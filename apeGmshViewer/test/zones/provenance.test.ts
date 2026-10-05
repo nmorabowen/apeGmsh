@@ -15,6 +15,7 @@ import { dirname, join } from "node:path";
 import { after, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import * as h5wasm from "h5wasm/node";
+import { openProvenance } from "../../src/main/zones.ts";
 import { readProvenance, sourceOf, type SourceSite } from "../../src/reader/provenance.ts";
 import { SchemaError, type H5Module } from "../../src/reader/read.ts";
 import { tree, writeTree, type Tree } from "./tree.ts";
@@ -146,6 +147,64 @@ test("columns of different lengths are refused", refuse((t) => (rec(t)["seq"] = 
 test("a 0 line is refused", refuse((t) => ((t.provenance!["sites"] as Tree)["line"] = new Int32Array([0, 40])), /sites\/line\[0\] = 0; lines are 1-based/));
 test("an unknown file kind is refused", refuse((t) => ((t.provenance!["files"] as Tree)["kind"] = ["notebook"]), /files\/kind\[0\] = "notebook"/));
 test("a malformed sha256 is refused", refuse((t) => ((t.provenance!["files"] as Tree)["sha256"] = ["xyz"]), /sha256\[0\] is not a hex sha256/));
+
+// --- pseudo-file sources: sha256 "" (#1435 item 1) ---------------------------
+// The writer keeps a `<...>` name for a source with no file and records no
+// digest for it (h5-schema.md, "Files"; `_file_row`).
+
+const files = (t: Tree) => t.provenance!["files"] as Tree;
+const oneFile = (path: string, sha: string) => (t: Tree) => {
+  files(t)["path"] = [path];
+  files(t)["sha256"] = [sha];
+};
+for (const pseudo of ["<string>", "<stdin>", "<ipython-input-3-9f2c41ab>"]) {
+  test(`a pseudo-file ${pseudo} with an empty sha256 opens, and keeps its name`, () => {
+    const p = readProvenance(h5, write(oneFile(pseudo, "")))!;
+    assert.deepEqual(p.files.sha256, [""]);
+    const s = site(sourceOf(p, "opensees/section/Cols"));
+    assert.equal(s.file, pseudo, "never joined to @base_dir");
+    assert.equal(s.sha256, "");
+  });
+}
+test("a real relative path with an empty sha256 is refused, naming the rule", refuse(oneFile("model.py", ""),
+  /^\/provenance\/files\/sha256\[0\] is not a hex sha256 \(it may be empty only for a pseudo-file such as <string>; path\[0\] is "model\.py"\)$/));
+test("an absolute path with an empty sha256 is refused", refuse(oneFile("C:/runs/frame/model.py", ""), /sha256\[0\] is not a hex sha256 \(it may be empty only/));
+test("a half-bracketed name is no pseudo-file", refuse(oneFile("<string", ""), /sha256\[0\] is not a hex sha256/));
+test("a pseudo-file with a non-hex digest is still refused", refuse(oneFile("<string>", "xyz"), /sha256\[0\] is not a hex sha256$/));
+test("a mixed table: real files hashed, the pseudo-file empty; a real empty one among them is refused", () => {
+  const mixed = (shaOfModule: string) => (t: Tree) => {
+    files(t)["path"] = ["model.py", "<string>", "/opt/helpers/frames.py"];
+    files(t)["sha256"] = ["a".repeat(64), "", shaOfModule];
+    files(t)["kind"] = ["module", "script", "module"];
+  };
+  const p = readProvenance(h5, write(mixed("b".repeat(64))))!;
+  assert.deepEqual(p.files.sha256, ["a".repeat(64), "", "b".repeat(64)]);
+  assert.equal(site(sourceOf(p, "opensees/section/Cols")).file, "C:/runs/frame/model.py");
+  assert.throws(() => readProvenance(h5, write(mixed(""))), (e: unknown) => e instanceof SchemaError && /sha256\[2\] is not a hex sha256 \(it may be empty only for a pseudo-file such as <string>; path\[2\] is "\/opt\/helpers\/frames\.py"\)/.test(e.message));
+});
+
+test("shoebuckle.h5, written by the writer from `python -c`, opens: <string> has no digest", async () => {
+  const path = join(fixtures, "shoebuckle.h5");
+  const p = readProvenance(h5, path)!;
+  assert.ok(p, "the regenerated fixture carries /provenance");
+  assert.equal(p.version, "1.1.0");
+  const at = p.files.path.indexOf("<string>");
+  assert.ok(at >= 0, "the -c command is the script, recorded as <string>");
+  assert.equal(p.files.sha256[at], "");
+  assert.equal(p.files.kind[at], "script");
+  // Every other file is real and hashed.
+  p.files.path.forEach((f, i) => {
+    if (i !== at) assert.match(p.files.sha256[i]!, /^[0-9a-f]{64}$/, f);
+  });
+  // A record's script frame is the `-c` line, kept as <string>.
+  const withScript = p.records.path.find((_, i) => p.records.script[i]! >= 0 && p.sites.file[p.records.script[i]!] === at)!;
+  const r = sourceOf(p, withScript) as { script: SourceSite; site: SourceSite };
+  assert.equal(r.script.file, "<string>");
+  assert.match(r.site.file, /\/examples\/shoebuckle_arch\.py$/);
+  // The main process answers it as read, not as malformed.
+  const answer = await openProvenance(path);
+  assert.equal(answer.ok, true, JSON.stringify(answer).slice(0, 300));
+});
 // Strict where h5-schema.md implies an invariant (Fable on #1316):
 test("a backslash path is refused (paths are POSIX)", refuse((t) => ((t.provenance!["files"] as Tree)["path"] = ["sub\\model.py"]), /files\/path\[0\] = "sub\\\\model\.py" has a backslash; paths are POSIX/));
 test("a backslash base_dir is refused", refuse((t) => (t.provenance!.attrs!["base_dir"] = "C:\\runs\\frame"), /@base_dir = .* has a backslash/));
@@ -201,6 +260,8 @@ test("an origin column of another length is refused", refuse((t) => {
 test("a 1.0.0 file that carries the column is read as written", () => {
   const p = readProvenance(h5, write((t) => (rec(t)["origin"] = ["synthesised", "user"])))!;
   assert.deepEqual(p.records.origin, ["synthesised", "user"]);
+  assert.equal(p.originColumn, true);
+  assert.equal(readProvenance(h5, write(() => {}))!.originColumn, false);
 });
 
 // The fixture main's own writer produced (fixtures/README.md, "bridge_provenance.h5").

@@ -20,8 +20,12 @@ $env:PYTHONPATH = "src"
 ```
 
 The generator is not part of this app and is not copied here (ADR 0112 D4).
-Re-running it changes only `/meta/created_iso` and the lineage hashes if the
-example and the writer are unchanged.
+If the example and the writer are unchanged, a re-run changes
+`/meta/created_iso`, the lineage hashes, `/meta/session_id` (new every run),
+and the `/provenance` paths: `@base_dir` and the absolute path of
+`examples/shoebuckle_arch.py` are the generating checkout's. The `-c` command
+is the script, so `/provenance/files` also holds the pseudo-file `<string>`
+with an empty `sha256` (h5-schema.md, "Files").
 
 The tests in `test/fixture.test.ts` check this file against closed forms of the
 example's parameters (span, column height, rise, element size, section

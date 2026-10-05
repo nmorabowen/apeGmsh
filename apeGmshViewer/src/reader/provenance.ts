@@ -6,11 +6,19 @@
 // geometry.ts: a broken table, an index out of range, an unknown `kind` or
 // `origin`, or a duplicate declaration path raises, naming its HDF5 path.
 //
+// `files/sha256` is 64 hex digits, or "" for a pseudo-file source (`<string>`
+// from `python -c`, `<stdin>`, an old IPython `<ipython-input-…>` cell), which
+// keeps its `<...>` name as its path and is never joined to `@base_dir`
+// (h5-schema.md, "Files"; the writer's `_file_row` and `_absolute`).
+//
 // 1.1.0 (#1378) added `records/origin`: `user` for a declaration the user
 // made, `synthesised` for an object apeGmsh created inside a verb the user
-// called (keys `<verb>:<owner>[/<role>]`). From 1.1.0 the column is required;
-// a file below it reads with every record as `user`, as the Python reader does
-// (`_femdata_h5_io._read_provenance`, `schema_version.PROVENANCE_ORIGIN_FROM`).
+// called (keys `<verb>:<owner>[/<role>]`). From 1.1.0 the column is required,
+// and a file below it reads with every record as `user`: these two rules are
+// the Python reader's (`_femdata_h5_io._read_provenance`,
+// `schema_version.PROVENANCE_ORIGIN_FROM`). Refusing an unknown `origin`
+// value is the app's own, stricter rule: the Python reader passes any string
+// through (`decode_columns`).
 //
 // Browser-safe: no Node import.
 
@@ -34,8 +42,17 @@ export interface ProvenanceZone {
   files: { path: string[]; sha256: string[]; kind: ("script" | "module")[] };
   sites: { file: Int32Array; line: Int32Array; function: string[] };
   records: { path: string[]; site: Int32Array; script: Int32Array; seq: Int32Array; origin: Origin[] };
+  /** the file carries `records/origin`; false only below 1.1.0, where every origin reads as `user` */
+  originColumn: boolean;
   warnings: string[];
 }
+
+/**
+ * A pseudo-file source, `<string>`, `<stdin>`, `<ipython-input-…>`: no file on
+ * disk, so no digest and no `@base_dir` join. The writer tests the leading `<`
+ * (`_file_row`); the app also requires the closing `>`.
+ */
+export const isPseudoFile = (p: string): boolean => p.length >= 2 && p.startsWith("<") && p.endsWith(">");
 
 /** Read `/provenance` from an open file; `null` when the file has no such zone. */
 export function readProvenanceZone(h5: H5Module, f: H5File): ProvenanceZone | null {
@@ -65,7 +82,13 @@ export function readProvenanceZone(h5: H5Module, f: H5File): ProvenanceZone | nu
   };
   const nFiles = sameLength(fg.path, files);
   files.sha256.forEach((h, i) => {
-    if (!/^[0-9a-f]{64}$/.test(h)) throw new SchemaError(`${fg.path}/sha256[${i}] is not a hex sha256`);
+    if (h === "" && isPseudoFile(files.path[i]!)) return; // no file to hash
+    if (!/^[0-9a-f]{64}$/.test(h)) {
+      throw new SchemaError(
+        `${fg.path}/sha256[${i}] is not a hex sha256` +
+          (h === "" ? ` (it may be empty only for a pseudo-file such as <string>; path[${i}] is ${JSON.stringify(files.path[i])})` : ""),
+      );
+    }
   });
   // The spec stores paths POSIX: a backslash is a writer fault, refused rather
   // than guessed at (on POSIX it is a legal file-name character).
@@ -96,7 +119,8 @@ export function readProvenanceZone(h5: H5Module, f: H5File): ProvenanceZone | nu
   if (atLeast(version, PROVENANCE_ORIGIN_FROM) && !has(rg, "origin")) {
     throw new SchemaError(`${rg.path}/origin is missing (required from provenance_schema_version ${major}.${minor}.${patch}; this file is ${version})`);
   }
-  const rawOrigin = has(rg, "origin") ? strs(dataset(h5, rg, "origin")) : path.map(() => "user");
+  const originColumn = has(rg, "origin");
+  const rawOrigin = originColumn ? strs(dataset(h5, rg, "origin")) : path.map(() => "user");
   const records = {
     path,
     site: int32s(dataset(h5, rg, "site")),
@@ -127,7 +151,7 @@ export function readProvenanceZone(h5: H5Module, f: H5File): ProvenanceZone | nu
     }
     if (records.seq[i]! < 0) throw new SchemaError(`${rg.path}/seq[${i}] = ${records.seq[i]}; expected >= 0`);
   }
-  return { version, baseDir, files, sites, records, warnings };
+  return { version, baseDir, files, sites, records, originColumn, warnings };
 }
 
 /** `version` ("X.Y.Z", already checked by zoneVersion) is at or above `v`. */
@@ -148,11 +172,11 @@ export function readProvenance(h5: H5Module, path: string): ProvenanceZone | nul
 
 /** One source location, ready for `goToSource(file, line)`. */
 export interface SourceSite {
-  /** Absolute path (POSIX separators; Windows accepts them). */
+  /** Absolute path (POSIX separators; Windows accepts them), or a pseudo-file's `<...>` name. */
   file: string;
   line: number;
   function: string;
-  /** The file's sha256 when it was captured: compare to detect an edit. */
+  /** The file's sha256 when it was captured: compare to detect an edit; "" for a pseudo-file. */
   sha256: string;
   kind: "script" | "module";
 }
@@ -177,7 +201,8 @@ export function sourceOf(zone: ProvenanceZone, declPath: string): SourceOf {
     const fi = zone.sites.file[row]!;
     const rel = zone.files.path[fi]!;
     return {
-      file: isAbsolutePosix(rel) ? rel : `${zone.baseDir.replace(/\/+$/, "")}/${rel}`,
+      // A pseudo-file keeps its `<...>` name, as the writer's `_absolute` does.
+      file: isAbsolutePosix(rel) || isPseudoFile(rel) ? rel : `${zone.baseDir.replace(/\/+$/, "")}/${rel}`,
       line: zone.sites.line[row]!,
       function: zone.sites.function[row]!,
       sha256: zone.files.sha256[fi]!,

@@ -5,6 +5,7 @@ import type { Chain, ChainNode, Field } from "../chain/resolve.ts";
 import type { OpsFamily } from "../model/types.ts";
 import { elementFields, elementLinks, type Lookup } from "./decls.ts";
 import { pairSessions } from "../reader/geometry.ts";
+import { PROVENANCE_ORIGIN_FROM } from "../reader/provenance.ts";
 import { roleColouring } from "./roles.ts";
 import type { ArtifactInfo, Decl, DeclPath, DeclSource, LegendEntry, Origin, Pick, State, ZoneStatus } from "./types.ts";
 
@@ -267,23 +268,23 @@ export function sourcesOf(s: State): SourceRow[] {
   });
 }
 
-/** The first /provenance version that marks synthesised records (`records/origin`). */
-const ORIGIN_FROM_MINOR = 1;
-
 /**
  * The sources panel's header: the record count, how many are synthesised,
- * and a notice for a 1.0.x file, whose records carry no origin and so are
- * never marked (the app does not guess one from the key). `null` when there
- * is nothing to list: no model, no /provenance, or no record (the panel hides).
+ * and a notice when the records carry no `origin` column (a file below
+ * 1.1.0), so none is marked: the app does not guess one from the key. The
+ * notice follows the column, not the version: a 1.0.x file that carries the
+ * column is read as written and needs none. `null` when there is nothing to
+ * list: no model, no /provenance, or no record (the panel hides).
  */
 export function sourcesHeaderOf(s: State): { count: number; synthesised: number; notice: string | null } | null {
   if (s.provenance.length === 0) return null;
   const zone = s.artifacts.model?.zones["provenance"];
-  const v = zone?.status === "ready" ? /^(1)\.(\d+)\./.exec(zone.version) : null;
+  const version = zone?.status === "ready" ? zone.version.split(".").slice(0, 2).join(".") : "?";
+  const { major, minor } = PROVENANCE_ORIGIN_FROM;
   return {
     count: s.provenance.length,
     synthesised: s.provenance.filter((p) => p.origin === "synthesised").length,
-    notice: v !== null && Number(v[2]) < ORIGIN_FROM_MINOR ? `provenance ${v[1]}.${v[2]}: synthesised records are not marked` : null,
+    notice: s.provenanceOrigin ? null : `provenance ${version}: synthesised records are not marked (origin is recorded from ${major}.${minor})`,
   };
 }
 

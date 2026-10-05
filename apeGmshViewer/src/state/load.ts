@@ -350,5 +350,6 @@ export function loadModel(
     blocks: blocksOf(model, blobs),
     mesh: meshInfoOf(model, mesh, blobs),
     provenance: provenance ? provenanceEntries(provenance) : [],
+    provenanceOrigin: provenance?.originColumn ?? false,
   };
 }
