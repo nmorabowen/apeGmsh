@@ -51,9 +51,6 @@ _ALLOWED: frozenset[str] = frozenset({
     # -- model / mesh viewers: not retired at all, Dispatcher only ----
     "apeGmsh.viewers.mesh_viewer",
     "apeGmsh.viewers.model_viewer",
-    # -- geomTransf viewer: only the pure frame math in _beam_geometry,
-    #    so its page and the diagrams draw one vecxz rule -------------
-    "apeGmsh.viewers.geom_transf_viewer",
     # -- shared core -------------------------------------------------
     "apeGmsh.viewers.core._legend",           # live via the SESSION window
     "apeGmsh.viewers.core.visibility",        # live via mesh/model viewers

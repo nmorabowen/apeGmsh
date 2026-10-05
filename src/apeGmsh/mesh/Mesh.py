@@ -184,48 +184,6 @@ class Mesh(_HasLogging):
             self._parent, path, camera=camera, window_size=window_size,
         )
 
-    def preview(
-        self,
-        *,
-        dims: list[int] | None = None,
-        show_nodes: bool = True,
-        browser: bool = False,
-        return_fig: bool = False,
-    ):
-        """Interactive WebGL preview of the mesh.
-
-        Zero Qt dependency — works inline in Jupyter / VS Code / Colab,
-        or in a dedicated browser tab when ``browser=True``. Hover over
-        an element to see its BRep ``dim`` and ``tag``; hover over a
-        node to see its ``node=N`` id. Single-click a legend entry to
-        hide a trace, double-click to isolate it.
-
-        Parameters
-        ----------
-        dims : list of int, optional
-            Mesh dimensions to render. Defaults to ``[1, 2, 3]`` —
-            surface / volume / 1D curve elements.
-        show_nodes : bool
-            Render the full mesh-node cloud as a separate trace
-            (default ``True``). Matches the Qt mesh viewer, which
-            always shows the node cloud. Disable for very large meshes
-            where the nodes overwhelm the element rendering.
-        browser : bool
-            If ``True``, open in a new browser tab (temp HTML file)
-            instead of rendering inline.
-        return_fig : bool
-            If ``True``, skip display and return the raw
-            :class:`plotly.graph_objects.Figure`.
-        """
-        from ..viz.NotebookPreview import preview_mesh
-        return preview_mesh(
-            self._parent,
-            dims=dims,
-            show_nodes=show_nodes,
-            browser=browser,
-            return_fig=return_fig,
-        )
-
     # ------------------------------------------------------------------
     # Repr
     # ------------------------------------------------------------------

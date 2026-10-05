@@ -23,7 +23,3 @@ programmatic entity selection use `g.model.select(...)` (see
 ## VTK export
 
 ::: apeGmsh.viz.VTKExport.VTKExport
-
-## Notebook preview
-
-::: apeGmsh.viz.NotebookPreview.preview

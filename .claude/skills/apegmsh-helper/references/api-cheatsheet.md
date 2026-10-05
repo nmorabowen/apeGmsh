@@ -5,7 +5,7 @@ One-page map of the public apeGmsh surface. Every entry is a concrete
 composite attribute on a live session `g = apeGmsh(...)` (after
 `g.begin()` or inside a `with` block). Signatures reflect **v2.0.0**
 (`pyproject.toml` + the latest tagged `CHANGELOG.md` section agree; a
-stale editable install may still print `v1.6.0` in the banner). Read
+stale editable install may still report `v1.6.0` as `apeGmsh.__version__`). Read
 the matching heading. Do not grep `src/apeGmsh/` to author a model;
 `src/` is for maintaining the library (ADR 0096). Signatures: MCP
 `lookup(symbol)` or `python -m apeGmsh.studio.lookup SYMBOL`
@@ -246,7 +246,7 @@ the selection into a label/PG without raw tags:
 
 ## `g.mesh` — meshing
 
-`g.mesh.viewer(**kw)`, `g.mesh.render(...)` and `g.mesh.preview(...)`
+`g.mesh.viewer(**kw)` and `g.mesh.render(...)`
 are the flat entry points (there is no `g.mesh.results_viewer` — the
 post-solve door is `results.viewer()`, see `results.md`). Everything
 else lives in sub-composites: `generation`, `sizing`, `field`,
@@ -976,17 +976,6 @@ job.status() -> JobStatus  ; job.wait(*, poll=15.0, timeout=None) -> JobStatus
 job.tail(n=50, *, stream="out"|"err") -> str  ; job.cancel()  ; job.fetch(dest=None) -> Path
 Job.load(local_dir) -> Job                           # rehydrate from .apegmsh_job.json sidecar
 
-# apeGmsh.sensitivity — finite-difference gradient / calibration driver.
-from apeGmsh.sensitivity import Sensitivity, Param, Response
-Sensitivity(forward, params, *, rel_step=1e-2, scheme="central"|"forward")   # engine-free scalar forward
-Sensitivity.from_apesees(fem, *, build, params, response, steps, dt,         # live transient + capture
-    runner=None, capture_path=None, rel_step=1e-2, scheme="central")
-sens.gradient(at=None, *, rel_step=None, scheme=None) -> dict[str, float]
-sens.step_study(param=None, *, at=None, rel_steps=None) -> list[(rel_step, grad)]   # plateau check
-sens.solve(target, *, tol=1e-6, max_iter=50, damping=1.0) -> dict[str, float]      # 1-parameter only
-Param(name=, value=, lower=None, upper=None)
-Response(component=, pg=None, label=None, node=None, reduce="peak"|"rms"|"mean_abs"|"last"|"at_time", at_time=None, absolute=True)
-
 # apeGmsh.interop — import an analytical model (apeETABS *.sm.json) → conformal
 # beam+shell mesh → apeSees deck (ADR 0009). Full reference: interop.md.
 from apeGmsh.interop import StructuralModel, import_structural_model, \
@@ -1009,7 +998,7 @@ env = read_envelope(envelope_path())          # what was clicked
 # MCP status(mode="brief") default — root check; mode="full" for names.entities
 env.labels / env.physical_groups / env.phase / env.unnamed
 ```
-`# src/apeGmsh/hpc/_cluster.py, _job.py ; src/apeGmsh/sensitivity/driver.py, spec.py ; src/apeGmsh/interop/__init__.py ; src/apeGmsh/studio/_envelope.py`
+`# src/apeGmsh/hpc/_cluster.py, _job.py ; src/apeGmsh/interop/__init__.py ; src/apeGmsh/studio/_envelope.py`
 
 ## FEMData & persistence (see `fem-broker.md`, `results.md`)
 
