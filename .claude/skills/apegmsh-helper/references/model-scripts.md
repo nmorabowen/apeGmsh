@@ -44,6 +44,13 @@ These rules cover user model scripts, not library code.
 10. **Comments say why, and stay true.** Every non-default setting, and any step a reader would
     not expect, carries its reason. A reason longer than the line goes above it.
 
+**Check agent-written scripts.** Run `python scripts/lint_model_script.py <script.py>` (the lint
+lives beside this skill; it needs only the standard library) on every model script an agent
+writes, and fix each finding before handing the script over. It covers rules 1 to 2 (S1, S2, S3),
+4 (V1, V3), 6 (V4, V5), 7 (T1), 8 (T2) and 9 (T4), and prints `path:line: RULE message`;
+`--rules S1,V5` narrows it. It is advisory, never a gate: fidelity (rule 3), role naming (rule 5),
+symbol choice, the quality of a hand check and whether a comment is true still need a reviewer.
+
 ## Reference scripts
 
 Each script runs on stock openseespy and asserts its own hand check.
