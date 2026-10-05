@@ -16,13 +16,6 @@ from .._internal.types import (
 from ..node import Node
 
 if TYPE_CHECKING:
-
-    # FEMData is the only mesh symbol the bridge depends on (P3, P9).
-    # Imported under TYPE_CHECKING so that constructing apeSees does
-    # not transitively import gmsh during static analysis.
-    # Use the fully-qualified module path to disambiguate from the
-    # similarly-named submodule ``apeGmsh.mesh.FEMData`` under mypy.
-
     from ..analysis.modal import (
         FrequencyResponseResult,
         RandomResponseResult,

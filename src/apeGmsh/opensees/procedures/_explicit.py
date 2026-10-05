@@ -6,17 +6,6 @@ state and no ``__init__``.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-
-    # FEMData is the only mesh symbol the bridge depends on (P3, P9).
-    # Imported under TYPE_CHECKING so that constructing apeSees does
-    # not transitively import gmsh during static analysis.
-    # Use the fully-qualified module path to disambiguate from the
-    # similarly-named submodule ``apeGmsh.mesh.FEMData`` under mypy.
-
-    pass
 
 from ._host import _ProcedureHost
 
