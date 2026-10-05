@@ -20,7 +20,8 @@ from __future__ import annotations
 
 import pytest
 
-from apeGmsh.opensees.apesees import _StageBuilder, apeSees
+from apeGmsh.opensees.apesees import apeSees
+from apeGmsh.opensees.stage._builder import _StageBuilder
 from apeGmsh.opensees._internal.build import ProfileRecord
 from apeGmsh.opensees.emitter.h5 import H5Emitter
 from apeGmsh.opensees.emitter.py import PyEmitter
