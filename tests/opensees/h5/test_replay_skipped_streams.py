@@ -155,20 +155,23 @@ def test_element_form_coupling_replays_and_stays_silent(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def _staged_replay(fem: FEMData, claimed_name: str) -> None:
+def _staged_replay(fem: FEMData, claimed_name: str, **buckets) -> None:
+    """Replay one stage whose MP buckets are ``buckets`` (default: the
+    equalDOF 1 -> 2 on dofs 1-3, named ``claimed_name``)."""
     from apeGmsh.opensees._internal.typed_records import (
         EqualDOFRecord,
         StageRecordRO,
     )
     from apeGmsh.opensees.emitter.recording import RecordingEmitter
 
-    st = StageRecordRO(
-        name="s1", analyze_steps=1,
-        equal_dofs=(EqualDOFRecord(
-            master=1, slave=2, dofs=(1, 2, 3), name=claimed_name,
-        ),),
-        equal_dof_seq=(1,),
-    )
+    if not buckets:
+        buckets = {
+            "equal_dofs": (EqualDOFRecord(
+                master=1, slave=2, dofs=(1, 2, 3), name=claimed_name,
+            ),),
+            "equal_dof_seq": (1,),
+        }
+    st = StageRecordRO(name="s1", analyze_steps=1, **buckets)
     _replay_staged_into(
         RecordingEmitter(), stages=(st,), ndm=3, ndf=6, fem=fem,
     )
@@ -189,12 +192,55 @@ def test_staged_replay_warns_for_an_unclaimed_constraint():
         kind="equal_dof", name="tie1", master_node=1, slave_node=2,
         dofs=[1, 2, 3],
     )
-    fem = _frame_fem(node_constraints=[named, _EQUAL_DOF])
+    unclaimed = NodePairRecord(
+        kind="equal_dof", master_node=1, slave_node=2, dofs=[4, 5, 6],
+    )
+    fem = _frame_fem(node_constraints=[named, unclaimed])
     with pytest.warns(
         ReplaySkippedStreamWarning,
         match=r"fem\.nodes\.constraints \(equal_dof: 1\)",
     ):
         _staged_replay(fem, "tie1")
+
+
+def test_staged_replay_silent_for_a_stage_claimed_tied_contact():
+    # Review finding 1 on b54b4665: a tied_contact slave row carries
+    # name=None (only the parent is named), so a name match missed it and
+    # warned although the stage block replays the slave as embeddedNode.
+    from apeGmsh._kernel.records._constraints import SurfaceCouplingRecord
+    from apeGmsh.opensees._internal.typed_records import EmbeddedNodeRecord
+
+    tc = SurfaceCouplingRecord(
+        kind="tied_contact", name="tc",
+        slave_records=[_interp("tie")],   # slave 2 tied to master 1
+    )
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", ReplaySkippedStreamWarning)
+        _staged_replay(
+            _frame_fem(constraints=[tc]), "tc",
+            embedded_nodes=(EmbeddedNodeRecord(
+                ele_tag=7, cnode=2, args=(1,),
+            ),),
+            embedded_node_seq=(1,),
+        )
+
+
+def test_staged_claim_by_name_does_not_excuse_another_kind():
+    # Review finding 2 on b54b4665: stage claims filter by kind, so an
+    # equalDOF "x" claimed by the stage must not hide a rigidDiaphragm
+    # "x" that stayed global and is lost on replay.
+    eq = NodePairRecord(
+        kind="equal_dof", name="x", master_node=1, slave_node=2,
+        dofs=[1, 2, 3],
+    )
+    rd = NodeGroupRecord(
+        kind="rigid_diaphragm", name="x", master_node=1, slave_nodes=[2],
+    )
+    with pytest.warns(
+        ReplaySkippedStreamWarning,
+        match=r"fem\.nodes\.constraints \(rigid_diaphragm: 1\)",
+    ):
+        _staged_replay(_frame_fem(node_constraints=[eq, rd]), "x")
 
 
 # ---------------------------------------------------------------------------
@@ -222,7 +268,7 @@ def _interp(kind: str, enforce: str = "penalty") -> InterpolationRecord:
 )
 def test_interpolation_rows(record, skipped):
     out = _skipped_replay_streams(
-        _frame_fem(constraints=[record]), stage_mp_names=frozenset(),
+        _frame_fem(constraints=[record]), stage_mp_keys=frozenset(),
     )
     if skipped:
         assert out == {"fem.elements.constraints": {record.kind: 1}}
@@ -246,7 +292,7 @@ def test_interpolation_rows(record, skipped):
 )
 def test_node_constraint_rows(record, skipped):
     out = _skipped_replay_streams(
-        _frame_fem(node_constraints=[record]), stage_mp_names=frozenset(),
+        _frame_fem(node_constraints=[record]), stage_mp_keys=frozenset(),
     )
     if skipped:
         assert out == {"fem.nodes.constraints": {record.kind: 1}}
@@ -267,7 +313,7 @@ def test_side_list_streams_are_named_with_counts():
         reinforce_ties=[object()],   # replayed by step 8b
         rebar_elements=[object()],   # element lines: replayed
     )
-    out = _skipped_replay_streams(fem, stage_mp_names=frozenset())
+    out = _skipped_replay_streams(fem, stage_mp_keys=frozenset())
     assert out == {
         "fem.elements.interfaces": {"interface": 1},
         "fem.elements.embed_ties": {"record": 2},
@@ -287,4 +333,4 @@ def test_a_fem_without_a_stream_fails_loud():
         ),
     )
     with pytest.raises(AttributeError, match="contacts"):
-        _skipped_replay_streams(fem, stage_mp_names=frozenset())
+        _skipped_replay_streams(fem, stage_mp_keys=frozenset())

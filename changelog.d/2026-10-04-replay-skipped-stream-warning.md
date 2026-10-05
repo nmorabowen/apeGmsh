@@ -12,7 +12,8 @@ emits anything, naming each skipped stream with its count, for example
 `fem.nodes.constraints (equal_dof: 1)`. Constraints that the forward emit writes
 as `element` lines (RBE2 `kinematic_coupling`, `rigid_body` with `as_element`,
 `distributing` RBE3, `penalty_al` ties) replay and do not warn. Neither do
-constraints a stage claims by name in a staged archive, or the `build("h5")`
+constraints a staged archive's stage blocks replay (matched by kind and nodes,
+not by name, since a `tied_contact` slave row carries no name), or the `build("h5")`
 target, whose neutral zone keeps them. A model without these streams replays
 silently. For a faithful deck, load `FEMData.from_h5(path)` and emit it through
 `apeSees(fem)`.
