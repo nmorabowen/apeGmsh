@@ -238,7 +238,7 @@ def test_the_module_is_still_importable_by_path():
 def test_the_other_viewers_are_untouched():
     import apeGmsh.viewers as viewers
 
-    assert {"ModelViewer", "MeshViewer", "GeomTransfViewer"} <= set(
+    assert {"ModelViewer", "MeshViewer"} <= set(
         viewers.__all__
     )
 

@@ -33,7 +33,6 @@ Top-level helpers re-exported from `apeGmsh` that don't have a
 dedicated composite page:
 
 - `apeGmsh.workdir` — context manager for the working directory.
-- `apeGmsh.preview` — notebook viewer.
 - `apeGmsh.settings`, `apeGmsh.theme_editor` — viewer preferences and
   theme editor (see [Viewers](viewers.md)).
 - `SelectionPicker` is a back-compat alias for `ModelViewer`.
