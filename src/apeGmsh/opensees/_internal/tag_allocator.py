@@ -27,6 +27,7 @@ move their minting into the plan one family at a time.
 from __future__ import annotations
 
 from collections.abc import Iterable
+from typing import NoReturn
 
 
 class TagLawError(RuntimeError):
@@ -93,7 +94,8 @@ class TagAllocator:
         child._frozen_kinds = self._frozen_kinds | kinds
         return child
 
-    def _check_mint(self, kind: str | None, verb: str) -> None:
+    def _refuse(self, kind: str | None, verb: str) -> NoReturn:
+        """Raise the :class:`TagLawError` for a refused mint."""
         if self._frozen:
             raise TagLawError(
                 f"{verb}({kind!r}) after the tag plan froze this allocator: "
@@ -106,6 +108,7 @@ class TagAllocator:
                 "this allocator, so the emit path must read its tag from "
                 "the tag plan instead of minting one (ADR 0114 D4)."
             )
+        raise AssertionError("_refuse called for an allowed mint")
 
     # ------------------------------------------------------------------
     # Minting
@@ -113,7 +116,8 @@ class TagAllocator:
 
     def allocate(self, kind: str) -> int:
         """Return the next 1-based tag for ``kind`` and bump the counter."""
-        self._check_mint(kind, "allocate")
+        if self._frozen or kind in self._frozen_kinds:
+            self._refuse(kind, "allocate")
         n = self._counters.get(kind, 0) + 1
         self._counters[kind] = n
         return n
@@ -136,7 +140,8 @@ class TagAllocator:
         ``n == 0`` reserves nothing and returns the next tag that *would*
         be allocated (the counter is untouched).
         """
-        self._check_mint(kind, "allocate_block")
+        if self._frozen or kind in self._frozen_kinds:
+            self._refuse(kind, "allocate_block")
         if n < 0:
             raise ValueError(f"allocate_block: n must be >= 0, got {n}.")
         base = self._counters.get(kind, 0)
@@ -158,7 +163,8 @@ class TagAllocator:
         0111 D2) to put every bridge-synthesised element above the
         model's FEM element ids, which the plan uses verbatim as tags.
         """
-        self._check_mint(kind, "reserve_through")
+        if self._frozen or kind in self._frozen_kinds:
+            self._refuse(kind, "reserve_through")
         if last > self._counters.get(kind, 0):
             self._counters[kind] = int(last)
 
@@ -174,7 +180,8 @@ class TagAllocator:
         when ``primitive`` already has a tag: read it with
         :meth:`tag_for` instead.
         """
-        self._check_mint(kind, "allocate_for")
+        if self._frozen or kind in self._frozen_kinds:
+            self._refuse(kind, "allocate_for")
         prev = self._assignments.get(id(primitive))
         if prev is not None:
             return prev
@@ -193,6 +200,7 @@ class TagAllocator:
         Refused on a frozen allocator: clearing it would let the next
         mint hand out a planned tag a second time.
         """
-        self._check_mint(None, "reset")
+        if self._frozen:
+            self._refuse(None, "reset")
         self._counters.clear()
         self._assignments.clear()

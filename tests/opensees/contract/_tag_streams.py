@@ -148,6 +148,7 @@ def models() -> dict[str, Callable[[], apeSees]]:
     recorders (region tags), and the arch fixture fans out one
     ``geomTransf`` per element. The H5 suites' fixtures add parameter
     tags: a flat initial stress, a staged one, and a staged absorbing flip.
+    :func:`two_rank_regions` adds named regions owned by different ranks.
     """
     from tests.opensees.golden import builder as golden
     from tests.opensees.h5.test_h5_initial_stress import _build_frame
@@ -167,7 +168,31 @@ def models() -> dict[str, Callable[[], apeSees]]:
         _build_frame, with_initial_stress=True)
     out["two_stage_initial_stress/staged"] = _real_two_stage_bridge
     out["kitchen_sink_absorbing/staged"] = _real_kitchen_sink_bridge
+    for mode in GOLDEN_MODES:
+        out[f"two_rank_regions/{mode}"] = partial(two_rank_regions, mode)
     return out
+
+
+def two_rank_regions(mode: str) -> apeSees:
+    """Two named regions owned by different ranks, plus a filtered MPCO.
+
+    The golden two-column frame with its recording set (whose MPCO
+    recorder is filtered by ``nodes_pg`` / ``elements_pg``, so it takes a
+    region tag) and two named regions: ``east`` holds only rank 1's
+    nodes and is declared first, ``west`` holds only rank 0's nodes and
+    is declared second. The flat deck numbers them in declaration order;
+    the partitioned deck numbers each on the first rank that emits it,
+    so the two orders differ. The tag plan must reproduce both.
+    """
+    from tests.opensees.golden import builder as golden
+
+    ops = golden.build_model("two_column_frame", mode, "recording")
+    split = golden.FIXTURES["two_column_frame"].partitions
+    assert split is not None
+    rank_nodes = {rank: nodes for rank, nodes, _ in split}
+    ops.region(name="east", nodes=rank_nodes[1])
+    ops.region(name="west", nodes=rank_nodes[0])
+    return ops
 
 
 def split_model() -> apeSees:
