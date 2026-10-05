@@ -45,6 +45,7 @@ __all__ = [
     "GeometryArtifactWarning",
     "GeometryCapture",
     "GeometryInt32Overflow",
+    "artifact_session_id",
     "artifact_zones",
     "capture_fallback",
     "capture_geometry",
@@ -204,6 +205,83 @@ def artifact_zones(path: "str | Path") -> frozenset[str]:
     if roots - set(root_of.values()):
         zones.add(NEUTRAL)
     return frozenset(zones)
+
+
+def artifact_session_id(path: "str | Path") -> str | None:
+    """The ``/meta/session_id`` an artifact carries, or ``None`` when the
+    file has none (written before #1304) or cannot be opened."""
+    try:
+        with h5py.File(str(path), "r") as f:
+            if "meta" not in f or "session_id" not in f["meta"].attrs:
+                return None
+            raw = f["meta"].attrs["session_id"]
+            return raw.decode("utf-8") if isinstance(raw, bytes) else str(raw)
+    except OSError:
+        return None
+
+
+def _artifact_target_is_ours(
+    target: "Path",
+    *,
+    writes: frozenset[str],
+    overwrite: bool,
+    session_id: str | None = None,
+) -> bool:
+    """May an automatic D1 write replace ``target``?
+
+    The V2b ownership rule, lifted to a module function (V2d, #1307) so
+    the end-of-session write and the bridge's write share it.  Yes when
+    ``target`` does not exist, or when it is an apeGmsh artifact (a
+    ``/meta`` zone version key is present), ``overwrite`` is on, and
+    every zone it holds is in ``writes`` (the zones the write produces).
+    A foreign file, an existing one under ``overwrite=False``, or one
+    holding a zone the write would drop is never replaced: one warning,
+    and that file is skipped (never written elsewhere).
+
+    ``session_id`` (the end-of-session write passes the id its snapshot
+    would stamp) adds one silent case: a target stamped with the same
+    ``/meta/session_id`` that already holds every zone in ``writes`` is
+    this run's own, fuller output (the bridge wrote neutral +
+    ``/opensees`` first), and it is kept without a warning.  A foreign
+    file, or one from another session (an older run), keeps the warning.
+
+    Warnings are raised at ``stacklevel=4``: this function, the writer's
+    private method, its public caller (``end()``, ``tcl()``, ...), the
+    user's line.
+    """
+    if not target.exists():
+        return True
+    if not overwrite:
+        warnings.warn(
+            f"{target} exists and overwrite=False; not written",
+            stacklevel=4,
+        )
+        return False
+    if not is_apegmsh_artifact(target):
+        warnings.warn(
+            f"{target} exists and is not an apeGmsh artifact (no /meta "
+            f"schema key); not overwritten. Pass save_to= (or ops.h5(path)) "
+            f"to write the model elsewhere.",
+            stacklevel=4,
+        )
+        return False
+    held = artifact_zones(target)
+    dropped = sorted(held - writes)
+    if dropped:
+        if (
+            session_id is not None
+            and writes <= held
+            and artifact_session_id(target) == session_id
+        ):
+            return False
+        warnings.warn(
+            f"{target} holds the {', '.join(dropped)} zone(s) that the "
+            f"automatic write would drop; not overwritten. Write that "
+            f"file under another name, or pass save_to= / ops.h5(path).",
+            stacklevel=4,
+        )
+        return False
+    return True
 
 
 # ---------------------------------------------------------------------------

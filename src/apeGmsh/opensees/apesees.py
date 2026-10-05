@@ -8225,6 +8225,9 @@ class apeSees:
         # ``opensees/<kind>/<name|#k>``; ``h5()`` appends the table to
         # the snapshot's own ``/provenance``.  Never hashed.
         self._provenance = ProvenanceStore()
+        # ADR 0112 D1 (V2d item 4): the automatic ``model.h5`` write
+        # (``_write_default_artifact``) warns once per bridge, then stops.
+        self._default_artifact_warned: bool = False
         # Call ordinal of ``imposed_displacement``: the ``<name>`` of its
         # synthesised records when the call gives no ``name=``.
         self._imposed_displacement_calls = 0
@@ -11850,6 +11853,77 @@ class apeSees:
                 f"--- stderr tail ---\n{job.tail(30, stream='err')}"
             )
         return job
+
+    def _write_default_artifact(self) -> None:
+        """ADR 0112 D1 for the bridge (program slice V2d item 4, #1307).
+
+        Called at the end of every successful terminal emit or live
+        build, i.e. after every ``bm.emit`` site except :meth:`h5`, which
+        stays the explicit override: writes the full ``model.h5``
+        (neutral + ``/opensees`` + ``/provenance``) at the session's
+        conventional path ``default_artifact_dir() / <model_name>.h5``
+        (V2b: ``$APEGMSH_ARTIFACT_DIR``, else beside the ``__main__``
+        script, else the cwd), with no opt-in, through :meth:`h5` into a
+        ``<target>.tmp-<uuid>`` beside the target and an atomic replace.
+        ``model_name`` is the session's name the snapshot carries
+        (``FEMData.model_name``, stamped by ``from_gmsh``).
+
+        It never raises into the user's run: the first failure warns, and
+        the bridge does not try again.  A stub snapshot (no neutral zone,
+        the composer's stub rule) belongs to no run and writes nothing; a
+        snapshot no session named (``from_msh``, an import, ``compose``,
+        ``fem.model_name == ""``) has no conventional path and warns.
+        V2b's ownership rule applies: a foreign ``.h5`` at the target, or
+        one holding a zone this write would drop, is skipped with its
+        warning.
+        """
+        if self._default_artifact_warned:
+            return
+        from ..mesh.FEMData import FEMData
+
+        if not isinstance(self._fem, FEMData):
+            return
+        import uuid
+        import warnings as _warnings
+        from pathlib import Path
+
+        from .._atomic_io import replace_with_retry
+        from .._core import default_artifact_dir
+        from ..mesh._geometry_h5_io import _artifact_target_is_ours
+        from ._internal.schema_version import NEUTRAL, OPENSEES, PROVENANCE
+
+        target: Path | None = None
+        try:
+            name = self._fem.model_name
+            if not name:
+                raise RuntimeError(
+                    "the snapshot carries no model_name (no session "
+                    "extracted it: from_msh, an import or compose), so it "
+                    "has no conventional artifact path; call ops.h5(path) "
+                    "to archive it"
+                )
+            target = default_artifact_dir() / f"{name}.h5"
+            if not _artifact_target_is_ours(
+                target,
+                writes=frozenset({NEUTRAL, OPENSEES, PROVENANCE}),
+                overwrite=True,
+            ):
+                self._default_artifact_warned = True
+                return
+            tmp = target.with_name(f"{target.name}.tmp-{uuid.uuid4().hex}")
+            try:
+                self.h5(str(tmp), model_name=name)
+                replace_with_retry(tmp, target)
+            finally:
+                tmp.unlink(missing_ok=True)
+        except Exception as exc:  # noqa: BLE001
+            self._default_artifact_warned = True
+            _warnings.warn(
+                f"model.h5 not written at "
+                f"{target if target is not None else '<unresolved>'}: "
+                f"{exc!r}",
+                stacklevel=3,
+            )
 
     def h5(
         self,

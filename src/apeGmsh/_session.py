@@ -310,49 +310,6 @@ class _SessionBase:
                 _gmsh_release()
                 self._active = False
 
-    def _artifact_target_is_ours(
-        self, target: "Path", *, writes: frozenset[str]
-    ) -> bool:
-        """May the automatic write replace ``target``?
-
-        Yes when it does not exist, or when it is an apeGmsh artifact (a
-        ``/meta`` zone version key is present), ``overwrite`` is on, and
-        every zone it holds is in ``writes`` (the zones the write
-        produces). A foreign file, an existing one under
-        ``overwrite=False``, or one holding a zone the write would drop
-        (an ``apeSees(fem).h5()`` at the model path, with ``/opensees``)
-        is never replaced: one warning, and that file is skipped (never
-        written elsewhere).
-        """
-        from .mesh._geometry_h5_io import artifact_zones, is_apegmsh_artifact
-
-        if not target.exists():
-            return True
-        if not self._overwrite:
-            warnings.warn(
-                f"{target} exists and overwrite=False; not written",
-                stacklevel=4,
-            )
-            return False
-        if not is_apegmsh_artifact(target):
-            warnings.warn(
-                f"{target} exists and is not an apeGmsh artifact (no /meta "
-                f"schema key); not overwritten. Pass save_to= to write the "
-                f"model elsewhere.",
-                stacklevel=4,
-            )
-            return False
-        dropped = sorted(artifact_zones(target) - writes)
-        if dropped:
-            warnings.warn(
-                f"{target} holds the {', '.join(dropped)} zone(s) that the "
-                f"end-of-session write would drop; not overwritten. Write "
-                f"that file under another name, or pass save_to=.",
-                stacklevel=4,
-            )
-            return False
-        return True
-
     def _write_artifacts(self) -> None:
         """Write ``model.h5`` and ``<stem>.geometry.h5`` before finalize.
 
@@ -367,10 +324,19 @@ class _SessionBase:
         Both files are written to ``<target>.tmp-<uuid>`` beside the
         target and moved into place with ``os.replace``, so a failed
         write leaves the previous file untouched and no temp behind.
+
+        Whether a target may be replaced is the module rule
+        :func:`~apeGmsh.mesh._geometry_h5_io._artifact_target_is_ours`,
+        shared with the bridge's automatic write (V2d, #1307): a
+        ``model.h5`` the bridge already wrote for this session (same
+        ``session_id``, every zone this write would produce) is kept
+        silently; a foreign file or another session's file is skipped
+        with a warning.
         """
         from ._atomic_io import replace_with_retry
         from .mesh._geometry_h5_io import (
             GeometryArtifactWarning,
+            _artifact_target_is_ours,
             capture_fallback,
             geometry_sibling_path,
             write_geometry_h5,
@@ -388,7 +354,10 @@ class _SessionBase:
             model_zones = frozenset({NEUTRAL}) | (
                 frozenset({PROVENANCE}) if fem.provenance is not None else frozenset()
             )
-            if self._artifact_target_is_ours(target, writes=model_zones):
+            if _artifact_target_is_ours(
+                target, writes=model_zones, overwrite=self._overwrite,
+                session_id=fem.session_id,
+            ):
                 tmp = target.with_name(f"{target.name}.tmp-{uuid.uuid4().hex}")
                 try:
                     self._do_save(tmp, fem=fem)
@@ -405,7 +374,9 @@ class _SessionBase:
             return
         sibling = geometry_sibling_path(target)
         try:
-            if not self._artifact_target_is_ours(sibling, writes=frozenset({GEOMETRY})):
+            if not _artifact_target_is_ours(
+                sibling, writes=frozenset({GEOMETRY}), overwrite=self._overwrite,
+            ):
                 return
             fem = getattr(self, "_fem", None)
             session_id = (

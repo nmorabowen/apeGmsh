@@ -1745,10 +1745,21 @@ class FEMData:
         mesh_selection: "MeshSelectionStore | None" = None,
         composed_from: "ComposeSet | tuple[ComposeRecord, ...] | None" = None,
         session_id: str | None = None,
+        model_name: str = "",
     ) -> None:
         self.nodes    = nodes
         self.elements = elements
         self.info     = info
+        # ── The session's name (ADR 0112 D1; V2d, #1307) ─────────
+        # ``from_gmsh`` stamps ``session.name``, the H5 reader passes
+        # ``/meta/model_name`` back, and derived copies inherit it.  It
+        # is what lets the bridge form the session's conventional
+        # artifact path ``<model_name>.h5`` for its automatic write.
+        # ``""`` means no session named this snapshot (from_msh, an
+        # import, compose, hand-built): no conventional path exists and
+        # the bridge warns instead of writing.  Identity metadata like
+        # session_id: no hash reads it.
+        self.model_name: str = str(model_name)
         # ── Session identity (ADR 0112 D1; V0 ratification Q1) ───
         # A uuid4 that pairs this snapshot's model.h5 with its sibling
         # ``<stem>.geometry.h5``.  It is identity metadata, not model
@@ -1835,6 +1846,8 @@ class FEMData:
             self.session_id = str(uuid.uuid4())
         if "provenance" not in state:
             self.provenance = None
+        if "model_name" not in state:
+            self.model_name = ""
 
     @property
     def snapshot_id(self) -> str:
@@ -1893,6 +1906,9 @@ class FEMData:
                     "begin() never ran on it"
                 )
             fem.session_id = _validated_session_id(session_id)
+            # ADR 0112 D1 (V2d): the session's name, so the bridge can
+            # form ``<model_name>.h5`` for its automatic write.
+            fem.model_name = str(session.name)
             # ADR 0112 D3: carry the session's provenance, unhashed.
             from apeGmsh._internal.provenance import table_for
             fem.provenance = table_for(session)
