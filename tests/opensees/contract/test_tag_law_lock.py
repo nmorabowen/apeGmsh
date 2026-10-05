@@ -62,7 +62,10 @@ _CEILING = 5
 MINT_METHODS = frozenset({
     "allocate", "allocate_block", "allocate_for", "reserve_through",
 })
-NON_MINT_METHODS = frozenset({"__init__", "last", "tag_for", "reset"})
+NON_MINT_METHODS = frozenset({
+    "__init__", "last", "tag_for", "reset",
+    "freeze", "fork", "frozen", "frozen_kinds", "_refuse",
+})
 
 #: Recorder methods that mint (``recorder.py``: ``materialize`` allocates
 #: the filter/energy region tags). Checked against ``recorder.py`` by
