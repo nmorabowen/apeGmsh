@@ -354,13 +354,18 @@ class ModelData:
 
         Before issuing any ``recorder`` call, the targets are checked
         against the live domain through read-only queries
-        (``getNodeTags`` / ``nodeCoord`` / ``getEleTags`` /
+        (``getNP`` / ``getNodeTags`` / ``nodeCoord`` / ``getEleTags`` /
         ``eleNodes``).  A targeted node that is absent or sits at other
         coordinates than the fem node of the same id, or a targeted
         element that is absent or joins other nodes than the fem
         element of the same id, raises a :class:`UserWarning` naming
         the ids: the recorder would observe the wrong entity (K19,
-        #1506).  The recorders are still attached.
+        #1506).  The recorders are still attached.  Coordinates match
+        within a small fraction of the fem's shortest element edge, so
+        a deck that typed rounded coordinates stays silent.  In a
+        parallel run (``ops.getNP() > 1``, OpenSeesMP) the tag lists
+        are rank-local, so an id absent on this rank is not reported;
+        the ids present on this rank are still checked.
         """
         sink = _LiveRecorderSink(ops)
         for decl in self._recorder_decls:
@@ -685,6 +690,58 @@ def _targets(args: "tuple[int | float | str, ...]", flag: str) -> list[int]:
     return out
 
 
+#: Coordinate tolerance as a fraction of the fem's shortest element edge.
+_COORD_TOL_FRACTION = 1e-3
+
+
+def _coord_tolerance(fem: Any, ids: Any, coords: Any) -> float:
+    """``_COORD_TOL_FRACTION`` of the shortest positive element edge.
+
+    An "edge" is the distance between any two nodes of one element,
+    over the first eight nodes of each element type (the corners for
+    every Gmsh type up to the hexahedron).  With no positive edge (a
+    single node, or only zero-length elements) the length scale falls
+    back to the diagonal of the nodes' bounding box, then to ``1.0``.
+    """
+    import numpy as np
+
+    order = np.argsort(ids)
+    sorted_ids = ids[order]
+    h = np.inf
+    for group in fem.elements:
+        conn = np.asarray(group.connectivity, dtype=np.int64)
+        if conn.ndim != 2 or conn.shape[0] == 0 or conn.shape[1] < 2:
+            continue
+        conn = conn[:, :8]
+        pos = np.searchsorted(sorted_ids, conn)
+        pos = np.clip(pos, 0, sorted_ids.size - 1)
+        known = (sorted_ids[pos] == conn).all(axis=1)
+        if not known.any():
+            continue
+        xyz = coords[order[pos[known]]]  # (E, k, 3)
+        k = xyz.shape[1]
+        for i in range(k):
+            for j in range(i + 1, k):
+                d = np.linalg.norm(xyz[:, i] - xyz[:, j], axis=1)
+                d = d[d > 0.0]
+                if d.size:
+                    h = min(h, float(d.min()))
+    if not np.isfinite(h):
+        span = coords.max(axis=0) - coords.min(axis=0) if coords.size else ()
+        h = float(np.linalg.norm(span)) if len(span) else 0.0
+        if h <= 0.0:
+            h = 1.0
+    return _COORD_TOL_FRACTION * h
+
+
+def _is_parallel(ops: Any) -> bool:
+    """True in an OpenSeesMP run: ``ops.getNP()`` reports more than one
+    process.  ``getNP`` is a standard interpreter command (stock
+    openseespy reports ``1``), so it is called directly, like the other
+    read-only queries."""
+    return int(ops.getNP()) > 1
+
+
 def _as_tags(raw: Any) -> set[int]:
     """``ops.getNodeTags()`` / ``getEleTags()`` as a set (a scalar for one)."""
     if isinstance(raw, int):
@@ -704,7 +761,9 @@ def _warn_on_tag_mismatch(
     ``ops.element`` tags differ records the wrong entities with no
     error from OpenSees.  Here the live domain answers, for every
     targeted id: does it exist, and is it the same entity (node: same
-    coordinates; element: same node set, whose nodes are checked too)?
+    coordinates within :func:`_coord_tolerance`; element: same node
+    set, whose nodes are checked too)?  In a parallel run the tag
+    lists are rank-local, so "absent" is not reported there.
     """
     import warnings
 
@@ -722,6 +781,7 @@ def _warn_on_tag_mismatch(
 
     problems: list[str] = []
     n_bad = 0
+    parallel = _is_parallel(ops)
 
     if ele_ids:
         fem_conn: dict[int, tuple[int, ...]] = {}
@@ -734,6 +794,8 @@ def _warn_on_tag_mismatch(
             if eid not in fem_conn:
                 why = "not in the bound FEMData"
             elif eid not in live_eles:
+                if parallel:
+                    continue  # rank-local tag list: may live on another rank
                 why = "absent from the live domain"
             else:
                 live = tuple(int(n) for n in ops.eleNodes(eid))
@@ -749,19 +811,21 @@ def _warn_on_tag_mismatch(
         ids = np.asarray(fem.nodes.ids).reshape(-1)
         coords = np.asarray(fem.nodes.coords, dtype=float)
         row = {int(n): i for i, n in enumerate(ids)}
-        scale = max(1.0, float(np.abs(coords).max())) if coords.size else 1.0
+        atol = _coord_tolerance(fem, ids, coords)
         live_nodes = _as_tags(ops.getNodeTags())
         for nid in sorted(node_ids):
             if nid not in row:
                 why = "not in the bound FEMData"
             elif nid not in live_nodes:
+                if parallel:
+                    continue  # rank-local tag list: may live on another rank
                 why = "absent from the live domain"
             else:
                 live_xyz = np.asarray(ops.nodeCoord(nid), dtype=float)
                 fem_xyz = coords[row[nid]]
                 if np.allclose(
                     live_xyz, fem_xyz[: live_xyz.size],
-                    rtol=0.0, atol=1e-9 * scale,
+                    rtol=0.0, atol=atol,
                 ):
                     continue
                 why = (

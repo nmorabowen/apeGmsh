@@ -97,10 +97,12 @@ none detected at runtime; X1-e adds the check in mode 1 for the live path.
    `nodeCoord`, `getEleTags`, `eleNodes`): a node absent or at other
    coordinates, or an element absent or joining other nodes (whose nodes are
    then checked too), raises one `UserWarning` naming the ids. The recorders
-   are still attached. `recorder_commands` and `write` have no domain to
+   are still attached. Coordinates match within 1e-3 of the fem's shortest
+   element edge (so rounded coordinates stay silent). In a parallel run
+   (`ops.getNP() > 1`) the tag lists are rank-local, so "absent" is not
+   reported there; ids present on the rank are still checked. `recorder_commands` and `write` have no domain to
    check, so they keep the banner and the docstring caveat. Pinned in
-   `tests/opensees/h5/test_model_data_recorders.py` (five cases fail with the
-   check removed).
+   `tests/opensees/h5/test_model_data_recorders.py`.
 2. **Staged laundering.** `from_h5` reads only the orientation zone, so
    `write()` on a staged archive silently drops `/opensees/stages`. It emits a
    `UserWarning` (ADR 0055 Phase 2); the file is still written.
