@@ -3294,6 +3294,12 @@
       "skill": "references/opensees-bridge.md",
       "symbol": "ops.nDMaterial.ASDConcrete3D"
     },
+    "ops.nDMaterial.ASDConcrete3D_stko": {
+      "doc": "Register an :class:`ASDConcrete3D` from the STKO preset parameters.",
+      "signature": "ASDConcrete3D_stko(*, E: 'float', v: 'float', fcp: 'float', ft: 'float | None' = None, fc0: 'float | None' = None, fcr: 'float | None' = None, ecp: 'float | None' = None, Gt: 'float | None' = None, Gc: 'float | None' = None, pscale_t: 'float' = 1.0, pscale_c: 'float' = 1.0, rho: 'float' = 0.0, Kc: 'float' = 0.6666666666666666, eta: 'float' = 0.0, cdf: 'float' = 0.0, implex: 'bool' = False, implex_alpha: 'float' = 1.0, tangent: 'str' = 'secant', name: 'str | None' = None) -> '_ASDConcrete3DCls'",
+      "skill": "references/opensees-bridge.md",
+      "symbol": "ops.nDMaterial.ASDConcrete3D_stko"
+    },
     "ops.nDMaterial.ASDPlasticMaterial3D": {
       "doc": "Register a generic :class:`ASDPlasticMaterial3D`.",
       "signature": "ASDPlasticMaterial3D(*, yf: 'str', pf: 'str', el: 'str', iv: 'str', internal_variables: 'dict[str, float | tuple[float, ...]] | None' = None, model_parameters: 'dict[str, float] | None' = None, integration_options: 'dict[str, float | int | str] | None' = None, name: 'str | None' = None) -> '_ASDPlasticMaterial3DCls'",
