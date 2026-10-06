@@ -42,6 +42,7 @@ from apeGmsh.opensees._internal.build import (
     allocate_interface_tags,
 )
 from apeGmsh.opensees._internal.tag_allocator import TagAllocator
+from apeGmsh.opensees._internal.tag_plan import plan_of
 
 from tests.opensees._helpers.tag_plan import emit_tags, stub_fem
 
@@ -290,11 +291,11 @@ def test_allocate_interface_tags_continues_the_shared_namespaces():
 def test_allocate_interface_tags_is_rank_independent_by_construction():
     # The whole point of the pre-pass: the triple is keyed by record,
     # allocated before any rank fan-out — so consuming the SAME plan
-    # from any rank's block yields the same tags. Two allocations of
-    # the same record list from fresh allocators agree.
+    # from any rank's block yields the same tags. Two reads of ONE plan,
+    # each through its own emit-allocator fork (as each rank's block
+    # gets one), agree.
     recs = [_rec(1, 3, backing=10), _rec(2, 4, backing=20)]
-    a = allocate_interface_tags(
-        recs, emit_tags(stub_fem(interfaces=recs)))
-    b = allocate_interface_tags(
-        recs, emit_tags(stub_fem(interfaces=recs)))
+    plan = plan_of(emit_tags(stub_fem(interfaces=recs)))
+    a = allocate_interface_tags(recs, plan.emit_allocator())
+    b = allocate_interface_tags(recs, plan.emit_allocator())
     assert [a[id(r)] for r in recs] == [b[id(r)] for r in recs]

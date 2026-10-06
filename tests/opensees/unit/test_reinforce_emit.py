@@ -116,8 +116,10 @@ def test_bond_unregistered_name_fails_loud():
     """A bond name that is not registered on the bridge raises, naming
     the offending material — never a dangling tag."""
     em = RecordingEmitter()
+    fem = _Fem([_bond_tie(bond="bond1")])
+    tags = emit_tags(fem)
     with pytest.raises(ValueError, match="bond1"):
-        _emit_ties(em, [_bond_tie(bond="bond1")], name_to_tag={"other": 3})
+        emit_reinforce_ties(em, fem, tags, name_to_tag={"other": 3})
 
 
 def test_fresh_element_tags_per_tie():
@@ -183,9 +185,11 @@ def test_h5_defers_deck_zone_without_warning():
     SILENTLY (no deviation warning; the round-trip is complete via the
     neutral zone + forward re-emit)."""
     em = H5Emitter(schema_version="x", model_name="m")
+    fem = _Fem([_perfect_tie(), _perfect_tie()])
+    tags = emit_tags(fem)
     with warnings.catch_warnings(record=True) as w:
         warnings.simplefilter("always")
-        _emit_ties(em, [_perfect_tie(), _perfect_tie()], name_to_tag={})
+        emit_reinforce_ties(em, fem, tags, name_to_tag={})
     # Both deck-ties no-op'd (counted for observability) ...
     assert em._skipped_reinforce_ties == 2
     # ... but NO deviation warning fires (the retired
@@ -205,7 +209,9 @@ def test_h5_consumes_pending_mp_name():
     """The H5 no-op consumes a latched mp comment so it cannot leak onto
     the next real MP record (INV-2)."""
     em = H5Emitter(schema_version="x", model_name="m")
+    fem = _Fem([_perfect_tie(name="r1")])
+    tags = emit_tags(fem)
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        _emit_ties(em, [_perfect_tie(name="r1")], name_to_tag={})
+        emit_reinforce_ties(em, fem, tags, name_to_tag={})
     assert em._pending_mp_name == ""
