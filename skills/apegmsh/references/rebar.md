@@ -141,7 +141,8 @@ g.rebar.place(cage: Cage, into: str, *, coupling="conformal",
 - **`coupling="embedded"`** — forwards to `g.reinforce` →
   `LadrunoEmbeddedRebar`. Needs a **physical-group** host and **exactly
   one** of `bond=<LadrunoBondSlip name>` or `perfect=<axial penalty>`.
-  **Single-process only** (warns under partitioned emit).
+  **MPI-safe:** the partitioned emit puts each tie on the rank that owns
+  its host nodes and ghost-declares a rebar node owned elsewhere.
 - **`per_member_coupling={role: coupling}`** — mix per role, e.g.
   `{"longitudinal": "conformal", "tie": "embedded"}`.
 - **`on_conformal_infeasible`** — `"fail"` (raise on embed error) or
@@ -184,7 +185,7 @@ frozen reference `-dir`. `place()` does **not** forward `corot`; call
 ## Fail-loud guards worth knowing
 
 - Conformal embedding must run **before** meshing and needs **one** host
-  volume; embedded coupling needs a **PG** host and is **single-process**.
+  volume; embedded coupling needs a **PG** host.
 - Embedded coupling: pass **exactly one** of `bond=` / `perfect=`.
 - `bundle ∈ [1, 4]`; the inward stack must not cross the section centre.
 - `circular_column` needs `n_bars ≥ 3`; a `Cage` must hold ≥ 1 member.

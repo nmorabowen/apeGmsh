@@ -84,7 +84,7 @@ L1 = (g.rebar.bar(db="#8", material="rebar")          # fluent (no points → bu
 | coupling | mechanism | host requirement | notes |
 |---|---|---|---|
 | `"conformal"` | gmsh `embed` of the bar curves into the host **before** `generate()` → shared nodes, perfect bond | single un-meshed volume (label OR PG) in the **same session** | MPI-OK; generated cages are inset interior so they mesh without a boundary PLC |
-| `"embedded"` | forwards each member to `g.reinforce` → `LadrunoEmbeddedRebar` | host must be a **physical group**; needs `bond=<LadrunoBondSlip name>` **xor** `perfect=<axial penalty>` | **single-process only** (partitioned `LadrunoEmbeddedRebar` raises) |
+| `"embedded"` | forwards each member to `g.reinforce` → `LadrunoEmbeddedRebar` | host must be a **physical group**; needs `bond=<LadrunoBondSlip name>` **xor** `perfect=<axial penalty>` | MPI-OK (#1369: each tie goes to the rank owning its host nodes; rebar nodes on other ranks are ghost-declared) |
 | mixed | `per_member_coupling={role: coupling}` | per the chosen modes | longitudinal conformal + ties embedded, etc. |
 
 `coupling="conformal"` across a composed Part **raises** (`embed` can't cross
