@@ -413,7 +413,7 @@ class TestFromStko:
 
     def test_bridge_registers(self) -> None:
         ops = apeSees(cast("object", MagicMock(name="FEMData")))
-        m = ops.nDMaterial.ASDConcrete3D_stko(**_RW2, implex=True)
+        m = ops.nDMaterial.ASDConcrete3DSTKO(**_RW2, implex=True)
         assert isinstance(m, ASDConcrete3D)
         assert m.lch_ref == pytest.approx(_RW2_DECK["lch_ref"])
         assert ops.tag_for(m) == 1

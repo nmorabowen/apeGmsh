@@ -468,7 +468,7 @@ class _NDMaterialNS(_BridgeNamespace):
             name=name,
         )
 
-    def ASDConcrete3D_stko(
+    def ASDConcrete3DSTKO(
         self,
         *,
         E: float,
@@ -494,7 +494,8 @@ class _NDMaterialNS(_BridgeNamespace):
         """Register an :class:`ASDConcrete3D` from the STKO preset parameters.
 
         Same inputs as the STKO ``Concrete (9P)`` dialog; see
-        :meth:`ASDConcrete3D.from_stko` for the defaults (``Concrete (1P)``).
+        :meth:`ASDConcrete3D.from_stko` for the defaults (``Concrete (1P)``);
+        the default ``Gt`` assumes N and mm, so pass ``Gt``/``Gc`` otherwise.
         For shell layers wrap the result in :meth:`PlateFromPlaneStress`.
         """
         return self._bridge._register(

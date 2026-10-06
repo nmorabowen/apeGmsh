@@ -2899,9 +2899,14 @@ class ASDConcrete3D(NDMaterial):
         ``Gc``; plasticity scale factors ``pscale_t`` / ``pscale_c`` in
         ``[0, 1]``. Omitted values take the ``Concrete (1P)`` defaults:
         ``ft = fcp/10``, ``fc0 = fcp/2``, ``fcr = fcp/10``, ``ecp = 2 fcp/E``,
-        ``Gt = 0.073 fcp^0.18``, ``Gc = 250 Gt`` (``Gt`` rule in N and mm), so
-        the 4P and 6P presets are the matching subsets of arguments.
-        ``lch_ref`` is derived the way STKO does (``min(hmin_t, hmin_c)``).
+        ``Gt = 0.073 fcp^0.18``, ``Gc = 250 Gt``, so the 4P and 6P presets
+        are the matching subsets of arguments. ``lch_ref`` is derived the way
+        STKO does (``min(hmin_t, hmin_c)``).
+
+        Units: the default ``Gt`` formula is the CEB-FIP fit in **N and mm**
+        (``fcp`` in MPa, ``Gt`` in N/mm). It gives a wrong ``Gt`` (and so a
+        wrong default ``Gc``) in any other unit system; there, pass ``Gt``
+        and ``Gc`` explicitly.
         """
         if E <= 0:
             raise ValueError(f"ASDConcrete3D.from_stko: E must be > 0, got {E!r}")
