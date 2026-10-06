@@ -300,8 +300,11 @@ with apeGmsh(model_name="cm", verbose=False) as g:
 '''
 
 
-def test_contextmanager_helper_script_is_the_with_line(tmp_path):
+def test_contextmanager_helper_script_is_the_with_line(tmp_path, monkeypatch):
     """Finding 4: the script walk passes through stdlib ``contextlib``."""
+    # Each CM_SCRIPT run is a different script writing ``cm.h5``: its own
+    # artifact dir, or P3 refuses the second with a warning (#1451).
+    monkeypatch.setenv("APEGMSH_ARTIFACT_DIR", str(tmp_path))
     script = tmp_path / "cm_script.py"
     table = _run_script(script, CM_SCRIPT)
     rec = table.record("geometry/box/cm")
@@ -350,6 +353,7 @@ def test_a_stdlib_launcher_main_never_claims_script(tmp_path, monkeypatch):
     module as ``__main__`` below the user's script.  Simulated by a launcher
     classified as stdlib that runs the script; ``script`` must stay the
     user's ``with`` line, never the launcher."""
+    monkeypatch.setenv("APEGMSH_ARTIFACT_DIR", str(tmp_path))  # #1451
     script = tmp_path / "cm_script.py"
     script.write_text(CM_SCRIPT, encoding="utf-8")
     launcher = tmp_path / "launcher.py"
@@ -380,6 +384,7 @@ def test_a_pdb_trampoline_never_claims_script(tmp_path, monkeypatch):
     ``__main__`` globals.  Simulated by a stdlib launcher that does the same;
     the pseudo-file frame is outside the script's real-file ``__main__``
     frame and must not override it."""
+    monkeypatch.setenv("APEGMSH_ARTIFACT_DIR", str(tmp_path))  # #1451
     script = tmp_path / "cm_script.py"
     script.write_text(CM_SCRIPT, encoding="utf-8")
     launcher = tmp_path / "pdb_launcher.py"
@@ -394,9 +399,10 @@ def test_a_pdb_trampoline_never_claims_script(tmp_path, monkeypatch):
         _marked(CM_SCRIPT, "cm_with"), "<module>")
 
 
-def test_dash_c_still_records_string():
+def test_dash_c_still_records_string(tmp_path, monkeypatch):
     """``python -c`` has no real file: its ``<string>`` ``__main__`` frame
     is the script."""
+    monkeypatch.setenv("APEGMSH_ARTIFACT_DIR", str(tmp_path))  # #1451
     glb = {"__name__": "__main__"}
     exec(compile(CM_SCRIPT, "<string>", "exec"), glb)
     top = glb["TABLE"].location(glb["TABLE"].record("geometry/box/cm").script)

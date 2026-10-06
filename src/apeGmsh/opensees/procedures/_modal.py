@@ -109,6 +109,7 @@ class _ModalMixin(_ProcedureHost):
         self._assert_fork_if_required()
         live_emitter = LiveOpsEmitter(wipe=True)
         bm.emit(live_emitter)
+        self._artifacts.after_emit(self)
         values = live_emitter.eigen(num_modes, solver=solver)
         return EigenResult(
             eigenvalues=np.asarray(values, dtype=np.float64),
@@ -191,6 +192,7 @@ class _ModalMixin(_ProcedureHost):
         self._assert_fork_if_required()
         live_emitter = LiveOpsEmitter(wipe=True)
         bm.emit(live_emitter)
+        self._artifacts.after_emit(self)
         values = live_emitter.eigen(num_modes, solver=solver)
         properties = live_emitter.modal_properties(unorm=unorm)
         return ModalPropertiesResult(
@@ -635,6 +637,7 @@ class _ModalMixin(_ProcedureHost):
         self._assert_fork_if_required()
         live_emitter = LiveOpsEmitter(wipe=True)
         bm.emit(live_emitter)
+        self._artifacts.after_emit(self)
         values = live_emitter.eigen_feast(
             float(f_min), float(f_max), certify=certify,
         )
@@ -726,6 +729,7 @@ class _ModalMixin(_ProcedureHost):
         self._assert_fork_if_required()
         live_emitter = LiveOpsEmitter(wipe=True)
         bm.emit(live_emitter)
+        self._artifacts.after_emit(self)
         live_emitter.eigen(num_modes, solver=solver)
         values = live_emitter.complex_eigen(*args)
         return ComplexEigenResult.from_flat(values)
@@ -852,6 +856,7 @@ class _ModalMixin(_ProcedureHost):
         self._assert_fork_if_required()
         live_emitter = LiveOpsEmitter(wipe=True)
         bm.emit(live_emitter)
+        self._artifacts.after_emit(self)
         values = live_emitter.eigen(num_modes, solver=solver)
         live_emitter.modal_properties()
         live_emitter.modal_response_history(*args)
@@ -965,6 +970,7 @@ class _ModalMixin(_ProcedureHost):
         self._assert_fork_if_required()
         live_emitter = LiveOpsEmitter(wipe=True)
         bm.emit(live_emitter)
+        self._artifacts.after_emit(self)
         values = live_emitter.eigen(num_modes, solver=solver)
         live_emitter.modal_properties()
         live_emitter.response_spectrum_analysis(int(direction), *args)

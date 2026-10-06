@@ -169,7 +169,8 @@ def build_opensees(
         raise TypeError(
             "this apeSees has no element_tags= option (ADR 0111 D2): the translated deck "
             "cannot carry STKO's element ids; update apeGmsh")
-    ops = apeSees(fem, element_tags=element_tags)
+    # P6 (#1307): a library-internal bridge writes no automatic model.h5.
+    ops = apeSees(fem, element_tags=element_tags, _artifacts=False)
     ops.model(ndm=3, ndf=6)
     declare_translation(ops, result, stages=stages, chain=chain)
     return ops

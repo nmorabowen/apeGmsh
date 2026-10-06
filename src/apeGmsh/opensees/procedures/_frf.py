@@ -330,6 +330,7 @@ class _FrfMixin(_ProcedureHost):
         self._assert_fork_if_required()
         live_emitter = LiveOpsEmitter(wipe=True)
         bm.emit(live_emitter)
+        self._artifacts.after_emit(self)
         live_emitter.eigen(num_modes, solver=solver)
         live_emitter.modal_properties()
         runner = getattr(live_emitter, command)

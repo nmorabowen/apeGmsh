@@ -617,7 +617,8 @@ def build_opensees(fem, model: StructuralModel, result: ImportResult,
     # Rigid-diaphragm records must be on the snapshot before apeSees reads it.
     _inject_diaphragms(fem, result)
 
-    ops = apeSees(fem)
+    # P6 (#1307): a library-internal bridge writes no automatic model.h5.
+    ops = apeSees(fem, _artifacts=False)
     ops.model(ndm=ndm, ndf=ndf)
 
     # One geomTransf per orientation actually used.

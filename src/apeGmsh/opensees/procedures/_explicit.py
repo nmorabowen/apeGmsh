@@ -146,6 +146,7 @@ class _ExplicitMixin(_ProcedureHost):
         self._assert_fork_if_required()
         live_emitter = LiveOpsEmitter(wipe=True)
         bm.emit(live_emitter)
+        self._artifacts.after_emit(self)
         # Prime one negligible step so the integrator computes dt_cr.
         live_emitter.analyze(steps=1, dt=_DTCR_PRIME_DT)
         return _dtcr_or_raise(live_emitter.critical_time_step())
@@ -219,6 +220,7 @@ class _ExplicitMixin(_ProcedureHost):
         self._assert_fork_if_required()
         live_emitter = LiveOpsEmitter(wipe=True)
         bm.emit(live_emitter)
+        self._artifacts.after_emit(self)
         # Prime, query dt_cr, then size + run the sub-stepped analysis on
         # the SAME emitter (the prime step's tiny dt is stable).
         live_emitter.analyze(steps=1, dt=_DTCR_PRIME_DT)

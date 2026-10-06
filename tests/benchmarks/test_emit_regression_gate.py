@@ -141,9 +141,13 @@ def _measure(kind: str, tmp: Path) -> dict:
     parses: list[float] = []
     deck_lines = 0
 
+    # P6 (#1307): the gate's bridges opt out of the automatic model.h5
+    # write, so the timed region stays the deck emit alone and the
+    # committed baseline holds; ``test_artifact_write_cost_is_reported``
+    # measures the write by itself.
     for i in range(REPS):
         tcl_path = tmp / f"gate_{kind}_{i}.tcl"
-        ops_tcl = apeSees(cast("object", fem))
+        ops_tcl = apeSees(cast("object", fem), _artifacts=False)
         _setup(ops_tcl)
         t0 = time.perf_counter()
         ops_tcl.tcl(str(tcl_path))
@@ -155,7 +159,7 @@ def _measure(kind: str, tmp: Path) -> dict:
         )
 
         py_path = tmp / f"gate_{kind}_{i}.py"
-        ops_py = apeSees(cast("object", fem))
+        ops_py = apeSees(cast("object", fem), _artifacts=False)
         _setup(ops_py)
         ops_py.py(str(py_path))
         py_src = py_path.read_text()
@@ -259,6 +263,82 @@ def test_emit_cost_has_not_regressed(kind: str, measured: dict) -> None:
         "means emit-side work got more expensive. See ADR 0065 / #876 "
         "for the scalar-lookup-in-a-loop shape this was built to catch."
     )
+
+
+@pytest.mark.bench
+def test_artifact_write_cost_is_reported(tmp_path: Path, monkeypatch) -> None:
+    """The automatic ``model.h5`` write (#1307, V2d-4b), measured by itself.
+
+    The gate cells above opt out (``_artifacts=False``), so their timed
+    region is the deck emit alone and the committed baseline holds.
+    This case builds a real session snapshot (the gate's ``FEMStub``
+    carries no ``model_name`` and belongs to no run), emits once with
+    the write off and once with it on, and reports the deck emit, the
+    first emit with the write, the write alone (the difference) and the
+    no-change repeat (the P5 key compare).  It asserts what must hold on
+    any machine: the write happens once, lands in the artifact directory
+    with ``/opensees``, and a repeat emit on the same model does not
+    write again.
+    """
+    from statistics import median as _median
+
+    from apeGmsh import apeGmsh
+
+    out = tmp_path / "artifacts"
+    out.mkdir()
+    monkeypatch.setenv("APEGMSH_ARTIFACT_DIR", str(out))
+    with apeGmsh(model_name="emit_gate_write", _artifacts=False) as g:
+        g.model.geometry.add_box(0, 0, 0, 2, 1, 1, label="body")
+        g.physical.add_volume("body", name="body")
+        g.mesh.sizing.set_global_size(0.08)
+        g.mesh.generation.generate(3)
+        fem = g.mesh.queries.get_fem_data()
+
+    def _bridge(enabled: bool) -> apeSees:
+        ops = apeSees(fem, _artifacts=enabled)
+        ops.model(ndm=3, ndf=3)
+        mat = ops.nDMaterial.ElasticIsotropic(E=2.0e10, nu=0.2)
+        ops.element.FourNodeTetrahedron(pg="body", material=mat)
+        return ops
+
+    target = out / "emit_gate_write.h5"
+    emit_off: list[float] = []
+    emit_on: list[float] = []
+    repeat_on: list[float] = []
+    for i in range(REPS):
+        ops = _bridge(False)
+        t0 = time.perf_counter()
+        ops.tcl(str(tmp_path / f"off_{i}.tcl"))
+        emit_off.append(time.perf_counter() - t0)
+        assert not target.exists()
+
+        target.unlink(missing_ok=True)
+        ops = _bridge(True)
+        t0 = time.perf_counter()
+        ops.tcl(str(tmp_path / f"on_{i}.tcl"))
+        emit_on.append(time.perf_counter() - t0)
+        assert target.exists()
+        stamp = target.stat().st_mtime_ns
+
+        t0 = time.perf_counter()
+        ops.tcl(str(tmp_path / f"again_{i}.tcl"))
+        repeat_on.append(time.perf_counter() - t0)
+        assert target.stat().st_mtime_ns == stamp, "a no-change repeat wrote again"
+
+    with h5py_file(target) as f:
+        assert "opensees" in f and "nodes" in f
+    off, on, again = _median(emit_off), _median(emit_on), _median(repeat_on)
+    print(
+        f"\n[emit-gate] artifact write: elements={fem.info.n_elems} "
+        f"emit={off:.3f}s emit+write={on:.3f}s write={on - off:.3f}s "
+        f"repeat(no change)={again:.3f}s",
+    )
+
+
+def h5py_file(path: Path):
+    import h5py
+
+    return h5py.File(path, "r")
 
 
 @pytest.mark.bench

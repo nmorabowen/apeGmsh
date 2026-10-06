@@ -1,0 +1,510 @@
+"""V2d-4b (#1307): the bridge's automatic ``model.h5`` write.
+
+Oracles:
+
+* **No ``.h5()`` call leaves the pair.**  A user script that builds a
+  session with no ``model_name`` and emits through ``apeSees`` with no
+  ``ops.h5()`` leaves ``<stem>.h5`` holding the neutral zone,
+  ``/opensees`` and ``/provenance``, stamped with the snapshot's
+  ``session_id``, beside the session's ``<stem>.geometry.h5`` that
+  carries the same id.  A ``mass_from_model()`` model passes this path.
+* **P5, one write per model state.**  A loop of emits on one model
+  writes once; adding a primitive, or a record that is not a primitive
+  (a ``fix``), writes again.  Counted by spying ``apeSees.h5``, the one
+  composition path the write goes through.
+* **Reload then emit** goes through ``artifact_verdict``: a source file
+  outside the artifact directory is untouched; the file at the target
+  is replaced only when the policy says so (same ``session_id``, no
+  dropped zone), and a file another script wrote is refused with one
+  warning and left byte-identical.
+* **Warn once per bridge, never raise.**  No name (P2), a partitioned
+  snapshot (P3), a refused target and a failing write each warn once
+  over three emits, and the emit's return value is unchanged.  An MPI
+  rank other than 0 is silent.  A stub snapshot and ``_artifacts=False``
+  write nothing and warn nothing.
+* **P6.**  The library's own constructors (ETABS, STKO, ``strut_tie``)
+  pass ``_artifacts=False``.
+
+Every test here passes under ``-W error::UserWarning``: the warnings the
+hook issues are caught where they are expected.
+"""
+from __future__ import annotations
+
+import re
+import runpy
+import warnings
+from pathlib import Path
+
+import h5py
+import pytest
+
+from apeGmsh import apeGmsh
+from apeGmsh.mesh.FEMData import FEMData
+from apeGmsh.opensees import apeSees
+from apeGmsh.opensees._internal.artifact_write import (
+    BridgeArtifactWarning,
+    BridgeArtifactWriter,
+)
+from tests.opensees.fixtures.fem_stub import make_two_node_beam
+
+SRC = Path(__file__).resolve().parents[3] / "src" / "apeGmsh"
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def _box_fem(name: str | None, *, partitions: int = 1) -> FEMData:
+    """A one-box tet mesh from a session that writes no artifacts of its
+    own (``_artifacts=False``), named ``name`` (``None``: the session's
+    default, which under pytest is no name at all)."""
+    kw = {} if name is None else {"model_name": name}
+    with apeGmsh(verbose=False, _artifacts=False, **kw) as g:
+        g.model.geometry.add_box(0, 0, 0, 1, 1, 1, label="b")
+        g.physical.add_volume("b", name="B")
+        g.mesh.sizing.set_global_size(0.5)
+        g.mesh.generation.generate(dim=3)
+        if partitions > 1:
+            g.mesh.partitioning.partition(partitions)
+        return g.mesh.queries.get_fem_data(dim=3)
+
+
+def _bridge(fem, **kw) -> apeSees:
+    ops = apeSees(fem, **kw)
+    ops.model(ndm=3, ndf=3)
+    mat = ops.nDMaterial.ElasticIsotropic(E=30e9, nu=0.2, rho=2400.0)
+    ops.element.FourNodeTetrahedron(pg="B", material=mat)
+    return ops
+
+
+@pytest.fixture
+def artifact_dir(tmp_path, monkeypatch) -> Path:
+    """This test's own conventional artifact directory (decks go to
+    ``tmp_path`` itself, so the directory holds only automatic writes)."""
+    out = tmp_path / "artifacts"
+    out.mkdir()
+    monkeypatch.setenv("APEGMSH_ARTIFACT_DIR", str(out))
+    return out
+
+
+@pytest.fixture
+def h5_calls(monkeypatch) -> list[str]:
+    """Every ``apeSees.h5`` call (the automatic write's composition path),
+    as the path written."""
+    calls: list[str] = []
+    real = apeSees.h5
+
+    def spy(self, path, **kw):
+        calls.append(str(path))
+        return real(self, path, **kw)
+
+    monkeypatch.setattr(apeSees, "h5", spy)
+    return calls
+
+
+def _zones(path: Path) -> set[str]:
+    with h5py.File(path, "r") as f:
+        return set(f.keys())
+
+
+def _meta(path: Path, key: str) -> str:
+    with h5py.File(path, "r") as f:
+        raw = f["meta"].attrs[key]
+    return raw.decode() if isinstance(raw, bytes) else str(raw)
+
+
+def _fem_hash(path: Path) -> str:
+    with h5py.File(path, "r") as f:
+        raw = f["meta/lineage"].attrs["fem_hash"]
+    return raw.decode() if isinstance(raw, bytes) else str(raw)
+
+
+def _bridge_warnings(record) -> list[str]:
+    return [str(w.message) for w in record
+            if issubclass(w.category, BridgeArtifactWarning)]
+
+
+# ---------------------------------------------------------------------------
+# The oracle: a run with no .h5() call leaves the pair
+# ---------------------------------------------------------------------------
+
+USER_SCRIPT = '''\
+from apeGmsh import apeGmsh
+from apeGmsh.opensees import apeSees
+
+with apeGmsh(verbose=False) as g:  # no model_name: the script's stem
+    g.model.geometry.add_box(0, 0, 0, 1, 1, 1, label="b")
+    g.physical.add_volume("b", name="B")
+    g.masses.volume("B", density=2400.0)
+    g.mesh.sizing.set_global_size(0.5)
+    g.mesh.generation.generate(dim=3)
+    fem = g.mesh.queries.get_fem_data(dim=3)
+
+ops = apeSees(fem)
+ops.model(ndm=3, ndf=3)
+mat = ops.nDMaterial.ElasticIsotropic(E=30e9, nu=0.2, rho=2400.0)
+ops.element.FourNodeTetrahedron(pg="B", material=mat)
+ops.mass_from_model()
+ops.tcl(TCL)
+'''
+
+
+def test_script_with_no_h5_call_leaves_the_model_and_geometry_pair(
+    tmp_path, monkeypatch,
+):
+    """The D1 contract for the bridge: ``python frame_auto.py`` leaves
+    ``frame_auto.h5`` (neutral + /opensees + /provenance, this run's
+    ``session_id``) beside ``frame_auto.geometry.h5`` with the same id,
+    and the user never named a file."""
+    out = tmp_path / "artifacts"
+    out.mkdir()
+    monkeypatch.setenv("APEGMSH_ARTIFACT_DIR", str(out))
+    script = tmp_path / "frame_auto.py"
+    script.write_text(USER_SCRIPT, encoding="utf-8")
+    deck = tmp_path / "frame_auto.tcl"
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", UserWarning)
+        glb = runpy.run_path(str(script), init_globals={"TCL": str(deck)},
+                             run_name="__main__")
+
+    model = out / "frame_auto.h5"
+    sibling = out / "frame_auto.geometry.h5"
+    assert deck.exists()
+    assert sorted(p.name for p in out.iterdir()) == [
+        "frame_auto.geometry.h5", "frame_auto.h5"]
+    zones = _zones(model)
+    assert {"meta", "nodes", "opensees", "provenance"} <= zones
+    fem = glb["fem"]
+    assert _meta(model, "session_id") == fem.session_id
+    assert _meta(sibling, "session_id") == fem.session_id
+    assert _meta(model, "model_name") == "frame_auto"
+    assert _fem_hash(model) == fem.snapshot_id
+    with h5py.File(model, "r") as f:
+        # mass_from_model streams the snapshot's masses into the deck and
+        # the file carries them in the neutral zone.
+        assert "masses" in f
+    assert "mass " in deck.read_text(encoding="utf-8")
+
+
+# ---------------------------------------------------------------------------
+# P5: the dirty flag
+# ---------------------------------------------------------------------------
+
+
+def test_a_loop_of_deck_emits_writes_once_until_the_model_changes(
+    artifact_dir, h5_calls, tmp_path,
+):
+    fem = _box_fem("loop")
+    ops = _bridge(fem)
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", UserWarning)
+        for i in range(100):
+            assert ops.tcl(str(tmp_path / f"d{i}.tcl")) is None
+        assert len(h5_calls) == 1
+        assert ops.py(str(tmp_path / "d.py")) is None
+        assert len(h5_calls) == 1
+        # A new primitive: the second write.
+        ops.uniaxialMaterial.ElasticMaterial(E=1.0)
+        ops.tcl(str(tmp_path / "e.tcl"))
+        assert len(h5_calls) == 2
+        # A record that is not a primitive (the gap K1-3d flagged): the third.
+        ops.fix(pg="B", dofs=(1, 1, 1))
+        ops.tcl(str(tmp_path / "f.tcl"))
+        ops.tcl(str(tmp_path / "f2.tcl"))
+        assert len(h5_calls) == 3
+    target = artifact_dir / "loop.h5"
+    assert all(Path(c).parent == artifact_dir for c in h5_calls)
+    assert {"opensees", "nodes", "provenance"} <= _zones(target)
+    assert _meta(target, "session_id") == fem.session_id
+    assert not list(artifact_dir.glob("*.tmp-*"))
+
+
+@pytest.mark.live
+def test_a_loop_of_live_builds_writes_once_until_the_model_changes(
+    artifact_dir, h5_calls,
+):
+    pytest.importorskip("openseespy.opensees")
+    with apeGmsh(model_name="live_loop", verbose=False, _artifacts=False) as g:
+        G = g.model.geometry
+        a = G.add_point(0.0, 0.0, 0.0)
+        b = G.add_point(2.0, 0.0, 0.0)
+        bar = G.add_line(a, b)
+        g.model.sync()
+        g.physical.add(1, [bar], name="Bar")
+        g.physical.add(0, [a], name="A")
+        g.physical.add(0, [b], name="B")
+        g.mesh.structured.set_transfinite_curve(bar, 2)
+        g.mesh.generation.generate(1)
+        fem = g.mesh.queries.get_fem_data(dim=1)
+    ops = apeSees(fem)
+    ops.model(ndm=3, ndf=3)
+    steel = ops.uniaxialMaterial.ElasticMaterial(E=200e9)
+    ops.element.Truss(pg="Bar", A=1e-3, material=steel)
+    ops.fix(pg="A", dofs=(1, 1, 1))
+    ops.fix(pg="B", dofs=(0, 1, 1))
+    ops.mass(pg="B", values=(10.0, 10.0, 10.0))
+    with ops.pattern.Plain(series=ops.timeSeries.Linear()) as p:
+        p.load(pg="B", forces=(1000.0, 0.0, 0.0))
+    ops.constraints.Plain()
+    ops.numberer.Plain()
+    ops.system.BandGeneral()
+    ops.test.NormDispIncr(tol=1e-10, max_iter=10)
+    ops.algorithm.Newton()
+    ops.integrator.LoadControl(dlam=0.5)
+    ops.analysis.Static()
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", UserWarning)
+        for _ in range(100):
+            assert ops.analyze(steps=1) == 0
+        assert len(h5_calls) == 1
+        ops.run()
+        assert len(h5_calls) == 1
+        ops.uniaxialMaterial.ElasticMaterial(E=1.0)
+        ops.run()
+        assert len(h5_calls) == 2
+    assert {"opensees", "nodes"} <= _zones(artifact_dir / "live_loop.h5")
+
+
+# ---------------------------------------------------------------------------
+# Reload then emit: through the verdict
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def verdicts(monkeypatch) -> list[Path]:
+    """Every target ``artifact_verdict`` was asked about."""
+    import apeGmsh._artifact_policy as policy
+
+    asked: list[Path] = []
+    real = policy.artifact_verdict
+
+    def spy(target, **kw):
+        asked.append(Path(target))
+        return real(target, **kw)
+
+    monkeypatch.setattr(policy, "artifact_verdict", spy)
+    return asked
+
+
+def test_reload_from_outside_the_artifact_dir_leaves_the_source_alone(
+    artifact_dir, tmp_path, verdicts,
+):
+    src = tmp_path / "elsewhere" / "reloaded.h5"
+    src.parent.mkdir()
+    fem0 = _box_fem("reloaded")
+    fem0.to_h5(str(src))
+    before = src.read_bytes()
+    fem1 = FEMData.from_h5(str(src))
+    assert fem1.model_name == "reloaded"
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", UserWarning)
+        _bridge(fem1).tcl(str(tmp_path / "r.tcl"))
+    assert src.read_bytes() == before
+    assert verdicts == [artifact_dir / "reloaded.h5"]
+    out = artifact_dir / "reloaded.h5"
+    assert {"opensees", "nodes"} <= _zones(out)
+    assert _meta(out, "session_id") == fem0.session_id
+
+
+def test_reload_from_the_target_itself_is_this_runs_file_and_is_enriched(
+    artifact_dir, tmp_path, verdicts,
+):
+    """The "script 2 analyses" flow: the source is the artifact at the
+    conventional path (same ``session_id``, no zone dropped), so P4 says
+    write.  The neutral content is unchanged (``fem_hash`` equal) and
+    the file gains ``/opensees``."""
+    fem0 = _box_fem("same")
+    target = artifact_dir / "same.h5"
+    fem0.to_h5(str(target))
+    fem_hash_before = _fem_hash(target)
+    fem1 = FEMData.from_h5(str(target))
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", UserWarning)
+        _bridge(fem1).tcl(str(tmp_path / "s.tcl"))
+    assert verdicts == [target]
+    assert "opensees" in _zones(target)
+    assert _fem_hash(target) == fem_hash_before
+    assert _meta(target, "session_id") == fem0.session_id
+
+
+OTHER_SCRIPT = '''\
+from apeGmsh import apeGmsh
+
+with apeGmsh(model_name="twin", verbose=False) as g:
+    g.model.geometry.add_box(0, 0, 0, 1, 1, 1, label="b")
+    g.physical.add_volume("b", name="B")
+    g.mesh.sizing.set_global_size(0.5)
+    g.mesh.generation.generate(dim=3)
+'''
+
+
+def test_a_file_another_script_wrote_is_refused_once_and_kept(
+    artifact_dir, tmp_path, verdicts, h5_calls,
+):
+    """P3 through the verdict: the target names another script in its
+    ``/provenance``; this bridge's snapshot names none.  One warning
+    over three emits, the file byte-identical, nothing else written."""
+    script = tmp_path / "other_script.py"
+    script.write_text(OTHER_SCRIPT, encoding="utf-8")
+    runpy.run_path(str(script), run_name="__main__")
+    # The session's own end() asked the verdict for its two files.
+    asked_by_session = len(verdicts)
+    target = artifact_dir / "twin.h5"
+    before = target.read_bytes()
+    fem = _box_fem("twin")
+    ops = _bridge(fem)
+    with warnings.catch_warnings(record=True) as rec:
+        warnings.simplefilter("always")
+        for i in range(3):
+            ops.tcl(str(tmp_path / f"t{i}.tcl"))
+    refusals = [str(w.message) for w in rec
+                if issubclass(w.category, UserWarning)
+                and "another script" in str(w.message)]
+    assert len(refusals) == 1
+    assert "other_script.py" in refusals[0]
+    assert verdicts[asked_by_session:] == [target]
+    assert h5_calls == []
+    assert target.read_bytes() == before
+    assert sorted(p.name for p in artifact_dir.iterdir()) == [
+        "twin.geometry.h5", "twin.h5"]
+
+
+# ---------------------------------------------------------------------------
+# Warn once per bridge, never raise
+# ---------------------------------------------------------------------------
+
+
+def test_no_name_warns_once_and_writes_nothing(artifact_dir, tmp_path, h5_calls):
+    """P2: under pytest the session has no script and no name, so the
+    snapshot's ``model_name`` is empty; the hook warns once per bridge,
+    naming the launcher case, and writes nothing.  No Windows-only path
+    logic: the same holds on Linux CI."""
+    fem = _box_fem(None)
+    assert fem.model_name == ""
+    ops = _bridge(fem)
+    with warnings.catch_warnings(record=True) as rec:
+        warnings.simplefilter("always")
+        for i in range(3):
+            assert ops.tcl(str(tmp_path / f"n{i}.tcl")) is None
+    msgs = _bridge_warnings(rec)
+    assert len(msgs) == 1
+    assert "no model name" in msgs[0]
+    assert "console-script launcher" in msgs[0]
+    assert h5_calls == []
+    assert list(artifact_dir.glob("*.h5")) == []
+
+
+def test_partitioned_snapshot_warns_once_and_writes_nothing(
+    artifact_dir, tmp_path, h5_calls,
+):
+    fem = _box_fem("parts", partitions=2)
+    assert len(fem.partitions) == 2
+    ops = _bridge(fem)
+    with warnings.catch_warnings(record=True) as rec:
+        warnings.simplefilter("always")
+        for i in range(3):
+            ops.tcl(str(tmp_path / f"p{i}.tcl"))
+    msgs = _bridge_warnings(rec)
+    assert len(msgs) == 1
+    assert "partitioned run (2 partitions)" in msgs[0]
+    assert h5_calls == []
+    assert list(artifact_dir.glob("*.h5")) == []
+
+
+def test_a_failing_write_warns_once_and_keeps_the_return_value(
+    artifact_dir, tmp_path, monkeypatch,
+):
+    """Seam 9: an ``OSError`` inside the write is one warning; the deck
+    is still written and the emit returns what it always returns; no
+    temp file is left behind, and the bridge does not try again."""
+    import apeGmsh._atomic_io as atomic
+
+    def deny(src, dest):
+        raise PermissionError(13, "read-only", str(dest))
+
+    monkeypatch.setattr(atomic, "replace_with_retry", deny)
+    fem = _box_fem("denied")
+    ops = _bridge(fem)
+    with warnings.catch_warnings(record=True) as rec:
+        warnings.simplefilter("always")
+        for i in range(3):
+            deck = tmp_path / f"w{i}.tcl"
+            assert ops.tcl(str(deck)) is None
+            assert deck.exists()
+    msgs = _bridge_warnings(rec)
+    assert len(msgs) == 1
+    assert "model.h5 not written" in msgs[0]
+    assert "PermissionError" in msgs[0]
+    assert "denied.h5" in msgs[0]
+    assert list(artifact_dir.iterdir()) == []
+
+
+def test_an_mpi_rank_other_than_zero_is_silent(artifact_dir, tmp_path, monkeypatch):
+    for name in ("OMPI_COMM_WORLD_RANK", "PMI_RANK", "PMIX_RANK",
+                 "MV2_COMM_WORLD_RANK", "SLURM_PROCID"):
+        monkeypatch.delenv(name, raising=False)
+    fem = _box_fem("rank")
+    ops = _bridge(fem)
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", UserWarning)
+        monkeypatch.setenv("PMI_RANK", "1")
+        ops.tcl(str(tmp_path / "r1.tcl"))
+        assert list(artifact_dir.glob("*.h5")) == []
+        monkeypatch.setenv("PMI_RANK", "0")
+        ops.tcl(str(tmp_path / "r0.tcl"))
+    assert (artifact_dir / "rank.h5").exists()
+
+
+def test_opt_out_and_stub_write_nothing_and_warn_nothing(
+    artifact_dir, tmp_path, h5_calls,
+):
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", UserWarning)
+        ops = _bridge(_box_fem("quiet"), _artifacts=False)
+        for i in range(2):
+            ops.tcl(str(tmp_path / f"q{i}.tcl"))
+        stub = apeSees(make_two_node_beam())  # type: ignore[arg-type]
+        stub.model(ndm=3, ndf=6)
+        stub.geomTransf.Linear(vecxz=(1.0, 0.0, 0.0))
+        stub.tcl(str(tmp_path / "stub.tcl"))
+    assert h5_calls == []
+    assert list(artifact_dir.iterdir()) == []
+
+
+def test_explicit_h5_is_not_the_hook(artifact_dir, tmp_path, h5_calls):
+    """P7: ``ops.h5(path)`` writes where it is told and nothing else; it
+    is the one path the spy sees."""
+    ops = _bridge(_box_fem("explicit"))
+    out = tmp_path / "mine.h5"
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", UserWarning)
+        ops.h5(str(out))
+    assert h5_calls == [str(out)]
+    assert out.exists()
+    assert list(artifact_dir.iterdir()) == []
+
+
+def test_writer_state_is_per_bridge():
+    """Two bridges on one snapshot each keep their own key and warning."""
+    a, b = BridgeArtifactWriter(), BridgeArtifactWriter(enabled=False)
+    assert a.enabled and not b.enabled
+    assert a._last_key is None and not a._warned
+
+
+# ---------------------------------------------------------------------------
+# P6: the library's own constructors opt out
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("rel", [
+    "interop/etabs_import.py",
+    "interop/stko/translate.py",
+    "interop/strut_tie.py",
+])
+def test_internal_constructors_pass_artifacts_false(rel: str):
+    text = (SRC / rel).read_text(encoding="utf-8")
+    calls = re.findall(r"^\s*ops = apeSees\((.*)\)\s*$", text, re.M)
+    assert calls, rel
+    assert all("_artifacts=False" in c for c in calls), (rel, calls)

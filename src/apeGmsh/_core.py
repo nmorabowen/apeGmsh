@@ -516,8 +516,9 @@ class apeGmsh(_SessionBase):
             if not self.name:
                 raise ArtifactTargetUnavailable(
                     f"no model name: the session has no model_name and "
-                    f"Python is not running a script file (a notebook, -c "
-                    f"or stdin), so there is no conventional model.h5 path "
+                    f"Python is not running a script file (a notebook, -c, "
+                    f"stdin, or a console-script launcher such as pytest or "
+                    f"jupyter), so there is no conventional model.h5 path "
                     f"under {target}; nothing is written automatically. "
                     f"Pass model_name= or save_to=<file>."
                 )
