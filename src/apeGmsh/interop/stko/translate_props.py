@@ -315,6 +315,8 @@ class ASDConcrete3DCrackPlanes(ASDConcrete3D):
             args += ["-cdf", self.cdf]
         if self.implex:
             args.append("-implex")
+            if self.implex_alpha != 1.0:
+                args += ["-implexAlpha", self.implex_alpha]
         nct, ncc, angle = self.crack_planes
         args += ["-crackPlanes", int(nct), int(ncc), float(angle)]
         if self.tangent == "numerical":
@@ -464,8 +466,9 @@ def _asd_concrete_options(scd: ScdModel, x: XObject) -> list[Option]:
     implex = a.get("integration")
     if implex not in ("Implicit", "IMPL-EX"):
         out.append(("integration", f"integration {implex!r} is not Implicit / IMPL-EX"))
-    if implex == "IMPL-EX" and float(a.get("implexAlpha", 1.0)) != 1.0:
-        out.append(("implexAlpha", "implexAlpha != 1.0: apeSees writes no -implexAlpha"))
+    if (x.type == "materials.uniaxial.ASDConcrete1D" and implex == "IMPL-EX"
+            and float(a.get("implexAlpha", 1.0)) != 1.0):
+        out.append(("implexAlpha", "implexAlpha != 1.0 on ASDConcrete1D is not in this version"))
     if a.get("constitutiveTensorType") == "Tangent":
         if x.type == "materials.uniaxial.ASDConcrete1D":
             out.append(("constitutiveTensorType", "-tangent on ASDConcrete1D is not in this version"))
@@ -585,6 +588,7 @@ def _build_asd_concrete_3d(b: _Builder, x: XObject) -> Any:
         lch_ref=law["lch_ref"], rho=float(a["rho"]), Kc=float(a["Kc"]),
         eta=float(a["eta"]), cdf=float(a["CDF"]),
         implex=a["integration"] == "IMPL-EX",
+        implex_alpha=float(a.get("implexAlpha", 1.0)) if a["integration"] == "IMPL-EX" else 1.0,
         tangent="numerical" if a["constitutiveTensorType"] == "Tangent" else "secant",
     )
     if a.get("-crackPlanes"):

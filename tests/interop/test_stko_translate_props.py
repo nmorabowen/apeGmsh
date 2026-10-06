@@ -470,6 +470,18 @@ def test_asdconcrete_3d_primitive_and_crack_planes() -> None:
                     "-crackPlanes", 4, 4, 45.0, "-autoRegularization", 3.188775510204082)
 
 
+def test_asdconcrete_3d_implex_alpha_reaches_the_deck() -> None:
+    """STKO's ``-implexAlpha`` survives the translation, crack planes or not."""
+    for crack in (False, True):
+        scd = nl_model()
+        scd.physical_properties[6].attributes.update({"-crackPlanes": crack, "implexAlpha": 0.0})
+        assert not check_supported(scd)
+        m = build_props(bridge(), scd, groups(scd)).primitives[6]
+        assert m.implex_alpha == 0.0
+        (_, args, _), = emitted(m)
+        assert args[args.index("-implexAlpha") + 1] == 0.0, crack
+
+
 def test_asdconcrete_without_crack_planes_is_the_bridge_class() -> None:
     res = build_props(bridge(), nl_model(), groups(nl_model()))
     m = res.primitives[6]
@@ -507,7 +519,7 @@ def test_everything_unsupported_listed_at_once() -> None:
         _x(30, "materials.nD.ElasticIsotropic", E=1.0, v=0.2),
         elastic_section(1, (1.0, 1.0, 1.0, 1.0), **{"Use Uniaxial Materials": True, "Y/section_offset": 50.0}),
         asd3d(6, Preset="Concrete (1P)", implexAlpha=0.5),
-        asd1d(9, constitutiveTensorType="Tangent"),
+        asd1d(9, constitutiveTensorType="Tangent", implexAlpha=0.5),
         _x(13, "materials.nD.PlateFromPlaneStress", refs=("matTag",), matTag=6, OutofPlaneModulus=1.0),
         _x(40, "sections.Mystery"),
         fiber_section(11, {"SURFACE_FIBER_GROUPS": [(9, [(0.0, 0.0, 1.0)])]}, rectangular=True,
@@ -537,7 +549,7 @@ def test_everything_unsupported_listed_at_once() -> None:
         ("option", "sections.Elastic:Y/section_offset", "a section offset makes STKO write -jntOffset"),
         ("option", "sections.LayeredShell:matTag", "2 layers"),
         ("option", "materials.nD.ASDConcrete3D:Preset", "preset 'Concrete (1P)'"),
-        ("option", "materials.nD.ASDConcrete3D:implexAlpha", "implexAlpha != 1.0"),
+        ("option", "materials.uniaxial.ASDConcrete1D:implexAlpha", "implexAlpha != 1.0 on ASDConcrete1D is not in this version"),
         ("option", "materials.uniaxial.ASDConcrete1D:constitutiveTensorType", "-tangent on ASDConcrete1D is not in this version"),
         ("option", "sections.RectangularFiberSection:-torsion", "-torsion (a torsion material) is not in this version"),
         ("option", "sections.RectangularFiberSection:Concrete (Core) Material", "no core material"),

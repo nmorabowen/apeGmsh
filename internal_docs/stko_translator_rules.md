@@ -416,7 +416,7 @@ checked on scanned objects only — each owner lists its own:
   `StandardIntegrationTypes`; sections.Elastic `Use Uniaxial Materials` (STKO writes an
   Aggregator); Fiber/RectangularFiberSection `-torsion`, RectangularFiberSection with no
   core material (STKO generates a confined material on the fly); ASDConcrete3D/1D
-  `Preset` other than `Concrete (9P)`, `implexAlpha != 1.0`, `-crackPlanes`,
+  `Preset` other than `Concrete (9P)`, ASDConcrete1D `implexAlpha != 1.0`, `-crackPlanes`,
   `constitutiveTensorType = Tangent` with IMPL-EX; geomTransf `transfType` other than
   Linear / PDelta / Corotational.
 - conditions: any `Mode = "function"` on a scanned condition (1C's unreferenced
@@ -555,8 +555,9 @@ unreachable). Translate the closure reachable from element groups only.
   (CC) in 1B/1C; 3.188775510204082 (3-D, 1D). apeSees: construct the raw
   `ASDConcrete3D(E, v, Te…Cd, lch_ref, rho, Kc, eta, cdf, implex)` /
   `ASDConcrete1D(...)` classes and `ops.register(...)` them (the namespace methods
-  build a different law from `fc`). apeSees omits `-implexAlpha`; OpenSees' default is
-  1.0, so `implexAlpha != 1.0` is an unsupported option. **V**
+  build a different law from `fc`). The 3-D class writes `-implexAlpha` when it is not
+  1.0 (OpenSees' default), so STKO's value carries over; `ASDConcrete1D` has no
+  `implex_alpha`, so `implexAlpha != 1.0` stays an unsupported option there. **V**
 - **P10 Hysteretic** (`Hysteretic.py`): `s1p e1p s2p e2p [s3p e3p] s1n e1n s2n e2n
   [s3n e3n] pinchx pinchy damage1 damage2 [beta if use_beta]`; exact. **V**
 - **P11 Tags.** STKO: element tag = mesh id, section/material tag = physical-property
