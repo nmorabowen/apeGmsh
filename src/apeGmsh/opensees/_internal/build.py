@@ -10536,6 +10536,118 @@ def resolve_initial_stress_elements(
     return ()
 
 
+class ParameterSite(NamedTuple):
+    """One place an emit declares ``parameter`` tags.
+
+    ``record`` declares them, ``rank`` is the runtime rank whose
+    ``partition_open`` block writes them (``None`` outside any block),
+    ``verb`` is the emitter verb that writes them, and ``n_tags`` is how
+    many it declares there: three for an initial stress (its XX, YY and
+    ZZ ramps), one for a stage flip or update that resolves an element on
+    that rank, none for one that resolves none.
+    """
+
+    record: Any
+    rank: int | None
+    verb: str
+    n_tags: int
+
+
+class PlannedParameter(NamedTuple):
+    """One :class:`ParameterSite` as the tag plan numbers it."""
+
+    record: Any
+    rank: int | None
+    verb: str
+    tags: tuple[int, ...]
+
+
+#: The verbs that declare ``parameter`` tags, and how many each declares
+#: per site: an initial stress's ramp (XX, YY, ZZ), and the one-shot
+#: absorbing flip and ``s.update_parameter`` (one, or none on a rank that
+#: holds none of the record's elements).
+PARAMETER_VERBS: dict[str, frozenset[int]] = {
+    "step_hook_ramp": frozenset({3}),
+    "flip_element_stage": frozenset({0, 1}),
+    "update_parameter": frozenset({0, 1}),
+}
+
+
+def initial_stress_sites(
+    records: "Iterable[InitialStressRecord]",
+) -> list[ParameterSite]:
+    """The parameter site of each initial stress: three ramp tags, written
+    once, outside any partition block."""
+    return [ParameterSite(rec, None, "step_hook_ramp", 3) for rec in records]
+
+
+def parameter_flip_sites(
+    verb: str,
+    records: "Sequence[ActivateAbsorbingRecord | UpdateParameterRecord]",
+    ele_tags: "Sequence[tuple[int, ...]]",
+    rank: int | None,
+) -> list[ParameterSite]:
+    """The parameter site of each flip or update record on ``rank``: one
+    tag if it resolves an element there (``ele_tags``), else none."""
+    if verb not in ("flip_element_stage", "update_parameter"):
+        raise BridgeError(f"parameter_flip_sites: unknown verb {verb!r}.")
+    if len(records) != len(ele_tags):
+        raise BridgeError(
+            "parameter_flip_sites: one element list per record is needed.")
+    return [
+        ParameterSite(rec, rank, verb, 1 if tags_ else 0)
+        for rec, tags_ in zip(records, ele_tags)
+    ]
+
+
+def plan_parameters(
+    sites: "Iterable[ParameterSite]", tags: TagAllocator,
+) -> tuple[PlannedParameter, ...]:
+    """Mint each site's ``parameter`` tags, in order.
+
+    The allocation loop of the initial-stress, absorbing-flip and
+    ``update_parameter`` emits, moved out of them (ADR 0114 D4, amended).
+    The build's tag plan runs it once per emit mode over every site the
+    mode's emit writes (``tag_plan._plan_parameters``); a writer handed a
+    plain allocator runs it over its own sites.
+    """
+    out: list[PlannedParameter] = []
+    for site in sites:
+        if site.n_tags not in PARAMETER_VERBS.get(site.verb, ()):
+            raise BridgeError(
+                f"plan_parameters: a {site.verb!r} site declares "
+                f"{site.n_tags} parameter tags; the verbs and their counts "
+                f"are {dict(PARAMETER_VERBS)}."
+            )
+        minted: list[int] = []
+        for _ in range(site.n_tags):
+            minted.append(tags.allocate("parameter"))
+        out.append(PlannedParameter(
+            site.record, site.rank, site.verb, tuple(minted)))
+    return tuple(out)
+
+
+def _parameter_tags(
+    sites: "Sequence[ParameterSite]", tags: TagAllocator,
+) -> list[tuple[int, ...]]:
+    """Each site's ``parameter`` tags, in order.
+
+    Two-way until K1-3d S6 drops ``tags`` (ADR 0114 D4, amended): handed
+    the emit allocator of a bridge emit, this reads the build's plan
+    (``plan.parameters[(record, rank)]``), which must hold each site's
+    record at its rank with as many tags as the site declares. Handed a
+    plain :class:`TagAllocator` (a direct caller, or the compose replay
+    under its ledger waiver), it plans ``sites`` through
+    :func:`plan_parameters`. Any other fork raises :class:`TagLawError`.
+    """
+    from .tag_plan import plan_or_standalone
+
+    plan = plan_or_standalone(tags)
+    if plan is None:
+        return [line.tags for line in plan_parameters(sites, tags)]
+    return [plan.parameters.tags_at(site) for site in sites]
+
+
 def emit_initial_stress_global(
     records: "Iterable[InitialStressRecord]",
     emitter: "Emitter",
@@ -10543,21 +10655,21 @@ def emit_initial_stress_global(
 ) -> dict[str, tuple[int, int, int]]:
     """Emit the global side of each :class:`InitialStressRecord`.
 
-    For each record, allocates three parameter tags (XX, YY, ZZ) from
-    the bridge allocator, then calls :meth:`Emitter.step_hook_ramp`,
-    which bundles the dispatcher boilerplate (once), the parameter
-    declarations, the per-step proc, and the dispatcher registration.
+    For each record, takes its three parameter tags (XX, YY, ZZ) from
+    the build's tag plan (:func:`_parameter_tags`), then calls
+    :meth:`Emitter.step_hook_ramp`, which bundles the dispatcher
+    boilerplate (once), the parameter declarations, the per-step proc,
+    and the dispatcher registration.
 
     Returns the mapping ``{record_name: (xx_tag, yy_tag, zz_tag)}`` so
     the per-rank ``addToParameter`` fan-out (see
     :func:`emit_initial_stress_addtoparameter`) can reach the same
     tags without re-allocating.
     """
+    records = tuple(records)
+    planned = _parameter_tags(initial_stress_sites(records), tags)
     out: dict[str, tuple[int, int, int]] = {}
-    for rec in records:
-        xx_tag = tags.allocate("parameter")
-        yy_tag = tags.allocate("parameter")
-        zz_tag = tags.allocate("parameter")
+    for rec, (xx_tag, yy_tag, zz_tag) in zip(records, planned):
         targets = (
             (xx_tag, rec.sigma_xx * rec.lambda_install),
             (yy_tag, rec.sigma_yy * rec.lambda_install),
@@ -10631,6 +10743,86 @@ def emit_initial_stress_addtoparameter(
                 )
 
 
+def _flip_ele_tags(
+    rec: "ActivateAbsorbingRecord | UpdateParameterRecord",
+    fem: "FEMData",
+    fem_eid_to_ops_tag: "FemToOpsTagMap",
+    element_owner: "SortedIntToInt | None",
+    partition_rank: int | None,
+    unregistered: "Callable[[int], str]",
+) -> tuple[int, ...]:
+    """The OpenSees tags of ``rec``'s elements that ``partition_rank`` flips.
+
+    ``rec`` targets its elements by ``pg`` or explicit ``elements``. In MP
+    mode (``partition_rank`` set) only this rank's owned elements count,
+    and an eid absent from ``fem_eid_to_ops_tag`` is skipped (it lives on
+    another rank). In single-partition mode an absent eid raises
+    :class:`BridgeError` with the message ``unregistered(eid)`` (the user
+    named an element no primitive emitted).
+    """
+    if rec.elements is not None:
+        eids: tuple[int, ...] = rec.elements
+    elif rec.pg is not None:
+        eids = tuple(eid for eid, _conn in expand_pg_to_elements(fem, rec.pg))
+    else:  # pragma: no cover — validated at the call site
+        eids = ()
+    is_partitioned_mode = partition_rank is not None
+    ops_tags: list[int] = []
+    for eid in eids:
+        if is_partitioned_mode and element_owner is not None:
+            owner = element_owner.get(int(eid))
+            if owner is None or owner != partition_rank:
+                continue
+        ops_tag = fem_eid_to_ops_tag.get(int(eid))
+        if ops_tag is None:
+            if is_partitioned_mode:
+                continue  # owned by another rank; silent skip OK.
+            raise BridgeError(unregistered(int(eid)))
+        ops_tags.append(int(ops_tag))
+    return tuple(ops_tags)
+
+
+def update_parameter_ele_tags(
+    rec: "UpdateParameterRecord",
+    fem: "FEMData",
+    fem_eid_to_ops_tag: "FemToOpsTagMap",
+    element_owner: "SortedIntToInt | None" = None,
+    partition_rank: int | None = None,
+) -> tuple[int, ...]:
+    """The OpenSees tags ``rec``'s ``updateParameter`` addresses on
+    ``partition_rank`` (:func:`_flip_ele_tags`)."""
+    def unregistered(eid: int) -> str:
+        return (
+            f"update_parameter {rec.name!r}: element id {eid} "
+            "is not registered with any Element primitive (the "
+            "updateParameter would silently no-op).  Either drop it "
+            "from elements= or declare the matching Element "
+            "primitive via ops.element.<Type>(pg=...)."
+        )
+    return _flip_ele_tags(rec, fem, fem_eid_to_ops_tag, element_owner,
+                          partition_rank, unregistered)
+
+
+def absorbing_ele_tags(
+    rec: "ActivateAbsorbingRecord",
+    fem: "FEMData",
+    fem_eid_to_ops_tag: "FemToOpsTagMap",
+    element_owner: "SortedIntToInt | None" = None,
+    partition_rank: int | None = None,
+) -> tuple[int, ...]:
+    """The OpenSees tags ``rec``'s stage flip addresses on
+    ``partition_rank`` (:func:`_flip_ele_tags`)."""
+    def unregistered(eid: int) -> str:
+        return (
+            f"activate_absorbing: element id {eid} is not "
+            "registered with any Element primitive (the stage flip "
+            "would silently no-op).  Emit the absorbing elements via "
+            "``ops.element.absorbing_boundary(skin=...)`` first."
+        )
+    return _flip_ele_tags(rec, fem, fem_eid_to_ops_tag, element_owner,
+                          partition_rank, unregistered)
+
+
 def emit_update_parameters(
     records: "Iterable[UpdateParameterRecord]",
     emitter: "Emitter",
@@ -10644,44 +10836,27 @@ def emit_update_parameters(
 
     Same element-resolution and per-rank contract as
     :func:`emit_activate_absorbing` — the two verbs drive the same
-    OpenSees primitive, only the argv tail and the value differ.  A
-    fresh ``parameter`` tag is allocated per (record, rank) so each
-    block is self-contained and a later stage may re-declare.
+    OpenSees primitive, only the argv tail and the value differ.  Each
+    (record, rank) that addresses an element writes its own ``parameter``
+    tag, which the build's tag plan gives it (:func:`_parameter_tags`),
+    so each block is self-contained and a later stage may re-declare.
     """
-    is_partitioned_mode = partition_rank is not None
-    for rec in records:
-        if rec.elements is not None:
-            eids: tuple[int, ...] = rec.elements
-        elif rec.pg is not None:
-            eids = tuple(eid for eid, _conn in expand_pg_to_elements(fem, rec.pg))
-        else:  # pragma: no cover — validated at the call site
-            eids = ()
-        ops_tags: list[int] = []
-        for eid in eids:
-            if is_partitioned_mode and element_owner is not None:
-                owner = element_owner.get(int(eid))
-                if owner is None or owner != partition_rank:
-                    continue
-            ops_tag = fem_eid_to_ops_tag.get(int(eid))
-            if ops_tag is None:
-                if is_partitioned_mode:
-                    continue  # owned by another rank; silent skip OK.
-                raise BridgeError(
-                    f"update_parameter {rec.name!r}: element id {int(eid)} "
-                    "is not registered with any Element primitive (the "
-                    "updateParameter would silently no-op).  Either drop it "
-                    "from elements= or declare the matching Element "
-                    "primitive via ops.element.<Type>(pg=...)."
-                )
-            ops_tags.append(int(ops_tag))
-        if ops_tags:
-            pid = tags.allocate("parameter")
+    records = tuple(records)
+    resolved = [
+        update_parameter_ele_tags(
+            rec, fem, fem_eid_to_ops_tag, element_owner, partition_rank)
+        for rec in records
+    ]
+    planned = _parameter_tags(parameter_flip_sites(
+        "update_parameter", records, resolved, partition_rank), tags)
+    for rec, ops_tags, pids in zip(records, resolved, planned):
+        for pid in pids:
             args: tuple[str | int, ...] = (
                 (rec.name,) if rec.mat_tag is None
                 else (rec.name, int(rec.mat_tag))
             )
             emitter.update_parameter(
-                pid, tuple(ops_tags), args, float(rec.value),
+                pid, ops_tags, args, float(rec.value),
             )
 
 
@@ -10697,7 +10872,7 @@ def emit_activate_absorbing(
     """Emit the absorbing-boundary stage flip for each record (ADR 0054 AB-3).
 
     For each record, resolve its elements (``pg`` or explicit ``elements``) to
-    OpenSees tags, then emit the one-shot
+    OpenSees tags (:func:`absorbing_ele_tags`), then emit the one-shot
     ``parameter`` / ``addToParameter ... stage`` / ``updateParameter 1`` /
     ``remove parameter`` block via :meth:`Emitter.flip_element_stage`.
 
@@ -10705,38 +10880,22 @@ def emit_activate_absorbing(
     mode (``partition_rank`` set) only this rank's owned elements are flipped,
     and an eid absent from ``fem_eid_to_ops_tag`` is silently skipped (it lives
     on another rank).  In single-partition mode an absent eid is a hard
-    :class:`BridgeError` (the user named an element no primitive emitted).  A
-    fresh ``parameter`` tag is allocated per (record, rank) so each block is
-    self-contained.
+    :class:`BridgeError` (the user named an element no primitive emitted).
+    Each (record, rank) that flips an element writes its own ``parameter``
+    tag, which the build's tag plan gives it (:func:`_parameter_tags`), so
+    each block is self-contained.
     """
-    is_partitioned_mode = partition_rank is not None
-    for rec in records:
-        if rec.elements is not None:
-            eids: tuple[int, ...] = rec.elements
-        elif rec.pg is not None:
-            eids = tuple(eid for eid, _conn in expand_pg_to_elements(fem, rec.pg))
-        else:  # pragma: no cover — validated at the call site
-            eids = ()
-        ops_tags: list[int] = []
-        for eid in eids:
-            if is_partitioned_mode and element_owner is not None:
-                owner = element_owner.get(int(eid))
-                if owner is None or owner != partition_rank:
-                    continue
-            ops_tag = fem_eid_to_ops_tag.get(int(eid))
-            if ops_tag is None:
-                if is_partitioned_mode:
-                    continue  # owned by another rank; silent skip OK.
-                raise BridgeError(
-                    f"activate_absorbing: element id {int(eid)} is not "
-                    "registered with any Element primitive (the stage flip "
-                    "would silently no-op).  Emit the absorbing elements via "
-                    "``ops.element.absorbing_boundary(skin=...)`` first."
-                )
-            ops_tags.append(int(ops_tag))
-        if ops_tags:
-            pid = tags.allocate("parameter")
-            emitter.flip_element_stage(pid, tuple(ops_tags))
+    records = tuple(records)
+    resolved = [
+        absorbing_ele_tags(
+            rec, fem, fem_eid_to_ops_tag, element_owner, partition_rank)
+        for rec in records
+    ]
+    planned = _parameter_tags(parameter_flip_sites(
+        "flip_element_stage", records, resolved, partition_rank), tags)
+    for ops_tags, pids in zip(resolved, planned):
+        for pid in pids:
+            emitter.flip_element_stage(pid, ops_tags)
 
 
 def zero_velocity_target_nodes(

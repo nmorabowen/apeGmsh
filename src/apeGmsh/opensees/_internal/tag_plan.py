@@ -47,6 +47,8 @@ if TYPE_CHECKING:
         ElementPlanRows,
         InterfacePlan,
         MPElementPlan,
+        ParameterSite,
+        PlannedParameter,
         TransformFanout,
     )
     from .types import Element, GeomTransf
@@ -493,12 +495,130 @@ class RegionTagPlan(FamilyTagPlan):
         )
 
 
+#: A parameter site's key: its record and the runtime rank whose block
+#: writes it (``None`` outside any partition block).
+ParameterKey = tuple[object, "int | None"]
+
+
 @dataclass(frozen=True, slots=True)
 class ParameterTagPlan(FamilyTagPlan):
-    """Initial-stress and staged ``updateParameter`` parameter ids."""
+    """Initial-stress, absorbing-flip and ``s.update_parameter`` parameter
+    ids.
+
+    ``lines`` is :func:`~.build.plan_parameters`'s result, made once by
+    :func:`plan_tags` over every parameter site the mode's emit writes, in
+    the order it writes them: the global initial stresses, then stage by
+    stage its initial stresses, its absorbing flips and its updates (each
+    rank by rank under a partitioned emit, a site with no element on its
+    rank holding no tag). ``owners`` is every ``(record, rank)`` the emit
+    walks, derived from the model's records alone; the lines must be
+    exactly those, by identity and in that order, or the plan raises when
+    it is made. The writers read ``plan.parameters[(record, rank)]`` and
+    mint nothing.
+    """
 
     FAMILY: ClassVar[str] = "parameters"
     KINDS: ClassVar[frozenset[str]] = frozenset({"parameter"})
+    MIGRATED: ClassVar[bool] = True
+
+    lines: tuple[PlannedParameter, ...] | None = field(
+        default=None, compare=False)
+    owners: tuple[ParameterKey, ...] = field(default=(), compare=False)
+    _index: "dict[tuple[int, int | None], PlannedParameter]" = field(
+        default_factory=dict, init=False, compare=False, repr=False)
+
+    def __post_init__(self) -> None:
+        from .build import PARAMETER_VERBS
+
+        if self.rows:
+            raise TagLawError(
+                "parameters: the parameter plan derives its rows from its "
+                "planned sites; pass lines, not rows."
+            )
+        if self.lines is None:
+            return
+        last = 0
+        for line in self.lines:
+            if len(line.tags) not in PARAMETER_VERBS.get(line.verb, ()):
+                raise TagLawError(
+                    f"parameters: a {line.verb!r} line holds "
+                    f"{len(line.tags)} tags; the verbs and their counts are "
+                    f"{dict(PARAMETER_VERBS)}."
+                )
+            key = (id(line.record), line.rank)
+            if key in self._index:
+                raise TagLawError(
+                    f"parameters: a {type(line.record).__name__} is planned "
+                    f"twice at rank {line.rank}.")
+            self._index[key] = line
+            for tag in line.tags:
+                if tag <= last:
+                    raise TagLawError(
+                        f"parameters: tag {tag} follows tag {last}; the plan "
+                        "holds its sites in the order it minted them, so its "
+                        "tags only rise."
+                    )
+                last = tag
+        planned = [(line.record, line.rank) for line in self.lines]
+        if len(planned) != len(self.owners) or any(
+            a is not b or r != s
+            for (a, r), (b, s) in zip(planned, self.owners)
+        ):
+            raise TagLawError(
+                f"the parameter plan holds {len(planned)} sites, but the "
+                f"model's records declare {len(self.owners)}, or other "
+                "ones, or in another order: the plan does not cover the "
+                "model (ADR 0114 D4, amended)."
+            )
+
+    def planned(self) -> tuple[PlannedParameter, ...]:
+        """The planned sites; a sub-plan that carries none raises."""
+        if self.lines is None:
+            raise TagLawError(
+                "parameters: this plan carries no parameter plan; plan_tags "
+                "plans one for every mode (ADR 0114 D4, amended)."
+            )
+        return self.lines
+
+    def stream(self) -> tuple[TagRow, ...]:
+        """One ``(verb, tag)`` row per planned tag, in mint order. The
+        verb is the one that writes it: ``step_hook_ramp`` (an initial
+        stress's three ramps), ``flip_element_stage`` or
+        ``update_parameter``."""
+        return tuple(
+            (line.verb, tag) for line in self.planned() for tag in line.tags)
+
+    def __getitem__(self, key: ParameterKey) -> tuple[int, ...]:
+        """The tags the plan gives ``record`` at ``rank``.
+
+        Looked up by the record's identity: a record the plan does not
+        hold at that rank (another model's, or one the plan dropped)
+        raises :class:`TagLawError`.
+        """
+        record, rank = key
+        self.planned()
+        line = self._index.get((id(record), rank))
+        if line is None or line.record is not record:
+            raise TagLawError(
+                f"the parameter plan holds no {type(record).__name__} at "
+                f"rank {rank}: the plan was not made for this emit (ADR "
+                "0114 D4, amended)."
+            )
+        return line.tags
+
+    def tags_at(self, site: ParameterSite) -> tuple[int, ...]:
+        """The tags of ``site``: its record's at its rank, as many as the
+        site declares and written by its verb, or :class:`TagLawError`."""
+        tags = self[(site.record, site.rank)]
+        line = self._index[(id(site.record), site.rank)]
+        if line.verb != site.verb or len(tags) != site.n_tags:
+            raise TagLawError(
+                f"the parameter plan gives a {type(site.record).__name__} "
+                f"at rank {site.rank} {len(tags)} {line.verb!r} tag(s), but "
+                f"this emit writes {site.n_tags} {site.verb!r} tag(s) there: "
+                "the plan was not made for this emit (ADR 0114 D4, amended)."
+            )
+        return tags
 
 
 @dataclass(frozen=True, slots=True)
@@ -892,8 +1012,12 @@ def plan_tags(bm: BuiltModel, mode: TagMode) -> TagPlan:
         regions=plan_regions(sites, tags), named=named,
         partitioned=mode.partitioned, fem=bm.fem)
 
-    # The other families are pending: their tags are still minted at
-    # emit time, from TagPlan.emit_allocator().
+    # Parameters: every initial-stress ramp, absorbing flip and update,
+    # in the order the mode's emit writes them. No other family mints
+    # ``parameter``.
+    parameters = _plan_parameters(bm, mode, elements, tags)
+
+    # Every family is planned: the emit allocator freezes every kind.
     tags.freeze()
     return TagPlan(
         mode=mode,
@@ -901,7 +1025,7 @@ def plan_tags(bm: BuiltModel, mode: TagMode) -> TagPlan:
         elements=elements,
         transforms=transforms,
         regions=regions,
-        parameters=ParameterTagPlan(),
+        parameters=parameters,
         mp_elements=MPElementTagPlan(mp=mp),
         interfaces=InterfaceTagPlan(interfaces=interfaces),
         contacts=contacts,
@@ -1040,6 +1164,84 @@ def _plan_mp_elements_and_interfaces(
             phantom_coords=phantom_coords, rank_plans=rank_plans,
         ),
         InterfacePlan(fem=fem, lines=tuple(ifaces)),
+    )
+
+
+def parameter_owners(
+    bm: BuiltModel, ranks: "Sequence[int | None]",
+) -> tuple[ParameterKey, ...]:
+    """Every ``(record, rank)`` whose parameter site ``bm``'s emit walks,
+    in emit order, from the model's records alone.
+
+    The global initial stresses, then stage by stage: its initial
+    stresses (outside any partition block), its absorbing flips and its
+    updates, each over ``ranks`` (``[None]`` on a flat emit, the runtime
+    ranks in partition order on a partitioned one).
+    """
+    out: list[ParameterKey] = [(rec, None) for rec in bm.initial_stress_records]
+    for stage in bm.stage_records:
+        out += [(rec, None) for rec in stage.initial_stress_records]
+        for records in (stage.activate_absorbing_records,
+                        stage.update_parameter_records):
+            out += [(rec, rank) for rank in ranks for rec in records]
+    return tuple(out)
+
+
+def _plan_parameters(
+    bm: BuiltModel, mode: TagMode, elements: ElementTagPlan,
+    tags: TagAllocator,
+) -> ParameterTagPlan:
+    """The parameter plan of ``bm``'s emit in ``mode``.
+
+    The emit writes an initial stress's three ramp tags once, outside any
+    partition block: first the global pool's, then each stage's. Each
+    stage then writes its absorbing flips, then its updates, record by
+    record; a partitioned emit writes each pass rank by rank, and a
+    record takes a tag on a rank only if it addresses an element that rank
+    owns. The element tags are the element plan's (``elements``), as the
+    emit maps them; the rank ownership is the emit's
+    (:func:`~.build.build_element_partition_owner`).
+    """
+    from .build import (
+        FemToOpsTagMap,
+        ParameterSite,
+        absorbing_ele_tags,
+        build_element_partition_owner,
+        initial_stress_sites,
+        parameter_flip_sites,
+        plan_parameters,
+        runtime_rank_from_partition_record,
+        update_parameter_ele_tags,
+    )
+
+    fem = bm.fem
+    ranks: list[int | None] = [None]
+    if mode.partitioned:
+        ranks = [runtime_rank_from_partition_record(part, idx)
+                 for idx, part in enumerate(fem.partitions)]
+    sites: list[ParameterSite] = initial_stress_sites(bm.initial_stress_records)
+    flips = any(
+        stage.activate_absorbing_records or stage.update_parameter_records
+        for stage in bm.stage_records)
+    # The emit's own maps, built only when a flip or update reads them.
+    eid_to_tag = FemToOpsTagMap.from_plan(elements.specs if flips else ())
+    owner = (build_element_partition_owner(fem)
+             if flips and mode.partitioned else None)
+    for stage in bm.stage_records:
+        sites += initial_stress_sites(stage.initial_stress_records)
+        absorbing = stage.activate_absorbing_records
+        for rank in ranks:
+            sites += parameter_flip_sites("flip_element_stage", absorbing, [
+                absorbing_ele_tags(rec, fem, eid_to_tag, owner, rank)
+                for rec in absorbing], rank)
+        updates = stage.update_parameter_records
+        for rank in ranks:
+            sites += parameter_flip_sites("update_parameter", updates, [
+                update_parameter_ele_tags(rec, fem, eid_to_tag, owner, rank)
+                for rec in updates], rank)
+    return ParameterTagPlan(
+        lines=plan_parameters(sites, tags),
+        owners=parameter_owners(bm, ranks),
     )
 
 
