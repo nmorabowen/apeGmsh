@@ -948,6 +948,319 @@ def test_partitioned_routing_runs_once_and_warns_once_per_emit(
     assert len(calls) == 1
 
 
+# ---------------------------------------------------------------------------
+# The region family (K1-3d S4)
+# ---------------------------------------------------------------------------
+
+
+#: A case of every region site: named regions whose rank order differs
+#: from their declaration order (flat, partitioned), and every global and
+#: stage-bound site with stage-claimed recorders (staged, partitioned).
+_REGION_CASES = (
+    "two_rank_regions/flat", "two_rank_regions/partitioned",
+    "stage_claimed_regions/staged", "stage_claimed_regions/staged_partitioned",
+)
+
+
+def test_short_or_empty_region_plan_fails_the_oracle() -> None:
+    """The region comparison is not vacuous: a dropped row is caught.
+
+    Every case that writes a region must reject the region plan with its
+    last row dropped, and with every row dropped, while accepting the real
+    one. A partitioned deck writes a region once per holder rank, so the
+    oracle compares its region rows as distinct rows (``PER_RANK_KINDS``).
+    """
+    checked = 0
+    for name in CASES:
+        case = _case(name)
+        rows = case.plan.regions.stream()
+        if not rows:
+            continue
+        checked += 1
+        assert _family_mismatch(case, "regions", rows) is None, name
+        assert _family_mismatch(case, "regions", rows[:-1]), name
+        assert _family_mismatch(case, "regions", ()), name
+    assert checked >= 20      # every golden recording cell, and the above
+
+
+@pytest.mark.parametrize(("name", "want"), [
+    # Flat: named, damping, then the global recorder pass; then the stage.
+    ("stage_claimed_regions/staged", [
+        ("named", "east"), ("named", "west"), ("rayleigh", (0, 0)),
+        ("damping", (0, 0)), ("recorder", "filter"),
+        ("named", "p_east"), ("named", "p_west"), ("rayleigh", (0, 0)),
+        ("damping", (0, 0)), ("recorder", "filter"), ("recorder", "filter"),
+        ("recorder", "energy"),
+    ]),
+    # Partitioned: the global recorder pass first (its regions are written
+    # in every rank block), named regions on their first holder rank
+    # (rank 0 holds node 2, rank 1 node 4); the stage-claimed recorders
+    # only in their stage (#1446).
+    ("stage_claimed_regions/staged_partitioned", [
+        ("recorder", "filter"), ("named", "west"), ("named", "east"),
+        ("rayleigh", (0, 0)), ("damping", (0, 0)),
+        ("named", "p_west"), ("named", "p_east"), ("rayleigh", (0, 0)),
+        ("damping", (0, 0)), ("recorder", "filter"), ("recorder", "filter"),
+        ("recorder", "energy"),
+    ]),
+])
+def test_stage_claimed_regions_plan(name: str, want: list[Any]) -> None:
+    """Closed form: the #1446 fixture's twelve regions, in mint order."""
+    regions = _case(name).plan.regions.regions
+    assert regions is not None
+    assert [(r.site[0], r.key) for r in regions] == want
+    assert [r.tag for r in regions] == list(range(1, len(want) + 1))
+
+
+def _path_allocators(
+    monkeypatch: pytest.MonkeyPatch, names: Any,
+) -> list[tuple[str, TagAllocator]]:
+    """Emit ``names`` and return each emit path's allocator."""
+    from apeGmsh.opensees.apesees import BuiltModel
+
+    seen: list[tuple[str, TagAllocator]] = []
+
+    def spy(path: str) -> Callable[..., Any]:
+        orig = getattr(BuiltModel, path)
+        sig = inspect.signature(orig)
+
+        def wrapper(self: Any, *args: Any, **kwargs: Any) -> Any:
+            seen.append((path, sig.bind(self, *args, **kwargs)
+                         .arguments["tags"]))
+            return orig(self, *args, **kwargs)
+        return wrapper
+
+    for path in _PATHS:
+        monkeypatch.setattr(BuiltModel, path, spy(path))
+    for name in sorted(names):
+        _emit_case(name)
+    return seen
+
+
+def _emit_case(name: str, bm: Any = None) -> list[Row]:
+    if name == _SPLIT:
+        return ts.emit_stream(
+            bm or ts.split_model().build(), TclEmitter, split=True)
+    return ts.emit_stream(bm or _MODELS[name]().build(), RecordingEmitter)
+
+
+def test_region_is_frozen_on_every_emit_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Every emit path's allocator refuses a ``region`` mint: flat, split,
+    staged, and partitioned (staged or not)."""
+    names = {*_first_case_per_mode().values(), *_REGION_CASES}
+    reached: set[str] = set()
+    for path, tags in _path_allocators(monkeypatch, names):
+        reached.add(path)
+        assert "region" in tags.frozen_kinds, path
+        with pytest.raises(TagLawError, match="planned and frozen"):
+            tags.allocate("region")
+        with pytest.raises(TagLawError):
+            tags.allocate_block("region", 1)
+    assert reached == set(_PATHS)
+
+
+def _minting_recorder_tags(self: Any, fem: Any, tags: TagAllocator) -> Any:
+    from apeGmsh.opensees._internal.tag_plan import plan_regions
+
+    rows = plan_regions([(("recorder", id(self)), self.region_keys())], tags)
+    return {row.key: row.tag for row in rows}
+
+
+def _minting_damping_tags(
+    self: Any, kind: str, stage: Any, recs: Any, tags: TagAllocator,
+) -> Any:
+    from apeGmsh.opensees._internal.tag_plan import plan_regions
+
+    site = (kind, None if stage is None else id(stage))
+    rows = plan_regions([(site, self._damping_region_keys(recs))], tags)
+    return {row.key: row.tag for row in rows}
+
+
+#: Each region writer mutated back to minting, with the cases that reach
+#: it: the recorder writer on every emit path, the named-region and the
+#: damping writers on every path that has them.
+_STRAY_MINTS = {
+    "recorder": ("two_column_frame/flat", "two_column_frame/partitioned",
+                 "two_column_frame/staged",
+                 "two_column_frame/staged_partitioned", _SPLIT),
+    "named": _REGION_CASES,
+    "damping": ("stage_claimed_regions/staged",
+                "stage_claimed_regions/staged_partitioned"),
+}
+
+
+@pytest.mark.parametrize(("writer", "name"), [
+    (w, n) for w, names in _STRAY_MINTS.items() for n in names])
+def test_a_stray_region_mint_raises(
+    writer: str, name: str, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Mutation: a region writer that mints raises where it mints.
+
+    Each writer (a filtered recorder's, the named regions', the damping
+    regions') is mutated to mint its tags from the emit allocator instead
+    of reading the plan. Every emit path that reaches it must raise, not
+    write a deck.
+    """
+    from apeGmsh.opensees.apesees import BuiltModel
+    from apeGmsh.opensees.recorder import FilterableRecorder
+
+    if writer == "recorder":
+        monkeypatch.setattr(
+            FilterableRecorder, "planned_region_tags", _minting_recorder_tags)
+    elif writer == "damping":
+        monkeypatch.setattr(
+            BuiltModel, "_planned_damping_region_tags", _minting_damping_tags)
+    else:
+        orig = BuiltModel._planned_named_regions
+
+        def minting_named(self: Any, tags: TagAllocator, stage: Any) -> Any:
+            return tuple(r._replace(tag=tags.allocate("region"))
+                         for r in orig(self, tags, stage))
+        monkeypatch.setattr(BuiltModel, "_planned_named_regions", minting_named)
+    with pytest.raises(TagLawError, match="planned and frozen"):
+        _emit_case(name)
+
+
+def _memoised_region_plan(name: str) -> tuple[Any, TagMode, TagPlan]:
+    bm = _MODELS[name]().build()
+    mode = emit_mode(bm, split=False, supports_partitions=True)
+    return bm, mode, bm._tag_plan(mode)
+
+
+def _with_regions(plan: TagPlan, rows: Any) -> TagPlan:
+    import dataclasses
+
+    from apeGmsh.opensees._internal.tag_plan import RegionTagPlan
+
+    sub = plan.regions
+    return dataclasses.replace(plan, regions=RegionTagPlan(
+        regions=tuple(rows), named=sub.named, partitioned=sub.partitioned,
+        fem=sub.fem))
+
+
+@pytest.mark.parametrize("name", _REGION_CASES)
+@pytest.mark.parametrize("cut", ["short", "empty"])
+def test_emit_refuses_a_short_or_empty_region_plan(name: str, cut: str) -> None:
+    """Mutation: the emit refuses a region plan that dropped regions.
+
+    The memoised plan's regions are cut (the last one dropped, or all of
+    them); the next emit must raise rather than write a deck that lacks
+    them.
+    """
+    bm, mode, plan = _memoised_region_plan(name)
+    rows = plan.regions.regions
+    assert rows
+    bm._tag_plans[mode] = _with_regions(
+        plan, rows[:-1] if cut == "short" else ())
+    with pytest.raises(TagLawError, match="not made for this emit"):
+        ts.emit_stream(bm, RecordingEmitter)
+
+
+@pytest.mark.parametrize(("name", "site_kind"), [
+    ("two_rank_regions/flat", "named"),
+    ("two_rank_regions/partitioned", "named"),
+    ("stage_claimed_regions/staged", "named"),
+    ("stage_claimed_regions/staged_partitioned", "named"),
+    ("stage_claimed_regions/staged", "recorder"),
+    ("stage_claimed_regions/staged_partitioned", "recorder"),
+])
+def test_emit_refuses_a_region_plan_with_two_regions_swapped(
+    name: str, site_kind: str,
+) -> None:
+    """Mutation: two regions of one site trade keys; the emit refuses it.
+
+    Each keeps its slot and tag, so the swapped plan holds the very rows
+    of the real one, same count, same kinds, same tags: a count, or a
+    comparison of rows alone, would pass it and write the two regions'
+    tags swapped. The emit must raise instead.
+    """
+    bm, mode, plan = _memoised_region_plan(name)
+    rows = list(plan.regions.regions or ())
+    by_site: dict[Any, list[int]] = {}
+    for i, row in enumerate(rows):
+        if row.site[0] == site_kind:
+            by_site.setdefault(row.site, []).append(i)
+    i, j = next(ix for ix in by_site.values() if len(ix) >= 2)[:2]
+    rows[i], rows[j] = (rows[i]._replace(key=rows[j].key),
+                        rows[j]._replace(key=rows[i].key))
+    swapped = _with_regions(plan, rows)
+    assert Counter(swapped.regions.stream()) == Counter(plan.regions.stream())
+    bm._tag_plans[mode] = swapped
+    with pytest.raises(TagLawError, match="not made for this emit"):
+        ts.emit_stream(bm, RecordingEmitter)
+
+
+def test_region_plan_rows_keep_their_mint_order() -> None:
+    """Two rows moved out of mint order (their tags no longer rise), a
+    region planned twice, or rows passed as ``rows``, are refused."""
+    from apeGmsh.opensees._internal.tag_plan import RegionTagPlan
+
+    plan = _case("stage_claimed_regions/staged").plan
+    rows = list(plan.regions.regions or ())
+    moved = [rows[1], rows[0], *rows[2:]]
+    with pytest.raises(TagLawError, match="only rise"):
+        _with_regions(plan, moved)
+    twice = [*rows, rows[0]._replace(tag=rows[-1].tag + 1)]
+    with pytest.raises(TagLawError, match="planned twice"):
+        _with_regions(plan, twice)
+    with pytest.raises(TagLawError, match="regions, not rows"):
+        RegionTagPlan(rows=(("region", 1),))
+    with pytest.raises(TagLawError, match="carries no regions"):
+        RegionTagPlan().stream()
+
+
+def test_planned_region_tags_is_two_way() -> None:
+    """Fork: read the plan. Plain allocator: plan through the same loop.
+
+    A plain fork, the frozen planner allocator and a fork for another
+    origin carry no plan; a fork of a real foreign plan is refused as
+    another model's.
+    """
+    from apeGmsh.opensees.recorder import Ladruno
+
+    case = _case("stage_claimed_regions/staged")
+    bm, plan = case.bm, case.plan
+    (spec,) = [p for p in bm.primitives if isinstance(p, Ladruno)]
+    assert spec.region_keys() == ("filter", "energy")
+    assert spec.planned_region_tags(bm.fem, plan.emit_allocator()) == {
+        "filter": 11, "energy": 12}
+    assert spec.planned_region_tags(bm.fem, TagAllocator()) == {
+        "filter": 1, "energy": 2}
+    for other in (plan.allocator.fork(), plan.allocator,
+                  plan.allocator.fork({"region"}, origin=object())):
+        with pytest.raises(TagLawError, match="carries no tag plan"):
+            spec.planned_region_tags(bm.fem, other)
+    foreign = _case("stage_claimed_regions/staged_partitioned").plan
+    with pytest.raises(TagLawError, match="another model's tag plan"):
+        spec.planned_region_tags(bm.fem, foreign.emit_allocator())
+
+
+def test_mint_site_names_are_unique() -> None:
+    """Each ``_MINT_SITES`` name defines one function in the bridge.
+
+    The mint log attributes a mint by the bare name of the function that
+    made it. A name defined twice (a generic one, as a recorder's
+    ``materialize`` was before S4) would credit one family's mints to the
+    other without an error.
+    """
+    import ast
+    from pathlib import Path
+
+    import apeGmsh.opensees as bridge
+
+    defs: Counter[str] = Counter()
+    for path in Path(bridge.__file__).parent.rglob("*.py"):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        defs.update(
+            node.name for node in ast.walk(tree)
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and node.name in _MINT_SITES)
+    assert set(defs) == set(_MINT_SITES), "a mint site no longer exists"
+    assert {n: c for n, c in defs.items() if c != 1} == {}
+
+
 _ALL_MIGRATED = all(cls.MIGRATED for cls in FAMILY_PLANS.values())
 
 
