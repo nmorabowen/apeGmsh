@@ -18,7 +18,7 @@ wraps them in one.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Iterable, Sequence
+from typing import Any, Iterable, Iterator, Sequence
 
 from apeGmsh.opensees._internal.tag_allocator import TagAllocator
 from apeGmsh.opensees._internal.tag_plan import (
@@ -125,7 +125,7 @@ class _NodeConstraints:
     def __init__(self, records: Sequence[Any]) -> None:
         self._records = tuple(records)
 
-    def __iter__(self):  # type: ignore[no-untyped-def]
+    def __iter__(self) -> Iterator[Any]:
         return iter(self._records)
 
 
@@ -135,10 +135,10 @@ class _SurfaceConstraints:
     def __init__(self, records: Sequence[Any]) -> None:
         self._records = tuple(records)
 
-    def __iter__(self):  # type: ignore[no-untyped-def]
+    def __iter__(self) -> Iterator[Any]:
         return iter(self._records)
 
-    def interpolations(self):  # type: ignore[no-untyped-def]
+    def interpolations(self) -> Iterator[Any]:
         return iter(self._records)
 
 
