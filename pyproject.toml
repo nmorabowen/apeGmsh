@@ -205,6 +205,7 @@ addopts = ["--import-mode=importlib", "-m", "not qt", "-p", "no:pytest-qt"]
 markers = [
     "live: requires openseespy",
     "ladruno_fork: end-to-end test requiring the Ladruno fork OpenSees backend (set APEGMSH_OPENSEES_BIN; auto-skips on stock/no backend)",
+    "ladruno_mkl: fork test that needs MKL/Pardiso (the Linux tarball may lack it); skips with a reason when `system Pardiso` is unavailable, and the live-fork lane counts these skips",
     "subprocess: requires OPENSEES binary",
     "h5: HDF5 tests",
     "slow: > 1 second",

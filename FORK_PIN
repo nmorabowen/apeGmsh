@@ -1,0 +1,7 @@
+# The Ladruno fork build apeGmsh's nightly `live-fork` lane tests against.
+# Read by .github/workflows/live-fork.yml and by
+# tests/opensees/integration_ladruno/conftest.py. Bump all four keys together.
+tag=ladruno-v20261005
+sha=011b02586a0c13e79c4363ba138d3e388caeb533
+repo=nmorabowen/OpenSees
+asset=ladruno-opensees-linux-ladruno-v20261005.tar.gz
