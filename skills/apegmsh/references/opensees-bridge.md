@@ -985,8 +985,7 @@ calls `build()` internally. Post-emit inspection is broker-side
 driver `source`s each rank's fragment. Every MPI rank then parses only the
 driver + its own fragments — `O(global + model/np)` instead of `O(model)` per
 rank. Deck semantics are unchanged (layout-only). Requires `len(fem.partitions)
-> 1` and is **mutually exclusive with `split=True`** — either condition raises
-`ValueError`.
+> 1`; otherwise it raises `ValueError`.
 
 ```python
 ops.tcl("main.tcl", per_rank=True)   # → main.tcl + ranks/rank0_0.tcl, ranks/rank1_0.tcl, …
@@ -1006,7 +1005,7 @@ and gates the attribution on a measurement. Output is
 sliced post-hoc). Everything goes to `.tmp` siblings promoted atomically on
 clean completion — a mid-emit exception never leaves a half-written deck
 (the driver is promoted last, so no entry point exists until every sourced
-fragment does). Not supported with `split=True` (raises `ValueError`).
+fragment does).
 
 ```python
 ops.tcl("main.tcl", stream=True, per_rank=True)   # constant deck-TEXT memory; build-side graph still scales with N (ADR 0100)

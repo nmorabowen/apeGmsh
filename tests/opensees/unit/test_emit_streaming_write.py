@@ -23,7 +23,7 @@ non-negotiable gates:
   partitioned, incl. per-rank ``<seq>`` numbering);
 * **O(1) emit peak** — stream-mode peak does not grow with element
   count (the line-buffer term vanishes);
-* **fail-loud guards** — ``split=True``, ``ops.py(stream=True)``, and
+* **fail-loud guards** — ``ops.py(stream=True)``, and
   in-memory introspection (``lines()`` etc.) in stream mode; and
 * **atomicity** — a mid-emit exception leaves no final deck and no
   ``.tmp`` litter.
@@ -278,14 +278,6 @@ def test_stream_emit_peak_is_o1_in_element_count(tmp_path: Path) -> None:
 
 
 # -- guards ------------------------------------------------------------------
-
-
-def test_stream_and_split_mutually_exclusive(tmp_path: Path) -> None:
-    """split=True + stream=True fails loud before building (v1)."""
-    ops = _make_flat_ops()
-    with pytest.raises(ValueError, match="stream=True and split=True"):
-        ops.tcl(str(tmp_path / "main.tcl"), split=True, stream=True)
-    assert not (tmp_path / "main.tcl").exists()
 
 
 def test_py_stream_fails_loud(tmp_path: Path) -> None:

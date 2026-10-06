@@ -1,7 +1,7 @@
 """The tag plan's oracle (ADR 0114 D4, amended): the plan is what the emit writes.
 
 For every model the K1-3 tag-law pins drive (``_tag_streams.models()``,
-plus the split frame) and the emit mode it takes, the plan the emit read
+and the contact cases) and the emit mode it takes, the plan the emit read
 (``BuiltModel.emit`` memoises one per mode) must plan exactly the derived
 ``(kind, tag)`` rows the emit writes. The oracle is the emit itself, read
 twice:
@@ -69,7 +69,6 @@ from apeGmsh.opensees._internal.tag_plan import (
     plan_tags,
 )
 from apeGmsh.opensees.emitter.recording import RecordingEmitter
-from apeGmsh.opensees.emitter.tcl import TclEmitter
 
 from tests.opensees.contract import _tag_streams as ts
 
@@ -222,8 +221,7 @@ _CONTACT_MODELS: dict[str, Callable[[], Any]] = {
 }
 
 _MODELS = {**ts.models(), **_CONTACT_MODELS}
-_SPLIT = "two_module_frame/split"
-CASES: tuple[str, ...] = (*sorted(_MODELS), _SPLIT)
+CASES: tuple[str, ...] = tuple(sorted(_MODELS))
 
 
 def _verb(kind: str) -> str:
@@ -349,21 +347,15 @@ def _read_log(name: str, log: list[_Op], plan: TagPlan) -> tuple[
 @lru_cache(maxsize=None)
 def _case(name: str) -> Case:
     """Everything one case's oracle reads, built once."""
-    if name == _SPLIT:
-        bm = ts.split_model().build()
-        cls: type = TclEmitter
-        split = True
-    else:
-        bm = _MODELS[name]().build()
-        cls = RecordingEmitter
-        split = False
+    bm = _MODELS[name]().build()
+    cls: type = RecordingEmitter
     mode = emit_mode(
-        bm, split=split,
+        bm, split=False,
         supports_partitions=getattr(cls, "supports_partitions", True),
     )
     assert mode not in bm._tag_plans
     with _mint_log() as log:
-        stream = ts.emit_stream(bm, cls, split=split)
+        stream = ts.emit_stream(bm, cls)
     plan = bm._tag_plans[mode]
     seed, seeded, planned, mints, minted = _read_log(name, log, plan)
     return Case(bm, tuple(stream), plan, seed, seeded, planned, mints,
@@ -703,7 +695,7 @@ def test_contact_kinds_are_frozen_on_every_emit_path(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Every emit path's allocator refuses a ``contactSurface`` or
-    ``contact`` mint: flat, split, staged, and partitioned over 1, 2 and
+    ``contact`` mint: flat, staged, and partitioned over 1, 2 and
     4 ranks."""
     from apeGmsh.opensees.apesees import BuiltModel
 
@@ -724,10 +716,7 @@ def test_contact_kinds_are_frozen_on_every_emit_path(
     names = {*_first_case_per_mode().values(), *_CONTACT_MODELS}
     reached: set[str] = set()
     for name in sorted(names):
-        if name == _SPLIT:
-            ts.emit_stream(ts.split_model().build(), TclEmitter, split=True)
-        else:
-            ts.emit_stream(_MODELS[name]().build(), RecordingEmitter)
+        ts.emit_stream(_MODELS[name]().build(), RecordingEmitter)
     for path, tags in seen:
         reached.add(path)
         assert {"contactSurface", "contact"} <= tags.frozen_kinds, path
@@ -745,7 +734,7 @@ def test_a_stray_contact_mint_raises(
 ) -> None:
     """Mutation: an emit that mints a contact tag raises where it mints.
 
-    The flat and split paths are mutated back to minting their contact
+    The flat path is mutated back to minting their contact
     tags (``_planned_contact_lines`` plans from the emit allocator); the
     partitioned path's writer is mutated to mint one ``contact`` tag per
     line, over 2 and 4 ranks. Each emit must raise, not write a deck.
@@ -1040,16 +1029,13 @@ def _path_allocators(
 
 
 def _emit_case(name: str, bm: Any = None) -> list[Row]:
-    if name == _SPLIT:
-        return ts.emit_stream(
-            bm or ts.split_model().build(), TclEmitter, split=True)
     return ts.emit_stream(bm or _MODELS[name]().build(), RecordingEmitter)
 
 
 def test_region_is_frozen_on_every_emit_path(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Every emit path's allocator refuses a ``region`` mint: flat, split,
+    """Every emit path's allocator refuses a ``region`` mint: flat,
     staged, and partitioned (staged or not)."""
     names = {*_first_case_per_mode().values(), *_REGION_CASES}
     reached: set[str] = set()
@@ -1086,7 +1072,7 @@ def _minting_damping_tags(
 _STRAY_MINTS = {
     "recorder": ("two_column_frame/flat", "two_column_frame/partitioned",
                  "two_column_frame/staged",
-                 "two_column_frame/staged_partitioned", _SPLIT),
+                 "two_column_frame/staged_partitioned"),
     "named": _REGION_CASES,
     "damping": ("stage_claimed_regions/staged",
                 "stage_claimed_regions/staged_partitioned"),
@@ -1366,7 +1352,7 @@ def test_corpus_reaches_every_mode() -> None:
     modes = {_case(n).plan.mode for n in CASES}
     for split, partitioned, staged in (
         (False, False, False), (False, True, False),
-        (False, False, True), (False, True, True), (True, False, False),
+        (False, False, True), (False, True, True),
     ):
         assert TagMode(split, partitioned, staged) in modes
 
@@ -1443,7 +1429,7 @@ def test_element_plan_rows_come_from_its_specs() -> None:
 # ---------------------------------------------------------------------------
 
 
-_PATHS = ("_emit_flat", "_emit_split", "_emit_partitioned",
+_PATHS = ("_emit_flat", "_emit_partitioned",
           "_emit_stages_flat", "_emit_stages_partitioned")
 
 
@@ -1459,7 +1445,7 @@ def test_every_emit_path_reads_the_memoised_plan(
 ) -> None:
     """``plan_of(tags)`` is the memoised plan, on every path and every emit.
 
-    Each emit path (flat, split, staged flat, partitioned, staged
+    Each emit path (flat, staged flat, partitioned, staged
     partitioned) receives a fresh ``emit_allocator()`` fork of the one plan
     ``BuiltModel.emit`` memoises for its mode; a second emit reuses it.
     """
@@ -1482,17 +1468,13 @@ def test_every_emit_path_reads_the_memoised_plan(
 
     reached: set[str] = set()
     for mode, name in _first_case_per_mode().items():
-        if name == _SPLIT:
-            bm = ts.split_model().build()
-            cls: type = TclEmitter
-        else:
-            bm = _MODELS[name]().build()
-            cls = RecordingEmitter
+        bm = _MODELS[name]().build()
+        cls: type = RecordingEmitter
         forks: list[TagAllocator] = []
         plans: list[TagPlan] = []
         for _ in range(2):
             seen.clear()
-            ts.emit_stream(bm, cls, split=mode.split)
+            ts.emit_stream(bm, cls)
             assert seen, f"{name}: no emit path ran"
             memo = bm._tag_plans[mode]
             for path, tags in seen:

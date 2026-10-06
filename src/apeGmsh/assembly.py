@@ -52,8 +52,7 @@ Design (ADR 0043 mode A; settled via the slice-1.4 red/blue pass):
   resolution happen in :meth:`materialize`.
 
 Out of scope for slice 1.4 (deferred to 1.5): ``Assembly.emit`` (the
-split-deck export — use ``apeSees(g._fem).tcl(split=True)`` on the
-materialised session) and ``Assembly.graph`` (inspection). ``couple``
+split-deck export, withdrawn with ``split=`` — ADR 0043) and ``Assembly.graph`` (inspection). ``couple``
 supports ``kind="equal_dof"``, ``kind="tied_contact"``, and
 ``kind="tie"`` (ADR 0085 — the non-matching-mesh surface tie, the
 interface for independently-meshed parts); ``embedded`` needs

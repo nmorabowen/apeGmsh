@@ -106,8 +106,7 @@ def tapped(cls: type) -> type:
 
 
 def emit_stream(
-    bm: Any, emitter_cls: type, *, split: bool = False,
-    **emitter_kwargs: Any,
+    bm: Any, emitter_cls: type, **emitter_kwargs: Any,
 ) -> Stream:
     """Emit the ``BuiltModel`` ``bm`` through a tapped ``emitter_cls``."""
     emitter = tapped(emitter_cls)(**emitter_kwargs)
@@ -116,17 +115,16 @@ def emit_stream(
         # Advisory nudges (auto numberer/system on a partitioned mesh) are
         # not what these pins are about.
         warnings.simplefilter("ignore")
-        bm.emit(emitter, split=split)
+        bm.emit(emitter)
     stream: Stream = emitter.tap
     return stream
 
 
 def tag_stream(
-    ops: apeSees, emitter_cls: type, *, split: bool = False,
-    **emitter_kwargs: Any,
+    ops: apeSees, emitter_cls: type, **emitter_kwargs: Any,
 ) -> Stream:
     """Build ``ops`` and emit it through a tapped ``emitter_cls``."""
-    return emit_stream(ops.build(), emitter_cls, split=split, **emitter_kwargs)
+    return emit_stream(ops.build(), emitter_cls, **emitter_kwargs)
 
 
 # ---------------------------------------------------------------------------
@@ -142,7 +140,7 @@ GOLDEN_MODES: tuple[str, ...] = (
 
 
 def models() -> dict[str, Callable[[], apeSees]]:
-    """Name -> a fresh ``apeSees`` recipe, covering every emit path but split.
+    """Name -> a fresh ``apeSees`` recipe, covering every emit path.
 
     The golden grid's ``recording`` cells carry node, element and MPCO
     recorders (region tags), and the arch fixture fans out one
@@ -377,21 +375,11 @@ def stage_claimed_regions(mode: str) -> apeSees:
     return ops
 
 
-def split_model() -> apeSees:
-    """The golden two-module frame, emitted with ``split=True`` (Tcl/Py only)."""
-    from tests.opensees.golden import builder as golden
-    return golden.build_model("two_module_frame", "flat", "recording")
-
-
 def all_streams() -> dict[str, list[list[object]]]:
-    """Every model's Recording stream plus the split Tcl stream, JSON-ready."""
+    """Every model's Recording stream, JSON-ready."""
     from apeGmsh.opensees.emitter.recording import RecordingEmitter
-    from apeGmsh.opensees.emitter.tcl import TclEmitter
 
     out: dict[str, list[list[object]]] = {}
     for name, recipe in models().items():
         out[name] = [list(r) for r in tag_stream(recipe(), RecordingEmitter)]
-    out["two_module_frame/split"] = [
-        list(r) for r in tag_stream(split_model(), TclEmitter, split=True)
-    ]
     return out

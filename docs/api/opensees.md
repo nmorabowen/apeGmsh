@@ -116,8 +116,7 @@ refuses staged models with ``NotImplementedError`` — emit via
 OpenSees subprocess. H5 archival supports staged builds:
 ``apeSees.h5(path)`` archives flat and partitioned staged models into
 ``/opensees/stages`` (ADR 0055). The remaining staged refusals are a
-stage-claimed interface (phantom nodes / ``node_to_surface``) and
-``split='parts'``.
+stage-claimed interface (phantom nodes / ``node_to_surface``).
 
 The full lifecycle table, builder verbs, validator surface, MP
 partitioned + staged emit (Phase SSI-2.C), and the SSI-1

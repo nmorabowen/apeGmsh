@@ -54,7 +54,6 @@ def _streams_in_subprocess(out: Path, hash_seed: str) -> dict[str, object]:
 
 def test_tag_streams_match_a_fresh_interpreter(tmp_path: Path) -> None:
     here = ts.all_streams()
-    assert "two_module_frame/split" in here
     assert any(k.endswith("/flat") for k in here)
     assert any(k.endswith("/partitioned") for k in here)
     assert any(k.endswith("/staged") for k in here)

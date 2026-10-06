@@ -18,7 +18,6 @@ allocator). Phase 4 wires:
 from __future__ import annotations
 
 import os
-import re
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Callable, Iterable, Sequence, TypeVar
 
@@ -123,7 +122,7 @@ from ._internal.build import (
     assert_ndm_compatible,
 )
 from ._internal.build import _element_transf as _build_element_transf
-from ._element_capabilities import builder_scoped_kind, is_builder_scoped
+from ._element_capabilities import is_builder_scoped
 from ._internal.tag_resolution import (
     set_current_fem_element_id,
     set_element_nodes,
@@ -642,107 +641,6 @@ class _MPCOFilterPlan:
     regions: tuple["_RegionEmit", ...]
 
 
-# ---------------------------------------------------------------------------
-# Split-emit layout (ADR 0043 slice 1.1, mode A)
-# ---------------------------------------------------------------------------
-
-@dataclass(frozen=True, slots=True)
-class _SplitLayout:
-    """Line-span map produced by :meth:`BuiltModel._emit_split`.
-
-    Carves the single emitter buffer into two contiguous fragment bands
-    and, within each, per-fragment ``(label, start, end)`` sub-spans.
-    ``[hoist_start, hoist_end)`` is the ADR 0099 S6 band — the gated
-    modules' fragments, whose ``source`` lines the writers place ABOVE
-    the builder-scoped declarations (empty and zero-width when the hoist
-    is off); ``[module_start, module_end)`` is the ADR 0043 band.  The
-    Tcl / Py writers slice the buffer with this map: ``lines[start:end]``
-    is fragment ``label``'s body; ``lines[:hoist_start]`` is the
-    surviving driver preamble (model + definitions),
-    ``lines[hoist_end:module_start]`` the builder-scoped declarations +
-    transforms, and ``lines[module_end:]`` the driver tail (interface +
-    loads + patterns + recorders).
-    """
-
-    module_start: int
-    module_end: int
-    modules: "list[tuple[str, int, int]]"
-    hoist_start: int
-    hoist_end: int
-    hoisted: "list[tuple[str, int, int]]"
-
-
-def _split_safe_name(label: str, used: "set[str]") -> str:
-    """Map a compose module label to a collision-free fragment stem.
-
-    Empty (host) label → ``"host"``; any character outside
-    ``[0-9A-Za-z_-]`` (e.g. the nested-compose ``/`` separator) →
-    ``_``; duplicates are disambiguated with a numeric suffix.
-    """
-    base = label if label != "" else "host"
-    safe = re.sub(r"[^0-9A-Za-z_-]", "_", base) or "host"
-    candidate = safe
-    i = 1
-    while candidate in used:
-        candidate = f"{safe}_{i}"
-        i += 1
-    used.add(candidate)
-    return candidate
-
-
-def _write_split_tcl(
-    path: str, lines: "list[str]", layout: "_SplitLayout",
-) -> None:
-    """Write a Tcl driver at ``path`` + ``parts/<label>.tcl`` fragments.
-
-    The driver ``source``s each fragment (relative to its own
-    location, so the deck runs from any cwd) between the definitions
-    preamble and the interface / loads / recorders tail.  Fragments in
-    ``layout.hoisted`` (ADR 0099 S6) are sourced EARLIER — above the
-    builder-scoped declarations — so the gated modules' ``model``
-    re-issues precede every declaration they would otherwise destroy.
-    """
-    out_dir = os.path.dirname(os.path.abspath(path))
-    parts_dir = os.path.join(out_dir, "parts")
-    os.makedirs(parts_dir, exist_ok=True)
-
-    used: set[str] = set()
-
-    def _fragment(label: str, start: int, end: int) -> str:
-        safe = _split_safe_name(label, used)
-        body = lines[start:end]
-        with open(
-            os.path.join(parts_dir, f"{safe}.tcl"), "w", encoding="utf-8",
-        ) as f:
-            f.write(f"# apeGmsh split fragment: {label or 'host'}\n")
-            if body:
-                f.writelines(ln + "\n" for ln in body)
-        return (
-            f"source [file join [file dirname [info script]] "
-            f"parts {safe}.tcl]"
-        )
-
-    hoist_lines = [_fragment(*mod) for mod in layout.hoisted]
-    source_lines = [_fragment(*mod) for mod in layout.modules]
-
-    driver = lines[: layout.hoist_start]
-    if hoist_lines:
-        driver += (
-            ["", "# --- hoisted gated fragments (ADR 0099 INV-1) ---"]
-            + hoist_lines
-            + [""]
-        )
-    driver += (
-        lines[layout.hoist_end: layout.module_start]
-        + ["", "# --- module fragments (ADR 0043 split='parts') ---"]
-        + source_lines
-        + [""]
-        + lines[layout.module_end:]
-    )
-    with open(path, "w", encoding="utf-8") as f:
-        f.writelines(ln + "\n" for ln in driver)
-
-
 def _write_per_rank_tcl(
     path: str, lines: "list[str]", spans: "list[PartitionSpan]",
 ) -> None:
@@ -797,78 +695,6 @@ def _write_per_rank_tcl(
     with open(path, "w", encoding="utf-8") as f:
         f.writelines(ln + "\n" for ln in driver)
 
-
-def _write_split_py(
-    path: str, lines: "list[str]", layout: "_SplitLayout",
-) -> None:
-    """Write a Py driver at ``path`` + ``parts/<label>.py`` fragments.
-
-    Each fragment exposes ``def build(ops): ...``; the driver loads
-    each fragment by explicit file path via ``importlib`` (no
-    ``sys.path`` mutation, no bare-module-name collisions) and calls
-    ``build(ops)`` against the driver's own ``ops`` handle.  Fragments
-    in ``layout.hoisted`` (ADR 0099 S6) are called EARLIER — above the
-    builder-scoped declarations — so the gated modules' ``model``
-    re-issues precede every declaration they would otherwise destroy.
-    """
-    out_dir = os.path.dirname(os.path.abspath(path))
-    parts_dir = os.path.join(out_dir, "parts")
-    os.makedirs(parts_dir, exist_ok=True)
-
-    used: set[str] = set()
-
-    def _fragment(label: str, start: int, end: int) -> str:
-        safe = _split_safe_name(label, used)
-        body = lines[start:end]
-        with open(
-            os.path.join(parts_dir, f"{safe}.py"), "w", encoding="utf-8",
-        ) as f:
-            f.write(f"# apeGmsh split fragment: {label or 'host'}\n")
-            f.write("def build(ops):\n")
-            if body:
-                for ln in body:
-                    f.write(f"    {ln}\n")
-            else:
-                f.write("    pass\n")
-        # Load each fragment by explicit file path (no sys.path
-        # mutation, no bare-module-name collisions) and call its
-        # ``build(ops)`` against the driver's own ops handle.
-        return (
-            f"_apesees_load('_apesees_frag_{safe}', '{safe}.py').build(ops)"
-        )
-
-    hoist_calls = [_fragment(*mod) for mod in layout.hoisted]
-    call_lines = [_fragment(*mod) for mod in layout.modules]
-
-    loader = [
-        "import importlib.util as _ilu, os as _os",
-        "def _apesees_load(_name, _file):",
-        "    _path = _os.path.join(_os.path.dirname("
-        "_os.path.abspath(__file__)), 'parts', _file)",
-        "    _spec = _ilu.spec_from_file_location(_name, _path)",
-        "    _mod = _ilu.module_from_spec(_spec)",
-        "    _spec.loader.exec_module(_mod)",
-        "    return _mod",
-    ]
-    driver = lines[: layout.hoist_start]
-    if hoist_calls:
-        # The loader helper rides the FIRST band that calls a fragment.
-        driver += (
-            ["", "# --- hoisted gated fragments (ADR 0099 INV-1) ---"]
-            + loader
-            + hoist_calls
-            + [""]
-        )
-    driver += (
-        lines[layout.hoist_end: layout.module_start]
-        + ["", "# --- module fragments (ADR 0043 split='parts') ---"]
-        + ([] if hoist_calls else loader)
-        + call_lines
-        + [""]
-        + lines[layout.module_end:]
-    )
-    with open(path, "w", encoding="utf-8") as f:
-        f.writelines(ln + "\n" for ln in driver)
 
 
 # ---------------------------------------------------------------------------
@@ -1147,22 +973,12 @@ class BuiltModel:
             "staged (per-stage patterns) — never both."
         )
 
-    def emit(
-        self, emitter: Emitter, *, split: bool = False,
-    ) -> "int | _SplitLayout":
+    def emit(self, emitter: Emitter) -> int:
         """Drive ``emitter`` over the model, returning ``analyze``'s exit value.
 
         Returns ``0`` if no ``analyze`` was registered (the bridge's
         ``apeSees.analyze`` would have populated one); otherwise the
         last ``analyze`` call's return value.
-
-        When ``split=True`` (ADR 0043 slice 1.1, mode A) the bridge
-        drives the module-grouped :meth:`_emit_split` path instead of
-        the flat / partitioned paths and returns a :class:`_SplitLayout`
-        for the Tcl / Py writers to slice the single buffer into
-        per-module fragments + a driver.  ``split`` is honoured only by
-        the Tcl / Py emit targets; every other path leaves it ``False``
-        and is byte-identical to the pre-0043 behaviour.
 
         Topological order rules:
           1. Materials & sections & time series & transforms come
@@ -1246,7 +1062,7 @@ class BuiltModel:
                 name_to_owner[rec.name] = f"stage {stage.name!r}"
 
         # 2c. ADR 0051 (BL-4): two-mode no-mixing guard.  Runs on every
-        # emit path (flat / split / partitioned) before any primitive is
+        # emit path (flat / partitioned) before any primitive is
         # emitted — a staged model may not also carry a global pattern.
         self._validate_two_mode_no_mixing()
 
@@ -1266,14 +1082,14 @@ class BuiltModel:
         # shared by two elements with disjoint per-node ndf (shell 6 vs
         # solid 3) corrupts OpenSees assembly (FE_Element::setID
         # truncation) and silently loses load.  Runs once here so every
-        # emit path (flat / split / partitioned) is covered before any
+        # emit path (flat / partitioned) is covered before any
         # element is emitted.
         validate_node_ndf_element_compat(self.fem, elements)
 
         # ADR 0054 (AB-5): ASDAbsorbingBoundary2D has no source-side
         # distortion handling — a skewed quad runs with silently wrong
         # dashpot/stiffness terms.  Fail loud here, once, on every emit
-        # path (flat / split / partitioned).
+        # path (flat / partitioned).
         validate_absorbing_quad_geometry(self.fem, elements)
 
         # ADR 0074 (D3 + legality): LadrunoUP shape/perm-dim/stab-on-TH
@@ -1610,8 +1426,7 @@ class BuiltModel:
         # re-issues ``model BasicBuilder``, which deletes the Tcl model
         # builder and purges the process-global timeSeries / geomTransf /
         # beamIntegration / damping registries.  The flat (S2), default
-        # partitioned (S5) and split (S6) paths hoist their gated element
-        # blocks — for split, the gated fragments' ``source`` lines —
+        # partitioned (S5) paths hoist their gated element blocks
         # above those declarations; the remaining paths would emit a deck
         # that dies late — or, for damping, runs to convergence and
         # reports an undamped answer.  Fail loud here, before any
@@ -1620,15 +1435,13 @@ class BuiltModel:
         # ``per_rank`` (ADR 0061) slices the partitioned fan-out into
         # file-per-rank fragments, which puts a FILE boundary where the
         # single-file deck has only a brace — the fix there is the
-        # source-line move S6 gave ``split``, but applied by the
+        # source-line move the flat path got, but applied by the
         # post-emit span writer, which cannot reorder recorded spans
         # yet — so it keeps the refusal and carries its own path token.
         # It is invisible to the emit call (``tcl`` applies it after /
         # around this), hence the emitter attribute — the same seam
         # ``supports_partitions`` uses.
-        if split:
-            _scope_path = "split"
-        elif is_partitioned(self.fem) and getattr(
+        if is_partitioned(self.fem) and getattr(
             emitter, "supports_partitions", True,
         ):
             _scope_path = (
@@ -1660,25 +1473,8 @@ class BuiltModel:
         # (``tag_plan.plan_of``).  The mode matches the dispatch below.
         emitter_can_partition = getattr(emitter, "supports_partitions", True)
         plan = self._tag_plan(emit_mode(
-            self, split=split, supports_partitions=emitter_can_partition))
+            self, split=False, supports_partitions=emitter_can_partition))
         tags = plan.emit_allocator()
-
-        # ADR 0043 slice 1.1: split (mode A) dispatch.  Routed before
-        # the partitioned branch so the split guards (which fail loud
-        # on partitioned / staged / initial_stress / non-composed
-        # models) own the decision.  The single-file paths below are
-        # untouched when ``split`` is ``False``.
-        if split:
-            return self._emit_split(
-                emitter=emitter,
-                tags=tags,
-                transforms=transforms,
-                elements=elements,
-                inferred_ndf=effective_ndf,
-                pre_element=pre_element,
-                post_element=post_element,
-                base_resolver=_base_resolver,
-            )
 
         # ADR 0027: partitioned vs unpartitioned branch.  The
         # unpartitioned path must be **byte-identical** to the pre-ADR
@@ -2112,511 +1908,6 @@ class BuiltModel:
                     if transf_replay_log is not None else None
                 ),
             )
-
-    # -- Split (mode A, ADR 0043 slice 1.1) emit path ---------------------
-
-    def _emit_split(
-        self,
-        *,
-        emitter: Emitter,
-        tags: TagAllocator,
-        transforms: "list[GeomTransf]",
-        elements: "list[Element]",
-        inferred_ndf: "dict[int, int]",
-        pre_element: "list[Primitive]",
-        post_element: "list[Primitive]",
-        base_resolver: object,
-    ) -> "_SplitLayout":
-        """Module-grouped emit for ``split="parts"`` (ADR 0043 mode A).
-
-        Drives a single ``emitter`` in three bands:
-
-        * **driver-pre** — definitions (materials / sections / time
-          series / beamIntegration) + the analysis chain + the
-          ``geomTransf`` fan-out.  Module-agnostic; lands in the driver.
-        * **per module** — for each composed module label, that
-          module's ``node`` + ``element`` + ``mass`` + intra-part
-          ``fix`` lines, emitted contiguously.  The ``[start, end)``
-          line span is recorded so the writer carves the fragment file.
-        * **driver-post** — regions, broker loads, the cross-module
-          MP-constraint interface, the auto constraint handler, then
-          patterns + recorders.  All land in the driver.
-
-        ADR 0099 S6: when a module owns a gated element that brackets
-        under this envelope AND the deck carries a builder-scoped
-        declaration, driver-pre splits in two — the surviving
-        definitions, then a HOISTED band of the gated modules'
-        fragments, then the builder-scoped declarations + the
-        ``geomTransf`` fan-out.  The hoist moves each gated fragment's
-        ``source`` line, not its element lines: the fragment carries
-        its nodes along unchanged.  Only a module owning BOTH a gated
-        and a builder-scoped-dependent element emits as two ordered
-        fragments (``<m>_gated`` / ``<m>_rest``).  With either gate
-        open the emitted deck does not move a byte.
-
-        Returns the :class:`_SplitLayout` describing the contiguous
-        module band + each module's sub-span (and the hoisted band).
-
-        Fail-loud for slice-1.1 out-of-scope models (partitioned,
-        staged, ``initial_stress``, non-composed): the split seam is a
-        single-Domain, single-pass, write-only export that does not
-        compose with those axes yet.
-        """
-        from .emitter.tcl import TclEmitter
-        from .emitter.py import PyEmitter
-        if not isinstance(emitter, (TclEmitter, PyEmitter)):
-            raise BridgeError(
-                "split='parts': emitter must be a buffered emitter "
-                "(TclEmitter or PyEmitter) — only buffered emitters "
-                "support the split line-span protocol."
-            )
-        if is_partitioned(self.fem):
-            raise BridgeError(
-                "split='parts' does not support partitioned models "
-                "(ADR 0043 slice 1.1).  Partition emit (ADR 0027) is an "
-                "orthogonal split axis; emit the single-file deck instead."
-            )
-        if self.stage_records:
-            raise BridgeError(
-                "split='parts' does not support staged models "
-                "(ADR 0043 slice 1.1).  Emit the single-file deck instead."
-            )
-        if self.initial_stress_records:
-            raise BridgeError(
-                "split='parts' does not support initial_stress models "
-                "(ADR 0043 slice 1.1).  Emit the single-file deck instead."
-            )
-
-        node_label_arr = self.fem.nodes.module_label
-        elem_label_by_id = self.fem.elements.module_label_by_id()
-        if node_label_arr is None or elem_label_by_id is None:
-            raise BridgeError(
-                "split='parts' requires a composed model (g.compose); "
-                "this model carries no per-row module labels.  Emit the "
-                "single-file deck instead."
-            )
-
-        nid_to_label: dict[int, str] = {
-            int(nid): str(lbl)
-            for nid, lbl in zip(self.fem.nodes.ids, node_label_arr)
-        }
-        present = set(nid_to_label.values()) | set(elem_label_by_id.values())
-        if not any(lbl != "" for lbl in present):
-            raise BridgeError(
-                "split='parts' requires a composed model with at least "
-                "one composed source module; every row is host-owned "
-                "(empty label).  Emit the single-file deck instead."
-            )
-
-        # Host ("") first, then composed sources alphabetically — a
-        # deterministic source order, stable across runs.
-        ordered_labels = sorted(present, key=lambda s: (s != "", s))
-
-        # Element tags are allocated before any line is emitted so the
-        # ADR 0099 hoist below has a plan — the same move ``_emit_flat``
-        # made for S2.  TagAllocator is per-kind, so the element /
-        # geomTransf counters are unaffected by allocating ahead of the
-        # transform fan-out, and allocation itself emits nothing: an
-        # unhoisted deck does not move a byte.
-        element_plan = _planned_element_specs(tags, elements)
-        # ADR 0065 v2 B3: columnar tag map off the plan (no boxed dict).
-        fem_eid_to_ops_tag = FemToOpsTagMap.from_plan(element_plan)
-
-        # Fail loud if any element's module label disagrees with its
-        # connectivity nodes' module (red/blue review, Finding B).  A
-        # silent host-default ('') for an element whose nodes live in a
-        # composed module would route that element into the ``host``
-        # fragment — emitted FIRST — referencing nodes not yet defined
-        # (they live in a later fragment), producing a deck that fails
-        # to load.  ``g.compose`` never produces cross-module element
-        # connectivity (every module is offset into a disjoint tag
-        # namespace), so this guards against partial / inconsistent
-        # module-label metadata, not normal composed models.
-        for _spec, sub in element_plan:
-            for eid, conn, _ele_tag in sub:
-                node_labels = {
-                    nid_to_label[int(n)]
-                    for n in conn
-                    if int(n) in nid_to_label
-                }
-                if len(node_labels) > 1:
-                    raise BridgeError(
-                        f"split='parts': element fem_eid={eid} spans "
-                        f"modules {sorted(node_labels)} through its "
-                        "connectivity. Every element's nodes must belong "
-                        "to one module; cross-module coupling must go "
-                        "through interface constraints, not shared "
-                        "element connectivity."
-                    )
-                elem_label = elem_label_by_id.get(int(eid), "")
-                if node_labels and elem_label not in node_labels:
-                    owner = next(iter(node_labels))
-                    raise BridgeError(
-                        f"split='parts': element fem_eid={eid} carries "
-                        f"module label {elem_label!r} but its nodes "
-                        f"belong to module {owner!r} (inconsistent / "
-                        "partial compose metadata). Refusing to emit a "
-                        "fragment that would reference undefined nodes."
-                    )
-
-        # -- ADR 0099 S6 (INV-1) — plan the hoisted gated fragments. ------
-        # A gated element block is wrapped in a ``model BasicBuilder``
-        # re-issue (:func:`open_builder_ndf_bracket`), and that re-issue
-        # purges the process-global timeSeries / geomTransf /
-        # beamIntegration / damping registries.  Split emit is
-        # file-per-module, so the hoist moves each gated module's
-        # ``source`` line above those declarations — the fragment
-        # carries its nodes along unchanged.  Only a module that ALSO
-        # owns a builder-scoped-DEPENDENT element (a frame referencing a
-        # geomTransf / beamIntegration declared driver-side, below the
-        # hoist point) cannot move wholesale; it emits as two ordered
-        # fragments instead (``<m>_gated`` with the nodes + gated
-        # blocks, ``<m>_rest`` with everything else) — the shape ADR
-        # 0061's per-rank writer already produces.
-        #
-        # Both gates matter.  With no builder-scoped declaration INV-1
-        # holds vacuously, and with no gated module no bracket ever
-        # fires; in either case hoisting is pure churn, so the deck (and
-        # every fragment) keeps the shape it had, byte for byte.  The
-        # scoped gate counts ``transforms`` alongside ``pre_element``:
-        # the geomTransf fan-out is itself a builder-scoped declaration
-        # pass, emitted driver-side below the hoist point.
-        pre_scoped: list[Primitive] = [
-            p for p in pre_element if is_builder_scoped(p)
-        ]
-        gated_spec_ids = {
-            id(spec) for spec, _sub in element_plan
-            if needs_builder_ndf_bracket(
-                spec, ndm=self.ndm, envelope_ndf=self.ndf)
-        }
-        # INV-2: dependence on a builder-scoped declaration is
-        # recognised through the one table (``builder_scoped_kind``
-        # over ``dependencies()``), never a second kind list.  A spec
-        # cannot be in BOTH sets — the INV-3 guard in
-        # ``validate_builder_scope_ordering`` refused that at emit entry.
-        dependent_spec_ids = {
-            id(spec) for spec, _sub in element_plan
-            if any(builder_scoped_kind(d) is not None
-                   for d in spec.dependencies())
-        }
-        gated_labels: set[str] = set()
-        dependent_labels: set[str] = set()
-        for spec, sub in element_plan:
-            sid = id(spec)
-            if sid not in gated_spec_ids and sid not in dependent_spec_ids:
-                continue
-            owners = {elem_label_by_id.get(int(row[0]), "") for row in sub}
-            if sid in gated_spec_ids:
-                gated_labels |= owners
-            else:
-                dependent_labels |= owners
-        if not (pre_scoped or transforms):
-            gated_labels = set()   # nothing to protect — hoist off.
-        if not gated_labels:
-            pre_scoped = []        # hoist off: one topo-ordered pass.
-
-        # -- driver-pre: definitions + analysis chain (no nodes —
-        #    nodes are per-module).  Mirrors _emit_flat step 4a; staged
-        #    skip is unreachable here (gated out above).  ADR 0092 S5
-        #    open item: hoist the constraint-handler auto-emit before a
-        #    user-declared ``analysis`` directive (see _emit_flat 4a).
-        #    ADR 0099 S6 (INV-1): when the hoist is on, this pass emits
-        #    only the declarations that SURVIVE a ``model BasicBuilder``
-        #    re-issue; the builder-scoped ones are held back below the
-        #    hoisted band.  Topo order is preserved within each pass,
-        #    and ``pre_scoped`` is empty (so this IS ``pre_element``)
-        #    whenever the hoist is off.
-        pre_survives: list[Primitive] = (
-            [p for p in pre_element if not is_builder_scoped(p)]
-            if pre_scoped else list(pre_element)
-        )
-        chain_auto_emitted = False
-        for p in pre_survives:
-            if not chain_auto_emitted and isinstance(p, Analysis):
-                self._maybe_auto_emit_constraint_handler(
-                    emitter, pre_element)
-                chain_auto_emitted = True
-            p._emit(emitter, self.tag_for[id(p)])
-
-        node_idx = node_index_lookup(self.fem.nodes.ids)  # ADR 0100 D3
-
-        def _emit_module_nodes(label: str) -> set[int]:
-            owned = {
-                nid for nid, lbl in nid_to_label.items() if lbl == label
-            }
-            # Nodes — FEM-id order for a grep-friendly, stable fragment.
-            for nid in sorted(owned):
-                xyz = self.fem.nodes.coords[node_idx[nid]]
-                _emit_node_with_inferred_ndf(
-                    emitter, inferred_ndf, int(nid),
-                    (float(xyz[0]), float(xyz[1]), float(xyz[2])),
-                    self.ndf,
-                )
-            return owned
-
-        # -- ADR 0099 S6 hoisted band: the gated modules' fragments, in
-        #    band order, sourced ABOVE every builder-scoped declaration.
-        #    A gated parser takes an nDMaterial and nothing else (INV-3
-        #    guards that at emit entry), and nDMaterial survives the
-        #    re-issue, so nothing a hoisted fragment needs has been held
-        #    back.  ``overrides`` is None here by construction: an
-        #    element that consumes a transform override carries a
-        #    GeomTransf dependency, is therefore builder-scoped-
-        #    dependent, and lands in the ``_rest`` fragment below —
-        #    after the fan-out has run.
-        hoist_start = emitter.line_count()
-        hoisted: list[tuple[str, int, int]] = []
-        hoisted_whole: set[str] = set()
-        two_fragment: set[str] = set()
-        for label in ordered_labels:
-            if label not in gated_labels:
-                continue
-            span_start = emitter.line_count()
-            owned_nodes = _emit_module_nodes(label)
-            if label in dependent_labels:
-                # The genuine boundary (ADR 0099 §"How the two deferred
-                # paths should actually be fixed"): this module carries
-                # both.  ``<m>_gated`` takes the nodes + the gated
-                # blocks; ``<m>_rest`` (in the band below) takes the
-                # rest, running after the declarations — and after this
-                # fragment, so its elements never forward-reference a
-                # node.
-                two_fragment.add(label)
-                self._emit_element_subset(
-                    emitter,
-                    element_plan=[
-                        (s, sub) for s, sub in element_plan
-                        if id(s) in gated_spec_ids
-                    ],
-                    eid_label=elem_label_by_id,
-                    label=label,
-                    overrides=None,
-                    base_resolver=base_resolver,
-                )
-                hoisted.append(
-                    ((label or "host") + "_gated",
-                     span_start, emitter.line_count()),
-                )
-            else:
-                # Whole-module hoist: the fragment is EXACTLY what the
-                # band below would have emitted — only its ``source``
-                # line moves.
-                hoisted_whole.add(label)
-                self._emit_element_subset(
-                    emitter,
-                    element_plan=element_plan,
-                    eid_label=elem_label_by_id,
-                    label=label,
-                    overrides=None,
-                    base_resolver=base_resolver,
-                )
-                self._emit_fixes_partitioned(
-                    emitter, owned_nodes, inferred_ndf)
-                self._emit_masses_partitioned(
-                    emitter, owned_nodes, inferred_ndf)
-                hoisted.append((label, span_start, emitter.line_count()))
-        hoist_end = emitter.line_count()
-
-        # -- Builder-scoped declarations + geomTransf fan-out.  Safe
-        #    from here down: no fragment sourced below re-issues
-        #    ``model`` (every bracketing module sits above, whole or as
-        #    its ``_gated`` half).
-        for p in pre_scoped:
-            p._emit(emitter, self.tag_for[id(p)])
-
-        overrides = emit_transform_specs(
-            transforms=transforms,
-            elements=elements,
-            emitter=emitter,
-            fem=self.fem,
-            tags=tags,
-            spec_to_own_tag=self.tag_for,
-            ndm=self.ndm,
-        )
-
-        # -- per-module band.
-        module_start = emitter.line_count()
-        modules: list[tuple[str, int, int]] = []
-        for label in ordered_labels:
-            if label in hoisted_whole:
-                continue
-            span_start = emitter.line_count()
-            if label in two_fragment:
-                # ``<m>_rest``: the nodes already rode ``<m>_gated``
-                # (sourced above), so this fragment holds only the
-                # remaining elements + fix + mass.
-                self._emit_element_subset(
-                    emitter,
-                    element_plan=[
-                        (s, sub) for s, sub in element_plan
-                        if id(s) not in gated_spec_ids
-                    ],
-                    eid_label=elem_label_by_id,
-                    label=label,
-                    overrides=overrides,
-                    base_resolver=base_resolver,
-                )
-                owned_nodes = {
-                    nid for nid, lbl in nid_to_label.items()
-                    if lbl == label
-                }
-            else:
-                owned_nodes = _emit_module_nodes(label)
-                # Elements owned by this module.
-                self._emit_element_subset(
-                    emitter,
-                    element_plan=element_plan,
-                    eid_label=elem_label_by_id,
-                    label=label,
-                    overrides=overrides,
-                    base_resolver=base_resolver,
-                )
-            # Intra-part fix + mass (reuse the owned-node-set filter).
-            self._emit_fixes_partitioned(emitter, owned_nodes, inferred_ndf)
-            self._emit_masses_partitioned(emitter, owned_nodes, inferred_ndf)
-            modules.append(
-                ((label or "host") + "_rest" if label in two_fragment
-                 else label,
-                 span_start, emitter.line_count()),
-            )
-        module_end = emitter.line_count()
-
-        # -- driver-post: regions, interface, patterns, recorders.
-        # ADR 0051: no broker-loads auto-emit — loads ride from_model.
-        self._emit_regions(emitter, tags)
-        self._emit_rayleigh(emitter, tags, fem_eid_to_ops_tag)
-        self._emit_damping_attach(emitter, tags, fem_eid_to_ops_tag)
-        self._emit_modal_damping(emitter)
-        emit_mp_constraints(
-            emitter, self.fem, tags,
-            claimed_ids=frozenset(self._claimed_constraint_ids()),
-            fem_eid_to_ops_tag=fem_eid_to_ops_tag,
-            stiffness_resolver=self._auto_stiffness_resolver(),
-        )
-        emit_equation_constraints(
-            emitter, self.fem, self.equation_constraint_records,
-            node_ndf=inferred_ndf, default_ndf=self.ndf,
-        )
-        emit_reinforce_ties(
-            emitter, self.fem, tags, name_to_tag=self.name_to_tag,
-        )
-        # Node-to-host embedment ties (g.embed). One LadrunoEmbeddedNode
-        # per constrained node; no material-name resolution needed.
-        emit_embed_ties(emitter, self.fem, tags)
-        # Face-to-face contact (g.constraints.contact). contactSurface pairs
-        # + the contact verb; the LadrunoContact handler is forced by the
-        # constraint-handler auto-emit below.
-        emit_contacts(emitter, self.fem, tags, ndm=self.ndm)
-        emit_contact_planes(emitter, self.fem, tags)
-        # Oriented coincident-pair zeroLength interfaces
-        # (g.constraints.interface, ADR 0093 D5) — same position as the
-        # flat path.  An interface is cross-module by construction (it
-        # couples a composed module to its host), so like the MP
-        # constraints above it belongs in driver-post, after every
-        # fragment has declared its nodes.  ``claimed_ids`` is empty here
-        # by the staged guard at the top of this method; it is passed so
-        # the two paths cannot drift if that guard is ever lifted.
-        emit_interfaces(
-            emitter, self.fem, tags,
-            effective_ndf=inferred_ndf,
-            envelope_ndf=self.ndf,
-            ndm=self.ndm,
-            claimed_ids=frozenset(self._claimed_interface_ids()),
-        )
-        emit_rebar_elements(
-            emitter, self.fem, tags, name_to_tag=self.name_to_tag,
-        )
-        # Skipped when already hoisted before a user ``analysis`` line
-        # (ADR 0092 S5 open item — see driver-pre above).
-        if not chain_auto_emitted:
-            self._maybe_auto_emit_constraint_handler(emitter, pre_element)
-
-        claimed_recorder_ids = self._claimed_recorder_ids()
-        for p in post_element:
-            tag = self.tag_for[id(p)]
-            if isinstance(p, Pattern):
-                emit_pattern_spec(
-                    p, emitter, tag, self.fem, self.ndf, self.ndm,
-                    effective_ndf=inferred_ndf,
-                )
-            elif isinstance(p, Recorder):
-                if id(p) in claimed_recorder_ids:
-                    continue
-                emit_recorder_spec(
-                    p, emitter, tag, self.fem,
-                    tags=tags,
-                    fem_eid_to_ops_tag=fem_eid_to_ops_tag,
-                )
-
-        return _SplitLayout(
-            module_start=module_start,
-            module_end=module_end,
-            modules=modules,
-            hoist_start=hoist_start,
-            hoist_end=hoist_end,
-            hoisted=hoisted,
-        )
-
-    def _emit_element_subset(
-        self,
-        emitter: Emitter,
-        *,
-        element_plan: "list[tuple[Element, ElementPlanRows]]",
-        eid_label: "dict[int, str]",
-        label: str,
-        overrides: "dict[tuple[int, int], int] | None",
-        base_resolver: object,
-    ) -> None:
-        """Emit ``element`` lines for elements owned by ``label``.
-
-        Factored from the :meth:`_emit_flat` element loop so the split
-        path reuses the exact orientation-override resolver dance
-        (ADR 0010) without duplicating it.
-        """
-        for spec, sub in element_plan:
-            transf_spec = _build_element_transf(spec)
-            rows = [
-                row for row in sub
-                if eid_label.get(int(row[0]), "") == label
-            ]
-            if not rows:
-                continue
-            # Builder-ndf bracket for gated upstream parsers (quad/tri6n)
-            # under a mixed-ndf envelope — see open_builder_ndf_bracket.
-            bracketed = open_builder_ndf_bracket(
-                emitter, spec, ndm=self.ndm, envelope_ndf=self.ndf)
-            for eid, node_tags, ele_tag in rows:
-                set_element_nodes(emitter, node_tags)
-                set_current_fem_element_id(emitter, eid)
-                if (
-                    transf_spec is not None
-                    and overrides is not None
-                    and (id(transf_spec), eid) in overrides
-                ):
-                    override_tag = overrides[(id(transf_spec), eid)]
-                    base = base_resolver
-                    override = transf_spec
-
-                    def _resolver_with_override(
-                        p: Primitive,
-                        _base: object = base,
-                        _override_spec: Primitive = override,
-                        _override_tag: int = override_tag,
-                    ) -> int:
-                        if p is _override_spec:
-                            return _override_tag
-                        return int(_base(p))  # type: ignore[operator]
-
-                    set_tag_resolver(emitter, _resolver_with_override)
-                    try:
-                        spec._emit(emitter, ele_tag)
-                    finally:
-                        set_tag_resolver(emitter, base_resolver)  # type: ignore[arg-type]
-                else:
-                    spec._emit(emitter, ele_tag)
-            if bracketed:
-                close_builder_ndf_bracket(
-                    emitter, ndm=self.ndm, envelope_ndf=self.ndf)
 
     def _emit_stages_flat(
         self,
@@ -5875,8 +5166,6 @@ class BuiltModel:
         **primary-owned** node set (each node on exactly one rank; see
         :func:`primary_owner_map`), not the full per-rank node set, or
         shared interface nodes carry their mass once per owning rank.
-        (The composed ``split='parts'`` caller passes module-exclusive
-        sets, which are primary by construction.)
         """
         eff = inferred_ndf or {}
         for rec in self.mass_records:
@@ -7253,7 +6542,7 @@ class BuiltModel:
         The order each emit path wrote its region tags in before the tag
         plan (ADR 0114 D4, amended), which the plan keeps:
 
-        * flat and split: the global named regions, the global
+        * flat: the global named regions, the global
           region-scoped Rayleigh, the global damping attaches, then the
           global pass's filtered recorders (``ordered``'s order, the
           stage-claimed ones skipped);
@@ -9638,7 +8927,6 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
         bin: str | None = None,
         analyze_steps: int | None = None,
         analyze_dt: float | None = None,
-        split: bool = False,
         per_rank: bool = False,
         flat: bool = False,
         stream: bool = False,
@@ -9673,16 +8961,6 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
         SSI-1).  Without ``analyze_steps``, the emitted deck declares
         the model but does not drive an analysis.
 
-        ``split=True`` (ADR 0043 slice 1.1, mode A) writes a driver
-        deck at ``path`` plus one ``parts/<module>.tcl`` fragment per
-        composed module (``g.compose``); the driver ``source``s each
-        fragment.  The split is canonical — by compose module, no
-        free-form carve — and changes only the on-disk layout: the
-        default ``split=False`` writes the single self-contained deck,
-        byte-identical to the pre-0043 output.  Requires a composed
-        model; partitioned / staged / ``initial_stress`` models are not
-        supported under ``split``.
-
         ``per_rank=True`` (ADR 0061) writes a driver deck at ``path``
         plus one ``ranks/rank<K>_<seq>.tcl`` fragment per
         ``if {[getPID] == K} { ... }`` block; the driver guards each
@@ -9690,8 +8968,7 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
         only the driver plus its own fragments — O(global + model/np)
         instead of O(model) per rank.  Layout-only: the deck semantics
         (including the single-process rank-0 fallback) are unchanged.
-        Requires a partitioned model (``len(fem.partitions) > 1``);
-        mutually exclusive with ``split``.
+        Requires a partitioned model (``len(fem.partitions) > 1``).
 
         ``flat=True`` forces the single-domain (serial) emit even when
         the model carries partitions — e.g. a composed model, which is
@@ -9703,7 +8980,7 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
         (``g.embed`` ties; fork contact before ADR 0092 S4 landed
         partitioned emit, and still the escape hatch for the contact
         cases the partitioned path refuses) on a composed model.
-        Mutually exclusive with ``per_rank`` and ``split``; a no-op on
+        Mutually exclusive with ``per_rank``; a no-op on
         an already-unpartitioned model.
 
         ``stream=True`` (ADR 0065 Tier 2 / plan_emit_memory_columnar.md
@@ -9714,38 +8991,16 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
         files are live-routed (``partition_open`` switches the sink)
         rather than sliced post-hoc. Everything goes to ``.tmp``
         siblings promoted atomically on clean completion — a mid-emit
-        exception never leaves a half-written deck. Not supported with
-        ``split=True`` (v1).
+        exception never leaves a half-written deck.
         """
         from .emitter.tcl import TclEmitter
 
-        if split and per_rank:
-            raise ValueError(
-                "apeSees.tcl: split=True and per_rank=True are mutually "
-                "exclusive — split carves by compose module (ADR 0043), "
-                "per_rank by partition rank (ADR 0061)."
-            )
-        if split and stream:
-            raise ValueError(
-                "apeSees.tcl: stream=True and split=True are not "
-                "supported together (v1) — the split writer slices the "
-                "accumulated module spans out of the line buffer, which "
-                "stream mode never builds (ADR 0065 Tier 2). Drop one "
-                "of the two flags."
-            )
         if flat and per_rank:
             raise ValueError(
                 "apeSees.tcl: flat=True and per_rank=True are mutually "
                 "exclusive — flat forces the single-domain (serial) "
                 "emit; per_rank splits the partitioned fan-out "
                 "(ADR 0061). Drop one of the two flags."
-            )
-        if flat and split:
-            raise ValueError(
-                "apeSees.tcl: flat=True and split=True are not "
-                "supported together — split drives the module-fragment "
-                "path (ADR 0043), which bypasses the flat/partitioned "
-                "branch. Drop one of the two flags."
             )
         bm = self.build()
         emitter = TclEmitter()
@@ -9765,74 +9020,64 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
             # path.
             emitter.supports_partitions = False  # type: ignore[attr-defined]
         pre_prof, post_prof = self._split_profiler_records()
-        if not split:
-            if stream:
-                # ADR 0065 Tier 2: write-through sink; per-rank
-                # fragment files are live-routed by
-                # partition_open/partition_close.
-                emitter.stream_to(path, per_rank=per_rank)
-            try:
-                bm.emit(emitter)
-                for _verb, _vargs in pre_prof:
-                    emitter.profiler(_verb, *_vargs)
-                if analyze_steps is not None:
-                    emitter.analyze(steps=int(analyze_steps), dt=analyze_dt)
-                for _verb, _vargs in post_prof:
-                    emitter.profiler(_verb, *_vargs)
-                if stream and per_rank and (
-                    emitter.stream_fragment_count() == 0
-                ):
-                    raise ValueError(
-                        "apeSees.tcl: per_rank=True requires a "
-                        "partitioned model (len(fem.partitions) > 1) — "
-                        "the emitted deck has no per-rank blocks to "
-                        "split out. Partition the mesh "
-                        "(g.mesh.partitioning) or drop per_rank."
-                    )
-                if stream:
-                    # Promotion runs INSIDE the guarded region (review
-                    # hardening): a failing os.replace mid-promotion
-                    # (Windows file lock / antivirus) routes to
-                    # stream_abort below, which removes every remaining
-                    # .tmp. Fragments already promoted by the partial
-                    # loop stay in place — the driver is promoted LAST,
-                    # so no deck entry point exists until everything it
-                    # sources does; a clean re-run overwrites the
-                    # leftovers via os.replace.
-                    emitter.stream_finish()
-            except BaseException:
-                if stream:
-                    # Leave no half-written deck: remove every .tmp
-                    # (final paths are only ever created by a COMPLETE
-                    # promotion pass, except fragments promoted before
-                    # a mid-promotion failure — see stream_finish;
-                    # ADR 0065 Tier 2 Decision §4).
-                    emitter.stream_abort()
-                raise
-            if not stream and per_rank:
-                spans = emitter.partition_spans()
-                if not spans:
-                    raise ValueError(
-                        "apeSees.tcl: per_rank=True requires a "
-                        "partitioned model (len(fem.partitions) > 1) — "
-                        "the emitted deck has no per-rank blocks to "
-                        "split out. Partition the mesh "
-                        "(g.mesh.partitioning) or drop per_rank."
-                    )
-                # line_buffer(): read-only, no deck-sized copy (ADR 0065 A0).
-                _write_per_rank_tcl(path, emitter.line_buffer(), spans)
-            elif not stream:
-                with open(path, "w", encoding="utf-8") as f:
-                    emitter.write_to(f)
-        else:
-            layout = bm.emit(emitter, split=True)
+        if stream:
+            # ADR 0065 Tier 2: write-through sink; per-rank
+            # fragment files are live-routed by
+            # partition_open/partition_close.
+            emitter.stream_to(path, per_rank=per_rank)
+        try:
+            bm.emit(emitter)
             for _verb, _vargs in pre_prof:
                 emitter.profiler(_verb, *_vargs)
             if analyze_steps is not None:
                 emitter.analyze(steps=int(analyze_steps), dt=analyze_dt)
             for _verb, _vargs in post_prof:
                 emitter.profiler(_verb, *_vargs)
-            _write_split_tcl(path, emitter.line_buffer(), layout)  # type: ignore[arg-type]
+            if stream and per_rank and (
+                emitter.stream_fragment_count() == 0
+            ):
+                raise ValueError(
+                    "apeSees.tcl: per_rank=True requires a "
+                    "partitioned model (len(fem.partitions) > 1) — "
+                    "the emitted deck has no per-rank blocks to "
+                    "split out. Partition the mesh "
+                    "(g.mesh.partitioning) or drop per_rank."
+                )
+            if stream:
+                # Promotion runs INSIDE the guarded region (review
+                # hardening): a failing os.replace mid-promotion
+                # (Windows file lock / antivirus) routes to
+                # stream_abort below, which removes every remaining
+                # .tmp. Fragments already promoted by the partial
+                # loop stay in place — the driver is promoted LAST,
+                # so no deck entry point exists until everything it
+                # sources does; a clean re-run overwrites the
+                # leftovers via os.replace.
+                emitter.stream_finish()
+        except BaseException:
+            if stream:
+                # Leave no half-written deck: remove every .tmp
+                # (final paths are only ever created by a COMPLETE
+                # promotion pass, except fragments promoted before
+                # a mid-promotion failure — see stream_finish;
+                # ADR 0065 Tier 2 Decision §4).
+                emitter.stream_abort()
+            raise
+        if not stream and per_rank:
+            spans = emitter.partition_spans()
+            if not spans:
+                raise ValueError(
+                    "apeSees.tcl: per_rank=True requires a "
+                    "partitioned model (len(fem.partitions) > 1) — "
+                    "the emitted deck has no per-rank blocks to "
+                    "split out. Partition the mesh "
+                    "(g.mesh.partitioning) or drop per_rank."
+                )
+            # line_buffer(): read-only, no deck-sized copy (ADR 0065 A0).
+            _write_per_rank_tcl(path, emitter.line_buffer(), spans)
+        elif not stream:
+            with open(path, "w", encoding="utf-8") as f:
+                emitter.write_to(f)
 
         if not run:
             return None
@@ -10226,10 +9471,10 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
         #
         # CONTRACT (ADR 0092 review, F6): this seam is honored ONLY by
         # the partitioned emit path — `_emit_partitioned` reads it; the
-        # flat/split auto-emit sites never consult it. That is sound
+        # flat auto-emit sites never consult it. That is sound
         # here because this deck REQUIRES len(partitions) > 1 (guarded
         # above), so the flat lane is unreachable. Any future producer
-        # that can reach `_emit_flat` / `_emit_split` must first wire
+        # that can reach `_emit_flat` must first wire
         # the flag through those sites' `_maybe_auto_emit_*` calls, or
         # the suppression will silently not happen there.
         emitter.suppress_analysis_chain_auto_emit = True  # type: ignore[attr-defined]
@@ -10276,7 +9521,6 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
         run: bool = False,
         analyze_steps: int | None = None,
         analyze_dt: float | None = None,
-        split: bool = False,
         python: str | None = None,
         stream: bool = False,
         verbose: bool = False,
@@ -10296,14 +9540,6 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
         ``analyze_steps`` / ``analyze_dt`` semantics mirror :meth:`tcl`
         (Phase SSI-1).
 
-        ``split=True`` (ADR 0043 slice 1.1, mode A) writes a driver
-        script at ``path`` plus one ``parts/<module>.py`` fragment per
-        composed module; each fragment exposes ``def build(ops): ...``
-        and the driver loads + calls them.  The default ``split=False``
-        writes the single self-contained script, byte-identical to the
-        pre-0043 output.  Same composed-model requirement as
-        :meth:`tcl`.
-
         ``stream=True`` is out of scope for the Python deck emitter
         (v1) and fails loud — the HPC path is Tcl (ADR 0065 Tier 2 /
         plan_emit_memory_columnar.md A1–A3); use
@@ -10322,25 +9558,15 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
         emitter = PyEmitter()
         emitter._emit_progress = bool(progress)
         pre_prof, post_prof = self._split_profiler_records()
-        if not split:
-            bm.emit(emitter)
-            for _verb, _vargs in pre_prof:
-                emitter.profiler(_verb, *_vargs)
-            if analyze_steps is not None:
-                emitter.analyze(steps=int(analyze_steps), dt=analyze_dt)
-            for _verb, _vargs in post_prof:
-                emitter.profiler(_verb, *_vargs)
-            with open(path, "w", encoding="utf-8") as f:
-                emitter.write_to(f)
-        else:
-            layout = bm.emit(emitter, split=True)
-            for _verb, _vargs in pre_prof:
-                emitter.profiler(_verb, *_vargs)
-            if analyze_steps is not None:
-                emitter.analyze(steps=int(analyze_steps), dt=analyze_dt)
-            for _verb, _vargs in post_prof:
-                emitter.profiler(_verb, *_vargs)
-            _write_split_py(path, emitter.line_buffer(), layout)  # type: ignore[arg-type]
+        bm.emit(emitter)
+        for _verb, _vargs in pre_prof:
+            emitter.profiler(_verb, *_vargs)
+        if analyze_steps is not None:
+            emitter.analyze(steps=int(analyze_steps), dt=analyze_dt)
+        for _verb, _vargs in post_prof:
+            emitter.profiler(_verb, *_vargs)
+        with open(path, "w", encoding="utf-8") as f:
+            emitter.write_to(f)
 
         if not run:
             return None

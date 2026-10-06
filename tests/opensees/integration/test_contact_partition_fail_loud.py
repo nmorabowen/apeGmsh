@@ -241,11 +241,9 @@ def test_flat_emits_composed_contact_model(tmp_path):
     _assert_serial_contact_deck(deck)
 
 
-def test_flat_conflicts_with_per_rank_and_split(tmp_path):
+def test_flat_conflicts_with_per_rank(tmp_path):
     fem = _contact_fem_partitioned()
     ops = apeSees(fem)
     ops.model(ndm=3, ndf=3)
     with pytest.raises(ValueError, match="flat=True and per_rank=True"):
         ops.tcl(str(tmp_path / "x.tcl"), flat=True, per_rank=True)
-    with pytest.raises(ValueError, match="flat=True and split=True"):
-        ops.tcl(str(tmp_path / "x.tcl"), flat=True, split=True)

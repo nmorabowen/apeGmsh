@@ -920,16 +920,16 @@ Flat emit / run verbs (each builds internally):
 
 ```
 ops.build() -> BuiltModel
-ops.tcl(path, *, run=False, bin=None, analyze_steps=None, analyze_dt=None, split=False, per_rank=False, stream=False)
-ops.py(path,  *, run=False, analyze_steps=None, analyze_dt=None, split=False)
+ops.tcl(path, *, run=False, bin=None, analyze_steps=None, analyze_dt=None, per_rank=False, stream=False)
+ops.py(path,  *, run=False, analyze_steps=None, analyze_dt=None)
 ops.h5(path,  *, model_name=None, cuts=(), sweeps=())     # writes BOTH neutral + /opensees zones
 ops.run(*, wipe=True)                                     # in-process LiveOpsEmitter; no analyze
 ops.analyze(*, steps, dt=None) -> int
 # per_rank=True (ADR 0061): partitioned model only → driver + ranks/rank<K>_<seq>.tcl
-# fragments (each rank parses only its own); mutually exclusive with split=True.
+# fragments (each rank parses only its own).
 # stream=True (ADR 0065 Tier 2): write-through file sink — peak emit RAM stops scaling
 # with deck size; byte-identical output, atomic .tmp promotion, composes with per_rank
-# (fragments live-routed); NOT with split=True (raises ValueError).
+# (fragments live-routed).
 
 # Remote SLURM (ADR 0060): emit → push (ssh) → sbatch → [wait → fetch], one call.
 ops.run_remote(job_dir, *, cluster, np=None, name=None, deck="main.tcl", binary=None,

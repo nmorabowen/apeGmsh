@@ -1,6 +1,12 @@
 # ADR 0043 — Connectivity graph + flexible (split) emit for model chaining
 
-**Status:** PROPOSED 2026-05-28 (partially resolved 2026-05-28).
+**Status:** WITHDRAWN 2026-10-06 (remediation program X1, panel K20
+8-0: Proposed for 123 days, no example ever used it). The `split=`
+emit mode (`BuiltModel._emit_split`, the `_SplitLayout` writers and the
+`split` kwarg on `apeSees.tcl` / `apeSees.py`) is removed. If a split
+deck is ever wanted again, build it as a printer transform over the
+single-file deck, not as a separate emit path. The text below is kept as
+the record. Originally PROPOSED 2026-05-28 (partially resolved 2026-05-28).
 Authored as a **discussion draft** to open the design space — no code
 has shipped under it. The four architecture-binding open questions
 (Q1 / Q2 / Q8 / Q9) are now **locked** — see **Decisions (resolved

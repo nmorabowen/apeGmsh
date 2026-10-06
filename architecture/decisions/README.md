@@ -58,7 +58,7 @@ An ADR over 40 KB has a decision summary of at most 60 lines in `summaries/` und
 | [0038](0038-compose-model-composition.md) | `g.compose()` model composition: flat-after-merge with namespaced tag-offset import | Accepted |
 | [0041](0041-chain-phase-geometry-constraints.md) | Chain-phase routing for geometry-intensive constraints (`embedded`, `tied_contact`) | Accepted |
 | [0042](0042-render-backend-seam.md) | Rendering-backend seam: `SceneLayer` IR + `RenderBackend` Protocol | Accepted |
-| [0043](0043-connectivity-graph-and-flexible-emit.md) | Connectivity graph + flexible (split) emit for model chaining | Proposed |
+| [0043](0043-connectivity-graph-and-flexible-emit.md) | Connectivity graph + flexible (split) emit for model chaining | WITHDRAWN 2026-10-06 |
 | [0044](0044-asdconcrete-regularization-contract.md) | ASDConcrete regularization contract | Accepted |
 | [0045](0045-selection-and-pick-contract.md) | Selection & Pick Contract: `SelectionTarget` IR + `FilterController` + `SelectionLog` over an additively-widened `PickBackend` | Accepted |
 | [0046](0046-shell-on-solid-node-sharing-guard.md) | Shell-on-solid node-sharing guard + the separate-node idiom | Accepted |

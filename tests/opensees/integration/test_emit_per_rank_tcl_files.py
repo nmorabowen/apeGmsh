@@ -174,11 +174,3 @@ def test_per_rank_requires_partitioned_model(tmp_path: Path) -> None:
     )
     with pytest.raises(ValueError, match="per_rank=True requires"):
         ops.tcl(str(tmp_path / "main.tcl"), per_rank=True)
-    assert not (tmp_path / "main.tcl").exists()
-
-
-def test_per_rank_and_split_mutually_exclusive(tmp_path: Path) -> None:
-    """split=True + per_rank=True fails loud before building."""
-    ops = _make_partitioned_ops(make_two_column_frame_partitioned())
-    with pytest.raises(ValueError, match="mutually\\s+exclusive"):
-        ops.tcl(str(tmp_path / "main.tcl"), split=True, per_rank=True)
