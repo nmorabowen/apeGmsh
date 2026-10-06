@@ -19,19 +19,112 @@ live path.  Without it, resolution falls back to environment variables
 Fork-ness is **not** a path.  Pointing ``binary=`` at the Ladruno fork
 build does not, by itself, tell apeGmsh the build has ``BezierTet10`` —
 that stays a capability detected at the point of use (see
-:mod:`apeGmsh.opensees.emitter.live`).  ``require_fork`` is the one
-place a target carries a fork *expectation*, and it governs only the
-**live** path: you cannot swap ``import openseespy`` under a running
-interpreter, so ``binary`` / ``python`` are inert for live execution and
-``require_fork`` simply fails loud at the ``run()`` / ``analyze()``
-boundary instead of three primitives deep.
+:mod:`apeGmsh.opensees.emitter.live`).  ``require_fork`` (or
+``mode="fork"``) is the one place a target carries a fork
+*expectation*, and it governs only the **live** path: you cannot swap
+``import openseespy`` under a running interpreter, so ``binary`` /
+``python`` are inert for live execution and ``require_fork`` simply
+fails loud at the ``run()`` / ``analyze()`` boundary instead of three
+primitives deep.
+
+What the imported binary *is* has one answer, :class:`BackendInfo`,
+computed by :func:`backend_info_of` from a single signal: the fork-only
+``ladrunoBuild()`` command returning a git sha.  The live resolver
+(:func:`apeGmsh.opensees.emitter.live.get_backend_info`) owns it; the
+backend name, the build stamp and :attr:`OpenSeesCapabilities.has_fork`
+all derive from it, so they cannot disagree.
 """
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import sys
 from dataclasses import dataclass
+from typing import Any, Literal
+
+#: What a backend is: the Ladruno fork, or stock OpenSees.
+BackendKind = Literal["fork", "stock"]
+
+#: How a target picks its backend kind: ``"auto"`` follows the imported
+#: binary's :class:`BackendInfo`; ``"fork"`` / ``"stock"`` pin it.
+TargetMode = Literal["auto", "fork", "stock"]
+
+_TARGET_MODES: frozenset[str] = frozenset({"auto", "fork", "stock"})
+
+#: A full git commit hash, which is what ``ladrunoBuild()`` returns on a
+#: fork build compiled from a git checkout (CMake stamps
+#: ``git log -1 --format=%H``; a build outside git answers ``"unknown"``).
+_SHA_RE = re.compile(r"[0-9a-fA-F]{40}")
+
+
+@dataclass(frozen=True)
+class BackendInfo:
+    """What the imported OpenSees binary is: the resolver's one verdict.
+
+    The **only** fork signal is ``ops.ladrunoBuild()`` returning a 40-char
+    git sha (fork PR #718, 2026-08-10).  Consequences, each deliberate:
+
+    * a fork build predating ``ladrunoBuild`` reads as ``"stock"``;
+    * a ``ladrunoBuild()`` that raises, or returns a non-string, an empty
+      string or anything that is not a sha (``"unknown"`` from a build
+      outside git), reads as ``"stock"`` with ``build=None``;
+    * the probe never raises.
+
+    Built by :func:`backend_info_of`; the live resolver caches the one for
+    the module it bound
+    (:func:`apeGmsh.opensees.emitter.live.get_backend_info`).
+    """
+
+    kind: BackendKind
+    """``"fork"`` iff ``build`` is a sha, else ``"stock"``."""
+    build: str | None
+    """The 40-char git sha from ``ladrunoBuild()``, or ``None``."""
+    version: str | None
+    """``ops.version()`` as a string, or ``None`` if it is absent or raises."""
+    source: str
+    """The module actually imported: its ``__file__``, else its ``__name__``.
+
+    Beside a fork install, a ``.pth`` may alias ``openseespy.opensees`` to
+    the fork module; this names the file that was really bound.
+    """
+
+
+def _build_stamp(ops: Any) -> str | None:
+    """``ops.ladrunoBuild()`` when it returns a sha, else ``None``; never raises."""
+    fn = getattr(ops, "ladrunoBuild", None)  # apegmsh-lint: getattr-undefined-ok fork-only OpenSees command (fork PR #718), the one fork signal
+    if not callable(fn):
+        return None
+    try:
+        raw = fn()
+    except Exception:
+        return None
+    if not isinstance(raw, str):
+        return None
+    stamp = raw.strip()
+    return stamp if _SHA_RE.fullmatch(stamp) else None
+
+
+def backend_info_of(ops: Any) -> BackendInfo:
+    """Classify the OpenSees module ``ops`` (see :class:`BackendInfo`).
+
+    Pure: reads the module and never imports one.  The live resolver calls
+    it on the module it bound; tests call it on fakes.
+    """
+    build = _build_stamp(ops)
+    version: str | None
+    version_fn = getattr(ops, "version", None)
+    try:
+        version = str(version_fn()) if callable(version_fn) else None
+    except Exception:
+        version = None
+    source = getattr(ops, "__file__", None) or getattr(ops, "__name__", None)
+    return BackendInfo(
+        kind="fork" if build is not None else "stock",
+        build=build,
+        version=version,
+        source=str(source) if source else type(ops).__name__,
+    )
 
 
 @dataclass(frozen=True)
@@ -54,24 +147,62 @@ class OpenSeesTarget:
         asserts the in-process openseespy is the Ladruno fork build before
         driving any primitive, raising a clear error otherwise.  Inert for
         the subprocess paths (a stock build there fails loud on the first
-        fork-only command anyway).
+        fork-only command anyway).  ``require_fork=True`` is
+        ``mode="fork"``; construction keeps the two in step.
+    mode
+        Which backend kind the target means.  ``"auto"`` (the default) is
+        whatever :class:`BackendInfo` reports for the imported binary
+        (:meth:`resolve_kind`).  ``"fork"`` pins the fork and sets
+        ``require_fork=True``, so the live path asserts it.  ``"stock"``
+        pins stock: a declaration for provenance and the subprocess paths,
+        which asserts nothing about the in-process build.
+        ``mode="stock"`` with ``require_fork=True`` contradicts itself and
+        raises :class:`ValueError`, as does any other mode string.
     """
 
     binary: str | None = None
     python: str | None = None
     require_fork: bool = False
+    mode: TargetMode = "auto"
+
+    def __post_init__(self) -> None:
+        if self.mode not in _TARGET_MODES:
+            raise ValueError(
+                f"OpenSeesTarget(mode={self.mode!r}): mode must be one of "
+                f"{sorted(_TARGET_MODES)}."
+            )
+        if self.require_fork and self.mode == "stock":
+            raise ValueError(
+                "OpenSeesTarget(require_fork=True, mode='stock') contradicts "
+                "itself: require_fork means mode='fork'. Drop one of them."
+            )
+        # require_fork keeps meaning fork, and a fork pin keeps the live
+        # assertion (the bridge reads ``require_fork``): set both, so the
+        # two spellings build equal targets.
+        if self.require_fork or self.mode == "fork":
+            object.__setattr__(self, "mode", "fork")
+            object.__setattr__(self, "require_fork", True)
+
+    def resolve_kind(self, info: BackendInfo) -> BackendKind:
+        """The backend kind this target means for the binary ``info`` describes.
+
+        ``mode="auto"`` returns ``info.kind``; a pinned mode returns itself.
+        """
+        if self.mode == "auto":
+            return info.kind
+        return "fork" if self.mode == "fork" else "stock"
 
 
 @dataclass(frozen=True)
 class OpenSeesCapabilities:
     """What the **live** in-process openseespy build can do.
 
-    Probed by :meth:`apeGmsh.opensees.apeSees.capabilities`.  ``has_fork``
-    is the backend resolver's verdict (``get_backend_name() ==
-    "ladruno-fork"``, i.e. the fork-only ``criticalTimeStep`` command), the
-    same test that tags the backend and gates the live emitter's fork-only
-    verbs, so the two cannot disagree.  ``has_profiler`` reports the
-    ``profiler`` command itself.
+    Probed by :meth:`apeGmsh.opensees.apeSees.capabilities`.  ``has_fork``,
+    ``version`` and ``build`` come from the resolver's one
+    :class:`BackendInfo` (``kind == "fork"``: ``ladrunoBuild()`` returned a
+    sha), the same verdict that names the backend (``get_backend_name()``),
+    so the two cannot disagree.  ``has_profiler`` reports the ``profiler``
+    command itself.
     """
 
     source: str
@@ -200,30 +331,19 @@ def probe_live_capabilities() -> OpenSeesCapabilities:
 
     Imports openseespy in the active interpreter and reports what it can
     do.  Raises whatever :func:`_get_ops` raises if openseespy is not
-    installed.
+    installed.  ``has_fork`` / ``version`` / ``build`` are the resolver's
+    :class:`BackendInfo`, never a second probe.
     """
-    from .emitter.live import _get_ops, get_backend_name
+    from .emitter.live import _get_ops, get_backend_info
 
     ops = _get_ops()
-    has_fork = get_backend_name() == "ladruno-fork"
-    has_profiler = hasattr(ops, "profiler")
-    version: str | None
-    try:
-        version = str(ops.version())
-    except Exception:
-        version = None
-    build: str | None
-    try:
-        from .emitter.live import get_backend_build
-
-        build = get_backend_build()
-    except Exception:
-        build = None
+    info = get_backend_info()
+    has_fork = info.kind == "fork"
     return OpenSeesCapabilities(
         source="live",
         has_fork=has_fork,
-        has_profiler=has_profiler,
-        version=version,
+        has_profiler=hasattr(ops, "profiler"),
+        version=info.version,
         has_ladruno_up=has_fork,
-        build=build,
+        build=info.build,
     )

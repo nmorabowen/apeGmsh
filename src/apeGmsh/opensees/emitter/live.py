@@ -28,6 +28,7 @@ from typing import (
 
 from .._internal.analyze_rc import check_analyze_rc
 from .._rc_c2_flags import rc_c2_flags, rc_c2_live_refusal
+from .._target import BackendInfo, backend_info_of
 from .base import DroppedAxisGuard, StrategySpec, command_row
 
 if TYPE_CHECKING:
@@ -36,7 +37,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     "LiveOpsEmitter", "Tet10UnverifiedBuildWarning", "get_backend_build",
-    "get_backend_name", "get_ops",
+    "get_backend_info", "get_backend_name", "get_ops",
 ]
 
 
@@ -359,7 +360,12 @@ class _NoOpOps:
 #: ``APEGMSH_OPENSEES_BIN`` must be set *before* the first emit / first
 #: :func:`get_backend_name` call to take effect.
 _OPS_CACHE: "ModuleType | None" = None
-_BACKEND_NAME: str = "unresolved"
+#: The resolver's :class:`BackendInfo`, keyed on the module it describes.
+#: Reset with ``_OPS_CACHE`` (in :func:`_get_ops`), and recomputed whenever
+#: the bound module is not the one it was computed for (a re-resolve, or a
+#: test that swaps ``_get_ops``), so a stale verdict cannot outlive its
+#: module.
+_BACKEND_INFO: "tuple[Any, BackendInfo] | None" = None
 
 
 def _looks_like_opensees(mod: "ModuleType") -> bool:
@@ -372,7 +378,7 @@ def _looks_like_opensees(mod: "ModuleType") -> bool:
     return all(hasattr(mod, a) for a in ("wipe", "model", "element"))
 
 
-def _resolve_ops() -> "tuple[ModuleType, str]":
+def _resolve_ops() -> "ModuleType":
     """Resolve the OpenSees backend module (auto-detect, env-overridable).
 
     Resolution order:
@@ -380,15 +386,17 @@ def _resolve_ops() -> "tuple[ModuleType, str]":
     1. ``APEGMSH_OPENSEES_BIN`` set → add it as a DLL directory (Windows;
        the Ladruno fork co-locates its MKL DLLs next to ``opensees.pyd``),
        put it on ``sys.path``, and ``import opensees`` (the fork's module
-       name) → ``"ladruno-fork"``.
+       name).
     2. else bare ``import opensees`` (fork already importable / on
-       ``PYTHONPATH``) → ``"ladruno-fork"``.
-    3. else ``import openseespy.opensees`` (stock PyPI build) →
-       ``"stock-openseespy"``.
+       ``PYTHONPATH``).
+    3. else ``import openseespy.opensees`` (stock PyPI build).
 
-    The backend is tagged ``"ladruno-fork"`` only when the resolved module
-    exposes a fork-only symbol (``criticalTimeStep``); this keeps detection
-    honest even if a bare ``opensees`` module ever ships from elsewhere.
+    Which loader succeeded says nothing about what the module *is*: the
+    caller classifies the module with
+    :func:`~apeGmsh.opensees._target.backend_info_of` (one signal,
+    ``ladrunoBuild()`` returning a sha). A bare ``opensees`` from
+    elsewhere, or a ``.pth`` that aliases ``openseespy.opensees`` to the
+    fork, is then still named for what was really imported.
     """
     from types import ModuleType
 
@@ -415,9 +423,11 @@ def _resolve_ops() -> "tuple[ModuleType, str]":
             # it on the `criticalTimeStep` check alone silently ignores
             # APEGMSH_OPENSEES_BIN and reintroduces the exact "installed
             # Ladruno hijacks import opensees" failure the fork's own
-            # LEDGER_quirks documents.
+            # LEDGER_quirks documents. (Module identity, not the backend
+            # kind: any OpenSees module loaded from `bin_dir` is the one
+            # asked for, and loading its extension twice is not safe.)
             existing = sys.modules.get("opensees")
-            if existing is not None and hasattr(existing, "criticalTimeStep"):
+            if existing is not None and _looks_like_opensees(existing):
                 existing_file = getattr(existing, "__file__", None)
                 existing_dir = (
                     os.path.dirname(os.path.abspath(existing_file))
@@ -449,7 +459,7 @@ def _resolve_ops() -> "tuple[ModuleType, str]":
                     if saved is not None:
                         sys.modules["opensees"] = saved
                     raise
-                if saved is not None and not hasattr(saved, "criticalTimeStep"):
+                if saved is not None and not _looks_like_opensees(saved):
                     sys.modules["opensees"] = saved
                 return mod
             spec = importlib.util.spec_from_file_location("opensees", pyd)
@@ -466,9 +476,9 @@ def _resolve_ops() -> "tuple[ModuleType, str]":
                 else:
                     sys.modules.pop("opensees", None)
                 raise
-            # Restore a non-fork shadower so we don't disturb its owner (the
-            # fork stays in our own cache regardless).
-            if saved is not None and not hasattr(saved, "criticalTimeStep"):
+            # Restore a non-OpenSees shadower so we don't disturb its owner
+            # (the fork stays in our own cache regardless).
+            if saved is not None and not _looks_like_opensees(saved):
                 sys.modules["opensees"] = saved
             return mod
         loaders.append(_from_bin)
@@ -498,11 +508,7 @@ def _resolve_ops() -> "tuple[ModuleType, str]":
             # try the next loader rather than returning a backend with no
             # ``wipe`` / ``model`` / ``element``.
             continue
-        name = (
-            "ladruno-fork" if hasattr(ops, "criticalTimeStep")
-            else "stock-openseespy"
-        )
-        return ops, name
+        return ops
 
     raise ImportError(
         "LiveOpsEmitter could not import an OpenSees backend. Point "
@@ -514,9 +520,10 @@ def _resolve_ops() -> "tuple[ModuleType, str]":
 
 def _get_ops() -> "ModuleType":
     """Lazy-import + cache the OpenSees backend module."""
-    global _OPS_CACHE, _BACKEND_NAME
+    global _OPS_CACHE, _BACKEND_INFO
     if _OPS_CACHE is None:
-        _OPS_CACHE, _BACKEND_NAME = _resolve_ops()
+        _BACKEND_INFO = None
+        _OPS_CACHE = _resolve_ops()
     return _OPS_CACHE
 
 
@@ -537,15 +544,36 @@ def get_ops() -> "ModuleType":
     return _get_ops()
 
 
+def get_backend_info() -> BackendInfo:
+    """Return the resolver's :class:`BackendInfo` for the bound module.
+
+    The one verdict on what the imported binary is (one signal:
+    ``ladrunoBuild()`` returning a sha). :func:`get_backend_name`,
+    :func:`get_backend_build` and ``apeSees.capabilities().has_fork`` all
+    read it. Resolves the backend on first call (same path / cache as
+    :func:`_get_ops`); a fork build predating ``ladrunoBuild`` reads as
+    ``"stock"``. Never raises past what :func:`_get_ops` raises.
+    """
+    global _BACKEND_INFO
+    ops = _get_ops()
+    cached = _BACKEND_INFO
+    if cached is None or cached[0] is not ops:
+        cached = (ops, backend_info_of(ops))
+        _BACKEND_INFO = cached
+    return cached[1]
+
+
 def get_backend_name() -> str:
     """Return the resolved backend: ``'ladruno-fork'`` or ``'stock-openseespy'``.
 
-    Resolves the backend on first call (same path / cache as
-    :func:`_get_ops`). Tests use this to skip fork-only cases cleanly on a
-    stock build.
+    Derived from :func:`get_backend_info` (``kind == "fork"``), so it cannot
+    disagree with ``capabilities().has_fork``. Tests use this to skip
+    fork-only cases cleanly on a stock build.
     """
-    _get_ops()
-    return _BACKEND_NAME
+    return (
+        "ladruno-fork" if get_backend_info().kind == "fork"
+        else "stock-openseespy"
+    )
 
 
 def get_backend_build() -> "str | None":
@@ -561,9 +589,11 @@ def get_backend_build() -> "str | None":
     measuring whatever ``import opensees`` happened to bind — the exact
     failure mode of the fork's TIMs T1 wrong-build incident. A stale
     ``opensees.pyd`` after a rebuild shows up here as an unchanged hash.
+
+    ``get_backend_info().build``: a ``ladrunoBuild()`` that raises or
+    answers something other than a sha (``""``, ``"unknown"``) is ``None``.
     """
-    fn = getattr(_get_ops(), "ladrunoBuild", None)
-    return fn() if callable(fn) else None
+    return get_backend_info().build
 
 
 class LiveOpsEmitter:

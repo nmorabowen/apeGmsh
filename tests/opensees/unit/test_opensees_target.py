@@ -142,12 +142,15 @@ def test_require_fork_passes_on_fork_verdict() -> None:
 # --------------------------------------------------------------------------
 # has_fork is the resolver's verdict, not the profiler command
 # --------------------------------------------------------------------------
-@pytest.mark.parametrize("backend, profiler", [
-    ("stock-openseespy", True),     # a profiler command does not make a fork
-    ("ladruno-fork", False),        # nor does its absence make stock
+_SHA = "0123456789abcdef0123456789abcdef01234567"
+
+
+@pytest.mark.parametrize("fork, profiler", [
+    (False, True),     # a profiler command does not make a fork
+    (True, False),     # nor does its absence make stock
 ])
 def test_has_fork_is_the_resolvers_verdict(
-    monkeypatch: pytest.MonkeyPatch, backend: str, profiler: bool,
+    monkeypatch: pytest.MonkeyPatch, fork: bool, profiler: bool,
 ) -> None:
     from types import ModuleType
 
@@ -155,15 +158,65 @@ def test_has_fork_is_the_resolvers_verdict(
     from apeGmsh.opensees.emitter import live
 
     fake = ModuleType("opensees")   # stubbed: never the real (maybe stale) build
+    # criticalTimeStep on both: it is no longer a fork signal
+    fake.criticalTimeStep = lambda: 1.0  # type: ignore[attr-defined]
+    if fork:
+        fake.ladrunoBuild = lambda: _SHA  # type: ignore[attr-defined]
     if profiler:
         fake.profiler = lambda *args: None  # type: ignore[attr-defined]
     monkeypatch.setattr(live, "_get_ops", lambda: fake)
-    monkeypatch.setattr(live, "_BACKEND_NAME", backend)
+    monkeypatch.setattr(live, "_BACKEND_INFO", live._BACKEND_INFO)  # restore
 
     caps = probe_live_capabilities()
-    assert caps.has_fork is (backend == "ladruno-fork")
+    assert caps.has_fork is fork
+    assert caps.has_fork is (live.get_backend_name() == "ladruno-fork")
+    assert caps.build == (_SHA if fork else None)
     assert caps.has_ladruno_up is caps.has_fork
     assert caps.has_profiler is profiler
+
+
+# --------------------------------------------------------------------------
+# Target mode: AUTO by default, explicit pins, require_fork means fork
+# --------------------------------------------------------------------------
+def test_default_mode_is_auto_and_follows_the_binary() -> None:
+    from apeGmsh.opensees._target import BackendInfo
+
+    target = OpenSeesTarget()
+    assert target.mode == "auto"
+    assert target.require_fork is False
+    fork = BackendInfo(kind="fork", build=_SHA, version="3.7", source="x")
+    stock = BackendInfo(kind="stock", build=None, version="3.7", source="y")
+    assert target.resolve_kind(fork) == "fork"
+    assert target.resolve_kind(stock) == "stock"
+
+
+@pytest.mark.parametrize("mode", ["fork", "stock"])
+def test_explicit_mode_pins_the_kind(mode: str) -> None:
+    from apeGmsh.opensees._target import BackendInfo
+
+    target = OpenSeesTarget(mode=mode)  # type: ignore[arg-type]
+    for kind in ("fork", "stock"):
+        info = BackendInfo(
+            kind=kind,  # type: ignore[arg-type]
+            build=_SHA if kind == "fork" else None,
+            version=None, source="m",
+        )
+        assert target.resolve_kind(info) == mode
+
+
+def test_require_fork_means_fork_and_fork_means_require_fork() -> None:
+    # The bridge's live gate reads require_fork, so a fork pin must set it.
+    assert OpenSeesTarget(require_fork=True).mode == "fork"
+    assert OpenSeesTarget(mode="fork").require_fork is True
+    assert OpenSeesTarget(require_fork=True) == OpenSeesTarget(mode="fork")
+    assert OpenSeesTarget(mode="stock").require_fork is False
+
+
+def test_contradictory_or_unknown_mode_raises() -> None:
+    with pytest.raises(ValueError, match="contradicts"):
+        OpenSeesTarget(require_fork=True, mode="stock")
+    with pytest.raises(ValueError, match="mode must be one of"):
+        OpenSeesTarget(mode="ladruno")  # type: ignore[arg-type]
 
 
 # --------------------------------------------------------------------------
