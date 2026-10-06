@@ -10627,49 +10627,48 @@ def plan_parameters(
     return tuple(out)
 
 
-def _parameter_tags(
+def _planned_parameters(
     sites: "Sequence[ParameterSite]", tags: TagAllocator,
-) -> list[tuple[int, ...]]:
-    """Each site's ``parameter`` tags, in order.
+) -> list[PlannedParameter]:
+    """Each site with its ``parameter`` tags, in order.
 
     Two-way until K1-3d S6 drops ``tags`` (ADR 0114 D4, amended): handed
     the emit allocator of a bridge emit, this reads the build's plan
     (``plan.parameters[(record, rank)]``), which must hold each site's
-    record at its rank with as many tags as the site declares. Handed a
-    plain :class:`TagAllocator` (a direct caller, or the compose replay
-    under its ledger waiver), it plans ``sites`` through
-    :func:`plan_parameters`. Any other fork raises :class:`TagLawError`.
+    record at its rank, written by its verb, with as many tags as the
+    site declares. Handed a plain :class:`TagAllocator` (a direct caller,
+    or the compose replay under its ledger waiver), it plans ``sites``
+    through :func:`plan_parameters`. Any other fork raises
+    :class:`TagLawError`.
     """
     from .tag_plan import plan_or_standalone
 
     plan = plan_or_standalone(tags)
     if plan is None:
-        return [line.tags for line in plan_parameters(sites, tags)]
-    return [plan.parameters.tags_at(site) for site in sites]
+        return list(plan_parameters(sites, tags))
+    return [
+        PlannedParameter(site.record, site.rank, site.verb,
+                         plan.parameters.tags_at(site))
+        for site in sites
+    ]
 
 
-def emit_initial_stress_global(
-    records: "Iterable[InitialStressRecord]",
-    emitter: "Emitter",
-    tags: TagAllocator,
+def write_planned_ramps(
+    emitter: "Emitter", lines: "Iterable[PlannedParameter]",
 ) -> dict[str, tuple[int, int, int]]:
-    """Emit the global side of each :class:`InitialStressRecord`.
+    """Write each planned initial-stress ramp; mint nothing.
 
-    For each record, takes its three parameter tags (XX, YY, ZZ) from
-    the build's tag plan (:func:`_parameter_tags`), then calls
-    :meth:`Emitter.step_hook_ramp`, which bundles the dispatcher
-    boilerplate (once), the parameter declarations, the per-step proc,
-    and the dispatcher registration.
-
-    Returns the mapping ``{record_name: (xx_tag, yy_tag, zz_tag)}`` so
-    the per-rank ``addToParameter`` fan-out (see
-    :func:`emit_initial_stress_addtoparameter`) can reach the same
-    tags without re-allocating.
+    One :meth:`Emitter.step_hook_ramp` per line, under the line's three
+    planned tags (XX, YY, ZZ). Returns ``{record_name: (xx, yy, zz)}``.
     """
-    records = tuple(records)
-    planned = _parameter_tags(initial_stress_sites(records), tags)
     out: dict[str, tuple[int, int, int]] = {}
-    for rec, (xx_tag, yy_tag, zz_tag) in zip(records, planned):
+    for line in lines:
+        if line.verb != "step_hook_ramp" or len(line.tags) != 3:
+            raise BridgeError(
+                f"write_planned_ramps: a {line.verb!r} line with "
+                f"{len(line.tags)} tags is not an initial-stress ramp.")
+        rec = line.record
+        xx_tag, yy_tag, zz_tag = line.tags
         targets = (
             (xx_tag, rec.sigma_xx * rec.lambda_install),
             (yy_tag, rec.sigma_yy * rec.lambda_install),
@@ -10683,6 +10682,28 @@ def emit_initial_stress_global(
         )
         out[rec.name] = (xx_tag, yy_tag, zz_tag)
     return out
+
+
+def emit_initial_stress_global(
+    records: "Iterable[InitialStressRecord]",
+    emitter: "Emitter",
+    tags: TagAllocator,
+) -> dict[str, tuple[int, int, int]]:
+    """Emit the global side of each :class:`InitialStressRecord`.
+
+    For each record, takes its three parameter tags (XX, YY, ZZ) from
+    the build's tag plan (:func:`_planned_parameters`), then calls
+    :meth:`Emitter.step_hook_ramp` (:func:`write_planned_ramps`), which
+    bundles the dispatcher boilerplate (once), the parameter
+    declarations, the per-step proc, and the dispatcher registration.
+
+    Returns the mapping ``{record_name: (xx_tag, yy_tag, zz_tag)}`` so
+    the per-rank ``addToParameter`` fan-out (see
+    :func:`emit_initial_stress_addtoparameter`) can reach the same
+    tags without re-allocating.
+    """
+    return write_planned_ramps(emitter, _planned_parameters(
+        initial_stress_sites(records), tags))
 
 
 def emit_initial_stress_addtoparameter(
@@ -10838,8 +10859,9 @@ def emit_update_parameters(
     :func:`emit_activate_absorbing` — the two verbs drive the same
     OpenSees primitive, only the argv tail and the value differ.  Each
     (record, rank) that addresses an element writes its own ``parameter``
-    tag, which the build's tag plan gives it (:func:`_parameter_tags`),
-    so each block is self-contained and a later stage may re-declare.
+    tag, which the build's tag plan gives it (:func:`_planned_parameters`),
+    so each block is self-contained and a later stage may re-declare;
+    :func:`write_planned_flips` writes it.
     """
     records = tuple(records)
     resolved = [
@@ -10847,17 +10869,9 @@ def emit_update_parameters(
             rec, fem, fem_eid_to_ops_tag, element_owner, partition_rank)
         for rec in records
     ]
-    planned = _parameter_tags(parameter_flip_sites(
-        "update_parameter", records, resolved, partition_rank), tags)
-    for rec, ops_tags, pids in zip(records, resolved, planned):
-        for pid in pids:
-            args: tuple[str | int, ...] = (
-                (rec.name,) if rec.mat_tag is None
-                else (rec.name, int(rec.mat_tag))
-            )
-            emitter.update_parameter(
-                pid, ops_tags, args, float(rec.value),
-            )
+    write_planned_flips(emitter, _planned_parameters(parameter_flip_sites(
+        "update_parameter", records, resolved, partition_rank), tags),
+        resolved)
 
 
 def emit_activate_absorbing(
@@ -10882,8 +10896,8 @@ def emit_activate_absorbing(
     on another rank).  In single-partition mode an absent eid is a hard
     :class:`BridgeError` (the user named an element no primitive emitted).
     Each (record, rank) that flips an element writes its own ``parameter``
-    tag, which the build's tag plan gives it (:func:`_parameter_tags`), so
-    each block is self-contained.
+    tag, which the build's tag plan gives it (:func:`_planned_parameters`),
+    so each block is self-contained; :func:`write_planned_flips` writes it.
     """
     records = tuple(records)
     resolved = [
@@ -10891,11 +10905,50 @@ def emit_activate_absorbing(
             rec, fem, fem_eid_to_ops_tag, element_owner, partition_rank)
         for rec in records
     ]
-    planned = _parameter_tags(parameter_flip_sites(
-        "flip_element_stage", records, resolved, partition_rank), tags)
-    for ops_tags, pids in zip(resolved, planned):
-        for pid in pids:
+    write_planned_flips(emitter, _planned_parameters(parameter_flip_sites(
+        "flip_element_stage", records, resolved, partition_rank), tags),
+        resolved)
+
+
+def write_planned_flips(
+    emitter: "Emitter",
+    lines: "Sequence[PlannedParameter]",
+    ele_tags: "Sequence[tuple[int, ...]]",
+) -> None:
+    """Write each planned absorbing flip or update; mint nothing.
+
+    ``ele_tags`` holds, per line, the OpenSees tags its record addresses
+    on the line's rank (:func:`absorbing_ele_tags`,
+    :func:`update_parameter_ele_tags`). A line with a tag writes one
+    :meth:`Emitter.flip_element_stage` or :meth:`Emitter.update_parameter`
+    under it; a line without one (no element on its rank) writes nothing.
+    """
+    if len(lines) != len(ele_tags):
+        raise BridgeError(
+            "write_planned_flips: one element list per planned line is "
+            "needed.")
+    for line, ops_tags in zip(lines, ele_tags):
+        if line.verb not in ("flip_element_stage", "update_parameter"):
+            raise BridgeError(
+                f"write_planned_flips: unknown verb {line.verb!r}; it "
+                "writes flip_element_stage and update_parameter lines.")
+        if len(line.tags) != (1 if ops_tags else 0):
+            raise BridgeError(
+                f"write_planned_flips: a {line.verb!r} line holds "
+                f"{len(line.tags)} tags for {len(ops_tags)} elements; a "
+                "line takes one tag iff it addresses an element.")
+        if not line.tags:
+            continue
+        (pid,) = line.tags
+        if line.verb == "flip_element_stage":
             emitter.flip_element_stage(pid, ops_tags)
+            continue
+        rec = line.record
+        args: tuple[str | int, ...] = (
+            (rec.name,) if rec.mat_tag is None
+            else (rec.name, int(rec.mat_tag))
+        )
+        emitter.update_parameter(pid, ops_tags, args, float(rec.value))
 
 
 def zero_velocity_target_nodes(

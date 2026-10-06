@@ -6,14 +6,15 @@ A tag is written once, by the bridge's build, and the archive keeps it.
 tag family, and freezes the allocator. The emit paths then read the plan
 instead of minting.
 
-The migration moves each family's allocation loop out of its emit helper
-and into this module one family at a time, so every step leaves the decks
-byte-identical. Until a family moves, its sub-plan is *pending*: its
+The migration moved each family's allocation loop out of its emit helper
+and into this module one family at a time, so every step left the decks
+byte-identical. A family not yet moved has a *pending* sub-plan: its
 :meth:`FamilyTagPlan.stream` raises, and the emit path keeps minting that
 family's tags from :meth:`TagPlan.emit_allocator`, a fork of the frozen
 planner allocator in which every kind whose minting families have all
-moved is frozen. A minting site the migration missed then raises
-:class:`TagLawError` where it is.
+moved is frozen. Since K1-3d S5 every family is planned, so the emit fork
+freezes every kind they mint, and a minting site the migration missed
+raises :class:`TagLawError` where it is.
 
 The plan is keyed by :class:`TagMode`, the ``(split, partitioned,
 staged)`` triple, because the split, partitioned and staged decks each
@@ -1204,7 +1205,6 @@ def _plan_parameters(
     """
     from .build import (
         FemToOpsTagMap,
-        ParameterSite,
         absorbing_ele_tags,
         build_element_partition_owner,
         initial_stress_sites,

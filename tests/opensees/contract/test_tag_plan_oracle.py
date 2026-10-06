@@ -32,7 +32,12 @@ other migrated families' plans in those kinds. Rows compare by
 ``(verb, tag)``: an element spec picks its type token in its own
 ``_emit``, so the plan's element rows carry the bare verb. A partitioned
 deck writes one region tag in every rank block that holds the region's
-members, so region rows compare as distinct rows (``PER_RANK_KINDS``). The
+members, so its region rows compare as distinct rows (``PER_RANK_KINDS``);
+a flat deck's compare as a multiset. An initial stress declares its three
+``parameter`` tags through ``step_hook_ramp``'s targets, which the K1-3 tap
+does not see, so the oracle's own tap (``_ramp_tapped``) records one
+``("step_hook_ramp", tag)`` row per target; ``addToParameter`` only
+references those tags. The
 ``MIGRATED`` flag in ``tag_plan.py`` drives the marker, so a migration
 slice turns its cases into real comparisons in the same commit;
 ``test_every_family_has_rows`` keeps every family's comparison
@@ -84,7 +89,7 @@ VERB_KIND: dict[str, str] = {
     "geomTransf": "geomTransf",
     "uniaxialMaterial": "uniaxialMaterial",
     "region": "region",
-    "addToParameter": "parameter",
+    "step_hook_ramp": "parameter",
     "update_parameter": "parameter",
     "flip_element_stage": "parameter",
     "contact_surface": "contactSurface",
@@ -93,11 +98,13 @@ VERB_KIND: dict[str, str] = {
 }
 
 #: Tap verbs whose tag is a node id, a registered primitive's tag that
-#: no family mints, or a reference to a tag minted elsewhere.
+#: no family mints, or a reference to a tag minted elsewhere (an
+#: ``addToParameter`` names a ramp tag its ``step_hook_ramp`` declared:
+#: ``test_add_to_parameter_names_a_planned_ramp_tag``).
 NON_DERIVED_VERBS: frozenset[str] = frozenset({
     "node", "fix", "mass", "load", "sp", "remove_element", "timeSeries",
     "pattern_open", "nDMaterial", "section", "section_open",
-    "beamIntegration", "damping",
+    "beamIntegration", "damping", "addToParameter",
 })
 
 #: The function that mints at emit time -> the family its tags belong to.
@@ -106,9 +113,7 @@ _MINT_SITES: dict[str, str] = {
     "emit_element_spec": "elements",
     "plan_transform_specs": "transforms",
     "plan_regions": "regions",
-    "emit_initial_stress_global": "parameters",
-    "emit_update_parameters": "parameters",
-    "emit_activate_absorbing": "parameters",
+    "plan_parameters": "parameters",
     "plan_mp_elements": "mp_elements",
     "plan_interface_tags": "interfaces",
     "plan_contacts": "contacts",
@@ -118,9 +123,10 @@ _MINT_SITES: dict[str, str] = {
 PLANNED = "<planned>"
 
 #: Kinds whose one tag a partitioned deck writes once per rank that holds
-#: the object's members (a region: ADR 0027 INV-4). Their emitted rows
-#: compare as distinct ``(verb, tag)`` rows; every other kind compares as a
-#: multiset, so a tag written twice is caught.
+#: the object's members (a region: ADR 0027 INV-4). On a partitioned deck
+#: their emitted rows compare as distinct ``(verb, tag)`` rows; every other
+#: kind, and every kind on a flat deck, compares as a multiset, so a tag
+#: written twice is caught.
 PER_RANK_KINDS: frozenset[str] = frozenset({"region"})
 
 
@@ -396,6 +402,121 @@ def _iface_staged(*, partitioned: bool) -> Any:
     return ops
 
 
+def _param_ranks_fem(n_ranks: int, *, partitioned: bool = True) -> Any:
+    """A truss stub of two bars per rank, for the parameter sites.
+
+    Rank ``r`` (``b = 100 (r + 1)``, ``e = 10 (r + 1)``) natively holds the
+    nodes ``b+1..b+3`` and the bars ``e`` (``b+1 - b+2``) and ``e+1``
+    (``b+2 - b+3``). ``Bars`` groups every bar; ``Edge`` the second bar
+    of every rank but rank 0, so rank 0 holds none of it.
+    """
+    from tests.opensees.fixtures.fem_stub import (
+        FEMStub,
+        _ElementGroupView,
+        _ElementsStub,
+        _NodesStub,
+    )
+
+    ids: list[int] = []
+    coords: list[tuple[float, float, float]] = []
+    bar_ids: list[int] = []
+    bars: list[tuple[int, int]] = []
+    edge_ids: list[int] = []
+    edge: list[tuple[int, int]] = []
+    rank_nodes: dict[int, list[int]] = {}
+    rank_elems: dict[int, list[int]] = {}
+    for r in range(n_ranks):
+        b, e, x = 100 * (r + 1), 10 * (r + 1), 10.0 * r
+        ids += [b + 1, b + 2, b + 3]
+        coords += [(x, 0.0, 0.0), (x + 1, 0.0, 0.0), (x + 2, 0.0, 0.0)]
+        bar_ids += [e, e + 1]
+        bars += [(b + 1, b + 2), (b + 2, b + 3)]
+        if r:
+            edge_ids.append(e + 1)
+            edge.append((b + 2, b + 3))
+        rank_nodes[r] = [b + 1, b + 2, b + 3]
+        rank_elems[r] = [e, e + 1]
+    fem = FEMStub(
+        nodes=_NodesStub(ids=ids, coords=coords, node_pgs={}),
+        elements=_ElementsStub(elem_pgs={
+            "Bars": _ElementGroupView(
+                ids=tuple(bar_ids), connectivity=tuple(bars)),
+            "Edge": _ElementGroupView(
+                ids=tuple(edge_ids), connectivity=tuple(edge)),
+        }),
+    )
+    if partitioned:
+        fem.set_partitions([
+            (r, rank_nodes[r], rank_elems[r]) for r in range(n_ranks)])
+    return fem
+
+
+def _param_ranks(
+    n_ranks: int, *, partitioned: bool = True, staged: bool = True,
+) -> Any:
+    """:func:`_param_ranks_fem` under a truss, with every parameter site.
+
+    A global initial stress ``g`` on ``Bars``. Unless ``staged`` is false,
+    two stages follow. ``s1``: an initial stress ``s1`` on rank 0's first
+    bar, an absorbing flip on ``Edge`` (no element on rank 0), then the
+    updates ``E`` (the last rank's first bar only) and ``A`` (``Bars``).
+    ``s2``: an initial stress ``s2`` on ``Edge``, then an absorbing flip
+    of rank 0's and the last rank's first bars.
+    """
+    from typing import cast
+
+    from apeGmsh.opensees import apeSees
+
+    ops = apeSees(cast(Any, _param_ranks_fem(
+        n_ranks, partitioned=partitioned)))
+    ops.model(ndm=3, ndf=3)
+    mat = ops.uniaxialMaterial.ElasticMaterial(E=1.0e6)
+    ops.element.Truss(pg="Bars", A=0.01, material=mat)
+    ops.initial_stress(name="g", pg="Bars", sigma_xx=-1.0, sigma_yy=-2.0,
+                       sigma_zz=-3.0, ramp_steps=2)
+    if not staged:
+        return ops
+    last = 10 * n_ranks
+
+    def chain() -> dict[str, Any]:
+        return {
+            "test": ops.test.NormDispIncr(tol=1e-4, max_iter=10),
+            "algorithm": ops.algorithm.Newton(),
+            "integrator": ops.integrator.LoadControl(dlam=1.0),
+            "constraints": ops.constraints.Transformation(),
+            "numberer": (ops.numberer.ParallelPlain() if partitioned
+                         else ops.numberer.Plain()),
+            "system": (ops.system.Mumps() if partitioned
+                       else ops.system.BandGeneral()),
+            "analysis": ops.analysis.Static(),
+        }
+    with ops.stage(name="s1") as s:
+        s.initial_stress(name="s1", elements=[10], sigma_xx=-1.0,
+                         sigma_yy=-1.0, sigma_zz=-1.0, ramp_steps=1)
+        s.activate_absorbing(pg="Edge")
+        s.update_parameter("E", 2.0e6, elements=[last])
+        s.update_parameter("A", 0.02, pg="Bars")
+        s.analysis(**chain())
+        s.run(n_increments=1)
+    with ops.stage(name="s2") as s:
+        s.initial_stress(name="s2", pg="Edge", sigma_xx=-1.0,
+                         sigma_yy=-1.0, sigma_zz=-1.0, ramp_steps=1)
+        s.activate_absorbing(elements=[10, last])
+        s.analysis(**chain())
+        s.run(n_increments=1)
+    return ops
+
+
+#: The parameter cases (K1-3d S5): every parameter site, flat and staged,
+#: and partitioned over 2 and 4 ranks, staged or not.
+_PARAM_MODELS: dict[str, Callable[[], Any]] = {
+    "param_ranks_2/partitioned": lambda: _param_ranks(2, staged=False),
+    "param_ranks_4/staged": lambda: _param_ranks(4, partitioned=False),
+    "param_ranks_2/staged_partitioned": lambda: _param_ranks(2),
+    "param_ranks_4/staged_partitioned": lambda: _param_ranks(4),
+}
+
+
 #: The MP-element and interface cases (K1-3d S3c): every MP site over 2
 #: and 4 ranks, flat, and staged both ways; interfaces beside an
 #: element-minting embedded tie, flat, over 2 and 4 ranks, and staged
@@ -417,7 +538,7 @@ _MP_MODELS: dict[str, Callable[[], Any]] = {
         lambda: _iface_staged(partitioned=True)),
 }
 
-_MODELS = {**ts.models(), **_CONTACT_MODELS, **_MP_MODELS}
+_MODELS = {**ts.models(), **_CONTACT_MODELS, **_MP_MODELS, **_PARAM_MODELS}
 CASES: tuple[str, ...] = tuple(sorted(_MODELS))
 
 
@@ -541,9 +662,48 @@ def _read_log(name: str, log: list[_Op], plan: TagPlan) -> tuple[
     return seed, frozenset(seeded), planned, mints, minted
 
 
+def _ramp_tapped(cls: type) -> type:
+    """:func:`ts.tapped` ``cls``, whose ``step_hook_ramp`` also records a
+    ``("step_hook_ramp", tag)`` row per ramp target.
+
+    The ramp declares its ``parameter`` tags through ``targets``, not a
+    Protocol tag argument, so the K1-3 tap records no row for it. These
+    rows are the declarations the parameter plan's ramp rows compare to;
+    the ``addToParameter`` lines only reference them.
+    """
+    base = ts.tapped(cls)
+
+    def step_hook_ramp(self: Any, name: str, *args: Any, **kwargs: Any) -> Any:
+        if self._tap_depth == 0:
+            self.tap.extend(
+                ("step_hook_ramp", int(tag)) for tag, _value in kwargs["targets"])
+        return base.step_hook_ramp(self, name, *args, **kwargs)
+
+    return type(f"Ramp{base.__name__}", (base,), {
+        "step_hook_ramp": step_hook_ramp})
+
+
+def _oracle_stream(bm: Any, cls: type = RecordingEmitter) -> list[Row]:
+    """``bm``'s emit through :func:`_ramp_tapped` ``cls``."""
+    import warnings
+
+    emitter = _ramp_tapped(cls)()
+    emitter.tap = []
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        bm.emit(emitter)
+    stream: list[Row] = emitter.tap
+    return stream
+
+
 @lru_cache(maxsize=None)
 def _case(name: str) -> Case:
     """Everything one case's oracle reads, built once."""
+    return _build_case(name)
+
+
+def _build_case(name: str) -> Case:
+    """Build case ``name`` afresh (a mutation test patches the emit first)."""
     bm = _MODELS[name]().build()
     cls: type = RecordingEmitter
     mode = emit_mode(
@@ -552,7 +712,7 @@ def _case(name: str) -> Case:
     )
     assert mode not in bm._tag_plans
     with _mint_log() as log:
-        stream = ts.emit_stream(bm, cls)
+        stream = _oracle_stream(bm, cls)
     plan = bm._tag_plans[mode]
     seed, seeded, planned, mints, minted = _read_log(name, log, plan)
     return Case(bm, tuple(stream), plan, seed, seeded, planned, mints,
@@ -575,8 +735,12 @@ def _owner(case: Case, row: Row) -> str | None:
     return PLANNED
 
 
-def _per_rank_once(rows: Counter[Row]) -> Counter[Row]:
-    """``rows`` with each :data:`PER_RANK_KINDS` row counted once."""
+def _per_rank_once(case: Case, rows: Counter[Row]) -> Counter[Row]:
+    """``rows`` with each :data:`PER_RANK_KINDS` row counted once, on a
+    partitioned deck only: a flat deck writes each region once, so a
+    region written twice there is caught."""
+    if not case.plan.mode.partitioned:
+        return rows
     for row in rows:
         if VERB_KIND[row[0]] in PER_RANK_KINDS:
             rows[row] = 1
@@ -585,7 +749,7 @@ def _per_rank_once(rows: Counter[Row]) -> Counter[Row]:
 
 def _rows(case: Case, owner: str, kinds: frozenset[str]) -> Counter[Row]:
     """The tapped rows of ``owner`` in ``kinds``, as ``(verb, tag)``."""
-    return _per_rank_once(Counter(
+    return _per_rank_once(case, Counter(
         (_verb(r[0]), r[1]) for r in case.stream
         if _owner(case, r) == owner and VERB_KIND[_verb(r[0])] in kinds
     ))
@@ -1446,6 +1610,417 @@ def test_mint_site_names_are_unique() -> None:
     assert {n: c for n, c in defs.items() if c != 1} == {}
 
 
+def test_a_duplicated_flat_region_line_fails_the_oracle(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Mutation: a stage writes its named regions twice on a flat deck.
+
+    A flat deck writes each region once, so the oracle compares its region
+    rows as a multiset: the duplicated ``region`` lines leave the emitted
+    rows one row longer per region than the plan, and the comparison
+    fails. Collapsing region rows on every deck (only a partitioned one
+    writes a region once per holder rank) would hide it.
+    """
+    from apeGmsh.opensees.apesees import BuiltModel
+
+    name = "stage_claimed_regions/staged"
+    real = _case(name)
+    assert _family_mismatch(real, "regions", real.plan.regions.stream()) is None
+    orig = BuiltModel._emit_stage_regions
+
+    def twice(self: Any, *args: Any, **kwargs: Any) -> None:
+        orig(self, *args, **kwargs)
+        orig(self, *args, **kwargs)
+
+    monkeypatch.setattr(BuiltModel, "_emit_stage_regions", twice)
+    case = _build_case(name)
+    problem = _family_mismatch(case, "regions", case.plan.regions.stream())
+    assert problem is not None and "emitted only [('region', 6)" in problem
+
+
+# ---------------------------------------------------------------------------
+# The parameter family (K1-3d S5)
+# ---------------------------------------------------------------------------
+
+
+#: Every case whose emit writes a parameter tag: the K1-3 H5 fixtures (a
+#: flat initial stress, a staged one, a staged absorbing flip) and every
+#: parameter site flat, staged, and partitioned over 2 and 4 ranks.
+_PARAM_CASES = (
+    "initial_stress_frame/flat", "two_stage_initial_stress/staged",
+    "kitchen_sink_absorbing/staged", *_PARAM_MODELS,
+)
+
+
+def test_short_or_empty_parameter_plan_fails_the_oracle() -> None:
+    """The parameter comparison is not vacuous: a dropped row is caught.
+
+    Every case that writes a parameter tag (flat, staged, and partitioned
+    over 2 and 4 ranks, staged or not) must reject the parameter plan with
+    its last row dropped, and with every row dropped, while accepting the
+    real one.
+    """
+    checked: set[str] = set()
+    for name in CASES:
+        case = _case(name)
+        rows = case.plan.parameters.stream()
+        if not rows:
+            continue
+        checked.add(name)
+        assert _family_mismatch(case, "parameters", rows) is None, name
+        assert _family_mismatch(case, "parameters", rows[:-1]), name
+        assert _family_mismatch(case, "parameters", ()), name
+    assert set(_PARAM_CASES) <= checked
+    modes = {_case(n).plan.mode for n in _PARAM_CASES}
+    assert modes == {TagMode(False, p, s) for p in (False, True)
+                     for s in (False, True)}
+
+
+def _param_site(line: Any) -> tuple[Any, ...]:
+    """A planned parameter line as ``(verb, label, rank, tags)``; the label
+    is the record's name, else its ``pg``, else its element ids."""
+    rec = line.record
+    label = getattr(rec, "name", None) or rec.pg or tuple(rec.elements)
+    return line.verb, label, line.rank, line.tags
+
+
+def _ramp(label: str, first: int) -> tuple[Any, ...]:
+    return ("step_hook_ramp", label, None, (first, first + 1, first + 2))
+
+
+def _flip(label: Any, rank: int | None, *tags: int) -> tuple[Any, ...]:
+    return ("flip_element_stage", label, rank, tags)
+
+
+def _update(label: str, rank: int | None, *tags: int) -> tuple[Any, ...]:
+    return ("update_parameter", label, rank, tags)
+
+
+@pytest.mark.parametrize(("name", "want"), [
+    # Flat: the global ramp, then per stage its ramp, flips, updates.
+    ("param_ranks_4/staged", [
+        _ramp("g", 1), _ramp("s1", 4), _flip("Edge", None, 7),
+        _update("E", None, 8), _update("A", None, 9),
+        _ramp("s2", 10), _flip((10, 40), None, 13),
+    ]),
+    # Partitioned, unstaged: the global ramp, written outside every block.
+    ("param_ranks_2/partitioned", [_ramp("g", 1)]),
+    # Partitioned: each flip and update pass rank by rank; a rank that
+    # owns none of a record's elements gives it no tag (rank 0 holds no
+    # ``Edge`` bar; only the last rank holds ``E``'s bar).
+    ("param_ranks_2/staged_partitioned", [
+        _ramp("g", 1), _ramp("s1", 4),
+        _flip("Edge", 0), _flip("Edge", 1, 7),
+        _update("E", 0), _update("A", 0, 8),
+        _update("E", 1, 9), _update("A", 1, 10),
+        _ramp("s2", 11), _flip((10, 20), 0, 14), _flip((10, 20), 1, 15),
+    ]),
+    ("param_ranks_4/staged_partitioned", [
+        _ramp("g", 1), _ramp("s1", 4),
+        _flip("Edge", 0), _flip("Edge", 1, 7), _flip("Edge", 2, 8),
+        _flip("Edge", 3, 9),
+        _update("E", 0), _update("A", 0, 10), _update("E", 1),
+        _update("A", 1, 11), _update("E", 2), _update("A", 2, 12),
+        _update("E", 3, 13), _update("A", 3, 14),
+        _ramp("s2", 15),
+        _flip((10, 40), 0, 18), _flip((10, 40), 1), _flip((10, 40), 2),
+        _flip((10, 40), 3, 19),
+    ]),
+])
+def test_parameters_number_in_emit_order(name: str, want: list[Any]) -> None:
+    """Closed form: every parameter site of the fixture, in mint order."""
+    case = _case(name)
+    assert [_param_site(ln) for ln in case.plan.parameters.planned()] == want
+    # The deck writes each planned flip and update tag once, in plan order.
+    written = [(k, t) for k, t in case.stream
+               if k in ("flip_element_stage", "update_parameter",
+                        "step_hook_ramp")]
+    assert written == list(case.plan.parameters.stream())
+
+
+@pytest.mark.parametrize("name", _PARAM_CASES)
+def test_add_to_parameter_names_a_planned_ramp_tag(name: str) -> None:
+    """An ``addToParameter`` references a tag its ramp declared.
+
+    The oracle compares the ramp declarations; each ``addToParameter`` line
+    names one of them, and every declared ramp is named by some element
+    (each fixture's initial stresses cover elements on some rank).
+    """
+    case = _case(name)
+    ramps = {t for v, t in case.plan.parameters.stream()
+             if v == "step_hook_ramp"}
+    named = {t for k, t in case.stream if k == "addToParameter"}
+    assert named == ramps
+
+
+def test_no_kind_is_minted_at_emit() -> None:
+    """K1-3d S5 planned the last family: every emit fork freezes every
+    family's kinds, and no case mints a tag at emit time."""
+    kinds = frozenset().union(*(cls.KINDS for cls in FAMILY_PLANS.values()))
+    assert all(cls.MIGRATED for cls in FAMILY_PLANS.values())
+    for name in CASES:
+        case = _case(name)
+        assert case.plan.frozen_kinds == kinds, name
+        assert case.minted == {}, name
+
+
+def test_parameter_is_frozen_on_every_emit_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Every emit path's allocator refuses a ``parameter`` mint: flat,
+    staged, and partitioned (staged or not) over 2 and 4 ranks."""
+    names = {*_first_case_per_mode().values(), *_PARAM_CASES}
+    reached: set[str] = set()
+    for path, tags in _path_allocators(monkeypatch, names):
+        reached.add(path)
+        assert "parameter" in tags.frozen_kinds, path
+        with pytest.raises(TagLawError, match="planned and frozen"):
+            tags.allocate("parameter")
+        with pytest.raises(TagLawError):
+            tags.allocate_block("parameter", 1)
+    assert reached == set(_PATHS)
+
+
+@pytest.mark.parametrize(("verb", "name", "path"), [
+    ("step_hook_ramp", "initial_stress_frame/flat", "_emit_flat"),
+    ("step_hook_ramp", "param_ranks_2/partitioned", "_emit_partitioned"),
+    ("step_hook_ramp", "two_stage_initial_stress/staged", "_emit_stages_flat"),
+    ("flip_element_stage", "param_ranks_4/staged", "_emit_stages_flat"),
+    ("update_parameter", "param_ranks_4/staged", "_emit_stages_flat"),
+    ("flip_element_stage", "param_ranks_2/staged_partitioned",
+     "_emit_stages_partitioned"),
+    ("update_parameter", "param_ranks_2/staged_partitioned",
+     "_emit_stages_partitioned"),
+    ("flip_element_stage", "param_ranks_4/staged_partitioned",
+     "_emit_stages_partitioned"),
+    ("update_parameter", "param_ranks_4/staged_partitioned",
+     "_emit_stages_partitioned"),
+])
+def test_a_stray_parameter_mint_raises(
+    verb: str, name: str, path: str, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Mutation: a parameter writer that mints raises where it mints.
+
+    The writer of ``verb`` is mutated back to minting its tags from the
+    emit allocator, as it did before the plan. The emit must raise on the
+    path named, not write a deck.
+    """
+    from apeGmsh.opensees._internal import build
+
+    orig = build._planned_parameters
+
+    def minting(sites: Any, tags: TagAllocator) -> Any:
+        if sites and sites[0].verb == verb:
+            return list(build.plan_parameters(sites, tags))
+        return orig(sites, tags)
+
+    monkeypatch.setattr(build, "_planned_parameters", minting)
+    with pytest.raises(TagLawError, match="planned and frozen") as err:
+        _emit_case(name)
+    assert path in {entry.name for entry in err.traceback}
+
+
+def _with_parameters(plan: TagPlan, lines: Any, owners: Any) -> TagPlan:
+    import dataclasses
+
+    from apeGmsh.opensees._internal.tag_plan import ParameterTagPlan
+
+    return dataclasses.replace(plan, parameters=ParameterTagPlan(
+        lines=tuple(lines), owners=tuple(owners)))
+
+
+@pytest.mark.parametrize("name", _PARAM_CASES)
+@pytest.mark.parametrize("cut", ["short", "empty"])
+def test_emit_refuses_a_short_or_empty_parameter_plan(
+    name: str, cut: str,
+) -> None:
+    """Mutation: the emit refuses a parameter plan that dropped sites.
+
+    The memoised plan's sites are cut (the last one dropped, or all of
+    them), its owners with them, so the plan is consistent; the next emit
+    must raise rather than write a deck that lacks them.
+    """
+    bm, mode, plan = _memoised_region_plan(name)
+    sub = plan.parameters
+    keep = len(sub.planned()) - 1 if cut == "short" else 0
+    bm._tag_plans[mode] = _with_parameters(
+        plan, sub.planned()[:keep], sub.owners[:keep])
+    with pytest.raises(TagLawError, match="parameter plan holds no"):
+        ts.emit_stream(bm, RecordingEmitter)
+
+
+@pytest.mark.parametrize("name", _PARAM_CASES)
+def test_emit_refuses_a_parameter_plan_for_other_records(name: str) -> None:
+    """Mutation: same count, same kinds, other records.
+
+    The memoised plan is given the parameter plan of a second build of the
+    same recipe: every site, verb and tag is the real plan's, but its
+    records are another model's objects. The emit looks each record up by
+    identity, so it must raise rather than write the other model's tags.
+    """
+    bm, mode, plan = _memoised_region_plan(name)
+    other = _MODELS[name]().build()._tag_plan(mode).parameters
+    assert other.stream() == plan.parameters.stream()
+    bm._tag_plans[mode] = _with_parameters(plan, other.planned(), other.owners)
+    with pytest.raises(TagLawError, match="parameter plan holds no"):
+        ts.emit_stream(bm, RecordingEmitter)
+
+
+@pytest.mark.parametrize("name", [
+    "param_ranks_4/staged", "param_ranks_2/staged_partitioned",
+    "param_ranks_4/staged_partitioned",
+])
+def test_parameter_plan_refuses_a_swapped_dropped_or_doubled_site(
+    name: str,
+) -> None:
+    """The parameter plan covers the model's records exactly, by identity.
+
+    Two sites of one verb at one rank trade records, each keeping its
+    slot and tags: the swapped plan holds the very rows of the real one,
+    same count, same kinds, same tags, so a count of sites would pass it
+    and the emit would write the two records' tags swapped. Each swap,
+    each dropped site and each doubled one is refused when the plan is
+    made.
+    """
+    from apeGmsh.opensees._internal.tag_plan import ParameterTagPlan
+
+    sub = _case(name).plan.parameters
+    lines, owners = sub.planned(), sub.owners
+    assert ParameterTagPlan(lines=lines, owners=owners).lines == lines
+    pairs = [
+        (i, j) for i, a in enumerate(lines) for j, b in enumerate(lines)
+        if i < j and (a.verb, a.rank) == (b.verb, b.rank)
+        and a.record is not b.record
+    ]
+    assert {lines[i].verb for i, _ in pairs} == {
+        "step_hook_ramp", "flip_element_stage", "update_parameter"}
+    for i, j in pairs:
+        swapped = list(lines)
+        swapped[i] = lines[i]._replace(record=lines[j].record)
+        swapped[j] = lines[j]._replace(record=lines[i].record)
+        assert len(swapped) == len(owners)
+        with pytest.raises(TagLawError, match="does not cover"):
+            ParameterTagPlan(lines=tuple(swapped), owners=owners)
+    for i, line in enumerate(lines):
+        with pytest.raises(TagLawError, match="does not cover"):
+            ParameterTagPlan(lines=lines[:i] + lines[i + 1:], owners=owners)
+        with pytest.raises(TagLawError, match="twice"):
+            ParameterTagPlan(lines=(*lines, line), owners=(*owners, owners[i]))
+
+
+def test_parameter_plan_keeps_its_mint_order_and_counts() -> None:
+    """Sites out of mint order, a site with the wrong number of tags, an
+    unknown verb, or rows passed as ``rows``, are refused."""
+    from apeGmsh.opensees._internal.tag_plan import ParameterTagPlan
+
+    sub = _case("param_ranks_4/staged").plan.parameters
+    lines, owners = list(sub.planned()), list(sub.owners)
+    with pytest.raises(TagLawError, match="only rise"):
+        ParameterTagPlan(lines=(lines[1], lines[0], *lines[2:]),
+                         owners=(owners[1], owners[0], *owners[2:]))
+    for bad in (lines[0]._replace(tags=lines[0].tags[:2]),
+                lines[2]._replace(tags=(7, 8)),
+                lines[2]._replace(verb="parameter")):
+        with pytest.raises(TagLawError, match="the verbs and their counts"):
+            ParameterTagPlan(lines=(bad, *lines[1:]), owners=tuple(owners))
+    with pytest.raises(TagLawError, match="lines, not rows"):
+        ParameterTagPlan(rows=(("step_hook_ramp", 1),))
+    with pytest.raises(TagLawError, match="no parameter plan"):
+        ParameterTagPlan().stream()
+    with pytest.raises(TagLawError, match="no parameter plan"):
+        ParameterTagPlan()[(lines[0].record, None)]
+
+
+def test_parameter_writers_are_two_way() -> None:
+    """Fork: read the plan. Plain allocator: plan through the same loop.
+
+    The three writers, handed a plain allocator (a direct caller, until
+    K1-3d S6), write the same rows as when handed the emit allocator, and
+    those rows are the plan's, flat and over 2 ranks. A plain fork, the
+    frozen planner allocator and a fork for another origin carry no plan;
+    a fork of another model's plan holds none of these records.
+    """
+    from apeGmsh.opensees._internal.build import (
+        FemToOpsTagMap,
+        build_element_partition_owner,
+        emit_activate_absorbing,
+        emit_initial_stress_global,
+        emit_update_parameters,
+        runtime_rank_from_partition_record,
+    )
+
+    for name in ("param_ranks_4/staged", "param_ranks_2/staged_partitioned"):
+        bm, plan = _case(name).bm, _case(name).plan
+        eid_to_tag = FemToOpsTagMap.from_plan(plan.elements.specs)
+        owner = ranks = None
+        if plan.mode.partitioned:
+            owner = build_element_partition_owner(bm.fem)
+            ranks = [runtime_rank_from_partition_record(p, i)
+                     for i, p in enumerate(bm.fem.partitions)]
+
+        def run(tags: TagAllocator) -> list[Row]:
+            em = _ramp_tapped(RecordingEmitter)()
+            em.tap = []
+            emit_initial_stress_global(bm.initial_stress_records, em, tags)
+            for stage in bm.stage_records:
+                emit_initial_stress_global(
+                    stage.initial_stress_records, em, tags)
+                for emit, records in (
+                    (emit_activate_absorbing,
+                     stage.activate_absorbing_records),
+                    (emit_update_parameters, stage.update_parameter_records),
+                ):
+                    for rank in ranks or [None]:
+                        emit(records, em, bm.fem, eid_to_tag, tags,
+                             element_owner=owner, partition_rank=rank)
+            return list(em.tap)
+
+        planned = run(plan.emit_allocator())
+        assert planned == run(TagAllocator()), name
+        assert planned == list(plan.parameters.stream()), name
+        for other in (plan.allocator.fork(), plan.allocator,
+                      plan.allocator.fork({"parameter"}, origin=object())):
+            with pytest.raises(TagLawError, match="carries no tag plan"):
+                run(other)
+        foreign = _MODELS[name]().build()._tag_plan(plan.mode)
+        with pytest.raises(TagLawError, match="parameter plan holds no"):
+            run(foreign.emit_allocator())
+
+
+def test_parameter_writers_refuse_a_line_they_do_not_write() -> None:
+    """The writers write the planned lines they are given, and refuse a
+    line of another verb, a tag count that does not match the line's
+    elements, or a list of elements per line of another length."""
+    from apeGmsh.opensees._internal.build import (
+        BridgeError,
+        ParameterSite,
+        plan_parameters,
+        write_planned_flips,
+        write_planned_ramps,
+    )
+
+    sub = _case("param_ranks_4/staged").plan.parameters
+    ramp, _s1, flip, update, *_ = sub.planned()
+    em = RecordingEmitter()
+    assert write_planned_ramps(em, [ramp]) == {"g": (1, 2, 3)}
+    write_planned_flips(em, [flip, update], [(9,), (9,)])
+    assert [c[:2] for c in em.calls[1:]] == [
+        ("flip_element_stage", (7, (9,))),
+        ("update_parameter", (8, (9,), ("E",), 2.0e6))]
+    for lines, ele in (([flip], [()]), ([flip], [(9,), (9,)]),
+                       ([ramp], [(9,)]),
+                       ([flip._replace(tags=(7, 8))], [(9,)])):
+        with pytest.raises(BridgeError):
+            write_planned_flips(RecordingEmitter(), lines, ele)
+    with pytest.raises(BridgeError, match="not an initial-stress ramp"):
+        write_planned_ramps(RecordingEmitter(), [flip])
+    for verb, n in (("update_parameter", 2), ("step_hook_ramp", 1),
+                    ("parameter", 1)):
+        with pytest.raises(BridgeError, match=f"declares {n} parameter tags"):
+            plan_parameters([ParameterSite(None, None, verb, n)],
+                            TagAllocator())
+
+
 # ---------------------------------------------------------------------------
 # The MP-element and interface families (K1-3d S3c)
 # ---------------------------------------------------------------------------
@@ -1852,7 +2427,7 @@ def test_whole_plan_equals_tapped_stream(name: str) -> None:
     """``sorted(plan.stream())`` is every derived row the emit writes."""
     case = _case(name)
     planned = sorted((_verb(k), t) for k, t in case.plan.stream())
-    derived = sorted(_per_rank_once(Counter(
+    derived = sorted(_per_rank_once(case, Counter(
         (_verb(k), t) for k, t in case.stream
         if _owner(case, (k, t)) is not None)).elements())
     assert planned == derived, (
@@ -2002,11 +2577,9 @@ def test_a_kind_shared_with_a_pending_family_stays_open(
     assert {"elements", "mp_elements", "interfaces"} <= set(plan.migrated)
     assert {"element", "uniaxialMaterial"} <= plan.frozen_kinds
     monkeypatch.setattr(MPElementTagPlan, "MIGRATED", False)
+    assert "mp_elements" not in plan.migrated
     assert "element" not in plan.frozen_kinds
     assert "uniaxialMaterial" in plan.frozen_kinds
-    if len(plan.migrated) < len(FAMILIES):
-        with pytest.raises(NotImplementedError):
-            plan.stream()
 
 
 def test_element_plan_rows_come_from_its_specs() -> None:
