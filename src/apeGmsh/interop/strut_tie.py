@@ -667,7 +667,7 @@ def strut_tie_overlays(
         reinforced=reinforced,
     )
     E = EC_COEFFICIENT_4700 * math.sqrt(fe.fc)
-    # P6 (#1307): a library-internal bridge writes no automatic model.h5.
+    # D1 P6: a library-internal bridge writes no automatic model.h5.
     ops = apeSees(fe.fem, _artifacts=False)
     ops.model(ndm=fe.ndm, ndf=fe.ndm)
     mat = ops.nDMaterial.ElasticIsotropic(E=E, nu=POISSON_RATIO)
@@ -1003,7 +1003,7 @@ def strut_tie_pushover(
     dof = dof0 + 1  # OpenSees numbering
     reference = float(np.linalg.norm(fe.applied[: fe.ndm]))
 
-    # P6 (#1307): a library-internal bridge writes no automatic model.h5.
+    # D1 P6: a library-internal bridge writes no automatic model.h5.
     ops = apeSees(fe.fem, _artifacts=False)
     ops.model(ndm=fe.ndm, ndf=fe.ndm)
     if material == "asd":
