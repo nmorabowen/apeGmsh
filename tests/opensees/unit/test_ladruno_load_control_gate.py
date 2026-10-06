@@ -5,8 +5,11 @@ modules shaped like the four builds that matter. The first three are the
 builds that would otherwise run the wrong integrator without an error:
 
 * **stock openseespy** — refused by the shared fork-integrator gate;
-* **a fork build older than 2026-08-04** — has ``criticalTimeStep`` but not
-  the integrator. Its ``integrator`` command warns and KEEPS THE PREVIOUS
+* **a fork build older than 2026-08-04** — has no ``ladrunoBuild`` stamp
+  (fork PR #718, 2026-08-10), so ``BackendInfo`` reads it as stock and the
+  shared fork-integrator gate refuses it; a stamped build without the
+  integrator (no such build exists; held for safety) is refused by the
+  ``ladrunoLoadControl`` probe. Either way the integrator is missing. Its ``integrator`` command warns and KEEPS THE PREVIOUS
   integrator (probed on the 2026-06-25 build), so it must be refused
   before the call;
 * **an S1-only fork build (2026-08-04 .. 2026-09-04)** — knows the
@@ -30,9 +33,18 @@ class _StockOps:
         self.calls.append(("integrator", i_type, *args))
 
 
-class _OldForkOps(_StockOps):
+class _UnstampedForkOps(_StockOps):
+    """A fork build predating ``ladrunoBuild``: stock by ``BackendInfo``."""
+
     def criticalTimeStep(self) -> float:          # noqa: N802
         return 1.0
+
+
+class _OldForkOps(_UnstampedForkOps):
+    """A stamped fork build without the integrator."""
+
+    def ladrunoBuild(self) -> str:                # noqa: N802
+        return "a" * 40
 
 
 class _S1ForkOps(_OldForkOps):
@@ -71,6 +83,13 @@ def _emitter(ops: object, *, in_partition: bool = False) -> LiveOpsEmitter:
 def test_stock_build_refused() -> None:
     ops = _StockOps()
     with pytest.raises(RuntimeError, match="requires the Ladruno fork"):
+        _emitter(ops).integrator("LadrunoLoadControl", 0.1, "-tangentPredictor")
+    assert ops.calls == []
+
+
+def test_unstamped_fork_refused_as_stock() -> None:
+    ops = _UnstampedForkOps()
+    with pytest.raises(RuntimeError, match="requires the Ladruno fork.*#718"):
         _emitter(ops).integrator("LadrunoLoadControl", 0.1, "-tangentPredictor")
     assert ops.calls == []
 

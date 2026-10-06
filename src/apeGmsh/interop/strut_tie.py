@@ -582,11 +582,16 @@ def _reactions(live: Any, fe: _FEModel) -> np.ndarray:
 
 
 def _backend_tag(live: Any) -> str:
-    """Which OpenSees answered: the same rule the live emitter applies
-    (``criticalTimeStep`` is a fork-only symbol). Two payloads from the same
-    inputs can differ by 20–30 % between the fork and stock openseespy, so
-    every overlay names its backend."""
-    return "ladruno-fork" if hasattr(live, "criticalTimeStep") else "stock-openseespy"
+    """Which OpenSees answered: the bridge's one signal, ``BackendInfo``
+    (``ladrunoBuild()`` returning a sha; a fork build predating it reads as
+    stock). Two payloads from the same inputs can differ by 20–30 % between
+    the fork and stock openseespy, so every overlay names its backend."""
+    from apeGmsh.opensees._target import backend_info_of
+
+    return (
+        "ladruno-fork" if backend_info_of(live).kind == "fork"
+        else "stock-openseespy"
+    )
 
 
 def _summary(

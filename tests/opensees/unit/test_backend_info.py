@@ -220,3 +220,41 @@ def test_results_h5_refuses_unknown_kind_and_stock_build(tmp_path: Path) -> None
         )
     assert not (tmp_path / "a.h5").exists()
     assert not (tmp_path / "b.h5").exists()
+
+
+# --------------------------------------------------------------------------
+# The writer's callers and the other backend tags read the same signal
+# --------------------------------------------------------------------------
+def _capture_attrs(tmp_path: Path, ops: Any) -> dict[str, Any]:
+    import h5py
+
+    from apeGmsh.results.capture._domain import DomainCapture
+    from tests.test_results_domain_capture import _make_spec, _MockFem
+
+    fem = _MockFem([1, 2])
+    path = tmp_path / "cap.h5"
+    with DomainCapture(
+        _make_spec(snapshot_id=fem.snapshot_id), path, fem, ops=ops,
+    ):
+        pass
+    with h5py.File(path, "r") as f:
+        return dict(f.attrs)
+
+
+def test_domain_capture_stamps_the_fork_it_samples(tmp_path: Path) -> None:
+    attrs = _capture_attrs(tmp_path, _fake(build=_SHA))
+    assert attrs["opensees_backend"] == "fork"
+    assert attrs["opensees_build"] == _SHA
+
+
+def test_domain_capture_unstamped_fork_is_stock(tmp_path: Path) -> None:
+    attrs = _capture_attrs(tmp_path, _fake(critical=True))
+    assert attrs["opensees_backend"] == "stock"
+    assert "opensees_build" not in attrs
+
+
+def test_strut_tie_backend_tag_uses_the_one_signal() -> None:
+    from apeGmsh.interop.strut_tie import _backend_tag
+
+    assert _backend_tag(_fake(build=_SHA)) == "ladruno-fork"
+    assert _backend_tag(_fake(critical=True)) == "stock-openseespy"

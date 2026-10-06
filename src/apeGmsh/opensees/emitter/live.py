@@ -36,8 +36,8 @@ if TYPE_CHECKING:
 
 
 __all__ = [
-    "LiveOpsEmitter", "Tet10UnverifiedBuildWarning", "get_backend_build",
-    "get_backend_info", "get_backend_name", "get_ops",
+    "LiveOpsEmitter", "get_backend_build", "get_backend_info",
+    "get_backend_name", "get_ops",
 ]
 
 
@@ -268,6 +268,15 @@ _STOCK_EQ_ROWS_SURVIVE_WIPE = (
 #: every emitter (see :data:`_STOCK_EQ_ROWS_SURVIVE_WIPE`).
 _STOCK_EQ_ROWS_LIVE = False
 
+#: Appended to every "needs the fork" refusal the live gates raise, since
+#: the gates read :class:`~apeGmsh.opensees._target.BackendInfo` (one
+#: signal, ``ladrunoBuild()``) and an older fork build fails it.
+_UNSTAMPED_FORK_NOTE = (
+    " A Ladruno fork build predating the ladrunoBuild stamp (fork PR #718, "
+    "2026-08-10) reads as stock here: rebuild the fork."
+)
+
+
 #: Raised by :meth:`LiveOpsEmitter.element` for ``TenNodeTetrahedron`` on a
 #: stock build. Upstream ``TenNodeTetrahedron::shp3d`` sets ``xsj = Jdet``
 #: where ``Jdet`` already carries the tetrahedral 1/6 (it is the element
@@ -286,39 +295,20 @@ _TET10_STOCK_DEFECT = (
     "Ladruno fork carries the fix (fork PR #520). On stock, mesh tet4 "
     "(FourNodeTetrahedron) or hexahedra (stdBrick). "
     "Deck emission via ops.tcl(...) / ops.py(...) works on any build."
-)
-
-#: Warned by :meth:`LiveOpsEmitter.element` for ``TenNodeTetrahedron`` on a
-#: fork build that cannot be shown to carry fork PR #520.
-_TET10_FORK_UNVERIFIED = (
-    "TenNodeTetrahedron on a Ladruno fork build without the ladrunoBuild "
-    "stamp (fork PR #718, 2026-08-10): apeGmsh cannot tell whether it carries "
-    "the TenNodeTetrahedron fix (fork PR #520, 2026-07-07). A build from "
-    "before 2026-07-07 is 6x too soft in stiffness, mass, body force and "
-    "reactions, with no warning from the engine. Rebuild the fork."
+    + _UNSTAMPED_FORK_NOTE
 )
 
 
-class Tet10UnverifiedBuildWarning(UserWarning):
-    """``TenNodeTetrahedron`` on a fork build too old to prove its fix.
-
-    Fires iff the bound build is the fork (``criticalTimeStep``) but lacks
-    ``ladrunoBuild``: fork PR #718 (2026-08-10) postdates the element fix,
-    fork PR #520 (2026-07-07), and tet10 exposes no response a probe could
-    read without running an analysis.
-    """
-
-
-def _tet10_volume_fixed(ops: Any) -> "bool | None":
+def _tet10_volume_fixed(ops: Any) -> bool:
     """Whether ``ops``'s ``TenNodeTetrahedron`` integrates its volume right.
 
-    ``False`` on stock (:data:`_TET10_STOCK_DEFECT`), ``True`` on a fork
-    build that answers ``ladrunoBuild``, ``None`` on an older fork build,
-    which may predate the fix.
+    ``True`` iff ``ops`` is the fork by :class:`BackendInfo` (its
+    ``ladrunoBuild()`` answers a sha): fork PR #718, which added the
+    stamp (2026-08-10), postdates the element fix, fork PR #520
+    (2026-07-07). Every other build, including a fork build without the
+    stamp, is ``False`` and refused (:data:`_TET10_STOCK_DEFECT`).
     """
-    if not hasattr(ops, "criticalTimeStep"):
-        return False
-    return True if hasattr(ops, "ladrunoBuild") else None
+    return backend_info_of(ops).kind == "fork"
 
 
 #: Raised by :meth:`LiveOpsEmitter.constraints` for ``LadrunoProjection`` on
@@ -620,7 +610,9 @@ class LiveOpsEmitter:
     def __init__(self, *, wipe: bool = True) -> None:
         self._ops = _get_ops()
         if wipe and _STOCK_EQ_ROWS_LIVE:
-            raise RuntimeError(_STOCK_EQ_ROWS_SURVIVE_WIPE)
+            raise RuntimeError(
+                _STOCK_EQ_ROWS_SURVIVE_WIPE + _UNSTAMPED_FORK_NOTE,
+            )
         if wipe:
             self._ops.wipe()
         # Partition-emission state (ADR 0027 / P4). LiveOps is
@@ -765,9 +757,7 @@ class LiveOpsEmitter:
         self._ops.equationConstraint(
             int(cnode), int(cdof), float(ccoef), *flat,
         )
-        if not self._in_partition and not hasattr(
-            self._ops, "criticalTimeStep",
-        ):
+        if not self._in_partition and self._backend().kind != "fork":
             global _STOCK_EQ_ROWS_LIVE
             _STOCK_EQ_ROWS_LIVE = True
 
@@ -850,9 +840,9 @@ class LiveOpsEmitter:
         # LadrunoRC -betaC / -crackedNu: a build without them silently
         # discards them (no error), so refuse before the call.
         if rc_c2_flags(mat_type, params):
-            fn = getattr(self._ops, "ladrunoBuild", None)
-            build = fn() if callable(fn) else None
-            refusal = rc_c2_live_refusal(mat_type, params, build)
+            refusal = rc_c2_live_refusal(
+                mat_type, params, self._backend().build,
+            )
             if refusal is not None:
                 raise RuntimeError(refusal)
         self._ops.nDMaterial(mat_type, tag, *params)
@@ -918,15 +908,12 @@ class LiveOpsEmitter:
         ):
             self._element_fork_gated(ele_type, tag, args)
             return
-        if ele_type == "TenNodeTetrahedron" and not self._in_partition:
-            fixed = _tet10_volume_fixed(self._ops)
-            if fixed is False:
-                raise RuntimeError(_TET10_STOCK_DEFECT)
-            if fixed is None:
-                warnings.warn(
-                    _TET10_FORK_UNVERIFIED, Tet10UnverifiedBuildWarning,
-                    stacklevel=2,
-                )
+        if (
+            ele_type == "TenNodeTetrahedron"
+            and not self._in_partition
+            and not _tet10_volume_fixed(self._ops)
+        ):
+            raise RuntimeError(_TET10_STOCK_DEFECT)
         self._ops.element(ele_type, tag, *args)
 
     def _element_fork_gated(
@@ -958,8 +945,9 @@ class LiveOpsEmitter:
         For the fork commands that CANNOT be verified after the fact —
         stock openseespy accepts them and then does not honour them, so
         there is no post-hoc probe like the element gate's ``getEleTags``.
-        The build test is the same one the resolver tags the backend with
-        (:func:`_resolve_ops` → ``criticalTimeStep``).
+        The build test is the resolver's one signal: :meth:`_backend`
+        ``.kind == "fork"`` (``ladrunoBuild()`` answers a sha), so a fork
+        build predating that stamp is refused like stock.
 
         No-op while a partition block is open: ``self._ops`` is then the
         ``_NoOpOps`` stand-in, which answers every ``hasattr`` and drives
@@ -967,8 +955,20 @@ class LiveOpsEmitter:
         """
         if self._in_partition:
             return
-        if not hasattr(self._ops, "criticalTimeStep"):
-            raise RuntimeError(message)
+        if self._backend().kind != "fork":
+            raise RuntimeError(message + _UNSTAMPED_FORK_NOTE)
+
+    def _backend(self) -> BackendInfo:
+        """:class:`BackendInfo` of the module this emitter drives.
+
+        The resolver's cached verdict when ``self._ops`` is the bound
+        module (:func:`get_backend_info`), else the same classifier run on
+        whatever ``self._ops`` is (a test fake). One signal either way:
+        ``ladrunoBuild()`` returning a sha.
+        """
+        if self._ops is _OPS_CACHE:
+            return get_backend_info()
+        return backend_info_of(self._ops)
 
     def _confirm_tangent_predictor(self) -> None:
         """Raise unless the just-set LadrunoLoadControl armed the predictor.
