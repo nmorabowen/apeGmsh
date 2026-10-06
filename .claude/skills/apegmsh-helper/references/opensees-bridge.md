@@ -107,7 +107,9 @@ integ  = ops.beamIntegration.Lobatto(section=sec, n_ip=5)
 Which namespace:
 
 - **`ops.nDMaterial`** → solid elements (`FourNodeTetrahedron`,
-  `stdBrick`, `SSPbrick`, `quad`, `tri31`, `SSPquad`).
+  `stdBrick`, `FourNodeQuad`, `Tri31`; fork: `LadrunoBrick`, `LadrunoQuad`).
+  `SSPbrick` / `bbarBrick` / `SSPquad` are deferred (not on `ops.element`);
+  the fork's `LadrunoBrick` / `LadrunoQuad` `formulation=` selectors cover them.
 - **`ops.uniaxialMaterial`** → `truss`, `corotTruss`, `zeroLength` /
   `twoNodeLink` / `CoupledZeroLength` springs, and fiber-section beams.
 - **`ops.section`** → shell elements (`ElasticMembranePlateSection`)
@@ -145,8 +147,8 @@ The bridge is agnostic; pick by mechanics. One-clause defaults (for the
 
 | Mesh | Default | Reach for instead |
 |---|---|---|
-| 3-D solid (hex/tet) | `stdBrick` / `FourNodeTetrahedron` | `SSPbrick` (cheaper, stabilized hourglass), `bbarBrick` (near-incompressible / plasticity, beats volumetric locking) |
-| 2-D solid | `quad` (`SSPquad` stabilized) | `tri31` only where a quad mesh won't form |
+| 3-D solid (hex/tet) | `stdBrick` / `FourNodeTetrahedron` | fork: `LadrunoBrick(formulation="ssp")` or `"bbar"` (stabilized hourglass / near-incompressible); stock: no anti-locking hex yet (`SSPbrick` / `bbarBrick` are deferred) |
+| 2-D solid | `FourNodeQuad` (fork: `LadrunoQuad(formulation="ssp")` stabilized; `SSPquad` is deferred) | `Tri31` only where a quad mesh won't form |
 | Shell | `ShellMITC4` (general 4-node) | `ASDShellQ4` (drilling DOF, large-disp), `ShellDKGQ` (thin, no shear) |
 | Beam/column | `forceBeamColumn` (force-based, fewer elems for spread plasticity) | `dispBeamColumn` (displacement-based, stiff/short members or when force-based won't converge) |
 
@@ -459,6 +461,17 @@ deck. The `Emitter` protocol now defines the verbs
 
 <!-- verified: tests/opensees/unit/test_emitter_protocol.py::test_equalDOF_records_master_slave_dofs, ::test_rigidLink_records_kind_master_slave, ::test_rigidDiaphragm_records_perp_master_slaves, ::test_embeddedNode_records_ele_tag_cnode_args -->
 
+**A detached diaphragm master needs its out-of-plane DOFs fixed.**
+`rigidDiaphragm` ties only `ux, uy, rz` (horizontal floor), so a master
+that is a lone labelled point at the centre of mass has `uz, rx, ry`
+stiffened by nothing: K is singular there, `analyze` can still return 0
+with garbage displacements, and `eigen` gives periods of ~1e4 s. Restate
+them — `ops.fix(pg="master", dofs=(0, 0, 1, 1, 1, 0))` — or attach the
+master to an element. The build warns (`DetachedDiaphragmMasterWarning`,
+from `apeGmsh.opensees`) on a detached master with free DOFs and names
+the mask; a master held by a `fix` / `s.support` / `sp` / another
+constraint stays silent (#1333).
+
 Emission order (INV-3/INV-5, `build.emit_mp_constraints`): phantom
 nodes (synthesized by `NodeToSurfaceRecord` ties, `node(..., ndf=6)`)
 emit first, then MP constraints, **after** element emission and
@@ -627,6 +640,39 @@ ops.tcl("model.tcl", run=True)   # staged decks emit via Tcl/Py text ONLY
 ```
 <!-- verified: tests/opensees/unit/test_stages.py::test_stage_builder_records_complete_stage, tests/opensees/unit/test_stages.py::test_stage_builder_missing_analysis_raises -->
 
+**The stage clock restarts at 0.** Every stage closes with
+`loadConst -time 0.0`: its loads become the permanent baseline and the
+pseudo-time goes back to 0. The next stage's increments therefore land at
+`t0 + h, t0 + 2h, ..., t0 + n*h`. `t0` is 0 unless `s.set_time(t0)` sets it
+(and `s.reset()` before the loop puts it back at 0). `h` is `dt` under
+`Transient`, or the `LoadControl` `dlam` under `Static`. A series is read on
+this stage clock, not on a global one, so a load history that continues
+across stages needs `s.set_time`:
+
+```python
+with ops.stage(name="s2") as s:              # meant to run over t in [1, 2]
+    s.set_time(1.0)                          # without it: t in [0, 1]
+    with s.pattern(series=ops.timeSeries.Path(time=(1.0, 2.0),
+                                              values=(0.0, 2.0))) as p:
+        p.load(pg="Tip", forces=(1.0, 0.0))
+    s.analysis(test=..., algorithm=..., constraints=..., numberer=...,
+               system=..., analysis=ops.analysis.Static(),
+               integrator=ops.integrator.LoadControl(dlam=0.25))
+    s.run(n_increments=4, dt=0.25)          # increments at 1.25 .. 2.0
+```
+
+Without `s.set_time(1.0)` that `Path` reads 0 at all four increments, so the
+deck would exit 0 having applied nothing. The stage now raises
+`SeriesOutsideStageWindowWarning` (from `apeGmsh.opensees`) when it closes,
+naming the series' support, the stage's window, and the `s.set_time` that
+fixes it. It evaluates the series at every increment, as OpenSees does: a
+`time=` Path is 0 outside `[time[0], time[-1]]` and ignores `start_time`. A
+`dt=` Path is 0 before `start_time` and from its last sample on. A `file=`
+Path is not checked, and neither is a stage whose analysis solves for its
+advance (`DisplacementControl`, `ArcLength`, an adaptive `LoadControl` with
+`min_lam`/`max_lam`, `VariableTransient`).
+<!-- verified: tests/opensees/unit/test_stage_series_window.py -->
+
 ### Stage verbs — PUSH vs PULL vs CLAIM
 
 The three semantics are distinct (don't confuse them):
@@ -713,8 +759,11 @@ LAST in the stage block (after `s.reset()`, immediately before `analyze`).
   `ops.eigen()` raise `NotImplementedError` when any stage is
   registered. Only `ops.tcl(path, run=)` / `ops.py(path, run=)` drive
   a staged deck.
-- **H5 archival refuses staged models** — `apeSees(fem).h5()` raises
-  on a staged build (`apesees.py:4665`); `split='parts'` also refuses.
+- **H5 archival supports staged models**: `apeSees(fem).h5()` archives
+  staged builds (flat and partitioned) into `/opensees/stages` (ADR 0055
+  Phase 2 + Phase 5). The one remaining staged refusal is a stage-claimed
+  interface (phantom nodes / `node_to_surface`). `split='parts'` still
+  refuses staged models (`BridgeError`).
 - `s.mass` re-applying mass to a node already massed in another tier
   raises (validator V2) unless you pass `overwrite=True` to ack it.
   Same region `name=` across scopes raises (V3).

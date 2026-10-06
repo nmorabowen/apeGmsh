@@ -19,11 +19,13 @@ export const initialState: State = {
   phase: { axis: [], at: null },
   selection: { decls: [], picks: [] },
   hover: null,
-  visibility: { hidden: [], edges: true, opacity: 1 },
+  visibility: { hidden: [], edges: true, opacity: 1, colourBy: "group" },
   inspector: { pinned: [] },
   windows: { open: [] },
   overrides: {},
   geometry: null,
+  provenance: [],
+  provenanceOrigin: false,
   source: { seq: 0, request: null, last: null },
   view: { frameSeq: 0 },
 };
@@ -95,7 +97,7 @@ export function reduce(s: State, e: Event): State {
       if (e.artifact === "geometry") {
         return withPhase({ ...s, artifacts: { ...s.artifacts, geometry: info }, geometry: e.load.geometry });
       }
-      const { decls, names, blocks, mesh } = e.load;
+      const { decls, names, blocks, mesh, provenance, provenanceOrigin } = e.load;
       // A model read for the first time opens on the mesh. A re-read of the
       // same file (D1 rewrites it every run) keeps the phase shown only while
       // that phase is still on the axis: a re-read model with a new
@@ -111,6 +113,8 @@ export function reduce(s: State, e: Event): State {
         names,
         blocks,
         mesh,
+        provenance,
+        provenanceOrigin,
         selection: NO_SELECTION,
         hover: null,
         visibility: { ...s.visibility, hidden: [] },
@@ -200,6 +204,9 @@ export function reduce(s: State, e: Event): State {
     case "setOpacity":
       if (!Number.isFinite(e.value)) throw new RangeError(`setOpacity: ${e.value} is not a number`);
       return { ...s, visibility: { ...s.visibility, opacity: Math.min(1, Math.max(0, e.value)) } };
+    case "setColourBy":
+      if (e.by !== "group" && e.by !== "role") throw new RangeError(`setColourBy: ${JSON.stringify(e.by)}`);
+      return s.visibility.colourBy === e.by ? s : { ...s, visibility: { ...s.visibility, colourBy: e.by } };
     case "setPhase":
       if (!s.phase.axis.some((k) => samePhase(k, e.at))) throw new Error(`setPhase: ${JSON.stringify(e.at)} is not on the phase axis`);
       return { ...s, phase: { ...s.phase, at: e.at } };
@@ -219,7 +226,11 @@ export function reduce(s: State, e: Event): State {
     case "closeWindow":
       return { ...s, windows: { open: s.windows.open.filter((w) => w !== e.window) } };
     case "requestSource": {
-      if (!(e.decl in s.decls)) throw new Error(`requestSource: ${e.decl} is not a declaration of the loaded model`);
+      // A declaration, or a /provenance record the app has no declaration
+      // for (a synthesised series or pattern, from the sources listing).
+      if (!(e.decl in s.decls) && !s.provenance.some((p) => p.key === e.decl)) {
+        throw new Error(`requestSource: ${e.decl} is not a declaration or a /provenance record of the loaded model`);
+      }
       const seq = s.source.seq + 1;
       return { ...s, source: { seq, request: { decl: e.decl, seq }, last: null } };
     }

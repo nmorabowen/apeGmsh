@@ -58,10 +58,13 @@ PARSER_VERSION = "1.0"
 # rejects any version outside this set with a clear error rather than
 # silently misreading (ADR 0023 spirit, integer-keyed).
 #
-# Policy: maintain a rolling **two-version window** — the current writer
-# version N and the immediately prior N-1 — so a reader can straddle a
-# writer bump (read both the old and new fixtures during a transition);
-# drop versions older than N-1. Only v1 exists today, so the set is just
+# This is NOT the per-zone compatibility floor of ADR 0113 (that gates the
+# semver zone stamps above, ``RESULTS_SCHEMA_FLOOR`` and its siblings). The
+# Ladruno recorder's integer FORMAT_VERSION belongs to the fork's writer and
+# has its own explicit set. Policy: keep the current writer version N and the
+# immediately prior N-1 in the set, so a reader can straddle a writer bump
+# (read both the old and new fixtures during a transition); drop versions
+# older than N-1 only deliberately. Only v1 exists today, so the set is just
 # ``(1,)``; when the writer ships v2, widen to ``(1, 2)`` (NOT ``(2,)``).
 LADRUNO_FORMAT_VERSION = 1
 LADRUNO_SUPPORTED_FORMAT_VERSIONS: tuple[int, ...] = (1,)

@@ -2149,6 +2149,20 @@ class ConstraintsComposite(_DeclarationsMixin):
         with one master and many slaves. Downstream this becomes
         ``ops.rigidDiaphragm(perpDirn, master, *slaves)``.
 
+        **The master's out-of-plane DOFs are yours to hold.** The
+        diaphragm ties only the in-plane DOFs (``ux, uy, rz`` for a
+        horizontal floor). A master that sits alone at the centre of
+        mass — the usual pattern — is in no element, so its ``uz, rx,
+        ry`` are stiffened by nothing and the stiffness matrix is
+        singular there: OpenSees prints "matrix singular", a static
+        ``analyze`` can still return 0 with garbage displacements, and
+        ``eigen`` reports periods of ~1e4 s or ~1e-154 s. Fix them on
+        the bridge, ``ops.fix(pg="master", dofs=(0, 0, 1, 1, 1, 0))``,
+        or attach the master to an element. The bridge warns at build
+        (:class:`~apeGmsh.opensees.DetachedDiaphragmMasterWarning`)
+        when a detached master still has free DOFs, naming the mask
+        (#1333).
+
         Parameters
         ----------
         master_label : str
@@ -2194,15 +2208,18 @@ class ConstraintsComposite(_DeclarationsMixin):
 
         Examples
         --------
-        A horizontal slab at z = 3.0 m::
+        A horizontal slab at z = 3.0 m, its master a labelled point
+        at the centre of mass (master first, slaves second)::
 
             g.constraints.rigid_diaphragm(
-                "slab", "slab_master",
+                "slab_master", "slab",
                 master_point=(2.5, 2.5, 3.0),
                 plane_normal=(0, 0, 1),
                 constrained_dofs=[1, 2, 6],
                 plane_tolerance=0.05,
             )
+            ...
+            ops.fix(pg="slab_master", dofs=(0, 0, 1, 1, 1, 0))  # uz, rx, ry
         """
         return self._add_def(RigidDiaphragmDef(
             master_label=master_label, slave_label=slave_label,

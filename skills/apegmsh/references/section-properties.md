@@ -300,8 +300,8 @@ on Windows → `RuntimeError`. Everything is equally reachable headless:
 
 ## 10. Section documents + the builder GUI (ADR 0080)
 
-`SectionDocument` is versioned JSON (`SECTION_DOC_VERSION`, ADR 0023
-additive-minor window) describing ONE section. It is the source of
+`SectionDocument` is versioned JSON (`SECTION_DOC_VERSION`, with a
+floor, ADR 0113 amendment) describing ONE section. It is the source of
 truth; `launch_builder()` is an editor for it. **Parity law** — every
 GUI action is a document mutation, so anything the window does a
 script can do. One document, one lane.

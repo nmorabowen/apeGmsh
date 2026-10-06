@@ -246,9 +246,7 @@ with pg_preserved() as pg:
 
 The exit of the `with` block is where the PG rebuild happens. Every
 call site is tested against all three boolean semantics in
-`tests/test_pg_boolean_survival.py` (pytest) and
-`tests/run_pg_survival_test.py` (standalone, raw-gmsh, runs as a
-diagnostic script).
+`tests/test_pg_boolean_survival.py` (pytest).
 
 ### Visualising the remap
 

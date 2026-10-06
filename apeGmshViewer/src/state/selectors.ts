@@ -5,7 +5,9 @@ import type { Chain, ChainNode, Field } from "../chain/resolve.ts";
 import type { OpsFamily } from "../model/types.ts";
 import { elementFields, elementLinks, type Lookup } from "./decls.ts";
 import { pairSessions } from "../reader/geometry.ts";
-import type { ArtifactInfo, Decl, DeclPath, DeclSource, LegendEntry, Pick, State, ZoneStatus } from "./types.ts";
+import { PROVENANCE_ORIGIN_FROM } from "../reader/provenance.ts";
+import { roleColouring } from "./roles.ts";
+import type { ArtifactInfo, Decl, DeclPath, DeclSource, LegendEntry, Origin, Pick, State, ZoneStatus } from "./types.ts";
 
 function lookupOf(s: State): Lookup {
   // Tags are not keys of the state; an element's links are followed by the
@@ -105,6 +107,12 @@ export function inspected(s: State): { decl: DeclPath; pinned: boolean; chain: C
 
 export const legendOf = (s: State): LegendEntry[] => s.mesh?.legend ?? [];
 
+/** The colour-by-role legend: the roles the file records, the unassigned row, and whether it records any. */
+export const roleLegendOf = (s: State): { legend: LegendEntry[]; fileHasRoles: boolean } | null => {
+  const r = roleColouring(s);
+  return r ? { legend: r.legend, fileHasRoles: r.fileHasRoles } : null;
+};
+
 export const isHidden = (s: State, decl: DeclPath | null): boolean => decl !== null && s.visibility.hidden.includes(decl);
 
 /** The header's summary of the model artifact, or null when none is loaded. */
@@ -175,6 +183,17 @@ export function noticesOf(s: State): string[] {
 }
 
 /**
+ * The jump to a recorded source. A source with no digest (a pseudo-file, or a
+ * file the writer could not read) opens only when main found its path on
+ * disk; otherwise it is "source not recorded" and the button is off. There is
+ * no edit check: with no digest there is nothing to compare.
+ */
+function jumpOf(src: DeclSource): { ok: true; source: DeclSource; label: string } | { ok: false; reason: string } {
+  if (!src.recorded) return { ok: false, reason: `source not recorded (${src.file})` };
+  return { ok: true, source: src, label: `${baseName(src.file)}:${src.line}` };
+}
+
+/**
  * Where go-to-source would jump for `decl`, or why it cannot. An unnamed
  * object's path (`#k`) is never joined: the app numbers unnamed objects in
  * the reader's listing order and /provenance in declaration order, so one
@@ -182,8 +201,15 @@ export function noticesOf(s: State): string[] {
  */
 export function sourceFor(s: State, decl: DeclPath): { ok: true; source: DeclSource; label: string } | { ok: false; reason: string } {
   const d = s.decls[decl];
-  if (!d) return { ok: false, reason: `${decl} is not a declaration of the loaded model` };
-  if (d.provenance) return { ok: true, source: d.provenance, label: `${baseName(d.provenance.file)}:${d.provenance.line}` };
+  if (!d) {
+    // A /provenance record with no declaration in the app (a series, a
+    // pattern, a synthesised object): the listing's go-to-source.
+    const r = s.provenance.find((p) => p.key === decl);
+    if (!r) return { ok: false, reason: `${decl} is not a declaration of the loaded model` };
+    if (!r.source) return { ok: false, reason: `${decl} has no source frame in /provenance` };
+    return jumpOf(r.source);
+  }
+  if (d.provenance) return jumpOf(d.provenance);
   const zone = s.artifacts.model?.zones["provenance"];
   if (!zone || zone.status === "absent") return { ok: false, reason: "the model file has no /provenance zone (written before apeGmsh recorded sources)" };
   if (zone.status === "refused") return { ok: false, reason: `the /provenance zone was refused: ${zone.reason}` };
@@ -205,6 +231,72 @@ export function sourceFor(s: State, decl: DeclPath): { ok: true; source: DeclSou
 export function declOfH5(s: State, h5: string): DeclPath | null {
   for (const d of Object.values(s.decls)) if (d.tag !== null && d.h5 === h5) return d.path;
   return null;
+}
+
+/** One row of the sources listing (panels/sources.ts). */
+export interface SourceRow {
+  key: DeclPath;
+  origin: Origin;
+  /** `<verb>` of a synthesised key (`support` in `support:<stage>/hold`); null for the user's own declarations */
+  verb: string | null;
+  /**
+   * The key cut after each `/`, the only places it may wrap: joined they are
+   * the key; the first is the zone prefix (`opensees/`).
+   */
+  segments: string[];
+  /** `file:line` of the go-to-source target, or null when the record has no frame */
+  label: string | null;
+  /** the button's tooltip: the absolute file, the line and the function; or the reason it is off */
+  title: string;
+  /** why go-to-source is off for this row (shown on a second line), or null when it can jump */
+  off: string | null;
+}
+
+/** `a/b:c/d` -> [`a/`, `b:c/`, `d`]: the pieces between which a path may wrap. */
+export function pathSegments(key: string): string[] {
+  return key.match(/[^/]*\/|[^/]+$/g) ?? [];
+}
+
+/**
+ * The sources listing: every /provenance record of the model, in capture
+ * order. Synthesised objects are listed by default, marked by `origin`
+ * (maintainer ruling on #1378); there is no filter that hides them.
+ */
+export function sourcesOf(s: State): SourceRow[] {
+  return s.provenance.map((p) => {
+    const where = sourceFor(s, p.key);
+    const name = p.key.split("/").slice(2).join("/");
+    const colon = name.indexOf(":");
+    return {
+      key: p.key,
+      origin: p.origin,
+      verb: p.origin === "synthesised" && colon > 0 ? name.slice(0, colon) : null,
+      segments: pathSegments(p.key),
+      label: where.ok ? where.label : null,
+      title: where.ok ? `open ${where.source.file}:${where.source.line} (${where.source.function}) in the editor` : where.reason,
+      off: where.ok ? null : where.reason,
+    };
+  });
+}
+
+/**
+ * The sources panel's header: the record count, how many are synthesised,
+ * and a notice when the records carry no `origin` column (a file below
+ * 1.1.0), so none is marked: the app does not guess one from the key. The
+ * notice follows the column, not the version: a 1.0.x file that carries the
+ * column is read as written and needs none. `null` when there is nothing to
+ * list: no model, no /provenance, or no record (the panel hides).
+ */
+export function sourcesHeaderOf(s: State): { count: number; synthesised: number; notice: string | null } | null {
+  if (s.provenance.length === 0) return null;
+  const zone = s.artifacts.model?.zones["provenance"];
+  const version = zone?.status === "ready" ? zone.version.split(".").slice(0, 2).join(".") : "?";
+  const { major, minor } = PROVENANCE_ORIGIN_FROM;
+  return {
+    count: s.provenance.length,
+    synthesised: s.provenance.filter((p) => p.origin === "synthesised").length,
+    notice: s.provenanceOrigin ? null : `provenance ${version}: synthesised records are not marked (origin is recorded from ${major}.${minor})`,
+  };
 }
 
 /** The latest go-to-source answer for `decl`, when it failed. */

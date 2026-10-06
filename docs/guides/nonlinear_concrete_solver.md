@@ -93,7 +93,7 @@ l_max = 2·E·Gf / ft²          (Bažant-Oh snapback limit)
 |---|---|---|
 | solid concrete, small strain | `ops.element.LadrunoBrick` | the fork host; `geom="linear"` (default) or `"corot"` |
 | solid, tets from CAD | `FourNodeTetrahedron` / `TenNodeTetrahedron` | tets lock in bending — prefer hexes |
-| solid, stock | `stdBrick`, `bbarBrick`, `SSPbrick` | `bbarBrick` reduces volumetric locking |
+| solid, stock | `stdBrick` | `bbarBrick` / `SSPbrick` are deferred on the bridge; for anti-locking use fork `LadrunoBrick(formulation="bbar")` |
 | **RC shell / wall** | `ASDShellQ4` (+ `LayeredShellFiberSection`) | the `LadrunoRCConcrete` host; `-corotational` for large rotation |
 
 `g.mesh.partitioning.renumber(dim=…, method="rcm", base=1)` **before** `get_fem_data` — dense 1-based

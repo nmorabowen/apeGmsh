@@ -1,0 +1,12 @@
+# The tag-law ledger (K1-3, #1361): replay-side tag minting that K2 removes.
+# Shrink-only. Each row is one site the AST lock in test_tag_law_lock.py
+# waives, as: <waiver> <module under opensees/> <function> <rule> <symbol>.
+# Each waiver is commented at its site in the source and pinned by a test in
+# test_tag_law_replay_pins.py. Remove a row in the PR that stops that replay
+# minting, and lower N_WAIVED with it. Never add a row or raise N_WAIVED.
+N_WAIVED = 5
+reinforce-tie-replay _internal/compose.py _replay_into counters _counters
+reinforce-tie-replay _internal/compose.py _replay_into helper emit_reinforce_ties
+initial-stress-replay _internal/compose.py _replay_into helper emit_initial_stress_global
+staged-replay-params _internal/compose.py _replay_staged_into helper emit_initial_stress_global
+staged-replay-params _internal/compose.py _replay_staged_into helper emit_activate_absorbing

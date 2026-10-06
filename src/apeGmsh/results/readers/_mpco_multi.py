@@ -36,7 +36,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Any, Optional, Sequence
 
 import numpy as np
 from numpy import ndarray
@@ -146,6 +146,20 @@ class MPCOMultiPartitionReader:
         self._tag_map = tag_map
         for r in self._readers:
             r.attach_tag_map(tag_map)
+
+    def spatial_dim(self) -> int:
+        """Coordinate column count of the capture; partition 0 answers (#1393)."""
+        return self._readers[0].spatial_dim()
+
+    def attach_stage_names(self, names: "Sequence[str]") -> None:
+        """Forward the program's stage names to every child reader (#1324).
+
+        :meth:`stages` answers from partition 0, but every child keeps
+        its own stage list, so each is renamed — the construction-time
+        consistency check already proved they agree.
+        """
+        for r in self._readers:
+            r.attach_stage_names(names)
 
     # ------------------------------------------------------------------
     # Construction-time validation

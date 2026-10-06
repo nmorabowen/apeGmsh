@@ -16,19 +16,60 @@ install resolves to the main-repo src, which would test the wrong tree.
 """
 from __future__ import annotations
 
+import ast
 from pathlib import Path
 
 import pytest
 
 _SRC = Path(__file__).resolve().parents[2] / "src" / "apeGmsh" / "viewers"
-_MESH = _SRC / "mesh_viewer.py"
-_MODEL = _SRC / "model_viewer.py"
-_REGISTRY = _SRC / "ui" / "_dock_registry.py"
 
 
-def _read(p: Path) -> str:
-    assert p.is_file(), f"expected source file at {p}"
-    return p.read_text(encoding="utf-8")
+def _defining_files(kind: type, name: str) -> list[Path]:
+    """Every ``.py`` under viewers/ with a top-level ``class``/``def`` ``name``.
+
+    Found by AST walk, never by filename: a hub split that moves the
+    symbol still resolves, and one that deletes it fails loudly below.
+    """
+    found = []
+    for p in sorted(_SRC.rglob("*.py")):
+        tree = ast.parse(p.read_text(encoding="utf-8"), filename=str(p))
+        if any(isinstance(n, kind) and n.name == name for n in tree.body):
+            found.append(p)
+    return found
+
+
+def _unit(kind: type, name: str) -> list[Path]:
+    """The defining module of ``name`` plus its package siblings.
+
+    A module split into a package (``x.py`` -> ``x/``, mixins in
+    siblings) keeps the whole unit in scope. Missing or ambiguous
+    targets raise: a guard must never pass because it found nothing.
+    """
+    found = _defining_files(kind, name)
+    assert len(found) == 1, (
+        f"expected exactly one definition of {name!r} under {_SRC}, "
+        f"found {[str(f) for f in found]}"
+    )
+    f = found[0]
+    pkg = f.parent if f.name == "__init__.py" else f.with_suffix("")
+    files = [f]
+    if pkg.is_dir():
+        files += sorted(q for q in pkg.rglob("*.py") if q != f)
+    return files
+
+
+def _text(unit: list[Path]) -> str:
+    return "\n".join(p.read_text(encoding="utf-8") for p in unit)
+
+
+_MESH = _unit(ast.ClassDef, "MeshViewer")
+_MODEL = _unit(ast.ClassDef, "ModelViewer")
+_REGISTRY = _unit(ast.FunctionDef, "sanitize_dock_placement")
+
+
+def _read(p: list[Path]) -> str:
+    assert p, "empty guard scope"
+    return _text(p)
 
 
 @pytest.mark.parametrize("path", [_MESH, _MODEL], ids=["mesh", "model"])
@@ -37,7 +78,7 @@ def test_no_restoreDockWidget_in_viewers(path):
     placement — including a corrupt one. It is the root trap and must
     never be called from either viewer again."""
     assert "restoreDockWidget" not in _read(path), (
-        f"{path.name} must not call restoreDockWidget — it re-applies a "
+        f"{path[0].name} must not call restoreDockWidget — it re-applies a "
         f"corrupt persisted nav-dock placement (the recurring bug). Nav "
         f"docks are now construction-time docks healed by "
         f"sanitize_dock_placement instead."

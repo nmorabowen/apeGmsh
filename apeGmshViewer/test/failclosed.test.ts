@@ -170,8 +170,8 @@ const v = (t: { major: number }, minor: number) => `${t.major}.${minor}.0`;
 // the floor to the target opens with no banner; a newer minor of the same
 // major opens with exactly one banner naming the file's stamp and the target.
 
-test("ADR 0113 floors: the app's table (neutral 2.10, opensees 2.11, geometry 1.0, provenance 1.0)", () => {
-  assert.deepEqual(ZONE_FLOOR, { neutral: 10, opensees: 11, geometry: 0, provenance: 0 });
+test("ADR 0113 floors: the app's table (neutral 2.10, opensees 2.12, geometry 1.0, provenance 1.0)", () => {
+  assert.deepEqual(ZONE_FLOOR, { neutral: 10, opensees: 12, geometry: 0, provenance: 0 });
 });
 
 test("neutral: the floor and an older minor above it open with no banner", () => {
@@ -201,11 +201,11 @@ test("neutral: a newer minor opens with exactly one banner naming the stamp and 
   ]);
 });
 
-test("opensees: below the floor (2.10, before the rank flip) is refused, naming it", () => {
+test("opensees: below the floor (2.11, the era whose files never opened: #1303) is refused, naming it", () => {
   const stamp = v(OPENSEES_TARGET, ZONE_FLOOR.opensees - 1);
   assert.throws(() => read(writeFile("o-old.h5", v(NEUTRAL_TARGET, NEUTRAL_TARGET.minor), true, stamp)), (e: unknown) => {
     const r = parseRefusal((e as Error).message);
-    return /opensees_schema_version 2\.10\.0: layouts before 2\.11 are not supported/.test((e as Error).message) && r?.zone === "opensees" && r.newer === false;
+    return /opensees_schema_version 2\.11\.0: layouts before 2\.12 are not supported/.test((e as Error).message) && r?.zone === "opensees" && r.newer === false;
   });
 });
 
@@ -222,7 +222,24 @@ test("opensees: the floor opens silently; a newer minor opens with one banner", 
   assert.deepEqual(read(writeFile("o-floor.h5", n, true, v(OPENSEES_TARGET, ZONE_FLOOR.opensees))).warnings, []);
   const w = read(writeFile("o-new.h5", n, true, v(OPENSEES_TARGET, OPENSEES_TARGET.minor + 1))).warnings;
   assert.equal(w.length, 1);
-  assert.match(w[0]!, /^opensees_schema_version 2\.22\.0 is newer than this app \(2\.21\.x\)/);
+  assert.equal(
+    w[0],
+    `opensees_schema_version ${v(OPENSEES_TARGET, OPENSEES_TARGET.minor + 1)} is newer than this app (${OPENSEES_TARGET.major}.${OPENSEES_TARGET.minor}.x): the file opens, and what that apeGmsh added is not shown`,
+  );
+});
+
+test("opensees 2.22: the /opensees/bcs@mass_from_model marker (#1304) is ignored without a warning", () => {
+  // The marker tells a reader that rebuilds the model to stream /masses; this
+  // app rebuilds nothing and never reads /opensees/bcs, so a file carrying it
+  // at the target opens with no banner and no warning (V2h, #1427).
+  const path = writeFile("o-mass-marker.h5", v(NEUTRAL_TARGET, NEUTRAL_TARGET.minor), true, v(OPENSEES_TARGET, OPENSEES_TARGET.minor));
+  const f = new h5wasm.File(path, "a");
+  const bcs = (f.get("opensees") as h5wasm.Group).create_group("bcs");
+  bcs.create_attribute("mass_from_model", 1, null, "<b");
+  f.close();
+  const m = read(path);
+  assert.equal(m.opensees?.version, v(OPENSEES_TARGET, OPENSEES_TARGET.minor));
+  assert.deepEqual(m.warnings, []);
 });
 
 /** A file holding only the zone's stamp and an empty zone group: the version is checked first. */

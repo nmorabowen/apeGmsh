@@ -96,10 +96,35 @@ export interface DeclSource {
   file: string;
   line: number;
   function: string;
-  /** the file's sha256 when it was captured */
+  /** the file's sha256 when it was captured; "" when the writer had none to take */
   sha256: string;
+  /** the source can be opened; false for a pseudo-file, or a path with no digest that is not on disk ("source not recorded") */
+  recorded: boolean;
   /** the outermost script line, when the call came through a helper; null when there is none */
   script: { file: string; line: number } | null;
+}
+
+/**
+ * Who made a /provenance record (schema 1.1.0, `records/origin`): `user` for a
+ * declaration the user made, `synthesised` for an object apeGmsh created
+ * inside a verb the user called (a stage's HOLD series and support pattern).
+ * A 1.0.x file reads every record as `user`.
+ */
+export type Origin = "user" | "synthesised";
+
+/**
+ * One /provenance record, as the sources listing shows it. The listing has
+ * every record of the file, synthesised ones included (maintainer ruling on
+ * #1378: shown by default), in capture order (`seq`).
+ */
+export interface ProvenanceEntry {
+  /** the record's declaration path, `<zone>/<family>/<name|#k>`, or `<zone>/<family>/<verb>:<owner>[/<role>]` when synthesised */
+  key: DeclPath;
+  origin: Origin;
+  /** 0-based capture order in the run */
+  seq: number;
+  /** where go-to-source jumps: the call site (for a synthesised object, the user's verb call); null when the record has no frame */
+  source: DeclSource | null;
 }
 
 export type ArtifactKind = "geometry" | "model" | "results";
@@ -137,7 +162,14 @@ export interface LegendEntry {
   name: string;
   color: readonly [number, number, number];
   elements: number;
+  /** a second cue beside the colour: stripes on the chip of a group whose slot is in the second ring (the same hue as an office colour, one lightness step away; taken when no free office colour contrasts with the group's neighbours) */
+  cue: "stripe" | "stripe2" | null;
+  /** the palette slot the group was assigned (state/palette.ts); null for the synthetic rows */
+  slot: number | null;
 }
+
+/** What colours the model: its physical groups, or the structural role each element's file records. */
+export type ColourBy = "group" | "role";
 
 /** The render derivation of the model artifact: blob refs, per-primitive indices, legend and bounds. */
 export interface MeshInfo {
@@ -154,6 +186,8 @@ export interface MeshInfo {
   /** the decl path of every drawn element, in first-drawn order */
   elements: DeclPath[];
   legend: LegendEntry[];
+  /** legend rows whose elements share a node (each pair once, a < b): what the slot assignment keeps apart */
+  adjacency: [number, number][];
   center: readonly [number, number, number];
   radius: number;
   counts: { lineCells: number; faceCells: number; solidCells: number; opsOnly: number; points: number };
@@ -215,13 +249,17 @@ export interface State {
   phase: { axis: PhaseKey[]; at: PhaseKey | null };
   selection: { decls: DeclPath[]; picks: Pick[] };
   hover: Pick | DeclPath | null;
-  visibility: { hidden: DeclPath[]; edges: boolean; opacity: number };
+  visibility: { hidden: DeclPath[]; edges: boolean; opacity: number; colourBy: ColourBy };
   inspector: { pinned: DeclPath[] };
   windows: Layout;
   /** reserved for the D3 ADR; always empty */
   overrides: Record<DeclPath, never>;
   /** the geometry sibling as read; drawn only when it pairs with the model (selectors.geometryPairing) */
   geometry: GeometryInfo | null;
+  /** the model file's /provenance records in capture order; [] when it has none (selectors.sourcesOf lists them) */
+  provenance: ProvenanceEntry[];
+  /** the records carry `records/origin` (1.1.0 on); false when they do not, so none is marked synthesised */
+  provenanceOrigin: boolean;
   /**
    * go-to-source: the latest request (the effects act on a new `seq`) and the
    * latest answer. `seq` counts requests for the whole session and is never
@@ -244,6 +282,10 @@ export interface ModelLoad {
   names: Record<string, DeclPath[]>;
   blocks: BlockInfo[];
   mesh: MeshInfo;
+  /** the /provenance records, in capture order; [] when the file has none or the zone was not read */
+  provenance: ProvenanceEntry[];
+  /** the zone carries `records/origin` (false with no zone) */
+  provenanceOrigin: boolean;
 }
 
 /** The payload of `fileLoaded` for the geometry artifact. */
@@ -278,6 +320,7 @@ export type Event =
   | { type: "showAll" }
   | { type: "setEdges"; on: boolean }
   | { type: "setOpacity"; value: number }
+  | { type: "setColourBy"; by: ColourBy }
   | { type: "setPhase"; at: PhaseKey }
   | { type: "setResultStep"; step: number }
   | { type: "inspectorPin"; decl: DeclPath }

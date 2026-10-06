@@ -335,7 +335,7 @@ and `Constraints` (the facade module).
   iterates; exposes typed attributes `inspect`, `model`, `labels`,
   `sections`, `parts`, `constraints`, `loads`, `masses`, `node_ndf`,
   `mesh`, `loader`, `physical`, `mesh_selection`, `view`, `plot`.
-  - `.__init__(self, *, model_name="ModelName", verbose=False)`
+  - `.__init__(self, *, model_name=None, verbose=False, save_to=None, overwrite=True)` — `model_name=None` takes the running script's stem (#1307)
 
 #### `_session.py`
 - `_SessionBase` **[composite]** — base for `apeGmsh` and `Part`. Manages

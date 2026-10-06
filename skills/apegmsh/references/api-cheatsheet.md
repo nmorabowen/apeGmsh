@@ -5,7 +5,7 @@ One-page map of the public apeGmsh surface. Every entry is a concrete
 composite attribute on a live session `g = apeGmsh(...)` (after
 `g.begin()` or inside a `with` block). Signatures reflect **v2.0.0**
 (`pyproject.toml` + the latest tagged `CHANGELOG.md` section agree; a
-stale editable install may still print `v1.6.0` in the banner). Read
+stale editable install may still report `v1.6.0` as `apeGmsh.__version__`). Read
 the matching heading. Do not grep `src/apeGmsh/` to author a model;
 `src/` is for maintaining the library (ADR 0096). Signatures: MCP
 `lookup(symbol)` or `python -m apeGmsh.studio.lookup SYMBOL`
@@ -22,13 +22,15 @@ into labels.
 ```python
 from apeGmsh import apeGmsh, Part
 
-g = apeGmsh(model_name="...", verbose=False,
-            save_to=None, overwrite=True)   # save_to= autosaves neutral zone on end()
+g = apeGmsh(model_name=None, verbose=False,
+            save_to=None, overwrite=True)   # model_name=None -> the running script's stem
 g.begin()           # opens gmsh, wires composites
 g.is_active         # True while session is open
-g.name              # the model name
+g.name              # the model name ("" in a notebook / -c / stdin with no model_name=)
 g.save(path=None)   # explicit neutral-zone checkpoint (uses save_to if path None)
-g.end()             # closes gmsh (+ autosaves if save_to set)
+g.end()             # closes gmsh; writes <dir>/<model_name>.h5 + <model_name>.geometry.h5
+                    # beside the script (save_to= overrides the path). No model_name and no
+                    # script file: nothing written, one warning. Pass model_name= in notebooks.
 
 # Preferred form
 with apeGmsh(model_name="...", save_to="m.h5") as g:
@@ -244,7 +246,7 @@ the selection into a label/PG without raw tags:
 
 ## `g.mesh` — meshing
 
-`g.mesh.viewer(**kw)`, `g.mesh.render(...)` and `g.mesh.preview(...)`
+`g.mesh.viewer(**kw)` and `g.mesh.render(...)`
 are the flat entry points (there is no `g.mesh.results_viewer` — the
 post-solve door is `results.viewer()`, see `results.md`). Everything
 else lives in sub-composites: `generation`, `sizing`, `field`,
@@ -280,11 +282,13 @@ g.mesh.field.set_background(f_t)
 ### `g.mesh.structured` — (`_Structured`)
 
 ```
-set_transfinite_curve(tag, num_nodes, *, mesh_type="Progression", coef=1.0)
+set_transfinite_curve(tag, n_nodes, *, mesh_type="Progression", coef=1.0)   # tag: int, label/PG name, or a list
 set_transfinite_surface(tag, *, arrangement="Left", corners=None)
 set_transfinite_volume(tag, *, corners=None)
 set_transfinite_automatic(dimtags=None, corner_angle=2.35, recombine=False)
-set_recombine(dim, tag, *, angle=45)   recombine()   set_smoothing(dim, tag, num_steps)   set_compound(dim, tags)
+set_recombine(tag, *, dim=2, angle=45)   # BEFORE generate(): request quads
+recombine()                              # AFTER generate() only; warns on an empty 2-D mesh
+set_smoothing(dim, tag, num_steps)   set_compound(dim, tags)
 
 build_graded_box(*, extent=(bx,ly,hz), footprint=(B,L), h, l_mech, d_mech, r,
                  orientation=0.0) -> list[int]   # 18 sub-volume tags
@@ -409,7 +413,9 @@ add(dim, tags, name) -> int                  entities(name, *, dim=None) -> list
 get_all(*, dim=-1) -> list[str]              has(name, *, dim=None) -> bool
 labels_for_entity(dim, tag) -> list[str]     reverse_map(*, dim=-1) -> dict[DimTag, str]
 remove(name, *, dim=None)   rename(old, new, *, dim=None)
-promote_to_physical(name, *, dim=None, ...)  # label -> solver-visible PG
+promote_to_physical(name, *, pg_name=None, dim=None) -> Tag  # label -> solver-visible PG;
+    # an existing pg_name at the same dim merges (union, like physical.add);
+    # at another dim it raises ValueError (#1332)
 ```
 
 ## Per-node DOF count — inferred + `ops.ndf` (ADR 0048/0049)
@@ -551,7 +557,9 @@ don't hand-write the deck.
 ```
 equal_dof(master_label, slave_label, *, master_entities=None, slave_entities=None, dofs=None)
 rigid_link(master_label, slave_label, *, link_type="beam"|"bar"|"rotBeam")
-rigid_diaphragm(master_label, slave_label, *, perp_dirn=3)   penalty(master_label, slave_label, *, stiffness=1e10, dofs=None)
+rigid_diaphragm(master_label, slave_label, *, master_point=(0,0,0), plane_normal=(0,0,1),
+                constrained_dofs=None, plane_tolerance=1.0, name=None)
+penalty(master_label, slave_label, *, stiffness=1e10, dofs=None)
 rigid_body(master_label, slave_label, *, dofs=None)
 tie(master_label, slave_label, *, ..., tolerance=1.0, stiffness="auto", enforce="penalty",
     control=None, method="collocation"|"mortar", outward=None)   # method= ADR 0086
@@ -968,17 +976,6 @@ job.status() -> JobStatus  ; job.wait(*, poll=15.0, timeout=None) -> JobStatus
 job.tail(n=50, *, stream="out"|"err") -> str  ; job.cancel()  ; job.fetch(dest=None) -> Path
 Job.load(local_dir) -> Job                           # rehydrate from .apegmsh_job.json sidecar
 
-# apeGmsh.sensitivity — finite-difference gradient / calibration driver.
-from apeGmsh.sensitivity import Sensitivity, Param, Response
-Sensitivity(forward, params, *, rel_step=1e-2, scheme="central"|"forward")   # engine-free scalar forward
-Sensitivity.from_apesees(fem, *, build, params, response, steps, dt,         # live transient + capture
-    runner=None, capture_path=None, rel_step=1e-2, scheme="central")
-sens.gradient(at=None, *, rel_step=None, scheme=None) -> dict[str, float]
-sens.step_study(param=None, *, at=None, rel_steps=None) -> list[(rel_step, grad)]   # plateau check
-sens.solve(target, *, tol=1e-6, max_iter=50, damping=1.0) -> dict[str, float]      # 1-parameter only
-Param(name=, value=, lower=None, upper=None)
-Response(component=, pg=None, label=None, node=None, reduce="peak"|"rms"|"mean_abs"|"last"|"at_time", at_time=None, absolute=True)
-
 # apeGmsh.interop — import an analytical model (apeETABS *.sm.json) → conformal
 # beam+shell mesh → apeSees deck (ADR 0009). Full reference: interop.md.
 from apeGmsh.interop import StructuralModel, import_structural_model, \
@@ -1001,7 +998,7 @@ env = read_envelope(envelope_path())          # what was clicked
 # MCP status(mode="brief") default — root check; mode="full" for names.entities
 env.labels / env.physical_groups / env.phase / env.unnamed
 ```
-`# src/apeGmsh/hpc/_cluster.py, _job.py ; src/apeGmsh/sensitivity/driver.py, spec.py ; src/apeGmsh/interop/__init__.py ; src/apeGmsh/studio/_envelope.py`
+`# src/apeGmsh/hpc/_cluster.py, _job.py ; src/apeGmsh/interop/__init__.py ; src/apeGmsh/studio/_envelope.py`
 
 ## FEMData & persistence (see `fem-broker.md`, `results.md`)
 
@@ -1033,13 +1030,13 @@ Gmsh code (`4`), or Gmsh name (`"Tetrahedron 4"`).
 | Code | Gmsh name      | Alias   | OpenSees typical mapping |
 |------|----------------|---------|--------------------------|
 | 1    | Line 2         | `line2` | `truss`, `elasticBeamColumn` |
-| 2    | Triangle 3     | `tri3`  | `tri31` |
-| 3    | Quad 4         | `quad4` | `quad`, `SSPquad`, `ShellMITC4`, `ShellDKGQ`, `ASDShellQ4` |
+| 2    | Triangle 3     | `tri3`  | `Tri31` |
+| 3    | Quad 4         | `quad4` | `FourNodeQuad`, `LadrunoQuad` (fork), `ShellMITC4`, `ShellDKGQ`, `ASDShellQ4` |
 | 4    | Tetrahedron 4  | `tet4`  | `FourNodeTetrahedron` |
-| 5    | Hexahedron 8   | `hex8`  | `stdBrick`, `SSPbrick`, `bbarBrick` |
+| 5    | Hexahedron 8   | `hex8`  | `stdBrick`, `LadrunoBrick` (fork; `SSPbrick` / `bbarBrick` are deferred) |
 | 6    | Prism 6        | —       | (not directly mapped) |
 | 8    | Line 3 (quad)  | —       | demote via `split_higher_order_lines` |
-| 9    | Triangle 6     | `tri6`  | `tri6n` (SixNodeTri), `BezierTri6` (Ladruno fork) |
+| 9    | Triangle 6     | `tri6`  | `SixNodeTri`, `BezierTri6` (Ladruno fork) |
 | 10   | Quad 9         | `quad9` | — |
 | 11   | Tetrahedron 10 | `tet10` | `TenNodeTetrahedron`, `BezierTet10` (Ladruno fork) |
 

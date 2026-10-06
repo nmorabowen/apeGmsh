@@ -11,7 +11,7 @@ tools: Read, Grep, Glob, Bash, Write
 ---
 
 Write **one** design brief of at most 1,500 words to the scratch path the
-orchestrator gives you.
+orchestrator gives you. Write the brief to disk early (a skeleton in the first minutes) and update it after each section, so a watchdog kill leaves a usable brief.
 
 - Do not read any other design brief for the same decision; independence is the
   point.

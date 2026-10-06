@@ -10,20 +10,23 @@ import { mountHeader } from "../panels/header.ts";
 import { mountInspector } from "../panels/inspector.ts";
 import { mountLegend } from "../panels/legend.ts";
 import { mountPhase } from "../panels/phase.ts";
+import { mountSources } from "../panels/sources.ts";
 import { BlobStore } from "../state/blobs.ts";
 import { chainOf } from "../state/selectors.ts";
 import { Store } from "../state/store.ts";
 import type { DeclPath } from "../state/types.ts";
+import { applyTheme } from "../theme/tokens.ts";
 import { Viewport } from "./viewport.ts";
 
 const bridge = (window as unknown as { viewer: Bridge }).viewer;
+applyTheme(document);
 
 const store = new Store();
 const blobs = new BlobStore();
 const effects = new Effects(store, blobs, bridge);
 const viewport = new Viewport(document.getElementById("viewport")!, store, blobs);
 effects.setFrameTarget(viewport);
-const panels = [mountHeader(store), mountBanner(store), mountLegend(store), mountInspector(store), mountEmpty(store), mountPhase(store)];
+const panels = [mountHeader(store), mountBanner(store), mountLegend(store), mountInspector(store), mountEmpty(store), mountPhase(store), mountSources(store)];
 window.addEventListener("beforeunload", () => {
   for (const d of panels) d();
   effects.dispose();
@@ -233,6 +236,19 @@ async function main() {
     viewport.renderNow();
     await bridge.captureStill("framed");
   }
+  // Two palette stills with nothing selected (a selection dims the model):
+  // `<out>.groups.png` coloured by physical group, `<out>.role.png` by role.
+  // With nothing selected, `frameSelection` frames the whole model again
+  // after `F` framed the selection above.
+  store.dispatch({ type: "clearSelection" });
+  store.dispatch({ type: "frameSelection" });
+  await settle();
+  viewport.renderNow();
+  await bridge.captureStill("groups");
+  store.dispatch({ type: "setColourBy", by: "role" });
+  await settle();
+  viewport.renderNow();
+  await bridge.captureStill("role");
   await bridge.captureDone();
 }
 

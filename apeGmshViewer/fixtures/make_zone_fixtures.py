@@ -7,8 +7,9 @@ It writes, beside this file:
 
 * ``zones.h5``: ``shoebuckle.h5`` plus ``/meta/session_id``, an
   ``/opensees/names`` table naming the material ``Steel`` and the section
-  ``W_section``, and a ``/provenance`` zone (1.0.0) whose records point at
-  the lines of ``examples/shoebuckle_arch.py`` that declare the beam chain;
+  ``W_section``, and a hand-written ``/provenance`` zone (1.0.0) whose
+  records point at the lines of ``examples/shoebuckle_arch.py`` that
+  declare the beam chain, in place of the writer's own 1.1.0 zone;
 * ``zones.geometry.h5``: a ``/geometry`` zone (1.0.0) for a unit cube
   (8 points, 12 straight curves of 32 samples, 6 two-triangle faces with
   outward normals, 1 volume), with the same ``session_id``.
@@ -156,6 +157,12 @@ def main() -> None:
     shutil.copyfile(HERE / "shoebuckle.h5", model)
     with h5py.File(model, "a") as f:
         f["meta"].attrs["session_id"] = SESSION
+        # main's writer stamps its own /provenance (1.1.0, #1378) into
+        # shoebuckle.h5; this fixture carries the hand-written 1.0.0 zone
+        # instead, so drop the writer's before writing it.
+        if "provenance" in f:
+            del f["provenance"]
+            del f["meta"].attrs["provenance_schema_version"]
         # Bridge-side names (opensees 2.13+): name, kind (the family), tag.
         names = f["opensees"].create_group("names")
         names["name"] = np.array(["Steel", "W_section"], dtype=object).astype(STR)

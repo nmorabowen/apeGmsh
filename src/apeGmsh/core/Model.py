@@ -117,6 +117,11 @@ class Model(_HasLogging):
         if role is not None:
             meta['role'] = role
         self._metadata[(dim, tag)] = meta
+        # ADR 0112 D3: one provenance record per user call, captured
+        # before the label below so the call's record is the geometry's
+        # (the label it creates is the same user call and records none).
+        from apeGmsh._internal.provenance import capture
+        capture(self._parent, "geometry", kind, label)
 
         # When the owning session has ``_auto_pg_from_label`` set
         # (both Part and apeGmsh sessions), automatically create a
@@ -357,41 +362,6 @@ class Model(_HasLogging):
 
         return render_model(
             self._parent, path, camera=camera, window_size=window_size,
-        )
-
-    def preview(
-        self,
-        *,
-        dims: list[int] | None = None,
-        browser: bool = False,
-        return_fig: bool = False,
-    ):
-        """Interactive WebGL preview of the BRep geometry.
-
-        Zero Qt dependency — works inline in Jupyter / VS Code / Colab,
-        or in a dedicated browser tab when ``browser=True``. Hover over
-        a cell to see its ``dim`` and ``tag``.
-
-        Parameters
-        ----------
-        dims : list of int, optional
-            BRep dimensions to render. Defaults to ``[0, 1, 2, 3]``.
-        browser : bool
-            If ``True``, open in a new browser tab (temp HTML file)
-            instead of rendering inline. Useful when the notebook
-            output is cluttered or you want a dedicated window.
-        return_fig : bool
-            If ``True``, skip display and return the raw
-            :class:`plotly.graph_objects.Figure` for saving with
-            ``fig.write_html('path.html')`` or composing a notebook
-            layout.
-        """
-        from apeGmsh.viz.NotebookPreview import preview_model
-        return preview_model(
-            self._parent,
-            dims=dims,
-            browser=browser,
-            return_fig=return_fig,
         )
 
     def gui(self) -> None:

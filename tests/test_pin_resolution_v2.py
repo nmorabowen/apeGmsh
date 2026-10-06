@@ -150,7 +150,7 @@ def _selection_mixin(comp_cls, fem):
     idiom as ``tests/test_characterization_selection._selection_mixin``.
     """
     comp = comp_cls.__new__(comp_cls)
-    comp._r = types.SimpleNamespace(_fem=fem)
+    comp._r = types.SimpleNamespace(_fem=fem, _fem_unavailable=None)
     return comp
 
 

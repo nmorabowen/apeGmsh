@@ -35,7 +35,11 @@ const PLAIN = join(fixtures, "shoebuckle.h5");
 const SCRIPT = "/work/apeGmsh/examples/shoebuckle_arch.py";
 
 const model: ModelFile = await openModel(MODEL);
-const plain: ModelFile = await openModel(PLAIN);
+// shoebuckle.h5 with no session_id, as files before #1304 had none. main's
+// writer stamps one into every model.h5, so the attribute is dropped here.
+const withoutSession = (m: ModelFile): ModelFile =>
+  ({ ...m, meta: Object.fromEntries(Object.entries(m.meta).filter(([k]) => k !== "session_id")) });
+const plain: ModelFile = withoutSession(await openModel(PLAIN));
 const provenance: ProvenanceZone = readProvenance(h5, MODEL)!;
 const geometry: GeometryZone = readGeometry(h5, GEOMETRY)!;
 
@@ -102,7 +106,7 @@ test("a geometry opened with no model is drawn alone, as the only phase", () => 
 test("provenance joins named declarations; the inspector's source is the declaring line", () => {
   const s = withModel(initialState, model, provenance);
   const sec = s.decls["opensees/section/W_section"]!;
-  assert.deepEqual(sec.provenance, { file: SCRIPT, line: 293, function: "declare_model", sha256: provenance.files.sha256[0], script: { file: SCRIPT, line: 451 } });
+  assert.deepEqual(sec.provenance, { file: SCRIPT, line: 293, function: "declare_model", sha256: provenance.files.sha256[0], recorded: true, script: { file: SCRIPT, line: 451 } });
   assert.equal(s.decls["opensees/uniaxialMaterial/Steel"]!.provenance!.line, 285);
   const r = sourceFor(s, "opensees/section/W_section");
   assert.ok(r.ok);

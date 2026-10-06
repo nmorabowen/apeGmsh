@@ -77,7 +77,12 @@ from typing import TYPE_CHECKING, Any, Optional
 
 from numpy import ndarray
 
-from ._bind import _resolve_fem, resolve_bound_model
+from ._bind import (
+    _bind_stage_names,
+    _resolve_fem,
+    _resolve_fem_via_model,
+    resolve_bound_model,
+)
 from ._composites import (
     ElementResultsComposite,
     NodeResultsComposite,
@@ -112,10 +117,11 @@ _MODEL_REQUIRED_MESSAGE = (
 
 _MODEL_H5_REQUIRED_MESSAGE = (
     "model_h5= is required. For a model built through the apeSees "
-    "bridge, pass the sibling archive (model_h5='model.h5'). For a bare "
-    "FEMData snapshot (e.g. get_fem_data()), the one-call route is "
-    "Results.from_fem(fem, path) — or write it yourself with "
-    "fem.to_h5('model.h5') and pass model_h5='model.h5'."
+    "bridge, write ops.h5('model.h5') and pass model_h5='model.h5': that "
+    "archive carries the element tag map the bridge's dense renumbering "
+    "needs. For a bare FEMData that drove a hand-written deck whose "
+    "element tags are the fem element ids, use "
+    "Results.from_fem(fem, path) or fem.to_h5('model.h5')."
 )
 
 
@@ -234,6 +240,13 @@ class Results:
     ) -> None:
         self._reader = reader
         self._fem = fem
+        # ADR 0113 D9 — ``from_native`` sets this after construction
+        # when no ``fem=`` was supplied and the file's embedded
+        # ``/model`` is below its floor: the refusal text. ``/stages``
+        # read; :attr:`fem` raises it until ``bind(fem)`` supplies a
+        # snapshot. Not a constructor keyword: it stays off the public
+        # ``Results`` signature.
+        self._fem_unavailable: Optional[str] = None
         self._stage_id = stage_id
         self._path = path
         # ADR 0020 INV-1 (Phase 8 prune) — ``_model`` is required and
@@ -280,6 +293,15 @@ class Results:
         If ``fem`` is omitted, the embedded ``/model/`` snapshot is
         used as the bound FEMData.
 
+        ADR 0113 D9 — a results file outlives its embedded model zones.
+        When the embedded ``/model`` is below its floor the file still
+        opens and ``/stages`` read: with ``fem=`` supplied the zone is
+        never read; without it :attr:`fem` raises the reader's refusal
+        (with a ``fem=`` hint) until :meth:`bind` supplies a snapshot.
+        The embedded ``/opensees`` is never read here, since ``model=``
+        is required; ``OpenSeesModel.from_h5`` on such a file refuses,
+        so the model comes from a sidecar archive.
+
         ``model_path`` records the on-disk archive the ``model`` was read
         from, for when it is *not* ``path`` itself — e.g. results whose
         embedded ``/model`` zone is not independently readable. The
@@ -288,18 +310,28 @@ class Results:
         """
         if model is None:
             raise TypeError(_MODEL_REQUIRED_MESSAGE)
+        from ..opensees._internal.schema_version import NEUTRAL
         from .readers._native import NativeReader
         reader = NativeReader(path)
-        bound_fem = _resolve_fem(reader, fem)
+        fem_unavailable: Optional[str] = None
+        if fem is None and NEUTRAL in reader.unavailable_zones:
+            # D9: no snapshot to bind and the file's own is below its
+            # floor. Open anyway; ``Results.fem`` refuses with the text.
+            fem_unavailable = reader.unavailable_zones[NEUTRAL]
+            bound_fem: "Optional[FEMData]" = None
+        else:
+            bound_fem = _resolve_fem(reader, fem)
         bound_model = resolve_bound_model(reader, model)
         # ``resolve_bound_model`` always returns ``model`` here since
         # we just asserted it is non-None, but route through the helper
         # to keep the resolution semantics in one place.
         assert bound_model is not None
-        return cls(
+        results = cls(
             reader, fem=bound_fem, path=Path(path), model=bound_model,
             model_path=Path(model_path) if model_path is not None else None,
-        )._with_autoloaded_definitions()
+        )
+        results._fem_unavailable = fem_unavailable
+        return results._with_autoloaded_definitions()
 
     @classmethod
     def from_recorders(
@@ -416,9 +448,33 @@ class Results:
         (no derived ``results.h5`` is written copying the
         ``/opensees/`` zone in).
 
+        What the archive carries, the results use (#1324, #1325):
+
+        - **FEMData.** ``fem=`` wins when given. Otherwise the neutral
+          FEMData stored in ``model_h5`` (physical groups, labels) is
+          bound whenever its node ids cover the capture's and sit at
+          the capture's coordinates (the model's ``ndm`` columns: a 2-D
+          model on an offset plane compares in ``x, y``), so ``pg=``
+          queries work from files alone. An archive written by
+          ``fem.to_h5`` carries no element tag map, so it is bound
+          only when the capture's element ids and nodes are its own
+          (ops tags are read as fem element ids on that route); a ``model_h5`` from another model or another mesh of
+          the same part warns (``ModelFemMismatchWarning``) and the
+          partial FEMData synthesized from the MPCO ``MODEL/`` group is
+          bound instead.
+        - **Stage names.** ``ops.stage(name=...)`` names from
+          ``/opensees/stages`` replace the file's ``MODEL_STAGE[<k>]``
+          names in order (``results.stage("gravity")``);
+          ``MODEL_STAGE[<k>]`` stays resolvable as an alias. A partial
+          run (fewer capture stages than program stages) names the
+          prefix and warns (``StageCountMismatchWarning``); more capture
+          stages than program stages warns and keeps the file's names.
+          Two program stages with one name warn
+          (``DuplicateStageNameWarning``); ``stage(name)`` picks the
+          first, and the ids ``stage_<k>`` stay unique.
+
         Single-file mode (default for non-partitioned analyses): pass
-        the path of one ``.mpco`` file. Synthesizes a partial FEMData
-        from the MPCO ``MODEL/`` group if ``fem`` is omitted.
+        the path of one ``.mpco`` file.
 
         Multi-partition mode (parallel OpenSees runs): pass either
 
@@ -461,11 +517,17 @@ class Results:
                 reader = MPCOMultiPartitionReader(discovered)
             else:
                 reader = MPCOReader(discovered[0])
-        bound_fem = _resolve_fem(reader, fem)
         # Per INV-3, this is an in-memory rehydrate from the sibling
         # file; we never copy the zone into a derived h5.
         from ..opensees.opensees_model import OpenSeesModel
         bound_model = OpenSeesModel.from_h5(model_h5)
+        # #1325 — the archive's neutral FEMData carries the physical
+        # groups the MPCO MODEL/ group lacks; #1324 — its /opensees/stages
+        # carry the names the MODEL_STAGE[<k>] groups lack.
+        bound_fem = _resolve_fem_via_model(
+            reader, fem, bound_model, model_path=model_h5,
+        )
+        _bind_stage_names(reader, bound_model, model_path=model_h5)
         # ADR 0043 slice 1.3 — MPCO buckets key element results by the
         # OpenSees ops tag; the results API speaks fem_eid. Whenever the
         # bound model carries a real element_meta pairing, the reader must
@@ -694,7 +756,22 @@ class Results:
 
     @property
     def fem(self) -> "Optional[FEMData]":
-        """The bound FEMData snapshot, or None if not bound."""
+        """The bound FEMData snapshot, or None if not bound.
+
+        Raises :class:`SchemaVersionError` on a native results file whose
+        embedded ``/model`` is below its floor and no ``fem=`` was
+        supplied (ADR 0113 D9): the zone is never read silently, and
+        the message says to pass ``fem=`` or call :meth:`bind`.
+        """
+        if self._fem_unavailable is not None:
+            from ..opensees._internal.schema_version import SchemaVersionError
+
+            raise SchemaVersionError(
+                f"{self._fem_unavailable} The embedded neutral zone is "
+                "unavailable; only /stages reads (ADR 0113 D9). Pass "
+                "fem= to Results.from_native, or call results.bind(fem), "
+                "with the FEMData this run used."
+            )
         return self._fem
 
     @property
@@ -1006,7 +1083,7 @@ class Results:
         return list(self._all_stages())
 
     def stage(self, name_or_id: str) -> "Results":
-        """Return a Results scoped to a stage (matched by id or name)."""
+        """Return a Results scoped to a stage (matched by id, name or alias)."""
         info = self._lookup_stage(name_or_id)
         return self._derive(stage_id=info.id)
 
@@ -1864,11 +1941,25 @@ class Results:
         return self._stages_cache
 
     def _lookup_stage(self, name_or_id: str) -> StageInfo:
-        for s in self._all_stages():
-            if s.id == name_or_id or s.name == name_or_id:
-                return s
-        names = sorted({s.name for s in self._all_stages()} |
-                        {s.id for s in self._all_stages()})
+        """Resolve a stage by exact id, then by name, then by alias.
+
+        Three passes, not one first-match: the viewers hand back
+        ``StageInfo.id`` (``stage_<k>``), and a program whose stages
+        are named ``stage_1`` / ``stage_2`` would otherwise send
+        ``stage("stage_1")`` to ``stage_0`` by name (#1393).
+        """
+        stages = self._all_stages()
+        for pick in (
+            lambda s: s.id == name_or_id,
+            lambda s: s.name == name_or_id,
+            lambda s: name_or_id in s.aliases,
+        ):
+            for s in stages:
+                if pick(s):
+                    return s
+        names = sorted({s.name for s in stages} |
+                        {s.id for s in stages} |
+                        {a for s in stages for a in s.aliases})
         raise KeyError(
             f"No stage matches {name_or_id!r}. Available: {names}"
         )
@@ -1941,6 +2032,11 @@ class Results:
         new = Results.__new__(Results)
         new._reader = self._reader
         new._fem = self._fem if isinstance(fem, _Sentinel) else fem
+        # A supplied fem (``bind``) clears the D9 refusal; stage / mode
+        # derivation carries it.
+        new._fem_unavailable = (
+            self._fem_unavailable if isinstance(fem, _Sentinel) else None
+        )
         new._stage_id = (
             self._stage_id if isinstance(stage_id, _Sentinel) else stage_id
         )

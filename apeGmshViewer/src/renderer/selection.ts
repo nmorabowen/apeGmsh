@@ -15,13 +15,15 @@
 import * as THREE from "three";
 import type { BlobStore } from "../state/blobs.ts";
 import type { State } from "../state/types.ts";
+import { DARK, toHexNumber } from "../theme/tokens.ts";
 
 /** The layer the highlight objects also live on; the mask pass renders it alone. */
 export const HALO_LAYER = 1;
 /** Halo width in CSS pixels (times the device pixel ratio on screen). */
 export const HALO_PX = 3;
-export const HALO_COLOUR = 0xffffff;
-export const SELECTION_COLOUR = 0xffd400;
+/** The halo is white; the core (outline and fill) is the office accent (#1308 round 3, item 3). */
+export const HALO_COLOUR = toHexNumber(DARK.halo);
+export const SELECTION_COLOUR = toHexNumber(DARK.selection);
 /** The pulse: HALO_PX swells to PULSE_SCALE x HALO_PX and back over PULSE_MS. */
 export const PULSE_MS = 650;
 export const PULSE_SCALE = 3;
@@ -290,7 +292,8 @@ export class SelectionHalo {
     const autoClear = r.autoClear, mask = camera.layers.mask;
     camera.layers.set(HALO_LAYER);
     r.setRenderTarget(this.mask);
-    r.setClearColor(0x000000, 0);
+    // The mask is cleared to alpha 0; its colour is never read.
+    r.setClearColor(0, 0);
     r.clear();
     r.render(scene, camera);
     r.setRenderTarget(null);

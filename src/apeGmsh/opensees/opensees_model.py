@@ -47,20 +47,22 @@ companion test suite.
 :mod:`apeGmsh.mesh`; the embedded ``FEMData`` is bound inside
 :meth:`from_h5`.
 
-**INV-5.**  ``build('live')`` (and the other re-emit targets) may
-produce tag identity that diverges from a fresh
-``apeSees(fem).run()``.  The bridge's :class:`TagAllocator`
-allocations are lost across H5 round-trip; this class replays the
-stored tags exactly, which matches the bridge's first run but is not
-guaranteed to match a subsequent fresh build.  Downstream tooling
-that depends on bridge-time tag stability must capture the
-:class:`BuiltModel` from :meth:`apeSees.build` directly and avoid the
-H5 round-trip.
+**INV-5.**  ``build(target)`` replays the tags the archive stores and
+allocates none of its own.  A tag is written once, by the bridge's
+build, and the archive keeps it (ADR 0114 D4, which supersedes ADR
+0019 INV-5), so the replayed deck carries the same tags as the build
+that wrote the archive, with no masking.  Three waived replay paths
+still re-derive tags for rows the archive does not carry yet
+(reinforce ties, and the initial-stress and staged parameters); each
+is waived on
+``tests/opensees/contract/tag_law_ledger.txt`` and pinned to the
+forward deck's tags by ``test_tag_law_replay_pins.py``.
 
 See also
 ========
 
 - :doc:`/architecture/decisions/0019-opensees-model-read-side-broker`
+- :doc:`/architecture/decisions/0114-the-archive-is-the-program`
 - :doc:`/architecture/decisions/0018-modeldata-vanilla-opensees-enrichment`
 - :doc:`/architecture/decisions/0011-h5-as-fourth-emit-target`
 - :doc:`/architecture/decisions/0020-results-carries-opensees-model`
@@ -295,7 +297,9 @@ class OpenSeesModel:
         with h5_reader.open(spath, meta_path=meta_path) as model:
             meta = model.meta()
             model_name = str(meta.get("model_name", "model"))
-            ndm = h5_reader.read_spatial_ndm(meta, model.handle)
+            ndm = h5_reader.read_spatial_ndm(
+                meta, model.handle, coords=fem.nodes.coords,
+            )
             ndf = int(meta.get("ndf", 0))
             snapshot_id = str(meta.get("snapshot_id", ""))
 

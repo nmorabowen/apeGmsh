@@ -1,6 +1,6 @@
 # ADR 0066 — H5DRM DRM-load authoring: typed pattern emit + DRMBox-from-`.h5drm` builder + buffer/boundary contract
 
-**Status:** Proposed — REQUIREMENT (not yet implemented). Grounded in a validated
+**Status:** Accepted — shipped (see Amendment 1, 2026-10-04). Grounded in a validated
 reference implementation in the OpenSees-fork side
 (`OpenSees/Ladruno_implementation/drm_study/`, shipped with fork PR
 `nmorabowen/OpenSees#296`, branch `ladruno`) and direct reads of the fixed
@@ -8,6 +8,8 @@ reference implementation in the OpenSees-fork side
 absorbing boundary — the ghost-layer emit) and the existing parametric `DRMBox`
 part (`parts/drm_box.py`). This ADR owns the **H5DRM load pattern** and the
 **dataset-keyed box builder**; ADR 0054 owns the absorbing layer.
+
+**Accepted 2026-10-04** (T week 1 status batch, #1202).
 
 ## Context
 
@@ -166,3 +168,9 @@ divergence ⇒ buffer+boundary mandatory; past-tend now holds final displacement
 - `parts/drm_box.py` — the parametric (non-dataset) DRM box; share hex machinery.
 - Fork: `Ladruno_implementation/drm_study/SCOPE.md` (validation write-up),
   `lysmer_asd_absorbing_boundaries_guide.md` §7.2/§9, OpenSees PR #296.
+
+## Amendment 1 (2026-10-04): shipped; drift recorded
+
+Accepted in the T week 1 status batch (#1202). The header's "REQUIREMENT (not yet implemented)" claim was stale: `pattern.H5DRM` (`opensees/pattern/pattern.py`) and `add_DRM_box_from_h5drm` (`core/_parts_registry.py`) shipped (D-1..D-4).
+
+Drift from the Decision text: the exterior buffer is a `buffer=` parameter of `add_DRM_box_from_h5drm`, not a separate `g.drm_buffer(...)` call as R3 sketches. The Decision above is left as written.

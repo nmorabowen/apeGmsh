@@ -129,6 +129,21 @@ class _ElementLabelsStub:
         return np.asarray(self._labels[name], dtype=np.int64)
 
 
+class _PhysicalNamesStub:
+    """Stand-in for ``fem.{nodes,elements}.physical`` — exposes the
+    public :meth:`PhysicalGroupSet.names` the bridge's "PG not found"
+    errors list (#1335).  The stub carries no dims, so ``dim`` must be
+    the default."""
+
+    def __init__(self, pgs: dict) -> None:
+        self._pgs = pgs
+
+    def names(self, dim: int = -1) -> list[str]:
+        if dim != -1:
+            raise NotImplementedError("fem-stub physical.names: dim filter")
+        return sorted(self._pgs.keys())
+
+
 class _MeshSelectionStub:
     """Stand-in for ``fem.mesh_selection`` — exposes ``node_ids`` and
     ``element_ids`` keyed by selection set name."""
@@ -173,6 +188,7 @@ class _NodesStub:
         self._coords = np.asarray(coords, dtype=np.float64)
         self._id_to_idx = {int(n): i for i, n in enumerate(self._ids)}
         self._pgs = {k: list(v) for k, v in node_pgs.items()}
+        self.physical = _PhysicalNamesStub(self._pgs)
         self.labels = _NodeLabelsStub(labels or {})
         # ADR 0043 split: per-node compose labels aligned to ``ids``;
         # ``None`` mirrors the uncomposed broker (no metadata).
@@ -301,6 +317,7 @@ class _ElementsStub:
         module_label: dict[int, str] | None = None,
     ) -> None:
         self._pgs = dict(elem_pgs)
+        self.physical = _PhysicalNamesStub(self._pgs)
         self.labels = _ElementLabelsStub(labels or {})
         # ADR 0043 split: flat ``element-id -> compose label`` map;
         # ``None`` mirrors the uncomposed broker (no metadata).
@@ -542,12 +559,22 @@ class FEMStub:
         ])
 
 
-def make_two_node_beam() -> FEMStub:
+def _up(
+    h: float, ndm: int, *, x: float = 0.0,
+) -> "tuple[float, float, float]":
+    """A point ``h`` up a column at ``x``: along z in 3-D, along y in 2-D."""
+    if ndm not in (2, 3):
+        raise ValueError(f"fixture ndm must be 2 or 3, got {ndm!r}")
+    return (x, h, 0.0) if ndm == 2 else (x, 0.0, h)
+
+
+def make_two_node_beam(*, ndm: int = 3) -> FEMStub:
     """Two nodes + one line element, both in PGs ``"Cols"`` and base.
 
     Geometry:
       * node 1 at origin
-      * node 2 at (0, 0, 1) — vertical column
+      * node 2 at (0, 0, 1) — vertical column; at (0, 1, 0) with
+        ``ndm=2``, so a 2-D model lies in the z = 0 plane (#1337)
 
     PGs:
       * ``"Cols"``: element 1 (the vertical line)
@@ -556,7 +583,7 @@ def make_two_node_beam() -> FEMStub:
     """
     nodes = _NodesStub(
         ids=[1, 2],
-        coords=[(0.0, 0.0, 0.0), (0.0, 0.0, 1.0)],
+        coords=[(0.0, 0.0, 0.0), _up(1.0, ndm)],
         node_pgs={"Base": [1], "Top": [2]},
     )
     elements = _ElementsStub(
@@ -569,7 +596,7 @@ def make_two_node_beam() -> FEMStub:
     return FEMStub(nodes=nodes, elements=elements)
 
 
-def make_two_column_frame() -> FEMStub:
+def make_two_column_frame(*, ndm: int = 3) -> FEMStub:
     """Two parallel columns sharing a common base PG.
 
     Geometry:
@@ -577,6 +604,9 @@ def make_two_column_frame() -> FEMStub:
       * node 2 at (0, 0, 1)   - top of column A
       * node 3 at (1, 0, 0)   - base of column B
       * node 4 at (1, 0, 1)   - top of column B
+
+    With ``ndm=2`` the columns run along y instead of z, so a 2-D model
+    lies in the z = 0 plane (#1337).
 
     PGs:
       * ``"Cols"``: elements 1 and 2 (both vertical columns)
@@ -587,9 +617,9 @@ def make_two_column_frame() -> FEMStub:
         ids=[1, 2, 3, 4],
         coords=[
             (0.0, 0.0, 0.0),
-            (0.0, 0.0, 1.0),
+            _up(1.0, ndm),
             (1.0, 0.0, 0.0),
-            (1.0, 0.0, 1.0),
+            _up(1.0, ndm, x=1.0),
         ],
         node_pgs={"Base": [1, 3], "Top": [2, 4]},
     )
@@ -677,14 +707,16 @@ def make_two_module_frame() -> FEMStub:
     return FEMStub(nodes=nodes, elements=elements)
 
 
-def make_two_column_frame_partitioned() -> FEMStub:
+def make_two_column_frame_partitioned(*, ndm: int = 3) -> FEMStub:
     """Same geometry as :func:`make_two_column_frame`, partitioned into 2.
+
+    ``ndm`` is passed through: 2 lays the columns along y (#1337).
 
     Partition 0 owns column A (nodes 1, 2; element 1).
     Partition 1 owns column B (nodes 3, 4; element 2).
     Used by ADR 0027 (P4) integration tests.
     """
-    stub = make_two_column_frame()
+    stub = make_two_column_frame(ndm=ndm)
     stub.set_partitions([
         (0, [1, 2], [1]),
         (1, [3, 4], [2]),

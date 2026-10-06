@@ -1,12 +1,14 @@
 # ADR 0099 — Builder-scoped declarations must follow the last model re-issue
 
-**Status:** Proposed (2026-08-18) — filed off a blocking defect report from
+**Status:** Accepted (2026-08-18) — filed off a blocking defect report from
 **Cerro Lindo Hito-3 (Rock–Frame Interaction RevA)**, whose emitted deck dies
 at `pattern Plain 1 1`. Everything below was **measured this session**: the
 survival table and the fix ordering are both results of running probe decks
 through `C:\Program Files\Ladruno\OpenSees\bin\OpenSees.exe` on Ladruno build
 `25a0647f`, not readings of the source. The reporter's proposed fix is
 insufficient and is refuted below.
+
+**Accepted 2026-10-04** (T week 1 status batch, #1202).
 
 ## Context
 

@@ -124,6 +124,8 @@ Documented loudly in the class docstring; users who need tag stability
 must capture the bridge's `BuiltModel` from `apeSees.build()` directly
 and not round-trip through H5.
 
+> **Superseded 2026-10-04 by [ADR 0114](0114-the-archive-is-the-program.md) D4:** tags are archive facts, and replay never allocates one.
+
 ## Alternatives considered
 
 | Alternative | Why rejected |

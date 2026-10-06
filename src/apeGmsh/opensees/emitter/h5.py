@@ -34,8 +34,9 @@ https://github.com/nmorabowen/apeGmsh/blob/a9f8b670df700dd5b1a9c40f5c7d1f25dd1d4
 
 The reshuffle is a breaking schema change — ``SCHEMA_VERSION`` jumps
 ``1.1.0 → 2.0.0``.  Phase 7a (ADR 0023) replaced the previous
-``EXPECTED_SCHEMA_MAJOR`` constant with per-zone two-version-window
-validation in :mod:`apeGmsh.opensees._internal.schema_version`.
+``EXPECTED_SCHEMA_MAJOR`` constant with per-zone version validation in
+:mod:`apeGmsh.opensees._internal.schema_version` (a two-version window
+then; a floor per zone since ADR 0113).
 
 **Schema deviation (documented).**  One place where the streaming
 Protocol cannot supply the spec-level grouping the schema asks for:
@@ -72,10 +73,13 @@ the dependency into import time for users who never call ``ops.h5()``.
 """
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any, Iterable, Literal, Sequence
+from typing import TYPE_CHECKING, Any, Iterable, Literal, NoReturn, Sequence
 
+from .base import DroppedAxisGuard, command_row
+from .verbs import VERBS, Verb
 from .._internal.tag_resolution import (
     ATTR_ELEMENT_NODES,
     clear_element_emit_context,
@@ -159,12 +163,39 @@ class H5FeatureDeferredWarning(UserWarning):
 H5ReinforceDeviationWarning = H5FeatureDeferredWarning
 
 
+class H5RefusedVerb(NotImplementedError):
+    """``H5Emitter`` refuses a verb whose ``VERBS`` row is ``refuse`` (ADR 0114 D1).
+
+    Raised by :meth:`H5Emitter._refuse`, the one path every refusal takes,
+    so ``apeSees.h5()`` fails loud instead of writing an archive that
+    silently lacks the call. ``verb`` is the Protocol verb and ``row`` its
+    ``VERBS`` row; ``detail`` says what the call carried and what to use
+    instead. A ``NotImplementedError`` subclass: the refusal means "no
+    store yet", and the existing ``except NotImplementedError`` sites keep
+    catching it.
+    """
+
+    def __init__(self, verb: str, row: Verb, detail: str) -> None:
+        self.verb = verb
+        self.row = row
+        super().__init__(
+            f"H5Emitter refuses {verb!r} (VERBS row: via={row.via}, "
+            f"scope={row.scope}, h5={row.h5}, ADR 0114 D1). {detail}"
+        )
+
+
 #: Schema version string emitted in ``/meta/schema_version``. Bump
 #: ``MAJOR`` only on a breaking change; ``MINOR`` for additive groups
 #: (such as the ``/beam_integration`` group introduced alongside the
 #: Protocol's ``beamIntegration`` method in Phase 4.5).
 #:
 #: History:
+#:   Reading the history: entries that say "per ADR 0023 two-version
+#:   reader window, both N-1 and N files are accepted" record the rule
+#:   in force when that minor shipped. ADR 0113 retired the window; a
+#:   reader now opens every minor from :data:`SCHEMA_FLOOR` (2.12.0) up
+#:   to the current one and refuses a newer minor (INV-4).
+#:
 #:   * 1.0.0 — Phase 6 initial release.
 #:   * 1.1.0 — added ``/beam_integration`` group + widened fiber-layer
 #:     ``line`` field from float[4] to float[6].
@@ -445,11 +476,15 @@ H5ReinforceDeviationWarning = H5FeatureDeferredWarning
 #:     2.21 and 2.22 files; a 2.21.x reader REFUSES a 2.22.x file.
 SCHEMA_VERSION: str = "2.22.0"
 
-#: Oldest opensees-zone minor the reader opens (ADR 0113 (#1303)): 2.11.0,
-#: the 0-based rank flip, is the zone's last non-additive minor. The
-#: floor moves only with a major bump; :func:`schema_version.reader_floor`
-#: reads it from here.
-SCHEMA_FLOOR: str = "2.11.0"
+#: Oldest opensees-zone minor the reader opens (ADR 0113 (#1303)). The
+#: zone's last non-additive minor is 2.11.0, the 0-based rank flip, but
+#: every 2.11-era writer stamped neutral 2.7.0, below the neutral floor
+#: 2.10.0, so no 2.11 file opens through today's readers: the schema
+#: corpus proved it (#1329) and the maintainer raised the floor to 2.12.0
+#: on 2026-10-04 (ADR 0113 D3, the evidence gate; no major bump). From
+#: here on the floor moves only with a major bump;
+#: :func:`schema_version.reader_floor` reads it from here.
+SCHEMA_FLOOR: str = "2.12.0"
 
 
 # Map known time-series type tokens to "is path-bearing": for a Path
@@ -986,6 +1021,9 @@ class H5Emitter:
 
         self._ndm: int | None = None
         self._ndf: int | None = None
+        # The archive keeps every node's xyz, but a deck replayed from it
+        # trims to ndm; refuse here what that replay would refuse (#1337).
+        self._dropped_axes = DroppedAxisGuard.BEFORE_MODEL
 
         # Nodes — stored as parallel arrays for compact write.
         self._node_tags: list[int] = []
@@ -1015,16 +1053,14 @@ class H5Emitter:
         # the same ``apeSees.h5`` archive. The emitter no-ops each deck
         # tie and counts it (observability only — no warning, since the
         # neutral round-trip is complete). See ``embedded_rebar``.
-        self._skipped_reinforce_ties: int = 0
-        self._skipped_embed_ties: int = 0
-        self._skipped_contacts: int = 0
-
-        # ADR 0068, Open item 4 (RESOLVED): the equation route
-        # (EQ_Constraint) round-trips via the neutral InterpolationRecord
-        # lane (enforce + weights, schema 2.14.0), so the deck emitter
-        # no-ops it silently like the reinforce/embed/contact ties (no
-        # warn). Counter retained for symmetry / diagnostics.
-        self._skipped_equation_constraints: int = 0
+        #
+        # ADR 0114 D1: every such drop goes through :meth:`_ledger`, which
+        # counts it here by verb. The ``ledger`` rows of ``VERBS`` are the
+        # only verbs that may reach it (K2's xfail ledger; shrink-only).
+        # The equation route (ADR 0068, Open item 4 RESOLVED) is one of
+        # them: it round-trips via the neutral InterpolationRecord lane
+        # (enforce + weights, schema 2.14.0).
+        self._ledger_counts: Counter[str] = Counter()
 
         # Constitutive.
         self._uniaxial: list[_MaterialRecord] = []
@@ -1160,12 +1196,87 @@ class H5Emitter:
         self._element_ranks: list[int] = []
 
     # =====================================================================
+    # ADR 0114 D1/D2: the one refusal, the one ledger, the one bracket
+    # =====================================================================
+
+    def _refuse(self, verb: str, detail: str) -> NoReturn:
+        """Raise :class:`H5RefusedVerb` for ``verb``, a ``refuse`` row.
+
+        Every ``refuse`` body ends here, so the lock
+        (``test_verbs_lock.py``) can read the refusal off the source and
+        the message always names the verb and its ``VERBS`` row.
+        """
+        row = VERBS[verb]
+        if row.h5 != "refuse":
+            raise RuntimeError(
+                f"H5Emitter._refuse({verb!r}): the VERBS row is "
+                f"h5={row.h5!r}, not 'refuse'; fix the row or the body."
+            )
+        raise H5RefusedVerb(verb, row, detail)
+
+    def _ledger(self, verb: str) -> None:
+        """Count a call to ``verb``, a ``ledger`` row, and stay silent.
+
+        The drop is deliberate and observable: ``_ledger_counts[verb]``
+        is the number of calls the archive does not carry. Only a
+        ``ledger`` row may be counted here; anything else is a body that
+        drops what its row says it archives.
+        """
+        row = VERBS[verb]
+        if row.h5 != "ledger":
+            raise RuntimeError(
+                f"H5Emitter._ledger({verb!r}): the VERBS row is "
+                f"h5={row.h5!r}, not 'ledger'; fix the row or the body."
+            )
+        self._ledger_counts[verb] += 1
+
+    def _stage_block(self, verb: str) -> _StageEmitBlock:
+        """Return the open stage bucket a stage-only verb captures into.
+
+        ADR 0114 D2: a ``scope == "stage"`` verb emitted outside a
+        ``stage_open`` / ``stage_close`` bracket raises. Before K1-2 the
+        bodies returned silently, so a bridge path that emitted a stage
+        mutator globally would have archived nothing and said nothing.
+        The bracket pair itself and ``flip_element_stage`` (archived by
+        the ``set_stage_records`` side channel; the lock pins its body
+        trivial) do not use this.
+        """
+        blk = self._stage_current
+        if blk is None:
+            raise RuntimeError(
+                f"H5Emitter.{verb}: a stage-only verb (VERBS scope "
+                "'stage') was emitted outside a stage bracket; it has no "
+                "global store, so the archive could not carry it (ADR "
+                "0114 D2). Emit it inside stage_open(...) / stage_close()."
+            )
+        return blk
+
+    # The four counters tests read, derived from the ledger so the two
+    # cannot drift.
+    @property
+    def _skipped_reinforce_ties(self) -> int:
+        return self._ledger_counts["embedded_rebar"]
+
+    @property
+    def _skipped_embed_ties(self) -> int:
+        return self._ledger_counts["embedded_node"]
+
+    @property
+    def _skipped_contacts(self) -> int:
+        return self._ledger_counts["contact_surface"]
+
+    @property
+    def _skipped_equation_constraints(self) -> int:
+        return self._ledger_counts["equationConstraint"]
+
+    # =====================================================================
     # Protocol — Model
     # =====================================================================
 
     def model(self, *, ndm: int, ndf: int) -> None:
         self._ndm = ndm
         self._ndf = ndf
+        self._dropped_axes = DroppedAxisGuard(ndm)
 
     def node(
         self, tag: int, *coords: float, ndf: int | None = None,
@@ -1176,6 +1287,7 @@ class H5Emitter:
             x, y = cs
             triple = (x, y, 0.0)
         elif len(cs) == 3:
+            self._dropped_axes.trim(cs, int(tag))
             x, y, z = cs
             triple = (x, y, z)
         else:
@@ -1359,12 +1471,13 @@ class H5Emitter:
         # *deck* archival only — the canonical FEMData snapshot
         # (_femdata_h5_io) DOES round-trip equal_dof_mixed records.
         _ = (master, slave, dof_pairs)
-        raise NotImplementedError(
+        self._refuse(
+            "equalDOF_mixed",
             "equalDOF_Mixed archival to the OpenSees H5 deck is deferred "
             "(ADR 0069). Emit the model with .tcl() / .py() / live run, or "
             "persist it via the FEMData .h5 snapshot (get_fem_data), which "
             "round-trips equal_dof_mixed records. Deck archival is tracked "
-            "as a follow-up."
+            "as a follow-up.",
         )
 
     def rigidLink(self, kind: str, master: int, slave: int) -> None:
@@ -1468,7 +1581,7 @@ class H5Emitter:
         # mp comment so it can't leak onto the next real MP record.
         del cnode, cdof, ccoef, retained
         self._consume_pending_mp_name()
-        self._skipped_equation_constraints += 1
+        self._ledger("equationConstraint")
 
     def embedded_rebar(
         self, ele_tag: int, *args: int | float | str,
@@ -1490,7 +1603,7 @@ class H5Emitter:
         # can't leak onto the next real MP record.
         del ele_tag, args
         self._consume_pending_mp_name()
-        self._skipped_reinforce_ties += 1
+        self._ledger("embedded_rebar")
 
     def embedded_node(
         self, ele_tag: int, *args: int | float | str,
@@ -1507,7 +1620,7 @@ class H5Emitter:
         # latched mp comment so it can't leak onto the next real MP record.
         del ele_tag, args
         self._consume_pending_mp_name()
-        self._skipped_embed_ties += 1
+        self._ledger("embedded_node")
 
     def contact_surface(
         self, tag: int, *args: int | float | str,
@@ -1525,7 +1638,7 @@ class H5Emitter:
         # record.
         del tag, args
         self._consume_pending_mp_name()
-        self._skipped_contacts += 1
+        self._ledger("contact_surface")
 
     def contact(
         self, tag: int, *args: int | float | str,
@@ -1533,6 +1646,7 @@ class H5Emitter:
         # Companion to contact_surface — the warning fires once on the first
         # contactSurface; just consume the call here.
         del tag, args
+        self._ledger("contact")
 
     def contact_plane(
         self, tag: int, *args: int | float | str,
@@ -1543,6 +1657,7 @@ class H5Emitter:
         # contactSurface call is consumed by ``contact_surface`` above; this
         # just consumes the contactPlane verb.
         del tag, args
+        self._ledger("contact_plane")
 
     def mp_constraint_comment(self, name: str) -> None:
         # Latch the declaration label; the next MP-constraint call will
@@ -2021,19 +2136,15 @@ class H5Emitter:
         support pattern; the bucket's open pattern records the
         ``(node, dof)`` pair and the deck emitters re-render the
         ``sp <node> <dof> [nodeDisp …] -const`` form on replay.
-        Outside a stage bracket this stays a no-op (unreachable from
-        bridge-driven call sites; Protocol-conformance tests drive it
-        bare).
+        Outside a stage bracket it raises (ADR 0114 D2); the bridge only
+        emits it inside a stage's HOLD pattern.
         """
-        if self._stage_current is None:
-            del node, dof
-            return
+        blk = self._stage_block("sp_hold")
         pat = self._active_pattern("sp_hold")
         # P5.1: a HOLD on a cross-rank shared node emits inside every
         # owning rank's copy of the stage's HOLD pattern — capture once.
         if self._partition_dup(
-            ("sp_hold", self._stage_current.name, pat.tag,
-             int(node), int(dof)),
+            ("sp_hold", blk.name, pat.tag, int(node), int(dof)),
         ):
             return
         pat.sp_holds.append((int(node), int(dof)))
@@ -2111,6 +2222,7 @@ class H5Emitter:
             ))
             return
         del alpha_m, beta_k, beta_k_init, beta_k_comm
+        self._ledger("rayleigh")
 
     def damping(
         self, damp_type: str, tag: int, *args: int | float | str,
@@ -2130,6 +2242,7 @@ class H5Emitter:
         # ADR 0053 (D4): modal damping is a domain directive (like
         # ``rayleigh`` / ``eigen``); archival deferred — no-op, no schema bump.
         del factors
+        self._ledger("modal_damping")
 
     def recorder_declaration_begin(
         self,
@@ -2286,6 +2399,16 @@ class H5Emitter:
         attrs["system"] = primary
         attrs["system_runtime_fallback"] = fallback
 
+    # -- Command channel (ADR 0114 D2/D3) ---------------------------------
+
+    def command(self, verb: str, *args: int | float | str) -> None:
+        command_row(verb)
+        self._refuse(
+            "command",
+            f"The token {verb!r} has no archive store yet: K1-4 adds "
+            "/opensees/commands. Use ops.tcl(path) / ops.py(path).",
+        )
+
     # =====================================================================
     # Protocol — Stress control (Phase SSI-1) + Staged analysis (SSI-2)
     # =====================================================================
@@ -2330,14 +2453,14 @@ class H5Emitter:
         the stage with the parameter left at its declared value.
         """
         del pid, ele_tags, value
-        if self._stage_current is None:
-            return
-        raise NotImplementedError(
-            f"H5Emitter: stage {self._stage_current.name!r} emits "
-            f"updateParameter for {args[0]!r} (s.update_parameter).  The "
-            "stage block has no store for it, so the archive would be "
-            "irreplayable — H5 archival of s.update_parameter is "
-            "deferred.  Use ops.tcl(path) / ops.py(path)."
+        blk = self._stage_block("update_parameter")
+        self._refuse(
+            "update_parameter",
+            f"Stage {blk.name!r} emits updateParameter for {args[0]!r} "
+            "(s.update_parameter). The stage block has no store for it, so "
+            "the archive would be irreplayable; H5 archival of "
+            "s.update_parameter is deferred. Use ops.tcl(path) / "
+            "ops.py(path).",
         )
 
     def step_hook_ramp(
@@ -2389,8 +2512,7 @@ class H5Emitter:
 
     def domain_change(self) -> None:
         """Record the stage's ``domainChange`` barrier (ADR 0055 Phase 2)."""
-        if self._stage_current is not None:
-            self._stage_current.domain_changed = True
+        self._stage_block("domain_change").domain_changed = True
 
     # -- Staged-analysis mutators (Phase SSI-2.E) ---------------------------
     # Capture into the active stage bucket (ADR 0055 Phase 2).  All five
@@ -2401,24 +2523,23 @@ class H5Emitter:
     # never-set is structurally distinct from value-0.
 
     def set_time(self, t: float) -> None:
-        if self._stage_current is not None:
-            self._stage_current.set_time = float(t)
+        self._stage_block("set_time").set_time = float(t)
 
     def set_creep(self, on: bool) -> None:
-        if self._stage_current is not None:
-            self._stage_current.set_creep_on = bool(on)
+        self._stage_block("set_creep").set_creep_on = bool(on)
 
     def reset(self) -> None:
-        if self._stage_current is not None:
-            self._stage_current.pre_analyze_reset = True
+        self._stage_block("reset").pre_analyze_reset = True
 
     def set_node_vel(self, node: int, dof: int, value: float) -> None:
-        self._refuse_node_kinematics_archival("setNodeVel")
+        self._refuse_node_kinematics_archival("set_node_vel", "setNodeVel")
 
     def set_node_accel(self, node: int, dof: int, value: float) -> None:
-        self._refuse_node_kinematics_archival("setNodeAccel")
+        self._refuse_node_kinematics_archival("set_node_accel", "setNodeAccel")
 
-    def _refuse_node_kinematics_archival(self, command: str) -> None:
+    def _refuse_node_kinematics_archival(
+        self, verb: str, command: str,
+    ) -> NoReturn:
         """``s.zero_velocities`` has no H5 stage-block store yet.
 
         Fail loud rather than write an archive that silently drops the
@@ -2428,49 +2549,44 @@ class H5Emitter:
         stage-claimed phantom-node archival refusal in
         :meth:`set_stage_records`.
         """
-        if self._stage_current is None:
-            return
-        raise NotImplementedError(
-            f"H5Emitter: stage {self._stage_current.name!r} emits "
-            f"{command} (s.zero_velocities).  The stage block has no "
-            "store for nodal velocity / acceleration zeroing, so the "
-            "archive would be irreplayable — H5 archival of "
-            "s.zero_velocities is deferred.  Use ops.tcl(path) / "
-            "ops.py(path)."
+        blk = self._stage_block(verb)
+        self._refuse(
+            verb,
+            f"Stage {blk.name!r} emits {command} (s.zero_velocities). The "
+            "stage block has no store for nodal velocity / acceleration "
+            "zeroing, so the archive would be irreplayable; H5 archival of "
+            "s.zero_velocities is deferred. Use ops.tcl(path) / "
+            "ops.py(path).",
         )
 
     def remove_sp(self, node: int, dof: int) -> None:
-        if self._stage_current is not None:
-            # P5.1: remove_sp replicates on every rank owning the node
-            # (mirrors fix's INV-4 fan-out) — capture once.
-            if self._partition_dup(
-                ("stage_remove_sp", self._stage_current.name,
-                 int(node), int(dof)),
-            ):
-                return
-            self._stage_current.remove_sps.append((int(node), int(dof)))
+        blk = self._stage_block("remove_sp")
+        # P5.1: remove_sp replicates on every rank owning the node
+        # (mirrors fix's INV-4 fan-out) — capture once.
+        if self._partition_dup(
+            ("stage_remove_sp", blk.name, int(node), int(dof)),
+        ):
+            return
+        blk.remove_sps.append((int(node), int(dof)))
 
     def remove_element(self, tag: int) -> None:
-        if self._stage_current is not None:
-            self._stage_current.remove_elements.append(int(tag))
+        self._stage_block("remove_element").remove_elements.append(int(tag))
 
     def update_material_stage(self, mat_tag: int, stage: int) -> None:
-        if self._stage_current is not None:
-            # A stage flip is model-global: the partitioned emit path
-            # replicates the line on EVERY rank (each rank is its own
-            # process with its own static mElastFlag), so the capture
-            # dedupes exactly like remove_sp's INV-4 fan-out.  Without
-            # this the archive would carry N copies per material under
-            # partitioning and one copy without it — an unstable
-            # model_hash for the same authored model.
-            if self._partition_dup(
-                ("stage_update_material_stage", self._stage_current.name,
-                 int(mat_tag), int(stage)),
-            ):
-                return
-            self._stage_current.update_material_stages.append(
-                (int(mat_tag), int(stage)),
-            )
+        blk = self._stage_block("update_material_stage")
+        # A stage flip is model-global: the partitioned emit path
+        # replicates the line on EVERY rank (each rank is its own
+        # process with its own static mElastFlag), so the capture
+        # dedupes exactly like remove_sp's INV-4 fan-out.  Without
+        # this the archive would carry N copies per material under
+        # partitioning and one copy without it — an unstable
+        # model_hash for the same authored model.
+        if self._partition_dup(
+            ("stage_update_material_stage", blk.name,
+             int(mat_tag), int(stage)),
+        ):
+            return
+        blk.update_material_stages.append((int(mat_tag), int(stage)))
 
     # =====================================================================
     # Protocol — Analysis chain
@@ -2565,6 +2681,7 @@ class H5Emitter:
         # bridge's ``apeSees.eigen(...)`` drives a LiveOpsEmitter
         # directly and never routes through H5.
         del num_modes, solver
+        self._ledger("eigen")
         return []
 
     def modal_properties(
@@ -2573,6 +2690,7 @@ class H5Emitter:
         # Runtime one-shot retrieval — nothing in the model definition
         # to archive.  No-op, mirroring ``eigen`` above.
         del unorm, out
+        self._ledger("modal_properties")
         return {}
 
     def eigen_feast(
@@ -2581,6 +2699,7 @@ class H5Emitter:
         # Runtime one-shot retrieval — no-op, mirroring ``eigen`` above
         # (ADR 0075 INV-2).
         del f_min, f_max, certify
+        self._ledger("eigen_feast")
         return []
 
     def modal_response_history(
@@ -2589,6 +2708,7 @@ class H5Emitter:
         # Runtime analysis command — not model definition.  No-op,
         # mirroring ``eigen`` above (ADR 0075 INV-2).
         del args
+        self._ledger("modal_response_history")
 
     def response_spectrum_analysis(
         self, direction: int, *args: int | float | str,
@@ -2596,12 +2716,14 @@ class H5Emitter:
         # Runtime analysis command — not model definition.  No-op,
         # mirroring ``eigen`` above (ADR 0075 INV-2).
         del direction, args
+        self._ledger("response_spectrum_analysis")
 
     def profiler(self, *args: int | float | str) -> None:
         # The profiler is runtime telemetry around the analyze loop — there
         # is nothing in the model definition to archive.  No-op, mirroring
         # ``eigen`` above.
         del args
+        self._ledger("profiler")
 
     # =====================================================================
     # Output — write the buffered model to disk

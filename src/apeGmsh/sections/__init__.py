@@ -47,10 +47,12 @@ from .shell import W_shell
 from .profile import W_profile
 from ._analysis import SectionProperties
 from ._document import (
+    SECTION_DOC_FLOOR,
     SECTION_DOC_VERSION,
     FiberRecipe,
     SectionDocument,
     SectionDocumentError,
+    SectionDocumentNewerWarning,
 )
 from ._builder_gui import launch_builder
 from ._handoff import handoff_snippet
@@ -82,7 +84,9 @@ __all__ = [
     "SectionMaterial",
     "SectionDocument",
     "SectionDocumentError",
+    "SectionDocumentNewerWarning",
     "SECTION_DOC_VERSION",
+    "SECTION_DOC_FLOOR",
     "FiberRecipe",
     "launch_builder",
     "handoff_snippet",

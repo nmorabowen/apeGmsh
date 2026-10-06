@@ -104,12 +104,19 @@ diaphragm plane shares in-plane motion with a master node:
 
 ```python
 g.constraints.rigid_diaphragm(
-    "slab", "slab_master",
+    "slab_master", "slab",
     master_point=(2.5, 2.5, 3.0),
     plane_normal=(0, 0, 1),
     plane_tolerance=0.05,
 )
 ```
+
+The diaphragm ties only the in-plane DOFs (`ux, uy, rz` here). A master that
+is a lone point at the centre of mass sits in no element, so its `uz, rx, ry`
+are stiffened by nothing and the stiffness matrix is singular there; fix them on
+the bridge, `ops.fix(pg="slab_master", dofs=(0, 0, 1, 1, 1, 0))`, or attach the
+master to an element. The build warns (`DetachedDiaphragmMasterWarning`) when a
+detached master still has free DOFs, naming the mask.
 
 `rigid_body` welds a whole region to a master (all six DOFs), and
 `kinematic_coupling` is the RBE2 of the family: a reference node rigidly drives

@@ -33,7 +33,7 @@ from apeGmsh.opensees import apeSees
 from apeGmsh.opensees.element.zero_length import ZeroLengthMatDir
 from apeGmsh.opensees.emitter.live import LiveOpsEmitter
 
-from tests.opensees.fixtures.fem_stub import make_two_node_beam
+from tests.opensees.live._springs import coincident_spring
 
 _POINTS: tuple[tuple[float, float], ...] = (
     (0.0012499999999999998, 781.5821391014429),
@@ -68,7 +68,7 @@ def _backbone(u: float) -> float:
 
 @pytest.mark.live
 def test_multilinear_fuse_backbone_and_last_slope_extrapolation() -> None:
-    fem = make_two_node_beam()  # node 1 @origin (Base), node 2; line "Cols"
+    fem = coincident_spring()  # zeroLength "Cols": node 1 (Base) -> 2
     ops = apeSees(cast("object", fem))  # type: ignore[arg-type]
     ops.model(ndm=2, ndf=3)
 

@@ -1,4 +1,7 @@
-// Turn a ModelFile into flat render buffers, coloured by physical group.
+// Turn a ModelFile into flat render buffers and a legend of the physical
+// groups that colour them. Colours themselves come from the theme
+// (src/theme/tokens.ts, through src/state/palette.ts); this module hands
+// out the group of every primitive, never a colour.
 //
 // Pure: no three.js and no DOM, so the tests run it in Node. Cells are
 // recognised by their gmsh element-type `code` (gmsh's own numbering,
@@ -34,29 +37,18 @@ const CORNERS: Readonly<Record<Shape, number>> = {
   point: 1, line: 2, tri: 3, quad: 4, tet: 4, hex: 8, prism: 6, pyramid: 5,
 };
 
-/** Categorical palette (sRGB 0..1); groups cycle through it. */
-export const PALETTE: readonly (readonly [number, number, number])[] = [
-  [0.29, 0.56, 0.89], [0.95, 0.55, 0.22], [0.36, 0.73, 0.42], [0.86, 0.33, 0.38],
-  [0.62, 0.47, 0.84], [0.25, 0.75, 0.78], [0.89, 0.75, 0.25], [0.84, 0.45, 0.70],
-  [0.55, 0.62, 0.30], [0.50, 0.58, 0.68],
-];
-export const NO_GROUP: readonly [number, number, number] = [0.62, 0.64, 0.68];
-export const OPS_ONLY: readonly [number, number, number] = [0.93, 0.93, 0.93];
-
+/** One legend row: a physical group (or one of the two synthetic rows) and how many cells it colours. */
 export interface LegendEntry {
   name: string;
-  color: readonly [number, number, number];
   elements: number;
 }
 
 export interface MeshBuffers {
   /** 6 floats per segment (two xyz endpoints). */
   linePositions: Float32Array;
-  lineColors: Float32Array;
   lineRefs: ElementRef[];
   /** 9 floats per triangle. */
   triPositions: Float32Array;
-  triColors: Float32Array;
   triRefs: ElementRef[];
   /** 6 floats per outline edge of the drawn faces. */
   edgePositions: Float32Array;
@@ -93,18 +85,15 @@ export function buildMesh(model: ModelFile): MeshBuffers {
   const { byElement, order } = colourGroups(model);
   const legendCount = new Array<number>(order.length).fill(0);
   let noGroup = 0;
-  const colourOf = (femId: number): readonly [number, number, number] => {
+  /** Count the cell in its colour group's legend row (or in the no-group row). */
+  const count = (femId: number): void => {
     const gi = byElement.get(femId);
-    if (gi === undefined) {
-      noGroup++;
-      return NO_GROUP;
-    }
-    legendCount[gi]!++;
-    return PALETTE[gi % PALETTE.length]!;
+    if (gi === undefined) noGroup++;
+    else legendCount[gi]!++;
   };
 
-  const lp: number[] = [], lc: number[] = [], lr: ElementRef[] = [];
-  const tp: number[] = [], tc: number[] = [], tr: ElementRef[] = [];
+  const lp: number[] = [], lr: ElementRef[] = [];
+  const tp: number[] = [], tr: ElementRef[] = [];
   const counts = { lineCells: 0, faceCells: 0, solidCells: 0, opsOnly: 0, points: 0 };
   const missingNodes = new Set<number>();
 
@@ -117,23 +106,21 @@ export function buildMesh(model: ModelFile): MeshBuffers {
     return i;
   };
   const push3 = (arr: number[], i: number) => arr.push(xyz[3 * i]!, xyz[3 * i + 1]!, xyz[3 * i + 2]!);
-  const pushSeg = (a: number, b: number, c: readonly number[], ref: ElementRef) => {
+  const pushSeg = (a: number, b: number, ref: ElementRef) => {
     push3(lp, a); push3(lp, b);
-    lc.push(c[0]!, c[1]!, c[2]!, c[0]!, c[1]!, c[2]!);
     lr.push(ref);
   };
   const polygons: number[][] = [];
-  const pushFace = (ids: number[], c: readonly number[], ref: ElementRef) => {
+  const pushFace = (ids: number[], ref: ElementRef) => {
     polygons.push(ids);
     for (let k = 1; k + 1 < ids.length; k++) {
       push3(tp, ids[0]!); push3(tp, ids[k]!); push3(tp, ids[k + 1]!);
-      for (let m = 0; m < 3; m++) tc.push(c[0]!, c[1]!, c[2]!);
       tr.push(ref);
     }
   };
 
   // Solid boundary faces: a face seen once is on the boundary.
-  const solidFaces = new Map<string, { ids: number[]; colour: readonly number[]; ref: ElementRef; n: number }>();
+  const solidFaces = new Map<string, { ids: number[]; ref: ElementRef; n: number }>();
 
   model.blocks.forEach((b, blockIndex) => {
     const shape = GMSH_SHAPE[b.code];
@@ -160,13 +147,13 @@ export function buildMesh(model: ModelFile): MeshBuffers {
         counts.points++;
         continue;
       }
-      const colour = colourOf(b.ids[row]!);
+      count(b.ids[row]!);
       if (shape === "line") {
         counts.lineCells++;
-        pushSeg(corner[0]!, corner[1]!, colour, ref);
+        pushSeg(corner[0]!, corner[1]!, ref);
       } else if (shape === "tri" || shape === "quad") {
         counts.faceCells++;
-        pushFace(corner, colour, ref);
+        pushFace(corner, ref);
       } else {
         counts.solidCells++;
         for (const f of SOLID_FACES[shape]) {
@@ -174,12 +161,12 @@ export function buildMesh(model: ModelFile): MeshBuffers {
           const key = ids.slice().sort((x, y) => x - y).join(",");
           const seen = solidFaces.get(key);
           if (seen) seen.n++;
-          else solidFaces.set(key, { ids, colour, ref, n: 1 });
+          else solidFaces.set(key, { ids, ref, n: 1 });
         }
       }
     }
   });
-  for (const f of solidFaces.values()) if (f.n === 1) pushFace(f.ids, f.colour, f.ref);
+  for (const f of solidFaces.values()) if (f.n === 1) pushFace(f.ids, f.ref);
 
   // OpenSees-only elements (no neutral-zone cell): drawn from inline connectivity.
   model.opensees?.elementMeta.forEach((meta, metaIndex) => {
@@ -189,7 +176,7 @@ export function buildMesh(model: ModelFile): MeshBuffers {
       const idx = conn.map(at);
       if (idx.some((i) => i < 0)) return;
       counts.opsOnly++;
-      for (let k = 0; k + 1 < idx.length; k++) pushSeg(idx[k]!, idx[k + 1]!, OPS_ONLY, { kind: "ops", metaIndex, row });
+      for (let k = 0; k + 1 < idx.length; k++) pushSeg(idx[k]!, idx[k + 1]!, { kind: "ops", metaIndex, row });
     });
   });
 
@@ -224,18 +211,16 @@ export function buildMesh(model: ModelFile): MeshBuffers {
   const radius = Math.max(1e-9, Math.hypot(hi[0]! - lo[0]!, hi[1]! - lo[1]!, hi[2]! - lo[2]!) / 2);
 
   const legend: LegendEntry[] = order
-    .map((name, gi) => ({ name, color: PALETTE[gi % PALETTE.length]!, elements: legendCount[gi]! }))
+    .map((name, gi) => ({ name, elements: legendCount[gi]! }))
     .filter((e) => e.elements > 0)
     .sort((a, b) => b.elements - a.elements || a.name.localeCompare(b.name));
-  if (noGroup) legend.push({ name: "(no physical group)", color: NO_GROUP, elements: noGroup });
-  if (counts.opsOnly) legend.push({ name: "(OpenSees-only, no cell)", color: OPS_ONLY, elements: counts.opsOnly });
+  if (noGroup) legend.push({ name: "(no physical group)", elements: noGroup });
+  if (counts.opsOnly) legend.push({ name: "(OpenSees-only, no cell)", elements: counts.opsOnly });
 
   return {
     linePositions: new Float32Array(lp),
-    lineColors: new Float32Array(lc),
     lineRefs: lr,
     triPositions: new Float32Array(tp),
-    triColors: new Float32Array(tc),
     triRefs: tr,
     edgePositions: new Float32Array(ep),
     legend,

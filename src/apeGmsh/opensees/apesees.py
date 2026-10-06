@@ -25,27 +25,20 @@ from typing import TYPE_CHECKING, Any, Callable, Iterable, Sequence, TypeVar
 from ._internal.build import (
     BridgeError,
     DampingAttachRecord,
-    ActivateAbsorbingRecord,
-    ElementRemovalRecord,
     FixRecord,
     InitialStressRecord,
     MassRecord,
-    MaterialStageRecord,
     ModalDampingRecord,
     NdfRecord,
-    UpdateParameterRecord,
     RayleighRecord,
     RegionAssignmentRecord,
     ProfileRecord,
     SPRemovalRecord,
     StageRecord,
     SupportRecord,
-    ZeroVelocityRecord,
     ELEMENT_TAG_MODES,
     ElementTagMode,
     _emit_node_with_inferred_ndf,
-    allocate_element_tags,
-    reserve_fem_element_tags,
     bucket_primary_nodes_by_rank,
     build_element_partition_owner,
     build_node_partition_owners,
@@ -119,6 +112,7 @@ from ._internal.build import (
     validate_adaptive_element_endpoints,
     resolve_ndf_overlay,
     validate_constraint_master_ndf,
+    validate_diaphragm_master_stiffness,
     validate_record_ndf_consistency,
     fit_dof_vector,
     fit_fix_mask,
@@ -134,6 +128,7 @@ from ._internal.tag_resolution import (
     set_stage_owned_node_tags,
 )
 from ._internal.compose import _compose_model_h5, _path_stem
+from .._internal.provenance import ProvenanceStore
 from ._internal.ns import (
     _AlgorithmNS,
     _AnalysisNS,
@@ -150,14 +145,20 @@ from ._internal.ns import (
     _ProfilerNS,
     _RecorderNS,
     _SectionNS,
-    _StageDampingNS,
     _StrategyNS,
     _SystemNS,
     _TestNS,
     _TimeSeriesNS,
     _UniaxialMaterialNS,
 )
-from ._internal.tag_allocator import TagAllocator
+from ._internal.tag_allocator import TagAllocator, TagLawError
+from ._internal.tag_plan import (
+    TagMode,
+    TagPlan,
+    emit_mode,
+    plan_of,
+    plan_tags,
+)
 from ._internal.tag_resolution import set_tag_resolver
 from ._internal.types import (
     Analysis,
@@ -183,6 +184,11 @@ from ._run import resolve_log_path, run_label, stream_run
 from .emitter.base import Emitter, StrategySpec
 from .node import Node, _NodeAccessor, _iter_tags
 from .recorder import FilterableRecorder, Ladruno
+from .procedures._contact import _ContactQueryMixin
+from .procedures._explicit import ExplicitRunResult, _ExplicitMixin
+from .procedures._frf import _FrfMixin
+from .procedures._modal import _ModalMixin
+from .stage._builder import _StageBuilder, _build_initial_stress_record
 from .transform import Cartesian, Orientation
 
 if TYPE_CHECKING:
@@ -196,10 +202,6 @@ if TYPE_CHECKING:
     # similarly-named submodule ``apeGmsh.mesh.FEMData`` under mypy.
     from apeGmsh.cuts import SectionCutDef, SectionSweepDef
     from apeGmsh.mesh.FEMData import FEMData
-    from apeGmsh._kernel.records._constraints import (
-        ConstraintRecord,
-        InterfaceRecord,
-    )
     from ._internal.build import StiffnessResolver
     from .analysis.strategy import Ladder
     from .emitter.tcl import PartitionSpan
@@ -210,18 +212,7 @@ if TYPE_CHECKING:
     from apeGmsh.results.capture.spec import DomainCaptureSpec
     from apeGmsh.hpc import Cluster, Job
 
-    from .analysis.complex_eigen import ComplexEigenResult
-    from .analysis.eigen import EigenResult
-    from .analysis.footfall_result import FootfallResult
-    from .analysis.modal import (
-        FrequencyResponseResult,
-        ModalHistoryResult,
-        ModalPropertiesResult,
-        RandomResponseResult,
-        ResponseSpectrumResult,
-        SteadyStateResult,
-    )
-    from .emitter.live import ContactInfo, LiveOpsEmitter
+    from .emitter.live import LiveOpsEmitter
 
 
 __all__ = ["apeSees", "BuiltModel", "ExplicitRunResult"]
@@ -327,15 +318,6 @@ _ANALYSIS_CHAIN_BASES: tuple[type[Primitive], ...] = (
 )
 
 
-# Phase SSI-2.E: nDMaterial classes that honour ``updateMaterialStage``.
-# Matched by ``type(handle).__name__`` so the stage verb does not have to
-# import the material classes.  Flipping anything else is a silent no-op
-# in OpenSees, so ``s.update_material_stage`` refuses it instead.  This
-# set grows when the PressureIndepMultiYield / PM4Sand family gets typed.
-STAGED_MATERIAL_CLASSES: frozenset[str] = frozenset(
-    {"ManzariDafalias", "SAniSandMS", "LadrunoSANISAND"},
-)
-
 
 def _is_analysis_chain_primitive(prim: Primitive) -> bool:
     """True iff ``prim`` is one of the seven analysis-chain types."""
@@ -351,6 +333,26 @@ def _kind_of(prim: Primitive) -> str:
         f"Primitive {type(prim).__name__} does not inherit from any "
         f"recognized family base (UniaxialMaterial, Section, ...)."
     )
+
+
+def _planned_element_specs(
+    tags: TagAllocator, elements: "list[Element]",
+) -> "list[tuple[Element, ElementPlanRows]]":
+    """The element plan this emit reads, from the plan ``tags`` carries.
+
+    ADR 0114 D4 (amended): element tags are allocated once, by
+    ``plan_tags``; the emit paths read them here instead of minting.
+    The plan must cover exactly ``elements``, the specs this emit fans
+    out, in order; anything else raises :class:`TagLawError`.
+    """
+    specs = plan_of(tags).elements.specs
+    if [id(s) for s, _ in specs] != [id(e) for e in elements]:
+        raise TagLawError(
+            f"the element plan holds {len(specs)} specs, but this emit fans "
+            f"out {len(elements)}, or in another order: the plan was not "
+            "made for this model (ADR 0114 D4, amended)."
+        )
+    return list(specs)
 
 
 def _fem_has_contacts(fem: "FEMData") -> bool:
@@ -951,6 +953,22 @@ class BuiltModel:
     # rebind the field), so ``id(rec)`` reuse across builds is not a hazard.
     _mt_pairs_cache:         "dict[int, list[tuple[int, Any]]]" = field(
         default_factory=dict, compare=False)
+    # ADR 0114 D4 (amended) — the build-time tag plan, one per emit mode,
+    # made by ``plan_tags`` on the first ``emit`` in that mode and reused
+    # by every later one. ``init=False``, so ``dataclasses.replace`` gives
+    # the copy a fresh memo; ``copy.copy`` still shares it, so
+    # ``_tag_plan`` also checks that the memoised plan was made from this
+    # model's inputs (``TagPlan.planned_for``) and re-plans if not.
+    _tag_plans:              "dict[TagMode, TagPlan]" = field(
+        default_factory=dict, init=False, compare=False, repr=False)
+
+    def _tag_plan(self, mode: "TagMode") -> "TagPlan":
+        """The memoised :class:`TagPlan` of emit mode ``mode`` for this model."""
+        plan = self._tag_plans.get(mode)
+        if plan is None or not plan.planned_for(self):
+            plan = plan_tags(self, mode)
+            self._tag_plans[mode] = plan
+        return plan
 
     def _has_equation_constraints(self) -> bool:
         """True iff the deck carries any ``equationConstraint`` row.
@@ -1155,30 +1173,6 @@ class BuiltModel:
           4. Pattern / recorder specs resolve ``pg=`` records into
              per-node / per-element calls.
         """
-        # Re-create a TagAllocator seeded with the bridge's existing
-        # primitive-tag assignments. Element fan-out + orientation
-        # override tags allocate freshly during emit; the seeded
-        # counters keep those allocations from colliding with
-        # primitive-own tags.
-        tags = TagAllocator()
-        for prim in self.primitives:
-            tags.allocate_for(prim, _kind_of(prim))
-        # tag_for already mirrors the assignments; nothing else to do
-        # for the seeded primitives.
-
-        # ADR 0111 D2: ``element_tags="fem"`` reserves the FEM element-id
-        # range on the ``"element"`` counter HERE, before any emit path
-        # allocates an element tag (the element plan, interface /
-        # embedded / rebar / rigid-body / coupling elements, node-pair
-        # springs), so every synthesised tag lands above max(FEM id) on
-        # every path: flat, split, staged and partitioned alike. It also
-        # refuses ids that cannot be tags (<= 0, or fanned out twice).
-        if self.element_tags == "fem":
-            reserve_fem_element_tags(
-                [p for p in self.primitives if isinstance(p, Element)],
-                self.fem, tags,
-            )
-
         # Tag resolver: returns the bridge-allocated tag for any
         # primitive in self.primitives. Fan-out helpers may install
         # short-lived element-specific resolvers on top of this; they
@@ -1533,6 +1527,24 @@ class BuiltModel:
                 ),
                 mass_from_model=self.mass_from_model,
             )
+        # #1333 - a rigidDiaphragm master no element touches has its untied
+        # DOFs (uz, rx, ry on a floor) stiffened by nothing: K is singular
+        # there.  Warn, naming the fix; archival emits never solve, so skip.
+        if not _emitter_is_archival:
+            validate_diaphragm_master_stiffness(
+                self.fem, elements, self.ndm, self.ndf, effective_ndf,
+                fix_records=(
+                    *self.fix_records,
+                    *(r for st in self.stage_records for r in st.fix_records),
+                    *(r for st in self.stage_records
+                      for r in st.support_records),
+                ),
+                sp_records=tuple(sp for p in _plains for sp in p.sps),
+                stage_constraint_records=tuple(
+                    r for st in self.stage_records
+                    for r in st.stage_constraint_records
+                ),
+            )
         validate_record_ndf_consistency(
             self.fem, effective_ndf, self.ndm, self.ndf,
             fix_records=(
@@ -1633,6 +1645,21 @@ class BuiltModel:
             stage_records=self.stage_records,
         )
 
+        # ADR 0114 D4 (amended): the tags this emit writes come from the
+        # build-time tag plan of its mode, made once per mode and
+        # memoised.  ``plan_tags`` seeds the planner allocator from the
+        # registered primitives, reserves the FEM element-id range under
+        # ``element_tags="fem"`` (ADR 0111 D2: every synthesised tag lands
+        # above max(FEM id) on every path), plans every migrated family
+        # (the element fan-out included) and freezes.  The emit mints its
+        # still-pending families from a fork of that allocator, which
+        # continues every counter from the plan and carries the plan
+        # (``tag_plan.plan_of``).  The mode matches the dispatch below.
+        emitter_can_partition = getattr(emitter, "supports_partitions", True)
+        plan = self._tag_plan(emit_mode(
+            self, split=split, supports_partitions=emitter_can_partition))
+        tags = plan.emit_allocator()
+
         # ADR 0043 slice 1.1: split (mode A) dispatch.  Routed before
         # the partitioned branch so the split guards (which fail loud
         # on partitioned / staged / initial_stress / non-composed
@@ -1668,7 +1695,6 @@ class BuiltModel:
         # is what lets a composed multi-module model emit ALL its nodes and
         # analyze in-process.  Partition-capable emitters (Tcl/Py/MPI
         # writers) keep the per-rank fan-out.
-        emitter_can_partition = getattr(emitter, "supports_partitions", True)
         if not is_partitioned(self.fem) or not emitter_can_partition:
             self._emit_flat(
                 emitter=emitter,
@@ -1745,8 +1771,7 @@ class BuiltModel:
             element_owner_stage, node_owner_stage = compute_stage_ownership(
                 self.stage_records, elements, self.fem,
             )
-            element_plan = allocate_element_tags(
-                elements, self.fem, tags, element_tags=self.element_tags)
+            element_plan = _planned_element_specs(tags, elements)
             # ADR 0065 v2 B3: columnar tag map off the plan (no per-element
             # boxed dict). Node-pair sentinel rows are dropped in from_plan.
             fem_eid_to_ops_tag = FemToOpsTagMap.from_plan(element_plan)
@@ -1828,8 +1853,7 @@ class BuiltModel:
         # the element / geomTransf counters are unaffected by the move —
         # the staged branch above has always allocated here.
         if element_plan is None:
-            element_plan = allocate_element_tags(
-                elements, self.fem, tags, element_tags=self.element_tags)
+            element_plan = _planned_element_specs(tags, elements)
             # ADR 0065 v2 B3: columnar tag map (see the staged branch above).
             fem_eid_to_ops_tag = FemToOpsTagMap.from_plan(element_plan)
         if fem_eid_to_ops_tag is None:
@@ -2191,8 +2215,7 @@ class BuiltModel:
         # geomTransf counters are unaffected by allocating ahead of the
         # transform fan-out, and allocation itself emits nothing: an
         # unhoisted deck does not move a byte.
-        element_plan = allocate_element_tags(
-            elements, self.fem, tags, element_tags=self.element_tags)
+        element_plan = _planned_element_specs(tags, elements)
         # ADR 0065 v2 B3: columnar tag map off the plan (no boxed dict).
         fem_eid_to_ops_tag = FemToOpsTagMap.from_plan(element_plan)
 
@@ -3247,8 +3270,7 @@ class BuiltModel:
             element_owner_stage, node_owner_stage = compute_stage_ownership(
                 self.stage_records, elements, self.fem,
             )
-            early_element_plan = allocate_element_tags(
-                elements, self.fem, tags, element_tags=self.element_tags)
+            early_element_plan = _planned_element_specs(tags, elements)
             # ADR 0065 v2 B3: columnar tag map off the plan (no boxed dict).
             early_fem_eid_to_ops_tag = FemToOpsTagMap.from_plan(
                 early_element_plan
@@ -3355,8 +3377,7 @@ class BuiltModel:
                 )
             fem_eid_to_ops_tag = early_fem_eid_to_ops_tag
         else:
-            element_plan = allocate_element_tags(
-                elements, self.fem, tags, element_tags=self.element_tags)
+            element_plan = _planned_element_specs(tags, elements)
             # Global fem-eid → ops-tag map; used by the initial_stress
             # per-rank ``addToParameter`` fan-out to translate the user's
             # FEM element selection into OpenSees element tags (Phase
@@ -8257,7 +8278,7 @@ def _emit_pattern_sp_partitioned(
 # apeSees — the bridge
 # ---------------------------------------------------------------------------
 
-class apeSees:
+class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
     """The OpenSees bridge.
 
     Construct with a :class:`~apeGmsh.mesh.FEMData` snapshot:
@@ -8330,6 +8351,15 @@ class apeSees:
         # read by ``_resolve`` so reference kwargs accept a name string
         # as well as the object handle.
         self._names: dict[str, Primitive] = {}
+        # ADR 0112 D3 (V2d): where in the user's source each primitive
+        # was declared.  Filled by ``_register`` through the shared
+        # capture helper, one record per user call, keyed
+        # ``opensees/<kind>/<name|#k>``; ``h5()`` appends the table to
+        # the snapshot's own ``/provenance``.  Never hashed.
+        self._provenance = ProvenanceStore()
+        # Call ordinal of ``imposed_displacement``: the ``<name>`` of its
+        # synthesised records when the call gives no ``name=``.
+        self._imposed_displacement_calls = 0
         self._tags = TagAllocator()
         self._ndm: int | None = None
         self._ndf: int | None = None
@@ -8616,13 +8646,15 @@ class apeSees:
         Example::
 
             ops.model(ndm=3, ndf=6)
+            from apeGmsh.opensees.emitter.live import get_ops
+            osp = get_ops()   # the module the bridge drives; never import openseespy
             spec = DomainCaptureSpec(opensees=ops)
             spec.nodes(pg="Top", components=["displacement"])
-            with ops.domain_capture(spec, path="run.h5") as cap:
+            with ops.domain_capture(spec, path="run.h5", ops=osp) as cap:
                 cap.begin_stage("gravity", kind="static")
                 for _ in range(n):
-                    ops.analyze(1, 1.0)
-                    cap.step(t=ops.getTime())
+                    osp.analyze(1, 1.0)   # the backend module, not the bridge
+                    cap.step(t=osp.getTime())
                 cap.end_stage()
 
         Raises
@@ -9014,6 +9046,7 @@ class apeSees:
         uz: float | None = None,
         pattern_factor: float = 1.0,
         series: "TimeSeries | None" = None,
+        name: str | None = None,
     ) -> "Plain":
         """Imposed-displacement pattern helper (Phase SSI-3).
 
@@ -9050,6 +9083,18 @@ class apeSees:
             already registered with the bridge.  When supplied,
             ``pattern_factor`` is ignored — the user is in full
             control of the time-history shape.
+        name
+            Optional bridge-side alias for the pattern (as ``name=`` on
+            ``ops.pattern.Plain``).  It is also the ``<name>`` of the
+            call's provenance records,
+            ``opensees/pattern/imposed_displacement:<name>`` and, for the
+            auto-created series,
+            ``opensees/timeSeries/imposed_displacement:<name>``; without
+            it ``<name>`` is ``#<k>``, the call's 1-based ordinal on this
+            bridge, so a name may not start with ``#``.  A refused or
+            taken name raises before anything is registered.  Both
+            records carry ``origin = "synthesised"`` and point at this
+            call (ADR 0112 D3, #1378).
 
         Returns
         -------
@@ -9103,16 +9148,68 @@ class apeSees:
                         f"ops.model(..., ndf={dof_idx}) first."
                     )
 
+        from .pattern.pattern import Plain as _Plain
+        from .time_series.time_series import Linear as _Linear
+
+        # Every refusal happens here, before anything is registered, so
+        # a bad call leaves no series, pattern, alias or record behind.
+        # An empty name is no name (as ``_register`` and ``capture``
+        # read it): the call takes its ordinal key.
+        name = name or None
+        if name is not None:
+            if name.startswith("#"):
+                raise ValueError(
+                    f"apeSees.imposed_displacement: name={name!r} may not "
+                    "start with '#': that prefix marks the ordinal key of "
+                    "an unnamed call (imposed_displacement:#<k>)."
+                )
+            existing = self._names.get(name)
+            if existing is not None:
+                raise ValueError(
+                    f"apeSees: name {name!r} is already registered to a "
+                    f"{type(existing).__name__}; names must be unique per "
+                    "bridge.  Pick a different name= (or pass the object "
+                    "handle directly)."
+                )
+        if series is not None:
+            # A name string resolves through the alias table like every
+            # other reference kwarg (an unknown name or a non-series
+            # fails loud).
+            series = self._resolve(series, base=TimeSeries)
+
+        # Provenance key of this call's synthesised objects
+        # (``<verb>:<name>`` or ``<verb>:#<k>``; see ``name`` above).
+        # Both prospective keys are checked before either object is
+        # registered: user names share the key space, and a refusal
+        # must leave no series, pattern or record behind.
+        _key = (
+            f"imposed_displacement:"
+            f"{name if name is not None else f'#{self._imposed_displacement_calls + 1}'}"
+        )
+        for _family, _needed in (("timeSeries", series is None),
+                                 ("pattern", True)):
+            if _needed and self._provenance.has("opensees", _family, _key):
+                raise ValueError(
+                    "apeSees.imposed_displacement: the provenance key "
+                    f"'opensees/{_family}/{_key}' of the {_family} it would "
+                    "create already has a record (a declaration was named "
+                    "like it); pass another name=.  Nothing was registered."
+                )
+        self._imposed_displacement_calls += 1
+
         # Default time series: Linear scaled by pattern_factor.
         # Folds STKO's ``-fact F`` semantics into the time-series
         # factor instead of an explicit ``-fact`` on the pattern
         # (apeGmsh's Plain pattern primitive doesn't carry one).
         if series is None:
-            series = self.timeSeries.Linear(factor=float(pattern_factor))
+            series = self._register(
+                _Linear(factor=float(pattern_factor)), synthesised=_key,
+            )
 
-        # Construct the Plain pattern via the namespace so it gets
-        # registered + tagged.
-        plain = self.pattern.Plain(series=series)
+        # Register + tag the Plain pattern directly (not through the
+        # namespace) so its provenance record carries the verb's key.
+        plain = self._register(_Plain(series=series), name=name,
+                               synthesised=_key)
         # Populate the sp records.  Plain's recording API accepts
         # either pg= or node=; we route based on the helper's input.
         dof_values: tuple[tuple[int, float | None], ...] = (
@@ -9436,1618 +9533,6 @@ class apeSees:
         return self._live_emitter.augment(
             element=element, tol=tol, max_passes=max_passes,
         )
-
-    def _require_live_for_contact_query(self, verb: str) -> "LiveOpsEmitter":
-        """The shared no-live-analysis guard for the contact queries."""
-        if self._live_emitter is None:
-            raise BridgeError(
-                f"apeSees.{verb}: no live analysis has run. Call analyze(...) "
-                "first (the live path) — the contact queries read the CURRENT "
-                "state of the contact engine, so they only mean anything after "
-                "a step. There is no recorded alternative: the LadrunoContact "
-                "subsystem has no recorder channel, so contact data is "
-                "live-query-only (fork ADR-85 adoption S6)."
-            )
-        return self._live_emitter
-
-    def ladruno_contact_force(self, node: int) -> float:
-        """Total normal contact-force **magnitude** on an NTS slave node.
-
-        The sum over that node's active master-segment pairs of
-        ``tn = kn·<−gap>₊`` (fork ``ladrunoContactForce``, ADR-39 B3). Works in
-        2-D and 3-D. Requires a prior **live** :meth:`analyze`; fork-only.
-
-        Four limits, none of which the return value can tell you about — read
-        them before using this number:
-
-        * **NTS lane only.** It is fed exclusively from the segment / end-cap
-          branch, so a **mortar** or **rigid-plane** slave always reads
-          ``0.0``. Those lanes have no force query at all; recover their forces
-          from reactions or the penalty-depth identity instead.
-        * **A magnitude, not a vector.** Near a corner or the 2-D D4 end-cap
-          the pair normal is not axis-aligned, so this does **not** equal any
-          single global force component. The fork's own guide says so.
-        * **Zero is ambiguous.** ``0.0`` means "not in contact" *and* "no
-          contact engine in this domain". Call :meth:`ladruno_contact_info`
-          and check ``total_contacts`` to tell them apart — **not**
-          ``n_contacts``, which counts the NTS lane only and reads ``0`` on a
-          perfectly live mortar-only model.
-        * **A released 3-D pair reports its last-active force forever** — a
-          known, deferred fork defect (reproduced at ``f_query = 1000.0``
-          against ``f_true = 0.0``). The 2-D lane carries the fix.
-        """
-        return self._require_live_for_contact_query(
-            "ladruno_contact_force").ladruno_contact_force(node)
-
-    def ladruno_contact_info(self) -> "ContactInfo":
-        """Engine counters — ``(n_contacts, n_commits, n_reverts,
-        n_mortar_contacts)`` (fork ``ladrunoContactInfo``).
-
-        Mostly useful as the disambiguator for the other three queries: they
-        all return ``0.0`` both for "nothing happening here" and for "no
-        contact engine at all". Use ``info.total_contacts``, the sum of the two
-        lane counters — ``n_contacts`` and ``n_mortar_contacts`` are **disjoint
-        lanes**, not a total and a subset, so a mortar-only model reports
-        ``n_contacts == 0`` with a live engine (measured on fork
-        ``b17e8bd82``). Requires a prior live :meth:`analyze`; fork-only.
-        """
-        return self._require_live_for_contact_query(
-            "ladruno_contact_info").ladruno_contact_info()
-
-    def ladruno_mortar_penetration(self) -> float:
-        """Max KKT-active normal penetration over all mortar slave nodes
-        (fork ``ladrunoMortarPenetration``, ADR-41 C2.2).
-
-        A **length**, not a force — dimension-blind, and unaffected by the
-        mortar ``thickness=``. It is the mortar lane's ALM convergence measure:
-        the quantity a held-load augmentation loop watches to decide it has
-        augmented enough. ``0.0`` with no mortar contact. Requires a prior live
-        :meth:`analyze`; fork-only.
-        """
-        return self._require_live_for_contact_query(
-            "ladruno_mortar_penetration").ladruno_mortar_penetration()
-
-    def ladruno_mortar_tie_residual(self) -> float:
-        """Max weighted relative-displacement bond residual over all mortar
-        **tie** slave nodes (fork ``ladrunoMortarTieResidual``, ADR-41 C4).
-
-        The tie's ALM convergence measure, the counterpart of
-        :meth:`ladruno_mortar_penetration` for ``tie=True``. ``0.0`` with no
-        tie declared. Requires a prior live :meth:`analyze`; fork-only.
-        """
-        return self._require_live_for_contact_query(
-            "ladruno_mortar_tie_residual").ladruno_mortar_tie_residual()
-
-    def eigen(
-        self,
-        num_modes: int,
-        *,
-        solver: str = "-genBandArpack",
-    ) -> "EigenResult":
-        """Build + emit + run a one-shot ``eigen`` solve via the live emitter.
-
-        Builds a :class:`BuiltModel`, drives a
-        :class:`~apeGmsh.opensees.emitter.live.LiveOpsEmitter` end-to-
-        end (model + nodes + elements + bcs + mass), then issues the
-        single ``eigen`` call and returns an :class:`EigenResult`
-        carrying the eigenvalues plus a back-reference to the live
-        emitter for lazy mode-shape access.
-
-        Unlike :meth:`analyze`, ``eigen`` does NOT require an analysis
-        chain (constraints / numberer / system / test / algorithm /
-        integrator / analysis): it only needs the assembled stiffness
-        and mass matrices.
-
-        **Partitioned models — serial-gather stopgap (ADR 0077 Tier 0).**
-        On a partition-authored model this runs the eigensolve *serially
-        on the full, gathered model* in one process (the live emitter has
-        ``supports_partitions = False``): the modes are exact, but the
-        whole model is assembled on one rank, so it does **not** scale the
-        eigensolve. There is no *distributed* modal path yet — never run a
-        bare ``eigen`` under ``OpenSeesMP`` (it solves each rank's LOCAL
-        subdomain → wrong modes; ADR 0077 refuted v1). Distributed FEAST
-        (ADR 0077 Tier 1) is gated on the classic-Tcl ``-feast`` unlock.
-
-        Parameters
-        ----------
-        num_modes
-            Number of modes to compute. Must be ``>= 1``.
-        solver
-            OpenSees eigen-solver flag, one of ``-genBandArpack``
-            (default), ``-symmBandLapack``, ``-fullGenLapack``,
-            ``-frequency``, ``-standard``. Passed through verbatim to
-            ``ops.eigen(solver, num_modes)``.
-
-        Returns
-        -------
-        EigenResult
-            Carries ``eigenvalues`` (``λ_i = ω_i²``) plus derived
-            ``omega`` / ``freq`` / ``periods`` and a
-            :meth:`EigenResult.mode_shape` accessor.
-
-        Raises
-        ------
-        ValueError
-            If ``num_modes < 1``.
-        NotImplementedError
-            If the model has any registered stages — live execution
-            of staged models is unsupported (Phase SSI-2.A).
-        """
-        if num_modes < 1:
-            raise ValueError(
-                f"apeSees.eigen: num_modes must be >= 1, got {num_modes}."
-            )
-        if self._stage_records:
-            raise NotImplementedError(
-                "apeSees.eigen: live execution does not support staged "
-                "models (Phase SSI-2.A) "
-                f"(got {len(self._stage_records)} stage(s)).  Eigen "
-                "analyses are typically run against an unstaged build; "
-                "either drop the stage blocks or emit Tcl/Py and run "
-                "the eigen command there."
-            )
-
-        # Local imports — keep openseespy + numpy out of bridge import
-        # time for Tcl/Py/H5-only users.
-        from .analysis.eigen import EigenResult
-        from .emitter.live import LiveOpsEmitter
-        import numpy as np
-
-        bm = self.build()
-        self._assert_fork_if_required()
-        live_emitter = LiveOpsEmitter(wipe=True)
-        bm.emit(live_emitter)
-        values = live_emitter.eigen(num_modes, solver=solver)
-        return EigenResult(
-            eigenvalues=np.asarray(values, dtype=np.float64),
-            _live=live_emitter,
-        )
-
-    def modal_properties(
-        self,
-        num_modes: int,
-        *,
-        solver: str = "-genBandArpack",
-        unorm: bool = False,
-    ) -> "ModalPropertiesResult":
-        """Build + emit + run ``eigen`` + ``modalProperties`` live.
-
-        Like :meth:`eigen`, drives a
-        :class:`~apeGmsh.opensees.emitter.live.LiveOpsEmitter` end-to-end
-        and needs no analysis chain; after the eigen solve it issues
-        ``modalProperties -return`` (upstream ``DomainModalProperties``)
-        and wraps the returned dict in a
-        :class:`~apeGmsh.opensees.analysis.modal.ModalPropertiesResult`
-        carrying participation factors, modal masses, and mass ratios
-        per mode and per global component.
-
-        The properties are also stored on the OpenSees Domain, which is
-        the prerequisite state for the Ladruno fork's modal-response
-        commands (fork ADR 44).
-
-        **Partitioned models — serial-gather stopgap (ADR 0077 Tier 0).**
-        Runs serially on the full, gathered model (see :meth:`eigen`), so
-        participation factors / effective modal mass are **correct** here.
-        This is the *only* correct way to get modal properties on a
-        partition-authored model today: the distributed path (ADR 0077
-        Tier 1) has no participation surface — upstream
-        ``modalProperties`` is MPI-blind — so a distributed run would
-        return wrong effective mass. It does not scale the eigensolve
-        (whole model on one rank).
-
-        Parameters
-        ----------
-        num_modes
-            Number of modes to compute. Must be ``>= 1``.
-        solver
-            OpenSees eigen-solver flag, passed through verbatim (see
-            :meth:`eigen`). Use ``-fullGenLapack`` on tiny models —
-            ARPACK needs ``num_modes < n_dof``.
-        unorm
-            Request the displacement-normalized eigenvector scaling
-            (``modalProperties -unorm``).
-
-        Raises
-        ------
-        ValueError
-            If ``num_modes < 1``.
-        NotImplementedError
-            If the model has any registered stages — live execution
-            of staged models is unsupported (Phase SSI-2.A).
-        """
-        if num_modes < 1:
-            raise ValueError(
-                "apeSees.modal_properties: num_modes must be >= 1, "
-                f"got {num_modes}."
-            )
-        if self._stage_records:
-            raise NotImplementedError(
-                "apeSees.modal_properties: live execution does not "
-                "support staged models (Phase SSI-2.A) "
-                f"(got {len(self._stage_records)} stage(s)).  Either "
-                "drop the stage blocks or emit Tcl/Py and run the "
-                "modalProperties command there."
-            )
-
-        # Local imports — keep openseespy + numpy out of bridge import
-        # time for Tcl/Py/H5-only users.
-        from .analysis.modal import ModalPropertiesResult
-        from .emitter.live import LiveOpsEmitter
-        import numpy as np
-
-        bm = self.build()
-        self._assert_fork_if_required()
-        live_emitter = LiveOpsEmitter(wipe=True)
-        bm.emit(live_emitter)
-        values = live_emitter.eigen(num_modes, solver=solver)
-        properties = live_emitter.modal_properties(unorm=unorm)
-        return ModalPropertiesResult(
-            eigenvalues=np.asarray(values, dtype=np.float64),
-            properties=properties,
-            _live=live_emitter,
-        )
-
-    def footfall_walking(
-        self,
-        *,
-        num_modes: int,
-        body_weight: float,
-        g: float,
-        response_nodes: "int | Node | Sequence[int | Node]",
-        excitation: str = "self",
-        excitation_nodes: "int | Node | Sequence[int | Node] | None" = None,
-        dof: int = 3,
-        occupancy: str = "office",
-        limit: str = "curve",
-        damp: float | None = None,
-        modal_damp: Sequence[float] | None = None,
-        rayleigh: tuple[float, float] | None = None,
-        f_max: float = 20.0,
-        n_extra: int = 30,
-        dt: float = 0.005,
-        solver: str = "-genBandArpack",
-    ) -> "FootfallResult":
-        """Evaluate walking footfall vibration on a live modal basis.
-
-        AISC Design Guide 11, 2nd ed., §7.4.1, as ADR 0109 lays it out: one
-        ``eigen`` + ``modalProperties`` pair through :meth:`modal_properties`,
-        the modal acceleration FRF ``A_ij(Ω) = −Ω² H_ij(Ω)`` summed in numpy
-        over the D4 sweep grid, and each response node checked against
-        **both** Design Guide branches — Eq 7-1 where the FRF peaks below
-        9 Hz (a low-frequency floor, resonant build-up) and Eq 7-4…7-6 where
-        it peaks in 9-``f_max`` Hz (a high-frequency floor, footstep impulses
-        summed over every mode with ``f_n <= f_max``). The larger governs,
-        and the result records which branch it was.
-
-        Runs on **stock openseespy** — ``eigen``, ``modalProperties`` and
-        ``nodeEigenvector`` are all upstream; the fork is needed only for the
-        band solve the warning below points at.
-
-        **Units are yours.** ``body_weight`` (``Q``, model force units) and
-        ``g`` (model acceleration units) are required and have no defaults —
-        apeGmsh cannot know whether the model is in N·m or kip·in, and a
-        silently wrong ``g`` is a factor of 386 in the answer. ``Q = 168 lb
-        ≈ 747 N`` is the Guide's recommended walker weight. Every
-        acceleration on the result is a **fraction of g**.
-
-        **Where to put the nodes.** The Guide walks the walker along the
-        mid-length of an unobstructed path and seats the occupant at the
-        maximum mode-shape ordinate; both at mid-bay is the conservative
-        default. ``excitation="self"`` checks the diagonal ``(j, j)`` — the
-        walker standing where the occupant sits. ``excitation="full"``
-        checks every ``(i, j)`` pair and reports, per response node, the
-        excitation node that produced the largest ``a_p``.
-
-        **The eigenvector scale is asserted, not assumed** (ADR 0109 D2): the
-        modal sum takes ``m̃_a = 1``, and ``partiMass_C / partiFactor_C²``
-        must be 1 for every checkable mode or the evaluation refuses. The
-        provenance lands on :attr:`FootfallResult.normalization`.
-
-        Parameters
-        ----------
-        num_modes
-            Modes to extract. The Eq 7-5 sum wants every mode with
-            ``f_n <= f_max``; a basis that stops short of ``f_max`` warns.
-        body_weight
-            Walker weight ``Q`` in model force units. Must be ``> 0``.
-        g
-            Gravitational acceleration in model units. Must be ``> 0``.
-        response_nodes
-            Occupant node(s) — a tag, a ``Node``, or a sequence of either.
-        excitation
-            ``"self"`` (the diagonal only) or ``"full"`` (every pair).
-        excitation_nodes
-            Walker node(s) for ``excitation="full"``; defaults to
-            ``response_nodes``. Refused under ``"self"``, where the
-            excitation set IS the response set.
-        dof
-            1-based DOF the FRF and the mode shapes are read at — the
-            vertical translation, 3 on a 3-D floor.
-        occupancy
-            Tolerance family: ``"office"`` / ``"residence"`` / ``"church"`` /
-            ``"school"`` (0.5 %g), ``"shopping"`` / ``"dining"`` /
-            ``"indoor_bridge"`` (1.5 %g), ``"outdoor_bridge"`` (5 %g).
-        limit
-            ``"curve"`` (Fig 2-1 — the flat value scaled by the ISO 2631-2
-            base curve) or ``"table"`` (the flat Table 4-1 value).
-        damp, modal_damp, rayleigh
-            Exactly one ADR 0075 damping channel (ADR 0109 D6): a uniform
-            ratio (Table 4-2 is a sum of component ratios), a per-mode list
-            in absolute mode order, or ``(a0, a1)`` converted per mode as
-            ``ξ_a = a0/(2ω_a) + a1·ω_a/2``.
-        f_max
-            Upper band edge in Hz — also the Eq 7-5 basis cut. Table 7-1's
-            resonant harmonics stop at 20 Hz, so ``0 < f_max <= 20``.
-        n_extra
-            Linearly spaced sweep points on top of the modal frequencies and
-            their ±5 % clusters (ADR 0109 D4).
-        dt
-            Sampling step of the Eq 7-5 acceleration history, s.
-        solver
-            Eigen-solver flag, passed through verbatim (see :meth:`eigen`).
-
-        Returns
-        -------
-        FootfallResult
-            One row per response node — see
-            :class:`~apeGmsh.opensees.analysis.footfall_result.FootfallResult`.
-
-        Warns
-        -----
-        UserWarning
-            When the highest extracted mode is below ``f_max``: the Eq 7-5
-            impulse sum is then missing modes it should carry. Raise
-            ``num_modes``, or on the fork use ``eigen_feast`` over the band.
-
-        Raises
-        ------
-        ValueError
-            If ``num_modes < 1``, ``body_weight <= 0``, ``g <= 0``,
-            ``dof < 1``, a node set is empty, ``excitation`` is not
-            ``"self"`` / ``"full"``, ``limit`` is not ``"curve"`` /
-            ``"table"``, ``occupancy`` is unknown, ``f_max`` is outside
-            ``(0, 20]``, the damping channel is not exactly one, or the
-            eigenvectors are not mass-normalised.
-        NotImplementedError
-            If the model has any registered stages.
-        """
-        # Local imports — keep numpy + the kernel out of bridge import
-        # time for Tcl/Py/H5-only users.
-        import warnings as _warnings
-
-        import numpy as np
-
-        from .analysis.footfall import (
-            dominant_frequency,
-            tolerance_limit,
-            walking_high_frequency,
-            walking_low_frequency,
-        )
-        from .analysis.footfall_frf import frf_matrix, grid_for
-        from .analysis.footfall_result import FootfallModes, FootfallResult
-        from .analysis.modal import _damping_channel_args
-
-        context = "apeSees.footfall_walking"
-        self._modal_prereqs_and_guards(num_modes, context=context)
-        if body_weight <= 0.0:
-            raise ValueError(
-                f"{context}: body_weight is the walker's weight Q in model "
-                f"force units and must be > 0, got {body_weight}."
-            )
-        if g <= 0.0:
-            raise ValueError(
-                f"{context}: g is gravitational acceleration in model units "
-                f"and must be > 0, got {g} (386.1 in/s^2, 9.81 m/s^2)."
-            )
-        if dof < 1:
-            raise ValueError(f"{context}: dof is 1-based, got {dof}.")
-        excitations = ("self", "full")
-        if excitation not in excitations:
-            raise ValueError(
-                f"{context}: excitation must be one of {excitations}, got "
-                f"{excitation!r}."
-            )
-        limits = ("curve", "table")
-        if limit not in limits:
-            raise ValueError(
-                f"{context}: limit must be one of {limits}, got {limit!r}."
-            )
-        if not (0.0 < f_max <= 20.0):
-            raise ValueError(
-                f"{context}: f_max must be in (0, 20] Hz — Table 7-1's "
-                f"resonant harmonics stop at 20 Hz — got {f_max}."
-            )
-        # Probe the occupancy/kind pair now rather than after the solve.
-        tolerance_limit(occupancy, 8.0, kind=limit)  # type: ignore[arg-type]
-        # The same exactly-one-of rule the FRF matrix applies (ADR 0075),
-        # run up front so a bad channel does not cost an eigen solve.
-        _damping_channel_args(
-            damp=damp, rayleigh=rayleigh, modal_damp=modal_damp,
-            context=context,
-        )
-
-        resp_tags = self._footfall_tags(
-            response_nodes, "response_nodes", context,
-        )
-        if excitation == "self":
-            if excitation_nodes is not None:
-                raise ValueError(
-                    f"{context}: excitation='self' evaluates the diagonal "
-                    "(j, j), so the excitation set IS response_nodes — pass "
-                    "excitation='full' to drive a different node set."
-                )
-            exc_tags = resp_tags
-        elif excitation_nodes is None:
-            exc_tags = resp_tags
-        else:
-            exc_tags = self._footfall_tags(
-                excitation_nodes, "excitation_nodes", context,
-            )
-
-        props = self.modal_properties(num_modes, solver=solver)
-        modal_f = np.asarray(props.freq, dtype=np.float64)
-        if float(np.max(modal_f)) < f_max:
-            _warnings.warn(
-                f"{context}: the highest extracted mode is "
-                f"{float(np.max(modal_f)):.3f} Hz, below f_max={f_max} Hz — "
-                "the Eq 7-5 impulse sum is missing modes it should carry. "
-                "Raise num_modes, or on the fork use "
-                f"eigen_feast(0.0, {f_max + 2.0}) to get the band exactly.",
-                UserWarning,
-                stacklevel=2,
-            )
-        f_min = max(float(np.min(modal_f)) - 1.0, 0.1)
-        freq = grid_for(props, f_min, f_max, n_extra)
-        matrix = frf_matrix(
-            props, exc_nodes=exc_tags, resp_nodes=resp_tags, dof=dof,
-            freq=freq, damp=damp, modal_damp=modal_damp, rayleigh=rayleigh,
-            unorm=False,
-        )
-        # Read the mode-shape columns while this domain is still the live
-        # one — everything after is pure numpy (the ADR 0075 staleness
-        # contract: a later eigen/sweep call wipes what ``props`` reads).
-        n_modes = int(matrix.modal_freq.size)
-        phi = {
-            tag: np.asarray(
-                [
-                    float(props.mode_shape(tag, mode + 1)[dof - 1])
-                    for mode in range(n_modes)
-                ],
-                dtype=np.float64,
-            )
-            for tag in dict.fromkeys((*exc_tags, *resp_tags))
-        }
-
-        modal_damping = matrix.modal_damping
-        basis = matrix.modal_freq <= f_max
-        hf_band = (freq >= 9.0) & (freq <= f_max)
-        n_resp = len(resp_tags)
-        nan = float("nan")
-        out_f_dom = np.full(n_resp, nan)
-        out_f_dom_hf = np.full(n_resp, nan)
-        out_frf_max = np.full(n_resp, nan)
-        out_a_lf = np.full(n_resp, nan)
-        out_a_hf = np.full(n_resp, nan)
-        out_a_p = np.full(n_resp, nan)
-        out_limit = np.full(n_resp, nan)
-        out_ratio = np.full(n_resp, nan)
-        out_regime = np.empty(n_resp, dtype=object)
-        out_exc = np.zeros(n_resp, dtype=np.int64)
-
-        for row, j_tag in enumerate(resp_tags):
-            candidates = (j_tag,) if excitation == "self" else exc_tags
-            best: "tuple[float, float, float, float, float, float] | None" = None
-            best_exc = j_tag
-            best_regime = "none"
-            for i_tag in candidates:
-                mag = matrix.magnitude(i_tag, j_tag)
-
-                f_lf = dominant_frequency(freq, mag, 9.0)
-                a_lf = nan
-                if np.isfinite(f_lf):
-                    beta_dom = float(modal_damping[
-                        int(np.argmin(np.abs(matrix.modal_freq - f_lf)))
-                    ])
-                    a_lf = walking_low_frequency(
-                        float(mag[int(np.argmin(np.abs(freq - f_lf)))]),
-                        f_lf, beta_dom, body_weight,
-                    ) / g
-
-                f_hf = nan
-                a_hf = nan
-                if bool(np.any(hf_band)):
-                    f_hf = dominant_frequency(
-                        freq[hf_band], mag[hf_band], f_max,
-                    )
-                if np.isfinite(f_hf) and bool(np.any(basis)):
-                    a_espa = walking_high_frequency(
-                        matrix.modal_freq[basis], phi[i_tag][basis],
-                        phi[j_tag][basis], f_hf, modal_damping[basis],
-                        body_weight, dt,
-                    )[0]
-                    a_hf = a_espa / g
-
-                if np.isfinite(a_lf) and np.isfinite(a_hf):
-                    regime = "both"
-                    a_p = max(a_lf, a_hf)
-                    f_gov = f_lf if a_lf >= a_hf else f_hf
-                elif np.isfinite(a_lf):
-                    regime, a_p, f_gov = "low", a_lf, f_lf
-                elif np.isfinite(a_hf):
-                    regime, a_p, f_gov = "high", a_hf, f_hf
-                else:
-                    regime, a_p, f_gov = "none", nan, nan
-
-                # Take the candidate unless the incumbent is finite AND
-                # at least as large — a NaN incumbent must never win
-                # (R-B finding 5: ``a_p > nan`` is False and would pin
-                # the first excitation node forever).
-                if best is not None and np.isfinite(best[0]) and not (
-                    np.isfinite(a_p) and a_p > best[0]
-                ):
-                    continue
-                frf_at = (
-                    float(mag[int(np.argmin(np.abs(freq - f_gov)))])
-                    if np.isfinite(f_gov) else nan
-                )
-                best = (a_p, a_lf, a_hf, f_gov, f_hf, frf_at)
-                best_exc = i_tag
-                best_regime = regime
-
-            assert best is not None  # every node has >= 1 candidate
-            out_a_p[row] = best[0]
-            out_a_lf[row] = best[1]
-            out_a_hf[row] = best[2]
-            out_f_dom[row] = best[3]
-            out_f_dom_hf[row] = best[4]
-            out_frf_max[row] = best[5]
-            out_regime[row] = best_regime
-            out_exc[row] = best_exc
-            if np.isfinite(best[3]):
-                limit_value = tolerance_limit(
-                    occupancy, best[3], kind=limit,  # type: ignore[arg-type]
-                )
-                out_limit[row] = limit_value
-                out_ratio[row] = best[0] / limit_value
-
-        return FootfallResult(
-            nodes=resp_tags,
-            f_dom=out_f_dom,
-            frf_max=out_frf_max,
-            a_p_lf=out_a_lf,
-            a_espa_hf=out_a_hf,
-            a_p=out_a_p,
-            regime=out_regime,
-            exc_node=out_exc,
-            limit=out_limit,
-            ratio=out_ratio,
-            occupancy=occupancy,
-            limit_kind=limit,
-            g=float(g),
-            body_weight=float(body_weight),
-            normalization=matrix.normalization,
-            freq=freq,
-            modes=FootfallModes(f_n=matrix.modal_freq, beta=modal_damping),
-            dof=int(dof),
-            dt=float(dt),
-            f_max=float(f_max),
-            _matrix=matrix,
-            _phi=phi,
-            _f_dom_hf=out_f_dom_hf,
-        )
-
-    def _footfall_tags(
-        self,
-        nodes: "int | Node | Sequence[int | Node]",
-        name: str,
-        context: str,
-    ) -> tuple[int, ...]:
-        """Resolve a footfall node set — one tag / ``Node``, or a sequence
-        of either — to unique tags in the order given."""
-        from .analysis.modal import _node_tag
-
-        items: "Sequence[int | Node]"
-        if isinstance(nodes, (int, Node)):
-            items = (nodes,)
-        else:
-            items = tuple(nodes)
-        if not items:
-            raise ValueError(
-                f"{context}: {name} must carry at least one node."
-            )
-        seen: dict[int, None] = {}
-        for item in items:
-            seen.setdefault(_node_tag(item), None)
-        return tuple(seen)
-
-    def eigen_feast(
-        self,
-        f_min: float,
-        f_max: float,
-        *,
-        certify: bool = False,
-    ) -> "EigenResult":
-        """Band-targeted FEAST eigensolve via the live emitter.
-
-        **Fork-only** (Ladruno ADR-43): ``eigen -feast fmin fmax``
-        returns **all** modes whose natural frequency lies in
-        ``[f_min, f_max]`` Hz — the mode count is an output
-        (``len(result.eigenvalues)``), not an input, which is why this
-        is a separate method and not an :meth:`eigen` solver flag.
-
-        ``certify=True`` adds the fork's Sturm/inertia completeness
-        certificate: the band content is independently counted via
-        LDLᵀ inertia at the two band edges and the solve REFUSES on a
-        mismatch with FEAST's count.
-
-        Parameters
-        ----------
-        f_min, f_max
-            Frequency band in Hz; needs ``0 <= f_min < f_max``.
-        certify
-            Emit ``-certify`` (the completeness certificate).
-
-        Returns
-        -------
-        EigenResult
-            The standard eigen result (possibly zero modes if the band
-            is empty) with lazy ``mode_shape`` access.
-        """
-        if not (0.0 <= f_min < f_max):
-            raise ValueError(
-                "apeSees.eigen_feast: need 0 <= f_min < f_max, got "
-                f"f_min={f_min}, f_max={f_max}."
-            )
-        if self._stage_records:
-            raise NotImplementedError(
-                "apeSees.eigen_feast: live execution does not support "
-                "staged models (Phase SSI-2.A) "
-                f"(got {len(self._stage_records)} stage(s))."
-            )
-        # The stock ``ops.eigen`` symbol exists on every build, so the
-        # missing-attribute gate cannot fire — pre-check the fork probe
-        # for the friendly message (a pre-ADR-43 fork build still fails
-        # with the OpenSees '-feast' parse error).
-        if not self.capabilities().has_fork:
-            raise RuntimeError(
-                "apeSees.eigen_feast requires the Ladruno fork build of "
-                "OpenSees (fork ADR-43 band-targeted FEAST eigensolver); "
-                "the in-process openseespy is not the fork."
-            )
-
-        from .analysis.eigen import EigenResult
-        from .emitter.live import LiveOpsEmitter
-        import numpy as np
-
-        bm = self.build()
-        self._assert_fork_if_required()
-        live_emitter = LiveOpsEmitter(wipe=True)
-        bm.emit(live_emitter)
-        values = live_emitter.eigen_feast(
-            float(f_min), float(f_max), certify=certify,
-        )
-        return EigenResult(
-            eigenvalues=np.asarray(values, dtype=np.float64),
-            _live=live_emitter,
-        )
-
-    def complex_eigen(
-        self,
-        num_modes: int,
-        *,
-        solver: str = "-genBandArpack",
-        tol: float | None = None,
-        closed_form: bool = False,
-    ) -> "ComplexEigenResult":
-        """Complex / state-space modal analysis via the live emitter.
-
-        **Fork-only** (Ladruno ADR-46, ``complexEigen``): true per-mode
-        damping ratios ζ_k, damped frequencies ω_d,k, and phased mode
-        shapes for **non-classically damped** models (localized
-        dashpots, bearings, radiation damping).  Builds + emits a fresh
-        live domain, runs the real ``eigen`` (the projection basis),
-        then ``complexEigen`` and parses the flat 7-per-mode return
-        into a :class:`ComplexEigenResult`.
-
-        The default route projects the model's **actual** M and C
-        (element ``getDamp()``/``getMass()`` + nodal mass/``alphaM``) —
-        exactly the C a transient analysis feels.  ``closed_form=True``
-        uses the fast global-Rayleigh diagonal closed form instead
-        (refuses ``betaKinit``/``betaKcomm``; blind to scoped
-        Rayleigh).
-
-        Contract traps (fork guide): damping that does not flow through
-        ``getDamp()`` is invisible (``modalDamping``, HHT-α numerical
-        damping, elements whose ``-doRayleigh`` defaults OFF — the
-        ``Truss``/``zeroLength`` families); the projection spans only
-        the retained ``num_modes`` real modes; complex mode shapes are
-        recorded via Node-recorder ``raw=("complexEigenRe<k>",)`` /
-        ``Im<k>`` tokens, not carried on this result.
-
-        Parameters
-        ----------
-        num_modes
-            Real modes to extract as the projection basis (retain
-            enough to cover the band of interest;
-            ``-fullGenLapack`` on tiny models).
-        tol
-            Optional residual tolerance (fork default 1e-8).
-        closed_form
-            Use the closed-form Rayleigh route (Route A).
-        """
-        context = "apeSees.complex_eigen"
-        self._modal_prereqs_and_guards(num_modes, context=context)
-        # Fork guide trap #4: the eigenvector distribution to
-        # MP-constrained slave DOFs needs a distributing constraint
-        # handler — ``constraints Plain`` + MP constraints yields wrong
-        # complex shapes. The bridge-driven eigen path defaults to
-        # Transformation when no handler is declared; warn when the
-        # user declared Plain.
-        from .analysis.constraint_handler import Plain as _PlainHandler
-
-        if any(isinstance(p, _PlainHandler) for p in self._primitives):
-            import warnings
-
-            warnings.warn(
-                f"{context}: 'constraints Plain' is declared — on a "
-                "model with MP constraints (rigid links, equalDOF, "
-                "embedded, ...) complexEigen mode shapes need a "
-                "distributing handler (Transformation).",
-                UserWarning,
-                stacklevel=2,
-            )
-
-        from .analysis.complex_eigen import ComplexEigenResult
-        from .emitter.live import LiveOpsEmitter
-
-        args: list[int | float | str] = []
-        if tol is not None:
-            if tol <= 0.0:
-                raise ValueError(
-                    f"{context}: tol must be > 0, got {tol}."
-                )
-            args.extend(("-tol", float(tol)))
-        if closed_form:
-            args.append("-closedForm")
-
-        bm = self.build()
-        self._assert_fork_if_required()
-        live_emitter = LiveOpsEmitter(wipe=True)
-        bm.emit(live_emitter)
-        live_emitter.eigen(num_modes, solver=solver)
-        values = live_emitter.complex_eigen(*args)
-        return ComplexEigenResult.from_flat(values)
-
-    def _modal_prereqs_and_guards(
-        self, num_modes: int, *, context: str,
-    ) -> None:
-        """Shared validation for the ADR 0075 modal-response drivers."""
-        if num_modes < 1:
-            raise ValueError(
-                f"{context}: num_modes must be >= 1, got {num_modes}."
-            )
-        if self._stage_records:
-            raise NotImplementedError(
-                f"{context}: live execution does not support staged "
-                "models (Phase SSI-2.A) "
-                f"(got {len(self._stage_records)} stage(s)).  Either "
-                "drop the stage blocks or emit Tcl/Py and run the "
-                "command there."
-            )
-
-    def modal_response_history(
-        self,
-        *,
-        dt: float,
-        n_steps: int,
-        num_modes: int,
-        base_accel: "TimeSeries | str | None" = None,
-        direction: int | None = None,
-        load: "Plain | str | None" = None,
-        series: "TimeSeries | str | None" = None,
-        damp: float | None = None,
-        rayleigh: tuple[float, float] | None = None,
-        modal_damp: Sequence[float] | None = None,
-        modes: Sequence[int] | None = None,
-        t0: float = 0.0,
-        solver: str = "-genBandArpack",
-    ) -> "ModalHistoryResult":
-        """Run the fork's exact modal-superposition transient live.
-
-        **Fork-only** (Ladruno ADR-44 P1a, ``modalResponseHistory``).
-        Builds + emits a fresh live domain, issues ``eigen`` +
-        ``modalProperties``, then advances each retained mode by the
-        closed-form piecewise-linear recurrence — no iteration, no
-        factorization.  One domain step is **committed per station**
-        (``t0 … t0 + n_steps·dt``), so every recorder declared on the
-        model captures the history exactly as in a direct run.
-
-        Linear models only — superposition is invalid under any
-        material or geometric nonlinearity (use ``analyze`` then).
-
-        Parameters
-        ----------
-        dt, n_steps
-            Time step and station count (``n_steps + 1`` commits).
-        num_modes
-            Modes to extract for the superposition basis (retain
-            enough to cover the band of interest).
-        base_accel, direction
-            Ground-acceleration channel: a registered
-            ``ops.timeSeries.*`` handle (or name) sampled at the
-            stations, plus the global excitation direction (1-based).
-            Response is **relative** to the moving base.  Make the
-            record extend at least one sample past ``t0 + n_steps·dt``.
-        load, series
-            Nodal-force channel ``P(t) = s(t)·P``: an
-            ``ops.pattern.Plain`` handle (or name) whose plain nodal
-            loads give the reference shape ``P`` (the pattern's own
-            timeSeries is IGNORED by the fork), and the scalar
-            ``s(t)`` timeSeries.  Response is **absolute**.  Mutually
-            exclusive with the base-acceleration channel.
-        damp, rayleigh, modal_damp
-            Exactly one damping channel (ADR 0075): uniform ratio /
-            Rayleigh ``(a0, a1)`` / per-mode ratios.
-        modes
-            Optional 1-based subset of the extracted modes.
-        t0
-            Start time (base accel sampled at ``t0 + k·dt``).
-        solver
-            Eigen-solver flag (``-fullGenLapack`` on tiny models).
-        """
-        from .analysis.modal import (
-            ModalHistoryResult,
-            _damping_channel_args,
-        )
-        from .emitter.live import LiveOpsEmitter
-        from .pattern.pattern import Plain as _Plain
-        import numpy as np
-
-        context = "apeSees.modal_response_history"
-        self._modal_prereqs_and_guards(num_modes, context=context)
-        if dt <= 0.0 or n_steps < 1:
-            raise ValueError(
-                f"{context}: dt must be > 0 and n_steps >= 1, got "
-                f"dt={dt}, n_steps={n_steps}."
-            )
-        damping_args = _damping_channel_args(
-            damp=damp, rayleigh=rayleigh, modal_damp=modal_damp,
-            context=context,
-        )
-        excitation = self._resolve_modal_excitation(
-            base_accel=base_accel, direction=direction,
-            load=load, series=series, context=context,
-            plain_cls=_Plain, series_required=True,
-        )
-
-        args: list[int | float | str] = [
-            "-dt", float(dt), "-nsteps", int(n_steps),
-        ]
-        if t0 != 0.0:
-            args.extend(("-t0", float(t0)))
-        args.extend(excitation)
-        args.extend(damping_args)
-        if modes is not None:
-            mode_list = [int(m) for m in modes]
-            if not mode_list or any(m < 1 for m in mode_list):
-                raise ValueError(
-                    f"{context}: modes must be 1-based mode numbers, "
-                    f"got {modes!r}."
-                )
-            args.extend(("-modes", *mode_list))
-
-        bm = self.build()
-        self._assert_fork_if_required()
-        live_emitter = LiveOpsEmitter(wipe=True)
-        bm.emit(live_emitter)
-        values = live_emitter.eigen(num_modes, solver=solver)
-        live_emitter.modal_properties()
-        live_emitter.modal_response_history(*args)
-        return ModalHistoryResult(
-            eigenvalues=np.asarray(values, dtype=np.float64),
-            dt=float(dt),
-            n_steps=int(n_steps),
-            _live=live_emitter,
-        )
-
-    def response_spectrum_analysis(
-        self,
-        direction: int,
-        *,
-        periods: Sequence[float],
-        accels: Sequence[float],
-        combine: str,
-        num_modes: int,
-        damp: float | None = None,
-        modal_damp: Sequence[float] | None = None,
-        solver: str = "-genBandArpack",
-    ) -> "ResponseSpectrumResult":
-        """Run a response-spectrum analysis with native combination.
-
-        **Fork-only** (Ladruno ADR-44 P1b): the ``-combine`` stage on
-        ``responseSpectrumAnalysis``.  Builds + emits a fresh live
-        domain, issues ``eigen`` + ``modalProperties``, computes the
-        per-mode modal displacements against the ``(periods, accels)``
-        design spectrum, and commits the **combined** nodal design
-        displacement field, read back via
-        :meth:`ResponseSpectrumResult.node_disp`.
-
-        Combination is per-quantity and nonlinear — do NOT derive
-        combined element forces / drifts from the combined
-        displacements (combine those quantities' own per-mode peaks
-        instead).
-
-        Parameters
-        ----------
-        direction
-            Global excitation direction (1-based).
-        periods, accels
-            The design spectrum ``Sa(Tn)`` as parallel lists.
-            ``periods`` must be non-negative and strictly increasing;
-            a leading ``T = 0`` PGA anchor is legal (the fork clamps
-            ``T <= Tn[0]`` to ``Sa[0]``).
-        combine
-            ``"SRSS"`` | ``"CQC"`` | ``"ABS"`` | ``"TenPercent"``.
-            CQC and TenPercent weight closely-spaced modes; CQC
-            requires a damping channel.
-        num_modes
-            Modes to extract; the combination spans all of them
-            (``-combine`` and ``-mode`` are mutually exclusive — the
-            bridge never emits ``-mode``).
-        damp, modal_damp
-            Optional damping channel (uniform ratio or per-mode).
-            Required for ``CQC``.
-        """
-        from .analysis.modal import (
-            ResponseSpectrumResult,
-            _damping_channel_args,
-        )
-        from .emitter.live import LiveOpsEmitter
-        import numpy as np
-
-        context = "apeSees.response_spectrum_analysis"
-        self._modal_prereqs_and_guards(num_modes, context=context)
-        if int(direction) < 1:
-            raise ValueError(
-                f"{context}: direction is 1-based, got {direction}."
-            )
-        rules = ("SRSS", "CQC", "ABS", "TenPercent")
-        if combine not in rules:
-            raise ValueError(
-                f"{context}: combine must be one of {rules}, got "
-                f"{combine!r}."
-            )
-        tn = [float(t) for t in periods]
-        sa = [float(a) for a in accels]
-        if len(tn) != len(sa) or not tn:
-            raise ValueError(
-                f"{context}: periods and accels must be equal-length "
-                f"non-empty lists, got {len(tn)} periods / {len(sa)} "
-                "accels."
-            )
-        if any(t < 0.0 for t in tn) or any(
-            b <= a for a, b in zip(tn, tn[1:])
-        ):
-            raise ValueError(
-                f"{context}: periods must be non-negative and strictly "
-                "increasing (the fork refuses negative Tn; a leading "
-                "T=0 PGA anchor is legal)."
-            )
-        if combine == "CQC" and damp is None and modal_damp is None:
-            raise ValueError(
-                f"{context}: CQC needs a damping channel — pass damp= "
-                "or modal_damp=."
-            )
-        damping_args: tuple[float | str, ...] = ()
-        if damp is not None or modal_damp is not None:
-            damping_args = _damping_channel_args(
-                damp=damp, rayleigh=None, modal_damp=modal_damp,
-                context=context,
-            )
-
-        args: list[int | float | str] = ["-Tn", *tn, "-Sa", *sa]
-        args.extend(("-combine", combine))
-        args.extend(damping_args)
-
-        bm = self.build()
-        self._assert_fork_if_required()
-        live_emitter = LiveOpsEmitter(wipe=True)
-        bm.emit(live_emitter)
-        values = live_emitter.eigen(num_modes, solver=solver)
-        live_emitter.modal_properties()
-        live_emitter.response_spectrum_analysis(int(direction), *args)
-        return ResponseSpectrumResult(
-            eigenvalues=np.asarray(values, dtype=np.float64),
-            combine=combine,
-            _live=live_emitter,
-        )
-
-    def _resolve_modal_excitation(
-        self,
-        *,
-        base_accel: "TimeSeries | str | None",
-        direction: int | None,
-        load: "Plain | str | None",
-        series: "TimeSeries | str | None",
-        context: str,
-        plain_cls: type,
-        series_required: bool,
-    ) -> tuple[int | float | str, ...]:
-        """Resolve one ADR-44 excitation channel to its flag tail.
-
-        Exactly one of the base-acceleration channel
-        (``base_accel`` + ``direction`` → ``-baseAccel $ts -dir $d``)
-        or the nodal-force channel (``load`` [+ ``series``] →
-        ``-load $pat [-series $ts]``) must be given.  Handles resolve
-        dual-mode (object or registered name) and must be registered
-        on THIS bridge; the fork refuses patterns carrying sp
-        constraints or moment tensors, so the bridge pre-checks for
-        the friendlier error.
-        """
-        has_base = base_accel is not None
-        has_load = load is not None
-        if has_base == has_load:
-            raise ValueError(
-                f"{context}: supply exactly one excitation channel — "
-                "base_accel= (+ direction=) OR load= "
-                + ("(+ series=)" if series_required else "")
-                + f"; got base_accel={base_accel!r}, load={load!r}."
-            )
-        if has_base:
-            assert base_accel is not None  # has_base == (base_accel is not None)
-            if direction is None or int(direction) < 1:
-                raise ValueError(
-                    f"{context}: the base-acceleration channel needs "
-                    f"direction= (1-based), got {direction!r}."
-                )
-            if series is not None:
-                raise ValueError(
-                    f"{context}: series= belongs to the load= channel."
-                )
-            ts = self._resolve(base_accel, base=TimeSeries)
-            # _resolve only kind-checks name-string refs; object
-            # handles pass through untouched — and per-kind 1-based tag
-            # counters mean a wrong-kind handle's tag numerically
-            # collides with a real primitive of the expected kind
-            # (adversarial-review hardening).
-            if not isinstance(ts, TimeSeries):
-                raise TypeError(
-                    f"{context}: base_accel= needs an ops.timeSeries.* "
-                    f"handle (or registered name), got "
-                    f"{type(ts).__name__}."
-                )
-            ts_tag = self.tag_for(ts)
-            if ts_tag is None:
-                raise BridgeError(
-                    f"{context}: the base_accel timeSeries is not "
-                    "registered on this bridge — create it via "
-                    "ops.timeSeries.<Type>(...)."
-                )
-            return ("-baseAccel", int(ts_tag), "-dir", int(direction))
-
-        if direction is not None:
-            raise ValueError(
-                f"{context}: direction= belongs to the base_accel "
-                "channel."
-            )
-        assert load is not None  # XOR check above guarantees it
-        pat_tag = self._resolve_load_pattern_tag(
-            load, context=context, plain_cls=plain_cls,
-        )
-        tail: list[int | float | str] = ["-load", int(pat_tag)]
-        if series_required:
-            if series is None:
-                raise ValueError(
-                    f"{context}: the load= channel needs series= "
-                    "(the scalar s(t) timeSeries; the pattern's own "
-                    "timeSeries is ignored by the fork)."
-                )
-            s = self._resolve(series, base=TimeSeries)
-            if not isinstance(s, TimeSeries):
-                raise TypeError(
-                    f"{context}: series= needs an ops.timeSeries.* "
-                    f"handle (or registered name), got "
-                    f"{type(s).__name__}."
-                )
-            s_tag = self.tag_for(s)
-            if s_tag is None:
-                raise BridgeError(
-                    f"{context}: the series timeSeries is not "
-                    "registered on this bridge — create it via "
-                    "ops.timeSeries.<Type>(...)."
-                )
-            tail.extend(("-series", int(s_tag)))
-        elif series is not None:
-            raise ValueError(
-                f"{context}: series= is not accepted here (the "
-                "harmonic/PSD sweeps carry their own excitation "
-                "scale)."
-            )
-        return tuple(tail)
-
-    def _resolve_load_pattern_tag(
-        self,
-        load: "Plain | str",
-        *,
-        context: str,
-        plain_cls: type,
-    ) -> int:
-        """Resolve an ADR-44 ``-load`` pattern handle to its tag.
-
-        The fork refuses ``-load`` patterns carrying anything but plain
-        nodal loads; the bridge pre-checks sp constraints and
-        moment-tensor sources for the friendlier error.
-        """
-        pat = self._resolve(load, base=plain_cls)
-        # Object handles bypass _resolve's kind check — refuse a
-        # wrong-kind handle before its tag collides with a real
-        # pattern tag (adversarial-review hardening).
-        if not isinstance(pat, plain_cls):
-            raise TypeError(
-                f"{context}: load= needs an ops.pattern.Plain handle "
-                f"(or registered name), got {type(pat).__name__}."
-            )
-        pat_tag = self.tag_for(pat)
-        if pat_tag is None:
-            raise BridgeError(
-                f"{context}: the load pattern is not registered on "
-                "this bridge — create it via ops.pattern.Plain(...)."
-            )
-        if getattr(pat, "sps", ()):
-            raise BridgeError(
-                f"{context}: the fork refuses -load patterns carrying "
-                "sp constraints — use a pattern with plain nodal "
-                "loads only."
-            )
-        if getattr(pat, "moment_tensors", ()):
-            raise BridgeError(
-                f"{context}: the fork refuses -load patterns carrying "
-                "moment-tensor sources — use a pattern with plain "
-                "nodal loads only."
-            )
-        return int(pat_tag)
-
-    def frequency_response(
-        self,
-        *,
-        f_min: float,
-        f_max: float,
-        n_freq: int,
-        node: "int | Node",
-        dof: int,
-        num_modes: int,
-        grid: str = "lin",
-        base_accel_dir: int | None = None,
-        load: "Plain | str | None" = None,
-        amp: float = 1.0,
-        damp: float | None = None,
-        rayleigh: tuple[float, float] | None = None,
-        modal_damp: Sequence[float] | None = None,
-        resp: str = "disp",
-        modes: Sequence[int] | None = None,
-        out: str | None = None,
-        solver: str = "-genBandArpack",
-    ) -> "FrequencyResponseResult":
-        """Compute the complex modal FRF of one response DOF, live.
-
-        **Fork-only** (Ladruno ADR-44 P2, ``frequencyResponse``): for a
-        harmonic excitation ``amp·e^{iΩt}`` the steady response is a
-        dense post-processor on the mode basis — no time stepping.
-        Returns a :class:`FrequencyResponseResult` (frequencies in Hz
-        + complex FRF).
-
-        Excitation: ``base_accel_dir=`` for uniform harmonic base
-        acceleration along a global direction (no timeSeries — the
-        sweep is per ``amp``; **relative** response) XOR ``load=`` for
-        harmonic nodal forces ``amp·P·e^{iΩt}`` from a plain-nodal-load
-        pattern (**absolute** response).
-
-        ``grid``: ``"lin"`` / ``"log"`` / ``"biased"`` — biased adds a
-        ±5 % cluster around each in-band modal frequency so sharp
-        low-damping peaks are not stepped over.
-
-        ``resp``: ``"disp"`` | ``"vel"`` (``iΩ·û``) | ``"accel"``
-        (``−Ω²·û``).  ``out=`` additionally writes the table to an
-        ASCII file.
-        """
-        rows = self._run_modal_sweep(
-            command="frequency_response",
-            context="apeSees.frequency_response",
-            f_min=f_min, f_max=f_max, n_freq=n_freq,
-            node=node, dof=dof, num_modes=num_modes, grid=grid,
-            base_accel_dir=base_accel_dir, load=load, amp=amp,
-            damp=damp, rayleigh=rayleigh, modal_damp=modal_damp,
-            resp=resp, modes=modes, out=out, solver=solver,
-        )
-        from .analysis.modal import FrequencyResponseResult
-        import numpy as np
-
-        table = np.asarray(rows, dtype=np.float64)
-        return FrequencyResponseResult(
-            freq=table[:, 0],
-            response=table[:, 1] + 1j * table[:, 2],
-        )
-
-    def steady_state_dynamics(
-        self,
-        *,
-        f_min: float,
-        f_max: float,
-        n_freq: int,
-        node: "int | Node",
-        dof: int,
-        num_modes: int,
-        grid: str = "lin",
-        base_accel_dir: int | None = None,
-        load: "Plain | str | None" = None,
-        amp: float = 1.0,
-        damp: float | None = None,
-        rayleigh: tuple[float, float] | None = None,
-        modal_damp: Sequence[float] | None = None,
-        resp: str = "disp",
-        modes: Sequence[int] | None = None,
-        out: str | None = None,
-        solver: str = "-genBandArpack",
-    ) -> "SteadyStateResult":
-        """Steady-state harmonic response amplitude ``|response|`` per
-        sweep frequency — the magnitude companion of
-        :meth:`frequency_response` (same flags, fork ADR-44 P2)."""
-        rows = self._run_modal_sweep(
-            command="steady_state_dynamics",
-            context="apeSees.steady_state_dynamics",
-            f_min=f_min, f_max=f_max, n_freq=n_freq,
-            node=node, dof=dof, num_modes=num_modes, grid=grid,
-            base_accel_dir=base_accel_dir, load=load, amp=amp,
-            damp=damp, rayleigh=rayleigh, modal_damp=modal_damp,
-            resp=resp, modes=modes, out=out, solver=solver,
-        )
-        from .analysis.modal import SteadyStateResult
-        import numpy as np
-
-        table = np.asarray(rows, dtype=np.float64)
-        return SteadyStateResult(
-            freq=table[:, 0], magnitude=table[:, 1],
-        )
-
-    def random_response(
-        self,
-        *,
-        f_min: float,
-        f_max: float,
-        n_freq: int,
-        node: "int | Node",
-        dof: int,
-        num_modes: int,
-        input_psd: "TimeSeries | str",
-        grid: str = "biased",
-        base_accel_dir: int | None = None,
-        load: "Plain | str | None" = None,
-        damp: float | None = None,
-        rayleigh: tuple[float, float] | None = None,
-        modal_damp: Sequence[float] | None = None,
-        resp: str = "disp",
-        modes: Sequence[int] | None = None,
-        stats: bool = False,
-        duration: float | None = None,
-        out: str | None = None,
-        solver: str = "-genBandArpack",
-    ) -> "RandomResponseResult":
-        """Stationary random response RMS on the modal FRF, live.
-
-        **Fork-only** (Ladruno ADR-44 P3, ``randomResponse``):
-        ``input_psd`` is a **one-sided PSD G(f) in Hz** ((excitation)²/
-        Hz), supplied as a registered timeSeries sampled at ``f`` in Hz
-        (``Path`` with f→G breakpoints, ``Constant`` for white noise).
-        With ``base_accel_dir=`` it is the base-acceleration PSD; with
-        ``load=`` the PSD of the scalar multiplying the pattern's
-        nodal-load shape (fully correlated).
-
-        ``grid`` defaults to ``"biased"`` — the RMS is a band integral
-        and a linear grid mis-integrates sharp resonances (fork guide
-        P3).  The band ``[f_min, f_max]`` must cover the input's
-        support and every resonance carrying response power; the fork
-        refuses zero-damped in-band modes and a rigid-body mode with
-        ``f_min = 0``.
-
-        ``stats=`` adds ``ν₀`` (mean zero-upcrossing rate, Hz) and the
-        spectral moments ``m0`` / ``m2``; ``duration=`` additionally
-        appends the Davenport expected peak over that exposure.
-        """
-        from .analysis.modal import RandomResponseResult
-
-        context = "apeSees.random_response"
-        ts = self._resolve(input_psd, base=TimeSeries)
-        if not isinstance(ts, TimeSeries):
-            raise TypeError(
-                f"{context}: input_psd= needs an ops.timeSeries.* "
-                f"handle (or registered name), got {type(ts).__name__}."
-            )
-        psd_tag = self.tag_for(ts)
-        if psd_tag is None:
-            raise BridgeError(
-                f"{context}: the input_psd timeSeries is not "
-                "registered on this bridge — create it via "
-                "ops.timeSeries.<Type>(...)."
-            )
-        if duration is not None and duration <= 0.0:
-            raise ValueError(
-                f"{context}: duration must be > 0, got {duration}."
-            )
-        extra: list[int | float | str] = ["-inputPSD", int(psd_tag)]
-        if stats or duration is not None:
-            extra.append("-stats")
-        if duration is not None:
-            extra.extend(("-duration", float(duration)))
-
-        raw = self._run_modal_sweep(
-            command="random_response",
-            context=context,
-            f_min=f_min, f_max=f_max, n_freq=n_freq,
-            node=node, dof=dof, num_modes=num_modes, grid=grid,
-            base_accel_dir=base_accel_dir, load=load, amp=None,
-            damp=damp, rayleigh=rayleigh, modal_damp=modal_damp,
-            resp=resp, modes=modes, out=out, solver=solver,
-            extra_args=tuple(extra),
-        )
-        if isinstance(raw, (int, float)):
-            return RandomResponseResult(rms=float(raw))
-        values = [float(v) for v in raw]
-        peak = values[4] if len(values) > 4 else None
-        return RandomResponseResult(
-            rms=values[0], nu0=values[1], m0=values[2], m2=values[3],
-            peak=peak,
-        )
-
-    def _run_modal_sweep(
-        self,
-        *,
-        command: str,
-        context: str,
-        f_min: float,
-        f_max: float,
-        n_freq: int,
-        node: "int | Node",
-        dof: int,
-        num_modes: int,
-        grid: str,
-        base_accel_dir: int | None,
-        load: "Plain | str | None",
-        amp: float | None,
-        damp: float | None,
-        rayleigh: tuple[float, float] | None,
-        modal_damp: Sequence[float] | None,
-        resp: str,
-        modes: Sequence[int] | None,
-        out: str | None,
-        solver: str,
-        extra_args: tuple[int | float | str, ...] = (),
-    ) -> Any:
-        """Validate + marshal one ADR-44 frequency-domain sweep and run
-        it on a fresh live domain (eigen → modalProperties → command).
-        Returns the live emitter's raw return."""
-        from .analysis.modal import _damping_channel_args, _node_tag
-        from .emitter.live import LiveOpsEmitter
-        from .pattern.pattern import Plain as _Plain
-
-        self._modal_prereqs_and_guards(num_modes, context=context)
-        if not (0.0 <= f_min < f_max):
-            raise ValueError(
-                f"{context}: need 0 <= f_min < f_max, got "
-                f"f_min={f_min}, f_max={f_max}."
-            )
-        min_nf = 2 if command == "random_response" else 1
-        if n_freq < min_nf:
-            raise ValueError(
-                f"{context}: n_freq must be >= {min_nf}, got {n_freq}."
-            )
-        grids = ("lin", "log", "biased")
-        if grid not in grids:
-            raise ValueError(
-                f"{context}: grid must be one of {grids}, got {grid!r}."
-            )
-        resps = ("disp", "vel", "accel")
-        if resp not in resps:
-            raise ValueError(
-                f"{context}: resp must be one of {resps}, got {resp!r}."
-            )
-        if dof < 1:
-            raise ValueError(
-                f"{context}: dof is 1-based, got {dof}."
-            )
-        damping_args = _damping_channel_args(
-            damp=damp, rayleigh=rayleigh, modal_damp=modal_damp,
-            context=context,
-        )
-        has_base = base_accel_dir is not None
-        has_load = load is not None
-        if has_base == has_load:
-            raise ValueError(
-                f"{context}: supply exactly one excitation channel — "
-                "base_accel_dir= (harmonic base acceleration, no "
-                "timeSeries) OR load= (nodal-force pattern); got "
-                f"base_accel_dir={base_accel_dir!r}, load={load!r}."
-            )
-        if base_accel_dir is not None:
-            if int(base_accel_dir) < 1:
-                raise ValueError(
-                    f"{context}: base_accel_dir is 1-based, got "
-                    f"{base_accel_dir}."
-                )
-            excitation: tuple[int | float | str, ...] = (
-                "-baseAccel", "-dir", int(base_accel_dir),
-            )
-        else:
-            assert load is not None  # XOR check above guarantees it
-            pat_tag = self._resolve_load_pattern_tag(
-                load, context=context, plain_cls=_Plain,
-            )
-            excitation = ("-load", pat_tag)
-
-        args: list[int | float | str] = [
-            "-freq", float(f_min), float(f_max), int(n_freq),
-            f"-{grid}",
-        ]
-        args.extend(excitation)
-        if amp is not None and amp != 1.0:
-            args.extend(("-amp", float(amp)))
-        args.extend(damping_args)
-        args.extend(("-node", _node_tag(node), "-dof", int(dof)))
-        if resp != "disp":
-            args.extend(("-resp", resp))
-        if modes is not None:
-            mode_list = [int(m) for m in modes]
-            if not mode_list or any(m < 1 for m in mode_list):
-                raise ValueError(
-                    f"{context}: modes must be 1-based mode numbers, "
-                    f"got {modes!r}."
-                )
-            args.extend(("-modes", *mode_list))
-        args.extend(extra_args)
-        if out is not None:
-            args.extend(("-out", out))
-
-        bm = self.build()
-        self._assert_fork_if_required()
-        live_emitter = LiveOpsEmitter(wipe=True)
-        bm.emit(live_emitter)
-        live_emitter.eigen(num_modes, solver=solver)
-        live_emitter.modal_properties()
-        runner = getattr(live_emitter, command)
-        return runner(*args)
-
-    def critical_time_step(self) -> float:
-        """Query the active explicit integrator's critical time step ``dt_cr``.
-
-        **Fork-only** (Ladruno): builds + emits a throwaway live model
-        (like :meth:`eigen`), primes one tiny step to trigger the
-        integrator's ``dt_cr`` computation, then returns the usable
-        (Noh-Bathe) limit.
-
-        Requires a complete analysis chain with an **explicit**
-        integrator constructed with ``cfl=True`` (e.g.
-        ``ops.integrator.ExplicitBathe(cfl=True)``), a ``Transient``
-        analysis, and **element mass density** (``-rho`` / ``-mass``) —
-        the ``dt_cr`` eigensolve uses element mass+stiffness, not
-        ``ops.mass`` nodal mass.
-
-        Raises
-        ------
-        BridgeError
-            If the analysis chain is incomplete.
-        NotImplementedError
-            If the model has registered stages (live execution of staged
-            models is unsupported — emit Tcl/Py instead).
-        ValueError
-            If ``dt_cr`` is not usable (no ``cfl`` flag, a non-explicit
-            integrator, or a pure nodal-mass model).
-        """
-        if self._stage_records:
-            raise NotImplementedError(
-                "apeSees.critical_time_step: live execution does not "
-                "support staged models "
-                f"(got {len(self._stage_records)} stage(s)). Emit Tcl/Py "
-                "and query criticalTimeStep() there instead."
-            )
-        self._check_analysis_chain_for_analyze()
-        self._check_explicit_solver_compat()
-
-        from .emitter.live import LiveOpsEmitter
-
-        bm = self.build()
-        self._assert_fork_if_required()
-        live_emitter = LiveOpsEmitter(wipe=True)
-        bm.emit(live_emitter)
-        # Prime one negligible step so the integrator computes dt_cr.
-        live_emitter.analyze(steps=1, dt=_DTCR_PRIME_DT)
-        return _dtcr_or_raise(live_emitter.critical_time_step())
-
-    def analyze_explicit(
-        self,
-        *,
-        duration: float,
-        safety: float = 0.9,
-        dt_max: float | None = None,
-    ) -> "ExplicitRunResult":
-        """Run an explicit transient over ``duration``, auto-sized to ``dt_cr``.
-
-        **Fork-only** (Ladruno) driver implementing the explicit-dynamics
-        sub-stepping recipe (ADR D5): build + emit, prime one tiny step,
-        query the critical time step, then integrate ``duration`` in
-        ``n = ceil(duration / (safety * dt_cr))`` equal sub-steps via a
-        single ``analyze(n, duration / n)``.
-
-        .. warning::
-           ``dt_cr`` is queried **once**, on the initial stiffness. For a
-           model whose tangent *stiffens* mid-run (contact closing,
-           geometric / material stiffening) the true critical step shrinks
-           and a fixed ``dt`` can go supercritical and diverge. Guard such
-           runs by constructing the integrator with ``cfl_abort=True`` (and
-           ``recompute=N``) so a recomputed CFL violation aborts the run —
-           this method then re-raises that abort as an error rather than
-           returning silently. A one-shot run with an unguarded integrator
-           emits :class:`OpenSeesExplicitSolverWarning`.
-
-        Parameters
-        ----------
-        duration
-            Total physical time to integrate (``> 0``).
-        safety
-            Fraction of ``dt_cr`` used as the step (``0 < safety <= 1``;
-            default ``0.9``). Scales the value ``criticalTimeStep()``
-            returns — do not re-base it on any larger Noh-Bathe bound.
-        dt_max
-            Optional upper bound on the sub-step — use a step finer than
-            stability requires (e.g. for output resolution). ``> 0``.
-
-        Returns
-        -------
-        ExplicitRunResult
-            ``(n, dt, dt_cr)`` — the sub-step count, the step actually used,
-            and the queried critical time step.
-
-        Raises
-        ------
-        BridgeError / NotImplementedError / ValueError
-            As for :meth:`critical_time_step`, plus ``ValueError`` for an
-            out-of-range ``duration`` / ``safety`` / ``dt_max``.
-        RuntimeError
-            If the explicit ``analyze`` returns non-zero (divergence, or a
-            mid-run ``-cflAbort`` when the integrator is guarded).
-        """
-        if self._stage_records:
-            raise NotImplementedError(
-                "apeSees.analyze_explicit: live execution does not support "
-                f"staged models (got {len(self._stage_records)} stage(s)). "
-                "Emit Tcl/Py and drive the explicit run there instead."
-            )
-        self._check_analysis_chain_for_analyze()
-        self._check_explicit_solver_compat()
-        self._warn_if_unguarded_explicit_run()
-
-        from .emitter.live import LiveOpsEmitter
-
-        bm = self.build()
-        self._assert_fork_if_required()
-        live_emitter = LiveOpsEmitter(wipe=True)
-        bm.emit(live_emitter)
-        # Prime, query dt_cr, then size + run the sub-stepped analysis on
-        # the SAME emitter (the prime step's tiny dt is stable).
-        live_emitter.analyze(steps=1, dt=_DTCR_PRIME_DT)
-        dtcr = _dtcr_or_raise(live_emitter.critical_time_step())
-        n, dt = _explicit_substep_count(
-            duration, dtcr, safety=safety, dt_max=dt_max,
-        )
-        ret = int(live_emitter.analyze(steps=n, dt=dt))
-        if ret != 0:
-            raise RuntimeError(
-                f"apeSees.analyze_explicit: explicit run failed (analyze "
-                f"returned {ret}) after sizing dt={dt:.3e} from "
-                f"dt_cr={dtcr:.3e} over {n} sub-steps. The solution likely "
-                "diverged — on a stiffening model the critical step can fall "
-                "below dt mid-run. Lower safety=, pass a smaller dt_max=, or "
-                "construct the integrator with cfl_abort=True / recompute=N."
-            )
-        return ExplicitRunResult(n=n, dt=dt, dt_cr=dtcr)
 
     def tcl(
         self,
@@ -12027,6 +10512,8 @@ class apeSees:
         # 0018 / _internal.compose).  apeSees passes snapshot_id=None:
         # the broker / bridge meta write is authoritative here, so
         # this stays byte-invariant with the pre-extraction code.
+        # ADR 0112 D3: the bridge's declaration provenance rides along
+        # and is appended to the snapshot's own table in /provenance.
         _compose_model_h5(
             self._fem, emitter, path,
             model_name=name,
@@ -12037,11 +10524,15 @@ class apeSees:
             names=self._name_records(),
             computed_sections=self._computed_section_records(bm.primitives),
             nodes_ndf=_nodes_ndf,
+            provenance=self._provenance.snapshot(),
         )
 
     # -- Registration -----------------------------------------------------
 
-    def _register(self, prim: _P, *, name: str | None = None) -> _P:
+    def _register(
+        self, prim: _P, *, name: str | None = None,
+        synthesised: str | None = None,
+    ) -> _P:
         """Add ``prim`` to the bridge, allocate its tag, return it.
 
         When ``name`` is given, register it as a bridge-side alias for
@@ -12050,10 +10541,30 @@ class apeSees:
         the returned handle.  Names are unique per bridge instance; a
         duplicate raises ``ValueError`` (fail-loud — no silent
         last-wins).
+
+        ADR 0112 D3: the registration records its declaration
+        provenance as ``opensees/<kind>/<name|#k>``, where ``<kind>``
+        is the tag-allocator kind (the OpenSees command: ``element``,
+        ``uniaxialMaterial``, ``pattern``, ...).  The helper keeps one
+        record per user call.  A primitive the bridge synthesises inside
+        a verb the user called (the HOLD series and pattern of
+        ``s.support``, the series and pattern of ``imposed_displacement``)
+        is registered with ``synthesised=<verb>:<owner>[/<role>]`` and
+        gets a record under that key, pointing at the verb call, with
+        ``origin = "synthesised"`` and no ``#k`` number (maintainer
+        ruling on #1378).
         """
         kind = _kind_of(prim)
-        self._tags.allocate_for(prim, kind)
-        self._primitives.append(prim)
+        # An empty name is no name, exactly as ``capture`` reads it: the
+        # primitive is unnamed for the key, the alias table and the
+        # record alike (#1378 round 4).
+        name = name or None
+        # Every refusal runs before the tag is allocated and the
+        # primitive appended, so a refused call leaves no primitive, no
+        # tag and no record.  A primitive registered before (P11:
+        # ``allocate_for`` is idempotent on the object) keeps its record
+        # and is not checked again.
+        already = self._tags.tag_for(prim) is not None
         if name is not None:
             existing = self._names.get(name)
             if existing is not None and existing is not prim:
@@ -12063,11 +10574,47 @@ class apeSees:
                     "bridge.  Pick a different name= (or pass the object "
                     "handle directly)."
                 )
+        if not already:
+            # User names and synthesised keys share one key space per
+            # family; a collision on either side fails here.
+            if synthesised is not None:
+                key, what = synthesised, "synthesised key"
+            elif name is not None:
+                key, what = name, "name"
+            else:
+                key = self._provenance.next_unnamed_key("opensees", kind)
+                what = "unnamed key"
+            if self._provenance.has("opensees", kind, key):
+                raise ValueError(
+                    f"apeSees: the {what} {key!r} of this "
+                    f"{type(prim).__name__} collides with the existing "
+                    f"provenance record 'opensees/{kind}/{key}' (user names "
+                    "and synthesised keys share one key space per family); "
+                    "rename one of them.  Nothing was registered."
+                )
+        self._tags.allocate_for(prim, kind)
+        self._primitives.append(prim)
+        if name is not None:
             self._names[name] = prim
+        if not already:
+            if synthesised is not None:
+                self._provenance.capture_synthesised(
+                    "opensees", kind, synthesised)
+            else:
+                self._provenance.capture(
+                    "opensees", kind, name, on_existing="raise")
         return prim
 
     def register(self, prim: _P) -> _P:
-        """Register a standalone primitive with the bridge (P11)."""
+        """Register a standalone primitive with the bridge (P11).
+
+        Idempotent on the object: registering an instance the bridge
+        already holds (a namespace handle, or a second ``register``)
+        returns it unchanged, so it stays once in the primitive list
+        (#1409).
+        """
+        if self._tags.tag_for(prim) is not None:
+            return prim
         return self._register(prim)
 
     def _resolve(
@@ -12352,1989 +10899,6 @@ class apeSees:
                 "primitives via ops.<family>.<Type>(...) before calling "
                 "analyze()."
             )
-
-
-# ---------------------------------------------------------------------------
-# Explicit critical-time-step (dt_cr) helpers (Ladruno fork).  Pure functions
-# — the math + sentinel handling, unit-testable without openseespy.
-# ---------------------------------------------------------------------------
-
-# Tiny priming step: triggers the integrator's domainChanged() so dt_cr is
-# computed, without meaningfully advancing the solution (negligible vs any
-# real integration duration).  Per the explicit-dynamics ADR (D5) recipe.
-# NOTE: required on the deployed fork build (605affeb) — criticalTimeStep()
-# returns the 0.0 NOT_COMPUTED sentinel until the first step runs.
-_DTCR_PRIME_DT = 1e-12
-
-
-@dataclass(frozen=True, slots=True)
-class ExplicitRunResult:
-    """Result of :meth:`apeSees.analyze_explicit`.
-
-    ``n`` sub-steps of size ``dt`` tiled the requested duration; ``dt_cr``
-    is the critical time step queried on the initial stiffness (``dt`` is
-    ``safety * dt_cr``, optionally capped by ``dt_max``).
-    """
-
-    n: int
-    dt: float
-    dt_cr: float
-
-
-def _dtcr_or_raise(dtcr: float) -> float:
-    """Return ``dtcr`` if it is a usable (> 0) critical time step, else raise.
-
-    ``ops.criticalTimeStep()`` sentinels: ``0.0`` not-computed (no prior
-    ``analyze`` / ``domainChanged``), ``-1.0`` not-applicable or disabled
-    (no ``cfl`` flag, a non-explicit integrator, or a model whose *elements*
-    yield no finite estimate — e.g. a pure nodal-mass model).
-    """
-    if dtcr > 0:
-        return dtcr
-    if dtcr == 0.0:
-        raise ValueError(
-            "critical_time_step: dt_cr not computed yet (sentinel 0.0). "
-            "An explicit integrator with cfl=True must be registered and "
-            "the domain primed — this is handled internally, so seeing 0.0 "
-            "means the priming step did not run."
-        )
-    raise ValueError(
-        "critical_time_step: dt_cr not applicable (sentinel -1.0). Requires "
-        "an explicit integrator (ExplicitBathe / ExplicitBatheLNVD / "
-        "CentralDifferenceLadruno) with cfl=True, and element mass density "
-        "(e.g. element -rho / -mass). The dt_cr eigensolve loops ELEMENTS and "
-        "uses element mass + stiffness; ops.mass nodal mass is excluded (the "
-        "estimate is computed on a different mass operator than the run uses), "
-        "so a pure nodal-mass model yields no finite estimate."
-    )
-
-
-def _explicit_substep_count(
-    duration: float,
-    dtcr: float,
-    *,
-    safety: float,
-    dt_max: float | None,
-) -> tuple[int, float]:
-    """Stable sub-step count for an explicit run of length ``duration``.
-
-    ``dt_stable = safety * dtcr`` (capped by ``dt_max`` if given);
-    ``n = max(1, ceil(duration / dt))``; returns ``(n, duration / n)`` so
-    the steps tile ``duration`` exactly.  Assumes ``dtcr > 0`` (the caller
-    routes through :func:`_dtcr_or_raise` first).
-    """
-    import math
-
-    if duration <= 0:
-        raise ValueError(
-            f"analyze_explicit: duration must be > 0, got {duration}."
-        )
-    if not (0.0 < safety <= 1.0):
-        raise ValueError(
-            f"analyze_explicit: safety must be in (0, 1], got {safety}."
-        )
-    if dt_max is not None and dt_max <= 0:
-        raise ValueError(
-            f"analyze_explicit: dt_max must be > 0, got {dt_max}."
-        )
-    # ``safety`` scales the value criticalTimeStep() returns — NOT any
-    # larger Noh-Bathe bound. Empirically 0.9 of the returned value runs
-    # stable for ExplicitBathe; re-basing it on a bigger bound would erase
-    # the margin.
-    dt = safety * dtcr
-    if dt_max is not None:
-        dt = min(dt, dt_max)
-    n = max(1, math.ceil(duration / dt))
-    return n, duration / n
-
-
-# ---------------------------------------------------------------------------
-# Shared validation for initial_stress (used by ops.initial_stress PULL +
-# s.initial_stress PUSH).
-# ---------------------------------------------------------------------------
-
-
-def _build_initial_stress_record(
-    *,
-    source_label: str,
-    name: str,
-    pg: str | None,
-    elements: "Iterable[int] | None",
-    sigma_xx: float,
-    sigma_yy: float,
-    sigma_zz: float,
-    ramp_steps: int,
-    lambda_install: float,
-) -> "InitialStressRecord":
-    """Validate inputs and construct an :class:`InitialStressRecord`.
-
-    Shared by :meth:`apeSees.initial_stress` (the bridge-global PULL
-    factory) and :meth:`_StageBuilder.initial_stress` (the stage-bound
-    PUSH method).  ``source_label`` prefixes every error message so
-    users see which API surface they violated.
-
-    Validation rules (identical to the historical inline checks):
-
-    * Exactly one of ``pg=`` / ``elements=``.
-    * ``name`` non-empty and a valid Tcl identifier.
-    * ``ramp_steps >= 1``.
-    * ``lambda_install in (0, 1]``.
-    """
-    if (pg is None) == (elements is None):
-        raise ValueError(
-            f"{source_label}: supply exactly one of pg= or "
-            f"elements= (got pg={pg!r}, elements={elements!r})."
-        )
-    if not name:
-        raise ValueError(
-            f"{source_label}: name= must be non-empty."
-        )
-    if not name.replace("_", "").isalnum() or name[0].isdigit():
-        raise ValueError(
-            f"{source_label}: name must be a valid Tcl identifier "
-            "(alphanumeric + underscore, not starting with a digit). "
-            f"Got name={name!r}."
-        )
-    if ramp_steps < 1:
-        raise ValueError(
-            f"{source_label}: ramp_steps must be >= 1, "
-            f"got {ramp_steps}."
-        )
-    if not (0.0 < lambda_install <= 1.0):
-        raise ValueError(
-            f"{source_label}: lambda_install must be in (0, 1], "
-            f"got {lambda_install}."
-        )
-    elements_tuple = (
-        tuple(int(e) for e in elements) if elements is not None else None
-    )
-    return InitialStressRecord(
-        name=str(name),
-        pg=pg,
-        elements=elements_tuple,
-        sigma_xx=float(sigma_xx),
-        sigma_yy=float(sigma_yy),
-        sigma_zz=float(sigma_zz),
-        ramp_steps=int(ramp_steps),
-        lambda_install=float(lambda_install),
-    )
-
-
-# ---------------------------------------------------------------------------
-# _StageBuilder — context manager backing ops.stage(name) (Phase SSI-2.A)
-# ---------------------------------------------------------------------------
-
-
-class _StageBuilder:
-    """Collects per-stage records inside a ``with ops.stage(...) as s:``
-    block; emits a :class:`StageRecord` to the bridge on context-exit.
-
-    Lifecycle:
-
-    1. Constructed by :meth:`apeSees.stage` — holds a back-reference
-       to the bridge.
-    2. Inside the ``with`` block, the user calls ``s.add(record)``,
-       ``s.analysis(test=, algorithm=, ...)``, and ``s.run(n=, dt=)``.
-    3. On ``__exit__`` (clean exit only), validates that all required
-       fields are populated and appends a frozen :class:`StageRecord`
-       to ``bridge._stage_records``.  On exception, the stage is
-       discarded (caller's exception propagates).
-
-    The builder is NOT a typed primitive — it does not register a tag
-    with the bridge.  The records / analysis-chain primitives it
-    references ARE registered (independently, via their own
-    namespace calls) and therefore appear in
-    :attr:`apeSees._primitives` for the topological emit pass.  The
-    stage record holds REFERENCES into those primitives, not copies.
-    """
-
-    __slots__ = (
-        "_bridge", "_name",
-        "_initial_stress_records",
-        "_activate_absorbing_records",
-        "_activated_pgs",
-        # Transient → static handover: ``s.zero_velocities`` pool.
-        "_zero_velocity_records",
-        # Phase SSI-2.D (PR-B + PR-C): stage-bound BC + recorder pools.
-        "_fix_records",
-        "_mass_records",
-        "_region_records",
-        "_recorder_specs",
-        # ADR 0053 D5: stage-bound damping pools + the ``s.damping`` namespace.
-        "_rayleigh_records",
-        "_damping_attach_records",
-        "damping",
-        # ADR 0051 (BL-3): stage-scoped load patterns created via
-        # ``s.pattern(series=)``.
-        "_pattern_specs",
-        # ADR 0052 slice 1: stage-bound HOLD supports (``s.support``) +
-        # the lazily-created per-stage ``Plain`` HOLD pattern.
-        "_support_records",
-        "_support_pattern",
-        # Stage-bound constraint pool — populated by s.embedded /
-        # s.equal_dof / s.rigid_link / s.tie / s.tied_contact /
-        # s.kinematic_coupling / s.node_to_surface.
-        "_stage_constraint_records",
-        # ADR 0093 S7: stage-bound interface pool — populated by
-        # s.interface(name=), kept apart from the MP pool above.
-        "_stage_interface_records",
-        # Phase SSI-2.E: between-stage Domain mutators.  Removal pools
-        # emit BEFORE the stage's new fix / mass / region lines; the
-        # three scalar fields emit at well-defined slots (set_time +
-        # set_creep right after stage_open; pre_analyze_reset right
-        # before analyze).
-        "_remove_sp_records",
-        "_remove_element_records",
-        "_update_material_stage_records",
-        # Typed pass-through over parameter / updateParameter.
-        "_update_parameter_records",
-        "_set_time",
-        "_set_creep_on",
-        "_pre_analyze_reset",
-        "_test", "_algorithm", "_integrator",
-        "_constraints", "_numberer", "_system", "_analysis",
-        "_n_increments", "_dt",
-        # ADR 0057 Phase A: optional solution-strategy ladder for the
-        # stage's analyze loop (set via ``s.run(strategy=)``).
-        "_strategy",
-        "_analysis_set", "_run_set",
-        # TIMs A8: optional per-stage profiler bracket (``s.profile``).
-        "_profile",
-    )
-
-    def __init__(self, bridge: "apeSees", name: str) -> None:
-        self._bridge = bridge
-        self._name = name
-        self._initial_stress_records: list[InitialStressRecord] = []
-        self._activate_absorbing_records: list[ActivateAbsorbingRecord] = []
-        self._activated_pgs: list[str] = []
-        # Transient → static handover: nodal vel / accel zeroing pool.
-        self._zero_velocity_records: list[ZeroVelocityRecord] = []
-        # Phase SSI-2.D PR-B: stage-bound BC pools (fix + mass).
-        self._fix_records: list[FixRecord] = []
-        self._mass_records: list[MassRecord] = []
-        # Phase SSI-2.D PR-C: stage-bound region + recorder pools.
-        self._region_records: list[RegionAssignmentRecord] = []
-        self._recorder_specs: list[Recorder] = []
-        # ADR 0053 D5: stage-bound damping pools + the ``s.damping``
-        # namespace (rayleigh + object forms; modal raises — deferred).
-        self._rayleigh_records: list[RayleighRecord] = []
-        self._damping_attach_records: list[DampingAttachRecord] = []
-        self.damping = _StageDampingNS(bridge, self)
-        # ADR 0051 (BL-3): stage-scoped load patterns.
-        self._pattern_specs: list["Plain"] = []
-        # ADR 0052 slice 1: stage-bound HOLD supports + the dedicated
-        # per-stage ``Plain`` HOLD pattern (created lazily on the first
-        # ``s.support`` call in this stage; None until then).
-        self._support_records: list["SupportRecord"] = []
-        self._support_pattern: "Plain | None" = None
-        # Stage-bound constraint pool — flat list of resolved
-        # ConstraintRecord instances.  Emit-time dispatches by
-        # isinstance into the six per-kind emit helpers.
-        self._stage_constraint_records: list["ConstraintRecord"] = []
-        # ADR 0093 S7: stage-claimed InterfaceRecord rows (see
-        # :meth:`interface`).
-        self._stage_interface_records: list["InterfaceRecord"] = []
-        # Phase SSI-2.E: between-stage Domain mutators.
-        self._remove_sp_records: list[SPRemovalRecord] = []
-        self._remove_element_records: list[ElementRemovalRecord] = []
-        self._update_material_stage_records: list[MaterialStageRecord] = []
-        # Typed pass-through over parameter / updateParameter.
-        self._update_parameter_records: list[UpdateParameterRecord] = []
-        self._set_time: float | None = None
-        self._set_creep_on: bool | None = None
-        self._pre_analyze_reset: bool = False
-        self._test: Primitive | None = None
-        self._algorithm: Primitive | None = None
-        self._integrator: Primitive | None = None
-        self._constraints: Primitive | None = None
-        self._numberer: Primitive | None = None
-        self._system: Primitive | None = None
-        self._analysis: Primitive | None = None
-        self._n_increments: int = 0
-        self._dt: float | None = None
-        self._strategy: "Ladder | None" = None
-        self._analysis_set: bool = False
-        self._run_set: bool = False
-        # TIMs A8: optional per-stage profiler bracket.
-        self._profile: "ProfileRecord | None" = None
-
-    def __enter__(self) -> "_StageBuilder":
-        return self
-
-    def __exit__(
-        self,
-        exc_type: type[BaseException] | None,
-        exc_val: BaseException | None,
-        exc_tb: object,
-    ) -> None:
-        # Clear the bridge's open-builder slot regardless of how we
-        # exit (exception or clean close) so subsequent
-        # ``ops.stage(...)`` calls work.  Set in
-        # ``apeSees.stage(name)``.
-        self._bridge._open_stage_builder = None
-        if exc_type is not None:
-            # Don't swallow user's exception; just drop the in-progress
-            # stage (no records appended to the bridge).
-            return
-        # Validate: every stage MUST have a complete analysis chain
-        # and a run() call.  Missing-piece errors are caller errors.
-        if not self._analysis_set:
-            raise ValueError(
-                f"Stage {self._name!r}: missing s.analysis(...) — "
-                "every stage must declare its analysis chain (test, "
-                "algorithm, integrator, constraints, numberer, system, "
-                "analysis)."
-            )
-        if not self._run_set:
-            raise ValueError(
-                f"Stage {self._name!r}: missing s.run(n_increments=, "
-                "dt=) — every stage must declare its analyze loop."
-            )
-        record = StageRecord(
-            name=self._name,
-            initial_stress_records=tuple(self._initial_stress_records),
-            test=self._test,
-            algorithm=self._algorithm,
-            integrator=self._integrator,
-            constraints=self._constraints,
-            numberer=self._numberer,
-            system=self._system,
-            analysis=self._analysis,
-            n_increments=int(self._n_increments),
-            dt=None if self._dt is None else float(self._dt),
-            strategy=self._strategy,
-            activated_pgs=tuple(self._activated_pgs),
-            zero_velocity_records=tuple(self._zero_velocity_records),
-            fix_records=tuple(self._fix_records),
-            mass_records=tuple(self._mass_records),
-            region_records=tuple(self._region_records),
-            recorder_specs=tuple(self._recorder_specs),
-            rayleigh_records=tuple(self._rayleigh_records),
-            damping_attach_records=tuple(self._damping_attach_records),
-            pattern_specs=tuple(self._pattern_specs),
-            support_records=tuple(self._support_records),
-            support_pattern=self._support_pattern,
-            stage_constraint_records=tuple(self._stage_constraint_records),
-            stage_interface_records=tuple(self._stage_interface_records),
-            remove_sp_records=tuple(self._remove_sp_records),
-            remove_element_records=tuple(self._remove_element_records),
-            update_material_stage_records=tuple(
-                self._update_material_stage_records,
-            ),
-            update_parameter_records=tuple(self._update_parameter_records),
-            set_time=self._set_time,
-            set_creep_on=self._set_creep_on,
-            pre_analyze_reset=self._pre_analyze_reset,
-            activate_absorbing_records=tuple(self._activate_absorbing_records),
-            profile=self._profile,
-        )
-        self._bridge._stage_records.append(record)
-
-    # -- Stage population -------------------------------------------------
-
-    def add(self, record: InitialStressRecord) -> None:
-        """Bind a previously-registered record to this stage.
-
-        Currently supports :class:`InitialStressRecord` only.  The
-        record is removed from the bridge's global ``_initial_stress_records``
-        pool (so it does not also emit in the flat-emit zone) and
-        added to this stage's pool.
-
-        Passing a record that's NOT in the bridge's global pool
-        raises ``ValueError`` — usually a sign of double-``add``ing
-        the same record across stages.
-        """
-        if isinstance(record, InitialStressRecord):
-            try:
-                self._bridge._initial_stress_records.remove(record)
-            except ValueError as e:
-                raise ValueError(
-                    f"Stage {self._name!r}.add: InitialStressRecord "
-                    f"name={record.name!r} not in the bridge's global "
-                    "pool — was it already added to a different stage "
-                    "or registered through a different bridge instance?"
-                ) from e
-            self._initial_stress_records.append(record)
-            return
-        raise TypeError(
-            f"Stage {self._name!r}.add: unsupported record type "
-            f"{type(record).__name__!r}.  Phase SSI-2.A supports "
-            "InitialStressRecord only; future versions may extend."
-        )
-
-    def initial_stress(
-        self,
-        *,
-        name: str,
-        pg: str | None = None,
-        elements: "Iterable[int] | None" = None,
-        sigma_xx: float,
-        sigma_yy: float,
-        sigma_zz: float,
-        ramp_steps: int,
-        lambda_install: float = 1.0,
-    ) -> "InitialStressRecord":
-        """Stage-bound PUSH mirror of :meth:`apeSees.initial_stress`.
-
-        Signature is identical to ``ops.initial_stress(...)``; the
-        record is created and appended directly to this stage's pool
-        instead of the bridge's global pool — no intermediate
-        ``s.add(record)`` step required.
-
-        Equivalent to:
-
-            record = ops.initial_stress(name=..., ...)
-            s.add(record)
-
-        but in one call, mirroring the
-        ``s.fix`` / ``s.mass`` / ``s.embedded`` PUSH builder methods.
-        The existing :meth:`add` PULL path remains supported for
-        callers that build records globally and bind them later.
-
-        Per-stage emission ordering is unchanged: this stage's
-        initial-stress records emit AFTER the stage's analysis chain
-        is established, regardless of which API surface (PUSH vs PULL)
-        the record came in through.
-
-        Returns the constructed record so callers can inspect or pass
-        it to validators (mirroring ``ops.initial_stress``'s return).
-        """
-        record = _build_initial_stress_record(
-            source_label=f"Stage {self._name!r}.initial_stress",
-            name=name, pg=pg, elements=elements,
-            sigma_xx=sigma_xx, sigma_yy=sigma_yy, sigma_zz=sigma_zz,
-            ramp_steps=ramp_steps, lambda_install=lambda_install,
-        )
-        self._initial_stress_records.append(record)
-        return record
-
-    def activate_absorbing(
-        self,
-        *,
-        pg: str | None = None,
-        elements: "Iterable[int] | None" = None,
-    ) -> "ActivateAbsorbingRecord":
-        """Flip this stage's absorbing-boundary elements to absorbing mode.
-
-        Emits the one-way ``ASDAbsorbingBoundary`` stage switch (0→1) — the
-        OpenSees ``parameter`` / ``addToParameter ... stage`` /
-        ``updateParameter 1`` sequence (ADR 0054 AB-3) — once, after this
-        stage's analysis chain is established and before its ``analyze`` loop,
-        so the gravity stage has already held the boundary by penalty.  Target
-        the elements by ``pg`` (typically
-        ``AbsorbingSkinResult.skin_all_pg``) or an explicit ``elements`` list;
-        exactly one is required.  Per-partition emission is automatic.
-
-        Usage::
-
-            with ops.stage("dynamic") as s:
-                s.activate_absorbing(pg=skin.skin_all_pg)
-                s.analysis(...); s.run(...)
-        """
-        if (pg is None) == (elements is None):
-            raise ValueError(
-                f"Stage {self._name!r}.activate_absorbing: supply exactly one "
-                "of pg= or elements=."
-            )
-        record = ActivateAbsorbingRecord(
-            pg=pg,
-            elements=(
-                tuple(int(e) for e in elements) if elements is not None else None
-            ),
-        )
-        self._activate_absorbing_records.append(record)
-        return record
-
-    def zero_velocities(
-        self, nodes: "Iterable[int | Node] | None" = None,
-    ) -> "ZeroVelocityRecord":
-        """Zero the nodal velocity AND acceleration state at this stage's
-        boundary — the transient → static handover.
-
-        A static stage inherits the previous transient stage's committed
-        nodal velocities and accelerations (a static integrator never
-        writes either), so ``recorder Node ... -dynamic`` /
-        ``reactions -dynamic`` in the static stage keeps reporting the
-        previous stage's inertial and damping terms as if they were
-        live.  Call this on the static stage to hand it a quiescent
-        kinematic state.
-
-        Emits, per targeted node and per DOF of that node's *effective*
-        ndf (a u-p node has 4, so it gets DOFs 1..4)::
-
-            setNodeVel   <node> <dof> 0.0 -commit
-            setNodeAccel <node> <dof> 0.0 -commit
-
-        ``-commit`` is load-bearing, not decoration.  The stock handler
-        (``OpenSeesMiscCommands.cpp`` ``OPS_setNodeVel`` /
-        ``OPS_setNodeAccel``) rebuilds the vector from the node's
-        COMMITTED state (``Node::getVel`` returns ``commitVel``) and
-        writes only the TRIAL vector.  Without committing each call, the
-        next DOF's call reads the OLD committed vector back and only the
-        last DOF ends up zeroed — and the committed state a static stage
-        actually reads is never touched at all.
-
-        Emit slot: LAST in the stage block — after the stage's domain
-        mutations, its analysis chain, its patterns and the optional
-        ``s.reset()``, immediately before ``analyze``.  ``reset`` reverts
-        the Domain to the last ``setTime`` (restoring the velocities),
-        so the zeroing has to follow it; and nothing else may run between
-        the zeroing and the step that would otherwise read the stale
-        state.
-
-        There is no cheaper mechanism.  The Ladruno fork adds
-        ``ladrunoSetNodeTrial`` (``OpenSeesMiscCommands.cpp``
-        ``OPS_LadrunoSetNodeTrial``), but it writes the TRIAL vectors
-        only and never commits, so it cannot express this; neither stock
-        nor the fork ships a domain-wide zeroing command.  The deck is
-        therefore ``2 x sum(ndf)`` lines — proportional to the model.
-        Pass ``nodes=`` to scope it when the whole domain is too many.
-
-        Parameters
-        ----------
-        nodes
-            The nodes to quiet.  ``None`` (default) means the whole
-            domain — every node in ``fem.nodes.ids``.  Accepts a mix of
-            plain integer tags and :class:`Node` instances, same as
-            :meth:`fix`.
-
-        Raises
-        ------
-        ValueError
-            If ``nodes=`` is supplied but empty (an inert directive is
-            almost always a mistake; omit the argument for the whole
-            domain).
-        """
-        if nodes is None:
-            record = ZeroVelocityRecord(nodes=None)
-        else:
-            nodes_tuple = _iter_tags(nodes)
-            if not nodes_tuple:
-                raise ValueError(
-                    f"Stage {self._name!r}.zero_velocities: nodes= is "
-                    "empty — omit the argument to zero the whole domain."
-                )
-            record = ZeroVelocityRecord(nodes=nodes_tuple)
-        self._zero_velocity_records.append(record)
-        return record
-
-    # -- Stage-bound constraints (CLAIM by name) -------------------------
-
-    def embedded(self, *, name: str) -> "tuple[ConstraintRecord, ...]":
-        """Claim resolved ``embedded`` constraint records by name for
-        this stage.
-
-        Constraint declaration happens at apeGmsh time via
-        ``g.constraints.embedded(host_label=..., embedded_label=...,
-        name=...)``, which produces resolved ``InterpolationRecord``
-        rows on ``fem.elements.constraints``.  This method finds the
-        rows matching ``name`` and:
-
-        * appends them to this stage's constraint pool (so they emit
-          inside the stage's block, AFTER stage regions and BEFORE the
-          stage's ``domain_change``);
-        * records their ``id(...)`` in the bridge's
-          ``_stage_claimed_constraint_ids`` set so the global MP-
-          constraint pass SKIPS them (no double emission).
-
-        The shipped contract is **claim-by-name**, not direct create:
-        the kernel resolver runs at apeGmsh / FEMData-build time
-        (needs gmsh + parts), so by bridge time the records already
-        exist on the FEMData broker.  See ADR 0034 §"Stage-bound
-        constraints".
-
-        Parameters
-        ----------
-        name
-            Unique constraint name passed to
-            ``g.constraints.embedded(name=...)`` at apeGmsh time.
-
-        Returns
-        -------
-        tuple[ConstraintRecord, ...]
-            The claimed records, in registration order on the broker.
-
-        Raises
-        ------
-        ValueError
-            * No record on ``fem.elements.constraints`` matches
-              ``name`` (typo, or missing ``name=`` at declaration).
-            * The matched record is already claimed by a different
-              stage (double-claim).
-        """
-        return self._claim_constraints_by_name(
-            name=name,
-            method_label="s.embedded",
-            kind="embedded",
-            scope="elements",
-        )
-
-    def tie(self, *, name: str) -> "tuple[ConstraintRecord, ...]":
-        """Claim resolved ``tie`` constraint records by name (claim-by-
-        name; see :meth:`embedded` for the contract)."""
-        return self._claim_constraints_by_name(
-            name=name,
-            method_label="s.tie",
-            kind="tie",
-            scope="elements",
-        )
-
-    def distributing(self, *, name: str) -> "tuple[ConstraintRecord, ...]":
-        """Claim resolved ``distributing`` constraint records by name
-        (claim-by-name; see :meth:`embedded` for the contract)."""
-        return self._claim_constraints_by_name(
-            name=name,
-            method_label="s.distributing",
-            kind="distributing",
-            scope="elements",
-        )
-
-    def equal_dof(self, *, name: str) -> "tuple[ConstraintRecord, ...]":
-        """Claim resolved ``equal_dof`` constraint records by name
-        (claim-by-name; see :meth:`embedded` for the contract)."""
-        return self._claim_constraints_by_name(
-            name=name,
-            method_label="s.equal_dof",
-            kind="equal_dof",
-            scope="nodes",
-        )
-
-    def rigid_link(self, *, name: str) -> "tuple[ConstraintRecord, ...]":
-        """Claim resolved rigid-link constraint records by name.
-
-        Spans ``rigid_beam``, ``rigid_rod``, and ``rigid_body`` since
-        ``g.constraints.rigid_link(...)`` may produce any of the three
-        depending on the user's flag (see ConstraintsComposite).
-        Claim-by-name semantics; see :meth:`embedded` for the contract.
-        """
-        return self._claim_constraints_by_name(
-            name=name,
-            method_label="s.rigid_link",
-            kind=frozenset({"rigid_beam", "rigid_rod", "rigid_body"}),
-            scope="nodes",
-        )
-
-    def rigid_diaphragm(
-        self, *, name: str,
-    ) -> "tuple[ConstraintRecord, ...]":
-        """Claim resolved ``rigid_diaphragm`` constraint records by
-        name (claim-by-name; see :meth:`embedded` for the contract)."""
-        return self._claim_constraints_by_name(
-            name=name,
-            method_label="s.rigid_diaphragm",
-            kind="rigid_diaphragm",
-            scope="nodes",
-        )
-
-    def kinematic_coupling(
-        self, *, name: str,
-    ) -> "tuple[ConstraintRecord, ...]":
-        """Claim resolved ``kinematic_coupling`` constraint records by
-        name (claim-by-name; see :meth:`embedded` for the contract)."""
-        return self._claim_constraints_by_name(
-            name=name,
-            method_label="s.kinematic_coupling",
-            kind="kinematic_coupling",
-            scope="nodes",
-        )
-
-    def node_to_surface(
-        self, *, name: str,
-    ) -> "tuple[ConstraintRecord, ...]":
-        """Claim resolved ``node_to_surface`` constraint records by
-        name (claim-by-name; see :meth:`embedded` for the contract)."""
-        return self._claim_constraints_by_name(
-            name=name,
-            method_label="s.node_to_surface",
-            kind="node_to_surface",
-            scope="nodes",
-        )
-
-    def node_to_surface_spring(
-        self, *, name: str,
-    ) -> "tuple[ConstraintRecord, ...]":
-        """Claim resolved ``node_to_surface_spring`` constraint records
-        by name (claim-by-name; see :meth:`embedded` for the contract).
-        """
-        return self._claim_constraints_by_name(
-            name=name,
-            method_label="s.node_to_surface_spring",
-            kind="node_to_surface_spring",
-            scope="nodes",
-        )
-
-    def tied_contact(self, *, name: str) -> "tuple[ConstraintRecord, ...]":
-        """Claim a resolved ``tied_contact`` surface coupling by name for
-        this stage (claim-by-name; see :meth:`embedded` for the contract).
-
-        ``g.constraints.tied_contact(master_label=..., slave_label=...,
-        name=...)`` resolves at apeGmsh time to a single
-        :class:`SurfaceCouplingRecord` on ``fem.elements.constraints``
-        whose ``slave_records`` hold one ``InterpolationRecord`` per slave
-        node.  Claiming it routes the whole coupling into this stage's
-        block: the stage adapter expands the nested slaves on emit, and
-        :meth:`_claimed_constraint_ids` registers those same slave ids so
-        the global surface-coupling pass (which sees the expanded slaves,
-        not the outer record) correctly skips them — no double emission.
-
-        Both the flat and partitioned stage emit paths handle the
-        expansion (``_StageConstraintAdapter.interpolations`` /
-        ``_emit_surface_couplings_for_rank``).
-        """
-        return self._claim_constraints_by_name(
-            name=name,
-            method_label="s.tied_contact",
-            kind="tied_contact",
-            scope="elements",
-        )
-
-    def interface(self, *, name: str) -> "tuple[InterfaceRecord, ...]":
-        """Claim resolved ``g.constraints.interface()`` records by name
-        for this stage — the liner-install pattern (ADR 0093 S7 / INV-6).
-
-        ``g.constraints.interface(..., name="RockLiner")`` resolves at
-        apeGmsh time into one
-        :class:`~apeGmsh._kernel.records._constraints.InterfaceRecord`
-        per coincident node pair on ``fem.elements.interfaces``.
-        Claiming the name here moves the whole per-pair unit — the
-        mixed-ndf phantom, its nested ``equalDOF``, the two
-        tributary-scaled uniaxials and the ``zeroLength`` — out of the
-        base pass and into this stage's block, emitted after the
-        stage's activated topology and before its ``domain_change``.
-        The interface is therefore installed on the ground the previous
-        stages already equilibrated, and carries only the load
-        increments applied from this stage onward.
-
-        Deliberately NOT routed through
-        :meth:`_claim_constraints_by_name`: that helper walks
-        ``fem.{nodes,elements}.constraints`` and lands its matches in
-        the stage's MP pool, whose emit shape is wrong for an
-        interface.  This is the FIRST stage-claim path for any
-        side-list record and is kept thin on purpose — contacts,
-        embeds and reinforce ties still have no stage-claim path
-        (ADR 0093 INV-6).
-
-        Parameters
-        ----------
-        name
-            The ``name=`` passed to ``g.constraints.interface(...)`` at
-            apeGmsh time.
-
-        Returns
-        -------
-        tuple[InterfaceRecord, ...]
-            The claimed records, in broker registration order.
-
-        Raises
-        ------
-        ValueError
-            Empty ``name=``; no interface record carries that name
-            (the message lists the names that exist); or the name is
-            already claimed by another stage.
-        """
-        return self._claim_interfaces_by_name(name=name)
-
-    def _claim_interfaces_by_name(
-        self, *, name: str,
-    ) -> "tuple[InterfaceRecord, ...]":
-        """Walk ``fem.elements.interfaces``, claim matches by name.
-
-        Duck-typed access to the side-list (the neutral-zone writers /
-        fem-likes contract): ``getattr(..., "interfaces", None)``, never
-        a bare attribute read.
-        """
-        from apeGmsh._kernel.records._kinds import ConstraintKind
-
-        if not name:
-            raise ValueError(
-                f"Stage {self._name!r}.s.interface: name= must be "
-                "non-empty (claim-by-name requires the user to have "
-                "passed a unique name= to g.constraints.interface at "
-                "apeGmsh time)."
-            )
-        fem = self._bridge._fem
-        elements = getattr(fem, "elements", None)
-        container = (
-            getattr(elements, "interfaces", None)
-            if elements is not None else None
-        )
-        if not container:
-            raise ValueError(
-                f"Stage {self._name!r}.s.interface: this model carries "
-                "no g.constraints.interface() records at all "
-                "(fem.elements.interfaces is empty) — nothing to claim. "
-                f"Declare g.constraints.interface(..., name={name!r}) "
-                "at apeGmsh time."
-            )
-        matched = [
-            rec for rec in container
-            if getattr(rec, "name", None) == name
-            and getattr(rec, "kind", None) == ConstraintKind.INTERFACE
-        ]
-        if not matched:
-            available = sorted({
-                str(getattr(rec, "name", None))
-                for rec in container
-                if getattr(rec, "name", None)
-            })
-            known = ", ".join(repr(n) for n in available) or "<none named>"
-            raise ValueError(
-                f"Stage {self._name!r}.s.interface: no resolved "
-                f"interface records found with name={name!r} on "
-                f"fem.elements.interfaces. Available interface names: "
-                f"{known}."
-            )
-        already = self._bridge._stage_claimed_interface_ids
-        for rec in matched:
-            if id(rec) in already:
-                raise ValueError(
-                    f"Stage {self._name!r}.s.interface: interface "
-                    f"name={name!r} is already claimed by another "
-                    "stage — each named interface may bind to at most "
-                    "one stage (ADR 0093 S7)."
-                )
-        for rec in matched:
-            already.add(id(rec))
-            self._stage_interface_records.append(rec)
-        return tuple(matched)
-
-    # NOTE: s.mortar is intentionally out of scope. As of ADR 0073
-    # ``g.constraints.mortar`` delegates to the fork contact-tie and resolves
-    # to a ``ContactRecord`` on ``fem.elements.contacts`` (a serial-only
-    # subsystem emitted by ``emit_contacts``), NOT a claimable MP
-    # ``SurfaceCouplingRecord`` — so there is still no stage-claimable record.
-
-    # -- Internal claim helper -------------------------------------------
-
-    def _claim_constraints_by_name(
-        self,
-        *,
-        name: str,
-        method_label: str,
-        kind: "str | frozenset[str] | None",
-        scope: str,
-    ) -> "tuple[ConstraintRecord, ...]":
-        """Walk the FEMData constraint broker, claim matches by name.
-
-        Parameters
-        ----------
-        name
-            Constraint name to match (from
-            ``g.constraints.<kind>(..., name=name)``).
-        method_label
-            Display name for error messages (e.g. ``"s.embedded"``).
-        kind
-            If a ``str``, filter records by ``rec.kind == kind``.
-            If a ``frozenset[str]``, filter by membership (used for
-            ``s.rigid_link`` which spans rigid_beam / rigid_rod /
-            rigid_body).  ``None`` skips the kind check.
-        scope
-            ``"elements"`` (walk ``fem.elements.constraints``) or
-            ``"nodes"`` (walk ``fem.nodes.constraints``).
-        """
-        if not name:
-            raise ValueError(
-                f"Stage {self._name!r}.{method_label}: name= must be "
-                "non-empty (claim-by-name requires the user to have "
-                "passed a unique name= to g.constraints.X at apeGmsh "
-                "time)."
-            )
-        fem = self._bridge._fem
-        if scope == "elements":
-            container = getattr(
-                getattr(fem, "elements", None), "constraints", None,
-            )
-            scope_attr = "fem.elements.constraints"
-        elif scope == "nodes":
-            container = getattr(
-                getattr(fem, "nodes", None), "constraints", None,
-            )
-            scope_attr = "fem.nodes.constraints"
-        else:
-            raise ValueError(
-                f"Stage {self._name!r}.{method_label}: invalid scope "
-                f"{scope!r} (internal bug)."
-            )
-        if container is None:
-            raise ValueError(
-                f"Stage {self._name!r}.{method_label}: {scope_attr} "
-                f"is None on this FEMData — no constraint broker to "
-                f"claim from."
-            )
-
-        kind_check: "Callable[[object], bool] | None"
-        kind_label: "str | None"
-        if isinstance(kind, str):
-            kind_str = kind
-
-            def kind_check(k: object) -> bool:
-                return k == kind_str
-
-            kind_label = repr(kind)
-        elif kind is not None:
-            kind_set = kind
-
-            def kind_check(k: object) -> bool:
-                return k in kind_set
-
-            kind_label = repr(sorted(kind))
-        else:
-            kind_check = None
-            kind_label = None
-        matched: list["ConstraintRecord"] = []
-        for rec in container:
-            if getattr(rec, "name", None) != name:
-                continue
-            if kind_check is not None and not kind_check(
-                getattr(rec, "kind", None)
-            ):
-                continue
-            matched.append(rec)
-        if not matched:
-            raise ValueError(
-                f"Stage {self._name!r}.{method_label}: no resolved "
-                f"constraint records found with name={name!r}"
-                + (f" and kind in {kind_label}" if kind_label else "")
-                + f" on {scope_attr}. Did you pass name={name!r} to "
-                "the matching g.constraints.X(...) call at apeGmsh "
-                "time?"
-            )
-        already = self._bridge._stage_claimed_constraint_ids
-        for rec in matched:
-            if id(rec) in already:
-                raise ValueError(
-                    f"Stage {self._name!r}.{method_label}: constraint "
-                    f"name={name!r} is already claimed by another "
-                    "stage — each named constraint may bind to at "
-                    "most one stage."
-                )
-        for rec in matched:
-            already.add(id(rec))
-            self._stage_constraint_records.append(rec)
-        return tuple(matched)
-
-    def fix(
-        self,
-        *,
-        pg: str | None = None,
-        nodes: "Iterable[int | Node] | None" = None,
-        dofs: tuple[int, ...],
-    ) -> None:
-        """Apply homogeneous SP constraints (``fix``) bound to this stage.
-
-        Signature mirrors :meth:`apeSees.fix` verbatim: exactly one of
-        ``pg`` / ``nodes`` must be supplied; ``nodes`` accepts a mix
-        of plain integer tags and :class:`Node` instances; ``dofs``
-        is a tuple of 0/1 flags per ndf.  The bridge expands ``pg``
-        to a per-node fan-out at emit time, same as the global
-        :meth:`apeSees.fix` path.
-
-        Stage-bound fix lines emit **inside this stage's block**, after
-        the stage's topology (nodes + elements activated via
-        :meth:`activate`) and before the stage's initial-stress
-        records.  Per-rank fan-out under MP follows the same INV-4
-        rules as the global path: each rank only emits ``fix`` for
-        nodes it owns.
-
-        Validators V1 / V2 (Phase SSI-2.D PR-A) gate this at build
-        time — see :meth:`apeSees._run_staged_bc_validators`.
-
-        Reference frame — absolute (ANCHOR).  ``fix`` is a homogeneous
-        single-point constraint at value 0, so adding it mid-stage to a
-        node that has already drifted to ``u = d`` drives that DOF back
-        toward its ``t = 0`` reference position on the next ``analyze``:
-        the node is *moved*, and the attached elements pick up the
-        corresponding (physical, not spurious) forces.  Use this when
-        you genuinely want the DOF returned to the undeformed position.
-        To instead *hold* the node at its current deformed position with
-        zero initial force, use :meth:`support` (ADR 0052); ``fix``
-        cannot express that, as a homogeneous SP has no value lever.
-
-        Parameters
-        ----------
-        pg
-            Physical group whose nodes receive the fix.  XOR with
-            ``nodes``.
-        nodes
-            Explicit list of node tags (or :class:`Node` instances).
-            XOR with ``pg``.
-        dofs
-            ``ndf``-length tuple of 0/1 flags — ``1`` means fix that
-            DOF, ``0`` leaves it free.
-
-        Raises
-        ------
-        ValueError
-            If both or neither of ``pg`` / ``nodes`` is supplied.
-        """
-        if (pg is None) == (nodes is None):
-            raise ValueError(
-                f"Stage {self._name!r}.fix: supply exactly one of "
-                f"pg= or nodes= (got pg={pg!r}, nodes={nodes!r})."
-            )
-        nodes_tuple = _iter_tags(nodes) if nodes is not None else None
-        self._fix_records.append(
-            FixRecord(pg=pg, nodes=nodes_tuple, dofs=tuple(dofs)),
-        )
-
-    def support(
-        self,
-        *,
-        pg: str | None = None,
-        nodes: "Iterable[int | Node] | None" = None,
-        dofs: tuple[int, ...],
-    ) -> None:
-        """Install a stage-bound support that HOLDS the current deformed
-        position with zero initial force (ADR 0052).
-
-        The staged-construction counterpart to :meth:`fix`.  Where
-        ``fix`` is *absolute* — it drives the DOF back to its ``t = 0``
-        reference position — ``support`` *holds* the DOF at wherever it
-        has drifted to by the start of this stage.  Each flagged DOF
-        emits, inside this stage's dedicated constant pattern::
-
-            sp <node> <dof> [nodeDisp <node> <dof>] -const
-
-        The ``nodeDisp`` value is captured **at runtime** in the emitted
-        deck (after the prior stage's ``analyze`` + ``loadConst``), so
-        the support is satisfied the instant it is added — zero residual,
-        zero jump, zero spurious force.  ``-const`` pins the value so it
-        is never scaled by a load factor.
-
-        Signature mirrors :meth:`fix`: exactly one of ``pg`` / ``nodes``;
-        ``dofs`` is an ``ndf``-length tuple of 0/1 flags (``1`` = hold
-        that DOF).  No value is supplied — it is read from the model at
-        runtime.  Emits inside this stage's block (BC region, before
-        ``domain_change``) into a per-stage ``Plain`` pattern bound to a
-        single shared ``Constant`` series; the pattern is claimed so the
-        global / stage-load-pattern passes never double-emit it.
-
-        Reference frame — deformed (HOLD).  Use this for the usual
-        staged-construction intent: you add a support to hold what is
-        already there.  To instead return a DOF to its ``t = 0`` position
-        (a physical restoring force, e.g. releasing then re-anchoring),
-        use :meth:`fix`.
-
-        Transient caveat — momentum-kill, not value-jump.  A HOLD support
-        introduces no displacement jump (the value equals the current
-        position), so it is exactly zero-force in a static stage.  In a
-        *transient* stage, however, rigidly pinning a moving DOF cuts its
-        velocity in one step — the reaction absorbs the momentum and the
-        kinetic energy is removed discontinuously (an impulse).  This is
-        **not** fixable by ramping (there is no value trajectory to
-        ramp).  If that impulse matters, install the support at a
-        quiescent instant, or model the support as a stiff
-        spring + dashpot (a ``zeroLength`` element) so the momentum
-        bleeds off instead of being cut.
-
-        Validators V1 / V2 gate this at build time: a ``support`` and a
-        ``fix`` (or two ``support`` directives) on the same ``(node,
-        DOF)`` across tiers is refused — a DOF can carry only one
-        single-point constraint.  ``s.remove_sp`` on that target clears
-        the registration so a same-stage re-support is allowed.
-
-        Parameters
-        ----------
-        pg
-            Physical group whose nodes are held.  XOR with ``nodes``.
-        nodes
-            Explicit list of node tags (or :class:`Node` instances).
-            XOR with ``pg``.
-        dofs
-            ``ndf``-length tuple of 0/1 flags — ``1`` means hold that
-            DOF at its current displacement, ``0`` leaves it free.
-
-        Raises
-        ------
-        ValueError
-            If both or neither of ``pg`` / ``nodes`` is supplied.
-        """
-        if (pg is None) == (nodes is None):
-            raise ValueError(
-                f"Stage {self._name!r}.support: supply exactly one of "
-                f"pg= or nodes= (got pg={pg!r}, nodes={nodes!r})."
-            )
-        nodes_tuple = _iter_tags(nodes) if nodes is not None else None
-        # Lazily create the shared Constant series (once across all
-        # stages) and this stage's dedicated Plain HOLD pattern (once
-        # per stage), then claim the pattern so neither the global
-        # post-element pattern pass nor the 7b stage-load-pattern pass
-        # double-emits it — the dedicated HOLD block drives its emit.
-        if self._support_pattern is None:
-            if self._bridge._hold_series is None:
-                self._bridge._hold_series = self._bridge.timeSeries.Constant(
-                    factor=1.0,
-                )
-            self._support_pattern = self._bridge.pattern.Plain(
-                series=self._bridge._hold_series,
-            )
-            self._bridge._stage_claimed_pattern_ids.add(
-                id(self._support_pattern),
-            )
-        self._support_records.append(
-            SupportRecord(pg=pg, nodes=nodes_tuple, dofs=tuple(dofs)),
-        )
-
-    def mass(
-        self,
-        *,
-        pg: str | None = None,
-        nodes: "Iterable[int | Node] | None" = None,
-        values: tuple[float, ...],
-        overwrite: bool = False,
-    ) -> None:
-        """Attach lumped nodal mass bound to this stage.
-
-        Signature mirrors :meth:`apeSees.mass` verbatim, plus the
-        Phase SSI-2.E ``overwrite=`` flag.  Stage-bound mass lines
-        emit alongside stage-bound fix lines (see :meth:`fix` for the
-        emit-position rationale).
-
-        OpenSees ``setMass`` silently OVERWRITES a node's mass on
-        repeated calls.  Validator V2 (Phase SSI-2.D PR-A) refuses
-        the same node receiving mass in more than one tier (global +
-        any stage, or stage A + stage B) at build time so the
-        physics change is not silent.
-
-        Pass ``overwrite=True`` to opt out of V2 for this record only —
-        the user is acknowledging the OpenSees ``setMass`` overwrite is
-        intentional (e.g. swapping a temporary construction mass for a
-        permanent one between stages).  The emitted ``mass`` line is
-        byte-identical with or without the flag; the difference is
-        purely a build-time validator-bypass marker.
-
-        Parameters
-        ----------
-        pg
-            Physical group whose nodes receive the mass.  XOR with
-            ``nodes``.
-        nodes
-            Explicit list of node tags (or :class:`Node` instances).
-            XOR with ``pg``.
-        values
-            ``ndf``-length tuple of mass values per DOF.
-        overwrite
-            When ``True``, V2 skips the cross-tier duplicate-mass
-            check for this record.  Defaults to ``False`` (V2 active).
-
-        Raises
-        ------
-        ValueError
-            If both or neither of ``pg`` / ``nodes`` is supplied.
-        """
-        if (pg is None) == (nodes is None):
-            raise ValueError(
-                f"Stage {self._name!r}.mass: supply exactly one of "
-                f"pg= or nodes= (got pg={pg!r}, nodes={nodes!r})."
-            )
-        nodes_tuple = _iter_tags(nodes) if nodes is not None else None
-        self._mass_records.append(
-            MassRecord(
-                pg=pg, nodes=nodes_tuple, values=tuple(values),
-                overwrite=bool(overwrite),
-            ),
-        )
-
-    # -- Phase SSI-2.E: between-stage Domain mutators --------------------
-
-    def remove_sp(
-        self,
-        *,
-        pg: str | None = None,
-        nodes: "Iterable[int | Node] | None" = None,
-        dofs: tuple[int, ...],
-    ) -> None:
-        """Release prior-tier SP constraints on a set of nodes / DOFs
-        within this stage (Phase SSI-2.E).
-
-        Stage-bound only.  The emitted ``remove sp $node $dof`` lines
-        fire BEFORE the stage's new ``fix`` / ``mass`` / ``region``
-        lines, so a stage can release a prior-stage support and then
-        re-fix the same DOF with a new value in the same stage block.
-
-        Validator V5 (Phase SSI-2.E) refuses targets whose SP was not
-        declared in an earlier scope (global pool OR strictly-earlier
-        stage's ``s.fix`` pool), or that was already removed by an
-        earlier stage's ``s.remove_sp``.
-
-        Parameters
-        ----------
-        pg
-            Physical group whose nodes have SPs released.  XOR with
-            ``nodes``.
-        nodes
-            Explicit list of node tags (or :class:`Node` instances).
-            XOR with ``pg``.
-        dofs
-            DOF indices to release per node.  Per OpenSees convention,
-            DOFs are 1-based — ``(1, 2, 3)`` releases the first three
-            DOFs at every resolved node.  Unlike :meth:`fix`, these
-            are DOF *indices* (one ``remove sp`` line per index), not
-            a fixity flag vector.
-
-        Raises
-        ------
-        ValueError
-            If both or neither of ``pg`` / ``nodes`` is supplied, or
-            if ``dofs`` is empty.
-        """
-        if (pg is None) == (nodes is None):
-            raise ValueError(
-                f"Stage {self._name!r}.remove_sp: supply exactly one "
-                f"of pg= or nodes= (got pg={pg!r}, nodes={nodes!r})."
-            )
-        dofs_tuple = tuple(int(d) for d in dofs)
-        if not dofs_tuple:
-            raise ValueError(
-                f"Stage {self._name!r}.remove_sp: dofs= must contain "
-                "at least one DOF index."
-            )
-        nodes_tuple = _iter_tags(nodes) if nodes is not None else None
-        self._remove_sp_records.append(
-            SPRemovalRecord(
-                pg=pg, nodes=nodes_tuple, dofs=dofs_tuple,
-            ),
-        )
-
-    def remove_bc(
-        self,
-        *,
-        pg: str | None = None,
-        nodes: "Iterable[int | Node] | None" = None,
-        dofs: tuple[int, ...],
-    ) -> None:
-        """Release prior-tier boundary conditions on a set of nodes /
-        DOFs within this stage — the ``g.constraints.bc``-reading alias
-        of :meth:`remove_sp` (ADR 0051 §8).
-
-        Verbatim delegate: ``s.remove_bc(...)`` and ``s.remove_sp(...)``
-        produce identical :class:`SPRemovalRecord` rows and identical
-        ``remove sp $node $dof`` deck lines.  ``remove_bc`` reads more
-        naturally when the released constraint was declared with
-        ``g.constraints.bc(...)``; ``remove_sp`` is retained because
-        shipped decks and tests reference it.
-
-        DOF convention (unchanged, easy to trip over): ``dofs=`` here are
-        **1-based DOF indices** — one ``remove sp`` line per index — NOT
-        the 0/1 fixity flag vector that ``ops.fix`` / ``s.fix`` take.
-        ``(1, 2, 3)`` releases the first three DOFs at every resolved
-        node.
-
-        See :meth:`remove_sp` for the full parameter / validator (V5)
-        contract.
-        """
-        self.remove_sp(pg=pg, nodes=nodes, dofs=dofs)
-
-    def remove_element(
-        self,
-        *,
-        pg: str | None = None,
-        elements: "Iterable[int] | None" = None,
-    ) -> None:
-        """Drop elements from the Domain mid-analysis within this stage
-        (Phase SSI-2.E).
-
-        Stage-bound only.  The emitted ``remove element $tag`` lines
-        fire BEFORE the stage's new ``fix`` / ``mass`` / ``region`` /
-        MP-constraint lines so the same stage can release legacy
-        elements and immediately bind new BCs to the survivors.
-
-        Element nodes are NOT removed — they remain in the Domain and
-        may continue to carry SP / mass / load declarations from other
-        tiers.  Use :meth:`remove_sp` separately if you also want to
-        drop SP constraints from those orphaned nodes.
-
-        Validator V6 (Phase SSI-2.E) refuses targets that were not
-        previously emitted in an earlier scope (globally emitted OR
-        activated by a strictly-earlier stage's ``s.activate(pgs=)``),
-        or that were already removed by an earlier stage.
-
-        Parameters
-        ----------
-        pg
-            Physical group whose elements are removed.  XOR with
-            ``elements``.
-        elements
-            Explicit list of FEM element ids (NOT OpenSees ops tags)
-            — matches the :class:`recorder.Element` convention.  The
-            bridge translates FEM eids to OpenSees ops tags via the
-            pre-allocated ``fem_eid_to_ops_tag`` map at emit time, so
-            the emitted ``remove element $tag`` line carries the
-            OpenSees tag the rest of the deck uses.  XOR with ``pg``.
-
-        Raises
-        ------
-        ValueError
-            If both or neither of ``pg`` / ``elements`` is supplied.
-        """
-        if (pg is None) == (elements is None):
-            raise ValueError(
-                f"Stage {self._name!r}.remove_element: supply exactly "
-                f"one of pg= or elements= (got pg={pg!r}, "
-                f"elements={elements!r})."
-            )
-        elements_tuple = (
-            None if elements is None else tuple(int(e) for e in elements)
-        )
-        self._remove_element_records.append(
-            ElementRemovalRecord(pg=pg, elements=elements_tuple),
-        )
-
-    def update_material_stage(
-        self,
-        *,
-        materials: "Iterable[Primitive]",
-        stage: int,
-    ) -> None:
-        """Flip SANISAND materials between the elastic and the
-        elastoplastic stage within this stage (Phase SSI-2.E).
-
-        Stage-bound only — there is no top-level
-        ``apeSees.update_material_stage``.  Emits one
-        ``updateMaterialStage -material $tag -stage $stage`` line per
-        material, in the order given.  ``stage=0`` is elastic,
-        ``stage=1`` is elastoplastic; the OpenSees handler additionally
-        calls ``Elastic2Plastic()`` when the value is 1.  This is the
-        staged-gravity idiom for soil plasticity: build elastic, solve
-        gravity, flip to plastic, push.
-
-        The lines emit AFTER this stage's element activation and after
-        its ``remove_sp`` / ``remove_element`` block, and BEFORE the
-        stage's new ``fix`` / ``mass`` / ``region`` lines — so a stage
-        can release, re-fix, and then flip.
-
-        Only materials whose elements are LIVE in the Domain at that
-        point are reached: ``MaterialStageParameter::setDomain()`` walks
-        the Domain's elements looking for the material tag, so a
-        material whose elements are activated by a *later* stage is not
-        flipped by an earlier stage's call (OpenSees prints
-        ``no effect with material tag N`` and the flip silently does
-        nothing).  Validator V7 turns that no-op into a build-time
-        error.
-
-        ``materials=`` is a SEQUENCE on purpose.
-        ``ManzariDafalias::mElastFlag`` is declared ``static`` — a
-        single stage flag shared by every instance in the process, and
-        any constructor resets it.  Two SANISAND materials therefore
-        cannot sit at different stages, and construction order preserves
-        nothing.  The enforced practice is to call this for EVERY
-        material tag, EVERY time, immediately before the
-        stage-dependent analysis step.
-
-        Parameters
-        ----------
-        materials
-            The SANISAND material handles to flip.  Every handle must
-            already be registered on the bridge and must be one of
-            :data:`STAGED_MATERIAL_CLASSES`.
-        stage
-            ``0`` (elastic) or ``1`` (elastoplastic).
-
-        Raises
-        ------
-        ValueError
-            If ``stage`` is not 0 or 1, or if ``materials`` is empty.
-        BridgeError
-            If a handle was never registered on this bridge, or its
-            class does not honour ``updateMaterialStage``.
-        """
-        stage_i = int(stage)
-        if stage_i not in (0, 1):
-            raise ValueError(
-                f"Stage {self._name!r}.update_material_stage: stage= "
-                f"must be 0 (elastic) or 1 (elastoplastic), got "
-                f"{stage!r}."
-            )
-        mats = tuple(materials)
-        if not mats:
-            raise ValueError(
-                f"Stage {self._name!r}.update_material_stage: "
-                "materials= must contain at least one material."
-            )
-        mat_tags: list[int] = []
-        for mat in mats:
-            tag = self._bridge.tag_for(mat)
-            if tag is None:
-                raise BridgeError(
-                    f"Stage {self._name!r}.update_material_stage: "
-                    f"{type(mat).__name__} was never registered on this "
-                    "bridge, so it has no nDMaterial tag.  Create it via "
-                    "ops.nDMaterial.<Class>(...) (or register it with "
-                    "ops.register(mat)) before flipping its stage."
-                )
-            if type(mat).__name__ not in STAGED_MATERIAL_CLASSES:
-                raise BridgeError(
-                    f"Stage {self._name!r}.update_material_stage: "
-                    f"{type(mat).__name__} does not honour "
-                    "updateMaterialStage — the command would be a "
-                    "silent no-op.  Supported: "
-                    f"{', '.join(sorted(STAGED_MATERIAL_CLASSES))}."
-                )
-            mat_tags.append(int(tag))
-        self._update_material_stage_records.append(
-            MaterialStageRecord(mat_tags=tuple(mat_tags), stage=stage_i),
-        )
-
-    def update_parameter(
-        self,
-        name: str,
-        value: float,
-        *,
-        pg: str | None = None,
-        elements: "Iterable[int] | None" = None,
-        material: "Primitive | None" = None,
-    ) -> "UpdateParameterRecord":
-        """Change one element (or element-hosted material) parameter at
-        this stage's boundary — a typed pass-through over the same
-        ``parameter`` / ``addToParameter`` / ``updateParameter``
-        primitive that :meth:`initial_stress` and
-        :meth:`activate_absorbing` drive internally.
-
-        Emits, once per record::
-
-            parameter $pid
-            addToParameter $pid element $eleTag <name> [<mat_tag>]   # per element
-            updateParameter $pid <value>
-            remove parameter $pid
-
-        Two target shapes, both addressed through elements:
-
-        * **an element parameter** — ``s.update_parameter("xPerm", 1e-5,
-          pg="soil")``.  ``LadrunoUP::setParameter`` matches ``xPerm`` /
-          ``yPerm`` / ``zPerm`` directly (fork
-          ``LadrunoUP.cpp:1932-1943``; ``zPerm`` is 3-D only).
-        * **a material parameter** — ``s.update_parameter("poissonRatio",
-          0.35, pg="soil", material=sand)``.  The element forwards the
-          unmatched argv to its integration-point materials (the
-          catch-all at ``LadrunoUP.cpp:1962-1971``) and the material
-          matches on ``argv[0] == name`` **and** ``argv[1] == its own
-          tag`` (``ManzariDafalias::setParameter``
-          ``ManzariDafalias.cpp:820-857``) — which is why ``material=``
-          appends the tag rather than replacing the element target.
-
-        There is deliberately no ``material=``-only form: OpenSees
-        ``parameter`` / ``addToParameter`` accept ``node`` / ``element``
-        / ``region`` / ``loadPattern`` and nothing else
-        (``OpenSeesParameterCommands.cpp`` ``OPS_Parameter`` /
-        ``OPS_addToParameter``), so a material is unreachable without an
-        element that hosts it.
-
-        No registry of known parameter names — the element's /
-        material's own ``setParameter`` is the authority, and a name it
-        does not recognise already errors there.
-
-        Parameters
-        ----------
-        name
-            The parameter name the target's ``setParameter`` matches
-            (e.g. ``"xPerm"``, ``"poissonRatio"``).
-        value
-            The value passed to ``updateParameter``.
-        pg
-            Physical group whose elements carry the parameter.  XOR with
-            ``elements``.
-        elements
-            Explicit list of FEM element ids (NOT OpenSees ops tags —
-            same convention as :meth:`remove_element` /
-            :meth:`activate_absorbing`).  XOR with ``pg``.
-        material
-            Optional material handle.  When given, its bridge-allocated
-            tag is appended to the ``addToParameter`` argv so the
-            element forwards the update to THAT material.  Omit for a
-            parameter the element owns itself.
-
-        Raises
-        ------
-        ValueError
-            Empty ``name``; both or neither of ``pg`` / ``elements``.
-        BridgeError
-            ``material=`` was never registered on this bridge (so it has
-            no tag, and the argv would name nothing).
-        """
-        if not name:
-            raise ValueError(
-                f"Stage {self._name!r}.update_parameter: name= must be "
-                "non-empty."
-            )
-        if (pg is None) == (elements is None):
-            raise ValueError(
-                f"Stage {self._name!r}.update_parameter: supply exactly "
-                f"one of pg= or elements= (got pg={pg!r}, "
-                f"elements={elements!r})."
-            )
-        mat_tag: int | None = None
-        if material is not None:
-            tag = self._bridge.tag_for(material)
-            if tag is None:
-                raise BridgeError(
-                    f"Stage {self._name!r}.update_parameter: "
-                    f"{type(material).__name__} was never registered on "
-                    "this bridge, so it has no tag — the addToParameter "
-                    "argv would name nothing and the update would be a "
-                    "silent no-op.  Create it via ops.nDMaterial.<Class>"
-                    "(...) / ops.uniaxialMaterial.<Class>(...) (or "
-                    "register it with ops.register(mat)) first."
-                )
-            mat_tag = int(tag)
-        record = UpdateParameterRecord(
-            name=str(name),
-            value=float(value),
-            pg=pg,
-            elements=(
-                None if elements is None
-                else tuple(int(e) for e in elements)
-            ),
-            mat_tag=mat_tag,
-        )
-        self._update_parameter_records.append(record)
-        return record
-
-    def set_time(self, t: float) -> None:
-        """Override the stage's starting pseudo-time (Phase SSI-2.E).
-
-        Emits ``setTime $t`` at the top of the stage block — right
-        after ``stage_open``.  Overrides the ``loadConst -time 0.0``
-        reset that the previous stage's ``stage_close`` emitted.
-        Useful when the dynamic clock of a transient stage should
-        begin at a non-zero value (e.g. continuing simulated time
-        across multi-record ground motion runs).
-
-        Idempotent at the call-site level: a second ``s.set_time(...)``
-        in the same stage overwrites the prior value (only the last
-        wins).  Per OpenSees semantics, ``setTime`` does NOT reset
-        committed state — node displacements / element forces survive.
-        """
-        self._set_time = float(t)
-
-    def set_creep(self, on: bool) -> None:
-        """Toggle creep for time-dependent concrete materials in this
-        stage (Phase SSI-2.E).
-
-        Emits ``setCreep 1`` or ``setCreep 0`` near the top of the
-        stage block (after ``set_time``).  Sticky on the OpenSees side
-        — apeSees does NOT auto-reset between stages.  Re-assert the
-        desired state per stage if you need it scoped.
-
-        A second call in the same stage overwrites the prior value.
-        """
-        self._set_creep_on = bool(on)
-
-    def reset(self) -> None:
-        """Request a ``reset`` command right before this stage's
-        ``analyze`` (Phase SSI-2.E).
-
-        Emits the bare OpenSees ``reset`` command, which wipes the
-        Domain state back to the last ``setTime`` call.  Rarely
-        needed — kept for parity with the OpenSees surface so unusual
-        workflows don't have to drop to raw Tcl.
-
-        Idempotent: multiple ``s.reset()`` calls on the same stage
-        produce a single emitted ``reset`` line.
-        """
-        self._pre_analyze_reset = True
-
-    def region(
-        self,
-        *,
-        name: str,
-        pg: str | None = None,
-        nodes: "Iterable[int | Node] | None" = None,
-    ) -> None:
-        """Assign nodes to a named OpenSees Region bound to this stage.
-
-        Signature mirrors :meth:`apeSees.region` verbatim.  Stage-bound
-        regions emit **inside this stage's block**, alongside the
-        stage's ``fix`` / ``mass`` lines and before the
-        ``domain_change`` barrier.
-
-        Under MP the per-stage region tag is allocated once on the
-        first rank that contributes members, then re-used across every
-        rank that owns members of the same region — same INV-4
-        convention the global path uses, but cached per-stage so two
-        stages with regions named ``"foo"`` get distinct tags.
-        Validator V3 (Phase SSI-2.D PR-A) refuses same-``name``
-        regions across scopes, so within any single stage every
-        ``name=`` resolves to one unique tag.
-
-        Parameters
-        ----------
-        name
-            Region label.  Must be unique across global + every
-            stage's region pool (V3).  Mangle the label to make scope
-            explicit when the same conceptual region appears in
-            multiple stages (e.g. ``lining_rayleigh_stage2``).
-        pg
-            Physical group whose nodes join the region.  XOR with
-            ``nodes``.
-        nodes
-            Explicit node list.  XOR with ``pg``.
-
-        Raises
-        ------
-        ValueError
-            If ``name`` is empty or if both / neither of
-            ``pg`` / ``nodes`` is supplied.
-        """
-        if not name:
-            raise ValueError(
-                f"Stage {self._name!r}.region: name= must be non-empty."
-            )
-        if (pg is None) == (nodes is None):
-            raise ValueError(
-                f"Stage {self._name!r}.region: supply exactly one of "
-                f"pg= or nodes= (got pg={pg!r}, nodes={nodes!r})."
-            )
-        nodes_tuple = _iter_tags(nodes) if nodes is not None else None
-        self._region_records.append(
-            RegionAssignmentRecord(
-                name=str(name), pg=pg, nodes=nodes_tuple,
-            ),
-        )
-
-    def recorder(self, spec: Recorder) -> None:
-        """Bind a previously-registered recorder to this stage (PULL).
-
-        ``spec`` is a :class:`Recorder` constructed and registered via
-        ``ops.recorder.Node(...)`` / ``ops.recorder.Element(...)`` /
-        ``ops.recorder.MPCO(...)``.  The recorder keeps its allocated
-        tag and stays in the bridge's ``_primitives`` list, but its
-        ``id(...)`` lands in
-        :attr:`apeSees._stage_claimed_recorder_ids` so the global
-        post-element emit loop SKIPS it — the stage's emit pass
-        invokes :func:`emit_recorder_spec` inside the stage block
-        instead, AFTER the stage's region declarations and analysis
-        chain so the recorder sees fully-populated regions when
-        OpenSees parses the ``recorder`` line.
-
-        Mirrors the :meth:`add` PULL semantics for
-        :class:`InitialStressRecord`; stage-bound recorders ARE
-        bridge primitives with registration side effects (tag
-        allocation), so PULL is the natural shape.
-
-        Parameters
-        ----------
-        spec
-            A :class:`Recorder` instance already registered with the
-            bridge.
-
-        Raises
-        ------
-        TypeError
-            If ``spec`` is not a :class:`Recorder` instance.
-        ValueError
-            If ``spec`` is not in the bridge's ``_primitives`` (never
-            registered through ``ops.recorder.X(...)``) or has
-            already been claimed by another stage (double-add).
-        """
-        if not isinstance(spec, Recorder):
-            raise TypeError(
-                f"Stage {self._name!r}.recorder: expected a Recorder "
-                f"instance (constructed via ops.recorder.Node / "
-                f"Element / MPCO); got {type(spec).__name__!r}."
-            )
-        if id(spec) in self._bridge._stage_claimed_recorder_ids:
-            raise ValueError(
-                f"Stage {self._name!r}.recorder: recorder spec already "
-                "claimed by another stage — each recorder may bind to "
-                "at most one stage."
-            )
-        if spec not in self._bridge._primitives:
-            raise ValueError(
-                f"Stage {self._name!r}.recorder: recorder spec not in "
-                "the bridge's _primitives — was it registered through "
-                "this bridge's ``ops.recorder.X(...)`` namespace?"
-            )
-        self._bridge._stage_claimed_recorder_ids.add(id(spec))
-        self._recorder_specs.append(spec)
-
-    def pattern(
-        self,
-        *,
-        series: "TimeSeries | str",
-        name: str | None = None,
-    ) -> "Plain":
-        """Create a stage-scoped ``Plain`` load pattern (ADR 0051 §6).
-
-        Returns a stage-owned :class:`~apeGmsh.opensees.pattern.pattern.Plain`
-        that is **both** a typed primitive (registered with the bridge,
-        so it gets a tag) **and** a context manager — open it with a
-        ``with`` block and call ``p.load(...)`` / ``p.sp(...)`` /
-        ``p.from_model(case)`` to populate it, exactly like the global
-        ``ops.pattern.Plain(...)``::
-
-            with ops.stage(name="push") as s:
-                ts = ops.timeSeries.Linear()
-                with s.pattern(series=ts) as p:
-                    p.from_model("live")
-                    p.load(node=99, forces=(50.0, 0.0, 0.0))
-                s.analysis(...)
-                s.run(n_increments=10, dt=0.1)
-
-        The pattern emits **inside this stage's block** — after the
-        stage's analysis chain and before its ``analyze`` loop — so its
-        loads / prescribed displacements drive only this stage and are
-        frozen as the permanent baseline by the stage's
-        ``stage_close`` ``loadConst``.  It is claimed via
-        :attr:`apeSees._stage_claimed_pattern_ids` so the global
-        post-element pattern pass SKIPS it (no double emission), exactly
-        mirroring how :meth:`recorder` claims recorders.
-
-        The existing **global** ``ops.pattern.Plain(...)`` remains the
-        non-staged path; per ADR 0051 §5 a model may not mix a global
-        pattern with stages — that no-mixing guard lands in BL-4.
-
-        Parameters
-        ----------
-        series
-            The :class:`~apeGmsh.opensees._internal.types.TimeSeries`
-            scaling this pattern's loads — a handle, or the ``name=``
-            a series was registered under (dual-mode, same as
-            ``ops.pattern.Plain``).
-        name
-            Optional bridge-side alias for the pattern (see
-            ``ops.pattern.Plain``).
-        """
-        # Delegate construction to the pattern namespace so the series
-        # name resolution + registration + tag allocation are identical
-        # to the global ``ops.pattern.Plain(...)`` path; then claim it
-        # for this stage.
-        plain = self._bridge.pattern.Plain(series=series, name=name)
-        self._bridge._stage_claimed_pattern_ids.add(id(plain))
-        self._pattern_specs.append(plain)
-        return plain
-
-    def imposed_path(
-        self,
-        *,
-        node: "int | Node",
-        ratios: "Sequence[float]",
-        series: "TimeSeries | str",
-    ) -> "Plain":
-        """Drive ONE node along a prescribed multi-DOF path in this stage.
-
-        The rotational / staged counterpart to
-        :meth:`apeSees.imposed_displacement`, which is translations-only
-        (``ux`` / ``uy`` / ``uz`` → DOFs 1-3) and global (ADR 0051 §5
-        forbids mixing a global pattern with stages).  Here ``ratios``
-        is positional over the node's DOFs, so DOFs 4..6 — the rotations
-        — are reachable, and the pattern is stage-scoped.
-
-        Creates a stage-scoped ``Plain`` via :meth:`pattern` and records
-        one ``sp`` per NON-ZERO ratio::
-
-            sp <node> <i> <ratios[i-1]>
-
-        Zero ratios are skipped, not emitted as ``sp … 0.0``: a
-        prescribed zero is a *constraint* (it pins the DOF), not the
-        absence of one, so emitting it would silently clamp DOFs the
-        caller meant to leave free.  Use ``s.fix`` / ``s.support`` when
-        pinning is what you want.
-
-        The ratios are shape only — the magnitude and history come from
-        ``series``.  The applied value on DOF ``i`` at time ``t`` is
-        ``ratios[i-1] * series(t)``, so a unit-direction vector plus a
-        ``Path`` series gives a fault-slip or support-settlement path,
-        and the same pattern may carry ordinary ``p.load`` lines on
-        other DOFs of the same node (they coexist — a prescribed SP and
-        a nodal load are different rows in the same pattern).
-
-        Returns the pattern, so more can be added to it::
-
-            with ops.stage("slip") as s:
-                p = s.imposed_path(
-                    node=99, ratios=(0.0, 0.0, 0.0, 0.0, 0.0, 0.01),
-                    series=ops.timeSeries.Linear(),
-                )
-                p.load(node=99, forces=(0.0, 0.0, -5e3, 0.0, 0.0, 0.0))
-
-        Parameters
-        ----------
-        node
-            The node to drive — a tag or a :class:`Node`.
-        ratios
-            Per-DOF ratios, positional from DOF 1.  At most the model's
-            ``ndf`` entries; at least one must be non-zero.
-        series
-            The :class:`~apeGmsh.opensees._internal.types.TimeSeries`
-            scaling the path — a handle, or the ``name=`` a series was
-            registered under (dual-mode, same as :meth:`pattern`).
-
-        Raises
-        ------
-        ValueError
-            ``ratios`` is empty, is all zeros (an inert directive), or
-            is longer than the model's ``ndf``.
-
-        Notes
-        -----
-        The length check is against the ``ops.model(ndf=)`` **envelope**,
-        which is an upper bound on any node's ndf — the per-node
-        *effective* ndf map (ADR 0048) is only resolved at build time,
-        from every declared element's PG fan-out, so it cannot be probed
-        per call without a full mesh walk.  A ratio past the envelope is
-        therefore refused here; a ratio past a particular node's lower
-        effective ndf reaches OpenSees, which rejects the ``sp`` line.
-        """
-        ratios_t = tuple(float(r) for r in ratios)
-        if not ratios_t:
-            raise ValueError(
-                f"Stage {self._name!r}.imposed_path: ratios= must "
-                "contain at least one entry."
-            )
-        model_ndf = self._bridge._ndf
-        if model_ndf is not None and len(ratios_t) > model_ndf:
-            raise ValueError(
-                f"Stage {self._name!r}.imposed_path: ratios= has "
-                f"{len(ratios_t)} entries but the model's ndf is "
-                f"{model_ndf} — DOF {len(ratios_t)} does not exist.  "
-                f"Trim ratios= or call ops.model(..., "
-                f"ndf={len(ratios_t)}) first."
-            )
-        if not any(ratios_t):
-            raise ValueError(
-                f"Stage {self._name!r}.imposed_path: every ratio is "
-                "zero, so the pattern would emit no sp lines at all.  "
-                "Supply at least one non-zero ratio (a prescribed zero "
-                "is a fixity — use s.fix / s.support for that)."
-            )
-        plain = self.pattern(series=series)
-        node_tag = int(_iter_tags([node])[0])
-        with plain:
-            for dof, ratio in enumerate(ratios_t, start=1):
-                if ratio:
-                    plain.sp(node=node_tag, dof=dof, value=ratio)
-        return plain
-
-    def activate(self, *, pgs: "Iterable[str]") -> None:
-        """Mark element PGs as activated by this stage (Phase SSI-2.B).
-
-        Elements whose ``pg=`` matches any activated PG emit their
-        ``node`` + ``element`` commands **inside this stage's block**
-        (between ``stage_open`` and ``domain_change``), not in the
-        global pre-stage emit.  Nodes referenced exclusively by
-        stage-activated elements move into the stage's block too;
-        nodes shared with global elements stay global.
-
-        May be called multiple times per stage (PGs accumulate as a
-        set; duplicates collapse).  Same PG activated in two
-        different stages is a build-time error (first-write wins
-        is unsafe — the user clearly meant something different).
-
-        Parameters
-        ----------
-        pgs
-            Iterable of element-PG names (e.g. ``["cimbra"]``,
-            ``["rock", "lining"]``).  Each must be a non-empty string.
-        """
-        for pg in pgs:
-            if not isinstance(pg, str) or not pg:
-                raise ValueError(
-                    f"Stage {self._name!r}.activate: pgs= must be an "
-                    "iterable of non-empty strings, got "
-                    f"{pg!r}."
-                )
-            if pg not in self._activated_pgs:
-                self._activated_pgs.append(pg)
-
-    def analysis(
-        self,
-        *,
-        test: Primitive,
-        algorithm: Primitive,
-        integrator: Primitive,
-        constraints: Primitive,
-        numberer: Primitive,
-        system: Primitive,
-        analysis: Primitive,
-    ) -> None:
-        """Bind the analysis chain for this stage.
-
-        All seven arguments are required.  Each must be a primitive
-        already registered with the bridge (e.g. via
-        ``ops.test.NormDispIncr(...)``); the stage holds a reference
-        only, not a copy.  Multiple stages may share the same
-        primitive instance (e.g. the same ``constraints.Plain()``
-        across all stages) — the bridge emits each primitive exactly
-        once per stage in which it's referenced, so OpenSees gets a
-        fresh ``constraints Plain`` line per stage as required.
-        """
-        if self._analysis_set:
-            raise ValueError(
-                f"Stage {self._name!r}.analysis: already called; "
-                "stages support one analysis chain each."
-            )
-        self._test = test
-        self._algorithm = algorithm
-        self._integrator = integrator
-        self._constraints = constraints
-        self._numberer = numberer
-        self._system = system
-        self._analysis = analysis
-        self._analysis_set = True
-
-    def run(
-        self, *, n_increments: int, dt: float | None = None,
-        strategy: "Ladder | None" = None,
-    ) -> None:
-        """Set the analyze-loop length + step size for this stage.
-
-        ``strategy`` (ADR 0057 Phase A) attaches a solution-strategy
-        ladder to this stage's analyze loop: on a failed increment the
-        emitted loop escalates through the ladder's algorithm rungs
-        (the chain's own algorithm is rung 0) and restores rung 0
-        after a rescue; exhausting the ladder aborts fail-loud.
-        Build one via ``ops.strategy.profile("non-smooth")`` or
-        ``ops.strategy.Ladder(rungs=[...])``.
-        """
-        if self._run_set:
-            raise ValueError(
-                f"Stage {self._name!r}.run: already called; "
-                "stages support one analyze loop each."
-            )
-        if n_increments < 1:
-            raise ValueError(
-                f"Stage {self._name!r}.run: n_increments must be >= 1, "
-                f"got {n_increments}."
-            )
-        self._n_increments = int(n_increments)
-        self._dt = None if dt is None else float(dt)
-        self._strategy = strategy
-        self._run_set = True
-
-    def profile(
-        self, *,
-        deep: bool = False,
-        memory: bool = False,
-        per_step: bool = False,
-    ) -> None:
-        """Bracket THIS stage's ``analyze`` loop with the Ladruno
-        fork's stack profiler (TIMs A8), reported under this stage's
-        own name.
-
-        Reuses the same ``Emitter.profiler(*args)`` machinery the
-        bridge-level ``ops.profiler.*`` verbs drive (see
-        ``_ProfilerNS.start`` / ``.report``) — NOT a second
-        implementation.  Emits ``profiler start [-deep] [-memory]
-        [-perStep]`` immediately before this stage's analyze loop and
-        ``profiler report <stage name>.h5`` immediately after it
-        (before ``stage_close``); the filename is derived from the
-        stage's name, so no filename kwarg is needed here.
-
-        ``deep`` / ``memory`` / ``per_step`` mirror
-        ``ops.profiler.start``'s three flags exactly. Deck emission
-        works on any build; running the deck requires the Ladruno
-        fork (stock ``openseespy``/``OpenSees.exe`` rejects the
-        ``profiler`` command at run time).
-        """
-        if self._profile is not None:
-            raise ValueError(
-                f"Stage {self._name!r}.profile: already called; "
-                "stages support one profiler bracket each."
-            )
-        self._profile = ProfileRecord(
-            deep=bool(deep), memory=bool(memory), per_step=bool(per_step),
-        )
 
 
 # ---------------------------------------------------------------------------

@@ -212,15 +212,14 @@ Attributes only.
 > version keys at the **file root** (not `/meta`) — see
 > [Schema versioning](#versioning).
 
-Schema versioning is **per-zone**, **strict on major**, **bounded on
-minor** via the two-version reader window
-([ADR 0023](decisions/0023-per-zone-schema-versioning.md)). A reader
-written for `X.Y.*` accepts `X.Y.*` and `X.(Y-1).*` and refuses
-older minors, newer minors, or any other major. The window applies
-to **additive-only** changes; layout-perturbing minor bumps (such
-as the B2 2.10 split of `/physical_groups/` and `/labels/`) walk
-the window forward and the prior minor falls out of reach — see
-[ADR 0023's 2026-05-28 amendment](decisions/0023-per-zone-schema-versioning.md#amendment--2026-05-28--window-applies-to-additive-only-changes-b2--pr-398).
+Schema versioning is **per-zone**, **strict on major**, and a
+**floor per zone** on minor
+([ADR 0113](decisions/0113-compatibility-is-a-floor-per-zone.md), which
+retired [ADR 0023](decisions/0023-per-zone-schema-versioning.md)'s
+two-version reader window). A reader written for `X.Y.*` accepts every
+same-major minor from the zone's floor up to `X.Y` and refuses lower
+minors, newer minors, or any other major. See
+[Schema versioning](#versioning) for the floors and the shim ledger.
 
 ## `/nodes`
 
@@ -385,8 +384,13 @@ record class.
 Per-pattern, per-kind datasets sharing the symmetric outer compound.
 
 * `/loads/nodal/{pattern}` — `NodalLoadRecord` rows.  Payload:
-  `node_id`, `force_xyz` (3,)f64, `moment_xyz` (3,)f64.  Absent
-  force / moment components NaN-filled.
+  `node_id`, `force_xyz` (3,)f64, `moment_xyz` (3,)f64, `name`
+  (utf-8, 2.5.0), `basis` (utf-8, 2.28.0: `lagrange` / `bernstein`,
+  `""` = basis-insensitive), `source` (utf-8, 2.35.0: the definition
+  kind the record was reduced from — `gravity`, `body`, `line`,
+  `surface`, `point`, `point_closest`, `face_load`; `""` = unknown).
+  Absent force / moment components NaN-filled; the string columns are
+  presence-probed, so an older file decodes them as `None`.
 * `/loads/element/{pattern}` — `ElementLoadRecord` rows.  Payload:
   `element_id`, `load_type` (utf-8), `params_json` (utf-8 JSON
   blob — element-load `*args` shape is too freeform for a fixed
@@ -1011,10 +1015,11 @@ inherit it:
   whose result merges several sources and so belongs to none of their
   sessions; `from_mpco` and `.ladruno` imports, which have no session; a
   pre-#1304 pickle; and `from_h5` of a file without the attr.
-* **Pending (V2b):** today `from_gmsh` mints a fresh id per extraction,
-  so two `get_fem_data()` calls in one session differ. V2b makes the
-  session own one id from `generate()` and hands it to every snapshot it
-  extracts and to its geometry sibling.
+* **Owned by the session (V2b, #1305):** `apeGmsh.begin()` mints one
+  uuid4 (`_SessionBase._session_id`), `FEMData.from_gmsh(session=...)`
+  stamps it on every snapshot the session extracts, and the session
+  stamps its geometry sibling with the id of the snapshot `model.h5`
+  carries. Two `get_fem_data()` calls in one session share the id.
 
 Pairing by equality therefore holds only for the artifacts of one
 session: the snapshot that wrote `model.h5`, the snapshots derived from
@@ -1094,7 +1099,9 @@ detail, and no normals or UVs.
 
 ## `/provenance`
 
-Version key: `/meta/provenance_schema_version` (current `1.0.0`).
+Version key: `/meta/provenance_schema_version` (current `1.1.0`, floor
+`1.0.0`; `1.1.0` added the `records/origin` column, #1378, and a
+`1.0.0` file reads with every record as `origin = "user"`).
 Layout from V0 decisions 11 to 14: the source location of every user
 declaration, deduplicated into three tables. Each table is a group of
 equal-length column datasets.
@@ -1103,7 +1110,7 @@ equal-length column datasets.
 /provenance   @base_dir str
   /files      path str · sha256 str · kind str
   /sites      file i4 · line i4 · function str
-  /records    path str (unique) · site i4 · script i4 · seq i4
+  /records    path str (unique) · site i4 · script i4 · seq i4 · origin str
 ```
 
 * **Key.** `records/path` is the **declaration path**
@@ -1112,19 +1119,94 @@ equal-length column datasets.
   `#k`, its 1-based order among the unnamed declarations of that family
   in this run, so `#k` is stable within one run only. The key is never
   an HDF5 group name or an OpenSees tag (Q3).
+* **Families.** The session writes these paths (V2c,
+  `src/apeGmsh/_internal/provenance.py`):
+  * `neutral/labels/<name>` from `g.labels.add`, `g.labels.rename` (the
+    new name) and `g.parts.add` (the instance label);
+  * `neutral/physical_groups/<name|#k>` from `g.physical.add` and its
+    shorthands, and from `g.labels.promote_to_physical`;
+  * `geometry/<kind>/<label|#k>` from every geometry registration, where
+    `<kind>` is the registering primitive (`box`, `line`, `polyline`, ...);
+  * `neutral/<family>/<name|#k>` from the declaration verbs, where
+    `<family>` is one of `constraints`, `bcs`, `contacts`,
+    `contact_planes`, `interfaces`, `decoupled_nodes`, `displacements`,
+    `embeds`, `loads`, `masses`, `rebar`, `rebar_members` or
+    `reinforcements` (`core/_declarations.py::_PROVENANCE_FAMILY`).
+
+  A named path keeps its first record. A later call that merges into a
+  label or appends to a physical group adds no record.
+
+  The bridge writes (V2d, `apeSees._register`):
+  * `opensees/<kind>/<name|#k>` for every primitive the user declared,
+    where `<kind>` is the OpenSees command (`element`,
+    `uniaxialMaterial`, `nDMaterial`, `section`, `geomTransf`,
+    `beamIntegration`, `timeSeries`, `pattern`, `damping`, `recorder`,
+    `constraints`, `numberer`, `system`, `test`, `algorithm`,
+    `integrator`, `analysis`) and `<name>` the `name=` alias;
+  * `opensees/<kind>/<verb>:<owner>[/<role>]` for an object the bridge
+    synthesises inside a verb the user called, with
+    `origin = "synthesised"`: `opensees/timeSeries/support:<stage>/hold`
+    and `opensees/pattern/support:<stage>` from `s.support`,
+    `opensees/timeSeries/imposed_displacement:<name>` and
+    `opensees/pattern/imposed_displacement:<name>` from
+    `imposed_displacement` (`<name>` is its `name=`, else `#<k>`, the
+    call's 1-based ordinal on the bridge; a `name=` starting with `#`
+    is refused). The bridge allows a repeated stage name, so a stage
+    whose pattern key `support:<stage>` is taken keys its support
+    objects `<stage>@<n>` with the smallest `n >= 2` whose key is free
+    (stages `s`, `s`, `s@2` give `support:s`, `support:s@2`,
+    `support:s@2@2`). These keys never use the family's `#k` counter,
+    so the user's first unnamed `Linear()` stays `#1`.
+
+  User names and synthesised keys share one key space per family, and
+  no name is restricted. A collision, whichever side comes second (a
+  user `Linear(name="imposed_displacement:foo")` after
+  `imposed_displacement(name="foo")`, a stage `x` whose HOLD key a user
+  `Linear(name="support:x/hold")` took, a user name `#1` followed by an
+  unnamed declaration), fails loud **before** the bridge allocates a
+  tag: the refused call leaves no primitive, no tag and no record. A
+  record is never overwritten and never dropped.
+
+  In a file the bridge writes, the `opensees/` records are the bridge's
+  own: a snapshot loaded from an earlier bridge-written file drops that
+  file's `opensees/` records before the new ones are appended, so a
+  repeated name does not collide and no stale record survives.
 * **Files.** `path` is POSIX. It is relative to `@base_dir` when the
   file lies under it, and absolute otherwise (Q8). `sha256` is the hex
   digest of the file when it was captured, so go-to-source can tell
-  that the file has been edited since. `kind` is `script` for the run's
-  `__main__` file and `module` for any other file.
+  that the file has been edited since. `sha256` is `""` for a pseudo-file
+  (`<string>`, `<stdin>`, a notebook cell, which keep that name as
+  `path`) and for a source that could not be read. `kind` is `script`
+  for the run's `__main__` file and `module` for any other file.
 * **Sites.** `file` is a row of `files`; `line` is 1-based.
 * **Records.** `site` is a row of `sites`: the first frame outside
   apeGmsh and the standard library. `script` is a row of `sites`: the
-  outermost `__main__` frame, which differs from `site` when the call
-  came through a user helper. Either is -1 when no such frame exists.
+  outermost `__main__` frame of the user code around `site`, which
+  differs from `site` when the call came through a user helper. The
+  walk for `script` starts at `site`, passes through standard-library
+  frames (`contextlib`, `runpy`), and stops at the first apeGmsh or
+  site-packages frame. A launcher that runs as `__main__` from
+  site-packages (`pytest`, `ipykernel`) therefore never claims it, and
+  a call with no user `__main__` frame around it (a test function) gets
+  none. A `__main__` frame whose file lies under the apeGmsh tree is
+  user code. A stdlib launcher's `__main__` frame (`python -m cProfile`,
+  `pdb`, `trace`) is not, so the walk passes through it. A pseudo-file
+  `__main__` frame (`<string>`) never overrides a real-file one the
+  walk already found, so the `<string>` trampoline of `python -m pdb`
+  does not claim it; with no real file around it (`-c`, `<stdin>`, a
+  notebook cell) it is the script. Either is -1 when no such frame
+  exists.
   `seq` is the declaration's 0-based capture order in the run.
+  `origin` (1.1.0) is `user` for a declaration the user made and
+  `synthesised` for an object apeGmsh created inside a verb the user
+  called (the keys above); a viewer shows synthesised objects by
+  default. Absent in a file below `1.1.0`, where every record reads as
+  `user`; from `1.1.0` on the column is required and a file without it
+  is malformed (`schema_version.py::PROVENANCE_ORIGIN_FROM`).
 * There is one record per user call: none per emitted row, none per
-  fanned-out element, and none for calls apeGmsh synthesises.
+  fanned-out element. A call that synthesises deck objects (series,
+  patterns) gets one record per synthesised object, each pointing at
+  the call's own site.
 * Every artifact the session writes carries its own `/provenance`
   (decision 14). The replay writers copy it forward (Q7).
 * No hash reads `/provenance` (the same allowlists as above).
@@ -1170,14 +1252,14 @@ call `validate_zone_version(...)` for each zone before reading it.
 
 ### Zone registry
 
-| Zone | `/meta` key | Root paths | Writer constant (source of truth) | Current |
-|---|---|---|---|---|
-| neutral (broker) | `neutral_schema_version` | `/nodes`, `/elements`, `/physical_groups`, `/labels`, `/mesh_selections`, `/partitions`, `/parts`, `/constraints`, `/reinforce_ties`, `/embed_ties`, `/rebar_elements`, `/contacts`, `/contact_planes`, `/interfaces`, `/loads`, `/masses`, `/composed_from` | [`mesh/_femdata_h5_io.py`](../src/apeGmsh/mesh/_femdata_h5_io.py) `NEUTRAL_SCHEMA_VERSION` | **2.34.0** |
-| opensees (bridge) | `opensees_schema_version` | `/opensees/*` | [`opensees/emitter/h5.py`](../src/apeGmsh/opensees/emitter/h5.py) `SCHEMA_VERSION` | **2.22.0** |
-| results | `results_schema_version` | `/stages/*` (composed `results.h5`, at file root) | [`results/schema/_versions.py`](../src/apeGmsh/results/schema/_versions.py) `RESULTS_SCHEMA_VERSION` | **1.1.0** |
-| cuts (sub-zone of opensees) | — (no own key; rides the opensees zone) | `/opensees/cuts`, `/opensees/sweeps` | [`cuts/_h5_io.py`](../src/apeGmsh/cuts/_h5_io.py) `V4_SCHEMA_VERSION` | 2.5.0 |
-| geometry (ADR 0112 D2) | `geometry_schema_version` | `/geometry` (sibling `<stem>.geometry.h5` only) | [`opensees/_internal/schema_version.py`](../src/apeGmsh/opensees/_internal/schema_version.py) `GEOMETRY_SCHEMA_VERSION` | **1.0.0** |
-| provenance (ADR 0112 D3) | `provenance_schema_version` | `/provenance` | [`opensees/_internal/schema_version.py`](../src/apeGmsh/opensees/_internal/schema_version.py) `PROVENANCE_SCHEMA_VERSION` | **1.0.0** |
+| Zone | `/meta` key | Root paths | Writer constant (source of truth) | Current | Floor |
+|---|---|---|---|---|---|
+| neutral (broker) | `neutral_schema_version` | `/nodes`, `/elements`, `/physical_groups`, `/labels`, `/mesh_selections`, `/partitions`, `/parts`, `/constraints`, `/reinforce_ties`, `/embed_ties`, `/rebar_elements`, `/contacts`, `/contact_planes`, `/interfaces`, `/loads`, `/masses`, `/composed_from` | [`mesh/_femdata_h5_io.py`](../src/apeGmsh/mesh/_femdata_h5_io.py) `NEUTRAL_SCHEMA_VERSION` | **2.35.0** | **2.10.0** |
+| opensees (bridge) | `opensees_schema_version` | `/opensees/*` | [`opensees/emitter/h5.py`](../src/apeGmsh/opensees/emitter/h5.py) `SCHEMA_VERSION` | **2.22.0** | **2.12.0** |
+| results | `results_schema_version` | `/stages/*` (composed `results.h5`, at file root) | [`results/schema/_versions.py`](../src/apeGmsh/results/schema/_versions.py) `RESULTS_SCHEMA_VERSION` | **1.1.0** | **1.0.0** |
+| cuts (sub-zone of opensees) | — (no own key; rides the opensees zone) | `/opensees/cuts`, `/opensees/sweeps` | [`cuts/_h5_io.py`](../src/apeGmsh/cuts/_h5_io.py) `V4_SCHEMA_VERSION` | 2.5.0 | none of its own: it rides the opensees floor |
+| geometry (ADR 0112 D2) | `geometry_schema_version` | `/geometry` (sibling `<stem>.geometry.h5` only) | [`opensees/_internal/schema_version.py`](../src/apeGmsh/opensees/_internal/schema_version.py) `GEOMETRY_SCHEMA_VERSION` | **1.0.0** | **1.0.0** |
+| provenance (ADR 0112 D3) | `provenance_schema_version` | `/provenance` | [`opensees/_internal/schema_version.py`](../src/apeGmsh/opensees/_internal/schema_version.py) `PROVENANCE_SCHEMA_VERSION` | **1.1.0** | **1.0.0** |
 
 > The geometry and provenance keys never fall back to the legacy
 > envelope: they postdate it, so an absent key means the zone was not
@@ -1192,20 +1274,77 @@ call `validate_zone_version(...)` for each zone before reading it.
 > agreement; [`tests/fixtures/schema.py`](../tests/fixtures/schema.py)
 > centralizes the values fixtures stamp.
 
+### The floor rule
+
+Compatibility is a **floor per zone**, not a window
+([ADR 0113](decisions/0113-compatibility-is-a-floor-per-zone.md) D1; it
+retired ADR 0023's two-version window, which expired files the readers
+could still parse). `validate_zone_version` accepts a file iff
+
+```
+file.major == reader.major  and  floor.minor <= file.minor <= reader.minor
+```
+
+The patch is ignored. A file below the floor refuses as "too old", a
+newer minor refuses as "newer than this reader" (ADR 0023 INV-4: Python
+readers have no forward tolerance), and another major refuses as a major
+mismatch. Every refusal names both ends of the supported range, for
+example `supports 2.10.x–2.34.x`.
+
+- **Where the floor lives.** Each floor is a writer-owned constant beside
+  the version it bounds (ADR 0113 D3): `NEUTRAL_SCHEMA_FLOOR`,
+  `SCHEMA_FLOOR`, `RESULTS_SCHEMA_FLOOR`, `GEOMETRY_SCHEMA_FLOOR` and
+  `PROVENANCE_SCHEMA_FLOOR`. `reader_floor(zone)` reads them, as
+  `reader_version(zone)` reads the versions. The **Floor** column of the
+  registry above is a snapshot of those constants.
+- **Evidence.** A floor stands only where a committed corpus file from
+  every minor, floor to current, opens through today's reader
+  (`tests/fixtures/schema_corpus/`, built from git's frozen writers by
+  `scripts/build_schema_corpus.py`; ADR 0113 D8). The opensees floor is
+  2.12.0, not the 2.11.0 first ratified: every 2.11-era writer stamped
+  a neutral zone below the neutral floor, so no 2.11 file could open.
+- **A floor only rises**, and after the initial evidence gate only with a
+  major bump, to `X.0.0`, by ADR. Raising it deletes the shims beneath it.
+- **Files below a floor** are refused, except an embedded zone of a
+  `results.h5`: a results file whose embedded `/model` or `/opensees` is
+  below its floor still opens its `/stages`, read-only and flagged (D9).
+  An embedded zone newer than the reader still refuses the whole file.
+- **The app** carries the same floors in `apeGmshViewer/src/reader/read.ts`
+  (`ZONE_FLOOR`); a Python test parses them as text. The app opens a
+  same-major newer file with one banner instead of refusing (D7).
+
 ### Bump rules (per zone)
 
-- **Major** bump → breaking change. Readers refuse outright.
-- **Minor** bump → additive (new group, new attribute). Readers
-  one minor behind continue to parse via the two-version window,
-  ignoring unknown groups.
+- **Major** bump → breaking change, and the only place a restructure
+  (renamed group, changed dtype, layout split) may go. Readers refuse
+  outright; the zone's floor is reset to `X.0.0` by ADR, and the
+  migrator (ADR 0113 D6) ships with the first major bump of any zone.
+- **Minor** bump → additive (new group, new attribute, new column), or a
+  semantic change that ships a reader shim (see the ledger below). The
+  stamp still moves for an additive change: an older reader would
+  otherwise open the file and drop a deck-affecting column unseen (D5).
+  Readers at or above the new minor open every minor from the floor,
+  probing for what an older file lacks.
 - **Patch** bump → internal/cosmetic. Readers must not depend.
+- **Every minor bump adds one corpus file**: the outgoing minor's, built
+  with `python scripts/build_schema_corpus.py --zone <Z> --minor <M>` and
+  committed (see the bridge-feature guide's bump checklist).
 
-**Window caveat.** The two-version window applies to **additive-only**
-minor bumps. A minor bump that perturbs the canonical bytes of a
-required structure (the B2 layout split at neutral 2.10, and the
-opensees 2.11 0-based-rank flip, are the canonical examples) walks the
-window forward and the prior minor falls out of reach. See
-[ADR 0023's 2026-05-28 amendment](decisions/0023-per-zone-schema-versioning.md#amendment--2026-05-28--window-applies-to-additive-only-changes-b2--pr-398).
+### Shim ledger
+
+A minor that changes the *meaning* of a field already in the file ships
+a reader shim keyed on a named `*_FROM` constant at or above the zone's
+floor, with a test on a corpus file below it (ADR 0113 D4, INV 8). This
+table is the one list of them.
+
+| Zone | Constant | Below it | At or above it |
+|---|---|---|---|
+| neutral | `META_NDM_IS_SPATIAL_FROM` = 2.34.0 (`opensees/emitter/h5_reader.py`) | `/meta/ndm` is the mesh dimension; `read_spatial_ndm(meta, f, *, coords)` salvages the spatial `ndm` from the `per_element_vecxz` widths: width 0 (a 2-D transform) resolves 2, width 3 lifts to 3, and conflicting evidence, an unknown width, or a result that would drop a non-zero coordinate column refuses (a pre-2.34 2-D truss with y≠0 and a 2-D surface at z≠0 refuse; #1358) | the attribute is trusted |
+| neutral | SP loads before 2.26.1 (no named constant: the data carries it) | every SP record sits in one `default` case; the per-case split is not reconstructed | one group per case under `/loads/sp` |
+
+A shim never forwards an old value under a newer stamp (ADR 0113 INV 9):
+`NativeWriter` restamps the embedded `/model/meta` of a results twin,
+so it forwards `ndm` through `read_spatial_ndm`, never the raw attribute.
 
 ### Legacy envelope (`/meta/schema_version`)
 
@@ -1228,12 +1367,15 @@ our own output is held by
 The list below is the **neutral-zone** lineage, condensed from the
 canonical log — the `NEUTRAL_SCHEMA_VERSION` docstring in
 [`mesh/_femdata_h5_io.py`](../src/apeGmsh/mesh/_femdata_h5_io.py), current
-through **2.34.0**. The opensees zone's per-version history is
+through **2.35.0**. The opensees zone's per-version history is
 maintained inline in [`opensees/emitter/h5.py`](../src/apeGmsh/opensees/emitter/h5.py)
 (`SCHEMA_VERSION` docstring), current through **2.20.0**; its post-2.10
 additions are summarized after this list.
 
-History:
+History (entries that mention ADR 0023's "two-version reader window" were
+written under that rule and stay as the record of what each writer
+promised then; ADR 0113 retired the window, and today every minor from the
+zone's floor up opens):
 
 - `1.0.0` — Phase 6 initial release.
 - `1.1.0` — added `/beam_integration` group + widened fiber-layer
@@ -1305,7 +1447,8 @@ History:
   `compute_snapshot_id` hash widened to fold element-side PGs and
   labels (previously element-side PGs were invisible to the hash,
   and labels weren't hashed at all). **Not additive** — 2.9
-  files cannot be read by the 2.10 reader, the window slid forward.
+  files could not be read by the 2.10 reader (under the window of the
+  day it slid forward; the floor rule makes 2.10.0 the neutral floor).
   ADR 0021 INV-1 retired; ADR 0023 window semantics reframed.
 - `2.11.0` — ADR 0049 (decoupled-node provenance): additive — adds the
   optional `/nodes/provenance` int8 dataset (0=mesh, 1=decoupled),
@@ -1409,11 +1552,27 @@ full "why" and the exact affected dtype columns:
   stamp `0`, the undeclared sentinel `ndf` has always used, which
   `OpenSeesModel.build`/`to_h5` and `DomainCapture.from_h5` refuse.
   `h5_reader.read_spatial_ndm` trusts `/meta/ndm` from this minor on
-  and keeps the transform-based salvage for 2.33.x files, which the
-  two-version window still admits; `NativeWriter` forwards the salvaged
-  value (not the raw stamp) onto a composed file's `/model/meta`.
+  and salvages it for older files (which the floor admits) from the `per_element_vecxz` widths:
+  `0` (a 2-D `geomTransf`, which has no vecxz) resolves 2, `3` lifts the
+  stamp to 3, and conflicting evidence, an unknown width, or a result
+  that would drop a non-zero coordinate column refuses (#1358);
+  `NativeWriter` forwards the salvaged value (not the raw stamp) onto a
+  composed file's `/model/meta`.
+- `2.35.0` — #1338 nodal load `source`: adds the `source` column to
+  `nodal_load_payload_dtype`, the `kind` of the definition a nodal load
+  was reduced from (`NodalLoadSource`), so the bridge's
+  `WarnBodyForceDoubleCount` guard can tell a reduced self-weight from
+  a vertical footing line load after the definitions are gone. `""`
+  decodes to `None` (unknown), and an older file reads the same way;
+  the guard still warns on an unknown source. Additive, presence-probed
+  on read; the minor bumps per ADR 0113 D5.
 
 ### OpenSees-zone history (post-2.10)
+
+The window wording below is era-correct history (ADR 0113 retired the
+window). The opensees floor is 2.12.0; the 2.11.0 entry records the
+rank flip that made 2.10 unreadable, but no 2.11-era file can be opened
+either, because its writer stamped a neutral zone below the neutral floor.
 
 The opensees zone advanced past 2.10 independently of the neutral
 zone (it shares the early lineage above through 2.10; the entries
@@ -1427,8 +1586,8 @@ detail lives in the `SCHEMA_VERSION` docstring in
   `partition_ids` column on `/opensees/element_meta/{type}` are now
   in `[0, N-1]`. Group naming (`partition_NN`) is unchanged. Breaking
   for any reader that mapped `rank`/`partition_ids` to `part.id`
-  directly; the two-version window slid forward (2.10 falls out of
-  reach for the opensees zone).
+  directly; under the window of the day 2.10 fell out of reach for the
+  opensees zone.
 - `2.12.0` — ADR 0035 (ASDEmbeddedNodeElement option exposure):
   `/opensees/constraints/embeddedNode` gains five typed columns —
   `stiffness` (`-K`), `stiffness_p` (`-KP`) + `has_stiffness_p`
@@ -1438,16 +1597,15 @@ detail lives in the `SCHEMA_VERSION` docstring in
 - `2.13.0`–`2.16.0` — see the `SCHEMA_VERSION` docstring in
   [`opensees/emitter/h5.py`](../src/apeGmsh/opensees/emitter/h5.py) (named primitives sidecar,
   `/opensees/nodes_ndf`, `/opensees/dampings`, `/opensees/initial_stress`).
-  From 2.16.0 onward a minor bump is a producer **hard floor** — a 2.N.x
-  reader REFUSES a 2.(N+1).x file (the window only lets a newer reader open
-  an older file, never the reverse).
+  From 2.16.0 onward a 2.N.x reader REFUSES a 2.(N+1).x file (INV-4: a
+  reader opens older files down to the floor, never newer ones).
 - `2.17.0` — ADR 0049 (node-pair zeroLength): optional
   `inline_connectivity` vlen-int64 dataset under
   `/opensees/element_meta/{type}/` carrying the endpoint tags of node-pair
   spring elements (no neutral gmsh cell to source them from). Written only
   for type groups with a node-pair (`fem_eid < 0`) row, so PG-only models
   are byte-identical; folds into `model_hash`. Additive group; a 2.16.x
-  reader refuses a 2.17.x file (hard floor), a 2.17 reader opens 2.16 + 2.17.
+  reader refuses a 2.17.x file (INV-4).
 - `2.18.0` — ADR 0055 Phase 2 (staged-model archival, non-partitioned):
   `/opensees/stages/stage_NNN` groups in registration order, each carrying
   the captured resolved per-stage emit stream — `owned_node_ids` /
@@ -1468,35 +1626,32 @@ detail lives in the `SCHEMA_VERSION` docstring in
   Staged files carry NO global `/opensees/analysis` group.  The
   `fem_eid → ops_tag` map is NOT duplicated — it is the existing
   `element_meta` `fem_eids`/`ids` columns.  Written only when ≥ 1 stage
-  exists (vanilla byte-identical); folds into `model_hash`; hard-floor
-  window semantics as above.
+  exists (vanilla byte-identical); folds into `model_hash`; a 2.17.x reader
+  refuses it (INV-4).
 - `2.19.0` — ADR 0055 Phase 5 (P5.1, partitioned staged archival): NO
   layout change — the bump marks that PARTITIONED staged archives now
   exist (the last `apeSees.h5` fail-loud guard is lifted). Per-rank
   replicated emission dedupes to one captured record; per-rank pattern
   and stage-region fragments merge by tag. Folds into `model_hash`;
-  hard-floor window semantics as above.
+  a 2.18.x reader refuses it (INV-4).
 - `2.20.0` — ADR 0078 Amendment A1 (ComputedSection provenance):
   additive — new optional `/opensees/computed_sections` sidecar
   (`tag` / `analyzer_name` / JSON `payload`), written only when a
   `ComputedSection` emitted. Provenance metadata, not authored model
   state → excluded from `model_hash` (same carve-out as `names`).
-  Standard additive-minor window semantics (a 2.20 reader opens 2.19
-  and 2.20 files; a 2.19.x reader refuses a 2.20.x file).
+  Additive minor (a 2.19.x reader refuses a 2.20.x file, INV-4).
 - `2.21.0` — Phase SSI-2.E (`s.update_material_stage`): additive —
   new optional `update_material_stage` dataset (`(N, 2)` int64,
   `(mat_tag, stage)`) under `/opensees/stages/stage_NNN/`, written
   only when a stage actually flips a SANISAND material. Authored
-  model state, not provenance → folds into `model_hash`. Standard
-  additive-minor window semantics (a 2.21 reader opens 2.20 and 2.21
-  files; a 2.20.x reader refuses a 2.21.x file).
+  model state, not provenance → folds into `model_hash`. Additive
+  minor (a 2.20.x reader refuses a 2.21.x file, INV-4).
 - `2.22.0` — ADR 0112 amendment 5 (#1304): additive — new optional
   `/opensees/bcs@mass_from_model` marker (see [`/opensees/bcs`](#opensees-bcs)).
   Under `mass_from_model()` the archive skips the mass stream and
   replay streams the neutral zone's `/masses`. Authored model state →
-  folds into `model_hash`. Standard additive-minor window semantics (a
-  2.22 reader opens 2.21 and 2.22 files; a 2.21.x reader refuses a
-  2.22.x file).
+  folds into `model_hash`. Additive minor (a 2.21.x
+  reader refuses a 2.22.x file, INV-4).
 
 This is the **current** opensees-zone version (`SCHEMA_VERSION` in
 [`opensees/emitter/h5.py`](../src/apeGmsh/opensees/emitter/h5.py)); check that constant

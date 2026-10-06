@@ -20,10 +20,33 @@ import ast
 from pathlib import Path
 
 
-MODEL_DATA_PATH = (
-    Path(__file__).resolve().parents[3]
-    / "src" / "apeGmsh" / "opensees" / "model_data.py"
-)
+_OPENSEES = Path(__file__).resolve().parents[3] / "src" / "apeGmsh" / "opensees"
+
+
+def _model_data_files() -> list[Path]:
+    """Every source file of the ``ModelData`` module.
+
+    Found by AST walk for ``class ModelData`` (not by filename), plus
+    package siblings if it is split into a package. Raises when the
+    class is missing or ambiguous, so a hub move cannot make the
+    guard pass over nothing.
+    """
+    found = []
+    for p in sorted(_OPENSEES.rglob("*.py")):
+        tree = ast.parse(p.read_text(encoding="utf-8"), filename=str(p))
+        if any(isinstance(n, ast.ClassDef) and n.name == "ModelData"
+               for n in tree.body):
+            found.append(p)
+    assert len(found) == 1, (
+        f"expected exactly one class ModelData under {_OPENSEES}, "
+        f"found {[str(f) for f in found]}"
+    )
+    f = found[0]
+    pkg = f.parent if f.name == "__init__.py" else f.with_suffix("")
+    files = [f]
+    if pkg.is_dir():
+        files += sorted(q for q in pkg.rglob("*.py") if q != f)
+    return files
 
 
 # h5py write APIs.  Any attribute call with one of these names is a
@@ -43,11 +66,8 @@ FORBIDDEN_METHOD_NAMES = frozenset({
 
 
 def test_model_data_path_exists() -> None:
-    """Sanity check — the file we walk has to be present."""
-    assert MODEL_DATA_PATH.is_file(), (
-        f"model_data.py not found at {MODEL_DATA_PATH}. If the module "
-        f"has moved, update the path constant in this test."
-    )
+    """Sanity check: the unit we walk has to resolve."""
+    assert all(p.is_file() for p in _model_data_files())
 
 
 def _collect_offences(path: Path) -> list[tuple[int, str]]:
@@ -147,13 +167,17 @@ def _resolve_h5py_file_mode(call: ast.Call) -> "str | None":
 
 
 def test_model_data_has_no_h5py_write_surface() -> None:
-    offences = _collect_offences(MODEL_DATA_PATH)
+    offences = [
+        (p.name, ln, why)
+        for p in _model_data_files()
+        for ln, why in _collect_offences(p)
+    ]
     assert not offences, (
         "ModelData module must have no h5py write surface (ADR 0018 "
         "INV-1 / INV-3 — schema authority stays in H5Emitter and "
         "mesh/_femdata_h5_io.py).  Offences:\n"
         + "\n".join(
-            f"  {MODEL_DATA_PATH.name}:{ln}  {why}" for ln, why in offences
+            f"  {name}:{ln}  {why}" for name, ln, why in offences
         )
     )
 

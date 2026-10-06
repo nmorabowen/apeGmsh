@@ -1495,7 +1495,7 @@ CUSTOM_RULE_CATALOG: dict[tuple[str, str], CustomRuleLayout] = {
 # OpenSees recorder token in apeGmsh-canonical form
 # (``"global_force"`` / ``"local_force"``). Component layouts use
 # the ``nodal_resisting_*`` canonical names from
-# :data:`apeGmsh.results._vocabulary.PER_ELEMENT_NODAL_FORCES` —
+# :data:`apeGmsh._vocabulary.PER_ELEMENT_NODAL_FORCES` —
 # distinct from the global-frame ``force_*`` / ``moment_*`` names
 # (which are applied nodal forces, a different topology level).
 #
@@ -2290,7 +2290,7 @@ _LINE_STATION_PREFIX_TO_KEYWORD: dict[str, str] = {
 # Nodal-forces topology — closed-form elastic beams expose per-
 # element-node force vectors under ``globalForce`` / ``localForce``.
 # The canonical names are the ``nodal_resisting_*`` family from
-# :data:`apeGmsh.results._vocabulary.PER_ELEMENT_NODAL_FORCES`.
+# :data:`apeGmsh._vocabulary.PER_ELEMENT_NODAL_FORCES`.
 _NODAL_FORCE_PREFIX_TO_KEYWORD: dict[str, str] = {
     # Global frame.
     "nodal_resisting_force": "globalForce",

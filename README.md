@@ -89,10 +89,6 @@ with apeGmsh(model_name="plate") as g:
     print(fem.info)
 ```
 
-On import, apeGmsh prints an ASCII banner with the version to
-`stderr`. Set `APEGMSH_QUIET=1` to suppress it (useful for tests
-and CI).
-
 ## How it fits together
 
 You describe a model inside an `apeGmsh` session — one Gmsh kernel

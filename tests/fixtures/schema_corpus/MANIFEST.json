@@ -1,12 +1,12 @@
 {
  "about": "ADR 0113 D8 schema corpus. One entry per minor from each zone's floor to its current minor; status 'gap' entries carry the reason no real file exists. Built by scripts/build_schema_corpus.py.",
- "base": "ae81ce7909ede34b00dd6889116616269c93c82b",
+ "base": "9c526f0ce8198cc9f86c12f2ab747cdb0032fd6b",
  "floors": {
   "neutral": "2.10.0",
-  "opensees": "2.11.0"
+  "opensees": "2.12.0"
  },
  "current": {
-  "neutral": "2.34.0",
+  "neutral": "2.35.0",
   "opensees": "2.22.0"
  },
  "entries": [
@@ -24,11 +24,11 @@
    "files": {
     "h5": {
      "name": "neutral_2.10.h5",
-     "sha256": "ad6b39a2bafb9d04940629cdb33a2859d27660233da058755c5f85d83ab27ba4"
+     "sha256": "505a2af5c25a362e1e49d8bdc7c4217251ba5c0a029b8f9e91fcc2a8c22147f9"
     },
     "dump": {
      "name": "neutral_2.10.dump.json",
-     "sha256": "0048826a23d0940c41a9f37770f1fe3b2654bf95103eff64d331ca6829e08965"
+     "sha256": "ee6d656d944d8c3d1f6ce3177e7d7123e92690383ddfcb970672ed4b153eea2c"
     }
    },
    "stamps": {
@@ -50,11 +50,11 @@
    "files": {
     "h5": {
      "name": "neutral_2.11.h5",
-     "sha256": "123e1dc8ca2d9a84f59585f85f2c46bb42b90e54597c1c3f6771bf1e8613a7e5"
+     "sha256": "6f00d54103363faa1294fa03f2bac7a02a2ed7fe5a29c5edec0418563c040656"
     },
     "dump": {
      "name": "neutral_2.11.dump.json",
-     "sha256": "0048826a23d0940c41a9f37770f1fe3b2654bf95103eff64d331ca6829e08965"
+     "sha256": "ee6d656d944d8c3d1f6ce3177e7d7123e92690383ddfcb970672ed4b153eea2c"
     }
    },
    "stamps": {
@@ -76,11 +76,11 @@
    "files": {
     "h5": {
      "name": "neutral_2.12.h5",
-     "sha256": "bfc9d7c311e45841a13687ab9d3136326d91e8b1b8579b38b3fbe3531e06e89b"
+     "sha256": "8865cf6f6e4387e4ba63675eb8d53e7dbb429dcf87f8ae19b43c5c716818aa7f"
     },
     "dump": {
      "name": "neutral_2.12.dump.json",
-     "sha256": "0048826a23d0940c41a9f37770f1fe3b2654bf95103eff64d331ca6829e08965"
+     "sha256": "ee6d656d944d8c3d1f6ce3177e7d7123e92690383ddfcb970672ed4b153eea2c"
     }
    },
    "stamps": {
@@ -102,11 +102,11 @@
    "files": {
     "h5": {
      "name": "neutral_2.13.h5",
-     "sha256": "c5549d61df12bfb84d6cc80f320e0a3d2674957c8f5f087d28296644543c9d5c"
+     "sha256": "d32fbe5b0a590af0be5369bb230143a96e4b802e88d5945bbe32ad519e09f4bc"
     },
     "dump": {
      "name": "neutral_2.13.dump.json",
-     "sha256": "0048826a23d0940c41a9f37770f1fe3b2654bf95103eff64d331ca6829e08965"
+     "sha256": "ee6d656d944d8c3d1f6ce3177e7d7123e92690383ddfcb970672ed4b153eea2c"
     }
    },
    "stamps": {
@@ -128,11 +128,11 @@
    "files": {
     "h5": {
      "name": "neutral_2.14.h5",
-     "sha256": "8e4f7a37386543c2918a80b2525a586f107226b87004aa7ad77cd5d86dad77e2"
+     "sha256": "bf9963df2b561b071479a921b55f6815e9ce0deb9a23f0ad8419baf42fe3ada9"
     },
     "dump": {
      "name": "neutral_2.14.dump.json",
-     "sha256": "0048826a23d0940c41a9f37770f1fe3b2654bf95103eff64d331ca6829e08965"
+     "sha256": "ee6d656d944d8c3d1f6ce3177e7d7123e92690383ddfcb970672ed4b153eea2c"
     }
    },
    "stamps": {
@@ -154,11 +154,11 @@
    "files": {
     "h5": {
      "name": "neutral_2.15.h5",
-     "sha256": "d541e36f2d81152080e8eb4ac315433cc4e72dc42201acfacbefe73cf750fbe7"
+     "sha256": "0d8923acdbfdabf282d8adf931e6205eb94ef5258524e0b928ebcb95b082dbec"
     },
     "dump": {
      "name": "neutral_2.15.dump.json",
-     "sha256": "0048826a23d0940c41a9f37770f1fe3b2654bf95103eff64d331ca6829e08965"
+     "sha256": "ee6d656d944d8c3d1f6ce3177e7d7123e92690383ddfcb970672ed4b153eea2c"
     }
    },
    "stamps": {
@@ -180,11 +180,11 @@
    "files": {
     "h5": {
      "name": "neutral_2.16.h5",
-     "sha256": "207da1c2987a6dd231cdea07b65368c8b488fb6014b132cbe79d372b6c5446bb"
+     "sha256": "34806e564927bb8e39f18abee8d38ed339a66ae5f9c7e84b351e6c3f44a93214"
     },
     "dump": {
      "name": "neutral_2.16.dump.json",
-     "sha256": "0048826a23d0940c41a9f37770f1fe3b2654bf95103eff64d331ca6829e08965"
+     "sha256": "ee6d656d944d8c3d1f6ce3177e7d7123e92690383ddfcb970672ed4b153eea2c"
     }
    },
    "stamps": {
@@ -220,11 +220,11 @@
    "files": {
     "h5": {
      "name": "neutral_2.19.h5",
-     "sha256": "96692dd76ac6f5afbbe246badc0ae7b5bf7697eb9e8e73ca5b1a3eb413a80217"
+     "sha256": "75d040051508bd936dd43c37688c4141c5d4645f6de9fa2746dfdc2881848551"
     },
     "dump": {
      "name": "neutral_2.19.dump.json",
-     "sha256": "0048826a23d0940c41a9f37770f1fe3b2654bf95103eff64d331ca6829e08965"
+     "sha256": "ee6d656d944d8c3d1f6ce3177e7d7123e92690383ddfcb970672ed4b153eea2c"
     }
    },
    "stamps": {
@@ -246,11 +246,11 @@
    "files": {
     "h5": {
      "name": "neutral_2.20.h5",
-     "sha256": "8f36edf8bc2da3a12399e5222833dd51fdce949aef6eefa1277723b3bb6093bd"
+     "sha256": "57d4a69b91fefaca66d73331c22a6fe1b29f9b8ca41fc6b2144268e17dfd02e2"
     },
     "dump": {
      "name": "neutral_2.20.dump.json",
-     "sha256": "0048826a23d0940c41a9f37770f1fe3b2654bf95103eff64d331ca6829e08965"
+     "sha256": "ee6d656d944d8c3d1f6ce3177e7d7123e92690383ddfcb970672ed4b153eea2c"
     }
    },
    "stamps": {
@@ -272,11 +272,11 @@
    "files": {
     "h5": {
      "name": "neutral_2.21.h5",
-     "sha256": "1b1b86e16fe68dc13d49af7029737fb4a5b03d35914321c9a8f9969ddfcffb4f"
+     "sha256": "6d999d3ebbfbc8d67e6c65bc5c8fa0dea8696b67ed38b942f3ec0c36ef851cab"
     },
     "dump": {
      "name": "neutral_2.21.dump.json",
-     "sha256": "0048826a23d0940c41a9f37770f1fe3b2654bf95103eff64d331ca6829e08965"
+     "sha256": "ee6d656d944d8c3d1f6ce3177e7d7123e92690383ddfcb970672ed4b153eea2c"
     }
    },
    "stamps": {
@@ -298,11 +298,11 @@
    "files": {
     "h5": {
      "name": "neutral_2.22.h5",
-     "sha256": "bbb50d72b86850bab9a2234c7a65c5e1bda5f58176c4b82ade8244d89a334e6b"
+     "sha256": "fc73e46e6f9540bff0dcee1109db3bc29a475d538c600b610ca73bad9f8dd330"
     },
     "dump": {
      "name": "neutral_2.22.dump.json",
-     "sha256": "0048826a23d0940c41a9f37770f1fe3b2654bf95103eff64d331ca6829e08965"
+     "sha256": "ee6d656d944d8c3d1f6ce3177e7d7123e92690383ddfcb970672ed4b153eea2c"
     }
    },
    "stamps": {
@@ -324,11 +324,11 @@
    "files": {
     "h5": {
      "name": "neutral_2.23.h5",
-     "sha256": "35425aed6d3f5fcc8911fa0a3b9c4df6e3bb1b5918bd7225ab4a3402eb30fee2"
+     "sha256": "7181d8e25fd25ef2a3cf6cd1628233747378fd13b87245efd88b3f8a3851a5c6"
     },
     "dump": {
      "name": "neutral_2.23.dump.json",
-     "sha256": "0048826a23d0940c41a9f37770f1fe3b2654bf95103eff64d331ca6829e08965"
+     "sha256": "ee6d656d944d8c3d1f6ce3177e7d7123e92690383ddfcb970672ed4b153eea2c"
     }
    },
    "stamps": {
@@ -350,11 +350,11 @@
    "files": {
     "h5": {
      "name": "neutral_2.24.h5",
-     "sha256": "82364f6c1c039319a457d6bf1f611683c8988c89f2762bc459b33d3fd4e0cbb1"
+     "sha256": "35695a0188de3a6a9e82054e3f9fadee9f6dd8c833f4b3d5988b471151a45be6"
     },
     "dump": {
      "name": "neutral_2.24.dump.json",
-     "sha256": "0048826a23d0940c41a9f37770f1fe3b2654bf95103eff64d331ca6829e08965"
+     "sha256": "ee6d656d944d8c3d1f6ce3177e7d7123e92690383ddfcb970672ed4b153eea2c"
     }
    },
    "stamps": {
@@ -376,11 +376,39 @@
    "files": {
     "h5": {
      "name": "neutral_2.25.h5",
-     "sha256": "e6267fbd558ee61e1f7cb9c4eb5fe679f233b246dbed28989ab06c597ba86210"
+     "sha256": "16de9bf57180c94a79129cedf807a7bd225d286a7b7dadc951085b08029fb741"
     },
     "dump": {
      "name": "neutral_2.25.dump.json",
-     "sha256": "0048826a23d0940c41a9f37770f1fe3b2654bf95103eff64d331ca6829e08965"
+     "sha256": "ee6d656d944d8c3d1f6ce3177e7d7123e92690383ddfcb970672ed4b153eea2c"
+    }
+   },
+   "stamps": {
+    "neutral": "2.25.0",
+    "opensees": "2.19.0"
+   }
+  },
+  {
+   "zone": "neutral",
+   "minor": "2.25",
+   "variant": "sp_cases",
+   "why": "prescribed displacements under two g.displacements.case names, written before 2.26.1 split /loads/sp/default into one group per case: the ledger says it reads as one `default` case (Q5)",
+   "sha": "69df0ef847421db003ae2102152a1e320e342ae1",
+   "date": "2026-06-29",
+   "version": "2.25.0",
+   "bump_commits": [
+    "ba65e75ce71cce09ba2d230a2783efac9e42ff00"
+   ],
+   "generator": "tests/fixtures/schema_corpus/_era_generator.py --zone neutral --variant sp_cases",
+   "status": "ok",
+   "files": {
+    "h5": {
+     "name": "neutral_2.25_sp_cases.h5",
+     "sha256": "a248c0660f2f0ad53d5370b6e4200994c2ff96e9d049f6e568c72d13c8132736"
+    },
+    "dump": {
+     "name": "neutral_2.25_sp_cases.dump.json",
+     "sha256": "36e918203d5d8dc931323dca0d273dc2523e9f95d7afff8bd8794ea3a9a6be84"
     }
    },
    "stamps": {
@@ -403,11 +431,11 @@
    "files": {
     "h5": {
      "name": "neutral_2.26.h5",
-     "sha256": "e435146f172129098f21f3480c6d28cb51eebb8e4c1708f5c4bf56a937f3b70c"
+     "sha256": "1e467f526dcac3c99522fe373c800621f577e399fb49a005d2f3ef146383dec7"
     },
     "dump": {
      "name": "neutral_2.26.dump.json",
-     "sha256": "0048826a23d0940c41a9f37770f1fe3b2654bf95103eff64d331ca6829e08965"
+     "sha256": "ee6d656d944d8c3d1f6ce3177e7d7123e92690383ddfcb970672ed4b153eea2c"
     }
    },
    "stamps": {
@@ -429,11 +457,11 @@
    "files": {
     "h5": {
      "name": "neutral_2.27.h5",
-     "sha256": "4dc09567e0f92ec3bd969ac256e1614ba736616511d50d9d49cacd4962b5c106"
+     "sha256": "dea7632105ac41b8e8ec63104e786abab39a54596c2fff7d41a6657ccc415ef3"
     },
     "dump": {
      "name": "neutral_2.27.dump.json",
-     "sha256": "0048826a23d0940c41a9f37770f1fe3b2654bf95103eff64d331ca6829e08965"
+     "sha256": "ee6d656d944d8c3d1f6ce3177e7d7123e92690383ddfcb970672ed4b153eea2c"
     }
    },
    "stamps": {
@@ -455,11 +483,11 @@
    "files": {
     "h5": {
      "name": "neutral_2.28.h5",
-     "sha256": "633e42e2b15916ab5c0d2076320c3179088a09c273d23f163d57b86cbd55618e"
+     "sha256": "ba85d9da4f59817046ee5158940f8cb6aa9c3e243be95adea0e546353bef79b4"
     },
     "dump": {
      "name": "neutral_2.28.dump.json",
-     "sha256": "0048826a23d0940c41a9f37770f1fe3b2654bf95103eff64d331ca6829e08965"
+     "sha256": "ee6d656d944d8c3d1f6ce3177e7d7123e92690383ddfcb970672ed4b153eea2c"
     }
    },
    "stamps": {
@@ -481,11 +509,11 @@
    "files": {
     "h5": {
      "name": "neutral_2.29.h5",
-     "sha256": "d8014a1b4c01eb837f0497674eda8f9f0ae41ec25f2558e00aac7e65781c59d1"
+     "sha256": "66166e4d06bdbb736e0b16c38d06fd97afd4e0c3eeaa3f8f754b87fab18e09b1"
     },
     "dump": {
      "name": "neutral_2.29.dump.json",
-     "sha256": "0048826a23d0940c41a9f37770f1fe3b2654bf95103eff64d331ca6829e08965"
+     "sha256": "ee6d656d944d8c3d1f6ce3177e7d7123e92690383ddfcb970672ed4b153eea2c"
     }
    },
    "stamps": {
@@ -507,11 +535,11 @@
    "files": {
     "h5": {
      "name": "neutral_2.30.h5",
-     "sha256": "371ce627f32f7e313ab4208bdf4f394ea7e6a68a187d83ba191bd34846247fa2"
+     "sha256": "0639bab276ec8ccf7eff4f3b6611ee7df77d40dc2e95c94742bc166c410d0260"
     },
     "dump": {
      "name": "neutral_2.30.dump.json",
-     "sha256": "0048826a23d0940c41a9f37770f1fe3b2654bf95103eff64d331ca6829e08965"
+     "sha256": "ee6d656d944d8c3d1f6ce3177e7d7123e92690383ddfcb970672ed4b153eea2c"
     }
    },
    "stamps": {
@@ -533,11 +561,11 @@
    "files": {
     "h5": {
      "name": "neutral_2.31.h5",
-     "sha256": "7300d86d2ec1ca7443df2b69052c79c14eab9a2431812c32156dd35d62685825"
+     "sha256": "c634651f10e855c35c96cbdece5a6779ac63cef52b26078b051a22614c3cfb78"
     },
     "dump": {
      "name": "neutral_2.31.dump.json",
-     "sha256": "0048826a23d0940c41a9f37770f1fe3b2654bf95103eff64d331ca6829e08965"
+     "sha256": "ee6d656d944d8c3d1f6ce3177e7d7123e92690383ddfcb970672ed4b153eea2c"
     }
    },
    "stamps": {
@@ -559,11 +587,11 @@
    "files": {
     "h5": {
      "name": "neutral_2.32.h5",
-     "sha256": "e725e1cbde8e080e66e3d38aa7020a2e43b2623dbe329e7fce5a3235de324ad4"
+     "sha256": "f55866f08b46e416bc2e2bdaf9697c99427ae0abc7d2ec820600a8f4d7d54571"
     },
     "dump": {
      "name": "neutral_2.32.dump.json",
-     "sha256": "0048826a23d0940c41a9f37770f1fe3b2654bf95103eff64d331ca6829e08965"
+     "sha256": "ee6d656d944d8c3d1f6ce3177e7d7123e92690383ddfcb970672ed4b153eea2c"
     }
    },
    "stamps": {
@@ -585,11 +613,11 @@
    "files": {
     "h5": {
      "name": "neutral_2.33.h5",
-     "sha256": "7cf1d9b81ddf62f5b3a1ec6014f6bb80c32375ef5c311c96293ff48bcd96623a"
+     "sha256": "2487453c11f4fd35f5478889dfa3f72d6c5df4771ba7055b4a15fc51ed1165a1"
     },
     "dump": {
      "name": "neutral_2.33.dump.json",
-     "sha256": "0048826a23d0940c41a9f37770f1fe3b2654bf95103eff64d331ca6829e08965"
+     "sha256": "ee6d656d944d8c3d1f6ce3177e7d7123e92690383ddfcb970672ed4b153eea2c"
     }
    },
    "stamps": {
@@ -600,8 +628,8 @@
   {
    "zone": "neutral",
    "minor": "2.34",
-   "sha": "ae81ce7909ede34b00dd6889116616269c93c82b",
-   "date": "2026-10-03",
+   "sha": "3ae7ba314115f808dc4b30944984e844b0a2362e",
+   "date": "2026-10-04",
    "version": "2.34.0",
    "bump_commits": [
     "0d95c30b128e1e5c67e03fb8803223d740c87570"
@@ -611,15 +639,41 @@
    "files": {
     "h5": {
      "name": "neutral_2.34.h5",
-     "sha256": "931b0834a1952e6199730f44186e349dc77f70bda8de940882b002f0553ff2bc"
+     "sha256": "f0e5c6e027a97087b2ab489c6d2e120e1fcb78544b89bbaa8467237fb40695c5"
     },
     "dump": {
      "name": "neutral_2.34.dump.json",
-     "sha256": "0048826a23d0940c41a9f37770f1fe3b2654bf95103eff64d331ca6829e08965"
+     "sha256": "17625823acb3c8e1ffcaad7eecee977582a0241aa6f61118d561a6979cc3be39"
     }
    },
    "stamps": {
     "neutral": "2.34.0",
+    "opensees": "2.22.0"
+   }
+  },
+  {
+   "zone": "neutral",
+   "minor": "2.35",
+   "sha": "9c526f0ce8198cc9f86c12f2ab747cdb0032fd6b",
+   "date": "2026-10-04",
+   "version": "2.35.0",
+   "bump_commits": [
+    "68a225bcf5d54d1bb0d886846beca7b327a40ef9"
+   ],
+   "generator": "tests/fixtures/schema_corpus/_era_generator.py --zone neutral",
+   "status": "ok",
+   "files": {
+    "h5": {
+     "name": "neutral_2.35.h5",
+     "sha256": "723d44ce372d48d22df160cda70e1704c053585334d1d2916bcf822c2ab3e76d"
+    },
+    "dump": {
+     "name": "neutral_2.35.dump.json",
+     "sha256": "17625823acb3c8e1ffcaad7eecee977582a0241aa6f61118d561a6979cc3be39"
+    }
+   },
+   "stamps": {
+    "neutral": "2.35.0",
     "opensees": "2.22.0"
    }
   },
@@ -637,11 +691,11 @@
    "files": {
     "h5": {
      "name": "opensees_2.11.h5",
-     "sha256": "5d90599cdc47d9621be86d942bda4196493748e28acec0cd459d1ddd4bb8b6e1"
+     "sha256": "2099702b030cf92491b26c5499e4f703187a83bd38bdc5e0b20e857b1e4473f5"
     },
     "dump": {
      "name": "opensees_2.11.dump.json",
-     "sha256": "309c5ad375d7851dac743ebd6301d93d54f8980842a197317088d0f0dd74774e"
+     "sha256": "5ad508a8e5159dc5bc8ef51b8a21c6bdbfef028a4a714fecbed3f4266103d969"
     },
     "tcl": {
      "name": "opensees_2.11.tcl",
@@ -653,7 +707,7 @@
     "opensees": "2.11.0"
    },
    "gap_kind": "below_floor",
-   "reason": "the era's writer ran, but neutral 2.7.0 is below the neutral floor 2.10.0: today's readers refuse every file this era wrote"
+   "reason": "the era's writer ran, but neutral 2.7.0 is below the neutral floor 2.10.0; opensees 2.11.0 is below the opensees floor 2.12.0: today's readers refuse every file this era wrote"
   },
   {
    "zone": "opensees",
@@ -669,11 +723,11 @@
    "files": {
     "h5": {
      "name": "opensees_2.12.h5",
-     "sha256": "d7dcc4c62d31db217a7e2b332121cb453549fed3508722be91f67763551eac1f"
+     "sha256": "99e7a1c51750122017fd8a4a25595b0129d5056585d1c5d13f11b160c6f167d0"
     },
     "dump": {
      "name": "opensees_2.12.dump.json",
-     "sha256": "9d9618990161574bf0753dbebe118dafb98ffc587a1d0b3a8b4bea5a22b7e323"
+     "sha256": "41f89edb70a652e48b7b2d093a763ef8dda0370cde9818fb384ceb5bfff00698"
     },
     "tcl": {
      "name": "opensees_2.12.tcl",
@@ -699,11 +753,11 @@
    "files": {
     "h5": {
      "name": "opensees_2.13.h5",
-     "sha256": "d4bb5d66548bef4a8242ed20eaa1092bdb0825f84ed5092ce1b19f69af1a6dd6"
+     "sha256": "ebb04c75d19b9f31aa1fc092b4e3c396139c2dc0dd6c309ca4290e1e469945c2"
     },
     "dump": {
      "name": "opensees_2.13.dump.json",
-     "sha256": "3b51c82ec153cd0111312226b2a6d048f742fa25e1787ba3978d4964ede2593c"
+     "sha256": "8ed97ab09135fbcb025f5f202fa03a5f70f1f8833d45a48d17748dc112e5db39"
     },
     "tcl": {
      "name": "opensees_2.13.tcl",
@@ -729,11 +783,11 @@
    "files": {
     "h5": {
      "name": "opensees_2.14.h5",
-     "sha256": "3273ccbf679c370b6d51f883255941f8748ab471073aa47cf86909466ba8d191"
+     "sha256": "c934881f04db5b1e4d6151ac45a3fd3dde4b0ab6daf445391518916224cd1b82"
     },
     "dump": {
      "name": "opensees_2.14.dump.json",
-     "sha256": "1be0cbaeec4d2ca518b9bf6b5b1f7d7ea9652856e3b8fc6c7336ae3181058feb"
+     "sha256": "23aa3503f778d9dae5509258bb3f85387272708aa200c03bb9190977bae3f0a7"
     },
     "tcl": {
      "name": "opensees_2.14.tcl",
@@ -759,11 +813,11 @@
    "files": {
     "h5": {
      "name": "opensees_2.15.h5",
-     "sha256": "d3c482bccd4bd0c021f59e4893f4f40431ac44adef0826eb7905e5405e2727b1"
+     "sha256": "54a5d7c4fd2460d2989921501aa2882370dd95912fa27e243e0d574d95cbe050"
     },
     "dump": {
      "name": "opensees_2.15.dump.json",
-     "sha256": "b3070d4a7c2c4edec2cc1627f2b458c651f5c948cc4ac564450a3b45a3fd292b"
+     "sha256": "602cb0271c236c9431d50f7eecf0a0e3a3f35255416a0ab3d27e041c876959fc"
     },
     "tcl": {
      "name": "opensees_2.15.tcl",
@@ -789,11 +843,11 @@
    "files": {
     "h5": {
      "name": "opensees_2.16.h5",
-     "sha256": "fa59f13ba084ed6afec0d68996e7325b967df3ca96af5bf3c4de9c92e6ddce87"
+     "sha256": "ab0cefde80c5f3624f90e725ebb8bfcc7fd3a8e99443362d242adb82285f6b8f"
     },
     "dump": {
      "name": "opensees_2.16.dump.json",
-     "sha256": "e37ea8da666ef56ea27d8c5d16f165c44924fff7847f4a03303a7bc59ef9e22e"
+     "sha256": "c614314f618bcce083ddd2b970ef5172d8e68d6a28740636c504928d7303e628"
     },
     "tcl": {
      "name": "opensees_2.16.tcl",
@@ -819,11 +873,11 @@
    "files": {
     "h5": {
      "name": "opensees_2.17.h5",
-     "sha256": "8c60c7378f22829593c40d4897e8030798f5fe631b1ae3cc1d743e36bae2c399"
+     "sha256": "9d6be0bacb8deae1115343ccb9d42d0447e6718f48f33655ec4ef24c39aead10"
     },
     "dump": {
      "name": "opensees_2.17.dump.json",
-     "sha256": "3f21167cc7d5854705e12b45917507d23e9797df1570444e5353d4a2c71854b2"
+     "sha256": "e08030f4f387b502d8d986ebec93ebe7f34b4c37981a2cc2cc7e636d9e6a5ed4"
     },
     "tcl": {
      "name": "opensees_2.17.tcl",
@@ -849,11 +903,11 @@
    "files": {
     "h5": {
      "name": "opensees_2.18.h5",
-     "sha256": "0f5866c67506bf56013cf51ffbce6acac787e76eee941140154a90c9d08e70f1"
+     "sha256": "1a4d565173106d38b04376142db432a5ba05cf00d8ba98584b7b88e1b7590a8a"
     },
     "dump": {
      "name": "opensees_2.18.dump.json",
-     "sha256": "84d3e7eb2612bdfeca73bb431d29521d628ca844491f83586583bf6da4860b01"
+     "sha256": "cec385604b25bb8a46276fbf8e7c2bdbc31e626a47d663e7a753836d366855bf"
     },
     "tcl": {
      "name": "opensees_2.18.tcl",
@@ -879,11 +933,11 @@
    "files": {
     "h5": {
      "name": "opensees_2.19.h5",
-     "sha256": "0ae20b2703a886af6284d74468898abd0cd5cb13194e1c7a563667b37570664b"
+     "sha256": "dcc45416057b86b9f8d3f30c0effa45f98ed6bf25c7957558e53c788646d77e4"
     },
     "dump": {
      "name": "opensees_2.19.dump.json",
-     "sha256": "b83abd7646808bbe3dee34967989c42f10244efecb8f92b93dbd81c19ffc5d1d"
+     "sha256": "ac9f12fc5058e09a35caec0da725851e8db3bd4a4c153d62d025d450ef3605a6"
     },
     "tcl": {
      "name": "opensees_2.19.tcl",
@@ -909,15 +963,47 @@
    "files": {
     "h5": {
      "name": "opensees_2.20.h5",
-     "sha256": "aa89472cb4a64b850840d26c698dd1318ecb4e53b7971e7a1037774529f96741"
+     "sha256": "c62174b7a15ec5b23d081d1a7dc99f1862d25c6f10df9050c2ef4fc71bc00965"
     },
     "dump": {
      "name": "opensees_2.20.dump.json",
-     "sha256": "16e10ca6c5575e854b5196e2bc8f1ee21e91529620e9a155d84ebc0776cf4ea7"
+     "sha256": "caf0415f42740b028deb44df206bc734916fad470e84170d2c97754d459c191b"
     },
     "tcl": {
      "name": "opensees_2.20.tcl",
      "sha256": "5a0d3a8374c78f2bd38c5ffc940359033a69726b0bf8e5e1442dc13f8643873e"
+    }
+   },
+   "stamps": {
+    "neutral": "2.31.0",
+    "opensees": "2.20.0"
+   }
+  },
+  {
+   "zone": "opensees",
+   "minor": "2.20",
+   "variant": "frame2d",
+   "why": "the portal frame declared ops.model(ndm=2, ndf=3), written before neutral 2.34.0 made /meta/ndm the spatial dimension (#1291): the stamp is the mesh dimension 1, the file says 2-D through its (1, 0) vecxz and /meta/ndf = 3, and read_spatial_ndm (#1300) must recover 2 from that evidence (#1358)",
+   "sha": "099ad637f5e9d57f889565d6aeda11f07b1e03bd",
+   "date": "2026-08-26",
+   "version": "2.20.0",
+   "bump_commits": [
+    "0cc25dc54587dc4e5deeb86d15104cb5a9c01990"
+   ],
+   "generator": "tests/fixtures/schema_corpus/_era_generator.py --zone opensees --variant frame2d",
+   "status": "ok",
+   "files": {
+    "h5": {
+     "name": "opensees_2.20_frame2d.h5",
+     "sha256": "6f6ccbcff73c09ad311b331f230d3a4a0646e832724788fbf51de27c5df41dee"
+    },
+    "dump": {
+     "name": "opensees_2.20_frame2d.dump.json",
+     "sha256": "8c8795172285f882c12b0cb4a04e8254e1b8bd54da9a2745e119f780ef8a90d1"
+    },
+    "tcl": {
+     "name": "opensees_2.20_frame2d.tcl",
+     "sha256": "be40132a84e14f7fd12c6226b3909de2eebb7c1d34141ac168c453f559d9ae3d"
     }
    },
    "stamps": {
@@ -939,11 +1025,11 @@
    "files": {
     "h5": {
      "name": "opensees_2.21.h5",
-     "sha256": "dc0e74b60a079e84ed1955d7cfcfa927502df75303c368c3aa54a113005d6066"
+     "sha256": "66f8c3c5f23496517113fea6a307571102f736383d0b6c0599f49db5323fb6f9"
     },
     "dump": {
      "name": "opensees_2.21.dump.json",
-     "sha256": "dc19854454f09c35f2caffaa3cc7af2f9db3c137026a527da9f8f13763fec1a6"
+     "sha256": "41cd9797cffef9aa539adfba52707677763620da7d11b7b88bdac0de24c9e4be"
     },
     "tcl": {
      "name": "opensees_2.21.tcl",
@@ -958,8 +1044,8 @@
   {
    "zone": "opensees",
    "minor": "2.22",
-   "sha": "ae81ce7909ede34b00dd6889116616269c93c82b",
-   "date": "2026-10-03",
+   "sha": "3ae7ba314115f808dc4b30944984e844b0a2362e",
+   "date": "2026-10-04",
    "version": "2.22.0",
    "bump_commits": [
     "b16efda0aacf7ecb84c3815c41bd8399e746cb16"
@@ -969,11 +1055,11 @@
    "files": {
     "h5": {
      "name": "opensees_2.22.h5",
-     "sha256": "2f766c7455a7833296aaf90ab495dd9863c8d83e996e105565efb3a461457ec6"
+     "sha256": "92a7a9e28bab0a33c4d9b9fd4483bf150588a8622a52cef302414baf88565db4"
     },
     "dump": {
      "name": "opensees_2.22.dump.json",
-     "sha256": "1fb94bc8eb741757777732c522827e31e662fdfb5362c140b2eff5a6a44e22f8"
+     "sha256": "e1c7628a3d3d402c719e03a62ee20febd3c9a5be0a438dd5eebc510b21fe179f"
     },
     "tcl": {
      "name": "opensees_2.22.tcl",

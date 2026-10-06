@@ -107,7 +107,6 @@ from apeGmsh.viewers.model_viewer import ModelViewer
 # module path. It must not be re-exported from here or from
 # ``apeGmsh.viewers``.
 from apeGmsh.viewers import settings, theme_editor
-from apeGmsh.viz.NotebookPreview import preview
 from apeGmsh._workdir import workdir
 from apeGmsh import profiler
 from apeGmsh.sections import SectionProperties, SectionMaterial
@@ -116,14 +115,14 @@ from apeGmsh.sections import SectionProperties, SectionMaterial
 SelectionPicker = ModelViewer
 
 
-# ── Version + import banner ───────────────────────────────────────────
+# ── Version ───────────────────────────────────────────
 def _resolve_version() -> str:
     """Resolve the apeGmsh version, preferring the live source tree.
 
     Editable installs (``pip install -e .``) and source checkouts
     don't refresh ``importlib.metadata`` on every save — bumping
     ``pyproject.toml`` shows the *old* installed version until the
-    user reinstalls. To make the banner reflect the source-tree
+    user reinstalls. To make ``__version__`` reflect the source-tree
     version automatically, read ``pyproject.toml`` first when one
     sits next to the package; fall back to installed metadata when
     running from a wheel.
@@ -159,39 +158,6 @@ def _resolve_version() -> str:
 
 __version__ = _resolve_version()
 
-
-def _print_banner() -> None:
-    """Print the apeGmsh ASCII banner + version on import.
-
-    Set ``APEGMSH_QUIET=1`` to suppress (useful for tests / CI).
-    """
-    import os
-    import sys
-    if os.environ.get("APEGMSH_QUIET"):
-        return
-    banner = r"""
- █████╗ ██████╗ ███████╗ ██████╗ ███╗   ███╗███████╗██╗  ██╗
-██╔══██╗██╔══██╗██╔════╝██╔════╝ ████╗ ████║██╔════╝██║  ██║
-███████║██████╔╝█████╗  ██║  ███╗██╔████╔██║███████╗███████║
-██╔══██║██╔═══╝ ██╔══╝  ██║   ██║██║╚██╔╝██║╚════██║██╔══██║
-██║  ██║██║     ███████╗╚██████╔╝██║ ╚═╝ ██║███████║██║  ██║
-╚═╝  ╚═╝╚═╝     ╚══════╝ ╚═════╝ ╚═╝     ╚═╝╚══════╝╚═╝  ╚═╝
-██╗      █████╗ ██████╗ ██████╗ ██╗   ██╗███╗   ██╗ ██████╗
-██║     ██╔══██╗██╔══██╗██╔══██╗██║   ██║████╗  ██║██╔═══██╗
-██║     ███████║██║  ██║██████╔╝██║   ██║██╔██╗ ██║██║   ██║
-██║     ██╔══██║██║  ██║██╔══██╗██║   ██║██║╚██╗██║██║   ██║
-███████╗██║  ██║██████╔╝██║  ██║╚██████╔╝██║ ╚████║╚██████╔╝
-╚══════╝╚═╝  ╚═╝╚═════╝ ╚═╝  ╚═╝ ╚═════╝ ╚═╝  ╚═══╝ ╚═════╝
-"""
-    try:
-        sys.stderr.write(banner)
-        sys.stderr.write(f"  apeGmsh v{__version__}\n\n")
-        sys.stderr.flush()
-    except Exception:
-        pass
-
-
-_print_banner()
 
 __all__ = [
     "_SessionBase",
@@ -230,7 +196,6 @@ __all__ = [
     "Constraints",
     "settings",
     "theme_editor",
-    "preview",
     "workdir",
     "profiler",
     "__version__",

@@ -124,10 +124,6 @@ tip_drift=2.0, path=None)`) build a ready-to-view sample with no
 
 ::: apeGmsh.viewers.web_viewer.WebViewer
 
-## Geometric transform viewer
-
-::: apeGmsh.viewers.geom_transf_viewer.GeomTransfViewer
-
 ## Preferences
 
 ### `settings()`

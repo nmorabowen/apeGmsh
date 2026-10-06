@@ -61,7 +61,7 @@ def _emit(ops: apeSees) -> RecordingEmitter:
 
 
 def test_global_pattern_plus_stage_raises() -> None:
-    ops = _frame_ops(make_two_column_frame())
+    ops = _frame_ops(make_two_column_frame(ndm=2))
     with ops.pattern.Plain(series=ops.timeSeries.Linear()) as p:
         p.load(node=2, forces=(50.0, 0.0, 0.0))
     _add_stage(ops, "push")
@@ -78,7 +78,7 @@ def test_global_pattern_plus_stage_raises() -> None:
 def test_imposed_displacement_plus_stage_raises() -> None:
     """``ops.imposed_displacement`` registers a GLOBAL Plain pattern, so
     combining it with a stage trips the no-mixing guard."""
-    ops = _frame_ops(make_two_column_frame())
+    ops = _frame_ops(make_two_column_frame(ndm=2))
     ops.imposed_displacement(pg="Top", ux=0.01)
     _add_stage(ops, "push")
     with pytest.raises(BridgeError, match="global ops.pattern"):
@@ -87,7 +87,7 @@ def test_imposed_displacement_plus_stage_raises() -> None:
 
 def test_uniform_excitation_global_plus_stage_raises() -> None:
     """The guard catches ANY global pattern class, not just Plain."""
-    ops = _frame_ops(make_two_column_frame())
+    ops = _frame_ops(make_two_column_frame(ndm=2))
     ops.pattern.UniformExcitation(direction=1, series=ops.timeSeries.Linear())
     _add_stage(ops, "shake")
     with pytest.raises(BridgeError) as exc:
@@ -98,7 +98,7 @@ def test_uniform_excitation_global_plus_stage_raises() -> None:
 def test_stage_only_patterns_do_not_trip_guard() -> None:
     """A staged model whose only pattern is stage-scoped (s.pattern) is
     valid — it is NOT a global pattern."""
-    ops = _frame_ops(make_two_column_frame())
+    ops = _frame_ops(make_two_column_frame(ndm=2))
     with ops.stage(name="push") as s:
         with s.pattern(series=ops.timeSeries.Linear()) as p:
             p.load(node=2, forces=(50.0, 0.0, 0.0))
@@ -109,7 +109,7 @@ def test_stage_only_patterns_do_not_trip_guard() -> None:
 
 
 def test_global_pattern_without_stages_is_fine() -> None:
-    ops = _frame_ops(make_two_column_frame())
+    ops = _frame_ops(make_two_column_frame(ndm=2))
     with ops.pattern.Plain(series=ops.timeSeries.Linear()) as p:
         p.load(node=2, forces=(50.0, 0.0, 0.0))
     rec = _emit(ops)              # must not raise
@@ -125,7 +125,7 @@ def test_declared_but_unimported_case_is_silent() -> None:
     from apeGmsh._kernel.record_sets import NodalLoadSet
     from apeGmsh._kernel.records._loads import NodalLoadRecord
 
-    fem = make_two_column_frame()
+    fem = make_two_column_frame(ndm=2)
     fem.nodes.loads = NodalLoadSet([  # type: ignore[attr-defined]
         NodalLoadRecord(node_id=2, force_xyz=(10.0, 0.0, 0.0), pattern="dead"),
     ])

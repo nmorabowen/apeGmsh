@@ -1,9 +1,11 @@
 # ADR 0097 — Void tools on the modeling composite: role, not type
 
-**Status:** Proposed (2026-08-15). Session-side geometry/boolean
+**Status:** Accepted (2026-08-15). Session-side geometry/boolean
 authoring — no Emitter Protocol, no H5 schema bump, no OpenSees
 change. Chain-phase freeze (ADR 0038) already covers every `add_*` /
 boolean / transform this ADR composes over.
+
+**Accepted 2026-10-04** (T week 1 status batch, #1202).
 
 ## Context
 

@@ -212,9 +212,9 @@ def test_missing_fem_eids_dataset_raises_helpful(tmp_path: Path) -> None:
     """Files lacking the fem_eids dataset surface a clear
     "re-emit with newer apeGmsh" message rather than KeyError on an
     h5 dataset.  Originally this exercised the pre-Phase-8.6
-    (schema 2.1.x) shape; per ADR 0023 the fixture must be inside
-    the two-version reader window, so we use 2.7.0 with the dataset
-    deliberately omitted."""
+    (schema 2.1.x) shape; the fixture must be at or above the opensees
+    floor (ADR 0113), so we use a stamp the reader accepts with the
+    dataset deliberately omitted."""
     h5 = tmp_path / "model.h5"
     with h5py.File(h5, "w") as f:
         meta = f.create_group("meta")

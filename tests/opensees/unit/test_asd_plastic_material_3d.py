@@ -760,7 +760,7 @@ def test_plane_strain_wraps_3d_material() -> None:
 def test_plane_strain_emit_shape() -> None:
     """Through the bridge: PlaneStrain emits ``nDMaterial PlaneStrain
     $tag $base_tag`` with the bridge-resolved tag for ``base``."""
-    fem = make_two_node_beam()
+    fem = make_two_node_beam(ndm=2)
     ops = apeSees(fem, default_orientation=None)
     ops.model(ndm=2, ndf=2)
     base = ops.nDMaterial.MohrCoulombSoil(

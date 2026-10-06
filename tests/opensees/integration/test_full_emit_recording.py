@@ -1274,7 +1274,7 @@ def test_from_model_imports_broker_loads_into_a_plain_pattern() -> None:
     ]
 
     # 1. No auto-emit: declared loads alone produce NO load lines.
-    fem = make_two_column_frame()
+    fem = make_two_column_frame(ndm=2)
     fem.nodes.loads = NodalLoadSet(list(records))  # type: ignore[attr-defined]
     ops = apeSees(cast("object", fem), default_orientation=None)  # type: ignore[arg-type]
     ops.model(ndm=2, ndf=3)
@@ -1283,7 +1283,7 @@ def test_from_model_imports_broker_loads_into_a_plain_pattern() -> None:
     assert [c for c in rec.calls if c[0] == "load"] == []
 
     # 2. from_model import: a Plain pattern pulls the "Pressure" case.
-    fem = make_two_column_frame()
+    fem = make_two_column_frame(ndm=2)
     fem.nodes.loads = NodalLoadSet(list(records))  # type: ignore[attr-defined]
     ops = apeSees(cast("object", fem), default_orientation=None)  # type: ignore[arg-type]
     ops.model(ndm=2, ndf=3)
@@ -1314,7 +1314,7 @@ def test_from_model_imports_prescribed_sp_not_homogeneous() -> None:
     from apeGmsh._kernel.record_sets import SPSet
     from apeGmsh._kernel.records._loads import SPRecord
 
-    fem = make_two_column_frame()
+    fem = make_two_column_frame(ndm=2)
     fem.nodes.sp = SPSet([  # type: ignore[attr-defined]
         SPRecord(node_id=1, dof=1, value=0.01,
                  is_homogeneous=False, pattern="settle"),
@@ -1344,7 +1344,7 @@ def test_from_model_typo_raises_bridge_error() -> None:
     from apeGmsh._kernel.record_sets import NodalLoadSet
     from apeGmsh.opensees._internal.build import BridgeError
 
-    fem = make_two_column_frame()
+    fem = make_two_column_frame(ndm=2)
     fem.nodes.loads = NodalLoadSet([  # type: ignore[attr-defined]
         NodalLoadRecord(node_id=1, force_xyz=(10.0, 0.0, 0.0),
                         pattern="Pressure"),
@@ -1361,7 +1361,7 @@ def test_from_model_typo_raises_bridge_error() -> None:
 def test_from_model_allow_empty_suppresses_guard() -> None:
     """from_model(case, allow_empty=True) exempts a deliberately empty
     case from the zero-match guard; the deck simply has no lines for it."""
-    fem = make_two_column_frame()
+    fem = make_two_column_frame(ndm=2)
     ops = apeSees(cast("object", fem), default_orientation=None)  # type: ignore[arg-type]
     ops.model(ndm=2, ndf=3)
     with ops.pattern.Plain(series=ops.timeSeries.Linear()) as p:
@@ -1380,7 +1380,7 @@ def test_from_model_homogeneous_only_case_names_the_reason() -> None:
     from apeGmsh._kernel.records._loads import SPRecord
     from apeGmsh.opensees._internal.build import BridgeError
 
-    fem = make_two_column_frame()
+    fem = make_two_column_frame(ndm=2)
     fem.nodes.sp = SPSet([  # type: ignore[attr-defined]
         SPRecord(node_id=1, dof=1, value=0.0,
                  is_homogeneous=True, pattern="hold_only"),
@@ -1402,7 +1402,7 @@ def test_from_model_missing_case_hints_at_legacy_flattening() -> None:
     from apeGmsh._kernel.records._loads import SPRecord
     from apeGmsh.opensees._internal.build import BridgeError
 
-    fem = make_two_column_frame()
+    fem = make_two_column_frame(ndm=2)
     fem.nodes.sp = SPSet([  # type: ignore[attr-defined]
         SPRecord(node_id=1, dof=3, value=-15.0,
                  is_homogeneous=False, pattern="default"),
@@ -1420,7 +1420,7 @@ def test_2d_geomtransf_emits_bare_form_without_vecxz() -> None:
     """A 2-D model (ndm=2) with a vecxz-less, orientation-less Linear
     transform emits the bare ``geomTransf Linear $tag`` — no vecxz
     vector. Regression for the 2-D beam-column emit path."""
-    fem = make_two_column_frame()
+    fem = make_two_column_frame(ndm=2)
     ops = apeSees(cast("object", fem), default_orientation=None)  # type: ignore[arg-type]
     ops.model(ndm=2, ndf=3)
 
@@ -1456,7 +1456,7 @@ def test_2d_geomtransf_with_orientation_raises_bridgeerror() -> None:
     from apeGmsh.opensees._internal.build import BridgeError
     from apeGmsh.opensees.transform import Cylindrical
 
-    fem = make_two_column_frame()
+    fem = make_two_column_frame(ndm=2)
     ops = apeSees(cast("object", fem))  # type: ignore[arg-type]
     ops.model(ndm=2, ndf=3)
 

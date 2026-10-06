@@ -1,5 +1,5 @@
 """
-``g.rebar`` — the L2 reinforcement-cage authoring composite (ADR 0066).
+``g.rebar`` — the L2 reinforcement-cage authoring composite (ADR 0067).
 
 Sits **above** the shipped ``g.reinforce`` binding composite: it owns the
 L1 spec objects (:mod:`apeGmsh._kernel.defs.rebar`) + geometry generation
@@ -50,7 +50,7 @@ _AXIS_TOKENS = {
 _TRANSVERSE_ROLES = frozenset({"tie", "crosstie", "hoop", "stirrup"})
 
 if TYPE_CHECKING:
-    from .._core import _ApeGmshSession
+    from apeGmsh._core import apeGmsh as _ApeGmshSession
 
 
 # ── resolution-side records (not L1 specs) ───────────────────────────
@@ -83,7 +83,7 @@ class RebarPlacement:
 # ── the composite ────────────────────────────────────────────────────
 
 class RebarComposite(_DeclarationsMixin):
-    """``g.rebar`` — reinforcement-cage authoring (ADR 0066)."""
+    """``g.rebar`` — reinforcement-cage authoring (ADR 0067)."""
 
     _DECLARATION_STORES = {
         "placements": (RebarPlacement,),

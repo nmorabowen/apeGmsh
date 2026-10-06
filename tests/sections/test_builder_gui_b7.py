@@ -18,6 +18,9 @@ import os
 
 import pytest
 
+# Real QApplication per file: runs in qt-window-tests, never the shared suite (lesson #1241).
+pytestmark = pytest.mark.qt
+
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from apeGmsh.sections import SectionDocument, handoff_snippet  # noqa: E402

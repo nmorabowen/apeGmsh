@@ -64,7 +64,7 @@ from ._constraints import (
     NodeToSurfaceRecord,
     SurfaceCouplingRecord,
 )
-from ._kinds import ConstraintKind, LoadKind
+from ._kinds import ConstraintKind, LoadKind, NodalLoadSource
 from ._loads import (
     ElementLoadRecord,
     LoadRecord,
@@ -81,6 +81,7 @@ __all__ = [
     # Kind enums
     "ConstraintKind",
     "LoadKind",
+    "NodalLoadSource",
     # Constraint defs (re-export from _kernel.defs.constraints)
     "ConstraintDef",
     "EqualDOFDef",

@@ -76,9 +76,22 @@ the quoted heading. Paths are from the repo root; `architecture/` is
 
 ## Schema
 
-- [ ] A schema bump follows `architecture/h5-schema.md` and ADR 0023, "Bump
-      cadence — locked policy" and "Per-zone read validation — two-version
-      reader window". Cite the ADR's Decision section, not older prose.
+- [ ] A schema bump follows `architecture/h5-schema.md` ("Versioning": the
+      floor rule, bump rules, shim ledger), ADR 0023's bump cadence and
+      ADR 0113's floor. Compatibility is a floor per zone, not a window: the
+      reader opens every minor from the zone's floor to the current one, and
+      the floor moves only with a major bump, by ADR. Cite the ADR's Decision
+      section, not older prose.
+- [ ] A bump adds its corpus file. Rebuild the zone's file with
+      `python scripts/build_schema_corpus.py --zone <neutral|opensees> --base HEAD`
+      after committing the bump (`--list` shows the plan first), and commit the
+      new `tests/fixtures/schema_corpus/` files and `MANIFEST.json`.
+      `tests/opensees/h5/test_schema_corpus.py` fails a bump that skipped it.
+      The builder anchors non-current eras on `origin/main`, and the suite fails a manifest
+      SHA that is not an ancestor of it (#1365, #1407), so a squash merge cannot orphan one.
+- [ ] A change to what an existing field *means* ships a reader shim keyed on
+      a named `*_FROM` constant above the floor, a corpus file below it, and a
+      row in the shim ledger in `h5-schema.md`. A restructure is a major bump.
 - [ ] Tests read versions from `tests/fixtures/schema.py`, never a literal.
       The `schema-literal` quirk rule holds this: hard-coded versions
       turned main red at 2.12.0, 2.13.0 and 2.16.0 (#642, #738).

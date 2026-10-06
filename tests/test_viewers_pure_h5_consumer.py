@@ -40,6 +40,36 @@ def _viewers_python_files() -> list[Path]:
     return sorted(p for p in VIEWERS_DIR.rglob("*.py") if p.is_file())
 
 
+def _resolve_relative(path: Path, level: int, module: str) -> str:
+    """Absolute dotted path of ``from <level dots><module> import ...``.
+
+    ``level`` 1 is the importing file's own package; each extra dot climbs
+    one package.  The package is derived from the path under ``src/``
+    (an ``__init__.py`` is its own package, like any other module's folder).
+    """
+    rel = path.relative_to(VIEWERS_DIR.parent.parent)       # apeGmsh/viewers/..
+    package = list(rel.parts[:-1])
+    base = package[: len(package) - (level - 1)] if level > 1 else package
+    return ".".join([*base, module] if module else base)
+
+
+#: Known ADR 0014 violations that the relative-import resolver exposed.
+#: Keyed ``src``-relative posix path -> the banned dotted path.  Each is a
+#: real leak (viewers/ reaching apeGmsh.opensees) to be fixed in ``src/``,
+#: not widened here.  ``_KNOWN_RELATIVE_LEAK_BASELINE`` is a ceiling: the
+#: count may fall (fix + delete the entry), never rise.
+_KNOWN_RELATIVE_LEAKS: dict[tuple[str, str], str] = {
+    ("apeGmsh/viewers/diagrams/_kind_catalog.py",
+     "apeGmsh.opensees._response_catalog.split_canonical_component"):
+        "relative `from ...opensees._response_catalog import "
+        "split_canonical_component` (found by B2-3, #1414); fix tracked in #1421",
+    ("apeGmsh/viewers/ui/_diagram_settings_tab.py",
+     "apeGmsh.opensees._response_catalog.split_canonical_component"):
+        "function-local relative import of the same symbol; fix tracked in #1421",
+}
+_KNOWN_RELATIVE_LEAK_BASELINE = 2
+
+
 def _collect_offending_imports(path: Path) -> list[tuple[int, str]]:
     """Parse ``path`` and return ``(lineno, module)`` for every forbidden import.
 
@@ -52,8 +82,9 @@ def _collect_offending_imports(path: Path) -> list[tuple[int, str]]:
     are flagged.  ``from apeGmsh.opensees.emitter import h5_reader`` is
     recognised as importing ``apeGmsh.opensees.emitter.h5_reader``
     (the allowed leaf), not the parent ``apeGmsh.opensees.emitter``.
-    Relative imports (``.scene``, ``..data``) inside the viewers
-    package are ignored — they don't reach mesh / opensees.
+    Relative imports are resolved to absolute dotted paths first
+    (see :func:`_resolve_relative`), so ``from ...opensees.x import y``
+    is judged as ``apeGmsh.opensees.x.y``.
     """
     source = path.read_text(encoding="utf-8")
     tree = ast.parse(source, filename=str(path))
@@ -65,11 +96,12 @@ def _collect_offending_imports(path: Path) -> list[tuple[int, str]]:
                 if _is_forbidden(alias.name):
                     offenders.append((node.lineno, alias.name))
         elif isinstance(node, ast.ImportFrom):
-            # Relative imports have node.level >= 1 — never cross
-            # out of viewers/.
-            if node.level and node.level > 0:
-                continue
+            # Relative imports are resolved against the importing
+            # file's package, then checked like absolute ones (a
+            # ``from ...opensees.x import y`` climbs out of viewers/).
             module = node.module or ""
+            if node.level and node.level > 0:
+                module = _resolve_relative(path, node.level, module)
             for alias in node.names:
                 # Resolve the dotted path each imported name represents.
                 # ``from apeGmsh.opensees.emitter import h5_reader``
@@ -111,10 +143,20 @@ def test_viewers_have_no_mesh_or_opensees_imports() -> None:
     assert files, "No viewer source files found — test path is wrong."
 
     leaks: list[tuple[Path, int, str]] = []
+    known = 0
     for path in files:
         for lineno, module in _collect_offending_imports(path):
+            key = (path.relative_to(VIEWERS_DIR.parent.parent).as_posix(),
+                   module)
+            if key in _KNOWN_RELATIVE_LEAKS:
+                known += 1
+                continue
             leaks.append((path, lineno, module))
 
+    assert known <= _KNOWN_RELATIVE_LEAK_BASELINE, (
+        f"{known} known relative-import leaks exceeds the baseline "
+        f"{_KNOWN_RELATIVE_LEAK_BASELINE}; never raise it."
+    )
     if leaks:
         rel_leaks = sorted(
             (

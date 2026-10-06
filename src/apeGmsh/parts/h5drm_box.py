@@ -43,7 +43,7 @@ from ._axis1d import Axis1D
 from .plane_wave_box import AbsorbingSkinResult, _btype_for
 
 if TYPE_CHECKING:
-    from ..core._session import _SessionBase  # pragma: no cover
+    from .._session import _SessionBase  # pragma: no cover
 
 
 class WarnDRMGridIrregular(UserWarning):

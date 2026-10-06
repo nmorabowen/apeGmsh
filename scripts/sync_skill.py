@@ -92,6 +92,10 @@ def planned_files() -> dict[Path, str]:
     if ref_dir.is_dir():
         for ref in sorted(ref_dir.glob("*.md")):
             out[DERIVED / "references" / ref.name] = ref.read_text(encoding="utf-8")
+    script_dir = CANONICAL / "scripts"
+    if script_dir.is_dir():
+        for script in sorted(script_dir.glob("*.py")):
+            out[DERIVED / "scripts" / script.name] = script.read_text(encoding="utf-8")
     return out
 
 
@@ -135,7 +139,8 @@ def main() -> int:
     plan = planned_files()
     # Also flag derived reference files that no longer exist in canonical.
     existing_refs = set((DERIVED / "references").glob("*.md")) if (DERIVED / "references").is_dir() else set()
-    stale = existing_refs - set(plan)
+    existing_scripts = set((DERIVED / "scripts").glob("*.py")) if (DERIVED / "scripts").is_dir() else set()
+    stale = (existing_refs | existing_scripts) - set(plan)
 
     if args.check:
         drift = [p for p, c in plan.items() if not p.exists() or p.read_text(encoding="utf-8") != c]

@@ -41,7 +41,13 @@ from typing import (
     IO, Any, Callable, Literal, NamedTuple, Sequence, SupportsIndex,
 )
 
-from .base import StrategySpec, trim_coords_to_ndm
+from .base import (
+    NUMPY_VALUE_TYPES,
+    DroppedAxisGuard,
+    StrategySpec,
+    command_row,
+    plain_scalar,
+)
 
 
 __all__ = ["PartitionSpan", "TclEmitter", "TCL_COUPLING_TOKENS_MIN_BUILD"]
@@ -248,7 +254,11 @@ def _fmt_value(v: Any) -> str:
 
     Booleans are coerced to ``1`` / ``0`` (OpenSees doesn't speak Python
     ``True``). Integers and floats use their ``repr`` (which preserves
-    enough digits for floats to round-trip).
+    enough digits for floats to round-trip). A numpy scalar or 0-d
+    array renders as the plain Python number (see
+    :func:`~apeGmsh.opensees.emitter.base.plain_scalar`, #1336), and a
+    subclass of ``int`` / ``float`` renders as its base value, never
+    through its own ``repr``.
     """
     if isinstance(v, bool):
         return "1" if v else "0"
@@ -256,10 +266,12 @@ def _fmt_value(v: Any) -> str:
         if "\\" in v or any(c.isspace() for c in v):
             return "{" + v + "}"
         return v
+    if isinstance(v, NUMPY_VALUE_TYPES):
+        return _fmt_value(plain_scalar(v))
     if isinstance(v, int):
-        return str(v)
+        return str(int(v))
     if isinstance(v, float):
-        return repr(v)
+        return repr(float(v))
     # Fallback — should not happen for the typed-emit boundary.
     return str(v)
 
@@ -563,9 +575,12 @@ class TclEmitter:
     #: Model ``ndm``, learned from :meth:`model`; ``None`` until then.
     #: Node coordinates are trimmed to it — see ``trim_coords_to_ndm``.
     _model_ndm: "int | None" = None
+    #: Trims nodes to ``_model_ndm`` and refuses a lossy trim (#1337).
+    _dropped_axes: DroppedAxisGuard = DroppedAxisGuard.BEFORE_MODEL
 
     def model(self, *, ndm: int, ndf: int) -> None:
         self._model_ndm = ndm
+        self._dropped_axes = DroppedAxisGuard(ndm)
         self._lines.append(f"model BasicBuilder -ndm {ndm} -ndf {ndf}")
 
     def node(
@@ -573,7 +588,7 @@ class TclEmitter:
     ) -> None:
         # A padded coordinate would swallow the -ndf flag below (and
         # -mass) in a 2-D deck — see trim_coords_to_ndm.
-        coords = trim_coords_to_ndm(coords, self._model_ndm)
+        coords = self._dropped_axes.trim(coords, tag)
         # Fast path for the dominant deck band (one line per mesh
         # node): plain-int tag + plain-float coords render via a single
         # f-string. ``{x!r}`` on an exact float is exactly what _join
@@ -1730,3 +1745,9 @@ class TclEmitter:
             f"if {{[catch {{system {primary}}} _err]}} "
             f"{{ system {fallback} }}"
         )
+
+    # -- Command channel (ADR 0114 D2/D3) ---------------------------------
+
+    def command(self, verb: str, *args: int | float | str) -> None:
+        command_row(verb)
+        self._lines.append(_join(verb, *args))

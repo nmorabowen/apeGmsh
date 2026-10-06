@@ -44,7 +44,7 @@ neutral zone; ignore what else is in the file.
 **Read this before reading any data.** Getting it wrong is the one
 mistake that produces plausible-looking garbage instead of an error.
 
-Versions are **semver strings**, not integers — `"2.34.0"`, stored as
+Versions are **semver strings**, not integers — `"2.35.0"`, stored as
 HDF5 variable-length UTF-8 string attributes. Each zone carries its own
 independent version; they do not share a number.
 
@@ -55,7 +55,7 @@ independent version; they do not share a number.
 | `schema_version` | — | **no** — legacy envelope |
 
 The neutral zone is gated by **`neutral_schema_version` alone**. At the
-time of writing the writer stamps `2.34.0`.
+time of writing the writer stamps `2.35.0`.
 
 `schema_version` is a back-compatibility envelope that predates the
 per-zone split. Its value is "whichever writer wrote last" — the
@@ -67,39 +67,48 @@ Note that a broker-only file still stamps `opensees_schema_version`,
 even though it has no `/opensees/` group. Its presence is not evidence
 that a solver zone exists; check for the group.
 
-### The two-version window
+### The floor rule
 
-A reader declares the version it was written against. Call that
-`R.major.R.minor`. Given a file at `F`:
+A reader declares the version it was written against, `R`, and the
+oldest version it still understands, its floor `L`. Given a file at `F`:
 
 | Condition | Behaviour |
 |---|---|
 | `F.major != R.major` | **refuse** |
-| `F.minor == R.minor` | accept |
-| `F.minor == R.minor - 1` | accept |
-| `F.minor < R.minor - 1` | **refuse** — too old |
+| `F.minor < L.minor` | **refuse** — too old |
+| `L.minor <= F.minor <= R.minor` | accept |
 | `F.minor > R.minor` | **refuse** — newer than the reader |
 
 Patch differences are always ignored.
 
-The window runs **backward only**. A current reader opens the previous
-minor's files; a reader older than the file refuses it. There is no
+The floor for the neutral zone is **`2.10.0`**: the layout split of the
+named-index groups into two sides, the last time required content moved.
+Every neutral minor from `2.10` up to the current one opens, so a
+`model.h5` written since then keeps working in a newer reader. The
+opensees zone's floor is `2.12.0` and the results zone's is `1.0.0`.
+The floor only moves up, and only with a major bump.
+
+The rule runs **backward only**. A current reader opens every file from
+its floor up; a reader older than the file refuses it. There is no
 forward tolerance, and that is deliberate: a newer minor may carry
 meaning the reader cannot see, and silently rendering a model wrong is
 worse than declining to render it.
 
 So: **on an unknown version, refuse visibly.** Show the user the file's
-version and the range you support. Never fall back to "parse what I
-recognise and hope" — the whole point of the window is that this
-failure mode is not available.
+version and the range you support, floor to current. Never fall back to
+"parse what I recognise and hope". The one deviation is the apeGmsh
+viewer app, which only reads and opens a newer file of the same major
+with a single warning, because installed apps lag the library by
+design. A new reader of your own should refuse.
 
 This is the rule apeGmsh's own reader enforces, in
 `opensees/_internal/schema_version.py` (`validate_zone_version`). The
-same rule, with the same window, governs the `/opensees/` bridge zone
+same rule, with its own floor, governs the `/opensees/` bridge zone
 via `opensees_schema_version` and the `/stages/` results zone via
 `results_schema_version`; a consumer that later reads those zones
 applies this section unchanged, once per zone, against that zone's own
-key.
+key and floor. The decision and its reasons are in
+[ADR 0113](https://github.com/nmorabowen/apeGmsh/blob/main/architecture/decisions/0113-compatibility-is-a-floor-per-zone.md).
 
 ### What a minor bump means for you
 
@@ -111,11 +120,14 @@ Which gives the compatibility promise: **ignore fields you do not
 recognise.** A dataset or attribute appearing that this page does not
 mention is a newer apeGmsh being additive, not a corrupt file. Skip it.
 
-The exception, and the reason the window exists at all: a minor bump
-that *restructures* required content walks the window forward and locks
-the prior minor out. That has happened once in the neutral zone (the
-`2.10.0` split of the named-index groups into two sides). Honour the
-window and you are safe from it.
+Two things sit outside "additive". A change to what an existing field
+*means* ships a reader shim in apeGmsh, keyed on the version that
+introduced it; the `ndm` attribute in `/meta` is the spatial dimension
+from `2.34.0` and was the mesh dimension before, and loads saved before
+`2.26.1` sit in one `default` case. A change to a required structure's
+layout is a **major** bump from now on. It has happened once in the
+neutral zone, as the `2.10.0` split, and that is why the floor sits
+there. A file below the floor is refused.
 
 ## Zone map
 
@@ -430,8 +442,8 @@ means you are reading a newer file, not a broken one. Skip it and carry
 on.
 
 **Refuse what you cannot understand.** The corollary. If
-`neutral_schema_version` falls outside your two-version window, stop and
-say so, showing the file's version and your supported range. Do not
+`neutral_schema_version` falls outside your supported range, stop and
+say so, showing the file's version and that range. Do not
 partially render.
 
 **Check yourself against the golden.** The conformance artifact is
@@ -449,8 +461,8 @@ hand-rolled.
 
 **A checklist for a new reader**, in the order the mistakes happen:
 
-1. Read `/meta`'s `neutral_schema_version`; validate the window; refuse
-   loudly if outside it.
+1. Read `/meta`'s `neutral_schema_version`; check it against your floor
+   and your own version; refuse loudly if outside them.
 2. Read `/nodes/ids` and `/nodes/coords`; build the id → row map.
 3. Read each `/elements/{type}`; resolve connectivity **through the
    map**, not by subtracting 1.

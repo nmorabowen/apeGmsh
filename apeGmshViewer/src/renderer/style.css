@@ -1,16 +1,8 @@
-:root {
-  --bg-0: #121418;
-  --bg-1: #1b1e24;
-  --panel: rgba(30, 33, 40, 0.92);
-  --line: rgba(255, 255, 255, 0.08);
-  --text: #e6e8ec;
-  --muted: #8b919c;
-  --accent: #f5c542;
-  --interp: #f0a04b;
-  --error: #ff6b6b;
-  --mono: "Cascadia Mono", "Consolas", ui-monospace, monospace;
-  color-scheme: dark;
-}
+/* Every colour and font is a custom property that src/theme/tokens.ts sets
+   on the document (applyTheme) from the office style; this sheet names no
+   colour of its own (test/tokens.test.ts). */
+
+:root { color-scheme: dark; }
 
 * { box-sizing: border-box; }
 
@@ -20,7 +12,7 @@ html, body {
   overflow: hidden;
   background: radial-gradient(ellipse at 50% 40%, var(--bg-1), var(--bg-0));
   color: var(--text);
-  font: 13px/1.45 "Segoe UI", system-ui, sans-serif;
+  font: 14px/1.4 var(--font);
 }
 
 #viewport { position: fixed; inset: 0; }
@@ -33,63 +25,82 @@ html, body {
   background: var(--panel); border: 1px solid var(--line);
 }
 #file-name { font-weight: 600; }
-#file-stats { color: var(--muted); font-size: 12px; }
+#file-stats { color: var(--muted); font-size: 13px; }
 
 #banner {
   position: fixed; top: 58px; left: 16px; max-width: 560px;
   padding: 8px 12px; border-radius: 9px;
-  background: rgba(70, 40, 20, 0.92); border: 1px solid var(--interp);
-  color: #ffd7a8; font-size: 12px;
+  background: var(--interp-wash); border: 1px solid var(--interp);
+  color: var(--interp-text); font-size: 13px;
 }
 #banner div + div { margin-top: 3px; }
 
 #legend {
   position: fixed; left: 16px; bottom: 16px; max-height: 45vh; overflow: auto;
-  padding: 10px 12px; border-radius: 10px; min-width: 180px;
+  padding: 10px 12px; border-radius: 10px; min-width: 200px;
   background: var(--panel); border: 1px solid var(--line);
 }
 #legend h3, #inspector h3 {
-  margin: 0 0 6px; font-size: 11px; font-weight: 600;
+  margin: 0 0 6px; font-size: 12px; font-weight: 600;
   letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted);
 }
 .legend-row { display: flex; align-items: center; gap: 8px; padding: 1px 0; }
-.chip { width: 11px; height: 11px; border-radius: 3px; flex: none; }
+.chip { width: 12px; height: 12px; border-radius: 3px; flex: none; }
+.chip.stripe { background-image: repeating-linear-gradient(135deg, transparent 0 3px, var(--bg-0) 3px 5px); }
+.chip.stripe2 { background-image: repeating-linear-gradient(45deg, transparent 0 2px, var(--bg-0) 2px 3px); }
 .legend-count { margin-left: auto; color: var(--muted); font-variant-numeric: tabular-nums; }
+.legend-note { color: var(--muted); font-size: 13px; max-width: 260px; margin: 4px 0 2px; }
+.legend-mode { display: flex; gap: 4px; margin: 0 0 8px; }
+.legend-mode button {
+  flex: 1; padding: 2px 8px; border-radius: 5px; cursor: pointer;
+  font: 600 12px var(--font); letter-spacing: 0.02em;
+  color: var(--text); background: var(--hover); border: 1px solid var(--line);
+}
+.legend-mode button.on { color: var(--accent-ink); background: var(--accent); border-color: var(--accent); }
 
-#inspector {
+/* The right rail (V2g, design brief on #1426): the inspector on top, the
+   sources below, never overlapping. The rail itself takes no clicks. */
+#rail {
   position: fixed; top: 14px; right: 14px; bottom: 14px; width: 470px;
+  display: flex; flex-direction: column; justify-content: flex-end; gap: 10px;
+  pointer-events: none;
+}
+#rail > * { pointer-events: auto; }
+#rail > [hidden] { display: none; }
+#inspector {
+  flex: 1 1 auto; min-height: 0;
   overflow: auto; padding: 14px; border-radius: 12px;
   background: var(--panel); border: 1px solid var(--line);
 }
 .problems {
   margin: 0 0 10px; padding: 8px 10px; border-radius: 8px;
-  background: rgba(255, 107, 107, 0.1); border: 1px solid rgba(255, 107, 107, 0.4);
-  color: var(--error); font-size: 12px;
+  background: var(--error-wash); border: 1px solid var(--error-line);
+  color: var(--error); font-size: 13px;
 }
 .node {
   margin: 0 0 10px; padding: 10px 11px; border-radius: 9px;
-  background: rgba(255, 255, 255, 0.03); border: 1px solid var(--line);
+  background: var(--faint); border: 1px solid var(--line);
 }
 .node-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; }
 .role {
-  font-size: 10px; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase;
-  padding: 1px 6px; border-radius: 5px; background: rgba(245, 197, 66, 0.14); color: var(--accent);
+  font-size: 11px; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase;
+  padding: 1px 6px; border-radius: 5px; background: var(--accent-wash); color: var(--accent);
 }
-.node-name { font-size: 14px; font-weight: 600; }
+.node-name { font-size: 15px; font-weight: 600; }
 .node-type { color: var(--muted); }
 .node-src { color: var(--muted); font: 11px var(--mono); margin: 2px 0 6px; overflow-wrap: anywhere; }
-.via { font-size: 12px; margin: 0 0 6px; color: var(--muted); }
+.via { font-size: 13px; margin: 0 0 6px; color: var(--muted); }
 .via b { color: var(--text); font-weight: 600; }
 table.fields { width: 100%; border-collapse: collapse; }
 table.fields td { padding: 3px 4px; vertical-align: top; border-top: 1px solid var(--line); }
 td.f-label { color: var(--muted); white-space: nowrap; width: 1%; padding-right: 12px; }
 td.f-value { font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
-.f-src { font: 10.5px var(--mono); color: #6f7682; overflow-wrap: anywhere; margin-top: 1px; }
+.f-src { font: 10.5px var(--mono); color: var(--source); overflow-wrap: anywhere; margin-top: 1px; }
 .tag-interp {
   display: inline-block; margin-left: 4px; padding: 0 5px; border-radius: 4px;
-  font: 600 10px "Segoe UI", sans-serif; color: #1b1e24; background: var(--interp);
+  font: 600 11px var(--font); color: var(--accent-ink); background: var(--interp);
 }
-.children { margin-left: 14px; padding-left: 10px; border-left: 1px dashed rgba(255, 255, 255, 0.12); }
+.children { margin-left: 14px; padding-left: 10px; border-left: 1px dashed var(--dashed); }
 
 #empty {
   position: fixed; inset: 0; display: grid; place-items: center; pointer-events: none;
@@ -97,14 +108,14 @@ td.f-value { font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
 #empty[hidden] { display: none; }
 .empty-card {
   padding: 26px 34px; border-radius: 14px; text-align: center;
-  border: 1.5px dashed rgba(255, 255, 255, 0.18); background: rgba(255, 255, 255, 0.02);
+  border: 1.5px dashed var(--drop-border); background: var(--faint);
 }
-.empty-title { font-size: 17px; font-weight: 600; }
+.empty-title { font-size: 18px; font-weight: 600; }
 .empty-sub { color: var(--muted); margin-top: 6px; }
 .empty-error { color: var(--error); margin-top: 10px; max-width: 520px; }
 code { font-family: var(--mono); }
 
-/* V2e: refusals, hidden groups, pins */
+/* refusals, hidden groups, pins */
 #banner .refused { color: var(--error); font-weight: 600; }
 .empty-refused { color: var(--error); margin-top: 10px; max-width: 520px; font-weight: 600; }
 .sibling { color: var(--muted); }
@@ -113,10 +124,10 @@ code { font-family: var(--mono); }
 #legend h3, #inspector h3 { display: flex; align-items: center; gap: 8px; }
 .legend-all, .pin {
   margin-left: auto; padding: 0 6px; border-radius: 4px; cursor: pointer;
-  font: 600 10px "Segoe UI", sans-serif; letter-spacing: 0; text-transform: none;
-  color: var(--text); background: rgba(255, 255, 255, 0.08); border: 1px solid var(--line);
+  font: 600 11px var(--font); letter-spacing: 0; text-transform: none;
+  color: var(--text); background: var(--hover); border: 1px solid var(--line);
 }
-.pin.pinned { color: #1b1e24; background: var(--accent); }
+.pin.pinned { color: var(--accent-ink); background: var(--accent); }
 
 /* V2f: phase axis, stale-geometry notice, go to source */
 #phase {
@@ -127,15 +138,43 @@ code { font-family: var(--mono); }
 #phase[hidden] { display: none; }
 .phase {
   padding: 2px 10px; border-radius: 6px; cursor: pointer;
-  font: 600 11px "Segoe UI", sans-serif; color: var(--muted);
+  font: 600 12px var(--font); color: var(--muted);
   background: transparent; border: 1px solid transparent;
 }
-.phase.active { color: #1b1e24; background: var(--accent); }
-#banner .notice { color: #ffd7a8; font-weight: 600; }
+.phase.active { color: var(--accent-ink); background: var(--accent); }
+#banner .notice { color: var(--interp-text); font-weight: 600; }
 .source {
   padding: 0 6px; border-radius: 4px; cursor: pointer;
   font: 600 10px var(--mono); letter-spacing: 0; text-transform: none;
-  color: var(--text); background: rgba(255, 255, 255, 0.08); border: 1px solid var(--line);
+  color: var(--text); background: var(--hover); border: 1px solid var(--line);
 }
 .source:disabled { cursor: default; color: var(--muted); opacity: 0.6; }
-.source-failed { color: var(--error); font-size: 12px; margin: 0 0 6px; }
+.source-failed { color: var(--error); font-size: 13px; margin: 0 0 6px; }
+
+/* V2g: the sources listing, below the inspector in #rail (design brief on
+   #1426). Capped at 40% of the rail while the inspector shows. */
+#sources {
+  flex: 0 1 auto; min-height: 0; max-height: 100%;
+  overflow: auto; padding: 10px 12px; border-radius: 10px;
+  background: var(--panel); border: 1px solid var(--line);
+}
+#inspector:not([hidden]) + #sources { max-height: 40%; }
+#sources h3 {
+  display: flex; align-items: center; gap: 8px;
+  margin: 0 0 6px; font-size: 12px; font-weight: 600;
+  letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted);
+}
+.sources-notice { color: var(--muted); font-size: 12px; margin: 0 0 6px; }
+.source-row {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center;
+  column-gap: 6px; padding: 3px 0; border-top: 1px solid var(--line);
+}
+/* A key wraps only at the <wbr> after each `/`, never inside a segment. */
+.source-key { font: 11px var(--mono); color: var(--text); overflow-wrap: normal; word-break: keep-all; }
+.source-zone, .source-row.synthesised .source-key { color: var(--muted); }
+.synth {
+  padding: 0 5px; border-radius: 4px;
+  font: 600 11px var(--font); color: var(--muted); background: none;
+  border: 1px dashed var(--muted);
+}
+.source-off, .source-row .source-failed { grid-column: 1 / -1; margin: 1px 0 0; }

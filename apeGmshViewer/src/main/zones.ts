@@ -7,7 +7,15 @@
 import { statSync } from "node:fs";
 import * as h5wasm from "h5wasm/node";
 import { readGeometry, type GeometryZone } from "../reader/geometry.ts";
-import { readProvenance, type ProvenanceZone } from "../reader/provenance.ts";
+import { filePath, isPseudoFile, readProvenance, type ProvenanceZone } from "../reader/provenance.ts";
+
+const isFile = (p: string): boolean => {
+  try {
+    return statSync(p).isFile();
+  } catch {
+    return false;
+  }
+};
 import type { H5Module } from "../reader/read.ts";
 
 const h5 = h5wasm as unknown as H5Module;
@@ -33,7 +41,11 @@ export async function openGeometry(path: string): Promise<GeometryAnswer> {
 export async function openProvenance(path: string): Promise<ProvenanceAnswer> {
   try {
     await h5wasm.ready;
-    return { ok: true, zone: readProvenance(h5, path) };
+    const zone = readProvenance(h5, path);
+    // Only main can see the disk: a source with no digest opens only when its
+    // path is a file now (provenance.ts, SourceSite.recorded).
+    if (zone) zone.present = zone.files.path.map((p, i) => !isPseudoFile(p) && isFile(filePath(zone, i)));
+    return { ok: true, zone };
   } catch (err) {
     return { ok: false, error: message(err) };
   }

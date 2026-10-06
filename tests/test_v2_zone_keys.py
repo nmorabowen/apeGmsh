@@ -68,7 +68,7 @@ REPO = Path(__file__).resolve().parents[1]
 def test_zone_registered_with_own_key(zone, key, current):
     assert _ZONE_KEY[zone] == key == f"{zone}_schema_version"
     assert reader_version(zone) == SchemaVersion.parse(current)
-    # Present key: read and accepted by the two-version window.
+    # Present key: read and accepted (it sits at the current version).
     got = read_zone_version({key: current}, zone)
     assert got == SchemaVersion.parse(current)
     validate_zone_version(got, reader_version(zone), zone=zone)
@@ -236,13 +236,29 @@ def _add_dummy_zones(path: Path) -> None:
         ent = geo.create_group("entities")
         ent.create_dataset("dim", data=np.array([3], dtype=np.int8))
         ent.create_dataset("tag", data=np.array([1], dtype=np.int32))
+        # A complete, empty /provenance (h5-schema.md, "/provenance"): the
+        # reader refuses a partial zone, so every table and column exists.
+        # Since V2d (#1307) the bridge write already carries the real
+        # zone (``base`` above hashed with it); the dummy replaces it.
+        if "provenance" in f:
+            del f["provenance"]
         prov = f.create_group("provenance")
-        rec = prov.create_group("records")
-        rec.create_dataset(
-            "path", data=np.array(["opensees/element/#1"], dtype=object),
-            dtype=h5py.string_dtype("utf-8"),
-        )
-        rec.create_dataset("seq", data=np.array([0], dtype=np.int32))
+        prov.attrs["base_dir"] = path.parent.as_posix()
+        for table, cols in (
+            ("files", {"path": str, "sha256": str, "kind": str}),
+            ("sites", {"file": int, "line": int, "function": str}),
+            ("records", {"path": str, "site": int, "script": int,
+                         "seq": int, "origin": str}),  # origin: 1.1.0
+        ):
+            grp = prov.create_group(table)
+            for name, kind in cols.items():
+                if kind is str:
+                    grp.create_dataset(
+                        name, data=np.array([], dtype=object),
+                        dtype=h5py.string_dtype("utf-8"))
+                else:
+                    grp.create_dataset(
+                        name, data=np.array([], dtype=np.int32))
         f["meta"].attrs[GEOMETRY_KEY] = GEOMETRY_CURRENT
         f["meta"].attrs[PROVENANCE_KEY] = PROVENANCE_CURRENT
 

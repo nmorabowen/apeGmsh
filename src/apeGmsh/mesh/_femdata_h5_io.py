@@ -85,7 +85,16 @@ __all__ = [
 
 
 #: Schema version stamped by :func:`write_fem_h5` and the standalone
-#: ``FEMData.to_h5(path)`` flow.  Phase 8.5 added the neutral zone
+#: ``FEMData.to_h5(path)`` flow.
+#:
+#: Reading the history below: the entries from 2.5.0 to 2.33.0 say "per
+#: ADR 0023's two-version reader window, readers tolerate N-1 and N".
+#: That was the rule when each minor shipped and the sentence is kept as
+#: the record. ADR 0113 retired the window: today a reader opens every
+#: minor from :data:`NEUTRAL_SCHEMA_FLOOR` (2.10.0) up to the current one,
+#: and refuses a newer minor (INV-4).
+#:
+#: Phase 8.5 added the neutral zone
 #: (`2.0.0 → 2.1.0`); Phase 8.6 added the ``fem_eids`` dataset under
 #: each ``/opensees/element_meta/{type_token}/`` group
 #: (`2.1.0 → 2.2.0`).  Phase 8.7 commit 2 added the
@@ -437,7 +446,20 @@ __all__ = [
 #: Broker-only files (no `/opensees/...`) still stamp the current
 #: minor — the field is additive and old readers tolerate its
 #: absence.
-NEUTRAL_SCHEMA_VERSION: str = "2.34.0"
+#:
+#: v2.35.0 (October 2026, #1338 — nodal load ``source``): additive —
+#: adds the ``source`` (utf8) column to ``nodal_load_payload_dtype``.
+#: It carries the ``kind`` of the definition a nodal load was reduced
+#: from (``"gravity"``, ``"line"``, ``"surface"``, ... —
+#: ``NodalLoadSource``), so the bridge's ``WarnBodyForceDoubleCount``
+#: guard can tell a reduced self-weight from a vertical footing load
+#: after the definitions are gone; ``""`` decodes to ``None``
+#: (unknown).  Presence-probed on read (``"source" in p.dtype.names``);
+#: a 2.34.x file lacks the column and decodes ``source=None``, which
+#: the guard treats as a possible gravity case (it warns, as every
+#: reader before this minor did).  An additive column still bumps the
+#: minor (ADR 0113 D5).
+NEUTRAL_SCHEMA_VERSION: str = "2.35.0"
 
 #: Oldest neutral minor the reader opens (ADR 0113 (#1303)): the B2 layout
 #: split. Every later minor is additive and presence-probed, or carries a
@@ -480,6 +502,11 @@ def write_fem_h5(
 
     from ..opensees._internal.lineage import write_lineage_attrs
 
+    # ADR 0112 D3: a session's snapshot carries /provenance.  Encoded
+    # before the file is opened, so an int32 overflow refuses before
+    # anything is written (h5-schema.md, "Integer policy").
+    provenance = _encode_provenance(fem, path)
+
     with h5py.File(path, "w") as f:
         write_meta(
             fem, f,
@@ -489,6 +516,8 @@ def write_fem_h5(
             ndf=ndf,
         )
         write_neutral_zone(fem, f)
+        if provenance is not None:
+            _write_provenance(f, *provenance)
         # ADR 0021 lineage — broker-only files carry just ``fem_hash``
         # (no ``/opensees/`` ⇒ no ``model_hash``).  The fem snapshot
         # is authoritative; recompute happens at read time per the
@@ -500,6 +529,121 @@ def write_fem_h5(
                 fem_hash = ""
             if fem_hash:
                 write_lineage_attrs(f["meta"], fem_hash=fem_hash)
+
+
+#: ``/provenance`` table -> its columns; the string ones are named in
+#: :data:`_PROVENANCE_STR_COLUMNS`, the rest are int32
+#: (``architecture/h5-schema.md``, "/provenance").
+_PROVENANCE_COLUMNS: dict[str, tuple[str, ...]] = {
+    "files": ("path", "sha256", "kind"),
+    "sites": ("file", "line", "function"),
+    "records": ("path", "site", "script", "seq", "origin"),
+}
+_PROVENANCE_STR_COLUMNS = frozenset(
+    {"path", "sha256", "kind", "function", "origin"})
+#: Columns a file below ``PROVENANCE_ORIGIN_FROM`` lacks; the reader fills
+#: them (``origin`` reads as ``"user"``, ``decode_columns``) instead of
+#: refusing the file.  From that version on they are required.
+_PROVENANCE_PRE_ORIGIN_COLUMNS = frozenset({"origin"})
+
+
+def _encode_provenance(
+    fem: "FEMData", path: str,
+) -> "tuple[dict[str, dict[str, list]], str] | None":
+    """``(columns, base_dir)`` for ``fem``'s ``/provenance``, or ``None``
+    when it carries none (no session extracted it, or a duck-typed test
+    double).  Raises ``ProvenanceOverflowError`` on an int32 overflow."""
+    from apeGmsh._internal.provenance import base_dir_for, encode_columns
+
+    from .FEMData import FEMData
+    if not isinstance(fem, FEMData) or fem.provenance is None:
+        return None
+    base_dir = base_dir_for(path)
+    return encode_columns(fem.provenance, base_dir), base_dir
+
+
+def _write_provenance(
+    f: Any, columns: "dict[str, dict[str, list]]", base_dir: str,
+) -> None:
+    """Write ``/provenance`` and stamp its zone key."""
+    from apeGmsh.opensees._internal.schema_version import (
+        PROVENANCE_KEY,
+        PROVENANCE_SCHEMA_VERSION,
+    )
+    str_dt = _vlen_utf8()
+    grp = f.create_group("provenance")
+    grp.attrs["base_dir"] = base_dir
+    for table, names in _PROVENANCE_COLUMNS.items():
+        sub = grp.create_group(table)
+        for name in names:
+            values = columns[table][name]
+            if name in _PROVENANCE_STR_COLUMNS:
+                sub.create_dataset(
+                    name, data=np.array(values, dtype=object).reshape(-1),
+                    dtype=str_dt)
+            else:
+                sub.create_dataset(
+                    name, data=np.asarray(values, dtype=np.int32).reshape(-1))
+    f["meta"].attrs[PROVENANCE_KEY] = PROVENANCE_SCHEMA_VERSION
+
+
+def _read_provenance(parent: Any, label: str) -> Any:
+    """Read ``/provenance`` under ``parent`` into a ``ProvenanceTable``,
+    or ``None`` when the file carries none."""
+    from apeGmsh._internal.provenance import decode_columns
+    from apeGmsh.opensees._internal.schema_version import (
+        PROVENANCE,
+        PROVENANCE_ORIGIN_FROM,
+        read_zone_version,
+        reader_version,
+        validate_zone_version,
+    )
+    from apeGmsh.opensees.emitter.h5_reader import MalformedH5Error
+
+    if "provenance" not in parent:
+        return None
+    version = read_zone_version(parent["meta"].attrs, PROVENANCE)
+    if version is None:
+        raise MalformedH5Error(
+            f"{label}: /provenance is present but /meta carries no "
+            f"provenance_schema_version")
+    validate_zone_version(
+        version, reader_version(PROVENANCE), zone=PROVENANCE)
+    pre_origin = (
+        (version.major, version.minor, version.patch) < PROVENANCE_ORIGIN_FROM
+    )
+    grp = parent["provenance"]
+    columns: dict[str, dict[str, list]] = {}
+    for table, names in _PROVENANCE_COLUMNS.items():
+        cols: dict[str, list] = {}
+        for name in names:
+            if table not in grp or name not in grp[table]:
+                if (pre_origin and table in grp
+                        and name in _PROVENANCE_PRE_ORIGIN_COLUMNS):
+                    continue  # below 1.1.0: decode_columns defaults it
+                raise MalformedH5Error(
+                    f"{label}: /provenance/{table}/{name} is missing"
+                    + (f" (required from provenance_schema_version "
+                       f"{'.'.join(map(str, PROVENANCE_ORIGIN_FROM))}, "
+                       f"this file is {version})"
+                       if name in _PROVENANCE_PRE_ORIGIN_COLUMNS else ""))
+            raw = grp[table][name][()].tolist()
+            cols[name] = (
+                [v.decode("utf-8") if isinstance(v, bytes) else str(v)
+                 for v in raw]
+                if name in _PROVENANCE_STR_COLUMNS
+                else [int(v) for v in raw]
+            )
+        if len({len(v) for v in cols.values()}) > 1:
+            raise MalformedH5Error(
+                f"{label}: /provenance/{table} columns differ in length")
+        columns[table] = cols
+    if "base_dir" not in grp.attrs:
+        raise MalformedH5Error(f"{label}: /provenance@base_dir is missing")
+    raw_base = grp.attrs["base_dir"]
+    base_dir = (raw_base.decode("utf-8") if isinstance(raw_base, bytes)
+                else str(raw_base))
+    return decode_columns(columns, base_dir)
 
 
 def write_neutral_zone_into_group(
@@ -911,8 +1055,7 @@ def _write_partitions(fem: "FEMData", f: Any) -> None:
 
     Added in neutral schema 2.5.0 (Phase 2 of the major refactor) so
     ``fem.partitions`` / ``select(partition=k)`` survive the H5
-    round-trip.  Per ADR 0023's two-version window, readers in 2.4.x
-    silently lack this group.
+    round-trip.  Readers in 2.4.x silently lack this group.
     """
     parts = getattr(fem.nodes, "_partitions", None) or {}
     if not parts:
@@ -1017,8 +1160,8 @@ def _write_parts(fem: "FEMData", f: Any) -> None:
 
     Added in neutral schema 2.5.0 (Phase 2 of the major refactor) so
     ``fem.nodes.select(target=part_label)`` / ``fem.elements.select
-    (target=part_label)`` survive the H5 round-trip.  Per ADR 0023's
-    two-version window, readers in 2.4.x silently lack this group.
+    (target=part_label)`` survive the H5 round-trip.  Readers in 2.4.x
+    silently lack this group.
     """
     node_map = getattr(fem.nodes, "_part_node_map", None) or {}
     elem_map = getattr(fem.elements, "_part_elem_map", None) or {}
@@ -2385,7 +2528,8 @@ def _write_nodal_loads(parent: Any, load_set: Any) -> None:
                 "node", str(int(rec.node_id)), "nodal",
                 (int(rec.node_id), tuple(float(x) for x in force),
                  tuple(float(x) for x in moment), rec.name or "",
-                 getattr(rec, "basis", None) or ""),
+                 getattr(rec, "basis", None) or "",
+                 rec.source or ""),
             )
         safe = str(pattern).replace("/", "_") or "default"
         parent.create_dataset(safe, data=rows)
@@ -2558,7 +2702,10 @@ def read_fem_h5(path: str, *, root: str = "/") -> "FEMData":
                 )
             parent = f[key]
             label = f"{path}{root}"
-        return read_neutral_zone_from_group(parent, label=label)
+        fem = read_neutral_zone_from_group(parent, label=label)
+        # ADR 0112 D3: the provenance the writing session captured.
+        fem.provenance = _read_provenance(parent, label)
+        return fem
 
 
 def read_neutral_zone_from_group(
@@ -2889,11 +3036,22 @@ def read_neutral_zone_from_group(
             raise MalformedH5Error(
                 f"{label}: /meta/session_id is malformed: {exc}"
             ) from exc
+    # ADR 0112 D1: carry ``/meta/model_name`` back, so a reloaded
+    # snapshot keeps the session's conventional artifact name; a file
+    # without the attr gives ``""`` (no session named it).
+    model_name = ""
+    if "model_name" in parent["meta"].attrs:
+        raw_name = parent["meta"].attrs["model_name"]
+        model_name = (
+            raw_name.decode("utf-8") if isinstance(raw_name, bytes)
+            else str(raw_name)
+        )
     rebuilt = FEMData(
         nodes=nodes, elements=elements, info=info,
         mesh_selection=mesh_selection,
         composed_from=composed_from,
         session_id=session_id,
+        model_name=model_name,
     )
 
     # B4 — verify /meta/snapshot_id matches the recomputed hash
@@ -4110,6 +4268,15 @@ def _read_loads(
                     if "basis" in (p.dtype.names or ())
                     else None
                 )
+                # ``source`` added in neutral schema 2.35.0 (#1338) —
+                # presence-probed; older files decode ``None`` (unknown),
+                # which the bridge's double-count guard treats as a
+                # possible gravity case.
+                source = (
+                    (_str(p["source"]) or None)
+                    if "source" in (p.dtype.names or ())
+                    else None
+                )
                 nodal.append(NodalLoadRecord(
                     pattern=_str(pattern_safe),
                     name=_opt_name(p),
@@ -4117,6 +4284,7 @@ def _read_loads(
                     force_xyz=force if any(np.isfinite(force)) else None,
                     moment_xyz=moment if any(np.isfinite(moment)) else None,
                     basis=basis,
+                    source=source,
                 ))
 
     if "element" in parent:

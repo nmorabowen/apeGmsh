@@ -14,8 +14,16 @@
 ### Goal
 <!-- One paragraph: what changes and why. Link the report section that motivates it. -->
 
+### Seams
+<!-- Semantic cards that touch a hub or write files only; delete otherwise. List each seam the change crosses: reload, shared namespace, a raise after registration, empty or degenerate names, partial writes. -->
+- reload:
+- shared namespace:
+- a raise after registration:
+- empty or degenerate names:
+- partial writes:
+
 ### Owned files
-<!-- The only files the worker may edit. -->
+<!-- The only files the worker may edit. Derive this list, never write it: paste the output of the verification grep run on origin/main untruncated, and check each cited path with `git ls-tree origin/main <path>` or `nav.py where <symbol>`. -->
 - `path::symbol`
 
 ### Append-only
@@ -33,6 +41,8 @@ Run exactly these commands, and paste a summary of the results in the PR body:
 - `<command>`
 
 If this is a fix, the regression test must fail with the fix reverted. Say so in the PR body.
+
+A ratchet or exception list pins a baseline (a count or a frozen set) and asserts current <= baseline; rejecting stale entries alone is not a ratchet. Raising the baseline is a maintainer gate (PROGRAM.md §4).
 
 ### Stop condition
 <!-- When to stop and report instead of widening scope. -->

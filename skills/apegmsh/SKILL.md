@@ -57,6 +57,7 @@ has no hit **and** you are changing apeGmsh itself.
 | Task | Read only |
 |---|---|
 | First script / session skeleton | `references/workflows.md` |
+| Writing a model script (shape, naming, checks) | `references/model-scripts.md` (rules + the one nearest reference script) |
 | Public composite signature | MCP `lookup(symbol)` or `python -m apeGmsh.studio.lookup SYMBOL` |
 | Public API map (headings) | `references/api-cheatsheet.md` (matching heading) |
 | FEMData / `model.h5` | `references/fem-broker.md` |
@@ -84,6 +85,7 @@ What each file contains (do not read them all):
 - `interop.md` — ETABS / analytical import
 - `section-properties.md` — `SectionProperties`, fiber handoff
 - `workflows.md` — end-to-end patterns (not a forced pipeline)
+- `model-scripts.md` — Script English rules + reference scripts (truss, 3-D frame, staged footing)
 - `gotchas.md` — anti-patterns
 - `ladruno.md` — fork-only emit/read
 
@@ -361,9 +363,9 @@ These are the anti-hallucination guardrails — the removed/renamed surfaces an
 agent most often gets wrong. Everything quantitative (schema integers, full
 signatures) lives in the references.
 
-- **Version is v2.0.0** (`pyproject.toml`). A stale editable install may print
-  `v1.6.0` in the banner — trust the source, not the banner. Anything claiming
-  "v1.0" is stale. v2.0.0 shipped the three-broker chain
+- **Version is v2.0.0** (`pyproject.toml`). A stale editable install may report
+  `v1.6.0` as `apeGmsh.__version__` — trust the source, not the install.
+  Anything claiming "v1.0" is stale. v2.0.0 shipped the three-broker chain
   `FEMData ⊂ OpenSeesModel ⊂ Results`, auto MP-constraint emission, and deleted
   `BindError`.
 - **Work from the latest apeGmsh.** At session open, pull (or upgrade) the
@@ -380,10 +382,13 @@ signatures) lives in the references.
   `results.viewer()` / `results.session()`. `ResultsViewer` is **not** an
   export of `apeGmsh` or `apeGmsh.viewers` — importing it from either
   raises `ImportError`; the post-solve document is a `ResultsSession`.
+- **Removed (ADR 0116):** the plotly preview (`apeGmsh.preview`,
+  `g.model.preview`, `g.mesh.preview`), `GeomTransfViewer`,
+  `apeGmsh.sensitivity` and the import banner. Inline pictures are
+  `g.plot` (matplotlib) or `render(...)` stills.
 - **Sidecar modules** (separate imports, NOT session composites):
   `from apeGmsh.hpc import Cluster, Job` (remote SLURM, pairs with
-  `ops.run_remote`), `from apeGmsh.sensitivity import Sensitivity` (FD
-  gradient/calibration), `from apeGmsh.studio import SelectionEnvelope`
+  `ops.run_remote`), `from apeGmsh.studio import SelectionEnvelope`
   (`python -m apeGmsh.studio script.py --phase model` — stops before
   `generate()`; `.apegmsh/selection.json` + `names.json` + `runs.jsonl`;
   `--status` inspects them, ADR 0095). Details in `api-cheatsheet.md`.

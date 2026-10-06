@@ -11,7 +11,7 @@ import math
 
 import pytest
 
-from apeGmsh.opensees.apesees import (
+from apeGmsh.opensees.procedures._explicit import (
     _dtcr_or_raise,
     _explicit_substep_count,
 )

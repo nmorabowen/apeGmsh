@@ -1,6 +1,6 @@
 # ADR 0093 — `g.constraints.interface()`: oriented coincident-pair zeroLength interface
 
-**Status:** Proposed (2026-08-12) — driven by the Cerro Lindo SSI program
+**Status:** Accepted (2026-08-12) — driven by the Cerro Lindo SSI program
 (`Informe No3/Project/ADR/ADR-0005-ssi-squeezing-interaction-model.md` D1.3 /
 D4 / D8.0): a steel arch (`dispBeamColumn` wire) node-for-node coincident with
 a tunnel-face continuum boundary needs a **unilateral** (compression-only,
@@ -13,6 +13,8 @@ for that campaign, not a convenience. Three scope decisions were taken at
 sign-off of the plan: **declarative per-area laws** (not opensees primitives
 in the verb), **full partitioned support in v1**, and **2D line masters first**
 (3D surface masters refused loudly, deferred).
+
+**Accepted 2026-10-04** (T week 1 status batch, #1202).
 
 **Adversarially reviewed same day** (top-tier probe against the fork source
 and this repo). Three findings refuted the draft and are folded in below:
@@ -316,6 +318,14 @@ axes from the master face geometry, per-pair tributary-scaled materials.
      Folding pattern `sp` into the ghost stream is a named follow-up;
      until then the emit refuses loudly, advising
      `uncuttable_elements=`, `ops.fix`, or serial emit.
+
+  *Note, 2026-10-05 ([ADR 0114](0114-the-archive-is-the-program.md) D4
+  amendment, K1-3d, #1445).* The up-front tag pre-pass
+  (`allocate_interface_tags`) moves into the build-time tag plan
+  (`_internal/tag_plan.py::plan_tags`); the owner rule above is unchanged.
+  The conditional in item 1 ends with K1-3d S7, which numbers partitioned
+  decks in flat order: flat and partitioned interface tags then match
+  unconditionally, and the drift pin flips to equality.
 - **INV-6 — staged: claimable by name, emitted on the equilibrated ground.**
   `g.constraints.interface(..., name="RockLinerInterface")` +
   `s.interface(name="RockLinerInterface")` inside a stage claims the records

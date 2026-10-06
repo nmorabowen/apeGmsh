@@ -156,8 +156,10 @@ reads with `Results.from_mpco(path, fem=fem, model_h5=model_h5)`.
 !!! note "Two things the MPCO path needs"
     - **`model_h5=`** — an MPCO file carries only a *partial* model (no
       physical-group regions), so `from_mpco` needs a sibling `model.h5`
-      (written by `ops.h5(...)`) to recover the structural side. Pass
-      `fem=` too so name-based queries (`pg="RoofL"`) resolve.
+      (written by `ops.h5(...)`) to recover the structural side. Its
+      FEMData and `ops.stage()` names are bound too, so `pg="RoofL"` and
+      `results.stage("gravity")` resolve from files alone; `fem=` is
+      optional and wins when given.
     - **Local disk** — write the `.mpco` to local disk and `wipe()` in the
       same process before reading it. Pointing an MPCO recorder at a synced
       virtual drive (OneDrive / Dropbox / SeaDrive) can crash the kernel on

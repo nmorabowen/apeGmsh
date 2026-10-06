@@ -31,6 +31,8 @@ The orchestrator:
 
 The orchestrator **never implements**, and its context stays small. It reads issue text and worker reports of at most 300 words.
 
+**Quality first, then token-efficient.** Run one worker per slice and continue it with SendMessage rather than starting fresh. Use the cheap pinned roles for measurement and mechanical work. Navigate with `nav.py` and ranged reads, never whole large files. Batch `gh --json` queries, or use `git log --first-parent`, instead of many single calls. Keep reports to 300 words or fewer, file side-quests as issues, and run at most 3–4 sessions at once.
+
 ## 2. Roster
 
 Model and effort are pinned in `.claude/agents/prog-*.md`, so routing depends on the slice type, not on per-call judgment.
@@ -77,6 +79,7 @@ Model and effort are pinned in `.claude/agents/prog-*.md`, so routing depends on
 | #1200 | S Hub splits |
 | #1201 | K Archive is the program |
 | #1202 | T Weekly triage |
+| #1372 | R Script English (readable model scripts) |
 
 **Slice issues** carry the labels `program`, `slice` and `chain:<X>`, plus either `mechanical` or `semantic`. The body is `internal_docs/program/slice_card.md`, filled in. Close the slice when its PR lands.
 
@@ -143,6 +146,7 @@ The full link specs are in the chain issues.
 | V0 → V5 | apeGmshViewer (ADR 0112): zone + state-store design → P0 spike → unconditional write, `/geometry`, provenance → readable stages → results → delete the Qt viewers | V0 ratified; K1 for V3; human gate at V5 |
 | S1 → S3 | `_StageBuilder` + procedures → `build/` layers → `nd`/compose/h5io | C2 + C3; S1 must need ≤1 fix in 7 days |
 | K0 → K4 | `VERBS` design → archive completeness → round-trip oracle → fork loader (KC1–6) → dated flip | C1 + C2; F2 for K3 |
+| R0 → R6 | Silent-defect follow-ups → read-back-by-label ADR (architect pair) → implement it → stage/solver ergonomics · advisory model-script lint → re-cut the rule card → validation loop | R1 ratified and the `apesees.py` lock free for R2; R2 + R3 for R5; human gate at R6 |
 
 **Waves:**
 
@@ -153,6 +157,7 @@ The full link specs are in the chain issues.
 | 3 | F2 · N2 · K0/K1 · S1 · X2 |
 | 4 and later | K2 · S2 · X3 · F3 · X4 · N3 · S3 |
 | any time | V1 (no `src/` change); V0 beside K0 |
+| after ratification | R0 · R1 · R4 in parallel; R2/R3 after R1; R5 → R6 |
 
 Run at most 2–3 orchestrator sessions at once. Put the parallelism inside each session.
 
@@ -181,20 +186,21 @@ All `prog-*` agents follow this protocol.
 2. **Stay in scope.** Edit only the files the card says you own. Never read a file over 2,000 lines whole: use `python scripts/nav.py map|at|where|refs|family` once it exists, otherwise grep an outline and read ranges.
 3. **Python.** Use `C:\Users\nmora\venv\opensees_venv\Scripts\python.exe`. Probes need `PYTHONPATH=<your worktree>/src`, because the editable install points at another checkout. Running `pytest` from the worktree root is fine. Never import openseespy or opensees inside the shared pytest process unless the card calls for a live test.
 4. **Verify.** Run the card's commands exactly. A fix must prove its regression test fails with the fix reverted, and the PR body must say so. Warn-as-contract changes are verified with `pytest -W error::<Category>`.
-5. **Land-ready PR.**
+5. **Survive the watchdog.** Tool calls die at 600 s and sessions at the account or rate limit; work has survived only when it was pushed. Push the branch before any long step (an empty skeleton commit is fine), commit WIP after each verified step, and `git push` before every long run (suite, build, review wait). Open the PR when verification is done. Keep scratch files (for example `pr_body.md`) inside your own worktree, never in a shared scratchpad. Run long commands in the background with a pid file and poll; never pipe the primary command.
+6. **Land-ready PR.**
    - Commit with the attribution trailer your harness specifies.
    - Open the PR with `gh pr create --base main --body-file -`.
    - The body lists `Slice: #<n>`, `Author-model: <model>`, `Class: mechanical|semantic`, and a verification summary.
    - Add the CHANGELOG entry as `internal_docs/changelog_workflow.md` currently specifies.
-6. **Never:**
+7. **Never:**
    - merge;
    - push to `main`;
    - use `--auto`;
    - touch `C:\Users\nmora\Github\OpenSees_Compile\OpenSees`;
    - edit outside your owned files;
    - raise a ratchet baseline.
-7. **Report.** Send the orchestrator at most 300 words: the PR URL, what changed, the verification result, risks and follow-ups. Long material goes in the PR body.
-8. **If blocked,** stop and report rather than improvise. That covers a red gate, an ambiguous card, or scope that must grow.
+8. **Report.** Send the orchestrator at most 300 words: the PR URL, what changed, the verification result, risks and follow-ups. Long material goes in the PR body.
+9. **If blocked,** stop and report rather than improvise. That covers a red gate, an ambiguous card, or scope that must grow.
 
 ## 8. Kill criteria and KPIs
 
@@ -209,6 +215,7 @@ The kill criteria are measured weekly by the triage (#1202). The fallback in eve
 | A shadow registry or path reaches 30 days without a flip | Delete it. S3's families list is exempt: it is gate configuration. |
 | The fork lane is not green within 30 days of the pin | Make an explicit C-or-D decision. |
 | The index-touch share is not below 20% 30 days after fragments ship | Fragments have failed. |
+| The median ready-to-merge time, or the wait in the hub-lock queue, doubles against its first measurement for 2 consecutive weeks | T reviews the gates that cost the time (`gates.md`) and narrows or retires them. |
 
 **K3-only criteria (KC1–KC6):**
 - KC1: 14 consecutive green `live-fork` nights before any loader PR.
@@ -231,6 +238,10 @@ The kill criteria are measured weekly by the triage (#1202). The fallback in eve
 | Private cross-package imports | 48% |
 | `live-fork` green streak | 0 |
 | Legacy viewer LOC | 23.9k |
+| `src/` Python lines | 301.7k |
+| Line count of each hub file | `apesees.py` 14,181 |
+
+The structure KPIs are a KPI, never a hard gate; contracts are constrained, internals stay fluid.
 
 ## 9. Next-link chip prompt
 

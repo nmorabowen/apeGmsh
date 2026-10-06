@@ -1,6 +1,6 @@
 # ADR 0068 — Constraint-based non-matching tie via `equationConstraint` (EQ_Constraint)
 
-**Status:** Proposed (2026-06-20).  Extends ADR 0022 (MP-constraint
+**Status:** Accepted (2026-06-20).  Extends ADR 0022 (MP-constraint
 emission fan-out) with a **sixth** `Emitter` Protocol method and a second
 *enforcement route* for the surface-coupling constraints (`tie`,
 `tied_contact`).  Threads through ADR 0035/0036 (`ASDEmbeddedNodeElement`
@@ -11,6 +11,8 @@ with ADR 0066 (H5DRM authoring) — the constraint route is what makes a
 apeGmsh geometry change (the projection + shape-function machinery is
 reused verbatim); the fork OpenSees side is **already shipped** (see
 Context).
+
+**Accepted 2026-10-04** (T week 1 status batch, #1202).
 
 ## Context
 

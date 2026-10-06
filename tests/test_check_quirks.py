@@ -932,3 +932,600 @@ def test_doc_path_resolves_a_symbol_in_its_scope(tmp_path: Path) -> None:
     assert "has no class `Nope`" in found[1].message
     assert "defines no `missing` in class Cls" in found[2].message
     assert "cannot be checked for `a.b.c`" in found[3].message
+
+
+# --- ratchet-baseline: a shrink-only list that can still grow (#1240) --------
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+
+PRE_FIX_EXCEPTIONS = '''\
+"""Gate configuration. ``EXCEPTIONS`` is a ratchet: it may only shrink."""
+EXCEPTIONS: dict[str, str] = {
+    "apeGmsh.opensees.integration:Lobatto": "no family",
+}
+'''
+
+
+def _real(rel: str) -> str:
+    return (REPO_ROOT / rel).read_text(encoding="utf-8")
+
+
+def test_ratchet_baseline_flags_the_pre_fix_exceptions_shape(tmp_path: Path) -> None:
+    # The shape of tests/families.py when #1232 shipped it (0877f388, before the baseline).
+    _write(tmp_path, "tests/families.py", PRE_FIX_EXCEPTIONS)
+    assert _found(tmp_path) == ["ratchet-baseline:families.py:2"]
+
+
+@pytest.mark.parametrize(
+    "assign",
+    [
+        "EXTRAS_ONLY = frozenset({'a'})",
+        "ALLOWLIST = ['a']",
+        "GRANDFATHERED = ('a',)",
+        "EXCEPTIONS = {'a'}",
+        "EXCEPTIONS: set[str] = {'a'}",
+    ],
+)
+def test_ratchet_baseline_flags_every_list_shape(tmp_path: Path, assign: str) -> None:
+    _write(tmp_path, "tests/a.py", assign + "\n")
+    assert [f.rule for f in quirks.scan(tmp_path)] == ["ratchet-baseline"]
+
+
+@pytest.mark.parametrize("rel", ["tests/families.py", "tests/opensees/unit/test_element_capability_unknown.py"])
+def test_ratchet_baseline_passes_the_fixed_files_from_main(tmp_path: Path, rel: str) -> None:
+    _write(tmp_path, rel, _real(rel))
+    assert [f for f in quirks.scan(tmp_path) if f.rule == "ratchet-baseline"] == []
+
+
+def test_ratchet_baseline_passes_other_names_and_non_literals(tmp_path: Path) -> None:
+    _write(tmp_path, "tests/a.py", "EXCEPTIONS_BASELINE = 3\nOTHER = {'a'}\nEXCEPTIONS = build()\n")
+    assert _found(tmp_path) == []
+
+
+def test_ratchet_baseline_is_scoped_to_tests(tmp_path: Path) -> None:
+    _write(tmp_path, "src/apeGmsh/mesh/a.py", "EXCEPTIONS = {'a'}\n")
+    assert _found(tmp_path) == []
+
+
+def test_ratchet_baseline_waiver_suppresses_one_site(tmp_path: Path) -> None:
+    _write(
+        tmp_path,
+        "tests/a.py",
+        "# apegmsh-lint: ratchet-baseline-ok a fixed table, not a ratchet.\nALLOWLIST = {'a'}\n",
+    )
+    assert _found(tmp_path) == []
+
+
+# --- qt-process-isolation: Qt + a thread in the shared process (#1242) -------
+
+B6_BUG_COMMIT = "8269206d"
+B6 = "tests/sections/test_builder_gui_b6.py"
+
+
+def _b6_at(commit: str) -> str:
+    import subprocess
+
+    done = subprocess.run(
+        ["git", "show", f"{commit}:{B6}"], cwd=REPO_ROOT, capture_output=True, text=True, encoding="utf-8"
+    )
+    if done.returncode != 0:
+        pytest.skip(f"{commit} is not in this clone")
+    return done.stdout
+
+
+def test_qt_process_isolation_flags_b6_at_the_commit_that_had_the_bug(tmp_path: Path) -> None:
+    _write(tmp_path, B6, _b6_at(B6_BUG_COMMIT))
+    assert [f.rule for f in quirks.scan(tmp_path)] == ["qt-process-isolation"]
+
+
+def test_qt_process_isolation_passes_b6_on_main(tmp_path: Path) -> None:
+    _write(tmp_path, B6, _real(B6))
+    assert quirks.scan(tmp_path) == []
+
+
+QT_THREAD = '''\
+import threading
+import pytest
+{mark}
+def test_it():
+    qt = pytest.importorskip("qtpy.QtWidgets")
+    threading.Thread(target=print).start()
+'''
+
+
+# Built by concatenation so this file never holds the literal qt marker that
+# test_qt_lane_coverage scans for (#1241); the runtime strings are unchanged.
+_QT = "pytest.mark." + "qt"
+
+
+@pytest.mark.parametrize(
+    ("mark", "flagged"),
+    [
+        ("", True),
+        ("pytestmark = pytest.mark.slow", True),
+        (f"pytestmark = {_QT}", False),
+        ("pytestmark = [pytest.mark.subprocess]", False),
+        (f"pytestmark: list = [pytest.mark.slow, {_QT}]", False),
+    ],
+)
+def test_qt_process_isolation_needs_a_module_level_mark(tmp_path: Path, mark: str, flagged: bool) -> None:
+    _write(tmp_path, "tests/a.py", QT_THREAD.format(mark=mark))
+    assert [f.rule for f in quirks.scan(tmp_path)] == (["qt-process-isolation"] if flagged else [])
+
+
+@pytest.mark.parametrize(
+    ("source", "flagged"),
+    [
+        ("import threading\ndef test_it():\n    threading.Thread(target=print)\n", False),  # a thread, no Qt
+        ("from qtpy import QtWidgets\ndef test_it():\n    pass\n", False),                  # Qt, no thread
+        (
+            "from apeGmsh.sections._properties import PropertiesController\n"
+            "def test_it():\n    PropertiesController()\n",
+            False,  # the _properties worker is a thread only: no Qt binding, not the #1242 class
+        ),
+    ],
+)
+def test_qt_process_isolation_needs_both_halves(tmp_path: Path, source: str, flagged: bool) -> None:
+    _write(tmp_path, "tests/a.py", source)
+    assert [f.rule for f in quirks.scan(tmp_path)] == (["qt-process-isolation"] if flagged else [])
+
+
+def test_qt_process_isolation_is_scoped_to_tests(tmp_path: Path) -> None:
+    _write(tmp_path, "src/apeGmsh/viewers/a.py", QT_THREAD.format(mark=""))
+    assert _found(tmp_path) == []
+
+
+def test_qt_process_isolation_passes_test_properties_from_main(tmp_path: Path) -> None:
+    rel = "tests/sections/test_properties.py"
+    _write(tmp_path, rel, _real(rel))
+    assert quirks.scan(tmp_path) == []
+
+
+# --- compose-streams: keyed by package glob, so a split keeps the rule -------
+
+
+@pytest.mark.parametrize(
+    "rel",
+    [
+        "src/apeGmsh/mesh/_compose/_rebuild.py",       # _compose.py became a package
+        "src/apeGmsh/mesh/_femdata_h5_io/_nodes.py",   # the h5 I/O became a package
+        "src/apeGmsh/mesh/_femdata_h5/_elements.py",   # or was split under a new name
+    ],
+)
+def test_compose_streams_fires_at_a_post_split_path(tmp_path: Path, rel: str) -> None:
+    _write(tmp_path, "src/apeGmsh/mesh/FEMData.py", FEMDATA)
+    _write(tmp_path, rel, "new = ElementComposite(groups=g, physical=p)\n")
+    assert [f.rule for f in quirks.scan(tmp_path)] == ["compose-streams"]
+
+
+def test_compose_streams_passes_a_complete_rebuild_at_a_post_split_path(tmp_path: Path) -> None:
+    _write(tmp_path, "src/apeGmsh/mesh/FEMData.py", FEMDATA)
+    _write(tmp_path, "src/apeGmsh/mesh/_compose/_rebuild.py", "new = ElementComposite(g, p, contacts=c, embed_ties=e)\n")
+    assert _found(tmp_path) == []
+
+
+def test_compose_streams_glob_leaves_other_mesh_modules_alone(tmp_path: Path) -> None:
+    _write(tmp_path, "src/apeGmsh/mesh/FEMData.py", FEMDATA)
+    _write(tmp_path, "src/apeGmsh/mesh/_femdata_hash.py", "new = ElementComposite(groups=g, physical=p)\n")
+    _write(tmp_path, "src/apeGmsh/mesh/_other.py", "e = ElementComposite(g, p)\n")
+    assert _found(tmp_path) == []
+
+
+# --- stale-patch-target: a string target no longer in src/ -------------------
+
+PATCH_SRC = """\
+    from other import reexported
+
+    CONSTANT = 1
+
+    def helper():
+        pass
+
+    class Base:
+        inherited = 1
+
+    class Widget:
+        def method(self):
+            self.attr = 1
+
+    class Child(Base):
+        pass
+"""
+
+
+def _patch_tree(tmp_path: Path, test_source: str) -> Path:
+    _write(tmp_path, "src/apeGmsh/mesh/_mod.py", PATCH_SRC)
+    _write(tmp_path, "src/apeGmsh/mesh/__init__.py", "from ._mod import helper\n")
+    _write(tmp_path, "tests/test_a.py", test_source)
+    return tmp_path
+
+
+@pytest.mark.parametrize(
+    "call",
+    [
+        'patch("apeGmsh.mesh._mod.gone")',                                  # the name was removed
+        'mock.patch("apeGmsh.mesh._old.helper")',                           # the module moved
+        'monkeypatch.setattr("apeGmsh.mesh._mod.gone", 1)',                 # same, via monkeypatch
+        'patch("apeGmsh.mesh._mod.Widget.gone")',                           # a class member removed
+        'patch("apeGmsh.nowhere.helper")',                                  # the package is gone
+        'mocker.patch("apeGmsh.mesh.missing")',                             # not in the package __init__
+    ],
+)
+def test_stale_patch_target_flags_a_target_that_does_not_resolve(tmp_path: Path, call: str) -> None:
+    _patch_tree(tmp_path, f"def test_it(monkeypatch, mocker):\n    {call}\n")
+    found = quirks.scan(tmp_path)
+    assert [f.rule for f in found] == ["stale-patch-target"]
+    assert call.split('"')[1] in found[0].message
+
+
+@pytest.mark.parametrize(
+    "call",
+    [
+        'patch("apeGmsh.mesh._mod.helper")',            # a def
+        'patch("apeGmsh.mesh._mod.CONSTANT")',          # an assignment
+        'patch("apeGmsh.mesh._mod.reexported")',        # an import re-export
+        'patch("apeGmsh.mesh._mod.Widget")',            # a class
+        'patch("apeGmsh.mesh._mod.Widget.method")',     # a method
+        'patch("apeGmsh.mesh._mod.Widget.attr")',       # a self attribute
+        'patch("apeGmsh.mesh._mod.Child.inherited")',   # inherited: a base the file does not show
+        'patch("apeGmsh.mesh.helper")',                 # re-exported by the package __init__
+        'patch("apeGmsh.mesh._mod")',                   # a module
+        'patch("apeGmsh.mesh")',                        # a package
+        'patch("os.path.join")',                        # not first-party
+        'patch("gmsh.model.add")',                      # third party
+        'monkeypatch.setattr("apeGmsh.mesh._mod.helper", 1)',
+        'monkeypatch.setattr(obj, "gone", 1)',          # an object, not a string target
+        'patch(target)',                                # a dynamic target
+        'patch("apeGmsh.mesh._mod." + name)',           # computed
+        'patch.object(mod, "gone")',                    # not a string target
+    ],
+)
+def test_stale_patch_target_passes_a_target_that_resolves_or_is_unreadable(tmp_path: Path, call: str) -> None:
+    _patch_tree(tmp_path, f"def test_it(monkeypatch, mocker, obj, target, name, mod):\n    {call}\n")
+    assert _found(tmp_path) == []
+
+
+def test_stale_patch_target_fires_at_a_post_split_path(tmp_path: Path) -> None:
+    # _mod.py became a package whose __init__ does not re-export helper: the old string is stale.
+    _write(tmp_path, "src/apeGmsh/mesh/_mod/__init__.py", "from ._impl import other\n")
+    _write(tmp_path, "src/apeGmsh/mesh/_mod/_impl.py", "def helper():\n    pass\n\ndef other():\n    pass\n")
+    _write(tmp_path, "tests/test_a.py", 'def test_it():\n    patch("apeGmsh.mesh._mod.helper")\n')
+    assert [f.rule for f in quirks.scan(tmp_path)] == ["stale-patch-target"]
+    _write(tmp_path, "tests/test_a.py", 'def test_it():\n    patch("apeGmsh.mesh._mod._impl.helper")\n')
+    assert _found(tmp_path) == []
+
+
+def test_stale_patch_target_stays_silent_when_a_module_can_supply_any_name(tmp_path: Path) -> None:
+    _write(tmp_path, "src/apeGmsh/mesh/_mod.py", "from ._impl import *\n")
+    _write(tmp_path, "src/apeGmsh/mesh/_lazy.py", "def __getattr__(name):\n    raise AttributeError(name)\n")
+    _write(tmp_path, "tests/test_a.py", 'def test_it():\n    patch("apeGmsh.mesh._mod.x")\n    patch("apeGmsh.mesh._lazy.y")\n')
+    assert _found(tmp_path) == []
+
+
+def test_stale_patch_target_reads_a_multiline_with_block(tmp_path: Path) -> None:
+    _patch_tree(tmp_path, """\
+        def test_it():
+            with patch(
+                "apeGmsh.mesh._mod.gone",
+                return_value=1,
+            ):
+                pass
+        """)
+    assert _found(tmp_path) == ["stale-patch-target:test_a.py:2"]
+
+
+def test_stale_patch_target_is_scoped_to_tests(tmp_path: Path) -> None:
+    _patch_tree(tmp_path, "x = 1\n")
+    _write(tmp_path, "src/apeGmsh/mesh/_user.py", 'patch("apeGmsh.mesh._mod.gone")\n')
+    assert _found(tmp_path) == []
+
+
+def test_stale_patch_target_waiver_suppresses_one_site(tmp_path: Path) -> None:
+    _patch_tree(tmp_path, """\
+        def test_it():
+            # apegmsh-lint: stale-patch-target-ok the module is generated at import time
+            patch("apeGmsh.mesh._mod.gone")
+            patch("apeGmsh.mesh._mod.gone2")
+        """)
+    assert _found(tmp_path) == ["stale-patch-target:test_a.py:4"]
+
+
+def test_stale_patch_target_stale_waiver_is_a_finding(tmp_path: Path) -> None:
+    _patch_tree(tmp_path, """\
+        def test_it():
+            # apegmsh-lint: stale-patch-target-ok was dynamic once
+            patch("apeGmsh.mesh._mod.helper")
+        """)
+    assert _found(tmp_path) == ["waiver:test_a.py:2"]
+
+
+def test_stale_patch_target_passes_every_target_on_main() -> None:
+    found = [f for f in quirks.scan(quirks.REPO) if f.rule == "stale-patch-target"]
+    assert found == []
+
+
+# --- raw-meta-ndm: #1405, fabfa042 -------------------------------------------
+
+NDM_BUG_COMMIT = "fabfa042"
+NDM_SITES = {
+    "src/apeGmsh/opensees/model_data.py": 486,
+    "src/apeGmsh/results/capture/_domain.py": 652,
+    "src/apeGmsh/opensees/emitter/h5_reader.py": 514,
+}
+
+
+def _file_at(commit: str, rel: str) -> str:
+    import subprocess
+
+    done = subprocess.run(
+        ["git", "show", f"{commit}:{rel}"], cwd=REPO_ROOT, capture_output=True, text=True, encoding="utf-8"
+    )
+    if done.returncode != 0:
+        pytest.skip(f"{commit} is not in this clone")
+    return done.stdout
+
+
+def test_raw_meta_ndm_flags_the_three_raw_reads_at_the_commit_that_had_them(tmp_path: Path) -> None:
+    for rel in NDM_SITES:
+        _write(tmp_path, rel, _file_at(NDM_BUG_COMMIT, rel))
+    found = {f.path: f.line for f in quirks.scan(tmp_path) if f.rule == "raw-meta-ndm"}
+    assert found == NDM_SITES
+
+
+def test_raw_meta_ndm_is_silent_on_main() -> None:
+    assert [f for f in quirks.scan(quirks.REPO) if f.rule == "raw-meta-ndm"] == []
+
+
+@pytest.mark.parametrize(
+    "read",
+    [
+        'int(meta.attrs.get("ndm", 3))',
+        'int(meta["ndm"])',
+        'int(self.meta().get("ndm", 3) or 3)',
+        'int(model.meta()["ndm"])',
+        'int(attrs.get("ndm", 0))',
+        'int(h5.meta.get("ndm"))',
+    ],
+)
+def test_raw_meta_ndm_flags_a_raw_read(tmp_path: Path, read: str) -> None:
+    _write(tmp_path, "src/apeGmsh/results/_x.py", f"def f(meta, attrs, self, model, h5):\n    return {read}\n")
+    assert _found(tmp_path) == ["raw-meta-ndm:_x.py:2"]
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        'def f(meta):\n    meta.attrs["ndm"] = 3\n',                                # a write
+        'def f():\n    return {"ndm": 3}\n',                                        # a dict literal
+        'def f(cfg):\n    return cfg.get("ndm", 3)\n',                             # not a meta receiver
+        'def f(meta):\n    return meta.get("ndf", 3)\n',                           # another key
+        'import json\ndef f(p):\n    meta = json.loads(p)\n    return meta.get("ndm", 3)\n',  # a JSON sidecar
+        'def f(meta, h5_reader):\n    return h5_reader.read_spatial_ndm(meta, None, None)\n',
+    ],
+)
+def test_raw_meta_ndm_passes_other_shapes(tmp_path: Path, source: str) -> None:
+    _write(tmp_path, "src/apeGmsh/results/_x.py", source)
+    assert _found(tmp_path) == []
+
+
+def test_raw_meta_ndm_is_scoped_to_src(tmp_path: Path) -> None:
+    _write(tmp_path, "tests/test_a.py", 'def test_it(meta):\n    assert meta["ndm"] == 3\n')
+    assert _found(tmp_path) == []
+
+
+def test_raw_meta_ndm_exempts_the_reader_and_its_helpers_only(tmp_path: Path) -> None:
+    _write(tmp_path, "src/apeGmsh/opensees/emitter/h5_reader.py", """\
+        def read_spatial_ndm(meta, f, coords):
+            return int(meta.get("ndm", 0))
+
+        def _trusted_meta_ndm(meta, why):
+            return int(meta["ndm"])
+
+        def _salvage_pre_spatial_ndm(stamp, f, coords):
+            return int(f.attrs["meta"].get("ndm"))
+
+        def other(meta):
+            return int(meta["ndm"])
+        """)
+    assert _found(tmp_path) == ["raw-meta-ndm:h5_reader.py:11"]
+
+
+def test_raw_meta_ndm_waiver_suppresses_one_site(tmp_path: Path) -> None:
+    _write(tmp_path, "src/apeGmsh/results/_x.py", """\
+        def f(meta):
+            # apegmsh-lint: raw-meta-ndm-ok a bridge-only sidecar, never a neutral file
+            a = meta["ndm"]
+            return a, meta["ndm"]
+        """)
+    assert _found(tmp_path) == ["raw-meta-ndm:_x.py:4"]
+
+
+# --- comment-provenance: added comments only, read from a diff ----------------
+
+
+def _git(root: Path, *args: str) -> str:
+    import subprocess
+
+    done = subprocess.run(
+        ["git", "-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", *args],
+        cwd=root, capture_output=True, text=True, encoding="utf-8",
+    )
+    assert done.returncode == 0, done.stderr
+    return done.stdout
+
+
+def _repo_with(tmp_path: Path, before: str, after: str, rel: str = "src/apeGmsh/_m.py") -> Path:
+    _git(tmp_path, "init", "-q", "-b", "main")
+    _write(tmp_path, rel, before)
+    _git(tmp_path, "add", "-A")
+    _git(tmp_path, "commit", "-q", "-m", "base")
+    _git(tmp_path, "checkout", "-q", "-b", "topic")
+    _write(tmp_path, rel, after)
+    _git(tmp_path, "add", "-A")
+    _git(tmp_path, "commit", "-q", "-m", "topic")
+    return tmp_path
+
+
+def _provenance(root: Path, base: str = "main") -> list[str]:
+    return [f"{f.path}:{f.line}" for f in quirks.scan(root, base) if f.rule == "comment-provenance"]
+
+
+@pytest.mark.parametrize(
+    "comment",
+    [
+        "# fixed in #1234",
+        "# see PR #99 for the reason",
+        "# shipped in 2.34.0",
+        "# shipped with the h5 reader",
+        "# as of 2026-09 this is the default",
+        "# as of 12 September 2026 only 3-D is read",
+        "# as of Sept 2026 only 3-D is read",
+        "# as of 2026 only 3-D is read",
+        "# previously this returned None",
+        "# it used to raise",
+        "# Previously a dict",
+    ],
+)
+def test_comment_provenance_flags_an_added_comment_with_history(tmp_path: Path, comment: str) -> None:
+    root = _repo_with(tmp_path, "x = 1\n", f"x = 1\n{comment}\ny = 2\n")
+    assert _provenance(root) == ["src/apeGmsh/_m.py:2"]
+
+
+@pytest.mark.parametrize(
+    "comment",
+    [
+        "# the node ids are dense and 1-based",
+        "# issue the query once, then cache it",           # the word, not a number
+        "# step #1 of the pipeline",                       # a single digit is a step, not a ticket
+        "# as of the next call the cache is warm",         # no date
+        "# a used tool and a previous one",
+    ],
+)
+def test_comment_provenance_passes_a_comment_that_says_what_the_code_does(tmp_path: Path, comment: str) -> None:
+    root = _repo_with(tmp_path, "x = 1\n", f"x = 1\n{comment}\ny = 2\n")
+    assert _provenance(root) == []
+
+
+def test_comment_provenance_never_flags_an_existing_comment(tmp_path: Path) -> None:
+    before = "# fixed in #1234, previously a dict\nx = 1\n"
+    root = _repo_with(tmp_path, before, before + "y = 2  # a clean note\n")
+    assert _provenance(root) == []
+
+
+def test_comment_provenance_flags_a_trailing_comment_and_reports_its_line(tmp_path: Path) -> None:
+    root = _repo_with(tmp_path, "x = 1\n", "x = 1\ny = 2\nz = 3  # was #77\n")
+    assert _provenance(root) == ["src/apeGmsh/_m.py:3"]
+
+
+def test_comment_provenance_reads_a_string_as_code_not_a_comment(tmp_path: Path) -> None:
+    root = _repo_with(tmp_path, "x = 1\n", 'x = 1\ny = "see #1234 previously"\n')
+    assert _provenance(root) == []
+
+
+def test_comment_provenance_is_scoped_to_src(tmp_path: Path) -> None:
+    root = _repo_with(tmp_path, "x = 1\n", "x = 1\n# fixed in #1234\n", rel="tests/test_a.py")
+    assert _provenance(root) == []
+
+
+def test_comment_provenance_waiver_suppresses_one_site(tmp_path: Path) -> None:
+    after = (
+        "x = 1\n"
+        "# apegmsh-lint: comment-provenance-ok the issue is the contract this guards\n"
+        "# see #1234 for the reproducer\n"
+        "y = 2  # apegmsh-lint: comment-provenance-ok quotes the upstream ticket #55\n"
+        "z = 3  # was #77\n"
+    )
+    root = _repo_with(tmp_path, "x = 1\n", after)
+    assert _provenance(root) == ["src/apeGmsh/_m.py:5"]
+    assert [f for f in quirks.scan(root, "main") if f.rule == "waiver"] == []
+
+
+def test_comment_provenance_waiver_needs_a_reason(tmp_path: Path) -> None:
+    root = _repo_with(tmp_path, "x = 1\n", "x = 1\n# was #77  # apegmsh-lint: comment-provenance-ok\n")
+    assert sorted(f.rule for f in quirks.scan(root, "main")) == ["comment-provenance", "waiver"]
+
+
+def test_comment_provenance_is_silent_without_a_base(tmp_path: Path) -> None:
+    _repo_with(tmp_path, "x = 1\n", "x = 1\n# fixed in #1234\n")
+    assert _found(tmp_path) == []
+
+
+def test_comment_provenance_fails_loudly_on_an_unknown_base(tmp_path: Path) -> None:
+    root = _repo_with(tmp_path, "x = 1\n", "x = 2\n")
+    with pytest.raises(SystemExit, match="merge-base"):
+        quirks.scan(root, "no-such-ref")
+
+
+def test_comment_provenance_runs_from_the_command_line(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    root = _repo_with(tmp_path, "x = 1\n", "x = 1\n# fixed in #1234\n")
+    assert quirks.main(["--root", str(root), "--base", "main"]) == 1
+    assert "[comment-provenance]" in capsys.readouterr().out
+    assert quirks.main(["--root", str(root)]) == 0
+
+
+def test_added_lines_reads_a_zero_context_diff() -> None:
+    diff = textwrap.dedent("""\
+        diff --git a/src/a.py b/src/a.py
+        --- a/src/a.py
+        +++ b/src/a.py
+        @@ -3 +3,2 @@ def f():
+        -old
+        +new
+        +newer
+        @@ -10,2 +11,0 @@
+        -gone
+        -gone
+        diff --git a/src/b.py b/src/b.py
+        --- a/src/b.py
+        +++ /dev/null
+        @@ -1 +0,0 @@
+        -deleted
+        """)
+    assert quirks._added_lines(diff) == {"src/a.py": {3, 4}}
+
+
+# --- comment-provenance: a comment moved verbatim is not new provenance -------
+
+
+def _two_file_repo(tmp_path: Path, before: dict[str, str], after: dict[str, str]) -> Path:
+    _git(tmp_path, "init", "-q", "-b", "main")
+    for rel, text in before.items():
+        _write(tmp_path, rel, text)
+    _git(tmp_path, "add", "-A")
+    _git(tmp_path, "commit", "-q", "-m", "base")
+    _git(tmp_path, "checkout", "-q", "-b", "topic")
+    for rel, text in after.items():
+        _write(tmp_path, rel, text)
+    _git(tmp_path, "add", "-A")
+    _git(tmp_path, "commit", "-q", "-m", "topic")
+    return tmp_path
+
+
+def test_comment_provenance_passes_a_comment_moved_verbatim_between_files(tmp_path: Path) -> None:
+    root = _two_file_repo(
+        tmp_path,
+        {"src/apeGmsh/_a.py": "def f():\n    # kept for the hub (ADR 0112 D3, #1378)\n    return 1\n",
+         "src/apeGmsh/_b.py": "z = 0\n"},
+        {"src/apeGmsh/_a.py": "def f():\n    return 1\n",
+         "src/apeGmsh/_b.py": "z = 0\ndef f():\n    # kept for the hub (ADR 0112 D3, #1378)\n    return 1\n"},
+    )
+    assert _provenance(root) == []
+
+
+def test_comment_provenance_flags_a_new_comment_when_another_is_deleted(tmp_path: Path) -> None:
+    root = _two_file_repo(
+        tmp_path,
+        {"src/apeGmsh/_a.py": "# old note #1378\nx = 1\n"},
+        {"src/apeGmsh/_a.py": "x = 1\n# brand new note #1500\n"},
+    )
+    assert _provenance(root) == ["src/apeGmsh/_a.py:2"]
+
+
+def test_comment_provenance_moved_once_added_twice_is_flagged_once(tmp_path: Path) -> None:
+    root = _two_file_repo(
+        tmp_path,
+        {"src/apeGmsh/_a.py": "# moved note #1378\nx = 1\n", "src/apeGmsh/_b.py": "z = 0\n"},
+        {"src/apeGmsh/_a.py": "x = 1\n",
+         "src/apeGmsh/_b.py": "z = 0\n# moved note #1378\ny = 1\n# moved note #1378\n"},
+    )
+    assert len(_provenance(root)) == 1

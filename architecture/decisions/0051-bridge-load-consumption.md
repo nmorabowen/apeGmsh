@@ -1,6 +1,6 @@
 # ADR 0051 — Bridge load consumption: opt-in import, load cases, stage-scoped patterns
 
-**Status:** Proposed (2026-05-31). The **bridge-consumption half** of the
+**Status:** Accepted (2026-05-31). The **bridge-consumption half** of the
 loads work. Sibling to [ADR 0050](0050-dimension-indexed-loads-and-displacements.md)
 (the *authoring-surface* half). **Supersedes** ADR 0050's LOAD-1 framing
 (auto-emit) and its §5 element-form / cross-dim-gravity *emit* decisions —
@@ -9,6 +9,8 @@ see "Consequences". Builds on the staged-analysis orchestrator
 [0034](0034-stage-bound-bcs-and-recorders.md)) and the explicit-pattern
 doctrine ([0005](0005-patterns-explicit.md) /
 [0007](0007-time-series-separated-from-pattern.md)).
+
+**Accepted 2026-10-04** (T week 1 status batch, #1202).
 
 ## Context
 

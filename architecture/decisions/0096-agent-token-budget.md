@@ -1,6 +1,8 @@
 # ADR 0096 — Agent token budget (lookup vs judgment)
 
-**Status:** Proposed (2026-08-14)
+**Status:** Accepted (2026-08-14)
+
+**Accepted 2026-10-04** (T week 1 status batch, #1202).
 
 **Does not amend** [ADR 0095](0095-apegmsh-studio.md) INV-10
 (MCP wraps habitat verbs, not `g.model.*` / `apeSees`). 0095

@@ -616,7 +616,7 @@ class H5DRM(Pattern):
     -----
     Mutually exclusive with a base-input absorbing drive (ADR 0054 §7.2:
     DRM ring **or** ``-fx/-fy/-fz`` base input, never both) and valid only
-    for 3-DOF, ≤8-node elements (``stdBrick``/``SSPbrick``). Those two
+    for 3-DOF, ≤8-node elements (``stdBrick``). Those two
     checks need the FEM snapshot / the full pattern set, so they are
     enforced by the bridge build pipeline (and guaranteed by construction
     once ``g.parts.add_DRM_box_from_h5drm`` lands in D-2), not at the

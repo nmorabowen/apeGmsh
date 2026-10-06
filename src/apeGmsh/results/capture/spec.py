@@ -21,14 +21,16 @@ Usage
 ::
 
     # Live: ndm/ndf sourced from the attached bridge.
+    from apeGmsh.opensees.emitter.live import get_ops
+    osp = get_ops()   # the module the bridge drives; never import openseespy
     spec = DomainCaptureSpec(opensees=ops)
     spec.nodes(pg="Top", components=["displacement", "reaction"])
     spec.gauss(pg="Body", components=["stress", "von_mises_stress"])
-    with ops.domain_capture(spec, path="run.h5") as cap:
+    with ops.domain_capture(spec, path="run.h5", ops=osp) as cap:
         cap.begin_stage("gravity", kind="static")
         for _ in range(n):
-            ops.analyze(1, 1.0)
-            cap.step(t=ops.getTime())
+            osp.analyze(1, 1.0)   # the backend module, not the bridge
+            cap.step(t=osp.getTime())
         cap.end_stage()
 
     # File: ndm/ndf sourced from model.h5 ``/meta``.

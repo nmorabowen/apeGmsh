@@ -11,10 +11,22 @@ the era's own ``build("tcl")`` deck.  Usage::
     python _era_generator.py --zone opensees --out F.h5 --dump F.dump.json --tcl F.tcl
 
 Only API that exists unchanged from the zone floors on is used (neutral
-2.10.0, opensees 2.11.0); where a call was renamed, the generator probes
+2.10.0, opensees 2.12.0); where a call was renamed, the generator probes
 for the spelling the era knows and records which one it used, so the
 *model* is the same in every era.  A failure here is a gap the builder
 records; the generator never substitutes a different model.
+
+``--variant`` builds one of the ADR 0113 D4 shim-ledger cases instead of
+the plain model, at one chosen era (``scripts/build_schema_corpus.py``
+``VARIANTS``):
+
+* ``sp_cases`` (neutral): the box with prescribed displacements under two
+  ``g.displacements.case`` names.  A writer before neutral 2.26.1 flattens
+  every SP record into ``/loads/sp/default``, so the file reads as one
+  ``default`` case (ledger, Q5).
+* ``frame2d`` (opensees): the same portal frame declared ``ops.model(ndm=2,
+  ndf=3)`` in the XY plane.  A writer before neutral 2.34.0 stamps the mesh
+  dimension in ``/meta/ndm``, the case ``read_spatial_ndm`` salvages (#1300).
 """
 from __future__ import annotations
 
@@ -29,7 +41,7 @@ import apeGmsh
 from apeGmsh import apeGmsh as Session
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from _semantic_dump import dump_fem, dump_model  # noqa: E402
+from _semantic_dump import dump_fem, dump_model, dump_stamps  # noqa: E402
 
 
 def _face_at_z(volume_tag: int, z: float, tol: float = 1e-6) -> int:
@@ -42,8 +54,18 @@ def _face_at_z(volume_tag: int, z: float, tol: float = 1e-6) -> int:
     raise AssertionError(f"no boundary face of volume {volume_tag} at z={z}")
 
 
-def neutral_box() -> "object":
-    """The deterministic box of ``tests/fixtures/neutral_zone/_generate_fixtures.py``."""
+#: The ``g.displacements.case`` names the ``sp_cases`` variant authors.
+SP_CASES = ("PushA", "PushB")
+
+
+def neutral_box(*, sp_cases: bool = False) -> "tuple[object, dict]":
+    """The deterministic box of ``tests/fixtures/neutral_zone/_generate_fixtures.py``.
+
+    With ``sp_cases`` the base face also carries one prescribed
+    displacement per case in :data:`SP_CASES` (``g.displacements``, ADR
+    0050, present from 2026-05-31 on).
+    """
+    notes: dict = {}
     g = Session(model_name="neutral_box", verbose=False)
     g.begin()
     try:
@@ -52,6 +74,11 @@ def neutral_box() -> "object":
         base = _face_at_z(vol, 0.0)
         g.physical.add_volume("box", name="Body")
         g.physical.add(2, [base], name="Base")
+        if sp_cases:
+            for case, values in zip(SP_CASES, ((0.0, 0.0, -0.01), (0.01, 0.0, 0.0))):
+                with g.displacements.case(case):
+                    g.displacements.point(pg="Base", dofs=[1, 1, 1], values=values)
+            notes["sp_cases"] = list(SP_CASES)
         g.mesh.structured.set_transfinite_box("box", n=3)
         g.mesh.generation.generate(dim=3)
         g.mesh_selection.select().in_box(
@@ -60,7 +87,7 @@ def neutral_box() -> "object":
         fem = g.mesh.queries.get_fem_data(dim=3)
     finally:
         g.end()
-    return fem
+    return fem, notes
 
 
 def _point_load(g: "object", pg: str, force: tuple) -> str:
@@ -73,19 +100,30 @@ def _point_load(g: "object", pg: str, force: tuple) -> str:
     return "g.loads.point(pg=, force_xyz=)"
 
 
-def opensees_frame(path: str) -> "tuple[object, dict]":
-    """A one-bay 3-D portal frame through ``apeSees(fem).h5()``."""
+def opensees_frame(path: str, *, ndm: int = 3) -> "tuple[object, dict]":
+    """A one-bay portal frame through ``apeSees(fem).h5()``.
+
+    ``ndm=3`` is the plain corpus model (XZ plane, 6 dof).  ``ndm=2`` is
+    the ``frame2d`` variant: the same frame in the XY plane declared
+    ``ops.model(ndm=2, ndf=3)``, with the 2-D member signatures.
+    """
     from apeGmsh.opensees import apeSees
     from apeGmsh.opensees.section.fiber import FiberPoint
 
-    notes: dict = {}
+    if ndm not in (2, 3):
+        raise ValueError(f"opensees_frame: ndm must be 2 or 3, got {ndm!r}")
+    notes: dict = {"declared_ndm": ndm}
     g = Session(model_name="corpus_frame", verbose=False)
     g.begin()
     try:
         occ = gmsh.model.occ
         p0 = occ.addPoint(0.0, 0.0, 0.0)
-        p1 = occ.addPoint(0.0, 0.0, 3.0)
-        p2 = occ.addPoint(4.0, 0.0, 3.0)
+        if ndm == 3:
+            p1 = occ.addPoint(0.0, 0.0, 3.0)
+            p2 = occ.addPoint(4.0, 0.0, 3.0)
+        else:
+            p1 = occ.addPoint(0.0, 3.0, 0.0)
+            p2 = occ.addPoint(4.0, 3.0, 0.0)
         p3 = occ.addPoint(4.0, 0.0, 0.0)
         c1 = occ.addLine(p0, p1)
         bm = occ.addLine(p1, p2)
@@ -110,27 +148,39 @@ def opensees_frame(path: str) -> "tuple[object, dict]":
         g.end()
 
     ops = apeSees(fem)
-    ops.model(ndm=3, ndf=6)
-    transf = ops.geomTransf.Linear(vecxz=(0.0, 1.0, 0.0))
-    ops.element.elasticBeamColumn(
-        pg="Cols", transf=transf,
-        A=0.01, E=200.0e9, Iz=1.0e-4, Iy=2.0e-4, G=80.0e9, J=3.0e-4,
-    )
     steel = ops.uniaxialMaterial.Steel02(fy=420.0e6, E=200.0e9, b=0.01)
-    sec = ops.section.Fiber(
-        GJ=2.4e7,
-        fibers=(
-            FiberPoint(material=steel, y=0.1, z=0.0, area=0.005),
-            FiberPoint(material=steel, y=-0.1, z=0.0, area=0.005),
-        ),
+    fibers = (
+        FiberPoint(material=steel, y=0.1, z=0.0, area=0.005),
+        FiberPoint(material=steel, y=-0.1, z=0.0, area=0.005),
     )
+    if ndm == 3:
+        ops.model(ndm=3, ndf=6)
+        transf = ops.geomTransf.Linear(vecxz=(0.0, 1.0, 0.0))
+        ops.element.elasticBeamColumn(
+            pg="Cols", transf=transf,
+            A=0.01, E=200.0e9, Iz=1.0e-4, Iy=2.0e-4, G=80.0e9, J=3.0e-4,
+        )
+        sec = ops.section.Fiber(GJ=2.4e7, fibers=fibers)
+        fix = (1, 1, 1, 1, 1, 1)
+        mass = (100.0, 100.0, 100.0, 0.0, 0.0, 0.0)
+        forces = (5.0e3, 0.0, 0.0, 0.0, 0.0, 0.0)
+    else:
+        ops.model(ndm=2, ndf=3)
+        transf = ops.geomTransf.Linear()
+        ops.element.elasticBeamColumn(
+            pg="Cols", transf=transf, A=0.01, E=200.0e9, Iz=1.0e-4,
+        )
+        sec = ops.section.Fiber(fibers=fibers)
+        fix = (1, 1, 1)
+        mass = (100.0, 100.0, 0.0)
+        forces = (5.0e3, 0.0, 0.0)
     integ = ops.beamIntegration.Lobatto(section=sec, n_ip=3)
     ops.element.forceBeamColumn(pg="Beam", transf=transf, integration=integ)
-    ops.fix(pg="Base", dofs=(1, 1, 1, 1, 1, 1))
-    ops.mass(pg="Top", values=(100.0, 100.0, 100.0, 0.0, 0.0, 0.0))
+    ops.fix(pg="Base", dofs=fix)
+    ops.mass(pg="Top", values=mass)
     ts = ops.timeSeries.Linear()
     with ops.pattern.Plain(series=ts) as pat:
-        pat.load(pg="Top", forces=(5.0e3, 0.0, 0.0, 0.0, 0.0, 0.0))
+        pat.load(pg="Top", forces=forces)
     ops.h5(path)
     return fem, notes
 
@@ -138,6 +188,8 @@ def opensees_frame(path: str) -> "tuple[object, dict]":
 def main(argv: "list[str] | None" = None) -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--zone", choices=("neutral", "opensees"), required=True)
+    ap.add_argument("--variant", choices=("sp_cases", "frame2d"), default=None,
+                    help="an ADR 0113 D4 ledger case instead of the plain model")
     ap.add_argument("--out", required=True)
     ap.add_argument("--dump", required=True)
     ap.add_argument("--tcl")
@@ -152,14 +204,22 @@ def main(argv: "list[str] | None" = None) -> int:
 
     from apeGmsh.mesh.FEMData import FEMData
 
-    notes: dict = {}
+    variant_zone = {"sp_cases": "neutral", "frame2d": "opensees"}
+    if a.variant and variant_zone[a.variant] != a.zone:
+        raise SystemExit(
+            f"--variant {a.variant} belongs to the {variant_zone[a.variant]} zone"
+        )
     if a.zone == "neutral":
-        neutral_box().to_h5(a.out)
+        fem, notes = neutral_box(sp_cases=a.variant == "sp_cases")
+        fem.to_h5(a.out)
     else:
-        _fem, notes = opensees_frame(a.out)
+        _fem, notes = opensees_frame(a.out, ndm=2 if a.variant == "frame2d" else 3)
 
     # The era's OWN reader produces the oracle.
-    dump: dict = {"fem": dump_fem(FEMData.from_h5(a.out))}
+    dump: dict = {
+        "fem": dump_fem(FEMData.from_h5(a.out)),
+        "meta": dump_stamps(a.out),
+    }
     if a.zone == "opensees":
         from apeGmsh.opensees.opensees_model import OpenSeesModel
 

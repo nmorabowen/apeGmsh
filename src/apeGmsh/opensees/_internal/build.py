@@ -67,6 +67,7 @@ from ..element.beam_column import (
 from ..pattern.pattern import Plain, _LoadRecord, _SPRecord
 from ..recorder import RecorderDeclaration, RecorderRecord
 from ..transform import Corotational, Linear, PDelta
+from .stage_window import warn_stage_series_outside_window
 from .tag_allocator import TagAllocator
 from .tag_resolution import (
     MISSING_FEM_ELEMENT_ID,
@@ -140,6 +141,7 @@ __all__ = [
     "make_auto_stiffness_resolver",
     "AUTO_STIFFNESS_ALPHA",
     "UnconsumedModelDefinitionWarning",
+    "DetachedDiaphragmMasterWarning",
     "WarnBodyForceDoubleCount",
     "WarnLoadBasisMismatch",
     "infer_node_ndf",
@@ -147,6 +149,7 @@ __all__ = [
     "validate_adaptive_element_endpoints",
     "resolve_ndf_overlay",
     "validate_constraint_master_ndf",
+    "validate_diaphragm_master_stiffness",
     "validate_record_ndf_consistency",
     "fit_dof_vector",
     "broker_mass_components",
@@ -822,6 +825,241 @@ def validate_constraint_master_ndf(
     if nc is not None:
         _walk(nc)  # NodeConstraintSet is iterable over its raw records.
     _walk(stage_constraint_records)
+
+
+class DetachedDiaphragmMasterWarning(UserWarning):
+    """A ``rigid_diaphragm`` master that no element touches has DOFs
+    nothing stiffens (#1333).
+
+    ``rigidDiaphragm`` ties only the in-plane DOFs of the slaves to the
+    master (``ux, uy, rz`` for a horizontal floor).  A master standing
+    alone at the floor's centre of mass - the documented pattern - then
+    carries ``uz, rx, ry`` that no element, constraint or ``fix``
+    stiffens.  The stiffness matrix is singular there: OpenSees prints
+    "matrix singular", a static ``analyze`` can still return 0 with
+    garbage displacements, and ``eigen`` reports modes with periods of
+    ~1e4 s or ~1e-154 s.  The warning names the ``ops.fix`` mask that
+    closes the hole; attaching the master to an element also silences it.
+    """
+
+
+#: 1-based DOFs ``rigidDiaphragm`` ties on a slave, per ``(ndm, perpDirn)``
+#: (``RigidDiaphragm.cpp:142-212``; ``perpPlaneConstrained = perpDirn - 1``).
+#: The master is the retained node, so these are the master DOFs the
+#: slaves' stiffness reaches.
+_DIAPHRAGM_TIED_DOFS: "dict[tuple[int, int], frozenset[int]]" = {
+    (3, 3): frozenset({1, 2, 6}),
+    (3, 2): frozenset({1, 3, 5}),
+    (3, 1): frozenset({2, 3, 4}),
+    (2, 3): frozenset({1, 2, 3}),
+    (2, 2): frozenset({2}),
+    (2, 1): frozenset({1}),
+}
+
+_SPATIAL_DOF_NAMES = ("ux", "uy", "uz", "rx", "ry", "rz")
+
+
+def _single_node_pg(fem: "FEMData", node: int) -> "str | None":
+    """Name of a physical group whose only node is ``node``, so a warning
+    can suggest the ``ops.fix(pg=...)`` form the user wrote the model in;
+    ``None`` when no such group exists (the ``nodes=`` form is always
+    valid, so that is a result, not a skipped lookup).  Every dim is
+    walked: only a point group can hold exactly one node, and the public
+    :meth:`PhysicalGroupSet.names` is the one surface the FEM stub mirrors."""
+    for name in fem.nodes.physical.names():
+        ids = expand_pg_to_nodes(fem, name)
+        if len(ids) == 1 and int(ids[0]) == int(node):
+            return str(name)
+    return None
+
+
+def _constraint_record_node_tags(rec: object) -> "set[int]":
+    """Every node tag a constraint record references, from its
+    ADR 0038 ``tag_rewrite_spec`` cover set."""
+    spec = type(rec).tag_rewrite_spec  # type: ignore[attr-defined]
+    out: set[int] = set()
+    for f in spec["tag_fields_scalar"]:
+        v = getattr(rec, f)
+        if v is not None:
+            out.add(int(v))
+    for f in spec["tag_fields_array"]:
+        v = getattr(rec, f)
+        if v is not None:
+            out.update(int(n) for n in np.asarray(v).reshape(-1))
+    return out
+
+
+def validate_diaphragm_master_stiffness(
+    fem: "FEMData",
+    elements: "Iterable[Element]",
+    ndm: int,
+    envelope_ndf: int,
+    effective_ndf: "Mapping[int, int]",
+    *,
+    fix_records: "Iterable[FixRecord | SupportRecord]" = (),
+    sp_records: "Iterable[_SPRecord]" = (),
+    stage_constraint_records: "Iterable[ConstraintRecord]" = (),
+) -> None:
+    """#1333 - warn when a ``rigid_diaphragm`` master that no element
+    touches has DOFs nothing stiffens.
+
+    For each diaphragm master absent from every declared element's
+    connectivity, the DOFs ``1..ndf`` are reduced by what reaches them:
+    the DOFs the diaphragm ties (:data:`_DIAPHRAGM_TIED_DOFS`, from the
+    emitted ``perpDirn``, not the record's ``dofs``), the DOFs of any
+    other node-pair / node-group constraint the master takes part in
+    (``master_dofs`` when it is the retained node of an
+    ``equal_dof_mixed``; every DOF when the record names none, which is
+    the fork couplings' count-based default), and the DOFs a ``fix`` /
+    ``s.support`` / pattern ``sp`` holds.  A master any other record kind
+    references (a surface coupling, an embedment, a contact) is left
+    alone: those records carry no per-DOF set the bridge can read, and a
+    false warning on a legitimately coupled master would teach users to
+    filter the category.  A master an element touches is out of scope
+    whatever it stiffens - this gate is about the element-less master
+    the ``rigid_diaphragm`` docstring recommends.
+
+    One aggregated :class:`DetachedDiaphragmMasterWarning` names every
+    detached master, its free DOFs and the ``ops.fix`` mask that closes
+    them; a model whose masters are all attached or fully held stays
+    silent.  Covers broker constraints and stage-claimed ones.
+    """
+    from apeGmsh._kernel.records._kinds import ConstraintKind as _CK
+    from apeGmsh._kernel.records._constraints import (
+        NodeGroupRecord,
+        NodePairRecord,
+    )
+
+    nodes = getattr(fem, "nodes", None)
+    nc = getattr(nodes, "constraints", None) if nodes is not None else None
+    node_records: list[object] = [
+        *(nc if nc is not None else ()), *stage_constraint_records,
+    ]
+    diaphragms = [
+        r for r in node_records
+        if isinstance(r, NodeGroupRecord) and r.kind == _CK.RIGID_DIAPHRAGM
+    ]
+    if not diaphragms:
+        return
+    masters = {int(r.master_node) for r in diaphragms}
+
+    # Attached masters: any declared element's connectivity holds the tag.
+    master_arr = np.fromiter(masters, dtype=np.int64)
+    attached: set[int] = set()
+    for spec in elements:
+        fan = expand_spec_to_elements(fem, spec)
+        if not fan:
+            continue
+        conn = fan.conn
+        if conn.ndim == 2:
+            hit = conn[np.isin(conn, master_arr)]
+        else:
+            hit = np.concatenate([
+                np.asarray(row, dtype=np.int64) for row in conn
+            ])
+            hit = hit[np.isin(hit, master_arr)]
+        attached.update(int(n) for n in hit)
+        if attached >= masters:
+            return
+    detached = masters - attached
+
+    def ndf_of(n: int) -> int:
+        return int(effective_ndf.get(int(n), int(envelope_ndf)))
+
+    held: dict[int, set[int]] = {m: set() for m in detached}
+
+    # The diaphragms themselves - the DOFs OpenSees ties for the
+    # emitted perpDirn.
+    for rec in diaphragms:
+        m = int(rec.master_node)
+        if m in held:
+            perp = _perp_dirn_from_normal(rec.plane_normal)
+            held[m] |= _DIAPHRAGM_TIED_DOFS[(3 if int(ndm) == 3 else 2, perp)]
+
+    # Every other node-side constraint the master takes part in.
+    elements_c = getattr(fem, "elements", None)
+    ec = (
+        getattr(elements_c, "constraints", None)
+        if elements_c is not None else None
+    )
+    diaphragm_ids = {id(r) for r in diaphragms}
+    for rec in (*node_records, *(ec if ec is not None else ())):
+        if id(rec) in diaphragm_ids:  # by identity: records hold arrays
+            continue
+        touched = _constraint_record_node_tags(rec) & detached
+        if not touched:
+            continue
+        if isinstance(rec, (NodePairRecord, NodeGroupRecord)):
+            dofs = {int(d) for d in rec.dofs} if rec.dofs else None
+            for m in touched:
+                if (
+                    isinstance(rec, NodePairRecord)
+                    and rec.master_dofs is not None
+                    and int(rec.master_node) == m
+                ):
+                    held[m] |= {int(d) for d in rec.master_dofs}
+                elif dofs is None:
+                    held[m] |= set(range(1, ndf_of(m) + 1))
+                else:
+                    held[m] |= dofs
+        else:
+            # Surface coupling / embedment / contact: no per-DOF set the
+            # bridge can read - assume the master is stiffened.
+            for m in touched:
+                held[m] |= set(range(1, ndf_of(m) + 1))
+
+    # fix / support masks and pattern sps on the master.
+    for frec in fix_records:
+        for n in _record_node_ids(fem, frec):
+            if int(n) in held:
+                held[int(n)] |= {
+                    d for d, flag in enumerate(frec.dofs, start=1) if flag
+                }
+    for srec in sp_records:
+        targets = (
+            expand_pg_to_nodes(fem, srec.target)
+            if srec.target_kind == "pg" else (int(srec.target),)
+        )
+        for n in targets:
+            if int(n) in held:
+                held[int(n)].add(int(srec.dof))
+
+    issues: list[str] = []
+    for rec in diaphragms:
+        m = int(rec.master_node)
+        if m not in held:
+            continue
+        ndf = ndf_of(m)
+        free = sorted(set(range(1, ndf + 1)) - held[m])
+        if not free:
+            continue
+        del held[m]  # one entry per master, whatever the diaphragm count
+        layout = _load_dof_layout(ndf, int(ndm))
+        names = ", ".join(
+            _SPATIAL_DOF_NAMES[layout[d - 1]] if d - 1 < len(layout)
+            else f"DOF {d}"
+            for d in free
+        )
+        mask = tuple(1 if d in free else 0 for d in range(1, ndf + 1))
+        label = f" {rec.name!r}" if rec.name else ""
+        pg = _single_node_pg(fem, m)
+        target = f"pg={pg!r}" if pg is not None else f"nodes=({m},)"
+        issues.append(
+            f"rigid_diaphragm{label}: master node {m} is attached to no "
+            f"element, and its DOFs {names} ({', '.join(map(str, free))}) "
+            f"are stiffened by nothing - not the diaphragm, not another "
+            f"constraint, not a fix. Fix them with ops.fix({target}, "
+            f"dofs={mask}) or attach the master to an element"
+        )
+    if issues:
+        warnings.warn(
+            "; ".join(issues) + ". The stiffness matrix is singular on "
+            "those DOFs: OpenSees prints 'matrix singular', a static "
+            "analyze can still return 0 with garbage displacements, and "
+            "eigen reports periods of ~1e4 s or ~1e-154 s (#1333).",
+            DetachedDiaphragmMasterWarning,
+            stacklevel=_stacklevel_outside_package(),
+        )
 
 
 def fit_dof_vector(
@@ -1637,6 +1875,12 @@ class StageRecord:
     # working unmodified.
     update_parameter_records: tuple["UpdateParameterRecord", ...] = ()
 
+    def __post_init__(self) -> None:
+        # #1334: a stage pattern whose Path series is zero at every
+        # increment of the stage applies no load; warn when the stage
+        # closes, before any route emits or runs it.
+        warn_stage_series_outside_window(self)
+
 
 @dataclass(frozen=True, slots=True)
 class InitialStressRecord:
@@ -2398,27 +2642,18 @@ def expand_pg_to_nodes(fem: "FEMData", pg: str) -> tuple[int, ...]:
 
 
 def _available_pg_names(fem: "FEMData") -> set[str]:
-    """Best-effort enumeration of PG names known to the snapshot.
+    """PG names known to the snapshot, for the "not found" errors.
 
-    Used in error messages — helps the user spot a typo without having
-    to re-query the FEM. We probe both ``elements`` and ``nodes``
-    composites since the user might have asked for a node PG via an
-    element-fan-out call site (or vice versa).
+    Helps the user spot a typo without having to re-query the FEM. Both
+    ``elements`` and ``nodes`` are read, since the user might have
+    asked for a node PG via an element-fan-out call site (or vice
+    versa). Reads the public ``PhysicalGroupSet.names()``: the private
+    ``_groups`` dict is keyed by ``(dim, tag)``, so filtering its keys
+    for strings always listed nothing (#1335).
     """
-    out: set[str] = set()
-    for composite_name in ("elements", "nodes"):
-        composite = getattr(fem, composite_name, None)
-        if composite is None:
-            continue
-        physical = getattr(composite, "physical", None)
-        if physical is None:
-            continue
-        groups = getattr(physical, "_groups", None)
-        if isinstance(groups, dict):
-            for key in groups.keys():
-                if isinstance(key, str):
-                    out.add(key)
-    return out
+    return set(fem.elements.physical.names()) | set(
+        fem.nodes.physical.names()
+    )
 
 
 def _describe_pg_cells(fem: "FEMData", pg: str) -> str:
@@ -2810,6 +3045,57 @@ def replay_builder_scoped_declarations(
             emitter.geomTransf(type_token, tag, *vec)
 
 
+#: Gmsh quadrilateral codes (quad4, quad8) and the node counts of the
+#: triangle cells (tri3, tri6) a surface meshed without recombination gives.
+_QUAD_ETYPES: frozenset[int] = frozenset({3, 16})
+_TRI_NODE_COUNTS: frozenset[int] = frozenset({3, 6})
+
+
+def check_quad_element_on_triangles(
+    spec: Element,
+    elements: "PGElementFanout | list[tuple[int, tuple[int, ...]]]",
+) -> None:
+    """Raise, naming the PG, when a quad-only element meets triangle cells.
+
+    A surface meshed without recombination is all-triangle (most often
+    ``g.mesh.structured.recombine()`` called before ``generate()``, which
+    is a no-op). The element's own ``_emit`` would then fail with a bare
+    "expected 4 node tags, got 3" that says nothing about recombination
+    (#1327), so :func:`allocate_element_tags`, which plans every emit
+    route (flat, staged, partitioned), runs this first and names the cause.
+
+    Only classes whose registry entry accepts quadrilaterals alone are
+    checked. A class with no registry entry, or one that accepts other
+    shapes, keeps its own node-count check in ``_emit``, which still
+    fails loud on a mismatch.
+    """
+    from .._element_capabilities import _ETYPE_INFO, Unknown, element_capability
+
+    cap = element_capability(type(spec).__name__)
+    if cap is Unknown or not cap.gmsh_etypes or not cap.gmsh_etypes <= _QUAD_ETYPES:
+        return
+    if isinstance(elements, PGElementFanout) and elements.conn.ndim == 2:
+        counts = {int(elements.conn.shape[1])}
+    else:
+        counts = {len(nodes) for _, nodes in elements}
+    tri = sorted(counts & _TRI_NODE_COUNTS)
+    if not tri:
+        return
+    cls = type(spec).__name__
+    pg = getattr(spec, "pg", None)
+    want = sorted({_ETYPE_INFO[e][0] for e in cap.gmsh_etypes})
+    raise BridgeError(
+        f"{cls}(pg={pg!r}): the physical group holds "
+        f"{'/'.join(map(str, tri))}-node triangles, but {cls} needs "
+        f"{'/'.join(map(str, want))}-node quadrilaterals. Request quads "
+        f"before meshing with g.mesh.structured.set_recombine({pg!r}) or "
+        "g.mesh.recipe.structured(...), then generate(); "
+        "g.mesh.structured.recombine() only acts on an already generated "
+        "mesh. Otherwise declare a triangle element on this PG (e.g. "
+        "ShellMITC3 / ASDShellT3 for shells, Tri31 for plane solids)."
+    )
+
+
 def emit_element_spec(
     spec: Element,
     emitter: "Emitter",
@@ -2954,34 +3240,44 @@ def _element_transf(spec: Element) -> GeomTransf | None:
 # distinct vecxz observed across the elements that reference the spec.
 # ---------------------------------------------------------------------------
 
-def emit_transform_specs(
+#: One ``geomTransf`` line of an orientation fan-out: ``(tag, vecxz)``.
+TransformLine: TypeAlias = "tuple[int, tuple[float, float, float]]"
+
+
+@dataclass(frozen=True, slots=True)
+class TransformFanout:
+    """:func:`plan_transform_specs`'s result: every transform's lines.
+
+    ``specs`` holds one ``(transform, lines)`` pair per transform spec, in
+    the order the emit walks them. ``lines`` is ``None`` for a transform
+    with no orientation fan-out (it emits its own line under its own
+    tag), and otherwise the ``(tag, vecxz)`` line of each distinct
+    ``vecxz``, first-seen order: the first reuses the spec's own tag, the
+    rest are the planned tags (empty when no element references it).
+    ``overrides`` maps ``(id(transform), element id)`` to the planned tag
+    of every element whose ``vecxz`` is not the spec's own.
+    """
+
+    specs: "tuple[tuple[GeomTransf, tuple[TransformLine, ...] | None], ...]"
+    overrides: "dict[tuple[int, int], int]"
+
+
+def plan_transform_specs(
     transforms: Iterable[GeomTransf],
     elements: Iterable[Element],
-    emitter: "Emitter",
     fem: "FEMData",
     tags: TagAllocator,
     spec_to_own_tag: dict[int, int],
     ndm: int = 3,
-    replay_log: "list[tuple[Any, ...]] | None" = None,
-) -> dict[tuple[int, int], int]:
-    """Emit ``geomTransf`` lines for every transform spec.
+) -> TransformFanout:
+    """Plan the orientation fan-out's ``geomTransf`` tags (ADR 0010).
 
-    ``replay_log`` (ADR 0099 S7): when a stage-activated gated element
-    will bracket mid-deck, the staged path must be able to re-declare
-    these lines at bracket close — but the orientation fan-out ALLOCATES
-    per-vecxz tags, so a re-run cannot reproduce them.  A non-None log
-    captures one entry per emitted line, in emit order, for
-    :func:`replay_builder_scoped_declarations` to re-drive verbatim.
+    The allocation loop of :func:`emit_transform_specs`, moved out of the
+    emit (ADR 0114 D4, amended): the build's tag plan runs it once per
+    emit mode with the planner allocator, and a standalone call of
+    :func:`emit_transform_specs` runs it with the caller's allocator.
 
-    For non-orientation transforms (explicit ``vecxz=``), one line
-    per spec using the spec's own allocated tag — that's the path
-    :class:`Linear` / :class:`PDelta` / :class:`Corotational` already
-    handle in their ``_emit``. When ``ndm == 2`` and such a transform
-    has neither ``vecxz`` nor ``orientation``, the bare 2-D form
-    ``geomTransf <Type> $tag`` is emitted here instead (the primitive
-    ``_emit`` requires a ``vecxz`` and doesn't know ``ndm``).
-
-    For orientation-bearing transforms, the bridge:
+    For each orientation-bearing transform, the bridge:
 
       1. Walks every element spec whose ``transf`` IS this transform.
       2. For each element in the spec's PG, computes the per-element
@@ -2991,16 +3287,13 @@ def emit_transform_specs(
          reuses the spec's own allocated tag (so the spec's tag is
          never wasted); subsequent distinct vecxz get freshly-allocated
          transform tags.
-      4. Emits one ``geomTransf`` line per distinct ``vecxz``.
-      5. Returns a per-element override map so the element fan-out can
-         install element-specific resolvers for elements whose transform
-         vecxz is not the spec's "own" tag.
+      4. Records one line per distinct ``vecxz`` and a per-element
+         override map, so the element fan-out can install
+         element-specific resolvers for elements whose transform vecxz
+         is not the spec's "own" tag.
 
-    Returns
-    -------
-    dict[(id(transf_spec), element_id), int]
-        Per-element override tags. Elements not in the dict use the
-        spec's own resolver lookup (which yields the spec's own tag).
+    A transform with no orientation records ``None``: its single line
+    is the spec's own, written by :func:`emit_transform_specs`.
     """
     # Pre-bin elements by transform spec.
     elems_by_transf: dict[int, list[Element]] = {}
@@ -3010,42 +3303,13 @@ def emit_transform_specs(
             continue
         elems_by_transf.setdefault(id(t), []).append(ele)
 
+    specs: "list[tuple[GeomTransf, tuple[TransformLine, ...] | None]]" = []
     overrides: dict[tuple[int, int], int] = {}
 
     for transf in transforms:
         own_tag = spec_to_own_tag[id(transf)]
         if not is_orientation_transform(transf):
-            # No orientation fan-out. Either an explicit vecxz= (3D —
-            # one line, the spec's own _emit) or the bare 2D form
-            # (``geomTransf <Type> $tag`` with no vecxz vector, which
-            # is required in 2D and invalid in 3D). The primitive's
-            # _emit can't take this branch because it doesn't know ndm.
-            bare_2d = ndm == 2 and type(transf) in _TRANSF_TYPE_TOKEN
-            if bare_2d:
-                # An explicit vecxz in 2-D is dropped: Tcl's 2-D
-                # ``geomTransf`` rejects any trailing args (and exits
-                # 0), while openseespy silently ignores them.  Only a
-                # vector along global Z matches what a 2-D model can
-                # mean (local z = global Z); anything else is a 3-D
-                # intent the 2-D transform cannot honor.
-                vecxz = getattr(transf, "vecxz", None)
-                if vecxz is not None and not _is_global_z(vecxz):
-                    raise BridgeError(
-                        f"geomTransf {type(transf).__name__}: "
-                        f"vecxz={tuple(vecxz)!r} with ndm=2. OpenSees "
-                        "2-D transforms take no vecxz (local z is always "
-                        "global Z); drop the vecxz= kwarg."
-                    )
-                emitter.geomTransf(_TRANSF_TYPE_TOKEN[type(transf)], own_tag)
-                if replay_log is not None:
-                    replay_log.append(
-                        ("line", _TRANSF_TYPE_TOKEN[type(transf)],
-                         own_tag, ()),
-                    )
-            else:
-                transf._emit(emitter, own_tag)
-                if replay_log is not None:
-                    replay_log.append(("spec", transf, own_tag))
+            specs.append((transf, None))
             continue
 
         # Guard: orientation= is meaningless in OpenSees 2-D.  The
@@ -3087,12 +3351,12 @@ def emit_transform_specs(
 
         # orientation path: walk every element whose transf IS this
         # transform, compute per-element vecxz, dedupe.
-        type_token = _TRANSF_TYPE_TOKEN[type(transf)]
         elems = elems_by_transf.get(id(transf), [])
         if not elems:
             # No elements reference this transform — emit nothing. The
             # spec is effectively a dead declaration; the user can
             # find this with introspection.
+            specs.append((transf, ()))
             continue
 
         # Gather per-element vecxz, keyed by element id.
@@ -3115,6 +3379,7 @@ def emit_transform_specs(
         # Dedupe by quantized key. First-seen vecxz reuses the spec's
         # own tag; later distinct vecxz claim fresh transform tags.
         key_to_tag: dict[tuple[int, int, int], int] = {}
+        lines: list[TransformLine] = []
         for eid, vec in per_element_vecxz:
             k = _vecxz_key(vec)
             if k not in key_to_tag:
@@ -3123,15 +3388,115 @@ def emit_transform_specs(
                     key_to_tag[k] = own_tag
                 else:
                     key_to_tag[k] = tags.allocate("geomTransf")
-                emitter.geomTransf(type_token, key_to_tag[k], *vec)
-                if replay_log is not None:
-                    replay_log.append(("line", type_token, key_to_tag[k], vec))
+                lines.append((key_to_tag[k], vec))
 
             assigned = key_to_tag[k]
             if assigned != own_tag:
                 overrides[(id(transf), eid)] = assigned
+        specs.append((transf, tuple(lines)))
 
-    return overrides
+    return TransformFanout(specs=tuple(specs), overrides=overrides)
+
+
+def emit_transform_specs(
+    transforms: Iterable[GeomTransf],
+    elements: Iterable[Element],
+    emitter: "Emitter",
+    fem: "FEMData",
+    tags: TagAllocator,
+    spec_to_own_tag: dict[int, int],
+    ndm: int = 3,
+    replay_log: "list[tuple[Any, ...]] | None" = None,
+) -> dict[tuple[int, int], int]:
+    """Emit ``geomTransf`` lines for every transform spec.
+
+    The tags come from :func:`plan_transform_specs` (ADR 0114 D4,
+    amended). Handed the emit allocator of a bridge emit
+    (``TagPlan.emit_allocator()``), this reads the fan-out the build's
+    tag plan made, and refuses one made for other transforms. Handed a
+    plain :class:`TagAllocator` (a direct caller), it plans the fan-out
+    from that allocator through the same loop. Any other fork raises
+    :class:`TagLawError`. The plain-allocator path goes when the emit
+    signatures drop ``tags`` (K1-3d S6).
+
+    ``replay_log`` (ADR 0099 S7): when a stage-activated gated element
+    will bracket mid-deck, the staged path must be able to re-declare
+    these lines at bracket close — but the orientation fan-out ALLOCATES
+    per-vecxz tags, so a re-run cannot reproduce them.  A non-None log
+    captures one entry per emitted line, in emit order, for
+    :func:`replay_builder_scoped_declarations` to re-drive verbatim.
+
+    For non-orientation transforms (explicit ``vecxz=``), one line
+    per spec using the spec's own allocated tag — that's the path
+    :class:`Linear` / :class:`PDelta` / :class:`Corotational` already
+    handle in their ``_emit``. When ``ndm == 2`` and such a transform
+    has neither ``vecxz`` nor ``orientation``, the bare 2-D form
+    ``geomTransf <Type> $tag`` is emitted here instead (the primitive
+    ``_emit`` requires a ``vecxz`` and doesn't know ``ndm``).
+
+    For orientation-bearing transforms, one ``geomTransf`` line per
+    distinct ``vecxz``, as :func:`plan_transform_specs` planned them.
+
+    Returns
+    -------
+    dict[(id(transf_spec), element_id), int]
+        Per-element override tags. Elements not in the dict use the
+        spec's own resolver lookup (which yields the spec's own tag).
+    """
+    from .tag_plan import plan_or_standalone
+
+    transforms = list(transforms)
+    plan = plan_or_standalone(tags)
+    if plan is None:
+        fanout = plan_transform_specs(
+            transforms, elements, fem, tags, spec_to_own_tag, ndm=ndm,
+        )
+    else:
+        fanout = plan.transforms.fanout_for(transforms)
+
+    for transf, lines in fanout.specs:
+        own_tag = spec_to_own_tag[id(transf)]
+        if lines is None:
+            # No orientation fan-out. Either an explicit vecxz= (3D —
+            # one line, the spec's own _emit) or the bare 2D form
+            # (``geomTransf <Type> $tag`` with no vecxz vector, which
+            # is required in 2D and invalid in 3D). The primitive's
+            # _emit can't take this branch because it doesn't know ndm.
+            bare_2d = ndm == 2 and type(transf) in _TRANSF_TYPE_TOKEN
+            if bare_2d:
+                # An explicit vecxz in 2-D is dropped: Tcl's 2-D
+                # ``geomTransf`` rejects any trailing args (and exits
+                # 0), while openseespy silently ignores them.  Only a
+                # vector along global Z matches what a 2-D model can
+                # mean (local z = global Z); anything else is a 3-D
+                # intent the 2-D transform cannot honor.
+                vecxz = getattr(transf, "vecxz", None)
+                if vecxz is not None and not _is_global_z(vecxz):
+                    raise BridgeError(
+                        f"geomTransf {type(transf).__name__}: "
+                        f"vecxz={tuple(vecxz)!r} with ndm=2. OpenSees "
+                        "2-D transforms take no vecxz (local z is always "
+                        "global Z); drop the vecxz= kwarg."
+                    )
+                emitter.geomTransf(_TRANSF_TYPE_TOKEN[type(transf)], own_tag)
+                if replay_log is not None:
+                    replay_log.append(
+                        ("line", _TRANSF_TYPE_TOKEN[type(transf)],
+                         own_tag, ()),
+                    )
+            else:
+                transf._emit(emitter, own_tag)
+                if replay_log is not None:
+                    replay_log.append(("spec", transf, own_tag))
+            continue
+
+        type_token = _TRANSF_TYPE_TOKEN[type(transf)]
+        for tag, vec in lines:
+            emitter.geomTransf(type_token, tag, *vec)
+            if replay_log is not None:
+                replay_log.append(("line", type_token, tag, vec))
+
+    return fanout.overrides
 
 
 def _is_global_z(v: "tuple[float, float, float]") -> bool:
@@ -4349,6 +4714,12 @@ class WarnBodyForceDoubleCount(UserWarning):
     nodal loads land on the same nodes **along the same axis**, that region
     carries its self-weight **twice**.  Fail-soft — both may be intentional,
     but it is almost always a mistake.
+
+    Only a nodal load reduced from a body definition (``g.loads.gravity`` /
+    ``g.loads.volume``) counts; a collinear line, surface, point or face
+    load is a boundary load, not a second self-weight (#1338). A record
+    whose source is unknown (a ``model.h5`` older than neutral 2.35.0)
+    still counts, because it may be either.
     """
 
 
@@ -4368,11 +4739,21 @@ def validate_body_force_double_count(
     — double self-weight, not an orthogonal push).  Fail-soft (one aggregated
     warning).
 
+    Collinearity alone cannot tell a reduced self-weight from a vertical
+    footing line load (#1338), so the overlap also reads each record's
+    ``source`` — the definition kind the resolver stamped
+    (:class:`~apeGmsh._kernel.records._kinds.NodalLoadSource`). A body
+    source (``gravity`` / ``body``) counts; a boundary source (``point``,
+    ``line``, ``surface``, ``face_load``, ...) never does; ``None`` (a
+    synthesized record, or a file older than neutral 2.35.0) counts because
+    it may be either; any other value is outside the vocabulary and raises.
+
     LadrunoUP names its always-on solid self-weight ``body`` (an
     ACCELERATION, not a force density) rather than ``body_force``; the
     collinearity test compares directions only, so the unit difference is
     irrelevant and the guard reads either attribute.
     """
+    from apeGmsh._kernel.records._kinds import NodalLoadSource
     # (pg, class_name, body_force_3d) — pg pulled via getattr so the loop
     # stays typed against the abstract ``Element`` (no ``.pg`` attribute).
     bf_specs: list[tuple[str, str, np.ndarray]] = []
@@ -4399,18 +4780,31 @@ def validate_body_force_double_count(
     if load_set is None:
         return
 
-    # case -> {node_id: force_xyz} (only loads carrying a real force).
-    case_loads: dict[str, dict[int, np.ndarray]] = {}
+    # case -> {node_id: (force_xyz, source)} — only loads carrying a real
+    # force from a source that can be a self-weight: a body reduction, or
+    # unknown.  A boundary-source record (#1338) is skipped here, and a
+    # source outside the vocabulary fails closed.
+    case_loads: dict[str, dict[int, tuple[np.ndarray, str | None]]] = {}
     for case in cases:
-        per_node: dict[int, np.ndarray] = {}
+        per_node: dict[int, tuple[np.ndarray, str | None]] = {}
         for rec in load_set.by_pattern(case):
             f = getattr(rec, "force_xyz", None)
             if f is None:
                 continue
+            source = rec.source
+            if source in NodalLoadSource.BOUNDARY_KINDS:
+                continue
+            if source is not None and source not in NodalLoadSource.BODY_KINDS:
+                raise BridgeError(
+                    f"nodal load on node {int(rec.node_id)} in case {case!r} "
+                    f"carries source {source!r}, which is not a "
+                    f"NodalLoadSource kind {sorted(NodalLoadSource.ALL)}; the "
+                    f"double-count guard cannot classify it."
+                )
             fv = np.asarray(f, dtype=float)
             if float(np.linalg.norm(fv)) == 0.0:
                 continue
-            per_node[int(rec.node_id)] = fv
+            per_node[int(rec.node_id)] = (fv, source)
         if per_node:
             case_loads[case] = per_node
 
@@ -4423,16 +4817,25 @@ def validate_body_force_double_count(
         spec_nodes = set(expand_pg_to_nodes(fem, pg))
         for case, per_node in case_loads.items():
             n_hit = 0
+            hit_sources: set[str | None] = set()
             for nid in spec_nodes & per_node.keys():
-                fv = per_node[nid]
+                fv, source = per_node[nid]
                 cos = float(abs(np.dot(fv / np.linalg.norm(fv), bf_dir)))
                 if cos > 0.999:        # collinear -> same line of action
                     n_hit += 1
+                    hit_sources.add(source)
             if n_hit:
+                named = ", ".join(sorted(s for s in hit_sources if s is not None))
+                if None in hit_sources:
+                    named = (
+                        (named + ", " if named else "")
+                        + "unknown: a record without a definition kind, "
+                        "such as a model.h5 older than neutral 2.35.0"
+                    )
                 collisions.append(
                     f"pg {pg!r} ({cls_name}, body_force) "
                     f"shares {n_hit} loaded node(s) with from_model case "
-                    f"{case!r}"
+                    f"{case!r} (source {named})"
                 )
 
     if collisions:
@@ -8904,6 +9307,10 @@ def allocate_element_tags(
                 f"check that get_fem_data(dim=...) was not called with a "
                 f"dim that excludes this group's cells."
             )
+        if pg is not None:
+            # #1327: a quad-only element on a triangle PG fails here,
+            # naming the PG, instead of per element inside ``_emit``.
+            check_quad_element_on_triangles(spec, fanout)
         if element_tags == "fem" and pg is not None:
             eids = np.asarray(fanout.eids, dtype=np.int64)
             if n and int(eids.max()) > tags.last("element"):

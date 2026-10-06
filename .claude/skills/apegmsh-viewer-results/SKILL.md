@@ -52,8 +52,8 @@ the quoted heading. `decisions/` is
       33-probe sweep (414ca711, #424). Its AST guard,
       `tests/test_results_mpco_get_hazard.py`, scans only `_mpco*.py`, so
       a new reader is unguarded.
-- [ ] Versions are per zone with a two-version window (ADR 0023, "Per-zone
-      read validation"). Tests take versions from `tests/fixtures/schema.py`;
+- [ ] Versions are per zone with a floor (ADR 0113; it retired ADR 0023's
+      two-version window). Tests take versions from `tests/fixtures/schema.py`;
       the `schema-literal` quirk rule holds this.
 - [ ] A new result type is also a response-catalog row. The catalog and its
       tests' `expected` sets are shared literals (AGENTS.md "How work lands").

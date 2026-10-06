@@ -393,8 +393,9 @@ def gmsh_model_identity() -> tuple[str, str]:
     Recorded on a FEMData snapshot at extraction and recomputed before
     a raw ``(dim, tag)`` selection asks live Gmsh, so the snapshot never
     answers from a different model.  The name alone cannot identify the
-    model: every session defaults to ``"ModelName"`` and Gmsh accepts
-    duplicate names.  The fingerprint folds the entity list, the max
+    model: two sessions may share one (the default is the running
+    script's stem) and Gmsh accepts duplicate names.  The fingerprint
+    folds the entity list, the max
     node and element tags, and the nodes on geometry points (tags and
     coordinates); every call is O(1) or O(entities), independent of
     mesh size.

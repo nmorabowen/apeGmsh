@@ -334,7 +334,8 @@ def _build(
             weld_plan.append((pid, nid, centre, a_hat, float(p["length_l1"]) / 2.0))
 
     # -- mesh ---------------------------------------------------------------
-    with apeGmsh(model_name="stm_overlay", verbose=verbose) as g:
+    # library-internal: no ADR 0112 D1 artifacts beside the caller
+    with apeGmsh(model_name="stm_overlay", verbose=verbose, _artifacts=False) as g:
         geo = g.model.geometry
         if plane:
             tags = [geo.add_point(x, y, z0, mesh_size=size) for x, y in outline]

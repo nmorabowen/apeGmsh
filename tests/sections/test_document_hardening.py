@@ -14,7 +14,11 @@ import math
 
 import pytest
 
-from apeGmsh.sections import SectionDocument, SectionDocumentError
+from apeGmsh.sections import (
+    SECTION_DOC_VERSION,
+    SectionDocument,
+    SectionDocumentError,
+)
 
 
 def _write(tmp_path, data):
@@ -175,7 +179,7 @@ def test_geometry_value_junk_refused_at_load(tmp_path):
 
 
 # ─────────────────────────────────────────────────────────────────────
-# version window edges (the "1.-1.0" hole) + misc
+# version string edges (the "1.-1.0" hole) + misc
 # ─────────────────────────────────────────────────────────────────────
 
 @pytest.mark.parametrize("version", [
@@ -224,3 +228,98 @@ def test_mutation_value_gates_match_loader():
     with pytest.raises(SectionDocumentError, match="int_rad"):
         fib.add_patch_circ(material="m", n_circ=8, n_rad=2,
                            int_rad=2.0, ext_rad=1.0)
+
+
+# ─────────────────────────────────────────────────────────────────────
+# uniaxial params refuse at to_section, never a raw TypeError (#1354)
+# ─────────────────────────────────────────────────────────────────────
+
+def _bridge():
+    from typing import cast
+
+    from apeGmsh.opensees import apeSees
+
+    from tests.opensees.fixtures.fem_stub import make_two_node_beam
+
+    ops = apeSees(cast("object", make_two_node_beam()))  # type: ignore[arg-type]
+    ops.model(ndm=3, ndf=6)
+    return ops
+
+
+_REFUSE_CASES = [
+    # a key ElasticMaterial lacks: the bind text must name it (the
+    # sorted params list alone is not enough)
+    ({"E": 1.0, "fillet": 2.0}, ("unexpected keyword argument 'fillet'",)),
+    # its required key missing: the given keys are not blamed. The bind
+    # text is asserted in two pieces because 3.12+ says "missing a
+    # required keyword-only argument: 'E'" and 3.10/3.11 drop
+    # "keyword-only".
+    ({}, ("missing a required", "'E'")),
+]
+
+
+@pytest.mark.parametrize("params,bind_texts", _REFUSE_CASES)
+def test_uniaxial_params_refuse_at_to_section(tmp_path, params, bind_texts):
+    """The loader keeps no bridge signatures, so the document opens;
+    ``to_section`` binds the params against the real constructor and
+    refuses with the material, the key and the version named."""
+    f = _fib_doc()
+    f["materials"]["m"]["uniaxial"]["params"] = params
+    doc = SectionDocument.open(_write(tmp_path, f))
+    with pytest.raises(SectionDocumentError) as ei:
+        doc.to_section(_bridge())
+    msg = str(ei.value)
+    assert "material 'm'" in msg
+    assert f"ElasticMaterial() rejects params {sorted(params)}" in msg
+    assert all(t in msg for t in bind_texts), msg
+    assert "does not take" not in msg
+    assert f"section_doc_version {SECTION_DOC_VERSION}" in msg
+    # the mutation path lands on the same splat
+    doc2 = SectionDocument.new(name="h", kind="fiber")
+    doc2.set_material("m", uniaxial=("ElasticMaterial", params))
+    doc2.add_point(material="m", y=0.0, z=0.0, area=1.0)
+    with pytest.raises(SectionDocumentError) as ei2:
+        doc2.to_section(_bridge())
+    assert all(t in str(ei2.value) for t in bind_texts), str(ei2.value)
+
+
+@pytest.mark.parametrize("params,bind_texts", _REFUSE_CASES)
+def test_uniaxial_params_refuse_continuum_lane(tmp_path, params, bind_texts):
+    """The continuum lane (``_to_computed_fiber``) resolves region and
+    bar materials through the same helper: a bad bar-material spec
+    refuses after the mesh builds, naming the same three things."""
+    doc = SectionDocument.new(name="rc", kind="continuum")
+    doc.set_material(
+        "conc", E=25e3, nu=0.2, uniaxial=("ElasticMaterial", {"E": 25e3}),
+    )
+    doc.set_material("steel", uniaxial=("ElasticMaterial", params))
+    doc.add_shape("rect_face", id="conc", b=1.0, h=1.0)
+    doc.add_bar(material="steel", x=0.0, y=0.0, area=0.01)
+    doc.set_mesh(lc=0.5)
+    doc = SectionDocument.open(_write(tmp_path, doc.to_dict()))
+    with pytest.raises(SectionDocumentError) as ei:
+        doc.to_section(_bridge())
+    msg = str(ei.value)
+    assert "material 'steel'" in msg
+    assert f"ElasticMaterial() rejects params {sorted(params)}" in msg
+    assert all(t in msg for t in bind_texts), msg
+    assert f"section_doc_version {SECTION_DOC_VERSION}" in msg
+
+
+def test_uniaxial_constructor_typeerror_not_swallowed(tmp_path):
+    """Only the keyword-splat failure is translated. A ``TypeError``
+    the constructor raises for its own reasons, with the keys accepted,
+    propagates untouched (a stub bridge pins the two cases apart)."""
+    class _Boom:
+        def __init__(self, *, E: float) -> None:
+            raise TypeError("inside the constructor")
+
+    class _NS:
+        ElasticMaterial = _Boom
+
+    class _Ops:
+        uniaxialMaterial = _NS()
+
+    doc = SectionDocument.open(_write(tmp_path, _fib_doc()))
+    with pytest.raises(TypeError, match="inside the constructor"):
+        doc.to_section(_Ops())

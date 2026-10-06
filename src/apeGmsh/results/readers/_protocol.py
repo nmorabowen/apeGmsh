@@ -51,6 +51,12 @@ class StageInfo:
     For ``kind="mode"``, the eigenvalue/frequency/period/index
     fields are populated and ``n_steps`` is 1. For other kinds,
     the mode-only fields are ``None``.
+
+    ``aliases`` are further names ``Results.stage(...)`` resolves to
+    this stage.  Empty under every reader's own naming; an MPCO reader
+    that has had the program's stage names attached (#1324) keeps the
+    file's ``MODEL_STAGE[<k>]`` group name here so older scripts still
+    find it.
     """
 
     id: str
@@ -62,6 +68,7 @@ class StageInfo:
     frequency_hz: Optional[float] = None
     period_s: Optional[float] = None
     mode_index: Optional[int] = None
+    aliases: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -139,7 +146,11 @@ class ResultsReader(Protocol):
     def fem(self) -> "Optional[FEMData]":
         """Embedded / synthesized FEMData snapshot.
 
-        - ``NativeReader``: reconstructs from ``/model/`` (always available).
+        - ``NativeReader``: reconstructs from ``/model/`` when the file
+          carries it. An embedded ``/model`` below its floor is listed in
+          ``NativeReader.unavailable_zones`` and this raises
+          ``SchemaVersionError`` with that text instead of reading it
+          (ADR 0113 D9); ``/stages`` read regardless.
         - ``MPCOReader``: synthesizes a partial FEMData from ``/MODEL/``
           (no apeGmsh labels, no Part provenance).
         """
@@ -149,8 +160,11 @@ class ResultsReader(Protocol):
         """Embedded :class:`OpenSeesModel` from the file's ``/opensees/`` zone.
 
         Phase 4 (ADR 0020) — the Composed-file pattern. Native readers
-        auto-resolve from the file when the zone is present (silent, no
-        warning); third-party file readers (MPCO) return ``None``.
+        auto-resolve from the file when the zone is present, and raise
+        ``SchemaVersionError`` when that zone or the ``/model`` it pairs
+        with is below its floor (ADR 0113 D9: the zone is flagged in
+        ``NativeReader.unavailable_zones`` and never read silently);
+        third-party file readers (MPCO) return ``None``.
 
         Returns
         -------

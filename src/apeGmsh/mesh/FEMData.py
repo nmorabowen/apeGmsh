@@ -73,6 +73,7 @@ from .._kernel.payloads import (
 if TYPE_CHECKING:
     import pandas as pd
     from pathlib import Path
+    from apeGmsh._internal.provenance import ProvenanceTable
     from apeGmsh.assess import AssessmentReport
     from .MeshSelectionSet import MeshSelectionStore
 
@@ -1744,10 +1745,21 @@ class FEMData:
         mesh_selection: "MeshSelectionStore | None" = None,
         composed_from: "ComposeSet | tuple[ComposeRecord, ...] | None" = None,
         session_id: str | None = None,
+        model_name: str = "",
     ) -> None:
         self.nodes    = nodes
         self.elements = elements
         self.info     = info
+        # ── The session's name (ADR 0112 D1) ─────────────────────
+        # ``from_gmsh`` stamps ``session.name``, the H5 reader passes
+        # ``/meta/model_name`` back, and derived copies inherit it.  It
+        # is what the bridge's automatic write forms its conventional
+        # path ``<model_name>.h5`` from.  ``""`` means no session named
+        # this snapshot (from_msh, an import, compose, hand-built, or a
+        # session with no name and no script): no conventional path
+        # exists and nothing is written automatically.  Identity
+        # metadata like ``session_id``: no hash reads it.
+        self.model_name: str = str(model_name)
         # ── Session identity (ADR 0112 D1; V0 ratification Q1) ───
         # A uuid4 that pairs this snapshot's model.h5 with its sibling
         # ``<stem>.geometry.h5``.  It is identity metadata, not model
@@ -1762,6 +1774,13 @@ class FEMData:
             str(uuid.uuid4()) if session_id is None
             else _validated_session_id(session_id)
         )
+        # ── Declaration provenance (ADR 0112 D3) ─────────────────
+        # The session's frozen provenance table, attached by from_gmsh
+        # and restored by from_h5; ``None`` for a snapshot no session
+        # extracted (from_msh, imports, compose, hand-built), which
+        # writes no /provenance.  Like session_id it is not model
+        # content: no hash reads it, and derived snapshots inherit it.
+        self.provenance: ProvenanceTable | None = None
         self.mesh_selection = mesh_selection
         self.inspect  = InspectComposite(self)
         # ── Compose provenance (Phase 3A.1 / ADR 0038) ───────────
@@ -1825,6 +1844,10 @@ class FEMData:
         self.__dict__.update(state)
         if "session_id" not in state:
             self.session_id = str(uuid.uuid4())
+        if "provenance" not in state:
+            self.provenance = None
+        if "model_name" not in state:
+            self.model_name = ""
 
     @property
     def snapshot_id(self) -> str:
@@ -1864,11 +1887,32 @@ class FEMData:
             DOFs per node for load/mass vector padding.
         remove_orphans : bool
             If True, remove mesh nodes not connected to any element.
+
+        The snapshot takes the session's ``session_id`` (h5-schema.md,
+        "Who mints it"): the session owns one uuid4 from ``begin()``, so
+        every extraction of one session, and the geometry sibling it
+        writes, carry the same id.  Without a session the snapshot mints
+        its own.
         """
         from ._fem_factory import _from_gmsh
-        return _from_gmsh(
+        fem = _from_gmsh(
             cls, dim=dim, session=session, ndf=ndf,
             remove_orphans=remove_orphans)
+        if session is not None:
+            session_id = session._session_id
+            if session_id is None:
+                raise RuntimeError(
+                    "FEMData.from_gmsh: the session has no session_id; "
+                    "begin() never ran on it"
+                )
+            fem.session_id = _validated_session_id(session_id)
+            # ADR 0112 D1 (P1): the session's name, which the bridge's
+            # automatic write forms ``<model_name>.h5`` from.
+            fem.model_name = str(session.name)
+            # ADR 0112 D3: carry the session's provenance, unhashed.
+            from apeGmsh._internal.provenance import table_for
+            fem.provenance = table_for(session)
+        return fem
 
     @classmethod
     def from_msh(
@@ -1957,6 +2001,10 @@ class FEMData:
 
         Use ``apeSees(fem).h5(path)`` instead to get a fully enriched
         file (neutral zone + ``/opensees/...``).
+
+        ``model_name`` defaults to the snapshot's own :attr:`model_name`
+        (P1, #1307), so a session-named snapshot round-trips its name
+        through ``/meta/model_name`` without the caller repeating it.
         """
         # g.reinforce (ADR 20 / R2b → ADR 0067 P5.1): LadrunoEmbeddedRebar
         # ties now round-trip through the neutral model.h5 (persisted into the
@@ -1969,7 +2017,7 @@ class FEMData:
         from ._femdata_h5_io import write_fem_h5
         write_fem_h5(
             self, path,
-            model_name=model_name,
+            model_name=model_name or self.model_name,
             apegmsh_version=apegmsh_version,
             ndf=ndf,
         )

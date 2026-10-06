@@ -418,3 +418,188 @@ owned files).
   `internal_docs/plan_architectural_strains_2026-09.md` RS6.
 - #1300, the `read_spatial_ndm` shim and `META_NDM_IS_SPATIAL_FROM`,
   the precedent for D4; #1303, the design and its ratification.
+
+## Amendment — 2026-10-04 — Section documents come under the floor rule (#1317)
+
+Append-only. D1–D10 and INV 1–12 stand as written for the HDF5 zones.
+This amendment extends the floor rule to one more versioned format, the
+JSON section document of [ADR 0080](0080-section-builder.md). It was
+ratified by the maintainer on #1317 ("YES, as recommended",
+2026-10-04).
+
+### Context
+
+A section document (`.section.json`) is stamped with
+`SECTION_DOC_VERSION` from `sections/_document.py`. It is not an HDF5
+zone: it is not in `_ZONE_KEY`, `model.h5` does not carry it, and the
+app does not read it. Its readers are the section builder GUI and the
+headless `SectionDocument` API. It carried its own copy of ADR 0023's
+two-version window (`cur_minor - 1 <= minor <= cur_minor`, same major).
+
+The window had the same strain D1 retires for the zones (RS6). The
+version is still 1.0.0, as #840 (12fbd62f, 2026-07-19) stamped it,
+although B2–B7 added keys: the fiber lane, `bars`, `disconnected`,
+`mesh.order`, `GJ`, and shape `translate` / `rotate`. The loader
+presence-probes every key added after B1 and gives it a default. The
+required keys (`shapes`, `booleans` and `mesh` for the continuum lane;
+`patches`, `layers`, `points` and `templates` for the fiber lane) have
+existed since each lane shipped at 1.0.0. There have been no format
+breaks. Yet at 1.2.0 the window would refuse every saved 1.0 document,
+which ADR 0112 D1 ("the files are the model") rules out for a file a
+user authored by hand or in the builder.
+
+### Decision
+
+**S1 — A floor, not a window.** `SECTION_DOC_FLOOR = "1.0.0"` sits
+beside `SECTION_DOC_VERSION` in `sections/_document.py` (D3). The
+loader accepts a document iff it is the loader's major and
+`floor.minor <= minor`; the patch is ignored. Another major, or a minor
+below the floor, refuses with a `SectionDocumentError` that names the
+floor. The evidence for 1.0.0 is the history above: one minor has ever
+been written, and every later key is presence-probed. The floor moves
+only with a major bump, to `X.0.0`, and only rises (D3).
+
+**S2 — A newer same-major minor opens, with one warning.** Unlike D2
+for the Python HDF5 readers, a document of a newer minor of the
+loader's major opens. It is read through the same presence probes, and
+the loader emits exactly one `SectionDocumentNewerWarning` naming the
+document's version and its own, attributed to the caller of
+`SectionDocument.open`. The section builder GUI, the format's primary
+reader, captures that warning when it opens a document (`Open…` and
+`launch_builder(path)`) and shows it on the status bar; other warnings
+pass through. What the loader does with the newer content was probed on
+2026-10-04, and the tests hold it:
+
+- unknown optional keys at the top level, on a shape and in `mesh`
+  are kept verbatim, so a re-save does not lose them, and `build()`
+  ignores them;
+- a value the loader cannot interpret (a new shape kind, a new boolean
+  op, an unknown material key, a new parameter on a known shape kind)
+  still refuses, with a `SectionDocumentError` at load.
+
+**Known gap.** The `params` of a material's `uniaxial` spec are the
+bridge constructor's keywords, not section-document keys, and the
+loader does not check them at any version. An unknown keyword there
+loads, and `to_section()` fails with the bridge constructor's
+`TypeError` (probed 2026-10-04 on `ElasticMaterial`). Checking them at
+load needs the bridge's signatures in the loader; that is follow-up
+work, not this amendment's.
+
+D2's hazard is a newer column dropped *silently*. The warning makes the
+drop visible, the way D7's banner does for the app, and an unknown
+value in a field the loader already reads (a shape kind, a boolean op,
+a material key, a shape parameter) refuses rather than being guessed.
+The deviation is the
+one the maintainer ratified on #1317 ("newer same-major files are read
+through presence probes"); it applies to section documents only, and
+D2 still holds for every HDF5 zone.
+
+**S3 — A semantic change ships a named shim (D4).** A minor that
+changes the meaning of an existing key ships a reader shim keyed on a
+named `SECTION_DOC_*_FROM` constant at or above the floor; the
+bare-version-compare quirk rule (D4, slice 6) covers `sections/` as
+part of `src/`. A restructure (a renamed or removed required key, a
+changed type) is a major bump. An additive key still bumps the minor
+(D5) and is read with a presence probe and a default.
+
+**Not extended.** Section documents get no corpus (D8) and no migrator
+(D6) here: one minor exists, so there is nothing to backfill or
+migrate. The first bump of `SECTION_DOC_VERSION` adds the outgoing
+minor's document as a committed fixture that the new loader must open,
+the cheap form of D8. The first major bump decides the migrator.
+
+### Invariants (section documents)
+
+- **S-INV-1, edges.** Same major and `floor.minor <= minor` opens, with
+  no warning up to the loader's minor; `floor.minor - 1` and every
+  other major refuse naming the floor; `loader.minor + 1` opens with
+  exactly one `SectionDocumentNewerWarning` whose filename is the
+  caller's. Held by
+  `tests/sections/test_section_document.py::test_version_floor_today`
+  (the shipped 1.0.0 constants) and `::test_version_floor_edges`
+  (floor 1.3, loader 1.5, both edges).
+- **S-INV-2, writer-owned.** `SECTION_DOC_FLOOR` has the major of
+  `SECTION_DOC_VERSION` and is not above it
+  (`::test_floor_constant_is_writer_owned`).
+- **S-INV-3, newer content.** A newer minor's unknown optional keys
+  survive open and save, `build()` ignores them (a 2 × 3 rectangle
+  carrying a fillet it cannot honour integrates to area 6, centroid at
+  the origin), and an uninterpretable value, a new shape parameter
+  included, still refuses (`::test_newer_minor_unknown_keys`).
+- **S-INV-4, the GUI shows it.** Opening a newer-minor document in the
+  builder puts the warning's text on the status bar and lets other
+  warnings through (`tests/sections/test_builder_gui.py::
+  test_open_with_notice_captures_only_the_newer_warning`, headless, and
+  `::test_open_document_shows_the_newer_warning_on_the_status_bar`,
+  offscreen).
+
+ADR 0080 carries a dated amendment pointing here; its original text is
+unchanged.
+
+## Amendment — 2026-10-04 — Erratum: D8, D9 and the opensees floor (#1303 PR-5)
+
+Append-only. This is an erratum, not a new decision: D1–D10 and INV 1–12
+stand as ratified, and the wording below replaces the three phrases it
+names. It records what the slices that landed (and the one in review)
+found when they met the code, and the maintainer's 2026-10-04 decision on
+#1303.
+
+### E1 — D8: the corpus file is the minor's last commit
+
+D8 says the builder checks out "each schema-bump commit of a zone". The
+builder (`scripts/build_schema_corpus.py`, #1329) writes each minor's
+file with **the minor's last first-parent commit**: the parent of the
+next minor's bump commit, or the base commit for the current minor. Read
+D8's phrase as "the minor's last commit". A patch bump therefore folds
+into its minor (the 2.26.1 writer is the 2.26 file), and each file is
+what that minor's writer looked like when it was last current. The
+manifest names that commit's SHA, so INV 6's "its commit SHA in the
+manifest" holds as written.
+
+### E2 — D9: what "unavailable" means in the shipped code
+
+D9 says that when an embedded zone is below its floor, "`Results.model`
+is unavailable, the reader says so". `Results.model` is not a property:
+`Results.from_native` requires the caller to pass `model=`, so the
+sentence is literally false. The rule's intent, that **results outlive a
+model zone the library can no longer read**, shipped in PR #1339 (merged
+as 2f529850, INV 11) through the accessors that would read the embedded
+zones:
+
+- `NativeReader` opens a file whose embedded `/model` (neutral) or
+  `/opensees` zone is below its floor, reads `/stages` read-only and
+  rewrites nothing. The zone is listed in `NativeReader.unavailable_zones`
+  (zone id to the refusal text), and one `UserWarning` per flagged zone is
+  emitted at open, so two when both zones are below their floors.
+- `Results.fem` raises `SchemaVersionError` with the reader's text plus a
+  hint to pass `fem=` or call `.bind(fem)`. A supplied `fem=` is returned
+  before the reader is asked, so the embedded zone is never read and the
+  file opens normally. `repr` and `summary` show "FEM: unavailable ..."
+  rather than raising.
+- `OpenSeesModel.from_h5(results_path)` refuses on a flagged file, so the
+  bridge model comes from a sidecar archive.
+- An embedded zone **newer** than the reader, and the results zone itself
+  in either direction, still refuse the whole file (D2).
+
+Read D9 as: the file opens and its stages read; the accessor that would
+read the flagged zone refuses with the floor text; the open itself is
+never refused for a flagged embedded zone. `model=` stays required.
+
+### E3 — The opensees floor is 2.12.0, and D9's example follows
+
+The maintainer decided on #1303, 2026-10-04, to raise the opensees floor
+from 2.11.0 to **2.12.0**. The evidence is the corpus (#1329): every
+2.11-era writer stamped a neutral zone below the neutral floor (2.6 or
+2.7, against 2.10), so no 2.11 file opens through `OpenSeesModel.from_h5`.
+This is D3's initial evidence gate working as written ("an era whose
+frozen writer will not run raises that zone's floor past it"), so it is
+not a major bump. #1353 landed it: `SCHEMA_FLOOR = "2.12.0"`, with the
+app's `ZONE_FLOOR` at `opensees: 12`.
+
+Read every "2.11.0" or "opensees 2.11" in D1's table, D7 and D9 as
+**2.12.0**; in particular D9's "(2.11.0)" example becomes "(2.12.0)", and
+the table row's reason becomes "the first era whose files open (2.11 is
+the 0-based rank flip, below the neutral floor in every writer)". The
+rank flip remains the zone's last non-additive bump. ADR 0023's
+amendment of 2026-10-03 states 2.11.0 "at ratification", which was true
+when it was written and is superseded by this erratum.

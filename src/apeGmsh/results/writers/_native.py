@@ -137,8 +137,8 @@ class NativeWriter:
         h5.attrs[_native.ATTR_SCHEMA_VERSION] = _versions.SCHEMA_VERSION
         # ADR 0023 — per-zone marker; the envelope above bumps only on
         # partition-shape changes, this one tracks the results-zone
-        # content shape independently. Phase 7a wires the two-version
-        # read window against this attr.
+        # content shape independently. The reader validates this attr
+        # against the results floor (ADR 0113).
         h5.attrs[_native.ATTR_RESULTS_SCHEMA_VERSION] = (
             _versions.RESULTS_SCHEMA_VERSION
         )
@@ -270,7 +270,7 @@ class NativeWriter:
             # value under a new version stamp would launder it past the
             # reader's salvage, so the value forwarded is what the
             # reader would resolve from the SOURCE (its own version
-            # stamp, its transforms).
+            # stamp, its transforms, its node coordinates).
             if "meta" in src and "/model/meta" in h5:
                 from apeGmsh.opensees.emitter.h5_reader import read_spatial_ndm
 
@@ -280,7 +280,9 @@ class NativeWriter:
                 # undeclared); the bridge's ops.model declaration lives
                 # on the source model.h5, so forward both (#1291).
                 if "ndm" in src_meta:
-                    dst_meta["ndm"] = int(read_spatial_ndm(src_meta, src))
+                    dst_meta["ndm"] = int(read_spatial_ndm(
+                        src_meta, src, coords=src["nodes/coords"],
+                    ))
                 if "ndf" in src_meta:
                     dst_meta["ndf"] = int(src_meta["ndf"])
                 if "model_name" in src_meta:

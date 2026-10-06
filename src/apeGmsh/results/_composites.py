@@ -36,6 +36,10 @@ if TYPE_CHECKING:
 # =====================================================================
 
 def _require_fem(results: "Results", method: str):
+    if results._fem_unavailable is not None:
+        # ADR 0113 D9 — the file's own /model is below its floor: the
+        # property raises the refusal that names the zone and the hint.
+        return results.fem
     fem = results._fem
     if fem is None:
         raise RuntimeError(
@@ -316,13 +320,7 @@ class _SelectionMixin:
         if not named:
             return None     # all nodes
 
-        fem = self._r._fem
-        if fem is None:
-            raise RuntimeError(
-                "Cannot resolve pg= / label= / selection= without a bound "
-                "FEMData. Pass fem= when constructing Results, or "
-                "call .bind(fem)."
-            )
+        fem = _require_fem(self._r, "Resolving pg= / label= / selection=")
 
         all_ids: list[ndarray] = []
         if pg is not None:
@@ -402,13 +400,7 @@ class _SelectionMixin:
         if not named:
             return None
 
-        fem = self._r._fem
-        if fem is None:
-            raise RuntimeError(
-                "Cannot resolve pg= / label= / selection= without a bound "
-                "FEMData. Pass fem= when constructing Results, or "
-                "call .bind(fem)."
-            )
+        fem = _require_fem(self._r, "Resolving pg= / label= / selection=")
 
         all_ids: list[ndarray] = []
         if pg is not None:

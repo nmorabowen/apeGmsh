@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import os
+import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from ._session import _SessionBase
+from ._session import ArtifactTargetUnavailable, _SessionBase
 
 if TYPE_CHECKING:
     from .viz.Inspect import Inspect
@@ -30,15 +32,56 @@ if TYPE_CHECKING:
     from .viz.Plot import Plot
 
 
+#: Environment variable that overrides the conventional artifact directory.
+ARTIFACT_DIR_ENV = "APEGMSH_ARTIFACT_DIR"
+
+
+def default_artifact_dir() -> Path:
+    """The directory a session writes its artifacts to when ``save_to`` is None.
+
+    ADR 0112 D1: the artifacts live "at a conventional path next to the
+    script".  Resolution order:
+
+    1. ``$APEGMSH_ARTIFACT_DIR`` when set and non-empty (the test suite
+       points it at a temporary directory so nothing lands in the repo);
+    2. the directory of the ``__main__`` script, when Python is running
+       one (``python model.py`` writes beside ``model.py``);
+    3. the current working directory (a REPL or a notebook).
+
+    Resolved at call time, not at construction, so a ``chdir`` before
+    ``end()`` is honoured the way a relative ``save_to`` would be.
+    """
+    env = os.environ.get(ARTIFACT_DIR_ENV, "")
+    if env:
+        return Path(env)
+    main = sys.modules.get("__main__")
+    try:
+        main_file = main.__file__ if main is not None else None
+    except AttributeError:  # a REPL or notebook __main__ has no file
+        main_file = None
+    if main_file:
+        return Path(main_file).resolve().parent
+    return Path.cwd()
+
+
 class apeGmsh(_SessionBase):
     """Standalone single-model Gmsh session with all composites.
 
     Parameters
     ----------
-    model_name : str
-        Name passed to ``gmsh.model.add()``.
+    model_name : str or None
+        Name passed to ``gmsh.model.add()`` and the stem of the
+        session's ``model.h5`` (``<dir>/<model_name>.h5``).  ``None``
+        (the default) takes the stem of the script Python is running;
+        with no real script (a notebook, ``-c``, stdin) the session has
+        no name and writes nothing automatically (one warning).
     verbose : bool
         If True, composites print diagnostic messages.
+    save_to : str, Path or None
+        Where ``end()`` writes ``model.h5`` instead of the conventional
+        path; a directory means ``<dir>/<model_name>.h5``.
+    overwrite : bool
+        ``False`` refuses to replace an existing target.
     """
 
     _COMPOSITES = (
@@ -96,18 +139,46 @@ class apeGmsh(_SessionBase):
     def __init__(
         self,
         *,
-        model_name: str = "ModelName",
+        model_name: str | None = None,
         verbose: bool = False,
         save_to: str | Path | None = None,
         overwrite: bool = True,
+        _artifacts: bool = True,
     ) -> None:
-        super().__init__(name=model_name, verbose=verbose)
+        # ADR 0112 D1: the default name is the ``__main__`` script's
+        # stem, so ``python frame.py`` leaves ``frame.h5`` beside it.
+        # With no real script (a notebook, ``-c``, stdin, a launcher) the
+        # session has no name: ``end()`` writes nothing automatically and
+        # warns once, and the snapshot's ``model_name`` is ``""``.  An
+        # explicit ``model_name`` always wins; an empty one is refused.
+        if model_name is None:
+            from ._artifact_policy import main_script
+
+            script = main_script()
+            name = script.stem if script is not None else ""
+        else:
+            name = str(model_name)
+            if not name:
+                raise ValueError(
+                    "apeGmsh(model_name=''): the model name must be a "
+                    "non-empty string; leave it out to take the script's stem"
+                )
+        super().__init__(name=name, verbose=verbose)
+        # ADR 0112 D1: this session *is* the model; ``end()`` writes
+        # ``model.h5`` and its geometry sibling unconditionally.  The
+        # private ``_artifacts=False`` is for library-internal sessions
+        # only (section mesh workers, solver cross-checks, the demo
+        # builder); it is not a user-facing opt-out.
+        self._writes_artifacts = bool(_artifacts)
         # Labels (Tier 1 naming) are auto-created from label= kwargs
         # on geometry methods in both Part and Assembly sessions.
         self._auto_pg_from_label = True
-        # Autosave configuration. ``save_to=None`` disables autosave;
-        # otherwise ``end()`` writes the neutral-zone HDF5 to this path
-        # before finalizing gmsh.  Manual ``g.save()`` uses the same path.
+        # Artifact path override (ADR 0112 D1).  ``end()`` always writes
+        # the neutral-zone HDF5 and its geometry sibling before
+        # finalizing gmsh: at ``save_to`` when given, else at the
+        # conventional path ``default_artifact_dir() / <model_name>.h5``
+        # (see :meth:`_resolve_save_target`).  Manual ``g.save()`` with
+        # no argument still requires ``save_to``.
         self._save_to: Path | None = Path(save_to) if save_to else None
         self._overwrite: bool = overwrite
         # ── FEMData cache (Phase 3B.2b-prep / ADR 0038) ──────────
@@ -419,15 +490,37 @@ class apeGmsh(_SessionBase):
     def _resolve_save_target(self, path: "str | Path | None") -> Path:
         """Normalize a save destination to a concrete ``.h5`` file path.
 
+        ``path`` wins; else ``save_to``; else (ADR 0112 D1, the
+        unconditional write) the conventional path
+        ``default_artifact_dir() / <model_name>.h5``.
+
         A directory target (an existing directory, or a path with no
         suffix) means "drop the model file in here" — it is resolved to
         ``<dir>/<model_name>.h5``.  Passing a directory straight to h5py
         truncate-opens it as a file and fails with a cryptic OS-level
         ``PermissionError`` on Windows; this gives both :meth:`save` and
         the :meth:`end` autosave a usable file path instead.
+
+        Raises :class:`~apeGmsh._session.ArtifactTargetUnavailable` when
+        the path needs the session's name and it has none (P2, #1307: no
+        ``model_name`` and no script file); ``end()`` turns that into one
+        warning and writes nothing.
         """
-        target = Path(path) if path is not None else self._save_to
+        if path is not None:
+            target = Path(path)
+        elif self._save_to is not None:
+            target = self._save_to
+        else:
+            target = default_artifact_dir()
         if target.is_dir() or target.suffix == "":
+            if not self.name:
+                raise ArtifactTargetUnavailable(
+                    f"no model name: the session has no model_name and "
+                    f"Python is not running a script file (a notebook, -c "
+                    f"or stdin), so there is no conventional model.h5 path "
+                    f"under {target}; nothing is written automatically. "
+                    f"Pass model_name= or save_to=<file>."
+                )
             target = target / f"{self.name}.h5"
         return target
 
@@ -460,22 +553,27 @@ class apeGmsh(_SessionBase):
         self._do_save(target)
         return target
 
-    def _do_save(self, path: Path) -> None:
-        """Extract the broker snapshot and write it to ``path``.
+    def _snapshot_to_save(self) -> "FEMData":
+        """The broker snapshot a save writes.
 
         Chain-phase sessions (built via :meth:`from_h5`) save the
         cached ``_fem`` directly — they have no gmsh state to
         re-extract from.
         """
-        from . import __version__ as _ver
-
         if (
             getattr(self, "_fem_from_h5", False)
             and getattr(self, "_fem", None) is not None
         ):
-            fem = self._fem
-        else:
-            fem = self.mesh.queries.get_fem_data()
+            return self._fem
+        return self.mesh.queries.get_fem_data()
+
+    def _do_save(self, path: Path, fem: "FEMData | None" = None) -> None:
+        """Write the broker snapshot (``fem``, else :meth:`_snapshot_to_save`)
+        to ``path``."""
+        from . import __version__ as _ver
+
+        if fem is None:
+            fem = self._snapshot_to_save()
         fem.to_h5(
             str(path),
             model_name=self.name,

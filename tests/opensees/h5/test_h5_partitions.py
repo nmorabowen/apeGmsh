@@ -242,9 +242,10 @@ def test_h5_reader_back_compat_pre_partition_schema(
     were emitted.
 
     The 2.20.0 → 2.21.0 bump (SSI-2.E updateMaterialStage) is
-    purely additive.  A 2.20.0 stamp is the oldest the current reader
-    accepts (two-version window); a 2.19.0 stamp would now be REFUSED
-    (outside the window — the hard floor).
+    purely additive.  The current reader opens every minor from the
+    opensees floor (``SCHEMA_FLOOR``) up, so the prior minor opens, and
+    so does a 2.19.0 stamp (ADR 0113 retired the two-version window;
+    only a stamp below the floor is refused).
     """
     e = H5Emitter(schema_version=OPENSEES_PRIOR_MINOR)
     e.model(ndm=3, ndf=6)

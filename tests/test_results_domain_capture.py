@@ -558,11 +558,13 @@ def test_domain_capture_from_h5(tmp_path: Path) -> None:
     from apeGmsh.results.capture import DomainCaptureSpec
 
     # Forge a minimal bridge-shaped model.h5 with ndm/ndf in /meta.
-    # ADR 0023 — fixture inside the two-version reader window (2.7.x).
+    # ADR 0023 / 0113 — a minimal bridge-shaped fixture; the stamp it
+    # carries must be at or above the opensees floor.
     model_path = tmp_path / "model.h5"
     with h5py.File(model_path, "w") as f:
         meta = f.create_group("meta")
         meta.attrs["schema_version"] = OPENSEES_CURRENT
+        meta.attrs["opensees_schema_version"] = OPENSEES_CURRENT
         meta.attrs["ndm"] = 3
         meta.attrs["ndf"] = 6
         meta.attrs["snapshot_id"] = "stub-snapshot"

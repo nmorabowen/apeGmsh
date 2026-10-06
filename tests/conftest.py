@@ -1,11 +1,55 @@
 """Shared test fixtures for apeGmsh test suite."""
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Any
 
 import pytest
 import gmsh
+
+_REPO = Path(__file__).resolve().parents[1]
+_SKIP_DIRS = frozenset({".git", ".claude", "node_modules", "__pycache__", ".venv", "venv"})
+
+
+def _repo_h5_files() -> set[Path]:
+    """Every ``*.h5`` under the repo, skipping VCS, worktree and package dirs."""
+    found: set[Path] = set()
+    for root, dirs, files in os.walk(_REPO):
+        dirs[:] = [d for d in dirs if d not in _SKIP_DIRS]
+        for name in files:
+            if name.endswith(".h5"):
+                found.add(Path(root) / name)
+    return found
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _artifact_dir(tmp_path_factory: pytest.TempPathFactory):
+    """Route every session's unconditional artifacts to a temp dir.
+
+    ADR 0112 D1 (V2b, #1305): ``apeGmsh.end()`` writes ``model.h5`` and
+    ``<stem>.geometry.h5`` even without ``save_to``, at
+    ``$APEGMSH_ARTIFACT_DIR`` when set.  Under pytest the ``__main__``
+    fallback would be pytest's own package directory, so the suite pins
+    the variable to a session temp dir, and the teardown proves that no
+    test left an ``.h5`` anywhere in the repository.
+    """
+    before = _repo_h5_files()
+    out = tmp_path_factory.mktemp("apegmsh_artifacts")
+    previous = os.environ.get("APEGMSH_ARTIFACT_DIR")
+    os.environ["APEGMSH_ARTIFACT_DIR"] = str(out)
+    try:
+        yield out
+    finally:
+        if previous is None:
+            os.environ.pop("APEGMSH_ARTIFACT_DIR", None)
+        else:
+            os.environ["APEGMSH_ARTIFACT_DIR"] = previous
+        litter = sorted(str(p.relative_to(_REPO)) for p in _repo_h5_files() - before)
+        assert not litter, (
+            "the suite wrote .h5 files into the repository (ADR 0112 D1 "
+            f"artifacts must go to APEGMSH_ARTIFACT_DIR): {litter}"
+        )
 
 
 def pytest_runtest_setup(item: pytest.Item) -> None:

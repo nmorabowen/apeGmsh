@@ -1,6 +1,6 @@
 # ADR 0067 — Reinforcement-cage authoring: a `g.rebar` geometry layer above `g.reinforce`
 
-**Status:** Proposed (2026-06-19; refined by a 14-agent design workflow,
+**Status:** Accepted (2026-06-19; refined by a 14-agent design workflow,
 every signature cross-checked against `src/apeGmsh`).  Builds on — and
 explicitly **delegates to** — the already-shipped `g.reinforce`
 composite (`ReinforcementsComposite`).  Threads through ADR 0022
@@ -10,6 +10,8 @@ exposure + host decomposition), ADR 0038 (`g.compose`), and ADR 0041
 C++ change.  No H5 schema bump for the **inline** path; the
 **composed-Part** path is gated on lifting an existing deferral (see
 §6.3 and Open Items).
+
+**Accepted 2026-10-04** (T week 1 status batch, #1202).
 
 ## Context
 

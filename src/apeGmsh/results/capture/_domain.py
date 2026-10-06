@@ -63,13 +63,15 @@ Usage
 
     # Live, bridge sources ndm/ndf (Phase 9 D8)
     from apeGmsh.results.capture import DomainCaptureSpec
+    from apeGmsh.opensees.emitter.live import get_ops
+    osp = get_ops()   # the module the bridge drives; never import openseespy
     spec = DomainCaptureSpec(opensees=ops)
     spec.nodes(components=["displacement"], pg="Top")
-    with ops.domain_capture(spec, path="run.h5") as cap:
+    with ops.domain_capture(spec, path="run.h5", ops=osp) as cap:
         cap.begin_stage("gravity", kind="static")
         for _ in range(n_grav):
-            ops.analyze(1, 1.0)
-            cap.step(t=ops.getTime())
+            osp.analyze(1, 1.0)   # the backend module, not the bridge
+            cap.step(t=osp.getTime())
         cap.end_stage()
         cap.capture_modes()
 
@@ -646,14 +648,30 @@ class DomainCapture:
 
         with h5_reader.open(str(model_path)) as model:
             meta = model.meta()
-            try:
-                ndm = int(meta["ndm"])
-                ndf = int(meta["ndf"])
-            except KeyError as exc:
+            if "ndm" not in meta or "ndf" not in meta:
                 raise RuntimeError(
                     f"DomainCapture.from_h5: {model_path!s} has no "
                     f"ndm/ndf attrs in /meta (got {sorted(meta)!r})."
-                ) from exc
+                )
+            def _coords() -> Any:
+                nodes = model.nodes()
+                if "coords" not in nodes:
+                    raise RuntimeError(
+                        f"DomainCapture.from_h5: {model_path!s} predates "
+                        "neutral 2.34.0 and has no /nodes/coords; "
+                        "salvaging its ndm needs the model's node "
+                        "coordinates (#1368)."
+                    )
+                return nodes["coords"]
+
+            # Before neutral 2.34.0 ``/meta/ndm`` is the mesh dimension:
+            # the shim salvages the ops.model one from the file's own
+            # transforms and node coordinates (loaded only then), or
+            # refuses (#1291, #1358, #1368).
+            ndm = h5_reader.read_spatial_ndm(
+                meta, model.handle, coords=_coords,
+            )
+            ndf = int(meta["ndf"])
             if ndm < 1:
                 # ``0`` is the broker-only "undeclared" sentinel (#1291);
                 # resolving a spec against it would expand components

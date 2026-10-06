@@ -1,6 +1,5 @@
 from .model_viewer import ModelViewer
 from .mesh_viewer import MeshViewer
-from .geom_transf_viewer import GeomTransfViewer
 
 # ``ResultsViewer`` is DE-PUBLISHED here at ADR 0098 S6a, not deleted.
 # ``results.viewer()`` now opens a ``ResultsSession`` window
@@ -40,7 +39,6 @@ def theme_editor() -> int:
 __all__ = [
     "ModelViewer",
     "MeshViewer",
-    "GeomTransfViewer",
     "settings",
     "theme_editor",
 ]

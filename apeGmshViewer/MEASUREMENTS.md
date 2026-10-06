@@ -67,7 +67,7 @@ Notes on the rows:
   The clicked element was a `CorotTruss`, whose chain is element →
   `uniaxialMaterial Steel02` (named `rebar_long` in `/opensees/names`).
 - `footing_analysis_composed.h5` (`C:\Users\nmora\Github\apeGmsh\`) is schema
-  2.26.0 / 2.19.0, outside the reader window: it opens with a warning banner.
+  2.26.0 / 2.19.0, older than that day's reader window (ADR 0113 has since replaced the window with a floor): it opened with a warning banner.
   Its elements are `BezierTri6`, which the syntax table does not know, so the
   inspector reports the chain as not decoded, by type name.
 - `sanramon_1A` `model.h5` is the maintainer's San Ramon building. Source:
@@ -229,3 +229,33 @@ Two limits: the hidden window is clamped to the screen height, so a tall chain
 needs the second still (`<out>.chain-end.png`, inspector scrolled to the end);
 and the run needs a desktop session, since Electron still creates a GPU
 context.
+
+## Geometry sibling size (ADR 0112 D2a, V2b #1305, V0 amendment 4)
+
+Every session run now writes `<stem>.geometry.h5` beside `model.h5`. The
+amendment asks for its size on the measured models; if the sibling were
+larger than `model.h5` on the largest model, Q2 (when geometry is captured)
+would be reopened. Rows were produced on 2026-10-04 with the V2b branch
+(the PR for #1305) by rebuilding each model with `APEGMSH_ARTIFACT_DIR` set,
+so the session's unconditional `end()` wrote the neutral `<name>.h5` and the
+sibling; `model.h5` is the bridge's composed file (`ops.h5`, neutral +
+`/opensees`), the one the rows above measure. Sizes in MB.
+
+| model | `model.h5` (composed) | neutral `<name>.h5` | `<name>.geometry.h5` | sibling / model.h5 | entities (0/1/2/3-D) | triangles | curve points | memberships | `@source` |
+|---|---|---|---|---|---|---|---|---|---|
+| `fixtures/shoebuckle.h5` (`examples/shoebuckle_arch.py`) | 0.19 | 0.15 | 0.02 | 0.11 | 8 (5/3/0/0) | 0 | 96 | 15 | `temp_mesh` (the example meshes with `dim=1`; no surfaces) |
+| maintainer: `sanramon_1A` | 27.27 | 17.68 | 1.47 | 0.054 | 1430 (489/776/165/0) | 25 682 | 24 832 | 719 | `mesh` |
+| maintainer: `ladruno_4D6-24_coarse` (`su_4D6-24_coarse`, `build_fem` only) | 3.46 (row above) | 3.01 | 0.32 | 0.09 | 603 | 1 856 | 7 680 | 230 | `mesh` |
+
+- The sibling is 5 to 11 % of `model.h5` on every model, and 5.4 % on the
+  largest (San Ramon 1A). **Q2 stays closed.**
+- The San Ramon file is 25 682 triangles for 12 841 shell quads (two per
+  quad), 24 832 curve points (776 curves x 32 samples) and 719 label /
+  physical-group memberships; `@status = ok`. A first capture lost 13 slabs
+  (`partial`, 4 008 triangles): their elements use the nodes of the column
+  lines *embedded* in them, which a per-surface
+  `getNodes(includeBoundary=True)` does not return. The writer reads the
+  model's node table once instead; `tests/test_geometry_artifact.py` holds
+  the case.
+- Capture cost at `generate()` exit is below the build noise: San Ramon
+  1A builds in 6.7 s with the capture and both writes included.

@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import inspect
 import re
+import warnings
 from typing import Any
 
 import h5py
@@ -144,8 +145,9 @@ def test_reader_accessors_return_attrs(tmp_path: Any) -> None:
 
 
 # ===========================================================================
-# Phase 7a — Per-zone schema versioning + two-version reader window
-# (ADR 0023). Tests below exercise the central helpers in
+# Phase 7a — Per-zone schema versioning; the reader gate is a floor per
+# zone since ADR 0113 (it retired ADR 0023's two-version window).
+# Tests below exercise the central helpers in
 # :mod:`apeGmsh.opensees._internal.schema_version` plus the read/write
 # wiring across the three zones (neutral, opensees, results).
 # ===========================================================================
@@ -416,9 +418,12 @@ def test_reader_version_reflects_writer_constants() -> None:
         ), zone
         reader = reader_version(zone)
         assert floor.major == reader.major and floor.minor <= reader.minor, zone
-    # The new zones' floor is their first (and, so far, only) version.
+    # The new zones' floor is their first version: geometry has only that
+    # one; provenance gained the additive 1.1.0 (records/origin, V2d
+    # #1378) and its floor stays at 1.0.0.
     assert GEOMETRY_SCHEMA_FLOOR == GEOMETRY_SCHEMA_VERSION
-    assert PROVENANCE_SCHEMA_FLOOR == PROVENANCE_SCHEMA_VERSION
+    assert PROVENANCE_SCHEMA_FLOOR == PROVENANCE_FLOOR
+    assert SchemaVersion.parse(PROVENANCE_SCHEMA_VERSION).minor >= 1
 
 
 # ---------------------------------------------------------------------------
@@ -428,7 +433,7 @@ def test_reader_version_reflects_writer_constants() -> None:
 # the real old files are the corpus's job (#1303 PR-3).
 # ---------------------------------------------------------------------------
 
-#: Neutral stamps the old two-version window refused: the floor itself, a
+#: Neutral stamps the retired two-version window refused: the floor itself, a
 #: mid-history minor, and the minor #1300 (2.34.0) expired.
 _OLD_NEUTRAL_STAMPS = (NEUTRAL_FLOOR, "2.12.0", "2.32.0")
 
@@ -497,15 +502,27 @@ def test_opensees_stamp_at_floor_opens_through_h5_reader(
         assert m.schema_version == stamp
 
 
+@pytest.mark.parametrize("patch", _PATCHES)
 def test_opensees_stamp_below_floor_refuses_through_h5_reader(
-    tmp_path: Path,
+    tmp_path: Path, patch: int,
 ) -> None:
+    """One minor below the opensees floor refuses at every patch, and the
+    refusal names the floor (2.12.0 since the ADR 0113 D3 evidence gate
+    raised it past the 2.11 era, whose files never open: #1329)."""
+    floor, reader = reader_floor(OPENSEES), reader_version(OPENSEES)
+    stamp = f"{floor.major}.{floor.minor - 1}.{patch}"
     out = tmp_path / "bridge_old.h5"
-    e = H5Emitter(schema_version=_below(OPENSEES_FLOOR))
+    e = H5Emitter(schema_version=stamp)
     e.model(ndm=3, ndf=6)
     e.write(str(out))
-    with pytest.raises(SchemaVersionError, match="too old"):
+    with pytest.raises(SchemaVersionError) as exc:
         h5_reader.open(str(out))
+    msg = str(exc.value)
+    assert f"opensees_schema_version={stamp}: too old" in msg
+    assert (
+        f"supports {floor.major}.{floor.minor}.x–"
+        f"{reader.major}.{reader.minor}.x" in msg
+    )
 
 
 def _restamp_results(path: Path, *, neutral: str, opensees: str, results: str) -> None:
@@ -529,23 +546,122 @@ def test_results_with_floor_stamped_zones_open_through_native_reader(
         results_path, neutral=NEUTRAL_FLOOR, opensees=OPENSEES_FLOOR,
         results=RESULTS_FLOOR,
     )
-    NativeReader(results_path).close()
+    # Warn-as-contract: a file inside every floor opens silently; the D9
+    # warning below fires only on a zone the reader cannot open.
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        reader = NativeReader(results_path)
+    with reader:
+        assert reader.unavailable_zones == {}
+        assert reader.fem() is not None
+        assert reader.opensees_model() is not None
 
 
-@pytest.mark.parametrize("zone", [NEUTRAL, OPENSEES])
-def test_results_with_embedded_zone_below_floor_refuses(
-    tmp_path: Path, zone: str,
-) -> None:
-    from apeGmsh.results.readers._native import NativeReader
+# ADR 0113 D9 / INV-11: a results file outlives its embedded model zones.
+# An embedded /model (neutral) or /opensees below its floor no longer
+# expires the file: /stages opens read-only and flagged, model access
+# refuses. An embedded zone NEWER than the reader still refuses (INV-4, D2).
 
+
+def _flagged_results(tmp_path: Path, zone: str, stamp: str) -> Path:
     results_path, _ = _build_composed_results(tmp_path)
     stamps = {NEUTRAL: NEUTRAL_FLOOR, OPENSEES: OPENSEES_FLOOR}
-    stamps[zone] = _below(stamps[zone])
+    stamps[zone] = stamp
     _restamp_results(
         results_path, neutral=stamps[NEUTRAL], opensees=stamps[OPENSEES],
         results=RESULTS_FLOOR,
     )
-    with pytest.raises(_PerZoneSchemaError, match=f"{zone}_schema_version"):
+    return results_path
+
+
+@pytest.mark.parametrize("zone", [NEUTRAL, OPENSEES])
+def test_results_with_embedded_zone_below_floor_opens_stages_flagged(
+    tmp_path: Path, zone: str,
+) -> None:
+    """D9: the embedded zone below its floor is flagged, /stages reads."""
+    from apeGmsh.results.readers._native import NativeReader
+    from apeGmsh.results.readers._protocol import ResultLevel
+
+    floor = {NEUTRAL: NEUTRAL_FLOOR, OPENSEES: OPENSEES_FLOOR}[zone]
+    results_path = _flagged_results(tmp_path, zone, _below(floor))
+    with pytest.warns(UserWarning, match=f"{zone}_schema_version") as rec:
+        reader = NativeReader(results_path)
+    with reader:
+        assert len(rec) == 1
+        msg = str(rec[0].message)
+        assert "too old" in msg and str(results_path) in msg
+        # Flagged: the reader names the zone and why.
+        assert set(reader.unavailable_zones) == {zone}
+        assert "too old" in reader.unavailable_zones[zone]
+        # /stages opens read-only.
+        (stage,) = reader.stages()
+        assert stage.kind == "static" and stage.n_steps == 1
+        assert reader.time_vector(stage.id).tolist() == [0.0]
+        assert reader.available_components(stage.id, ResultLevel.NODES) == [
+            "displacement_z",
+        ]
+        slab = reader.read_nodes(stage.id, "displacement_z")
+        assert slab.values.shape[0] == 1
+        # Model access refuses, naming the zone.
+        with pytest.raises(_PerZoneSchemaError, match=f"{zone}_schema_version"):
+            reader.opensees_model()
+        if zone == NEUTRAL:
+            with pytest.raises(_PerZoneSchemaError, match="neutral_schema_version"):
+                reader.fem()
+        else:
+            # The neutral zone is inside its floor: the FEM still reads.
+            assert reader.fem() is not None
+
+
+def test_results_with_embedded_neutral_of_an_older_major_is_flagged(
+    tmp_path: Path,
+) -> None:
+    """Below the floor includes the previous major: the reader cannot open
+    that /model either, and /stages do not depend on it."""
+    from apeGmsh.results.readers._native import NativeReader
+
+    floor = SchemaVersion.parse(NEUTRAL_FLOOR)
+    results_path = _flagged_results(
+        tmp_path, NEUTRAL, f"{floor.major - 1}.99.0",
+    )
+    with pytest.warns(UserWarning, match="different major"):
+        reader = NativeReader(results_path)
+    with reader:
+        assert set(reader.unavailable_zones) == {NEUTRAL}
+        assert len(reader.stages()) == 1
+        with pytest.raises(_PerZoneSchemaError, match="neutral_schema_version"):
+            reader.fem()
+
+
+@pytest.mark.parametrize("zone", [NEUTRAL, OPENSEES])
+def test_results_with_embedded_zone_newer_than_reader_refuses(
+    tmp_path: Path, zone: str,
+) -> None:
+    """D2 / INV-4: D9 covers old zones only; a newer embedded zone refuses."""
+    from apeGmsh.results.readers._native import NativeReader
+
+    reader = reader_version(zone)
+    results_path = _flagged_results(
+        tmp_path, zone, f"{reader.major}.{reader.minor + 1}.0",
+    )
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        with pytest.raises(_PerZoneSchemaError, match=f"{zone}_schema_version"):
+            NativeReader(results_path)
+
+
+def test_results_zone_below_its_floor_still_refuses(tmp_path: Path) -> None:
+    """D9 is about the embedded zones; the results zone itself is validated
+    as before (its floor is 1.0.0, so the edge is the previous major)."""
+    from apeGmsh.results.readers._native import NativeReader
+
+    results_path, _ = _build_composed_results(tmp_path)
+    floor = SchemaVersion.parse(RESULTS_FLOOR)
+    _restamp_results(
+        results_path, neutral=NEUTRAL_FLOOR, opensees=OPENSEES_FLOOR,
+        results=f"{floor.major - 1}.0.0",
+    )
+    with pytest.raises(_PerZoneSchemaError, match="results_schema_version"):
         NativeReader(results_path)
 
 
@@ -570,10 +686,10 @@ def test_envelope_back_compat_preserves_existing_files(tmp_path: Any) -> None:
 
 
 def test_results_schema_version_independent_of_opensees(tmp_path: Any) -> None:
-    """Each zone's version window is independent of the others.
+    """Each zone's version check is independent of the others.
 
-    The results-zone reader window applies to the results version
-    only; the opensees-zone window applies to the opensees version
+    The results-zone floor check applies to the results version
+    only; the opensees-zone check applies to the opensees version
     only — they don't share a major (INV-3).
     """
     reader_neutral = reader_version(NEUTRAL)
@@ -752,10 +868,32 @@ def _zone_registry_current(text: str, zone_label: str) -> str:
     return version.group(1)
 
 
+def _zone_registry_floor(text: str, zone_label: str) -> str:
+    """The Floor-column ``**X.Y.Z**`` value (the row's last cell) for the
+    zone-registry row whose leading cell starts with ``zone_label``."""
+    row = re.search(
+        rf"^\|\s*{re.escape(zone_label)}[^|]*\|.*\|\s*$", text, re.M,
+    )
+    assert row is not None, (
+        f"h5-schema.md: no zone-registry row found starting with "
+        f"`| {zone_label}` — table reformatted or row renamed, update "
+        "the scan (or the doc)."
+    )
+    cells = [c.strip() for c in row.group(0).strip().strip("|").split("|")]
+    floor = re.fullmatch(r"\*\*(\d+\.\d+\.\d+)\*\*", cells[-1])
+    assert floor is not None, (
+        f"h5-schema.md: zone-registry row for {zone_label!r} has no "
+        "bolded **X.Y.Z** Floor cell in its last column — table format "
+        "drifted."
+    )
+    return floor.group(1)
+
+
 def test_h5_schema_doc_registry_matches_writer_constants() -> None:
     """The zone-registry's "Current" column must equal the live writer
-    constants for the neutral and opensees zones — not a hand-typed
-    snapshot that can silently go stale."""
+    constants for the neutral and opensees zones, and its "Floor" column
+    must equal every zone's reader floor (ADR 0113 INV-3) — not a
+    hand-typed snapshot that can silently go stale."""
     from apeGmsh.mesh._femdata_h5_io import NEUTRAL_SCHEMA_VERSION
     from apeGmsh.opensees.emitter.h5 import SCHEMA_VERSION as OPENSEES_VERSION
 
@@ -772,6 +910,26 @@ def test_h5_schema_doc_registry_matches_writer_constants() -> None:
         f"but SCHEMA_VERSION={OPENSEES_VERSION!r} — the doc has drifted "
         "from opensees/emitter/h5.py; update the table."
     )
+
+    from apeGmsh.opensees._internal.schema_version import (
+        GEOMETRY, NEUTRAL, OPENSEES, PROVENANCE, RESULTS, reader_floor,
+    )
+
+    for zone, label in (
+        (NEUTRAL, "neutral (broker)"),
+        (OPENSEES, "opensees (bridge)"),
+        (RESULTS, "results"),
+        (GEOMETRY, "geometry"),
+        (PROVENANCE, "provenance"),
+    ):
+        floor_doc = _zone_registry_floor(text, label)
+        floor_live = str(reader_floor(zone))
+        assert floor_doc == floor_live, (
+            f"h5-schema.md zone registry says {label} Floor={floor_doc!r} "
+            f"but reader_floor({zone!r})={floor_live!r} — the doc has "
+            "drifted from the zone's *_SCHEMA_FLOOR constant; update the "
+            "table."
+        )
 
 
 def _write_neutral_zone_group_names() -> list[str]:

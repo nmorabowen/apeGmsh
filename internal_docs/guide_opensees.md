@@ -320,8 +320,8 @@ recipes [Apply gravity](../how-to/gravity.md) and
 
 | Family | Types |
 |--------|-------|
-| 3-D solid | `FourNodeTetrahedron`, `TenNodeTetrahedron`, `stdBrick`, `bbarBrick`, `SSPbrick` |
-| 2-D solid | `quad`, `tri31`, `SSPquad` |
+| 3-D solid | `FourNodeTetrahedron`, `TenNodeTetrahedron`, `stdBrick`; fork `LadrunoBrick` (`formulation=` std/bbar/uri/ssp/eas). `bbarBrick` / `SSPbrick` are deferred |
+| 2-D solid | `FourNodeQuad`, `Tri31`, `SixNodeTri`; fork `LadrunoQuad` (`formulation=` std/bbar/ssp). `SSPquad` is deferred |
 | Shell | `ShellMITC3`, `ShellMITC4`, `ShellDKGQ`, `ASDShellQ4` |
 | Truss | `truss`, `corotTruss` |
 | Beam | `elasticBeamColumn`, `forceBeamColumn`, `ElasticTimoshenkoBeam` |

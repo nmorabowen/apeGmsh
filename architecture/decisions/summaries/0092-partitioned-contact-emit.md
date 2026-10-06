@@ -1,6 +1,6 @@
 # ADR 0092 — Partitioned contact emit: one owner rank per interaction, the whole interface ghosted (summary)
 
-**Status:** Proposed (2026-08-11) — the emit half of a cross-library effort. The engine half is
+**Status:** Accepted (2026-08-11) — the emit half of a cross-library effort. The engine half is
 fork **ADR-78** (`OpenSees/Ladruno_implementation/78_ladruno_parallel_contact_adr.md`); neither
 half ships alone. […]
 

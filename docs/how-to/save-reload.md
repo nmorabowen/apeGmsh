@@ -47,9 +47,18 @@ FEMData.from_h5(cls, path, *, root="/") -> FEMData                          # FE
 - **Autosave fires on `end()`, not eagerly.** Nothing is written until
   `__exit__` / `g.end()` runs — if the process dies mid-build, the file
   never lands. Call `g.save()` explicitly when a checkpoint matters.
-- **`save_to=None` (the default) disables autosave.** With a path set,
-  `overwrite=False` against an existing file raises `FileExistsError`;
-  `g.save()` with neither an argument nor a `save_to=` raises `RuntimeError`.
+- **`save_to=None` (the default) still writes.** `end()` leaves
+  `<model_name>.h5` and `<model_name>.geometry.h5` beside the running
+  script, and `model_name` defaults to the script's stem (`python
+  frame.py` leaves `frame.h5`). A notebook, `python -c` or stdin has no
+  script: with no explicit `model_name` nothing is written automatically,
+  and one warning says so. Set `model_name` per run in a parameter sweep
+  that keeps every run's file; a file another script wrote at that path
+  is kept, with a warning. A notebook's cells are not scripts, so a
+  notebook replaces its file on every run: give each notebook its own
+  `model_name`. With a path set, `overwrite=False` against an
+  existing file raises `FileExistsError` on `g.save()`; `g.save()` with
+  neither an argument nor a `save_to=` raises `RuntimeError`.
 - **Autosave catches-and-warns on write failure** so gmsh still finalizes.
   A silently-warned failure can lose data — prefer an explicit `g.save()`
   when persistence is the point.

@@ -14,19 +14,38 @@ reimplements any of it (ADR 0018 INV-1/3, scope C1).
 from __future__ import annotations
 
 import os
+import warnings
+from collections import Counter
 from typing import TYPE_CHECKING, Any, Sequence
 
 if TYPE_CHECKING:
     import h5py
 
+    from ..._internal.provenance import ProvenanceTable
+
 
 __all__ = [
+    "ReplaySkippedStreamWarning",
     "_compose_model_h5",
+    "_merge_provenance",
     "_replay_into",
     "_try_write_broker_zone",
     "_override_schema_version",
     "_path_stem",
 ]
+
+
+class ReplaySkippedStreamWarning(UserWarning):
+    """Deck replay left out a stream the source model carries (D8, #1412).
+
+    :func:`_replay_into` re-emits the ``/opensees`` deck records plus the
+    ``g.reinforce`` ties.  It has no deck record for the neutral-zone
+    streams that the forward bridge fans out at emit time: equalDOF /
+    rigidLink / rigidDiaphragm / node-to-surface couplings, penalty and
+    equation ties, ``g.embed`` ties, contacts, and phantom-bridged
+    interfaces.  A replayed deck that carries any of them differs from the
+    forward ``apeSees`` deck, so the replay warns and names each one.
+    """
 
 
 def _write_opensees_nodes_ndf(
@@ -81,13 +100,15 @@ def _compose_model_h5(
     computed_sections: "Sequence[tuple[int, str, str]]" = (),
     snapshot_id: str | None = None,
     nodes_ndf: "dict[int, int] | None" = None,
+    provenance: "ProvenanceTable | None" = None,
 ) -> None:
     """Compose a ``model.h5`` from a broker ``fem`` + a populated ``emitter``.
 
     The one composition path.  Order: broker ``/meta`` + neutral zone
     (with a stub-FEM fallback to the bridge's own ``/meta`` +
     schema-version override), then the ``emitter``'s ``/opensees/...``
-    enrichment, then apeGmsh.cuts v4 ``/opensees/cuts`` / ``/sweeps``.
+    enrichment, then apeGmsh.cuts v4 ``/opensees/cuts`` / ``/sweeps``,
+    then ``/provenance`` (ADR 0112 D3).
 
     Parameters
     ----------
@@ -117,11 +138,26 @@ def _compose_model_h5(
         carry-through for ``ModelData.from_h5``).  ``None`` ⇒ leave
         whatever the broker / bridge wrote: the pre-extraction
         behaviour, so ``apeSees.h5`` is byte-invariant under C1.
+    provenance
+        The bridge's declaration provenance (``apeSees._provenance``),
+        appended to the snapshot's own table (``fem.provenance``, the
+        session's records, which ``FEMData.from_h5`` carries forward
+        from a source file).  The merged table is written as
+        ``/provenance`` when the snapshot is a real :class:`FEMData`
+        and either side has records; a replay writer passes ``None``
+        and so copies the snapshot's table forward (V0 Q7).  A stub
+        snapshot (the bridge-only fallback) writes none: it belongs to
+        no run, and its records would hold test paths.  No hash reads
+        it.
     """
     import h5py
 
+    from ..._internal.provenance import base_dir_for, encode_columns
     from ...cuts._h5_io import write_cuts_into
-    from ...mesh._femdata_h5_io import NEUTRAL_SCHEMA_VERSION
+    from ...mesh._femdata_h5_io import (
+        NEUTRAL_SCHEMA_VERSION,
+        _write_provenance,
+    )
     from ..emitter.h5 import SCHEMA_VERSION
     from ._computed_sections_h5 import write_computed_sections_into
     from ._names_h5 import write_names_into
@@ -137,6 +173,30 @@ def _compose_model_h5(
             "dimension; call ops.model(ndm=, ndf=) before writing model.h5 "
             "(/meta/ndm is read as the model's dimension, #1291)."
         )
+
+    # ADR 0112 D3: merge and encode before the file is opened, so an
+    # int32 overflow refuses with nothing written (h5-schema.md,
+    # "Integer policy").  Only a real FEMData snapshot carries the zone;
+    # the stub fallback below writes none.
+    from ...mesh.FEMData import FEMData
+
+    prov_table = None
+    if isinstance(fem, FEMData):
+        base = fem.provenance
+        if provenance is not None and base is not None:
+            # The bridge owns the ``opensees/`` zone: a snapshot loaded
+            # from a bridge-written file carries that file's bridge
+            # records, which this bridge declares afresh (the "script 2,
+            # analyse" flow, FEMData.from_h5 -> apeSees -> h5).  Keeping
+            # them would collide on a repeated name or leave a stale
+            # record for a declaration this bridge did not make.
+            base = _drop_zone(base, "opensees")
+        prov_table = _merge_provenance(base, provenance)
+    prov_base_dir = base_dir_for(path)
+    prov_columns = (
+        encode_columns(prov_table, prov_base_dir)
+        if prov_table is not None else None
+    )
 
     with h5py.File(path, "w") as f:
         broker_used = _try_write_broker_zone(
@@ -186,6 +246,12 @@ def _compose_model_h5(
         # no-op when empty; hash-excluded like names (provenance
         # metadata, not authored model state).
         write_computed_sections_into(f, computed_sections)
+        # ADR 0112 D3 — the declaration provenance of the snapshot and
+        # the bridge, after /opensees.  ``model_hash`` below reads
+        # /opensees only and ``fem_hash`` the neutral zone, so the zone
+        # changes neither (V2a invariance).
+        if prov_columns is not None and "meta" in f:
+            _write_provenance(f, prov_columns, prov_base_dir)
 
         # ADR 0021 — stamp the lineage triple ``/meta/lineage/...``
         # after every zone is written.  ``fem_hash`` is recomputed
@@ -205,6 +271,89 @@ def _compose_model_h5(
                 fem_hash=fem_hash if fem_hash else None,
                 model_hash=model_hash,
             )
+
+
+def _merge_provenance(
+    base: "ProvenanceTable | None",
+    extra: "ProvenanceTable | None",
+) -> "ProvenanceTable | None":
+    """Append ``extra``'s records to ``base``, re-indexing its rows.
+
+    The tables come from two stores (the session's and the bridge's),
+    each with its own ``files`` / ``sites`` rows and 0-based ``seq``.
+    ``extra``'s files and sites are deduplicated into ``base``'s, its
+    records keep their order with ``seq`` continued after ``base``'s
+    last record, and a declaration path present on both sides is
+    refused: the zones differ (``neutral/`` / ``geometry/`` against
+    ``opensees/``), so a collision is a programming error, not a
+    merge.  ``None`` when neither side has a table; an empty ``extra``
+    leaves ``base`` as it is.
+    """
+    from ..._internal.provenance import ProvenanceTable, RecordRow, SiteRow
+
+    if extra is None or not extra.records:
+        return base
+    if base is None:
+        return extra
+
+    files = list(base.files)
+    file_index = {row: i for i, row in enumerate(files)}
+    sites = list(base.sites)
+    site_index = {row: i for i, row in enumerate(sites)}
+    records = list(base.records)
+    paths = {r.path for r in records}
+
+    def file_row(i: int) -> int:
+        row = extra.files[i]
+        j = file_index.get(row)
+        if j is None:
+            j = file_index[row] = len(files)
+            files.append(row)
+        return j
+
+    def site_row(i: int) -> int:
+        if i < 0:
+            return -1
+        s = extra.sites[i]
+        row = SiteRow(file_row(s.file), s.line, s.function)
+        j = site_index.get(row)
+        if j is None:
+            j = site_index[row] = len(sites)
+            sites.append(row)
+        return j
+
+    offset = len(records)
+    for r in extra.records:
+        if r.path in paths:
+            raise ValueError(
+                f"_merge_provenance: declaration path {r.path!r} is "
+                "recorded by both the snapshot and the bridge; the two "
+                "stores must not share a zone")
+        paths.add(r.path)
+        records.append(RecordRow(
+            r.path, site_row(r.site), site_row(r.script), offset + r.seq,
+            r.origin))
+    return ProvenanceTable(tuple(files), tuple(sites), tuple(records))
+
+
+def _drop_zone(table: "ProvenanceTable", zone: str) -> "ProvenanceTable":
+    """``table`` without the records of ``zone``, compacted: ``seq``
+    renumbered from 0 in the surviving order and the ``files`` / ``sites``
+    rows nothing references any more dropped."""
+    from ..._internal.provenance import ProvenanceTable, RecordRow
+
+    kept = [r for r in table.records if not r.path.startswith(f"{zone}/")]
+    if len(kept) == len(table.records):
+        return table
+    renumbered = ProvenanceTable(
+        table.files, table.sites,
+        tuple(RecordRow(r.path, r.site, r.script, i, r.origin)
+              for i, r in enumerate(kept)))
+    # Merging onto an empty table re-indexes files and sites through the
+    # dedupe path, so only the rows the kept records reach survive.
+    merged = _merge_provenance(ProvenanceTable(), renumbered)
+    assert merged is not None
+    return merged
 
 
 def _try_write_broker_zone(
@@ -264,6 +413,201 @@ def _path_stem(path: str) -> str:
     base = os.path.basename(path)
     stem, _ = os.path.splitext(base)
     return stem or "model"
+
+
+def _constraint_replays_as_element(rec: Any, kind_cls: Any) -> bool:
+    """True iff the forward emit writes ``rec`` as an ``element`` line.
+
+    Those lines are archived in ``/opensees/element_meta``, and replay
+    re-emits them with the other elements, so the record is not skipped:
+    an RBE2 ``kinematic_coupling`` (``LadrunoKinematicCoupling``), a
+    ``rigid_body`` with ``as_element`` (``LadrunoRigidBody``), an
+    interpolation on the ``penalty_al`` route (``LadrunoEmbeddedNode``)
+    and a ``distributing`` RBE3 off the equation route
+    (``LadrunoDistributingCoupling``).  This mirrors the branches of
+    ``build.emit_mp_constraints`` and ``build._emit_one_interpolation``.
+    Every other kind goes out through a verb the deck zone has no replay
+    for, so it counts as skipped; an unknown kind counts as skipped too.
+    """
+    kind = rec.kind
+    if kind == kind_cls.KINEMATIC_COUPLING:
+        return True
+    if kind == kind_cls.RIGID_BODY:
+        return bool(rec.as_element)
+    return False
+
+
+def _interpolation_replays_as_element(rec: Any, kind_cls: Any) -> bool:
+    """:func:`_constraint_replays_as_element` for one interpolation row."""
+    if rec.enforce == "penalty_al":
+        return True
+    return bool(
+        rec.kind == kind_cls.DISTRIBUTING and rec.enforce != "equation"
+    )
+
+
+def _stage_mp_keys(stages: "Sequence[Any]") -> "frozenset[tuple[Any, ...]]":
+    """The keys of every MP line the stage blocks of ``stages`` re-emit.
+
+    A key is ``(bucket, *what it ties)`` over the four ``StageRecordRO``
+    MP buckets; :func:`_constraint_stage_keys` builds the matching side.
+    Keys carry the bucket and the tied nodes, not the declaration name.
+    The archived name is no identity: a ``tied_contact`` slave row has
+    ``name=None`` (only its parent is named), and a ``rigid_body`` group
+    writes its name on its first ``rigidLink`` only.
+    """
+    keys: "set[tuple[Any, ...]]" = set()
+    for s in stages:
+        for r in s.equal_dofs:
+            keys.add(("equal_dof", int(r.master), int(r.slave),
+                      tuple(int(d) for d in r.dofs)))
+        for r in s.rigid_links:
+            keys.add(("rigid_link", str(r.kind), int(r.master), int(r.slave)))
+        for r in s.rigid_diaphragms:
+            keys.add(("rigid_diaphragm", int(r.master),
+                      tuple(sorted(int(n) for n in r.slaves))))
+        for r in s.embedded_nodes:
+            keys.add(("embedded_node", int(r.cnode),
+                      tuple(int(n) for n in r.args)))
+    return frozenset(keys)
+
+
+def _pair_stage_keys(rec: Any, kind_cls: Any) -> "list[tuple[Any, ...]]":
+    """Stage-bucket keys of one ``NodePairRecord`` (empty: no bucket)."""
+    if rec.kind == kind_cls.EQUAL_DOF:
+        return [("equal_dof", int(rec.master_node), int(rec.slave_node),
+                 tuple(int(d) for d in rec.dofs))]
+    if rec.kind in (kind_cls.RIGID_BEAM, kind_cls.RIGID_ROD):
+        link = "beam" if rec.kind == kind_cls.RIGID_BEAM else "bar"
+        return [("rigid_link", link, int(rec.master_node),
+                 int(rec.slave_node))]
+    return []
+
+
+def _constraint_stage_keys(
+    rec: Any, kind_cls: Any,
+) -> "list[tuple[Any, ...]]":
+    """The stage-bucket keys a stage block writes for one node constraint.
+
+    Mirrors ``build._emit_rigid_links`` / ``_emit_equal_dofs`` /
+    ``_emit_rigid_diaphragms``.  An empty list means no stage bucket can
+    hold the record, so it never counts as stage-replayed.
+    """
+    kind = rec.kind
+    if kind == kind_cls.RIGID_BODY:
+        return [("rigid_link", "beam", int(rec.master_node), int(sn))
+                for sn in rec.slave_nodes]
+    if kind == kind_cls.RIGID_DIAPHRAGM:
+        return [("rigid_diaphragm", int(rec.master_node),
+                 tuple(sorted(int(n) for n in rec.slave_nodes)))]
+    if kind in (kind_cls.NODE_TO_SURFACE, kind_cls.NODE_TO_SURFACE_SPRING):
+        # The nested pairs, as the two emitters walk them: the rigid-kind
+        # links, then every phantom -> slave equalDOF.
+        keys: "list[tuple[Any, ...]]" = []
+        for pair in rec.rigid_link_records:
+            keys += _pair_stage_keys(pair, kind_cls)
+        for pair in rec.equal_dof_records:
+            keys.append(("equal_dof", int(pair.master_node),
+                         int(pair.slave_node),
+                         tuple(int(d) for d in pair.dofs)))
+        return keys
+    return _pair_stage_keys(rec, kind_cls)
+
+
+def _interpolation_stage_keys(rec: Any) -> "list[tuple[Any, ...]]":
+    """Stage-bucket key of one non-element interpolation row: its
+    ``embeddedNode`` line (none on the equation route, a ledger verb)."""
+    if rec.enforce == "equation":
+        return []
+    return [("embedded_node", int(rec.slave_node),
+             tuple(int(n) for n in rec.master_nodes))]
+
+
+def _skipped_replay_streams(
+    fem: Any, *, stage_mp_keys: "frozenset[tuple[Any, ...]]",
+) -> "dict[str, Counter[str]]":
+    """Return ``{stream: Counter(kind -> count)}`` for every non-empty
+    neutral-zone stream that :func:`_replay_into` does not re-emit.
+
+    ``stage_mp_keys`` (:func:`_stage_mp_keys`) holds the MP lines that a
+    staged archive's stage blocks re-emit.  A record counts as replayed
+    there only when every line its fan-out writes is among them, matched
+    on bucket and nodes, so a stage that claims the equalDOF named ``x``
+    does not also excuse a rigidDiaphragm named ``x``.
+
+    The streams are read without defaults: a ``fem`` that lacks one fails
+    here rather than passing for empty.
+    """
+    out: "dict[str, Counter[str]]" = {}
+
+    def _staged(keys: "list[tuple[Any, ...]]") -> bool:
+        return bool(keys) and all(k in stage_mp_keys for k in keys)
+
+    node_set = fem.nodes.constraints
+    kind_cls = node_set.Kind
+    nodes_skipped: "Counter[str]" = Counter(
+        str(rec.kind) for rec in node_set
+        if not _constraint_replays_as_element(rec, kind_cls)
+        and not _staged(_constraint_stage_keys(rec, kind_cls))
+    )
+    if nodes_skipped:
+        out["fem.nodes.constraints"] = nodes_skipped
+
+    # interpolations() expands tied_contact / mortar into their slave rows,
+    # as the forward emit does, so each slave is matched on its own.
+    surface_skipped: "Counter[str]" = Counter(
+        str(rec.kind) for rec in fem.elements.constraints.interpolations()
+        if not _interpolation_replays_as_element(rec, kind_cls)
+        and not _staged(_interpolation_stage_keys(rec))
+    )
+    if surface_skipped:
+        out["fem.elements.constraints"] = surface_skipped
+
+    # An interface on an equal-ndf pair is a zeroLength plus its materials,
+    # all replayed; a mixed-ndf pair also needs a phantom node and its
+    # equalDOF, which replay has no record for.  No stage match is tried:
+    # the writer refuses a stage phantom node (``set_stage_records``), so a
+    # stage-claimed phantom interface never reaches an archive.
+    interfaces_skipped: "Counter[str]" = Counter(
+        str(rec.kind) for rec in fem.elements.interfaces
+        if rec.phantom_node is not None
+    )
+    if interfaces_skipped:
+        out["fem.elements.interfaces"] = interfaces_skipped
+
+    # The H5 emitter keeps no deck record for these at all (ledger verbs).
+    for stream, recs in (
+        ("fem.elements.embed_ties", fem.elements.embed_ties),
+        ("fem.elements.contacts", fem.elements.contacts),
+        ("fem.elements.contact_planes", fem.elements.contact_planes),
+    ):
+        if recs:
+            out[stream] = Counter({"record": len(recs)})
+    return out
+
+
+def _warn_skipped_replay_streams(
+    fem: Any, *, stage_mp_keys: "frozenset[tuple[Any, ...]]",
+) -> None:
+    """Warn :class:`ReplaySkippedStreamWarning` iff ``fem`` carries a
+    stream that replay does not re-emit, naming each stream and count."""
+    skipped = _skipped_replay_streams(fem, stage_mp_keys=stage_mp_keys)
+    if not skipped:
+        return
+    parts = []
+    for stream, kinds in skipped.items():
+        detail = ", ".join(f"{k}: {n}" for k, n in sorted(kinds.items()))
+        parts.append(f"{stream} ({detail})")
+    warnings.warn(
+        "Deck replay does not re-emit "
+        f"{len(skipped)} stream(s) the model carries: "
+        + "; ".join(parts)
+        + ". The replayed deck leaves these constraints and ties out, so "
+        "it differs from the forward apeSees deck. For a faithful deck, "
+        "load FEMData.from_h5(path) and emit it through apeSees(fem).",
+        ReplaySkippedStreamWarning,
+        stacklevel=3,
+    )
 
 
 def _replay_elements_bracketed(
@@ -333,6 +677,7 @@ def _replay_into(
     initial_stress_tags: Any = None,
     reinforce_name_to_tag: "dict[str, int] | None" = None,
     deck_ordering: bool = True,
+    stage_mp_keys: "frozenset[tuple[Any, ...]]" = frozenset(),
 ) -> None:
     """Walk a typed-record graph and re-emit it through ``emitter``.
 
@@ -420,11 +765,23 @@ def _replay_into(
         :class:`BuiltModel` from :meth:`apeSees.build` directly and
         not round-trip through H5.
 
+        **Skipped streams warn (D8, #1412).**  When ``fem`` is given (the
+        tcl / py / live deck targets), every neutral-zone stream this
+        helper has no replay for is named, with its count, in one
+        :class:`ReplaySkippedStreamWarning` before anything is emitted.
+        ``stage_mp_keys`` is passed by :func:`_replay_staged_into`: the MP
+        lines its stage blocks re-emit, which are therefore not skipped.
+        The H5 re-emit path passes no ``fem``; its archive keeps those
+        streams in the neutral zone that ``_compose_model_h5`` rewrites.
+
     Parameters mirror :class:`apeGmsh.opensees._internal.typed_records`
     field names; see :mod:`apeGmsh.opensees.opensees_model` for the
     canonical instantiation pattern.
     """
     from .build import node_coords_as_floats
+
+    if fem is not None:
+        _warn_skipped_replay_streams(fem, stage_mp_keys=stage_mp_keys)
 
     # 1. Model directive.
     emitter.model(ndm=int(ndm), ndf=int(ndf))
@@ -607,6 +964,9 @@ def _replay_into(
         from .build import emit_reinforce_ties
         from .tag_allocator import TagAllocator
 
+        # tag-law waiver reinforce-tie-replay (tag_law_ledger.txt): replay
+        # mints the tie element tags (the _counters seed below and
+        # emit_reinforce_ties) because the deck zone stores no tie record.
         _rt_tags = TagAllocator()
         # Seed the element counter past the max replayed element tag so the tie
         # element tags don't collide with the directly-replayed elements.
@@ -646,6 +1006,9 @@ def _replay_into(
         # so global + per-stage parameter tags accumulate on one counter
         # (the bridge reuses one ``tags`` across everything).  Flat
         # callers pass None → fresh allocator (unchanged behaviour).
+        # tag-law waiver initial-stress-replay (tag_law_ledger.txt): replay
+        # mints the parameter tags (emit_initial_stress_global) because the
+        # archive stores the declarative record, not the allocated tags.
         _is_tags = initial_stress_tags or TagAllocator()
         # ADR 0065 v2 B3: the emit helpers now take a FemToOpsTagMap.
         fem_eid_to_ops_tag = FemToOpsTagMap.from_pairs(
@@ -948,15 +1311,21 @@ def _replay_staged_into(
     # ONE allocator threaded across the global prefix AND every stage
     # (the bridge reuses a single ``tags``; a per-stage allocator would
     # restart parameter counters at stage boundaries — gate-1 FATAL).
+    # tag-law waiver staged-replay-params (tag_law_ledger.txt): replay mints
+    # the stage parameter tags (emit_initial_stress_global and
+    # emit_activate_absorbing) because the archive stores no parameter tag.
     tags = TagAllocator()
 
     # 1. Global prefix — _replay_into with stage-owned topology filtered
     # out and the shared allocator threaded for any GLOBAL initial_stress.
+    # The stage blocks below re-emit their claimed MP constraints, so the
+    # skipped-stream warning must not count those (D8, #1412).
     _replay_into(
         emitter,
         skip_node_tags=owned_node_tags,
         skip_element_tags=owned_element_tags,
         initial_stress_tags=tags,
+        stage_mp_keys=_stage_mp_keys(stages),
         **replay_kwargs,
     )
 

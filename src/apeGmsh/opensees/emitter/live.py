@@ -28,7 +28,7 @@ from typing import (
 
 from .._internal.analyze_rc import check_analyze_rc
 from .._rc_c2_flags import rc_c2_flags, rc_c2_live_refusal
-from .base import StrategySpec, trim_coords_to_ndm
+from .base import DroppedAxisGuard, StrategySpec, command_row
 
 if TYPE_CHECKING:
     from types import ModuleType
@@ -283,7 +283,7 @@ _TET10_STOCK_DEFECT = (
     "stock release through openseespy 3.8.0; upstream master as of "
     "2026-09-25). It converges to that answer without a warning. The "
     "Ladruno fork carries the fix (fork PR #520). On stock, mesh tet4 "
-    "(FourNodeTetrahedron) or hexahedra (stdBrick / SSPbrick / bbarBrick). "
+    "(FourNodeTetrahedron) or hexahedra (stdBrick). "
     "Deck emission via ops.tcl(...) / ops.py(...) works on any build."
 )
 
@@ -644,9 +644,12 @@ class LiveOpsEmitter:
     #: Model ``ndm``, learned from :meth:`model`; ``None`` until then.
     #: Node coordinates are trimmed to it — see ``trim_coords_to_ndm``.
     _model_ndm: "int | None" = None
+    #: Trims nodes to ``_model_ndm`` and refuses a lossy trim (#1337).
+    _dropped_axes: DroppedAxisGuard = DroppedAxisGuard.BEFORE_MODEL
 
     def model(self, *, ndm: int, ndf: int) -> None:
         self._model_ndm = ndm
+        self._dropped_axes = DroppedAxisGuard(ndm)
         self._ops.model("basic", "-ndm", ndm, "-ndf", ndf)
 
     def node(
@@ -655,7 +658,7 @@ class LiveOpsEmitter:
         # openseespy parses the node argv exactly as Tcl does, so a
         # padded coordinate swallows -ndf here too — see
         # trim_coords_to_ndm.
-        coords = trim_coords_to_ndm(coords, self._model_ndm)
+        coords = self._dropped_axes.trim(coords, tag)
         if ndf is None:
             self._ops.node(tag, *coords)
         else:
@@ -1572,6 +1575,25 @@ class LiveOpsEmitter:
                 stacklevel=2,
             )
             self._ops.system(fallback)
+
+    # -- Command channel (ADR 0114 D2/D3) ---------------------------------
+
+    def command(self, verb: str, *args: int | float | str) -> None:
+        row = command_row(verb)
+        # The token's binding is looked up by its own name, the way the
+        # typed fork verbs probe theirs (``profiler``,
+        # ``modal_response_history``); a missing attribute means this
+        # build lacks the command, so name what the row requires.
+        fn = getattr(self._ops, verb, None)
+        if fn is None:
+            needs = ", ".join(sorted(row.requires)) or "a stock build"
+            raise RuntimeError(
+                f"LiveOpsEmitter.command({verb!r}): the bound openseespy "
+                f"module has no ops.{verb}; the verb requires {needs} "
+                "(VERBS row, ADR 0114). Emit a deck with ops.tcl(path) / "
+                "ops.py(path) for a build that has it."
+            )
+        fn(*args)
 
     # -- Staged analysis (Phase SSI-2.A) ------------------------------------
     #

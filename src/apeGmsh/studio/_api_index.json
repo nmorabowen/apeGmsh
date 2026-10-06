@@ -259,7 +259,7 @@
       "symbol": "Results.show_web"
     },
     "Results.stage": {
-      "doc": "Return a Results scoped to a stage (matched by id or name).",
+      "doc": "Return a Results scoped to a stage (matched by id, name or alias).",
       "signature": "stage(name_or_id: 'str') -> \"'Results'\"",
       "skill": "references/results.md",
       "symbol": "Results.stage"
@@ -1098,12 +1098,6 @@
       "skill": "references/api-cheatsheet.md",
       "symbol": "g.mesh.partitioning.unpartition"
     },
-    "g.mesh.preview": {
-      "doc": "Interactive WebGL preview of the mesh.",
-      "signature": "preview(*, dims: 'list[int] | None' = None, show_nodes: 'bool' = True, browser: 'bool' = False, return_fig: 'bool' = False)",
-      "skill": "references/api-cheatsheet.md",
-      "symbol": "g.mesh.preview"
-    },
     "g.mesh.queries.get_element_properties": {
       "doc": "Return metadata for a given gmsh element type code.",
       "signature": "get_element_properties(element_type: 'int') -> 'dict'",
@@ -1751,12 +1745,6 @@
       "signature": "launch_picker(*, show_points: 'bool' = True, show_curves: 'bool' = True, show_surfaces: 'bool' = True, show_volumes: 'bool' = False, verbose: 'bool' = True) -> 'None'",
       "skill": "references/api-cheatsheet.md",
       "symbol": "g.model.launch_picker"
-    },
-    "g.model.preview": {
-      "doc": "Interactive WebGL preview of the BRep geometry.",
-      "signature": "preview(*, dims: 'list[int] | None' = None, browser: 'bool' = False, return_fig: 'bool' = False)",
-      "skill": "references/api-cheatsheet.md",
-      "symbol": "g.model.preview"
     },
     "g.model.queries.adjacencies": {
       "doc": "Return entities adjacent to the given entity.",
@@ -3110,7 +3098,7 @@
     },
     "ops.imposed_displacement": {
       "doc": "Imposed-displacement pattern helper (Phase SSI-3).",
-      "signature": "imposed_displacement(*, pg: 'str | None' = None, nodes: 'Iterable[int] | None' = None, ux: 'float | None' = None, uy: 'float | None' = None, uz: 'float | None' = None, pattern_factor: 'float' = 1.0, series: \"'TimeSeries | None'\" = None) -> \"'Plain'\"",
+      "signature": "imposed_displacement(*, pg: 'str | None' = None, nodes: 'Iterable[int] | None' = None, ux: 'float | None' = None, uy: 'float | None' = None, uz: 'float | None' = None, pattern_factor: 'float' = 1.0, series: \"'TimeSeries | None'\" = None, name: 'str | None' = None) -> \"'Plain'\"",
       "skill": "references/opensees-bridge.md",
       "symbol": "ops.imposed_displacement"
     },

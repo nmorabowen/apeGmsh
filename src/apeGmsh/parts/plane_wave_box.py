@@ -39,7 +39,7 @@ import gmsh
 from ._axis1d import Axis1D
 
 if TYPE_CHECKING:
-    from ..core._session import _SessionBase  # pragma: no cover
+    from .._session import _SessionBase  # pragma: no cover
 
 # Canonical btype letter order — also the OpenSees-accepted set.
 _BTYPE_ORDER = "BLRFK"

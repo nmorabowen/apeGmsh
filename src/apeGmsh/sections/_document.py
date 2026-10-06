@@ -21,10 +21,15 @@ Material-table entries are dual-role: continuum params (``E``/``nu``
 (``{"type": ..., "params": {...}}``). The continuum build requires the
 first role on used materials; the fiber handoff requires the second.
 
-Versioning: ``SECTION_DOC_VERSION`` follows the ADR 0023 additive-minor
-law with the corrected (#836) window direction — this loader opens
-documents at its own minor and the previous minor; a loader older than
-the document refuses it loudly.
+Versioning: compatibility is a floor (ADR 0113, amended 2026-10-04 for
+section documents, #1317). This loader opens every document of its own
+major from ``SECTION_DOC_FLOOR`` up: older minors read through the
+presence probes in ``_validate`` (every key added after B1 has a
+default), and a newer minor opens with a ``SectionDocumentNewerWarning``
+naming both versions, its unknown optional keys ignored. Another major,
+or a minor below the floor, refuses with a message that names the
+floor. A change to the meaning of an existing key ships a reader shim
+keyed on a named ``*_FROM`` constant; a restructure is a major bump.
 
 The document deliberately owns the composite-partition law: the
 ``embed`` boolean op is the one-step "inner region inside an outer
@@ -35,6 +40,7 @@ non-overlapping compositions.
 """
 from __future__ import annotations
 
+import inspect
 import json
 import math
 from dataclasses import dataclass
@@ -49,17 +55,26 @@ if TYPE_CHECKING:  # pragma: no cover
 
 
 __all__ = [
+    "SECTION_DOC_FLOOR",
     "SECTION_DOC_VERSION",
     "FiberRecipe",
     "SectionDocument",
     "SectionDocumentError",
+    "SectionDocumentNewerWarning",
 ]
 
 
-#: Document schema version (ADR 0080). Additive-minor law: this loader
-#: accepts documents at the same minor and the previous minor of the
-#: same major; anything newer or older refuses loudly.
+#: Document schema version (ADR 0080), stamped by ``SectionDocument.new``.
+#: Bump the minor for an additive key (read with a presence probe and a
+#: default) and the major for a restructure.
 SECTION_DOC_VERSION: str = "1.0.0"
+
+#: The oldest document this loader opens (ADR 0113 floor rule, extended to
+#: section documents by its 2026-10-04 amendment, #1317). 1.0.0 because the
+#: version has never been bumped and every key added after B1 is
+#: presence-probed with a default. It moves only with a major bump, to
+#: ``X.0.0``, and only rises.
+SECTION_DOC_FLOOR: str = "1.0.0"
 
 #: Parametric shapes the continuum lane accepts, mapped to their
 #: ``g.sections.*`` builder names and required parameter keys.
@@ -78,8 +93,16 @@ _MATERIAL_KEYS = ("E", "nu", "G", "fy", "density", "uniaxial")
 
 
 class SectionDocumentError(ValueError):
-    """A section document is malformed, out of version window, or
-    references something it does not define."""
+    """A section document is malformed, outside the versions this loader
+    reads (another major, or below ``SECTION_DOC_FLOOR``), or references
+    something it does not define."""
+
+
+class SectionDocumentNewerWarning(UserWarning):
+    """A document of this loader's major but a newer minor was opened.
+
+    It opens because every minor is additive, but keys this loader does
+    not know are ignored by ``build()``; upgrade apeGmsh to read them."""
 
 
 def _num(value: Any, what: str) -> float:
@@ -267,7 +290,9 @@ class SectionDocument:
     """
 
     def __init__(self, data: dict[str, Any]) -> None:
-        _validate(data)
+        # stacklevel 4: warn <- _check_version <- _validate <- __init__
+        # <- the caller of SectionDocument(...)
+        _validate(data, stacklevel=4)
         self._data = data
 
     # ── construction ─────────────────────────────────────────────────
@@ -305,14 +330,20 @@ class SectionDocument:
 
     @classmethod
     def open(cls, path: str | Path) -> "SectionDocument":
-        """Load a ``.section.json`` document (version-window checked)."""
+        """Load a ``.section.json`` document (version-floor checked)."""
         try:
             data = json.loads(Path(path).read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as e:
             raise SectionDocumentError(
                 f"SectionDocument.open: cannot read {path!s}: {e}"
             ) from e
-        return cls(data)
+        # validated here rather than through cls(data), so a
+        # SectionDocumentNewerWarning names the caller of open():
+        # warn <- _check_version <- _validate <- open <- caller
+        doc = cls.__new__(cls)
+        _validate(data, stacklevel=4)
+        doc._data = data
+        return doc
 
     def export_script(self, path: "str | Path | None" = None) -> str:
         """Render the document as a readable, runnable apeGmsh script
@@ -800,7 +831,16 @@ class SectionDocument:
         )
 
     def _resolve_uniaxial(self, ops: Any, names: "list[str]") -> dict[str, Any]:
-        """One bridge uniaxial material per document material name."""
+        """One bridge uniaxial material per document material name.
+
+        The spec's ``params`` are bound against the constructor's own
+        signature before the call, so a key the bridge does not take
+        (or a required one the document lacks) refuses as
+        :class:`SectionDocumentError` naming the material, the key and
+        the document version (#1354). Only that binding failure is
+        translated: a ``TypeError`` the constructor raises on its own
+        propagates untouched. No bridge signature lives here; the
+        factory the caller hands in is introspected."""
         table = self._data["materials"]
         mats: dict[str, Any] = {}
         for mname in names:
@@ -823,7 +863,17 @@ class SectionDocument:
                     f"material {mname!r}: ops.uniaxialMaterial has no "
                     f"constructor {spec['type']!r}."
                 )
-            mats[mname] = factory(**spec["params"])
+            params = spec["params"]
+            try:
+                inspect.signature(factory).bind(**params)
+            except TypeError as e:
+                raise SectionDocumentError(
+                    f"material {mname!r}: ops.uniaxialMaterial."
+                    f"{spec['type']}() rejects params "
+                    f"{sorted(params)} — {e} (section_doc_version "
+                    f"{self._data['section_doc_version']})."
+                ) from e
+            mats[mname] = factory(**params)
         return mats
 
     def _to_computed_fiber(self, ops: Any, *, name: str | None) -> Any:
@@ -906,7 +956,9 @@ class SectionDocument:
 
         sacrificial = self._sacrificial_ids()
 
-        g = apeGmsh(model_name=self.name or "section_doc", verbose=False)
+        # library-internal: no ADR 0112 D1 artifacts beside the caller
+        g = apeGmsh(model_name=self.name or "section_doc", verbose=False,
+                    _artifacts=False)
         g.begin()
         try:
             instances: dict[str, Any] = {}
@@ -1051,7 +1103,9 @@ def typed_fiber_items(
     return tuple(patches), layers, points
 
 
-def _validate(data: dict[str, Any]) -> None:
+def _validate(data: dict[str, Any], *, stacklevel: int) -> None:
+    """Validate a document dict. ``stacklevel`` is handed to the
+    newer-minor warning so it names the public caller."""
     if not isinstance(data, dict):
         raise SectionDocumentError("section document must be a JSON object.")
     version = data.get("section_doc_version")
@@ -1060,7 +1114,7 @@ def _validate(data: dict[str, Any]) -> None:
             "missing/invalid 'section_doc_version' — not a section "
             "document."
         )
-    _check_version(version)
+    _check_version(version, stacklevel=stacklevel)
     kind = data.get("kind")
     if kind not in ("continuum", "fiber"):
         raise SectionDocumentError(
@@ -1127,6 +1181,16 @@ def _validate(data: dict[str, Any]) -> None:
             if missing:
                 raise SectionDocumentError(
                     f"shape {sid!r} ({kind_}): missing params {missing}."
+                )
+            # mirror add_shape: a parameter this loader does not know
+            # (e.g. one a newer minor added) would reach the builder as
+            # an unexpected keyword at build time
+            extra = [k for k in params if k not in _SHAPE_PARAMS[kind_]]
+            if extra:
+                raise SectionDocumentError(
+                    f"shape {sid!r} ({kind_}): unknown params {extra} "
+                    f"(section_doc_version {version}; this loader "
+                    f"reads {SECTION_DOC_VERSION})."
                 )
             for k in _SHAPE_PARAMS[kind_]:
                 _num(params[k], f"shape {sid!r} param {k}")
@@ -1269,24 +1333,40 @@ def _validate_fiber(data: dict[str, Any]) -> None:
             )
 
 
-def _check_version(version: str) -> None:
+def _check_version(version: str, *, stacklevel: int) -> None:
+    """The ADR 0113 floor rule for section documents (2026-10-04
+    amendment): same major and ``floor.minor <= minor``; the patch is
+    ignored. A newer minor opens with a warning, never silently."""
     import re
+    import warnings
 
     # canonical digits only — rejects negatives ("1.-1.0" would slip
-    # the minor-window arithmetic at minor 0), whitespace, and
-    # zero-padding
+    # the floor arithmetic), whitespace, and zero-padding
     if not re.fullmatch(r"(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)", version):
         raise SectionDocumentError(
             f"invalid section_doc_version {version!r}."
         )
     major, minor, _patch = (int(p) for p in version.split("."))
     cur_major, cur_minor, _ = (int(p) for p in SECTION_DOC_VERSION.split("."))
-    if major != cur_major or not (cur_minor - 1 <= minor <= cur_minor):
+    _floor_major, floor_minor, _ = (
+        int(p) for p in SECTION_DOC_FLOOR.split(".")
+    )
+    if major != cur_major or minor < floor_minor:
         raise SectionDocumentError(
-            f"section_doc_version {version} is outside this loader's "
-            f"window ({cur_major}.{max(cur_minor - 1, 0)}.x – "
-            f"{cur_major}.{cur_minor}.x). Upgrade apeGmsh to read a "
-            f"newer document, or re-save it with a current version."
+            f"section_doc_version {version} is not readable here: this "
+            f"loader reads {cur_major}.x documents from its floor "
+            f"{SECTION_DOC_FLOOR} up (ADR 0113). A newer major needs a "
+            f"newer apeGmsh; an older one has no reader."
+        )
+    if minor > cur_minor:
+        warnings.warn(
+            SectionDocumentNewerWarning(
+                f"section_doc_version {version} is newer than this "
+                f"loader ({SECTION_DOC_VERSION}); it opens, but keys "
+                f"added after {cur_major}.{cur_minor} are ignored. "
+                f"Upgrade apeGmsh to read them."
+            ),
+            stacklevel=stacklevel,
         )
 
 

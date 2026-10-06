@@ -460,8 +460,8 @@ def test_results_schema_version_attr_present(tmp_path: Path) -> None:
 
     ADR 0023 — the per-zone marker for the results zone. Phase 4
     writes it alongside the envelope ``/meta/schema_version`` so
-    Phase 7a's two-version reader window has a stable key to gate on
-    when it lands.
+    Phase 7a's reader gate (now the ADR 0113 floor) has a stable key
+    to validate.
     """
     from apeGmsh.results.schema._versions import RESULTS_SCHEMA_VERSION
     results_path, _ = _make_native_results_with_opensees(tmp_path)

@@ -9,9 +9,10 @@ import type { Group, ModelFile, OpsFamily, Param } from "../model/types.ts";
 import { sourceOf, type ProvenanceZone } from "../reader/provenance.ts";
 import type { BlobStore } from "./blobs.ts";
 import { cellPath, elementLinks, objectDecl, objectPaths, opsRowPath, type Lookup } from "./decls.ts";
-import { NO_GROUP, OPS_ONLY, paletteFor } from "./palette.ts";
+import { groupAdjacency } from "./adjacency.ts";
+import { assignSlots, NO_GROUP, OPS_ONLY, slotColour } from "./palette.ts";
 import { emptyRecord } from "./reduce.ts";
-import type { ArtifactInfo, BlockInfo, Decl, DeclPath, ElementFacts, LegendEntry, MeshInfo, ModelLoad, ZoneStatus } from "./types.ts";
+import type { ArtifactInfo, BlockInfo, Decl, DeclPath, DeclSource, ElementFacts, LegendEntry, MeshInfo, ModelLoad, ProvenanceEntry, ZoneStatus } from "./types.ts";
 
 /** The legend rows that are not a physical group (build.ts names them). */
 const NO_GROUP_ROW = "(no physical group)";
@@ -174,18 +175,33 @@ function pathOfRef(model: ModelFile, r: ElementRef): DeclPath {
 
 /** The render blobs, the per-primitive element and legend indices, and the coloured legend. */
 export function meshInfoOf(model: ModelFile, mesh: MeshBuffers, blobs: BlobStore): MeshInfo {
-  // Legend: build.ts's rows (most elements first), with generated colours (R2).
+  // Legend: build.ts's rows (most elements first). Groups that are neighbours
+  // in the view (an element of each shares a node) get contrasting slots of
+  // the office palette (R2, the #1330 ruling); the adjacency is kept in the
+  // state so the assignment can be checked and never lives in a view.
+  const { byElement, order } = colourGroups(model);
   const groups = mesh.legend.filter((e) => e.name !== NO_GROUP_ROW && e.name !== OPS_ONLY_ROW);
-  const colours = paletteFor(groups.length);
+  const rowOf = new Map(groups.map((e, i) => [e.name, i]));
+  const adjacency = groupAdjacency(model, byElement, order.length)
+    .map(([a, b]): [number, number] | null => {
+      const ra = rowOf.get(order[a]!), rb = rowOf.get(order[b]!);
+      return ra === undefined || rb === undefined ? null : ra < rb ? [ra, rb] : [rb, ra];
+    })
+    .filter((p): p is [number, number] => p !== null)
+    .sort((p, q) => p[0] - q[0] || p[1] - q[1]);
+  const slots = assignSlots(groups.length, adjacency);
   const legend: LegendEntry[] = mesh.legend.map((e) => {
-    const gi = groups.indexOf(e);
-    if (gi >= 0) return { decl: `mesh/physical_group/${e.name}`, name: e.name, color: colours[gi]!, elements: e.elements };
-    return { decl: null, name: e.name, color: e.name === NO_GROUP_ROW ? NO_GROUP : OPS_ONLY, elements: e.elements };
+    const gi = rowOf.get(e.name);
+    if (gi !== undefined) {
+      const slot = slots[gi]!;
+      const { color, ring } = slotColour(slot);
+      return { decl: `mesh/physical_group/${e.name}`, name: e.name, color, elements: e.elements, cue: ring === 0 ? null : "stripe", slot };
+    }
+    return { decl: null, name: e.name, color: e.name === NO_GROUP_ROW ? NO_GROUP : OPS_ONLY, elements: e.elements, cue: null, slot: null };
   });
   const legendIndex = new Map(legend.map((e, i) => [e.name, i]));
   const noGroupRow = legendIndex.get(NO_GROUP_ROW) ?? -1;
   const opsOnlyRow = legendIndex.get(OPS_ONLY_ROW) ?? -1;
-  const { byElement, order } = colourGroups(model);
 
   const elements: DeclPath[] = [];
   const elementIndex = new Map<string, number>();
@@ -224,6 +240,7 @@ export function meshInfoOf(model: ModelFile, mesh: MeshBuffers, blobs: BlobStore
     triGroup: blobs.put("model/mesh/triGroup", tris.group),
     elements,
     legend,
+    adjacency,
     center: mesh.center,
     radius: mesh.radius,
     counts: mesh.counts,
@@ -245,22 +262,42 @@ export function joinProvenance(decls: Record<DeclPath, Decl>, zone: ProvenanceZo
     if (path.includes("/#")) continue;
     const d = decls[path];
     if (!d) continue;
-    const r = sourceOf(zone, path);
-    if (!r.ok) continue;
-    const at = r.site ?? r.script!;
-    decls[path] = {
-      ...d,
-      provenance: {
-        file: at.file,
-        line: at.line,
-        function: at.function,
-        sha256: at.sha256,
-        script: r.script && r.site ? { file: r.script.file, line: r.script.line } : null,
-      },
-    };
+    const source = declSourceOf(zone, path);
+    if (!source) continue;
+    decls[path] = { ...d, provenance: source };
     joined++;
   }
   return joined;
+}
+
+/** Where go-to-source jumps for the record at `path`: its site, else its script line; null when it has neither. */
+function declSourceOf(zone: ProvenanceZone, path: string): DeclSource | null {
+  const r = sourceOf(zone, path);
+  if (!r.ok) return null;
+  const at = r.site ?? r.script!;
+  return {
+    file: at.file,
+    line: at.line,
+    function: at.function,
+    sha256: at.sha256,
+    recorded: at.recorded,
+    script: r.script && r.site ? { file: r.script.file, line: r.script.line } : null,
+  };
+}
+
+/**
+ * Every /provenance record as a listing entry, in capture order. Synthesised
+ * records are kept (the listing shows them by default); a synthesised
+ * object's source is the user's call of the verb that made it.
+ */
+export function provenanceEntries(zone: ProvenanceZone): ProvenanceEntry[] {
+  const rows = zone.records.path.map((key, i): ProvenanceEntry => ({
+    key,
+    origin: zone.records.origin[i]!,
+    seq: zone.records.seq[i]!,
+    source: declSourceOf(zone, key),
+  }));
+  return rows.sort((a, b) => a.seq - b.seq);
 }
 
 /**
@@ -307,5 +344,13 @@ export function loadModel(
       opsOnly: mesh.counts.opsOnly,
     },
   };
-  return { info, decls, names, blocks: blocksOf(model, blobs), mesh: meshInfoOf(model, mesh, blobs) };
+  return {
+    info,
+    decls,
+    names,
+    blocks: blocksOf(model, blobs),
+    mesh: meshInfoOf(model, mesh, blobs),
+    provenance: provenance ? provenanceEntries(provenance) : [],
+    provenanceOrigin: provenance?.originColumn ?? false,
+  };
 }

@@ -63,6 +63,15 @@ is replacing a converged-but-wrong answer:
 No shortcut methods on parent composites. The sub-composite prefix is
 required everywhere (`g.model.geometry.add_box`, not `g.model.add_box`).
 
+### ❌ `g.mesh.structured.recombine()` before `generate()` → ✅ `set_recombine(...)` first
+`recombine()` merges the triangles of an *existing* mesh. Before `generate()`
+there is nothing to merge, so the mesh comes out all-triangle; it now warns
+`RecombineEmptyMeshWarning`. Request quads before meshing with
+`g.mesh.structured.set_recombine("Slab")` (label or PG name) or
+`g.mesh.recipe.structured(...)`. A quad-only element (`ShellMITC4`,
+`ShellDKGQ`, `ASDShellQ4`, `FourNodeQuad`, `LadrunoQuad`) on a triangle PG
+raises a `BridgeError` at emit that names the PG and these fixes.
+
 ### ❌ Skipping `make_conformal` after STEP import
 Touching bodies need `remove_duplicates` + `make_conformal` for shared
 interfaces, or the meshes won't share nodes at the interface.
@@ -184,6 +193,21 @@ Before this fix the gotcha recommended `remove_orphans()` after the fragment;
 that call deleted the column segments that stick out past the slabs.
 
 ## Pitfalls not covered in the other references
+
+### Linear quads with J2 (von Mises) soil lock, so the limit load comes out too high
+
+`FourNodeQuad` with `J2Plasticity` in plane strain locks under isochoric plastic flow: a strip
+footing converged at 600 kPa although the Prandtl limit, (2 + π)·SU, is 386 kPa. Use
+`SixNodeTri` on `g.mesh.generation.set_order(2)` (it fails at 380–400 kPa, as it should), and
+`reduction="consistent"` for line loads on the quadratic edges. The bridge has no stock B-bar
+or SSP quad. See `model-scripts.md`, `staged_footing.py`.
+
+### `analyze` can return 0 on a singular stiffness
+
+With `system.BandGeneral()`, a model with free DOFs (e.g. a rigid-diaphragm master that no
+element touches, #1333) printed "matrix singular" and `analyze` still returned 0, with garbage
+displacements. `assert status == 0` does not prove the solve. Add a check that would fail on
+garbage: an equilibrium sum, a hand estimate, or sane eigen periods.
 
 ### `remove_duplicates` tolerance is unit-dependent
 mm models: `tolerance=1e-3`. Metre models: `tolerance=1e-6`. Picking the
@@ -342,3 +366,16 @@ Probe before trusting it:
 `material.ladrunoBranch` — a MATERIAL-level response like the ADR 0105 ones, so
 the bare token records nothing and is refused — replies empty on a pre-#803
 engine. The linear b-bar leg is *not* a discriminator: 1.085 before and after.
+
+## J2Plasticity (upstream return-map bug, #1321)
+
+### ❌ `ops.nDMaterial.J2Plasticity(sig0=275e6, ...)` (steel in Pa) → ✅ MPa units, or `LadrunoJ2`
+Upstream `J2Plasticity::plastic_integrator` seeds its residual at `1.0` and
+loops `while (|resid| > 1e-8*sig0)`. At `sig0 >= 1e8` the loop never runs, so
+the material stays elastic past yield with no error: S275 in Pa carries 3 fy
+at 3 eps_y. Every view is hit (`J2PlaneStress`, `J2PlaneStrain`,
+`J2ThreeDimensional`, `J2PlateFiber`), on stock OpenSees and the fork alike.
+`sigInf` does not enter the tolerance, so only `sig0` matters. Construction
+warns `J2PlasticityNoYieldWarning`. Work in N-mm-MPa (`sig0=275.0`) so
+`sig0 < 1e8`, or use `ops.nDMaterial.LadrunoJ2` on the fork, whose return
+map tests the computed residual.

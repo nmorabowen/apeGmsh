@@ -8,9 +8,9 @@ import { edgeMask, sameDrawn, visibleMaps } from "../src/renderer/visible.ts";
 import type { LegendEntry } from "../src/state/types.ts";
 
 const legend: LegendEntry[] = [
-  { decl: "mesh/physical_group/LeftColumn", name: "LeftColumn", color: [1, 0, 0], elements: 2 },
-  { decl: "mesh/physical_group/RightColumn", name: "RightColumn", color: [0, 1, 0], elements: 2 },
-  { decl: null, name: "(no physical group)", color: [0.5, 0.5, 0.5], elements: 1 },
+  { decl: "mesh/physical_group/LeftColumn", name: "LeftColumn", color: [1, 0, 0], elements: 2, cue: null, slot: null },
+  { decl: "mesh/physical_group/RightColumn", name: "RightColumn", color: [0, 1, 0], elements: 2, cue: null, slot: null },
+  { decl: null, name: "(no physical group)", color: [0.5, 0.5, 0.5], elements: 1, cue: null, slot: null },
 ];
 // segments 0,1 are LeftColumn; 2,3 RightColumn; 4 in no group
 const lineGroup = Int32Array.from([0, 0, 1, 1, 2]);

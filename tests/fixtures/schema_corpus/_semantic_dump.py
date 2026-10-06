@@ -13,11 +13,19 @@ One function pair turns what a reader returned into plain JSON:
 So the reader is the only thing that varies.  This module must stay
 importable by every era from the zone floors on: it imports nothing from
 apeGmsh and touches only the public surface that has been stable since
-neutral 2.10.0 / opensees 2.11.0 (``FEMData.snapshot_id``, the node and
+neutral 2.10.0 / opensees 2.12.0 (``FEMData.snapshot_id``, the node and
 element composites, ``NamedGroupSet.get_all/get_name/node_ids/
-element_ids``, the record sets' ``len``, and ``OpenSeesModel``'s record
-accessors).  Editing it changes the oracle for every committed era, so
-rebuild the corpus after any change.
+element_ids``, ``MeshSelectionStore.get_all/get_name/get_nodes/
+get_elements``, ``NodeComposite.ndf_for``, the record sets' ``len``, and
+``OpenSeesModel``'s record accessors).  Editing it changes the oracle for
+every committed era, so rebuild the corpus after any change.
+
+:func:`dump_stamps` is the one exception to "reader objects only": it
+reads the ``/meta`` ``ndm`` and ``ndf`` attributes raw with h5py, because
+``FEMData.from_h5`` does not carry them.  Those are the writer's
+declarations, equal in every era by construction; they sit in the dump so
+each file says what its era stamped (a pre-2.34.0 frame stamps the mesh
+dimension, which is the case the ``read_spatial_ndm`` shim exists for).
 """
 from __future__ import annotations
 
@@ -26,7 +34,9 @@ import enum
 import math
 from typing import Any
 
-DUMP_FORMAT = 1
+#: 1: the #1329 corpus. 2: adds ``mesh_selections``, the per-node ``ndf``
+#: histogram and the raw ``/meta`` stamps (#1303, opensees floor 2.12).
+DUMP_FORMAT = 2
 
 
 def _norm(x: Any) -> Any:
@@ -86,6 +96,48 @@ def _patterns(records: Any) -> list[str]:
     return sorted({str(getattr(r, "pattern", "")) for r in records})
 
 
+def _mesh_selections(store: Any) -> dict[str, dict[str, int]]:
+    """``"dim:name" -> {nodes, elements}`` of the saved mesh selections.
+
+    ``elements`` is ``-1`` for a node-only set (no element side), the
+    same convention as :func:`_group_sizes`.  ``None`` is the reader's
+    "no ``/mesh_selections`` group" and dumps as an empty mapping.
+    """
+    out: dict[str, dict[str, int]] = {}
+    if store is None:
+        return out
+    for dim, tag in store.get_all():
+        name = store.get_name(dim, tag)
+        n_nodes = int(len(store.get_nodes(dim, tag)["tags"]))
+        try:
+            n_elems = int(len(store.get_elements(dim, tag)["element_ids"]))
+        except ValueError:
+            n_elems = -1
+        out[f"{dim}:{name}"] = {"nodes": n_nodes, "elements": n_elems}
+    return out
+
+
+def _node_ndf(nodes: Any) -> dict[str, Any]:
+    """The per-node ``ndf`` stream as a histogram, ``{"6": 7}``, plus the
+    count of nodes whose snapshot carries no ndf (``ndf_for`` raises
+    ``LookupError`` for them: the sentinel 0 and the absent dataset alike).
+
+    Every corpus generator leaves ndf to the bridge, so today each dump
+    records ``declared == {}`` and every node undeclared: the field holds
+    the stream's shape, not yet a value.  It becomes live the day a
+    generator declares ``g.node_ndf`` / ``ops.ndf(...)``."""
+    declared: dict[str, int] = {}
+    undeclared = 0
+    for nid in nodes.ids.tolist():
+        try:
+            value = int(nodes.ndf_for(int(nid)))
+        except LookupError:
+            undeclared += 1
+            continue
+        declared[str(value)] = declared.get(str(value), 0) + 1
+    return {"declared": dict(sorted(declared.items())), "undeclared": undeclared}
+
+
 def dump_fem(fem: Any) -> dict[str, Any]:
     """The neutral-zone semantic dump of a :class:`FEMData`."""
     nodes, elements = fem.nodes, fem.elements
@@ -115,7 +167,24 @@ def dump_fem(fem: Any) -> dict[str, Any]:
             "element": int(len(elements.constraints)),
         },
         "masses": int(len(nodes.masses)),
+        "mesh_selections": _mesh_selections(fem.mesh_selection),
+        "ndf": _node_ndf(nodes),
     }
+
+
+def dump_stamps(path: str) -> dict[str, int]:
+    """The neutral writer's ``/meta`` ``ndm`` and ``ndf`` stamps, read raw.
+
+    Both attributes have been written by every neutral writer from 2.10.0
+    on (``FEMData.to_h5`` stamps the mesh dimension, or 0, and its ``ndf``
+    argument; ``apeSees.h5`` stamps the ``ops.model`` pair from neutral
+    2.34.0 on).  A missing attribute is an error, not a default.
+    """
+    import h5py
+
+    with h5py.File(path, "r") as f:
+        attrs = f["meta"].attrs
+        return {"ndm": int(attrs["ndm"]), "ndf": int(attrs["ndf"])}
 
 
 _MODEL_ACCESSORS = (

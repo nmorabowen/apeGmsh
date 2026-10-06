@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pytest
 
-from apeGmsh.results._vocabulary import expand_many, expand_shorthand
+from apeGmsh._vocabulary import expand_many, expand_shorthand
 
 
 # =====================================================================

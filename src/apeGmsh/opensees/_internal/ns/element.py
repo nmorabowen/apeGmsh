@@ -73,7 +73,7 @@ from ..types import (
 from ._base import _BridgeNamespace
 
 if TYPE_CHECKING:
-    from ...parts.plane_wave_box import AbsorbingSkinResult
+    from ....parts.plane_wave_box import AbsorbingSkinResult
 
 
 __all__ = ["_ElementNS"]
