@@ -1,4 +1,4 @@
-### TESTS — K19: `ModelData` stays; its two existing replacements are now proven (#1504)
+### TESTS — K19: `ModelData` stays; its two existing replacements are now proven (#1506)
 
 The maintainer's K19 decision cuts a `ModelData` capability only where a
 replacement exists and a test exercises it. Nothing met that bar in a way that

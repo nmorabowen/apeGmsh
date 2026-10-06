@@ -7,7 +7,7 @@ P0.3 decided K19 as "cut `ModelData`, **if no functionality is lost**". This
 inventory tests that condition. It does not hold: five of the nine
 capabilities have **NO REPLACEMENT** (see the table below).
 
-**K19 outcome (X1-e, #1504): nothing is cut.** The maintainer's decision
+**K19 outcome (X1-e, #1506): nothing is cut.** The maintainer's decision
 (#1199, 2026-10-06) was to cut a row only where a replacement exists and a
 test exercises it. Two rows have a tested replacement (2, and the round-trip
 half of 8); neither can be removed without removing a class that the gap rows
@@ -30,7 +30,7 @@ zone the results viewer joins to orient beams. It is exported from
 **without** adopting the full `apeSees` bridge, which is the audience's
 defining constraint (ADR 0018 Context).
 
-The last two columns are the K19 decision applied in X1-e (#1504). `T` is
+The last two columns are the K19 decision applied in X1-e (#1506). `T` is
 `tests/opensees/h5/test_model_data_replacements.py`.
 
 | # | Capability (`model_data.py`) | Replacement | Verdict (X1-d) | K19 verdict (X1-e) | Replacement test |

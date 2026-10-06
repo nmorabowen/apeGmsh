@@ -1,4 +1,4 @@
-"""K19 (#1504): proof of the replacements that exist for ``ModelData``.
+"""K19 (#1506): proof of the replacements that exist for ``ModelData``.
 
 The inventory ``internal_docs/program/x1_modeldata_inventory.md`` lists
 nine ``ModelData`` capabilities.  Two have a bridge-free replacement
