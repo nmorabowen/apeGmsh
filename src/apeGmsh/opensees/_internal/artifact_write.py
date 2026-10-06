@@ -11,14 +11,17 @@ call writes, through the D1 overwrite policy
 (:mod:`apeGmsh._artifact_policy`, rules P1 to P4, built in 4a and called
 here, not re-implemented) and two rules of its own:
 
-* **P5, the dirty flag.**  A loop of ``analyze`` calls on one model
-  writes once: the write runs only when the bridge's declarations
-  changed since its last write.  The key is the primitive count and
-  the snapshot's content hash, as the ruling says, widened to the
-  bridge's record lists and model flags (a ``fix``, ``mass``,
-  ``region``, ``stage`` or ``mass_from_model`` is not a primitive, and
-  without them an edit that only adds one would leave the file stale:
-  the gap both K1-3d briefs flagged on #1307).
+* **P5, the dirty flag.**  A loop of emits on one model writes once,
+  and so does a loop of fresh bridges on one unchanged model (one
+  bridge per ground motion): the write runs only when the
+  declarations that would reach the file differ from what the file at
+  that path last received.  The declarations are digested whole
+  (:func:`_declaration_digest`: every primitive with its contents, a
+  pattern's recorded loads included, every record list, the model
+  flags, the names and the snapshot's content hash), never counted, so
+  a second ``p.load()`` on a registered pattern or a sweep that changes
+  one material value in a fresh bridge is a new state.  The digest of
+  the last write is kept process-wide, keyed by the resolved target.
 * **P6, the opt-out.**  ``apeSees(fem, _artifacts=False)`` is for the
   library's own bridges (the ETABS and STKO importers, ``strut_tie``,
   the emit-cost bench): they write nothing and warn nothing.
@@ -26,17 +29,23 @@ here, not re-implemented) and two rules of its own:
 The write goes through the one composition path, :meth:`apeSees.h5`,
 into ``<target>.tmp-<uuid>`` beside the target and an atomic replace,
 so a failed write leaves the previous file untouched and no temp
-behind.  Nothing here raises into the user's run: a refused write (the
-policy's own warning), a snapshot with no name (P2), a partitioned
-snapshot (P3), or a failure of the write itself (an ``OSError``, an
-h5py error) warns **once per bridge** and stops; an MPI rank other
-than 0 is silent (P3).  A stub snapshot (not a :class:`FEMData`; the
-bridge-only file ``h5()`` writes for it carries no neutral zone)
-belongs to no run and is skipped silently.  An explicit ``ops.h5(path)``
-never comes here (P7).
+behind.  An automatic write is silent about deferred archive features
+(``H5FeatureDeferredWarning`` belongs to the explicit saves: ``g.save()``,
+``save_to=``, ``ops.h5(path)``).  Nothing here raises into the user's
+run: a refused write (the policy's own warning), a snapshot with no
+name that no session warned about (P2), a kernel-partitioned snapshot
+(P3), or a failure of the write itself (an ``OSError``, an h5py error)
+warns **once per bridge** and stops; an MPI rank other than 0 is silent
+(P3).  A session snapshot with no name is silent too: its session
+already gave the one P2 warning at ``end()``.  A stub snapshot (not a
+:class:`FEMData`; the bridge-only file ``h5()`` writes for it carries no
+neutral zone) belongs to no run and is skipped silently.  An explicit
+``ops.h5(path)`` never comes here (P7).
 """
 from __future__ import annotations
 
+import hashlib
+import pickle
 import uuid
 import warnings
 from pathlib import Path
@@ -53,9 +62,10 @@ __all__ = ["BridgeArtifactWarning", "BridgeArtifactWriter"]
 class BridgeArtifactWarning(UserWarning):
     """The bridge's automatic ``model.h5`` write was skipped or failed.
 
-    Issued once per bridge: for a snapshot with no name (P2), a
-    partitioned snapshot (P3) and a write that failed.  A target the
-    D1 policy refuses warns through the policy's own ``UserWarning``.
+    Issued once per bridge: for a snapshot with no name that no session
+    warned about (P2), a kernel-partitioned snapshot (P3) and a write
+    that failed.  A target the D1 policy refuses warns through the
+    policy's own ``UserWarning``.
     """
 
 
@@ -64,42 +74,56 @@ class BridgeArtifactWarning(UserWarning):
 #: ...), the user's call.
 _STACKLEVEL = 3
 
+#: The declaration digest last written at each resolved target, for
+#: the whole process (P5 across bridges).  A target whose file is gone
+#: is written again whatever the memo says.
+_LAST_WRITTEN: dict[Path, str] = {}
 
-def _dirty_key(bridge: "_ProcedureHost") -> tuple[object, ...]:
-    """What the write depends on (P5): the registered primitives, every
-    record list and model flag the build reads, and the snapshot's
-    content hash (``snapshot_id``, the stored ``fem_hash``; cached on
-    the snapshot, so a repeat is a lookup).  Explicit attributes, not a
-    name list, so the type checker holds them to the bridge."""
-    return (
-        len(bridge._primitives),
-        len(bridge._fix_records),
-        len(bridge._equation_constraint_records),
-        len(bridge._mass_records),
-        len(bridge._ndf_records),
-        len(bridge._region_records),
-        len(bridge._rayleigh_records),
-        len(bridge._damping_attach_records),
-        len(bridge._modal_damping_records),
-        len(bridge._initial_stress_records),
-        len(bridge._stage_records),
-        bridge._mass_from_model,
-        bridge._fix_from_model,
+
+def _declaration_digest(bridge: "_ProcedureHost", name: str) -> str:
+    """One digest of everything the write depends on (P5): the name, the
+    snapshot's content hash (``snapshot_id``, the stored ``fem_hash``),
+    the registered primitives with their full contents (a frozen
+    primitive's fields and a pattern's private accumulators alike), the
+    name aliases, every record list and the model flags.  Pickled, not
+    ``repr``'d, so a long array is never truncated into a collision; an
+    object that cannot be pickled refuses, and the caller warns.
+    """
+    state = (
+        name,
+        bridge._fem.snapshot_id,
         bridge._ndm,
         bridge._ndf,
-        bridge._fem.snapshot_id,
+        bridge._element_tags,
+        bridge._default_orientation,
+        bridge._mass_from_model,
+        bridge._fix_from_model,
+        bridge._primitives,
+        bridge._names,
+        bridge._fix_records,
+        bridge._equation_constraint_records,
+        bridge._mass_records,
+        bridge._ndf_records,
+        bridge._region_records,
+        bridge._rayleigh_records,
+        bridge._damping_attach_records,
+        bridge._modal_damping_records,
+        bridge._initial_stress_records,
+        bridge._stage_records,
     )
+    raw = pickle.dumps(state, protocol=pickle.HIGHEST_PROTOCOL)
+    return hashlib.blake2b(raw, digest_size=16).hexdigest()
 
 
 class BridgeArtifactWriter:
-    """One bridge's automatic-write state: the opt-out, the P5 key of its
-    last write, and whether it has warned."""
+    """One bridge's automatic-write state: the opt-out and whether it
+    has warned.  What was last written lives in :data:`_LAST_WRITTEN`,
+    shared by every bridge in the process."""
 
-    __slots__ = ("enabled", "_last_key", "_warned")
+    __slots__ = ("enabled", "_warned")
 
     def __init__(self, *, enabled: bool = True) -> None:
         self.enabled = bool(enabled)
-        self._last_key: tuple[object, ...] | None = None
         self._warned = False
 
     def after_emit(self, bridge: "_ProcedureHost") -> None:
@@ -114,9 +138,6 @@ class BridgeArtifactWriter:
             fem = bridge._fem
             if not isinstance(fem, FEMData):
                 return
-            key = _dirty_key(bridge)
-            if key == self._last_key:
-                return
             from ..._artifact_policy import (
                 artifact_verdict,
                 content_hash,
@@ -125,6 +146,7 @@ class BridgeArtifactWriter:
             )
             from ..._atomic_io import replace_with_retry
             from ..._core import default_artifact_dir
+            from ..emitter.h5 import H5FeatureDeferredWarning
             from .build import is_partitioned
             from .schema_version import NEUTRAL, OPENSEES, PROVENANCE
 
@@ -132,25 +154,31 @@ class BridgeArtifactWriter:
             if mpi_rank() not in (None, 0):
                 return
             # P1/P2: the name is the one the session gave the snapshot.
+            # A session snapshot (it carries the session's provenance
+            # table) with no name already drew the one P2 warning, at
+            # the session's ``end()``: stay silent.  A snapshot no
+            # session extracted (from_msh, an import) gets the warning
+            # here, once.
             name = fem.model_name
             if not name:
-                self._warned = True
-                warnings.warn(
-                    "no model name: the snapshot carries no model_name (no "
-                    "session named it: a session with no model_name= run "
-                    "from a notebook, -c, stdin or a console-script launcher, "
-                    "or a from_msh / import / compose snapshot), so there is "
-                    "no conventional model.h5 path; the bridge writes nothing "
-                    "automatically. Pass model_name= to the session, or call "
-                    "ops.h5(path).",
-                    BridgeArtifactWarning,
-                    stacklevel=_STACKLEVEL,
-                )
+                if fem.provenance is None:
+                    self._warned = True
+                    warnings.warn(
+                        "no model name: the snapshot carries no model_name "
+                        "(a from_msh, import or hand-built snapshot; a "
+                        "session's would have been named by it, or by the "
+                        "script it ran from), so there is no conventional "
+                        "model.h5 path; the bridge writes nothing "
+                        "automatically. Call ops.h5(path).",
+                        BridgeArtifactWarning,
+                        stacklevel=_STACKLEVEL,
+                    )
                 return
-            # P3: a partitioned snapshot emits per rank; its model.h5 is
-            # outside V2's scope.  The bridge's own predicate, the one
-            # BuiltModel.emit routes on.
-            if is_partitioned(fem):
+            # P3: a mesh the kernel partitioned is an MPI deck's; its
+            # model.h5 is outside V2's scope.  A composed model reports
+            # its modules as partitions (ADR 0038) and is not
+            # partitioned for D1: it writes, as it does for the session.
+            if is_partitioned(fem) and not fem.composed_from:
                 self._warned = True
                 warnings.warn(
                     f"partitioned run ({len(fem.partitions)} partitions): "
@@ -161,7 +189,10 @@ class BridgeArtifactWriter:
                     stacklevel=_STACKLEVEL,
                 )
                 return
-            target = default_artifact_dir() / f"{name}.h5"
+            target = (default_artifact_dir() / f"{name}.h5").resolve()
+            digest = _declaration_digest(bridge, name)
+            if _LAST_WRITTEN.get(target) == digest and target.exists():
+                return
             # The zones ``h5()`` writes: ``/provenance`` only when the
             # merged table has records (compose.py, ``_merge_provenance``).
             bridge_prov = bridge._provenance.snapshot()
@@ -183,11 +214,15 @@ class BridgeArtifactWriter:
             if verdict == "write":
                 tmp = target.with_name(f"{target.name}.tmp-{uuid.uuid4().hex}")
                 try:
-                    bridge.h5(str(tmp), model_name=name)
+                    with warnings.catch_warnings():
+                        # A deferred archive feature is the explicit
+                        # save's warning; the automatic write is silent.
+                        warnings.simplefilter("ignore", H5FeatureDeferredWarning)
+                        bridge.h5(str(tmp), model_name=name)
                     replace_with_retry(tmp, target)
                 finally:
                     tmp.unlink(missing_ok=True)
-            self._last_key = key
+            _LAST_WRITTEN[target] = digest
         except Exception as exc:  # noqa: BLE001
             self._warned = True
             warnings.warn(

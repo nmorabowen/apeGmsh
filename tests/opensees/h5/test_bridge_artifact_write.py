@@ -41,6 +41,7 @@ import pytest
 from apeGmsh import apeGmsh
 from apeGmsh.mesh.FEMData import FEMData
 from apeGmsh.opensees import apeSees
+from apeGmsh.opensees.apesees import OpenSeesAutoEmitWarning
 from apeGmsh.opensees._internal.artifact_write import (
     BridgeArtifactWarning,
     BridgeArtifactWriter,
@@ -376,13 +377,33 @@ def test_a_file_another_script_wrote_is_refused_once_and_kept(
 # ---------------------------------------------------------------------------
 
 
-def test_no_name_warns_once_and_writes_nothing(artifact_dir, tmp_path, h5_calls):
-    """P2: under pytest the session has no script and no name, so the
-    snapshot's ``model_name`` is empty; the hook warns once per bridge,
-    naming the launcher case, and writes nothing.  No Windows-only path
-    logic: the same holds on Linux CI."""
+def test_no_name_session_snapshot_is_silent_and_writes_nothing(
+    artifact_dir, tmp_path, h5_calls,
+):
+    """P2 is one warning: under pytest the session has no script and no
+    name, and its ``end()`` is where that warning is given (here the
+    session opted out, so none at all); the bridge stays silent and
+    writes nothing.  No Windows-only path logic: the same holds on
+    Linux CI."""
     fem = _box_fem(None)
-    assert fem.model_name == ""
+    assert fem.model_name == "" and fem.provenance is not None
+    ops = _bridge(fem)
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", UserWarning)
+        for i in range(3):
+            assert ops.tcl(str(tmp_path / f"n{i}.tcl")) is None
+    assert h5_calls == []
+    assert list(artifact_dir.glob("*.h5")) == []
+
+
+def test_no_name_non_session_snapshot_warns_once_and_writes_nothing(
+    artifact_dir, tmp_path, h5_calls,
+):
+    """A snapshot no session extracted (from_msh, an import: no
+    provenance table, no name) has had no P2 warning yet: the bridge
+    gives it, once per bridge over three emits, and writes nothing."""
+    fem = _box_fem(None)
+    fem.provenance = None
     ops = _bridge(fem)
     with warnings.catch_warnings(record=True) as rec:
         warnings.simplefilter("always")
@@ -391,7 +412,7 @@ def test_no_name_warns_once_and_writes_nothing(artifact_dir, tmp_path, h5_calls)
     msgs = _bridge_warnings(rec)
     assert len(msgs) == 1
     assert "no model name" in msgs[0]
-    assert "console-script launcher" in msgs[0]
+    assert "ops.h5(path)" in msgs[0]
     assert h5_calls == []
     assert list(artifact_dir.glob("*.h5")) == []
 
@@ -486,11 +507,150 @@ def test_explicit_h5_is_not_the_hook(artifact_dir, tmp_path, h5_calls):
     assert list(artifact_dir.iterdir()) == []
 
 
-def test_writer_state_is_per_bridge():
-    """Two bridges on one snapshot each keep their own key and warning."""
+def test_writer_warned_flag_is_per_bridge_and_the_memo_is_per_target():
+    """Each bridge keeps its own opt-out and warned flag; what was last
+    written is remembered per resolved target for the whole process."""
+    from apeGmsh.opensees._internal import artifact_write as aw
+
     a, b = BridgeArtifactWriter(), BridgeArtifactWriter(enabled=False)
     assert a.enabled and not b.enabled
-    assert a._last_key is None and not a._warned
+    assert not a._warned and not hasattr(a, "_last_key")
+    assert isinstance(aw._LAST_WRITTEN, dict)
+
+
+# ---------------------------------------------------------------------------
+# P5 across bridges, and the digest sees contents, not counts
+# ---------------------------------------------------------------------------
+
+
+def test_fresh_bridges_on_an_unchanged_model_write_once(
+    artifact_dir, tmp_path, h5_calls,
+):
+    """One bridge per ground motion, same model: the first writes, the
+    other four find their digest already at the target.  A sixth bridge
+    that changes one material value (same primitive count) writes."""
+    fem = _box_fem("ida")
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", UserWarning)
+        for gm in range(5):
+            ops = _bridge(fem)
+            ops.tcl(str(tmp_path / f"gm{gm}.tcl"))
+        assert len(h5_calls) == 1
+        ops = apeSees(fem)
+        ops.model(ndm=3, ndf=3)
+        mat = ops.nDMaterial.ElasticIsotropic(E=31e9, nu=0.2, rho=2400.0)
+        ops.element.FourNodeTetrahedron(pg="B", material=mat)
+        ops.tcl(str(tmp_path / "sweep.tcl"))
+        assert len(h5_calls) == 2
+        # The file gone from under the memo: written again.
+        (artifact_dir / "ida.h5").unlink()
+        _bridge(fem).tcl(str(tmp_path / "gm_again.tcl"))
+        assert len(h5_calls) == 3
+    assert (artifact_dir / "ida.h5").exists()
+
+
+def _load_shapes(path: Path) -> dict[str, tuple[int, ...]]:
+    out: dict[str, tuple[int, ...]] = {}
+    with h5py.File(path, "r") as f:
+        def visit(name, obj):
+            if isinstance(obj, h5py.Dataset) and "load" in name.lower():
+                out[name] = tuple(obj.shape)
+        f.visititems(visit)
+    return out
+
+
+def test_a_second_load_on_a_registered_pattern_writes_again(
+    artifact_dir, tmp_path, h5_calls,
+):
+    """``Plain.load`` appends to the pattern's private list: no new
+    primitive, no new record, but a different deck.  The digest sees
+    it; the automatic file equals an explicit ``h5()`` of the same
+    state (the reviewer's reproducer: 339 loads where 678 were due)."""
+    fem = _box_fem("stale")
+    ops = _bridge(fem)
+    ops.fix(pg="B", dofs=(1, 1, 1))
+    p = ops.pattern.Plain(series=ops.timeSeries.Linear())
+    p.load(pg="B", forces=(1.0, 0.0, 0.0))
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", UserWarning)
+        ops.tcl(str(tmp_path / "a.tcl"))
+        before = _load_shapes(artifact_dir / "stale.h5")
+        p.load(pg="B", forces=(0.0, 5.0, 0.0))
+        ops.tcl(str(tmp_path / "b.tcl"))
+        after = _load_shapes(artifact_dir / "stale.h5")
+        ops.h5(str(tmp_path / "explicit.h5"))
+    assert len(h5_calls) == 3  # two automatic writes and the explicit one
+    assert before != after
+    assert after == _load_shapes(tmp_path / "explicit.h5")
+    a = (tmp_path / "a.tcl").read_text(encoding="utf-8").count("load ")
+    b = (tmp_path / "b.tcl").read_text(encoding="utf-8").count("load ")
+    assert b == 2 * a > 0
+
+
+def test_a_composed_model_writes(artifact_dir, tmp_path, h5_calls):
+    """A composed model reports its modules as partitions (ADR 0038) and
+    is not partitioned for D1 (`_artifact_policy`, the session's rule):
+    the bridge writes it, with no warning."""
+    for nm in ("hostmod", "mod"):
+        with apeGmsh(model_name=nm, verbose=False, _artifacts=False) as g:
+            box = g.model.geometry.add_box(0, 0, 0, 1, 1, 1)
+            g.model.sync()
+            g.mesh.sizing.set_global_size(0.5)
+            g.mesh.generation.generate(3)
+            g.physical.add(3, [box], name="B")
+            g.mesh.queries.get_fem_data(dim=3).to_h5(str(tmp_path / f"{nm}.h5"))
+    g = apeGmsh.from_h5(str(tmp_path / "hostmod.h5"))
+    g.compose(str(tmp_path / "mod.h5"), label="M", translate=(2.0, 0.0, 0.0))
+    g.save(str(tmp_path / "out.h5"))
+    fem = FEMData.from_h5(str(tmp_path / "out.h5"))
+    assert fem.model_name == "hostmod"
+    assert len(fem.partitions) == 2 and fem.composed_from
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", UserWarning)
+        # The bridge's advisory on a multi-partition deck (ADR 0027), not
+        # this test's subject.
+        warnings.simplefilter("ignore", OpenSeesAutoEmitWarning)
+        _bridge(fem).tcl(str(tmp_path / "c.tcl"))
+    assert len(h5_calls) == 1
+    out = artifact_dir / "hostmod.h5"
+    assert {"opensees", "nodes", "partitions"} <= _zones(out)
+
+
+# ---------------------------------------------------------------------------
+# Deferred archive features: the explicit save's warning, not the hook's
+# ---------------------------------------------------------------------------
+
+
+def _eq_bridge(fem) -> apeSees:
+    ops = _bridge(fem)
+    ops.equation_constraint(constrained=(4, 1), retained=[(2, 1, -1.0)])
+    return ops
+
+
+def test_automatic_write_is_silent_about_deferred_features(
+    artifact_dir, tmp_path, h5_calls,
+):
+    from apeGmsh.opensees.emitter.h5 import H5FeatureDeferredWarning
+
+    ops = _eq_bridge(_box_fem("eq"))
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", H5FeatureDeferredWarning)
+        # The Lagrange-handler advisory (an EQ_Constraint is present) is
+        # the bridge's, not this test's subject.
+        warnings.simplefilter("ignore", OpenSeesAutoEmitWarning)
+        ops.tcl(str(tmp_path / "a.tcl"))
+    assert len(h5_calls) == 1
+    assert "opensees" in _zones(artifact_dir / "eq.h5")
+
+
+def test_explicit_h5_still_warns_about_deferred_features(artifact_dir, tmp_path):
+    from apeGmsh.opensees.emitter.h5 import H5FeatureDeferredWarning
+
+    ops = _eq_bridge(_box_fem("eq_explicit"))
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", OpenSeesAutoEmitWarning)
+        with pytest.warns(H5FeatureDeferredWarning, match="equation_constraint"):
+            ops.h5(str(tmp_path / "explicit.h5"))
 
 
 # ---------------------------------------------------------------------------

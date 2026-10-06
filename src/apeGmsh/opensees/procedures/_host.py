@@ -15,8 +15,10 @@ if TYPE_CHECKING:
     from ..._internal.provenance import ProvenanceStore
     from ...mesh.FEMData import FEMData
     from .._internal.artifact_write import BridgeArtifactWriter
+    from ..transform import Orientation
     from .._internal.build import (
         DampingAttachRecord,
+        ElementTagMode,
         EquationConstraintRecord,
         FixRecord,
         InitialStressRecord,
@@ -46,6 +48,9 @@ class _ProcedureHost:
         _provenance: "ProvenanceStore"
         _live_emitter: "LiveOpsEmitter | None"
         _primitives: list[Primitive]
+        _names: dict[str, Primitive]
+        _default_orientation: "Orientation | None"
+        _element_tags: "ElementTagMode"
         _fix_records: list[FixRecord]
         _equation_constraint_records: list[EquationConstraintRecord]
         _mass_records: list[MassRecord]
