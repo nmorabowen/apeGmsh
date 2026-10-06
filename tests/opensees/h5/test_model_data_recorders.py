@@ -15,13 +15,19 @@ Covered here:
   the whole-model ``PyEmitter`` seeds — pasting that into a live deck
   would erase the user's model.
 * ``attach_recorders`` forwards exactly the same ``recorder`` calls
-  into a session object, and touches nothing but ``.recorder`` (no
-  ``wipe`` / ``model``).
+  into a session object, and touches nothing but ``.recorder`` and the
+  read-only domain queries (no ``wipe`` / ``model`` / ``node``).
+* The tag-correspondence warning (K19, #1506).  The oracle is the
+  fake live domain itself: built from the fem (same tags, same
+  coordinates, same element nodes), ``attach_recorders`` stays silent;
+  built with other tags, other coordinates or other element nodes, it
+  warns and names each id that is not the fem entity.
 * Fail-loud + empty-state edges.
 """
 from __future__ import annotations
 
-from typing import cast
+import warnings
+from typing import Any, cast
 
 import pytest
 
@@ -32,6 +38,7 @@ from tests.opensees.fixtures.fem_stub import (
     make_two_column_frame,
     make_two_node_beam,
 )
+from tests.opensees.h5._opensees_model_fixtures import build_simple_frame_fem
 
 
 # ---------------------------------------------------------------------------
@@ -139,25 +146,74 @@ def test_recorder_commands_line_stations_resolves_to_fem_element_ids() -> None:
 # ---------------------------------------------------------------------------
 
 class _RecordingOps:
-    """Captures ``recorder`` calls; raises if anything else is touched."""
+    """A fake live domain: captures ``recorder`` calls, answers the
+    read-only queries, and raises if anything else is touched.
 
-    def __init__(self) -> None:
+    ``nodes`` maps tag -> coordinates and ``eles`` tag -> node tags, as
+    the user's hand-written ``ops.node`` / ``ops.element`` calls left
+    them; ``n_procs`` is what ``getNP`` reports.  The default is the
+    one-column frame's own nodes (``build_simple_frame_fem``), so the
+    tags equal the fem ids.
+    """
+
+    def __init__(
+        self,
+        nodes: "dict[int, tuple[float, ...]] | None" = None,
+        eles: "dict[int, tuple[int, ...]] | None" = None,
+        n_procs: int = 1,
+    ) -> None:
+        self.n_procs = n_procs
+        self.nodes = nodes if nodes is not None else dict(_COLUMN_NODES)
+        self.eles = eles if eles is not None else {}
         self.calls: list[tuple[str, tuple[object, ...]]] = []
 
     def recorder(self, kind: str, *args: object) -> None:
         self.calls.append((kind, args))
 
+    def getNodeTags(self) -> list[int]:
+        return list(self.nodes)
+
+    def nodeCoord(self, tag: int) -> list[float]:
+        return list(self.nodes[tag])
+
+    def getNP(self) -> int:
+        return self.n_procs
+
+    def getEleTags(self) -> list[int]:
+        return list(self.eles)
+
+    def eleNodes(self, tag: int) -> list[int]:
+        return list(self.eles[tag])
+
     def __getattr__(self, name: str) -> object:  # pragma: no cover - guard
         raise AssertionError(
             f"attach_recorders touched ops.{name} — it must only call "
-            f"ops.recorder(...) (no wipe / model / node)."
+            f"ops.recorder(...) and read-only queries (no wipe / model / "
+            f"node)."
         )
 
 
+#: ``build_simple_frame_fem()``: one column, element 1 joins nodes 1 and 2,
+#: 1.0 long (so the coordinate tolerance is 1e-3).
+_COLUMN_NODES: "dict[int, tuple[float, ...]]" = {
+    1: (0.0, 0.0, 0.0), 2: (0.0, 0.0, 1.0),
+}
+
+
+def _column_nodes_md() -> ModelData:
+    """A displacement recorder on the column's nodes 1 and 2.
+
+    The live check walks ``fem.elements`` for the mesh size, so these
+    tests bind a real :class:`FEMData` (the fem stub's element composite
+    does not iterate).
+    """
+    md = ModelData(build_simple_frame_fem(), ndm=3, ndf=6)
+    md.recorders(nodes="displacement", pg="Cols", file_root="out")
+    return md
+
+
 def test_attach_recorders_forwards_only_recorder_calls() -> None:
-    fem = make_two_column_frame()  # Base PG -> nodes 1, 3
-    md = ModelData(cast("object", fem), ndm=3, ndf=6)
-    md.recorders(nodes="displacement", pg="Base", file_root="out")
+    md = _column_nodes_md()
 
     ops = _RecordingOps()
     md.attach_recorders(ops)
@@ -168,14 +224,12 @@ def test_attach_recorders_forwards_only_recorder_calls() -> None:
     # Same fem-id resolution as recorder_commands.
     assert "-node" in args
     node_pos = args.index("-node")
-    assert args[node_pos + 1] == 1 and args[node_pos + 2] == 3
+    assert args[node_pos + 1] == 1 and args[node_pos + 2] == 2
 
 
 def test_attach_recorders_matches_command_rendering() -> None:
     """The live forward and the py rendering issue the same recorder."""
-    fem = make_two_node_beam()  # Top PG -> node 2
-    md = ModelData(cast("object", fem), ndm=3, ndf=6)
-    md.recorders(nodes="displacement", pg="Top", file_root="out")
+    md = _column_nodes_md()
 
     ops = _RecordingOps()
     md.attach_recorders(ops)
@@ -185,8 +239,205 @@ def test_attach_recorders_matches_command_rendering() -> None:
     kind, args = ops.calls[0]
     assert kind == "Node"
     rendered = md.recorder_commands(target="py")[1]
-    for token in ("-file", "-node", 2, "-dof", "disp"):
+    for token in ("-file", "-node", 1, 2, "-dof", "disp"):
         assert (str(token) in rendered)
+
+
+# ---------------------------------------------------------------------------
+# attach_recorders — tag correspondence (K19, #1506)
+# ---------------------------------------------------------------------------
+
+def _attach(md: ModelData, ops: _RecordingOps) -> list[str]:
+    """Attach, returning the messages of every warning raised."""
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        md.attach_recorders(ops)
+    return [str(w.message) for w in caught]
+
+
+def test_attach_is_silent_when_live_tags_are_the_fem_ids() -> None:
+    md = _column_nodes_md()
+    ops = _RecordingOps()
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        md.attach_recorders(ops)
+    assert len(ops.calls) == 1
+
+
+def test_attach_warns_when_a_targeted_node_is_absent() -> None:
+    """The deck numbered its nodes from 101: fem nodes 1 and 2 do not exist."""
+    md = _column_nodes_md()
+    ops = _RecordingOps(nodes={101: (0.0, 0.0, 0.0), 102: (0.0, 0.0, 1.0)})
+    [msg] = _attach(md, ops)
+    assert "2 of them" in msg
+    assert "node 1: absent from the live domain" in msg
+    assert "node 2: absent from the live domain" in msg
+    # Still attached: the warning does not drop the user's recorders.
+    assert len(ops.calls) == 1
+
+
+def test_attach_warns_when_a_node_tag_names_another_point() -> None:
+    """Same tags, other numbering: deck node 1 sits where fem node 2 is."""
+    md = _column_nodes_md()
+    ops = _RecordingOps(nodes={1: (0.0, 0.0, 1.0), 2: (0.0, 0.0, 0.0)})
+    [msg] = _attach(md, ops)
+    assert "2 of them" in msg
+    assert "node 1: live coordinates (0.0, 0.0, 1.0)" in msg
+
+
+def _rounded(nodes: "dict[int, tuple[float, ...]]") -> "dict[int, tuple[float, ...]]":
+    """The deck typed every x with a 1e-7 rounding error."""
+    return {t: (x + 1e-7, *rest) for t, (x, *rest) in nodes.items()}
+
+
+@pytest.mark.parametrize(
+    "nodes, expected",
+    [
+        # Same numbering, rounded coordinates: 1e-7 is far below the
+        # tolerance (1e-3 of the 1.0 column length), so silent.
+        (_rounded(_COLUMN_NODES), None),
+        # Renumbered and rounded: deck node 1 is the fem node 2 point
+        # (one column length away), so it still warns.
+        (_rounded({1: (0.0, 0.0, 1.0), 2: (0.0, 0.0, 0.0)}),
+         "node 1: live coordinates"),
+    ],
+    ids=["rounded_silent", "renumbered_warns"],
+)
+def test_attach_coordinate_tolerance_follows_the_mesh_size(
+    nodes: "dict[int, tuple[float, ...]]", expected: "str | None",
+) -> None:
+    md = _column_nodes_md()
+    msgs = _attach(md, _RecordingOps(nodes=nodes))
+    if expected is None:
+        assert msgs == []
+    else:
+        [msg] = msgs
+        assert expected in msg
+
+
+@pytest.mark.parametrize(
+    "decl",
+    [
+        {"nodes": "displacement", "pg": "Base"},
+        {"line_stations": "bending_moment_y", "pg": "Cols"},
+    ],
+    ids=["nodes", "line_stations"],
+)
+def test_attach_never_breaks_on_a_fem_whose_elements_do_not_walk(
+    decl: "dict[str, str]",
+) -> None:
+    """The check is a diagnostic: the fem stub's element composite does
+    not iterate, so the tolerance falls back to the bounding box (and the
+    element comparison is not made), with no exception and every
+    recorder attached."""
+    fem = make_two_column_frame()
+    with pytest.raises(TypeError):
+        iter(fem.elements)  # the precondition this test is about
+    md = ModelData(cast("object", fem), ndm=3, ndf=6)
+    md.recorders(file_root="out", **decl)  # type: ignore[arg-type]
+    ops = _RecordingOps(nodes={
+        1: (1e-7, 0.0, 0.0), 2: (0.0, 0.0, 1.0),
+        3: (1.0, 0.0, 0.0), 4: (1.0, 0.0, 1.0),
+    })
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        md.attach_recorders(ops)
+    n_expected = 1 if "nodes" in decl else 2
+    assert len(ops.calls) == n_expected
+
+
+def test_attach_on_a_non_walkable_fem_still_warns_on_a_wrong_node() -> None:
+    """With the bounding-box tolerance (1e-3 of the 1.41 diagonal), a
+    node one column length off still warns."""
+    fem = make_two_column_frame()  # Base PG -> nodes 1, 3
+    md = ModelData(cast("object", fem), ndm=3, ndf=6)
+    md.recorders(nodes="displacement", pg="Base", file_root="out")
+    ops = _RecordingOps(nodes={
+        1: (0.0, 0.0, 1.0), 2: (0.0, 0.0, 0.0),
+        3: (1.0, 0.0, 0.0), 4: (1.0, 0.0, 1.0),
+    })
+    [msg] = _attach(md, ops)
+    assert "1 of them" in msg and "node 1: live coordinates" in msg
+    assert len(ops.calls) == 1
+
+
+def test_attach_in_a_parallel_run_skips_absent_but_checks_present() -> None:
+    """OpenSeesMP: tag lists are rank-local.  Node 2 lives on another
+    rank (absent here, not reported); node 1 is on this rank at the
+    wrong point (reported)."""
+    md = _column_nodes_md()
+    on_rank = {1: (0.0, 0.0, 1.0)}
+
+    [msg] = _attach(md, _RecordingOps(nodes=on_rank, n_procs=2))
+    assert "1 of them" in msg and "node 1: live coordinates" in msg
+    assert "node 2" not in msg
+
+    # The same deck run sequentially reports node 2 as absent too.
+    [msg] = _attach(md, _RecordingOps(nodes=on_rank, n_procs=1))
+    assert "node 2: absent from the live domain" in msg
+
+
+def test_attach_in_a_parallel_run_is_silent_for_off_rank_elements() -> None:
+    md = _frame_md()
+    ops = _RecordingOps(nodes={}, eles={}, n_procs=4)
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        md.attach_recorders(ops)
+    assert len(ops.calls) == 2
+
+
+def _frame_md() -> ModelData:
+    fem = build_simple_frame_fem()  # element 1 joins nodes 1 (z=0), 2 (z=1)
+    md = ModelData(fem, ndm=3, ndf=6)
+    md.recorders(line_stations="bending_moment_y", pg="Cols", file_root="out")
+    return md
+
+
+_FRAME_NODES: "dict[int, tuple[float, ...]]" = {
+    1: (0.0, 0.0, 0.0), 2: (0.0, 0.0, 1.0), 3: (5.0, 0.0, 0.0),
+}
+
+
+def test_attach_is_silent_when_the_element_is_the_fem_element() -> None:
+    md = _frame_md()
+    ops = _RecordingOps(nodes=_FRAME_NODES, eles={1: (1, 2)})
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        md.attach_recorders(ops)
+    # One section-force recorder plus its integrationPoints pair.
+    assert len(ops.calls) == 2
+    for kind, args in ops.calls:
+        assert kind == "Element" and args[args.index("-ele") + 1] == 1
+
+
+@pytest.mark.parametrize(
+    "eles, expected",
+    [
+        ({7: (1, 2)}, "element 1: absent from the live domain"),
+        ({1: (2, 3)}, "element 1: live nodes (2, 3) vs fem nodes (1, 2)"),
+    ],
+    ids=["absent", "other_nodes"],
+)
+def test_attach_warns_when_the_element_is_not_the_fem_element(
+    eles: "dict[int, tuple[int, ...]]", expected: str,
+) -> None:
+    md = _frame_md()
+    ops = _RecordingOps(nodes=_FRAME_NODES, eles=eles)
+    [msg] = _attach(md, ops)
+    assert expected in msg
+    assert "1 of them" in msg  # one element, counted once over both calls
+    assert len(ops.calls) == 2
+
+
+def test_attach_checks_the_nodes_of_a_matching_element() -> None:
+    """Element 1 joins tags (1, 2) as the fem says, but the deck's node 2
+    is not at the fem node 2 point: the element is another element."""
+    md = _frame_md()
+    nodes: "dict[int, Any]" = {**_FRAME_NODES, 2: (0.0, 0.0, 3.0)}
+    ops = _RecordingOps(nodes=nodes, eles={1: (1, 2)})
+    [msg] = _attach(md, ops)
+    assert "node 2: live coordinates (0.0, 0.0, 3.0)" in msg
+    assert "element 1" not in msg
 
 
 # ---------------------------------------------------------------------------

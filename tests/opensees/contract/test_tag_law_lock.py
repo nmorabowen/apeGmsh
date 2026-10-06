@@ -87,6 +87,7 @@ TAG_PLAN_MINTING_HELPERS = frozenset({"plan_regions", "plan_tags"})
 MINTING_HELPERS = frozenset({
     "_emit_kinematic_couplings",
     "_emit_one_interpolation",
+    "_mp_element_tagger",
     "_planned_contact_lines",
     "_emit_rigid_body_elements",
     "_emit_surface_couplings",
@@ -111,6 +112,8 @@ MINTING_HELPERS = frozenset({
     "emit_transform_specs",
     "emit_update_parameters",
     "plan_contacts",
+    "plan_interface_tags",
+    "plan_mp_elements",
     "plan_transform_specs",
     "reserve_fem_element_tags",
 })

@@ -47,8 +47,11 @@ boundary INV-5 draws.
     emitted ``recorder`` commands target *your* ``ops.element`` /
     ``ops.node`` tags only if those equal the broker fem ids — the same
     ``tag == fem_eid`` invariant :meth:`oriented_elements` already
-    relies on (see the tag-correspondence caveat above).  A mismatch
-    silently records the wrong entities.
+    relies on (see the tag-correspondence caveat below).  A mismatch
+    records the wrong entities.  :meth:`attach_recorders` checks every
+    target against the live domain and warns on a mismatch;
+    :meth:`recorder_commands` and :meth:`write` have no domain to
+    check, so there the assumption is yours to keep.
 
 .. note::
 
@@ -348,6 +351,21 @@ class ModelData:
         OpenSees ordering.  See the class ``tag == fem_eid`` warning:
         selectors resolve to fem ids, so they target the caller's tags
         only if those equal the fem ids.
+
+        Before issuing any ``recorder`` call, the targets are checked
+        against the live domain through read-only queries
+        (``getNP`` / ``getNodeTags`` / ``nodeCoord`` / ``getEleTags`` /
+        ``eleNodes``).  A targeted node that is absent or sits at other
+        coordinates than the fem node of the same id, or a targeted
+        element that is absent or joins other nodes than the fem
+        element of the same id, raises a :class:`UserWarning` naming
+        the ids: the recorder would observe the wrong entity (K19,
+        #1506).  The recorders are still attached.  Coordinates match
+        within a small fraction of the fem's shortest element edge, so
+        a deck that typed rounded coordinates stays silent.  In a
+        parallel run (``ops.getNP() > 1``, OpenSeesMP) the tag lists
+        are rank-local, so an id absent on this rank is not reported;
+        the ids present on this rank are still checked.
         """
         sink = _LiveRecorderSink(ops)
         for decl in self._recorder_decls:
@@ -357,6 +375,10 @@ class ModelData:
                 self._fem,
                 fem_eid_to_ops_tag=None,
             )
+        # The fan-out only buffered the calls: check every target
+        # against the live domain, then issue them all.
+        _warn_on_tag_mismatch(ops, self._fem, sink.calls)
+        sink.flush()
 
     def recorder_commands(
         self, *, target: Literal["py", "tcl"] = "py",
@@ -652,24 +674,233 @@ class ModelData:
             return md
 
 
+#: How many mismatched ids the tag-correspondence warning spells out.
+_MISMATCH_SHOWN = 5
+
+
+def _targets(args: "tuple[int | float | str, ...]", flag: str) -> list[int]:
+    """The integer ids that follow ``flag`` in one ``recorder`` arg list."""
+    out: list[int] = []
+    if flag not in args:
+        return out
+    for a in args[args.index(flag) + 1:]:
+        if isinstance(a, bool) or not isinstance(a, int):
+            break
+        out.append(int(a))
+    return out
+
+
+#: Coordinate tolerance as a fraction of the fem's shortest element edge.
+_COORD_TOL_FRACTION = 1e-3
+
+
+def _walk_elements(fem: Any) -> "tuple[bool, list[tuple[Any, Any]]]":
+    """``(walkable, [(ids, connectivity), ...])`` over ``fem.elements``.
+
+    The tag check is a diagnostic and must never break
+    :meth:`ModelData.attach_recorders`.  A FEMData-like object whose
+    element composite cannot be walked (no ``__iter__``, or groups
+    without ``ids`` / ``connectivity``) gives ``(False, [])``: the
+    tolerance then falls back to the bounding box, and the element
+    comparison is not made.
+    """
+    try:
+        return True, [(g.ids, g.connectivity) for g in fem.elements]
+    except (TypeError, AttributeError):
+        return False, []
+
+
+def _coord_tolerance(
+    groups: "list[tuple[Any, Any]]", ids: Any, coords: Any,
+) -> float:
+    """``_COORD_TOL_FRACTION`` of the shortest positive element edge.
+
+    An "edge" is the distance between any two nodes of one element,
+    over the first eight nodes of each element type (the corners for
+    every Gmsh type up to the hexahedron).  With no positive edge (a
+    single node, only zero-length elements, or no walkable elements)
+    the length scale falls back to the diagonal of the nodes' bounding
+    box, then to ``1.0``.
+    """
+    import numpy as np
+
+    order = np.argsort(ids)
+    sorted_ids = ids[order]
+    h = np.inf
+    for _, group_conn in groups:
+        conn = np.asarray(group_conn, dtype=np.int64)
+        if conn.ndim != 2 or conn.shape[0] == 0 or conn.shape[1] < 2:
+            continue
+        conn = conn[:, :8]
+        pos = np.searchsorted(sorted_ids, conn)
+        pos = np.clip(pos, 0, sorted_ids.size - 1)
+        known = (sorted_ids[pos] == conn).all(axis=1)
+        if not known.any():
+            continue
+        xyz = coords[order[pos[known]]]  # (E, k, 3)
+        k = xyz.shape[1]
+        for i in range(k):
+            for j in range(i + 1, k):
+                d = np.linalg.norm(xyz[:, i] - xyz[:, j], axis=1)
+                d = d[d > 0.0]
+                if d.size:
+                    h = min(h, float(d.min()))
+    if not np.isfinite(h):
+        span = coords.max(axis=0) - coords.min(axis=0) if coords.size else ()
+        h = float(np.linalg.norm(span)) if len(span) else 0.0
+        if h <= 0.0:
+            h = 1.0
+    return _COORD_TOL_FRACTION * h
+
+
+def _is_parallel(ops: Any) -> bool:
+    """True in an OpenSeesMP run: ``ops.getNP()`` reports more than one
+    process.  ``getNP`` is a standard interpreter command (stock
+    openseespy reports ``1``), so it is called directly, like the other
+    read-only queries."""
+    return int(ops.getNP()) > 1
+
+
+def _as_tags(raw: Any) -> set[int]:
+    """``ops.getNodeTags()`` / ``getEleTags()`` as a set (a scalar for one)."""
+    if isinstance(raw, int):
+        return {int(raw)}
+    return {int(t) for t in raw}
+
+
+def _warn_on_tag_mismatch(
+    ops: Any,
+    fem: Any,
+    calls: "list[tuple[str, tuple[int | float | str, ...]]]",
+) -> None:
+    """Warn when a recorder target's live tag is not the fem entity.
+
+    ``ModelData`` recorders target **fem** node / element ids verbatim
+    (``tag == fem_eid``).  A hand-written deck whose ``ops.node`` /
+    ``ops.element`` tags differ records the wrong entities with no
+    error from OpenSees.  Here the live domain answers, for every
+    targeted id: does it exist, and is it the same entity (node: same
+    coordinates within :func:`_coord_tolerance`; element: same node
+    set, whose nodes are checked too)?  In a parallel run the tag
+    lists are rank-local, so "absent" is not reported there.
+    """
+    import warnings
+
+    import numpy as np
+
+    node_ids: set[int] = set()
+    ele_ids: set[int] = set()
+    for kind, args in calls:
+        if kind == "Node":
+            node_ids.update(_targets(args, "-node"))
+        elif kind == "Element":
+            ele_ids.update(_targets(args, "-ele"))
+    if not node_ids and not ele_ids:
+        return
+
+    problems: list[str] = []
+    n_bad = 0
+    parallel = _is_parallel(ops)
+
+    walkable, groups = _walk_elements(fem)
+
+    # Without walkable elements the fem element of an id is unknown, so
+    # the element comparison is not made (the node check still runs).
+    if ele_ids and walkable:
+        fem_conn: dict[int, tuple[int, ...]] = {}
+        for group_ids, group_conn in groups:
+            for eid, conn in zip(group_ids, group_conn):
+                if int(eid) in ele_ids:
+                    fem_conn[int(eid)] = tuple(int(c) for c in conn)
+        live_eles = _as_tags(ops.getEleTags())
+        for eid in sorted(ele_ids):
+            if eid not in fem_conn:
+                why = "not in the bound FEMData"
+            elif eid not in live_eles:
+                if parallel:
+                    continue  # rank-local tag list: may live on another rank
+                why = "absent from the live domain"
+            else:
+                live = tuple(int(n) for n in ops.eleNodes(eid))
+                node_ids.update(fem_conn[eid])
+                if sorted(live) == sorted(fem_conn[eid]):
+                    continue
+                why = f"live nodes {live} vs fem nodes {fem_conn[eid]}"
+            n_bad += 1
+            if len(problems) < _MISMATCH_SHOWN:
+                problems.append(f"element {eid}: {why}")
+
+    if node_ids:
+        ids = np.asarray(fem.nodes.ids).reshape(-1)
+        coords = np.asarray(fem.nodes.coords, dtype=float)
+        row = {int(n): i for i, n in enumerate(ids)}
+        atol = _coord_tolerance(groups, ids, coords)
+        live_nodes = _as_tags(ops.getNodeTags())
+        for nid in sorted(node_ids):
+            if nid not in row:
+                why = "not in the bound FEMData"
+            elif nid not in live_nodes:
+                if parallel:
+                    continue  # rank-local tag list: may live on another rank
+                why = "absent from the live domain"
+            else:
+                live_xyz = np.asarray(ops.nodeCoord(nid), dtype=float)
+                fem_xyz = coords[row[nid]]
+                if np.allclose(
+                    live_xyz, fem_xyz[: live_xyz.size],
+                    rtol=0.0, atol=atol,
+                ):
+                    continue
+                why = (
+                    f"live coordinates {tuple(live_xyz.tolist())} vs fem "
+                    f"{tuple(fem_xyz.tolist())}"
+                )
+            n_bad += 1
+            if len(problems) < _MISMATCH_SHOWN:
+                problems.append(f"node {nid}: {why}")
+
+    if n_bad:
+        more = n_bad - len(problems)
+        warnings.warn(
+            "ModelData.attach_recorders: the recorders target fem ids, "
+            f"and {n_bad} of them are not the same entity in the live "
+            "OpenSees domain (tag == fem_eid does not hold): "
+            + "; ".join(problems)
+            + (f"; and {more} more" if more > 0 else "")
+            + ". These recorders will observe the wrong nodes / elements. "
+            "Drive ops.node / ops.element from fem.nodes / fem.elements "
+            "so the tags equal the fem ids.",
+            UserWarning, stacklevel=3,
+        )
+
+
 class _LiveRecorderSink:
-    """Recorder-only emitter forwarding into a live ``openseespy`` module.
+    """Recorder-only emitter that buffers calls for a live ``openseespy`` module.
 
     The recorder fan-out (:func:`_emit_recorder_declaration`) touches
     exactly three emitter methods: :meth:`recorder`,
     :meth:`recorder_declaration_begin`, :meth:`recorder_declaration_end`.
     This sink implements only those, so it cannot wipe the domain or
     re-declare the model the way the bridge's whole-model
-    ``LiveOpsEmitter`` can.  Used by :meth:`ModelData.attach_recorders`.
+    ``LiveOpsEmitter`` can.  :meth:`recorder` buffers each call so
+    :meth:`ModelData.attach_recorders` can check every target before
+    :meth:`flush` issues them.
     """
 
-    __slots__ = ("_ops",)
+    __slots__ = ("_ops", "calls")
 
     def __init__(self, ops: Any) -> None:
         self._ops = ops
+        self.calls: list[tuple[str, tuple[int | float | str, ...]]] = []
 
     def recorder(self, kind: str, *args: "int | float | str") -> None:
-        self._ops.recorder(kind, *args)
+        self.calls.append((kind, args))
+
+    def flush(self) -> None:
+        """Issue every buffered call as ``ops.recorder(...)``, in order."""
+        for kind, args in self.calls:
+            self._ops.recorder(kind, *args)
+        self.calls = []
 
     def recorder_declaration_begin(
         self,

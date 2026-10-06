@@ -305,22 +305,38 @@ def test_node_pair_reader_reconstructs_connectivity(tmp_path: Path) -> None:
         g.end()
 
 
-def test_node_pair_h5_round_trip_byte_stable(tmp_path: Path) -> None:
+def _rewrite_opensees_model(src: Path, dst: Path) -> None:
+    OpenSeesModel.from_h5(str(src)).to_h5(str(dst))
+
+
+def _rewrite_model_data(src: Path, dst: Path) -> None:
+    ModelData.from_h5(str(src)).write(str(dst))
+
+
+@pytest.mark.parametrize(
+    "rewrite", [_rewrite_opensees_model, _rewrite_model_data],
+    ids=["opensees_model", "model_data"],
+)
+def test_node_pair_h5_round_trip_byte_stable(tmp_path: Path, rewrite) -> None:
     g, fem, h = _box_with_ground()
     try:
         ops, mesh_tag = _spring_ops(fem, h, ground_ndf=3)
         a = tmp_path / "a.h5"
         ops.h5(str(a))
-        # H5 -> H5 via the bridge persistence path (ModelData).  The first
+        # H5 -> H5 through each rewriter: ``OpenSeesModel.from_h5 -> to_h5``
+        # (the replacement, K19 #1506) and ``ModelData.from_h5 -> write``
+        # (kept; it is orientation-only, ADR 0018 INV-5).  ModelData's first
         # re-write normalises the apeSees-writer zone into the ModelData
-        # layout (the two writers differ pre-existingly, unrelated to ADR
-        # 0049 — so a vs b hashes legitimately differ); subsequent re-writes
+        # layout (a vs b hashes legitimately differ); subsequent re-writes
         # must be byte-stable, which is what locks the node-pair connectivity
         # persistence.
         b, c = tmp_path / "b.h5", tmp_path / "c.h5"
-        ModelData.from_h5(str(a)).write(str(b))
-        ModelData.from_h5(str(b)).write(str(c))
+        rewrite(a, b)
+        rewrite(b, c)
         assert _model_hash(b) == _model_hash(c)
+        if rewrite is _rewrite_opensees_model:
+            # The replacement keeps the whole deck: no normalising step.
+            assert _model_hash(a) == _model_hash(b)
 
         # inline_connectivity dataset round-trips with the same endpoints.
         for p in (a, b, c):
