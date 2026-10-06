@@ -14,7 +14,14 @@ unused `records=` parameter. A helper handed a fork of another model's plan
 now says so, for transforms too, and the emit refuses a contact plan that
 does not hold each contact record exactly once. Every emitted deck,
 partitioned contact decks over 2 and 4 ranks included, is byte-identical.
-One ordering change: a partitioned contact routing refusal (undecidable
-owner, cut master under auto sizing, staged model) now raises when the emit
-plans its tags, before the partitioned path's own checks. The pattern-`sp`
-check on contact ghosts still runs in the emit.
+One ordering change, which the maintainer accepted: the partitioned contact
+routing refusals (undecidable owner, a cut master with `kn='auto'`, a
+partially traced master under auto sizing, and a contact on a STAGED
+partitioned model) now raise when the emit plans its tags. That is before
+the partitioned path's own refusals, which now come second: the
+`equation_constraint` (EQ) rows refusal, the reinforce, rebar and embed
+refusals, the `soft=` refusal, the node-pair ZeroLength refusal, and the
+staged BC validators. Every one of them is still a `BridgeError`, so a
+partitioned model that breaks more than one rule may now report a different
+first error. The pattern-`sp` check on contact ghosts still runs in the
+emit.

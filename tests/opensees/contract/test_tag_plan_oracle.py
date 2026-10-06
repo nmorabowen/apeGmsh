@@ -800,6 +800,40 @@ def test_emit_refuses_a_short_or_empty_contact_plan(
         ts.emit_stream(bm, RecordingEmitter)
 
 
+@pytest.mark.parametrize("name", [
+    "contact_ranks_4/flat", "contact_ranks_2/partitioned",
+    "contact_ranks_4/partitioned",
+])
+def test_emit_refuses_a_contact_plan_with_a_swapped_record(name: str) -> None:
+    """Mutation: same count, other records. ``check_covers`` compares
+    record identities, not only how many there are.
+
+    The memoised plan's ``c1`` line is given ``c0``'s record, so the plan
+    still holds one line per contact but plans ``c0`` twice and ``c1``
+    never. The next emit must raise rather than write ``c0`` twice.
+    """
+    import dataclasses
+
+    from apeGmsh.opensees._internal.tag_plan import ContactTagPlan
+
+    bm = _MODELS[name]().build()
+    mode = emit_mode(bm, split=False, supports_partitions=True)
+    plan = bm._tag_plan(mode)
+    contacts = plan.contacts.contacts
+    assert contacts is not None
+    by_name = {ln.record.name: ln.record for ln in contacts.lines}
+    lines = tuple(
+        ln._replace(record=by_name["c0"]) if ln.record.name == "c1" else ln
+        for ln in contacts.lines
+    )
+    assert len(lines) == len(contacts.lines)
+    bm._tag_plans[mode] = dataclasses.replace(
+        plan, contacts=ContactTagPlan(
+            contacts=dataclasses.replace(contacts, lines=lines)))
+    with pytest.raises(TagLawError, match="contact plan holds"):
+        ts.emit_stream(bm, RecordingEmitter)
+
+
 def test_emit_contacts_is_two_way() -> None:
     """Fork: read the plan. Plain allocator: plan through the same loop.
 
