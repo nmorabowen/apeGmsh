@@ -11226,7 +11226,7 @@ def _emit_foreign_node_declarations(
     emitter: "Emitter",
     fem: "FEMData",
     plan: "_RankConstraintPlan",
-    phantom_coords: "dict[int, tuple[float, float, float]]",
+    phantom_coords: "Mapping[int, tuple[float, float, float]]",
     inferred_ndf: "dict[int, int]",
     foreign_node_ndf: int | None,
     ghost_sp_ops: "dict[int, list[GhostSPOp]] | None",

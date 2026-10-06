@@ -215,7 +215,193 @@ _CONTACT_MODELS: dict[str, Callable[[], Any]] = {
     "contact_ranks_4/flat": lambda: _contact_ranks(4, partitioned=False),
 }
 
-_MODELS = {**ts.models(), **_CONTACT_MODELS}
+def _mp_ranks_fem(n_ranks: int, *, partitioned: bool = True) -> Any:
+    """A truss stub with one of every MP element on each rank.
+
+    Rank ``r`` (``b = 100 (r + 1)``) natively holds a triangle
+    ``b+1..b+3`` (with ``b+4``), a kinematic coupling ``kc{r}``
+    (``b+6 -> b+7``), an element rigid body ``rb{r}`` (``b+8, b+9``), a
+    reinforce tie ``rt{r}`` of ``b+10`` in the triangle, and a rebar
+    cell ``b+10 - b+11`` on bar ``bar{r}``; its penalty tie ``tie{r}``
+    binds ``b+5``, which lives on the next rank, so the tie's host rank
+    declares it as a ghost. Every record is declared in reverse rank
+    order, so the partitioned deck, which numbers each rank's elements
+    in its block, numbers them differently from the flat one.
+    """
+    from apeGmsh._kernel.records._constraints import (
+        InterpolationRecord,
+        NodeGroupRecord,
+        ReinforceTieRecord,
+    )
+    from apeGmsh._kernel.records._kinds import ConstraintKind
+    from apeGmsh._kernel.records._rebar import RebarElementRecord
+
+    from tests.opensees.fixtures.fem_stub import (
+        FEMStub,
+        _ElementGroupView,
+        _ElementsStub,
+        _NodesStub,
+    )
+
+    ids: list[int] = []
+    coords: list[tuple[float, float, float]] = []
+    bar_ids: list[int] = []
+    bars: list[tuple[int, int]] = []
+    rank_nodes: dict[int, list[int]] = {r: [] for r in range(n_ranks)}
+    rank_elems: dict[int, list[int]] = {r: [] for r in range(n_ranks)}
+    node_recs: list[Any] = []
+    interps: list[Any] = []
+    ties: list[Any] = []
+    rebar: list[Any] = []
+    for r in range(n_ranks):
+        b, x, nxt = 100 * (r + 1), 10.0 * r, (r + 1) % n_ranks
+        ids += [b + k for k in range(1, 12)]
+        coords += [(x, 0.0, 0.0), (x + 1, 0.0, 0.0), (x + 1, 1.0, 0.0),
+                   (x, 1.0, 0.0), (x + 0.3, 0.3, 0.0), (x, 0.0, 2.0),
+                   (x + 1, 0.0, 2.0), (x, 1.0, 2.0), (x + 1, 1.0, 2.0),
+                   (x + 0.5, 0.4, 0.0), (x + 0.5, 0.4, 1.0)]
+        rank_nodes[r] += [b + k for k in (1, 2, 3, 4, 6, 7, 8, 9, 10, 11)]
+        rank_nodes[nxt].append(b + 5)
+        e = 10 * (r + 1)
+        for k, conn in enumerate(((b + 1, b + 2), (b + 2, b + 3),
+                                  (b + 3, b + 4), (b + 6, b + 7),
+                                  (b + 8, b + 9))):
+            bar_ids.append(e + k)
+            bars.append(conn)
+            rank_elems[r].append(e + k)
+        node_recs[:0] = [
+            NodeGroupRecord(
+                kind=ConstraintKind.RIGID_BODY, master_node=b + 8,
+                slave_nodes=[b + 9], as_element=True, name=f"rb{r}"),
+            NodeGroupRecord(
+                kind=ConstraintKind.KINEMATIC_COUPLING, master_node=b + 6,
+                slave_nodes=[b + 7], dofs=[1, 2, 3], name=f"kc{r}"),
+        ]
+        interps.insert(0, InterpolationRecord(
+            kind=ConstraintKind.TIE, slave_node=b + 5,
+            master_nodes=[b + 1, b + 2, b + 3], dofs=[1, 2, 3],
+            enforce="penalty", stiffness=1.0e10, name=f"tie{r}"))
+        ties.insert(0, ReinforceTieRecord(
+            kind="reinforce", name=f"rt{r}", rebar_node=b + 10,
+            host_nodes=[b + 1, b + 2, b + 3],
+            weights=np.array([0.2, 0.4, 0.4]),
+            direction=np.array([0.0, 0.0, 1.0]), perfect=1.0e8))
+        rebar.insert(0, RebarElementRecord(
+            pg=f"bar{r}", element="truss", material="steel", area=1.0e-4,
+            connectivity=((b + 10, b + 11),)))
+    fem = FEMStub(
+        nodes=_NodesStub(ids=ids, coords=coords, node_pgs={}),
+        elements=_ElementsStub(elem_pgs={"Bars": _ElementGroupView(
+            ids=tuple(bar_ids), connectivity=tuple(bars))}),
+    )
+    if partitioned:
+        fem.set_partitions([
+            (r, rank_nodes[r], rank_elems[r]) for r in range(n_ranks)])
+    fem.add_node_constraints(node_recs)
+    fem.add_surface_constraints(interps)
+    fem.elements.reinforce_ties = ties
+    fem.elements.rebar_elements = rebar
+    return fem
+
+
+def _mp_ranks(
+    n_ranks: int, *, partitioned: bool = True, staged: bool = False,
+) -> Any:
+    """:func:`_mp_ranks_fem` under a truss; ``staged`` claims rank 0's
+    coupling and rigid body and rank 1's tie in a second stage."""
+    from typing import cast
+
+    from apeGmsh.opensees import apeSees
+
+    ops = apeSees(cast(Any, _mp_ranks_fem(n_ranks, partitioned=partitioned)))
+    ops.model(ndm=3, ndf=3)
+    mat = ops.uniaxialMaterial.ElasticMaterial(E=1.0e6)
+    ops.uniaxialMaterial.ElasticMaterial(E=2.0e5, name="steel")
+    ops.element.Truss(pg="Bars", A=0.01, material=mat)
+    if staged:
+        def chain() -> dict[str, Any]:
+            return {
+                "test": ops.test.NormDispIncr(tol=1e-4, max_iter=10),
+                "algorithm": ops.algorithm.Newton(),
+                "integrator": ops.integrator.LoadControl(dlam=1.0),
+                "constraints": ops.constraints.Transformation(),
+                "numberer": (ops.numberer.ParallelPlain() if partitioned
+                             else ops.numberer.Plain()),
+                "system": (ops.system.Mumps() if partitioned
+                           else ops.system.BandGeneral()),
+                "analysis": ops.analysis.Static(),
+            }
+        with ops.stage(name="s1") as s:
+            s.analysis(**chain())
+            s.run(n_increments=1)
+        with ops.stage(name="s2") as s:
+            s.kinematic_coupling(name="kc0")
+            s.rigid_link(name="rb0")
+            s.tie(name="tie1")
+            s.analysis(**chain())
+            s.run(n_increments=1)
+    return ops
+
+
+def _iface(**kw: Any) -> Any:
+    from tests.opensees.integration import (
+        test_interface_partitioned_emit as ip,
+    )
+    return ip._quad_ops(ip._fem(embed=True, **kw))
+
+
+def _iface_staged(*, partitioned: bool) -> Any:
+    from tests.opensees.integration import (
+        test_interface_partitioned_emit as ip,
+    )
+    from tests.opensees.integration import (
+        test_interface_partitioned_staged_emit as ips,
+    )
+    if partitioned:
+        return ips._staged(ips._quad_ops(ips._fem()), service=True)
+    ops = ips._quad_ops(ip._fem())
+
+    def chain() -> dict[str, Any]:
+        return {
+            "test": ops.test.NormDispIncr(tol=1e-6, max_iter=25),
+            "algorithm": ops.algorithm.Newton(),
+            "integrator": ops.integrator.LoadControl(dlam=1.0),
+            "constraints": ops.constraints.Transformation(),
+            "numberer": ops.numberer.Plain(),
+            "system": ops.system.BandGeneral(),
+            "analysis": ops.analysis.Static(),
+        }
+    with ops.stage(name="ground") as s:
+        s.analysis(**chain())
+        s.run(n_increments=1, dt=1.0)
+    with ops.stage(name="install") as s:
+        s.activate(pgs=["liner"])
+        s.interface(name="RockLiner")
+        s.analysis(**chain())
+        s.run(n_increments=1, dt=1.0)
+    return ops
+
+
+#: The MP-element and interface cases (K1-3d S3c): every MP site over 2
+#: and 4 ranks, flat, and staged both ways; interfaces beside an
+#: element-minting embedded tie, flat, over 2 and 4 ranks, and staged
+#: both ways.
+_MP_MODELS: dict[str, Callable[[], Any]] = {
+    "mp_ranks_2/partitioned": lambda: _mp_ranks(2),
+    "mp_ranks_4/partitioned": lambda: _mp_ranks(4),
+    "mp_ranks_4/flat": lambda: _mp_ranks(4, partitioned=False),
+    "mp_ranks_2/staged": lambda: _mp_ranks(
+        2, partitioned=False, staged=True),
+    "mp_ranks_2/staged_partitioned": lambda: _mp_ranks(2, staged=True),
+    "iface_embed/flat": lambda: _iface(),
+    "iface_embed_ranks_2/partitioned": lambda: _iface(cut="split"),
+    "iface_embed_ranks_4/partitioned": lambda: _iface(n_parts=4),
+    "iface_staged/staged": lambda: _iface_staged(partitioned=False),
+    "iface_staged_ranks_2/staged_partitioned": (
+        lambda: _iface_staged(partitioned=True)),
+}
+
+_MODELS = {**ts.models(), **_CONTACT_MODELS, **_MP_MODELS}
 CASES: tuple[str, ...] = tuple(sorted(_MODELS))
 
 
@@ -1244,6 +1430,379 @@ def test_mint_site_names_are_unique() -> None:
     assert {n: c for n, c in defs.items() if c != 1} == {}
 
 
+# ---------------------------------------------------------------------------
+# The MP-element and interface families (K1-3d S3c)
+# ---------------------------------------------------------------------------
+
+
+#: Cases whose emit writes MP elements / interfaces (``_MP_MODELS`` plus
+#: the synthesised truss, flat and under ``element_tags="fem"``).
+_MP_CASES = (
+    *(n for n in _MP_MODELS if n.startswith("mp_") or "embed" in n),
+    "synthesised_elements/flat", "synthesised_elements_fem_ids/flat",
+)
+_IFACE_CASES = (
+    *(n for n in _MP_MODELS if n.startswith("iface")),
+    "synthesised_elements/flat", "synthesised_elements_fem_ids/flat",
+)
+
+
+@pytest.mark.parametrize("family, names", [
+    ("mp_elements", _MP_CASES), ("interfaces", _IFACE_CASES)])
+def test_short_or_empty_mp_or_interface_plan_fails_the_oracle(
+    family: str, names: tuple[str, ...],
+) -> None:
+    """Neither comparison is vacuous: a dropped row is caught.
+
+    Every case that writes the family's tags (flat, staged, and
+    partitioned over 2 and 4 ranks) must reject its plan with the last
+    row dropped, and with every row dropped, while accepting the real one.
+    """
+    checked: set[str] = set()
+    for name in CASES:
+        case = _case(name)
+        rows = case.plan.family(family).stream()
+        if not rows:
+            continue
+        checked.add(name)
+        assert _family_mismatch(case, family, rows) is None, name
+        assert _family_mismatch(case, family, rows[:-1]), name
+        assert _family_mismatch(case, family, ()), name
+    assert set(names) <= checked
+    modes = {_case(n).plan.mode for n in names}
+    assert TagMode(False, True, True) in modes      # staged partitioned
+    assert TagMode(False, False, True) in modes     # staged flat
+
+
+def test_mp_elements_number_rank_by_rank() -> None:
+    """The partitioned plan numbers MP elements rank by rank, as the deck did.
+
+    The 20 bars take the element plan's tags, up to ``e``. Rank ``r``'s
+    block then writes its rigid body, coupling, tie (the global MP pass),
+    its reinforce tie and its rebar cell, so they take ``e + 1 + 5r`` to
+    ``e + 5 + 5r``. The flat deck writes every rigid body, then every
+    coupling, every tie, every reinforce tie, every rebar cell, each in
+    declaration order (rank 3 first).
+    """
+    def named(name: str) -> list[tuple[str, int]]:
+        mp = _case(name).plan.mp_elements.planned()
+        return [(getattr(ln.record, "name", None) or ln.record.pg, ln.tag)
+                for ln in mp.lines]
+
+    e = max(t for _, t in _case("mp_ranks_4/flat").plan.elements.stream())
+    assert e == max(
+        t for _, t in _case("mp_ranks_4/partitioned").plan.elements.stream())
+    assert named("mp_ranks_4/partitioned") == [
+        (f"{kind}{r}", e + 1 + 5 * r + k)
+        for r in range(4)
+        for k, kind in enumerate(("rb", "kc", "tie", "rt", "bar"))
+    ]
+    assert named("mp_ranks_4/flat") == [
+        (f"{kind}{r}", e + 1 + 4 * k + (3 - r))
+        for k, kind in enumerate(("rb", "kc", "tie", "rt", "bar"))
+        for r in (3, 2, 1, 0)
+    ]
+
+
+def test_staged_mp_elements_number_after_the_global_pass() -> None:
+    """Stage-claimed MP elements take their tags in the stage's pass.
+
+    Stage ``s2`` claims rank 0's rigid body and coupling and rank 1's
+    tie. The global pass skips them; the stage pass numbers them after
+    every global element, rank by rank on the partitioned deck.
+    """
+    for name in ("mp_ranks_2/staged", "mp_ranks_2/staged_partitioned"):
+        plan = _case(name).plan
+        e = max(t for _, t in plan.elements.stream())
+        mp = plan.mp_elements.planned()
+        assert [ln.record.name for ln in mp.lines[-3:]] == [
+            "rb0", "kc0", "tie1"], name
+        assert [ln.tag for ln in mp.lines] == list(range(e + 1, e + 11))
+        written = _case(name).stream
+        assert [t for k, t in written if _verb(k) in (
+            "element", "embeddedNode", "embedded_rebar")][-3:] == [
+            e + 8, e + 9, e + 10], name
+
+
+def test_element_and_material_kinds_are_frozen_on_every_emit_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Every emit path's allocator refuses an ``element`` or
+    ``uniaxialMaterial`` mint: flat, staged, and partitioned and
+    staged-partitioned over 2 and 4 ranks."""
+    from apeGmsh.opensees.apesees import BuiltModel
+
+    seen: list[tuple[str, TagAllocator]] = []
+
+    def spy(path: str) -> Callable[..., Any]:
+        orig = getattr(BuiltModel, path)
+        sig = inspect.signature(orig)
+
+        def wrapper(self: Any, *args: Any, **kwargs: Any) -> Any:
+            seen.append((path, sig.bind(self, *args, **kwargs)
+                         .arguments["tags"]))
+            return orig(self, *args, **kwargs)
+        return wrapper
+
+    for path in _PATHS:
+        monkeypatch.setattr(BuiltModel, path, spy(path))
+    names = {*_first_case_per_mode().values(), *_MP_CASES, *_IFACE_CASES}
+    for name in sorted(names):
+        ts.emit_stream(_MODELS[name]().build(), RecordingEmitter)
+    assert {path for path, _ in seen} == set(_PATHS)
+    for path, tags in seen:
+        assert {"element", "uniaxialMaterial"} <= tags.frozen_kinds, path
+        for kind in ("element", "uniaxialMaterial"):
+            with pytest.raises(TagLawError, match="planned and frozen"):
+                tags.allocate(kind)
+            with pytest.raises(TagLawError):
+                tags.allocate_block(kind, 1)
+
+
+@pytest.mark.parametrize("name", sorted({*_MP_CASES, *_IFACE_CASES}))
+def test_a_stray_element_mint_raises(
+    name: str, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Mutation: an emit whose writers mint again raises where they mint.
+
+    The MP-element writers are mutated to mint each element's tag from
+    the emit allocator, and ``allocate_interface_tags`` to allocate as
+    it did before the plan (at both of its call sites). Every emit that
+    writes an MP element or an interface, on every path, must raise
+    rather than write a deck.
+    """
+    import apeGmsh.opensees.apesees as apesees_mod
+    from apeGmsh.opensees._internal import build
+
+    def minting_tagger(tags: TagAllocator) -> Any:
+        return lambda entry: tags.allocate("element")
+
+    def minting_interfaces(records: Any, tags: TagAllocator) -> Any:
+        return {id(r): (tags.allocate("uniaxialMaterial"),
+                        tags.allocate("uniaxialMaterial"),
+                        tags.allocate("element")) for r in records}
+
+    monkeypatch.setattr(build, "_mp_element_tagger", minting_tagger)
+    monkeypatch.setattr(build, "allocate_interface_tags", minting_interfaces)
+    monkeypatch.setattr(
+        apesees_mod, "allocate_interface_tags", minting_interfaces)
+    with pytest.raises(TagLawError, match="planned and frozen"):
+        ts.emit_stream(_MODELS[name]().build(), RecordingEmitter)
+
+
+def _plain_like_the_planner(bm: Any, plan: TagPlan) -> TagAllocator:
+    """A plain allocator seeded as the planner was, its ``element``
+    counter past the element fan-out: a direct caller's allocator."""
+    tags = _seeded_like_the_planner(bm)
+    last = max((t for _, t in plan.elements.stream()), default=0)
+    if last:
+        tags.reserve_through("element", last)
+    return tags
+
+
+def test_mp_writers_are_two_way() -> None:
+    """Fork: read the plan. Plain allocator: plan through the same loop.
+
+    The flat MP writers, handed a plain allocator (a direct caller, until
+    K1-3d S6), write the same rows as when handed the emit allocator, and
+    those rows are the plan's. A plain fork, the frozen planner allocator
+    and a fork for another origin carry no plan; a fork of a real foreign
+    plan is refused as another model's.
+    """
+    from apeGmsh.opensees._internal.build import (
+        emit_embed_ties,
+        emit_mp_constraints,
+        emit_rebar_elements,
+        emit_reinforce_ties,
+    )
+
+    case = _case("mp_ranks_4/flat")
+    bm, plan = case.bm, case.plan
+
+    def run(tags: TagAllocator) -> list[Row]:
+        em = ts.tapped(RecordingEmitter)()
+        em.tap = []
+        emit_mp_constraints(em, bm.fem, tags)
+        emit_reinforce_ties(em, bm.fem, tags, name_to_tag=bm.name_to_tag)
+        emit_embed_ties(em, bm.fem, tags)
+        emit_rebar_elements(em, bm.fem, tags, name_to_tag=bm.name_to_tag)
+        return [(_verb(k), t) for k, t in em.tap]
+
+    planned = run(plan.emit_allocator())
+    assert planned == run(_plain_like_the_planner(bm, plan))
+    assert planned == list(plan.mp_elements.stream())
+    assert len(planned) == 20
+
+    for other in (plan.allocator.fork(), plan.allocator,
+                  plan.allocator.fork({"element"}, origin=object())):
+        with pytest.raises(TagLawError, match="carries no tag plan"):
+            run(other)
+    foreign = _case("mp_ranks_4/partitioned").plan
+    with pytest.raises(TagLawError, match="another FEM snapshot"):
+        run(foreign.emit_allocator())
+
+
+def test_allocate_interface_tags_is_two_way() -> None:
+    """Fork: read the plan. Plain allocator: plan through the same loop."""
+    from apeGmsh.opensees._internal.build import (
+        allocate_interface_tags,
+        interface_records,
+    )
+
+    case = _case("iface_embed/flat")
+    plan = case.plan
+    records = interface_records(case.bm.fem)
+    planned = allocate_interface_tags(records, plan.emit_allocator())
+    lines = plan.interfaces.planned().lines
+    assert planned == {id(ln.record): ln.tags for ln in lines}
+    assert len(planned) == len(records) >= 3
+
+    plain = TagAllocator()
+    n0, _t0, e0 = lines[0].tags
+    plain.reserve_through("uniaxialMaterial", n0 - 1)
+    plain.reserve_through("element", e0 - 1)
+    assert allocate_interface_tags(records, plain) == planned
+
+    for other in (plan.allocator.fork(), plan.allocator):
+        with pytest.raises(TagLawError, match="carries no tag plan"):
+            allocate_interface_tags(records, other)
+    foreign = _case("iface_embed_ranks_2/partitioned").plan
+    with pytest.raises(TagLawError, match="interface plan holds no tags"):
+        allocate_interface_tags(records, foreign.emit_allocator())
+
+
+def test_partitioned_mp_routing_runs_once_per_plan(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The global pass's rank routing is resolved by the plan, once.
+
+    Before the plan, every partitioned emit ran ``_plan_rank_constraints``
+    once per rank. Now the plan runs it once per rank and every emit
+    reads it: two emits of the 4-rank model, four routings.
+    """
+    from apeGmsh.opensees._internal import build
+
+    calls: list[int] = []
+    orig = build._plan_rank_constraints
+
+    def spy(**kwargs: Any) -> Any:
+        calls.append(kwargs["partition_rank"])
+        return orig(**kwargs)
+
+    monkeypatch.setattr(build, "_plan_rank_constraints", spy)
+    bm = _MODELS["mp_ranks_4/partitioned"]().build()
+    first = ts.emit_stream(bm, RecordingEmitter)
+    assert sorted(calls) == [0, 1, 2, 3]
+    assert ts.emit_stream(bm, RecordingEmitter) == first
+    assert sorted(calls) == [0, 1, 2, 3]
+
+
+def _foreign_line(case_name: str, site: str) -> Any:
+    """A planned line of ``site`` from a second build of ``case_name``: the
+    same kind of record, but another model's object."""
+    other = _MODELS[case_name]().build()
+    mp = other._tag_plan(_case(case_name).plan.mode).mp_elements.planned()
+    return next(ln for ln in mp.lines if ln.site == site)
+
+
+@pytest.mark.parametrize("site", ["rigid_body", "kinematic_coupling",
+                                  "interpolation", "reinforce_tie"])
+def test_mp_plan_refuses_a_swapped_dropped_or_doubled_element(
+    site: str,
+) -> None:
+    """The MP-element plan covers its FEM exactly, checked by identity.
+
+    Each element of ``site`` in turn is swapped for the same kind of
+    element of a second build (the count is unchanged), dropped, or
+    planned twice; every variant is refused when it is made.
+    """
+    import dataclasses
+
+    from apeGmsh.opensees._internal.build import MPElementPlan
+
+    for name in ("mp_ranks_4/flat", "mp_ranks_4/partitioned"):
+        mp = _case(name).plan.mp_elements.planned()
+        assert MPElementPlan(
+            fem=mp.fem, lines=mp.lines, partitioned=mp.partitioned,
+            claimed_ids=mp.claimed_ids,
+        ).lines == mp.lines
+        stranger = _foreign_line(name, site)
+        at = [i for i, ln in enumerate(mp.lines) if ln.site == site]
+        assert len(at) == 4
+        for i in at:
+            swapped = (*mp.lines[:i],
+                       stranger._replace(tag=mp.lines[i].tag),
+                       *mp.lines[i + 1:])
+            dropped = mp.lines[:i] + mp.lines[i + 1:]
+            doubled = (*mp.lines, mp.lines[i])
+            for lines, match in ((swapped, "does not cover"),
+                                 (dropped, "does not cover"),
+                                 (doubled, "twice")):
+                with pytest.raises(TagLawError, match=match):
+                    dataclasses.replace(mp, lines=lines)
+
+
+def test_interface_plan_refuses_a_swapped_dropped_or_doubled_record() -> None:
+    import dataclasses
+
+    from apeGmsh.opensees._internal.build import PlannedInterface
+
+    plan = _case("iface_embed/flat").plan.interfaces.planned()
+    other = _MODELS["iface_embed/flat"]().build()
+    stranger = other._tag_plan(
+        _case("iface_embed/flat").plan.mode).interfaces.planned().lines[0]
+    for i, line in enumerate(plan.lines):
+        swapped = (*plan.lines[:i],
+                   PlannedInterface(stranger.record, line.tags),
+                   *plan.lines[i + 1:])
+        dropped = plan.lines[:i] + plan.lines[i + 1:]
+        for lines, match in ((swapped, "does not cover"),
+                             (dropped, "does not cover"),
+                             ((*plan.lines, line), "twice")):
+            with pytest.raises(TagLawError, match=match):
+                dataclasses.replace(plan, lines=lines)
+
+
+def test_mp_plan_refuses_other_reads() -> None:
+    """A record, a rank, a FEM or a claim set the plan was not made for."""
+    from apeGmsh.opensees._internal.build import mp_element_entry
+
+    flat = _case("mp_ranks_4/flat").plan.mp_elements.planned()
+    part = _case("mp_ranks_4/partitioned").plan.mp_elements.planned()
+    stranger = _foreign_line("mp_ranks_4/flat", "rigid_body")
+    with pytest.raises(TagLawError, match="holds no rigid_body element"):
+        flat.tag_of(mp_element_entry("rigid_body", stranger.record))
+    with pytest.raises(TagLawError, match="carries no rank routing"):
+        flat.rank_constraints(0)
+    assert sorted(part.rank_plans) == [0, 1, 2, 3]
+    with pytest.raises(TagLawError, match="routes no rank 7"):
+        part.rank_constraints(7)
+    with pytest.raises(TagLawError, match="another FEM snapshot"):
+        flat.for_fem(part.fem)
+    with pytest.raises(TagLawError, match="other stage claims"):
+        flat.check_claims(frozenset({1}))
+    staged = _case("mp_ranks_2/staged").plan.mp_elements.planned()
+    assert len(staged.claimed_ids) == 3
+    with pytest.raises(TagLawError, match="other stage claims"):
+        staged.check_claims(frozenset())
+
+
+def test_mp_and_interface_plans_derive_their_rows() -> None:
+    from apeGmsh.opensees._internal.tag_plan import (
+        InterfaceTagPlan,
+        MPElementTagPlan,
+    )
+
+    with pytest.raises(TagLawError, match="pass mp, not rows"):
+        MPElementTagPlan(rows=(("element", 1),))
+    with pytest.raises(TagLawError, match="no MP-element plan"):
+        MPElementTagPlan().stream()
+    with pytest.raises(TagLawError, match="pass interfaces, not rows"):
+        InterfaceTagPlan(rows=(("element", 1),))
+    with pytest.raises(TagLawError, match="no interface plan"):
+        InterfaceTagPlan().stream()
+
+
 _ALL_MIGRATED = all(cls.MIGRATED for cls in FAMILY_PLANS.values())
 
 
@@ -1389,21 +1948,28 @@ def test_plan_seeds_every_registered_tag() -> None:
         assert plan.allocator.tag_for(prim) == bm.tag_for[id(prim)]
 
 
-def test_a_kind_shared_with_a_pending_family_stays_open() -> None:
+def test_a_kind_shared_with_a_pending_family_stays_open(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """``element`` is frozen only once every family minting it has moved.
 
-    The elements family is planned, but the MP-element and interface
-    families still mint ``element`` tags at emit time, so the emit fork
-    leaves ``element`` open; the oracle's still-minted check is then what
-    catches an element-spec mint the migration missed.
+    The elements, MP-element and interface families all mint ``element``
+    and are all planned (K1-3d S3c), so the emit fork freezes
+    ``element``, and ``uniaxialMaterial`` with the interfaces. Were one of
+    them still pending, the fork would leave the shared kind open, and
+    the oracle's still-minted check would be what catches a mint the
+    migration missed.
     """
+    from apeGmsh.opensees._internal.tag_plan import MPElementTagPlan
+
     plan = _case("two_column_frame/flat").plan
     assert plan.migrated == tuple(
         f for f in FAMILIES if FAMILY_PLANS[f].MIGRATED)
-    assert "elements" in plan.migrated
-    sharing = [f for f, cls in FAMILY_PLANS.items()
-               if "element" in cls.KINDS and not cls.MIGRATED]
-    assert ("element" in plan.frozen_kinds) == (not sharing)
+    assert {"elements", "mp_elements", "interfaces"} <= set(plan.migrated)
+    assert {"element", "uniaxialMaterial"} <= plan.frozen_kinds
+    monkeypatch.setattr(MPElementTagPlan, "MIGRATED", False)
+    assert "element" not in plan.frozen_kinds
+    assert "uniaxialMaterial" in plan.frozen_kinds
     if len(plan.migrated) < len(FAMILIES):
         with pytest.raises(NotImplementedError):
             plan.stream()
