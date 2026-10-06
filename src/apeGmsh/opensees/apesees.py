@@ -58,6 +58,8 @@ from ._internal.build import (
     emit_embed_ties,
     emit_contacts,
     emit_contact_planes,
+    PlannedContact,
+    write_planned_contact,
     emit_interfaces,
     emit_rebar_elements,
     emit_zero_velocities,
@@ -3324,15 +3326,38 @@ class BuiltModel:
         node_owners = build_node_partition_owners(self.fem)
         element_owner = build_element_partition_owner(self.fem)
 
-        # ADR 0092 S4 (INV-1): resolve each contact interaction's owner
-        # rank + ghost node set ONCE, before any emission — every named
-        # refusal (undecidable owner, cut/partially-resolved master under
-        # auto-sizing, pattern-sp on a contact ghost, staged deck) fires
-        # here, so a refused model emits nothing.
-        contact_plan_by_rank = self._plan_partitioned_contacts(
-            partitions, element_owner, staged=staged,
-            inferred_ndf=inferred_ndf, post_element=post_element,
-        )
+        # ADR 0092 S4 (INV-1): each contact interaction's owner rank +
+        # ghost node set were resolved ONCE, with its tags, by the build's
+        # tag plan (ADR 0114 D4 amended; _plan_partitioned_contacts) —
+        # its named refusals (undecidable owner, cut/partially-resolved
+        # master under auto-sizing, staged deck) fired there, before any
+        # emission. Read the routing from the plan, repeat its warnings
+        # (one per emit, as before the plan), and run the pattern-sp
+        # sweep, which needs this emit's ndf map and patterns.
+        contact_plan = plan_of(tags).contacts.for_fem(self.fem)
+        if contact_plan.notes:
+            import warnings as _warnings
+            for note in contact_plan.notes:
+                _warnings.warn(note, UserWarning, stacklevel=1)
+        # 2026-08-13 review F1: a pattern-borne `sp` on a node the plan
+        # ghost-declares would constrain the DOF on its native rank while
+        # the owner rank's ghost copy stays FREE — the same constrained-
+        # DOF disagreement the interface lane refuses (ADR 0027 INV-2:
+        # measured 'Matrix is Singular Numerically'; and the HOLD variant
+        # runs CLEAN to a wrong answer). The ghost replay carries the fix
+        # tiers only, so refuse here — before any emission — rather than
+        # mirror (mirroring pattern sp onto ghosts, correctly under
+        # staging, is its own project).
+        contact_ghosts = contact_plan.ghost_node_ids()
+        if contact_ghosts:
+            self._refuse_pattern_sp_on_interface_ghosts(
+                contact_ghosts, post_element, inferred_ndf,
+                lane="contact",
+            )
+        contact_lines_by_rank: "dict[int | None, list[PlannedContact]]" = {}
+        for contact_line in contact_plan.lines:
+            contact_lines_by_rank.setdefault(
+                contact_line.owner_rank, []).append(contact_line)
 
         # ADR 0093 S8 (INV-5): resolve each interface record's owner
         # rank (element-side, via the stamped backing continuum
@@ -3741,7 +3766,7 @@ class BuiltModel:
             node_owners,
             by_node=(
                 _fem_has_mp_constraints(self.fem)
-                or bool(contact_plan_by_rank)
+                or bool(contact_lines_by_rank)
                 or bool(interface_plan_by_rank)
                 or any(bool(p) for p in stage_interface_plans)
             ),
@@ -3901,8 +3926,8 @@ class BuiltModel:
                 # P0.d). Runs AFTER 7b so already-declared MP-constraint
                 # ghosts are not re-declared.
                 self._emit_contacts_partitioned(
-                    emitter, tags,
-                    contact_plan_by_rank.get(rank, []),
+                    emitter,
+                    contact_lines_by_rank.get(rank, []),
                     declared_ghosts=ghost_tags_by_rank[rank],
                     ghost_sp_ops=ghost_sp_ops,
                     inferred_ndf=inferred_ndf,
@@ -5967,19 +5992,25 @@ class BuiltModel:
     def _plan_partitioned_contacts(
         self,
         partitions: "list[Any]",
-        element_owner: "SortedIntToInt",
         *,
         staged: bool,
-        inferred_ndf: "dict[int, int]",
-        post_element: "list[Primitive]",
-    ) -> "dict[int, list[tuple[str, Any, tuple[int, ...]]]]":
+    ) -> "tuple[dict[int, list[tuple[str, Any, tuple[int, ...]]]], tuple[str, ...]]":
         """Resolve owner rank + ghost set for every contact interaction
         (ADR 0092 S4, INV-1/INV-2), or refuse with a NAMED error (INV-5).
 
-        Returns ``{owner_rank: [(kind, record, ghost_node_ids), ...]}``
-        with ``kind`` in ``{"contact", "contact_plane"}`` — what step 7c
-        of the per-rank loop emits inside the owner's block. Empty when
-        the model carries no contact interactions.
+        Returns ``({owner_rank: [(kind, record, ghost_node_ids), ...]},
+        notes)`` with ``kind`` in ``{"contact", "contact_plane"}`` — what
+        step 7c of the per-rank loop emits inside the owner's block —
+        and the warnings the routing raises, which every partitioned
+        emit repeats. Empty when the model carries no contact
+        interactions.
+
+        The build's tag plan calls this once per plan
+        (``tag_plan.plan_tags``, ADR 0114 D4 amended), and numbers the
+        routed interactions rank by rank; the emit reads the routing
+        from the plan. The pattern-borne ``sp`` sweep over the routed
+        ghosts (below) needs the emit's own ndf map and patterns, so
+        :meth:`_emit_partitioned` runs it, still before any emission.
 
         Owner exactness (INV-1, second amendment): where the mesh's
         element connectivity resolves each master facet to its backing
@@ -6011,15 +6042,7 @@ class BuiltModel:
           back to the node tally would re-open the silent-partial-
           interface hole. A partial element→rank ownership map alone
           (no auto knob, or a one-rank master) degrades to the tally
-          with a loud warning instead;
-        * **pattern-borne ``sp`` on a contact ghost** (2026-08-13
-          review, F1) — a prescribed displacement on a node this plan
-          will ghost-declare: pattern sp fans out on NATIVE ranks only,
-          so the owner rank's ghost DOF would stay free — the measured
-          ADR 0027 INV-2 constrained-DOF disagreement. Same sweep the
-          interface lane runs
-          (:meth:`_refuse_pattern_sp_on_interface_ghosts`,
-          ``lane="contact"``);
+          with a loud warning instead (a note, which each emit warns);
         * **staged model** — the partitioned staged pipeline skips the
           analysis-chain auto-emit (each stage carries its own chain), so
           the forced ``LadrunoContact`` handler would never be emitted
@@ -6037,7 +6060,9 @@ class BuiltModel:
         contacts = list(getattr(elements_comp, "contacts", None) or ())
         planes = list(getattr(elements_comp, "contact_planes", None) or ())
         if not contacts and not planes:
-            return {}
+            return {}, ()
+        element_owner = build_element_partition_owner(self.fem)
+        notes: "list[str]" = []
 
         from apeGmsh._kernel.resolvers._contact_ownership import (
             master_backing_element_ids,
@@ -6203,17 +6228,17 @@ class BuiltModel:
                     # silent — the exact owner pick quietly degrading to
                     # the node tally is how a mis-owned interaction slips
                     # through. (With an auto knob + multi-rank master it
-                    # refused above instead.)
-                    import warnings as _warnings
-                    _warnings.warn(
+                    # refused above instead.) The routing runs once per
+                    # tag plan, so the warning is a note that every
+                    # partitioned emit repeats (:meth:`_emit_partitioned`).
+                    notes.append(
                         f"apeSees: {verb} interaction {label} — "
                         f"{unowned_backing} master facet backing "
                         "element(s) are absent from every "
                         "PartitionRecord (partial element-ownership "
                         "map); the element-exact owner pick (ADR 0092 "
                         "INV-1) degrades to the node tally for this "
-                        "interaction.",
-                        stacklevel=2,
+                        "interaction."
                     )
                 try:
                     ownership = resolve_contact_ownership(
@@ -6238,34 +6263,12 @@ class BuiltModel:
                 plan.setdefault(ownership.owner_rank, []).append(
                     (kind, rec, ownership.ghost_node_ids),
                 )
-
-        # 2026-08-13 review F1: a pattern-borne `sp` on a node this plan
-        # ghost-declares would constrain the DOF on its native rank while
-        # the owner rank's ghost copy stays FREE — the same constrained-
-        # DOF disagreement the interface lane refuses (ADR 0027 INV-2:
-        # measured 'Matrix is Singular Numerically'; and the HOLD variant
-        # runs CLEAN to a wrong answer). The ghost replay carries the fix
-        # tiers only, so refuse at plan time — before any emission —
-        # rather than mirror (mirroring pattern sp onto ghosts, correctly
-        # under staging, is its own project).
-        contact_ghosts = {
-            int(nid)
-            for entries in plan.values()
-            for _kind, _rec, ghost_ids in entries
-            for nid in ghost_ids
-        }
-        if contact_ghosts:
-            self._refuse_pattern_sp_on_interface_ghosts(
-                contact_ghosts, post_element, inferred_ndf,
-                lane="contact",
-            )
-        return plan
+        return plan, tuple(notes)
 
     def _emit_contacts_partitioned(
         self,
         emitter: Emitter,
-        tags: TagAllocator,
-        entries: "list[tuple[str, Any, tuple[int, ...]]]",
+        lines: "list[PlannedContact]",
         *,
         declared_ghosts: "set[int]",
         ghost_sp_ops: "dict[int, list[Any]]",
@@ -6274,13 +6277,13 @@ class BuiltModel:
     ) -> None:
         """Emit this rank's owned contact interactions (ADR 0092 S4).
 
-        For each planned ``(kind, record, ghost_node_ids)`` entry: first
-        declare every ghost node — ``node tag x y z`` with the same
-        inferred/envelope ndf its owner emits, immediately followed by
-        the owner's replayed SP stream (ADR 0027 INV-2 machinery) — then
-        the ``contactSurface`` pair + ``contact`` / ``contactPlane`` verb
-        via :func:`emit_contacts` / :func:`emit_contact_planes` with the
-        single record.
+        For each planned line this rank owns (the tag plan's routing, in
+        plan order): first declare every ghost node — ``node tag x y z``
+        with the same inferred/envelope ndf its owner emits, immediately
+        followed by the owner's replayed SP stream (ADR 0027 INV-2
+        machinery) — then the ``contactSurface`` pair + ``contact`` /
+        ``contactPlane`` verb under the line's planned tags
+        (:func:`write_planned_contact`).
 
         INV-7 holds structurally: a ghost gets a ``node`` line + ``fix``
         replay and NOTHING else — mass buckets by primary owner, loads by
@@ -6293,8 +6296,8 @@ class BuiltModel:
         (a duplicate ``node`` line is an OpenSees parse error), and every
         ghost declared here is registered back into it.
         """
-        for kind, rec, ghost_ids in entries:
-            for nid_raw in ghost_ids:
+        for line in lines:
+            for nid_raw in line.ghost_node_ids:
                 nid = int(nid_raw)
                 if nid in declared_ghosts:
                     continue
@@ -6317,11 +6320,7 @@ class BuiltModel:
                     emitter, nid, ghost_sp_ops.get(nid, ()),
                 )
                 declared_ghosts.add(nid)
-            if kind == "contact":
-                emit_contacts(
-                    emitter, self.fem, tags, ndm=self.ndm, records=(rec,))
-            else:
-                emit_contact_planes(emitter, self.fem, tags, records=(rec,))
+            write_planned_contact(emitter, line, ndm=self.ndm)
 
     def _plan_partitioned_interfaces(
         self,

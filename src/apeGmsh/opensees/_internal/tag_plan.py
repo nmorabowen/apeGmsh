@@ -40,11 +40,20 @@ from .tag_allocator import TagAllocator, TagLawError
 
 if TYPE_CHECKING:
     from ..apesees import BuiltModel
-    from .build import ElementPlanRows, TransformFanout
+    from .build import ContactPlan, ElementPlanRows, TransformFanout
     from .types import Element, GeomTransf
 
 #: One planned emission: ``(kind, tag)`` in the emit's verb vocabulary.
 TagRow = tuple[str, int]
+
+#: A helper handed a fork of another model's plan says so first, rather
+#: than report a count or order mismatch that would hide the cause.
+_FOREIGN_PLAN = (
+    "the {family} plan was made over another FEM snapshot than the one "
+    "this emit walks: the emit allocator is a fork of another model's tag "
+    "plan. Emit each model through its own BuiltModel.emit (ADR 0114 D4, "
+    "amended)."
+)
 
 
 class TagMode(NamedTuple):
@@ -199,14 +208,19 @@ class TransformTagPlan(FamilyTagPlan):
             rows.extend((f"geomTransf:{token}", tag) for tag, _ in lines[1:])
         return tuple(rows)
 
-    def fanout_for(self, transforms: list[GeomTransf]) -> TransformFanout:
+    def fanout_for(
+        self, transforms: list[GeomTransf], fem: object,
+    ) -> TransformFanout:
         """The planned fan-out, which must cover exactly ``transforms``.
 
-        ``transforms`` are the specs this emit walks, in order; a plan
-        made for other specs, or in another order, raises
-        :class:`TagLawError`.
+        ``transforms`` are the specs this emit walks, in order, over the
+        FEM snapshot ``fem``. A plan made over another FEM (a fork of
+        another model's plan), for other specs, or in another order,
+        raises :class:`TagLawError`.
         """
         fanout = self._planned()
+        if fem is not fanout.fem:
+            raise TagLawError(_FOREIGN_PLAN.format(family="transform"))
         if [id(t) for t, _ in fanout.specs] != [id(t) for t in transforms]:
             raise TagLawError(
                 f"the transform plan holds {len(fanout.specs)} specs, but "
@@ -253,10 +267,62 @@ class InterfaceTagPlan(FamilyTagPlan):
 
 @dataclass(frozen=True, slots=True)
 class ContactTagPlan(FamilyTagPlan):
-    """Contact surfaces and contact interactions (face and rigid plane)."""
+    """Contact surfaces and contact interactions (face and rigid plane).
+
+    ``contacts`` is :func:`~.build.plan_contacts`'s result, made once by
+    :func:`plan_tags`: every interaction in emit order with its planned
+    tags and, under a partitioned emit, its routing (owner rank and
+    ghost nodes, ADR 0092 S4). The emit paths write it instead of
+    allocating, and the partitioned path reads its routing instead of
+    resolving owners again.
+    """
 
     FAMILY: ClassVar[str] = "contacts"
     KINDS: ClassVar[frozenset[str]] = frozenset({"contactSurface", "contact"})
+    MIGRATED: ClassVar[bool] = True
+
+    contacts: ContactPlan | None = field(default=None, compare=False)
+
+    def __post_init__(self) -> None:
+        if self.rows:
+            raise TagLawError(
+                "contacts: the contact plan derives its rows from its "
+                "planned interactions; pass contacts, not rows."
+            )
+
+    def _planned(self) -> ContactPlan:
+        if self.contacts is None:
+            raise TagLawError(
+                "contacts: this plan carries no contact plan; plan_tags "
+                "plans one for every mode (ADR 0114 D4, amended)."
+            )
+        return self.contacts
+
+    def stream(self) -> tuple[TagRow, ...]:
+        """Each planned interaction's ``contact_surface`` rows, then the
+        row of its verb (``contact`` or ``contact_plane``, the record
+        kind's own name), in emit order."""
+        rows: list[TagRow] = []
+        for line in self._planned().lines:
+            if line.kind not in ("contact", "contact_plane"):
+                raise TagLawError(
+                    f"contacts: unknown contact kind {line.kind!r}.")
+            *surfaces, contact = line.tags
+            rows.extend(("contact_surface", tag) for tag in surfaces)
+            rows.append((line.kind, contact))
+        return tuple(rows)
+
+    def for_fem(self, fem: object) -> ContactPlan:
+        """The contact plan, which must have been made over ``fem``.
+
+        ``fem`` is the FEM snapshot this emit walks; a plan made over
+        another one (a fork of another model's plan) raises
+        :class:`TagLawError`.
+        """
+        planned = self._planned()
+        if fem is not planned.fem:
+            raise TagLawError(_FOREIGN_PLAN.format(family="contact"))
+        return planned
 
 
 #: The sub-plan class of every family, in :class:`TagPlan` field order.
@@ -480,6 +546,10 @@ def plan_tags(bm: BuiltModel, mode: TagMode) -> TagPlan:
         element_specs, bm.fem, tags, bm.tag_for, ndm=bm.ndm,
     ))
 
+    # Contacts: every interaction, in the order its mode's emit writes
+    # it. No other family mints ``contactSurface`` or ``contact``.
+    contacts = ContactTagPlan(contacts=_plan_contacts(bm, mode, tags))
+
     # The other families are pending: their tags are still minted at
     # emit time, from TagPlan.emit_allocator().
     tags.freeze()
@@ -492,6 +562,35 @@ def plan_tags(bm: BuiltModel, mode: TagMode) -> TagPlan:
         parameters=ParameterTagPlan(),
         mp_elements=MPElementTagPlan(),
         interfaces=InterfaceTagPlan(),
-        contacts=ContactTagPlan(),
+        contacts=contacts,
         inputs=plan_inputs(bm),
+    )
+
+
+def _plan_contacts(
+    bm: BuiltModel, mode: TagMode, tags: TagAllocator,
+) -> ContactPlan:
+    """The contact plan of ``bm``'s emit in ``mode``.
+
+    A flat or split emit writes every contact, then every contact plane.
+    A partitioned emit writes each interaction inside its owner rank's
+    block, rank by rank (ADR 0092 S4), so the routing is resolved here,
+    once per plan: ``BuiltModel._plan_partitioned_contacts`` picks each
+    owner rank and ghost set and raises every routing refusal before any
+    emission. Its warnings ride on the plan, and each emit repeats them.
+    """
+    from .build import (
+        flat_contact_entries,
+        partitioned_contact_entries,
+        plan_contacts,
+    )
+
+    if not mode.partitioned:
+        return plan_contacts(bm.fem, flat_contact_entries(bm.fem), tags)
+    partitions = list(bm.fem.partitions)
+    routing, notes = bm._plan_partitioned_contacts(
+        partitions, staged=mode.staged)
+    return plan_contacts(
+        bm.fem, partitioned_contact_entries(routing, partitions), tags,
+        notes=notes,
     )
