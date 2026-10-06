@@ -61,12 +61,11 @@ jobs:
         run: |
           set -euo pipefail
           unset PYTHONPATH
+          export LADRUNO_OPENSEES_QUIET=1
           want=$(grep -E '^sha=' "$GITHUB_WORKSPACE/FORK_PIN" | cut -d= -f2-)
-          got=$(python -c "import opensees; print(opensees.ladrunoBuild())")
+          got=$(python -c "import opensees; print(opensees.ladrunoBuild())" | tail -n1)
           echo "pin=$want build=$got"
-          case "$want" in "$got"*) ;; *)
-            case "$got" in "$want"*) ;; *) echo "::error::build $got != pin $want"; exit 1;; esac;;
-          esac
+          [ "$got" = "$want" ] || { echo "::error::build $got != pin $want"; exit 1; }
 
       - name: Run ladruno_fork tests
         run: |
