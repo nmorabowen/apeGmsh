@@ -92,7 +92,7 @@ class BackendInfo:
 
 def _build_stamp(ops: Any) -> str | None:
     """``ops.ladrunoBuild()`` when it returns a sha, else ``None``; never raises."""
-    fn = getattr(ops, "ladrunoBuild", None)  # apegmsh-lint: getattr-undefined-ok fork-only OpenSees command (fork PR #718), the one fork signal
+    fn = getattr(ops, "ladrunoBuild", None)  # apegmsh-lint: getattr-undefined-ok fork-only OpenSees command, the one fork signal
     if not callable(fn):
         return None
     try:
