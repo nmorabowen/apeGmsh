@@ -315,6 +315,52 @@ def test_attach_coordinate_tolerance_follows_the_mesh_size(
         assert expected in msg
 
 
+@pytest.mark.parametrize(
+    "decl",
+    [
+        {"nodes": "displacement", "pg": "Base"},
+        {"line_stations": "bending_moment_y", "pg": "Cols"},
+    ],
+    ids=["nodes", "line_stations"],
+)
+def test_attach_never_breaks_on_a_fem_whose_elements_do_not_walk(
+    decl: "dict[str, str]",
+) -> None:
+    """The check is a diagnostic: the fem stub's element composite does
+    not iterate, so the tolerance falls back to the bounding box (and the
+    element comparison is not made), with no exception and every
+    recorder attached."""
+    fem = make_two_column_frame()
+    with pytest.raises(TypeError):
+        iter(fem.elements)  # the precondition this test is about
+    md = ModelData(cast("object", fem), ndm=3, ndf=6)
+    md.recorders(file_root="out", **decl)  # type: ignore[arg-type]
+    ops = _RecordingOps(nodes={
+        1: (1e-7, 0.0, 0.0), 2: (0.0, 0.0, 1.0),
+        3: (1.0, 0.0, 0.0), 4: (1.0, 0.0, 1.0),
+    })
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        md.attach_recorders(ops)
+    n_expected = 1 if "nodes" in decl else 2
+    assert len(ops.calls) == n_expected
+
+
+def test_attach_on_a_non_walkable_fem_still_warns_on_a_wrong_node() -> None:
+    """With the bounding-box tolerance (1e-3 of the 1.41 diagonal), a
+    node one column length off still warns."""
+    fem = make_two_column_frame()  # Base PG -> nodes 1, 3
+    md = ModelData(cast("object", fem), ndm=3, ndf=6)
+    md.recorders(nodes="displacement", pg="Base", file_root="out")
+    ops = _RecordingOps(nodes={
+        1: (0.0, 0.0, 1.0), 2: (0.0, 0.0, 0.0),
+        3: (1.0, 0.0, 0.0), 4: (1.0, 0.0, 1.0),
+    })
+    [msg] = _attach(md, ops)
+    assert "1 of them" in msg and "node 1: live coordinates" in msg
+    assert len(ops.calls) == 1
+
+
 def test_attach_in_a_parallel_run_skips_absent_but_checks_present() -> None:
     """OpenSeesMP: tag lists are rank-local.  Node 2 lives on another
     rank (absent here, not reported); node 1 is on this rank at the

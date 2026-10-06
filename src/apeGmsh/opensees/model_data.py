@@ -694,22 +694,41 @@ def _targets(args: "tuple[int | float | str, ...]", flag: str) -> list[int]:
 _COORD_TOL_FRACTION = 1e-3
 
 
-def _coord_tolerance(fem: Any, ids: Any, coords: Any) -> float:
+def _walk_elements(fem: Any) -> "tuple[bool, list[tuple[Any, Any]]]":
+    """``(walkable, [(ids, connectivity), ...])`` over ``fem.elements``.
+
+    The tag check is a diagnostic and must never break
+    :meth:`ModelData.attach_recorders`.  A FEMData-like object whose
+    element composite cannot be walked (no ``__iter__``, or groups
+    without ``ids`` / ``connectivity``) gives ``(False, [])``: the
+    tolerance then falls back to the bounding box, and the element
+    comparison is not made.
+    """
+    try:
+        return True, [(g.ids, g.connectivity) for g in fem.elements]
+    except (TypeError, AttributeError):
+        return False, []
+
+
+def _coord_tolerance(
+    groups: "list[tuple[Any, Any]]", ids: Any, coords: Any,
+) -> float:
     """``_COORD_TOL_FRACTION`` of the shortest positive element edge.
 
     An "edge" is the distance between any two nodes of one element,
     over the first eight nodes of each element type (the corners for
     every Gmsh type up to the hexahedron).  With no positive edge (a
-    single node, or only zero-length elements) the length scale falls
-    back to the diagonal of the nodes' bounding box, then to ``1.0``.
+    single node, only zero-length elements, or no walkable elements)
+    the length scale falls back to the diagonal of the nodes' bounding
+    box, then to ``1.0``.
     """
     import numpy as np
 
     order = np.argsort(ids)
     sorted_ids = ids[order]
     h = np.inf
-    for group in fem.elements:
-        conn = np.asarray(group.connectivity, dtype=np.int64)
+    for _, group_conn in groups:
+        conn = np.asarray(group_conn, dtype=np.int64)
         if conn.ndim != 2 or conn.shape[0] == 0 or conn.shape[1] < 2:
             continue
         conn = conn[:, :8]
@@ -783,10 +802,14 @@ def _warn_on_tag_mismatch(
     n_bad = 0
     parallel = _is_parallel(ops)
 
-    if ele_ids:
+    walkable, groups = _walk_elements(fem)
+
+    # Without walkable elements the fem element of an id is unknown, so
+    # the element comparison is not made (the node check still runs).
+    if ele_ids and walkable:
         fem_conn: dict[int, tuple[int, ...]] = {}
-        for group in fem.elements:
-            for eid, conn in zip(group.ids, group.connectivity):
+        for group_ids, group_conn in groups:
+            for eid, conn in zip(group_ids, group_conn):
                 if int(eid) in ele_ids:
                     fem_conn[int(eid)] = tuple(int(c) for c in conn)
         live_eles = _as_tags(ops.getEleTags())
@@ -811,7 +834,7 @@ def _warn_on_tag_mismatch(
         ids = np.asarray(fem.nodes.ids).reshape(-1)
         coords = np.asarray(fem.nodes.coords, dtype=float)
         row = {int(n): i for i, n in enumerate(ids)}
-        atol = _coord_tolerance(fem, ids, coords)
+        atol = _coord_tolerance(groups, ids, coords)
         live_nodes = _as_tags(ops.getNodeTags())
         for nid in sorted(node_ids):
             if nid not in row:
