@@ -20,8 +20,8 @@ from apeGmsh._kernel.defs.constraints import ReinforceDef
 from apeGmsh._kernel.records._constraints import ReinforceTieRecord
 from apeGmsh.opensees import apeSees
 from apeGmsh.opensees._internal.build import emit_reinforce_ties
-from apeGmsh.opensees._internal.tag_allocator import TagAllocator
 from apeGmsh.opensees.emitter.recording import RecordingEmitter
+from tests.opensees._helpers.tag_plan import emit_tags
 
 
 # --------------------------------------------------------------------------
@@ -73,8 +73,8 @@ class _Fem:
 
 def test_bipenalty_dtcr_emits_flags():
     em = RecordingEmitter()
-    emit_reinforce_ties(em, _Fem([_tie(bipenalty=True, dtcr=2.5e-6)]),
-                        TagAllocator(), name_to_tag={})
+    fem = _Fem([_tie(bipenalty=True, dtcr=2.5e-6)])
+    emit_reinforce_ties(em, fem, emit_tags(fem), name_to_tag={})
     args = [c for c in em.calls if c[0] == "embedded_rebar"][0][1]
     assert "-bipenalty" in args
     assert "-dtcr" in args
@@ -83,8 +83,8 @@ def test_bipenalty_dtcr_emits_flags():
 
 def test_al_emits_enforce_al():
     em = RecordingEmitter()
-    emit_reinforce_ties(em, _Fem([_tie(enforce="al")]),
-                        TagAllocator(), name_to_tag={})
+    fem = _Fem([_tie(enforce="al")])
+    emit_reinforce_ties(em, fem, emit_tags(fem), name_to_tag={})
     args = [c for c in em.calls if c[0] == "embedded_rebar"][0][1]
     assert "-enforce" in args
     assert args[args.index("-enforce") + 1] == "al"

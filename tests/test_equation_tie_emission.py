@@ -23,6 +23,7 @@ from apeGmsh._kernel.records._kinds import ConstraintKind as K
 from apeGmsh.opensees._internal.build import _emit_one_interpolation
 from apeGmsh.opensees._internal.tag_allocator import TagAllocator
 from apeGmsh.opensees.emitter.recording import RecordingEmitter
+from tests.opensees._helpers.tag_plan import emit_tags, stub_fem
 
 
 # --------------------------------------------------------------------------
@@ -67,9 +68,10 @@ def test_interpolation_record_carries_enforce_default():
     assert rec.enforce == "penalty"
 
 
-def _emit(rec: InterpolationRecord, tags: TagAllocator | None = None):
+def _emit(rec: InterpolationRecord):
     e = RecordingEmitter()
-    _emit_one_interpolation(e, rec, tags or TagAllocator())
+    _emit_one_interpolation(
+        e, rec, emit_tags(stub_fem(interpolations=[rec])))
     return e
 
 
@@ -96,17 +98,19 @@ def test_equation_route_emits_one_equationConstraint_per_dof():
 
 def test_equation_route_allocates_no_element_tag():
     # The equation route must NOT consume an element tag (it is a domain
-    # command), so the element-tag stream is untouched across the emit.
-    tags = TagAllocator()
-    first = tags.allocate("element")
+    # command), so the element-tag stream is untouched across the emit:
+    # the plan holds no element for it, and the emit allocator (which
+    # refuses an element mint) is still at the seeded tag after the emit.
+    planner = TagAllocator()
+    first = planner.allocate("element")
     rec = InterpolationRecord(
         kind=K.TIE, slave_node=7, master_nodes=[2, 3, 4],
         weights=np.array([0.5, 0.3, 0.2]), dofs=[1, 2, 3],
         enforce="equation",
     )
+    tags = emit_tags(stub_fem(interpolations=[rec]), tags=planner)
     _emit_one_interpolation(RecordingEmitter(), rec, tags)
-    second = tags.allocate("element")
-    assert second == first + 1                 # nothing allocated in between
+    assert tags.last("element") == first       # nothing allocated after it
 
 
 def test_equation_route_accepts_quad4_face_arity():
@@ -270,7 +274,8 @@ def test_h5_deck_emitter_equation_tie_no_deviation_warning(recwarn):
         kind=K.TIE, slave_node=4, master_nodes=[1, 2, 3],
         weights=np.array([0.5, 0.3, 0.2]), dofs=[1, 2, 3], enforce="equation",
     )
-    _emit_one_interpolation(e, rec, TagAllocator())
+    _emit_one_interpolation(
+        e, rec, emit_tags(stub_fem(interpolations=[rec])))
     # one no-op'd deck row per tied DOF; NO deviation warning (recovered via
     # the neutral lane, proven by the re-emit test below).
     assert e._skipped_equation_constraints == 3

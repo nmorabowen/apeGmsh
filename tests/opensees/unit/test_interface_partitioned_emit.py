@@ -42,6 +42,7 @@ from apeGmsh.opensees._internal.build import (
     allocate_interface_tags,
 )
 from apeGmsh.opensees._internal.tag_allocator import TagAllocator
+from tests.opensees._helpers.tag_plan import emit_tags, stub_fem
 
 ENT_LAW = NormalLaw(kind="ent", k_per_area=1.0e6)
 EPP_LAW = TangentialLaw(kind="epp", k_per_area=1.0e5, tau_b=250.0)
@@ -264,8 +265,8 @@ def test_same_input_same_output():
 # =====================================================================
 def test_allocate_interface_tags_walks_records_in_order():
     recs = [_rec(1, 3, backing=10), _rec(2, 4, backing=11)]
-    tags = TagAllocator()
-    plan = allocate_interface_tags(recs, tags)
+    plan = allocate_interface_tags(
+        recs, emit_tags(stub_fem(interfaces=recs)))
     # Per record: normal mat, tangential mat (uniaxialMaterial counter),
     # element — the same consumption sequence the inline allocation
     # used, so flat-path tag values are unchanged.
@@ -280,7 +281,8 @@ def test_allocate_interface_tags_continues_the_shared_namespaces():
         tags.allocate("element")
     for _ in range(3):
         tags.allocate("uniaxialMaterial")
-    plan = allocate_interface_tags(recs, tags)
+    plan = allocate_interface_tags(
+        recs, emit_tags(stub_fem(interfaces=recs), tags=tags))
     assert plan[id(recs[0])] == (4, 5, 6)
 
 
@@ -290,6 +292,8 @@ def test_allocate_interface_tags_is_rank_independent_by_construction():
     # from any rank's block yields the same tags. Two allocations of
     # the same record list from fresh allocators agree.
     recs = [_rec(1, 3, backing=10), _rec(2, 4, backing=20)]
-    a = allocate_interface_tags(recs, TagAllocator())
-    b = allocate_interface_tags(recs, TagAllocator())
+    a = allocate_interface_tags(
+        recs, emit_tags(stub_fem(interfaces=recs)))
+    b = allocate_interface_tags(
+        recs, emit_tags(stub_fem(interfaces=recs)))
     assert [a[id(r)] for r in recs] == [b[id(r)] for r in recs]

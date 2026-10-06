@@ -36,6 +36,7 @@ from apeGmsh.opensees._internal.tag_resolution import is_phantom_node
 from apeGmsh.opensees.emitter.py import PyEmitter
 from apeGmsh.opensees.emitter.recording import RecordingEmitter
 from apeGmsh.opensees.emitter.tcl import TclEmitter
+from tests.opensees._helpers.tag_plan import StageClaims, emit_tags, stub_fem
 
 # Exact binary values throughout, so the golden lines carry no float
 # noise: A_trib ∈ {0.25, 0.5}, k ∈ {1e6, 1e5}, tau_b = 250.
@@ -107,8 +108,9 @@ def _emit(records, *, ndf=None, envelope=2, ndm=2, emitter=None):
         for r in records:
             ndf[int(r.master_node)] = 2
             ndf[int(r.slave_node)] = 3 if r.phantom_node is not None else 2
+    fem = _Fem(list(records))
     emit_interfaces(
-        em, _Fem(list(records)), TagAllocator(),
+        em, fem, emit_tags(fem),
         effective_ndf=ndf, envelope_ndf=envelope, ndm=ndm,
     )
     return em
@@ -477,8 +479,9 @@ def test_interface_tags_continue_the_shared_namespaces():
     for _ in range(3):
         tags.allocate("uniaxialMaterial")
     em = RecordingEmitter()
+    fem = _Fem([_rec(10, 20, a_trib=0.25)])
     emit_interfaces(
-        em, _Fem([_rec(10, 20, a_trib=0.25)]), tags,
+        em, fem, emit_tags(fem, tags=tags),
         effective_ndf={10: 2, 20: 2}, envelope_ndf=2, ndm=2,
     )
     assert [c[1][1] for c in em.calls if c[0] == "uniaxialMaterial"] == [4, 5]
@@ -737,8 +740,12 @@ def test_3d_staged_emit_matches_the_flat_lines():
     em = TclEmitter()
     em.model(ndm=3, ndf=3)
     before = len(em.lines())
+    tags = emit_tags(
+        stub_fem(interfaces=recs),
+        stages=[StageClaims(stage_interface_records=recs)],
+    )
     emit_stage_interfaces(
-        recs, em, TagAllocator(),
+        recs, em, tags,
         effective_ndf={10: 3, 20: 4, 11: 3, 21: 4}, envelope_ndf=3, ndm=3,
     )
     assert em.lines()[before:] == _flat_3d_lines(recs)
@@ -768,7 +775,8 @@ def test_3d_partitioned_emit_matches_the_flat_lines():
     plan = _plan_rank_interfaces(recs, parts)
     assert sorted(plan) == [0, 1]          # runtime ranks, 0-based
 
-    tag_plan = allocate_interface_tags(recs, TagAllocator())
+    tag_plan = allocate_interface_tags(
+        recs, emit_tags(stub_fem(interfaces=recs)))
     em = TclEmitter()
     em.model(ndm=3, ndf=3)
     before = len(em.lines())
