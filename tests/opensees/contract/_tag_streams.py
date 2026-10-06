@@ -148,7 +148,9 @@ def models() -> dict[str, Callable[[], apeSees]]:
     recorders (region tags), and the arch fixture fans out one
     ``geomTransf`` per element. The H5 suites' fixtures add parameter
     tags: a flat initial stress, a staged one, and a staged absorbing flip.
-    :func:`two_rank_regions` adds named regions owned by different ranks.
+    :func:`two_rank_regions` adds named regions owned by different ranks,
+    and :func:`stage_claimed_regions` every global and stage-bound region
+    site, with stage-claimed filtered recorders.
     """
     from tests.opensees.golden import builder as golden
     from tests.opensees.h5.test_h5_initial_stress import _build_frame

@@ -867,7 +867,7 @@ class MPCO(FilterableRecorder):
     ``_emit`` is called directly (outside the build pipeline); the
     ``pg=`` form is materialised by
     :func:`apeGmsh.opensees._internal.build.emit_recorder_spec`,
-    which resolves selectors, allocates a region tag, emits the
+    which resolves selectors, reads its planned region tag, emits the
     region, and replaces the spec via :func:`dataclasses.replace`
     with explicit ``nodes=``/``elements=`` before driving ``_emit``.
     """

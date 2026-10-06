@@ -30,7 +30,9 @@ family's case fails if the emit still mints any of its tags, and otherwise
 compares its plan, exactly, with the planned rows of its kinds less the
 other migrated families' plans in those kinds. Rows compare by
 ``(verb, tag)``: an element spec picks its type token in its own
-``_emit``, so the plan's element rows carry the bare verb. The
+``_emit``, so the plan's element rows carry the bare verb. A partitioned
+deck writes one region tag in every rank block that holds the region's
+members, so region rows compare as distinct rows (``PER_RANK_KINDS``). The
 ``MIGRATED`` flag in ``tag_plan.py`` drives the marker, so a migration
 slice turns its cases into real comparisons in the same commit;
 ``test_every_family_has_rows`` keeps every family's comparison

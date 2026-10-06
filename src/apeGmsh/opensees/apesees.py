@@ -3699,7 +3699,7 @@ class BuiltModel:
 
         # ADR 0027 INV-4 (MPCO recorder path): for every MPCO recorder
         # that carries a filter, resolve its full filter ids ONCE and
-        # allocate the region tag ONCE — both shared across every rank.
+        # read its planned region tag ONCE — both shared across every rank.
         # The per-rank loop below emits one ``region <tag> -node ... -ele ...``
         # line per rank with the rank's owned subset (or skips the rank
         # entirely when the intersection is empty).  After the per-rank
@@ -4022,7 +4022,7 @@ class BuiltModel:
         # MPCO recorders with a filter (INV-4): the per-rank ``region``
         # lines were already emitted inside the rank loop above; here we
         # only emit the ``recorder mpco ... -R <tag>`` declaration line,
-        # injecting the pre-allocated shared region tag via
+        # injecting the planned shared region tag via
         # :func:`dataclasses.replace` so MPCO.materialize's region-emit
         # branch is bypassed (the region was emitted per-rank).  All
         # other recorders (Node / Element / RecorderDeclaration / MPCO
@@ -4042,7 +4042,7 @@ class BuiltModel:
                 # Pre-resolved MPCO: build the materialised spec directly
                 # so its ``_emit`` appends ``-R <tag>`` without re-
                 # entering MPCO.materialize (which would otherwise
-                # re-allocate a tag and re-emit the region globally).
+                # re-emit the region globally).
                 materialised = plan_entry.materialised_spec
                 materialised._emit(emitter, tag)
             else:
@@ -9397,7 +9397,7 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
         (across multiple calls, across explicit ``nodes=`` and
         ``pg=`` resolutions) and emits a single
         ``region $tag -node n1 n2 ...`` line at build time with a
-        freshly allocated region tag.  Useful for damping
+        region tag from the build's tag plan.  Useful for damping
         assignments and any future recorder that filters by region.
 
         Exactly one of ``pg`` / ``nodes`` must be supplied; ``nodes``
