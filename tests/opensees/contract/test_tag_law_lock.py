@@ -124,6 +124,9 @@ def _locked_modules() -> list[Path]:
         *sorted((_OPENSEES / "emitter").rglob("*.py")),
         _OPENSEES / "_internal" / "compose.py",
         _OPENSEES / "opensees_model.py",
+        # ADR 0117 INV-3: the assembly rehydrates onto the bridge and
+        # never mints; its tags come from the bridge's plan.
+        *sorted((_OPENSEES.parent / "assembly").rglob("*.py")),
     ]
 
 
@@ -296,7 +299,8 @@ def _violations_by_module(
     out: dict[str, list[Violation]] = {}
     for path in _locked_modules():
         tree = (sources or {}).get(path) or _parse(path)
-        rel = path.relative_to(_OPENSEES).as_posix()
+        rel = (path.relative_to(_OPENSEES) if path.is_relative_to(_OPENSEES)
+               else Path("..") / path.relative_to(_OPENSEES.parent)).as_posix()
         out[rel] = scan(tree, MINTING_HELPERS | TAG_PLAN_MINTING_HELPERS)
     return out
 
