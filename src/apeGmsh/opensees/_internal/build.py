@@ -6953,7 +6953,7 @@ def emit_mp_constraints(
        yields :class:`InterpolationRecord` rows (one slave node ↔ N
        weighted master nodes from a master element face).  Emitted as
        one ``emitter.embeddedNode(ele_tag, cnode, *args)``
-       per record using a freshly allocated element tag.  Covers
+       per record under its planned element tag.  Covers
        ``tie`` / ``distributing`` / ``embedded`` directly and
        ``tied_contact`` / ``mortar`` via the
        :meth:`SurfaceCouplingRecord.slave_records` expansion that
@@ -7082,8 +7082,8 @@ def emit_reinforce_ties(
     ``-dir``, and the axial law (``-perfect kAxial`` or ``-bond matName``
     + ``-bondScale``). The positional argument list is assembled by the
     R0 ``embedded_rebar_args`` grammar builder (the single source of truth
-    for the flag order), and a fresh element tag is drawn from the
-    canonical :class:`TagAllocator` so rebar couplings share the global
+    for the flag order), and the element takes its planned tag on the
+    ``"element"`` counter, so rebar couplings share the global
     element-tag namespace.
 
     Bond name → tag resolution (Option B): a ``bond`` record holds the
@@ -7161,8 +7161,8 @@ def emit_embed_ties(
     carries the constrained node, the host node list + shape-function
     weights (the ``-shape`` host-element-tag-free path), and the isotropic
     tie parameters. The positional argument list is assembled by the
-    ``embedded_node_args`` grammar builder, and a fresh element tag is drawn
-    from the canonical :class:`TagAllocator` so embedment couplings share the
+    ``embedded_node_args`` grammar builder, and the element takes its planned
+    tag on the ``"element"`` counter, so embedment couplings share the
     global element-tag namespace.
 
     No-op when the FEM snapshot exposes no ``elements.embed_ties`` — embedment
@@ -8345,10 +8345,10 @@ def emit_stage_interfaces(
     ``zeroLength``'s two endpoints (and, for a mixed-ndf pair, the
     phantom this pass mints) must be in the Domain when the element
     references them.  Element and material tags come from the SAME
-    :class:`TagAllocator` the base pass draws from, continuing the
-    shared namespace (the ``_emit_rigid_body_elements`` /
-    :func:`emit_stage_mp_constraints` element-minting-in-stage
-    precedent).
+    plan as the base pass's (:func:`allocate_interface_tags`), which
+    numbers each stage's claimed records after the base pass, continuing
+    the shared namespace (the :func:`emit_stage_mp_constraints`
+    element-in-stage precedent).
 
     No-op when the stage claimed nothing.
     """
@@ -8472,8 +8472,8 @@ def emit_rebar_elements(
     dim-1 cells are dropped from a dim-3 ``FEMData``); a ``CorotTruss`` is
     emitted per line cell. This is the bar's OWN axial element —
     distinct from the ``LadrunoEmbeddedRebar`` coupling (which carries no
-    axial stiffness). A fresh element tag is drawn from the canonical
-    :class:`TagAllocator` (shared element-tag namespace, like
+    axial stiffness). Each cell takes its planned tag on the ``"element"``
+    counter (shared element-tag namespace, like
     :func:`emit_reinforce_ties`).
 
     Material name → tag resolution (Option B): ``name_to_tag`` (the bridge's
@@ -8859,8 +8859,8 @@ def _emit_kinematic_couplings(
     an empty list means "every DOF the slave has" (the element's own
     default, ragged-layout aware), so ``-dof`` is **omitted** then; a
     non-empty list emits ``-dof $c1 ...`` to restrict the tie.  Each line
-    allocates a fresh element tag from the canonical :class:`TagAllocator`
-    (``"element"`` kind), like the embedded-node path.
+    takes its planned tag on the ``"element"`` counter, like the
+    embedded-node path.
 
     **Fork-only:** the line emits on any build, but the live emitter gates
     ``LadrunoKinematicCoupling`` through ``_FORK_ONLY_ELEMENTS`` so a stock
@@ -9010,8 +9010,7 @@ def _emit_surface_couplings(
     interpolation over those corners internally, so the per-record
     weights from :class:`InterpolationRecord` are NOT emitted here
     (they survive in the FEM record for round-tripping).  Each emitted
-    line allocates a fresh integer element tag from the bridge's
-    canonical :class:`TagAllocator` (``"element"`` kind) so embedded-
+    line takes its planned tag on the ``"element"`` counter, so embedded-
     node element tags share the global element-tag namespace and never
     collide with structural elements or with each other under
     partitioned emit (ADR 0027 §"Tag determinism"). The tags come from
@@ -11969,9 +11968,9 @@ def _emit_surface_couplings_for_rank(
 ) -> None:
     """Emit ASDEmbeddedNodeElement lines for the host-rank surface couplings.
 
-    Element tags come from the bridge's canonical :class:`TagAllocator`
-    (``"element"`` kind), which is shared across all ranks of the same
-    emit pass — so a record landing on rank K and a different record
+    Element tags come from one ``"element"`` counter shared across all
+    ranks of the same emit pass — so a record landing on rank K and a
+    different record
     landing on rank K+1 receive distinct globally-unique tags (ADR 0027
     §"Tag determinism").  The previous static ``1_000_000`` base
     collided across ranks because each rank restarted the counter
