@@ -930,9 +930,9 @@ def plan_or_standalone(tags: TagAllocator) -> TagPlan | None:
 def plan_inputs(bm: BuiltModel) -> tuple[object, ...]:
     """Every public field of ``bm``, in field order: what a plan reads.
 
-    The planner reads the primitives, their tags, the FEM snapshot and
-    ``element_tags`` today, and the families still to migrate read the
-    records; taking every public field covers them all.
+    The planner reads the primitives, their tags, the FEM snapshot,
+    ``element_tags`` and the records (stage, region, initial-stress and
+    parameter records); taking every public field covers them all.
     """
     import dataclasses
 

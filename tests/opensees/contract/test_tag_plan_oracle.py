@@ -1987,6 +1987,42 @@ def test_parameter_writers_are_two_way() -> None:
             run(foreign.emit_allocator())
 
 
+@pytest.mark.parametrize(("verb", "match"), [
+    ("activate_absorbing", "activate_absorbing: element id 999"),
+    ("update_parameter", "update_parameter 'E': element id 999"),
+])
+def test_an_unknown_flip_element_raises_when_the_emit_plans(
+    verb: str, match: str,
+) -> None:
+    """A flat staged flip or update naming an element no primitive emits
+    raises its ``BridgeError`` when the emit plans its tags, before any
+    line is written, with the message the writer gave before the plan."""
+    from apeGmsh.opensees._internal.build import BridgeError
+
+    ops = _param_ranks(2, partitioned=False, staged=False)
+    with ops.stage(name="bad") as s:
+        if verb == "activate_absorbing":
+            s.activate_absorbing(elements=[10, 999])
+        else:
+            s.update_parameter("E", 1.0, elements=[999])
+        s.analysis(
+            test=ops.test.NormDispIncr(tol=1e-4, max_iter=10),
+            algorithm=ops.algorithm.Newton(),
+            integrator=ops.integrator.LoadControl(dlam=1.0),
+            constraints=ops.constraints.Transformation(),
+            numberer=ops.numberer.Plain(),
+            system=ops.system.BandGeneral(),
+            analysis=ops.analysis.Static(),
+        )
+        s.run(n_increments=1)
+    bm = ops.build()
+    em = RecordingEmitter()
+    with pytest.raises(BridgeError, match=match) as err:
+        bm.emit(em)
+    assert "plan_tags" in {entry.name for entry in err.traceback}
+    assert em.calls == [("model", (), {"ndm": 3, "ndf": 3})]
+
+
 def test_parameter_writers_refuse_a_line_they_do_not_write() -> None:
     """The writers write the planned lines they are given, and refuse a
     line of another verb, a tag count that does not match the line's
