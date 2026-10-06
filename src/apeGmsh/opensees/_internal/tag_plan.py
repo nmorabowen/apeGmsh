@@ -917,7 +917,7 @@ def _plan_mp_elements_and_interfaces(
     Both families mint ``element`` tags, so they are planned in one walk,
     in the order the mode's emit writes them:
 
-    * flat and split: the global MP-constraint pass (rigid bodies,
+    * flat: the global MP-constraint pass (rigid bodies,
       kinematic couplings, interpolation ties), the reinforce and embed
       ties, the unclaimed interfaces, the rebar cells; then, stage by
       stage, the stage's claimed MP constraints and claimed interfaces;

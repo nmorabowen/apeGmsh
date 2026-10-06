@@ -4,8 +4,8 @@ The element-tag allocation of every MP-element writer (rigid bodies,
 kinematic couplings, interpolation ties, `g.reinforce` and `g.embed` ties,
 auto-emitted rebar cells) moved into `plan_mp_elements`, and the interface
 allocation loop into `plan_interface_tags`. `plan_tags` runs both once per
-emit mode, in the order that mode's emit writes them: flat and split
-interleave the MP passes with the interfaces, and a partitioned emit
+emit mode, in the order that mode's emit writes them: a flat emit
+interleaves the MP passes with the interfaces, and a partitioned emit
 numbers the interfaces in one pre-pass, then each rank's MP elements and
 reinforcement in its block, then the stage passes. On a partitioned emit
 the plan also resolves the global MP-constraint pass's rank routing
