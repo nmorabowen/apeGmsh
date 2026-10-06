@@ -215,7 +215,7 @@ if TYPE_CHECKING:
     from apeGmsh.hpc import Cluster, Job
 
     from .emitter.live import LiveOpsEmitter
-    from ._internal.tag_plan import NamedRegion, RegionSite
+    from ._internal.tag_plan import NamedMembers, NamedRegion, RegionSite
 
 
 __all__ = ["apeSees", "BuiltModel", "ExplicitRunResult"]
@@ -3852,7 +3852,7 @@ class BuiltModel:
 
                 # 7-bis. Named regions (per-rank intersection — INV-4).
                 self._emit_regions_partitioned(
-                    emitter, tags, rank_owned_nodes[rank],
+                    emitter, tags, rank_owned_nodes[rank], rank,
                 )
 
                 # 7-ter. MPCO recorder filter regions (INV-4 — internal
@@ -4559,7 +4559,7 @@ class BuiltModel:
                                 kind="mass", node=int(nid)))
                         self._emit_stage_regions_partitioned(
                             stage, emitter, tags,
-                            owned_nodes=rank_owned,
+                            owned_nodes=rank_owned, rank=rank,
                         )
                         # Stage-bound MP constraints — per-rank fan-
                         # out using the same replication rules as the
@@ -7164,6 +7164,7 @@ class BuiltModel:
         emitter: Emitter,
         tags: TagAllocator,
         owned_nodes: "set[int] | SortedIntSet",
+        rank: int,
     ) -> None:
         """Per-rank fan-out for one stage's region pool (MP path).
 
@@ -7177,14 +7178,17 @@ class BuiltModel:
             return
         for region in self._planned_named_regions(tags, stage):
             owned_list = [n for n in region.nodes if int(n) in owned_nodes]
-            if owned_list:
-                emitter.region(region.planned_tag(), "-node", *owned_list)
+            if not owned_list:
+                region.check_unheld_on(rank)
+                continue
+            emitter.region(region.tag_on_rank(rank), "-node", *owned_list)
 
     def _emit_regions_partitioned(
         self,
         emitter: Emitter,
         tags: TagAllocator,
         owned_nodes: "set[int] | SortedIntSet",
+        rank: int,
     ) -> None:
         """Per-rank named-region fan-out (ADR 0027 §"Regions interaction" /
         INV-4).
@@ -7203,8 +7207,9 @@ class BuiltModel:
             owned_list = [n for n in region.nodes if int(n) in owned_nodes]
             if not owned_list:
                 # INV-4: empty intersection → no region line on this rank.
+                region.check_unheld_on(rank)
                 continue
-            emitter.region(region.planned_tag(), "-node", *owned_list)
+            emitter.region(region.tag_on_rank(rank), "-node", *owned_list)
 
     def _planned_named_regions(
         self, tags: TagAllocator, stage: "StageRecord | None",
@@ -7241,7 +7246,7 @@ class BuiltModel:
 
     def _region_sites(
         self, mode: TagMode, ordered: "Sequence[Primitive]",
-    ) -> "tuple[list[tuple[RegionSite, tuple[object, ...]]], dict[RegionSite, tuple[tuple[str, tuple[int, ...]], ...]]]":
+    ) -> "tuple[list[tuple[RegionSite, tuple[object, ...]]], dict[RegionSite, NamedMembers]]":
         """Every region site ``mode``'s emit writes, in the order it mints
         their tags, and the merged members of every named-region site.
 
@@ -7266,13 +7271,14 @@ class BuiltModel:
         """
         partitioned = mode.partitioned
         sites: list[tuple[RegionSite, tuple[object, ...]]] = []
-        named: dict[RegionSite, tuple[tuple[str, tuple[int, ...]], ...]] = {}
-        rank_nodes: "list[SortedIntSet] | None" = None
+        named: dict[RegionSite, NamedMembers] = {}
+        rank_nodes: "list[tuple[int, SortedIntSet]] | None" = None
         if partitioned and (self.region_records or any(
                 st.region_records for st in self.stage_records)):
             rank_nodes = [
-                SortedIntSet.from_ids(part.node_ids)
-                for part in self.fem.partitions
+                (runtime_rank_from_partition_record(part, idx),
+                 SortedIntSet.from_ids(part.node_ids))
+                for idx, part in enumerate(self.fem.partitions)
             ]
 
         def add_named(
@@ -7282,16 +7288,22 @@ class BuiltModel:
                 return
             site: RegionSite = ("named", scope)
             members = self._merged_region_members(records)
-            named[site] = tuple(members.items())
+            first: dict[str, int] = {}
             if rank_nodes is None:
                 keys = [name for name, nodes in members.items() if nodes]
             else:
-                keys = []
-                for owned in rank_nodes:
+                # Numbered on the first rank, in partition order, that
+                # holds a member; first-seen order within a rank.
+                for rank, owned in rank_nodes:
                     for name, nodes in members.items():
-                        if name not in keys and any(
+                        if name not in first and any(
                                 int(n) in owned for n in nodes):
-                            keys.append(name)
+                            first[name] = rank
+                keys = list(first)
+            named[site] = tuple(
+                (name, nodes, first.get(name))
+                for name, nodes in members.items()
+            )
             sites.append((site, tuple(keys)))
 
         def add_damping(

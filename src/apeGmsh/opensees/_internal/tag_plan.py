@@ -248,6 +248,14 @@ REGION_SITE_KINDS: frozenset[str] = frozenset(
     {"named", "rayleigh", "damping", "recorder"})
 
 
+#: Every region name a named-region site declares, in first-seen order:
+#: ``(name, merged member nodes, first rank)``. The first rank is the
+#: runtime rank a partitioned emit numbers the region on (the first, in
+#: partition order, that holds a member), and ``None`` on a flat emit or
+#: when no rank holds one.
+NamedMembers = tuple[tuple[str, tuple[int, ...], "int | None"], ...]
+
+
 class PlannedRegion(NamedTuple):
     """One planned ``region`` tag: the site that writes it, its key there."""
 
@@ -258,16 +266,42 @@ class PlannedRegion(NamedTuple):
 
 class NamedRegion(NamedTuple):
     """A named region as the plan holds it: its merged member nodes, in
-    first-seen order, and its planned tag.
+    first-seen order, its planned tag and, under a partitioned emit, the
+    rank it was numbered on.
 
     ``tag`` is ``None`` for a region no emit writes (it has no members
     or, under a partitioned emit, no rank holds one). :meth:`planned_tag`
-    is how a writer reads it.
+    and :meth:`tag_on_rank` are how a writer reads it.
     """
 
     name: str
     nodes: tuple[int, ...]
     tag: int | None
+    first_rank: int | None = None
+
+    def tag_on_rank(self, rank: int) -> int:
+        """The tag ``rank``, which holds members of this region, writes.
+
+        The plan numbered the region on its first holder rank, so no
+        earlier rank may hold a member.
+        """
+        if self.first_rank is None or rank < self.first_rank:
+            raise TagLawError(
+                f"named region {self.name!r} has members on rank {rank}, "
+                f"but the region plan numbered it on rank {self.first_rank}: "
+                "the plan was not made for this emit (ADR 0114 D4, amended)."
+            )
+        return self.planned_tag()
+
+    def check_unheld_on(self, rank: int) -> None:
+        """Raise if the plan numbered this region on ``rank``, which holds
+        none of its members."""
+        if rank == self.first_rank:
+            raise TagLawError(
+                f"the region plan numbered named region {self.name!r} on "
+                f"rank {rank}, which holds none of its members: the plan "
+                "was not made for this emit (ADR 0114 D4, amended)."
+            )
 
     def planned_tag(self) -> int:
         """The tag to write; raises if the plan gave this region none."""
@@ -327,8 +361,8 @@ class RegionTagPlan(FamilyTagPlan):
 
     regions: tuple[PlannedRegion, ...] | None = field(
         default=None, compare=False)
-    named: "Mapping[RegionSite, tuple[tuple[str, tuple[int, ...]], ...]]" = (
-        field(default_factory=dict, compare=False))
+    named: "Mapping[RegionSite, NamedMembers]" = field(
+        default_factory=dict, compare=False)
     partitioned: bool = False
     fem: object = field(default=None, compare=False)
     _by_site: "dict[RegionSite, dict[object, int]]" = field(
@@ -362,7 +396,8 @@ class RegionTagPlan(FamilyTagPlan):
         for site, at_site in self._by_site.items():
             if site[0] != "named":
                 continue
-            members = dict(self.named.get(site, ()))
+            members = {
+                name: nodes for name, nodes, _ in self.named.get(site, ())}
             for name in at_site:
                 if not isinstance(name, str) or not members.get(name):
                     raise TagLawError(
@@ -415,33 +450,40 @@ class RegionTagPlan(FamilyTagPlan):
         in that order. Each comes with its planned members and tag.
 
         A flat or split emit numbers the names that have members in
-        first-seen order, so their planned tags must be exactly those
-        names', rising in that order. A partitioned emit numbers them rank
-        by rank, which only its writers can check
-        (:meth:`NamedRegion.planned_tag`).
+        first-seen order. A partitioned emit numbers them rank by rank,
+        each on its first holder rank, in first-seen order within a rank;
+        its writers check each first rank (:meth:`NamedRegion.tag_on_rank`,
+        :meth:`NamedRegion.check_unheld_on`). Either way the planned tags
+        must be exactly those names', rising in that order: a plan that
+        dropped or swapped two raises :class:`TagLawError`.
         """
         self._planned(fem)
         members = tuple(self.named.get(site, ()))
-        if [name for name, _ in members] != list(names):
+        if [name for name, _, _ in members] != list(names):
             raise TagLawError(
                 f"the region plan holds the named regions "
-                f"{[name for name, _ in members]} at {site}, but this emit "
-                f"declares {list(names)}: the plan was not made for this "
-                "emit (ADR 0114 D4, amended)."
+                f"{[name for name, _, _ in members]} at {site}, but this "
+                f"emit declares {list(names)}: the plan was not made for "
+                "this emit (ADR 0114 D4, amended)."
             )
+        if self.partitioned:
+            ranked = [(first, i, name)
+                      for i, (name, _, first) in enumerate(members)
+                      if first is not None]
+            numbered = [name for _, _, name in sorted(ranked)]
+        else:
+            numbered = [name for name, nodes, _ in members if nodes]
         planned = self._by_site.get(site, {})
-        if not self.partitioned and list(planned) != [
-                name for name, nodes in members if nodes]:
+        if list(planned) != numbered:
             raise TagLawError(
                 f"the region plan numbers the named regions {list(planned)} "
-                f"at {site}, but a flat emit numbers "
-                f"{[name for name, nodes in members if nodes]}, in that "
+                f"at {site}, but this emit numbers {numbered}, in that "
                 "order: the plan was not made for this emit (ADR 0114 D4, "
                 "amended)."
             )
         return tuple(
-            NamedRegion(name, nodes, planned.get(name))
-            for name, nodes in members
+            NamedRegion(name, nodes, planned.get(name), first)
+            for name, nodes, first in members
         )
 
 
