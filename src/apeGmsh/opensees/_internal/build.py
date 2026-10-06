@@ -6767,6 +6767,26 @@ class ContactPlan:
             )
         return planned
 
+    def check_covers(self, fem: "FEMData") -> None:
+        """Raise :class:`TagLawError` unless the plan holds every record
+        of ``fem``'s contact streams exactly once, and nothing else.
+
+        The partitioned emit writes the plan's routed lines and walks no
+        record pool of its own, so a plan that dropped a record would
+        drop the interaction from the deck without this check.
+        """
+        for kind in CONTACT_STREAMS:
+            planned = sorted(
+                id(line.record) for line in self.lines if line.kind == kind)
+            records = contact_records(fem, kind)
+            if planned != sorted(id(r) for r in records):
+                raise TagLawError(
+                    f"the contact plan holds {len(planned)} {kind} records, "
+                    f"but the FEM carries {len(records)}, or other ones: "
+                    "the plan was not made for this emit (ADR 0114 D4, "
+                    "amended)."
+                )
+
     def ghost_node_ids(self) -> set[int]:
         """Every node a routed interaction declares as a ghost."""
         return {nid for line in self.lines for nid in line.ghost_node_ids}

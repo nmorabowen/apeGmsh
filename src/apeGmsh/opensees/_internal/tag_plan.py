@@ -315,13 +315,15 @@ class ContactTagPlan(FamilyTagPlan):
     def for_fem(self, fem: object) -> ContactPlan:
         """The contact plan, which must have been made over ``fem``.
 
-        ``fem`` is the FEM snapshot this emit walks; a plan made over
-        another one (a fork of another model's plan) raises
+        ``fem`` is the FEM snapshot this emit walks. A plan made over
+        another one (a fork of another model's plan), or one that does
+        not hold each of its contact records exactly once, raises
         :class:`TagLawError`.
         """
         planned = self._planned()
         if fem is not planned.fem:
             raise TagLawError(_FOREIGN_PLAN.format(family="contact"))
+        planned.check_covers(fem)
         return planned
 
 
