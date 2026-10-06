@@ -87,23 +87,33 @@ def gmsh_session():
 
 
 @pytest.fixture
-def g(tmp_path, monkeypatch):
-    """Full apeGmsh session with all composites wired up.
-
-    Its artifacts go to this test's own directory: every ``g`` session
-    is named ``test``, and a bridge built on one test's snapshot leaves
-    the full ``test.h5`` (with ``/opensees``) at the conventional path,
-    which the next test's ``end()`` would then refuse to replace, with a
-    warning, once per test (#1307).
-    """
+def g():
+    """Full apeGmsh session with all composites wired up."""
     from apeGmsh import apeGmsh
-    out = tmp_path / "apegmsh_artifacts"
-    out.mkdir()
-    monkeypatch.setenv("APEGMSH_ARTIFACT_DIR", str(out))
     session = apeGmsh(model_name="test", verbose=False)
     session.begin()
     yield session
     session.end()
+
+
+@pytest.fixture(autouse=True)
+def _artifact_dir_per_test(_artifact_dir, tmp_path_factory, monkeypatch):
+    """Each test's automatic artifacts go to its own directory.
+
+    The session-wide pin above keeps them out of the repository; this one
+    keeps them out of each other's way.  Sessions in different tests
+    share names (``g`` is always ``test``), and the bridge's automatic
+    write (#1307) leaves the full ``model.h5`` (with ``/opensees``) at
+    the conventional path, which a later test's ``end()`` would refuse
+    to replace, with a warning, once per test.  The directory is a
+    sibling of the test's ``tmp_path``, never inside it: tests point
+    ``APEGMSH_ARTIFACT_DIR`` at ``tmp_path`` and assert its listing.
+    Module- and session-scoped fixtures still see the shared directory,
+    and a test that sets the variable itself overrides this.
+    """
+    out = tmp_path_factory.mktemp("artifacts_per_test")
+    monkeypatch.setenv("APEGMSH_ARTIFACT_DIR", str(out))
+    return out
 
 
 # ---------------------------------------------------------------------------

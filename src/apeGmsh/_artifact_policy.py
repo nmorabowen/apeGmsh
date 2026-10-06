@@ -32,7 +32,12 @@ rulings of 2026-10-05 on PR #1439:
   warning naming both files, so the pair stays consistent.
 
 A foreign file, an existing one under ``overwrite=False``, or an older
-file holding a zone the write would drop keep V2b's warnings (#1305).
+file holding a zone the write would drop keep V2b's warnings (#1305),
+with one exception ruled on #1307 (2026-10-07): a file whose
+``/provenance`` names this run's script is this script's own earlier
+output, and a script run twice replaces it, fuller or not, so
+``model.h5`` and ``<stem>.geometry.h5`` end the run with one
+``session_id``.
 An explicit ``apeSees.h5(path)`` never consults this module (P7): it
 keeps its ``'w'`` behaviour, because it is the user's intent.
 """
@@ -389,11 +394,12 @@ def artifact_verdict(
       neutral content equals what the write would produce (P4), and
       ``"refuse"`` with one warning when it holds different content (a
       filtered ``get_fem_data``, or a change after it was written);
-    * **another run's file**: it holds no zone the write would drop
-      (V2b's warning otherwise), and, unless ``explicit``, its
-      ``/provenance`` names a script in ``scripts`` or names no script
-      (P3; a parameter sweep that keeps each run sets ``model_name``
-      per run, and so does each notebook, whose cells name no script).
+    * **another run's file**: its ``/provenance`` names a script in
+      ``scripts`` (the same script, run again: replaced whatever zones
+      it holds), or it holds no zone the write would drop (V2b's warning
+      otherwise) and, unless ``explicit``, names no script (P3; a
+      parameter sweep that keeps each run sets ``model_name`` per run,
+      and so does each notebook, whose cells name no script).
 
     Every ``"refuse"`` is one warning (``UserWarning``); the file is
     never written elsewhere.
@@ -426,14 +432,19 @@ def artifact_verdict(
             f"Emit again from the session's snapshot, or pass save_to=.",
             skips,
         )
-    if dropped:
+    # P3, a script run twice: the file's ``/provenance`` names this run's
+    # script, so the file is this script's earlier output, fuller or not,
+    # and the run replaces it (the bridge then writes the fuller file
+    # again, and ``model.h5`` and its sibling carry one ``session_id``).
+    same_script = bool(file_scripts & scripts)
+    if dropped and not same_script:
         return _refuse(
             f"{target} holds the {', '.join(dropped)} zone(s) that the "
             f"automatic write would drop; not overwritten. Write that "
             f"file under another name, or pass save_to=.",
             skips,
         )
-    if not explicit and file_scripts and not (file_scripts & scripts):
+    if not explicit and file_scripts and not same_script:
         return _refuse(
             f"{target} was written by another script "
             f"({', '.join(sorted(file_scripts))}); not overwritten. Set "

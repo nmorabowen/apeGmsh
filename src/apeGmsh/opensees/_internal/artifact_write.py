@@ -82,15 +82,18 @@ _LAST_WRITTEN: dict[Path, str] = {}
 
 def _declaration_digest(bridge: "_ProcedureHost", name: str) -> str:
     """One digest of everything the write depends on (P5): the name, the
-    snapshot's content hash (``snapshot_id``, the stored ``fem_hash``),
-    the registered primitives with their full contents (a frozen
-    primitive's fields and a pattern's private accumulators alike), the
-    name aliases, every record list and the model flags.  Pickled, not
+    snapshot's ``session_id`` (a re-run of the session in one process, a
+    notebook cell run again, is a new run whose file must carry its id)
+    and content hash (``snapshot_id``, the stored ``fem_hash``), the
+    registered primitives with their full contents (a frozen primitive's
+    fields and a pattern's private accumulators alike), the name
+    aliases, every record list and the model flags.  Pickled, not
     ``repr``'d, so a long array is never truncated into a collision; an
     object that cannot be pickled refuses, and the caller warns.
     """
     state = (
         name,
+        bridge._fem.session_id,
         bridge._fem.snapshot_id,
         bridge._ndm,
         bridge._ndf,

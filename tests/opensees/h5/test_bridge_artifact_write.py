@@ -617,6 +617,171 @@ def test_a_composed_model_writes(artifact_dir, tmp_path, h5_calls):
 
 
 # ---------------------------------------------------------------------------
+# A script run twice (P3 ruling of 2026-10-07 on #1307)
+# ---------------------------------------------------------------------------
+
+RERUN_SCRIPT = '''\
+import sys
+from apeGmsh import apeGmsh
+from apeGmsh.opensees import apeSees
+
+with apeGmsh(verbose=False) as g:  # named by the script's stem
+    g.model.geometry.add_box(0, 0, 0, 1, 1, 1, label="b")
+    g.physical.add_volume("b", name="B")
+    g.mesh.sizing.set_global_size(0.5)
+    g.mesh.generation.generate(dim=3)
+    fem = g.mesh.queries.get_fem_data(dim=3)
+
+ops = apeSees(fem)
+ops.model(ndm=3, ndf=3)
+mat = ops.nDMaterial.ElasticIsotropic(E=30e9, nu=0.2, rho=2400.0)
+ops.element.FourNodeTetrahedron(pg="B", material=mat)
+ops.tcl(TCL)
+sys.stdout.write("SESSION " + fem.session_id + "\\n")
+'''
+
+
+def _pair_ids(out: Path, stem: str) -> tuple[str, str, set[str]]:
+    model, sibling = out / f"{stem}.h5", out / f"{stem}.geometry.h5"
+    return _meta(model, "session_id"), _meta(sibling, "session_id"), _zones(model)
+
+
+def test_a_script_run_twice_in_process_leaves_run_two_s_pair(tmp_path, monkeypatch):
+    """Run 2's session ``end()`` finds run 1's full ``model.h5`` (with
+    ``/opensees``) whose ``/provenance`` names the same script: it
+    replaces it (P3), the bridge writes the fuller file again, and both
+    files carry run 2's ``session_id``.  No warning in either run."""
+    out = tmp_path / "artifacts"
+    out.mkdir()
+    monkeypatch.setenv("APEGMSH_ARTIFACT_DIR", str(out))
+    script = tmp_path / "twice.py"
+    script.write_text(RERUN_SCRIPT, encoding="utf-8")
+    ids = []
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", UserWarning)
+        for i in range(2):
+            glb = runpy.run_path(str(script), run_name="__main__",
+                                 init_globals={"TCL": str(tmp_path / f"t{i}.tcl")})
+            ids.append(glb["fem"].session_id)
+            model_id, sibling_id, zones = _pair_ids(out, "twice")
+            assert model_id == sibling_id == ids[-1]
+            assert "opensees" in zones
+    assert ids[0] != ids[1]
+
+
+def test_a_script_run_twice_in_subprocesses_leaves_run_two_s_pair(tmp_path):
+    """The same, as ``python twice.py`` twice: a fresh process each time,
+    so the P5 memo plays no part and the policy alone decides."""
+    import os
+    import subprocess
+    import sys
+
+    import apeGmsh as pkg
+
+    out = tmp_path / "artifacts"
+    out.mkdir()
+    script = tmp_path / "twice.py"
+    script.write_text(RERUN_SCRIPT.replace("ops.tcl(TCL)", "ops.tcl('twice.tcl')"),
+                      encoding="utf-8")
+    env = {
+        **os.environ,
+        "APEGMSH_ARTIFACT_DIR": str(out),
+        "PYTHONPATH": str(Path(pkg.__file__).resolve().parents[1]),
+        "PYTHONWARNINGS": "error::UserWarning",
+    }
+    ids = []
+    for _ in range(2):
+        # stdin from the null device: under pytest's capture the child
+        # would inherit a console handle gmsh cannot use on Windows.
+        proc = subprocess.run(
+            [sys.executable, str(script)], cwd=str(tmp_path), env=env,
+            stdin=subprocess.DEVNULL, capture_output=True, text=True,
+            timeout=600,
+        )
+        assert proc.returncode == 0, proc.stdout + proc.stderr
+        ids.append(proc.stdout.strip().split("SESSION ")[-1].split()[0])
+        model_id, sibling_id, zones = _pair_ids(out, "twice")
+        assert model_id == sibling_id == ids[-1]
+        assert "opensees" in zones
+    assert ids[0] != ids[1]
+
+
+def test_a_same_script_fuller_file_is_replaced_and_a_foreign_one_is_refused(
+    tmp_path, monkeypatch,
+):
+    """The rule itself: another run's ``model.h5`` holding ``/opensees``
+    that the neutral write would drop is ``"write"`` when its
+    ``/provenance`` names this run's script, and the V2b refusal
+    otherwise."""
+    from apeGmsh._artifact_policy import artifact_identity, artifact_verdict
+    from apeGmsh.opensees._internal.schema_version import NEUTRAL, PROVENANCE
+
+    out = tmp_path / "artifacts"
+    out.mkdir()
+    monkeypatch.setenv("APEGMSH_ARTIFACT_DIR", str(out))
+    script = tmp_path / "once.py"
+    script.write_text(RERUN_SCRIPT, encoding="utf-8")
+    runpy.run_path(str(script), run_name="__main__",
+                   init_globals={"TCL": str(tmp_path / "o.tcl")})
+    target = out / "once.h5"
+    assert "opensees" in _zones(target)
+    _, file_scripts = artifact_identity(target)
+    assert file_scripts
+    neutral = frozenset({NEUTRAL, PROVENANCE})
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", UserWarning)
+        assert artifact_verdict(
+            target, writes=neutral, overwrite=True, session_id="another-run",
+            content=lambda: "", scripts=file_scripts, explicit=False,
+        ) == "write"
+    with pytest.warns(UserWarning, match="would drop"):
+        assert artifact_verdict(
+            target, writes=neutral, overwrite=True, session_id="another-run",
+            content=lambda: "", scripts=frozenset({"c:/elsewhere/other.py"}),
+            explicit=False,
+        ) == "refuse"
+    assert "opensees" in _zones(target)
+
+
+def test_a_session_rerun_in_one_process_rewrites_the_file(
+    artifact_dir, tmp_path, h5_calls,
+):
+    """The reviewer's ``rerun.py``: a notebook cell run again builds the
+    same model in a new session (new ``session_id``) and a new bridge.
+    The digest carries the ``session_id``, so the second cell writes,
+    and the file carries the second session's id."""
+    def cell(i: int):
+        with apeGmsh(model_name="rr", verbose=False) as g:  # end() writes rr.h5
+            g.model.geometry.add_box(0, 0, 0, 1, 1, 1, label="b")
+            g.physical.add_volume("b", name="B")
+            g.mesh.sizing.set_global_size(0.5)
+            g.mesh.generation.generate(dim=3)
+            fem = g.mesh.queries.get_fem_data(dim=3)
+        _bridge(fem).tcl(str(tmp_path / f"rr{i}.tcl"))
+        return fem.session_id
+
+    with warnings.catch_warnings(record=True) as rec:
+        warnings.simplefilter("always")
+        first = cell(0)
+        assert _meta(artifact_dir / "rr.h5", "session_id") == first
+        second = cell(1)
+    # Under pytest the cells name no script, so cell 2's session end()
+    # keeps V2b's refusal of cell 1's fuller file (the notebook case the
+    # P3 ruling leaves as it is); the bridge is silent and rewrites.
+    assert _bridge_warnings(rec) == []
+    assert [m for m in (str(w.message) for w in rec) if "would drop" in m]
+    assert first != second
+    assert len(h5_calls) == 2
+    model_id, sibling_id, zones = _pair_ids(artifact_dir, "rr")
+    assert model_id == second and "opensees" in zones
+    # The refused session write skipped its sibling as well (the pair
+    # rule), so the sibling still carries cell 1's id here; a script run
+    # twice, which names itself, ends with one id on both files
+    # (``test_a_script_run_twice_in_process_leaves_run_two_s_pair``).
+    assert sibling_id == first
+
+
+# ---------------------------------------------------------------------------
 # Deferred archive features: the explicit save's warning, not the hook's
 # ---------------------------------------------------------------------------
 
