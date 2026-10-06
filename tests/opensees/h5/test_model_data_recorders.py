@@ -15,13 +15,19 @@ Covered here:
   the whole-model ``PyEmitter`` seeds — pasting that into a live deck
   would erase the user's model.
 * ``attach_recorders`` forwards exactly the same ``recorder`` calls
-  into a session object, and touches nothing but ``.recorder`` (no
-  ``wipe`` / ``model``).
+  into a session object, and touches nothing but ``.recorder`` and the
+  read-only domain queries (no ``wipe`` / ``model`` / ``node``).
+* The tag-correspondence warning (K19, #1506).  The oracle is the
+  fake live domain itself: built from the fem (same tags, same
+  coordinates, same element nodes), ``attach_recorders`` stays silent;
+  built with other tags, other coordinates or other element nodes, it
+  warns and names each id that is not the fem entity.
 * Fail-loud + empty-state edges.
 """
 from __future__ import annotations
 
-from typing import cast
+import warnings
+from typing import Any, cast
 
 import pytest
 
@@ -32,6 +38,7 @@ from tests.opensees.fixtures.fem_stub import (
     make_two_column_frame,
     make_two_node_beam,
 )
+from tests.opensees.h5._opensees_model_fixtures import build_simple_frame_fem
 
 
 # ---------------------------------------------------------------------------
@@ -139,18 +146,47 @@ def test_recorder_commands_line_stations_resolves_to_fem_element_ids() -> None:
 # ---------------------------------------------------------------------------
 
 class _RecordingOps:
-    """Captures ``recorder`` calls; raises if anything else is touched."""
+    """A fake live domain: captures ``recorder`` calls, answers the
+    read-only queries, and raises if anything else is touched.
 
-    def __init__(self) -> None:
+    ``nodes`` maps tag -> coordinates and ``eles`` tag -> node tags, as
+    the user's hand-written ``ops.node`` / ``ops.element`` calls left
+    them.  The default is the two-column frame stub's own nodes, so the
+    tags equal the fem ids.
+    """
+
+    def __init__(
+        self,
+        nodes: "dict[int, tuple[float, ...]] | None" = None,
+        eles: "dict[int, tuple[int, ...]] | None" = None,
+    ) -> None:
+        self.nodes = nodes if nodes is not None else {
+            1: (0.0, 0.0, 0.0), 2: (0.0, 0.0, 1.0),
+            3: (1.0, 0.0, 0.0), 4: (1.0, 0.0, 1.0),
+        }
+        self.eles = eles if eles is not None else {}
         self.calls: list[tuple[str, tuple[object, ...]]] = []
 
     def recorder(self, kind: str, *args: object) -> None:
         self.calls.append((kind, args))
 
+    def getNodeTags(self) -> list[int]:
+        return list(self.nodes)
+
+    def nodeCoord(self, tag: int) -> list[float]:
+        return list(self.nodes[tag])
+
+    def getEleTags(self) -> list[int]:
+        return list(self.eles)
+
+    def eleNodes(self, tag: int) -> list[int]:
+        return list(self.eles[tag])
+
     def __getattr__(self, name: str) -> object:  # pragma: no cover - guard
         raise AssertionError(
             f"attach_recorders touched ops.{name} — it must only call "
-            f"ops.recorder(...) (no wipe / model / node)."
+            f"ops.recorder(...) and read-only queries (no wipe / model / "
+            f"node)."
         )
 
 
@@ -187,6 +223,115 @@ def test_attach_recorders_matches_command_rendering() -> None:
     rendered = md.recorder_commands(target="py")[1]
     for token in ("-file", "-node", 2, "-dof", "disp"):
         assert (str(token) in rendered)
+
+
+# ---------------------------------------------------------------------------
+# attach_recorders — tag correspondence (K19, #1506)
+# ---------------------------------------------------------------------------
+
+def _attach(md: ModelData, ops: _RecordingOps) -> list[str]:
+    """Attach, returning the messages of every warning raised."""
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        md.attach_recorders(ops)
+    return [str(w.message) for w in caught]
+
+
+def test_attach_is_silent_when_live_tags_are_the_fem_ids() -> None:
+    fem = make_two_column_frame()  # Base PG -> nodes 1, 3
+    md = ModelData(cast("object", fem), ndm=3, ndf=6)
+    md.recorders(nodes="displacement", pg="Base", file_root="out")
+    ops = _RecordingOps()
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        md.attach_recorders(ops)
+    assert len(ops.calls) == 1
+
+
+def test_attach_warns_when_a_targeted_node_is_absent() -> None:
+    """The deck numbered its nodes from 101: fem nodes 1 and 3 do not exist."""
+    fem = make_two_column_frame()
+    md = ModelData(cast("object", fem), ndm=3, ndf=6)
+    md.recorders(nodes="displacement", pg="Base", file_root="out")
+    ops = _RecordingOps(nodes={
+        101: (0.0, 0.0, 0.0), 102: (0.0, 0.0, 1.0),
+        103: (1.0, 0.0, 0.0), 104: (1.0, 0.0, 1.0),
+    })
+    [msg] = _attach(md, ops)
+    assert "2 of them" in msg
+    assert "node 1: absent from the live domain" in msg
+    assert "node 3: absent from the live domain" in msg
+    # Still attached: the warning does not drop the user's recorders.
+    assert len(ops.calls) == 1
+
+
+def test_attach_warns_when_a_node_tag_names_another_point() -> None:
+    """Same tags, other numbering: deck node 1 sits where fem node 2 is."""
+    fem = make_two_column_frame()
+    md = ModelData(cast("object", fem), ndm=3, ndf=6)
+    md.recorders(nodes="displacement", pg="Base", file_root="out")
+    ops = _RecordingOps(nodes={
+        1: (0.0, 0.0, 1.0), 2: (0.0, 0.0, 0.0),
+        3: (1.0, 0.0, 0.0), 4: (1.0, 0.0, 1.0),
+    })
+    [msg] = _attach(md, ops)
+    assert "1 of them" in msg
+    assert "node 1: live coordinates (0.0, 0.0, 1.0)" in msg
+    assert "node 3" not in msg
+
+
+def _frame_md() -> ModelData:
+    fem = build_simple_frame_fem()  # element 1 joins nodes 1 (z=0), 2 (z=1)
+    md = ModelData(fem, ndm=3, ndf=6)
+    md.recorders(line_stations="bending_moment_y", pg="Cols", file_root="out")
+    return md
+
+
+_FRAME_NODES: "dict[int, tuple[float, ...]]" = {
+    1: (0.0, 0.0, 0.0), 2: (0.0, 0.0, 1.0), 3: (5.0, 0.0, 0.0),
+}
+
+
+def test_attach_is_silent_when_the_element_is_the_fem_element() -> None:
+    md = _frame_md()
+    ops = _RecordingOps(nodes=_FRAME_NODES, eles={1: (1, 2)})
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        md.attach_recorders(ops)
+    # One section-force recorder plus its integrationPoints pair.
+    assert len(ops.calls) == 2
+    for kind, args in ops.calls:
+        assert kind == "Element" and args[args.index("-ele") + 1] == 1
+
+
+@pytest.mark.parametrize(
+    "eles, expected",
+    [
+        ({7: (1, 2)}, "element 1: absent from the live domain"),
+        ({1: (2, 3)}, "element 1: live nodes (2, 3) vs fem nodes (1, 2)"),
+    ],
+    ids=["absent", "other_nodes"],
+)
+def test_attach_warns_when_the_element_is_not_the_fem_element(
+    eles: "dict[int, tuple[int, ...]]", expected: str,
+) -> None:
+    md = _frame_md()
+    ops = _RecordingOps(nodes=_FRAME_NODES, eles=eles)
+    [msg] = _attach(md, ops)
+    assert expected in msg
+    assert "1 of them" in msg  # one element, counted once over both calls
+    assert len(ops.calls) == 2
+
+
+def test_attach_checks_the_nodes_of_a_matching_element() -> None:
+    """Element 1 joins tags (1, 2) as the fem says, but the deck's node 2
+    is not at the fem node 2 point: the element is another element."""
+    md = _frame_md()
+    nodes: "dict[int, Any]" = {**_FRAME_NODES, 2: (0.0, 0.0, 3.0)}
+    ops = _RecordingOps(nodes=nodes, eles={1: (1, 2)})
+    [msg] = _attach(md, ops)
+    assert "node 2: live coordinates (0.0, 0.0, 3.0)" in msg
+    assert "element 1" not in msg
 
 
 # ---------------------------------------------------------------------------
