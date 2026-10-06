@@ -307,8 +307,19 @@ def _tet10_volume_fixed(ops: Any) -> bool:
     stamp (2026-08-10), postdates the element fix, fork PR #520
     (2026-07-07). Every other build, including a fork build without the
     stamp, is ``False`` and refused (:data:`_TET10_STOCK_DEFECT`).
+    Reads the resolver's cached verdict for the bound module, so a mesh of
+    many tet10 elements does not re-probe the build per element.
     """
-    return backend_info_of(ops).kind == "fork"
+    return _backend_of(ops).kind == "fork"
+
+
+def _backend_of(ops: Any) -> BackendInfo:
+    """:class:`BackendInfo` of ``ops``: the resolver's cached verdict when
+    ``ops`` is the bound module (:func:`get_backend_info`), else the same
+    classifier run on ``ops`` (a test fake). One signal either way."""
+    if ops is _OPS_CACHE:
+        return get_backend_info()
+    return backend_info_of(ops)
 
 
 #: Raised by :meth:`LiveOpsEmitter.constraints` for ``LadrunoProjection`` on
@@ -959,16 +970,14 @@ class LiveOpsEmitter:
             raise RuntimeError(message + _UNSTAMPED_FORK_NOTE)
 
     def _backend(self) -> BackendInfo:
-        """:class:`BackendInfo` of the module this emitter drives.
+        """:class:`BackendInfo` of the build this emitter drives.
 
-        The resolver's cached verdict when ``self._ops`` is the bound
-        module (:func:`get_backend_info`), else the same classifier run on
-        whatever ``self._ops`` is (a test fake). One signal either way:
-        ``ladrunoBuild()`` returning a sha.
+        Inside a partition block ``self._ops`` may be the ``_NoOpOps``
+        stand-in, which says nothing about the build, so the real module
+        (``self._real_ops``) is classified instead (:func:`_backend_of`).
         """
-        if self._ops is _OPS_CACHE:
-            return get_backend_info()
-        return backend_info_of(self._ops)
+        ops = self._real_ops if self._in_partition else self._ops
+        return _backend_of(ops)
 
     def _confirm_tangent_predictor(self) -> None:
         """Raise unless the just-set LadrunoLoadControl armed the predictor.

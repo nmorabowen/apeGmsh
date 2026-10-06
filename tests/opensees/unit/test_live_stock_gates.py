@@ -211,3 +211,53 @@ def test_ladruno_projection_passes_on_the_fork() -> None:
     ops = _ForkOps()
     _emitter(ops).constraints("LadrunoProjection", "-verbose")
     assert ops.calls == [("constraints", "LadrunoProjection", "-verbose")]
+
+
+# -- partition blocks read the real build ------------------------------------
+
+class _RCForkOps(_ForkOps):
+    def nDMaterial(self, *args: object) -> None:  # noqa: N802
+        self.calls.append(("nDMaterial", *args))
+
+
+@pytest.mark.parametrize("rank", [0, 1])
+def test_rc_c2_gate_classifies_the_real_build_inside_a_partition(
+    monkeypatch: pytest.MonkeyPatch, rank: int,
+) -> None:
+    # Inside a non-zero partition block ``_ops`` is the ``_NoOpOps``
+    # stand-in; the gate must classify the bound module, not the stand-in,
+    # so a stamped fork is not refused as stock there.
+    from apeGmsh.opensees import _rc_c2_flags
+
+    monkeypatch.setattr(_rc_c2_flags, "LADRUNO_RC_C2_MIN_BUILD", "c" * 40)
+    ops = _RCForkOps()
+    le = _new_model(monkeypatch, ops)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", UserWarning)   # the rank!=0 notice
+        le.partition_open(rank)
+    le.nDMaterial("LadrunoRCConcrete", 1, 30.0, "-betaC", 189.0)
+    le.partition_close()
+    expected = [("nDMaterial", "LadrunoRCConcrete", 1, 30.0, "-betaC", 189.0)]
+    assert [c for c in ops.calls if c[0] == "nDMaterial"] == (
+        expected if rank == 0 else []
+    )
+
+
+def test_tet10_gate_reads_the_cached_verdict(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The bound module is probed once (the resolver's cache), not per element.
+    probes: list[int] = []
+
+    class _CountingFork(_ForkOps):
+        def ladrunoBuild(self) -> str:  # noqa: N802
+            probes.append(1)
+            return "0" * 40
+
+    ops = _CountingFork()
+    monkeypatch.setattr(live, "_OPS_CACHE", ops)
+    monkeypatch.setattr(live, "_BACKEND_INFO", None)
+    le = _emitter(ops)
+    for tag in range(1, 51):
+        le.element("TenNodeTetrahedron", tag, *range(1, 11), 1)
+    assert len(probes) == 1

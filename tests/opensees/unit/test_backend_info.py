@@ -258,3 +258,52 @@ def test_strut_tie_backend_tag_uses_the_one_signal() -> None:
 
     assert _backend_tag(_fake(build=_SHA)) == "ladruno-fork"
     assert _backend_tag(_fake(critical=True)) == "stock-openseespy"
+
+
+def _fork_info() -> BackendInfo:
+    return BackendInfo(kind="fork", build=_SHA, version="3.8.0", source="x")
+
+
+def test_footfall_results_carry_the_live_backend(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import h5py
+    import numpy as np
+
+    from apeGmsh.opensees.analysis.footfall_result import FootfallResult
+    from tests.test_results_domain_capture import _MockFem
+
+    monkeypatch.setattr(live, "get_backend_info", _fork_info)
+    res = object.__new__(FootfallResult)
+    for name, value in {
+        "nodes": (1,), "a_p": np.array([1.0]), "ratio": np.array([0.5]),
+        "f_dom": np.array([4.0]),
+    }.items():
+        object.__setattr__(res, name, value)
+    out = res.to_results(_MockFem([1, 2]), tmp_path / "ff.h5")
+    with h5py.File(out, "r") as f:
+        assert f.attrs["opensees_backend"] == "fork"
+        assert f.attrs["opensees_build"] == _SHA
+
+
+def test_parallel_modal_to_native_does_not_stamp_the_in_process_build(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The modes came from a separate binary: even with a fork bound in this
+    # process, the file must not claim it.
+    import h5py
+
+    from apeGmsh.opensees.analysis.modal import ParallelModalResult
+    from tests.test_parallel_modal_to_native import _write_job
+    from tests.test_results_domain_capture import _MockFem
+
+    monkeypatch.setattr(live, "get_backend_info", _fork_info)
+    job = _write_job(
+        tmp_path, eigenvalues="100.0", nodes=[1], ndf=3, ndm=3,
+        rows=["0.1 0.2 0.3\n"],
+    )
+    out = tmp_path / "modes.h5"
+    ParallelModalResult.from_job(str(job)).to_native(out, _MockFem([1]))
+    with h5py.File(out, "r") as f:
+        assert "opensees_backend" not in f.attrs
+        assert "opensees_build" not in f.attrs
