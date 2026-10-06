@@ -6619,12 +6619,15 @@ def constraint_pass_entries(
             mp_element_entry("kinematic_coupling", rec)
             for rec in _kinematic_coupling_records(
                 node_constraints, allowed_ids))
-    out.extend(
-        mp_element_entry("interpolation", rec)
-        for rec in interpolations
-        if isinstance(rec, InterpolationRecord)
-        and _interpolation_route(rec) != "equation"
-    )
+    for rec in interpolations:
+        if not isinstance(rec, InterpolationRecord):
+            continue
+        # The ``mp_element_entry`` of an element-writing interpolation,
+        # its route read once (a gate cell walks 10^4 of them).
+        route = _interpolation_route(rec)
+        if route != "equation":
+            out.append(MPElementEntry(
+                "interpolation", rec, id(rec), _INTERPOLATION_VERBS[route]))
     return out
 
 
