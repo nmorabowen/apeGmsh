@@ -170,6 +170,9 @@ def models() -> dict[str, Callable[[], apeSees]]:
     out["kitchen_sink_absorbing/staged"] = _real_kitchen_sink_bridge
     for mode in GOLDEN_MODES:
         out[f"two_rank_regions/{mode}"] = partial(two_rank_regions, mode)
+    for mode in STAGE_CLAIMED_MODES:
+        out[f"stage_claimed_regions/{mode}"] = partial(
+            stage_claimed_regions, mode)
     out["synthesised_elements/flat"] = partial(
         synthesised_elements, element_tags="sequential")
     out["synthesised_elements_fem_ids/flat"] = partial(
@@ -316,6 +319,59 @@ def two_rank_regions(mode: str) -> apeSees:
     rank_nodes = {rank: nodes for rank, nodes, _ in split}
     ops.region(name="east", nodes=rank_nodes[1])
     ops.region(name="west", nodes=rank_nodes[0])
+    return ops
+
+
+#: The emit modes :func:`stage_claimed_regions` is driven in.
+STAGE_CLAIMED_MODES: tuple[str, ...] = ("staged", "staged_partitioned")
+
+
+def stage_claimed_regions(mode: str) -> apeSees:
+    """Every region site, global and stage-bound, plus stage-claimed recorders.
+
+    The golden two-column frame, staged, with its recording set (a global
+    MPCO filtered by ``nodes_pg`` / ``elements_pg``), then:
+
+    * global named regions ``east`` (rank 1's top node) and ``west``
+      (rank 0's), declared in that order, and a region-scoped Rayleigh
+      and a ``Uniform`` damping attach on ``Cols``;
+    * a third stage, ``probe``, with its own named regions (``p_east``
+      then ``p_west``), a scoped Rayleigh, a damping attach, and two
+      claimed recorders: an MPCO filtered by ``Top`` / ``Cols`` and a
+      Ladruno filtered by ``Top`` with a decoupled ``energy_pg``.
+
+    Under ``staged_partitioned`` this is the #1446 model: before the fix,
+    the partitioned pre-plan also gave each stage-claimed recorder region
+    a tag, which the stage pass then minted again, so three region tags
+    were written per rank and never referenced.
+    """
+    from tests.opensees.golden import builder as golden
+
+    if mode not in STAGE_CLAIMED_MODES:
+        raise ValueError(f"stage_claimed_regions: unknown mode {mode!r}")
+    ops = golden.build_model("two_column_frame", mode, "recording")
+    ops.region(name="east", nodes=[4])
+    ops.region(name="west", nodes=[2])
+    ops.damping.rayleigh(alpha_m=0.01, beta_k=0.001, on="Cols")
+    ops.damping.uniform(ratio=0.02, freq_lower=1.0, freq_upper=10.0,
+                        on="Cols")
+    with ops.stage(name="probe") as s:
+        s.region(name="p_east", nodes=[4])
+        s.region(name="p_west", pg="Top")
+        s.damping.rayleigh(alpha_m=0.02, beta_k=0.002, on="Cols")
+        s.damping.uniform(ratio=0.03, freq_lower=1.0, freq_upper=10.0,
+                          on="Cols")
+        s.recorder(ops.recorder.MPCO(
+            file="out/probe.mpco", nodal_responses=("displacement",),
+            nodes_pg="Top", elements_pg="Cols",
+        ))
+        s.recorder(ops.recorder.Ladruno(
+            file="out/probe.ladruno", nodal_responses=("displacement",),
+            nodes_pg="Top", energy_pg="Cols",
+        ))
+        s.analysis(**golden._chain(
+            ops, mode in golden.PARTITIONED_MODES))
+        s.run(n_increments=1)
     return ops
 
 
