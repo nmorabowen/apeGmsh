@@ -28,6 +28,7 @@ from apeGmsh.opensees._internal.build import (
     _plan_rank_constraints,
 )
 from apeGmsh.opensees.emitter.recording import RecordingEmitter
+
 from tests.opensees._helpers.tag_plan import emit_tags, stub_fem
 
 

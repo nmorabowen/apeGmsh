@@ -13,9 +13,10 @@ import pytest
 from apeGmsh._kernel.defs.constraints import ContactPlaneDef
 from apeGmsh._kernel.records._constraints import ContactPlaneRecord
 from apeGmsh.opensees._internal.build import emit_contact_planes
-from tests.opensees._helpers.tag_plan import emit_tags
 from apeGmsh.opensees.element.contact import contact_plane_args
 from apeGmsh.opensees.emitter.recording import RecordingEmitter
+
+from tests.opensees._helpers.tag_plan import emit_tags
 
 
 # --------------------------------------------------------------------------

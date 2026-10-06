@@ -41,6 +41,7 @@ from apeGmsh.opensees._internal.build import (
     make_auto_stiffness_resolver,
 )
 from apeGmsh.opensees.emitter.recording import RecordingEmitter
+
 from tests.opensees._helpers.tag_plan import emit_tags, stub_fem
 
 E_HOST = 200_000.0

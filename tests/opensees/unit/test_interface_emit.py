@@ -36,6 +36,7 @@ from apeGmsh.opensees._internal.tag_resolution import is_phantom_node
 from apeGmsh.opensees.emitter.py import PyEmitter
 from apeGmsh.opensees.emitter.recording import RecordingEmitter
 from apeGmsh.opensees.emitter.tcl import TclEmitter
+
 from tests.opensees._helpers.tag_plan import StageClaims, emit_tags, stub_fem
 
 # Exact binary values throughout, so the golden lines carry no float

@@ -36,7 +36,6 @@ from apeGmsh._kernel.records._constraints import (
 from apeGmsh._kernel.records._kinds import ConstraintKind
 from apeGmsh.opensees import apeSees
 from apeGmsh.opensees._internal.build import emit_mp_constraints
-from tests.opensees._helpers.tag_plan import emit_tags
 from apeGmsh.opensees.emitter.h5 import H5Emitter
 from apeGmsh.opensees.emitter.py import PyEmitter
 from apeGmsh.opensees.emitter.recording import RecordingEmitter
@@ -44,6 +43,7 @@ from apeGmsh.opensees.emitter.tcl import TclEmitter
 from apeGmsh.opensees.section.fiber import FiberPoint
 
 from tests.fixtures.schema import OPENSEES_CURRENT
+from tests.opensees._helpers.tag_plan import emit_tags
 from tests.opensees.fixtures.fem_stub import make_two_column_frame
 
 

@@ -33,6 +33,7 @@ from apeGmsh.opensees._internal.tag_plan import (
     TransformTagPlan,
     _plan_contacts,
     _plan_mp_elements_and_interfaces,
+    plan_regions,
 )
 
 
@@ -72,6 +73,7 @@ def emit_tags(
     fem: Any,
     *,
     stages: Iterable[StageClaims] = (),
+    recorders: Iterable[Any] = (),
     tags: TagAllocator | None = None,
 ) -> TagAllocator:
     """The emit allocator of a flat emit's tag plan over ``fem``.
@@ -81,6 +83,9 @@ def emit_tags(
     MP-constraint pass, the reinforce and embed ties, the unclaimed
     interfaces, the rebar cells, then each stage's claimed constraints
     and interfaces (``stages``), then every contact and contact plane.
+    Its regions are those of ``recorders``, filtered recorder specs, one
+    site each in the given order, keyed as the build keys them
+    (``("recorder", id(spec))``, :meth:`region_keys`).
 
     ``tags`` seeds the planner: the plan continues its counters, as a
     bridge plan continues the seeded primitive and element tags. A fresh
@@ -95,13 +100,17 @@ def emit_tags(
     mp, interfaces = _plan_mp_elements_and_interfaces(
         inputs, mode, planner)  # type: ignore[arg-type]
     contacts = _plan_contacts(inputs, mode, planner)  # type: ignore[arg-type]
+    regions = plan_regions(
+        [(("recorder", id(spec)), spec.region_keys()) for spec in recorders],
+        planner,
+    )
     planner.freeze()
     plan = TagPlan(
         mode=mode,
         allocator=planner,
         elements=ElementTagPlan(),
         transforms=TransformTagPlan(),
-        regions=RegionTagPlan(),
+        regions=RegionTagPlan(regions=regions, fem=fem),
         parameters=ParameterTagPlan(),
         mp_elements=MPElementTagPlan(mp=mp),
         interfaces=InterfaceTagPlan(interfaces=interfaces),

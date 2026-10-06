@@ -556,8 +556,8 @@ def test_mpco_empty_explicit_nodes_raises_bridge_error() -> None:
     pipeline must still refuse the empty region)."""
     from dataclasses import replace
     from apeGmsh.opensees._internal.build import BridgeError
-    from apeGmsh.opensees._internal.tag_allocator import TagAllocator
     from apeGmsh.opensees.recorder import MPCO as _MPCO
+    from tests.opensees._helpers.tag_plan import emit_tags
     from tests.opensees.fixtures.fem_stub import (
         FEMStub, _ElementGroupView, _ElementsStub, _NodesStub,
     )
@@ -578,9 +578,10 @@ def test_mpco_empty_explicit_nodes_raises_bridge_error() -> None:
         nodes=(1,),
     )
     spec = replace(spec, nodes=())
+    tags = emit_tags(fem, recorders=[spec])
 
     with pytest.raises(BridgeError, match=r"nodes=\(\) is empty"):
-        spec.materialize(RecordingEmitter(), fem, TagAllocator())
+        spec.materialize(RecordingEmitter(), fem, tags)
 
 
 def test_mpco_without_filter_emits_no_region() -> None:

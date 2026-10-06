@@ -23,6 +23,7 @@ from apeGmsh._kernel.records._kinds import ConstraintKind as K
 from apeGmsh.opensees._internal.build import _emit_one_interpolation
 from apeGmsh.opensees._internal.tag_allocator import TagAllocator
 from apeGmsh.opensees.emitter.recording import RecordingEmitter
+
 from tests.opensees._helpers.tag_plan import emit_tags, stub_fem
 
 

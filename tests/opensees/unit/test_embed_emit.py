@@ -20,6 +20,7 @@ from apeGmsh._kernel.records._constraints import EmbedTieRecord
 from apeGmsh.opensees._internal.build import emit_embed_ties
 from apeGmsh.opensees.element.embedded_node import embedded_node_args
 from apeGmsh.opensees.emitter.recording import RecordingEmitter
+
 from tests.opensees._helpers.tag_plan import emit_tags
 
 

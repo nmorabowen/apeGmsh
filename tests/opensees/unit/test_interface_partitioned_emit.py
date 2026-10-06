@@ -42,6 +42,7 @@ from apeGmsh.opensees._internal.build import (
     allocate_interface_tags,
 )
 from apeGmsh.opensees._internal.tag_allocator import TagAllocator
+
 from tests.opensees._helpers.tag_plan import emit_tags, stub_fem
 
 ENT_LAW = NormalLaw(kind="ent", k_per_area=1.0e6)
