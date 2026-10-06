@@ -14,10 +14,10 @@ import pytest
 
 from apeGmsh._kernel.records._constraints import ReinforceTieRecord
 from apeGmsh.opensees._internal.build import emit_reinforce_ties
-from apeGmsh.opensees._internal.tag_allocator import TagAllocator
 from apeGmsh.opensees.emitter.recording import RecordingEmitter
 from apeGmsh.opensees.emitter.tcl import TclEmitter
 from apeGmsh.opensees.emitter.h5 import H5Emitter
+from tests.opensees._helpers.tag_plan import emit_tags
 
 
 # --------------------------------------------------------------------------
@@ -31,6 +31,13 @@ class _Elems:
 class _Fem:
     def __init__(self, ties):
         self.elements = _Elems(ties)
+
+
+def _emit_ties(em, ties, **kw):
+    """``emit_reinforce_ties`` over a stub FEM holding ``ties``, with the
+    emit allocator of that FEM's tag plan."""
+    fem = _Fem(ties)
+    emit_reinforce_ties(em, fem, emit_tags(fem), **kw)
 
 
 def _perfect_tie(name=None):
@@ -75,8 +82,7 @@ def test_perfect_tie_emits_shape_dir_perfect():
     """A perfect-bond tie emits the -shape weights, -dir axis and
     -perfect kAxial via the recording emitter."""
     em = RecordingEmitter()
-    emit_reinforce_ties(em, _Fem([_perfect_tie()]), TagAllocator(),
-                        name_to_tag={})
+    _emit_ties(em, [_perfect_tie()], name_to_tag={})
     calls = [c for c in em.calls if c[0] == "embedded_rebar"]
     assert len(calls) == 1
     args = calls[0][1]  # (ele_tag, rebar_node, nHost, *hosts, -shape, ...)
@@ -95,8 +101,7 @@ def test_bond_tie_resolves_name_to_tag_and_bondscale():
     """A bond tie resolves the bond material NAME to its bridge tag and
     emits -bond <tag> -bondScale."""
     em = RecordingEmitter()
-    emit_reinforce_ties(em, _Fem([_bond_tie(bond="bond1")]), TagAllocator(),
-                        name_to_tag={"bond1": 7})
+    _emit_ties(em, [_bond_tie(bond="bond1")], name_to_tag={"bond1": 7})
     args = [c for c in em.calls if c[0] == "embedded_rebar"][0][1]
     assert "-bond" in args
     bi = args.index("-bond")
@@ -111,16 +116,13 @@ def test_bond_unregistered_name_fails_loud():
     the offending material — never a dangling tag."""
     em = RecordingEmitter()
     with pytest.raises(ValueError, match="bond1"):
-        emit_reinforce_ties(em, _Fem([_bond_tie(bond="bond1")]),
-                            TagAllocator(), name_to_tag={"other": 3})
+        _emit_ties(em, [_bond_tie(bond="bond1")], name_to_tag={"other": 3})
 
 
 def test_fresh_element_tags_per_tie():
     """Each tie draws a fresh element tag from the allocator."""
     em = RecordingEmitter()
-    tags = TagAllocator()
-    emit_reinforce_ties(
-        em, _Fem([_perfect_tie(), _perfect_tie()]), tags, name_to_tag={})
+    _emit_ties(em, [_perfect_tie(), _perfect_tie()], name_to_tag={})
     ele_tags = [c[1][0] for c in em.calls if c[0] == "embedded_rebar"]
     assert len(ele_tags) == 2
     assert ele_tags[0] != ele_tags[1]
@@ -129,8 +131,7 @@ def test_fresh_element_tags_per_tie():
 def test_name_round_trips_as_mp_comment():
     """A named tie precedes its element with an mp_constraint_comment."""
     em = RecordingEmitter()
-    emit_reinforce_ties(em, _Fem([_perfect_tie(name="col_rebar")]),
-                        TagAllocator(), name_to_tag={})
+    _emit_ties(em, [_perfect_tie(name="col_rebar")], name_to_tag={})
     kinds = [c[0] for c in em.calls]
     assert "mp_constraint_comment" in kinds
     assert kinds.index("mp_constraint_comment") < kinds.index("embedded_rebar")
@@ -139,8 +140,7 @@ def test_name_round_trips_as_mp_comment():
 def test_tcl_text_line():
     """The Tcl backend renders one ``element LadrunoEmbeddedRebar`` line."""
     em = TclEmitter()
-    emit_reinforce_ties(em, _Fem([_perfect_tie()]), TagAllocator(),
-                        name_to_tag={})
+    _emit_ties(em, [_perfect_tie()], name_to_tag={})
     line = next(l for l in em.lines() if "LadrunoEmbeddedRebar" in l)
     assert line.startswith("element LadrunoEmbeddedRebar")
     assert "-shape" in line and "-dir" in line and "-perfect" in line
@@ -150,8 +150,7 @@ def test_corot_tie_emits_corot_shapeb():
     """A corot tie emits -corot -shapeB <NshapeB> (after -dir), carrying the
     point-B weights parallel to the host node list."""
     em = RecordingEmitter()
-    emit_reinforce_ties(em, _Fem([_corot_tie()]), TagAllocator(),
-                        name_to_tag={})
+    _emit_ties(em, [_corot_tie()], name_to_tag={})
     args = [c for c in em.calls if c[0] == "embedded_rebar"][0][1]
     assert "-corot" in args and "-shapeB" in args
     # -corot precedes -shapeB; the corot block follows -dir.
@@ -163,8 +162,7 @@ def test_corot_tie_emits_corot_shapeb():
 def test_non_corot_tie_omits_corot():
     """A frozen-axis tie emits neither -corot nor -shapeB."""
     em = RecordingEmitter()
-    emit_reinforce_ties(em, _Fem([_perfect_tie()]), TagAllocator(),
-                        name_to_tag={})
+    _emit_ties(em, [_perfect_tie()], name_to_tag={})
     args = [c for c in em.calls if c[0] == "embedded_rebar"][0][1]
     assert "-corot" not in args and "-shapeB" not in args
 
@@ -172,7 +170,7 @@ def test_non_corot_tie_omits_corot():
 def test_no_ties_is_noop():
     """A FEM with no reinforce_ties emits nothing."""
     em = RecordingEmitter()
-    emit_reinforce_ties(em, _Fem([]), TagAllocator(), name_to_tag={})
+    _emit_ties(em, [], name_to_tag={})
     assert not any(c[0] == "embedded_rebar" for c in em.calls)
 
 
@@ -186,9 +184,7 @@ def test_h5_defers_deck_zone_without_warning():
     em = H5Emitter(schema_version="x", model_name="m")
     with warnings.catch_warnings(record=True) as w:
         warnings.simplefilter("always")
-        emit_reinforce_ties(
-            em, _Fem([_perfect_tie(), _perfect_tie()]), TagAllocator(),
-            name_to_tag={})
+        _emit_ties(em, [_perfect_tie(), _perfect_tie()], name_to_tag={})
     # Both deck-ties no-op'd (counted for observability) ...
     assert em._skipped_reinforce_ties == 2
     # ... but NO deviation warning fires (the retired
@@ -210,6 +206,5 @@ def test_h5_consumes_pending_mp_name():
     em = H5Emitter(schema_version="x", model_name="m")
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        emit_reinforce_ties(em, _Fem([_perfect_tie(name="r1")]),
-                            TagAllocator(), name_to_tag={})
+        _emit_ties(em, [_perfect_tie(name="r1")], name_to_tag={})
     assert em._pending_mp_name == ""

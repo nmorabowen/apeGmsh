@@ -21,15 +21,16 @@ import pytest
 
 from apeGmsh._kernel.records._constraints import InterpolationRecord
 from apeGmsh.opensees._internal.build import _emit_one_interpolation
-from apeGmsh.opensees._internal.tag_allocator import TagAllocator
 from apeGmsh.opensees.emitter.recording import RecordingEmitter
+from tests.opensees._helpers.tag_plan import emit_tags, stub_fem
 
 
 def _emit(rec: InterpolationRecord) -> list:
     e = RecordingEmitter()
+    tags = emit_tags(stub_fem(interpolations=[rec]))
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
-        _emit_one_interpolation(e, rec, TagAllocator())
+        _emit_one_interpolation(e, rec, tags)
     return [w for w in caught if issubclass(w.category, UserWarning)]
 
 
