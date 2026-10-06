@@ -402,6 +402,9 @@ def plan_or_standalone(tags: TagAllocator) -> TagPlan | None:
     allocator (a plain :meth:`TagAllocator.fork`, a fork for another
     origin, the frozen planner allocator) raises :class:`TagLawError`.
     """
+    # A fresh allocator is neither forked nor frozen; ``_forked`` is set
+    # by TagAllocator.fork and read only here and in plan_of's sibling
+    # check (a module of the same package as tag_allocator).
     if not tags._forked and not tags.frozen:
         return None
     return plan_of(tags)
