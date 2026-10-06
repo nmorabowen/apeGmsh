@@ -33,7 +33,7 @@ rulings of 2026-10-05 on PR #1439:
 
 A foreign file, an existing one under ``overwrite=False``, or an older
 file holding a zone the write would drop keep V2b's warnings (#1305),
-with one exception ruled on #1307 (2026-10-07): a file whose
+with one exception ruled on #1307 (2026-10-06): a file whose
 ``/provenance`` names this run's script is this script's own earlier
 output, and a script run twice replaces it, fuller or not, so
 ``model.h5`` and ``<stem>.geometry.h5`` end the run with one
