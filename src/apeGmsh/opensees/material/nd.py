@@ -2932,10 +2932,16 @@ class ASDConcrete3D(NDMaterial):
         ecp_ = ecp if ecp is not None else 2.0 * fcp / E
         Gt_ = Gt if Gt is not None else _laws.ceb_fip_Gf(fcp)
         Gc_ = Gc if Gc is not None else 250.0 * Gt_
-        if not (fc0_ < fcp and fcr_ < fcp):
+        # STKO's own checks (ASDConcrete3D.py:472): fc0 < fcp, fcr <= fcp.
+        if not fc0_ < fcp:
             raise ValueError(
-                f"ASDConcrete3D.from_stko: fc0 ({fc0_!r}) and fcr ({fcr_!r}) "
-                f"must be below fcp ({fcp!r})."
+                f"ASDConcrete3D.from_stko: fc0 ({fc0_!r}) must be below "
+                f"fcp ({fcp!r})."
+            )
+        if not fcr_ <= fcp:
+            raise ValueError(
+                f"ASDConcrete3D.from_stko: fcr ({fcr_!r}) must not exceed "
+                f"fcp ({fcp!r})."
             )
         if ecp_ <= fcp / E:
             raise ValueError(

@@ -369,12 +369,19 @@ class TestFromStko:
         ({"pscale_t": 1.5}, "pscale_t must be in"),
         ({"pscale_c": -0.1}, "pscale_c must be in"),
         ({"fc0": 50.0}, "must be below fcp"),
+        ({"fcr": 50.0}, "must not exceed fcp"),
         ({"ecp": 1e-4}, "must exceed the elastic strain"),
         ({"Gt": 0.0}, "Gt must be > 0"),
     ])
     def test_validation(self, kwargs: dict, msg: str) -> None:
         with pytest.raises(ValueError, match=msg):
             ASDConcrete3D.from_stko(**{**_RW2, **kwargs})
+
+    def test_fcr_equal_to_fcp_is_accepted(self) -> None:
+        # STKO: "fcr must be <= fcp" (ASDConcrete3D.py:472), a no-softening
+        # residual plateau at the peak.
+        m = ASDConcrete3D.from_stko(**{**_RW2, "fcr": _RW2["fcp"]})
+        assert m.Cs[-1] == _RW2["fcp"]
 
     def test_implex_alpha_emitted_only_when_not_one(self) -> None:
         for alpha, present in ((1.0, False), (0.5, True)):
