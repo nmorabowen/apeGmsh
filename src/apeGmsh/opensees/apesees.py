@@ -6009,8 +6009,9 @@ class BuiltModel:
         (``tag_plan.plan_tags``, ADR 0114 D4 amended), and numbers the
         routed interactions rank by rank; the emit reads the routing
         from the plan. The pattern-borne ``sp`` sweep over the routed
-        ghosts (below) needs the emit's own ndf map and patterns, so
-        :meth:`_emit_partitioned` runs it, still before any emission.
+        ghosts (2026-08-13 review F1) needs the emit's own ndf map and
+        patterns, so :meth:`_emit_partitioned` runs it, still before any
+        emission.
 
         Owner exactness (INV-1, second amendment): where the mesh's
         element connectivity resolves each master facet to its backing
