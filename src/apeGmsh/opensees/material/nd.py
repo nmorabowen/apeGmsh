@@ -75,6 +75,7 @@ __all__ = [
     "PlaneStressRebar",
     "ASDConcrete3D",
     "ASDRegularizationWarning",
+    "ASDImplexAlphaIgnoredWarning",
     "ASDPlasticIntegrationWarning",
     "ASDP_MIN_FORK_BUILD",
     "SANISAND_IMPLEX_FACTOR_MIN_BUILD",
@@ -2763,6 +2764,16 @@ class ASDRegularizationWarning(UserWarning):
     """
 
 
+class ASDImplexAlphaIgnoredWarning(UserWarning):
+    """Raised (as a warning) when ``implex_alpha`` is set without ``implex``.
+
+    ``-implexAlpha`` only scales the IMPL-EX extrapolation, so with
+    ``implex=False`` a non-default ``implex_alpha`` is never emitted and has
+    no effect. Subclass of :class:`UserWarning` for the warn-as-contract
+    idiom (cf. :class:`ASDRegularizationWarning`).
+    """
+
+
 class SanisandIntegrationWarning(UserWarning):
     """Raised (as a warning) for a SANISAND setting known to bite silently.
 
@@ -2806,8 +2817,10 @@ class ASDConcrete3D(NDMaterial):
         Rate-dependent viscosity, tension/compression cross-damage factor,
         IMPL-EX integration flag.
     implex_alpha
-        IMPL-EX extrapolation factor (``-implexAlpha``, default ``1.0``,
-        emitted only when ``implex`` and different from 1).
+        IMPL-EX extrapolation factor (``-implexAlpha``, ``>= 0``, default
+        ``1.0``; ``0`` turns the extrapolation off). Emitted only when
+        ``implex`` and different from 1; set without ``implex`` it warns
+        (:class:`ASDImplexAlphaIgnoredWarning`).
     tangent
         Tangent operator handed to the solver: ``"secant"`` (default — the
         damaged secant stiffness, what the parser builds without a flag) or
@@ -3039,10 +3052,21 @@ class ASDConcrete3D(NDMaterial):
                 "implex=True — the C++ uses the IMPL-EX secant and ignores "
                 "-tangent. Drop one of them."
             )
-        if self.implex_alpha <= 0:
+        # 0 is valid: the C++ scales the extrapolation by implex_alpha
+        # (ASDConcrete3DMaterial.cpp:2334), so 0 turns extrapolation off.
+        if self.implex_alpha < 0:
             raise ValueError(
-                f"ASDConcrete3D: implex_alpha must be > 0, got "
+                f"ASDConcrete3D: implex_alpha must be >= 0, got "
                 f"{self.implex_alpha!r}"
+            )
+        if not self.implex and self.implex_alpha != 1.0:
+            warnings.warn(
+                f"ASDConcrete3D: implex_alpha={self.implex_alpha!r} has no "
+                f"effect with implex=False (-implexAlpha only scales the "
+                f"IMPL-EX extrapolation) and is not emitted. Set implex=True "
+                f"or drop implex_alpha.",
+                ASDImplexAlphaIgnoredWarning,
+                stacklevel=3,
             )
 
     def preview_backbone(self) -> dict[str, tuple[float, ...] | float]:

@@ -11,12 +11,18 @@ from __future__ import annotations
 from typing import cast
 from unittest.mock import MagicMock
 
+import warnings
+
 import pytest
 
 from apeGmsh.opensees import apeSees
 from apeGmsh.opensees.emitter.recording import RecordingEmitter
 from apeGmsh.opensees.material import _asdconcrete_laws as laws
-from apeGmsh.opensees.material.nd import ASDConcrete3D, ASDRegularizationWarning
+from apeGmsh.opensees.material.nd import (
+    ASDConcrete3D,
+    ASDImplexAlphaIgnoredWarning,
+    ASDRegularizationWarning,
+)
 from apeGmsh.opensees.material.uniaxial import ASDConcrete1D
 
 
@@ -380,6 +386,30 @@ class TestFromStko:
             assert ("-implexAlpha" in args) is present
             if present:
                 assert args[args.index("-implexAlpha") + 1] == 0.5
+
+    def test_implex_alpha_zero_is_accepted_and_emitted(self) -> None:
+        # The C++ multiplies the extrapolation by alpha (cpp:2334): 0 is
+        # "extrapolation off", a valid value STKO recommends for instabilities.
+        m = ASDConcrete3D.from_stko(**_RW2, implex=True, implex_alpha=0.0)
+        em = RecordingEmitter()
+        m._emit(em, tag=1)
+        (_, args, _), = em.calls
+        assert args[args.index("-implexAlpha") + 1] == 0.0
+
+    def test_negative_implex_alpha_is_refused(self) -> None:
+        with pytest.raises(ValueError, match="implex_alpha must be >= 0"):
+            ASDConcrete3D.from_stko(**_RW2, implex=True, implex_alpha=-0.1)
+
+    def test_implex_alpha_without_implex_warns(self) -> None:
+        with pytest.warns(ASDImplexAlphaIgnoredWarning, match="implex=False"):
+            m = ASDConcrete3D.from_stko(**_RW2, implex_alpha=0.5)
+        em = RecordingEmitter()
+        m._emit(em, tag=1)
+        (_, args, _), = em.calls
+        assert "-implexAlpha" not in args and "-implex" not in args
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", ASDImplexAlphaIgnoredWarning)
+            ASDConcrete3D.from_stko(**_RW2)            # default alpha: silent
 
     def test_bridge_registers(self) -> None:
         ops = apeSees(cast("object", MagicMock(name="FEMData")))
