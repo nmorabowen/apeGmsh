@@ -48,6 +48,7 @@ from typing import (
     Iterator,
     Literal,
     Mapping,
+    NamedTuple,
     Sequence,
     TypeAlias,
     cast,
@@ -68,7 +69,7 @@ from ..pattern.pattern import Plain, _LoadRecord, _SPRecord
 from ..recorder import RecorderDeclaration, RecorderRecord
 from ..transform import Corotational, Linear, PDelta
 from .stage_window import warn_stage_series_outside_window
-from .tag_allocator import TagAllocator
+from .tag_allocator import TagAllocator, TagLawError
 from .tag_resolution import (
     MISSING_FEM_ELEMENT_ID,
     resolve_tag,
@@ -3255,11 +3256,13 @@ class TransformFanout:
     ``vecxz``, first-seen order: the first reuses the spec's own tag, the
     rest are the planned tags (empty when no element references it).
     ``overrides`` maps ``(id(transform), element id)`` to the planned tag
-    of every element whose ``vecxz`` is not the spec's own.
+    of every element whose ``vecxz`` is not the spec's own. ``fem`` is
+    the FEM snapshot the fan-out was planned over.
     """
 
     specs: "tuple[tuple[GeomTransf, tuple[TransformLine, ...] | None], ...]"
     overrides: "dict[tuple[int, int], int]"
+    fem: Any
 
 
 def plan_transform_specs(
@@ -3395,7 +3398,7 @@ def plan_transform_specs(
                 overrides[(id(transf), eid)] = assigned
         specs.append((transf, tuple(lines)))
 
-    return TransformFanout(specs=tuple(specs), overrides=overrides)
+    return TransformFanout(specs=tuple(specs), overrides=overrides, fem=fem)
 
 
 def emit_transform_specs(
@@ -3452,7 +3455,7 @@ def emit_transform_specs(
             transforms, elements, fem, tags, spec_to_own_tag, ndm=ndm,
         )
     else:
-        fanout = plan.transforms.fanout_for(transforms)
+        fanout = plan.transforms.fanout_for(transforms, fem)
 
     for transf, lines in fanout.specs:
         own_tag = spec_to_own_tag[id(transf)]
@@ -6700,26 +6703,240 @@ def emit_embed_ties(
         emitter.embedded_node(ele_tag, *args)
 
 
-def emit_contacts(
-    emitter: "Emitter", fem: "FEMData", tags: TagAllocator,
-    *, ndm: int, records: "Iterable[Any] | None" = None,
+# ---------------------------------------------------------------------------
+# Contacts (g.constraints.contact / contact_plane, ADR 0092): planned tags
+#
+# The tag plan numbers every contact interaction once per emit mode
+# (ADR 0114 D4, amended): :func:`plan_contacts` is the allocation loop,
+# and the emit writes the planned lines (:func:`write_planned_contact`).
+# ---------------------------------------------------------------------------
+
+#: The contact record kinds, in the order a flat emit walks them, and the
+#: ``fem.elements`` stream each one is read from.
+CONTACT_STREAMS: dict[str, str] = {
+    "contact": "contacts",
+    "contact_plane": "contact_planes",
+}
+
+
+class PlannedContact(NamedTuple):
+    """One contact interaction as the tag plan numbers it.
+
+    ``kind`` is ``"contact"`` (face to face: a master and a slave
+    ``contactSurface``, then ``contact``) or ``"contact_plane"`` (a rigid
+    plane: a slave ``contactSurface``, then ``contactPlane``). ``tags``
+    are the surface tags, then the contact tag. ``owner_rank`` and
+    ``ghost_node_ids`` are the partitioned routing (ADR 0092 S4): the
+    rank whose block writes the interaction, and the interface nodes
+    declared there as ghosts first. A flat emit has ``None`` and ``()``.
+    """
+
+    kind: str
+    record: Any
+    tags: tuple[int, ...]
+    owner_rank: "int | None"
+    ghost_node_ids: tuple[int, ...]
+
+
+#: One interaction to plan: ``(kind, record, owner_rank, ghost_node_ids)``.
+ContactEntry: TypeAlias = "tuple[str, Any, int | None, tuple[int, ...]]"
+
+
+@dataclass(frozen=True, slots=True)
+class ContactPlan:
+    """:func:`plan_contacts`'s result: every contact's tags, in emit order.
+
+    ``fem`` is the FEM snapshot whose records were planned. ``lines`` are
+    the interactions in the order the emit writes them: every contact,
+    then every contact plane, on a flat emit; rank by rank, as routed, on
+    a partitioned one. ``notes`` are the routing's warnings, which every
+    partitioned emit repeats, so each emit warns once, as before the plan.
+    """
+
+    fem: Any
+    lines: tuple[PlannedContact, ...]
+    notes: tuple[str, ...] = ()
+
+    def lines_for(
+        self, kind: str, records: "Sequence[Any]",
+    ) -> tuple[PlannedContact, ...]:
+        """The planned lines of ``kind``, which must be exactly ``records``.
+
+        ``records`` is the pool a flat emit walks, in order. A plan made
+        for other records, or in another order (a partitioned plan numbers
+        them rank by rank), raises :class:`TagLawError`.
+        """
+        planned = tuple(line for line in self.lines if line.kind == kind)
+        if [id(line.record) for line in planned] != [id(r) for r in records]:
+            raise TagLawError(
+                f"the contact plan holds {len(planned)} {kind} records, but "
+                f"this emit walks {len(records)}, or in another order: the "
+                "plan was not made for this emit (ADR 0114 D4, amended)."
+            )
+        return planned
+
+    def check_covers(self, fem: "FEMData") -> None:
+        """Raise :class:`TagLawError` unless the plan holds every record
+        of ``fem``'s contact streams exactly once, and nothing else.
+
+        The partitioned emit writes the plan's routed lines and walks no
+        record pool of its own, so a plan that dropped a record would
+        drop the interaction from the deck without this check.
+        """
+        for kind in CONTACT_STREAMS:
+            planned = sorted(
+                id(line.record) for line in self.lines if line.kind == kind)
+            records = contact_records(fem, kind)
+            if planned != sorted(id(r) for r in records):
+                raise TagLawError(
+                    f"the contact plan holds {len(planned)} {kind} records, "
+                    f"but the FEM carries {len(records)}, or other ones: "
+                    "the plan was not made for this emit (ADR 0114 D4, "
+                    "amended)."
+                )
+
+    def ghost_node_ids(self) -> set[int]:
+        """Every node a routed interaction declares as a ghost."""
+        return {nid for line in self.lines for nid in line.ghost_node_ids}
+
+
+def contact_records(fem: "FEMData", kind: str) -> list[Any]:
+    """The records of contact ``kind`` on ``fem``; empty when it has none."""
+    if kind not in CONTACT_STREAMS:
+        raise BridgeError(
+            f"unknown contact kind {kind!r}; the kinds are "
+            f"{tuple(CONTACT_STREAMS)}."
+        )
+    elements = getattr(fem, "elements", None)
+    if elements is None:
+        return []
+    return list(getattr(elements, CONTACT_STREAMS[kind], None) or ())
+
+
+def flat_contact_entries(fem: "FEMData") -> list[ContactEntry]:
+    """Every contact, then every contact plane: the flat emit's order."""
+    return [
+        (kind, rec, None, ())
+        for kind in CONTACT_STREAMS
+        for rec in contact_records(fem, kind)
+    ]
+
+
+def partitioned_contact_entries(
+    routing: "Mapping[int, Sequence[tuple[str, Any, tuple[int, ...]]]]",
+    partitions: "Sequence[Any]",
+) -> list[ContactEntry]:
+    """The routed interactions, rank by rank: the partitioned emit's order.
+
+    ``routing`` is ``BuiltModel._plan_partitioned_contacts``'s
+    ``{owner_rank: [(kind, record, ghost_node_ids), ...]}``. The ranks run
+    in the order the per-rank loop opens them (ADR 0027: ``enumerate``
+    over ``partitions``). A record routed to a rank that no partition
+    runs raises, rather than drop out of the deck.
+    """
+    out: list[ContactEntry] = []
+    ranks: set[int] = set()
+    for idx, part in enumerate(partitions):
+        rank = runtime_rank_from_partition_record(part, idx)
+        ranks.add(rank)
+        out.extend(
+            (kind, rec, rank, tuple(int(n) for n in ghosts))
+            for kind, rec, ghosts in routing.get(rank, ())
+        )
+    stray = sorted(set(routing) - ranks)
+    if stray:
+        raise BridgeError(
+            f"apeSees: contact interactions are routed to rank(s) {stray}, "
+            "which no partition runs (ADR 0092 INV-1); they would drop out "
+            "of the partitioned deck."
+        )
+    return out
+
+
+def plan_contacts(
+    fem: "FEMData", entries: "Iterable[ContactEntry]", tags: TagAllocator,
+    *, notes: "Iterable[str]" = (),
+) -> ContactPlan:
+    """Plan the contact tags, in the order the emit writes them.
+
+    The allocation loop of :func:`emit_contacts` and
+    :func:`emit_contact_planes`, moved out of the emit (ADR 0114 D4,
+    amended): the build's tag plan runs it once per emit mode with the
+    planner allocator, and a standalone call of either helper runs it
+    with the caller's allocator. Each ``contact`` takes two
+    ``contactSurface`` tags (master, slave) and one ``contact`` tag; each
+    ``contact_plane`` takes one ``contactSurface`` tag (slave) and one
+    ``contact`` tag.
+    """
+    lines: list[PlannedContact] = []
+    for kind, rec, owner_rank, ghosts in entries:
+        if kind == "contact":
+            surfaces: tuple[int, ...] = (
+                tags.allocate("contactSurface"),
+                tags.allocate("contactSurface"),
+            )
+        elif kind == "contact_plane":
+            surfaces = (tags.allocate("contactSurface"),)
+        else:
+            raise BridgeError(
+                f"plan_contacts: unknown contact kind {kind!r}; the kinds "
+                f"are {tuple(CONTACT_STREAMS)}."
+            )
+        lines.append(PlannedContact(
+            kind, rec, (*surfaces, tags.allocate("contact")),
+            owner_rank, tuple(ghosts),
+        ))
+    return ContactPlan(fem=fem, lines=tuple(lines), notes=tuple(notes))
+
+
+def _planned_contact_lines(
+    fem: "FEMData", tags: TagAllocator, kind: str,
+) -> tuple[PlannedContact, ...]:
+    """The planned lines of ``kind`` for a flat emit of ``fem``.
+
+    Two-way until K1-3d S6 drops ``tags`` (ADR 0114 D4, amended). Handed
+    the emit allocator of a bridge emit (``TagPlan.emit_allocator()``),
+    this reads the plan, and refuses one made for another model or for
+    other records. Handed a plain :class:`TagAllocator` (a direct caller),
+    it plans the records through :func:`plan_contacts`. Any other fork
+    raises :class:`TagLawError`.
+    """
+    from .tag_plan import plan_or_standalone
+
+    records = contact_records(fem, kind)
+    plan = plan_or_standalone(tags)
+    if plan is None:
+        if not records:
+            return ()
+        return plan_contacts(
+            fem, [(kind, rec, None, ()) for rec in records], tags).lines
+    return plan.contacts.for_fem(fem).lines_for(kind, records)
+
+
+def write_planned_contact(
+    emitter: "Emitter", line: PlannedContact, *, ndm: int,
 ) -> None:
-    """Emit the fork `contactSurface` + `contact` pair per contact interaction
-    (`g.constraints.contact`).
+    """Write one planned interaction under its planned tags.
 
-    Consumes ``fem.elements.contacts`` —
-    :class:`~apeGmsh._kernel.records._constraints.ContactRecord` rows produced
-    by :class:`ConstraintsComposite` at FEM-build time. Each record emits two
-    `contactSurface` defs (master faceted + slave node-set/faceted) and the
-    `contact` verb, drawing surface/contact tags from their own
-    :class:`TagAllocator` namespaces. The `LadrunoContact` handler is emitted
-    separately by the bridge's constraint-handler auto-emit.
+    ``ndm`` gates a face-to-face ``contact`` (:func:`_write_contact`); a
+    ``contact_plane`` carries no dimension of its own
+    (:func:`_write_contact_plane`). An unknown kind raises.
+    """
+    if line.kind == "contact":
+        _write_contact(emitter, line, ndm=ndm)
+    elif line.kind == "contact_plane":
+        _write_contact_plane(emitter, line)
+    else:
+        raise BridgeError(
+            f"write_planned_contact: unknown contact kind {line.kind!r}; "
+            f"the kinds are {tuple(CONTACT_STREAMS)}."
+        )
 
-    ``records`` overrides the source pool: the partitioned path (ADR 0092
-    S4) passes each interaction singly, inside its OWNER rank's block —
-    one owner per interaction (INV-1), after the ghost `node` + SP-replay
-    declarations. ``None`` (the flat path) emits every record on
-    ``fem.elements.contacts``. No-op when the effective pool is empty.
+
+def _write_contact(
+    emitter: "Emitter", line: PlannedContact, *, ndm: int,
+) -> None:
+    """Write a face-to-face contact: master and slave surface, ``contact``.
 
     ``ndm`` cross-checks the record's own dimension (``master_nps == 2`` ⇔
     2D) against what the user declared in ``ops.model(ndm=, ndf=)``. The
@@ -6736,76 +6953,102 @@ def emit_contacts(
     """
     from ..element.contact import contact_args, contact_surface_args
 
-    if records is not None:
-        contacts: "Iterable[Any] | None" = records
-    else:
-        elements = getattr(fem, "elements", None)
-        contacts = (
-            getattr(elements, "contacts", None)
-            if elements is not None else None
+    rec = line.record
+    m_nps = int(rec.master_nps)
+    if (m_nps == 2) != (int(ndm) == 2):
+        who = repr(rec.name) if rec.name else "(unnamed)"
+        raise BridgeError(
+            f"apeSees: contact interaction {who} carries "
+            f"master_nps={m_nps}, i.e. a "
+            f"{'2D line-segment' if m_nps == 2 else '3D faceted'} "
+            f"surface, but the model was declared ndm={int(ndm)}. The "
+            f"fork derives the contact lane from the referenced nodes' "
+            f"coordinate size and aborts on a mismatch; a 2D surface in "
+            f"a 3D model (or the reverse) cannot be emitted. Rebuild the "
+            f"contact against a {int(ndm)}D mesh, or declare "
+            f"ops.model(ndm={2 if m_nps == 2 else 3}, ...)."
         )
-    if not contacts:
-        return
+    _emit_name(emitter, rec.name)
+    m_tag, s_tag, c_tag = line.tags
 
-    for rec in contacts:
-        m_nps = int(rec.master_nps)
-        if (m_nps == 2) != (int(ndm) == 2):
-            who = repr(rec.name) if rec.name else "(unnamed)"
-            raise BridgeError(
-                f"apeSees: contact interaction {who} carries "
-                f"master_nps={m_nps}, i.e. a "
-                f"{'2D line-segment' if m_nps == 2 else '3D faceted'} "
-                f"surface, but the model was declared ndm={int(ndm)}. The "
-                f"fork derives the contact lane from the referenced nodes' "
-                f"coordinate size and aborts on a mismatch; a 2D surface in "
-                f"a 3D model (or the reverse) cannot be emitted. Rebuild the "
-                f"contact against a {int(ndm)}D mesh, or declare "
-                f"ops.model(ndm={2 if m_nps == 2 else 3}, ...)."
-            )
-        _emit_name(emitter, rec.name)
-        m_tag = tags.allocate("contactSurface")
-        s_tag = tags.allocate("contactSurface")
-        c_tag = tags.allocate("contact")
+    # Master: always a faceted surface (flat connectivity + stride).
+    m_flat = [int(n) for n in rec.master_faces.reshape(-1)]
+    emitter.contact_surface(
+        m_tag, *contact_surface_args("master", m_flat, rec.master_nps))
 
-        # Master: always a faceted surface (flat connectivity + stride).
-        m_flat = [int(n) for n in rec.master_faces.reshape(-1)]
+    # Slave: NTS node set vs mortar faceted.
+    if rec.formulation == "nts":
         emitter.contact_surface(
-            m_tag, *contact_surface_args("master", m_flat, rec.master_nps))
+            s_tag,
+            *contact_surface_args("slave", [int(n) for n in rec.slave_nodes]))
+    else:
+        s_flat = [int(n) for n in rec.slave_faces.reshape(-1)]
+        emitter.contact_surface(
+            s_tag,
+            *contact_surface_args("slave-segments", s_flat, rec.slave_nps))
 
-        # Slave: NTS node set vs mortar faceted.
-        if rec.formulation == "nts":
-            emitter.contact_surface(
-                s_tag,
-                *contact_surface_args("slave", [int(n) for n in rec.slave_nodes]))
-        else:
-            s_flat = [int(n) for n in rec.slave_faces.reshape(-1)]
-            emitter.contact_surface(
-                s_tag,
-                *contact_surface_args("slave-segments", s_flat, rec.slave_nps))
+    emitter.contact(c_tag, *contact_args(
+        m_tag, s_tag, rec.formulation,
+        kn=rec.kn, kt=rec.kt, mu=rec.mu,
+        eps_n=rec.eps_n, eps_t=rec.eps_t,
+        cohesion=rec.cohesion, tau_max=rec.tau_max,
+        aug_tol=rec.aug_tol, max_aug=rec.max_aug, ngp=rec.ngp,
+        tie=rec.tie, thickness=rec.thickness,
+        soft=rec.soft, visc=rec.visc,
+        consistent_tan=rec.consistent_tan, geom_tan=rec.geom_tan,
+        cell=rec.cell,
+        edge_edge=rec.edge_edge, edge_kn=rec.edge_kn,
+        edge_band=rec.edge_band, edge_mu=rec.edge_mu, edge_kt=rec.edge_kt,
+        edge_cohesion=rec.edge_cohesion, edge_tau_max=rec.edge_tau_max,
+        edge_consistent_tan=rec.edge_consistent_tan,
+        edge_soft=rec.edge_soft, edge_alm=rec.edge_alm,
+        edge_aug_tol=rec.edge_aug_tol,
+        outward=rec.outward, ndm=int(ndm),
+    ))
 
-        emitter.contact(c_tag, *contact_args(
-            m_tag, s_tag, rec.formulation,
-            kn=rec.kn, kt=rec.kt, mu=rec.mu,
-            eps_n=rec.eps_n, eps_t=rec.eps_t,
-            cohesion=rec.cohesion, tau_max=rec.tau_max,
-            aug_tol=rec.aug_tol, max_aug=rec.max_aug, ngp=rec.ngp,
-            tie=rec.tie, thickness=rec.thickness,
-            soft=rec.soft, visc=rec.visc,
-            consistent_tan=rec.consistent_tan, geom_tan=rec.geom_tan,
-            cell=rec.cell,
-            edge_edge=rec.edge_edge, edge_kn=rec.edge_kn,
-            edge_band=rec.edge_band, edge_mu=rec.edge_mu, edge_kt=rec.edge_kt,
-            edge_cohesion=rec.edge_cohesion, edge_tau_max=rec.edge_tau_max,
-            edge_consistent_tan=rec.edge_consistent_tan,
-            edge_soft=rec.edge_soft, edge_alm=rec.edge_alm,
-            edge_aug_tol=rec.edge_aug_tol,
-            outward=rec.outward, ndm=int(ndm),
-        ))
+
+def _write_contact_plane(emitter: "Emitter", line: PlannedContact) -> None:
+    """Write a rigid-plane contact: slave surface, then ``contactPlane``."""
+    from ..element.contact import contact_plane_args, contact_surface_args
+
+    rec = line.record
+    _emit_name(emitter, rec.name)
+    s_tag, c_tag = line.tags
+    emitter.contact_surface(
+        s_tag,
+        *contact_surface_args("slave", [int(n) for n in rec.slave_nodes]))
+    emitter.contact_plane(c_tag, *contact_plane_args(
+        s_tag, rec.normal, rec.point, rec.kn,
+        visc=rec.visc, soft=rec.soft,
+    ))
+
+
+def emit_contacts(
+    emitter: "Emitter", fem: "FEMData", tags: TagAllocator, *, ndm: int,
+) -> None:
+    """Emit the fork `contactSurface` + `contact` pair per contact interaction
+    (`g.constraints.contact`).
+
+    Consumes ``fem.elements.contacts`` —
+    :class:`~apeGmsh._kernel.records._constraints.ContactRecord` rows produced
+    by :class:`ConstraintsComposite` at FEM-build time. Each record emits two
+    `contactSurface` defs (master faceted + slave node-set/faceted) and the
+    `contact` verb (:func:`_write_contact`, which also cross-checks the
+    record's dimension against ``ndm``). The `LadrunoContact` handler is
+    emitted separately by the bridge's constraint-handler auto-emit.
+
+    The tags come from :func:`plan_contacts` (ADR 0114 D4, amended);
+    :func:`_planned_contact_lines` says how this reads them. The
+    partitioned path (ADR 0092 S4) does not come through here: it writes
+    the plan's routed lines inside each owner rank's block. No-op when the
+    FEM carries no contacts.
+    """
+    for line in _planned_contact_lines(fem, tags, "contact"):
+        _write_contact(emitter, line, ndm=ndm)
 
 
 def emit_contact_planes(
     emitter: "Emitter", fem: "FEMData", tags: TagAllocator,
-    *, records: "Iterable[Any] | None" = None,
 ) -> None:
     """Emit one fork ``contactSurface -slave`` + ``contactPlane`` per
     rigid-plane contact (`g.constraints.contact_plane`).
@@ -6814,35 +7057,13 @@ def emit_contact_planes(
     Each record emits one ``contactSurface -slave <nodes>`` (the slave node set)
     and one ``contactPlane <tag> <slaveSurfTag> nx ny nz px py pz kn [-visc]
     [-soft]``. The ``LadrunoContact`` handler is auto-emitted by the bridge when
-    contacts OR contact planes are present. ``records`` overrides the source
-    pool (ADR 0092 S4 — the partitioned path emits each record singly inside
-    its owner rank's block); ``None`` emits every record on
-    ``fem.elements.contact_planes``. No-op when the effective pool is empty.
+    contacts OR contact planes are present. The tags come from
+    :func:`plan_contacts`, as in :func:`emit_contacts`, and the partitioned
+    path (ADR 0092 S4) writes the plan's routed lines instead. No-op when the
+    FEM carries no contact planes.
     """
-    from ..element.contact import contact_plane_args, contact_surface_args
-
-    if records is not None:
-        planes: "Iterable[Any] | None" = records
-    else:
-        elements = getattr(fem, "elements", None)
-        planes = (
-            getattr(elements, "contact_planes", None)
-            if elements is not None else None
-        )
-    if not planes:
-        return
-
-    for rec in planes:
-        _emit_name(emitter, rec.name)
-        s_tag = tags.allocate("contactSurface")
-        c_tag = tags.allocate("contact")
-        emitter.contact_surface(
-            s_tag,
-            *contact_surface_args("slave", [int(n) for n in rec.slave_nodes]))
-        emitter.contact_plane(c_tag, *contact_plane_args(
-            s_tag, rec.normal, rec.point, rec.kn,
-            visc=rec.visc, soft=rec.soft,
-        ))
+    for line in _planned_contact_lines(fem, tags, "contact_plane"):
+        _write_contact_plane(emitter, line)
 
 
 def _interface_normal_material(a_trib: float, law: object) -> "UniaxialMaterial":

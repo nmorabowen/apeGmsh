@@ -53,6 +53,7 @@ from contextlib import contextmanager
 from functools import lru_cache
 from typing import Any, NamedTuple
 
+import numpy as np
 import pytest
 
 from apeGmsh.opensees._internal.tag_allocator import TagAllocator, TagLawError
@@ -121,14 +122,105 @@ _MINT_SITES: dict[str, str] = {
     "_emit_kinematic_couplings": "mp_elements",
     "_emit_one_interpolation": "mp_elements",
     "allocate_interface_tags": "interfaces",
-    "emit_contacts": "contacts",
-    "emit_contact_planes": "contacts",
+    "plan_contacts": "contacts",
 }
 
 #: The owner of a row some migrated family's plan must hold.
 PLANNED = "<planned>"
 
-_MODELS = ts.models()
+
+def _contact_ranks_fem(n_ranks: int, *, partitioned: bool = True) -> Any:
+    """A truss stub with one contact and one contact plane per rank.
+
+    Rank ``r`` natively holds the master pad ``b+1..b+4`` and the plane's
+    slave node ``b+7`` (``b = 100 (r + 1)``), so it owns contact ``c{r}``
+    and plane ``p{r}``. The contact's slave nodes ``b+5, b+6`` live on the
+    next rank, so the owner declares them as ghosts. Contacts and planes
+    are declared in reverse rank order, so the partitioned deck, which
+    numbers them rank by rank, numbers them differently from the flat
+    one. The stub's elements are not iterable, so the owner pick is the
+    node tally (ADR 0092 INV-1).
+    """
+    from apeGmsh._kernel.records._constraints import (
+        ContactPlaneRecord,
+        ContactRecord,
+    )
+
+    from tests.opensees.fixtures.fem_stub import (
+        FEMStub,
+        _ElementGroupView,
+        _ElementsStub,
+        _NodesStub,
+    )
+
+    ids: list[int] = []
+    coords: list[tuple[float, float, float]] = []
+    bar_ids: list[int] = []
+    bars: list[tuple[int, int]] = []
+    rank_nodes: dict[int, list[int]] = {r: [] for r in range(n_ranks)}
+    rank_elems: dict[int, list[int]] = {r: [] for r in range(n_ranks)}
+    contacts: list[Any] = []
+    planes: list[Any] = []
+    for r in range(n_ranks):
+        b, x, nxt = 100 * (r + 1), 10.0 * r, (r + 1) % n_ranks
+        ids += [b + k for k in range(1, 8)]
+        coords += [(x, 0.0, 0.0), (x + 1, 0.0, 0.0), (x + 1, 1.0, 0.0),
+                   (x, 1.0, 0.0), (x + 0.2, 0.2, 0.5), (x + 0.8, 0.8, 0.5),
+                   (x, 0.0, -1.0)]
+        rank_nodes[r] += [b + 1, b + 2, b + 3, b + 4, b + 7]
+        rank_nodes[nxt] += [b + 5, b + 6]
+        e = 10 * (r + 1)
+        for eid, conn, rank in ((e + 1, (b + 1, b + 2), r),
+                                (e + 2, (b + 3, b + 7), r),
+                                (e + 3, (b + 5, b + 6), nxt)):
+            bar_ids.append(eid)
+            bars.append(conn)
+            rank_elems[rank].append(eid)
+        contacts.insert(0, ContactRecord(
+            kind="contact", name=f"c{r}", formulation="nts",
+            master_faces=np.array([[b + 1, b + 2, b + 3, b + 4]],
+                                  dtype=np.int64),
+            master_nps=4, slave_nodes=[b + 5, b + 6],
+            kn=1.0e6, kt=0.0, mu=0.0,
+        ))
+        planes.insert(0, ContactPlaneRecord(
+            kind="contact_plane", name=f"p{r}", slave_nodes=[b + 7],
+            normal=(0.0, 0.0, 1.0), point=(0.0, 0.0, -2.0), kn=1.0e6,
+        ))
+    fem = FEMStub(
+        nodes=_NodesStub(ids=ids, coords=coords, node_pgs={}),
+        elements=_ElementsStub(elem_pgs={"Bars": _ElementGroupView(
+            ids=tuple(bar_ids), connectivity=tuple(bars))}),
+    )
+    if partitioned:
+        fem.set_partitions([
+            (r, rank_nodes[r], rank_elems[r]) for r in range(n_ranks)])
+    fem.elements.contacts = contacts
+    fem.elements.contact_planes = planes
+    return fem
+
+
+def _contact_ranks(n_ranks: int, *, partitioned: bool = True) -> Any:
+    from typing import cast
+
+    from apeGmsh.opensees import apeSees
+
+    ops = apeSees(cast(Any, _contact_ranks_fem(
+        n_ranks, partitioned=partitioned)))
+    ops.model(ndm=3, ndf=3)
+    mat = ops.uniaxialMaterial.ElasticMaterial(E=1.0e6)
+    ops.element.Truss(pg="Bars", A=0.01, material=mat)
+    return ops
+
+
+#: The contact cases: 2 and 4 ranks, and the 4-rank stub emitted flat.
+_CONTACT_MODELS: dict[str, Callable[[], Any]] = {
+    "contact_ranks_2/partitioned": lambda: _contact_ranks(2),
+    "contact_ranks_4/partitioned": lambda: _contact_ranks(4),
+    "contact_ranks_4/flat": lambda: _contact_ranks(4, partitioned=False),
+}
+
+_MODELS = {**ts.models(), **_CONTACT_MODELS}
 _SPLIT = "two_module_frame/split"
 CASES: tuple[str, ...] = (*sorted(_MODELS), _SPLIT)
 
@@ -447,13 +539,41 @@ def test_emit_transform_specs_is_two_way() -> None:
     planned_rows, planned_over = run(plan.emit_allocator())
     plain_rows, plain_over = run(_seeded_like_the_planner(bm))
     assert planned_rows == plain_rows and planned_over == plain_over
-    assert planned_over == plan.transforms.fanout_for(transforms).overrides
+    assert planned_over == plan.transforms.fanout_for(
+        transforms, bm.fem).overrides
     assert planned_over      # the arch fans out past the spec's own tag
 
     for other in (plan.allocator.fork(), plan.allocator,
                   plan.allocator.fork({"geomTransf"}, origin=object())):
         with pytest.raises(TagLawError, match="carries no tag plan"):
             run(other)
+
+
+def test_emit_transform_specs_refuses_a_fork_of_another_models_plan() -> None:
+    """A real foreign plan's fork is refused as such, not as a miscount.
+
+    The same arch recipe built twice gives two models with their own FEM
+    snapshots. Model B's emit handed model A's emit allocator must say
+    the plan is another model's, before any count or order check.
+    """
+    from apeGmsh.opensees._internal.build import emit_transform_specs
+
+    case = _case("arch_with_orientation_fan_out/flat")
+    other = _MODELS["arch_with_orientation_fan_out/flat"]().build()
+    assert other.fem is not case.bm.fem
+    o_transforms, o_elements = _arch_transform_inputs(_Inputs(other))
+    em = RecordingEmitter()
+    with pytest.raises(TagLawError, match="another model's tag plan"):
+        emit_transform_specs(
+            o_transforms, o_elements, em, other.fem,
+            case.plan.emit_allocator(), other.tag_for, ndm=other.ndm)
+    assert not em.calls
+
+
+class _Inputs(NamedTuple):
+    """A model wrapped like a :class:`Case`, for the input helpers."""
+
+    bm: Any
 
 
 def _seeded_like_the_planner(bm: Any) -> TagAllocator:
@@ -472,10 +592,13 @@ def test_emit_refuses_a_transform_plan_for_other_specs() -> None:
     transforms, _ = _arch_transform_inputs(case)
     assert transforms
     sub = case.plan.transforms
-    assert sub.fanout_for(transforms) is sub.fanout
+    fem = case.bm.fem
+    assert sub.fanout_for(transforms, fem) is sub.fanout
     for wrong in ([], [*transforms, transforms[0]], transforms[:-1]):
-        with pytest.raises(TagLawError, match="transform plan"):
-            sub.fanout_for(wrong)
+        with pytest.raises(TagLawError, match="transform plan holds"):
+            sub.fanout_for(wrong, fem)
+    with pytest.raises(TagLawError, match="another model's tag plan"):
+        sub.fanout_for(transforms, ts.synthesised_elements_fem())
 
 
 def test_transform_plan_derives_its_rows_from_its_fanout() -> None:
@@ -485,6 +608,303 @@ def test_transform_plan_derives_its_rows_from_its_fanout() -> None:
         TransformTagPlan(rows=(("geomTransf", 2),))
     with pytest.raises(TagLawError, match="no fan-out"):
         TransformTagPlan().stream()
+
+
+# ---------------------------------------------------------------------------
+# The contact family (K1-3d S3b)
+# ---------------------------------------------------------------------------
+
+
+_CONTACT_CASES = (
+    "synthesised_elements/flat", "synthesised_elements_fem_ids/flat",
+    *_CONTACT_MODELS,
+)
+
+
+def _contact_rows(stream: Any) -> list[Row]:
+    return [(_verb(k), t) for k, t in stream
+            if _verb(k) in ("contact_surface", "contact", "contact_plane")]
+
+
+def test_short_or_empty_contact_plan_fails_the_oracle() -> None:
+    """The contact comparison is not vacuous: a dropped row is caught.
+
+    Every case with contacts (flat, and partitioned over 2 and 4 ranks)
+    must reject the contact plan with its last row dropped, and with
+    every row dropped, while accepting the real one.
+    """
+    checked = 0
+    for name in CASES:
+        case = _case(name)
+        rows = case.plan.contacts.stream()
+        if not rows:
+            continue
+        checked += 1
+        assert _family_mismatch(case, "contacts", rows) is None, name
+        assert _family_mismatch(case, "contacts", rows[:-1]), name
+        assert _family_mismatch(case, "contacts", ()), name
+    assert checked == len(_CONTACT_CASES)
+
+
+@pytest.mark.parametrize("name", _CONTACT_CASES)
+def test_contact_rows_are_written_in_plan_order(name: str) -> None:
+    """The emit writes the planned contact rows in the plan's own order."""
+    case = _case(name)
+    assert _contact_rows(case.stream) == list(case.plan.contacts.stream())
+
+
+@pytest.mark.parametrize("n_ranks", [2, 4])
+def test_partitioned_contacts_number_rank_by_rank(n_ranks: int) -> None:
+    """The partitioned plan numbers contacts rank by rank, as the deck did.
+
+    Rank ``r`` owns ``c{r}`` and ``p{r}``, declared in reverse rank
+    order. The partitioned deck writes each rank's block in turn, so
+    rank ``r``'s contact takes surfaces ``3r+1, 3r+2`` and contact
+    ``2r+1``, and its plane surface ``3r+3`` and contact ``2r+2``. The
+    flat deck numbers every contact, then every plane, in declaration
+    order. Each owner declares its contact's slave nodes as ghosts.
+    """
+    case = _case(f"contact_ranks_{n_ranks}/partitioned")
+    lines = case.plan.contacts.contacts
+    assert lines is not None
+    got = {line.record.name: (line.tags, line.owner_rank)
+           for line in lines.lines}
+    want: dict[str, Any] = {}
+    for r in range(n_ranks):
+        want[f"c{r}"] = ((3 * r + 1, 3 * r + 2, 2 * r + 1), r)
+        want[f"p{r}"] = ((3 * r + 3, 2 * r + 2), r)
+    assert got == want
+    for line in lines.lines:
+        b = 100 * (line.owner_rank + 1)
+        ghosts = (b + 5, b + 6) if line.kind == "contact" else ()
+        assert tuple(sorted(line.ghost_node_ids)) == ghosts
+
+    if n_ranks == 4:
+        flat = _case("contact_ranks_4/flat").plan.contacts.contacts
+        assert flat is not None
+        assert [(ln.record.name, ln.tags) for ln in flat.lines] == [
+            ("c3", (1, 2, 1)), ("c2", (3, 4, 2)), ("c1", (5, 6, 3)),
+            ("c0", (7, 8, 4)), ("p3", (9, 5)), ("p2", (10, 6)),
+            ("p1", (11, 7)), ("p0", (12, 8)),
+        ]
+        assert all(ln.owner_rank is None for ln in flat.lines)
+
+
+def test_contact_kinds_are_frozen_on_every_emit_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Every emit path's allocator refuses a ``contactSurface`` or
+    ``contact`` mint: flat, split, staged, and partitioned over 1, 2 and
+    4 ranks."""
+    from apeGmsh.opensees.apesees import BuiltModel
+
+    seen: list[tuple[str, TagAllocator]] = []
+
+    def spy(path: str) -> Callable[..., Any]:
+        orig = getattr(BuiltModel, path)
+        sig = inspect.signature(orig)
+
+        def wrapper(self: Any, *args: Any, **kwargs: Any) -> Any:
+            seen.append((path, sig.bind(self, *args, **kwargs)
+                         .arguments["tags"]))
+            return orig(self, *args, **kwargs)
+        return wrapper
+
+    for path in _PATHS:
+        monkeypatch.setattr(BuiltModel, path, spy(path))
+    names = {*_first_case_per_mode().values(), *_CONTACT_MODELS}
+    reached: set[str] = set()
+    for name in sorted(names):
+        if name == _SPLIT:
+            ts.emit_stream(ts.split_model().build(), TclEmitter, split=True)
+        else:
+            ts.emit_stream(_MODELS[name]().build(), RecordingEmitter)
+    for path, tags in seen:
+        reached.add(path)
+        assert {"contactSurface", "contact"} <= tags.frozen_kinds, path
+        for kind in ("contactSurface", "contact"):
+            with pytest.raises(TagLawError, match="planned and frozen"):
+                tags.allocate(kind)
+            with pytest.raises(TagLawError):
+                tags.allocate_block(kind, 1)
+    assert reached == set(_PATHS)
+
+
+@pytest.mark.parametrize("name", _CONTACT_CASES)
+def test_a_stray_contact_mint_raises(
+    name: str, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Mutation: an emit that mints a contact tag raises where it mints.
+
+    The flat and split paths are mutated back to minting their contact
+    tags (``_planned_contact_lines`` plans from the emit allocator); the
+    partitioned path's writer is mutated to mint one ``contact`` tag per
+    line, over 2 and 4 ranks. Each emit must raise, not write a deck.
+    """
+    import apeGmsh.opensees.apesees as apesees_mod
+    from apeGmsh.opensees._internal import build
+    from apeGmsh.opensees.apesees import BuiltModel
+
+    def minting_lines(fem: Any, tags: TagAllocator, kind: str) -> Any:
+        entries = [(kind, r, None, ()) for r in build.contact_records(fem, kind)]
+        return build.plan_contacts(fem, entries, tags).lines
+
+    monkeypatch.setattr(build, "_planned_contact_lines", minting_lines)
+
+    fork: list[TagAllocator] = []
+    orig_partitioned = BuiltModel._emit_partitioned
+
+    def spy(self: Any, **kwargs: Any) -> Any:
+        fork.append(kwargs["tags"])
+        return orig_partitioned(self, **kwargs)
+
+    orig_writer = apesees_mod.write_planned_contact
+
+    def minting_writer(emitter: Any, line: Any, *, ndm: int) -> None:
+        fork[-1].allocate("contact")
+        orig_writer(emitter, line, ndm=ndm)
+
+    monkeypatch.setattr(BuiltModel, "_emit_partitioned", spy)
+    monkeypatch.setattr(apesees_mod, "write_planned_contact", minting_writer)
+
+    with pytest.raises(TagLawError, match="planned and frozen"):
+        ts.emit_stream(_MODELS[name]().build(), RecordingEmitter)
+    assert bool(fork) == name.endswith("/partitioned")
+
+
+@pytest.mark.parametrize("name", _CONTACT_CASES)
+@pytest.mark.parametrize("cut", ["short", "empty"])
+def test_emit_refuses_a_short_or_empty_contact_plan(
+    name: str, cut: str,
+) -> None:
+    """Mutation: the emit refuses a contact plan that dropped interactions.
+
+    The memoised plan's contact lines are cut (the last one dropped, or
+    all of them); the next emit, flat or partitioned, must raise rather
+    than write a deck that lacks them.
+    """
+    import dataclasses
+
+    from apeGmsh.opensees._internal.tag_plan import ContactTagPlan
+
+    bm = _MODELS[name]().build()
+    mode = emit_mode(bm, split=False, supports_partitions=True)
+    plan = bm._tag_plan(mode)
+    contacts = plan.contacts.contacts
+    assert contacts is not None and contacts.lines
+    lines = contacts.lines[:-1] if cut == "short" else ()
+    bm._tag_plans[mode] = dataclasses.replace(
+        plan, contacts=ContactTagPlan(
+            contacts=dataclasses.replace(contacts, lines=lines)))
+    with pytest.raises(TagLawError, match="contact plan holds"):
+        ts.emit_stream(bm, RecordingEmitter)
+
+
+def test_emit_contacts_is_two_way() -> None:
+    """Fork: read the plan. Plain allocator: plan through the same loop.
+
+    The plain-allocator path (a direct caller, until K1-3d S6) writes the
+    same rows as the planned path. A plain fork, the frozen planner
+    allocator and a fork for another origin carry no plan; a fork of a
+    real foreign plan is refused as another model's.
+    """
+    from apeGmsh.opensees._internal.build import (
+        emit_contact_planes,
+        emit_contacts,
+    )
+
+    case = _case("synthesised_elements/flat")
+    bm, plan = case.bm, case.plan
+
+    def run(tags: TagAllocator, fem: Any = None) -> list[Row]:
+        em = ts.tapped(RecordingEmitter)()
+        em.tap = []
+        emit_contacts(em, bm.fem if fem is None else fem, tags, ndm=bm.ndm)
+        emit_contact_planes(em, bm.fem if fem is None else fem, tags)
+        return list(em.tap)
+
+    planned = run(plan.emit_allocator())
+    assert planned == run(_seeded_like_the_planner(bm))
+    assert planned == list(plan.contacts.stream())
+    assert planned       # one contact and one plane
+
+    for other in (plan.allocator.fork(), plan.allocator,
+                  plan.allocator.fork({"contact"}, origin=object())):
+        with pytest.raises(TagLawError, match="carries no tag plan"):
+            run(other)
+    foreign = _case("contact_ranks_4/flat").plan
+    with pytest.raises(TagLawError, match="another model's tag plan"):
+        run(foreign.emit_allocator())
+    with pytest.raises(TagLawError, match="another model's tag plan"):
+        run(plan.emit_allocator(), fem=foreign.contacts.contacts.fem)
+
+
+def test_emit_contacts_refuses_a_plan_for_other_records() -> None:
+    from apeGmsh.opensees._internal.build import ContactPlan
+
+    flat = _case("contact_ranks_4/flat").plan.contacts.for_fem(
+        _case("contact_ranks_4/flat").bm.fem)
+    part = _case("contact_ranks_4/partitioned").plan.contacts.contacts
+    assert isinstance(part, ContactPlan)
+    records = [ln.record for ln in flat.lines if ln.kind == "contact"]
+    assert flat.lines_for("contact", records)
+    for wrong in ([], records[:-1], [*records, records[0]], records[::-1]):
+        with pytest.raises(TagLawError, match="contact plan holds"):
+            flat.lines_for("contact", wrong)
+    # A partitioned plan numbers rank by rank: not the flat walk's order.
+    part_records = [r for r in part.fem.elements.contacts]
+    with pytest.raises(TagLawError, match="contact plan holds"):
+        part.lines_for("contact", part_records)
+
+
+def test_contact_plan_derives_its_rows_from_its_lines() -> None:
+    from apeGmsh.opensees._internal.tag_plan import ContactTagPlan
+
+    with pytest.raises(TagLawError, match="contacts, not rows"):
+        ContactTagPlan(rows=(("contact", 1),))
+    with pytest.raises(TagLawError, match="no contact plan"):
+        ContactTagPlan().stream()
+    with pytest.raises(TagLawError, match="no contact plan"):
+        ContactTagPlan().for_fem(object())
+
+
+def test_partitioned_routing_runs_once_and_warns_once_per_emit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The routing runs once per plan; its warning fires once per emit.
+
+    Before the plan, every partitioned emit re-ran
+    ``_plan_partitioned_contacts`` and warned once (the F3 partial
+    element-ownership warning). Now the plan runs it once, and each emit
+    repeats the warning it noted: two emits, one routing, two warnings.
+    """
+    import warnings
+
+    from apeGmsh.opensees.apesees import BuiltModel
+
+    from tests.opensees.integration.test_contact_partitioned_review_fixes import (
+        _cut_master_stub,
+        _stub_ops,
+    )
+
+    calls: list[int] = []
+    orig = BuiltModel._plan_partitioned_contacts
+
+    def spy(self: Any, *args: Any, **kwargs: Any) -> Any:
+        calls.append(1)
+        return orig(self, *args, **kwargs)
+
+    monkeypatch.setattr(BuiltModel, "_plan_partitioned_contacts", spy)
+    bm = _stub_ops(_cut_master_stub(kn=1.0e6, second_facet="unowned")).build()
+    for _ in range(2):
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            bm.emit(RecordingEmitter())
+        hits = [w for w in caught
+                if "absent from every PartitionRecord" in str(w.message)]
+        assert len(hits) == 1
+        assert hits[0].category is UserWarning
+    assert len(calls) == 1
 
 
 _ALL_MIGRATED = all(cls.MIGRATED for cls in FAMILY_PLANS.values())
