@@ -34,7 +34,7 @@ through it: :func:`plan_of` reads the plan that an allocator from
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, ClassVar, NamedTuple
+from typing import TYPE_CHECKING, Any, ClassVar, NamedTuple
 
 from .tag_allocator import TagAllocator, TagLawError
 
@@ -42,7 +42,13 @@ if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping, Sequence
 
     from ..apesees import BuiltModel
-    from .build import ContactPlan, ElementPlanRows, TransformFanout
+    from .build import (
+        ContactPlan,
+        ElementPlanRows,
+        InterfacePlan,
+        MPElementPlan,
+        TransformFanout,
+    )
     from .types import Element, GeomTransf
 
 #: One planned emission: ``(kind, tag)`` in the emit's verb vocabulary.
@@ -498,19 +504,93 @@ class ParameterTagPlan(FamilyTagPlan):
 @dataclass(frozen=True, slots=True)
 class MPElementTagPlan(FamilyTagPlan):
     """Elements the MP constraints synthesise: ties, rebar, rigid bodies,
-    couplings."""
+    couplings.
+
+    ``mp`` is the :class:`~.build.MPElementPlan` :func:`plan_tags` makes
+    once per mode: every element in the order its mode's emit writes it
+    (rigid bodies, kinematic couplings and interpolation ties; reinforce
+    and embed ties; rebar cells; stage by stage, and rank by rank under a
+    partitioned emit), and, under a partitioned emit, the global
+    MP-constraint pass's routing. The writers read it instead of
+    allocating.
+    """
 
     FAMILY: ClassVar[str] = "mp_elements"
     KINDS: ClassVar[frozenset[str]] = frozenset({"element"})
+    MIGRATED: ClassVar[bool] = True
+
+    mp: MPElementPlan | None = field(default=None, compare=False)
+
+    def __post_init__(self) -> None:
+        if self.rows:
+            raise TagLawError(
+                "mp_elements: the MP-element plan derives its rows from "
+                "its planned elements; pass mp, not rows."
+            )
+
+    def planned(self) -> MPElementPlan:
+        """The MP-element plan; a sub-plan that carries none raises."""
+        if self.mp is None:
+            raise TagLawError(
+                "mp_elements: this plan carries no MP-element plan; "
+                "plan_tags plans one for every mode (ADR 0114 D4, "
+                "amended)."
+            )
+        return self.mp
+
+    def stream(self) -> tuple[TagRow, ...]:
+        """One ``(verb, tag)`` row per planned element, in emit order.
+
+        The verb is the one its writer emits: ``element``,
+        ``embeddedNode``, ``embedded_rebar`` or ``embedded_node``.
+        """
+        return tuple((line.verb, line.tag) for line in self.planned().lines)
 
 
 @dataclass(frozen=True, slots=True)
 class InterfaceTagPlan(FamilyTagPlan):
-    """Interface ``zeroLength`` elements and their two uniaxial materials."""
+    """Interface ``zeroLength`` elements and their two uniaxial materials.
+
+    ``interfaces`` is the :class:`~.build.InterfacePlan` :func:`plan_tags`
+    makes once per mode: every interface record with its ``(normal,
+    tangential, element)`` tags, in the order its mode's emit takes
+    them. :func:`~.build.allocate_interface_tags` reads it instead of
+    allocating.
+    """
 
     FAMILY: ClassVar[str] = "interfaces"
     KINDS: ClassVar[frozenset[str]] = frozenset(
         {"element", "uniaxialMaterial"})
+    MIGRATED: ClassVar[bool] = True
+
+    interfaces: InterfacePlan | None = field(default=None, compare=False)
+
+    def __post_init__(self) -> None:
+        if self.rows:
+            raise TagLawError(
+                "interfaces: the interface plan derives its rows from its "
+                "planned records; pass interfaces, not rows."
+            )
+
+    def planned(self) -> InterfacePlan:
+        """The interface plan; a sub-plan that carries none raises."""
+        if self.interfaces is None:
+            raise TagLawError(
+                "interfaces: this plan carries no interface plan; "
+                "plan_tags plans one for every mode (ADR 0114 D4, "
+                "amended)."
+            )
+        return self.interfaces
+
+    def stream(self) -> tuple[TagRow, ...]:
+        """Each planned record's two ``uniaxialMaterial`` rows, then its
+        ``element`` row (the ``zeroLength``), in plan order."""
+        rows: list[TagRow] = []
+        for line in self.planned().lines:
+            n_tag, t_tag, ele_tag = line.tags
+            rows += [("uniaxialMaterial", n_tag), ("uniaxialMaterial", t_tag),
+                     ("element", ele_tag)]
+        return tuple(rows)
 
 
 @dataclass(frozen=True, slots=True)
@@ -796,6 +876,11 @@ def plan_tags(bm: BuiltModel, mode: TagMode) -> TagPlan:
         element_specs, bm.fem, tags, bm.tag_for, ndm=bm.ndm,
     ))
 
+    # MP elements and interfaces: one ``element`` counter, after the
+    # element fan-out, interleaved as the mode's emit interleaves them;
+    # the interfaces also number their ``uniaxialMaterial`` pairs.
+    mp, interfaces = _plan_mp_elements_and_interfaces(bm, mode, tags)
+
     # Contacts: every interaction, in the order its mode's emit writes
     # it. No other family mints ``contactSurface`` or ``contact``.
     contacts = ContactTagPlan(contacts=_plan_contacts(bm, mode, tags))
@@ -817,10 +902,144 @@ def plan_tags(bm: BuiltModel, mode: TagMode) -> TagPlan:
         transforms=transforms,
         regions=regions,
         parameters=ParameterTagPlan(),
-        mp_elements=MPElementTagPlan(),
-        interfaces=InterfaceTagPlan(),
+        mp_elements=MPElementTagPlan(mp=mp),
+        interfaces=InterfaceTagPlan(interfaces=interfaces),
         contacts=contacts,
         inputs=plan_inputs(bm),
+    )
+
+
+def _plan_mp_elements_and_interfaces(
+    bm: BuiltModel, mode: TagMode, tags: TagAllocator,
+) -> tuple[MPElementPlan, InterfacePlan]:
+    """The MP-element and interface plans of ``bm``'s emit in ``mode``.
+
+    Both families mint ``element`` tags, so they are planned in one walk,
+    in the order the mode's emit writes them:
+
+    * flat and split: the global MP-constraint pass (rigid bodies,
+      kinematic couplings, interpolation ties), the reinforce and embed
+      ties, the unclaimed interfaces, the rebar cells; then, stage by
+      stage, the stage's claimed MP constraints and claimed interfaces;
+    * partitioned: every interface in one pre-pass (unclaimed, then each
+      stage's claimed ones: ADR 0093 S8/S9); then rank by rank the global
+      MP-constraint pass, routed once here
+      (:func:`~.build.plan_partitioned_mp_constraints`), and the rank's
+      reinforce ties and rebar cells
+      (``BuiltModel._plan_partitioned_reinforcement``); then stage by
+      stage, rank by rank, the stage's claimed MP constraints.
+
+    The partitioned emit refuses ``g.embed``, so no embed tie is planned
+    there. Each plan checks, as it is made, that it holds every element
+    and record the emit of ``bm.fem`` writes, once.
+    """
+    from .build import (
+        InterfacePlan,
+        MPElementEntry,
+        MPElementPlan,
+        PlannedInterface,
+        PlannedMPElement,
+        _StageConstraintAdapter,
+        build_element_partition_owner,
+        build_node_partition_owners,
+        constraint_pass_entries,
+        embed_tie_records,
+        interface_records,
+        interpolation_records,
+        mp_constraint_pools,
+        mp_element_entry,
+        plan_interface_tags,
+        plan_mp_elements,
+        plan_partitioned_mp_constraints,
+        plan_stage_mp_constraints_partitioned,
+        rebar_cell_entries,
+        rebar_element_records,
+        reinforce_tie_records,
+        runtime_rank_from_partition_record,
+    )
+
+    fem = bm.fem
+    claimed = frozenset(bm._claimed_constraint_ids())
+    claimed_interfaces = frozenset(bm._claimed_interface_ids())
+    unclaimed = [r for r in interface_records(fem)
+                 if id(r) not in claimed_interfaces]
+    node_constraints, surface_constraints = mp_constraint_pools(fem, claimed)
+    mp: list[PlannedMPElement] = []
+    ifaces: list[PlannedInterface] = []
+
+    def ties(records: list[Any]) -> list[MPElementEntry]:
+        return [mp_element_entry("reinforce_tie", r) for r in records]
+
+    if not mode.partitioned:
+        mp += plan_mp_elements([
+            *constraint_pass_entries(
+                node_constraints, interpolation_records(surface_constraints)),
+            *ties(reinforce_tie_records(fem)),
+            *(mp_element_entry("embed_tie", r)
+              for r in embed_tie_records(fem)),
+        ], tags)
+        ifaces += plan_interface_tags(unclaimed, tags)
+        mp += plan_mp_elements(
+            rebar_cell_entries(rebar_element_records(fem)), tags)
+        for stage in bm.stage_records:
+            if stage.stage_constraint_records:
+                adapter = _StageConstraintAdapter(
+                    stage.stage_constraint_records)
+                mp += plan_mp_elements(constraint_pass_entries(
+                    adapter, interpolation_records(adapter)), tags)
+            ifaces += plan_interface_tags(stage.stage_interface_records, tags)
+        return (
+            MPElementPlan(fem=fem, lines=tuple(mp), claimed_ids=claimed),
+            InterfacePlan(fem=fem, lines=tuple(ifaces)),
+        )
+
+    ifaces += plan_interface_tags([
+        *unclaimed,
+        *(r for stage in bm.stage_records
+          for r in stage.stage_interface_records),
+    ], tags)
+    partitions = list(fem.partitions)
+    node_owners = build_node_partition_owners(fem)
+    element_owner = build_element_partition_owner(fem)
+    phantom_coords, rank_plans = plan_partitioned_mp_constraints(
+        fem, claimed, node_owners, element_owner)
+    reinforcement = bm._plan_partitioned_reinforcement(node_owners)
+    ranks = [runtime_rank_from_partition_record(part, idx)
+             for idx, part in enumerate(partitions)]
+    for rank in ranks:
+        # ``rank_plans`` is empty when the FEM has no constraint
+        # container, else it routes every rank.
+        if rank_plans and rank_plans[rank].any():
+            routed = rank_plans[rank]
+            mp += plan_mp_elements(constraint_pass_entries(
+                node_constraints, routed.embedded_records,
+                allowed_ids=routed.allowed_record_ids,
+            ), tags)
+        # ``reinforcement`` holds only the ranks that own a tie or a cell.
+        if rank in reinforcement:
+            rank_ties, rank_bars, _ghosts = reinforcement[rank]
+            mp += plan_mp_elements(
+                [*ties(rank_ties), *rebar_cell_entries(rank_bars)], tags)
+    for stage in bm.stage_records:
+        if not stage.stage_constraint_records:
+            continue
+        for rank in ranks:
+            staged = plan_stage_mp_constraints_partitioned(
+                stage.stage_constraint_records, partition_rank=rank,
+                node_owners=node_owners, element_owner=element_owner,
+            )
+            if staged is None:
+                continue
+            mp += plan_mp_elements(constraint_pass_entries(
+                staged.adapter, staged.plan.embedded_records,
+                allowed_ids=staged.plan.allowed_record_ids,
+            ), tags)
+    return (
+        MPElementPlan(
+            fem=fem, lines=tuple(mp), partitioned=True, claimed_ids=claimed,
+            phantom_coords=phantom_coords, rank_plans=rank_plans,
+        ),
+        InterfacePlan(fem=fem, lines=tuple(ifaces)),
     )
 
 

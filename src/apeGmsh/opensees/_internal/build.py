@@ -39,11 +39,12 @@ from __future__ import annotations
 
 import warnings
 import weakref
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import (
     TYPE_CHECKING,
     Any,
     Callable,
+    Hashable,
     Iterable,
     Iterator,
     Literal,
@@ -80,6 +81,8 @@ from .tag_resolution import (
 from .types import Damping, Element, GeomTransf, Primitive, Recorder
 
 if TYPE_CHECKING:
+    from collections import Counter
+
     # Use the fully-qualified module path to disambiguate from the
     # similarly-named submodule ``apeGmsh.mesh.FEMData`` under mypy.
     from apeGmsh.mesh.FEMData import FEMData
@@ -6386,6 +6389,511 @@ def _sanitize_raw_token(token: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# MP elements (ADR 0114 D4, amended): planned tags
+#
+# The tag plan numbers every element the MP constraints synthesise once per
+# emit mode: rigid bodies, kinematic couplings, interpolation ties, reinforce
+# and embed ties, and auto-emitted rebar cells. :func:`plan_mp_elements` is
+# the allocation loop; the writers below read each element's planned tag
+# (:func:`_mp_element_tagger`) instead of minting one.
+# ---------------------------------------------------------------------------
+
+#: The MP-element sites, each a writer below.
+MP_ELEMENT_SITES: tuple[str, ...] = (
+    "rigid_body", "kinematic_coupling", "interpolation",
+    "reinforce_tie", "embed_tie", "rebar_cell",
+)
+
+#: The tap verb each site but ``interpolation`` writes; an
+#: interpolation's verb depends on its route (:data:`_INTERPOLATION_VERBS`).
+_SITE_VERBS: dict[str, str] = {
+    "rigid_body": "element",
+    "kinematic_coupling": "element",
+    "reinforce_tie": "embedded_rebar",
+    "embed_tie": "embedded_node",
+    "rebar_cell": "element",
+}
+
+#: An interpolation's route -> the tap verb it writes. The ``equation``
+#: route writes ``equationConstraint`` rows and no element (ADR 0068).
+_INTERPOLATION_VERBS: dict[str, str] = {
+    "penalty_al": "element",
+    "distributing": "element",
+    "embedded": "embeddedNode",
+}
+
+
+def _interpolation_route(rec: Any) -> str:
+    """How :func:`_emit_one_interpolation` writes ``rec``.
+
+    ``"equation"`` (``equationConstraint`` rows, no element),
+    ``"penalty_al"`` (``LadrunoEmbeddedNode``), ``"distributing"``
+    (``LadrunoDistributingCoupling``) or ``"embedded"``
+    (``ASDEmbeddedNodeElement``).
+    """
+    from apeGmsh._kernel.records._kinds import ConstraintKind
+
+    enforce = getattr(rec, "enforce", "penalty")
+    if enforce == "equation":
+        return "equation"
+    if enforce == "penalty_al":
+        return "penalty_al"
+    if rec.kind == ConstraintKind.DISTRIBUTING:
+        return "distributing"
+    return "embedded"
+
+
+class MPElementEntry(NamedTuple):
+    """One MP element to plan: its site, record, key and tap verb.
+
+    ``key`` is ``id(record)``, except for a rebar cell, whose key is
+    ``(pg, i_node, j_node)``: the partitioned emit hands each rank copies
+    of the bar records that hold only its cells.
+    """
+
+    site: str
+    record: Any
+    key: Hashable
+    verb: str
+
+
+class PlannedMPElement(NamedTuple):
+    """One MP element as the tag plan numbers it."""
+
+    site: str
+    record: Any
+    key: Hashable
+    verb: str
+    tag: int
+
+
+def mp_element_entry(
+    site: str, record: Any, cell: "tuple[int, int] | None" = None,
+) -> MPElementEntry:
+    """The plan entry of one MP element; an unknown site raises."""
+    if site not in MP_ELEMENT_SITES:
+        raise BridgeError(
+            f"unknown MP-element site {site!r}; the sites are "
+            f"{MP_ELEMENT_SITES}."
+        )
+    if (site == "rebar_cell") != (cell is not None):
+        raise BridgeError(
+            "mp_element_entry: a rebar_cell entry, and only a rebar_cell "
+            "entry, names its cell."
+        )
+    if cell is not None:
+        key: Hashable = (str(record.pg), int(cell[0]), int(cell[1]))
+        return MPElementEntry(site, record, key, _SITE_VERBS[site])
+    if site == "interpolation":
+        route = _interpolation_route(record)
+        if route not in _INTERPOLATION_VERBS:
+            raise BridgeError(
+                f"an {route!r} interpolation writes no element, so it "
+                "takes no element tag (ADR 0068)."
+            )
+        return MPElementEntry(
+            site, record, id(record), _INTERPOLATION_VERBS[route])
+    return MPElementEntry(site, record, id(record), _SITE_VERBS[site])
+
+
+def plan_mp_elements(
+    entries: "Iterable[MPElementEntry]", tags: TagAllocator,
+) -> tuple[PlannedMPElement, ...]:
+    """Plan the MP elements' tags, one ``element`` tag each, in order.
+
+    The allocation loop of every MP-element writer, moved out of the
+    emit (ADR 0114 D4, amended): the build's tag plan runs it once per
+    emit mode with the planner allocator, in the order that mode's emit
+    writes the elements; a standalone call of a writer runs it with the
+    caller's allocator (:func:`_mp_element_tagger`).
+    """
+    out: list[PlannedMPElement] = []
+    for entry in entries:
+        out.append(PlannedMPElement(*entry, tags.allocate("element")))
+    return tuple(out)
+
+
+def mp_constraint_pools(
+    fem: "FEMData", claimed_ids: "frozenset[int]",
+) -> "tuple[Any, Any]":
+    """``(node_constraints, surface_constraints)`` of ``fem``, less the
+    stage-claimed records; ``None`` where the snapshot has no such
+    container (broker constraints are purely additive)."""
+    nodes = getattr(fem, "nodes", None)
+    elements = getattr(fem, "elements", None)
+    node_constraints = (
+        getattr(nodes, "constraints", None) if nodes is not None else None
+    )
+    surface_constraints = (
+        getattr(elements, "constraints", None)
+        if elements is not None
+        else None
+    )
+    # Filter out records claimed by stage builders so they don't
+    # double-emit in the global block and again inside their owning
+    # stage's block.  Wrap once at the orchestrator; helpers consume
+    # the adapter unchanged.
+    if claimed_ids and node_constraints is not None:
+        node_constraints = _ExcludeClaimedConstraints(
+            node_constraints, claimed_ids,
+        )
+    if claimed_ids and surface_constraints is not None:
+        surface_constraints = _ExcludeClaimedConstraints(
+            surface_constraints, claimed_ids,
+        )
+    return node_constraints, surface_constraints
+
+
+def _rigid_body_element_records(
+    node_constraints: Iterable[object],
+    allowed_ids: "frozenset[int] | None" = None,
+) -> Iterator[Any]:
+    """The ``rigid_body`` rows emitted as ``LadrunoRigidBody`` elements
+    (``as_element=True``), in container order."""
+    from apeGmsh._kernel.records._constraints import NodeGroupRecord
+    from apeGmsh._kernel.records._kinds import ConstraintKind
+
+    for rec in node_constraints:
+        if allowed_ids is not None and id(rec) not in allowed_ids:
+            continue
+        if (
+            isinstance(rec, NodeGroupRecord)
+            and rec.kind == ConstraintKind.RIGID_BODY
+            and getattr(rec, "as_element", False)
+        ):
+            yield rec
+
+
+def _kinematic_coupling_records(
+    node_constraints: Iterable[object],
+    allowed_ids: "frozenset[int] | None" = None,
+) -> Iterator[Any]:
+    """The ``kinematic_coupling`` rows, in container order."""
+    from apeGmsh._kernel.records._constraints import NodeGroupRecord
+    from apeGmsh._kernel.records._kinds import ConstraintKind
+
+    for rec in node_constraints:
+        if allowed_ids is not None and id(rec) not in allowed_ids:
+            continue
+        if (
+            isinstance(rec, NodeGroupRecord)
+            and rec.kind == ConstraintKind.KINEMATIC_COUPLING
+        ):
+            yield rec
+
+
+def interpolation_records(surface_constraints: object) -> list[Any]:
+    """Every :class:`InterpolationRecord` ``surface_constraints`` yields
+    (``tied_contact`` / ``mortar`` slaves expanded), in order."""
+    from apeGmsh._kernel.records._constraints import InterpolationRecord
+
+    interps = getattr(surface_constraints, "interpolations", None)
+    if surface_constraints is None or interps is None:
+        return []
+    return [r for r in interps() if isinstance(r, InterpolationRecord)]
+
+
+def constraint_pass_entries(
+    node_constraints: "Iterable[object] | None",
+    interpolations: "Iterable[Any]",
+    *,
+    allowed_ids: "frozenset[int] | None" = None,
+) -> list[MPElementEntry]:
+    """The elements one MP-constraint pass writes, in its write order.
+
+    Rigid bodies, then kinematic couplings (both over
+    ``node_constraints``, filtered to ``allowed_ids`` when given), then
+    every interpolation in ``interpolations`` that writes an element: the
+    order of :func:`emit_mp_constraints`, of its partitioned and staged
+    variants, which take their records from the same walks.
+    """
+    from apeGmsh._kernel.records._constraints import InterpolationRecord
+
+    out: list[MPElementEntry] = []
+    if node_constraints is not None:
+        out.extend(
+            mp_element_entry("rigid_body", rec)
+            for rec in _rigid_body_element_records(
+                node_constraints, allowed_ids))
+        out.extend(
+            mp_element_entry("kinematic_coupling", rec)
+            for rec in _kinematic_coupling_records(
+                node_constraints, allowed_ids))
+    out.extend(
+        mp_element_entry("interpolation", rec)
+        for rec in interpolations
+        if isinstance(rec, InterpolationRecord)
+        and _interpolation_route(rec) != "equation"
+    )
+    return out
+
+
+def _fem_side_list(fem: "FEMData", name: str) -> list[Any]:
+    """``fem.elements.<name>`` as a list; empty when it has none."""
+    elements = getattr(fem, "elements", None)
+    if elements is None:
+        return []
+    return list(getattr(elements, name, None) or ())
+
+
+def reinforce_tie_records(fem: "FEMData") -> list[Any]:
+    """``fem.elements.reinforce_ties`` (``g.reinforce``)."""
+    return _fem_side_list(fem, "reinforce_ties")
+
+
+def embed_tie_records(fem: "FEMData") -> list[Any]:
+    """``fem.elements.embed_ties`` (``g.embed``)."""
+    return _fem_side_list(fem, "embed_ties")
+
+
+def rebar_element_records(fem: "FEMData") -> list[Any]:
+    """``fem.elements.rebar_elements`` (``g.rebar.place(emit_elements=True)``)."""
+    return _fem_side_list(fem, "rebar_elements")
+
+
+def interface_records(fem: "FEMData") -> list[Any]:
+    """``fem.elements.interfaces`` (``g.constraints.interface``)."""
+    return _fem_side_list(fem, "interfaces")
+
+
+def rebar_cell_entries(records: "Iterable[Any]") -> list[MPElementEntry]:
+    """One entry per line cell of each bar record, in write order."""
+    return [
+        mp_element_entry("rebar_cell", rec, (int(i), int(j)))
+        for rec in records
+        for i, j in rec.connectivity
+    ]
+
+
+def mp_element_keys(
+    fem: "FEMData", *, partitioned: bool,
+) -> "Counter[tuple[str, Hashable]]":
+    """Every ``(site, key)`` one emit of ``fem`` writes, as a multiset.
+
+    Read straight off the FEM snapshot, past any stage claim, rank or
+    pass routing, so a plan whose routing drops or doubles an element
+    disagrees with it. A partitioned emit writes no embed tie (the path
+    refuses ``g.embed``) and skips an interpolation with no master node
+    (no rank can host it).
+    """
+    from collections import Counter
+
+    node_constraints, surface_constraints = mp_constraint_pools(
+        fem, frozenset())
+    interps = interpolation_records(surface_constraints)
+    if partitioned:
+        interps = [r for r in interps if len(r.master_nodes)]
+    entries = constraint_pass_entries(node_constraints, interps)
+    entries += [
+        mp_element_entry("reinforce_tie", r)
+        for r in reinforce_tie_records(fem)]
+    if not partitioned:
+        entries += [
+            mp_element_entry("embed_tie", r) for r in embed_tie_records(fem)]
+    entries += rebar_cell_entries(rebar_element_records(fem))
+    return Counter((e.site, e.key) for e in entries)
+
+
+@dataclass(frozen=True, slots=True)
+class MPElementPlan:
+    """The MP elements' tags, in the order the emit writes them.
+
+    ``fem`` is the FEM snapshot that was planned and ``lines`` the
+    elements in emit order. ``claimed_ids`` are the stage-claimed records
+    the global passes skip. A partitioned plan also carries the global
+    MP-constraint pass's routing, resolved once (ADR 0027):
+    ``phantom_coords`` and each rank's :class:`_RankConstraintPlan`,
+    which :func:`emit_mp_constraints_partitioned` reads instead of
+    resolving it again.
+
+    A plan holds each element once and covers every element the emit of
+    ``fem`` writes (:meth:`check_covers`); either failure raises
+    :class:`TagLawError` when the plan is made.
+    """
+
+    fem: Any
+    lines: tuple[PlannedMPElement, ...]
+    partitioned: bool = False
+    claimed_ids: frozenset[int] = frozenset()
+    phantom_coords: "Mapping[int, tuple[float, float, float]]" = field(
+        default_factory=dict)
+    rank_plans: "Mapping[int, _RankConstraintPlan]" = field(
+        default_factory=dict)
+    _index: "dict[tuple[str, Hashable], int]" = field(
+        init=False, compare=False, repr=False)
+
+    def __post_init__(self) -> None:
+        index: "dict[tuple[str, Hashable], int]" = {}
+        for line in self.lines:
+            k = (line.site, line.key)
+            if k in index:
+                raise TagLawError(
+                    f"the MP-element plan holds the {line.site} element "
+                    f"{line.key!r} twice: an emit writes each once (ADR "
+                    "0114 D4, amended)."
+                )
+            index[k] = line.tag
+        object.__setattr__(self, "_index", index)
+        self.check_covers()
+
+    def check_covers(self) -> None:
+        """Raise :class:`TagLawError` unless the plan holds exactly the
+        MP elements the emit of its FEM writes (:func:`mp_element_keys`).
+
+        The writers look each element's tag up by record, so a plan that
+        dropped a record's element would only fail when that record is
+        written; this check refuses it, and a plan that holds another
+        model's record in its place, when the plan is made.
+        """
+        from collections import Counter
+
+        planned = Counter((line.site, line.key) for line in self.lines)
+        expected = mp_element_keys(self.fem, partitioned=self.partitioned)
+        if planned != expected:
+            raise TagLawError(
+                f"the MP-element plan holds {sum(planned.values())} "
+                f"elements, but the emit of its FEM writes "
+                f"{sum(expected.values())}, or other ones: the plan does "
+                "not cover the model (ADR 0114 D4, amended)."
+            )
+
+    def for_fem(self, fem: "FEMData") -> "MPElementPlan":
+        """The plan, which must have been made over ``fem``; a plan made
+        over another FEM snapshot raises :class:`TagLawError`."""
+        if fem is not self.fem:
+            raise TagLawError(_FOREIGN_FEM.format(family="MP-element"))
+        return self
+
+    def check_claims(self, claimed_ids: "frozenset[int]") -> None:
+        """Raise :class:`TagLawError` unless the plan's global passes
+        skipped exactly the stage claims ``claimed_ids``."""
+        if frozenset(claimed_ids) != self.claimed_ids:
+            raise TagLawError(
+                "the MP-element plan was made for other stage claims than "
+                "this emit passes (ADR 0114 D4, amended)."
+            )
+
+    def tag_of(self, entry: MPElementEntry) -> int:
+        """The planned tag of ``entry``; a record the plan does not hold
+        raises :class:`TagLawError`."""
+        tag = self._index.get((entry.site, entry.key))
+        if tag is None:
+            raise TagLawError(
+                f"the MP-element plan holds no {entry.site} element for "
+                f"{entry.key!r}: the plan was not made for this emit (ADR "
+                "0114 D4, amended)."
+            )
+        return tag
+
+    def rank_constraints(
+        self, rank: int,
+    ) -> "tuple[Mapping[int, tuple[float, float, float]], _RankConstraintPlan]":
+        """The global pass's phantom coordinates and rank ``rank``'s
+        routing; a rank the plan did not route raises."""
+        if not self.partitioned:
+            raise TagLawError(
+                "a flat MP-element plan carries no rank routing; the "
+                "partitioned emit reads a partitioned plan (ADR 0114 D4, "
+                "amended)."
+            )
+        if rank not in self.rank_plans:
+            raise TagLawError(
+                f"the MP-element plan routes no rank {rank}: the plan was "
+                "not made for this emit (ADR 0114 D4, amended)."
+            )
+        return self.phantom_coords, self.rank_plans[rank]
+
+
+#: A writer handed a fork of another model's plan says so first.
+_FOREIGN_FEM = (
+    "the {family} plan was made over another FEM snapshot than the one "
+    "this emit walks: the emit allocator is a fork of another model's tag "
+    "plan. Emit each model through its own BuiltModel.emit (ADR 0114 D4, "
+    "amended)."
+)
+
+
+def plan_partitioned_mp_constraints(
+    fem: "FEMData",
+    claimed_ids: "frozenset[int]",
+    node_owners: "NodePartitionOwners",
+    element_owner: "SortedIntToInt",
+) -> "tuple[dict[int, tuple[float, float, float]], dict[int, _RankConstraintPlan]]":
+    """The global partitioned MP-constraint pass's routing, every rank.
+
+    ``(phantom_coords, {rank: _RankConstraintPlan})``: the phantom nodes
+    the pass declares, and which records each rank emits and which
+    foreign nodes it declares (:func:`_plan_rank_constraints`, ADR 0027),
+    over the ranks in the order the per-rank loop opens them. Empty when
+    the FEM carries no constraint container. The tag plan resolves it
+    once; :func:`emit_mp_constraints_partitioned` reads it.
+    """
+    node_constraints, surface_constraints = mp_constraint_pools(
+        fem, claimed_ids)
+    if node_constraints is None and surface_constraints is None:
+        return {}, {}
+    phantom_coords = (
+        _gather_phantom_nodes(node_constraints)
+        if node_constraints is not None
+        else {}
+    )
+    plans: "dict[int, _RankConstraintPlan]" = {}
+    for idx, part in enumerate(fem.partitions):
+        rank = runtime_rank_from_partition_record(part, idx)
+        plans[rank] = _plan_rank_constraints(
+            node_constraints=node_constraints,
+            surface_constraints=surface_constraints,
+            partition_rank=rank,
+            node_owners=node_owners,
+            element_owner=element_owner,
+            phantom_tags=set(phantom_coords.keys()),
+        )
+    return phantom_coords, plans
+
+
+def _mp_plan(tags: TagAllocator, fem: "FEMData") -> "MPElementPlan | None":
+    """The MP-element plan of a bridge emit, made over ``fem``.
+
+    Two-way until K1-3d S6 drops ``tags`` (ADR 0114 D4, amended): handed
+    the emit allocator of a bridge emit (``TagPlan.emit_allocator()``),
+    this returns the plan, and refuses one made over another FEM. Handed a plain :class:`TagAllocator` (a direct
+    caller, or the compose replay under its ledger waiver), it returns
+    ``None``: the writers then plan their own elements from ``tags``
+    through :func:`plan_mp_elements`. Any other fork raises
+    :class:`TagLawError`.
+    """
+    from .tag_plan import plan_or_standalone
+
+    plan = plan_or_standalone(tags)
+    if plan is None:
+        return None
+    return plan.mp_elements.planned().for_fem(fem)
+
+
+def _mp_element_tagger(
+    tags: TagAllocator,
+) -> "Callable[[MPElementEntry], int]":
+    """How a writer handed ``tags`` gets one MP element's tag.
+
+    Handed the emit allocator of a bridge emit, the tag the plan holds for
+    the element (:meth:`MPElementPlan.tag_of`). Handed a plain
+    :class:`TagAllocator`, the element is planned from ``tags`` through
+    :func:`plan_mp_elements`, the loop the tag plan runs, at the point the
+    writer writes it. Any other fork raises :class:`TagLawError`.
+    """
+    from .tag_plan import plan_or_standalone
+
+    plan = plan_or_standalone(tags)
+    if plan is not None:
+        return plan.mp_elements.planned().tag_of
+
+    def standalone(entry: MPElementEntry) -> int:
+        (line,) = plan_mp_elements((entry,), tags)
+        return line.tag
+    return standalone
+
+
+# ---------------------------------------------------------------------------
 # MP constraint fan-out (Phase 7b, ADR 0022) — closes the §3.3 deferral.
 # ---------------------------------------------------------------------------
 
@@ -6465,32 +6973,18 @@ def emit_mp_constraints(
     No-op when the FEM snapshot exposes no ``nodes.constraints`` or
     ``elements.constraints`` accessors — broker constraints are
     purely additive on top of any other bridge state.
+
+    The element tags come from :func:`plan_mp_elements` (ADR 0114 D4,
+    amended); :func:`_mp_plan` says how this reads them, and a plan made
+    for other stage claims than ``claimed_ids`` raises.
     """
     from .tag_resolution import set_phantom_node_tags
 
-    nodes = getattr(fem, "nodes", None)
-    elements = getattr(fem, "elements", None)
-    node_constraints = (
-        getattr(nodes, "constraints", None) if nodes is not None else None
-    )
-    surface_constraints = (
-        getattr(elements, "constraints", None)
-        if elements is not None
-        else None
-    )
-
-    # Filter out records claimed by stage builders so they don't
-    # double-emit in the global block and again inside their owning
-    # stage's block.  Wrap once at the orchestrator; helpers consume
-    # the adapter unchanged.
-    if claimed_ids and node_constraints is not None:
-        node_constraints = _ExcludeClaimedConstraints(
-            node_constraints, claimed_ids,
-        )
-    if claimed_ids and surface_constraints is not None:
-        surface_constraints = _ExcludeClaimedConstraints(
-            surface_constraints, claimed_ids,
-        )
+    plan = _mp_plan(tags, fem)
+    if plan is not None:
+        plan.check_claims(claimed_ids)
+    node_constraints, surface_constraints = mp_constraint_pools(
+        fem, claimed_ids)
 
     # -------------------------------------------------------------------
     # 0. Pre-load the phantom-tag predicate on the emitter so the H5
@@ -6603,20 +7097,18 @@ def emit_reinforce_ties(
 
     ``records`` restricts the pass to a subset (the partitioned emit hands
     each rank the ties it owns).
+
+    The element tags come from :func:`plan_mp_elements` (ADR 0114 D4,
+    amended): :func:`_mp_element_tagger` says how this reads them.
     """
     from ..element.embedded_rebar import embedded_rebar_args
 
-    ties: Any
-    if records is not None:
-        ties = list(records)
-    else:
-        elements = getattr(fem, "elements", None)
-        ties = (
-            getattr(elements, "reinforce_ties", None)
-            if elements is not None else None
-        )
+    ties = (
+        list(records) if records is not None else reinforce_tie_records(fem))
     if not ties:
         return
+    _mp_plan(tags, fem)        # refuses a fork of another model's plan
+    tag_of = _mp_element_tagger(tags)
 
     for rec in ties:
         _emit_name(emitter, rec.name)
@@ -6653,7 +7145,7 @@ def emit_reinforce_ties(
             bipenalty=rec.bipenalty,
             dtcr=rec.dtcr,
         )
-        ele_tag = tags.allocate("element")
+        ele_tag = tag_of(mp_element_entry("reinforce_tie", rec))
         emitter.embedded_rebar(ele_tag, *args)
 
 
@@ -6674,17 +7166,16 @@ def emit_embed_ties(
     global element-tag namespace.
 
     No-op when the FEM snapshot exposes no ``elements.embed_ties`` — embedment
-    is purely additive on top of any other bridge state.
+    is purely additive on top of any other bridge state. The element tags
+    come from :func:`plan_mp_elements`, as in :func:`emit_reinforce_ties`.
     """
     from ..element.embedded_node import embedded_node_args
 
-    elements = getattr(fem, "elements", None)
-    ties = (
-        getattr(elements, "embed_ties", None)
-        if elements is not None else None
-    )
+    ties = embed_tie_records(fem)
     if not ties:
         return
+    _mp_plan(tags, fem)        # refuses a fork of another model's plan
+    tag_of = _mp_element_tagger(tags)
 
     for rec in ties:
         _emit_name(emitter, rec.name)
@@ -6699,7 +7190,7 @@ def emit_embed_ties(
             dtcr=rec.dtcr,
             staged=rec.staged,
         )
-        ele_tag = tags.allocate("element")
+        ele_tag = tag_of(mp_element_entry("embed_tie", rec))
         emitter.embedded_node(ele_tag, *args)
 
 
@@ -7452,33 +7943,137 @@ def _register_interface_phantoms(
         set_phantom_node_tags(emitter, set(existing) | phantoms)
 
 
+class PlannedInterface(NamedTuple):
+    """One interface record as the tag plan numbers it:
+    ``(normal_mat_tag, tangential_mat_tag, element_tag)``."""
+
+    record: Any
+    tags: tuple[int, int, int]
+
+
+def plan_interface_tags(
+    records: "Iterable[InterfaceRecord]", tags: TagAllocator,
+) -> tuple[PlannedInterface, ...]:
+    """Plan every record's material + element tags, in the given order.
+
+    The allocation loop of :func:`allocate_interface_tags`, moved out of
+    the emit (ADR 0114 D4, amended). Per record the allocator is consumed
+    in the ``(uniaxialMaterial, uniaxialMaterial, element)`` sequence the
+    pre-S8 inline allocation used, so the per-kind counters advance
+    exactly as before.
+    """
+    out: list[PlannedInterface] = []
+    for rec in records:
+        n_tag = tags.allocate("uniaxialMaterial")
+        t_tag = tags.allocate("uniaxialMaterial")
+        ele_tag = tags.allocate("element")
+        out.append(PlannedInterface(rec, (n_tag, t_tag, ele_tag)))
+    return tuple(out)
+
+
+@dataclass(frozen=True, slots=True)
+class InterfacePlan:
+    """The interface records' tags, in the order the emit planned them.
+
+    ``fem`` is the FEM snapshot whose ``elements.interfaces`` were
+    planned, and ``lines`` each record with its ``(normal, tangential,
+    element)`` tags: on a flat emit the unclaimed records, then each
+    stage's claimed ones, as their passes write them; on a partitioned
+    emit the same sequence as one pre-pass (ADR 0093 S8/S9). A plan
+    holds each record once and every record of ``fem`` (:meth:`check_covers`),
+    or raises :class:`TagLawError` when it is made.
+    """
+
+    fem: Any
+    lines: tuple[PlannedInterface, ...]
+    _index: "dict[int, tuple[int, int, int]]" = field(
+        init=False, compare=False, repr=False)
+
+    def __post_init__(self) -> None:
+        index: "dict[int, tuple[int, int, int]]" = {}
+        for line in self.lines:
+            if id(line.record) in index:
+                raise TagLawError(
+                    "the interface plan holds one record twice: an emit "
+                    "writes each once (ADR 0114 D4, amended)."
+                )
+            index[id(line.record)] = line.tags
+        object.__setattr__(self, "_index", index)
+        self.check_covers()
+
+    def check_covers(self) -> None:
+        """Raise :class:`TagLawError` unless the plan holds exactly the
+        records of its FEM's ``elements.interfaces``.
+
+        The writers look each record's tags up by identity, so a plan
+        that dropped a record would only fail when that record is written;
+        this check refuses it, and a plan that holds another model's
+        record in its place, when the plan is made.
+        """
+        planned = sorted(id(line.record) for line in self.lines)
+        records = interface_records(self.fem)
+        if planned != sorted(id(r) for r in records):
+            raise TagLawError(
+                f"the interface plan holds {len(planned)} records, but the "
+                f"FEM carries {len(records)}, or other ones: the plan does "
+                "not cover the model (ADR 0114 D4, amended)."
+            )
+
+    def for_fem(self, fem: "FEMData") -> "InterfacePlan":
+        """The plan, which must have been made over ``fem``; a plan made
+        over another FEM snapshot raises :class:`TagLawError`."""
+        if fem is not self.fem:
+            raise TagLawError(_FOREIGN_FEM.format(family="interface"))
+        return self
+
+    def tags_for(
+        self, records: "Iterable[InterfaceRecord]",
+    ) -> "dict[int, tuple[int, int, int]]":
+        """``{id(record): tags}`` for ``records``; a record the plan does
+        not hold raises :class:`TagLawError`."""
+        out: "dict[int, tuple[int, int, int]]" = {}
+        for rec in records:
+            planned = self._index.get(id(rec))
+            if planned is None:
+                raise TagLawError(
+                    "the interface plan holds no tags for an interface "
+                    "record this emit writes: the plan was not made for "
+                    "this emit (ADR 0114 D4, amended)."
+                )
+            out[id(rec)] = planned
+        return out
+
+
 def allocate_interface_tags(
     records: "Sequence[InterfaceRecord]", tags: TagAllocator,
 ) -> "dict[int, tuple[int, int, int]]":
-    """Pre-allocate every record's material + element tags in the given
-    (flat side-list) order — ADR 0093 INV-5 / ADR 0027 §"Tag
-    determinism".
+    """Every record's material + element tags, keyed by ``id(record)`` —
+    ADR 0093 INV-5 / ADR 0027 §"Tag determinism".
 
     Returns ``{id(record): (normal_mat_tag, tangential_mat_tag,
-    element_tag)}``.  Per record the allocator is consumed in the same
-    ``(uniaxialMaterial, uniaxialMaterial, element)`` sequence the
-    pre-S8 inline allocation used, so the resulting tag values are
-    byte-identical on the flat path — the per-kind counters advance
-    exactly as before.
+    element_tag)}``. Two-way until K1-3d S6 drops ``tags`` (ADR 0114 D4,
+    amended): handed the emit allocator of a bridge emit
+    (``TagPlan.emit_allocator()``), this reads the tags the build's plan
+    holds for ``records`` (:meth:`InterfacePlan.tags_for`). Handed a plain
+    :class:`TagAllocator` (a direct caller), it plans ``records``, in the
+    given order, through :func:`plan_interface_tags`. Any other fork
+    raises :class:`TagLawError`.
 
     Splitting allocation from emission is what lets the partitioned
     path allocate ALL interface tags before the per-rank fan-out (so a
     record's tags do not depend on which rank owns it, and 1-rank and
     N-rank decks stay byte-comparable), while the flat and stage passes
-    consume the SAME pre-pass so the two paths cannot drift.
+    consume the SAME plan so the two paths cannot drift.
     """
-    plan: "dict[int, tuple[int, int, int]]" = {}
-    for rec in records:
-        n_tag = tags.allocate("uniaxialMaterial")
-        t_tag = tags.allocate("uniaxialMaterial")
-        ele_tag = tags.allocate("element")
-        plan[id(rec)] = (n_tag, t_tag, ele_tag)
-    return plan
+    from .tag_plan import plan_or_standalone
+
+    plan = plan_or_standalone(tags)
+    if plan is None:
+        return {
+            id(line.record): line.tags
+            for line in plan_interface_tags(records, tags)
+        }
+    return plan.interfaces.planned().tags_for(records)
 
 
 def _plan_rank_interfaces(
@@ -7827,7 +8422,12 @@ def emit_interfaces(
     atomic unit inside its owner rank's block via the same
     :func:`_emit_interface_record` core. No-op when the FEM snapshot
     exposes no ``elements.interfaces``.
+
+    The tags come from :func:`plan_interface_tags` (ADR 0114 D4,
+    amended); :func:`allocate_interface_tags` says how this reads them.
     """
+    from .tag_plan import plan_or_standalone
+
     elements = getattr(fem, "elements", None)
     interfaces = (
         getattr(elements, "interfaces", None)
@@ -7847,6 +8447,9 @@ def emit_interfaces(
     unclaimed = [rec for rec in all_records if id(rec) not in claimed_ids]
     if not unclaimed:
         return
+    plan = plan_or_standalone(tags)
+    if plan is not None:       # refuses a fork of another model's plan
+        plan.interfaces.planned().for_fem(fem)
     _register_interface_phantoms(emitter, unclaimed)
     tag_plan = allocate_interface_tags(unclaimed, tags)
     for rec in unclaimed:
@@ -7886,18 +8489,17 @@ def emit_rebar_elements(
 
     ``records`` restricts the pass to a subset (the partitioned emit hands
     each rank records holding only the bar cells it owns).
+
+    The element tags come from :func:`plan_mp_elements`, one per cell,
+    keyed by ``(pg, i_node, j_node)`` so a rank's copy of a bar record
+    reads the tags planned for its cells (:func:`_mp_element_tagger`).
     """
-    recs: Any
-    if records is not None:
-        recs = list(records)
-    else:
-        elements = getattr(fem, "elements", None)
-        recs = (
-            getattr(elements, "rebar_elements", None)
-            if elements is not None else None
-        )
+    recs = (
+        list(records) if records is not None else rebar_element_records(fem))
     if not recs:
         return
+    _mp_plan(tags, fem)        # refuses a fork of another model's plan
+    tag_of = _mp_element_tagger(tags)
 
     for rec in recs:
         if rec.element != "truss":
@@ -7919,7 +8521,8 @@ def emit_rebar_elements(
                 f"Known names: {known}."
             )
         for i_node, j_node in rec.connectivity:
-            ele_tag = tags.allocate("element")
+            ele_tag = tag_of(mp_element_entry(
+                "rebar_cell", rec, (int(i_node), int(j_node))))
             # Minted bar cell — the line cell has a gmsh id, but a dim-3
             # extraction drops it from /elements, so there is no row to
             # join on; args start with the node pair: ADR 0049 node-pair
@@ -8082,22 +8685,15 @@ def _emit_rigid_body_elements(
     **Fork-only:** the line emits on any build; the live emitter gates
     ``LadrunoRigidBody`` through ``_FORK_ONLY_ELEMENTS`` so a stock
     OpenSees build fails loud (it does not know class tag 33015).
-    """
-    from apeGmsh._kernel.records._constraints import NodeGroupRecord
-    from apeGmsh._kernel.records._kinds import ConstraintKind
 
-    for rec in node_constraints:
-        if allowed_ids is not None and id(rec) not in allowed_ids:
-            continue
-        if not (
-            isinstance(rec, NodeGroupRecord)
-            and rec.kind == ConstraintKind.RIGID_BODY
-            and getattr(rec, "as_element", False)
-        ):
-            continue
+    The element tags come from :func:`plan_mp_elements`
+    (:func:`_mp_element_tagger`).
+    """
+    tag_of = _mp_element_tagger(tags)
+    for rec in _rigid_body_element_records(node_constraints, allowed_ids):
         _emit_name(emitter, rec.name)
         body_nodes = [int(rec.master_node), *(int(s) for s in rec.slave_nodes)]
-        ele_tag = tags.allocate("element")
+        ele_tag = tag_of(mp_element_entry("rigid_body", rec))
         args: list[int | float | str] = [len(body_nodes), *body_nodes]
         if rec.mass is not None:
             args += ["-mass", float(rec.mass)]
@@ -8271,21 +8867,14 @@ def _emit_kinematic_couplings(
     OpenSees build fails loud (it does not know class tag 33012).
 
     ``allowed_ids`` filters to a rank's / stage's claimed subset when given.
+    The element tags come from :func:`plan_mp_elements`
+    (:func:`_mp_element_tagger`).
     """
-    from apeGmsh._kernel.records._constraints import NodeGroupRecord
-    from apeGmsh._kernel.records._kinds import ConstraintKind
-
-    for rec in node_constraints:
-        if allowed_ids is not None and id(rec) not in allowed_ids:
-            continue
-        if not (
-            isinstance(rec, NodeGroupRecord)
-            and rec.kind == ConstraintKind.KINEMATIC_COUPLING
-        ):
-            continue
+    tag_of = _mp_element_tagger(tags)
+    for rec in _kinematic_coupling_records(node_constraints, allowed_ids):
         _emit_name(emitter, rec.name)
         slaves = [int(sn) for sn in rec.slave_nodes]
-        ele_tag = tags.allocate("element")
+        ele_tag = tag_of(mp_element_entry("kinematic_coupling", rec))
         args: list[int | float | str] = [
             int(rec.master_node), len(slaves), *slaves,
         ]
@@ -8425,25 +9014,35 @@ def _emit_surface_couplings(
     canonical :class:`TagAllocator` (``"element"`` kind) so embedded-
     node element tags share the global element-tag namespace and never
     collide with structural elements or with each other under
-    partitioned emit (ADR 0027 §"Tag determinism").
+    partitioned emit (ADR 0027 §"Tag determinism"). The tags come from
+    :func:`plan_mp_elements` (:func:`_mp_element_tagger`).
     """
-    from apeGmsh._kernel.records._constraints import InterpolationRecord
-
-    interps = getattr(surface_constraints, "interpolations", None)
-    if interps is None:
-        return
-
-    for rec in interps():
-        if not isinstance(rec, InterpolationRecord):
-            continue
-        _emit_one_interpolation(
-            emitter, rec, tags, fem_eid_to_ops_tag=fem_eid_to_ops_tag,
+    tag_of = _mp_element_tagger(tags)
+    for rec in interpolation_records(surface_constraints):
+        _write_one_interpolation(
+            emitter, rec, tag_of, fem_eid_to_ops_tag=fem_eid_to_ops_tag,
             stiffness_resolver=stiffness_resolver,
         )
 
 
 def _emit_one_interpolation(
     emitter: "Emitter", rec: "InterpolationRecord", tags: TagAllocator,
+    *, fem_eid_to_ops_tag: "FemToOpsTagMap | None" = None,
+    stiffness_resolver: "StiffnessResolver | None" = None,
+) -> None:
+    """Emit one :class:`InterpolationRecord` row
+    (:func:`_write_one_interpolation`), its element tag read through
+    :func:`_mp_element_tagger`."""
+    _write_one_interpolation(
+        emitter, rec, _mp_element_tagger(tags),
+        fem_eid_to_ops_tag=fem_eid_to_ops_tag,
+        stiffness_resolver=stiffness_resolver,
+    )
+
+
+def _write_one_interpolation(
+    emitter: "Emitter", rec: "InterpolationRecord",
+    tag_of: "Callable[[MPElementEntry], int]",
     *, fem_eid_to_ops_tag: "FemToOpsTagMap | None" = None,
     stiffness_resolver: "StiffnessResolver | None" = None,
 ) -> None:
@@ -8464,29 +9063,29 @@ def _emit_one_interpolation(
       in the FEM record but aren't emitted, the element interpolates
       isoparametrically over the corners).
 
-    Each line allocates a fresh element tag from the canonical
-    :class:`TagAllocator` so coupling-element tags share the global
-    element-tag namespace (ADR 0027 §"Tag determinism").
+    Each element line takes the tag ``tag_of`` gives it (the plan's, or
+    one planned from a plain allocator: :func:`_mp_element_tagger`), so
+    coupling-element tags share the global element-tag namespace (ADR
+    0027 §"Tag determinism"). The route is :func:`_interpolation_route`,
+    the one the tag plan reads.
     """
-    from apeGmsh._kernel.records._kinds import ConstraintKind
-
     _emit_name(emitter, rec.name)
 
     # ADR 0068 — enforce route. The equation route is a domain-level
-    # EQ_Constraint (NOT an element), so it must branch BEFORE element-tag
-    # allocation: allocating a tag it never uses would perturb the
-    # deterministic element-tag stream. ``penalty`` / ``penalty_al`` keep
-    # the element paths below.
-    enforce = getattr(rec, "enforce", "penalty")
-    if enforce == "equation":
+    # EQ_Constraint (NOT an element), so it must branch BEFORE the
+    # element-tag read: it takes no tag, and the plan holds none for it.
+    # ``penalty`` / ``penalty_al`` keep the element paths below.
+    route = _interpolation_route(rec)
+    if route == "equation":
         _emit_equation_tie(emitter, rec)
         return
 
-    ele_tag = tags.allocate("element")
-    if enforce == "penalty_al":
+    ele_tag = tag_of(MPElementEntry(
+        "interpolation", rec, id(rec), _INTERPOLATION_VERBS[route]))
+    if route == "penalty_al":
         _emit_penalty_al_tie(emitter, rec, ele_tag, fem_eid_to_ops_tag)
         return
-    if rec.kind == ConstraintKind.DISTRIBUTING:
+    if route == "distributing":
         ref = int(rec.slave_node)
         independents = [int(mn) for mn in rec.master_nodes]
         args: list[int | float | str] = [ref, len(independents), *independents]
@@ -10859,39 +11458,41 @@ def emit_mp_constraints_partitioned(
     Returns the real (non-phantom) ghost tags this rank declared, so a
     staged caller can keep their SP state in sync with the owner across
     later stage blocks (ADR 0027 INV-2).
+
+    Steps 1-2 (which records emit on this rank, and which foreign nodes
+    it declares) are resolved once per tag plan, every rank at once, by
+    :func:`plan_partitioned_mp_constraints` (ADR 0114 D4, amended): handed
+    the emit allocator of a bridge emit, this reads them, and the element
+    tags, from the plan (:func:`_mp_plan`). Handed a plain
+    :class:`TagAllocator`, it resolves them with the same function and
+    plans its elements from ``tags``.
     """
     from .tag_resolution import set_phantom_node_tags
-    nodes = getattr(fem, "nodes", None)
-    elements = getattr(fem, "elements", None)
-    node_constraints = (
-        getattr(nodes, "constraints", None) if nodes is not None else None
-    )
-    surface_constraints = (
-        getattr(elements, "constraints", None)
-        if elements is not None
-        else None
-    )
 
+    mp_plan = _mp_plan(tags, fem)
+    if mp_plan is not None:
+        mp_plan.check_claims(claimed_ids)
+    # Stage-claimed records are filtered out — they emit per-stage via
+    # ``emit_stage_mp_constraints_partitioned`` instead.
+    node_constraints, surface_constraints = mp_constraint_pools(
+        fem, claimed_ids)
     if node_constraints is None and surface_constraints is None:
         return frozenset()
 
-    # Filter out stage-claimed records — they emit per-stage via
-    # ``emit_stage_mp_constraints_partitioned`` instead.
-    if claimed_ids and node_constraints is not None:
-        node_constraints = _ExcludeClaimedConstraints(
-            node_constraints, claimed_ids,
-        )
-    if claimed_ids and surface_constraints is not None:
-        surface_constraints = _ExcludeClaimedConstraints(
-            surface_constraints, claimed_ids,
-        )
-
-    # Build the lookup tables used during constraint replication.
-    phantom_coords = (
-        _gather_phantom_nodes(node_constraints)
-        if node_constraints is not None
-        else {}
-    )
+    # Which constraints emit on this rank, plus all the foreign-node
+    # tags they reference (replicate-on-both / replicate-everywhere-
+    # with-a-slave rules from ADR 0027), and the phantom nodes.
+    if mp_plan is not None:
+        phantom_coords, plan = mp_plan.rank_constraints(partition_rank)
+    else:
+        phantom_coords, rank_plans = plan_partitioned_mp_constraints(
+            fem, claimed_ids, node_owners, element_owner)
+        if partition_rank not in rank_plans:
+            raise BridgeError(
+                f"emit_mp_constraints_partitioned: rank {partition_rank} "
+                "is not a rank of the FEM snapshot's partitions."
+            )
+        plan = rank_plans[partition_rank]
 
     # Pre-load the phantom-tag predicate on the emitter (ADR 0033 —
     # stateless replacement for the prior phantom-mode flag).
@@ -10900,17 +11501,6 @@ def emit_mp_constraints_partitioned(
     # consistent across the OpenSeesMP fan-out.
     set_phantom_node_tags(emitter, set(phantom_coords.keys()))
 
-    # Collect which constraints will emit on this rank, plus all the
-    # foreign-node tags they reference (replicate-on-both / replicate-
-    # everywhere-with-a-slave rules from ADR 0027).
-    plan = _plan_rank_constraints(
-        node_constraints=node_constraints,
-        surface_constraints=surface_constraints,
-        partition_rank=partition_rank,
-        node_owners=node_owners,
-        element_owner=element_owner,
-        phantom_tags=set(phantom_coords.keys()),
-    )
     if not plan.any():
         return frozenset()
 
@@ -11385,14 +11975,16 @@ def _emit_surface_couplings_for_rank(
     landing on rank K+1 receive distinct globally-unique tags (ADR 0027
     §"Tag determinism").  The previous static ``1_000_000`` base
     collided across ranks because each rank restarted the counter
-    independently.
+    independently. The tags come from :func:`plan_mp_elements`
+    (:func:`_mp_element_tagger`).
     """
     from apeGmsh._kernel.records._constraints import InterpolationRecord
 
+    tag_of = _mp_element_tagger(tags)
     for rec in records:
         if not isinstance(rec, InterpolationRecord):
             continue
-        _emit_one_interpolation(
-            emitter, rec, tags, fem_eid_to_ops_tag=fem_eid_to_ops_tag,
+        _write_one_interpolation(
+            emitter, rec, tag_of, fem_eid_to_ops_tag=fem_eid_to_ops_tag,
             stiffness_resolver=stiffness_resolver,
         )

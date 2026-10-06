@@ -109,13 +109,8 @@ _MINT_SITES: dict[str, str] = {
     "emit_initial_stress_global": "parameters",
     "emit_update_parameters": "parameters",
     "emit_activate_absorbing": "parameters",
-    "emit_reinforce_ties": "mp_elements",
-    "emit_embed_ties": "mp_elements",
-    "emit_rebar_elements": "mp_elements",
-    "_emit_rigid_body_elements": "mp_elements",
-    "_emit_kinematic_couplings": "mp_elements",
-    "_emit_one_interpolation": "mp_elements",
-    "allocate_interface_tags": "interfaces",
+    "plan_mp_elements": "mp_elements",
+    "plan_interface_tags": "interfaces",
     "plan_contacts": "contacts",
 }
 
@@ -1340,10 +1335,12 @@ def test_plan_seed_is_the_emit_seed(name: str) -> None:
 
 
 def test_fem_ids_case_reserves_past_the_carrier() -> None:
-    """The ``element_tags="fem"`` case: FEM ids from 33, mints from 51."""
+    """The ``element_tags="fem"`` case: FEM ids from 33, the planned MP
+    elements and interface from 51, nothing minted at emit."""
     case = _case("synthesised_elements_fem_ids/flat")
-    assert case.plan.allocator.last("element") == ts._SYNTH_CARRIER_EID
-    assert min(case.minted["element"]) == ts._SYNTH_CARRIER_EID + 1
+    assert case.seed["element"] == ts._SYNTH_CARRIER_EID
+    assert min(case.planned["element"]) == ts._SYNTH_CARRIER_EID + 1
+    assert "element" not in case.minted
     elements = sorted(t for k, t in case.stream if k == "element:Truss")
     assert elements[0] == ts._SYNTH_FIRST_EID
 
