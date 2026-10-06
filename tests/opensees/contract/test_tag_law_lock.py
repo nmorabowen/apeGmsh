@@ -8,12 +8,14 @@ design slice #1445. This lock holds the other side now. No module under
 
 ``allocate``
     reference a minting method: ``TagAllocator``'s ``allocate*`` and
-    ``reserve_through``, or a recorder's ``materialize``, which allocates
-    the recorder's region tags (:data:`RECORDER_MINT_METHODS`);
+    ``reserve_through``, or a recorder's ``materialize`` /
+    ``planned_region_tags``, which plan the recorder's region tags when
+    handed a plain allocator (:data:`RECORDER_MINT_METHODS`);
 ``helper``
-    reference a tag-minting helper of ``_internal/build.py``
-    (:data:`MINTING_HELPERS`, derived from ``build.py`` and locked, so a
-    new minting helper must join the list);
+    reference a tag-minting helper of ``_internal/build.py`` or
+    ``_internal/tag_plan.py`` (:data:`MINTING_HELPERS`,
+    :data:`TAG_PLAN_MINTING_HELPERS`, each derived from its module and
+    locked, so a new minting helper must join its list);
 ``counters``
     touch ``TagAllocator._counters``;
 ``max_plus_one``
@@ -67,10 +69,17 @@ NON_MINT_METHODS = frozenset({
     "freeze", "fork", "frozen", "frozen_kinds", "_refuse",
 })
 
-#: Recorder methods that mint (``recorder.py``: ``materialize`` allocates
-#: the filter/energy region tags). Checked against ``recorder.py`` by
+#: Recorder methods that mint (``recorder.py``): ``planned_region_tags``
+#: plans the filter/energy region tags when handed a plain allocator
+#: (through ``tag_plan.plan_regions``), and ``materialize`` calls it.
+#: Derived from ``recorder.py`` by
 #: :func:`test_recorder_mint_methods_are_derived`.
-RECORDER_MINT_METHODS = frozenset({"materialize"})
+RECORDER_MINT_METHODS = frozenset({"materialize", "planned_region_tags"})
+
+#: Every module-level function of ``_internal/tag_plan.py`` that mints a
+#: tag. Derived by :func:`derive_minting_helpers`; this literal is the lock
+#: on that list, and the locked modules may reference none of them.
+TAG_PLAN_MINTING_HELPERS = frozenset({"plan_regions", "plan_tags"})
 
 #: Every module-level function of ``build.py`` that mints a tag, directly or
 #: through another one. Derived by :func:`derive_minting_helpers`; this
@@ -285,7 +294,7 @@ def _violations_by_module(
     for path in _locked_modules():
         tree = (sources or {}).get(path) or _parse(path)
         rel = path.relative_to(_OPENSEES).as_posix()
-        out[rel] = scan(tree)
+        out[rel] = scan(tree, MINTING_HELPERS | TAG_PLAN_MINTING_HELPERS)
     return out
 
 
@@ -323,20 +332,52 @@ def test_allocator_methods_are_classified() -> None:
 
 
 def test_recorder_mint_methods_are_derived() -> None:
-    """Every ``recorder.py`` method that allocates is in RECORDER_MINT_METHODS."""
+    """``recorder.py``'s minting methods are exactly RECORDER_MINT_METHODS.
+
+    A method mints if it calls an allocator mint, calls a tag-plan minting
+    helper (``plan_regions``), or calls a minting method of its own class
+    hierarchy (``self.m(...)``, ``FilterableRecorder.m(self, ...)``).
+    """
     tree = _parse(_OPENSEES / "recorder.py")
-    minting = {
-        fn.name
-        for cls in tree.body if isinstance(cls, ast.ClassDef)
+    methods = [
+        fn for cls in tree.body if isinstance(cls, ast.ClassDef)
         for fn in cls.body if isinstance(fn, ast.FunctionDef)
+    ]
+
+    def calls(fn: ast.FunctionDef) -> list[ast.expr]:
+        return [n.func for n in ast.walk(fn) if isinstance(n, ast.Call)]
+
+    minting = {
+        fn.name for fn in methods
         if any(
-            isinstance(n, ast.Call) and _is_allocator_mint_attr(n.func)
-            for n in ast.walk(fn))
+            _is_allocator_mint_attr(f) or (
+                isinstance(f, ast.Name) and f.id in TAG_PLAN_MINTING_HELPERS)
+            for f in calls(fn))
     }
-    assert minting, "recorder.py no longer allocates; revisit the lock"
-    assert minting <= RECORDER_MINT_METHODS, (
-        "recorder.py methods mint but are not locked: "
-        f"{sorted(minting - RECORDER_MINT_METHODS)}")
+    grew = True
+    while grew:
+        grew = False
+        for fn in methods:
+            if fn.name not in minting and any(
+                    isinstance(f, ast.Attribute) and f.attr in minting
+                    for f in calls(fn)):
+                minting.add(fn.name)
+                grew = True
+    assert minting == RECORDER_MINT_METHODS, (
+        "recorder.py's minting methods changed; update RECORDER_MINT_METHODS "
+        f"(new: {sorted(minting - RECORDER_MINT_METHODS)}, "
+        f"gone: {sorted(RECORDER_MINT_METHODS - minting)})")
+
+
+def test_tag_plan_minting_helper_list_is_derived() -> None:
+    derived = derive_minting_helpers(
+        _parse(_OPENSEES / "_internal" / "tag_plan.py"))
+    assert derived == TAG_PLAN_MINTING_HELPERS, (
+        "tag_plan.py's tag-minting helpers changed; update "
+        f"TAG_PLAN_MINTING_HELPERS (new: "
+        f"{sorted(derived - TAG_PLAN_MINTING_HELPERS)}, gone: "
+        f"{sorted(TAG_PLAN_MINTING_HELPERS - derived)})"
+    )
 
 
 def test_minting_helper_list_is_derived_from_build() -> None:

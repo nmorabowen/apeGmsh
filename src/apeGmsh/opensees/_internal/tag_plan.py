@@ -33,7 +33,6 @@ through it: :func:`plan_of` reads the plan that an allocator from
 """
 from __future__ import annotations
 
-from collections import Counter
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, ClassVar, NamedTuple
 
@@ -316,9 +315,10 @@ class RegionTagPlan(FamilyTagPlan):
     the mode's emit writes, in the order it was minted, keyed by its site.
     ``named`` holds, per named-region site, every declared region name in
     first-seen order with its merged member nodes, so the emit writes the
-    members the plan resolved. ``fem`` is the FEM snapshot it was made
-    over. The emit's writers read their tags here (:meth:`tags_for`,
-    :meth:`named_for`) and mint none.
+    members the plan resolved. ``partitioned`` says the named regions were
+    numbered rank by rank, each on the first rank that holds a member.
+    ``fem`` is the FEM snapshot it was made over. The emit's writers read
+    their tags here (:meth:`tags_for`, :meth:`named_for`) and mint none.
     """
 
     FAMILY: ClassVar[str] = "regions"
@@ -329,7 +329,10 @@ class RegionTagPlan(FamilyTagPlan):
         default=None, compare=False)
     named: "Mapping[RegionSite, tuple[tuple[str, tuple[int, ...]], ...]]" = (
         field(default_factory=dict, compare=False))
+    partitioned: bool = False
     fem: object = field(default=None, compare=False)
+    _by_site: "dict[RegionSite, dict[object, int]]" = field(
+        default_factory=dict, init=False, compare=False, repr=False)
 
     def __post_init__(self) -> None:
         if self.rows:
@@ -340,7 +343,6 @@ class RegionTagPlan(FamilyTagPlan):
         if self.regions is None:
             return
         last = 0
-        seen: set[tuple[RegionSite, object]] = set()
         for row in self.regions:
             if row.site[0] not in REGION_SITE_KINDS:
                 raise TagLawError(
@@ -352,15 +354,20 @@ class RegionTagPlan(FamilyTagPlan):
                     "order it minted them, so its tags only rise."
                 )
             last = row.tag
-            if (row.site, row.key) in seen:
+            at_site = self._by_site.setdefault(row.site, {})
+            if row.key in at_site:
                 raise TagLawError(
                     f"regions: {row.site}/{row.key!r} is planned twice.")
-            seen.add((row.site, row.key))
-            if row.site[0] == "named" and row.key not in dict(
-                    self.named.get(row.site, ())):
-                raise TagLawError(
-                    f"regions: named region {row.key!r} has a tag but no "
-                    f"members at {row.site}.")
+            at_site[row.key] = row.tag
+        for site, at_site in self._by_site.items():
+            if site[0] != "named":
+                continue
+            members = dict(self.named.get(site, ()))
+            for name in at_site:
+                if not isinstance(name, str) or not members.get(name):
+                    raise TagLawError(
+                        f"regions: named region {name!r} has a tag but no "
+                        f"members at {site}.")
 
     def _planned(self, fem: object) -> tuple[PlannedRegion, ...]:
         if self.regions is None:
@@ -381,21 +388,22 @@ class RegionTagPlan(FamilyTagPlan):
     ) -> dict[object, int]:
         """The planned tag of each of ``keys`` at ``site``.
 
-        ``keys`` are the regions this emit writes at ``site``, derived
-        from the records it walks. The plan must hold exactly those keys
-        there (by identity of key, not by count): a plan made for other
-        records, or one that dropped a region, raises
-        :class:`TagLawError`.
+        ``keys`` are the regions this emit writes at ``site``, in the order
+        it writes them, derived from the records it walks. The plan must
+        hold exactly those keys there, in that order (a damping pool and a
+        recorder write their regions in the order the plan minted them): a
+        plan made for other records, one that dropped a region, or one
+        that swapped two, raises :class:`TagLawError`.
         """
-        planned = {
-            row.key: row.tag for row in self._planned(fem) if row.site == site}
-        if Counter(list(planned)) != Counter(keys):
+        self._planned(fem)
+        planned = self._by_site.get(site, {})
+        if list(planned) != list(keys):
             raise TagLawError(
                 f"the region plan holds {list(planned)} at {site}, but this "
                 f"emit writes {list(keys)}: the plan was not made for this "
                 "emit (ADR 0114 D4, amended)."
             )
-        return {key: planned[key] for key in keys}
+        return dict(planned)
 
     def named_for(
         self, fem: object, site: RegionSite, names: "Sequence[str]",
@@ -405,8 +413,14 @@ class RegionTagPlan(FamilyTagPlan):
         ``names`` are the region names this emit's records declare at
         ``site``, in first-seen order; the plan must hold exactly them,
         in that order. Each comes with its planned members and tag.
+
+        A flat or split emit numbers the names that have members in
+        first-seen order, so their planned tags must be exactly those
+        names', rising in that order. A partitioned emit numbers them rank
+        by rank, which only its writers can check
+        (:meth:`NamedRegion.planned_tag`).
         """
-        planned = self._planned(fem)
+        self._planned(fem)
         members = tuple(self.named.get(site, ()))
         if [name for name, _ in members] != list(names):
             raise TagLawError(
@@ -415,9 +429,18 @@ class RegionTagPlan(FamilyTagPlan):
                 f"declares {list(names)}: the plan was not made for this "
                 "emit (ADR 0114 D4, amended)."
             )
-        tags = {row.key: row.tag for row in planned if row.site == site}
+        planned = self._by_site.get(site, {})
+        if not self.partitioned and list(planned) != [
+                name for name, nodes in members if nodes]:
+            raise TagLawError(
+                f"the region plan numbers the named regions {list(planned)} "
+                f"at {site}, but a flat emit numbers "
+                f"{[name for name, nodes in members if nodes]}, in that "
+                "order: the plan was not made for this emit (ADR 0114 D4, "
+                "amended)."
+            )
         return tuple(
-            NamedRegion(name, nodes, tags.get(name))
+            NamedRegion(name, nodes, planned.get(name))
             for name, nodes in members
         )
 
@@ -739,7 +762,8 @@ def plan_tags(bm: BuiltModel, mode: TagMode) -> TagPlan:
     # mode's emit writes them. No other family mints ``region``.
     sites, named = bm._region_sites(mode, ordered)
     regions = RegionTagPlan(
-        regions=plan_regions(sites, tags), named=named, fem=bm.fem)
+        regions=plan_regions(sites, tags), named=named,
+        partitioned=mode.partitioned, fem=bm.fem)
 
     # The other families are pending: their tags are still minted at
     # emit time, from TagPlan.emit_allocator().
