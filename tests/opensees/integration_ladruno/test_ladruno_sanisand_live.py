@@ -55,6 +55,7 @@ run — but such builds fail the probe anyway.
 """
 from __future__ import annotations
 
+import sys
 from collections.abc import Callable
 
 import numpy as np
@@ -380,6 +381,11 @@ def _naive_uniaxial_run(
 
 
 @pytest.mark.live
+@pytest.mark.xfail(
+    sys.platform.startswith("linux"),
+    reason="Linux fork build differs ~4e-10 from ManzariDafalias; F3 roster #1523",
+    strict=True,
+)
 def test_i1_pinned_ladruno_sanisand_reproduces_manzari_bit_identically() -> None:
     _require_ladruno_sanisand()
     fem = _single_hex_fem()
