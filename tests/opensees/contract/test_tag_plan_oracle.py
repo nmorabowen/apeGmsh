@@ -215,7 +215,9 @@ _CONTACT_MODELS: dict[str, Callable[[], Any]] = {
     "contact_ranks_4/flat": lambda: _contact_ranks(4, partitioned=False),
 }
 
-def _mp_ranks_fem(n_ranks: int, *, partitioned: bool = True) -> Any:
+def _mp_ranks_fem(
+    n_ranks: int, *, partitioned: bool = True, embed: bool = False,
+) -> Any:
     """A truss stub with one of every MP element on each rank.
 
     Rank ``r`` (``b = 100 (r + 1)``) natively holds a triangle
@@ -226,9 +228,12 @@ def _mp_ranks_fem(n_ranks: int, *, partitioned: bool = True) -> Any:
     binds ``b+5``, which lives on the next rank, so the tie's host rank
     declares it as a ghost. Every record is declared in reverse rank
     order, so the partitioned deck, which numbers each rank's elements
-    in its block, numbers them differently from the flat one.
+    in its block, numbers them differently from the flat one. ``embed``
+    adds a ``g.embed`` tie ``et{r}`` of ``b+11`` in the triangle (flat
+    only: the partitioned emit refuses ``g.embed``).
     """
     from apeGmsh._kernel.records._constraints import (
+        EmbedTieRecord,
         InterpolationRecord,
         NodeGroupRecord,
         ReinforceTieRecord,
@@ -252,6 +257,7 @@ def _mp_ranks_fem(n_ranks: int, *, partitioned: bool = True) -> Any:
     node_recs: list[Any] = []
     interps: list[Any] = []
     ties: list[Any] = []
+    embeds: list[Any] = []
     rebar: list[Any] = []
     for r in range(n_ranks):
         b, x, nxt = 100 * (r + 1), 10.0 * r, (r + 1) % n_ranks
@@ -286,6 +292,10 @@ def _mp_ranks_fem(n_ranks: int, *, partitioned: bool = True) -> Any:
             host_nodes=[b + 1, b + 2, b + 3],
             weights=np.array([0.2, 0.4, 0.4]),
             direction=np.array([0.0, 0.0, 1.0]), perfect=1.0e8))
+        embeds.insert(0, EmbedTieRecord(
+            kind="embed", name=f"et{r}", node=b + 11,
+            host_nodes=[b + 1, b + 2, b + 3],
+            weights=np.array([0.2, 0.4, 0.4]), k=1.0e8))
         rebar.insert(0, RebarElementRecord(
             pg=f"bar{r}", element="truss", material="steel", area=1.0e-4,
             connectivity=((b + 10, b + 11),)))
@@ -301,11 +311,14 @@ def _mp_ranks_fem(n_ranks: int, *, partitioned: bool = True) -> Any:
     fem.add_surface_constraints(interps)
     fem.elements.reinforce_ties = ties
     fem.elements.rebar_elements = rebar
+    if embed:
+        fem.elements.embed_ties = embeds
     return fem
 
 
 def _mp_ranks(
     n_ranks: int, *, partitioned: bool = True, staged: bool = False,
+    embed: bool = False,
 ) -> Any:
     """:func:`_mp_ranks_fem` under a truss; ``staged`` claims rank 0's
     coupling and rigid body and rank 1's tie in a second stage."""
@@ -313,7 +326,8 @@ def _mp_ranks(
 
     from apeGmsh.opensees import apeSees
 
-    ops = apeSees(cast(Any, _mp_ranks_fem(n_ranks, partitioned=partitioned)))
+    ops = apeSees(cast(Any, _mp_ranks_fem(
+        n_ranks, partitioned=partitioned, embed=embed)))
     ops.model(ndm=3, ndf=3)
     mat = ops.uniaxialMaterial.ElasticMaterial(E=1.0e6)
     ops.uniaxialMaterial.ElasticMaterial(E=2.0e5, name="steel")
@@ -390,6 +404,8 @@ _MP_MODELS: dict[str, Callable[[], Any]] = {
     "mp_ranks_2/partitioned": lambda: _mp_ranks(2),
     "mp_ranks_4/partitioned": lambda: _mp_ranks(4),
     "mp_ranks_4/flat": lambda: _mp_ranks(4, partitioned=False),
+    "mp_ranks_embed_4/flat": lambda: _mp_ranks(
+        4, partitioned=False, embed=True),
     "mp_ranks_2/staged": lambda: _mp_ranks(
         2, partitioned=False, staged=True),
     "mp_ranks_2/staged_partitioned": lambda: _mp_ranks(2, staged=True),
@@ -1699,28 +1715,46 @@ def test_partitioned_mp_routing_runs_once_per_plan(
 
 def _foreign_line(case_name: str, site: str) -> Any:
     """A planned line of ``site`` from a second build of ``case_name``: the
-    same kind of record, but another model's object."""
+    same kind of record, but another model's object.
+
+    A rebar cell is keyed by content, ``(pg, i, j)``, which a second build
+    repeats, so its stranger is a cell of a bar the FEM does not carry.
+    """
     other = _MODELS[case_name]().build()
     mp = other._tag_plan(_case(case_name).plan.mode).mp_elements.planned()
-    return next(ln for ln in mp.lines if ln.site == site)
+    line = next(ln for ln in mp.lines if ln.site == site)
+    if site == "rebar_cell":
+        line = line._replace(key=("no_such_bar", *line.key[1:]))
+    return line
 
 
-@pytest.mark.parametrize("site", ["rigid_body", "kinematic_coupling",
-                                  "interpolation", "reinforce_tie"])
+_MP_SITE_CASES = {
+    "rigid_body": ("mp_ranks_4/flat", "mp_ranks_4/partitioned"),
+    "kinematic_coupling": ("mp_ranks_4/flat", "mp_ranks_4/partitioned"),
+    "interpolation": ("mp_ranks_4/flat", "mp_ranks_4/partitioned"),
+    "reinforce_tie": ("mp_ranks_4/flat", "mp_ranks_4/partitioned"),
+    # The partitioned emit refuses g.embed, so embed ties are flat only.
+    "embed_tie": ("mp_ranks_embed_4/flat",),
+    "rebar_cell": ("mp_ranks_4/flat", "mp_ranks_4/partitioned"),
+}
+
+
+@pytest.mark.parametrize("site", sorted(_MP_SITE_CASES))
 def test_mp_plan_refuses_a_swapped_dropped_or_doubled_element(
     site: str,
 ) -> None:
-    """The MP-element plan covers its FEM exactly, checked by identity.
+    """The MP-element plan covers its FEM exactly, checked by key.
 
     Each element of ``site`` in turn is swapped for the same kind of
-    element of a second build (the count is unchanged), dropped, or
+    element the FEM does not hold (the count is unchanged), dropped, or
     planned twice; every variant is refused when it is made.
     """
     import dataclasses
 
-    from apeGmsh.opensees._internal.build import MPElementPlan
+    from apeGmsh.opensees._internal.build import MP_ELEMENT_SITES, MPElementPlan
 
-    for name in ("mp_ranks_4/flat", "mp_ranks_4/partitioned"):
+    assert set(_MP_SITE_CASES) == set(MP_ELEMENT_SITES)
+    for name in _MP_SITE_CASES[site]:
         mp = _case(name).plan.mp_elements.planned()
         assert MPElementPlan(
             fem=mp.fem, lines=mp.lines, partitioned=mp.partitioned,
