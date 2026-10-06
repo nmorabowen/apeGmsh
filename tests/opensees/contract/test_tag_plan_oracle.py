@@ -104,14 +104,7 @@ _MINT_SITES: dict[str, str] = {
     "allocate_element_tags": "elements",
     "emit_element_spec": "elements",
     "plan_transform_specs": "transforms",
-    "_emit_rayleigh": "regions",
-    "_emit_damping_attach": "regions",
-    "_emit_regions": "regions",
-    "_emit_stage_regions": "regions",
-    "_emit_stage_regions_partitioned": "regions",
-    "_emit_regions_partitioned": "regions",
-    "_plan_partitioned_mpco_recorders": "regions",
-    "materialize": "regions",
+    "plan_regions": "regions",
     "emit_initial_stress_global": "parameters",
     "emit_update_parameters": "parameters",
     "emit_activate_absorbing": "parameters",
@@ -127,6 +120,12 @@ _MINT_SITES: dict[str, str] = {
 
 #: The owner of a row some migrated family's plan must hold.
 PLANNED = "<planned>"
+
+#: Kinds whose one tag a partitioned deck writes once per rank that holds
+#: the object's members (a region: ADR 0027 INV-4). Their emitted rows
+#: compare as distinct ``(verb, tag)`` rows; every other kind compares as a
+#: multiset, so a tag written twice is caught.
+PER_RANK_KINDS: frozenset[str] = frozenset({"region"})
 
 
 def _contact_ranks_fem(n_ranks: int, *, partitioned: bool = True) -> Any:
@@ -385,12 +384,20 @@ def _owner(case: Case, row: Row) -> str | None:
     return PLANNED
 
 
+def _per_rank_once(rows: Counter[Row]) -> Counter[Row]:
+    """``rows`` with each :data:`PER_RANK_KINDS` row counted once."""
+    for row in rows:
+        if VERB_KIND[row[0]] in PER_RANK_KINDS:
+            rows[row] = 1
+    return rows
+
+
 def _rows(case: Case, owner: str, kinds: frozenset[str]) -> Counter[Row]:
     """The tapped rows of ``owner`` in ``kinds``, as ``(verb, tag)``."""
-    return Counter(
+    return _per_rank_once(Counter(
         (_verb(r[0]), r[1]) for r in case.stream
         if _owner(case, r) == owner and VERB_KIND[_verb(r[0])] in kinds
-    )
+    ))
 
 
 def _in_kinds(rows: Any, kinds: frozenset[str]) -> Counter[Row]:
@@ -956,9 +963,9 @@ def test_whole_plan_equals_tapped_stream(name: str) -> None:
     """``sorted(plan.stream())`` is every derived row the emit writes."""
     case = _case(name)
     planned = sorted((_verb(k), t) for k, t in case.plan.stream())
-    derived = sorted(
+    derived = sorted(_per_rank_once(Counter(
         (_verb(k), t) for k, t in case.stream
-        if _owner(case, (k, t)) is not None)
+        if _owner(case, (k, t)) is not None)).elements())
     assert planned == derived, (
         f"{name} [{case.plan.mode}]: the plan and the emit disagree")
 

@@ -215,6 +215,7 @@ if TYPE_CHECKING:
     from apeGmsh.hpc import Cluster, Job
 
     from .emitter.live import LiveOpsEmitter
+    from ._internal.tag_plan import NamedRegion, RegionSite
 
 
 __all__ = ["apeSees", "BuiltModel", "ExplicitRunResult"]
@@ -2951,11 +2952,11 @@ class BuiltModel:
             # only the attach is stage-scoped.  Modal damping is not staged.
             self._emit_rayleigh(
                 emitter, tags, fem_eid_to_ops_tag,
-                records=stage.rayleigh_records,
+                stage=stage,
             )
             self._emit_damping_attach(
                 emitter, tags, fem_eid_to_ops_tag,
-                records=stage.damping_attach_records,
+                stage=stage,
             )
 
             # 6. Initial stress.
@@ -3696,10 +3697,6 @@ class BuiltModel:
             bucket_primary_nodes_by_rank(primary_owner, rank_owned_nodes)
         )
 
-        # Cross-rank tag identity cache (region tags, ADR 0027
-        # §"Tag determinism").
-        region_tag_cache: dict[str, int] = {}
-
         # ADR 0027 INV-4 (MPCO recorder path): for every MPCO recorder
         # that carries a filter, resolve its full filter ids ONCE and
         # allocate the region tag ONCE — both shared across every rank.
@@ -3855,8 +3852,7 @@ class BuiltModel:
 
                 # 7-bis. Named regions (per-rank intersection — INV-4).
                 self._emit_regions_partitioned(
-                    emitter, tags, rank_owned_nodes[rank], rank,
-                    region_tag_cache,
+                    emitter, tags, rank_owned_nodes[rank],
                 )
 
                 # 7-ter. MPCO recorder filter regions (INV-4 — internal
@@ -4298,13 +4294,6 @@ class BuiltModel:
                 for nid in self._resolve_node_target(rec.pg, rec.nodes):
                     region_target_nodes.add(int(nid))
 
-            # Per-stage region tag cache (Phase SSI-2.D PR-C): the
-            # SAME tag must survive across every rank that emits its
-            # rank-intersection of a stage-bound region.  Fresh per
-            # stage so stage-2's regions don't accidentally re-use
-            # stage-1's tags.
-            stage_region_tag_cache: dict[str, int] = {}
-
             # Phase SSI-2.E: pre-resolve removal targets ONCE per stage
             # (rank-independent), then filter per rank.  Same shape as
             # fix_targets / mass_targets above.
@@ -4552,10 +4541,9 @@ class BuiltModel:
                         # bound BCs (fix + mass + region).  Targets
                         # pre-resolved above; per-rank filter via
                         # ``rank_owned`` intersection mirrors the
-                        # existing INV-4 fan-out convention.  Region
-                        # emit threads the per-stage tag cache so all
-                        # contributing ranks emit the SAME tag for
-                        # each region name.
+                        # existing INV-4 fan-out convention.  Every
+                        # contributing rank writes the one tag the
+                        # plan gave each region name.
                         for fix_rec, nid in rank_fix:
                             emitter.fix(nid, *fix_rec.dofs)
                         # ADR 0027 INV-2 forward half: mirror this
@@ -4572,7 +4560,6 @@ class BuiltModel:
                         self._emit_stage_regions_partitioned(
                             stage, emitter, tags,
                             owned_nodes=rank_owned,
-                            region_tag_cache=stage_region_tag_cache,
                         )
                         # Stage-bound MP constraints — per-rank fan-
                         # out using the same replication rules as the
@@ -4684,11 +4671,11 @@ class BuiltModel:
             # rank owns.  Modal damping is not staged.
             self._emit_rayleigh(
                 emitter, tags, fem_eid_to_ops_tag,
-                records=stage.rayleigh_records,
+                stage=stage,
             )
             self._emit_damping_attach(
                 emitter, tags, fem_eid_to_ops_tag,
-                records=stage.damping_attach_records,
+                stage=stage,
             )
 
             # 4. Initial-stress globals + per-rank ``addToParameter``.
@@ -6888,7 +6875,7 @@ class BuiltModel:
         tags: "TagAllocator | None" = None,
         fem_eid_to_ops_tag: "FemToOpsTagMap | None" = None,
         *,
-        records: "Sequence[RayleighRecord] | None" = None,
+        stage: "StageRecord | None" = None,
     ) -> None:
         """Emit Rayleigh damping declarations (ADR 0053, D1 + D2 + D5).
 
@@ -6905,13 +6892,15 @@ class BuiltModel:
         per ``on`` physical-group name, with ``-ele`` membership because βK
         is stiffness-proportional. ``tags`` / ``fem_eid_to_ops_tag`` are
         required only when region records are present (the emit driver always
-        supplies them).
+        supplies them); each region's tag is the one the build's tag plan
+        gave it (``("rayleigh", scope)`` sites of
+        :meth:`_region_sites`).
 
-        ``records`` overrides the source pool — D5 passes a stage's
-        ``rayleigh_records`` so stage-bound Rayleigh emits inside the stage
-        block; ``None`` uses the global (non-staged) pool.
+        ``stage`` selects the source pool — D5 passes the stage whose
+        ``rayleigh_records`` emit inside its block; ``None`` uses the global
+        (non-staged) pool.
         """
-        recs = self.rayleigh_records if records is None else tuple(records)
+        recs = self.rayleigh_records if stage is None else stage.rayleigh_records
         if not recs:
             return
         import warnings as _warnings
@@ -6932,13 +6921,16 @@ class BuiltModel:
             emitter.rayleigh(
                 rec.alpha_m, rec.beta_k, rec.beta_k_init, rec.beta_k_comm,
             )
-        for rec in scoped:
-            for name in rec.on:
+        if not scoped:
+            return
+        region_tags = self._planned_damping_region_tags(
+            "rayleigh", stage, recs, tags)
+        for i, rec in enumerate(recs):
+            for j, name in enumerate(rec.on):
                 ele_tags = self._resolve_damping_on_elements(
                     name, fem_eid_to_ops_tag,
                 )
-                assert tags is not None  # always supplied when scoped present
-                tag = tags.allocate("region")
+                tag = region_tags[(i, j)]
                 emitter.region(
                     tag, "-ele", *ele_tags, "-rayleigh",
                     rec.alpha_m, rec.beta_k, rec.beta_k_init, rec.beta_k_comm,
@@ -7055,34 +7047,64 @@ class BuiltModel:
         tags: "TagAllocator | None" = None,
         fem_eid_to_ops_tag: "FemToOpsTagMap | None" = None,
         *,
-        records: "Sequence[DampingAttachRecord] | None" = None,
+        stage: "StageRecord | None" = None,
     ) -> None:
         """Attach each ``damping`` object to its ``on`` groups (ADR 0053 D3).
 
         The object itself already emitted its ``damping <Type> $tag`` line in
         the pre-element definition group; here, driver-post, we emit one
         ``region $tag -ele … -damp $dampTag`` per ``on`` physical group, with
-        ``-ele`` membership. The object's tag is read back from ``tag_for``.
+        ``-ele`` membership. The object's tag is read back from ``tag_for``;
+        each region's tag is the one the build's tag plan gave it
+        (``("damping", scope)`` sites of :meth:`_region_sites`).
 
-        ``records`` overrides the source pool — D5 passes a stage's
-        ``damping_attach_records`` so the ``region -damp`` attach emits
-        inside the stage block (the object definition still emits once,
-        pre-element); ``None`` uses the global (non-staged) pool.
+        ``stage`` selects the source pool — D5 passes the stage whose
+        ``damping_attach_records`` attach inside its block (the object
+        definition still emits once, pre-element); ``None`` uses the global
+        (non-staged) pool.
         """
-        recs = self.damping_attach_records if records is None else tuple(records)
+        recs = (self.damping_attach_records if stage is None
+                else stage.damping_attach_records)
         if not recs:
             return
-        for rec in recs:
+        region_tags = self._planned_damping_region_tags(
+            "damping", stage, recs, tags)
+        for i, rec in enumerate(recs):
             damp_tag = self.tag_for[id(rec.prim)]
-            for name in rec.on:
+            for j, name in enumerate(rec.on):
                 ele_tags = self._resolve_damping_on_elements(
                     name, fem_eid_to_ops_tag,
                 )
-                assert tags is not None  # always supplied when records present
-                tag = tags.allocate("region")
                 emitter.region(
-                    tag, "-ele", *ele_tags, "-damp", damp_tag,
+                    region_tags[(i, j)], "-ele", *ele_tags, "-damp", damp_tag,
                 )
+
+    @staticmethod
+    def _damping_region_keys(
+        recs: "Sequence[RayleighRecord | DampingAttachRecord]",
+    ) -> tuple[tuple[int, int], ...]:
+        """The region keys of a damping pool: ``(record index, on index)``
+        of every ``on`` name, in the order the pool writes them."""
+        return tuple(
+            (i, j) for i, rec in enumerate(recs) for j in range(len(rec.on)))
+
+    def _planned_damping_region_tags(
+        self,
+        kind: str,
+        stage: "StageRecord | None",
+        recs: "Sequence[RayleighRecord | DampingAttachRecord]",
+        tags: "TagAllocator | None",
+    ) -> dict[object, int]:
+        """The planned region tag of each ``on`` name of a damping pool."""
+        if tags is None:
+            raise BridgeError(
+                "apeSees: region-scoped damping (on=...) needs the emit's "
+                "tag allocator; this is an internal emit-wiring error."
+            )
+        return plan_of(tags).regions.tags_for(
+            self.fem, (kind, None if stage is None else id(stage)),
+            self._damping_region_keys(recs),
+        )
 
     def _emit_modal_damping(self, emitter: Emitter) -> None:
         """Emit bundled ``eigen`` + ``modalDamping`` (ADR 0053 D4).
@@ -7101,32 +7123,17 @@ class BuiltModel:
     def _emit_regions(self, emitter: Emitter, tags: TagAllocator) -> None:
         """Fan named-region assignments out into ``emitter.region`` calls.
 
-        Groups records by name in first-seen order; within each name,
-        merges all member nodes (across PG resolution and explicit
-        tuples) into a single ordered, deduped tuple; allocates one
-        ``"region"`` tag per name; emits one ``region $tag -node ...``
-        line per name.
-
-        Multiple records with the same name dedupe by node tag; node
-        order within the emitted ``-node`` list is first-seen across
-        records.
+        One ``region $tag -node ...`` line per name, in first-seen order.
+        The build's tag plan merged each name's members (every record of
+        the name, PG resolution and explicit tuples alike, deduped by node
+        tag in first-seen order) and gave each name with members one
+        ``"region"`` tag (:meth:`_region_sites`); this writes them.
         """
         if not self.region_records:
             return
-        by_name: dict[str, list[int]] = {}
-        seen_per_name: dict[str, set[int]] = {}
-        for rec in self.region_records:
-            bucket = by_name.setdefault(rec.name, [])
-            seen = seen_per_name.setdefault(rec.name, set())
-            for node_tag in self._resolve_node_target(rec.pg, rec.nodes):
-                if node_tag not in seen:
-                    seen.add(node_tag)
-                    bucket.append(node_tag)
-        for name, node_list in by_name.items():
-            if not node_list:
-                continue
-            tag = tags.allocate("region")
-            emitter.region(tag, "-node", *node_list)
+        for region in self._planned_named_regions(tags, None):
+            if region.nodes:
+                emitter.region(region.planned_tag(), "-node", *region.nodes)
 
     def _emit_stage_regions(
         self,
@@ -7136,35 +7143,20 @@ class BuiltModel:
     ) -> None:
         """Single-partition fan-out for one stage's region pool.
 
-        Mirrors :meth:`_emit_regions` shape but operates on
-        ``stage.region_records`` rather than ``self.region_records``:
-        groups records by ``name`` in first-seen order, merges members
-        across same-name records (de-duping by node tag, first-seen
-        order preserved), allocates ONE region tag per name, emits one
-        ``region $tag -node n1 n2 ...`` per name.
+        :meth:`_emit_regions` over ``stage.region_records``: one
+        ``region $tag -node n1 n2 ...`` per name, under the tag the plan
+        gave the name at this stage's site.
 
         V3 (Phase SSI-2.D PR-A) guarantees no name collision across
         scopes, so each stage's name set is disjoint from every other
-        stage's and from the global pool — tag allocation through the
-        shared ``tags.allocate("region")`` counter produces disjoint
-        tags by construction.
+        stage's and from the global pool; the plan keys each stage's
+        names by the stage, so their tags are disjoint by construction.
         """
         if not stage.region_records:
             return
-        by_name: dict[str, list[int]] = {}
-        seen_per_name: dict[str, set[int]] = {}
-        for rec in stage.region_records:
-            bucket = by_name.setdefault(rec.name, [])
-            seen = seen_per_name.setdefault(rec.name, set())
-            for node_tag in self._resolve_node_target(rec.pg, rec.nodes):
-                if node_tag not in seen:
-                    seen.add(node_tag)
-                    bucket.append(node_tag)
-        for name, node_list in by_name.items():
-            if not node_list:
-                continue
-            tag = tags.allocate("region")
-            emitter.region(tag, "-node", *node_list)
+        for region in self._planned_named_regions(tags, stage):
+            if region.nodes:
+                emitter.region(region.planned_tag(), "-node", *region.nodes)
 
     def _emit_stage_regions_partitioned(
         self,
@@ -7172,85 +7164,168 @@ class BuiltModel:
         emitter: Emitter,
         tags: TagAllocator,
         owned_nodes: "set[int] | SortedIntSet",
-        region_tag_cache: dict[str, int],
     ) -> None:
         """Per-rank fan-out for one stage's region pool (MP path).
 
-        Mirrors :meth:`_emit_regions_partitioned`: same name-merging
-        semantics, per-rank ``owned_nodes`` intersection, INV-4 empty-
-        intersection skip.  The ``region_tag_cache`` is shared across
-        the per-rank loop FOR THIS STAGE so all contributing ranks
-        agree on the tag — the cache is keyed by region NAME (within
-        this stage), not stage-mangled, because V3 already guarantees
-        no cross-stage name collision.
-
-        The caller (``_emit_stages_partitioned``) constructs a FRESH
-        cache per stage so stage-2's regions don't accidentally
-        adopt stage-1's tags.
+        Mirrors :meth:`_emit_regions_partitioned` over
+        ``stage.region_records``: same merged members, per-rank
+        ``owned_nodes`` intersection, INV-4 empty-intersection skip.
+        Every rank that emits a region writes the one tag the plan gave
+        it, which the plan numbered on the first rank that emits it.
         """
         if not stage.region_records:
             return
-        by_name: dict[str, list[int]] = {}
-        seen_per_name: dict[str, set[int]] = {}
-        for rec in stage.region_records:
-            bucket = by_name.setdefault(rec.name, [])
-            seen = seen_per_name.setdefault(rec.name, set())
-            for node_tag in self._resolve_node_target(rec.pg, rec.nodes):
-                if node_tag not in seen:
-                    seen.add(node_tag)
-                    bucket.append(node_tag)
-        for name, node_list in by_name.items():
-            owned_list = [n for n in node_list if int(n) in owned_nodes]
-            if not owned_list:
-                continue
-            tag = region_tag_cache.get(name)
-            if tag is None:
-                tag = tags.allocate("region")
-                region_tag_cache[name] = tag
-            emitter.region(tag, "-node", *owned_list)
+        for region in self._planned_named_regions(tags, stage):
+            owned_list = [n for n in region.nodes if int(n) in owned_nodes]
+            if owned_list:
+                emitter.region(region.planned_tag(), "-node", *owned_list)
 
     def _emit_regions_partitioned(
         self,
         emitter: Emitter,
         tags: TagAllocator,
         owned_nodes: "set[int] | SortedIntSet",
-        rank: int,
-        region_tag_cache: dict[str, int],
     ) -> None:
         """Per-rank named-region fan-out (ADR 0027 §"Regions interaction" /
         INV-4).
 
-        Same name-merging semantics as :meth:`_emit_regions`, but the
-        merged node tuple is intersected with ``owned_nodes`` before
-        emission.  Empty intersection ⇒ no ``region`` line emitted on
-        this rank (INV-4).  The region tag is allocated **once** on the
-        FIRST rank that emits the region — ``region_tag_cache`` is
-        shared across the per-rank loop so the same tag survives across
-        every rank that emits the region (INV-4 §"region tag is the
-        same scalar across every rank that does emit").
+        Same merged members as :meth:`_emit_regions`, but each is
+        intersected with ``owned_nodes`` before emission.  Empty
+        intersection ⇒ no ``region`` line emitted on this rank (INV-4).
+        The tag is the same scalar on every rank that emits the region
+        (INV-4 §"region tag is the same scalar across every rank that
+        does emit"): the plan gave it once, numbered on the FIRST rank
+        that emits the region.
         """
         if not self.region_records:
             return
+        for region in self._planned_named_regions(tags, None):
+            owned_list = [n for n in region.nodes if int(n) in owned_nodes]
+            if not owned_list:
+                # INV-4: empty intersection → no region line on this rank.
+                continue
+            emitter.region(region.planned_tag(), "-node", *owned_list)
 
+    def _planned_named_regions(
+        self, tags: TagAllocator, stage: "StageRecord | None",
+    ) -> "tuple[NamedRegion, ...]":
+        """The named regions the plan holds for ``stage``'s pool (``None``:
+        the global pool), with their merged members and planned tags.
+
+        The plan must hold exactly the names this pool's records declare,
+        in first-seen order; a plan made for another model raises.
+        """
+        records = self.region_records if stage is None else stage.region_records
+        names = tuple(dict.fromkeys(rec.name for rec in records))
+        return plan_of(tags).regions.named_for(
+            self.fem, ("named", None if stage is None else id(stage)), names)
+
+    def _merged_region_members(
+        self, records: "Sequence[RegionAssignmentRecord]",
+    ) -> dict[str, tuple[int, ...]]:
+        """Each region name's members, in first-seen name order.
+
+        Every record of a name joins it (PG resolution and explicit
+        tuples alike); members dedupe by node tag, in first-seen order.
+        """
         by_name: dict[str, list[int]] = {}
         seen_per_name: dict[str, set[int]] = {}
-        for rec in self.region_records:
+        for rec in records:
             bucket = by_name.setdefault(rec.name, [])
             seen = seen_per_name.setdefault(rec.name, set())
             for node_tag in self._resolve_node_target(rec.pg, rec.nodes):
                 if node_tag not in seen:
                     seen.add(node_tag)
                     bucket.append(node_tag)
-        for name, node_list in by_name.items():
-            owned_list = [n for n in node_list if int(n) in owned_nodes]
-            if not owned_list:
-                # INV-4: empty intersection → no region line on this rank.
-                continue
-            tag = region_tag_cache.get(name)
-            if tag is None:
-                tag = tags.allocate("region")
-                region_tag_cache[name] = tag
-            emitter.region(tag, "-node", *owned_list)
+        return {name: tuple(nodes) for name, nodes in by_name.items()}
+
+    def _region_sites(
+        self, mode: TagMode, ordered: "Sequence[Primitive]",
+    ) -> "tuple[list[tuple[RegionSite, tuple[object, ...]]], dict[RegionSite, tuple[tuple[str, tuple[int, ...]], ...]]]":
+        """Every region site ``mode``'s emit writes, in the order it mints
+        their tags, and the merged members of every named-region site.
+
+        The order each emit path wrote its region tags in before the tag
+        plan (ADR 0114 D4, amended), which the plan keeps:
+
+        * flat and split: the global named regions, the global
+          region-scoped Rayleigh, the global damping attaches, then the
+          global pass's filtered recorders (``ordered``'s order, the
+          stage-claimed ones skipped);
+        * partitioned: the global pass's filtered recorders first (their
+          regions are written inside every rank block), then the global
+          named regions, each numbered on the first rank (in partition
+          order) that holds one of its members, then the global damping;
+        * then, staged, each stage in turn: its named regions (per rank
+          first-holder order when partitioned), its Rayleigh, its damping
+          attaches, its claimed filtered recorders.
+
+        A stage-claimed recorder's regions belong to its stage alone. The
+        partitioned global pass once planned them too, so each was written
+        twice under two tags (#1446).
+        """
+        partitioned = mode.partitioned
+        sites: list[tuple[RegionSite, tuple[object, ...]]] = []
+        named: dict[RegionSite, tuple[tuple[str, tuple[int, ...]], ...]] = {}
+        rank_nodes: "list[SortedIntSet] | None" = None
+        if partitioned and (self.region_records or any(
+                st.region_records for st in self.stage_records)):
+            rank_nodes = [
+                SortedIntSet.from_ids(part.node_ids)
+                for part in self.fem.partitions
+            ]
+
+        def add_named(
+            scope: "int | None", records: "Sequence[RegionAssignmentRecord]",
+        ) -> None:
+            if not records:
+                return
+            site: RegionSite = ("named", scope)
+            members = self._merged_region_members(records)
+            named[site] = tuple(members.items())
+            if rank_nodes is None:
+                keys = [name for name, nodes in members.items() if nodes]
+            else:
+                keys = []
+                for owned in rank_nodes:
+                    for name, nodes in members.items():
+                        if name not in keys and any(
+                                int(n) in owned for n in nodes):
+                            keys.append(name)
+            sites.append((site, tuple(keys)))
+
+        def add_damping(
+            kind: str, scope: "int | None",
+            recs: "Sequence[RayleighRecord | DampingAttachRecord]",
+        ) -> None:
+            keys = self._damping_region_keys(recs)
+            if keys:
+                sites.append(((kind, scope), keys))
+
+        def add_recorders(specs: "Iterable[object]") -> None:
+            for spec in specs:
+                if isinstance(spec, FilterableRecorder) and spec.region_keys():
+                    sites.append(
+                        (("recorder", id(spec)), spec.region_keys()))
+
+        claimed = self._claimed_recorder_ids()
+        global_recorders = [
+            p for p in ordered
+            if isinstance(p, Recorder) and id(p) not in claimed
+        ]
+        if partitioned:
+            add_recorders(global_recorders)
+        add_named(None, self.region_records)
+        add_damping("rayleigh", None, self.rayleigh_records)
+        add_damping("damping", None, self.damping_attach_records)
+        if not partitioned:
+            add_recorders(global_recorders)
+        for stage in self.stage_records:
+            add_named(id(stage), stage.region_records)
+            add_damping("rayleigh", id(stage), stage.rayleigh_records)
+            add_damping("damping", id(stage), stage.damping_attach_records)
+            add_recorders(stage.recorder_specs)
+        return sites, named
 
     # -- MPCO recorder filter regions (ADR 0027 INV-4 — internal regions) --
 
@@ -7259,7 +7334,8 @@ class BuiltModel:
         post_element: "list[Primitive]",
         tags: TagAllocator,
     ) -> "dict[int, _MPCOFilterPlan]":
-        """Pre-resolve + allocate region tag(s) per region-bearing recorder.
+        """Pre-resolve the region(s) of every region-bearing recorder of
+        the global pass, under the tags the build's tag plan gave them.
 
         Returns a dict keyed by ``id(spec)`` carrying the recorder's
         regions (value-channel filter region + any Ladruno ``energy_pg``
@@ -7270,6 +7346,12 @@ class BuiltModel:
         from the dict; the caller routes them through the unchanged
         :func:`emit_recorder_spec` global pass.
 
+        Stage-claimed recorders are absent too: their stage writes their
+        regions, inside the stage block (after the stage's elements are in
+        the domain), under the tags the plan gave them there. Planning
+        them here as well wrote each of their regions twice, under two
+        tags, the first never referenced (#1446).
+
         The plan is built ONCE before the per-rank loop so:
 
         1. Each region tag is the SAME scalar across every rank that
@@ -7278,22 +7360,26 @@ class BuiltModel:
         2. ``_emit`` is bypass-safe — the materialised spec carries the
            shared tags directly, so the global recorder pass after the
            per-rank loop simply forwards ``-R <tag>`` / ``-G energy
-           <tag>`` without re-allocating tags or re-emitting regions.
+           <tag>`` without re-reading tags or re-emitting regions.
         """
+        claimed = self._claimed_recorder_ids()
         plan: dict[int, _MPCOFilterPlan] = {}
         for p in post_element:
             # FilterableRecorder = MPCO + Ladruno (ADR 0064): both share
             # the has_filter()/resolve_filter_ids()/-R region machinery,
             # so the per-rank region pass covers both recorder kinds.
-            if not isinstance(p, FilterableRecorder):
+            if not isinstance(p, FilterableRecorder) or id(p) in claimed:
                 continue
+            if not p.region_keys():
+                continue
+            region_tags = p.planned_region_tags(self.fem, tags)
             regions: list[_RegionEmit] = []
             materialised: FilterableRecorder = p
 
             # Value-channel filter region (-R), shared by MPCO + Ladruno.
             if p.has_filter():
                 node_ids, elem_ids = p.resolve_filter_ids(self.fem)
-                region_tag = tags.allocate("region")
+                region_tag = region_tags["filter"]
                 regions.append(_RegionEmit(region_tag, node_ids, elem_ids))
                 materialised = replace(
                     materialised,
@@ -7309,7 +7395,7 @@ class BuiltModel:
             # its own per-rank fan-out.
             if isinstance(p, Ladruno) and p.energy_pg is not None:
                 e_eids = p.resolve_energy_ids(self.fem)
-                energy_tag = tags.allocate("region")
+                energy_tag = region_tags["energy"]
                 regions.append(_RegionEmit(energy_tag, (), e_eids))
                 assert isinstance(materialised, Ladruno)
                 materialised = replace(
@@ -7318,8 +7404,6 @@ class BuiltModel:
                     _energy_region_tags=(energy_tag,),
                 )
 
-            if not regions:
-                continue
             plan[id(p)] = _MPCOFilterPlan(
                 materialised_spec=materialised,
                 regions=tuple(regions),
