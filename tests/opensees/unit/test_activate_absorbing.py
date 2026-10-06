@@ -1,8 +1,10 @@
 """Unit tests for the absorbing-boundary stage flip (ADR 0054, AB-3).
 
-Covers the emitter method (``flip_element_stage``), the build emit function
-(``emit_activate_absorbing`` — element resolution, per-partition filtering,
-missing-eid fail-loud), and the staged verb validation.
+Covers the emitter method (``flip_element_stage``), the build's flip path
+(``absorbing_ele_tags`` — element resolution, per-partition filtering,
+missing-eid fail-loud — then the ``plan_parameters`` loop and the
+``write_planned_flips`` writer, as ``emit_activate_absorbing`` runs them),
+and the staged verb validation.
 """
 from __future__ import annotations
 
@@ -15,21 +17,28 @@ from apeGmsh.opensees import apeSees
 from apeGmsh.opensees._internal.build import (
     ActivateAbsorbingRecord,
     BridgeError,
-    emit_activate_absorbing,
+    absorbing_ele_tags,
+    parameter_flip_sites,
+    plan_parameters,
+    write_planned_flips,
 )
 from apeGmsh.opensees._internal.tag_allocator import TagAllocator
 from apeGmsh.opensees.emitter.recording import RecordingEmitter
 
 
 def _emit(records, *, eid_to_tag, element_owner=None, partition_rank=None):
+    """Resolve, plan through ``plan_parameters``, then write: the flip
+    path of ``emit_activate_absorbing``, without a bridge emit's plan."""
     e = RecordingEmitter()
-    emit_activate_absorbing(
-        records, e, cast("object", MagicMock(name="FEMData")),
-        fem_eid_to_ops_tag=eid_to_tag,
-        tags=TagAllocator(),
-        element_owner=element_owner,
-        partition_rank=partition_rank,
-    )
+    fem = cast("object", MagicMock(name="FEMData"))
+    resolved = [
+        absorbing_ele_tags(rec, fem, eid_to_tag, element_owner, partition_rank)
+        for rec in records
+    ]
+    lines = plan_parameters(parameter_flip_sites(
+        "flip_element_stage", records, resolved, partition_rank),
+        TagAllocator())
+    write_planned_flips(e, lines, resolved)
     return [c for c in e.calls if c[0] == "flip_element_stage"]
 
 

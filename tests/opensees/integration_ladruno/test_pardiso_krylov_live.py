@@ -26,7 +26,7 @@ from apeGmsh import apeGmsh
 from apeGmsh.opensees import apeSees
 from apeGmsh.opensees.emitter.live import LiveOpsEmitter
 
-pytestmark = pytest.mark.ladruno_fork
+pytestmark = [pytest.mark.ladruno_fork, pytest.mark.ladruno_mkl]
 
 
 def _build_block():

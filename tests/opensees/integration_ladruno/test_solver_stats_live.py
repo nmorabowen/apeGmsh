@@ -66,7 +66,7 @@ from tests.opensees.fixtures.fem_stub import (
     _NodesStub,
 )
 
-pytestmark = pytest.mark.ladruno_fork
+pytestmark = [pytest.mark.ladruno_fork, pytest.mark.ladruno_mkl]
 
 NX = 2
 LEL = 100.0

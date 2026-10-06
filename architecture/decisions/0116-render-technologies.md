@@ -1,7 +1,7 @@
 # ADR 0116 — Render technologies: three.js in apeGmshViewer and matplotlib; VTK in sunset
 
-**Status:** Proposed (2026-10-05). The maintainer accepts it by merging the
-X1-c slice (#1483), which is a human gate (PROGRAM.md §4).
+**Status:** Accepted (2026-10-06). The maintainer accepted it by merging the
+X1-c slice (#1483) as #1493 (`2e6626d6`), and confirmed it in the T session.
 
 **Owner:** nmora
 
