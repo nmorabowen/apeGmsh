@@ -42,15 +42,12 @@ src/apeGmsh/viz/Inspect.py::_directives
 src/apeGmsh/doctor.py::GMSH_API_VERSION
 src/apeGmsh/ground_motions/_parsers/_obspy_bridge.py::network
 src/apeGmsh/ground_motions/_parsers/_obspy_bridge.py::starttime
-src/apeGmsh/interop/strut_tie.py::criticalTimeStep
 src/apeGmsh/mesh/_femdata_h5_io.py::tolist
 src/apeGmsh/opensees/emitter/live.py::add_dll_directory
 src/apeGmsh/opensees/emitter/live.py::complexEigen
 src/apeGmsh/opensees/emitter/live.py::contactPlane
 src/apeGmsh/opensees/emitter/live.py::contactSurface
-src/apeGmsh/opensees/emitter/live.py::criticalTimeStep
 src/apeGmsh/opensees/emitter/live.py::frequencyResponse
-src/apeGmsh/opensees/emitter/live.py::ladrunoBuild
 src/apeGmsh/opensees/emitter/live.py::ladrunoLoadControl
 src/apeGmsh/opensees/emitter/live.py::ladrunoProjectionTieForce
 src/apeGmsh/opensees/emitter/live.py::modalResponseHistory
