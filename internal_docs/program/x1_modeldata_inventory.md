@@ -12,7 +12,9 @@ capabilities have **NO REPLACEMENT** (see the table below).
 test exercises it. Two rows have a tested replacement (2, and the round-trip
 half of 8); neither can be removed without removing a class that the gap rows
 keep. `ModelData` and its `apeGmsh.opensees` export stay. The gaps are listed
-under [Gaps (kept)](#gaps-kept).
+under [Gaps (kept)](#gaps-kept). X1-e also re-points the H5 rewrite oracles
+onto the replacement where one exists, and turns silent-wrong mode 1 (tag
+correspondence) into a runtime warning on the live path.
 
 ## What `ModelData` is
 
@@ -61,31 +63,44 @@ in X1-e).
 | Gap | Rows | Why it is kept | What a cut would need |
 |---|---|---|---|
 | G1 | 1 | The `ndm`/`ndf`/`model_name` binding for a bridge-less writer has no replacement; `FEMData.from_h5` supplies only `fem` | a bridge-less writer that takes the binding (G3) |
-| G2 | 2 | A replacement exists and is proven (`OpenSeesModel.from_h5(p).fem` / `.ndm` / `.ndf`, same values as `ModelData.from_h5(p)`). It is not cut because the accessors belong to a class that stays: removing them breaks `md.ndm` callers and gains nothing. They go when the class goes | nothing beyond the class cut |
+| G2 | 2 | A replacement exists and is proven (`OpenSeesModel.from_h5(p).fem` / `.ndm` / `.ndf`, same values as `ModelData.from_h5(p)`). It is not cut because the accessors belong to a class that stays: removing them breaks `md.ndm` callers and gains nothing, and the cut would have to edit `tests/opensees/h5/test_h5_meta_ndm_raw_readers.py:71` (it pins `ModelData.from_h5(p).ndm` through the pre-2.34.0 shim), which X1-e does not own. They go when the class goes | nothing beyond the class cut |
 | G3 | 3, 7 | No orientation-only `model.h5` writer exists outside a full `apeSees` model (materials, sections, elements) | an orientation writer on `OpenSeesModel` or the H5 layer |
 | G4 | 4, 5, 6, 9 | No bridge-less recorder emission: `_RecorderNS.declare` needs an `apeSees(fem)`, and `apeSees.run` rebuilds the domain instead of attaching to a live one | recorder-only emission on `apeSees`/`recorder`, or the capability recorded as dropped |
 | G5 | 8 | The round trip is replaced and proven, staged archives included (the replacement keeps `/opensees/stages`; `ModelData` warns and would drop it). Enrichment, `from_h5` then `oriented_elements` then `write`, has no replacement, and both halves live in one method | G3, so enrichment can move with it |
 
-The five test files that use `ModelData` as a tool
-(`test_node_pair_zerolength.py`, `test_bridge_provenance.py`,
-`test_h5_meta_ndm.py`, `test_h5_stages_reader.py`,
-`tests/viewers/test_viewer_orientation_from_model_h5.py`) stay on
-`ModelData`. With the class kept, re-pointing them would remove coverage
-of its write path without adding any: `test_bridge_provenance.py` already
-runs both writers, and the round-trip contract of the replacement is
-pinned in `T`. The viewer fixture writes an orientation-only file (G3),
-which has no replacement.
+The five test files that use `ModelData` as a tool, and where each oracle
+now runs:
+
+| File | Oracle | Runs on |
+|---|---|---|
+| `tests/opensees/unit/test_node_pair_zerolength.py` | H5-to-H5 rewrite is byte-stable and keeps node-pair `inline_connectivity` (ADR 0049) | **re-pointed**: parametrized over `OpenSeesModel.from_h5 -> to_h5` (which also keeps the source `model_hash`, `a == b`) and `ModelData.from_h5 -> write` (kept) |
+| `tests/opensees/h5/test_h5_meta_ndm.py` | a `ModelData(ndm=2)` file reads back `ndm == 2` | **re-pointed** read-back: `OpenSeesModel.from_h5(p).ndm` and `ModelData.from_h5(p).ndm`. The write is `ModelData`'s (G3) |
+| `tests/opensees/h5/test_bridge_provenance.py` | replay carries `/provenance` byte-equal | already parametrized over both rewriters; unchanged |
+| `tests/opensees/h5/test_h5_stages_reader.py` | `ModelData.from_h5` warns on a staged archive | unchanged: the warning is `ModelData`'s own (G5); the replacement's staged round trip is pinned in `T` |
+| `tests/viewers/test_viewer_orientation_from_model_h5.py` | viewer orients beams from an orientation-only file | unchanged: the fixture writes an orientation-only file (G3), which has no replacement |
+
+Both rewriters stay on the re-pointed oracles because `ModelData` stays: dropping
+its branch would remove coverage of a kept write path.
 
 ## The silent-wrong modes
 
-All are documented in the module docstring (`model_data.py:36-89`) and none is
-detected at runtime.
+All are documented in the module docstring (`model_data.py:36-89`). X1-d found
+none detected at runtime; X1-e adds the check in mode 1 for the live path.
 
 1. **Tag correspondence** (the mode the panel cites). Orientation and recorder
    selectors resolve to **FEM element/node ids**, while the user's
    `ops.element`/`ops.node` tags are typed by hand. If they differ, results
-   land on the wrong elements with no diagnostic. The safe pattern is
-   manual: drive `ops.element` from `fem.elements`.
+   land on the wrong elements. The safe pattern is manual: drive
+   `ops.element` from `fem.elements`. **X1-e (#1506):**
+   `attach_recorders(ops)` now checks every recorder target against the live
+   domain before issuing any `recorder` call (read-only `getNodeTags`,
+   `nodeCoord`, `getEleTags`, `eleNodes`): a node absent or at other
+   coordinates, or an element absent or joining other nodes (whose nodes are
+   then checked too), raises one `UserWarning` naming the ids. The recorders
+   are still attached. `recorder_commands` and `write` have no domain to
+   check, so they keep the banner and the docstring caveat. Pinned in
+   `tests/opensees/h5/test_model_data_recorders.py` (five cases fail with the
+   check removed).
 2. **Staged laundering.** `from_h5` reads only the orientation zone, so
    `write()` on a staged archive silently drops `/opensees/stages`. It emits a
    `UserWarning` (ADR 0055 Phase 2); the file is still written.
