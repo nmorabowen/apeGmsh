@@ -121,7 +121,11 @@ def build_two_quad_fem() -> FEMData:
     info = MeshInfo(
         n_nodes=6, n_elems=2, bandwidth=3, types=[quad_info],
     )
-    return FEMData(nodes=nodes, elements=elements, info=info)
+    # Named like a session snapshot: a bridge built on it writes its
+    # model.h5 to the test's artifact directory instead of warning that
+    # no session named it (#1307).
+    return FEMData(nodes=nodes, elements=elements, info=info,
+                   model_name="two_quad")
 
 
 def _real_two_stage_bridge() -> apeSees:

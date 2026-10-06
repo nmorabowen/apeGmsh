@@ -154,7 +154,9 @@ def build_partitioned_two_quad_fem(
     info = MeshInfo(
         n_nodes=6, n_elems=2, bandwidth=3, types=[quad_info],
     )
-    return FEMData(nodes=nodes, elements=elements, info=info)
+    # Named like a session snapshot (#1307): see build_two_quad_fem.
+    return FEMData(nodes=nodes, elements=elements, info=info,
+                   model_name="two_quad_partitioned")
 
 
 def _build_bridge() -> apeSees:

@@ -54,7 +54,10 @@ def _frame_fem(*, node_constraints=(), **element_streams) -> FEMData:
         labels=base.elements.labels,
         **element_streams,
     )
-    return FEMData(nodes=nodes, elements=elements, info=base.info)
+    # Named like a session snapshot (#1307): a bridge on it writes its
+    # model.h5 to the test's artifact directory instead of warning.
+    return FEMData(nodes=nodes, elements=elements, info=base.info,
+                   model_name="skipped_streams")
 
 
 def _archive(fem: FEMData, tmp_path: Path) -> "tuple[str, str]":

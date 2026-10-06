@@ -80,7 +80,10 @@ def build_simple_frame_fem(*, ndm: int = 3) -> FEMData:
     info = MeshInfo(
         n_nodes=2, n_elems=1, bandwidth=1, types=[line_info],
     )
-    return FEMData(nodes=nodes, elements=elements, info=info)
+    # Named like a session snapshot (#1307): a bridge on it writes its
+    # model.h5 to the test's artifact directory instead of warning.
+    return FEMData(nodes=nodes, elements=elements, info=info,
+                   model_name="simple_frame")
 
 
 def build_simple_frame_h5(tmp_path: Path) -> "tuple[Path, FEMData]":
@@ -170,7 +173,8 @@ def build_frame_with_orientation_fan_out_h5(
     info = MeshInfo(
         n_nodes=4, n_elems=2, bandwidth=2, types=[line_info],
     )
-    fem = FEMData(nodes=nodes, elements=elements, info=info)
+    fem = FEMData(nodes=nodes, elements=elements, info=info,
+                  model_name="orientation_fan_out")
 
     ops = apeSees(fem)
     ops.model(ndm=3, ndf=6)

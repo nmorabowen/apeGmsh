@@ -32,7 +32,9 @@ def _bridge(
     the two-rank twin — ``Mumps`` is refused on a serial deck (ADR 0106
     D5) and it is the only system carrying an int beside a float."""
     fem = build_partitioned_two_quad_fem() if partitioned else build_two_quad_fem()
-    ops = apeSees(fem, default_orientation=None)
+    # A kernel-partitioned snapshot gets no automatic model.h5 and would
+    # draw its P3 warning (#1307); the round trip here is the explicit h5().
+    ops = apeSees(fem, default_orientation=None, _artifacts=not partitioned)
     ops.model(ndm=2, ndf=2)
     mat = ops.nDMaterial.ElasticIsotropic(E=1e6, nu=0.3, rho=0.0)
     ops.element.FourNodeQuad(pg="Rock", thickness=1.0, material=mat)

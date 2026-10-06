@@ -101,7 +101,7 @@ def test_contact_under_partitioned_emit_now_emits(tmp_path):
     fem = _contact_fem_partitioned()
     assert len(fem.partitions) == 2
     assert fem.elements.contacts                      # really present
-    ops = apeSees(fem)
+    ops = apeSees(fem, _artifacts=False)  # partitioned snapshot: see _tet_ops
     ops.model(ndm=3, ndf=3)
     deck = tmp_path / "deck.tcl"
     ops.tcl(str(deck))                                # no BridgeError
@@ -117,7 +117,7 @@ def test_contact_plane_under_partitioned_emit_now_emits(tmp_path):
     assert len(fem.partitions) == 2
     assert fem.elements.contact_planes                # really present
     assert not fem.elements.contacts                  # plane-only
-    ops = apeSees(fem)
+    ops = apeSees(fem, _artifacts=False)  # partitioned snapshot: see _tet_ops
     ops.model(ndm=3, ndf=3)
     deck = tmp_path / "deck.tcl"
     ops.tcl(str(deck))                                # no BridgeError
@@ -135,7 +135,7 @@ def test_contact_plane_under_partitioned_staged_emit_fails_loud(tmp_path):
     assert len(fem.partitions) == 2
     assert fem.elements.contact_planes                # really present
     assert not fem.elements.contacts                  # plane-only (the trap)
-    ops = apeSees(fem)
+    ops = apeSees(fem, _artifacts=False)  # partitioned snapshot: see _tet_ops
     ops.model(ndm=3, ndf=3)
     # Make the model STAGED (stage_records non-empty ⇒ the staged dispatch).
     with ops.stage(name="hold") as s:
@@ -159,7 +159,7 @@ def test_embed_under_partitioned_emit_fails_loud(tmp_path):
     fem = _embed_fem_partitioned()
     assert len(fem.partitions) == 2
     assert fem.elements.embed_ties                    # really present
-    ops = apeSees(fem)
+    ops = apeSees(fem, _artifacts=False)  # partitioned snapshot: see _tet_ops
     ops.model(ndm=3, ndf=3)
     with pytest.raises(BridgeError, match="embed.*partitioned|partitioned.*embed"):
         ops.tcl(str(tmp_path / "deck.tcl"))
@@ -175,7 +175,9 @@ def test_embed_under_partitioned_emit_fails_loud(tmp_path):
 
 
 def _tet_ops(fem, *pgs):
-    ops = apeSees(fem)
+    # The automatic model.h5 is not this file's subject, and a
+    # kernel-partitioned snapshot would draw its P3 warning (#1307).
+    ops = apeSees(fem, _artifacts=False)
     ops.model(ndm=3, ndf=3)
     mat = ops.nDMaterial.ElasticIsotropic(E=30e9, nu=0.2, rho=2400)
     for pg in pgs:
@@ -227,6 +229,9 @@ def test_flat_emits_composed_contact_model(tmp_path):
         g.mesh.queries.get_fem_data(dim=3).to_h5(str(plain))
     fem = FEMData.from_h5(str(plain)).compose(
         str(mod), label="C", translate=(0.0, 10.0, 0.0))
+    # The snapshot-level compose mints a nameless snapshot; name it so the
+    # bridges below write their model.h5 instead of warning (#1307).
+    fem.model_name = "flat_composed"
     assert len(fem.partitions) == 2                   # auto one-rank-per-module
     assert len(fem.elements.contacts) == 1
 
@@ -243,7 +248,7 @@ def test_flat_emits_composed_contact_model(tmp_path):
 
 def test_flat_conflicts_with_per_rank(tmp_path):
     fem = _contact_fem_partitioned()
-    ops = apeSees(fem)
+    ops = apeSees(fem, _artifacts=False)  # partitioned snapshot: see _tet_ops
     ops.model(ndm=3, ndf=3)
     with pytest.raises(ValueError, match="flat=True and per_rank=True"):
         ops.tcl(str(tmp_path / "x.tcl"), flat=True, per_rank=True)
