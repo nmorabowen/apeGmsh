@@ -88,14 +88,21 @@ def test_opensees_model_to_h5_round_trips_the_declared_ndm(
 
 
 def test_model_data_2d_frame_writes_and_reads_ndm(tmp_path: Path) -> None:
-    """``ModelData(ndm=2)`` on a line-only fem writes, and reads back, 2."""
+    """``ModelData(ndm=2)`` on a line-only fem writes, and reads back, 2.
+
+    The read-back runs through both readers: ``OpenSeesModel.from_h5``
+    (the replacement for the ``ModelData.ndm`` accessor, K19 #1506) and
+    ``ModelData.from_h5`` (kept).
+    """
     from apeGmsh.opensees.model_data import ModelData
+    from apeGmsh.opensees.opensees_model import OpenSeesModel
 
     fem = build_simple_frame_fem(ndm=2)
     out = tmp_path / "md.h5"
     ModelData(fem, ndm=2, ndf=3).write(str(out))
     with h5py.File(out, "r") as f:
         assert int(f["meta"].attrs["ndm"]) == 2
+    assert OpenSeesModel.from_h5(str(out)).ndm == 2
     assert ModelData.from_h5(str(out)).ndm == 2
 
 
