@@ -306,13 +306,13 @@ def test_artifact_write_cost_is_reported(tmp_path: Path, monkeypatch) -> None:
     emit_on: list[float] = []
     repeat_on: list[float] = []
     for i in range(REPS):
+        target.unlink(missing_ok=True)
         ops = _bridge(False)
         t0 = time.perf_counter()
         ops.tcl(str(tmp_path / f"off_{i}.tcl"))
         emit_off.append(time.perf_counter() - t0)
         assert not target.exists()
 
-        target.unlink(missing_ok=True)
         ops = _bridge(True)
         t0 = time.perf_counter()
         ops.tcl(str(tmp_path / f"on_{i}.tcl"))
