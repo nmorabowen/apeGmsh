@@ -87,9 +87,19 @@ def gmsh_session():
 
 
 @pytest.fixture
-def g():
-    """Full apeGmsh session with all composites wired up."""
+def g(tmp_path, monkeypatch):
+    """Full apeGmsh session with all composites wired up.
+
+    Its artifacts go to this test's own directory: every ``g`` session
+    is named ``test``, and a bridge built on one test's snapshot leaves
+    the full ``test.h5`` (with ``/opensees``) at the conventional path,
+    which the next test's ``end()`` would then refuse to replace, with a
+    warning, once per test (#1307).
+    """
     from apeGmsh import apeGmsh
+    out = tmp_path / "apegmsh_artifacts"
+    out.mkdir()
+    monkeypatch.setenv("APEGMSH_ARTIFACT_DIR", str(out))
     session = apeGmsh(model_name="test", verbose=False)
     session.begin()
     yield session
