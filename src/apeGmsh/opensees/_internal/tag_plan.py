@@ -652,10 +652,6 @@ class ParameterTagPlan(FamilyTagPlan):
         if self.lines is None:
             return
         last = 0
-        # Canonical numbering: one record has one set of tags on every
-        # rank, and no two records share a tag.
-        record_tags: dict[int, tuple[int, ...]] = {}
-        tag_record: dict[int, int] = {}
         for line in self.lines:
             if len(line.tags) not in PARAMETER_VERBS.get(line.verb, ()):
                 raise TagLawError(
@@ -669,19 +665,6 @@ class ParameterTagPlan(FamilyTagPlan):
                     f"parameters: a {type(line.record).__name__} is planned "
                     f"twice at rank {line.rank}.")
             self._index[key] = line
-            if line.tags:
-                held = record_tags.setdefault(id(line.record), line.tags)
-                if held != line.tags:
-                    raise TagLawError(
-                        f"parameters: a {type(line.record).__name__} holds "
-                        f"tags {held} on one rank and {line.tags} at rank "
-                        f"{line.rank}; a tag is rank-invariant."
-                    )
-            for tag in line.tags:
-                if tag_record.setdefault(tag, id(line.record)) != id(
-                        line.record):
-                    raise TagLawError(
-                        f"parameters: tag {tag} is planned for two records.")
             # Sites outside any partition block are written in mint
             # order, so their tags rise; a rank's flip or update reuses
             # its record's tag, in the rank-by-rank write order.
@@ -717,6 +700,26 @@ class ParameterTagPlan(FamilyTagPlan):
                 f"the model's records declare {len(self.owners)}; the plan "
                 "does not cover the model (ADR 0114 D4, amended)."
             )
+        # Canonical numbering: one record holds one set of tags on every
+        # rank that writes it, and no two records share a tag.
+        record_tags: dict[int, tuple[int, ...]] = {}
+        tag_record: dict[int, int] = {}
+        for line in self.lines:
+            if not line.tags:
+                continue
+            held = record_tags.setdefault(id(line.record), line.tags)
+            if held != line.tags:
+                raise TagLawError(
+                    f"parameters: a {type(line.record).__name__} holds tags "
+                    f"{held} on one rank and {line.tags} at rank "
+                    f"{line.rank}; a tag is rank-invariant (ADR 0114 D4, "
+                    "amended)."
+                )
+            for tag in line.tags:
+                if tag_record.setdefault(tag, id(line.record)) != id(
+                        line.record):
+                    raise TagLawError(
+                        f"parameters: tag {tag} is planned for two records.")
 
     def planned(self) -> tuple[PlannedParameter, ...]:
         """The planned sites; a sub-plan that carries none raises."""
