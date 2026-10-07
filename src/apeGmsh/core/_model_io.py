@@ -8,8 +8,6 @@ from typing import TYPE_CHECKING
 
 import gmsh
 
-from apeGmsh._kernel._label_prefix import LABEL_PREFIX, is_label_pg
-
 from ._helpers import Tag, TagsLike
 from ._geometry_errors import WarnGeomHealSkipsSewing, WarnGeomImportHealth
 
@@ -379,6 +377,9 @@ class _DXFImporter:
         another dim, is refused; ``g.physical.add`` would refuse the
         latter too, but only after earlier layers had been written.
         """
+        # Lazy: keeps the eager core -> _kernel import graph unchanged
+        # (tests/test_import_dag_polarity.py).
+        from apeGmsh._kernel._label_prefix import LABEL_PREFIX, is_label_pg
         reserved = sorted(n for n in names if is_label_pg(n))
         if reserved:
             raise ValueError(
