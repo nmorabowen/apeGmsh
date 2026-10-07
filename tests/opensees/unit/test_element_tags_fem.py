@@ -343,11 +343,9 @@ def test_allocation_without_the_reservation_is_refused() -> None:
 #: ``allocate_block("element", n)`` call in ``src/apeGmsh/opensees``. Each
 #: runs inside the build's tag plan (``tag_plan.plan_tags``) AFTER
 #: ``reserve_fem_element_tags``, so under ``element_tags="fem"`` it draws a
-#: tag above every FEM id — except ``emit_element_spec``, the pre-plan
-#: fan-out the bridge no longer calls (kept for its direct unit tests). A
-#: new site must be checked the same way before it joins this set.
+#: tag above every FEM id. A new site must be checked the same way before
+#: it joins this set.
 _AUDITED_ELEMENT_ALLOCATIONS = {
-    ("_internal/build.py", "emit_element_spec"),
     ("_internal/build.py", "plan_mp_elements"),
     ("_internal/build.py", "plan_interface_tags"),
     ("_internal/build.py", "allocate_element_tags"),

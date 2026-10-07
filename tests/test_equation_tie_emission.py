@@ -99,9 +99,9 @@ def test_equation_route_emits_one_equationConstraint_per_dof():
 
 def test_equation_route_allocates_no_element_tag():
     # The equation route must NOT consume an element tag (it is a domain
-    # command), so the element-tag stream is untouched across the emit:
-    # the plan holds no element for it, and the emit allocator (which
-    # refuses an element mint) is still at the seeded tag after the emit.
+    # command): the plan holds no element for it, so the planner's
+    # element counter is still at the seeded tag, and the emit writes no
+    # element.
     planner = TagAllocator()
     first = planner.allocate("element")
     rec = InterpolationRecord(
@@ -109,9 +109,12 @@ def test_equation_route_allocates_no_element_tag():
         weights=np.array([0.5, 0.3, 0.2]), dofs=[1, 2, 3],
         enforce="equation",
     )
-    tags = emit_tags(stub_fem(interpolations=[rec]), tags=planner)
-    _emit_one_interpolation(RecordingEmitter(), rec, tags)
-    assert tags.last("element") == first       # nothing allocated after it
+    plan = emit_tags(stub_fem(interpolations=[rec]), tags=planner)
+    e = RecordingEmitter()
+    _emit_one_interpolation(e, rec, plan)
+    assert plan.mp_elements.planned().lines == ()
+    assert planner.last("element") == first     # nothing planned after it
+    assert not [c for c in e.calls if c[0] == "element"]
 
 
 def test_equation_route_accepts_quad4_face_arity():

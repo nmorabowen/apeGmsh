@@ -126,7 +126,7 @@ def test_partitioned_emit_refuses_the_rows() -> None:
     bm = ops.build()
     with pytest.raises(BridgeError, match="partitioned"):
         bm._emit_partitioned(  # the guard runs before any argument is used
-            emitter=RecordingEmitter(), tags=None, transforms=[],  # type: ignore[arg-type]
+            emitter=RecordingEmitter(), tag_plan=None, transforms=[],  # type: ignore[arg-type]
             elements=[], inferred_ndf={}, pre_element=[], post_element=[],
             base_resolver=None,
         )

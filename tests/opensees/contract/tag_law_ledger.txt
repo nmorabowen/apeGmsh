@@ -1,12 +1,15 @@
-# The tag-law ledger (K1-3, #1361): replay-side tag minting that K2 removes.
+# The tag-law ledger (K1-3, #1361): replay-side tag minting not yet retired.
 # Shrink-only. Each row is one site the AST lock in test_tag_law_lock.py
-# waives, as: <waiver> <module under opensees/> <function> <rule> <symbol>.
-# Each waiver is commented at its site in the source and pinned by a test in
-# test_tag_law_replay_pins.py. Remove a row in the PR that stops that replay
-# minting, and lower N_WAIVED with it. Never add a row or raise N_WAIVED.
+# waives, as: <waiver> <module under opensees/> <function> <rule> <symbol>,
+# then a comment naming the slice that retires it. Each waiver is commented
+# at its site in the source and pinned by a test in
+# test_tag_law_replay_pins.py. The helper symbols are build.py's three
+# standalone replay entry points (K1-3d S6, #1458); every other emit helper
+# reads the TagPlan. Remove a row in the PR that stops that replay minting,
+# and lower N_WAIVED with it. Never add a row or raise N_WAIVED.
 N_WAIVED = 5
-reinforce-tie-replay _internal/compose.py _replay_into counters _counters
-reinforce-tie-replay _internal/compose.py _replay_into helper emit_reinforce_ties
-initial-stress-replay _internal/compose.py _replay_into helper emit_initial_stress_global
-staged-replay-params _internal/compose.py _replay_staged_into helper emit_initial_stress_global
-staged-replay-params _internal/compose.py _replay_staged_into helper emit_activate_absorbing
+reinforce-tie-replay _internal/compose.py _replay_into counters _counters  # retired by K2, which archives the tie tags
+reinforce-tie-replay _internal/compose.py _replay_into helper replay_reinforce_ties  # retired by K2, which archives the tie tags
+initial-stress-replay _internal/compose.py _replay_into helper replay_initial_stress_global  # retired by K1-8 (#1465), which archives the parameter tags per row
+staged-replay-params _internal/compose.py _replay_staged_into helper replay_initial_stress_global  # retired by K1-8 (#1465), which archives the parameter tags per row
+staged-replay-params _internal/compose.py _replay_staged_into helper replay_activate_absorbing  # retired by K1-8 (#1465), which archives the parameter tags per row
