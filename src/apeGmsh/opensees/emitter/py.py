@@ -324,7 +324,7 @@ class PyEmitter:
                         and y.__class__ is float
                         and z.__class__ is float
                         # nan/inf fall through to the general path,
-                        # which refuses them naming ``node`` (#1356).
+                        # which refuses them naming ``node`` and the argument.
                         and not (x - x or y - y or z - z)
                     ):
                         self._lines.append(
