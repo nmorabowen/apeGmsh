@@ -245,7 +245,8 @@ def _damping(token: str, args: tuple[Any, ...], name: "str | None", what: str) -
 _ElementParser = Callable[[str, tuple[Any, ...], str], tuple[tuple[_Key, ...], _Make]]
 
 
-def _el_std_brick(pg: str, args: tuple[Any, ...], what: str) -> tuple[tuple[_Key, ...], _Make]:
+def _solid(token: str, pg: str, args: tuple[Any, ...], what: str) -> tuple[tuple[_Key, ...], _Make]:
+    """``stdBrick`` / ``FourNodeTetrahedron``: ``matTag [b1 b2 b3]``."""
     if len(args) not in (1, 4):
         raise AssemblyError(
             f"{what}: archived args {args!r} carry flags the assembly does not "
@@ -253,8 +254,8 @@ def _el_std_brick(pg: str, args: tuple[Any, ...], what: str) -> tuple[tuple[_Key
         )
     mat = ("nDMaterial", _tag(args[0], what))
     body = _numbers(args[1:], 3, 3, what) if len(args) == 4 else None
-    return (mat,), lambda ops, ref: ops.element.stdBrick(
-        pg=pg, material=cast(Any, ref(*mat)),
+    return (mat,), lambda ops, ref: getattr(ops.element, token)(
+        pg=pg, material=ref(*mat),
         body_force=(body[0], body[1], body[2]) if body is not None else None)
 
 
@@ -321,7 +322,8 @@ def _beam_with_integration(
 
 
 _ELEMENTS: dict[str, _ElementParser] = {
-    "stdBrick": _el_std_brick,
+    "stdBrick": lambda pg, a, w: _solid("stdBrick", pg, a, w),
+    "FourNodeTetrahedron": lambda pg, a, w: _solid("FourNodeTetrahedron", pg, a, w),
     "ShellMITC4": _el_shell_mitc4,
     "elasticBeamColumn": _el_elastic_beam,
     "forceBeamColumn": lambda pg, a, w: _beam_with_integration("forceBeamColumn", pg, a, w),

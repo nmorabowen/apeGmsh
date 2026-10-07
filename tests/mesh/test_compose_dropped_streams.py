@@ -1,17 +1,20 @@
-"""Compose warns iff it drops a non-empty source stream (program slice
-B2-2, D9).
+"""Compose carries the source's ``rebar_elements``, and warns iff it drops
+a non-empty source stream (program slices B2-2 D9, AS2a).
 
 ``g.compose`` rebuilds the host's ``ElementComposite`` from the rewritten
-bundle. The bundle carries every neutral-zone stream but the source's
-``elements.rebar_elements`` (the cage's auto-emitted structural rebar from
-``g.rebar.place(emit_elements=True)``), which used to vanish without a
-word. Now the rewriter emits one :class:`ComposeDroppedStreamWarning` per
-non-empty uncarried stream, naming it and its count; a plain compose and a
-host-side rebar stream (which IS carried) stay silent.
+bundle. Until AS2a the bundle lacked the source's ``elements.rebar_elements``
+(the cage's auto-emitted structural rebar from
+``g.rebar.place(emit_elements=True)``) and the rewriter warned
+:class:`ComposeDroppedStreamWarning`. ADR 0117 D4 carries it: each bar cell
+moves with the module's id offset, the bar PG is prefixed as every PG is,
+and the material (the bond name) becomes the bridge name
+``{label}.{material}``, so it binds to the instance's rehydrated material.
+No stream is uncarried today; the helper still warns for any stream that
+joins :data:`_UNCARRIED_ELEMENT_STREAMS`.
 
 Run with ``-W error::apeGmsh.mesh._compose.ComposeDroppedStreamWarning`` to
-prove the silent cases are silent. Built on a real conformal cage placement
-(no fork build), like ``tests/mesh/test_rebar_element_h5_roundtrip.py``.
+prove the carry is silent. Built on a real conformal cage placement (no
+fork build), like ``tests/mesh/test_rebar_element_h5_roundtrip.py``.
 """
 from __future__ import annotations
 
@@ -65,28 +68,35 @@ def _compose_and_reload(host, mod, tmp_path, *, label: str) -> FEMData:
     return FEMData.from_h5(str(out))
 
 
-# ── the drop is loud ────────────────────────────────────────────────
+# ── the source stream is carried, silently ──────────────────────────
 
-def test_compose_warns_when_source_rebar_elements_are_dropped(tmp_path):
+def test_compose_carries_source_rebar_elements(tmp_path):
     mod = tmp_path / "mod.h5"
     host = tmp_path / "host.h5"
     n = _rebar_module_h5(mod)
     assert n == 1
-    assert len(FEMData.from_h5(str(mod)).elements.rebar_elements) == n
+    (bar,) = FEMData.from_h5(str(mod)).elements.rebar_elements
     _plain_h5(host)
 
-    with pytest.warns(ComposeDroppedStreamWarning) as rec:
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", ComposeDroppedStreamWarning)
         merged = _compose_and_reload(host, mod, tmp_path, label="A")
 
-    msgs = [str(w.message) for w in rec
-            if w.category is ComposeDroppedStreamWarning]
-    assert len(msgs) == 1                       # one line per dropped stream
-    assert "compose(label='A')" in msgs[0]
-    assert f"carries {n} elements.rebar_elements" in msgs[0]
-    # The warning is honest: the stream really is absent on the result.
-    # The day the bundle carries it, this assertion flips AND
-    # "rebar_elements" leaves _UNCARRIED_ELEMENT_STREAMS together.
-    assert len(merged.elements.rebar_elements) == 0
+    (got,) = merged.elements.rebar_elements
+    # The bond (bar material) name is the bridge name ``A.<material>``.
+    assert got.material == f"A.{bar.material}" == "A.rebar"
+    sep = "/" if "." in bar.pg else "."     # ADR 0038 PG alternation
+    assert got.pg == f"A{sep}{bar.pg}"
+    assert (got.element, got.area, got.role) == (bar.element, bar.area, bar.role)
+    # The cells moved with the module by one offset, onto merged nodes
+    # that sit above every host node.
+    off = got.connectivity[0][0] - bar.connectivity[0][0]
+    assert got.connectivity == tuple(
+        (i + off, j + off) for i, j in bar.connectivity)
+    merged_ids = {int(i) for i in merged.nodes.ids}
+    host_max = max(int(i) for i in FEMData.from_h5(str(host)).nodes.ids)
+    cell_nodes = {i for c in got.connectivity for i in c}
+    assert cell_nodes <= merged_ids and min(cell_nodes) > host_max
 
 
 # ── carried streams and empty ones stay silent ──────────────────────
@@ -129,26 +139,35 @@ class _Src:
         self.elements = _Elems(**streams)
 
 
-def test_uncarried_streams_tuple_names_rebar_elements_only():
-    # Every other ElementComposite stream is carried by _merge_bundle_into_fem;
-    # a stream added here must be one the bundle really lacks.
-    assert _UNCARRIED_ELEMENT_STREAMS == ("rebar_elements",)
+def test_uncarried_streams_tuple_is_empty():
+    # Every ElementComposite stream is carried by _merge_bundle_into_fem
+    # (rebar_elements since AS2a); a stream added here must be one the
+    # bundle really lacks.
+    assert _UNCARRIED_ELEMENT_STREAMS == ()
 
 
-def test_helper_names_stream_and_count():
-    src = _Src(rebar_elements=[object(), object(), object()])
+@pytest.fixture
+def _one_uncarried(monkeypatch):
+    """The helper's contract, on a stand-in stream named ``future``."""
+    import apeGmsh.mesh._compose as compose
+
+    monkeypatch.setattr(compose, "_UNCARRIED_ELEMENT_STREAMS", ("future",))
+
+
+def test_helper_names_stream_and_count(_one_uncarried):
+    src = _Src(future=[object(), object(), object()])
     with pytest.warns(ComposeDroppedStreamWarning,
-                      match=r"carries 3 elements\.rebar_elements"):
+                      match=r"carries 3 elements\.future"):
         _warn_dropped_streams(src, label="X")
 
 
-def test_helper_silent_on_empty_stream():
+def test_helper_silent_on_empty_stream(_one_uncarried):
     with warnings.catch_warnings():
         warnings.simplefilter("error", ComposeDroppedStreamWarning)
-        _warn_dropped_streams(_Src(rebar_elements=[]), label="X")
+        _warn_dropped_streams(_Src(future=[]), label="X")
 
 
-def test_helper_fails_closed_on_missing_stream():
+def test_helper_fails_closed_on_missing_stream(_one_uncarried):
     # The stream is a public ElementComposite attribute; an object without
     # it is a contract break, not a reason to stay quiet.
     with pytest.raises(AttributeError):
