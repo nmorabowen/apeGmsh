@@ -62,7 +62,7 @@ deferred.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Optional, Sequence
+from typing import TYPE_CHECKING, Any, Sequence
 
 if TYPE_CHECKING:
     from apeGmsh._core import apeGmsh

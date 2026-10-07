@@ -71,6 +71,14 @@ if TYPE_CHECKING:
     from ...mesh.FEMData import FEMData
 
 
+#: Root attrs naming the OpenSees build that produced the results
+#: (``architecture/h5-schema.md``, results root attrs). Additive and
+#: optional: absent means unknown.
+ATTR_OPENSEES_BACKEND = "opensees_backend"
+ATTR_OPENSEES_BUILD = "opensees_build"
+_OPENSEES_BACKEND_KINDS = frozenset({"fork", "stock"})
+
+
 class NativeWriter:
     """Bulk writer for apeGmsh native HDF5 result files.
 
@@ -107,8 +115,19 @@ class NativeWriter:
         source_path: str = "",
         analysis_label: str = "",
         model_h5_src: Optional[str | Path] = None,
+        opensees_backend: Optional[str] = None,
+        opensees_build: Optional[str] = None,
     ) -> None:
         """Create the file, write root attrs, embed FEMData if provided.
+
+        ``opensees_backend`` / ``opensees_build`` (F2-b provenance) — the
+        kind (``"fork"`` / ``"stock"``) and git sha of the OpenSees build
+        that produced the results, as the bridge's ``BackendInfo`` reports
+        them. Written as the root attrs ``opensees_backend`` /
+        ``opensees_build`` with the other root attrs, before any data;
+        each is left out when ``None`` (unknown), and an empty build string
+        counts as unknown. The writer stays h5py-side: the caller that
+        knows which binary ran passes them.
 
         ``model_h5_src`` (Phase 4, ADR 0020) — when supplied, points at
         an existing apeGmsh-produced ``model.h5`` whose ``/opensees/``
@@ -124,11 +143,29 @@ class NativeWriter:
             ``model_h5_src`` is supplied but does not exist.
         RuntimeError
             ``model_h5_src`` does not carry a ``/opensees/`` group.
+        ValueError
+            ``opensees_backend`` is not ``"fork"`` / ``"stock"``, or a
+            build is given for a stock backend.
         """
         import h5py
 
         if self._h5 is not None:
             raise RuntimeError(f"NativeWriter for {self._path} already open.")
+        build = opensees_build or None   # "" is unknown, not a build
+        if (
+            opensees_backend is not None
+            and opensees_backend not in _OPENSEES_BACKEND_KINDS
+        ):
+            raise ValueError(
+                f"NativeWriter.open(opensees_backend={opensees_backend!r}): "
+                f"expected one of {sorted(_OPENSEES_BACKEND_KINDS)} or None."
+            )
+        if build is not None and opensees_backend != "fork":
+            raise ValueError(
+                f"NativeWriter.open(opensees_build={build!r}) needs "
+                f"opensees_backend='fork' (got {opensees_backend!r}): only a "
+                "fork build carries a build stamp."
+            )
 
         self._path.parent.mkdir(parents=True, exist_ok=True)
         self._h5 = h5py.File(self._path, "w")
@@ -156,6 +193,10 @@ class NativeWriter:
         )
         h5.attrs[_native.ATTR_APEGMSH_VERSION] = _apegmsh_version()
         h5.attrs[_native.ATTR_ANALYSIS_LABEL] = analysis_label
+        if opensees_backend is not None:
+            h5.attrs[ATTR_OPENSEES_BACKEND] = opensees_backend
+        if build is not None:
+            h5.attrs[ATTR_OPENSEES_BUILD] = build
 
         # Empty stages container
         h5.create_group(_native.STAGES_GROUP[1:])

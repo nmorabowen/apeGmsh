@@ -1,0 +1,440 @@
+{
+ "assembly": {
+  "dump_format": 2,
+  "instances": [
+   {
+    "label": "pier_1",
+    "rotate": null,
+    "source": "block.h5",
+    "translate": [
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   {
+    "label": "pier_2",
+    "rotate": [
+     [
+      0.0,
+      0.0,
+      1.0
+     ],
+     3.141592653589793
+    ],
+    "source": "block.h5",
+    "translate": [
+     10.0,
+     10.0,
+     10.0
+    ]
+   }
+  ],
+  "name": "stack",
+  "ties": [
+   {
+    "dofs": [
+     1,
+     2,
+     3
+    ],
+    "enforce": "equation",
+    "master": "pier_1.top",
+    "method": "collocation",
+    "name": "t1",
+    "slave": "pier_2.bot",
+    "tolerance": 1.0
+   }
+  ],
+  "zone": {
+   "__type__": "AssemblyZone",
+   "instances": [
+    {
+     "__type__": "InstanceRow",
+     "fem_id_base": 1000000,
+     "fem_id_span": 64,
+     "label": "pier_1",
+     "partition_rank": -1,
+     "rotate": [
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "source_fem_hash": "ca0e5a93a41ca2949a1c3a9accbdf6a1",
+     "source_opensees_hash": "3a3746d458d486c7199617f2434f9a9e",
+     "source_path": "block.h5",
+     "translate": [
+      0.0,
+      0.0,
+      0.0
+     ]
+    },
+    {
+     "__type__": "InstanceRow",
+     "fem_id_base": 2000000,
+     "fem_id_span": 64,
+     "label": "pier_2",
+     "partition_rank": -1,
+     "rotate": [
+      0.0,
+      0.0,
+      1.0,
+      3.141592653589793
+     ],
+     "source_fem_hash": "ca0e5a93a41ca2949a1c3a9accbdf6a1",
+     "source_opensees_hash": "3a3746d458d486c7199617f2434f9a9e",
+     "source_path": "block.h5",
+     "translate": [
+      10.0,
+      10.0,
+      10.0
+     ]
+    }
+   ],
+   "name": "stack",
+   "ties": [
+    {
+     "__type__": "TieRow",
+     "kind": "tie",
+     "master": "pier_1.top",
+     "n_records": 9,
+     "name": "t1",
+     "params": "{\"dofs\":[1,2,3],\"enforce\":\"equation\",\"method\":\"collocation\",\"tolerance\":1.0}",
+     "slave": "pier_2.bot"
+    }
+   ],
+   "version": "1.0.0"
+  }
+ },
+ "fem": {
+  "constraints": {
+   "element": 9,
+   "node": 0
+  },
+  "dump_format": 2,
+  "element_counts": {
+   "hex8": 16,
+   "line2": 48,
+   "point1": 16,
+   "quad4": 48
+  },
+  "labels": {
+   "element_side": {
+    "3:pier_1.v": 8,
+    "3:pier_2.v": 8
+   },
+   "node_side": {
+    "3:pier_1.v": 27,
+    "3:pier_2.v": 27
+   }
+  },
+  "loads": {
+   "element": 0,
+   "element_patterns": [],
+   "nodal": 0,
+   "nodal_patterns": [],
+   "sp": 0,
+   "sp_patterns": []
+  },
+  "masses": 0,
+  "mesh_selections": {},
+  "n_nodes": 54,
+  "ndf": {
+   "declared": {},
+   "undeclared": 54
+  },
+  "physical_groups": {
+   "element_side": {
+    "2:pier_1.bot": 4,
+    "2:pier_1.top": 4,
+    "2:pier_2.bot": 4,
+    "2:pier_2.top": 4,
+    "3:pier_1.Vol": 8,
+    "3:pier_2.Vol": 8
+   },
+   "node_side": {
+    "2:pier_1.bot": 9,
+    "2:pier_1.top": 9,
+    "2:pier_2.bot": 9,
+    "2:pier_2.top": 9,
+    "3:pier_1.Vol": 27,
+    "3:pier_2.Vol": 27
+   }
+  },
+  "snapshot_id": "a8f7a62dae410a666fbb082f8ba70b30"
+ },
+ "generator_notes": {
+  "instances": 2,
+  "ties": 1
+ },
+ "meta": {
+  "ndf": 3,
+  "ndm": 3
+ },
+ "model": {
+  "analysis": {
+   "handler": "Lagrange",
+   "numberer": "ParallelPlain",
+   "numberer_runtime_fallback": "RCM",
+   "system": "Mumps",
+   "system_runtime_fallback": "UmfPack"
+  },
+  "beam_integration": [],
+  "dump_format": 2,
+  "elements": [
+   {
+    "__type__": "ElementRecord",
+    "args": [
+     1
+    ],
+    "connectivity": [],
+    "fem_eid": 1000008,
+    "tag": 1000008,
+    "type_token": "stdBrick"
+   },
+   {
+    "__type__": "ElementRecord",
+    "args": [
+     1
+    ],
+    "connectivity": [],
+    "fem_eid": 1000009,
+    "tag": 1000009,
+    "type_token": "stdBrick"
+   },
+   {
+    "__type__": "ElementRecord",
+    "args": [
+     1
+    ],
+    "connectivity": [],
+    "fem_eid": 1000010,
+    "tag": 1000010,
+    "type_token": "stdBrick"
+   },
+   {
+    "__type__": "ElementRecord",
+    "args": [
+     1
+    ],
+    "connectivity": [],
+    "fem_eid": 1000011,
+    "tag": 1000011,
+    "type_token": "stdBrick"
+   },
+   {
+    "__type__": "ElementRecord",
+    "args": [
+     1
+    ],
+    "connectivity": [],
+    "fem_eid": 1000012,
+    "tag": 1000012,
+    "type_token": "stdBrick"
+   },
+   {
+    "__type__": "ElementRecord",
+    "args": [
+     1
+    ],
+    "connectivity": [],
+    "fem_eid": 1000013,
+    "tag": 1000013,
+    "type_token": "stdBrick"
+   },
+   {
+    "__type__": "ElementRecord",
+    "args": [
+     1
+    ],
+    "connectivity": [],
+    "fem_eid": 1000014,
+    "tag": 1000014,
+    "type_token": "stdBrick"
+   },
+   {
+    "__type__": "ElementRecord",
+    "args": [
+     1
+    ],
+    "connectivity": [],
+    "fem_eid": 1000015,
+    "tag": 1000015,
+    "type_token": "stdBrick"
+   },
+   {
+    "__type__": "ElementRecord",
+    "args": [
+     2
+    ],
+    "connectivity": [],
+    "fem_eid": 2000008,
+    "tag": 2000008,
+    "type_token": "stdBrick"
+   },
+   {
+    "__type__": "ElementRecord",
+    "args": [
+     2
+    ],
+    "connectivity": [],
+    "fem_eid": 2000009,
+    "tag": 2000009,
+    "type_token": "stdBrick"
+   },
+   {
+    "__type__": "ElementRecord",
+    "args": [
+     2
+    ],
+    "connectivity": [],
+    "fem_eid": 2000010,
+    "tag": 2000010,
+    "type_token": "stdBrick"
+   },
+   {
+    "__type__": "ElementRecord",
+    "args": [
+     2
+    ],
+    "connectivity": [],
+    "fem_eid": 2000011,
+    "tag": 2000011,
+    "type_token": "stdBrick"
+   },
+   {
+    "__type__": "ElementRecord",
+    "args": [
+     2
+    ],
+    "connectivity": [],
+    "fem_eid": 2000012,
+    "tag": 2000012,
+    "type_token": "stdBrick"
+   },
+   {
+    "__type__": "ElementRecord",
+    "args": [
+     2
+    ],
+    "connectivity": [],
+    "fem_eid": 2000013,
+    "tag": 2000013,
+    "type_token": "stdBrick"
+   },
+   {
+    "__type__": "ElementRecord",
+    "args": [
+     2
+    ],
+    "connectivity": [],
+    "fem_eid": 2000014,
+    "tag": 2000014,
+    "type_token": "stdBrick"
+   },
+   {
+    "__type__": "ElementRecord",
+    "args": [
+     2
+    ],
+    "connectivity": [],
+    "fem_eid": 2000015,
+    "tag": 2000015,
+    "type_token": "stdBrick"
+   }
+  ],
+  "fem": {
+   "constraints": {
+    "element": 9,
+    "node": 0
+   },
+   "dump_format": 2,
+   "element_counts": {
+    "hex8": 16,
+    "line2": 48,
+    "point1": 16,
+    "quad4": 48
+   },
+   "labels": {
+    "element_side": {
+     "3:pier_1.v": 8,
+     "3:pier_2.v": 8
+    },
+    "node_side": {
+     "3:pier_1.v": 27,
+     "3:pier_2.v": 27
+    }
+   },
+   "loads": {
+    "element": 0,
+    "element_patterns": [],
+    "nodal": 0,
+    "nodal_patterns": [],
+    "sp": 0,
+    "sp_patterns": []
+   },
+   "masses": 0,
+   "mesh_selections": {},
+   "n_nodes": 54,
+   "ndf": {
+    "declared": {},
+    "undeclared": 54
+   },
+   "physical_groups": {
+    "element_side": {
+     "2:pier_1.bot": 4,
+     "2:pier_1.top": 4,
+     "2:pier_2.bot": 4,
+     "2:pier_2.top": 4,
+     "3:pier_1.Vol": 8,
+     "3:pier_2.Vol": 8
+    },
+    "node_side": {
+     "2:pier_1.bot": 9,
+     "2:pier_1.top": 9,
+     "2:pier_2.bot": 9,
+     "2:pier_2.top": 9,
+     "3:pier_1.Vol": 27,
+     "3:pier_2.Vol": 27
+    }
+   },
+   "snapshot_id": "a8f7a62dae410a666fbb082f8ba70b30"
+  },
+  "fixes": [],
+  "masses": [],
+  "materials": {
+   "nd": [
+    {
+     "__type__": "MaterialRecord",
+     "params": [
+      200000,
+      0.3,
+      7.85e-09
+     ],
+     "tag": 1,
+     "type_token": "ElasticIsotropic"
+    },
+    {
+     "__type__": "MaterialRecord",
+     "params": [
+      200000,
+      0.3,
+      7.85e-09
+     ],
+     "tag": 2,
+     "type_token": "ElasticIsotropic"
+    }
+   ]
+  },
+  "model_name": "assembly_1.0",
+  "ndf": 3,
+  "ndm": 3,
+  "patterns": [],
+  "recorders": [],
+  "sections": [],
+  "snapshot_id": "a8f7a62dae410a666fbb082f8ba70b30",
+  "time_series": [],
+  "transforms": []
+ }
+}

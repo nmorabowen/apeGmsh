@@ -27,13 +27,15 @@ from apeGmsh.opensees._internal.build import (
     _emit_kinematic_couplings,
     _plan_rank_constraints,
 )
-from apeGmsh.opensees._internal.tag_allocator import TagAllocator
 from apeGmsh.opensees.emitter.recording import RecordingEmitter
+
+from tests.opensees._helpers.tag_plan import emit_tags, stub_fem
 
 
 def _emit(records: list[NodeGroupRecord]) -> RecordingEmitter:
     e = RecordingEmitter()
-    _emit_kinematic_couplings(e, records, TagAllocator())
+    tags = emit_tags(stub_fem(node_constraints=records))
+    _emit_kinematic_couplings(e, records, tags)
     return e
 
 

@@ -158,6 +158,8 @@ import numpy as np
 
 from apeGmsh.opensees._internal.schema_version import (
     _ZONE_KEY,
+    ASSEMBLY,
+    ASSEMBLY_KEY,
     ENVELOPE_KEY,
     GEOMETRY,
     NEUTRAL,
@@ -214,6 +216,19 @@ def test_per_zone_keys_written_on_compose(tmp_path: Any) -> None:
     assert ENVELOPE_KEY in keys
     assert NEUTRAL_KEY in keys
     assert OPENSEES_KEY in keys
+    # ADR 0117 D5: only Assembly.h5 writes /assembly and its key.
+    assert ASSEMBLY_KEY not in keys
+
+
+def test_assembly_key_is_its_own_and_never_the_envelope() -> None:
+    """ADR 0117 D5 / ADR 0112 D2: ``/assembly`` has its own ``/meta`` key,
+    and a file without it has no assembly version even if it carries the
+    legacy envelope (the zone postdates the envelope)."""
+    assert _ZONE_KEY[ASSEMBLY] == ASSEMBLY_KEY == "assembly_schema_version"
+    attrs = {ENVELOPE_KEY: str(reader_version(NEUTRAL))}
+    assert read_zone_version(attrs, ASSEMBLY) is None
+    stamped = {ASSEMBLY_KEY: str(reader_version(ASSEMBLY))}
+    assert read_zone_version(stamped, ASSEMBLY) == reader_version(ASSEMBLY)
 
 
 def test_per_zone_keys_written_on_native_results(tmp_path: Any) -> None:
@@ -387,6 +402,8 @@ def test_reader_version_reflects_writer_constants() -> None:
         NEUTRAL_SCHEMA_VERSION,
     )
     from apeGmsh.opensees._internal.schema_version import (
+        ASSEMBLY_SCHEMA_FLOOR,
+        ASSEMBLY_SCHEMA_VERSION,
         GEOMETRY_SCHEMA_FLOOR,
         GEOMETRY_SCHEMA_VERSION,
         PROVENANCE_SCHEMA_FLOOR,
@@ -409,6 +426,10 @@ def test_reader_version_reflects_writer_constants() -> None:
         RESULTS: (RESULTS_SCHEMA_FLOOR, RESULTS_FLOOR),
         GEOMETRY: (GEOMETRY_SCHEMA_FLOOR, GEOMETRY_FLOOR),
         PROVENANCE: (PROVENANCE_SCHEMA_FLOOR, PROVENANCE_FLOOR),
+        # ADR 0117 D5: the zone's floor is its first version, so the
+        # writer constant is its own fixture (no tests/fixtures/schema.py
+        # row until its first minor bump).
+        ASSEMBLY: (ASSEMBLY_SCHEMA_FLOOR, ASSEMBLY_SCHEMA_VERSION),
     }
     assert set(writer_floors) == set(_ZONE_KEY)
     for zone, (writer_floor, fixture_floor) in writer_floors.items():
@@ -912,7 +933,8 @@ def test_h5_schema_doc_registry_matches_writer_constants() -> None:
     )
 
     from apeGmsh.opensees._internal.schema_version import (
-        GEOMETRY, NEUTRAL, OPENSEES, PROVENANCE, RESULTS, reader_floor,
+        ASSEMBLY, GEOMETRY, NEUTRAL, OPENSEES, PROVENANCE, RESULTS,
+        reader_floor,
     )
 
     for zone, label in (
@@ -921,6 +943,7 @@ def test_h5_schema_doc_registry_matches_writer_constants() -> None:
         (RESULTS, "results"),
         (GEOMETRY, "geometry"),
         (PROVENANCE, "provenance"),
+        (ASSEMBLY, "assembly"),
     ):
         floor_doc = _zone_registry_floor(text, label)
         floor_live = str(reader_floor(zone))

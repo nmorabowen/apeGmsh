@@ -16,9 +16,10 @@ not pollute prior state.
 from __future__ import annotations
 
 from .._internal.analyze_rc import COMMIT_ABORT_MESSAGE, COMMIT_ABORT_RC
-from .._internal.build import stage_marker_name
+from .._internal.build import BridgeError, stage_marker_name
 from .._rc_c2_flags import warn_rc_c2_deck
 
+import math
 from typing import Any, Literal, Sequence
 
 from .base import (
@@ -81,8 +82,87 @@ def _fmt_value(v: Any) -> str:
     if isinstance(v, int):
         return str(int(v))
     if isinstance(v, float):
-        return repr(float(v))
+        f = float(v)
+        if not math.isfinite(f):
+            raise _NonFiniteArg(f)
+        return repr(f)
+    _refuse_nonfinite_items(v)
     return repr(v)
+
+
+class _NonFiniteArg(BridgeError):
+    """A ``nan`` / ``inf`` reached the formatter (#1356).
+
+    :func:`_fmt_value` has no command context, so it raises this; the
+    caller that knows the command re-raises a :class:`BridgeError` that
+    names the command and the argument (:func:`_nonfinite_error`).
+    """
+
+    def __init__(self, value: float) -> None:
+        super().__init__(f"non-finite float {value!r}")
+        self.value = value
+
+
+def _refuse_nonfinite_items(v: Any) -> None:
+    """Raise :class:`_NonFiniteArg` for a ``nan`` / ``inf`` inside a
+    list or tuple argument: the fallback renders it with ``repr``, which
+    would print a bare ``nan`` token. Fallback path only."""
+    if isinstance(v, (list, tuple)):
+        for x in v:
+            _fmt_value(x)
+
+
+def _is_nonfinite_token(a: Any) -> bool:
+    try:
+        _fmt_value(a)
+    except _NonFiniteArg:
+        return True
+    return False
+
+
+def _nonfinite_error(command: str, args: Sequence[Any], value: float) -> BridgeError:
+    """The emit-time refusal of a non-finite float (#1356).
+
+    OpenSees cannot read ``nan`` / ``inf``: a py deck dies with
+    ``NameError`` and Tcl's ``Tcl_GetDouble`` rejects the token. The
+    message names the command and the offending argument (0-based
+    position among the command's positional arguments). Error path
+    only, so it re-formats the arguments to find the offender.
+    """
+    where = f"an argument is {value!r}"
+    for i, a in enumerate(args):
+        if _is_nonfinite_token(a):
+            where = f"argument {i} is {a!r}"
+            break
+    return BridgeError(
+        f"{command}: {where}; OpenSees cannot parse a non-finite float "
+        "(nan/inf), so the deck would fail at run time. Fix the value at "
+        "its source (#1356)."
+    )
+
+
+def _refuse_nonfinite_ramp(
+    name: str, targets: tuple[tuple[int, float], ...], n_steps_to_full: float,
+) -> None:
+    """Refuse a non-finite ramp constant before any hook line is emitted.
+
+    The ramp body interpolates ``n_steps_to_full`` and each target into
+    an expression, not through the line formatter, so it is checked
+    here (#1356).
+    """
+    bad: list[str] = []
+    if not math.isfinite(float(n_steps_to_full)):
+        bad.append(f"n_steps_to_full is {float(n_steps_to_full)!r}")
+    bad += [
+        f"target of parameter {int(tag)} is {float(t)!r}"
+        for tag, t in targets if not math.isfinite(float(t))
+    ]
+    if bad:
+        raise BridgeError(
+            f"step hook ramp {name!r}: {'; '.join(bad)}; OpenSees cannot "
+            "parse a non-finite float (nan/inf), so the deck would fail at "
+            "run time. Fix the value at its source (#1356)."
+        )
 
 
 def _ops_call(method: str, *args: Any) -> str:
@@ -92,17 +172,29 @@ def _ops_call(method: str, *args: Any) -> str:
     instead of per token — measured flat-emit hotspot); strings and odd
     types still route through :func:`_fmt_value`, so output is
     identical.
+
+    A non-finite float raises :class:`BridgeError` naming the command
+    and the argument (#1356). The inlined float check is ``a - a``:
+    ``0.0`` (falsy) for every finite float, ``nan`` (truthy) for
+    ``nan`` and ``+-inf`` -- one float op, no attribute lookup or call.
     """
     out: list[str] = []
     append = out.append
-    for a in args:
-        c = a.__class__
-        if c is int:
-            append(str(a))
-        elif c is float:
-            append(repr(a))
-        else:
-            append(_fmt_value(a))
+    try:
+        for a in args:
+            c = a.__class__
+            if c is int:
+                append(str(a))
+            elif c is float:
+                if a - a:
+                    raise _NonFiniteArg(a)
+                append(repr(a))
+            else:
+                append(_fmt_value(a))
+    except _NonFiniteArg as exc:
+        head = f"ops.{method}({_fmt_value(args[0])}, ...)" if (
+            args and isinstance(args[0], str)) else f"ops.{method}(...)"
+        raise _nonfinite_error(head, args, exc.value) from None
     return f"ops.{method}({', '.join(out)})"
 
 
@@ -231,6 +323,9 @@ class PyEmitter:
                         x.__class__ is float
                         and y.__class__ is float
                         and z.__class__ is float
+                        # nan/inf fall through to the general path,
+                        # which refuses them naming ``node`` and the argument.
+                        and not (x - x or y - y or z - z)
                     ):
                         self._lines.append(
                             f"ops.node({tag}, {x!r}, {y!r}, {z!r})"
@@ -238,7 +333,8 @@ class PyEmitter:
                         return
                 elif len(coords) == 2:
                     x, y = coords
-                    if x.__class__ is float and y.__class__ is float:
+                    if (x.__class__ is float and y.__class__ is float
+                            and not (x - x or y - y)):
                         self._lines.append(f"ops.node({tag}, {x!r}, {y!r})")
                         return
             self._lines.append(_ops_call("node", tag, *coords))
@@ -578,10 +674,17 @@ class PyEmitter:
             self._lines.indent = prev_indent
             return 0
 
-        rungs_literal = "[" + ", ".join(
-            "(" + ", ".join(_fmt_value(a) for a in rung) + ",)"
-            for rung in strategy.rungs
-        ) + "]"
+        try:
+            rungs_literal = "[" + ", ".join(
+                "(" + ", ".join(_fmt_value(a) for a in rung) + ",)"
+                for rung in strategy.rungs
+            ) + "]"
+        except _NonFiniteArg as exc:
+            k, bad = next((k, r) for k, r in enumerate(strategy.rungs)
+                          if any(_is_nonfinite_token(a) for a in r))
+            raise _nonfinite_error(
+                f"analyze strategy {strategy.name!r} rung {k}", bad, exc.value,
+            ) from None
         sname = stage_marker_name(strategy.name)
         self._lines.append(f"_apesees_rungs = {rungs_literal}")
         self._lines.append(f"for _apesees_i in range({n}):")
@@ -759,6 +862,7 @@ class PyEmitter:
         n_steps_to_full: float,
         phase: Literal["before", "after"] = "before",
     ) -> None:
+        _refuse_nonfinite_ramp(name, targets, n_steps_to_full)
         # 1. Dispatcher boilerplate (idempotent).
         if not self._hook_dispatcher_emitted:
             self._emit_hook_dispatcher_boilerplate()

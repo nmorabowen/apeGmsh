@@ -8,13 +8,12 @@ instead of minting.
 
 The migration moved each family's allocation loop out of its emit helper
 and into this module one family at a time, so every step left the decks
-byte-identical. A family not yet moved has a *pending* sub-plan: its
-:meth:`FamilyTagPlan.stream` raises, and the emit path keeps minting that
-family's tags from :meth:`TagPlan.emit_allocator`, a fork of the frozen
-planner allocator in which every kind whose minting families have all
-moved is frozen. Since K1-3d S5 every family is planned, so the emit fork
-freezes every kind they mint, and a minting site the migration missed
-raises :class:`TagLawError` where it is.
+byte-identical. A family not yet moved has a *pending* sub-plan, whose
+:meth:`FamilyTagPlan.stream` raises. Every family is planned now, and the
+emit holds the :class:`TagPlan` itself, which has no allocation API: its
+helpers take the plan, read their family's rows, and mint nothing. An
+owner the plan does not hold raises :class:`~.build.TagPlanMiss`, naming
+the family and the owner.
 
 The plan is keyed by :class:`TagMode`, the ``(split, partitioned,
 staged)`` triple, because the split, partitioned and staged decks each
@@ -27,10 +26,6 @@ joined by ``:`` to its type token when the planner knows it
 records, so the oracle can compare the two. An element spec picks its
 type token inside its own ``_emit``, so an element row carries the bare
 verb, ``("element", 7)``, and the oracle compares element rows by verb.
-
-The emit helpers that are handed only the emit allocator reach the plan
-through it: :func:`plan_of` reads the plan that an allocator from
-:meth:`TagPlan.emit_allocator` was forked for.
 """
 from __future__ import annotations
 
@@ -57,14 +52,25 @@ if TYPE_CHECKING:
 #: One planned emission: ``(kind, tag)`` in the emit's verb vocabulary.
 TagRow = tuple[str, int]
 
-#: A helper handed a fork of another model's plan says so first, rather
+#: A helper handed another model's plan says so first, rather
 #: than report a count or order mismatch that would hide the cause.
 _FOREIGN_PLAN = (
     "the {family} plan was made over another FEM snapshot than the one "
-    "this emit walks: the emit allocator is a fork of another model's tag "
-    "plan. Emit each model through its own BuiltModel.emit (ADR 0114 D4, "
-    "amended)."
+    "this emit walks: the tag plan is another model's. Emit each model "
+    "through its own BuiltModel.emit (ADR 0114 D4, amended)."
 )
+
+
+def _miss(message: str) -> Exception:
+    """A plan miss: the plan holds no row for an owner this emit writes.
+
+    The error is a :class:`~.build.TagPlanMiss`, a :class:`~.build.BridgeError`
+    and a :class:`TagLawError` at once; ``message`` names the family and
+    the owner.
+    """
+    from .build import TagPlanMiss
+
+    return TagPlanMiss(message)
 
 
 class TagMode(NamedTuple):
@@ -201,7 +207,7 @@ class TransformTagPlan(FamilyTagPlan):
 
     def _planned(self) -> TransformFanout:
         if self.fanout is None:
-            raise TagLawError(
+            raise _miss(
                 "transforms: this plan carries no fan-out; plan_tags "
                 "plans one for every mode (ADR 0114 D4, amended)."
             )
@@ -225,15 +231,15 @@ class TransformTagPlan(FamilyTagPlan):
         """The planned fan-out, which must cover exactly ``transforms``.
 
         ``transforms`` are the specs this emit walks, in order, over the
-        FEM snapshot ``fem``. A plan made over another FEM (a fork of
-        another model's plan), for other specs, or in another order,
-        raises :class:`TagLawError`.
+        FEM snapshot ``fem``. A plan made over another FEM (another
+        model's plan), for other specs, or in another order, raises
+        :class:`~.build.TagPlanMiss`.
         """
         fanout = self._planned()
         if fem is not fanout.fem:
-            raise TagLawError(_FOREIGN_PLAN.format(family="transform"))
+            raise _miss(_FOREIGN_PLAN.format(family="transform"))
         if [id(t) for t, _ in fanout.specs] != [id(t) for t in transforms]:
-            raise TagLawError(
+            raise _miss(
                 f"the transform plan holds {len(fanout.specs)} specs, but "
                 f"this emit walks {len(transforms)}, or in another order: "
                 "the plan was not made for this model (ADR 0114 D4, "
@@ -295,7 +301,7 @@ class NamedRegion(NamedTuple):
         earlier rank may hold a member.
         """
         if self.first_rank is None or rank < self.first_rank:
-            raise TagLawError(
+            raise _miss(
                 f"named region {self.name!r} has members on rank {rank}, "
                 f"but the region plan numbered it on rank {self.first_rank}: "
                 "the plan was not made for this emit (ADR 0114 D4, amended)."
@@ -306,7 +312,7 @@ class NamedRegion(NamedTuple):
         """Raise if the plan numbered this region on ``rank``, which holds
         none of its members."""
         if rank == self.first_rank:
-            raise TagLawError(
+            raise _miss(
                 f"the region plan numbered named region {self.name!r} on "
                 f"rank {rank}, which holds none of its members: the plan "
                 "was not made for this emit (ADR 0114 D4, amended)."
@@ -315,7 +321,7 @@ class NamedRegion(NamedTuple):
     def planned_tag(self) -> int:
         """The tag to write; raises if the plan gave this region none."""
         if self.tag is None:
-            raise TagLawError(
+            raise _miss(
                 f"the region plan gives named region {self.name!r} no tag, "
                 "but this emit writes it: the plan was not made for this "
                 "emit (ADR 0114 D4, amended)."
@@ -415,12 +421,12 @@ class RegionTagPlan(FamilyTagPlan):
 
     def _planned(self, fem: object) -> tuple[PlannedRegion, ...]:
         if self.regions is None:
-            raise TagLawError(
+            raise _miss(
                 "regions: this plan carries no regions; plan_tags plans "
                 "them for every mode (ADR 0114 D4, amended)."
             )
         if fem is not self.fem:
-            raise TagLawError(_FOREIGN_PLAN.format(family="region"))
+            raise _miss(_FOREIGN_PLAN.format(family="region"))
         return self.regions
 
     def stream(self) -> tuple[TagRow, ...]:
@@ -442,7 +448,7 @@ class RegionTagPlan(FamilyTagPlan):
         self._planned(fem)
         planned = self._by_site.get(site, {})
         if list(planned) != list(keys):
-            raise TagLawError(
+            raise _miss(
                 f"the region plan holds {list(planned)} at {site}, but this "
                 f"emit writes {list(keys)}: the plan was not made for this "
                 "emit (ADR 0114 D4, amended)."
@@ -469,7 +475,7 @@ class RegionTagPlan(FamilyTagPlan):
         self._planned(fem)
         members = tuple(self.named.get(site, ()))
         if [name for name, _, _ in members] != list(names):
-            raise TagLawError(
+            raise _miss(
                 f"the region plan holds the named regions "
                 f"{[name for name, _, _ in members]} at {site}, but this "
                 f"emit declares {list(names)}: the plan was not made for "
@@ -484,7 +490,7 @@ class RegionTagPlan(FamilyTagPlan):
             numbered = [name for name, nodes, _ in members if nodes]
         planned = self._by_site.get(site, {})
         if list(planned) != numbered:
-            raise TagLawError(
+            raise _miss(
                 f"the region plan numbers the named regions {list(planned)} "
                 f"at {site}, but this emit numbers {numbered}, in that "
                 "order: the plan was not made for this emit (ADR 0114 D4, "
@@ -514,8 +520,10 @@ class ParameterTagPlan(FamilyTagPlan):
     rank holding no tag). ``owners`` is every ``(record, rank)`` the emit
     walks, derived from the model's records alone; the lines must be
     exactly those, by identity and in that order, or the plan raises when
-    it is made. The writers read ``plan.parameters[(record, rank)]`` and
-    mint nothing.
+    it is made. The writers read their lines (:meth:`line_at`,
+    :meth:`flip_lines`) and mint nothing; a flip or update line carries
+    the element tags the plan resolved, so the writers do not resolve them
+    again.
     """
 
     FAMILY: ClassVar[str] = "parameters"
@@ -565,17 +573,28 @@ class ParameterTagPlan(FamilyTagPlan):
             a is not b or r != s
             for (a, r), (b, s) in zip(planned, self.owners)
         ):
-            raise TagLawError(
-                f"the parameter plan holds {len(planned)} sites, but the "
-                f"model's records declare {len(self.owners)}, or other "
-                "ones, or in another order: the plan does not cover the "
-                "model (ADR 0114 D4, amended)."
+            from .build import plan_owner
+
+            i = next((i for i, ((a, r), (b, s)) in enumerate(
+                zip(planned, self.owners)) if a is not b or r != s),
+                min(len(planned), len(self.owners)))
+            if i < len(self.owners):
+                rec, rank = self.owners[i]
+                owner = f"holds no {plan_owner(rec)} at rank {rank} in site {i}"
+            else:
+                rec, rank = planned[i]
+                owner = (f"holds {plan_owner(rec)} at rank {rank} in site "
+                         f"{i}, which the model's records do not declare")
+            raise _miss(
+                f"the parameter plan {owner}: it holds {len(planned)} sites, "
+                f"the model's records declare {len(self.owners)}; the plan "
+                "does not cover the model (ADR 0114 D4, amended)."
             )
 
     def planned(self) -> tuple[PlannedParameter, ...]:
         """The planned sites; a sub-plan that carries none raises."""
         if self.lines is None:
-            raise TagLawError(
+            raise _miss(
                 "parameters: this plan carries no parameter plan; plan_tags "
                 "plans one for every mode (ADR 0114 D4, amended)."
             )
@@ -589,37 +608,64 @@ class ParameterTagPlan(FamilyTagPlan):
         return tuple(
             (line.verb, tag) for line in self.planned() for tag in line.tags)
 
-    def __getitem__(self, key: ParameterKey) -> tuple[int, ...]:
-        """The tags the plan gives ``record`` at ``rank``.
+    def _line(self, record: object, rank: int | None) -> PlannedParameter:
+        """The line the plan holds for ``record`` at ``rank``.
 
         Looked up by the record's identity: a record the plan does not
         hold at that rank (another model's, or one the plan dropped)
-        raises :class:`TagLawError`.
+        raises :class:`~.build.TagPlanMiss`.
         """
-        record, rank = key
         self.planned()
         line = self._index.get((id(record), rank))
         if line is None or line.record is not record:
-            raise TagLawError(
+            raise _miss(
                 f"the parameter plan holds no {type(record).__name__} at "
                 f"rank {rank}: the plan was not made for this emit (ADR "
                 "0114 D4, amended)."
             )
-        return line.tags
+        return line
 
-    def tags_at(self, site: ParameterSite) -> tuple[int, ...]:
-        """The tags of ``site``: its record's at its rank, as many as the
-        site declares and written by its verb, or :class:`TagLawError`."""
-        tags = self[(site.record, site.rank)]
-        line = self._index[(id(site.record), site.rank)]
-        if line.verb != site.verb or len(tags) != site.n_tags:
-            raise TagLawError(
+    def __getitem__(self, key: ParameterKey) -> tuple[int, ...]:
+        """The tags the plan gives ``record`` at ``rank``."""
+        record, rank = key
+        return self._line(record, rank).tags
+
+    def line_at(self, site: ParameterSite) -> PlannedParameter:
+        """The line of ``site``: its record's at its rank, with as many
+        tags as the site declares, written by its verb, or
+        :class:`~.build.TagPlanMiss`."""
+        line = self._line(site.record, site.rank)
+        if line.verb != site.verb or len(line.tags) != site.n_tags:
+            raise _miss(
                 f"the parameter plan gives a {type(site.record).__name__} "
-                f"at rank {site.rank} {len(tags)} {line.verb!r} tag(s), but "
-                f"this emit writes {site.n_tags} {site.verb!r} tag(s) there: "
-                "the plan was not made for this emit (ADR 0114 D4, amended)."
+                f"at rank {site.rank} {len(line.tags)} {line.verb!r} tag(s), "
+                f"but this emit writes {site.n_tags} {site.verb!r} tag(s) "
+                "there: the plan was not made for this emit (ADR 0114 D4, "
+                "amended)."
             )
-        return tags
+        return line
+
+    def flip_lines(
+        self, verb: str, records: "Sequence[object]", rank: int | None,
+    ) -> tuple[PlannedParameter, ...]:
+        """The lines of a flip or update pass: each record's at ``rank``,
+        written by ``verb``, with the element tags the plan resolved for
+        it there (:attr:`PlannedParameter.ele_tags`).
+
+        A record the plan does not hold at ``rank``, or holds for another
+        verb, raises :class:`~.build.TagPlanMiss`.
+        """
+        lines = tuple(self._line(rec, rank) for rec in records)
+        for line in lines:
+            if line.verb != verb:
+                raise _miss(
+                    f"the parameter plan holds a "
+                    f"{type(line.record).__name__} at rank {rank} for "
+                    f"{line.verb!r}, but this emit writes it by {verb!r}: "
+                    "the plan was not made for this emit (ADR 0114 D4, "
+                    "amended)."
+                )
+        return lines
 
 
 @dataclass(frozen=True, slots=True)
@@ -652,7 +698,7 @@ class MPElementTagPlan(FamilyTagPlan):
     def planned(self) -> MPElementPlan:
         """The MP-element plan; a sub-plan that carries none raises."""
         if self.mp is None:
-            raise TagLawError(
+            raise _miss(
                 "mp_elements: this plan carries no MP-element plan; "
                 "plan_tags plans one for every mode (ADR 0114 D4, "
                 "amended)."
@@ -696,7 +742,7 @@ class InterfaceTagPlan(FamilyTagPlan):
     def planned(self) -> InterfacePlan:
         """The interface plan; a sub-plan that carries none raises."""
         if self.interfaces is None:
-            raise TagLawError(
+            raise _miss(
                 "interfaces: this plan carries no interface plan; "
                 "plan_tags plans one for every mode (ADR 0114 D4, "
                 "amended)."
@@ -741,7 +787,7 @@ class ContactTagPlan(FamilyTagPlan):
 
     def _planned(self) -> ContactPlan:
         if self.contacts is None:
-            raise TagLawError(
+            raise _miss(
                 "contacts: this plan carries no contact plan; plan_tags "
                 "plans one for every mode (ADR 0114 D4, amended)."
             )
@@ -765,13 +811,13 @@ class ContactTagPlan(FamilyTagPlan):
         """The contact plan, which must have been made over ``fem``.
 
         ``fem`` is the FEM snapshot this emit walks. A plan made over
-        another one (a fork of another model's plan), or one that does
-        not hold each of its contact records exactly once, raises
-        :class:`TagLawError`.
+        another one (another model's plan), or one that does not hold
+        each of its contact records exactly once, raises
+        :class:`~.build.TagPlanMiss`, which names the record it misses.
         """
         planned = self._planned()
         if fem is not planned.fem:
-            raise TagLawError(_FOREIGN_PLAN.format(family="contact"))
+            raise _miss(_FOREIGN_PLAN.format(family="contact"))
         planned.check_covers(fem)
         return planned
 
@@ -803,6 +849,9 @@ class TagPlan:
     :func:`plan_inputs` of the model the plan was made for, so a memoised
     plan can tell whether it still describes a model
     (:meth:`planned_for`).
+
+    The emit holds the plan itself and hands it to every helper; the plan
+    has no allocation API, so an emit can read a tag but never mint one.
     """
 
     mode: TagMode
@@ -876,55 +925,6 @@ class TagPlan:
         for name in FAMILIES:
             out.extend(self.family(name).stream())
         return out
-
-    def emit_allocator(self) -> TagAllocator:
-        """The allocator the emit mints its pending families from.
-
-        A fork of the frozen planner allocator: it continues every
-        counter from the plan, and every :attr:`frozen_kinds` kind raises
-        :class:`TagLawError` on a mint.
-        """
-        return self.allocator.fork(self.frozen_kinds, origin=self)
-
-
-def plan_of(tags: TagAllocator) -> TagPlan:
-    """The plan ``tags`` was forked from by :meth:`TagPlan.emit_allocator`.
-
-    The emit helpers that are handed only the emit allocator read the
-    plan here. Any other allocator (a fresh one, the frozen planner
-    allocator, a plain :meth:`TagAllocator.fork`) raises
-    :class:`TagLawError`: no plan drove that emit.
-    """
-    # The fork's origin is set by TagAllocator.fork and read only here
-    # (a sibling module of tag_allocator in this package).
-    plan = tags._origin
-    if not isinstance(plan, TagPlan):
-        raise TagLawError(
-            "plan_of: this allocator did not come from "
-            "TagPlan.emit_allocator(), so it carries no tag plan; an emit "
-            "is driven by BuiltModel.emit (ADR 0114 D4, amended)."
-        )
-    return plan
-
-
-def plan_or_standalone(tags: TagAllocator) -> TagPlan | None:
-    """The plan of a bridge emit's allocator, or ``None`` for a plain one.
-
-    The two-way emit helpers (ADR 0114 D4, amended; until K1-3d S6 drops
-    ``tags`` from their signatures) read the plan when handed
-    :meth:`TagPlan.emit_allocator`'s fork, and plan their own rows from
-    a plain :class:`TagAllocator` (a direct caller, or the compose
-    replay under its ledger waiver) through the same ``plan_*`` loop.
-    ``None`` therefore means "plan from ``tags``", never "skip". Any other
-    allocator (a plain :meth:`TagAllocator.fork`, a fork for another
-    origin, the frozen planner allocator) raises :class:`TagLawError`.
-    """
-    # A fresh allocator is neither forked nor frozen; ``_forked`` is set
-    # by TagAllocator.fork and read only here and in plan_of's sibling
-    # check (a module of the same package as tag_allocator).
-    if not tags._forked and not tags.frozen:
-        return None
-    return plan_of(tags)
 
 
 def plan_inputs(bm: BuiltModel) -> tuple[object, ...]:
@@ -1018,7 +1018,8 @@ def plan_tags(bm: BuiltModel, mode: TagMode) -> TagPlan:
     # ``parameter``.
     parameters = _plan_parameters(bm, mode, elements, tags)
 
-    # Every family is planned: the emit allocator freezes every kind.
+    # Every family is planned: the frozen planner holds every tag the
+    # emit writes, and nothing mints after this.
     tags.freeze()
     return TagPlan(
         mode=mode,

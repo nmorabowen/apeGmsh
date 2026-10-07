@@ -27,7 +27,7 @@ if TYPE_CHECKING:
 
     from ..emitter.base import Emitter
     from .build import FemToOpsTagMap
-    from .tag_allocator import TagAllocator
+    from .tag_plan import TagPlan
 
 
 __all__ = [
@@ -227,7 +227,7 @@ class Recorder(Primitive):
         self,
         emitter: "Emitter",
         fem: "FEMData",
-        tags: "TagAllocator | None",
+        tag_plan: "TagPlan | None",
         fem_eid_to_ops_tag: "FemToOpsTagMap | dict[int, int] | None" = None,
     ) -> "Recorder":
         """Resolve build-time selectors against the FEM.
@@ -240,9 +240,10 @@ class Recorder(Primitive):
         (MPCO emits a ``region`` line) on ``emitter``.
 
         The returned recorder must satisfy its own ``_emit`` contract
-        directly — i.e. with no remaining ``pg=`` form set.  ``tags``
-        is the bridge's :class:`TagAllocator`; recorders that need
-        a fresh tag (e.g. MPCO's region tag) allocate from it.
+        directly — i.e. with no remaining ``pg=`` form set.
+        ``tag_plan`` is the emit's :class:`~.tag_plan.TagPlan`;
+        recorders that write a region (e.g. MPCO's filter region) read
+        its planned tag from it.
 
         ``fem_eid_to_ops_tag`` is the bridge-built ``{fem_eid: ops_tag}``
         map for element fan-out — needed by element-targeting recorders

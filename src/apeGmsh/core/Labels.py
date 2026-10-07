@@ -1093,12 +1093,32 @@ class Labels(_HasLogging):
         -------
         int
             The Gmsh physical-group tag backing this label.
+
+        Raises
+        ------
+        ValueError
+            If *tags* is empty or *name* is empty (#1364).  Before,
+            an empty *tags* registered nothing and returned silently.
         """
         # Phase 3B.2d / ADR 0038 — labels round-trip via the
         # FEMData broker; mutating them post-extraction would diverge
         # the broker from gmsh.
         from ._compose_errors import chain_phase_guard
         chain_phase_guard(self._parent, f"g.labels.add({name!r})")
+        # Refuse before any gmsh call, so a refused add leaves no PG
+        # behind; an empty label would otherwise register nothing.
+        if not strip_prefix(name):
+            raise ValueError(
+                f"g.labels.add(dim={dim}, name={name!r}): a label needs "
+                f"a non-empty name."
+            )
+        tags = [int(t) for t in tags]
+        if not tags:
+            raise ValueError(
+                f"g.labels.add(dim={dim}, tags=[], name={name!r}): no "
+                f"entities to label, so the label would not exist.  Check "
+                f"the selection or query that produced the tags."
+            )
         prefixed = add_prefix(name)
 
         # Build a name→(dim, pg_tag) index in one pass over all label
@@ -1447,7 +1467,8 @@ class Labels(_HasLogging):
         Raises
         ------
         ValueError
-            If *pg_name* already names a PG at a different dimension.
+            If *pg_name* already names a PG at a different dimension,
+            or carries the reserved ``_label:`` prefix.
         """
         # Creates a solver-facing PG, so it is a PG mutation and frozen
         # on the same terms as g.physical.add().  Guarded ahead of the
@@ -1457,8 +1478,17 @@ class Labels(_HasLogging):
         chain_phase_guard(
             self._parent, f"g.labels.promote_to_physical({label_name!r})",
         )
-        tags = self.entities(label_name, dim=dim)
         out_name = pg_name or label_name
+        # Refused here, before any gmsh write, so the message names
+        # the pg_name= knob.  physical.add() refuses it too.
+        if is_label_pg(out_name):
+            raise ValueError(
+                f"g.labels.promote_to_physical({label_name!r}, "
+                f"pg_name={out_name!r}): names starting with "
+                f"{LABEL_PREFIX!r} are reserved for labels.  Pass a "
+                f"pg_name= without that prefix."
+            )
+        tags = self.entities(label_name, dim=dim)
 
         # Resolve the dim from the label's PG
         prefixed = add_prefix(label_name)
@@ -1474,12 +1504,29 @@ class Labels(_HasLogging):
         if resolved_dim is None:
             raise KeyError(f"label {label_name!r} not found")
 
+        # A PG name maps to one dimension.  physical.add() refuses the
+        # cross-dim reuse too, but its message cannot name pg_name=,
+        # the knob a promote caller turns.
+        physical = self._parent.physical
+        held_at = [
+            d for d in (0, 1, 2, 3)
+            if d != resolved_dim and physical.get_tag(d, out_name) is not None
+        ]
+        if held_at:
+            raise ValueError(
+                f"g.labels.promote_to_physical({label_name!r}): the "
+                f"physical group {out_name!r} already exists at "
+                f"dim={held_at[0]}, but label {label_name!r} is at "
+                f"dim={resolved_dim}.  A physical-group name maps to one "
+                f"dimension; pass a distinct pg_name=."
+            )
+
         # Through g.physical.add, never a raw addPhysicalGroup: add()
         # upserts an existing name at this dim, and gmsh silently
         # leaves a second PG of the same name unnamed (#1332).
         # ``_parent.physical`` is in the Composite Parent Contract
         # (apeGmsh/_session.py).
-        pg_tag = self._parent.physical.add(resolved_dim, tags, name=out_name)
+        pg_tag = physical.add(resolved_dim, tags, name=out_name)
         self._log(
             f"promote_to_physical({label_name!r}) -> "
             f"PG {out_name!r} (dim={resolved_dim}, {len(tags)} entities)"

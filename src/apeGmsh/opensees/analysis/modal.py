@@ -810,6 +810,11 @@ class ParallelModalResult:
         axes = ("x", "y", "z")
 
         writer = NativeWriter(path)
+        # No ``opensees_backend`` / ``opensees_build`` (F2-b): the modes
+        # came from a modal_deck run by a separate OpenSees/OpenSeesMP
+        # binary, which the run dir does not record. The in-process
+        # module's BackendInfo would name the wrong build, so the attrs
+        # stay absent (unknown), as for a recorder transcode.
         writer.open(
             fem=fem,
             source_type="parallel_modal",

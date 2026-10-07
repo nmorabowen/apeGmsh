@@ -1,0 +1,15 @@
+"""``apeGmsh.assembly`` — instances of model files, tied by label (ADR 0117).
+
+``Assembly`` is imported from this sub-package, not the top-level package
+(``from apeGmsh.assembly import Assembly``; the v1.0 contract in
+``tests/test_library_contracts.py``). The v2 API is
+``instance`` / ``tie`` / ``bridge``; the v1 ``add`` / ``couple`` /
+``materialize`` (``_v1.py``) stay until AS5 deletes them.
+"""
+from __future__ import annotations
+
+from ._assembly import Assembly, AssemblyRankWarning
+from ._instances import Instance, Tie
+from ._v1 import AssemblyError
+
+__all__ = ["Assembly", "AssemblyError", "AssemblyRankWarning", "Instance", "Tie"]

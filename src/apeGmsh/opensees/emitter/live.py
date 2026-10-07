@@ -28,6 +28,7 @@ from typing import (
 
 from .._internal.analyze_rc import check_analyze_rc
 from .._rc_c2_flags import rc_c2_flags, rc_c2_live_refusal
+from .._target import BackendInfo, backend_info_of
 from .base import DroppedAxisGuard, StrategySpec, command_row
 
 if TYPE_CHECKING:
@@ -35,7 +36,7 @@ if TYPE_CHECKING:
 
 
 __all__ = [
-    "LiveOpsEmitter", "Tet10UnverifiedBuildWarning", "get_backend_build",
+    "LiveOpsEmitter", "get_backend_build", "get_backend_info",
     "get_backend_name", "get_ops",
 ]
 
@@ -267,6 +268,15 @@ _STOCK_EQ_ROWS_SURVIVE_WIPE = (
 #: every emitter (see :data:`_STOCK_EQ_ROWS_SURVIVE_WIPE`).
 _STOCK_EQ_ROWS_LIVE = False
 
+#: Appended to every "needs the fork" refusal the live gates raise, since
+#: the gates read :class:`~apeGmsh.opensees._target.BackendInfo` (one
+#: signal, ``ladrunoBuild()``) and an older fork build fails it.
+_UNSTAMPED_FORK_NOTE = (
+    " A Ladruno fork build predating the ladrunoBuild stamp (fork PR #718, "
+    "2026-08-10) reads as stock here: rebuild the fork."
+)
+
+
 #: Raised by :meth:`LiveOpsEmitter.element` for ``TenNodeTetrahedron`` on a
 #: stock build. Upstream ``TenNodeTetrahedron::shp3d`` sets ``xsj = Jdet``
 #: where ``Jdet`` already carries the tetrahedral 1/6 (it is the element
@@ -285,39 +295,31 @@ _TET10_STOCK_DEFECT = (
     "Ladruno fork carries the fix (fork PR #520). On stock, mesh tet4 "
     "(FourNodeTetrahedron) or hexahedra (stdBrick). "
     "Deck emission via ops.tcl(...) / ops.py(...) works on any build."
-)
-
-#: Warned by :meth:`LiveOpsEmitter.element` for ``TenNodeTetrahedron`` on a
-#: fork build that cannot be shown to carry fork PR #520.
-_TET10_FORK_UNVERIFIED = (
-    "TenNodeTetrahedron on a Ladruno fork build without the ladrunoBuild "
-    "stamp (fork PR #718, 2026-08-10): apeGmsh cannot tell whether it carries "
-    "the TenNodeTetrahedron fix (fork PR #520, 2026-07-07). A build from "
-    "before 2026-07-07 is 6x too soft in stiffness, mass, body force and "
-    "reactions, with no warning from the engine. Rebuild the fork."
+    + _UNSTAMPED_FORK_NOTE
 )
 
 
-class Tet10UnverifiedBuildWarning(UserWarning):
-    """``TenNodeTetrahedron`` on a fork build too old to prove its fix.
-
-    Fires iff the bound build is the fork (``criticalTimeStep``) but lacks
-    ``ladrunoBuild``: fork PR #718 (2026-08-10) postdates the element fix,
-    fork PR #520 (2026-07-07), and tet10 exposes no response a probe could
-    read without running an analysis.
-    """
-
-
-def _tet10_volume_fixed(ops: Any) -> "bool | None":
+def _tet10_volume_fixed(ops: Any) -> bool:
     """Whether ``ops``'s ``TenNodeTetrahedron`` integrates its volume right.
 
-    ``False`` on stock (:data:`_TET10_STOCK_DEFECT`), ``True`` on a fork
-    build that answers ``ladrunoBuild``, ``None`` on an older fork build,
-    which may predate the fix.
+    ``True`` iff ``ops`` is the fork by :class:`BackendInfo` (its
+    ``ladrunoBuild()`` answers a sha): fork PR #718, which added the
+    stamp (2026-08-10), postdates the element fix, fork PR #520
+    (2026-07-07). Every other build, including a fork build without the
+    stamp, is ``False`` and refused (:data:`_TET10_STOCK_DEFECT`).
+    Reads the resolver's cached verdict for the bound module, so a mesh of
+    many tet10 elements does not re-probe the build per element.
     """
-    if not hasattr(ops, "criticalTimeStep"):
-        return False
-    return True if hasattr(ops, "ladrunoBuild") else None
+    return _backend_of(ops).kind == "fork"
+
+
+def _backend_of(ops: Any) -> BackendInfo:
+    """:class:`BackendInfo` of ``ops``: the resolver's cached verdict when
+    ``ops`` is the bound module (:func:`get_backend_info`), else the same
+    classifier run on ``ops`` (a test fake). One signal either way."""
+    if ops is _OPS_CACHE:
+        return get_backend_info()
+    return backend_info_of(ops)
 
 
 #: Raised by :meth:`LiveOpsEmitter.constraints` for ``LadrunoProjection`` on
@@ -359,7 +361,12 @@ class _NoOpOps:
 #: ``APEGMSH_OPENSEES_BIN`` must be set *before* the first emit / first
 #: :func:`get_backend_name` call to take effect.
 _OPS_CACHE: "ModuleType | None" = None
-_BACKEND_NAME: str = "unresolved"
+#: The resolver's :class:`BackendInfo`, keyed on the module it describes.
+#: Reset with ``_OPS_CACHE`` (in :func:`_get_ops`), and recomputed whenever
+#: the bound module is not the one it was computed for (a re-resolve, or a
+#: test that swaps ``_get_ops``), so a stale verdict cannot outlive its
+#: module.
+_BACKEND_INFO: "tuple[Any, BackendInfo] | None" = None
 
 
 def _looks_like_opensees(mod: "ModuleType") -> bool:
@@ -372,7 +379,7 @@ def _looks_like_opensees(mod: "ModuleType") -> bool:
     return all(hasattr(mod, a) for a in ("wipe", "model", "element"))
 
 
-def _resolve_ops() -> "tuple[ModuleType, str]":
+def _resolve_ops() -> "ModuleType":
     """Resolve the OpenSees backend module (auto-detect, env-overridable).
 
     Resolution order:
@@ -380,15 +387,17 @@ def _resolve_ops() -> "tuple[ModuleType, str]":
     1. ``APEGMSH_OPENSEES_BIN`` set → add it as a DLL directory (Windows;
        the Ladruno fork co-locates its MKL DLLs next to ``opensees.pyd``),
        put it on ``sys.path``, and ``import opensees`` (the fork's module
-       name) → ``"ladruno-fork"``.
+       name).
     2. else bare ``import opensees`` (fork already importable / on
-       ``PYTHONPATH``) → ``"ladruno-fork"``.
-    3. else ``import openseespy.opensees`` (stock PyPI build) →
-       ``"stock-openseespy"``.
+       ``PYTHONPATH``).
+    3. else ``import openseespy.opensees`` (stock PyPI build).
 
-    The backend is tagged ``"ladruno-fork"`` only when the resolved module
-    exposes a fork-only symbol (``criticalTimeStep``); this keeps detection
-    honest even if a bare ``opensees`` module ever ships from elsewhere.
+    Which loader succeeded says nothing about what the module *is*: the
+    caller classifies the module with
+    :func:`~apeGmsh.opensees._target.backend_info_of` (one signal,
+    ``ladrunoBuild()`` returning a sha). A bare ``opensees`` from
+    elsewhere, or a ``.pth`` that aliases ``openseespy.opensees`` to the
+    fork, is then still named for what was really imported.
     """
     from types import ModuleType
 
@@ -415,9 +424,11 @@ def _resolve_ops() -> "tuple[ModuleType, str]":
             # it on the `criticalTimeStep` check alone silently ignores
             # APEGMSH_OPENSEES_BIN and reintroduces the exact "installed
             # Ladruno hijacks import opensees" failure the fork's own
-            # LEDGER_quirks documents.
+            # LEDGER_quirks documents. (Module identity, not the backend
+            # kind: any OpenSees module loaded from `bin_dir` is the one
+            # asked for, and loading its extension twice is not safe.)
             existing = sys.modules.get("opensees")
-            if existing is not None and hasattr(existing, "criticalTimeStep"):
+            if existing is not None and _looks_like_opensees(existing):
                 existing_file = getattr(existing, "__file__", None)
                 existing_dir = (
                     os.path.dirname(os.path.abspath(existing_file))
@@ -449,7 +460,7 @@ def _resolve_ops() -> "tuple[ModuleType, str]":
                     if saved is not None:
                         sys.modules["opensees"] = saved
                     raise
-                if saved is not None and not hasattr(saved, "criticalTimeStep"):
+                if saved is not None and not _looks_like_opensees(saved):
                     sys.modules["opensees"] = saved
                 return mod
             spec = importlib.util.spec_from_file_location("opensees", pyd)
@@ -466,9 +477,9 @@ def _resolve_ops() -> "tuple[ModuleType, str]":
                 else:
                     sys.modules.pop("opensees", None)
                 raise
-            # Restore a non-fork shadower so we don't disturb its owner (the
-            # fork stays in our own cache regardless).
-            if saved is not None and not hasattr(saved, "criticalTimeStep"):
+            # Restore a non-OpenSees shadower so we don't disturb its owner
+            # (the fork stays in our own cache regardless).
+            if saved is not None and not _looks_like_opensees(saved):
                 sys.modules["opensees"] = saved
             return mod
         loaders.append(_from_bin)
@@ -498,11 +509,7 @@ def _resolve_ops() -> "tuple[ModuleType, str]":
             # try the next loader rather than returning a backend with no
             # ``wipe`` / ``model`` / ``element``.
             continue
-        name = (
-            "ladruno-fork" if hasattr(ops, "criticalTimeStep")
-            else "stock-openseespy"
-        )
-        return ops, name
+        return ops
 
     raise ImportError(
         "LiveOpsEmitter could not import an OpenSees backend. Point "
@@ -514,9 +521,10 @@ def _resolve_ops() -> "tuple[ModuleType, str]":
 
 def _get_ops() -> "ModuleType":
     """Lazy-import + cache the OpenSees backend module."""
-    global _OPS_CACHE, _BACKEND_NAME
+    global _OPS_CACHE, _BACKEND_INFO
     if _OPS_CACHE is None:
-        _OPS_CACHE, _BACKEND_NAME = _resolve_ops()
+        _BACKEND_INFO = None
+        _OPS_CACHE = _resolve_ops()
     return _OPS_CACHE
 
 
@@ -537,15 +545,36 @@ def get_ops() -> "ModuleType":
     return _get_ops()
 
 
+def get_backend_info() -> BackendInfo:
+    """Return the resolver's :class:`BackendInfo` for the bound module.
+
+    The one verdict on what the imported binary is (one signal:
+    ``ladrunoBuild()`` returning a sha). :func:`get_backend_name`,
+    :func:`get_backend_build` and ``apeSees.capabilities().has_fork`` all
+    read it. Resolves the backend on first call (same path / cache as
+    :func:`_get_ops`); a fork build predating ``ladrunoBuild`` reads as
+    ``"stock"``. Never raises past what :func:`_get_ops` raises.
+    """
+    global _BACKEND_INFO
+    ops = _get_ops()
+    cached = _BACKEND_INFO
+    if cached is None or cached[0] is not ops:
+        cached = (ops, backend_info_of(ops))
+        _BACKEND_INFO = cached
+    return cached[1]
+
+
 def get_backend_name() -> str:
     """Return the resolved backend: ``'ladruno-fork'`` or ``'stock-openseespy'``.
 
-    Resolves the backend on first call (same path / cache as
-    :func:`_get_ops`). Tests use this to skip fork-only cases cleanly on a
-    stock build.
+    Derived from :func:`get_backend_info` (``kind == "fork"``), so it cannot
+    disagree with ``capabilities().has_fork``. Tests use this to skip
+    fork-only cases cleanly on a stock build.
     """
-    _get_ops()
-    return _BACKEND_NAME
+    return (
+        "ladruno-fork" if get_backend_info().kind == "fork"
+        else "stock-openseespy"
+    )
 
 
 def get_backend_build() -> "str | None":
@@ -561,9 +590,11 @@ def get_backend_build() -> "str | None":
     measuring whatever ``import opensees`` happened to bind — the exact
     failure mode of the fork's TIMs T1 wrong-build incident. A stale
     ``opensees.pyd`` after a rebuild shows up here as an unchanged hash.
+
+    ``get_backend_info().build``: a ``ladrunoBuild()`` that raises or
+    answers something other than a sha (``""``, ``"unknown"``) is ``None``.
     """
-    fn = getattr(_get_ops(), "ladrunoBuild", None)
-    return fn() if callable(fn) else None
+    return get_backend_info().build
 
 
 class LiveOpsEmitter:
@@ -590,7 +621,9 @@ class LiveOpsEmitter:
     def __init__(self, *, wipe: bool = True) -> None:
         self._ops = _get_ops()
         if wipe and _STOCK_EQ_ROWS_LIVE:
-            raise RuntimeError(_STOCK_EQ_ROWS_SURVIVE_WIPE)
+            raise RuntimeError(
+                _STOCK_EQ_ROWS_SURVIVE_WIPE + _UNSTAMPED_FORK_NOTE,
+            )
         if wipe:
             self._ops.wipe()
         # Partition-emission state (ADR 0027 / P4). LiveOps is
@@ -735,9 +768,7 @@ class LiveOpsEmitter:
         self._ops.equationConstraint(
             int(cnode), int(cdof), float(ccoef), *flat,
         )
-        if not self._in_partition and not hasattr(
-            self._ops, "criticalTimeStep",
-        ):
+        if not self._in_partition and self._backend().kind != "fork":
             global _STOCK_EQ_ROWS_LIVE
             _STOCK_EQ_ROWS_LIVE = True
 
@@ -820,9 +851,9 @@ class LiveOpsEmitter:
         # LadrunoRC -betaC / -crackedNu: a build without them silently
         # discards them (no error), so refuse before the call.
         if rc_c2_flags(mat_type, params):
-            fn = getattr(self._ops, "ladrunoBuild", None)
-            build = fn() if callable(fn) else None
-            refusal = rc_c2_live_refusal(mat_type, params, build)
+            refusal = rc_c2_live_refusal(
+                mat_type, params, self._backend().build,
+            )
             if refusal is not None:
                 raise RuntimeError(refusal)
         self._ops.nDMaterial(mat_type, tag, *params)
@@ -888,15 +919,12 @@ class LiveOpsEmitter:
         ):
             self._element_fork_gated(ele_type, tag, args)
             return
-        if ele_type == "TenNodeTetrahedron" and not self._in_partition:
-            fixed = _tet10_volume_fixed(self._ops)
-            if fixed is False:
-                raise RuntimeError(_TET10_STOCK_DEFECT)
-            if fixed is None:
-                warnings.warn(
-                    _TET10_FORK_UNVERIFIED, Tet10UnverifiedBuildWarning,
-                    stacklevel=2,
-                )
+        if (
+            ele_type == "TenNodeTetrahedron"
+            and not self._in_partition
+            and not _tet10_volume_fixed(self._ops)
+        ):
+            raise RuntimeError(_TET10_STOCK_DEFECT)
         self._ops.element(ele_type, tag, *args)
 
     def _element_fork_gated(
@@ -928,8 +956,9 @@ class LiveOpsEmitter:
         For the fork commands that CANNOT be verified after the fact —
         stock openseespy accepts them and then does not honour them, so
         there is no post-hoc probe like the element gate's ``getEleTags``.
-        The build test is the same one the resolver tags the backend with
-        (:func:`_resolve_ops` → ``criticalTimeStep``).
+        The build test is the resolver's one signal: :meth:`_backend`
+        ``.kind == "fork"`` (``ladrunoBuild()`` answers a sha), so a fork
+        build predating that stamp is refused like stock.
 
         No-op while a partition block is open: ``self._ops`` is then the
         ``_NoOpOps`` stand-in, which answers every ``hasattr`` and drives
@@ -937,8 +966,18 @@ class LiveOpsEmitter:
         """
         if self._in_partition:
             return
-        if not hasattr(self._ops, "criticalTimeStep"):
-            raise RuntimeError(message)
+        if self._backend().kind != "fork":
+            raise RuntimeError(message + _UNSTAMPED_FORK_NOTE)
+
+    def _backend(self) -> BackendInfo:
+        """:class:`BackendInfo` of the build this emitter drives.
+
+        Inside a partition block ``self._ops`` may be the ``_NoOpOps``
+        stand-in, which says nothing about the build, so the real module
+        (``self._real_ops``) is classified instead (:func:`_backend_of`).
+        """
+        ops = self._real_ops if self._in_partition else self._ops
+        return _backend_of(ops)
 
     def _confirm_tangent_predictor(self) -> None:
         """Raise unless the just-set LadrunoLoadControl armed the predictor.

@@ -1,4 +1,5 @@
-"""Warn when a stage pattern's ``Path`` series is zero at every increment.
+"""Warn when a stage pattern's ``Path`` series is zero at every increment,
+or ends inside the stage and unloads there.
 
 Every stage closes with ``loadConst -time 0.0``, so the next stage's
 pseudo-time restarts at 0 unless ``s.set_time(t)`` moves it.  A ``Path``
@@ -13,6 +14,12 @@ pseudo-time of every increment when a stage closes (it is called from
 :class:`SeriesOutsideStageWindowWarning` when every one of those factors
 is zero.
 
+Otherwise it raises :class:`SeriesEndsMidStageWarning` when some
+increment lies past the series' last sample while that sample is
+non-zero and the series has no ``use_last``: OpenSees reads the series
+as 0 there, so the pattern drops its load mid-stage (#1363).  The two
+warnings are exclusive, at most one per pattern.
+
 The increments' pseudo-times are reproduced the way OpenSees produces
 them: ``setTime`` (``s.set_time``, else the 0 the previous
 ``loadConst -time 0.0`` left; ``s.reset()`` before the analyze loop puts
@@ -23,16 +30,15 @@ for its advance (any other static integrator, an adaptive load control
 with ``min_lam``/``max_lam``, ``VariableTransient``) has no pseudo-times
 before the run, and its stage is not checked.
 
-The series is evaluated as ``PathSeries.cpp`` / ``PathTimeSeries.cpp`` do
-(the bridge never emits ``-useLast``, so the factor is 0 outside the
-support):
+The series is evaluated as ``PathSeries.cpp`` / ``PathTimeSeries.cpp`` do:
 
-* ``time=`` (``PathTimeSeries``): linear between the points, 0 outside
-  ``[time[0], time[-1]]``.  This route ignores ``-startTime`` and
-  ``-prependZero``.
+* ``time=`` (``PathTimeSeries``): linear between the points, 0 before
+  ``time[0]`` and after ``time[-1]``.  ``Path`` refuses ``start_time``,
+  ``prepend_zero`` and ``use_last`` on this route (OpenSees drops them).
 * ``dt=`` (``PathSeries``): sample ``k`` sits at ``start_time + k*dt``,
   after a leading 0 when ``prepend_zero``; the factor is 0 before
-  ``start_time`` and from the last sample's time on.
+  ``start_time`` and from the last sample's time on (at that time too:
+  ``incr2 >= size``), unless ``use_last`` holds the last value there.
 * ``file=``: the samples are in a file the deck reads at run time, so the
   series is not checked.
 """
@@ -56,6 +62,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     "SeriesOutsideStageWindowWarning",
+    "SeriesEndsMidStageWarning",
     "stage_increment_times",
     "path_factor",
     "warn_stage_series_outside_window",
@@ -70,6 +77,20 @@ class SeriesOutsideStageWindowWarning(UserWarning):
     ``loadConst -time 0.0``) unless ``s.set_time(t)`` moves it.  Fix the
     stage clock with ``s.set_time(t)``, or re-base the series' time axis
     onto the stage's window.
+    """
+
+
+class SeriesEndsMidStageWarning(UserWarning):
+    """A stage pattern's ``Path`` series ends inside the stage on a
+    non-zero value and has no ``use_last``, so the pattern drops its load
+    to 0 from the first increment past the last sample (#1363).
+
+    Not a subclass of :class:`SeriesOutsideStageWindowWarning`, whose
+    contract is "warns iff the pattern applies no load at all": here the
+    pattern does load, then unloads.  Fix: ``use_last=True`` (``dt=``
+    series) to hold the last value, a series that reaches the end of the
+    stage, or a trailing 0 sample when the drop is intended (a record
+    followed by free vibration).
     """
 
 
@@ -125,9 +146,11 @@ def path_factor(series: Path, t: np.ndarray) -> np.ndarray:
     evaluates it (module docstring).  Caller guarantees ``values=``."""
     assert series.values is not None
     values = np.asarray(series.values, dtype=float)
+    # Past the last sample: 0, or the last value under ``-useLast``.
+    tail = float(values[-1]) if series.use_last else 0.0
     if series.time is not None:
         times = np.asarray(series.time, dtype=float)
-        out = np.interp(t, times, values, left=0.0, right=0.0)
+        out = np.interp(t, times, values, left=0.0, right=tail)
     else:
         assert series.dt is not None  # Path.__post_init__ guarantee
         if series.prepend_zero:
@@ -138,9 +161,28 @@ def path_factor(series: Path, t: np.ndarray) -> np.ndarray:
         j = np.where(live, i1, 0).astype(np.int64)
         v1 = values[j]
         v2 = values[np.minimum(j + 1, values.size - 1)]
-        out = np.where(live, v1 + (v2 - v1) * (incr - i1), 0.0)
+        out = np.where(live, v1 + (v2 - v1) * (incr - i1),
+                       np.where(_past_end(series, t), tail, 0.0))
     factors: np.ndarray = float(series.factor) * np.asarray(out, dtype=float)
     return factors
+
+
+def _past_end(series: Path, t: np.ndarray) -> np.ndarray:
+    """Which pseudo-times ``t`` lie past the series' last sample, where
+    OpenSees returns 0 (or the last value under ``-useLast``).
+
+    ``time=``: after ``time[-1]``.  ``dt=``: at or after the last sample's
+    time, ``incr2 >= size`` in ``PathSeries::getFactor``.
+    """
+    assert series.values is not None
+    if series.time is not None:
+        past: np.ndarray = t > float(series.time[-1])
+        return past
+    assert series.dt is not None
+    n = len(series.values) + (1 if series.prepend_zero else 0)
+    incr = (t - float(series.start_time)) / float(series.dt)
+    past = (t >= float(series.start_time)) & (np.floor(incr) + 1 >= n)
+    return past
 
 
 def _support(series: Path) -> str:
@@ -198,9 +240,44 @@ def _stacklevel() -> int:
         del frame
 
 
+def _warn_ends_mid_stage(
+    stage: "StageRecord", k: int, series: Path, t: np.ndarray,
+    lo: float, hi: float,
+) -> None:
+    """Warn when an increment lies past the series' last sample while that
+    sample is non-zero and ``use_last`` is off (module docstring)."""
+    assert series.values is not None
+    last = float(series.factor) * float(series.values[-1])
+    if series.use_last or last == 0.0:
+        return
+    past = _past_end(series, t)
+    if not np.any(past):
+        return
+    t_drop = float(t[past][0])
+    if series.time is not None:
+        fix = (f"extend the series to the end of the window with its last "
+               f"value repeated, time=(*time, {hi:g}), "
+               f"values=(*values, values[-1])")
+    else:
+        fix = "pass use_last=True to hold the last value"
+    warnings.warn(
+        f"Stage {stage.name!r}: pattern #{k}'s Path series "
+        f"({_support(series)}) ends inside the stage's pseudo-time window "
+        f"[{lo:g}, {hi:g}] on the non-zero factor {last:g}, so OpenSees "
+        f"reads it as 0 from the increment at t={t_drop:g} on "
+        f"({int(past.sum())} of {t.size} increment(s)) and this pattern "
+        f"drops its load mid-stage. Fix: {fix}; or, if the drop is "
+        f"intended (a record followed by free vibration), end the series "
+        f"with a 0 sample.",
+        SeriesEndsMidStageWarning,
+        stacklevel=_stacklevel(),
+    )
+
+
 def warn_stage_series_outside_window(stage: "StageRecord") -> None:
     """Warn once per stage pattern whose ``Path`` series is zero at every
-    increment of the stage (module docstring)."""
+    increment of the stage, or else ends inside the stage on a non-zero
+    value without ``use_last`` (module docstring)."""
     paths = [
         (k, p.series) for k, p in enumerate(stage.pattern_specs, start=1)
         if isinstance(p.series, Path) and p.series.values is not None
@@ -214,6 +291,7 @@ def warn_stage_series_outside_window(stage: "StageRecord") -> None:
     lo, hi = min(t0, float(t[-1])), max(t0, float(t[-1]))
     for k, series in paths:
         if np.any(path_factor(series, t) != 0.0):
+            _warn_ends_mid_stage(stage, k, series, t, lo, hi)
             continue
         onset = _onset(series)
         if onset is None:

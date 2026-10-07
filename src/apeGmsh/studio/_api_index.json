@@ -1,7 +1,7 @@
 {
   "entries": {
     "Assembly": {
-      "doc": "A declarative spatial assembly of composed parts + interface couples.",
+      "doc": "Instances of saved ``model.h5`` files joined by assembly-level ties.",
       "signature": "Assembly(name: 'str') -> 'None'",
       "skill": "references/compose.md",
       "symbol": "Assembly"
@@ -12,17 +12,47 @@
       "skill": "references/compose.md",
       "symbol": "Assembly.add"
     },
+    "Assembly.bridge": {
+      "doc": "Build one forward :class:`~apeGmsh.opensees.apeSees` (ADR 0117 D1).",
+      "signature": "bridge(ndm: 'int', ndf: 'int', *, element_tags: \"Literal['sequential', 'fem']\" = 'fem') -> \"'apeSees'\"",
+      "skill": "references/compose.md",
+      "symbol": "Assembly.bridge"
+    },
     "Assembly.couple": {
       "doc": "Declare an interface constraint between two parts. Chainable.",
       "signature": "couple(part_a: 'str', part_b: 'str', *, kind: 'str', ports: 'Sequence[str]', dofs: \"'Sequence[int] | None'\" = None, tolerance: \"'float | None'\" = None, name: \"'str | None'\" = None, **options: 'Any') -> \"'Assembly'\"",
       "skill": "references/compose.md",
       "symbol": "Assembly.couple"
     },
+    "Assembly.from_h5": {
+      "doc": "Re-list the instances and ties an assembly archive declares.",
+      "signature": "from_h5(path: \"'str | Path'\") -> \"'Assembly'\"",
+      "skill": "references/compose.md",
+      "symbol": "Assembly.from_h5"
+    },
+    "Assembly.h5": {
+      "doc": "Write the last ``bridge()``'s ``model.h5`` plus ``/assembly``.",
+      "signature": "h5(path: \"'str | Path'\", *, model_name: \"'str | None'\" = None) -> 'None'",
+      "skill": "references/compose.md",
+      "symbol": "Assembly.h5"
+    },
+    "Assembly.instance": {
+      "doc": "Place a saved ``model.h5`` under ``label``. Returns ``self``.",
+      "signature": "instance(label: 'str', source: \"'str | Path'\", *, translate: 'Sequence[float]' = (0.0, 0.0, 0.0), rotate: \"'tuple[Sequence[float], float] | None'\" = None) -> \"'Assembly'\"",
+      "skill": "references/compose.md",
+      "symbol": "Assembly.instance"
+    },
     "Assembly.materialize": {
       "doc": "Run the graph: compose every part + apply every couple.",
       "signature": "materialize() -> \"'apeGmsh'\"",
       "skill": "references/compose.md",
       "symbol": "Assembly.materialize"
+    },
+    "Assembly.tie": {
+      "doc": "Tie two instance ports, ``\"{instance}.{pg|label}\"``. Returns ``self``.",
+      "signature": "tie(master: 'str', slave: 'str', *, enforce: 'str' = 'penalty', method: 'str' = 'collocation', dofs: \"'Sequence[int] | None'\" = None, tolerance: 'float' = 1.0, name: \"'str | None'\" = None) -> \"'Assembly'\"",
+      "skill": "references/compose.md",
+      "symbol": "Assembly.tie"
     },
     "Cluster": {
       "doc": "One remote SLURM cluster. ``Cluster.load(\"esmeralda\")`` to construct.",
@@ -3890,7 +3920,7 @@
     },
     "ops.timeSeries.Path": {
       "doc": "Construct + register a ``timeSeries Path`` (time-history).",
-      "signature": "Path(*, file: 'str | None' = None, values: 'tuple[float, ...] | None' = None, time: 'tuple[float, ...] | None' = None, dt: 'float | None' = None, factor: 'float' = 1.0, start_time: 'float' = 0.0, prepend_zero: 'bool' = False, name: 'str | None' = None) -> 'Path'",
+      "signature": "Path(*, file: 'str | None' = None, values: 'tuple[float, ...] | None' = None, time: 'tuple[float, ...] | None' = None, dt: 'float | None' = None, factor: 'float' = 1.0, start_time: 'float' = 0.0, prepend_zero: 'bool' = False, use_last: 'bool' = False, name: 'str | None' = None) -> 'Path'",
       "skill": "references/opensees-bridge.md",
       "symbol": "ops.timeSeries.Path"
     },

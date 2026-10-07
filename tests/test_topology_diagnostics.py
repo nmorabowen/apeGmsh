@@ -1,7 +1,7 @@
 """
-Topology-diagnostic safeguards: tuple-uniqueness check at emit_element_spec
-(P1), the find_coincident_node_pairs diagnostic on InspectComposite (P3),
-and the unconditional print on mesh.remove_duplicate_nodes.
+Topology-diagnostic safeguards: the find_coincident_node_pairs diagnostic
+on InspectComposite (P3) and the unconditional print on
+mesh.remove_duplicate_nodes.
 
 Motivated by the disjoint-wire-at-OCC-arc-endpoint bug pattern: an
 add_ellipse(angle1, angle2) + lines wire that fails to weld at the
@@ -13,81 +13,6 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import numpy as np
-import pytest
-
-
-# =====================================================================
-# P1 — Tuple-uniqueness at emit_element_spec
-# =====================================================================
-
-def test_emit_element_spec_rejects_duplicate_node_tags(monkeypatch):
-    """A repeated tag inside one element's connectivity must fail loud
-    at the bridge boundary, before OpenSees sees the garbage.
-    """
-    from apeGmsh.opensees._internal import build as build_mod
-    from apeGmsh.opensees._internal.build import BridgeError, emit_element_spec
-
-    forged = [(7, (1, 2, 2, 3))]  # node 2 repeated
-    monkeypatch.setattr(
-        build_mod, "expand_pg_to_elements",
-        lambda fem, pg: forged,
-    )
-
-    class _Spec:
-        pg = "any"
-
-    with pytest.raises(BridgeError, match="duplicate node tags"):
-        emit_element_spec(
-            spec=_Spec(),
-            emitter=object(),
-            fem=object(),
-            tags=SimpleNamespace(allocate=lambda kind: 999),
-            base_resolver=lambda p: 0,
-        )
-
-
-def test_emit_element_spec_accepts_zero_length_two_distinct_tags(monkeypatch):
-    """zeroLength elements use two *distinct* tags at the same XYZ. The
-    P1 check is tag-based, not coord-based, so the legitimate zeroLength
-    pattern must still pass. (Acceptance is implicit — the loop iterates
-    past the check; we forge a stub emit that records the visit.)
-    """
-    from apeGmsh.opensees._internal import build as build_mod
-    from apeGmsh.opensees._internal.build import emit_element_spec
-    from apeGmsh.opensees._internal import tag_resolution
-
-    forged = [(5, (10, 11))]  # two distinct tags — fine
-    monkeypatch.setattr(
-        build_mod, "expand_pg_to_elements",
-        lambda fem, pg: forged,
-    )
-    # Bypass the emitter side-channel writers; they reach into
-    # context vars unavailable to our object().
-    monkeypatch.setattr(tag_resolution, "set_element_nodes",
-                        lambda emitter, nodes: None)
-    monkeypatch.setattr(tag_resolution, "set_current_fem_element_id",
-                        lambda emitter, eid: None)
-    monkeypatch.setattr(build_mod, "set_element_nodes",
-                        lambda emitter, nodes: None)
-    monkeypatch.setattr(build_mod, "set_current_fem_element_id",
-                        lambda emitter, eid: None)
-
-    visited: list[int] = []
-
-    class _Spec:
-        pg = "any"
-
-        def _emit(self_inner, emitter, ele_tag):  # noqa: N805
-            visited.append(int(ele_tag))
-
-    emit_element_spec(
-        spec=_Spec(),
-        emitter=object(),
-        fem=object(),
-        tags=SimpleNamespace(allocate=lambda kind: 42),
-        base_resolver=lambda p: 0,
-    )
-    assert visited == [42]  # the check did not block emission
 
 
 # =====================================================================

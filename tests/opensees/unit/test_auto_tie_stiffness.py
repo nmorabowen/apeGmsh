@@ -40,8 +40,9 @@ from apeGmsh.opensees._internal.build import (
     _emit_one_interpolation,
     make_auto_stiffness_resolver,
 )
-from apeGmsh.opensees._internal.tag_allocator import TagAllocator
 from apeGmsh.opensees.emitter.recording import RecordingEmitter
+
+from tests.opensees._helpers.tag_plan import emit_tags, stub_fem
 
 E_HOST = 200_000.0
 
@@ -148,10 +149,12 @@ def test_resolver_fails_loud_without_material() -> None:
 def test_emit_resolves_auto_to_a_finite_K() -> None:
     resolver = make_auto_stiffness_resolver(_host_fem(), [_Spec()])
     e = RecordingEmitter()
+    rec = _auto_rec()
+    tags = emit_tags(stub_fem(interpolations=[rec]))
     with warnings.catch_warnings():
         warnings.simplefilter("error")   # no 1e18 warning on auto
         _emit_one_interpolation(
-            e, _auto_rec(), TagAllocator(), stiffness_resolver=resolver)
+            e, rec, tags, stiffness_resolver=resolver)
     calls = [c for c in e.calls if c[0] == "embeddedNode"]
     assert len(calls) == 1
     k = calls[0][2]["stiffness"]
@@ -162,14 +165,17 @@ def test_emit_resolves_auto_to_a_finite_K() -> None:
 
 def test_emit_without_resolver_fails_loud() -> None:
     e = RecordingEmitter()
+    rec = _auto_rec()
+    tags = emit_tags(stub_fem(interpolations=[rec]))
     with pytest.raises(BridgeError, match="auto"):
-        _emit_one_interpolation(e, _auto_rec(), TagAllocator())
+        _emit_one_interpolation(e, rec, tags)
 
 
 def test_equation_route_ignores_auto() -> None:
     rec = _auto_rec(enforce="equation")
     e = RecordingEmitter()
-    _emit_one_interpolation(e, rec, TagAllocator())   # no resolver needed
+    tags = emit_tags(stub_fem(interpolations=[rec]))
+    _emit_one_interpolation(e, rec, tags)   # no resolver needed
     assert any(c[0] == "equationConstraint" for c in e.calls)
 
 

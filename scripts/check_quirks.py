@@ -17,7 +17,13 @@ waiver: a collision is never right, and a dead citation is fixed in the doc.
 
     python scripts/check_quirks.py              # this checkout
     python scripts/check_quirks.py --root DIR   # another tree, e.g. a `git archive`
-    python scripts/check_quirks.py --base origin/main   # also `comment-provenance`
+    python scripts/check_quirks.py --base REF   # `comment-provenance` against REF
+    python scripts/check_quirks.py --no-base    # skip the diff rules on purpose
+
+Without `--base` the diff rules read the diff against `origin/main` (else local `main`), so a
+local run sees what CI's `--base origin/<base_ref>` sees; fetch `origin main` first. When
+neither resolves, or shares no merge base with HEAD, one `note:` line names the skipped rules
+and the exit code is unchanged.
 
 `comment-provenance` reads only the comment lines a branch added in `src/` since its
 merge base with `--base REF`, so it never flags an existing comment; CI passes the PR's
@@ -1428,6 +1434,23 @@ def _scan(root: Path, base: str | None = None) -> list[Finding]:
     return sorted(findings, key=lambda f: (f.path, f.line, f.rule))
 
 
+def default_base(root: Path) -> str | None:
+    """`origin/main`, else `main`, whichever resolves and shares a merge base with HEAD; else None."""
+    def ok(*args: str) -> bool:
+        try:
+            done = subprocess.run(
+                ["git", "-C", str(root), *args], capture_output=True, text=True, encoding="utf-8"
+            )
+        except OSError:
+            return False
+        return done.returncode == 0
+
+    for ref in ("origin/main", "main"):
+        if ok("rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}") and ok("merge-base", ref, "HEAD"):
+            return ref
+    return None
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=(__doc__ or "").splitlines()[0])
     parser.add_argument("--root", type=Path, default=REPO, help="tree to scan")
@@ -1435,8 +1458,21 @@ def main(argv: list[str] | None = None) -> int:
         "--base", metavar="REF",
         help="also read the comments this branch adds since its merge base with REF (comment-provenance)",
     )
+    parser.add_argument(
+        "--no-base", action="store_true",
+        help="skip the diff-scoped rules on purpose (default: diff against origin/main, else main)",
+    )
     args = parser.parse_args(argv)
-    findings = scan(args.root.resolve(), args.base)
+    root = args.root.resolve()
+    base = args.base
+    skipped = ", ".join(sorted(DIFF_RULES))
+    if base is None and args.no_base:
+        print(f"note: {skipped} not run: --no-base")
+    elif base is None:
+        base = default_base(root)
+        if base is None:
+            print(f"note: {skipped} not run: no --base and neither origin/main nor main resolves")
+    findings = scan(root, base)
     for finding in findings:
         print(finding)
     if findings:

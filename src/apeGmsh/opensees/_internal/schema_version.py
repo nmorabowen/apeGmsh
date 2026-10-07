@@ -32,6 +32,7 @@ Per-zone version stamps + one envelope (ADR 0023):
 - ``/meta/results_schema_version``    -> :data:`RESULTS_KEY`
 - ``/meta/geometry_schema_version``   -> :data:`GEOMETRY_KEY` (ADR 0112 D2)
 - ``/meta/provenance_schema_version`` -> :data:`PROVENANCE_KEY` (ADR 0112 D3)
+- ``/meta/assembly_schema_version``   -> :data:`ASSEMBLY_KEY` (ADR 0117 D5)
 - ``/meta/schema_version``            -> :data:`ENVELOPE_KEY` (back-compat only)
 
 Files written before Phase 7a (envelope-only) read via the envelope-fallback
@@ -46,6 +47,10 @@ from typing import Mapping, Optional
 
 
 __all__ = [
+    "ASSEMBLY",
+    "ASSEMBLY_KEY",
+    "ASSEMBLY_SCHEMA_FLOOR",
+    "ASSEMBLY_SCHEMA_VERSION",
     "ENVELOPE_KEY",
     "GEOMETRY",
     "GEOMETRY_KEY",
@@ -91,6 +96,10 @@ GEOMETRY: str = "geometry"
 #: Provenance zone identifier (``/provenance`` root zone, ADR 0112 D3).
 PROVENANCE: str = "provenance"
 
+#: Assembly zone identifier (``/assembly`` root zone, ADR 0117 D5). Only an
+#: archive written by ``Assembly.h5`` carries it.
+ASSEMBLY: str = "assembly"
+
 
 # ---------------------------------------------------------------------------
 # /meta/ attribute keys
@@ -115,6 +124,9 @@ GEOMETRY_KEY: str = "geometry_schema_version"
 #: Per-zone key for the provenance zone (ADR 0112 D3, #1304).
 PROVENANCE_KEY: str = "provenance_schema_version"
 
+#: Per-zone key for the assembly zone (ADR 0117 D5; its own key, ADR 0112 D2).
+ASSEMBLY_KEY: str = "assembly_schema_version"
+
 
 # ---------------------------------------------------------------------------
 # Writer versions of the zones whose writers import them from here
@@ -134,6 +146,12 @@ PROVENANCE_SCHEMA_VERSION: str = "1.1.0"  # V2d #1378: additive records/origin
 GEOMETRY_SCHEMA_FLOOR: str = "1.0.0"
 PROVENANCE_SCHEMA_FLOOR: str = "1.0.0"
 
+#: Current version and floor of the ``/assembly`` zone. Its writer and
+#: reader (``apeGmsh/assembly/_h5.py``) import them from here
+#: (``architecture/h5-schema.md``, "/assembly").
+ASSEMBLY_SCHEMA_VERSION: str = "1.0.0"  # the zone's first version: floor and current coincide
+ASSEMBLY_SCHEMA_FLOOR: str = "1.0.0"
+
 #: First ``/provenance`` version whose ``records`` table carries the
 #: ``origin`` column (#1378), as a ``(major, minor, patch)`` triple.  The
 #: reader requires the column from this version on and fills ``"user"``
@@ -149,12 +167,14 @@ _ZONE_KEY: dict[str, str] = {
     RESULTS: RESULTS_KEY,
     GEOMETRY: GEOMETRY_KEY,
     PROVENANCE: PROVENANCE_KEY,
+    ASSEMBLY: ASSEMBLY_KEY,
 }
 
 # Zones born after the per-zone split. The legacy envelope predates them, so
 # it never stands in for their version: an absent key means the zone was not
 # written, never "use the envelope" (ADR 0023 INV-2).
-_NO_ENVELOPE_ZONES: frozenset[str] = frozenset({GEOMETRY, PROVENANCE})
+_NO_ENVELOPE_ZONES: frozenset[str] = frozenset(
+    {GEOMETRY, PROVENANCE, ASSEMBLY})
 
 
 # ---------------------------------------------------------------------------
@@ -237,7 +257,8 @@ def reader_version(zone: str) -> SchemaVersion:
     ----------
     zone
         One of the keys of ``_ZONE_KEY``: :data:`NEUTRAL`, :data:`OPENSEES`,
-        :data:`RESULTS`, :data:`GEOMETRY` or :data:`PROVENANCE`.
+        :data:`RESULTS`, :data:`GEOMETRY`, :data:`PROVENANCE` or
+        :data:`ASSEMBLY`.
 
     Raises
     ------
@@ -257,6 +278,8 @@ def reader_version(zone: str) -> SchemaVersion:
         return SchemaVersion.parse(GEOMETRY_SCHEMA_VERSION)
     if zone == PROVENANCE:
         return SchemaVersion.parse(PROVENANCE_SCHEMA_VERSION)
+    if zone == ASSEMBLY:
+        return SchemaVersion.parse(ASSEMBLY_SCHEMA_VERSION)
     raise ValueError(
         f"reader_version: unknown zone {zone!r} "
         f"(expected one of {tuple(_ZONE_KEY)!r})"
@@ -287,6 +310,8 @@ def reader_floor(zone: str) -> SchemaVersion:
         return SchemaVersion.parse(GEOMETRY_SCHEMA_FLOOR)
     if zone == PROVENANCE:
         return SchemaVersion.parse(PROVENANCE_SCHEMA_FLOOR)
+    if zone == ASSEMBLY:
+        return SchemaVersion.parse(ASSEMBLY_SCHEMA_FLOOR)
     raise ValueError(
         f"reader_floor: unknown zone {zone!r} "
         f"(expected one of {tuple(_ZONE_KEY)!r})"
@@ -317,8 +342,8 @@ def read_zone_version(
         return the value of :data:`ENVELOPE_KEY` instead. This is the
         back-compat path for pre-Phase-7a files (single-stamp legacy).
         ADR 0023 §"Single-stamp legacy files". It never applies to
-        :data:`GEOMETRY` or :data:`PROVENANCE`, which postdate the
-        envelope: for them an absent key returns ``None``.
+        :data:`GEOMETRY`, :data:`PROVENANCE` or :data:`ASSEMBLY`, which
+        postdate the envelope: for them an absent key returns ``None``.
 
     Returns
     -------

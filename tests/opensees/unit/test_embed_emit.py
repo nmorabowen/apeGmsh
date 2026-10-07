@@ -18,9 +18,10 @@ import pytest
 from apeGmsh._kernel.defs.constraints import EmbedDef
 from apeGmsh._kernel.records._constraints import EmbedTieRecord
 from apeGmsh.opensees._internal.build import emit_embed_ties
-from apeGmsh.opensees._internal.tag_allocator import TagAllocator
 from apeGmsh.opensees.element.embedded_node import embedded_node_args
 from apeGmsh.opensees.emitter.recording import RecordingEmitter
+
+from tests.opensees._helpers.tag_plan import emit_tags
 
 
 # --------------------------------------------------------------------------
@@ -210,7 +211,8 @@ def _rec(**over):
 
 def test_emit_routes_to_embedded_node_with_token():
     em = RecordingEmitter()
-    emit_embed_ties(em, _Fem([_rec()]), TagAllocator())
+    fem = _Fem([_rec()])
+    emit_embed_ties(em, fem, emit_tags(fem))
     calls = [c for c in em.calls if c[0] == "embedded_node"]
     assert len(calls) == 1
     ele_tag, *args = calls[0][1]
@@ -222,12 +224,14 @@ def test_emit_routes_to_embedded_node_with_token():
 
 def test_emit_al_record_emits_enforce_al():
     em = RecordingEmitter()
-    emit_embed_ties(em, _Fem([_rec(enforce="al", k=None)]), TagAllocator())
+    fem = _Fem([_rec(enforce="al", k=None)])
+    emit_embed_ties(em, fem, emit_tags(fem))
     args = [c for c in em.calls if c[0] == "embedded_node"][0][1]
     assert "-enforce" in args and args[args.index("-enforce") + 1] == "al"
 
 
 def test_emit_noop_when_no_ties():
     em = RecordingEmitter()
-    emit_embed_ties(em, _Fem([]), TagAllocator())
+    fem = _Fem([])
+    emit_embed_ties(em, fem, emit_tags(fem))
     assert [c for c in em.calls if c[0] == "embedded_node"] == []

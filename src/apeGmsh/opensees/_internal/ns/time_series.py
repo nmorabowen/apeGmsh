@@ -56,13 +56,17 @@ class _TimeSeriesNS(_BridgeNamespace):
         factor: float = 1.0,
         start_time: float = 0.0,
         prepend_zero: bool = False,
+        use_last: bool = False,
         name: str | None = None,
     ) -> Path:
         """Construct + register a ``timeSeries Path`` (time-history).
 
         Exactly one of ``file`` or ``values`` must be supplied; when
         ``values`` is supplied, exactly one of ``dt`` or ``time`` is
-        required. See :class:`apeGmsh.opensees.time_series.time_series.Path`.
+        required. ``use_last=True`` emits ``-useLast`` and holds the last
+        value past the support instead of dropping to 0. ``time=`` refuses
+        ``start_time``, ``prepend_zero`` and ``use_last``.
+        See :class:`apeGmsh.opensees.time_series.time_series.Path`.
         """
         return self._bridge._register(
             Path(
@@ -73,6 +77,7 @@ class _TimeSeriesNS(_BridgeNamespace):
                 factor=factor,
                 start_time=start_time,
                 prepend_zero=prepend_zero,
+                use_last=use_last,
             ),
             name=name,
         )

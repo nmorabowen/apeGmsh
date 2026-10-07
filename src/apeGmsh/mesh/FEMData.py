@@ -624,7 +624,8 @@ class NodeComposite:
         where = f" at dim={dim}" if dim is not None else ""
         raise KeyError(
             f"No label, physical group, or part named {t!r}{where}. "
-            f"Labels: {list(self.labels._groups) if hasattr(self.labels, '_groups') else '?'}; "
+            f"Labels: {self.labels.names()}; "
+            f"physical groups: {self.physical.names()}; "
             f"parts: {list(self._part_node_map)}"
         )
 
@@ -2520,10 +2521,8 @@ def _resolve_anchor_to_translate(
         raise ComposeAnchorError(
             f"compose(anchor={anchor!r}) did not resolve to a "
             f"non-empty physical group or label on the host. "
-            f"Available PGs: "
-            f"{list(getattr(fem.nodes.physical, '_groups', {}).keys())}; "
-            f"labels: "
-            f"{list(getattr(fem.nodes.labels, '_groups', {}).keys())}."
+            f"Available PGs: {fem.nodes.physical.names()}; "
+            f"labels: {fem.nodes.labels.names()}."
         )
     centroid = np.asarray(coords, dtype=np.float64).mean(axis=0)
     return (

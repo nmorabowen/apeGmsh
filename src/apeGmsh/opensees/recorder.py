@@ -71,7 +71,7 @@ if TYPE_CHECKING:
     from apeGmsh.mesh.FEMData import FEMData
 
     from ._internal.build import FemToOpsTagMap
-    from ._internal.tag_allocator import TagAllocator
+    from ._internal.tag_plan import TagPlan
     from .emitter.base import Emitter
 
 
@@ -172,7 +172,7 @@ class Node(Recorder):
         self,
         emitter: "Emitter",
         fem: "FEMData",
-        tags: "TagAllocator | None",
+        tag_plan: "TagPlan | None",
         fem_eid_to_ops_tag: "FemToOpsTagMap | dict[int, int] | None" = None,
     ) -> "Node":
         # ``fem_eid_to_ops_tag`` is accepted for signature parity with
@@ -283,7 +283,7 @@ class Element(Recorder):
         self,
         emitter: "Emitter",
         fem: "FEMData",
-        tags: "TagAllocator | None",
+        tag_plan: "TagPlan | None",
         fem_eid_to_ops_tag: "FemToOpsTagMap | dict[int, int] | None" = None,
     ) -> "Element":
         if self.pg is None:
@@ -559,33 +559,21 @@ class FilterableRecorder(Recorder):
 
         ``"filter"`` is the value-channel filter region (``-R``), present
         iff :meth:`has_filter`. :class:`Ladruno` adds ``"energy"``, its
-        decoupled energy region. The tag plan and a standalone
-        :meth:`materialize` both number them in this order.
+        decoupled energy region. The tag plan numbers them in this order.
         """
         return ("filter",) if self.has_filter() else ()
 
     def planned_region_tags(
-        self, fem: "FEMData", tags: "TagAllocator",
+        self, fem: "FEMData", tag_plan: "TagPlan",
     ) -> dict[object, int]:
         """The tag of each of :meth:`region_keys`, by key.
 
-        Two-way until K1-3d S6 drops ``tags`` (ADR 0114 D4, amended).
-        Handed the emit allocator of a bridge emit
-        (``TagPlan.emit_allocator()``), this reads the tags the plan gave
-        this recorder's regions, and refuses a plan made for another model
-        or one that lacks a region this recorder writes. Handed a plain
-        :class:`TagAllocator` (a direct caller), it plans them through the
-        same loop, :func:`~._internal.tag_plan.plan_regions`. Any other
-        fork raises :class:`~._internal.tag_allocator.TagLawError`.
+        Read from ``tag_plan`` (ADR 0114 D4, amended): a plan made for
+        another model, or one that lacks a region this recorder writes,
+        raises :class:`~._internal.build.TagPlanMiss`.
         """
-        from ._internal.tag_plan import plan_or_standalone, plan_regions
-
-        site = ("recorder", id(self))
-        keys = self.region_keys()
-        plan = plan_or_standalone(tags)
-        if plan is None:
-            return {row.key: row.tag for row in plan_regions([(site, keys)], tags)}
-        return plan.regions.tags_for(fem, site, keys)
+        return tag_plan.regions.tags_for(
+            fem, ("recorder", id(self)), self.region_keys())
 
     def resolve_filter_ids(
         self,
@@ -700,7 +688,7 @@ class FilterableRecorder(Recorder):
         self,
         emitter: "Emitter",
         fem: "FEMData",
-        tags: "TagAllocator | None",
+        tag_plan: "TagPlan | None",
         fem_eid_to_ops_tag: "FemToOpsTagMap | dict[int, int] | None" = None,
     ) -> "FilterableRecorder":
         """Resolve filter selectors against the FEM and emit the region.
@@ -714,8 +702,8 @@ class FilterableRecorder(Recorder):
            :class:`BridgeError` (an empty OpenSees region is rejected
            at runtime).
         2. Reads the region tag the build's tag plan gave it
-           (:meth:`planned_region_tags`; ``tags`` must be supplied — the
-           bridge build pipeline forwards the emit allocator).
+           (:meth:`planned_region_tags`; ``tag_plan`` must be supplied —
+           the bridge build pipeline forwards the emit's tag plan).
         3. Emits one ``region $tag -node ... -ele ...`` line on
            ``emitter``.
         4. Returns a clone with the filter selectors cleared and
@@ -735,16 +723,16 @@ class FilterableRecorder(Recorder):
 
         from ._internal.build import BridgeError
 
-        if tags is None:
+        if tag_plan is None:
             raise BridgeError(
                 f"{type(self).__name__} with a region (a nodes=/elements=/"
                 "nodes_pg=/elements_pg= filter, or a Ladruno energy_pg=) "
-                "requires a TagAllocator on emit_recorder_spec(..., tags=); "
+                "requires a TagPlan on emit_recorder_spec(..., tag_plan=); "
                 "the bridge build pipeline supplies one — tests that "
                 "bypass the bridge must pass it explicitly."
             )
         return self._write_planned_regions(
-            emitter, fem, self.planned_region_tags(fem, tags),
+            emitter, fem, self.planned_region_tags(fem, tag_plan),
             fem_eid_to_ops_tag,
         )
 
@@ -1250,7 +1238,7 @@ class Monitor(Recorder):
         self,
         emitter: "Emitter",
         fem: "FEMData",
-        tags: "TagAllocator | None",
+        tag_plan: "TagPlan | None",
         fem_eid_to_ops_tag: "FemToOpsTagMap | dict[int, int] | None" = None,
     ) -> "Monitor":
         # Node tags equal FEM node ids (never rebased), so no element-tag

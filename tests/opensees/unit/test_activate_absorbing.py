@@ -2,9 +2,9 @@
 
 Covers the emitter method (``flip_element_stage``), the build's flip path
 (``absorbing_ele_tags`` — element resolution, per-partition filtering,
-missing-eid fail-loud — then the ``plan_parameters`` loop and the
-``write_planned_flips`` writer, as ``emit_activate_absorbing`` runs them),
-and the staged verb validation.
+missing-eid fail-loud — as the tag plan runs it, then the real
+``emit_activate_absorbing`` writing the planned lines), and the staged verb
+validation.
 """
 from __future__ import annotations
 
@@ -18,27 +18,29 @@ from apeGmsh.opensees._internal.build import (
     ActivateAbsorbingRecord,
     BridgeError,
     absorbing_ele_tags,
+    emit_activate_absorbing,
     parameter_flip_sites,
-    plan_parameters,
-    write_planned_flips,
 )
-from apeGmsh.opensees._internal.tag_allocator import TagAllocator
 from apeGmsh.opensees.emitter.recording import RecordingEmitter
+
+from tests.opensees._helpers.tag_plan import parameter_plan
 
 
 def _emit(records, *, eid_to_tag, element_owner=None, partition_rank=None):
-    """Resolve, plan through ``plan_parameters``, then write: the flip
-    path of ``emit_activate_absorbing``, without a bridge emit's plan."""
+    """Plan the flips as ``plan_tags`` does (resolve each record's
+    elements, then number the sites), then write them through the real
+    ``emit_activate_absorbing``."""
     e = RecordingEmitter()
     fem = cast("object", MagicMock(name="FEMData"))
     resolved = [
         absorbing_ele_tags(rec, fem, eid_to_tag, element_owner, partition_rank)
         for rec in records
     ]
-    lines = plan_parameters(parameter_flip_sites(
-        "flip_element_stage", records, resolved, partition_rank),
-        TagAllocator())
-    write_planned_flips(e, lines, resolved)
+    plan = parameter_plan(
+        parameter_flip_sites(
+            "flip_element_stage", records, resolved, partition_rank),
+        partitioned=partition_rank is not None)
+    emit_activate_absorbing(records, e, plan, partition_rank=partition_rank)
     return [c for c in e.calls if c[0] == "flip_element_stage"]
 
 

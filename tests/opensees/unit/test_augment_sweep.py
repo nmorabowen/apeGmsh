@@ -35,9 +35,9 @@ class _FakeOps:
         self._gaps = list(gaps if gaps is not None else [1e-2, 1e-5, 1e-11])
         self._rcs = list(rcs or [])
 
-    # the fork-build probe ``_stock_build_gate`` reads
-    def criticalTimeStep(self) -> float:          # noqa: N802
-        return 1.0
+    # the one fork signal ``_stock_build_gate`` reads (BackendInfo)
+    def ladrunoBuild(self) -> str:                # noqa: N802
+        return "b" * 40
 
     def ladrunoBeginAugment(self) -> None:        # noqa: N802
         self.calls.append(("begin",))
@@ -194,11 +194,16 @@ def test_a_raising_begin_does_not_latch_the_augment_flag() -> None:
     assert gaps == [1e-11]
 
 
-def test_stock_build_is_refused() -> None:
+@pytest.mark.parametrize("unstamped_fork", [False, True])
+def test_stock_build_is_refused(unstamped_fork: bool) -> None:
     class _StockOps:
-        pass                       # no ``criticalTimeStep``
+        pass                       # no ``ladrunoBuild``
 
-    le = _emitter(_StockOps())
+    class _UnstampedForkOps:       # a fork build predating fork PR #718
+        def criticalTimeStep(self) -> float:      # noqa: N802
+            return 1.0
+
+    le = _emitter(_UnstampedForkOps() if unstamped_fork else _StockOps())
     with pytest.raises(RuntimeError, match="requires the Ladruno fork build") \
             as exc:
         with le.augment(element=1):

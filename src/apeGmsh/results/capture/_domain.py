@@ -511,11 +511,19 @@ class DomainCapture:
                         model_h5_src,
                     )
 
+        # F2-b provenance: the module this capture samples is the one that
+        # runs the analysis, so its BackendInfo (one signal,
+        # ``ladrunoBuild()``) names the build behind every row.
+        from ...opensees._target import backend_info_of
+
+        backend = backend_info_of(self._lazy_ops())
         self._writer.open(
             fem=self._fem,
             source_type="domain_capture",
             source_path="<openseespy>",
             model_h5_src=model_h5_src,
+            opensees_backend=backend.kind,
+            opensees_build=backend.build,
         )
         # Categorise records up-front
         for rec in self._spec.records:

@@ -16,9 +16,10 @@ import pytest
 from apeGmsh._kernel.defs.constraints import ContactDef
 from apeGmsh._kernel.records._constraints import ContactRecord
 from apeGmsh.opensees._internal.build import emit_contacts
-from apeGmsh.opensees._internal.tag_allocator import TagAllocator
 from apeGmsh.opensees.element.contact import contact_args, contact_surface_args
 from apeGmsh.opensees.emitter.recording import RecordingEmitter
+
+from tests.opensees._helpers.tag_plan import emit_tags
 
 
 # --------------------------------------------------------------------------
@@ -1054,7 +1055,8 @@ def _mortar_rec(**over):
 
 def test_emit_nts_two_surfaces_and_contact():
     em = RecordingEmitter()
-    emit_contacts(em, _Fem([_nts_rec()]), TagAllocator(), ndm=3)
+    fem = _Fem([_nts_rec()])
+    emit_contacts(em, fem, emit_tags(fem), ndm=3)
     surf = [c for c in em.calls if c[0] == "contact_surface"]
     con = [c for c in em.calls if c[0] == "contact"]
     assert len(surf) == 2 and len(con) == 1
@@ -1067,7 +1069,8 @@ def test_emit_nts_two_surfaces_and_contact():
 
 def test_emit_mortar_slave_segments():
     em = RecordingEmitter()
-    emit_contacts(em, _Fem([_mortar_rec()]), TagAllocator(), ndm=3)
+    fem = _Fem([_mortar_rec()])
+    emit_contacts(em, fem, emit_tags(fem), ndm=3)
     surf = [c for c in em.calls if c[0] == "contact_surface"]
     con = [c for c in em.calls if c[0] == "contact"][0][1]
     assert "-slave-segments" in surf[1][1]
@@ -1076,7 +1079,8 @@ def test_emit_mortar_slave_segments():
 
 def test_emit_surface_and_contact_tags_distinct_namespaces():
     em = RecordingEmitter()
-    emit_contacts(em, _Fem([_nts_rec()]), TagAllocator(), ndm=3)
+    fem = _Fem([_nts_rec()])
+    emit_contacts(em, fem, emit_tags(fem), ndm=3)
     surf = [c for c in em.calls if c[0] == "contact_surface"]
     con = [c for c in em.calls if c[0] == "contact"][0][1]
     m_tag, s_tag = surf[0][1][0], surf[1][1][0]
@@ -1090,7 +1094,8 @@ def test_emit_surface_and_contact_tags_distinct_namespaces():
 
 def test_emit_noop_when_no_contacts():
     em = RecordingEmitter()
-    emit_contacts(em, _Fem([]), TagAllocator(), ndm=3)
+    fem = _Fem([])
+    emit_contacts(em, fem, emit_tags(fem), ndm=3)
     assert [c for c in em.calls if c[0] in ("contact", "contact_surface")] == []
 
 
@@ -1099,7 +1104,8 @@ def test_emit_carries_extension_modifiers():
     em = RecordingEmitter()
     rec = _nts_rec(kn="auto", kt=None, mu=None, outward=None,
                    soft=0.1, visc=1.0, consistent_tan=True, geom_tan=True)
-    emit_contacts(em, _Fem([rec]), TagAllocator(), ndm=3)
+    fem = _Fem([rec])
+    emit_contacts(em, fem, emit_tags(fem), ndm=3)
     cargs = [c for c in em.calls if c[0] == "contact"][0][1]
     for tok in ("-soft", 0.1, "-visc", 1.0, "-consistanttan", "-geomtan"):
         assert tok in cargs
@@ -1117,7 +1123,8 @@ def _nts_2d_rec(**over):
 
 def test_emit_2d_master_is_six_tags_for_three_segments():
     em = RecordingEmitter()
-    emit_contacts(em, _Fem([_nts_2d_rec()]), TagAllocator(), ndm=2)
+    fem = _Fem([_nts_2d_rec()])
+    emit_contacts(em, fem, emit_tags(fem), ndm=2)
     args = [c for c in em.calls if c[0] == "contact_surface"][0][1]
     assert args[1] == "-master" and args[2] == 2
     assert list(args[3:]) == [1, 2, 2, 3, 3, 4]     # NOT [1, 2, 3, 4]
@@ -1130,9 +1137,10 @@ def test_emit_refuses_a_2d_record_in_a_3d_model():
     from_h5 hole where an archived 2D record lands in a 3D assembly."""
     from apeGmsh.opensees._internal.build import BridgeError
     em = RecordingEmitter()
+    fem = _Fem([_nts_2d_rec(name="joint")])
+    tags = emit_tags(fem)
     with pytest.raises(BridgeError) as exc:
-        emit_contacts(em, _Fem([_nts_2d_rec(name="joint")]),
-                      TagAllocator(), ndm=3)
+        emit_contacts(em, fem, tags, ndm=3)
     msg = str(exc.value)
     assert "master_nps=2" in msg and "ndm=3" in msg
 
@@ -1140,8 +1148,10 @@ def test_emit_refuses_a_2d_record_in_a_3d_model():
 def test_emit_refuses_a_3d_record_in_a_2d_model():
     from apeGmsh.opensees._internal.build import BridgeError
     em = RecordingEmitter()
+    fem = _Fem([_nts_rec()])
+    tags = emit_tags(fem)
     with pytest.raises(BridgeError) as exc:
-        emit_contacts(em, _Fem([_nts_rec()]), TagAllocator(), ndm=2)
+        emit_contacts(em, fem, tags, ndm=2)
     assert "master_nps=3" in str(exc.value)
 
 
@@ -1154,7 +1164,8 @@ def test_emit_carries_edge_edge_modifiers():
         edge_kt=1e6, edge_cohesion=1e3, edge_tau_max=5e5,
         edge_consistent_tan=True, edge_soft=0.1, edge_alm=True,
         edge_aug_tol=1e-6)
-    emit_contacts(em, _Fem([rec]), TagAllocator(), ndm=3)
+    fem = _Fem([rec])
+    emit_contacts(em, fem, emit_tags(fem), ndm=3)
     cargs = [c for c in em.calls if c[0] == "contact"][0][1]
     for tok in ("-edgeedge", "-edgeKn", "auto", "-edgeBand", "-edgeMu",
                 "-edgeKt", "-edgeCohesion", "-edgeTauMax",
@@ -1250,7 +1261,8 @@ def _mortar_2d_rec(**over):
 
 def test_emit_2d_mortar_slave_is_six_tags_for_three_segments():
     em = RecordingEmitter()
-    emit_contacts(em, _Fem([_mortar_2d_rec()]), TagAllocator(), ndm=2)
+    fem = _Fem([_mortar_2d_rec()])
+    emit_contacts(em, fem, emit_tags(fem), ndm=2)
     surfaces = [c for c in em.calls if c[0] == "contact_surface"]
     master, slave = surfaces[0][1], surfaces[1][1]
     assert master[1] == "-master" and master[2] == 2
@@ -1262,8 +1274,8 @@ def test_emit_2d_mortar_slave_is_six_tags_for_three_segments():
 
 def test_emit_2d_mortar_carries_thickness_and_a_2component_outward():
     em = RecordingEmitter()
-    emit_contacts(em, _Fem([_mortar_2d_rec(thickness=0.5)]),
-                  TagAllocator(), ndm=2)
+    fem = _Fem([_mortar_2d_rec(thickness=0.5)])
+    emit_contacts(em, fem, emit_tags(fem), ndm=2)
     cargs = list([c for c in em.calls if c[0] == "contact"][0][1])
     assert cargs[cargs.index("-thickness") + 1] == 0.5
     assert cargs[cargs.index("-outward"):] == ["-outward", 1.0, 0.0]

@@ -121,6 +121,7 @@ from ._internal.build import (
     fix_records_from_model,
     broker_mass_components,
     assert_ndm_compatible,
+    TagPlanMiss,
 )
 from ._internal.build import _element_transf as _build_element_transf
 from ._element_capabilities import is_builder_scoped
@@ -153,12 +154,11 @@ from ._internal.ns import (
     _TimeSeriesNS,
     _UniaxialMaterialNS,
 )
-from ._internal.tag_allocator import TagAllocator, TagLawError
+from ._internal.tag_allocator import TagAllocator
 from ._internal.tag_plan import (
     TagMode,
     TagPlan,
     emit_mode,
-    plan_of,
     plan_tags,
 )
 from ._internal.tag_resolution import set_tag_resolver
@@ -339,18 +339,18 @@ def _kind_of(prim: Primitive) -> str:
 
 
 def _planned_element_specs(
-    tags: TagAllocator, elements: "list[Element]",
+    tag_plan: TagPlan, elements: "list[Element]",
 ) -> "list[tuple[Element, ElementPlanRows]]":
-    """The element plan this emit reads, from the plan ``tags`` carries.
+    """The element plan this emit reads, from ``tag_plan``.
 
     ADR 0114 D4 (amended): element tags are allocated once, by
     ``plan_tags``; the emit paths read them here instead of minting.
     The plan must cover exactly ``elements``, the specs this emit fans
-    out, in order; anything else raises :class:`TagLawError`.
+    out, in order; anything else raises :class:`TagPlanMiss`.
     """
-    specs = plan_of(tags).elements.specs
+    specs = tag_plan.elements.specs
     if [id(s) for s, _ in specs] != [id(e) for e in elements]:
-        raise TagLawError(
+        raise TagPlanMiss(
             f"the element plan holds {len(specs)} specs, but this emit fans "
             f"out {len(elements)}, or in another order: the plan was not "
             "made for this model (ADR 0114 D4, amended)."
@@ -1468,14 +1468,13 @@ class BuiltModel:
         # registered primitives, reserves the FEM element-id range under
         # ``element_tags="fem"`` (ADR 0111 D2: every synthesised tag lands
         # above max(FEM id) on every path), plans every migrated family
-        # (the element fan-out included) and freezes.  The emit mints its
-        # still-pending families from a fork of that allocator, which
-        # continues every counter from the plan and carries the plan
-        # (``tag_plan.plan_of``).  The mode matches the dispatch below.
+        # (the element fan-out included) and freezes.  The emit holds the
+        # plan itself and hands it to every helper, which reads its
+        # family's rows and mints nothing.  The mode matches the dispatch
+        # below.
         emitter_can_partition = getattr(emitter, "supports_partitions", True)
-        plan = self._tag_plan(emit_mode(
+        tag_plan = self._tag_plan(emit_mode(
             self, split=False, supports_partitions=emitter_can_partition))
-        tags = plan.emit_allocator()
 
         # ADR 0027: partitioned vs unpartitioned branch.  The
         # unpartitioned path must be **byte-identical** to the pre-ADR
@@ -1498,7 +1497,7 @@ class BuiltModel:
         if not is_partitioned(self.fem) or not emitter_can_partition:
             self._emit_flat(
                 emitter=emitter,
-                tags=tags,
+                tag_plan=tag_plan,
                 transforms=transforms,
                 elements=elements,
                 inferred_ndf=effective_ndf,
@@ -1514,7 +1513,7 @@ class BuiltModel:
         # :meth:`_emit_stages_partitioned`.
         self._emit_partitioned(
             emitter=emitter,
-            tags=tags,
+            tag_plan=tag_plan,
             transforms=transforms,
             elements=elements,
             inferred_ndf=effective_ndf,
@@ -1530,7 +1529,7 @@ class BuiltModel:
         self,
         *,
         emitter: Emitter,
-        tags: TagAllocator,
+        tag_plan: TagPlan,
         transforms: "list[GeomTransf]",
         elements: "list[Element]",
         inferred_ndf: "dict[int, int]",
@@ -1571,7 +1570,7 @@ class BuiltModel:
             element_owner_stage, node_owner_stage = compute_stage_ownership(
                 self.stage_records, elements, self.fem,
             )
-            element_plan = _planned_element_specs(tags, elements)
+            element_plan = _planned_element_specs(tag_plan, elements)
             # ADR 0065 v2 B3: columnar tag map off the plan (no per-element
             # boxed dict). Node-pair sentinel rows are dropped in from_plan.
             fem_eid_to_ops_tag = FemToOpsTagMap.from_plan(element_plan)
@@ -1653,7 +1652,7 @@ class BuiltModel:
         # the element / geomTransf counters are unaffected by the move —
         # the staged branch above has always allocated here.
         if element_plan is None:
-            element_plan = _planned_element_specs(tags, elements)
+            element_plan = _planned_element_specs(tag_plan, elements)
             # ADR 0065 v2 B3: columnar tag map (see the staged branch above).
             fem_eid_to_ops_tag = FemToOpsTagMap.from_plan(element_plan)
         if fem_eid_to_ops_tag is None:
@@ -1759,10 +1758,9 @@ class BuiltModel:
         # 6. GeomTransf fan-out (builder-scoped — same reasoning as 5b).
         overrides = emit_transform_specs(
             transforms=transforms,
-            elements=elements,
             emitter=emitter,
             fem=self.fem,
-            tags=tags,
+            tag_plan=tag_plan,
             spec_to_own_tag=self.tag_for,
             ndm=self.ndm,
             replay_log=transf_replay_log,
@@ -1782,16 +1780,16 @@ class BuiltModel:
         # p.load(...).  There is no broker-loads auto-emitter.
         self._emit_fixes(emitter, inferred_ndf)
         self._emit_masses(emitter, inferred_ndf)
-        self._emit_regions(emitter, tags)
-        self._emit_rayleigh(emitter, tags, fem_eid_to_ops_tag)
-        self._emit_damping_attach(emitter, tags, fem_eid_to_ops_tag)
+        self._emit_regions(emitter, tag_plan)
+        self._emit_rayleigh(emitter, tag_plan, fem_eid_to_ops_tag)
+        self._emit_damping_attach(emitter, tag_plan, fem_eid_to_ops_tag)
         self._emit_modal_damping(emitter)
 
         # 7b. MP constraints (Phase 7b, ADR 0022 INV-5).  Records
         # claimed by ``s.embedded`` / ``s.equal_dof`` / ... are
         # SKIPPED here — they emit inside their owning stage's block.
         emit_mp_constraints(
-            emitter, self.fem, tags,
+            emitter, self.fem, tag_plan,
             claimed_ids=frozenset(self._claimed_constraint_ids()),
             fem_eid_to_ops_tag=fem_eid_to_ops_tag,
             stiffness_resolver=self._auto_stiffness_resolver(),
@@ -1805,16 +1803,16 @@ class BuiltModel:
         # One LadrunoEmbeddedRebar per rebar node; bond names resolve to
         # tags via the bridge name-alias map.
         emit_reinforce_ties(
-            emitter, self.fem, tags, name_to_tag=self.name_to_tag,
+            emitter, self.fem, tag_plan, name_to_tag=self.name_to_tag,
         )
         # Node-to-host embedment ties (g.embed). One LadrunoEmbeddedNode
         # per constrained node; no material-name resolution needed.
-        emit_embed_ties(emitter, self.fem, tags)
+        emit_embed_ties(emitter, self.fem, tag_plan)
         # Face-to-face contact (g.constraints.contact). contactSurface pairs
         # + the contact verb; the LadrunoContact handler is forced by the
         # constraint-handler auto-emit below.
-        emit_contacts(emitter, self.fem, tags, ndm=self.ndm)
-        emit_contact_planes(emitter, self.fem, tags)
+        emit_contacts(emitter, self.fem, tag_plan, ndm=self.ndm)
+        emit_contact_planes(emitter, self.fem, tag_plan)
         # Oriented coincident-pair zeroLength interfaces
         # (g.constraints.interface, ADR 0093 D5). Per pair: the mixed-ndf
         # phantom + its equalDOF, two tributary-scaled uniaxials, one
@@ -1823,7 +1821,7 @@ class BuiltModel:
         # Records claimed by ``s.interface(name=)`` are SKIPPED here —
         # they emit inside their owning stage's block (ADR 0093 S7).
         emit_interfaces(
-            emitter, self.fem, tags,
+            emitter, self.fem, tag_plan,
             effective_ndf=inferred_ndf,
             envelope_ndf=self.ndf,
             ndm=self.ndm,
@@ -1835,7 +1833,7 @@ class BuiltModel:
         # PG line cell — the bar's OWN axial element, distinct from the
         # coupling above. Material resolved by name.
         emit_rebar_elements(
-            emitter, self.fem, tags, name_to_tag=self.name_to_tag,
+            emitter, self.fem, tag_plan, name_to_tag=self.name_to_tag,
         )
 
         # 7c. Auto-emit constraint handler when MP constraints present.
@@ -1854,7 +1852,7 @@ class BuiltModel:
         # globally before any stage starts.
         if self.initial_stress_records:
             name_to_param_tags = emit_initial_stress_global(
-                self.initial_stress_records, emitter, tags,
+                self.initial_stress_records, emitter, tag_plan,
             )
             emit_initial_stress_addtoparameter(
                 self.initial_stress_records,
@@ -1884,7 +1882,7 @@ class BuiltModel:
                     continue
                 emit_recorder_spec(
                     p, emitter, tag, self.fem,
-                    tags=tags,
+                    tag_plan=tag_plan,
                     fem_eid_to_ops_tag=fem_eid_to_ops_tag,
                 )
             else:  # pragma: no cover  - unreachable per partition above
@@ -1896,7 +1894,7 @@ class BuiltModel:
         # non-staged models.
         if staged:
             self._emit_stages_flat(
-                emitter, tags,
+                emitter, tag_plan,
                 element_plan=element_plan,
                 element_owner_stage=element_owner_stage,
                 node_owner_stage=node_owner_stage,
@@ -1913,7 +1911,7 @@ class BuiltModel:
     def _emit_stages_flat(
         self,
         emitter: Emitter,
-        tags: TagAllocator,
+        tag_plan: TagPlan,
         *,
         element_plan: "list[tuple[Element, ElementPlanRows]]" = (),  # type: ignore[assignment]  # empty tuple is an immutable Sequence[never] default
         element_owner_stage: "dict[int, int]" = {},
@@ -2175,14 +2173,14 @@ class BuiltModel:
                     emitter.mass(node, *fit_dof_vector(
                         mass_rec.values, int(inferred_ndf.get(node, self.ndf)),
                         kind="mass", node=node))
-            self._emit_stage_regions(stage, emitter, tags)
+            self._emit_stage_regions(stage, emitter, tag_plan)
             # Stage-bound MP constraints — emit AFTER regions, BEFORE
             # domain_change so the constrained nodes / elements (which
             # emitted at the top of the stage block) are already in
             # the OpenSees domain when the constraint references them.
             if stage.stage_constraint_records:
                 emit_stage_mp_constraints(
-                    stage.stage_constraint_records, emitter, tags,
+                    stage.stage_constraint_records, emitter, tag_plan,
                     fem_eid_to_ops_tag=fem_eid_to_ops_tag,
                     stiffness_resolver=self._auto_stiffness_resolver(),
                 )
@@ -2195,7 +2193,7 @@ class BuiltModel:
             # the ``zeroLength`` references them.  Element / material
             # tags continue the shared allocator.
             emit_stage_interfaces(
-                stage.stage_interface_records, emitter, tags,
+                stage.stage_interface_records, emitter, tag_plan,
                 effective_ndf=inferred_ndf,
                 envelope_ndf=self.ndf,
                 ndm=self.ndm,
@@ -2243,18 +2241,18 @@ class BuiltModel:
             # definitions themselves emit once, pre-element (global pool);
             # only the attach is stage-scoped.  Modal damping is not staged.
             self._emit_rayleigh(
-                emitter, tags, fem_eid_to_ops_tag,
+                emitter, tag_plan, fem_eid_to_ops_tag,
                 stage=stage,
             )
             self._emit_damping_attach(
-                emitter, tags, fem_eid_to_ops_tag,
+                emitter, tag_plan, fem_eid_to_ops_tag,
                 stage=stage,
             )
 
             # 6. Initial stress.
             if stage.initial_stress_records:
                 name_to_param_tags = emit_initial_stress_global(
-                    stage.initial_stress_records, emitter, tags,
+                    stage.initial_stress_records, emitter, tag_plan,
                 )
                 emit_initial_stress_addtoparameter(
                     stage.initial_stress_records,
@@ -2267,9 +2265,7 @@ class BuiltModel:
             if stage.activate_absorbing_records:
                 emit_activate_absorbing(
                     stage.activate_absorbing_records,
-                    emitter, self.fem,
-                    fem_eid_to_ops_tag=fem_eid_to_ops_tag,
-                    tags=tags,
+                    emitter, tag_plan,
                 )
 
             # 6c. ``s.update_parameter`` — the general form of the same
@@ -2279,9 +2275,7 @@ class BuiltModel:
             if stage.update_parameter_records:
                 emit_update_parameters(
                     stage.update_parameter_records,
-                    emitter, self.fem,
-                    fem_eid_to_ops_tag=fem_eid_to_ops_tag,
-                    tags=tags,
+                    emitter, tag_plan,
                 )
 
             # 7. Analysis chain.
@@ -2317,7 +2311,7 @@ class BuiltModel:
                 rec_spec_tag = self.tag_for[id(rec_spec)]
                 emit_recorder_spec(
                     rec_spec, emitter, rec_spec_tag, self.fem,
-                    tags=tags,
+                    tag_plan=tag_plan,
                     fem_eid_to_ops_tag=fem_eid_to_ops_tag,
                 )
 
@@ -2383,7 +2377,7 @@ class BuiltModel:
         self,
         *,
         emitter: Emitter,
-        tags: TagAllocator,
+        tag_plan: TagPlan,
         transforms: "list[GeomTransf]",
         elements: "list[Element]",
         inferred_ndf: "dict[int, int]",
@@ -2565,7 +2559,7 @@ class BuiltModel:
             element_owner_stage, node_owner_stage = compute_stage_ownership(
                 self.stage_records, elements, self.fem,
             )
-            early_element_plan = _planned_element_specs(tags, elements)
+            early_element_plan = _planned_element_specs(tag_plan, elements)
             # ADR 0065 v2 B3: columnar tag map off the plan (no boxed dict).
             early_fem_eid_to_ops_tag = FemToOpsTagMap.from_plan(
                 early_element_plan
@@ -2601,7 +2595,7 @@ class BuiltModel:
         # emission. Read the routing from the plan, repeat its warnings
         # (one per emit, as before the plan), and run the pattern-sp
         # sweep, which needs this emit's ndf map and patterns.
-        contact_plan = plan_of(tags).contacts.for_fem(self.fem)
+        contact_plan = tag_plan.contacts.for_fem(self.fem)
         if contact_plan.notes:
             import warnings as _warnings
             for note in contact_plan.notes:
@@ -2695,7 +2689,7 @@ class BuiltModel:
                 )
             fem_eid_to_ops_tag = early_fem_eid_to_ops_tag
         else:
-            element_plan = _planned_element_specs(tags, elements)
+            element_plan = _planned_element_specs(tag_plan, elements)
             # Global fem-eid → ops-tag map; used by the initial_stress
             # per-rank ``addToParameter`` fan-out to translate the user's
             # FEM element selection into OpenSees element tags (Phase
@@ -2904,10 +2898,9 @@ class BuiltModel:
         # partition_open block so they're available to every rank.
         overrides = emit_transform_specs(
             transforms=transforms,
-            elements=elements,
             emitter=emitter,
             fem=self.fem,
-            tags=tags,
+            tag_plan=tag_plan,
             spec_to_own_tag=self.tag_for,
             ndm=self.ndm,
         )
@@ -2945,7 +2938,7 @@ class BuiltModel:
                 for rec in stage.stage_interface_records
             ]
             interface_tag_plan = allocate_interface_tags(
-                ordered_interface_records, tags,
+                ordered_interface_records, tag_plan,
             )
 
         # Initial stress — global side (parameter declarations + proc +
@@ -2958,7 +2951,7 @@ class BuiltModel:
         init_stress_param_tags: dict[str, tuple[int, int, int]] = {}
         if self.initial_stress_records:
             init_stress_param_tags = emit_initial_stress_global(
-                self.initial_stress_records, emitter, tags,
+                self.initial_stress_records, emitter, tag_plan,
             )
 
         # Stable per-rank node tags — sort within each rank by node id
@@ -2999,7 +2992,7 @@ class BuiltModel:
         # ``-R <tag>`` referencing the shared tag — MPCO post-processing
         # then stitches the per-rank ``.mpco`` outputs by tag identity.
         mpco_filter_plan = self._plan_partitioned_mpco_recorders(
-            post_element, tags,
+            post_element, tag_plan,
         )
 
         # Pre-compute claimed-constraint ids ONCE before the per-rank
@@ -3144,7 +3137,7 @@ class BuiltModel:
 
                 # 7-bis. Named regions (per-rank intersection — INV-4).
                 self._emit_regions_partitioned(
-                    emitter, tags, rank_owned_nodes[rank], rank,
+                    emitter, tag_plan, rank_owned_nodes[rank], rank,
                 )
 
                 # 7-ter. MPCO recorder filter regions (INV-4 — internal
@@ -3172,11 +3165,9 @@ class BuiltModel:
                         emitter=emitter,
                         fem=self.fem,
                         partition_rank=rank,
-                        node_owners=node_owners,
-                        element_owner=element_owner,
                         foreign_node_ndf=int(self.ndf),
                         inferred_ndf=inferred_ndf,
-                        tags=tags,
+                        tag_plan=tag_plan,
                         ndm=self.ndm,
                         claimed_ids=stage_claimed_constraint_ids,
                         fem_eid_to_ops_tag=fem_eid_to_ops_tag,
@@ -3236,7 +3227,7 @@ class BuiltModel:
                 # bar nodes first, then the LadrunoEmbeddedRebar ties and the
                 # bar CorotTrusses (g.reinforce / g.rebar).
                 self._emit_reinforcement_partitioned(
-                    emitter, tags,
+                    emitter, tag_plan,
                     reinforcement_plan_by_rank.get(rank),
                     declared_ghosts=ghost_tags_by_rank[rank],
                     ghost_sp_ops=ghost_sp_ops,
@@ -3281,7 +3272,7 @@ class BuiltModel:
         # damping, silently dropping a non-stage ``ops.damping.rayleigh``
         # so np>1 ran undamped (the plane-wave handoff's finding #1).
         self._emit_global_damping_partitioned(
-            emitter, tags, fem_eid_to_ops_tag,
+            emitter, tag_plan, fem_eid_to_ops_tag,
         )
 
         # -- 3. Analysis chain — emitted GLOBALLY (outside any rank
@@ -3340,14 +3331,14 @@ class BuiltModel:
             else:
                 emit_recorder_spec(
                     p, emitter, tag, self.fem,
-                    tags=tags,
+                    tag_plan=tag_plan,
                     fem_eid_to_ops_tag=fem_eid_to_ops_tag,
                 )
 
         # -- 4. Per-stage emit blocks (Phase SSI-2.C). ----------------
         if staged:
             self._emit_stages_partitioned(
-                emitter, tags,
+                emitter, tag_plan,
                 partitions=partitions,
                 element_plan=element_plan,
                 plan_by_rank=plan_by_rank,
@@ -3373,7 +3364,7 @@ class BuiltModel:
     def _emit_stages_partitioned(
         self,
         emitter: Emitter,
-        tags: TagAllocator,
+        tag_plan: TagPlan,
         *,
         partitions: "list[Any]",
         element_plan: "list[tuple[Element, ElementPlanRows]]",
@@ -3850,7 +3841,7 @@ class BuiltModel:
                                 int(inferred_ndf.get(int(nid), self.ndf)),
                                 kind="mass", node=int(nid)))
                         self._emit_stage_regions_partitioned(
-                            stage, emitter, tags,
+                            stage, emitter, tag_plan,
                             owned_nodes=rank_owned, rank=rank,
                         )
                         # Stage-bound MP constraints — per-rank fan-
@@ -3867,7 +3858,7 @@ class BuiltModel:
                                 fem=self.fem,
                                 foreign_node_ndf=int(self.ndf),
                                 inferred_ndf=inferred_ndf,
-                                tags=tags,
+                                tag_plan=tag_plan,
                                 ndm=self.ndm,
                                 fem_eid_to_ops_tag=fem_eid_to_ops_tag,
                                 ghost_sp_ops=stage_ghost_sp_ops,
@@ -3962,18 +3953,18 @@ class BuiltModel:
             # every PG element; OpenSeesMP binds only the elements each
             # rank owns.  Modal damping is not staged.
             self._emit_rayleigh(
-                emitter, tags, fem_eid_to_ops_tag,
+                emitter, tag_plan, fem_eid_to_ops_tag,
                 stage=stage,
             )
             self._emit_damping_attach(
-                emitter, tags, fem_eid_to_ops_tag,
+                emitter, tag_plan, fem_eid_to_ops_tag,
                 stage=stage,
             )
 
             # 4. Initial-stress globals + per-rank ``addToParameter``.
             if stage.initial_stress_records:
                 name_to_param_tags = emit_initial_stress_global(
-                    stage.initial_stress_records, emitter, tags,
+                    stage.initial_stress_records, emitter, tag_plan,
                 )
                 for idx, _part in enumerate(partitions):
                     rank = runtime_rank_from_partition_record(_part, idx)
@@ -3998,11 +3989,7 @@ class BuiltModel:
                     try:
                         emit_activate_absorbing(
                             stage.activate_absorbing_records,
-                            emitter, self.fem,
-                            fem_eid_to_ops_tag=fem_eid_to_ops_tag,
-                            tags=tags,
-                            element_owner=element_owner,
-                            partition_rank=rank,
+                            emitter, tag_plan, partition_rank=rank,
                         )
                     finally:
                         emitter.partition_close()
@@ -4017,11 +4004,7 @@ class BuiltModel:
                     try:
                         emit_update_parameters(
                             stage.update_parameter_records,
-                            emitter, self.fem,
-                            fem_eid_to_ops_tag=fem_eid_to_ops_tag,
-                            tags=tags,
-                            element_owner=element_owner,
-                            partition_rank=rank,
+                            emitter, tag_plan, partition_rank=rank,
                         )
                     finally:
                         emitter.partition_close()
@@ -4088,7 +4071,7 @@ class BuiltModel:
                 rec_spec_tag = self.tag_for[id(rec_spec)]
                 emit_recorder_spec(
                     rec_spec, emitter, rec_spec_tag, self.fem,
-                    tags=tags,
+                    tag_plan=tag_plan,
                     fem_eid_to_ops_tag=fem_eid_to_ops_tag,
                 )
 
@@ -5671,7 +5654,7 @@ class BuiltModel:
     def _emit_reinforcement_partitioned(
         self,
         emitter: Emitter,
-        tags: TagAllocator,
+        tag_plan: TagPlan,
         entry: "tuple[list[Any], list[Any], tuple[int, ...]] | None",
         *,
         declared_ghosts: "set[int]",
@@ -5704,11 +5687,11 @@ class BuiltModel:
             emit_ghost_sp_ops(emitter, nid, ghost_sp_ops.get(nid, ()))
             declared_ghosts.add(nid)
         emit_reinforce_ties(
-            emitter, self.fem, tags, name_to_tag=self.name_to_tag,
+            emitter, self.fem, tag_plan, name_to_tag=self.name_to_tag,
             records=rank_ties,
         )
         emit_rebar_elements(
-            emitter, self.fem, tags, name_to_tag=self.name_to_tag,
+            emitter, self.fem, tag_plan, name_to_tag=self.name_to_tag,
             records=rank_bars,
         )
 
@@ -6162,7 +6145,7 @@ class BuiltModel:
     def _emit_rayleigh(
         self,
         emitter: Emitter,
-        tags: "TagAllocator | None" = None,
+        tag_plan: "TagPlan | None" = None,
         fem_eid_to_ops_tag: "FemToOpsTagMap | None" = None,
         *,
         stage: "StageRecord | None" = None,
@@ -6180,7 +6163,7 @@ class BuiltModel:
         Global records (``on == ()``) render a bare ``rayleigh αM βK βK0
         βKc``. Region records render one ``region $tag -ele … -rayleigh …``
         per ``on`` physical-group name, with ``-ele`` membership because βK
-        is stiffness-proportional. ``tags`` / ``fem_eid_to_ops_tag`` are
+        is stiffness-proportional. ``tag_plan`` / ``fem_eid_to_ops_tag`` are
         required only when region records are present (the emit driver always
         supplies them); each region's tag is the one the build's tag plan
         gave it (``("rayleigh", scope)`` sites of
@@ -6214,7 +6197,7 @@ class BuiltModel:
         if not scoped:
             return
         region_tags = self._planned_damping_region_tags(
-            "rayleigh", stage, recs, tags)
+            "rayleigh", stage, recs, tag_plan)
         for i, rec in enumerate(recs):
             for j, name in enumerate(rec.on):
                 ele_tags = self._resolve_damping_on_elements(
@@ -6229,7 +6212,7 @@ class BuiltModel:
     def _emit_global_damping_partitioned(
         self,
         emitter: Emitter,
-        tags: TagAllocator,
+        tag_plan: TagPlan,
         fem_eid_to_ops_tag: "FemToOpsTagMap",
     ) -> None:
         """Emit global (non-stage) damping under partitioned (MPI) emit.
@@ -6296,8 +6279,8 @@ class BuiltModel:
         # attaches — emitted once, outside any partition block, exactly as
         # the stage-bound partitioned pass does (every rank binds only its
         # locally-owned elements; foreign -ele tags are skipped).
-        self._emit_rayleigh(emitter, tags, fem_eid_to_ops_tag)
-        self._emit_damping_attach(emitter, tags, fem_eid_to_ops_tag)
+        self._emit_rayleigh(emitter, tag_plan, fem_eid_to_ops_tag)
+        self._emit_damping_attach(emitter, tag_plan, fem_eid_to_ops_tag)
 
     def _resolve_damping_on_elements(
         self,
@@ -6334,7 +6317,7 @@ class BuiltModel:
     def _emit_damping_attach(
         self,
         emitter: Emitter,
-        tags: "TagAllocator | None" = None,
+        tag_plan: "TagPlan | None" = None,
         fem_eid_to_ops_tag: "FemToOpsTagMap | None" = None,
         *,
         stage: "StageRecord | None" = None,
@@ -6358,7 +6341,7 @@ class BuiltModel:
         if not recs:
             return
         region_tags = self._planned_damping_region_tags(
-            "damping", stage, recs, tags)
+            "damping", stage, recs, tag_plan)
         for i, rec in enumerate(recs):
             damp_tag = self.tag_for[id(rec.prim)]
             for j, name in enumerate(rec.on):
@@ -6383,15 +6366,15 @@ class BuiltModel:
         kind: str,
         stage: "StageRecord | None",
         recs: "Sequence[RayleighRecord | DampingAttachRecord]",
-        tags: "TagAllocator | None",
+        tag_plan: "TagPlan | None",
     ) -> dict[object, int]:
         """The planned region tag of each ``on`` name of a damping pool."""
-        if tags is None:
+        if tag_plan is None:
             raise BridgeError(
                 "apeSees: region-scoped damping (on=...) needs the emit's "
-                "tag allocator; this is an internal emit-wiring error."
+                "tag plan; this is an internal emit-wiring error."
             )
-        return plan_of(tags).regions.tags_for(
+        return tag_plan.regions.tags_for(
             self.fem, (kind, None if stage is None else id(stage)),
             self._damping_region_keys(recs),
         )
@@ -6410,7 +6393,7 @@ class BuiltModel:
             emitter.eigen(rec.modes, solver=rec.solver)
             emitter.modal_damping(*rec.factors)
 
-    def _emit_regions(self, emitter: Emitter, tags: TagAllocator) -> None:
+    def _emit_regions(self, emitter: Emitter, tag_plan: TagPlan) -> None:
         """Fan named-region assignments out into ``emitter.region`` calls.
 
         One ``region $tag -node ...`` line per name, in first-seen order.
@@ -6421,7 +6404,7 @@ class BuiltModel:
         """
         if not self.region_records:
             return
-        for region in self._planned_named_regions(tags, None):
+        for region in self._planned_named_regions(tag_plan, None):
             if region.nodes:
                 emitter.region(region.planned_tag(), "-node", *region.nodes)
 
@@ -6429,7 +6412,7 @@ class BuiltModel:
         self,
         stage: "StageRecord",
         emitter: Emitter,
-        tags: TagAllocator,
+        tag_plan: TagPlan,
     ) -> None:
         """Single-partition fan-out for one stage's region pool.
 
@@ -6444,7 +6427,7 @@ class BuiltModel:
         """
         if not stage.region_records:
             return
-        for region in self._planned_named_regions(tags, stage):
+        for region in self._planned_named_regions(tag_plan, stage):
             if region.nodes:
                 emitter.region(region.planned_tag(), "-node", *region.nodes)
 
@@ -6452,7 +6435,7 @@ class BuiltModel:
         self,
         stage: "StageRecord",
         emitter: Emitter,
-        tags: TagAllocator,
+        tag_plan: TagPlan,
         owned_nodes: "set[int] | SortedIntSet",
         rank: int,
     ) -> None:
@@ -6466,7 +6449,7 @@ class BuiltModel:
         """
         if not stage.region_records:
             return
-        for region in self._planned_named_regions(tags, stage):
+        for region in self._planned_named_regions(tag_plan, stage):
             owned_list = [n for n in region.nodes if int(n) in owned_nodes]
             if not owned_list:
                 region.check_unheld_on(rank)
@@ -6476,7 +6459,7 @@ class BuiltModel:
     def _emit_regions_partitioned(
         self,
         emitter: Emitter,
-        tags: TagAllocator,
+        tag_plan: TagPlan,
         owned_nodes: "set[int] | SortedIntSet",
         rank: int,
     ) -> None:
@@ -6493,7 +6476,7 @@ class BuiltModel:
         """
         if not self.region_records:
             return
-        for region in self._planned_named_regions(tags, None):
+        for region in self._planned_named_regions(tag_plan, None):
             owned_list = [n for n in region.nodes if int(n) in owned_nodes]
             if not owned_list:
                 # INV-4: empty intersection → no region line on this rank.
@@ -6502,7 +6485,7 @@ class BuiltModel:
             emitter.region(region.tag_on_rank(rank), "-node", *owned_list)
 
     def _planned_named_regions(
-        self, tags: TagAllocator, stage: "StageRecord | None",
+        self, tag_plan: TagPlan, stage: "StageRecord | None",
     ) -> "tuple[NamedRegion, ...]":
         """The named regions the plan holds for ``stage``'s pool (``None``:
         the global pool), with their merged members and planned tags.
@@ -6512,7 +6495,7 @@ class BuiltModel:
         """
         records = self.region_records if stage is None else stage.region_records
         names = tuple(dict.fromkeys(rec.name for rec in records))
-        return plan_of(tags).regions.named_for(
+        return tag_plan.regions.named_for(
             self.fem, ("named", None if stage is None else id(stage)), names)
 
     def _merged_region_members(
@@ -6634,7 +6617,7 @@ class BuiltModel:
     def _plan_partitioned_mpco_recorders(
         self,
         post_element: "list[Primitive]",
-        tags: TagAllocator,
+        tag_plan: TagPlan,
     ) -> "dict[int, _MPCOFilterPlan]":
         """Pre-resolve the region(s) of every region-bearing recorder of
         the global pass, under the tags the build's tag plan gave them.
@@ -6674,7 +6657,7 @@ class BuiltModel:
                 continue
             if not p.region_keys():
                 continue
-            region_tags = p.planned_region_tags(self.fem, tags)
+            region_tags = p.planned_region_tags(self.fem, tag_plan)
             regions: list[_RegionEmit] = []
             materialised: FilterableRecorder = p
 

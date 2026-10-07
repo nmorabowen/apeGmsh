@@ -170,13 +170,9 @@ class ComposeDroppedStreamWarning(UserWarning):
 
     One warning per dropped stream per compose call, naming the stream
     and its record count (program slice B2-2, D9).  The streams that
-    trip it are listed in :data:`_UNCARRIED_ELEMENT_STREAMS`; today that
-    is the source's ``elements.rebar_elements`` (the cage's auto-emitted
-    structural rebar from ``g.rebar.place(emit_elements=True)``), whose
-    carry needs the module's tag offset on ``connectivity``, the
-    namespace prefix on ``pg`` and a decision on the bridge-side
-    ``material`` name, so it is not a trivial copy like ``contacts``.
-    Carried streams and empty ones stay silent.  Silence per call with
+    trip it are listed in :data:`_UNCARRIED_ELEMENT_STREAMS`, which is
+    empty today: ``elements.rebar_elements`` is carried since AS2a
+    (ADR 0117 D4).  Carried streams and empty ones stay silent.  Silence per call with
     ``warnings.simplefilter("ignore", ComposeDroppedStreamWarning)``.
     """
 
@@ -713,6 +709,9 @@ class _RewrittenBundle:
     # carried through the module's rotate+translate per INV-2.  Empty
     # when the source declares no interfaces.
     interfaces: tuple = ()
+    # Auto-emitted rebar elements (ADR 0117 D4): bar cells offset, PG
+    # prefixed, material ``{label}.{name}``.
+    rebar_elements: tuple = ()
 
 
 # ── Helper: schema-version + tag-span reader ───────────────────────
@@ -1644,10 +1643,23 @@ def _rewrite_source_for_compose(
         )
         for rec in (getattr(source.elements, "interfaces", None) or ())
     )
+    # Auto-emitted rebar elements (ADR 0117 D4, AS2a): offset the bar
+    # cells, prefix the bar PG as every PG is, and prefix the material as
+    # a bridge name (``{label}.{name}``, the rehydrator's rule), so the
+    # bar binds to the instance's own rehydrated material.
+    new_rebar_elements = tuple(
+        _dc_replace(
+            rec,
+            pg=_prefix_namespaced_name(label, rec.pg),
+            material=f"{label}.{rec.material}",
+            connectivity=tuple(
+                (int(i) + offset, int(j) + offset) for i, j in rec.connectivity),
+        )
+        for rec in source.elements.rebar_elements
+    )
     # Streams the source carries that this rewrite does NOT place on the
-    # bundle (today: ``elements.rebar_elements``).  Warn once per
-    # non-empty one so the drop is never silent (B2-2 / D9); the merge
-    # engine's ElementComposite rebuild then carries only the host's.
+    # bundle (none today).  Warn once per non-empty one so a drop is
+    # never silent (B2-2 / D9).
     _warn_dropped_streams(source, label=label)
 
     # 7. Joined module_label arrays (Phase 3E.1).  The source's
@@ -1729,6 +1741,7 @@ def _rewrite_source_for_compose(
         contacts=new_contacts,
         contact_planes=new_contact_planes,
         interfaces=new_interfaces,
+        rebar_elements=new_rebar_elements,
     )
 
 
@@ -2737,15 +2750,10 @@ def _merge_bundle_into_fem(
         # term the composed module arrives unsprung.
         interfaces=(list(getattr(fem.elements, "interfaces", []))
                     + list(bundle.interfaces)),
-        # ADR 0067 P5.2 / B1a.2: preserve the HOST's auto-emitted rebar
-        # elements across the merge (the rebuilt ElementComposite would
-        # otherwise drop them). The SOURCE module's rebar_elements are NOT
-        # carried (the bundle has no such stream: the carry needs the tag
-        # offset on connectivity, the PG prefix and a material-name
-        # decision), so the rewriter warns per non-empty source stream
-        # (``_warn_dropped_streams``, B2-2 / D9) instead of dropping it
-        # silently. Carrying it is a compose teach-in follow-on.
-        rebar_elements=list(getattr(fem.elements, "rebar_elements", [])),
+        # ADR 0067 P5.2 / ADR 0117 D4: the host's auto-emitted rebar
+        # elements plus the bundle's rewritten ones.
+        rebar_elements=(list(getattr(fem.elements, "rebar_elements", []))
+                        + list(bundle.rebar_elements)),
         gmsh_source=getattr(fem.elements, "_gmsh_source", None),
     )
 
@@ -3201,6 +3209,15 @@ def _bundle_constraint_refs(bundle: "_RewrittenBundle"):
     for stream in record_streams:
         for rec in stream:
             yield from _walk(rec)
+    # Rebar cells carry no tag_rewrite_spec (a nested pair tuple); their
+    # node tags are offset by the bespoke carry in the rewriter (AS2a).
+    for rec in bundle.rebar_elements:
+        for k, (i, j) in enumerate(rec.connectivity):
+            for end, tag in (("i", i), ("j", j)):
+                yield ConstraintReference(
+                    kind=type(rec).__name__,
+                    field_name=f"connectivity[{k}].{end}", tag=int(tag),
+                )
 
 
 def _next_free_group_key(
@@ -3419,8 +3436,9 @@ def _emit_filter_warnings(source_path: "str | Path", label: str) -> None:
 #: parts, labels) or is an ADR 0038 DISCARD verdict rebuilt on the host
 #: (the module's own PartitionSet).  A stream leaves this tuple the day
 #: the bundle carries it; a new uncarried stream joins it, so the drop
-#: warns instead of passing silently (B2-2 / D9).
-_UNCARRIED_ELEMENT_STREAMS: "tuple[str, ...]" = ("rebar_elements",)
+#: warns instead of passing silently (B2-2 / D9).  ``rebar_elements``
+#: left it in AS2a (ADR 0117 D4).
+_UNCARRIED_ELEMENT_STREAMS: "tuple[str, ...]" = ()
 
 
 def _warn_dropped_streams(source: "FEMData", *, label: str) -> None:
