@@ -961,18 +961,18 @@ def _replay_into(
         if fem is not None else None
     )
     if reinforce_ties:
-        from .build import emit_reinforce_ties
+        from .build import replay_reinforce_ties
         from .tag_allocator import TagAllocator
 
         # tag-law waiver reinforce-tie-replay (tag_law_ledger.txt): replay
         # mints the tie element tags (the _counters seed below and
-        # emit_reinforce_ties) because the deck zone stores no tie record.
+        # replay_reinforce_ties) because replay has no archived tie tags.
         _rt_tags = TagAllocator()
         # Seed the element counter past the max replayed element tag so the tie
         # element tags don't collide with the directly-replayed elements.
         max_elem_tag = max((int(e.tag) for e in elements), default=0)
         _rt_tags._counters["element"] = max_elem_tag
-        emit_reinforce_ties(
+        replay_reinforce_ties(
             emitter, fem, _rt_tags,
             name_to_tag=dict(reinforce_name_to_tag or {}),
         )
@@ -998,7 +998,7 @@ def _replay_into(
         from .build import (
             FemToOpsTagMap,
             emit_initial_stress_addtoparameter,
-            emit_initial_stress_global,
+            replay_initial_stress_global,
         )
         from .tag_allocator import TagAllocator
 
@@ -1007,8 +1007,8 @@ def _replay_into(
         # (the bridge reuses one ``tags`` across everything).  Flat
         # callers pass None → fresh allocator (unchanged behaviour).
         # tag-law waiver initial-stress-replay (tag_law_ledger.txt): replay
-        # mints the parameter tags (emit_initial_stress_global) because the
-        # archive stores the declarative record, not the allocated tags.
+        # mints the parameter tags (replay_initial_stress_global) because
+        # the archive stores the declarative record, not the allocated tags.
         _is_tags = initial_stress_tags or TagAllocator()
         # ADR 0065 v2 B3: the emit helpers now take a FemToOpsTagMap.
         fem_eid_to_ops_tag = FemToOpsTagMap.from_pairs(
@@ -1016,7 +1016,7 @@ def _replay_into(
             for e in elements
             if int(e.fem_eid) >= 0
         )
-        name_to_param_tags = emit_initial_stress_global(
+        name_to_param_tags = replay_initial_stress_global(
             initial_stress, emitter, _is_tags,
         )
         emit_initial_stress_addtoparameter(
@@ -1225,9 +1225,9 @@ def _replay_staged_into(
     """
     from .build import (
         ActivateAbsorbingRecord,
-        emit_activate_absorbing,
         emit_initial_stress_addtoparameter,
-        emit_initial_stress_global,
+        replay_activate_absorbing,
+        replay_initial_stress_global,
     )
     from .tag_allocator import TagAllocator
 
@@ -1312,8 +1312,8 @@ def _replay_staged_into(
     # (the bridge reuses a single ``tags``; a per-stage allocator would
     # restart parameter counters at stage boundaries — gate-1 FATAL).
     # tag-law waiver staged-replay-params (tag_law_ledger.txt): replay mints
-    # the stage parameter tags (emit_initial_stress_global and
-    # emit_activate_absorbing) because the archive stores no parameter tag.
+    # the stage parameter tags (replay_initial_stress_global and
+    # replay_activate_absorbing) because the archive stores no parameter tag.
     tags = TagAllocator()
 
     # 1. Global prefix — _replay_into with stage-owned topology filtered
@@ -1538,7 +1538,7 @@ def _replay_staged_into(
         # stage initial_stress — re-run the bridge helpers with the
         # SHARED allocator (parameter tags accumulate across stages).
         if st.initial_stress:
-            name_to_param_tags = emit_initial_stress_global(
+            name_to_param_tags = replay_initial_stress_global(
                 st.initial_stress, emitter, tags,
             )
             emit_initial_stress_addtoparameter(
@@ -1554,7 +1554,7 @@ def _replay_staged_into(
                 ActivateAbsorbingRecord(pg=pg, elements=els)
                 for pg, els in st.activate_absorbing
             )
-            emit_activate_absorbing(
+            replay_activate_absorbing(
                 ab_records, emitter, fem,
                 fem_eid_to_ops_tag=fem_eid_to_ops_tag, tags=tags,
             )
