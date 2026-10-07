@@ -25,8 +25,9 @@ from apeGmsh.opensees._internal.build import (
     _emit_kinematic_couplings,
     _emit_one_interpolation,
 )
-from apeGmsh.opensees._internal.tag_allocator import TagAllocator
 from apeGmsh.opensees.emitter.recording import RecordingEmitter
+
+from tests.opensees._helpers.tag_plan import emit_tags, stub_fem
 
 
 # ── CouplingControl: validation ──────────────────────────────────────────
@@ -150,7 +151,8 @@ def test_kinematic_emit_appends_control_flags() -> None:
         control=CouplingControl(k=1e10, enforce="al"),
     )
     e = RecordingEmitter()
-    _emit_kinematic_couplings(e, [rec], TagAllocator())
+    tags = emit_tags(stub_fem(node_constraints=[rec]))
+    _emit_kinematic_couplings(e, [rec], tags)
     flat = [c for c in e.calls if c[0] == "element"][0][1]
     assert flat[0] == "LadrunoKinematicCoupling"
     # ref=1, N=2, slaves 2 3, -dof 1 2, then the control flags.
@@ -163,7 +165,8 @@ def test_kinematic_emit_no_control_no_extra_flags() -> None:
         control=None,
     )
     e = RecordingEmitter()
-    _emit_kinematic_couplings(e, [rec], TagAllocator())
+    tags = emit_tags(stub_fem(node_constraints=[rec]))
+    _emit_kinematic_couplings(e, [rec], tags)
     flat = [c for c in e.calls if c[0] == "element"][0][1]
     assert flat[2:] == (1, 1, 2)          # no -dof, no control flags
 
@@ -174,7 +177,8 @@ def test_distributing_emit_appends_control_flags() -> None:
         weights=None, control=CouplingControl(k=5e8, bipenalty_dtcr=1e-6),
     )
     e = RecordingEmitter()
-    _emit_one_interpolation(e, rec, TagAllocator())
+    tags = emit_tags(stub_fem(interpolations=[rec]))
+    _emit_one_interpolation(e, rec, tags)
     flat = [c for c in e.calls if c[0] == "element"][0][1]
     assert flat[0] == "LadrunoDistributingCoupling"
     # ref=1, N=3, indep 2 3 4, (no -w), then control flags.
@@ -191,8 +195,9 @@ def test_kinematic_emit_translates_host_eid() -> None:
         control=CouplingControl(k="auto", k_alpha=1e3, host=7),
     )
     e = RecordingEmitter()
+    tags = emit_tags(stub_fem(node_constraints=[rec]))
     _emit_kinematic_couplings(
-        e, [rec], TagAllocator(), fem_eid_to_ops_tag={7: 1234},
+        e, [rec], tags, fem_eid_to_ops_tag={7: 1234},
     )
     flat = [c for c in e.calls if c[0] == "element"][0][1]
     assert flat[2:] == (
@@ -207,8 +212,9 @@ def test_distributing_emit_translates_host_eid_wcap() -> None:
         control=CouplingControl(host=9, bipenalty_wcap=0.1),
     )
     e = RecordingEmitter()
+    tags = emit_tags(stub_fem(interpolations=[rec]))
     _emit_one_interpolation(
-        e, rec, TagAllocator(), fem_eid_to_ops_tag={9: 55},
+        e, rec, tags, fem_eid_to_ops_tag={9: 55},
     )
     flat = [c for c in e.calls if c[0] == "element"][0][1]
     assert flat[2:] == (
@@ -222,8 +228,9 @@ def test_hosted_control_fails_loud_without_map() -> None:
         control=CouplingControl(k="auto", host=7), name="lid",
     )
     e = RecordingEmitter()
+    tags = emit_tags(stub_fem(node_constraints=[rec]))
     with pytest.raises(ValueError, match="'lid'.*host=7.*got none"):
-        _emit_kinematic_couplings(e, [rec], TagAllocator())
+        _emit_kinematic_couplings(e, [rec], tags)
 
 
 def test_hosted_control_fails_loud_on_unknown_eid() -> None:
@@ -232,9 +239,10 @@ def test_hosted_control_fails_loud_on_unknown_eid() -> None:
         control=CouplingControl(k="auto", host=999),
     )
     e = RecordingEmitter()
+    tags = emit_tags(stub_fem(interpolations=[rec]))
     with pytest.raises(ValueError, match="host=999 is not an emitted"):
         _emit_one_interpolation(
-            e, rec, TagAllocator(), fem_eid_to_ops_tag={7: 1234},
+            e, rec, tags, fem_eid_to_ops_tag={7: 1234},
         )
 
 
@@ -246,7 +254,8 @@ def test_unhosted_control_ignores_missing_map() -> None:
         control=CouplingControl(k=1e10),
     )
     e = RecordingEmitter()
-    _emit_kinematic_couplings(e, [rec], TagAllocator())
+    tags = emit_tags(stub_fem(node_constraints=[rec]))
+    _emit_kinematic_couplings(e, [rec], tags)
     flat = [c for c in e.calls if c[0] == "element"][0][1]
     assert flat[2:] == (1, 1, 2, "-k", 1e10)
 
@@ -416,7 +425,8 @@ def test_kinematic_emit_carries_al_update() -> None:
         control=CouplingControl(k=1e6, enforce="al", al_update="iter"),
     )
     e = RecordingEmitter()
-    _emit_kinematic_couplings(e, [rec], TagAllocator())
+    tags = emit_tags(stub_fem(node_constraints=[rec]))
+    _emit_kinematic_couplings(e, [rec], tags)
     flat = [c for c in e.calls if c[0] == "element"][0][1]
     assert flat[0] == "LadrunoKinematicCoupling"
     assert flat[2:] == (
@@ -433,10 +443,11 @@ def test_distributing_emit_refuses_al_update() -> None:
         name="ring",
     )
     e = RecordingEmitter()
+    tags = emit_tags(stub_fem(interpolations=[rec]))
     with pytest.raises(
         ValueError, match="'ring'.*LadrunoKinematicCoupling-only",
     ):
-        _emit_one_interpolation(e, rec, TagAllocator())
+        _emit_one_interpolation(e, rec, tags)
 
 
 def test_penalty_al_embedded_emit_refuses_al_update() -> None:
@@ -447,8 +458,9 @@ def test_penalty_al_embedded_emit_refuses_al_update() -> None:
         control=CouplingControl(enforce="al", al_update="iter"),
     )
     e = RecordingEmitter()
+    tags = emit_tags(stub_fem(interpolations=[rec]))
     with pytest.raises(ValueError, match="LadrunoKinematicCoupling-only"):
-        _emit_one_interpolation(e, rec, TagAllocator())
+        _emit_one_interpolation(e, rec, tags)
 
 
 def test_public_knob_reaches_the_emitted_token() -> None:
@@ -467,7 +479,8 @@ def test_public_knob_reaches_the_emitted_token() -> None:
         control=CouplingControl(enforce="al", al_update="commit"),
     )
     e = RecordingEmitter()
-    _emit_kinematic_couplings(e, [rec], TagAllocator())
+    tags = emit_tags(stub_fem(node_constraints=[rec]))
+    _emit_kinematic_couplings(e, [rec], tags)
     flat = [c for c in e.calls if c[0] == "element"][0][1]
     assert flat[-2:] == ("-alUpdate", "commit")
 

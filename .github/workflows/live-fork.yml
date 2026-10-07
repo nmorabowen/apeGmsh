@@ -49,8 +49,23 @@ jobs:
           tar xzf "$RUNNER_TEMP/fork/$asset" -C "$RUNNER_TEMP/fork" --strip-components=1
           ls -l "$RUNNER_TEMP/fork"
           cat "$RUNNER_TEMP/fork/BUILD_INFO.txt"
-          # `import opensees` resolves to opensees.so on PYTHONPATH.
-          echo "PYTHONPATH=$RUNNER_TEMP/fork" >> "$GITHUB_ENV"
+          # Install opensees.so into site-packages rather than exporting
+          # PYTHONPATH: subprocess tests rebuild PYTHONPATH (src:root) and
+          # would drop the fork dir, so the child could not import it.
+          purelib=$(python -c "import sysconfig; print(sysconfig.get_paths()['purelib'])")
+          cp "$RUNNER_TEMP"/fork/opensees*.so "$purelib/"
+          ls -l "$purelib"/opensees*.so
+
+      - name: Assert the installed build is the pinned one
+        working-directory: ${{ runner.temp }}
+        run: |
+          set -euo pipefail
+          unset PYTHONPATH
+          export LADRUNO_OPENSEES_QUIET=1
+          want=$(grep -E '^sha=' "$GITHUB_WORKSPACE/FORK_PIN" | cut -d= -f2-)
+          got=$(python -c "import opensees; print(opensees.ladrunoBuild())" | tail -n1)
+          echo "pin=$want build=$got"
+          [ "$got" = "$want" ] || { echo "::error::build $got != pin $want"; exit 1; }
 
       - name: Run ladruno_fork tests
         run: |

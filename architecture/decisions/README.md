@@ -132,3 +132,4 @@ An ADR over 40 KB has a decision summary of at most 60 lines in `summaries/` und
 | [0114](0114-the-archive-is-the-program.md) | The archive is the program: `VERBS`, `command()`, tag law, `will_solve` | Accepted |
 | [0115](0115-read-back-by-label.md) | Read-back by label and label-addressed records | Accepted |
 | [0116](0116-render-technologies.md) | Render technologies: three.js in apeGmshViewer and matplotlib; VTK in sunset | Accepted |
+| [0117](0117-assembly-compose-v2.md) | Assembly (compose v2): instances of model files, rehydrated into one forward bridge | Accepted |

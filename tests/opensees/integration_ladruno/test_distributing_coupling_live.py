@@ -20,8 +20,9 @@ import pytest
 
 from apeGmsh._kernel.records._constraints import InterpolationRecord
 from apeGmsh.opensees._internal.build import _emit_one_interpolation
-from apeGmsh.opensees._internal.tag_allocator import TagAllocator
 from apeGmsh.opensees.emitter.live import LiveOpsEmitter
+
+from tests.opensees._helpers.tag_plan import emit_tags, stub_fem
 
 pytestmark = pytest.mark.ladruno_fork
 
@@ -44,7 +45,8 @@ def test_rbe3_element_loads_on_fork() -> None:
         kind="distributing", slave_node=10, master_nodes=[1, 2, 3, 4],
         weights=None,
     )
-    _emit_one_interpolation(e, rec, TagAllocator())
+    _emit_one_interpolation(
+        e, rec, emit_tags(stub_fem(interpolations=[rec])))
 
     # The fork-only-element gate in LiveOpsEmitter.element confirms the build
     # actually accepted LadrunoDistributingCoupling (a stock build would have

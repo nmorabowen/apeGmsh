@@ -212,6 +212,24 @@ Attributes only.
 > version keys at the **file root** (not `/meta`) — see
 > [Schema versioning](#versioning).
 
+### `results.h5` root attrs: OpenSees build provenance
+
+A `results.h5` written by the native writer (`NativeWriter.open`) may carry
+two root attrs naming the OpenSees build that produced its data. They come
+from the bridge's `BackendInfo` (`apeGmsh.opensees._target`), whose one fork
+signal is `ladrunoBuild()` returning a git sha, and are written with the
+other root attrs, before any stage data.
+
+| Attribute | Type | Description |
+|---|---|---|
+| `opensees_backend` | string | `"fork"` (Ladruno) or `"stock"`. Absent when the writer's caller did not know which binary ran |
+| `opensees_build` | string | the 40-character git sha the fork binary was compiled from (`ladrunoBuild()`). Absent on stock, on a fork build predating `ladrunoBuild` (which reads as stock), and when unknown; never an empty string |
+
+Both are **optional** and read **without a version gate**: like
+`/meta/session_id`, an additive provenance attr bumps no zone and older
+readers ignore it (ADR 0023 INV-2). Neither is deck-affecting, so the
+minor-bump rule for additive content does not apply.
+
 Schema versioning is **per-zone**, **strict on major**, and a
 **floor per zone** on minor
 ([ADR 0113](decisions/0113-compatibility-is-a-floor-per-zone.md), which

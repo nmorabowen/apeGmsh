@@ -89,6 +89,7 @@ MINTING_HELPERS = frozenset({
     "_emit_one_interpolation",
     "_mp_element_tagger",
     "_planned_contact_lines",
+    "_planned_parameters",
     "_emit_rigid_body_elements",
     "_emit_surface_couplings",
     "_emit_surface_couplings_for_rank",
@@ -114,6 +115,7 @@ MINTING_HELPERS = frozenset({
     "plan_contacts",
     "plan_interface_tags",
     "plan_mp_elements",
+    "plan_parameters",
     "plan_transform_specs",
     "reserve_fem_element_tags",
 })

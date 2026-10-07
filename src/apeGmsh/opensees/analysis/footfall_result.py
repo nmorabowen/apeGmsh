@@ -221,8 +221,16 @@ class FootfallResult:
                 out[0, row_of[int(tag)]] = values[j]
             return out
 
+        # F2-b provenance: footfall_walking ran on the live modal basis, in
+        # this process, on the module the live resolver bound.
+        from ..emitter.live import get_backend_info
+
+        backend = get_backend_info()
         writer = NativeWriter(out_path)
-        writer.open(source_type="footfall_walking", source_path="")
+        writer.open(
+            source_type="footfall_walking", source_path="",
+            opensees_backend=backend.kind, opensees_build=backend.build,
+        )
         try:
             sid = writer.begin_stage(
                 name="footfall", kind="static", time=np.array([0.0]),
