@@ -149,7 +149,7 @@ PROVENANCE_SCHEMA_FLOOR: str = "1.0.0"
 #: Current version and floor of the ``/assembly`` zone. Its writer and
 #: reader (``apeGmsh/assembly/_h5.py``) import them from here
 #: (``architecture/h5-schema.md``, "/assembly").
-ASSEMBLY_SCHEMA_VERSION: str = "1.0.0"  # AS3 #1540: /assembly zone registered
+ASSEMBLY_SCHEMA_VERSION: str = "1.0.0"  # the zone's first version: floor and current coincide
 ASSEMBLY_SCHEMA_FLOOR: str = "1.0.0"
 
 #: First ``/provenance`` version whose ``records`` table carries the
