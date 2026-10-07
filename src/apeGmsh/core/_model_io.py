@@ -323,7 +323,7 @@ class _DXFImporter:
         msp = doc.modelspace()
 
         # Refuse a layer name the layer PGs cannot take before any
-        # gmsh write, so a refused load imports nothing (#1364).
+        # gmsh write, so a refused load imports nothing.
         if create_physical_groups:
             self._refuse_layer_pg_names({
                 entity.dxf.layer for entity in msp
@@ -355,7 +355,7 @@ class _DXFImporter:
             self._refuse_layer_pg_names(set(layers))
             # Through g.physical.add, never a raw addPhysicalGroup: add()
             # upserts a name that exists at this dim, where gmsh would
-            # leave a second same-named PG unnamed (#1332, #1364).
+            # leave a second same-named PG unnamed.
             physical = self._model._parent.physical
             for layer_name, dim_tags in layers.items():
                 for dim, tags in dim_tags.items():

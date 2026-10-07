@@ -1106,7 +1106,7 @@ class Labels(_HasLogging):
         from ._compose_errors import chain_phase_guard
         chain_phase_guard(self._parent, f"g.labels.add({name!r})")
         # Refuse before any gmsh call, so a refused add leaves no PG
-        # behind (#1364, the sibling of #1335's empty selection).
+        # behind; an empty label would otherwise register nothing.
         if not strip_prefix(name):
             raise ValueError(
                 f"g.labels.add(dim={dim}, name={name!r}): a label needs "
@@ -1480,7 +1480,7 @@ class Labels(_HasLogging):
         )
         out_name = pg_name or label_name
         # Refused here, before any gmsh write, so the message names
-        # the pg_name= knob (#1364).  physical.add() refuses it too.
+        # the pg_name= knob.  physical.add() refuses it too.
         if is_label_pg(out_name):
             raise ValueError(
                 f"g.labels.promote_to_physical({label_name!r}, "
@@ -1505,8 +1505,8 @@ class Labels(_HasLogging):
             raise KeyError(f"label {label_name!r} not found")
 
         # A PG name maps to one dimension.  physical.add() refuses the
-        # cross-dim reuse too, but its message never names pg_name=,
-        # the knob a promote caller turns (#1364).
+        # cross-dim reuse too, but its message cannot name pg_name=,
+        # the knob a promote caller turns.
         physical = self._parent.physical
         held_at = [
             d for d in (0, 1, 2, 3)

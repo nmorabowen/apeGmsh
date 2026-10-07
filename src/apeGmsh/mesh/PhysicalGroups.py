@@ -121,7 +121,7 @@ class PhysicalGroups(_HasLogging):
         )
         # The prefix marks label PGs, which get_tag() skips, so the
         # upsert below would miss a same-named label and gmsh would
-        # leave the new PG unnamed (#1364).  Refused before any gmsh
+        # leave the new PG unnamed.  Refused before any gmsh
         # call; g.labels creates its PGs without this method.
         if is_label_pg(name):
             raise ValueError(
