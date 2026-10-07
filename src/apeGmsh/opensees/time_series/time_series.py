@@ -192,7 +192,7 @@ class Constant(TimeSeries):
 @dataclass(frozen=True, kw_only=True, slots=True)
 class Path(TimeSeries):
     """``timeSeries Path tag (-filePath s | -values v...) [-time t...]
-    [-dt dt] [-factor f] [-startTime t0] [-prependZero]``.
+    [-dt dt] [-factor f] [-startTime t0] [-prependZero] [-useLast]``.
 
     Reads a time-history of values, with the time axis given either by
     a uniform ``dt`` or by an explicit ``time`` sequence.
@@ -202,6 +202,20 @@ class Path(TimeSeries):
     required. When ``file`` is supplied, ``dt`` and ``time`` are both
     optional (the file may already encode time / be uniformly sampled
     with a separate ``dt``).
+
+    Past the last sample OpenSees returns 0, so a series whose support
+    ends inside an analysis unloads there.  ``use_last=True`` emits
+    ``-useLast`` and holds the last value instead.
+
+    ``start_time``, ``prepend_zero`` and ``use_last`` are refused with
+    ``time=`` (:class:`~apeGmsh.opensees._internal.build.BridgeError`).
+    ``OPS_PathSeries`` builds a ``time=`` series as a ``PathTimeSeries``
+    and never passes it ``-startTime`` or ``-prependZero``, on stock or on
+    the fork, so both flags would be dropped without a word.  Stock
+    OpenSees also drops ``-useLast`` on that route (only the Ladruno fork
+    forwards it, its ADR 79 P2), and a deck does not know which build
+    will run it.  Re-base the ``time`` axis yourself instead, or use
+    ``dt=``, which honours all three (#1363).
     """
 
     file: str | None = None
@@ -211,6 +225,7 @@ class Path(TimeSeries):
     factor: float = 1.0
     start_time: float = 0.0
     prepend_zero: bool = False
+    use_last: bool = False
 
     def __post_init__(self) -> None:
         # Exactly one of (file, values) must be set.
@@ -235,6 +250,44 @@ class Path(TimeSeries):
             raise ValueError(
                 f"Path: factor must be > 0, got {self.factor!r}"
             )
+        if self.time is not None:
+            self._refuse_time_route_flags()
+
+    def _refuse_time_route_flags(self) -> None:
+        """Refuse the flags OpenSees drops on the ``time=`` route (#1363)."""
+        # Lazy: ``_internal.build`` imports ``stage_window``, which imports
+        # this module.
+        from .._internal.build import BridgeError
+
+        assert self.time is not None
+        if self.start_time != 0.0:
+            raise BridgeError(
+                f"Path(time=..., start_time={self.start_time!r}): OpenSees "
+                f"builds a time= Path as a PathTimeSeries and never passes "
+                f"it -startTime (stock and fork alike), so the shift would "
+                f"be dropped without a word. Re-base the time axis instead: "
+                f"time=tuple(t + {self.start_time!r} for t in time)."
+            )
+        if self.prepend_zero:
+            raise BridgeError(
+                "Path(time=..., prepend_zero=True): OpenSees builds a time= "
+                "Path as a PathTimeSeries and never passes it -prependZero "
+                "(stock and fork alike), so the leading zero would be "
+                "dropped without a word. Re-base the time axis instead: "
+                "put the zero sample in yourself, time=(t0, *time) with "
+                "values=(0.0, *values) for a t0 before time[0]."
+            )
+        if self.use_last:
+            raise BridgeError(
+                "Path(time=..., use_last=True): stock OpenSees drops "
+                "-useLast on the time= route (only the Ladruno fork "
+                "forwards it), and a deck does not know which build will "
+                "run it, so the series could still drop to 0 after its "
+                "last point. Use dt= (both builds honour -useLast there), "
+                "or extend the time axis to the end of the analysis with "
+                "the last value repeated: time=(*time, t_end), "
+                "values=(*values, values[-1])."
+            )
 
     def _emit(self, emitter: "Emitter", tag: int) -> None:
         args: list[float | str] = []
@@ -253,6 +306,8 @@ class Path(TimeSeries):
             args += ["-startTime", self.start_time]
         if self.prepend_zero:
             args += ["-prependZero"]
+        if self.use_last:
+            args += ["-useLast"]
         emitter.timeSeries("Path", tag, *args)
 
     def dependencies(self) -> tuple[Primitive, ...]:
