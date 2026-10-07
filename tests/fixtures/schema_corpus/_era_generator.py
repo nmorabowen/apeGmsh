@@ -209,7 +209,8 @@ def assembly_stack(path: str) -> dict:
     work = tempfile.mkdtemp(prefix="assembly_corpus_")
     os.chdir(work)
     try:
-        with Session(model_name="block", verbose=False) as g:
+        with Session(model_name="block", verbose=False,
+                     save_to=os.path.join(work, "block_mesh.h5")) as g:
             g.model.geometry.add_box(0.0, 0.0, 0.0, side, side, h, label="v")
             g.physical.add_volume("v", name="Vol")
             for z, pg in ((0.0, "bot"), (h, "top")):

@@ -65,7 +65,7 @@ RUN_STAMPS = frozenset({"created_iso", "session_id", "composed_at"})
 _ROOT = Path(__file__).resolve().parents[2]
 CORPUS = _ROOT / "tests" / "fixtures" / "schema_corpus"
 #: sha256 of the committed corpus file; a regenerated file must say so here.
-CORPUS_H5_SHA256 = "e2a007035c3ad9756a8f03b78b469ce6626246fd0da4ea14bb33fed292274e93"
+CORPUS_H5_SHA256 = "abd01c3c7608b84eef4a7c401d28d0e3cc1ce9c659a14cbad1a5a4115c2e01b1"
 
 
 def _here() -> int:
