@@ -1781,6 +1781,14 @@ class FEMData:
         # writes no /provenance.  Like session_id it is not model
         # content: no hash reads it, and derived snapshots inherit it.
         self.provenance: ProvenanceTable | None = None
+        # ── The extraction view (ADR 0112 D1) ────────────────────
+        # ``(dim, remove_orphans)`` of the ``from_gmsh`` call that made
+        # this snapshot, so a session can re-extract the same view at
+        # ``end()`` and tell a narrower ``get_fem_data(dim=...)`` view a
+        # bridge archived from a model changed after that write.
+        # ``None`` for a snapshot no session extracted.  Not model
+        # content: no hash reads it; derived copies inherit it.
+        self.extract_view: tuple[int | None, bool] | None = None
         self.mesh_selection = mesh_selection
         self.inspect  = InspectComposite(self)
         # ── Compose provenance (Phase 3A.1 / ADR 0038) ───────────
@@ -1848,6 +1856,8 @@ class FEMData:
             self.provenance = None
         if "model_name" not in state:
             self.model_name = ""
+        if "extract_view" not in state:
+            self.extract_view = None
 
     @property
     def snapshot_id(self) -> str:
@@ -1912,6 +1922,9 @@ class FEMData:
             # ADR 0112 D3: carry the session's provenance, unhashed.
             from apeGmsh._internal.provenance import table_for
             fem.provenance = table_for(session)
+            # ADR 0112 D1: the view this snapshot is of the mesh, so
+            # end() can re-extract it and compare like with like.
+            fem.extract_view = (dim, bool(remove_orphans))
         return fem
 
     @classmethod

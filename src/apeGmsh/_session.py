@@ -358,6 +358,7 @@ class _SessionBase:
         """
         from ._artifact_policy import (
             artifact_verdict,
+            bridge_view_for,
             content_hash,
             mpi_rank,
             provenance_scripts,
@@ -405,9 +406,22 @@ class _SessionBase:
                 frozenset({PROVENANCE}) if fem.provenance is not None else frozenset()
             )
             scripts = provenance_scripts(fem.provenance)
+            # P4 compares like with like: when this run's bridge wrote
+            # the target from a ``get_fem_data(dim=...)`` view, the
+            # content to match is that same view re-extracted now, not
+            # the unfiltered snapshot.  A change after the bridge's
+            # write still differs and still warns.
+            view = bridge_view_for(target, fem.session_id)
+
+            def _content() -> str:
+                if view is None:
+                    return content_hash(fem)
+                return content_hash(self.mesh.queries.get_fem_data(
+                    dim=view[0], remove_orphans=view[1]))
+
             verdict = artifact_verdict(
                 target, writes=model_zones, overwrite=self._overwrite,
-                session_id=fem.session_id, content=lambda: content_hash(fem),
+                session_id=fem.session_id, content=_content,
                 scripts=scripts, explicit=explicit, skips=(sibling,),
             )
             if verdict == "refuse":

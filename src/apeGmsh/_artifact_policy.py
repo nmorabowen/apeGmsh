@@ -67,6 +67,7 @@ __all__ = [
     "artifact_identity",
     "artifact_target_is_ours",
     "artifact_verdict",
+    "bridge_view_for",
     "content_hash",
     "main_script",
     "mpi_rank",
@@ -103,19 +104,37 @@ _NOTEBOOK_CELL = re.compile(r"(^|[\\/])ipykernel_\d+[\\/]|^<ipython-input-")
 #: (``end()``, ``tcl()``, ...), the user's call.
 _STACKLEVEL = 4
 
-#: The ``session_id`` whose bridge last wrote each resolved target, for
-#: this process (:func:`record_bridge_write`).  The session's ``end()``
-#: keeps such a file instead of comparing its content: the bridge wrote
-#: this run's analysed snapshot, which may be a ``get_fem_data(dim=...)``
-#: view narrower than the session's own.
-_BRIDGE_WRITES: dict[Path, str] = {}
+#: The extraction view (``FEMData.extract_view``: ``(dim,
+#: remove_orphans)`` of the ``from_gmsh`` call) of the snapshot a bridge
+#: last archived at each resolved target, by ``session_id``, for this
+#: process (:func:`record_bridge_write`).  The session's ``end()`` asks
+#: :func:`bridge_view_for` so that P4 compares the file with the same
+#: view re-extracted now: a ``get_fem_data(dim=...)`` view narrower than
+#: the session's own is then equal content, while a declaration made
+#: after the bridge's write still differs and still warns.
+_BRIDGE_WRITES: dict[Path, tuple[str, tuple[int | None, bool] | None]] = {}
 
 
-def record_bridge_write(target: "str | Path", session_id: str) -> None:
+def record_bridge_write(
+    target: "str | Path", session_id: str,
+    view: tuple[int | None, bool] | None,
+) -> None:
     """Note that the bridge of ``session_id`` wrote the full ``model.h5``
-    at ``target`` in this process (the bridge's automatic write calls
-    this after its atomic replace)."""
-    _BRIDGE_WRITES[Path(target).resolve()] = session_id
+    at ``target`` in this process from a snapshot extracted as ``view``
+    (the bridge's automatic write calls this after its atomic replace)."""
+    _BRIDGE_WRITES[Path(target).resolve()] = (session_id, view)
+
+
+def bridge_view_for(
+    target: "str | Path", session_id: str,
+) -> tuple[int | None, bool] | None:
+    """The view the bridge of ``session_id`` archived at ``target`` in this
+    process, or ``None`` when no such bridge wrote it (or it wrote a
+    snapshot no session extracted)."""
+    entry = _BRIDGE_WRITES.get(Path(target).resolve())
+    if entry is None or entry[0] != session_id:
+        return None
+    return entry[1]
 
 
 # ---------------------------------------------------------------------------
@@ -438,13 +457,11 @@ def artifact_verdict(
     if file_session == session_id:
         if not dropped:
             return "write"
-        # This run's bridge wrote the fuller file in this process, from
-        # the snapshot the user analysed (a ``get_fem_data(dim=...)``
-        # inside the ``with`` block is a narrower view of the mesh than
-        # the session's own, not a stale one): the file is this run's
-        # output and is kept, so the pair stays whole.
-        if _BRIDGE_WRITES.get(Path(target).resolve()) == session_id:
-            return "keep"
+        # This run's fuller file (the bridge's): kept when its neutral
+        # content equals what the caller would write now.  A session
+        # whose bridge archived a ``get_fem_data(dim=...)`` view hands in
+        # that view's content (:func:`bridge_view_for`), so a narrower
+        # view is equal and a declaration made after the write differs.
         if artifact_content_hash(target) == content():
             return "keep"
         return _refuse(

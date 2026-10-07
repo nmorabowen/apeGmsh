@@ -190,7 +190,7 @@ def test_partitioned_emit_union_recovers_moment_tensor():
 
 
 def test_non_zero_t0_fails_loud(box_fem):
-    ops = apeSees(box_fem, _artifacts=False)  # partitioned snapshot: no automatic model.h5
+    ops = apeSees(box_fem, _artifacts=False)  # flat bridge; the archive is not this test's subject
     ops.model(ndm=3, ndf=3)
     mat = ops.register(ElasticIsotropic(E=1.0e7, nu=0.25, rho=2000.0))
     ops.element.stdBrick(pg="soil", material=mat)

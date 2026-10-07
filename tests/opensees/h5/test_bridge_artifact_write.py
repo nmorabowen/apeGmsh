@@ -812,6 +812,37 @@ def test_bridge_inside_the_with_block_on_a_filtered_snapshot_leaves_a_whole_pair
     assert _fem_hash(artifact_dir / "inside.h5") == fem.snapshot_id
 
 
+def test_a_declaration_after_the_bridge_wrote_still_warns_stale(
+    artifact_dir, tmp_path, h5_calls,
+):
+    """The reviewer's ``late.py``: the bridge archives the unfiltered
+    snapshot, then ``g.masses.volume`` is declared before the block
+    ends.  The session re-extracts the bridge's view at ``end()``, finds
+    the masses the file lacks, and P4 warns "different content"; the
+    file stays the bridge's (no masses) and, by the pair rule, the
+    sibling is not written.  The narrower-view case above stays silent."""
+    with warnings.catch_warnings(record=True) as rec:
+        warnings.simplefilter("always")
+        with apeGmsh(model_name="late", verbose=False) as g:
+            g.model.geometry.add_box(0, 0, 0, 1, 1, 1, label="b")
+            g.physical.add_volume("b", name="B")
+            g.mesh.sizing.set_global_size(0.5)
+            g.mesh.generation.generate(dim=3)
+            fem = g.mesh.queries.get_fem_data()
+            _bridge(fem).tcl(str(tmp_path / "late.tcl"))
+            g.masses.volume("B", density=2400.0)
+    msgs = [str(w.message) for w in rec if issubclass(w.category, UserWarning)]
+    stale = [m for m in msgs if "different content" in m]
+    assert len(stale) == 1 and "opensees" in stale[0], msgs
+    assert _bridge_warnings(rec) == []
+    assert len(h5_calls) == 1
+    model = artifact_dir / "late.h5"
+    assert _meta(model, "session_id") == fem.session_id
+    with h5py.File(model, "r") as f:
+        assert "opensees" in f and "masses" not in f
+    assert not (artifact_dir / "late.geometry.h5").exists()
+
+
 # ---------------------------------------------------------------------------
 # Deferred archive features: the explicit save's warning, not the hook's
 # ---------------------------------------------------------------------------
