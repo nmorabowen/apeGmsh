@@ -185,7 +185,7 @@ class WarnDxfLayerMismatch(UserWarning):
 #: ``gmsh.model.getBoundingBox`` pads an OCC curve's box by OCC's
 #: ``Precision::Confusion`` (1e-7) on every side; the endpoint
 #: coordinates ``gmsh.model.getValue`` returns are not padded.  A
-#: matching tolerance below this pad never matches (#1532).
+#: matching tolerance below this pad matches no box.
 _OCC_BBOX_PAD: float = 1e-7
 
 _Point3 = tuple[float, float, float]
@@ -328,8 +328,8 @@ class _DXFImporter:
         layer = entity.dxf.layer
         if etype == 'LWPOLYLINE':
             # A lightweight polyline is planar: 2-D vertices at one
-            # elevation.  ezdxf has no 'z' format code ('xyz' yields
-            # pairs and the unpack below raised).
+            # elevation.  ezdxf has no 'z' format code: 'xyz' yields
+            # pairs.
             z = float(entity.dxf.elevation)
             vertices = [
                 (x, y, z)
