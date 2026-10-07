@@ -9,12 +9,17 @@ the era's own ``build("tcl")`` deck.  Usage::
 
     python _era_generator.py --zone neutral  --out F.h5 --dump F.dump.json
     python _era_generator.py --zone opensees --out F.h5 --dump F.dump.json --tcl F.tcl
+    python _era_generator.py --zone assembly --out F.h5 --dump F.dump.json
 
 Only API that exists unchanged from the zone floors on is used (neutral
 2.10.0, opensees 2.12.0); where a call was renamed, the generator probes
 for the spelling the era knows and records which one it used, so the
 *model* is the same in every era.  A failure here is a gap the builder
 records; the generator never substitutes a different model.
+
+``--zone assembly`` (ADR 0117 D5, from ``assembly_schema_version`` 1.0.0)
+writes a two-instance stack through ``Assembly.h5`` (:func:`assembly_stack`)
+and adds the ``/assembly`` dump of ``Assembly.from_h5`` and the zone's rows.
 
 ``--variant`` builds one of the ADR 0113 D4 shim-ledger cases instead of
 the plain model, at one chosen era (``scripts/build_schema_corpus.py``
@@ -32,8 +37,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import sys
+import tempfile
 
 import gmsh
 
@@ -185,9 +192,56 @@ def opensees_frame(path: str, *, ndm: int = 3) -> "tuple[object, dict]":
     return fem, notes
 
 
+def assembly_stack(path: str) -> dict:
+    """Two instances of one hex8 block, the second turned half a turn about
+    z and stacked on the first, joined by one named ``equation`` tie.
+
+    The block file is written in a temporary directory that is the working
+    directory while the assembly is declared, so ``/assembly`` and
+    ``/composed_from`` record the relative ``block.h5``.
+    """
+    from apeGmsh.assembly import Assembly
+    from apeGmsh.opensees import apeSees
+
+    side, h, tol = 10.0, 10.0, 0.01
+    notes: dict = {"instances": 2, "ties": 1}
+    here = os.getcwd()
+    work = tempfile.mkdtemp(prefix="assembly_corpus_")
+    os.chdir(work)
+    try:
+        with Session(model_name="block", verbose=False) as g:
+            g.model.geometry.add_box(0.0, 0.0, 0.0, side, side, h, label="v")
+            g.physical.add_volume("v", name="Vol")
+            for z, pg in ((0.0, "bot"), (h, "top")):
+                faces = g.model.select(None, dim=2).in_box(
+                    (-side, -side, z - tol), (2 * side, 2 * side, z + tol),
+                ).result().tags()
+                g.physical.add_surface(faces, name=pg)
+            g.mesh.recipe.structured(size=5.0, fallback="strict")
+            fem = g.mesh.queries.get_fem_data(dim=None)
+        block = apeSees(fem)
+        block.model(ndm=3, ndf=3)
+        steel = block.nDMaterial.ElasticIsotropic(
+            E=200_000.0, nu=0.3, rho=7.85e-9, name="steel")
+        block.element.stdBrick(pg="Vol", material=steel)
+        block.h5("block.h5")
+
+        asm = Assembly("stack")
+        asm.instance("pier_1", "block.h5")
+        asm.instance("pier_2", "block.h5", translate=(side, side, h),
+                     rotate=((0.0, 0.0, 1.0), math.pi))
+        asm.tie("pier_1.top", "pier_2.bot", enforce="equation",
+                dofs=[1, 2, 3], name="t1")
+        asm.bridge(ndm=3, ndf=3)
+        asm.h5(path)
+    finally:
+        os.chdir(here)
+    return notes
+
+
 def main(argv: "list[str] | None" = None) -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--zone", choices=("neutral", "opensees"), required=True)
+    ap.add_argument("--zone", choices=("neutral", "opensees", "assembly"), required=True)
     ap.add_argument("--variant", choices=("sp_cases", "frame2d"), default=None,
                     help="an ADR 0113 D4 ledger case instead of the plain model")
     ap.add_argument("--out", required=True)
@@ -212,6 +266,8 @@ def main(argv: "list[str] | None" = None) -> int:
     if a.zone == "neutral":
         fem, notes = neutral_box(sp_cases=a.variant == "sp_cases")
         fem.to_h5(a.out)
+    elif a.zone == "assembly":
+        notes = assembly_stack(os.path.abspath(a.out))
     else:
         _fem, notes = opensees_frame(a.out, ndm=2 if a.variant == "frame2d" else 3)
 
@@ -220,7 +276,7 @@ def main(argv: "list[str] | None" = None) -> int:
         "fem": dump_fem(FEMData.from_h5(a.out)),
         "meta": dump_stamps(a.out),
     }
-    if a.zone == "opensees":
+    if a.zone in ("opensees", "assembly"):
         from apeGmsh.opensees.opensees_model import OpenSeesModel
 
         model = OpenSeesModel.from_h5(a.out)
@@ -229,6 +285,13 @@ def main(argv: "list[str] | None" = None) -> int:
             deck = model.build("tcl")
             with open(a.tcl, "w", encoding="utf-8", newline="\n") as fh:
                 fh.write(deck)
+    if a.zone == "assembly":
+        from apeGmsh.assembly import Assembly
+        from apeGmsh.assembly._h5 import read_assembly_zone
+
+        from _semantic_dump import dump_assembly
+        dump["assembly"] = dump_assembly(
+            Assembly.from_h5(a.out), read_assembly_zone(a.out))
     dump["generator_notes"] = notes
     with open(a.dump, "w", encoding="utf-8", newline="\n") as fh:
         json.dump(dump, fh, indent=1, sort_keys=True)

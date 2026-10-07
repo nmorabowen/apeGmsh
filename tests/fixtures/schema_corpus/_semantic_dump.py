@@ -208,3 +208,35 @@ def dump_model(model: Any) -> dict[str, Any]:
     out["analysis"] = _norm(dict(model.analysis()))
     out["fem"] = dump_fem(model.fem)
     return out
+
+
+def dump_assembly(asm: Any, zone: Any) -> dict[str, Any]:
+    """The ``/assembly`` dump (ADR 0117 D5): what ``Assembly.from_h5``
+    re-lists, and every row of the zone as its reader returned it.
+
+    Added with the assembly zone (AS3, #1540). It touches none of the
+    dumps above, so no committed era's oracle changes.
+    """
+    return {
+        "dump_format": DUMP_FORMAT,
+        "name": str(asm.name),
+        "instances": [
+            {
+                "label": str(i.label),
+                "source": i.source.as_posix(),
+                "translate": _norm(i.translate),
+                "rotate": _norm(i.rotate),
+            }
+            for i in asm.instances
+        ],
+        "ties": [
+            {
+                "master": str(t.master), "slave": str(t.slave),
+                "enforce": str(t.enforce), "method": str(t.method),
+                "dofs": _norm(t.dofs), "tolerance": float(t.tolerance),
+                "name": t.name,
+            }
+            for t in asm.ties
+        ],
+        "zone": _norm(zone),
+    }

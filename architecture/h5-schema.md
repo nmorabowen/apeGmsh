@@ -136,6 +136,9 @@ model.h5
 │     ├── /files                           one row per source file
 │     ├── /sites                           one row per (file, line, function)
 │     └── /records                         one row per declaration path
+├── /assembly                              (optional; Assembly.h5 only, see /assembly below)
+│     ├── /instances                       one row per instance
+│     └── /ties                            one row per assembly-level tie
 │
 └── /opensees/                             ── OpenSees zone (bridge-owned) ──
       ├── /materials
@@ -1228,6 +1231,53 @@ equal-length column datasets.
 * Every artifact the session writes carries its own `/provenance`
   (decision 14). The replay writers copy it forward (Q7).
 * No hash reads `/provenance` (the same allowlists as above).
+* An assembly (ADR 0117 D5) writes `assembly/instances/<label>` from
+  `Assembly.instance` and `assembly/ties/<name|#k>` from `Assembly.tie`,
+  both `origin = "user"`, at the declaring line. They ride the merged
+  FEM of `Assembly.bridge`, so `ops.h5` writes them too.
+
+## `/assembly`
+
+Version key: `/meta/assembly_schema_version` (current `1.0.0`, floor
+`1.0.0`; [ADR 0117](decisions/0117-assembly-compose-v2.md) D5, its own
+key per ADR 0112 D2). Written by `Assembly.h5` only, after `apeSees.h5`
+has written the whole `model.h5`
+([`assembly/_h5.py`](../src/apeGmsh/assembly/_h5.py)). It re-lists what
+was assembled; the flat zones stay authoritative, so no model reader
+reads it. Each table is a group of equal-length column datasets.
+
+```
+/assembly     @name str
+  /instances  label str · source_path str · source_fem_hash str ·
+              source_opensees_hash str · translate (n, 3) f8 · rotate (n, 4) f8 ·
+              fem_id_base i8 · fem_id_span i8 · partition_rank i8
+  /ties       name str · kind str · master str · slave str · params str ·
+              n_records i8
+```
+
+* **Instances.** `source_path` is the path as declared, in POSIX form;
+  `source_fem_hash` and `source_opensees_hash` are the source's
+  `fem_hash` and `model_hash` (ADR 0021) when it was bridged. `rotate`
+  is `(ax, ay, az, theta)`, all zero for an unrotated instance (a
+  declared axis is never zero). `fem_id_base` and `fem_id_span` are the
+  relocated FEM-id window of the instance's nodes and elements: the
+  source's smallest id maps to `fem_id_base`. `partition_rank` is `-1`
+  without a rank hint.
+* **Ties.** `name` is `""` for an unnamed tie. `kind` is `tie` (the only
+  kind in 1.0.0; a reader refuses any other). `master` and `slave` are
+  the ports `{instance}.{pg|label}`. `params` is canonical JSON with the
+  keys `dofs`, `enforce`, `method`, `tolerance`. `n_records` is the
+  number of constraint records the tie resolved to, at least 1.
+* **Empty and rewritten.** An assembly with no ties writes `/ties` with
+  zero-length columns, never a missing group. Writing into a file that
+  already has the zone replaces it. Rows are validated before the file
+  is opened, and a failure part-way removes the partial group and key.
+* `Assembly.from_h5` reads only this zone and never opens an instance
+  file. A file without `/assembly` opens exactly as before in every
+  reader; `Assembly.from_h5` refuses it.
+* `/composed_from` is still written beside it. No hash reads
+  `/assembly`: `fem_hash` reads the neutral zone and `model_hash`
+  reads `/opensees`.
 
 ## Cross-references
 
@@ -1278,8 +1328,9 @@ call `validate_zone_version(...)` for each zone before reading it.
 | cuts (sub-zone of opensees) | — (no own key; rides the opensees zone) | `/opensees/cuts`, `/opensees/sweeps` | [`cuts/_h5_io.py`](../src/apeGmsh/cuts/_h5_io.py) `V4_SCHEMA_VERSION` | 2.5.0 | none of its own: it rides the opensees floor |
 | geometry (ADR 0112 D2) | `geometry_schema_version` | `/geometry` (sibling `<stem>.geometry.h5` only) | [`opensees/_internal/schema_version.py`](../src/apeGmsh/opensees/_internal/schema_version.py) `GEOMETRY_SCHEMA_VERSION` | **1.0.0** | **1.0.0** |
 | provenance (ADR 0112 D3) | `provenance_schema_version` | `/provenance` | [`opensees/_internal/schema_version.py`](../src/apeGmsh/opensees/_internal/schema_version.py) `PROVENANCE_SCHEMA_VERSION` | **1.1.0** | **1.0.0** |
+| assembly (ADR 0117 D5) | `assembly_schema_version` | `/assembly` (`Assembly.h5` archives only) | [`opensees/_internal/schema_version.py`](../src/apeGmsh/opensees/_internal/schema_version.py) `ASSEMBLY_SCHEMA_VERSION` | **1.0.0** | **1.0.0** |
 
-> The geometry and provenance keys never fall back to the legacy
+> The geometry, provenance and assembly keys never fall back to the legacy
 > envelope: they postdate it, so an absent key means the zone was not
 > written (`read_zone_version` returns `None`). Their writers import the
 > version constants from `schema_version.py` until they have modules of
