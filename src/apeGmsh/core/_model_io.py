@@ -165,6 +165,82 @@ def _compute_health() -> ImportHealth:
     )
 
 
+class WarnDxfLayerMismatch(UserWarning):
+    """Advisory: :meth:`_IO.load_dxf` could not map every DXF curve to
+    exactly one layer after OCC's duplicate removal (#1532).
+
+    Two cases, one warning each: a DXF entity that no surviving OCC
+    curve matched (its layer PG is short one curve, or absent when the
+    layer lost every curve), and a surviving curve that matched entities
+    on several layers (an exact duplicate drawn on two layers: the curve
+    joins every such layer PG).  The geometry itself is imported either
+    way, so this is a warning and not an error: raising here would leave
+    the OCC writes already made in the model with no layer PGs at all.
+
+    Subclass of :class:`UserWarning` so it can be silenced with
+    ``warnings.simplefilter('ignore', WarnDxfLayerMismatch)``.
+    """
+
+
+#: ``gmsh.model.getBoundingBox`` pads an OCC curve's box by OCC's
+#: ``Precision::Confusion`` (1e-7) on every side; the endpoint
+#: coordinates ``gmsh.model.getValue`` returns are not padded.  A
+#: matching tolerance below this pad never matches (#1532).
+_OCC_BBOX_PAD: float = 1e-7
+
+_Point3 = tuple[float, float, float]
+_Bbox = tuple[float, float, float, float, float, float]
+
+
+def _bbox_of(points: list[_Point3]) -> _Bbox:
+    xs, ys, zs = zip(*points)
+    return (min(xs), min(ys), min(zs), max(xs), max(ys), max(zs))
+
+
+def _distinct_points(points: tuple[_Point3, ...], tol: float) -> tuple[_Point3, ...]:
+    """*points* with those within *tol* (per axis) of an earlier one dropped."""
+    out: list[_Point3] = []
+    for p in points:
+        if not any(_points_close(p, q, tol) for q in out):
+            out.append(p)
+    return tuple(out)
+
+
+def _points_close(p: _Point3, q: _Point3, tol: float) -> bool:
+    return all(abs(a - b) <= tol for a, b in zip(p, q))
+
+
+@dataclass(frozen=True)
+class _DxfCurveRecord:
+    """One OCC curve a DXF converter created, as :meth:`_DXFImporter.
+    _rebuild_layers` recognises it after ``removeAllDuplicates``
+    renumbered the tags.
+
+    ``ends`` are the curve's endpoint coordinates (a full circle holds
+    its OCC seam vertex, ``centre + (r, 0, 0)``: gmsh builds the circle
+    on the global X axis).  ``bbox`` is the curve's exact axis-aligned
+    box when ``bbox_exact``; for a B-spline it is the control-polygon
+    hull, which OCC's own box lies within but does not equal.
+    """
+
+    layer: str
+    ends: tuple[_Point3, ...]
+    bbox: _Bbox
+    bbox_exact: bool
+
+    def matches(self, ends: tuple[_Point3, ...], bbox: _Bbox, tol: float) -> bool:
+        mine = _distinct_points(self.ends, tol)
+        if len(mine) != len(ends):
+            return False
+        if not all(any(_points_close(p, q, tol) for q in mine) for p in ends):
+            return False
+        if self.bbox_exact:
+            return all(abs(a - b) <= tol for a, b in zip(self.bbox, bbox))
+        lo_ok = all(a - tol <= b for a, b in zip(self.bbox[:3], bbox[:3]))
+        hi_ok = all(b <= a + tol for a, b in zip(self.bbox[3:], bbox[3:]))
+        return lo_ok and hi_ok
+
+
 class _DXFImporter:
     """Encapsulates the DXF -> OCC geometry conversion pipeline.
 
@@ -176,7 +252,7 @@ class _DXFImporter:
         self._model = model
         self._tol = tol
         self._pt_cache: dict[tuple[int, int, int], Tag] = {}
-        self._geom_to_layer: dict[tuple[float, ...], str] = {}
+        self._records: list[_DxfCurveRecord] = []
         self._pt_to_layer: dict[tuple[int, int, int], str] = {}
 
     # -- helpers ----------------------------------------------------------
@@ -194,16 +270,10 @@ class _DXFImporter:
         self._model._register(0, tag, None, 'dxf_point')
         return tag
 
-    @staticmethod
-    def _bbox_key(
-        x0: float, y0: float, z0: float,
-        x1: float, y1: float, z1: float,
-    ) -> tuple[float, ...]:
-        return (
-            round(min(x0, x1), 8), round(min(y0, y1), 8),
-            round(min(z0, z1), 8), round(max(x0, x1), 8),
-            round(max(y0, y1), 8), round(max(z0, z1), 8),
-        )
+    def _record_segment(self, layer: str, s: _Point3, e: _Point3) -> None:
+        self._records.append(_DxfCurveRecord(
+            layer=layer, ends=(s, e), bbox=_bbox_of([s, e]), bbox_exact=True,
+        ))
 
     # -- per-entity-type converters ---------------------------------------
 
@@ -217,7 +287,7 @@ class _DXFImporter:
         p1 = self._get_or_add_point(s.x, s.y, s.z)
         p2 = self._get_or_add_point(e.x, e.y, e.z)
         gmsh.model.occ.addLine(p1, p2)
-        self._geom_to_layer[self._bbox_key(s.x, s.y, s.z, e.x, e.y, e.z)] = entity.dxf.layer
+        self._record_segment(entity.dxf.layer, (s.x, s.y, s.z), (e.x, e.y, e.z))
 
     def _convert_arc(self, entity) -> None:
         c = entity.dxf.center
@@ -227,25 +297,44 @@ class _DXFImporter:
         if a2 <= a1:
             a2 += 2.0 * math.pi
         gmsh.model.occ.addCircle(c.x, c.y, c.z, r, angle1=a1, angle2=a2)
-        sx = c.x + r * math.cos(a1)
-        sy = c.y + r * math.sin(a1)
-        ex = c.x + r * math.cos(a2)
-        ey = c.y + r * math.sin(a2)
-        self._geom_to_layer[self._bbox_key(sx, sy, c.z, ex, ey, c.z)] = entity.dxf.layer
+        start = (c.x + r * math.cos(a1), c.y + r * math.sin(a1), c.z)
+        end = (c.x + r * math.cos(a2), c.y + r * math.sin(a2), c.z)
+        # The arc's box spans its endpoints and every axis extreme
+        # (angles k*pi/2) the arc passes through.
+        extremes = [start, end]
+        quarter = 0.5 * math.pi
+        k = math.ceil(a1 / quarter)
+        while k * quarter <= a2:
+            extremes.append((
+                c.x + r * math.cos(k * quarter), c.y + r * math.sin(k * quarter), c.z,
+            ))
+            k += 1
+        self._records.append(_DxfCurveRecord(
+            layer=entity.dxf.layer, ends=(start, end),
+            bbox=_bbox_of(extremes), bbox_exact=True,
+        ))
 
     def _convert_circle(self, entity) -> None:
         c = entity.dxf.center
         r = entity.dxf.radius
         gmsh.model.occ.addCircle(c.x, c.y, c.z, r)
-        self._geom_to_layer[self._bbox_key(
-            c.x - r, c.y - r, c.z, c.x + r, c.y + r, c.z,
-        )] = entity.dxf.layer
+        self._records.append(_DxfCurveRecord(
+            layer=entity.dxf.layer, ends=((c.x + r, c.y, c.z),),
+            bbox=(c.x - r, c.y - r, c.z, c.x + r, c.y + r, c.z), bbox_exact=True,
+        ))
 
     def _convert_polyline(self, entity) -> None:
         etype = entity.dxftype()
         layer = entity.dxf.layer
         if etype == 'LWPOLYLINE':
-            vertices = list(entity.get_points(format='xyz'))  # type: ignore[attr-defined]
+            # A lightweight polyline is planar: 2-D vertices at one
+            # elevation.  ezdxf has no 'z' format code ('xyz' yields
+            # pairs and the unpack below raised).
+            z = float(entity.dxf.elevation)
+            vertices = [
+                (x, y, z)
+                for x, y in entity.get_points(format='xy')  # type: ignore[attr-defined]
+            ]
         else:
             vertices = [
                 (v.dxf.location.x, v.dxf.location.y, v.dxf.location.z)
@@ -267,26 +356,25 @@ class _DXFImporter:
 
         for (v_s, v_e), (p1, p2) in zip(vert_pairs, pt_pairs):
             gmsh.model.occ.addLine(p1, p2)
-            self._geom_to_layer[self._bbox_key(
-                v_s[0], v_s[1], v_s[2], v_e[0], v_e[1], v_e[2],
-            )] = layer
+            self._record_segment(
+                layer, (v_s[0], v_s[1], v_s[2]), (v_e[0], v_e[1], v_e[2]),
+            )
 
     def _convert_spline(self, entity) -> None:
-        ctrl_pts: list[Tag] = []
-        for cp in entity.control_points:  # type: ignore[attr-defined]
-            ctrl_pts.append(self._get_or_add_point(
-                cp[0], cp[1], cp[2] if len(cp) > 2 else 0.0,
-            ))
+        cps: list[_Point3] = [
+            (cp[0], cp[1], cp[2] if len(cp) > 2 else 0.0)
+            for cp in entity.control_points  # type: ignore[attr-defined]
+        ]
+        ctrl_pts = [self._get_or_add_point(*cp) for cp in cps]
         if len(ctrl_pts) < 2:
             return
         gmsh.model.occ.addBSpline(ctrl_pts)
-        cps = entity.control_points  # type: ignore[attr-defined]
-        xs = [c[0] for c in cps]
-        ys = [c[1] for c in cps]
-        zs = [c[2] if len(c) > 2 else 0.0 for c in cps]
-        self._geom_to_layer[self._bbox_key(
-            min(xs), min(ys), min(zs), max(xs), max(ys), max(zs),
-        )] = entity.dxf.layer
+        # A clamped B-spline ends at its first and last control points;
+        # OCC bounds it inside the control-polygon hull, not on it.
+        self._records.append(_DxfCurveRecord(
+            layer=entity.dxf.layer, ends=(cps[0], cps[-1]),
+            bbox=_bbox_of(cps), bbox_exact=False,
+        ))
 
     # -- dispatch table ---------------------------------------------------
 
@@ -401,17 +489,102 @@ class _DXFImporter:
                 f"create_physical_groups=False."
             )
 
+    def _match_tolerance(self) -> float:
+        """Per-axis distance under which two coordinates are the same.
+
+        Floored at ten times OCC's bbox pad (below it nothing matches,
+        #1532) and at the user's ``point_tolerance`` (closer points were
+        merged into one gmsh point), plus a relative term for round-off
+        at large coordinates (a plan in mm at 1e5 adds 1e-3).
+        """
+        extent = max(
+            (abs(c) for rec in self._records for c in rec.bbox), default=0.0,
+        )
+        return max(10.0 * _OCC_BBOX_PAD, self._tol, 1e-8 * extent)
+
     def _rebuild_layers(self) -> dict[str, dict[int, list[Tag]]]:
+        """Map every curve now in the model to the layer(s) of the DXF
+        entities it came from, or to ``_unmatched``.
+
+        ``removeAllDuplicates`` renumbers tags, so the match is geometric:
+        endpoint coordinates (exact) and the bounding box (padded by OCC,
+        hence the tolerance) against the records the converters kept.
+        Records are bucketed by endpoint cell so a curve checks only the
+        records sharing one endpoint cell or a neighbour.
+        """
+        tol = self._match_tolerance()
+        cells: dict[tuple[int, int, int], list[int]] = {}
+        for i, rec in enumerate(self._records):
+            for p in rec.ends:
+                cells.setdefault(self._cell(p, tol), []).append(i)
+        offsets = [(dx, dy, dz) for dx in (-1, 0, 1) for dy in (-1, 0, 1) for dz in (-1, 0, 1)]
+
+        hits_per_record = [0] * len(self._records)
+        multi_layer: list[tuple[Tag, list[str]]] = []
         layers: dict[str, dict[int, list[Tag]]] = {}
         for dim, tag in gmsh.model.getEntities(1):
-            bb = gmsh.model.getBoundingBox(dim, tag)
-            bbox_key = self._bbox_key(*bb)
-            layer_name = self._geom_to_layer.get(bbox_key, "_unmatched")
+            x0, y0, z0, x1, y1, z1 = (float(c) for c in gmsh.model.getBoundingBox(dim, tag))
+            bbox: _Bbox = (x0, y0, z0, x1, y1, z1)
+            bnd = gmsh.model.getBoundary([(dim, tag)], combined=False, oriented=False)
+            raw_ends: list[_Point3] = []
+            for _, ptag in bnd:
+                px, py, pz = (float(c) for c in gmsh.model.getValue(0, ptag, []))
+                raw_ends.append((px, py, pz))
+            ends = _distinct_points(tuple(raw_ends), tol)
+            candidates: set[int] = set()
+            if ends:
+                cx, cy, cz = self._cell(ends[0], tol)
+                for dx, dy, dz in offsets:
+                    candidates.update(cells.get((cx + dx, cy + dy, cz + dz), ()))
+            hits = sorted(
+                i for i in candidates if self._records[i].matches(ends, bbox, tol)
+            )
+            for i in hits:
+                hits_per_record[i] += 1
+            names = sorted({self._records[i].layer for i in hits}) or ["_unmatched"]
+            if len(names) > 1:
+                multi_layer.append((tag, names))
             self._model._register(dim, tag, None, 'dxf')
-            layers.setdefault(layer_name, {}).setdefault(1, []).append(tag)
+            for name in names:
+                layers.setdefault(name, {}).setdefault(1, []).append(tag)
         for dim, tag in gmsh.model.getEntities(0):
             self._model._register(dim, tag, None, 'dxf_point')
+
+        self._warn_mismatches(hits_per_record, multi_layer, layers)
         return layers
+
+    @staticmethod
+    def _cell(p: _Point3, tol: float) -> tuple[int, int, int]:
+        # Two points within tol per axis differ by at most one cell per axis.
+        return (round(p[0] / tol), round(p[1] / tol), round(p[2] / tol))
+
+    def _warn_mismatches(
+        self,
+        hits_per_record: list[int],
+        multi_layer: list[tuple[Tag, list[str]]],
+        layers: dict[str, dict[int, list[Tag]]],
+    ) -> None:
+        lost: dict[str, int] = {}
+        for rec, n in zip(self._records, hits_per_record):
+            if n == 0:
+                lost[rec.layer] = lost.get(rec.layer, 0) + 1
+        if lost:
+            empty = sorted(name for name in lost if name not in layers)
+            warnings.warn(WarnDxfLayerMismatch(
+                f"load_dxf: {sum(lost.values())} DXF curve(s) matched none "
+                f"of the imported curves after duplicate removal, per layer "
+                f"{lost}; layer(s) {empty} matched nothing and get no "
+                f"physical group.  Unmatched imported curves, if any, are "
+                f"in the '_unmatched' group."
+            ), stacklevel=5)
+        if multi_layer:
+            shown = ", ".join(f"curve {t} -> {names}" for t, names in multi_layer[:5])
+            more = f" (+{len(multi_layer) - 5} more)" if len(multi_layer) > 5 else ""
+            warnings.warn(WarnDxfLayerMismatch(
+                f"load_dxf: {len(multi_layer)} imported curve(s) match DXF "
+                f"entities on several layers (duplicates drawn on more than "
+                f"one layer); each joins every such layer group: {shown}{more}."
+            ), stacklevel=5)
 
 
 class _IO:
