@@ -8,6 +8,8 @@ from typing import TYPE_CHECKING
 
 import gmsh
 
+from apeGmsh._kernel._label_prefix import LABEL_PREFIX, is_label_pg
+
 from ._helpers import Tag, TagsLike
 from ._geometry_errors import WarnGeomHealSkipsSewing, WarnGeomImportHealth
 
@@ -322,6 +324,14 @@ class _DXFImporter:
         doc = ezdxf.readfile(str(file_path))
         msp = doc.modelspace()
 
+        # Refuse a layer name the layer PGs cannot take before any
+        # gmsh write, so a refused load imports nothing (#1364).
+        if create_physical_groups:
+            self._refuse_layer_pg_names({
+                entity.dxf.layer for entity in msp
+                if entity.dxftype() in self._CONVERTERS
+            })
+
         # Convert entities
         for entity in msp:
             etype = entity.dxftype()
@@ -342,10 +352,17 @@ class _DXFImporter:
         layers = self._rebuild_layers()
 
         if create_physical_groups:
+            # Again on the final names (``_unmatched`` joins here), and
+            # before the first PG write.
+            self._refuse_layer_pg_names(set(layers))
+            # Through g.physical.add, never a raw addPhysicalGroup: add()
+            # upserts a name that exists at this dim, where gmsh would
+            # leave a second same-named PG unnamed (#1332, #1364).
+            physical = self._model._parent.physical
             for layer_name, dim_tags in layers.items():
                 for dim, tags in dim_tags.items():
                     if tags:
-                        gmsh.model.addPhysicalGroup(dim, tags, name=layer_name)
+                        physical.add(dim, tags, name=layer_name)
 
         layer_summary = {
             name: {d: len(ts) for d, ts in ents.items()}
@@ -353,6 +370,35 @@ class _DXFImporter:
         }
         self._model._log(f"loaded DXF <- {file_path.name}  layers={layer_summary}")
         return layers
+
+    def _refuse_layer_pg_names(self, names: set[str]) -> None:
+        """Raise if a layer PG cannot take one of *names* (#1364).
+
+        Layer PGs hold curves (``_rebuild_layers`` maps dim 1 only).
+        A name with the reserved label prefix, or one a PG holds at
+        another dim, is refused; ``g.physical.add`` would refuse the
+        latter too, but only after earlier layers had been written.
+        """
+        reserved = sorted(n for n in names if is_label_pg(n))
+        if reserved:
+            raise ValueError(
+                f"load_dxf: layer name(s) {reserved} start with the "
+                f"reserved {LABEL_PREFIX!r} prefix.  Rename the layer(s), "
+                f"or pass create_physical_groups=False."
+            )
+        physical = self._model._parent.physical
+        held = sorted(
+            (n, d) for n in names for d in (0, 2, 3)
+            if physical.get_tag(d, n) is not None
+        )
+        if held:
+            raise ValueError(
+                f"load_dxf: layer physical groups are curves (dim=1), but "
+                f"(name, dim) {held} already name physical groups at "
+                f"another dim.  A physical-group name maps to one "
+                f"dimension: rename the layer(s) or those groups, or pass "
+                f"create_physical_groups=False."
+            )
 
     def _rebuild_layers(self) -> dict[str, dict[int, list[Tag]]]:
         layers: dict[str, dict[int, list[Tag]]] = {}

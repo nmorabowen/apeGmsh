@@ -7,7 +7,7 @@ import pandas as pd
 
 from apeGmsh._logging import _HasLogging
 from apeGmsh._types import Tag, DimTag
-from apeGmsh._kernel._label_prefix import is_label_pg
+from apeGmsh._kernel._label_prefix import LABEL_PREFIX, is_label_pg
 
 if TYPE_CHECKING:
     from apeGmsh._types import SessionProtocol as _SessionBase
@@ -111,6 +111,7 @@ class PhysicalGroups(_HasLogging):
             If *name* is already used by a physical group at a
             different dimension.  Multi-dimensional physical groups
             are not supported — pick a distinct name per dimension.
+            Also if *name* starts with the reserved ``_label:`` prefix.
         """
         # Phase 3B.2d / ADR 0038 — PG mutation in chain phase would
         # diverge the FEMData snapshot from the live gmsh model.
@@ -118,6 +119,17 @@ class PhysicalGroups(_HasLogging):
         chain_phase_guard(
             self._parent, f"g.physical.add(dim={dim}, name={name!r})"
         )
+        # The prefix marks label PGs, which get_tag() skips, so the
+        # upsert below would miss a same-named label and gmsh would
+        # leave the new PG unnamed (#1364).  Refused before any gmsh
+        # call; g.labels creates its PGs without this method.
+        if is_label_pg(name):
+            raise ValueError(
+                f"g.physical.add(dim={dim}, name={name!r}): names "
+                f"starting with {LABEL_PREFIX!r} are reserved for "
+                f"g.labels.  Use a name without that prefix, or "
+                f"g.labels.add() to create a label."
+            )
         from typing import cast
         from apeGmsh.core._helpers import resolve_to_tags
         if isinstance(tags, (str, int)):
