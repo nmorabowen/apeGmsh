@@ -3172,8 +3172,8 @@ def plan_transform_specs(
 
     The allocation loop of :func:`emit_transform_specs`, moved out of the
     emit (ADR 0114 D4, amended): the build's tag plan runs it once per
-    emit mode with the planner allocator, and a standalone call of
-    :func:`emit_transform_specs` runs it with the caller's allocator.
+    emit mode with the planner allocator, and
+    :func:`emit_transform_specs` writes what it planned.
 
     For each orientation-bearing transform, the bridge:
 
@@ -6381,8 +6381,8 @@ def plan_mp_elements(
     The allocation loop of every MP-element writer, moved out of the
     emit (ADR 0114 D4, amended): the build's tag plan runs it once per
     emit mode with the planner allocator, in the order that mode's emit
-    writes the elements; a standalone call of a writer runs it with the
-    caller's allocator (:func:`_mp_element_tagger`).
+    writes the elements; :func:`replay_reinforce_ties` alone runs it with
+    the deck replay's allocator.
     """
     out: list[PlannedMPElement] = []
     for entry in entries:
@@ -6684,12 +6684,11 @@ class MPElementPlan:
         return self.phantom_coords, self.rank_plans[rank]
 
 
-#: A writer handed a fork of another model's plan says so first.
+#: A writer handed another model's plan says so first.
 _FOREIGN_FEM = (
     "the {family} plan was made over another FEM snapshot than the one "
-    "this emit walks: the emit allocator is a fork of another model's tag "
-    "plan. Emit each model through its own BuiltModel.emit (ADR 0114 D4, "
-    "amended)."
+    "this emit walks: the tag plan is another model's. Emit each model "
+    "through its own BuiltModel.emit (ADR 0114 D4, amended)."
 )
 
 
@@ -6871,9 +6870,9 @@ def emit_mp_constraints(
 
     # -------------------------------------------------------------------
     # 2b. Rigid bodies (as_element) — one fork ``element LadrunoRigidBody``
-    #     per NodeGroupRecord(kind=rigid_body, as_element=True). Allocates
-    #     element tags, so it takes ``tags`` (the rigidLink-chain form in
-    #     step 2 skips these records).
+    #     per NodeGroupRecord(kind=rigid_body, as_element=True). Writes
+    #     planned element tags, so it takes ``tag_plan`` (the rigidLink-chain
+    #     form in step 2 skips these records).
     # -------------------------------------------------------------------
     if node_constraints is not None:
         _emit_rigid_body_elements(emitter, node_constraints, tag_plan)
@@ -6896,7 +6895,8 @@ def emit_mp_constraints(
     # 5. Kinematic couplings (RBE2) — one fork
     #    ``element LadrunoKinematicCoupling`` per NodeGroupRecord row.
     #    Carries the moment-arm transport an equalDOF expansion can't
-    #    (offset reference). Allocates element tags, so it takes ``tags``.
+    #    (offset reference). Writes planned element tags, so it takes
+    #    ``tag_plan``.
     # -------------------------------------------------------------------
     if node_constraints is not None:
         _emit_kinematic_couplings(
@@ -7237,8 +7237,8 @@ def plan_contacts(
     The allocation loop of :func:`emit_contacts` and
     :func:`emit_contact_planes`, moved out of the emit (ADR 0114 D4,
     amended): the build's tag plan runs it once per emit mode with the
-    planner allocator, and a standalone call of either helper runs it
-    with the caller's allocator. Each ``contact`` takes two
+    planner allocator, and the helpers write what it planned. Each
+    ``contact`` takes two
     ``contactSurface`` tags (master, slave) and one ``contact`` tag; each
     ``contact_plane`` takes one ``contactSurface`` tag (slave) and one
     ``contact`` tag.
@@ -8918,8 +8918,8 @@ def _write_one_interpolation(
       in the FEM record but aren't emitted, the element interpolates
       isoparametrically over the corners).
 
-    Each element line takes the tag ``tag_of`` gives it (the plan's, or
-    one planned from a plain allocator: :func:`_mp_element_tagger`), so
+    Each element line takes the tag ``tag_of`` gives it (the plan's:
+    :func:`_mp_element_tagger`), so
     coupling-element tags share the global element-tag namespace (ADR
     0027 §"Tag determinism"). The route is :func:`_interpolation_route`,
     the one the tag plan reads.
@@ -11502,8 +11502,6 @@ def emit_mp_constraints_partitioned(
     emitter: "Emitter",
     fem: "FEMData",
     partition_rank: int,
-    node_owners: "NodePartitionOwners",
-    element_owner: "SortedIntToInt",
     foreign_node_ndf: int | None,
     inferred_ndf: "dict[int, int]",
     tag_plan: "TagPlan",
@@ -11547,17 +11545,13 @@ def emit_mp_constraints_partitioned(
 
     Steps 1-2 (which records emit on this rank, and which foreign nodes
     it declares) are resolved once per tag plan, every rank at once, by
-    :func:`plan_partitioned_mp_constraints` (ADR 0114 D4, amended): handed
-    the emit allocator of a bridge emit, this reads them, and the element
-    tags, from the plan (:func:`_mp_plan`). Handed a plain
-    :class:`TagAllocator`, it resolves them with the same function and
-    plans its elements from ``tags``.
+    :func:`plan_partitioned_mp_constraints` (ADR 0114 D4, amended); this
+    reads them, and the element tags, from ``tag_plan`` (:func:`_mp_plan`).
     """
     from .tag_resolution import set_phantom_node_tags
 
     mp_plan = _mp_plan(tag_plan, fem)
-    if mp_plan is not None:
-        mp_plan.check_claims(claimed_ids)
+    mp_plan.check_claims(claimed_ids)
     # Stage-claimed records are filtered out — they emit per-stage via
     # ``emit_stage_mp_constraints_partitioned`` instead.
     node_constraints, surface_constraints = mp_constraint_pools(
@@ -11568,17 +11562,7 @@ def emit_mp_constraints_partitioned(
     # Which constraints emit on this rank, plus all the foreign-node
     # tags they reference (replicate-on-both / replicate-everywhere-
     # with-a-slave rules from ADR 0027), and the phantom nodes.
-    if mp_plan is not None:
-        phantom_coords, plan = mp_plan.rank_constraints(partition_rank)
-    else:
-        phantom_coords, rank_plans = plan_partitioned_mp_constraints(
-            fem, claimed_ids, node_owners, element_owner)
-        if partition_rank not in rank_plans:
-            raise BridgeError(
-                f"emit_mp_constraints_partitioned: rank {partition_rank} "
-                "is not a rank of the FEM snapshot's partitions."
-            )
-        plan = rank_plans[partition_rank]
+    phantom_coords, plan = mp_plan.rank_constraints(partition_rank)
 
     # Pre-load the phantom-tag predicate on the emitter (ADR 0033 —
     # stateless replacement for the prior phantom-mode flag).

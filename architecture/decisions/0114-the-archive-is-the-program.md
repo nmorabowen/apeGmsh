@@ -265,6 +265,8 @@ numbering). S3 and S5 take a new hub lock,
 `lock:src/apeGmsh/opensees/_internal/build.py`. Then K1-4…K1-8, then
 V2d-4b (#1307), unless chain T interleaves.
 
+Note (K1-3d S6, 2026-10-06): S3 ran after S2, not beside it, and split into S3a, S3b and S3c, because the MP and interface elements share the `element` counter with the element fan-out (#1445).
+
 Every slice runs: the 86 golden cells and their `.h5dump` files
 byte-identical (S7 excepted, on purpose, and only its partitioned
 cells); K1-3's pins (`test_tag_law_lock.py`, `test_tag_streams.py`,

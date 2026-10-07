@@ -3164,8 +3164,6 @@ class BuiltModel:
                         emitter=emitter,
                         fem=self.fem,
                         partition_rank=rank,
-                        node_owners=node_owners,
-                        element_owner=element_owner,
                         foreign_node_ndf=int(self.ndf),
                         inferred_ndf=inferred_ndf,
                         tag_plan=tag_plan,
@@ -6164,7 +6162,7 @@ class BuiltModel:
         Global records (``on == ()``) render a bare ``rayleigh αM βK βK0
         βKc``. Region records render one ``region $tag -ele … -rayleigh …``
         per ``on`` physical-group name, with ``-ele`` membership because βK
-        is stiffness-proportional. ``tags`` / ``fem_eid_to_ops_tag`` are
+        is stiffness-proportional. ``tag_plan`` / ``fem_eid_to_ops_tag`` are
         required only when region records are present (the emit driver always
         supplies them); each region's tag is the one the build's tag plan
         gave it (``("rayleigh", scope)`` sites of
