@@ -170,13 +170,9 @@ class ComposeDroppedStreamWarning(UserWarning):
 
     One warning per dropped stream per compose call, naming the stream
     and its record count (program slice B2-2, D9).  The streams that
-    trip it are listed in :data:`_UNCARRIED_ELEMENT_STREAMS`; today that
-    is the source's ``elements.rebar_elements`` (the cage's auto-emitted
-    structural rebar from ``g.rebar.place(emit_elements=True)``), whose
-    carry needs the module's tag offset on ``connectivity``, the
-    namespace prefix on ``pg`` and a decision on the bridge-side
-    ``material`` name, so it is not a trivial copy like ``contacts``.
-    Carried streams and empty ones stay silent.  Silence per call with
+    trip it are listed in :data:`_UNCARRIED_ELEMENT_STREAMS`, which is
+    empty today: ``elements.rebar_elements`` is carried since AS2a
+    (ADR 0117 D4).  Carried streams and empty ones stay silent.  Silence per call with
     ``warnings.simplefilter("ignore", ComposeDroppedStreamWarning)``.
     """
 
@@ -3213,6 +3209,15 @@ def _bundle_constraint_refs(bundle: "_RewrittenBundle"):
     for stream in record_streams:
         for rec in stream:
             yield from _walk(rec)
+    # Rebar cells carry no tag_rewrite_spec (a nested pair tuple); their
+    # node tags are offset by the bespoke carry in the rewriter (AS2a).
+    for rec in bundle.rebar_elements:
+        for k, (i, j) in enumerate(rec.connectivity):
+            for end, tag in (("i", i), ("j", j)):
+                yield ConstraintReference(
+                    kind=type(rec).__name__,
+                    field_name=f"connectivity[{k}].{end}", tag=int(tag),
+                )
 
 
 def _next_free_group_key(

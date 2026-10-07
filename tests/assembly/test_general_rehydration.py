@@ -158,6 +158,77 @@ def declare_region_damped(ops) -> None:
                         on="Left", name="regional")
 
 
+def declare_urd(ops) -> None:
+    """URD / URDbeta dampings, a deactivate window and ``-cMass``."""
+    ops.model(ndm=3, ndf=6)
+    t = ops.geomTransf.Linear(vecxz=(1.0, 0.0, 0.0), name="colT")
+    tb = ops.geomTransf.Linear(vecxz=(0.0, 0.0, 1.0), name="bmT")
+    u = ops.damping.urd(points=[(1.0, 0.02), (5.0, 0.03), (10.0, 0.05)],
+                        name="u")
+    ub = ops.damping.urd_beta(points=[(1.0, 0.001), (10.0, 0.002)],
+                              deactivate_time=3.0, name="ub")
+    props = {"A": 1.0, "E": E, "Iz": 2.0, "Iy": 3.0, "G": 4.0, "J": 5.0}
+    ops.element.elasticBeamColumn(pg="ColL", transf=t, damp=u, c_mass=True,
+                                  **props)
+    ops.element.elasticBeamColumn(pg="ColR", transf=t, damp=ub, **props)
+    ops.element.elasticBeamColumn(pg="Beam", transf=tb, **props)
+
+
+def frame2d_fem():
+    """The portal frame in the x-y plane, for ``ndm=2``."""
+    with apeGmsh(model_name="frame2d", verbose=False) as g:
+        geo = g.model.geometry
+        p = [geo.add_point(*xyz) for xyz in
+             ((0, 0, 0), (0, 3, 0), (4, 3, 0), (4, 0, 0))]
+        cl, bm, cr = (geo.add_line(p[0], p[1]), geo.add_line(p[1], p[2]),
+                      geo.add_line(p[3], p[2]))
+        g.model.sync()
+        g.physical.add(1, [cl], name="ColL")
+        g.physical.add(1, [cr], name="ColR")
+        g.physical.add(1, [bm], name="Beam")
+        g.mesh.sizing.set_global_size(1.0)
+        g.mesh.generation.generate(1)
+        return g.mesh.queries.get_fem_data(dim=1)
+
+
+def declare_frame2d(ops) -> None:
+    """2-D ``section Elastic`` (with G, alphaY) and 2-D ``elasticBeamColumn``."""
+    ops.model(ndm=2, ndf=3)
+    t = ops.geomTransf.Linear(name="t2")
+    sec = ops.section.Elastic(E=E, A=100.0, Iz=1e4, G=8e4, alphaY=0.83,
+                              name="sec2")
+    ip = ops.beamIntegration.Legendre(section=sec, n_ip=3, name="leg")
+    ops.element.forceBeamColumn(pg="ColL", transf=t, integration=ip)
+    ops.element.dispBeamColumn(pg="ColR", transf=t, integration=ip)
+    ops.element.elasticBeamColumn(pg="Beam", transf=t, A=50.0, E=E, Iz=3e3,
+                                  mass=0.1, c_mass=True)
+
+
+def declare_both_attached(ops) -> None:
+    """One damping attached by ``damp=`` on ColL AND by region on ColR."""
+    ops.model(ndm=3, ndf=6)
+    t = ops.geomTransf.Linear(vecxz=(1.0, 0.0, 0.0), name="colT")
+    tb = ops.geomTransf.Linear(vecxz=(0.0, 0.0, 1.0), name="bmT")
+    uni = ops.damping.uniform(ratio=0.02, freq_lower=1.0, freq_upper=10.0,
+                              on="ColR", name="uni")
+    props = {"A": 1.0, "E": E, "Iz": 1.0, "Iy": 1.0, "G": 1.0, "J": 1.0}
+    ops.element.elasticBeamColumn(pg="ColL", transf=t, damp=uni, **props)
+    ops.element.elasticBeamColumn(pg="ColR", transf=t, **props)
+    ops.element.elasticBeamColumn(pg="Beam", transf=tb, **props)
+
+
+def declare_factor(ops) -> None:
+    """A damping scaled by a time series (``-factor``), attached by damp=."""
+    ops.model(ndm=3, ndf=6)
+    t = ops.geomTransf.Linear(vecxz=(1.0, 0.0, 0.0), name="colT")
+    tb = ops.geomTransf.Linear(vecxz=(0.0, 0.0, 1.0), name="bmT")
+    ts = ops.timeSeries.Linear(name="ramp")
+    s = ops.damping.sec_stif(beta=0.01, factor=ts, name="s")
+    props = {"A": 1.0, "E": E, "Iz": 2.0, "Iy": 3.0, "G": 4.0, "J": 5.0}
+    for pg, tr in (("ColL", t), ("ColR", t), ("Beam", tb)):
+        ops.element.elasticBeamColumn(pg=pg, transf=tr, damp=s, **props)
+
+
 def write_instance(path: Path, fem, declare, **kw) -> Path:
     from apeGmsh.opensees import apeSees
 
@@ -180,6 +251,11 @@ def files(tmp_path_factory) -> dict[str, Path]:
         "ring": write_instance(d / "ring.h5", ring_fem(), declare_ring),
         "regional": write_instance(
             d / "regional.h5", split, declare_region_damped),
+        "urd": write_instance(d / "urd.h5", frame, declare_urd),
+        "frame2d": write_instance(d / "frame2d.h5", frame2d_fem(),
+                                  declare_frame2d),
+        "both": write_instance(d / "both.h5", frame, declare_both_attached),
+        "factor": write_instance(d / "factor.h5", frame, declare_factor),
         "dir": d,
     }
 
@@ -198,7 +274,7 @@ def _source_min(path: Path) -> int:
     return min(ids)
 
 
-def _bridge(*instances, ndf: int):
+def _bridge(*instances, ndf: int, ndm: int = 3):
     import warnings
 
     from apeGmsh.assembly import Assembly, AssemblyRankWarning
@@ -208,19 +284,21 @@ def _bridge(*instances, ndf: int):
         asm.instance(label, path, **kw)
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", AssemblyRankWarning)
-        return asm.bridge(ndm=3, ndf=ndf)
+        return asm.bridge(ndm=ndm, ndf=ndf)
 
 
 # ---------------------------------------------------------------------------
 # INV-4 parity: transforms, integrations, dampings, flags; multi-spec block
 # ---------------------------------------------------------------------------
 
-@pytest.mark.parametrize("kind, declare, ndf", [
-    ("frame", declare_frame, 6),
-    ("split", declare_split, 3),
+@pytest.mark.parametrize("kind, declare, ndm, ndf", [
+    ("frame", declare_frame, 3, 6),
+    ("split", declare_split, 3, 3),
+    ("urd", declare_urd, 3, 6),
+    ("frame2d", declare_frame2d, 2, 3),
 ])
-def test_one_instance_deck_equals_the_source_deck(files, kind, declare, ndf,
-                                                  tmp_path):
+def test_one_instance_deck_equals_the_source_deck(files, kind, declare, ndm,
+                                                  ndf, tmp_path):
     from apeGmsh.mesh import FEMData
     from apeGmsh.opensees import apeSees
 
@@ -229,7 +307,8 @@ def test_one_instance_deck_equals_the_source_deck(files, kind, declare, ndf,
     declare(ref)
     want = _deck(ref, tmp_path / "ref.tcl")
 
-    got = _deck(_bridge(("inst", src, {}), ndf=ndf), tmp_path / "asm.tcl")
+    got = _deck(_bridge(("inst", src, {}), ndf=ndf, ndm=ndm),
+                tmp_path / "asm.tcl")
     off = GRANULE - _source_min(src)
     got = re.sub(r"(?<![\w.\-])\d{7,}(?![\w.])",
                  lambda m: str(int(m.group(0)) - off), got)
@@ -240,6 +319,14 @@ def test_one_instance_deck_equals_the_source_deck(files, kind, declare, ndf,
                      "damping Uniform", "damping SecStif", "-iter", "-cMass",
                      "-damp", "-activateTime"):
             assert line in want, line
+    if kind == "urd":
+        for line in ("damping URD ", "damping URDbeta ", "-deactivateTime",
+                     "-cMass"):
+            assert line in want, line
+    if kind == "frame2d":
+        assert "section Elastic 1 200000.0 100.0 10000.0 80000.0 0.83" in want
+        assert re.search(r"element elasticBeamColumn \d+ \d+ \d+ 50\.0 "
+                         r"200000\.0 3000\.0 1 -mass 0\.1 -cMass", want)
 
 
 def test_two_instances_carry_their_own_transforms_and_dampings(files, tmp_path):
@@ -354,3 +441,85 @@ def test_args_varying_inside_a_group_raise_naming_as2b(files, tmp_path):
 def test_region_attached_damping_raises_before_registration(files, tmp_path):
     _empty_after_refusal(files["regional"], (3, 3), tmp_path,
                          r"damping tags \[1\] are attached by region")
+
+
+def test_region_attached_damping_with_an_element_attach_raises(files):
+    """The region half of a doubly attached damping is not carried, and the
+    model reader cannot see it: the bridge refuses before it exists, so no
+    deck and no registration can follow."""
+    from apeGmsh.assembly import Assembly, AssemblyError
+    from apeGmsh.opensees.opensees_model import OpenSeesModel
+
+    rows = OpenSeesModel.from_h5(str(files["both"])).elements()
+    assert any("-damp" in r.args for r in rows), "the element half exists"
+    asm = Assembly("x").instance("p", files["both"])
+    with pytest.raises(AssemblyError,
+                       match=r"damping tags \[1\] are attached by region "
+                             r"\(\['/opensees/regions/region_\d+'\]\)"):
+        asm.bridge(ndm=3, ndf=6)
+
+
+def test_time_series_factor_raises_before_registration(files, tmp_path):
+    _empty_after_refusal(files["factor"], (3, 6), tmp_path,
+                         r"'-factor' references a time series")
+
+
+def _stub_model(bar_area: float, bar_material: str):
+    """The members ``_rebar_rows`` / ``_element_specs`` read, for one bar
+    cell (1, 2) and one ``fem_eid=-1`` CorotTruss row on material tag 3."""
+    from types import SimpleNamespace
+
+    from apeGmsh._kernel.records._rebar import RebarElementRecord
+    from apeGmsh.opensees._internal.typed_records import ElementRecord
+
+    bar = RebarElementRecord(pg="L1", element="truss", material=bar_material,
+                             area=bar_area, connectivity=((1, 2),))
+    row = ElementRecord(type_token="CorotTruss", tag=7, args=(1, 2, 0.5, 3),
+                        connectivity=(1, 2), fem_eid=-1)
+    fem = SimpleNamespace(elements=SimpleNamespace(rebar_elements=[bar]))
+    return SimpleNamespace(fem=fem, elements=lambda: (row,))
+
+
+@pytest.mark.parametrize("area, material, skipped", [
+    (0.5, "rebar", {7}),        # the carried bar: not re-declared
+    (0.25, "rebar", set()),     # another area: a foreign row
+    (0.5, "other", set()),      # another material: a foreign row
+])
+def test_rebar_row_skip_needs_nodes_area_and_material(area, material, skipped):
+    from apeGmsh.assembly import AssemblyError
+    from apeGmsh.assembly._rehydrate import _element_specs, _rebar_rows
+
+    model = _stub_model(area, material)
+    skip = _rebar_rows("p", model, {("uniaxialMaterial", 3): "rebar"})
+    assert skip == skipped
+    if not skipped:             # a row the stream does not emit must raise
+        with pytest.raises(AssemblyError, match="not a carried rebar bar"):
+            _element_specs("p", model, skip)
+
+
+def declare_stage_attached(ops) -> None:
+    """Element-attached dampings plus one attached by a stage's region."""
+    declare_urd(ops)
+    with ops.stage(name="shake") as s:
+        s.damping.sec_stif(beta=0.002, on="Beam", name="staged")
+        s.analysis(
+            test=ops.test.NormDispIncr(tol=1e-6, max_iter=10),
+            algorithm=ops.algorithm.Newton(),
+            integrator=ops.integrator.LoadControl(dlam=1.0),
+            constraints=ops.constraints.Plain(),
+            numberer=ops.numberer.RCM(),
+            system=ops.system.UmfPack(),
+            analysis=ops.analysis.Static(),
+        )
+        s.run(n_increments=1)
+
+
+def test_stage_attached_damping_raises(tmp_path):
+    from apeGmsh.assembly import Assembly, AssemblyError
+
+    src = write_instance(tmp_path / "staged.h5", frame_fem(),
+                         declare_stage_attached)
+    asm = Assembly("x").instance("p", src)
+    with pytest.raises(AssemblyError,
+                       match=r"attached by region \(\['/opensees/stages/"):
+        asm.bridge(ndm=3, ndf=6)

@@ -172,3 +172,27 @@ def test_helper_fails_closed_on_missing_stream(_one_uncarried):
     # it is a contract break, not a reason to stay quiet.
     with pytest.raises(AttributeError):
         _warn_dropped_streams(_Src(), label="X")
+
+
+def test_drift_check_covers_rebar_cells():
+    """Check 3 (cover-set drift) sees every carried rebar node tag."""
+    from types import SimpleNamespace
+
+    from apeGmsh._kernel.records._rebar import RebarElementRecord
+    from apeGmsh.mesh._compose import _bundle_constraint_refs
+
+    bar = RebarElementRecord(pg="A.L1", element="truss", material="A.rebar",
+                             area=1.0, connectivity=((11, 12), (12, 13)))
+    empty: tuple = ()
+    bundle = SimpleNamespace(
+        node_constraints=empty, elem_constraints=empty, reinforce_ties=empty,
+        embed_ties=empty, contacts=empty, contact_planes=empty,
+        interfaces=empty, rebar_elements=(bar,),
+    )
+    refs = [(r.kind, r.field_name, r.tag) for r in _bundle_constraint_refs(bundle)]
+    assert refs == [
+        ("RebarElementRecord", "connectivity[0].i", 11),
+        ("RebarElementRecord", "connectivity[0].j", 12),
+        ("RebarElementRecord", "connectivity[1].i", 12),
+        ("RebarElementRecord", "connectivity[1].j", 13),
+    ]

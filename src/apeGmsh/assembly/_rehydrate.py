@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, cast
 
 from apeGmsh.opensees._internal.typed_records import SectionSimpleRecord
@@ -40,7 +41,7 @@ if TYPE_CHECKING:
     from apeGmsh.opensees._internal.types import Primitive
     from apeGmsh.opensees.opensees_model import OpenSeesModel
 
-__all__ = ["rehydrate"]
+__all__ = ["refuse_region_dampings", "rehydrate"]
 
 #: A ``(kind, tag)`` reference, ``kind`` as ``OpenSeesModel.names()`` spells it.
 _Key = tuple[str, int]
@@ -537,6 +538,58 @@ def _plan(label: str, model: "OpenSeesModel") -> list[_Decl]:
             f"damping on the assembly bridge."
         )
     return plan
+
+
+def _region_params(g: Any) -> list[Any]:
+    """A region group's ``params`` tail (the writer's float/str attr pair)."""
+    nums = [float(v) for v in g.attrs["params"]] if "params" in g.attrs else []
+    strs: list[str] = []
+    if "params_str" in g.attrs:
+        strs = [s.decode("utf-8") if isinstance(s, bytes) else str(s)
+                for s in g.attrs["params_str"]]
+    return [strs[i] if i < len(strs) and strs[i] != "" else v
+            for i, v in enumerate(nums)]
+
+
+def refuse_region_dampings(label: str, source: "str | Path") -> None:
+    """Raise if ``source`` attaches a damping object through a region.
+
+    A ``region ... -damp`` attach, global or stage-scoped, is analysis
+    content that does not travel (ADR 0117 D4), and
+    :meth:`OpenSeesModel.from_h5` does not read ``/opensees/regions``, so
+    a damping also attached by an element's ``damp=`` would bridge with
+    its region half silently dropped. The archive is read here, read-only.
+    """
+    import h5py
+
+    found: dict[int, list[str]] = {}
+    with h5py.File(str(source), "r") as f:
+        if "opensees" not in f:
+            return
+        zone = f["opensees"]
+        pools: list[tuple[str, Any]] = []
+        if "regions" in zone:
+            pools.append(("/opensees/regions", zone["regions"]))
+        if "stages" in zone:
+            for sname in sorted(zone["stages"]):
+                stage = zone["stages"][sname]
+                if "regions" in stage:
+                    pools.append((f"/opensees/stages/{sname}/regions", stage["regions"]))
+        for where, grp in pools:
+            for rname in sorted(grp):
+                args = _region_params(grp[rname])
+                for k, a in enumerate(args[:-1]):
+                    if a == "-damp":
+                        tag = _tag(args[k + 1], f"{where}/{rname}")
+                        found.setdefault(tag, []).append(f"{where}/{rname}")
+    if found:
+        raise AssemblyError(
+            f"instance {label!r}: damping tags {sorted(found)} are attached "
+            f"by region ({sorted({w for ws in found.values() for w in ws})}), "
+            f"which is analysis content and not carried (ADR 0117 D4); "
+            f"attach them with an element's damp= in the source, or declare "
+            f"the damping on the assembly bridge."
+        )
 
 
 def rehydrate(ops: "apeSees", label: str, model: "OpenSeesModel") -> None:

@@ -243,6 +243,12 @@ class Assembly(_AssemblyV1):
         """Every instance composed onto an empty broker, then every tie."""
         from apeGmsh._kernel.resolvers._chain_phase_router import route_def_to_fem
 
+        from ._rehydrate import refuse_region_dampings
+
+        # Refused before anything is merged or registered: a region
+        # attach is not carried, and the model reader cannot see it.
+        for inst in self._instances:
+            refuse_region_dampings(inst.label, inst.source)
         fem = _empty_fem()
         for inst in self._instances:
             fem = fem.compose(
