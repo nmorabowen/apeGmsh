@@ -216,15 +216,16 @@ def _damping(token: str, args: tuple[Any, ...], name: "str | None", what: str) -
             f"{what}: '-factor' references a time series, which is analysis "
             f"content and not carried (ADR 0117 D4)."
         )
-    window = {"activate_time": _opt(flags, "-activateTime"),
-              "deactivate_time": _opt(flags, "-deactivateTime")}
+    ta, td = _opt(flags, "-activateTime"), _opt(flags, "-deactivateTime")
     if token == "Uniform":
         z, f1, f2 = _numbers(pos, 3, 3, what)
         return lambda ops, ref: ops.damping.uniform(
-            ratio=z, freq_lower=f1, freq_upper=f2, name=name, **window)
+            ratio=z, freq_lower=f1, freq_upper=f2, name=name,
+            activate_time=ta, deactivate_time=td)
     if token == "SecStif":
         (beta,) = _numbers(pos, 1, 1, what)
-        return lambda ops, ref: ops.damping.sec_stif(beta=beta, name=name, **window)
+        return lambda ops, ref: ops.damping.sec_stif(beta=beta, name=name,
+            activate_time=ta, deactivate_time=td)
     if token in ("URD", "URDbeta"):
         n = _tag(pos[0], what) if pos else 0
         if n < 2:
@@ -232,7 +233,8 @@ def _damping(token: str, args: tuple[Any, ...], name: "str | None", what: str) -
         v = _numbers(pos[1:], 2 * n, 2 * n, what)
         points = [(v[2 * k], v[2 * k + 1]) for k in range(n)]
         method = "urd" if token == "URD" else "urd_beta"
-        return lambda ops, ref: getattr(ops.damping, method)(points=points, name=name, **window)
+        return lambda ops, ref: getattr(ops.damping, method)(points=points, name=name,
+            activate_time=ta, deactivate_time=td)
     raise AssemblyError(
         f"{what} is not rehydrated; supported: ['SecStif', 'URD', 'URDbeta', 'Uniform']."
     )
@@ -276,6 +278,9 @@ def _damp_ref(flags: dict[str, list[Any]], what: str) -> "_Key | None":
 
 def _el_elastic_beam(pg: str, args: tuple[Any, ...], what: str) -> tuple[tuple[_Key, ...], _Make]:
     pos, flags = _split(args, {"-mass": 1, "-cMass": 0, "-damp": 1}, what)
+    G: "float | None"
+    J: "float | None"
+    Iy: "float | None"
     if len(pos) == 7:       # 3-D: A E G J Iy Iz transfTag
         A, E, G, J, Iy, Iz = _numbers(pos[:6], 6, 6, what)
     elif len(pos) == 4:     # 2-D: A E Iz transfTag
