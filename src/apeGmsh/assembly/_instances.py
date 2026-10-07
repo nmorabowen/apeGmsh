@@ -13,8 +13,8 @@ from typing import Any, Sequence, cast
 from ._v1 import AssemblyError
 
 __all__ = [
-    "Instance", "Tie", "check_label", "check_rotate", "check_translate",
-    "split_port",
+    "Coupling", "Instance", "RefNode", "Tie", "check_label", "check_point",
+    "check_rotate", "check_translate", "split_port",
 ]
 
 
@@ -51,6 +51,40 @@ class Tie:
     tolerance: float
     name: "str | None"
     #: The ``TieDef`` built (and so validated) when ``tie()`` was called.
+    definition: Any = field(compare=False, repr=False)
+
+
+@dataclass(frozen=True)
+class RefNode:
+    """An assembly-owned reference node (ADR 0117 D3).
+
+    It is not part of any instance: ``bridge()`` adds it to the merged FEM
+    as an element-less decoupled node labelled ``name`` (which has no
+    ``.``), at FEM id ``k`` for the ``k``-th declared node, below every
+    instance window.
+    """
+
+    name: str
+    coords: tuple[float, float, float]
+
+
+@dataclass(frozen=True)
+class Coupling:
+    """One assembly-level coupling between two ports (ADR 0117 D3).
+
+    ``kind`` is a ``/assembly/ties`` kind other than ``tie`` and ``node``.
+    For ``kinematic_coupling`` / ``distributing_coupling`` the master is
+    the reference node and the slave the target port; for ``embedded``
+    the master is the host. ``params`` is the canonical JSON of the
+    options, exactly as the ``/assembly/ties`` row stores it.
+    """
+
+    kind: str
+    master: str
+    slave: str
+    params: str
+    name: "str | None"
+    #: The constraint def built (and so validated) when the verb was called.
     definition: Any = field(compare=False, repr=False)
 
 
@@ -101,33 +135,45 @@ def check_rotate(
 
 def check_translate(translate: Sequence[float]) -> tuple[float, float, float]:
     """Normalise ``translate=(x, y, z)``; refuse a non-finite component."""
+    return check_point(translate, what="translate")
+
+
+def check_point(value: object, *, what: str) -> tuple[float, float, float]:
+    """Normalise a 3-vector ``(x, y, z)``; refuse a non-finite component."""
     try:
-        t = tuple(float(v) for v in translate)
+        t = tuple(float(v) for v in cast("Sequence[float]", value))
     except (TypeError, ValueError) as exc:
-        raise AssemblyError(
-            f"translate={translate!r}: expected (x, y, z).") from exc
+        raise AssemblyError(f"{what}={value!r}: expected (x, y, z).") from exc
     if len(t) != 3:
-        raise AssemblyError(f"translate={translate!r}: expected (x, y, z).")
+        raise AssemblyError(f"{what}={value!r}: expected (x, y, z).")
     if not all(math.isfinite(v) for v in t):
         raise AssemblyError(
-            f"translate={translate!r}: every component must be a finite number.")
+            f"{what}={value!r}: every component must be a finite number.")
     return (t[0], t[1], t[2])
 
 
-def split_port(port: object, labels: Sequence[str]) -> tuple[str, str]:
+def split_port(
+    port: object, labels: Sequence[str], nodes: Sequence[str] = (),
+) -> tuple[str, str]:
     """Split ``"{instance}.{pg|label}"`` on its first dot.
 
-    A port with no dot names an assembly-owned object; P1 declares none,
-    so it raises listing the instances. The instance must already be
-    declared, and the local name must be non-empty.
+    A port with no dot names an assembly-owned object: one of ``nodes``
+    (the reference nodes this verb accepts), returned as ``("", port)``.
+    Any other bare port raises listing the instances and those nodes. The
+    instance must already be declared, and the local name must be
+    non-empty.
     """
     if not isinstance(port, str) or not port:
         raise AssemblyError(f"port must be a non-empty string, got {port!r}.")
     inst, dot, local = port.partition(".")
     if not dot:
+        if port in nodes:
+            return "", port
+        owned = (f"reference nodes {list(nodes)}" if nodes
+                 else "none this verb accepts")
         raise AssemblyError(
-            f"port {port!r} names no assembly object (this assembly declares "
-            f"none); an instance port is '{{instance}}.{{pg}}', with instances "
+            f"port {port!r} names no assembly object (declared: {owned}); "
+            f"an instance port is '{{instance}}.{{pg}}', with instances "
             f"{list(labels)}."
         )
     if inst not in labels:

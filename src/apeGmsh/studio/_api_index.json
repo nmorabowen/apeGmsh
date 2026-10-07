@@ -19,10 +19,22 @@
       "symbol": "Assembly.bridge"
     },
     "Assembly.couple": {
-      "doc": "Declare an interface constraint between two parts. Chainable.",
-      "signature": "couple(part_a: 'str', part_b: 'str', *, kind: 'str', ports: 'Sequence[str]', dofs: \"'Sequence[int] | None'\" = None, tolerance: \"'float | None'\" = None, name: \"'str | None'\" = None, **options: 'Any') -> \"'Assembly'\"",
+      "doc": "Couple an instance port to a reference node. Returns ``self``.",
+      "signature": "couple(target: 'str', part_b: \"'str | None'\" = None, *, kind: 'str', reference: \"'str | None'\" = None, dofs: \"'Sequence[int] | None'\" = None, weighting: 'str' = 'uniform', name: \"'str | None'\" = None, ports: \"'Sequence[str] | None'\" = None, tolerance: \"'float | None'\" = None, **options: 'Any') -> \"'Assembly'\"",
       "skill": "references/compose.md",
       "symbol": "Assembly.couple"
+    },
+    "Assembly.embedded": {
+      "doc": "Embed the nodes of one instance port in the elements of another.",
+      "signature": "embedded(host: 'str', embedded: 'str', *, tolerance: 'float' = 0.0, stiffness: \"'float | str'\" = 'auto', name: \"'str | None'\" = None) -> \"'Assembly'\"",
+      "skill": "references/compose.md",
+      "symbol": "Assembly.embedded"
+    },
+    "Assembly.equal_dof": {
+      "doc": "Tie the co-located nodes of two ports with ``equalDOF``. Returns ``self``.",
+      "signature": "equal_dof(master: 'str', slave: 'str', *, dofs: \"'Sequence[int] | None'\" = None, tolerance: 'float' = 1e-06, name: \"'str | None'\" = None) -> \"'Assembly'\"",
+      "skill": "references/compose.md",
+      "symbol": "Assembly.equal_dof"
     },
     "Assembly.from_h5": {
       "doc": "Re-list the instances and ties an assembly archive declares.",
@@ -47,6 +59,24 @@
       "signature": "materialize() -> \"'apeGmsh'\"",
       "skill": "references/compose.md",
       "symbol": "Assembly.materialize"
+    },
+    "Assembly.node": {
+      "doc": "Declare an assembly-owned reference node. Returns ``self``.",
+      "signature": "node(name: 'str', coords: 'Sequence[float]') -> \"'Assembly'\"",
+      "skill": "references/compose.md",
+      "symbol": "Assembly.node"
+    },
+    "Assembly.rigid_diaphragm": {
+      "doc": "Make the in-plane motion of two ports one rigid body. Returns ``self``.",
+      "signature": "rigid_diaphragm(master: 'str', slave: 'str', *, master_point: \"'Sequence[float] | None'\" = None, plane_normal: 'Sequence[float]' = (0.0, 0.0, 1.0), constrained_dofs: 'Sequence[int]' = (1, 2, 6), plane_tolerance: 'float' = 1.0, name: \"'str | None'\" = None) -> \"'Assembly'\"",
+      "skill": "references/compose.md",
+      "symbol": "Assembly.rigid_diaphragm"
+    },
+    "Assembly.rigid_link": {
+      "doc": "Link every slave node rigidly to one master node. Returns ``self``.",
+      "signature": "rigid_link(master: 'str', slave: 'str', *, link_type: 'str' = 'beam', master_point: \"'Sequence[float] | None'\" = None, name: \"'str | None'\" = None) -> \"'Assembly'\"",
+      "skill": "references/compose.md",
+      "symbol": "Assembly.rigid_link"
     },
     "Assembly.tie": {
       "doc": "Tie two instance ports, ``\"{instance}.{pg|label}\"``. Returns ``self``.",
