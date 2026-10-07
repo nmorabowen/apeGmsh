@@ -278,7 +278,9 @@ Each is testable.
    assembly-owned name contains `.`. `instance()` with a label containing `.`,
    `/` or whitespace, or a clashing label, raises `AssemblyError`.
 2. **INV-2.** Two runs of the same assembly script yield byte-identical
-   `h5dump` of the archive (excluding `created_iso`, `session_id`) and
+   `h5dump` of the archive (excluding the volatile stamps `meta@created_iso`,
+   `meta@session_id` and `composed_from/*@composed_at`; see the
+   [INV-2 amendment](#amendment--inv-2-volatile-stamps-october-2026)) and
    byte-identical decks.
 3. **INV-3.** No emit-time mint: `tests/opensees/contract/test_tag_law_lock.py`
    covers `src/apeGmsh/assembly/` (no `TagAllocator(`, no `allocate*`); a
@@ -386,3 +388,15 @@ There is no P5 deprecation slice: D7 replaces it with the human-gated removal
 - **ADR 0112, 0113:** consistent. `/assembly` is a new zone with its own
   version key; no existing floor moves.
 - **ADR 0085, 0086, 0115:** stand.
+
+## Amendment — INV-2 volatile stamps (October 2026)
+
+Accepted by the maintainer's ruling on
+[#1550](https://github.com/nmorabowen/apeGmsh/issues/1550#issuecomment-6030918108).
+INV-2's volatile list gains `composed_from/*@composed_at`, beside
+`meta@created_iso` and `meta@session_id`. The compose writer stamps each
+`/composed_from` record with the wall-clock time of the merge, so two runs can
+never match on that attribute. The writer does not change: `composed_at` stays
+a wall-clock stamp until `/composed_from` retires under D5. The exclusion is
+matched by exact path (`*` is one path segment), so the same attribute name
+anywhere else is still compared.
