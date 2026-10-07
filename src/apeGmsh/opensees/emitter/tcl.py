@@ -33,9 +33,10 @@ see the constant's docstring.
 from __future__ import annotations
 
 from .._internal.analyze_rc import COMMIT_ABORT_MESSAGE, COMMIT_ABORT_RC
-from .._internal.build import stage_marker_name
+from .._internal.build import BridgeError, stage_marker_name
 from .._rc_c2_flags import warn_rc_c2_deck
 
+import math
 import os
 from typing import (
     IO, Any, Callable, Literal, NamedTuple, Sequence, SupportsIndex,
@@ -271,9 +272,71 @@ def _fmt_value(v: Any) -> str:
     if isinstance(v, int):
         return str(int(v))
     if isinstance(v, float):
-        return repr(float(v))
+        f = float(v)
+        if not math.isfinite(f):
+            raise _NonFiniteArg(f)
+        return repr(f)
     # Fallback — should not happen for the typed-emit boundary.
+    _refuse_nonfinite_items(v)
     return str(v)
+
+
+class _NonFiniteArg(BridgeError):
+    """A ``nan`` / ``inf`` reached the formatter (#1356).
+
+    :func:`_fmt_value` has no command context, so it raises this;
+    :func:`_join`, which has the whole line, re-raises a
+    :class:`BridgeError` that names the command and the argument
+    (:func:`_nonfinite_error`).
+    """
+
+    def __init__(self, value: float) -> None:
+        super().__init__(f"non-finite float {value!r}")
+        self.value = value
+
+
+def _refuse_nonfinite_items(v: Any) -> None:
+    """Raise :class:`_NonFiniteArg` for a ``nan`` / ``inf`` inside a
+    list or tuple argument: the fallback renders it with ``str``, which
+    would print a bare ``nan`` token. Fallback path only."""
+    if isinstance(v, (list, tuple)):
+        for x in v:
+            _fmt_value(x)
+
+
+def _is_nonfinite_token(a: Any) -> bool:
+    try:
+        _fmt_value(a)
+    except _NonFiniteArg:
+        return True
+    return False
+
+
+def _nonfinite_error(parts: Sequence[Any], value: float) -> BridgeError:
+    """The emit-time refusal of a non-finite float (#1356).
+
+    Tcl's ``Tcl_GetDouble`` rejects ``nan`` / ``inf`` (and the py deck
+    dies with ``NameError``). The command is the line's leading string
+    words (``element forceBeamColumn``); the argument is the offender's
+    0-based position among the words after the first. Error path only,
+    so it re-formats the parts to find the offender.
+    """
+    words: list[str] = []
+    for p in parts[:2]:
+        if not isinstance(p, str):
+            break
+        words.append(p)
+    command = " ".join(words) if words else "<tcl line>"
+    where = f"an argument is {value!r}"
+    for i, a in enumerate(parts):
+        if _is_nonfinite_token(a):
+            where = f"argument {i - 1} is {a!r}"
+            break
+    return BridgeError(
+        f"{command}: {where}; OpenSees cannot parse a non-finite float "
+        "(nan/inf), so the deck would fail at run time. Fix the value at "
+        "its source (#1356)."
+    )
 
 
 def _join(*parts: Any) -> str:
@@ -295,17 +358,22 @@ def _join(*parts: Any) -> str:
     """
     out: list[str] = []
     append = out.append
-    for p in parts:
-        c = p.__class__
-        if c is int:
-            append(str(p))
-        elif c is float:
-            append(repr(p))
-        elif c is str:
-            append("{" + p + "}"
-                   if "\\" in p or any(ch.isspace() for ch in p) else p)
-        else:
-            append(_fmt_value(p))
+    try:
+        for p in parts:
+            c = p.__class__
+            if c is int:
+                append(str(p))
+            elif c is float:
+                if p - p:  # nan for nan/+-inf, 0.0 for every finite float
+                    raise _NonFiniteArg(p)
+                append(repr(p))
+            elif c is str:
+                append("{" + p + "}"
+                       if "\\" in p or any(ch.isspace() for ch in p) else p)
+            else:
+                append(_fmt_value(p))
+    except _NonFiniteArg as exc:
+        raise _nonfinite_error(parts, exc.value) from None
     return " ".join(out)
 
 
