@@ -61,6 +61,7 @@ from ._instances import (
     check_point,
     check_rotate,
     check_translate,
+    merged_port,
     split_port,
 )
 from ._v1 import Assembly as _AssemblyV1
@@ -196,8 +197,8 @@ class Assembly(_AssemblyV1):
         """
         self._refuse_mixed("tie")
         labels = [i.label for i in self._instances]
-        split_port(master, labels)
-        split_port(slave, labels)
+        m_name = merged_port(master, labels)
+        s_name = merged_port(slave, labels)
         if name is not None:
             self._check_new_name(name, what="tie name")
         from apeGmsh._kernel.defs.constraints import TieDef
@@ -205,7 +206,7 @@ class Assembly(_AssemblyV1):
         dofs_t = tuple(int(d) for d in dofs) if dofs is not None else None
         try:
             definition = TieDef(
-                master_label=master, slave_label=slave,
+                master_label=m_name, slave_label=s_name,
                 dofs=list(dofs_t) if dofs_t is not None else None,
                 tolerance=float(tolerance), enforce=enforce, method=method,
                 name=name,
@@ -261,8 +262,9 @@ class Assembly(_AssemblyV1):
 
         Each port is ``"{instance}.{pg|label}"`` or a reference node. Every
         slave node within ``tolerance`` of a master node shares ``dofs``
-        (``None``: every DOF) with it. Exact on matching meshes; the
-        non-matching case is ``tie``.
+        (``None``: DOFs 1-6, which the bridge refuses on a node with
+        fewer) with it. Exact on matching meshes; the non-matching case is
+        ``tie``.
 
         Raises :class:`AssemblyError` here for a bad port, name or option,
         and from ``bridge()`` when no pair is co-located (ADR 0117 INV-7).
@@ -484,12 +486,12 @@ class Assembly(_AssemblyV1):
         labels = [i.label for i in self._instances]
         nodes = [n.name for n in self._nodes]
         master_ok, slave_ok = NODE_PORTS[kind]
-        split_port(master, labels, nodes if master_ok else ())
-        split_port(slave, labels, nodes if slave_ok else ())
+        m_name = merged_port(master, labels, nodes if master_ok else ())
+        s_name = merged_port(slave, labels, nodes if slave_ok else ())
         if name is not None:
             self._check_new_name(name, what=f"{kind} name")
         definition = coupling_definition(
-            kind, master, slave, params, name, self._node_coords())
+            kind, m_name, s_name, params, name, self._node_coords())
         # Every check above runs first: a refused call records nothing.
         self._provenance.capture("assembly", "ties", name, on_existing="raise")
         self._ties.append(Coupling(
@@ -692,11 +694,11 @@ class Assembly(_AssemblyV1):
                 asm._check_new_name(name, what=f"{t.kind} name")
             if t.kind != "tie":
                 master_ok, slave_ok = NODE_PORTS[t.kind]
-                split_port(t.master, labels, nodes if master_ok else ())
-                split_port(t.slave, labels, nodes if slave_ok else ())
+                m_name = merged_port(t.master, labels, nodes if master_ok else ())
+                s_name = merged_port(t.slave, labels, nodes if slave_ok else ())
                 try:
                     definition = coupling_definition(
-                        t.kind, t.master, t.slave, params, name,
+                        t.kind, m_name, s_name, params, name,
                         asm._node_coords())
                 except AssemblyError as exc:
                     raise AssemblyError(f"{path}: /assembly row: {exc}") from exc
@@ -711,13 +713,13 @@ class Assembly(_AssemblyV1):
                     f"{path}: /assembly tie {t.name!r} params carry "
                     f"{sorted(params)}, expected {sorted(TIE_PARAMS['tie'])}."
                 )
-            split_port(t.master, labels)
-            split_port(t.slave, labels)
+            m_name = merged_port(t.master, labels)
+            s_name = merged_port(t.slave, labels)
             dofs = (tuple(int(d) for d in params["dofs"])
                     if params["dofs"] is not None else None)
             try:
                 definition = TieDef(
-                    master_label=t.master, slave_label=t.slave,
+                    master_label=m_name, slave_label=s_name,
                     dofs=list(dofs) if dofs is not None else None,
                     tolerance=float(params["tolerance"]),
                     enforce=params["enforce"], method=params["method"],

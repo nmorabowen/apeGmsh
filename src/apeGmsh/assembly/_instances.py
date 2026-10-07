@@ -14,7 +14,7 @@ from ._v1 import AssemblyError
 
 __all__ = [
     "Coupling", "Instance", "RefNode", "Tie", "check_label", "check_point",
-    "check_rotate", "check_translate", "split_port",
+    "check_rotate", "check_translate", "merged_port", "split_port",
 ]
 
 
@@ -186,3 +186,25 @@ def split_port(
             f"port {port!r} has an empty name after the instance label."
         )
     return inst, local
+
+
+def merged_port(
+    port: object, labels: Sequence[str], nodes: Sequence[str] = (),
+) -> str:
+    """The name the merged FEM carries for ``port`` (checked as
+    :func:`split_port` checks it).
+
+    A reference node keeps its name. An instance port ``"{inst}.{name}"``
+    maps through the merge engine's own prefix rule
+    (``_prefix_namespaced_name``, ADR 0038 nested composition): a plain
+    ``name`` becomes ``"{inst}.{name}"``, and a dotted source name such as
+    ``deck.slab`` becomes ``"{inst}/deck.slab"``, the name compose gave it.
+    """
+    from apeGmsh.mesh._compose import _prefix_namespaced_name
+
+    inst, local = split_port(port, labels, nodes)
+    if not inst:
+        return local
+    merged = _prefix_namespaced_name(inst, local)
+    assert merged is not None  # a str in gives a str out
+    return merged

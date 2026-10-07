@@ -73,11 +73,29 @@ def cube_fem(workdir: Path):
         return g.mesh.queries.get_fem_data(dim=None)
 
 
+def dotted_block_fem(workdir: Path):
+    """``block_fem`` whose interface groups have dotted source names:
+    ``deck.bot`` (z=0) and ``deck.top`` (z=H). Elements stay on ``Vol``."""
+    from tests.assembly.test_two_instances_one_tie import _faces_at_z
+
+    with apeGmsh(model_name="dblock", save_to=str(workdir / "dblock_mesh.h5"),
+                 overwrite=True) as g:
+        g.model.geometry.add_box(0.0, 0.0, 0.0, SIDE, SIDE, H, label="v")
+        g.physical.add_volume("v", name="Vol")
+        g.physical.add_volume("v", name="core.all")
+        g.physical.add_surface(_faces_at_z(g, 0.0), name="deck.bot")
+        g.physical.add_surface(_faces_at_z(g, H), name="deck.top")
+        g.mesh.recipe.structured(size=5.0, fallback="strict")
+        return g.mesh.queries.get_fem_data(dim=None)
+
+
 @pytest.fixture(scope="module")
 def files(tmp_path_factory) -> dict[str, Path]:
     d = tmp_path_factory.mktemp("as4a")
     return {
         "block": write_instance(d / "block.h5", block_fem(d), declare_block),
+        "dblock": write_instance(d / "dblock.h5", dotted_block_fem(d),
+                                 declare_block),
         "plate": write_instance(d / "plate.h5", plate_fem(d), declare_plate),
         "cube": write_instance(d / "cube.h5", cube_fem(d), declare_block),
         "dir": d,
@@ -287,6 +305,70 @@ def test_the_deck_emits_each_coupling(files, tmp_path):
     emb.tcl(str(tmp_path / "e.tcl"), flat=True)
     lines = (tmp_path / "e.tcl").read_text(encoding="utf-8").splitlines()
     assert sum(ln.startswith("element ASDEmbeddedNodeElement") for ln in lines) == 8
+
+
+# ---------------------------------------------------------------------------
+# Dotted source names — a port maps through the merge engine's prefix rule
+# ---------------------------------------------------------------------------
+
+#: Each verb family on dotted ports, and the records it resolves on the
+#: same geometry with plain ports (the oracle: ``block_fem``'s ``top`` /
+#: ``bot`` / ``Vol`` are the same node sets as ``deck.top`` / ``deck.bot`` /
+#: ``core.all``).
+_DOTTED = {
+    "tie": (lambda a, p: a.tie(f"pier_1.{p['top']}", f"pier_2.{p['bot']}",
+                               enforce="equation", dofs=[1, 2, 3]),
+            "elements", "tie", 9),
+    "equal_dof": (lambda a, p: a.equal_dof(f"pier_1.{p['top']}",
+                                           f"pier_2.{p['bot']}", dofs=[1, 2, 3]),
+                  "nodes", "equal_dof", 9),
+    "rigid_link": (lambda a, p: a.rigid_link("ref", f"pier_2.{p['top']}",
+                                             link_type="rod"),
+                   "nodes", "rigid_rod", 9),
+    "rigid_diaphragm": (
+        lambda a, p: a.rigid_diaphragm("ref", f"pier_2.{p['top']}",
+                                       plane_tolerance=6.0),
+        "nodes", "rigid_diaphragm", 1),
+    "embedded": (lambda a, p: a.embedded(f"pier_1.{p['vol']}", "bar.Vol"),
+                 "elements", "embedded", 8),
+    "kinematic": (lambda a, p: a.couple(f"pier_2.{p['top']}", kind="kinematic",
+                                        reference="ref"),
+                  "nodes", "kinematic_coupling", 1),
+    "distributing": (lambda a, p: a.couple(f"pier_2.{p['top']}",
+                                           kind="distributing", reference="ref"),
+                     "elements", "distributing", 1),
+}
+
+
+@pytest.mark.parametrize("family", sorted(_DOTTED))
+def test_a_dotted_source_name_resolves_like_a_plain_one(files, family, tmp_path):
+    """``"pier_1.deck.top"`` names the group compose stored as
+    ``pier_1/deck.top`` (``_prefix_namespaced_name``, ADR 0038)."""
+    from apeGmsh.assembly import Assembly
+
+    declare, side, kind, n = _DOTTED[family]
+    got = {}
+    for src, names in (("block", {"top": "top", "bot": "bot", "vol": "Vol"}),
+                       ("dblock", {"top": "deck.top", "bot": "deck.bot",
+                                   "vol": "core.all"})):
+        asm = (Assembly("d")
+               .instance("pier_1", files[src])
+               .instance("pier_2", files[src], translate=(0.0, 0.0, H))
+               .instance("bar", files["cube"], translate=CUBE_AT)
+               .node("ref", REF))
+        declare(asm, names)
+        ops = asm.bridge(ndm=3, ndf=3)
+        fem = ops.fem
+        recs = (_node_records if side == "nodes" else _elem_records)(fem, kind)
+        got[src] = len(recs)
+        if src == "dblock":
+            assert "pier_1/deck.top" in fem.nodes.physical
+            ops.ndf(1, ndf=6)
+            asm.h5(tmp_path / "d.h5")
+            back = Assembly.from_h5(tmp_path / "d.h5")
+            assert back.ties == asm.ties
+            assert back.ties[0].definition == asm.ties[0].definition
+    assert got == {"block": n, "dblock": n}
 
 
 # ---------------------------------------------------------------------------
