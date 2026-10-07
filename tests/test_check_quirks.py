@@ -1460,7 +1460,7 @@ def test_comment_provenance_runs_from_the_command_line(tmp_path: Path, capsys: p
     root = _repo_with(tmp_path, "x = 1\n", "x = 1\n# fixed in #1234\n")
     assert quirks.main(["--root", str(root), "--base", "main"]) == 1
     assert "[comment-provenance]" in capsys.readouterr().out
-    assert quirks.main(["--root", str(root)]) == 0
+    assert quirks.main(["--root", str(root), "--no-base"]) == 0
 
 
 def test_added_lines_reads_a_zero_context_diff() -> None:
@@ -1529,3 +1529,40 @@ def test_comment_provenance_moved_once_added_twice_is_flagged_once(tmp_path: Pat
          "src/apeGmsh/_b.py": "z = 0\n# moved note #1378\ny = 1\n# moved note #1378\n"},
     )
     assert len(_provenance(root)) == 1
+
+
+def test_main_without_base_defaults_to_main_and_flags_provenance(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    root = _repo_with(tmp_path, "x = 1\n", "x = 1\n# fixed in #1234\n")
+    assert quirks.main(["--root", str(root)]) == 1
+    assert "comment-provenance" in capsys.readouterr().out
+
+
+def test_main_no_base_skips_the_diff_rules_with_a_notice(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    root = _repo_with(tmp_path, "x = 1\n", "x = 1\n# fixed in #1234\n")
+    assert quirks.main(["--root", str(root), "--no-base"]) == 0
+    assert "note: comment-provenance not run" in capsys.readouterr().out
+
+
+def test_main_with_no_main_branch_prints_the_notice_and_does_not_crash(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    root = _repo_with(tmp_path, "x = 1\n", "x = 1\n# fixed in #1234\n")
+    _git(root, "branch", "-m", "main", "trunk")
+    assert quirks.main(["--root", str(root)]) == 0
+    assert "note: comment-provenance not run: no --base" in capsys.readouterr().out
+
+
+def test_main_outside_a_repo_prints_the_notice(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    assert quirks.main(["--root", str(tmp_path)]) == 0
+    assert "note: comment-provenance not run" in capsys.readouterr().out
+
+
+def test_main_prefers_origin_main_over_local_main(tmp_path: Path) -> None:
+    root = _repo_with(tmp_path, "x = 1\n", "x = 1\n# fixed in #1234\n")
+    _git(root, "update-ref", "refs/remotes/origin/main", "main")
+    assert quirks.default_base(root) == "origin/main"
+    assert quirks.main(["--root", str(root)]) == 1
+
+
+def test_main_explicit_base_is_unchanged(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    root = _repo_with(tmp_path, "x = 1\n", "x = 1\n# fixed in #1234\n")
+    assert quirks.main(["--root", str(root), "--base", "main"]) == 1
+    assert "note:" not in capsys.readouterr().out

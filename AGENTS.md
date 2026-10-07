@@ -49,7 +49,7 @@ a viewer, a script) imports **main's** apeGmsh unless it runs with `PYTHONPATH=<
 | `live-stock` | `pytest tests -m "live and not qt and not subprocess and not bench"` with stock openseespy | a `live` test that skips everywhere is not a passing test; `-rs` shows why it skipped |
 | `emit-cost-gate` | `pytest -m bench tests/benchmarks/test_emit_regression_gate.py -s` | it compares emit cost normalised by parse cost against a committed baseline |
 | `docs-check` | `mkdocs build --strict` | runs on changes to `docs/`, `src/`, `README`, `CHANGELOG` and `mkdocs.yml` |
-| quirk lint (last step of `static-gates`) | `python scripts/check_quirks.py` (self-test: `tests/test_check_quirks.py`) | lessons that recurred after being written down, held as rules. Each finding names its lesson. Fix the code, or waive one site with `# apegmsh-lint: <rule>-ok <reason>`. Never waive a real bug to go green |
+| quirk lint (last step of `static-gates`) | `git fetch origin main && python scripts/check_quirks.py` (diffs against `origin/main` by default; `--no-base` skips the diff rules; self-test: `tests/test_check_quirks.py`) | lessons that recurred after being written down, held as rules. Each finding names its lesson. Fix the code, or waive one site with `# apegmsh-lint: <rule>-ok <reason>`. Never waive a real bug to go green |
 
 - **Judge a local run against a baseline, not a raw count.** Beside a Ladruno fork build,
   `import opensees` un-skips the `ladruno_fork` tests, which CI never runs and a stale build
