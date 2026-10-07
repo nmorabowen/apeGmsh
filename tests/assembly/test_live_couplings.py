@@ -189,11 +189,26 @@ def _solve_distributing(workdir: Path) -> dict:
             "load": list(load[:3])}
 
 
+def _solve_distributing_symmetric(workdir: Path) -> dict:
+    """A vertical load through the centre: per-node base reactions."""
+    import numpy as np
+
+    ops, _, live = _block_with_reference(
+        workdir, "distributing", (0.0, 0.0, -P, 0.0, 0.0, 0.0))
+    live.reactions()
+    coord = dict(zip((int(i) for i in ops.fem.nodes.ids),
+                     np.asarray(ops.fem.nodes.coords, dtype=float)))
+    return {"base": [[float(coord[t][0]), float(coord[t][1]),
+                      live.nodeReaction(t, 3)]
+                     for t in _ids(ops.fem, pg="col.bot")]}
+
+
 _CASES = {
     "equal_dof": _solve_equal_dof,
     "rigid_diaphragm": _solve_rigid_diaphragm,
     "kinematic": _solve_kinematic,
     "distributing": _solve_distributing,
+    "distributing_symmetric": _solve_distributing_symmetric,
 }
 
 
@@ -264,3 +279,21 @@ def test_distributing_coupling_reactions_sum_to_the_load(tmp_path: Path):
     res = _solve("distributing", tmp_path)
     for r, f in zip(res["sum"], res["load"]):
         assert r == pytest.approx(-f, abs=1e-8 * P), res
+
+
+@pytest.mark.live
+@pytest.mark.ladruno_fork
+def test_distributing_coupling_spreads_a_centred_load_symmetrically(tmp_path: Path):
+    """Uniform weights on the symmetric 3x3 top face and a load through its
+    centroid: the base reactions share the face's 8-fold symmetry (mirror
+    in x, mirror in y, swap x and y) and sum to the load."""
+    _live_ops()
+    res = _solve("distributing_symmetric", tmp_path)
+    rz = {(round(x, 9), round(y, 9)): r for x, y, r in res["base"]}
+    assert len(rz) == 9, res
+    assert sum(rz.values()) == pytest.approx(P, rel=1e-9), res
+    for (x, y), r in rz.items():
+        for image in ((SIDE - x, y), (x, SIDE - y), (y, x)):
+            assert rz[image] == pytest.approx(r, abs=1e-9 * P), (x, y, image, res)
+    # Not uniform: the corner, edge and centre shares differ.
+    assert len({round(r / P, 6) for r in rz.values()}) == 3, res

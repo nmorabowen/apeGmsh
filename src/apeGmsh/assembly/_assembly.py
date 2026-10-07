@@ -417,6 +417,14 @@ class Assembly(_AssemblyV1):
                     f"part_b, kind=, ports=); the instance form takes kind "
                     f"'kinematic' or 'distributing'."
                 )
+            if reference is not None or weighting != "uniform":
+                # Options of the instance form: v1 forwards unknown
+                # keywords to g.constraints, so refuse rather than drop.
+                raise AssemblyError(
+                    f"couple(kind={kind!r}): reference= and weighting= are "
+                    f"options of kind 'kinematic' / 'distributing' on an "
+                    f"instance-declared assembly, not of the v1 form."
+                )
             super().couple(
                 target, part_b, kind=kind, ports=ports, dofs=dofs,
                 tolerance=tolerance, name=name, **options)
@@ -770,7 +778,12 @@ class Assembly(_AssemblyV1):
                 # an RBE3 with no independent and an embedded node outside
                 # every host element.
                 raise AssemblyError(f"{what} resolved to no record: {exc}") from exc
-            if routed is None or _constraint_count(routed) <= before:
+            # A group record with no slave constrains nothing: a
+            # diaphragm whose master is in the plane but whose ports put
+            # no other node there routes to one record and the deck line
+            # ``rigidDiaphragm 3 1``.
+            if (routed is None or _constraint_count(routed) <= before
+                    or _slaveless(fem, routed)):
                 hint = (f"Check that the two surfaces meet within "
                         f"tolerance={t.tolerance}." if isinstance(t, Tie)
                         else _EMPTY_HINT[t.kind])
@@ -862,8 +875,8 @@ def _base_fem(ref_nodes: Sequence[RefNode] = ()) -> "FEMData":
 _EMPTY_HINT: dict[str, str] = {
     "equal_dof": "No slave node lies within tolerance of a master node.",
     "rigid_link": "The slave set holds no node but the master.",
-    "rigid_diaphragm": "No node of either port lies within plane_tolerance "
-                       "of the plane.",
+    "rigid_diaphragm": "No node of either port but the master lies within "
+                       "plane_tolerance of the plane.",
     "embedded": "Every embedded node is a corner of a host element.",
     "kinematic_coupling": "The target holds no node but the reference.",
     "distributing_coupling": "The target holds no node but the reference.",
@@ -1015,3 +1028,18 @@ def _tie_rows(b: _Bridged) -> list[TieRow]:
 def _constraint_count(fem: "FEMData") -> int:
     """Node-side plus element-side constraint records on a broker."""
     return len(tuple(fem.nodes.constraints)) + len(tuple(fem.elements.constraints))
+
+
+def _slaveless(before: "FEMData", after: "FEMData") -> bool:
+    """True when routing appended a node-group record with no slave.
+
+    Records are appended (``with_constraint``), so the new ones are the
+    tail of ``after``'s node-side set.
+    """
+    from apeGmsh._kernel.records._constraints import NodeGroupRecord
+
+    n = len(tuple(before.nodes.constraints))
+    return any(
+        isinstance(rec, NodeGroupRecord) and not rec.slave_nodes
+        for rec in tuple(after.nodes.constraints)[n:]
+    )

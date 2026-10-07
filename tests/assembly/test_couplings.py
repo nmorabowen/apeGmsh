@@ -299,6 +299,36 @@ def test_the_deck_emits_each_coupling(files, tmp_path):
     (rbe2,) = [ln for ln in deck if ln.startswith("element LadrunoKinematicCoupling")]
     assert rbe2.split()[3:5] == ["1", "9"]
 
+    # Review F5: RBE3 is ``element LadrunoDistributingCoupling tag R N
+    # i1..iN [-w w1..wN]``, independents in sorted order; ``area`` weights
+    # are the tributary areas of the 2x2 top face of 5 mm quads: 25/4 at a
+    # corner, 2 x 25/4 on an edge, 4 x 25/4 at the centre.
+    for weighting in ("uniform", "area"):
+        rbe3 = (_stack(files).node("ref", REF)
+                .couple("pier_2.top", kind="distributing", reference="ref",
+                        weighting=weighting)
+                .bridge(ndm=3, ndf=3))
+        rbe3.ndf(1, ndf=6)
+        rbe3.tcl(str(tmp_path / "d.tcl"), flat=True)
+        (line,) = [ln for ln in (tmp_path / "d.tcl").read_text(
+            encoding="utf-8").splitlines()
+            if ln.startswith("element LadrunoDistributingCoupling")]
+        tok = line.split()
+        top = _ids(rbe3.fem, pg="pier_2.top")
+        assert tok[3:5] == ["1", "9"]
+        assert [int(t) for t in tok[5:14]] == top
+        if weighting == "uniform":
+            assert len(tok) == 14, line
+            continue
+        assert tok[14] == "-w"
+        c = _coords(rbe3.fem)
+
+        def tributary(nid: int) -> float:
+            on_edge = sum(abs(v - SIDE / 2) > 1.0 for v in c[nid][:2])
+            return {2: 6.25, 1: 12.5, 0: 25.0}[on_edge]
+        np.testing.assert_allclose([float(w) for w in tok[15:]],
+                                   [tributary(t) for t in top], rtol=1e-12)
+
     emb = (Assembly("emb").instance("host", files["block"])
            .instance("bar", files["cube"], translate=CUBE_AT)
            .embedded("host.Vol", "bar.Vol").bridge(ndm=3, ndf=3))
@@ -508,6 +538,42 @@ def test_bad_declarations_raise_and_record_nothing(files, verb, match):
     assert [t.name for t in asm.ties] == ["retry"]
 
 
+@pytest.mark.parametrize("case", ["walls_horizontal_plane", "ref_far_above"])
+def test_a_diaphragm_whose_only_plane_node_is_its_master_raises(files, case):
+    """Review F1: the reference master is always in its own plane, so a
+    diaphragm whose slave port has no node there routes one record with
+    no slave (``rigidDiaphragm 3 1``). It must raise naming both ports."""
+    from apeGmsh.assembly import AssemblyError
+
+    if case == "walls_horizontal_plane":
+        # cm sits at z = 11; the walls' nodes at z = 10 and 12 are 1 away.
+        asm = _walls(files).rigid_diaphragm(
+            "cm", "w1.Slab", plane_normal=(0, 0, 1), constrained_dofs=(1, 2, 6),
+            plane_tolerance=0.5)
+        ports, ndf = ("cm", "w1.Slab"), 6
+    else:
+        asm = (_stack(files).node("ref", (0.0, 0.0, 1000.0))
+               .rigid_diaphragm("ref", "pier_2.top"))
+        ports, ndf = ("ref", "pier_2.top"), 3
+    with pytest.raises(AssemblyError, match="resolved to no record") as info:
+        asm.bridge(ndm=3, ndf=ndf)
+    assert f"rigid_diaphragm({ports[0]!r}, {ports[1]!r})" in str(info.value)
+
+
+def test_the_v1_couple_refuses_instance_form_options(files):
+    """Review F2: v1 forwards unknown keywords to ``g.constraints``; the
+    instance-form ``reference=`` / ``weighting=`` must not vanish there."""
+    from apeGmsh.assembly import Assembly, AssemblyError
+
+    for kw in ({"reference": "ref"}, {"weighting": "area"}):
+        asm = Assembly("v1").add("h", str(files["block"]))
+        with pytest.raises(AssemblyError, match="reference= and weighting="):
+            asm.couple("h", "h", kind="equal_dof", ports=("top", "bot"), **kw)
+        assert asm._couples == []
+    asm.couple("h", "h", kind="equal_dof", ports=("top", "bot"))
+    assert len(asm._couples) == 1
+
+
 # ---------------------------------------------------------------------------
 # D3 — the unroutable verbs stay out
 # ---------------------------------------------------------------------------
@@ -619,6 +685,15 @@ def test_foreign_params_are_refused_on_write_and_on_read(files, tmp_path):
         params[1] = vals[1].replace('"dofs":null', '"dofs":[0]')
     with pytest.raises(AssemblyError, match="1..6"):
         Assembly.from_h5(_tampered(out, tmp_path / "bad.h5", edit))
+
+    # Review F3: a foreign *key* in a coupling row is refused on read.
+    def foreign_key(f):
+        params = f["assembly/ties/params"]
+        vals = [p.decode() if isinstance(p, bytes) else p for p in params[()]]
+        assert vals[1] == '{"dofs":null}'
+        params[1] = '{"dofs":null,"extra":1}'
+    with pytest.raises(AssemblyError, match=r"params carry \['dofs', 'extra'\]"):
+        Assembly.from_h5(_tampered(out, tmp_path / "bad3.h5", foreign_key))
 
     def node_ports(f):
         f["assembly/ties/master"][0] = "pier_1.top"
