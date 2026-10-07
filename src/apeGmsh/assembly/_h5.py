@@ -49,6 +49,7 @@ __all__ = [
     "InstanceRow",
     "TieRow",
     "read_assembly_zone",
+    "validate_rows",
     "write_assembly_zone",
 ]
 
@@ -153,6 +154,15 @@ def write_assembly_zone(
             if ASSEMBLY_KEY in meta.attrs:
                 del meta.attrs[ASSEMBLY_KEY]
             raise
+
+
+def validate_rows(
+    name: str, instances: Sequence[InstanceRow], ties: Sequence[TieRow],
+) -> None:
+    """Raise :class:`AssemblyError` for any row :func:`write_assembly_zone`
+    would refuse, without touching a file. ``Assembly.h5`` calls it before
+    ``apeSees.h5`` overwrites the target."""
+    _columns(name, instances, ties)
 
 
 def _columns(

@@ -79,7 +79,8 @@ def check_label(label: object, *, what: str) -> str:
 def check_rotate(
     rotate: object,
 ) -> "tuple[tuple[float, float, float], float] | None":
-    """Normalise ``rotate=((ax, ay, az), theta)``; refuse a zero axis."""
+    """Normalise ``rotate=((ax, ay, az), theta)``; refuse a zero axis and
+    a non-finite (``nan``, ``inf``) component."""
     if rotate is None:
         return None
     try:
@@ -90,16 +91,26 @@ def check_rotate(
         raise AssemblyError(
             f"rotate={rotate!r}: expected ((ax, ay, az), theta_radians)."
         ) from exc
+    if not all(math.isfinite(v) for v in (ax, ay, az, th)):
+        raise AssemblyError(
+            f"rotate={rotate!r}: the axis and angle must be finite numbers.")
     if math.hypot(ax, ay, az) == 0.0:
         raise AssemblyError(f"rotate={rotate!r}: the rotation axis is zero.")
     return ((ax, ay, az), th)
 
 
 def check_translate(translate: Sequence[float]) -> tuple[float, float, float]:
-    """Normalise ``translate=(x, y, z)``."""
-    t = tuple(float(v) for v in translate)
+    """Normalise ``translate=(x, y, z)``; refuse a non-finite component."""
+    try:
+        t = tuple(float(v) for v in translate)
+    except (TypeError, ValueError) as exc:
+        raise AssemblyError(
+            f"translate={translate!r}: expected (x, y, z).") from exc
     if len(t) != 3:
         raise AssemblyError(f"translate={translate!r}: expected (x, y, z).")
+    if not all(math.isfinite(v) for v in t):
+        raise AssemblyError(
+            f"translate={translate!r}: every component must be a finite number.")
     return (t[0], t[1], t[2])
 
 

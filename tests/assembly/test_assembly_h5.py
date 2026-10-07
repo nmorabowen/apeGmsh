@@ -57,10 +57,27 @@ TOL = 0.01
 GRANULE = 1_000_000
 #: Nodes on one face of the 2x2x2 block: (2 + 1) ** 2.
 FACE_NODES = 9
-#: The attributes INV-2 lets differ between two runs: the archive's write
-#: time and session id (ADR 0117 INV-2), and each /composed_from entry's
-#: compose time (ADR 0038 ``composed_at``), a timestamp of the same kind.
-RUN_STAMPS = frozenset({"created_iso", "session_id", "composed_at"})
+#: The attributes INV-2 lets differ between two runs, by exact path: the
+#: archive's write time and session id (ADR 0117 INV-2), and each
+#: /composed_from entry's compose time (ADR 0038 ``composed_at``), a
+#: timestamp of the same kind that the ADR's list omits (#1550). The same
+#: attribute name anywhere else is compared.
+RUN_STAMPS: frozenset[tuple[str, str]] = frozenset({
+    ("meta", "created_iso"), ("meta", "session_id"),
+    ("composed_from/*", "composed_at"),
+})
+
+
+def is_run_stamp(path: str, attr: str) -> bool:
+    """Whether ``path@attr`` is one of :data:`RUN_STAMPS`; ``*`` matches
+    exactly one path segment."""
+    for pattern, name in RUN_STAMPS:
+        if attr != name:
+            continue
+        want, got = pattern.split("/"), path.split("/")
+        if len(want) == len(got) and all(w in ("*", g) for w, g in zip(want, got)):
+            return True
+    return False
 
 _ROOT = Path(__file__).resolve().parents[2]
 CORPUS = _ROOT / "tests" / "fixtures" / "schema_corpus"
@@ -143,9 +160,10 @@ def build_archive(workdir: Path) -> tuple[Path, Path]:
     return archive, deck
 
 
-def h5dump(path: Path, *, skip_attrs: frozenset[str] = RUN_STAMPS) -> dict[str, Any]:
+def h5dump(path: Path, *, skip_stamps: bool = True) -> dict[str, Any]:
     """Every group, dataset and attribute of ``path`` as comparable values:
-    names, dtypes, shapes and the raw bytes of numeric data."""
+    names, dtypes, shapes and the raw bytes of numeric data. With
+    ``skip_stamps`` the :data:`RUN_STAMPS` attributes are left out."""
 
     def value(x: Any) -> Any:
         a = np.asarray(x)
@@ -158,15 +176,16 @@ def h5dump(path: Path, *, skip_attrs: frozenset[str] = RUN_STAMPS) -> dict[str, 
         return [a.dtype.str, list(a.shape), hashlib.sha256(
             np.ascontiguousarray(a).tobytes()).hexdigest()]
 
-    def attrs(obj: Any) -> dict[str, Any]:
-        return {k: value(obj.attrs[k]) for k in sorted(obj.attrs) if k not in skip_attrs}
+    def attrs(name: str, obj: Any) -> dict[str, Any]:
+        return {k: value(obj.attrs[k]) for k in sorted(obj.attrs)
+                if not (skip_stamps and is_run_stamp(name, k))}
 
     out: dict[str, Any] = {}
     with h5py.File(path, "r") as f:
-        out["/"] = {"attrs": attrs(f)}
+        out["/"] = {"attrs": attrs("", f)}
 
         def visit(name: str, obj: Any) -> None:
-            entry: dict[str, Any] = {"attrs": attrs(obj)}
+            entry: dict[str, Any] = {"attrs": attrs(name, obj)}
             if isinstance(obj, h5py.Dataset):
                 entry["dtype"] = str(obj.dtype)
                 entry["data"] = value(obj[()])
@@ -544,6 +563,93 @@ def test_reader_refuses_an_unknown_kind_and_ragged_columns(built, tmp_path):
 
     with pytest.raises(MalformedH5Error, match="ties/params is missing"):
         Assembly.from_h5(_tampered(built, tmp_path, "missing.h5", missing))
+
+
+def test_a_refused_instance_records_no_provenance_and_can_be_retried(built, tmp_path):
+    """Review F1: every check runs before the provenance capture."""
+    from apeGmsh.assembly import Assembly, AssemblyError
+    from apeGmsh.mesh import FEMData
+
+    asm = Assembly("retry")
+    with pytest.raises(AssemblyError, match="axis is zero"):
+        asm.instance("A", built["block"], rotate=((0.0, 0.0, 0.0), 1.0))
+    with pytest.raises(AssemblyError, match="finite"):
+        asm.instance("A", built["block"], translate=(0.0, math.nan, 0.0))
+    asm.instance("A", built["block"])
+    _bridge_plain(asm)
+    out = tmp_path / "retry.h5"
+    asm.h5(out)
+    paths = [r.path for r in FEMData.from_h5(str(out)).provenance.records
+             if r.path.startswith("assembly/")]
+    assert paths == ["assembly/instances/A"]
+
+
+def test_a_refused_h5_leaves_an_existing_archive_byte_identical(built, tmp_path, monkeypatch):
+    """Review F2: the rows are validated before ops.h5 overwrites the target."""
+    import dataclasses
+
+    from apeGmsh.assembly import AssemblyError, _assembly
+
+    out = tmp_path / "keep.h5"
+    shutil.copy(built["archive"], out)
+    before = out.read_bytes()
+    real = _assembly._tie_rows
+
+    def zero_records(b):
+        return [dataclasses.replace(t, n_records=0) for t in real(b)]
+
+    monkeypatch.setattr(_assembly, "_tie_rows", zero_records)
+    with pytest.raises(AssemblyError, match="n_records=0"):
+        built["asm"].h5(out, model_name="stack")
+    assert out.read_bytes() == before
+
+
+def test_reader_refuses_a_zero_axis_with_a_nonzero_angle(built, tmp_path):
+    """Review F3: only the all-zero rotate row means 'not rotated'."""
+    from apeGmsh.assembly import Assembly
+    from apeGmsh.opensees.emitter.h5_reader import MalformedH5Error
+
+    def tilt(f):
+        f["assembly/instances/rotate"][0, 3] = 0.5
+
+    with pytest.raises(MalformedH5Error, match="zero axis with a nonzero angle"):
+        Assembly.from_h5(_tampered(built, tmp_path, "tilt.h5", tilt))
+
+
+@pytest.mark.parametrize("bad", [math.nan, math.inf, -math.inf])
+def test_non_finite_translate_or_rotate_is_refused(built, bad):
+    """Review F5: nan and inf are refused before anything is recorded."""
+    from apeGmsh.assembly import Assembly, AssemblyError
+    from apeGmsh.assembly._instances import check_rotate, check_translate
+
+    with pytest.raises(AssemblyError, match="finite"):
+        check_translate((0.0, bad, 0.0))
+    with pytest.raises(AssemblyError, match="finite"):
+        check_rotate(((0.0, 0.0, bad), 1.0))
+    with pytest.raises(AssemblyError, match="finite"):
+        check_rotate(((0.0, 0.0, 1.0), bad))
+    asm = Assembly("x")
+    with pytest.raises(AssemblyError, match="finite"):
+        asm.instance("a", built["block"], translate=(bad, 0.0, 0.0))
+    assert asm.instances == ()
+
+
+def test_inv2_skips_the_run_stamps_only_at_their_own_paths(built, tmp_path):
+    """Review F4: a run-stamp name anywhere else is still compared."""
+    assert is_run_stamp("meta", "created_iso")
+    assert is_run_stamp("composed_from/pier_1", "composed_at")
+    assert not is_run_stamp("opensees", "created_iso")
+    assert not is_run_stamp("composed_from/pier_1/properties", "composed_at")
+    copies = []
+    for k, stamp in enumerate(("a", "b")):
+        out = tmp_path / f"stamped_{k}.h5"
+        shutil.copy(built["archive"], out)
+        with h5py.File(out, "r+") as f:
+            f["meta"].attrs["created_iso"] = stamp  # skipped
+            f["assembly"].attrs["session_id"] = stamp  # compared
+        copies.append(h5dump(out))
+    assert copies[0]["meta"] == copies[1]["meta"]
+    assert copies[0]["assembly"] != copies[1]["assembly"]
 
 
 # ---------------------------------------------------------------------------

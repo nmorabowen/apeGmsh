@@ -39,7 +39,13 @@ from typing import TYPE_CHECKING, Literal, Sequence
 
 from apeGmsh._internal.provenance import ProvenanceStore
 
-from ._h5 import InstanceRow, TieRow, read_assembly_zone, write_assembly_zone
+from ._h5 import (
+    InstanceRow,
+    TieRow,
+    read_assembly_zone,
+    validate_rows,
+    write_assembly_zone,
+)
 from ._instances import (
     Instance,
     Tie,
@@ -138,14 +144,16 @@ class Assembly(_AssemblyV1):
         path = Path(source)
         if not path.is_file():
             raise AssemblyError(f"instance {label!r}: no file at {str(path)!r}.")
-        self._provenance.capture(
-            "assembly", "instances", label, on_existing="raise")
-        self._instances.append(Instance(
+        placed = Instance(
             label=label,
             source=path,
             translate=check_translate(translate),
             rotate=check_rotate(rotate),
-        ))
+        )
+        # Every check above runs first: a refused call records nothing.
+        self._provenance.capture(
+            "assembly", "instances", label, on_existing="raise")
+        self._instances.append(placed)
         return self
 
     def tie(
@@ -327,6 +335,8 @@ class Assembly(_AssemblyV1):
             )
         instances = _instance_rows(b)
         ties = _tie_rows(b)
+        # Refuse a bad row before ops.h5 overwrites ``path``.
+        validate_rows(self.name, instances, ties)
         b.ops.h5(str(path), model_name=model_name)
         write_assembly_zone(path, self.name, instances, ties)
 
@@ -341,16 +351,28 @@ class Assembly(_AssemblyV1):
         with ``OpenSeesModel.from_h5`` to rebuild the model.
 
         Raises :class:`AssemblyError` for a file without ``/assembly`` or
-        with a row the declaring verbs would refuse.
+        with a row the declaring verbs would refuse, and ``MalformedH5Error``
+        for a rotation row with a zero axis and a nonzero angle (only the
+        all-zero row means "not rotated").
         """
         from apeGmsh._kernel.defs.constraints import TieDef
+        from apeGmsh.opensees.emitter.h5_reader import MalformedH5Error
 
         zone = read_assembly_zone(path)
         asm = cls(zone.name)
         for r in zone.instances:
             check_label(r.label, what="instance label")
             ax, ay, az, theta = r.rotate
-            rotate = None if (ax, ay, az) == (0.0, 0.0, 0.0) else ((ax, ay, az), theta)
+            if (ax, ay, az, theta) == (0.0, 0.0, 0.0, 0.0):
+                rotate = None
+            elif (ax, ay, az) == (0.0, 0.0, 0.0):
+                raise MalformedH5Error(
+                    f"{path}: /assembly instance {r.label!r} has rotate "
+                    f"{r.rotate!r}: a zero axis with a nonzero angle. Only "
+                    f"the all-zero row means 'not rotated'."
+                )
+            else:
+                rotate = ((ax, ay, az), theta)
             asm._instances.append(Instance(
                 label=r.label,
                 source=Path(r.source_path),
