@@ -30,12 +30,18 @@ from tests.assembly.test_two_instances_one_tie import (
     H,
     SIDE,
     block_fem,
-    declare_block,
     write_instance,
 )
 
 DELTA = 0.01                         # prescribed shortening, mm
 K_EXACT = E * SIDE * SIDE / (2 * H)  # two blocks of EA/H in series
+
+
+def _declare(ops) -> None:
+    """The block's model content with ``nu = 0``: the 1-D closed form."""
+    ops.model(ndm=3, ndf=3)
+    steel = ops.nDMaterial.ElasticIsotropic(E=E, nu=0.0, name="steel")
+    ops.element.stdBrick(pg="Vol", material=steel)
 
 
 def _solve(workdir: Path) -> dict:
@@ -45,7 +51,7 @@ def _solve(workdir: Path) -> dict:
     from apeGmsh.assembly import Assembly
     from apeGmsh.opensees.emitter.live import LiveOpsEmitter
 
-    block = write_instance(workdir / "block.h5", block_fem(workdir), declare_block)
+    block = write_instance(workdir / "block.h5", block_fem(workdir), _declare)
     ops = (
         Assembly("stack")
         .instance("pier_1", block)

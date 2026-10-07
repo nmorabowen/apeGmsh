@@ -6,9 +6,9 @@ call leaves the assembly unchanged (ADR 0117 INV-1, INV-7).
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Sequence, cast
+from typing import Any, Sequence, cast
 
 from ._v1 import AssemblyError
 
@@ -50,6 +50,8 @@ class Tie:
     dofs: "tuple[int, ...] | None"
     tolerance: float
     name: "str | None"
+    #: The ``TieDef`` built (and so validated) when ``tie()`` was called.
+    definition: Any = field(compare=False, repr=False)
 
 
 def check_label(label: object, *, what: str) -> str:

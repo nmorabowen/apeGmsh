@@ -28,6 +28,7 @@ unchanged until AS5 deletes them; one assembly uses one API or the other
 """
 from __future__ import annotations
 
+import warnings
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, Sequence
 
@@ -47,7 +48,11 @@ if TYPE_CHECKING:
     from apeGmsh.opensees import apeSees
     from apeGmsh.opensees.opensees_model import OpenSeesModel
 
-__all__ = ["Assembly"]
+__all__ = ["Assembly", "AssemblyRankWarning"]
+
+
+class AssemblyRankWarning(UserWarning):
+    """``bridge()`` built a partitioned FEM whose rank 0 is empty (AS4, #1530)."""
 
 
 class Assembly(_AssemblyV1):
@@ -133,7 +138,9 @@ class Assembly(_AssemblyV1):
 
         Raises :class:`AssemblyError` for a port that names no declared
         instance (a bare port names an assembly object, and this assembly
-        declares none), or a ``name`` that contains ``.`` or repeats.
+        declares none), a ``name`` that contains ``.`` or repeats, or tie
+        options ``TieDef`` refuses (an unknown ``enforce``, ``method="mortar"``
+        without ``enforce="equation"``).
         """
         self._refuse_mixed("tie")
         labels = [i.label for i in self._instances]
@@ -143,14 +150,27 @@ class Assembly(_AssemblyV1):
             check_label(name, what="tie name")
             if any(t.name == name for t in self._ties):
                 raise AssemblyError(f"tie name {name!r} is already declared.")
+        from apeGmsh._kernel.defs.constraints import TieDef
+
+        dofs_t = tuple(int(d) for d in dofs) if dofs is not None else None
+        try:
+            definition = TieDef(
+                master_label=master, slave_label=slave,
+                dofs=list(dofs_t) if dofs_t is not None else None,
+                tolerance=float(tolerance), enforce=enforce, method=method,
+                name=name,
+            )
+        except ValueError as exc:
+            raise AssemblyError(f"tie({master!r}, {slave!r}): {exc}") from exc
         self._ties.append(Tie(
             master=master,
             slave=slave,
             enforce=enforce,
             method=method,
-            dofs=tuple(int(d) for d in dofs) if dofs is not None else None,
+            dofs=dofs_t,
             tolerance=float(tolerance),
             name=name,
+            definition=definition,
         ))
         return self
 
@@ -170,9 +190,12 @@ class Assembly(_AssemblyV1):
         analysis on it. ``element_tags="fem"`` (the default) keeps every
         element's relocated FEM id as its tag.
 
-        Raises :class:`AssemblyError` if no instance is declared, a tie
-        resolves to no record, or an instance carries model content AS1
-        cannot rehydrate.
+        Raises :class:`AssemblyError` if no instance is declared, an
+        instance was built with another ``ndm`` or ``ndf``, a tie resolves to
+        no record, or an instance carries model content AS1 cannot rehydrate.
+        Warns :class:`AssemblyRankWarning` when the merged FEM is partitioned
+        (always, until AS4): rank 0 is empty, so use ``tcl(flat=True)`` for
+        the serial deck.
         """
         self._refuse_mixed("bridge")
         if not self._instances:
@@ -183,6 +206,16 @@ class Assembly(_AssemblyV1):
         from ._rehydrate import rehydrate
 
         fem = self._merged_fem()
+        if len(fem.partitions) > 1:
+            warnings.warn(
+                f"Assembly({self.name!r}).bridge(): the merged FEM is "
+                f"partitioned one rank per instance with an empty rank 0 "
+                f"(no host; AS4, #1530), so the default tcl() writes a "
+                f"partitioned deck. tcl(flat=True) is the serial deck; live "
+                f"runs are serial.",
+                AssemblyRankWarning,
+                stacklevel=2,
+            )
         ops = apeSees(fem, element_tags=element_tags)
         ops.model(ndm=ndm, ndf=ndf)
         # Read each source once. The key carries the resolved path as well
@@ -197,17 +230,17 @@ class Assembly(_AssemblyV1):
             if key not in models:
                 models[key] = OpenSeesModel.from_h5(inst.source)
             model = models[key]
-            if model.ndm != ndm:
+            if model.ndm != ndm or model.ndf != ndf:
                 raise AssemblyError(
-                    f"instance {inst.label!r} was built with ndm={model.ndm}; "
-                    f"the assembly bridge has ndm={ndm}."
+                    f"instance {inst.label!r} was built with ndm={model.ndm}, "
+                    f"ndf={model.ndf}; the assembly bridge has ndm={ndm}, "
+                    f"ndf={ndf}."
                 )
             rehydrate(ops, inst.label, model)
         return ops
 
     def _merged_fem(self) -> "FEMData":
         """Every instance composed onto an empty broker, then every tie."""
-        from apeGmsh._kernel.defs.constraints import TieDef
         from apeGmsh._kernel.resolvers._chain_phase_router import route_def_to_fem
 
         fem = _empty_fem()
@@ -220,14 +253,8 @@ class Assembly(_AssemblyV1):
             )
         for t in self._ties:
             before = _constraint_count(fem)
-            defn = TieDef(
-                master_label=t.master, slave_label=t.slave,
-                dofs=list(t.dofs) if t.dofs is not None else None,
-                tolerance=t.tolerance, enforce=t.enforce, method=t.method,
-                name=t.name,
-            )
             try:
-                routed = route_def_to_fem(fem, defn)
+                routed = route_def_to_fem(fem, t.definition)
             except KeyError as exc:
                 raise AssemblyError(
                     f"tie({t.master!r}, {t.slave!r}): a port is not a physical "

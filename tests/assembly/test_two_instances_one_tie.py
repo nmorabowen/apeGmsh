@@ -33,6 +33,9 @@ from apeGmsh import apeGmsh
 
 # Units: N, mm, MPa.
 E = 200_000.0
+#: Nonzero and distinct, so a rehydrator that swaps two params changes the deck.
+NU = 0.3
+RHO = 7.85e-9
 SIDE = 10.0
 H = 10.0
 TOL = 0.01
@@ -61,7 +64,7 @@ def block_fem(workdir: Path):
 
 def declare_block(ops, *, extra: bool = False) -> None:
     ops.model(ndm=3, ndf=3)
-    steel = ops.nDMaterial.ElasticIsotropic(E=E, nu=0.0, name="steel")
+    steel = ops.nDMaterial.ElasticIsotropic(E=E, nu=NU, rho=RHO, name="steel")
     ops.element.stdBrick(pg="Vol", material=steel)
     if extra:  # a material AS1 does not rehydrate
         ops.uniaxialMaterial.ElasticPP(E=1.0, epsyP=0.01)
@@ -80,7 +83,7 @@ def plate_fem(workdir: Path):
 def declare_plate(ops) -> None:
     ops.model(ndm=3, ndf=6)
     sec = ops.section.ElasticMembranePlateSection(
-        E=E, nu=0.2, h=0.5, name="slab")
+        E=E, nu=0.2, h=0.5, rho=2.4e-9, name="slab")
     ops.element.ShellMITC4(pg="Slab", section=sec)
 
 
@@ -183,8 +186,8 @@ def test_same_file_twice_registers_two_namespaced_materials(files, monkeypatch):
 
     deck = _deck(ops, files["dir"] / "stack.tcl")
     mats = [ln for ln in deck.splitlines() if ln.startswith("nDMaterial")]
-    assert mats == ["nDMaterial ElasticIsotropic 1 200000.0 0.0 0.0",
-                    "nDMaterial ElasticIsotropic 2 200000.0 0.0 0.0"]
+    assert mats == [f"nDMaterial ElasticIsotropic {k} 200000.0 0.3 7.85e-09"
+                    for k in (1, 2)]
     # Each brick's last token is its material tag; FEM ids name the instance.
     by_instance: dict[int, set[str]] = {1: set(), 2: set()}
     for ln in deck.splitlines():
@@ -357,3 +360,53 @@ def test_assembly_package_names_no_tag_allocator():
             if name is not None and "TagAllocator" in name:
                 offenders.append(f"{path.name}:{node.lineno}")
     assert offenders == []
+
+
+# ---------------------------------------------------------------------------
+# Review round 1 (#1529)
+# ---------------------------------------------------------------------------
+
+def test_dedup_key_keeps_two_files_that_share_a_fem_hash_apart(files):
+    """``block.h5`` and ``block_extra.h5`` share their mesh, so their FEM
+    hash, but only the second carries an ``ElasticPP``. Keyed by hash alone,
+    the second instance would reuse the first file's model and build."""
+    from apeGmsh.assembly import Assembly, AssemblyError
+    from apeGmsh.mesh import FEMData
+
+    a, b = files["block"], files["block_extra"]
+    assert (FEMData.from_h5(str(a)).snapshot_id
+            == FEMData.from_h5(str(b)).snapshot_id)
+    asm = (Assembly("pair").instance("a", a)
+           .instance("b", b, translate=(0.0, 0.0, H)))
+    with pytest.raises(AssemblyError, match="instance 'b'.*ElasticPP"):
+        asm.bridge(ndm=3, ndf=3)
+
+
+@pytest.mark.parametrize("kw, match", [
+    ({"enforce": "bogus"}, "bogus"),
+    ({"method": "mortar"}, "mortar"),       # mortar needs enforce="equation"
+])
+def test_bad_tie_options_raise_at_declaration(files, kw, match):
+    from apeGmsh.assembly import Assembly, AssemblyError
+
+    asm = (Assembly("s").instance("pier_1", files["block"])
+           .instance("pier_2", files["block"], translate=(0.0, 0.0, H)))
+    with pytest.raises(AssemblyError, match=match):
+        asm.tie("pier_1.top", "pier_2.bot", **kw)
+    assert asm.ties == ()
+
+
+def test_ndf_mismatch_raises(files):
+    from apeGmsh.assembly import Assembly, AssemblyError
+
+    asm = Assembly("x").instance("slab", files["plate"])
+    with pytest.raises(AssemblyError, match="ndf=6.*ndf=3"):
+        asm.bridge(ndm=3, ndf=3)
+
+
+def test_bridge_warns_that_the_default_deck_has_an_empty_rank_0(files):
+    from apeGmsh.assembly import AssemblyRankWarning
+
+    with pytest.warns(AssemblyRankWarning, match=r"tcl\(flat=True\)"):
+        ops = _stack(files).bridge(ndm=3, ndf=3)
+    assert len(ops.fem.partitions) == 3      # empty rank 0 + one per instance

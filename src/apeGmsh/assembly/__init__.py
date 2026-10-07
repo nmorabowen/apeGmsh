@@ -8,8 +8,8 @@
 """
 from __future__ import annotations
 
-from ._assembly import Assembly
+from ._assembly import Assembly, AssemblyRankWarning
 from ._instances import Instance, Tie
 from ._v1 import AssemblyError
 
-__all__ = ["Assembly", "AssemblyError", "Instance", "Tie"]
+__all__ = ["Assembly", "AssemblyError", "AssemblyRankWarning", "Instance", "Tie"]

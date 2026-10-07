@@ -231,8 +231,11 @@ opensees schema versions do not move. The `/composed_from` writer retires when
 Unchanged by construction. The flat FEMData keeps ADR 0038's three-layer rank
 model (`partition_rank=` per instance); cross-instance ties are ordinary
 cross-partition MP constraints (ADR 0027 replication; S7 rank-invariant
-tags); and the resident-graph pass (ADR 0100) sees one flat model. The first
-slice includes a two-rank test.
+tags); and the resident-graph pass (ADR 0100) sees one flat model. The
+two-rank test belongs to P4 (AS4, #1530), not the first slice. Until AS4
+settles the rank layout, the merge engine keeps rank 0 for a host that v2 does
+not have, so an assembly's default `tcl()` is partitioned with an empty rank 0;
+`bridge()` warns, and `tcl(flat=True)` is the serial deck (AS1, #1529).
 
 ### D7 — Migration: today's compose is deleted, not deprecated
 
@@ -281,8 +284,10 @@ Each is testable.
    covers `src/apeGmsh/assembly/` (no `TagAllocator(`, no `allocate*`); a
    planted mint raises `TagLawError`.
 4. **INV-4.** An assembly of one instance at the identity transform emits a
-   deck equal to the instance's own `apeSees(fem).tcl()` after stripping the
-   `inst.` prefix from names (rehydration parity).
+   serial deck (`tcl(flat=True)`) equal to the instance's own
+   `apeSees(fem, element_tags="fem").tcl()` after stripping the `inst.`
+   prefix from names and shifting the relocated FEM ids back by
+   `fem_id_base - source_min` (rehydration parity).
 5. **INV-5.** Carried-set exclusivity: the assembly bridge's `names` equal the
    union of each instance's `OpenSeesModel.from_h5(...).names` for model
    kinds, prefixed, and contain no pattern, recorder, stage or analysis name.
