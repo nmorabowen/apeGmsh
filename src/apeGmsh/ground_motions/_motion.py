@@ -164,9 +164,16 @@ class GroundMotion:
             OpenSees applies the factor at runtime, so the underlying
             values stay readable. Defaults to ``1.0`` (no scaling).
         prepend_zero
-            Forwarded to ``ops.timeSeries.Path`` — prepend a ``(0, 0)``
-            sample so the structure starts at rest. Useful for records
-            that begin at non-zero acceleration.
+            Forwarded to ``ops.timeSeries.Path`` as ``-prependZero``: a
+            0 sample goes in front of the record, which shifts every
+            sample one ``dt`` later, so the structure starts at rest.
+            Useful for records that begin at non-zero acceleration.
+            **Uniform records only.** A non-uniform record emits a
+            ``time=`` Path, which OpenSees builds without ``-prependZero``,
+            so ``Path`` raises ``BridgeError`` (#1363). For a non-uniform
+            record, re-base it yourself: put a ``(t0, 0.0)`` sample in
+            front of its time and acceleration arrays, with ``t0`` before
+            its first time, and call this with ``prepend_zero=False``.
 
         Returns
         -------

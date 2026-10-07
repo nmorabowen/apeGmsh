@@ -17,3 +17,5 @@ now warns with `SeriesEndsMidStageWarning`, which is exported from
 last sample's time too, so a ramp that ends exactly on the stage's last
 increment unloads on that increment. `model.h5` stores the emitted tokens,
 so `-useLast` round-trips with no schema change.
+`Motion.to_time_series(prepend_zero=True)` on a non-uniform record now
+raises the same `BridgeError`; its docstring says how to re-base the record.

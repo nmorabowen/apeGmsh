@@ -145,12 +145,24 @@ def test_set_time_fix_is_silent() -> None:
 @pytest.mark.parametrize("series_kw", [
     {"time": (0.0, 1.0), "values": (0.0, 1.0)},          # matches window
     {"time": (0.5, 3.0), "values": (1.0, 1.0)},          # partial overlap
-    {"dt": 0.25, "values": (0.0, 1.0, 2.0, 3.0, 4.0)},   # dt route
+    {"dt": 0.25, "values": (0.0, 1.0, 2.0, 3.0, 4.0, 5.0)},  # dt route
     {"dt": 1.0, "values": (1.0, 2.0), "prepend_zero": True},
 ])
 def test_overlapping_path_is_silent(series_kw: dict[str, Any]) -> None:
     ops = _ops()
     _stage(ops, ops.timeSeries.Path(**series_kw))
+
+
+def test_dt_window_ending_on_last_sample_warns_mid_stage() -> None:
+    """A ``dt=`` series reads 0 at its last sample's time
+    (``incr2 >= size``), so a window ending exactly there is not inert
+    (no #1334 warning) but drops the load on its last increment (#1363)."""
+    from apeGmsh.opensees import SeriesEndsMidStageWarning
+
+    ops = _ops()
+    series = ops.timeSeries.Path(dt=0.25, values=(0.0, 1.0, 2.0, 3.0, 4.0))
+    with pytest.warns(SeriesEndsMidStageWarning, match="t=1 on"):
+        _stage(ops, series)
 
 
 def test_linear_and_constant_are_silent() -> None:
