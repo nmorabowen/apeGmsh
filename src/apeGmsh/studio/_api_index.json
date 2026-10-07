@@ -24,6 +24,18 @@
       "skill": "references/compose.md",
       "symbol": "Assembly.couple"
     },
+    "Assembly.from_h5": {
+      "doc": "Re-list the instances and ties an assembly archive declares.",
+      "signature": "from_h5(path: \"'str | Path'\") -> \"'Assembly'\"",
+      "skill": "references/compose.md",
+      "symbol": "Assembly.from_h5"
+    },
+    "Assembly.h5": {
+      "doc": "Write the last ``bridge()``'s ``model.h5`` plus ``/assembly``.",
+      "signature": "h5(path: \"'str | Path'\", *, model_name: \"'str | None'\" = None) -> 'None'",
+      "skill": "references/compose.md",
+      "symbol": "Assembly.h5"
+    },
     "Assembly.instance": {
       "doc": "Place a saved ``model.h5`` under ``label``. Returns ``self``.",
       "signature": "instance(label: 'str', source: \"'str | Path'\", *, translate: 'Sequence[float]' = (0.0, 0.0, 0.0), rotate: \"'tuple[Sequence[float], float] | None'\" = None) -> \"'Assembly'\"",
