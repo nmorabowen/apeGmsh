@@ -15,10 +15,14 @@ helpers take the plan, read their family's rows, and mint nothing. An
 owner the plan does not hold raises :class:`~.build.TagPlanMiss`, naming
 the family and the owner.
 
-The plan is keyed by :class:`TagMode`, the ``(split, partitioned,
-staged)`` triple, because the split, partitioned and staged decks each
-number their derived tags in their own order today. The plan for one
-mode is what that mode's emit writes.
+Numbering is canonical: every mode mints its tags in the flat emit's
+order, so one owner has one tag whatever the mode, and a partitioned
+deck gives it the same tag on 1, 2 or 4 ranks (ADR 0114 D4, amended,
+item 4). The plan is still keyed by :class:`TagMode`, because a
+partitioned plan also carries the routing its emit reads (each rank's
+MP constraints, each contact's owner rank, the rank-by-rank write
+order), and its rows are in the order that mode's emit writes them.
+The tags in those rows are the flat walk's.
 
 A plan row is ``(kind, tag)`` in the emit's verb vocabulary: the verb,
 joined by ``:`` to its type token when the planner knows it
@@ -327,8 +331,8 @@ REGION_SITE_KINDS: frozenset[str] = frozenset(
 
 #: Every region name a named-region site declares, in first-seen order:
 #: ``(name, merged member nodes, first rank)``. The first rank is the
-#: runtime rank a partitioned emit numbers the region on (the first, in
-#: partition order, that holds a member), and ``None`` on a flat emit or
+#: runtime rank a partitioned emit first writes the region on (the first,
+#: in partition order, that holds a member), and ``None`` on a flat emit or
 #: when no rank holds one.
 NamedMembers = tuple[tuple[str, tuple[int, ...], "int | None"], ...]
 
@@ -344,7 +348,7 @@ class PlannedRegion(NamedTuple):
 class NamedRegion(NamedTuple):
     """A named region as the plan holds it: its merged member nodes, in
     first-seen order, its planned tag and, under a partitioned emit, the
-    rank it was numbered on.
+    first rank that writes it.
 
     ``tag`` is ``None`` for a region no emit writes (it has no members
     or, under a partitioned emit, no rank holds one). :meth:`planned_tag`
@@ -359,23 +363,24 @@ class NamedRegion(NamedTuple):
     def tag_on_rank(self, rank: int) -> int:
         """The tag ``rank``, which holds members of this region, writes.
 
-        The plan numbered the region on its first holder rank, so no
-        earlier rank may hold a member.
+        The plan writes the region first on its first holder rank, so
+        no earlier rank may hold a member. The tag is the flat walk's on
+        every rank.
         """
         if self.first_rank is None or rank < self.first_rank:
             raise _miss(
                 f"named region {self.name!r} has members on rank {rank}, "
-                f"but the region plan numbered it on rank {self.first_rank}: "
+                f"but the region plan writes it first on rank {self.first_rank}: "
                 "the plan was not made for this emit (ADR 0114 D4, amended)."
             )
         return self.planned_tag()
 
     def check_unheld_on(self, rank: int) -> None:
-        """Raise if the plan numbered this region on ``rank``, which holds
+        """Raise if the plan writes this region first on ``rank``, which holds
         none of its members."""
         if rank == self.first_rank:
             raise _miss(
-                f"the region plan numbered named region {self.name!r} on "
+                f"the region plan writes named region {self.name!r} first on "
                 f"rank {rank}, which holds none of its members: the plan "
                 "was not made for this emit (ADR 0114 D4, amended)."
             )
@@ -417,17 +422,46 @@ def plan_regions(
     return tuple(rows)
 
 
+def route_regions(
+    canonical: "Sequence[PlannedRegion]",
+    written: "Iterable[tuple[RegionSite, Sequence[object]]]",
+) -> tuple[PlannedRegion, ...]:
+    """The regions a partitioned emit writes, in its order, with the tags
+    the canonical (flat-order) walk minted.
+
+    ``canonical`` is :func:`plan_regions`'s result over the flat walk's
+    sites; ``written`` the sites the partitioned emit writes, in its own
+    order (``BuiltModel._region_sites``). A region it writes that the flat
+    walk did not number raises :class:`~.build.TagPlanMiss`.
+    """
+    by_key = {(row.site, row.key): row.tag for row in canonical}
+    rows: list[PlannedRegion] = []
+    for site, keys in written:
+        for key in keys:
+            tag = by_key.get((site, key))
+            if tag is None:
+                raise _miss(
+                    f"regions: the partitioned emit writes {site}/{key!r}, "
+                    "which the canonical (flat-order) walk did not number "
+                    "(ADR 0114 D4, amended)."
+                )
+            rows.append(PlannedRegion(site, key, tag))
+    return tuple(rows)
+
+
 @dataclass(frozen=True, slots=True)
 class RegionTagPlan(FamilyTagPlan):
     """Named regions, damping regions and recorder filter/energy regions.
 
     ``regions`` is :func:`plan_regions`'s result, made once by
     :func:`plan_tags` over ``BuiltModel._region_sites``: every region tag
-    the mode's emit writes, in the order it was minted, keyed by its site.
+    the mode's emit writes, keyed by its site, in the order it was minted
+    (flat) or written (partitioned, :func:`route_regions`), with the flat
+    walk's tags either way.
     ``named`` holds, per named-region site, every declared region name in
     first-seen order with its merged member nodes, so the emit writes the
-    members the plan resolved. ``partitioned`` says the named regions were
-    numbered rank by rank, each on the first rank that holds a member.
+    members the plan resolved. ``partitioned`` says the named regions are
+    written rank by rank, each first on the first rank that holds a member.
     ``fem`` is the FEM snapshot it was made over. The emit's writers read
     their tags here (:meth:`tags_for`, :meth:`named_for`) and mint none.
     """
@@ -454,16 +488,22 @@ class RegionTagPlan(FamilyTagPlan):
         if self.regions is None:
             return
         last = 0
+        seen: set[int] = set()
         for row in self.regions:
             if row.site[0] not in REGION_SITE_KINDS:
                 raise TagLawError(
                     f"regions: unknown region site {row.site[0]!r}.")
-            if row.tag <= last:
+            # A flat plan holds its regions in mint order, so its tags
+            # rise; a partitioned one holds them in its write order, with
+            # the flat walk's tags, so they are only distinct.
+            if row.tag in seen or (not self.partitioned and row.tag <= last):
                 raise TagLawError(
                     f"regions: tag {row.tag} of {row.site}/{row.key!r} "
-                    f"follows tag {last}; the plan holds its regions in the "
-                    "order it minted them, so its tags only rise."
+                    f"follows tag {last}; the plan numbers its regions in "
+                    "the flat walk's order, so a flat plan's tags only rise "
+                    "and no plan gives one tag to two regions."
                 )
+            seen.add(row.tag)
             last = row.tag
             at_site = self._by_site.setdefault(row.site, {})
             if row.key in at_site:
@@ -526,13 +566,14 @@ class RegionTagPlan(FamilyTagPlan):
         ``site``, in first-seen order; the plan must hold exactly them,
         in that order. Each comes with its planned members and tag.
 
-        A flat or split emit numbers the names that have members in
-        first-seen order. A partitioned emit numbers them rank by rank,
-        each on its first holder rank, in first-seen order within a rank;
-        its writers check each first rank (:meth:`NamedRegion.tag_on_rank`,
-        :meth:`NamedRegion.check_unheld_on`). Either way the planned tags
-        must be exactly those names', rising in that order: a plan that
-        dropped or swapped two raises :class:`TagLawError`.
+        A flat or split emit writes the names that have members in
+        first-seen order. A partitioned emit writes them rank by rank,
+        each first on its first holder rank, in first-seen order within a
+        rank; its writers check each first rank
+        (:meth:`NamedRegion.tag_on_rank`, :meth:`NamedRegion.check_unheld_on`).
+        Either way the plan must hold exactly those names, in that order,
+        each with the flat walk's tag: a plan that dropped or swapped two
+        raises :class:`TagLawError`.
         """
         self._planned(fem)
         members = tuple(self.named.get(site, ()))
@@ -579,7 +620,9 @@ class ParameterTagPlan(FamilyTagPlan):
     the order it writes them: the global initial stresses, then stage by
     stage its initial stresses, its absorbing flips and its updates (each
     rank by rank under a partitioned emit, a site with no element on its
-    rank holding no tag). ``owners`` is every ``(record, rank)`` the emit
+    rank holding no tag). The tags are the flat walk's: a record holds the
+    same tag on every rank that writes it. ``owners`` is every
+    ``(record, rank)`` the emit
     walks, derived from the model's records alone; the lines must be
     exactly those, by identity and in that order, or the plan raises when
     it is made. The writers read their lines (:meth:`line_at`,
@@ -609,6 +652,10 @@ class ParameterTagPlan(FamilyTagPlan):
         if self.lines is None:
             return
         last = 0
+        # Canonical numbering: one record has one set of tags on every
+        # rank, and no two records share a tag.
+        record_tags: dict[int, tuple[int, ...]] = {}
+        tag_record: dict[int, int] = {}
         for line in self.lines:
             if len(line.tags) not in PARAMETER_VERBS.get(line.verb, ()):
                 raise TagLawError(
@@ -622,6 +669,24 @@ class ParameterTagPlan(FamilyTagPlan):
                     f"parameters: a {type(line.record).__name__} is planned "
                     f"twice at rank {line.rank}.")
             self._index[key] = line
+            if line.tags:
+                held = record_tags.setdefault(id(line.record), line.tags)
+                if held != line.tags:
+                    raise TagLawError(
+                        f"parameters: a {type(line.record).__name__} holds "
+                        f"tags {held} on one rank and {line.tags} at rank "
+                        f"{line.rank}; a tag is rank-invariant."
+                    )
+            for tag in line.tags:
+                if tag_record.setdefault(tag, id(line.record)) != id(
+                        line.record):
+                    raise TagLawError(
+                        f"parameters: tag {tag} is planned for two records.")
+            # Sites outside any partition block are written in mint
+            # order, so their tags rise; a rank's flip or update reuses
+            # its record's tag, in the rank-by-rank write order.
+            if line.rank is not None:
+                continue
             for tag in line.tags:
                 if tag <= last:
                     raise TagLawError(
@@ -1060,24 +1125,29 @@ def plan_tags(bm: BuiltModel, mode: TagMode) -> TagPlan:
     ))
 
     # MP elements and interfaces: one ``element`` counter, after the
-    # element fan-out, interleaved as the mode's emit interleaves them;
-    # the interfaces also number their ``uniaxialMaterial`` pairs.
+    # element fan-out, interleaved as the flat emit interleaves them; the
+    # interfaces also number their ``uniaxialMaterial`` pairs.
     mp, interfaces = _plan_mp_elements_and_interfaces(bm, mode, tags)
 
-    # Contacts: every interaction, in the order its mode's emit writes
-    # it. No other family mints ``contactSurface`` or ``contact``.
+    # Contacts: every interaction, minted in the flat walk's order and
+    # held in the order the mode's emit writes it. No other family mints
+    # ``contactSurface`` or ``contact``.
     contacts = ContactTagPlan(contacts=_plan_contacts(bm, mode, tags))
 
-    # Regions: every named, damping and recorder region, in the order its
-    # mode's emit writes them. No other family mints ``region``.
-    sites, named = bm._region_sites(mode, ordered)
+    # Regions: every named, damping and recorder region, minted in the
+    # flat walk's order and held in the order the mode's emit writes them.
+    # No other family mints ``region``.
+    sites, written, named = bm._region_sites(mode, ordered)
+    planned_regions = plan_regions(sites, tags)
+    if mode.partitioned:
+        planned_regions = route_regions(planned_regions, written)
     regions = RegionTagPlan(
-        regions=plan_regions(sites, tags), named=named,
+        regions=planned_regions, named=named,
         partitioned=mode.partitioned, fem=bm.fem)
 
     # Parameters: every initial-stress ramp, absorbing flip and update,
-    # in the order the mode's emit writes them. No other family mints
-    # ``parameter``.
+    # minted in the flat walk's order and held in the order the mode's
+    # emit writes them. No other family mints ``parameter``.
     parameters = _plan_parameters(bm, mode, elements, tags)
 
     # Every family is planned: the frozen planner holds every tag the
@@ -1102,24 +1172,27 @@ def _plan_mp_elements_and_interfaces(
 ) -> tuple[MPElementPlan, InterfacePlan]:
     """The MP-element and interface plans of ``bm``'s emit in ``mode``.
 
-    Both families mint ``element`` tags, so they are planned in one walk,
-    in the order the mode's emit writes them:
+    Both families mint ``element`` tags, so every mode mints them in one
+    walk, in the order the flat emit writes them (canonical numbering):
+    the global MP-constraint pass (rigid bodies, kinematic couplings,
+    interpolation ties), the reinforce and embed ties, the unclaimed
+    interfaces, the rebar cells; then, stage by stage, the stage's claimed
+    MP constraints and claimed interfaces.
 
-    * flat: the global MP-constraint pass (rigid bodies,
-      kinematic couplings, interpolation ties), the reinforce and embed
-      ties, the unclaimed interfaces, the rebar cells; then, stage by
-      stage, the stage's claimed MP constraints and claimed interfaces;
-    * partitioned: every interface in one pre-pass (unclaimed, then each
-      stage's claimed ones: ADR 0093 S8/S9); then rank by rank the global
-      MP-constraint pass, routed once here
-      (:func:`~.build.plan_partitioned_mp_constraints`), and the rank's
-      reinforce ties and rebar cells
-      (``BuiltModel._plan_partitioned_reinforcement``); then stage by
-      stage, rank by rank, the stage's claimed MP constraints.
+    A partitioned emit writes the same elements in another order, with
+    those tags: every interface in one pre-pass (unclaimed, then each
+    stage's claimed ones: ADR 0093 S8/S9, the flat walk's own order); then
+    rank by rank the global MP-constraint pass, routed once here
+    (:func:`~.build.plan_partitioned_mp_constraints`), and the rank's
+    reinforce ties and rebar cells
+    (``BuiltModel._plan_partitioned_reinforcement``); then stage by stage,
+    rank by rank, the stage's claimed MP constraints. Its MP-element lines
+    are in that order (:func:`~.build.number_mp_elements`).
 
-    The partitioned emit refuses ``g.embed``, so no embed tie is planned
-    there. Each plan checks, as it is made, that it holds every element
-    and record the emit of ``bm.fem`` writes, once.
+    The partitioned emit refuses ``g.embed`` and skips an interpolation
+    with no master node, so the tags the flat walk gives those are not
+    written there. Each plan checks, as it is made, that it holds every
+    element and record the emit of ``bm.fem`` writes, once.
     """
     from .build import (
         InterfacePlan,
@@ -1136,6 +1209,7 @@ def _plan_mp_elements_and_interfaces(
         interpolation_records,
         mp_constraint_pools,
         mp_element_entry,
+        number_mp_elements,
         plan_interface_tags,
         plan_mp_elements,
         plan_partitioned_mp_constraints,
@@ -1158,34 +1232,34 @@ def _plan_mp_elements_and_interfaces(
     def ties(records: list[Any]) -> list[MPElementEntry]:
         return [mp_element_entry("reinforce_tie", r) for r in records]
 
+    # The canonical walk: the flat emit's order, in every mode.
+    mp += plan_mp_elements([
+        *constraint_pass_entries(
+            node_constraints, interpolation_records(surface_constraints)),
+        *ties(reinforce_tie_records(fem)),
+        *(mp_element_entry("embed_tie", r)
+          for r in embed_tie_records(fem)),
+    ], tags)
+    ifaces += plan_interface_tags(unclaimed, tags)
+    mp += plan_mp_elements(
+        rebar_cell_entries(rebar_element_records(fem)), tags)
+    for stage in bm.stage_records:
+        if stage.stage_constraint_records:
+            adapter = _StageConstraintAdapter(
+                stage.stage_constraint_records)
+            mp += plan_mp_elements(constraint_pass_entries(
+                adapter, interpolation_records(adapter)), tags)
+        ifaces += plan_interface_tags(stage.stage_interface_records, tags)
+    interfaces = InterfacePlan(fem=fem, lines=tuple(ifaces))
     if not mode.partitioned:
-        mp += plan_mp_elements([
-            *constraint_pass_entries(
-                node_constraints, interpolation_records(surface_constraints)),
-            *ties(reinforce_tie_records(fem)),
-            *(mp_element_entry("embed_tie", r)
-              for r in embed_tie_records(fem)),
-        ], tags)
-        ifaces += plan_interface_tags(unclaimed, tags)
-        mp += plan_mp_elements(
-            rebar_cell_entries(rebar_element_records(fem)), tags)
-        for stage in bm.stage_records:
-            if stage.stage_constraint_records:
-                adapter = _StageConstraintAdapter(
-                    stage.stage_constraint_records)
-                mp += plan_mp_elements(constraint_pass_entries(
-                    adapter, interpolation_records(adapter)), tags)
-            ifaces += plan_interface_tags(stage.stage_interface_records, tags)
         return (
             MPElementPlan(fem=fem, lines=tuple(mp), claimed_ids=claimed),
-            InterfacePlan(fem=fem, lines=tuple(ifaces)),
+            interfaces,
         )
 
-    ifaces += plan_interface_tags([
-        *unclaimed,
-        *(r for stage in bm.stage_records
-          for r in stage.stage_interface_records),
-    ], tags)
+    # The partitioned emit's order, with the canonical walk's tags.
+    canonical = {(line.site, line.key): line.tag for line in mp}
+    mp = []
     partitions = list(fem.partitions)
     node_owners = build_node_partition_owners(fem)
     element_owner = build_element_partition_owner(fem)
@@ -1199,15 +1273,16 @@ def _plan_mp_elements_and_interfaces(
         # container, else it routes every rank.
         if rank_plans and rank_plans[rank].any():
             routed = rank_plans[rank]
-            mp += plan_mp_elements(constraint_pass_entries(
+            mp += number_mp_elements(constraint_pass_entries(
                 node_constraints, routed.embedded_records,
                 allowed_ids=routed.allowed_record_ids,
-            ), tags)
+            ), canonical)
         # ``reinforcement`` holds only the ranks that own a tie or a cell.
         if rank in reinforcement:
             rank_ties, rank_bars, _ghosts = reinforcement[rank]
-            mp += plan_mp_elements(
-                [*ties(rank_ties), *rebar_cell_entries(rank_bars)], tags)
+            mp += number_mp_elements(
+                [*ties(rank_ties), *rebar_cell_entries(rank_bars)],
+                canonical)
     for stage in bm.stage_records:
         if not stage.stage_constraint_records:
             continue
@@ -1218,16 +1293,16 @@ def _plan_mp_elements_and_interfaces(
             )
             if staged is None:
                 continue
-            mp += plan_mp_elements(constraint_pass_entries(
+            mp += number_mp_elements(constraint_pass_entries(
                 staged.adapter, staged.plan.embedded_records,
                 allowed_ids=staged.plan.allowed_record_ids,
-            ), tags)
+            ), canonical)
     return (
         MPElementPlan(
             fem=fem, lines=tuple(mp), partitioned=True, claimed_ids=claimed,
             phantom_coords=phantom_coords, rank_plans=rank_plans,
         ),
-        InterfacePlan(fem=fem, lines=tuple(ifaces)),
+        interfaces,
     )
 
 
@@ -1265,12 +1340,17 @@ def _plan_parameters(
     owns. The element tags are the element plan's (``elements``), as the
     emit maps them; the rank ownership is the emit's
     (:func:`~.build.build_element_partition_owner`).
+
+    Every mode mints in the flat walk's order (canonical numbering), so a
+    partitioned emit gives a record the tag the flat emit gives it, on
+    every rank that writes it (:func:`~.build.number_parameters`).
     """
     from .build import (
         FemToOpsTagMap,
         absorbing_ele_tags,
         build_element_partition_owner,
         initial_stress_sites,
+        number_parameters,
         parameter_flip_sites,
         plan_parameters,
         runtime_rank_from_partition_record,
@@ -1282,7 +1362,6 @@ def _plan_parameters(
     if mode.partitioned:
         ranks = [runtime_rank_from_partition_record(part, idx)
                  for idx, part in enumerate(fem.partitions)]
-    sites: list[ParameterSite] = initial_stress_sites(bm.initial_stress_records)
     flips = any(
         stage.activate_absorbing_records or stage.update_parameter_records
         for stage in bm.stage_records)
@@ -1290,20 +1369,33 @@ def _plan_parameters(
     eid_to_tag = FemToOpsTagMap.from_plan(elements.specs if flips else ())
     owner = (build_element_partition_owner(fem)
              if flips and mode.partitioned else None)
-    for stage in bm.stage_records:
-        sites += initial_stress_sites(stage.initial_stress_records)
-        absorbing = stage.activate_absorbing_records
-        for rank in ranks:
-            sites += parameter_flip_sites("flip_element_stage", absorbing, [
-                absorbing_ele_tags(rec, fem, eid_to_tag, owner, rank)
-                for rec in absorbing], rank)
-        updates = stage.update_parameter_records
-        for rank in ranks:
-            sites += parameter_flip_sites("update_parameter", updates, [
-                update_parameter_ele_tags(rec, fem, eid_to_tag, owner, rank)
-                for rec in updates], rank)
+
+    def walk(
+        ranks: "Sequence[int | None]", owner: Any,
+    ) -> list[ParameterSite]:
+        sites = initial_stress_sites(bm.initial_stress_records)
+        for stage in bm.stage_records:
+            sites += initial_stress_sites(stage.initial_stress_records)
+            absorbing = stage.activate_absorbing_records
+            for rank in ranks:
+                sites += parameter_flip_sites(
+                    "flip_element_stage", absorbing, [
+                        absorbing_ele_tags(rec, fem, eid_to_tag, owner, rank)
+                        for rec in absorbing], rank)
+            updates = stage.update_parameter_records
+            for rank in ranks:
+                sites += parameter_flip_sites("update_parameter", updates, [
+                    update_parameter_ele_tags(
+                        rec, fem, eid_to_tag, owner, rank)
+                    for rec in updates], rank)
+        return sites
+
+    # The canonical walk: the flat emit's sites, in every mode.
+    lines = plan_parameters(walk([None], None), tags)
+    if mode.partitioned:
+        lines = number_parameters(walk(ranks, owner), lines)
     return ParameterTagPlan(
-        lines=plan_parameters(sites, tags),
+        lines=lines,
         owners=parameter_owners(bm, ranks),
     )
 
@@ -1313,25 +1405,29 @@ def _plan_contacts(
 ) -> ContactPlan:
     """The contact plan of ``bm``'s emit in ``mode``.
 
-    A flat or split emit writes every contact, then every contact plane.
-    A partitioned emit writes each interaction inside its owner rank's
-    block, rank by rank (ADR 0092 S4), so the routing is resolved here,
-    once per plan: ``BuiltModel._plan_partitioned_contacts`` picks each
-    owner rank and ghost set and raises every routing refusal before any
-    emission. Its warnings ride on the plan, and each emit repeats them.
+    Every mode mints in the flat emit's order (canonical numbering):
+    every contact, then every contact plane. A partitioned emit writes
+    each interaction inside its owner rank's block, rank by rank (ADR
+    0092 S4), with those tags (:func:`~.build.route_contacts`), so the
+    routing is resolved here, once per plan:
+    ``BuiltModel._plan_partitioned_contacts`` picks each owner rank and
+    ghost set and raises every routing refusal before any emission. Its
+    warnings ride on the plan, and each emit repeats them.
     """
     from .build import (
         flat_contact_entries,
         partitioned_contact_entries,
         plan_contacts,
+        route_contacts,
     )
 
+    canonical = plan_contacts(bm.fem, flat_contact_entries(bm.fem), tags)
     if not mode.partitioned:
-        return plan_contacts(bm.fem, flat_contact_entries(bm.fem), tags)
+        return canonical
     partitions = list(bm.fem.partitions)
     routing, notes = bm._plan_partitioned_contacts(
         partitions, staged=mode.staged)
-    return plan_contacts(
-        bm.fem, partitioned_contact_entries(routing, partitions), tags,
+    return route_contacts(
+        canonical, partitioned_contact_entries(routing, partitions),
         notes=notes,
     )

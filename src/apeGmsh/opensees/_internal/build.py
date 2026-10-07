@@ -6416,6 +6416,32 @@ def plan_mp_elements(
     return tuple(out)
 
 
+def number_mp_elements(
+    entries: "Iterable[MPElementEntry]",
+    canonical: "Mapping[tuple[str, Hashable], int]",
+) -> tuple[PlannedMPElement, ...]:
+    """The MP elements ``entries``, in their order, with the tags the
+    canonical (flat-order) walk minted for them.
+
+    ``canonical`` maps each ``(site, key)`` of that walk
+    (:func:`plan_mp_elements`) to its tag. A partitioned emit writes the
+    same elements rank by rank, so it reads their tags here and mints
+    none. An element the canonical walk did not number raises
+    :class:`TagPlanMiss`.
+    """
+    out: list[PlannedMPElement] = []
+    for entry in entries:
+        tag = canonical.get((entry.site, entry.key))
+        if tag is None:
+            raise TagPlanMiss(
+                f"the partitioned emit writes the {entry.site} element "
+                f"{entry.key!r}, which the canonical (flat-order) walk did "
+                "not number (ADR 0114 D4, amended)."
+            )
+        out.append(PlannedMPElement(*entry, tag))
+    return tuple(out)
+
+
 def mp_constraint_pools(
     fem: "FEMData", claimed_ids: "frozenset[int]",
 ) -> "tuple[Any, Any]":
@@ -7295,6 +7321,36 @@ def plan_contacts(
             owner_rank, tuple(ghosts),
         ))
     return ContactPlan(fem=fem, lines=tuple(lines), notes=tuple(notes))
+
+
+def route_contacts(
+    canonical: ContactPlan, entries: "Iterable[ContactEntry]",
+    *, notes: "Iterable[str]" = (),
+) -> ContactPlan:
+    """The routed interactions ``entries``, in their order, with the tags
+    the canonical (flat-order) plan gave them.
+
+    ``canonical`` is :func:`plan_contacts`'s result over
+    :func:`flat_contact_entries`. A partitioned emit writes the same
+    interactions rank by rank (:func:`partitioned_contact_entries`), so
+    each keeps its flat tags and gains its owner rank and ghosts. An
+    interaction the canonical plan does not hold, or holds as another
+    kind, raises :class:`TagPlanMiss`.
+    """
+    by_record = {id(line.record): line for line in canonical.lines}
+    lines: list[PlannedContact] = []
+    for kind, rec, owner_rank, ghosts in entries:
+        line = by_record.get(id(rec))
+        if line is None or line.record is not rec or line.kind != kind:
+            raise TagPlanMiss(
+                f"the partitioned emit writes the {kind} {plan_owner(rec)}, "
+                "which the canonical (flat-order) contact plan does not "
+                "number (ADR 0114 D4, amended)."
+            )
+        lines.append(PlannedContact(
+            kind, rec, line.tags, owner_rank, tuple(ghosts)))
+    return ContactPlan(
+        fem=canonical.fem, lines=tuple(lines), notes=tuple(notes))
 
 
 def _planned_contact_lines(
@@ -10520,6 +10576,53 @@ def plan_parameters(
             minted.append(tags.allocate("parameter"))
         out.append(PlannedParameter(
             site.record, site.rank, site.verb, tuple(minted), site.ele_tags))
+    return tuple(out)
+
+
+def number_parameters(
+    sites: "Iterable[ParameterSite]",
+    canonical: "Iterable[PlannedParameter]",
+) -> tuple[PlannedParameter, ...]:
+    """Each site's ``parameter`` tags, read from the canonical walk.
+
+    ``canonical`` is :func:`plan_parameters`'s result over the flat
+    emit's sites, one per record. A partitioned emit writes a flip or an
+    update once per rank that holds its elements, each time with the tag
+    the flat walk gave its record, so a tag is rank-invariant. A site
+    that declares tags its record holds none of (or holds for another
+    verb) raises :class:`TagPlanMiss`.
+    """
+    by_record: dict[int, PlannedParameter] = {}
+    for line in canonical:
+        if by_record.setdefault(id(line.record), line) is not line:
+            raise TagPlanMiss(
+                f"number_parameters: the canonical walk holds "
+                f"{plan_owner(line.record)} twice; it declares one site per "
+                "record (ADR 0114 D4, amended)."
+            )
+    out: list[PlannedParameter] = []
+    for site in sites:
+        if site.n_tags not in PARAMETER_VERBS.get(site.verb, ()):
+            raise BridgeError(
+                f"number_parameters: a {site.verb!r} site declares "
+                f"{site.n_tags} parameter tags; the verbs and their counts "
+                f"are {dict(PARAMETER_VERBS)}."
+            )
+        held: tuple[int, ...] = ()
+        if site.n_tags:
+            minted = by_record.get(id(site.record))
+            if (minted is None or minted.record is not site.record
+                    or minted.verb != site.verb
+                    or len(minted.tags) != site.n_tags):
+                raise TagPlanMiss(
+                    f"the {site.verb!r} site of {plan_owner(site.record)} at "
+                    f"rank {site.rank} declares {site.n_tags} parameter "
+                    "tag(s) the canonical (flat-order) walk did not number "
+                    "(ADR 0114 D4, amended)."
+                )
+            held = minted.tags
+        out.append(PlannedParameter(
+            site.record, site.rank, site.verb, held, site.ele_tags))
     return tuple(out)
 
 
