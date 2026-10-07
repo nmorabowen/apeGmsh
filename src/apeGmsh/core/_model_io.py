@@ -323,12 +323,15 @@ class _DXFImporter:
         msp = doc.modelspace()
 
         # Refuse a layer name the layer PGs cannot take before any
-        # gmsh write, so a refused load imports nothing.
+        # gmsh write, so a refused load imports nothing.  The set holds
+        # every name _rebuild_layers can produce: the file's layers,
+        # plus ``_unmatched`` for any curve whose layer it cannot match
+        # (curves already in the model included).
         if create_physical_groups:
             self._refuse_layer_pg_names({
                 entity.dxf.layer for entity in msp
                 if entity.dxftype() in self._CONVERTERS
-            })
+            } | {"_unmatched"})
 
         # Convert entities
         for entity in msp:
@@ -350,9 +353,6 @@ class _DXFImporter:
         layers = self._rebuild_layers()
 
         if create_physical_groups:
-            # Again on the final names (``_unmatched`` joins here), and
-            # before the first PG write.
-            self._refuse_layer_pg_names(set(layers))
             # Through g.physical.add, never a raw addPhysicalGroup: add()
             # upserts a name that exists at this dim, where gmsh would
             # leave a second same-named PG unnamed.

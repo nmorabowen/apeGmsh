@@ -150,6 +150,21 @@ def test_dxf_layer_held_at_other_dim_raises_before_import(g, tmp_path):
     assert gmsh.model.getEntities(1) == before_curves
 
 
+def test_dxf_unmatched_held_at_other_dim_raises_before_import(g, tmp_path):
+    """``_unmatched`` is a layer-PG name the importer adds itself, so it
+    is refused before the import, like a file layer."""
+    _unit_line(g)
+    g.physical.add(0, g.labels.entities("a"), name="_unmatched")
+    path = tmp_path / "a.dxf"
+    _write_dxf(path, "Beams", 3.0)
+    before_pgs = _pgs()
+    before_curves = gmsh.model.getEntities(1)
+    with pytest.raises(ValueError, match=r"\('_unmatched', 0\)"):
+        g.model.io.load_dxf(path)
+    assert _pgs() == before_pgs
+    assert gmsh.model.getEntities(1) == before_curves
+
+
 def test_dxf_layer_reserved_prefix_raises(g, tmp_path):
     path = tmp_path / "a.dxf"
     _write_dxf(path, f"{LABEL_PREFIX}x", 0.0)
