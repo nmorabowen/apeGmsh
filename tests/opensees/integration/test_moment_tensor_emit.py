@@ -52,7 +52,7 @@ def two_region_fem():
 
 
 def _emit_with_region(fem, *, position, region):
-    ops = apeSees(fem)
+    ops = apeSees(fem, _artifacts=False)  # partitioned snapshot: no automatic model.h5
     ops.model(ndm=3, ndf=3)
     mat = ops.register(ElasticIsotropic(E=1.0e7, nu=0.25, rho=2000.0))
     ops.element.stdBrick(pg="soil", material=mat)
@@ -88,7 +88,7 @@ def _load_calls(rec: RecordingEmitter):
 
 
 def _emit_source(fem, *, method, position):
-    ops = apeSees(fem)
+    ops = apeSees(fem, _artifacts=False)  # partitioned snapshot: no automatic model.h5
     ops.model(ndm=3, ndf=3)
     mat = ops.register(ElasticIsotropic(E=1.0e7, nu=0.25, rho=2000.0))
     ops.element.stdBrick(pg="soil", material=mat)
@@ -157,7 +157,7 @@ def test_partitioned_emit_union_recovers_moment_tensor():
 
     assert len(fem.partitions) == 2
     M = 1.0e6 * unit_moment_tensor(strike=350, dip=40, rake=113)
-    ops = apeSees(fem)
+    ops = apeSees(fem, _artifacts=False)  # partitioned snapshot: no automatic model.h5
     ops.model(ndm=3, ndf=3)
     mat = ops.register(ElasticIsotropic(E=1.0e7, nu=0.25, rho=2000.0))
     ops.element.stdBrick(pg="soil", material=mat)
@@ -190,7 +190,7 @@ def test_partitioned_emit_union_recovers_moment_tensor():
 
 
 def test_non_zero_t0_fails_loud(box_fem):
-    ops = apeSees(box_fem)
+    ops = apeSees(box_fem, _artifacts=False)  # partitioned snapshot: no automatic model.h5
     ops.model(ndm=3, ndf=3)
     mat = ops.register(ElasticIsotropic(E=1.0e7, nu=0.25, rho=2000.0))
     ops.element.stdBrick(pg="soil", material=mat)
@@ -236,7 +236,7 @@ def test_host_search_runs_once_regardless_of_ranks(monkeypatch):
 
         monkeypatch.setattr(build_mod, "_collect_continuum_hosts", _counting)
 
-        ops = apeSees(fem)
+        ops = apeSees(fem, _artifacts=False)  # partitioned snapshot: no automatic model.h5
         ops.model(ndm=3, ndf=3)
         mat = ops.register(ElasticIsotropic(E=1.0e7, nu=0.25, rho=2000.0))
         ops.element.stdBrick(pg="soil", material=mat)

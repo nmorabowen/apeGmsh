@@ -56,7 +56,7 @@ def _frame_fem(partitions: int = 0, **mass_kw):
 
 
 def _frame_ops(fem):
-    ops = apeSees(fem)
+    ops = apeSees(fem, _artifacts=False)  # partitioned snapshot: no automatic model.h5
     ops.model(ndm=2, ndf=3)
     transf = ops.geomTransf.Linear()
     ops.element.elasticBeamColumn(
@@ -110,7 +110,7 @@ def test_2d_solid_mass_emits_two_components_instead_of_raising():
         fem = g.mesh.queries.get_fem_data(dim=2)
     assert len(fem.nodes.masses) > 0
 
-    ops = apeSees(fem)
+    ops = apeSees(fem, _artifacts=False)  # partitioned snapshot: no automatic model.h5
     ops.model(ndm=2, ndf=2)
     mat = ops.nDMaterial.ElasticIsotropic(E=30e9, nu=0.2, rho=0.0)
     ops.element.Tri31(pg="Plate", thickness=0.2, material=mat)

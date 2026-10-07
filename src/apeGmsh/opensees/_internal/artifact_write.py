@@ -146,6 +146,7 @@ class BridgeArtifactWriter:
                 content_hash,
                 mpi_rank,
                 provenance_scripts,
+                record_bridge_write,
             )
             from ..._atomic_io import replace_with_retry
             from ..._core import default_artifact_dir
@@ -225,6 +226,10 @@ class BridgeArtifactWriter:
                     replace_with_retry(tmp, target)
                 finally:
                     tmp.unlink(missing_ok=True)
+                # The session's end() keeps this run's bridge file (the
+                # analysed snapshot, perhaps a narrower get_fem_data(dim=)
+                # view than its own) instead of comparing content.
+                record_bridge_write(target, fem.session_id)
             _LAST_WRITTEN[target] = digest
         except Exception as exc:  # noqa: BLE001
             self._warned = True

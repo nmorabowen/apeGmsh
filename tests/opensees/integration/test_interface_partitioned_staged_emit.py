@@ -149,7 +149,7 @@ def _pchain(ops, handler: str = "Transformation"):
 
 
 def _quad_ops(fem):
-    ops = apeSees(fem)
+    ops = apeSees(fem, _artifacts=False)  # partitioned snapshot: no automatic model.h5
     ops.model(ndm=2, ndf=2)
     mat = ops.nDMaterial.ElasticIsotropic(E=30e9, nu=0.2, rho=2400)
     for pg in ("rock", "liner"):
@@ -162,7 +162,7 @@ def _quad_ops(fem):
 def _mixed_ops(fem):
     """2-dof continuum master vs 3-dof beam slave — the campaign's
     primary case — under an ndf=2 envelope."""
-    ops = apeSees(fem)
+    ops = apeSees(fem, _artifacts=False)  # partitioned snapshot: no automatic model.h5
     ops.model(ndm=2, ndf=2)
     mat = ops.nDMaterial.ElasticIsotropic(E=30e9, nu=0.2, rho=2400)
     ops.element.FourNodeQuad(

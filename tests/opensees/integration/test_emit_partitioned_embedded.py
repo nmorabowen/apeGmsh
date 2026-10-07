@@ -112,7 +112,7 @@ def _build_disjoint_triangles_fem(
 
 def _emit_with_recording(fem) -> RecordingEmitter:
     """Drive the bridge build through a ``RecordingEmitter`` and return it."""
-    ops = apeSees(cast("object", fem))
+    ops = apeSees(cast("object", fem), _artifacts=False)  # partitioned snapshot: no automatic model.h5
     ops.model(ndm=3, ndf=6)
     # Need at least one structural element so the build pipeline has
     # a real element pass to run; reuse the existing PG ``"Cols"``.
@@ -399,7 +399,7 @@ def test_real_resolver_partitioned_embedded_does_not_fail_loud() -> None:
     # ``ValueError`` here — the test fails immediately with that
     # message.  Otherwise emit completes and we inspect the per-rank
     # output for INV-OWN + INV-TAG.
-    ops = apeSees(cast("object", fem))
+    ops = apeSees(cast("object", fem), _artifacts=False)  # partitioned snapshot: no automatic model.h5
     ops.model(ndm=3, ndf=3)
     rec = RecordingEmitter()
     bm = ops.build()
@@ -635,10 +635,10 @@ def test_cross_rank_embedded_with_rebar_nodes_owned(tmp_path) -> None:
     tcl_path = tmp_path / "deck.tcl"
     py_path = tmp_path / "deck.py"
     envelope_ndf = 3
-    ops_tcl = apeSees(cast("object", fem))
+    ops_tcl = apeSees(cast("object", fem), _artifacts=False)  # partitioned snapshot: no automatic model.h5
     ops_tcl.model(ndm=3, ndf=envelope_ndf)
     ops_tcl.tcl(str(tcl_path))
-    ops_py = apeSees(cast("object", fem))
+    ops_py = apeSees(cast("object", fem), _artifacts=False)  # partitioned snapshot: no automatic model.h5
     ops_py.model(ndm=3, ndf=envelope_ndf)
     ops_py.py(str(py_path))
 

@@ -72,6 +72,7 @@ __all__ = [
     "mpi_rank",
     "neutral_content_hash",
     "provenance_scripts",
+    "record_bridge_write",
 ]
 
 #: Environment variables an MPI launcher (or ``srun``) sets to the rank
@@ -101,6 +102,20 @@ _NOTEBOOK_CELL = re.compile(r"(^|[\\/])ipykernel_\d+[\\/]|^<ipython-input-")
 #: the function, the writer's private method, its public caller
 #: (``end()``, ``tcl()``, ...), the user's call.
 _STACKLEVEL = 4
+
+#: The ``session_id`` whose bridge last wrote each resolved target, for
+#: this process (:func:`record_bridge_write`).  The session's ``end()``
+#: keeps such a file instead of comparing its content: the bridge wrote
+#: this run's analysed snapshot, which may be a ``get_fem_data(dim=...)``
+#: view narrower than the session's own.
+_BRIDGE_WRITES: dict[Path, str] = {}
+
+
+def record_bridge_write(target: "str | Path", session_id: str) -> None:
+    """Note that the bridge of ``session_id`` wrote the full ``model.h5``
+    at ``target`` in this process (the bridge's automatic write calls
+    this after its atomic replace)."""
+    _BRIDGE_WRITES[Path(target).resolve()] = session_id
 
 
 # ---------------------------------------------------------------------------
@@ -423,6 +438,13 @@ def artifact_verdict(
     if file_session == session_id:
         if not dropped:
             return "write"
+        # This run's bridge wrote the fuller file in this process, from
+        # the snapshot the user analysed (a ``get_fem_data(dim=...)``
+        # inside the ``with`` block is a narrower view of the mesh than
+        # the session's own, not a stale one): the file is this run's
+        # output and is kept, so the pair stays whole.
+        if _BRIDGE_WRITES.get(Path(target).resolve()) == session_id:
+            return "keep"
         if artifact_content_hash(target) == content():
             return "keep"
         return _refuse(

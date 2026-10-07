@@ -782,6 +782,37 @@ def test_a_session_rerun_in_one_process_rewrites_the_file(
 
 
 # ---------------------------------------------------------------------------
+# A filtered snapshot emitted inside the ``with`` block (round 4)
+# ---------------------------------------------------------------------------
+
+
+def test_bridge_inside_the_with_block_on_a_filtered_snapshot_leaves_a_whole_pair(
+    artifact_dir, tmp_path, h5_calls,
+):
+    """The common script shape: ``fem = get_fem_data(dim=3)`` and the
+    bridge emit before the block ends.  The session's ``end()`` then
+    finds this run's fuller file whose neutral zone is the narrower
+    ``dim=3`` view, not its own unfiltered mesh.  That file is this
+    run's analysed model: ``end()`` keeps it silently and still writes
+    the sibling, so both carry the session's id and nothing warns (the
+    37 "different content" refusals of the suite were this shape)."""
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", UserWarning)
+        with apeGmsh(model_name="inside", verbose=False) as g:
+            g.model.geometry.add_box(0, 0, 0, 1, 1, 1, label="b")
+            g.physical.add_volume("b", name="B")
+            g.mesh.sizing.set_global_size(0.5)
+            g.mesh.generation.generate(dim=3)
+            fem = g.mesh.queries.get_fem_data(dim=3)
+            _bridge(fem).tcl(str(tmp_path / "inside.tcl"))
+    assert len(h5_calls) == 1
+    model_id, sibling_id, zones = _pair_ids(artifact_dir, "inside")
+    assert model_id == sibling_id == fem.session_id
+    assert "opensees" in zones
+    assert _fem_hash(artifact_dir / "inside.h5") == fem.snapshot_id
+
+
+# ---------------------------------------------------------------------------
 # Deferred archive features: the explicit save's warning, not the hook's
 # ---------------------------------------------------------------------------
 

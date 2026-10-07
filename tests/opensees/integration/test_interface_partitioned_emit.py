@@ -213,7 +213,7 @@ def _fem(*, slave_ndf=None, n=4, cut=None, n_parts=None, embed=False):
 
 
 def _quad_ops(fem, *, fix_wire: "tuple[int, int] | None" = None):
-    ops = apeSees(fem)
+    ops = apeSees(fem, _artifacts=False)  # partitioned snapshot: no automatic model.h5
     ops.model(ndm=2, ndf=2)
     mat = ops.nDMaterial.ElasticIsotropic(E=30e9, nu=0.2, rho=2400)
     for pg in ("rock", "liner"):
@@ -228,7 +228,7 @@ def _quad_ops(fem, *, fix_wire: "tuple[int, int] | None" = None):
 def _mixed_ops(fem, *, fix_wire: "tuple[int, int, int] | None" = None):
     """2-dof continuum master vs 3-dof beam slave (the campaign's
     primary case) under an ndf=2 envelope — per-node ndf is LIVE."""
-    ops = apeSees(fem)
+    ops = apeSees(fem, _artifacts=False)  # partitioned snapshot: no automatic model.h5
     ops.model(ndm=2, ndf=2)
     mat = ops.nDMaterial.ElasticIsotropic(E=30e9, nu=0.2, rho=2400)
     ops.element.FourNodeQuad(
@@ -768,7 +768,7 @@ def _fem3d(*, n: int = 3, cut: bool = True):
 
 
 def _brick_ops(fem):
-    ops = apeSees(fem)
+    ops = apeSees(fem, _artifacts=False)  # partitioned snapshot: no automatic model.h5
     ops.model(ndm=3, ndf=3)
     mat = ops.nDMaterial.ElasticIsotropic(E=30e9, nu=0.2, rho=2400)
     for pg in ("rock", "liner"):

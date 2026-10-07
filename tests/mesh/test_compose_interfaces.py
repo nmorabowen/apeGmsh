@@ -349,7 +349,7 @@ def test_composed_rotated_model_emits_both_interface_blocks(tmp_path):
         assert got.master_node > src.master_node
         assert got.backing_element > src.backing_element
 
-    ops = apeSees(merged)
+    ops = apeSees(merged, _artifacts=False)  # partitioned snapshot: no automatic model.h5
     ops.model(ndm=2, ndf=2)
     mat = ops.nDMaterial.ElasticIsotropic(E=30e9, nu=0.2, rho=2400)
     for pg in ("rock", "liner", "M.rock", "M.liner"):

@@ -229,7 +229,7 @@ def test_interface_zero_length_lands_above_every_fem_id(
     partition: int, tmp_path: Path,
 ) -> None:
     fem = _interface_fem(partition)
-    ops = apeSees(fem, element_tags="fem")
+    ops = apeSees(fem, element_tags="fem", _artifacts=False)  # partitioned snapshot: no automatic model.h5
     ops.model(ndm=2, ndf=2)
     mat = ops.nDMaterial.ElasticIsotropic(E=30e9, nu=0.2, rho=2400)
     for pg in ("rock", "liner"):

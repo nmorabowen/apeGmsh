@@ -72,7 +72,7 @@ def _fem(*, slave_ndf=None, partition=0, n=2):
 
 
 def _quad_ops(fem, *pgs):
-    ops = apeSees(fem)
+    ops = apeSees(fem, _artifacts=False)  # partitioned snapshot: no automatic model.h5
     ops.model(ndm=2, ndf=2)
     mat = ops.nDMaterial.ElasticIsotropic(E=30e9, nu=0.2, rho=2400)
     for pg in pgs:
@@ -142,7 +142,7 @@ def test_equal_ndf_needs_no_constraint_handler(tmp_path):
 # Mixed ndf: 2-dof continuum master vs 3-dof beam slave
 # ======================================================================
 def _mixed_ops(fem):
-    ops = apeSees(fem)
+    ops = apeSees(fem, _artifacts=False)  # partitioned snapshot: no automatic model.h5
     ops.model(ndm=2, ndf=2)
     mat = ops.nDMaterial.ElasticIsotropic(E=30e9, nu=0.2, rho=2400)
     ops.element.FourNodeQuad(
@@ -445,7 +445,7 @@ def test_3d_interface_emits_one_zerolength_per_pair(tmp_path):
     assert n_pairs > 0
     assert len(recs) == n_pairs
 
-    ops = apeSees(fem)
+    ops = apeSees(fem, _artifacts=False)  # partitioned snapshot: no automatic model.h5
     ops.model(ndm=3, ndf=3)
     mat = ops.nDMaterial.ElasticIsotropic(E=30e9, nu=0.2, rho=2400)
     for pg in ("soil", "footing"):
@@ -521,7 +521,7 @@ def test_3d_interface_up_master_shell_slave_emits(tmp_path):
     recs = fem.elements.interfaces
     assert recs and all(len(r.orient) == 9 for r in recs)
 
-    ops = apeSees(fem)
+    ops = apeSees(fem, _artifacts=False)  # partitioned snapshot: no automatic model.h5
     ops.model(ndm=3, ndf=3)
     soil_mat = ops.nDMaterial.ElasticIsotropic(E=3e7, nu=0.3, rho=2.0)
     ops.element.LadrunoUP(

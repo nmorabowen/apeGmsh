@@ -38,7 +38,7 @@ def _partitioned_fem(nparts: int):
 
 
 def _emit_element_lines(fem, soil_pgs) -> list[str]:
-    ops = apeSees(fem)
+    ops = apeSees(fem, _artifacts=False)  # partitioned snapshot: no automatic model.h5
     ops.model(ndm=3, ndf=3)
     for pg in soil_pgs:
         ops.element.stdBrick(pg=pg, material=ops.register(

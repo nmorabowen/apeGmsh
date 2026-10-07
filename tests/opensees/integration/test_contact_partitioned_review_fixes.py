@@ -100,7 +100,7 @@ def _two_box_fem(model_name: str, **contact_kw):
 
 
 def _ops(fem):
-    ops = apeSees(fem)
+    ops = apeSees(fem, _artifacts=False)  # partitioned snapshot: no automatic model.h5
     ops.model(ndm=3, ndf=3)
     mat = ops.nDMaterial.ElasticIsotropic(E=30e9, nu=0.2, rho=2400)
     ops.element.FourNodeTetrahedron(pg="solid", material=mat)
@@ -285,7 +285,7 @@ def _cut_master_stub(*, kn, second_facet: str) -> FEMStub:
 
 
 def _stub_ops(fem):
-    ops = apeSees(cast("object", fem))
+    ops = apeSees(cast("object", fem), _artifacts=False)  # partitioned snapshot: no automatic model.h5
     ops.model(ndm=3, ndf=3)
     mat = ops.uniaxialMaterial.ElasticMaterial(E=1e6)
     ops.element.Truss(pg="Bars", A=0.01, material=mat)

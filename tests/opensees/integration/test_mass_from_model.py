@@ -32,7 +32,7 @@ def fem_with_masses():
 
 
 def _emit_mass_lines(fem, declare):
-    ops = apeSees(fem)
+    ops = apeSees(fem, _artifacts=False)  # partitioned snapshot: no automatic model.h5
     ops.model(ndm=3, ndf=3)
     mat = ops.nDMaterial.ElasticIsotropic(E=30e9, nu=0.2, rho=0.0)
     ops.element.FourNodeTetrahedron(pg="B", material=mat)
@@ -113,7 +113,7 @@ def test_mass_from_model_h5_emitter_skips_stream_and_marks(fem_with_masses):
     import h5py
 
     fem = fem_with_masses
-    ops = apeSees(fem)
+    ops = apeSees(fem, _artifacts=False)  # partitioned snapshot: no automatic model.h5
     ops.model(ndm=3, ndf=3)
     mat = ops.nDMaterial.ElasticIsotropic(E=30e9, nu=0.2, rho=0.0)
     ops.element.FourNodeTetrahedron(pg="B", material=mat)

@@ -129,7 +129,7 @@ def _two_box_fem(model_name: str, **contact_kw):
 
 
 def _ops(fem):
-    ops = apeSees(fem)
+    ops = apeSees(fem, _artifacts=False)  # partitioned snapshot: no automatic model.h5
     ops.model(ndm=3, ndf=3)
     mat = ops.nDMaterial.ElasticIsotropic(E=30e9, nu=0.2, rho=2400)
     ops.element.FourNodeTetrahedron(pg="solid", material=mat)
@@ -343,7 +343,7 @@ def _tied_stub_fem() -> FEMStub:
 
 def test_undecidable_owner_refuses_named(tmp_path):
     fem = _tied_stub_fem()
-    ops = apeSees(cast("object", fem))
+    ops = apeSees(cast("object", fem), _artifacts=False)  # partitioned snapshot: no automatic model.h5
     ops.model(ndm=3, ndf=3)
     mat = ops.uniaxialMaterial.ElasticMaterial(E=1e6)
     ops.element.Truss(pg="Bars", A=0.01, material=mat)

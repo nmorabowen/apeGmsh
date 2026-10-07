@@ -50,7 +50,7 @@ def _build(tmp_path, nparts):
             g.mesh.partitioning.partition(nparts)
         fem = g.mesh.queries.get_fem_data(dim=None)
 
-        ops = apeSees(fem)
+        ops = apeSees(fem, _artifacts=False)  # partitioned snapshot: no automatic model.h5
         ops.model(ndm=3, ndf=3)
         conc = ops.nDMaterial.ElasticIsotropic(E=30000.0, nu=0.2)
         ops.uniaxialMaterial.Steel02(fy=420.0, E=200000.0, b=0.01, name="steel")

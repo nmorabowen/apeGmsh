@@ -79,7 +79,7 @@ def _plane_fem(model_name: str, *, partition: bool, **plane_kw):
 
 
 def _ops(fem):
-    ops = apeSees(fem)
+    ops = apeSees(fem, _artifacts=False)  # partitioned snapshot: no automatic model.h5
     ops.model(ndm=3, ndf=3)
     mat = ops.nDMaterial.ElasticIsotropic(E=30e9, nu=0.2, rho=2400)
     ops.element.FourNodeTetrahedron(pg="solid", material=mat)

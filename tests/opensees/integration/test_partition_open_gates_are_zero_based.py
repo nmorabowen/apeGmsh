@@ -102,7 +102,7 @@ def _build_partitioned_frame_session(n_parts: int):
 def _wire_apesees(fem):
     from apeGmsh.opensees import apeSees
 
-    ops = apeSees(fem)
+    ops = apeSees(fem, _artifacts=False)  # partitioned snapshot: no automatic model.h5
     ops.model(ndm=3, ndf=6)
     transf_col = ops.geomTransf.Linear(vecxz=(1.0, 0.0, 0.0))
     transf_beam = ops.geomTransf.Linear(vecxz=(0.0, 0.0, 1.0))

@@ -184,7 +184,7 @@ def _wire_apesees(fem, *, with_recorders: bool = True):
     """
     from apeGmsh.opensees import apeSees
 
-    ops = apeSees(cast("object", fem))
+    ops = apeSees(cast("object", fem), _artifacts=False)  # partitioned snapshot: no automatic model.h5
     ops.model(ndm=3, ndf=6)
 
     # Two separate transforms — a single vecxz cannot cover both

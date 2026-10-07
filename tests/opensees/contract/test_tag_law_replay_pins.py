@@ -29,7 +29,22 @@ def _forward_and_replayed(ops_factory, tmp_path: Path) -> tuple[str, str]:  # ty
     ops: apeSees = ops_factory()
     ops.tcl(str(fwd), progress=False)
     archive = tmp_path / "model.h5"
-    ops_factory().h5(str(archive))
+    # The factory builds a second session of the same name: give it its
+    # own artifact directory, or its end() would meet the first bridge's
+    # full model.h5 and refuse it with a warning (#1307).
+    import os
+
+    second = tmp_path / "second_run_artifacts"
+    second.mkdir()
+    previous = os.environ.get("APEGMSH_ARTIFACT_DIR")
+    os.environ["APEGMSH_ARTIFACT_DIR"] = str(second)
+    try:
+        ops_factory().h5(str(archive))
+    finally:
+        if previous is None:
+            os.environ.pop("APEGMSH_ARTIFACT_DIR", None)
+        else:
+            os.environ["APEGMSH_ARTIFACT_DIR"] = previous
     replayed = OpenSeesModel.from_h5(str(archive)).build("tcl")
     assert isinstance(replayed, str)
     return fwd.read_text(encoding="utf-8"), replayed
