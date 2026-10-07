@@ -176,16 +176,73 @@ def test_entity_that_matches_no_curve_warns_and_names_the_layer(g, tmp_path):
 
     importer = _DXFImporter(g.model, 1e-6)
     importer._records.append(_DxfCurveRecord(
-        layer=BEAMS, ends=((0.0, 0.0, 0.0), (1.0, 0.0, 0.0)),
+        layer=BEAMS, kind="Line", ends=((0.0, 0.0, 0.0), (1.0, 0.0, 0.0)),
         bbox=(0.0, 0.0, 0.0, 1.0, 0.0, 0.0), bbox_exact=True,
     ))
     importer._records.append(_DxfCurveRecord(
-        layer="Ghost", ends=((9.0, 9.0, 0.0), (9.0, 10.0, 0.0)),
+        layer="Ghost", kind="Line", ends=((9.0, 9.0, 0.0), (9.0, 10.0, 0.0)),
         bbox=(9.0, 9.0, 0.0, 9.0, 10.0, 0.0), bbox_exact=True,
     ))
     with pytest.warns(WarnDxfLayerMismatch, match=r"\['Ghost'\] matched nothing"):
         layers = importer._rebuild_layers()
     assert set(layers) == {BEAMS}
+
+
+def test_line_inside_a_spline_hull_stays_on_its_own_layer(g, tmp_path):
+    """Review finding 1 on #1558: a spline's record is a hull containment,
+    so a LINE with the spline's endpoints inside that hull matched it too
+    and landed on both layers.  The curve kind (``gmsh.model.getType``)
+    separates them."""
+    from apeGmsh.core._model_io import WarnDxfLayerMismatch
+
+    doc = ezdxf.new()
+    doc.layers.add(BEAMS)
+    doc.layers.add(COLUMNS)
+    msp = doc.modelspace()
+    msp.add_open_spline([(0, 0, 0), (1, 2, 0), (3, 3, 0), (4, 1, 0)],
+                        dxfattribs={"layer": BEAMS})
+    msp.add_line((0, 0, 0), (4, 1, 0), dxfattribs={"layer": COLUMNS})
+    path = tmp_path / "hull.dxf"
+    doc.saveas(str(path))
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", WarnDxfLayerMismatch)
+        layers = g.model.io.load_dxf(path)
+
+    assert "_unmatched" not in layers, layers
+    (spline_tag,) = layers[BEAMS][1]
+    (line_tag,) = layers[COLUMNS][1]
+    assert gmsh.model.getType(1, spline_tag) == "BSpline"
+    assert gmsh.model.getType(1, line_tag) == "Line"
+
+
+def test_utm_scale_lines_a_centimetre_apart_stay_distinct(g, tmp_path):
+    """Review finding 2 on #1558: at UTM coordinates (4e6) a relative
+    tolerance of 1e-8 was 4 cm, so two lines 1 cm apart matched each
+    other's layer.  The round-off term is 1e-12 of the extent."""
+    from apeGmsh.core._model_io import WarnDxfLayerMismatch
+
+    doc = ezdxf.new()
+    doc.layers.add(BEAMS)
+    doc.layers.add(COLUMNS)
+    msp = doc.modelspace()
+    msp.add_line((500000, 4000000, 0), (500003, 4000000, 0),
+                 dxfattribs={"layer": BEAMS})
+    msp.add_line((500000, 4000000, 0), (500003, 4000000.01, 0),
+                 dxfattribs={"layer": COLUMNS})
+    path = tmp_path / "utm.dxf"
+    doc.saveas(str(path))
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", WarnDxfLayerMismatch)
+        layers = g.model.io.load_dxf(path)
+
+    assert "_unmatched" not in layers, layers
+    assert len(layers[BEAMS][1]) == 1 and len(layers[COLUMNS][1]) == 1
+    assert layers[BEAMS][1] != layers[COLUMNS][1]
+    assert _ends(layers[COLUMNS][1][0]) == {
+        _pt(500000, 4000000), _pt(500003, 4000000.01),
+    }
 
 
 def test_chord_and_arc_with_shared_endpoints_separate_by_box(g, tmp_path):

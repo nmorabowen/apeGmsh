@@ -216,19 +216,27 @@ class _DxfCurveRecord:
     _rebuild_layers` recognises it after ``removeAllDuplicates``
     renumbered the tags.
 
-    ``ends`` are the curve's endpoint coordinates (a full circle holds
-    its OCC seam vertex, ``centre + (r, 0, 0)``: gmsh builds the circle
-    on the global X axis).  ``bbox`` is the curve's exact axis-aligned
-    box when ``bbox_exact``; for a B-spline it is the control-polygon
-    hull, which OCC's own box lies within but does not equal.
+    ``kind`` is the curve type as ``gmsh.model.getType`` names it
+    (``Line``, ``Circle`` for arcs and circles, ``BSpline``).  ``ends``
+    are the curve's endpoint coordinates (a full circle holds its OCC
+    seam vertex, ``centre + (r, 0, 0)``: gmsh builds the circle on the
+    global X axis).  ``bbox`` is the curve's exact axis-aligned box when
+    ``bbox_exact``; for a B-spline it is the control-polygon hull, which
+    OCC's own box lies within but does not equal, so the kind is what
+    keeps a line inside that hull from matching the spline.
     """
 
     layer: str
+    kind: str
     ends: tuple[_Point3, ...]
     bbox: _Bbox
     bbox_exact: bool
 
-    def matches(self, ends: tuple[_Point3, ...], bbox: _Bbox, tol: float) -> bool:
+    def matches(
+        self, kind: str, ends: tuple[_Point3, ...], bbox: _Bbox, tol: float,
+    ) -> bool:
+        if kind != self.kind:
+            return False
         mine = _distinct_points(self.ends, tol)
         if len(mine) != len(ends):
             return False
@@ -272,7 +280,8 @@ class _DXFImporter:
 
     def _record_segment(self, layer: str, s: _Point3, e: _Point3) -> None:
         self._records.append(_DxfCurveRecord(
-            layer=layer, ends=(s, e), bbox=_bbox_of([s, e]), bbox_exact=True,
+            layer=layer, kind="Line", ends=(s, e), bbox=_bbox_of([s, e]),
+            bbox_exact=True,
         ))
 
     # -- per-entity-type converters ---------------------------------------
@@ -310,7 +319,7 @@ class _DXFImporter:
             ))
             k += 1
         self._records.append(_DxfCurveRecord(
-            layer=entity.dxf.layer, ends=(start, end),
+            layer=entity.dxf.layer, kind="Circle", ends=(start, end),
             bbox=_bbox_of(extremes), bbox_exact=True,
         ))
 
@@ -319,7 +328,7 @@ class _DXFImporter:
         r = entity.dxf.radius
         gmsh.model.occ.addCircle(c.x, c.y, c.z, r)
         self._records.append(_DxfCurveRecord(
-            layer=entity.dxf.layer, ends=((c.x + r, c.y, c.z),),
+            layer=entity.dxf.layer, kind="Circle", ends=((c.x + r, c.y, c.z),),
             bbox=(c.x - r, c.y - r, c.z, c.x + r, c.y + r, c.z), bbox_exact=True,
         ))
 
@@ -372,7 +381,7 @@ class _DXFImporter:
         # A clamped B-spline ends at its first and last control points;
         # OCC bounds it inside the control-polygon hull, not on it.
         self._records.append(_DxfCurveRecord(
-            layer=entity.dxf.layer, ends=(cps[0], cps[-1]),
+            layer=entity.dxf.layer, kind="BSpline", ends=(cps[0], cps[-1]),
             bbox=_bbox_of(cps), bbox_exact=False,
         ))
 
@@ -494,13 +503,15 @@ class _DXFImporter:
 
         Floored at ten times OCC's bbox pad (below it nothing matches,
         #1532) and at the user's ``point_tolerance`` (closer points were
-        merged into one gmsh point), plus a relative term for round-off
-        at large coordinates (a plan in mm at 1e5 adds 1e-3).
+        merged into one gmsh point), plus a round-off term at large
+        coordinates: double precision carries ~1e-16 relative, so 1e-12
+        of the extent is 4e-6 at UTM (4e6) and keeps two lines a
+        centimetre apart distinct.
         """
         extent = max(
             (abs(c) for rec in self._records for c in rec.bbox), default=0.0,
         )
-        return max(10.0 * _OCC_BBOX_PAD, self._tol, 1e-8 * extent)
+        return max(10.0 * _OCC_BBOX_PAD, self._tol, 1e-12 * extent)
 
     def _rebuild_layers(self) -> dict[str, dict[int, list[Tag]]]:
         """Map every curve now in the model to the layer(s) of the DXF
@@ -531,13 +542,15 @@ class _DXFImporter:
                 px, py, pz = (float(c) for c in gmsh.model.getValue(0, ptag, []))
                 raw_ends.append((px, py, pz))
             ends = _distinct_points(tuple(raw_ends), tol)
+            kind = gmsh.model.getType(dim, tag)
             candidates: set[int] = set()
             if ends:
                 cx, cy, cz = self._cell(ends[0], tol)
                 for dx, dy, dz in offsets:
                     candidates.update(cells.get((cx + dx, cy + dy, cz + dz), ()))
             hits = sorted(
-                i for i in candidates if self._records[i].matches(ends, bbox, tol)
+                i for i in candidates
+                if self._records[i].matches(kind, ends, bbox, tol)
             )
             for i in hits:
                 hits_per_record[i] += 1
@@ -572,10 +585,14 @@ class _DXFImporter:
             empty = sorted(name for name in lost if name not in layers)
             warnings.warn(WarnDxfLayerMismatch(
                 f"load_dxf: {sum(lost.values())} DXF curve(s) matched none "
-                f"of the imported curves after duplicate removal, per layer "
-                f"{lost}; layer(s) {empty} matched nothing and get no "
-                f"physical group.  Unmatched imported curves, if any, are "
-                f"in the '_unmatched' group."
+                f"of the imported curves, per layer {lost}; layer(s) "
+                f"{empty} matched nothing and get no physical group.  "
+                f"OCC's duplicate removal also splits curves at crossings "
+                f"and T-junctions, and a closed spline's pieces or seam do "
+                f"not match its record; such curves are imported but sit "
+                f"in the '_unmatched' group.  Join them to a layer group "
+                f"by hand, or split the drawing at those nodes before "
+                f"importing."
             ), stacklevel=5)
         if multi_layer:
             shown = ", ".join(f"curve {t} -> {names}" for t, names in multi_layer[:5])
