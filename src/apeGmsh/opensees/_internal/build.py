@@ -209,6 +209,32 @@ class TagPlanMiss(BridgeError, TagLawError):
     """
 
 
+def plan_owner(record: object) -> str:
+    """How a plan miss names its owner: the record's type and, when it
+    carries one, its user-facing ``name``."""
+    name = record.name if hasattr(record, "name") else None
+    kind = type(record).__name__
+    return f"{kind} {name!r}" if isinstance(name, str) and name else kind
+
+
+def _coverage_miss(
+    family: str, planned: "Sequence[object]", records: "Sequence[object]",
+) -> str:
+    """The first record ``records`` holds that ``planned`` lacks (or the
+    first ``planned`` holds that ``records`` lacks), named for a miss."""
+    have = {id(r) for r in planned}
+    want = {id(r) for r in records}
+    lost = [r for r in records if id(r) not in have]
+    if lost:
+        return (f"the {family} plan holds no {plan_owner(lost[0])} that the "
+                "emit of its FEM writes")
+    extra = [r for r in planned if id(r) not in want]
+    if extra:
+        return (f"the {family} plan holds {plan_owner(extra[0])}, which the "
+                "emit of its FEM does not write")
+    return f"the {family} plan holds a record twice"
+
+
 def validate_node_ndf_element_compat(
     fem: "FEMData", elements: "Iterable[Element]",
 ) -> None:
@@ -6630,11 +6656,17 @@ class MPElementPlan:
         planned = Counter((line.site, line.key) for line in self.lines)
         expected = mp_element_keys(self.fem, partitioned=self.partitioned)
         if planned != expected:
-            raise TagLawError(
-                f"the MP-element plan holds {sum(planned.values())} "
-                f"elements, but the emit of its FEM writes "
-                f"{sum(expected.values())}, or other ones: the plan does "
-                "not cover the model (ADR 0114 D4, amended)."
+            lost = sorted((expected - planned).elements(), key=repr)
+            extra = sorted((planned - expected).elements(), key=repr)
+            owner = (f"holds no {lost[0][0]} element for {lost[0][1]!r}"
+                     if lost else
+                     f"holds a {extra[0][0]} element for {extra[0][1]!r} "
+                     "that the emit of its FEM does not write")
+            raise TagPlanMiss(
+                f"the MP-element plan {owner}: it holds "
+                f"{sum(planned.values())} elements, the emit of its FEM "
+                f"writes {sum(expected.values())}; the plan does not cover "
+                "the model (ADR 0114 D4, amended)."
             )
 
     def for_fem(self, fem: "FEMData") -> "MPElementPlan":
@@ -7144,9 +7176,11 @@ class ContactPlan:
         planned = tuple(line for line in self.lines if line.kind == kind)
         if [id(line.record) for line in planned] != [id(r) for r in records]:
             raise TagPlanMiss(
-                f"the contact plan holds {len(planned)} {kind} records, but "
-                f"this emit walks {len(records)}, or in another order: the "
-                "plan was not made for this emit (ADR 0114 D4, amended)."
+                f"{_coverage_miss('contact', [ln.record for ln in planned], records)}"
+                f" in this emit's order: the contact plan holds "
+                f"{len(planned)} {kind} records, but this emit walks "
+                f"{len(records)}, or in another order; the plan was not made "
+                "for this emit (ADR 0114 D4, amended)."
             )
         return planned
 
@@ -7159,15 +7193,14 @@ class ContactPlan:
         drop the interaction from the deck without this check.
         """
         for kind in CONTACT_STREAMS:
-            planned = sorted(
-                id(line.record) for line in self.lines if line.kind == kind)
+            planned = [line.record for line in self.lines if line.kind == kind]
             records = contact_records(fem, kind)
-            if planned != sorted(id(r) for r in records):
-                raise TagLawError(
-                    f"the contact plan holds {len(planned)} {kind} records, "
-                    f"but the FEM carries {len(records)}, or other ones: "
-                    "the plan was not made for this emit (ADR 0114 D4, "
-                    "amended)."
+            if sorted(map(id, planned)) != sorted(map(id, records)):
+                raise TagPlanMiss(
+                    f"{_coverage_miss('contact', planned, records)}: the contact "
+                    f"plan holds {len(planned)} {kind} records, but the FEM "
+                    f"carries {len(records)}; the plan was not made for this "
+                    "emit (ADR 0114 D4, amended)."
                 )
 
     def ghost_node_ids(self) -> set[int]:
@@ -7882,13 +7915,14 @@ class InterfacePlan:
         this check refuses it, and a plan that holds another model's
         record in its place, when the plan is made.
         """
-        planned = sorted(id(line.record) for line in self.lines)
+        planned = [line.record for line in self.lines]
         records = interface_records(self.fem)
-        if planned != sorted(id(r) for r in records):
-            raise TagLawError(
-                f"the interface plan holds {len(planned)} records, but the "
-                f"FEM carries {len(records)}, or other ones: the plan does "
-                "not cover the model (ADR 0114 D4, amended)."
+        if sorted(map(id, planned)) != sorted(map(id, records)):
+            raise TagPlanMiss(
+                f"{_coverage_miss('interface', planned, records)}: the "
+                f"interface plan holds {len(planned)} records, but the FEM "
+                f"carries {len(records)}; the plan does not cover the model "
+                "(ADR 0114 D4, amended)."
             )
 
     def for_fem(self, fem: "FEMData") -> "InterfacePlan":
@@ -7908,9 +7942,9 @@ class InterfacePlan:
             planned = self._index.get(id(rec))
             if planned is None:
                 raise TagPlanMiss(
-                    "the interface plan holds no tags for an interface "
-                    "record this emit writes: the plan was not made for "
-                    "this emit (ADR 0114 D4, amended)."
+                    f"the interface plan holds no tags for {plan_owner(rec)}, "
+                    "which this emit writes: the plan was not made for this "
+                    "emit (ADR 0114 D4, amended)."
                 )
             out[id(rec)] = planned
         return out
@@ -8305,7 +8339,7 @@ def emit_interfaces(
     unclaimed = [rec for rec in all_records if id(rec) not in claimed_ids]
     if not unclaimed:
         return
-    tag_plan.interfaces.planned().for_fem(fem)   # refuses another model's
+    tag_plan.interfaces.planned().for_fem(fem)   # refuses another model's plan
     _register_interface_phantoms(emitter, unclaimed)
     iface_tags = allocate_interface_tags(unclaimed, tag_plan)
     for rec in unclaimed:
@@ -8354,7 +8388,7 @@ def emit_rebar_elements(
         list(records) if records is not None else rebar_element_records(fem))
     if not recs:
         return
-    _mp_plan(tag_plan, fem)        # refuses a fork of another model's plan
+    _mp_plan(tag_plan, fem)        # refuses another model's plan
     tag_of = _mp_element_tagger(tag_plan)
 
     for rec in recs:

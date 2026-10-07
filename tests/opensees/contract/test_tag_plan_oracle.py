@@ -2888,3 +2888,92 @@ def test_unfrozen_allocator_is_unchanged() -> None:
     assert tags.allocate_for(prim, "region") == 1
     tags.reset()
     assert tags.last("element") == 0 and tags.tag_for(prim) is None
+
+
+# ---------------------------------------------------------------------------
+# A plan miss is a BridgeError naming its family and owner (S6 review)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("name", [
+    "contact_ranks_4/flat", "contact_ranks_2/partitioned"])
+def test_a_cut_contact_plan_is_a_named_plan_miss(name: str) -> None:
+    """Mutation: the memoised contact plan loses its last line. The next
+    emit, flat or partitioned, raises a :class:`TagPlanMiss` (a
+    :class:`BridgeError`) that names the contact family and the record
+    the plan lacks."""
+    import dataclasses
+
+    from apeGmsh.opensees._internal.build import BridgeError, plan_owner
+    from apeGmsh.opensees._internal.tag_plan import ContactTagPlan
+
+    bm = _MODELS[name]().build()
+    mode = emit_mode(bm, split=False, supports_partitions=True)
+    plan = bm._tag_plan(mode)
+    contacts = plan.contacts.contacts
+    assert contacts is not None and contacts.lines
+    cut = contacts.lines[-1]
+    bm._tag_plans[mode] = dataclasses.replace(
+        plan, contacts=ContactTagPlan(
+            contacts=dataclasses.replace(contacts, lines=contacts.lines[:-1])))
+    with pytest.raises(TagPlanMiss) as err:
+        ts.emit_stream(bm, RecordingEmitter)
+    assert isinstance(err.value, BridgeError)
+    message = str(err.value)
+    assert "contact plan" in message, message
+    assert f"holds no {plan_owner(cut.record)}" in message, message
+    assert repr(cut.record.name) in message, message
+
+
+def test_a_cut_interface_plan_is_a_named_plan_miss() -> None:
+    """The interface plan refuses a dropped record, and a read of a record
+    it does not hold, with a :class:`TagPlanMiss` naming the interface
+    family and the record."""
+    import dataclasses
+
+    from apeGmsh.opensees._internal.build import (
+        BridgeError,
+        interface_records,
+        plan_owner,
+    )
+
+    iface = _case("iface_embed/flat").plan.interfaces.planned()
+    cut = iface.lines[-1]
+    with pytest.raises(TagPlanMiss) as err:
+        dataclasses.replace(iface, lines=iface.lines[:-1])
+    assert isinstance(err.value, BridgeError)
+    assert "interface plan" in str(err.value)
+    assert f"holds no {plan_owner(cut.record)}" in str(err.value)
+
+    stranger = interface_records(_MODELS["iface_embed/flat"]().build().fem)[0]
+    with pytest.raises(TagPlanMiss) as err:
+        iface.tags_for([stranger])
+    assert isinstance(err.value, BridgeError)
+    assert (f"interface plan holds no tags for {plan_owner(stranger)}"
+            in str(err.value))
+
+
+def test_a_cut_mp_or_parameter_plan_is_a_named_plan_miss() -> None:
+    """The MP-element and parameter plans refuse a dropped owner with a
+    :class:`TagPlanMiss` naming the family and the owner."""
+    import dataclasses
+
+    from apeGmsh.opensees._internal.build import BridgeError, plan_owner
+    from apeGmsh.opensees._internal.tag_plan import ParameterTagPlan
+
+    mp = _case("mp_ranks_4/flat").plan.mp_elements.planned()
+    cut = mp.lines[-1]
+    with pytest.raises(TagPlanMiss) as err:
+        dataclasses.replace(mp, lines=mp.lines[:-1])
+    assert isinstance(err.value, BridgeError)
+    assert (f"MP-element plan holds no {cut.site} element for {cut.key!r}"
+            in str(err.value))
+
+    sub = _case("param_ranks_4/staged").plan.parameters
+    lines, owners = sub.planned(), sub.owners
+    with pytest.raises(TagPlanMiss) as err:
+        ParameterTagPlan(lines=lines[:-1], owners=owners)
+    rec, rank = owners[-1]
+    assert isinstance(err.value, BridgeError)
+    assert (f"parameter plan holds no {plan_owner(rec)} at rank {rank}"
+            in str(err.value))

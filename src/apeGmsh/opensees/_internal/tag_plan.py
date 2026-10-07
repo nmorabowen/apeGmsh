@@ -52,7 +52,7 @@ if TYPE_CHECKING:
 #: One planned emission: ``(kind, tag)`` in the emit's verb vocabulary.
 TagRow = tuple[str, int]
 
-#: A helper handed a fork of another model's plan says so first, rather
+#: A helper handed another model's plan says so first, rather
 #: than report a count or order mismatch that would hide the cause.
 _FOREIGN_PLAN = (
     "the {family} plan was made over another FEM snapshot than the one "
@@ -231,9 +231,9 @@ class TransformTagPlan(FamilyTagPlan):
         """The planned fan-out, which must cover exactly ``transforms``.
 
         ``transforms`` are the specs this emit walks, in order, over the
-        FEM snapshot ``fem``. A plan made over another FEM (a fork of
-        another model's plan), for other specs, or in another order,
-        raises :class:`TagLawError`.
+        FEM snapshot ``fem``. A plan made over another FEM (another
+        model's plan), for other specs, or in another order, raises
+        :class:`~.build.TagPlanMiss`.
         """
         fanout = self._planned()
         if fem is not fanout.fem:
@@ -573,11 +573,22 @@ class ParameterTagPlan(FamilyTagPlan):
             a is not b or r != s
             for (a, r), (b, s) in zip(planned, self.owners)
         ):
-            raise TagLawError(
-                f"the parameter plan holds {len(planned)} sites, but the "
-                f"model's records declare {len(self.owners)}, or other "
-                "ones, or in another order: the plan does not cover the "
-                "model (ADR 0114 D4, amended)."
+            from .build import plan_owner
+
+            i = next((i for i, ((a, r), (b, s)) in enumerate(
+                zip(planned, self.owners)) if a is not b or r != s),
+                min(len(planned), len(self.owners)))
+            if i < len(self.owners):
+                rec, rank = self.owners[i]
+                owner = f"holds no {plan_owner(rec)} at rank {rank} in site {i}"
+            else:
+                rec, rank = planned[i]
+                owner = (f"holds {plan_owner(rec)} at rank {rank} in site "
+                         f"{i}, which the model's records do not declare")
+            raise _miss(
+                f"the parameter plan {owner}: it holds {len(planned)} sites, "
+                f"the model's records declare {len(self.owners)}; the plan "
+                "does not cover the model (ADR 0114 D4, amended)."
             )
 
     def planned(self) -> tuple[PlannedParameter, ...]:
@@ -800,9 +811,9 @@ class ContactTagPlan(FamilyTagPlan):
         """The contact plan, which must have been made over ``fem``.
 
         ``fem`` is the FEM snapshot this emit walks. A plan made over
-        another one (a fork of another model's plan), or one that does
-        not hold each of its contact records exactly once, raises
-        :class:`TagLawError`.
+        another one (another model's plan), or one that does not hold
+        each of its contact records exactly once, raises
+        :class:`~.build.TagPlanMiss`, which names the record it misses.
         """
         planned = self._planned()
         if fem is not planned.fem:
