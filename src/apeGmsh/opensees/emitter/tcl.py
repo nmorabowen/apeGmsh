@@ -312,31 +312,62 @@ def _is_nonfinite_token(a: Any) -> bool:
     return False
 
 
-def _nonfinite_error(parts: Sequence[Any], value: float) -> BridgeError:
+def _nonfinite_error(
+    parts: Sequence[Any], value: float, *, command: str | None = None,
+) -> BridgeError:
     """The emit-time refusal of a non-finite float (#1356).
 
     Tcl's ``Tcl_GetDouble`` rejects ``nan`` / ``inf`` (and the py deck
     dies with ``NameError``). The command is the line's leading string
     words (``element forceBeamColumn``); the argument is the offender's
     0-based position among the words after the first. Error path only,
-    so it re-formats the parts to find the offender.
+    so it re-formats the parts to find the offender. With an explicit
+    ``command`` (a strategy rung, whose parts carry no command word) the
+    position counts from the first part, as in the py deck.
     """
-    words: list[str] = []
-    for p in parts[:2]:
-        if not isinstance(p, str):
-            break
-        words.append(p)
-    command = " ".join(words) if words else "<tcl line>"
+    offset = 0
+    if command is None:
+        offset = 1
+        words: list[str] = []
+        for p in parts[:2]:
+            if not isinstance(p, str):
+                break
+            words.append(p)
+        command = " ".join(words) if words else "<tcl line>"
     where = f"an argument is {value!r}"
     for i, a in enumerate(parts):
         if _is_nonfinite_token(a):
-            where = f"argument {i - 1} is {a!r}"
+            where = f"argument {i - offset} is {a!r}"
             break
     return BridgeError(
         f"{command}: {where}; OpenSees cannot parse a non-finite float "
         "(nan/inf), so the deck would fail at run time. Fix the value at "
         "its source (#1356)."
     )
+
+
+def _refuse_nonfinite_ramp(
+    name: str, targets: tuple[tuple[int, float], ...], n_steps_to_full: float,
+) -> None:
+    """Refuse a non-finite ramp constant before any hook line is emitted.
+
+    The ramp body interpolates ``n_steps_to_full`` and each target into
+    an expression, not through the line formatter, so it is checked
+    here (#1356).
+    """
+    bad: list[str] = []
+    if not math.isfinite(float(n_steps_to_full)):
+        bad.append(f"n_steps_to_full is {float(n_steps_to_full)!r}")
+    bad += [
+        f"target of parameter {int(tag)} is {float(t)!r}"
+        for tag, t in targets if not math.isfinite(float(t))
+    ]
+    if bad:
+        raise BridgeError(
+            f"step hook ramp {name!r}: {'; '.join(bad)}; OpenSees cannot "
+            "parse a non-finite float (nan/inf), so the deck would fail at "
+            "run time. Fix the value at its source (#1356)."
+        )
 
 
 def _join(*parts: Any) -> str:
@@ -1037,6 +1068,14 @@ class TclEmitter:
             self._lines.append("}")
             return 0
 
+        bad = [(k, r) for k, r in enumerate(strategy.rungs)
+               if any(_is_nonfinite_token(a) for a in r)]
+        if bad:
+            k, rung = bad[0]
+            raise _nonfinite_error(
+                rung, float("nan"),
+                command=f"analyze strategy {strategy.name!r} rung {k}",
+            )
         rungs_literal = "{" + " ".join(
             "{" + _join(*rung) + "}" for rung in strategy.rungs
         ) + "}"
@@ -1435,6 +1474,7 @@ class TclEmitter:
         n_steps_to_full: float,
         phase: Literal["before", "after"] = "before",
     ) -> None:
+        _refuse_nonfinite_ramp(name, targets, n_steps_to_full)
         # 1. Dispatcher boilerplate (idempotent — emitted on first call).
         if not self._hook_dispatcher_emitted:
             self._emit_hook_dispatcher_boilerplate()
@@ -1534,7 +1574,7 @@ class TclEmitter:
     def set_time(self, t: float) -> None:
         prev_indent = self._lines.indent
         self._lines.indent = ""
-        self._lines.append(f"setTime {repr(float(t))}")
+        self._lines.append(_join("setTime", float(t)))
         self._lines.indent = prev_indent
 
     def set_creep(self, on: bool) -> None:

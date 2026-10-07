@@ -23,7 +23,7 @@ from apeGmsh.opensees import apeSees
 from apeGmsh.opensees._internal.build import BridgeError
 from apeGmsh.opensees.emitter.base import StrategySpec
 from apeGmsh.opensees.emitter.py import PyEmitter, _ops_call
-from apeGmsh.opensees.emitter.tcl import _join
+from apeGmsh.opensees.emitter.tcl import TclEmitter, _join
 
 from tests.opensees.fixtures.fem_stub import make_two_node_beam
 
@@ -91,8 +91,13 @@ def test_finite_values_render_unchanged(
     assert "[1.0, 2.0]" in render([1.0, 2.0])
 
 
-def test_py_strategy_rung_with_nan_raises_naming_the_rung() -> None:
-    e = PyEmitter()
+_EMITTERS = [PyEmitter, TclEmitter]
+_EIDS = ["py", "tcl"]
+
+
+@pytest.mark.parametrize("emitter", _EMITTERS, ids=_EIDS)
+def test_strategy_rung_with_nan_raises_naming_the_rung(emitter: Any) -> None:
+    e = emitter()
     spec = StrategySpec(
         name="lad",
         rungs=(
@@ -104,6 +109,38 @@ def test_py_strategy_rung_with_nan_raises_naming_the_rung() -> None:
         BridgeError, match=r"analyze strategy 'lad' rung 1: argument 2 is nan",
     ):
         e.analyze(steps=1, strategy=spec)
+
+
+@pytest.mark.parametrize("emitter", _EMITTERS, ids=_EIDS)
+@pytest.mark.parametrize("t", [float("nan"), float("inf")], ids=repr)
+def test_set_time_nonfinite_raises(emitter: Any, t: float) -> None:
+    e = emitter()
+    with pytest.raises(BridgeError, match=r"setTime.*argument 0 is"):
+        e.set_time(t)
+    e.set_time(2.5)
+    assert any(ln.strip() in ("setTime 2.5", "ops.setTime(2.5)")
+               for ln in e.lines())
+
+
+@pytest.mark.parametrize("emitter", _EMITTERS, ids=_EIDS)
+@pytest.mark.parametrize(
+    ("targets", "n", "match"),
+    [
+        (((1, 1.0),), float("nan"), r"n_steps_to_full is nan"),
+        (((1, 1.0), (2, float("inf"))), 10.0,
+         r"target of parameter 2 is inf"),
+        (((3, float("-inf")),), 10.0, r"target of parameter 3 is -inf"),
+    ],
+    ids=["n_steps_nan", "target_inf", "target_-inf"],
+)
+def test_step_hook_ramp_nonfinite_raises_before_emitting(
+    emitter: Any, targets: Any, n: float, match: str,
+) -> None:
+    e = emitter()
+    before = list(e.lines())
+    with pytest.raises(BridgeError, match=r"step hook ramp 'ramp1': " + match):
+        e.step_hook_ramp("ramp1", targets=targets, n_steps_to_full=n)
+    assert list(e.lines()) == before
 
 
 def _truss(E: float) -> apeSees:

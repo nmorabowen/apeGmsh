@@ -141,6 +141,30 @@ def _nonfinite_error(command: str, args: Sequence[Any], value: float) -> BridgeE
     )
 
 
+def _refuse_nonfinite_ramp(
+    name: str, targets: tuple[tuple[int, float], ...], n_steps_to_full: float,
+) -> None:
+    """Refuse a non-finite ramp constant before any hook line is emitted.
+
+    The ramp body interpolates ``n_steps_to_full`` and each target into
+    an expression, not through the line formatter, so it is checked
+    here (#1356).
+    """
+    bad: list[str] = []
+    if not math.isfinite(float(n_steps_to_full)):
+        bad.append(f"n_steps_to_full is {float(n_steps_to_full)!r}")
+    bad += [
+        f"target of parameter {int(tag)} is {float(t)!r}"
+        for tag, t in targets if not math.isfinite(float(t))
+    ]
+    if bad:
+        raise BridgeError(
+            f"step hook ramp {name!r}: {'; '.join(bad)}; OpenSees cannot "
+            "parse a non-finite float (nan/inf), so the deck would fail at "
+            "run time. Fix the value at its source (#1356)."
+        )
+
+
 def _ops_call(method: str, *args: Any) -> str:
     """Render an ``ops.<method>(...)`` source line.
 
@@ -834,6 +858,7 @@ class PyEmitter:
         n_steps_to_full: float,
         phase: Literal["before", "after"] = "before",
     ) -> None:
+        _refuse_nonfinite_ramp(name, targets, n_steps_to_full)
         # 1. Dispatcher boilerplate (idempotent).
         if not self._hook_dispatcher_emitted:
             self._emit_hook_dispatcher_boilerplate()
