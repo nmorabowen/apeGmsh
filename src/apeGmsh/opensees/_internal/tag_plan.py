@@ -32,6 +32,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, ClassVar, NamedTuple
 
+import numpy as np
+
 from .tag_allocator import TagAllocator, TagLawError
 
 if TYPE_CHECKING:
@@ -170,6 +172,8 @@ class ElementTagPlan(FamilyTagPlan):
                 "elements: the element plan derives its rows from specs; "
                 "pass specs, not rows."
             )
+        for spec, sub in self.specs:
+            check_distinct_nodes(spec, sub)
 
     def stream(self) -> tuple[TagRow, ...]:
         """One ``("element", tag)`` row per planned element, spec by spec."""
@@ -178,6 +182,64 @@ class ElementTagPlan(FamilyTagPlan):
             for _spec, sub in self.specs
             for _eid, _conn, tag in sub
         )
+
+
+def _first_repeated_row(conn: np.ndarray) -> int | None:
+    """Index of the first connectivity row that repeats a node tag.
+
+    ``conn`` follows the :class:`~.build.ElementPlanRows` convention: a
+    rectangular ``int64[N, k]`` for a homogeneous fan-out, checked in
+    one vectorised pass (a sorted row repeats a tag iff two neighbours
+    are equal), or an object-dtype ``[N]`` of per-row arrays for a
+    mixed-npe fan-out, checked row by row. ``None`` when every row is
+    distinct.
+    """
+    if conn.ndim == 2:
+        if conn.shape[0] == 0 or conn.shape[1] < 2:
+            return None
+        srt = np.sort(conn, axis=1)
+        hits = np.flatnonzero((srt[:, 1:] == srt[:, :-1]).any(axis=1))
+        return int(hits[0]) if hits.size else None
+    for i in range(conn.shape[0]):
+        row = np.asarray(conn[i])
+        if np.unique(row).size != row.size:
+            return i
+    return None
+
+
+def check_distinct_nodes(spec: Element, rows: ElementPlanRows) -> None:
+    """Refuse an element whose connectivity repeats a node tag (#1536).
+
+    No OpenSees element accepts a repeated tag in its connectivity: a
+    zeroLength needs two *distinct* (coincident) nodes, and a collapsed
+    quad or hex assembles a singular element silently. The check runs on
+    the planned rows of every spec, inside :func:`plan_tags`, so it
+    fires on the first emit before any element, deck or archive is
+    written. The message names the element class and PG, the planned
+    OpenSees tag, the FEM element id and the repeated node.
+    """
+    i = _first_repeated_row(rows.conn)
+    if i is None:
+        return
+    from .build import BridgeError
+    from .tag_resolution import MISSING_FEM_ELEMENT_ID
+
+    eid, nodes, tag = rows[i]
+    repeated = sorted({n for n in nodes if nodes.count(n) > 1})
+    cls = type(spec).__name__
+    pg = getattr(spec, "pg", None)
+    where = (
+        "the node-pair element" if eid == MISSING_FEM_ELEMENT_ID
+        else f"FEM element {eid}"
+    )
+    noun = "node" if len(repeated) == 1 else "nodes"
+    raise BridgeError(
+        f"{cls}(pg={pg!r}): element {tag} ({where}) repeats {noun} "
+        f"{', '.join(map(str, repeated))} in its connectivity {nodes}; "
+        "every node in an element's connectivity must be distinct. A "
+        "repeated tag is a collapsed or degenerate cell upstream (gmsh, "
+        "an import, or compose); no OpenSees element accepts it."
+    )
 
 
 @dataclass(frozen=True, slots=True)
