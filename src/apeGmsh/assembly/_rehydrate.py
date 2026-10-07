@@ -31,6 +31,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, cast
 
+from apeGmsh.mesh._compose import _prefix_namespaced_name
 from apeGmsh.opensees._internal.typed_records import SectionSimpleRecord
 
 from ._v1 import AssemblyError
@@ -514,7 +515,9 @@ def _plan(label: str, model: "OpenSeesModel") -> list[_Decl]:
                 f"instance {label!r}: element {token!r} is not rehydrated; "
                 f"supported: {sorted(_ELEMENTS)}."
             )
-        refs, make = parse_el(f"{label}.{pg}", args, f"instance {label!r}: element {token!r}")
+        # The merge engine's own rule, so the spec names the PG compose wrote.
+        refs, make = parse_el(str(_prefix_namespaced_name(label, pg)), args,
+                              f"instance {label!r}: element {token!r}")
         plan.append(_Decl(None, refs, make))
 
     declared: set[_Key] = set()
@@ -595,7 +598,10 @@ def refuse_region_dampings(label: str, source: "str | Path") -> None:
 def rehydrate(ops: "apeSees", label: str, model: "OpenSeesModel") -> None:
     """Register ``model``'s model content on ``ops`` under ``{label}.``.
 
-    Names become ``{label}.{name}``; physical groups ``{label}.{pg}``.
+    Names become ``{label}.{name}`` (the carried rebar material's rule in
+    the merge engine); physical groups take the merge engine's
+    ``_prefix_namespaced_name`` (ADR 0038 alternation): ``{label}.{pg}``
+    when ``pg`` holds an even number of ``.``/``/``, else ``{label}/{pg}``.
     Registration order: uniaxial materials, nD materials, sections,
     transforms, beam integrations, dampings, then element specs, each in
     archived tag order. Every declaration is parsed and checked before the
