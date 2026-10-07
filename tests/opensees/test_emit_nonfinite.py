@@ -143,6 +143,29 @@ def test_step_hook_ramp_nonfinite_raises_before_emitting(
     assert list(e.lines()) == before
 
 
+@pytest.mark.parametrize("emitter", _EMITTERS, ids=_EIDS)
+@pytest.mark.parametrize(
+    ("coords", "index"),
+    [
+        ((float("nan"), 0.0, 0.0), 1),
+        ((0.0, 0.0, float("-inf")), 3),
+        ((float("inf"), 0.0), 1),
+        ((0.0, float("nan")), 2),
+    ],
+    ids=["3d_x_nan", "3d_z_-inf", "2d_x_inf", "2d_y_nan"],
+)
+def test_node_fast_path_refuses_nonfinite_coords(
+    emitter: Any, coords: tuple[float, ...], index: int,
+) -> None:
+    e = emitter()
+    with pytest.raises(BridgeError, match=rf"node.*: argument {index} is "):
+        e.node(1, *coords)
+    finite = tuple(0.5 for _ in coords)
+    e.node(1, *finite)
+    tail = ", ".join(["1", *map(repr, finite)])
+    assert e.lines()[-1] in (f"ops.node({tail})", "node " + tail.replace(", ", " "))
+
+
 def _truss(E: float) -> apeSees:
     ops = apeSees(cast("object", make_two_node_beam()))  # type: ignore[arg-type]
     ops.model(ndm=3, ndf=3)

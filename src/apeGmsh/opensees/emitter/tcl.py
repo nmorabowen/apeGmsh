@@ -703,12 +703,16 @@ class TclEmitter:
                         x.__class__ is float
                         and y.__class__ is float
                         and z.__class__ is float
+                        # nan/inf fall through to the general path,
+                        # which refuses them naming ``node`` (#1356).
+                        and not (x - x or y - y or z - z)
                     ):
                         self._lines.append(f"node {tag} {x!r} {y!r} {z!r}")
                         return
                 elif len(coords) == 2:
                     x, y = coords
-                    if x.__class__ is float and y.__class__ is float:
+                    if (x.__class__ is float and y.__class__ is float
+                            and not (x - x or y - y)):
                         self._lines.append(f"node {tag} {x!r} {y!r}")
                         return
             self._lines.append(_join("node", tag, *coords))
