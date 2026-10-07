@@ -16,6 +16,8 @@ it resolves no record. Every kind, and each reference node, is a row of
 `/assembly/ties` (params as canonical JSON, `n_records`) and round-trips
 through `Assembly.from_h5`; a row whose params carry other keys is refused
 on write and on read. A port naming a dotted source group (`"A.deck.slab"`)
-now resolves to the group compose stored (`A/deck.slab`), for `tie` too.
+now resolves to the group compose stored (`A/deck.slab`), for `tie` too,
+and `Assembly.h5()` of an assembly that instances another assembly archive
+no longer refuses it: rows labelled `X/A` belong to instance `X`.
 `contact` and `interface` stay instance-internal: `couple(kind="contact")`
 on an instance-declared assembly raises.

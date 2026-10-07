@@ -906,11 +906,27 @@ def _instance_rows(b: _Bridged) -> list[InstanceRow]:
             "h5(): the merged FEM carries no per-row instance labels; the "
             "FEM-id window of an instance cannot be recorded."
         )
+    from apeGmsh.mesh._compose import _split_joined_label
+
+    # A row's label is the instance's own, or, for an instance whose
+    # source is itself an assembly archive, the joined ``X/A`` the merge
+    # engine grafts (ADR 0038 nested composition): its root names the
+    # instance. ``""`` marks an assembly-owned reference node.
+    roots: dict[str, str] = {}
+
+    def root(lbl: object) -> str:
+        key = str(lbl)
+        if key not in roots:
+            parts = _split_joined_label(key)
+            roots[key] = parts[0] if parts else ""
+        return roots[key]
+
     node_ids = np.asarray(fem.nodes.ids, dtype=np.int64)
+    node_root = np.array([root(lbl) for lbl in node_lbl], dtype=object)
     rows: list[InstanceRow] = []
     for inst in b.instances:
-        ids = [int(i) for i in node_ids[node_lbl == inst.label]]
-        ids += [int(e) for e, lbl in elem_lbl.items() if lbl == inst.label]
+        ids = [int(i) for i in node_ids[node_root == inst.label]]
+        ids += [int(e) for e, lbl in elem_lbl.items() if root(lbl) == inst.label]
         if not ids:
             raise AssemblyError(
                 f"h5(): instance {inst.label!r} owns no node or element of "

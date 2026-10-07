@@ -371,6 +371,49 @@ def test_a_dotted_source_name_resolves_like_a_plain_one(files, family, tmp_path)
     assert got == {"block": n, "dblock": n}
 
 
+def test_an_assembly_archive_instanced_again_writes_and_reads_back(files, tmp_path):
+    """A nested archive: rows of instance ``X`` carry the joined label
+    ``X/A``, whose root is ``X``; a port into it, ``"X.A/deck.top"``, maps
+    to ``X.A/deck.top`` by the same prefix rule (ADR 0038)."""
+    from apeGmsh.assembly import Assembly
+    from apeGmsh.assembly._h5 import read_assembly_zone
+
+    # The inner archive carries a reference node but no coupling: an
+    # archive whose deck holds a coupling element is refused as an
+    # instance source by the rehydrator (MP element rows are not carried).
+    inner = Assembly("inner").instance("A", files["dblock"]).node("ref", REF)
+    inner.bridge(ndm=3, ndf=3)
+    p1 = tmp_path / "inner.h5"
+    inner.h5(p1)
+
+    outer = (Assembly("outer").instance("X", p1)
+             .instance("Y", p1, translate=(0.0, 0.0, H))
+             .equal_dof("X.A/deck.top", "Y.A/deck.bot", dofs=[1, 2, 3],
+                        name="glue"))
+    ops = outer.bridge(ndm=3, ndf=3)
+    fem = ops.fem
+    assert "X.A/deck.top" in fem.nodes.physical
+    assert len(_node_records(fem, "equal_dof")) == 9
+    assert set(fem.nodes.module_label) >= {"X/A", "Y/A"}
+    for nid in fem.nodes.decoupled_ids:  # the inner reference nodes
+        ops.ndf(int(nid), ndf=6)
+    p2 = tmp_path / "outer.h5"
+    outer.h5(p2)
+
+    zone = read_assembly_zone(p2)
+    rows = {r.label: r for r in zone.instances}
+    assert set(rows) == {"X", "Y"}
+    for label, r in rows.items():
+        owned = [int(i) for i, lbl in zip(fem.nodes.ids, fem.nodes.module_label)
+                 if str(lbl).split("/")[0].split(".")[0] == label]
+        assert r.fem_id_base <= min(owned)
+        assert max(owned) < r.fem_id_base + r.fem_id_span
+    back = Assembly.from_h5(p2)
+    assert [i.label for i in back.instances] == ["X", "Y"]
+    assert back.ties == outer.ties
+    assert {t.name: t.n_records for t in zone.ties} == {"glue": 9}
+
+
 # ---------------------------------------------------------------------------
 # INV-7 — zero records and bad ports fail loud
 # ---------------------------------------------------------------------------
