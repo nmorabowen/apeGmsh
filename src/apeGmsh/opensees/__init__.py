@@ -30,7 +30,10 @@ from ._internal.build import (
     DetachedDiaphragmMasterWarning,
     UnconsumedModelDefinitionWarning,
 )
-from ._internal.stage_window import SeriesOutsideStageWindowWarning
+from ._internal.stage_window import (
+    SeriesEndsMidStageWarning,
+    SeriesOutsideStageWindowWarning,
+)
 from .model_data import ModelData
 from .node import Node, NodeSet
 from .opensees_model import OpenSeesModel
@@ -51,5 +54,6 @@ __all__ = [
     "OpenSeesCapabilities",
     "UnconsumedModelDefinitionWarning",
     "SeriesOutsideStageWindowWarning",
+    "SeriesEndsMidStageWarning",
     "DetachedDiaphragmMasterWarning",
 ]

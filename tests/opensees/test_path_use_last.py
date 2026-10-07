@@ -26,9 +26,11 @@ from typing import Any, cast
 
 import pytest
 
-from apeGmsh.opensees import SeriesOutsideStageWindowWarning
+from apeGmsh.opensees import (
+    SeriesEndsMidStageWarning,
+    SeriesOutsideStageWindowWarning,
+)
 from apeGmsh.opensees._internal.build import BridgeError
-from apeGmsh.opensees._internal.stage_window import SeriesEndsMidStageWarning
 from apeGmsh.opensees.apesees import apeSees
 from apeGmsh.opensees.emitter.recording import RecordingEmitter
 from apeGmsh.opensees.time_series.time_series import Path
@@ -48,14 +50,8 @@ def _ops() -> apeSees:
 
 
 def _register(ops: apeSees, **kw: Any) -> Path:
-    """Register a ``Path`` built from ``kw``.
-
-    ``ops.timeSeries.Path`` does not take ``use_last`` yet (its wrapper is
-    outside this slice), so the primitive is built directly and handed to
-    the bridge the way the wrapper does.
-    """
-    series: Path = ops._register(Path(**kw))
-    return series
+    """Declare a ``Path`` through the public facade."""
+    return ops.timeSeries.Path(**kw)
 
 
 def _stage(ops: apeSees, series: Any, *, n: int = 8, h: float = 0.25,

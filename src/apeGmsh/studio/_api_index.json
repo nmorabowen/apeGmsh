@@ -3890,7 +3890,7 @@
     },
     "ops.timeSeries.Path": {
       "doc": "Construct + register a ``timeSeries Path`` (time-history).",
-      "signature": "Path(*, file: 'str | None' = None, values: 'tuple[float, ...] | None' = None, time: 'tuple[float, ...] | None' = None, dt: 'float | None' = None, factor: 'float' = 1.0, start_time: 'float' = 0.0, prepend_zero: 'bool' = False, name: 'str | None' = None) -> 'Path'",
+      "signature": "Path(*, file: 'str | None' = None, values: 'tuple[float, ...] | None' = None, time: 'tuple[float, ...] | None' = None, dt: 'float | None' = None, factor: 'float' = 1.0, start_time: 'float' = 0.0, prepend_zero: 'bool' = False, use_last: 'bool' = False, name: 'str | None' = None) -> 'Path'",
       "skill": "references/opensees-bridge.md",
       "symbol": "ops.timeSeries.Path"
     },
