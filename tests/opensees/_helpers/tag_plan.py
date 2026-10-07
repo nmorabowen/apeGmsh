@@ -115,6 +115,37 @@ def emit_tags(
     )
 
 
+def parameter_plan(
+    sites: Sequence[Any], *, partitioned: bool = False,
+) -> TagPlan:
+    """A staged emit's tag plan holding only the parameter ``sites``.
+
+    The sites (``build.ParameterSite``, from ``initial_stress_sites`` or
+    ``parameter_flip_sites``) are numbered by ``build.plan_parameters``,
+    the loop :func:`~apeGmsh.opensees._internal.tag_plan.plan_tags` runs,
+    from a fresh planner, so a parameter writer (``emit_activate_absorbing``,
+    ``emit_update_parameters``) can be called directly with a plan.
+    """
+    from apeGmsh.opensees._internal.build import plan_parameters
+
+    planner = TagAllocator()
+    lines = plan_parameters(sites, planner)
+    planner.freeze()
+    return TagPlan(
+        mode=TagMode(split=False, partitioned=partitioned, staged=True),
+        allocator=planner,
+        elements=ElementTagPlan(),
+        transforms=TransformTagPlan(),
+        regions=RegionTagPlan(),
+        parameters=ParameterTagPlan(
+            lines=lines,
+            owners=tuple((site.record, site.rank) for site in sites)),
+        mp_elements=MPElementTagPlan(),
+        interfaces=InterfaceTagPlan(),
+        contacts=ContactTagPlan(),
+    )
+
+
 class _NodeConstraints:
     """``fem.nodes.constraints``: iterable over node-level records."""
 

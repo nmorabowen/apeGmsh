@@ -44,11 +44,12 @@ slice turns its cases into real comparisons in the same commit;
 non-vacuous, and ``test_short_or_empty_element_plan_fails_the_oracle``
 proves the comparison catches a plan that drops rows.
 
-Beside the oracle, this file pins what S1 and S2 ship:
+Beside the oracle, this file pins what S1, S2 and S6 ship:
 ``TagAllocator.freeze()`` and ``fork()``, ``TagLawError``, a plan seeded
 exactly as the emit used to seed its allocator (``element_tags="fem"``
-included), the plan each emit path reads (``plan_of``), and the refusal
-of ``reset()`` on every fork.
+included), the plan each emit path holds (the memoised :class:`TagPlan`
+itself, which has no allocation API; S6), a plan miss raising
+``TagPlanMiss``, and the refusal of ``reset()`` on every fork.
 """
 from __future__ import annotations
 
@@ -63,6 +64,7 @@ from typing import Any, NamedTuple
 import numpy as np
 import pytest
 
+from apeGmsh.opensees._internal.build import TagPlanMiss
 from apeGmsh.opensees._internal.tag_allocator import TagAllocator, TagLawError
 from apeGmsh.opensees._internal.tag_plan import (
     FAMILIES,
@@ -70,7 +72,6 @@ from apeGmsh.opensees._internal.tag_plan import (
     TagMode,
     TagPlan,
     emit_mode,
-    plan_of,
     plan_tags,
 )
 from apeGmsh.opensees.emitter.recording import RecordingEmitter
@@ -110,7 +111,6 @@ NON_DERIVED_VERBS: frozenset[str] = frozenset({
 #: The function that mints at emit time -> the family its tags belong to.
 _MINT_SITES: dict[str, str] = {
     "allocate_element_tags": "elements",
-    "emit_element_spec": "elements",
     "plan_transform_specs": "transforms",
     "plan_regions": "regions",
     "plan_parameters": "parameters",
@@ -626,9 +626,9 @@ def _read_log(name: str, log: list[_Op], plan: TagPlan) -> tuple[
     assert any(op.allocator == planner for op in log), (
         f"{name}: the emit's plan was not made inside this emit")
     emit_allocators = {op.allocator for op in log} - {planner}
-    assert len(emit_allocators) <= 1, (
+    assert not emit_allocators, (
         f"{name}: the emit minted from {len(emit_allocators)} allocators "
-        "besides the plan's; it mints from one emit_allocator() fork"
+        "besides the plan's; it holds the plan and mints nothing"
     )
     seed: dict[str, int] = {}
     seeded: set[tuple[str, int]] = set()
@@ -868,67 +868,52 @@ def _arch_transform_inputs(case: Case) -> tuple[list[Any], list[Any]]:
             [p for p in ordered if isinstance(p, Element)])
 
 
-def test_geomtransf_is_frozen_in_the_emit_fork() -> None:
-    """A stray ``geomTransf`` mint at emit time raises where it is."""
+def test_geomtransf_is_frozen_in_the_plan() -> None:
+    """The only allocator a plan carries is the frozen planner's: a stray
+    ``geomTransf`` mint through it raises where it is."""
     plan = _case("arch_with_orientation_fan_out/flat").plan
     assert "geomTransf" in plan.frozen_kinds
-    tags = plan.emit_allocator()
-    with pytest.raises(TagLawError, match="planned and frozen"):
-        tags.allocate("geomTransf")
+    with pytest.raises(TagLawError, match="froze this allocator"):
+        plan.allocator.allocate("geomTransf")
     with pytest.raises(TagLawError):
-        tags.allocate_block("geomTransf", 1)
+        plan.allocator.allocate_block("geomTransf", 1)
 
 
-def test_emit_transform_specs_is_two_way() -> None:
-    """Fork: read the plan. Plain allocator: plan through the same loop.
-
-    The plain-allocator path (a direct caller, until K1-3d S6) writes the
-    same lines and overrides as the planned path; any other fork raises.
-    """
+def test_emit_transform_specs_reads_the_plan() -> None:
+    """The writer writes the fan-out the plan holds, overrides included."""
     from apeGmsh.opensees._internal.build import emit_transform_specs
 
     case = _case("arch_with_orientation_fan_out/flat")
     bm, plan = case.bm, case.plan
-    transforms, elements = _arch_transform_inputs(case)
-
-    def run(tags: TagAllocator) -> tuple[list[Row], Any]:
-        em = ts.tapped(RecordingEmitter)()
-        em.tap = []
-        overrides = emit_transform_specs(
-            transforms, elements, em, bm.fem, tags, bm.tag_for, ndm=bm.ndm)
-        return list(em.tap), overrides
-
-    planned_rows, planned_over = run(plan.emit_allocator())
-    plain_rows, plain_over = run(_seeded_like_the_planner(bm))
-    assert planned_rows == plain_rows and planned_over == plain_over
-    assert planned_over == plan.transforms.fanout_for(
+    transforms, _elements = _arch_transform_inputs(case)
+    em = ts.tapped(RecordingEmitter)()
+    em.tap = []
+    overrides = emit_transform_specs(
+        transforms, em, bm.fem, plan, bm.tag_for, ndm=bm.ndm)
+    assert overrides == plan.transforms.fanout_for(
         transforms, bm.fem).overrides
-    assert planned_over      # the arch fans out past the spec's own tag
-
-    for other in (plan.allocator.fork(), plan.allocator,
-                  plan.allocator.fork({"geomTransf"}, origin=object())):
-        with pytest.raises(TagLawError, match="carries no tag plan"):
-            run(other)
+    assert overrides      # the arch fans out past the spec's own tag
+    assert [r for r in em.tap if r[0].startswith("geomTransf")]
 
 
 def test_emit_transform_specs_refuses_a_fork_of_another_models_plan() -> None:
     """A real foreign plan's fork is refused as such, not as a miscount.
 
     The same arch recipe built twice gives two models with their own FEM
-    snapshots. Model B's emit handed model A's emit allocator must say
-    the plan is another model's, before any count or order check.
+    snapshots. Model B's emit handed model A's plan must say the plan is
+    another model's, before any count or order check.
     """
     from apeGmsh.opensees._internal.build import emit_transform_specs
 
     case = _case("arch_with_orientation_fan_out/flat")
     other = _MODELS["arch_with_orientation_fan_out/flat"]().build()
     assert other.fem is not case.bm.fem
-    o_transforms, o_elements = _arch_transform_inputs(_Inputs(other))
+    o_transforms, _o_elements = _arch_transform_inputs(_Inputs(other))
     em = RecordingEmitter()
-    with pytest.raises(TagLawError, match="another model's tag plan"):
+    with pytest.raises(TagPlanMiss, match="tag plan is another model's"):
         emit_transform_specs(
-            o_transforms, o_elements, em, other.fem,
-            case.plan.emit_allocator(), other.tag_for, ndm=other.ndm)
+            o_transforms, em, other.fem,
+            case.plan, other.tag_for, ndm=other.ndm)
     assert not em.calls
 
 
@@ -936,17 +921,6 @@ class _Inputs(NamedTuple):
     """A model wrapped like a :class:`Case`, for the input helpers."""
 
     bm: Any
-
-
-def _seeded_like_the_planner(bm: Any) -> TagAllocator:
-    """A plain allocator seeded with ``bm``'s primitives, as a direct
-    caller of an emit helper seeds one."""
-    from apeGmsh.opensees.apesees import _kind_of
-
-    tags = TagAllocator()
-    for prim in bm.primitives:
-        tags.allocate_for(prim, _kind_of(prim))
-    return tags
 
 
 def test_emit_refuses_a_transform_plan_for_other_specs() -> None:
@@ -959,7 +933,7 @@ def test_emit_refuses_a_transform_plan_for_other_specs() -> None:
     for wrong in ([], [*transforms, transforms[0]], transforms[:-1]):
         with pytest.raises(TagLawError, match="transform plan holds"):
             sub.fanout_for(wrong, fem)
-    with pytest.raises(TagLawError, match="another model's tag plan"):
+    with pytest.raises(TagPlanMiss, match="tag plan is another model's"):
         sub.fanout_for(transforms, ts.synthesised_elements_fem())
 
 
@@ -1052,83 +1026,48 @@ def test_partitioned_contacts_number_rank_by_rank(n_ranks: int) -> None:
         assert all(ln.owner_rank is None for ln in flat.lines)
 
 
-def test_contact_kinds_are_frozen_on_every_emit_path(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Every emit path's allocator refuses a ``contactSurface`` or
-    ``contact`` mint: flat, staged, and partitioned over 1, 2 and
-    4 ranks."""
-    from apeGmsh.opensees.apesees import BuiltModel
-
-    seen: list[tuple[str, TagAllocator]] = []
-
-    def spy(path: str) -> Callable[..., Any]:
-        orig = getattr(BuiltModel, path)
-        sig = inspect.signature(orig)
-
-        def wrapper(self: Any, *args: Any, **kwargs: Any) -> Any:
-            seen.append((path, sig.bind(self, *args, **kwargs)
-                         .arguments["tags"]))
-            return orig(self, *args, **kwargs)
-        return wrapper
-
-    for path in _PATHS:
-        monkeypatch.setattr(BuiltModel, path, spy(path))
-    names = {*_first_case_per_mode().values(), *_CONTACT_MODELS}
-    reached: set[str] = set()
-    for name in sorted(names):
-        ts.emit_stream(_MODELS[name]().build(), RecordingEmitter)
-    for path, tags in seen:
-        reached.add(path)
-        assert {"contactSurface", "contact"} <= tags.frozen_kinds, path
-        for kind in ("contactSurface", "contact"):
-            with pytest.raises(TagLawError, match="planned and frozen"):
-                tags.allocate(kind)
-            with pytest.raises(TagLawError):
-                tags.allocate_block(kind, 1)
-    assert reached == set(_PATHS)
-
-
 @pytest.mark.parametrize("name", _CONTACT_CASES)
 def test_a_stray_contact_mint_raises(
     name: str, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Mutation: an emit that mints a contact tag raises where it mints.
 
-    The flat path is mutated back to minting their contact
-    tags (``_planned_contact_lines`` plans from the emit allocator); the
+    The emit holds only the plan, whose one allocator is the frozen
+    planner's. The flat path is mutated back to minting its contact tags
+    (``_planned_contact_lines`` plans through that allocator); the
     partitioned path's writer is mutated to mint one ``contact`` tag per
-    line, over 2 and 4 ranks. Each emit must raise, not write a deck.
+    line through it, over 2 and 4 ranks. Each emit must raise, not write
+    a deck.
     """
     import apeGmsh.opensees.apesees as apesees_mod
     from apeGmsh.opensees._internal import build
     from apeGmsh.opensees.apesees import BuiltModel
 
-    def minting_lines(fem: Any, tags: TagAllocator, kind: str) -> Any:
+    def minting_lines(fem: Any, tag_plan: TagPlan, kind: str) -> Any:
         entries = [(kind, r, None, ()) for r in build.contact_records(fem, kind)]
-        return build.plan_contacts(fem, entries, tags).lines
+        return build.plan_contacts(fem, entries, tag_plan.allocator).lines
 
     monkeypatch.setattr(build, "_planned_contact_lines", minting_lines)
 
-    fork: list[TagAllocator] = []
+    held: list[TagPlan] = []
     orig_partitioned = BuiltModel._emit_partitioned
 
     def spy(self: Any, **kwargs: Any) -> Any:
-        fork.append(kwargs["tags"])
+        held.append(kwargs["tag_plan"])
         return orig_partitioned(self, **kwargs)
 
     orig_writer = apesees_mod.write_planned_contact
 
     def minting_writer(emitter: Any, line: Any, *, ndm: int) -> None:
-        fork[-1].allocate("contact")
+        held[-1].allocator.allocate("contact")
         orig_writer(emitter, line, ndm=ndm)
 
     monkeypatch.setattr(BuiltModel, "_emit_partitioned", spy)
     monkeypatch.setattr(apesees_mod, "write_planned_contact", minting_writer)
 
-    with pytest.raises(TagLawError, match="planned and frozen"):
+    with pytest.raises(TagLawError, match="froze this allocator"):
         ts.emit_stream(_MODELS[name]().build(), RecordingEmitter)
-    assert bool(fork) == name.endswith("/partitioned")
+    assert bool(held) == name.endswith("/partitioned")
 
 
 @pytest.mark.parametrize("name", _CONTACT_CASES)
@@ -1193,14 +1132,9 @@ def test_emit_refuses_a_contact_plan_with_a_swapped_record(name: str) -> None:
         ts.emit_stream(bm, RecordingEmitter)
 
 
-def test_emit_contacts_is_two_way() -> None:
-    """Fork: read the plan. Plain allocator: plan through the same loop.
-
-    The plain-allocator path (a direct caller, until K1-3d S6) writes the
-    same rows as the planned path. A plain fork, the frozen planner
-    allocator and a fork for another origin carry no plan; a fork of a
-    real foreign plan is refused as another model's.
-    """
+def test_emit_contacts_reads_the_plan() -> None:
+    """The writers write the plan's rows; another model's plan, or a plan
+    handed another model's FEM, is refused as such."""
     from apeGmsh.opensees._internal.build import (
         emit_contact_planes,
         emit_contacts,
@@ -1209,27 +1143,22 @@ def test_emit_contacts_is_two_way() -> None:
     case = _case("synthesised_elements/flat")
     bm, plan = case.bm, case.plan
 
-    def run(tags: TagAllocator, fem: Any = None) -> list[Row]:
+    def run(tag_plan: TagPlan, fem: Any = None) -> list[Row]:
         em = ts.tapped(RecordingEmitter)()
         em.tap = []
-        emit_contacts(em, bm.fem if fem is None else fem, tags, ndm=bm.ndm)
-        emit_contact_planes(em, bm.fem if fem is None else fem, tags)
+        emit_contacts(em, bm.fem if fem is None else fem, tag_plan, ndm=bm.ndm)
+        emit_contact_planes(em, bm.fem if fem is None else fem, tag_plan)
         return list(em.tap)
 
-    planned = run(plan.emit_allocator())
-    assert planned == run(_seeded_like_the_planner(bm))
+    planned = run(plan)
     assert planned == list(plan.contacts.stream())
     assert planned       # one contact and one plane
 
-    for other in (plan.allocator.fork(), plan.allocator,
-                  plan.allocator.fork({"contact"}, origin=object())):
-        with pytest.raises(TagLawError, match="carries no tag plan"):
-            run(other)
     foreign = _case("contact_ranks_4/flat").plan
-    with pytest.raises(TagLawError, match="another model's tag plan"):
-        run(foreign.emit_allocator())
-    with pytest.raises(TagLawError, match="another model's tag plan"):
-        run(plan.emit_allocator(), fem=foreign.contacts.contacts.fem)
+    with pytest.raises(TagPlanMiss, match="tag plan is another model's"):
+        run(foreign)
+    with pytest.raises(TagPlanMiss, match="tag plan is another model's"):
+        run(plan, fem=foreign.contacts.contacts.fem)
 
 
 def test_emit_contacts_refuses_a_plan_for_other_records() -> None:
@@ -1364,13 +1293,13 @@ def test_stage_claimed_regions_plan(name: str, want: list[Any]) -> None:
     assert [r.tag for r in regions] == list(range(1, len(want) + 1))
 
 
-def _path_allocators(
+def _path_plans(
     monkeypatch: pytest.MonkeyPatch, names: Any,
-) -> list[tuple[str, TagAllocator]]:
-    """Emit ``names`` and return each emit path's allocator."""
+) -> list[tuple[str, TagPlan]]:
+    """Emit ``names`` and return the tag plan each emit path holds."""
     from apeGmsh.opensees.apesees import BuiltModel
 
-    seen: list[tuple[str, TagAllocator]] = []
+    seen: list[tuple[str, TagPlan]] = []
 
     def spy(path: str) -> Callable[..., Any]:
         orig = getattr(BuiltModel, path)
@@ -1378,7 +1307,7 @@ def _path_allocators(
 
         def wrapper(self: Any, *args: Any, **kwargs: Any) -> Any:
             seen.append((path, sig.bind(self, *args, **kwargs)
-                         .arguments["tags"]))
+                         .arguments["tag_plan"]))
             return orig(self, *args, **kwargs)
         return wrapper
 
@@ -1396,34 +1325,36 @@ def _emit_case(name: str, bm: Any = None) -> list[Row]:
 def test_region_is_frozen_on_every_emit_path(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Every emit path's allocator refuses a ``region`` mint: flat,
-    staged, and partitioned (staged or not)."""
+    """Every emit path holds a plan whose allocator refuses a ``region``
+    mint: flat, staged, and partitioned (staged or not)."""
     names = {*_first_case_per_mode().values(), *_REGION_CASES}
     reached: set[str] = set()
-    for path, tags in _path_allocators(monkeypatch, names):
+    for path, plan in _path_plans(monkeypatch, names):
         reached.add(path)
-        assert "region" in tags.frozen_kinds, path
-        with pytest.raises(TagLawError, match="planned and frozen"):
-            tags.allocate("region")
+        assert "region" in plan.frozen_kinds, path
+        with pytest.raises(TagLawError, match="froze this allocator"):
+            plan.allocator.allocate("region")
         with pytest.raises(TagLawError):
-            tags.allocate_block("region", 1)
+            plan.allocator.allocate_block("region", 1)
     assert reached == set(_PATHS)
 
 
-def _minting_recorder_tags(self: Any, fem: Any, tags: TagAllocator) -> Any:
+def _minting_recorder_tags(self: Any, fem: Any, tag_plan: TagPlan) -> Any:
     from apeGmsh.opensees._internal.tag_plan import plan_regions
 
-    rows = plan_regions([(("recorder", id(self)), self.region_keys())], tags)
+    rows = plan_regions([(("recorder", id(self)), self.region_keys())],
+                        tag_plan.allocator)
     return {row.key: row.tag for row in rows}
 
 
 def _minting_damping_tags(
-    self: Any, kind: str, stage: Any, recs: Any, tags: TagAllocator,
+    self: Any, kind: str, stage: Any, recs: Any, tag_plan: TagPlan,
 ) -> Any:
     from apeGmsh.opensees._internal.tag_plan import plan_regions
 
     site = (kind, None if stage is None else id(stage))
-    rows = plan_regions([(site, self._damping_region_keys(recs))], tags)
+    rows = plan_regions([(site, self._damping_region_keys(recs))],
+                        tag_plan.allocator)
     return {row.key: row.tag for row in rows}
 
 
@@ -1448,9 +1379,9 @@ def test_a_stray_region_mint_raises(
     """Mutation: a region writer that mints raises where it mints.
 
     Each writer (a filtered recorder's, the named regions', the damping
-    regions') is mutated to mint its tags from the emit allocator instead
-    of reading the plan. Every emit path that reaches it must raise, not
-    write a deck.
+    regions') is mutated to mint its tags from the only allocator the emit
+    holds, the plan's frozen one, instead of reading the plan. Every emit
+    path that reaches it must raise, not write a deck.
     """
     from apeGmsh.opensees.apesees import BuiltModel
     from apeGmsh.opensees.recorder import FilterableRecorder
@@ -1464,11 +1395,11 @@ def test_a_stray_region_mint_raises(
     else:
         orig = BuiltModel._planned_named_regions
 
-        def minting_named(self: Any, tags: TagAllocator, stage: Any) -> Any:
-            return tuple(r._replace(tag=tags.allocate("region"))
-                         for r in orig(self, tags, stage))
+        def minting_named(self: Any, tag_plan: TagPlan, stage: Any) -> Any:
+            return tuple(r._replace(tag=tag_plan.allocator.allocate("region"))
+                         for r in orig(self, tag_plan, stage))
         monkeypatch.setattr(BuiltModel, "_planned_named_regions", minting_named)
-    with pytest.raises(TagLawError, match="planned and frozen"):
+    with pytest.raises(TagLawError, match="froze this allocator"):
         _emit_case(name)
 
 
@@ -1560,30 +1491,20 @@ def test_region_plan_rows_keep_their_mint_order() -> None:
         RegionTagPlan().stream()
 
 
-def test_planned_region_tags_is_two_way() -> None:
-    """Fork: read the plan. Plain allocator: plan through the same loop.
-
-    A plain fork, the frozen planner allocator and a fork for another
-    origin carry no plan; a fork of a real foreign plan is refused as
-    another model's.
-    """
+def test_planned_region_tags_reads_the_plan() -> None:
+    """A recorder reads its region tags from the plan; another model's
+    plan is refused as such."""
     from apeGmsh.opensees.recorder import Ladruno
 
     case = _case("stage_claimed_regions/staged")
     bm, plan = case.bm, case.plan
     (spec,) = [p for p in bm.primitives if isinstance(p, Ladruno)]
     assert spec.region_keys() == ("filter", "energy")
-    assert spec.planned_region_tags(bm.fem, plan.emit_allocator()) == {
+    assert spec.planned_region_tags(bm.fem, plan) == {
         "filter": 11, "energy": 12}
-    assert spec.planned_region_tags(bm.fem, TagAllocator()) == {
-        "filter": 1, "energy": 2}
-    for other in (plan.allocator.fork(), plan.allocator,
-                  plan.allocator.fork({"region"}, origin=object())):
-        with pytest.raises(TagLawError, match="carries no tag plan"):
-            spec.planned_region_tags(bm.fem, other)
     foreign = _case("stage_claimed_regions/staged_partitioned").plan
-    with pytest.raises(TagLawError, match="another model's tag plan"):
-        spec.planned_region_tags(bm.fem, foreign.emit_allocator())
+    with pytest.raises(TagPlanMiss, match="tag plan is another model's"):
+        spec.planned_region_tags(bm.fem, foreign)
 
 
 def test_mint_site_names_are_unique() -> None:
@@ -1767,17 +1688,18 @@ def test_no_kind_is_minted_at_emit() -> None:
 def test_parameter_is_frozen_on_every_emit_path(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Every emit path's allocator refuses a ``parameter`` mint: flat,
-    staged, and partitioned (staged or not) over 2 and 4 ranks."""
+    """Every emit path holds a plan whose allocator refuses a
+    ``parameter`` mint: flat, staged, and partitioned (staged or not)
+    over 2 and 4 ranks."""
     names = {*_first_case_per_mode().values(), *_PARAM_CASES}
     reached: set[str] = set()
-    for path, tags in _path_allocators(monkeypatch, names):
+    for path, plan in _path_plans(monkeypatch, names):
         reached.add(path)
-        assert "parameter" in tags.frozen_kinds, path
-        with pytest.raises(TagLawError, match="planned and frozen"):
-            tags.allocate("parameter")
+        assert "parameter" in plan.frozen_kinds, path
+        with pytest.raises(TagLawError, match="froze this allocator"):
+            plan.allocator.allocate("parameter")
         with pytest.raises(TagLawError):
-            tags.allocate_block("parameter", 1)
+            plan.allocator.allocate_block("parameter", 1)
     assert reached == set(_PATHS)
 
 
@@ -1801,21 +1723,32 @@ def test_a_stray_parameter_mint_raises(
 ) -> None:
     """Mutation: a parameter writer that mints raises where it mints.
 
-    The writer of ``verb`` is mutated back to minting its tags from the
-    emit allocator, as it did before the plan. The emit must raise on the
-    path named, not write a deck.
+    The writer of ``verb`` is mutated back to minting its tags, as it did
+    before the plan, from the only allocator the emit holds: the plan's
+    frozen one. The emit must raise on the path named, not write a deck.
     """
+    import apeGmsh.opensees.apesees as apesees_mod
     from apeGmsh.opensees._internal import build
 
-    orig = build._planned_parameters
+    if verb == "step_hook_ramp":
+        orig = build._planned_parameters
 
-    def minting(sites: Any, tags: TagAllocator) -> Any:
-        if sites and sites[0].verb == verb:
-            return list(build.plan_parameters(sites, tags))
-        return orig(sites, tags)
+        def minting(sites: Any, tag_plan: TagPlan) -> Any:
+            return list(build.plan_parameters(sites, tag_plan.allocator))
 
-    monkeypatch.setattr(build, "_planned_parameters", minting)
-    with pytest.raises(TagLawError, match="planned and frozen") as err:
+        monkeypatch.setattr(build, "_planned_parameters", minting)
+    else:
+        attr = {"flip_element_stage": "emit_activate_absorbing",
+                "update_parameter": "emit_update_parameters"}[verb]
+        orig = getattr(apesees_mod, attr)
+
+        def minting_writer(records: Any, emitter: Any, tag_plan: TagPlan,
+                           partition_rank: Any = None) -> Any:
+            tag_plan.allocator.allocate("parameter")
+            return orig(records, emitter, tag_plan, partition_rank)
+
+        monkeypatch.setattr(apesees_mod, attr, minting_writer)
+    with pytest.raises(TagLawError, match="froze this allocator") as err:
         _emit_case(name)
     assert path in {entry.name for entry in err.traceback}
 
@@ -1931,18 +1864,11 @@ def test_parameter_plan_keeps_its_mint_order_and_counts() -> None:
         ParameterTagPlan()[(lines[0].record, None)]
 
 
-def test_parameter_writers_are_two_way() -> None:
-    """Fork: read the plan. Plain allocator: plan through the same loop.
-
-    The three writers, handed a plain allocator (a direct caller, until
-    K1-3d S6), write the same rows as when handed the emit allocator, and
-    those rows are the plan's, flat and over 2 ranks. A plain fork, the
-    frozen planner allocator and a fork for another origin carry no plan;
-    a fork of another model's plan holds none of these records.
-    """
+def test_parameter_writers_read_the_plan() -> None:
+    """The three writers write the plan's rows, flat and over 2 ranks, the
+    flips and updates over the elements the plan resolved; another
+    model's plan holds none of these records."""
     from apeGmsh.opensees._internal.build import (
-        FemToOpsTagMap,
-        build_element_partition_owner,
         emit_activate_absorbing,
         emit_initial_stress_global,
         emit_update_parameters,
@@ -1951,40 +1877,62 @@ def test_parameter_writers_are_two_way() -> None:
 
     for name in ("param_ranks_4/staged", "param_ranks_2/staged_partitioned"):
         bm, plan = _case(name).bm, _case(name).plan
-        eid_to_tag = FemToOpsTagMap.from_plan(plan.elements.specs)
-        owner = ranks = None
+        ranks = None
         if plan.mode.partitioned:
-            owner = build_element_partition_owner(bm.fem)
             ranks = [runtime_rank_from_partition_record(p, i)
                      for i, p in enumerate(bm.fem.partitions)]
 
-        def run(tags: TagAllocator) -> list[Row]:
+        def run(tag_plan: TagPlan) -> list[Row]:
             em = _ramp_tapped(RecordingEmitter)()
             em.tap = []
-            emit_initial_stress_global(bm.initial_stress_records, em, tags)
+            emit_initial_stress_global(bm.initial_stress_records, em, tag_plan)
             for stage in bm.stage_records:
                 emit_initial_stress_global(
-                    stage.initial_stress_records, em, tags)
+                    stage.initial_stress_records, em, tag_plan)
                 for emit, records in (
                     (emit_activate_absorbing,
                      stage.activate_absorbing_records),
                     (emit_update_parameters, stage.update_parameter_records),
                 ):
                     for rank in ranks or [None]:
-                        emit(records, em, bm.fem, eid_to_tag, tags,
-                             element_owner=owner, partition_rank=rank)
+                        emit(records, em, tag_plan, partition_rank=rank)
             return list(em.tap)
 
-        planned = run(plan.emit_allocator())
-        assert planned == run(TagAllocator()), name
-        assert planned == list(plan.parameters.stream()), name
-        for other in (plan.allocator.fork(), plan.allocator,
-                      plan.allocator.fork({"parameter"}, origin=object())):
-            with pytest.raises(TagLawError, match="carries no tag plan"):
-                run(other)
+        assert run(plan) == list(plan.parameters.stream()), name
         foreign = _MODELS[name]().build()._tag_plan(plan.mode)
-        with pytest.raises(TagLawError, match="parameter plan holds no"):
-            run(foreign.emit_allocator())
+        with pytest.raises(TagPlanMiss, match="parameter plan holds no"):
+            run(foreign)
+
+
+def test_flip_lines_carry_the_elements_the_plan_resolved() -> None:
+    """Closed form: the plan resolves each flip and update once, and its
+    lines carry the element tags the writers address (S5 review (1))."""
+    from apeGmsh.opensees._internal.build import (
+        FemToOpsTagMap,
+        absorbing_ele_tags,
+        update_parameter_ele_tags,
+    )
+
+    case = _case("param_ranks_4/staged")
+    bm, plan = case.bm, case.plan
+    eid_to_tag = FemToOpsTagMap.from_plan(plan.elements.specs)
+    checked = 0
+    for stage in bm.stage_records:
+        for verb, records, resolve in (
+            ("flip_element_stage", stage.activate_absorbing_records,
+             absorbing_ele_tags),
+            ("update_parameter", stage.update_parameter_records,
+             update_parameter_ele_tags),
+        ):
+            lines = plan.parameters.flip_lines(verb, records, None)
+            assert [ln.ele_tags for ln in lines] == [
+                resolve(rec, bm.fem, eid_to_tag) for rec in records]
+            checked += len(lines)
+    assert checked
+    with pytest.raises(TagPlanMiss, match="by 'update_parameter'"):
+        plan.parameters.flip_lines(
+            "update_parameter", bm.stage_records[0].activate_absorbing_records
+            or bm.stage_records[-1].activate_absorbing_records, None)
 
 
 @pytest.mark.parametrize(("verb", "match"), [
@@ -2154,36 +2102,19 @@ def test_staged_mp_elements_number_after_the_global_pass() -> None:
 def test_element_and_material_kinds_are_frozen_on_every_emit_path(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Every emit path's allocator refuses an ``element`` or
-    ``uniaxialMaterial`` mint: flat, staged, and partitioned and
-    staged-partitioned over 2 and 4 ranks."""
-    from apeGmsh.opensees.apesees import BuiltModel
-
-    seen: list[tuple[str, TagAllocator]] = []
-
-    def spy(path: str) -> Callable[..., Any]:
-        orig = getattr(BuiltModel, path)
-        sig = inspect.signature(orig)
-
-        def wrapper(self: Any, *args: Any, **kwargs: Any) -> Any:
-            seen.append((path, sig.bind(self, *args, **kwargs)
-                         .arguments["tags"]))
-            return orig(self, *args, **kwargs)
-        return wrapper
-
-    for path in _PATHS:
-        monkeypatch.setattr(BuiltModel, path, spy(path))
+    """Every emit path holds a plan whose allocator refuses an
+    ``element`` or ``uniaxialMaterial`` mint: flat, staged, and
+    partitioned and staged-partitioned over 2 and 4 ranks."""
     names = {*_first_case_per_mode().values(), *_MP_CASES, *_IFACE_CASES}
-    for name in sorted(names):
-        ts.emit_stream(_MODELS[name]().build(), RecordingEmitter)
+    seen = _path_plans(monkeypatch, names)
     assert {path for path, _ in seen} == set(_PATHS)
-    for path, tags in seen:
-        assert {"element", "uniaxialMaterial"} <= tags.frozen_kinds, path
+    for path, plan in seen:
+        assert {"element", "uniaxialMaterial"} <= plan.frozen_kinds, path
         for kind in ("element", "uniaxialMaterial"):
-            with pytest.raises(TagLawError, match="planned and frozen"):
-                tags.allocate(kind)
+            with pytest.raises(TagLawError, match="froze this allocator"):
+                plan.allocator.allocate(kind)
             with pytest.raises(TagLawError):
-                tags.allocate_block(kind, 1)
+                plan.allocator.allocate_block(kind, 1)
 
 
 @pytest.mark.parametrize("name", sorted({*_MP_CASES, *_IFACE_CASES}))
@@ -2192,19 +2123,20 @@ def test_a_stray_element_mint_raises(
 ) -> None:
     """Mutation: an emit whose writers mint again raises where they mint.
 
-    The MP-element writers are mutated to mint each element's tag from
-    the emit allocator, and ``allocate_interface_tags`` to allocate as
-    it did before the plan (at both of its call sites). Every emit that
-    writes an MP element or an interface, on every path, must raise
-    rather than write a deck.
+    The MP-element writers are mutated to mint each element's tag, and
+    ``allocate_interface_tags`` to allocate as it did before the plan (at
+    both of its call sites), from the only allocator the emit holds: the
+    plan's frozen one. Every emit that writes an MP element or an
+    interface, on every path, must raise rather than write a deck.
     """
     import apeGmsh.opensees.apesees as apesees_mod
     from apeGmsh.opensees._internal import build
 
-    def minting_tagger(tags: TagAllocator) -> Any:
-        return lambda entry: tags.allocate("element")
+    def minting_tagger(tag_plan: TagPlan) -> Any:
+        return lambda entry: tag_plan.allocator.allocate("element")
 
-    def minting_interfaces(records: Any, tags: TagAllocator) -> Any:
+    def minting_interfaces(records: Any, tag_plan: TagPlan) -> Any:
+        tags = tag_plan.allocator
         return {id(r): (tags.allocate("uniaxialMaterial"),
                         tags.allocate("uniaxialMaterial"),
                         tags.allocate("element")) for r in records}
@@ -2213,29 +2145,13 @@ def test_a_stray_element_mint_raises(
     monkeypatch.setattr(build, "allocate_interface_tags", minting_interfaces)
     monkeypatch.setattr(
         apesees_mod, "allocate_interface_tags", minting_interfaces)
-    with pytest.raises(TagLawError, match="planned and frozen"):
+    with pytest.raises(TagLawError, match="froze this allocator"):
         ts.emit_stream(_MODELS[name]().build(), RecordingEmitter)
 
 
-def _plain_like_the_planner(bm: Any, plan: TagPlan) -> TagAllocator:
-    """A plain allocator seeded as the planner was, its ``element``
-    counter past the element fan-out: a direct caller's allocator."""
-    tags = _seeded_like_the_planner(bm)
-    last = max((t for _, t in plan.elements.stream()), default=0)
-    if last:
-        tags.reserve_through("element", last)
-    return tags
-
-
-def test_mp_writers_are_two_way() -> None:
-    """Fork: read the plan. Plain allocator: plan through the same loop.
-
-    The flat MP writers, handed a plain allocator (a direct caller, until
-    K1-3d S6), write the same rows as when handed the emit allocator, and
-    those rows are the plan's. A plain fork, the frozen planner allocator
-    and a fork for another origin carry no plan; a fork of a real foreign
-    plan is refused as another model's.
-    """
+def test_mp_writers_read_the_plan() -> None:
+    """The flat MP writers write the plan's rows; another model's plan is
+    refused as made over another FEM."""
     from apeGmsh.opensees._internal.build import (
         emit_embed_ties,
         emit_mp_constraints,
@@ -2246,31 +2162,45 @@ def test_mp_writers_are_two_way() -> None:
     case = _case("mp_ranks_4/flat")
     bm, plan = case.bm, case.plan
 
-    def run(tags: TagAllocator) -> list[Row]:
+    def run(tag_plan: TagPlan) -> list[Row]:
         em = ts.tapped(RecordingEmitter)()
         em.tap = []
-        emit_mp_constraints(em, bm.fem, tags)
-        emit_reinforce_ties(em, bm.fem, tags, name_to_tag=bm.name_to_tag)
-        emit_embed_ties(em, bm.fem, tags)
-        emit_rebar_elements(em, bm.fem, tags, name_to_tag=bm.name_to_tag)
+        emit_mp_constraints(em, bm.fem, tag_plan)
+        emit_reinforce_ties(em, bm.fem, tag_plan, name_to_tag=bm.name_to_tag)
+        emit_embed_ties(em, bm.fem, tag_plan)
+        emit_rebar_elements(em, bm.fem, tag_plan, name_to_tag=bm.name_to_tag)
         return [(_verb(k), t) for k, t in em.tap]
 
-    planned = run(plan.emit_allocator())
-    assert planned == run(_plain_like_the_planner(bm, plan))
+    planned = run(plan)
     assert planned == list(plan.mp_elements.stream())
     assert len(planned) == 20
-
-    for other in (plan.allocator.fork(), plan.allocator,
-                  plan.allocator.fork({"element"}, origin=object())):
-        with pytest.raises(TagLawError, match="carries no tag plan"):
-            run(other)
     foreign = _case("mp_ranks_4/partitioned").plan
-    with pytest.raises(TagLawError, match="another FEM snapshot"):
-        run(foreign.emit_allocator())
+    with pytest.raises(TagPlanMiss, match="another FEM snapshot"):
+        run(foreign)
 
 
-def test_allocate_interface_tags_is_two_way() -> None:
-    """Fork: read the plan. Plain allocator: plan through the same loop."""
+def test_reinforce_tie_replay_numbers_the_ties_as_the_plan() -> None:
+    """The waived standalone entry (``reinforce-tie-replay``): handed an
+    allocator whose ``element`` counter stands where the plan began the
+    ties, it numbers them as the plan did, through the planner's loop."""
+    from apeGmsh.opensees._internal.build import replay_reinforce_ties
+
+    case = _case("mp_ranks_4/flat")
+    bm, plan = case.bm, case.plan
+    ties = [ln for ln in plan.mp_elements.planned().lines
+            if ln.site == "reinforce_tie"]
+    assert ties
+    plain = TagAllocator()
+    plain.reserve_through("element", ties[0].tag - 1)
+    em = ts.tapped(RecordingEmitter)()
+    em.tap = []
+    replay_reinforce_ties(em, bm.fem, plain, name_to_tag=bm.name_to_tag)
+    assert [t for _k, t in em.tap] == [ln.tag for ln in ties]
+
+
+def test_allocate_interface_tags_reads_the_plan() -> None:
+    """Every record's tags are the plan's; another model's plan holds
+    none of these records."""
     from apeGmsh.opensees._internal.build import (
         allocate_interface_tags,
         interface_records,
@@ -2279,23 +2209,13 @@ def test_allocate_interface_tags_is_two_way() -> None:
     case = _case("iface_embed/flat")
     plan = case.plan
     records = interface_records(case.bm.fem)
-    planned = allocate_interface_tags(records, plan.emit_allocator())
+    planned = allocate_interface_tags(records, plan)
     lines = plan.interfaces.planned().lines
     assert planned == {id(ln.record): ln.tags for ln in lines}
     assert len(planned) == len(records) >= 3
-
-    plain = TagAllocator()
-    n0, _t0, e0 = lines[0].tags
-    plain.reserve_through("uniaxialMaterial", n0 - 1)
-    plain.reserve_through("element", e0 - 1)
-    assert allocate_interface_tags(records, plain) == planned
-
-    for other in (plan.allocator.fork(), plan.allocator):
-        with pytest.raises(TagLawError, match="carries no tag plan"):
-            allocate_interface_tags(records, other)
     foreign = _case("iface_embed_ranks_2/partitioned").plan
-    with pytest.raises(TagLawError, match="interface plan holds no tags"):
-        allocate_interface_tags(records, foreign.emit_allocator())
+    with pytest.raises(TagPlanMiss, match="interface plan holds no tags"):
+        allocate_interface_tags(records, foreign)
 
 
 def test_partitioned_mp_routing_runs_once_per_plan(
@@ -2631,7 +2551,7 @@ def test_element_plan_rows_come_from_its_specs() -> None:
 
 
 # ---------------------------------------------------------------------------
-# The plan each emit path reads (plan_of)
+# The plan each emit path holds
 # ---------------------------------------------------------------------------
 
 
@@ -2649,59 +2569,58 @@ def _first_case_per_mode() -> dict[TagMode, str]:
 def test_every_emit_path_reads_the_memoised_plan(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """``plan_of(tags)`` is the memoised plan, on every path and every emit.
+    """Every emit path holds the memoised plan itself, on every emit.
 
-    Each emit path (flat, staged flat, partitioned, staged
-    partitioned) receives a fresh ``emit_allocator()`` fork of the one plan
-    ``BuiltModel.emit`` memoises for its mode; a second emit reuses it.
+    Each emit path (flat, staged flat, partitioned, staged partitioned)
+    is handed the one plan ``BuiltModel.emit`` memoises for its mode, not
+    an allocator; its allocator is frozen in every kind; a second emit
+    reuses it.
     """
+    reached: set[str] = set()
+    every_kind = frozenset().union(*(c.KINDS for c in FAMILY_PLANS.values()))
+    for mode, name in _first_case_per_mode().items():
+        bm = _MODELS[name]().build()
+        plans: list[TagPlan] = []
+        for _ in range(2):
+            with monkeypatch.context() as mp:
+                seen = _path_plans_of(mp, bm)
+            assert seen, f"{name}: no emit path ran"
+            memo = bm._tag_plans[mode]
+            for path, plan in seen:
+                reached.add(path)
+                assert isinstance(plan, TagPlan), f"{name}: {path}"
+                assert plan is memo, f"{name}: {path}"
+                assert plan.allocator.frozen, f"{name}: {path}"
+                assert plan.frozen_kinds == every_kind, f"{name}: {path}"
+            plans.append(seen[0][1])
+        # The second emit reads the plan the first one made.
+        assert plans[0] is plans[1], f"{name}: re-planned on the second emit"
+        assert list(bm._tag_plans) == [mode]
+    assert reached == set(_PATHS)
+
+
+def _path_plans_of(
+    monkeypatch: pytest.MonkeyPatch, bm: Any,
+) -> list[tuple[str, TagPlan]]:
+    """Emit ``bm`` once and return the tag plan each emit path holds."""
     from apeGmsh.opensees.apesees import BuiltModel
 
-    seen: list[tuple[str, TagAllocator]] = []
+    seen: list[tuple[str, TagPlan]] = []
 
     def spy(path: str) -> Callable[..., Any]:
         orig = getattr(BuiltModel, path)
         sig = inspect.signature(orig)
 
         def wrapper(self: Any, *args: Any, **kwargs: Any) -> Any:
-            bound = sig.bind(self, *args, **kwargs)
-            seen.append((path, bound.arguments["tags"]))
+            seen.append((path, sig.bind(self, *args, **kwargs)
+                         .arguments["tag_plan"]))
             return orig(self, *args, **kwargs)
         return wrapper
 
     for path in _PATHS:
         monkeypatch.setattr(BuiltModel, path, spy(path))
-
-    reached: set[str] = set()
-    for mode, name in _first_case_per_mode().items():
-        bm = _MODELS[name]().build()
-        cls: type = RecordingEmitter
-        forks: list[TagAllocator] = []
-        plans: list[TagPlan] = []
-        for _ in range(2):
-            seen.clear()
-            ts.emit_stream(bm, cls)
-            assert seen, f"{name}: no emit path ran"
-            memo = bm._tag_plans[mode]
-            for path, tags in seen:
-                reached.add(path)
-                assert plan_of(tags) is memo, f"{name}: {path}"
-            forks.append(seen[0][1])
-            plans.append(plan_of(seen[0][1]))
-        # The second emit reads the plan the first one made.
-        assert plans[0] is plans[1], f"{name}: re-planned on the second emit"
-        assert forks[0] is not forks[1], f"{name}: one fork, two emits"
-        assert list(bm._tag_plans) == [mode]
-    assert reached == set(_PATHS)
-
-
-def test_plan_of_refuses_an_allocator_without_a_plan() -> None:
-    plan = _case("two_column_frame/flat").plan
-    for tags in (TagAllocator(), plan.allocator, plan.allocator.fork(),
-                 plan.allocator.fork({"element"}, origin=object())):
-        with pytest.raises(TagLawError, match="carries no tag plan"):
-            plan_of(tags)
-    assert plan_of(plan.emit_allocator()) is plan
+    ts.emit_stream(bm, RecordingEmitter)
+    return seen
 
 
 def test_emit_refuses_an_element_plan_for_other_specs() -> None:
@@ -2710,8 +2629,7 @@ def test_emit_refuses_an_element_plan_for_other_specs() -> None:
     plan = _case("kitchen_sink_absorbing/staged").plan
     specs = [s for s, _ in plan.elements.specs]
     assert len({id(s) for s in specs}) == len(specs) >= 2
-    tags = plan.emit_allocator()
-    got = [s for s, _ in _planned_element_specs(tags, specs)]
+    got = [s for s, _ in _planned_element_specs(plan, specs)]
     assert [id(s) for s in got] == [id(s) for s in specs]
     wrongs = {
         "short": specs[:-1],
@@ -2722,8 +2640,8 @@ def test_emit_refuses_an_element_plan_for_other_specs() -> None:
         "empty": [],
     }
     for label, wrong in wrongs.items():
-        with pytest.raises(TagLawError, match="element plan"):
-            _planned_element_specs(tags, wrong)
+        with pytest.raises(TagPlanMiss, match="element plan"):
+            _planned_element_specs(plan, wrong)
             pytest.fail(f"{label}: accepted")
 
 
@@ -2784,19 +2702,30 @@ def test_copy_shares_the_memo_only_while_the_inputs_match() -> None:
     assert not plan.planned_for(changed)
 
 
-def test_emit_allocator_continues_the_plan() -> None:
+def test_tag_plan_has_no_allocation_api() -> None:
+    """The plan the emit holds offers no way to mint: no allocator fork,
+    no allocate method, and its one allocator is frozen."""
     plan = _case("arch_with_orientation_fan_out/flat").plan
-    tags = plan.emit_allocator()
-    assert not tags.frozen
-    assert tags.frozen_kinds == plan.frozen_kinds
-    before = {k: plan.allocator.last(k)
-              for k in ("element", "geomTransf", "region")}
-    for kind in before:
-        if kind not in plan.frozen_kinds:
-            assert tags.allocate(kind) == before[kind] + 1
-    # The plan's own allocator is untouched by the fork's mints.
-    assert {k: plan.allocator.last(k) for k in before} == before
-    assert before["element"] > 1      # the planned element fan-out
+    assert not [m for m in dir(plan)
+                if m.startswith(("allocate", "emit_allocator", "reserve"))]
+    assert plan.allocator.frozen
+    assert plan.allocator.last("element") > 1   # the planned fan-out
+
+
+def test_a_plan_miss_is_a_bridge_error_naming_family_and_owner() -> None:
+    """A plan miss raises :class:`TagPlanMiss`, which is both a
+    :class:`BridgeError` and a :class:`TagLawError`, and names the family
+    and the owner it misses."""
+    from apeGmsh.opensees._internal.build import BridgeError, ParameterSite
+
+    plan = _case("initial_stress_frame/flat").plan
+    stranger = object()
+    with pytest.raises(TagPlanMiss) as err:
+        plan.parameters.line_at(
+            ParameterSite(stranger, None, "step_hook_ramp", 3))
+    assert isinstance(err.value, BridgeError)
+    assert isinstance(err.value, TagLawError)
+    assert "parameter plan holds no object at rank None" in str(err.value)
 
 
 def test_unknown_family_raises() -> None:
@@ -2926,13 +2855,12 @@ def test_fork_with_no_kinds_is_an_open_copy() -> None:
 @pytest.mark.parametrize("make", [
     lambda: _seeded_allocator().fork(),
     lambda: _seeded_allocator().fork({"region"}),
-    lambda: _case("two_column_frame/flat").plan.emit_allocator(),
-], ids=["no_frozen_kinds", "frozen_kind", "emit_allocator"])
+], ids=["no_frozen_kinds", "frozen_kind"])
 def test_every_fork_refuses_reset(make: Any) -> None:
     """A fork never clears: that would re-mint tags its parent handed out.
 
-    Before S2 a fork with no frozen kinds still reset; now that the emit
-    mints from ``plan.emit_allocator()``, every fork refuses.
+    Before S2 a fork with no frozen kinds still reset; since S2 every fork
+    refuses.
     """
     child = make()
     last = child.last("element")
