@@ -138,7 +138,7 @@ model.h5
 │     └── /records                         one row per declaration path
 ├── /assembly                              (optional; Assembly.h5 only, see /assembly below)
 │     ├── /instances                       one row per instance
-│     └── /ties                            one row per assembly-level tie
+│     └── /ties                            one row per tie, coupling or reference node
 │
 └── /opensees/                             ── OpenSees zone (bridge-owned) ──
       ├── /materials
@@ -1233,7 +1233,9 @@ equal-length column datasets.
 * No hash reads `/provenance` (the same allowlists as above).
 * An assembly (ADR 0117 D5) writes `assembly/instances/<label>` from
   `Assembly.instance` and `assembly/ties/<name|#k>` from `Assembly.tie`,
-  both `origin = "user"`, at the declaring line. They ride the merged
+  `Assembly.node` and every coupling verb (`equal_dof`, `rigid_link`,
+  `rigid_diaphragm`, `embedded`, `couple`), all `origin = "user"`, at the
+  declaring line. They ride the merged
   FEM of `Assembly.bridge`, so `ops.h5` writes them too.
 
 ## `/assembly`
@@ -1263,11 +1265,33 @@ reads it. Each table is a group of equal-length column datasets.
   relocated FEM-id window of the instance's nodes and elements: the
   source's smallest id maps to `fem_id_base`. `partition_rank` is `-1`
   without a rank hint.
-* **Ties.** `name` is `""` for an unnamed tie. `kind` is `tie` (the only
-  kind in 1.0.0; a reader refuses any other). `master` and `slave` are
-  the ports `{instance}.{pg|label}`. `params` is canonical JSON with the
-  keys `dofs`, `enforce`, `method`, `tolerance`. `n_records` is the
-  number of constraint records the tie resolved to, at least 1.
+* **Ties.** One row per assembly-level tie, coupling (ADR 0117 D3) and
+  reference node. `name` is `""` for an unnamed tie or coupling.
+  `master` and `slave` are the ports as declared: `{instance}.{pg|label}`
+  or, where the kind accepts one, the name of a reference node. `params`
+  is canonical JSON (sorted keys, no spaces) holding exactly the keys of
+  its kind (`TIE_PARAMS` in `assembly/_h5.py`); a row with other keys is
+  refused on write and on read, and a reader refuses an unknown kind.
+  `n_records` is the number of constraint records the row resolved to,
+  at least 1. The kinds of 1.0.0:
+
+  | kind | master / slave | `params` keys |
+  |---|---|---|
+  | `tie` | port / port | `dofs`, `enforce`, `method`, `tolerance` |
+  | `equal_dof` | port or node / port or node | `dofs`, `tolerance` |
+  | `rigid_link` | port or node / port or node | `link_type`, `master_point` |
+  | `rigid_diaphragm` | port or node / port or node | `constrained_dofs`, `master_point`, `plane_normal`, `plane_tolerance` |
+  | `embedded` | host port / embedded port | `stiffness`, `tolerance` |
+  | `kinematic_coupling` (RBE2) | reference node / port | `dofs` |
+  | `distributing_coupling` (RBE3) | reference node / port | `weighting` |
+  | `node` | `""` / `""` | `coords` |
+
+* **Reference nodes.** A `node` row is an assembly-owned reference node
+  (`Assembly.node`): `name` is the node's (non-empty, no `.`), both ports
+  are `""`, `params` is `{"coords":[x,y,z]}` and `n_records` is 1. Node
+  rows are written before every other row, so a reader knows each node
+  before a coupling names it; in the flat zones the `k`-th node is the
+  decoupled node with FEM id `k`, labelled with its name.
 * **Empty and rewritten.** An assembly with no ties writes `/ties` with
   zero-length columns, never a missing group. Writing into a file that
   already has the zone replaces it. Rows are validated before the file

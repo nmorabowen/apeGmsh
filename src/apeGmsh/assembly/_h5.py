@@ -45,6 +45,7 @@ from ._v1 import AssemblyError
 
 __all__ = [
     "TIE_KINDS",
+    "TIE_PARAMS",
     "AssemblyZone",
     "InstanceRow",
     "TieRow",
@@ -56,9 +57,27 @@ __all__ = [
 #: The ``/assembly`` root group.
 ZONE_GROUP = "assembly"
 
-#: Tie kinds the zone records. AS3 declares ``tie`` only; P4 adds the
-#: couplings. A kind outside this set is refused on write and on read.
-TIE_KINDS: frozenset[str] = frozenset({"tie"})
+#: The ``params`` JSON keys of each kind a ``/assembly/ties`` row records
+#: (ADR 0117 D3). ``tie`` is AS3's; AS4 adds the couplings and ``node``, the
+#: assembly-owned reference node (``master`` and ``slave`` are ``""``, the
+#: name is the node's, ``n_records`` is 1). A kind outside this table, or a
+#: row whose params carry other keys, is refused on write; an unknown kind
+#: is refused on read.
+TIE_PARAMS: dict[str, frozenset[str]] = {
+    "tie": frozenset({"dofs", "enforce", "method", "tolerance"}),
+    "equal_dof": frozenset({"dofs", "tolerance"}),
+    "rigid_link": frozenset({"link_type", "master_point"}),
+    "rigid_diaphragm": frozenset({
+        "constrained_dofs", "master_point", "plane_normal", "plane_tolerance"}),
+    "embedded": frozenset({"stiffness", "tolerance"}),
+    "kinematic_coupling": frozenset({"dofs"}),
+    "distributing_coupling": frozenset({"weighting"}),
+    "node": frozenset({"coords"}),
+}
+
+#: Tie kinds the zone records; a kind outside this set is refused on
+#: write and on read.
+TIE_KINDS: frozenset[str] = frozenset(TIE_PARAMS)
 
 _INSTANCE_STR = ("label", "source_path", "source_fem_hash", "source_opensees_hash")
 _INSTANCE_INT = ("fem_id_base", "fem_id_span", "partition_rank")
@@ -214,6 +233,11 @@ def _columns(
             raise AssemblyError(f"/assembly tie {t.name!r}: params is not JSON: {exc}") from exc
         if not isinstance(params, dict):
             raise AssemblyError(f"/assembly tie {t.name!r}: params must be a JSON object.")
+        if set(params) != TIE_PARAMS[t.kind]:
+            raise AssemblyError(
+                f"/assembly tie {t.name!r}: {t.kind} params carry "
+                f"{sorted(params)}, expected {sorted(TIE_PARAMS[t.kind])}."
+            )
         if t.n_records < 1:
             raise AssemblyError(
                 f"/assembly tie {t.name!r}: n_records={t.n_records}; a tie resolves "
