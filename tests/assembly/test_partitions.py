@@ -12,16 +12,23 @@ Oracles, each naming the right answer independently of the code under test:
 * reference nodes — they sit on rank 0 (below every window).
 * seams — a bad, clashing or mixed ``partition_rank`` raises before
   anything is recorded; a rank with no instance raises at ``bridge()``; a
-  ranked instance of an assembly archive is refused; ``partition_rank``
-  round-trips through ``/assembly/instances`` (``-1`` for none) and a
-  tampered mixed column is refused on read.
+  ranked instance of an assembly archive is refused, and so is any
+  instance of a *ranked* archive, ranked outer assembly or not;
+  ``partition_rank`` round-trips through ``/assembly/instances`` (``-1``
+  for none) and a tampered mixed column is refused on read.
+* merge engine: a host-less chain auto-ranks from 0; a host that owns
+  only an element still claims rank 0; overriding a foreign partition
+  assignment warns, on the host-ful and the host-less path, and a
+  consistent one does not.
 """
 from __future__ import annotations
 
 import re
+import warnings
 from pathlib import Path
 
 import h5py
+import numpy as np
 import pytest
 
 from tests.assembly.test_two_instances_one_tie import (
@@ -177,6 +184,115 @@ def test_a_ranked_instance_of_an_assembly_archive_is_refused(files, tmp_path):
     unranked = (Assembly("outer").instance("X", tmp_path / "inner.h5")
                 .instance("Y", tmp_path / "inner.h5", translate=(0.0, 0.0, H)))
     assert unranked.bridge(ndm=3, ndf=3).fem.nodes.partitions == []
+
+
+@pytest.fixture(scope="module")
+def ranked_archive(files) -> Path:
+    """An assembly archive whose instances ``A`` and ``B`` carry ranks 0, 1."""
+    from apeGmsh.assembly import Assembly
+
+    inner = (Assembly("inner")
+             .instance("A", files["block"], partition_rank=0)
+             .instance("B", files["block"], translate=(0.0, 0.0, H),
+                       partition_rank=1))
+    inner.bridge(ndm=3, ndf=3)
+    out = files["dir"] / "ranked_inner.h5"
+    inner.h5(out)
+    return out
+
+
+@pytest.mark.parametrize("ranks", [(None,), (None, None), (0,), (0, 1)])
+def test_an_instance_of_a_ranked_archive_is_refused(
+        files, ranked_archive, ranks):
+    """Review F1: its ``/composed_from`` ranks would be hints the assembly
+    never declared: an empty rank 2 for one unranked instance, a raw rank
+    collision for two. Refused in ``instance()``, recording nothing."""
+    from apeGmsh.assembly import Assembly, AssemblyError
+
+    asm = Assembly("o")
+    for k, rank in enumerate(ranks[:-1]):
+        asm.instance(f"P{k}", files["block"], partition_rank=rank,
+                     translate=(0.0, 0.0, 3 * H * (k + 1)))
+    with pytest.raises(AssemblyError,
+                       match=r"modules \['A', 'B'\] that carry a partition_rank"):
+        asm.instance("X", ranked_archive, partition_rank=ranks[-1])
+    assert [i.label for i in asm.instances] == [
+        f"P{k}" for k in range(len(ranks) - 1)]
+
+
+# ---------------------------------------------------------------------------
+# The merge engine's host rank (``_rebuild_partitions_from_modules``)
+# ---------------------------------------------------------------------------
+
+def _record(label: str, rank: "int | None"):
+    from apeGmsh._kernel.records._compose import ComposeRecord
+
+    return ComposeRecord(
+        label=label, source_path=f"{label}.h5", source_fem_hash=label,
+        source_neutral_schema_version="2.9.0", translate=(0.0, 0.0, 0.0),
+        partition_rank=rank, composed_at="2026-10-07T00:00:00Z")
+
+
+def _chain(ranks, node_labels, elem_labels):
+    """Nodes 1-3 and line elements 10, 11 labelled by module (``""``: host)."""
+    from apeGmsh._kernel.record_sets import ComposeSet
+    from tests.test_phase_3b_2d import _make_fem
+
+    return _make_fem(
+        composed_from=ComposeSet(tuple(_record(k, r) for k, r in ranks.items())),
+        node_module_labels=list(node_labels),
+        elem_module_labels=list(elem_labels))
+
+
+def _members(fem) -> dict[int, tuple[list[int], list[int]]]:
+    return {r: (sorted(fem.nodes._partitions[r]["node_ids"].tolist()),
+                sorted(fem.elements._partitions[r]["element_ids"].tolist()))
+            for r in fem.nodes.partitions}
+
+
+def test_a_host_less_chain_auto_ranks_from_zero():
+    """Review F3: hints ``(None, 1)`` on an empty host put ``A`` on rank 0."""
+    from apeGmsh.mesh._compose import _rebuild_partitions_from_modules
+
+    fem = _rebuild_partitions_from_modules(
+        _chain({"A": None, "B": 1}, ["A", "B", "B"], ["A", "B"]))
+    assert _members(fem) == {0: ([1], [10]), 1: ([2, 3], [11])}
+
+
+def test_a_host_owning_only_an_element_claims_rank_0():
+    """Review F3: no host node, one host element: the host keeps rank 0
+    and the unhinted module goes to rank 1 (not a serial FEM)."""
+    from apeGmsh.mesh._compose import _rebuild_partitions_from_modules
+
+    fem = _rebuild_partitions_from_modules(
+        _chain({"A": None}, ["A", "A", "A"], ["", "A"]))
+    assert _members(fem) == {0: ([], [10]), 1: ([1, 2, 3], [11])}
+
+
+@pytest.mark.parametrize("host_node", ["", "A"])   # host-ful, host-less
+def test_overriding_a_foreign_partition_assignment_warns(host_node):
+    """Review F2: a METIS-like rank 7 is not a rank the modules would get,
+    so replacing it warns (ADR 0038 Layer 3), with or without a host."""
+    from apeGmsh.mesh._compose import _rebuild_partitions_from_modules
+
+    fem = _chain({"A": None}, ["A", "A", host_node], ["A", "A"])
+    fem.nodes._partitions = {7: {"node_ids": np.array([1, 2, 3]),
+                                 "element_ids": np.array([], dtype=np.int64)}}
+    with pytest.warns(UserWarning, match="overriding the existing partition"):
+        _rebuild_partitions_from_modules(fem)
+
+
+def test_a_consistent_partition_assignment_is_replaced_silently():
+    """The rank set compose itself writes ({0, 1}) is not an override."""
+    from apeGmsh.mesh._compose import _rebuild_partitions_from_modules
+
+    fem = _chain({"A": None}, ["A", "A", ""], ["A", "A"])
+    fem.nodes._partitions = {r: {"node_ids": np.array([r + 1]),
+                                 "element_ids": np.array([], dtype=np.int64)}
+                             for r in (0, 1)}
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", UserWarning)
+        _rebuild_partitions_from_modules(fem)
 
 
 # ---------------------------------------------------------------------------

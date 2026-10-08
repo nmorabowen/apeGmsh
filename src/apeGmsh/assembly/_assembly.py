@@ -63,6 +63,7 @@ from ._instances import (
     check_point,
     check_rotate,
     check_translate,
+    check_unranked_source,
     merged_port,
     split_port,
 )
@@ -157,16 +158,18 @@ class Assembly(_AssemblyV1):
 
         Raises :class:`AssemblyError`, before recording anything, for a
         label that is empty, contains ``.``, ``/`` or whitespace, starts or
-        ends with ``_``, or is already declared; for a missing file; for
-        a zero rotation axis; and for a ``partition_rank`` that is not an
-        ``int >= 0``, that another instance holds, or that is given on one
-        instance and not another.
+        ends with ``_``, or is already declared; for a missing file or one
+        whose composed modules carry a partition rank (a ranked assembly
+        archive); for a zero rotation axis; and for a ``partition_rank``
+        that is not an ``int >= 0``, that another instance holds, or that
+        is given on one instance and not another.
         """
         self._refuse_mixed("instance")
         self._check_new_name(label, what="instance label")
         path = Path(source)
         if not path.is_file():
             raise AssemblyError(f"instance {label!r}: no file at {str(path)!r}.")
+        check_unranked_source(path, label)
         placed = Instance(
             label=label,
             source=path,

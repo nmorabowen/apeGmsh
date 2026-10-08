@@ -15,6 +15,7 @@ from ._v1 import AssemblyError
 __all__ = [
     "Coupling", "Instance", "RefNode", "Tie", "check_dense_ranks",
     "check_label", "check_partition_rank", "check_point",
+    "check_unranked_source",
     "check_rotate", "check_translate", "merged_port", "split_port",
 ]
 
@@ -165,6 +166,34 @@ def check_partition_rank(
                 f"instance {label!r}: rank {rank} already holds instance "
                 f"{other.label!r}; one rank holds one instance.")
     return rank
+
+
+def check_unranked_source(path: Path, label: str) -> None:
+    """Refuse a source whose composed modules carry a partition rank.
+
+    The merge engine reads each ``/composed_from/*@partition_rank`` as a
+    rank hint, so a ranked assembly archive (or a ranked ``g.compose``
+    model) instanced here would add ranks the assembly never declared:
+    an empty rank, or a raw rank collision between two instances. An
+    assembly's ranks come from ``instance(partition_rank=)`` only.
+    """
+    import h5py
+
+    try:
+        with h5py.File(str(path), "r") as f:
+            grp = f.get("composed_from")
+            ranked = [] if grp is None else sorted(
+                str(sub.attrs["label"]) for sub in grp.values()
+                if "partition_rank" in sub.attrs)
+    except OSError as exc:
+        raise AssemblyError(
+            f"instance {label!r}: {str(path)!r} is not a readable model.h5 "
+            f"({exc}).") from exc
+    if ranked:
+        raise AssemblyError(
+            f"instance {label!r}: {str(path)!r} composes modules {ranked} "
+            f"that carry a partition_rank; an instance source must be "
+            f"unranked (rank the assembly with instance(partition_rank=)).")
 
 
 def check_dense_ranks(placed: Sequence[Instance]) -> None:
