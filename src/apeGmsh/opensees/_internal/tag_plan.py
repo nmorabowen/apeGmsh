@@ -1190,7 +1190,9 @@ def _plan_mp_elements_and_interfaces(
     reinforce ties and rebar cells
     (``BuiltModel._plan_partitioned_reinforcement``); then stage by stage,
     rank by rank, the stage's claimed MP constraints. Its MP-element lines
-    are in that order (:func:`~.build.number_mp_elements`).
+    are in that order, each with the canonical walk's tag
+    (:func:`~.build.number_constraint_pass`,
+    :func:`~.build.number_mp_elements`).
 
     The partitioned emit refuses ``g.embed`` and skips an interpolation
     with no master node, so the tags the flat walk gives those are not
@@ -1212,6 +1214,7 @@ def _plan_mp_elements_and_interfaces(
         interpolation_records,
         mp_constraint_pools,
         mp_element_entry,
+        number_constraint_pass,
         number_mp_elements,
         plan_interface_tags,
         plan_mp_elements,
@@ -1261,7 +1264,7 @@ def _plan_mp_elements_and_interfaces(
         )
 
     # The partitioned emit's order, with the canonical walk's tags.
-    canonical = {(line.site, line.key): line.tag for line in mp}
+    canonical = {(line.site, line.key): line for line in mp}
     mp = []
     partitions = list(fem.partitions)
     node_owners = build_node_partition_owners(fem)
@@ -1276,10 +1279,10 @@ def _plan_mp_elements_and_interfaces(
         # container, else it routes every rank.
         if rank_plans and rank_plans[rank].any():
             routed = rank_plans[rank]
-            mp += number_mp_elements(constraint_pass_entries(
-                node_constraints, routed.embedded_records,
+            mp += number_constraint_pass(
+                node_constraints, routed.embedded_records, canonical,
                 allowed_ids=routed.allowed_record_ids,
-            ), canonical)
+            )
         # ``reinforcement`` holds only the ranks that own a tie or a cell.
         if rank in reinforcement:
             rank_ties, rank_bars, _ghosts = reinforcement[rank]
@@ -1296,10 +1299,10 @@ def _plan_mp_elements_and_interfaces(
             )
             if staged is None:
                 continue
-            mp += number_mp_elements(constraint_pass_entries(
-                staged.adapter, staged.plan.embedded_records,
+            mp += number_constraint_pass(
+                staged.adapter, staged.plan.embedded_records, canonical,
                 allowed_ids=staged.plan.allowed_record_ids,
-            ), canonical)
+            )
     return (
         MPElementPlan(
             fem=fem, lines=tuple(mp), partitioned=True, claimed_ids=claimed,

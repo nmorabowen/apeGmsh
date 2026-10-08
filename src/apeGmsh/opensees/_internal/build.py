@@ -6418,28 +6418,80 @@ def plan_mp_elements(
 
 def number_mp_elements(
     entries: "Iterable[MPElementEntry]",
-    canonical: "Mapping[tuple[str, Hashable], int]",
+    canonical: "Mapping[tuple[str, Hashable], PlannedMPElement]",
 ) -> tuple[PlannedMPElement, ...]:
     """The MP elements ``entries``, in their order, with the tags the
     canonical (flat-order) walk minted for them.
 
     ``canonical`` maps each ``(site, key)`` of that walk
-    (:func:`plan_mp_elements`) to its tag. A partitioned emit writes the
+    (:func:`plan_mp_elements`) to its line. A partitioned emit writes the
     same elements rank by rank, so it reads their tags here and mints
     none. An element the canonical walk did not number raises
     :class:`TagPlanMiss`.
     """
     out: list[PlannedMPElement] = []
     for entry in entries:
-        tag = canonical.get((entry.site, entry.key))
-        if tag is None:
+        line = canonical.get((entry.site, entry.key))
+        if line is None:
             raise TagPlanMiss(
                 f"the partitioned emit writes the {entry.site} element "
                 f"{entry.key!r}, which the canonical (flat-order) walk did "
                 "not number (ADR 0114 D4, amended)."
             )
-        out.append(PlannedMPElement(*entry, tag))
+        out.append(PlannedMPElement(*entry, line.tag))
     return tuple(out)
+
+
+def number_constraint_pass(
+    node_constraints: "Iterable[object] | None",
+    interpolations: "Iterable[Any]",
+    canonical: "Mapping[tuple[str, Hashable], PlannedMPElement]",
+    *,
+    allowed_ids: "frozenset[int] | None" = None,
+) -> list[PlannedMPElement]:
+    """:func:`constraint_pass_entries` over one rank's records, numbered by
+    the canonical (flat-order) walk's lines.
+
+    The same elements, in the same order, as
+    ``number_mp_elements(constraint_pass_entries(...), tags)``, but an
+    interpolation reuses its canonical line, so its route is read only
+    when that walk did not number it: an ``equation`` tie writes no
+    element and is skipped; any other raises :class:`TagPlanMiss`.
+    """
+    from apeGmsh._kernel.records._constraints import InterpolationRecord
+
+    out: list[PlannedMPElement] = []
+    if node_constraints is not None:
+        for site, records in (
+            ("rigid_body", _rigid_body_element_records(
+                node_constraints, allowed_ids)),
+            ("kinematic_coupling", _kinematic_coupling_records(
+                node_constraints, allowed_ids)),
+        ):
+            for rec in records:
+                line = canonical.get((site, id(rec)))
+                if line is None or line.record is not rec:
+                    raise TagPlanMiss(
+                        f"the partitioned emit writes the {site} element of "
+                        f"{plan_owner(rec)}, which the canonical (flat-order) "
+                        "walk did not number (ADR 0114 D4, amended)."
+                    )
+                out.append(line)
+    for rec in interpolations:
+        if not isinstance(rec, InterpolationRecord):
+            continue
+        line = canonical.get(("interpolation", id(rec)))
+        if line is not None and line.record is rec:
+            out.append(line)
+            continue
+        if _interpolation_route(rec) == "equation":
+            continue
+        raise TagPlanMiss(
+            f"the partitioned emit writes the interpolation element of "
+            f"{plan_owner(rec)}, which the canonical (flat-order) walk did "
+            "not number (ADR 0114 D4, amended)."
+        )
+    return out
 
 
 def mp_constraint_pools(
