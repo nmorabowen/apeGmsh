@@ -2868,8 +2868,8 @@ def _rebuild_partitions_from_modules(fem: "FEMData") -> "FEMData":
     # The host claims rank 0 only when it owns an element. A host-less
     # chain (ADR 0117's Assembly: an empty broker, or one holding only
     # element-less reference nodes) is ranked by its hints alone: none
-    # leaves it unpartitioned, so its deck is serial, and its host nodes
-    # follow rank 0 (#1530: an empty rank-0 block dropped the model).
+    # leaves it unpartitioned, so its deck is serial (an empty rank-0
+    # block would hold no element), and its host nodes follow rank 0.
     elem_ml = getattr(fem.elements, "_module_label", None) or {}
     host_owns_element = any(
         len(grp.ids) > 0 and (elem_ml.get(code) is None

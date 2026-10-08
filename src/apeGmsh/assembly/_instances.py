@@ -146,7 +146,7 @@ def check_partition_rank(
     ``None`` or an ``int >= 0`` (a ``bool`` is refused). Either every
     instance of an assembly carries a rank or none does, and one rank
     holds one instance: the merge engine places each instance on its own
-    rank, and an unranked assembly is serial (#1530).
+    rank, and an unranked assembly is serial.
     """
     if rank is not None and (
             not isinstance(rank, int) or isinstance(rank, bool) or rank < 0):
@@ -169,7 +169,7 @@ def check_partition_rank(
 
 def check_dense_ranks(placed: Sequence[Instance]) -> None:
     """Refuse a ranked assembly whose ranks are not ``0 .. n-1``: a rank
-    with no instance would emit an empty ``getPID`` block (#1530)."""
+    with no instance would emit an empty ``getPID`` block."""
     ranks = {i.partition_rank for i in placed}
     if ranks == {None}:
         return
