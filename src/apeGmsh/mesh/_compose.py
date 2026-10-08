@@ -2865,9 +2865,25 @@ def _rebuild_partitions_from_modules(fem: "FEMData") -> "FEMData":
     if not composed:
         return fem
 
+    # The host claims rank 0 only when it owns an element. A host-less
+    # chain (ADR 0117's Assembly: an empty broker, or one holding only
+    # element-less reference nodes) is ranked by its hints alone: none
+    # leaves it unpartitioned, so its deck is serial, and its host nodes
+    # follow rank 0 (#1530: an empty rank-0 block dropped the model).
+    elem_ml = getattr(fem.elements, "_module_label", None) or {}
+    host_owns_element = any(
+        len(grp.ids) > 0 and (elem_ml.get(code) is None
+                              or any(str(lbl) == "" for lbl in elem_ml[code]))
+        for code, grp in fem.elements._groups.items())
+    if not host_owns_element and all(
+            rec.partition_rank is None for rec in composed):
+        fem.nodes._partitions = {}
+        fem.elements._partitions = {}
+        return _rebuilt_fem(fem)
+
     # Layer 1 / 2 — assign each module a rank.
     rank_by_label: dict[str, int] = {}
-    used: set[int] = {0}  # host always owns rank 0
+    used: set[int] = {0} if host_owns_element else set()
     # First pass — honour Layer-2 hints.
     for rec in composed:
         if rec.partition_rank is not None:
@@ -2885,7 +2901,7 @@ def _rebuild_partitions_from_modules(fem: "FEMData") -> "FEMData":
             rank_by_label[rec.label] = r
     # Second pass — auto-assign the unhinted modules from the lowest
     # unused integer.
-    auto_cursor = 1
+    auto_cursor = 0
     for rec in composed:
         if rec.label in rank_by_label:
             continue
@@ -2943,7 +2959,6 @@ def _rebuild_partitions_from_modules(fem: "FEMData") -> "FEMData":
     for r in rank_by_label.values():
         new_elem_parts[r] = {"node_ids": [], "element_ids": []}
 
-    elem_ml = getattr(fem.elements, "_module_label", None) or {}
     for code, grp in fem.elements._groups.items():
         eids = np.asarray(grp.ids, dtype=np.int64)
         ml_arr = (
@@ -2968,13 +2983,16 @@ def _rebuild_partitions_from_modules(fem: "FEMData") -> "FEMData":
     # are documented as the broker's source of truth for partitions).
     fem.nodes._partitions = new_node_parts
     fem.elements._partitions = new_elem_parts
+    return _rebuilt_fem(fem)
 
-    # Rebuild the public PartitionSet by constructing a fresh
-    # :class:`FEMData` — its ``__init__`` reads the partition dicts
-    # straight off the composites' ``_partitions`` back-stores, so
-    # the returned snapshot exposes the just-assigned ranks via
-    # ``fem.partitions``.  Pass mesh_selection + composed_from + info
-    # through unchanged so the chain head is otherwise intact.
+
+def _rebuilt_fem(fem: "FEMData") -> "FEMData":
+    """Rebuild the public PartitionSet by constructing a fresh
+    :class:`FEMData` — its ``__init__`` reads the partition dicts
+    straight off the composites' ``_partitions`` back-stores, so
+    the returned snapshot exposes the just-assigned ranks via
+    ``fem.partitions``.  Pass mesh_selection + composed_from + info
+    through unchanged so the chain head is otherwise intact."""
     from .FEMData import FEMData as _FEMData
     return _FEMData(
         nodes=fem.nodes,

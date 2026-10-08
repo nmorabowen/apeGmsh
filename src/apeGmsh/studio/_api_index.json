@@ -50,7 +50,7 @@
     },
     "Assembly.instance": {
       "doc": "Place a saved ``model.h5`` under ``label``. Returns ``self``.",
-      "signature": "instance(label: 'str', source: \"'str | Path'\", *, translate: 'Sequence[float]' = (0.0, 0.0, 0.0), rotate: \"'tuple[Sequence[float], float] | None'\" = None) -> \"'Assembly'\"",
+      "signature": "instance(label: 'str', source: \"'str | Path'\", *, translate: 'Sequence[float]' = (0.0, 0.0, 0.0), rotate: \"'tuple[Sequence[float], float] | None'\" = None, partition_rank: \"'int | None'\" = None) -> \"'Assembly'\"",
       "skill": "references/compose.md",
       "symbol": "Assembly.instance"
     },

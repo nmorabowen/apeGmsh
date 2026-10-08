@@ -13,7 +13,8 @@ from typing import Any, Sequence, cast
 from ._v1 import AssemblyError
 
 __all__ = [
-    "Coupling", "Instance", "RefNode", "Tie", "check_label", "check_point",
+    "Coupling", "Instance", "RefNode", "Tie", "check_dense_ranks",
+    "check_label", "check_partition_rank", "check_point",
     "check_rotate", "check_translate", "merged_port", "split_port",
 ]
 
@@ -30,6 +31,10 @@ class Instance:
     source: Path
     translate: tuple[float, float, float]
     rotate: "tuple[tuple[float, float, float], float] | None"
+    #: The OpenSeesMP rank (``getPID``) that owns the instance (ADR 0038
+    #: Layer 2), or ``None``. Every instance of an assembly carries one or
+    #: none does: an unranked assembly is serial.
+    partition_rank: "int | None" = None
 
     def compose_rotate(self) -> "tuple[float, float, float, float] | None":
         """``rotate`` in the merge engine's axis-angle form ``(x, y, z, theta)``."""
@@ -131,6 +136,49 @@ def check_rotate(
     if math.hypot(ax, ay, az) == 0.0:
         raise AssemblyError(f"rotate={rotate!r}: the rotation axis is zero.")
     return ((ax, ay, az), th)
+
+
+def check_partition_rank(
+    rank: object, label: str, placed: Sequence[Instance],
+) -> "int | None":
+    """Return ``rank`` for a new instance ``label`` beside ``placed``.
+
+    ``None`` or an ``int >= 0`` (a ``bool`` is refused). Either every
+    instance of an assembly carries a rank or none does, and one rank
+    holds one instance: the merge engine places each instance on its own
+    rank, and an unranked assembly is serial (#1530).
+    """
+    if rank is not None and (
+            not isinstance(rank, int) or isinstance(rank, bool) or rank < 0):
+        raise AssemblyError(
+            f"instance {label!r}: partition_rank must be an int >= 0 or "
+            f"None, got {rank!r}.")
+    if placed and (placed[0].partition_rank is None) != (rank is None):
+        raise AssemblyError(
+            f"instance {label!r}: partition_rank={rank!r}, but instance "
+            f"{placed[0].label!r} has partition_rank="
+            f"{placed[0].partition_rank!r}; give every instance a rank, or "
+            f"none for a serial assembly.")
+    for other in placed:
+        if rank is not None and other.partition_rank == rank:
+            raise AssemblyError(
+                f"instance {label!r}: rank {rank} already holds instance "
+                f"{other.label!r}; one rank holds one instance.")
+    return rank
+
+
+def check_dense_ranks(placed: Sequence[Instance]) -> None:
+    """Refuse a ranked assembly whose ranks are not ``0 .. n-1``: a rank
+    with no instance would emit an empty ``getPID`` block (#1530)."""
+    ranks = {i.partition_rank for i in placed}
+    if ranks == {None}:
+        return
+    empty = sorted(set(range(len(placed))) - ranks)
+    if empty:
+        raise AssemblyError(
+            f"partition ranks {sorted(r for r in ranks if r is not None)} "
+            f"leave rank(s) {empty} with no instance; ranks run 0 .. "
+            f"{len(placed) - 1}, one per instance.")
 
 
 def check_translate(translate: Sequence[float]) -> tuple[float, float, float]:
