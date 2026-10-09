@@ -165,7 +165,9 @@ model.h5
       │     └── /cut_{i}                   one group per persisted SectionCutDef
       ├── /sweeps                          (optional, v4)
       │     └── /sweep_{i}                 one group per persisted SectionSweepDef
-      └── /analysis                        attrs + sub-attrs (optional)
+      ├── /analysis                        attrs + sub-attrs (optional)
+      ├── /commands                        calls with no typed store (optional, opensees 2.23.0)
+      └── /program                         run-length emit order (opensees 2.23.0)
 ```
 
 The user's PG names, material names, etc. are HDF5 group names — they
@@ -1013,6 +1015,67 @@ Present only if the user called the analysis primitives.
 Absent if `ops.h5(path)` was called before any analysis primitive.
 The viewer must tolerate this group being missing.
 
+## `/opensees/program` (opensees 2.23.0)
+
+The order in which the bridge drove the H5 emitter (ADR 0114 R2): one
+compound row per **run**, a maximal stretch of consecutive Protocol
+calls with equal `(method, store, stage, decl)` and consecutive rows.
+Every file the bridge writes from 2.23.0 on carries it; it is hashed.
+
+```
+/opensees/program          compound (N,)
+    first   i4   1-based emit index of the run's first call
+    count   i4   calls in the run (>= 1)
+    method  i2   index into @methods (the Protocol method name)
+    store   i2   index into @stores (the VERBS store template), -1 when
+                 the call wrote nothing (a `ledger` verb)
+    row     i4   the record's ordinal among the records `method` wrote
+                 to `store` in this stage, in emit order; -1 with store -1
+    stage   i4   -1 global, else the `stage_NNN` ordinal
+    decl    i4   -1 (the `/opensees/decls` row, from K1-6)
+  @methods     vlen str (M,)
+  @stores      vlen str (S,)   VERBS templates, e.g. `{scope}/bcs/fix`;
+                               `stage` resolves `{scope}`
+  @emit_count  i4              the runs tile [1, emit_count] with no gap
+```
+
+A call a partition bracket replicates (a shared node's `fix` on each
+owning rank) repeats the `row` of its first capture, so replication is
+a run that points at a row already written. Side channels
+(`set_stage_records`, `add_oriented_elements`, `mark_mass_from_model`)
+are not Protocol calls and have no emit index. The reader exposes the
+runs as `H5Model.program()` and a record's emit index as
+`H5Model.emit_index(method, row, stage=-1)` (`OpenSeesModel` delegates);
+there is no per-record `emit_index` column (ADR 0114 Q2). An H5 → H5
+rewrite (`OpenSeesModel.to_h5`) echoes the table, because its
+category-major replay cannot regenerate the order.
+
+## `/opensees/commands` (optional, opensees 2.23.0)
+
+The generic store for a call that has no typed one (ADR 0114 R3a): the
+global `rayleigh`, `eigen` and `modal_damping` (ADR 0053 D1/D4) and a
+stage's `s.profile` bracket (`profiler`). Written only when such a call
+exists; hashed.
+
+```
+/opensees/commands/
+    method       vlen str (N,)    the Protocol method
+    token        vlen str (N,)    the OpenSees verb of a `command` row, else ""
+    stage        i4 (N,)          -1 global, else the `stage_NNN` ordinal
+    arg_offsets  i4 (N+1,)        row i owns args[arg_offsets[i]:arg_offsets[i+1]]
+    args         f8 (A,)          numeric argument, NaN for a string
+    args_str     vlen str (A,)    string argument, "" for a number
+    arg_kinds    i1 (A,)          0 int, 1 float, 2 str
+    arg_names    vlen str (A,)    "" positional, else the keyword
+```
+
+Replay calls `method(*positional, **keywords)` with each argument back
+at its Python type, so the line is byte-identical. Global rows replay
+at the bridge's slot (after the masses, before the patterns); a stage's
+`profiler` rows bracket that stage's `analyze` on the side
+`/opensees/program` records. A row whose method has no replay slot
+raises.
+
 ## `/meta/session_id` and the geometry sibling
 
 ADR 0112 D1 makes geometry an artifact of its own, and the V0
@@ -1347,7 +1410,7 @@ call `validate_zone_version(...)` for each zone before reading it.
 | Zone | `/meta` key | Root paths | Writer constant (source of truth) | Current | Floor |
 |---|---|---|---|---|---|
 | neutral (broker) | `neutral_schema_version` | `/nodes`, `/elements`, `/physical_groups`, `/labels`, `/mesh_selections`, `/partitions`, `/parts`, `/constraints`, `/reinforce_ties`, `/embed_ties`, `/rebar_elements`, `/contacts`, `/contact_planes`, `/interfaces`, `/loads`, `/masses`, `/composed_from` | [`mesh/_femdata_h5_io.py`](../src/apeGmsh/mesh/_femdata_h5_io.py) `NEUTRAL_SCHEMA_VERSION` | **2.35.0** | **2.10.0** |
-| opensees (bridge) | `opensees_schema_version` | `/opensees/*` | [`opensees/emitter/h5.py`](../src/apeGmsh/opensees/emitter/h5.py) `SCHEMA_VERSION` | **2.22.0** | **2.12.0** |
+| opensees (bridge) | `opensees_schema_version` | `/opensees/*` | [`opensees/emitter/h5.py`](../src/apeGmsh/opensees/emitter/h5.py) `SCHEMA_VERSION` | **2.23.0** | **2.12.0** |
 | results | `results_schema_version` | `/stages/*` (composed `results.h5`, at file root) | [`results/schema/_versions.py`](../src/apeGmsh/results/schema/_versions.py) `RESULTS_SCHEMA_VERSION` | **1.1.0** | **1.0.0** |
 | cuts (sub-zone of opensees) | — (no own key; rides the opensees zone) | `/opensees/cuts`, `/opensees/sweeps` | [`cuts/_h5_io.py`](../src/apeGmsh/cuts/_h5_io.py) `V4_SCHEMA_VERSION` | 2.5.0 | none of its own: it rides the opensees floor |
 | geometry (ADR 0112 D2) | `geometry_schema_version` | `/geometry` (sibling `<stem>.geometry.h5` only) | [`opensees/_internal/schema_version.py`](../src/apeGmsh/opensees/_internal/schema_version.py) `GEOMETRY_SCHEMA_VERSION` | **1.0.0** | **1.0.0** |
@@ -1745,6 +1808,14 @@ detail lives in the `SCHEMA_VERSION` docstring in
   replay streams the neutral zone's `/masses`. Authored model state →
   folds into `model_hash`. Additive minor (a 2.21.x
   reader refuses a 2.22.x file, INV-4).
+- `2.23.0` — ADR 0114 R2/R3a (K1-4, #1461): additive — new
+  [`/opensees/program`](#opensees-program-opensees-2230) (the emit
+  order, every file) and optional
+  [`/opensees/commands`](#opensees-commands-optional-opensees-2230)
+  (global `rayleigh` / `eigen` / `modal_damping` and stage `profiler`,
+  which earlier files dropped). Both fold into `model_hash`, so an
+  identical model hashes differently once at this minor (ADR 0114 Q5).
+  Additive minor (a 2.22.x reader refuses a 2.23.x file, INV-4).
 
 This is the **current** opensees-zone version (`SCHEMA_VERSION` in
 [`opensees/emitter/h5.py`](../src/apeGmsh/opensees/emitter/h5.py)); check that constant
