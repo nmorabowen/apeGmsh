@@ -32,7 +32,7 @@ from __future__ import annotations
 import builtins
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Iterator, Mapping
+from typing import TYPE_CHECKING, Any, Iterator, Mapping, Sequence
 
 from .._internal.schema_version import (
     NEUTRAL,
@@ -63,10 +63,13 @@ if TYPE_CHECKING:
 
 
 __all__ = [
+    "CommandRecordRO",
     "H5Model",
     "MalformedH5Error",
     "PartitionEmittedRecord",
+    "ProgramRun",
     "SchemaVersionError",
+    "emit_index_of",
     "open",
 ]
 
@@ -110,6 +113,81 @@ class PartitionEmittedRecord:
     element_ids: tuple[int, ...]
     node_ids: tuple[int, ...]
     boundary_node_ids: tuple[int, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class ProgramRun:
+    """One row of ``/opensees/program`` (ADR 0114 R2, schema 2.23.0).
+
+    The calls ``first`` .. ``first + count - 1`` (1-based emit indices)
+    are ``method`` calls that wrote rows ``row`` .. ``row + count - 1``
+    of ``store`` in ``stage`` (``-1``: global). ``store`` is ``""`` and
+    ``row`` ``-1`` for calls the archive does not carry (``ledger``
+    verbs). ``row`` is the record's ordinal among the records ``method``
+    wrote to ``store`` in that stage, in emit order; a partition-
+    replicated call repeats its first capture's row. ``decl`` is ``-1``
+    until ``/opensees/decls`` exists.
+    """
+
+    first: int
+    count: int
+    method: str
+    store: str
+    row: int
+    stage: int
+    decl: int
+
+
+@dataclass(frozen=True, slots=True)
+class CommandRecordRO:
+    """One ``/opensees/commands`` row (ADR 0114 R3a, schema 2.23.0).
+
+    A call with no typed store: ``method`` is the Protocol method
+    (``rayleigh``, ``eigen``, ``modal_damping``, ``profiler`` or
+    ``command``), ``token`` the OpenSees verb of a ``command`` row,
+    ``stage`` ``-1`` for a global call. ``args`` keep their Python type;
+    ``names[i]`` is ``""`` for a positional argument and the keyword
+    otherwise. ``emit_index`` is the call's 1-based emit index, derived
+    from ``/opensees/program``.
+    """
+
+    method: str
+    token: str
+    stage: int
+    args: tuple[int | float | str, ...]
+    names: tuple[str, ...]
+    emit_index: int
+
+    @property
+    def positional(self) -> tuple[int | float | str, ...]:
+        """The arguments passed by position, in order."""
+        return tuple(a for a, n in zip(self.args, self.names) if not n)
+
+    @property
+    def keywords(self) -> dict[str, int | float | str]:
+        """The arguments passed by keyword."""
+        return {n: a for a, n in zip(self.args, self.names) if n}
+
+
+def emit_index_of(
+    runs: "Sequence[ProgramRun]",
+    method: str, row: int, *, stage: int = -1,
+) -> int:
+    """The 1-based emit index of the call that wrote ``row`` of
+    ``method``'s store in ``stage`` (ADR 0114 Q2).
+
+    The first run that covers the row is the record's own capture; a
+    later one is a partition replica. Raises :class:`LookupError` when no
+    run covers it, so a caller never reads an order the file lacks.
+    """
+    for run in runs:
+        if (run.method == method and run.stage == stage and run.row >= 0
+                and run.row <= row < run.row + run.count):
+            return run.first + (row - run.row)
+    raise LookupError(
+        f"/opensees/program has no {method!r} call writing row {row} "
+        f"in stage {stage}; a file below opensees 2.23.0 has no program."
+    )
 
 
 class MalformedH5Error(ValueError):
@@ -1145,6 +1223,109 @@ class H5Model:
         for name in ops["patterns"]:
             out.append(self._pattern_record(ops["patterns"][name]))
         return out
+
+    def program(self) -> tuple[ProgramRun, ...]:
+        """Return ``/opensees/program`` as :class:`ProgramRun` values.
+
+        Empty for a file below opensees 2.23.0, which has no program.
+        The runs must tile ``[1, @emit_count]`` in order; a file whose
+        runs do not raises :class:`MalformedH5Error`.
+        """
+        if "opensees" not in self._f or "program" not in self._f["opensees"]:
+            return ()
+        ds = self._f["opensees"]["program"]
+        fields = ("first", "count", "method", "store", "row", "stage", "decl")
+        names = tuple(ds.dtype.names or ())
+        if names != fields:
+            raise MalformedH5Error(
+                f"/opensees/program has fields {names}; expected {fields}."
+            )
+        methods = [str(_decode_bytes(m)) for m in ds.attrs["methods"]]
+        stores = [str(_decode_bytes(m)) for m in ds.attrs["stores"]]
+        emit_count = int(ds.attrs["emit_count"])
+        runs: list[ProgramRun] = []
+        expected = 1
+        for rec in ds[()]:
+            first, count, m, st, row, stage, decl = (int(v) for v in rec)
+            if (first != expected or count < 1 or not 0 <= m < len(methods)
+                    or not -1 <= st < len(stores)):
+                raise MalformedH5Error(
+                    f"/opensees/program run {len(runs)} "
+                    f"(first={first}, count={count}, method={m}, store={st}) "
+                    "does not continue the emit order."
+                )
+            expected = first + count
+            runs.append(ProgramRun(
+                first=first, count=count, method=methods[m],
+                store=stores[st] if st >= 0 else "", row=row, stage=stage,
+                decl=decl,
+            ))
+        if expected != emit_count + 1:
+            raise MalformedH5Error(
+                f"/opensees/program runs end at {expected - 1}; "
+                f"@emit_count is {emit_count}."
+            )
+        return tuple(runs)
+
+    def emit_index(self, method: str, row: int, *, stage: int = -1) -> int:
+        """The 1-based emit index of ``row`` of ``method``'s store in
+        ``stage`` (``-1`` global), from ``/opensees/program`` (ADR 0114
+        Q2). See :func:`emit_index_of`."""
+        return emit_index_of(self.program(), method, row, stage=stage)
+
+    def commands(self) -> tuple[CommandRecordRO, ...]:
+        """Return every ``/opensees/commands`` row, in write order.
+
+        Empty when the file has none (a model with no such call, or a
+        file below opensees 2.23.0).
+        """
+        if "opensees" not in self._f or "commands" not in self._f["opensees"]:
+            return ()
+        g = self._f["opensees"]["commands"]
+        methods = [str(_decode_bytes(v)) for v in g["method"][()]]
+        tokens = [str(_decode_bytes(v)) for v in g["token"][()]]
+        stages = [int(v) for v in g["stage"][()]]
+        offsets = [int(v) for v in g["arg_offsets"][()]]
+        nums = g["args"][()]
+        strs = [str(_decode_bytes(v)) for v in g["args_str"][()]]
+        kinds = [int(v) for v in g["arg_kinds"][()]]
+        arg_names = [str(_decode_bytes(v)) for v in g["arg_names"][()]]
+        n = len(methods)
+        if not (len(tokens) == len(stages) == n and len(offsets) == n + 1
+                and offsets[0] == 0 and offsets[-1] == len(kinds)
+                == len(nums) == len(strs) == len(arg_names)):
+            raise MalformedH5Error(
+                "/opensees/commands columns disagree in length."
+            )
+        runs = self.program()
+        seen: dict[tuple[str, int], int] = {}
+        out: list[CommandRecordRO] = []
+        for i in range(n):
+            args: list[int | float | str] = []
+            for j in range(offsets[i], offsets[i + 1]):
+                kind = kinds[j]
+                if kind == 0:
+                    args.append(int(nums[j]))
+                elif kind == 1:
+                    args.append(float(nums[j]))
+                elif kind == 2:
+                    args.append(strs[j])
+                else:
+                    raise MalformedH5Error(
+                        f"/opensees/commands arg_kinds[{j}] = {kind}; "
+                        "expected 0 (int), 1 (float) or 2 (str)."
+                    )
+            key = (methods[i], stages[i])
+            row = seen.get(key, 0)
+            seen[key] = row + 1
+            out.append(CommandRecordRO(
+                method=methods[i], token=tokens[i], stage=stages[i],
+                args=tuple(args),
+                names=tuple(arg_names[offsets[i]:offsets[i + 1]]),
+                emit_index=emit_index_of(
+                    runs, methods[i], row, stage=stages[i]),
+            ))
+        return tuple(out)
 
     def recorders(self) -> list[RecorderRecord]:
         """Return every ``/opensees/recorders/{name}`` group.

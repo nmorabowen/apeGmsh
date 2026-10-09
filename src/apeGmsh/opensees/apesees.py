@@ -19,7 +19,9 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field, replace
-from typing import TYPE_CHECKING, Any, Callable, Iterable, Sequence, TypeVar
+from typing import (
+    TYPE_CHECKING, Any, Callable, Iterable, Mapping, Sequence, TypeVar,
+)
 
 from ._internal.artifact_write import BridgeArtifactWriter
 from ._internal.build import (
@@ -7751,6 +7753,10 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
         # ADR 0112 D1 (V2d-4b): the automatic model.h5 write, called once
         # at the end of each terminal emit / live build (not ``h5()``).
         self._artifacts = BridgeArtifactWriter(enabled=_artifacts)
+        # ADR 0114 Q3: each distinct set of ``ledger`` verbs ``h5()``
+        # warned about, so the automatic write and an explicit ``h5()``
+        # warn once per set rather than on every emit.
+        self._ledger_warned: set[frozenset[str]] = set()
         # Call ordinal of ``imposed_displacement``: the ``<name>`` of its
         # synthesised records when the call gives no ``name=``.
         self._imposed_displacement_calls = 0
@@ -9862,6 +9868,33 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
             computed_sections=self._computed_section_records(bm.primitives),
             nodes_ndf=_nodes_ndf,
             provenance=self._provenance.snapshot(),
+        )
+        self._warn_ledger(emitter.ledger_counts)
+
+    def _warn_ledger(self, counts: "Mapping[str, int]") -> None:
+        """Warn once per distinct set of ``ledger`` verbs ``h5()`` dropped.
+
+        ADR 0114 Q3: a ``ledger`` call (contact, rebar, embed,
+        ``equationConstraint``) leaves no ``/opensees`` record, so a deck
+        replayed from the file omits it. The guard is per instance and
+        per verb set, so a model that writes on every emit warns once,
+        and again only when a new ledgered verb appears.
+        """
+        verbs = frozenset(v for v, n in counts.items() if n)
+        if not verbs or verbs in self._ledger_warned:
+            return
+        self._ledger_warned.add(verbs)
+        import warnings as _warnings
+
+        from .emitter.h5 import H5LedgerWarning
+        detail = ", ".join(f"{v} x{counts[v]}" for v in sorted(verbs))
+        _warnings.warn(
+            f"ops.h5: {sum(counts[v] for v in verbs)} call(s) to ledgered "
+            f"verbs ({detail}) are not carried by the /opensees archive, "
+            "so a deck replayed from it omits them unless the neutral zone "
+            "re-derives them (ADR 0114 Q3).",
+            H5LedgerWarning,
+            stacklevel=3,
         )
 
     # -- Registration -----------------------------------------------------

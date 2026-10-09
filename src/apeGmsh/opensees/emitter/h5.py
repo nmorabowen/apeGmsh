@@ -73,8 +73,11 @@ the dependency into import time for users who never call ``ops.h5()``.
 """
 from __future__ import annotations
 
+import functools
 from collections import Counter
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
+from types import MappingProxyType
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Iterable, Literal, NoReturn, Sequence
 
@@ -120,6 +123,7 @@ __all__ = [
     "H5Emitter", "SCHEMA_FLOOR", "SCHEMA_VERSION",
     "H5EquationConstraintDeviationWarning",
     "H5FeatureDeferredWarning",
+    "H5LedgerWarning",
     "H5ReinforceDeviationWarning",
 ]
 
@@ -137,6 +141,18 @@ class H5EquationConstraintDeviationWarning(UserWarning):
     reinforce ties, which also no-op silently in the deck zone. The class is
     retained for back-compat (existing imports); new code should not expect it
     to fire."""
+
+
+class H5LedgerWarning(UserWarning):
+    """``apeSees.h5`` wrote an archive that leaves out ``ledger`` calls.
+
+    A ``ledger`` row of ``VERBS`` (ADR 0114, Q3) is a verb ``H5Emitter``
+    counts and drops: ``/opensees`` carries no record of the call, so a
+    deck replayed from the file omits it (the contact, rebar, embed and
+    ``equationConstraint`` rows; some persist in the neutral zone instead).
+    The bridge raises it at most once per ``apeSees`` instance for each
+    distinct set of ledgered verbs. It is not an ``H5FeatureDeferredWarning``,
+    so the automatic ``model.h5`` write does not silence it."""
 
 
 class H5FeatureDeferredWarning(UserWarning):
@@ -474,7 +490,15 @@ class H5RefusedVerb(NotImplementedError):
 #:     to 2.21.x.  Authored model state → folds into ``model_hash``.
 #:     Standard additive-minor window semantics: a 2.22 reader opens
 #:     2.21 and 2.22 files; a 2.21.x reader REFUSES a 2.22.x file.
-SCHEMA_VERSION: str = "2.22.0"
+#:   * 2.23.0 — ADR 0114 R2/R3a (K1-4): additive — new ``/opensees/program``
+#:     table (the emit order: one run-length row per stretch of calls,
+#:     ``first, count, method, store, row, stage, decl``) and an optional
+#:     ``/opensees/commands`` store, written only when a call has no typed
+#:     store (global ``rayleigh``, ``eigen``, ``modal_damping``, a stage's
+#:     ``profiler`` bracket).  Both fold into ``model_hash``, so an
+#:     identical model hashes differently once at this minor.  A 2.23
+#:     reader opens 2.12 through 2.23; a 2.22.x reader REFUSES a 2.23.x file.
+SCHEMA_VERSION: str = "2.23.0"
 
 #: Oldest opensees-zone minor the reader opens (ADR 0113 (#1303)). The
 #: zone's last non-additive minor is 2.11.0, the 0-based rank flip, but
@@ -995,6 +1019,133 @@ def _ro_to_stage_block(ro: "Any") -> "_StageEmitBlock":
 
 
 # ---------------------------------------------------------------------------
+# Emit order and the generic store (ADR 0114 R2/R3a, schema 2.23.0)
+# ---------------------------------------------------------------------------
+
+#: ``row`` / ``store`` of a call that wrote nothing (a ``ledger`` verb).
+_NO_ROW = -1
+#: ``decl`` until K1-6 adds ``/opensees/decls``.
+_NO_DECL = -1
+#: The magnitude an ``int`` command argument may have and still survive
+#: the ``f8`` ``args`` column exactly.
+_EXACT_INT = 2 ** 53
+#: ``/opensees/commands/arg_kinds`` codes.
+_KIND_INT, _KIND_FLOAT, _KIND_STR = 0, 1, 2
+
+
+@dataclass(frozen=True, slots=True)
+class _CommandRecord:
+    """One ``/opensees/commands`` row: a call with no typed store.
+
+    ``args`` holds every argument in call order; ``names[i]`` is ``""``
+    for a positional argument and the keyword otherwise, so a replay is
+    ``getattr(emitter, method)(*positional, **keywords)`` (``command``
+    rows prepend ``token``). The values keep their Python type (``int``,
+    ``float`` or ``str``) so a replayed line is byte-identical.
+    """
+
+    method: str
+    token: str
+    stage: int
+    args: tuple[int | float | str, ...]
+    names: tuple[str, ...]
+
+
+def _command_kind(method: str, value: object) -> int:
+    """The ``arg_kinds`` code of one command argument; refuse the rest."""
+    if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+        raise TypeError(
+            f"H5Emitter.{method}: argument {value!r} is a "
+            f"{type(value).__name__}; a /opensees/commands row holds int, "
+            "float or str values only."
+        )
+    if isinstance(value, int):
+        if abs(value) >= _EXACT_INT:
+            raise ValueError(
+                f"H5Emitter.{method}: int argument {value} does not fit "
+                "the f8 args column exactly."
+            )
+        return _KIND_INT
+    return _KIND_FLOAT if isinstance(value, float) else _KIND_STR
+
+
+class _ProgramTape:
+    """The run-length emit order written as ``/opensees/program``.
+
+    Every Protocol call ``H5Emitter`` completes is one emit index
+    (1-based, ``count`` of them in all). A run is a maximal stretch of
+    consecutive calls with equal ``(method, store, stage, decl)`` whose
+    rows are consecutive (or all :data:`_NO_ROW`). ``row`` is the
+    record's ordinal among the records ``method`` wrote to ``store`` in
+    that ``stage``, in emit order; a call that a partition bracket
+    replicates repeats the row of its first capture, so the run points
+    at a row already written.
+    """
+
+    __slots__ = (
+        "runs", "methods", "stores", "count", "depth", "pending",
+        "override", "_method_ix", "_store_ix", "_ordinal", "_first_rows",
+    )
+
+    def __init__(self) -> None:
+        # ``[first, count, method, store, row, stage, decl]`` per run.
+        self.runs: list[list[int]] = []
+        self.methods: list[str] = []
+        self.stores: list[str] = []
+        self.count = 0
+        # Nesting depth: a Protocol method calling another counts once.
+        self.depth = 0
+        # The row the call in flight takes unless a body overrides it.
+        self.pending = _NO_ROW
+        self.override: int | None = None
+        self._method_ix: dict[str, int] = {}
+        self._store_ix: dict[str, int] = {}
+        self._ordinal: dict[tuple[str, int], int] = {}
+        self._first_rows: dict[tuple[Any, ...], int] = {}
+
+    def begin(self, method: str, store: str, stage: int) -> None:
+        self.pending = (
+            self._ordinal.get((method, stage), 0) if store else _NO_ROW)
+        self.override = None
+
+    def remember(self, key: "tuple[Any, ...]") -> None:
+        """Record that ``key``'s first capture is the call in flight."""
+        self._first_rows[key] = self.pending
+
+    def repeat(self, key: "tuple[Any, ...]") -> None:
+        """The call in flight replicates ``key``'s first capture."""
+        self.override = self._first_rows[key]
+
+    def note(self, method: str, store: str, stage: int) -> None:
+        self.count += 1
+        if self.override is not None:
+            row = self.override
+        else:
+            row = self.pending
+            if row != _NO_ROW:
+                self._ordinal[(method, stage)] = row + 1
+        m = self._method_ix.get(method)
+        if m is None:
+            m = self._method_ix[method] = len(self.methods)
+            self.methods.append(method)
+        if store:
+            st = self._store_ix.get(store)
+            if st is None:
+                st = self._store_ix[store] = len(self.stores)
+                self.stores.append(store)
+        else:
+            st = _NO_ROW
+        if self.runs:
+            last = self.runs[-1]
+            if (last[2] == m and last[3] == st and last[5] == stage
+                    and (row == last[4] + last[1] if row != _NO_ROW
+                         else last[4] == _NO_ROW)):
+                last[1] += 1
+                return
+        self.runs.append([self.count, 1, m, st, row, stage, _NO_DECL])
+
+
+# ---------------------------------------------------------------------------
 # H5Emitter
 # ---------------------------------------------------------------------------
 
@@ -1061,6 +1212,15 @@ class H5Emitter:
         # them: it round-trips via the neutral InterpolationRecord lane
         # (enforce + weights, schema 2.14.0).
         self._ledger_counts: Counter[str] = Counter()
+
+        # ADR 0114 R2/R3a (schema 2.23.0): the emit order every Protocol
+        # call notes (``/opensees/program``), and the generic store for
+        # calls with no typed one (``/opensees/commands``). An H5 -> H5
+        # rewrite echoes both through :meth:`restore_program`, since a
+        # category-major replay cannot regenerate the original order.
+        self._program = _ProgramTape()
+        self._commands: list[_CommandRecord] = []
+        self._program_restored: "tuple[tuple[tuple[int, ...], ...], tuple[str, ...], tuple[str, ...], int] | None" = None
 
         # Constitutive.
         self._uniaxial: list[_MaterialRecord] = []
@@ -1251,6 +1411,50 @@ class H5Emitter:
             )
         return blk
 
+    def _program_stage(self) -> int:
+        """The ``stage`` column of a call now: ``-1`` outside a bracket,
+        else the open stage's ``stage_NNN`` ordinal."""
+        if self._stage_current is None:
+            return _NO_ROW
+        return len(self._stage_blocks)
+
+    def _command(
+        self,
+        method: str,
+        args: "tuple[int | float | str, ...]",
+        *,
+        names: "tuple[str, ...] | None" = None,
+        token: str = "",
+        stage: int = _NO_ROW,
+    ) -> None:
+        """Append one ``/opensees/commands`` row (ADR 0114 R3a).
+
+        A global-scope verb inside a stage bracket raises: the archive
+        has no stage store for it, so it could not replay there.
+        """
+        if stage == _NO_ROW and self._stage_current is not None:
+            raise RuntimeError(
+                f"H5Emitter.{method}: a global-only verb (VERBS scope "
+                "'global') was emitted inside stage "
+                f"{self._stage_current.name!r}; the archive has no stage "
+                "store for it (ADR 0114 D2)."
+            )
+        for value in args:
+            _command_kind(method, value)
+        self._commands.append(_CommandRecord(
+            method=method, token=token, stage=stage, args=tuple(args),
+            names=names if names is not None else ("",) * len(args),
+        ))
+
+    @property
+    def ledger_counts(self) -> "Mapping[str, int]":
+        """``{verb: calls}`` for the ``ledger`` calls the archive dropped.
+
+        ``apeSees.h5`` reads it after the write to warn about what
+        ``/opensees`` does not carry (:class:`H5LedgerWarning`).
+        """
+        return MappingProxyType(dict(self._ledger_counts))
+
     # The four counters tests read, derived from the ledger so the two
     # cannot drift.
     @property
@@ -1348,16 +1552,19 @@ class H5Emitter:
                 if is_phantom_node(self, int(tag)):
                     if not self._partition_dup(
                         ("stage_phantom", blk.name, int(tag)),
+                        own_row=False,
                     ):
                         blk.phantom_node_tags.append(int(tag))
                 elif is_stage_owned_node(self, int(tag)):
                     if not self._partition_dup(
-                        ("stage_node", blk.name, int(tag)),
+                        ("stage_node", blk.name, int(tag)), own_row=False,
                     ):
                         blk.owned_node_ids.append(int(tag))
                 # else: foreign decl — partition-block mirror only.
 
-    def _partition_dup(self, key: "tuple[Any, ...]") -> bool:
+    def _partition_dup(
+        self, key: "tuple[Any, ...]", *, own_row: bool = True,
+    ) -> bool:
         """True iff ``key`` was already captured under a partition bracket.
 
         P5.0a (ADR 0055 Phase 5 groundwork): the partitioned global
@@ -1366,12 +1573,20 @@ class H5Emitter:
         H5 capture must record each logical record once.  Outside a
         partition bracket this never reports a duplicate — flat-build
         capture (including genuine user duplicates) is unchanged.
+
+        ``own_row``: ``key`` names the record the call writes to its own
+        store, so a replica's ``/opensees/program`` row repeats the first
+        capture's. ``False`` for a side list (``node``'s stage-owned ids).
         """
         if self._partition_current is None:
             return False
         if key in self._partition_seen:
+            if own_row:
+                self._program.repeat(key)
             return True
         self._partition_seen.add(key)
+        if own_row:
+            self._program.remember(key)
         return False
 
     def fix(self, tag: int, *dofs: int) -> None:
@@ -2014,8 +2229,10 @@ class H5Emitter:
                 if existing is not None and existing.type_token == p_type:
                     blk.open_pattern = existing
                     self._stage_open_pattern_resumed = True
+                    self._program.repeat(("stage_pattern", *key))
                     return
                 self._stage_partition_patterns[key] = rec
+                self._program.remember(("stage_pattern", *key))
             blk.pattern_seq.append(blk.next_emit_index())
             blk.open_pattern = rec
             return
@@ -2038,8 +2255,10 @@ class H5Emitter:
             if existing is not None and existing.type_token == p_type:
                 self._open_pattern = existing
                 self._open_pattern_resumed = True
+                self._program.repeat(("pattern", int(tag)))
                 return
             self._partition_patterns_by_tag[int(tag)] = rec
+            self._program.remember(("pattern", int(tag)))
         self._open_pattern = rec
 
     def _flush_open_pattern(self) -> None:
@@ -2189,9 +2408,11 @@ class H5Emitter:
                         blk.regions[idx] = _RegionRecord(
                             tag=int(tag), args=merged,
                         )
+                        self._program.repeat(("stage_region", *key))
                         return
                 else:
                     self._stage_partition_regions[key] = len(blk.regions)
+                    self._program.remember(("stage_region", *key))
             blk.region_seq.append(blk.next_emit_index())
             blk.regions.append(_RegionRecord(tag=int(tag), args=tuple(args)))
             return
@@ -2204,15 +2425,13 @@ class H5Emitter:
         beta_k_init: float,
         beta_k_comm: float,
     ) -> None:
-        # ADR 0053 (D1): archival of the GLOBAL rayleigh form is deferred —
-        # no ``/opensees/`` slot and no schema bump in D1 (same rationale as
-        # ``eigen``: this is a domain directive, not a tagged model object).
-        # Region-scoped Rayleigh (D2) persists for free via ``region`` since
-        # it carries the ``-rayleigh`` tail.
+        # The GLOBAL form is a domain directive, not a tagged object: it
+        # is a ``/opensees/commands`` row (ADR 0114 R3a, schema 2.23.0).
+        # Region-scoped Rayleigh (ADR 0053 D2) persists via ``region``,
+        # which carries the ``-rayleigh`` tail.
         # ADR 0055 Phase 2: a STAGE-bound global-form rayleigh
         # (``s.damping.rayleigh`` with ``on=()``) is part of the staged
-        # program and captures into the stage bucket; the non-staged
-        # global form stays unarchived (D1 deferral unchanged).
+        # program and captures into the stage bucket.
         if self._stage_current is not None:
             blk = self._stage_current
             blk.rayleigh_seq.append(blk.next_emit_index())
@@ -2221,8 +2440,7 @@ class H5Emitter:
                 float(beta_k_init), float(beta_k_comm),
             ))
             return
-        del alpha_m, beta_k, beta_k_init, beta_k_comm
-        self._ledger("rayleigh")
+        self._command("rayleigh", (alpha_m, beta_k, beta_k_init, beta_k_comm))
 
     def damping(
         self, damp_type: str, tag: int, *args: int | float | str,
@@ -2239,10 +2457,10 @@ class H5Emitter:
         )
 
     def modal_damping(self, *factors: float) -> None:
-        # ADR 0053 (D4): modal damping is a domain directive (like
-        # ``rayleigh`` / ``eigen``); archival deferred — no-op, no schema bump.
-        del factors
-        self._ledger("modal_damping")
+        # ADR 0053 (D4): a domain directive, so a ``/opensees/commands``
+        # row (ADR 0114 R3a); the ``eigen`` row before it supplies the
+        # modes it damps.
+        self._command("modal_damping", factors)
 
     def recorder_declaration_begin(
         self,
@@ -2403,10 +2621,8 @@ class H5Emitter:
 
     def command(self, verb: str, *args: int | float | str) -> None:
         command_row(verb)
-        self._refuse(
-            "command",
-            f"The token {verb!r} has no archive store yet: K1-4 adds "
-            "/opensees/commands. Use ops.tcl(path) / ops.py(path).",
+        self._command(
+            "command", args, token=verb, stage=self._program_stage(),
         )
 
     # =====================================================================
@@ -2676,12 +2892,13 @@ class H5Emitter:
     def eigen(
         self, num_modes: int, *, solver: str = "-genBandArpack",
     ) -> list[float]:
-        # ``eigen`` is a runtime one-shot retrieval — not part of the
-        # model definition the H5 archive captures.  No-op here; the
-        # bridge's ``apeSees.eigen(...)`` drives a LiveOpsEmitter
-        # directly and never routes through H5.
-        del num_modes, solver
-        self._ledger("eigen")
+        # The bridge emits ``eigen`` into a deck only ahead of
+        # ``modalDamping`` (ADR 0053 D4), so it is part of the deck's
+        # program: a ``/opensees/commands`` row (ADR 0114 R3a).
+        # ``apeSees.eigen(...)`` drives a LiveOpsEmitter, never H5.
+        self._command(
+            "eigen", (num_modes, solver), names=("", "solver"),
+        )
         return []
 
     def modal_properties(
@@ -2719,11 +2936,12 @@ class H5Emitter:
         self._ledger("response_spectrum_analysis")
 
     def profiler(self, *args: int | float | str) -> None:
-        # The profiler is runtime telemetry around the analyze loop — there
-        # is nothing in the model definition to archive.  No-op, mirroring
-        # ``eigen`` above.
-        del args
-        self._ledger("profiler")
+        # A stage's ``s.profile`` bracket (TIMs A8): ``profiler start``
+        # before the stage's analyze, ``stop`` / ``report`` after. Each
+        # call is a stage ``/opensees/commands`` row (ADR 0114 R3a); the
+        # program's emit order places it around ``analyze`` on replay.
+        self._stage_block("profiler")
+        self._command("profiler", args, stage=self._program_stage())
 
     # =====================================================================
     # Output — write the buffered model to disk
@@ -2775,6 +2993,10 @@ class H5Emitter:
         # ``/opensees`` group after every zone they reference
         # (materials / series / dampings / element_meta) is written.
         self._write_stages(f)
+        # ADR 0114 R2/R3a (schema 2.23.0): the generic store and the
+        # emit order over every store above. Both are hashed.
+        self._write_commands(f)
+        self._write_program(f)
 
     # -- Per-group writers (split out so each step adds one) -------------
 
@@ -3571,7 +3793,7 @@ class H5Emitter:
                 "analyze leaked outside its bracket (phantom "
                 "/opensees/analysis)."
             )
-        for blk, rec in zip(self._stage_blocks, records):
+        for idx, (blk, rec) in enumerate(zip(self._stage_blocks, records)):
             if blk.name != rec.name:
                 raise RuntimeError(
                     "H5Emitter.set_stage_records: stage order drift — "
@@ -3598,17 +3820,19 @@ class H5Emitter:
                     "stage-claimed phantom-node constraints is "
                     "deferred.  Use ops.tcl(path) / ops.py(path)."
                 )
-            if getattr(rec, "profile", None) is not None:
-                raise NotImplementedError(
+            # TIMs A8: ``s.profile`` reaches the archive as this stage's
+            # ``profiler`` command rows; a declared bracket with none
+            # captured (or rows with no bracket) is capture drift.
+            profiled = any(
+                c.method == "profiler" and c.stage == idx
+                for c in self._commands
+            )
+            if profiled != (rec.profile is not None):
+                raise RuntimeError(
                     f"H5Emitter.set_stage_records: stage {rec.name!r} "
-                    "declares a profiler bracket (s.profile(...), "
-                    "TIMs A8) — the emitted ``profiler start``/"
-                    "``report`` lines are runtime telemetry with no "
-                    "model-definition store (see the bridge-level "
-                    "``profiler`` no-op above), so a re-emit from this "
-                    "archive would silently drop the bracket.  H5 "
-                    "archival of ``s.profile`` is deferred.  Use "
-                    "ops.tcl(path) / ops.py(path)."
+                    f"{'declares' if rec.profile is not None else 'has no'} "
+                    "s.profile bracket but the capture holds "
+                    f"{'no' if not profiled else 'its'} profiler rows."
                 )
             blk.activated_pgs = tuple(rec.activated_pgs)
             blk.initial_stress_records = tuple(rec.initial_stress_records)
@@ -3666,6 +3890,145 @@ class H5Emitter:
         self._element_ranks = [
             tag_to_rank.get(int(rec.tag), -1) for rec in self._elements
         ]
+
+    def restore_program(
+        self, runs: "Sequence[Any]", commands: "Sequence[Any]",
+    ) -> None:
+        """Echo a source archive's ``/opensees/program`` and
+        ``/opensees/commands`` (the ``from_h5 -> to_h5`` path).
+
+        The rewrite re-emits category-major and restores stages without
+        emitting, so its own calls cannot regenerate the source's order;
+        the stores it rewrites are the source's, row for row, so the
+        source's runs still address them. ``runs`` and ``commands`` are
+        the reader's ``ProgramRun`` / ``CommandRecordRO`` values. Refuses
+        when this emitter already captured command rows, which the echo
+        would duplicate.
+        """
+        if self._commands:
+            raise RuntimeError(
+                "H5Emitter.restore_program: emitter already holds "
+                f"{len(self._commands)} command row(s); the echo would "
+                "duplicate them. Call it on an emitter whose replay "
+                "passed no commands."
+            )
+        methods: list[str] = []
+        stores: list[str] = []
+        rows: list[tuple[int, ...]] = []
+        for run in runs:
+            method, store = str(run.method), str(run.store)
+            if method not in methods:
+                methods.append(method)
+            if store and store not in stores:
+                stores.append(store)
+            rows.append((
+                int(run.first), int(run.count), methods.index(method),
+                stores.index(store) if store else _NO_ROW,
+                int(run.row), int(run.stage), int(run.decl),
+            ))
+        self._program_restored = (
+            tuple(rows), tuple(methods), tuple(stores),
+            sum(r[1] for r in rows),
+        )
+        for rec in commands:
+            self._commands.append(_CommandRecord(
+                method=str(rec.method), token=str(rec.token),
+                stage=int(rec.stage), args=tuple(rec.args),
+                names=tuple(str(n) for n in rec.names),
+            ))
+
+    def _write_commands(self, f: Any) -> None:
+        """Persist ``/opensees/commands`` (ADR 0114 R3a, schema 2.23.0).
+
+        One row per call: ``method``, ``token`` (the OpenSees verb of a
+        ``command`` row, else ``""``), ``stage`` (``-1`` global), and the
+        ragged arguments ``arg_offsets`` (n + 1) over ``args`` (f8, NaN
+        for a string), ``args_str`` (``""`` for a number), ``arg_kinds``
+        (0 int, 1 float, 2 str) and ``arg_names`` (``""`` positional).
+        Written only when a row exists, so other files keep their bytes.
+        """
+        if not self._commands:
+            return
+        import h5py
+        import numpy as np
+
+        str_dt = h5py.string_dtype(encoding="utf-8")
+        g = self._ops_group(f).create_group("commands")
+        recs = self._commands
+        offsets = [0]
+        nums: list[float] = []
+        strs: list[str] = []
+        kinds: list[int] = []
+        names: list[str] = []
+        for rec in recs:
+            for value, name in zip(rec.args, rec.names):
+                kind = _command_kind(rec.method, value)
+                kinds.append(kind)
+                names.append(name)
+                if kind == _KIND_STR:
+                    nums.append(float("nan"))
+                    strs.append(str(value))
+                else:
+                    nums.append(float(value))
+                    strs.append("")
+            offsets.append(len(kinds))
+        def _strs(values: "list[str]") -> Any:
+            return np.array(values, dtype=object)
+
+        g.create_dataset(
+            "method", data=_strs([r.method for r in recs]), dtype=str_dt)
+        g.create_dataset(
+            "token", data=_strs([r.token for r in recs]), dtype=str_dt)
+        g.create_dataset(
+            "stage", data=np.asarray([r.stage for r in recs], dtype=np.int32))
+        g.create_dataset(
+            "arg_offsets", data=np.asarray(offsets, dtype=np.int32))
+        g.create_dataset("args", data=np.asarray(nums, dtype=np.float64))
+        g.create_dataset("args_str", data=_strs(strs), dtype=str_dt)
+        g.create_dataset("arg_kinds", data=np.asarray(kinds, dtype=np.int8))
+        g.create_dataset("arg_names", data=_strs(names), dtype=str_dt)
+
+    def _write_program(self, f: Any) -> None:
+        """Persist ``/opensees/program`` (ADR 0114 R2, schema 2.23.0).
+
+        A compound table, one row per run (see :class:`_ProgramTape`):
+        ``first`` (1-based emit index), ``count``, ``method`` (into
+        ``@methods``), ``store`` (into ``@stores``, ``-1`` when the call
+        wrote nothing), ``row``, ``stage`` (``-1`` global) and ``decl``
+        (``-1`` until ``/opensees/decls``). ``@emit_count`` is the number
+        of calls; the runs tile ``[1, emit_count]``. Hashed.
+        """
+        if self._program_restored is not None:
+            rows, methods, stores, count = self._program_restored
+        else:
+            tape = self._program
+            rows = tuple(tuple(r) for r in tape.runs)
+            methods, stores = tuple(tape.methods), tuple(tape.stores)
+            count = tape.count
+        if not count:
+            return
+        import h5py
+        import numpy as np
+
+        dt = np.dtype([
+            ("first", np.int32), ("count", np.int32), ("method", np.int16),
+            ("store", np.int16), ("row", np.int32), ("stage", np.int32),
+            ("decl", np.int32),
+        ])
+        if len(methods) > np.iinfo(np.int16).max or (
+                len(stores) > np.iinfo(np.int16).max):
+            raise ValueError(
+                "H5Emitter._write_program: more methods or stores than an "
+                "i2 index holds."
+            )
+        ds = self._ops_group(f).create_dataset(
+            "program", data=np.array(list(rows), dtype=dt))
+        str_dt = h5py.string_dtype(encoding="utf-8")
+        ds.attrs.create(
+            "methods", np.array(list(methods), dtype=object), dtype=str_dt)
+        ds.attrs.create(
+            "stores", np.array(list(stores), dtype=object), dtype=str_dt)
+        ds.attrs["emit_count"] = np.int32(count)
 
     def restore_stage_blocks(self, stages_ro: "Sequence[Any]") -> None:
         """Re-install captured stage buckets from read-side
@@ -4280,6 +4643,50 @@ class H5Emitter:
             "snapshot_id": self._snapshot_id,
             "model_name": self._model_name,
         }
+
+
+def _noted(
+    name: str, fn: "Callable[..., Any]",
+) -> "Callable[..., Any]":
+    """Wrap Protocol method ``name`` so each completed call notes one
+    ``/opensees/program`` emit index (ADR 0114 R2).
+
+    The store comes from the verb's ``VERBS`` row (the global or the
+    stage side of a ``|`` template). A call that raises notes nothing,
+    and a Protocol method a body calls internally counts once, as the
+    outer call.
+    """
+    glob, _, stage_side = VERBS[name].store.partition("|")
+    stage_store = stage_side or glob
+
+    @functools.wraps(fn)
+    def noted(self: "H5Emitter", *args: Any, **kwargs: Any) -> Any:
+        tape = self._program
+        if tape.depth:
+            return fn(self, *args, **kwargs)
+        stage = self._program_stage()
+        store = glob if stage == _NO_ROW else stage_store
+        tape.begin(name, store, stage)
+        tape.depth = 1
+        try:
+            out = fn(self, *args, **kwargs)
+        finally:
+            tape.depth = 0
+        if stage == _NO_ROW and self._stage_current is not None:
+            # ``stage_open``: the call belongs to the stage it opened.
+            stage = self._program_stage()
+            store = stage_store
+            tape.begin(name, store, stage)
+        tape.note(name, store, stage)
+        return out
+
+    return noted
+
+
+for _verb, _row in VERBS.items():
+    if _row.via == "protocol":
+        setattr(H5Emitter, _verb, _noted(_verb, getattr(H5Emitter, _verb)))
+del _verb, _row
 
 
 def material_name(rec: _MaterialRecord) -> str:
