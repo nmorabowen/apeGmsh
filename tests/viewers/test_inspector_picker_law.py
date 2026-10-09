@@ -52,6 +52,15 @@ def qapp():
     return QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
 
 
+@pytest.fixture(autouse=True)
+def _disposes_its_widgets(request):
+    """The inspector pages and the slot rows built beside them; their
+    lambdas keep them alive, so delete them before exit does."""
+    from tests.viewers._qt_teardown import disposing_new_top_levels
+
+    yield from disposing_new_top_levels(request.node.nodeid)
+
+
 @pytest.fixture
 def multi_family(g, tmp_path: Path):
     """One stage recording nodes, Gauss AND line stations.
