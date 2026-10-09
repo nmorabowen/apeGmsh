@@ -79,7 +79,8 @@ dxf = ["ezdxf"]
 # Folded into [viewer] rather than a hard base dep or a separate [web]
 # extra — the whole render stack (pyvista/vtk/PySide6) is already an
 # opt-in here, so one render-install story stays consistent.
-viewer = ["PySide6>=6.5", "pyvista>=0.43", "pyvistaqt>=0.11", "vtk>=9.2", "qtpy",
+viewer = ["PySide6>=6.5,<6.12",  # Qt viewers in sunset (ADR 0112): PySide 6.12 double-deletes widgets at exit; pin holds until V5 removes Qt (#1571)
+          "pyvista>=0.43", "pyvistaqt>=0.11", "vtk>=9.2", "qtpy",
           "trame>=3.0", "trame-vtk>=2.6", "trame-vuetify>=2.6", "trame-pyvista",
           "ipywidgets>=8.0", "nest_asyncio2"]
 animation = ["imageio>=2.30", "imageio-ffmpeg>=0.4"]
@@ -133,7 +134,8 @@ docs = [
 #                       write_brep needs it.
 #   docs, section-oracle  build/CI-only, never a user runtime dep.
 all = ["matplotlib", "scipy", "openseespy", "ezdxf",
-       "PySide6>=6.5", "pyvista>=0.43", "pyvistaqt>=0.11", "vtk>=9.2", "qtpy",
+       "PySide6>=6.5,<6.12",  # Qt viewers in sunset (ADR 0112): PySide 6.12 double-deletes widgets at exit; pin holds until V5 removes Qt (#1571)
+       "pyvista>=0.43", "pyvistaqt>=0.11", "vtk>=9.2", "qtpy",
        "trame>=3.0", "trame-vtk>=2.6", "trame-vuetify>=2.6", "trame-pyvista",
        "ipywidgets>=8.0", "nest_asyncio2",
        "mcp>=1.2"]
