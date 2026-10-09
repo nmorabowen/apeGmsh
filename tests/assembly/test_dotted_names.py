@@ -25,7 +25,6 @@ Oracles, each naming the right answer independently of the code under test:
 from __future__ import annotations
 
 import re
-import warnings
 from pathlib import Path
 
 import numpy as np
@@ -123,11 +122,7 @@ def _assembly(*instances):
 
 
 def _bridge(asm, ndf: int = 3):
-    from apeGmsh.assembly import AssemblyRankWarning
-
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore", AssemblyRankWarning)
-        return asm.bridge(ndm=3, ndf=ndf)
+    return asm.bridge(ndm=3, ndf=ndf)
 
 
 def _deck(ops, path: Path) -> str:

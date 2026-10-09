@@ -34,7 +34,6 @@ import os
 import shutil
 import subprocess
 import sys
-import warnings
 from pathlib import Path
 from typing import Any
 
@@ -139,11 +138,7 @@ def declare_stack(block: Path) -> tuple[Any, dict[str, int]]:
 
 
 def _bridge(asm: Any) -> Any:
-    from apeGmsh.assembly import AssemblyRankWarning
-
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore", AssemblyRankWarning)
-        ops = asm.bridge(ndm=3, ndf=3)
+    ops = asm.bridge(ndm=3, ndf=3)
     ops.fix(pg="pier_1.bot", dofs=[1, 1, 1])
     return ops
 
@@ -422,11 +417,7 @@ def test_zero_ties_write_an_empty_ties_table(built, tmp_path):
 
 
 def _bridge_plain(asm: Any) -> Any:
-    from apeGmsh.assembly import AssemblyRankWarning
-
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore", AssemblyRankWarning)
-        return asm.bridge(ndm=3, ndf=3)
+    return asm.bridge(ndm=3, ndf=3)
 
 
 def test_rewriting_replaces_the_zone(built, tmp_path):
