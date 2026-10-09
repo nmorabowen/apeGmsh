@@ -25,6 +25,10 @@ the merged FEM as ``{instance}.{pg}#<k>`` (ADR 0117 D8).
 Bars of a rebar cage (``fem_eid = -1`` ``CorotTruss`` rows) are not
 re-declared: they travel as the carried ``/rebar_elements`` stream, whose
 material is ``{instance}.{name}`` and binds to the rehydrated material.
+Interface units (#1586) are not re-declared either: each ``/interfaces``
+record's ``zeroLength`` row and its unnamed tributary uniaxials are
+synthesised again by the build from the carried record. A point (dim-0)
+group (#1587) holds no element spec; it travels as ``{instance}.{pg}``.
 """
 from __future__ import annotations
 
@@ -369,6 +373,61 @@ def _rebar_rows(
     return out
 
 
+#: Uniaxial types the build translates an interface law to (ADR 0093 D1).
+_INTERFACE_MATERIALS = frozenset({"ENT", "Elastic", "ElasticPP", "ElasticPPGap"})
+
+
+def _interface_rows(
+    label: str, model: "OpenSeesModel", names: dict[_Key, str],
+) -> tuple[set[int], set[int]]:
+    """Tags of the ``zeroLength`` rows and uniaxial materials the carried
+    ``/interfaces`` emit (ADR 0093, ADR 0117 D4).
+
+    The build synthesises each record's unit (two or three tributary
+    uniaxials and one ``zeroLength`` from ``master_node`` to the phantom
+    or slave node) from the merged FEM's interface stream, so these rows
+    are not re-declared. Every record must match exactly one row, and a
+    matched row's materials must be unnamed uniaxials of a D1 type;
+    anything else raises.
+    """
+    records = list(model.fem.elements.interfaces)
+    if not records:
+        return set(), set()
+    uniaxial = {r.tag: r for r in model.materials_by_family().get("uniaxial", ())}
+    by_pair: dict[tuple[int, int], list["ElementRecord"]] = {}
+    for row in model.elements():
+        ends = row.args[:2]
+        if row.fem_eid < 0 and row.type_token == "zeroLength" and len(ends) == 2 \
+                and all(isinstance(n, int) and not isinstance(n, bool) for n in ends):
+            by_pair.setdefault((int(ends[0]), int(ends[1])), []).append(row)
+    rows: set[int] = set()
+    mats: set[int] = set()
+    for rec in records:
+        j = rec.phantom_node if rec.phantom_node is not None else rec.slave_node
+        what = f"instance {label!r}: interface {rec.name!r} pair ({rec.master_node}, {j})"
+        found = by_pair.get((int(rec.master_node), int(j)), [])
+        if len(found) != 1:
+            raise AssemblyError(
+                f"{what} matches {len(found)} archived zeroLength rows, not one "
+                f"(a stage-claimed interface does not travel)."
+            )
+        args = found[0].args
+        n_mat = 3 if rec.orient is not None and len(rec.orient) == 9 else 2
+        if len(args) < 3 + n_mat or args[2] != "-mat":
+            raise AssemblyError(f"{what}: archived args {args!r} are not '-mat' first.")
+        for t in (_tag(a, what) for a in args[3:3 + n_mat]):
+            mrec = uniaxial.get(t)
+            if mrec is None or mrec.type_token not in _INTERFACE_MATERIALS \
+                    or ("uniaxialMaterial", t) in names:
+                raise AssemblyError(
+                    f"{what}: material tag {t} is not an unnamed interface "
+                    f"uniaxial ({sorted(_INTERFACE_MATERIALS)})."
+                )
+            mats.add(t)
+        rows.add(found[0].tag)
+    return rows, mats
+
+
 @dataclass(frozen=True)
 class _Spec:
     """One element spec: on source group ``pg``, or on its row subset."""
@@ -403,7 +462,7 @@ def _element_specs(
             raise AssemblyError(
                 f"instance {label!r}: element {rec.type_token} tag {rec.tag} "
                 f"has no FEM element (a node-pair or synthesised row that is "
-                f"not a carried rebar bar); the assembly rehydrates "
+                f"not a carried rebar bar or interface pair); the assembly rehydrates "
                 f"physical-group element specs only."
             )
         rows.setdefault((rec.type_token, rec.args), []).append(rec)
@@ -412,9 +471,12 @@ def _element_specs(
     for code, group in enumerate(fem.elements):
         for eid in group.ids:
             type_of[int(eid)] = code
+    # A dim-0 (point) group holds nodes only: it carries no element spec,
+    # and it travels as ``{instance}.{pg}`` through the merged FEM.
+    physical = fem.elements.physical
     pg_ids = {
         pg: frozenset(int(e) for e in fem.elements.select(pg=pg).ids)
-        for pg in sorted(set(fem.elements.physical.names()))
+        for pg in sorted({n for d in (1, 2, 3) for n in physical.names(dim=d)})
     }
 
     specs: list[tuple[int, _Spec]] = []
@@ -492,10 +554,13 @@ def _plan(label: str, model: "OpenSeesModel") -> tuple[list[_Decl], list[_Group]
             f"instance {label!r}: unknown material families {sorted(unknown)}."
         )
 
+    iface_rows, iface_mats = _interface_rows(label, model, names)
     plan: list[_Decl] = []
     by_family = model.materials_by_family()
     for family, kind in _MATERIAL_FAMILIES:
         for mrec in sorted(by_family.get(family, ()), key=lambda r: r.tag):
+            if kind == "uniaxialMaterial" and mrec.tag in iface_mats:
+                continue    # the build re-synthesises it from /interfaces
             parse = _MATERIALS.get((kind, mrec.type_token))
             if parse is None:
                 raise AssemblyError(
@@ -543,7 +608,7 @@ def _plan(label: str, model: "OpenSeesModel") -> tuple[list[_Decl], list[_Group]
             dm.type_token, dm.args, prefixed("damping", dm.tag),
             what("damping", dm.type_token, dm.tag))))
 
-    skip = _rebar_rows(label, model, names)
+    skip = _rebar_rows(label, model, names) | iface_rows
     groups: list[_Group] = []
     for spec in _element_specs(label, model, skip):
         parse_el = _ELEMENTS.get(spec.token)
