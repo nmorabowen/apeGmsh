@@ -461,6 +461,11 @@ def test_args_varying_inside_a_group_are_carried_per_row(files, tmp_path):
         ids = [int(e) for nm in rows for e in phys.element_ids(nm)]
         assert len(ids) == n
         assert sorted(ids) == sorted(int(e) for e in phys.element_ids(f"{lab}.Ring"))
+        # #k follows tag order: #1 holds the smallest-tag row's element,
+        # at the closed-form k * GRANULE - source_min relocation.
+        off = (1 + ("a", "b").index(lab)) * GRANULE - _source_min(files["ring"])
+        by_tag = [r.fem_eid + off for r in sorted(src.elements(), key=lambda r: r.tag)]
+        assert ids == by_tag
         every.update(rows)
 
     out = tmp_path / "ring_asm.h5"
