@@ -1065,12 +1065,13 @@ def _anchor_translate(
     # The coordinates come from the node table (``select``): the group
     # sets' own ``node_coords`` keep the source's coordinates after a
     # compose, before its rotation and translation.
-    for key in ("pg", "label"):
+    for by_pg in (True, False):
         try:
-            coords = np.asarray(
-                fem.nodes.select(**{key: merged}).coords, dtype=np.float64)
+            sel = (fem.nodes.select(pg=merged) if by_pg
+                   else fem.nodes.select(label=merged))
         except KeyError:
             continue
+        coords = np.asarray(sel.coords, dtype=np.float64)
         if len(coords):
             c = coords.reshape(-1, 3).mean(axis=0)
             return (float(c[0]), float(c[1]), float(c[2]))
