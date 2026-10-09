@@ -1261,7 +1261,9 @@ reads it. Each table is a group of equal-length column datasets.
   `source_fem_hash` and `source_opensees_hash` are the source's
   `fem_hash` and `model_hash` (ADR 0021) when it was bridged. `rotate`
   is `(ax, ay, az, theta)`, all zero for an unrotated instance (a
-  declared axis is never zero). `fem_id_base` and `fem_id_span` are the
+  declared axis is never zero). An instance declared with `anchor=`
+  stores the translate its anchor resolved to; the anchor name is not
+  stored (v1's `/composed_from` did not store it either). `fem_id_base` and `fem_id_span` are the
   relocated FEM-id window of the instance's nodes and elements: the
   source's smallest id maps to `fem_id_base`. `partition_rank` is `-1`
   without a rank hint.
@@ -1270,21 +1272,34 @@ reads it. Each table is a group of equal-length column datasets.
   `master` and `slave` are the ports as declared: `{instance}.{pg|label}`
   or, where the kind accepts one, the name of a reference node. `params`
   is canonical JSON (sorted keys, no spaces) holding exactly the keys of
-  its kind (`TIE_PARAMS` in `assembly/_h5.py`); a row with other keys is
-  refused on write and on read, and a reader refuses an unknown kind.
+  its kind (`TIE_PARAMS` in `assembly/_h5.py`), plus any of the kind's
+  knobs (`TIE_KNOBS`) that is set; a row with other keys, or with a knob
+  stored at its default, is refused on write and on read, and a reader
+  refuses an unknown kind.
   `n_records` is the number of constraint records the row resolved to,
   at least 1. The kinds of 1.0.0:
 
-  | kind | master / slave | `params` keys |
-  |---|---|---|
-  | `tie` | port / port | `dofs`, `enforce`, `method`, `tolerance` |
-  | `equal_dof` | port or node / port or node | `dofs`, `tolerance` |
-  | `rigid_link` | port or node / port or node | `link_type`, `master_point` |
-  | `rigid_diaphragm` | port or node / port or node | `constrained_dofs`, `master_point`, `plane_normal`, `plane_tolerance` |
-  | `embedded` | host port / embedded port | `stiffness`, `tolerance` |
-  | `kinematic_coupling` (RBE2) | reference node / port | `dofs` |
-  | `distributing_coupling` (RBE3) | reference node / port | `weighting` |
-  | `node` | `""` / `""` | `coords` |
+  | kind | master / slave | `params` keys | knobs (written only when set) |
+  |---|---|---|---|
+  | `tie` | port / port | `dofs`, `enforce`, `method`, `tolerance` | `stiffness` (`"auto"`), `stiffness_p`, `rotational` (`false`), `pressure` (`false`), `control`, `outward` |
+  | `equal_dof` | port or node / port or node | `dofs`, `tolerance` | |
+  | `equal_dof_mixed` | port or node / port or node | `dof_pairs`, `tolerance` | |
+  | `rigid_link` | port or node / port or node | `link_type`, `master_point` | |
+  | `rigid_diaphragm` | port or node / port or node | `constrained_dofs`, `master_point`, `plane_normal`, `plane_tolerance` | |
+  | `rigid_body` | port or node / port or node | `as_element`, `master_point`, `mass`, `omega` | |
+  | `embedded` | host port / embedded port | `stiffness`, `tolerance` | |
+  | `kinematic_coupling` (RBE2) | reference node / port | `dofs` | `k`, `k_alpha`, `kr`, `enforce` (`"penalty"`), `al_update` |
+  | `distributing_coupling` (RBE3) | reference node / port | `weighting` | `k`, `k_alpha`, `kr`, `enforce` (`"penalty"`) |
+  | `node` | `""` / `""` | `coords` | |
+
+  A knob's default is `null` unless the table names one. The knobs and
+  the kinds `equal_dof_mixed` and `rigid_body` came with AS5-b (#1588);
+  the version stays 1.0.0 because the zone is unreleased, and a row that
+  sets no knob is the row written before them. `dof_pairs` is a list of
+  `[retained, constrained]` DOF pairs. A tie's `control` is a
+  `CouplingControl` as an object holding every one of its fields. RBE2 /
+  RBE3 `k="auto"` and `k_alpha` need a host element, which an assembly
+  coupling does not take, so the verbs and the reader refuse them.
 
 * **Reference nodes.** A `node` row is an assembly-owned reference node
   (`Assembly.node`): `name` is the node's (non-empty, no `.`), both ports

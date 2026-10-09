@@ -1467,12 +1467,12 @@ def _rewrite_source_for_compose(
     if source_depth >= max_compose_depth:
         raise ComposeDepthExceededError(
             f"compose(label={label!r}, source={str(source_path)!r}) would "
-            f"exceed max_compose_depth={max_compose_depth}: source's own "
-            f"compose depth is {source_depth} (max label depth in "
+            f"exceed the maximum compose depth ({max_compose_depth}): "
+            f"source's own compose depth is {source_depth} (max label depth in "
             f"source.composed_from), and composing it would create a "
-            f"depth-{source_depth + 1} entry on the host. Lift the cap "
-            f"with max_compose_depth=N or flatten the source via "
-            f"re-baking before composing."
+            f"depth-{source_depth + 1} entry on the host. Flatten the "
+            f"source by re-baking it, or save an intermediate archive of "
+            f"fewer levels and instance that, before composing."
         )
     result_depth = source_depth + 1
 

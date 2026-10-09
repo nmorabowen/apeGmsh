@@ -367,7 +367,8 @@ class TestDepthTracking:
             g.compose(depth_3_h5, label="topLevel")
         # Message names host's source depth (3) and the cap (3).
         msg = str(ei.value)
-        assert "max_compose_depth=3" in msg
+        assert "the maximum compose depth (3)" in msg
+        assert "max_compose_depth" not in msg   # no knob (#1585, G3)
         assert "depth is 3" in msg
 
     def test_depth_exceeded_is_core_error(

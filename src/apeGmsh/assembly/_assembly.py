@@ -31,6 +31,7 @@ unchanged until AS5 deletes them; one assembly uses one API or the other
 """
 from __future__ import annotations
 
+import dataclasses
 import json
 import warnings
 from dataclasses import dataclass
@@ -43,6 +44,7 @@ from ._h5 import (
     TIE_PARAMS,
     InstanceRow,
     TieRow,
+    row_params,
     read_assembly_zone,
     validate_rows,
     write_assembly_zone,
@@ -51,6 +53,8 @@ from ._couplings import (
     NODE_PORTS,
     canonical_params,
     coupling_definition,
+    tie_definition,
+    tie_params,
 )
 from ._instances import (
     Coupling,
@@ -142,12 +146,21 @@ class Assembly(_AssemblyV1):
         translate: Sequence[float] = (0.0, 0.0, 0.0),
         rotate: "tuple[Sequence[float], float] | None" = None,
         partition_rank: "int | None" = None,
+        anchor: "str | None" = None,
     ) -> "Assembly":
         """Place a saved ``model.h5`` under ``label``. Returns ``self``.
 
         Every name the file owns becomes ``{label}.{name}``. ``rotate`` is
         ``((ax, ay, az), theta_radians)`` about the origin, applied before
         ``translate``. The same file may be instanced any number of times.
+
+        ``anchor`` is v1's ``compose(anchor=)``: a port
+        ``"{instance}.{pg|label}"`` of an instance declared before this
+        one, resolved here to the centroid of its nodes (a physical group
+        first, then a label, after that instance's placement), which
+        becomes ``translate``. It excludes a nonzero ``translate``. The
+        anchor is sugar for the translate, as in v1: ``instances`` and
+        the archive hold the resolved ``translate``.
 
         ``partition_rank`` is the OpenSeesMP rank (``getPID``) that owns the
         instance (ADR 0038 Layer 2). With no rank anywhere the assembly is
@@ -160,9 +173,11 @@ class Assembly(_AssemblyV1):
         label that is empty, contains ``.``, ``/`` or whitespace, starts or
         ends with ``_``, or is already declared; for a missing file or one
         whose composed modules carry a partition rank (a ranked assembly
-        archive); for a zero rotation axis; and for a ``partition_rank``
+        archive); for a zero rotation axis; for a ``partition_rank``
         that is not an ``int >= 0``, that another instance holds, or that
-        is given on one instance and not another.
+        is given on one instance and not another; and for an ``anchor``
+        given with a nonzero ``translate``, that names no earlier instance,
+        or that resolves no node.
         """
         self._refuse_mixed("instance")
         self._check_new_name(label, what="instance label")
@@ -170,13 +185,22 @@ class Assembly(_AssemblyV1):
         if not path.is_file():
             raise AssemblyError(f"instance {label!r}: no file at {str(path)!r}.")
         check_unranked_source(path, label)
+        moved = check_translate(translate)
+        turned = check_rotate(rotate)
+        rank = check_partition_rank(partition_rank, label, self._instances)
+        if anchor is not None:
+            if moved != (0.0, 0.0, 0.0):
+                raise AssemblyError(
+                    f"instance {label!r}: anchor={anchor!r} and a nonzero "
+                    f"translate={moved!r} are mutually exclusive; the anchor "
+                    f"resolves to the translate (ADR 0038).")
+            try:
+                moved = _anchor_translate(anchor, self._instances)
+            except AssemblyError as exc:
+                raise AssemblyError(f"instance {label!r}: {exc}") from exc
         placed = Instance(
-            label=label,
-            source=path,
-            translate=check_translate(translate),
-            rotate=check_rotate(rotate),
-            partition_rank=check_partition_rank(
-                partition_rank, label, self._instances),
+            label=label, source=path, translate=moved, rotate=turned,
+            partition_rank=rank,
         )
         # Every check above runs first: a refused call records nothing.
         self._provenance.capture(
@@ -194,6 +218,12 @@ class Assembly(_AssemblyV1):
         dofs: "Sequence[int] | None" = None,
         tolerance: float = 1.0,
         name: "str | None" = None,
+        stiffness: "float | str" = "auto",
+        stiffness_p: "float | None" = None,
+        rotational: bool = False,
+        pressure: bool = False,
+        control: Any = None,
+        outward: "Sequence[float] | None" = None,
     ) -> "Assembly":
         """Tie two instance ports, ``"{instance}.{pg|label}"``. Returns ``self``.
 
@@ -202,41 +232,48 @@ class Assembly(_AssemblyV1):
         surface, ``slave`` the projected side. ``enforce="equation"`` is
         exact and needs the Lagrange handler and an unsymmetric system.
 
+        ``stiffness``, ``stiffness_p``, ``rotational``, ``pressure``,
+        ``control`` (a ``CouplingControl``, ``enforce="penalty_al"`` only)
+        and ``outward`` (``method="mortar"`` only) are the
+        ``g.constraints.tie`` options of those names, passed to its
+        ``TieDef`` unchanged.
+
         Raises :class:`AssemblyError` for a port that names no declared
         instance (a bare port names an assembly object, and this assembly
         declares none), a ``name`` that contains ``.`` or repeats, or tie
         options ``TieDef`` refuses (an unknown ``enforce``, ``method="mortar"``
-        without ``enforce="equation"``).
+        without ``enforce="equation"``, a penalty knob on the equation
+        route), or a knob of the wrong type.
         """
+        from apeGmsh._kernel._coupling_control import CouplingControl
+
         self._refuse_mixed("tie")
         labels = [i.label for i in self._instances]
         m_name = merged_port(master, labels)
         s_name = merged_port(slave, labels)
         if name is not None:
             self._check_new_name(name, what="tie name")
-        from apeGmsh._kernel.defs.constraints import TieDef
-
-        dofs_t = tuple(int(d) for d in dofs) if dofs is not None else None
+        if control is not None and not isinstance(control, CouplingControl):
+            raise AssemblyError(
+                f"tie({master!r}, {slave!r}): control={control!r}: expected "
+                f"a CouplingControl or None.")
+        params = {
+            "dofs": _list_or_none(dofs), "enforce": enforce, "method": method,
+            "tolerance": tolerance, "stiffness": stiffness,
+            "stiffness_p": stiffness_p, "rotational": rotational,
+            "pressure": pressure,
+            "control": (None if control is None
+                        else dataclasses.asdict(control)),
+            "outward": _point_or_none(outward, "outward"),
+        }
         try:
-            definition = TieDef(
-                master_label=m_name, slave_label=s_name,
-                dofs=list(dofs_t) if dofs_t is not None else None,
-                tolerance=float(tolerance), enforce=enforce, method=method,
-                name=name,
-            )
-        except ValueError as exc:
+            definition = tie_definition(
+                m_name, s_name, row_params("tie", params), name)
+        except AssemblyError as exc:
             raise AssemblyError(f"tie({master!r}, {slave!r}): {exc}") from exc
+        # Every check above runs first: a refused call records nothing.
         self._provenance.capture("assembly", "ties", name, on_existing="raise")
-        self._ties.append(Tie(
-            master=master,
-            slave=slave,
-            enforce=enforce,
-            method=method,
-            dofs=dofs_t,
-            tolerance=float(tolerance),
-            name=name,
-            definition=definition,
-        ))
+        self._ties.append(Tie.of(master, slave, definition))
         return self
 
     def node(self, name: str, coords: Sequence[float]) -> "Assembly":
@@ -285,6 +322,38 @@ class Assembly(_AssemblyV1):
         return self._couple_ports(
             "equal_dof", master, slave, name,
             {"dofs": _list_or_none(dofs), "tolerance": tolerance})
+
+    def equal_dof_mixed(
+        self,
+        master: str,
+        slave: str,
+        *,
+        dof_pairs: Sequence[Sequence[int]],
+        tolerance: float = 1e-6,
+        name: "str | None" = None,
+    ) -> "Assembly":
+        """Tie differently-numbered DOFs of co-located nodes. Returns ``self``.
+
+        ``g.constraints.equal_dof_mixed`` across instances: every slave
+        node within ``tolerance`` of a master node is tied to it by
+        ``equalDOF_Mixed``, master DOF ``r`` to slave DOF ``c`` for each
+        ``(r, c)`` of ``dof_pairs`` (1-based, 1..6). It couples a beam or
+        shell to a solid whose DOFs number the coupled quantity
+        differently. Each port is ``"{instance}.{pg|label}"`` or a
+        reference node.
+
+        Raises :class:`AssemblyError` here for a bad port, name or option
+        (an empty ``dof_pairs``, a DOF outside 1..6, a constrained DOF
+        twice), and from ``bridge()`` when no pair is co-located (INV-7).
+        """
+        # JSON-ready: tuples become lists; the shape is checked later.
+        pairs: Any = dof_pairs
+        if isinstance(pairs, (list, tuple)):
+            pairs = [list(p) if isinstance(p, (list, tuple)) else p
+                     for p in pairs]
+        return self._couple_ports(
+            "equal_dof_mixed", master, slave, name,
+            {"dof_pairs": pairs, "tolerance": tolerance})
 
     def rigid_link(
         self,
@@ -335,23 +404,49 @@ class Assembly(_AssemblyV1):
         and from ``bridge()`` when no node lies in the plane (INV-7).
         """
         if master_point is None:
-            self._refuse_mixed("rigid_diaphragm")
-            split_port(master, [i.label for i in self._instances],
-                       [n.name for n in self._nodes])
-            ref = self._node_coords().get(master)
-            if ref is None:
-                raise AssemblyError(
-                    f"rigid_diaphragm({master!r}, {slave!r}): master_point= is "
-                    f"required when the master is an instance port; it "
-                    f"defaults to a reference node's coordinates."
-                )
-            master_point = ref
+            master_point = self._reference_point("rigid_diaphragm", master, slave)
         return self._couple_ports(
             "rigid_diaphragm", master, slave, name,
             {"master_point": list(check_point(master_point, what="master_point")),
              "plane_normal": list(check_point(plane_normal, what="plane_normal")),
              "constrained_dofs": _list_or_none(constrained_dofs),
              "plane_tolerance": plane_tolerance})
+
+    def rigid_body(
+        self,
+        master: str,
+        slave: str,
+        *,
+        master_point: "Sequence[float] | None" = None,
+        as_element: bool = False,
+        mass: "float | None" = None,
+        omega: "Sequence[float] | None" = None,
+        name: "str | None" = None,
+    ) -> "Assembly":
+        """Make every node of ``slave`` follow one master rigidly. Returns ``self``.
+
+        ``g.constraints.rigid_body`` across instances: all six DOFs of each
+        slave node follow the master node (the ``master`` node nearest
+        ``master_point``) through ``u_s = u_m + theta_m x (x_s - x_m)``,
+        ``theta_s = theta_m``; every node needs ndf 6 in 3-D. The default
+        emit is a chain of ``rigidLink beam``; ``as_element=True`` emits the
+        fork ``element LadrunoRigidBody`` (3-D only), with ``mass`` and
+        ``omega`` as in ``g.constraints``. ``master_point`` defaults to the
+        coordinates of ``master`` when it is a reference node and is
+        required otherwise.
+
+        Raises :class:`AssemblyError` here for a bad port, name or option
+        (``mass`` or ``omega`` without ``as_element``, a negative ``mass``),
+        and from ``bridge()`` when the slave set holds no node but the
+        master (INV-7).
+        """
+        if master_point is None:
+            master_point = self._reference_point("rigid_body", master, slave)
+        return self._couple_ports(
+            "rigid_body", master, slave, name,
+            {"master_point": list(check_point(master_point, what="master_point")),
+             "as_element": as_element, "mass": mass,
+             "omega": _point_or_none(omega, "omega")})
 
     def embedded(
         self,
@@ -392,6 +487,11 @@ class Assembly(_AssemblyV1):
         name: "str | None" = None,
         ports: "Sequence[str] | None" = None,
         tolerance: "float | None" = None,
+        k: "float | None" = None,
+        k_alpha: "float | None" = None,
+        kr: "float | None" = None,
+        enforce: "str | None" = None,
+        al_update: "str | None" = None,
         **options: Any,
     ) -> "Assembly":
         """Couple an instance port to a reference node. Returns ``self``.
@@ -405,6 +505,15 @@ class Assembly(_AssemblyV1):
         stock OpenSees refuses them at the element line. The reference
         needs the rotational DOFs (ndf 6 in 3-D).
 
+        The penalty / enforcement knobs are those of
+        ``g.constraints.kinematic_coupling`` / ``distributing_coupling``:
+        ``k`` (``-k``, a number > 0), ``kr`` (``-kr``), ``enforce``
+        (``"penalty"``, the default, or ``"al"``) and, on RBE2 only,
+        ``al_update`` (``"commit"`` | ``"iter"``, with ``enforce="al"``).
+        ``None`` leaves the fork element's default. ``k_alpha`` and
+        ``k="auto"`` scale off a host element (``-host``), which the
+        assembly form does not take, so they are refused.
+
         Any other ``kind`` is the v1 ``couple(part_a, part_b, kind=,
         ports=)`` of an ``add``-declared assembly, kept until AS5 deletes
         it. ``contact`` and ``interface`` are not assembly couplings (ADR
@@ -415,13 +524,19 @@ class Assembly(_AssemblyV1):
         (INV-7).
         """
         v2_kind = _V2_COUPLE_KINDS.get(kind)
+        knobs = {key: v for key, v in (
+            ("k", k), ("k_alpha", k_alpha), ("kr", kr), ("enforce", enforce),
+            ("al_update", al_update)) if v is not None}
         if v2_kind is None:
+            # The v1 form forwards these keywords to g.constraints as before.
+            options.update(knobs)
             if self._instances or self._nodes or self._ties:
                 raise AssemblyError(
                     f"couple(kind={kind!r}): an instance-declared assembly "
                     f"couples with kind 'kinematic' (RBE2) or 'distributing' "
-                    f"(RBE3); use tie, equal_dof, rigid_link, rigid_diaphragm "
-                    f"or embedded for the others. contact and interface are "
+                    f"(RBE3); use tie, equal_dof, equal_dof_mixed, rigid_link, "
+                    f"rigid_diaphragm, rigid_body or embedded for the others. "
+                    f"contact and interface are "
                     f"not assembly couplings (ADR 0117 D3)."
                 )
             if part_b is None or ports is None:
@@ -449,25 +564,29 @@ class Assembly(_AssemblyV1):
             raise AssemblyError(
                 f"couple(kind={kind!r}): unexpected options {sorted(extra)}; "
                 f"the instance form is couple(target, kind=, reference=, "
-                f"dofs= | weighting=, name=)."
+                f"dofs= | weighting=, name=, k=, kr=, enforce=, al_update=)."
             )
         if reference is None:
             raise AssemblyError(
                 f"couple({target!r}, kind={kind!r}): reference= (a reference "
                 f"node declared with Assembly.node) is required."
             )
+        params: dict[str, Any] = {
+            "k": k, "k_alpha": k_alpha, "kr": kr,
+            "enforce": "penalty" if enforce is None else enforce}
         if v2_kind == "kinematic_coupling":
             if weighting != "uniform":
                 raise AssemblyError(
                     f"couple({target!r}, kind='kinematic'): weighting= is an "
                     f"option of kind='distributing'.")
-            params: dict[str, Any] = {"dofs": _list_or_none(dofs)}
+            params.update(dofs=_list_or_none(dofs), al_update=al_update)
         else:
-            if dofs is not None:
-                raise AssemblyError(
-                    f"couple({target!r}, kind='distributing'): dofs= is an "
-                    f"option of kind='kinematic'.")
-            params = {"weighting": weighting}
+            for key, value in (("dofs", dofs), ("al_update", al_update)):
+                if value is not None:
+                    raise AssemblyError(
+                        f"couple({target!r}, kind='distributing'): {key}= is "
+                        f"an option of kind='kinematic'.")
+            params["weighting"] = weighting
         return self._couple_ports(v2_kind, reference, target, name, params)
 
     # ------------------------------------------------------------------
@@ -511,16 +630,34 @@ class Assembly(_AssemblyV1):
         s_name = merged_port(slave, labels, nodes if slave_ok else ())
         if name is not None:
             self._check_new_name(name, what=f"{kind} name")
+        stored = row_params(kind, params)
         definition = coupling_definition(
-            kind, m_name, s_name, params, name, self._node_coords())
+            kind, m_name, s_name, stored, name, self._node_coords())
         # Every check above runs first: a refused call records nothing.
         self._provenance.capture("assembly", "ties", name, on_existing="raise")
         self._ties.append(Coupling(
             kind=kind, master=master, slave=slave,
-            params=canonical_params(params), name=name,
+            params=canonical_params(stored), name=name,
             definition=definition,
         ))
         return self
+
+    def _reference_point(
+        self, verb: str, master: str, slave: str,
+    ) -> tuple[float, float, float]:
+        """The default ``master_point``: the coordinates of ``master`` when
+        it is a reference node. An instance-port master needs one given."""
+        self._refuse_mixed(verb)
+        split_port(master, [i.label for i in self._instances],
+                   [n.name for n in self._nodes])
+        ref = self._node_coords().get(master)
+        if ref is None:
+            raise AssemblyError(
+                f"{verb}({master!r}, {slave!r}): master_point= is required "
+                f"when the master is an instance port; it defaults to a "
+                f"reference node's coordinates."
+            )
+        return ref
 
     # ------------------------------------------------------------------
     # Build
@@ -691,7 +828,6 @@ class Assembly(_AssemblyV1):
         for a rotation row with a zero axis and a nonzero angle (only the
         all-zero row means "not rotated").
         """
-        from apeGmsh._kernel.defs.constraints import TieDef
         from apeGmsh.opensees.emitter.h5_reader import MalformedH5Error
 
         zone = read_assembly_zone(path)
@@ -737,6 +873,10 @@ class Assembly(_AssemblyV1):
             if t.kind == "node":
                 continue
             params = json.loads(t.params)
+            if not isinstance(params, dict):
+                raise AssemblyError(
+                    f"{path}: /assembly {t.kind} row {t.name!r}: params must "
+                    f"be a JSON object.")
             name = t.name or None
             if name is not None:
                 asm._check_new_name(name, what=f"{t.kind} name")
@@ -756,31 +896,13 @@ class Assembly(_AssemblyV1):
                     definition=definition,
                 ))
                 continue
-            if set(params) != TIE_PARAMS["tie"]:
-                raise AssemblyError(
-                    f"{path}: /assembly tie {t.name!r} params carry "
-                    f"{sorted(params)}, expected {sorted(TIE_PARAMS['tie'])}."
-                )
             m_name = merged_port(t.master, labels)
             s_name = merged_port(t.slave, labels)
-            dofs = (tuple(int(d) for d in params["dofs"])
-                    if params["dofs"] is not None else None)
             try:
-                definition = TieDef(
-                    master_label=m_name, slave_label=s_name,
-                    dofs=list(dofs) if dofs is not None else None,
-                    tolerance=float(params["tolerance"]),
-                    enforce=params["enforce"], method=params["method"],
-                    name=name,
-                )
-            except ValueError as exc:
+                definition = tie_definition(m_name, s_name, params, name)
+            except AssemblyError as exc:
                 raise AssemblyError(f"{path}: /assembly tie {t.name!r}: {exc}") from exc
-            asm._ties.append(Tie(
-                master=t.master, slave=t.slave, enforce=params["enforce"],
-                method=params["method"], dofs=dofs,
-                tolerance=float(params["tolerance"]), name=name,
-                definition=definition,
-            ))
+            asm._ties.append(Tie.of(t.master, t.slave, definition))
         asm._archive = Path(path)
         return asm
 
@@ -914,13 +1036,61 @@ def _base_fem(ref_nodes: Sequence[RefNode] = ()) -> "FEMData":
     return FEMData(nodes=nodes, elements=elements, info=MeshInfo(n, 0, 0))
 
 
+def _anchor_translate(
+    anchor: object, placed: Sequence[Instance],
+) -> tuple[float, float, float]:
+    """The translate ``instance(anchor=)`` resolves to.
+
+    v1's rule (``FEMData._resolve_anchor_to_translate``, ADR 0038) with the
+    host replaced by the instances declared so far: ``anchor`` is a port
+    ``"{instance}.{pg|label}"`` of one of them, looked up as a physical
+    group first and then as a label, and the translate is the mean of its
+    node coordinates where that instance puts them (its rotation, then its
+    translation). Raises :class:`AssemblyError` for a port that names no
+    placed instance and for a name that resolves no node, listing that
+    instance's group and label names.
+    """
+    import numpy as np
+
+    labels = [i.label for i in placed]
+    merged = merged_port(anchor, labels)
+    inst_label, _ = split_port(anchor, labels)
+    inst = next(i for i in placed if i.label == inst_label)
+    with warnings.catch_warnings():
+        # bridge() shows this instance's compose warnings.
+        warnings.simplefilter("ignore")
+        fem = _base_fem().compose(
+            inst.source, label=inst.label, translate=inst.translate,
+            rotate=inst.compose_rotate())
+    # The coordinates come from the node table (``select``): the group
+    # sets' own ``node_coords`` keep the source's coordinates after a
+    # compose, before its rotation and translation.
+    for by_pg in (True, False):
+        try:
+            sel = (fem.nodes.select(pg=merged) if by_pg
+                   else fem.nodes.select(label=merged))
+        except KeyError:
+            continue
+        coords = np.asarray(sel.coords, dtype=np.float64)
+        if len(coords):
+            c = coords.reshape(-1, 3).mean(axis=0)
+            return (float(c[0]), float(c[1]), float(c[2]))
+    raise AssemblyError(
+        f"anchor={anchor!r} resolves no node of instance {inst.label!r}; its "
+        f"physical groups are {fem.nodes.physical.names()} and its labels "
+        f"{fem.nodes.labels.names()}."
+    )
+
+
 #: Per coupling kind, why a coupling between existing ports can resolve
 #: to no record (ADR 0117 INV-7).
 _EMPTY_HINT: dict[str, str] = {
     "equal_dof": "No slave node lies within tolerance of a master node.",
+    "equal_dof_mixed": "No slave node lies within tolerance of a master node.",
     "rigid_link": "The slave set holds no node but the master.",
     "rigid_diaphragm": "No node of either port but the master lies within "
                        "plane_tolerance of the plane.",
+    "rigid_body": "The slave set holds no node but the master.",
     "embedded": "Every embedded node is a corner of a host element.",
     "kinematic_coupling": "The target holds no node but the reference.",
     "distributing_coupling": "The target holds no node but the reference.",
@@ -1050,12 +1220,7 @@ def _tie_rows(b: _Bridged) -> list[TieRow]:
                 f"in chain phase."
             )
         if isinstance(t, Tie):
-            params = canonical_params({
-                "dofs": list(t.dofs) if t.dofs is not None else None,
-                "enforce": t.enforce,
-                "method": t.method,
-                "tolerance": t.tolerance,
-            })
+            params = canonical_params(tie_params(t.definition), "tie")
         else:
             params = t.params
         rows.append(TieRow(
