@@ -57,13 +57,10 @@ from ._instances import (
     Instance,
     RefNode,
     Tie,
-    check_dense_ranks,
     check_label,
-    check_partition_rank,
     check_point,
     check_rotate,
     check_translate,
-    check_unranked_source,
     merged_port,
     split_port,
 )
@@ -75,7 +72,11 @@ if TYPE_CHECKING:
     from apeGmsh.opensees import apeSees
     from apeGmsh.opensees.opensees_model import OpenSeesModel
 
-__all__ = ["Assembly"]
+__all__ = ["Assembly", "AssemblyRankWarning"]
+
+
+class AssemblyRankWarning(UserWarning):
+    """``bridge()`` built a partitioned FEM whose rank 0 is empty (AS4, #1530)."""
 
 
 @dataclass(frozen=True)
@@ -141,7 +142,6 @@ class Assembly(_AssemblyV1):
         *,
         translate: Sequence[float] = (0.0, 0.0, 0.0),
         rotate: "tuple[Sequence[float], float] | None" = None,
-        partition_rank: "int | None" = None,
     ) -> "Assembly":
         """Place a saved ``model.h5`` under ``label``. Returns ``self``.
 
@@ -149,34 +149,21 @@ class Assembly(_AssemblyV1):
         ``((ax, ay, az), theta_radians)`` about the origin, applied before
         ``translate``. The same file may be instanced any number of times.
 
-        ``partition_rank`` is the OpenSeesMP rank (``getPID``) that owns the
-        instance (ADR 0038 Layer 2). With no rank anywhere the assembly is
-        serial and ``tcl()`` writes an unpartitioned deck. With ranks, every
-        instance carries one, one per rank, and ``bridge()`` requires them
-        to run ``0 .. n-1``; the reference nodes (``node()``) live on
-        rank 0 and are ghosted where a coupling needs them.
-
         Raises :class:`AssemblyError`, before recording anything, for a
         label that is empty, contains ``.``, ``/`` or whitespace, starts or
-        ends with ``_``, or is already declared; for a missing file or one
-        whose composed modules carry a partition rank (a ranked assembly
-        archive); for a zero rotation axis; and for a ``partition_rank``
-        that is not an ``int >= 0``, that another instance holds, or that
-        is given on one instance and not another.
+        ends with ``_``, or is already declared; for a missing file; and for
+        a zero rotation axis.
         """
         self._refuse_mixed("instance")
         self._check_new_name(label, what="instance label")
         path = Path(source)
         if not path.is_file():
             raise AssemblyError(f"instance {label!r}: no file at {str(path)!r}.")
-        check_unranked_source(path, label)
         placed = Instance(
             label=label,
             source=path,
             translate=check_translate(translate),
             rotate=check_rotate(rotate),
-            partition_rank=check_partition_rank(
-                partition_rank, label, self._instances),
         )
         # Every check above runs first: a refused call records nothing.
         self._provenance.capture(
@@ -538,15 +525,12 @@ class Assembly(_AssemblyV1):
         analysis on it. ``element_tags="fem"`` (the default) keeps every
         element's relocated FEM id as its tag.
 
-        An assembly whose instances carry no ``partition_rank`` is serial:
-        its ``tcl()`` deck is unpartitioned. A ranked one is partitioned one
-        rank per instance, and each cross-instance constraint is written on
-        every rank that owns one of its nodes (ADR 0027).
-
-        Raises :class:`AssemblyError` if no instance is declared, the
-        instances' ranks leave a rank with no instance, an instance was
-        built with another ``ndm`` or ``ndf``, a tie resolves to no record,
-        or an instance carries model content AS1 cannot rehydrate.
+        Raises :class:`AssemblyError` if no instance is declared, an
+        instance was built with another ``ndm`` or ``ndf``, a tie resolves to
+        no record, or an instance carries model content AS1 cannot rehydrate.
+        Warns :class:`AssemblyRankWarning` when the merged FEM is partitioned
+        (always, until AS4): rank 0 is empty, so use ``tcl(flat=True)`` for
+        the serial deck.
         """
         self._refuse_mixed("bridge")
         if self._archive is not None:
@@ -558,26 +542,12 @@ class Assembly(_AssemblyV1):
             )
         if not self._instances:
             raise AssemblyError(f"Assembly({self.name!r}).bridge(): no instances.")
-        try:
-            check_dense_ranks(self._instances)
-        except AssemblyError as exc:
-            raise AssemblyError(f"Assembly({self.name!r}).bridge(): {exc}") from exc
         from apeGmsh.opensees import apeSees
         from apeGmsh.opensees.opensees_model import OpenSeesModel
 
         from ._rehydrate import rehydrate
 
         fem = self._merged_fem()
-        ranks = list(range(len(self._instances)))
-        if (self._instances[0].partition_rank is not None
-                and fem.nodes.partitions != ranks):
-            raise AssemblyError(
-                f"Assembly({self.name!r}).bridge(): the merged FEM has ranks "
-                f"{fem.nodes.partitions}, not one per instance {ranks}. An "
-                f"instance whose source is itself an assembly archive cannot "
-                f"carry partition_rank: its nested instances take ranks of "
-                f"their own."
-            )
         # AS3 hook: the assembly's declaration provenance rides on the merged
         # FEM, so apeSees.h5 writes it to /provenance beside the bridge's.
         if fem.provenance is not None:
@@ -587,6 +557,16 @@ class Assembly(_AssemblyV1):
                 f"is not implemented."
             )
         fem.provenance = self._provenance.snapshot()
+        if len(fem.partitions) > 1:
+            warnings.warn(
+                f"Assembly({self.name!r}).bridge(): the merged FEM is "
+                f"partitioned one rank per instance with an empty rank 0 "
+                f"(no host; AS4, #1530), so the default tcl() writes a "
+                f"partitioned deck. tcl(flat=True) is the serial deck; live "
+                f"runs are serial.",
+                AssemblyRankWarning,
+                stacklevel=2,
+            )
         ops = apeSees(fem, element_tags=element_tags)
         ops.model(ndm=ndm, ndf=ndf)
         # Read each source once. The key carries the resolved path as well
@@ -697,9 +677,6 @@ class Assembly(_AssemblyV1):
                 source=Path(r.source_path),
                 translate=check_translate(r.translate),
                 rotate=check_rotate(rotate),
-                partition_rank=check_partition_rank(
-                    None if r.partition_rank == -1 else r.partition_rank,
-                    r.label, asm._instances),
             ))
         labels = [i.label for i in asm._instances]
         # Reference nodes first: a coupling row may name any of them.
@@ -784,7 +761,6 @@ class Assembly(_AssemblyV1):
                 label=inst.label,
                 translate=inst.translate,
                 rotate=inst.compose_rotate(),
-                partition_rank=inst.partition_rank,
             )
         for t in self._ties:
             verb = "tie" if isinstance(t, Tie) else t.kind

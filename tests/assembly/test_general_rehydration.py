@@ -275,12 +275,16 @@ def _source_min(path: Path) -> int:
 
 
 def _bridge(*instances, ndf: int, ndm: int = 3):
-    from apeGmsh.assembly import Assembly
+    import warnings
+
+    from apeGmsh.assembly import Assembly, AssemblyRankWarning
 
     asm = Assembly("asm")
     for label, path, kw in instances:
         asm.instance(label, path, **kw)
-    return asm.bridge(ndm=ndm, ndf=ndf)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", AssemblyRankWarning)
+        return asm.bridge(ndm=ndm, ndf=ndf)
 
 
 # ---------------------------------------------------------------------------

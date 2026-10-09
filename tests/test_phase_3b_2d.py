@@ -866,11 +866,9 @@ class TestRankModel:
             partition_rank=0,
             composed_at="2026-05-26T12:00:00Z",
         )
-        # Node 3 is the host's own (not a decoupled reference node), so the
-        # host claims rank 0; a host-less chain reserves no rank.
         fem = _make_fem(
             composed_from=ComposeSet((rec_a,)),
-            node_module_labels=["A", "A", ""],
+            node_module_labels=["A", "A", "A"],
             elem_module_labels=["A", "A"],
         )
         with pytest.raises(ValueError, match="rank model"):

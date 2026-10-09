@@ -45,6 +45,11 @@ from tests.assembly.test_two_instances_one_tie import (
     write_instance,
 )
 
+#: Every bridge here is partitioned with an empty rank 0 (#1530, not this
+#: slice); the warning is AS1's contract and is tested there.
+pytestmark = pytest.mark.filterwarnings(
+    "ignore::apeGmsh.assembly.AssemblyRankWarning")
+
 #: A rotation that stands the xy plate up in the plane y = 0.
 STAND_UP = ((1.0, 0.0, 0.0), math.pi / 2)
 #: Vertical offset of the second wall: a 2 mm gap, so no node coincides.

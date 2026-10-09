@@ -402,3 +402,11 @@ def test_ndf_mismatch_raises(files):
     asm = Assembly("x").instance("slab", files["plate"])
     with pytest.raises(AssemblyError, match="ndf=6.*ndf=3"):
         asm.bridge(ndm=3, ndf=3)
+
+
+def test_bridge_warns_that_the_default_deck_has_an_empty_rank_0(files):
+    from apeGmsh.assembly import AssemblyRankWarning
+
+    with pytest.warns(AssemblyRankWarning, match=r"tcl\(flat=True\)"):
+        ops = _stack(files).bridge(ndm=3, ndf=3)
+    assert len(ops.fem.partitions) == 3      # empty rank 0 + one per instance
