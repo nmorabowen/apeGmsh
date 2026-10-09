@@ -9,14 +9,17 @@ Oracles, each naming the right answer independently of the code under test:
   own FEM, ids shifted back by the closed-form relocation
   ``1_000_000 - source_min``.
 * parity for a multi-spec block (two materials on two PGs of one volume).
+* parity for args that vary inside a group (AS2b, #1542): an
+  orientation-derived transform on a ring, one transform per element,
+  carried as one spec per row on ``{inst}.Ring#<k>``.
 * rebar carry — two instances of one cage file: each bar cell arrives once,
   as a ``CorotTruss`` on the instance's own ``{inst}.rebar`` material, with
   nodes at the closed-form ``k * 1_000_000 - source_min`` offset.
 * INV-5 — the assembly's names are exactly the source's model-kind names,
   prefixed per instance; no time series or pattern name travels.
-* refusals raise before registration — args that vary inside a group (an
-  orientation-derived transform on a ring) name AS2b (#1542); a damping
-  attached by region names the region; ``ops`` stays empty.
+* refusals raise before registration — a damping attached by region
+  names the region; ``ops`` stays empty. A synthesized row group that
+  would shadow a source group raises.
 """
 from __future__ import annotations
 
@@ -125,13 +128,14 @@ def declare_cage(ops) -> None:
     ops.element.FourNodeTetrahedron(pg="Conc", material=conc)
 
 
-def ring_fem():
-    """A circle of beam elements, PG ``Ring``."""
+def ring_fem(*extra: str):
+    """A circle of beam elements, PG ``Ring`` (plus ``extra`` PGs on it)."""
     with apeGmsh(model_name="ring", verbose=False) as g:
         g.model.geometry.add_circle(0, 0, 0, 5.0, label="ring")
         g.model.sync()
-        g.physical.add(1, g.model.select(None, dim=1).result().tags(),
-                       name="Ring")
+        curves = g.model.select(None, dim=1).result().tags()
+        for name in ("Ring",) + extra:
+            g.physical.add(1, curves, name=name)
         g.mesh.sizing.set_global_size(2.0)
         g.mesh.generation.generate(1)
         return g.mesh.queries.get_fem_data(dim=1)
@@ -249,6 +253,8 @@ def files(tmp_path_factory) -> dict[str, Path]:
         "split": write_instance(d / "split.h5", split, declare_split),
         "cage": write_instance(d / "cage.h5", cage_fem(), declare_cage),
         "ring": write_instance(d / "ring.h5", ring_fem(), declare_ring),
+        "ring_shadow": write_instance(d / "ring_shadow.h5",
+                                      ring_fem("Ring#1"), declare_ring),
         "regional": write_instance(
             d / "regional.h5", split, declare_region_damped),
         "urd": write_instance(d / "urd.h5", frame, declare_urd),
@@ -292,6 +298,7 @@ def _bridge(*instances, ndf: int, ndm: int = 3):
     ("split", declare_split, 3, 3),
     ("urd", declare_urd, 3, 6),
     ("frame2d", declare_frame2d, 2, 3),
+    ("ring", declare_ring, 3, 6),
 ])
 def test_one_instance_deck_equals_the_source_deck(files, kind, declare, ndm,
                                                   ndf, tmp_path):
@@ -323,6 +330,9 @@ def test_one_instance_deck_equals_the_source_deck(files, kind, declare, ndm,
         assert "section Elastic 1 200000.0 100.0 10000.0 80000.0 0.83" in want
         assert re.search(r"element elasticBeamColumn \d+ \d+ \d+ 50\.0 "
                          r"200000\.0 3000\.0 1 -mass 0\.1 -cMass", want)
+    if kind == "ring":          # one transform per element: args vary
+        assert want.count("geomTransf Linear") == \
+            want.count("element elasticBeamColumn") > 1
 
 
 def test_two_instances_carry_their_own_transforms_and_dampings(files, tmp_path):
@@ -425,13 +435,59 @@ def _empty_after_refusal(path: Path, ndm_ndf: tuple[int, int], tmp_path,
     assert declared == []
 
 
-def test_args_varying_inside_a_group_raise_naming_as2b(files, tmp_path):
+def test_args_varying_inside_a_group_are_carried_per_row(files, tmp_path):
+    """AS2b (#1542): one ``{inst}.Ring#<k>`` group per distinct args row,
+    each one element, together exactly ``{inst}.Ring``; the groups and the
+    per-row rows survive the assembly archive, which re-bridges as an
+    instance to the same deck."""
+    from apeGmsh.assembly import Assembly
+    from apeGmsh.mesh import FEMData
     from apeGmsh.opensees.opensees_model import OpenSeesModel
 
-    model = OpenSeesModel.from_h5(str(files["ring"]))
-    assert len({r.args for r in model.elements()}) == len(model.elements()) > 1
-    _empty_after_refusal(files["ring"], (3, 6), tmp_path,
-                         r"vary inside a group.*AS2b selector \(#1542\)")
+    src = OpenSeesModel.from_h5(str(files["ring"]))
+    n = len(src.elements())
+    assert len({r.args for r in src.elements()}) == n > 1
+
+    asm = Assembly("asm")
+    asm.instance("a", files["ring"])
+    asm.instance("b", files["ring"], translate=(20.0, 0.0, 0.0))
+    ops = asm.bridge(ndm=3, ndf=6)
+    phys = ops.fem.elements.physical
+    every: set[str] = set()
+    for lab in ("a", "b"):
+        rows = [f"{lab}.Ring#{k}" for k in range(1, n + 1)]
+        assert {nm for nm in phys.names() if nm.startswith(f"{lab}.Ring#")} \
+            == set(rows)
+        ids = [int(e) for nm in rows for e in phys.element_ids(nm)]
+        assert len(ids) == n
+        assert sorted(ids) == sorted(int(e) for e in phys.element_ids(f"{lab}.Ring"))
+        every.update(rows)
+
+    out = tmp_path / "ring_asm.h5"
+    asm.h5(out)
+    assert [i.label for i in Assembly.from_h5(out).instances] == ["a", "b"]
+    back = OpenSeesModel.from_h5(str(out))
+    assert len({r.args for r in back.elements()}) == len(back.elements()) == 2 * n
+    assert every <= set(FEMData.from_h5(str(out)).elements.physical.names())
+
+    # The archive as an instance: its rows match a.Ring#k exactly.
+    want = _deck(ops, tmp_path / "asm.tcl")
+    nested = Assembly("outer")
+    nested.instance("x", out)
+    got = _deck(nested.bridge(ndm=3, ndf=6), tmp_path / "nested.tcl")
+    off = GRANULE - _source_min(out)
+    got = re.sub(r"(?<![\w.\-])\d{7,}(?![\w.])",
+                 lambda m: str(int(m.group(0)) - off), got)
+    assert got == want
+
+
+def test_a_row_group_that_shadows_a_source_group_raises(files):
+    """The ``#<k>`` suffix is checked: a source group named ``Ring#1``
+    would be shadowed by the synthesized ``p.Ring#1``."""
+    from apeGmsh.assembly import AssemblyError
+
+    with pytest.raises(AssemblyError, match=r"'p\.Ring#1' would shadow"):
+        _bridge(("p", files["ring_shadow"], {}), ndf=6)
 
 
 def test_region_attached_damping_raises_before_registration(files, tmp_path):
