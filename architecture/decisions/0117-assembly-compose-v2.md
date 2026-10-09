@@ -237,6 +237,19 @@ settles the rank layout, the merge engine keeps rank 0 for a host that v2 does
 not have, so an assembly's default `tcl()` is partitioned with an empty rank 0;
 `bridge()` warns, and `tcl(flat=True)` is the serial deck (AS1, #1529).
 
+> **Note (October 2026, AS4-b #1564):** the interim paragraph above no longer
+> describes the code. The merge engine reserves rank 0 for a host only when the
+> host owns an element, so an assembly whose instances carry no
+> `partition_rank` is unpartitioned and its default `tcl()` is the serial deck
+> (the same deck as `tcl(flat=True)`). `AssemblyRankWarning` is removed.
+> `instance(..., partition_rank=k)` ranks an instance; every instance carries a
+> rank or none does, one instance per rank, and `bridge()` requires the ranks
+> to run `0 .. n-1`. Reference nodes live on rank 0 and are declared on each
+> rank a coupling needs them on. An instance source whose `/composed_from`
+> modules carry a rank is refused, at `instance()` and again at `bridge()`
+> (AS4-d #1566), and so is a ranked instance whose source is itself an
+> assembly archive.
+
 ### D7 — Migration: today's compose is deleted, not deprecated
 
 **This replaces the brief's Q7 and P5.** `g.compose`, `FEMData.compose`,

@@ -31,9 +31,10 @@ Two top-level facts that the older skill got wrong and you must not repeat:
   entry point is the post-session bridge `apeSees(fem)` from
   `apeGmsh.opensees`.
 - "The session **is** the assembly" at the *top level* — `apeGmsh.Assembly`
-  does not exist. The declarative `Assembly`+`couple` builder **shipped** as
-  a **sub-path** import (`from apeGmsh.assembly import Assembly`, PR #433) —
-  see `compose.md`.
+  does not exist. Several saved models are assembled with the **sub-path**
+  import `from apeGmsh.assembly import Assembly`: v2 is `instance` / `tie`
+  / couplings / `bridge()` (ADR 0117); the v1 `add` / `couple` /
+  `materialize` form is pending removal. See `compose.md` §"Assembly v2".
 
 ---
 
