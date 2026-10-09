@@ -22,6 +22,14 @@ def qapp():
     yield app
 
 
+@pytest.fixture(autouse=True)
+def _disposes_its_widgets():
+    """Each panel's lambdas keep it alive; delete it before exit does."""
+    from tests.viewers._qt_teardown import disposing_new_top_levels
+
+    yield from disposing_new_top_levels()
+
+
 # =====================================================================
 # BooleanPanel
 # =====================================================================
