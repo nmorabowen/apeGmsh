@@ -320,6 +320,8 @@ Each is testable.
 6. **INV-6.** Instancing is exact: for each instance, assembly coordinates
    equal `R·x + t` within 1e-12 and connectivity equals the source's plus
    `fem_id_base - source_min`.
+   **Note (2026-10-09, #1593).** Instance frame rule: points → `R·x + t`;
+   direction vectors, normals and offsets → `R·v`.
 7. **INV-7.** A tie that resolves zero records raises `AssemblyError` naming
    both ports; a bare port that names no assembly object raises, listing the
    instances.
