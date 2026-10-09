@@ -971,8 +971,9 @@ def _transform_contact_geometry(
       only local-x would leave the pair's frame non-orthogonal and
       silently mis-oriented, and the same holds vector by vector at
       either width;
-    * ``phantom_coords`` (InterfaceRecord) is a position — rotated then
-      translated, exactly like the real node it stands on.
+    * ``phantom_coords`` (InterfaceRecord, NodeToSurfaceRecord) is a
+      position — rotated then translated, exactly like the real node it
+      stands on.
 
     Returns ``rec`` unchanged when nothing applies (no such fields, or
     identity transform).
@@ -1274,10 +1275,14 @@ def _rewrite_named_groups(
     *,
     offset: int,
     label: str,
+    translate: tuple[float, float, float],
+    rotate: tuple[float, float, float, float] | None,
 ) -> dict:
     """Return a copy of a ``{(dim, tag): info_dict}`` mapping with
     the KEY tag, ``node_ids`` / ``element_ids`` / ``connectivity``
-    offset and the ``name`` namespaced.
+    offset, the ``name`` namespaced and the cached ``node_coords``
+    placed by the module transform (the same one ``nodes.coords``
+    gets).
 
     The key's ``tag`` is offset into the module's reserved window with
     the same ``offset`` already applied to node / element ids.  Gmsh
@@ -1314,14 +1319,7 @@ def _rewrite_named_groups(
                     else:
                         new_info[k] = arr + np.int64(offset)
             elif k == "node_coords":
-                # Coords are not tag-bearing; copy as-is (geometric
-                # transform applies to fem.nodes.coords, not the
-                # PG-side mirror copies which the rewriter re-derives
-                # from the rebuilt node table when 3B.2b merges).  In
-                # 3B.2a we preserve the source coords; 3B.2b will
-                # decide whether to re-fetch from the rewritten node
-                # table or keep these PG-local copies.
-                new_info[k] = v
+                new_info[k] = _place_cached_coords(v, translate, rotate)
             else:
                 # Forward unknown keys (e.g. nested per-type 'groups')
                 # untouched — 3B.2b will handle the rewrite if needed.
@@ -1358,14 +1356,29 @@ def _rewrite_part_map(
 # ── Helper: rewrite the mesh-selection store ───────────────────────
 
 
+def _place_cached_coords(
+    v: Any,
+    translate: tuple[float, float, float],
+    rotate: tuple[float, float, float, float] | None,
+) -> Any:
+    """Place a group's cached ``(N, 3)`` ``node_coords`` like the node table."""
+    return _apply_geometric_transform(
+        np.asarray(v, dtype=np.float64).reshape(-1, 3),
+        translate=translate, rotate=rotate,
+    )
+
+
 def _rewrite_mesh_selection(
     store: Any,
     *,
     offset: int,
     label: str,
+    translate: tuple[float, float, float],
+    rotate: tuple[float, float, float, float] | None,
 ) -> Any:
     """Return a fresh ``MeshSelectionStore`` with the KEY tags and the
-    member tag arrays offset and the selection names namespaced.
+    member tag arrays offset, the selection names namespaced and the
+    cached ``node_coords`` placed by the module transform.
 
     The key offset mirrors :func:`_rewrite_named_groups` — selection
     sets re-use small per-source tags, so without it a second composed
@@ -1396,6 +1409,8 @@ def _rewrite_mesh_selection(
                         new_info[k] = arr
                     else:
                         new_info[k] = arr + np.int64(offset)
+            elif k == "node_coords":
+                new_info[k] = _place_cached_coords(v, translate, rotate)
             else:
                 new_info[k] = v
         sets[(int(dim), int(tag) + int(offset))] = new_info
@@ -1532,20 +1547,25 @@ def _rewrite_source_for_compose(
     #    on both node-side and element-side composites.
     new_node_physical = _rewrite_named_groups(
         source.nodes.physical._groups, offset=offset, label=label,
+        translate=translate, rotate=rotate,
     )
     new_elem_physical = _rewrite_named_groups(
         source.elements.physical._groups, offset=offset, label=label,
+        translate=translate, rotate=rotate,
     )
     new_node_labels = _rewrite_named_groups(
         source.nodes.labels._groups, offset=offset, label=label,
+        translate=translate, rotate=rotate,
     )
     new_elem_labels = _rewrite_named_groups(
         source.elements.labels._groups, offset=offset, label=label,
+        translate=translate, rotate=rotate,
     )
 
     # 4. Mesh selections (optional).
     new_mesh_selection = _rewrite_mesh_selection(
         source.mesh_selection, offset=offset, label=label,
+        translate=translate, rotate=rotate,
     )
 
     # 5. Parts maps — namespace the part_label keys + offset members.
@@ -1559,8 +1579,13 @@ def _rewrite_source_for_compose(
     )
 
     # 6. Constraint / load / mass / SP records — apply tag_rewrite_spec.
+    #    A node-to-surface record's ``phantom_coords`` is a position the
+    #    bridge declares its phantom nodes at: place it.
     new_node_constraints = tuple(
-        _rewrite_record(rec, offset=offset, label=label)
+        _transform_contact_geometry(
+            _rewrite_record(rec, offset=offset, label=label),
+            translate=translate, rotate=rotate,
+        )
         for rec in source.nodes.constraints
     )
     new_elem_constraints = tuple(
