@@ -1877,6 +1877,69 @@ class FEMData:
         self._snapshot_id_cache = digest
         return digest
 
+    def _add_element_group(self, name: str, ids) -> None:
+        """Register ``ids`` as the element-side physical group ``name``.
+
+        Not a user API: the assembly rehydrator
+        (``apeGmsh.assembly._rehydrate``) is its only caller, for element
+        rows whose args vary inside one physical group (ADR 0117 D8).
+        The group resolves through ``fem.elements.select(pg=name)``, so a
+        bridge element spec can take ``pg=name``, and it is written to
+        ``/physical_groups/element_side`` like any other group.
+
+        This changes the snapshot in place: ``fem.elements`` becomes a
+        shallow copy carrying a new :class:`PhysicalGroupSet` (so a
+        snapshot this one was derived from does not see the group), and
+        :attr:`snapshot_id` is recomputed on next read.  The group takes
+        the next free tag at its dimension.
+
+        Raises
+        ------
+        ValueError
+            If ``name`` is empty or already names a physical group on
+            either side, ``ids`` is empty, or the elements span more
+            than one dimension.
+        KeyError
+            If an id is not an element of this snapshot.
+        """
+        eids = sorted({int(e) for e in ids})
+        node_pg, elem_pg = self.nodes.physical, self.elements.physical
+        if not name or name in node_pg.names() or name in elem_pg.names():
+            raise ValueError(
+                f"_add_element_group: {name!r} is empty or already names a "
+                f"physical group.")
+        if not eids:
+            raise ValueError(f"_add_element_group({name!r}): no element ids.")
+        wanted = set(eids)
+        dims: set[int] = set()
+        nodes: list[ndarray] = []
+        for group in self.elements:
+            mask = np.isin(group.ids, eids)
+            if mask.any():
+                dims.add(group.dim)
+                nodes.append(group.connectivity[mask].ravel())
+                wanted.difference_update(int(e) for e in group.ids[mask])
+        if wanted:
+            raise KeyError(
+                f"_add_element_group({name!r}): element ids "
+                f"{sorted(wanted)[:5]} are not in this snapshot.")
+        if len(dims) != 1:
+            raise ValueError(
+                f"_add_element_group({name!r}): elements span dims "
+                f"{sorted(dims)}; a physical group has one.")
+        (dim,) = dims
+        nids = np.unique(np.concatenate(nodes))
+        tags = [t for d, t in (*node_pg.get_all(), *elem_pg.get_all()) if d == dim]
+        coords = self.nodes.coords[[self.nodes.index(n) for n in nids]]
+        groups = dict(elem_pg._groups)
+        groups[(dim, max(tags, default=0) + 1)] = {
+            "name": name, "node_ids": nids, "node_coords": coords,
+            "element_ids": np.asarray(eids, dtype=np.int64),
+        }
+        self.elements = self._replaced_elements(physical=PhysicalGroupSet(groups))
+        if hasattr(self, "_snapshot_id_cache"):
+            del self._snapshot_id_cache
+
     @classmethod
     def from_gmsh(
         cls,
