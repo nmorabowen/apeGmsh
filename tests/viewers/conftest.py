@@ -13,6 +13,20 @@ from typing import Any
 import pytest
 
 
+@pytest.fixture(scope="module", autouse=True)
+def _module_disposes_its_widgets(request):
+    """Delete the top-level widgets a viewer module leaves behind.
+
+    Panels kept alive by their own lambda slots otherwise survive to
+    interpreter exit, where PySide 6.12 deletes them and segfaults
+    (``tests/viewers/_qt_teardown.py``). Module scope, so a module's own
+    fixtures keep their widgets until the module is done with them.
+    """
+    from tests.viewers._qt_teardown import disposing_new_top_levels
+
+    yield from disposing_new_top_levels(request.module.__name__)
+
+
 # =====================================================================
 # Exact-pixel assertions on inexact GL stacks
 # =====================================================================
