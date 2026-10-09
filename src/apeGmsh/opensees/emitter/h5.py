@@ -1084,7 +1084,8 @@ class _ProgramTape:
 
     __slots__ = (
         "runs", "methods", "stores", "count", "depth", "pending",
-        "override", "_method_ix", "_store_ix", "_ordinal", "_first_rows",
+        "override", "ordinal", "_method_ix", "_store_ix", "_first_rows",
+        "_last", "_last_method", "_last_store", "_last_stage",
     )
 
     def __init__(self) -> None:
@@ -1098,15 +1099,17 @@ class _ProgramTape:
         # The row the call in flight takes unless a body overrides it.
         self.pending = _NO_ROW
         self.override: int | None = None
+        # Next row per ``(method, stage)``.
+        self.ordinal: dict[tuple[str, int], int] = {}
         self._method_ix: dict[str, int] = {}
         self._store_ix: dict[str, int] = {}
-        self._ordinal: dict[tuple[str, int], int] = {}
         self._first_rows: dict[tuple[Any, ...], int] = {}
-
-    def begin(self, method: str, store: str, stage: int) -> None:
-        self.pending = (
-            self._ordinal.get((method, stage), 0) if store else _NO_ROW)
-        self.override = None
+        # The open run and its key, so a repeated call extends it without
+        # interning (the per-node / per-element hot path).
+        self._last: list[int] | None = None
+        self._last_method = ""
+        self._last_store = ""
+        self._last_stage = _NO_ROW
 
     def remember(self, key: "tuple[Any, ...]") -> None:
         """Record that ``key``'s first capture is the call in flight."""
@@ -1116,14 +1119,24 @@ class _ProgramTape:
         """The call in flight replicates ``key``'s first capture."""
         self.override = self._first_rows[key]
 
-    def note(self, method: str, store: str, stage: int) -> None:
+    def note(
+        self, method: str, store: str, stage: int,
+        key: "tuple[str, int]",
+    ) -> None:
+        """Append the completed call to the open run, or open a new one."""
         self.count += 1
-        if self.override is not None:
-            row = self.override
-        else:
+        row = self.override
+        if row is None:
             row = self.pending
             if row != _NO_ROW:
-                self._ordinal[(method, stage)] = row + 1
+                self.ordinal[key] = row + 1
+        last = self._last
+        if (last is not None and method is self._last_method
+                and store is self._last_store and stage == self._last_stage
+                and (row == last[4] + last[1] if row != _NO_ROW
+                     else last[4] == _NO_ROW)):
+            last[1] += 1
+            return
         m = self._method_ix.get(method)
         if m is None:
             m = self._method_ix[method] = len(self.methods)
@@ -1135,14 +1148,11 @@ class _ProgramTape:
                 self.stores.append(store)
         else:
             st = _NO_ROW
-        if self.runs:
-            last = self.runs[-1]
-            if (last[2] == m and last[3] == st and last[5] == stage
-                    and (row == last[4] + last[1] if row != _NO_ROW
-                         else last[4] == _NO_ROW)):
-                last[1] += 1
-                return
-        self.runs.append([self.count, 1, m, st, row, stage, _NO_DECL])
+        run = [self.count, 1, m, st, row, stage, _NO_DECL]
+        self.runs.append(run)
+        self._last = run
+        self._last_method, self._last_store = method, store
+        self._last_stage = stage
 
 
 # ---------------------------------------------------------------------------
@@ -4665,20 +4675,25 @@ def _noted(
         tape = self._program
         if tape.depth:
             return fn(self, *args, **kwargs)
-        stage = self._program_stage()
-        store = glob if stage == _NO_ROW else stage_store
-        tape.begin(name, store, stage)
+        blk = self._stage_current
+        if blk is None:
+            stage, store = _NO_ROW, glob
+        else:
+            stage, store = len(self._stage_blocks), stage_store
+        key = (name, stage)
+        tape.pending = tape.ordinal.get(key, 0) if store else _NO_ROW
+        tape.override = None
         tape.depth = 1
         try:
             out = fn(self, *args, **kwargs)
         finally:
             tape.depth = 0
-        if stage == _NO_ROW and self._stage_current is not None:
+        if blk is None and self._stage_current is not None:
             # ``stage_open``: the call belongs to the stage it opened.
-            stage = self._program_stage()
-            store = stage_store
-            tape.begin(name, store, stage)
-        tape.note(name, store, stage)
+            stage, store = len(self._stage_blocks), stage_store
+            key = (name, stage)
+            tape.pending = tape.ordinal.get(key, 0) if store else _NO_ROW
+        tape.note(name, store, stage, key)
         return out
 
     return noted
