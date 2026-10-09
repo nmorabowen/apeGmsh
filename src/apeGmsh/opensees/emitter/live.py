@@ -703,8 +703,8 @@ class LiveOpsEmitter:
     supports_partitions: bool = False
 
     def __init__(self, *, wipe: bool = True) -> None:
-        # The module is bound behind the numpy-scalar-coercing proxy
-        # (#1352): every ``self._ops.X(...)`` below passes its positional
+        # The module is bound behind the numpy-scalar-coercing proxy:
+        # every ``self._ops.X(...)`` below passes its positional
         # arguments through ``plain_scalar`` before the real call.
         self._ops: "_CoercingOps" = _CoercingOps(_get_ops())
         if wipe and _STOCK_EQ_ROWS_LIVE:
