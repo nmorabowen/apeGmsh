@@ -41,6 +41,7 @@ from apeGmsh.opensees.emitter.h5 import (
 )
 from apeGmsh.opensees.emitter.recording import RecordingEmitter
 
+from tests.fixtures.schema import OPENSEES_PRIOR_MINOR
 from tests.opensees.h5._opensees_model_fixtures import build_simple_frame_fem
 from tests.opensees.h5.test_h5_partitioned_staged_capture import (
     _OVERLAPPING_SPLIT,
@@ -445,3 +446,52 @@ def test_ledger_warns_once_per_bridge_and_set(
     (only,) = _of(rec, H5LedgerWarning)
     assert "embedded_node x1" in str(only.message)
     assert Path(only.filename).resolve() == Path(__file__).resolve()
+
+
+# ---------------------------------------------------------------------------
+# 6. Rewrites never write an order the file does not hold (#1573 review)
+# ---------------------------------------------------------------------------
+
+
+def test_upgrading_a_pre_program_file_writes_no_program(tmp_path: Path) -> None:
+    """A source below 2.23.0 has no program; the rewrite must not invent
+    one from its own category-major replay."""
+    src = _archive(
+        _staged(partitioned=False, rayleigh=False, profile=False), tmp_path)
+    with h5py.File(str(src), "r+") as f:
+        del f["opensees/program"]
+        f["meta"].attrs["opensees_schema_version"] = OPENSEES_PRIOR_MINOR
+    out = tmp_path / "upgraded.h5"
+    OpenSeesModel.from_h5(str(src)).to_h5(str(out))
+    with h5py.File(str(out), "r") as f:
+        assert "program" not in f["opensees"]
+    with h5_reader.open(str(out)) as m:
+        assert m.program() == ()
+        with pytest.raises(h5_reader.ProgramAbsentError, match="predates"):
+            m.emit_index("analyze", 0, stage=0)
+    with pytest.raises(h5_reader.ProgramAbsentError, match="predates"):
+        OpenSeesModel.from_h5(str(out)).emit_index("analyze", 0, stage=0)
+
+
+def test_rewrite_unlinks_runs_whose_store_it_dropped(tmp_path: Path) -> None:
+    """The rewrite does not carry ``/opensees/regions`` (a main-side gap,
+    #1579); the echoed program must not name it."""
+    ops = _frame(rayleigh=True, modal=False)
+    ops.damping.rayleigh(alpha_m=0.5, beta_k=0.0, on="Cols")
+    src = _archive(ops, tmp_path)
+    with h5py.File(str(src), "r") as f:
+        assert "regions" in f["opensees"]
+    out = tmp_path / "rewrite.h5"
+    with pytest.warns(H5FeatureDeferredWarning, match="regions"):
+        OpenSeesModel.from_h5(str(out.parent / src.name)).to_h5(str(out))
+    with h5py.File(str(out), "r") as f:
+        assert "regions" not in f["opensees"]
+        stores = [s.decode() if isinstance(s, bytes) else str(s)
+                  for s in f["opensees/program"].attrs["stores"]]
+    assert not [s for s in stores if "regions" in s]
+    with h5_reader.open(str(src)) as a, h5_reader.open(str(out)) as b:
+        ra, rb = a.program(), b.program()
+    # The order survives: same methods at the same emit indices.
+    assert _expand(ra) == _expand(rb)
+    dropped = [r for r in rb if r.method == "region"]
+    assert dropped and all(r.store == "" and r.row == -1 for r in dropped)

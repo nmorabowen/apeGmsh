@@ -4011,6 +4011,8 @@ class H5Emitter:
         """
         if self._program_restored is not None:
             rows, methods, stores, count = self._program_restored
+            if count:
+                rows, stores = self._drop_absent_stores(f, rows, stores)
         else:
             tape = self._program
             rows = tuple(tuple(r) for r in tape.runs)
@@ -4040,6 +4042,49 @@ class H5Emitter:
         ds.attrs.create(
             "stores", np.array(list(stores), dtype=object), dtype=str_dt)
         ds.attrs["emit_count"] = np.int32(count)
+
+    @staticmethod
+    def _drop_absent_stores(
+        f: Any,
+        rows: "tuple[tuple[int, ...], ...]",
+        stores: "tuple[str, ...]",
+    ) -> "tuple[tuple[tuple[int, ...], ...], tuple[str, ...]]":
+        """Unlink echoed runs whose store this rewrite did not write.
+
+        An echoed program addresses the source's stores; a rewrite that
+        drops one (``/opensees/regions`` is not replayed) would leave runs
+        naming a path the file lacks. Those runs keep their emit indices
+        (the tiling holds) with ``store`` and ``row`` ``-1``, ``@stores``
+        loses the name, and the drop is warned, naming the stores.
+        """
+        import warnings
+
+        absent: set[int] = set()
+        for row in rows:
+            st, stage = row[3], row[5]
+            if st != _NO_ROW and _store_root(stores[st], stage).lstrip("/") not in f:
+                absent.add(st)
+        if not absent:
+            return rows, stores
+        keep = [i for i in range(len(stores)) if i not in absent]
+        remap = {old: new for new, old in enumerate(keep)}
+        out = tuple(
+            r if r[3] == _NO_ROW else (
+                (r[0], r[1], r[2], _NO_ROW, _NO_ROW, r[5], r[6])
+                if r[3] in absent else
+                (r[0], r[1], r[2], remap[r[3]], r[4], r[5], r[6]))
+            for r in rows
+        )
+        names = sorted(stores[i] for i in absent)
+        warnings.warn(
+            "model.h5 rewrite: the source's /opensees/program names "
+            f"store(s) {names} that this rewrite does not write; their runs "
+            "keep their emit indices with store -1, so the order survives "
+            "but the records do not.",
+            H5FeatureDeferredWarning,
+            stacklevel=2,
+        )
+        return out, tuple(stores[i] for i in keep)
 
     def restore_stage_blocks(self, stages_ro: "Sequence[Any]") -> None:
         """Re-install captured stage buckets from read-side
@@ -4654,6 +4699,28 @@ class H5Emitter:
             "snapshot_id": self._snapshot_id,
             "model_name": self._model_name,
         }
+
+
+def _store_root(template: str, stage: int) -> str:
+    """The HDF5 path a ``VERBS`` store template's records live under.
+
+    ``{scope}`` and the stage prefix resolve by ``stage``; the path is cut
+    at the first unresolved field or ``@attribute`` (to the last whole
+    segment), so ``{scope}/regions/region_{k:03d}`` is ``/opensees/regions``.
+    """
+    scope = (
+        "/opensees" if stage == _NO_ROW
+        else f"/opensees/stages/stage_{stage:03d}")
+    path = template.replace("{scope}", scope)
+    if stage != _NO_ROW:
+        path = path.replace(
+            "/opensees/stages/stage_{k:03d}", scope, 1)
+    cuts = [i for i in (path.find("{"), path.find("@")) if i >= 0]
+    cut = min(cuts) if cuts else len(path)
+    literal = path[:cut]
+    if cut < len(path) and path[cut] == "{":
+        literal = literal.rsplit("/", 1)[0]
+    return literal.rstrip("/")
 
 
 def _noted(

@@ -1394,9 +1394,11 @@ class OpenSeesModel:
             emitter_fresh.restore_partition_blocks(self._partitions)
         # ADR 0114 R2/R3a: echo the emit order and the command rows. The
         # category-major replay above cannot regenerate the order, and it
-        # passes no commands, so the echo is their only source here.
-        if self._program:
-            emitter_fresh.restore_program(self._program, self._commands)
+        # passes no commands, so the echo is their only source here. A
+        # source below 2.23.0 has no program: echoing that absence keeps
+        # the replay's own tape out of the file, which is not the order the
+        # bridge emitted.
+        emitter_fresh.restore_program(self._program, self._commands)
         _compose_model_h5(
             self._fem,
             emitter_fresh,

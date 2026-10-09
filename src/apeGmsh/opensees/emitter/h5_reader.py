@@ -67,6 +67,7 @@ __all__ = [
     "H5Model",
     "MalformedH5Error",
     "PartitionEmittedRecord",
+    "ProgramAbsentError",
     "ProgramRun",
     "SchemaVersionError",
     "emit_index_of",
@@ -169,6 +170,15 @@ class CommandRecordRO:
         return {n: a for a, n in zip(self.args, self.names) if n}
 
 
+class ProgramAbsentError(RuntimeError):
+    """The archive has no ``/opensees/program``, so it holds no emit order.
+
+    A file written below opensees 2.23.0 has none, and neither does one
+    rewritten from such a file (``OpenSeesModel.to_h5`` does not invent an
+    order the source never recorded).
+    """
+
+
 def emit_index_of(
     runs: "Sequence[ProgramRun]",
     method: str, row: int, *, stage: int = -1,
@@ -177,16 +187,24 @@ def emit_index_of(
     ``method``'s store in ``stage`` (ADR 0114 Q2).
 
     The first run that covers the row is the record's own capture; a
-    later one is a partition replica. Raises :class:`LookupError` when no
-    run covers it, so a caller never reads an order the file lacks.
+    later one is a partition replica. Raises :class:`ProgramAbsentError`
+    when there is no program at all, and :class:`LookupError` when no run
+    covers the row, so a caller never reads an order the file lacks.
     """
+    if not runs:
+        raise ProgramAbsentError(
+            "this archive predates /opensees/program (opensees 2.23.0), or "
+            "was rewritten from a file that does, so it records no emit "
+            f"order; emit_index({method!r}, {row}, stage={stage}) has no "
+            "answer."
+        )
     for run in runs:
         if (run.method == method and run.stage == stage and run.row >= 0
                 and run.row <= row < run.row + run.count):
             return run.first + (row - run.row)
     raise LookupError(
         f"/opensees/program has no {method!r} call writing row {row} "
-        f"in stage {stage}; a file below opensees 2.23.0 has no program."
+        f"in stage {stage}."
     )
 
 
