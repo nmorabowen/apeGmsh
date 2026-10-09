@@ -4113,6 +4113,8 @@ class H5Emitter:
                 (r[0], r[1], r[2], remap[r[3]], r[4], r[5], r[6]))
             for r in rows
         )
+        from .._internal.build import _stacklevel_outside_package
+
         names = sorted(stores[i] for i in absent)
         warnings.warn(
             "model.h5 rewrite: the source's /opensees/program names "
@@ -4120,7 +4122,7 @@ class H5Emitter:
             "keep their emit indices with store -1, so the order survives "
             "but the records do not.",
             H5FeatureDeferredWarning,
-            stacklevel=2,
+            stacklevel=_stacklevel_outside_package(),
         )
         return out, tuple(stores[i] for i in keep)
 

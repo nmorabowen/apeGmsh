@@ -408,6 +408,34 @@ def test_one_dropped_row_is_one_warning(tmp_path: Path) -> None:
                                   for w in others]
 
 
+def test_automatic_write_warns_once_about_the_dropped_row(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The automatic write silences ``H5FeatureDeferredWarning``, so the
+    ledger warning must carry ``equationConstraint`` there: one warning,
+    not zero."""
+    art = tmp_path / "artifacts"
+    art.mkdir()
+    monkeypatch.setenv("APEGMSH_ARTIFACT_DIR", str(art))
+    ops = _ledgered_frame()
+    with warnings.catch_warnings(record=True) as rec:
+        warnings.simplefilter("always")
+        ops.tcl(str(tmp_path / "a.tcl"))
+    assert (art / "simple_frame.h5").exists()
+    about_archive = [
+        w for w in rec
+        if issubclass(w.category, (H5LedgerWarning, H5FeatureDeferredWarning))
+    ]
+    assert [w.category for w in about_archive] == [H5LedgerWarning], [
+        (w.category.__name__, str(w.message)[:80]) for w in rec]
+    assert "equationConstraint x1" in str(about_archive[0].message)
+    assert Path(about_archive[0].filename).resolve() == Path(__file__).resolve()
+    others = [w for w in rec if w not in about_archive]
+    assert all(issubclass(w.category, OpenSeesAutoEmitWarning)
+               for w in others), [(w.category.__name__, str(w.message)[:80])
+                                  for w in others]
+
+
 def _with_ledger(
     monkeypatch: pytest.MonkeyPatch, extra: dict[str, int],
 ) -> None:
@@ -482,8 +510,10 @@ def test_rewrite_unlinks_runs_whose_store_it_dropped(tmp_path: Path) -> None:
     with h5py.File(str(src), "r") as f:
         assert "regions" in f["opensees"]
     out = tmp_path / "rewrite.h5"
-    with pytest.warns(H5FeatureDeferredWarning, match="regions"):
+    with pytest.warns(H5FeatureDeferredWarning, match="regions") as rec:
         OpenSeesModel.from_h5(str(out.parent / src.name)).to_h5(str(out))
+    (dropped_w,) = [w for w in rec if "regions" in str(w.message)]
+    assert Path(dropped_w.filename).resolve() == Path(__file__).resolve()
     with h5py.File(str(out), "r") as f:
         assert "regions" not in f["opensees"]
         stores = [s.decode() if isinstance(s, bytes) else str(s)

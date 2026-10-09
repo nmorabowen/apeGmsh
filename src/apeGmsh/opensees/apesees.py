@@ -7664,6 +7664,28 @@ def _emit_pattern_sp_partitioned(
 # apeSees — the bridge
 # ---------------------------------------------------------------------------
 
+def _warn_if_shown(message: str, category: type[Warning]) -> bool:
+    """Warn at the first caller outside apeGmsh; ``True`` iff the active
+    filters let it through to the user.
+
+    The automatic ``model.h5`` write silences ``H5FeatureDeferredWarning``,
+    so whether a deferred warning was seen depends on the caller's
+    filters. The warning is recorded under those same filters and then
+    re-issued to the real handler.
+    """
+    import warnings as _warnings
+
+    from ._internal.build import _stacklevel_outside_package
+
+    with _warnings.catch_warnings(record=True) as seen:
+        _warnings.warn(
+            message, category, stacklevel=_stacklevel_outside_package())
+    for w in seen:
+        _warnings.warn_explicit(
+            w.message, w.category, w.filename, w.lineno, source=w.source)
+    return bool(seen)
+
+
 class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
     """The OpenSees bridge.
 
@@ -9804,22 +9826,24 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
         bm = self.build()
         emitter = H5Emitter(model_name=name, snapshot_id=snapshot_id)
         bm.emit(emitter)
+        # Ledgered verbs whose own deferred warning reached the user; the
+        # ledger warning below skips only those (one dropped row, one
+        # warning, on the explicit and the automatic path alike).
+        deferred_shown: set[str] = set()
         if bm.equation_constraint_records:
             # The deck zone has no equationConstraint record and, unlike an
             # enforce="equation" tie, a bridge-level row has no neutral-zone
             # twin either — so it does not survive a from_h5 round-trip.
-            import warnings as _warnings
-
             from .emitter.h5 import H5FeatureDeferredWarning
-            _warnings.warn(
+            if _warn_if_shown(
                 f"ops.h5: {len(bm.equation_constraint_records)} "
                 "apeSees.equation_constraint row(s) are NOT archived — the "
                 "model.h5 has no record for them, so a model rebuilt from it "
                 "runs without the constraint. Emit Tcl / openseespy (or run "
                 "in-process) for the complete model.",
                 H5FeatureDeferredWarning,
-                stacklevel=2,
-            )
+            ):
+                deferred_shown.add("equationConstraint")
 
         # ADR 0055 Phase 1: hand the declarative global initial-stress
         # records to the emitter via the side-channel (the Protocol
@@ -9869,11 +9893,10 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
             nodes_ndf=_nodes_ndf,
             provenance=self._provenance.snapshot(),
         )
-        # ``equationConstraint`` already raised its own deferred warning
-        # above; one dropped row is one warning, so the ledger skips it.
+        # A verb whose deferred warning the user saw above is skipped; the
+        # automatic write silences that class, so there the ledger warns.
         self._warn_ledger(
-            emitter.ledger_counts,
-            already_warned=frozenset({"equationConstraint"}),
+            emitter.ledger_counts, already_warned=frozenset(deferred_shown),
         )
 
     def _warn_ledger(
