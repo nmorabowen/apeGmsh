@@ -29,7 +29,7 @@ from typing import (
 from .._internal.analyze_rc import check_analyze_rc
 from .._rc_c2_flags import rc_c2_flags, rc_c2_live_refusal
 from .._target import BackendInfo, backend_info_of
-from .base import DroppedAxisGuard, StrategySpec, command_row
+from .base import DroppedAxisGuard, StrategySpec, command_row, plain_scalar
 
 if TYPE_CHECKING:
     from types import ModuleType
@@ -316,7 +316,11 @@ def _tet10_volume_fixed(ops: Any) -> bool:
 def _backend_of(ops: Any) -> BackendInfo:
     """:class:`BackendInfo` of ``ops``: the resolver's cached verdict when
     ``ops`` is the bound module (:func:`get_backend_info`), else the same
-    classifier run on ``ops`` (a test fake). One signal either way."""
+    classifier run on ``ops`` (a test fake). One signal either way. The
+    emitter binds the module behind :class:`_CoercingOps`; the verdict is
+    keyed on the module itself, so the proxy is unwrapped first."""
+    if isinstance(ops, _CoercingOps):
+        ops = ops.module
     if ops is _OPS_CACHE:
         return get_backend_info()
     return backend_info_of(ops)
@@ -354,6 +358,86 @@ class _NoOpOps:
         def _noop(*_args: Any, **_kwargs: Any) -> int:
             return 0
         return _noop
+
+
+#: The exact argument types openseespy parses as-is. A call whose
+#: positional arguments are all of these types is forwarded untouched
+#: (the fast path of :class:`_CoercingOps`); anything else goes through
+#: :func:`plain_scalar` first.
+_PLAIN_ARG_TYPES: frozenset[type] = frozenset({int, float, str, bool})
+
+
+def _coerce_args(args: tuple[Any, ...]) -> tuple[Any, ...]:
+    """``args`` with every numpy scalar replaced by its Python value.
+
+    Returns ``args`` itself when nothing needs coercing, so the common
+    call rebuilds no tuple. A numpy array with ``ndim > 0`` raises
+    ``TypeError`` here, before any openseespy call runs
+    (:func:`plain_scalar`). Everything that is not numpy (``str``,
+    ``None``, a list, a tuple) passes through unchanged; containers are
+    not walked, because no live call site passes one.
+    """
+    for a in args:
+        if type(a) not in _PLAIN_ARG_TYPES:
+            return tuple(plain_scalar(a) for a in args)
+    return args
+
+
+class _CoercingOps:
+    """The bound openseespy module behind a numpy-scalar-coercing proxy.
+
+    openseespy parses only Python ``int`` / ``float`` / ``str`` / ``bool``
+    positional arguments: ``np.float32``, ``np.int64``, ``np.bool_`` and
+    0-d arrays, which subclass none of them, die in the parser with
+    ``OpenSeesError`` (#1352; ``np.float64`` passes only because it
+    subclasses ``float``). The py and Tcl decks normalise such values in
+    their formatters (#1336); this proxy is the live route's one seam for
+    the same rule. :class:`LiveOpsEmitter` binds it as ``self._ops``, so
+    every ``self._ops.X(...)`` call, in every verb, has its positional
+    arguments passed through :func:`plain_scalar` before the real call.
+
+    Attribute access forwards to the module: a missing verb raises
+    ``AttributeError`` as the module would, so a capability probe
+    (``getattr(self._ops, "contactSurface", None)``, ``hasattr``) still
+    reads ``None`` / ``False``, and a non-callable attribute is returned
+    as-is. The proxy caches one wrapper per verb, keyed on the module
+    function it wraps, so a test that swaps a function on the module is
+    honoured on the next access. ``module`` is the raw module, for the
+    identity checks keyed on it (:func:`_backend_of`).
+    """
+
+    __slots__ = ("_module", "_wrappers")
+
+    def __init__(self, module: "ModuleType") -> None:
+        self._module = module
+        self._wrappers: dict[str, tuple[Any, Callable[..., Any]]] = {}
+
+    @property
+    def module(self) -> "ModuleType":
+        """The openseespy module this proxy forwards to."""
+        return self._module
+
+    def __repr__(self) -> str:
+        return f"_CoercingOps({self._module!r})"
+
+    def __getattr__(self, name: str) -> Any:
+        # Only reached when ``name`` is not a slot: ``getattr`` on the
+        # module raises AttributeError for a verb this build lacks.
+        attr = getattr(self._module, name)
+        if not callable(attr):
+            return attr
+        cached = self._wrappers.get(name)
+        if cached is not None and cached[0] is attr:
+            return cached[1]
+
+        def call(*args: Any, **kwargs: Any) -> Any:
+            return attr(*_coerce_args(args), **kwargs)
+
+        call.__name__ = name
+        call.__qualname__ = f"_CoercingOps.{name}"
+        call.__wrapped__ = attr  # type: ignore[attr-defined]
+        self._wrappers[name] = (attr, call)
+        return call
 
 
 #: Module-level cache for the resolved OpenSees backend. The backend is
@@ -619,7 +703,10 @@ class LiveOpsEmitter:
     supports_partitions: bool = False
 
     def __init__(self, *, wipe: bool = True) -> None:
-        self._ops = _get_ops()
+        # The module is bound behind the numpy-scalar-coercing proxy
+        # (#1352): every ``self._ops.X(...)`` below passes its positional
+        # arguments through ``plain_scalar`` before the real call.
+        self._ops: "_CoercingOps" = _CoercingOps(_get_ops())
         if wipe and _STOCK_EQ_ROWS_LIVE:
             raise RuntimeError(
                 _STOCK_EQ_ROWS_SURVIVE_WIPE + _UNSTAMPED_FORK_NOTE,
@@ -631,11 +718,12 @@ class LiveOpsEmitter:
         # passes through; ``partition_open(K!=0)`` swaps ``self._ops``
         # for a :class:`_NoOpOps` so every subsequent emit method
         # silently no-ops until the matching ``partition_close``. The
-        # real openseespy module is stashed in ``_real_ops`` and
-        # restored on ``partition_close``. A one-shot ``UserWarning``
-        # fires on the first non-zero ``partition_open`` to surface
-        # the contract mismatch (live cannot run partitioned models).
-        self._real_ops: "ModuleType" = self._ops
+        # real openseespy module (behind its proxy) is stashed in
+        # ``_real_ops`` and restored on ``partition_close``. A one-shot
+        # ``UserWarning`` fires on the first non-zero ``partition_open``
+        # to surface the contract mismatch (live cannot run partitioned
+        # models).
+        self._real_ops: "_CoercingOps" = self._ops
         self._partition_warned: bool = False
         self._in_partition: bool = False
         # Step-hook state (Phase SSI-1).  ``_before_step_hooks`` /
@@ -1794,10 +1882,13 @@ class LiveOpsEmitter:
     # -- Direct accessor for tests / diagnostics ----------------------------
 
     @property
-    def ops(self) -> "ModuleType":
-        """Return the openseespy module — lets live-mode users query state.
+    def ops(self) -> "_CoercingOps":
+        """Return the bound openseespy module — lets live-mode users query
+        state.
 
         Useful for ``ret = ops_emitter.ops.nodeDisp(2, 1)`` after an
-        analysis runs.
+        analysis runs. The module sits behind the numpy-scalar-coercing
+        proxy (#1352), so a query may pass numpy integers too; the raw
+        module is :func:`get_ops`.
         """
         return self._ops
