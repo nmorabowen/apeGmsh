@@ -73,6 +73,25 @@ def test_anchor_resolves_to_the_centroid_of_a_physical_group(block):
         rtol=0, atol=1e-12)
 
 
+def test_a_point_group_anchors_at_its_one_node(block, tmp_path):
+    """v1's own resolution test anchored on a one-node group: the centroid
+    of a point group is that point. ``Corner`` is the block's (10, 10, 10)
+    vertex; the host sits at ``SHIFT``, so the anchor lands at the corner
+    plus ``SHIFT``."""
+    from apeGmsh.assembly import Assembly
+    from tests.assembly.test_carried_interfaces_and_point_groups import (
+        _write,
+        corner_fem,
+        declare_corner,
+    )
+
+    corner = _write(tmp_path / "corner.h5", corner_fem(), declare_corner)
+    asm = (Assembly("corner").instance("host", corner, translate=SHIFT)
+           .instance("m", block, anchor="host.Corner"))
+    assert asm.instances[1].translate == (SHIFT[0] + 10.0, 10.0, 10.0)
+    asm.bridge(ndm=3, ndf=3)
+
+
 def test_a_name_that_is_no_group_falls_back_to_a_label(block):
     # ``v`` is the box's geometry label, not a physical group.
     asm = _host(block).instance("m", block, anchor="host.v")
