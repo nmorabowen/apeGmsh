@@ -1111,6 +1111,44 @@ class _ProgramTape:
         self._last_store = ""
         self._last_stage = _NO_ROW
 
+    def note_plain(self, method: str, store: str, stage: int) -> None:
+        """Note a call that always appends a fresh row and is never
+        replicated: the per-node / per-element hot path, inlined into
+        ``node`` and ``element`` instead of the generic wrapper."""
+        key = (method, stage)
+        ordinal = self.ordinal
+        row = ordinal.get(key, 0)
+        ordinal[key] = row + 1
+        self.count += 1
+        last = self._last
+        if (last is not None and method == self._last_method
+                and store == self._last_store and stage == self._last_stage
+                and row == last[4] + last[1]):
+            last[1] += 1
+            return
+        self.pending, self.override = row, None
+        self.note_open(method, store, stage)
+
+    def note_open(self, method: str, store: str, stage: int) -> None:
+        """Open a run for a call already counted, at ``self.pending``."""
+        m = self._method_ix.get(method)
+        if m is None:
+            m = self._method_ix[method] = len(self.methods)
+            self.methods.append(method)
+        if store:
+            st = self._store_ix.get(store)
+            if st is None:
+                st = self._store_ix[store] = len(self.stores)
+                self.stores.append(store)
+        else:
+            st = _NO_ROW
+        row = self.pending if self.override is None else self.override
+        run = [self.count, 1, m, st, row, stage, _NO_DECL]
+        self.runs.append(run)
+        self._last = run
+        self._last_method, self._last_store = method, store
+        self._last_stage = stage
+
     def remember(self, key: "tuple[Any, ...]") -> None:
         """Record that ``key``'s first capture is the call in flight."""
         self._first_rows[key] = self.pending
@@ -1131,28 +1169,13 @@ class _ProgramTape:
             if row != _NO_ROW:
                 self.ordinal[key] = row + 1
         last = self._last
-        if (last is not None and method is self._last_method
-                and store is self._last_store and stage == self._last_stage
+        if (last is not None and method == self._last_method
+                and store == self._last_store and stage == self._last_stage
                 and (row == last[4] + last[1] if row != _NO_ROW
                      else last[4] == _NO_ROW)):
             last[1] += 1
             return
-        m = self._method_ix.get(method)
-        if m is None:
-            m = self._method_ix[method] = len(self.methods)
-            self.methods.append(method)
-        if store:
-            st = self._store_ix.get(store)
-            if st is None:
-                st = self._store_ix[store] = len(self.stores)
-                self.stores.append(store)
-        else:
-            st = _NO_ROW
-        run = [self.count, 1, m, st, row, stage, _NO_DECL]
-        self.runs.append(run)
-        self._last = run
-        self._last_method, self._last_store = method, store
-        self._last_stage = stage
+        self.note_open(method, store, stage)
 
 
 # ---------------------------------------------------------------------------
@@ -1571,6 +1594,13 @@ class H5Emitter:
                     ):
                         blk.owned_node_ids.append(int(tag))
                 # else: foreign decl — partition-block mirror only.
+        # ADR 0114 R2: the hot path notes inline, not through ``_noted``.
+        tape = self._program
+        if not tape.depth:
+            tape.note_plain(
+                "node", _NODE_STORE,
+                _NO_ROW if self._stage_current is None
+                else len(self._stage_blocks))
 
     def _partition_dup(
         self, key: "tuple[Any, ...]", *, own_row: bool = True,
@@ -2061,6 +2091,14 @@ class H5Emitter:
         # the owned tag so replay re-emits it inside the stage block.
         if self._stage_current is not None:
             self._stage_current.owned_element_ids.append(int(tag))
+        # ADR 0114 R2: the hot path notes inline, not through ``_noted``.
+        tape = self._program
+        if not tape.depth:
+            if self._stage_current is None:
+                tape.note_plain("element", _ELEMENT_STORE, _NO_ROW)
+            else:
+                tape.note_plain(
+                    "element", _ELEMENT_STAGE_STORE, len(self._stage_blocks))
 
     # =====================================================================
     # Public — declarative orientation inject (ADR 0018 / ModelData)
@@ -4766,10 +4804,16 @@ def _noted(
     return noted
 
 
+#: Protocol methods that note inline (the per-node / per-element hot
+#: path): each always appends a fresh row and is never replicated, so the
+#: generic wrapper's override bookkeeping buys them nothing.
+_NOTED_INLINE: frozenset[str] = frozenset({"node", "element"})
+_NODE_STORE = VERBS["node"].store
+_ELEMENT_STORE, _BAR, _ELEMENT_STAGE_STORE = VERBS["element"].store.partition("|")
 for _verb, _row in VERBS.items():
-    if _row.via == "protocol":
+    if _row.via == "protocol" and _verb not in _NOTED_INLINE:
         setattr(H5Emitter, _verb, _noted(_verb, getattr(H5Emitter, _verb)))
-del _verb, _row
+del _verb, _row, _BAR
 
 
 def material_name(rec: _MaterialRecord) -> str:
