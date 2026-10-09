@@ -1937,7 +1937,6 @@ class FEMData:
             "element_ids": np.asarray(eids, dtype=np.int64),
         }
         self.elements = self._replaced_elements(physical=PhysicalGroupSet(groups))
-        self.inspect = InspectComposite(self)
         if hasattr(self, "_snapshot_id_cache"):
             del self._snapshot_id_cache
 
