@@ -20,6 +20,9 @@ env:
   QT_QPA_PLATFORM: offscreen
   # Harmless without openseespy; keeps parity with local invocation.
   LADRUNO_OPENSEES_QUIET: "1"
+  # TEMP #1571: pin PySide6<6.12 for every pip install in this workflow
+  # (constraints file; remove by 2026-10-16 with the source fix).
+  PIP_CONSTRAINT: ${{ github.workspace }}/.github/ci-constraints.txt
 
 jobs:
   # Fast, dedicated job for the regression-lock contract tests. These
