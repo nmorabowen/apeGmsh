@@ -990,15 +990,17 @@ def test_contact_rows_are_written_in_plan_order(name: str) -> None:
 
 
 @pytest.mark.parametrize("n_ranks", [2, 4])
-def test_partitioned_contacts_number_rank_by_rank(n_ranks: int) -> None:
-    """The partitioned plan numbers contacts rank by rank, as the deck did.
+def test_partitioned_contacts_take_the_flat_tags(n_ranks: int) -> None:
+    """The partitioned plan writes contacts rank by rank, with the flat
+    walk's tags (canonical numbering, ADR 0114 D4 amended, item 4).
 
     Rank ``r`` owns ``c{r}`` and ``p{r}``, declared in reverse rank
-    order. The partitioned deck writes each rank's block in turn, so
-    rank ``r``'s contact takes surfaces ``3r+1, 3r+2`` and contact
-    ``2r+1``, and its plane surface ``3r+3`` and contact ``2r+2``. The
-    flat deck numbers every contact, then every plane, in declaration
-    order. Each owner declares its contact's slave nodes as ghosts.
+    order, so ``c{r}`` and ``p{r}`` are the ``i = n - 1 - r``-th of their
+    kind. The flat walk numbers every contact, then every plane, in
+    declaration order: ``c{r}`` takes surfaces ``2i+1, 2i+2`` and contact
+    ``i+1``, ``p{r}`` surface ``2n+i+1`` and contact ``n+i+1``. The
+    partitioned deck writes rank ``r``'s block in turn with those tags,
+    and each owner declares its contact's slave nodes as ghosts.
     """
     case = _case(f"contact_ranks_{n_ranks}/partitioned")
     lines = case.plan.contacts.contacts
@@ -1007,9 +1009,13 @@ def test_partitioned_contacts_number_rank_by_rank(n_ranks: int) -> None:
            for line in lines.lines}
     want: dict[str, Any] = {}
     for r in range(n_ranks):
-        want[f"c{r}"] = ((3 * r + 1, 3 * r + 2, 2 * r + 1), r)
-        want[f"p{r}"] = ((3 * r + 3, 2 * r + 2), r)
+        i = n_ranks - 1 - r
+        want[f"c{r}"] = ((2 * i + 1, 2 * i + 2, i + 1), r)
+        want[f"p{r}"] = ((2 * n_ranks + i + 1, n_ranks + i + 1), r)
     assert got == want
+    # Written rank by rank: the owner ranks only rise along the lines.
+    owners = [line.owner_rank for line in lines.lines]
+    assert owners == sorted(owners)
     for line in lines.lines:
         b = 100 * (line.owner_rank + 1)
         ghosts = (b + 5, b + 6) if line.kind == "contact" else ()
@@ -1173,7 +1179,8 @@ def test_emit_contacts_refuses_a_plan_for_other_records() -> None:
     for wrong in ([], records[:-1], [*records, records[0]], records[::-1]):
         with pytest.raises(TagLawError, match="contact plan holds"):
             flat.lines_for("contact", wrong)
-    # A partitioned plan numbers rank by rank: not the flat walk's order.
+    # A partitioned plan holds its lines rank by rank: not the flat
+    # walk's order, although its tags are the flat walk's.
     part_records = [r for r in part.fem.elements.contacts]
     with pytest.raises(TagLawError, match="contact plan holds"):
         part.lines_for("contact", part_records)
@@ -1273,10 +1280,11 @@ def test_short_or_empty_region_plan_fails_the_oracle() -> None:
         ("damping", (0, 0)), ("recorder", "filter"), ("recorder", "filter"),
         ("recorder", "energy"),
     ]),
-    # Partitioned: the global recorder pass first (its regions are written
-    # in every rank block), named regions on their first holder rank
-    # (rank 0 holds node 2, rank 1 node 4); the stage-claimed recorders
-    # only in their stage (#1446).
+    # Partitioned: written with the flat walk's tags (canonical
+    # numbering), in the partitioned write order: the global recorder
+    # pass first (its regions are written in every rank block), named
+    # regions on their first holder rank (rank 0 holds node 2, rank 1
+    # node 4); the stage-claimed recorders only in their stage (#1446).
     ("stage_claimed_regions/staged_partitioned", [
         ("recorder", "filter"), ("named", "west"), ("named", "east"),
         ("rayleigh", (0, 0)), ("damping", (0, 0)),
@@ -1286,11 +1294,24 @@ def test_short_or_empty_region_plan_fails_the_oracle() -> None:
     ]),
 ])
 def test_stage_claimed_regions_plan(name: str, want: list[Any]) -> None:
-    """Closed form: the #1446 fixture's twelve regions, in mint order."""
+    """Closed form: the #1446 fixture's twelve regions, in write order,
+    each with its flat-walk tag (the flat case's tag at the same site
+    and key), so a region has one tag whatever the mode."""
     regions = _case(name).plan.regions.regions
     assert regions is not None
     assert [(r.site[0], r.key) for r in regions] == want
-    assert [r.tag for r in regions] == list(range(1, len(want) + 1))
+    flat = _case("stage_claimed_regions/staged").plan.regions.regions
+    assert flat is not None
+    assert [r.tag for r in flat] == list(range(1, len(want) + 1))
+    # The flat tags in flat mint order: east 1, west 2, rayleigh 3,
+    # damping 4, the global recorder 5; then the stage's p_east 6,
+    # p_west 7, rayleigh 8, damping 9, its recorders 10, 11, 12.
+    canonical = {
+        "stage_claimed_regions/staged": list(range(1, 13)),
+        "stage_claimed_regions/staged_partitioned": [
+            5, 2, 1, 3, 4, 7, 6, 8, 9, 10, 11, 12],
+    }[name]
+    assert [r.tag for r in regions] == canonical
 
 
 def _path_plans(
@@ -1626,30 +1647,34 @@ def _update(label: str, rank: int | None, *tags: int) -> tuple[Any, ...]:
     ]),
     # Partitioned, unstaged: the global ramp, written outside every block.
     ("param_ranks_2/partitioned", [_ramp("g", 1)]),
-    # Partitioned: each flip and update pass rank by rank; a rank that
-    # owns none of a record's elements gives it no tag (rank 0 holds no
-    # ``Edge`` bar; only the last rank holds ``E``'s bar).
+    # Partitioned: each flip and update pass rank by rank, every record
+    # with the flat walk's tag on every rank that writes it (canonical
+    # numbering: ``Edge`` 7, ``E`` 8, ``A`` 9, the last flip 13, as on
+    # the flat deck); a rank that owns none of a record's elements gives
+    # it no tag (rank 0 holds no ``Edge`` bar; only the last rank holds
+    # ``E``'s bar).
     ("param_ranks_2/staged_partitioned", [
         _ramp("g", 1), _ramp("s1", 4),
         _flip("Edge", 0), _flip("Edge", 1, 7),
-        _update("E", 0), _update("A", 0, 8),
-        _update("E", 1, 9), _update("A", 1, 10),
-        _ramp("s2", 11), _flip((10, 20), 0, 14), _flip((10, 20), 1, 15),
+        _update("E", 0), _update("A", 0, 9),
+        _update("E", 1, 8), _update("A", 1, 9),
+        _ramp("s2", 10), _flip((10, 20), 0, 13), _flip((10, 20), 1, 13),
     ]),
     ("param_ranks_4/staged_partitioned", [
         _ramp("g", 1), _ramp("s1", 4),
-        _flip("Edge", 0), _flip("Edge", 1, 7), _flip("Edge", 2, 8),
-        _flip("Edge", 3, 9),
-        _update("E", 0), _update("A", 0, 10), _update("E", 1),
-        _update("A", 1, 11), _update("E", 2), _update("A", 2, 12),
-        _update("E", 3, 13), _update("A", 3, 14),
-        _ramp("s2", 15),
-        _flip((10, 40), 0, 18), _flip((10, 40), 1), _flip((10, 40), 2),
-        _flip((10, 40), 3, 19),
+        _flip("Edge", 0), _flip("Edge", 1, 7), _flip("Edge", 2, 7),
+        _flip("Edge", 3, 7),
+        _update("E", 0), _update("A", 0, 9), _update("E", 1),
+        _update("A", 1, 9), _update("E", 2), _update("A", 2, 9),
+        _update("E", 3, 8), _update("A", 3, 9),
+        _ramp("s2", 10),
+        _flip((10, 40), 0, 13), _flip((10, 40), 1), _flip((10, 40), 2),
+        _flip((10, 40), 3, 13),
     ]),
 ])
 def test_parameters_number_in_emit_order(name: str, want: list[Any]) -> None:
-    """Closed form: every parameter site of the fixture, in mint order."""
+    """Closed form: every parameter site of the fixture, in write order,
+    with the flat walk's tags."""
     case = _case(name)
     assert [_param_site(ln) for ln in case.plan.parameters.planned()] == want
     # The deck writes each planned flip and update tag once, in plan order.
@@ -2049,15 +2074,17 @@ def test_short_or_empty_mp_or_interface_plan_fails_the_oracle(
     assert TagMode(False, False, True) in modes     # staged flat
 
 
-def test_mp_elements_number_rank_by_rank() -> None:
-    """The partitioned plan numbers MP elements rank by rank, as the deck did.
+def test_partitioned_mp_elements_take_the_flat_tags() -> None:
+    """The partitioned plan writes MP elements rank by rank, with the flat
+    walk's tags (canonical numbering, ADR 0114 D4 amended, item 4).
 
-    The 20 bars take the element plan's tags, up to ``e``. Rank ``r``'s
-    block then writes its rigid body, coupling, tie (the global MP pass),
-    its reinforce tie and its rebar cell, so they take ``e + 1 + 5r`` to
-    ``e + 5 + 5r``. The flat deck writes every rigid body, then every
-    coupling, every tie, every reinforce tie, every rebar cell, each in
-    declaration order (rank 3 first).
+    The 20 bars take the element plan's tags, up to ``e``. The flat walk
+    numbers every rigid body, then every coupling, every tie, every
+    reinforce tie, every rebar cell, each in declaration order (rank 3
+    first), so kind ``k`` of rank ``r`` takes ``e + 1 + 4k + (3 - r)``.
+    Rank ``r``'s block writes its rigid body, coupling, tie (the global
+    MP pass), its reinforce tie and its rebar cell, in that order, with
+    those tags.
     """
     def named(name: str) -> list[tuple[str, int]]:
         mp = _case(name).plan.mp_elements.planned()
@@ -2068,7 +2095,7 @@ def test_mp_elements_number_rank_by_rank() -> None:
     assert e == max(
         t for _, t in _case("mp_ranks_4/partitioned").plan.elements.stream())
     assert named("mp_ranks_4/partitioned") == [
-        (f"{kind}{r}", e + 1 + 5 * r + k)
+        (f"{kind}{r}", e + 1 + 4 * k + (3 - r))
         for r in range(4)
         for k, kind in enumerate(("rb", "kc", "tie", "rt", "bar"))
     ]
@@ -2084,15 +2111,24 @@ def test_staged_mp_elements_number_after_the_global_pass() -> None:
 
     Stage ``s2`` claims rank 0's rigid body and coupling and rank 1's
     tie. The global pass skips them; the stage pass numbers them after
-    every global element, rank by rank on the partitioned deck.
+    every global element, and the partitioned deck, which writes them
+    rank by rank, gives every element the flat deck's tag.
     """
+    def label(ln: Any) -> tuple[Any, ...]:
+        name = getattr(ln.record, "name", None) or ln.record.pg
+        return (ln.site, name, ln.key if ln.site == "rebar_cell" else None)
+
+    flat = {label(ln): ln.tag for ln in
+            _case("mp_ranks_2/staged").plan.mp_elements.planned().lines}
     for name in ("mp_ranks_2/staged", "mp_ranks_2/staged_partitioned"):
         plan = _case(name).plan
         e = max(t for _, t in plan.elements.stream())
         mp = plan.mp_elements.planned()
         assert [ln.record.name for ln in mp.lines[-3:]] == [
             "rb0", "kc0", "tie1"], name
-        assert [ln.tag for ln in mp.lines] == list(range(e + 1, e + 11))
+        assert [ln.tag for ln in mp.lines[-3:]] == [e + 8, e + 9, e + 10]
+        assert sorted(ln.tag for ln in mp.lines) == list(range(e + 1, e + 11))
+        assert {label(ln): ln.tag for ln in mp.lines} == flat, name
         written = _case(name).stream
         assert [t for k, t in written if _verb(k) in (
             "element", "embeddedNode", "embedded_rebar")][-3:] == [
@@ -2478,20 +2514,31 @@ def test_corpus_reaches_every_mode() -> None:
         assert TagMode(split, partitioned, staged) in modes
 
 
-def test_two_rank_regions_number_differently_by_mode() -> None:
+def test_two_rank_regions_take_one_tag_in_every_mode() -> None:
     """The invariant-8 fixture: rank order is not declaration order.
 
     ``east`` (rank 1's nodes) is declared before ``west`` (rank 0's).
-    The flat deck numbers the named regions in declaration order; the
-    partitioned deck numbers the MPCO filter region first and then each
-    named region on the first rank that emits it. The region plan has to
-    reproduce both, until the canonical-numbering slice makes them one.
+    Both decks number the named regions in declaration order, then the
+    MPCO filter region (canonical numbering, ADR 0114 D4 amended, item
+    4): ``east`` 1, ``west`` 2, the filter 3. The partitioned deck writes
+    rank 0's block (``west``, the filter), then rank 1's (``east``, the
+    filter), with those tags. Before canonical numbering it wrote
+    ``[2, 1, 3, 1]``: the filter region took 1 and ``east`` 3.
     """
     def regions(name: str) -> list[int]:
         return [t for k, t in _case(name).stream if k == "region"]
 
+    def owners(name: str) -> dict[Any, int]:
+        planned = _case(name).plan.regions.regions
+        assert planned is not None
+        return {(r.site[0], r.key): r.tag for r in planned}
+
     assert regions("two_rank_regions/flat") == [1, 2, 3]
-    assert regions("two_rank_regions/partitioned") == [2, 1, 3, 1]
+    assert regions("two_rank_regions/partitioned") == [2, 3, 1, 3]
+    assert owners("two_rank_regions/partitioned") == owners(
+        "two_rank_regions/flat") == {
+            ("named", "east"): 1, ("named", "west"): 2,
+            ("recorder", "filter"): 3}
 
 
 # ---------------------------------------------------------------------------

@@ -18,16 +18,17 @@ What is pinned here, on real gmsh-meshed two-body models:
   prefixes aside, the ADR 0027 INV-1 phrasing), with IDENTICAL material
   and element tags, because the tag pre-pass allocates every record's
   triple in flat side-list order BEFORE the rank fan-out.
-  **Flat↔partitioned tag identity is CONDITIONAL** (ADR 0093 INV-5, as
-  amended during S8): it holds when no other element-minting MP pass
-  coexists. Rigid-body / kinematic-coupling / ASDEmbeddedNodeElement
-  tags are minted inside the per-rank 7b pass, after the interface
-  pre-pass, while the flat path mints them before ``emit_interfaces``
-  — so a combined model's interface tags drift between the two decks
+  **Flat↔partitioned tag identity is unconditional** (canonical
+  numbering, ADR 0114 D4 amended, item 4): the tag plan mints every
+  element-minting MP pass and the interfaces in the flat deck's order
+  in every mode, so a combined model's interface tags match too. Until
+  then the ASDEmbeddedNodeElement tags of the per-rank pass were minted
+  after the interface pre-pass, and the interface tags drifted
   (measured: 21-24 vs 25-28 with a coexisting ``g.constraints.
-  embedded``). What holds UNCONDITIONALLY — and is pinned by the
-  mixed-model regression below — is exactly-once emission, global tag
-  uniqueness within each deck, and cross-rank determinism;
+  embedded``; the conditional in ADR 0093 INV-5's S8 amendment). The
+  mixed-model regression below pins exactly-once emission, global tag
+  uniqueness within each deck, the flat tags, and cross-rank
+  determinism;
 * **the all-shared-cut degenerate case** — the cut hugs the interface,
   both pair nodes verified replicated onto both ranks, and the owner is
   still exact via the backing element (no tie, no heuristic);
@@ -585,17 +586,17 @@ def test_pattern_sp_on_native_nodes_still_emits(tmp_path):
 # =====================================================================
 # (3c) Coexisting element-minting MP pass — the tag-identity caveat
 # =====================================================================
-def test_interface_plus_embedded_exactly_once_with_documented_drift(
+def test_interface_plus_embedded_exactly_once_with_flat_tags(
     tmp_path,
 ):
-    # Flat↔partitioned interface-tag identity is CONDITIONAL (module
-    # docstring / ADR 0093 INV-5 amended during S8): ASDEmbedded
-    # element tags are minted inside the per-rank 7b pass, AFTER the
-    # interface pre-pass, while the flat path mints them before
-    # emit_interfaces. What must hold regardless — and is pinned here —
-    # is exactly-once emission, global element-tag uniqueness within
-    # each deck, and the drift itself (so if allocation order ever
-    # unifies, this pin flags the docs for cleanup).
+    # Flat↔partitioned interface-tag identity, with a coexisting
+    # element-minting MP pass (ASDEmbedded). It was conditional (ADR
+    # 0093 INV-5, S8 amendment): the per-rank pass minted its tags after
+    # the interface pre-pass, and the interface tags drifted (21-24 vs
+    # 25-28). Canonical numbering (ADR 0114 D4 amended, item 4) mints in
+    # the flat order in every mode, so the tags are now equal. Pinned:
+    # exactly-once emission, global element-tag uniqueness within each
+    # deck, and the same tag for every interface and embedded element.
     fem = _fem(cut="split", embed=True)
     recs = list(fem.elements.interfaces)
     assert recs
@@ -622,21 +623,16 @@ def test_interface_plus_embedded_exactly_once_with_documented_drift(
     assert len(part_tags) == len(set(part_tags))       # globally unique
     assert len(_ele_tags(flat_lines)) == len(set(_ele_tags(flat_lines)))
 
-    # Endpoints and orient match flat pair-for-pair; the TAGS drift —
-    # the documented conditional (measured 21-24 vs 25-28 on this
-    # model).
-    def _sans_tag(ln):
-        tok = ln.split()
-        return tuple(tok[:2] + tok[3:])
+    # Every interface line matches flat, tag included: same endpoints,
+    # same orient, same tag (the drift measured 21-24 vs 25-28 here).
+    assert sorted(part_zl) == sorted(flat_zl)
+    # The coexisting ASDEmbedded elements keep their flat tags too.
+    def _embedded(lines):
+        return sorted(ln for ln in lines
+                      if ln.startswith("element ASDEmbeddedNodeElement "))
 
-    assert sorted(map(_sans_tag, part_zl)) == sorted(map(_sans_tag, flat_zl))
-    assert sorted(int(ln.split()[2]) for ln in part_zl) != \
-        sorted(int(ln.split()[2]) for ln in flat_zl), (
-            "flat and partitioned interface tags now MATCH with a "
-            "coexisting element-minting MP pass — the conditional "
-            "documented in ADR 0093 INV-5 (S8 amendment) and this "
-            "module's docstring can be retired"
-        )
+    assert _embedded(ln for lines in blocks.values() for ln in lines) == \
+        _embedded(flat_lines)
     # Cross-rank determinism is unconditional.
     assert part_text == _deck_text(_quad_ops(fem), tmp_path, "part2.tcl")
 

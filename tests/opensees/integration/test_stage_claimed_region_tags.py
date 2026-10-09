@@ -34,18 +34,23 @@ from tests.opensees.contract import _tag_streams as ts
 #: filter and an energy region.
 _N_REGIONS = 2 + 1 + 1 + 1 + 2 + 1 + 1 + 1 + 2
 
-#: The ``region`` lines of each deck, in deck order. The flat deck writes
-#: each region once, in mint order. The partitioned deck writes a region
-#: in every rank block that holds a member: rank 0's block writes ``west``
-#: (2) and the global MPCO's filter region (1), rank 1's ``east`` (3) and
-#: the filter region again; the global Rayleigh and damping regions (4,
-#: 5) follow. In stage ``probe`` rank 0 writes ``p_west`` (6, on ``Top``,
-#: whose nodes both ranks hold) and rank 1 ``p_east`` (7) and ``p_west``;
-#: the stage's Rayleigh, damping and claimed-recorder regions (8..12)
-#: follow once.
+#: The ``region`` lines of each deck, in deck order. Both decks number
+#: the regions in the flat deck's mint order (canonical numbering, ADR
+#: 0114 D4 amended, item 4): ``east`` 1, ``west`` 2, the global Rayleigh
+#: and damping regions 3 and 4, the global MPCO's filter region 5; in
+#: stage ``probe``, ``p_east`` 6, ``p_west`` 7, the stage's Rayleigh,
+#: damping and claimed-recorder regions 8..12. The flat deck writes each
+#: region once, in that order. The partitioned deck writes a region in
+#: every rank block that holds a member: rank 0's block writes ``west``
+#: (2) and the filter region (5), rank 1's ``east`` (1) and the filter
+#: region again; the global Rayleigh and damping regions (3, 4) follow.
+#: In stage ``probe`` rank 0 writes ``p_west`` (7, on ``Top``, whose
+#: nodes both ranks hold) and rank 1 ``p_east`` (6) and ``p_west``; the
+#: stage's Rayleigh, damping and claimed-recorder regions (8..12) follow
+#: once.
 _DECLARED: dict[str, list[int]] = {
     "staged": list(range(1, _N_REGIONS + 1)),
-    "staged_partitioned": [2, 1, 3, 1, 4, 5, 6, 7, 6, 8, 9, 10, 11, 12],
+    "staged_partitioned": [2, 5, 1, 5, 3, 4, 7, 6, 7, 8, 9, 10, 11, 12],
 }
 
 _REGION = re.compile(r"^\s*region (\d+)\b")
@@ -111,3 +116,27 @@ def test_recorders_reference_declared_regions(mode: str) -> None:
                 assert declared[ref] > probe, (
                     f"{mode}: the stage-claimed recorder {ln!r} references "
                     f"region {ref}, declared before its stage")
+
+
+@pytest.mark.parametrize("mode", ts.STAGE_CLAIMED_MODES)
+def test_claimed_recorder_regions_follow_the_stage_domain_change(
+    mode: str,
+) -> None:
+    """Canonical numbering moves tag values, never a declaration.
+
+    OpenSees ``MeshRegion`` fixes its members when it is declared, so a
+    stage-claimed recorder's regions must be declared after the stage's
+    ``domainChange`` (#1446). Each region that recorder references is
+    declared once, after that line.
+    """
+    lines = _deck(mode)
+    probe = lines.index("# === Stage: probe ===")
+    change = next(i for i, ln in enumerate(lines)
+                  if i > probe and ln.strip() == "domainChange")
+    where = {int(m.group(1)): i for i, ln in enumerate(lines)
+             if (m := _REGION.match(ln))}
+    refs = [int(r) for ln in lines[change:]
+            if ln.lstrip().startswith("recorder ")
+            for r in _REFS.findall(ln)]
+    assert sorted(refs) == [10, 11, 12], mode
+    assert all(where[r] > change for r in refs), mode
