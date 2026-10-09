@@ -36,6 +36,7 @@ a guide: the decisions README, `h5-schema.md` and `pyproject.toml` are kept curr
 Use a Python that has the extras installed (`pip install -e ".[plot,viewer,dxf]" pytest`;
 openseespy for `live`): on the maintainer's machine, `C:\Users\nmora\venv\opensees_venv\Scripts\python.exe`.
 System Python lacks pyvista, so a `ModuleNotFoundError` there means the wrong interpreter.
+CI installs against `.github/ci-constraints.txt` (`PIP_CONSTRAINT`), so upstream drift shows up in the nightly `deps-canary` issue, not on `main`; bump the pins with `python scripts/update_constraints.py --run <canary run id>`.
 **The editable install points at the main checkout, not your worktree.** `pytest` is safe,
 because `pythonpath = ["src"]` in `pyproject.toml`. Any other in-process probe (`python -c`,
 a viewer, a script) imports **main's** apeGmsh unless it runs with `PYTHONPATH=<worktree>/src`.

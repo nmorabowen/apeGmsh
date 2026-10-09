@@ -1,0 +1,135 @@
+name: Deps canary
+
+# CI proper installs against .github/ci-constraints.txt (PIP_CONSTRAINT in
+# tests.yml), so an upstream release cannot turn `main` red (#1571). This
+# workflow is the other half: it installs the LATEST releases of everything,
+# runs the `suite` selection, and reports drift in one `[Deps canary]` issue.
+# Green canary -> `python scripts/update_constraints.py --run <id>` -> one PR.
+#
+# The pull_request trigger (path-filtered to this file and the updater) only
+# proves the workflow itself runs; it never opens an issue.
+
+on:
+  schedule:
+    - cron: '43 6 * * *'
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - '.github/workflows/deps-canary.yml'
+      - 'scripts/update_constraints.py'
+
+permissions:
+  contents: read
+  issues: write
+
+env:
+  QT_QPA_PLATFORM: offscreen
+  LADRUNO_OPENSEES_QUIET: "1"
+  # Deliberately no PIP_CONSTRAINT: this workflow tests the latest releases.
+
+jobs:
+  suite:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      APEGMSH_EXPECT_GL: "1"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # test_schema_corpus needs refs/remotes/origin/main history (#1407)
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install apt deps for Qt/VTK
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libgl1 libegl1 libxkbcommon0 libdbus-1-3 \
+            libfontconfig1 libxcb-cursor0 libglu1-mesa
+
+      - name: Install package, latest releases (same extras as tests.yml suite)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[plot,viewer,dxf,partition-pymetis,section-oracle]" pytest
+
+      - name: Record installed versions
+        run: pip freeze --exclude-editable > freeze-suite.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: freeze-suite
+          path: freeze-suite.txt
+
+      - name: Run curated suite (same selection as tests.yml)
+        run: |
+          pytest tests -q -p no:cacheprovider \
+            -m "not live and not subprocess and not bench and not qt"
+
+  # Python 3.12 + stock openseespy, as tests.yml live-stock. Records the
+  # versions only (openseespy needs the Python 3.12 wheel); the live tests
+  # themselves stay in tests.yml.
+  freeze-live-stock:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install package + stock openseespy, latest releases
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[plot,viewer,dxf]" openseespy pytest
+          pip freeze --exclude-editable > freeze-live-stock.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: freeze-live-stock
+          path: freeze-live-stock.txt
+
+  report:
+    needs: [suite, freeze-live-stock]
+    if: always() && needs.suite.result == 'failure' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: freeze-*
+          merge-multiple: true
+
+      - name: Open or update the tracking issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          title='[Deps canary] latest dependencies break the suite'
+          files=(--freeze freeze-suite.txt)
+          [ -f freeze-live-stock.txt ] && files+=(--freeze freeze-live-stock.txt)
+          python scripts/update_constraints.py "${files[@]}" --diff > drift.md
+          number=$(gh issue list --state open --search "\"$title\" in:title" \
+            --json number,title --jq "map(select(.title == \"$title\"))[0].number // empty")
+          {
+            echo "Nightly run $(date -u +%F): ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+            echo
+            echo "The \`suite\` selection fails against the latest releases. \`main\` is unaffected: CI installs from \`.github/ci-constraints.txt\`."
+            echo
+            echo "Packages whose latest version differs from the constraints file:"
+            echo
+            cat drift.md
+            echo
+            echo "Fix the code or cap the package in \`pyproject.toml\`, then regenerate: \`python scripts/update_constraints.py --run ${GITHUB_RUN_ID}\` (only from a green run)."
+          } > body.md
+          if [ -n "$number" ]; then
+            gh issue comment "$number" --body-file body.md
+          else
+            gh issue create --title "$title" --body-file body.md
+          fi
