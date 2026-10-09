@@ -543,10 +543,24 @@ class Assembly(_AssemblyV1):
         rank per instance, and each cross-instance constraint is written on
         every rank that owns one of its nodes (ADR 0027).
 
-        Raises :class:`AssemblyError` if no instance is declared, the
-        instances' ranks leave a rank with no instance, an instance was
-        built with another ``ndm`` or ``ndf``, a tie resolves to no record,
-        or an instance carries model content AS1 cannot rehydrate.
+        Each instance carries its model content: mesh, groups, labels,
+        intra-instance constraints and the ``/rebar_elements`` stream, plus
+        its uniaxial ``Elastic`` and nD ``ElasticIsotropic`` materials,
+        ``Elastic`` and ``ElasticMembranePlateSection`` sections,
+        transforms, uniform beam integrations, element-attached dampings and
+        element specs. Its analysis content (fixes, masses, patterns,
+        recorders, stages, the analysis) stays behind (ADR 0117 D4).
+
+        Raises :class:`AssemblyError` before anything is merged or
+        registered if no instance is declared, the instances' ranks leave a
+        rank with no instance, a source file now composes ranked modules,
+        or a source attaches a damping by region (global or in a stage).
+        Raises it while merging if a tie or coupling resolves to no record.
+        Raises it while rehydrating if an instance was built with another
+        ``ndm`` or ``ndf``, or carries model content that is not rehydrated:
+        another material, section, transform, integration or element type,
+        or element rows whose args vary inside a physical group (the
+        per-row selector, #1542).
         """
         self._refuse_mixed("bridge")
         if self._archive is not None:
@@ -774,8 +788,11 @@ class Assembly(_AssemblyV1):
         from ._rehydrate import refuse_region_dampings
 
         # Refused before anything is merged or registered: a region
-        # attach is not carried, and the model reader cannot see it.
+        # attach is not carried, and the model reader cannot see it. The
+        # unranked-source check of instance() runs again, because the file
+        # at a source path can change between instance() and bridge().
         for inst in self._instances:
+            check_unranked_source(inst.source, inst.label)
             refuse_region_dampings(inst.label, inst.source)
         fem = _base_fem(self._nodes)
         for inst in self._instances:
