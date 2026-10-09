@@ -996,7 +996,7 @@ class InterfaceRecord(ConstraintRecord):
         Coulomb law acts on two tangents and the triad is what a reader
         of the record wants to see. Directions, not tags; ``g.compose``
         rotates every stacked vector (never translates), the
-        :class:`ContactRecord`-style ``_transform_contact_geometry``
+        :class:`ContactRecord`-style ``_place_record_geometry``
         extension (INV-2).
     a_trib
         Tributary area for this pair — ``ell_trib * thickness`` on a 2D
