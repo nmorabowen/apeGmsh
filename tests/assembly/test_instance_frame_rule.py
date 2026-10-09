@@ -159,14 +159,23 @@ FRAME_FREE = {
     "shape_b": "shape-function weights at the bar's second point",
     "master_faces": "node tags",
     "slave_faces": "node tags",
+    "slave_nodes": "node tags",
+    "master_nodes": "node tags",
+    "host_nodes": "node tags",
+    "phantom_nodes": "node tags",
+    "dofs": "DOF indices (a general R cannot map them; #1597)",
+    "master_dofs": "DOF indices (a general R cannot map them; #1597)",
 }
+
+#: Container annotations a point, a direction or a child record list can hide in.
+_CONTAINERS = ("ndarray", "tuple", "list", "List", "Sequence", "dict", "Mapping")
 
 
 def _vector_fields(cls) -> set[str]:
     out = set()
     for f in dataclasses.fields(cls):
         ann = str(f.type)
-        if ("ndarray" in ann or "tuple" in ann) and "ClassVar" not in ann:
+        if any(c in ann for c in _CONTAINERS) and "ClassVar" not in ann:
             out.add(f.name)
     return out
 
@@ -177,11 +186,20 @@ def test_every_constraint_kind_and_vector_field_is_classified():
              if isinstance(cls, type) and issubclass(cls, C.ConstraintRecord)
              and cls is not C.ConstraintRecord}
     assert kinds == set(table), "a constraint kind is missing from the frame table"
-    for cls, (points, directions, _nested) in table.items():
-        placed = set(points) | set(directions)
-        unclassified = _vector_fields(cls) - placed - set(FRAME_FREE)
-        assert not unclassified, (cls.__name__, unclassified)
-        assert placed <= _vector_fields(cls), (cls.__name__, placed)
+    for cls, (points, directions, nested) in table.items():
+        name = cls.__name__
+        # The geometry walk visits exactly the children the tag rewrite does.
+        assert tuple(nested) == tuple(
+            (cls.tag_rewrite_spec or {}).get("nested_records", ())), name
+        classified = set(points) | set(directions) | set(nested)
+        fields = _vector_fields(cls)
+        assert classified <= fields, (name, classified - fields)
+        unclassified = fields - classified - set(FRAME_FREE)
+        assert not unclassified, (name, unclassified)
+        # A child record list is never waved through as frame-free.
+        for f in dataclasses.fields(cls):
+            if "Record" in str(f.type):
+                assert f.name in nested, (name, f.name)
 
 
 # ---------------------------------------------------------------------------
@@ -347,9 +365,14 @@ def _solve_standing_slab(workdir: Path) -> dict:
     coord = dict(zip((int(i) for i in fem.nodes.ids),
                      np.asarray(fem.nodes.coords, dtype=float)))
     slab = [t for t in _ids(fem, pg="w.Slab") if t != cm]
-    # Out of plane the slab and the master are held; in plane the
-    # diaphragm alone carries the slab.
-    ops.fix(nodes=slab + [cm], dofs=(0, 1, 0, 1, 0, 1))
+    # Out of plane the slab is a cantilever from its lower edge and the
+    # master is held; in plane the diaphragm alone carries the slab. Leave
+    # the out-of-plane DOFs free elsewhere: holding them all leaves the
+    # Transformation handler a zero-size system, which stock OpenSees
+    # exits on.
+    z0 = min(coord[t][2] for t in slab)
+    ops.fix(nodes=[t for t in slab if abs(coord[t][2] - z0) < 1e-9] + [cm],
+            dofs=(0, 1, 0, 1, 0, 1))
     dx, dz, theta = MOTION
     ts = ops.timeSeries.Linear()
     with ops.pattern.Plain(series=ts) as pat:
