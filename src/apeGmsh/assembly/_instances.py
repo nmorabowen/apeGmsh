@@ -58,6 +58,28 @@ class Tie:
     name: "str | None"
     #: The ``TieDef`` built (and so validated) when ``tie()`` was called.
     definition: Any = field(compare=False, repr=False)
+    #: The penalty knobs ``g.constraints.tie`` takes, passed to the
+    #: ``TieDef`` unchanged (AS5-b, the v1 ``couple(kind="tie")`` options).
+    stiffness: "float | str" = "auto"
+    stiffness_p: "float | None" = None
+    rotational: bool = False
+    pressure: bool = False
+    #: A ``CouplingControl`` (``enforce="penalty_al"`` only), or ``None``.
+    control: Any = None
+    outward: "tuple[float, float, float] | None" = None
+
+    @classmethod
+    def of(cls, master: str, slave: str, definition: Any) -> "Tie":
+        """The record of a ``TieDef`` that ``tie_definition`` built."""
+        d = definition
+        return cls(
+            master=master, slave=slave, enforce=d.enforce, method=d.method,
+            dofs=tuple(d.dofs) if d.dofs is not None else None,
+            tolerance=d.tolerance, name=d.name, definition=d,
+            stiffness=d.stiffness, stiffness_p=d.stiffness_p,
+            rotational=d.rotational, pressure=d.pressure, control=d.control,
+            outward=d.outward,
+        )
 
 
 @dataclass(frozen=True)

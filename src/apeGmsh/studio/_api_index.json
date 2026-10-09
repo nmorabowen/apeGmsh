@@ -20,7 +20,7 @@
     },
     "Assembly.couple": {
       "doc": "Couple an instance port to a reference node. Returns ``self``.",
-      "signature": "couple(target: 'str', part_b: \"'str | None'\" = None, *, kind: 'str', reference: \"'str | None'\" = None, dofs: \"'Sequence[int] | None'\" = None, weighting: 'str' = 'uniform', name: \"'str | None'\" = None, ports: \"'Sequence[str] | None'\" = None, tolerance: \"'float | None'\" = None, **options: 'Any') -> \"'Assembly'\"",
+      "signature": "couple(target: 'str', part_b: \"'str | None'\" = None, *, kind: 'str', reference: \"'str | None'\" = None, dofs: \"'Sequence[int] | None'\" = None, weighting: 'str' = 'uniform', name: \"'str | None'\" = None, ports: \"'Sequence[str] | None'\" = None, tolerance: \"'float | None'\" = None, k: \"'float | None'\" = None, k_alpha: \"'float | None'\" = None, kr: \"'float | None'\" = None, enforce: \"'str | None'\" = None, al_update: \"'str | None'\" = None, **options: 'Any') -> \"'Assembly'\"",
       "skill": "references/compose.md",
       "symbol": "Assembly.couple"
     },
@@ -36,6 +36,12 @@
       "skill": "references/compose.md",
       "symbol": "Assembly.equal_dof"
     },
+    "Assembly.equal_dof_mixed": {
+      "doc": "Tie differently-numbered DOFs of co-located nodes. Returns ``self``.",
+      "signature": "equal_dof_mixed(master: 'str', slave: 'str', *, dof_pairs: 'Sequence[Sequence[int]]', tolerance: 'float' = 1e-06, name: \"'str | None'\" = None) -> \"'Assembly'\"",
+      "skill": "references/compose.md",
+      "symbol": "Assembly.equal_dof_mixed"
+    },
     "Assembly.from_h5": {
       "doc": "Re-list the instances and ties an assembly archive declares.",
       "signature": "from_h5(path: \"'str | Path'\") -> \"'Assembly'\"",
@@ -50,7 +56,7 @@
     },
     "Assembly.instance": {
       "doc": "Place a saved ``model.h5`` under ``label``. Returns ``self``.",
-      "signature": "instance(label: 'str', source: \"'str | Path'\", *, translate: 'Sequence[float]' = (0.0, 0.0, 0.0), rotate: \"'tuple[Sequence[float], float] | None'\" = None, partition_rank: \"'int | None'\" = None) -> \"'Assembly'\"",
+      "signature": "instance(label: 'str', source: \"'str | Path'\", *, translate: 'Sequence[float]' = (0.0, 0.0, 0.0), rotate: \"'tuple[Sequence[float], float] | None'\" = None, partition_rank: \"'int | None'\" = None, anchor: \"'str | None'\" = None) -> \"'Assembly'\"",
       "skill": "references/compose.md",
       "symbol": "Assembly.instance"
     },
@@ -66,6 +72,12 @@
       "skill": "references/compose.md",
       "symbol": "Assembly.node"
     },
+    "Assembly.rigid_body": {
+      "doc": "Make every node of ``slave`` follow one master rigidly. Returns ``self``.",
+      "signature": "rigid_body(master: 'str', slave: 'str', *, master_point: \"'Sequence[float] | None'\" = None, as_element: 'bool' = False, mass: \"'float | None'\" = None, omega: \"'Sequence[float] | None'\" = None, name: \"'str | None'\" = None) -> \"'Assembly'\"",
+      "skill": "references/compose.md",
+      "symbol": "Assembly.rigid_body"
+    },
     "Assembly.rigid_diaphragm": {
       "doc": "Make the in-plane motion of two ports one rigid body. Returns ``self``.",
       "signature": "rigid_diaphragm(master: 'str', slave: 'str', *, master_point: \"'Sequence[float] | None'\" = None, plane_normal: 'Sequence[float]' = (0.0, 0.0, 1.0), constrained_dofs: 'Sequence[int]' = (1, 2, 6), plane_tolerance: 'float' = 1.0, name: \"'str | None'\" = None) -> \"'Assembly'\"",
@@ -80,7 +92,7 @@
     },
     "Assembly.tie": {
       "doc": "Tie two instance ports, ``\"{instance}.{pg|label}\"``. Returns ``self``.",
-      "signature": "tie(master: 'str', slave: 'str', *, enforce: 'str' = 'penalty', method: 'str' = 'collocation', dofs: \"'Sequence[int] | None'\" = None, tolerance: 'float' = 1.0, name: \"'str | None'\" = None) -> \"'Assembly'\"",
+      "signature": "tie(master: 'str', slave: 'str', *, enforce: 'str' = 'penalty', method: 'str' = 'collocation', dofs: \"'Sequence[int] | None'\" = None, tolerance: 'float' = 1.0, name: \"'str | None'\" = None, stiffness: \"'float | str'\" = 'auto', stiffness_p: \"'float | None'\" = None, rotational: 'bool' = False, pressure: 'bool' = False, control: 'Any' = None, outward: \"'Sequence[float] | None'\" = None) -> \"'Assembly'\"",
       "skill": "references/compose.md",
       "symbol": "Assembly.tie"
     },
