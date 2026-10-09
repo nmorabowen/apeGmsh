@@ -261,6 +261,7 @@ def _control(value: object) -> Any:
         raise AssemblyError(
             f"control={value!r}: expected a CouplingControl, stored as an "
             f"object with the keys {sorted(fields)}.")
+    _refuse_auto_stiffness(value["k"], value["k_alpha"], value["host"])
     return CouplingControl(**value)
 
 
@@ -275,13 +276,7 @@ def _rbe_control(p: Mapping[str, Any]) -> Any:
     from apeGmsh._kernel._coupling_control import CouplingControl
 
     k, k_alpha = p["k"], p["k_alpha"]
-    if k == "auto" or k_alpha is not None:
-        raise AssemblyError(
-            f"k={k!r}, k_alpha={k_alpha!r}: Assembly requires an explicit "
-            f"k, a number > 0 (default 1e12, the fork's, when k is left "
-            f"out). k='auto' and k_alpha scale the penalty off a host "
-            f"element, which the assembly does not take; auto-stiffness "
-            f"may return later as a label-based host.")
+    _refuse_auto_stiffness(k, k_alpha, None)
     if p["enforce"] not in ("penalty", "al"):
         raise AssemblyError(
             f"enforce={p['enforce']!r}: expected 'penalty' or 'al'.")
@@ -295,6 +290,19 @@ def _rbe_control(p: Mapping[str, Any]) -> Any:
         kr=None if kr is None else _positive(kr, "kr"),
         enforce=p["enforce"], al_update=al_update,
     )
+
+
+def _refuse_auto_stiffness(k: object, k_alpha: object, host: object) -> None:
+    """Refuse ``k="auto"``, ``k_alpha`` and ``host`` (maintainer ruling on
+    #1585, option b): each scales the penalty off a host element, given as
+    a raw FEM element id the assembly's relocation does not track."""
+    if k == "auto" or k_alpha is not None or host is not None:
+        raise AssemblyError(
+            f"k={k!r}, k_alpha={k_alpha!r}, host={host!r}: Assembly requires "
+            f"an explicit k, a number > 0 (default 1e12, the fork's, when k "
+            f"is left out). k='auto' and k_alpha scale the penalty off a "
+            f"host element, which the assembly does not take; "
+            f"auto-stiffness may return later as a label-based host.")
 
 
 def _dof_pairs(value: object) -> list[tuple[int, int]]:

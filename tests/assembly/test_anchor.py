@@ -92,6 +92,32 @@ def test_a_point_group_anchors_at_its_one_node(block, tmp_path):
     asm.bridge(ndm=3, ndf=3)
 
 
+def test_a_group_wins_over_a_label_of_the_same_name(tmp_path):
+    """v1 looks the anchor up as a physical group first, then as a label.
+    Here ``v`` is both: the box's geometry label (centroid ``(SIDE/2,
+    SIDE/2, H/2)``) and a physical group on its top face (centroid
+    ``(SIDE/2, SIDE/2, H)``). The group's centroid is the translate."""
+    from apeGmsh import apeGmsh
+    from apeGmsh.assembly import Assembly
+    from apeGmsh.mesh import FEMData
+    from tests.assembly.test_two_instances_one_tie import _faces_at_z
+
+    with apeGmsh(model_name="both", save_to=str(tmp_path / "both_mesh.h5"),
+                 overwrite=True) as g:
+        g.model.geometry.add_box(0.0, 0.0, 0.0, SIDE, SIDE, H, label="v")
+        g.physical.add_volume("v", name="Vol")
+        g.physical.add_surface(_faces_at_z(g, H), name="v")
+        g.mesh.recipe.structured(size=5.0, fallback="strict")
+        fem = g.mesh.queries.get_fem_data(dim=None)
+    both = write_instance(tmp_path / "both.h5", fem, declare_block)
+    src = FEMData.from_h5(str(both))
+    assert "v" in src.nodes.physical.names() and "v" in src.nodes.labels.names()
+
+    asm = (Assembly("both").instance("host", both)
+           .instance("m", both, anchor="host.v"))
+    assert asm.instances[1].translate == (SIDE / 2, SIDE / 2, H)
+
+
 def test_a_name_that_is_no_group_falls_back_to_a_label(block):
     # ``v`` is the box's geometry label, not a physical group.
     asm = _host(block).instance("m", block, anchor="host.v")

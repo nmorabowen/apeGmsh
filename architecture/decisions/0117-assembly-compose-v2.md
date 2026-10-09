@@ -180,8 +180,11 @@ rank).
 
 **Note (2026-10-09, AS5-b′, #1588; maintainer rulings on #1585).** For
 parity with v1, v2 adds `equal_dof_mixed` and `rigid_body`, the RBE2/RBE3
-knobs `k`, `k_alpha`, `kr`, `enforce` and `al_update` on `couple`, and the
-`g.constraints.tie` penalty knobs on `tie`. Cross-instance `penalty` and
+knobs `k`, `kr`, `enforce` and `al_update` (RBE2 only) on `couple`, and the
+`g.constraints.tie` penalty knobs on `tie`. `k="auto"` and `k_alpha` are
+dropped by the maintainer's ruling on #1585: an assembly coupling requires an
+explicit `k` (default 1e12), and auto-stiffness may return later as a
+label-based host. Cross-instance `penalty` and
 `tied_contact` are **deferred**: v2 does not expose them, and they are
 re-added when a model needs them. They are routable in chain phase, so
 adding one is a new verb, not a design change.

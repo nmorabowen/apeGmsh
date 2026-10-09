@@ -171,6 +171,28 @@ def test_a_control_needs_the_penalty_al_route(block):
                           control=CouplingControl(k=1.0e9))
 
 
+@pytest.mark.parametrize("knobs", [
+    {"k": "auto", "host": 1_000_001},
+    {"k": "auto", "k_alpha": 50.0, "host": 1_000_001},
+    {"k": 1.0e9, "bipenalty_wcap": 0.5, "host": 1_000_001},
+])
+def test_a_tie_control_with_auto_stiffness_or_a_host_is_refused(block, knobs):
+    """Review F4 (#1591): a tie's ``control`` gets the RBE refusal. ``host``
+    is a raw FEM element id the assembly's relocation does not track, and
+    ``k="auto"`` / ``k_alpha`` need it."""
+    from apeGmsh._kernel._coupling_control import CouplingControl
+    from apeGmsh.assembly import AssemblyError
+
+    asm = _stack(block)
+    with pytest.raises(AssemblyError) as info:
+        asm.tie("pier_1.top", "pier_2.bot", enforce="penalty_al",
+                control=CouplingControl(**knobs))
+    msg = str(info.value)
+    assert "Assembly requires an explicit k" in msg
+    assert "may return later as a label-based host" in msg
+    assert asm.ties == ()
+
+
 def _tie_params(path: Path) -> dict[str, dict]:
     from apeGmsh.assembly._h5 import read_assembly_zone
 
