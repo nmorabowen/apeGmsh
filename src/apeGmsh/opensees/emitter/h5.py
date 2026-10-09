@@ -3827,10 +3827,11 @@ class H5Emitter:
                 c.method == "profiler" and c.stage == idx
                 for c in self._commands
             )
-            if profiled != (rec.profile is not None):
+            declared = getattr(rec, "profile", None) is not None
+            if profiled != declared:
                 raise RuntimeError(
                     f"H5Emitter.set_stage_records: stage {rec.name!r} "
-                    f"{'declares' if rec.profile is not None else 'has no'} "
+                    f"{'declares' if declared else 'has no'} "
                     "s.profile bracket but the capture holds "
                     f"{'no' if not profiled else 'its'} profiler rows."
                 )

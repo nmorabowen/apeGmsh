@@ -298,14 +298,19 @@ def test_h5emitter_write_bcs_mass_compound_dataset(tmp_path) -> None:  # type: i
 def test_h5emitter_no_bcs_no_group(tmp_path) -> None:  # type: ignore[no-untyped-def]
     """If no fix / mass calls, /opensees/bcs is not created at all.
 
-    With no other bridge content the parent /opensees group is also
-    skipped (lazy creation in H5Emitter._ops_group)."""
+    The one call is still an emit, so /opensees holds only its
+    ``program`` (opensees 2.23.0, ADR 0114 R2); with no call at all the
+    group is skipped (lazy creation in H5Emitter._ops_group)."""
     import h5py
     e = H5Emitter()
     e.model(ndm=2, ndf=3)
     out = tmp_path / "no_bcs.h5"
     e.write(str(out))
     with h5py.File(out, "r") as f:
+        assert list(f["opensees"]) == ["program"]
+    empty = tmp_path / "no_calls.h5"
+    H5Emitter().write(str(empty))
+    with h5py.File(empty, "r") as f:
         assert "opensees" not in f
 
 
