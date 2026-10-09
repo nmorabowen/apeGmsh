@@ -10,13 +10,13 @@
       
       
       
-        <link rel="canonical" href="https://nmorabowen.github.io/apeGmsh/how-to/gravity/">
+        <link rel="canonical" href="https://nmorabowen.github.io/apeGmsh/how-to/assemble-saved-models/">
       
       
-        <link rel="prev" href="../compose-modules/">
+        <link rel="prev" href="../save-reload/">
       
       
-        <link rel="next" href="../face-pressure/">
+        <link rel="next" href="../compose-modules/">
       
       
         
@@ -27,7 +27,7 @@
     
     
       
-        <title>Apply gravity / self-weight - apeGmsh</title>
+        <title>Assemble saved models - apeGmsh</title>
       
     
     
@@ -82,7 +82,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#apply-gravity-self-weight" class="md-skip">
+        <a href="#assemble-saved-models" class="md-skip">
           Skip to content
         </a>
       
@@ -117,7 +117,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Apply gravity / self-weight
+              Assemble saved models
             
           </span>
         </div>
@@ -680,8 +680,10 @@
                 
   
   
+    
   
   
+  
     
     
       
@@ -697,11 +699,11 @@
       
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_3" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_3" checked>
         
           
           <label class="md-nav__link" for="__nav_3_3" id="__nav_3_3_label" tabindex="0">
@@ -722,7 +724,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_3_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_3_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_3_3">
             <span class="md-nav__icon md-icon"></span>
             
@@ -765,10 +767,37 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../assemble-saved-models/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Assemble saved models
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -784,6 +813,114 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#the-recipe" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The recipe
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#instances-and-names" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Instances and names
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ties-and-couplings" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Ties and couplings
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#what-an-instance-carries" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What an instance carries
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#decks-and-ranks" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Decks and ranks
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-archive" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The archive
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#what-refuses" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What refuses
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-older-compose-path" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The older compose path
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -829,10 +966,8 @@
                 
   
   
-    
   
   
-  
     
     
       
@@ -852,11 +987,11 @@
       
     
     
-    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4" checked>
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4" >
         
           
           <label class="md-nav__link" for="__nav_3_4" id="__nav_3_4_label" tabindex="0">
@@ -877,7 +1012,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_4_label" aria-expanded="true">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_4_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_3_4">
             <span class="md-nav__icon md-icon"></span>
             
@@ -892,37 +1027,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Apply gravity / self-weight
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../gravity/" class="md-nav__link">
         
   
   
@@ -938,59 +1046,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#recipe" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Recipe
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#notes-gotchas" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Notes / gotchas
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#see-also" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        See also
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -3633,10 +3688,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#recipe" class="md-nav__link">
+  <a href="#the-recipe" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Recipe
+        The recipe
       
     </span>
   </a>
@@ -3644,10 +3699,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#notes-gotchas" class="md-nav__link">
+  <a href="#instances-and-names" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Notes / gotchas
+        Instances and names
       
     </span>
   </a>
@@ -3655,10 +3710,65 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#see-also" class="md-nav__link">
+  <a href="#ties-and-couplings" class="md-nav__link">
     <span class="md-ellipsis">
       
-        See also
+        Ties and couplings
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#what-an-instance-carries" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What an instance carries
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#decks-and-ranks" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Decks and ranks
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-archive" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The archive
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#what-refuses" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What refuses
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-older-compose-path" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The older compose path
       
     </span>
   </a>
@@ -3685,81 +3795,204 @@
   
 
 
-<h1 id="apply-gravity-self-weight">Apply gravity / self-weight<a class="headerlink" href="#apply-gravity-self-weight" title="Permanent link">&para;</a></h1>
-<p>Add the body weight (<code>ρ · g</code>) of a meshed solid as a load. Reach for this
-whenever a model carries its own dead load — a footing, a dam, a soil
-column, an RC volume — instead of (or alongside) a hand-applied nodal load.</p>
-<p>Gravity is a body load with a convenience wrapper: you give it a <strong>volume
-target by name</strong>, a gravity vector <code>g</code>, and a <code>density</code>. Like every
-<code>g.loads.*</code> factory it is declared pre-mesh under a load <em>case</em> and
-resolved at <code>get_fem_data</code>; on the bridge you then <strong>opt in</strong> with
-<code>p.from_model(case)</code> inside a pattern — you never write <code>eleLoad</code> for
-it, and nothing emits without your pattern.</p>
-<h2 id="recipe">Recipe<a class="headerlink" href="#recipe" title="Permanent link">&para;</a></h2>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">apeGmsh</span><span class="w"> </span><span class="kn">import</span> <span class="n">apeGmsh</span>
-</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="kn">from</span><span class="w"> </span><span class="nn">apeGmsh.opensees</span><span class="w"> </span><span class="kn">import</span> <span class="n">apeSees</span>
-</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>
-</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="n">g</span> <span class="o">=</span> <span class="n">apeGmsh</span><span class="p">(</span><span class="n">model_name</span><span class="o">=</span><span class="s2">"gravity_demo"</span><span class="p">)</span>
-</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="n">g</span><span class="o">.</span><span class="n">begin</span><span class="p">()</span>
-</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="c1"># ... build a part, mesh a volume into the PG "rc_volume" ...</span>
-</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>
-</span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a><span class="c1"># Self-weight of the concrete volume, grouped in a dead-load pattern.</span>
-</span><span id="__span-0-9"><a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a><span class="k">with</span> <span class="n">g</span><span class="o">.</span><span class="n">loads</span><span class="o">.</span><span class="n">case</span><span class="p">(</span><span class="s2">"self_weight"</span><span class="p">):</span>
-</span><span id="__span-0-10"><a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a>    <span class="n">g</span><span class="o">.</span><span class="n">loads</span><span class="o">.</span><span class="n">gravity</span><span class="p">(</span><span class="s2">"rc_volume"</span><span class="p">,</span> <span class="n">g</span><span class="o">=</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="o">-</span><span class="mf">9.81</span><span class="p">),</span> <span class="n">density</span><span class="o">=</span><span class="mi">2400</span><span class="p">)</span>
-</span><span id="__span-0-11"><a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a>
-</span><span id="__span-0-12"><a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a><span class="c1"># density=(0,0,-9.81) is the default g; the one-liner is just:</span>
-</span><span id="__span-0-13"><a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a><span class="c1">#     g.loads.gravity("rc_volume", density=2400)</span>
-</span><span id="__span-0-14"><a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a><span class="c1"># density=None tells the bridge to read ρ from the assigned material</span>
-</span><span id="__span-0-15"><a id="__codelineno-0-15" name="__codelineno-0-15" href="#__codelineno-0-15"></a><span class="c1"># (only valid with target_form="element").</span>
-</span><span id="__span-0-16"><a id="__codelineno-0-16" name="__codelineno-0-16" href="#__codelineno-0-16"></a>
-</span><span id="__span-0-17"><a id="__codelineno-0-17" name="__codelineno-0-17" href="#__codelineno-0-17"></a><span class="c1"># Resolve: the gravity def becomes per-node body-force records on the broker.</span>
-</span><span id="__span-0-18"><a id="__codelineno-0-18" name="__codelineno-0-18" href="#__codelineno-0-18"></a><span class="n">fem</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">queries</span><span class="o">.</span><span class="n">get_fem_data</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
-</span><span id="__span-0-19"><a id="__codelineno-0-19" name="__codelineno-0-19" href="#__codelineno-0-19"></a>
-</span><span id="__span-0-20"><a id="__codelineno-0-20" name="__codelineno-0-20" href="#__codelineno-0-20"></a><span class="c1"># Build OpenSees through the typed bridge, then opt the case in:</span>
-</span><span id="__span-0-21"><a id="__codelineno-0-21" name="__codelineno-0-21" href="#__codelineno-0-21"></a><span class="n">ops</span> <span class="o">=</span> <span class="n">apeSees</span><span class="p">(</span><span class="n">fem</span><span class="p">)</span>
-</span><span id="__span-0-22"><a id="__codelineno-0-22" name="__codelineno-0-22" href="#__codelineno-0-22"></a><span class="c1"># ... ops.section / ops.element / ops.fix / ops.mass ...</span>
-</span><span id="__span-0-23"><a id="__codelineno-0-23" name="__codelineno-0-23" href="#__codelineno-0-23"></a><span class="n">ts</span> <span class="o">=</span> <span class="n">ops</span><span class="o">.</span><span class="n">timeSeries</span><span class="o">.</span><span class="n">Linear</span><span class="p">()</span>
-</span><span id="__span-0-24"><a id="__codelineno-0-24" name="__codelineno-0-24" href="#__codelineno-0-24"></a><span class="k">with</span> <span class="n">ops</span><span class="o">.</span><span class="n">pattern</span><span class="o">.</span><span class="n">Plain</span><span class="p">(</span><span class="n">series</span><span class="o">=</span><span class="n">ts</span><span class="p">)</span> <span class="k">as</span> <span class="n">p</span><span class="p">:</span>
-</span><span id="__span-0-25"><a id="__codelineno-0-25" name="__codelineno-0-25" href="#__codelineno-0-25"></a>    <span class="n">p</span><span class="o">.</span><span class="n">from_model</span><span class="p">(</span><span class="s2">"self_weight"</span><span class="p">)</span>     <span class="c1"># replay the resolved case as nodal loads</span>
-</span><span id="__span-0-26"><a id="__codelineno-0-26" name="__codelineno-0-26" href="#__codelineno-0-26"></a><span class="n">ops</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="o">...</span><span class="p">)</span>
+<h1 id="assemble-saved-models">Assemble saved models<a class="headerlink" href="#assemble-saved-models" title="Permanent link">&para;</a></h1>
+<p>This page shows how to build one OpenSees model out of saved <code>model.h5</code>
+files with <code>Assembly</code>: place each file as a named instance, join the
+instances with ties and couplings, declare the analysis on one bridge,
+write the deck and the archive, and give each instance its own MPI rank.
+It assumes you can already save a model with its materials and elements
+(<a href="../save-reload/">Save &amp; reload a model</a>).</p>
+<h2 id="the-recipe">The recipe<a class="headerlink" href="#the-recipe" title="Permanent link">&para;</a></h2>
+<p>The example saves one steel block, places it twice, and stacks the two
+copies. The upper copy is turned half a turn about the vertical axis and
+lifted onto the lower one; a tie joins the two faces that meet, and a
+reference node above the stack carries the load through a rigid cap. With
+Poisson's ratio zero the stack is two springs of <code>EA/H</code> in series, so the
+cap must settle by <code>P·2H/(E·A)</code>.</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">math</span><span class="w"> </span><span class="kn">import</span> <span class="n">pi</span>
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>
+</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="kn">import</span><span class="w"> </span><span class="nn">openseespy.opensees</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">osp</span>
+</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>
+</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="kn">from</span><span class="w"> </span><span class="nn">apeGmsh</span><span class="w"> </span><span class="kn">import</span> <span class="n">apeGmsh</span>
+</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="kn">from</span><span class="w"> </span><span class="nn">apeGmsh.assembly</span><span class="w"> </span><span class="kn">import</span> <span class="n">Assembly</span>
+</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="kn">from</span><span class="w"> </span><span class="nn">apeGmsh.opensees</span><span class="w"> </span><span class="kn">import</span> <span class="n">apeSees</span>
+</span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>
+</span><span id="__span-0-9"><a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a><span class="n">E</span><span class="p">,</span> <span class="n">SIDE</span><span class="p">,</span> <span class="n">H</span> <span class="o">=</span> <span class="mf">200_000.0</span><span class="p">,</span> <span class="mf">200.0</span><span class="p">,</span> <span class="mf">400.0</span>          <span class="c1"># MPa, mm, mm</span>
+</span><span id="__span-0-10"><a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a>
+</span><span id="__span-0-11"><a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a><span class="c1"># 1. One model, saved once: mesh, groups, material and elements.</span>
+</span><span id="__span-0-12"><a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a><span class="k">with</span> <span class="n">apeGmsh</span><span class="p">(</span><span class="n">model_name</span><span class="o">=</span><span class="s2">"block"</span><span class="p">,</span> <span class="n">save_to</span><span class="o">=</span><span class="s2">"block_mesh.h5"</span><span class="p">)</span> <span class="k">as</span> <span class="n">g</span><span class="p">:</span>
+</span><span id="__span-0-13"><a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a>    <span class="n">g</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">geometry</span><span class="o">.</span><span class="n">add_box</span><span class="p">(</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">,</span> <span class="n">SIDE</span><span class="p">,</span> <span class="n">SIDE</span><span class="p">,</span> <span class="n">H</span><span class="p">,</span> <span class="n">label</span><span class="o">=</span><span class="s2">"body"</span><span class="p">)</span>
+</span><span id="__span-0-14"><a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a>    <span class="n">g</span><span class="o">.</span><span class="n">physical</span><span class="o">.</span><span class="n">add_volume</span><span class="p">(</span><span class="s2">"body"</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="s2">"Vol"</span><span class="p">)</span>
+</span><span id="__span-0-15"><a id="__codelineno-0-15" name="__codelineno-0-15" href="#__codelineno-0-15"></a>    <span class="n">faces</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">select</span><span class="p">(</span><span class="kc">None</span><span class="p">,</span> <span class="n">dim</span><span class="o">=</span><span class="mi">2</span><span class="p">)</span>
+</span><span id="__span-0-16"><a id="__codelineno-0-16" name="__codelineno-0-16" href="#__codelineno-0-16"></a>    <span class="n">faces</span><span class="o">.</span><span class="n">in_box</span><span class="p">((</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="o">-</span><span class="mi">1</span><span class="p">),</span> <span class="p">(</span><span class="n">SIDE</span> <span class="o">+</span> <span class="mi">1</span><span class="p">,</span> <span class="n">SIDE</span> <span class="o">+</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">))</span><span class="o">.</span><span class="n">to_physical</span><span class="p">(</span><span class="s2">"bot"</span><span class="p">)</span>
+</span><span id="__span-0-17"><a id="__codelineno-0-17" name="__codelineno-0-17" href="#__codelineno-0-17"></a>    <span class="n">faces</span><span class="o">.</span><span class="n">in_box</span><span class="p">((</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="n">H</span> <span class="o">-</span> <span class="mi">1</span><span class="p">),</span> <span class="p">(</span><span class="n">SIDE</span> <span class="o">+</span> <span class="mi">1</span><span class="p">,</span> <span class="n">SIDE</span> <span class="o">+</span> <span class="mi">1</span><span class="p">,</span> <span class="n">H</span> <span class="o">+</span> <span class="mi">1</span><span class="p">))</span><span class="o">.</span><span class="n">to_physical</span><span class="p">(</span><span class="s2">"top"</span><span class="p">)</span>
+</span><span id="__span-0-18"><a id="__codelineno-0-18" name="__codelineno-0-18" href="#__codelineno-0-18"></a>    <span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">recipe</span><span class="o">.</span><span class="n">structured</span><span class="p">(</span><span class="n">size</span><span class="o">=</span><span class="mf">100.0</span><span class="p">,</span> <span class="n">fallback</span><span class="o">=</span><span class="s2">"strict"</span><span class="p">)</span>
+</span><span id="__span-0-19"><a id="__codelineno-0-19" name="__codelineno-0-19" href="#__codelineno-0-19"></a>    <span class="n">fem</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">queries</span><span class="o">.</span><span class="n">get_fem_data</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span>   <span class="c1"># dim=None: ties need faces</span>
+</span><span id="__span-0-20"><a id="__codelineno-0-20" name="__codelineno-0-20" href="#__codelineno-0-20"></a>
+</span><span id="__span-0-21"><a id="__codelineno-0-21" name="__codelineno-0-21" href="#__codelineno-0-21"></a><span class="n">block</span> <span class="o">=</span> <span class="n">apeSees</span><span class="p">(</span><span class="n">fem</span><span class="p">)</span>
+</span><span id="__span-0-22"><a id="__codelineno-0-22" name="__codelineno-0-22" href="#__codelineno-0-22"></a><span class="n">block</span><span class="o">.</span><span class="n">model</span><span class="p">(</span><span class="n">ndm</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span> <span class="n">ndf</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
+</span><span id="__span-0-23"><a id="__codelineno-0-23" name="__codelineno-0-23" href="#__codelineno-0-23"></a><span class="n">steel</span> <span class="o">=</span> <span class="n">block</span><span class="o">.</span><span class="n">nDMaterial</span><span class="o">.</span><span class="n">ElasticIsotropic</span><span class="p">(</span><span class="n">E</span><span class="o">=</span><span class="n">E</span><span class="p">,</span> <span class="n">nu</span><span class="o">=</span><span class="mf">0.0</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="s2">"steel"</span><span class="p">)</span>
+</span><span id="__span-0-24"><a id="__codelineno-0-24" name="__codelineno-0-24" href="#__codelineno-0-24"></a><span class="n">block</span><span class="o">.</span><span class="n">element</span><span class="o">.</span><span class="n">stdBrick</span><span class="p">(</span><span class="n">pg</span><span class="o">=</span><span class="s2">"Vol"</span><span class="p">,</span> <span class="n">material</span><span class="o">=</span><span class="n">steel</span><span class="p">)</span>
+</span><span id="__span-0-25"><a id="__codelineno-0-25" name="__codelineno-0-25" href="#__codelineno-0-25"></a><span class="n">block</span><span class="o">.</span><span class="n">h5</span><span class="p">(</span><span class="s2">"block.h5"</span><span class="p">)</span>
+</span><span id="__span-0-26"><a id="__codelineno-0-26" name="__codelineno-0-26" href="#__codelineno-0-26"></a>
+</span><span id="__span-0-27"><a id="__codelineno-0-27" name="__codelineno-0-27" href="#__codelineno-0-27"></a><span class="c1"># 2. Two instances of the file, tied, with a reference node on a rigid cap.</span>
+</span><span id="__span-0-28"><a id="__codelineno-0-28" name="__codelineno-0-28" href="#__codelineno-0-28"></a><span class="n">asm</span> <span class="o">=</span> <span class="p">(</span>
+</span><span id="__span-0-29"><a id="__codelineno-0-29" name="__codelineno-0-29" href="#__codelineno-0-29"></a>    <span class="n">Assembly</span><span class="p">(</span><span class="s2">"stack"</span><span class="p">)</span>
+</span><span id="__span-0-30"><a id="__codelineno-0-30" name="__codelineno-0-30" href="#__codelineno-0-30"></a>    <span class="o">.</span><span class="n">instance</span><span class="p">(</span><span class="s2">"lower"</span><span class="p">,</span> <span class="s2">"block.h5"</span><span class="p">)</span>
+</span><span id="__span-0-31"><a id="__codelineno-0-31" name="__codelineno-0-31" href="#__codelineno-0-31"></a>    <span class="o">.</span><span class="n">instance</span><span class="p">(</span><span class="s2">"upper"</span><span class="p">,</span> <span class="s2">"block.h5"</span><span class="p">,</span>
+</span><span id="__span-0-32"><a id="__codelineno-0-32" name="__codelineno-0-32" href="#__codelineno-0-32"></a>              <span class="n">rotate</span><span class="o">=</span><span class="p">((</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">),</span> <span class="n">pi</span><span class="p">),</span> <span class="n">translate</span><span class="o">=</span><span class="p">(</span><span class="n">SIDE</span><span class="p">,</span> <span class="n">SIDE</span><span class="p">,</span> <span class="n">H</span><span class="p">))</span>
+</span><span id="__span-0-33"><a id="__codelineno-0-33" name="__codelineno-0-33" href="#__codelineno-0-33"></a>    <span class="o">.</span><span class="n">tie</span><span class="p">(</span><span class="s2">"lower.top"</span><span class="p">,</span> <span class="s2">"upper.bot"</span><span class="p">,</span> <span class="n">enforce</span><span class="o">=</span><span class="s2">"equation"</span><span class="p">,</span> <span class="n">dofs</span><span class="o">=</span><span class="p">[</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">3</span><span class="p">])</span>
+</span><span id="__span-0-34"><a id="__codelineno-0-34" name="__codelineno-0-34" href="#__codelineno-0-34"></a>    <span class="o">.</span><span class="n">node</span><span class="p">(</span><span class="s2">"cap"</span><span class="p">,</span> <span class="p">(</span><span class="n">SIDE</span> <span class="o">/</span> <span class="mi">2</span><span class="p">,</span> <span class="n">SIDE</span> <span class="o">/</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">2</span> <span class="o">*</span> <span class="n">H</span><span class="p">))</span>
+</span><span id="__span-0-35"><a id="__codelineno-0-35" name="__codelineno-0-35" href="#__codelineno-0-35"></a>    <span class="o">.</span><span class="n">rigid_link</span><span class="p">(</span><span class="s2">"cap"</span><span class="p">,</span> <span class="s2">"upper.top"</span><span class="p">,</span> <span class="n">link_type</span><span class="o">=</span><span class="s2">"rod"</span><span class="p">)</span>
+</span><span id="__span-0-36"><a id="__codelineno-0-36" name="__codelineno-0-36" href="#__codelineno-0-36"></a><span class="p">)</span>
+</span><span id="__span-0-37"><a id="__codelineno-0-37" name="__codelineno-0-37" href="#__codelineno-0-37"></a>
+</span><span id="__span-0-38"><a id="__codelineno-0-38" name="__codelineno-0-38" href="#__codelineno-0-38"></a><span class="c1"># 3. One bridge. Supports, loads and the analysis are declared here.</span>
+</span><span id="__span-0-39"><a id="__codelineno-0-39" name="__codelineno-0-39" href="#__codelineno-0-39"></a><span class="n">ops</span> <span class="o">=</span> <span class="n">asm</span><span class="o">.</span><span class="n">bridge</span><span class="p">(</span><span class="n">ndm</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span> <span class="n">ndf</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
+</span><span id="__span-0-40"><a id="__codelineno-0-40" name="__codelineno-0-40" href="#__codelineno-0-40"></a><span class="p">(</span><span class="n">cap</span><span class="p">,)</span> <span class="o">=</span> <span class="n">ops</span><span class="o">.</span><span class="n">fem</span><span class="o">.</span><span class="n">nodes</span><span class="o">.</span><span class="n">select</span><span class="p">(</span><span class="n">label</span><span class="o">=</span><span class="s2">"cap"</span><span class="p">)</span><span class="o">.</span><span class="n">ids</span>
+</span><span id="__span-0-41"><a id="__codelineno-0-41" name="__codelineno-0-41" href="#__codelineno-0-41"></a><span class="n">P</span> <span class="o">=</span> <span class="mf">10_000.0</span>
+</span><span id="__span-0-42"><a id="__codelineno-0-42" name="__codelineno-0-42" href="#__codelineno-0-42"></a><span class="n">ops</span><span class="o">.</span><span class="n">fix</span><span class="p">(</span><span class="n">pg</span><span class="o">=</span><span class="s2">"lower.bot"</span><span class="p">,</span> <span class="n">dofs</span><span class="o">=</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">))</span>
+</span><span id="__span-0-43"><a id="__codelineno-0-43" name="__codelineno-0-43" href="#__codelineno-0-43"></a><span class="k">with</span> <span class="n">ops</span><span class="o">.</span><span class="n">pattern</span><span class="o">.</span><span class="n">Plain</span><span class="p">(</span><span class="n">series</span><span class="o">=</span><span class="n">ops</span><span class="o">.</span><span class="n">timeSeries</span><span class="o">.</span><span class="n">Linear</span><span class="p">())</span> <span class="k">as</span> <span class="n">pat</span><span class="p">:</span>
+</span><span id="__span-0-44"><a id="__codelineno-0-44" name="__codelineno-0-44" href="#__codelineno-0-44"></a>    <span class="n">pat</span><span class="o">.</span><span class="n">load</span><span class="p">(</span><span class="n">node</span><span class="o">=</span><span class="nb">int</span><span class="p">(</span><span class="n">cap</span><span class="p">),</span> <span class="n">forces</span><span class="o">=</span><span class="p">(</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">,</span> <span class="o">-</span><span class="n">P</span><span class="p">))</span>
+</span><span id="__span-0-45"><a id="__codelineno-0-45" name="__codelineno-0-45" href="#__codelineno-0-45"></a><span class="n">ops</span><span class="o">.</span><span class="n">constraints</span><span class="o">.</span><span class="n">Lagrange</span><span class="p">()</span>
+</span><span id="__span-0-46"><a id="__codelineno-0-46" name="__codelineno-0-46" href="#__codelineno-0-46"></a><span class="n">ops</span><span class="o">.</span><span class="n">numberer</span><span class="o">.</span><span class="n">Plain</span><span class="p">()</span>
+</span><span id="__span-0-47"><a id="__codelineno-0-47" name="__codelineno-0-47" href="#__codelineno-0-47"></a><span class="n">ops</span><span class="o">.</span><span class="n">system</span><span class="o">.</span><span class="n">FullGeneral</span><span class="p">()</span>
+</span><span id="__span-0-48"><a id="__codelineno-0-48" name="__codelineno-0-48" href="#__codelineno-0-48"></a><span class="n">ops</span><span class="o">.</span><span class="n">test</span><span class="o">.</span><span class="n">NormUnbalance</span><span class="p">(</span><span class="n">tol</span><span class="o">=</span><span class="mf">1e-6</span><span class="p">,</span> <span class="n">max_iter</span><span class="o">=</span><span class="mi">10</span><span class="p">)</span>
+</span><span id="__span-0-49"><a id="__codelineno-0-49" name="__codelineno-0-49" href="#__codelineno-0-49"></a><span class="n">ops</span><span class="o">.</span><span class="n">algorithm</span><span class="o">.</span><span class="n">Linear</span><span class="p">()</span>
+</span><span id="__span-0-50"><a id="__codelineno-0-50" name="__codelineno-0-50" href="#__codelineno-0-50"></a><span class="n">ops</span><span class="o">.</span><span class="n">integrator</span><span class="o">.</span><span class="n">LoadControl</span><span class="p">(</span><span class="n">dlam</span><span class="o">=</span><span class="mf">1.0</span><span class="p">)</span>
+</span><span id="__span-0-51"><a id="__codelineno-0-51" name="__codelineno-0-51" href="#__codelineno-0-51"></a><span class="n">ops</span><span class="o">.</span><span class="n">analysis</span><span class="o">.</span><span class="n">Static</span><span class="p">()</span>
+</span><span id="__span-0-52"><a id="__codelineno-0-52" name="__codelineno-0-52" href="#__codelineno-0-52"></a>
+</span><span id="__span-0-53"><a id="__codelineno-0-53" name="__codelineno-0-53" href="#__codelineno-0-53"></a><span class="n">ops</span><span class="o">.</span><span class="n">tcl</span><span class="p">(</span><span class="s2">"stack.tcl"</span><span class="p">)</span>                     <span class="c1"># serial: no instance has a rank</span>
+</span><span id="__span-0-54"><a id="__codelineno-0-54" name="__codelineno-0-54" href="#__codelineno-0-54"></a><span class="n">ops</span><span class="o">.</span><span class="n">tcl</span><span class="p">(</span><span class="s2">"stack_flat.tcl"</span><span class="p">,</span> <span class="n">flat</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>     <span class="c1"># the same deck</span>
+</span><span id="__span-0-55"><a id="__codelineno-0-55" name="__codelineno-0-55" href="#__codelineno-0-55"></a><span class="n">asm</span><span class="o">.</span><span class="n">h5</span><span class="p">(</span><span class="s2">"stack.h5"</span><span class="p">)</span>                       <span class="c1"># the bridge's model.h5 + /assembly</span>
+</span><span id="__span-0-56"><a id="__codelineno-0-56" name="__codelineno-0-56" href="#__codelineno-0-56"></a>
+</span><span id="__span-0-57"><a id="__codelineno-0-57" name="__codelineno-0-57" href="#__codelineno-0-57"></a><span class="c1"># 4. The archive lists what was declared.</span>
+</span><span id="__span-0-58"><a id="__codelineno-0-58" name="__codelineno-0-58" href="#__codelineno-0-58"></a><span class="n">again</span> <span class="o">=</span> <span class="n">Assembly</span><span class="o">.</span><span class="n">from_h5</span><span class="p">(</span><span class="s2">"stack.h5"</span><span class="p">)</span>
+</span><span id="__span-0-59"><a id="__codelineno-0-59" name="__codelineno-0-59" href="#__codelineno-0-59"></a><span class="k">assert</span> <span class="p">[</span><span class="n">i</span><span class="o">.</span><span class="n">label</span> <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="n">again</span><span class="o">.</span><span class="n">instances</span><span class="p">]</span> <span class="o">==</span> <span class="p">[</span><span class="s2">"lower"</span><span class="p">,</span> <span class="s2">"upper"</span><span class="p">]</span>
+</span><span id="__span-0-60"><a id="__codelineno-0-60" name="__codelineno-0-60" href="#__codelineno-0-60"></a><span class="k">assert</span> <span class="p">[</span><span class="n">n</span><span class="o">.</span><span class="n">name</span> <span class="k">for</span> <span class="n">n</span> <span class="ow">in</span> <span class="n">again</span><span class="o">.</span><span class="n">nodes</span><span class="p">]</span> <span class="o">==</span> <span class="p">[</span><span class="s2">"cap"</span><span class="p">]</span>
+</span><span id="__span-0-61"><a id="__codelineno-0-61" name="__codelineno-0-61" href="#__codelineno-0-61"></a><span class="k">assert</span> <span class="p">[</span><span class="n">t</span><span class="o">.</span><span class="n">master</span> <span class="k">for</span> <span class="n">t</span> <span class="ow">in</span> <span class="n">again</span><span class="o">.</span><span class="n">ties</span><span class="p">]</span> <span class="o">==</span> <span class="p">[</span><span class="s2">"lower.top"</span><span class="p">,</span> <span class="s2">"cap"</span><span class="p">]</span>
+</span><span id="__span-0-62"><a id="__codelineno-0-62" name="__codelineno-0-62" href="#__codelineno-0-62"></a><span class="nb">print</span><span class="p">(</span><span class="s2">"reloaded:"</span><span class="p">,</span> <span class="p">[</span><span class="n">i</span><span class="o">.</span><span class="n">label</span> <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="n">again</span><span class="o">.</span><span class="n">instances</span><span class="p">],</span>
+</span><span id="__span-0-63"><a id="__codelineno-0-63" name="__codelineno-0-63" href="#__codelineno-0-63"></a>      <span class="p">[</span><span class="n">t</span><span class="o">.</span><span class="n">master</span> <span class="k">for</span> <span class="n">t</span> <span class="ow">in</span> <span class="n">again</span><span class="o">.</span><span class="n">ties</span><span class="p">])</span>
+</span><span id="__span-0-64"><a id="__codelineno-0-64" name="__codelineno-0-64" href="#__codelineno-0-64"></a>
+</span><span id="__span-0-65"><a id="__codelineno-0-65" name="__codelineno-0-65" href="#__codelineno-0-65"></a><span class="c1"># 5. Solve, and check against the closed form.</span>
+</span><span id="__span-0-66"><a id="__codelineno-0-66" name="__codelineno-0-66" href="#__codelineno-0-66"></a><span class="n">ops</span><span class="o">.</span><span class="n">run</span><span class="p">()</span>
+</span><span id="__span-0-67"><a id="__codelineno-0-67" name="__codelineno-0-67" href="#__codelineno-0-67"></a><span class="n">ops</span><span class="o">.</span><span class="n">analyze</span><span class="p">(</span><span class="n">steps</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
+</span><span id="__span-0-68"><a id="__codelineno-0-68" name="__codelineno-0-68" href="#__codelineno-0-68"></a><span class="n">u</span> <span class="o">=</span> <span class="n">osp</span><span class="o">.</span><span class="n">nodeDisp</span><span class="p">(</span><span class="nb">int</span><span class="p">(</span><span class="n">cap</span><span class="p">),</span> <span class="mi">3</span><span class="p">)</span>
+</span><span id="__span-0-69"><a id="__codelineno-0-69" name="__codelineno-0-69" href="#__codelineno-0-69"></a><span class="n">exact</span> <span class="o">=</span> <span class="o">-</span><span class="n">P</span> <span class="o">*</span> <span class="mi">2</span> <span class="o">*</span> <span class="n">H</span> <span class="o">/</span> <span class="p">(</span><span class="n">E</span> <span class="o">*</span> <span class="n">SIDE</span> <span class="o">*</span> <span class="n">SIDE</span><span class="p">)</span>
+</span><span id="__span-0-70"><a id="__codelineno-0-70" name="__codelineno-0-70" href="#__codelineno-0-70"></a><span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"cap settles </span><span class="si">{</span><span class="n">u</span><span class="si">:</span><span class="s2">.6e</span><span class="si">}</span><span class="s2"> mm, closed form </span><span class="si">{</span><span class="n">exact</span><span class="si">:</span><span class="s2">.6e</span><span class="si">}</span><span class="s2"> mm"</span><span class="p">)</span>
+</span><span id="__span-0-71"><a id="__codelineno-0-71" name="__codelineno-0-71" href="#__codelineno-0-71"></a><span class="k">assert</span> <span class="nb">abs</span><span class="p">(</span><span class="n">u</span> <span class="o">-</span> <span class="n">exact</span><span class="p">)</span> <span class="o">&lt;=</span> <span class="mf">1e-9</span> <span class="o">*</span> <span class="nb">abs</span><span class="p">(</span><span class="n">exact</span><span class="p">)</span>
+</span><span id="__span-0-72"><a id="__codelineno-0-72" name="__codelineno-0-72" href="#__codelineno-0-72"></a>
+</span><span id="__span-0-73"><a id="__codelineno-0-73" name="__codelineno-0-73" href="#__codelineno-0-73"></a><span class="c1"># 6. One rank per instance, for OpenSeesMP.</span>
+</span><span id="__span-0-74"><a id="__codelineno-0-74" name="__codelineno-0-74" href="#__codelineno-0-74"></a><span class="n">ranked</span> <span class="o">=</span> <span class="p">(</span>
+</span><span id="__span-0-75"><a id="__codelineno-0-75" name="__codelineno-0-75" href="#__codelineno-0-75"></a>    <span class="n">Assembly</span><span class="p">(</span><span class="s2">"stack_mp"</span><span class="p">)</span>
+</span><span id="__span-0-76"><a id="__codelineno-0-76" name="__codelineno-0-76" href="#__codelineno-0-76"></a>    <span class="o">.</span><span class="n">instance</span><span class="p">(</span><span class="s2">"lower"</span><span class="p">,</span> <span class="s2">"block.h5"</span><span class="p">,</span> <span class="n">partition_rank</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>
+</span><span id="__span-0-77"><a id="__codelineno-0-77" name="__codelineno-0-77" href="#__codelineno-0-77"></a>    <span class="o">.</span><span class="n">instance</span><span class="p">(</span><span class="s2">"upper"</span><span class="p">,</span> <span class="s2">"block.h5"</span><span class="p">,</span> <span class="n">partition_rank</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span>
+</span><span id="__span-0-78"><a id="__codelineno-0-78" name="__codelineno-0-78" href="#__codelineno-0-78"></a>              <span class="n">rotate</span><span class="o">=</span><span class="p">((</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">),</span> <span class="n">pi</span><span class="p">),</span> <span class="n">translate</span><span class="o">=</span><span class="p">(</span><span class="n">SIDE</span><span class="p">,</span> <span class="n">SIDE</span><span class="p">,</span> <span class="n">H</span><span class="p">))</span>
+</span><span id="__span-0-79"><a id="__codelineno-0-79" name="__codelineno-0-79" href="#__codelineno-0-79"></a>    <span class="o">.</span><span class="n">tie</span><span class="p">(</span><span class="s2">"lower.top"</span><span class="p">,</span> <span class="s2">"upper.bot"</span><span class="p">,</span> <span class="n">enforce</span><span class="o">=</span><span class="s2">"equation"</span><span class="p">,</span> <span class="n">dofs</span><span class="o">=</span><span class="p">[</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">3</span><span class="p">])</span>
+</span><span id="__span-0-80"><a id="__codelineno-0-80" name="__codelineno-0-80" href="#__codelineno-0-80"></a><span class="p">)</span>
+</span><span id="__span-0-81"><a id="__codelineno-0-81" name="__codelineno-0-81" href="#__codelineno-0-81"></a><span class="n">ranked</span><span class="o">.</span><span class="n">bridge</span><span class="p">(</span><span class="n">ndm</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span> <span class="n">ndf</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span><span class="o">.</span><span class="n">tcl</span><span class="p">(</span><span class="s2">"stack_mp.tcl"</span><span class="p">)</span>
+</span><span id="__span-0-82"><a id="__codelineno-0-82" name="__codelineno-0-82" href="#__codelineno-0-82"></a><span class="n">deck</span> <span class="o">=</span> <span class="nb">open</span><span class="p">(</span><span class="s2">"stack_mp.tcl"</span><span class="p">,</span> <span class="n">encoding</span><span class="o">=</span><span class="s2">"utf-8"</span><span class="p">)</span><span class="o">.</span><span class="n">read</span><span class="p">()</span>
+</span><span id="__span-0-83"><a id="__codelineno-0-83" name="__codelineno-0-83" href="#__codelineno-0-83"></a><span class="nb">print</span><span class="p">(</span><span class="s2">"getPID blocks:"</span><span class="p">,</span> <span class="n">deck</span><span class="o">.</span><span class="n">count</span><span class="p">(</span><span class="s2">"if {[getPID] =="</span><span class="p">))</span>
+</span><span id="__span-0-84"><a id="__codelineno-0-84" name="__codelineno-0-84" href="#__codelineno-0-84"></a><span class="n">serial</span> <span class="o">=</span> <span class="nb">open</span><span class="p">(</span><span class="s2">"stack.tcl"</span><span class="p">,</span> <span class="n">encoding</span><span class="o">=</span><span class="s2">"utf-8"</span><span class="p">)</span><span class="o">.</span><span class="n">read</span><span class="p">()</span>
+</span><span id="__span-0-85"><a id="__codelineno-0-85" name="__codelineno-0-85" href="#__codelineno-0-85"></a><span class="k">assert</span> <span class="s2">"getPID"</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">serial</span>
+</span><span id="__span-0-86"><a id="__codelineno-0-86" name="__codelineno-0-86" href="#__codelineno-0-86"></a><span class="k">assert</span> <span class="n">serial</span> <span class="o">==</span> <span class="nb">open</span><span class="p">(</span><span class="s2">"stack_flat.tcl"</span><span class="p">,</span> <span class="n">encoding</span><span class="o">=</span><span class="s2">"utf-8"</span><span class="p">)</span><span class="o">.</span><span class="n">read</span><span class="p">()</span>
+</span><span id="__span-0-87"><a id="__codelineno-0-87" name="__codelineno-0-87" href="#__codelineno-0-87"></a><span class="nb">print</span><span class="p">(</span><span class="s2">"serial deck:"</span><span class="p">,</span> <span class="n">serial</span><span class="o">.</span><span class="n">count</span><span class="p">(</span><span class="s2">"element stdBrick"</span><span class="p">),</span> <span class="s2">"bricks, no getPID"</span><span class="p">)</span>
 </span></code></pre></div>
-<h2 id="notes-gotchas">Notes / gotchas<a class="headerlink" href="#notes-gotchas" title="Permanent link">&para;</a></h2>
+<p>Step 5 solves in-process with the exact tie, which needs a build with
+<code>equationConstraint</code>: openseespy &gt;= 3.8.0 (one tied model per process) or
+the Ladruno fork (<a href="../../concepts/backend-capabilities/">Backend capabilities</a>).
+Older openseespy refuses <code>enforce="equation"</code> at that step. Run on the
+Ladruno fork, the script prints:</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>reloaded: ['lower', 'upper'] ['lower.top', 'cap']
+</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>cap settles -1.000000e-03 mm, closed form -1.000000e-03 mm
+</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>getPID blocks: 2
+</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>serial deck: 32 bricks, no getPID
+</span></code></pre></div>
+<p>The settlement matches <code>P·2H/(E·A) = 1.0e-3 mm</code> to round-off, which is
+what an exact tie on matching faces and a rigid cap must give.</p>
+<h2 id="instances-and-names">Instances and names<a class="headerlink" href="#instances-and-names" title="Permanent link">&para;</a></h2>
+<p><code>instance(label, source)</code> places a file. Every name the file owns comes in
+as <code>{label}.{name}</code>, so the block's <code>top</code> group is <code>lower.top</code> in one
+instance and <code>upper.top</code> in the other, and its <code>steel</code> material becomes two
+materials, <code>lower.steel</code> and <code>upper.steel</code>. There is no host: every
+instance is namespaced the same way, and the file is read once however
+many times you place it. <code>rotate=((ax, ay, az), theta)</code> turns the instance
+about the origin by <code>theta</code> radians, and <code>translate=</code> moves it after the
+rotation. A label must be non-empty and free of <code>.</code>, <code>/</code> and whitespace,
+and may not start or end with <code>_</code>; instance labels, reference nodes and tie
+names share one namespace, so a repeated name raises <code>AssemblyError</code>.</p>
+<h2 id="ties-and-couplings">Ties and couplings<a class="headerlink" href="#ties-and-couplings" title="Permanent link">&para;</a></h2>
+<p>Every port is <code>"{instance}.{group or label}"</code>. <code>tie(master, slave)</code>
+resolves exactly as <code>g.constraints.tie</code> does on a non-matching interface;
+<code>enforce="equation"</code> is exact and needs the Lagrange handler. The other
+verbs follow the session's constraint vocabulary: <code>equal_dof</code> for
+co-located nodes, <code>rigid_link</code> and <code>rigid_diaphragm</code> for rigid bodies,
+<code>embedded</code> for nodes of one instance inside the elements of another, and
+<code>couple(target, kind="kinematic" | "distributing", reference=)</code> for RBE2
+and RBE3, which emit Ladruno-fork elements that stock OpenSees refuses.
+<code>node(name, coords)</code> declares a reference node owned by the assembly; it
+is a port of <code>equal_dof</code>, <code>rigid_link</code> and <code>rigid_diaphragm</code> and the
+<code>reference</code> of <code>couple</code>, and you read it back by label, as step 3 does.
+<code>rigid_diaphragm</code> needs 6 DOFs on its nodes in 3-D, which is why a brick
+model like this one uses a <code>rigid_link</code> rod. A tie or coupling whose ports
+exist but couple nothing raises at <code>bridge()</code>.</p>
+<h2 id="what-an-instance-carries">What an instance carries<a class="headerlink" href="#what-an-instance-carries" title="Permanent link">&para;</a></h2>
+<p>Model content travels with the instance; analysis content belongs to the
+assembly. The mesh, groups, labels, intra-instance constraints (ties,
+embeds, interfaces and contacts the source declared inside itself) and the
+rebar stream travel, and from the source's solver zone so do its
+materials, sections, transforms, beam integrations, dampings attached
+through an element's <code>damp=</code> and its element specs. The source's fixes,
+masses, load patterns, recorders, stages and analysis stay behind: declare
+them on the bridge, as step 3 does.</p>
+<h2 id="decks-and-ranks">Decks and ranks<a class="headerlink" href="#decks-and-ranks" title="Permanent link">&para;</a></h2>
+<p>An assembly whose instances carry no <code>partition_rank</code> is serial: <code>tcl()</code>
+writes one unpartitioned deck, identical to <code>tcl(flat=True)</code>. Give every
+instance <code>partition_rank=k</code>, one instance per rank and ranks running
+<code>0 .. n-1</code>, and <code>tcl()</code> writes one <code>getPID</code> block per rank. Reference
+nodes live on rank 0 and are declared on every other rank a coupling
+needs them, and each tie across instances is written on every rank that
+owns one of its nodes, with the same tags. Without your own numberer and
+system, the partitioned deck picks <code>ParallelPlain</code> and <code>Mumps</code> at run time,
+with serial fallbacks, and says so in a warning.</p>
+<h2 id="the-archive">The archive<a class="headerlink" href="#the-archive" title="Permanent link">&para;</a></h2>
+<p><code>asm.h5(path)</code> writes exactly the <code>model.h5</code> the bridge's own <code>ops.h5</code>
+writes, plus an <code>/assembly</code> zone that lists the instances and ties.
+Every reader opens it unchanged, and <code>OpenSeesModel.from_h5</code> rebuilds the
+model from it. <code>Assembly.from_h5(path)</code> reads only the listing: it never
+re-reads the instance files, and the assembly it returns cannot
+<code>bridge()</code> or <code>h5()</code> again. Declare supports, loads and the analysis
+before <code>h5()</code>, and call <code>bridge()</code> again if you declare another instance
+or tie after it, or <code>h5()</code> raises.</p>
+<h2 id="what-refuses">What refuses<a class="headerlink" href="#what-refuses" title="Permanent link">&para;</a></h2>
+<p>Each of these raises <code>AssemblyError</code>, at the declaring call or at
+<code>bridge()</code>, so no partial model comes back:</p>
 <ul>
-<li><strong>Don't double-apply.</strong> Import each case with <code>from_model</code> in exactly
-  one pattern, and do <strong>not</strong> <em>also</em> hand the same elements a body force
-  through the bridge (a raw <code>eleLoad -bodyForce</code> / element <code>body_force=</code>
-  for the identical volume). That stacks two copies of self-weight and
-  doubles the dead load — a silent, order-of-magnitude error in the
-  reactions. Declare it in exactly one place.</li>
-<li><strong>Target volumes only.</strong> Gravity must resolve to 3-D entities. Targeting
-  a surface or curve is a <strong>no-op</strong> — the volume iterator silently skips
-  non-3D dim-tags. (Self-weight of a shell belongs on the shell section's
-  thickness × density, not on a load.) If a gravity def produces zero
-  records, you almost certainly targeted the wrong-dimension label.</li>
-<li><strong><code>g</code> is unit-sensitive.</strong> <code>(0, 0, -9.81)</code> is for SI-metre models. For
-  a kg-mm-s model use <code>(0, 0, -9810)</code>. A unit mismatch in <code>g</code> or <code>density</code>
-  (kg/m³ vs g/cm³) shows up as an order-of-magnitude error in <code>ΣF</code>.</li>
-<li><strong><code>density=None</code> needs element form.</strong> Reading ρ from the material is
-  only available with <code>target_form="element"</code>; the default
-  <code>target_form="nodal"</code> <strong>requires</strong> an explicit <code>density</code> and raises
-  <code>ValueError</code> without one.</li>
-<li><strong>Sanity-check ΣF.</strong> After <code>get_fem_data</code>, sum <code>force_xyz</code> over the
-  pattern and compare against <code>ρ · g · V</code> by hand — this is the cheapest
-  way to catch a flipped sign or a doubled load.</li>
+<li><code>contact</code> and <code>interface</code> across instances. They are not assembly
+  couplings; declare them inside the source model, where they travel.</li>
+<li>Element rows whose arguments vary inside one physical group. Each group
+  rehydrates as one element spec; the per-row selector is not built yet
+  (<a href="https://github.com/nmorabowen/apeGmsh/issues/1542">#1542</a>).</li>
+<li>A damping attached by region, globally or in a stage. Attach it with an
+  element's <code>damp=</code> in the source, or declare it on the bridge.</li>
+<li>A material, section, transform, integration or element type the
+  assembly does not rehydrate yet. The error lists the supported ones.</li>
+<li>A source whose own modules carry a partition rank, such as a ranked
+  assembly archive, checked at <code>instance()</code> and again at <code>bridge()</code>, and a
+  <code>partition_rank</code> on an instance whose source is itself an assembly
+  archive.</li>
 </ul>
-<h2 id="see-also">See also<a class="headerlink" href="#see-also" title="Permanent link">&para;</a></h2>
-<ul>
-<li><strong>Concept:</strong> <a href="../../concepts/loads-and-masses/">Loads guide §8</a> — the
-  define→resolve pipeline, <code>reduction</code> (tributary vs consistent),
-  <code>target_form</code> (nodal vs element), and how body forces land on the broker.</li>
-<li><strong>Bridge:</strong> <a href="../../concepts/opensees-bridge/">OpenSees bridge guide</a>
-  — why loads are pattern-scoped at the OpenSees level and are imported
-  opt-in from the snapshot with <code>p.from_model(case)</code> (ADR 0051).</li>
-<li><strong>API:</strong> <a href="../../api/loads/"><code>g.loads</code></a> — <code>gravity</code>, <code>body</code>, and the rest
-  of the load-factory signatures.</li>
-</ul>
+<h2 id="the-older-compose-path">The older compose path<a class="headerlink" href="#the-older-compose-path" title="Permanent link">&para;</a></h2>
+<p><code>g.compose</code>, <code>FEMData.compose</code>, <code>apeGmsh.compose</code> and the <code>Assembly</code>
+verbs <code>add</code>, <code>couple(kind=, ports=)</code> and <code>materialize</code> are the first
+version of this feature. They are to be removed without a deprecation
+period once <code>Assembly</code> covers their uses (<a href="https://github.com/nmorabowen/apeGmsh/blob/main/architecture/decisions/0117-assembly-compose-v2.md">ADR 0117
+D7</a>).
+Start new models with <code>instance</code>, <code>tie</code> and <code>bridge</code>; one assembly cannot
+mix the two APIs.</p>
 <hr />
-<p><em>Next: <a href="../face-pressure/">Apply a face pressure or traction</a>.</em></p>
+<p><em>Next: <a href="../compose-modules/">Compose modules</a>, which documents the older
+path for models that still use it; or go on to
+<a href="../gravity/">Apply gravity / self-weight</a>.</em></p>
 
 
 
