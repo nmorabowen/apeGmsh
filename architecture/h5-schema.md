@@ -1048,7 +1048,12 @@ runs as `H5Model.program()` and a record's emit index as
 `H5Model.emit_index(method, row, stage=-1)` (`OpenSeesModel` delegates);
 there is no per-record `emit_index` column (ADR 0114 Q2). An H5 → H5
 rewrite (`OpenSeesModel.to_h5`) echoes the table, because its
-category-major replay cannot regenerate the order.
+category-major replay cannot regenerate the order. A rewrite of a file
+below 2.23.0 writes **no** program (it never invents an order), and
+`emit_index` on such a file raises `ProgramAbsentError`. When the
+rewrite does not carry a store an echoed run names (today
+`/opensees/regions`), that run keeps its emit indices with `store` and
+`row` `-1`, `@stores` drops the name, and the rewrite warns.
 
 ## `/opensees/commands` (optional, opensees 2.23.0)
 
