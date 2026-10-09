@@ -1,4 +1,4 @@
-# Model composition (compose v1, Phase 3)
+# Model composition: Assembly v2 (ADR 0117), then compose v1
 <!-- skill-freshness: verified against apeGmsh main@56cd64ec (2026-08-04) · signatures: python -m apeGmsh.studio.lookup SYMBOL (ADR 0096); src/ is not the authoring lookup -->
 
 Compose stitches independently-built, *saved* `model.h5` modules into one larger
@@ -14,6 +14,84 @@ Mental model:
 - `g.compose("part.h5", label="...")` grafts the part in, tag-offset + namespaced.
 - Bridge module interfaces with chain-phase constraints (`tied_contact`, `embedded`, …).
 - `g.save("assembly.h5")` the result, or `apeSees(g._fem).tcl(...)` to emit a deck.
+
+---
+
+## Assembly v2 — instances of saved models (ADR 0117)
+
+**The path for new multi-file models.** Everything below this section is
+compose v1, which ADR 0117 D7 deletes without a deprecation period (chain
+link AS5). Published how-to: `docs/how-to/assemble-saved-models.md`.
+
+```python
+# verified: docs/how-to/assemble-saved-models.md (run as a script on the Ladruno fork; the equation tie needs openseespy >= 3.8.0 or the fork)
+from math import pi
+from apeGmsh.assembly import Assembly, AssemblyError
+
+asm = (
+    Assembly("stack")
+    .instance("lower", "block.h5")                       # a saved model.h5 WITH /opensees
+    .instance("upper", "block.h5",                       # same file again: read once
+              rotate=((0.0, 0.0, 1.0), pi), translate=(200.0, 200.0, 400.0))
+    .tie("lower.top", "upper.bot", enforce="equation", dofs=[1, 2, 3])
+    .node("cap", (100.0, 100.0, 800.0))                  # assembly-owned reference node
+    .rigid_link("cap", "upper.top", link_type="rod")
+)
+ops = asm.bridge(ndm=3, ndf=3)                           # one ordinary apeSees
+(cap,) = ops.fem.nodes.select(label="cap").ids
+ops.fix(pg="lower.bot", dofs=(1, 1, 1))                  # analysis content: on the bridge
+...
+ops.tcl("stack.tcl")             # serial deck when no instance has a rank (== flat=True)
+asm.h5("stack.h5")               # = ops.h5 + /assembly zone
+again = Assembly.from_h5("stack.h5")   # re-lists instances/nodes/ties only
+```
+
+- **Source** = a `model.h5` written by `ops.h5(...)` (neutral zone + `/opensees`):
+  build the part in its own session, declare `model`, materials and element
+  specs on `apeSees(fem)`, `ops.h5("part.h5")`. Extract with
+  `get_fem_data(dim=None)` when a tie will use its faces.
+- **Names.** No host: every name a file owns becomes `{label}.{name}` (PG
+  `top` → `lower.top`, material `steel` → `lower.steel`). Labels: non-empty,
+  no `.` `/` whitespace, no leading/trailing `_`. Instance labels, reference
+  nodes and tie names share ONE namespace. `rotate=((ax, ay, az), theta_rad)`
+  is about the origin and applied before `translate`.
+- **Verbs** (ports `"{instance}.{pg|label}"`; a reference node is a bare name):
+  `tie` (as `g.constraints.tie`; `enforce="equation"` exact, needs Lagrange),
+  `equal_dof` (co-located nodes), `rigid_link(master, slave, link_type="beam"|"rod")`,
+  `rigid_diaphragm` (6 DOF nodes in 3-D, so not on ndf-3 bricks),
+  `embedded(host, embedded)`, `couple(target, kind="kinematic"|"distributing",
+  reference=)` (RBE2/RBE3: Ladruno-fork elements, stock refuses). `node(name,
+  coords)` declares a reference node: FEM id `k` for the `k`-th, read back by
+  `label=`; its ndf is the bridge's unless `ops.ndf(tag, ndf=6)`.
+- **Carry rule (D4): model content travels, analysis content is the
+  assembly's.** Travels: mesh, groups, labels, intra-instance constraints,
+  `/rebar_elements`, and from `/opensees` the materials, sections,
+  transforms, beam integrations, element-attached dampings and element
+  specs. Stays behind: fixes, masses, patterns, time series, recorders,
+  stages, analysis. Declare those on the bridge.
+- **Ranks (D6).** No `partition_rank` anywhere → serial, `tcl()` writes no
+  `getPID`. `instance(..., partition_rank=k)` on EVERY instance, one per
+  rank, ranks `0 .. n-1` → one `getPID` block per rank; reference nodes on
+  rank 0; cross-instance MP lines on every owning rank (INV-9). The
+  partitioned deck auto-emits `ParallelPlain` / `Mumps` with serial fallbacks
+  unless you declare numberer/system.
+- **Archive (D5).** `asm.h5(path)` refuses before `bridge()`, after a new
+  declaration, or on a `from_h5` result. `Assembly.from_h5` never opens the
+  instance files and cannot `bridge()` / `h5()`; rebuild the model with
+  `OpenSeesModel.from_h5(path)`.
+- **Refused (`AssemblyError`)**: `contact` / `interface` across instances
+  (declare them inside the source); element rows whose args vary inside a
+  PG (per-row selector #1542); a damping attached by region, global or in
+  a stage; a material/section/transform/integration/element type not yet
+  rehydrated (the error lists the supported ones: today uniaxial
+  `Elastic`, nD `ElasticIsotropic`, `Elastic` / `ElasticMembranePlateSection` sections,
+  `stdBrick`, `FourNodeTetrahedron`, `ShellMITC4`, `elasticBeamColumn`,
+  `forceBeamColumn`, `dispBeamColumn`); a source whose `/composed_from`
+  modules carry a rank (checked at `instance()` and again at `bridge()`); a
+  ranked instance of an assembly archive; a tie/coupling that couples
+  nothing (INV-7); mixing v1 `add` with v2 verbs on one `Assembly`.
+- **Where v1 is still needed:** element types v2 does not rehydrate yet
+  (e.g. hex20 for the mixed-order route below) and per-row element args.
 
 ---
 
@@ -248,7 +326,9 @@ enum is wrong.
 
 ---
 
-## Declarative `Assembly` + `couple` (shipped, sub-path import)
+## Declarative `Assembly` + `couple` (v1, removal pending)
+
+The v1 form of `Assembly`; new models use the v2 section above.
 
 For spatially coupling several saved `model.h5` modules, a declarative builder
 **shipped in v2.0.0** (PR #433, ADR 0043 slice 1.4). It is imported from a

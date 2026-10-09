@@ -167,6 +167,7 @@ nav:
           - Import & heal a STEP: how-to/import-step.md
       - Build & assemble:
           - Save & reload a model: how-to/save-reload.md
+          - Assemble saved models: how-to/assemble-saved-models.md
           - Compose modules: how-to/compose-modules.md
       - Physics:
           - Apply gravity / self-weight: how-to/gravity.md
