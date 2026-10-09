@@ -215,8 +215,10 @@ def _zone(path: Path) -> dict[str, Any]:
         out["program_attrs"] = {k: np.asarray(v).tolist()
                                 for k, v in prog.attrs.items()}
         if "commands" in ops:
-            out["commands"] = {k: np.asarray(ops["commands"][k][()]).tolist()
-                               for k in ops["commands"]}
+            # repr() so the NaN of a string slot compares equal to itself.
+            out["commands"] = {
+                k: [repr(v) for v in np.asarray(ops["commands"][k][()]).tolist()]
+                for k in ops["commands"]}
         out["model_hash"] = compute_model_hash("", ops)
     return out
 
