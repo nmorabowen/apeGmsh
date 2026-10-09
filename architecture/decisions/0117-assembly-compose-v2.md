@@ -178,6 +178,14 @@ and `couple(kind="kinematic"|"distributing", reference=<assembly node>)`.
 `contact` is phase 6 (ADR 0092's locality rule holds when an instance is a
 rank).
 
+**Note (2026-10-09, AS5-b′, #1588; maintainer rulings on #1585).** For
+parity with v1, v2 adds `equal_dof_mixed` and `rigid_body`, the RBE2/RBE3
+knobs `k`, `k_alpha`, `kr`, `enforce` and `al_update` on `couple`, and the
+`g.constraints.tie` penalty knobs on `tie`. Cross-instance `penalty` and
+`tied_contact` are **deferred**: v2 does not expose them, and they are
+re-added when a model needs them. They are routable in chain phase, so
+adding one is a new verb, not a design change.
+
 Every port is `{instance}.{pg|label}`. A bare port names an assembly object
 or raises, listing the instances. Each declaration takes `name=` and reads
 back by label (`ops.nodes.get(label=...)`, `Results.nodes.get(label=...)`;
