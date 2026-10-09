@@ -9869,32 +9869,46 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
             nodes_ndf=_nodes_ndf,
             provenance=self._provenance.snapshot(),
         )
-        self._warn_ledger(emitter.ledger_counts)
+        # ``equationConstraint`` already raised its own deferred warning
+        # above; one dropped row is one warning, so the ledger skips it.
+        self._warn_ledger(
+            emitter.ledger_counts,
+            already_warned=frozenset({"equationConstraint"}),
+        )
 
-    def _warn_ledger(self, counts: "Mapping[str, int]") -> None:
+    def _warn_ledger(
+        self, counts: "Mapping[str, int]", *,
+        already_warned: "frozenset[str]" = frozenset(),
+    ) -> None:
         """Warn once per distinct set of ``ledger`` verbs ``h5()`` dropped.
 
         ADR 0114 Q3: a ``ledger`` call (contact, rebar, embed,
         ``equationConstraint``) leaves no ``/opensees`` record, so a deck
         replayed from the file omits it. The guard is per instance and
         per verb set, so a model that writes on every emit warns once,
-        and again only when a new ledgered verb appears.
+        and again only when a new ledgered verb appears. Verbs in
+        ``already_warned`` raised a dedicated warning of their own and
+        are left out, so no dropped row warns twice.
         """
-        verbs = frozenset(v for v, n in counts.items() if n)
+        verbs = frozenset(
+            v for v, n in counts.items() if n and v not in already_warned)
         if not verbs or verbs in self._ledger_warned:
             return
         self._ledger_warned.add(verbs)
         import warnings as _warnings
 
+        from ._internal.build import _stacklevel_outside_package
         from .emitter.h5 import H5LedgerWarning
         detail = ", ".join(f"{v} x{counts[v]}" for v in sorted(verbs))
+        # The explicit ``ops.h5()`` and the automatic write after an emit
+        # both reach here; point at the user's call either way.
         _warnings.warn(
-            f"ops.h5: {sum(counts[v] for v in verbs)} call(s) to ledgered "
+            f"model.h5: {sum(counts[v] for v in verbs)} call(s) to ledgered "
             f"verbs ({detail}) are not carried by the /opensees archive, "
             "so a deck replayed from it omits them unless the neutral zone "
             "re-derives them (ADR 0114 Q3).",
             H5LedgerWarning,
-            stacklevel=3,
+            stacklevel=_stacklevel_outside_package(),
         )
 
     # -- Registration -----------------------------------------------------

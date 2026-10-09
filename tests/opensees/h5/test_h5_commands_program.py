@@ -33,7 +33,12 @@ import pytest
 from apeGmsh.opensees import OpenSeesModel, apeSees
 from apeGmsh.opensees._internal.lineage import compute_model_hash
 from apeGmsh.opensees.emitter import h5_reader
-from apeGmsh.opensees.emitter.h5 import H5Emitter, H5LedgerWarning
+from apeGmsh.opensees.apesees import OpenSeesAutoEmitWarning
+from apeGmsh.opensees.emitter.h5 import (
+    H5Emitter,
+    H5FeatureDeferredWarning,
+    H5LedgerWarning,
+)
 from apeGmsh.opensees.emitter.recording import RecordingEmitter
 
 from tests.opensees.h5._opensees_model_fixtures import build_simple_frame_fem
@@ -364,6 +369,7 @@ def test_global_eigen_inside_a_stage_raises() -> None:
 # ---------------------------------------------------------------------------
 # 5. The ledger warning
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
 
 
 def _ledgered_frame() -> apeSees:
@@ -372,9 +378,8 @@ def _ledgered_frame() -> apeSees:
     return ops
 
 
-def _ledger_warnings(record: list[warnings.WarningMessage]) -> list[str]:
-    return [str(w.message) for w in record
-            if issubclass(w.category, H5LedgerWarning)]
+def _of(record: list[warnings.WarningMessage], cat: type) -> list[Any]:
+    return [w for w in record if issubclass(w.category, cat)]
 
 
 def test_no_ledger_no_warning(tmp_path: Path) -> None:
@@ -383,31 +388,60 @@ def test_no_ledger_no_warning(tmp_path: Path) -> None:
         _frame(rayleigh=True, modal=True).h5(str(tmp_path / "m.h5"))
 
 
+def test_one_dropped_row_is_one_warning(tmp_path: Path) -> None:
+    """``equationConstraint`` raises its own deferred warning; the ledger
+    warning skips it, so the row warns once across every category."""
+    ops = _ledgered_frame()
+    with warnings.catch_warnings(record=True) as rec:
+        warnings.simplefilter("always")
+        ops.h5(str(tmp_path / "m.h5"))
+    about_archive = [
+        w for w in rec
+        if issubclass(w.category, (H5LedgerWarning, H5FeatureDeferredWarning))
+    ]
+    assert [w.category for w in about_archive] == [H5FeatureDeferredWarning], [
+        (w.category.__name__, str(w.message)[:80]) for w in rec]
+    others = [w for w in rec if w not in about_archive]
+    assert all(issubclass(w.category, OpenSeesAutoEmitWarning)
+               for w in others), [(w.category.__name__, str(w.message)[:80])
+                                  for w in others]
+
+
+def _with_ledger(
+    monkeypatch: pytest.MonkeyPatch, extra: dict[str, int],
+) -> None:
+    """Add ledger calls the fixture model cannot make (contact needs a
+    meshed interface); the bridge reads them through ``ledger_counts``."""
+    real = H5Emitter.__dict__["ledger_counts"]
+
+    def _counts(self: H5Emitter) -> dict[str, int]:
+        return {**real.fget(self), **extra}
+
+    monkeypatch.setattr(H5Emitter, "ledger_counts", property(_counts))
+
+
 def test_ledger_warns_once_per_bridge_and_set(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    ops = _ledgered_frame()
+    ops = _frame(rayleigh=False, modal=False)
+    _with_ledger(monkeypatch, {"contact": 2})
     with warnings.catch_warnings(record=True) as rec:
         warnings.simplefilter("always")
         # Two emits whose automatic model.h5 write reaches h5(), then h5().
         ops.tcl(str(tmp_path / "a.tcl"))
         ops.tcl(str(tmp_path / "b.tcl"))
         ops.h5(str(tmp_path / "m.h5"))
-    msgs = _ledger_warnings(rec)
-    assert len(msgs) == 1, msgs
-    assert "equationConstraint x1" in msgs[0]
+    (only,) = _of(rec, H5LedgerWarning)
+    assert "contact x2" in str(only.message)
+    # It names the user's call (the first tcl() here), not the bridge.
+    assert Path(only.filename).resolve() == Path(__file__).resolve()
 
     # A new ledgered verb is a new set: one more warning, then silence.
-    real = H5Emitter.ledger_counts
-
-    def _plus_contact(self: H5Emitter) -> dict[str, int]:
-        return {**real.fget(self), "contact": 2}  # type: ignore[attr-defined]
-
-    monkeypatch.setattr(H5Emitter, "ledger_counts", property(_plus_contact))
+    _with_ledger(monkeypatch, {"contact": 2, "embedded_node": 1})
     with warnings.catch_warnings(record=True) as rec:
         warnings.simplefilter("always")
         ops.h5(str(tmp_path / "m2.h5"))
         ops.h5(str(tmp_path / "m3.h5"))
-    msgs = _ledger_warnings(rec)
-    assert len(msgs) == 1, msgs
-    assert "contact x2" in msgs[0]
+    (only,) = _of(rec, H5LedgerWarning)
+    assert "embedded_node x1" in str(only.message)
+    assert Path(only.filename).resolve() == Path(__file__).resolve()
