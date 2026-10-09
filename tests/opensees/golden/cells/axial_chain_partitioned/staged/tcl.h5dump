@@ -5,8 +5,8 @@ A /meta@created_iso dtype=str[utf-8,vlen] shape=() sha1=masked
 A /meta@model_name dtype=str[utf-8,vlen] shape=() sha1=b9d13fa513214f3ee642cfb66b091bb007f26c4c
 A /meta@ndf dtype=<i8 shape=() sha1=774502a842d52103dbae64c3407b1825f50f8587
 A /meta@ndm dtype=<i8 shape=() sha1=774502a842d52103dbae64c3407b1825f50f8587
-A /meta@opensees_schema_version dtype=str[utf-8,vlen] shape=() sha1=cc0fbd525e215522e9116d5389768480f319bc2e
-A /meta@schema_version dtype=str[utf-8,vlen] shape=() sha1=cc0fbd525e215522e9116d5389768480f319bc2e
+A /meta@opensees_schema_version dtype=str[utf-8,vlen] shape=() sha1=052f8c36855361819ccc8769c3b74fbfa3651d89
+A /meta@schema_version dtype=str[utf-8,vlen] shape=() sha1=052f8c36855361819ccc8769c3b74fbfa3651d89
 A /meta@snapshot_id dtype=str[utf-8,vlen] shape=() sha1=be5860ffd4409e5cc12add2802a5ecf9c16828e8
 G /meta/lineage
 A /meta/lineage@model_hash dtype=str[utf-8,vlen] shape=() sha1=masked
@@ -42,6 +42,10 @@ A /opensees/partitions/partition_01@rank dtype=<i8 shape=() sha1=e88bf9a567e8136
 D /opensees/partitions/partition_01/boundary_node_ids dtype=<i8 shape=(1,) sha1=8f0e74cd68e27f2ab0a33d0e719872623b599c06
 D /opensees/partitions/partition_01/element_ids dtype=<i8 shape=(4,) sha1=23542123f902a14b5bab0e1484fd27dd15059a47
 D /opensees/partitions/partition_01/node_ids dtype=<i8 shape=(5,) sha1=b90abe6a84c969076c3fe55a5954f94f022f3957
+D /opensees/program dtype={first:<i4,count:<i4,method:<i2,store:<i2,row:<i4,stage:<i4,decl:<i4} shape=(55,) sha1=52b786aec7cb7956271a77fcf92efabe7459c9ad
+A /opensees/program@emit_count dtype=<i4 shape=() sha1=6b3ec0f949b03d98a318efb7560a2e8c006b2d7a
+A /opensees/program@methods dtype=str[utf-8,vlen] shape=(22,) sha1=7b3aeaf1ff519f37f11d6f251ab7f9e56642d0f1
+A /opensees/program@stores dtype=str[utf-8,vlen] shape=(20,) sha1=855702913b68404998c6599118675cafd7c68915
 G /opensees/stages
 A /opensees/stages@n_stages dtype=<i8 shape=() sha1=774502a842d52103dbae64c3407b1825f50f8587
 G /opensees/stages/stage_000
