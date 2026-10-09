@@ -25,7 +25,7 @@ from apeGmsh import apeGmsh
 from apeGmsh.assembly import Assembly
 from apeGmsh.opensees import apeSees
 
-E, SIDE, H = 200_000.0, 200.0, 400.0          # N, mm, MPa
+E, SIDE, H = 200_000.0, 200.0, 400.0          # MPa, mm, mm
 
 # 1. One model, saved once: mesh, groups, material and elements.
 with apeGmsh(model_name="block", save_to="block_mesh.h5") as g:
@@ -106,7 +106,11 @@ assert serial == open("stack_flat.tcl", encoding="utf-8").read()
 print("serial deck:", serial.count("element stdBrick"), "bricks, no getPID")
 ```
 
-Run against stock openseespy, it prints:
+Step 5 solves in-process with the exact tie, which needs a build with
+`equationConstraint`: openseespy >= 3.8.0 (one tied model per process) or
+the Ladruno fork ([Backend capabilities](../concepts/backend-capabilities.md)).
+Older openseespy refuses `enforce="equation"` at that step. Run on the
+Ladruno fork, the script prints:
 
 ```text
 reloaded: ['lower', 'upper'] ['lower.top', 'cap']

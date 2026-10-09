@@ -239,9 +239,9 @@ not have, so an assembly's default `tcl()` is partitioned with an empty rank 0;
 
 > **Note (October 2026, AS4-b #1564):** the interim paragraph above no longer
 > describes the code. The merge engine reserves rank 0 for a host only when the
-> host owns an element, so an assembly whose instances carry no
-> `partition_rank` is unpartitioned and its default `tcl()` is the serial deck
-> (the same deck as `tcl(flat=True)`). `AssemblyRankWarning` is removed.
+> host owns an element or a non-reference node, so an assembly whose
+> instances carry no `partition_rank` is unpartitioned and its default
+> `tcl()` is the serial deck (the same deck as `tcl(flat=True)`). `AssemblyRankWarning` is removed.
 > `instance(..., partition_rank=k)` ranks an instance; every instance carries a
 > rank or none does, one instance per rank, and `bridge()` requires the ranks
 > to run `0 .. n-1`. Reference nodes live on rank 0 and are declared on each

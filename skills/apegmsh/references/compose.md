@@ -24,7 +24,7 @@ compose v1, which ADR 0117 D7 deletes without a deprecation period (chain
 link AS5). Published how-to: `docs/how-to/assemble-saved-models.md`.
 
 ```python
-# verified: docs/how-to/assemble-saved-models.md (run as a script, stock openseespy)
+# verified: docs/how-to/assemble-saved-models.md (run as a script on the Ladruno fork; the equation tie needs openseespy >= 3.8.0 or the fork)
 from math import pi
 from apeGmsh.assembly import Assembly, AssemblyError
 

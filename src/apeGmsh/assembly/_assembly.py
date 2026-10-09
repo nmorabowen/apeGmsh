@@ -555,7 +555,10 @@ class Assembly(_AssemblyV1):
         registered if no instance is declared, the instances' ranks leave a
         rank with no instance, a source file now composes ranked modules,
         or a source attaches a damping by region (global or in a stage).
-        Raises it while merging if a tie or coupling resolves to no record.
+        Raises it after the merge if the instances are ranked and an
+        instance's source is itself an assembly archive (its nested
+        instances bring ranks of their own), and while merging if a tie
+        or coupling resolves to no record.
         Raises it while rehydrating if an instance was built with another
         ``ndm`` or ``ndf``, or carries model content that is not rehydrated:
         another material, section, transform, integration or element type,
