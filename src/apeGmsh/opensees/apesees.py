@@ -6519,24 +6519,27 @@ class BuiltModel:
 
     def _region_sites(
         self, mode: TagMode, ordered: "Sequence[Primitive]",
-    ) -> "tuple[list[tuple[RegionSite, tuple[object, ...]]], dict[RegionSite, NamedMembers]]":
-        """Every region site ``mode``'s emit writes, in the order it mints
-        their tags, and the merged members of every named-region site.
+    ) -> "tuple[list[tuple[RegionSite, tuple[object, ...]]], list[tuple[RegionSite, tuple[object, ...]]], dict[RegionSite, NamedMembers]]":
+        """Every region site, in the order the flat walk mints their tags
+        and in the order ``mode``'s emit writes them, and the merged
+        members of every named-region site.
 
-        The order each emit path wrote its region tags in before the tag
-        plan (ADR 0114 D4, amended), which the plan keeps:
+        Returns ``(sites, written, named)``. ``sites`` is the canonical
+        mint order, the flat emit's in every mode, so a region has one tag
+        whatever the mode (ADR 0114 D4, amended): the global named regions
+        (each name that has members), the global region-scoped Rayleigh,
+        the global damping attaches, then the global pass's filtered
+        recorders (``ordered``'s order, the stage-claimed ones skipped);
+        then, staged, each stage in turn: its named regions, its Rayleigh,
+        its damping attaches, its claimed filtered recorders.
 
-        * flat: the global named regions, the global
-          region-scoped Rayleigh, the global damping attaches, then the
-          global pass's filtered recorders (``ordered``'s order, the
-          stage-claimed ones skipped);
-        * partitioned: the global pass's filtered recorders first (their
-          regions are written inside every rank block), then the global
-          named regions, each numbered on the first rank (in partition
-          order) that holds one of its members, then the global damping;
-        * then, staged, each stage in turn: its named regions (per rank
-          first-holder order when partitioned), its Rayleigh, its damping
-          attaches, its claimed filtered recorders.
+        ``written`` is ``sites`` on a flat emit. A partitioned emit writes
+        the global pass's filtered recorders first (their regions are
+        written inside every rank block), then the global named regions,
+        each first on the first rank (in partition order) that holds one
+        of its members, then the global damping; then each stage as above,
+        its named regions in first-holder order. A named region no rank
+        holds is not written there.
 
         A stage-claimed recorder's regions belong to its stage alone. The
         partitioned global pass once planned them too, so each was written
@@ -6544,6 +6547,7 @@ class BuiltModel:
         """
         partitioned = mode.partitioned
         sites: list[tuple[RegionSite, tuple[object, ...]]] = []
+        written: list[tuple[RegionSite, tuple[object, ...]]] = []
         named: dict[RegionSite, NamedMembers] = {}
         rank_nodes: "list[tuple[int, SortedIntSet]] | None" = None
         if partitioned and (self.region_records or any(
@@ -6554,6 +6558,12 @@ class BuiltModel:
                 for idx, part in enumerate(self.fem.partitions)
             ]
 
+        def add(site: RegionSite, keys: "tuple[object, ...]",
+                written_keys: "tuple[object, ...] | None" = None) -> None:
+            sites.append((site, keys))
+            written.append(
+                (site, keys if written_keys is None else written_keys))
+
         def add_named(
             scope: "int | None", records: "Sequence[RegionAssignmentRecord]",
         ) -> None:
@@ -6562,22 +6572,22 @@ class BuiltModel:
             site: RegionSite = ("named", scope)
             members = self._merged_region_members(records)
             first: dict[str, int] = {}
-            if rank_nodes is None:
-                keys = [name for name, nodes in members.items() if nodes]
-            else:
-                # Numbered on the first rank, in partition order, that
-                # holds a member; first-seen order within a rank.
+            keys = tuple(name for name, nodes in members.items() if nodes)
+            written_keys = keys
+            if rank_nodes is not None:
+                # Written first on the first rank, in partition order,
+                # that holds a member; first-seen order within a rank.
                 for rank, owned in rank_nodes:
                     for name, nodes in members.items():
                         if name not in first and any(
                                 int(n) in owned for n in nodes):
                             first[name] = rank
-                keys = list(first)
+                written_keys = tuple(first)
             named[site] = tuple(
                 (name, nodes, first.get(name))
                 for name, nodes in members.items()
             )
-            sites.append((site, tuple(keys)))
+            add(site, keys, written_keys)
 
         def add_damping(
             kind: str, scope: "int | None",
@@ -6585,32 +6595,37 @@ class BuiltModel:
         ) -> None:
             keys = self._damping_region_keys(recs)
             if keys:
-                sites.append(((kind, scope), keys))
+                add((kind, scope), keys)
 
-        def add_recorders(specs: "Iterable[object]") -> None:
-            for spec in specs:
-                if isinstance(spec, FilterableRecorder) and spec.region_keys():
-                    sites.append(
-                        (("recorder", id(spec)), spec.region_keys()))
+        def recorder_sites(
+            specs: "Iterable[object]",
+        ) -> "list[tuple[RegionSite, tuple[object, ...]]]":
+            return [
+                (("recorder", id(spec)), spec.region_keys())
+                for spec in specs
+                if isinstance(spec, FilterableRecorder) and spec.region_keys()
+            ]
 
         claimed = self._claimed_recorder_ids()
-        global_recorders = [
+        global_recorders = recorder_sites(
             p for p in ordered
             if isinstance(p, Recorder) and id(p) not in claimed
-        ]
+        )
         if partitioned:
-            add_recorders(global_recorders)
+            written += global_recorders
         add_named(None, self.region_records)
         add_damping("rayleigh", None, self.rayleigh_records)
         add_damping("damping", None, self.damping_attach_records)
+        sites += global_recorders
         if not partitioned:
-            add_recorders(global_recorders)
+            written += global_recorders
         for stage in self.stage_records:
             add_named(id(stage), stage.region_records)
             add_damping("rayleigh", id(stage), stage.rayleigh_records)
             add_damping("damping", id(stage), stage.damping_attach_records)
-            add_recorders(stage.recorder_specs)
-        return sites, named
+            for site_keys in recorder_sites(stage.recorder_specs):
+                add(*site_keys)
+        return sites, written, named
 
     # -- MPCO recorder filter regions (ADR 0027 INV-4 — internal regions) --
 
