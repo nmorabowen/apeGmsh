@@ -1,4 +1,0 @@
-PySide6<6.12  # TEMP #1571: PySide6 6.12 atexit crash on a leaked widget; remove by 2026-10-16
-shiboken6<6.12  # TEMP #1571: PySide6 6.12 atexit crash on a leaked widget; remove by 2026-10-16
-PySide6-Essentials<6.12  # TEMP #1571: PySide6 6.12 atexit crash on a leaked widget; remove by 2026-10-16
-PySide6-Addons<6.12  # TEMP #1571: PySide6 6.12 atexit crash on a leaked widget; remove by 2026-10-16
