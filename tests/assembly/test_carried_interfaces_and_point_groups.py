@@ -44,9 +44,25 @@ def _curve_at_x(surface: int, x: float) -> int:
     raise AssertionError(f"no boundary curve of surface {surface} at x={x}")
 
 
-def interface_fem():
+#: ``(normal law, tangential law)`` per fixture: together every uniaxial the
+#: ADR 0093 D1 table synthesises (``ENT``, ``ElasticPPGap``, ``ElasticPP``,
+#: ``Elastic``).
+LAWS = {
+    "ent_epp": (dict(kind="ent", k_per_area=1.0e9),
+                dict(kind="epp", k_per_area=1.0e8, tau_b=2.5e5)),
+    "gap_elastic": (dict(kind="epp_gap", k_per_area=1.0e9, tau_b_n=4.0e5,
+                         gap=-1.0e-4),
+                    dict(kind="elastic", k_per_area=1.0e8)),
+    "elastic_epp": (dict(kind="elastic", k_per_area=1.0e9),
+                    dict(kind="epp", k_per_area=1.0e8, tau_b=2.5e5)),
+}
+
+
+def interface_fem(laws: str = "ent_epp"):
     """Two abutting unit squares with one interface ``RL`` across x=1."""
     from apeGmsh._kernel.records._constraints import NormalLaw, TangentialLaw
+
+    normal, tangential = LAWS[laws]
 
     with apeGmsh(model_name="iface", verbose=False) as g:
         left = g.model.geometry.add_rectangle(0, 0, 0, 1, 1)
@@ -60,8 +76,7 @@ def interface_fem():
         g.physical.add(1, [_curve_at_x(right, 1.0)], name="wire")
         g.constraints.interface(
             "face", "wire",
-            normal=NormalLaw(kind="ent", k_per_area=1.0e9),
-            tangential=TangentialLaw(kind="epp", k_per_area=1.0e8, tau_b=2.5e5),
+            normal=NormalLaw(**normal), tangential=TangentialLaw(**tangential),
             thickness=0.5, name="RL")
         return g.mesh.queries.get_fem_data()
 
@@ -105,7 +120,8 @@ def _write(path: Path, fem, declare) -> Path:
 def files(tmp_path_factory) -> dict[str, Path]:
     d = tmp_path_factory.mktemp("g4g5")
     return {
-        "iface": _write(d / "iface.h5", interface_fem(), declare_interface),
+        **{laws: _write(d / f"{laws}.h5", interface_fem(laws), declare_interface)
+           for laws in LAWS},
         "corner": _write(d / "corner.h5", corner_fem(), declare_corner),
     }
 
@@ -151,11 +167,18 @@ def _parity(src: Path, declare, ndm: int, ndf: int, tmp_path) -> tuple[str, str]
 # G4 (#1586): /interfaces
 # ---------------------------------------------------------------------------
 
-def test_an_interface_source_deck_equals_the_source_deck(files, tmp_path):
-    want, got = _parity(files["iface"], declare_interface, 2, 2, tmp_path)
+@pytest.mark.parametrize("laws, normal, tangential", [
+    ("ent_epp", "ENT", "ElasticPP"),
+    ("gap_elastic", "ElasticPPGap", "Elastic"),
+    ("elastic_epp", "Elastic", "ElasticPP"),
+])
+def test_an_interface_source_deck_equals_the_source_deck(files, laws, normal,
+                                                         tangential, tmp_path):
+    want, got = _parity(files[laws], declare_interface, 2, 2, tmp_path)
     assert want.count("element zeroLength") == 2
-    assert want.count("uniaxialMaterial ENT") == 2
-    assert want.count("uniaxialMaterial ElasticPP") == 2
+    for token in (normal, tangential):
+        assert len(re.findall(rf"^uniaxialMaterial {token} [2-5] ", want,
+                              re.M)) == 2, token      # one per pair, after "k"
     assert "uniaxialMaterial Elastic 1 30000000.0" in want   # user material first
     assert got.count("# inst.RL") == 2          # compose namespaces the record
     assert got.replace("# inst.RL", "# RL") == want
@@ -164,8 +187,8 @@ def test_an_interface_source_deck_equals_the_source_deck(files, tmp_path):
 def test_two_interface_instances_each_carry_their_own_pairs(files, tmp_path):
     from apeGmsh.opensees.opensees_model import OpenSeesModel
 
-    ops = _bridge(("a", files["iface"], {}),
-                  ("b", files["iface"], {"translate": (5.0, 0.0, 0.0)}),
+    ops = _bridge(("a", files["ent_epp"], {}),
+                  ("b", files["ent_epp"], {"translate": (5.0, 0.0, 0.0)}),
                   ndm=2, ndf=2)
     assert sorted(r.name for r in ops.fem.elements.interfaces) == \
         ["a.RL", "a.RL", "b.RL", "b.RL"]
