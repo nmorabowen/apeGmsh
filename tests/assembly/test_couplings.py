@@ -877,6 +877,25 @@ def test_bad_parity_declarations_raise_and_record_nothing(files, verb, match):
     assert asm.ties == ()
 
 
+@pytest.mark.parametrize("kind", ["kinematic", "distributing"])
+@pytest.mark.parametrize("knob", [{"k": "auto"}, {"k_alpha": 10.0},
+                                  {"k": "auto", "k_alpha": 10.0}])
+def test_auto_stiffness_is_refused_asking_for_an_explicit_k(files, kind, knob):
+    """Maintainer ruling on #1585 (option b): ``k="auto"`` and ``k_alpha``
+    stay refused. The message asks for an explicit ``k`` and says the
+    auto-stiffness may return as a label-based host."""
+    from apeGmsh.assembly import AssemblyError
+
+    asm = _stack(files).node("ref", REF)
+    with pytest.raises(AssemblyError) as info:
+        asm.couple("pier_2.top", kind=kind, reference="ref", **knob)
+    msg = str(info.value)
+    assert "Assembly requires an explicit k" in msg
+    assert "default 1e12" in msg
+    assert "may return later as a label-based host" in msg
+    assert asm.ties == ()
+
+
 def test_the_parity_verbs_share_the_namespace_and_fail_loud(files):
     from apeGmsh.assembly import AssemblyError
 

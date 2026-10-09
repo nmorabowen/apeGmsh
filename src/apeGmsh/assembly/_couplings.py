@@ -277,9 +277,11 @@ def _rbe_control(p: Mapping[str, Any]) -> Any:
     k, k_alpha = p["k"], p["k_alpha"]
     if k == "auto" or k_alpha is not None:
         raise AssemblyError(
-            f"k={k!r}, k_alpha={k_alpha!r}: k='auto' and k_alpha scale the "
-            f"penalty off a host element (-host), which an assembly "
-            f"coupling does not take; give k as a number > 0.")
+            f"k={k!r}, k_alpha={k_alpha!r}: Assembly requires an explicit "
+            f"k, a number > 0 (default 1e12, the fork's, when k is left "
+            f"out). k='auto' and k_alpha scale the penalty off a host "
+            f"element, which the assembly does not take; auto-stiffness "
+            f"may return later as a label-based host.")
     if p["enforce"] not in ("penalty", "al"):
         raise AssemblyError(
             f"enforce={p['enforce']!r}: expected 'penalty' or 'al'.")
