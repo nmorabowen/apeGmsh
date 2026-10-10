@@ -49,11 +49,13 @@ Model and effort are pinned in `.claude/agents/prog-*.md`, so routing depends on
 | `prog-auditor` | Haiku | low | read-only + Bash | KPIs, kill criteria, claim probes |
 
 **Rules:**
-- The reviewer's family must differ from the author's. Every PR body carries an `Author-model:` line.
+- **Opus reviews semantic PRs** (maintainer ruling, recorded in the #1202 handoffs, 2026-10-07 to 10). The cross-family rule (reviewer family differs from the author's) is retired in practice; this records what is done. Every PR body still carries an `Author-model:` line.
 - Mechanical PRs proven by `verify_move` need no reviewer.
 - Designs for irreversible decisions come from both architects, working independently. The orchestrator reconciles them, and the maintainer ratifies.
 
 **The orchestrator session's own model** is set in the model picker. Workers are pinned regardless, so it only affects dispatch.
+
+**The T coordinator.** One live coordinator session runs alongside the link orchestrators. It holds no slice, arbitrates locks, relays the maintainer one question at a time, and runs the weekly triage. The detail lives in the `apegmsh-program` skill, "Coordinator mode".
 
 | Chains | Orchestrator |
 |---|---|
@@ -91,7 +93,7 @@ Model and effort are pinned in `.claude/agents/prog-*.md`, so routing depends on
 | `blocked` | The slice is waiting. |
 | `human-gate` | Needs the maintainer. |
 | `lesson` | A failure class has occurred twice. It must become a rule within 7 days. |
-| `lock:<file>` | One in-flight semantic PR per hub file. Create on demand with `gh label create --force`. |
+| `lock:<file>` | One in-flight semantic PR per hub file. Create on demand with `gh label create --force`. Only a slice that a live session is working may hold a lock, and only the holder carries the label. The queue for a hub lives in board text, not in labels. A chain does not hold a hub across slices. |
 | `freeze:<file>` | A split window is open, announced on the board with an expiry date. Create on demand. |
 
 **WIP:** at most 8 open program PRs at any time.
@@ -114,7 +116,6 @@ gh api repos/{owner}/{repo}/compare/main...<sha> --jq .status
 The result must be `behind` or `identical`.
 
 **The maintainer's decision or click is always needed for:**
-- semantic PRs;
 - ADR acceptance;
 - charter changes;
 - deletions of user-facing features (the legacy viewer, trame, `ModelData`);
@@ -122,7 +123,12 @@ The result must be `behind` or `identical`.
 - anything in the fork repository;
 - raising any ratchet baseline;
 - releases;
-- MEMORY or global-config changes.
+- MEMORY or global-config changes;
+- anything labelled `human-gate`.
+
+**Self-landing of semantic PRs.** A session lands its own semantic PR, with `python scripts/land_pr.py <n>`, once the PR is Opus-approved at the head SHA and every required check is green. The maintainer click for semantic PRs therefore narrows to the list above: ADR acceptance, charter changes, deletions of user-facing features, GitHub settings, and anything labelled `human-gate`.
+
+**Workflow mode.** When the maintainer opts in, a coordinator may run a slice as a background workflow (build, Opus review, land). The workflow's lander obeys the same rules as above. It may not close an issue whose PR says `Refs` rather than `Closes` (observed in #1511, 2026-10-10).
 
 ## 5. Chain map
 
@@ -263,6 +269,7 @@ Ledger: chain issue #<n>; board #1203; charter internal_docs/program/PROGRAM.md.
 - **Structure.** No DeckProgram, ColumnSpec or picture IR. The `BuiltModel` split is dropped. Pure-move splits happen one hub at a time.
 - **Scope.** Cuts of about 37k LOC. Studio is frozen, interop kept.
 - **Viewers: ADR 0112 is canonical** (2026-10-03, maintainer). It supersedes the panel's K21 two-render-technology rule (VTK + matplotlib) with three.js + matplotlib, VTK in sunset, and its chain V replaces the Qt viewers.
+- **Qt viewers are in sunset.** They take only changes that unblock CI or stop a user-facing crash.
 - **Tooling.** `land_pr.py` of about 80 lines; `preflight` is cut; `nav.py` plus the completeness gate.
 
 **Open decisions** (P0.3 in #1193):
