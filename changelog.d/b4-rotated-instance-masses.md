@@ -10,7 +10,8 @@ non-diagonal raises `ComposeError` naming the instance, the nodes and the
 remedy, because OpenSees `mass` takes a diagonal only. Before, every mass row
 was copied verbatim, so a rotated anisotropic mass was silently wrong.
 Isotropic masses, `rotate=None` and instances without masses are
-byte-identical to before. "Diagonal" is decided with a relative tolerance of
-1e-9 on the off-diagonals against the row's largest value. The mass row joins
+byte-identical to before. "Diagonal" is decided per off-diagonal entry, with a
+relative tolerance of 1e-9 against the larger of its two turned diagonal
+values; a rotated instance whose mass is not finite is refused. The mass row joins
 the per-type frame table (`_MASS_FIELDS`); an unclassified `MassRecord` field
 raises `TypeError`.

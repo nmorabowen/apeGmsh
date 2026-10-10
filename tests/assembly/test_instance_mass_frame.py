@@ -253,3 +253,40 @@ def test_refusal_leaves_the_host_model_unchanged(tmp_path):
     assert host.nodes.ids.size == n_nodes
     assert len(host.composed_from) == n_modules
     assert host.nodes.masses.mass_array().tobytes() == masses_before
+
+
+# ---------------------------------------------------------------------------
+# Review fixes: per-pair tolerance (F1) and non-finite input (F2)
+# ---------------------------------------------------------------------------
+
+def test_tiny_anisotropic_pair_beside_a_huge_value_is_still_refused():
+    """A triple-max tolerance would hide ``1e-6`` vs ``2e-6`` behind ``1000``."""
+    rec = MassRecord(node_id=1, mass=(1e-6, 2e-6, 1000.0, 0.0, 0.0, 0.0))
+    with pytest.raises(ComposeError, match="node\\(s\\) 1 into"):
+        _rewrite([rec], ROT_Z_30)
+
+
+def test_tiny_pair_beside_a_huge_value_survives_a_permutation():
+    """The pair scale is the turned diagonal: a cyclic turn puts ``1000``
+    into the pairs it contaminates at roundoff, and the values permute."""
+    rec = MassRecord(node_id=1, mass=(1e-6, 2e-6, 1000.0, 0.0, 0.0, 0.0))
+    assert _rows(_rewrite([rec], ROT_111_120)) == [
+        (1000.0, 1e-6, 2e-6, 0.0, 0.0, 0.0)]
+
+
+@pytest.mark.parametrize("mass, rotate", [
+    ((math.nan, 2.0, 3.0, 0.0, 0.0, 0.0), ROT_Z_30),
+    ((math.inf, 2.0, 3.0, 0.0, 0.0, 0.0), ROT_X_90),
+    ((math.nan, math.nan, math.nan, 0.0, 0.0, 0.0), ROT_Z_90),
+    ((1.0, 1.0, 1.0, 0.0, -math.inf, 0.0), ROT_Z_90),
+])
+def test_non_finite_mass_under_a_rotation_is_refused(mass, rotate):
+    rec = MassRecord(node_id=7, mass=mass)
+    with pytest.raises(ComposeError, match="node\\(s\\) 7 is not finite"):
+        _rewrite([rec], rotate)
+
+
+def test_non_finite_mass_without_a_rotation_is_left_alone():
+    rec = MassRecord(node_id=7, mass=(math.nan, 2.0, 3.0, 0.0, 0.0, 0.0))
+    (got,) = _rewrite([rec], None)
+    assert math.isnan(got.mass[0]) and got.mass[1:] == rec.mass[1:]

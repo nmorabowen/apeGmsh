@@ -1098,8 +1098,9 @@ _MASS_FIELDS: dict[str, dict[str, str]] = {
     "MassRecord": {"node_id": "tag", "mass": "diagonal", "name": "name"},
 }
 
-#: A turned mass tensor counts as diagonal when every off-diagonal entry
-#: is within this fraction of the row's largest diagonal value.
+#: A turned mass tensor counts as diagonal when each off-diagonal entry
+#: ``(i, j)`` is within this fraction of the larger of its two turned
+#: diagonal values ``|M_ii|``, ``|M_jj|``.
 _MASS_DIAGONAL_RTOL = 1e-9
 
 
@@ -1116,8 +1117,9 @@ def _place_mass_columns(
     ``(Ixx, Iyy, Izz)``, and each turns as ``R diag(d) Rᵀ``. Rows whose
     triple is isotropic (``d == m I``, which ``R`` leaves alone) and
     ``rotate=None`` are left untouched. Otherwise the turned tensor must
-    be diagonal within :data:`_MASS_DIAGONAL_RTOL` of the row's largest
-    entry (axis-aligned rotations permute the values; a rotation about the
+    be diagonal, each off-diagonal entry within :data:`_MASS_DIAGONAL_RTOL`
+    of the larger of its two turned diagonal values (axis-aligned rotations
+    permute the values; a rotation about the
     axis of a transversely isotropic triple keeps them), and the emitted
     values are the source entries themselves, matched to the turned
     diagonal, so every surviving value stays byte-identical to the deck's
@@ -1130,6 +1132,14 @@ def _place_mass_columns(
     """
     if rotate is None or mass.shape[0] == 0:
         return mass
+    finite = np.isfinite(mass).all(axis=1)
+    if not finite.all():
+        broken = node_ids[~finite]
+        shown = ", ".join(str(int(i)) for i in broken[:5])
+        raise ComposeError(
+            f"compose: instance {label!r} is rotated, but the mass on "
+            f"node(s) {shown} is not finite, so it cannot be turned; fix "
+            f"the source masses or compose it without rotate=.")
     # ``_apply_geometric_transform`` maps rows by ``x @ R.T``, so the
     # identity stack comes back as ``R.T`` (and as ``I`` for the
     # degenerate zero axis it tolerates).
@@ -1146,10 +1156,14 @@ def _place_mass_columns(
         inverse = np.asarray(inverse).reshape(-1)
         turned = np.einsum("ik,nk,jk->nij", R, uniq, R)      # (U, 3, 3)
         diag = np.einsum("nii->ni", turned)                   # (U, 3)
-        off = turned.copy()
+        off = np.abs(turned)
         off[:, (0, 1, 2), (0, 1, 2)] = 0.0
-        scale = np.abs(uniq).max(axis=1)
-        bad = np.abs(off).max(axis=(1, 2)) > _MASS_DIAGONAL_RTOL * scale
+        # Each off-diagonal entry is judged against its own pair of turned
+        # diagonal values, so a tiny mass beside a huge one is not hidden
+        # by the huge one; ``~(a <= b)`` keeps a NaN from passing.
+        mag = np.abs(diag)
+        scale = np.maximum(mag[:, :, None], mag[:, None, :])    # (U, 3, 3)
+        bad = ~(off <= _MASS_DIAGONAL_RTOL * scale).all(axis=(1, 2))
         if bad.any():
             offenders = node_ids[rows[np.isin(inverse, np.flatnonzero(bad))]]
             shown = ", ".join(str(int(i)) for i in offenders[:5])
