@@ -2,7 +2,7 @@
   "entries": {
     "Assembly": {
       "doc": "Instances of saved ``model.h5`` files joined by assembly-level ties.",
-      "signature": "Assembly(name: 'str') -> 'None'",
+      "signature": "Assembly(name: 'str', *, host: \"'FEMData | str | Path | None'\" = None) -> 'None'",
       "skill": "references/compose.md",
       "symbol": "Assembly"
     },
@@ -35,6 +35,12 @@
       "signature": "equal_dof_mixed(master: 'str', slave: 'str', *, dof_pairs: 'Sequence[Sequence[int]]', tolerance: 'float' = 1e-06, name: \"'str | None'\" = None) -> \"'Assembly'\"",
       "skill": "references/compose.md",
       "symbol": "Assembly.equal_dof_mixed"
+    },
+    "Assembly.fem": {
+      "doc": "The merged snapshot: the host (if any), every instance, every tie.",
+      "signature": "fem() -> \"'FEMData'\"",
+      "skill": "references/compose.md",
+      "symbol": "Assembly.fem"
     },
     "Assembly.from_h5": {
       "doc": "Re-list the instances and ties an assembly archive declares.",

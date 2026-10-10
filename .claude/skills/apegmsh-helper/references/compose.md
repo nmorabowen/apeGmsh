@@ -75,6 +75,20 @@ again = Assembly.from_h5("stack.h5")   # re-lists instances/nodes/ties only
   rank 0; cross-instance MP lines on every owning rank (INV-9). The
   partitioned deck auto-emits `ParallelPlain` / `Mumps` with serial fallbacks
   unless you declare numberer/system.
+- **One graph on N ranks (ADR 0120 D2).** `asm.fem()` is the merged
+  `FEMData` without a bridge; `fem.repartition(n, weights=None)` cuts ANY
+  snapshot into `n` ranks by recursive coordinate bisection of the element
+  centroids (weight = node count, or `{"hex8": 8, "quad4": 20, "point1": 0}`,
+  or `f(type_name, ids, centroids)`), ignoring module boundaries — the route to
+  16-32 ranks for a structure + soil box. Ids run `1..n`; `n=1` unpartitions.
+  Cross-rank embedded / tie couplings follow ADR 0027; element-less nodes are
+  routed by the bridge (D1).
+- **Hosted assembly (ADR 0120 D3)** — "graft this FEM into that one":
+  `Assembly(name, host=fem_or_model_h5)`. The host keeps its ids and BARE names
+  (a bare port names a host PG/label: `asm.embedded("soil.pit", "Mat")`);
+  instances are namespaced as usual. Build with `fem()` (unpartitioned):
+  `ops = apeSees(asm.fem().repartition(16))`. Refused on a hosted assembly:
+  `node()`, `partition_rank`, `bridge()`, `h5()` (write `ops.h5(path)`).
 - **Archive (D5).** `asm.h5(path)` refuses before `bridge()`, after a new
   declaration, or on a `from_h5` result. `Assembly.from_h5` never opens the
   instance files and cannot `bridge()` / `h5()`; rebuild the model with

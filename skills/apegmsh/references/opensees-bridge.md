@@ -191,10 +191,18 @@ ops.element.ZeroLength(nodes=("boundary_node", gnd),           # mesh-node label
 - **Node-pair `nodes=(i, j)`** works on `ZeroLength` / `CoupledZeroLength` /
   `TwoNodeLink` (mutually exclusive with `pg=`). Both ends must carry **equal
   `ndf`** (G1 fails loud otherwise) and resolve to **distinct** nodes. Not for
-  `ZeroLengthSection` (non-adaptive — use `pg=` or a plain `ZeroLength`). v1
-  limits: global-only (no stage binding), fails loud under partitioned/MPI emit,
-  and not drawn in the viewer (no mesh cell). Int endpoints are a non-compose-safe
-  escape hatch — prefer a handle or label.
+  `ZeroLengthSection` (non-adaptive — use `pg=` or a plain `ZeroLength`).
+  Limits: global-only (no stage binding) and not drawn in the viewer (no mesh
+  cell). Int endpoints are a non-compose-safe escape hatch — prefer a handle or
+  label.
+- **Partitioned / MPI emit (ADR 0120 D1).** A node-pair element is written on
+  the lowest rank holding both endpoints. An element-less node (a decoupled
+  ground or side node) is in no Gmsh partition, so `build()` routes it to the
+  lowest rank of the mesh node it is tied to (through the spring or an MP
+  record); its `node`, `ndf`, `fix`, `mass` and a side node's `equalDOF` go to
+  that rank only. A spring between two mesh nodes held by no common rank raises
+  `BridgeError` (reach the far node through a decoupled node + `equal_dof`), and
+  so does a stage-claimed node-pair under MPI.
 - **`Viscous` / `ViscousDamper` / `Maxwell`** are the rate-dependent (dashpot)
   uniaxials — they produce a velocity-proportional force with **no `-doRayleigh`**.
   A pure `Viscous` has zero static stiffness → parallel it with an elastic spring

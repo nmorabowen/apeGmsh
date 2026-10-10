@@ -104,20 +104,19 @@ class Assembly:
     """Instances of saved ``model.h5`` files joined by assembly-level ties.
 
     See the module docstring. ``name`` is the assembly's own name.
+
+    ``host`` (ADR 0120 D3) is a ``FEMData`` or a ``model.h5`` path the
+    instances are grafted onto. The host keeps its node and element ids and
+    its bare group and label names, which ports name directly (``"Base"``,
+    beside ``"soil.pit"``). A hosted assembly has no reference nodes and no
+    ``partition_rank``; it is built with :meth:`fem`, not :meth:`bridge`
+    (the host carries no ``/opensees`` content to rehydrate):
+    ``apeSees(asm.fem())``, or ``asm.fem().repartition(n)`` for an MPI deck.
     """
 
     def __init__(
         self, name: str, *, host: "FEMData | str | Path | None" = None,
     ) -> None:
-        """``host`` (ADR 0120 D3): a ``FEMData`` or a ``model.h5`` path the
-        instances are grafted onto. The host keeps its node and element ids
-        and its bare group and label names, which ports name directly
-        (``"Base"``, beside ``"soil.pit"``). A hosted assembly has no
-        reference nodes and no ``partition_rank``; it is built with
-        :meth:`fem`, not :meth:`bridge` (the host carries no ``/opensees``
-        content to rehydrate): ``apeSees(asm.fem())``, or
-        ``asm.fem().repartition(n)`` for an MPI deck.
-        """
         if not isinstance(name, str) or not name:
             raise AssemblyError("Assembly(name=) requires a non-empty string.")
         self.name = name
