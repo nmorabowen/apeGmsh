@@ -28,6 +28,7 @@ from ...material.uniaxial import (
     LadrunoUniaxialJ2,
     Maxwell,
     MultiLinear,
+    Parallel,
     PySimple1,
     PyTzQzType,
     QzSimple1,
@@ -462,6 +463,30 @@ class _UniaxialMaterialNS(_BridgeNamespace):
         )
         return self._bridge._register(
             InitialStress(base_material=base_material, sigma_init=sigma_init),
+            name=name,
+        )
+
+    def Parallel(
+        self, *,
+        materials: Sequence[UniaxialMaterial | str],
+        factors: Sequence[float] | None = None,
+        name: str | None = None,
+    ) -> Parallel:
+        """``uniaxialMaterial Parallel`` — members in parallel, each
+        scaled by an optional ``-factors`` entry.
+
+        ``materials`` accepts UniaxialMaterial handles or their
+        registered names. ``factors`` is one finite number per member,
+        or ``None`` to omit ``-factors``. See :class:`Parallel`.
+        """
+        members = tuple(
+            self._bridge._resolve(m, base=UniaxialMaterial) for m in materials
+        )
+        return self._bridge._register(
+            Parallel(
+                materials=members,
+                factors=None if factors is None else tuple(factors),
+            ),
             name=name,
         )
 

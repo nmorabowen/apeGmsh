@@ -35,6 +35,22 @@ if TYPE_CHECKING:
 __all__ = ["Aggregator", "AGGREGATOR_DOF_CODES"]
 
 
+def _rate_dependent_member(mat: UniaxialMaterial) -> UniaxialMaterial | None:
+    """The first rate-dependent uniaxial in ``mat`` or its uniaxial
+    dependencies (a ``Parallel`` member, a wrapped base), else ``None``."""
+    stack: list[Primitive] = [mat]
+    seen: set[int] = set()
+    while stack:
+        p = stack.pop()
+        if id(p) in seen or not isinstance(p, UniaxialMaterial):
+            continue
+        seen.add(id(p))
+        if p.is_rate_dependent:
+            return p
+        stack.extend(p.dependencies())
+    return None
+
+
 #: The six DOF codes accepted by ``section Aggregator``.  Anything
 #: outside this set fails validation in :class:`Aggregator`'s
 #: ``__post_init__``.
@@ -100,14 +116,16 @@ class Aggregator(Section):
                     f"UniaxialMaterial primitive, got "
                     f"{type(mat).__name__!r}."
                 )
-            if mat.is_rate_dependent:
+            rate_mat = _rate_dependent_member(mat)
+            if rate_mat is not None:
                 # section Aggregator feeds its uniaxials the 1-arg
                 # setTrialStrain (no rate), and ZeroLengthSection never
                 # passes a section strain rate — a rate-dependent
-                # material here is SILENTLY inert as a dashpot. Fail loud.
+                # material here is SILENTLY inert as a dashpot, also
+                # when it sits inside a wrapper (Parallel). Fail loud.
                 raise ValueError(
-                    f"Aggregator: materials_by_dof[{code!r}] is a "
-                    f"rate-dependent material ({type(mat).__name__!r}), "
+                    f"Aggregator: materials_by_dof[{code!r}] is or holds a "
+                    f"rate-dependent material ({type(rate_mat).__name__!r}), "
                     f"which is silently inert inside a section "
                     f"Aggregator — neither the aggregator nor "
                     f"zeroLengthSection passes a strain rate, so it "

@@ -4074,6 +4074,12 @@
       "skill": "references/opensees-bridge.md",
       "symbol": "ops.uniaxialMaterial.MultiLinear"
     },
+    "ops.uniaxialMaterial.Parallel": {
+      "doc": "``uniaxialMaterial Parallel`` — members in parallel, each",
+      "signature": "Parallel(*, materials: 'Sequence[UniaxialMaterial | str]', factors: 'Sequence[float] | None' = None, name: 'str | None' = None) -> 'Parallel'",
+      "skill": "references/opensees-bridge.md",
+      "symbol": "ops.uniaxialMaterial.Parallel"
+    },
     "ops.uniaxialMaterial.PySimple1": {
       "doc": "``uniaxialMaterial PySimple1`` — lateral soil–pile (p-y) spring.",
       "signature": "PySimple1(*, soil_type: 'PyTzQzType', pult: 'float', y50: 'float', Cd: 'float', c: 'float' = 0.0, name: 'str | None' = None) -> 'PySimple1'",
