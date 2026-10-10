@@ -780,10 +780,10 @@ def test_single_stamp_file_fallback_lineage_is_envelope(tmp_path: Any) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_opensees_reader_version_is_2_24_0() -> None:
-    """Schema 2.24.0 — ``/opensees@will_solve`` / ``@solve_refusals`` /
-    ``@requires`` (ADR 0114 D6, #1462)."""
-    assert reader_version(OPENSEES) == SchemaVersion(2, 24, 0)
+def test_opensees_reader_version_is_2_25_0() -> None:
+    """Schema 2.25.0 — ``/opensees/decls``, hash-excluded (ADR 0114 R5,
+    K1-6, #1463)."""
+    assert reader_version(OPENSEES) == SchemaVersion(2, 25, 0)
 
 
 def test_constraints_group_present_when_emitted(tmp_path: Any) -> None:

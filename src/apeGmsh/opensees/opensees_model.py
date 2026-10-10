@@ -214,6 +214,10 @@ class OpenSeesModel:
     #: refusal; ``build('live')`` refuses on stock openseespy when
     #: ``requires`` names the fork; ``to_h5`` echoes the stamp.
     _solve_stamp: "SolveStamp | None" = None
+    #: ``/opensees/decls`` (ADR 0114 R5, K1-6, opensees 2.25.0) as the
+    #: reader's ``DeclarationTable``, or ``None`` for a file without it
+    #: (below 2.25.0, or written by no bridge emit).
+    _declarations: "Any | None" = None
 
     # ------------------------------------------------------------------
     # Construction
@@ -337,6 +341,7 @@ class OpenSeesModel:
             program = model.program()
             commands = model.commands()
             solve_stamp = model.solve_stamp()
+            declarations = model.declarations()
 
             elements = cls._load_elements(model)
             fixes, masses = cls._load_bcs(model)
@@ -400,6 +405,7 @@ class OpenSeesModel:
             _program=program,
             _commands=commands,
             _solve_stamp=solve_stamp,
+            _declarations=declarations,
         )
 
     @classmethod
@@ -790,6 +796,20 @@ class OpenSeesModel:
         (``UniformExcitation``) keep their body in ``args``.
         """
         return self._patterns
+
+    @property
+    def declarations(self) -> "Any | None":
+        """The archive's declarations (ADR 0114 R5, K1-6, opensees 2.25.0).
+
+        A :class:`~apeGmsh.opensees.emitter.h5_reader.DeclarationTable`:
+        every bridge declaration's key (``opensees/<family>/<name|#k>``)
+        and ``name=``, joined to its tags (``for_tag(kind, tag)``) and to
+        the rows of the tagless stores (``for_row("bcs/fix", i)``), so
+        the names given to ``fix``, ``mass`` and the recorders read back.
+        ``None`` for a file that carries none (below 2.25.0, or one no
+        bridge emit wrote).
+        """
+        return self._declarations
 
     @property
     def solve_stamp(self) -> "SolveStamp | None":
@@ -1461,6 +1481,10 @@ class OpenSeesModel:
                 solve_refusals=self._solve_stamp.solve_refusals,
                 solve_refusals_flat=self._solve_stamp.solve_refusals_flat,
             )
+        # ADR 0114 R5 (K1-6): echo the declarations; the replay keeps
+        # every store's row order, so the rows columns still apply.
+        if self._declarations is not None:
+            emitter_fresh.restore_declarations(self._declarations)
         _compose_model_h5(
             self._fem,
             emitter_fresh,
