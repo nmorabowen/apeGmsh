@@ -8489,8 +8489,8 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
 
         Returns the :class:`~apeGmsh.opensees._internal.spring_bed.SpringBed`
         record (node tags, ``k``, ``c``, areas, orientations, specs).
-        Partitioned emit refuses node-pair elements (ADR 0049), so a bed
-        emits single-process only.
+        A partitioned emit routes each spring, its ground and side nodes and
+        their ``equalDOF`` to the rank of the structural node (ADR 0120).
         """
         from ._internal.spring_bed import build_spring_bed
 
