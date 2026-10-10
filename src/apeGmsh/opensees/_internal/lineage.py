@@ -92,9 +92,14 @@ WARNING_PREFIX: str = "[lineage] "
 #: lineage, so it is excluded on the same grounds.  ``decls`` (ADR 0114
 #: R5, K1-6) carries the declaration keys and the ``name=`` of every
 #: declaration, fix and mass included: labels again (A7), excluded so a
-#: rename never drifts ``model_hash``.
+#: rename never drifts ``model_hash``.  ``decl_params`` (K1-7) is the
+#: declarations' parameters by field name: a derived view of the hashed
+#: stores (the values are already hashed through each store's row), so
+#: hashing it again would only make ``model_hash`` depend on the field
+#: encoding; excluded on the same grounds as ``decls``.
 MODEL_HASH_EXCLUDED_CHILDREN: frozenset[str] = frozenset(
-    {"cuts", "sweeps", "regions", "names", "computed_sections", "decls"}
+    {"cuts", "sweeps", "regions", "names", "computed_sections", "decls",
+     "decl_params"}
 )
 
 #: blake2b digest size — matches today's ``snapshot_id`` (16 bytes ⇒

@@ -22,10 +22,15 @@ apeGmsh package is imported. What it pins:
     call under ``src/apeGmsh/opensees/`` passes a literal verb that is a
     ``via == "command"`` row, from a ``_emit`` method of a class (or from
     ``_internal/compose.py``, K2's replay). A non-literal verb, a token
-    without such a row, or any other caller fails.
+    without such a row, or any other caller fails;
+(h) the ``params_names`` ratchet (K1-7, ADR 0114 Q4): the sampled
+    primitives whose store argv is not their dataclass fields, by the
+    writer's own ``decl_argv_names``, are exactly the lines of
+    ``params_names_ledger.txt``, whose ``N_LEDGER`` may only go down.
 
-It reads source, not behaviour: an archive body that stores the wrong
-thing is K2's round-trip oracle.
+(a)-(g) read source, not behaviour: an archive body that stores the wrong
+thing is K2's round-trip oracle. (h) is the one check that imports
+apeGmsh, inside its own functions, since the argv exists only at emit.
 """
 from __future__ import annotations
 
@@ -115,10 +120,10 @@ def _assigned_names(cls: ast.ClassDef) -> set[str]:
     return names
 
 
-def _read_ledger() -> tuple[int, frozenset[str]]:
+def _read_ledger(path: Path = _LEDGER_FILE) -> tuple[int, frozenset[str]]:
     n_ledger: int | None = None
     names: list[str] = []
-    for raw in _LEDGER_FILE.read_text(encoding="utf-8").splitlines():
+    for raw in path.read_text(encoding="utf-8").splitlines():
         line = raw.strip()
         if not line or line.startswith("#"):
             continue
@@ -126,8 +131,8 @@ def _read_ledger() -> tuple[int, frozenset[str]]:
             n_ledger = int(line.split("=", 1)[1])
             continue
         names.append(line)
-    assert n_ledger is not None, "verbs_ledger.txt has no N_LEDGER line"
-    assert len(names) == len(set(names)), "verbs_ledger.txt repeats a verb"
+    assert n_ledger is not None, f"{path.name} has no N_LEDGER line"
+    assert len(names) == len(set(names)), f"{path.name} repeats a line"
     return n_ledger, frozenset(names)
 
 
@@ -631,3 +636,121 @@ class H5Emitter:
     assert _raises_refusal(methods["mass"], methods, names, skip=skip)
     assert _raises_refusal(methods["element"], methods, names, skip=skip)
     assert not _raises_refusal(methods["node"], methods, names, skip=skip)
+
+
+# ---------------------------------------------------------------------------
+# (h) The params_names ratchet (K1-7, #1464): argv equals fields
+# ---------------------------------------------------------------------------
+
+#: The shrink-only ledger of sampled primitives whose store argv is not
+#: their dataclass fields, as ``<verb>.<Class>``; ``N_LEDGER`` may only
+#: go down. The verbs are the flat-argv stores ``params_names`` is derived
+#: from (``H5Emitter._argv_by_tag``).
+_PARAMS_LEDGER_FILE = Path(__file__).with_name("params_names_ledger.txt")
+
+
+def _sampled_primitives() -> list[tuple[str, object]]:
+    """``(verb, instance)`` for every contract-sampled primitive of the
+    flat-argv families (the ``ALL_*`` rosters' minimal instances), plus
+    one instance of each integration rule and damping object, which have
+    no roster of their own."""
+    from apeGmsh.opensees import integration as integ
+    from apeGmsh.opensees.damping import damping as damp
+    from apeGmsh.opensees.material.uniaxial import Steel01
+    from apeGmsh.opensees.section.beam import ElasticSection
+    from apeGmsh.opensees.time_series.time_series import Constant
+
+    from .test_nd_material_contract import ALL_ND, _instantiate
+    from .test_section_contract import ALL_SECTIONS, _make_minimal
+    from .test_time_series_contract import ALL_TIME_SERIES, _minimal_instance
+    from .test_uniaxial_material_contract import ALL_UNIAXIAL, _minimal
+
+    sec = ElasticSection(E=200e9, A=0.01, Iz=1e-4)
+    out: list[tuple[str, object]] = []
+    out += [("uniaxialMaterial", _minimal(c)) for c in ALL_UNIAXIAL]
+    out += [("nDMaterial", _instantiate(c)) for c in ALL_ND]
+    out += [("section", _make_minimal(c)) for c in ALL_SECTIONS]
+    out += [("timeSeries", _minimal_instance(c)) for c in ALL_TIME_SERIES]
+    out += [("beamIntegration", c(section=sec, n_ip=3)) for c in (
+        integ.Lobatto, integ.Legendre, integ.NewtonCotes, integ.Radau,
+        integ.Trapezoidal)]
+    out += [("beamIntegration", c(
+        section_i=sec, lp_i=0.1, section_j=sec, lp_j=0.1, section_interior=sec,
+    )) for c in (integ.HingeRadau, integ.HingeRadauTwo, integ.HingeMidpoint,
+                 integ.HingeEndpoint)]
+    out += [
+        ("damping", damp.Uniform(zeta=0.05, freq1=1.0, freq2=10.0)),
+        ("damping", damp.SecStif(beta=0.01)),
+        ("damping", damp.URD(points=((1.0, 0.05), (10.0, 0.05)))),
+        ("damping", damp.URDbeta(points=((1.0, 0.01), (10.0, 0.01)))),
+    ]
+    assert any(isinstance(p, Steel01) for _v, p in out) and any(
+        isinstance(p, Constant) for _v, p in out)
+    return out
+
+
+def _argv_mismatches() -> frozenset[str]:
+    """The sampled primitives whose argv is not their fields, by the
+    writer's own rule (``decl_argv_names``): each is emitted into a
+    ``RecordingEmitter`` with a stub resolver; its store row is the one
+    ``verb`` call's args after the type token and the tag (a primitive
+    that emits anything else, a ``Fiber`` section's block, has no flat
+    row and is unnamed)."""
+    from apeGmsh.opensees._internal.tag_resolution import set_tag_resolver
+    from apeGmsh.opensees.emitter.h5 import decl_argv_names, encode_decl_params
+    from apeGmsh.opensees.emitter.recording import RecordingEmitter
+
+    out: set[str] = set()
+    for verb, prim in _sampled_primitives():
+        rec = RecordingEmitter()
+        tags: dict[int, int] = {}
+        set_tag_resolver(rec, lambda p: tags.setdefault(id(p), 100 + len(tags)))
+        prim._emit(rec, tag=1)  # type: ignore[attr-defined]
+        params = encode_decl_params(prim, lambda p: f"k{id(p)}")
+        calls = rec.calls
+        names = None
+        if len(calls) == 1 and calls[0][0] == verb:
+            names = decl_argv_names(
+                params, calls[0][1][2:], lambda k: tags.get(int(k[1:])))
+        if names is None:
+            out.add(f"{verb}.{type(prim).__name__}")
+    return frozenset(out)
+
+
+def _check_params_ledger(
+    n_ledger: int, listed: frozenset[str], mismatches: frozenset[str],
+) -> None:
+    assert len(listed) == n_ledger, (
+        f"params_names_ledger.txt lists {len(listed)} primitives but "
+        f"N_LEDGER = {n_ledger}")
+    assert len(mismatches) <= n_ledger, (
+        f"{len(mismatches)} primitives whose argv is not their fields exceed "
+        f"N_LEDGER = {n_ledger}; the ledger may only shrink")
+    assert mismatches == listed, (
+        f"new unnamed primitives (make the argv the fields, or report): "
+        f"{sorted(mismatches - listed)}; primitives now named (delete their "
+        f"lines and lower N_LEDGER): {sorted(listed - mismatches)}")
+
+
+def test_h_params_names_ledger_only_shrinks() -> None:
+    n_ledger, listed = _read_ledger(_PARAMS_LEDGER_FILE)
+    mismatches = _argv_mismatches()
+    # The rule names something: a plain material's argv is its fields.
+    assert "uniaxialMaterial.Steel01" not in mismatches
+    _check_params_ledger(n_ledger, listed, mismatches)
+
+
+def test_h_a_grown_or_stale_ledger_fails() -> None:
+    n_ledger, listed = _read_ledger(_PARAMS_LEDGER_FILE)
+    mismatches = _argv_mismatches()
+    # A line for a primitive that is named (stale), with or without the
+    # count raised; and a new unnamed primitive outside the ledger.
+    with pytest.raises(AssertionError):
+        _check_params_ledger(
+            n_ledger + 1, listed | {"uniaxialMaterial.Steel01"}, mismatches)
+    with pytest.raises(AssertionError):
+        _check_params_ledger(
+            n_ledger, listed | {"uniaxialMaterial.Steel01"}, mismatches)
+    with pytest.raises(AssertionError):
+        _check_params_ledger(
+            n_ledger, listed, mismatches | {"uniaxialMaterial.New"})

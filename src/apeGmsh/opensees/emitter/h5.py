@@ -121,11 +121,14 @@ if TYPE_CHECKING:
 
 
 __all__ = [
-    "Declaration", "DeclTagRun", "H5Emitter", "SCHEMA_FLOOR", "SCHEMA_VERSION",
+    "Declaration", "DeclParamsRow", "DeclTagRun", "H5Emitter",
+    "SCHEMA_FLOOR", "SCHEMA_VERSION",
+    "H5DeclParamsError",
     "H5EquationConstraintDeviationWarning",
     "H5FeatureDeferredWarning",
     "H5LedgerWarning",
     "H5ReinforceDeviationWarning",
+    "decl_argv_names", "encode_decl_params",
 ]
 
 
@@ -531,7 +534,24 @@ class H5RefusedVerb(NotImplementedError):
 #:     Written only when the bridge drove the emit (``set_declarations``).
 #:     A 2.25 reader opens 2.12 through 2.25; a 2.24.x reader REFUSES a
 #:     2.25.x file.
-SCHEMA_VERSION: str = "2.25.0"
+#:   * 2.26.0 — ADR 0114 A6/Q4 (K1-7): additive — new optional
+#:     ``/opensees/decl_params`` group hanging off ``decls``: every
+#:     registered primitive's parameters **by field name**, encoded
+#:     generically from ``dataclasses.fields(prim)`` (``decl`` = the
+#:     ``decls`` row; ``type`` = the primitive class; ``params`` = one
+#:     JSON object per row, a reference to another primitive stored as
+#:     its declaration key ``{"$decl": key}``; ``params_names`` = the
+#:     field name of every argv slot of the declaration's store row when
+#:     the argv equals the fields, ``""`` otherwise; ``transf_ref``,
+#:     ``integration_ref``, ``section_ref`` = the declaration key of the
+#:     primitive's ``GeomTransf`` / ``BeamIntegration`` / ``Section``
+#:     field, ``""`` when it has none). A derived view of the hashed
+#:     stores: ``decl_params`` is in ``MODEL_HASH_EXCLUDED_CHILDREN``, so
+#:     ``model_hash`` is unchanged. Written only when the bridge handed
+#:     the primitives in (``set_decl_params``); an unknown field shape
+#:     refuses the write. A 2.26 reader opens 2.12 through 2.26; a
+#:     2.25.x reader REFUSES a 2.26.x file.
+SCHEMA_VERSION: str = "2.26.0"
 
 #: Oldest opensees-zone minor the reader opens (ADR 0113 (#1303)). The
 #: zone's last non-additive minor is 2.11.0, the 0-based rank flip, but
@@ -1097,6 +1117,236 @@ class Declaration(NamedTuple):
 #: tags ``first .. first + count - 1`` of allocator kind ``kind`` belong
 #: to declaration ``decl`` (an index into the declaration rows).
 DeclTagRun = tuple[str, int, int, int]
+
+
+class H5DeclParamsError(TypeError):
+    """A primitive field holds a shape ``/opensees/decl_params`` cannot
+    store by name (K1-7). Raised at write, never skipped: an archive that
+    silently dropped a field would read back as a different declaration.
+    """
+
+
+#: The non-dataclass objects a primitive field may hold, by qualified
+#: class name, stored as ``{"$opaque": <class>}``: their lowering lives in
+#: the hashed stores (a transform's per-element ``vecxz``, the
+#: ``computed_sections`` sidecar), so the name is the whole record. Any
+#: other object refuses.
+_OPAQUE_FIELD_TYPES: frozenset[str] = frozenset({
+    "apeGmsh.opensees._orientation.Cartesian",
+    "apeGmsh.opensees._orientation.Cylindrical",
+    "apeGmsh.opensees._orientation.Spherical",
+    "apeGmsh.opensees._orientation.AlongBeam",
+    "apeGmsh.sections._analysis.SectionProperties",
+})
+
+#: The ``decls`` families a ``*_ref`` column of ``decl_params`` names:
+#: the first top-level field holding a primitive of that family.
+_REF_COLUMNS: tuple[tuple[str, str], ...] = (
+    ("transf_ref", "geomTransf"),
+    ("integration_ref", "beamIntegration"),
+    ("section_ref", "section"),
+)
+
+#: The tagged stores whose rows carry one flat argv per tag, the domain
+#: of ``params_names`` (ADR 0114 Q4): the archive names a declaration's
+#: argv slots only where its store row *is* the fields. An element row
+#: carries node tags, a complex section (``Fiber``) spans several calls,
+#: a chain component writes no tag: unnamed.
+_ARGV_STORE_KINDS: frozenset[str] = frozenset({
+    "uniaxialMaterial", "nDMaterial", "section", "beamIntegration",
+    "timeSeries", "damping",
+})
+
+
+def _qualname(value: object) -> str:
+    t = type(value)
+    return f"{t.__module__}.{t.__qualname__}"
+
+
+def encode_decl_params(
+    prim: object, key_of: Callable[[object], str],
+) -> dict[str, Any]:
+    """Encode ``prim``'s fields by name for ``/opensees/decl_params`` (K1-7).
+
+    ``prim`` is a registered primitive (a dataclass). ``key_of`` maps a
+    primitive another field references to its declaration key and raises
+    :class:`KeyError` for one the bridge never registered. The result is
+    a JSON-ready mapping, field name -> value, in field order:
+
+    * ``None``, ``bool``, ``int``, ``float`` (finite), ``str``: as is;
+    * a :class:`Primitive`: ``{"$decl": key}``;
+    * a tuple or list: a list, element by element (nested lists kept);
+    * a mapping with ``str`` keys: an object, key by key;
+    * a non-primitive dataclass (a ``Fiber`` patch, a ``ShellLayer``):
+      ``{"$struct": <class>, "fields": {...}}``;
+    * an object in :data:`_OPAQUE_FIELD_TYPES`: ``{"$opaque": <class>}``.
+
+    Every other shape (an ``ndarray``, a set, an ``Enum``, a non-finite
+    float, a mapping keyed by anything but a plain ``str``, an unlisted
+    object) raises :class:`H5DeclParamsError` naming the field.
+    """
+    import dataclasses
+
+    if not dataclasses.is_dataclass(prim) or isinstance(prim, type):
+        raise H5DeclParamsError(
+            f"decl_params: {type(prim).__name__} is not a dataclass "
+            "primitive; every registered primitive is one (P12).")
+    return {
+        f.name: _encode_field(
+            getattr(prim, f.name), key_of, f"{type(prim).__name__}.{f.name}")
+        for f in dataclasses.fields(prim)
+    }
+
+
+def _encode_field(
+    value: Any, key_of: Callable[[object], str], where: str,
+) -> Any:
+    import dataclasses
+    import math
+    import numbers
+
+    from .._internal.types import Primitive
+
+    if value is None or isinstance(value, (bool, str)):
+        return value
+    if isinstance(value, numbers.Integral):
+        return int(value)
+    if isinstance(value, numbers.Real):
+        v = float(value)
+        if not math.isfinite(v):
+            raise H5DeclParamsError(
+                f"decl_params: {where} is {v!r}; a non-finite value has no "
+                "exact JSON form, so the field cannot be stored by name.")
+        return v
+    if isinstance(value, Primitive):
+        try:
+            return {"$decl": key_of(value)}
+        except KeyError:
+            raise H5DeclParamsError(
+                f"decl_params: {where} holds a {type(value).__name__} the "
+                "bridge never registered, so it has no declaration key; "
+                "construct it through the bridge (P11).") from None
+    if isinstance(value, (tuple, list)):
+        return [_encode_field(v, key_of, f"{where}[{i}]")
+                for i, v in enumerate(value)]
+    if isinstance(value, Mapping):
+        out: dict[str, Any] = {}
+        for k, v in value.items():
+            if type(k) is not str or k.startswith("$"):
+                raise H5DeclParamsError(
+                    f"decl_params: {where} is keyed by {k!r}; a mapping "
+                    "field is stored as an object, so its keys are plain "
+                    "str that do not start with '$'.")
+            out[k] = _encode_field(v, key_of, f"{where}[{k!r}]")
+        return out
+    if dataclasses.is_dataclass(value) and not isinstance(value, type):
+        return {
+            "$struct": type(value).__name__,
+            "fields": {
+                f.name: _encode_field(
+                    getattr(value, f.name), key_of, f"{where}.{f.name}")
+                for f in dataclasses.fields(value)
+            },
+        }
+    if _qualname(value) in _OPAQUE_FIELD_TYPES:
+        return {"$opaque": type(value).__name__}
+    raise H5DeclParamsError(
+        f"decl_params: {where} holds a {_qualname(value)}, a shape "
+        "/opensees/decl_params does not store by name (scalars, "
+        "primitives, tuples, str-keyed mappings, value dataclasses and "
+        "the listed opaque objects are); the archive refuses rather than "
+        "drop the field.")
+
+
+def _argv_slots(
+    name: str, value: Any, tag_of_key: Callable[[str], int | None],
+) -> "list[tuple[str, Any]] | None":
+    """The ``(slot name, value)`` pairs an encoded field contributes to a
+    flat argv, or ``None`` when the field has no slot form: a ``bool``
+    (a flag), a mapping, a struct, an opaque object, or a reference whose
+    declaration has no single tag. ``None`` contributes nothing (an
+    omitted optional)."""
+    if value is None:
+        return []
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float, str)):
+        return [(name, value)]
+    if isinstance(value, list):
+        out: list[tuple[str, Any]] = []
+        for i, v in enumerate(value):
+            slots = _argv_slots(f"{name}[{i}]", v, tag_of_key)
+            if slots is None:
+                return None
+            out.extend(slots)
+        return out
+    if isinstance(value, dict) and set(value) == {"$decl"}:
+        tag = tag_of_key(value["$decl"])
+        return None if tag is None else [(name, tag)]
+    return None
+
+
+def decl_argv_names(
+    params: Mapping[str, Any], argv: "Sequence[Any]",
+    tag_of_key: Callable[[str], int | None],
+) -> "tuple[str, ...] | None":
+    """The field name of every slot of ``argv`` when the argv equals the
+    fields (ADR 0114 Q4), else ``None``.
+
+    ``params`` is :func:`encode_decl_params`'s output, ``argv`` the
+    declaration's store row after its type token and tag, ``tag_of_key``
+    the tag a referenced declaration key resolves to (``None`` when it
+    has no single tag). The fields are flattened in order: a scalar is
+    one slot named after its field, a sequence one slot per element
+    (``points[0]``, nested as ``m_ij[0][1]``), a reference its tag, an
+    omitted optional (``None``) no slot. The argv equals the fields iff
+    the slot count and every value match. A ``bool`` (a flag), a mapping,
+    a struct or an opaque field has no slot form, so its primitive is
+    never named: argv flags without a field stay unnamed.
+    """
+    slots: list[tuple[str, Any]] = []
+    for name, value in params.items():
+        field_slots = _argv_slots(name, value, tag_of_key)
+        if field_slots is None:
+            return None
+        slots.extend(field_slots)
+    if len(slots) != len(argv):
+        return None
+    for (_name, want), got in zip(slots, argv):
+        if isinstance(want, bool) or isinstance(got, bool):
+            return None
+        if isinstance(want, (int, float)) and isinstance(got, (int, float)):
+            if float(want) != float(got):
+                return None
+        elif want != got:
+            return None
+    return tuple(name for name, _v in slots)
+
+
+#: One ``/opensees/decl_params`` row as the writer holds it:
+#: ``(decl, type, params, params_names, transf_ref, integration_ref,
+#: section_ref)``, ``params`` the JSON text, ``params_names`` the JSON
+#: list text or ``""``.
+DeclParamsRow = tuple[int, str, str, str, str, str, str]
+
+
+def _json_text(value: Any) -> str:
+    import json
+
+    return json.dumps(value, allow_nan=False, separators=(",", ":"))
+
+
+def _decl_refs(value: Any) -> "Iterable[str]":
+    """Every declaration key an encoded value references, at any depth."""
+    if isinstance(value, dict):
+        if set(value) == {"$decl"}:
+            yield value["$decl"]
+        else:
+            for v in value.values():
+                yield from _decl_refs(v)
+    elif isinstance(value, list):
+        for v in value:
+            yield from _decl_refs(v)
 #: The magnitude an ``int`` command argument may have and still survive
 #: the ``f8`` ``args`` column exactly.
 _EXACT_INT = 2 ** 53
@@ -1369,6 +1619,14 @@ class H5Emitter:
         # Protocol calls (``initial_stress``, ``activate_absorbing``), handed
         # in by :meth:`set_declaration_rows`.
         self._decl_side_rows: "dict[str, list[int]]" = {}
+        # K1-7 (schema 2.26.0): the primitives' parameters by field name,
+        # ``(decl, type, params)`` per registered primitive, encoded by
+        # :meth:`set_decl_params`; the ``params_names`` and ``*_ref``
+        # columns are derived at write from the stores. A rewrite echoes
+        # the source's rows verbatim (``_decl_params_restored``).
+        # ``None``: not handed in, no group.
+        self._decl_params: "list[tuple[int, str, dict[str, Any]]] | None" = None
+        self._decl_params_restored: "list[DeclParamsRow] | None" = None
 
         # Constitutive.
         self._uniaxial: list[_MaterialRecord] = []
@@ -3210,8 +3468,109 @@ class H5Emitter:
         # ADR 0114 R5 (K1-6, schema 2.25.0): the declarations. A label,
         # so ``decls`` is in ``MODEL_HASH_EXCLUDED_CHILDREN``.
         self._write_decls(f)
+        # K1-7 (schema 2.26.0): the declarations' parameters by field
+        # name, a derived view of the stores above; hash-excluded too.
+        self._write_decl_params(f)
 
     # -- Per-group writers (split out so each step adds one) -------------
+
+    def _argv_by_tag(self) -> "dict[str, dict[int, tuple[Any, ...]]]":
+        """``kind -> tag -> argv`` of the tagged stores whose rows carry
+        one flat argv per tag (:data:`_ARGV_STORE_KINDS`): the argv a
+        declaration's ``params_names`` is checked against."""
+        return {
+            "uniaxialMaterial": {r.tag: r.params for r in self._uniaxial},
+            "nDMaterial": {r.tag: r.params for r in self._nd},
+            "section": {r.tag: r.params for r in self._sections_simple},
+            "beamIntegration": {r.tag: r.args for r in self._beam_integrations},
+            "timeSeries": {r.tag: r.args for r in self._time_series},
+            "damping": {r.tag: r.args for r in self._dampings},
+        }
+
+    def _decl_params_rows(self) -> "list[DeclParamsRow]":
+        """The ``/opensees/decl_params`` rows: the handed-in primitives
+        with their ``params_names`` and ``*_ref`` columns derived from
+        the stores and the declaration joins (K1-7)."""
+        assert self._declarations is not None and self._decl_params is not None
+        decls = self._declarations
+        row_of_key = {d.key: i for i, d in enumerate(decls)}
+        runs_of: dict[int, list[DeclTagRun]] = {}
+        for run in self._decl_tags:
+            runs_of.setdefault(run[3], []).append(run)
+
+        def single_tag(decl: int) -> "tuple[str, int] | None":
+            runs = runs_of.get(decl, [])
+            if len(runs) == 1 and runs[0][2] == 1:
+                return runs[0][0], runs[0][1]
+            return None
+
+        def tag_of_key(key: str) -> "int | None":
+            row = row_of_key.get(key)
+            found = None if row is None else single_tag(row)
+            return None if found is None else found[1]
+
+        argv_by_tag = self._argv_by_tag()
+        out: list[DeclParamsRow] = []
+        for decl, type_name, params in self._decl_params:
+            names = ""
+            kind_tag = single_tag(decl)
+            if kind_tag is not None and kind_tag[0] in _ARGV_STORE_KINDS:
+                argv = argv_by_tag[kind_tag[0]].get(kind_tag[1])
+                if argv is not None:
+                    found = decl_argv_names(params, argv, tag_of_key)
+                    if found is not None:
+                        names = _json_text(list(found))
+            refs: dict[str, str] = {col: "" for col, _f in _REF_COLUMNS}
+            for value in params.values():
+                if not (isinstance(value, dict) and set(value) == {"$decl"}):
+                    continue
+                family = decls[row_of_key[value["$decl"]]].family
+                for col, want in _REF_COLUMNS:
+                    if family == want and not refs[col]:
+                        refs[col] = value["$decl"]
+            out.append((decl, type_name, _json_text(params), names,
+                        refs["transf_ref"], refs["integration_ref"],
+                        refs["section_ref"]))
+        return out
+
+    def _write_decl_params(self, f: Any) -> None:
+        """Persist ``/opensees/decl_params`` (ADR 0114 A6/Q4, K1-7, schema
+        2.26.0): one row per handed-in primitive, parallel columns
+        ``decl``, ``type``, ``params``, ``params_names``, ``transf_ref``,
+        ``integration_ref`` and ``section_ref``. Written only once
+        :meth:`set_decl_params` ran (or a rewrite echoed the source's);
+        a referenced key the declarations lack refuses. Hash-excluded:
+        ``decl_params`` is in ``MODEL_HASH_EXCLUDED_CHILDREN``.
+        """
+        if self._decl_params_restored is not None:
+            rows = self._decl_params_restored
+        elif self._decl_params is not None:
+            if self._declarations is None:
+                raise RuntimeError(
+                    "H5Emitter._write_decl_params: parameters without "
+                    "declarations; set_declarations runs first.")
+            keys = {d.key for d in self._declarations}
+            for decl, type_name, params in self._decl_params:
+                for ref in _decl_refs(params):
+                    if ref not in keys:
+                        raise RuntimeError(
+                            f"H5Emitter._write_decl_params: {type_name} "
+                            f"(declaration {decl}) references {ref!r}, "
+                            "which /opensees/decls does not declare.")
+            rows = self._decl_params_rows()
+        else:
+            return
+        import h5py
+        import numpy as np
+
+        str_dt = h5py.string_dtype(encoding="utf-8")
+        g = self._ops_group(f).create_group("decl_params")
+        g.create_dataset(
+            "decl", data=np.array([r[0] for r in rows], dtype=np.int64))
+        for col, name in ((1, "type"), (2, "params"), (3, "params_names"),
+                          (4, "transf_ref"), (5, "integration_ref"),
+                          (6, "section_ref")):
+            g.create_dataset(name, data=[r[col] for r in rows], dtype=str_dt)
 
     def _write_decls(self, f: Any) -> None:
         """Persist ``/opensees/decls`` (ADR 0114 R5, K1-6, schema 2.25.0).
@@ -4353,14 +4712,59 @@ class H5Emitter:
         self._declarations = rows
         self._decl_tags = tuple(runs)
 
+    def set_decl_params(
+        self, items: "Sequence[tuple[int, object]]",
+        key_of: Callable[[object], str],
+    ) -> None:
+        """Hand in the registered primitives for ``/opensees/decl_params``
+        (ADR 0114 A6/Q4, K1-7, schema 2.26.0).
+
+        Side channel, not a Protocol call. ``items`` pairs each primitive
+        with its ``decls`` row; ``key_of`` maps a primitive a field
+        references to its declaration key (:class:`KeyError` for an
+        unregistered one). Each primitive is encoded now by
+        :func:`encode_decl_params`, so an unknown field shape refuses
+        here, before the emit, with :class:`H5DeclParamsError`. Called
+        once, after :meth:`set_declarations`; a second call, a row out of
+        range or two items on one row refuses. The ``params_names`` and
+        ``*_ref`` columns are derived at :meth:`write` from the stores.
+        """
+        if self._declarations is None:
+            raise RuntimeError(
+                "H5Emitter.set_decl_params: call set_declarations first.")
+        if self._decl_params is not None or self._decl_params_restored is not None:
+            raise RuntimeError(
+                "H5Emitter.set_decl_params: the declaration parameters are "
+                "already set; they are handed in once per emit.")
+        rows: list[tuple[int, str, dict[str, Any]]] = []
+        seen: set[int] = set()
+        for decl, prim in items:
+            decl = int(decl)
+            if not 0 <= decl < len(self._declarations):
+                raise IndexError(
+                    f"H5Emitter.set_decl_params: declaration {decl} is out "
+                    f"of range (there are {len(self._declarations)}).")
+            if decl in seen:
+                raise ValueError(
+                    "H5Emitter.set_decl_params: two primitives on "
+                    f"declaration {decl} ({self._declarations[decl].key!r}); "
+                    "a declaration has one parameter set.")
+            seen.add(decl)
+            rows.append((decl, type(prim).__name__,
+                         encode_decl_params(prim, key_of)))
+        self._decl_params = rows
+
     def restore_declarations(self, table: Any) -> None:
-        """Echo a source archive's ``/opensees/decls`` (the
-        ``from_h5 -> to_h5`` path, K1-6).
+        """Echo a source archive's ``/opensees/decls`` and its
+        ``decl_params`` (the ``from_h5 -> to_h5`` path, K1-6 / K1-7).
 
         ``table`` is the reader's ``DeclarationTable``. The rewrite
         replays every store in its source order, so the source's
         ``rows`` columns still describe it; the writer checks each against
-        its store's row count and refuses a mismatch.
+        its store's row count and refuses a mismatch. The ``params`` rows
+        are echoed verbatim (their JSON text included): a rewrite has no
+        primitives to re-encode, and the columns are a derived view the
+        source already derived.
         """
         self.set_declarations(
             [(d.key, d.family, d.name, d.synth) for d in table.decls],
@@ -4370,6 +4774,13 @@ class H5Emitter:
             str(store): [int(v) for v in column]
             for store, column in table.rows.items()
         }
+        if table.params:
+            self._decl_params_restored = [
+                (int(decl), p.type, p.params_json,
+                 "" if p.params_names is None else _json_text(list(p.params_names)),
+                 p.transf_ref, p.integration_ref, p.section_ref)
+                for decl, p in sorted(table.params.items())
+            ]
 
     #: The stores a side channel fills (no Protocol call notes a row), by
     #: their path below a scope: their rows columns come from the bridge.

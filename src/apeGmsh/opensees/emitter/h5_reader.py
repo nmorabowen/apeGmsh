@@ -32,6 +32,7 @@ from __future__ import annotations
 import builtins
 from dataclasses import dataclass
 from pathlib import Path
+from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Iterator, Mapping, Sequence
 
 from .caps import SolveStamp
@@ -66,6 +67,10 @@ if TYPE_CHECKING:
 
 __all__ = [
     "CommandRecordRO",
+    "DeclOpaque",
+    "DeclParamsRO",
+    "DeclRef",
+    "DeclStruct",
     "DeclarationRO",
     "DeclarationTable",
     "H5Model",
@@ -193,6 +198,59 @@ class DeclarationRO:
 
 
 @dataclass(frozen=True, slots=True)
+class DeclRef:
+    """A parameter that references another declaration (K1-7): ``key`` is
+    its ``/opensees/decls`` key, resolved by
+    :meth:`DeclarationTable.by_key`."""
+
+    key: str
+
+
+@dataclass(frozen=True, slots=True)
+class DeclStruct:
+    """A value dataclass held by a parameter (a ``Fiber`` patch, a
+    ``ShellLayer``): its class name and its own fields by name."""
+
+    type: str
+    fields: Mapping[str, Any]
+
+
+@dataclass(frozen=True, slots=True)
+class DeclOpaque:
+    """An object a parameter holds that the archive records by class
+    name only (an orientation, a ``SectionProperties``): its lowering
+    lives in the hashed stores."""
+
+    type: str
+
+
+@dataclass(frozen=True, slots=True)
+class DeclParamsRO:
+    """One ``/opensees/decl_params`` row (ADR 0114 A6/Q4, K1-7, opensees
+    2.26.0): a declaration's parameters by field name.
+
+    ``type`` is the primitive class. ``params`` maps each dataclass field
+    to its value: a scalar, ``None``, a tuple (nested kept), a mapping, a
+    :class:`DeclRef`, a :class:`DeclStruct` or a :class:`DeclOpaque`.
+    ``params_names`` names the argv slots of the declaration's store row,
+    one per slot, when the archive found the argv equal to the fields,
+    else ``None`` (the slots are unnamed). ``transf_ref``,
+    ``integration_ref`` and ``section_ref`` are the declaration key of
+    the first field holding a ``GeomTransf`` / ``BeamIntegration`` /
+    ``Section``, ``""`` when there is none. ``params_json`` is the row's
+    stored text, which a rewrite echoes verbatim.
+    """
+
+    type: str
+    params: Mapping[str, Any]
+    params_names: tuple[str, ...] | None
+    transf_ref: str
+    integration_ref: str
+    section_ref: str
+    params_json: str
+
+
+@dataclass(frozen=True, slots=True)
 class DeclarationTable:
     """``/opensees/decls``: the declarations and their joins (K1-6).
 
@@ -203,11 +261,27 @@ class DeclarationTable:
     spec's). ``rows`` maps a tagless store path below ``/opensees``
     (``bcs/fix``, ``bcs/mass``, ``recorders``,
     ``stages/stage_NNN/bcs/fix`` ...) to one declaration index per row.
+    ``params`` maps a declaration index to its :class:`DeclParamsRO`
+    (``/opensees/decl_params``, K1-7); empty for a file below 2.26.0 or
+    one no bridge emit wrote.
     """
 
     decls: tuple[DeclarationRO, ...]
     tags: tuple[tuple[str, int, int, int], ...]
     rows: Mapping[str, tuple[int, ...]]
+    params: Mapping[int, DeclParamsRO] = MappingProxyType({})
+
+    def params_for(self, key: str) -> DeclParamsRO:
+        """The parameters of the declaration keyed ``key``; a key the
+        table lacks, or one without a ``decl_params`` row (a fix, a
+        mass, a recorder region), raises :class:`KeyError`."""
+        for i, d in enumerate(self.decls):
+            if d.key == key:
+                if i not in self.params:
+                    raise KeyError(
+                        f"/opensees/decl_params has no row for {key!r}.")
+                return self.params[i]
+        raise KeyError(f"/opensees/decls has no declaration {key!r}.")
 
     def by_key(self, key: str) -> DeclarationRO:
         """The declaration whose key is ``key``; an unknown key raises."""
@@ -239,6 +313,123 @@ class DeclarationTable:
                 f"{sorted(self.rows)}."
             )
         return self.decls[self.rows[store][row]]
+
+
+def _decode_decl_value(value: Any, keys: "set[str]", where: str) -> Any:
+    """Decode one ``decl_params`` JSON value: a ``{"$decl": key}`` object
+    to :class:`DeclRef` (its key must be a declaration), ``{"$struct",
+    "fields"}`` to :class:`DeclStruct`, ``{"$opaque"}`` to
+    :class:`DeclOpaque`, a list to a tuple, any other object to a
+    read-only mapping; an object with an unknown ``$`` tag raises."""
+    if isinstance(value, list):
+        return tuple(
+            _decode_decl_value(v, keys, f"{where}[{i}]")
+            for i, v in enumerate(value))
+    if not isinstance(value, dict):
+        return value
+    tags = {k for k in value if k.startswith("$")}
+    if not tags:
+        return MappingProxyType({
+            k: _decode_decl_value(v, keys, f"{where}[{k!r}]")
+            for k, v in value.items()})
+    if set(value) == {"$decl"}:
+        key = value["$decl"]
+        if not isinstance(key, str) or key not in keys:
+            raise MalformedH5Error(
+                f"/opensees/decl_params: {where} references {key!r}, which "
+                "/opensees/decls does not declare.")
+        return DeclRef(key=key)
+    if set(value) == {"$struct", "fields"} and isinstance(value["fields"], dict):
+        return DeclStruct(
+            type=str(value["$struct"]),
+            fields=MappingProxyType({
+                k: _decode_decl_value(v, keys, f"{where}.{k}")
+                for k, v in value["fields"].items()}))
+    if set(value) == {"$opaque"}:
+        return DeclOpaque(type=str(value["$opaque"]))
+    raise MalformedH5Error(
+        f"/opensees/decl_params: {where} carries the unknown tag(s) "
+        f"{sorted(tags)}; the reader knows $decl, $struct and $opaque.")
+
+
+def _read_decl_params(g: Any, keys: "Sequence[str]") -> dict[int, DeclParamsRO]:
+    """Read ``/opensees/decl_params`` (K1-7, opensees 2.26.0) into
+    ``decl row -> DeclParamsRO``. Columns that differ in length, a
+    ``decl`` out of range or repeated, ``params`` that is not a JSON
+    object, a reference or ``*_ref`` to a key the declarations lack, or a
+    ``params_names`` that is not a JSON list of str raise
+    :class:`MalformedH5Error`."""
+    import json
+
+    import numpy as np
+
+    def strings(name: str) -> list[str]:
+        return [str(_decode_bytes(v)) for v in g[name][()]]
+
+    decl = [int(v) for v in np.asarray(g["decl"][()])]
+    columns = {
+        name: strings(name)
+        for name in ("type", "params", "params_names", "transf_ref",
+                     "integration_ref", "section_ref")}
+    n = len(decl)
+    if any(len(c) != n for c in columns.values()):
+        raise MalformedH5Error(
+            "/opensees/decl_params: decl, type, params, params_names and "
+            "the *_ref columns differ in length.")
+    known = set(keys)
+    out: dict[int, DeclParamsRO] = {}
+    for i in range(n):
+        row = decl[i]
+        if not 0 <= row < len(keys):
+            raise MalformedH5Error(
+                f"/opensees/decl_params row {i} points at declaration "
+                f"{row}; there are {len(keys)}.")
+        if row in out:
+            raise MalformedH5Error(
+                f"/opensees/decl_params rows for declaration {row} "
+                f"({keys[row]!r}) repeat; a declaration has one.")
+        where = f"{keys[row]!r}"
+        try:
+            raw = json.loads(columns["params"][i])
+        except ValueError as exc:
+            raise MalformedH5Error(
+                f"/opensees/decl_params: params of {where} is not JSON: "
+                f"{exc}.") from None
+        if not isinstance(raw, dict):
+            raise MalformedH5Error(
+                f"/opensees/decl_params: params of {where} is not an "
+                "object of field name -> value.")
+        params = MappingProxyType({
+            str(k): _decode_decl_value(v, known, f"{where}.{k}")
+            for k, v in raw.items()})
+        names_text = columns["params_names"][i]
+        names: tuple[str, ...] | None = None
+        if names_text:
+            try:
+                names_raw = json.loads(names_text)
+            except ValueError:
+                names_raw = None
+            if (not isinstance(names_raw, list)
+                    or not all(isinstance(s, str) for s in names_raw)):
+                raise MalformedH5Error(
+                    f"/opensees/decl_params: params_names of {where} is "
+                    "not a JSON list of str.")
+            names = tuple(names_raw)
+        refs = {}
+        for col in ("transf_ref", "integration_ref", "section_ref"):
+            ref = columns[col][i]
+            if ref and ref not in known:
+                raise MalformedH5Error(
+                    f"/opensees/decl_params: {col} of {where} is {ref!r}, "
+                    "which /opensees/decls does not declare.")
+            refs[col] = ref
+        out[row] = DeclParamsRO(
+            type=columns["type"][i], params=params, params_names=names,
+            transf_ref=refs["transf_ref"],
+            integration_ref=refs["integration_ref"],
+            section_ref=refs["section_ref"],
+            params_json=columns["params"][i])
+    return out
 
 
 #: The ``/opensees`` solve-stamp attributes (ADR 0114 D6, opensees
@@ -1437,10 +1628,13 @@ class H5Model:
             rows[path] = column
 
         g["rows"].visititems(visit)
-        from types import MappingProxyType
-
+        params = (
+            _read_decl_params(ops["decl_params"], keys)
+            if "decl_params" in ops else {}
+        )
         return DeclarationTable(
-            decls=decls, tags=tags, rows=MappingProxyType(rows))
+            decls=decls, tags=tags, rows=MappingProxyType(rows),
+            params=MappingProxyType(params))
 
     def program(self) -> tuple[ProgramRun, ...]:
         """Return ``/opensees/program`` as :class:`ProgramRun` values.

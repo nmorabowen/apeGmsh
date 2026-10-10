@@ -1,0 +1,46 @@
+# The params_names ledger (ADR 0114 Q4, K1-7 #1464): the contract-sampled
+# primitives of the flat-argv stores (uniaxialMaterial, nDMaterial,
+# section, beamIntegration, timeSeries, damping) whose store argv is NOT
+# their dataclass fields, so /opensees/decl_params leaves their argv slots
+# unnamed (a flag without a field, an omitted-by-default or reordered
+# field, a block that spans several calls). Checked by
+# test_verbs_lock.py (h) with the writer's own decl_argv_names, on the
+# samples the ALL_* rosters construct.
+# Shrink-only. Remove a line in the PR that makes a primitive's argv its
+# fields, and lower N_LEDGER with it. Never add a line or raise N_LEDGER.
+N_LEDGER = 35
+damping.URD
+damping.URDbeta
+nDMaterial.DruckerPrager
+nDMaterial.LadrunoJ2
+nDMaterial.LadrunoJ2Finite
+nDMaterial.LadrunoSANISAND
+nDMaterial.ManzariDafalias
+nDMaterial.SAniSandMS
+section.Aggregator
+section.ElasticMembranePlateSection
+section.Fiber
+section.LadrunoShellModifier
+section.LayeredShell
+section.LayeredShellFiberSection
+timeSeries.ASCE41Protocol
+timeSeries.Constant
+timeSeries.FEMA461Protocol
+timeSeries.Linear
+timeSeries.ModifiedATC24Protocol
+timeSeries.Path
+timeSeries.Pulse
+timeSeries.Ricker
+timeSeries.Trig
+uniaxialMaterial.ASDSteel1D
+uniaxialMaterial.ENT
+uniaxialMaterial.ElasticMaterial
+uniaxialMaterial.ElasticPPGap
+uniaxialMaterial.Hysteretic
+uniaxialMaterial.LadrunoRebarBuckling
+uniaxialMaterial.LadrunoUniaxialJ2
+uniaxialMaterial.Parallel
+uniaxialMaterial.PySimple1
+uniaxialMaterial.QzSimple1
+uniaxialMaterial.TzSimple1
+uniaxialMaterial.Viscous
