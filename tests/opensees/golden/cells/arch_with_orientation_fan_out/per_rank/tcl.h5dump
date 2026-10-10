@@ -5,8 +5,8 @@ A /meta@created_iso dtype=str[utf-8,vlen] shape=() sha1=masked
 A /meta@model_name dtype=str[utf-8,vlen] shape=() sha1=b9d13fa513214f3ee642cfb66b091bb007f26c4c
 A /meta@ndf dtype=<i8 shape=() sha1=0cf6c361d9199e18f10de459b59db53c79258106
 A /meta@ndm dtype=<i8 shape=() sha1=3e8c1c43b68367ba858df7b619c5b31131c2e887
-A /meta@opensees_schema_version dtype=str[utf-8,vlen] shape=() sha1=54079b01a8581e2da2afc1e2ddf8790a3732b49a
-A /meta@schema_version dtype=str[utf-8,vlen] shape=() sha1=54079b01a8581e2da2afc1e2ddf8790a3732b49a
+A /meta@opensees_schema_version dtype=str[utf-8,vlen] shape=() sha1=13fc0336558de9bbc64e1adb9f899943b82c8ebd
+A /meta@schema_version dtype=str[utf-8,vlen] shape=() sha1=13fc0336558de9bbc64e1adb9f899943b82c8ebd
 A /meta@snapshot_id dtype=str[utf-8,vlen] shape=() sha1=be5860ffd4409e5cc12add2802a5ecf9c16828e8
 G /meta/lineage
 A /meta/lineage@model_hash dtype=str[utf-8,vlen] shape=() sha1=masked
@@ -18,6 +18,14 @@ A /opensees@solve_refusals_flat dtype=str[utf-8,vlen] shape=(0,) sha1=65a2eebac8
 A /opensees@will_solve dtype=|i1 shape=() sha1=aa2f5d5b573d575796db102ad68843c320061bd7
 G /opensees/bcs
 D /opensees/bcs/fix dtype={target_kind:str[utf-8,vlen],target:str[utf-8,vlen],dofs:<i8[6]} shape=(1,) sha1=0876f4ecd3cffaf655fb959a6e414dbdd5d6d97d
+G /opensees/decl_params
+D /opensees/decl_params/decl dtype=<i8 shape=(20,) sha1=3f3cf085272fd0c0d0fa52e5feff7a3d94d3e065
+D /opensees/decl_params/integration_ref dtype=str[utf-8,vlen] shape=(20,) sha1=04bcc2cfd9ed508dd82025a85169fb0939fd7c6d
+D /opensees/decl_params/params dtype=str[utf-8,vlen] shape=(20,) sha1=72a9af0ee94e20e4a3797cde91e3a0fc640325f9
+D /opensees/decl_params/params_names dtype=str[utf-8,vlen] shape=(20,) sha1=04bcc2cfd9ed508dd82025a85169fb0939fd7c6d
+D /opensees/decl_params/section_ref dtype=str[utf-8,vlen] shape=(20,) sha1=04bcc2cfd9ed508dd82025a85169fb0939fd7c6d
+D /opensees/decl_params/transf_ref dtype=str[utf-8,vlen] shape=(20,) sha1=ab8873ad91e7afa85a6246d2214888c2550df054
+D /opensees/decl_params/type dtype=str[utf-8,vlen] shape=(20,) sha1=20ec0c0ec81b695319bdb08ba7e25a66222c214e
 G /opensees/decls
 D /opensees/decls/family dtype=str[utf-8,vlen] shape=(21,) sha1=bec947bb7d867a61da792cfb11a41b9c8d9ed0b1
 D /opensees/decls/key dtype=str[utf-8,vlen] shape=(21,) sha1=1745d5b6a444abafbdb75a6a28f36268d0563ea5
