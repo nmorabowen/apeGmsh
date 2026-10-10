@@ -261,123 +261,224 @@ def _contact_label(defn) -> str:
 
 
 class ContactSlaveOverlapWarning(UserWarning):
-    """Several NTS contacts share one slave label and a later one claimed
-    nodes an earlier one already holds (the seam nodes of adjacent slave
-    entities, #1264). The nodes stay with the first declaration; the
-    warning names both contacts and the count moved. Suppress with
+    """Several NTS contacts share one slave label with touching masters
+    (adjacent sectors of one body) and a later one claimed nodes an
+    earlier one already holds: the seam nodes of adjacent slave entities.
+    The nodes stay with the first declaration; the warning names both
+    contacts and the count moved. Suppress with
     ``warnings.filterwarnings("ignore", category=ContactSlaveOverlapWarning)``
     once the split is deliberate."""
 
 
-# A tie master is "flat enough" for ONE global outward when every facet
-# normal (sign-fixed by that outward, which is exactly what the fork does
-# with ``-outward``) lies within 45° of it: the normals then span at most
-# 90° about the declared direction. A 90° sector with a radial outward
-# sits inside the bound; a half or closed cylinder, or a box, does not.
-_TIE_FLAT_COS = math.cos(math.radians(45.0))
+# A set of unit normals all within 45° of one axis spans at most 90°
+# pairwise; the cone about the mean direction is the O(n) early accept,
+# the exact pairwise minimum dot is the oracle when the cone fails.
+_TIE_CONE_COS = math.cos(math.radians(45.0))
 
 
-def _refuse_tie_on_non_flat_master(
-        defn, master_faces: np.ndarray, outward: tuple[float, ...],
-        node_tags, node_coords) -> None:
-    """Refuse a 3D mortar tie whose master facet normals span more than
-    90° about the declared ``outward`` (#1262).
+def _surface_outward_sign(tag: int, centres: np.ndarray, normals: np.ndarray,
+                          offsets: np.ndarray, label: str) -> float:
+    """``+1`` when the mesh winding of surface *tag* points OUT of the one
+    volume it bounds, ``-1`` when it points in.
 
-    ``ContactDef`` requires one global ``outward`` for ``tie=True``, and the
-    fork uses it only as a SIGN reference per facet. On a curved or closed
-    master (a cylindrical pile skin) that pairing is silently wrong — the
-    piles ladder measured a single tie 3.65x too stiff against a 4-sector
-    split — so the span is checked here, from the facet corner coordinates,
-    before any record is built. Flat and gently curved masters pass
-    unchanged. Raises :class:`ValueError` naming the sector remedy.
+    The winding is consistent across a surface but not across surfaces:
+    gmsh winds a face with the orientation of the solid that CREATED it,
+    so a box face winds outward, the hole a boolean cut leaves winds into
+    the remaining soil (it kept the tool's orientation), and neither the
+    signed boundary tag nor the parametric normal says which. The volume
+    does: a point one facet-size off a facet along its normal is inside
+    the volume when the winding points in. Up to 512 facets vote; a
+    surface that bounds no volume, or more than one, keeps its winding.
     """
-    faces = np.asarray(master_faces, dtype=np.int64)
+    import gmsh
+    up, _ = gmsh.model.getAdjacencies(2, tag)
+    if len(up) != 1:
+        return 1.0
+    vol = int(up[0])
+    step = max(1, len(centres) // 512)
+    sel = slice(0, None, step)
+    plus = centres[sel] + offsets[sel, None] * normals[sel]
+    minus = centres[sel] - offsets[sel, None] * normals[sel]
+    n_plus = int(gmsh.model.isInside(3, vol, plus.ravel().tolist()))
+    n_minus = int(gmsh.model.isInside(3, vol, minus.ravel().tolist()))
+    if n_plus == n_minus:
+        raise ValueError(
+            f"contact: tie{label} master surface (2, {tag}) cannot be "
+            f"oriented against volume {vol}: {n_plus} facet probes fall "
+            f"inside it on either side of the surface. The tie span check "
+            f"needs an outward normal per facet; name a free boundary "
+            f"surface of one meshed body as the master.")
+    return -1.0 if n_plus > n_minus else 1.0
+
+
+def _oriented_master_normals(entities, parts, node_tags, node_coords,
+                             label: str):
+    """Unit facet normals of the master surfaces, each oriented OUTWARD
+    from the volume its surface bounds (:func:`_surface_outward_sign`).
+    Zero-area facets are dropped. Returns ``(units, n_facets)``."""
+    import gmsh
     tags = np.asarray(node_tags, dtype=np.int64).ravel()
     xyz = np.asarray(node_coords, dtype=float).reshape(len(tags), -1)
     order = np.argsort(tags, kind="stable")
     sorted_tags = tags[order]
-    pos = np.searchsorted(sorted_tags, faces)
-    pos = np.clip(pos, 0, len(sorted_tags) - 1)
-    missing = sorted_tags[pos] != faces
-    if missing.any():
-        raise ValueError(
-            f"contact: tie{_contact_label(defn)} cites master facet node "
-            f"{int(faces[missing][0])}, which is not in the mesh node "
-            f"table — the master faces and the node table disagree.")
-    p = xyz[order[pos]]                     # (n_facets, nps, 3)
-    if faces.shape[1] == 3:
-        normals = np.cross(p[:, 1] - p[:, 0], p[:, 2] - p[:, 0])
-    else:                                   # quad: cross of the diagonals
-        normals = np.cross(p[:, 2] - p[:, 0], p[:, 3] - p[:, 1])
-    length = np.linalg.norm(normals, axis=1)
-    live = length > 0.0
-    if not live.any():
+
+    surfaces: list[int] = []
+    for dim, tag in entities:
+        if int(dim) == 2:
+            surfaces.append(int(tag))
+        elif int(dim) == 3:
+            surfaces.extend(
+                abs(int(t)) for d, t in gmsh.model.getBoundary(
+                    [(3, int(tag))], oriented=False) if d == 2)
+
+    blocks: list[np.ndarray] = []
+    n_facets = 0
+    for tag in surfaces:
+        faces = parts._collect_surface_faces([(2, tag)])
+        if faces.size == 0:
+            continue
+        faces, _ = _drop_to_corner_facets(faces)
+        faces = np.asarray(faces, dtype=np.int64)
+        pos = np.clip(np.searchsorted(sorted_tags, faces),
+                      0, len(sorted_tags) - 1)
+        missing = sorted_tags[pos] != faces
+        if missing.any():
+            raise ValueError(
+                f"contact: master surface (2, {tag}) cites facet node "
+                f"{int(faces[missing][0])}, which is not in the mesh node "
+                f"table — the master faces and the node table disagree.")
+        p = xyz[order[pos]]                 # (n_facets, nps, 3)
+        if faces.shape[1] == 3:
+            n = np.cross(p[:, 1] - p[:, 0], p[:, 2] - p[:, 0])
+        else:                               # quad: cross of the diagonals
+            n = np.cross(p[:, 2] - p[:, 0], p[:, 3] - p[:, 1])
+        n_facets += int(len(n))
+        length = np.linalg.norm(n, axis=1)
+        live = length > 0.0
+        if not live.any():
+            continue
+        units = n[live] / length[live, None]
+        # |cross| is twice the facet area (edge cross for a triangle,
+        # diagonal cross for a quad): its sqrt is the facet size, the
+        # probe offset that clears a curved surface's chord sagitta.
+        offsets = np.sqrt(length[live])
+        sign = _surface_outward_sign(
+            tag, p[live].mean(axis=1), units, offsets, label)
+        blocks.append(sign * units)
+    if not blocks:
+        return np.empty((0, 3)), n_facets
+    return np.vstack(blocks), n_facets
+
+
+def _min_pairwise_dot(units: np.ndarray) -> float:
+    """The smallest dot product over all pairs of unit vectors, in row
+    chunks so the Gram matrix never materialises whole."""
+    best = 1.0
+    step = max(1, 2_000_000 // max(len(units), 1))
+    for i in range(0, len(units), step):
+        best = min(best, float((units[i:i + step] @ units.T).min()))
+    return best
+
+
+def _refuse_tie_on_non_flat_master(
+        defn, entities, parts, node_tags, node_coords) -> None:
+    """Refuse a 3D mortar tie whose master facet normals span more than
+    90°: some pair of outward-oriented facet normals points more than 90°
+    apart (their dot product is negative).
+
+    ``ContactDef`` requires one global ``outward`` for ``tie=True``, and
+    the fork uses it only as a SIGN reference per facet. On a curved or
+    closed master (a cylindrical pile skin) or an opposed pair of faces (a
+    slab's top and bottom) that pairing is silently wrong — the piles
+    ladder measured a single tie 3.65x too stiff against a 4-sector split
+    — so the span is measured here, from the facet corner coordinates,
+    before any record is built. The span is a property of the master
+    alone: a flat or gently curved master passes whatever sign its outward
+    carries. Raises :class:`ValueError` stating the widest pair and naming
+    the sector remedy.
+    """
+    units, n_facets = _oriented_master_normals(
+        entities, parts, node_tags, node_coords, _contact_label(defn))
+    if len(units) == 0:
         raise ValueError(
             f"contact: tie{_contact_label(defn)} master surface has no "
             f"facet with a non-zero area; its normals cannot be checked.")
-    o = np.asarray(outward[:3], dtype=float)
-    o = o / np.linalg.norm(o)
-    cos_dev = np.abs(normals[live] @ o) / length[live]
-    worst = float(cos_dev.min())
-    if worst >= _TIE_FLAT_COS - 1e-9:
+    mean = units.sum(axis=0)
+    norm = float(np.linalg.norm(mean))
+    if norm > 0.0 and float((units @ (mean / norm)).min()) \
+            >= _TIE_CONE_COS - 1e-9:
+        return                              # all within 45° of one axis
+    worst = _min_pairwise_dot(units)
+    if worst >= -1e-9:
         return
-    n_off = int((cos_dev < _TIE_FLAT_COS - 1e-9).sum())
-    worst_deg = math.degrees(math.acos(min(1.0, worst)))
+    worst_deg = math.degrees(math.acos(max(-1.0, worst)))
     raise ValueError(
-        f"contact: tie{_contact_label(defn)} declares one global "
-        f"outward={tuple(float(x) for x in outward)!r}, but its master "
-        f"facet normals span more than 90° about it ({n_off} of "
-        f"{int(live.sum())} facets deviate by more than 45°, the worst by "
-        f"{worst_deg:.1f}°): the master is curved or closed, and the fork "
-        f"uses -outward only as a per-facet sign reference, so a single "
-        f"direction pairs the tie wrong (a cylindrical pile skin measured "
-        f"3.65x too stiff). Split the interface into sectors whose normals "
-        f"each span at most 90°: one contact(tie=True, ...) per sector with "
+        f"contact: tie{_contact_label(defn)} master facet normals span "
+        f"more than 90°: the widest pair of its {len(units)} facet "
+        f"normals (oriented outward from their volume) is {worst_deg:.1f}° "
+        f"apart, so the master is curved, closed or two-sided, and the "
+        f"single global outward= a tie carries pairs it wrong (the fork "
+        f"uses -outward only as a per-facet sign reference; a cylindrical "
+        f"pile skin measured 3.65x too stiff). Split the interface into "
+        f"sectors whose normals each span at most 90°: one "
+        f"contact(tie=True, ...) per sector with "
         f"master_entities=/slave_entities= naming that sector's surfaces "
         f"and a radial outward= for each.")
 
 
 def _claim_slave_nodes(
-        defn, slave_nodes: list[int], claimed: dict[str, dict[int, str]],
+        defn, slave_nodes: list[int], master_nodes: set[int],
+        claimed: dict[str, list[tuple[str, set[int], set[int]]]],
 ) -> list[int]:
     """Drop the slave nodes an earlier contact on the same slave label
-    already holds (#1264); the first declaration wins.
+    with a TOUCHING master already holds; the first declaration wins.
 
-    ``claimed`` maps a slave label to ``{node_tag: contact label}`` and is
-    local to one :meth:`resolve_contacts` call, so a rebuild resolves the
-    same split in declaration order. Contacts on different slave labels
-    never interact. Warns :class:`ContactSlaveOverlapWarning` when nodes
-    move; raises when nothing is left (an empty contact would be a silent
-    no-op in the deck).
+    Two masters touch when their node sets intersect: the sector surfaces
+    of one body share their seam nodes, and that seam is where one slave
+    node lands in two contacts and the fork adds its tractions. Contacts
+    whose masters share no node (two piles against one soil label) are
+    separate bodies and keep their full slave sets, as they always did.
+    ``claimed`` maps a slave label to ``[(contact, master nodes, slave
+    nodes)]`` and is local to one :meth:`resolve_contacts` call, so a
+    rebuild resolves the same split in declaration order. Warns
+    :class:`ContactSlaveOverlapWarning` when nodes move; raises when
+    nothing is left (an empty contact would be a silent no-op in the deck).
     """
     label = defn.slave_label
     mine = _contact_label(defn).strip()
-    held = claimed.setdefault(label, {})
+    earlier = claimed.setdefault(label, [])
+    held: dict[int, str] = {}
+    for owner, m_nodes, s_nodes in earlier:
+        if m_nodes & master_nodes:
+            for t in s_nodes:
+                held.setdefault(t, owner)
     kept: list[int] = []
     dropped_by: dict[str, int] = {}
     for t in slave_nodes:
         owner = held.get(t)
         if owner is None:
-            held[t] = mine
             kept.append(t)
         else:
             dropped_by[owner] = dropped_by.get(owner, 0) + 1
+    earlier.append((mine, set(master_nodes), set(kept)))
     if not dropped_by:
         return kept
     owners = ", ".join(f"{k} ({n} nodes)" for k, n in dropped_by.items())
     if not kept:
         raise ValueError(
-            f"contact: {mine} shares slave label {label!r} with earlier "
-            f"contact(s) {owners}, which already claim every one of its "
-            f"{len(slave_nodes)} slave nodes — the contact would be empty "
-            f"(a silent no-op). Give it its own slave_entities=, or drop it.")
+            f"contact: {mine} shares slave label {label!r} and a touching "
+            f"master with earlier contact(s) {owners}, which already claim "
+            f"every one of its {len(slave_nodes)} slave nodes — the contact "
+            f"would be empty (a silent no-op). Give it its own "
+            f"slave_entities=, or drop it.")
     import warnings
     warnings.warn(
-        f"contact: {mine} shares slave label {label!r} with earlier "
-        f"contact(s) {owners}; those {sum(dropped_by.values())} seam nodes "
-        f"stay with the first declaration and were dropped from {mine} "
-        f"({len(kept)} remain), so no slave node sits in two contacts (the "
-        f"fork would ADD their tractions).",
+        f"contact: {mine} shares slave label {label!r} and a touching "
+        f"master with earlier contact(s) {owners}; those "
+        f"{sum(dropped_by.values())} seam nodes stay with the first "
+        f"declaration and were dropped from {mine} ({len(kept)} remain), "
+        f"so no slave node sits in two contacts (the fork would ADD their "
+        f"tractions).",
         ContactSlaveOverlapWarning, stacklevel=4)
     return kept
 
@@ -972,7 +1073,7 @@ class ConstraintsComposite(_DeclarationsMixin):
         # NTS slave nodes already claimed, per slave label: local to this
         # call, so a FEM-cache rebuild resolves the same split in the same
         # declaration order.
-        claimed: dict[str, dict[int, str]] = {}
+        claimed: dict[str, list[tuple[str, set[int], set[int]]]] = {}
 
         for defn in self.contact_defs:
             m_ents = (defn.master_entities
@@ -1019,6 +1120,8 @@ class ConstraintsComposite(_DeclarationsMixin):
             if defn.formulation == "nts":
                 slave_nodes = _claim_slave_nodes(
                     defn, self._collect_node_set(s_ents, defn.slave_label),
+                    {int(t) for t in
+                     np.asarray(master_faces, dtype=np.int64).ravel()},
                     claimed)
                 slave_faces, slave_nps = None, 0
             elif model_dim == 2:
@@ -1095,7 +1198,7 @@ class ConstraintsComposite(_DeclarationsMixin):
                     # (ContactDef refuses tie without it); refuse it on a
                     # master whose normals it cannot sign-fix.
                     _refuse_tie_on_non_flat_master(
-                        defn, master_faces, outward, node_tags, node_coords)
+                        defn, m_ents, parts, node_tags, node_coords)
 
             if model_dim == 2:
                 # The two orientation guards apeGmsh owes a 2D deck, on

@@ -6,15 +6,21 @@ by the piles-validation ladder on a cylindrical pile skin:
 * **#1262** — ``ContactDef`` requires one global ``outward`` for a mortar
   tie, and the fork uses it only as a per-facet SIGN reference. On a
   closed master the pairing is silently wrong (one tie measured 3.65x too
-  stiff against a 4-sector split). Resolve now refuses a tie whose master
-  facet normals span more than 90° about the declared outward and names
-  the sector remedy. On main the closed-cylinder case raises nothing.
+  stiff against a 4-sector split). Resolve now measures the span of the
+  master's facet normals, each oriented outward from its volume, and
+  refuses a tie when some pair is more than 90° apart, naming the sector
+  remedy. The span is the master's alone (the outward's sign does not
+  enter), so a slab's top and bottom under one label refuse while a 60°
+  sector with an edge-aligned outward passes. On main the closed-cylinder
+  case raises nothing.
 * **#1264** — ``_collect_node_set`` de-duplicates within one contact only,
   so per-sector NTS contacts on one slave label both claim the seam nodes
   of adjacent slave entities and the fork ADDS their tractions. Resolve
-  now keeps every slave node with the first declaration on that label and
-  warns :class:`ContactSlaveOverlapWarning`. On main the two halves below
-  overlap on 12 seam nodes.
+  now keeps every slave node with the first declaration among contacts
+  that share the label AND whose masters touch (share a node: sector
+  neighbours of one body), and warns :class:`ContactSlaveOverlapWarning`.
+  Two piles against one soil label share no master node and keep their
+  full sets. On main the two halves below overlap on 12 seam nodes.
 
 The fixtures are real OCC meshes (no fork build needed: the records are
 resolved at ``get_fem_data``). The sector helpers key on the OCC surface
@@ -24,6 +30,7 @@ skin from its two flat cut faces.
 from __future__ import annotations
 
 import math
+import re
 import warnings
 
 import pytest
@@ -94,6 +101,10 @@ def test_tie_on_closed_cylinder_master_refuses_naming_sectors(tmp_path):
         msg = str(exc.value)
         assert "'tie_all'" in msg
         assert "span more than 90°" in msg
+        # The message states what was measured: the widest pair of a
+        # closed skin's outward normals is antipodal.
+        assert re.search(r"widest pair of its \d+ facet normals .* is "
+                         r"1[78]\d\.\d° apart", msg), msg
         assert "master_entities=/slave_entities=" in msg
         assert "radial outward=" in msg
         # Seam A: a resolve-time raise leaves the session's declarations
@@ -150,6 +161,67 @@ def test_tie_on_flat_master_is_unchanged(tmp_path):
         assert len(fem.elements.contacts) == 1
 
 
+def test_tie_on_sixty_degree_sector_with_edge_aligned_outward_resolves(tmp_path):
+    """The span is a property of the master alone. A 60° sector spans 60°
+    whatever the outward: with it aligned to one sector EDGE (the far
+    edge's normals sit 60° off it) the tie still resolves, and no warning
+    fires (run with ``-W error::UserWarning``)."""
+    with apeGmsh(model_name="b4_sec60", verbose=False,
+                 save_to=tmp_path / "m.h5") as g:
+        pile = g.model.geometry.add_cylinder(0, 0, 0, 0, 0, H, R,
+                                             angle=math.pi / 3)
+        soil = g.model.geometry.add_box(-2, -2, 0, 4, 4, H)
+        soil = g.model.boolean.cut(
+            soil, g.model.geometry.add_cylinder(0, 0, 0, 0, 0, H, R))[0]
+        g.model.sync()
+        skins, holes = _curved_faces(pile), _curved_faces(soil)
+        assert len(skins) == 1 and holes
+        g.mesh.sizing.set_global_size(0.2)
+        g.mesh.generation.generate(3)
+        g.physical.add(3, [pile, soil], name="solid")
+        g.physical.add(2, skins, name="skin")
+        g.physical.add(2, holes, name="hole")
+        # The sector sweeps from the +x axis: (1, 0, 0) is its first edge.
+        g.constraints.contact("skin", "hole", formulation="mortar",
+                              tie=True, outward=(1.0, 0.0, 0.0))
+        fem = g.mesh.queries.get_fem_data(dim=3)
+    assert len(fem.elements.contacts) == 1
+
+
+def test_tie_on_slab_top_and_bottom_refuses(tmp_path):
+    """Opposed faces under one label: a slab's top and bottom are 180°
+    apart once each normal is oriented outward from the slab, so a tie
+    with ``outward=(0, 0, 1)`` is refused — an unsigned check would pass
+    it."""
+    with apeGmsh(model_name="b4_slab", verbose=False,
+                 save_to=tmp_path / "m.h5") as g:
+        slab = g.model.geometry.add_box(0, 0, 1, 1, 1, 0.2)
+        below = g.model.geometry.add_box(0, 0, 0, 1, 1, 1)
+        g.model.sync()
+        faces = [(abs(t), gmsh.model.occ.getCenterOfMass(2, abs(t))[2])
+                 for d, t in gmsh.model.getBoundary([(3, slab)],
+                                                    oriented=False)
+                 if d == 2]
+        top_bottom = [t for t, z in faces if abs(z - 1.0) < 1e-6
+                      or abs(z - 1.2) < 1e-6]
+        assert len(top_bottom) == 2
+        under = [abs(t) for d, t in gmsh.model.getBoundary(
+            [(3, below)], oriented=False)
+            if d == 2 and gmsh.model.occ.getCenterOfMass(2, abs(t))[2] > 0.99]
+        g.mesh.sizing.set_global_size(0.5)
+        g.mesh.generation.generate(3)
+        g.physical.add(3, [slab, below], name="solid")
+        g.physical.add(2, top_bottom, name="faces")
+        g.physical.add(2, under, name="under")
+        g.constraints.contact("faces", "under", formulation="mortar",
+                              tie=True, outward=(0.0, 0.0, 1.0),
+                              name="two_sided")
+        with pytest.raises(ValueError, match=r"'two_sided'.*span more than "
+                                             r"90°.*widest pair.*180\.0° apart"):
+            g.mesh.queries.get_fem_data(dim=3)
+        g.constraints.contact_defs.clear()
+
+
 def test_non_tie_contact_on_closed_master_is_unchanged(tmp_path):
     """The guard is a TIE guard: a plain NTS contact on the closed skin
     (no outward, the fork's per-facet normal) resolves as before."""
@@ -203,8 +275,9 @@ def test_sector_contacts_on_one_slave_label_are_disjoint(tmp_path):
                                   slave_entities=[(2, h) for h in ents],
                                   name=nm)
         with pytest.warns(ContactSlaveOverlapWarning,
-                          match=r"'right' shares slave label 'hole' with "
-                                r"earlier contact\(s\) 'left' \(\d+ nodes\)"):
+                          match=r"'right' shares slave label 'hole' and a "
+                                r"touching master with earlier contact\(s\) "
+                                r"'left' \(\d+ nodes\)"):
             g.mesh.queries.get_fem_data(dim=3)
         first, second = g.constraints.contact_records
         a, b = set(first.slave_nodes), set(second.slave_nodes)
@@ -243,6 +316,41 @@ def test_contacts_on_different_slave_labels_do_not_interact(tmp_path):
     assert a & b                      # the seam is in both, by design
 
 
+def test_two_piles_against_one_soil_label_keep_full_slave_sets(tmp_path):
+    """Two piles (``skin1``, ``skin2``) against one slave label ``holes``:
+    the masters share no node, so these are separate bodies, not sector
+    neighbours — each contact keeps the whole label, as on base, and
+    nothing warns (run with ``-W error::UserWarning``)."""
+    with apeGmsh(model_name="b4_two_piles", verbose=False,
+                 save_to=tmp_path / "m.h5") as g:
+        p1 = g.model.geometry.add_cylinder(-1, 0, 0, 0, 0, H, R)
+        p2 = g.model.geometry.add_cylinder(1, 0, 0, 0, 0, H, R)
+        soil = g.model.geometry.add_box(-3, -2, 0, 6, 4, H)
+        soil = g.model.boolean.cut(
+            soil, [g.model.geometry.add_cylinder(-1, 0, 0, 0, 0, H, R),
+                   g.model.geometry.add_cylinder(1, 0, 0, 0, 0, H, R)])[0]
+        g.model.sync()
+        holes = _curved_faces(soil)
+        assert len(holes) == 2
+        g.mesh.sizing.set_global_size(0.4)
+        g.mesh.generation.generate(3)
+        g.physical.add(3, [p1, p2, soil], name="solid")
+        g.physical.add(2, _curved_faces(p1), name="skin1")
+        g.physical.add(2, _curved_faces(p2), name="skin2")
+        g.physical.add(2, holes, name="holes")
+        label_nodes: set[int] = set()
+        for h in holes:
+            nt, _, _ = gmsh.model.mesh.getNodes(2, h, includeBoundary=True)
+            label_nodes |= {int(t) for t in nt}
+        g.constraints.contact("skin1", "holes", formulation="nts",
+                              kn=1e6, kt=1e6, mu=0.3)
+        g.constraints.contact("skin2", "holes", formulation="nts",
+                              kn=1e6, kt=1e6, mu=0.3)
+        g.mesh.queries.get_fem_data(dim=3)
+        sets = [set(r.slave_nodes) for r in g.constraints.contact_records]
+    assert sets == [label_nodes, label_nodes]
+
+
 def test_fully_claimed_slave_set_refuses_naming_both(tmp_path):
     """A later contact whose every slave node an earlier one on the same
     label already holds would be an empty, silent no-op: refuse it."""
@@ -254,8 +362,9 @@ def test_fully_claimed_slave_set_refuses_naming_both(tmp_path):
         g.constraints.contact("skin", "hole", formulation="nts",
                               kn=1e6, kt=1e6, mu=0.3, name="again")
         with pytest.raises(ValueError, match=r"'again' shares slave label "
-                                             r"'hole' with earlier contact"
-                                             r"\(s\) 'whole'.*would be empty"):
+                                             r"'hole' and a touching master "
+                                             r"with earlier contact\(s\) "
+                                             r"'whole'.*would be empty"):
             g.mesh.queries.get_fem_data(dim=3)
         assert not g.constraints.contact_records
         g.constraints.contact_defs.clear()
