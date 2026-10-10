@@ -5,8 +5,8 @@ A /meta@created_iso dtype=str[utf-8,vlen] shape=() sha1=masked
 A /meta@model_name dtype=str[utf-8,vlen] shape=() sha1=b9d13fa513214f3ee642cfb66b091bb007f26c4c
 A /meta@ndf dtype=<i8 shape=() sha1=0cf6c361d9199e18f10de459b59db53c79258106
 A /meta@ndm dtype=<i8 shape=() sha1=3e8c1c43b68367ba858df7b619c5b31131c2e887
-A /meta@opensees_schema_version dtype=str[utf-8,vlen] shape=() sha1=cc0fbd525e215522e9116d5389768480f319bc2e
-A /meta@schema_version dtype=str[utf-8,vlen] shape=() sha1=cc0fbd525e215522e9116d5389768480f319bc2e
+A /meta@opensees_schema_version dtype=str[utf-8,vlen] shape=() sha1=052f8c36855361819ccc8769c3b74fbfa3651d89
+A /meta@schema_version dtype=str[utf-8,vlen] shape=() sha1=052f8c36855361819ccc8769c3b74fbfa3651d89
 A /meta@snapshot_id dtype=str[utf-8,vlen] shape=() sha1=be5860ffd4409e5cc12add2802a5ecf9c16828e8
 G /meta/lineage
 A /meta/lineage@model_hash dtype=str[utf-8,vlen] shape=() sha1=masked
@@ -54,6 +54,10 @@ A /opensees/patterns/Plain_1@series_ref dtype=str[utf-8,vlen] shape=() sha1=c4d3
 A /opensees/patterns/Plain_1@tag dtype=<i8 shape=() sha1=e88bf9a567e8136424d5b8d1198175906afa6ec6
 A /opensees/patterns/Plain_1@type dtype=str[utf-8,vlen] shape=() sha1=c75caead06e68b9635a793e87bfcd772310f1a18
 D /opensees/patterns/Plain_1/loads dtype={target_kind:str[utf-8,vlen],target:str[utf-8,vlen],forces:<f8[6]} shape=(2,) sha1=470ee5ba9efee070db23d0a4190895b6e17bc6c4
+D /opensees/program dtype={first:<i4,count:<i4,method:<i2,store:<i2,row:<i4,stage:<i4,decl:<i4} shape=(29,) sha1=52d2b60cbfe06b0622512869f493b7656a1580ac
+A /opensees/program@emit_count dtype=<i4 shape=() sha1=afd8ba5a80bc0723d4946e4b21b4d9389d3a34ff
+A /opensees/program@methods dtype=str[utf-8,vlen] shape=(20,) sha1=7600014916459547002da336d708d403f4a31580
+A /opensees/program@stores dtype=str[utf-8,vlen] shape=(18,) sha1=d6efd20d1d100385dfd62cbf4a3d8e9349d9fb15
 G /opensees/recorders
 G /opensees/recorders/Element_1
 A /opensees/recorders/Element_1@file dtype=str[utf-8,vlen] shape=() sha1=8d078127c02cf2e00b30f120279809115bdc00c9

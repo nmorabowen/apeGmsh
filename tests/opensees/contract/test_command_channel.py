@@ -58,10 +58,11 @@ def _inject_row(monkeypatch: pytest.MonkeyPatch, **overrides: Any) -> Verb:
 
 # -- the fail-closed allow-list ---------------------------------------------
 
-def test_no_command_row_ships_in_k1_2() -> None:
+def test_no_command_row_ships_yet() -> None:
     assert not [k for k, v in VERBS.items() if v.via == "command"]
     assert VERBS["command"].via == "protocol"
-    assert VERBS["command"].h5 == "refuse"
+    assert VERBS["command"].h5 == "archive"
+    assert VERBS["command"].store == "/opensees/commands"
 
 
 @pytest.mark.parametrize("verb", ["noSuchVerb", "fix", "command"],
@@ -106,14 +107,26 @@ def test_live_names_the_requires_when_the_binding_is_missing(
         _live(_Ops()).command("forkOnlyCmd", 1)
 
 
-def test_h5_refuses_every_token_until_k1_4(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_h5_writes_an_allowed_token_as_a_commands_row(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Any,
+) -> None:
+    """K1-4: an allow-listed token is a ``/opensees/commands`` row that
+    reads back with its token, its arguments at their types, and its
+    emit index; an unknown token still raises (above)."""
+    from apeGmsh.opensees.emitter import h5_reader
+
     _inject_row(monkeypatch)
-    with pytest.raises(H5RefusedVerb) as info:
-        H5Emitter().command("probeCmd", *ARGS)
-    assert isinstance(info.value, NotImplementedError)
-    assert info.value.verb == "command"
-    assert info.value.row is VERBS["command"]
-    assert "'probeCmd'" in str(info.value) and "/opensees/commands" in str(info.value)
+    e = H5Emitter()
+    e.model(ndm=2, ndf=2)
+    e.command("probeCmd", *ARGS)
+    out = tmp_path / "cmd.h5"
+    e.write(str(out))
+    with h5_reader.open(str(out)) as m:
+        (row,) = m.commands()
+    assert (row.method, row.token, row.stage) == ("command", "probeCmd", -1)
+    assert row.args == ARGS and all(
+        type(a) is type(b) for a, b in zip(row.args, ARGS))
+    assert row.emit_index == 2
 
 
 # -- the H5 helpers ----------------------------------------------------------
@@ -130,8 +143,6 @@ def test_h5_ledger_counts_dropped_calls_silently(
     recwarn: pytest.WarningsRecorder,
 ) -> None:
     e = H5Emitter()
-    e.profiler("start")
-    e.profiler("report")
     e.modal_damping(0.05)
     e.contact(1, "a")
     e.contact_plane(2, "b")
@@ -141,12 +152,15 @@ def test_h5_ledger_counts_dropped_calls_silently(
     assert e.eigen_feast(0.0, 10.0) == []
     e.modal_response_history(1)
     e.response_spectrum_analysis(1, "-Tn", 0.1)
-    assert dict(e._ledger_counts) == {
-        "profiler": 2, "modal_damping": 1, "contact": 1, "contact_plane": 1,
-        "rayleigh": 1, "eigen": 1, "modal_properties": 1, "eigen_feast": 1,
-        "modal_response_history": 1, "response_spectrum_analysis": 1,
+    # K1-4: the global rayleigh / eigen / modal_damping are command rows.
+    assert dict(e.ledger_counts) == {
+        "contact": 1, "contact_plane": 1, "modal_properties": 1,
+        "eigen_feast": 1, "modal_response_history": 1,
+        "response_spectrum_analysis": 1,
     }
-    assert all(VERBS[v].h5 == "ledger" for v in e._ledger_counts)
+    assert [c.method for c in e._commands] == [
+        "modal_damping", "rayleigh", "eigen"]
+    assert all(VERBS[v].h5 == "ledger" for v in e.ledger_counts)
     assert not recwarn.list
 
 
@@ -183,6 +197,7 @@ _STAGE_ONLY_CALLS: list[tuple[str, tuple[Any, ...]]] = [
     ("update_parameter", (1, (1,), ("xPerm",), 1e-5)),
     ("set_node_vel", (1, 1, 0.0)),
     ("set_node_accel", (1, 1, 0.0)),
+    ("profiler", ("start",)),
 ]
 
 

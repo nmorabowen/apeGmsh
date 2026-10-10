@@ -678,6 +678,7 @@ def _replay_into(
     reinforce_name_to_tag: "dict[str, int] | None" = None,
     deck_ordering: bool = True,
     stage_mp_keys: "frozenset[tuple[Any, ...]]" = frozenset(),
+    commands: "Sequence[Any]" = (),
 ) -> None:
     """Walk a typed-record graph and re-emit it through ``emitter``.
 
@@ -715,6 +716,9 @@ def _replay_into(
           ``fem`` is ``None`` (the H5 re-emit path; ties persist via the
           neutral zone there). Scoped/best-effort — see the inline note.
       9. ``emitter.fix`` / ``emitter.mass``
+      9a. the global ``/opensees/commands`` rows (``rayleigh``, ``eigen``,
+          ``modal_damping``) in their emit order: the bridge's slot 7,
+          after the masses and before the patterns and the chain
       10. ``emitter.pattern_open`` (+ load / sp / eleLoad +
           pattern_close)
       11. ``emitter.recorder`` (wrapped in declaration-begin/end when
@@ -983,6 +987,18 @@ def _replay_into(
     for rec in masses:
         emitter.mass(int(rec.tag), *(float(v) for v in rec.values))
 
+    # 9a. Global ``/opensees/commands`` rows (ADR 0114 R3a), in emit
+    # order. The bridge emits them at its slot 7 (``_emit_rayleigh`` /
+    # ``_emit_modal_damping``, after the masses and before the patterns).
+    for cmd in commands:
+        if int(cmd.stage) >= 0:
+            raise ValueError(
+                f"_replay_into: a stage-{cmd.stage} {cmd.method!r} command "
+                "row reached the global slot; route it through "
+                "_replay_staged_into."
+            )
+        _replay_command(emitter, cmd, _GLOBAL_COMMAND_METHODS)
+
     # 9b. Global initial stress (ADR 0055 Phase 1).  Emitted BEFORE
     # patterns / the analysis chain so ``step_hook_ramp`` registers and
     # the trailing ``analyze`` re-wraps into the hook-driven loop — without
@@ -1203,10 +1219,29 @@ def _region_is_scoped(args: "Sequence[Any]") -> bool:
     return "-rayleigh" in toks or "-damp" in toks
 
 
+#: The ``/opensees/commands`` methods each replay slot carries. A row
+#: whose method has no slot raises rather than land at a guessed line.
+_GLOBAL_COMMAND_METHODS: "frozenset[str]" = frozenset(
+    {"rayleigh", "eigen", "modal_damping"})
+_STAGE_COMMAND_METHODS: "frozenset[str]" = frozenset({"profiler"})
+
+
+def _replay_command(emitter: Any, cmd: Any, methods: "frozenset[str]") -> None:
+    """Re-emit one ``/opensees/commands`` row (a reader ``CommandRecordRO``)."""
+    if cmd.method not in methods:
+        raise NotImplementedError(
+            f"replay: a {cmd.method!r} command row (stage {cmd.stage}) has "
+            f"no replay slot here; this slot carries {sorted(methods)}."
+        )
+    getattr(emitter, cmd.method)(*cmd.positional, **cmd.keywords)
+
+
 def _replay_staged_into(
     emitter: Any,
     *,
     stages: "Sequence[Any]",
+    commands: "Sequence[Any]" = (),
+    program: "Sequence[Any]" = (),
     **replay_kwargs: Any,
 ) -> None:
     """Re-emit a STAGED archive's deck (ADR 0055 P2.3) onto ``emitter``.
@@ -1222,6 +1257,11 @@ def _replay_staged_into(
     ``replay_kwargs`` are the same keyword arguments :func:`_replay_into`
     accepts (the global record graph); ``elements`` MUST already be
     connectivity-rehydrated (the owned-element lookup keys into it).
+
+    ``commands`` are every ``/opensees/commands`` row: the global ones
+    go to the prefix, and a stage's ``profiler`` rows bracket its
+    ``analyze``. ``program`` (the ``/opensees/program`` runs) says which
+    side of the analyze each row was emitted on.
     """
     from .build import (
         ActivateAbsorbingRecord,
@@ -1326,8 +1366,19 @@ def _replay_staged_into(
         skip_element_tags=owned_element_tags,
         initial_stress_tags=tags,
         stage_mp_keys=_stage_mp_keys(stages),
+        commands=tuple(c for c in commands if int(c.stage) < 0),
         **replay_kwargs,
     )
+    stage_commands: "dict[int, list[Any]]" = {}
+    for cmd in commands:
+        if int(cmd.stage) >= 0:
+            stage_commands.setdefault(int(cmd.stage), []).append(cmd)
+    if any(k >= len(stages) for k in stage_commands):
+        raise ValueError(
+            f"replay: command rows name stages {sorted(stage_commands)} "
+            f"but the archive has {len(stages)} stage(s)."
+        )
+    from ..emitter.h5_reader import emit_index_of
 
     # Lookups for owned-topology re-emit inside each stage block.
     node_map: "dict[int, tuple[tuple[float, ...], int | None]]" = {}
@@ -1350,7 +1401,7 @@ def _replay_staged_into(
     )
 
     # 2. Per-stage blocks — exact _emit_stages_flat order.
-    for st in stages:
+    for k, st in enumerate(stages):
         emitter.stage_open(st.name)
         if st.set_time is not None:
             emitter.set_time(float(st.set_time))
@@ -1581,6 +1632,14 @@ def _replay_staged_into(
         if st.pre_analyze_reset:
             emitter.reset()
 
+        # TIMs A8: the stage's ``profiler`` rows (ADR 0114 R3a) bracket
+        # its analyze; the program's emit order says which side each is.
+        cmds = stage_commands.get(k, [])
+        at = emit_index_of(program, "analyze", 0, stage=k) if cmds else 0
+        for cmd in cmds:
+            if cmd.emit_index < at:
+                _replay_command(emitter, cmd, _STAGE_COMMAND_METHODS)
+
         # label= mirrors the bridge's _emit_stages_flat call so the
         # fail-loud analyze banner names the stage (deck equality).
         if st.analyze_dt is None:
@@ -1590,4 +1649,7 @@ def _replay_staged_into(
                 steps=int(st.analyze_steps), dt=float(st.analyze_dt),
                 label=st.name,
             )
+        for cmd in cmds:
+            if cmd.emit_index > at:
+                _replay_command(emitter, cmd, _STAGE_COMMAND_METHODS)
         emitter.stage_close()

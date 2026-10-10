@@ -13,8 +13,9 @@ Covers:
   (mirrors ``ops.profiler.start``'s three flags exactly).
 - ``Pardiso(stats=True)`` still emits ``-stats`` on its ``system Pardiso``
   line inside a stage, with and without ``s.profile`` on that stage.
-- H5 archival of ``s.profile`` refuses loudly (mirrors the
-  ``phantom_node_tags`` refusal in ``H5Emitter.set_stage_records``).
+- H5 archives ``s.profile`` as the stage's ``profiler`` command rows
+  (ADR 0114 R3a, opensees 2.23.0); ``set_stage_records`` fails loud
+  when the rows and the declared bracket disagree.
 """
 from __future__ import annotations
 
@@ -322,11 +323,11 @@ def test_pardiso_stats_emits_inside_stage_with_profile() -> None:
 
 
 # ===========================================================================
-# H5 archival — refuse loudly (mirrors the phantom_node_tags refusal)
+# H5 archival — the bracket is the stage's profiler command rows
 # ===========================================================================
 
 
-def test_h5_set_stage_records_refuses_profile() -> None:
+def test_h5_set_stage_records_archives_profile_as_commands() -> None:
     ops = _two_stage_ops()
     with ops.stage(name="dyn") as s:
         s.profile(deep=True)
@@ -335,8 +336,33 @@ def test_h5_set_stage_records_refuses_profile() -> None:
     bm = ops.build()
     emitter = H5Emitter(model_name="m", snapshot_id="")
     bm.emit(emitter)
-    with pytest.raises(NotImplementedError, match="s.profile"):
+    emitter.set_stage_records(bm.stage_records)  # no raise
+    rows = [(c.method, c.stage, c.args) for c in emitter._commands]
+    assert rows == [
+        ("profiler", 0, ("start", "-deep")),
+        ("profiler", 0, ("stop",)),
+        ("profiler", 0, ("report", "dyn.h5")),
+    ]
+
+
+def test_h5_set_stage_records_refuses_profile_capture_drift() -> None:
+    """A declared bracket with no captured profiler rows is drift."""
+    ops = _two_stage_ops()
+    with ops.stage(name="dyn") as s:
+        s.profile(deep=True)
+        s.analysis(**_full_chain(ops))
+        s.run(n_increments=1)
+    bm = ops.build()
+    emitter = H5Emitter(model_name="m", snapshot_id="")
+    bm.emit(emitter)
+    emitter._commands.clear()
+    with pytest.raises(RuntimeError, match="s.profile"):
         emitter.set_stage_records(bm.stage_records)
+
+
+def test_h5_profiler_outside_a_stage_raises() -> None:
+    with pytest.raises(RuntimeError, match="outside a stage bracket"):
+        H5Emitter(model_name="m").profiler("start")
 
 
 def test_h5_set_stage_records_ok_without_profile() -> None:

@@ -5,8 +5,8 @@ A /meta@created_iso dtype=str[utf-8,vlen] shape=() sha1=masked
 A /meta@model_name dtype=str[utf-8,vlen] shape=() sha1=b9d13fa513214f3ee642cfb66b091bb007f26c4c
 A /meta@ndf dtype=<i8 shape=() sha1=0cf6c361d9199e18f10de459b59db53c79258106
 A /meta@ndm dtype=<i8 shape=() sha1=3e8c1c43b68367ba858df7b619c5b31131c2e887
-A /meta@opensees_schema_version dtype=str[utf-8,vlen] shape=() sha1=cc0fbd525e215522e9116d5389768480f319bc2e
-A /meta@schema_version dtype=str[utf-8,vlen] shape=() sha1=cc0fbd525e215522e9116d5389768480f319bc2e
+A /meta@opensees_schema_version dtype=str[utf-8,vlen] shape=() sha1=052f8c36855361819ccc8769c3b74fbfa3651d89
+A /meta@schema_version dtype=str[utf-8,vlen] shape=() sha1=052f8c36855361819ccc8769c3b74fbfa3651d89
 A /meta@snapshot_id dtype=str[utf-8,vlen] shape=() sha1=be5860ffd4409e5cc12add2802a5ecf9c16828e8
 G /meta/lineage
 A /meta/lineage@model_hash dtype=str[utf-8,vlen] shape=() sha1=masked
@@ -37,6 +37,10 @@ A /opensees/patterns/Plain_1@series_ref dtype=str[utf-8,vlen] shape=() sha1=c4d3
 A /opensees/patterns/Plain_1@tag dtype=<i8 shape=() sha1=e88bf9a567e8136424d5b8d1198175906afa6ec6
 A /opensees/patterns/Plain_1@type dtype=str[utf-8,vlen] shape=() sha1=c75caead06e68b9635a793e87bfcd772310f1a18
 D /opensees/patterns/Plain_1/loads dtype={target_kind:str[utf-8,vlen],target:str[utf-8,vlen],forces:<f8[6]} shape=(1,) sha1=c308593b81ac3cbf85dd7b6148d5bbf78bd79362
+D /opensees/program dtype={first:<i4,count:<i4,method:<i2,store:<i2,row:<i4,stage:<i4,decl:<i4} shape=(16,) sha1=03f78da16f68f7997cd972374ef810a7c2241205
+A /opensees/program@emit_count dtype=<i4 shape=() sha1=e16c596518c7d5c6fb031956b9c2c65881b61d19
+A /opensees/program@methods dtype=str[utf-8,vlen] shape=(16,) sha1=3a91f9fde59e7d50a7ffb5310e46efe423a09d63
+A /opensees/program@stores dtype=str[utf-8,vlen] shape=(15,) sha1=d9358344f31ee6efd908d3d1136da08365208768
 G /opensees/time_series
 G /opensees/time_series/Linear_1
 A /opensees/time_series/Linear_1@params dtype=<f8 shape=(0,) sha1=419d1e627c2422306e1ff28f4c3a42af99262e2f

@@ -19,7 +19,9 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field, replace
-from typing import TYPE_CHECKING, Any, Callable, Iterable, Sequence, TypeVar
+from typing import (
+    TYPE_CHECKING, Any, Callable, Iterable, Mapping, Sequence, TypeVar,
+)
 
 from ._internal.artifact_write import BridgeArtifactWriter
 from ._internal.build import (
@@ -7662,6 +7664,28 @@ def _emit_pattern_sp_partitioned(
 # apeSees — the bridge
 # ---------------------------------------------------------------------------
 
+def _warn_if_shown(message: str, category: type[Warning]) -> bool:
+    """Warn at the first caller outside apeGmsh; ``True`` iff the active
+    filters let it through to the user.
+
+    The automatic ``model.h5`` write silences ``H5FeatureDeferredWarning``,
+    so whether a deferred warning was seen depends on the caller's
+    filters. The warning is recorded under those same filters and then
+    re-issued to the real handler.
+    """
+    import warnings as _warnings
+
+    from ._internal.build import _stacklevel_outside_package
+
+    with _warnings.catch_warnings(record=True) as seen:
+        _warnings.warn(
+            message, category, stacklevel=_stacklevel_outside_package())
+    for w in seen:
+        _warnings.warn_explicit(
+            w.message, w.category, w.filename, w.lineno, source=w.source)
+    return bool(seen)
+
+
 class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
     """The OpenSees bridge.
 
@@ -7751,6 +7775,10 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
         # ADR 0112 D1 (V2d-4b): the automatic model.h5 write, called once
         # at the end of each terminal emit / live build (not ``h5()``).
         self._artifacts = BridgeArtifactWriter(enabled=_artifacts)
+        # ADR 0114 Q3: each distinct set of ``ledger`` verbs ``h5()``
+        # warned about, so the automatic write and an explicit ``h5()``
+        # warn once per set rather than on every emit.
+        self._ledger_warned: set[frozenset[str]] = set()
         # Call ordinal of ``imposed_displacement``: the ``<name>`` of its
         # synthesised records when the call gives no ``name=``.
         self._imposed_displacement_calls = 0
@@ -9798,22 +9826,24 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
         bm = self.build()
         emitter = H5Emitter(model_name=name, snapshot_id=snapshot_id)
         bm.emit(emitter)
+        # Ledgered verbs whose own deferred warning reached the user; the
+        # ledger warning below skips only those (one dropped row, one
+        # warning, on the explicit and the automatic path alike).
+        deferred_shown: set[str] = set()
         if bm.equation_constraint_records:
             # The deck zone has no equationConstraint record and, unlike an
             # enforce="equation" tie, a bridge-level row has no neutral-zone
             # twin either — so it does not survive a from_h5 round-trip.
-            import warnings as _warnings
-
             from .emitter.h5 import H5FeatureDeferredWarning
-            _warnings.warn(
+            if _warn_if_shown(
                 f"ops.h5: {len(bm.equation_constraint_records)} "
                 "apeSees.equation_constraint row(s) are NOT archived — the "
                 "model.h5 has no record for them, so a model rebuilt from it "
                 "runs without the constraint. Emit Tcl / openseespy (or run "
                 "in-process) for the complete model.",
                 H5FeatureDeferredWarning,
-                stacklevel=2,
-            )
+            ):
+                deferred_shown.add("equationConstraint")
 
         # ADR 0055 Phase 1: hand the declarative global initial-stress
         # records to the emitter via the side-channel (the Protocol
@@ -9862,6 +9892,46 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
             computed_sections=self._computed_section_records(bm.primitives),
             nodes_ndf=_nodes_ndf,
             provenance=self._provenance.snapshot(),
+        )
+        # A verb whose deferred warning the user saw above is skipped; the
+        # automatic write silences that class, so there the ledger warns.
+        self._warn_ledger(
+            emitter.ledger_counts, already_warned=frozenset(deferred_shown),
+        )
+
+    def _warn_ledger(
+        self, counts: "Mapping[str, int]", *,
+        already_warned: "frozenset[str]" = frozenset(),
+    ) -> None:
+        """Warn once per distinct set of ``ledger`` verbs ``h5()`` dropped.
+
+        ADR 0114 Q3: a ``ledger`` call (contact, rebar, embed,
+        ``equationConstraint``) leaves no ``/opensees`` record, so a deck
+        replayed from the file omits it. The guard is per instance and
+        per verb set, so a model that writes on every emit warns once,
+        and again only when a new ledgered verb appears. Verbs in
+        ``already_warned`` raised a dedicated warning of their own and
+        are left out, so no dropped row warns twice.
+        """
+        verbs = frozenset(
+            v for v, n in counts.items() if n and v not in already_warned)
+        if not verbs or verbs in self._ledger_warned:
+            return
+        self._ledger_warned.add(verbs)
+        import warnings as _warnings
+
+        from ._internal.build import _stacklevel_outside_package
+        from .emitter.h5 import H5LedgerWarning
+        detail = ", ".join(f"{v} x{counts[v]}" for v in sorted(verbs))
+        # The explicit ``ops.h5()`` and the automatic write after an emit
+        # both reach here; point at the user's call either way.
+        _warnings.warn(
+            f"model.h5: {sum(counts[v] for v in verbs)} call(s) to ledgered "
+            f"verbs ({detail}) are not carried by the /opensees archive, "
+            "so a deck replayed from it omits them unless the neutral zone "
+            "re-derives them (ADR 0114 Q3).",
+            H5LedgerWarning,
+            stacklevel=_stacklevel_outside_package(),
         )
 
     # -- Registration -----------------------------------------------------

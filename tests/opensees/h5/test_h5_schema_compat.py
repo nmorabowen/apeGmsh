@@ -780,9 +780,9 @@ def test_single_stamp_file_fallback_lineage_is_envelope(tmp_path: Any) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_opensees_reader_version_is_2_22_0() -> None:
-    """Schema 2.22.0 — ``/opensees/bcs@mass_from_model`` marker (#1304)."""
-    assert reader_version(OPENSEES) == SchemaVersion(2, 22, 0)
+def test_opensees_reader_version_is_2_23_0() -> None:
+    """Schema 2.23.0 — ``/opensees/program`` + ``/opensees/commands`` (#1461)."""
+    assert reader_version(OPENSEES) == SchemaVersion(2, 23, 0)
 
 
 def test_constraints_group_present_when_emitted(tmp_path: Any) -> None:

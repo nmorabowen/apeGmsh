@@ -99,6 +99,9 @@ class Verb:
 _NONE: Final[frozenset[str]] = frozenset()
 _FORK: Final[frozenset[str]] = frozenset({"fork"})
 _S: Final[str] = "/opensees/stages/stage_{k:03d}"
+#: The generic store of K1-4 (opensees 2.23.0): one row per call, with a
+#: ``stage`` column (``-1`` global).
+_CMD: Final[str] = "/opensees/commands"
 
 
 def _p(
@@ -195,12 +198,13 @@ _ROWS: Final[tuple[Verb, ...]] = (
     # -- Regions and damping ----------------------------------------------
     _p("region", "region", "both", "archive",
        "{scope}/regions/region_{k:03d}", seq=("add", "region"), decl=True),
-    # Archived inside a stage; the global form is dropped (ADR 0053 D1).
-    _p("rayleigh", "damping", "both", "ledger", _S + "/rayleigh",
-       seq=("set", "rayleigh")),
+    # The global form is a ``/opensees/commands`` row (K1-4); the stage
+    # form keeps its stage sub-table (ADR 0055 Phase 2).
+    _p("rayleigh", "damping", "both", "archive",
+       _CMD + "|" + _S + "/rayleigh", seq=("set", "rayleigh")),
     _p("damping", "damping", "global", "archive",
        "/opensees/dampings/damping_{k:03d}", decl=True),
-    _p("modal_damping", "damping", "global", "ledger", ""),
+    _p("modal_damping", "damping", "global", "archive", _CMD),
     # -- Recorders --------------------------------------------------------
     _p("recorder", "recorder", "both", "archive",
        "{scope}/recorders/{kind}_{k}", seq=("add", "recorder"), decl=True),
@@ -256,7 +260,7 @@ _ROWS: Final[tuple[Verb, ...]] = (
     _p("update_material_stage", "material", "stage", "archive",
        _S + "/update_material_stage", seq=("set", "material_stage")),
     # -- Modal family (runtime retrieval and fork analyses) ---------------
-    _p("eigen", "modal", "global", "ledger", "", returns="list[float]"),
+    _p("eigen", "modal", "global", "archive", _CMD, returns="list[float]"),
     _p("modal_properties", "modal", "global", "ledger", "",
        returns="dict[str, list[float]]"),
     _p("modal_response_history", "modal", "global", "ledger", "",
@@ -265,7 +269,9 @@ _ROWS: Final[tuple[Verb, ...]] = (
        requires=_FORK),
     _p("eigen_feast", "modal", "global", "ledger", "",
        requires=_FORK, returns="list[float]"),
-    _p("profiler", "profiler", "both", "ledger", "", requires=_FORK),
+    # Archived as a stage's ``/opensees/commands`` row (``s.profile``);
+    # the bridge's own ``ops.profiler`` brackets reach decks only.
+    _p("profiler", "profiler", "stage", "archive", _CMD, requires=_FORK),
     # -- Partitions -------------------------------------------------------
     _p("partition_open", "partition", "both", "archive",
        "/opensees/partitions/partition_{rank:02d}"),
@@ -276,9 +282,9 @@ _ROWS: Final[tuple[Verb, ...]] = (
     _p("parallel_runtime_fallback_system", "analysis", "both", "archive",
        "{scope}/analysis@system_runtime_fallback"),
     # -- Command channel (ADR 0114 D2/D3) ---------------------------------
-    # Method 75, the last. H5 refuses every token until K1-4 adds
-    # ``/opensees/commands``; the token's own row then says where it goes.
-    _p("command", "channel", "both", "refuse", ""),
+    # Method 75, the last. H5 writes an allow-listed token as a
+    # ``/opensees/commands`` row; an unknown token raises on every emitter.
+    _p("command", "channel", "both", "archive", _CMD),
 )
 
 #: One row per verb, keyed by verb name.
@@ -313,7 +319,7 @@ SIDE_CHANNELS: Final[Mapping[str, frozenset[str]]] = MappingProxyType({
         "mark_mass_from_model", "add_oriented_elements", "write",
         "write_opensees_into", "set_initial_stress_records",
         "set_stage_records", "restore_partition_blocks",
-        "restore_stage_blocks",
+        "restore_stage_blocks", "restore_program", "ledger_counts",
     }),
     "recording": frozenset(),
 })

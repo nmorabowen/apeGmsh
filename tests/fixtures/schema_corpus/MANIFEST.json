@@ -7,7 +7,7 @@
  },
  "current": {
   "neutral": "2.35.0",
-  "opensees": "2.22.0"
+  "opensees": "2.23.0"
  },
  "entries": [
   {
@@ -1069,6 +1069,36 @@
    "stamps": {
     "neutral": "2.34.0",
     "opensees": "2.22.0"
+   }
+  },
+  {
+   "zone": "opensees",
+   "minor": "2.23",
+   "sha": "1670795618f374350718f2f870651da65efc7bc7",
+   "date": "2026-10-08",
+   "version": "2.23.0",
+   "bump_commits": [
+    "2ee04c1ec1479813c5e5c7e075dd2ececa56b474"
+   ],
+   "generator": "tests/fixtures/schema_corpus/_era_generator.py --zone opensees",
+   "status": "ok",
+   "files": {
+    "h5": {
+     "name": "opensees_2.23.h5",
+     "sha256": "222ecdbaeac4b27388d0ece73530786e4b5c8cbb994c3d372a09853b8494d435"
+    },
+    "dump": {
+     "name": "opensees_2.23.dump.json",
+     "sha256": "89b4cbeccb8e28b6c6dcb7f2930cedaca4325c757979ed295f2b11cf16ca2802"
+    },
+    "tcl": {
+     "name": "opensees_2.23.tcl",
+     "sha256": "5a0d3a8374c78f2bd38c5ffc940359033a69726b0bf8e5e1442dc13f8643873e"
+    }
+   },
+   "stamps": {
+    "neutral": "2.35.0",
+    "opensees": "2.23.0"
    }
   }
  ]

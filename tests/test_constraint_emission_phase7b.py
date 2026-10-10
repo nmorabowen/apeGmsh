@@ -1026,11 +1026,10 @@ class TestH5SchemaIntegration:
             assert f["meta"].attrs["schema_version"] == OPENSEES_CURRENT
             assert f["meta"].attrs["opensees_schema_version"] == OPENSEES_CURRENT
 
-    def test_reader_accepts_2_21_and_2_22(self, tmp_path: Path) -> None:
-        """The OpenSees reader opens 2.22.x (#1304: the
-        ``/opensees/bcs@mass_from_model`` marker) and the minors before it
-        down to the zone's floor (ADR 0113 (#1303)); below the floor it
-        refuses."""
+    def test_reader_accepts_2_22_and_2_23(self, tmp_path: Path) -> None:
+        """The OpenSees reader opens 2.23.x (#1461: ``/opensees/program``
+        and ``/opensees/commands``) and the minors before it down to the
+        zone's floor (ADR 0113 (#1303)); below the floor it refuses."""
         from apeGmsh.opensees._internal.schema_version import (
             OPENSEES,
             SchemaVersion,
@@ -1040,9 +1039,10 @@ class TestH5SchemaIntegration:
             validate_zone_version,
         )
         reader = reader_version(OPENSEES)
-        assert reader == SchemaVersion(2, 22, 0)
-        validate_zone_version(SchemaVersion(2, 21, 0), reader, zone=OPENSEES)
+        assert reader == SchemaVersion(2, 23, 0)
         validate_zone_version(SchemaVersion(2, 22, 0), reader, zone=OPENSEES)
+        validate_zone_version(SchemaVersion(2, 23, 0), reader, zone=OPENSEES)
+        validate_zone_version(SchemaVersion(2, 21, 0), reader, zone=OPENSEES)
         # 2.20.x, outside the retired two-version window, opens again.
         validate_zone_version(SchemaVersion(2, 20, 0), reader, zone=OPENSEES)
         floor = reader_floor(OPENSEES)

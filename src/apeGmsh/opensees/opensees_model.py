@@ -200,6 +200,12 @@ class OpenSeesModel:
     #: ``/opensees/bcs/mass`` rows for the snapshot masses.  Replay streams
     #: ``fem.nodes.masses`` instead; ``to_h5`` re-marks the file.
     _mass_from_model: bool = False
+    #: ``/opensees/program`` and ``/opensees/commands`` (ADR 0114 R2/R3a,
+    #: opensees 2.23.0; empty below it), as the reader's ``ProgramRun`` /
+    #: ``CommandRecordRO`` values. Replay places the command rows;
+    #: ``to_h5`` echoes both through ``H5Emitter.restore_program``.
+    _program: "tuple[Any, ...]" = field(default_factory=tuple)
+    _commands: "tuple[Any, ...]" = field(default_factory=tuple)
 
     # ------------------------------------------------------------------
     # Construction
@@ -320,6 +326,8 @@ class OpenSeesModel:
             partitions = tuple(model.partitions())
             patterns = tuple(model.patterns())
             recorders = tuple(model.recorders())
+            program = model.program()
+            commands = model.commands()
 
             elements = cls._load_elements(model)
             fixes, masses = cls._load_bcs(model)
@@ -380,6 +388,8 @@ class OpenSeesModel:
             _stages=stages,
             _partitions=partitions,
             _mass_from_model=mass_from_model,
+            _program=program,
+            _commands=commands,
         )
 
     @classmethod
@@ -763,6 +773,22 @@ class OpenSeesModel:
         (``UniformExcitation``) keep their body in ``args``.
         """
         return self._patterns
+
+    def program(self) -> "tuple[Any, ...]":
+        """Return the ``/opensees/program`` runs (ADR 0114 R2); empty for
+        an archive below opensees 2.23.0."""
+        return self._program
+
+    def commands(self) -> "tuple[Any, ...]":
+        """Return the ``/opensees/commands`` rows (ADR 0114 R3a)."""
+        return self._commands
+
+    def emit_index(self, method: str, row: int, *, stage: int = -1) -> int:
+        """The 1-based emit index of ``row`` of ``method``'s store in
+        ``stage``; delegates to :func:`h5_reader.emit_index_of` (Q2)."""
+        from .emitter.h5_reader import emit_index_of
+
+        return emit_index_of(self._program, method, row, stage=stage)
 
     def recorders(self) -> tuple[RecorderRecord, ...]:
         """Return every ``recorder`` call.
@@ -1200,9 +1226,12 @@ class OpenSeesModel:
         # then per-stage blocks).  The Live target raises upfront inside
         # _replay_staged_into.  Non-staged models take the flat path.
         if self._stages:
-            _replay_staged_into(emitter, stages=self._stages, **replay_kwargs)
+            _replay_staged_into(
+                emitter, stages=self._stages, commands=self._commands,
+                program=self._program, **replay_kwargs,
+            )
         else:
-            _replay_into(emitter, **replay_kwargs)
+            _replay_into(emitter, commands=self._commands, **replay_kwargs)
 
     def _rehydrate_element_connectivity(
         self, records: tuple[ElementRecord, ...],
@@ -1363,6 +1392,13 @@ class OpenSeesModel:
         # _element_ranks against the populated element pool).
         if self._partitions:
             emitter_fresh.restore_partition_blocks(self._partitions)
+        # ADR 0114 R2/R3a: echo the emit order and the command rows. The
+        # category-major replay above cannot regenerate the order, and it
+        # passes no commands, so the echo is their only source here. A
+        # source below 2.23.0 has no program: echoing that absence keeps
+        # the replay's own tape out of the file, which is not the order the
+        # bridge emitted.
+        emitter_fresh.restore_program(self._program, self._commands)
         _compose_model_h5(
             self._fem,
             emitter_fresh,
