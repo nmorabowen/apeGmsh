@@ -497,11 +497,18 @@ def test_a_composed_model_writes(monkeypatch, tmp_path: Path) -> None:
         ops.system.Mumps()               # auto-emit would warn
         model = tmp_path / "host.h5"
         asm.h5(model)
-    assert len(ops.fem.partitions) == 2              # one per module rank
-    assert model.is_file()
-    reloaded = FEMData.from_h5(str(model))
+        # The D1 gate: a session holding the composed model reports its
+        # modules as partitions, and its automatic write still happens.
+        with apeGmsh.from_h5(model, model_name="reopened") as g:
+            fem = g.mesh.queries.get_fem_data()
+            assert len(fem.partitions) == 2          # one per module rank
+    assert len(ops.fem.partitions) == 2
+    reopened = tmp_path / "reopened.h5"
+    assert reopened.is_file()
+    reloaded = FEMData.from_h5(str(reopened))
     assert len(reloaded.partitions) == 2
     assert sorted(reloaded.composed_from.labels) == ["H", "M"]
+    assert reloaded.session_id == fem.session_id
 
 
 # ---------------------------------------------------------------------------

@@ -224,6 +224,14 @@ To move a model across:
   `equal_dof` on dotted ports, `"{instance}.{group}"`.
 - `materialize()` becomes `bridge(ndm=, ndf=)`, which returns the
   `apeSees` bridge; `asm.h5(path)` writes the archive.
+- **Supports, masses and loads are restated on the bridge.** A composed
+  v1 session carried the module's `g.constraints.bc`, `g.masses` and load
+  cases into its deck; the bridge emits them only when asked:
+  `ops.fix_from_model()`, `ops.mass_from_model()` and, inside a pattern,
+  `p.from_model(case)` (or `ops.fix` / `ops.mass` / `p.load` on dotted
+  groups). The build warns (`UnconsumedModelDefinitionWarning`) when the
+  model defines supports or masses the deck leaves out, so nothing is
+  dropped silently.
 
 ---
 

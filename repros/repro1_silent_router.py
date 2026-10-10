@@ -2,7 +2,7 @@ r"""Defect 1 reproduction — chain-phase silent failures in the def router.
 
 Builds two independently-meshed blocks (module A: z 0..50, module B:
 z 50.5..100.5, 0.5 mm gap), saves each to h5, then opens a chain-phase
-assembly via apeGmsh.from_h5(A) + g.compose(B) and probes every silent
+assembly (Assembly archive of A + B, reopened with apeGmsh.from_h5) and probes every silent
 path:
 
   1a. tie with a MISSPELLED slave label            -> expected: raise?
@@ -44,11 +44,32 @@ def build_module(fname, name, z0, size):
     return path
 
 
+def composed_session(pa, pb):
+    """Modules A and B as one Assembly archive, reopened as a chain-phase
+    session (``g.compose`` was removed in AS5-c, ADR 0117 D7). Every
+    instance is namespaced, so A's groups are ``A.A_*`` and B's ``B.B_*``."""
+    from apeGmsh.assembly import Assembly
+    from apeGmsh.mesh import FEMData
+    from apeGmsh.opensees import apeSees
+
+    srcs = []
+    for p in (pa, pb):
+        ops = apeSees(FEMData.from_h5(str(p)))
+        ops.model(ndm=3, ndf=3)
+        src = p.with_name(p.stem + "_src.h5")
+        ops.h5(str(src))
+        srcs.append(src)
+    asm = Assembly("AB").instance("A", srcs[0]).instance("B", srcs[1])
+    asm.bridge(ndm=3, ndf=3)
+    archive = TMP / "AB.h5"
+    asm.h5(str(archive))
+    return apeGmsh.from_h5(str(archive))
+
+
 pa = build_module("mod_a.h5", "A", 0.0, 25.0)
 pb = build_module("mod_b.h5", "B", 50.5, 20.0)
 
-g = apeGmsh.from_h5(pa)
-g.compose(str(pb), label="B")
+g = composed_session(pa, pb)
 fem = g._fem
 
 node_pgs = sorted(e.get("name", "?") for e in fem.nodes.physical._groups.values())
@@ -88,21 +109,21 @@ b_body = next((n for n in elem_pgs if n.endswith("B_body")), "B_body")
 print(f"\nusing composed names: b_top={b_top!r} b_bot={b_bot!r} b_body={b_body!r}")
 
 probe("1a tie, misspelled slave label",
-      lambda: g.constraints.tie("A_top", "B_bott_TYPO", tolerance=1.0))
+      lambda: g.constraints.tie("A.A_top", "B_bott_TYPO", tolerance=1.0))
 
 probe("1b bc, misspelled target",
-      lambda: g.constraints.bc("A_bott_TYPO", dofs=[1, 1, 1]))
+      lambda: g.constraints.bc("A.A_bott_TYPO", dofs=[1, 1, 1]))
 
 
 def _load_case():
     with g.loads.case("push"):
-        g.loads.point.force("A_topp_TYPO", force=(0, 0, -1000.0))
+        g.loads.point.force("A.A_topp_TYPO", force=(0, 0, -1000.0))
 
 
 probe("1c point load, misspelled target", _load_case)
 
 probe("1d point mass, misspelled target",
-      lambda: g.masses.point("A_topp_TYPO", mass=10.0))
+      lambda: g.masses.point("A.A_topp_TYPO", mass=10.0))
 
 
 def _disp_case():
@@ -113,7 +134,7 @@ def _disp_case():
 probe("1e displacements.surface, VALID face, chain phase", _disp_case)
 
 probe("1f tie, valid labels, tolerance 0.01 << gap 0.5 (zero projections)",
-      lambda: g.constraints.tie("A_top", b_bot, tolerance=0.01))
+      lambda: g.constraints.tie("A.A_top", b_bot, tolerance=0.01))
 
 def _gravity():
     with g.loads.case("dead"):
