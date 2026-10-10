@@ -725,7 +725,9 @@ def test_cross_rank_embedded_with_rebar_nodes_owned(tmp_path) -> None:
                     for tok in body[2:]:
                         if tok.startswith("'-") or tok.startswith('"-'):
                             break
-                        masters.append(int(tok))
+                        # The 4th retained node is emitted as a quoted
+                        # string (openseespy reads it with OPS_GetString).
+                        masters.append(int(tok.strip("'\"")))
                     embeds.append({
                         "rank": rank,
                         "ele_tag": ele_tag,
