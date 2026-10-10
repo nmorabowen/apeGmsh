@@ -426,7 +426,7 @@ def _empty_after_refusal(path: Path, ndm_ndf: tuple[int, int], tmp_path,
     ops = apeSees(model.fem)
     ops.model(ndm=ndm_ndf[0], ndf=ndm_ndf[1])
     with pytest.raises(AssemblyError, match=match):
-        rehydrate(ops, "p", model)
+        rehydrate(ops, "p", model, None)
     deck = _deck(ops, tmp_path / "empty.tcl")
     declared = [ln for ln in deck.splitlines()
                 if ln.split()[:1] and ln.split()[0] in

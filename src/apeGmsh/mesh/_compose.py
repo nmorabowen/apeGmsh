@@ -25,7 +25,7 @@ Cross-references
 from __future__ import annotations
 
 import warnings
-from dataclasses import dataclass, field, replace as _dc_replace
+from dataclasses import dataclass, field, fields as _dc_fields, replace as _dc_replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -1058,6 +1058,123 @@ def _place_record_geometry(
     return _dc_replace(rec, **changes) if changes else rec
 
 
+#: The instance frame rule for load records (ADR 0117, the load note):
+#: every field's class. ``by_source`` is a nodal force or moment, which
+#: turns by ``R v`` unless the record is a reduced body force; ``params``
+#: is classified per load type in :data:`_ELEMENT_LOAD_PARAMS`; the rest
+#: (tags, names, DOF indices, scalars, flags) never transform.
+_LOAD_FIELDS: dict[str, dict[str, str]] = {
+    "NodalLoadRecord": {
+        "kind": "token", "pattern": "name", "name": "name",
+        "node_id": "tag", "force_xyz": "by_source",
+        "moment_xyz": "by_source", "basis": "token", "source": "token",
+    },
+    "ElementLoadRecord": {
+        "kind": "token", "pattern": "name", "name": "name",
+        "element_id": "tag", "load_type": "token", "params": "params",
+    },
+    "SPRecord": {
+        "kind": "token", "pattern": "name", "name": "name",
+        "node_id": "tag", "dof": "dof", "value": "scalar",
+        "is_homogeneous": "flag",
+    },
+}
+
+#: Element-load ``params`` by ``load_type``: the key groups that form one
+#: authored 3-vector (turn by ``R v``) and the keys that stay put. Gravity
+#: ``g`` and a body force ``bf`` are global (ADR 0117's load note):
+#: rotating a module never tilts its weight.
+_ELEMENT_LOAD_PARAMS: dict[str, tuple[tuple[tuple[str, ...], ...], tuple[str, ...]]] = {
+    "beamUniform": ((("wx", "wy", "wz"),), ()),
+    "surfacePressure": ((("direction",),), ("p", "normal")),
+    "bodyForce": ((), ("g", "density", "bf")),
+}
+
+
+def _place_load_record(
+    rec: Any,
+    *,
+    rotate: tuple[float, float, float, float] | None,
+) -> Any:
+    """Carry a load record through the module rotation (ADR 0117).
+
+    A nodal force or moment authored in the module (``source`` one of
+    :data:`NodalLoadSource.BOUNDARY_KINDS`) and an element load's authored
+    direction turn by ``R v``. A reduced self-weight or body force
+    (``source`` in ``BODY_KINDS``, an element ``g`` / ``bf``) stays global,
+    and a DOF index, a scalar or a tag never transforms. A load never
+    translates.
+
+    Raises ``TypeError`` for a record kind, field or element-load
+    parameter the frame tables do not classify, and ``ComposeError``
+    when a rotated module carries a nodal vector whose ``source`` does not
+    say whether it is a body force (a record from a file older than
+    neutral schema 2.35.0).
+    """
+    from .._kernel.records._kinds import NodalLoadSource
+
+    kind = type(rec).__name__
+    table = _LOAD_FIELDS.get(kind)
+    if table is None:
+        raise TypeError(
+            f"compose: load record kind {kind} has no entry in the "
+            f"instance frame table _LOAD_FIELDS.")
+    unclassified = {f.name for f in _dc_fields(rec)} - set(table)
+    if unclassified:
+        raise TypeError(
+            f"compose: {kind} fields {sorted(unclassified)} are not "
+            f"classified in the instance frame table _LOAD_FIELDS.")
+    changes: dict[str, Any] = {}
+    if kind == "ElementLoadRecord":
+        groups = _ELEMENT_LOAD_PARAMS.get(rec.load_type)
+        if groups is None:
+            raise TypeError(
+                f"compose: element load type {rec.load_type!r} has no "
+                f"entry in _ELEMENT_LOAD_PARAMS.")
+        turned, kept = groups
+        known = {k for grp in turned for k in grp} | set(kept)
+        if set(rec.params) - known:
+            raise TypeError(
+                f"compose: {rec.load_type} params "
+                f"{sorted(set(rec.params) - known)} are not classified in "
+                f"_ELEMENT_LOAD_PARAMS.")
+        if rotate is not None:
+            params = dict(rec.params)
+            for grp in turned:
+                missing = [k for k in grp if k not in params]
+                if missing:
+                    raise TypeError(
+                        f"compose: {rec.load_type} params lack {missing}; "
+                        f"the vector {grp} cannot be turned in part.")
+                values = [params[k] for k in grp]
+                if len(grp) == 1:
+                    params[grp[0]] = _place_vectors(
+                        values[0], translate=(0.0, 0.0, 0.0), rotate=rotate,
+                        what=f"{rec.load_type}.{grp[0]}")
+                else:
+                    moved = _place_vectors(
+                        tuple(values), translate=(0.0, 0.0, 0.0),
+                        rotate=rotate, what=f"{rec.load_type}.{grp}")
+                    params.update(zip(grp, moved))
+            changes["params"] = params
+    elif rotate is not None and "by_source" in table.values():
+        vectors = [f for f, c in table.items()
+                   if c == "by_source" and getattr(rec, f) is not None]
+        if vectors and rec.source not in NodalLoadSource.ALL:
+            raise ComposeError(
+                f"compose: node {rec.node_id} carries a load with source "
+                f"{rec.source!r}, so a rotated module cannot tell an "
+                f"authored force (which turns) from a self-weight (which "
+                f"stays global). Re-save the module under neutral schema "
+                f">= 2.35.0, or compose it without rotate=.")
+        if rec.source not in NodalLoadSource.BODY_KINDS:
+            for f in vectors:
+                changes[f] = _place_vectors(
+                    getattr(rec, f), translate=(0.0, 0.0, 0.0),
+                    rotate=rotate, what=f"{kind}.{f}")
+    return _dc_replace(rec, **changes) if changes else rec
+
+
 # ── Helper: per-record tag-offset + namespace rewrite ──────────────
 
 
@@ -1628,15 +1745,21 @@ def _rewrite_source_for_compose(
         for rec in source.elements.constraints
     )
     new_nodal_loads = tuple(
-        _rewrite_record(rec, offset=offset, label=label)
+        _place_load_record(
+            _rewrite_record(rec, offset=offset, label=label), rotate=rotate,
+        )
         for rec in source.nodes.loads
     )
     new_element_loads = tuple(
-        _rewrite_record(rec, offset=offset, label=label)
+        _place_load_record(
+            _rewrite_record(rec, offset=offset, label=label), rotate=rotate,
+        )
         for rec in source.elements.loads
     )
     new_sp_records = tuple(
-        _rewrite_record(rec, offset=offset, label=label)
+        _place_load_record(
+            _rewrite_record(rec, offset=offset, label=label), rotate=rotate,
+        )
         for rec in source.nodes.sp
     )
     # Masses: vectorized columnar offset-rewrite (ADR 0065 v2 /

@@ -33,11 +33,13 @@ group (#1587) holds no element spec; it travels as ``{instance}.{pg}``.
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, cast
 
-from apeGmsh.mesh._compose import _prefix_namespaced_name
+import numpy as np
+
+from apeGmsh.mesh._compose import _apply_geometric_transform, _prefix_namespaced_name
 from apeGmsh.opensees._internal.typed_records import SectionSimpleRecord
 
 from ._v1 import AssemblyError
@@ -191,16 +193,33 @@ _SECTIONS: dict[str, _Parser] = {
 
 _TRANSFORMS = ("Linear", "PDelta", "Corotational")
 
+#: The instance frame rule (ADR 0117 INV-6 note) for every field of an
+#: archived ``TransformRecord``: a ``direction`` turns by ``R v`` and never
+#: translates; a tag or a type token is frame-free. :func:`_plan` refuses a
+#: record with a field missing here, so a new transform field (a joint
+#: offset, say) is classified before an instance can carry it.
+_TRANSFORM_FIELDS = {"type_token": "token", "tag": "tag", "vec": "direction"}
+
 #: Uniform-section quadrature rules: args ``(secTag, nIP)``.
 _INTEGRATIONS = ("Legendre", "Lobatto", "NewtonCotes", "Radau", "Trapezoidal")
 
 _WINDOW = {"-activateTime": 1, "-deactivateTime": 1}
 
 
-def _transform(token: str, vec: tuple[float, ...], name: "str | None", what: str) -> _Make:
+def _transform(
+    token: str, vec: tuple[float, ...], name: "str | None", what: str,
+    rotate: "tuple[float, float, float, float] | None",
+) -> _Make:
     if len(vec) not in (0, 3):
         raise AssemblyError(f"{what}: archived vecxz {vec!r} is not a 3-vector.")
-    vecxz = (float(vec[0]), float(vec[1]), float(vec[2])) if vec else None
+    vecxz = None
+    if vec:
+        # vecxz is a direction in the source frame: R v, never + t.
+        turned = _apply_geometric_transform(
+            np.asarray([vec], dtype=np.float64),
+            translate=(0.0, 0.0, 0.0), rotate=rotate,
+        )[0]
+        vecxz = (float(turned[0]), float(turned[1]), float(turned[2]))
     # ``token`` is one of _TRANSFORMS, each a public ``ops.geomTransf`` verb.
     return lambda ops, ref: getattr(ops.geomTransf, token)(vecxz=vecxz, name=name)
 
@@ -534,8 +553,14 @@ def _element_specs(
 _Group = tuple[str, str, str, tuple[int, ...]]
 
 
-def _plan(label: str, model: "OpenSeesModel") -> tuple[list[_Decl], list[_Group]]:
+def _plan(
+    label: str, model: "OpenSeesModel",
+    rotate: "tuple[float, float, float, float] | None",
+) -> tuple[list[_Decl], list[_Group]]:
     """Parse and check every archived declaration; register nothing.
+
+    ``rotate`` is the instance's axis-angle rotation (the merge engine's
+    form); every direction a declaration carries turns by it.
 
     Returns the declarations and the element groups to synthesize.
     """
@@ -588,9 +613,16 @@ def _plan(label: str, model: "OpenSeesModel") -> tuple[list[_Decl], list[_Group]
                 f"{what('geomTransf', tr.type_token, tr.tag)} is not "
                 f"rehydrated; supported: {sorted(_TRANSFORMS)}."
             )
+        unclassified = {f.name for f in fields(tr)} - set(_TRANSFORM_FIELDS)
+        if unclassified:
+            raise AssemblyError(
+                f"{what('geomTransf', tr.type_token, tr.tag)} carries "
+                f"{sorted(unclassified)}, which the instance frame rule does "
+                f"not classify; add them to _TRANSFORM_FIELDS."
+            )
         plan.append(_Decl(("geomTransf", tr.tag), (), _transform(
             tr.type_token, tr.vec, prefixed("geomTransf", tr.tag),
-            what("geomTransf", tr.type_token, tr.tag))))
+            what("geomTransf", tr.type_token, tr.tag), rotate)))
 
     for bi in sorted(model.beam_integration(), key=lambda r: r.tag):
         if bi.type_token not in _INTEGRATIONS:
@@ -735,8 +767,15 @@ def refuse_region_dampings(label: str, source: "str | Path") -> None:
         )
 
 
-def rehydrate(ops: "apeSees", label: str, model: "OpenSeesModel") -> None:
+def rehydrate(
+    ops: "apeSees", label: str, model: "OpenSeesModel",
+    rotate: "tuple[float, float, float, float] | None",
+) -> None:
     """Register ``model``'s model content on ``ops`` under ``{label}.``.
+
+    ``rotate`` is the instance's rotation in the merge engine's axis-angle
+    form (``None`` when not rotated): an archived ``vecxz`` turns by it, as
+    the instance's node coordinates did in the merge.
 
     Names become ``{label}.{name}`` (the carried rebar material's rule in
     the merge engine); physical groups take the merge engine's
@@ -747,7 +786,7 @@ def rehydrate(ops: "apeSees", label: str, model: "OpenSeesModel") -> None:
     archived tag order. Every declaration is parsed and checked before the
     first registration, so a refusal leaves ``ops`` untouched.
     """
-    plan, groups = _plan(label, model)
+    plan, groups = _plan(label, model, rotate)
     for name, ids in _group_ids(label, ops, model, groups):
         ops.fem._add_element_group(name, ids)
     by_ref: dict[_Key, "Primitive"] = {}

@@ -762,7 +762,7 @@ class Assembly(_AssemblyV1):
                     f"ndf={model.ndf}; the assembly bridge has ndm={ndm}, "
                     f"ndf={ndf}."
                 )
-            rehydrate(ops, inst.label, model)
+            rehydrate(ops, inst.label, model, inst.compose_rotate())
             opensees_hash[inst.label] = model.lineage.model_hash or ""
         self._bridged = _Bridged(
             ops=ops, fem=fem, instances=tuple(self._instances),

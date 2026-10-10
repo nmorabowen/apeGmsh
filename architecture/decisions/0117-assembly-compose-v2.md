@@ -322,6 +322,10 @@ Each is testable.
    `fem_id_base - source_min`.
    **Note (2026-10-09, #1593).** Instance frame rule: points → `R·x + t`;
    direction vectors, normals and offsets → `R·v`.
+   **Note (2026-10-09, #1597; maintainer ruling, option A).** Load frame
+   rule: authored forces, moments, line loads and pressure directions →
+   `R·v`; gravity `g` and body force `bf` (and their reduced nodal loads)
+   stay global; DOF indices never transform.
 7. **INV-7.** A tie that resolves zero records raises `AssemblyError` naming
    both ports; a bare port that names no assembly object raises, listing the
    instances.
