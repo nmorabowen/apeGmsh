@@ -171,6 +171,14 @@ class CommandRecordRO:
         return {n: a for a, n in zip(self.args, self.names) if n}
 
 
+#: The ``/opensees`` solve-stamp attributes (ADR 0114 D6, opensees
+#: 2.24.0), written together: any subset is a malformed stamp.
+_SOLVE_STAMP_ATTRS: tuple[str, ...] = (
+    "will_solve", "solve_mode", "solve_refusals", "solve_refusals_flat",
+    "requires",
+)
+
+
 class ProgramAbsentError(RuntimeError):
     """The archive has no ``/opensees/program``, so it holds no emit order.
 
@@ -1311,6 +1319,13 @@ class H5Model:
             return None
         attrs = self._f["opensees"].attrs
         if "will_solve" not in attrs:
+            partial = sorted(n for n in _SOLVE_STAMP_ATTRS if n in attrs)
+            if partial:
+                raise MalformedH5Error(
+                    f"/opensees carries {partial} without @will_solve; the "
+                    "writer stamps the five together, so this is a partial "
+                    "stamp, not an unstamped file."
+                )
             return None
         raw = attrs["will_solve"]
         arr = np.asarray(raw)

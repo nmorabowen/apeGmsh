@@ -246,7 +246,9 @@ RULES: dict[str, str] = {
     ),
     "emitter-sniff": (
         "asks an emitter for its class (`type(e).__name__ == \"H5Emitter\"`, "
-        "`e.__class__.__name__`, `isinstance(e, XEmitter)`) outside "
+        "`type(e) is XEmitter`, `e.__class__`, `__qualname__`, a string method on the "
+        "name, `isinstance(e, XEmitter)` through any import alias, `match e: case "
+        "XEmitter():`) outside "
         "src/apeGmsh/opensees/emitter/: the bridge then branches on a class name instead "
         "of a declared capability, so a target that behaves like the sniffed one is "
         "treated as a different one and the Protocol stops being the seam. Read "
@@ -1209,46 +1211,90 @@ def check_raw_meta_ndm(tree: ast.AST, rel: str, root: Path) -> Iterator[tuple[in
 
 #: The one package that may name emitter classes: it defines them.
 EMITTER_PACKAGE = "src/apeGmsh/opensees/emitter/"
-SNIFF_TEXT = re.compile(r"isinstance\(|issubclass\(|__name__")
+SNIFF_TEXT = re.compile(r"isinstance\(|issubclass\(|__name__|__qualname__|__class__|type\(|\bmatch\b")
+
+
+def _class_of(node: ast.expr) -> bool:
+    """`type(x)` or `x.__class__`: the object's class, asked for directly."""
+    if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+        return node.func.id == "type" and len(node.args) == 1
+    return isinstance(node, ast.Attribute) and node.attr == "__class__"
 
 
 def _class_name_of(node: ast.expr) -> bool:
-    """`type(x).__name__` or `x.__class__.__name__`."""
-    if not (isinstance(node, ast.Attribute) and node.attr == "__name__"):
-        return False
-    owner = node.value
-    if isinstance(owner, ast.Call) and isinstance(owner.func, ast.Name):
-        return owner.func.id == "type" and len(owner.args) == 1
-    return isinstance(owner, ast.Attribute) and owner.attr == "__class__"
+    """`type(x).__name__`, `x.__class__.__qualname__` and the like: the class's name."""
+    return (
+        isinstance(node, ast.Attribute)
+        and node.attr in ("__name__", "__qualname__")
+        and _class_of(node.value)
+    )
 
 
-def _names_an_emitter(node: ast.expr) -> bool:
-    """A string, name or dotted name ending in `Emitter`, or a collection holding one."""
+def _emitter_aliases(tree: ast.AST) -> set[str]:
+    """Local names an import binds to something named `*Emitter` (`import ... as _H5`)."""
+    aliases: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            for alias in node.names:
+                if alias.asname and alias.name.rsplit(".", 1)[-1].endswith("Emitter"):
+                    aliases.add(alias.asname)
+    return aliases
+
+
+#: The concrete emitter classes, for a class-name test that spells only a
+#: piece of one (`type(e).__name__.startswith("H5")`). The suffix rule
+#: covers the rest; a new emitter class is named `*Emitter` by convention.
+EMITTER_CLASSES = ("TclEmitter", "PyEmitter", "LiveOpsEmitter", "H5Emitter", "RecordingEmitter")
+
+
+def _spells_an_emitter(text: str) -> bool:
+    """A string that is, or is a piece of, an emitter class name."""
+    return bool(text) and (
+        text.endswith("Emitter") or any(text in cls for cls in EMITTER_CLASSES)
+    )
+
+
+def _names_an_emitter(node: ast.expr, aliases: frozenset[str] = frozenset()) -> bool:
+    """A string spelling (a piece of) an emitter class name, a name, dotted
+    name or import alias of one, or a collection holding one."""
     if isinstance(node, (ast.Tuple, ast.Set, ast.List)):
-        return any(_names_an_emitter(e) for e in node.elts)
+        return any(_names_an_emitter(e, aliases) for e in node.elts)
     if isinstance(node, ast.Constant):
-        return isinstance(node.value, str) and node.value.endswith("Emitter")
+        return isinstance(node.value, str) and _spells_an_emitter(node.value)
     name = node.id if isinstance(node, ast.Name) else node.attr if isinstance(node, ast.Attribute) else ""
-    return name.endswith("Emitter")
+    return name.endswith("Emitter") or name in aliases
 
 
 def check_emitter_sniff(tree: ast.AST, rel: str, root: Path) -> Iterator[tuple[int, str]]:
-    """A class-name comparison or an `isinstance` / `issubclass` against an
-    emitter class, anywhere under src/apeGmsh/ except the emitter package."""
+    """Asking an emitter for its class, anywhere under src/apeGmsh/ except the
+    emitter package: `isinstance` / `issubclass` against an emitter class (or
+    an import alias of one), `type(e)` / `e.__class__` or its `__name__` /
+    `__qualname__` compared to one (or to a piece of one), a string method on
+    that name taking one, or a `match` case on an emitter class."""
     if not rel.startswith(GETATTR_SCOPE) or rel.startswith(EMITTER_PACKAGE):
         return
+    aliases = frozenset(_emitter_aliases(tree))
     for node in ast.walk(tree):
         if isinstance(node, ast.Compare):
             operands = [node.left, *node.comparators]
-            if any(_class_name_of(o) for o in operands) and any(_names_an_emitter(o) for o in operands):
+            if any(_class_name_of(o) or _class_of(o) for o in operands) and any(
+                _names_an_emitter(o, aliases) for o in operands
+            ):
                 yield node.lineno, RULES["emitter-sniff"]
-        elif (
-            isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Name)
-            and node.func.id in ("isinstance", "issubclass")
-            and len(node.args) == 2
-            and _names_an_emitter(node.args[1])
-        ):
+        elif isinstance(node, ast.Call):
+            func = node.func
+            if (
+                isinstance(func, ast.Name)
+                and func.id in ("isinstance", "issubclass")
+                and len(node.args) == 2
+                and _names_an_emitter(node.args[1], aliases)
+            ) or (
+                isinstance(func, ast.Attribute)
+                and _class_name_of(func.value)
+                and any(_names_an_emitter(a, aliases) for a in node.args)
+            ):
+                yield node.lineno, RULES["emitter-sniff"]
+        elif isinstance(node, ast.MatchClass) and _names_an_emitter(node.cls, aliases):
             yield node.lineno, RULES["emitter-sniff"]
 
 

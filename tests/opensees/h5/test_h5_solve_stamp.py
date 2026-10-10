@@ -259,7 +259,8 @@ def test_replay_fails_closed_on_a_stored_refusal(tmp_path: Path) -> None:
 # -- an archival emit records the gates that would refuse ------------------
 
 
-def _up_column_bridge(*, partitions: int = 1, system: bool = False):
+def _up_column_bridge(*, partitions: int = 1, system: "str | None" = None,
+                      datum: bool = True):
     pytest.importorskip("gmsh")
     from apeGmsh import apeGmsh
 
@@ -284,9 +285,10 @@ def _up_column_bridge(*, partitions: int = 1, system: bool = False):
     ops.element.LadrunoUP(
         pg="Soil", material=mat, Kf=2.2e6, poro=0.4, rhoF=1.0, perm=(1e-4, 1e-4),
     )
-    ops.fix(pg="Top", dofs=(0, 0, 1))
-    if system:
-        ops.system.UmfPack()
+    if datum:
+        ops.fix(pg="Top", dofs=(0, 0, 1))
+    if system is not None:
+        getattr(ops.system, system)()
     ops.analysis.Static()  # solve-bearing; with no system the D4 gate refuses a deck
     return ops
 
@@ -345,7 +347,7 @@ def test_partitioned_archive_without_system_is_refused_on_flat_replay(
 
 @pytest.mark.filterwarnings("ignore::UserWarning")
 def test_valid_partitioned_archive_still_replays(tmp_path: Path) -> None:
-    ops = _up_column_bridge(partitions=2, system=True)
+    ops = _up_column_bridge(partitions=2, system="UmfPack")
     out = tmp_path / "p.h5"
     ops.h5(str(out))
     model = OpenSeesModel.from_h5(out)
@@ -355,6 +357,71 @@ def test_valid_partitioned_archive_still_replays(tmp_path: Path) -> None:
     assert stamp.solve_refusals == () and stamp.solve_refusals_flat == ()
     deck = model.build("tcl")
     assert "LadrunoUP" in deck and "UmfPack" in deck
+
+
+@pytest.mark.filterwarnings("ignore::UserWarning")
+def test_partitioned_mumps_archive_replays_flat_as_the_flat_emit_does(
+    tmp_path: Path,
+) -> None:
+    """The flat verdict is what ``ops.tcl(flat=True)`` decides on the same
+    model: the serial-Mumps gate keys on the FEM's partition count (ADR 0027
+    twin decks), so a partitioned archive with an explicit ``Mumps`` must
+    replay flat exactly as its flat emit succeeds (review of #1616, finding 1)."""
+    ops = _up_column_bridge(partitions=2, system="Mumps")
+    ops.tcl(str(tmp_path / "flat.tcl"), flat=True)  # the flat emit is legal
+    out = tmp_path / "p.h5"
+    ops.h5(str(out))
+    model = OpenSeesModel.from_h5(out)
+    stamp = model.solve_stamp
+    assert stamp is not None and stamp.solve_mode == "partitioned"
+    assert stamp.solve_refusals == () and stamp.solve_refusals_flat == ()
+    assert "Mumps" in model.build("tcl")
+
+
+def test_archival_stamp_records_the_pressure_datum_gate(tmp_path: Path) -> None:
+    """A sealed static u-p column: the datum gate refuses the deck and the
+    archive records it, under both modes (the gate ignores the mode)."""
+    ops = _up_column_bridge(system="UmfPack", datum=False)
+    with pytest.raises(BridgeError, match="NO fixed pressure DOF"):
+        ops.tcl(str(tmp_path / "deck.tcl"))
+    out = tmp_path / "m.h5"
+    ops.h5(str(out))
+    stamp = OpenSeesModel.from_h5(out).solve_stamp
+    assert stamp is not None
+    assert stamp.solve_refusals == ("up_pressure_datum",)
+    assert stamp.solve_refusals_flat == ("up_pressure_datum",)
+
+
+def test_archival_stamp_records_serial_mumps_in_the_archives_own_mode(
+    tmp_path: Path,
+) -> None:
+    """An unpartitioned column with an explicit ``Mumps``: the deck is
+    refused ("unknown system type") and the flat archive records the
+    gate in its own (flat) verdict."""
+    ops = _up_column_bridge(system="Mumps")
+    with pytest.raises(BridgeError, match="unknown system type"):
+        ops.tcl(str(tmp_path / "deck.tcl"))
+    out = tmp_path / "m.h5"
+    ops.h5(str(out))
+    stamp = OpenSeesModel.from_h5(out).solve_stamp
+    assert stamp is not None and stamp.solve_mode == "flat"
+    assert stamp.solve_refusals == ("serial_mumps",)
+    assert stamp.solve_refusals_flat == ("serial_mumps",)
+
+
+def test_a_partial_stamp_never_reads_as_unstamped(tmp_path: Path) -> None:
+    """Any stamp attribute without ``@will_solve`` is a malformed stamp, not
+    an absent one (review of #1616, finding 4)."""
+    for name in ("solve_mode", "solve_refusals", "solve_refusals_flat", "requires"):
+        out = _write(tmp_path / f"{name}.h5", (True, ("g",)), fork=True)
+        _tamper(out, will_solve=None)
+        with h5py.File(out, "r+") as f:
+            for other in ("solve_mode", "solve_refusals", "solve_refusals_flat", "requires"):
+                if other != name:
+                    del f["opensees"].attrs[other]
+        with h5_reader.open(str(out)) as m, pytest.raises(
+                MalformedH5Error, match=rf"carries \['{name}'\] without @will_solve"):
+            m.solve_stamp()
 
 
 # -- build('live') refuses a fork requirement on stock -----------------------

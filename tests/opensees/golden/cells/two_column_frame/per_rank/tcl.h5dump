@@ -14,7 +14,7 @@ G /opensees
 A /opensees@requires dtype=str[utf-8,vlen] shape=(0,) sha1=65a2eebac8fa31401168b747728fdc731e239202
 A /opensees@solve_mode dtype=str[utf-8,vlen] shape=() sha1=de86c4e8e15aa614353634eb702698f9063cff3f
 A /opensees@solve_refusals dtype=str[utf-8,vlen] shape=(0,) sha1=65a2eebac8fa31401168b747728fdc731e239202
-A /opensees@solve_refusals_flat dtype=str[utf-8,vlen] shape=(1,) sha1=a4b80af537368e65ff52faab1465e3c84519e5b3
+A /opensees@solve_refusals_flat dtype=str[utf-8,vlen] shape=(0,) sha1=65a2eebac8fa31401168b747728fdc731e239202
 A /opensees@will_solve dtype=|i1 shape=() sha1=aa2f5d5b573d575796db102ad68843c320061bd7
 G /opensees/bcs
 D /opensees/bcs/fix dtype={target_kind:str[utf-8,vlen],target:str[utf-8,vlen],dofs:<i8[6]} shape=(2,) sha1=673123ffdfaaef312df0c07ff87d0277fb59a26c

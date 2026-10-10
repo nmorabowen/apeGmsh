@@ -1274,11 +1274,39 @@ def test_emitter_sniff_flags_the_sites_at_the_commit_that_had_them(tmp_path: Pat
         "isinstance(emitter, h5.H5Emitter)",
         "isinstance(emitter, (int, LiveOpsEmitter))",
         "issubclass(type(emitter), RecordingEmitter)",
+        "type(emitter) is H5Emitter",                       # review of #1616
+        "type(emitter) == H5Emitter",
+        "H5Emitter is not type(emitter)",
+        "emitter.__class__ is H5Emitter",
+        'type(emitter).__qualname__ == "H5Emitter"',
+        'type(emitter).__name__.startswith("H5")',
+        'emitter.__class__.__qualname__.endswith("Emitter")',
+        '"H5" in type(emitter).__name__',
     ],
 )
 def test_emitter_sniff_flags_every_spelling(tmp_path: Path, sniff: str) -> None:
     _write(tmp_path, "src/apeGmsh/opensees/apesees.py", f"def archival(emitter):\n    return {sniff}\n")
     assert _found(tmp_path) == ["emitter-sniff:apesees.py:2"]
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "from apeGmsh.opensees.emitter.h5 import H5Emitter as _H5\n"
+        "def f(e):\n    return isinstance(e, _H5)\n",
+        "import apeGmsh.opensees.emitter.h5 as h5\n"
+        "from apeGmsh.opensees.emitter.live import LiveOpsEmitter as Live\n"
+        "def f(e):\n    return type(e) is Live\n",
+        "def f(e):\n    match e:\n        case H5Emitter():\n            return True\n",
+        "from apeGmsh.opensees.emitter.tcl import TclEmitter as T\n"
+        "def f(e):\n    match e:\n        case T(lines=_):\n            return True\n",
+    ],
+    ids=["isinstance-alias", "type-is-alias", "match-case", "match-case-alias"],
+)
+def test_emitter_sniff_flags_aliases_and_match(tmp_path: Path, source: str) -> None:
+    _write(tmp_path, "src/apeGmsh/opensees/apesees.py", source)
+    found = _found(tmp_path)
+    assert len(found) == 1 and found[0].startswith("emitter-sniff:apesees.py:")
 
 
 def test_emitter_sniff_reaches_every_package_but_the_emitter_one(tmp_path: Path) -> None:
@@ -1293,12 +1321,14 @@ def test_emitter_sniff_reaches_every_package_but_the_emitter_one(tmp_path: Path)
 @pytest.mark.parametrize(
     "line",
     [
-        'type(emitter).__name__ == "Frame"',               # not an emitter class
         "isinstance(emitter, Primitive)",
         "isinstance(p, (Analysis, Recorder))",
-        'type(emitter).__name__',                          # read, not compared
+        "type(emitter) is Frame",                          # not an emitter class
+        'type(emitter).__name__',                          # read for a message, not asked about
+        'f"got {type(emitter).__name__}"',
         'emitter.caps.archival',                           # the replacement
         'name = "H5Emitter"',
+        "emitter.lines",
     ],
 )
 def test_emitter_sniff_passes_what_does_not_ask_for_the_class(tmp_path: Path, line: str) -> None:

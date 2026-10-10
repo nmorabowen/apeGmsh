@@ -1143,15 +1143,20 @@ class BuiltModel:
 
         def _solve_gate(
             gate_id: str, *, enforce: bool, enforce_on_solve: bool,
-            partitioned: bool, run: "Callable[[bool, bool], None]",
+            partitioned: bool, flat_partitioned: bool,
+            run: "Callable[[bool, bool], None]",
         ) -> None:
+            # ``partitioned`` is what this emit passes the gate;
+            # ``flat_partitioned`` is what a flat emit of the same model
+            # (``ops.tcl(flat=True)``, every replay target) passes it, so
+            # the stored flat verdict equals exactly that emit's decision.
             run(enforce, partitioned)
             if not (_emitter_is_archival and enforce_on_solve
                     and not enforce):
                 return
             for mode_partitioned, ids in (
                 (partitioned, _solve_refusals),
-                (False, _solve_refusals_flat),
+                (flat_partitioned, _solve_refusals_flat),
             ):
                 with warnings.catch_warnings():
                     warnings.simplefilter("ignore")
@@ -1165,6 +1170,7 @@ class BuiltModel:
             enforce=_has_analysis_chain and not _emitter_is_archival,
             enforce_on_solve=_has_analysis_chain,
             partitioned=_will_partition,
+            flat_partitioned=False,
             run=lambda enforce, partitioned: validate_ladruno_up_solver(
                 elements,
                 enforce=enforce,
@@ -1191,6 +1197,7 @@ class BuiltModel:
             enforce=_has_analysis_chain and not _emitter_is_archival,
             enforce_on_solve=_has_analysis_chain,
             partitioned=is_partitioned(self.fem),
+            flat_partitioned=is_partitioned(self.fem),
             run=lambda enforce, partitioned: validate_serial_mumps(
                 enforce=enforce,
                 staged=_staged,
@@ -1458,6 +1465,7 @@ class BuiltModel:
             enforce=not _emitter_is_archival and _static_solve,
             enforce_on_solve=_static_solve,
             partitioned=_will_partition,
+            flat_partitioned=False,
             # The datum gate does not depend on the partition mode.
             run=lambda enforce, partitioned: validate_up_pressure_datum(
                 self.fem, elements, self.ndm,
