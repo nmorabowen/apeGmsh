@@ -1424,9 +1424,9 @@ class OpenSeesModel:
         """
         from .emitter.tcl import deck_backend
 
-        # F2-d (#1511): an archive carries no OpenSeesTarget, so the
-        # rebuilt deck is stamped as ``mode="auto"`` (the resolver's
-        # verdict when it has answered, else no stamp).
+        # An archive carries no OpenSeesTarget, so the rebuilt deck is
+        # stamped as ``mode="auto"`` (the resolver's verdict when it has
+        # answered, else no stamp).
         backend = deck_backend(None)
         emitter: "Emitter"
         if kind == "tcl":
