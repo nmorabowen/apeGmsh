@@ -969,9 +969,9 @@ class ConstraintsComposite(_DeclarationsMixin):
                                 np.asarray(node_coords, dtype=float))
             }
 
-        # NTS slave nodes already claimed, per slave label (#1264): local to
-        # this call, so a FEM-cache rebuild resolves the same split in the
-        # same declaration order.
+        # NTS slave nodes already claimed, per slave label: local to this
+        # call, so a FEM-cache rebuild resolves the same split in the same
+        # declaration order.
         claimed: dict[str, dict[int, str]] = {}
 
         for defn in self.contact_defs:
@@ -1093,7 +1093,7 @@ class ConstraintsComposite(_DeclarationsMixin):
                 if defn.tie and model_dim != 2:
                     # A 3D tie carries one global outward by construction
                     # (ContactDef refuses tie without it); refuse it on a
-                    # master whose normals it cannot sign-fix (#1262).
+                    # master whose normals it cannot sign-fix.
                     _refuse_tie_on_non_flat_master(
                         defn, master_faces, outward, node_tags, node_coords)
 
