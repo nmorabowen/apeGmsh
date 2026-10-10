@@ -1,6 +1,6 @@
-"""Compose carries embedded-reinforcement ties + the cross-Part guard
-(ADR 0067 P5.1, A2 + A3). Ties round-trip through the neutral H5 (A1), so a
-composed-Part cage keeps its reinforcement with offset tags."""
+"""Assembly v2 carries embedded-reinforcement ties + the cross-Part guard
+(ADR 0067 P5.1, A2 + A3). Ties round-trip through the neutral H5 (A1), so an
+instanced cage keeps its reinforcement with offset tags."""
 from __future__ import annotations
 
 import gmsh
@@ -8,11 +8,20 @@ import numpy as np
 import pytest
 
 from apeGmsh import apeGmsh
+from apeGmsh.assembly import Assembly
 from apeGmsh.mesh.FEMData import FEMData
+from apeGmsh.opensees import apeSees
 from apeGmsh.mesh._compose import (
     ComposeReinforceCrossPartError,
     _guard_reinforce_cross_part,
 )
+
+
+def _write_source(fem, path) -> None:
+    """A bridgeable source: the FEM plus ``/opensees`` ``model(3, 3)``."""
+    ops = apeSees(fem)
+    ops.model(ndm=3, ndf=3)
+    ops.h5(str(path))
 
 
 def _reinforced_module_h5(path, *, perfect=1.0e12):
@@ -29,7 +38,7 @@ def _reinforced_module_h5(path, *, perfect=1.0e12):
         g.reinforce(host="concrete", bars="rebar",
                     perfect=perfect, bar_diameter=0.025)
         fem = g.mesh.queries.get_fem_data(dim=3)
-        fem.to_h5(str(path))
+        _write_source(fem, path)
         return len(fem.elements.reinforce_ties)
 
 
@@ -40,7 +49,19 @@ def _plain_host_h5(path):
         g.mesh.sizing.set_global_size(0.5)
         g.mesh.generation.generate(3)
         g.physical.add(3, [box], name="host")
-        g.mesh.queries.get_fem_data(dim=3).to_h5(str(path))
+        _write_source(g.mesh.queries.get_fem_data(dim=3), path)
+
+
+def _compose_and_reload(host, mod, tmp_path, *, label, **instance_kw):
+    """Instance ``host`` (as ``host.*``) then ``mod`` (as ``{label}.*``),
+    bridge, write the archive and read the merged FEM back."""
+    asm = Assembly("reinforce")
+    asm.instance("host", str(host))
+    asm.instance(label, str(mod), **instance_kw)
+    asm.bridge(ndm=3, ndf=3)
+    out = tmp_path / "out.h5"
+    asm.h5(str(out))
+    return FEMData.from_h5(str(out))
 
 
 def test_compose_carries_reinforce_ties(tmp_path):
@@ -50,11 +71,8 @@ def test_compose_carries_reinforce_ties(tmp_path):
     assert n_ties >= 2
     _plain_host_h5(host)
 
-    g = apeGmsh.from_h5(str(host))
-    g.compose(str(mod), label="A", translate=(2.0, 0.0, 0.0))
-    out = tmp_path / "out.h5"
-    g.save(str(out))
-    merged = FEMData.from_h5(str(out))
+    merged = _compose_and_reload(host, mod, tmp_path, label="A",
+                                 translate=(2.0, 0.0, 0.0))
 
     ties = merged.elements.reinforce_ties
     assert len(ties) == n_ties                       # module's ties carried
@@ -74,11 +92,8 @@ def test_compose_offsets_tie_tags(tmp_path):
     src_ties = sorted(FEMData.from_h5(str(mod)).elements.reinforce_ties,
                       key=lambda t: t.rebar_node)
 
-    g = apeGmsh.from_h5(str(host))
-    g.compose(str(mod), label="A")
-    out = tmp_path / "out.h5"
-    g.save(str(out))
-    got = sorted(FEMData.from_h5(str(out)).elements.reinforce_ties,
+    got = sorted(_compose_and_reload(host, mod, tmp_path, label="A")
+                 .elements.reinforce_ties,
                  key=lambda t: t.rebar_node)
 
     assert len(got) == len(src_ties)
@@ -99,11 +114,9 @@ def test_compose_preserves_host_ties_with_plain_module(tmp_path):
     n = _reinforced_module_h5(rein_host)
     _plain_host_h5(plain_mod)
 
-    g = apeGmsh.from_h5(str(rein_host))
-    g.compose(str(plain_mod), label="B", translate=(2.0, 0.0, 0.0))
-    out = tmp_path / "out.h5"
-    g.save(str(out))
-    assert len(FEMData.from_h5(str(out)).elements.reinforce_ties) == n
+    merged = _compose_and_reload(rein_host, plain_mod, tmp_path, label="B",
+                                 translate=(2.0, 0.0, 0.0))
+    assert len(merged.elements.reinforce_ties) == n
 
 
 # ── A3: cross-Part guard (unit) ──────────────────────────────────────
