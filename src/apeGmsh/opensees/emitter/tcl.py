@@ -35,7 +35,7 @@ from __future__ import annotations
 from .._internal.analyze_rc import COMMIT_ABORT_MESSAGE, COMMIT_ABORT_RC
 from .._internal.build import BridgeError, stage_marker_name
 from .._rc_c2_flags import warn_rc_c2_deck
-from .._target import BackendInfo
+from .._target import BackendInfo, OpenSeesTarget
 
 import math
 import os
@@ -53,9 +53,11 @@ from .base import (
 
 
 __all__ = [
+    "DECK_BANNER",
     "PartitionSpan",
     "TclEmitter",
     "TCL_COUPLING_TOKENS_MIN_BUILD",
+    "deck_backend",
     "provenance_stamp",
 ]
 
@@ -86,6 +88,46 @@ def provenance_stamp(backend: BackendInfo) -> str:
     if backend.build is not None:
         stamp += f"; build {backend.build}"
     return stamp
+
+
+def _answered_backend() -> BackendInfo | None:
+    """The live resolver's verdict if it has already answered, else ``None``.
+
+    Never resolves: writing a deck must not import openseespy (an
+    openseespy-less interpreter emits decks).  Reads the cache
+    :func:`apeGmsh.opensees.emitter.live.get_backend_info` fills, and only
+    while it still describes the bound module.
+    """
+    from . import live
+
+    cached = live._BACKEND_INFO
+    if cached is None or live._OPS_CACHE is None or cached[0] is not live._OPS_CACHE:
+        return None
+    return cached[1]
+
+
+def deck_backend(target: OpenSeesTarget | None) -> BackendInfo | None:
+    """The :class:`BackendInfo` a deck built for ``target`` is stamped with.
+
+    The deck emitters' ``backend=`` (F2-d phase 2, #1511):
+
+    * ``mode="auto"`` (or no target) stamps the live resolver's verdict
+      when it has already answered in this process, and nothing when it
+      has not; the deck path never runs the probe itself.
+    * a pinned ``mode="fork"`` / ``"stock"`` always stamps that kind.  The
+      build rides along only when the resolver answered the same kind;
+      otherwise no binary was probed for it and the build is unknown.
+    """
+    mode = "auto" if target is None else target.mode
+    answered = _answered_backend()
+    if mode == "auto":
+        return answered
+    if answered is not None and answered.kind == mode:
+        return answered
+    kind: Literal["fork", "stock"] = "fork" if mode == "fork" else "stock"
+    return BackendInfo(
+        kind=kind, build=None, version=None, source=f"OpenSeesTarget(mode={mode!r})",
+    )
 
 #: Minimum fork build for ``k`` / ``dofs`` / ``host`` tokens on the Tcl
 #: target's coupling / embedded-node / embedded-rebar family

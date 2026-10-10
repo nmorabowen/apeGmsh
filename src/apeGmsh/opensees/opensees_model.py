@@ -1422,15 +1422,21 @@ class OpenSeesModel:
         Returns the deck as a string; if ``out=`` is given, writes it
         to that path as well.
         """
+        from .emitter.tcl import deck_backend
+
+        # F2-d (#1511): an archive carries no OpenSeesTarget, so the
+        # rebuilt deck is stamped as ``mode="auto"`` (the resolver's
+        # verdict when it has answered, else no stamp).
+        backend = deck_backend(None)
         emitter: "Emitter"
         if kind == "tcl":
             from .emitter.tcl import TclEmitter
 
-            emitter = TclEmitter()
+            emitter = TclEmitter(backend=backend)
         else:
             from .emitter.py import PyEmitter
 
-            emitter = PyEmitter()
+            emitter = PyEmitter(backend=backend)
         self._populate_emitter(emitter)
         text = "\n".join(emitter.lines()) + "\n"
         if out is not None:

@@ -21,7 +21,7 @@ from pathlib import Path
 from types import ModuleType
 from typing import Callable, cast
 
-from apeGmsh.opensees import apeSees
+from apeGmsh.opensees import OpenSeesTarget, apeSees
 from apeGmsh.opensees.transform import Spherical
 
 from tests.opensees.fixtures import fem_stub
@@ -275,7 +275,12 @@ def build_model(fixture: str, mode: str, output: str) -> apeSees:
     """The ``apeSees`` model one cell emits."""
     spec = FIXTURES[fixture]
     fem = _fem_for(fixture, mode)
-    ops = apeSees(cast("object", fem))  # type: ignore[arg-type]
+    # Pinned target (F2-d #1511): the deck stamp reads ``backend stock``
+    # whatever the process's live resolver has or has not answered.
+    ops = apeSees(
+        cast("object", fem),  # type: ignore[arg-type]
+        opensees=OpenSeesTarget(mode="stock"),
+    )
     ops.model(ndm=spec.ndm, ndf=spec.ndf)
     _declare_elements(ops, spec)
     _declare_fixes(ops, spec)
