@@ -27,7 +27,8 @@ import name`` (:func:`derive_minting_helpers`), and the hub scope covers
 every module of the set. Only those static ``ImportFrom`` forms are
 followed: a build module imported as a module object, or star-imported,
 fails the derivation outright rather than letting a helper that mints
-through such an import go unseen.
+through such an import go unseen, and so does a module-level alias or
+dispatch table naming a build function.
 
 The rules:
 
@@ -179,14 +180,16 @@ def _parse(path: Path) -> ast.Module:
 # ---------------------------------------------------------------------------
 
 
-def build_modules() -> list[Path]:
+def build_modules(file: Path = _BUILD, pkg: Path = _BUILD_PKG) -> list[Path]:
     """The build's modules, by whichever layout exists: ``[build.py]``
     today, ``build/**/*.py`` once S2 splits it. Both at once, or neither,
-    is a broken tree and fails here rather than locking half of it."""
-    is_file, is_pkg = _BUILD.is_file(), _BUILD_PKG.is_dir()
+    is a broken tree and fails here rather than locking half of it. The
+    package is its ``__init__.py``: a ``build/`` folder holding only a
+    ``__pycache__`` left by a checkout from after the split is not one."""
+    is_file, is_pkg = file.is_file(), (pkg / "__init__.py").is_file()
     assert is_file != is_pkg, (
         f"the build is one module or one package, not {is_file=} {is_pkg=}")
-    return [_BUILD] if is_file else sorted(_BUILD_PKG.rglob("*.py"))
+    return [file] if is_file else sorted(pkg.rglob("*.py"))
 
 
 def module_name(path: Path, root: Path) -> str:
@@ -329,16 +332,20 @@ def derive_minting_helpers(
         f"function name(s) defined in two build modules: {dupes}; the "
         "tag-law lock keys helpers by bare name")
 
-    def body_aliases(m: str, tree: ast.Module) -> dict[str, _Func]:
+    # Every node outside any function body (methods included): the
+    # module-level statements, and class bodies.
+    def outside_functions(tree: ast.Module) -> list[ast.AST]:
         inside = {
-            id(n) for fn in tree.body
+            id(k) for fn in ast.walk(tree)
             if isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef))
-            for n in ast.walk(fn)}
-        return _import_aliases(
-            (n for n in ast.walk(tree) if id(n) not in inside),
-            packages[m], modules, m)
+            for k in ast.walk(fn) if k is not fn}
+        return [n for n in ast.walk(tree) if id(n) not in inside]
 
-    module_aliases = {m: body_aliases(m, t) for m, t in modules.items()}
+    top_level = {m: outside_functions(t) for m, t in modules.items()}
+    module_aliases = {
+        m: _import_aliases(top_level[m], packages[m], modules, m)
+        for m in modules
+    }
 
     def target(ref: _Func, seen: frozenset[_Func] = frozenset()) -> _Func | None:
         """The function ``ref`` names, through re-exports."""
@@ -348,6 +355,19 @@ def derive_minting_helpers(
         if ref in seen or m not in modules or name not in module_aliases[m]:
             return None
         return target(module_aliases[m][name], seen | {ref})
+
+    # A module-level alias (``_f = plan_contacts``) or table
+    # (``{"c": plan_contacts}``) would hide a mint from the call-following
+    # below and from the scanner's bare-name rule: refuse it.
+    for m in modules:
+        for n in top_level[m]:
+            if not (isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load)):
+                continue
+            hit = target(module_aliases[m].get(n.id, (m, n.id)))
+            assert hit is None, (
+                f"{m}:{n.lineno}: module-level reference to build function "
+                f"{hit[1]!r} (an alias or a dispatch table); the tag-law lock "
+                "follows calls only, so call it by name inside a function")
 
     minting: set[_Func] = set()
     calls: dict[_Func, set[_Func]] = {}
@@ -1014,6 +1034,40 @@ def test_simulated_split_refuses_a_star_import(tmp_path: Path) -> None:
         tmp_path, "\n\nfrom .contacts import *  # noqa: F403\n")
     with pytest.raises(AssertionError, match="star-imports"):
         derive_minting_helpers(trees)
+
+
+@pytest.mark.parametrize("planted", [
+    # an alias of the imported planner, called from a non-planner
+    "\n\n_pc = plan_contacts\n\n\n"
+    "def emit_planted_caller(fem, entries, tags):\n"
+    "    return _pc(fem, entries, tags)\n",
+    # a dispatch table holding it
+    "\n\n_PLANTED_TABLE = {'contacts': plan_contacts}\n",
+    # an alias of a same-module function
+    "\n\n_planted = emit_contacts\n",
+])
+def test_simulated_split_refuses_a_module_level_function_reference(
+        tmp_path: Path, planted: str) -> None:
+    trees = _simulated_split(tmp_path, planted)
+    with pytest.raises(AssertionError, match="module-level reference"):
+        derive_minting_helpers(trees)
+
+
+def test_build_layout_ignores_a_pycache_only_package_folder(
+        tmp_path: Path) -> None:
+    """A ``build/`` folder holding only ``__pycache__`` (left by a checkout
+    from after the split) is not the package layout."""
+    file = tmp_path / "build.py"
+    file.write_text("", encoding="utf-8")
+    (tmp_path / "build" / "__pycache__").mkdir(parents=True)
+    (tmp_path / "build" / "__pycache__" / "x.cpython-312.pyc").write_bytes(b"")
+    assert build_modules(file, tmp_path / "build") == [file]
+    (tmp_path / "build" / "__init__.py").write_text("", encoding="utf-8")
+    with pytest.raises(AssertionError, match="one module or one package"):
+        build_modules(file, tmp_path / "build")
+    file.unlink()
+    assert build_modules(file, tmp_path / "build") == [
+        tmp_path / "build" / "__init__.py"]
 
 
 def test_simulated_split_refuses_a_duplicate_function_name(
