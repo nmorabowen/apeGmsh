@@ -853,6 +853,7 @@ class _StageEmitBlock:
     remove_sp_decls: list[int] = field(default_factory=list)
     remove_element_decls: list[int] = field(default_factory=list)
     update_material_stage_decls: list[int] = field(default_factory=list)
+    rayleigh_decls: list[int] = field(default_factory=list)
     # The HOLD pattern's ``sp_holds`` rows, by the pattern's tag.
     sp_hold_decls: "dict[int, list[int]]" = field(default_factory=dict)
     # Global-form stage rayleigh (``on=()``) — four raw coefficients
@@ -1334,6 +1335,7 @@ class H5Emitter:
         # category-major replay cannot regenerate the original order.
         self._program = _ProgramTape()
         self._commands: list[_CommandRecord] = []
+        self._command_decls: list[int] = []  # K1-6, parallel to _commands
         self._program_restored: "tuple[tuple[tuple[int, ...], ...], tuple[str, ...], tuple[str, ...], int] | None" = None
 
         # ADR 0114 D6 (schema 2.24.0): what the archive says about the
@@ -1591,6 +1593,8 @@ class H5Emitter:
             method=method, token=token, stage=stage, args=tuple(args),
             names=names if names is not None else ("",) * len(args),
         ))
+        # K1-6: the row's declaration (``/opensees/decls/rows/commands``).
+        self._command_decls.append(self._decl_open)
 
     @property
     def ledger_counts(self) -> "Mapping[str, int]":
@@ -2636,6 +2640,7 @@ class H5Emitter:
                 float(alpha_m), float(beta_k),
                 float(beta_k_init), float(beta_k_comm),
             ))
+            blk.rayleigh_decls.append(self._decl_open)  # K1-6
             return
         self._command("rayleigh", (alpha_m, beta_k, beta_k_init, beta_k_comm))
 
@@ -3251,6 +3256,8 @@ class H5Emitter:
             ("recorders", self._recorder_decls, self._recorders),
             ("initial_stress", side.get("initial_stress", []),
              self._initial_stress_records),
+            # One row per ``/opensees/commands`` row, global and stage.
+            ("commands", self._command_decls, self._commands),
         ]
         for idx, blk in enumerate(self._stage_blocks):
             base = f"stages/stage_{idx:03d}"
@@ -3269,6 +3276,7 @@ class H5Emitter:
                 (f"{base}/activate_absorbing",
                  side.get(f"{base}/activate_absorbing", []),
                  blk.activate_absorbing_records),
+                (f"{base}/rayleigh", blk.rayleigh_decls, blk.rayleighs),
             ]
             stores += [
                 (f"{base}/patterns/{pattern_name(pat)}/sp_holds",

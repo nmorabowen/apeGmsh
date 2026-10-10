@@ -1385,8 +1385,14 @@ class H5Model:
             column = tuple(int(v) for v in np.asarray(obj[()]))
             in_range(f"rows/{path}", column)
             # A dataset store (``bcs/fix``) has one row per entry, a group
-            # store (``recorders``) one child per record.
-            expected = len(ops[path]) if path in ops else 0
+            # store (``recorders``) one child per record, and the columnar
+            # ``commands`` group one entry of ``method`` per row.
+            if path not in ops:
+                expected = 0
+            elif isinstance(ops[path], h5py.Group) and "method" in ops[path]:
+                expected = len(ops[path]["method"])
+            else:
+                expected = len(ops[path])
             if len(column) != expected:
                 raise MalformedH5Error(
                     f"/opensees/decls/rows/{path} has {len(column)} entries; "

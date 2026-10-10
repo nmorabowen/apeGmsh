@@ -21,9 +21,11 @@ which is the path of the declaration's `/provenance` record.
 - **A label, not structure.** `decls` is excluded from `model_hash`, so the
   hash is unchanged for every model, and `/opensees/program`'s `decl`
   column stays `-1`. No deck byte changes.
-- **Not yet keyed.** The `ops.damping` Rayleigh and modal-damping records
-  carry no declaration yet, and neither do their `commands`,
-  stage-rayleigh and region rows.
+- **Damping.** `ops.damping.rayleigh` (global, region-scoped, staged) and
+  `ops.damping.modal` are declarations: each `/opensees/commands` row (a
+  global rayleigh, eigen + modal_damping, a stage's `s.profile` bracket),
+  each stage `rayleigh` row and each region-scoped Rayleigh's region
+  carries its declaration.
 
 **Changed (behaviour): new refusals.** Each refusal names the duplicate
 and both call sites. Names are unique per family and stay out of the

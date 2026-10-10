@@ -1003,9 +1003,8 @@ class BuiltModel:
         """The ``region`` tags of the plan, each joined to the declaration
         that owns its site (K1-6): a named region to its name's first
         assignment, a damping attach's region to its ``Damping`` object, a
-        filtered recorder's to the recorder. A region-scoped Rayleigh's
-        region has none: ``ops.damping.rayleigh`` records no declaration
-        (``_internal/ns/damping.py``, outside this slice)."""
+        region-scoped Rayleigh's to its ``rayleigh`` record, a filtered
+        recorder's to the recorder."""
         planned = tag_plan.regions.regions
         if planned is None:
             raise BridgeError(
@@ -1018,8 +1017,10 @@ class BuiltModel:
             kind, scope = row.site
             owner: object
             if kind == "rayleigh":
-                continue
-            if kind == "named":
+                pool_r = (self.rayleigh_records if scope is None
+                          else stages[scope].rayleigh_records)
+                owner = pool_r[cast("tuple[int, int]", row.key)[0]]
+            elif kind == "named":
                 pool = (self.region_records if scope is None
                         else stages[scope].region_records)
                 owner = next(r for r in pool if r.name == row.key)
@@ -2772,7 +2773,10 @@ class BuiltModel:
             # ``profiler start [flags]`` immediately before THIS
             # stage's analyze loop only.
             if stage.profile is not None:
+                prof_cursor = self._decl_cursor(emitter)  # K1-6
+                prof_cursor.open(stage.profile)
                 emitter.profiler("start", *_stage_profile_start_flags(stage.profile))
+                prof_cursor.close()
             rc = emitter.analyze(
                 steps=stage.n_increments, dt=stage.dt, label=stage.name,
                 strategy=_stage_strategy_spec(stage),
@@ -2790,8 +2794,11 @@ class BuiltModel:
             # name (``stop`` ends the run the way ``ops.profiler.stop``
             # does at bridge level; ``report`` appends the ended run).
             if stage.profile is not None:
+                prof_cursor = self._decl_cursor(emitter)  # K1-6
+                prof_cursor.open(stage.profile)
                 emitter.profiler("stop")
                 emitter.profiler("report", f"{stage.name}.h5")
+                prof_cursor.close()
 
             # 10. Stage close — loadConst + wipeAnalysis + hook clear.
             emitter.stage_close()
@@ -4598,7 +4605,10 @@ class BuiltModel:
             # ``profiler start [flags]`` immediately before THIS
             # stage's analyze loop only.
             if stage.profile is not None:
+                prof_cursor = self._decl_cursor(emitter)  # K1-6
+                prof_cursor.open(stage.profile)
                 emitter.profiler("start", *_stage_profile_start_flags(stage.profile))
+                prof_cursor.close()
             rc = emitter.analyze(
                 steps=stage.n_increments, dt=stage.dt, label=stage.name,
                 strategy=_stage_strategy_spec(stage),
@@ -4616,8 +4626,11 @@ class BuiltModel:
             # name (``stop`` ends the run the way ``ops.profiler.stop``
             # does at bridge level; ``report`` appends the ended run).
             if stage.profile is not None:
+                prof_cursor = self._decl_cursor(emitter)  # K1-6
+                prof_cursor.open(stage.profile)
                 emitter.profiler("stop")
                 emitter.profiler("report", f"{stage.name}.h5")
+                prof_cursor.close()
 
             # 8. Stage close — loadConst + wipeAnalysis + hook clear.
             set_stage_owned_node_tags(emitter, None)
@@ -6683,10 +6696,13 @@ class BuiltModel:
                 ),
                 stacklevel=2,
             )
+        cursor = self._decl_cursor(emitter)
         for rec in globals_:
+            cursor.open(rec)  # K1-6: its commands / stage rayleigh row
             emitter.rayleigh(
                 rec.alpha_m, rec.beta_k, rec.beta_k_init, rec.beta_k_comm,
             )
+        cursor.close()
         if not scoped:
             return
         region_tags = self._planned_damping_region_tags(
@@ -6882,9 +6898,12 @@ class BuiltModel:
         ``modalDamping <f1> [..]``. A scalar factor applies uniformly to all
         modes; ``modes`` factors apply per-mode.
         """
+        cursor = self._decl_cursor(emitter)
         for rec in self.modal_damping_records:
+            cursor.open(rec)  # K1-6: both commands rows are its
             emitter.eigen(rec.modes, solver=rec.solver)
             emitter.modal_damping(*rec.factors)
+        cursor.close()
 
     def _emit_regions(self, emitter: Emitter, tag_plan: TagPlan) -> None:
         """Fan named-region assignments out into ``emitter.region`` calls.

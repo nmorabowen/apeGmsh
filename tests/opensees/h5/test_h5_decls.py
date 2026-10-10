@@ -531,8 +531,6 @@ def test_names_of_the_internal_at_k_form_are_refused(declare: Any) -> None:
 #: ``neutral`` rows the FEM snapshot declares (keyed in the neutral zone);
 #: ``control`` model, analysis-chain and stage attributes, no row (the
 #:             chain primitives themselves are ``tagged`` declarations);
-#: ``blocked`` declared through ``_internal/ns/damping.py``, which records
-#:             no declaration yet (outside K1-6's files; reported on #1463).
 CLASS: dict[str, str] = {
     **{v: "tagged" for v in (
         "uniaxialMaterial", "nDMaterial", "section", "section_open",
@@ -541,7 +539,8 @@ CLASS: dict[str, str] = {
     **{v: "rows" for v in (
         "fix", "mass", "recorder", "sp_hold", "remove_sp", "remove_element",
         "update_material_stage", "addToParameter", "step_hook_ramp",
-        "flip_element_stage")},
+        "flip_element_stage", "rayleigh", "modal_damping", "eigen",
+        "profiler", "command")},
     **{v: "part" for v in (
         "section_close", "patch", "fiber", "layer", "pattern_close", "load",
         "eleLoad", "sp", "recorder_declaration_begin",
@@ -554,18 +553,21 @@ CLASS: dict[str, str] = {
         "domain_change", "set_time", "set_creep", "reset", "partition_open",
         "partition_close", "parallel_runtime_fallback_numberer",
         "parallel_runtime_fallback_system")},
-    **{v: "blocked" for v in (
-        "rayleigh", "modal_damping", "eigen", "profiler", "command")},
 }
 
-#: The store, below a scope, holding each ``rows`` verb's records.
-ROWS_STORE: dict[str, str] = {
-    "fix": "bcs/fix", "mass": "bcs/mass", "recorder": "recorders",
-    "sp_hold": "sp_holds", "remove_sp": "remove_sp",
-    "remove_element": "remove_element",
-    "update_material_stage": "update_material_stage",
-    "addToParameter": "initial_stress", "step_hook_ramp": "initial_stress",
-    "flip_element_stage": "activate_absorbing",
+#: The stores, below a scope, holding each ``rows`` verb's records
+#: (``commands`` is the root's columnar ``/opensees/commands``).
+ROWS_STORE: dict[str, tuple[str, ...]] = {
+    "fix": ("bcs/fix",), "mass": ("bcs/mass",), "recorder": ("recorders",),
+    "sp_hold": ("sp_holds",), "remove_sp": ("remove_sp",),
+    "remove_element": ("remove_element",),
+    "update_material_stage": ("update_material_stage",),
+    "addToParameter": ("initial_stress",),
+    "step_hook_ramp": ("initial_stress",),
+    "flip_element_stage": ("activate_absorbing",),
+    "rayleigh": ("commands", "rayleigh"),
+    "modal_damping": ("commands",), "eigen": ("commands",),
+    "profiler": ("commands",), "command": ("commands",),
 }
 
 #: ``tagged`` stores: group path below a scope -> allocator kind.
@@ -575,6 +577,40 @@ TAG_STORE: dict[str, str] = {
     "beam_integration": "beamIntegration", "time_series": "timeSeries",
     "patterns": "pattern", "dampings": "damping", "regions": "region",
 }
+
+
+def test_rayleigh_and_modal_damping_rows_carry_their_keys(
+    tmp_path: Path,
+) -> None:
+    """The commands rows (global rayleigh, eigen + modal_damping), the
+    region of a region-scoped rayleigh and a stage rayleigh row each
+    join to the ``ops.damping`` / ``s.damping`` call that declared it."""
+    ops = apeSees(_two_quad_stub(), default_orientation=None)
+    ops.model(ndm=2, ndf=2)
+    mat = ops.nDMaterial.ElasticIsotropic(E=1e6, nu=0.3, rho=0.0)
+    ops.element.FourNodeQuad(pg="Rock", thickness=1.0, material=mat)
+    ops.element.FourNodeQuad(pg="Fill", thickness=1.0, material=mat)
+    ops.fix(pg="Base", dofs=(1, 1))
+    ops.damping.modal(0.05, modes=2)
+    with ops.stage(name="s") as s:
+        s.damping.rayleigh(alpha_m=0.1)               # stage rayleigh row
+        s.damping.rayleigh(alpha_m=0.2, on="Fill")    # stage region
+        s.analysis(**_chain(ops))
+        s.run(n_increments=1)
+    p = tmp_path / "m.h5"
+    ops.h5(str(p))
+    table = _decls(p)
+    with h5py.File(str(p), "r") as f:
+        methods = [m.decode() for m in f["opensees/commands/method"][()]]
+        regions = f["opensees/stages/stage_000/regions"]
+        tag = next(int(regions[r].attrs["tag"]) for r in regions
+                   if regions[r].attrs["kind"] == "rayleigh")
+    keys = [table.for_row("commands", i).key for i in range(len(methods))]
+    assert methods == ["eigen", "modal_damping"]
+    assert keys == ["opensees/modal_damping/#1"] * 2
+    assert table.for_row("stages/stage_000/rayleigh", 0).key == (
+        "opensees/rayleigh/#1")
+    assert table.for_tag("region", tag).key == "opensees/rayleigh/#2"
 
 
 def test_every_registry_verb_is_classified() -> None:
@@ -609,8 +645,21 @@ def _all_verb_models() -> list[apeSees]:
     flat.initial_stress(name="geo", pg="Rock", sigma_xx=-1.0,
                         sigma_yy=-1.0, sigma_zz=-1.0, ramp_steps=2)
     flat.equation_constraint(constrained=(3, 1), retained=[(4, 1, -1.0)])
+    flat.damping.rayleigh(alpha_m=0.01)                 # a commands row
+    flat.damping.rayleigh(alpha_m=0.02, on="Rock")      # a region
+    flat.damping.modal(0.05, modes=2)                   # eigen + modal rows
+
+    prof = apeSees(_two_quad_stub(), default_orientation=None)
+    prof.model(ndm=2, ndf=2)
+    pmat = prof.nDMaterial.ElasticIsotropic(E=1e6, nu=0.3, rho=0.0)
+    prof.element.FourNodeQuad(pg="Rock", thickness=1.0, material=pmat)
+    prof.fix(pg="Base", dofs=(1, 1))
+    with prof.stage(name="profiled") as s:
+        s.profile()                                     # stage commands rows
+        s.analysis(**_chain(prof))
+        s.run(n_increments=1)
     return [
-        flat, _staged(named=True), _build_kitchen_sink_bridge(),
+        flat, prof, _staged(named=True), _build_kitchen_sink_bridge(),
         _build_two_stage_bridge(),
         build_material_stage_bridge(_make_two_quad_fem_stub()),
     ]
@@ -631,26 +680,35 @@ def test_every_declaration_verb_has_its_key(tmp_path: Path) -> None:
                 (f"stages/{s}/", root["stages"][s])
                 for s in (root["stages"] if "stages" in root else ())]
             for prefix, grp in scopes:
-                for verb, leaf in ROWS_STORE.items():
-                    paths = [leaf]
-                    if leaf == "sp_holds":
+                for verb, leaves in ROWS_STORE.items():
+                    paths = list(leaves)
+                    if leaves == ("sp_holds",):
                         pats = grp["patterns"] if "patterns" in grp else {}
                         paths = [f"patterns/{n}/sp_holds" for n in pats
                                  if "sp_holds" in pats[n]]
                     for path in paths:
-                        if path not in grp or not len(grp[path]):
+                        if path not in grp:
                             continue
-                        seen.add(verb)
+                        rows = (grp[path]["method"] if path == "commands"
+                                else grp[path])
+                        if not len(rows):
+                            continue
                         store = prefix + path
                         assert store in table.rows, store
-                        assert len(table.rows[store]) == len(grp[path])
+                        assert len(table.rows[store]) == len(rows)
+                        if path == "commands":
+                            methods = {m.decode() if isinstance(m, bytes)
+                                       else str(m) for m in rows[()]}
+                            seen.update(methods & set(ROWS_STORE))
+                        else:
+                            seen.add(verb)
                 for path, kind in TAG_STORE.items():
                     if path not in grp:
                         continue
                     for name in grp[path]:
                         g = grp[path][name]
                         if kind == "region" and g.attrs.get("kind") == "rayleigh":
-                            continue      # blocked: see CLASS
+                            seen.add("rayleigh_region")
                         tag = (int(g.attrs["tag"]) if "tag" in g.attrs
                                else int(name.rsplit("_", 1)[1]))
                         table.for_tag(kind, tag)
@@ -663,5 +721,9 @@ def test_every_declaration_verb_has_its_key(tmp_path: Path) -> None:
             assert any(d.family == "equation_constraint"
                        for d in table.decls)
     # Each ``rows`` verb and the region store were exercised.
-    assert set(ROWS_STORE) <= seen, sorted(set(ROWS_STORE) - seen)
-    assert "region" in seen
+    # ``command`` has no bridge caller yet (ADR 0114 Q7): a row of it would
+    # meet no open declaration and refuse at write, which
+    # ``test_tagless_row_without_a_declaration_refuses`` pins for the path.
+    assert set(ROWS_STORE) - {"command"} <= seen, sorted(
+        set(ROWS_STORE) - {"command"} - seen)
+    assert {"region", "rayleigh_region"} <= seen

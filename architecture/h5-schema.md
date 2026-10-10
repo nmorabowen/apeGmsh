@@ -1169,10 +1169,12 @@ does not read it, and the hashed `/opensees/program` `decl` column stays
     rows/<store>  i8 (R,)     one declaration row per record of a tagless
                               store, aligned to it: bcs/fix, bcs/mass,
                               recorders (one per group, in index order),
-                              initial_stress (one per stress_NNN), and under
-                              stages/stage_NNN those five plus remove_sp,
+                              initial_stress (one per stress_NNN),
+                              commands (one per /opensees/commands row),
+                              and under stages/stage_NNN bcs/fix, bcs/mass,
+                              recorders, initial_stress, remove_sp,
                               remove_element, update_material_stage,
-                              activate_absorbing and
+                              activate_absorbing, rayleigh and
                               patterns/<hold>/sp_holds (s.support)
 ```
 
@@ -1183,12 +1185,12 @@ element tags) inherits the spec's row, and an orientation fan-out's extra
 `geomTransf` tags inherit their transform's. A `region` tag joins to its
 site's owner: a named region to its name's first `ops.region` / `s.region`
 call (one declaration per name), a damping attach's region to its
-`Damping` object, a filtered recorder's to the recorder. Gap: the
-`ops.damping` Rayleigh and modal-damping records (created in
-`_internal/ns/damping.py`) have no declaration yet, so a region-scoped
-Rayleigh's region, a stage's `rayleigh` rows and the `/opensees/commands`
-rows (rayleigh, eigen, modal_damping, profiler) carry none; `s.profile`
-and `ops.equation_constraint` are keyed but write no row. An unnamed object apeGmsh
+`Damping` object, a region-scoped Rayleigh's to its `rayleigh` record, a
+filtered recorder's to the recorder. `rows/commands` gives every
+`/opensees/commands` row its declaration (a global `rayleigh`, the `eigen`
++ `modal_damping` pair of `ops.damping.modal`, a stage's `s.profile`
+bracket), and `stages/stage_NNN/rayleigh` each stage `rayleigh` row;
+`ops.equation_constraint` is keyed but writes no row (a ledger verb). An unnamed object apeGmsh
 registers inside a user call that already has its provenance record
 (one record per user call) has no record of its own; it is keyed
 `opensees/<family>/@k` with `synth` 1. The `rows` columns are filled at the head of each
