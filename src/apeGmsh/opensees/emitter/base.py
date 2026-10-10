@@ -1028,3 +1028,31 @@ def _build_embedded_flag_args(
         out.append("-KP")
         out.append(float(stiffness_p))
     return out
+
+
+def _embedded_retained_args(master_nodes: tuple[int, ...]) -> list[int | str]:
+    """The ``$Rnode1..3 <$Rnode4>`` tokens of an ``ASDEmbeddedNodeElement``
+    call made through **openseespy** (the ``.py`` deck and the live route).
+
+    The parser (``ASDEmbeddedNodeElement.cpp:212``) reads tag, cnode and
+    three retained nodes with ``OPS_GetInt``, then every further token
+    with ``OPS_GetString``, and takes the optional 4th retained node
+    (a tet4 host) as ``std::stoi`` of that string inside a ``catch(...)``.
+    Under openseespy an ``int`` argument is not a string there, so a 4th
+    node passed as ``int`` is silently dropped and the tet4 tie binds
+    three corners (#1621; measured: the embedded node then follows the
+    triangle, not the tet). Tcl text has no such distinction, so the Tcl
+    emitter does not use this helper. Three nodes are returned unchanged;
+    with four, the 4th is the decimal string of its tag. Any other count
+    is refused here: the parser would reject fewer with an opaque message
+    and drop every node past the 4th without a word.
+    """
+    n = len(master_nodes)
+    if n == 3:
+        return [int(m) for m in master_nodes]
+    if n == 4:
+        return [*(int(m) for m in master_nodes[:3]), str(int(master_nodes[3]))]
+    raise ValueError(
+        f"ASDEmbeddedNodeElement takes 3 (triangle) or 4 (tet4) retained "
+        f"nodes; got {n}: {tuple(int(m) for m in master_nodes)!r}."
+    )
