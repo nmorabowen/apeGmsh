@@ -79,7 +79,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from types import MappingProxyType
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any, Iterable, Literal, NoReturn, Sequence
+from typing import TYPE_CHECKING, Any, Iterable, Literal, NamedTuple, NoReturn, Sequence
 
 from .base import DroppedAxisGuard, command_row
 from .caps import SolveStamp, TargetCaps
@@ -121,7 +121,7 @@ if TYPE_CHECKING:
 
 
 __all__ = [
-    "H5Emitter", "SCHEMA_FLOOR", "SCHEMA_VERSION",
+    "Declaration", "DeclTagRun", "H5Emitter", "SCHEMA_FLOOR", "SCHEMA_VERSION",
     "H5EquationConstraintDeviationWarning",
     "H5FeatureDeferredWarning",
     "H5LedgerWarning",
@@ -514,7 +514,24 @@ class H5RefusedVerb(NotImplementedError):
 #:     into ``model_hash``.
 #:     A 2.24 reader opens 2.12 through 2.24; a 2.23.x reader REFUSES a
 #:     2.24.x file.
-SCHEMA_VERSION: str = "2.24.0"
+#:   * 2.25.0 — ADR 0114 R5 (K1-6): additive — new optional
+#:     ``/opensees/decls`` group, the bridge's declarations: one row per
+#:     declaration (``key`` = ``opensees/<family>/<name|#k>``, the
+#:     ``/provenance`` path; ``family``; ``name``, ``""`` when unnamed;
+#:     ``synth``), the ``tags`` runs (``kind``, ``first``, ``count``,
+#:     ``decl``) joining the tagged ones on the tag plan's ``(kind, tag)``
+#:     (a fan-out element or transform inherits its spec's row), and
+#:     ``rows/<store>`` columns giving the declaration of every row of the
+#:     tagless stores (``bcs/fix``, ``bcs/mass``, ``recorders`` and their
+#:     ``stages/stage_NNN`` twins). Carries the new ``name=`` of
+#:     ``fix`` / ``mass`` (flat and staged) and the recorders' forwarded
+#:     one. A label, not structure: ``decls`` is in
+#:     ``MODEL_HASH_EXCLUDED_CHILDREN``, so ``model_hash`` is unchanged
+#:     and ``/opensees/program``'s hashed ``decl`` column stays ``-1``.
+#:     Written only when the bridge drove the emit (``set_declarations``).
+#:     A 2.25 reader opens 2.12 through 2.25; a 2.24.x reader REFUSES a
+#:     2.25.x file.
+SCHEMA_VERSION: str = "2.25.0"
 
 #: Oldest opensees-zone minor the reader opens (ADR 0113 (#1303)). The
 #: zone's last non-additive minor is 2.11.0, the 0-based rank flip, but
@@ -828,6 +845,17 @@ class _StageEmitBlock:
     patterns_complete: "list[_PatternRecord]" = field(default_factory=list)
     open_pattern: "_PatternRecord | None" = None
     recorders: "list[_RecorderRecord]" = field(default_factory=list)
+    # K1-6 (schema 2.25.0): the declaration of each fix / mass / recorder
+    # record above, parallel to its list (``/opensees/decls/rows``).
+    fix_decls: list[int] = field(default_factory=list)
+    mass_decls: list[int] = field(default_factory=list)
+    recorder_decls: list[int] = field(default_factory=list)
+    remove_sp_decls: list[int] = field(default_factory=list)
+    remove_element_decls: list[int] = field(default_factory=list)
+    update_material_stage_decls: list[int] = field(default_factory=list)
+    rayleigh_decls: list[int] = field(default_factory=list)
+    # The HOLD pattern's ``sp_holds`` rows, by the pattern's tag.
+    sp_hold_decls: "dict[int, list[int]]" = field(default_factory=dict)
     # Global-form stage rayleigh (``on=()``) — four raw coefficients
     # per call.  Region-scoped rayleigh / damping attaches arrive as
     # ``region`` calls with the ``-rayleigh`` / ``-damp`` tail and are
@@ -1040,8 +1068,35 @@ def _ro_to_stage_block(ro: "Any") -> "_StageEmitBlock":
 
 #: ``row`` / ``store`` of a call that wrote nothing (a ``ledger`` verb).
 _NO_ROW = -1
-#: ``decl`` until K1-6 adds ``/opensees/decls``.
+#: ``/opensees/program``'s ``decl`` column, which stays ``-1``: the column
+#: is hashed, and a declaration is a label (A7), so the declaration join
+#: lives in the hash-excluded ``/opensees/decls`` (K1-6, schema 2.25.0).
+#: Also the "no declaration open" state of :meth:`H5Emitter.set_declaration`.
 _NO_DECL = -1
+
+
+class Declaration(NamedTuple):
+    """One bridge declaration (ADR 0114 R5, K1-6, schema 2.25.0).
+
+    ``key`` is the declaration path ``opensees/<family>/<name|#k>`` (or a
+    synthesised ``<verb>:<owner>[/<role>]`` key), the same path the
+    bridge's ``/provenance`` record carries (ADR 0112 D3). ``family`` is
+    the bridge allocator kind (``uniaxialMaterial``, ``element``, ...) or
+    the tagless verb (``fix``, ``mass``). ``name`` is the user's
+    ``name=``, ``""`` when unnamed. ``synth`` marks an object apeGmsh
+    synthesised inside a user verb (the HOLD series of ``s.support``).
+    """
+
+    key: str
+    family: str
+    name: str
+    synth: bool
+
+
+#: ``/opensees/decls/tags`` row: ``(kind, first, count, decl)``, the
+#: tags ``first .. first + count - 1`` of allocator kind ``kind`` belong
+#: to declaration ``decl`` (an index into the declaration rows).
+DeclTagRun = tuple[str, int, int, int]
 #: The magnitude an ``int`` command argument may have and still survive
 #: the ``f8`` ``args`` column exactly.
 _EXACT_INT = 2 ** 53
@@ -1280,6 +1335,7 @@ class H5Emitter:
         # category-major replay cannot regenerate the original order.
         self._program = _ProgramTape()
         self._commands: list[_CommandRecord] = []
+        self._command_decls: list[int] = []  # K1-6, parallel to _commands
         self._program_restored: "tuple[tuple[tuple[int, ...], ...], tuple[str, ...], tuple[str, ...], int] | None" = None
 
         # ADR 0114 D6 (schema 2.24.0): what the archive says about the
@@ -1290,6 +1346,29 @@ class H5Emitter:
         # ``@requires``; the last is derived from the program's methods at
         # write time. ``None`` writes nothing.
         self._solve_stamp_input: "tuple[bool, str, tuple[str, ...], tuple[str, ...]] | None" = None
+
+        # ADR 0114 R5 (K1-6, schema 2.25.0): the bridge's declarations,
+        # handed in once through :meth:`set_declarations` with the
+        # ``(kind, tag)`` runs of the tagged ones, and written as the
+        # hash-excluded ``/opensees/decls``. The tagless stores (fix, mass,
+        # recorders) note the declaration :meth:`set_declaration` opened
+        # in a column parallel to their records; a partition replica that
+        # was first captured with none open takes the replica's
+        # (``_decl_dup_rows``). ``None``: no bridge declarations, no group.
+        self._declarations: "tuple[Declaration, ...] | None" = None
+        self._decl_tags: "tuple[DeclTagRun, ...]" = ()
+        self._decl_open: int = _NO_DECL
+        self._fix_decls: list[int] = []
+        self._mass_decls: list[int] = []
+        self._recorder_decls: list[int] = []
+        self._decl_dup_rows: "dict[tuple[Any, ...], tuple[list[int], int]]" = {}
+        # The source's ``rows`` columns, echoed by :meth:`restore_declarations`
+        # in place of the live ones (a rewrite opens no declaration).
+        self._decl_rows_restored: "dict[str, list[int]] | None" = None
+        # The rows columns of the stores filled through side channels, not
+        # Protocol calls (``initial_stress``, ``activate_absorbing``), handed
+        # in by :meth:`set_declaration_rows`.
+        self._decl_side_rows: "dict[str, list[int]]" = {}
 
         # Constitutive.
         self._uniaxial: list[_MaterialRecord] = []
@@ -1514,6 +1593,8 @@ class H5Emitter:
             method=method, token=token, stage=stage, args=tuple(args),
             names=names if names is not None else ("",) * len(args),
         ))
+        # K1-6: the row's declaration (``/opensees/decls/rows/commands``).
+        self._command_decls.append(self._decl_open)
 
     @property
     def ledger_counts(self) -> "Mapping[str, int]":
@@ -1670,20 +1751,47 @@ class H5Emitter:
         # fix must NOT land in the global ``/opensees/bcs`` zone (it
         # would double-apply as a t=0 BC on replay).
         rec = _FixRecord(tag=int(tag), dofs=tuple(int(d) for d in dofs))
-        if self._stage_current is not None:
+        blk = self._stage_current
+        if blk is not None:
             # P5.1: a stage-bound fix on a cross-rank shared node
             # replicates per owning rank (INV-4) — capture once.
             # ``_partition_dup`` is inert outside a partition bracket,
             # so the flat staged path is unchanged.
-            if self._partition_dup(
-                ("stage_fix", self._stage_current.name, rec.tag, rec.dofs),
-            ):
+            key: "tuple[Any, ...]" = ("stage_fix", blk.name, rec.tag, rec.dofs)
+            if self._partition_dup(key):
+                self._decl_claim(key)
                 return
-            self._stage_current.fixes.append(rec)
+            self._decl_note(key, blk.fix_decls)
+            blk.fixes.append(rec)
             return
-        if self._partition_dup(("fix", rec.tag, rec.dofs)):
+        key = ("fix", rec.tag, rec.dofs)
+        if self._partition_dup(key):
+            self._decl_claim(key)
             return
+        self._decl_note(key, self._fix_decls)
         self._fixes.append(rec)
+
+    def _decl_note(self, key: "tuple[Any, ...]", decls: list[int]) -> None:
+        """Note the open declaration for the record about to be appended
+        to the store whose declaration column is ``decls`` (K1-6).
+
+        Inside a partition bracket the row is remembered under its dedupe
+        ``key``, so a replica that arrives with a declaration open can
+        give it one (:meth:`_decl_claim`).
+        """
+        decls.append(self._decl_open)
+        if self._partition_current is not None:
+            self._decl_dup_rows[key] = (decls, len(decls) - 1)
+
+    def _decl_claim(self, key: "tuple[Any, ...]") -> None:
+        """A partition replica of ``key`` arrived: its declaration fills
+        the first capture's row when that one was captured with none open
+        (a ghost replay before the owner's fix, ADR 0027 INV-2)."""
+        if self._decl_open == _NO_DECL:
+            return
+        decls, row = self._decl_dup_rows[key]
+        if decls[row] == _NO_DECL:
+            decls[row] = self._decl_open
 
     def mark_mass_from_model(self) -> None:
         """Record that the model's nodal masses come from the snapshot.
@@ -1708,16 +1816,21 @@ class H5Emitter:
         rec = _MassRecord(
             tag=int(tag), values=tuple(float(v) for v in values),
         )
-        if self._stage_current is not None:
-            if self._partition_dup(
-                ("stage_mass", self._stage_current.name,
-                 rec.tag, rec.values),
-            ):
+        blk = self._stage_current
+        if blk is not None:
+            key: "tuple[Any, ...]" = (
+                "stage_mass", blk.name, rec.tag, rec.values)
+            if self._partition_dup(key):
+                self._decl_claim(key)
                 return
-            self._stage_current.masses.append(rec)
+            self._decl_note(key, blk.mass_decls)
+            blk.masses.append(rec)
             return
-        if self._partition_dup(("mass", rec.tag, rec.values)):
+        key = ("mass", rec.tag, rec.values)
+        if self._partition_dup(key):
+            self._decl_claim(key)
             return
+        self._decl_note(key, self._mass_decls)
         self._masses.append(rec)
 
     # =====================================================================
@@ -2446,10 +2559,11 @@ class H5Emitter:
         pat = self._active_pattern("sp_hold")
         # P5.1: a HOLD on a cross-rank shared node emits inside every
         # owning rank's copy of the stage's HOLD pattern — capture once.
-        if self._partition_dup(
-            ("sp_hold", blk.name, pat.tag, int(node), int(dof)),
-        ):
+        key = ("sp_hold", blk.name, pat.tag, int(node), int(dof))
+        if self._partition_dup(key):
+            self._decl_claim(key)
             return
+        self._decl_note(key, blk.sp_hold_decls.setdefault(pat.tag, []))
         pat.sp_holds.append((int(node), int(dof)))
 
     # =====================================================================
@@ -2457,11 +2571,14 @@ class H5Emitter:
     # =====================================================================
 
     def recorder(self, kind: str, *args: int | float | str) -> None:
-        sink = (
-            self._stage_current.recorders
-            if self._stage_current is not None
-            else self._recorders
-        )
+        blk = self._stage_current
+        if blk is not None:
+            sink, decls = blk.recorders, blk.recorder_decls
+        else:
+            sink, decls = self._recorders, self._recorder_decls
+        # Recorders are emitted outside any partition bracket, so no
+        # replica reaches here: the column takes the open declaration.
+        decls.append(self._decl_open)
         sink.append(_RecorderRecord(
             kind=kind,
             args=tuple(args),
@@ -2523,6 +2640,7 @@ class H5Emitter:
                 float(alpha_m), float(beta_k),
                 float(beta_k_init), float(beta_k_comm),
             ))
+            blk.rayleigh_decls.append(self._decl_open)  # K1-6
             return
         self._command("rayleigh", (alpha_m, beta_k, beta_k_init, beta_k_comm))
 
@@ -2863,14 +2981,18 @@ class H5Emitter:
         blk = self._stage_block("remove_sp")
         # P5.1: remove_sp replicates on every rank owning the node
         # (mirrors fix's INV-4 fan-out) — capture once.
-        if self._partition_dup(
-            ("stage_remove_sp", blk.name, int(node), int(dof)),
-        ):
+        key = ("stage_remove_sp", blk.name, int(node), int(dof))
+        if self._partition_dup(key):
+            self._decl_claim(key)
             return
+        self._decl_note(key, blk.remove_sp_decls)
         blk.remove_sps.append((int(node), int(dof)))
 
     def remove_element(self, tag: int) -> None:
-        self._stage_block("remove_element").remove_elements.append(int(tag))
+        blk = self._stage_block("remove_element")
+        # A removal fires on the element's one owner rank: no replica.
+        blk.remove_element_decls.append(self._decl_open)
+        blk.remove_elements.append(int(tag))
 
     def update_material_stage(self, mat_tag: int, stage: int) -> None:
         blk = self._stage_block("update_material_stage")
@@ -2881,11 +3003,12 @@ class H5Emitter:
         # this the archive would carry N copies per material under
         # partitioning and one copy without it — an unstable
         # model_hash for the same authored model.
-        if self._partition_dup(
-            ("stage_update_material_stage", blk.name,
-             int(mat_tag), int(stage)),
-        ):
+        key = ("stage_update_material_stage", blk.name,
+               int(mat_tag), int(stage))
+        if self._partition_dup(key):
+            self._decl_claim(key)
             return
+        self._decl_note(key, blk.update_material_stage_decls)
         blk.update_material_stages.append((int(mat_tag), int(stage)))
 
     # =====================================================================
@@ -3084,8 +3207,121 @@ class H5Emitter:
         # ADR 0114 D6 (schema 2.24.0): the solve stamp, on ``/opensees``
         # itself. Hashed, like every attribute of the group.
         self._write_solve_stamp(f)
+        # ADR 0114 R5 (K1-6, schema 2.25.0): the declarations. A label,
+        # so ``decls`` is in ``MODEL_HASH_EXCLUDED_CHILDREN``.
+        self._write_decls(f)
 
     # -- Per-group writers (split out so each step adds one) -------------
+
+    def _write_decls(self, f: Any) -> None:
+        """Persist ``/opensees/decls`` (ADR 0114 R5, K1-6, schema 2.25.0).
+
+        Written only once :meth:`set_declarations` ran. One row per
+        declaration (``key``, ``family``, ``name``, ``synth``); ``tags``
+        holds the ``(kind, first, count, decl)`` runs of the tagged ones;
+        ``rows/<store>`` holds one declaration index per record of each
+        tagless store this archive wrote, aligned to its rows:
+        ``bcs/fix``, ``bcs/mass``, ``recorders`` (in group index order)
+        and the same three under ``stages/stage_NNN``. A tagless record
+        with no declaration open refuses: the archive would carry a row
+        no declaration claims. Hash-excluded: ``decls`` is in
+        ``MODEL_HASH_EXCLUDED_CHILDREN``.
+        """
+        if self._declarations is None:
+            return
+        import h5py
+        import numpy as np
+
+        str_dt = h5py.string_dtype(encoding="utf-8")
+        decls = self._declarations
+        g = self._ops_group(f).create_group("decls")
+        g.create_dataset("key", data=[d.key for d in decls], dtype=str_dt)
+        g.create_dataset(
+            "family", data=[d.family for d in decls], dtype=str_dt)
+        g.create_dataset("name", data=[d.name for d in decls], dtype=str_dt)
+        g.create_dataset(
+            "synth", data=np.array([int(d.synth) for d in decls],
+                                   dtype=np.int8))
+        tags = g.create_group("tags")
+        runs = self._decl_tags
+        tags.create_dataset("kind", data=[r[0] for r in runs], dtype=str_dt)
+        for col, name in ((1, "first"), (2, "count"), (3, "decl")):
+            tags.create_dataset(
+                name, data=np.array([r[col] for r in runs], dtype=np.int64))
+
+        side = self._decl_side_rows
+        stores: list[tuple[str, list[int], Sequence[Any]]] = [
+            ("bcs/fix", self._fix_decls, self._fixes),
+            ("bcs/mass", self._mass_decls, self._masses),
+            ("recorders", self._recorder_decls, self._recorders),
+            ("initial_stress", side.get("initial_stress", []),
+             self._initial_stress_records),
+            # One row per ``/opensees/commands`` row, global and stage.
+            ("commands", self._command_decls, self._commands),
+        ]
+        for idx, blk in enumerate(self._stage_blocks):
+            base = f"stages/stage_{idx:03d}"
+            stores += [
+                (f"{base}/bcs/fix", blk.fix_decls, blk.fixes),
+                (f"{base}/bcs/mass", blk.mass_decls, blk.masses),
+                (f"{base}/recorders", blk.recorder_decls, blk.recorders),
+                (f"{base}/remove_sp", blk.remove_sp_decls, blk.remove_sps),
+                (f"{base}/remove_element", blk.remove_element_decls,
+                 blk.remove_elements),
+                (f"{base}/update_material_stage",
+                 blk.update_material_stage_decls, blk.update_material_stages),
+                (f"{base}/initial_stress",
+                 side.get(f"{base}/initial_stress", []),
+                 blk.initial_stress_records),
+                (f"{base}/activate_absorbing",
+                 side.get(f"{base}/activate_absorbing", []),
+                 blk.activate_absorbing_records),
+                (f"{base}/rayleigh", blk.rayleigh_decls, blk.rayleighs),
+            ]
+            stores += [
+                (f"{base}/patterns/{pattern_name(pat)}/sp_holds",
+                 blk.sp_hold_decls.get(pat.tag, []), pat.sp_holds)
+                for pat in blk.patterns_complete if pat.sp_holds
+            ]
+        restored = self._decl_rows_restored
+        if restored is not None:
+            unknown = sorted(set(restored) - {s for s, _c, r in stores if r})
+            if unknown:
+                raise RuntimeError(
+                    "H5Emitter._write_decls: the echoed /opensees/decls rows "
+                    f"cover {unknown}, which this rewrite does not write."
+                )
+        rows = g.create_group("rows")
+        for store, column, records in stores:
+            n_records = len(records)
+            if not n_records:
+                continue
+            if restored is not None:
+                if store not in restored:
+                    raise RuntimeError(
+                        f"H5Emitter._write_decls: the rewrite writes "
+                        f"/opensees/{store}, but the echoed /opensees/decls "
+                        "holds no rows column for it."
+                    )
+                column = restored[store]
+            if len(column) != n_records:
+                raise RuntimeError(
+                    f"H5Emitter._write_decls: /opensees/{store} has "
+                    f"{n_records} rows but {len(column)} declaration "
+                    "entries; a record reached the store without its "
+                    "declaration (a Protocol call, or the bridge's "
+                    "set_declaration_rows for a side-channel store)."
+                )
+            if _NO_DECL in column:
+                bad = column.index(_NO_DECL)
+                raise RuntimeError(
+                    f"H5Emitter._write_decls: /opensees/{store} row {bad} "
+                    f"({records[bad]!r}) was written with no "
+                    "declaration open; the bridge opens one "
+                    "(set_declaration) at the head of every fix, mass and "
+                    "recorder loop."
+                )
+            rows.create_dataset(store, data=np.array(column, dtype=np.int64))
 
     def _write_solve_stamp(self, f: Any) -> None:
         """Persist ``/opensees@will_solve``, ``@solve_mode``,
@@ -4062,6 +4298,204 @@ class H5Emitter:
         assert stamp.solve_refusals_flat is not None
         self._solve_stamp_input = (
             will_solve, solve_mode, own, stamp.solve_refusals_flat)
+
+    def set_declarations(
+        self, decls: "Sequence[tuple[str, str, str, bool]]",
+        tags: "Sequence[DeclTagRun]",
+    ) -> None:
+        """Hand in the bridge's declarations (ADR 0114 R5, K1-6, schema 2.25.0).
+
+        Side channel, not a Protocol call (it notes no emit index).
+        ``decls`` are the declarations, one per key, as
+        :class:`Declaration` fields ``(key, family, name, synth)``; ``tags`` the
+        ``(kind, first, count, decl)`` runs joining each tagged
+        declaration on the tag plan's ``(kind, tag)``, a fan-out element
+        or transform included (it inherits its spec's declaration). Called
+        once, before the emit, so :meth:`set_declaration` can open them.
+        Refuses a second call, a repeated key, a run whose ``decl`` is out
+        of range, and two runs that claim one ``(kind, tag)``.
+        """
+        if self._declarations is not None:
+            raise RuntimeError(
+                "H5Emitter.set_declarations: the declarations are already "
+                "set; they are handed in once per emit."
+            )
+        rows = tuple(Declaration(*d) for d in decls)
+        seen: set[str] = set()
+        for d in rows:
+            if not d.key or d.key in seen:
+                raise ValueError(
+                    f"H5Emitter.set_declarations: declaration key {d.key!r} "
+                    "is empty or repeated; each declaration has one key."
+                )
+            seen.add(d.key)
+        runs: list[DeclTagRun] = []
+        for kind, first, count, decl in tags:
+            if not kind or int(count) < 1 or not 0 <= int(decl) < len(rows):
+                raise ValueError(
+                    "H5Emitter.set_declarations: tag run "
+                    f"{(kind, first, count, decl)!r} needs a kind, a count "
+                    f">= 1 and a declaration index below {len(rows)}."
+                )
+            runs.append((str(kind), int(first), int(count), int(decl)))
+        by_kind: dict[str, list[tuple[int, int]]] = {}
+        for kind, first, count, _decl in runs:
+            by_kind.setdefault(kind, []).append((first, first + count))
+        for kind, spans in by_kind.items():
+            spans.sort()
+            for (_a, end), (start, _b) in zip(spans, spans[1:]):
+                if start < end:
+                    raise ValueError(
+                        "H5Emitter.set_declarations: two declarations claim "
+                        f"{kind} tag {start}; a (kind, tag) has one "
+                        "declaration."
+                    )
+        self._declarations = rows
+        self._decl_tags = tuple(runs)
+
+    def restore_declarations(self, table: Any) -> None:
+        """Echo a source archive's ``/opensees/decls`` (the
+        ``from_h5 -> to_h5`` path, K1-6).
+
+        ``table`` is the reader's ``DeclarationTable``. The rewrite
+        replays every store in its source order, so the source's
+        ``rows`` columns still describe it; the writer checks each against
+        its store's row count and refuses a mismatch.
+        """
+        self.set_declarations(
+            [(d.key, d.family, d.name, d.synth) for d in table.decls],
+            table.tags,
+        )
+        self._decl_rows_restored = {
+            str(store): [int(v) for v in column]
+            for store, column in table.rows.items()
+        }
+
+    #: The stores a side channel fills (no Protocol call notes a row), by
+    #: their path below a scope: their rows columns come from the bridge.
+    _SIDE_ROW_STORES: "frozenset[str]" = frozenset(
+        {"initial_stress", "activate_absorbing"})
+
+    def set_declaration_rows(
+        self, store: str, column: "Sequence[int]",
+    ) -> None:
+        """Hand in the rows column of a side-channel store (K1-6):
+        ``initial_stress`` or ``stages/stage_NNN/{initial_stress,
+        activate_absorbing}``, one declaration per record the side channel
+        attached, in its order. The writer checks the length; a second
+        call for one store, or another store, refuses."""
+        if self._declarations is None:
+            raise RuntimeError(
+                "H5Emitter.set_declaration_rows: call set_declarations first.")
+        leaf = store.rsplit("/", 1)[-1]
+        if leaf not in self._SIDE_ROW_STORES or store in self._decl_side_rows:
+            raise ValueError(
+                f"H5Emitter.set_declaration_rows: {store!r} is not a "
+                "side-channel store, or its column is already set.")
+        values = [int(v) for v in column]
+        if any(not 0 <= v < len(self._declarations) for v in values):
+            raise IndexError(
+                f"H5Emitter.set_declaration_rows: {store!r} points past the "
+                "declarations.")
+        self._decl_side_rows[store] = values
+
+    def unclaimed_fix_rows(self) -> "tuple[tuple[int, int, tuple[int, ...]], ...]":
+        """The ``fix`` rows no declaration claims yet, as ``(stage, tag,
+        dofs)`` (``stage`` ``-1`` global, else the ``stage_NNN`` ordinal).
+
+        A ghost replay (ADR 0027 INV-2) writes a fix outside any loop the
+        bridge opens; it is claimed by its owner's replica when one
+        follows, and otherwise by :meth:`claim_fix_rows` after the emit.
+        """
+        out: list[tuple[int, int, tuple[int, ...]]] = []
+        pools = [(-1, self._fixes, self._fix_decls)] + [
+            (i, blk.fixes, blk.fix_decls)
+            for i, blk in enumerate(self._stage_blocks)]
+        for stage, records, column in pools:
+            out.extend(
+                (stage, rec.tag, rec.dofs)
+                for rec, decl in zip(records, column) if decl == _NO_DECL)
+        return tuple(out)
+
+    def claim_fix_rows(
+        self, claims: "Mapping[tuple[int, int, tuple[int, ...]], int]",
+    ) -> None:
+        """Give each unclaimed ``fix`` row the declaration ``claims`` maps
+        its ``(stage, tag, dofs)`` to (K1-6). A row ``claims`` lacks stays
+        unclaimed, so the write still refuses it."""
+        if self._declarations is None:
+            raise RuntimeError(
+                "H5Emitter.claim_fix_rows: call set_declarations first.")
+        pools = [(-1, self._fixes, self._fix_decls)] + [
+            (i, blk.fixes, blk.fix_decls)
+            for i, blk in enumerate(self._stage_blocks)]
+        for stage, records, column in pools:
+            for row, rec in enumerate(records):
+                if column[row] != _NO_DECL:
+                    continue
+                decl = claims.get((stage, rec.tag, rec.dofs))
+                if decl is not None:
+                    if not 0 <= decl < len(self._declarations):
+                        raise IndexError(
+                            f"H5Emitter.claim_fix_rows: declaration {decl} "
+                            "is out of range.")
+                    column[row] = decl
+
+    def unclaimed_remove_sp_rows(self) -> "tuple[tuple[int, int, int], ...]":
+        """The stage ``remove_sp`` rows no declaration claims yet, as
+        ``(stage, node, dof)``: a ghost's replay of its owner's release
+        (ADR 0027 INV-2), claimed after the emit like a ghost fix."""
+        return tuple(
+            (i, node, dof)
+            for i, blk in enumerate(self._stage_blocks)
+            for (node, dof), decl in zip(blk.remove_sps, blk.remove_sp_decls)
+            if decl == _NO_DECL
+        )
+
+    def claim_remove_sp_rows(
+        self, claims: "Mapping[tuple[int, int, int], int]",
+    ) -> None:
+        """Give each unclaimed stage ``remove_sp`` row the declaration
+        ``claims`` maps its ``(stage, node, dof)`` to; a row it lacks
+        stays unclaimed, so the write refuses it."""
+        if self._declarations is None:
+            raise RuntimeError(
+                "H5Emitter.claim_remove_sp_rows: call set_declarations first.")
+        for i, blk in enumerate(self._stage_blocks):
+            column = blk.remove_sp_decls
+            for row, (node, dof) in enumerate(blk.remove_sps):
+                if column[row] != _NO_DECL:
+                    continue
+                decl = claims.get((i, node, dof))
+                if decl is not None:
+                    if not 0 <= decl < len(self._declarations):
+                        raise IndexError(
+                            "H5Emitter.claim_remove_sp_rows: declaration "
+                            f"{decl} is out of range.")
+                    column[row] = decl
+
+    def set_declaration(self, decl: int) -> None:
+        """Open declaration ``decl`` for the tagless calls that follow (K1-6).
+
+        Called by the bridge at the head of each tagless loop (one fix,
+        mass or recorder declaration's fan-out); every ``fix``, ``mass``
+        and ``recorder`` call until the next one is that declaration's.
+        :data:`_NO_DECL` closes it, so a replicated call the bridge does
+        not attribute (a ghost replay, ADR 0027 INV-2) opens none.
+        Refuses before :meth:`set_declarations` and an index out of range.
+        """
+        if self._declarations is None:
+            raise RuntimeError(
+                "H5Emitter.set_declaration: call set_declarations first; "
+                "there are no declarations to open."
+            )
+        decl = int(decl)
+        if decl != _NO_DECL and not 0 <= decl < len(self._declarations):
+            raise IndexError(
+                f"H5Emitter.set_declaration: declaration {decl} is out of "
+                f"range (there are {len(self._declarations)})."
+            )
+        self._decl_open = decl
 
     def solve_stamp(self) -> SolveStamp | None:
         """The stamp :meth:`write` will put on ``/opensees``, or ``None``

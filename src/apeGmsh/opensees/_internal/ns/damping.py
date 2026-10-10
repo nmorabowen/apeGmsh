@@ -114,7 +114,11 @@ class _DampingNS(_BridgeNamespace):
                 "(alpha_m/beta_k/...) or the ratio form (ratio/f_i/f_j).",
             )
         targets = _normalize_on(on)
-        self._sink_rayleigh(RayleighRecord(*coeffs, on=targets))
+        record = RayleighRecord(*coeffs, on=targets)
+        # K1-6: every rayleigh (global, region-scoped, staged) is a
+        # declaration; its commands / stage rows and regions carry it.
+        self._bridge._declare_record(record, "rayleigh", None)
+        self._sink_rayleigh(record)
 
     def _sink_rayleigh(self, record: RayleighRecord) -> None:
         """Route a Rayleigh declaration to its pool.
@@ -169,9 +173,10 @@ class _DampingNS(_BridgeNamespace):
                     "ops.damping.modal: a per-mode ratios sequence must have "
                     f"exactly modes={modes} entries, got {len(factors)}.",
                 )
-        self._bridge._modal_damping_records.append(
-            ModalDampingRecord(factors=factors, modes=modes, solver=solver),
-        )
+        record = ModalDampingRecord(factors=factors, modes=modes, solver=solver)
+        # K1-6: its ``eigen`` and ``modal_damping`` commands rows carry it.
+        self._bridge._declare_record(record, "modal_damping", None)
+        self._bridge._modal_damping_records.append(record)
 
     def uniform(
         self,

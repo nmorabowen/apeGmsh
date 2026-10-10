@@ -89,9 +89,12 @@ WARNING_PREFIX: str = "[lineage] "
 #: must elide them to keep ``model_hash`` stable across the round-trip.
 #: ``names`` is the bridge-side alias sidecar (name→kind+tag): a label,
 #: not structure — relabelling a primitive must not invalidate results
-#: lineage, so it is excluded on the same grounds.
+#: lineage, so it is excluded on the same grounds.  ``decls`` (ADR 0114
+#: R5, K1-6) carries the declaration keys and the ``name=`` of every
+#: declaration, fix and mass included: labels again (A7), excluded so a
+#: rename never drifts ``model_hash``.
 MODEL_HASH_EXCLUDED_CHILDREN: frozenset[str] = frozenset(
-    {"cuts", "sweeps", "regions", "names", "computed_sections"}
+    {"cuts", "sweeps", "regions", "names", "computed_sections", "decls"}
 )
 
 #: blake2b digest size — matches today's ``snapshot_id`` (16 bytes ⇒

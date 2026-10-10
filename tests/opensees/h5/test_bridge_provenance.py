@@ -84,6 +84,9 @@ BRIDGE_PATHS = (
     "opensees/nDMaterial/#1",
     "opensees/element/#1",
 )
+#: ``ops.mass_from_model()`` is a declaration too (K1-6, #1463): the
+#: script's last bridge record.
+MASS_FROM_MODEL_PATH = "opensees/mass/#1"
 
 
 def _line(marker: str) -> int:
@@ -160,7 +163,7 @@ def test_session_and_bridge_records_share_one_table(oracle):
     # The session's records come first, the bridge's after, in
     # declaration order, with ``seq`` the row index of the merged table.
     assert "neutral/physical_groups/B" in paths
-    assert paths[-3:] == list(BRIDGE_PATHS)
+    assert paths[-4:] == [*BRIDGE_PATHS, MASS_FROM_MODEL_PATH]
     assert [r.seq for r in table.records] == list(range(len(paths)))
     pg = table.location(table.record("neutral/physical_groups/B").site)
     assert pg.line == _line("session_pg")
@@ -643,7 +646,7 @@ def test_reloaded_snapshot_then_h5_redeclaring_the_same_names(oracle, tmp_path):
     assert table is not None
     paths = [r.path for r in table.records]
     assert len(paths) == len(set(paths))
-    assert paths[-3:] == list(BRIDGE_PATHS)
+    assert paths[-4:] == [*BRIDGE_PATHS, MASS_FROM_MODEL_PATH]
     # The records are this bridge's: their site is this test, not the script.
     site = table.location(table.record("opensees/uniaxialMaterial/steel").site)
     assert site.path.endswith("test_bridge_provenance.py")
@@ -672,7 +675,8 @@ def test_reloaded_snapshot_then_h5_with_other_declarations_keeps_no_stale_record
     assert table is not None
     paths = [r.path for r in table.records]
     assert paths == session_paths + ["opensees/nDMaterial/conc2",
-                                     "opensees/element/#1"]
+                                     "opensees/element/#1",
+                                     MASS_FROM_MODEL_PATH]
     # The source's steel and its unnamed nDMaterial are gone; the element
     # key is this bridge's own #1, not the source's (its site is here).
     assert "opensees/uniaxialMaterial/steel" not in paths
