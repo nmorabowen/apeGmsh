@@ -203,6 +203,33 @@ def _bridge(fem):
     return ops
 
 
+def _bridge_no_chain(fem):
+    """Model + elements only: the stages own their analysis chains."""
+    from apeGmsh.opensees import apeSees
+
+    ops = apeSees(fem, _artifacts=False)
+    ops.model(ndm=3, ndf=3)
+    mat = ops.nDMaterial.ElasticIsotropic(E=30e9, nu=0.2, rho=2400)
+    ops.element.FourNodeTetrahedron(pg="solid", material=mat)
+    return ops
+
+
+def _chain(ops, system):
+    """A stage chain. ``system=None`` is how a stage reaches the gate's
+    "undeclared" branch: ``_StageBuilder.analysis`` annotates ``system``
+    as required but only stores the reference, and ``StageRecord.system``
+    is Optional, so the record the gate reads carries ``None``."""
+    return dict(
+        test=ops.test.NormDispIncr(tol=1e-4, max_iter=50),
+        algorithm=ops.algorithm.Newton(),
+        integrator=ops.integrator.LoadControl(dlam=0.1),
+        constraints=ops.constraints.Plain(),
+        numberer=ops.numberer.RCM(),
+        system=system,
+        analysis=ops.analysis.Static(),
+    )
+
+
 _MORTAR_CT = dict(formulation="mortar", eps_n="auto", mu=0.3,
                   consistent_tan=True)
 _MORTAR_EDGE_CT = dict(formulation="mortar", eps_n="auto", edge_edge=True,
@@ -251,6 +278,58 @@ class TestThroughTheBuild:
         out = tmp_path / "deck.tcl"
         ops.tcl(str(out))
         assert "-consistanttan" in out.read_text()
+
+    def test_staged_profilespd_refuses_naming_the_stage(self, tmp_path) -> None:
+        ops = _bridge_no_chain(_two_body_contact_fem(**_MORTAR_CT))
+        with ops.stage(name="hold") as s:
+            s.analysis(**_chain(ops, ops.system.UmfPack()))
+            s.run(n_increments=1)
+        with ops.stage(name="push") as s:
+            s.analysis(**_chain(ops, ops.system.ProfileSPD()))
+            s.run(n_increments=1)
+        with pytest.raises(BridgeError, match="stage 'push'.*ProfileSPD"):
+            ops.tcl(str(tmp_path / "deck.tcl"))
+
+    def test_staged_no_system_refuses_as_undeclared(self, tmp_path) -> None:
+        ops = _bridge_no_chain(_two_body_contact_fem(**_MORTAR_CT))
+        with ops.stage(name="hold") as s:
+            s.analysis(**_chain(ops, ops.system.UmfPack()))
+            s.run(n_increments=1)
+        with ops.stage(name="push") as s:
+            s.analysis(**_chain(ops, None))
+            s.run(n_increments=1)
+        with pytest.raises(BridgeError, match="stage 'push', undeclared"):
+            ops.tcl(str(tmp_path / "deck.tcl"))
+
+    def test_archival_h5_stamps_the_refusal_and_replay_fails_closed(
+        self, tmp_path,
+    ) -> None:
+        """The archival emit never raises: it records the verdict (ADR 0114
+        D6), and the replay fails closed on it. A direct
+        ``validate_consistent_tan_solver`` call in place of the
+        ``_solve_gate`` wrapper would stamp nothing and replay silently."""
+        import h5py
+
+        from apeGmsh.opensees import OpenSeesModel
+
+        import warnings
+
+        from apeGmsh.opensees.emitter.h5 import H5LedgerWarning
+
+        ops = _bridge(_two_body_contact_fem(**_MORTAR_CT))   # no system
+        out = tmp_path / "m.h5"
+        with warnings.catch_warnings():
+            # The contact verbs are ledgered, not archived (ADR 0114 Q3):
+            # expected on every contact archive, and not this test's subject.
+            warnings.simplefilter("ignore", H5LedgerWarning)
+            ops.h5(str(out))                                 # no BridgeError
+        with h5py.File(out, "r") as f:
+            stored = [str(t) for t in f["opensees"].attrs["solve_refusals"]]
+        assert "consistent_tan_solver" in stored
+        model = OpenSeesModel.from_h5(out)
+        assert "consistent_tan_solver" in model.solve_stamp.solve_refusals
+        with pytest.raises(BridgeError, match="'consistent_tan_solver'.*fails closed"):
+            model.build("tcl")
 
     def test_plain_contact_on_profilespd_is_unaffected(self, tmp_path) -> None:
         """Seam: no flag, no refusal and no new warning (run with -W error)."""
