@@ -80,6 +80,7 @@ from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Literal, Mapping, Sequence
 
 from ._internal.lineage import Lineage
+from .emitter.caps import SolveStamp
 from ._internal.typed_records import (
     BeamIntegrationRecord,
     DampingObjectRecord,
@@ -102,6 +103,7 @@ if TYPE_CHECKING:  # pragma: no cover - import for type checkers only
     from apeGmsh.results.Results import Results
 
     from ._internal.build import InitialStressRecord
+    from ._target import BackendInfo
     from .emitter.base import Emitter
     from .emitter.h5 import H5Emitter
 
@@ -206,6 +208,12 @@ class OpenSeesModel:
     #: ``to_h5`` echoes both through ``H5Emitter.restore_program``.
     _program: "tuple[Any, ...]" = field(default_factory=tuple)
     _commands: "tuple[Any, ...]" = field(default_factory=tuple)
+    #: ``/opensees@will_solve`` / ``@solve_refusals`` / ``@requires`` (ADR
+    #: 0114 D6, opensees 2.24.0), or ``None`` for a file without them.
+    #: Replay to a deck or the live domain fails closed on a stored
+    #: refusal; ``build('live')`` refuses on stock openseespy when
+    #: ``requires`` names the fork; ``to_h5`` echoes the stamp.
+    _solve_stamp: "SolveStamp | None" = None
 
     # ------------------------------------------------------------------
     # Construction
@@ -328,6 +336,7 @@ class OpenSeesModel:
             recorders = tuple(model.recorders())
             program = model.program()
             commands = model.commands()
+            solve_stamp = model.solve_stamp()
 
             elements = cls._load_elements(model)
             fixes, masses = cls._load_bcs(model)
@@ -390,6 +399,7 @@ class OpenSeesModel:
             _mass_from_model=mass_from_model,
             _program=program,
             _commands=commands,
+            _solve_stamp=solve_stamp,
         )
 
     @classmethod
@@ -490,6 +500,7 @@ class OpenSeesModel:
             _fixes=tuple(emitter._fixes),
             _masses=tuple(emitter._masses),
             _mass_from_model=emitter._mass_from_model,
+            _solve_stamp=emitter.solve_stamp(),
             _patterns=tuple(emitter._patterns_complete),
             _recorders=tuple(emitter._recorders),
             _dampings=tuple(emitter._dampings),
@@ -588,6 +599,12 @@ class OpenSeesModel:
             ``out=`` missing for the ``"h5"`` target.
         """
         self._require_declared_ndm()
+        if target in ("tcl", "py", "live"):
+            # ADR 0114 D6: fail closed on the stored refusals before any
+            # emit. The archive skipped the solve-time gates and recorded
+            # which would refuse; a deck or domain built from it would
+            # carry the solve those gates exist to stop.
+            self._refuse_stored_solve_refusals(target)
         if target == "tcl":
             return self._build_text("tcl", out)
         if target == "py":
@@ -773,6 +790,30 @@ class OpenSeesModel:
         (``UniformExcitation``) keep their body in ``args``.
         """
         return self._patterns
+
+    @property
+    def solve_stamp(self) -> "SolveStamp | None":
+        """The archive's ``/opensees`` solve stamp (ADR 0114 D6, opensees
+        2.24.0): ``will_solve``, ``solve_refusals`` and ``requires``;
+        ``None`` for a file that carries none (below 2.24.0)."""
+        return self._solve_stamp
+
+    def _refuse_stored_solve_refusals(self, target: str) -> None:
+        stamp = self._solve_stamp
+        if stamp is None or not stamp.solve_refusals:
+            return
+        from ._internal.build import BridgeError
+
+        raise BridgeError(
+            f"OpenSeesModel.build({target!r}): the archive records that "
+            "its solve was refused at emit by the gate(s) "
+            + ", ".join(repr(i) for i in stamp.solve_refusals)
+            + " (/opensees@solve_refusals). A deck built from it would "
+            "carry the solve those gates exist to stop, so the replay "
+            "fails closed. Fix the model (declare the system / datum the "
+            "gate names) and archive it again; build('h5') still echoes "
+            "the file as it is."
+        )
 
     def program(self) -> "tuple[Any, ...]":
         """Return the ``/opensees/program`` runs (ADR 0114 R2); empty for
@@ -1399,6 +1440,14 @@ class OpenSeesModel:
         # the replay's own tape out of the file, which is not the order the
         # bridge emitted.
         emitter_fresh.restore_program(self._program, self._commands)
+        # ADR 0114 D6: echo the solve stamp. ``@requires`` regenerates
+        # from the echoed program's methods, so it equals the source's; a
+        # source without a stamp (below 2.24.0) stays without one.
+        if self._solve_stamp is not None:
+            emitter_fresh.set_solve_stamp(
+                will_solve=self._solve_stamp.will_solve,
+                solve_refusals=self._solve_stamp.solve_refusals,
+            )
         _compose_model_h5(
             self._fem,
             emitter_fresh,
@@ -1462,10 +1511,47 @@ class OpenSeesModel:
                 "raises). Use build('tcl') / build('py') for staged "
                 "decks."
             )
-        from .emitter.live import LiveOpsEmitter
+        from .emitter.live import LiveOpsEmitter, get_backend_info
 
+        # ADR 0114 D6: a model whose verbs need the fork cannot be built
+        # into a stock domain; refuse before the wipe, naming the gap.
+        refuse_live_requires(self._solve_stamp, get_backend_info())
         emitter = LiveOpsEmitter(wipe=True)
         self._populate_emitter(emitter)
+
+
+def refuse_live_requires(
+    stamp: "SolveStamp | None", backend: "BackendInfo",
+) -> None:
+    """Raise when ``stamp.requires`` names a capability ``backend`` lacks.
+
+    ``"fork"`` is the one token ``VERBS`` rows carry today; it is met by
+    a ``BackendInfo`` of kind ``"fork"`` (``ladrunoBuild()`` answered a
+    sha). Any other token is unknown to this bridge and refuses too: an
+    archive from a newer bridge must not be solved on a guess.
+    """
+    if stamp is None or not stamp.requires:
+        return
+    from ._internal.build import BridgeError
+
+    missing = [
+        t for t in stamp.requires
+        if not (t == "fork" and backend.kind == "fork")
+    ]
+    if not missing:
+        return
+    raise BridgeError(
+        "OpenSeesModel.build('live'): the archive's verbs require "
+        + ", ".join(repr(t) for t in missing)
+        + f" (/opensees@requires), but the bound openseespy is a "
+        f"{backend.kind} build ({backend.source}). "
+        + ("Run it with the Ladruno fork on PYTHONPATH (or "
+           "APEGMSH_OPENSEES_BIN), or build('tcl') / build('py') and run "
+           "the deck with a fork binary."
+           if missing == ["fork"] else
+           "This bridge knows no backend that provides it; the archive "
+           "was written by a newer bridge.")
+    )
 
 
 # ---------------------------------------------------------------------------

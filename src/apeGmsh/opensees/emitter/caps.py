@@ -51,6 +51,14 @@ class TargetCaps:
         ``stage_open`` / ``stage_close`` print a runtime
         ``APEGMSH_STAGE open|close <name>`` marker so solver-stats
         blocks can be attributed to their stage.
+    ``supports_stages``
+        The target accepts ``stage_open`` / ``stage_close``. The live
+        in-process target raises on them, so a staged replay refuses
+        before its first call instead of dying mid-domain.
+
+    The ``archival`` target also carries the archive's side channels
+    (``mark_mass_from_model``, ``set_solve_stamp``); the bridge reaches
+    them through ``apesees._archive_side_channel``.
     """
 
     archival: bool = False
@@ -59,6 +67,7 @@ class TargetCaps:
     suppress_analysis_chain_auto_emit: bool = False
     model_reissue_purges: bool = False
     emit_stage_markers: bool = False
+    supports_stages: bool = True
 
 
 @dataclass(frozen=True, slots=True)
@@ -74,9 +83,11 @@ class SolveStamp:
         The ids of the solve-time gates that refused at emit, in order.
         A replay to a deck fails closed on a non-empty tuple.
     ``requires``
-        The sorted union of the capability tokens the archived verbs'
-        ``VERBS`` rows require (``"fork"``: the Ladruno build), so
-        ``build('live')`` can refuse on a backend that lacks one.
+        The sorted union of the capability tokens the ``VERBS`` rows of
+        every emitted verb require (``"fork"``: the Ladruno build),
+        ledger rows included, so ``build('live')`` can refuse on a
+        backend that lacks one. The writer derives it from its own
+        program (``/opensees/program@methods``).
     """
 
     will_solve: bool

@@ -490,11 +490,10 @@ class TclEmitter:
     #: re-declaring a still-alive tag hard-errors
     #: (``MapOfTaggedObjects::addComponent - ... similar tag exists``) —
     #: so a replay on any other backend would kill the deck it exists to
-    #: save.  Everyone else takes the ``getattr`` default ``False``.
-    model_reissue_purges: bool = True
-
-    #: ADR 0114 D6: the typed form of the flags above and of the
-    #: per-emit ones the bridge sets on an instance.
+    #: save.  Every other target declares ``model_reissue_purges=False``.
+    #: The bridge sets the per-emit fields (``per_rank_fragments``,
+    #: ``supports_partitions`` under ``flat=True``, ``emit_stage_markers``)
+    #: on an instance with ``dataclasses.replace``.
     caps: TargetCaps = TargetCaps(
         archival=False,
         supports_partitions=True,
@@ -547,16 +546,13 @@ class TclEmitter:
         # APEGMSH_PROGRESS`` in the loop so the run=True streamer can
         # render a live step counter. Default off keeps decks clean.
         self._emit_progress: bool = False
-        # ADR 0106 D2 — stage-marker injection, set by
-        # ``deck_requests_solver_stats(...)`` in ``BuiltModel.emit``.
-        # When True, ``stage_open`` / ``stage_close`` drop a runtime
+        # ADR 0106 D2 — stage-marker injection: ``BuiltModel.emit`` sets
+        # ``caps.emit_stage_markers`` from ``deck_requests_solver_stats``,
+        # and ``stage_open`` / ``stage_close`` then drop a runtime
         # ``puts APEGMSH_STAGE open|close <name>`` so a solver-stats
         # block on stderr can be attributed to the stage that paid for
-        # it. Default off keeps a deck with no ``stats=True`` anywhere
-        # byte-identical to today (INV-1). Tracks the name of the
-        # currently-open stage so ``stage_close`` (which takes no
-        # argument) can name it too.
-        self._emit_stage_markers: bool = False
+        # it. Tracks the name of the currently-open stage so
+        # ``stage_close`` (which takes no argument) can name it too.
         self._current_stage_name: str | None = None
         # Streaming sink state (ADR 0065 Tier 2 /
         # plan_emit_memory_columnar.md A1–A3). ``None`` = list mode
@@ -1614,7 +1610,7 @@ class TclEmitter:
         prev_indent = self._lines.indent
         self._lines.indent = ""
         self._lines.append(f"# === Stage: {name} ===")
-        if self._emit_stage_markers:
+        if self.caps.emit_stage_markers:
             self._current_stage_name = name
             self._emit_stage_marker("open", name)
         self._lines.indent = prev_indent
@@ -1628,7 +1624,7 @@ class TclEmitter:
     def stage_close(self) -> None:
         prev_indent = self._lines.indent
         self._lines.indent = ""
-        if self._emit_stage_markers and self._current_stage_name is not None:
+        if self.caps.emit_stage_markers and self._current_stage_name is not None:
             self._emit_stage_marker("close", self._current_stage_name)
             self._current_stage_name = None
         self._lines.append("loadConst -time 0.0")

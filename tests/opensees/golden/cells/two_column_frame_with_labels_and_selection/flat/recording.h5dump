@@ -11,6 +11,9 @@ A /meta@snapshot_id dtype=str[utf-8,vlen] shape=() sha1=be5860ffd4409e5cc12add28
 G /meta/lineage
 A /meta/lineage@model_hash dtype=str[utf-8,vlen] shape=() sha1=masked
 G /opensees
+A /opensees@requires dtype=str[utf-8,vlen] shape=(0,) sha1=65a2eebac8fa31401168b747728fdc731e239202
+A /opensees@solve_refusals dtype=str[utf-8,vlen] shape=(0,) sha1=65a2eebac8fa31401168b747728fdc731e239202
+A /opensees@will_solve dtype=|i1 shape=() sha1=aa2f5d5b573d575796db102ad68843c320061bd7
 G /opensees/analysis
 A /opensees/analysis@algorithm dtype=str[utf-8,vlen] shape=() sha1=e8e8bbbe9cd800a292cd81c62486bdce8b265ad5
 A /opensees/analysis@analysis dtype=str[utf-8,vlen] shape=() sha1=d2fb5fca3b3935658a6b9fc0736f133d956bf9e4

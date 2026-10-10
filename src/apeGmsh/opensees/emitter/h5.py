@@ -1280,9 +1280,11 @@ class H5Emitter:
 
         # ADR 0114 D6 (schema 2.24.0): what the archive says about the
         # solve it was emitted for, handed in once through
-        # :meth:`set_solve_stamp` and written as ``/opensees@will_solve``,
-        # ``@solve_refusals`` and ``@requires``. ``None`` writes nothing.
-        self._solve_stamp: SolveStamp | None = None
+        # :meth:`set_solve_stamp` (``will_solve`` and the refusal ids) and
+        # written as ``/opensees@will_solve``, ``@solve_refusals`` and
+        # ``@requires``; the last is derived from the program's methods at
+        # write time. ``None`` writes nothing.
+        self._solve_stamp_input: tuple[bool, tuple[str, ...]] | None = None
 
         # Constitutive.
         self._uniaxial: list[_MaterialRecord] = []
@@ -3089,7 +3091,7 @@ class H5Emitter:
         when there is nothing to name. All three fold into
         ``model_hash``.
         """
-        stamp = self._solve_stamp
+        stamp = self.solve_stamp()
         if stamp is None:
             return
         import h5py
@@ -3997,26 +3999,61 @@ class H5Emitter:
             tag_to_rank.get(int(rec.tag), -1) for rec in self._elements
         ]
 
-    def set_solve_stamp(self, stamp: SolveStamp) -> None:
+    def set_solve_stamp(
+        self, *, will_solve: bool, solve_refusals: Sequence[str] = (),
+    ) -> None:
         """Hand in the archive's solve stamp (ADR 0114 D6, schema 2.24.0).
 
-        Side channel, not a Protocol call: ``BuiltModel.emit`` computes
-        ``will_solve`` (``staged or any(Analysis)``), the ids of the
-        gates that refused, and the union of the archived verbs'
-        ``requires``; the H5 -> H5 rewrite echoes the source's stamp.
-        Refuses a second call, which would silently overwrite the first.
+        Side channel, not a Protocol call: ``BuiltModel.emit`` passes
+        ``will_solve`` (``staged or any(Analysis)``) and the ids of the
+        solve-time gates that would refuse; the H5 -> H5 rewrite echoes
+        the source's two values. ``@requires`` is not an argument: the
+        writer derives it from the verbs its program holds
+        (:meth:`solve_stamp`). Refuses a second call, which would
+        silently overwrite the first.
         """
-        if self._solve_stamp is not None:
+        if self._solve_stamp_input is not None:
             raise RuntimeError(
                 "H5Emitter.set_solve_stamp: the stamp is already set "
-                f"({self._solve_stamp!r}); it is written once per emit."
+                f"({self._solve_stamp_input!r}); it is written once per "
+                "emit."
             )
-        if not isinstance(stamp, SolveStamp):
+        if not isinstance(will_solve, bool):
             raise TypeError(
-                "H5Emitter.set_solve_stamp: expected a SolveStamp, got "
-                f"{type(stamp).__name__}"
+                "H5Emitter.set_solve_stamp: will_solve must be a bool, got "
+                f"{type(will_solve).__name__}"
             )
-        self._solve_stamp = stamp
+        ids = tuple(solve_refusals)
+        if isinstance(solve_refusals, str) or not all(
+                isinstance(i, str) and i for i in ids):
+            raise TypeError(
+                "H5Emitter.set_solve_stamp: solve_refusals must be a "
+                f"sequence of non-empty strings, got {solve_refusals!r}"
+            )
+        self._solve_stamp_input = (will_solve, ids)
+
+    def solve_stamp(self) -> SolveStamp | None:
+        """The stamp :meth:`write` will put on ``/opensees``, or ``None``
+        before :meth:`set_solve_stamp` ran.
+
+        ``requires`` is the sorted union of ``VERBS[method].requires``
+        over the methods the program holds: this emitter's own tape, or
+        the echoed source program after :meth:`restore_program`. Ledger
+        rows count too (the verb was emitted, even if it stored nothing),
+        so the union names what the model as emitted needed.
+        """
+        if self._solve_stamp_input is None:
+            return None
+        will_solve, refusals = self._solve_stamp_input
+        methods: "Sequence[str]" = (
+            self._program_restored[1] if self._program_restored is not None
+            else self._program.methods
+        )
+        requires = sorted({t for m in methods for t in VERBS[m].requires})
+        return SolveStamp(
+            will_solve=will_solve, solve_refusals=refusals,
+            requires=tuple(requires),
+        )
 
     def restore_program(
         self, runs: "Sequence[Any]", commands: "Sequence[Any]",

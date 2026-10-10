@@ -1,17 +1,26 @@
 """``/opensees@will_solve`` / ``@solve_refusals`` / ``@requires`` (ADR 0114 D6, opensees 2.24.0).
 
-The writer side of R4 (K1-5): ``H5Emitter.set_solve_stamp`` takes one
-``SolveStamp`` and ``write`` stamps the three attributes together on
-``/opensees``; ``H5Model.solve_stamp`` reads them back. Oracles:
+R4 (K1-5). The writer side: ``H5Emitter.set_solve_stamp(will_solve=,
+solve_refusals=)`` and ``write`` stamps the three attributes together on
+``/opensees``, deriving ``@requires`` from the verbs the program holds;
+``H5Model.solve_stamp`` reads them back. The bridge side: ``apeSees.h5``
+stamps every archive, an archival emit records the solve-time gates that
+would refuse instead of raising, and ``OpenSeesModel`` fails closed on
+them. Oracles:
 
 - **Round trip.** Every field comes back as it went in, empty tuples
-  included.
-- **Absent is None.** A writer that was never handed a stamp writes no
-  attribute, and a reader returns ``None`` for it and for every file
-  below 2.24.0 (the corpus file of the prior minor).
+  included; a fork verb on the tape puts ``"fork"`` in ``@requires``.
+- **Absent is None.** A writer never handed a stamp writes no attribute,
+  and a reader returns ``None`` for it and for every file below 2.24.0
+  (the corpus file of the prior minor).
 - **Malformed fails loud.** A partial stamp, a non-0/1 ``@will_solve``, an
   unsorted ``@requires`` or an empty token raises ``MalformedH5Error``.
 - **Hash scope.** The stamp folds into ``model_hash``.
+- **Bridge.** ``will_solve`` is ``staged or any(Analysis)``; a LadrunoUP
+  model with a solve and no system archives (where ``ops.tcl`` refuses)
+  with ``"ladruno_up_solver"`` recorded, and its replay to a deck refuses;
+  ``to_h5`` echoes the stamp hash-stable; ``build('live')`` refuses a
+  ``"fork"`` requirement on a stock backend before touching the domain.
 """
 from __future__ import annotations
 
@@ -21,44 +30,59 @@ import h5py
 import numpy as np
 import pytest
 
-from apeGmsh.opensees._internal.lineage import compute_model_hash
+from apeGmsh.opensees import OpenSeesModel, apeSees
+from apeGmsh.opensees._internal.build import BridgeError
+from apeGmsh.opensees._internal.lineage import compute_model_hash, read_stored_lineage
+from apeGmsh.opensees._target import BackendInfo
 from apeGmsh.opensees.emitter import h5_reader
 from apeGmsh.opensees.emitter.caps import SolveStamp
 from apeGmsh.opensees.emitter.h5 import H5Emitter
 from apeGmsh.opensees.emitter.h5_reader import MalformedH5Error
+from apeGmsh.opensees.opensees_model import refuse_live_requires
 
 from tests.fixtures.schema import OPENSEES_CURRENT, OPENSEES_PRIOR_MINOR
+from tests.opensees.h5._opensees_model_fixtures import build_simple_frame_fem
 
 _CORPUS = Path(__file__).resolve().parents[2] / "fixtures" / "schema_corpus"
 
 
-def _write(path: Path, stamp: SolveStamp | None) -> Path:
+def _write(
+    path: Path, stamp: "tuple[bool, tuple[str, ...]] | None", *, fork: bool = False,
+) -> Path:
     e = H5Emitter()
     e.model(ndm=3, ndf=6)
     e.node(1, 0.0, 0.0, 0.0)
     e.fix(1, 1, 1, 1, 1, 1, 1)
+    if fork:
+        e.contact_surface(1, 1.0)  # a ledger row whose VERBS row requires the fork
     if stamp is not None:
-        e.set_solve_stamp(stamp)
+        e.set_solve_stamp(will_solve=stamp[0], solve_refusals=stamp[1])
     e.write(str(path))
     return path
 
 
-@pytest.mark.parametrize("stamp", [
-    SolveStamp(True, ("ladruno_up_solver",), ("fork",)),
-    SolveStamp(False, (), ()),
-    SolveStamp(True, ("a", "b", "a"), ("fork", "mp")),
+# -- writer / reader ------------------------------------------------------
+
+
+@pytest.mark.parametrize("will_solve, refusals, fork", [
+    (True, ("ladruno_up_solver",), True),
+    (False, (), False),
+    (True, ("a", "b", "a"), False),
 ], ids=["full", "empty", "repeated-refusal"])
-def test_solve_stamp_round_trips(tmp_path: Path, stamp: SolveStamp) -> None:
-    out = _write(tmp_path / "m.h5", stamp)
+def test_solve_stamp_round_trips(
+    tmp_path: Path, will_solve: bool, refusals: tuple, fork: bool,
+) -> None:
+    out = _write(tmp_path / "m.h5", (will_solve, refusals), fork=fork)
+    want = SolveStamp(will_solve, refusals, ("fork",) if fork else ())
     with h5py.File(out, "r") as f:
         attrs = f["opensees"].attrs
         assert f["meta"].attrs["opensees_schema_version"] == OPENSEES_CURRENT
         assert attrs["will_solve"].dtype == np.int8
-        assert int(attrs["will_solve"]) == int(stamp.will_solve)
-        assert attrs["solve_refusals"].shape == (len(stamp.solve_refusals),)
-        assert attrs["requires"].shape == (len(stamp.requires),)
+        assert int(attrs["will_solve"]) == int(will_solve)
+        assert attrs["solve_refusals"].shape == (len(refusals),)
+        assert attrs["requires"].shape == (len(want.requires),)
     with h5_reader.open(str(out)) as m:
-        assert m.solve_stamp() == stamp
+        assert m.solve_stamp() == want
 
 
 def test_a_writer_never_handed_a_stamp_writes_no_attribute(tmp_path: Path) -> None:
@@ -77,13 +101,26 @@ def test_prior_minor_corpus_file_has_no_stamp() -> None:
         assert m.solve_stamp() is None
 
 
-def test_set_solve_stamp_refuses_a_second_call_and_a_foreign_type() -> None:
+def test_set_solve_stamp_refuses_a_second_call_and_bad_arguments() -> None:
     e = H5Emitter()
-    e.set_solve_stamp(SolveStamp(True))
+    e.set_solve_stamp(will_solve=True)
     with pytest.raises(RuntimeError, match="already set"):
-        e.set_solve_stamp(SolveStamp(False))
-    with pytest.raises(TypeError, match="expected a SolveStamp"):
-        H5Emitter().set_solve_stamp({"will_solve": True})  # type: ignore[arg-type]
+        e.set_solve_stamp(will_solve=False)
+    with pytest.raises(TypeError, match="must be a bool"):
+        H5Emitter().set_solve_stamp(will_solve=1)  # type: ignore[arg-type]
+    with pytest.raises(TypeError, match="non-empty strings"):
+        H5Emitter().set_solve_stamp(will_solve=True, solve_refusals="gate")
+    with pytest.raises(TypeError, match="non-empty strings"):
+        H5Emitter().set_solve_stamp(will_solve=True, solve_refusals=("",))
+
+
+def test_solve_stamp_accessor_is_none_until_set_then_derives_requires() -> None:
+    e = H5Emitter()
+    assert e.solve_stamp() is None
+    e.model(ndm=3, ndf=6)
+    e.contact_surface(1, 1.0)
+    e.set_solve_stamp(will_solve=False)
+    assert e.solve_stamp() == SolveStamp(False, (), ("fork",))
 
 
 def _tamper(path: Path, **attrs: object) -> None:
@@ -114,7 +151,7 @@ def _tamper(path: Path, **attrs: object) -> None:
     "no-refusals", "unsorted", "duplicate", "empty-token", "scalar-requires",
 ])
 def test_malformed_stamp_fails_loud(tmp_path: Path, tamper: dict, match: str) -> None:
-    out = _write(tmp_path / "m.h5", SolveStamp(True, ("g",), ("fork",)))
+    out = _write(tmp_path / "m.h5", (True, ("g",)), fork=True)
     _tamper(out, **tamper)
     with h5_reader.open(str(out)) as m, pytest.raises(MalformedH5Error, match=match):
         m.solve_stamp()
@@ -126,9 +163,152 @@ def test_stamp_folds_into_model_hash(tmp_path: Path) -> None:
             return compute_model_hash("", f["opensees"])
 
     none = digest(_write(tmp_path / "none.h5", None))
-    solve = digest(_write(tmp_path / "solve.h5", SolveStamp(True)))
-    archive = digest(_write(tmp_path / "archive.h5", SolveStamp(False)))
-    fork = digest(_write(tmp_path / "fork.h5", SolveStamp(True, requires=("fork",))))
-    assert len({none, solve, archive, fork}) == 4
-    # Deterministic for the same stamp.
-    assert digest(_write(tmp_path / "solve2.h5", SolveStamp(True))) == solve
+    solve = digest(_write(tmp_path / "solve.h5", (True, ())))
+    archive = digest(_write(tmp_path / "archive.h5", (False, ())))
+    refused = digest(_write(tmp_path / "refused.h5", (True, ("g",))))
+    assert len({none, solve, archive, refused}) == 4
+    assert digest(_write(tmp_path / "solve2.h5", (True, ()))) == solve
+
+
+# -- the bridge stamps every archive ----------------------------------------
+
+
+def _frame_bridge(*, analysis: bool) -> apeSees:
+    ops = apeSees(build_simple_frame_fem())
+    ops.model(ndm=3, ndf=6)
+    transf = ops.geomTransf.Linear(vecxz=(1.0, 0.0, 0.0))
+    ops.element.elasticBeamColumn(
+        pg="Cols", transf=transf,
+        A=0.0125, E=2900.25, Iz=1.5e-4, Iy=2.5e-4, G=1100.75, J=3.5e-4,
+    )
+    ops.fix(nodes=[1], dofs=(1, 1, 1, 1, 1, 1))
+    if analysis:
+        # ``will_solve`` is ``staged or any(Analysis)``: the Analysis
+        # primitive alone makes the archive a solving one.
+        ops.system.UmfPack()
+        ops.analysis.Static()
+    return ops
+
+
+@pytest.mark.parametrize("analysis", [False, True], ids=["model-only", "solving"])
+def test_apesees_h5_stamps_will_solve(tmp_path: Path, analysis: bool) -> None:
+    out = tmp_path / "m.h5"
+    _frame_bridge(analysis=analysis).h5(str(out))
+    model = OpenSeesModel.from_h5(out)
+    assert model.solve_stamp == SolveStamp(analysis, (), ())
+    # No refusal recorded, so the deck replays.
+    assert "elasticBeamColumn" in model.build("tcl")
+
+
+def test_to_h5_echoes_the_stamp_hash_stable(tmp_path: Path) -> None:
+    src, dst = tmp_path / "src.h5", tmp_path / "dst.h5"
+    _frame_bridge(analysis=True).h5(str(src))
+    OpenSeesModel.from_h5(src).to_h5(dst)
+    assert OpenSeesModel.from_h5(dst).solve_stamp == SolveStamp(True, (), ())
+    with h5py.File(src, "r") as a, h5py.File(dst, "r") as b:
+        assert read_stored_lineage(a["meta"])[1] == read_stored_lineage(b["meta"])[1]
+        assert dict(a["opensees"].attrs).keys() == dict(b["opensees"].attrs).keys()
+
+
+def test_replay_fails_closed_on_a_stored_refusal(tmp_path: Path) -> None:
+    out = tmp_path / "m.h5"
+    _frame_bridge(analysis=True).h5(str(out))
+    _tamper(out, solve_refusals=["serial_mumps"])
+    model = OpenSeesModel.from_h5(out)
+    assert model.solve_stamp is not None
+    assert model.solve_stamp.solve_refusals == ("serial_mumps",)
+    for target in ("tcl", "py", "live"):
+        with pytest.raises(BridgeError, match="'serial_mumps'.*fails closed"):
+            model.build(target)
+    # The H5 -> H5 echo is not a solve: it still rewrites the file as it is.
+    model.build("h5", out=str(tmp_path / "echo.h5"))
+    assert OpenSeesModel.from_h5(tmp_path / "echo.h5").solve_stamp == model.solve_stamp
+
+
+# -- an archival emit records the gates that would refuse ------------------
+
+
+def _up_column_bridge(ops_module, tmp_path: Path):
+    pytest.importorskip("gmsh")
+    from apeGmsh import apeGmsh
+
+    with apeGmsh(model_name="up_stamp", verbose=False) as g:
+        g.model.geometry.add_rectangle(0.0, 0.0, 0.0, 1.0, 4.0, label="soil")
+        g.physical.add_surface("soil", name="Soil")
+        g.mesh.structured.set_recombine("soil", dim=2)
+        g.mesh.sizing.set_global_size(1.0)
+        g.mesh.generation.generate(2)
+        g.mesh.structured.recombine()
+        g.mesh.partitioning.renumber(base=1)
+        fem = g.mesh.queries.get_fem_data(dim=2)
+    ops = apeSees(fem)
+    ops.model(ndm=2, ndf=3)
+    mat = ops.nDMaterial.ElasticIsotropic(E=1e4, nu=0.3, rho=2.0)
+    ops.element.LadrunoUP(
+        pg="Soil", material=mat, Kf=2.2e6, poro=0.4, rhoF=1.0, perm=(1e-4, 1e-4),
+    )
+    ops.analysis.Static()  # solve-bearing, no system: the D4 gate refuses a deck
+    return ops
+
+
+def test_archival_emit_records_the_refusing_gates(tmp_path: Path) -> None:
+    ops = _up_column_bridge(None, tmp_path)
+    with pytest.raises(BridgeError, match="no linear system"):
+        ops.tcl(str(tmp_path / "deck.tcl"))
+    out = tmp_path / "m.h5"
+    ops.h5(str(out))  # the archive is written where the deck is refused
+    model = OpenSeesModel.from_h5(out)
+    stamp = model.solve_stamp
+    assert stamp is not None and stamp.will_solve
+    # A fork ELEMENT type rides the generic ``element`` verb, whose VERBS
+    # row requires nothing: the requirement is value-dependent, which ADR
+    # 0114 D6 keeps out of ``@requires`` until K4 moves typed fork verbs
+    # onto the command channel. Only fork *verbs* (contact, embedded,
+    # eigen_feast, profiler, ...) reach it today.
+    assert stamp.requires == ()
+    assert "ladruno_up_solver" in stamp.solve_refusals
+    with pytest.raises(BridgeError, match="'ladruno_up_solver'.*fails closed"):
+        model.build("tcl")
+
+
+# -- build('live') refuses a fork requirement on stock -----------------------
+
+
+def _backend(kind: str) -> BackendInfo:
+    return BackendInfo(kind=kind, build=None if kind == "stock" else "a" * 40,
+                       version="3.7.1", source="fake.pyd")
+
+
+def test_refuse_live_requires_verdicts() -> None:
+    refuse_live_requires(None, _backend("stock"))
+    refuse_live_requires(SolveStamp(True), _backend("stock"))
+    refuse_live_requires(SolveStamp(True, requires=("fork",)), _backend("fork"))
+    with pytest.raises(BridgeError, match="require 'fork'.*stock build"):
+        refuse_live_requires(SolveStamp(True, requires=("fork",)), _backend("stock"))
+    with pytest.raises(BridgeError, match="'mp'.*newer bridge"):
+        refuse_live_requires(SolveStamp(True, requires=("fork", "mp")), _backend("fork"))
+
+
+def test_build_live_refuses_before_touching_the_domain(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import apeGmsh.opensees.emitter.live as live_mod
+
+    out = tmp_path / "m.h5"
+    _frame_bridge(analysis=True).h5(str(out))
+    _tamper(out, requires=["fork"])
+    model = OpenSeesModel.from_h5(out)
+    assert model.solve_stamp is not None and model.solve_stamp.requires == ("fork",)
+
+    constructed: list[object] = []
+
+    class _Live:
+        def __init__(self, *, wipe: bool = True) -> None:
+            constructed.append(self)
+            raise AssertionError("the live emitter must not be constructed")
+
+    monkeypatch.setattr(live_mod, "LiveOpsEmitter", _Live)
+    monkeypatch.setattr(live_mod, "get_backend_info", lambda: _backend("stock"))
+    with pytest.raises(BridgeError, match="require 'fork'"):
+        model.build("live")
+    assert constructed == []

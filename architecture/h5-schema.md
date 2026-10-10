@@ -1099,17 +1099,28 @@ R4), as three attributes on the `/opensees` group itself:
                                     Ladruno build); empty when none
 ```
 
-The bridge hands the writer one `SolveStamp` (`emitter/caps.py`) through
-`H5Emitter.set_solve_stamp`, and the writer stamps the three together;
-a file that lacks `@will_solve` carries **no** stamp, and
-`H5Model.solve_stamp()` returns `None` for it (every file below 2.24.0,
-and a 2.24 file written before the bridge stamped it). Absent is
-"unknown", never a default: a replay that needs the stamp must say so.
-A `@will_solve` without its two companions, one that is not the integer
-0 or 1, or a token array that is not sorted and unique raises
-`MalformedH5Error`. Replay to a deck fails closed on a non-empty
-`@solve_refusals`, and `build('live')` refuses on a backend that lacks a
-token in `@requires`. Attributes of `/opensees` fold into `model_hash`.
+`BuiltModel.emit` hands the writer `will_solve` and the refusal ids
+through `H5Emitter.set_solve_stamp` on every `apeSees.h5` emit; the
+writer derives `@requires` from the methods its `/opensees/program`
+holds (ledger rows included: the verb was emitted even if it stored
+nothing) and stamps the three together. The refusal ids are the
+solve-time gates of `BuiltModel.emit` with the `validate_` prefix
+dropped (`ladruno_up_solver`, `serial_mumps`, `up_pressure_datum`),
+probed as a solve would run them, under the archive's own partition
+facts. `H5Model.solve_stamp()` returns a `SolveStamp`
+(`emitter/caps.py`), or `None` for a file that lacks `@will_solve`
+(every file below 2.24.0). Absent is "unknown", never a default. A
+`@will_solve` without its two companions, one that is not the integer 0
+or 1, or a token array that is not sorted and unique raises
+`MalformedH5Error`. `OpenSeesModel.build('tcl' | 'py' | 'live')` fails
+closed on a non-empty `@solve_refusals`; `build('live')` refuses on a
+backend that lacks a token in `@requires` (`fork` needs a Ladruno
+build; an unknown token always refuses); `to_h5` echoes the stamp, and
+`@requires` regenerates from the echoed program. A fork *element or
+material type* rides the generic `element` / `nDMaterial` verb, whose
+row requires nothing, so it does not reach `@requires` until K4 moves
+typed fork verbs onto the command channel. Attributes of `/opensees`
+fold into `model_hash`.
 
 ## `/meta/session_id` and the geometry sibling
 

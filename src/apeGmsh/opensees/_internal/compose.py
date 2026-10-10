@@ -1271,10 +1271,9 @@ def _replay_staged_into(
     )
     from .tag_allocator import TagAllocator
 
-    # 0. Live guard — fail clean before any emit (the live emitter's
+    # 0. Stage guard — fail clean before any emit (the live emitter's
     # stage_open raises; a deep mid-replay crash would be opaque).
-    from ..emitter.live import LiveOpsEmitter
-    if isinstance(emitter, LiveOpsEmitter):
+    if not emitter.caps.supports_stages:
         raise NotImplementedError(
             "OpenSeesModel.build('live'): live re-emit of a staged "
             "archive is not supported (LiveOpsEmitter.stage_open "
@@ -1438,7 +1437,7 @@ def _replay_staged_into(
             _replay_elements_bracketed(
                 emitter, gated_recs, ndm=_ndm, envelope_ndf=_ndf,
             )
-            if getattr(emitter, "model_reissue_purges", False):
+            if emitter.caps.model_reissue_purges:
                 # Same kind order as the global prefix (steps 5-7b of
                 # ``_replay_into``): transforms, beam integrations, time
                 # series, dampings.

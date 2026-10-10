@@ -1321,6 +1321,10 @@ def test_emitter_sniff_waiver(tmp_path: Path) -> None:
     assert _found(tmp_path) == []
 
 
+def test_emitter_sniff_is_silent_in_this_checkout() -> None:
+    assert [f for f in quirks.scan(quirks.REPO) if f.rule == "emitter-sniff"] == []
+
+
 def test_emitter_sniff_scope_exists_in_this_checkout() -> None:
     assert (quirks.REPO / quirks.EMITTER_PACKAGE).is_dir(), "the emitter package moved: update EMITTER_PACKAGE"
 

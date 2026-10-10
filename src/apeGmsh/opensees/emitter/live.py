@@ -695,15 +695,13 @@ class LiveOpsEmitter:
 
     #: LiveOps runs in a single process and cannot drive OpenSeesMP, so
     #: it cannot consume the per-rank ``partition_open`` / ``partition_close``
-    #: brackets the partitioned emit path produces.  The bridge reads this
-    #: flag (default ``True`` for partition-capable emitters such as the
-    #: Tcl/Py/MPI writers) and flattens a partitioned model into one domain
-    #: via ``_emit_flat`` when emitting here — so a *composed* model
-    #: (auto-partitioned one-rank-per-module by ADR 0038) still emits every
-    #: module's nodes/elements into the single live domain and analyzes.
-    supports_partitions: bool = False
-
-    #: ADR 0114 D6: the typed form of the flag above.
+    #: brackets the partitioned emit path produces: the bridge reads
+    #: ``caps.supports_partitions`` and flattens a partitioned model into
+    #: one domain via ``_emit_flat`` when emitting here — so a *composed*
+    #: model (auto-partitioned one-rank-per-module by ADR 0038) still
+    #: emits every module's nodes/elements into the single live domain
+    #: and analyzes.  ``stage_open`` / ``stage_close`` raise here, so a
+    #: staged replay refuses up front (``caps.supports_stages``).
     caps: TargetCaps = TargetCaps(
         archival=False,
         supports_partitions=False,
@@ -711,6 +709,7 @@ class LiveOpsEmitter:
         suppress_analysis_chain_auto_emit=False,
         model_reissue_purges=False,
         emit_stage_markers=False,
+        supports_stages=False,
     )
 
     def __init__(self, *, wipe: bool = True) -> None:
