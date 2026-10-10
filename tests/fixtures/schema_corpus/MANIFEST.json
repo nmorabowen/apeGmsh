@@ -1,13 +1,13 @@
 {
  "about": "ADR 0113 D8 schema corpus. One entry per minor from each zone's floor to its current minor; status 'gap' entries carry the reason no real file exists. Built by scripts/build_schema_corpus.py.",
- "base": "9a3b99b6ee0a415271f1ac5d63ce45b1c5735f7a",
+ "base": "39a707145fbf5e8e500c0704e24ce0e92264bfcd",
  "floors": {
   "neutral": "2.10.0",
   "opensees": "2.12.0"
  },
  "current": {
   "neutral": "2.35.0",
-  "opensees": "2.25.0"
+  "opensees": "2.26.0"
  },
  "entries": [
   {
@@ -1104,7 +1104,7 @@
   {
    "zone": "opensees",
    "minor": "2.24",
-   "sha": "9a3b99b6ee0a415271f1ac5d63ce45b1c5735f7a",
+   "sha": "184ab3200ca347ef549b51268dc7dbee70f9c6e7",
    "date": "2026-10-10",
    "version": "2.24.0",
    "bump_commits": [
@@ -1115,7 +1115,7 @@
    "files": {
     "h5": {
      "name": "opensees_2.24.h5",
-     "sha256": "2bc2c91e2271892d01a0911ad6bea8bd9572d9796a5e79c9715e27d1bfadbb65"
+     "sha256": "a0d9262537b229dc13fb1e692f29b0da2e4e3ceb350486516ec38a3877373c4c"
     },
     "dump": {
      "name": "opensees_2.24.dump.json",
@@ -1134,18 +1134,18 @@
   {
    "zone": "opensees",
    "minor": "2.25",
-   "sha": "b9f50901ba0c5c8c219b927c16f43718bf0b057e",
+   "sha": "39a707145fbf5e8e500c0704e24ce0e92264bfcd",
    "date": "2026-10-10",
    "version": "2.25.0",
    "bump_commits": [
-    "d2f9b2e8325f5358eb1cafe4634312a3c2988def"
+    "997f1e5098ade3ac9913cdd64afc59e1a88ae11b"
    ],
    "generator": "tests/fixtures/schema_corpus/_era_generator.py --zone opensees",
    "status": "ok",
    "files": {
     "h5": {
      "name": "opensees_2.25.h5",
-     "sha256": "1e5791991149ec38698f0f3c42fe762e7c1357bead3acde68fd9a1b2bfb10082"
+     "sha256": "b05fad3042df899cefdc76ce8c80b72a8267e60ef1a6dec048af08cebf8c5137"
     },
     "dump": {
      "name": "opensees_2.25.dump.json",
@@ -1159,6 +1159,36 @@
    "stamps": {
     "neutral": "2.35.0",
     "opensees": "2.25.0"
+   }
+  },
+  {
+   "zone": "opensees",
+   "minor": "2.26",
+   "sha": "3e9e2d8b5cdb752942a4d724e311f83f35ec58cd",
+   "date": "2026-10-10",
+   "version": "2.26.0",
+   "bump_commits": [
+    "bb5f34be8a182e519fc23de170f83e7b0017f40e"
+   ],
+   "generator": "tests/fixtures/schema_corpus/_era_generator.py --zone opensees",
+   "status": "ok",
+   "files": {
+    "h5": {
+     "name": "opensees_2.26.h5",
+     "sha256": "cff05fce1cd2f30ec05288dcdbe76683d0617299673ecc96be379c8221f31f28"
+    },
+    "dump": {
+     "name": "opensees_2.26.dump.json",
+     "sha256": "72c8de719489879a726a80edba7c872d05e53026c1dffac96bc959d2270df558"
+    },
+    "tcl": {
+     "name": "opensees_2.26.tcl",
+     "sha256": "5a0d3a8374c78f2bd38c5ffc940359033a69726b0bf8e5e1442dc13f8643873e"
+    }
+   },
+   "stamps": {
+    "neutral": "2.35.0",
+    "opensees": "2.26.0"
    }
   }
  ]
