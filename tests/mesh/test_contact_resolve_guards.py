@@ -33,6 +33,7 @@ import math
 import re
 import warnings
 
+import numpy as np
 import pytest
 
 import gmsh
@@ -103,8 +104,8 @@ def test_tie_on_closed_cylinder_master_refuses_naming_sectors(tmp_path):
         assert "span more than 90°" in msg
         # The message states what was measured: the widest pair of a
         # closed skin's outward normals is antipodal.
-        assert re.search(r"widest pair of its \d+ facet normals .* is "
-                         r"1[78]\d\.\d° apart", msg), msg
+        assert re.search(r"a pair of its \d+ facet normals .* is "
+                         r"1[0-8]\d\.\d° apart", msg), msg
         assert "master_entities=/slave_entities=" in msg
         assert "radial outward=" in msg
         # Seam A: a resolve-time raise leaves the session's declarations
@@ -217,9 +218,92 @@ def test_tie_on_slab_top_and_bottom_refuses(tmp_path):
                               tie=True, outward=(0.0, 0.0, 1.0),
                               name="two_sided")
         with pytest.raises(ValueError, match=r"'two_sided'.*span more than "
-                                             r"90°.*widest pair.*180\.0° apart"):
+                                             r"90°.*a pair of.*180\.0° apart"):
             g.mesh.queries.get_fem_data(dim=3)
         g.constraints.contact_defs.clear()
+
+
+def test_tie_on_thin_plate_top_resolves(tmp_path):
+    """A plate thinner than a facet (2 x 2 x 0.02, mesh 0.5): a probe one
+    facet-size off the master lands outside the body on BOTH sides, so
+    the orientation vote must shrink its offset rather than refuse. The
+    master is a single surface, which also needs no vote at all; the
+    two-surface variant below forces one."""
+    for two_surfaces in (False, True):
+        with apeGmsh(model_name="b4_plate", verbose=False,
+                     save_to=tmp_path / "m.h5") as g:
+            if two_surfaces:
+                # Two conformal half-plates: the master spans two top
+                # faces, so the per-surface vote runs on a body 25x
+                # thinner than its facets.
+                a = g.model.geometry.add_box(0, 0, 1, 1, 2, 0.02)
+                b = g.model.geometry.add_box(1, 0, 1, 1, 2, 0.02)
+                plates = g.model.boolean.fragment([a], [b])
+            else:
+                plates = [g.model.geometry.add_box(0, 0, 1, 2, 2, 0.02)]
+            upper = g.model.geometry.add_box(0, 0, 1.02, 2, 2, 1)
+            g.model.sync()
+
+            def _at(vols, z):
+                return [abs(t) for v in vols
+                        for d, t in gmsh.model.getBoundary([(3, v)],
+                                                           oriented=False)
+                        if d == 2 and abs(gmsh.model.occ.getCenterOfMass(
+                            2, abs(t))[2] - z) < 1e-9]
+
+            top, under = _at(plates, 1.02), _at([upper], 1.02)
+            assert len(top) == (2 if two_surfaces else 1)
+            g.mesh.sizing.set_global_size(0.5)
+            g.mesh.generation.generate(3)
+            g.physical.add(3, list(plates) + [upper], name="solid")
+            g.physical.add(2, top, name="plate_top")
+            g.physical.add(2, under, name="under")
+            g.constraints.contact("plate_top", "under", formulation="mortar",
+                                  tie=True, outward=(0.0, 0.0, 1.0))
+            fem = g.mesh.queries.get_fem_data(dim=3)
+        assert len(fem.elements.contacts) == 1
+
+
+def test_tie_on_two_shells_one_mirrored_resolves(tmp_path):
+    """Two coplanar shell rectangles at z=1 under one master label, one of
+    them mirrored so its winding is reversed. They bound no volume, so
+    each surface is sign-fixed as a whole against the outward (the fork's
+    rule) and the pair reads as flat, not two-sided."""
+    with apeGmsh(model_name="b4_shells", verbose=False,
+                 save_to=tmp_path / "m.h5") as g:
+        box = g.model.geometry.add_box(0, 0, 0, 2, 1, 1)
+        left = g.model.geometry.add_rectangle(0, 0, 1, 1, 1)
+        right = g.model.geometry.add_rectangle(1, 0, 1, 1, 1)
+        gmsh.model.occ.mirror([(2, right)], 1, 0, 0, -1.5)  # x -> 3 - x
+        g.model.sync()
+        top = [abs(t) for d, t in gmsh.model.getBoundary(
+            [(3, box)], oriented=False)
+            if d == 2 and gmsh.model.occ.getCenterOfMass(2, abs(t))[2] > 0.99]
+        g.mesh.sizing.set_global_size(0.5)
+        g.mesh.generation.generate(3)
+        g.physical.add(3, [box], name="solid")
+        g.physical.add(2, [left, right], name="shells")
+        g.physical.add(2, top, name="top")
+        g.constraints.contact("shells", "top", formulation="mortar",
+                              tie=True, outward=(0.0, 0.0, 1.0))
+        fem = g.mesh.queries.get_fem_data(dim=3)
+    assert len(fem.elements.contacts) == 1
+
+
+def test_pair_beyond_90_on_synthetic_normals():
+    """The span oracle on bare normals: a closed skin (160k facets) is
+    refused through the extreme-normals shortcut, a 60° arc and a 90° arc
+    are accepted, a 91° arc is refused by the sweep."""
+    from apeGmsh.core.ConstraintsComposite import _pair_beyond_90
+
+    def arc(n, deg, start=0.0):
+        th = np.radians(start + np.linspace(0.0, deg, n))
+        return np.column_stack([np.cos(th), np.sin(th), np.zeros(n)])
+
+    assert _pair_beyond_90(arc(160_000, 360.0)) < -0.99
+    assert _pair_beyond_90(arc(5_000, 60.0, start=137.0)) is None
+    assert _pair_beyond_90(arc(5_000, 90.0)) is None
+    assert _pair_beyond_90(arc(5_000, 91.0)) is not None
 
 
 def test_non_tie_contact_on_closed_master_is_unchanged(tmp_path):
