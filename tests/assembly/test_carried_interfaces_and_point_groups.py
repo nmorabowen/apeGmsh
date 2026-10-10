@@ -268,3 +268,135 @@ def test_a_point_group_travels_as_the_instance_group(files):
         sel = nodes.select(pg=f"{label}.Corner")
         assert len(sel.ids) == 1
         np.testing.assert_allclose(np.asarray(sel.coords), [[x, 10.0, 10.0]])
+
+
+# ---------------------------------------------------------------------------
+# #1590 review F3: a 3-D surface master, a phantom (mixed-ndf) pair, and a
+# user node-pair zeroLength on an interface pair
+# ---------------------------------------------------------------------------
+
+def _surface_at_z(volume: int, z: float) -> int:
+    for _, tag in gmsh.model.getBoundary([(3, volume)], oriented=False):
+        bb = gmsh.model.getBoundingBox(2, abs(tag))
+        if abs(bb[2] - z) < 1e-6 and abs(bb[5] - z) < 1e-6:
+            return abs(tag)
+    raise AssertionError(f"no boundary surface of volume {volume} at z={z}")
+
+
+def interface_3d_fem():
+    """Two stacked unit cubes with one interface ``SF`` across z=1."""
+    from apeGmsh._kernel.records._constraints import NormalLaw, TangentialLaw
+
+    normal, tangential = LAWS["ent_epp"]
+    with apeGmsh(model_name="iface3d", verbose=False) as g:
+        soil = g.model.geometry.add_box(0, 0, 0, 1, 1, 1)
+        footing = g.model.geometry.add_box(0, 0, 1, 1, 1, 1)
+        g.model.sync()
+        g.mesh.structured.set_transfinite([(3, soil), (3, footing)], n=2)
+        g.mesh.generation.generate(3)
+        g.physical.add(3, [soil], name="soil")
+        g.physical.add(3, [footing], name="footing")
+        g.physical.add(2, [_surface_at_z(soil, 1.0)], name="face")
+        g.physical.add(2, [_surface_at_z(footing, 1.0)], name="skin")
+        g.constraints.interface(
+            "face", "skin",
+            normal=NormalLaw(**normal), tangential=TangentialLaw(**tangential),
+            name="SF")
+        return g.mesh.queries.get_fem_data(dim=3)
+
+
+def declare_3d(ops) -> None:
+    ops.model(ndm=3, ndf=3)
+    mat = ops.nDMaterial.ElasticIsotropic(E=30e9, nu=0.2, rho=0.0, name="m")
+    for pg in ("soil", "footing"):
+        ops.element.stdBrick(pg=pg, material=mat)
+
+
+def test_a_3d_interface_source_deck_equals_the_source_deck(tmp_path):
+    """A 3-D surface master: one ``zeroLength`` per node pair of the one-quad
+    face, each ``-mat n t t -dir 1 2 3``: two uniaxials per pair (F2)."""
+    src = _write(tmp_path / "iface3d.h5", interface_3d_fem(), declare_3d)
+    want, got = _parity(src, declare_3d, 3, 3, tmp_path)
+    zl = [ln.split() for ln in want.splitlines()
+          if ln.startswith("element zeroLength")]
+    assert len(zl) == 4                       # transfinite n=2: 4 face nodes
+    for tok in zl:
+        mats = tok[tok.index("-mat") + 1:tok.index("-dir")]
+        assert len(mats) == 3 and mats[1] == mats[2]
+    assert len(re.findall(r"^uniaxialMaterial ENT ", want, re.M)) == 4
+    assert len(re.findall(r"^uniaxialMaterial ElasticPP ", want, re.M)) == 4
+    assert got.replace("# inst.SF", "# SF") == want
+
+
+def phantom_fem():
+    """``interface_fem`` with a 3-dof beam slave: each pair gets a phantom."""
+    from apeGmsh._kernel.records._constraints import NormalLaw, TangentialLaw
+
+    normal, tangential = LAWS["ent_epp"]
+    with apeGmsh(model_name="iface_ph", verbose=False) as g:
+        left = g.model.geometry.add_rectangle(0, 0, 0, 1, 1)
+        right = g.model.geometry.add_rectangle(1, 0, 0, 1, 1)
+        g.model.sync()
+        g.mesh.structured.set_transfinite([(2, left), (2, right)], n=2)
+        g.mesh.generation.generate(2)
+        g.physical.add(2, [left], name="rock")
+        g.physical.add(1, [_curve_at_x(left, 1.0)], name="face")
+        g.physical.add(1, [_curve_at_x(right, 1.0)], name="wire")
+        g.constraints.interface(
+            "face", "wire",
+            normal=NormalLaw(**normal), tangential=TangentialLaw(**tangential),
+            thickness=0.5, slave_ndf=3, name="RW")
+        return g.mesh.queries.get_fem_data()
+
+
+def declare_phantom(ops) -> None:
+    ops.model(ndm=2, ndf=2)
+    ops.element.elasticBeamColumn(
+        pg="wire", transf=ops.geomTransf.Linear(name="lin"),
+        A=0.02, E=200e9, Iz=1.0e-4)
+
+
+def test_a_phantom_interface_carries_its_phantoms_per_instance(tmp_path):
+    """Mixed ndf (ADR 0093 D4): the source deck has one ``-ndf 2`` phantom
+    node per pair; one instance reproduces it, two carry two sets."""
+    src = _write(tmp_path / "phantom.h5", phantom_fem(), declare_phantom)
+    want, got = _parity(src, declare_phantom, 2, 2, tmp_path)
+    phantoms = [ln for ln in want.splitlines()
+                if ln.startswith("node ") and ln.endswith("-ndf 2")]
+    assert len(phantoms) == 2
+    assert want.count("element zeroLength") == 2
+    assert got.replace("# inst.RW", "# RW") == want
+
+    ops = _bridge(("a", src, {}), ("b", src, {"translate": (5.0, 0.0, 0.0)}),
+                  ndm=2, ndf=2)
+    recs = list(ops.fem.elements.interfaces)
+    assert len(recs) == 4 and all(r.phantom_node is not None for r in recs)
+    assert len({int(r.phantom_node) for r in recs}) == 4
+    deck = _deck(ops, tmp_path / "two.tcl")
+    assert deck.count("element zeroLength") == 4
+
+
+def test_a_user_zero_length_on_an_interface_pair_is_refused(tmp_path):
+    """A node-pair ``zeroLength`` the source declares on an interface pair
+    makes two archived rows on that pair: the bridge refuses rather than
+    guess which one the interface synthesises, and names the user
+    element, not a stage claim (F1)."""
+    from apeGmsh.assembly import AssemblyError
+    from apeGmsh.opensees.element.zero_length import ZeroLengthMatDir
+
+    fem = interface_fem("ent_epp")
+    rec = next(iter(fem.elements.interfaces))
+
+    def declare(ops) -> None:
+        declare_interface(ops)
+        k = ops.uniaxialMaterial.ElasticMaterial(E=1.0e6, name="spring")
+        ops.element.ZeroLength(
+            nodes=(int(rec.master_node), int(rec.slave_node)),
+            mat_dirs=(ZeroLengthMatDir(material=k, dof=1),))
+
+    src = _write(tmp_path / "user_zl.h5", fem, declare)
+    with pytest.raises(AssemblyError, match=(
+            r"matches 2 archived node-pair zeroLength rows.*declare it on "
+            r"the bridge")) as info:
+        _bridge(("a", src, {}), ndm=2, ndf=2)
+    assert "stage" not in str(info.value)

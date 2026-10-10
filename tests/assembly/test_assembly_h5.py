@@ -330,13 +330,27 @@ def test_inv10_from_h5_round_trips_the_declared_instances_and_ties(built):
 
 
 def test_from_h5_never_opens_an_instance_file(built, tmp_path):
+    """INV-5 (parity row 26): the archive is self-contained. Its source is
+    deleted before the archive is read, and every reader still opens it."""
     from apeGmsh.assembly import Assembly
+    from apeGmsh.mesh import FEMData
 
-    moved = tmp_path / "alone.h5"
-    shutil.copy(built["archive"], moved)
-    back = Assembly.from_h5(moved)
-    assert back.instances == built["asm"].instances
-    assert not (tmp_path / "block.h5").exists()
+    block = tmp_path / "block.h5"
+    shutil.copy(built["block"], block)
+    asm, _ = declare_stack(block)
+    _bridge(asm)
+    archive = tmp_path / "alone.h5"
+    asm.h5(archive, model_name="stack")
+    block.unlink()
+    assert not block.exists()
+
+    back = Assembly.from_h5(archive)
+    assert back.instances == asm.instances
+    assert [i.source for i in back.instances] == [block] * 3
+    fem = FEMData.from_h5(str(archive))
+    src = FEMData.from_h5(str(built["block"]))
+    assert len(fem.nodes.ids) == 3 * len(src.nodes.ids)
+    assert sorted(fem.composed_from.labels) == ["pier_1", "pier_2", "pier_3"]
 
 
 # ---------------------------------------------------------------------------
