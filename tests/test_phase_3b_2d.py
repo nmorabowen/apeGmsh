@@ -12,7 +12,9 @@ Covers ADR 0038's closing slice of Phase 3B:
   transforms — no get_fem_data() re-extraction needed.
 * Phase 2.2 tag-collision verifier fires on real synthetic collision
   fixtures, raising the matching typed exception.
-* Rank model — Layer 1 default, Layer 2 hint, Layer 3 METIS override.
+* Rank model — Layer 2 hint collisions, Layer 3 METIS override (the
+  Layer 1 default and the Layer 2 hint through a real merge are covered
+  by ``tests/assembly/test_partitions.py``).
 
 These tests run entirely against the FEMData broker; no live gmsh
 session is required for any of them.
@@ -772,23 +774,41 @@ class TestVerifier:
         )
 
     def test_verifier_runs_on_real_compose(
-        self, tmp_path: Path,
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """The verifier is wired into ``FEMData.compose`` and runs on
-        every real merge."""
-        host = _save_fem(_make_fem(), tmp_path / "host.h5")
-        module = _save_fem(
-            _make_fem(
+        """The verifier is wired into the compose merge and runs on
+        every real merge — here, ``Assembly.bridge()`` merging two
+        instances (ADR 0117)."""
+        from apeGmsh.assembly import Assembly
+        from apeGmsh.mesh import _compose as compose_mod
+        from apeGmsh.opensees import apeSees
+
+        def _source(path: Path) -> Path:
+            ops = apeSees(_make_fem(
                 node_ids=np.array([1, 2, 3], dtype=np.int64),
                 elem_ids=np.array([10, 11], dtype=np.int64),
-            ),
-            tmp_path / "module.h5",
-        )
-        g = apeGmsh.from_h5(host)
+            ))
+            ops.model(ndm=3, ndf=3)
+            ops.h5(str(path))
+            return path
+
+        calls: list[str] = []
+        real = compose_mod._run_compose_verifier
+
+        def _spy(**kw):
+            calls.append(kw["bundle"].label)
+            return real(**kw)
+
+        monkeypatch.setattr(compose_mod, "_run_compose_verifier", _spy)
+        asm = Assembly("verify")
+        asm.instance("host", _source(tmp_path / "host.h5"))
+        asm.instance("A", _source(tmp_path / "module.h5"))
         # This should run the verifier internally and pass.
-        g.compose(module, label="A")
-        # Sanity check the compose succeeded.
-        assert "A" in g._fem.composed_from
+        fem = asm.bridge(ndm=3, ndf=3).fem
+        # Sanity check the merge succeeded, and the verifier ran once
+        # per merged instance.
+        assert "A" in fem.composed_from
+        assert calls == ["host", "A"]
 
 
 # =============================================================================
@@ -797,42 +817,6 @@ class TestVerifier:
 
 
 class TestRankModel:
-    def test_layer_1_single_module_default(
-        self, tmp_path: Path,
-    ) -> None:
-        """One composed module → host on rank 0, module on rank 1."""
-        host = _save_fem(_make_fem(), tmp_path / "host.h5")
-        module = _save_fem(
-            _make_fem(node_ids=np.array([1, 2, 3], dtype=np.int64)),
-            tmp_path / "module.h5",
-        )
-        g = apeGmsh.from_h5(host)
-        g.compose(module, label="A")
-        fem = g._fem
-        # Partition 0 = host (3 nodes), partition 1 = module A (3 nodes).
-        parts = sorted(fem.partitions.keys()) if hasattr(
-            fem.partitions, "keys",
-        ) else list(fem.partitions._records.keys())
-        assert 0 in parts
-        assert 1 in parts
-
-    def test_layer_2_partition_rank_hint_honoured(
-        self, tmp_path: Path,
-    ) -> None:
-        """``partition_rank=K`` hint overrides Layer 1 default."""
-        host = _save_fem(_make_fem(), tmp_path / "host.h5")
-        module = _save_fem(
-            _make_fem(node_ids=np.array([1, 2, 3], dtype=np.int64)),
-            tmp_path / "module.h5",
-        )
-        g = apeGmsh.from_h5(host)
-        g.compose(module, label="A", partition_rank=5)
-        fem = g._fem
-        parts = list(fem.partitions._records.keys()) if hasattr(
-            fem.partitions, "_records",
-        ) else list(fem.partitions.keys())
-        assert 5 in parts
-
     def test_layer_2_hint_collision_raises(self) -> None:
         """Two Layer-2 hints colliding on the same rank → ValueError."""
         rec_a = ComposeRecord(

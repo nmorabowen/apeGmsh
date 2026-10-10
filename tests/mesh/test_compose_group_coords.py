@@ -1,17 +1,17 @@
-"""Compose places the coordinates cached on groups, not only the node table (#1592).
+"""Instancing places the coordinates cached on groups, not only the node table (#1592).
 
 Each physical group, label and mesh selection caches its own
-``node_coords``. ``compose(translate=, rotate=)`` moved ``nodes.coords``
-but copied those caches from the source unplaced, so
-``fem.physical.node_coords(...)`` and ``fem.labels.node_coords(...)``
-returned the module's source geometry while ``nodes.coords`` returned the
-placed one.
+``node_coords``. Before #1592 the merge behind ``Assembly.instance(translate=,
+rotate=)`` / ``bridge`` moved ``nodes.coords`` but copied those caches from
+the source unplaced, so ``fem.physical.node_coords(...)`` and
+``fem.labels.node_coords(...)`` returned the instance's source geometry
+while ``nodes.coords`` returned the placed one.
 
 Oracle: the closed form ``R x + t``. A rotation of 90 degrees about +z maps
 ``(x, y, z)`` to ``(-y, x, z)``; the translation is then added. The source's
 own group coordinates are the ``x``; the placed node table must agree with
-the cache row for row. The Assembly v2 case (instance with ``translate=``,
-then ``bridge``) runs through the same merge engine.
+the cache row for row. Each case instances the source twice: ``host`` at
+the identity, which must keep the source geometry, and ``m`` placed.
 
 A node-to-surface constraint caches its phantom nodes' ``phantom_coords``,
 which the bridge declares the phantoms at; they must land on the placed
@@ -39,6 +39,29 @@ def _place(xyz: np.ndarray, *, rotated: bool) -> np.ndarray:
     if rotated:
         xyz = np.column_stack([-xyz[:, 1], xyz[:, 0], xyz[:, 2]])
     return xyz + np.asarray(T)
+
+
+def _archive(mesh: Path, ndf: int) -> Path:
+    """``mesh`` (no ``/opensees``) rewritten as an instanceable archive."""
+    from apeGmsh.opensees import apeSees
+
+    ops = apeSees(FEMData.from_h5(str(mesh)))
+    ops.model(ndm=3, ndf=ndf)
+    archive = mesh.with_name(f"{mesh.stem}_src.h5")
+    ops.h5(str(archive))
+    return archive
+
+
+def _instanced(mesh: Path, ndf: int, *, rotated: bool) -> FEMData:
+    """``host`` at the identity plus ``m`` placed by ``T`` (and ``R``)."""
+    from apeGmsh.assembly import Assembly
+
+    archive = _archive(mesh, ndf)
+    rotate = (ROT_Z_90[:3], ROT_Z_90[3]) if rotated else None
+    return (Assembly("place")
+            .instance("host", archive)
+            .instance("m", archive, translate=T, rotate=rotate)
+            .bridge(ndm=3, ndf=ndf)).fem
 
 
 def _table_coords(fem: FEMData, ids) -> np.ndarray:
@@ -69,11 +92,9 @@ def module_h5(tmp_path_factory) -> Path:
 
 
 @pytest.mark.parametrize("rotated", [False, True], ids=["translate", "rotate"])
-def test_compose_places_group_and_label_coords(module_h5, rotated):
+def test_instance_places_group_and_label_coords(module_h5, rotated):
     src = FEMData.from_h5(str(module_h5))
-    host = FEMData.from_h5(str(module_h5))
-    fem = host.compose(str(module_h5), label="m", translate=T,
-                       rotate=ROT_Z_90 if rotated else None)
+    fem = _instanced(module_h5, 3, rotated=rotated)
 
     for side, kind, name in _GROUPS:
         comp = getattr(getattr(fem, side), kind)
@@ -85,9 +106,9 @@ def test_compose_places_group_and_label_coords(module_h5, rotated):
         np.testing.assert_allclose(
             got, _table_coords(fem, comp.node_ids(f"m.{name}")),
             rtol=0, atol=1e-9)
-        # The host's own group stays where it was.
+        # The identity instance's group stays where it was.
         np.testing.assert_array_equal(
-            comp.node_coords(name), src_comp.node_coords(name))
+            comp.node_coords(f"host.{name}"), src_comp.node_coords(name))
 
     sel = fem.mesh_selection
     (key,) = [k for k, i in sel._sets.items() if i["name"] == "m.face_x"]
@@ -129,7 +150,7 @@ def test_assembly_v2_bridge_places_group_coords(module_h5, tmp_path):
 
 
 @pytest.mark.parametrize("rotated", [False, True], ids=["translate", "rotate"])
-def test_compose_places_node_to_surface_phantoms(tmp_path, rotated):
+def test_instance_places_node_to_surface_phantoms(tmp_path, rotated):
     path = tmp_path / "capped.h5"
     with apeGmsh(model_name="capped", verbose=False) as g:
         g.model.geometry.add_box(0.0, 0.0, 0.0, SIDE, SIDE, SIDE, label="v")
@@ -144,12 +165,12 @@ def test_compose_places_node_to_surface_phantoms(tmp_path, rotated):
         g.mesh.queries.get_fem_data(dim=None).to_h5(str(path))
 
     (src_rec,) = FEMData.from_h5(str(path)).nodes.constraints
-    fem = FEMData.from_h5(str(path)).compose(
-        str(path), label="m", translate=T,
-        rotate=ROT_Z_90 if rotated else None)
-    (rec,) = [r for r in fem.nodes.constraints
-              if getattr(r, "phantom_coords", None) is not None
-              and int(r.master_node) != int(src_rec.master_node)]
+    fem = _instanced(path, 6, rotated=rotated)
+    # ``m`` is the second instance: its rows follow ``host``'s.
+    host_rec, rec = [r for r in fem.nodes.constraints
+                     if getattr(r, "phantom_coords", None) is not None]
+    np.testing.assert_allclose(host_rec.phantom_coords, src_rec.phantom_coords,
+                               rtol=0, atol=1e-9)
     got = np.asarray(rec.phantom_coords)
     np.testing.assert_allclose(
         got, _place(src_rec.phantom_coords, rotated=rotated),

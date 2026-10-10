@@ -262,11 +262,13 @@ def test_rotated_instance_reactions_balance_weight_and_turned_force(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# Routing: element-form loads through a rotated compose
+# Routing: element-form loads through a rotated instance
 # ---------------------------------------------------------------------------
 
-def test_rotated_compose_turns_line_loads_and_keeps_body_force(tmp_path):
+def test_rotated_instance_turns_line_loads_and_keeps_body_force(tmp_path):
+    from apeGmsh.assembly import Assembly
     from apeGmsh.mesh.FEMData import FEMData
+    from apeGmsh.opensees import apeSees
 
     path = tmp_path / "elem_loads.h5"
     with apeGmsh(model_name="el", verbose=False) as g:
@@ -286,8 +288,16 @@ def test_rotated_compose_turns_line_loads_and_keeps_body_force(tmp_path):
         g.mesh.queries.get_fem_data(dim=None).to_h5(str(path))
 
     src = list(FEMData.from_h5(str(path)).elements.loads)
-    fem = FEMData.from_h5(str(path)).compose(str(path), label="m",
-                                             rotate=ROT_X_90)
+    ops = apeSees(FEMData.from_h5(str(path)))
+    ops.model(ndm=3, ndf=6)
+    archive = tmp_path / "elem_loads_model.h5"
+    ops.h5(str(archive))
+    # The module at the identity, then a rotated copy: the merge appends
+    # the copy's rows after the first instance's.
+    fem = (Assembly("el")
+           .instance("host", archive)
+           .instance("m", archive, rotate=(ROT_X_90[:3], ROT_X_90[3]))
+           .bridge(ndm=3, ndf=6)).fem
     rows = list(fem.elements.loads)
     assert len(rows) == 2 * len(src)
     by_type = {"beamUniform": 0, "bodyForce": 0}

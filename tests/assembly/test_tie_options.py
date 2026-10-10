@@ -6,10 +6,11 @@ to ``g.constraints.tie``; v2's ``tie`` takes them and passes them to the
 same ``TieDef``. Oracles, each independent of the code under test:
 
 * the deck — an explicit ``stiffness`` gives the ``ASDEmbeddedNodeElement``
-  lines the v1 route gives (``Assembly.add`` / ``couple`` /
-  ``materialize``, then ``apeSees``), token for token once every node tag
-  is replaced by its coordinates (the two routes number the FEM
-  differently: v1 keeps the host's ids, v2 relocates every instance);
+  lines that ``g.constraints.tie`` gives in one apeGmsh session holding
+  the same two stacked blocks, token for token once every node tag is
+  replaced by its coordinates (the two routes number the FEM
+  differently: the session numbers one mesh, v2 relocates every
+  instance);
 * pass-through — each knob reaches the ``TieDef`` with the value given;
 * refusals — the combinations ``TieDef`` refuses raise at declaration and
   record nothing; a knob of the wrong type raises;
@@ -31,6 +32,8 @@ from tests.assembly.test_two_instances_one_tie import (
     H,
     NU,
     RHO,
+    SIDE,
+    TOL,
     block_fem,
     declare_block,
     write_instance,
@@ -73,30 +76,49 @@ def _embedded_lines(deck: Path, fem) -> list[tuple[str, ...]]:
     return sorted(out)
 
 
-def test_an_explicit_stiffness_emits_the_v1_tie_deck_lines(block, tmp_path):
-    from apeGmsh.assembly import Assembly
+def _one_session_stack(deck: Path):
+    """The two stacked blocks of :func:`_stack` meshed in one session and
+    tied with ``g.constraints.tie``; writes ``deck`` and returns the FEM."""
+    import gmsh
+
+    from apeGmsh import apeGmsh
     from apeGmsh.opensees import apeSees
 
+    with apeGmsh(model_name="one_session", verbose=False) as g:
+        low = g.model.geometry.add_box(0.0, 0.0, 0.0, SIDE, SIDE, H)
+        high = g.model.geometry.add_box(0.0, 0.0, H, SIDE, SIDE, H)
+        g.model.sync()
+        at_h = set(g.model.select(None, dim=2).in_box(
+            (-SIDE, -SIDE, H - TOL), (2 * SIDE, 2 * SIDE, H + TOL),
+        ).result().tags())
+
+        def face_at_h(vol: int) -> list[int]:
+            return [t for _, t in gmsh.model.getBoundary(
+                [(3, vol)], oriented=False) if t in at_h]
+
+        g.physical.add_volume([low, high], name="Vol")
+        g.physical.add_surface(face_at_h(low), name="top")
+        g.physical.add_surface(face_at_h(high), name="bot")
+        g.constraints.tie("top", "bot", dofs=[1, 2, 3], stiffness=K)
+        g.mesh.recipe.structured(size=5.0, fallback="strict")
+        fem = g.mesh.queries.get_fem_data(dim=None)
+    ops = apeSees(fem)
+    declare_block(ops)
+    ops.tcl(str(deck), flat=True)
+    return fem
+
+
+def test_an_explicit_stiffness_emits_the_one_session_tie_deck_lines(
+        block, tmp_path):
     v2 = _stack(block).tie("pier_1.top", "pier_2.bot", dofs=[1, 2, 3],
                            stiffness=K).bridge(ndm=3, ndf=3)
     v2.tcl(str(tmp_path / "v2.tcl"), flat=True)
-
-    g = (Assembly("v1").add("pier_1", str(block))
-         .add("pier_2", str(block), translate=(0.0, 0.0, H))
-         .couple("pier_1", "pier_2", kind="tie", ports=("top", "bot"),
-                 dofs=[1, 2, 3], stiffness=K)
-         .materialize())
-    v1 = apeSees(g._fem)
-    v1.model(ndm=3, ndf=3)
-    steel = v1.nDMaterial.ElasticIsotropic(E=E, nu=NU, rho=RHO, name="steel")
-    v1.element.stdBrick(pg="Vol", material=steel)
-    v1.element.stdBrick(pg="pier_2.Vol", material=steel)
-    v1.tcl(str(tmp_path / "v1.tcl"), flat=True)
+    fem = _one_session_stack(tmp_path / "one.tcl")
 
     lines_v2 = _embedded_lines(tmp_path / "v2.tcl", v2.fem)
     assert len(lines_v2) == 9                 # the 3x3 interface nodes
     assert {ln[-2:] for ln in lines_v2} == {("-K", repr(K))}
-    assert lines_v2 == _embedded_lines(tmp_path / "v1.tcl", g._fem)
+    assert lines_v2 == _embedded_lines(tmp_path / "one.tcl", fem)
 
 
 def test_each_knob_reaches_the_tie_definition(block):
