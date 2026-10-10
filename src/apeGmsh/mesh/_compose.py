@@ -1089,8 +1089,8 @@ _ELEMENT_LOAD_PARAMS: dict[str, tuple[tuple[tuple[str, ...], ...], tuple[str, ..
     "bodyForce": ((), ("g", "density", "bf")),
 }
 
-#: The instance frame rule for the mass record (ADR 0117, the mass note,
-#: #1600): ``mass`` holds two diagonal tensors, the translational
+#: The instance frame rule for the mass record (ADR 0117, the mass
+#: note): ``mass`` holds two diagonal tensors, the translational
 #: ``(mx, my, mz)`` and the rotary ``(Ixx, Iyy, Izz)``, which turn by
 #: ``R diag Rᵀ`` (a value per DOF is a tensor, not a DOF index); the tag
 #: and the name never transform.
@@ -1110,7 +1110,7 @@ def _place_mass_columns(
     label: str,
     node_ids: np.ndarray,
 ) -> np.ndarray:
-    """Turn the ``(N, 6)`` mass columns by the module rotation (#1600).
+    """Turn the ``(N, 6)`` mass columns by the module rotation.
 
     Each row holds two diagonal tensors, ``(mx, my, mz)`` and
     ``(Ixx, Iyy, Izz)``, and each turns as ``R diag(d) Rᵀ``. Rows whose
@@ -1882,7 +1882,7 @@ def _rewrite_source_for_compose(
     # record-tuple view is materialised (review hardening: the eager
     # ``tuple(new_mass_set)`` boxed every node's record on the compose
     # hot path and had no consumer). The mass tensors turn with the
-    # instance (#1600), or the rewrite refuses before anything merges.
+    # instance, or the rewrite refuses before anything merges.
     new_mass_set = _rewrite_mass_set(
         source.nodes.masses, offset=offset, label=label, rotate=rotate,
     )
