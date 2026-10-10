@@ -36,6 +36,11 @@ never implement.
 
 ## 1. Boot (at most 8 tool calls)
 
+0. **Check for a duplicate before planning (lesson #1507).** Run `ListAgents` for
+   a live session whose title names the same link, and
+   `gh issue list --label in-flight --label chain:<X>`. If either shows the link
+   in progress, stop and report "duplicate of <session>". Chip and next-batch
+   prompts name the link exactly.
 1. **Sync the worktree with main.** Use ccd_host `sync_with_base_branch`, or
    confirm `git rev-list --count HEAD..origin/main` is `0`.
 2. **Read the chain issue.** Run `gh issue view <chain issue> --comments` to get
@@ -55,6 +60,9 @@ never implement.
   - body: `internal_docs/program/slice_card.md`, filled in;
   - labels: `program slice chain:<X>`, plus `mechanical` or `semantic`, plus
     `lock:<file>` when the slice touches a hub.
+  - A slice queued for a lock records the queue in its body (lesson #1544). The
+    `lock:` label is applied only at the handover from the holder, by the
+    coordinator when one is live.
 - **Derive owned files, never write them.** For a move, rename or deletion, run
   the card's own verification grep against `origin/main` untruncated (no
   `head`) and paste its file list into the card; if the grep and the Owned list
@@ -77,6 +85,17 @@ never implement.
   - prompt: `Program slice #<n> (link <ID>). Read it with gh issue view <n>, then follow internal_docs/program/PROGRAM.md §7. Report in 300 words or fewer.`
   - For architects, add their scratch path.
 - **Label each dispatched slice** `in-flight`.
+- **Worker isolation (lesson #1525).** While isolation is flaky, use **either**
+  (a) the agent's default isolated worktree and never name a pre-created path,
+  **or** (b) the manual pattern: run `git worktree add <path> -b prog/<slice> origin/main`
+  yourself, dispatch `general-purpose` with `model:` pinned and "act as the role
+  in .claude/agents/<role>.md", and have the worker use `git -C <path>` and push
+  plain fast-forwards. Never mix the two; never create a remote branch before
+  the first commit. Workers run `python scripts/check_quirks.py --base origin/main`
+  (CI's form).
+- **Unregistered agent types (observed 2026-10-10).** If the `prog-*` agent types
+  are not registered in the session, run workers as `general-purpose` with the
+  role file inlined and the model pinned.
 
 ## 4. Verify
 
@@ -92,6 +111,10 @@ never implement.
     (SendMessage), or re-dispatch.
 - **Mechanical move PRs** must carry `verify_move` evidence in the body, once
   C2 has landed.
+
+- **Never end a turn on "waiting for CI or review" (lesson #1567).** At the start
+  of every turn, re-check `gh pr checks <n>` and the PR's `Review-verdict`
+  comments. The nightly `[Program probe]` issue is the backstop.
 
 ## 5. Land
 
@@ -138,12 +161,12 @@ the 2026-10-07 → 10 batch (#1202).
 **Boot.** Read the last coordinator handoff on #1202 and the latest comment on
 board #1203. They hold the lock holders, the queue, the open gates and the
 link prompts. Then run `ListAgents`: if another session titled "T coordinator"
-is live, stop (lesson #1507). Announce yourself to every live program session
+is live, stop. Announce yourself to every live program session
 and ask each to report to you at every landing, blocker, maintainer question,
 lock handover and handoff.
 
 **Locks.**
-- Only the holder carries a `lock:<file>` label (lesson #1544). The queue order
+- Only the holder carries a `lock:<file>` label. The queue order
   lives in board text, never on labels.
 - Only a slice that a **live session** is working may hold a lock. A slice with
   no session waits in the queue text.
@@ -153,7 +176,7 @@ lock handover and handoff.
 - On landing, the holder removes its labels and gives them to **no one**; the
   coordinator hands the lock over and says so on the next holder's issue.
 
-**Stalls (lesson #1567).** Notifications get lost: app restarts, dead
+**Stalls.** Notifications get lost: app restarts, dead
 reviewers, the 600 s watchdog. Never end a turn waiting for CI or a review. At
 every check, look for (a) approved and green PRs not landed, (b) open PRs with
 no `Review-verdict` after about 6 h, (c) lock holders with no PR activity. Read
