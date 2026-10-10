@@ -747,7 +747,7 @@ def _samples() -> dict[type, object]:
     from .test_uniaxial_material_contract import ALL_UNIAXIAL, _minimal
 
     sec = ElasticSection(E=200e9, A=0.01, Iz=1e-4)
-    rosters: list[tuple[list[type], Any]] = [
+    rosters: list[tuple[list[type], object]] = [
         (ALL_UNIAXIAL, _minimal), (ALL_ND, _instantiate),
         (ALL_SECTIONS, _make_minimal), (ALL_TIME_SERIES, _minimal_instance),
         (ALL_BEAM_COLUMN_ELEMENTS, beam), (ALL_TRUSS_ELEMENTS, truss),
