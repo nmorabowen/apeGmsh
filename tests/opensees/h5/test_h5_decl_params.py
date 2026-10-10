@@ -28,9 +28,8 @@ Oracles, each naming the right answer:
   slots; with ``-factors`` (a flag without a field) it stays unnamed, as
   does every element and transform.
 
-Until the K1-7 Phase 2 hook lands in ``apesees.py``, the fixture
-``decl_params_hook`` stands in for it: it hands ``BuiltModel.emit``'s
-primitives to the archive exactly as the hook will.
+The group is written by ``BuiltModel.emit``'s hook on every ``apeSees.h5``
+emit; nothing here feeds the archive by hand.
 """
 from __future__ import annotations
 
@@ -54,7 +53,6 @@ from apeGmsh.opensees._internal.lineage import (
 )
 from apeGmsh.opensees._internal.types import Primitive, UniaxialMaterial
 from apeGmsh.opensees._orientation import Cartesian
-from apeGmsh.opensees.apesees import BuiltModel
 from apeGmsh.opensees.emitter import h5_reader
 from apeGmsh.opensees.emitter.h5 import (
     H5DeclParamsError,
@@ -71,38 +69,6 @@ from apeGmsh.opensees.emitter.h5_reader import (
 from tests.opensees.golden.builder import build_model
 from tests.opensees.h5._opensees_model_fixtures import build_simple_frame_fem
 from tests.opensees.h5.test_h5_decls import _flat_frame, _staged
-
-
-# ---------------------------------------------------------------------------
-# The Phase 2 hook, as a fixture (Phase 1 of K1-7)
-# ---------------------------------------------------------------------------
-
-
-def _hand_in_params(bm: BuiltModel, emitter: H5Emitter) -> None:
-    """What the K1-7 ``BuiltModel`` hook does after ``set_declarations``:
-    every registered primitive with its ``decls`` row, and the key of
-    every primitive a field references."""
-    _rows, index = bm._declaration_rows()
-    decls = bm._decls
-
-    def key_of(prim: object) -> str:
-        return decls[id(prim)][0]
-
-    emitter.set_decl_params(
-        [(index[id(p)], p) for p in bm.primitives], key_of)
-
-
-@pytest.fixture
-def decl_params_hook(monkeypatch: pytest.MonkeyPatch) -> None:
-    orig = BuiltModel.emit
-
-    def emit(self: BuiltModel, emitter: Any) -> int:
-        out = orig(self, emitter)
-        if isinstance(emitter, H5Emitter):
-            _hand_in_params(self, emitter)
-        return out
-
-    monkeypatch.setattr(BuiltModel, "emit", emit)
 
 
 # ---------------------------------------------------------------------------
@@ -203,7 +169,6 @@ def _assert_params_read_back(ops: apeSees, path: Path) -> None:
             encode_decl_params(prim, key_of)))
 
 
-@pytest.mark.usefixtures("decl_params_hook")
 @pytest.mark.parametrize("build", [_staged, _flat_frame, _params_frame])
 def test_every_declaration_reads_back_by_field_name(
     tmp_path: Path, build: Callable[..., apeSees],
@@ -214,7 +179,6 @@ def test_every_declaration_reads_back_by_field_name(
     _assert_params_read_back(ops, p)
 
 
-@pytest.mark.usefixtures("decl_params_hook")
 @pytest.mark.parametrize("mode", [
     "flat", "partitioned", "staged", "staged_partitioned",
 ])
@@ -225,7 +189,6 @@ def test_every_declaration_reads_back_golden(tmp_path: Path, mode: str) -> None:
     _assert_params_read_back(ops, p)
 
 
-@pytest.mark.usefixtures("decl_params_hook")
 def test_orientation_reads_back_opaque(tmp_path: Path) -> None:
     ops = build_model("arch_with_orientation_fan_out", "flat", "tcl")
     p = tmp_path / "arch.h5"
@@ -244,7 +207,6 @@ def test_orientation_reads_back_opaque(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.usefixtures("decl_params_hook")
 def test_refs_resolve_to_declaration_keys(tmp_path: Path) -> None:
     ops = _params_frame()
     p = tmp_path / "m.h5"
@@ -434,27 +396,18 @@ def test_encoder_on_real_primitives(prim: Primitive) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_model_hash_and_deck_unchanged_by_the_group(
+def test_the_hook_writes_the_group_and_model_hash_excludes_it(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    without = tmp_path / "without.h5"
-    _params_frame().h5(str(without))
-    with h5py.File(str(without), "r") as f:
-        assert "decl_params" not in f["opensees"]
-    orig = BuiltModel.emit
-
-    def emit(self: BuiltModel, emitter: Any) -> int:
-        out = orig(self, emitter)
-        if isinstance(emitter, H5Emitter):
-            _hand_in_params(self, emitter)
-        return out
-
-    monkeypatch.setattr(BuiltModel, "emit", emit)
+    """``BuiltModel.emit`` hands every primitive to the archive; the
+    group is a derived view, so the hash with it deleted is the stamped
+    one, and a build whose hook is silenced stamps the same hash."""
     with_ = tmp_path / "with.h5"
     _params_frame().h5(str(with_))
     with h5py.File(str(with_), "r") as f:
         assert "decl_params" in f["opensees"]
-    assert _stored_model_hash(with_) == _stored_model_hash(without)
+        assert len(f["opensees"]["decl_params"]["decl"]) == len(
+            _params_frame().build().primitives)
     assert "decl_params" in MODEL_HASH_EXCLUDED_CHILDREN
     stripped = tmp_path / "stripped.h5"
     shutil.copy(with_, stripped)
@@ -463,13 +416,16 @@ def test_model_hash_and_deck_unchanged_by_the_group(
         del f["opensees"]["decl_params"]
         assert compute_model_hash(fem_hash, f["opensees"]) == (
             _stored_model_hash(with_))
-    _params_frame().tcl(str(tmp_path / "a.tcl"))
-    monkeypatch.setattr(BuiltModel, "emit", orig)
-    _params_frame().tcl(str(tmp_path / "b.tcl"))
-    assert (tmp_path / "a.tcl").read_bytes() == (tmp_path / "b.tcl").read_bytes()
+    # The same model with the hook silenced: no group, the same hash.
+    monkeypatch.setattr(
+        H5Emitter, "set_decl_params", lambda self, items, key_of: None)
+    without = tmp_path / "without.h5"
+    _params_frame().h5(str(without))
+    with h5py.File(str(without), "r") as f:
+        assert "decl_params" not in f["opensees"]
+    assert _stored_model_hash(with_) == _stored_model_hash(without)
 
 
-@pytest.mark.usefixtures("decl_params_hook")
 def test_rewrite_echoes_decl_params(tmp_path: Path) -> None:
     p = tmp_path / "src.h5"
     q = tmp_path / "out.h5"
@@ -485,7 +441,6 @@ def test_rewrite_echoes_decl_params(tmp_path: Path) -> None:
     assert _stored_model_hash(q) == _stored_model_hash(p)
 
 
-@pytest.mark.usefixtures("decl_params_hook")
 def test_a_source_without_the_group_rewrites_without_it(tmp_path: Path) -> None:
     p = tmp_path / "src.h5"
     q = tmp_path / "out.h5"
@@ -503,7 +458,6 @@ def test_a_source_without_the_group_rewrites_without_it(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.usefixtures("decl_params_hook")
 def test_params_names_where_argv_equals_fields(tmp_path: Path) -> None:
     ops = _params_frame()
     p = tmp_path / "m.h5"
@@ -556,7 +510,6 @@ def _tamper(path: Path, column: str, values: list[Any]) -> None:
         g.create_dataset(column, data=values, dtype=dt)
 
 
-@pytest.mark.usefixtures("decl_params_hook")
 @pytest.mark.parametrize("column, value, message", [
     ("decl", 10**6, "points at declaration"),
     ("params", "[1, 2]", "not an object"),
@@ -581,7 +534,6 @@ def test_reader_refuses_malformed_rows(
         _table(p)
 
 
-@pytest.mark.usefixtures("decl_params_hook")
 def test_reader_refuses_a_repeated_declaration(tmp_path: Path) -> None:
     p = tmp_path / "m.h5"
     _params_frame().h5(str(p))

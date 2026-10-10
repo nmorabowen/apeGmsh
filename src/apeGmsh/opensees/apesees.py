@@ -938,6 +938,12 @@ class BuiltModel:
             self._decl_memo[:] = [tuple(rows), index]
         return self._decl_memo[0], self._decl_memo[1]
 
+    def _declaration_key(self, owner: object) -> str:
+        """The declaration key of ``owner`` (a registered primitive);
+        :class:`KeyError` for one the bridge never registered (K1-7:
+        ``/opensees/decl_params`` stores a reference as this key)."""
+        return self._decls[id(owner)][0]
+
     def _declaration_table(
         self, tag_plan: "TagPlan",
     ) -> "tuple[tuple[_DeclRow, ...], list[tuple[str, int, int, int]]]":
@@ -1894,6 +1900,14 @@ class BuiltModel:
             _decl_rows, _decl_runs = self._declaration_table(tag_plan)
             _archive_side_channel(emitter).set_declarations(
                 _decl_rows, _decl_runs)
+            # K1-7: every registered primitive's parameters by field name
+            # (``/opensees/decl_params``), a field that holds another
+            # primitive as that primitive's declaration key.
+            _rows_, _decl_index = self._declaration_rows()
+            _archive_side_channel(emitter).set_decl_params(
+                [(_decl_index[id(p)], p) for p in self.primitives],
+                self._declaration_key,
+            )
 
         # ADR 0027: partitioned vs unpartitioned branch.  The
         # unpartitioned path must be **byte-identical** to the pre-ADR
