@@ -18,6 +18,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, Literal, Sequence
 
 from .base import DroppedAxisGuard, command_row
+from .caps import TargetCaps
 
 if TYPE_CHECKING:
     from .base import StrategySpec
@@ -25,6 +26,17 @@ if TYPE_CHECKING:
 
 class RecordingEmitter:
     """Records every emitter call as ``(name, args, kwargs)``."""
+
+    #: ADR 0114 D6: a recorder consumes partition brackets like a deck
+    #: writer and declares nothing else.
+    caps: TargetCaps = TargetCaps(
+        archival=False,
+        supports_partitions=True,
+        per_rank_fragments=False,
+        suppress_analysis_chain_auto_emit=False,
+        model_reissue_purges=False,
+        emit_stage_markers=False,
+    )
 
     def __init__(self) -> None:
         self.calls: list[tuple[str, tuple[Any, ...], dict[str, Any]]] = []

@@ -123,6 +123,10 @@ class _NullEmitter:
     live OpenSees domain.  The guard raises before any of these fire.
     """
 
+    from apeGmsh.opensees.emitter.caps import TargetCaps as _TargetCaps
+
+    caps = _TargetCaps()
+
     def __getattr__(self, _name):
         def _noop(*_args, **_kwargs):
             return None

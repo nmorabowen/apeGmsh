@@ -136,6 +136,10 @@ VERBS = VERBS_MOD.VERBS
 PROTOCOL = _methods(_class_node("base", "Emitter"))
 PROTOCOL_NAMES = [m.name for m in PROTOCOL]
 PROTOCOL_ROWS = {k: v for k, v in VERBS.items() if v.via == "protocol"}
+#: The Protocol's non-method names (ADR 0114 D6): ``caps`` is the
+#: ``TargetCaps`` declaration every emitter carries. Not a side channel
+#: and not a verb, so it is outside both ``SIDE_CHANNELS`` and the count.
+PROTOCOL_ATTRS = frozenset({"caps"})
 
 
 def test_verbs_module_imports_nothing_from_apegmsh() -> None:
@@ -151,9 +155,10 @@ def test_verbs_module_imports_nothing_from_apegmsh() -> None:
 def test_a_protocol_method_count_is_frozen() -> None:
     assert len(PROTOCOL_NAMES) == len(set(PROTOCOL_NAMES))
     bound = _assigned_names(_class_node("base", "Emitter"))
-    assert not bound, (
+    assert bound == PROTOCOL_ATTRS, (
         f"base.py::Emitter binds {sorted(bound)} by assignment; the "
-        "Protocol holds methods only, and its count is frozen"
+        f"Protocol holds methods plus exactly {sorted(PROTOCOL_ATTRS)} "
+        "(ADR 0114 D6), and its method count is frozen"
     )
     assert len(PROTOCOL_NAMES) == VERBS_MOD.EMITTER_METHOD_COUNT, (
         f"base.py::Emitter has {len(PROTOCOL_NAMES)} methods; ADR 0114 "
@@ -392,10 +397,11 @@ def test_archive_rows_have_a_body_that_stores() -> None:
 def test_e_emitters_define_protocol_and_declare_side_channels(stem: str) -> None:
     cls = _class_node(stem, _EMITTERS[stem])
     defined = {m.name for m in _methods(cls)} | _assigned_names(cls)
-    missing = set(PROTOCOL_NAMES) - defined
+    missing = (set(PROTOCOL_NAMES) | PROTOCOL_ATTRS) - defined
     assert not missing, f"{_EMITTERS[stem]} lacks {sorted(missing)}"
     public_extra = {n for n in defined
-                    if not n.startswith("_") and n not in PROTOCOL_NAMES}
+                    if not n.startswith("_") and n not in PROTOCOL_NAMES
+                    and n not in PROTOCOL_ATTRS}
     side = VERBS_MOD.SIDE_CHANNELS[stem]
     assert public_extra == side, (
         f"{_EMITTERS[stem]}: undeclared public names "

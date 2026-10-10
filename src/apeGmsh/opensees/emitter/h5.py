@@ -82,6 +82,7 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Iterable, Literal, NoReturn, Sequence
 
 from .base import DroppedAxisGuard, command_row
+from .caps import SolveStamp, TargetCaps
 from .verbs import VERBS, Verb
 from .._internal.tag_resolution import (
     ATTR_ELEMENT_NODES,
@@ -498,7 +499,22 @@ class H5RefusedVerb(NotImplementedError):
 #:     ``profiler`` bracket).  Both fold into ``model_hash``, so an
 #:     identical model hashes differently once at this minor.  A 2.23
 #:     reader opens 2.12 through 2.23; a 2.22.x reader REFUSES a 2.23.x file.
-SCHEMA_VERSION: str = "2.23.0"
+#:   * 2.24.0 — ADR 0114 D6/R4 (K1-5): additive — five optional
+#:     attributes on ``/opensees`` itself: ``@will_solve`` (int8 0/1,
+#:     ``staged or any(Analysis)`` at emit), ``@solve_mode`` (str, the
+#:     archive's own partition mode, ``flat`` or ``partitioned``),
+#:     ``@solve_refusals`` (vlen str, the ids of the solve-time gates
+#:     that would refuse under that mode), ``@solve_refusals_flat`` (the
+#:     same gates' verdict under the flat mode every replay target
+#:     emits) and ``@requires`` (vlen str, the sorted union of the
+#:     emitted verbs' ``VERBS.requires`` tokens).  Written together,
+#:     only once the bridge handed the emitter the stamp
+#:     (``set_solve_stamp``); a file without them reads as "no stamp"
+#:     (``None``), never as a default.  Attributes of ``/opensees`` fold
+#:     into ``model_hash``.
+#:     A 2.24 reader opens 2.12 through 2.24; a 2.23.x reader REFUSES a
+#:     2.24.x file.
+SCHEMA_VERSION: str = "2.24.0"
 
 #: Oldest opensees-zone minor the reader opens (ADR 0113 (#1303)). The
 #: zone's last non-additive minor is 2.11.0, the 0-based rank flip, but
@@ -1190,6 +1206,17 @@ class H5Emitter:
     state in memory; the file is written exactly once.
     """
 
+    #: ADR 0114 D6: the archival target. Solve-time gates do not enforce
+    #: here, and partition brackets are stored, not flattened.
+    caps: TargetCaps = TargetCaps(
+        archival=True,
+        supports_partitions=True,
+        per_rank_fragments=False,
+        suppress_analysis_chain_auto_emit=False,
+        model_reissue_purges=False,
+        emit_stage_markers=False,
+    )
+
     def __init__(
         self,
         *,
@@ -1254,6 +1281,15 @@ class H5Emitter:
         self._program = _ProgramTape()
         self._commands: list[_CommandRecord] = []
         self._program_restored: "tuple[tuple[tuple[int, ...], ...], tuple[str, ...], tuple[str, ...], int] | None" = None
+
+        # ADR 0114 D6 (schema 2.24.0): what the archive says about the
+        # solve it was emitted for, handed in once through
+        # :meth:`set_solve_stamp` (``will_solve``, the partition mode and
+        # the refusal ids per mode) and written as ``/opensees@will_solve``,
+        # ``@solve_mode``, ``@solve_refusals``, ``@solve_refusals_flat`` and
+        # ``@requires``; the last is derived from the program's methods at
+        # write time. ``None`` writes nothing.
+        self._solve_stamp_input: "tuple[bool, str, tuple[str, ...], tuple[str, ...]] | None" = None
 
         # Constitutive.
         self._uniaxial: list[_MaterialRecord] = []
@@ -3045,8 +3081,42 @@ class H5Emitter:
         # emit order over every store above. Both are hashed.
         self._write_commands(f)
         self._write_program(f)
+        # ADR 0114 D6 (schema 2.24.0): the solve stamp, on ``/opensees``
+        # itself. Hashed, like every attribute of the group.
+        self._write_solve_stamp(f)
 
     # -- Per-group writers (split out so each step adds one) -------------
+
+    def _write_solve_stamp(self, f: Any) -> None:
+        """Persist ``/opensees@will_solve``, ``@solve_mode``,
+        ``@solve_refusals``, ``@solve_refusals_flat`` and ``@requires``
+        (ADR 0114 D6, schema 2.24.0).
+
+        Written only once :meth:`set_solve_stamp` ran: ``will_solve`` is
+        an ``int8`` 0/1, ``solve_mode`` a string, the other three
+        vlen-string arrays, empty when there is nothing to name. All
+        five fold into ``model_hash``.
+        """
+        stamp = self.solve_stamp()
+        if stamp is None:
+            return
+        import h5py
+        import numpy as np
+
+        ops = self._ops_group(f)
+        str_dt = h5py.string_dtype(encoding="utf-8")
+        ops.attrs["will_solve"] = np.int8(1 if stamp.will_solve else 0)
+        ops.attrs.create(
+            "solve_mode", np.array(stamp.solve_mode, dtype=object),
+            dtype=str_dt)
+        assert stamp.solve_refusals_flat is not None
+        for name, tokens in (
+            ("solve_refusals", stamp.solve_refusals),
+            ("solve_refusals_flat", stamp.solve_refusals_flat),
+            ("requires", stamp.requires),
+        ):
+            ops.attrs.create(
+                name, np.array(list(tokens), dtype=object), dtype=str_dt)
 
     def _ops_group(self, f: Any) -> Any:
         """Lazily get or create the ``/opensees/`` namespace group.
@@ -3939,6 +4009,83 @@ class H5Emitter:
         self._element_ranks = [
             tag_to_rank.get(int(rec.tag), -1) for rec in self._elements
         ]
+
+    def set_solve_stamp(
+        self, *, will_solve: bool, solve_refusals: Sequence[str] = (),
+        solve_mode: str = "flat",
+        solve_refusals_flat: "Sequence[str] | None" = None,
+    ) -> None:
+        """Hand in the archive's solve stamp (ADR 0114 D6, schema 2.24.0).
+
+        Side channel, not a Protocol call: ``BuiltModel.emit`` passes
+        ``will_solve`` (``staged or any(Analysis)``), the archive's own
+        partition mode and the ids of the solve-time gates that would
+        refuse under it (``solve_refusals``) and under the flat mode
+        (``solve_refusals_flat``; defaults to ``solve_refusals`` for a
+        flat archive); the H5 -> H5 rewrite echoes the source's values.
+        ``@requires`` is not an argument: the writer derives it from the
+        verbs its program holds (:meth:`solve_stamp`). Refuses a second
+        call, which would silently overwrite the first.
+        """
+        if self._solve_stamp_input is not None:
+            raise RuntimeError(
+                "H5Emitter.set_solve_stamp: the stamp is already set "
+                f"({self._solve_stamp_input!r}); it is written once per "
+                "emit."
+            )
+        if not isinstance(will_solve, bool):
+            raise TypeError(
+                "H5Emitter.set_solve_stamp: will_solve must be a bool, got "
+                f"{type(will_solve).__name__}"
+            )
+
+        def _ids(name: str, value: "Sequence[str]") -> tuple[str, ...]:
+            ids = tuple(value)
+            if isinstance(value, str) or not all(
+                    isinstance(i, str) and i for i in ids):
+                raise TypeError(
+                    f"H5Emitter.set_solve_stamp: {name} must be a sequence "
+                    f"of non-empty strings, got {value!r}"
+                )
+            return ids
+
+        own = _ids("solve_refusals", solve_refusals)
+        flat = (
+            None if solve_refusals_flat is None
+            else _ids("solve_refusals_flat", solve_refusals_flat)
+        )
+        # Validate the mode / verdict pair once, the way the reader will:
+        # a flat stamp copies its verdict, a partitioned one must bring
+        # the flat verdict along.
+        stamp = SolveStamp(will_solve=will_solve, solve_refusals=own,
+                           solve_mode=solve_mode, solve_refusals_flat=flat)
+        assert stamp.solve_refusals_flat is not None
+        self._solve_stamp_input = (
+            will_solve, solve_mode, own, stamp.solve_refusals_flat)
+
+    def solve_stamp(self) -> SolveStamp | None:
+        """The stamp :meth:`write` will put on ``/opensees``, or ``None``
+        before :meth:`set_solve_stamp` ran.
+
+        ``requires`` is the sorted union of ``VERBS[method].requires``
+        over the methods the program holds: this emitter's own tape, or
+        the echoed source program after :meth:`restore_program`. Ledger
+        rows count too (the verb was emitted, even if it stored nothing),
+        so the union names what the model as emitted needed.
+        """
+        if self._solve_stamp_input is None:
+            return None
+        will_solve, mode, refusals, refusals_flat = self._solve_stamp_input
+        methods: "Sequence[str]" = (
+            self._program_restored[1] if self._program_restored is not None
+            else self._program.methods
+        )
+        requires = sorted({t for m in methods for t in VERBS[m].requires})
+        return SolveStamp(
+            will_solve=will_solve, solve_refusals=refusals,
+            requires=tuple(requires), solve_mode=mode,
+            solve_refusals_flat=refusals_flat,
+        )
 
     def restore_program(
         self, runs: "Sequence[Any]", commands: "Sequence[Any]",

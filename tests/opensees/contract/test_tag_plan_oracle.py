@@ -707,8 +707,7 @@ def _build_case(name: str) -> Case:
     bm = _MODELS[name]().build()
     cls: type = RecordingEmitter
     mode = emit_mode(
-        bm, split=False,
-        supports_partitions=getattr(cls, "supports_partitions", True),
+        bm, split=False, supports_partitions=cls.caps.supports_partitions,
     )
     assert mode not in bm._tag_plans
     with _mint_log() as log:
