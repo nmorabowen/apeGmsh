@@ -959,3 +959,41 @@ audits reached consensus on three points:
 - PRs #372 / #373 / #374 (`ColorMode.MODULE` viewer — consumes flat
   joined labels directly via `view.elements.module_for(eid)`; tree
   shape not required for v1 viewer).
+
+
+## Amendment 2026-10-10 — the public compose entry points are removed (ADR 0117 D7, AS5-c)
+
+ADR 0117 D7 deleted this ADR's public surface with no deprecation period:
+`g.compose`, `apeGmsh.compose`, `FEMData.compose`, the session facade
+writer `Compose.compose`, `Compose.MAX_COMPOSE_DEPTH`, and the v1
+`Assembly.add` / `couple(part_a, part_b, ports=)` / `materialize`
+(`assembly/_v1.py`). Composition is `apeGmsh.assembly.Assembly`
+(`instance` / the tie and coupling verbs / `bridge`). What changes here:
+
+- **The engine stays, behind one private entry.**
+  `apeGmsh.mesh._compose._compose_module(fem, source, *, label, translate,
+  rotate, partition_rank)` is the only caller of the rewrite, verifier and
+  merge path; `Assembly.bridge` (each instance) and `instance(anchor=)`
+  call it. It takes no `anchor`, `properties`, `compose_size_per_module` or
+  `max_compose_depth`: the depth cap is fixed at
+  `DEFAULT_MAX_COMPOSE_DEPTH = 3` (ruling G3), `properties` is gone
+  (ruling G2), and `anchor` is resolved by `Assembly` against an earlier
+  instance. The readers `compose_inspect`, `compose_list` and
+  `compose_tree` stay on the session and read any composed file, an
+  assembly archive included. The session's bundle replay
+  (`_compose_bundles`) went with `g.compose`, its only producer.
+- **Host asymmetry is retired.** Every instance is namespaced
+  `{instance}.{name}`; there is no host whose names stay bare and no
+  instance at offset 0 (instance `k` of a source below 10^6 starts at
+  `k * 1_000_000`). The separator alternation (`.` / `/` by depth) is
+  unchanged and still load-bearing: nested assembly archives use it, and
+  `compose_tree()` parses it.
+- **The materials row is corrected.** The verdict table lists materials,
+  sections, integration rules and element assignments as IMPORT, but the
+  neutral zone this engine merges never held them, and v1 compose carried
+  no `/opensees` content. Under ADR 0117 D4 they travel by rehydration of
+  each instance's `/opensees` zone, named `{instance}.{name}`; the engine
+  itself still merges only neutral-zone records.
+- **Analysis content.** The FILTER rows (stages, time series, patterns)
+  stand; their warnings now fire from `bridge()`, and the bridge declares
+  the analysis.

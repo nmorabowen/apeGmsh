@@ -430,3 +430,23 @@ never match on that attribute. The writer does not change: `composed_at` stays
 a wall-clock stamp until `/composed_from` retires under D5. The exclusion is
 matched by exact path (`*` is one path segment), so the same attribute name
 anywhere else is still compared.
+
+
+## Shipped — D7, the v1 removal (AS5-c, October 2026)
+
+Slice [#1595](https://github.com/nmorabowen/apeGmsh/issues/1595), after the
+parity re-run on [#1585](https://github.com/nmorabowen/apeGmsh/issues/1585)
+(0 GAP; rows 29f and 47 confirmed by the maintainer). Deleted: `g.compose`,
+`apeGmsh.compose`, `FEMData.compose`, `Compose.compose`,
+`Compose.MAX_COMPOSE_DEPTH`, `Assembly.add`, the v1 `Assembly.couple(part_a,
+part_b, kind=, ports=)` dispatch, `Assembly.materialize` and
+`src/apeGmsh/assembly/_v1.py`. `Assembly` no longer subclasses the v1 class;
+`AssemblyError` moved to `assembly/_errors.py` and stays public at
+`apeGmsh.assembly.AssemblyError`. The merge engine stays in
+`src/apeGmsh/mesh/_compose.py` (the maintainer's "keep the engine" condition)
+behind the private `_compose_module`, called from `Assembly._merged_fem` and
+`_anchor_translate`; ADR 0038 carries the matching amendment. The compose
+readers (`compose_inspect`, `compose_list`, `compose_tree`) stay. The 165
+v1-call-site tests were migrated (127), deleted as covered (26) or deleted as
+obsolete under a cited ruling (12), and the tests that landed after the re-run
+were migrated too.
