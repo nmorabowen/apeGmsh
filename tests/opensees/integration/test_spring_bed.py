@@ -259,3 +259,70 @@ class TestRefusals:
         with pytest.raises(ValueError):
             ops.spring_bed(gnd, at=side, k=(1.0, float("nan"), 1.0))
         assert len(ops._primitives) == before
+
+
+def _untied_fem(tie_dofs):
+    """A 1x1 mat whose ``at`` set is declared with ``tie_dofs`` (or none)."""
+    with apeGmsh(model_name="spring_bed_untied", verbose=False) as g:
+        g.model.geometry.add_rectangle(0.0, 0.0, 0.0, 1.0, 1.0, label="p")
+        g.physical.add_surface("p", name="P")
+        side = g.decouple_node_set("P", label="side", tie_dofs=tie_dofs)
+        gnd = g.decouple_node_set("P", offset=(0.0, 0.0, -1.0), label="gnd")
+        g.mesh.recipe.structured(size=1.0, fallback="strict")
+        fem = g.mesh.queries.get_fem_data(dim=2)
+    return fem, side, gnd
+
+
+class TestInertBedRefused:
+    """A bed whose ``at`` nodes are not tied to the structure carries
+    nothing (analysis converges, ground reaction 0.0): refused (#1614)."""
+
+    def test_at_without_tie_dofs(self) -> None:
+        fem, side, gnd = _untied_fem(None)
+        ops = _shell_ops(fem)
+        before = len(ops._primitives)
+        with pytest.raises(ValueError, match="not tied to the structure"):
+            ops.spring_bed(gnd, at=side, k=(1e3,) * 3)
+        assert len(ops._primitives) == before
+
+    def test_dirs_not_covered_by_tie_dofs(self) -> None:
+        fem, side, gnd = _untied_fem((3,))
+        with pytest.raises(ValueError, match=r"DOFs \[1, 2\]"):
+            _shell_ops(fem).spring_bed(gnd, at=side, k=(1e3,) * 3)
+
+    def test_orient_needs_all_translations_tied(self) -> None:
+        fem, side, gnd = _untied_fem((3,))
+        with pytest.raises(ValueError, match="not tied"):
+            _shell_ops(fem).spring_bed(gnd, at=side, k=(1e3,), dirs=(3,),
+                                       orient=ORIENT)
+
+    def test_subset_dirs_with_matching_tie_is_accepted(self) -> None:
+        fem, side, gnd = _untied_fem((3,))
+        bed = _shell_ops(fem).spring_bed(gnd, at=side, k=(1e3,), dirs=(3,))
+        assert len(bed) == len(gnd.tags)
+
+
+def test_user_material_named_like_the_unit_is_not_reused(tmp_path) -> None:
+    """A user ``ElasticMaterial(E=5)`` named ``spring_bed_unit_elastic``
+    used to be picked up as the unit spring (deck k = 500, bed.k = 100)."""
+    fem, side, gnd = _mat_fem("spring_bed_collision")
+    ops = _shell_ops(fem)
+    ops.uniaxialMaterial.ElasticMaterial(E=5.0, name="spring_bed_unit_elastic")
+    ops.uniaxialMaterial.Viscous(C=7.0, alpha=1.0,
+                                 name="spring_bed_unit_viscous")
+    bed = ops.spring_bed(gnd, at=side, k=(100.0,) * 3, c=(2.0,) * 3)
+    path = tmp_path / "collision.tcl"
+    with pytest.warns(UserWarning, match="Transformation"):
+        ops.tcl(str(path))
+    elastic = {t[2]: float(t[3]) for t in _lines(path, "uniaxialMaterial Elastic ")}
+    viscous = {t[2]: [float(v) for v in t[3:]]
+               for t in _lines(path, "uniaxialMaterial Viscous ")}
+    # the user's materials stay as declared; the bed adds its own units
+    assert sorted(elastic.values()) == [1.0, 5.0]
+    assert sorted(viscous.values()) == [[1.0, 1.0], [7.0, 1.0]]
+    unit_e = next(t for t, v in elastic.items() if v == 1.0)
+    unit_v = next(t for t, v in viscous.items() if v == [1.0, 1.0])
+    for t in _lines(path, "uniaxialMaterial Parallel "):
+        assert t[3:5] == [unit_e, unit_v]
+        assert [float(v) for v in t[t.index("-factors") + 1:]] == [100.0, 2.0]
+    assert bed.k[0, 0] == 100.0

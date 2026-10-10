@@ -20,3 +20,7 @@ dashpots, not the global Rayleigh pair, damp the springs. This is the San
 Ramón Tier-2 T2S deck topology; the single-node check of its patch
 (ζ = 0.1 with a global `rayleigh 0 0 1.0 0`) is an engine test. Partitioned
 emit refuses the bed, as every node-pair zeroLength (ADR 0049).
+`spring_bed(..., at=...)` refuses an `at` set that is not tied to the
+structure on every DOF in `dirs` (all of 1..3 with `orient`), since such a
+bed carries no load; the shared unit `Elastic`/`Viscous` are unnamed, so a
+user material called `spring_bed_unit_elastic` is just a user material.

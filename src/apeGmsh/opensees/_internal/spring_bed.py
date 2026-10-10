@@ -48,8 +48,12 @@ OrientValues = Union[
     Callable[[NDArray[np.float64]], Any],
 ]
 
-_UNIT_ELASTIC = "spring_bed_unit_elastic"
-_UNIT_VISCOUS = "spring_bed_unit_viscous"
+#: Provenance keys of the two shared unit materials. They are registered
+#: *unnamed* (``synthesised=``): no entry in the bridge's name table, so a
+#: user material can never be picked up as the unit spring (a user
+#: ``name="spring_bed_unit_elastic"`` is just a user material).
+_UNIT_ELASTIC = "spring_bed:unit_elastic"
+_UNIT_VISCOUS = "spring_bed:unit_viscous"
 
 
 @dataclass(frozen=True, eq=False)
@@ -153,16 +157,12 @@ def _set_def(ref: object, role: str) -> DecoupledNodeSetDef:
     return ref
 
 
-def _unit(ops: "apeSees", name: str, make: Callable[[], UniaxialMaterial]) -> UniaxialMaterial:
-    found = ops._names.get(name)
-    if found is not None:
-        if not isinstance(found, UniaxialMaterial):
-            raise TypeError(
-                f"spring_bed: the bridge name {name!r} is taken by a "
-                f"{type(found).__name__}; rename it."
-            )
-        return found
-    return ops._register(make(), name=name)
+def _unit(ops: "apeSees", key: str, make: Callable[[], UniaxialMaterial]) -> UniaxialMaterial:
+    """The bridge's one shared unit material under ``key``, made on first use."""
+    units = ops._spring_bed_units
+    if key not in units:
+        units[key] = ops._register(make(), synthesised=key)
+    return units[key]
 
 
 def build_spring_bed(
@@ -207,6 +207,22 @@ def build_spring_bed(
                 f"declare both sets on the same source."
             )
         j_tags = tuple(pairs[s] for s in source)
+        # The springs act on the ``at`` node's translations; unless they
+        # are tied to the structure the bed is inert (the analysis
+        # converges, the ground reaction is 0.0). ``orient`` rotates the
+        # spring axes, so every translation is coupled then.
+        need = set(dirs_t) | ({1, 2, 3} if orient is not None else set())
+        tied = set(aset.tie_dofs or ())
+        if not tied or not need <= tied:
+            have = sorted(tied)
+            raise ValueError(
+                f"spring_bed: the at= set {aset.label or aset.source!r} is "
+                f"not tied to the structure on DOFs {sorted(need - tied)} "
+                f"(declared tie_dofs={have if have else None}); the bed "
+                f"would carry no load. Declare it with "
+                f"g.decouple_node_set(..., tie_dofs={tuple(sorted(need))}) "
+                f"or a superset."
+            )
 
     fem = ops.fem
     row_of = {int(t): i for i, t in enumerate(fem.nodes.ids)}

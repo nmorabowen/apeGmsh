@@ -7768,6 +7768,10 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
         # read by ``_resolve`` so reference kwargs accept a name string
         # as well as the object handle.
         self._names: dict[str, Primitive] = {}
+        # ``ops.spring_bed``'s shared unit Elastic / Viscous, by their
+        # synthesised provenance key. Kept out of ``_names`` so no user
+        # material name can be mistaken for them.
+        self._spring_bed_units: dict[str, UniaxialMaterial] = {}
         # ADR 0112 D3 (V2d): where in the user's source each primitive
         # was declared.  Filled by ``_register`` through the shared
         # capture helper, one record per user call, keyed
