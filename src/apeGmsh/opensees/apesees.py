@@ -221,6 +221,8 @@ if TYPE_CHECKING:
 
     from .emitter.live import LiveOpsEmitter
     from ._internal.tag_plan import NamedMembers, NamedRegion, RegionSite
+    from apeGmsh._kernel.defs.decoupled import DecoupledNodeSetDef
+    from ._internal.spring_bed import OrientValues, SpringBed, SpringValues
 
 
 __all__ = ["apeSees", "BuiltModel", "ExplicitRunResult"]
@@ -7835,6 +7837,10 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
         # read by ``_resolve`` so reference kwargs accept a name string
         # as well as the object handle.
         self._names: dict[str, Primitive] = {}
+        # ``ops.spring_bed``'s shared unit Elastic / Viscous, by their
+        # synthesised provenance key. Kept out of ``_names`` so no user
+        # material name can be mistaken for them.
+        self._spring_bed_units: dict[str, UniaxialMaterial] = {}
         # ADR 0112 D3 (V2d): where in the user's source each primitive
         # was declared.  Filled by ``_register`` through the shared
         # capture helper, one record per user call, keyed
@@ -8394,6 +8400,78 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
             # A handle (DecoupledNodeDef) — store it raw; resolve_ndf_overlay
             # dereferences ``.tag`` at build (fail-loud on a None tag).
             self._ndf_records.append(NdfRecord(handle=target, tag=None, ndf=ndf))
+
+    def spring_bed(
+        self,
+        ground: "DecoupledNodeSetDef",
+        *,
+        at: "DecoupledNodeSetDef | None" = None,
+        k: "SpringValues",
+        c: "SpringValues | None" = None,
+        orient: "OrientValues | None" = None,
+        tributary: str | None = None,
+        dirs: "Sequence[int]" = (1, 2, 3),
+        do_rayleigh: bool = False,
+        fix: bool = True,
+        ndf: int = 3,
+        name: str | None = None,
+    ) -> "SpringBed":
+        """A grounded zeroLength spring (and dashpot) on every node of a
+        decoupled node set (ADR 0119 D2) — a distributed foundation bed.
+
+        Spring ``i`` joins the ``ground`` node ``i`` (a
+        ``g.decouple_node_set(...)`` handle) to the ``at`` node with the
+        same source node — the side nodes of a second set declared with
+        ``tie_dofs`` — or, with ``at=None``, to the source node itself.
+        Per spring and direction the bed registers
+        ``uniaxialMaterial Parallel <m> <E1> <V1> -factors k c`` over one
+        ``Elastic 1.0`` and one ``Viscous 1.0 1.0`` shared by every bed of
+        the bridge (``-factors k`` alone when ``c`` is ``None``), one
+        ``zeroLength`` per spring, ``fix`` on the ground nodes (all
+        ``ndf`` DOFs) and the ``ndf`` of the ground and ``at`` nodes.
+
+        Parameters
+        ----------
+        ground, at
+            Resolved ``g.decouple_node_set`` handles on one source.
+        k, c
+            Stiffness and dashpot coefficient per spring and direction:
+            an ``(n, len(dirs))`` array, ``len(dirs)`` values for every
+            spring, or a callable ``f(xyz, area)`` returning the array
+            (``xyz``: the ``(n, 3)`` source coordinates in source order;
+            ``area``: the tributary areas, ``None`` without
+            ``tributary=``). Values must be finite and ``>= 0``.
+        orient
+            ``-orient``: a 6-tuple, an ``(n, 6)`` array or ``f(xyz)``;
+            ``None`` keeps the global axes.
+        tributary
+            A 2-D label or physical group whose element areas, shared
+            equally among each element's corners, give ``area``.
+        dirs
+            The ``-dir`` DOFs, distinct, each ``<= ndf``.
+        do_rayleigh
+            ``False`` (default) keeps the springs out of Rayleigh
+            damping: the dashpots carry the foundation damping.
+        fix
+            Fix the ground nodes (default ``True``).
+        ndf
+            The DOF count stated for the ground and ``at`` nodes; it must
+            equal the ``ndf`` of the node each spring reaches.
+        name
+            A label for the returned record.
+
+        Returns the :class:`~apeGmsh.opensees._internal.spring_bed.SpringBed`
+        record (node tags, ``k``, ``c``, areas, orientations, specs).
+        Partitioned emit refuses node-pair elements (ADR 0049), so a bed
+        emits single-process only.
+        """
+        from ._internal.spring_bed import build_spring_bed
+
+        return build_spring_bed(
+            self, ground, at=at, k=k, c=c, orient=orient,
+            tributary=tributary, dirs=dirs, do_rayleigh=do_rayleigh,
+            fix=fix, ndf=ndf, name=name,
+        )
 
     def initial_stress(
         self,
