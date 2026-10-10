@@ -35,7 +35,7 @@ from __future__ import annotations
 from .._internal.analyze_rc import COMMIT_ABORT_MESSAGE, COMMIT_ABORT_RC
 from .._internal.build import BridgeError, stage_marker_name
 from .._rc_c2_flags import warn_rc_c2_deck
-from .._target import BackendInfo
+from .._target import BackendInfo, OpenSeesTarget
 
 import math
 import os
@@ -53,9 +53,11 @@ from .base import (
 
 
 __all__ = [
+    "DECK_BANNER",
     "PartitionSpan",
     "TclEmitter",
     "TCL_COUPLING_TOKENS_MIN_BUILD",
+    "deck_backend",
     "provenance_stamp",
 ]
 
@@ -86,6 +88,29 @@ def provenance_stamp(backend: BackendInfo) -> str:
     if backend.build is not None:
         stamp += f"; build {backend.build}"
     return stamp
+
+
+def deck_backend(target: OpenSeesTarget | None) -> BackendInfo | None:
+    """The :class:`BackendInfo` a deck built for ``target`` is stamped with.
+
+    The deck emitters' ``backend=``.  The stamp names the target the deck
+    is built for, and nothing else:
+
+    * a pinned ``mode="fork"`` / ``"stock"`` stamps that kind, with no
+      build: the deck runs on whatever binary the subprocess binds, and
+      no probe of that binary has answered;
+    * ``mode="auto"``, or no target, stamps nothing.  The live resolver's
+      verdict describes the in-process module, not the binary a deck runs
+      on, and reading it would make the same model's deck depend on what
+      ran earlier in the process.
+    """
+    if target is None or target.mode == "auto":
+        return None
+    kind: Literal["fork", "stock"] = "fork" if target.mode == "fork" else "stock"
+    return BackendInfo(
+        kind=kind, build=None, version=None,
+        source=f"OpenSeesTarget(mode={target.mode!r})",
+    )
 
 #: Minimum fork build for ``k`` / ``dofs`` / ``host`` tokens on the Tcl
 #: target's coupling / embedded-node / embedded-rebar family

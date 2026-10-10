@@ -117,6 +117,13 @@ self-contained.
 
   An attribute with the same name anywhere else is hashed. A new
   wall-clock field is a determinism bug, and the dump must expose it.
+- **Masked in the decks.** The provenance stamp on the second line of
+  every deck, `# apeGmsh <version>; backend <kind>[; build <sha>]`
+  (F2-d, #1511), has its version masked as `<VERSION>` and its build as
+  `<BUILD>` (`STAMP_LINE` in `builder.py`). The kind is not masked: it is
+  what the deck was emitted for. `build_model` pins
+  `OpenSeesTarget(mode="stock")`, so every cell reads `backend stock`
+  whatever the process's live resolver has answered.
 - **Not masked.** `schema_version`, `opensees_schema_version` and
   `snapshot_id` (empty for a stub). These are emit outputs, so a change to
   any of them is a real change.

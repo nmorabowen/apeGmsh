@@ -7938,9 +7938,9 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
         if not self.capabilities().has_fork:
             raise RuntimeError(
                 "OpenSeesTarget(require_fork=True) but the in-process "
-                "openseespy build does not look like the Ladruno fork "
-                "(the resolved backend lacks the fork-only "
-                "'criticalTimeStep' command). Launch "
+                "openseespy build is not the Ladruno fork (its "
+                "BackendInfo reads kind='stock': ladrunoBuild() did not "
+                "answer a git sha). Launch "
                 "this script under a python whose openseespy is the fork "
                 "build, or drop require_fork to run on stock OpenSees."
             )
@@ -9031,7 +9031,7 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
         siblings promoted atomically on clean completion — a mid-emit
         exception never leaves a half-written deck.
         """
-        from .emitter.tcl import TclEmitter
+        from .emitter.tcl import TclEmitter, deck_backend
 
         if flat and per_rank:
             raise ValueError(
@@ -9041,7 +9041,7 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
                 "(ADR 0061). Drop one of the two flags."
             )
         bm = self.build()
-        emitter = TclEmitter()
+        emitter = TclEmitter(backend=deck_backend(self._opensees))
         emitter._emit_progress = bool(progress)
         # ADR 0099 S5: ``per_rank`` is applied around / after ``bm.emit``
         # (live fragment routing under ``stream``, post-hoc span slicing
@@ -9236,7 +9236,7 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
         NotImplementedError
             If ``target != "tcl"`` or the model has registered stages.
         """
-        from .emitter.tcl import TclEmitter
+        from .emitter.tcl import TclEmitter, deck_backend
 
         if solver not in ("feast", "arpack"):
             raise ValueError(
@@ -9298,7 +9298,7 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
             )
 
         bm = self.build()
-        emitter = TclEmitter()
+        emitter = TclEmitter(backend=deck_backend(self._opensees))
         # L3 FEAST needs the FULL model on every rank — force the flat
         # (replicated) emit even for a partition-authored fem, exactly as
         # the live emitter does (ADR 0077 P2 live finding).
@@ -9469,7 +9469,7 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
         signal. Run it under ``mpiexec``; for a serial oracle build the
         model unpartitioned and use Tier 0 (:meth:`eigen`).
         """
-        from .emitter.tcl import TclEmitter
+        from .emitter.tcl import TclEmitter, deck_backend
 
         if len(self._fem.partitions) < 2:
             raise ValueError(
@@ -9503,7 +9503,7 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
                 "the deck forces it), or use solver='feast'."
             )
 
-        emitter = TclEmitter()
+        emitter = TclEmitter(backend=deck_backend(self._opensees))
         # The Tier-1B preamble is FORCED below, so suppress the ADR 0027
         # INV-5 auto-emit that would otherwise put a second (identical)
         # numberer/system pair above it. Nothing is lost: the auto-emit's
@@ -9587,6 +9587,7 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
         ``ops.tcl(path, stream=True)``.
         """
         from .emitter.py import PyEmitter
+        from .emitter.tcl import deck_backend
 
         if stream:
             raise ValueError(
@@ -9596,7 +9597,7 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
                 "A1–A3); use ops.tcl(path, stream=True) instead."
             )
         bm = self.build()
-        emitter = PyEmitter()
+        emitter = PyEmitter(backend=deck_backend(self._opensees))
         emitter._emit_progress = bool(progress)
         pre_prof, post_prof = self._split_profiler_records()
         bm.emit(emitter)
