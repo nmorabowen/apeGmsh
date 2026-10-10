@@ -42,7 +42,7 @@ from typing import Any, Sequence
 
 import numpy as np
 
-from ._v1 import AssemblyError
+from ._errors import AssemblyError
 
 __all__ = [
     "TIE_KINDS",

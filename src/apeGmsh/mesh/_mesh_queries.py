@@ -239,14 +239,6 @@ class _Queries:
         result = FEMData.from_gmsh(
             dim=dim, session=parent, remove_orphans=remove_orphans)
 
-        # Re-apply any stored compose bundles in compose-call order so
-        # composed modules survive broker mutations on the session.
-        bundles = getattr(parent, "_compose_bundles", ())
-        if bundles and is_default:
-            from ._compose import _merge_bundle_into_fem
-            for bundle in bundles:
-                result = _merge_bundle_into_fem(result, bundle)
-
         self._mesh._log(
             f"get_fem_data(dim={dim}) -> "
             f"{result.info.n_nodes} nodes, "

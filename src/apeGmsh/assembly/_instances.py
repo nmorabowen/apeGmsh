@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Sequence, cast
 
-from ._v1 import AssemblyError
+from ._errors import AssemblyError
 
 __all__ = [
     "Coupling", "Instance", "RefNode", "Tie", "check_dense_ranks",

@@ -42,7 +42,7 @@ import numpy as np
 from apeGmsh.mesh._compose import _apply_geometric_transform, _prefix_namespaced_name
 from apeGmsh.opensees._internal.typed_records import SectionSimpleRecord
 
-from ._v1 import AssemblyError
+from ._errors import AssemblyError
 
 if TYPE_CHECKING:
     from apeGmsh.opensees import apeSees
