@@ -409,6 +409,8 @@ class _StageBuilder:
             sigma_xx=sigma_xx, sigma_yy=sigma_yy, sigma_zz=sigma_zz,
             ramp_steps=ramp_steps, lambda_install=lambda_install,
         )
+        # K1-6: one key space with the flat ``ops.initial_stress``.
+        self._bridge._declare_by_name(record, "initial_stress", name)
         self._initial_stress_records.append(record)
         return record
 
@@ -446,6 +448,8 @@ class _StageBuilder:
                 tuple(int(e) for e in elements) if elements is not None else None
             ),
         )
+        self._bridge._declare_record(  # K1-6
+            record, "activate_absorbing", None)
         self._activate_absorbing_records.append(record)
         return record
 
@@ -923,6 +927,7 @@ class _StageBuilder:
         pg: str | None = None,
         nodes: "Iterable[int | Node] | None" = None,
         dofs: tuple[int, ...],
+        name: str | None = None,
     ) -> None:
         """Apply homogeneous SP constraints (``fix``) bound to this stage.
 
@@ -965,11 +970,17 @@ class _StageBuilder:
         dofs
             ``ndf``-length tuple of 0/1 flags — ``1`` means fix that
             DOF, ``0`` leaves it free.
+        name
+            Labels the declaration (``opensees/fix/<name>`` in
+            ``/opensees/decls``), unique among every ``fix``
+            declaration, flat or staged; ``#k`` when omitted.  A label
+            only: the deck and ``model_hash`` do not change with it.
 
         Raises
         ------
         ValueError
-            If both or neither of ``pg`` / ``nodes`` is supplied.
+            If both or neither of ``pg`` / ``nodes`` is supplied, or
+            ``name`` is already a ``fix`` declaration's.
         """
         if (pg is None) == (nodes is None):
             raise ValueError(
@@ -977,9 +988,10 @@ class _StageBuilder:
                 f"pg= or nodes= (got pg={pg!r}, nodes={nodes!r})."
             )
         nodes_tuple = _iter_tags(nodes) if nodes is not None else None
-        self._fix_records.append(
-            FixRecord(pg=pg, nodes=nodes_tuple, dofs=tuple(dofs)),
-        )
+        rec = FixRecord(pg=pg, nodes=nodes_tuple, dofs=tuple(dofs))
+        # K1-6: one key space with the flat ``ops.fix`` declarations.
+        self._bridge._declare_record(rec, "fix", name)
+        self._fix_records.append(rec)
 
     def support(
         self,
@@ -1110,9 +1122,11 @@ class _StageBuilder:
             self._bridge._stage_claimed_pattern_ids.add(
                 id(self._support_pattern),
             )
-        self._support_records.append(
-            SupportRecord(pg=pg, nodes=nodes_tuple, dofs=tuple(dofs)),
-        )
+        support = SupportRecord(pg=pg, nodes=nodes_tuple, dofs=tuple(dofs))
+        # K1-6: the call's own declaration, beside the synthesised HOLD
+        # series and pattern; its ``sp_hold`` rows carry it.
+        self._bridge._declare_record(support, "support", None)
+        self._support_records.append(support)
 
     def mass(
         self,
@@ -1121,6 +1135,7 @@ class _StageBuilder:
         nodes: "Iterable[int | Node] | None" = None,
         values: tuple[float, ...],
         overwrite: bool = False,
+        name: str | None = None,
     ) -> None:
         """Attach lumped nodal mass bound to this stage.
 
@@ -1155,6 +1170,11 @@ class _StageBuilder:
         overwrite
             When ``True``, V2 skips the cross-tier duplicate-mass
             check for this record.  Defaults to ``False`` (V2 active).
+        name
+            Labels the declaration (``opensees/mass/<name>`` in
+            ``/opensees/decls``), unique among every ``mass``
+            declaration, flat or staged; ``#k`` when omitted.  A label
+            only: the deck and ``model_hash`` do not change with it.
 
         Raises
         ------
@@ -1167,12 +1187,13 @@ class _StageBuilder:
                 f"pg= or nodes= (got pg={pg!r}, nodes={nodes!r})."
             )
         nodes_tuple = _iter_tags(nodes) if nodes is not None else None
-        self._mass_records.append(
-            MassRecord(
-                pg=pg, nodes=nodes_tuple, values=tuple(values),
-                overwrite=bool(overwrite),
-            ),
+        rec = MassRecord(
+            pg=pg, nodes=nodes_tuple, values=tuple(values),
+            overwrite=bool(overwrite),
         )
+        # K1-6: one key space with the flat ``ops.mass`` declarations.
+        self._bridge._declare_record(rec, "mass", name)
+        self._mass_records.append(rec)
 
     # -- Phase SSI-2.E: between-stage Domain mutators --------------------
 
@@ -1229,11 +1250,9 @@ class _StageBuilder:
                 "at least one DOF index."
             )
         nodes_tuple = _iter_tags(nodes) if nodes is not None else None
-        self._remove_sp_records.append(
-            SPRemovalRecord(
-                pg=pg, nodes=nodes_tuple, dofs=dofs_tuple,
-            ),
-        )
+        removal = SPRemovalRecord(pg=pg, nodes=nodes_tuple, dofs=dofs_tuple)
+        self._bridge._declare_record(removal, "remove_sp", None)  # K1-6
+        self._remove_sp_records.append(removal)
 
     def remove_bc(
         self,
@@ -1315,9 +1334,9 @@ class _StageBuilder:
         elements_tuple = (
             None if elements is None else tuple(int(e) for e in elements)
         )
-        self._remove_element_records.append(
-            ElementRemovalRecord(pg=pg, elements=elements_tuple),
-        )
+        removal = ElementRemovalRecord(pg=pg, elements=elements_tuple)
+        self._bridge._declare_record(removal, "remove_element", None)  # K1-6
+        self._remove_element_records.append(removal)
 
     def update_material_stage(
         self,
@@ -1410,9 +1429,10 @@ class _StageBuilder:
                     f"{', '.join(sorted(STAGED_MATERIAL_CLASSES))}."
                 )
             mat_tags.append(int(tag))
-        self._update_material_stage_records.append(
-            MaterialStageRecord(mat_tags=tuple(mat_tags), stage=stage_i),
-        )
+        flip = MaterialStageRecord(mat_tags=tuple(mat_tags), stage=stage_i)
+        self._bridge._declare_record(  # K1-6
+            flip, "update_material_stage", None)
+        self._update_material_stage_records.append(flip)
 
     def update_parameter(
         self,
@@ -1626,11 +1646,10 @@ class _StageBuilder:
                 f"pg= or nodes= (got pg={pg!r}, nodes={nodes!r})."
             )
         nodes_tuple = _iter_tags(nodes) if nodes is not None else None
-        self._region_records.append(
-            RegionAssignmentRecord(
-                name=str(name), pg=pg, nodes=nodes_tuple,
-            ),
-        )
+        region = RegionAssignmentRecord(name=str(name), pg=pg, nodes=nodes_tuple)
+        # K1-6: every assignment to one region name is one declaration.
+        self._bridge._declare_region(region)
+        self._region_records.append(region)
 
     def recorder(self, spec: Recorder) -> None:
         """Bind a previously-registered recorder to this stage (PULL).
@@ -1972,6 +1991,8 @@ class _StageBuilder:
                 f"Stage {self._name!r}.profile: already called; "
                 "stages support one profiler bracket each."
             )
-        self._profile = ProfileRecord(
+        profile = ProfileRecord(
             deep=bool(deep), memory=bool(memory), per_step=bool(per_step),
         )
+        self._bridge._declare_record(profile, "profile", None)  # K1-6
+        self._profile = profile

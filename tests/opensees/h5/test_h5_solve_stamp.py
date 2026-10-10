@@ -24,6 +24,7 @@ them. Oracles:
 """
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import h5py
@@ -40,7 +41,10 @@ from apeGmsh.opensees.emitter.h5 import H5Emitter
 from apeGmsh.opensees.emitter.h5_reader import MalformedH5Error
 from apeGmsh.opensees.opensees_model import refuse_live_requires
 
-from tests.fixtures.schema import OPENSEES_CURRENT, OPENSEES_PRIOR_MINOR
+from tests.fixtures.schema import (
+    OPENSEES_CURRENT,
+    OPENSEES_SOLVE_STAMP_FROM,
+)
 from tests.opensees.h5._opensees_model_fixtures import build_simple_frame_fem
 
 _CORPUS = Path(__file__).resolve().parents[2] / "fixtures" / "schema_corpus"
@@ -119,11 +123,25 @@ def test_a_writer_never_handed_a_stamp_writes_no_attribute(tmp_path: Path) -> No
 
 
 def test_prior_minor_corpus_file_has_no_stamp() -> None:
-    minor = ".".join(OPENSEES_PRIOR_MINOR.split(".")[:2])
-    path = _CORPUS / f"opensees_{minor}.h5"
-    assert path.exists(), f"corpus file {path.name} missing; rebuild the corpus"
-    with h5_reader.open(str(path)) as m:
-        assert m.solve_stamp() is None
+    """The newest corpus file below the stamp's minor carries none, and
+    the stamp's own file does: a fixed point of the history, whatever
+    the current or prior minor is."""
+    def minor_of(text: str) -> tuple[int, int]:
+        major, minor = text.split(".")[:2]
+        return int(major), int(minor)
+
+    stamp_from = minor_of(OPENSEES_SOLVE_STAMP_FROM)
+    plain = re.compile(r"opensees_(\d+\.\d+)\.h5")   # not the variants
+    minors = sorted(
+        minor_of(match.group(1))
+        for p in _CORPUS.glob("opensees_*.h5")
+        if (match := plain.fullmatch(p.name)) is not None)
+    below = [m for m in minors if m < stamp_from]
+    assert below and stamp_from in minors, "rebuild the corpus"
+    for minor, stamped in ((below[-1], False), (stamp_from, True)):
+        path = _CORPUS / f"opensees_{minor[0]}.{minor[1]}.h5"
+        with h5_reader.open(str(path)) as m:
+            assert (m.solve_stamp() is not None) is stamped, path.name
 
 
 def test_set_solve_stamp_refuses_a_second_call_and_bad_arguments() -> None:

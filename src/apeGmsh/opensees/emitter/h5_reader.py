@@ -65,6 +65,8 @@ if TYPE_CHECKING:
 
 __all__ = [
     "CommandRecordRO",
+    "DeclarationRO",
+    "DeclarationTable",
     "H5Model",
     "MalformedH5Error",
     "PartitionEmittedRecord",
@@ -127,8 +129,10 @@ class ProgramRun:
     ``row`` ``-1`` for calls the archive does not carry (``ledger``
     verbs). ``row`` is the record's ordinal among the records ``method``
     wrote to ``store`` in that stage, in emit order; a partition-
-    replicated call repeats its first capture's row. ``decl`` is ``-1``
-    until ``/opensees/decls`` exists.
+    replicated call repeats its first capture's row. ``decl`` is always
+    ``-1``: the column is hashed and a declaration is a label (A7), so the
+    declaration of a call's row is read from the hash-excluded
+    ``/opensees/decls`` instead (:meth:`H5Model.declarations`, 2.25.0).
     """
 
     first: int
@@ -169,6 +173,71 @@ class CommandRecordRO:
     def keywords(self) -> dict[str, int | float | str]:
         """The arguments passed by keyword."""
         return {n: a for a, n in zip(self.args, self.names) if n}
+
+
+@dataclass(frozen=True, slots=True)
+class DeclarationRO:
+    """One ``/opensees/decls`` row (ADR 0114 R5, K1-6, opensees 2.25.0).
+
+    ``key`` is the declaration path (``opensees/<family>/<name|#k>``),
+    the path of its ``/provenance`` record; ``name`` is the user's
+    ``name=``, ``""`` when unnamed; ``synth`` marks an object apeGmsh
+    synthesised inside a user verb.
+    """
+
+    key: str
+    family: str
+    name: str
+    synth: bool
+
+
+@dataclass(frozen=True, slots=True)
+class DeclarationTable:
+    """``/opensees/decls``: the declarations and their joins (K1-6).
+
+    ``decls`` holds one :class:`DeclarationRO` per declaration. ``tags``
+    holds the ``(kind, first, count, decl)`` runs of the tagged ones: the
+    tags ``first .. first + count - 1`` of allocator kind ``kind`` are
+    declaration ``decl``'s (a fan-out element or transform shares its
+    spec's). ``rows`` maps a tagless store path below ``/opensees``
+    (``bcs/fix``, ``bcs/mass``, ``recorders``,
+    ``stages/stage_NNN/bcs/fix`` ...) to one declaration index per row.
+    """
+
+    decls: tuple[DeclarationRO, ...]
+    tags: tuple[tuple[str, int, int, int], ...]
+    rows: Mapping[str, tuple[int, ...]]
+
+    def by_key(self, key: str) -> DeclarationRO:
+        """The declaration whose key is ``key``; an unknown key raises."""
+        for d in self.decls:
+            if d.key == key:
+                return d
+        raise KeyError(f"/opensees/decls has no declaration {key!r}.")
+
+    def for_tag(self, kind: str, tag: int) -> DeclarationRO:
+        """The declaration of tag ``tag`` of allocator kind ``kind``.
+
+        Raises :class:`KeyError` when no run covers it, so a caller never
+        reads a declaration the archive does not record.
+        """
+        for k, first, count, decl in self.tags:
+            if k == kind and first <= int(tag) < first + count:
+                return self.decls[decl]
+        raise KeyError(f"/opensees/decls has no declaration for {kind} {tag}.")
+
+    def for_row(self, store: str, row: int) -> DeclarationRO:
+        """The declaration of row ``row`` of tagless store ``store``.
+
+        Raises :class:`KeyError` for a store the table does not cover and
+        :class:`IndexError` for a row past its end.
+        """
+        if store not in self.rows:
+            raise KeyError(
+                f"/opensees/decls/rows has no store {store!r}; it covers "
+                f"{sorted(self.rows)}."
+            )
+        return self.decls[self.rows[store][row]]
 
 
 #: The ``/opensees`` solve-stamp attributes (ADR 0114 D6, opensees
@@ -1250,6 +1319,92 @@ class H5Model:
         for name in ops["patterns"]:
             out.append(self._pattern_record(ops["patterns"][name]))
         return out
+
+    def declarations(self) -> DeclarationTable | None:
+        """Return ``/opensees/decls`` (ADR 0114 R5, K1-6, opensees 2.25.0).
+
+        ``None`` when the file carries no ``decls`` group: every file below
+        2.25.0, and one no bridge emit wrote (a replay rewrite, a
+        declarative ``ModelData`` file). A group whose columns disagree in
+        length, whose ``tags`` or ``rows`` point past the declarations, or
+        whose ``rows`` column does not match its store's row count raises
+        :class:`MalformedH5Error`.
+        """
+        import numpy as np
+
+        if "opensees" not in self._f or "decls" not in self._f["opensees"]:
+            return None
+        ops = self._f["opensees"]
+        g = ops["decls"]
+
+        def strings(grp: Any, name: str) -> list[str]:
+            return [str(_decode_bytes(v)) for v in grp[name][()]]
+
+        keys = strings(g, "key")
+        families = strings(g, "family")
+        names = strings(g, "name")
+        synth = [int(v) for v in np.asarray(g["synth"][()])]
+        n = len(keys)
+        if not len(families) == len(names) == len(synth) == n:
+            raise MalformedH5Error(
+                "/opensees/decls: key, family, name and synth differ in "
+                f"length ({n}, {len(families)}, {len(names)}, {len(synth)})."
+            )
+        decls = tuple(
+            DeclarationRO(key=k, family=fm, name=nm, synth=bool(s))
+            for k, fm, nm, s in zip(keys, families, names, synth)
+        )
+
+        def in_range(where: str, values: "Sequence[int]") -> None:
+            bad = [v for v in values if not 0 <= v < n]
+            if bad:
+                raise MalformedH5Error(
+                    f"/opensees/decls/{where} points at declaration "
+                    f"{bad[0]}; there are {n}."
+                )
+
+        t = g["tags"]
+        kinds = strings(t, "kind")
+        cols = [[int(v) for v in np.asarray(t[c][()])]
+                for c in ("first", "count", "decl")]
+        if any(len(c) != len(kinds) for c in cols):
+            raise MalformedH5Error(
+                "/opensees/decls/tags: kind, first, count and decl differ "
+                "in length."
+            )
+        in_range("tags/decl", cols[2])
+        tags = tuple(zip(kinds, cols[0], cols[1], cols[2]))
+
+        rows: dict[str, tuple[int, ...]] = {}
+
+        def visit(path: str, obj: Any) -> None:
+            import h5py
+
+            if not isinstance(obj, h5py.Dataset):
+                return
+            column = tuple(int(v) for v in np.asarray(obj[()]))
+            in_range(f"rows/{path}", column)
+            # A dataset store (``bcs/fix``) has one row per entry, a group
+            # store (``recorders``) one child per record, and the columnar
+            # ``commands`` group one entry of ``method`` per row.
+            if path not in ops:
+                expected = 0
+            elif isinstance(ops[path], h5py.Group) and "method" in ops[path]:
+                expected = len(ops[path]["method"])
+            else:
+                expected = len(ops[path])
+            if len(column) != expected:
+                raise MalformedH5Error(
+                    f"/opensees/decls/rows/{path} has {len(column)} entries; "
+                    f"/opensees/{path} has {expected} records."
+                )
+            rows[path] = column
+
+        g["rows"].visititems(visit)
+        from types import MappingProxyType
+
+        return DeclarationTable(
+            decls=decls, tags=tags, rows=MappingProxyType(rows))
 
     def program(self) -> tuple[ProgramRun, ...]:
         """Return ``/opensees/program`` as :class:`ProgramRun` values.

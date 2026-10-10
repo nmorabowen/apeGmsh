@@ -44,12 +44,18 @@ class _RecorderNS(_BridgeNamespace):
         dofs: tuple[int, ...],
         dT: float | None = None,
         time_format: str = "step",
+        name: str | None = None,
     ) -> Node:
         """Construct + register a ``recorder Node``.
 
         Exactly one of ``nodes`` or ``pg`` must be supplied. See
         :class:`apeGmsh.opensees.recorder.Node` for the full parameter
         contract.
+
+        ``name`` labels the recorder's declaration (its
+        ``opensees/recorder/<name>`` key, unique among the recorders,
+        read back from ``/opensees/decls``); a label only,
+        the deck and ``model_hash`` do not change with it.
         """
         return self._bridge._register(
             Node(
@@ -60,7 +66,8 @@ class _RecorderNS(_BridgeNamespace):
                 dofs=dofs,
                 dT=dT,
                 time_format=time_format,
-            )
+            ),
+            name=name, alias=False,
         )
 
     # -- Element --------------------------------------------------------
@@ -73,12 +80,18 @@ class _RecorderNS(_BridgeNamespace):
         pg: str | None = None,
         dT: float | None = None,
         time_format: str = "step",
+        name: str | None = None,
     ) -> Element:
         """Construct + register a ``recorder Element``.
 
         Exactly one of ``elements`` or ``pg`` must be supplied. See
         :class:`apeGmsh.opensees.recorder.Element` for the full
         parameter contract.
+
+        ``name`` labels the recorder's declaration (its
+        ``opensees/recorder/<name>`` key, unique among the recorders,
+        read back from ``/opensees/decls``); a label only,
+        the deck and ``model_hash`` do not change with it.
         """
         return self._bridge._register(
             Element(
@@ -88,7 +101,8 @@ class _RecorderNS(_BridgeNamespace):
                 pg=pg,
                 dT=dT,
                 time_format=time_format,
-            )
+            ),
+            name=name, alias=False,
         )
 
     # -- declare (Phase 9 unified) --------------------------------------
@@ -109,7 +123,7 @@ class _RecorderNS(_BridgeNamespace):
         ids: Iterable[int] | None = None,
         dt: float | None = None,
         n_steps: int | None = None,
-        name: str = "default",
+        name: str | None = None,
         record_name: str | None = None,
         element_class_name: str | None = None,
         file_root: str = ".",
@@ -154,7 +168,14 @@ class _RecorderNS(_BridgeNamespace):
         dt, n_steps
             Recording cadence; at most one may be set.
         name
-            Declaration identifier; multiple coexist on one bridge.
+            The declaration's name (K1-6): the
+            ``.out`` file stem and ``declaration_name`` of every record
+            it fans into, and the ``opensees/recorder/<name>``
+            declaration key in ``/opensees/decls``.
+            A given name is unique among the recorders.
+            Omitted, the declaration is unnamed on the bridge (``#k``)
+            and its records keep the stem ``"default"``, so several
+            unnamed declarations coexist and their decks are unchanged.
         record_name
             Optional per-record name. Auto-generated when ``None``.
         element_class_name
@@ -174,6 +195,8 @@ class _RecorderNS(_BridgeNamespace):
         ------
         RuntimeError
             If ``ops.model(ndm=, ndf=)`` has not been called yet.
+        ValueError
+            If ``name`` is already registered on the bridge.
         """
         ndm = self._bridge._ndm
         ndf = self._bridge._ndf
@@ -201,12 +224,15 @@ class _RecorderNS(_BridgeNamespace):
             ids=ids,
             dt=dt,
             n_steps=n_steps,
-            name=name,
+            name="default" if name is None else name,
             record_name=record_name,
             element_class_name=element_class_name,
             file_root=file_root,
         )
-        return self._bridge._register(decl)
+        # The declaration's own ``name`` keys it when given;
+        # the ``"default"`` stem of an unnamed one is not a name, so two
+        # unnamed declarations do not collide (K1-6).
+        return self._bridge._register(decl, name=name, alias=False)
 
     # -- MPCO -----------------------------------------------------------
     def MPCO(
@@ -221,6 +247,7 @@ class _RecorderNS(_BridgeNamespace):
         nodes_pg: str | None = None,
         elements: tuple[int, ...] | None = None,
         elements_pg: str | None = None,
+        name: str | None = None,
     ) -> MPCO:
         """Construct + register a ``recorder mpco``.
 
@@ -232,6 +259,11 @@ class _RecorderNS(_BridgeNamespace):
         the MPCO line at build time. See
         :class:`apeGmsh.opensees.recorder.MPCO` for the full parameter
         contract.
+
+        ``name`` labels the recorder's declaration (its
+        ``opensees/recorder/<name>`` key, unique among the recorders,
+        read back from ``/opensees/decls``); a label only,
+        the deck and ``model_hash`` do not change with it.
         """
         return self._bridge._register(
             MPCO(
@@ -244,7 +276,8 @@ class _RecorderNS(_BridgeNamespace):
                 nodes_pg=nodes_pg,
                 elements=elements,
                 elements_pg=elements_pg,
-            )
+            ),
+            name=name, alias=False,
         )
 
     # -- Ladruno (fork-only canonical recorder) -------------------------
@@ -262,6 +295,7 @@ class _RecorderNS(_BridgeNamespace):
         nodes_pg: str | None = None,
         elements: tuple[int, ...] | None = None,
         elements_pg: str | None = None,
+        name: str | None = None,
     ) -> Ladruno:
         """Construct + register a ``recorder ladruno`` (fork-only).
 
@@ -283,6 +317,11 @@ class _RecorderNS(_BridgeNamespace):
         alongside any per-region one. Emission works on any build; the
         Ladruno fork is required only to *run* the deck. See
         :class:`apeGmsh.opensees.recorder.Ladruno` for the full contract.
+
+        ``name`` labels the recorder's declaration (its
+        ``opensees/recorder/<name>`` key, unique among the recorders,
+        read back from ``/opensees/decls``); a label only,
+        the deck and ``model_hash`` do not change with it.
         """
         return self._bridge._register(
             Ladruno(
@@ -297,7 +336,8 @@ class _RecorderNS(_BridgeNamespace):
                 nodes_pg=nodes_pg,
                 elements=elements,
                 elements_pg=elements_pg,
-            )
+            ),
+            name=name, alias=False,
         )
 
     # -- Monitor (fork-only live-telemetry SWMR sink) -------------------
@@ -311,6 +351,7 @@ class _RecorderNS(_BridgeNamespace):
         resp: str = "disp",
         every: int | None = None,
         hz: float | None = None,
+        name: str | None = None,
     ) -> Monitor:
         """Construct + register a ``recorder Monitor`` (fork-only).
 
@@ -320,6 +361,11 @@ class _RecorderNS(_BridgeNamespace):
         one of ``nodes`` or ``pg`` must be supplied. Emission works on any
         build; the Ladruno fork is required only to *run* the deck. See
         :class:`apeGmsh.opensees.recorder.Monitor` for the full contract.
+
+        ``name`` labels the recorder's declaration (its
+        ``opensees/recorder/<name>`` key, unique among the recorders,
+        read back from ``/opensees/decls``); a label only,
+        the deck and ``model_hash`` do not change with it.
         """
         return self._bridge._register(
             Monitor(
@@ -330,5 +376,6 @@ class _RecorderNS(_BridgeNamespace):
                 resp=resp,
                 every=every,
                 hz=hz,
-            )
+            ),
+            name=name, alias=False,
         )

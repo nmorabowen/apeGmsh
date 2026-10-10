@@ -169,7 +169,9 @@ model.h5
       │     └── /sweep_{i}                 one group per persisted SectionSweepDef
       ├── /analysis                        attrs + sub-attrs (optional)
       ├── /commands                        calls with no typed store (optional, opensees 2.23.0)
-      └── /program                         run-length emit order (opensees 2.23.0)
+      ├── /program                         run-length emit order (opensees 2.23.0)
+      └── /decls                           the bridge's declarations, hash-excluded
+                                           (optional, opensees 2.25.0)
 ```
 
 The user's PG names, material names, etc. are HDF5 group names — they
@@ -1034,7 +1036,9 @@ Every file the bridge writes from 2.23.0 on carries it; it is hashed.
     row     i4   the record's ordinal among the records `method` wrote
                  to `store` in this stage, in emit order; -1 with store -1
     stage   i4   -1 global, else the `stage_NNN` ordinal
-    decl    i4   -1 (the `/opensees/decls` row, from K1-6)
+    decl    i4   always -1: the column is hashed and a declaration is a
+                 label (A7), so the join lives in the hash-excluded
+                 `/opensees/decls` (opensees 2.25.0)
   @methods     vlen str (M,)
   @stores      vlen str (S,)   VERBS templates, e.g. `{scope}/bcs/fix`;
                                `stage` resolves `{scope}`
@@ -1137,6 +1141,73 @@ material type* rides the generic `element` / `nDMaterial` verb, whose
 row requires nothing, so it does not reach `@requires` until K4 moves
 typed fork verbs onto the command channel. Attributes of `/opensees`
 fold into `model_hash`.
+
+## `/opensees/decls` (optional, opensees 2.25.0)
+
+The bridge's declarations (ADR 0114 R5, K1-6): which user declaration
+each tag and each tagless row came from, under the declaration key of
+its `/provenance` record (ADR 0112 D3). Written on every `apeSees.h5`
+emit; a rewrite (`OpenSeesModel.to_h5`) echoes it. A label, not
+structure: `decls` is in `MODEL_HASH_EXCLUDED_CHILDREN`, so `model_hash`
+does not read it, and the hashed `/opensees/program` `decl` column stays
+`-1`.
+
+```
+/opensees/decls/
+    key       vlen str (N,)   opensees/<family>/<name|#k>, or a synthesised
+                              <verb>:<owner>[/<role>] key; one row per key
+    family    vlen str (N,)   the allocator kind (uniaxialMaterial, element,
+                              recorder, ...) or the tagless verb (fix, mass)
+    name      vlen str (N,)   the user's name=, "" when unnamed
+    synth     i1 (N,)         1 for an object apeGmsh synthesised in a user
+                              verb (the HOLD series of s.support)
+    tags/                     the tagged declarations, as runs
+        kind  vlen str (T,)   allocator kind
+        first i8 (T,)         first tag of the run
+        count i8 (T,)         tags first .. first + count - 1
+        decl  i8 (T,)         row of the declaration
+    rows/<store>  i8 (R,)     one declaration row per record of a tagless
+                              store, aligned to it: bcs/fix, bcs/mass,
+                              recorders (one per group, in index order),
+                              initial_stress (one per stress_NNN),
+                              commands (one per /opensees/commands row),
+                              and under stages/stage_NNN bcs/fix, bcs/mass,
+                              recorders, initial_stress, remove_sp,
+                              remove_element, update_material_stage,
+                              activate_absorbing, rayleigh and
+                              patterns/<hold>/sp_holds (s.support)
+```
+
+The tag join is the tag plan's `(kind, tag)` (#1445 open question 5):
+every registered primitive gives its own tag, except an element spec,
+whose registered tag is never written; its planned fan-out (a run of
+element tags) inherits the spec's row, and an orientation fan-out's extra
+`geomTransf` tags inherit their transform's. A `region` tag joins to its
+site's owner: a named region to its name's first `ops.region` / `s.region`
+call (one declaration per name), a damping attach's region to its
+`Damping` object, a region-scoped Rayleigh's to its `rayleigh` record, a
+filtered recorder's to the recorder. `rows/commands` gives every
+`/opensees/commands` row its declaration (a global `rayleigh`, the `eigen`
++ `modal_damping` pair of `ops.damping.modal`, a stage's `s.profile`
+bracket), and `stages/stage_NNN/rayleigh` each stage `rayleigh` row;
+`ops.equation_constraint` is keyed but writes no row (a ledger verb). An unnamed object apeGmsh
+registers inside a user call that already has its provenance record
+(one record per user call) has no record of its own; it is keyed
+`opensees/<family>/@k` with `synth` 1. The `rows` columns are filled at the head of each
+tagless loop (`H5Emitter.set_declaration`); a partition replica whose
+first capture had none open (a ghost replay before its owner's `fix`)
+takes the owner's, and a row that no declaration claims refuses at
+write; a ghost replay no replica claims (a node only ghosts carry) takes,
+after the emit, the first fix or `remove_sp` record of its replay order
+(global, then stages `0..i`). `fix`, `mass` (flat and staged) and the
+recorders take `name=` for this table only: unique per family (both call
+sites named on a repeat), never in `/opensees/names`;
+`fix_from_model()` / `mass_from_model()` are one declaration each, and a
+user name of the `@<k>` form is refused. `H5Model.declarations()` returns a
+`DeclarationTable` (`for_tag(kind, tag)`, `for_row(store, row)`,
+`by_key(key)`), or `None` for a file without the group;
+`OpenSeesModel.declarations` delegates. A column whose length disagrees
+with its store, or an index past the rows, raises `MalformedH5Error`.
 
 ## `/meta/session_id` and the geometry sibling
 
@@ -1487,7 +1558,7 @@ call `validate_zone_version(...)` for each zone before reading it.
 | Zone | `/meta` key | Root paths | Writer constant (source of truth) | Current | Floor |
 |---|---|---|---|---|---|
 | neutral (broker) | `neutral_schema_version` | `/nodes`, `/elements`, `/physical_groups`, `/labels`, `/mesh_selections`, `/partitions`, `/parts`, `/constraints`, `/reinforce_ties`, `/embed_ties`, `/rebar_elements`, `/contacts`, `/contact_planes`, `/interfaces`, `/loads`, `/masses`, `/composed_from` | [`mesh/_femdata_h5_io.py`](../src/apeGmsh/mesh/_femdata_h5_io.py) `NEUTRAL_SCHEMA_VERSION` | **2.35.0** | **2.10.0** |
-| opensees (bridge) | `opensees_schema_version` | `/opensees/*` | [`opensees/emitter/h5.py`](../src/apeGmsh/opensees/emitter/h5.py) `SCHEMA_VERSION` | **2.24.0** | **2.12.0** |
+| opensees (bridge) | `opensees_schema_version` | `/opensees/*` | [`opensees/emitter/h5.py`](../src/apeGmsh/opensees/emitter/h5.py) `SCHEMA_VERSION` | **2.25.0** | **2.12.0** |
 | results | `results_schema_version` | `/stages/*` (composed `results.h5`, at file root) | [`results/schema/_versions.py`](../src/apeGmsh/results/schema/_versions.py) `RESULTS_SCHEMA_VERSION` | **1.1.0** | **1.0.0** |
 | cuts (sub-zone of opensees) | — (no own key; rides the opensees zone) | `/opensees/cuts`, `/opensees/sweeps` | [`cuts/_h5_io.py`](../src/apeGmsh/cuts/_h5_io.py) `V4_SCHEMA_VERSION` | 2.5.0 | none of its own: it rides the opensees floor |
 | geometry (ADR 0112 D2) | `geometry_schema_version` | `/geometry` (sibling `<stem>.geometry.h5` only) | [`opensees/_internal/schema_version.py`](../src/apeGmsh/opensees/_internal/schema_version.py) `GEOMETRY_SCHEMA_VERSION` | **1.0.0** | **1.0.0** |
@@ -1900,6 +1971,14 @@ detail lives in the `SCHEMA_VERSION` docstring in
   written together on every `apeSees.h5` emit; a file without them
   reads as "no stamp" (`None`). Attributes of `/opensees` fold into
   `model_hash`. Additive minor (a 2.23.x reader refuses a 2.24.x file,
+  INV-4).
+- `2.25.0` — ADR 0114 R5 (K1-6, #1463): additive — new optional
+  [`/opensees/decls`](#opensees-decls-optional-opensees-2250), the
+  bridge's declarations joined on the tag plan's `(kind, tag)` and to
+  the rows of the tagless stores, carrying the new `name=` of `fix` /
+  `mass` and the recorders' forwarded one. Hash-excluded
+  (`MODEL_HASH_EXCLUDED_CHILDREN`), so `model_hash` is unchanged for
+  every model. Additive minor (a 2.24.x reader refuses a 2.25.x file,
   INV-4).
 
 This is the **current** opensees-zone version (`SCHEMA_VERSION` in

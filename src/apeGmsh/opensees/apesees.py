@@ -18,6 +18,8 @@ allocator). Phase 4 wires:
 from __future__ import annotations
 
 import os
+import re
+import sys
 from dataclasses import dataclass, field, replace
 import warnings
 from typing import (
@@ -204,6 +206,7 @@ from .transform import Cartesian, Orientation
 if TYPE_CHECKING:
     from contextlib import AbstractContextManager
     from pathlib import Path
+    from types import FrameType
 
     # FEMData is the only mesh symbol the bridge depends on (P3, P9).
     # Imported under TYPE_CHECKING so that constructing apeSees does
@@ -347,6 +350,102 @@ def _kind_of(prim: Primitive) -> str:
         f"Primitive {type(prim).__name__} does not inherit from any "
         f"recognized family base (UniaxialMaterial, Section, ...)."
     )
+
+
+#: One bridge declaration (ADR 0114 R5, K1-6): ``(key, family, name,
+#: synth)``, the fields of :class:`~.emitter.h5.Declaration`. ``key`` is
+#: the provenance path ``opensees/<family>/<name|#k>``; ``name`` is ``""``
+#: when unnamed.
+_DeclRow = tuple[str, str, str, bool]
+
+
+#: The ``@k`` key form of an unnamed object registered inside an already
+#: recorded user call (``apeSees._note_decl``); no user name may take it.
+_RESERVED_NAME = re.compile(r"@\d+")
+
+#: The apeGmsh package directory: frames under it are not the user's.
+_APEGMSH_DIR = os.path.normcase(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__)))) + os.sep
+
+
+def _refuse_reserved_name(name: str) -> None:
+    """Refuse a user ``name=`` of the internal ``@k`` key form (K1-6)."""
+    if _RESERVED_NAME.fullmatch(name):
+        raise ValueError(
+            f"apeSees: name {name!r} has the form '@<k>', which keys the "
+            "objects apeGmsh registers inside a recorded user call; pick "
+            "another name=.  Nothing was registered."
+        )
+
+
+def _call_site_text() -> str:
+    """``file:line (function)`` of the first frame outside apeGmsh: the
+    user call that is declaring, for the duplicate-name refusals."""
+    f: "FrameType | None" = sys._getframe(1)
+    while f is not None and os.path.normcase(
+            os.path.abspath(f.f_code.co_filename)).startswith(_APEGMSH_DIR):
+        f = f.f_back
+    if f is None:
+        return "an apeGmsh-internal call"
+    return f"{f.f_code.co_filename}:{f.f_lineno} ({f.f_code.co_name})"
+
+
+class _ModelWideDeclaration:
+    """The object a model-wide verb (``mass_from_model()``,
+    ``fix_from_model()``) is declared under: it has no record of its own
+    at call time, so this stands in for one in ``apeSees._decls``."""
+
+    __slots__ = ("verb",)
+
+    def __init__(self, verb: str) -> None:
+        self.verb = verb
+
+
+class _DeclCursor:
+    """Opens the declaration of each tagless loop (fix, mass, recorder)
+    on the emitter (ADR 0114 R5, K1-6).
+
+    This base is the cursor of a non-archival emitter: a deck has no
+    declarations to open, so both calls do nothing.
+    """
+
+    __slots__ = ()
+
+    def open(self, owner: object) -> None:
+        """The calls that follow are ``owner``'s declaration's."""
+
+    def close(self) -> None:
+        """The calls that follow belong to no declaration."""
+
+
+class _ArchiveDeclCursor(_DeclCursor):
+    """The cursor of an archival emitter: forwards to its
+    ``set_declaration`` side channel. ``index`` maps ``id(owner)`` to the
+    declaration's row; an owner it lacks raises, since its rows would be
+    written with no declaration."""
+
+    __slots__ = ("_side", "_index")
+
+    def __init__(self, side: "H5Emitter", index: "Mapping[int, int]") -> None:
+        self._side = side
+        self._index = index
+
+    def open(self, owner: object) -> None:
+        try:
+            decl = self._index[id(owner)]
+        except KeyError:
+            raise BridgeError(
+                f"BuiltModel.emit: a {type(owner).__name__} reached the "
+                "archive with no declaration; every fix, mass and recorder "
+                "is declared through apeSees (ADR 0114 R5)."
+            ) from None
+        self._side.set_declaration(decl)
+
+    def close(self) -> None:
+        self._side.set_declaration(-1)
+
+
+_NO_DECL_CURSOR = _DeclCursor()
 
 
 def _planned_element_specs(
@@ -802,6 +901,223 @@ class BuiltModel:
     # model's inputs (``TagPlan.planned_for``) and re-plans if not.
     _tag_plans:              "dict[TagMode, TagPlan]" = field(
         default_factory=dict, init=False, compare=False, repr=False)
+    # ADR 0114 R5 (K1-6) — ``id(owner) -> (key, family, name, synth)`` for
+    # every registered primitive, every fix / mass record (flat and staged)
+    # and every model-wide declaration, from ``apeSees.build``. An archival
+    # emit writes it as ``/opensees/decls``; a deck never reads it.
+    _decls:                  "Mapping[int, _DeclRow]" = field(
+        default_factory=dict, compare=False, repr=False)
+    # The declaration rows in first-seen order and ``id(owner) -> row``,
+    # derived from ``_decls`` once (``_declaration_rows``).
+    _decl_memo:              "list[Any]" = field(
+        default_factory=list, init=False, compare=False, repr=False)
+
+    def _declaration_rows(
+        self,
+    ) -> "tuple[tuple[_DeclRow, ...], Mapping[int, int]]":
+        """The declarations, one row per key in first-seen order, and the
+        row of each owner (ADR 0114 R5, K1-6). Two owners that share a key
+        share its row (the records ``fix_from_model()`` stands for); two
+        different declarations under one key raise."""
+        if not self._decl_memo:
+            rows: list[_DeclRow] = []
+            by_key: dict[str, int] = {}
+            index: dict[int, int] = {}
+            for owner, decl in self._decls.items():
+                row = by_key.get(decl[0])
+                if row is None:
+                    row = by_key[decl[0]] = len(rows)
+                    rows.append(decl)
+                elif rows[row] != decl:
+                    raise BridgeError(
+                        f"BuiltModel: two declarations share the key "
+                        f"{decl[0]!r} ({rows[row]!r} and {decl!r})."
+                    )
+                index[owner] = row
+            self._decl_memo[:] = [tuple(rows), index]
+        return self._decl_memo[0], self._decl_memo[1]
+
+    def _declaration_table(
+        self, tag_plan: "TagPlan",
+    ) -> "tuple[tuple[_DeclRow, ...], list[tuple[str, int, int, int]]]":
+        """The declarations and their ``(kind, first, count, decl)`` tag
+        runs, joined on the tag plan's ``(kind, tag)`` (ADR 0114 R5, K1-6;
+        #1445 open question 5).
+
+        Every registered primitive gives its own ``(kind, tag)``, except an
+        element spec: its registered tag is never written, so its rows are
+        its planned fan-out, which inherits the spec's declaration; an
+        orientation fan-out's extra ``geomTransf`` tags inherit their
+        spec's likewise. A primitive with no declaration raises.
+        """
+        import numpy as np
+
+        rows, index = self._declaration_rows()
+
+        def decl_of(owner: object) -> int:
+            try:
+                return index[id(owner)]
+            except KeyError:
+                raise BridgeError(
+                    f"BuiltModel: {type(owner).__name__} has no declaration; "
+                    "every primitive is declared by apeSees._register "
+                    "(ADR 0114 R5)."
+                ) from None
+
+        runs: list[tuple[str, int, int, int]] = []
+        for p in self.primitives:
+            if isinstance(p, Element):
+                continue
+            runs.append((_kind_of(p), int(self.tag_for[id(p)]), 1, decl_of(p)))
+        for spec, sub in tag_plan.elements.specs:
+            decl = decl_of(spec)
+            if not len(sub):
+                continue
+            if sub.tags is None:
+                runs.append(("element", int(sub.tag_start), len(sub), decl))
+                continue
+            tags = np.asarray(sub.tags, dtype=np.int64)
+            breaks = np.flatnonzero(np.diff(tags) != 1) + 1
+            starts = np.concatenate(([0], breaks))
+            ends = np.concatenate((breaks, [tags.shape[0]]))
+            runs.extend(
+                ("element", int(tags[a]), int(b - a), decl)
+                for a, b in zip(starts, ends))
+        fanout = tag_plan.transforms.fanout
+        if fanout is None:
+            raise BridgeError(
+                "BuiltModel: the tag plan carries no transform fan-out; "
+                "plan_tags plans one for every mode."
+            )
+        for transf, lines in fanout.specs:
+            if lines:
+                decl = decl_of(transf)
+                runs.extend(
+                    ("geomTransf", int(tag), 1, decl) for tag, _ in lines[1:])
+        runs.extend(self._region_runs(tag_plan, decl_of))
+        return rows, runs
+
+    def _region_runs(
+        self, tag_plan: "TagPlan", decl_of: "Callable[[object], int]",
+    ) -> "list[tuple[str, int, int, int]]":
+        """The ``region`` tags of the plan, each joined to the declaration
+        that owns its site (K1-6): a named region to its name's first
+        assignment, a damping attach's region to its ``Damping`` object, a
+        region-scoped Rayleigh's to its ``rayleigh`` record, a filtered
+        recorder's to the recorder."""
+        planned = tag_plan.regions.regions
+        if planned is None:
+            raise BridgeError(
+                "BuiltModel: the tag plan carries no regions; plan_tags "
+                "plans them for every mode.")
+        stages = {id(st): st for st in self.stage_records}
+        prims = {id(p): p for p in self.primitives}
+        runs: list[tuple[str, int, int, int]] = []
+        for row in planned:
+            kind, scope = row.site
+            owner: object
+            if kind == "rayleigh":
+                pool_r = (self.rayleigh_records if scope is None
+                          else stages[scope].rayleigh_records)
+                owner = pool_r[cast("tuple[int, int]", row.key)[0]]
+            elif kind == "named":
+                pool = (self.region_records if scope is None
+                        else stages[scope].region_records)
+                owner = next(r for r in pool if r.name == row.key)
+            elif kind == "damping":
+                attach = (self.damping_attach_records if scope is None
+                          else stages[scope].damping_attach_records)
+                owner = attach[cast("tuple[int, int]", row.key)[0]].prim
+            elif kind == "recorder":
+                owner = prims[cast(int, scope)]
+            else:
+                raise BridgeError(
+                    f"BuiltModel: region site {kind!r} has no declaration "
+                    "join (ADR 0114 R5).")
+            runs.append(("region", int(row.tag), 1, decl_of(owner)))
+        return runs
+
+    def _claim_ghost_fixes(self, side: "H5Emitter") -> None:
+        """Give the archive's unclaimed ``fix`` rows their declarations
+        (K1-6). A ghost replay (ADR 0027 INV-2) writes a node's fix from
+        its owner's SP stream, outside the bridge's fix loops. A ghost
+        declared in stage ``i`` replays the owner's whole stream so far
+        (``stage_ghost_sp_ops``): the global fixes, then stages ``0..i``.
+        The row belongs to the first record, in that replay order, that
+        targets ``(node, dofs)``. A row no record matches stays unclaimed
+        and the write refuses it."""
+        want = side.unclaimed_fix_rows()
+        if not want:
+            return
+        index = self._declaration_rows()[1]
+        pools: list[Sequence[FixRecord]] = [self.fix_records, *(
+            stage.fix_records for stage in self.stage_records)]
+        claims: dict[tuple[int, int, tuple[int, ...]], int] = {}
+        for stage_ix in sorted({s for s, _t, _d in want}):
+            # ``-1`` (global) replays the global pool only; stage ``i``
+            # replays the global pool and stages 0..i, in that order.
+            for pool in pools[:stage_ix + 2]:
+                for rec in pool:
+                    dofs = tuple(int(d) for d in rec.dofs)
+                    for node in self._resolve_node_target(rec.pg, rec.nodes):
+                        claims.setdefault(
+                            (stage_ix, int(node), dofs), index[id(rec)])
+        side.claim_fix_rows(claims)
+
+    def _hand_side_channel_rows(
+        self, side: "H5Emitter", global_initial_stress: "Sequence[object]",
+    ) -> None:
+        """Hand the archive the rows columns of the stores its side
+        channels fill (K1-6): the global initial stress (``ops.h5`` passes
+        the bridge's pool, which ``set_initial_stress_records`` took) and
+        each stage's initial stress and absorbing flips."""
+        index = self._declaration_rows()[1]
+
+        def column(records: "Sequence[object]") -> list[int]:
+            out = []
+            for rec in records:
+                if id(rec) not in index:
+                    raise BridgeError(
+                        f"BuiltModel: a {type(rec).__name__} reached the "
+                        "archive with no declaration (ADR 0114 R5).")
+                out.append(index[id(rec)])
+            return out
+
+        side.set_declaration_rows(
+            "initial_stress", column(global_initial_stress))
+        for i, stage in enumerate(self.stage_records):
+            base = f"stages/stage_{i:03d}"
+            side.set_declaration_rows(
+                f"{base}/initial_stress", column(stage.initial_stress_records))
+            side.set_declaration_rows(
+                f"{base}/activate_absorbing",
+                column(stage.activate_absorbing_records))
+
+    def _claim_ghost_removals(self, side: "H5Emitter") -> None:
+        """The ``remove_sp`` twin of :meth:`_claim_ghost_fixes`: a ghost in
+        stage ``i`` replays the releases of stages ``0..i``; the row belongs
+        to the first of those records that targets ``(node, dof)``."""
+        want = side.unclaimed_remove_sp_rows()
+        if not want:
+            return
+        index = self._declaration_rows()[1]
+        claims: dict[tuple[int, int, int], int] = {}
+        for stage_ix in sorted({s for s, _n, _d in want}):
+            for stage in self.stage_records[:stage_ix + 1]:
+                for rec in stage.remove_sp_records:
+                    for node in self._resolve_node_target(rec.pg, rec.nodes):
+                        for dof in rec.dofs:
+                            claims.setdefault(
+                                (stage_ix, int(node), int(dof)),
+                                index[id(rec)])
+        side.claim_remove_sp_rows(claims)
+
+    def _decl_cursor(self, emitter: Emitter) -> _DeclCursor:
+        """The tagless-loop declaration cursor for ``emitter`` (K1-6)."""
+        if not emitter.caps.archival:
+            return _NO_DECL_CURSOR
+        return _ArchiveDeclCursor(
+            _archive_side_channel(emitter), self._declaration_rows()[1])
 
     def _tag_plan(self, mode: "TagMode") -> "TagPlan":
         """The memoised :class:`TagPlan` of emit mode ``mode`` for this model."""
@@ -1548,6 +1864,12 @@ class BuiltModel:
         emitter_can_partition = emitter.caps.supports_partitions
         tag_plan = self._tag_plan(emit_mode(
             self, split=False, supports_partitions=emitter_can_partition))
+        if _emitter_is_archival:
+            # ADR 0114 R5 (K1-6): the archive's declarations, joined on
+            # the plan's ``(kind, tag)``, before any tagless loop opens one.
+            _decl_rows, _decl_runs = self._declaration_table(tag_plan)
+            _archive_side_channel(emitter).set_declarations(
+                _decl_rows, _decl_runs)
 
         # ADR 0027: partitioned vs unpartitioned branch.  The
         # unpartitioned path must be **byte-identical** to the pre-ADR
@@ -1594,6 +1916,11 @@ class BuiltModel:
                 base_resolver=_base_resolver,
             )
         if _emitter_is_archival:
+            # ADR 0114 R5 (K1-6): a ghost-replayed fix no owner's loop
+            # replicated (a node only ghosts carry) takes its record's
+            # declaration now.
+            self._claim_ghost_fixes(_archive_side_channel(emitter))
+            self._claim_ghost_removals(_archive_side_channel(emitter))
             # ADR 0114 D6: the archive records the solve it was emitted
             # for; the writer adds ``@requires`` from the verbs it holds.
             _archive_side_channel(emitter).set_solve_stamp(
@@ -1947,6 +2274,7 @@ class BuiltModel:
         # emit inside their owning stage's block.
         claimed_recorder_ids = self._claimed_recorder_ids()
         claimed_pattern_ids = self._claimed_pattern_ids()
+        rec_cursor = self._decl_cursor(emitter)
         for p in post_element:
             tag = self.tag_for[id(p)]
             if isinstance(p, Pattern):
@@ -1961,11 +2289,13 @@ class BuiltModel:
             elif isinstance(p, Recorder):
                 if id(p) in claimed_recorder_ids:
                     continue
+                rec_cursor.open(p)
                 emit_recorder_spec(
                     p, emitter, tag, self.fem,
                     tag_plan=tag_plan,
                     fem_eid_to_ops_tag=fem_eid_to_ops_tag,
                 )
+                rec_cursor.close()
             else:  # pragma: no cover  - unreachable per partition above
                 p._emit(emitter, tag)
 
@@ -2198,13 +2528,16 @@ class BuiltModel:
             # can release a prior-tier support and immediately re-fix
             # the same DOF / re-bind the same element in this stage.
             # Validators V5 / V6 already gated these at build time.
+            rem_cursor = self._decl_cursor(emitter)
             for sp_rem in stage.remove_sp_records:
+                rem_cursor.open(sp_rem)
                 for node_tag in self._resolve_node_target(
                     sp_rem.pg, sp_rem.nodes,
                 ):
                     for dof in sp_rem.dofs:
                         emitter.remove_sp(int(node_tag), int(dof))
             for ele_rem in stage.remove_element_records:
+                rem_cursor.open(ele_rem)
                 # ``elements=`` from the user is a list of FEM eids
                 # (matching the recorder.Element convention); translate
                 # to OpenSees ops tags at emit time.
@@ -2223,6 +2556,7 @@ class BuiltModel:
                     ops_tag = fem_eid_to_ops_tag.get(int(fem_eid))
                     if ops_tag is not None:
                         emitter.remove_element(int(ops_tag))
+            rem_cursor.close()
 
             # Phase SSI-2.E: SANISAND stage flips.  Emitted AFTER the
             # removals (so a stage can release / re-bind first) and
@@ -2230,11 +2564,14 @@ class BuiltModel:
             # updateMaterialStage reaches a material through the
             # Domain's LIVE elements, not through the material
             # registry.  Validator V7 already gated this at build time.
+            flip_cursor = self._decl_cursor(emitter)
             for mat_stage in stage.update_material_stage_records:
+                flip_cursor.open(mat_stage)
                 for mat_tag in mat_stage.mat_tags:
                     emitter.update_material_stage(
                         int(mat_tag), int(mat_stage.stage),
                     )
+            flip_cursor.close()
 
             # 4. Stage-bound BCs (Phase SSI-2.D PR-B + PR-C): fix +
             # mass + region.  Per-record fan-out via _resolve_node_target
@@ -2243,15 +2580,19 @@ class BuiltModel:
             # allocate one tag per name (V3 guarantees no cross-scope
             # name collision), and emit one ``region $tag -node ...``
             # per name.
+            decl_cursor = self._decl_cursor(emitter)
             for fix_rec in stage.fix_records:
+                decl_cursor.open(fix_rec)
                 for node_tag in self._resolve_node_target(fix_rec.pg, fix_rec.nodes):
                     emitter.fix(int(node_tag), *fix_rec.dofs)
             for mass_rec in stage.mass_records:
+                decl_cursor.open(mass_rec)
                 for node_tag in self._resolve_node_target(mass_rec.pg, mass_rec.nodes):
                     node = int(node_tag)
                     emitter.mass(node, *fit_dof_vector(
                         mass_rec.values, int(inferred_ndf.get(node, self.ndf)),
                         kind="mass", node=node))
+            decl_cursor.close()
             self._emit_stage_regions(stage, emitter, tag_plan)
             # Stage-bound MP constraints — emit AFTER regions, BEFORE
             # domain_change so the constrained nodes / elements (which
@@ -2291,13 +2632,16 @@ class BuiltModel:
                 pat_tag = self.tag_for[id(pat)]
                 ts_tag = self.tag_for[id(pat.series)]
                 emitter.pattern_open("Plain", pat_tag, ts_tag)
+                sup_cursor = self._decl_cursor(emitter)
                 for sup_rec in stage.support_records:
+                    sup_cursor.open(sup_rec)
                     for node_tag in self._resolve_node_target(
                         sup_rec.pg, sup_rec.nodes,
                     ):
                         for dof_idx, flag in enumerate(sup_rec.dofs, start=1):
                             if flag:
                                 emitter.sp_hold(int(node_tag), dof_idx)
+                sup_cursor.close()
                 emitter.pattern_close()
 
             # 5. domainChange — unconditional stage barrier.  Earlier
@@ -2386,13 +2730,16 @@ class BuiltModel:
             # stage's analyze steps.  Same emit_recorder_spec helper
             # as the global path; the recorder's tag was allocated
             # at ops.recorder.X(...) call time and remains valid.
+            rec_cursor = self._decl_cursor(emitter)
             for rec_spec in stage.recorder_specs:
                 rec_spec_tag = self.tag_for[id(rec_spec)]
+                rec_cursor.open(rec_spec)
                 emit_recorder_spec(
                     rec_spec, emitter, rec_spec_tag, self.fem,
                     tag_plan=tag_plan,
                     fem_eid_to_ops_tag=fem_eid_to_ops_tag,
                 )
+            rec_cursor.close()
 
             # Phase SSI-2.E: pre-analyze reset, if requested.  Emits
             # ``reset`` between the recorder declarations and the
@@ -2426,7 +2773,10 @@ class BuiltModel:
             # ``profiler start [flags]`` immediately before THIS
             # stage's analyze loop only.
             if stage.profile is not None:
+                prof_cursor = self._decl_cursor(emitter)  # K1-6
+                prof_cursor.open(stage.profile)
                 emitter.profiler("start", *_stage_profile_start_flags(stage.profile))
+                prof_cursor.close()
             rc = emitter.analyze(
                 steps=stage.n_increments, dt=stage.dt, label=stage.name,
                 strategy=_stage_strategy_spec(stage),
@@ -2444,8 +2794,11 @@ class BuiltModel:
             # name (``stop`` ends the run the way ``ops.profiler.stop``
             # does at bridge level; ``report`` appends the ended run).
             if stage.profile is not None:
+                prof_cursor = self._decl_cursor(emitter)  # K1-6
+                prof_cursor.open(stage.profile)
                 emitter.profiler("stop")
                 emitter.profiler("report", f"{stage.name}.h5")
+                prof_cursor.close()
 
             # 10. Stage close — loadConst + wipeAnalysis + hook clear.
             emitter.stage_close()
@@ -3221,15 +3574,21 @@ class BuiltModel:
                 # masses are ADDITIVE under MP assembly so each node's
                 # mass emits on its primary rank only.
                 eff_ndf = inferred_ndf or {}
+                decl_cursor = self._decl_cursor(emitter)
                 for fix_rec, fix_nodes in fix_plan_by_rank.get(rank, ()):
+                    decl_cursor.open(fix_rec)
                     for nid in fix_nodes:
                         emitter.fix(nid, *fix_rec.dofs)
                 for mass_rec, mass_nodes in mass_plan_by_rank.get(rank, ()):
+                    decl_cursor.open(mass_rec)
                     for nid in mass_nodes:
                         emitter.mass(nid, *fit_dof_vector(
                             mass_rec.values,
                             int(eff_ndf.get(nid, self.ndf)),
                             kind="mass", node=nid))
+                # The snapshot-mass stream is no declaration's rows (and
+                # an archive never takes it: ``_guard_mass_from_model``).
+                decl_cursor.close()
                 for _m in model_mass_by_rank.get(rank, ()):
                     _nid = int(_m.node_id)
                     emitter.mass(_nid, *broker_mass_components(
@@ -3415,12 +3774,14 @@ class BuiltModel:
         # are SKIPPED here — they emit inside their owning stage's
         # block.
         claimed_recorder_ids = self._claimed_recorder_ids()
+        rec_cursor = self._decl_cursor(emitter)
         for p in post_element:
             if not isinstance(p, Recorder):
                 continue
             if id(p) in claimed_recorder_ids:
                 continue
             tag = self.tag_for[id(p)]
+            rec_cursor.open(p)
             plan_entry = mpco_filter_plan.get(id(p))
             if plan_entry is not None:
                 # Pre-resolved MPCO: build the materialised spec directly
@@ -3435,6 +3796,7 @@ class BuiltModel:
                     tag_plan=tag_plan,
                     fem_eid_to_ops_tag=fem_eid_to_ops_tag,
                 )
+        rec_cursor.close()
 
         # -- 4. Per-stage emit blocks (Phase SSI-2.C). ----------------
         if staged:
@@ -3682,11 +4044,15 @@ class BuiltModel:
             # (rank-independent), then filter per rank.  Same shape as
             # fix_targets / mass_targets above.
             remove_sp_targets: "list[tuple[int, int]]" = []
+            # K1-6: the record of each target, parallel, for its declaration.
+            remove_sp_owners: "list[Any]" = []
             for sp_rem in stage.remove_sp_records:
                 for nid in self._resolve_node_target(sp_rem.pg, sp_rem.nodes):
                     for dof in sp_rem.dofs:
                         remove_sp_targets.append((int(nid), int(dof)))
+                        remove_sp_owners.append(sp_rem)
             remove_element_targets: "list[int]" = []
+            remove_element_owners: "list[Any]" = []
             for ele_rem in stage.remove_element_records:
                 # ``elements=`` from the user is a list of FEM eids
                 # (matching the recorder.Element convention); translate
@@ -3706,6 +4072,7 @@ class BuiltModel:
                     ops_tag = fem_eid_to_ops_tag.get(int(fem_eid))
                     if ops_tag is not None:
                         remove_element_targets.append(int(ops_tag))
+                        remove_element_owners.append(ele_rem)
 
             # ADR 0052: pre-resolve HOLD support targets ONCE per stage
             # (rank-independent) to ``(node_id, dof_idx)`` pairs, then
@@ -3713,12 +4080,12 @@ class BuiltModel:
             # ``sp`` DOF convention; only flagged DOFs are emitted.  Same
             # INV-4 fan-out as ``fix`` — a HOLD ``sp`` replicates on every
             # rank that owns the node.
-            support_targets: "list[tuple[int, int]]" = []
+            support_targets: "list[tuple[Any, int, int]]" = []
             for srec in stage.support_records:
                 for snid in self._resolve_node_target(srec.pg, srec.nodes):
                     for dof_idx, flag in enumerate(srec.dofs, start=1):
                         if flag:
-                            support_targets.append((int(snid), dof_idx))
+                            support_targets.append((srec, int(snid), dof_idx))
 
             # ADR 0027 INV-2 — this stage's SP delta per node, in the
             # owner's own emit order (removals first, then fixes: the
@@ -3791,18 +4158,20 @@ class BuiltModel:
                     # fires only on the rank that owns the element
                     # (single owner per fem_eid).
                     rank_remove_sp = [
-                        (nid, dof) for nid, dof in remove_sp_targets
+                        (rec, nid, dof) for rec, (nid, dof)
+                        in zip(remove_sp_owners, remove_sp_targets)
                         if nid in rank_owned
                     ]
                     rank_remove_element = [
-                        tag for tag in remove_element_targets
+                        (rec, tag) for rec, tag
+                        in zip(remove_element_owners, remove_element_targets)
                         if element_owner.get(
                             ops_tag_to_fem_eid.get(tag, -1)
                         ) == rank
                     ]
                     # ADR 0052: HOLD ``sp`` targets owned by this rank.
                     rank_support = [
-                        (nid, dof) for nid, dof in support_targets
+                        (rec, nid, dof) for rec, nid, dof in support_targets
                         if nid in rank_owned
                     ]
                     # ADR 0034 / ADR 0027: a stage-CLAIMED MP constraint
@@ -3906,9 +4275,12 @@ class BuiltModel:
                         # that has the node (INV-4 fan-out, mirrors
                         # fix); remove_element fires only on the rank
                         # owning the element.
-                        for nid, dof in rank_remove_sp:
+                        rem_cursor = self._decl_cursor(emitter)
+                        for rem_rec, nid, dof in rank_remove_sp:
+                            rem_cursor.open(rem_rec)
                             emitter.remove_sp(nid, dof)
-                        for ops_tag in rank_remove_element:
+                        for rem_rec, ops_tag in rank_remove_element:
+                            rem_cursor.open(rem_rec)
                             emitter.remove_element(ops_tag)
                         # Phase SSI-2.E: SANISAND stage flips, after
                         # this rank's element fan-out above (the command
@@ -3917,10 +4289,12 @@ class BuiltModel:
                         for mat_stage in (
                             stage.update_material_stage_records
                         ):
+                            rem_cursor.open(mat_stage)
                             for mat_tag in mat_stage.mat_tags:
                                 emitter.update_material_stage(
                                     int(mat_tag), int(mat_stage.stage),
                                 )
+                        rem_cursor.close()
                         # Phase SSI-2.D PR-B + PR-C: per-rank stage-
                         # bound BCs (fix + mass + region).  Targets
                         # pre-resolved above; per-rank filter via
@@ -3928,8 +4302,14 @@ class BuiltModel:
                         # existing INV-4 fan-out convention.  Every
                         # contributing rank writes the one tag the
                         # plan gave each region name.
+                        decl_cursor = self._decl_cursor(emitter)
                         for fix_rec, nid in rank_fix:
+                            decl_cursor.open(fix_rec)
                             emitter.fix(nid, *fix_rec.dofs)
+                        # A ghost replay is no declaration's own call: the
+                        # archive gives its row the owner's declaration
+                        # when the owner's fix replicates it (K1-6).
+                        decl_cursor.close()
                         # ADR 0027 INV-2 forward half: mirror this
                         # stage's SP delta onto the ghosts this rank
                         # already holds.  Each node's ops are already in
@@ -3937,10 +4317,12 @@ class BuiltModel:
                         for _gnid, _gops in rank_ghost_sp:
                             emit_ghost_sp_ops(emitter, _gnid, _gops)
                         for mass_rec, nid in rank_mass:
+                            decl_cursor.open(mass_rec)
                             emitter.mass(int(nid), *fit_dof_vector(
                                 mass_rec.values,
                                 int(inferred_ndf.get(int(nid), self.ndf)),
                                 kind="mass", node=int(nid)))
+                        decl_cursor.close()
                         self._emit_stage_regions_partitioned(
                             stage, emitter, tag_plan,
                             owned_nodes=rank_owned, rank=rank,
@@ -4024,8 +4406,11 @@ class BuiltModel:
                             pat_tag = self.tag_for[id(pat)]
                             ts_tag = self.tag_for[id(pat.series)]
                             emitter.pattern_open("Plain", pat_tag, ts_tag)
-                            for nid, dof in rank_support:
+                            sup_cursor = self._decl_cursor(emitter)
+                            for sup_rec, nid, dof in rank_support:
+                                sup_cursor.open(sup_rec)
                                 emitter.sp_hold(nid, dof)
+                            sup_cursor.close()
                             emitter.pattern_close()
                     finally:
                         emitter.partition_close()
@@ -4168,13 +4553,16 @@ class BuiltModel:
             # the recorder sees the bound analysis chain; BEFORE
             # analyze so the recorder captures the stage's analyze
             # steps.
+            rec_cursor = self._decl_cursor(emitter)
             for rec_spec in stage.recorder_specs:
                 rec_spec_tag = self.tag_for[id(rec_spec)]
+                rec_cursor.open(rec_spec)
                 emit_recorder_spec(
                     rec_spec, emitter, rec_spec_tag, self.fem,
                     tag_plan=tag_plan,
                     fem_eid_to_ops_tag=fem_eid_to_ops_tag,
                 )
+            rec_cursor.close()
 
             # Phase SSI-2.E: pre-analyze reset (global; emits ``reset``
             # outside any partition block — each rank applies locally).
@@ -4217,7 +4605,10 @@ class BuiltModel:
             # ``profiler start [flags]`` immediately before THIS
             # stage's analyze loop only.
             if stage.profile is not None:
+                prof_cursor = self._decl_cursor(emitter)  # K1-6
+                prof_cursor.open(stage.profile)
                 emitter.profiler("start", *_stage_profile_start_flags(stage.profile))
+                prof_cursor.close()
             rc = emitter.analyze(
                 steps=stage.n_increments, dt=stage.dt, label=stage.name,
                 strategy=_stage_strategy_spec(stage),
@@ -4235,8 +4626,11 @@ class BuiltModel:
             # name (``stop`` ends the run the way ``ops.profiler.stop``
             # does at bridge level; ``report`` appends the ended run).
             if stage.profile is not None:
+                prof_cursor = self._decl_cursor(emitter)  # K1-6
+                prof_cursor.open(stage.profile)
                 emitter.profiler("stop")
                 emitter.profiler("report", f"{stage.name}.h5")
+                prof_cursor.close()
 
             # 8. Stage close — loadConst + wipeAnalysis + hook clear.
             set_stage_owned_node_tags(emitter, None)
@@ -5155,11 +5549,14 @@ class BuiltModel:
         inferred_ndf: "dict[int, int] | None" = None,
     ) -> None:
         eff = inferred_ndf or {}
+        decl_cursor = self._decl_cursor(emitter)
         for rec in self.fix_records:
+            decl_cursor.open(rec)
             for node_tag in self._resolve_node_target(rec.pg, rec.nodes):
                 node = int(node_tag)
                 emitter.fix(node, *fit_fix_mask(
                     rec.dofs, int(eff.get(node, self.ndf))))
+        decl_cursor.close()
 
     def _guard_mass_from_model(self, emitter: Emitter) -> bool:
         """Validate a ``mass_from_model`` emit (ADR 0065 Tier 2).
@@ -5207,12 +5604,15 @@ class BuiltModel:
         inferred_ndf: "dict[int, int] | None" = None,
     ) -> None:
         eff = inferred_ndf or {}
+        decl_cursor = self._decl_cursor(emitter)
         for rec in self.mass_records:
+            decl_cursor.open(rec)
             for node_tag in self._resolve_node_target(rec.pg, rec.nodes):
                 node = int(node_tag)
                 emitter.mass(node, *fit_dof_vector(
                     rec.values, int(eff.get(node, self.ndf)),
                     kind="mass", node=node))
+        decl_cursor.close()
         if self.mass_from_model and self._guard_mass_from_model(emitter):
             for m in self.fem.nodes.masses:
                 nid = int(m.node_id)
@@ -5231,12 +5631,15 @@ class BuiltModel:
         the owning rank handles it.
         """
         eff = inferred_ndf or {}
+        decl_cursor = self._decl_cursor(emitter)
         for rec in self.fix_records:
+            decl_cursor.open(rec)
             for node_tag in self._resolve_node_target(rec.pg, rec.nodes):
                 if int(node_tag) in owned_nodes:
                     node = int(node_tag)
                     emitter.fix(node, *fit_fix_mask(
                         rec.dofs, int(eff.get(node, self.ndf))))
+        decl_cursor.close()
 
     def _emit_masses_partitioned(
         self, emitter: Emitter, owned_nodes: set[int],
@@ -5252,13 +5655,16 @@ class BuiltModel:
         shared interface nodes carry their mass once per owning rank.
         """
         eff = inferred_ndf or {}
+        decl_cursor = self._decl_cursor(emitter)
         for rec in self.mass_records:
+            decl_cursor.open(rec)
             for node_tag in self._resolve_node_target(rec.pg, rec.nodes):
                 if int(node_tag) in owned_nodes:
                     node = int(node_tag)
                     emitter.mass(node, *fit_dof_vector(
                         rec.values, int(eff.get(node, self.ndf)),
                         kind="mass", node=node))
+        decl_cursor.close()
         if self.mass_from_model and self._guard_mass_from_model(emitter):
             for m in self.fem.nodes.masses:
                 nid = int(m.node_id)
@@ -6290,10 +6696,13 @@ class BuiltModel:
                 ),
                 stacklevel=2,
             )
+        cursor = self._decl_cursor(emitter)
         for rec in globals_:
+            cursor.open(rec)  # K1-6: its commands / stage rayleigh row
             emitter.rayleigh(
                 rec.alpha_m, rec.beta_k, rec.beta_k_init, rec.beta_k_comm,
             )
+        cursor.close()
         if not scoped:
             return
         region_tags = self._planned_damping_region_tags(
@@ -6489,9 +6898,12 @@ class BuiltModel:
         ``modalDamping <f1> [..]``. A scalar factor applies uniformly to all
         modes; ``modes`` factors apply per-mode.
         """
+        cursor = self._decl_cursor(emitter)
         for rec in self.modal_damping_records:
+            cursor.open(rec)  # K1-6: both commands rows are its
             emitter.eigen(rec.modes, solver=rec.solver)
             emitter.modal_damping(*rec.factors)
+        cursor.close()
 
     def _emit_regions(self, emitter: Emitter, tag_plan: TagPlan) -> None:
         """Fan named-region assignments out into ``emitter.region`` calls.
@@ -7874,6 +8286,20 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
         # ``opensees/<kind>/<name|#k>``; ``h5()`` appends the table to
         # the snapshot's own ``/provenance``.  Never hashed.
         self._provenance = ProvenanceStore()
+        # ADR 0114 R5 (K1-6): the declaration of every registered
+        # primitive and every fix / mass record, by ``id`` of the object
+        # (held, so the id stays unique): ``(key, family, name, synth)``,
+        # ``key`` being the provenance path.  Written as
+        # ``/opensees/decls`` (hash-excluded) through the archive's
+        # ``set_declarations``.  An object apeGmsh registers inside a user
+        # call that already has its record (ADR 0112 D3) is keyed
+        # ``@k`` per family; ``_call_internal_decls`` counts them.
+        self._decls: dict[int, tuple[object, _DeclRow]] = {}
+        self._call_internal_decls: dict[str, int] = {}
+        # Declaration key -> the user call site that declared it, for the
+        # duplicate-name refusals (both sites are named).
+        self._decl_sites: dict[str, str] = {}
+        self._decl_by_key: dict[str, _DeclRow] = {}
         # ADR 0112 D1 (V2d-4b): the automatic model.h5 write, called once
         # at the end of each terminal emit / live build (not ``h5()``).
         self._artifacts = BridgeArtifactWriter(enabled=_artifacts)
@@ -7897,6 +8323,11 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
         # ADR 0051 §4 — opt-in: fix every homogeneous SP on the snapshot.
         # Set by ``fix_from_model()``; materialized into FixRecords at build.
         self._fix_from_model: bool = False
+        # K1-6: the objects that carry the one declaration of
+        # ``mass_from_model()`` / ``fix_from_model()`` in ``_decls``; the
+        # records ``fix_from_model`` materializes at build share it.
+        self._mass_from_model_owner = _ModelWideDeclaration("mass_from_model")
+        self._fix_from_model_owner = _ModelWideDeclaration("fix_from_model")
         # ADR 0049 — ``ops.ndf`` directives (element-less decoupled nodes only).
         self._ndf_records: list[NdfRecord] = []
         self._region_records: list[RegionAssignmentRecord] = []
@@ -8225,6 +8656,7 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
         pg: str | None = None,
         nodes: Iterable[int | Node] | None = None,
         dofs: tuple[int, ...],
+        name: str | None = None,
     ) -> None:
         """Apply homogeneous SP constraints (``fix``).
 
@@ -8233,6 +8665,12 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
         instances (from ``ops.nodes.get(...)``); both are normalized
         to tags. The build pipeline expands ``pg`` to a per-node
         fan-out at emit time.
+
+        ``name`` labels the declaration (``opensees/fix/<name>`` in
+        ``model.h5``'s ``/opensees/decls``, read back through
+        ``OpenSeesModel.declarations``); unnamed, it is ``#k``.  Names
+        are unique among the fixes (flat and staged).  A label only: the
+        deck and ``model_hash`` do not change with it.
         """
         if (pg is None) == (nodes is None):
             raise ValueError(
@@ -8240,9 +8678,9 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
                 f"(got pg={pg!r}, nodes={nodes!r})."
             )
         nodes_tuple = _iter_tags(nodes) if nodes is not None else None
-        self._fix_records.append(
-            FixRecord(pg=pg, nodes=nodes_tuple, dofs=tuple(dofs)),
-        )
+        rec = FixRecord(pg=pg, nodes=nodes_tuple, dofs=tuple(dofs))
+        self._declare_record(rec, "fix", name)
+        self._fix_records.append(rec)
 
     def equation_constraint(
         self,
@@ -8298,11 +8736,12 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
                     f"be a (node, dof, coef) triple, got {triple!r}."
                 ) from None
             rows.append((_iter_tags([rn])[0], rd, rc))
-        self._equation_constraint_records.append(
-            make_equation_constraint_record(
-                _iter_tags([cnode])[0], cdof, coef, rows,
-            ),
+        rec = make_equation_constraint_record(
+            _iter_tags([cnode])[0], cdof, coef, rows,
         )
+        # K1-6: a declaration with no archived rows (a ledger verb).
+        self._declare_record(rec, "equation_constraint", None)
+        self._equation_constraint_records.append(rec)
 
     def mass(
         self,
@@ -8311,6 +8750,7 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
         nodes: Iterable[int | Node] | None = None,
         values: tuple[float, ...],
         overwrite: bool = False,
+        name: str | None = None,
     ) -> None:
         """Attach lumped nodal mass.
 
@@ -8321,6 +8761,9 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
         V2's cross-tier duplicate-mass check.  Rare at the global tier
         but kept for symmetry with the stage-bound :meth:`_StageBuilder.mass`
         — see that method for the typical use case.
+
+        ``name`` labels the declaration (``opensees/mass/<name>`` in
+        ``/opensees/decls``), as for :meth:`fix`; a label only.
         """
         if (pg is None) == (nodes is None):
             raise ValueError(
@@ -8328,12 +8771,12 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
                 f"(got pg={pg!r}, nodes={nodes!r})."
             )
         nodes_tuple = _iter_tags(nodes) if nodes is not None else None
-        self._mass_records.append(
-            MassRecord(
-                pg=pg, nodes=nodes_tuple, values=tuple(values),
-                overwrite=bool(overwrite),
-            ),
+        rec = MassRecord(
+            pg=pg, nodes=nodes_tuple, values=tuple(values),
+            overwrite=bool(overwrite),
         )
+        self._declare_record(rec, "mass", name)
+        self._mass_records.append(rec)
 
     def mass_from_model(self) -> None:
         """Stream per-node lumped masses straight from the model snapshot.
@@ -8355,6 +8798,9 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
         the H5 archival emitter rejects it (masses already persist in
         ``model.h5`` via ``fem.nodes.masses``).
         """
+        if not self._mass_from_model:
+            # One declaration, however often it is called (K1-6).
+            self._declare_record(self._mass_from_model_owner, "mass", None)
         self._mass_from_model = True
 
     def fix_from_model(self) -> None:
@@ -8379,6 +8825,9 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
         (node, DOF) pairs: an overlap raises at build, since OpenSees
         refuses a second SP on a constrained DOF.
         """
+        if not self._fix_from_model:
+            # One declaration; the records build() materializes share it.
+            self._declare_record(self._fix_from_model_owner, "fix", None)
         self._fix_from_model = True
 
     def ndf(self, target: object = None, *, ndf: int) -> None:
@@ -8555,6 +9004,7 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
             sigma_xx=sigma_xx, sigma_yy=sigma_yy, sigma_zz=sigma_zz,
             ramp_steps=ramp_steps, lambda_install=lambda_install,
         )
+        self._declare_by_name(record, "initial_stress", name)  # K1-6
         self._initial_stress_records.append(record)
         # Phase SSI-2.A: return the record so callers can pass it to
         # ``with ops.stage(...) as s: s.add(record)`` which moves it
@@ -8915,11 +9365,9 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
                 f"(got pg={pg!r}, nodes={nodes!r})."
             )
         nodes_tuple = _iter_tags(nodes) if nodes is not None else None
-        self._region_records.append(
-            RegionAssignmentRecord(
-                name=str(name), pg=pg, nodes=nodes_tuple,
-            ),
-        )
+        region = RegionAssignmentRecord(name=str(name), pg=pg, nodes=nodes_tuple)
+        self._declare_region(region)  # K1-6: one declaration per name
+        self._region_records.append(region)
 
     def _split_profiler_records(
         self,
@@ -10037,6 +10485,9 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
         # somehow captured brackets must trip the count cross-check,
         # not silently write orphan buckets.
         emitter.set_stage_records(bm.stage_records)
+        # ADR 0114 R5 (K1-6): the side-channel stores' declarations, one
+        # per record in the order the side channels just attached them.
+        bm._hand_side_channel_rows(emitter, self._initial_stress_records)
 
         # ADR 0048 / 0049 — recompute the EFFECTIVE per-node ndf map (the same
         # deterministic inputs bm.emit used: inferred ∪ the ops.ndf overlay)
@@ -10114,7 +10565,7 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
 
     def _register(
         self, prim: _P, *, name: str | None = None,
-        synthesised: str | None = None,
+        synthesised: str | None = None, alias: bool = True,
     ) -> _P:
         """Add ``prim`` to the bridge, allocate its tag, return it.
 
@@ -10136,6 +10587,11 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
         gets a record under that key, pointing at the verb call, with
         ``origin = "synthesised"`` and no ``#k`` number (maintainer
         ruling on #1378).
+
+        ``alias=False`` (the recorders, K1-6) keeps ``name`` a label of
+        the declaration only: unique within its family, never entered in
+        the bridge-wide alias table, since nothing resolves a recorder
+        by name.
         """
         kind = _kind_of(prim)
         # An empty name is no name, exactly as ``capture`` reads it: the
@@ -10149,12 +10605,17 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
         # and is not checked again.
         already = self._tags.tag_for(prim) is not None
         if name is not None:
+            _refuse_reserved_name(name)
+        if name is not None and alias:
             existing = self._names.get(name)
             if existing is not None and existing is not prim:
+                existing_key = self._decls[id(existing)][1][0]
                 raise ValueError(
                     f"apeSees: name {name!r} is already registered to a "
-                    f"{type(existing).__name__}; names must be unique per "
-                    "bridge.  Pick a different name= (or pass the object "
+                    f"{type(existing).__name__} ('{existing_key}', at "
+                    f"{self._decl_sites.get(existing_key, 'an earlier call')}"
+                    f"), again at {_call_site_text()}; names must be unique "
+                    "per bridge.  Rename one of the two (or pass the object "
                     "handle directly)."
                 )
         if not already:
@@ -10167,26 +10628,115 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
             else:
                 key = self._provenance.next_unnamed_key("opensees", kind)
                 what = "unnamed key"
-            if self._provenance.has("opensees", kind, key):
-                raise ValueError(
-                    f"apeSees: the {what} {key!r} of this "
-                    f"{type(prim).__name__} collides with the existing "
-                    f"provenance record 'opensees/{kind}/{key}' (user names "
-                    "and synthesised keys share one key space per family); "
-                    "rename one of them.  Nothing was registered."
-                )
+            self._refuse_taken_key(kind, key, what, type(prim).__name__)
         self._tags.allocate_for(prim, kind)
         self._primitives.append(prim)
-        if name is not None:
+        if name is not None and alias:
             self._names[name] = prim
         if not already:
             if synthesised is not None:
-                self._provenance.capture_synthesised(
+                path = self._provenance.capture_synthesised(
                     "opensees", kind, synthesised)
             else:
-                self._provenance.capture(
+                path = self._provenance.capture(
                     "opensees", kind, name, on_existing="raise")
+            self._note_decl(
+                prim, kind, name, path, synth=synthesised is not None)
         return prim
+
+    def _declare_record(
+        self, owner: object, family: str, name: str | None,
+    ) -> None:
+        """Declare a tagless record (``fix`` / ``mass``) under ``family``
+        (ADR 0114 R5, K1-6): the records' share of ``_register``'s capture.
+
+        ``owner`` is the record (or the model-wide declaration object of
+        ``fix_from_model`` / ``mass_from_model``).  Its key is
+        ``opensees/<family>/<name|#k>``, captured as its ``/provenance``
+        record; a name already used in the family raises before anything
+        is recorded, so the caller appends the record only after this
+        returns.  The name is a label: it never reaches the record, the
+        deck or ``model_hash``.
+        """
+        name = name or None
+        if name is not None:
+            _refuse_reserved_name(name)
+        key = (name if name is not None
+               else self._provenance.next_unnamed_key("opensees", family))
+        self._refuse_taken_key(family, key, "name", type(owner).__name__)
+        path = self._provenance.capture(
+            "opensees", family, name, on_existing="raise")
+        self._note_decl(owner, family, name, path, synth=False)
+
+    def _declare_region(self, record: RegionAssignmentRecord) -> None:
+        """Declare a region assignment (``ops.region`` / ``s.region``, K1-6).
+
+        A region is its name: every assignment to one name merges into one
+        ``region`` line, so they are one declaration,
+        ``opensees/region/<name>``, recorded at its first call.
+        """
+        self._declare_by_name(record, "region", record.name)
+
+    def _declare_by_name(self, owner: object, family: str, name: str) -> None:
+        """Declare ``owner`` under ``opensees/<family>/<name>``, sharing the
+        declaration an earlier owner of that name holds (K1-6). For the
+        families whose name is the declaration's identity (a region), or
+        whose own validation already refuses a repeat at build (an initial
+        stress, ``registered twice``), so the key adds no refusal of its
+        own."""
+        _refuse_reserved_name(name)
+        first = self._decl_by_key.get(f"opensees/{family}/{name}")
+        if first is not None:
+            self._decls[id(owner)] = (owner, first)
+            return
+        self._declare_record(owner, family, name)
+
+    def _refuse_taken_key(
+        self, family: str, key: str, what: str, owner: str,
+    ) -> None:
+        """Raise when ``opensees/<family>/<key>`` is already a declaration.
+
+        Keys are unique per family (A4); the message names the key, the
+        site of the declaration that holds it and this call's site.
+        """
+        path = f"opensees/{family}/{key}"
+        if path not in self._decl_sites and not self._provenance.has(
+                "opensees", family, key):
+            return
+        raise ValueError(
+            f"apeSees: the {what} {key!r} of this {owner} collides with the "
+            f"existing provenance record '{path}', declared at "
+            f"{self._decl_sites.get(path, 'an earlier call')}; this call is "
+            f"at {_call_site_text()}.  User names and synthesised keys share "
+            "one key space per family: rename one of the two.  Nothing was "
+            "registered."
+        )
+
+    def _note_decl(
+        self, owner: object, family: str, name: str | None,
+        path: str | None, *, synth: bool,
+    ) -> None:
+        """Record ``owner``'s declaration ``(key, family, name, synth)``.
+
+        ``path`` is the provenance capture's answer.  ``None`` means the
+        user call already has its record (ADR 0112 D3, one record per
+        user call, which a session store may hold): ``owner`` is an object
+        apeGmsh registers inside that call.  A named one keys by its name;
+        an unnamed one takes ``opensees/<family>/@k`` (the family's k-th
+        such object) with ``synth`` set: ``@`` never forms a provenance
+        ``#k`` key, so the two counters cannot collide.
+        """
+        if path is not None:
+            decl: _DeclRow = (path, family, name or "", synth)
+        elif name is not None:
+            decl = (f"opensees/{family}/{name}", family, name, synth)
+        else:
+            k = self._call_internal_decls.get(family, 0) + 1
+            self._call_internal_decls[family] = k
+            decl = (f"opensees/{family}/@{k}", family, "", True)
+        self._decls[id(owner)] = (owner, decl)
+        self._decl_by_key.setdefault(decl[0], decl)
+        self._decl_sites.setdefault(decl[0], _call_site_text())
 
     def register(self, prim: _P) -> _P:
         """Register a standalone primitive with the bridge (P11).
@@ -10294,9 +10844,12 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
         tag_for: dict[int, int] = {
             id(p): self._tags.tag_for(p) or 0 for p in self._primitives
         }
+        decls: dict[int, _DeclRow] = {
+            oid: decl for oid, (_owner, decl) in self._decls.items()
+        }
         fix_records = tuple(self._fix_records)
         if self._fix_from_model:
-            fix_records += fix_records_from_model(
+            from_model = fix_records_from_model(
                 self._fem,
                 [p for p in self._primitives if isinstance(p, Element)],
                 self._ndm, self._ndf,
@@ -10308,6 +10861,11 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
                       for r in st.support_records),
                 ),
             )
+            # K1-6: the records fix_from_model() stands for share its
+            # one declaration.
+            model_wide = decls[id(self._fix_from_model_owner)]
+            decls.update((id(r), model_wide) for r in from_model)
+            fix_records += from_model
         # ADR 0120 D1: on a partitioned FEM, every element-less node (a
         # decoupled node, a spring bed's ground and side nodes) gets one
         # rank — the rank of the mesh node it reaches — so the per-rank
@@ -10341,6 +10899,7 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
             },
             mass_from_model=self._mass_from_model,
             element_tags=self._element_tags,
+            _decls=decls,
         )
 
     # -- Internal helpers ------------------------------------------------
