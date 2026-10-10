@@ -24,9 +24,10 @@ neutral broker.
 """
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from collections.abc import Callable, Sequence
+from typing import TYPE_CHECKING, Any
 
-from apeGmsh._kernel.defs.decoupled import DecoupledNodeDef
+from apeGmsh._kernel.defs.decoupled import DecoupledNodeDef, DecoupledNodeSetDef
 
 from ._declarations import _DeclarationsMixin
 
@@ -43,11 +44,15 @@ class DecoupledNodesComposite(_DeclarationsMixin):
     tags above every mesh node.
     """
 
-    _DECLARATION_STORES = {"node_defs": (DecoupledNodeDef,)}
+    _DECLARATION_STORES = {
+        "node_defs": (DecoupledNodeDef,),
+        "node_set_defs": (DecoupledNodeSetDef,),
+    }
 
     def __init__(self, parent: "_ApeGmshSession") -> None:
         self._parent = parent
         self.node_defs: list[DecoupledNodeDef] = []
+        self.node_set_defs: list[DecoupledNodeSetDef] = []
 
     # ------------------------------------------------------------------
     # Declaration
@@ -81,17 +86,65 @@ class DecoupledNodesComposite(_DeclarationsMixin):
         defn = DecoupledNodeDef(coords=coords_norm, point=point, label=label)
         return self._declare(defn)
 
+    def add_set(
+        self,
+        source: str,
+        *,
+        offset: "tuple[float, float, float] | Callable[[Any], Any]" = (
+            0.0, 0.0, 0.0),
+        label: str | None = None,
+        tie_dofs: "Sequence[int] | None" = None,
+    ) -> DecoupledNodeSetDef:
+        """Declare one decoupled node per node of ``source`` (ADR 0118 D1).
+
+        ``source`` is a label or physical-group name resolved at
+        extraction; ``offset`` a ``(dx, dy, dz)`` triple or a callable
+        ``f(xyz) -> (n, 3)`` offsets; ``tie_dofs`` adds one ``equal_dof``
+        (retained = source node) per pair on those DOFs. See
+        :class:`~apeGmsh._kernel.defs.decoupled.DecoupledNodeSetDef`.
+        """
+        from ._compose_errors import raise_if_from_h5_session
+        raise_if_from_h5_session(self._parent, "g.decouple_node_set()")
+        if not isinstance(source, str) or not source:
+            raise ValueError(
+                f"g.decouple_node_set: source must be a non-empty label or "
+                f"physical-group name; got {source!r}."
+            )
+        off: "tuple[float, float, float] | Callable[[Any], Any]"
+        if callable(offset):
+            off = offset
+        else:
+            triple = tuple(offset)
+            if len(triple) != 3:
+                raise ValueError(
+                    f"g.decouple_node_set: offset must be a (dx, dy, dz) "
+                    f"triple or a callable; got length {len(triple)}."
+                )
+            off = (float(triple[0]), float(triple[1]), float(triple[2]))
+        dofs: tuple[int, ...] | None = None
+        if tie_dofs is not None:
+            dofs = tuple(int(d) for d in tie_dofs)
+            if not dofs or any(d < 1 or d > 6 for d in dofs)                     or len(set(dofs)) != len(dofs):
+                raise ValueError(
+                    f"g.decouple_node_set: tie_dofs must be distinct DOFs in "
+                    f"1..6; got {tuple(tie_dofs)!r}."
+                )
+        defn = DecoupledNodeSetDef(
+            source=source, offset=off, label=label, tie_dofs=dofs)
+        return self._declare(defn)
+
     # ------------------------------------------------------------------
     # Queries
     # ------------------------------------------------------------------
 
     def __len__(self) -> int:
-        return len(self.node_defs)
+        return len(self.node_defs) + len(self.node_set_defs)
 
     def __repr__(self) -> str:
-        if not self.node_defs:
+        if not self.node_defs and not self.node_set_defs:
             return "DecoupledNodesComposite(empty)"
-        return f"DecoupledNodesComposite({len(self.node_defs)} defs)"
+        return (f"DecoupledNodesComposite({len(self.node_defs)} defs, "
+                f"{len(self.node_set_defs)} sets)")
 
 
 def _validate_location(

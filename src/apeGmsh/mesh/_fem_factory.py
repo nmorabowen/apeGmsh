@@ -291,6 +291,14 @@ def _from_gmsh(
     # MP-deterministic) and they fold into the snapshot_id via _ids +
     # _coords for free.
     decoupled_tags, decoupled_coords = _resolve_decoupled_nodes(session)
+    # Decoupled node *sets* (ADR 0118 D1) continue the same tag range,
+    # resolved by name against the mesh nodes just extracted.
+    set_tags, set_coords, set_ties = _resolve_decoupled_node_sets(
+        session, node_ids, node_coords_all, physical, labels,
+        first_tag=(max(decoupled_tags) + 1 if decoupled_tags else None),
+    )
+    decoupled_tags = list(decoupled_tags) + set_tags
+    decoupled_coords = list(decoupled_coords) + set_coords
     decoupled_set: set[int] = set(int(t) for t in decoupled_tags)
     if decoupled_tags:
         dt = np.asarray(decoupled_tags, dtype=int)
@@ -360,6 +368,10 @@ def _from_gmsh(
                 node_ids, node_coords_all, **resolve_kw)
             node_constraints, surface_constraints = \
                 _split_constraints(all_constraints)
+        # The equal_dof ties of g.decouple_node_set(tie_dofs=...)
+        # (ADR 0118 D1): plain broker MP records, emitted like any other.
+        if set_ties:
+            node_constraints = list(node_constraints) + set_ties
 
         # Embedded reinforcement (g.reinforce, ADR 20 / R2b). Pure
         # geometry like embedded(): each rebar-PG node is inverse-mapped
@@ -651,6 +663,94 @@ def _resolve_decoupled_nodes(session) -> tuple[list[int], list[tuple]]:
         tags.append(tag)
         coords.append((float(xyz[0]), float(xyz[1]), float(xyz[2])))
     return tags, coords
+
+
+def _resolve_decoupled_node_sets(
+    session, node_ids, node_coords, physical, labels, *,
+    first_tag: "int | None",
+) -> "tuple[list[int], list[tuple], list]":
+    """Resolve the session's decoupled node *sets* (ADR 0118 D1).
+
+    Each :class:`~apeGmsh._kernel.defs.decoupled.DecoupledNodeSetDef`
+    names a label or physical group; its mesh nodes (ascending tags)
+    are the source nodes, and one new node is placed at each source
+    node plus the def's offset.  Tags continue from ``first_tag`` (the
+    tag after the last single decoupled node) or ``getMaxNodeTag() + 1``,
+    so the range stays rank-invariant.  Writes ``source_ids`` / ``tags``
+    back onto each def and returns ``(tags, coords, equal_dof records)``.
+    """
+    if session is None:
+        return [], [], []
+    comp = getattr(session, "decoupled_nodes", None)
+    defs = getattr(comp, "node_set_defs", None) if comp is not None else None
+    if not defs:
+        return [], [], []
+
+    from apeGmsh._kernel.records._constraints import NodePairRecord
+    from apeGmsh._kernel.records._kinds import ConstraintKind
+
+    if first_tag is None:
+        import gmsh
+        first_tag = int(gmsh.model.mesh.getMaxNodeTag()) + 1
+    row_of = {int(t): i for i, t in enumerate(np.asarray(node_ids, dtype=int))}
+    xyz_all = np.asarray(node_coords, dtype=float).reshape(-1, 3)
+
+    tags: list[int] = []
+    coords: list[tuple] = []
+    ties: list = []
+    next_tag = int(first_tag)
+    for defn in defs:
+        src = _decoupled_set_source(defn, physical, labels)
+        missing = [t for t in src if t not in row_of]
+        if missing:
+            raise ValueError(
+                f"g.decouple_node_set({defn.source!r}): source nodes "
+                f"{missing[:5]} are not in the extracted node pool."
+            )
+        xyz = xyz_all[[row_of[t] for t in src]]
+        if callable(defn.offset):
+            off = np.asarray(defn.offset(xyz.copy()), dtype=float)
+            if off.shape != xyz.shape or not np.all(np.isfinite(off)):
+                raise ValueError(
+                    f"g.decouple_node_set({defn.source!r}): the offset "
+                    f"callable must return finite offsets of shape "
+                    f"{xyz.shape}; got shape {off.shape}."
+                )
+        else:
+            off = np.broadcast_to(
+                np.asarray(defn.offset, dtype=float), xyz.shape)
+        new_xyz = xyz + off
+        new_tags = list(range(next_tag, next_tag + len(src)))
+        next_tag += len(src)
+        defn.source_ids = tuple(int(t) for t in src)
+        defn.tags = tuple(new_tags)
+        tags.extend(new_tags)
+        coords.extend(tuple(float(v) for v in row) for row in new_xyz)
+        if defn.tie_dofs:
+            for s_tag, n_tag in zip(defn.source_ids, defn.tags):
+                ties.append(NodePairRecord(
+                    kind=ConstraintKind.EQUAL_DOF,
+                    name=defn.label,
+                    master_node=s_tag,
+                    slave_node=n_tag,
+                    dofs=list(defn.tie_dofs),
+                ))
+    return tags, coords, ties
+
+
+def _decoupled_set_source(defn, physical, labels) -> list[int]:
+    """The ascending mesh-node tags of a set's ``source`` name: a label
+    first, then a physical group (the session's resolution order)."""
+    name = defn.source
+    for groups in (labels, physical):
+        if groups is not None and name in groups:
+            ids = sorted({int(t) for t in groups.node_ids(name)})
+            if ids:
+                return ids
+    raise ValueError(
+        f"g.decouple_node_set: source {name!r} names no label or physical "
+        f"group with mesh nodes in this extraction."
+    )
 
 
 def _snapshot_point_coords(session, point_label: str) -> tuple:

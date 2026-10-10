@@ -460,6 +460,36 @@ class apeGmsh(_SessionBase):
             coords=coords, point=point, label=label,
         )
 
+    def decouple_node_set(
+        self,
+        source: str,
+        *,
+        offset: Any = (0.0, 0.0, 0.0),
+        label: "str | None" = None,
+        tie_dofs: Any = None,
+    ) -> Any:
+        """Declare one decoupled node per node of a mesh node set, by name
+        (ADR 0118 D1) — the grounds and the side nodes of a spring bed.
+
+        ``source`` is a label or physical-group name, resolved at
+        ``get_fem_data`` to its mesh nodes (ascending tags). Each new node
+        sits at its source node plus ``offset`` — a ``(dx, dy, dz)``
+        triple, or a callable ``f(xyz) -> (n, 3)`` offsets of the
+        ``(n, 3)`` source coordinates. ``tie_dofs`` (e.g. ``(1, 2, 3)``)
+        adds one ``equal_dof`` per pair, retained = source node, so a
+        3-dof side node follows a 6-dof structural node.
+
+        Returns the
+        :class:`~apeGmsh._kernel.defs.decoupled.DecoupledNodeSetDef`
+        handle; after extraction its ``source_ids`` and ``tags`` pair
+        each source node with its new node (``.pairs()``). The nodes
+        carry no ``ndf`` (ADR 0049); state it on the bridge
+        (``ops.spring_bed`` does).
+        """
+        return self.decoupled_nodes.add_set(
+            source, offset=offset, label=label, tie_dofs=tie_dofs,
+        )
+
     # ------------------------------------------------------------------
     # Persistence
     # ------------------------------------------------------------------
