@@ -837,7 +837,7 @@ class LiveOpsEmitter:
             stiffness, stiffness_p, rotational, pressure,
         )
         # The 4th retained node goes as a string: openseespy's parser
-        # reads it with OPS_GetString and drops an int (#1621).
+        # reads it with OPS_GetString and drops an int.
         self._ops.element(
             "ASDEmbeddedNodeElement", ele_tag, cnode,
             *_embedded_retained_args(master_nodes), *flag_args,

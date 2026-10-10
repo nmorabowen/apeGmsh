@@ -402,7 +402,7 @@ class PyEmitter:
             stiffness, stiffness_p, rotational, pressure,
         )
         # The 4th retained node goes as a string: openseespy's parser
-        # reads it with OPS_GetString and drops an int (#1621).
+        # reads it with OPS_GetString and drops an int.
         self._lines.append(
             _ops_call(
                 "element", "ASDEmbeddedNodeElement",
