@@ -1074,8 +1074,8 @@
   {
    "zone": "opensees",
    "minor": "2.23",
-   "sha": "11690cc700d6f6324b2d48c24a4de242ed4f84cd",
-   "date": "2026-10-09",
+   "sha": "eb1675b9d292d684e27ca473520f62ec884d0aa7",
+   "date": "2026-10-10",
    "version": "2.23.0",
    "bump_commits": [
     "25f841de3bfd700553a95b1617207b2094560926"
@@ -1085,7 +1085,7 @@
    "files": {
     "h5": {
      "name": "opensees_2.23.h5",
-     "sha256": "7b309dfa5cc079bd099103f71048ee5d6c055d92c471cba1c244c16e231feb07"
+     "sha256": "e734f917b8cb3adb5ee83937a2503056219e7c22cc14cb9a75c9f868625902bc"
     },
     "dump": {
      "name": "opensees_2.23.dump.json",
@@ -1104,7 +1104,7 @@
   {
    "zone": "opensees",
    "minor": "2.24",
-   "sha": "f70dcf761f716606f5ab0fc49982725635f1ba1b",
+   "sha": "dadde40a77cb20269fd7ef03b19b8b4d8cd0a050",
    "date": "2026-10-10",
    "version": "2.24.0",
    "bump_commits": [
@@ -1115,7 +1115,7 @@
    "files": {
     "h5": {
      "name": "opensees_2.24.h5",
-     "sha256": "37b41faa340f4836cd09bd600e657203ac585016be7a777293ca392fb4ab7e63"
+     "sha256": "2127599591abcd12b46a76789c6a6d2550379e54b654f2b15815956e130e3864"
     },
     "dump": {
      "name": "opensees_2.24.dump.json",
