@@ -1,14 +1,13 @@
 name: Program probe
 
 # Lessons #1567 (stalled program PRs) and #1544 (double lock holders).
-# Same permissions as orphans.yml; no secret beyond github.token.
+# orphans.yml's permissions plus read-only checks/statuses (the PR check
+# rollup); no secret beyond github.token.
 
 on:
   schedule:
     - cron: '47 5 * * *'
   workflow_dispatch:
-  push:  # TEMP: branch smoke of the token scopes; removed before review
-    branches: [claude/t-w2a-program-probe]
 
 permissions:
   contents: read
@@ -31,9 +30,4 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
-        run: |
-          if [ "${{ github.event_name }}" = push ]; then
-            python scripts/program_probe.py --approved-hours 0 --verdict-hours 0 --lock-hours 0
-          else
-            python scripts/program_probe.py --issue
-          fi
+        run: python scripts/program_probe.py --issue
