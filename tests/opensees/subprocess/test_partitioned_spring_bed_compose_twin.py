@@ -129,7 +129,9 @@ def _run(model_tcl: Path, ranks: "int | None", *, nsteps: int, dt: float) -> dic
     out = r.stdout + r.stderr
     assert r.returncode == 0 and out.count("TWIN_DONE") == (ranks or 1), (
         f"{cmd} exited {r.returncode}:\n{out[-3000:]}")
-    lam = np.array([float(v) for v in (deck.parent / "eig.txt").read_text().split()])
+    # a 3-dof DRM force on a 6-dof node: the DRM set swept in the structure
+    assert "addunbalLoad" not in out, out[-2000:]
+    lam =np.array([float(v) for v in (deck.parent / "eig.txt").read_text().split()])
     disp: dict[int, np.ndarray] = {}
     for f in sorted(deck.parent.glob("disp_*.txt")):
         for line in f.read_text().splitlines():
@@ -197,8 +199,11 @@ def test_spring_bed_ranks_match_serial(bed_serial, tmp_path: Path, ranks: int):
 # Gap 2 — the hosted composition
 # ---------------------------------------------------------------------------
 
-BX, BY, BZ, LAYER, SOIL_H = 8.0, 6.0, 8.0, 1.5, 1.5
-DT, NT, VS = 0.005, 120, 300.0
+# Units N, mm, t, s (as San Ramon): the fork's H5DRM matches a node with no
+# station to the nearest one within 10 model units (its ADR-88 fallback),
+# which in metres would sweep the whole structure into the DRM set.
+BX, BY, BZ, LAYER, SOIL_H = 8000.0, 6000.0, 8000.0, 1500.0, 1500.0
+DT, NT, VS = 0.005, 120, 300.0e3
 
 
 def _in_box(dim, lo, hi, tol=1e-6):
@@ -234,9 +239,9 @@ def _soil_module(path: Path) -> None:
 def _structure_module(path: Path) -> None:
     with apeGmsh(model_name="twin_structure", verbose=False, save_to=str(path)) as g:
         occ = gmsh.model.occ
-        mat = occ.addRectangle(-3, -2, 0, 6, 4)
-        roof = occ.addRectangle(-3, -2, 3, 6, 4)
-        box = occ.addBox(-3, -2, 0, 6, 4, 3)
+        mat = occ.addRectangle(-3000, -2000, 0, 6000, 4000)
+        roof = occ.addRectangle(-3000, -2000, 3000, 6000, 4000)
+        box = occ.addBox(-3000, -2000, 0, 6000, 4000, 3000)
         occ.synchronize()
         faces = [t for _d, t in gmsh.model.getBoundary([(3, box)], oriented=False)]
 
@@ -250,12 +255,12 @@ def _structure_module(path: Path) -> None:
         occ.fragment([(2, mat), (2, roof)], [(2, w) for w in walls])
         occ.synchronize()
         surf = [t for _d, t in gmsh.model.getEntities(2)]
-        mats = _in_box(2, (-3, -2, 0), (3, 2, 0))
-        roofs = _in_box(2, (-3, -2, 3), (3, 2, 3))
+        mats = _in_box(2, (-3000, -2000, 0), (3000, 2000, 0))
+        roofs = _in_box(2, (-3000, -2000, 3000), (3000, 2000, 3000))
         g.physical.add_surface(mats, name="Mat")
         g.physical.add_surface(roofs, name="Roof")
         g.physical.add_surface([s for s in surf if s not in mats + roofs], name="Walls")
-        g.mesh.sizing.set_global_size(0.75)
+        g.mesh.sizing.set_global_size(750.0)
         for s in surf:
             gmsh.model.mesh.setRecombine(2, s)
         g.mesh.generation.generate(dim=2)
@@ -276,8 +281,8 @@ def _drm_file(fem, path: Path) -> None:
     for i, p in enumerate(xyz):
         tau = t - (p[2] + BZ) / VS
         pulse = np.where(tau > 0, np.sin(2 * np.pi * 5.0 * tau) * np.exp(-3 * tau), 0.0)
-        disp[3 * i] = 1e-3 * pulse
-        disp[3 * i + 1] = 0.5e-3 * pulse
+        disp[3 * i] = 1.0 * pulse
+        disp[3 * i + 1] = 0.5 * pulse
     acc = np.gradient(np.gradient(disp, DT, axis=1), DT, axis=1)
     with h5py.File(path, "w") as f:
         d = f.create_group("DRM_Data")
@@ -303,7 +308,7 @@ def hosted_fem(tmp_path_factory):
     _structure_module(d / "structure.h5")
     asm = Assembly("twin", host=d / "structure.h5")
     asm.instance("soil", d / "soil.h5")
-    asm.embedded("soil.top", "Mat", tolerance=1e-3, stiffness=1.0e10, name="mat_embed")
+    asm.embedded("soil.top", "Mat", tolerance=1e-3, stiffness=1.0e7, name="mat_embed")
     fem = asm.fem()
     assert len(fem.partitions) == 0
     return fem
@@ -314,10 +319,10 @@ def _hosted_ops(fem, drm: Path):
 
     ops = apeSees(fem, element_tags="fem", _artifacts=False)
     ops.model(ndm=3, ndf=6)
-    sec = ops.section.ElasticMembranePlateSection(E=30e9, nu=0.2, h=0.3, rho=2400.0)
+    sec = ops.section.ElasticMembranePlateSection(E=30000.0, nu=0.2, h=300.0, rho=2.4e-9)
     for pg in ("Mat", "Walls", "Roof"):
         ops.element.ASDShellQ4(pg=pg, section=sec)
-    soil = ops.nDMaterial.ElasticIsotropic(E=200e6, nu=0.3, rho=2000.0)
+    soil = ops.nDMaterial.ElasticIsotropic(E=200.0, nu=0.3, rho=2.0e-9)
     ops.element.FourNodeTetrahedron(pg="soil.domain", material=soil)
     ops.fix(pg="soil.boundary", dofs=(1, 1, 1))
     ops.damping.rayleigh(on=["Mat", "Walls", "Roof"], alpha_m=0.3, beta_k=0.002)

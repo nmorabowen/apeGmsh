@@ -139,12 +139,20 @@ and `g.compose` stays removed.
 
 | model | ranks | max eigen rel. error | max disp error / peak |
 |---|---|---|---|
-| plate on 35 springs (Gmsh partition) | 2 | 4.4e-15 | 2.8e-15 |
-| | 4 | 6.4e-15 | 2.4e-15 |
-| hosted shell box + soil box, embedded, H5DRM | 2 | 2.3e-14 | 1.6e-14 |
-| | 4 | 4.4e-14 | 3.4e-14 |
+| plate on 35 springs (Gmsh partition) | 1 | 6.1e-15 | 1.3e-15 |
+| | 2 | 6.4e-15 | 1.9e-15 |
+| | 4 | 8.2e-15 | 1.1e-15 |
+| hosted shell box + soil box, embedded, H5DRM (N, mm) | 1 | 4.1e-12 | 3.6e-12 |
+| | 2 | 1.3e-11 | 2.4e-12 |
+| | 4 | 7.2e-12 | 1.2e-11 |
 
-The 1-rank lane (the serial deck under OpenSeesMP) passes the same gates.
+Rank 1 is the serial deck under OpenSeesMP (ParallelPlain + Mumps): the
+hosted model's 1e-11 level is the Mumps-vs-UmfPack round-off of a stiff
+embedded model in N/mm units, not the partition (it is already there on one
+rank). The hosted model is in mm because the fork's H5DRM matches a node
+without a station to the nearest one within 10 model units (its ADR-88
+fallback), which in metres pulls the whole structure into the DRM set.
+
 With ADR 0119's `g.decouple_node_set` + `ops.spring_bed` merged locally (not
 part of this change), a 83-spring bed matched serial to 3.7e-14 (eigen) and
 1.1e-14 (displacement) on 2 and 4 ranks. The port's 4D (86 182 nodes,
