@@ -1100,7 +1100,8 @@ _MASS_FIELDS: dict[str, dict[str, str]] = {
 
 #: A turned mass tensor counts as diagonal when each off-diagonal entry
 #: ``(i, j)`` is within this fraction of the larger of its two turned
-#: diagonal values ``|M_ii|``, ``|M_jj|``.
+#: diagonal values ``|M_ii|``, ``|M_jj|``, with a floor of ``64 eps`` times
+#: the triple's largest value for the roundoff a zero pair still carries.
 _MASS_DIAGONAL_RTOL = 1e-9
 
 
@@ -1160,10 +1161,15 @@ def _place_mass_columns(
         off[:, (0, 1, 2), (0, 1, 2)] = 0.0
         # Each off-diagonal entry is judged against its own pair of turned
         # diagonal values, so a tiny mass beside a huge one is not hidden
-        # by the huge one; ``~(a <= b)`` keeps a NaN from passing.
+        # by the huge one. A pair whose turned values are both zero (the
+        # diaphragm rotary ``(0, 0, Izz)``) still carries the roundoff of
+        # the triple's largest value, so the tolerance has that floor.
+        # ``~(a <= b)`` keeps a NaN from passing.
         mag = np.abs(diag)
-        scale = np.maximum(mag[:, :, None], mag[:, None, :])    # (U, 3, 3)
-        bad = ~(off <= _MASS_DIAGONAL_RTOL * scale).all(axis=(1, 2))
+        pair = np.maximum(mag[:, :, None], mag[:, None, :])     # (U, 3, 3)
+        floor = 64.0 * np.finfo(np.float64).eps * np.abs(uniq).max(axis=1)
+        tol = np.maximum(_MASS_DIAGONAL_RTOL * pair, floor[:, None, None])
+        bad = ~(off <= tol).all(axis=(1, 2))
         if bad.any():
             offenders = node_ids[rows[np.isin(inverse, np.flatnonzero(bad))]]
             shown = ", ".join(str(int(i)) for i in offenders[:5])

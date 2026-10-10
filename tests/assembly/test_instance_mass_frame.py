@@ -286,6 +286,33 @@ def test_non_finite_mass_under_a_rotation_is_refused(mass, rotate):
         _rewrite([rec], rotate)
 
 
+ROT_XY_180 = (1.0, 1.0, 0.0, math.pi)   # x <-> y, z -> -z
+
+
+@pytest.mark.parametrize("mass", [
+    (0.0, 0.0, 5.0, 0.0, 0.0, 0.0),      # translational, two exact zeros
+    (5.0, 5.0, 5.0, 0.0, 0.0, 7.0),      # the diaphragm rotary (0, 0, Izz)
+    (0.0, 0.0, 5.0, 0.0, 0.0, 7.0),
+])
+def test_zero_pair_beside_a_value_survives_a_half_turn_about_xy(mass):
+    """Both turned values of the x-y pair are exactly 0, so the pair scale
+    is ~1e-32 and the roundoff off-diagonal needs the eps floor."""
+    (got,) = _rewrite([MassRecord(node_id=1, mass=mass)], ROT_XY_180)
+    assert got.mass == mass
+
+
+def test_zero_pair_under_a_quarter_turn_permutes_exactly():
+    rec = MassRecord(node_id=1, mass=(0.0, 0.0, 5.0, 0.0, 0.0, 7.0))
+    (got,) = _rewrite([rec], ROT_X_90)
+    assert got.mass == (0.0, 5.0, 0.0, 0.0, 7.0, 0.0)
+
+
+def test_floor_does_not_admit_the_tiny_anisotropic_pair_under_30_degrees():
+    rec = MassRecord(node_id=1, mass=(1e-6, 2e-6, 1000.0, 0.0, 0.0, 0.0))
+    with pytest.raises(ComposeError, match="node\\(s\\) 1 into"):
+        _rewrite([rec], ROT_Z_30)
+
+
 def test_non_finite_mass_without_a_rotation_is_left_alone():
     rec = MassRecord(node_id=7, mass=(math.nan, 2.0, 3.0, 0.0, 0.0, 0.0))
     (got,) = _rewrite([rec], None)
