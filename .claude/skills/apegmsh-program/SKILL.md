@@ -128,3 +128,82 @@ Record first, then stop, when any of these holds:
 - WIP is full;
 - your own context is getting large. In that case, post the handoff and queue a
   continuation chip for the same link.
+
+## Coordinator mode (`/apegmsh-program T`, the live coordinator)
+
+One session coordinates the whole program: it holds no slice, arbitrates the
+locks, relays the maintainer, and runs the weekly triage. These rules come from
+the 2026-10-07 → 10 batch (#1202).
+
+**Boot.** Read the last coordinator handoff on #1202 and the latest comment on
+board #1203. They hold the lock holders, the queue, the open gates and the
+link prompts. Then run `ListAgents`: if another session titled "T coordinator"
+is live, stop (lesson #1507). Announce yourself to every live program session
+and ask each to report to you at every landing, blocker, maintainer question,
+lock handover and handoff.
+
+**Locks.**
+- Only the holder carries a `lock:<file>` label (lesson #1544). The queue order
+  lives in board text, never on labels.
+- Only a slice that a **live session** is working may hold a lock. A slice with
+  no session waits in the queue text.
+- A chain does not hold a hub across a series of slices: each slice releases on
+  landing and re-queues behind any waiting slice that has a live session.
+- Prefer routes that avoid the hub. A slice that finds one skips the queue.
+- On landing, the holder removes its labels and gives them to **no one**; the
+  coordinator hands the lock over and says so on the next holder's issue.
+
+**Stalls (lesson #1567).** Notifications get lost: app restarts, dead
+reviewers, the 600 s watchdog. Never end a turn waiting for CI or a review. At
+every check, look for (a) approved and green PRs not landed, (b) open PRs with
+no `Review-verdict` after about 6 h, (c) lock holders with no PR activity. Read
+the PR, then nudge the session with the exact next command. Reviewers run long
+checks in the background.
+
+**Red `main`.**
+1. Confirm it from `gh run list --branch main` first.
+2. Freeze landings program-wide; the fix PR and the revert are the only
+   exceptions.
+3. Fix forward under a deadline, with a revert PR ready as a draft.
+4. Prove a flaky fix with 2–3 consecutive green reruns.
+5. Lift the freeze by a condition every session can check itself: "`main`'s
+   run on `<sha>` is green".
+6. No masking: no skips, no `os._exit`, no xfail. An environment pin is allowed
+   as a labelled TEMP stopgap.
+7. Check the environment as well as the code: #1571 was a PySide6 release, not
+   the PR that looked guilty.
+
+**Approvals across merges.** A verdict binds to a SHA. An approval carries over
+only when the new delta is a merge of `main` that touches no PR file: compare
+the PR's own diff before and after, and post the carry-over with its reason. A
+hand-resolved conflict needs a delta review.
+
+**Maintainer questions.**
+- Ask one question at a time, explaining what it means for their modelling,
+  with a recommendation first. Record every ruling on the issue it governs
+  before relaying it.
+- Deletions (for example AS5) start with a parity table of v1 versus v2. Every
+  v1 feature must map to a v2 equivalent; any gap stops the deletion and goes
+  to the maintainer.
+- Standing rules:
+  - Qt viewers are in sunset: they get only changes that unblock CI or stop a
+    user-facing crash.
+  - Silent wrong answers go to chain B.
+  - Opus reviews.
+  - Sessions land their own green, approved PRs.
+
+**Wrap-up (batch end or large context).**
+1. Each session stops its workers, pushes any WIP, posts its §6 handoff with
+   the exact PR heads, review state and lock holders, refreshes its board row,
+   and reports.
+2. The coordinator archives each session that has handed off.
+3. The coordinator posts its own handoff on #1202. That handoff includes the
+   **ready-to-paste prompts** for the next batch's sessions, because the next
+   batch may run on another machine or account where chips do not exist.
+
+**Portable environment.** Never hard-code one machine.
+- Find the Python with the extras (`pyvista` and `gmsh` importable).
+- Probes need `PYTHONPATH=<worktree>/src`.
+- Treat the OpenSees fork checkout as optional and read-only.
+- Cross-session messages reach only sessions on the same machine.
+- On Windows, a script can die with 0xC000070A or exit 127 (#1376): retry once.
