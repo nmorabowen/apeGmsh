@@ -8344,7 +8344,7 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
         name: str | None = None,
     ) -> "SpringBed":
         """A grounded zeroLength spring (and dashpot) on every node of a
-        decoupled node set (ADR 0118 D2) — a distributed foundation bed.
+        decoupled node set (ADR 0119 D2) — a distributed foundation bed.
 
         Spring ``i`` joins the ``ground`` node ``i`` (a
         ``g.decouple_node_set(...)`` handle) to the ``at`` node with the

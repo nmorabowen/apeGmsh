@@ -1,4 +1,4 @@
-### ADDED — ground-spring bed: `g.decouple_node_set` and `ops.spring_bed` (ADR 0118, Proposed)
+### ADDED — ground-spring bed: `g.decouple_node_set` and `ops.spring_bed` (ADR 0119, Proposed)
 
 `g.decouple_node_set(source, offset=..., tie_dofs=...)` declares one
 decoupled node per node of a label or physical group, by name, resolved at

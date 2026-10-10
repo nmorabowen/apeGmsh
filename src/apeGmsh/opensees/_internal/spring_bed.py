@@ -1,4 +1,4 @@
-"""``ops.spring_bed`` — a grounded zeroLength spring/dashpot bed (ADR 0118 D2).
+"""``ops.spring_bed`` — a grounded zeroLength spring/dashpot bed (ADR 0119 D2).
 
 A builder, not an emit pass: it reads the frozen FEM snapshot once, at
 the call, and registers ordinary primitives on the bridge — one shared
@@ -7,7 +7,7 @@ per spring and direction, one node-pair ``ZeroLength`` per spring, the
 ground ``fix`` and the ``ndf`` statements of the decoupled nodes — so the
 emit path, the tag law and the ``ndf`` gates see nothing new.
 
-The nodes come from the session (ADR 0049 / 0118 D1): ``ground`` is a
+The nodes come from the session (ADR 0049 / 0119 D1): ``ground`` is a
 ``g.decouple_node_set(...)`` handle; ``at`` (optional) is a second set on
 the same source, typically the 3-dof side nodes created with
 ``tie_dofs=(1, 2, 3)``. Spring ``i`` joins ``ground`` node ``i`` to the

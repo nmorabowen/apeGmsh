@@ -95,7 +95,7 @@ class DecoupledNodesComposite(_DeclarationsMixin):
         label: str | None = None,
         tie_dofs: "Sequence[int] | None" = None,
     ) -> DecoupledNodeSetDef:
-        """Declare one decoupled node per node of ``source`` (ADR 0118 D1).
+        """Declare one decoupled node per node of ``source`` (ADR 0119 D1).
 
         ``source`` is a label or physical-group name resolved at
         extraction; ``offset`` a ``(dx, dy, dz)`` triple or a callable

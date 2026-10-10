@@ -1,4 +1,4 @@
-"""``ops.spring_bed`` — the emitted deck of a ground-spring bed (ADR 0118 D2).
+"""``ops.spring_bed`` — the emitted deck of a ground-spring bed (ADR 0119 D2).
 
 The deck form under test is the San Ramón Tier-2 T2S topology
 (``Tier2_springs.md`` section 6): a ground node offset and fixed, a 3-dof

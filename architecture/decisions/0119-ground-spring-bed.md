@@ -1,4 +1,4 @@
-# ADR 0118 — Ground-spring bed: decoupled node sets on the session, a spring bed on the bridge
+# ADR 0119 — Ground-spring bed: decoupled node sets on the session, a spring bed on the bridge
 
 **Status:** Proposed (2026-10-10).
 

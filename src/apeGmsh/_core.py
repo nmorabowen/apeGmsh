@@ -469,7 +469,7 @@ class apeGmsh(_SessionBase):
         tie_dofs: Any = None,
     ) -> Any:
         """Declare one decoupled node per node of a mesh node set, by name
-        (ADR 0118 D1) — the grounds and the side nodes of a spring bed.
+        (ADR 0119 D1) — the grounds and the side nodes of a spring bed.
 
         ``source`` is a label or physical-group name, resolved at
         ``get_fem_data`` to its mesh nodes (ascending tags). Each new node

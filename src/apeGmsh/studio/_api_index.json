@@ -541,7 +541,7 @@
       "symbol": "g.decoupled_nodes.add"
     },
     "g.decoupled_nodes.add_set": {
-      "doc": "Declare one decoupled node per node of ``source`` (ADR 0118 D1).",
+      "doc": "Declare one decoupled node per node of ``source`` (ADR 0119 D1).",
       "signature": "add_set(source: 'str', *, offset: \"'tuple[float, float, float] | Callable[[Any], Any]'\" = (0.0, 0.0, 0.0), label: 'str | None' = None, tie_dofs: \"'Sequence[int] | None'\" = None) -> 'DecoupledNodeSetDef'",
       "skill": "references/api-cheatsheet.md",
       "symbol": "g.decoupled_nodes.add_set"

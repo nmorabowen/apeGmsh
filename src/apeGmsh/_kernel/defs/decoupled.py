@@ -50,7 +50,7 @@ class DecoupledNodeDef:
 
 @dataclass
 class DecoupledNodeSetDef:
-    """One decoupled node per node of a mesh node set (ADR 0118 D1).
+    """One decoupled node per node of a mesh node set (ADR 0119 D1).
 
     Declared by name through ``g.decouple_node_set(source, ...)`` and
     resolved by the FEM factory at extraction, when the source nodes

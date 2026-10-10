@@ -1,4 +1,4 @@
-"""``g.decouple_node_set`` — decoupled nodes by group name (ADR 0118 D1).
+"""``g.decouple_node_set`` — decoupled nodes by group name (ADR 0119 D1).
 
 Oracles, independent of the code under test: the source nodes and their
 coordinates are read back from the FEM snapshot's own physical group;

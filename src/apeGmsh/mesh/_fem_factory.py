@@ -291,7 +291,7 @@ def _from_gmsh(
     # MP-deterministic) and they fold into the snapshot_id via _ids +
     # _coords for free.
     decoupled_tags, decoupled_coords = _resolve_decoupled_nodes(session)
-    # Decoupled node *sets* (ADR 0118 D1) continue the same tag range,
+    # Decoupled node *sets* (ADR 0119 D1) continue the same tag range,
     # resolved by name against the mesh nodes just extracted.
     set_tags, set_coords, set_ties = _resolve_decoupled_node_sets(
         session, node_ids, node_coords_all, physical, labels,
@@ -369,7 +369,7 @@ def _from_gmsh(
             node_constraints, surface_constraints = \
                 _split_constraints(all_constraints)
         # The equal_dof ties of g.decouple_node_set(tie_dofs=...)
-        # (ADR 0118 D1): plain broker MP records, emitted like any other.
+        # (ADR 0119 D1): plain broker MP records, emitted like any other.
         if set_ties:
             node_constraints = list(node_constraints) + set_ties
 
@@ -669,7 +669,7 @@ def _resolve_decoupled_node_sets(
     session, node_ids, node_coords, physical, labels, *,
     first_tag: "int | None",
 ) -> "tuple[list[int], list[tuple], list]":
-    """Resolve the session's decoupled node *sets* (ADR 0118 D1).
+    """Resolve the session's decoupled node *sets* (ADR 0119 D1).
 
     Each :class:`~apeGmsh._kernel.defs.decoupled.DecoupledNodeSetDef`
     names a label or physical group; its mesh nodes (ascending tags)

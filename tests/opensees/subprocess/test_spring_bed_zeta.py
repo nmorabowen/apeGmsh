@@ -1,5 +1,5 @@
 """The single-node damping check of the San Ramón T2S springs, on the engine
-(``Tier2_springs.md`` section 6; ADR 0118).
+(``Tier2_springs.md`` section 6; ADR 0119).
 
 One unit mass on a ``spring_bed`` spring per direction: k = 100, 400 and
 900 with c = 2, 4 and 0, so ``zeta = c / (2 sqrt(k m)) = 0.1, 0.1, 0``. A
