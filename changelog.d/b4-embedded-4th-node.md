@@ -7,7 +7,7 @@ retained node as an int, silently tied a tet4 host to three of its four corners
 (an embedded node at barycentric (0.1, 0.2, 0.3, 0.4) read `u = 0` instead of
 `0.4 * u_apex`). `PyEmitter.embeddedNode` and `LiveOpsEmitter.embeddedNode` now
 emit the 4th node as its decimal string through one shared helper
-(`_embedded_retained_args`), which also refuses any count other than 3 or 4;
+(`_embedded_retained_args`); every other node count passes through as before, and
 3-node (triangle) calls and the Tcl deck are byte-for-byte unchanged. Proven by
 `tests/opensees/live/test_embedded_tet4_live.py` (stock and fork) and
 `tests/opensees/unit/test_embedded_node_4th_retained.py`.

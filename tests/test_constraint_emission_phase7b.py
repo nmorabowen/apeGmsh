@@ -379,8 +379,10 @@ class TestEmbeddedNode:
         e.embeddedNode(
             1000, 5, 10, 1, 2, 3, rotational=True, stiffness=1.0e8,
         )
+        # Four retained nodes: the 4th goes as a string, which is how
+        # openseespy's parser reads it (#1621).
         assert (
-            "ops.element('ASDEmbeddedNodeElement', 1000, 5, 10, 1, 2, 3, "
+            "ops.element('ASDEmbeddedNodeElement', 1000, 5, 10, 1, 2, '3', "
             "'-rot', '-K', 100000000.0)"
             in e.lines()
         )

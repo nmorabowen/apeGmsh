@@ -59,11 +59,11 @@ def test_fourth_retained_node_is_its_decimal_string() -> None:
 
 
 @pytest.mark.parametrize("nodes", [(), (1,), (1, 2), (1, 2, 3, 4, 5)])
-def test_other_counts_are_refused(nodes: tuple[int, ...]) -> None:
-    """The parser rejects fewer than 3 with an opaque message and drops
-    every node past the 4th silently; refuse both at emit."""
-    with pytest.raises(ValueError, match="3 .*or 4"):
-        _embedded_retained_args(nodes)
+def test_other_counts_pass_through_as_ints(nodes: tuple[int, ...]) -> None:
+    """Only the tet4 call changes; every other count is what it was."""
+    got = _embedded_retained_args(nodes)
+    assert got == list(nodes)
+    assert all(type(a) is int for a in got)
 
 
 # ---------------------------------------------------------------------------

@@ -1042,17 +1042,10 @@ def _embedded_retained_args(master_nodes: tuple[int, ...]) -> list[int | str]:
     node passed as ``int`` is silently dropped and the tet4 tie binds
     three corners (#1621; measured: the embedded node then follows the
     triangle, not the tet). Tcl text has no such distinction, so the Tcl
-    emitter does not use this helper. Three nodes are returned unchanged;
-    with four, the 4th is the decimal string of its tag. Any other count
-    is refused here: the parser would reject fewer with an opaque message
-    and drop every node past the 4th without a word.
+    emitter does not use this helper. Only the 4-node (tet4) call changes:
+    its 4th node is the decimal string of its tag. Every other count is
+    passed through as ints, exactly as before.
     """
-    n = len(master_nodes)
-    if n == 3:
+    if len(master_nodes) != 4:
         return [int(m) for m in master_nodes]
-    if n == 4:
-        return [*(int(m) for m in master_nodes[:3]), str(int(master_nodes[3]))]
-    raise ValueError(
-        f"ASDEmbeddedNodeElement takes 3 (triangle) or 4 (tet4) retained "
-        f"nodes; got {n}: {tuple(int(m) for m in master_nodes)!r}."
-    )
+    return [*(int(m) for m in master_nodes[:3]), str(int(master_nodes[3]))]
