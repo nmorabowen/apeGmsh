@@ -930,7 +930,9 @@ class H5Model:
         if "opensees" not in self._f or "regions" not in self._f["opensees"]:
             return out
         grp = self._f["opensees"]["regions"]
-        for name in sorted(grp):
+        # ``region_{idx:03d}``: the numeric index is the write order, and
+        # a plain sort scrambles it past 999 (``region_1000`` < ``region_999``).
+        for name in sorted(grp, key=_recorder_group_order):
             g = grp[name]
             attrs = _attrs_as_dict(g)
             if "tag" not in attrs or "params" not in attrs:
@@ -941,7 +943,9 @@ class H5Model:
             out.append(RegionRecord(
                 tag=int(attrs["tag"]),
                 args=_rayleigh_tail_as_floats(
-                    self._read_param_array(g, "params")),
+                    self._read_param_array(g, "params"),
+                    where=f"/opensees/regions/{name}",
+                ),
             ))
         return out
 
@@ -2638,7 +2642,7 @@ def _attrs_as_dict(group: Any) -> dict[str, Any]:
 
 
 def _rayleigh_tail_as_floats(
-    args: "Sequence[int | float | str]",
+    args: "Sequence[int | float | str]", *, where: str,
 ) -> tuple[int | float | str, ...]:
     """Return a region's args with the four ``-rayleigh`` coefficients as floats.
 
@@ -2647,15 +2651,23 @@ def _rayleigh_tail_as_floats(
     numeric slot as float64, so :meth:`H5Model._read_param_array`
     recovers a whole-valued one (``0.0``) as an int. A replayed deck
     would then render ``0`` where the bridge wrote ``0.0``; the
-    coefficients are floats by construction, so cast them back.
+    coefficients are floats by construction, so cast them back. A
+    ``-rayleigh`` not followed by four numbers raises
+    :class:`MalformedH5Error` naming ``where``.
     """
     out = list(args)
     for k, a in enumerate(out):
-        if a == "-rayleigh":
-            for j in range(k + 1, min(k + 5, len(out))):
-                if not isinstance(out[j], str):
-                    out[j] = float(out[j])
-            break
+        if a != "-rayleigh":
+            continue
+        tail = out[k + 1:k + 5]
+        if len(tail) < 4 or any(isinstance(v, str) for v in tail):
+            raise MalformedH5Error(
+                f"{where}: -rayleigh must be followed by four coefficients "
+                f"(alphaM betaK betaK0 betaKc); got {tuple(tail)!r}."
+            )
+        for j in range(k + 1, k + 5):
+            out[j] = float(out[j])
+        break
     return tuple(out)
 
 

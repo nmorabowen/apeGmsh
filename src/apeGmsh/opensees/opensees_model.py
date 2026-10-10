@@ -1301,7 +1301,9 @@ class OpenSeesModel:
             beam_integrations=self._beam_integration,
             time_series=self._time_series,
             dampings=self._dampings,
-            regions=self._regions,
+            # A partitioned archive holds a fan-out region once per rank
+            # that writes it; a deck declares each tag once.
+            regions=_merge_region_rows(self._regions),
             elements=elements_with_conn,
             fixes=self._fixes,
             # ADR 0112 amendment 5: a marked archive re-streams the
@@ -1627,6 +1629,44 @@ def _decode(value: Any) -> Any:
     if isinstance(value, bytes):
         return value.decode("utf-8", errors="replace")
     return value
+
+
+def _merge_region_rows(
+    regions: "Sequence[RegionRecord]",
+) -> tuple[RegionRecord, ...]:
+    """One region row per tag for the deck targets.
+
+    A partitioned emit writes a ``-node`` fan-out region once per rank
+    that holds a member, each row carrying that rank's subset (the
+    ``/opensees/regions`` store keeps every row, so the H5 echo stays a
+    fixed point). A deck declares a tag once, so rows sharing a tag merge
+    by member union (first-occurrence order, ``_merge_node_region_args``)
+    when both are the plain ``-node`` form. Two rows sharing a tag in any
+    other shape (an ``-ele`` list, a ``-rayleigh`` or ``-damp`` tail) have
+    no safe union and raise ``ValueError`` naming the tag: replaying both
+    would redefine the region silently.
+    """
+    from .emitter.h5 import _merge_node_region_args
+
+    out: "list[RegionRecord]" = []
+    by_tag: "dict[int, int]" = {}
+    for rec in regions:
+        tag = int(rec.tag)
+        idx = by_tag.get(tag)
+        if idx is None:
+            by_tag[tag] = len(out)
+            out.append(rec)
+            continue
+        merged = _merge_node_region_args(out[idx].args, rec.args)
+        if merged is None:
+            raise ValueError(
+                f"OpenSeesModel.build: /opensees/regions holds two rows for "
+                f"region {tag} that are not both plain -node member lists "
+                f"({out[idx].args!r} and {rec.args!r}); a deck cannot "
+                "declare the tag twice and there is no safe union."
+            )
+        out[idx] = RegionRecord(tag=tag, args=merged)
+    return tuple(out)
 
 
 def _resolve_lineage(
