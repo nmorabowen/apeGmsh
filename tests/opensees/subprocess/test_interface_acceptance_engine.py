@@ -24,8 +24,8 @@ What lives here, against the ADR's S10 list:
   ``epp_gap`` (INV-1's sign rule is **per law kind**);
 * **slip saturation** — Σ tangential reaction pinned to
   ``τ_b × L × t``;
-* **compose invariance (INV-2)** — the same module composed with a 90°
-  rotation must reproduce the unrotated run's reactions;
+* **compose invariance (INV-2)** — the same module instanced (Assembly
+  v2) with a 90° rotation must reproduce the unrotated run's reactions;
 * **MPCO springs channels (D6)** — ``Results.from_mpco(...)
   .elements.springs`` read back per pair against the engine's own
   ``eleResponse`` — values to 1e-12, and one distinct element identity
@@ -626,13 +626,22 @@ def test_strip_push_transmits_and_pull_separates(strip) -> None:
 # 4 — compose invariance (INV-2): the 90°-rotated frame
 # =====================================================================
 
+def _write_source(fem, path: Path) -> None:
+    """A bridgeable source: the FEM plus ``/opensees`` ``model(2, 2)``.
+    The quads are declared on the bridge by dotted PG (``FourNodeQuad``
+    is not a rehydrated source spec)."""
+    ops = apeSees(fem)
+    ops.model(ndm=2, ndf=2)
+    ops.h5(str(path))
+
+
 def _module_h5(path: Path) -> None:
     with apeGmsh(model_name="s10_module", verbose=False) as g:
         _two_squares(g, n=2)
         g.constraints.interface(
             "face", "wire", normal=NORMAL_ENT, tangential=TANGENTIAL_EPP,
             thickness=THICKNESS, name="RockLiner")
-        g.mesh.queries.get_fem_data().to_h5(str(path))
+        _write_source(g.mesh.queries.get_fem_data(), path)
 
 
 def _host_h5(path: Path) -> None:
@@ -642,28 +651,30 @@ def _host_h5(path: Path) -> None:
         g.mesh.structured.set_transfinite([(2, surf)], n=2)
         g.mesh.generation.generate(2)
         g.physical.add(2, [surf], name="host")
-        g.mesh.queries.get_fem_data(dim=2).to_h5(str(path))
+        _write_source(g.mesh.queries.get_fem_data(dim=2), path)
 
 
 @pytest.fixture(scope="module")
 def rotated(tmp_path_factory: pytest.TempPathFactory) -> "dict[str, object]":
-    """The module composed onto a host with a 90° rotation about z, so
+    """The module instanced beside a host with a 90° rotation about z, so
     the interface line lands at ``y'=1`` with outward normal ``+y'``,
-    then RUN in that rotated frame."""
+    then RUN in that rotated frame (Assembly v2, ADR 0117)."""
+    from apeGmsh.assembly import Assembly
+
     d = tmp_path_factory.mktemp("s10_rot")
     mod, host, merged = d / "mod.h5", d / "host.h5", d / "merged.h5"
     _module_h5(mod)
     _host_h5(host)
-    g = apeGmsh.from_h5(str(host))
-    g.compose(str(mod), label="A",
-              rotate=(0.0, 0.0, 1.0, math.pi / 2.0),
-              translate=(2.0, 0.0, 0.0))
-    g.save(str(merged))
+    asm = Assembly("s10_rot")
+    asm.instance("host", str(host))
+    asm.instance("A", str(mod),
+                 rotate=((0.0, 0.0, 1.0), math.pi / 2.0),
+                 translate=(2.0, 0.0, 0.0))
+    ops = asm.bridge(ndm=2, ndf=2)
+    asm.h5(str(merged))
     fem = FEMData.from_h5(str(merged))
 
-    ops = apeSees(fem)
-    ops.model(ndm=2, ndf=2)
-    _quads(ops, "A.rock", "A.liner", "host")
+    _quads(ops, "A.rock", "A.liner", "host.host")
     base = d / "rot_model.tcl"
     ops.tcl(str(base), flat=True)
     model_text = base.read_text(encoding="utf-8")

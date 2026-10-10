@@ -231,8 +231,8 @@ es = sec.to_elastic_section(E=..., G=..., ndm=3)   # EAGER ElasticSection
   Read back via `OpenSeesModel.from_h5(...).computed_sections()`.
   Hash-excluded (a `ComputedSection` deck has the same `model_hash`
   as the hand-typed equivalent); the analyzer mesh is NOT persisted;
-  `g.compose` still drops the whole `/opensees/` zone (ADR 0055
-  FILTER) — re-declare `ComputedSection`s in the composing script.
+  `Assembly.bridge()` rehydrates only its roster of section types
+  (compose.md) — declare `ComputedSection`s on the bridge.
 
 ## 7. Flat-face builders (`g.sections.*_face`)
 

@@ -147,9 +147,8 @@ class ChainPhaseError(RuntimeError):
     Recovery
     --------
     Reload the session from disk (``apeGmsh.from_h5(path)``) or restart
-    the build phase before applying the mutation.  Chain-phase
-    composition (``g.compose(...)``) is the supported way to extend a
-    saved model.
+    the build phase before applying the mutation.  To combine saved
+    models, use ``apeGmsh.assembly.Assembly`` (ADR 0117).
     """
 
 
@@ -242,10 +241,10 @@ def raise_if_from_h5_session(session, verb: str) -> None:
         raise ChainPhaseError(
             f"{verb} requires a live gmsh session — it resolves from "
             f"gmsh geometry at extraction, which never happens in a "
-            f"from_h5/compose (chain-phase) session, so the definition "
+            f"from_h5 (chain-phase) session, so the definition "
             f"would be stored but silently never applied.  Declare it "
             f"in the source part session before saving; the resolved "
-            f"records round-trip through model.h5 and survive "
-            f"g.compose."
+            f"records round-trip through model.h5 and travel with "
+            f"an Assembly instance."
         )
 

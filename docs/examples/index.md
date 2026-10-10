@@ -38,8 +38,9 @@ ordered staircase they sit on.
     the read code is identical and both agree on the 8.39 mm drift to zero.
 
 -   __[Compose modules](compose-modules.md)__ — build the portal once, save
-    it, and `g.compose` it into two bays; PGs come back label-prefixed
-    (`bay2.Columns`) and each uncoupled bay drifts the exact E1 8.39 mm.
+    it, and instance it twice with `Assembly`; PGs come back
+    instance-prefixed (`bay2.Columns`) and each uncoupled bay drifts the
+    exact E1 8.39 mm.
 
 -   __[Pushover of a steel moment frame](pushover-steel-frame.md)__ — a
     `W14×90` **fibre** section (from **apeSteel**) in a `forceBeamColumn`

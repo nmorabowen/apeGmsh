@@ -271,8 +271,8 @@ g2 = apeGmsh.from_h5("ssbeam.h5")   # a *chain-phase* session, no gmsh
 
 Mind the difference: **`FEMData.from_h5` gives you a snapshot**;
 **`apeGmsh.from_h5` gives you a session** — but a *chain-phase* one with no
-live Gmsh kernel behind it. You can `g2.compose(...)` other saved models
-onto it and `g2.save(...)` the result, but `g2.model.*` and
+live Gmsh kernel behind it. You can query it and `g2.save(...)` it, but
+`g2.model.*` and
 `g2.mesh.generation.*` will fail (there's no kernel to draw into). For
 "reload one model and analyse it," `FEMData.from_h5` is the tool — that's
 what we use.
@@ -392,9 +392,9 @@ exactly `PL³/48EI` — after the model has been saved and reopened.
 - **[Results & export recipes](../how-to/index.md)** — the alternatives we
   deliberately didn't fork into here: exporting a runnable Tcl/Py deck,
   classic recorders, and STKO `.mpco` files.
-- **[Composing saved models](../how-to/index.md)** — where `apeGmsh.from_h5`
-  earns its keep: reload several saved `.h5` models and `g.compose(...)`
-  them into one assembly.
+- **[Assemble saved models](../how-to/assemble-saved-models.md)** — place
+  several saved `.h5` models as instances with `Assembly`, tie them, and
+  build one model.
 - **[Core mental model](../concepts/mental-model.md)** — the ideas behind
   the snapshot, the broker, and the name-everything habit, on one page.
 

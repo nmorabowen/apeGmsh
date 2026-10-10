@@ -171,18 +171,15 @@ meshes non-matching and declare a tie, as covered in
 
 Everything above happens *before* the mesh: Parts contribute geometry, the
 session stitches it, and one mesh covers the whole. apeGmsh has a second,
-later seam with a deliberately similar shape — `g.compose` merges a
-previously *saved* model (`model.h5`) into a host session as a module:
-already meshed, with its own loads, masses, and constraints resolved. Where a
-Part is a geometry template, a module is a finished sub-model; where
-instances get prefixed labels, composed modules get prefixed physical groups
-(the host keeps its bare names), and the interfaces between modules are
-coupled by constraints rather than fragmented — by compose time there is no
-geometry left to fragment. The `Assembly` builder (imported from
+later seam with a deliberately similar shape — `Assembly` (imported from
 `apeGmsh.assembly`, deliberately not top-level — the session *is* the
-assembly) is a declarative front over the same machinery: declare saved
-models as parts, declare the interface couples, and materialize the graph
-into one composed session.
+assembly) places previously *saved* models (`model.h5`) as named instances:
+already meshed, with their own materials, sections and element specs. Where
+a Part is a geometry template, an instance is a finished sub-model; every
+instance gets prefixed physical groups (`{instance}.{group}`), and the
+interfaces between instances are tied by constraints rather than fragmented
+— by then there is no geometry left to fragment. `bridge()` merges the
+instances and their ties into one OpenSees model.
 
 One consequence of the two seams is worth stating as a rule, because the
 choice is sometimes forced rather than stylistic. Element order is global
@@ -191,14 +188,14 @@ geometry seam can never produce hex20 ribs next to hex8 covers, no matter how
 the Parts are arranged. **If parts need different element orders (or you want
 each part meshed, saved, and iterated independently), the compose seam is the
 route**: one full session per part, each with its own recipe and order, saved
-to its own `model.h5`, assembled with `compose` or `Assembly`, interfaces
+to its own `model.h5`, assembled with `Assembly`, interfaces
 tied. Don't reach for `Part` there — a Part is a geometry template and
 cannot mesh, which is a deliberate contract (ADR 0085), not a gap awaiting a
 feature.
 
 Concept-level, that's the whole map: Parts compose geometry before meshing
-inside one session; `g.compose` composes finished models across sessions. The
-mechanics live in [Compose saved modules](../how-to/compose-modules.md), and
+inside one session; `Assembly` composes finished models across sessions. The
+mechanics live in [Assemble saved models](../how-to/assemble-saved-models.md), and
 the in-session workflow — Parts, placement, fragmentation, all the way to a
 solved frame — is walked end to end in
 [Multipart assembly](../examples/multipart-assembly.md).

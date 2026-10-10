@@ -42,7 +42,7 @@ import numpy as np
 from apeGmsh.mesh._compose import _apply_geometric_transform, _prefix_namespaced_name
 from apeGmsh.opensees._internal.typed_records import SectionSimpleRecord
 
-from ._v1 import AssemblyError
+from ._errors import AssemblyError
 
 if TYPE_CHECKING:
     from apeGmsh.opensees import apeSees
@@ -402,9 +402,10 @@ def _interface_rows(
     """Tags of the ``zeroLength`` rows and uniaxial materials the carried
     ``/interfaces`` emit (ADR 0093, ADR 0117 D4).
 
-    The build synthesises each record's unit (two or three tributary
-    uniaxials and one ``zeroLength`` from ``master_node`` to the phantom
-    or slave node) from the merged FEM's interface stream, so these rows
+    The build synthesises each record's unit (two tributary uniaxials,
+    normal and tangential, the tangential one named twice on a 3-D
+    ``-mat`` list, and one ``zeroLength`` from ``master_node`` to the
+    phantom or slave node) from the merged FEM's interface stream, so these rows
     are not re-declared. Every record must match exactly one row, and a
     matched row's materials must be unnamed uniaxials of a D1 type;
     anything else raises.
@@ -427,8 +428,11 @@ def _interface_rows(
         found = by_pair.get((int(rec.master_node), int(j)), [])
         if len(found) != 1:
             raise AssemblyError(
-                f"{what} matches {len(found)} archived zeroLength rows, not one "
-                f"(a stage-claimed interface does not travel)."
+                f"{what} matches {len(found)} archived node-pair zeroLength "
+                f"rows, not one: the interface's own row cannot be told "
+                f"apart. A node-pair zeroLength the source declares on an "
+                f"interface pair does not travel; declare it on the bridge "
+                f"instead."
             )
         args = found[0].args
         n_mat = 3 if rec.orient is not None and len(rec.orient) == 9 else 2

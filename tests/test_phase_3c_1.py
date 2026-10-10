@@ -6,18 +6,20 @@ ADR 0038 §"Lineage chain extension" / design-point D4:
 * uncomposed FEMData hashes byte-identically to today's
   :attr:`FEMData.snapshot_id` (backward compat — pre-2.9.0
   pin tests / bind-contract round-trips stay green);
-* composed FEMData hashes are independent of the
-  ``compose(A) → compose(B)`` vs ``compose(B) → compose(A)``
-  call order (the wrapper folds in sorted-by-``module_label``
-  contributions);
+* composed FEMData hashes are independent of the iteration order
+  of ``composed_from`` (the wrapper folds in sorted-by-
+  ``module_label`` contributions);
 * adding a module, changing a module's label, or removing a
   module all perturb the hash deterministically;
-* the wrapper round-trips through H5 — a saved-and-reloaded
-  composed FEMData has the same ``compose_hash`` as the
-  in-memory original.
+* the wrapper round-trips through H5 — an assembly archive
+  (``Assembly.h5``) reloaded with ``FEMData.from_h5`` has the same
+  ``compose_hash`` as the bridge's in-memory merged FEMData.
 
-These tests run entirely against the FEMData broker; no live
-Gmsh session and no openseespy import is required.
+Composition goes through the v2 :class:`~apeGmsh.assembly.Assembly`
+(ADR 0117): each source is written with ``apeSees(fem).model(...)``
+plus ``ops.h5``, instanced, and merged by ``Assembly.bridge``. The
+v1 live host becomes an instance named ``host``. No live Gmsh
+session and no openseespy import is required.
 """
 from __future__ import annotations
 
@@ -26,7 +28,6 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from apeGmsh._core import apeGmsh
 from apeGmsh.mesh._element_types import ElementGroup, make_type_info
 from apeGmsh.mesh._femdata_hash import compute_snapshot_id
 from apeGmsh.mesh._group_set import LabelSet, PhysicalGroupSet
@@ -97,8 +98,24 @@ def _make_module_fem(
 
 
 def _save(fem: FEMData, path: Path) -> Path:
-    fem.to_h5(str(path))
+    """Write ``fem`` as an assembly source (it needs ``model(ndm, ndf)``)."""
+    from apeGmsh.opensees import apeSees
+
+    ops = apeSees(fem)
+    ops.model(ndm=3, ndf=3)
+    ops.h5(str(path))
     return path
+
+
+def _bridge(*instances: "tuple[str, Path]"):
+    """Instance each ``(label, source)`` in order; return the assembly
+    and the bridge's merged FEMData."""
+    from apeGmsh.assembly import Assembly
+
+    asm = Assembly("lineage")
+    for label, source in instances:
+        asm.instance(label, source)
+    return asm, asm.bridge(ndm=3, ndf=3).fem
 
 
 @pytest.fixture
@@ -188,14 +205,19 @@ def test_compose_hash_stable_across_distinct_instances() -> None:
 def test_adding_a_module_changes_the_hash(
     host_h5: Path, module_a_h5: Path,
 ) -> None:
-    """``compose_hash`` distinguishes uncomposed vs one-module composed."""
-    uncomposed = apeGmsh.from_h5(host_h5)
-    h_before = compose_hash(uncomposed._fem)
+    """``compose_hash`` distinguishes uncomposed vs composed, and a
+    one-instance assembly from the same assembly plus a module."""
+    uncomposed = FEMData.from_h5(str(host_h5))
+    assert not uncomposed.composed_from
+    h_uncomposed = compose_hash(uncomposed)
 
-    composed = apeGmsh.from_h5(host_h5)
-    composed.compose(module_a_h5, label="A")
-    h_after = compose_hash(composed._fem)
+    _, host_only = _bridge(("host", host_h5))
+    h_before = compose_hash(host_only)
 
+    _, composed = _bridge(("host", host_h5), ("A", module_a_h5))
+    h_after = compose_hash(composed)
+
+    assert h_uncomposed != h_before
     assert h_before != h_after
 
 
@@ -208,12 +230,10 @@ def test_module_label_affects_the_hash(
     ``_hash_composed_from``'s label-update step) so the namespace
     identity is part of the fem-hash.
     """
-    g1 = apeGmsh.from_h5(host_h5)
-    g1.compose(module_a_h5, label="A")
-    g2 = apeGmsh.from_h5(host_h5)
-    g2.compose(module_a_h5, label="B")
+    _, fem_a = _bridge(("host", host_h5), ("A", module_a_h5))
+    _, fem_b = _bridge(("host", host_h5), ("B", module_a_h5))
 
-    assert compose_hash(g1._fem) != compose_hash(g2._fem)
+    assert compose_hash(fem_a) != compose_hash(fem_b)
 
 
 # ---------------------------------------------------------------------------
@@ -233,8 +253,8 @@ def test_compose_hash_sorts_composed_from_by_label(
     wrapper — the sort lives in
     :func:`apeGmsh.mesh._femdata_hash._hash_composed_from` today.
 
-    Note: this test does NOT exercise full ``g.compose(A) then
-    g.compose(B)`` vs ``g.compose(B) then g.compose(A)`` equivalence,
+    Note: this test does NOT exercise full ``instance(A) then
+    instance(B)`` vs ``instance(B) then instance(A)`` equivalence,
     because the tag-offset reservation scheme assigns windows in
     insertion order (so A-first vs B-first lands A's nodes at
     different absolute tags).  Compose-order-stable reservation is
@@ -275,18 +295,17 @@ def test_compose_hash_sorts_composed_from_by_label(
 def test_compose_hash_round_trips_via_from_h5(
     host_h5: Path, module_a_h5: Path, tmp_path: Path,
 ) -> None:
-    """Save a composed FEMData; reload via from_h5; ``compose_hash`` matches.
+    """Write an assembly archive; reload via from_h5; ``compose_hash`` matches.
 
     Closes the cross-session continuity loop:
     ``compose_hash(in_memory) == compose_hash(saved_then_reloaded)``.
     """
-    g = apeGmsh.from_h5(host_h5)
-    g.compose(module_a_h5, label="A")
-    in_memory = g._fem
+    asm, in_memory = _bridge(("host", host_h5), ("A", module_a_h5))
+    assert len(in_memory.composed_from) == 2
     expected = compose_hash(in_memory)
 
     out = tmp_path / "composed.h5"
-    g.save(out)
+    asm.h5(str(out))
 
     reloaded = FEMData.from_h5(str(out))
     assert compose_hash(reloaded) == expected
@@ -295,14 +314,14 @@ def test_compose_hash_round_trips_via_from_h5(
 def test_compose_hash_round_trips_multi_module(
     host_h5: Path, module_a_h5: Path, module_b_h5: Path, tmp_path: Path,
 ) -> None:
-    """Multi-module round-trip — both records contribute deterministically."""
-    g = apeGmsh.from_h5(host_h5)
-    g.compose(module_a_h5, label="A")
-    g.compose(module_b_h5, label="B")
-    expected = compose_hash(g._fem)
+    """Multi-module round-trip — every record contributes deterministically."""
+    asm, in_memory = _bridge(
+        ("host", host_h5), ("A", module_a_h5), ("B", module_b_h5))
+    assert len(in_memory.composed_from) == 3
+    expected = compose_hash(in_memory)
 
     out = tmp_path / "multi.h5"
-    g.save(out)
+    asm.h5(str(out))
 
     reloaded = FEMData.from_h5(str(out))
     assert compose_hash(reloaded) == expected

@@ -1,27 +1,27 @@
-# Model composition: Assembly v2 (ADR 0117), then compose v1
-<!-- skill-freshness: verified against apeGmsh main@56cd64ec (2026-08-04) · signatures: python -m apeGmsh.studio.lookup SYMBOL (ADR 0096); src/ is not the authoring lookup -->
+# Model composition: Assembly (ADR 0117)
+<!-- skill-freshness: verified against apeGmsh AS5-c (2026-10-10) · signatures: python -m apeGmsh.studio.lookup SYMBOL (ADR 0096); src/ is not the authoring lookup -->
 
-Compose stitches independently-built, *saved* `model.h5` modules into one larger
-FEM by tag-offsetting + namespacing each module's entities — no re-meshing, no
-re-running geometry. It is the durable, cross-session way to build big assemblies
-out of small reusable parts. ADR 0038 is the source-of-truth contract; ADRs 0036
-(embedded-host decomposition) and 0041 (chain-phase routing) cover interface
-bridging.
+`Assembly` stitches independently-built, *saved* `model.h5` files into one
+larger model by tag-offsetting + namespacing each instance's entities — no
+re-meshing, no re-running geometry. ADR 0117 is the contract; ADR 0038 still
+describes the merge engine underneath (tag windows, namespacing, the verifier).
 
 Mental model:
-- Build a part once, `g.save("part.h5")` (neutral zone only — see `fem-broker.md`).
-- Reload a host in **chain phase** with `apeGmsh.from_h5(...)` (NO gmsh — see below).
-- `g.compose("part.h5", label="...")` grafts the part in, tag-offset + namespaced.
-- Bridge module interfaces with chain-phase constraints (`tied_contact`, `embedded`, …).
-- `g.save("assembly.h5")` the result, or `apeSees(g._fem).tcl(...)` to emit a deck.
+- Build a part once; write it with `ops = apeSees(fem); ops.model(...); ops.h5("part.h5")`
+  (a plain `g.save()` file has no `/opensees` model and `bridge()` refuses it).
+- `Assembly(...).instance(label, "part.h5", translate=, rotate=)` places it, namespaced.
+- Tie instances with the assembly verbs on dotted ports `"{instance}.{pg}"`.
+- `bridge(ndm=, ndf=)` returns one `apeSees`; declare fixes/loads/analysis on it.
+- `asm.h5("assembly.h5")` writes the archive; every reader opens it as a `model.h5`.
 
 ---
 
 ## Assembly v2 — instances of saved models (ADR 0117)
 
-**The path for new multi-file models.** Everything below this section is
-compose v1, which ADR 0117 D7 deletes without a deprecation period (chain
-link AS5). Published how-to: `docs/how-to/assemble-saved-models.md`.
+**The one path for multi-file models.** The v1 `g.compose`,
+`FEMData.compose`, `apeGmsh.compose` and `Assembly.add / couple(part_a,
+part_b, ports=) / materialize` were removed without deprecation (ADR 0117
+D7, AS5-c). Published how-to: `docs/how-to/assemble-saved-models.md`.
 
 ```python
 # verified: docs/how-to/assemble-saved-models.md (run as a script on the Ladruno fork; the equation tie needs openseespy >= 3.8.0 or the fork)
@@ -89,233 +89,71 @@ again = Assembly.from_h5("stack.h5")   # re-lists instances/nodes/ties only
   `forceBeamColumn`, `dispBeamColumn`); a source whose `/composed_from`
   modules carry a rank (checked at `instance()` and again at `bridge()`); a
   ranked instance of an assembly archive; a tie/coupling that couples
-  nothing (INV-7); mixing v1 `add` with v2 verbs on one `Assembly`.
-- **Where v1 is still needed:** element types v2 does not rehydrate yet
-  (e.g. hex20 for the mixed-order route below) and per-row element args.
+  nothing (INV-7).
+- **An element type outside the roster** (e.g. hex20 for the mixed-order
+  route below, `FourNodeQuad`): write the source without that spec and
+  declare it on the bridge by dotted PG (`ops.element.FourNodeQuad(pg="a.Rock", ...)`).
+
 
 ---
 
-## g.compose — the session facade
+## Reading composed files — inspect / list / tree
+
+The compose **readers** stay on the session and open any composed file,
+an assembly archive included:
 
 ```python
-def compose(self, source, *, label, translate=(0,0,0), rotate=None,
-            anchor=None, partition_rank=None, properties=None,
-            max_compose_depth=None, compose_size_per_module=None) -> ComposedModule
-```
-`src/apeGmsh/_core.py:306` → `Compose.compose` `src/apeGmsh/mesh/_compose.py:1525`.
-
-```python
-from apeGmsh import apeGmsh
-# verified: tests/test_compose_end_to_end.py::test_from_h5_session_compose_workflow
-
-# Reload a saved host module in chain phase (no gmsh build):
-g = apeGmsh.from_h5("host.h5")
-g.compose("bolt.h5", label="bolt", translate=(10.0, 0.0, 0.0))
-g.compose("bolt.h5", label="bolt2", anchor="mount_pad")  # anchor sugar
-g.save("assembly.h5")
-```
-
-| arg | meaning |
-|---|---|
-| `source` | path to a saved neutral-zone `model.h5` (a part, or another composed assembly) |
-| `label` | **required**, namespace prefix for the module's PGs/labels. Strict — see rules below |
-| `translate` | `(dx,dy,dz)` rigid shift applied to the module's node coords |
-| `rotate` | `(angle, ax, ay, az)` quaternion-style 4-tuple, or `None` |
-| `anchor` | PG-name *sugar* that resolves to a translate; **mutually exclusive with non-zero `translate`** |
-| `partition_rank` | pin the module onto a given MPI rank (cross-partition emit, ADR 0027) |
-| `properties` | forward-compat dict, stored on the `ComposeRecord` |
-| `max_compose_depth` | per-call override of the nested-compose cap (default 3) |
-| `compose_size_per_module` | advisory tag-reservation FLOOR per module (see capacity gotcha) |
-
-Returns a `ComposedModule` handle (frozen dataclass; `src/apeGmsh/mesh/_compose.py:1394`)
-with working `.label / .source_path / .translate / .rotate / .partition_rank`
-properties. **`ComposedModule.pgs()/.labels()/.record_counts()` are STUBBED** —
-they raise `NotImplementedError`; use `g.compose_inspect(path)` for inventory.
-
-### label rules (fail loud — `ComposeLabelError`)
-`label` must be non-empty, contain **no `.`** (the namespace separator), **no `/`**
-(the depth-boundary separator), **no whitespace**, and **not start/end with `_`**
-(reserved-prefix convention). `src/apeGmsh/mesh/_compose.py:55`.
-
-```python
-# verified: tests/test_compose_facade.py::test_compose_label_dotted_raises
-g.compose("m.h5", label="a.b")   # ComposeLabelError
-g.compose("m.h5", label="a/b")   # ComposeLabelError (test_compose_label_slash_raises)
-```
-
-### anchor vs translate
-```python
-# verified: tests/test_compose_facade.py::test_compose_anchor_with_nonzero_translate_raises
-g.compose("m.h5", label="x", anchor="pad", translate=(1,0,0))  # ComposeAnchorError
-```
-
----
-
-## Namespacing — `'{label}.{pg}'`
-
-The first model in the chain (the `from_h5` host) keeps its PG/label names **bare**.
-Every composed module's physical groups and labels are prefixed with its label and
-a dot: a part PG `top` composed under `label="bolt"` becomes `bolt.top`. When you
-query the assembled FEM or wire interface constraints, you reference the **namespaced
-name** for composed modules and the **bare name** for the host.
-
-```python
-g = apeGmsh.from_h5("host.h5")     # host PGs stay bare: "face", "base", ...
-g.compose("bolt.h5", label="bolt") # bolt's PGs become "bolt.top", "bolt.shank", ...
-g.constraints.tied_contact(master_label="face", slave_label="bolt.top")
-```
-
-The `pattern` field of load-pattern records is intentionally **NOT** namespaced
-(verified: `tests/test_compose_end_to_end.py::test_compose_pattern_field_not_namespaced`).
-
----
-
-## Inspect / list / tree
-
-```python
-# verified: tests/test_compose_facade.py::test_compose_inspect_returns_metadata_for_uncomposed_source
-info = g.compose_inspect("bolt.h5")   # metadata-only read; does NOT merge/mutate
+# verified: tests/test_compose_facade.py
+g = apeGmsh.from_h5("stack.h5")       # an archive written by asm.h5(...)
+g.compose_list()    # tuple[ComposedModule, ...] — one per instance
+g.compose_tree()    # tuple[ComposeTreeNode, ...] — nested-compose hierarchy
+info = g.compose_inspect("part.h5")   # metadata-only read of any file
 # keys: fem_hash, neutral_schema_version, tag_span_max, pg_inventory,
 #       label_inventory, record_counts, composed_from, compose_tree, properties
-info["neutral_schema_version"]   # the writer's NEUTRAL_SCHEMA_VERSION ("2.27.0" today — see fem-broker.md)
-info["pg_inventory"]             # sorted tuple of PG names (node+element sides, deduped)
-info["composed_from"]            # () for an uncomposed source; tuple[ComposeRecord] otherwise
-
-# verified: tests/test_compose_facade.py::test_compose_list_populated_from_h5_round_trip
-g.compose_list()    # tuple[ComposedModule, ...] — modules composed into this session
-g.compose_tree()    # tuple[ComposeTreeNode, ...] — nested-compose hierarchy
-```
-`compose_inspect` is `src/apeGmsh/_core.py:322`; `compose_list` `:330`; `compose_tree`
-`:337`. `ComposeTreeNode(label, record, children)` is `src/apeGmsh/mesh/_compose.py:346`.
-
----
-
-## FEMData.compose — the pure primitive
-
-`g.compose` is sugar over the FEMData transform. The canonical primitive is a
-pure functional transform on a broker (no live session):
-
-```python
-# verified: tests/test_compose_end_to_end.py::test_single_module_compose_round_trip
-from apeGmsh import FEMData
-host = FEMData.from_h5("host.h5")
-merged = host.compose("bolt.h5", label="bolt", translate=(10, 0, 0))  # -> new FEMData
-```
-`src/apeGmsh/mesh/FEMData.py:1831`. Signature mirrors `g.compose` (incl.
-`max_compose_depth`). **Drift hazard:** calling `FEMData.compose` directly decouples
-the result from any live gmsh — if you then mutate the session mesh/PGs, the composed
-records are dropped. `g.compose` handles replay via `session._compose_bundles`; the
-bare primitive does not. Prefer `g.compose` in a session.
-
----
-
-## apeGmsh.from_h5 — chain-phase reassembly (no gmsh)
-
-```python
-@classmethod
-def from_h5(cls, path, *, model_name=None, verbose=False) -> apeGmsh
-```
-`src/apeGmsh/_core.py:142`. Rebuilds a session in **chain phase**: the FEM is loaded
-straight from the neutral zone — **there is NO gmsh state**.
-
-```python
-# verified: tests/test_v1_1_a_2_tied_contact_chain_phase.py::TestTiedContactChainPhase::test_chain_phase_session_path
-g = apeGmsh.from_h5("host.h5")
-# WORKS in chain phase:
-g.compose(...) / g.compose_inspect(...) / g.compose_list() / g.compose_tree()
-g.save(...)
-g.constraints.tied_contact(master_label="face", slave_label="bolt.top")  # interface bridging
-# FAILS in chain phase (no gmsh):
-g.model.geometry.add_box(...)      # raises
-g.mesh.generation.generate(...)    # raises
 ```
 
-`FEMData.from_h5` (the broker reload) is a *different* classmethod — it returns a
-bare `FEMData`, not a session. See `fem-broker.md`.
+`FEMData.from_h5("stack.h5")` gives the merged broker, with
+`fem.composed_from[label]` per instance and a `module_label` on every merged
+node and element.
 
-### chain-phase routing of interface constraints (ADR 0041)
-In chain phase, interface-bridging defs route through `try_chain_phase_route`
-(`src/apeGmsh/_kernel/resolvers/_chain_phase_router.py:74`) onto the FEM and are
-**NOT** gated by `ChainPhaseError`: `tie` (both `method=` values, incl. the
-ADR 0086 `method="mortar"` integral tie), `tied_contact`, `embedded`,
-`equal_dof`, `rigid_link`, `rigid_diaphragm`, plus loads + masses. Use
-`master_label=` / `slave_label=` (bare for host, `'{label}.{pg}'` for
-composed modules). For a permanent bond on a composed assembly, `contact`
-(which raises here) is never the answer — use
-`tie(method="mortar", enforce="equation")`.
+## Namespacing — `'{instance}.{pg}'`
 
-```python
-# verified: tests/test_v1_1_a_2_embedded_chain_phase.py::TestEmbeddedChainPhase::test_chain_phase_session_path
-g.constraints.embedded(host_label="soil", embedded_label="pile.shaft")
-```
+There is no host: every instance's physical groups, labels and named
+materials/sections become `{instance}.{name}`. The `pattern` field of a load
+record is NOT namespaced. Instance `k` (1-based) of a source whose ids are
+below 10^6 starts at `k * 1_000_000`.
 
-Two sharp edges:
-- **from_h5/compose sessions fail LOUD** (silent-failures slice 2, Aug 2026 — the
-  old KeyError/TypeError swallow is live-session-only now): a misspelled label
-  raises `KeyError`; a tie/tied_contact resolving 0 records raises `ValueError`
-  (partial projection warns with counts); a def kind the router can't apply
-  (`g.displacements.*`, distributed loads/masses, `contact`, `contact_plane`,
-  `g.embed`, `g.reinforce`, `g.decouple_node`) raises `ChainPhaseError` —
-  declare those in the source part session before saving. No more counting
-  `g._fem.elements.constraints` to detect a dropped tie.
-- `tied_contact` and `tie(method="mortar")` need dim=2 element groups (mortar on
-  BOTH sides). If the broker has none, the ADR 0041 Decision-5 path raises
-  `ValueError("re-extract with dim=None")` — a **hard** error that propagates
-  (not swallowed). Re-extract the source with `dim=None` before saving.
+## Nested assemblies + depth cap
 
----
+Instancing an assembly archive nests it. The depth cap is fixed at 3
+(`DEFAULT_MAX_COMPOSE_DEPTH`): `ComposeDepthExceededError` ("would exceed the
+maximum compose depth (3)"), raised at `bridge()`. The separator alternates
+by depth (depth 1 = `.`, depth 2 = `/`, ...); storage is a flat graft and
+`compose_tree()` re-derives the hierarchy. A ranked archive cannot be
+instanced.
 
-## Nested compose + depth cap
+## apeGmsh.from_h5 — chain-phase sessions (no gmsh)
 
-Composing a source that is itself a composed assembly nests provenance. The cap is
-`MAX_COMPOSE_DEPTH = 3` (`DEFAULT_MAX_COMPOSE_DEPTH`, `src/apeGmsh/mesh/_compose.py:144`),
-overridable per call via `max_compose_depth=`. Exceeding it raises
-`ComposeDepthExceededError`. The namespace separator alternates by depth
-(depth 1 = `.`, depth 2 = `/`, …) so depth boundaries stay parseable; storage is a
-flat graft (every ancestor surfaces as its own top-level `ComposeRecord`, and
-`compose_tree()` re-derives the hierarchy).
+`apeGmsh.from_h5(path)` rebuilds a session from the neutral zone with **no
+gmsh state**: `g.mesh.queries.get_fem_data()`, the compose readers and
+`g.save(...)` work; `g.model.*` / `g.mesh.generation.*` raise
+`ChainPhaseError`. Interface-bridging defs still route onto the FEM there
+(ADR 0041: `tie`, `tied_contact`, `embedded`, `equal_dof`, `rigid_link`,
+`rigid_diaphragm`, point loads/masses) and fail loud (`KeyError` for a
+misspelled label, `ValueError` for a tie that resolves nothing). For
+multi-file models use the `Assembly` verbs instead.
 
----
+## Errors and warnings
 
-## Error hierarchy + warnings
-
-Facade errors (catch with `except ComposeError`), `src/apeGmsh/mesh/_compose.py:51`:
-
-| error | when |
-|---|---|
-| `ComposeError` | base for all facade compose errors |
-| `ComposeLabelError` (also `ValueError`) | bad `label=` (dot/slash/whitespace/`_`-edge/empty) |
-| `ComposeAnchorError` (also `ValueError`) | `anchor=` + non-zero `translate=` |
-| `ComposeCapacityError` (also `ValueError`) | `compose_size_per_module=N` < source tag span |
-| `ComposeDepthExceededError` | nested depth > `max_compose_depth` |
-| `ComposeNamespaceCollisionError` (also `ValueError`) | post-rewrite PG-name collision |
-
-```python
-# verified: tests/test_compose_facade.py::test_exception_hierarchy
-from apeGmsh.mesh._compose import (
-    ComposeError, ComposeLabelError, ComposeAnchorError,
-    ComposeCapacityError, ComposeDepthExceededError, ComposeNamespaceCollisionError,
-)
-```
-
-Warnings (filter independently):
-- `ComposeInterfaceSizeWarning` — interface-class constraint count > `WARN_INTERFACE_SIZE`
-  (50 000). Canonical class at `apeGmsh.core._compose_errors`
-  (`src/apeGmsh/core/_compose_errors.py:69`). Silence:
-  `warnings.simplefilter("ignore", ComposeInterfaceSizeWarning)`.
-- `ComposeFilterWarning` — filtered record kinds (stages / time-series / load-patterns
-  are dropped from a composed module). `src/apeGmsh/mesh/_compose.py:114`.
-  Verified: `tests/test_compose_end_to_end.py::test_compose_filter_warning_for_stages`.
-
-`compose_size_per_module` is a FLOOR/advisory (actual = `max(auto_size, value)`);
-supplying a value SMALLER than the source span raises `ComposeCapacityError`.
-
-> Note — `ComposeCapacityError` and `ComposeDepthExceededError` exist in **both**
-> `apeGmsh.mesh._compose` (facade) and `apeGmsh.core._compose_errors` (verifier). The
-> facade `ComposeDepthExceededError` subclasses the core one, so
-> `except ComposeError` and `except` the core class both catch it.
-
----
+`AssemblyError` (`from apeGmsh.assembly import AssemblyError`) for every
+declaration, archive or `bridge()` refusal. The merge engine's typed errors
+(`apeGmsh.mesh._compose`: `ComposeError` base, `ComposeDepthExceededError`,
+`ComposeNamespaceCollisionError`, `ComposeTagCollisionError`, ...) surface
+from `bridge()`. Warnings, emitted by `bridge()`:
+- `ComposeFilterWarning` — an instance's stages / time series / patterns are
+  dropped (analysis content is the bridge's).
+- `ComposeDroppedStreamWarning` — a non-empty neutral stream that does not travel.
+- `ComposeInterfaceSizeWarning` — interface-class constraint count > 50 000.
 
 ## Viewing composed models — Module color mode
 
@@ -326,76 +164,30 @@ enum is wrong.
 
 ---
 
-## Declarative `Assembly` + `couple` (v1, removal pending)
-
-The v1 form of `Assembly`; new models use the v2 section above.
-
-For spatially coupling several saved `model.h5` modules, a declarative builder
-**shipped in v2.0.0** (PR #433, ADR 0043 slice 1.4). It is imported from a
-**sub-path** — `from apeGmsh.assembly import Assembly` — *not* top-level:
-`apeGmsh.Assembly` is deliberately guarded against (`test_library_contracts.py`),
-so the top-level mental model "the session IS the assembly" still holds. `Assembly`
-is a thin wrapper that *produces* a composed session.
-
-```python
-# verified: tests/test_assembly_compose_pipeline.py
-from apeGmsh.assembly import Assembly, AssemblyError
-
-g = (
-    Assembly("frame")
-    .add("col", "col.h5")                                  # first add = HOST (PGs stay bare)
-    .add("beam", "beam.h5", translate=(0.0, 3.0, 0.0))     # composed under label "beam"
-    .couple("col", "beam", kind="equal_dof",
-            ports=("top", "end"), dofs=[1, 2, 3])          # bare per-part PG names
-    .materialize()                                         # -> composed apeGmsh session
-)
-g.save("frame.h5")        # or apeSees(g._fem).tcl(...) / .py(...)
-```
-
-- **`Assembly(name)`** → `.add(label, source, *, translate=(0,0,0), rotate=None, anchor=None)`
-  → `.couple(part_a, part_b, *, kind, ports, dofs=None, tolerance=None, **options)`
-  → `.materialize() -> apeGmsh`.
-- **First `add()` is the HOST** — its PGs stay un-namespaced; every later part is
-  composed under its label, so its PGs become `"{label}.{pg}"`. `couple` always names
-  **bare** per-part PG names (`ports=("top", "end")`); `materialize` resolves host→bare,
-  composed→`"{label}.{pg}"`.
-- **`kind` ∈ `{equal_dof, tied_contact, tie}`** — `tie` since ADR 0085; extra
-  kwargs (`enforce="equation"`, `method="mortar"`, `stiffness=`, …) flow through
-  `**options` to `g.constraints.tie`. `embedded` / `rigid_link` are deferred
-  (they need host-volume geometry the bare-PG port model can't express). For
-  weld-type ties prefer `enforce="equation"` — exact (−0.01 % on the calibrated
-  closed-form rig); a hand-picked penalty number stays unit-sensitive.
-- **Fail-loud `AssemblyError`** if no parts were added, a couple names an unknown part,
-  or a couple resolves to **zero** new constraint records (a port that tied nothing).
-- It's a thin wrapper over `apeGmsh.from_h5(host)` + `g.compose(rest, label=...)` +
-  `g.constraints.<kind>(...)` (chain-phase-routed, ADR 0041). Reach the composed snapshot
-  via `g._fem`. `Assembly.emit` / `Assembly.graph` are the next slice (not yet shipped).
-
----
-
 ## Independent meshes per part — mixed element types AND orders (ADR 0085/0086)
 
-**Compose is the ONLY route to mixed element order.** `set_order` is global
-within a gmsh session, so hex20 in one region + hex8 in another is impossible
-in one mesh pass — and a `Part` cannot help (it is a geometry template with no
-mesh composite, by deliberate contract; ADR 0085 re-affirmed this after ADR
-0038 had already rejected `Part.bake()`). The unit of authorship is a **full
-session per part**:
+**Separate files are the ONLY route to mixed element order.** `set_order` is
+global within a gmsh session, so hex20 in one region + hex8 in another is
+impossible in one mesh pass — and a `Part` cannot help (it is a geometry
+template with no mesh composite, by deliberate contract; ADR 0085). The unit
+of authorship is a **full session per part**, assembled with `Assembly`:
 
 ```python
 # verified: tests/test_meshable_part_route.py, tests/test_mortar_tie_compose.py
-with apeGmsh(model_name="ribs", save_to="part_ribs.h5", overwrite=True) as g:
+with apeGmsh(model_name="ribs", verbose=False) as g:
     ...                                          # geometry + volume/surface PGs
     g.mesh.recipe.structured(size=4.0, fallback="strict")
     g.mesh.generation.set_order(2, bubble=False) # hex20 — THIS part only
-    g.mesh.queries.get_fem_data(dim=None)        # dim=None: ties need dim-2 groups
+    fem = g.mesh.queries.get_fem_data(dim=None)  # dim=None: ties need dim-2 groups
+ops = apeSees(fem); ops.model(ndm=3, ndf=3); ops.h5("part_ribs.h5")
 
-g = (Assembly("fuse")
-     .add("cover", "part_cover.h5")              # host (hex8) — bare PGs
-     .add("rb", "part_ribs.h5")                  # hex20, namespaced rb.*
-     .couple("cover", "rb", kind="tie", ports=("WeldFace", "WeldRoot"),
-             dofs=[1, 2, 3], method="mortar", enforce="equation")
-     .materialize())
+asm = (Assembly("fuse")
+       .instance("cover", "part_cover.h5")       # hex8
+       .instance("rb", "part_ribs.h5")           # hex20
+       .tie("cover.WeldFace", "rb.WeldRoot", dofs=[1, 2, 3],
+            method="mortar", enforce="equation"))
+ops = asm.bridge(ndm=3, ndf=3)
+# hex20 is outside the rehydrate roster: declare it on the bridge by dotted PG.
 ```
 
 Rules (measured on the Cerro Lindo rung-4 fuse):
@@ -414,6 +206,7 @@ Rules (measured on the Cerro Lindo rung-4 fuse):
    the difference appears when slave facets straddle master face boundaries.
    The mortar math is apeGmsh-side numpy; the fork's `LadrunoTie -mortar` is
    tri3/quad4-only and is NOT the emit target.
-4. Loads/BCs that must survive belong on the **host part's session** (a
-   composed module's load patterns are dropped, `ComposeFilterWarning`; sp
-   cases reload under `pattern='default'`).
+4. Loads/BCs belong on the **bridge** (an instance's load patterns are
+   dropped with a `ComposeFilterWarning`; neutral fixes/masses/SP cases travel
+   only through the opt-in `ops.fix_from_model()`, `ops.mass_from_model()`,
+   `p.from_model(case)`).

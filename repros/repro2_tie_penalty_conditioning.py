@@ -45,17 +45,38 @@ def build_module(fname, name, z0, size):
     return path
 
 
+def composed_session(pa, pb):
+    """Modules A and B as one Assembly archive, reopened as a chain-phase
+    session (``g.compose`` was removed in AS5-c, ADR 0117 D7). Every
+    instance is namespaced, so A's groups are ``A.A_*`` and B's ``B.B_*``."""
+    from apeGmsh.assembly import Assembly
+    from apeGmsh.mesh import FEMData
+    from apeGmsh.opensees import apeSees
+
+    srcs = []
+    for p in (pa, pb):
+        ops = apeSees(FEMData.from_h5(str(p)))
+        ops.model(ndm=3, ndf=3)
+        src = p.with_name(p.stem + "_src.h5")
+        ops.h5(str(src))
+        srcs.append(src)
+    asm = Assembly("AB").instance("A", srcs[0]).instance("B", srcs[1])
+    asm.bridge(ndm=3, ndf=3)
+    archive = TMP / "AB.h5"
+    asm.h5(str(archive))
+    return apeGmsh.from_h5(str(archive))
+
+
 pa = build_module("mod_a.h5", "A", 0.0, 25.0)
 pb = build_module("mod_b.h5", "B", 50.0, 20.0)   # conformal geometry, non-matching mesh
 
 
 def run_route(enforce, stiffness):
-    g = apeGmsh.from_h5(pa)
-    g.compose(str(pb), label="B")
+    g = composed_session(pa, pb)
     kwargs = dict(tolerance=1.0, enforce=enforce)
     if stiffness is not None:
         kwargs["stiffness"] = stiffness
-    g.constraints.tie("A_top", "B.B_bot", dofs=[1, 2, 3], **kwargs)
+    g.constraints.tie("A.A_top", "B.B_bot", dofs=[1, 2, 3], **kwargs)
     fem = g._fem
     n_tie = len(list(fem.elements.constraints))
     if n_tie == 0:
@@ -72,9 +93,9 @@ def run_route(enforce, stiffness):
     ops = apeSees(fem)
     ops.model(ndm=3, ndf=3)
     mat = ops.nDMaterial.ElasticIsotropic(E=E, nu=NU)
-    ops.element.FourNodeTetrahedron(pg="A_body", material=mat)
+    ops.element.FourNodeTetrahedron(pg="A.A_body", material=mat)
     ops.element.FourNodeTetrahedron(pg="B.B_body", material=mat)
-    ops.fix(pg="A_bot", dofs=(1, 1, 1))
+    ops.fix(pg="A.A_bot", dofs=(1, 1, 1))
     with ops.pattern.Plain(series=ops.timeSeries.Linear()) as p:
         p.load(pg="B.B_top", forces=(0.0, 0.0, -f_node))
 

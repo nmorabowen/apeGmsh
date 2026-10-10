@@ -8,6 +8,10 @@ label via the separator-alternation rule (depth-1 ``.``, depth-2
 ``/``, depth-3 ``.``, ...) and stitching child records under their
 parents.
 
+The nested sources are v2 assembly archives (ADR 0117): a leaf written
+with ``apeSees(fem).model(...).h5()``, instanced by an ``Assembly``
+whose ``asm.h5`` archive is the next level's source.
+
 Tests are pure FEMData / H5 (no Gmsh, no OpenSeesPy).
 """
 from __future__ import annotations
@@ -19,6 +23,7 @@ import pytest
 
 from apeGmsh._core import apeGmsh
 from apeGmsh._kernel.records._compose import ComposeRecord
+from apeGmsh.assembly import Assembly
 from apeGmsh.mesh._compose import (
     ComposeError,
     ComposeTreeNode,
@@ -34,6 +39,7 @@ from apeGmsh.mesh.FEMData import (
     MeshInfo,
     NodeComposite,
 )
+from apeGmsh.opensees import apeSees
 
 
 # ---------------------------------------------------------------------------
@@ -96,51 +102,64 @@ def _make_fem(
 
 @pytest.fixture
 def empty_h5(tmp_path: Path) -> Path:
-    """Empty FEMData — serves as the chain-phase 'empty host'."""
+    """Empty FEMData — an uncomposed file (empty compose tree)."""
     fem = _make_fem(node_ids=[], elem_ids=[])
     p = tmp_path / "empty.h5"
     fem.to_h5(str(p))
     return p
 
 
-@pytest.fixture
-def leaf_h5(tmp_path: Path) -> Path:
+def _write_source(fem: FEMData, path: Path) -> Path:
+    """Write ``fem`` as an instanceable source (``/opensees`` carries
+    ``model(ndm=3, ndf=3)``)."""
+    ops = apeSees(fem)
+    ops.model(ndm=3, ndf=3)
+    ops.h5(str(path))
+    return path
+
+
+def _archive(out: Path, *instances: "tuple[str, Path]") -> Path:
+    """An assembly archive instancing each ``(label, source)``."""
+    asm = Assembly(out.stem)
+    for label, source in instances:
+        asm.instance(label, source)
+    asm.bridge(ndm=3, ndf=3)
+    asm.h5(str(out))
+    return out
+
+
+@pytest.fixture(scope="module")
+def _dir(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    return tmp_path_factory.mktemp("compose_tree")
+
+
+@pytest.fixture(scope="module")
+def leaf_h5(_dir: Path) -> Path:
     """A depth-0 source: uncomposed leaf FEMData."""
-    fem = _make_fem(node_ids=[1, 2, 3], elem_ids=[10, 11])
-    p = tmp_path / "leaf.h5"
-    fem.to_h5(str(p))
-    return p
+    return _write_source(
+        _make_fem(node_ids=[1, 2, 3], elem_ids=[10, 11]), _dir / "leaf.h5",
+    )
 
 
-@pytest.fixture
-def leaf2_h5(tmp_path: Path) -> Path:
-    """A second depth-0 source for sibling-compose scenarios."""
-    fem = _make_fem(node_ids=[100, 101, 102], elem_ids=[200, 201])
-    p = tmp_path / "leaf2.h5"
-    fem.to_h5(str(p))
-    return p
+@pytest.fixture(scope="module")
+def leaf2_h5(_dir: Path) -> Path:
+    """A second depth-0 source for sibling-instance scenarios."""
+    return _write_source(
+        _make_fem(node_ids=[100, 101, 102], elem_ids=[200, 201]),
+        _dir / "leaf2.h5",
+    )
 
 
-@pytest.fixture
-def depth_1_h5(tmp_path: Path, empty_h5: Path, leaf_h5: Path) -> Path:
+@pytest.fixture(scope="module")
+def depth_1_h5(_dir: Path, leaf_h5: Path) -> Path:
     """Depth-1 source: ``[partA]``."""
-    g = apeGmsh.from_h5(empty_h5)
-    g.compose(leaf_h5, label="partA")
-    out = tmp_path / "depth_1.h5"
-    g.save(out)
-    return out
+    return _archive(_dir / "depth_1.h5", ("partA", leaf_h5))
 
 
-@pytest.fixture
-def depth_2_h5(
-    tmp_path: Path, empty_h5: Path, depth_1_h5: Path,
-) -> Path:
+@pytest.fixture(scope="module")
+def depth_2_h5(_dir: Path, depth_1_h5: Path) -> Path:
     """Depth-2 source: ``[assemblyM, assemblyM/partA]``."""
-    g = apeGmsh.from_h5(empty_h5)
-    g.compose(depth_1_h5, label="assemblyM")
-    out = tmp_path / "depth_2.h5"
-    g.save(out)
-    return out
+    return _archive(_dir / "depth_2.h5", ("assemblyM", depth_1_h5))
 
 
 # ---------------------------------------------------------------------------
@@ -348,8 +367,8 @@ class TestBuildComposeTree:
 
 
 class TestComposeTreeAPI:
-    """End-to-end: compose into an apeGmsh session, then walk the
-    derived tree."""
+    """End-to-end: write an assembly archive, open it as an apeGmsh
+    session, then walk the derived tree."""
 
     def test_uncomposed_returns_empty(self, empty_h5: Path) -> None:
         g = apeGmsh.from_h5(empty_h5)
@@ -368,10 +387,9 @@ class TestComposeTreeAPI:
         assert facade.compose_tree() == ()
 
     def test_single_depth_1_compose(
-        self, empty_h5: Path, leaf_h5: Path,
+        self, tmp_path: Path, leaf_h5: Path,
     ) -> None:
-        g = apeGmsh.from_h5(empty_h5)
-        g.compose(leaf_h5, label="partA")
+        g = apeGmsh.from_h5(_archive(tmp_path / "a.h5", ("partA", leaf_h5)))
         tree = g.compose_tree()
         assert len(tree) == 1
         assert tree[0].label == "partA"
@@ -379,11 +397,10 @@ class TestComposeTreeAPI:
         assert tree[0].children == ()
 
     def test_two_sibling_depth_1_composes(
-        self, empty_h5: Path, leaf_h5: Path, leaf2_h5: Path,
+        self, tmp_path: Path, leaf_h5: Path, leaf2_h5: Path,
     ) -> None:
-        g = apeGmsh.from_h5(empty_h5)
-        g.compose(leaf_h5, label="A")
-        g.compose(leaf2_h5, label="B")
+        g = apeGmsh.from_h5(_archive(
+            tmp_path / "a.h5", ("A", leaf_h5), ("B", leaf2_h5)))
         tree = g.compose_tree()
         labels = sorted(n.label for n in tree)
         assert labels == ["A", "B"]
@@ -391,10 +408,10 @@ class TestComposeTreeAPI:
             assert node.children == ()
 
     def test_depth_2_nested(
-        self, empty_h5: Path, depth_1_h5: Path,
+        self, tmp_path: Path, depth_1_h5: Path,
     ) -> None:
-        g = apeGmsh.from_h5(empty_h5)
-        g.compose(depth_1_h5, label="outer")
+        g = apeGmsh.from_h5(
+            _archive(tmp_path / "a.h5", ("outer", depth_1_h5)))
         tree = g.compose_tree()
         assert len(tree) == 1
         root = tree[0]
@@ -408,10 +425,10 @@ class TestComposeTreeAPI:
         assert child.record.label == "outer/partA"
 
     def test_depth_3_nested(
-        self, empty_h5: Path, depth_2_h5: Path,
+        self, tmp_path: Path, depth_2_h5: Path,
     ) -> None:
-        g = apeGmsh.from_h5(empty_h5)
-        g.compose(depth_2_h5, label="bayP")
+        g = apeGmsh.from_h5(
+            _archive(tmp_path / "a.h5", ("bayP", depth_2_h5)))
         tree = g.compose_tree()
         assert len(tree) == 1
         root = tree[0]
@@ -432,15 +449,14 @@ class TestComposeTreeAPI:
 
     def test_mixed_depth_siblings_e2e(
         self,
-        empty_h5: Path,
+        tmp_path: Path,
         leaf_h5: Path,
         depth_1_h5: Path,
     ) -> None:
-        """Compose a depth-0 leaf and a depth-1 source side-by-side.
+        """Instance a depth-0 leaf and a depth-1 source side-by-side.
         Result: two roots, one with a child, one without."""
-        g = apeGmsh.from_h5(empty_h5)
-        g.compose(leaf_h5, label="bareA")
-        g.compose(depth_1_h5, label="nestedB")
+        g = apeGmsh.from_h5(_archive(
+            tmp_path / "a.h5", ("bareA", leaf_h5), ("nestedB", depth_1_h5)))
         tree = g.compose_tree()
         labels = sorted(n.label for n in tree)
         assert labels == ["bareA", "nestedB"]
@@ -452,12 +468,12 @@ class TestComposeTreeAPI:
         assert nestedB.children[0].record.label == "nestedB/partA"
 
     def test_round_trip_tree_labels_match_flat(
-        self, empty_h5: Path, depth_2_h5: Path,
+        self, tmp_path: Path, depth_2_h5: Path,
     ) -> None:
         """Walking the tree and collecting every record's joined
         label reproduces the flat ``composed_from`` list (sorted)."""
-        g = apeGmsh.from_h5(empty_h5)
-        g.compose(depth_2_h5, label="bayP")
+        g = apeGmsh.from_h5(
+            _archive(tmp_path / "a.h5", ("bayP", depth_2_h5)))
         flat_labels = sorted(r.label for r in g._fem.composed_from)
 
         def _walk(nodes: "tuple[ComposeTreeNode, ...]") -> list[str]:
@@ -471,12 +487,11 @@ class TestComposeTreeAPI:
         assert tree_labels == flat_labels
 
     def test_record_fidelity(
-        self, empty_h5: Path, leaf_h5: Path,
+        self, tmp_path: Path, leaf_h5: Path,
     ) -> None:
         """Each tree node's ``record`` is the same ComposeRecord
         instance that ``fem.composed_from`` carries."""
-        g = apeGmsh.from_h5(empty_h5)
-        g.compose(leaf_h5, label="modA")
+        g = apeGmsh.from_h5(_archive(tmp_path / "a.h5", ("modA", leaf_h5)))
         tree = g.compose_tree()
         flat = g._fem.composed_from["modA"]
         assert tree[0].record is flat or tree[0].record == flat
@@ -486,12 +501,11 @@ class TestComposeTreeAPI:
         assert tree[0].record.source_fem_hash == flat.source_fem_hash
 
     def test_fem_compose_tree_matches_session(
-        self, empty_h5: Path, depth_1_h5: Path,
+        self, tmp_path: Path, depth_1_h5: Path,
     ) -> None:
         """The session shim delegates to the canonical primitive on
         FEMData — both return identical trees."""
-        g = apeGmsh.from_h5(empty_h5)
-        g.compose(depth_1_h5, label="modX")
+        g = apeGmsh.from_h5(_archive(tmp_path / "a.h5", ("modX", depth_1_h5)))
         session_tree = g.compose_tree()
         fem_tree = g._fem.compose_tree()
         # Compare by structure: equal tuple of equal ComposeTreeNodes.

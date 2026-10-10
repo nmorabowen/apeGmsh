@@ -16,7 +16,9 @@ Backward-compat: schema 2.8.x files (no ``/composed_from/`` group, no
 ``module_label`` parallel datasets) decode as "uncomposed" — iter
 yields nothing and ``composed_for_*`` return ``None`` for every id.
 
-These tests do not exercise OpenSeesMP (pure H5 + neutral-zone work).
+The composed fixture is a v2 assembly archive (ADR 0117:
+``Assembly.instance`` + ``bridge`` + ``Assembly.h5``). These tests do
+not exercise OpenSeesMP (pure H5 + neutral-zone work).
 """
 from __future__ import annotations
 
@@ -92,36 +94,63 @@ def _make_module_fem(
     return FEMData(nodes=nodes, elements=elements, info=info)
 
 
+def _write_source(fem: FEMData, path: Path) -> Path:
+    """Write ``fem`` as an assembly source (it needs ``model(ndm, ndf)``)."""
+    from apeGmsh.opensees import apeSees
+
+    ops = apeSees(fem)
+    ops.model(ndm=3, ndf=3)
+    ops.h5(str(path))
+    return path
+
+
 @pytest.fixture
 def composed_h5(tmp_path: Path) -> Path:
-    """Build host + 2 composed modules → save as composed model.h5."""
-    host = _make_module_fem(
+    """Two instances plus one assembly-owned node -> assembly archive.
+
+    v2 has no live host (row-15 ruling): the module-owned rows carry
+    ``A`` / ``B``, and the assembly reference node ``ref`` is the one
+    node row with an empty ``module_label`` (the host-owned case).
+    """
+    from apeGmsh.assembly import Assembly
+
+    module_a_path = _write_source(_make_module_fem(
         node_ids=np.array([1, 2, 3], dtype=np.int64),
         elem_ids=np.array([10, 11], dtype=np.int64),
-    )
-    host_path = tmp_path / "host.h5"
-    host.to_h5(str(host_path))
-
-    module_a = _make_module_fem(
-        node_ids=np.array([1, 2, 3], dtype=np.int64),
-        elem_ids=np.array([10, 11], dtype=np.int64),
-    )
-    module_a_path = tmp_path / "module_a.h5"
-    module_a.to_h5(str(module_a_path))
-
-    module_b = _make_module_fem(
+    ), tmp_path / "module_a.h5")
+    module_b_path = _write_source(_make_module_fem(
         node_ids=np.array([1, 2, 3, 4], dtype=np.int64),
         elem_ids=np.array([20, 21, 22], dtype=np.int64),
-    )
-    module_b_path = tmp_path / "module_b.h5"
-    module_b.to_h5(str(module_b_path))
+    ), tmp_path / "module_b.h5")
 
-    g = apeGmsh.from_h5(host_path)
-    g.compose(module_a_path, label="A", translate=(10.0, 0.0, 0.0))
-    g.compose(module_b_path, label="B", translate=(100.0, 0.0, 0.0))
+    asm = Assembly("composed")
+    asm.instance("A", module_a_path, translate=(10.0, 0.0, 0.0))
+    asm.instance("B", module_b_path, translate=(100.0, 0.0, 0.0))
+    asm.node("ref", (0.0, 5.0, 0.0))
+    asm.bridge(ndm=3, ndf=3)
 
     out = tmp_path / "composed.h5"
-    g.save(out)
+    asm.h5(str(out))
+    return out
+
+
+@pytest.fixture
+def host_row_h5(composed_h5: Path, tmp_path: Path) -> Path:
+    """The archive with its first element row's ``module_label`` blanked.
+
+    v2 has no host (row-15 ruling), so no writer emits a host-owned
+    element row any more; the reader still meets one in a v1-era file.
+    The blank is written in place, so the reader sees exactly the row
+    shape the v1 writer produced for a host element.
+    """
+    import shutil
+
+    out = tmp_path / "host_row.h5"
+    shutil.copy(composed_h5, out)
+    with h5py.File(str(out), "r+") as f:
+        sub = f["elements"][next(iter(f["elements"]))]
+        labels = sub["module_label"]
+        labels[0] = b"" if isinstance(labels[0], bytes) else ""
     return out
 
 
@@ -195,7 +224,7 @@ def test_iter_composed_from_round_trips_provenance(
     a = next(r for r in records if r.label == "A")
     b = next(r for r in records if r.label == "B")
 
-    # translate carried through from the compose() calls in the fixture.
+    # translate carried through from the instance() calls in the fixture.
     assert a.translate == (10.0, 0.0, 0.0)
     assert b.translate == (100.0, 0.0, 0.0)
     # No rotate / partition_rank supplied on this fixture.
@@ -273,7 +302,8 @@ def test_composed_for_node_returns_label_for_module_node(
 def test_composed_for_node_returns_none_for_host_node(
     composed_h5: Path,
 ) -> None:
-    """A node with empty-string ``module_label`` is host-owned → None."""
+    """A node with empty-string ``module_label`` (the assembly-owned
+    reference node) is not module-owned → None."""
     with h5_reader.open(str(composed_h5)) as model:
         nodes_data = model.nodes()
         ids = nodes_data["ids"]
@@ -351,11 +381,11 @@ def test_composed_for_element_returns_label_for_module_element(
 
 
 def test_composed_for_element_returns_none_for_host_element(
-    composed_h5: Path,
+    host_row_h5: Path,
 ) -> None:
     """Host-owned elements (empty-string ``module_label``) → None."""
-    with h5_reader.open(str(composed_h5)) as model:
-        with h5py.File(str(composed_h5), "r") as f:
+    with h5_reader.open(str(host_row_h5)) as model:
+        with h5py.File(str(host_row_h5), "r") as f:
             for type_name in f["elements"]:
                 sub = f["elements"][type_name]
                 ids = sub["ids"][:]

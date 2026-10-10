@@ -555,20 +555,6 @@ def test_a_diaphragm_whose_only_plane_node_is_its_master_raises(files, case):
     assert f"rigid_diaphragm({ports[0]!r}, {ports[1]!r})" in str(info.value)
 
 
-def test_the_v1_couple_refuses_instance_form_options(files):
-    """Review F2: v1 forwards unknown keywords to ``g.constraints``; the
-    instance-form ``reference=`` / ``weighting=`` must not vanish there."""
-    from apeGmsh.assembly import Assembly, AssemblyError
-
-    for kw in ({"reference": "ref"}, {"weighting": "area"}):
-        asm = Assembly("v1").add("h", str(files["block"]))
-        with pytest.raises(AssemblyError, match="reference= and weighting="):
-            asm.couple("h", "h", kind="equal_dof", ports=("top", "bot"), **kw)
-        assert asm._couples == []
-    asm.couple("h", "h", kind="equal_dof", ports=("top", "bot"))
-    assert len(asm._couples) == 1
-
-
 # ---------------------------------------------------------------------------
 # D3 — the unroutable verbs stay out
 # ---------------------------------------------------------------------------
@@ -581,7 +567,7 @@ def test_contact_interface_embed_and_reinforce_are_not_assembly_verbs(files):
     asm = _stack(files).node("ref", REF)
     for kind in ("contact", "interface", "tie", "equal_dof"):
         with pytest.raises(AssemblyError, match="not assembly couplings"):
-            asm.couple("pier_1.top", "pier_2.bot", kind=kind, ports=("a", "b"))
+            asm.couple("pier_1.top", kind=kind, reference="ref")
     assert asm.ties == ()
 
 

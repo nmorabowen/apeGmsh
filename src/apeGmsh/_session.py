@@ -338,7 +338,7 @@ class _SessionBase:
         sibling is stamped with the ``session_id`` of the snapshot the
         model file carries (``self._fem`` after the save), so the two
         files pair by equality even when that snapshot was minted by
-        ``compose`` rather than inherited from this session.
+        ``apeGmsh.from_h5`` rather than inherited from this session.
 
         Both files are written to ``<target>.tmp-<uuid>`` beside the
         target and moved into place with ``os.replace``, so a failed
@@ -533,9 +533,8 @@ class _SessionBase:
         from .core._compose_errors import ChainPhaseError
         raise ChainPhaseError(
             f"{operation}: model frozen after first get_fem_data() / "
-            f"compose; reload from H5 or restart to mutate geometry. "
-            f"Chain-phase composition (g.compose) and the "
-            f"interface-bridging constraints "
+            f"reload; reload from H5 or restart to mutate geometry. "
+            f"The interface-bridging constraints "
             f"(g.constraints.embedded / tied_contact / equalDOF / "
             f"rigid_link / rigid_diaphragm) remain available."
         )

@@ -172,8 +172,7 @@ class _Queries:
         ``clear()`` bumps an internal counter; the cache is fresh iff
         the counter has not advanced since the last extraction).  This
         means the session has a single canonical "chain head" snapshot
-        that ``FEMData.with_*`` transforms and the upcoming
-        ``FEMData.compose(...)`` engine (Phase 3B.2c) will update.
+        that the ``FEMData.with_*`` transforms update.
 
         Vanilla sessions (no ``_fem_counter`` attribute — direct
         ``FEMData.from_gmsh`` fixtures or test stubs) skip the cache
@@ -238,14 +237,6 @@ class _Queries:
 
         result = FEMData.from_gmsh(
             dim=dim, session=parent, remove_orphans=remove_orphans)
-
-        # Re-apply any stored compose bundles in compose-call order so
-        # composed modules survive broker mutations on the session.
-        bundles = getattr(parent, "_compose_bundles", ())
-        if bundles and is_default:
-            from ._compose import _merge_bundle_into_fem
-            for bundle in bundles:
-                result = _merge_bundle_into_fem(result, bundle)
 
         self._mesh._log(
             f"get_fem_data(dim={dim}) -> "

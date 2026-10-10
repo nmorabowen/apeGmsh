@@ -1,12 +1,12 @@
-"""Compose carries the source's ``rebar_elements``, and warns iff it drops
-a non-empty source stream (program slices B2-2 D9, AS2a).
+"""Assembly v2 carries the source's ``rebar_elements``, and the merge warns
+iff it drops a non-empty source stream (program slices B2-2 D9, AS2a).
 
-``g.compose`` rebuilds the host's ``ElementComposite`` from the rewritten
-bundle. Until AS2a the bundle lacked the source's ``elements.rebar_elements``
+``Assembly.bridge`` merges each instance's rewritten bundle into one
+``ElementComposite``. Until AS2a the bundle lacked the source's ``elements.rebar_elements``
 (the cage's auto-emitted structural rebar from
 ``g.rebar.place(emit_elements=True)``) and the rewriter warned
 :class:`ComposeDroppedStreamWarning`. ADR 0117 D4 carries it: each bar cell
-moves with the module's id offset, the bar PG is prefixed as every PG is,
+moves with the instance's id offset, the bar PG is prefixed as every PG is,
 and the material (the bond name) becomes the bridge name
 ``{label}.{material}``, so it binds to the instance's rehydrated material.
 No stream is uncarried today; the helper still warns for any stream that
@@ -24,12 +24,27 @@ import pytest
 
 from apeGmsh import apeGmsh
 from apeGmsh._kernel.defs.rebar import Cage
+from apeGmsh.assembly import Assembly
 from apeGmsh.mesh.FEMData import FEMData
+from apeGmsh.opensees import apeSees
 from apeGmsh.mesh._compose import (
     ComposeDroppedStreamWarning,
     _UNCARRIED_ELEMENT_STREAMS,
     _warn_dropped_streams,
 )
+
+
+def _write_source(fem, path, *, rebar_material: bool = False) -> None:
+    """A bridgeable source: the FEM plus ``/opensees`` ``model(3, 3)``.
+
+    A cage source also declares the bond material ``rebar`` its bar cells
+    name, so the instance rehydrates it as ``{label}.rebar``.
+    """
+    ops = apeSees(fem)
+    ops.model(ndm=3, ndf=3)
+    if rebar_material:
+        ops.uniaxialMaterial.ElasticMaterial(E=200.0e9, name="rebar")
+    ops.h5(str(path))
 
 
 def _rebar_module_h5(path) -> int:
@@ -46,7 +61,7 @@ def _rebar_module_h5(path) -> int:
         g.mesh.sizing.set_global_size(0.2)
         g.mesh.generation.generate(dim=3)
         fem = g.mesh.queries.get_fem_data(dim=3)
-        fem.to_h5(str(path))
+        _write_source(fem, path, rebar_material=True)
         return len(fem.elements.rebar_elements)
 
 
@@ -57,14 +72,18 @@ def _plain_h5(path) -> None:
         g.mesh.sizing.set_global_size(0.5)
         g.mesh.generation.generate(3)
         g.physical.add(3, [box], name="host")
-        g.mesh.queries.get_fem_data(dim=3).to_h5(str(path))
+        _write_source(g.mesh.queries.get_fem_data(dim=3), path)
 
 
 def _compose_and_reload(host, mod, tmp_path, *, label: str) -> FEMData:
-    g = apeGmsh.from_h5(str(host))
-    g.compose(str(mod), label=label, translate=(2.0, 0.0, 0.0))
+    """Instance ``host`` (as ``host.*``) then ``mod`` (as ``{label}.*``),
+    bridge (the merge runs there), write the archive and read it back."""
+    asm = Assembly("streams")
+    asm.instance("host", str(host))
+    asm.instance(label, str(mod), translate=(2.0, 0.0, 0.0))
+    asm.bridge(ndm=3, ndf=3)
     out = tmp_path / "out.h5"
-    g.save(str(out))
+    asm.h5(str(out))
     return FEMData.from_h5(str(out))
 
 
@@ -89,12 +108,12 @@ def test_compose_carries_source_rebar_elements(tmp_path):
     assert got.pg == f"A{sep}{bar.pg}"
     assert (got.element, got.area, got.role) == (bar.element, bar.area, bar.role)
     # The cells moved with the module by one offset, onto merged nodes
-    # that sit above every host node.
+    # that sit above every (relocated) host-instance node.
     off = got.connectivity[0][0] - bar.connectivity[0][0]
     assert got.connectivity == tuple(
         (i + off, j + off) for i, j in bar.connectivity)
     merged_ids = {int(i) for i in merged.nodes.ids}
-    host_max = max(int(i) for i in FEMData.from_h5(str(host)).nodes.ids)
+    host_max = max(int(i) for i in merged.nodes.select(pg="host.host").ids)
     cell_nodes = {i for c in got.connectivity for i in c}
     assert cell_nodes <= merged_ids and min(cell_nodes) > host_max
 

@@ -1,10 +1,10 @@
-"""Compose carries oriented coincident-pair zeroLength interfaces
-(ADR 0093 records under ADR 0038 compose, S6).
+"""Assembly v2 carries oriented coincident-pair zeroLength interfaces
+(ADR 0093 records under ADR 0117 instancing; S6, #1590).
 
-A module's ``elements.interfaces`` arrive on the host offset into the
-module's reservation window with namespaced names, the host's own
-interfaces survive the merge, and each record's own geometry follows the
-module's rotate+translate per INV-2 — **both** ``orient`` direction
+A source's ``elements.interfaces`` arrive offset into the instance's tag
+window with namespaced names (every instance, the former "host" included,
+is namespaced ``{label}.``), and each record's own geometry follows the
+instance's rotate+translate per INV-2 — **both** ``orient`` direction
 vectors rotated, ``phantom_coords`` rotated and translated. Until S6
 compose refused outright rather than merge a model whose springs had
 silently vanished.
@@ -24,7 +24,9 @@ import pytest
 import gmsh
 from apeGmsh import apeGmsh
 from apeGmsh._kernel.records._constraints import NormalLaw, TangentialLaw
+from apeGmsh.assembly import Assembly
 from apeGmsh.mesh.FEMData import FEMData
+from apeGmsh.opensees import apeSees
 
 NORMAL = NormalLaw(kind="ent", k_per_area=1.0e9)
 TANGENTIAL = TangentialLaw(kind="epp", k_per_area=1.0e8, tau_b=2.5e5)
@@ -33,6 +35,26 @@ THICKNESS = 0.5
 #: The verb's own frame on this fixture: the left square's right edge
 #: has outward normal +x, and local-y is the right-handed completion.
 BASE_ORIENT = (1.0, 0.0, 0.0, 0.0, 1.0, 0.0)
+
+#: Instance ``k`` (1-based) of a source whose ids are below 1e6 starts its
+#: tag window at ``k * GRANULE``.
+GRANULE = 1_000_000
+
+
+def _write_source(fem, path, *, beam_slave: bool = False) -> None:
+    """A bridgeable source: the FEM plus ``/opensees`` ``model(2, 2)``.
+
+    A phantom-bridged source (``slave_ndf=3``) also declares a 2-D beam on
+    the slave curve ``wire``, so its nodes really carry 3 dofs (ADR 0093 D4)
+    and the instance rehydrates that beam.
+    """
+    ops = apeSees(fem)
+    ops.model(ndm=2, ndf=2)
+    if beam_slave:
+        ops.element.elasticBeamColumn(
+            pg="wire", transf=ops.geomTransf.Linear(name="lin"),
+            A=0.02, E=200e9, Iz=1.0e-4)
+    ops.h5(str(path))
 
 
 def _curve_at_x(surface: int, x: float, tol: float = 1e-6) -> int:
@@ -62,7 +84,7 @@ def _interface_module_h5(path, *, slave_ndf=None, name="RockLiner", n=2):
             "face", "wire", normal=NORMAL, tangential=TANGENTIAL,
             thickness=THICKNESS, slave_ndf=slave_ndf, name=name)
         fem = g.mesh.queries.get_fem_data()
-        fem.to_h5(str(path))
+        _write_source(fem, path, beam_slave=slave_ndf == 3)
         assert len(fem.elements.interfaces) == 2
         return list(fem.elements.interfaces)
 
@@ -74,15 +96,36 @@ def _plain_host_h5(path):
         g.mesh.structured.set_transfinite([(2, surf)], n=2)
         g.mesh.generation.generate(2)
         g.physical.add(2, [surf], name="host")
-        g.mesh.queries.get_fem_data(dim=2).to_h5(str(path))
+        _write_source(g.mesh.queries.get_fem_data(dim=2), path)
 
 
-def _compose_and_reload(host, mod, tmp_path, out="out.h5", **compose_kw):
-    g = apeGmsh.from_h5(str(host))
-    g.compose(str(mod), **compose_kw)
+def _assemble(host, mod, *, label, **instance_kw):
+    """Instance ``host`` (as ``host.*``) then ``mod`` (as ``{label}.*``)."""
+    asm = Assembly("ifaces")
+    asm.instance("host", str(host))
+    asm.instance(label, str(mod), **instance_kw)
+    return asm
+
+
+def _compose_and_reload(host, mod, tmp_path, out="out.h5", **kw):
+    """Bridge the two instances, write the archive, read the merged FEM."""
+    asm = _assemble(host, mod, **kw)
+    asm.bridge(ndm=2, ndf=2)
     p = tmp_path / out
-    g.save(str(p))
+    asm.h5(str(p))
     return FEMData.from_h5(str(p))
+
+
+def _one_offset(got, src) -> int:
+    """The single positive offset every node AND backing-element tag of
+    ``got`` rides relative to ``src`` (asserts it is one)."""
+    offs = set()
+    for a, b in zip(got, src):
+        offs.add(a.master_node - b.master_node)
+        offs.add(a.slave_node - b.slave_node)
+        offs.add(a.backing_element - b.backing_element)
+    assert len(offs) == 1 and next(iter(offs)) > 0
+    return next(iter(offs))
 
 
 # ======================================================================
@@ -134,11 +177,10 @@ def test_compose_preserves_host_interface_with_plain_module(tmp_path):
     got = merged.elements.interfaces
     assert len(got) == len(src)
     for a, b in zip(got, src):
-        assert a.name == "RockLiner"                   # host-owned
-        assert a.master_node == b.master_node
-        assert a.slave_node == b.slave_node
-        assert a.backing_element == b.backing_element
+        assert a.name == "host.RockLiner"     # the host is an instance too
         assert tuple(a.orient) == pytest.approx(tuple(b.orient))
+    # the host's own interfaces survive, shifted by its one instance offset
+    _one_offset(got, src)
 
 
 def test_compose_both_sides_carry_interfaces(tmp_path):
@@ -151,7 +193,7 @@ def test_compose_both_sides_carry_interfaces(tmp_path):
         a, b, tmp_path, label="M", translate=(4.0, 0.0, 0.0))
 
     names = sorted({r.name for r in merged.elements.interfaces})
-    assert names == ["HostFace", "M.ModFace"]
+    assert names == ["M.ModFace", "host.HostFace"]
     assert len(merged.elements.interfaces) == 4
 
 
@@ -170,7 +212,7 @@ def test_compose_rotates_both_orient_vectors(tmp_path):
     # The translate must NOT move either — they are directions.
     merged = _compose_and_reload(
         host, mod, tmp_path, label="R",
-        translate=(0.0, 7.0, 0.0), rotate=(0.0, 0.0, 1.0, math.pi / 2.0))
+        translate=(0.0, 7.0, 0.0), rotate=((0.0, 0.0, 1.0), math.pi / 2.0))
 
     for rec in merged.elements.interfaces:
         assert tuple(rec.orient) == pytest.approx(
@@ -193,7 +235,7 @@ def test_compose_rotated_orient_still_points_out_of_the_master(tmp_path):
 
     merged = _compose_and_reload(
         host, mod, tmp_path, label="R",
-        translate=(0.0, 7.0, 0.0), rotate=(0.0, 0.0, 1.0, math.pi / 2.0))
+        translate=(0.0, 7.0, 0.0), rotate=((0.0, 0.0, 1.0), math.pi / 2.0))
 
     xyz = {
         int(t): merged.nodes.coords[i]
@@ -237,7 +279,7 @@ def test_compose_rotates_and_translates_phantom_coords(tmp_path):
     _plain_host_h5(host)
     assert all(r.phantom_coords is not None for r in src)
 
-    rotate = (0.0, 0.0, 1.0, math.pi / 2.0)
+    rotate = ((0.0, 0.0, 1.0), math.pi / 2.0)
     translate = (0.0, 7.0, 0.0)
     merged = _compose_and_reload(
         host, mod, tmp_path, label="P",
@@ -281,7 +323,7 @@ def test_two_phantom_carrying_models_do_not_collide(tmp_path):
     assert not (set(phantoms) & node_ids)
     # the module's phantoms rode the node rewrite into its window
     host_phantoms = {int(r.phantom_node) for r in recs
-                     if r.name == "HostFace"}
+                     if r.name == "host.HostFace"}
     mod_phantoms = {int(r.phantom_node) for r in recs
                     if r.name == "M.ModFace"}
     assert min(mod_phantoms) > max(host_phantoms)
@@ -308,34 +350,44 @@ def test_post_compose_reresolution_mints_above_the_composed_phantoms(tmp_path):
         a, b, tmp_path, label="M", translate=(4.0, 0.0, 0.0))
 
     rec = next(r for r in merged.elements.interfaces if r.name == "M.ModFace")
-    base = min(
-        int(t) for t in np.asarray(merged.nodes.ids).tolist()
-        if int(t) >= 1_000_000
-    )
-    # module tags live at/above the 1M reservation base; the phantom
-    # rode the same offset and stays inside that window.
+    # M is the second instance, so its window starts at 2 * GRANULE, above
+    # every tag of the first ("host") instance's window.
+    base = 2 * GRANULE
+    mod_nodes = {int(t) for pg in ("M.rock", "M.liner")
+                 for t in merged.nodes.select(pg=pg).ids}
+    assert min(mod_nodes) == base
+    host_nodes = {int(t) for t in np.asarray(merged.nodes.ids).tolist()
+                  if int(t) < base}
+    assert max(host_nodes) < base
+    # the phantom rode the same offset and stays inside that window.
     assert rec.phantom_node >= base
-    assert rec.phantom_node < base + 1_000_000
+    assert rec.phantom_node < base + GRANULE
 
 
 # ======================================================================
-# End-to-end: compose (one module ROTATED) -> h5 -> reload -> emit
+# End-to-end: two instances (one ROTATED) -> bridge -> emit
 # ======================================================================
 def test_composed_rotated_model_emits_both_interface_blocks(tmp_path):
-    from apeGmsh.opensees import apeSees
-
     a = tmp_path / "a.h5"
     b = tmp_path / "b.h5"
     src_host = _interface_module_h5(a, name="HostFace")
     src_mod = _interface_module_h5(b, name="ModFace")
 
-    merged = _compose_and_reload(
-        a, b, tmp_path, label="M",
-        translate=(0.0, 7.0, 0.0), rotate=(0.0, 0.0, 1.0, math.pi / 2.0))
+    asm = _assemble(
+        a, b, label="M",
+        translate=(0.0, 7.0, 0.0), rotate=((0.0, 0.0, 1.0), math.pi / 2.0))
+    ops = asm.bridge(ndm=2, ndf=2)
+    merged = ops.fem
+    # the archive round-trips the same interface records
+    out = tmp_path / "out.h5"
+    asm.h5(str(out))
+    assert sorted(r.name for r in
+                  FEMData.from_h5(str(out)).elements.interfaces) == \
+        sorted(r.name for r in merged.elements.interfaces)
 
     recs = merged.elements.interfaces
     assert len(recs) == 4
-    host_recs = [r for r in recs if r.name == "HostFace"]
+    host_recs = [r for r in recs if r.name == "host.HostFace"]
     mod_recs = [r for r in recs if r.name == "M.ModFace"]
 
     # The rotated module's frame really rotated; the host's did not.
@@ -349,20 +401,14 @@ def test_composed_rotated_model_emits_both_interface_blocks(tmp_path):
         assert got.master_node > src.master_node
         assert got.backing_element > src.backing_element
 
-    ops = apeSees(merged, _artifacts=False)  # partitioned snapshot: no automatic model.h5
-    ops.model(ndm=2, ndf=2)
+    # The quads are declared on the bridge by dotted PG (FourNodeQuad is
+    # not a rehydrated source spec).
     mat = ops.nDMaterial.ElasticIsotropic(E=30e9, nu=0.2, rho=2400)
-    for pg in ("rock", "liner", "M.rock", "M.liner"):
+    for pg in ("host.rock", "host.liner", "M.rock", "M.liner"):
         ops.element.FourNodeQuad(
             pg=pg, thickness=THICKNESS, material=mat,
             plane_type="PlaneStrain")
     path = tmp_path / "deck.tcl"
-    # ``flat=True``: a chain-phase compose leaves the merged model
-    # carrying one gmsh partition per module (pre-existing, unrelated to
-    # interfaces — a plain-on-plain compose does the same), and every
-    # serial-only side list refuses the partitioned path. ``flat`` is the
-    # sanctioned escape hatch (see test_interface_emit_e2e.py's
-    # ``test_flat_escape_hatch_...``); ADR 0093 S8 lifts the refusal.
     ops.tcl(str(path), flat=True)
     lines = [ln.strip() for ln in path.read_text().splitlines()]
     assert "getPID" not in "\n".join(lines)
@@ -386,6 +432,8 @@ def test_composed_rotated_model_emits_both_interface_blocks(tmp_path):
     for key, orient in seen.items():
         assert orient == pytest.approx(want[key], abs=1e-12)
 
-    # Sanity on the host side: unchanged tags, unchanged frame.
+    # Sanity on the host side: one constant tag offset, unchanged frame.
+    host_off = _one_offset(host_recs, src_host)
     for r in src_host:
-        assert (int(r.master_node), int(r.slave_node)) in seen
+        assert (int(r.master_node) + host_off,
+                int(r.slave_node) + host_off) in seen

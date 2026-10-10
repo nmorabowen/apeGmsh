@@ -36,9 +36,8 @@ class PartitionRecord:
     id : int
         Partition tag. The convention is **producer-dependent**:
         Gmsh's partitioner assigns 1-based tags (``1..N``, no rank 0);
-        ``g.compose(...)`` assigns 0-based ranks with the host on
-        ``id=0`` and each composed module on ``1, 2, ...`` (ADR 0038
-        rank model). The OpenSees bridge does **not** read this value
+        the compose engine behind ``Assembly.bridge`` assigns 0-based
+        ranks (ADR 0038 rank model, ADR 0117 D6). The OpenSees bridge does **not** read this value
         as a runtime rank — it derives the 0-based rank from the
         enumerate position in sorted ``fem.partitions`` (see
         ``opensees._internal.build.runtime_rank_from_partition_record``,

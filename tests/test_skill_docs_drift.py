@@ -68,17 +68,11 @@ _RESULTS_VIEWER = ("apeGmsh.results.Results", "Results.viewer")
 # ── D-SIG registry — doc-quoted def name -> (module, qualname) ──────
 #
 # Maps each API signature quoted in the skill docs to the live object
-# whose ``inspect.signature`` is the truth. ``compose`` binds to
-# ``Compose.compose`` (not the ``apeGmsh.compose`` session facade,
-# which is ``(source, *, label, **kwargs)`` and forwards): the doc
-# quotes the full keyword surface, and the forwarding target is where
-# that surface — and its defaults — actually live.
+# whose ``inspect.signature`` is the truth.
 _SIG_TARGETS: dict[str, tuple[str, str]] = {
     "viewer": _RESULTS_VIEWER,
     "show_web": ("apeGmsh.results.Results", "Results.show_web"),
     "serve_web": ("apeGmsh.results.Results", "Results.serve_web"),
-    "compose": ("apeGmsh.mesh._compose", "Compose.compose"),
-    "from_h5": ("apeGmsh", "apeGmsh.from_h5"),
 }
 
 # ── D-DEFAULT registry — file -> {keyword: (module, qualname)} ──────

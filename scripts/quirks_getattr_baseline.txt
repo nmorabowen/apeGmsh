@@ -12,9 +12,7 @@ src/apeGmsh/core/_compose_errors.py::_check_chain_phase
 src/apeGmsh/core/_compose_errors.py::_fem_from_h5
 src/apeGmsh/core/_declarations.py::_bump_fem_counter
 src/apeGmsh/core/_resolution.py::_sets
-src/apeGmsh/mesh/_compose.py::_bump_fem_counter
 src/apeGmsh/mesh/_compose.py::_fem_from_h5
-src/apeGmsh/mesh/_compose.py::_mark_fem_fresh
 src/apeGmsh/mesh/_compose.py::_names
 src/apeGmsh/mesh/_fem_factory.py::_bc_defs
 src/apeGmsh/mesh/_fem_factory.py::_emit_members

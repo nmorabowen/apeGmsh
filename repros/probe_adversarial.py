@@ -35,14 +35,35 @@ def build_module(fname, name, z0, size):
     return path
 
 
+def composed_session(pa, pb):
+    """Modules A and B as one Assembly archive, reopened as a chain-phase
+    session (``g.compose`` was removed in AS5-c, ADR 0117 D7). Every
+    instance is namespaced, so A's groups are ``A.A_*`` and B's ``B.B_*``."""
+    from apeGmsh.assembly import Assembly
+    from apeGmsh.mesh import FEMData
+    from apeGmsh.opensees import apeSees
+
+    srcs = []
+    for p in (pa, pb):
+        ops = apeSees(FEMData.from_h5(str(p)))
+        ops.model(ndm=3, ndf=3)
+        src = p.with_name(p.stem + "_src.h5")
+        ops.h5(str(src))
+        srcs.append(src)
+    asm = Assembly("AB").instance("A", srcs[0]).instance("B", srcs[1])
+    asm.bridge(ndm=3, ndf=3)
+    archive = TMP / "AB.h5"
+    asm.h5(str(archive))
+    return apeGmsh.from_h5(str(archive))
+
+
 pa = build_module("mod_a.h5", "A", 0.0, 25.0)
 pb = build_module("mod_b.h5", "B", 50.5, 20.0)
 
 # ── P1: contact() in chain phase ────────────────────────────────────
-g = apeGmsh.from_h5(pa)
-g.compose(str(pb), label="B")
+g = composed_session(pa, pb)
 try:
-    d = g.constraints.contact("A_top", "B.B_bot", formulation="mortar",
+    d = g.constraints.contact("A.A_top", "B.B_bot", formulation="mortar",
                               tie=True, outward=(0, 0, 1))
     n_defs = len(g.constraints.contact_defs)
     n_recs = len(getattr(g.constraints, "contact_records", []))

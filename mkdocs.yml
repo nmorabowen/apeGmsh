@@ -168,7 +168,6 @@ nav:
       - Build & assemble:
           - Save & reload a model: how-to/save-reload.md
           - Assemble saved models: how-to/assemble-saved-models.md
-          - Compose modules: how-to/compose-modules.md
       - Physics:
           - Apply gravity / self-weight: how-to/gravity.md
           - Apply a face pressure: how-to/face-pressure.md

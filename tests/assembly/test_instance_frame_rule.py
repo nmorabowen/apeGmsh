@@ -16,8 +16,10 @@ Oracles, each independent of the code under test:
 * lock: every :class:`ConstraintRecord` kind has a row in the frame table,
   and every array or tuple field on it is either placed or listed here as
   frame-free with the reason.
-* stream routing: a real module composed with ``rotate=`` carries a rotated
-  diaphragm normal, tie projection point and bar axis.
+* stream routing: a real module instanced with ``rotate=`` (an
+  :class:`Assembly` of the module at the identity plus a rotated copy,
+  then ``bridge``) carries a rotated diaphragm normal, tie projection
+  point and bar axis.
 * deck: a v2 instance rotated so its floor stands in the plane ``y = 0``
   writes ``rigidDiaphragm 2`` (it wrote ``3``).
 * live: that instance, driven through its diaphragm master, moves rigidly
@@ -203,7 +205,7 @@ def test_every_constraint_kind_and_vector_field_is_classified():
 
 
 # ---------------------------------------------------------------------------
-# Stream routing: a real rotated compose
+# Stream routing: a real rotated instance
 # ---------------------------------------------------------------------------
 
 def _slab_module(path: Path) -> Path:
@@ -232,7 +234,9 @@ def _tied_module(path: Path) -> Path:
             (-0.1, -0.1, 0.99), (1.1, 1.1, 1.01)).result().tags()
         g.physical.add_surface([faces[0]], name="ta")
         g.physical.add_surface([faces[-1]], name="bb")
-        g.constraints.tie("ta", "bb")
+        # An explicit K: ``"auto"`` scales off a host element the
+        # element-less archive does not declare.
+        g.constraints.tie("ta", "bb", stiffness=1.0e10)
         g.mesh.sizing.set_global_size(0.5)
         g.mesh.generation.generate(3)
         g.mesh.queries.get_fem_data(dim=3).to_h5(str(path))
@@ -256,15 +260,28 @@ def _reinforced_module(path: Path) -> Path:
     return path
 
 
-def _composed(path: Path) -> tuple[FEMData, FEMData]:
+def _composed(path: Path, ndf: int) -> tuple[FEMData, FEMData]:
+    """The module at the identity (``host``) plus a rotated, translated
+    copy (``m``), bridged; ``path`` is a mesh file without ``/opensees``,
+    so its archive carries ``model(ndm=3, ndf=ndf)``."""
+    from apeGmsh.assembly import Assembly
+    from apeGmsh.opensees import apeSees
+
     src = FEMData.from_h5(str(path))
-    out = FEMData.from_h5(str(path)).compose(
-        str(path), label="m", translate=T, rotate=ROT_X_90)
+    ops = apeSees(FEMData.from_h5(str(path)))
+    ops.model(ndm=3, ndf=ndf)
+    archive = path.with_name(f"{path.stem}_model.h5")
+    ops.h5(str(archive))
+    axis, theta = ROT_X_90[:3], ROT_X_90[3]
+    out = (Assembly("frame")
+           .instance("host", archive)
+           .instance("m", archive, translate=T, rotate=(axis, theta))
+           .bridge(ndm=3, ndf=ndf)).fem
     return src, out
 
 
 def _module_rows(records, src_records) -> list:
-    """The composed module's rows, which the merge appends after the host's.
+    """The rotated instance's rows, which the merge appends after the host's.
 
     Host and module are the same file, so the host holds the first half.
     """
@@ -274,8 +291,8 @@ def _module_rows(records, src_records) -> list:
     return records[n:]
 
 
-def test_rotated_compose_turns_the_diaphragm_normal_and_offsets(tmp_path):
-    src, fem = _composed(_slab_module(tmp_path / "slab.h5"))
+def test_rotated_instance_turns_the_diaphragm_normal_and_offsets(tmp_path):
+    src, fem = _composed(_slab_module(tmp_path / "slab.h5"), 6)
     (s,) = src.nodes.constraints
     rows = _module_rows(fem.nodes.constraints, [s])
     assert isinstance(rows[0], C.NodeGroupRecord)
@@ -289,8 +306,8 @@ def test_rotated_compose_turns_the_diaphragm_normal_and_offsets(tmp_path):
     np.testing.assert_allclose(rows[0].offsets, want, atol=1e-9)
 
 
-def test_rotated_compose_places_tie_projection_points(tmp_path):
-    src, fem = _composed(_tied_module(tmp_path / "tied.h5"))
+def test_rotated_instance_places_tie_projection_points(tmp_path):
+    src, fem = _composed(_tied_module(tmp_path / "tied.h5"), 3)
     src_rows = list(src.elements.constraints)
     assert src_rows and all(isinstance(r, C.InterpolationRecord) for r in src_rows)
     row = {int(n): i for i, n in enumerate(fem.nodes.ids)}
@@ -303,8 +320,8 @@ def test_rotated_compose_places_tie_projection_points(tmp_path):
                                    xyz[row[int(got.slave_node)]], atol=1e-6)
 
 
-def test_rotated_compose_turns_the_bar_axis(tmp_path):
-    src, fem = _composed(_reinforced_module(tmp_path / "rc.h5"))
+def test_rotated_instance_turns_the_bar_axis(tmp_path):
+    src, fem = _composed(_reinforced_module(tmp_path / "rc.h5"), 3)
     src_ties = src.elements.reinforce_ties
     assert len(src_ties) >= 2
     ties = _module_rows(fem.elements.reinforce_ties, src_ties)

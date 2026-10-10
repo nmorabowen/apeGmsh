@@ -17,7 +17,6 @@ from pathlib import Path
 import h5py
 import numpy as np
 
-from apeGmsh._core import apeGmsh
 from apeGmsh._kernel.payloads import ElementGroup
 from apeGmsh._kernel.record_sets import ComposeSet
 from apeGmsh._kernel.records._loads import NodalLoadRecord, SPRecord
@@ -136,15 +135,24 @@ def test_legacy_flattened_file_still_decodes(tmp_path: Path) -> None:
 def test_composed_module_displacement_case_survives(tmp_path: Path) -> None:
     """SP-side twin of test_compose_pattern_field_not_namespaced: a
     composed module's displacement case keeps its (un-namespaced) name
-    on the host broker, so from_model('push_gap') can match it."""
+    on the merged broker, so from_model('push_gap') can match it.
+
+    v2 (ADR 0117): the host is an instance too (row-15 ruling); the
+    merged broker is ``Assembly.bridge(...).fem``."""
+    from apeGmsh.assembly import Assembly
+    from apeGmsh.opensees import apeSees
+
     host = tmp_path / "host.h5"
     mod = tmp_path / "mod.h5"
-    _fem_with_cases().to_h5(str(host))
-    _fem_with_cases().to_h5(str(mod))
+    for path in (host, mod):
+        ops = apeSees(_fem_with_cases())
+        ops.model(ndm=3, ndf=3)
+        ops.h5(str(path))
 
-    g = apeGmsh.from_h5(host)
-    g.compose(str(mod), label="M")
-    sp = g._fem.nodes.sp
+    asm = Assembly("cases")
+    asm.instance("host", host)
+    asm.instance("M", mod)
+    sp = asm.bridge(ndm=3, ndf=3).fem.nodes.sp
     # Host + module records both present, case names intact and
     # NOT namespaced ('push_gap', not 'M.push_gap').
     assert sorted(set(sp.patterns())) == sorted(

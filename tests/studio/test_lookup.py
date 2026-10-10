@@ -119,10 +119,10 @@ def test_to_label_fluent_hit() -> None:
     assert "to_label(" in text
 
 
-def test_assembly_materialize_hit() -> None:
-    text, code = lookup("materialize")
+def test_assembly_bridge_hit() -> None:
+    text, code = lookup("Assembly.bridge")
     assert code == 0, text
-    assert "Assembly.materialize" in text
+    assert "Assembly.bridge" in text
     assert "references/compose.md" in text
 
 

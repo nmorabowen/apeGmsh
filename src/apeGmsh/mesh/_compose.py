@@ -1,16 +1,14 @@
-"""apeGmsh.mesh._compose — Compose facade scaffold (Phase 3B.1 / ADR 0038).
+"""apeGmsh.mesh._compose — the ADR 0038 compose engine and its readers.
 
-The :class:`Compose` facade is a session-level entry point that lands the
-shell of ADR 0038's ``g.compose(...)`` API: input validation, the
-``compose_inspect`` / ``compose_list`` companion helpers, the
-:class:`ComposedModule` handle, and the typed exception hierarchy.
+The merge engine — tag-offset reservation, namespace prefix sweep,
+record rewrite, the tag-collision verifier and the merge — has one
+private entry, :func:`_compose_module`, which ``Assembly.bridge`` calls
+for each instance (ADR 0117). The public ``g.compose`` /
+``FEMData.compose`` were removed in AS5-c (ADR 0117 D7).
 
-The merge engine itself — tag-offset reservation, namespace prefix
-sweep, record rewrite + verifier — is intentionally **deferred** to
-Phase 3B.2.  Calling :meth:`Compose.compose` here raises
-:class:`NotImplementedError` after the input gates pass; ``inspect`` and
-``list`` are fully functional because they only read H5 metadata or walk
-the current broker's ``fem.composed_from``.
+The session-level :class:`Compose` facade keeps the readers
+``compose_inspect`` / ``compose_list`` / ``compose_tree``, the
+:class:`ComposedModule` handle and the typed exception hierarchy.
 
 Cross-references
 ----------------
@@ -2080,17 +2078,14 @@ class ComposedModule:
 
 
 class Compose:
-    """Facade for compose-time model assembly per ADR 0038.
+    """Session-level compose readers per ADR 0038.
 
-    Single per-session instance, exposed through the three session-level
-    entry points :meth:`apeGmsh.compose`, :meth:`apeGmsh.compose_inspect`,
-    and :meth:`apeGmsh.compose_list`.
-
-    Phase 3B.1 (this PR) scaffolds the facade — input validation, the
-    list / inspect helpers, exception types, the
-    :data:`RESERVATION_GRANULARITY` knob, and the :class:`ComposedModule`
-    handle.  The merge engine behind :meth:`compose` raises
-    :class:`NotImplementedError` pending Phase 3B.2.
+    Single per-session instance behind :meth:`apeGmsh.compose_inspect`,
+    :meth:`apeGmsh.compose_list` and :meth:`apeGmsh.compose_tree`. It also
+    holds the label / rank validators and the
+    :data:`RESERVATION_GRANULARITY` knob the engine
+    (:func:`_compose_module`) uses. The ``compose`` writer was removed in
+    AS5-c (ADR 0117 D7).
     """
 
     #: Reservation granularity for per-module tag windows per ADR 0038
@@ -2101,173 +2096,10 @@ class Compose:
     #: engine.
     RESERVATION_GRANULARITY: int = 1_000_000
 
-    #: Default cap on nested-compose depth per ADR 0038
-    #: §"Nested composition".  Mirrors
-    #: :data:`DEFAULT_MAX_COMPOSE_DEPTH` at module scope so callers
-    #: can lift the cap class-wide (e.g. for a deep-hierarchy run)
-    #: without passing ``max_compose_depth=`` on every call:
-    #:
-    #: .. code:: python
-    #:
-    #:     class MyCompose(Compose):
-    #:         MAX_COMPOSE_DEPTH = 5
-    #:
-    #: Per-call ``max_compose_depth=N`` on :meth:`compose` overrides
-    #: the class-level default for that single invocation.
-    MAX_COMPOSE_DEPTH: int = DEFAULT_MAX_COMPOSE_DEPTH
-
     def __init__(self, session: "apeGmsh") -> None:
         self._session = session
 
     # ── Public API ────────────────────────────────────────────────
-
-    def compose(
-        self,
-        source: "str | Path",
-        *,
-        label: str,
-        translate: tuple[float, float, float] = (0.0, 0.0, 0.0),
-        rotate: tuple[float, float, float, float] | None = None,
-        anchor: str | None = None,
-        partition_rank: int | None = None,
-        properties: "dict[str, Any] | None" = None,
-        max_compose_depth: "int | None" = None,
-        compose_size_per_module: int | None = None,
-    ) -> ComposedModule:
-        """Merge a previously-saved apeGmsh model into the host session.
-
-        Phase 3B.1 (this PR) validates inputs eagerly and raises
-        :class:`NotImplementedError` before any H5 read or broker
-        mutation; the merge engine ships in Phase 3B.2.
-
-        Parameters
-        ----------
-        source : str | Path
-            Path to the source ``model.h5`` (H5-only in v1 per ADR 0038
-            §"g.compose() signature").
-        label : str
-            Namespace prefix assigned to every imported string-keyed
-            record.  Required.  Must be non-empty, contain no ``.``,
-            ``/`` or whitespace, and must not start or end with ``_``.
-        translate, rotate : tuple
-            Rigid-body placement of the module in the host's coordinate
-            system.  ``rotate`` is axis-angle ``(x, y, z, theta)``.
-        anchor : str | None
-            PG-name sugar over ``translate``.  Mutually exclusive with a
-            non-zero ``translate`` — see ADR 0038 §"g.compose() signature"
-            line 104.
-        partition_rank : int | None
-            Layer-2 rank hint per ADR 0038 §"Rank model".  ``K >= 0``.
-        properties : dict | None
-            Free-form provenance dict round-tripped through
-            ``/composed_from/{label}/properties`` on the host's next
-            ``g.save()``.
-        max_compose_depth : int or None, default None
-            Per-call override of the class-level
-            :data:`MAX_COMPOSE_DEPTH` (default 3).  Raises
-            :class:`ComposeDepthExceededError` when the source's own
-            ``composed_from`` depth would push the result past the
-            cap.  ``None`` falls back to the class-level default; pass
-            an explicit integer to lift the cap for a single compose
-            call.  See ADR 0038 §"Nested composition" (Phase 3E.1).
-        compose_size_per_module : int | None
-            Explicit reservation-size floor per ADR 0038 §"Tag-offset
-            scheme".  ``None`` means "auto-size from the source's
-            actual span".  Phase 3B.2 honours the override; 3B.1
-            validates only ``> 0``.
-
-        Returns
-        -------
-        ComposedModule
-            Phase 3B.2 returns the live handle; in 3B.1 this method
-            raises :class:`NotImplementedError` after validation.
-
-        Raises
-        ------
-        ComposeLabelError
-            ``label=`` violates the lexical rules.
-        ComposeAnchorError
-            ``anchor=`` combined with a non-zero ``translate=``.
-        ValueError
-            ``partition_rank < 0`` or ``compose_size_per_module <= 0``.
-        NotImplementedError
-            Always, after validation, until Phase 3B.2 wires the merge
-            engine.
-        """
-        # Eager input validation — fail before any H5 read so misuse
-        # surfaces at call time instead of half-way through the merge.
-        self._validate_label(label)
-        self._validate_translate_rotate_anchor(translate, anchor)
-        self._validate_partition_rank(partition_rank)
-        self._validate_compose_size(compose_size_per_module)
-        # ``properties`` is exercised by the merge engine;
-        # ``max_compose_depth`` is forwarded to the rewriter, which
-        # performs the nested-compose depth check before any rewrite
-        # work (Phase 3E.1 / ADR 0038 §"Nested composition").  ``None``
-        # falls back to the class-level :data:`MAX_COMPOSE_DEPTH` so
-        # subclasses can override the default without touching every
-        # call site.
-        if max_compose_depth is None:
-            max_compose_depth = type(self).MAX_COMPOSE_DEPTH
-        if not isinstance(max_compose_depth, int) or isinstance(
-            max_compose_depth, bool,
-        ):
-            raise ValueError(
-                "compose(max_compose_depth=...) must be an int, got "
-                f"{type(max_compose_depth).__name__}"
-            )
-        if max_compose_depth < 1:
-            raise ValueError(
-                "compose(max_compose_depth=...) must be >= 1, got "
-                f"{max_compose_depth}"
-            )
-
-        parent = self._session
-
-        # Ensure the session has a current ``_fem`` chain head.  On a
-        # newly-begun session this triggers the canonical extraction
-        # from gmsh + def lists; on a chain-phase session (built via
-        # ``apeGmsh.from_h5``) ``_fem`` is already populated.
-        if getattr(parent, "_fem", None) is None:
-            parent._fem = parent.mesh.queries.get_fem_data()
-
-        # Run the canonical transform.  ``FEMData.compose`` validates
-        # again (cheap; keeps the primitive callable standalone) and
-        # returns a new FEMData with the bundle merged in plus a
-        # ``_last_compose_bundle`` attribute carrying the bundle for
-        # replay.
-        new_fem = parent._fem.compose(
-            source,
-            label=label,
-            translate=translate,
-            rotate=rotate,
-            anchor=anchor,
-            partition_rank=partition_rank,
-            properties=properties,
-            compose_size_per_module=compose_size_per_module,
-            max_compose_depth=max_compose_depth,
-        )
-
-        # Update session state.
-        parent._fem = new_fem
-        bundle = getattr(new_fem, "_last_compose_bundle", None)
-        if bundle is not None:
-            existing = getattr(parent, "_compose_bundles", ())
-            parent._compose_bundles = (*existing, bundle)
-
-        # Bump + re-mark fresh so subsequent ``get_fem_data()`` calls
-        # see the merged snapshot as the current chain head.
-        if hasattr(parent, "_bump_fem_counter"):
-            parent._bump_fem_counter()
-        if hasattr(parent, "_mark_fem_fresh"):
-            parent._mark_fem_fresh()
-
-        # Provenance handle — the new ComposeRecord is the last entry
-        # in the result's composed_from chain.  ``ComposeSet`` iterates
-        # in ascending-label order, so look up by label rather than
-        # index.
-        new_record = new_fem.composed_from[label]
-        return ComposedModule(record=new_record, _fem=new_fem)
 
     def compose_inspect(self, path: "str | Path") -> dict:
         """Read a module's H5 header without composing it.
@@ -2490,25 +2322,6 @@ class Compose:
             )
 
     @staticmethod
-    def _validate_translate_rotate_anchor(
-        translate: tuple[float, float, float],
-        anchor: str | None,
-    ) -> None:
-        """Enforce ADR 0038 line 104: ``anchor=`` and a non-zero
-        ``translate=`` are mutually exclusive.
-        """
-        if anchor is None:
-            return
-        # Anchor is set — translate must be the identity.
-        if any(float(x) != 0.0 for x in translate):
-            raise ComposeAnchorError(
-                f"compose() got anchor={anchor!r} together with a "
-                f"non-zero translate={translate}; per ADR 0038 "
-                "§'g.compose() signature' line 104 the two are "
-                "mutually exclusive."
-            )
-
-    @staticmethod
     def _validate_partition_rank(partition_rank: int | None) -> None:
         """Enforce ADR 0038 §"Layer 2" line 420: ``K >= 0``.
 
@@ -2530,26 +2343,6 @@ class Compose:
             raise ValueError(
                 f"compose(partition_rank={partition_rank}) must be "
                 ">= 0 per ADR 0038 §'Rank model — Layer 2'."
-            )
-
-    @staticmethod
-    def _validate_compose_size(compose_size_per_module: int | None) -> None:
-        """Enforce ``compose_size_per_module > 0`` when supplied."""
-        if compose_size_per_module is None:
-            return
-        if (
-            not isinstance(compose_size_per_module, int)
-            or isinstance(compose_size_per_module, bool)
-        ):
-            raise ValueError(
-                "compose(compose_size_per_module=...) must be an int "
-                "or None, got "
-                f"{type(compose_size_per_module).__name__}"
-            )
-        if compose_size_per_module <= 0:
-            raise ValueError(
-                "compose(compose_size_per_module=...) must be > 0; "
-                f"got {compose_size_per_module}."
             )
 
 
@@ -2661,6 +2454,56 @@ def _host_max_tag(fem: "FEMData") -> int:
 # ---------------------------------------------------------------------------
 # Merge engine (Phase 3B.2c / ADR 0038)
 # ---------------------------------------------------------------------------
+
+
+def _compose_module(
+    fem: "FEMData",
+    source: "str | Path",
+    *,
+    label: str,
+    translate: tuple[float, float, float],
+    rotate: tuple[float, float, float, float] | None,
+    partition_rank: int | None,
+) -> "FEMData":
+    """Return a new :class:`FEMData`: ``fem`` plus the module at ``source``.
+
+    The engine entry ``Assembly.bridge`` merges each instance through
+    (ADR 0117; the public ``g.compose`` / ``FEMData.compose`` were
+    removed in AS5-c). ``fem`` is unchanged. Every IMPORT-verdict record
+    of the source is namespaced under ``label``, offset into its own tag
+    window (ADR 0038 §"Tag-offset scheme"), rotated then translated (the
+    instance frame rule), and merged after the tag-collision verifier.
+    The nested-compose depth cap is :data:`DEFAULT_MAX_COMPOSE_DEPTH`.
+    It emits the FILTER, dropped-stream and interface-size warnings.
+    """
+    Compose._validate_label(label)
+    Compose._validate_partition_rank(partition_rank)
+    source_span, source_min_tag, _source_max_tag = (
+        _compute_source_span(source))
+    base, size = _compute_reservation(
+        source_span=source_span,
+        host_max_tag=_host_max_tag(fem),
+        previous_reservations=(),
+        granularity=Compose.RESERVATION_GRANULARITY,
+        compose_size_per_module=None,
+    )
+    bundle = _rewrite_source_for_compose(
+        source_path=source,
+        label=label,
+        translate=translate,
+        rotate=rotate,
+        partition_rank=partition_rank,
+        properties={},
+        base=base,
+        size=size,
+        source_span=source_span,
+        source_min_tag=source_min_tag,
+        max_compose_depth=DEFAULT_MAX_COMPOSE_DEPTH,
+    )
+    _emit_filter_warnings(source, label)
+    _warn_interface_size(bundle, threshold=WARN_INTERFACE_SIZE)
+    new_fem = _merge_bundle_into_fem(fem, bundle)
+    return _rebuild_partitions_from_modules(new_fem)
 
 
 def _merge_bundle_into_fem(

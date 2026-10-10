@@ -38,7 +38,7 @@ import math
 from typing import Any, Mapping
 
 from ._h5 import TIE_KNOBS, params_key_error, row_params
-from ._v1 import AssemblyError
+from ._errors import AssemblyError
 
 __all__ = [
     "COUPLING_KINDS", "NODE_PORTS", "canonical_params", "coupling_definition",

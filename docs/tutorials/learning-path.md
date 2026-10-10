@@ -36,7 +36,7 @@ API throughout — every rung adds exactly one idea.
 | 5 | [Tie non-matching meshes](../examples/tie-non-matching-meshes.md) | multi-part assembly | `g.constraints.tie` auto-emitted by the bridge | matches the monolithic bar to ~3% |
 | 6 | [STEP import: plate with a hole](../examples/step-plate-with-hole.md) | plate in tension | CAD import, healing, naming edges by query | stress concentration $K_t \approx 3$ |
 | 7 | [Choosing a results strategy](../examples/results-strategies.md) | tutorial 4 | the same model read via `from_native` and `from_mpco` | both agree on the drift to zero |
-| 8 | [Compose modules](../examples/compose-modules.md) | tie + assembly | `g.compose` — build once, save, import twice | each bay drifts the portal frame's exact answer |
+| 8 | [Compose modules](../examples/compose-modules.md) | tie + assembly | `Assembly` — build once, save, instance twice | each bay drifts the portal frame's exact answer |
 | 9 | [Pushover of a steel moment frame](../examples/pushover-steel-frame.md) | fiber sections | DisplacementControl to a sway mechanism | $K = 2\cdot12EI_c/H^3$ (2.7%), $V_p = 4M_p/H$ (1.9%) |
 | 10 | [Plane-wave SSI: absorbing soil column](../examples/plane-wave-ssi.md) | modal analysis | the absorbing-boundary skin and a propagating wave | arrival at $H/V_s$; late motion < 1% of peak |
 | 11 | [Staged SSI: gravity then the absorbing flip](../examples/staged-gravity-ssi.md) | plane-wave SSI | `ops.stage` — settle under gravity, freeze, then shake | 5.6 cm settlement, then clean radiation |

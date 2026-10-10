@@ -1,19 +1,20 @@
 """Phase 3E.1 — Nested compose: depth verifier, separator alternation,
 recursive provenance graft.
 
-Locks ADR 0038 §"Nested composition":
+Locks ADR 0038 §"Nested composition", through the v2 ``Assembly``
+(ADR 0117): a nested source is an assembly archive (``asm.h5``), and
+instancing it in another assembly nests it one level deeper.
 
-1. **Depth limit** — composing a source whose own ``composed_from``
-   chain already sits at ``max_compose_depth`` (default 3) raises
-   :class:`ComposeDepthExceededError`.  ``max_compose_depth=N``
-   per-call or :data:`Compose.MAX_COMPOSE_DEPTH` class-level lifts
-   the cap.
+1. **Depth limit** — instancing a source whose own ``composed_from``
+   chain already sits at the fixed cap of 3 raises
+   :class:`ComposeDepthExceededError` at ``bridge()``.  The cap is not
+   configurable (ruling G3, #1585).
 2. **Separator alternation** — the outer namespace separator
    alternates ``.`` ↔ ``/`` per compose depth so nested labels
    remain unambiguous on parse.  Convention: depth 1 → ``.``,
    depth 2 → ``/``, depth 3 → ``.``, … (odd = ``.``, even = ``/``).
 3. **Provenance graft (flat)** — the source's own ``composed_from``
-   records surface in the host's flat ``composed_from`` chain with
+   records surface in the bridge's flat ``composed_from`` chain with
    their labels re-prefixed via the depth-N rule.  H5 round-trip
    preserves the joined labels via the existing 2.9.0 schema
    without further field additions.
@@ -30,6 +31,7 @@ import pytest
 
 from apeGmsh._core import apeGmsh
 from apeGmsh._kernel.records._compose import ComposeRecord
+from apeGmsh.assembly import Assembly
 from apeGmsh.core._compose_errors import (
     ComposeDepthExceededError as CoreComposeDepthExceededError,
 )
@@ -52,6 +54,7 @@ from apeGmsh.mesh.FEMData import (
     MeshInfo,
     NodeComposite,
 )
+from apeGmsh.opensees import apeSees
 from apeGmsh.opensees.emitter import h5_reader
 
 
@@ -66,8 +69,7 @@ def _make_fem(
     elem_ids: "list[int] | np.ndarray",
 ) -> FEMData:
     """Tiny single-Line2 FEMData (no compose state); supports empty
-    fixtures so we can build an empty host for nested-compose tests
-    without ambiguous "host has 1 record from from_h5" semantics.
+    fixtures.
     """
     node_ids = np.asarray(node_ids, dtype=np.int64)
     elem_ids = np.asarray(elem_ids, dtype=np.int64)
@@ -117,61 +119,77 @@ def _make_fem(
     return FEMData(nodes=nodes, elements=elements, info=info)
 
 
-@pytest.fixture
-def empty_h5(tmp_path: Path) -> Path:
-    """Empty FEMData saved to H5 — serves as the "fresh uncomposed
-    host" for chain-phase compose tests."""
-    fem = _make_fem(node_ids=[], elem_ids=[])
-    p = tmp_path / "empty.h5"
-    fem.to_h5(str(p))
-    return p
+def _write_source(fem: FEMData, path: Path) -> Path:
+    """Write ``fem`` as an instanceable source: ``/opensees`` carries
+    ``model(ndm=3, ndf=3)`` (a bare ``fem.to_h5`` file is refused by
+    ``bridge()``)."""
+    ops = apeSees(fem)
+    ops.model(ndm=3, ndf=3)
+    ops.h5(str(path))
+    return path
 
 
-@pytest.fixture
-def leaf_h5(tmp_path: Path) -> Path:
+def _assemble(*instances, out: "Path | None" = None, **kw):
+    """Instance each ``(label, source)`` (plus ``kw`` on every one) in
+    one assembly, bridge it, and write the archive to ``out`` if given.
+    Returns the bridge (``apeSees``); its merged broker is ``.fem``."""
+    asm = Assembly("nested")
+    for label, source in instances:
+        asm.instance(label, source, **kw)
+    ops = asm.bridge(ndm=3, ndf=3)
+    if out is not None:
+        asm.h5(str(out))
+    return ops
+
+
+@pytest.fixture(scope="module")
+def _dir(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    return tmp_path_factory.mktemp("phase_3e_1")
+
+
+@pytest.fixture(scope="module")
+def leaf_h5(_dir: Path) -> Path:
     """Depth-0 source: a leaf FEMData with no compose state."""
-    fem = _make_fem(node_ids=[1, 2, 3], elem_ids=[10, 11])
-    p = tmp_path / "leaf.h5"
-    fem.to_h5(str(p))
-    return p
+    return _write_source(
+        _make_fem(node_ids=[1, 2, 3], elem_ids=[10, 11]), _dir / "leaf.h5",
+    )
 
 
-@pytest.fixture
-def depth_1_h5(tmp_path: Path, empty_h5: Path, leaf_h5: Path) -> Path:
-    """A depth-1 source: leaf composed under label ``partA`` into an
-    empty host, saved.  Its ``composed_from`` is ``[partA]``."""
-    g = apeGmsh.from_h5(empty_h5)
-    g.compose(leaf_h5, label="partA")
-    out = tmp_path / "depth_1.h5"
-    g.save(out)
+@pytest.fixture(scope="module")
+def leaf2_h5(_dir: Path) -> Path:
+    """A second, distinct depth-0 leaf."""
+    return _write_source(
+        _make_fem(node_ids=[100, 200, 300], elem_ids=[1000, 1001]),
+        _dir / "leaf2.h5",
+    )
+
+
+@pytest.fixture(scope="module")
+def depth_1_h5(_dir: Path, leaf_h5: Path) -> Path:
+    """A depth-1 source: an assembly archive instancing the leaf under
+    label ``partA``.  Its ``composed_from`` is ``[partA]``."""
+    out = _dir / "depth_1.h5"
+    _assemble(("partA", leaf_h5), out=out)
     return out
 
 
-@pytest.fixture
-def depth_2_h5(
-    tmp_path: Path, empty_h5: Path, depth_1_h5: Path,
-) -> Path:
-    """A depth-2 source: depth-1 file composed under label
-    ``assemblyM`` into an empty host, saved.  Its ``composed_from``
-    is ``[assemblyM, assemblyM/partA]``."""
-    g = apeGmsh.from_h5(empty_h5)
-    g.compose(depth_1_h5, label="assemblyM")
-    out = tmp_path / "depth_2.h5"
-    g.save(out)
+@pytest.fixture(scope="module")
+def depth_2_h5(_dir: Path, depth_1_h5: Path) -> Path:
+    """A depth-2 source: the depth-1 archive instanced under label
+    ``assemblyM``.  Its ``composed_from`` is
+    ``[assemblyM, assemblyM/partA]``."""
+    out = _dir / "depth_2.h5"
+    _assemble(("assemblyM", depth_1_h5), out=out)
     return out
 
 
-@pytest.fixture
-def depth_3_h5(
-    tmp_path: Path, empty_h5: Path, depth_2_h5: Path,
-) -> Path:
-    """A depth-3 source: depth-2 file composed under label ``bayP``
-    into an empty host, saved.  Its ``composed_from`` is
+@pytest.fixture(scope="module")
+def depth_3_h5(_dir: Path, depth_2_h5: Path) -> Path:
+    """A depth-3 source: the depth-2 archive instanced under label
+    ``bayP``.  Its ``composed_from`` is
     ``[bayP, bayP.assemblyM/partA, bayP/assemblyM]``."""
-    g = apeGmsh.from_h5(empty_h5)
-    g.compose(depth_2_h5, label="bayP")
-    out = tmp_path / "depth_3.h5"
-    g.save(out)
+    out = _dir / "depth_3.h5"
+    _assemble(("bayP", depth_2_h5), out=out)
     return out
 
 
@@ -186,8 +204,10 @@ class TestLabelDepth:
     def test_default_max_compose_depth_is_3(self) -> None:
         assert DEFAULT_MAX_COMPOSE_DEPTH == 3
 
-    def test_compose_class_constant_mirrors_module_default(self) -> None:
-        assert Compose.MAX_COMPOSE_DEPTH == DEFAULT_MAX_COMPOSE_DEPTH
+    def test_compose_class_has_no_depth_knob(self) -> None:
+        # Ruling G3 (#1585): the cap is fixed at the module default;
+        # the class-level ``Compose.MAX_COMPOSE_DEPTH`` knob is gone.
+        assert not hasattr(Compose, "MAX_COMPOSE_DEPTH")
 
     def test_label_depth_empty_is_zero(self) -> None:
         assert _label_depth("") == 0
@@ -321,139 +341,62 @@ class TestReadSourceComposedFrom:
 
 
 class TestDepthTracking:
-    """Composing a source extends the resulting compose chain by one
+    """Instancing a source extends the resulting compose chain by one
     level; the depth check fires when the cap is exceeded."""
 
-    def test_depth_0_compose_produces_depth_1(
-        self, empty_h5: Path, leaf_h5: Path,
-    ) -> None:
-        g = apeGmsh.from_h5(empty_h5)
-        g.compose(leaf_h5, label="A")
-        labels = [r.label for r in g._fem.composed_from]
+    def test_depth_0_compose_produces_depth_1(self, leaf_h5: Path) -> None:
+        fem = _assemble(("A", leaf_h5)).fem
+        labels = [r.label for r in fem.composed_from]
         assert labels == ["A"]
-        assert _compose_depth_of_records(
-            tuple(g._fem.composed_from),
-        ) == 1
+        assert _compose_depth_of_records(tuple(fem.composed_from)) == 1
 
     def test_depth_1_compose_produces_depth_2(
-        self, empty_h5: Path, depth_1_h5: Path,
+        self, depth_1_h5: Path,
     ) -> None:
-        g = apeGmsh.from_h5(empty_h5)
-        g.compose(depth_1_h5, label="M2")
-        labels = sorted(r.label for r in g._fem.composed_from)
+        fem = _assemble(("M2", depth_1_h5)).fem
+        labels = sorted(r.label for r in fem.composed_from)
         assert labels == ["M2", "M2/partA"]
-        assert _compose_depth_of_records(
-            tuple(g._fem.composed_from),
-        ) == 2
+        assert _compose_depth_of_records(tuple(fem.composed_from)) == 2
 
     def test_depth_2_compose_produces_depth_3(
-        self, empty_h5: Path, depth_2_h5: Path,
+        self, depth_2_h5: Path,
     ) -> None:
-        g = apeGmsh.from_h5(empty_h5)
-        g.compose(depth_2_h5, label="M3")
-        labels = sorted(r.label for r in g._fem.composed_from)
+        fem = _assemble(("M3", depth_2_h5)).fem
+        labels = sorted(r.label for r in fem.composed_from)
         assert labels == [
             "M3", "M3.assemblyM/partA", "M3/assemblyM",
         ]
-        assert _compose_depth_of_records(
-            tuple(g._fem.composed_from),
-        ) == 3
+        assert _compose_depth_of_records(tuple(fem.composed_from)) == 3
 
-    def test_depth_3_compose_raises(
-        self, empty_h5: Path, depth_3_h5: Path,
-    ) -> None:
-        g = apeGmsh.from_h5(empty_h5)
+    def test_depth_3_compose_raises(self, depth_3_h5: Path) -> None:
         with pytest.raises(ComposeDepthExceededError) as ei:
-            g.compose(depth_3_h5, label="topLevel")
-        # Message names host's source depth (3) and the cap (3).
+            _assemble(("topLevel", depth_3_h5))
+        # Message names the source depth (3) and the cap (3).
         msg = str(ei.value)
-        assert "the maximum compose depth (3)" in msg
+        assert "would exceed the maximum compose depth (3)" in msg
         assert "max_compose_depth" not in msg   # no knob (#1585, G3)
         assert "depth is 3" in msg
 
-    def test_depth_exceeded_is_core_error(
-        self, empty_h5: Path, depth_3_h5: Path,
-    ) -> None:
+    def test_depth_exceeded_is_core_error(self, depth_3_h5: Path) -> None:
         """The facade exception inherits from the core canonical class
         so callers using ``except CoreComposeDepthExceededError`` catch
         it from outside the mesh package."""
-        g = apeGmsh.from_h5(empty_h5)
         with pytest.raises(CoreComposeDepthExceededError):
-            g.compose(depth_3_h5, label="topLevel")
+            _assemble(("topLevel", depth_3_h5))
 
-    def test_depth_exceeded_also_value_error(
-        self, empty_h5: Path, depth_3_h5: Path,
-    ) -> None:
+    def test_depth_exceeded_also_value_error(self, depth_3_h5: Path) -> None:
         """``ValueError`` continues to catch it — backward compat."""
-        g = apeGmsh.from_h5(empty_h5)
         with pytest.raises(ValueError):
-            g.compose(depth_3_h5, label="topLevel")
-
-
-class TestMaxDepthOverride:
-    """The per-call kwarg lifts the depth cap for a single compose."""
-
-    def test_override_allows_deeper(
-        self, empty_h5: Path, depth_3_h5: Path,
-    ) -> None:
-        g = apeGmsh.from_h5(empty_h5)
-        # Cap = 4 lets the depth-3 source compose (yielding depth 4).
-        g.compose(depth_3_h5, label="topLevel", max_compose_depth=4)
-        labels = sorted(r.label for r in g._fem.composed_from)
-        assert "topLevel" in labels
-        # The result has at least one depth-4 entry (joined three times).
-        assert max(_label_depth(r.label) for r in g._fem.composed_from) == 4
-
-    def test_class_level_constant_can_be_lifted(
-        self, empty_h5: Path, depth_3_h5: Path,
-    ) -> None:
-        """Subclassing :class:`Compose` with ``MAX_COMPOSE_DEPTH = 5``
-        lifts the cap class-wide without per-call kwargs."""
-        # Build a custom session class with a wider cap.
-        g = apeGmsh.from_h5(empty_h5)
-        original = Compose.MAX_COMPOSE_DEPTH
-        try:
-            Compose.MAX_COMPOSE_DEPTH = 5
-            g.compose(depth_3_h5, label="topLevel")
-            labels = [r.label for r in g._fem.composed_from]
-            assert "topLevel" in labels
-        finally:
-            Compose.MAX_COMPOSE_DEPTH = original
-
-    def test_override_too_small_raises(
-        self, empty_h5: Path, depth_1_h5: Path,
-    ) -> None:
-        """Tightening the cap below the source's depth makes a
-        previously-legal compose fail."""
-        g = apeGmsh.from_h5(empty_h5)
-        with pytest.raises(ComposeDepthExceededError):
-            g.compose(depth_1_h5, label="X", max_compose_depth=1)
-
-    def test_override_invalid_type_raises(
-        self, empty_h5: Path, leaf_h5: Path,
-    ) -> None:
-        g = apeGmsh.from_h5(empty_h5)
-        with pytest.raises(ValueError, match="must be an int"):
-            g.compose(leaf_h5, label="X", max_compose_depth="three")  # type: ignore[arg-type]
-
-    def test_override_below_one_raises(
-        self, empty_h5: Path, leaf_h5: Path,
-    ) -> None:
-        g = apeGmsh.from_h5(empty_h5)
-        with pytest.raises(ValueError, match=">= 1"):
-            g.compose(leaf_h5, label="X", max_compose_depth=0)
+            _assemble(("topLevel", depth_3_h5))
 
 
 class TestSeparatorAlternationEndToEnd:
-    """Composing nested sources produces the expected joined labels
+    """Instancing nested sources produces the expected joined labels
     with depth-N separator alternation."""
 
-    def test_depth_2_uses_slash(
-        self, empty_h5: Path, depth_1_h5: Path,
-    ) -> None:
-        g = apeGmsh.from_h5(empty_h5)
-        g.compose(depth_1_h5, label="outer")
-        labels = sorted(r.label for r in g._fem.composed_from)
+    def test_depth_2_uses_slash(self, depth_1_h5: Path) -> None:
+        fem = _assemble(("outer", depth_1_h5)).fem
+        labels = sorted(r.label for r in fem.composed_from)
         # Top-level "outer" + grafted "outer/partA" (depth-2 boundary
         # uses "/").
         assert "outer" in labels
@@ -461,11 +404,10 @@ class TestSeparatorAlternationEndToEnd:
         assert "outer.partA" not in labels  # no "." at depth 2
 
     def test_depth_3_uses_dot_at_outer_boundary(
-        self, empty_h5: Path, depth_2_h5: Path,
+        self, depth_2_h5: Path,
     ) -> None:
-        g = apeGmsh.from_h5(empty_h5)
-        g.compose(depth_2_h5, label="top")
-        labels = sorted(r.label for r in g._fem.composed_from)
+        fem = _assemble(("top", depth_2_h5)).fem
+        labels = sorted(r.label for r in fem.composed_from)
         # Top-level "top" + grafted "top/assemblyM" (depth-2 inner
         # boundary uses "/") + grafted "top.assemblyM/partA"
         # (depth-3 boundary uses "." outer, "/" preserved inner).
@@ -473,29 +415,25 @@ class TestSeparatorAlternationEndToEnd:
         assert "top/assemblyM" in labels
         assert "top.assemblyM/partA" in labels
 
-    def test_module_label_on_nodes_is_joined(
-        self, empty_h5: Path, depth_1_h5: Path,
-    ) -> None:
-        """A depth-2 compose stamps the source's depth-1 rows with
+    def test_module_label_on_nodes_is_joined(self, depth_1_h5: Path) -> None:
+        """A depth-2 instance stamps the source's depth-1 rows with
         ``{outer}/{inner}`` on the merged ``module_label`` parallel
         dataset."""
-        g = apeGmsh.from_h5(empty_h5)
-        g.compose(depth_1_h5, label="outer")
+        fem = _assemble(("outer", depth_1_h5)).fem
         # All nodes came from depth_1_h5, whose own rows had
-        # module_label == "partA".  After compose: "outer/partA".
-        ml = g._fem.nodes._module_label
+        # module_label == "partA".  After the merge: "outer/partA".
+        ml = fem.nodes._module_label
         assert ml is not None
-        # The empty host contributed 0 rows; all rows are from the
-        # composed module → all labels are "outer/partA".
+        # The assembly's empty base contributed 0 rows; every row is
+        # from the instance → all labels are "outer/partA".
         labels = set(str(x) for x in ml)
         assert labels == {"outer/partA"}
 
     def test_module_label_on_elements_is_joined(
-        self, empty_h5: Path, depth_1_h5: Path,
+        self, depth_1_h5: Path,
     ) -> None:
-        g = apeGmsh.from_h5(empty_h5)
-        g.compose(depth_1_h5, label="outer")
-        ml = g._fem.elements._module_label
+        fem = _assemble(("outer", depth_1_h5)).fem
+        ml = fem.elements._module_label
         assert ml is not None
         for arr in ml.values():
             labels = set(str(x) for x in arr)
@@ -512,12 +450,10 @@ class TestH5RoundTripNested:
     module_labels across save/load cycles."""
 
     def test_round_trip_preserves_labels(
-        self, empty_h5: Path, depth_2_h5: Path, tmp_path: Path,
+        self, depth_2_h5: Path, tmp_path: Path,
     ) -> None:
-        g = apeGmsh.from_h5(empty_h5)
-        g.compose(depth_2_h5, label="top")
         out = tmp_path / "round.h5"
-        g.save(out)
+        _assemble(("top", depth_2_h5), out=out)
         # Reload and compare labels.
         g2 = apeGmsh.from_h5(out)
         loaded_labels = sorted(r.label for r in g2._fem.composed_from)
@@ -526,37 +462,32 @@ class TestH5RoundTripNested:
         ]
 
     def test_round_trip_preserves_translate(
-        self, empty_h5: Path, depth_1_h5: Path, tmp_path: Path,
+        self, depth_1_h5: Path, tmp_path: Path,
     ) -> None:
-        g = apeGmsh.from_h5(empty_h5)
-        g.compose(depth_1_h5, label="outer", translate=(5.0, 0.0, 0.0))
         out = tmp_path / "round.h5"
-        g.save(out)
+        _assemble(("outer", depth_1_h5), out=out, translate=(5.0, 0.0, 0.0))
         g2 = apeGmsh.from_h5(out)
         # The top-level ComposeRecord carries the translate.
         outer_rec = g2._fem.composed_from["outer"]
         assert outer_rec.translate == (5.0, 0.0, 0.0)
 
     def test_round_trip_module_label_for_node(
-        self, empty_h5: Path, depth_1_h5: Path, tmp_path: Path,
+        self, depth_1_h5: Path, tmp_path: Path,
     ) -> None:
-        g = apeGmsh.from_h5(empty_h5)
-        g.compose(depth_1_h5, label="outer")
         out = tmp_path / "round.h5"
-        g.save(out)
+        _assemble(("outer", depth_1_h5), out=out)
         with h5_reader.open(str(out)) as model:
             ids = model.nodes()["ids"]
+            assert len(ids) > 0
             for nid in ids:
-                # Every node came from the composed module at depth 2.
+                # Every node came from the instance at depth 2.
                 assert model.composed_for_node(int(nid)) == "outer/partA"
 
     def test_iter_composed_from_yields_nested_labels(
-        self, empty_h5: Path, depth_2_h5: Path, tmp_path: Path,
+        self, depth_2_h5: Path, tmp_path: Path,
     ) -> None:
-        g = apeGmsh.from_h5(empty_h5)
-        g.compose(depth_2_h5, label="top")
         out = tmp_path / "round.h5"
-        g.save(out)
+        _assemble(("top", depth_2_h5), out=out)
         with h5_reader.open(str(out)) as model:
             labels = sorted(r.label for r in model.iter_composed_from())
         assert labels == [
@@ -564,13 +495,11 @@ class TestH5RoundTripNested:
         ]
 
     def test_double_round_trip_is_stable(
-        self, empty_h5: Path, depth_2_h5: Path, tmp_path: Path,
+        self, depth_2_h5: Path, tmp_path: Path,
     ) -> None:
         """save → load → save → load yields the same compose chain."""
-        g1 = apeGmsh.from_h5(empty_h5)
-        g1.compose(depth_2_h5, label="top")
         out1 = tmp_path / "r1.h5"
-        g1.save(out1)
+        _assemble(("top", depth_2_h5), out=out1)
         g2 = apeGmsh.from_h5(out1)
         out2 = tmp_path / "r2.h5"
         g2.save(out2)
@@ -578,16 +507,17 @@ class TestH5RoundTripNested:
         first_labels = sorted(r.label for r in g2._fem.composed_from)
         second_labels = sorted(r.label for r in g3._fem.composed_from)
         assert first_labels == second_labels
+        assert first_labels == [
+            "top", "top.assemblyM/partA", "top/assemblyM",
+        ]
 
     def test_h5_uses_safe_group_names_for_slashed_labels(
-        self, empty_h5: Path, depth_2_h5: Path, tmp_path: Path,
+        self, depth_2_h5: Path, tmp_path: Path,
     ) -> None:
         """The H5 writer sanitises ``/`` to ``_`` for group names but
         round-trips the original label via the ``label`` attribute."""
-        g = apeGmsh.from_h5(empty_h5)
-        g.compose(depth_2_h5, label="top")
         out = tmp_path / "round.h5"
-        g.save(out)
+        _assemble(("top", depth_2_h5), out=out)
         with h5py.File(str(out), "r") as f:
             assert "composed_from" in f
             cf = f["composed_from"]
@@ -607,7 +537,7 @@ class TestH5RoundTripNested:
 
 
 # ---------------------------------------------------------------------------
-# Edge cases — multiple modules, sibling composes, mixed inputs
+# Edge cases — multiple modules, sibling instances, mixed inputs
 # ---------------------------------------------------------------------------
 
 
@@ -615,64 +545,44 @@ class TestEdgeCases:
     """Behaviour at unusual composition shapes."""
 
     def test_two_sibling_depth_1_composes_stay_depth_1(
-        self, empty_h5: Path, leaf_h5: Path,
+        self, leaf_h5: Path, leaf2_h5: Path,
     ) -> None:
-        """Composing two leaves under different outer labels yields
-        two depth-1 entries (sibling modules; no nesting)."""
-        g = apeGmsh.from_h5(empty_h5)
-        g.compose(leaf_h5, label="A")
-        # Build a second distinct leaf source.
-        leaf2 = _make_fem(
-            node_ids=[100, 200, 300], elem_ids=[1000, 1001],
-        )
-        leaf2_path = empty_h5.parent / "leaf2.h5"
-        leaf2.to_h5(str(leaf2_path))
-        g.compose(leaf2_path, label="B")
-        labels = sorted(r.label for r in g._fem.composed_from)
+        """Instancing two leaves under different labels yields two
+        depth-1 entries (sibling modules; no nesting)."""
+        fem = _assemble(("A", leaf_h5), ("B", leaf2_h5)).fem
+        labels = sorted(r.label for r in fem.composed_from)
         assert labels == ["A", "B"]
-        # Sibling composes do NOT count as nested.
+        # Sibling instances do NOT count as nested.
         assert max(
             _label_depth(L) for L in labels
         ) == 1
 
     def test_compose_source_with_multiple_modules(
-        self, empty_h5: Path, leaf_h5: Path, tmp_path: Path,
+        self, leaf_h5: Path, leaf2_h5: Path, tmp_path: Path,
     ) -> None:
         """A source whose own ``composed_from`` has multiple entries —
-        the host inherits all of them through the graft."""
-        # Build a host that composes two leaves.
-        gA = apeGmsh.from_h5(empty_h5)
-        gA.compose(leaf_h5, label="A")
-        leaf2 = _make_fem(
-            node_ids=[100, 200, 300], elem_ids=[1000, 1001],
-        )
-        leaf2_path = tmp_path / "leaf2.h5"
-        leaf2.to_h5(str(leaf2_path))
-        gA.compose(leaf2_path, label="B")
+        the bridge inherits all of them through the graft."""
+        # Build an archive that instances two leaves.
         multi_h5 = tmp_path / "multi.h5"
-        gA.save(multi_h5)
-        # Compose the multi-module source into a fresh host.
-        g = apeGmsh.from_h5(empty_h5)
-        g.compose(multi_h5, label="outer")
-        labels = sorted(r.label for r in g._fem.composed_from)
+        _assemble(("A", leaf_h5), ("B", leaf2_h5), out=multi_h5)
+        # Instance the multi-module archive in a fresh assembly.
+        fem = _assemble(("outer", multi_h5)).fem
+        labels = sorted(r.label for r in fem.composed_from)
         # Top-level "outer" + grafted "outer/A" + grafted "outer/B".
         assert labels == ["outer", "outer/A", "outer/B"]
 
-    def test_uncomposed_source_does_not_graft(
-        self, empty_h5: Path, leaf_h5: Path,
-    ) -> None:
-        """Composing a depth-0 source produces a single top-level
+    def test_uncomposed_source_does_not_graft(self, leaf_h5: Path) -> None:
+        """Instancing a depth-0 source produces a single top-level
         entry; no graft records appear."""
-        g = apeGmsh.from_h5(empty_h5)
-        g.compose(leaf_h5, label="outer")
-        labels = [r.label for r in g._fem.composed_from]
+        fem = _assemble(("outer", leaf_h5)).fem
+        labels = [r.label for r in fem.composed_from]
         assert labels == ["outer"]
 
     def test_compose_inspect_reports_nested_provenance(
         self, depth_2_h5: Path,
     ) -> None:
         """``compose_inspect`` surfaces the source's nested
-        ``composed_from`` so callers can audit before composing."""
+        ``composed_from`` so callers can audit before instancing."""
         from apeGmsh.mesh._compose import Compose
 
         # Build a session with no host; compose_inspect doesn't need

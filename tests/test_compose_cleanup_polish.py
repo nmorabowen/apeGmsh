@@ -24,6 +24,7 @@ import numpy as np
 import pytest
 
 from apeGmsh._core import apeGmsh
+from apeGmsh.assembly import Assembly
 from apeGmsh.mesh._element_types import ElementGroup, make_type_info
 from apeGmsh.mesh._group_set import LabelSet, PhysicalGroupSet
 from apeGmsh.mesh.FEMData import (
@@ -32,6 +33,7 @@ from apeGmsh.mesh.FEMData import (
     MeshInfo,
     NodeComposite,
 )
+from apeGmsh.opensees import apeSees
 from apeGmsh.viewers.core.color_mode_controller import (
     _FALLBACK_RGB,
     _GROUP_PALETTE_RGB,
@@ -84,7 +86,8 @@ def test_phys_group_idle_deterministic_across_calls() -> None:
 # Item 3: compose_inspect adds 'compose_tree' key
 # =====================================================================
 # Fixtures mirror tests/test_compose_tree.py — no Gmsh, no OpenSeesPy;
-# pure FEMData → H5 → from_h5 → compose → save chain.
+# pure FEMData → apeSees.h5 → Assembly.instance → bridge → asm.h5 chain
+# (the nested sources are v2 assembly archives, ADR 0117).
 
 
 def _make_fem(
@@ -140,40 +143,36 @@ def _make_fem(
     return FEMData(nodes=nodes, elements=elements, info=info)
 
 
-@pytest.fixture
-def empty_h5(tmp_path: Path) -> Path:
-    fem = _make_fem(node_ids=[], elem_ids=[])
-    p = tmp_path / "empty.h5"
-    fem.to_h5(str(p))
-    return p
+def _archive(out: Path, label: str, source: Path) -> Path:
+    """An assembly archive instancing ``source`` under ``label``."""
+    asm = Assembly(out.stem)
+    asm.instance(label, source)
+    asm.bridge(ndm=3, ndf=3)
+    asm.h5(str(out))
+    return out
 
 
 @pytest.fixture
 def leaf_h5(tmp_path: Path) -> Path:
-    fem = _make_fem(node_ids=[1, 2, 3], elem_ids=[10, 11])
+    """Depth-0 source; ``/opensees`` carries ``model(3, 3)`` so it can
+    be instanced."""
+    ops = apeSees(_make_fem(node_ids=[1, 2, 3], elem_ids=[10, 11]))
+    ops.model(ndm=3, ndf=3)
     p = tmp_path / "leaf.h5"
-    fem.to_h5(str(p))
+    ops.h5(str(p))
     return p
 
 
 @pytest.fixture
-def depth_1_h5(tmp_path: Path, empty_h5: Path, leaf_h5: Path) -> Path:
+def depth_1_h5(tmp_path: Path, leaf_h5: Path) -> Path:
     """Depth-1 source: composed_from = [partA]."""
-    g = apeGmsh.from_h5(empty_h5)
-    g.compose(leaf_h5, label="partA")
-    out = tmp_path / "depth_1.h5"
-    g.save(out)
-    return out
+    return _archive(tmp_path / "depth_1.h5", "partA", leaf_h5)
 
 
 @pytest.fixture
-def depth_2_h5(tmp_path: Path, empty_h5: Path, depth_1_h5: Path) -> Path:
+def depth_2_h5(tmp_path: Path, depth_1_h5: Path) -> Path:
     """Depth-2 source: composed_from = [assemblyM, assemblyM/partA]."""
-    g = apeGmsh.from_h5(empty_h5)
-    g.compose(depth_1_h5, label="assemblyM")
-    out = tmp_path / "depth_2.h5"
-    g.save(out)
-    return out
+    return _archive(tmp_path / "depth_2.h5", "assemblyM", depth_1_h5)
 
 
 def test_compose_inspect_uncomposed_returns_empty_tree(leaf_h5: Path) -> None:

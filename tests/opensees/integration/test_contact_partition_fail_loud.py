@@ -202,8 +202,21 @@ def test_flat_emits_contact_deck_from_partitioned_model(tmp_path):
 
 
 def test_flat_emits_composed_contact_model(tmp_path):
-    # The motivating case: plain host composes a contact-carrying module.
-    from apeGmsh.mesh.FEMData import FEMData
+    # The motivating case: a plain host and a contact-carrying module,
+    # composed by a v2 assembly (ADR 0117), one rank per instance.
+    import warnings
+
+    from apeGmsh.assembly import Assembly
+    from apeGmsh.opensees.emitter.h5 import H5LedgerWarning
+
+    def _write_source(fem, path):
+        src = apeSees(fem, _artifacts=False)
+        src.model(ndm=3, ndf=3)
+        with warnings.catch_warnings():
+            # The contact travels in the neutral zone (asserted below),
+            # not as a ledgered /opensees verb.
+            warnings.simplefilter("ignore", H5LedgerWarning)
+            src.h5(str(path))
 
     mod = tmp_path / "mod.h5"
     plain = tmp_path / "plain.h5"
@@ -219,30 +232,29 @@ def test_flat_emits_composed_contact_model(tmp_path):
         g.physical.add(2, [master], name="master")
         g.physical.add(2, [slave], name="slave")
         g.constraints.contact("master", "slave", formulation="nts", kn=1.0e6)
-        g.mesh.queries.get_fem_data(dim=3).to_h5(str(mod))
+        _write_source(g.mesh.queries.get_fem_data(dim=3), mod)
     with apeGmsh(model_name="flat_host", verbose=False) as g:
         box = g.model.geometry.add_box(5, 5, 5, 1, 1, 1)
         g.model.sync()
         g.mesh.sizing.set_global_size(1.0)
         g.mesh.generation.generate(3)
         g.physical.add(3, [box], name="hostvol")
-        g.mesh.queries.get_fem_data(dim=3).to_h5(str(plain))
-    fem = FEMData.from_h5(str(plain)).compose(
-        str(mod), label="C", translate=(0.0, 10.0, 0.0))
-    # The snapshot-level compose mints a nameless snapshot; name it so the
-    # bridges below write their model.h5 instead of warning (#1307).
-    fem.model_name = "flat_composed"
-    assert len(fem.partitions) == 2                   # auto one-rank-per-module
+        _write_source(g.mesh.queries.get_fem_data(dim=3), plain)
+    asm = Assembly("flat_composed")
+    asm.instance("host", plain, partition_rank=0)
+    asm.instance("C", mod, translate=(0.0, 10.0, 0.0), partition_rank=1)
+    fem = asm.bridge(ndm=3, ndf=3).fem
+    assert len(fem.partitions) == 2                   # one rank per instance
     assert len(fem.elements.contacts) == 1
 
     # default (partitioned) path now EMITS (ADR 0092 S4): the module's
     # interaction lands whole inside its owner rank's block …
     default_deck = tmp_path / "deck_default.tcl"
-    _tet_ops(fem, "hostvol", "C.solid").tcl(str(default_deck))
+    _tet_ops(fem, "host.hostvol", "C.solid").tcl(str(default_deck))
     _one_owner_block_only(default_deck, "contact ")
     # … and flat=True stays the serial escape hatch, unchanged.
     deck = tmp_path / "deck_flat.tcl"
-    _tet_ops(fem, "hostvol", "C.solid").tcl(str(deck), flat=True)
+    _tet_ops(fem, "host.hostvol", "C.solid").tcl(str(deck), flat=True)
     _assert_serial_contact_deck(deck)
 
 

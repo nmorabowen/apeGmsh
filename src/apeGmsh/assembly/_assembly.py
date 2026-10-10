@@ -18,16 +18,15 @@ under ``{instance}.``; analysis content (fixes, masses, patterns, recorders,
 stages, analysis) is declared on the returned bridge (ADR 0117 D4).
 
 ``instance`` and ``tie`` only record, after validating; ``bridge`` merges the
-FEM side through the existing compose engine (``FEMData.compose``), resolves
+FEM side through the compose engine (``mesh._compose._compose_module``), resolves
 each tie in chain phase, and rehydrates each instance's ``/opensees`` zone.
 No tag is allocated here: the bridge plans every tag at build (ADR 0114 D4).
 
 ``h5`` writes the bridge's ``model.h5`` plus the ``/assembly`` zone (ADR 0117
 D5, ``_h5.py``); ``from_h5`` re-lists an archive's instances and ties.
 
-The v1 declarations (``add`` / ``couple`` / ``materialize``) are inherited
-unchanged until AS5 deletes them; one assembly uses one API or the other
-(the v1 build of a v2 assembly finds no parts and raises).
+The v1 declarations (``add`` / ``couple(part_a, part_b, ports=)`` /
+``materialize``) and ``g.compose`` were removed in AS5-c (ADR 0117 D7).
 """
 from __future__ import annotations
 
@@ -71,8 +70,7 @@ from ._instances import (
     merged_port,
     split_port,
 )
-from ._v1 import Assembly as _AssemblyV1
-from ._v1 import AssemblyError
+from ._errors import AssemblyError
 
 if TYPE_CHECKING:
     from apeGmsh.mesh import FEMData
@@ -97,14 +95,16 @@ class _Bridged:
     opensees_hash: dict[str, str]
 
 
-class Assembly(_AssemblyV1):
+class Assembly:
     """Instances of saved ``model.h5`` files joined by assembly-level ties.
 
     See the module docstring. ``name`` is the assembly's own name.
     """
 
     def __init__(self, name: str) -> None:
-        super().__init__(name)
+        if not isinstance(name, str) or not name:
+            raise AssemblyError("Assembly(name=) requires a non-empty string.")
+        self.name = name
         self._instances: list[Instance] = []
         self._nodes: list[RefNode] = []
         self._ties: "list[Tie | Coupling]" = []
@@ -179,7 +179,6 @@ class Assembly(_AssemblyV1):
         given with a nonzero ``translate``, that names no earlier instance,
         or that resolves no node.
         """
-        self._refuse_mixed("instance")
         self._check_new_name(label, what="instance label")
         path = Path(source)
         if not path.is_file():
@@ -247,7 +246,6 @@ class Assembly(_AssemblyV1):
         """
         from apeGmsh._kernel._coupling_control import CouplingControl
 
-        self._refuse_mixed("tie")
         labels = [i.label for i in self._instances]
         m_name = merged_port(master, labels)
         s_name = merged_port(slave, labels)
@@ -292,7 +290,6 @@ class Assembly(_AssemblyV1):
         declared (an instance, node, tie or coupling), and for non-finite
         coordinates.
         """
-        self._refuse_mixed("node")
         self._check_new_name(name, what="node name")
         xyz = check_point(coords, what="coords")
         self._provenance.capture("assembly", "ties", name, on_existing="raise")
@@ -473,26 +470,20 @@ class Assembly(_AssemblyV1):
             "embedded", host, embedded, name,
             {"tolerance": tolerance, "stiffness": stiffness})
 
-    # The v2 form renames v1's first argument (part_a -> target); AS5
-    # deletes v1, and this ignore with it.
-    def couple(  # type: ignore[override]
+    def couple(
         self,
         target: str,
-        part_b: "str | None" = None,
         *,
         kind: str,
         reference: "str | None" = None,
         dofs: "Sequence[int] | None" = None,
         weighting: str = "uniform",
         name: "str | None" = None,
-        ports: "Sequence[str] | None" = None,
-        tolerance: "float | None" = None,
         k: "float | None" = None,
         k_alpha: "float | None" = None,
         kr: "float | None" = None,
         enforce: "str | None" = None,
         al_update: "str | None" = None,
-        **options: Any,
     ) -> "Assembly":
         """Couple an instance port to a reference node. Returns ``self``.
 
@@ -514,9 +505,7 @@ class Assembly(_AssemblyV1):
         ``k="auto"`` scale off a host element (``-host``), which the
         assembly form does not take, so they are refused.
 
-        Any other ``kind`` is the v1 ``couple(part_a, part_b, kind=,
-        ports=)`` of an ``add``-declared assembly, kept until AS5 deletes
-        it. ``contact`` and ``interface`` are not assembly couplings (ADR
+        ``contact`` and ``interface`` are not assembly couplings (ADR
         0117 D3); they stay inside an instance.
 
         Raises :class:`AssemblyError` here for a bad port, name, option or
@@ -524,47 +513,13 @@ class Assembly(_AssemblyV1):
         (INV-7).
         """
         v2_kind = _V2_COUPLE_KINDS.get(kind)
-        knobs = {key: v for key, v in (
-            ("k", k), ("k_alpha", k_alpha), ("kr", kr), ("enforce", enforce),
-            ("al_update", al_update)) if v is not None}
         if v2_kind is None:
-            # The v1 form forwards these keywords to g.constraints as before.
-            options.update(knobs)
-            if self._instances or self._nodes or self._ties:
-                raise AssemblyError(
-                    f"couple(kind={kind!r}): an instance-declared assembly "
-                    f"couples with kind 'kinematic' (RBE2) or 'distributing' "
-                    f"(RBE3); use tie, equal_dof, equal_dof_mixed, rigid_link, "
-                    f"rigid_diaphragm, rigid_body or embedded for the others. "
-                    f"contact and interface are "
-                    f"not assembly couplings (ADR 0117 D3)."
-                )
-            if part_b is None or ports is None:
-                raise AssemblyError(
-                    f"couple(kind={kind!r}): the v1 form is couple(part_a, "
-                    f"part_b, kind=, ports=); the instance form takes kind "
-                    f"'kinematic' or 'distributing'."
-                )
-            if reference is not None or weighting != "uniform":
-                # Options of the instance form: v1 forwards unknown
-                # keywords to g.constraints, so refuse rather than drop.
-                raise AssemblyError(
-                    f"couple(kind={kind!r}): reference= and weighting= are "
-                    f"options of kind 'kinematic' / 'distributing' on an "
-                    f"instance-declared assembly, not of the v1 form."
-                )
-            super().couple(
-                target, part_b, kind=kind, ports=ports, dofs=dofs,
-                tolerance=tolerance, name=name, **options)
-            return self
-        extra = {k: v for k, v in (("part_b", part_b), ("ports", ports),
-                                   ("tolerance", tolerance)) if v is not None}
-        extra.update(options)
-        if extra:
             raise AssemblyError(
-                f"couple(kind={kind!r}): unexpected options {sorted(extra)}; "
-                f"the instance form is couple(target, kind=, reference=, "
-                f"dofs= | weighting=, name=, k=, kr=, enforce=, al_update=)."
+                f"couple(kind={kind!r}): an assembly couples with kind "
+                f"'kinematic' (RBE2) or 'distributing' (RBE3); use tie, "
+                f"equal_dof, equal_dof_mixed, rigid_link, rigid_diaphragm, "
+                f"rigid_body or embedded for the others. contact and "
+                f"interface are not assembly couplings (ADR 0117 D3)."
             )
         if reference is None:
             raise AssemblyError(
@@ -622,7 +577,6 @@ class Assembly(_AssemblyV1):
         params: dict[str, Any],
     ) -> "Assembly":
         """Validate one coupling completely, then record it."""
-        self._refuse_mixed(kind)
         labels = [i.label for i in self._instances]
         nodes = [n.name for n in self._nodes]
         master_ok, slave_ok = NODE_PORTS[kind]
@@ -647,7 +601,6 @@ class Assembly(_AssemblyV1):
     ) -> tuple[float, float, float]:
         """The default ``master_point``: the coordinates of ``master`` when
         it is a reference node. An instance-port master needs one given."""
-        self._refuse_mixed(verb)
         split_port(master, [i.label for i in self._instances],
                    [n.name for n in self._nodes])
         ref = self._node_coords().get(master)
@@ -702,7 +655,6 @@ class Assembly(_AssemblyV1):
         or element rows whose args vary inside a physical group (the
         per-row selector, #1542).
         """
-        self._refuse_mixed("bridge")
         if self._archive is not None:
             raise AssemblyError(
                 f"Assembly({self.name!r}).bridge(): this assembly was read from "
@@ -909,6 +861,7 @@ class Assembly(_AssemblyV1):
     def _merged_fem(self) -> "FEMData":
         """Every instance composed onto an empty broker, then every tie."""
         from apeGmsh._kernel.resolvers._chain_phase_router import route_def_to_fem
+        from apeGmsh.mesh._compose import _compose_module
 
         from ._rehydrate import refuse_region_dampings
 
@@ -921,7 +874,8 @@ class Assembly(_AssemblyV1):
             refuse_region_dampings(inst.label, inst.source)
         fem = _base_fem(self._nodes)
         for inst in self._instances:
-            fem = fem.compose(
+            fem = _compose_module(
+                fem,
                 inst.source,
                 label=inst.label,
                 translate=inst.translate,
@@ -959,37 +913,6 @@ class Assembly(_AssemblyV1):
                 )
             fem = routed
         return fem
-
-    # ------------------------------------------------------------------
-    # v1 coexistence (deleted in AS5)
-    # ------------------------------------------------------------------
-
-    def _refuse_mixed(self, verb: str) -> None:
-        if self._parts or self._couples:
-            raise AssemblyError(
-                f"{verb}(): this assembly already uses the v1 add/couple API; "
-                f"declare it with instance/tie/bridge only."
-            )
-
-    def add(
-        self,
-        label: str,
-        source: str,
-        *,
-        translate: tuple[float, float, float] = (0.0, 0.0, 0.0),
-        rotate: "tuple[float, float, float, float] | None" = None,
-        anchor: "str | None" = None,
-    ) -> "Assembly":
-        if self._instances or self._nodes or self._ties:
-            raise AssemblyError(
-                "add(): this assembly already uses instance/tie; the v1 "
-                "add/couple/materialize API cannot be mixed in."
-            )
-        super().add(
-            label, source, translate=translate, rotate=rotate, anchor=anchor)
-        return self
-
-    add.__doc__ = _AssemblyV1.add.__doc__
 
 
 def _base_fem(ref_nodes: Sequence[RefNode] = ()) -> "FEMData":
@@ -1041,7 +964,7 @@ def _anchor_translate(
 ) -> tuple[float, float, float]:
     """The translate ``instance(anchor=)`` resolves to.
 
-    v1's rule (``FEMData._resolve_anchor_to_translate``, ADR 0038) with the
+    v1's ``compose(anchor=)`` rule (ADR 0038) with the
     host replaced by the instances declared so far: ``anchor`` is a port
     ``"{instance}.{pg|label}"`` of one of them, looked up as a physical
     group first and then as a label, and the translate is the mean of its
@@ -1052,6 +975,8 @@ def _anchor_translate(
     """
     import numpy as np
 
+    from apeGmsh.mesh._compose import _compose_module
+
     labels = [i.label for i in placed]
     merged = merged_port(anchor, labels)
     inst_label, _ = split_port(anchor, labels)
@@ -1059,9 +984,9 @@ def _anchor_translate(
     with warnings.catch_warnings():
         # bridge() shows this instance's compose warnings.
         warnings.simplefilter("ignore")
-        fem = _base_fem().compose(
-            inst.source, label=inst.label, translate=inst.translate,
-            rotate=inst.compose_rotate())
+        fem = _compose_module(
+            _base_fem(), inst.source, label=inst.label, translate=inst.translate,
+            rotate=inst.compose_rotate(), partition_rank=None)
     # The coordinates come from the node table (``select``): the group
     # sets' own ``node_coords`` keep the source's coordinates after a
     # compose, before its rotation and translation.

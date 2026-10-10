@@ -229,7 +229,7 @@ def test_a_source_swapped_for_a_ranked_archive_is_refused_at_bridge(
     import shutil
 
     from apeGmsh.assembly import Assembly, AssemblyError
-    from apeGmsh.mesh import FEMData
+    from apeGmsh.mesh import _compose
 
     src = tmp_path / "swapped.h5"
     shutil.copyfile(files["block"], src)
@@ -239,7 +239,8 @@ def test_a_source_swapped_for_a_ranked_archive_is_refused_at_bridge(
     def no_merge(*args, **kwargs):
         raise AssertionError("bridge() merged a ranked source")
 
-    monkeypatch.setattr(FEMData, "compose", no_merge)
+    # The merge engine's one entry (bridge() imports it at call time).
+    monkeypatch.setattr(_compose, "_compose_module", no_merge)
     with pytest.raises(AssemblyError, match=(
             r"instance 'X': .* composes modules \['A', 'B'\] that carry a "
             r"partition_rank")):

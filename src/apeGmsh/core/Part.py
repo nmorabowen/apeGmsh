@@ -19,9 +19,9 @@ meshes, and extracts.
 sizes, or *orders* (``set_order`` is global within a gmsh session,
 so mixed order is impossible in one mesh pass) — a Part is the
 wrong unit.  Author each part as a full ``apeGmsh`` session saved
-to ``model.h5``, then assemble with ``g.compose`` /
-``apeGmsh.assembly.Assembly`` and couple the interfaces with
-constraints.  See ADR 0085 and ``docs/how-to/compose-modules.md``.
+to ``model.h5``, then assemble with ``apeGmsh.assembly.Assembly``
+and tie the interfaces.  See ADR 0085 and
+``docs/how-to/assemble-saved-models.md``.
 
 A Part is created in its own isolated Gmsh session, geometry is
 built with the geometry/labels API, then either saved to **STEP**
@@ -122,7 +122,7 @@ class Part(_SessionBase):
     Carries geometry plus Tier-1 naming (``labels`` + auto-created
     physical groups from ``label=`` kwargs, persisted via the STEP
     sidecar).  For independently-meshed parts use a full session per
-    part + ``g.compose`` instead — see the module docstring.
+    part + ``Assembly`` instead — see the module docstring.
 
     Parameters
     ----------

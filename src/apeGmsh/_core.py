@@ -184,8 +184,8 @@ class apeGmsh(_SessionBase):
         # ── FEMData cache (Phase 3B.2b-prep / ADR 0038) ──────────
         # The session caches the most recent ``get_fem_data()`` result
         # so repeat calls return the same broker object identity (and
-        # downstream consumers — chain-phase shims, future
-        # ``g.compose()`` — have a single canonical snapshot to update
+        # downstream consumers — the chain-phase shims — have a
+        # single canonical snapshot to update
         # via ``FEMData.with_*`` transforms).  Every declaration
         # (``_DeclarationsMixin._declare`` — ``g.constraints.X``,
         # ``g.loads.X``, ``g.reinforce`` and the rest) bumps
@@ -197,25 +197,10 @@ class apeGmsh(_SessionBase):
         self._fem: "FEMData | None" = None
         self._fem_counter: int = 0
         self._fem_counter_at_build: int | None = None
-        # ── Compose state (Phase 3B.2c / ADR 0038) ────────────────
-        # ``_compose_bundles`` holds every ``_RewrittenBundle`` produced
-        # by a ``g.compose(...)`` call on this session in compose-call
-        # order.  When a broker mutation invalidates the cache, the
-        # next ``get_fem_data()`` re-extracts from gmsh + def lists and
-        # then re-applies every stored bundle on top — so the composed
-        # modules survive any subsequent ``g.constraints.X`` / etc.
-        # mutation.
-        #
         # ``_fem_from_h5`` flags sessions built via
         # :meth:`apeGmsh.from_h5`: those have no gmsh state, so the
         # cache-stale path must re-use ``_fem`` as the chain head
-        # rather than re-extracting from absent gmsh.  3B.2c chooses
-        # this scoped-flag approach rather than generalising
-        # ``get_fem_data()`` over a missing-gmsh case because the
-        # alternative — making ``from_gmsh`` tolerate absent gmsh —
-        # would bleed compose-only concerns into every extraction
-        # caller.  3B.2d's resolver refactor takes the cleaner cut.
-        self._compose_bundles: tuple = ()
+        # rather than re-extracting from absent gmsh.
         self._fem_from_h5: bool = False
 
     # ------------------------------------------------------------------
@@ -240,24 +225,16 @@ class apeGmsh(_SessionBase):
         mesh state raises :class:`~.core._compose_errors.ChainPhaseError`
         naming the H5-safe alternative.
 
-        Useful for cross-session composition workflows::
-
-            # Day 1
-            with apeGmsh(model_name="host", save_to="host.h5") as g:
-                ...
-
-            # Day 2
-            g = apeGmsh.from_h5("host.h5")
-            g.compose("module_a.h5", label="A")
-            g.compose("module_b.h5", label="B")
-            g.save("final.h5")
+        Composition is :class:`apeGmsh.assembly.Assembly` (ADR 0117):
+        instance saved files, tie them, ``bridge()``; ``from_h5`` then
+        opens the assembly archive like any ``model.h5``.
 
         What works
         ----------
         * ``g.mesh.queries.get_fem_data()`` — the chain head, and the
           surface every refusal below points back at.
-        * ``g.compose(...)`` / ``compose_inspect(...)`` /
-          ``compose_list()`` and :meth:`save`.
+        * The compose readers ``compose_inspect(...)`` /
+          ``compose_list()`` / ``compose_tree()``, and :meth:`save`.
         * The chain-phase authoring shims, routed through
           ``FEMData.with_*``: ``g.constraints.bc`` / ``tie`` /
           ``embedded`` / ``tied_contact`` / ``equalDOF`` /
@@ -582,24 +559,8 @@ class apeGmsh(_SessionBase):
         )
 
     # ------------------------------------------------------------------
-    # Compose facade — ADR 0038
+    # Compose readers — ADR 0038 (the g.compose writer was removed in AS5-c)
     # ------------------------------------------------------------------
-
-    def compose(
-        self,
-        source: "str | Path",
-        *,
-        label: str,
-        **kwargs: Any,
-    ) -> "ComposedModule":
-        """Merge a previously-saved apeGmsh model into this session.
-
-        See :meth:`apeGmsh.mesh._compose.Compose.compose` for the full
-        signature, validation contract, and exception types.  Phase
-        3B.1 scaffolds the facade — the merge engine itself lands in
-        Phase 3B.2.
-        """
-        return self._compose_facade().compose(source, label=label, **kwargs)
 
     def compose_inspect(self, path: "str | Path") -> dict:
         """Read a module's H5 header without composing it.
@@ -627,7 +588,7 @@ class apeGmsh(_SessionBase):
         """Lazy-instantiate the single per-session :class:`Compose` facade.
 
         Compose is a session-level facade rather than a ``_COMPOSITES``
-        entry so the three public methods (``compose`` /
+        entry so the three public readers (``compose_tree`` /
         ``compose_inspect`` / ``compose_list``) read naturally on the
         session.  The lazy pattern keeps unused sessions free of the
         facade's import cost.

@@ -1,7 +1,7 @@
 """Compose PG / label ``(dim, tag)`` key-collision regression tests.
 
 Gmsh auto-assigns physical-group and label tags ``1, 2, 3, ...`` in
-EVERY source file, so every composed module re-uses the host's ``(dim,
+EVERY source file, so every composed module re-uses the same ``(dim,
 tag)`` pairs.  Historically the merge shifted a colliding bundle key to
 ``(dim, tag + 1_000_000_000)`` — a fixed single shift, so the SECOND
 colliding module landed on the FIRST module's shifted key and silently
@@ -14,7 +14,8 @@ Locked here:
 
 * the rewriter offsets group KEYS into the module's reserved window
   (disjoint by construction, mirroring node / element tag offsets);
-* 3+ module composes keep every host + module PG / label / selection;
+* 5 instances of an ``Assembly`` (ADR 0117), all built from files with
+  the same auto tags, keep every instance's PG / label / selection;
 * the merge never overwrites — a forced collision probes a FREE key
   and warns (:class:`ComposeTagCollisionWarning`);
 * the lossless count invariant raises :class:`ComposeTagCollisionError`.
@@ -26,7 +27,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from apeGmsh._core import apeGmsh
+from apeGmsh.assembly import Assembly
 from apeGmsh.mesh import (
     ComposeTagCollisionError,
     ComposeTagCollisionWarning,
@@ -45,6 +46,7 @@ from apeGmsh.mesh.FEMData import (
     NodeComposite,
 )
 from apeGmsh.mesh.MeshSelectionSet import MeshSelectionStore
+from apeGmsh.opensees import apeSees
 
 
 # ---------------------------------------------------------------------------
@@ -111,19 +113,27 @@ def _make_module_fem(prefix: str) -> FEMData:
 
 
 MODULE_LABELS = ("m1", "m2", "m3", "m4")
+#: Every instance, in declaration order. v1 composed onto a live host
+#: whose groups stayed bare; v2 has no host, so the host is instance 1
+#: and is namespaced like every other.
+ALL_LABELS = ("host",) + MODULE_LABELS
 
 
-@pytest.fixture
-def composed_session(tmp_path: Path):
-    """Host + 4 composed modules, all with colliding gmsh auto tags."""
-    host_p = tmp_path / "host.h5"
-    _make_module_fem("host").to_h5(str(host_p))
-    g = apeGmsh.from_h5(host_p)
-    for label in MODULE_LABELS:
-        p = tmp_path / f"{label}.h5"
-        _make_module_fem(label).to_h5(str(p))
-        g.compose(p, label=label)
-    return g
+@pytest.fixture(scope="module")
+def composed(tmp_path_factory: pytest.TempPathFactory):
+    """5 instances, every source with colliding gmsh auto tags.
+
+    Returns ``(asm, fem)``: the bridged assembly and its merged broker.
+    """
+    d = tmp_path_factory.mktemp("pg_tag_collision")
+    asm = Assembly("collide")
+    for label in ALL_LABELS:
+        p = d / f"{label}.h5"
+        ops = apeSees(_make_module_fem(label))
+        ops.model(ndm=3, ndf=3)
+        ops.h5(str(p))
+        asm.instance(label, p)
+    return asm, asm.bridge(ndm=3, ndf=3).fem
 
 
 # ---------------------------------------------------------------------------
@@ -131,43 +141,35 @@ def composed_session(tmp_path: Path):
 # ---------------------------------------------------------------------------
 
 
-def test_multi_module_compose_keeps_every_pg_and_label(
-    composed_session,
-) -> None:
-    """Host + 4 modules -> 5x every group, correctly namespaced."""
-    fem = composed_session.mesh.queries.get_fem_data(dim=None)
+def test_multi_module_compose_keeps_every_pg_and_label(composed) -> None:
+    """5 instances -> 5x every group, correctly namespaced."""
+    _, fem = composed
 
     expected_node_pgs = sorted(
-        ["host_top", "host_bot", "host_vol"]
-        + [f"{m}.{m}_{s}" for m in MODULE_LABELS
-           for s in ("top", "bot", "vol")]
+        f"{m}.{m}_{s}" for m in ALL_LABELS for s in ("top", "bot", "vol")
     )
-    expected_elem_pgs = sorted(
-        ["host_lines"] + [f"{m}.{m}_lines" for m in MODULE_LABELS]
-    )
-    expected_labels = sorted(
-        ["host_lbl"] + [f"{m}.{m}_lbl" for m in MODULE_LABELS]
-    )
+    expected_elem_pgs = sorted(f"{m}.{m}_lines" for m in ALL_LABELS)
+    expected_labels = sorted(f"{m}.{m}_lbl" for m in ALL_LABELS)
 
     assert sorted(fem.nodes.physical.names()) == expected_node_pgs
     assert sorted(fem.elements.physical.names()) == expected_elem_pgs
     assert sorted(fem.nodes.labels.names()) == expected_labels
 
     # Count invariant: nothing merged away.
-    assert len(fem.nodes.physical) == 3 * (1 + len(MODULE_LABELS))
-    assert len(fem.elements.physical) == 1 * (1 + len(MODULE_LABELS))
-    assert len(fem.nodes.labels) == 1 * (1 + len(MODULE_LABELS))
+    assert len(fem.nodes.physical) == 3 * len(ALL_LABELS)
+    assert len(fem.elements.physical) == 1 * len(ALL_LABELS)
+    assert len(fem.nodes.labels) == 1 * len(ALL_LABELS)
 
 
 def test_multi_module_compose_pg_membership_is_module_local(
-    composed_session,
+    composed,
 ) -> None:
-    """Each surviving PG resolves to ITS module's offset node ids —
-    the exact lookup ``g.constraints.tie(master_label=...)`` performs."""
-    fem = composed_session.mesh.queries.get_fem_data(dim=None)
+    """Each surviving PG resolves to ITS instance's offset node ids —
+    the exact lookup ``asm.tie("m1.m1_vol", ...)`` performs."""
+    _, fem = composed
     node_ml = np.asarray(fem.nodes._module_label, dtype=object)
     node_ids = np.asarray(fem.nodes.ids, dtype=np.int64)
-    for m in MODULE_LABELS:
+    for m in ALL_LABELS:
         owned = set(
             int(t) for t, lbl in zip(node_ids, node_ml) if str(lbl) == m
         )
@@ -182,40 +184,39 @@ def test_multi_module_compose_pg_membership_is_module_local(
 
 
 def test_multi_module_compose_keys_are_disjoint_per_module(
-    composed_session,
+    composed,
 ) -> None:
-    """Bundle group keys were offset into each module's reserved
+    """Bundle group keys were offset into each instance's reserved
     window: 5 distinct (dim, tag) keys carry the 5 '*_vol' names."""
-    fem = composed_session.mesh.queries.get_fem_data(dim=None)
+    _, fem = composed
     groups = fem.nodes.physical._groups
     vol_keys = {
         key: info["name"]
         for key, info in groups.items()
         if str(info.get("name", "")).endswith("_vol")
     }
-    assert len(vol_keys) == 1 + len(MODULE_LABELS)
-    # Host keeps its small gmsh tag; every module's key sits above its
-    # window base (>= 1_000_000 granularity).
+    assert len(vol_keys) == len(ALL_LABELS)
+    # Every instance's key sits above its window base (>= 1_000_000
+    # granularity; instance k starts at k * 1_000_000), so the five
+    # identical source tags (3, 3) land on five distinct keys.
     tags_by_name = {v: k[1] for k, v in vol_keys.items()}
-    assert tags_by_name["host_vol"] == 3
-    module_tags = [
-        tags_by_name[f"{m}.{m}_vol"] for m in MODULE_LABELS
-    ]
-    assert all(t >= 1_000_000 for t in module_tags)
-    assert len(set(module_tags)) == len(module_tags)
+    tags = [tags_by_name[f"{m}.{m}_vol"] for m in ALL_LABELS]
+    assert all(t >= 1_000_000 for t in tags)
+    assert len(set(tags)) == len(tags)
 
 
 def test_multi_module_compose_survives_h5_round_trip(
-    composed_session, tmp_path: Path,
+    composed, tmp_path: Path,
 ) -> None:
-    """Save the composed model and reload — nothing lost on disk."""
+    """Write the assembly archive and reload — nothing lost on disk."""
+    asm, _ = composed
     out = tmp_path / "composed.h5"
-    composed_session.save(out)
+    asm.h5(str(out))
     reloaded = FEMData.from_h5(str(out))
-    assert len(reloaded.nodes.physical) == 3 * (1 + len(MODULE_LABELS))
-    assert len(reloaded.elements.physical) == 1 * (1 + len(MODULE_LABELS))
-    assert len(reloaded.nodes.labels) == 1 * (1 + len(MODULE_LABELS))
-    for m in MODULE_LABELS:
+    assert len(reloaded.nodes.physical) == 3 * len(ALL_LABELS)
+    assert len(reloaded.elements.physical) == 1 * len(ALL_LABELS)
+    assert len(reloaded.nodes.labels) == 1 * len(ALL_LABELS)
+    for m in ALL_LABELS:
         assert f"{m}.{m}_vol" in reloaded.nodes.physical
         assert f"{m}.{m}_lines" in reloaded.elements.physical
         assert f"{m}.{m}_lbl" in reloaded.nodes.labels

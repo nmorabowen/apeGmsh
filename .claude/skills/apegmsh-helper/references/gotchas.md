@@ -270,8 +270,8 @@ the naming law, not a bug — read `EIxx_c` or `transformed(e_ref=...)`
 `set_order` is global per gmsh session → hex20 ribs + hex8 covers is
 impossible in ONE session, and a `Part` has no mesh composite (deliberate —
 ADR 0085; the docstring that said otherwise was stale for months). ✅ One
-full `apeGmsh` session per part → `g.save()` → `Assembly` /
-`from_h5`+`compose`. See `compose.md` §"Independent meshes per part".
+full `apeGmsh` session per part → `apeSees(fem).model(...).h5()` → `Assembly`
+(`instance` / `tie` / `bridge`). See `compose.md` §"Independent meshes per part".
 
 ### Collocation tie across an order mismatch over-constrains
 `tie()` (default `method="collocation"`) pins quad8 slave nodes onto the

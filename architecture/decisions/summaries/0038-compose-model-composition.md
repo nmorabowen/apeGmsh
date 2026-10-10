@@ -55,6 +55,12 @@ schema 2.8.0 → 2.9.0, additive-minor (ADR 0023).
   the one-way door and must stay a flat fold over sorted joined labels; `g.compose_tree()`
   (PR #370) is the derived tree view, which makes separator alternation load-bearing
   (`ComposeLabelError` forbids `.` and `/` in labels).
+- 2026-10-10, public entry points removed (ADR 0117 D7, AS5-c): `g.compose`,
+  `apeGmsh.compose`, `FEMData.compose` and the v1 `Assembly.add / couple / materialize` are
+  gone; the engine stays behind the private `mesh._compose._compose_module`, which
+  `Assembly.bridge` calls. Host asymmetry retired (every instance namespaced); separator
+  alternation stands; the materials row corrected (they travel by `/opensees` rehydration,
+  ADR 0117 D4, never through this engine).
 
 Full text: [../0038-compose-model-composition.md](../0038-compose-model-composition.md).
 Precedence (AGENTS.md): the code wins over the ADR, and the ADR wins over this summary.

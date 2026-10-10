@@ -319,17 +319,6 @@ def test_bad_port_raises_at_declaration(files, port, match):
     assert asm.ties == ()
 
 
-def test_v1_and_v2_declarations_do_not_mix(files):
-    from apeGmsh.assembly import Assembly, AssemblyError
-
-    with pytest.raises(AssemblyError, match="v1"):
-        Assembly("x").add("h", str(files["block"])).instance("p", files["block"])
-    with pytest.raises(AssemblyError, match="instance/tie"):
-        Assembly("x").instance("p", files["block"]).add("h", str(files["block"]))
-    with pytest.raises(AssemblyError, match="no parts"):
-        Assembly("x").instance("p", files["block"]).materialize()
-
-
 # ---------------------------------------------------------------------------
 # Reload — determinism
 # ---------------------------------------------------------------------------

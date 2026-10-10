@@ -34,7 +34,7 @@ Two top-level facts that the older skill got wrong and you must not repeat:
   does not exist. Several saved models are assembled with the **sub-path**
   import `from apeGmsh.assembly import Assembly`: v2 is `instance` / `tie`
   / couplings / `bridge()` (ADR 0117); the v1 `add` / `couple` /
-  `materialize` form is pending removal. See `compose.md` §"Assembly v2".
+  `materialize` form and `g.compose` were removed. See `compose.md` §"Assembly v2".
 
 ---
 
@@ -153,7 +153,7 @@ Key points:
   promote them into PGs first.
 - This is the *imperative* multi-part path (one live gmsh session). The
   *declarative* cross-session path (build modules separately, save each to
-  `.h5`, then graft) is `g.compose` — see `compose.md`.
+  `.h5`, then instance) is `Assembly` — see `compose.md`.
 
 ---
 
@@ -484,37 +484,44 @@ surface (`results.inspect`, `results.stages`, `eigen_modes`, slabs) in
 
 ---
 
-## 7. Compose — build modules → graft → inspect/save
+## 7. Assembly — build modules → instance → bridge
 
-Build reusable modules in isolation, save each to `.h5`, then graft them
-into a host via `g.compose` (tag-offset namespacing, no gmsh re-run). The
-cross-session path runs in a chain-phase session (`apeGmsh.from_h5`).
+Build reusable modules in isolation, write each to `.h5` with its
+`/opensees` model, then place them as instances (tag-offset namespacing, no
+gmsh re-run) and bridge one OpenSees model.
 
 ```python
 from apeGmsh import apeGmsh
+from apeGmsh.assembly import Assembly
+from apeGmsh.opensees import apeSees
 
-# 1. Build + save a reusable module
-with apeGmsh(model_name="bolt", save_to="bolt.h5", overwrite=True) as g:
+# 1. Build + write a reusable module (model content travels with it)
+with apeGmsh(model_name="bolt", verbose=False) as g:
     g.model.geometry.add_box(0, 0, 0, 1, 1, 5, label="shaft")
     g.physical.add(3, ["shaft"], name="shaft")
     g.mesh.generation.generate(dim=3)
+    fem = g.mesh.queries.get_fem_data(dim=None)
+ops = apeSees(fem)
+ops.model(ndm=3, ndf=3)
+steel = ops.nDMaterial.ElasticIsotropic(E=200e3, nu=0.3, name="steel")
+ops.element.FourNodeTetrahedron(pg="shaft", material=steel)
+ops.h5("bolt.h5")
 
-# 2. Cross-session composition — chain phase, no gmsh build
-g = apeGmsh.from_h5("host.h5")
-g.compose("bolt.h5", label="bolt", translate=(10.0, 0.0, 0.0))
-g.compose("bolt.h5", label="bolt2", anchor="mount_pad")  # anchor XOR translate
-print(g.compose_list())          # (ComposedModule(label='bolt'), ...)
-g.compose_inspect("bolt.h5")     # metadata-only dict, no merge
-g.save("assembly.h5")
-# verified: tests/test_compose_end_to_end.py::test_from_h5_session_compose_workflow
-# verified: tests/test_compose_end_to_end.py::test_cross_session_compose_via_from_h5
+# 2. Instance it twice and bridge
+asm = (Assembly("bolts")
+       .instance("bolt", "bolt.h5")
+       .instance("bolt2", "bolt.h5", translate=(10.0, 0.0, 0.0)))
+ops = asm.bridge(ndm=3, ndf=3)       # analysis content goes on this bridge
+asm.h5("assembly.h5")
+print(apeGmsh.from_h5("assembly.h5").compose_list())   # (ComposedModule(label='bolt'), ...)
+# verified: tests/assembly/test_two_instances_one_tie.py
 ```
 
-Composed-module PGs are namespaced `{label}.{pg}` (the host stays bare).
-Interface-bridging constraints (`tie`/`equal_dof`/`tied_contact`/...) DO
-work in chain phase and route onto the FEMData. `label=` is fail-loud (no
-`.`/`/`/whitespace; can't start/end with `_`); `anchor=` and a non-zero
-`translate=` are mutually exclusive. Full rules, nested compose, depth
+Every instance's PGs are namespaced `{label}.{pg}` (there is no host). Tie
+instances with `tie` / `equal_dof` / `rigid_link` / ... on dotted ports.
+Labels are fail-loud (no `.`/`/`/whitespace; can't start/end with `_`);
+`anchor=` (a dotted port of an earlier instance) and a non-zero
+`translate=` are mutually exclusive. Full rules, nested assemblies, depth
 limits, and the viewer `'Module'` color mode in `compose.md`.
 
 ---

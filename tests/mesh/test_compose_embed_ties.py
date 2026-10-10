@@ -1,8 +1,8 @@
-"""Compose carries node-to-host embedment ties (ADR 0073 g.embed under
-ADR 0038 compose). A module's ``elements.embed_ties`` arrive on the host
-offset into the module's reservation window with namespaced names, the
-host's own embed ties survive the merge, and the merged model save/reloads
-losslessly. Previously BOTH sides were silently dropped: the bundle never
+"""Assembly v2 carries node-to-host embedment ties (ADR 0073 g.embed under
+ADR 0117 instancing). A source's ``elements.embed_ties`` arrive offset into
+the instance's tag window with namespaced names (every instance, the former
+"host" included, is namespaced ``{label}.``), and the merged archive
+reloads losslessly. Previously BOTH sides were silently dropped: the bundle never
 read the embed-tie stream and the merge rebuilt ``ElementComposite``
 without ``embed_ties=`` — the isotropic sibling of the reinforce-tie
 carry in ``test_compose_reinforce_ties.py``."""
@@ -13,11 +13,20 @@ import numpy as np
 import pytest
 
 from apeGmsh import apeGmsh
+from apeGmsh.assembly import Assembly
 from apeGmsh.mesh.FEMData import FEMData
+from apeGmsh.opensees import apeSees
 from apeGmsh.mesh._compose import (
     ComposeReinforceCrossPartError,
     _guard_reinforce_cross_part,
 )
+
+
+def _write_source(fem, path) -> None:
+    """A bridgeable source: the FEM plus ``/opensees`` ``model(3, 3)``."""
+    ops = apeSees(fem)
+    ops.model(ndm=3, ndf=3)
+    ops.h5(str(path))
 
 
 def _embedded_module_h5(path, *, k=1.0e12, name="pin"):
@@ -33,7 +42,7 @@ def _embedded_module_h5(path, *, k=1.0e12, name="pin"):
         g.physical.add(0, [pt], name="probe")
         g.embed(host="host", nodes="probe", k=k, name=name)
         fem = g.mesh.queries.get_fem_data(dim=3)
-        fem.to_h5(str(path))
+        _write_source(fem, path)
         assert len(fem.elements.embed_ties) == 1
         return fem.elements.embed_ties[0]
 
@@ -45,14 +54,18 @@ def _plain_host_h5(path):
         g.mesh.sizing.set_global_size(1.0)
         g.mesh.generation.generate(3)
         g.physical.add(3, [box], name="host")
-        g.mesh.queries.get_fem_data(dim=3).to_h5(str(path))
+        _write_source(g.mesh.queries.get_fem_data(dim=3), path)
 
 
-def _compose_and_reload(host, mod, tmp_path, **compose_kw):
-    g = apeGmsh.from_h5(str(host))
-    g.compose(str(mod), **compose_kw)
+def _compose_and_reload(host, mod, tmp_path, *, label, **instance_kw):
+    """Instance ``host`` (as ``host.*``) then ``mod`` (as ``{label}.*``),
+    bridge, write the archive and read the merged FEM back."""
+    asm = Assembly("embed")
+    asm.instance("host", str(host))
+    asm.instance(label, str(mod), **instance_kw)
+    asm.bridge(ndm=3, ndf=3)
     out = tmp_path / "out.h5"
-    g.save(str(out))
+    asm.h5(str(out))
     return FEMData.from_h5(str(out))
 
 
@@ -95,9 +108,14 @@ def test_compose_preserves_host_embed_tie_with_plain_module(tmp_path):
 
     assert len(merged.elements.embed_ties) == 1
     got = merged.elements.embed_ties[0]
-    assert got.name == "pin"                          # host-owned: unprefixed
-    assert got.node == src.node
-    assert list(got.host_nodes) == list(src.host_nodes)
+    assert got.name == "host.pin"             # the host is an instance too
+    # the host's own tie survives, shifted by its one instance offset
+    offs = {got.node - src.node}
+    offs |= {g - s for g, s in zip(got.host_nodes, src.host_nodes)}
+    assert len(offs) == 1 and next(iter(offs)) > 0
+    node_ids = set(np.asarray(merged.nodes.ids, dtype=np.int64).tolist())
+    assert int(got.node) in node_ids
+    assert set(int(n) for n in got.host_nodes) <= node_ids
 
 
 def test_compose_both_sides_carry_embed_ties(tmp_path):
@@ -110,35 +128,7 @@ def test_compose_both_sides_carry_embed_ties(tmp_path):
         a, b, tmp_path, label="M", translate=(4.0, 0.0, 0.0))
 
     names = sorted(t.name for t in merged.elements.embed_ties)
-    assert names == ["M.pin", "pin"]
-
-
-def test_live_session_compose_keeps_embed_tie_on_reextraction(tmp_path):
-    """A LIVE session with a resolved embed tie composes a module, and the
-    post-compose ``get_fem_data`` (which re-extracts and re-applies every
-    bundle through the merge) must keep the tie."""
-    plain = tmp_path / "plain.h5"
-    _plain_host_h5(plain)
-
-    with apeGmsh(model_name="live_embed", verbose=False) as g:
-        box = g.model.geometry.add_box(0, 0, 0, 1, 1, 1)
-        pt = gmsh.model.occ.addPoint(0.4, 0.4, 0.4)
-        g.model.sync()
-        g.mesh.sizing.set_global_size(0.5)
-        g.mesh.generation.generate(3)
-        g.physical.add(3, [box], name="host")
-        g.physical.add(0, [pt], name="probe")
-        g.embed(host="host", nodes="probe", k=1.0e12)
-        fem0 = g.mesh.queries.get_fem_data(dim=3)
-        assert len(fem0.elements.embed_ties) == 1
-
-        g.compose(str(plain), label="M", translate=(10.0, 0.0, 0.0))
-        fem1 = g.mesh.queries.get_fem_data(dim=3)
-        assert len(fem1.elements.embed_ties) == 1
-
-        out = tmp_path / "live_out.h5"
-        g.save(str(out))
-    assert len(FEMData.from_h5(str(out)).elements.embed_ties) == 1
+    assert names == ["M.pin", "host.pin"]
 
 
 # ── Cross-Part guard on embed ties (unit) ────────────────────────────

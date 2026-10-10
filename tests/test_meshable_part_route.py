@@ -3,17 +3,19 @@
 `Part` stays geometry-only (ADR 0085): when parts need different element
 types AND different orders — impossible in one gmsh session because
 ``set_order`` is global — the supported route is one full session per part
-→ ``g.save()`` → ``Assembly`` (`from_h5` host + `compose` + couples).
+→ ``ops.h5()`` → ``Assembly`` (ADR 0117: ``instance`` per part + ``tie``
++ ``bridge``).
 
 Locked here:
 
 * three parts meshed independently as **hex8 / hex20 / tet10** (orders 1
   and 2 side by side), each saved to its own ``model.h5``;
-* ``Assembly`` with the ADR 0085 ``kind="tie"`` couple assembles them and
-  fails loud if an interface ties nothing;
-* every part's physical groups survive composition **by name** (the
-  PG-tag-collision fix ``7b63d67a`` is load-bearing here — before it,
-  later modules silently destroyed earlier modules' PGs);
+* ``Assembly.tie(..., enforce="equation")`` assembles them and
+  ``bridge()`` fails loud if an interface ties nothing;
+* every part's physical groups survive composition **by name**, each
+  under its instance label (the PG-tag-collision fix ``7b63d67a`` is
+  load-bearing here — before it, later modules silently destroyed
+  earlier modules' PGs);
 * the assembled FEMData reports mixed element types;
 * LIVE (openseespy-gated): a two-block hex8+tet10 stack with ``nu = 0``
   tied by ``enforce="equation"`` reproduces the series closed form
@@ -61,8 +63,12 @@ def _build_block(
     bot_pg: str | None,
     top_pg: str | None,
 ):
-    """One block = one full session with its OWN mesh recipe and order."""
-    with apeGmsh(model_name=name, save_to=str(path), overwrite=True) as g:
+    """One block = one full session with its OWN mesh recipe and order,
+    written to ``path`` as an instanceable source (``/opensees`` model
+    ndm=3, ndf=3; the elements are declared on the assembly's bridge)."""
+    from apeGmsh.opensees import apeSees
+
+    with apeGmsh(model_name=name) as g:
         g.model.geometry.add_box(0.0, 0.0, z0, SIDE, SIDE, H, label="v")
         g.physical.add_volume("v", name=vol_pg)
         if bot_pg is not None:
@@ -78,6 +84,9 @@ def _build_block(
             g.mesh.generation.set_order(2, bubble=False)
         # dim=None, NOT dim=3: the tie resolver needs dim-2 element groups.
         fem = g.mesh.queries.get_fem_data(dim=None)
+    ops = apeSees(fem)
+    ops.model(ndm=3, ndf=3)
+    ops.h5(str(path))
     return fem
 
 
@@ -117,28 +126,27 @@ def test_three_parts_mixed_type_and_order_compose_and_tie(tmp_path: Path):
     assert _solid_types(f_ribs) == {"hex20": 2}
     assert _solid_types(f_plate) == {"tet10": 2}
 
-    # Assemble: host + two composed modules + two tie couples. The
-    # interfaces are genuinely non-matching (2x2 quad4 vs 4x4 quad8 at
-    # z=10; quad8 vs unstructured tri6 at z=20). materialize() raises
-    # AssemblyError if a couple ties nothing.
-    g = (
+    # Assemble: three instances + two ties. The interfaces are genuinely
+    # non-matching (2x2 quad4 vs 4x4 quad8 at z=10; quad8 vs unstructured
+    # tri6 at z=20). bridge() raises AssemblyError if a tie ties nothing.
+    ops = (
         Assembly("stack")
-        .add("cover", str(cover))                 # host: bare PG names
-        .add("rb", str(ribs))
-        .add("pl", str(plate))
-        .couple("cover", "rb", kind="tie", ports=("CoverTop", "RibsBot"),
-                dofs=[1, 2, 3], enforce="equation")
-        .couple("rb", "pl", kind="tie", ports=("RibsTop", "PlateBot"),
-                dofs=[1, 2, 3], enforce="equation")
-        .materialize()
+        .instance("cover", cover)
+        .instance("rb", ribs)
+        .instance("pl", plate)
+        .tie("cover.CoverTop", "rb.RibsBot", dofs=[1, 2, 3],
+             enforce="equation")
+        .tie("rb.RibsTop", "pl.PlateBot", dofs=[1, 2, 3],
+             enforce="equation")
+        .bridge(ndm=3, ndf=3)
     )
-    fem = g.mesh.queries.get_fem_data(dim=None)
+    fem = ops.fem
 
-    # (i) EVERY part's PGs survive, by explicit name — host bare, composed
-    # namespaced. Never trust the tie call alone: on the raw compose path
-    # a tie against a lost PG is a silent no-op.
+    # (i) EVERY part's PGs survive, by explicit name, each namespaced
+    # under its instance. Never trust the tie call alone: a tie against a
+    # lost PG would resolve nothing.
     expected = {
-        "CoverVol", "Base", "CoverTop",
+        "cover.CoverVol", "cover.Base", "cover.CoverTop",
         "rb.RibsVol", "rb.RibsBot", "rb.RibsTop",
         "pl.PlateVol", "pl.PlateBot", "pl.PlateTop",
     }
@@ -150,18 +158,9 @@ def test_three_parts_mixed_type_and_order_compose_and_tie(tmp_path: Path):
     assert set(solids) == {"hex8", "hex20", "tet10"}
     assert set(solids.values()) == {1, 2}
 
-    # (iii) both ties produced records (belt to materialize's braces).
+    # (iii) both ties produced records (belt to bridge's braces).
     n_ties = len(list(fem.elements.constraints))
     assert n_ties > 0
-
-
-def test_assembly_rejects_unknown_kind_still(tmp_path: Path):
-    """Adding "tie" must not have loosened the couple-kind gate."""
-    from apeGmsh.assembly import Assembly, AssemblyError
-
-    asm = Assembly("x")
-    with pytest.raises(AssemblyError, match="unsupported kind"):
-        asm.couple("a", "b", kind="mortar", ports=("p", "q"))
 
 
 # --------------------------------------------------------------------------
@@ -229,7 +228,6 @@ def _tied_stack(workdir: Path, plate: str, method: str) -> dict:
     import numpy as np
 
     from apeGmsh.assembly import Assembly
-    from apeGmsh.opensees import apeSees
     from apeGmsh.opensees.emitter.live import LiveOpsEmitter
 
     mesh, order, size, element, n_plate = _PLATES[plate]
@@ -243,26 +241,23 @@ def _tied_stack(workdir: Path, plate: str, method: str) -> dict:
         plate_h5, name="plate", z0=H, mesh=mesh, order=order, size=size,
         vol_pg="PlateVol", bot_pg="PlateBot", top_pg="PlateTop",
     )
-    extra = {} if method == "collocation" else {"method": method}
-    g = (
+    ops = (
         Assembly("two_blocks")
-        .add("cover", str(cover_h5))
-        .add("pl", str(plate_h5))
-        .couple("cover", "pl", kind="tie", ports=("CoverTop", "PlateBot"),
-                dofs=[1, 2, 3], enforce="equation", **extra)
-        .materialize()
+        .instance("cover", cover_h5)
+        .instance("pl", plate_h5)
+        .tie("cover.CoverTop", "pl.PlateBot", dofs=[1, 2, 3],
+             enforce="equation", method=method)
+        .bridge(ndm=3, ndf=3)
     )
-    fem = g.mesh.queries.get_fem_data(dim=None)
+    fem = ops.fem
     if n_plate is not None:
         got = len(list(fem.elements.select(pg="pl.PlateVol").ids))
         assert got == n_plate, f"{plate} plate meshed as {got} elements"
 
-    ops = apeSees(fem)
-    ops.model(ndm=3, ndf=3)
     steel = ops.nDMaterial.ElasticIsotropic(E=E, nu=NU)
-    ops.element.stdBrick(pg="CoverVol", material=steel)
+    ops.element.stdBrick(pg="cover.CoverVol", material=steel)
     getattr(ops.element, element)(pg="pl.PlateVol", material=steel)
-    ops.fix(pg="Base", dofs=(1, 1, 1))
+    ops.fix(pg="cover.Base", dofs=(1, 1, 1))
     ts = ops.timeSeries.Linear()
     with ops.pattern.Plain(series=ts) as pat:
         pat.sp(pg="pl.PlateTop", dof=3, value=-DELTA)
@@ -281,7 +276,7 @@ def _tied_stack(workdir: Path, plate: str, method: str) -> dict:
 
     live = emitter.ops
     live.reactions()
-    base_ids = [int(t) for t in fem.nodes.select(pg="Base").ids]
+    base_ids = [int(t) for t in fem.nodes.select(pg="cover.Base").ids]
     r_z = sum(live.nodeReaction(t, 3) for t in base_ids)
     residual = 0.0
     for rec in fem.elements.constraints:

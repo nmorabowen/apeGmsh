@@ -107,8 +107,7 @@ Resolving your declarations against the real mesh produces the immutable
 the canonical model. So the session **freezes its build phase**: geometry,
 meshing, and physical-group calls now raise a clear error instead of silently
 desynchronizing the snapshot from the kernel it came from. What remains open is
-exactly what operates *on* snapshots — composing modules with `g.compose`, and
-the interface-bridging constraints (embedded ties, tied contact, `equalDOF`,
+exactly what operates *on* snapshots — the interface-bridging constraints (embedded ties, tied contact, `equalDOF`,
 rigid links and diaphragms) that couple already-meshed regions. If you need to
 change the geometry after the freeze, you rebuild or reload; you don't mutate.
 
@@ -192,11 +191,12 @@ moment you create them. Both paths converge on the same place — one session,
 one mesh, one snapshot.
 
 However you build, the hierarchy is fixed: Parts are templates, instances are
-placements, and the session is the one true model. Even the `Assembly` builder
-— a declarative front for composing already-saved `model.h5` modules, covered
-in [Compose modules](../how-to/compose-modules.md) — resolves down to one
-session in the end. Everything the solver will ever see passes through that
-session exactly once, in the snapshot.
+placements, and the session is the one true model. The `Assembly` builder
+— which places already-saved `model.h5` files as instances, covered in
+[Assemble saved models](../how-to/assemble-saved-models.md) — works on the
+snapshots those sessions saved, and its `bridge()` merges them into one.
+Everything the solver will ever see passed through a session exactly once,
+in a snapshot.
 
 ---
 

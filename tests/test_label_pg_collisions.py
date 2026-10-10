@@ -8,8 +8,9 @@ Five sites, one oracle each:
    prefix before any gmsh write.
 3. DXF layer PGs go through ``g.physical.add``: a second load of the
    same layer merges into its PG instead of leaving an unnamed one.
-4. The compose-anchor and node-target errors list group *names*, not
-   the ``(dim, tag)`` keys of the snapshot dict.
+4. The node-target error lists group *names*, not the ``(dim, tag)``
+   keys of the snapshot dict (the anchor sibling is covered by
+   ``tests/assembly/test_anchor.py``).
 5. ``promote_to_physical`` into a name held at another dim names the
    ``pg_name=`` knob.
 
@@ -192,19 +193,6 @@ def fem(g):
     g.physical.add(1, g.labels.entities("beam"), name="Girder")
     g.mesh.generation.generate(dim=1)
     return g.mesh.queries.get_fem_data(dim=1)
-
-
-def test_compose_anchor_error_lists_names(fem):
-    from apeGmsh.mesh._compose import ComposeAnchorError
-    from apeGmsh.mesh.FEMData import _resolve_anchor_to_translate
-
-    with pytest.raises(ComposeAnchorError) as exc:
-        _resolve_anchor_to_translate(fem, "nope")
-    msg = str(exc.value)
-    # Oracle: the snapshot's own public name lists.
-    assert _listed(msg, "Available PGs:") == fem.nodes.physical.names()
-    assert _listed(msg, "labels:") == fem.nodes.labels.names()
-    assert "Girder" in fem.nodes.physical.names()
 
 
 def test_node_target_error_lists_names(fem):
