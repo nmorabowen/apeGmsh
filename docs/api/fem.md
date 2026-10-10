@@ -33,7 +33,7 @@ refuses anything older or newer
 This is the same neutral zone the session writes via
 `apeGmsh(save_to=...)` / `g.save()` — see the
 [Session](session.md#native-persistence) page. `FEMData.from_h5`
-is also the entry point `apeGmsh.from_h5` and `g.compose` build on
-for chain-phase reassembly.
+is also the entry point `apeGmsh.from_h5` builds on for chain-phase
+reassembly.
 
 ::: apeGmsh.mesh.FEMData

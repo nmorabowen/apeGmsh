@@ -223,20 +223,19 @@ is in the [FEMData reference](../api/fem.md).
 ## Composition over snapshots
 
 Persistence makes one more thing possible: building *with* snapshots.
-`apeGmsh.from_h5("host.h5")` reopens a saved model as a session with no
-Gmsh kernel at all — geometry and meshing are gone, and what remains is
-exactly what operates on frozen data: `g.compose(...)` grafts further saved
-modules into the model, interface constraints couple the already-meshed
-regions, and `g.save(...)` writes the assembly out again. Each composed
-module leaves a provenance record on the result (`fem.composed_from`), and
-every merged node and element remembers which module it came from — so even
-a many-module assembly can trace each row to its source.
+An `Assembly` places saved `model.h5` files as named instances, ties them
+across their already-meshed interfaces, and `bridge()` merges every
+instance's snapshot into one broker — no Gmsh kernel is involved, because
+what remains is exactly what operates on frozen data. Each instance leaves
+a provenance record on the result (`fem.composed_from`), and every merged
+node and element remembers which instance it came from — so even a
+many-instance assembly can trace each row to its source.
 
 This is the immutability argument completing itself. Snapshots compose
 *because* they are frozen: merging two live Gmsh sessions would mean
 reconciling two mutable tag spaces, but merging two snapshots is arithmetic
 on plain data. The recipe is in
-[Compose modules](../how-to/compose-modules.md); the concept to keep is that
+[Assemble saved models](../how-to/assemble-saved-models.md); the concept to keep is that
 `FEMData` is not just the session's output — it is a first-class building
 block in its own right.
 

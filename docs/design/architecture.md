@@ -60,8 +60,8 @@ composites — `g.loads`, `g.masses`, `g.constraints`,
 `g.rebar`, `g.embed`). No metaclass, no registration decorators: a
 reader tracing where `g.mesh` comes from finds one tuple in
 `_core.py`. A few surfaces are session-level facades rather than
-composites — `g.compose(...)`, which grafts a saved `model.h5` into
-the current session as a subassembly, is the notable one.
+composites — the compose readers `g.compose_list()`,
+`g.compose_tree()` and `g.compose_inspect(...)` are the notable ones.
 
 Three class flavors recur everywhere, and telling them apart tells you
 what a class is allowed to do:
@@ -146,9 +146,9 @@ The broker is also the persistence unit. `fem.to_h5()` /
 `FEMData.from_h5()` round-trip the entire snapshot — mesh, names,
 records, and the model's provenance — through a versioned neutral HDF5
 schema (`model.h5`), and `apeGmsh.from_h5()` can rehydrate a session
-around a saved snapshot with no gmsh state at all. `g.compose()`
-builds on the same file format to assemble multi-model systems from
-independently authored and saved models. The schema is versioned and
+around a saved snapshot with no gmsh state at all. `Assembly`
+(`apeGmsh.assembly`) builds on the same file format to assemble
+multi-model systems from independently authored and saved models. The schema is versioned and
 append-only precisely because saved models outlive library releases.
 
 ## The bridge is thin on purpose

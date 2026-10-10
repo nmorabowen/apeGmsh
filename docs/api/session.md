@@ -62,7 +62,7 @@ separately by the bridge via `apeSees(fem).h5(path)` — see the
 a session **directly from a `model.h5`**, skipping the Gmsh build
 entirely. The returned session is a *chain-phase* session: it has
 no live kernel, so geometry/meshing verbs are unavailable, but it
-can still `compose`, `save`, and feed the bridge.
+can still `save` and feed the bridge.
 
 ```python
 g = apeGmsh.from_h5("model.h5")        # no gmsh; loads the neutral zone
@@ -71,59 +71,33 @@ ops = apeSees(g.mesh.queries.get_fem_data(dim=3))
 
 ## Composition
 
-`g.compose(source, *, label, ...)` merges another saved module's
-`model.h5` into the current session under a namespaced `label`,
-applying an optional rigid placement (`translate`, `rotate`,
-`anchor`) and reserving a disjoint tag span so child tags never
-collide ([ADR 0038](https://github.com/nmorabowen/apeGmsh/blob/main/architecture/decisions/0038-compose-model-composition.md)).
-It returns a `ComposedModule` handle.
+Composing saved models is
+[`Assembly`](../how-to/assemble-saved-models.md) (`from apeGmsh.assembly
+import Assembly`, [ADR 0117](https://github.com/nmorabowen/apeGmsh/blob/main/architecture/decisions/0117-assembly-compose-v2.md)):
+`instance` places a saved `model.h5` under a namespaced label, the tie
+and coupling verbs join instances by dotted port, and `bridge` builds
+one `apeSees`. The session-level `g.compose` and the v1 `Assembly`
+verbs (`add`, `couple(part_a, part_b, ports=)`, `materialize`) were
+removed in AS5-c.
+
+The session keeps the compose **readers**, which open any composed
+file, an assembly archive included:
 
 ```python
-with apeGmsh.from_h5("frame.h5") as g:
-    g.compose("panel.h5", label="Panel_A", translate=(0, 0, 3.0))
-    g.compose("panel.h5", label="Panel_B", translate=(0, 0, 6.0))
-    g.compose_list()                 # -> (ComposedModule, ...)
-    g.compose_tree()                 # nested-compose hierarchy
+g = apeGmsh.from_h5("stack.h5")      # an archive written by asm.h5(...)
+g.compose_list()                     # -> (ComposedModule, ...)
+g.compose_tree()                     # nested-compose hierarchy
+g.compose_inspect("pier.h5")         # header of a file, without composing it
 ```
 
-Inspect a candidate file **without** composing via
-`g.compose_inspect(path)` (returns a dict: `fem_hash`,
+`g.compose_inspect(path)` returns a dict (`fem_hash`,
 `neutral_schema_version`, `tag_span_max`, `pg_inventory`,
 `label_inventory`, `record_counts`, `compose_tree`, …).
-`g.compose_list()` enumerates the modules already composed into
-this session; `g.compose_tree()` returns the nested-compose
+`g.compose_list()` enumerates the modules composed into the file the
+session holds; `g.compose_tree()` returns their nested-compose
 hierarchy. In the viewer, composed parts are colourable by the
 string-keyed Module modes (`'Module'`, `'Module: Root'`,
 `'Module: Leaf'`).
-
-### Declarative assembly — `Assembly` + `couple`
-
-To spatially couple several saved `model.h5` modules without
-hand-wiring `compose` + constraints, use the declarative builder
-(shipped in v2.0.0, [ADR 0043](https://github.com/nmorabowen/apeGmsh/blob/main/architecture/decisions/0043-connectivity-graph-and-flexible-emit.md)
-slice 1.4). It is imported from a **sub-path** — `apeGmsh.Assembly`
-is intentionally not exported, so the top-level "the session *is* the
-assembly" model is unchanged.
-
-```python
-from apeGmsh.assembly import Assembly
-
-g = (
-    Assembly("frame")
-    .add("col", "col.h5")                               # first add = host (bare PGs)
-    .add("beam", "beam.h5", translate=(0.0, 3.0, 0.0))  # composed under label "beam"
-    .couple("col", "beam", kind="equal_dof",
-            ports=("top", "end"), dofs=[1, 2, 3])
-    .materialize()                                      # -> composed apeGmsh session
-)
-g.save("frame.h5")
-```
-
-`materialize()` is a thin wrapper over `apeGmsh.from_h5` (host) +
-`g.compose` (each later part) + `g.constraints.<kind>`. Couple `kind`
-is `equal_dof` or `tied_contact`; `ports` are **bare** per-part
-physical-group names. A couple that resolves to zero constraints, an
-unknown part, or no parts raises `AssemblyError`.
 
 ## Package
 

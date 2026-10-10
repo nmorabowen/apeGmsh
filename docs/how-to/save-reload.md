@@ -28,8 +28,8 @@ print(fem.info.summary())          # query nodes/PGs/loads with no live gmsh
 
 # --- Reload (B): a resumable chain-phase session (no gmsh) ------------
 g2 = apeGmsh.from_h5("plate.h5")   # skips the gmsh build entirely
-g2.compose("bolt.h5", label="bolt", translate=(0.5, 0.5, 0.0))
-g2.save("assembly.h5")
+fem2 = g2.mesh.queries.get_fem_data()   # the chain head, read from the file
+g2.save("plate_copy.h5")
 ```
 
 Exact signatures (verified against `src/`):
@@ -89,8 +89,8 @@ FEMData.from_h5(cls, path, *, root="/") -> FEMData                          # FE
   — the immutable snapshot and the full native-persistence round-trip contract.
 - **Tutorial:** [Save, reload, and view a model](../tutorials/save-reload-view.md)
   — the same workflow walked end to end.
-- **How-to:** [Compose modules into one model](compose-modules.md)
-  — graft saved `.h5` parts together via `apeGmsh.from_h5` + `g.compose`.
+- **How-to:** [Assemble saved models](assemble-saved-models.md)
+  — place saved `.h5` models as named instances, tie them, and bridge one model with `Assembly`.
 - **API:** [`FEMData` native persistence](../api/fem.md#native-persistence)
   and [Session persistence](../api/session.md#native-persistence).
 

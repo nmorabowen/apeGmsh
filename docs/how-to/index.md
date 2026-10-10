@@ -23,7 +23,6 @@ task, not just the ones with a tidy page yet.
 - **[Build a multi-part assembly](../concepts/parts-and-assembly.md)** — template a Part, place copies, and fragment them into one conformal mesh.
 - **[Save a model and reload it](save-reload.md)** — persist to `model.h5` with `save_to` / `g.save`, and bring it back with `FEMData.from_h5` / `apeGmsh.from_h5`.
 - **[Assemble saved models](assemble-saved-models.md)** — place saved `model.h5` files as named instances, tie them, and build one OpenSees model with `Assembly` (`instance` / `tie` / `bridge`), serial or one MPI rank per instance.
-- **[Compose models from saved modules](compose-modules.md)** — combine independently-saved `.h5` parts with `g.compose` / `apeGmsh.from_h5` (the older path, pending removal).
 
 ## Physics
 

@@ -205,18 +205,26 @@ Each of these raises `AssemblyError`, at the declaring call or at
   `partition_rank` on an instance whose source is itself an assembly
   archive.
 
-## The older compose path
+## Coming from `g.compose`
 
 `g.compose`, `FEMData.compose`, `apeGmsh.compose` and the `Assembly`
-verbs `add`, `couple(kind=, ports=)` and `materialize` are the first
-version of this feature. They are to be removed without a deprecation
-period once `Assembly` covers their uses ([ADR 0117
+verbs `add`, `couple(part_a, part_b, kind=, ports=)` and `materialize`
+were the first version of this feature. They were removed without a
+deprecation period ([ADR 0117
 D7](https://github.com/nmorabowen/apeGmsh/blob/main/architecture/decisions/0117-assembly-compose-v2.md)).
-Start new models with `instance`, `tie` and `bridge`; one assembly cannot
-mix the two APIs.
+To move a model across:
+
+- **Save the host, then instance it.** There is no live host session:
+  write the host as a file with `apeSees(fem).model(...)` and `.h5()`, and
+  `instance("host", "host.h5")`. Its groups become `host.<name>`, like
+  every other instance's.
+- `add(label, source, ...)` becomes `instance(label, source, ...)`; a
+  rotation `(x, y, z, theta)` becomes `((x, y, z), theta)`.
+- `couple(kind="tie" | "equal_dof", ports=...)` becomes `tie` or
+  `equal_dof` on dotted ports, `"{instance}.{group}"`.
+- `materialize()` becomes `bridge(ndm=, ndf=)`, which returns the
+  `apeSees` bridge; `asm.h5(path)` writes the archive.
 
 ---
 
-*Next: [Compose modules](compose-modules.md), which documents the older
-path for models that still use it; or go on to
-[Apply gravity / self-weight](gravity.md).*
+*Next: [Apply gravity / self-weight](gravity.md).*
