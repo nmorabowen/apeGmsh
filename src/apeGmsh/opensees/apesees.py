@@ -133,6 +133,7 @@ from ._internal.build import (
     TagPlanMiss,
 )
 from ._internal.build import _element_transf as _build_element_transf
+from ._internal.contact_solver_gate import validate_consistent_tan_solver
 from ._element_capabilities import is_builder_scoped
 from ._internal.tag_resolution import (
     MISSING_FEM_ELEMENT_ID,
@@ -1495,6 +1496,29 @@ class BuiltModel:
             flat_partitioned=False,
             run=lambda enforce, partitioned: validate_ladruno_up_solver(
                 elements,
+                enforce=enforce,
+                staged=_staged,
+                partitioned=partitioned,
+                flat_systems=[
+                    p for p in ordered if isinstance(p, LinearSystem)],
+                stage_systems=[
+                    (repr(st.name), st.system) for st in self.stage_records
+                ],
+            ),
+        )
+
+        # A `consistent_tan` / `edge_consistent_tan` contact emits the
+        # fork's UNSYMMETRIC consistent friction tangent. Same physics
+        # and scope rules as the u-p gate above, fail-loud: a half-storage
+        # solver returns a plausible but wrong solve with rc 0.
+        _solve_gate(
+            "consistent_tan_solver",
+            enforce=_has_analysis_chain and not _emitter_is_archival,
+            enforce_on_solve=_has_analysis_chain,
+            partitioned=_will_partition,
+            flat_partitioned=False,
+            run=lambda enforce, partitioned: validate_consistent_tan_solver(
+                self.fem,
                 enforce=enforce,
                 staged=_staged,
                 partitioned=partitioned,
