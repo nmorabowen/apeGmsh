@@ -1,13 +1,14 @@
-"""End-to-end compose tests — Phase 3B.2c / ADR 0038.
+"""End-to-end compose tests — Phase 3B.2c / ADR 0038, on the ADR 0117
+``Assembly`` (v2) form.
 
-Locks the wired ``g.compose(...)`` API: cross-session composition via
-``apeGmsh.from_h5``, anchor resolution, FILTER-warning emission, the
-host pattern-field rewrite reversal, and ``get_fem_data()`` /
-``compose_inspect`` / ``compose_list`` interactions.
+Locks the merge engine as ``Assembly.bridge()`` drives it: FILTER-warning
+emission at ``bridge()``, the module pattern-field (not namespaced), and
+the ``compose_inspect`` / ``compose_list`` readers on an assembly archive
+(``Assembly.h5`` + ``apeGmsh.from_h5``).
 
-These tests run entirely against the FEMData broker — no live Gmsh
-session is required (every fixture uses :meth:`apeGmsh.from_h5` to
-load a pre-saved H5 directly into chain phase).
+Every source is a small hand-built FEMData written with
+``apeSees(fem).model(...)`` + ``ops.h5`` (``bridge()`` refuses a source
+with no ``/opensees`` model) — no live Gmsh session is required.
 """
 from __future__ import annotations
 
@@ -19,16 +20,9 @@ import numpy as np
 import pytest
 
 from apeGmsh._core import apeGmsh
-from apeGmsh._kernel.records._compose import ComposeRecord
-from apeGmsh._kernel.record_sets import ComposeSet
-from apeGmsh._kernel.records._kinds import ConstraintKind
 from apeGmsh._kernel.records._loads import NodalLoadRecord
-from apeGmsh._kernel.records._masses import MassRecord
-from apeGmsh.mesh._compose import (
-    ComposeAnchorError,
-    ComposeFilterWarning,
-    ComposedModule,
-)
+from apeGmsh.assembly import Assembly
+from apeGmsh.mesh._compose import ComposeFilterWarning
 from apeGmsh.mesh._element_types import ElementGroup, make_type_info
 from apeGmsh.mesh._group_set import LabelSet, PhysicalGroupSet
 from apeGmsh.mesh.FEMData import (
@@ -37,6 +31,7 @@ from apeGmsh.mesh.FEMData import (
     MeshInfo,
     NodeComposite,
 )
+from apeGmsh.opensees import apeSees
 
 
 # ---------------------------------------------------------------------------
@@ -98,20 +93,16 @@ def _make_module_fem(
 
 
 def _save_module(fem: FEMData, path: Path) -> Path:
-    fem.to_h5(str(path))
+    """Write ``fem`` as an instanceable source (``/opensees`` model 3/3)."""
+    ops = apeSees(fem)
+    ops.model(ndm=3, ndf=3)
+    ops.h5(str(path))
     return path
 
 
 @pytest.fixture
-def host_h5(tmp_path: Path) -> Path:
-    """Saved host module with node ids 1..3, elem ids 10..11."""
-    fem = _make_module_fem()
-    return _save_module(fem, tmp_path / "host.h5")
-
-
-@pytest.fixture
 def module_a_h5(tmp_path: Path) -> Path:
-    """Saved module A — same shape; will be tag-shifted on compose."""
+    """Saved module A — node ids 1..3, elem ids 10..11."""
     fem = _make_module_fem(
         node_ids=np.array([1, 2, 3], dtype=np.int64),
         elem_ids=np.array([10, 11], dtype=np.int64),
@@ -129,195 +120,54 @@ def module_b_h5(tmp_path: Path) -> Path:
     return _save_module(fem, tmp_path / "module_b.h5")
 
 
+def _filter_warnings(caught) -> list[str]:
+    return [
+        str(w.message) for w in caught
+        if issubclass(w.category, ComposeFilterWarning)
+    ]
+
+
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
 
 
-def test_single_module_compose_round_trip(
-    host_h5: Path, module_a_h5: Path, tmp_path: Path,
-) -> None:
-    """Build host, compose module, save composed model, reload + check."""
-    g = apeGmsh.from_h5(host_h5)
-    handle = g.compose(module_a_h5, label="A")
-    assert isinstance(handle, ComposedModule)
-    assert handle.label == "A"
-
-    out = tmp_path / "composed.h5"
-    g.save(out)
-
-    reloaded = FEMData.from_h5(str(out))
-    # One compose record present.
-    assert "A" in reloaded.composed_from
-    assert len(reloaded.composed_from) == 1
-    rec = reloaded.composed_from["A"]
-    assert rec.label == "A"
-    # Node count = 3 (host) + 3 (module) = 6.
-    assert reloaded.info.n_nodes == 6
-    # Element count = 2 + 2 = 4.
-    assert reloaded.info.n_elems == 4
-    # module_label populated for the bundle rows.
-    ml = getattr(reloaded.nodes, "_module_label", None)
-    assert ml is not None
-    labels_in_order = list(ml)
-    assert labels_in_order.count("A") == 3
-    assert labels_in_order.count("") == 3
-
-
-def test_multi_module_compose(
-    host_h5: Path, module_a_h5: Path, module_b_h5: Path, tmp_path: Path,
-) -> None:
-    """Two modules with different translates → both records present, no
-    tag overlap."""
-    g = apeGmsh.from_h5(host_h5)
-    g.compose(module_a_h5, label="A", translate=(0.0, 0.0, 0.0))
-    g.compose(module_b_h5, label="B", translate=(100.0, 0.0, 0.0))
-
-    out = tmp_path / "multi.h5"
-    g.save(out)
-
-    reloaded = FEMData.from_h5(str(out))
-    assert "A" in reloaded.composed_from
-    assert "B" in reloaded.composed_from
-    # 3 host + 3 A + 4 B = 10 nodes.
-    assert reloaded.info.n_nodes == 10
-    # 2 host + 2 A + 3 B = 7 elements.
-    assert reloaded.info.n_elems == 7
-    # Tag ranges disjoint — every node id appears exactly once.
-    node_ids = list(reloaded.nodes.ids)
-    assert len(set(int(x) for x in node_ids)) == len(node_ids)
-
-
-def test_cross_session_compose_via_from_h5(
-    host_h5: Path, module_a_h5: Path, tmp_path: Path,
-) -> None:
-    """Day 1: build + save.  Day 2: from_h5 + compose + save."""
-    # "Day 2" — load a previously-saved host, compose a module, save.
-    g = apeGmsh.from_h5(host_h5)
-    g.compose(module_a_h5, label="A")
-    final = tmp_path / "final.h5"
-    g.save(final)
-
-    reloaded = FEMData.from_h5(str(final))
-    assert "A" in reloaded.composed_from
-    assert reloaded.info.n_nodes == 6
-    assert reloaded.info.n_elems == 4
-
-
-def test_compose_with_anchor_resolution(
-    tmp_path: Path, module_a_h5: Path,
-) -> None:
-    """Anchor resolves to a PG centroid translate."""
-    # Host with a PG named "anchor_pt" at the origin offset (5, 0, 0).
-    node_ids = np.array([10, 11, 12], dtype=np.int64)
-    node_coords = np.array(
-        [[5.0, 0.0, 0.0], [6.0, 0.0, 0.0], [7.0, 0.0, 0.0]],
-        dtype=np.float64,
-    )
-    line_info = make_type_info(
-        code=1, gmsh_name="Line 2", dim=1, order=1, npe=2, count=2,
-    )
-    conn = np.array([[10, 11], [11, 12]], dtype=np.int64)
-    elem_ids = np.array([100, 101], dtype=np.int64)
-    line_group = ElementGroup(
-        element_type=line_info, ids=elem_ids, connectivity=conn,
-    )
-    pgs = {
-        (0, 1): {
-            "name": "anchor_pt",
-            "node_ids": np.array([10], dtype=np.int64),
-            "node_coords": np.array(
-                [[5.0, 0.0, 0.0]], dtype=np.float64,
-            ),
-        },
-    }
-    nodes = NodeComposite(
-        node_ids=node_ids,
-        node_coords=node_coords,
-        physical=PhysicalGroupSet(pgs),
-        labels=LabelSet({}),
-    )
-    elements = ElementComposite(
-        groups={1: line_group},
-        physical=PhysicalGroupSet({}),
-        labels=LabelSet({}),
-    )
-    info = MeshInfo(n_nodes=3, n_elems=2, bandwidth=1, types=[line_info])
-    host_fem = FEMData(nodes=nodes, elements=elements, info=info)
-    host_path = tmp_path / "host_with_pg.h5"
-    host_fem.to_h5(str(host_path))
-
-    g = apeGmsh.from_h5(host_path)
-    g.compose(module_a_h5, label="A", anchor="anchor_pt")
-
-    handle_rec = g._fem.composed_from["A"]
-    # Anchor PG has one node at (5, 0, 0); centroid is (5, 0, 0).
-    assert handle_rec.translate == (5.0, 0.0, 0.0)
-
-
-def test_compose_with_anchor_conflict_raises(
-    host_h5: Path, module_a_h5: Path,
-) -> None:
-    """``anchor=`` + non-zero ``translate=`` raises ComposeAnchorError."""
-    g = apeGmsh.from_h5(host_h5)
-    with pytest.raises(ComposeAnchorError):
-        g.compose(
-            module_a_h5,
-            label="A",
-            anchor="some_pg",
-            translate=(1.0, 0.0, 0.0),
-        )
-
-
-def test_compose_with_unknown_anchor_raises(
-    host_h5: Path, module_a_h5: Path,
-) -> None:
-    """Anchor PG that doesn't exist on the host raises
-    :class:`ComposeAnchorError`."""
-    g = apeGmsh.from_h5(host_h5)
-    with pytest.raises(ComposeAnchorError):
-        g.compose(module_a_h5, label="A", anchor="does_not_exist")
-
-
-def test_compose_filter_warning_for_stages(
-    host_h5: Path, tmp_path: Path,
-) -> None:
+def test_compose_filter_warning_for_stages(tmp_path: Path) -> None:
     """Source H5 carrying ``/opensees/stages/...`` emits one
-    :class:`ComposeFilterWarning` per kind (stages = 1).
+    :class:`ComposeFilterWarning` per kind (stages = 1) at ``bridge()``.
 
     Recorders / analysis-settings stay silent.
     """
-    # Build a module with stage content in /opensees/.
-    src_fem = _make_module_fem()
-    src_path = tmp_path / "module_with_stages.h5"
-    src_fem.to_h5(str(src_path))
-    # Hand-inject a /opensees/stages/ sub-group so the filter probe
-    # picks it up.  Recorders also added → must stay silent.
-    with h5py.File(str(src_path), "a") as f:
-        ops = f.create_group("opensees")
-        stages = ops.create_group("stages")
-        stages.create_group("stage_0")
-        recorders = ops.create_group("recorders")
-        recorders.create_group("rec_0")
+    from tests.opensees.h5.test_h5_stages_writer import _chain
 
-    g = apeGmsh.from_h5(host_h5)
+    # A real one-stage source (the reader refuses a hand-made stage stub).
+    ops = apeSees(_make_module_fem())
+    ops.model(ndm=3, ndf=3)
+    with ops.stage(name="only") as s:
+        s.analysis(**_chain(ops))
+        s.run(n_increments=1)
+    src_path = tmp_path / "module_with_stages.h5"
+    ops.h5(str(src_path))
+    # Hand-inject a /opensees/recorders/ sub-group → must stay silent.
+    with h5py.File(str(src_path), "a") as f:
+        assert "stages" in f["opensees"]
+        assert "time_series" not in f["opensees"]
+        f["opensees"].create_group("recorders").create_group("rec_0")
+
+    asm = Assembly("stages").instance("A", src_path)
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
-        g.compose(src_path, label="A")
+        asm.bridge(ndm=3, ndf=3)
 
-    relevant = [
-        w for w in caught if issubclass(w.category, ComposeFilterWarning)
-    ]
+    relevant = _filter_warnings(caught)
     # Exactly one stages warning, no recorder warning.
-    assert len(relevant) == 1, [str(w.message) for w in relevant]
-    assert "stages" in str(relevant[0].message).lower()
+    assert len(relevant) == 1, relevant
+    assert "stages" in relevant[0].lower()
 
 
-def test_compose_pattern_field_not_namespaced(
-    host_h5: Path, tmp_path: Path,
-) -> None:
+def test_compose_pattern_field_not_namespaced(tmp_path: Path) -> None:
     """Regression for 3B.2a's pattern namespacing — patterns are
-    FILTER-verdict, the host owns the pattern name."""
+    FILTER-verdict, the bridge owns the pattern name."""
     # Module with a nodal load on a known pattern name.
     fem = _make_module_fem(
         nodal_loads=[
@@ -331,33 +181,25 @@ def test_compose_pattern_field_not_namespaced(
     )
     src = _save_module(fem, tmp_path / "module_with_pattern.h5")
 
-    g = apeGmsh.from_h5(host_h5)
-    g.compose(src, label="A")
+    ops = Assembly("pattern").instance("A", src).bridge(ndm=3, ndf=3)
 
-    loads = list(g._fem.nodes.loads)
+    loads = list(ops.fem.nodes.loads)
     assert len(loads) == 1
     # Pattern field must remain "dead" — NOT "A.dead".
     assert loads[0].pattern == "dead"
 
 
-def test_compose_get_fem_data_returns_composed(
-    host_h5: Path, module_a_h5: Path,
-) -> None:
-    """After compose, ``get_fem_data()`` returns the merged FEMData."""
-    g = apeGmsh.from_h5(host_h5)
-    g.compose(module_a_h5, label="A")
-    fem = g.mesh.queries.get_fem_data()
-    assert "A" in fem.composed_from
-    assert fem.info.n_nodes == 6
-    assert fem.info.n_elems == 4
-
-
 def test_compose_inspect_after_compose(
-    host_h5: Path, module_a_h5: Path,
+    module_a_h5: Path, tmp_path: Path,
 ) -> None:
-    """``compose_inspect`` works post-compose (metadata-only read)."""
-    g = apeGmsh.from_h5(host_h5)
-    g.compose(module_a_h5, label="A")
+    """``compose_inspect`` works on a session opened on an assembly
+    archive (metadata-only read of the source)."""
+    asm = Assembly("inspect").instance("A", module_a_h5)
+    asm.bridge(ndm=3, ndf=3)
+    archive = tmp_path / "archive.h5"
+    asm.h5(str(archive))
+
+    g = apeGmsh.from_h5(archive)
     info = g.compose_inspect(module_a_h5)
     assert "neutral_schema_version" in info
     # The source is uncomposed (it's the module file).
@@ -365,47 +207,29 @@ def test_compose_inspect_after_compose(
 
 
 def test_compose_list_returns_modules(
-    host_h5: Path, module_a_h5: Path, module_b_h5: Path,
+    module_a_h5: Path, module_b_h5: Path, tmp_path: Path,
 ) -> None:
     """``g.compose_list()`` returns the composed modules in label order."""
-    g = apeGmsh.from_h5(host_h5)
-    g.compose(module_a_h5, label="A")
-    g.compose(module_b_h5, label="B", translate=(100.0, 0.0, 0.0))
+    asm = Assembly("list")
+    asm.instance("A", module_a_h5)
+    asm.instance("B", module_b_h5, translate=(100.0, 0.0, 0.0))
+    asm.bridge(ndm=3, ndf=3)
+    archive = tmp_path / "archive.h5"
+    asm.h5(str(archive))
 
-    modules = g.compose_list()
+    modules = apeGmsh.from_h5(archive).compose_list()
     assert len(modules) == 2
     assert [m.label for m in modules] == ["A", "B"]
 
 
-def test_compose_broker_mutation_preserves_compose_state(
-    host_h5: Path, module_a_h5: Path,
-) -> None:
-    """A broker mutation after compose must not drop the composed module.
-
-    Chain-phase sessions short-circuit ``get_fem_data()`` to the cached
-    ``_fem`` chain head — so even after a counter bump (simulating any
-    broker mutation) the composed module survives.
-    """
-    g = apeGmsh.from_h5(host_h5)
-    g.compose(module_a_h5, label="A")
-    # Simulate a mutation that bumps the counter (e.g. what
-    # ``g.constraints.bc.fix(...)`` would do post-extraction on a
-    # begun session).
-    g._bump_fem_counter()
-    fem = g.mesh.queries.get_fem_data()
-    # Compose state survives the invalidation.
-    assert "A" in fem.composed_from
-    assert fem.info.n_nodes == 6
-
-
 def test_from_h5_session_compose_workflow(
-    host_h5: Path, module_a_h5: Path, tmp_path: Path,
+    module_a_h5: Path, tmp_path: Path,
 ) -> None:
-    """The full chain-phase workflow runs cleanly."""
-    g = apeGmsh.from_h5(host_h5)
-    g.compose(module_a_h5, label="A")
+    """The full instance → bridge → archive → reload workflow runs cleanly."""
+    asm = Assembly("workflow").instance("A", module_a_h5)
+    asm.bridge(ndm=3, ndf=3)
     out = tmp_path / "final.h5"
-    g.save(out)
+    asm.h5(str(out))
     # File exists + reloads correctly.
     assert out.exists()
     reloaded = FEMData.from_h5(str(out))
@@ -420,51 +244,68 @@ def test_from_h5_session_compose_workflow(
 
 
 def _write_real_staged_archive(tmp_path: Path) -> Path:
-    """A real `ops.h5`-written staged archive (two stages, HOLD pattern,
-    stage pattern, Linear + Constant time-series)."""
-    from tests.opensees.h5.test_h5_partitioned_staged_capture import (
-        _flat_bridge,
-    )
+    """A real `ops.h5`-written staged archive (two stages, a stage fix,
+    a stage pattern, a Linear time-series) on the two-quad mesh.
+
+    It declares no element spec: a ``FourNodeQuad`` source is refused by
+    ``bridge()`` (it is not rehydrated, ADR 0117 D4); the quad is
+    declared on the bridge by dotted PG instead.
+    """
+    from tests.opensees.h5.test_h5_stages_reader import build_two_quad_fem
+    from tests.opensees.h5.test_h5_stages_writer import _chain
+
+    ops = apeSees(build_two_quad_fem(), default_orientation=None)
+    ops.model(ndm=2, ndf=2)
+    ops.fix(pg="Base", dofs=(1, 1))
+    with ops.stage(name="construction") as s:
+        s.fix(pg="FillTop", dofs=(1, 0))
+        s.analysis(**_chain(ops))
+        s.run(n_increments=5)
+    with ops.stage(name="loading") as s:
+        ts = ops.timeSeries.Linear()
+        with s.pattern(series=ts) as p:
+            p.load(pg="Fill", forces=(10.0, 0.0))
+        s.analysis(**_chain(ops))
+        s.run(n_increments=3, dt=0.01)
 
     src = tmp_path / "staged_module.h5"
-    _flat_bridge().h5(str(src))
+    ops.h5(str(src))
     return src
 
 
-def test_compose_filters_real_staged_archive(
-    host_h5: Path, tmp_path: Path,
-) -> None:
-    """Composing a REAL staged archive (ADR 0055 Phase 2/5 writer
-    output) warns once per droppable kind and the composed file
-    carries ZERO ``/opensees/stages`` bytes — the staged program is
-    never inherited (ADR 0038 §"Merge semantics" FILTER verdict;
-    ADR 0055 Phasing #3)."""
+def test_compose_filters_real_staged_archive(tmp_path: Path) -> None:
+    """Instancing a REAL staged archive (ADR 0055 Phase 2/5 writer
+    output) warns once per droppable kind at ``bridge()`` and the
+    assembly archive carries ZERO ``/opensees/stages`` bytes — the staged
+    program is never inherited (ADR 0038 §"Merge semantics" FILTER
+    verdict; ADR 0055 Phasing #3)."""
     src = _write_real_staged_archive(tmp_path)
     # Pre-condition: the source genuinely carries a staged program.
     with h5py.File(str(src), "r") as f:
         assert "stages" in f["opensees"]
         assert "time_series" in f["opensees"]
 
-    g = apeGmsh.from_h5(host_h5)
+    asm = Assembly("staged")
+    asm.instance("staged_mod", src, translate=(50.0, 0.0, 0.0))
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
-        g.compose(src, label="staged_mod", translate=(50.0, 0.0, 0.0))
-        out = tmp_path / "composed.h5"
-        g.save(out)
-    g.end()
+        ops = asm.bridge(ndm=2, ndf=2)
+    # The quad travels on the bridge, by dotted PG (row 47).
+    mat = ops.nDMaterial.ElasticIsotropic(E=1e6, nu=0.3, rho=0.0)
+    ops.element.FourNodeQuad(
+        pg="staged_mod.Rock", thickness=1.0, material=mat)
+    out = tmp_path / "composed.h5"
+    asm.h5(str(out))
 
-    relevant = [
-        w for w in caught if issubclass(w.category, ComposeFilterWarning)
-    ]
-    msgs = [str(w.message) for w in relevant]
+    msgs = _filter_warnings(caught)
     # Exactly one warning per droppable kind present on this source:
     # stages + time-series (the stage pattern itself is captured inside
     # the stage bucket, NOT under /opensees/patterns).
     assert len([m for m in msgs if "stages" in m]) == 1, msgs
     assert len([m for m in msgs if "time-series" in m]) == 1, msgs
-    assert len(relevant) == 2, msgs
+    assert len(msgs) == 2, msgs
 
-    # The composed file inherits NOTHING from the staged program.
+    # The archive inherits NOTHING from the staged program.
     with h5py.File(str(out), "r") as f:
         if "opensees" in f:
             assert "stages" not in f["opensees"]
@@ -472,7 +313,7 @@ def test_compose_filters_real_staged_archive(
 
 
 def test_compose_inspect_filtered_audit(
-    host_h5: Path, module_a_h5: Path, tmp_path: Path,
+    module_a_h5: Path, tmp_path: Path,
 ) -> None:
     """``compose_inspect`` surfaces the filtered-audit (ADR 0038
     §195-196 / ADR 0055 Phase 3): droppable warn-kind counts for a
@@ -482,7 +323,7 @@ def test_compose_inspect_filtered_audit(
         expected_stages = len(f["opensees"]["stages"].keys())
         expected_ts = len(f["opensees"]["time_series"].keys())
 
-    g = apeGmsh.from_h5(host_h5)
+    g = apeGmsh.from_h5(module_a_h5)
     info = g.compose_inspect(src)
     assert info["filtered"] == {
         "stages": expected_stages,

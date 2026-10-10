@@ -13,9 +13,11 @@ Covers the rewrite-only slice of the compose merge pipeline:
   declares a spec; DISCARD/DEFER kinds opt out with the ``None``
   sentinel.
 
-3B.2a deliberately ships ONLY the producer side.  ``g.compose()``
-itself still raises ``NotImplementedError``; FILTER warnings are
-silent at this layer (3B.2b owns ``ComposeFilterWarning`` emission).
+These tests drive the producer side directly; FILTER warnings are
+silent at this layer (the merge, run by ``Assembly.bridge()``, owns
+``ComposeFilterWarning`` emission).  The one merge test
+(``test_compose_keeps_host_interfaces``) uses the ADR 0117
+``Assembly`` (v2) form.
 """
 from __future__ import annotations
 
@@ -27,7 +29,6 @@ import h5py
 import numpy as np
 import pytest
 
-from apeGmsh._core import apeGmsh
 from apeGmsh._kernel.records._compose import ComposeRecord
 from apeGmsh._kernel.records._constraints import (
     ContactPlaneRecord,
@@ -39,6 +40,7 @@ from apeGmsh._kernel.records._constraints import (
     NodeToSurfaceRecord,
     NormalLaw,
     SurfaceCouplingRecord,
+    TangentialLaw,
 )
 from apeGmsh._kernel.records._kinds import ConstraintKind
 from apeGmsh._kernel.records._loads import (
@@ -601,25 +603,6 @@ def test_pre_2_8_0_schema_rejected(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Contract pin: g.compose() returns a ComposedModule handle in 3B.2c
-# ---------------------------------------------------------------------------
-
-
-def test_compose_compose_returns_handle(tmp_path: Path) -> None:
-    """``g.compose()`` is wired end-to-end in Phase 3B.2c.
-
-    Locks the contract that the public entry point is no longer a
-    stub.  A chain-phase session (from_h5) keeps the test self-
-    contained — no live gmsh state required.
-    """
-    fem = _make_fem()
-    src = _write_fem_h5(fem, tmp_path / "src.h5")
-    g = apeGmsh.from_h5(src)
-    handle = g.compose(src, label="m")
-    assert handle.label == "m"
-
-
-# ---------------------------------------------------------------------------
 # ADR 0093 S6 — interface records SURVIVE compose, on both sides.  These
 # were the S3 refusal tests (compose raised rather than silently drop);
 # they are flipped here now that the rewrite + merge carry exist.  The
@@ -640,26 +623,46 @@ def _interface_record() -> InterfaceRecord:
         orient=(1.0, 0.0, 0.0, 0.0, 1.0, 0.0),
         a_trib=0.25,
         normal_law=NormalLaw(kind="ent", k_per_area=1.0e6),
+        # A complete record: the bridge emits both laws when the source
+        # is written (``ops.h5``).
+        tangential_law=TangentialLaw(kind="elastic", k_per_area=1.0e6),
     )
 
 
 def test_compose_keeps_host_interfaces(tmp_path: Path) -> None:
-    """The exact scenario S3 refused: FEMData.compose() on a host whose
-    ``elements.interfaces`` is non-empty now merges, and the host's own
-    record survives un-rewritten (host tags are not offset).
+    """The exact scenario S3 refused: a merge whose first instance (the
+    v1 host) carries a non-empty ``elements.interfaces`` now merges, and
+    that instance's record survives, rewritten onto its own window.
+
+    v2 has no live host: the former host is instance 1, so its record is
+    namespaced (``host.iface``) and every tag field rides instance 1's
+    offset, ``1 * 1_000_000 - source_min`` (ADR 0038 windows).
     """
+    from apeGmsh.assembly import Assembly
+    from apeGmsh.opensees import apeSees
+
+    def _source(fem: FEMData, path: Path) -> Path:
+        ops = apeSees(fem)
+        ops.model(ndm=2, ndf=2)    # a six-float frame is a 2D interface
+        ops.h5(str(path))
+        return path
+
     host = _make_fem()
     host.elements.interfaces.append(_interface_record())
+    host_src = _source(host, tmp_path / "host.h5")
+    src = _source(_make_fem(), tmp_path / "src.h5")
 
-    source_fem = _make_fem()
-    src = _write_fem_h5(source_fem, tmp_path / "src.h5")
+    asm = Assembly("ifaces")
+    asm.instance("host", host_src)
+    asm.instance("m", src)
+    merged = asm.bridge(ndm=2, ndf=2).fem
 
-    merged = host.compose(src, label="m")
+    offset = 1_000_000 - 1                        # instance 1, source_min 1
     assert len(merged.elements.interfaces) == 1
     got = merged.elements.interfaces[0]
-    assert got.name == "iface"                    # host-owned: unprefixed
-    assert (got.master_node, got.slave_node) == (1, 2)
-    assert got.backing_element == 10
+    assert got.name == "host.iface"               # instance-owned: prefixed
+    assert (got.master_node, got.slave_node) == (1 + offset, 2 + offset)
+    assert got.backing_element == 10 + offset
 
 
 def test_rewrite_offsets_interface_tags_including_backing_element(

@@ -1,17 +1,14 @@
-"""ADR 0043 slice 1.4 — raw compose+couple pipeline (pre-Assembly).
+"""ADR 0043 slice 1.4 — the ``Assembly`` surface contracts, on the ADR
+0117 (v2) form.
 
-De-risks the linchpin the 1.4 red/blue pass flagged: NO existing test
-exercises an interface constraint over a *namespaced composed PG* through
-the session (``from_h5 -> g.compose -> g.constraints.<kind>``). All prior
-chain-phase constraint tests use hand-built FEMData with un-namespaced
-labels. This verifies the underlying pipeline the future ``Assembly``
-wrapper will sit on:
+The raw compose+couple pipeline this file once de-risked (``from_h5 ->
+g.compose -> g.constraints.<kind>``) is gone with v1; its oracles live in
+``tests/assembly/test_couplings.py`` (the namespaced port resolves and the
+coupling lands records) and ``tests/assembly/test_two_instances_one_tie.py``
+(bad ports). What stays here:
 
-* the host part keeps its PGs UN-prefixed (``"base"``),
-* a composed part's PGs are prefixed with its compose label (``"A.top"``),
-* ``g.constraints.equal_dof("base", "A.top", ...)`` resolves both through
-  ``FEMDataSource.nodes_for`` and actually appends a constraint record to
-  ``_fem`` (i.e. the chain-phase route did NOT silently drop the couple).
+* ``Assembly`` is a sub-path export, never top-level;
+* declaration-time validation refuses before recording anything.
 """
 from __future__ import annotations
 
@@ -20,7 +17,6 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from apeGmsh._core import apeGmsh
 from apeGmsh.mesh._element_types import ElementGroup, make_type_info
 from apeGmsh.mesh._group_set import LabelSet, PhysicalGroupSet
 from apeGmsh.mesh.FEMData import (
@@ -62,12 +58,8 @@ def _line_module(
 
 
 @pytest.fixture
-def host_and_module(tmp_path: Path) -> tuple[Path, Path]:
-    """Host with PG 'base' at x=2; module A with PG 'top' at local x=0.
-
-    Composing A with translate=(2,0,0) lands A's 'top' node on the host's
-    'base' node (co-located) so equal_dof pairs them.
-    """
+def host_h5(tmp_path: Path) -> Path:
+    """A saved part with node PG 'base' at x=2."""
     host = _line_module(
         node_ids=[1, 2, 3],
         coords=[[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [2.0, 0.0, 0.0]],
@@ -78,66 +70,9 @@ def host_and_module(tmp_path: Path) -> tuple[Path, Path]:
         }},
         elem_ids=[10, 11], conn=[[1, 2], [2, 3]],
     )
-    mod_a = _line_module(
-        node_ids=[1, 2, 3],
-        coords=[[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [2.0, 0.0, 0.0]],
-        node_pgs={(0, 100): {
-            "name": "top",
-            "node_ids": np.array([1], dtype=np.int64),
-            "node_coords": np.array([[0.0, 0.0, 0.0]], dtype=np.float64),
-        }},
-        elem_ids=[10, 11], conn=[[1, 2], [2, 3]],
-    )
     host_p = tmp_path / "host.h5"
-    a_p = tmp_path / "module_a.h5"
     host.to_h5(str(host_p))
-    mod_a.to_h5(str(a_p))
-    return host_p, a_p
-
-
-def _count_constraints(fem) -> int:
-    return len(tuple(fem.nodes.constraints)) + len(
-        tuple(fem.elements.constraints)
-    )
-
-
-class TestComposeCouplePipeline:
-    def test_nodes_for_resolves_namespaced_composed_pg(
-        self, host_and_module: tuple[Path, Path],
-    ) -> None:
-        """FEMDataSource.nodes_for must resolve both the host's bare PG
-        and the composed part's namespaced PG."""
-        from apeGmsh._kernel.resolvers._source import FEMDataSource
-
-        host_p, a_p = host_and_module
-        g = apeGmsh.from_h5(str(host_p))
-        g.compose(str(a_p), label="A", translate=(2.0, 0.0, 0.0))
-
-        src = FEMDataSource(g._fem)
-        base_nodes = set(int(x) for x in src.nodes_for("base"))
-        top_nodes = set(int(x) for x in src.nodes_for("A.top"))
-
-        assert base_nodes == {3}, "host PG 'base' should stay un-namespaced"
-        assert len(top_nodes) == 1, "composed PG 'A.top' must resolve"
-        assert top_nodes != base_nodes
-
-    def test_equal_dof_over_namespaced_pg_routes_onto_fem(
-        self, host_and_module: tuple[Path, Path],
-    ) -> None:
-        """The couple must actually append a constraint record (not be
-        silently dropped by the chain-phase router's KeyError swallow)."""
-        host_p, a_p = host_and_module
-        g = apeGmsh.from_h5(str(host_p))
-        g.compose(str(a_p), label="A", translate=(2.0, 0.0, 0.0))
-
-        before = _count_constraints(g._fem)
-        g.constraints.equal_dof("base", "A.top", dofs=[1, 2, 3])
-        after = _count_constraints(g._fem)
-
-        assert after > before, (
-            "equal_dof over a namespaced composed PG was silently dropped "
-            "— the chain-phase route did not apply to _fem"
-        )
+    return host_p
 
 
 class TestAssembly:
@@ -156,93 +91,23 @@ class TestAssembly:
             "it from apeGmsh.assembly."
         )
 
-    def test_materialize_applies_couple_like_raw_pipeline(
-        self, host_and_module: tuple[Path, Path],
-    ) -> None:
-        from apeGmsh.assembly import Assembly
-
-        host_p, a_p = host_and_module
-        asm = Assembly("frame")
-        asm.add("base_part", str(host_p))                      # host
-        asm.add("top_part", str(a_p), translate=(2.0, 0.0, 0.0))
-        asm.couple(
-            "base_part", "top_part", kind="equal_dof",
-            ports=("base", "top"), dofs=[1, 2, 3],
-        )
-        g = asm.materialize()
-
-        # The couple landed a constraint, and the composed broker carries
-        # both modules (host node 3 + A's offset nodes).
-        assert _count_constraints(g._fem) >= 1
-        assert g._fem.nodes.ids.size == 6  # 3 host + 3 composed
-
-    def test_chainable_declaration(
-        self, host_and_module: tuple[Path, Path],
-    ) -> None:
-        from apeGmsh.assembly import Assembly
-
-        host_p, a_p = host_and_module
-        g = (
-            Assembly("frame")
-            .add("base_part", str(host_p))
-            .add("top_part", str(a_p), translate=(2.0, 0.0, 0.0))
-            .couple(
-                "base_part", "top_part", kind="equal_dof",
-                ports=("base", "top"), dofs=[1, 2, 3],
-            )
-            .materialize()
-        )
-        assert _count_constraints(g._fem) >= 1
-
-    def test_fail_loud_on_unresolvable_port(
-        self, host_and_module: tuple[Path, Path],
-    ) -> None:
+    def test_validation(self, host_h5: Path) -> None:
         from apeGmsh.assembly import Assembly, AssemblyError
 
-        host_p, a_p = host_and_module
-        asm = Assembly("frame")
-        asm.add("base_part", str(host_p))
-        asm.add("top_part", str(a_p), translate=(2.0, 0.0, 0.0))
-        # "nope" is not a PG on top_part → router swallows KeyError →
-        # zero records → materialize must fail loud, not emit an untied model.
-        asm.couple(
-            "base_part", "top_part", kind="equal_dof",
-            ports=("base", "nope"), dofs=[1, 2, 3],
-        )
-        with pytest.raises(
-            AssemblyError, match="tied nothing|not a physical group",
-        ):
-            asm.materialize()
-
-    def test_couple_unknown_part_raises(
-        self, host_and_module: tuple[Path, Path],
-    ) -> None:
-        from apeGmsh.assembly import Assembly, AssemblyError
-
-        host_p, a_p = host_and_module
-        asm = Assembly("frame")
-        asm.add("base_part", str(host_p))
-        asm.add("top_part", str(a_p), translate=(2.0, 0.0, 0.0))
-        asm.couple(
-            "base_part", "ghost", kind="equal_dof",
-            ports=("base", "top"), dofs=[1, 2, 3],
-        )
-        with pytest.raises(AssemblyError, match="unknown part"):
-            asm.materialize()
-
-    def test_validation(self, host_and_module: tuple[Path, Path]) -> None:
-        from apeGmsh.assembly import Assembly, AssemblyError
-
-        host_p, _ = host_and_module
         with pytest.raises(AssemblyError):
             Assembly("")  # empty name
-        with pytest.raises(AssemblyError):
-            Assembly("x").materialize()  # no parts
+        with pytest.raises(AssemblyError, match="no instances"):
+            Assembly("x").bridge(ndm=3, ndf=3)  # no parts
         asm = Assembly("x")
-        asm.add("p", str(host_p))
-        with pytest.raises(AssemblyError, match="duplicate"):
-            asm.add("p", str(host_p))
-        with pytest.raises(AssemblyError, match="unsupported kind"):
-            asm.couple("p", "p", kind="welded", ports=("a", "b"))
+        asm.instance("p", str(host_h5))
+        with pytest.raises(AssemblyError, match="already declared"):
+            asm.instance("p", str(host_h5))  # duplicate
+        asm.node("ref", (2.0, 0.0, 0.0))
+        with pytest.raises(AssemblyError, match="kind='welded'"):
+            asm.couple("p.base", kind="welded", reference="ref")
         with pytest.raises(AssemblyError):
-            asm.couple("p", "p", kind="equal_dof", ports=("only_one",))
+            # a bare (undotted) port names no instance
+            asm.equal_dof("only_one", "p.base", dofs=[1, 2, 3])
+        # Every refusal recorded nothing.
+        assert [i.label for i in asm.instances] == ["p"]
+        assert asm.ties == ()

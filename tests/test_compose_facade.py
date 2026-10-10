@@ -1,24 +1,25 @@
-"""Tests for the Compose facade scaffold — Phase 3B.1 / ADR 0038.
+"""Tests for the Compose facade readers — Phase 3B.1 / ADR 0038, on the
+ADR 0117 ``Assembly`` (v2) form.
 
-This PR (3B.1) lands:
+Locks:
 
-* the input-validation gates on ``g.compose(...)``,
 * the ``g.compose_inspect(...)`` H5-metadata helper,
-* the ``g.compose_list()`` session-side accessor,
-* the :class:`ComposedModule` handle (identity surface only — the
-  introspection methods are stubbed pending Phase 3B.2's merge engine),
+* the ``g.compose_list()`` session-side accessor, read from a real
+  ``Assembly.h5`` archive,
+* the :class:`ComposedModule` handle (identity surface; the
+  introspection methods stay stubbed),
 * the typed exception hierarchy.
 
-The merge engine itself raises :class:`NotImplementedError` until
-Phase 3B.2 wires it.  These tests deliberately exercise the
-"validation-fires-before-engine-stub" guarantee so future regressions
-of the eager-gate contract are caught here, not on a partial merge.
+The v1 writer (``g.compose``) and its input gates are gone; the
+``Assembly.instance`` gates are locked in ``tests/assembly/``.
 """
 from __future__ import annotations
 
 from pathlib import Path
 
-import h5py
+import math
+import warnings
+
 import numpy as np
 import pytest
 
@@ -36,6 +37,7 @@ from apeGmsh.mesh._compose import (
     ComposeNamespaceCollisionError,
     ComposedModule,
 )
+from apeGmsh.assembly import Assembly
 from apeGmsh.mesh._element_types import ElementGroup, make_type_info
 from apeGmsh.mesh._group_set import LabelSet, PhysicalGroupSet
 from apeGmsh.mesh.FEMData import (
@@ -44,6 +46,7 @@ from apeGmsh.mesh.FEMData import (
     MeshInfo,
     NodeComposite,
 )
+from apeGmsh.opensees import apeSees
 
 
 # ---------------------------------------------------------------------------
@@ -117,23 +120,35 @@ def session() -> apeGmsh:
 
 @pytest.fixture
 def saved_uncomposed_h5(tmp_path: Path) -> Path:
-    """A fresh ``model.h5`` with no composition — for ``compose_inspect``."""
-    fem = _make_simple_fem()
+    """A fresh instanceable ``model.h5`` (``/opensees`` model 3/3) with no
+    composition — for ``compose_inspect`` and as the assembly's source."""
+    ops = apeSees(_make_simple_fem())
+    ops.model(ndm=3, ndf=3)
     out = tmp_path / "uncomposed.h5"
-    fem.to_h5(str(out))
+    ops.h5(str(out))
     return out
 
 
+#: ``beta``'s placement: a quarter turn about +z, then a translate.
+BETA_ROTATE = ((0.0, 0.0, 1.0), math.pi / 2)
+
+
 @pytest.fixture
-def saved_composed_h5(tmp_path: Path) -> Path:
-    """A ``model.h5`` carrying two ``ComposeRecord`` provenance entries."""
-    rec_a = _make_record("alpha", partition_rank=1)
-    rec_b = _make_record(
-        "beta", partition_rank=2, translate=(10.0, 0.0, 0.0),
-    )
-    fem = _make_simple_fem(composed_from=ComposeSet((rec_a, rec_b)))
+def saved_composed_h5(saved_uncomposed_h5: Path, tmp_path: Path) -> Path:
+    """An ``Assembly.h5`` archive with two ranked instances of one source:
+    ``alpha`` (rank 0, translate (1, 2, 3)) and ``beta`` (rank 1,
+    rotated, translate (10, 0, 0))."""
+    asm = Assembly("pair")
+    asm.instance("alpha", saved_uncomposed_h5,
+                 translate=(1.0, 2.0, 3.0), partition_rank=0)
+    asm.instance("beta", saved_uncomposed_h5, translate=(10.0, 0.0, 0.0),
+                 rotate=BETA_ROTATE, partition_rank=1)
     out = tmp_path / "composed.h5"
-    fem.to_h5(str(out))
+    with warnings.catch_warnings():
+        # Two ranks with no declared numberer/system auto-emit (ADR 0027).
+        warnings.simplefilter("ignore")
+        asm.bridge(ndm=3, ndf=3)
+        asm.h5(str(out))
     return out
 
 
@@ -145,116 +160,6 @@ def saved_composed_h5(tmp_path: Path) -> Path:
 def test_reservation_granularity_class_attr() -> None:
     """``RESERVATION_GRANULARITY`` is the documented 1M default."""
     assert Compose.RESERVATION_GRANULARITY == 1_000_000
-
-
-# ---------------------------------------------------------------------------
-# Label validation — ADR 0038 §"g.compose() signature" line 94
-# ---------------------------------------------------------------------------
-
-
-def test_compose_label_empty_raises(
-    session: apeGmsh, saved_uncomposed_h5: Path,
-) -> None:
-    """Empty ``label`` trips :class:`ComposeLabelError`."""
-    with pytest.raises(ComposeLabelError):
-        session.compose(saved_uncomposed_h5, label="")
-
-
-def test_compose_label_dotted_raises(
-    session: apeGmsh, saved_uncomposed_h5: Path,
-) -> None:
-    """``label='foo.bar'`` — '.' is the namespace separator."""
-    with pytest.raises(ComposeLabelError):
-        session.compose(saved_uncomposed_h5, label="foo.bar")
-
-
-def test_compose_label_slash_raises(
-    session: apeGmsh, saved_uncomposed_h5: Path,
-) -> None:
-    """``label='foo/bar'`` — '/' is the depth-boundary separator."""
-    with pytest.raises(ComposeLabelError):
-        session.compose(saved_uncomposed_h5, label="foo/bar")
-
-
-def test_compose_label_whitespace_raises(
-    session: apeGmsh, saved_uncomposed_h5: Path,
-) -> None:
-    """``label='foo bar'`` — whitespace is disallowed."""
-    with pytest.raises(ComposeLabelError):
-        session.compose(saved_uncomposed_h5, label="foo bar")
-
-
-# ---------------------------------------------------------------------------
-# Anchor / translate validation — ADR 0038 line 104
-# ---------------------------------------------------------------------------
-
-
-def test_compose_anchor_with_nonzero_translate_raises(
-    session: apeGmsh, saved_uncomposed_h5: Path,
-) -> None:
-    """``anchor=`` and a non-zero ``translate=`` are mutually exclusive."""
-    with pytest.raises(ComposeAnchorError):
-        session.compose(
-            saved_uncomposed_h5,
-            label="m",
-            anchor="some_pg",
-            translate=(1.0, 0.0, 0.0),
-        )
-
-
-def test_compose_anchor_with_zero_translate_passes_validation(
-    saved_uncomposed_h5: Path, tmp_path: Path,
-) -> None:
-    """``anchor=`` with default ``translate=(0, 0, 0)`` passes validation.
-
-    Locks the validation-order contract: input gates fire before the
-    engine.  Phase 3B.2c wires the merge engine, so a missing-PG
-    anchor surfaces :class:`ComposeAnchorError` from the resolver
-    rather than ``NotImplementedError``.  Either way, the
-    anchor+translate validator does NOT trip.
-    """
-    # Build a chain-phase session whose FEM has no PG named
-    # ``some_pg`` — anchor resolution must therefore raise
-    # ComposeAnchorError, NOT the older NotImplementedError.
-    g = apeGmsh.from_h5(saved_uncomposed_h5)
-    with pytest.raises(ComposeAnchorError):
-        g.compose(saved_uncomposed_h5, label="m", anchor="some_pg")
-
-
-# ---------------------------------------------------------------------------
-# Partition-rank validation — ADR 0038 §"Layer 2" line 420
-# ---------------------------------------------------------------------------
-
-
-def test_compose_partition_rank_negative_raises(
-    session: apeGmsh, saved_uncomposed_h5: Path,
-) -> None:
-    """``partition_rank=-1`` violates the ``K >= 0`` rule."""
-    with pytest.raises(ValueError):
-        session.compose(
-            saved_uncomposed_h5, label="m", partition_rank=-1,
-        )
-
-
-# ---------------------------------------------------------------------------
-# Merge-engine stub — ADR 0038 / Phase 3B.2 marker
-# ---------------------------------------------------------------------------
-
-
-def test_compose_merge_engine_wired_returns_handle(
-    saved_uncomposed_h5: Path,
-) -> None:
-    """Valid inputs now return a :class:`ComposedModule` handle.
-
-    Phase 3B.2c wires the merge engine: ``g.compose(...)`` no longer
-    stubs out, it returns the live handle for the composed module.
-    This test locks the new contract — a regression to a stub would
-    fail the assertion that the returned record's label matches.
-    """
-    g = apeGmsh.from_h5(saved_uncomposed_h5)
-    handle = g.compose(saved_uncomposed_h5, label="m")
-    assert isinstance(handle, ComposedModule)
-    assert handle.label == "m"
 
 
 # ---------------------------------------------------------------------------
@@ -299,7 +204,7 @@ def test_compose_inspect_returns_composed_from_for_composed_source(
     assert labels == ["alpha", "beta"]
     # Round-trip detail spot check.
     alpha = next(r for r in composed if r.label == "alpha")
-    assert alpha.partition_rank == 1
+    assert alpha.partition_rank == 0
     assert alpha.translate == (1.0, 2.0, 3.0)
 
 
@@ -339,7 +244,7 @@ def test_compose_list_empty_uncomposed_fem(session: apeGmsh) -> None:
 
 
 def test_compose_list_populated_from_h5_round_trip(
-    session: apeGmsh, saved_composed_h5: Path,
+    session: apeGmsh, saved_composed_h5: Path, saved_uncomposed_h5: Path,
 ) -> None:
     """Loaded composed FEMData → ``compose_list`` returns wrapped handles
     in label-sorted order.
@@ -359,17 +264,20 @@ def test_compose_list_populated_from_h5_round_trip(
     assert len(modules) == 2
     assert [m.label for m in modules] == ["alpha", "beta"]
 
+    source = str(saved_uncomposed_h5)
     alpha = modules[0]
     assert isinstance(alpha, ComposedModule)
-    assert alpha.source_path == "alpha.h5"
+    assert alpha.source_path == source
     assert alpha.translate == (1.0, 2.0, 3.0)
-    assert alpha.rotate == (0.0, 0.0, 1.0, 0.0)
-    assert alpha.partition_rank == 1
+    assert alpha.rotate is None  # identity: no rotation recorded
+    assert alpha.partition_rank == 0
 
     beta = modules[1]
-    assert beta.source_path == "beta.h5"
+    assert beta.source_path == source
     assert beta.translate == (10.0, 0.0, 0.0)
-    assert beta.partition_rank == 2
+    (ax, ay, az), theta = BETA_ROTATE
+    assert beta.rotate == pytest.approx((ax, ay, az, theta))
+    assert beta.partition_rank == 1
 
 
 # ---------------------------------------------------------------------------

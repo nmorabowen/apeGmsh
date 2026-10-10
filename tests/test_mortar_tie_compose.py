@@ -1,14 +1,15 @@
 """ADR 0086 acceptance — mortar mesh-ties on COMPOSED assemblies.
 
 The capability this locks: an order-mismatched interface (hex20 faces
-tied onto hex8 faces) expressed on an assembly built with
-``from_h5`` + ``compose`` — impossible before ADR 0086 because mortar
-lived only in the (build-phase, gmsh-needing, tri3/quad4-only) contact
-subsystem, and ``set_order`` being session-global forces mixed-order
-models through compose.
+tied onto hex8 faces) expressed on an ADR 0117 ``Assembly`` (one
+``instance`` per saved part, ``tie(enforce="equation", method="mortar")``,
+``bridge``) — impossible before ADR 0086 because mortar lived only in the
+(build-phase, gmsh-needing, tri3/quad4-only) contact subsystem, and
+``set_order`` being session-global forces mixed-order models through
+composition.
 
-Also locks ADR 0086 D4: ``g.constraints.contact`` on a chain-phase
-session raises ``ChainPhaseError`` instead of the historic silent drop.
+(ADR 0086 D4, contact on a composed model, is covered by
+``tests/assembly/test_couplings.py``: contact is not an assembly verb.)
 """
 from __future__ import annotations
 
@@ -16,8 +17,6 @@ from pathlib import Path
 
 import numpy as np
 import pytest
-
-from apeGmsh import apeGmsh
 
 from tests.test_meshable_part_route import _build_block, E, NU, SIDE, H
 
@@ -69,15 +68,14 @@ def test_mortar_tie_resolves_on_composed_assembly(tmp_path: Path):
     from apeGmsh.assembly import Assembly
 
     cover, ribs = _build_two_block_parts(tmp_path)
-    g = (
+    asm = (
         Assembly("stack")
-        .add("cover", str(cover))
-        .add("rb", str(ribs))
-        .couple("cover", "rb", kind="tie", ports=("CoverTop", "RibsBot"),
-                dofs=[1, 2, 3], method="mortar", enforce="equation")
-        .materialize()
+        .instance("cover", cover)
+        .instance("rb", ribs)
+        .tie("cover.CoverTop", "rb.RibsBot", dofs=[1, 2, 3],
+             method="mortar", enforce="equation")
     )
-    fem = g.mesh.queries.get_fem_data(dim=None)
+    fem = asm.bridge(ndm=3, ndf=3).fem
 
     # Acceptance #1: never trust the call — a non-zero record count.
     recs = [r for r in fem.elements.constraints
@@ -103,7 +101,7 @@ def test_mortar_tie_resolves_on_composed_assembly(tmp_path: Path):
     # save → reload is the production workflow).
     from apeGmsh.mesh.FEMData import FEMData
     out = tmp_path / "assembled.h5"
-    g.save(str(out))
+    asm.h5(str(out))
     fem2 = FEMData.from_h5(str(out))
     recs2 = sorted(
         (r for r in fem2.elements.constraints
@@ -119,29 +117,14 @@ def test_mortar_tie_resolves_on_composed_assembly(tmp_path: Path):
         assert r2.enforce == "equation"
 
 
-def test_contact_on_chain_phase_session_raises(tmp_path: Path):
-    """ADR 0086 D4 — the silent drop becomes a loud ChainPhaseError."""
-    from apeGmsh.core._compose_errors import ChainPhaseError
-
-    cover, ribs = _build_two_block_parts(tmp_path)
-    g = apeGmsh.from_h5(str(cover))
-    g.compose(str(ribs), label="rb")
-    with pytest.raises(ChainPhaseError, match="live gmsh session"):
-        g.constraints.contact("CoverTop", "rb.RibsBot",
-                              formulation="mortar", tie=True,
-                              outward=(0.0, 0.0, 1.0))
-
-
 # --------------------------------------------------------------------------
 # LIVE — closed form + order-swap symmetry (fork build: LadrunoBrick20)
 # --------------------------------------------------------------------------
 
 def _solve_stack_K(tmp_path, *, swap_master_slave: bool) -> float:
-    """Compose the hex8+hex20 stack, mortar-tie, solve, return K."""
+    """Assemble the hex8+hex20 stack, mortar-tie, solve, return K."""
     import openseespy.opensees as openseespy
     from apeGmsh.assembly import Assembly
-    from apeGmsh.mesh.FEMData import FEMData
-    from apeGmsh.opensees import apeSees
     from apeGmsh.opensees.emitter.live import LiveOpsEmitter
 
     sub = tmp_path / ("swap" if swap_master_slave else "fwd")
@@ -150,28 +133,26 @@ def _solve_stack_K(tmp_path, *, swap_master_slave: bool) -> float:
 
     asm = (
         Assembly("two_blocks")
-        .add("cover", str(cover))
-        .add("rb", str(ribs))
+        .instance("cover", cover)
+        .instance("rb", ribs)
     )
     if swap_master_slave:
         # hex20 quad8 faces as MASTER, hex8 quad4 faces as SLAVE
-        asm.couple("rb", "cover", kind="tie", ports=("RibsBot", "CoverTop"),
-                   dofs=[1, 2, 3], method="mortar", enforce="equation")
+        asm.tie("rb.RibsBot", "cover.CoverTop", dofs=[1, 2, 3],
+                method="mortar", enforce="equation")
     else:
         # hex8 quad4 faces as MASTER, hex20 quad8 faces as SLAVE —
         # the configuration collocation over-constrains and mortar fixes
-        asm.couple("cover", "rb", kind="tie", ports=("CoverTop", "RibsBot"),
-                   dofs=[1, 2, 3], method="mortar", enforce="equation")
-    g = asm.materialize()
-    fem = g.mesh.queries.get_fem_data(dim=None)
+        asm.tie("cover.CoverTop", "rb.RibsBot", dofs=[1, 2, 3],
+                method="mortar", enforce="equation")
+    ops = asm.bridge(ndm=3, ndf=3)
+    fem = ops.fem
 
     delta = 0.01
-    ops = apeSees(fem)
-    ops.model(ndm=3, ndf=3)
     steel = ops.nDMaterial.ElasticIsotropic(E=E, nu=NU)
-    ops.element.stdBrick(pg="CoverVol", material=steel)
+    ops.element.stdBrick(pg="cover.CoverVol", material=steel)
     ops.element.LadrunoBrick20(pg="rb.RibsVol", material=steel)
-    ops.fix(pg="Base", dofs=(1, 1, 1))
+    ops.fix(pg="cover.Base", dofs=(1, 1, 1))
     ts = ops.timeSeries.Linear()
     with ops.pattern.Plain(series=ts) as pat:
         pat.sp(pg="rb.RibsTop", dof=3, value=-delta)
@@ -189,7 +170,7 @@ def _solve_stack_K(tmp_path, *, swap_master_slave: bool) -> float:
     assert ret == 0, f"analyze returned {ret}"
 
     openseespy.reactions()
-    base_ids = [int(t) for t in fem.nodes.select(pg="Base").ids]
+    base_ids = [int(t) for t in fem.nodes.select(pg="cover.Base").ids]
     r_z = sum(openseespy.nodeReaction(t, 3) for t in base_ids)
     openseespy.wipe()
     return abs(r_z) / delta
