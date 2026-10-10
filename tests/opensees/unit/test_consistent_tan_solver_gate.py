@@ -19,6 +19,7 @@ with every unit case green.
 """
 from __future__ import annotations
 
+import warnings
 from types import SimpleNamespace as NS
 
 import pytest
@@ -27,6 +28,10 @@ from apeGmsh.opensees._internal.build import BridgeError
 from apeGmsh.opensees._internal.contact_solver_gate import (
     validate_consistent_tan_solver,
 )
+from apeGmsh.opensees.analysis.system import _MATRIX_TYPES
+
+CONFIGURABLE = ["Pardiso", "Mumps"]
+NOT_UNSYMMETRIC = sorted(t for t in _MATRIX_TYPES if t != "unsymmetric")
 
 SYMMETRIC = [
     "ProfileSPD", "SProfileSPD", "ParallelProfileSPD", "BandSPD",
@@ -93,15 +98,35 @@ class TestFlat:
     def test_general_system_passes(self, fem, sys_name) -> None:
         _flat(fem, [_sys(sys_name)])
 
-    @pytest.mark.parametrize("cls_name", ["Pardiso", "Mumps"])
-    def test_half_storage_mode_raises(self, cls_name) -> None:
-        with pytest.raises(BridgeError, match="matrix_type='symmetric'"):
-            _flat(CT, [_sys(cls_name, matrix_type="symmetric")])
+    @pytest.mark.parametrize("cls_name", CONFIGURABLE)
+    @pytest.mark.parametrize("mtype", sorted(_MATRIX_TYPES))
+    def test_configured_symmetry_decides(self, cls_name, mtype) -> None:
+        """Pardiso / Mumps are judged by their configured matrix_type."""
+        system = _sys(cls_name, matrix_type=mtype)
+        if mtype == "unsymmetric":
+            _flat(CT, [system])
+            return
+        with pytest.raises(BridgeError, match=f"matrix_type={mtype!r}"):
+            _flat(CT, [system])
+
+    @pytest.mark.parametrize("cls_name", CONFIGURABLE)
+    def test_unreadable_matrix_type_fails_closed(self, cls_name) -> None:
+        """A Pardiso/Mumps with no readable matrix_type is refused, never
+        assumed unsymmetric."""
+        system = type(cls_name, (), {})()           # the class name, nothing else
+        assert not hasattr(system, "matrix_type")
+        with pytest.raises(BridgeError, match="matrix_type=<unreadable>"):
+            _flat(CT, [system])
 
     def test_no_system_declared_raises(self) -> None:
-        """The OpenSees no-``system`` default is ProfileSPD (#1273 ruling)."""
-        with pytest.raises(BridgeError, match="ProfileSPD.*undeclared"):
+        """The OpenSees no-``system`` default is ProfileSPD (#1273 ruling),
+        and the refusal spells out the unsymmetric options."""
+        with pytest.raises(BridgeError, match="ProfileSPD.*undeclared") as exc:
             _flat(CT, [])
+        msg = str(exc.value)
+        assert 'ops.system.Pardiso(matrix_type="unsymmetric")' in msg
+        assert 'ops.system.Mumps(matrix_type="unsymmetric")' in msg
+        assert "ops.system.UmfPack()" in msg
 
     def test_last_declared_system_is_the_effective_one(self) -> None:
         _flat(CT, [_sys("ProfileSPD"), _sys("UmfPack")])
@@ -165,7 +190,7 @@ class TestUnaffected:
 # ---------------------------------------------------------------------------
 # The #1273 repro through ``ops.tcl``: builds silently on main.
 # ---------------------------------------------------------------------------
-def _two_body_contact_fem(**contact_kw):
+def _two_body_contact_fem(partitions=0, **contact_kw):
     gmsh = pytest.importorskip("gmsh")
     from apeGmsh import apeGmsh
 
@@ -177,7 +202,14 @@ def _two_body_contact_fem(**contact_kw):
                     return abs(tag)
         raise AssertionError(f"no face of vol {volume_tag} at z={z}")
 
-    with apeGmsh(model_name="ct_gate", verbose=False) as g:
+    with warnings.catch_warnings(), \
+            apeGmsh(model_name="ct_gate", verbose=False) as g:
+        if partitions:
+            # The session's exit autosave skips a partitioned model and
+            # says so (a UserWarning, not this test's subject); scoped to
+            # this session so -W error stays meaningful elsewhere.
+            warnings.filterwarnings(
+                "ignore", message=r".*partitioned run", category=UserWarning)
         box1 = g.model.geometry.add_box(0, 0, 0, 1, 1, 1)
         box2 = g.model.geometry.add_box(0, 0, 1.05, 1, 1, 1)
         g.model.sync()
@@ -189,6 +221,8 @@ def _two_body_contact_fem(**contact_kw):
         g.physical.add(2, [master], name="master")
         g.physical.add(2, [slave], name="slave")
         g.constraints.contact("master", "slave", **contact_kw)
+        if partitions:
+            g.mesh.partitioning.partition(partitions)
         return g.mesh.queries.get_fem_data(dim=3)
 
 
@@ -223,7 +257,7 @@ def _chain(ops, system):
         test=ops.test.NormDispIncr(tol=1e-4, max_iter=50),
         algorithm=ops.algorithm.Newton(),
         integrator=ops.integrator.LoadControl(dlam=0.1),
-        constraints=ops.constraints.Plain(),
+        constraints=ops.constraints.LadrunoContact(),   # contacts need it
         numberer=ops.numberer.RCM(),
         system=system,
         analysis=ops.analysis.Static(),
@@ -265,6 +299,65 @@ class TestThroughTheBuild:
         ops.system.Pardiso(matrix_type="symmetric")
         with pytest.raises(BridgeError, match="matrix_type='symmetric'"):
             ops.tcl(str(tmp_path / "deck.tcl"))
+
+    # -- the configured-symmetry rider (#1273 ruling) ----------------------
+    # Pardiso runs on the serial deck. Mumps needs a PARTITIONED mesh: on a
+    # serial deck the ADR 0106 D5 gate downstream of this one refuses every
+    # Mumps, which would mask the verdict under test.
+
+    @pytest.mark.parametrize("mtype", sorted(_MATRIX_TYPES))
+    def test_pardiso_judged_by_matrix_type(self, tmp_path, mtype) -> None:
+        ops = _bridge(_two_body_contact_fem(**_MORTAR_CT))
+        ops.system.Pardiso(matrix_type=mtype)
+        out = tmp_path / "deck.tcl"
+        if mtype == "unsymmetric":
+            ops.tcl(str(out))
+            assert "-consistanttan" in out.read_text()
+            return
+        with pytest.raises(BridgeError, match=f"Pardiso.*matrix_type={mtype!r}"):
+            ops.tcl(str(out))
+
+    @pytest.mark.parametrize("mtype", sorted(_MATRIX_TYPES))
+    def test_mumps_judged_by_matrix_type(self, tmp_path, mtype) -> None:
+        fem = _two_body_contact_fem(partitions=2, **_MORTAR_CT)
+        assert len(fem.partitions) == 2
+        ops = _bridge(fem)
+        ops.numberer.ParallelRCM()      # else the ADR 0027 auto-emit warns
+        ops.system.Mumps(matrix_type=mtype)
+        out = tmp_path / "deck.tcl"
+        if mtype == "unsymmetric":
+            ops.tcl(str(out))
+            assert "-consistanttan" in out.read_text()
+            return
+        with pytest.raises(BridgeError, match=f"Mumps.*matrix_type={mtype!r}"):
+            ops.tcl(str(out))
+
+    def test_staged_unsymmetric_mumps_stage_passes(self, tmp_path) -> None:
+        fem = _two_body_contact_fem(partitions=2, **_MORTAR_CT)
+        ops = _bridge_no_chain(fem)
+        with ops.stage(name="hold") as s:
+            s.analysis(**_chain(ops, ops.system.Mumps(matrix_type="unsymmetric")))
+            s.run(n_increments=1)
+        with ops.stage(name="push") as s:
+            s.analysis(**_chain(ops, ops.system.Mumps()))      # the default
+            s.run(n_increments=1)
+        out = tmp_path / "deck.tcl"
+        ops.tcl(str(out), flat=True)
+        assert "-consistanttan" in out.read_text()
+
+    @pytest.mark.parametrize("mtype", NOT_UNSYMMETRIC)
+    def test_staged_symmetric_mumps_stage_refuses(self, tmp_path, mtype) -> None:
+        fem = _two_body_contact_fem(partitions=2, **_MORTAR_CT)
+        ops = _bridge_no_chain(fem)
+        with ops.stage(name="hold") as s:
+            s.analysis(**_chain(ops, ops.system.Mumps()))
+            s.run(n_increments=1)
+        with ops.stage(name="push") as s:
+            s.analysis(**_chain(ops, ops.system.Mumps(matrix_type=mtype)))
+            s.run(n_increments=1)
+        with pytest.raises(BridgeError,
+                           match=f"Mumps.*matrix_type={mtype!r}.*stage 'push'"):
+            ops.tcl(str(tmp_path / "deck.tcl"), flat=True)
 
     @pytest.mark.parametrize(
         "make",

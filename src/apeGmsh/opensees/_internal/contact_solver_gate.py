@@ -34,6 +34,18 @@ if TYPE_CHECKING:
 
 __all__ = ["validate_consistent_tan_solver"]
 
+#: The systems whose symmetry is a constructor option: judged by the
+#: configured ``matrix_type``, not the class name.
+_CONFIGURABLE_SYMMETRY: frozenset[str] = frozenset({"Pardiso", "Mumps"})
+
+#: The spelled-out unsymmetric options the refusal names.
+_UNSYMMETRIC_OPTIONS = (
+    'ops.system.UmfPack(), ops.system.SparseGeneral(), '
+    'ops.system.FullGeneral(), ops.system.BandGeneral(), '
+    'ops.system.Pardiso(matrix_type="unsymmetric") or '
+    'ops.system.Mumps(matrix_type="unsymmetric")'
+)
+
 
 def _offenders(fem: "FEMData") -> list[str]:
     """``contact 'name' (flag)`` for every contact asking for a consistent tangent."""
@@ -77,9 +89,9 @@ def validate_consistent_tan_solver(
             f"friction tangent (-consistanttan / -edgeConsistentTan) is "
             f"UNSYMMETRIC, so the solve would use only half of it and "
             f"converge to a plausible but WRONG answer with rc 0 (#1273). "
-            f"Declare a general solver: {_GENERAL_SOLVER_MSG} — or drop "
-            f"consistent_tan (the default symmetric tangent is correct on "
-            f"any solver)."
+            f"Declare a general solver: {_GENERAL_SOLVER_MSG} — i.e. "
+            f"{_UNSYMMETRIC_OPTIONS} — or drop consistent_tan (the default "
+            f"symmetric tangent is correct on any solver)."
         )
 
     def _check(system: Any, where: str) -> None:
@@ -88,14 +100,24 @@ def validate_consistent_tan_solver(
             raise BridgeError(_why(
                 repr(token), where, f"{token} does not store the full matrix.",
             ))
-        # Pardiso / Mumps are legal only in their UNSYMMETRIC mode (fork
-        # ADR-75 P1d): the half-storage modes are exactly the silent drop
-        # this gate exists to stop.
-        mtype = getattr(system, "matrix_type", "unsymmetric")
+        if token not in _CONFIGURABLE_SYMMETRY:
+            return
+        # Pardiso / Mumps are judged by their CONFIGURED symmetry (fork
+        # ADR-75 P1d): only matrix_type="unsymmetric" passes. The read
+        # fails closed: a system of these classes with no readable
+        # matrix_type is refused, never assumed unsymmetric.
+        mtype = getattr(system, "matrix_type", None)
+        if mtype is None:
+            raise BridgeError(_why(
+                f"{token}(matrix_type=<unreadable>)", where,
+                f"{token} carries no readable matrix_type, so its configured "
+                f"symmetry is unknown and the gate refuses rather than "
+                f"assume it is unsymmetric.",
+            ))
         if mtype != "unsymmetric":
             raise BridgeError(_why(
                 f"{token}(matrix_type={mtype!r})", where,
-                "this mode stores only the upper triangle.",
+                f"matrix_type={mtype!r} stores only the upper triangle.",
             ))
 
     if staged:
