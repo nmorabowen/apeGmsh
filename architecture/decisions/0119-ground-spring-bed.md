@@ -127,10 +127,10 @@ recorders and the h5 opensees zone see nothing new:
 - A Tier-2 foundation is two session calls and one bridge call per spring
   group; the `ζ = c / (2 sqrt(k m))` single-node check of the T2S patch is a
   test.
-- **Partitioned emit is refused**, as for every node-pair zeroLength
-  (`apeSees` raises before the rank fan-out, ADR 0049): per-rank routing of
-  node-pair elements is still deferred. A partitioned Tier-2 deck needs that
-  routing first.
+- **Partitioned emit was refused** when this ADR was written, as for every
+  node-pair zeroLength (ADR 0049). ADR 0120 lifts that: each spring, its ground
+  and side nodes and their `equalDOF` are written on the rank of the structural
+  node, so a bed emits under MPI.
 - The emitted `zeroLength` line writes `-orient` and omits `-doRayleigh`
   when it is off (OpenSees default 0, `ZeroLength.cpp` `OPS_ZeroLength`); a
   checker that parses the as-run deck form must accept the absent flag.
