@@ -9,6 +9,12 @@ on:
     - cron: '47 5 * * *'
   workflow_dispatch:
 
+# One run at a time: two overlapping runs could each create the tracking
+# issue before search indexing shows the other's.
+concurrency:
+  group: program-probe
+  cancel-in-progress: false
+
 permissions:
   contents: read
   issues: write

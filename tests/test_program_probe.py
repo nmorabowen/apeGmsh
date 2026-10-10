@@ -128,6 +128,20 @@ def test_stale_lock_falls_back_to_issue_without_linked_pr():
     assert _kinds([], [_issue(900, ["lock:a.py"], updated=5.9)]) == []
 
 
+def test_stale_lock_uses_most_recent_linked_pr():
+    # card behaviour 3: the most recently updated linked PR decides
+    issue = _issue(900, ["lock:a.py"], updated=10)
+    old = _pr(1, created=12, updated=10, comments=[_verdict(11)])
+    new = _pr(2, created=12, updated=1, comments=[_verdict(11)])
+    assert _kinds([old, new], [issue]) == []
+    assert _kinds([new, old], [issue]) == []
+
+
+def test_only_lock_colon_labels_are_locks():
+    assert _kinds([], [_issue(1, ["locked"], updated=10),
+                       _issue(2, ["locked"], updated=10)]) == []
+
+
 def test_closing_reference_links_pr_to_lock_issue():
     pr = _pr(updated=0.1, body="", comments=[_verdict(1)])
     pr["closingIssuesReferences"] = [{"number": 900}]
@@ -166,6 +180,30 @@ def _no_gh(args):
     raise AssertionError(f"unexpected gh call {args}")
 
 
+def test_cli_refuses_issue_in_offline_mode(tmp_path, capsys):
+    fixture = tmp_path / "f.json"
+    fixture.write_text(json.dumps({"prs": [_pr(created=7)], "issues": []}))
+    import pytest
+    for argv in (["--from-json", str(fixture), "--now", NOW.isoformat(), "--issue"],
+                 ["--from-json", str(fixture), "--issue"],
+                 ["--now", NOW.isoformat(), "--issue"]):
+        with pytest.raises(SystemExit) as exc:
+            pp.main(argv, gh=_no_gh)
+        assert exc.value.code == 2
+    assert "--issue cannot be combined" in capsys.readouterr().err
+
+
+def test_cli_naive_now_is_utc(tmp_path, capsys):
+    fixture = tmp_path / "f.json"
+    fixture.write_text(json.dumps({"prs": [_pr(created=7)], "issues": []}))
+    naive = NOW.replace(tzinfo=None).isoformat()
+    assert pp.main(["--from-json", str(fixture), "--now", naive,
+                    "--format", "json"], gh=_no_gh) == 0
+    found = json.loads(capsys.readouterr().out)
+    assert [f["kind"] for f in found] == ["no-verdict"]
+    assert "open 7.0 h" in found[0]["detail"]
+
+
 class FakeGh:
     def __init__(self, open_issues):
         self.open_issues = open_issues
@@ -194,3 +232,20 @@ def test_sync_issue_creates_updates_and_closes():
     gh = FakeGh([])
     assert pp.sync_issue(gh, "o/r", [], NOW) == "nothing to do"
     assert len(gh.calls) == 1
+
+
+def test_sync_issue_collapses_duplicate_tracking_issues():
+    finding = [{"kind": "no-verdict", "ref": "#1", "title": "t", "detail": "d"}]
+    dupes = [{"number": 6, "title": pp.ISSUE_TITLE},
+             {"number": 5, "title": pp.ISSUE_TITLE},
+             {"number": 7, "title": "other"}]
+
+    gh = FakeGh(dupes)
+    assert pp.sync_issue(gh, "o/r", [], NOW) == "closed #5, #6"
+    closed = [c[2] for c in gh.calls if c[:2] == ["issue", "close"]]
+    assert closed == ["5", "6"]
+
+    gh = FakeGh(dupes)
+    assert pp.sync_issue(gh, "o/r", finding, NOW) == "updated #5; closed duplicates #6"
+    assert [c[:3] for c in gh.calls[1:]] == [["issue", "close", "6"],
+                                             ["issue", "edit", "5"]]

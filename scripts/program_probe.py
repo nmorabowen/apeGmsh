@@ -72,7 +72,9 @@ def run_gh(args: list[str]) -> str:
 
 
 def _ts(value: str) -> datetime:
-    return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    """Parse an ISO timestamp; a value with no offset is taken as UTC."""
+    t = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    return t if t.tzinfo is not None else t.replace(tzinfo=timezone.utc)
 
 
 def _hours(now: datetime, then: datetime) -> float:
@@ -198,25 +200,35 @@ def render_md(findings: list[dict]) -> str:
 
 
 def sync_issue(gh: Runner, repo: str, findings: list[dict], now: datetime) -> str:
-    """Open or update the one tracking issue; close it when clean."""
+    """Open or update the one tracking issue; close it when clean.
+
+    More than one open exact-title match (two overlapping runs that each
+    created one) is collapsed: the lowest number is kept, the rest are closed.
+    """
     rows = json.loads(gh(["issue", "list", "--repo", repo, "--state", "open",
                           "--label", "program", "--search", f'"{ISSUE_TITLE}" in:title',
                           "--json", "number,title"]))
-    existing = next((r["number"] for r in rows if r["title"] == ISSUE_TITLE), None)
+    matches = sorted(r["number"] for r in rows if r["title"] == ISSUE_TITLE)
     body = (f"Program probe run {now:%Y-%m-%d %H:%M} UTC "
             f"(`scripts/program_probe.py`, lessons #1567 and #1544).\n\n"
             + render_md(findings))
     if findings:
-        if existing is None:
+        keep, extras = (matches[0], matches[1:]) if matches else (None, [])
+        for n in extras:
+            gh(["issue", "close", str(n), "--repo", repo,
+                "--comment", f"Duplicate of #{keep}; the probe tracks findings there."])
+        dup = f"; closed duplicates {', '.join(f'#{n}' for n in extras)}" if extras else ""
+        if keep is None:
             gh(["issue", "create", "--repo", repo, "--title", ISSUE_TITLE,
                 "--label", "program", "--body", body])
             return "created"
-        gh(["issue", "edit", str(existing), "--repo", repo, "--body", body])
-        return f"updated #{existing}"
-    if existing is not None:
-        gh(["issue", "close", str(existing), "--repo", repo,
+        gh(["issue", "edit", str(keep), "--repo", repo, "--body", body])
+        return f"updated #{keep}{dup}"
+    for n in matches:
+        gh(["issue", "close", str(n), "--repo", repo,
             "--comment", f"Clean on {now:%Y-%m-%d %H:%M} UTC: no findings."])
-        return f"closed #{existing}"
+    if matches:
+        return "closed " + ", ".join(f"#{n}" for n in matches)
     return "nothing to do"
 
 
@@ -234,6 +246,9 @@ def main(argv: list[str] | None = None, gh: Runner = run_gh) -> int:
     ap.add_argument("--issue", action="store_true",
                     help="open/update/close the tracking issue")
     args = ap.parse_args(argv)
+    if args.issue and (args.from_json is not None or args.now is not None):
+        # The offline mode must never write to the live tracking issue.
+        ap.error("--issue cannot be combined with --from-json or --now")
     now = args.now or datetime.now(timezone.utc)
     if args.from_json is not None:
         data = json.loads(args.from_json.read_text(encoding="utf-8"))
