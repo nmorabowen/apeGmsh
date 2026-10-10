@@ -36,6 +36,7 @@ from apeGmsh.opensees.material.uniaxial import (
     LadrunoUniaxialJ2,
     Maxwell,
     MultiLinear,
+    Parallel,
     PySimple1,
     QzSimple1,
     Steel01,
@@ -1278,6 +1279,147 @@ class TestInitialStressNamespace:
         # tag allocator hands them out in registration order.
         assert ops.tag_for(base) == 1
         assert ops.tag_for(wrapped) == 2
+
+
+# ---------------------------------------------------------------------------
+# Parallel — members in parallel with -factors
+# ---------------------------------------------------------------------------
+
+def _unit_pair() -> tuple[ElasticMaterial, Viscous]:
+    return ElasticMaterial(E=1.0), Viscous(C=1.0, alpha=1.0)
+
+
+class TestParallel:
+    def test_construction(self) -> None:
+        e1, v1 = _unit_pair()
+        m = Parallel(materials=(e1, v1), factors=(3.0, 2.0))
+        assert m.materials == (e1, v1)
+        assert m.factors == (3.0, 2.0)
+
+    def test_factors_default_to_none(self) -> None:
+        e1, v1 = _unit_pair()
+        assert Parallel(materials=(e1, v1)).factors is None
+
+    def test_dependencies_are_the_members_once_each(self) -> None:
+        e1, v1 = _unit_pair()
+        m = Parallel(materials=(e1, v1, e1), factors=(1.0, 2.0, 3.0))
+        assert m.dependencies() == (e1, v1)
+
+    def test_emit_resolves_member_tags_and_writes_factors(self) -> None:
+        e1, v1 = _unit_pair()
+        m = Parallel(materials=(e1, v1), factors=(3.0, 2.0))
+        rec = RecordingEmitter()
+        set_tag_resolver(rec, lambda p: {id(e1): 9001, id(v1): 9002}[id(p)])
+        m._emit(rec, tag=3994)
+        assert rec.calls == [(
+            "uniaxialMaterial",
+            ("Parallel", 3994, 9001, 9002, "-factors", 3.0, 2.0),
+            {},
+        )]
+
+    def test_emit_without_factors_omits_the_flag(self) -> None:
+        e1, v1 = _unit_pair()
+        rec = RecordingEmitter()
+        set_tag_resolver(rec, lambda p: 5 if p is e1 else 6)
+        Parallel(materials=(e1, v1))._emit(rec, tag=1)
+        assert rec.calls[0][1] == ("Parallel", 1, 5, 6)
+
+    def test_t2s_deck_lines_are_byte_equal(self) -> None:
+        """The worked base spring of the San Ramon Tier-2 T2S patch
+        (``Tier2_springs.md`` section 6, element 9290, cell 2B): the two
+        unit members and the three per-direction Parallel lines, tag for
+        tag and digit for digit."""
+        e1, v1 = _unit_pair()
+        tags = {id(e1): 9001, id(v1): 9002}
+        e = TclEmitter()
+        set_tag_resolver(e, lambda p: tags[id(p)])
+        e1._emit(e, tag=9001)
+        v1._emit(e, tag=9002)
+        for tag, k, c in (
+            (3994, 103866.00979083704, 1938.5165844371518),
+            (3995, 107051.65850915055, 1938.5165844371518),
+            (3996, 259060.47502682978, 3413.5732236865174),
+        ):
+            Parallel(materials=(e1, v1), factors=(k, c))._emit(e, tag=tag)
+        assert [ln for ln in e.lines() if ln.startswith("uniaxialMaterial")] == [
+            "uniaxialMaterial Elastic 9001 1.0",
+            "uniaxialMaterial Viscous 9002 1.0 1.0",
+            "uniaxialMaterial Parallel 3994 9001 9002 -factors "
+            "103866.00979083704 1938.5165844371518",
+            "uniaxialMaterial Parallel 3995 9001 9002 -factors "
+            "107051.65850915055 1938.5165844371518",
+            "uniaxialMaterial Parallel 3996 9001 9002 -factors "
+            "259060.47502682978 3413.5732236865174",
+        ]
+
+    def test_numpy_factors_render_as_plain_floats(self) -> None:
+        import numpy as np
+
+        e1, v1 = _unit_pair()
+        e = TclEmitter()
+        set_tag_resolver(e, lambda p: 1 if p is e1 else 2)
+        k = np.float64(103866.00979083704)
+        Parallel(materials=(e1, v1), factors=(k, np.float64(2.0)))._emit(e, tag=3)
+        assert e.lines()[-1] == (
+            "uniaxialMaterial Parallel 3 1 2 -factors 103866.00979083704 2.0"
+        )
+
+    def test_py_line(self) -> None:
+        e1, v1 = _unit_pair()
+        e = PyEmitter()
+        set_tag_resolver(e, lambda p: 1 if p is e1 else 2)
+        Parallel(materials=(e1, v1), factors=(3.0, 2.0))._emit(e, tag=7)
+        assert [ln for ln in e.lines() if "Parallel" in ln] == [
+            "ops.uniaxialMaterial('Parallel', 7, 1, 2, '-factors', 3.0, 2.0)",
+        ]
+
+    def test_rejects_no_members(self) -> None:
+        with pytest.raises(ValueError, match="at least one"):
+            Parallel(materials=())
+
+    def test_rejects_non_uniaxial_member(self) -> None:
+        with pytest.raises(TypeError, match=r"materials\[1\]"):
+            Parallel(materials=(ElasticMaterial(E=1.0), object()))  # type: ignore[arg-type]
+
+    def test_rejects_factor_count_mismatch(self) -> None:
+        e1, v1 = _unit_pair()
+        with pytest.raises(ValueError, match="one per member"):
+            Parallel(materials=(e1, v1), factors=(1.0,))
+
+    @pytest.mark.parametrize("bad", [float("nan"), float("inf"), True])
+    def test_rejects_non_finite_factor(self, bad: float) -> None:
+        e1, v1 = _unit_pair()
+        with pytest.raises(ValueError, match="finite"):
+            Parallel(materials=(e1, v1), factors=(1.0, bad))
+
+    def test_zero_and_negative_factors_pass(self) -> None:
+        e1, v1 = _unit_pair()
+        m = Parallel(materials=(e1, v1), factors=(0.0, -1.0))
+        assert m.factors == (0.0, -1.0)
+
+    def test_is_not_rate_dependent_by_class(self) -> None:
+        # The class flag stays False; a consumer that must refuse a
+        # dashpot walks the members (see the Aggregator tests).
+        assert Parallel.is_rate_dependent is False
+
+
+class TestParallelNamespace:
+    def test_namespace_resolves_names_and_registers_members_first(self) -> None:
+        from typing import cast
+        from unittest.mock import MagicMock
+
+        from apeGmsh.opensees import apeSees
+
+        ops = apeSees(cast("object", MagicMock(name="FEMData")))  # type: ignore[arg-type]
+        e1 = ops.uniaxialMaterial.ElasticMaterial(E=1.0, name="unitE")
+        v1 = ops.uniaxialMaterial.Viscous(C=1.0)
+        par = ops.uniaxialMaterial.Parallel(
+            materials=["unitE", v1], factors=[3.0, 2.0],
+        )
+        assert isinstance(par, Parallel)
+        assert par.materials == (e1, v1)
+        assert par.factors == (3.0, 2.0)
+        assert (ops.tag_for(e1), ops.tag_for(v1), ops.tag_for(par)) == (1, 2, 3)
 
 
 # ---------------------------------------------------------------------------
