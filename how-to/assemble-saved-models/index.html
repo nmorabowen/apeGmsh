@@ -16,7 +16,7 @@
         <link rel="prev" href="../save-reload/">
       
       
-        <link rel="next" href="../compose-modules/">
+        <link rel="next" href="../gravity/">
       
       
         
@@ -691,8 +691,6 @@
       
         
       
-        
-      
     
     
     
@@ -907,10 +905,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#the-older-compose-path" class="md-nav__link">
+  <a href="#coming-from-gcompose" class="md-nav__link">
     <span class="md-ellipsis">
       
-        The older compose path
+        Coming from g.compose
       
     </span>
   </a>
@@ -921,34 +919,6 @@
   
 </nav>
       
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../compose-modules/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Compose modules
-  
-
-    
-  </span>
-  
-  
-
-      </a>
     </li>
   
 
@@ -3765,10 +3735,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#the-older-compose-path" class="md-nav__link">
+  <a href="#coming-from-gcompose" class="md-nav__link">
     <span class="md-ellipsis">
       
-        The older compose path
+        Coming from g.compose
       
     </span>
   </a>
@@ -3981,18 +3951,35 @@ or tie after it, or <code>h5()</code> raises.</p>
   <code>partition_rank</code> on an instance whose source is itself an assembly
   archive.</li>
 </ul>
-<h2 id="the-older-compose-path">The older compose path<a class="headerlink" href="#the-older-compose-path" title="Permanent link">&para;</a></h2>
+<h2 id="coming-from-gcompose">Coming from <code>g.compose</code><a class="headerlink" href="#coming-from-gcompose" title="Permanent link">&para;</a></h2>
 <p><code>g.compose</code>, <code>FEMData.compose</code>, <code>apeGmsh.compose</code> and the <code>Assembly</code>
-verbs <code>add</code>, <code>couple(kind=, ports=)</code> and <code>materialize</code> are the first
-version of this feature. They are to be removed without a deprecation
-period once <code>Assembly</code> covers their uses (<a href="https://github.com/nmorabowen/apeGmsh/blob/main/architecture/decisions/0117-assembly-compose-v2.md">ADR 0117
+verbs <code>add</code>, <code>couple(part_a, part_b, kind=, ports=)</code> and <code>materialize</code>
+were the first version of this feature. They were removed without a
+deprecation period (<a href="https://github.com/nmorabowen/apeGmsh/blob/main/architecture/decisions/0117-assembly-compose-v2.md">ADR 0117
 D7</a>).
-Start new models with <code>instance</code>, <code>tie</code> and <code>bridge</code>; one assembly cannot
-mix the two APIs.</p>
+To move a model across:</p>
+<ul>
+<li><strong>Save the host, then instance it.</strong> There is no live host session:
+  write the host as a file with <code>apeSees(fem).model(...)</code> and <code>.h5()</code>, and
+  <code>instance("host", "host.h5")</code>. Its groups become <code>host.&lt;name&gt;</code>, like
+  every other instance's.</li>
+<li><code>add(label, source, ...)</code> becomes <code>instance(label, source, ...)</code>; a
+  rotation <code>(x, y, z, theta)</code> becomes <code>((x, y, z), theta)</code>.</li>
+<li><code>couple(kind="tie" | "equal_dof", ports=...)</code> becomes <code>tie</code> or
+  <code>equal_dof</code> on dotted ports, <code>"{instance}.{group}"</code>.</li>
+<li><code>materialize()</code> becomes <code>bridge(ndm=, ndf=)</code>, which returns the
+  <code>apeSees</code> bridge; <code>asm.h5(path)</code> writes the archive.</li>
+<li><strong>Supports, masses and loads are restated on the bridge.</strong> A composed
+  v1 session carried the module's <code>g.constraints.bc</code>, <code>g.masses</code> and load
+  cases into its deck; the bridge emits them only when asked:
+  <code>ops.fix_from_model()</code>, <code>ops.mass_from_model()</code> and, inside a pattern,
+  <code>p.from_model(case)</code> (or <code>ops.fix</code> / <code>ops.mass</code> / <code>p.load</code> on dotted
+  groups). The build warns (<code>UnconsumedModelDefinitionWarning</code>) when the
+  model defines supports or masses the deck leaves out, so nothing is
+  dropped silently.</li>
+</ul>
 <hr />
-<p><em>Next: <a href="../compose-modules/">Compose modules</a>, which documents the older
-path for models that still use it; or go on to
-<a href="../gravity/">Apply gravity / self-weight</a>.</em></p>
+<p><em>Next: <a href="../gravity/">Apply gravity / self-weight</a>.</em></p>
 
 
 

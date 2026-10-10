@@ -687,8 +687,6 @@
       
         
       
-        
-      
     
     
     
@@ -774,34 +772,6 @@
     
   
     Assemble saved models
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../how-to/compose-modules/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Compose modules
   
 
     
@@ -2628,10 +2598,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#step-1-save-a-module-with-save_to" class="md-nav__link">
+  <a href="#step-1-save-a-module-with-opsh5" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Step 1 — Save a module with save_to=
+        Step 1 — Save a module with ops.h5
       
     </span>
   </a>
@@ -2639,10 +2609,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#step-2-reload-as-host-then-compose" class="md-nav__link">
+  <a href="#step-2-place-the-module-twice" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Step 2 — Reload as host, then compose
+        Step 2 — Place the module twice
       
     </span>
   </a>
@@ -3721,10 +3691,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#step-1-save-a-module-with-save_to" class="md-nav__link">
+  <a href="#step-1-save-a-module-with-opsh5" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Step 1 — Save a module with save_to=
+        Step 1 — Save a module with ops.h5
       
     </span>
   </a>
@@ -3732,10 +3702,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#step-2-reload-as-host-then-compose" class="md-nav__link">
+  <a href="#step-2-place-the-module-twice" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Step 2 — Reload as host, then compose
+        Step 2 — Place the module twice
       
     </span>
   </a>
@@ -3823,17 +3793,17 @@ draw the geometry, mesh, solve. That's the right shape for one structure.
 But real buildings repeat — the same bay, the same column, the same
 prefabricated unit, stamped out many times. You don't want to re-draw and
 re-mesh it on every copy. You want to build the piece <strong>once</strong>, save it,
-and graft copies into a larger assembly.</p>
-<p>That's <strong>compose</strong>. You save a meshed module to a <code>model.h5</code>, reload it as a
-<em>host</em>, and <code>g.compose(...)</code> another copy of it into place — tag-offset and
-namespaced, no re-meshing. In this example we build the
-<a href="../portal-frame/">portal frame</a> from E1 as a module, compose it into <strong>two
+and place copies of it into a larger model.</p>
+<p>That's <strong>compose</strong>. You save a meshed module, with its elements, to a
+<code>model.h5</code>, then an <code>Assembly</code> places it as many times as you like —
+tag-offset and namespaced, no re-meshing. In this example we build the
+<a href="../portal-frame/">portal frame</a> from E1 as a module, place it as <strong>two
 bays</strong>, push each bay with the same 60 kN lateral load, and check that
-<strong>each bay drifts exactly the E1 amount, 8.39 mm</strong> — because compose leaves
-the bays <em>independent</em>. That self-consistency is the whole proof: a composed
-copy behaves identically to the standalone original.</p>
+<strong>each bay drifts exactly the E1 amount, 8.39 mm</strong> — because the assembly
+leaves the bays <em>independent</em>. That self-consistency is the whole proof: a
+placed copy behaves identically to the standalone original.</p>
 <h2 id="the-problem">The problem<a class="headerlink" href="#the-problem" title="Permanent link">&para;</a></h2>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>   bay 1 (host, bare PGs)            bay 2 (composed, "bay2." prefix)
+<div class="language-text highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>   bay 1 ("bay1." prefix)            bay 2 ("bay2." prefix)
 </span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>   P ──►●═══════════●                P ──►●═══════════●
 </span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>        ║           ║                     ║           ║
 </span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>        ║  columns  ║ beam                ║           ║   H = 5 m
@@ -3861,11 +3831,11 @@ metres; we print millimetres.</p>
 </div>
 <h2 id="the-whole-script">The whole script<a class="headerlink" href="#the-whole-script" title="Permanent link">&para;</a></h2>
 <p>Read it once top to bottom, then we'll walk the three new moves: <strong>save a
-module</strong>, <strong>reload + compose</strong>, and <strong>address the composed copy by its
-prefixed name</strong>.</p>
+module</strong>, <strong>place it twice</strong>, and <strong>address each copy by its prefixed
+name</strong>.</p>
 <div class="language-python highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">tempfile</span><span class="o">,</span><span class="w"> </span><span class="nn">os</span>
-</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
-</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="kn">from</span><span class="w"> </span><span class="nn">apeGmsh</span><span class="w"> </span><span class="kn">import</span> <span class="n">apeGmsh</span><span class="p">,</span> <span class="n">FEMData</span><span class="p">,</span> <span class="n">Results</span>
+</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="kn">from</span><span class="w"> </span><span class="nn">apeGmsh</span><span class="w"> </span><span class="kn">import</span> <span class="n">apeGmsh</span><span class="p">,</span> <span class="n">Results</span>
+</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="kn">from</span><span class="w"> </span><span class="nn">apeGmsh.assembly</span><span class="w"> </span><span class="kn">import</span> <span class="n">Assembly</span>
 </span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="kn">from</span><span class="w"> </span><span class="nn">apeGmsh.opensees</span><span class="w"> </span><span class="kn">import</span> <span class="n">apeSees</span><span class="p">,</span> <span class="n">OpenSeesModel</span>
 </span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="kn">from</span><span class="w"> </span><span class="nn">apeGmsh.results.capture.spec</span><span class="w"> </span><span class="kn">import</span> <span class="n">DomainCaptureSpec</span>
 </span><span id="__span-1-6"><a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a>
@@ -3876,12 +3846,12 @@ prefixed name</strong>.</p>
 </span><span id="__span-1-11"><a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a><span class="n">P</span><span class="p">,</span> <span class="n">W</span> <span class="o">=</span> <span class="mf">60_000.0</span><span class="p">,</span> <span class="mf">300_000.0</span>                                   <span class="c1"># lateral + gravity</span>
 </span><span id="__span-1-12"><a id="__codelineno-1-12" name="__codelineno-1-12" href="#__codelineno-1-12"></a>
 </span><span id="__span-1-13"><a id="__codelineno-1-13" name="__codelineno-1-13" href="#__codelineno-1-13"></a><span class="n">work</span>     <span class="o">=</span> <span class="n">tempfile</span><span class="o">.</span><span class="n">mkdtemp</span><span class="p">()</span>
-</span><span id="__span-1-14"><a id="__codelineno-1-14" name="__codelineno-1-14" href="#__codelineno-1-14"></a><span class="n">module</span>   <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">work</span><span class="p">,</span> <span class="s2">"portal_module.h5"</span><span class="p">)</span>   <span class="c1"># the saved part</span>
-</span><span id="__span-1-15"><a id="__codelineno-1-15" name="__codelineno-1-15" href="#__codelineno-1-15"></a><span class="n">assembly</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">work</span><span class="p">,</span> <span class="s2">"two_bay.h5"</span><span class="p">)</span>         <span class="c1"># the composed model</span>
+</span><span id="__span-1-14"><a id="__codelineno-1-14" name="__codelineno-1-14" href="#__codelineno-1-14"></a><span class="n">module</span>   <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">work</span><span class="p">,</span> <span class="s2">"portal_module.h5"</span><span class="p">)</span>   <span class="c1"># the reusable part</span>
+</span><span id="__span-1-15"><a id="__codelineno-1-15" name="__codelineno-1-15" href="#__codelineno-1-15"></a><span class="n">assembly</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">work</span><span class="p">,</span> <span class="s2">"two_bay.h5"</span><span class="p">)</span>         <span class="c1"># the assembled model</span>
 </span><span id="__span-1-16"><a id="__codelineno-1-16" name="__codelineno-1-16" href="#__codelineno-1-16"></a><span class="n">run_h5</span>   <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">work</span><span class="p">,</span> <span class="s2">"run.h5"</span><span class="p">)</span>             <span class="c1"># the solved results</span>
 </span><span id="__span-1-17"><a id="__codelineno-1-17" name="__codelineno-1-17" href="#__codelineno-1-17"></a>
-</span><span id="__span-1-18"><a id="__codelineno-1-18" name="__codelineno-1-18" href="#__codelineno-1-18"></a><span class="c1"># --- 1. Build the portal MODULE once and SAVE it (save_to=) ---</span>
-</span><span id="__span-1-19"><a id="__codelineno-1-19" name="__codelineno-1-19" href="#__codelineno-1-19"></a><span class="k">with</span> <span class="n">apeGmsh</span><span class="p">(</span><span class="n">model_name</span><span class="o">=</span><span class="s2">"portal_module"</span><span class="p">,</span> <span class="n">save_to</span><span class="o">=</span><span class="n">module</span><span class="p">)</span> <span class="k">as</span> <span class="n">g</span><span class="p">:</span>
+</span><span id="__span-1-18"><a id="__codelineno-1-18" name="__codelineno-1-18" href="#__codelineno-1-18"></a><span class="c1"># --- 1. Build the portal MODULE once: mesh, groups and elements ---</span>
+</span><span id="__span-1-19"><a id="__codelineno-1-19" name="__codelineno-1-19" href="#__codelineno-1-19"></a><span class="k">with</span> <span class="n">apeGmsh</span><span class="p">(</span><span class="n">model_name</span><span class="o">=</span><span class="s2">"portal_module"</span><span class="p">)</span> <span class="k">as</span> <span class="n">g</span><span class="p">:</span>
 </span><span id="__span-1-20"><a id="__codelineno-1-20" name="__codelineno-1-20" href="#__codelineno-1-20"></a>    <span class="n">bl</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">geometry</span><span class="o">.</span><span class="n">add_point</span><span class="p">(</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">)</span>
 </span><span id="__span-1-21"><a id="__codelineno-1-21" name="__codelineno-1-21" href="#__codelineno-1-21"></a>    <span class="n">br</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">geometry</span><span class="o">.</span><span class="n">add_point</span><span class="p">(</span><span class="n">B</span><span class="p">,</span>   <span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">)</span>
 </span><span id="__span-1-22"><a id="__codelineno-1-22" name="__codelineno-1-22" href="#__codelineno-1-22"></a>    <span class="n">tl</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">geometry</span><span class="o">.</span><span class="n">add_point</span><span class="p">(</span><span class="mf">0.0</span><span class="p">,</span> <span class="n">H</span><span class="p">,</span>   <span class="mf">0.0</span><span class="p">)</span>
@@ -3899,179 +3869,184 @@ prefixed name</strong>.</p>
 </span><span id="__span-1-34"><a id="__codelineno-1-34" name="__codelineno-1-34" href="#__codelineno-1-34"></a>
 </span><span id="__span-1-35"><a id="__codelineno-1-35" name="__codelineno-1-35" href="#__codelineno-1-35"></a>    <span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">sizing</span><span class="o">.</span><span class="n">set_global_size</span><span class="p">(</span><span class="n">H</span> <span class="o">/</span> <span class="mf">6.0</span><span class="p">)</span>
 </span><span id="__span-1-36"><a id="__codelineno-1-36" name="__codelineno-1-36" href="#__codelineno-1-36"></a>    <span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">generation</span><span class="o">.</span><span class="n">generate</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
-</span><span id="__span-1-37"><a id="__codelineno-1-37" name="__codelineno-1-37" href="#__codelineno-1-37"></a><span class="c1"># model.h5 is autosaved on exit — the module is now a reusable file.</span>
+</span><span id="__span-1-37"><a id="__codelineno-1-37" name="__codelineno-1-37" href="#__codelineno-1-37"></a>    <span class="n">fem</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">queries</span><span class="o">.</span><span class="n">get_fem_data</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span>
 </span><span id="__span-1-38"><a id="__codelineno-1-38" name="__codelineno-1-38" href="#__codelineno-1-38"></a>
-</span><span id="__span-1-39"><a id="__codelineno-1-39" name="__codelineno-1-39" href="#__codelineno-1-39"></a><span class="c1"># --- 2. Reload the module as a HOST and COMPOSE a second bay 10 m away ---</span>
-</span><span id="__span-1-40"><a id="__codelineno-1-40" name="__codelineno-1-40" href="#__codelineno-1-40"></a><span class="n">g</span> <span class="o">=</span> <span class="n">apeGmsh</span><span class="o">.</span><span class="n">from_h5</span><span class="p">(</span><span class="n">module</span><span class="p">)</span>                          <span class="c1"># chain phase: no gmsh</span>
-</span><span id="__span-1-41"><a id="__codelineno-1-41" name="__codelineno-1-41" href="#__codelineno-1-41"></a><span class="n">g</span><span class="o">.</span><span class="n">compose</span><span class="p">(</span><span class="n">module</span><span class="p">,</span> <span class="n">label</span><span class="o">=</span><span class="s2">"bay2"</span><span class="p">,</span> <span class="n">translate</span><span class="o">=</span><span class="p">(</span><span class="mf">10.0</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">))</span>
-</span><span id="__span-1-42"><a id="__codelineno-1-42" name="__codelineno-1-42" href="#__codelineno-1-42"></a><span class="n">g</span><span class="o">.</span><span class="n">save</span><span class="p">(</span><span class="n">assembly</span><span class="p">)</span>
-</span><span id="__span-1-43"><a id="__codelineno-1-43" name="__codelineno-1-43" href="#__codelineno-1-43"></a>
-</span><span id="__span-1-44"><a id="__codelineno-1-44" name="__codelineno-1-44" href="#__codelineno-1-44"></a><span class="c1"># Chain-phase sessions have no live gmsh, so read the composed snapshot</span>
-</span><span id="__span-1-45"><a id="__codelineno-1-45" name="__codelineno-1-45" href="#__codelineno-1-45"></a><span class="c1"># back from the file we just wrote:</span>
-</span><span id="__span-1-46"><a id="__codelineno-1-46" name="__codelineno-1-46" href="#__codelineno-1-46"></a><span class="n">fem</span> <span class="o">=</span> <span class="n">FEMData</span><span class="o">.</span><span class="n">from_h5</span><span class="p">(</span><span class="n">assembly</span><span class="p">)</span>
-</span><span id="__span-1-47"><a id="__codelineno-1-47" name="__codelineno-1-47" href="#__codelineno-1-47"></a>
-</span><span id="__span-1-48"><a id="__codelineno-1-48" name="__codelineno-1-48" href="#__codelineno-1-48"></a><span class="c1"># --- 3. Build the two-bay OpenSees model through the typed bridge ---</span>
-</span><span id="__span-1-49"><a id="__codelineno-1-49" name="__codelineno-1-49" href="#__codelineno-1-49"></a><span class="n">ops</span> <span class="o">=</span> <span class="n">apeSees</span><span class="p">(</span><span class="n">fem</span><span class="p">)</span>
-</span><span id="__span-1-50"><a id="__codelineno-1-50" name="__codelineno-1-50" href="#__codelineno-1-50"></a><span class="n">ops</span><span class="o">.</span><span class="n">model</span><span class="p">(</span><span class="n">ndm</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span> <span class="n">ndf</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
-</span><span id="__span-1-51"><a id="__codelineno-1-51" name="__codelineno-1-51" href="#__codelineno-1-51"></a><span class="n">transf</span> <span class="o">=</span> <span class="n">ops</span><span class="o">.</span><span class="n">geomTransf</span><span class="o">.</span><span class="n">Linear</span><span class="p">()</span>
-</span><span id="__span-1-52"><a id="__codelineno-1-52" name="__codelineno-1-52" href="#__codelineno-1-52"></a>
-</span><span id="__span-1-53"><a id="__codelineno-1-53" name="__codelineno-1-53" href="#__codelineno-1-53"></a><span class="c1"># Host bay keeps BARE names; the composed bay is prefixed "bay2."</span>
-</span><span id="__span-1-54"><a id="__codelineno-1-54" name="__codelineno-1-54" href="#__codelineno-1-54"></a><span class="n">ops</span><span class="o">.</span><span class="n">element</span><span class="o">.</span><span class="n">elasticBeamColumn</span><span class="p">(</span><span class="n">pg</span><span class="o">=</span><span class="s2">"Columns"</span><span class="p">,</span>      <span class="n">transf</span><span class="o">=</span><span class="n">transf</span><span class="p">,</span> <span class="n">A</span><span class="o">=</span><span class="n">Ac</span><span class="p">,</span> <span class="n">E</span><span class="o">=</span><span class="n">E</span><span class="p">,</span> <span class="n">Iz</span><span class="o">=</span><span class="n">Ic</span><span class="p">)</span>
-</span><span id="__span-1-55"><a id="__codelineno-1-55" name="__codelineno-1-55" href="#__codelineno-1-55"></a><span class="n">ops</span><span class="o">.</span><span class="n">element</span><span class="o">.</span><span class="n">elasticBeamColumn</span><span class="p">(</span><span class="n">pg</span><span class="o">=</span><span class="s2">"Beam"</span><span class="p">,</span>         <span class="n">transf</span><span class="o">=</span><span class="n">transf</span><span class="p">,</span> <span class="n">A</span><span class="o">=</span><span class="n">Ab</span><span class="p">,</span> <span class="n">E</span><span class="o">=</span><span class="n">E</span><span class="p">,</span> <span class="n">Iz</span><span class="o">=</span><span class="n">Ib</span><span class="p">)</span>
-</span><span id="__span-1-56"><a id="__codelineno-1-56" name="__codelineno-1-56" href="#__codelineno-1-56"></a><span class="n">ops</span><span class="o">.</span><span class="n">element</span><span class="o">.</span><span class="n">elasticBeamColumn</span><span class="p">(</span><span class="n">pg</span><span class="o">=</span><span class="s2">"bay2.Columns"</span><span class="p">,</span> <span class="n">transf</span><span class="o">=</span><span class="n">transf</span><span class="p">,</span> <span class="n">A</span><span class="o">=</span><span class="n">Ac</span><span class="p">,</span> <span class="n">E</span><span class="o">=</span><span class="n">E</span><span class="p">,</span> <span class="n">Iz</span><span class="o">=</span><span class="n">Ic</span><span class="p">)</span>
-</span><span id="__span-1-57"><a id="__codelineno-1-57" name="__codelineno-1-57" href="#__codelineno-1-57"></a><span class="n">ops</span><span class="o">.</span><span class="n">element</span><span class="o">.</span><span class="n">elasticBeamColumn</span><span class="p">(</span><span class="n">pg</span><span class="o">=</span><span class="s2">"bay2.Beam"</span><span class="p">,</span>    <span class="n">transf</span><span class="o">=</span><span class="n">transf</span><span class="p">,</span> <span class="n">A</span><span class="o">=</span><span class="n">Ab</span><span class="p">,</span> <span class="n">E</span><span class="o">=</span><span class="n">E</span><span class="p">,</span> <span class="n">Iz</span><span class="o">=</span><span class="n">Ib</span><span class="p">)</span>
-</span><span id="__span-1-58"><a id="__codelineno-1-58" name="__codelineno-1-58" href="#__codelineno-1-58"></a>
-</span><span id="__span-1-59"><a id="__codelineno-1-59" name="__codelineno-1-59" href="#__codelineno-1-59"></a><span class="n">ops</span><span class="o">.</span><span class="n">fix</span><span class="p">(</span><span class="n">pg</span><span class="o">=</span><span class="s2">"Base"</span><span class="p">,</span>      <span class="n">dofs</span><span class="o">=</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">))</span>
-</span><span id="__span-1-60"><a id="__codelineno-1-60" name="__codelineno-1-60" href="#__codelineno-1-60"></a><span class="n">ops</span><span class="o">.</span><span class="n">fix</span><span class="p">(</span><span class="n">pg</span><span class="o">=</span><span class="s2">"bay2.Base"</span><span class="p">,</span> <span class="n">dofs</span><span class="o">=</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">))</span>
+</span><span id="__span-1-39"><a id="__codelineno-1-39" name="__codelineno-1-39" href="#__codelineno-1-39"></a><span class="n">portal</span> <span class="o">=</span> <span class="n">apeSees</span><span class="p">(</span><span class="n">fem</span><span class="p">)</span>
+</span><span id="__span-1-40"><a id="__codelineno-1-40" name="__codelineno-1-40" href="#__codelineno-1-40"></a><span class="n">portal</span><span class="o">.</span><span class="n">model</span><span class="p">(</span><span class="n">ndm</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span> <span class="n">ndf</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
+</span><span id="__span-1-41"><a id="__codelineno-1-41" name="__codelineno-1-41" href="#__codelineno-1-41"></a><span class="n">transf</span> <span class="o">=</span> <span class="n">portal</span><span class="o">.</span><span class="n">geomTransf</span><span class="o">.</span><span class="n">Linear</span><span class="p">()</span>
+</span><span id="__span-1-42"><a id="__codelineno-1-42" name="__codelineno-1-42" href="#__codelineno-1-42"></a><span class="n">portal</span><span class="o">.</span><span class="n">element</span><span class="o">.</span><span class="n">elasticBeamColumn</span><span class="p">(</span><span class="n">pg</span><span class="o">=</span><span class="s2">"Columns"</span><span class="p">,</span> <span class="n">transf</span><span class="o">=</span><span class="n">transf</span><span class="p">,</span> <span class="n">A</span><span class="o">=</span><span class="n">Ac</span><span class="p">,</span> <span class="n">E</span><span class="o">=</span><span class="n">E</span><span class="p">,</span> <span class="n">Iz</span><span class="o">=</span><span class="n">Ic</span><span class="p">)</span>
+</span><span id="__span-1-43"><a id="__codelineno-1-43" name="__codelineno-1-43" href="#__codelineno-1-43"></a><span class="n">portal</span><span class="o">.</span><span class="n">element</span><span class="o">.</span><span class="n">elasticBeamColumn</span><span class="p">(</span><span class="n">pg</span><span class="o">=</span><span class="s2">"Beam"</span><span class="p">,</span>    <span class="n">transf</span><span class="o">=</span><span class="n">transf</span><span class="p">,</span> <span class="n">A</span><span class="o">=</span><span class="n">Ab</span><span class="p">,</span> <span class="n">E</span><span class="o">=</span><span class="n">E</span><span class="p">,</span> <span class="n">Iz</span><span class="o">=</span><span class="n">Ib</span><span class="p">)</span>
+</span><span id="__span-1-44"><a id="__codelineno-1-44" name="__codelineno-1-44" href="#__codelineno-1-44"></a><span class="n">portal</span><span class="o">.</span><span class="n">h5</span><span class="p">(</span><span class="n">module</span><span class="p">)</span>                 <span class="c1"># the module: one reusable file</span>
+</span><span id="__span-1-45"><a id="__codelineno-1-45" name="__codelineno-1-45" href="#__codelineno-1-45"></a>
+</span><span id="__span-1-46"><a id="__codelineno-1-46" name="__codelineno-1-46" href="#__codelineno-1-46"></a><span class="c1"># --- 2. Place the module twice: bay 2 sits 10 m to the right ---</span>
+</span><span id="__span-1-47"><a id="__codelineno-1-47" name="__codelineno-1-47" href="#__codelineno-1-47"></a><span class="n">asm</span> <span class="o">=</span> <span class="n">Assembly</span><span class="p">(</span><span class="s2">"two_bay"</span><span class="p">)</span>
+</span><span id="__span-1-48"><a id="__codelineno-1-48" name="__codelineno-1-48" href="#__codelineno-1-48"></a><span class="n">asm</span><span class="o">.</span><span class="n">instance</span><span class="p">(</span><span class="s2">"bay1"</span><span class="p">,</span> <span class="n">module</span><span class="p">)</span>
+</span><span id="__span-1-49"><a id="__codelineno-1-49" name="__codelineno-1-49" href="#__codelineno-1-49"></a><span class="n">asm</span><span class="o">.</span><span class="n">instance</span><span class="p">(</span><span class="s2">"bay2"</span><span class="p">,</span> <span class="n">module</span><span class="p">,</span> <span class="n">translate</span><span class="o">=</span><span class="p">(</span><span class="mf">10.0</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">))</span>
+</span><span id="__span-1-50"><a id="__codelineno-1-50" name="__codelineno-1-50" href="#__codelineno-1-50"></a><span class="n">ops</span> <span class="o">=</span> <span class="n">asm</span><span class="o">.</span><span class="n">bridge</span><span class="p">(</span><span class="n">ndm</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span> <span class="n">ndf</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>    <span class="c1"># the elements arrive with each instance</span>
+</span><span id="__span-1-51"><a id="__codelineno-1-51" name="__codelineno-1-51" href="#__codelineno-1-51"></a>
+</span><span id="__span-1-52"><a id="__codelineno-1-52" name="__codelineno-1-52" href="#__codelineno-1-52"></a><span class="c1"># --- 3. Supports, loads and the analysis, on the bridge ---</span>
+</span><span id="__span-1-53"><a id="__codelineno-1-53" name="__codelineno-1-53" href="#__codelineno-1-53"></a><span class="k">for</span> <span class="n">bay</span> <span class="ow">in</span> <span class="p">(</span><span class="s2">"bay1"</span><span class="p">,</span> <span class="s2">"bay2"</span><span class="p">):</span>
+</span><span id="__span-1-54"><a id="__codelineno-1-54" name="__codelineno-1-54" href="#__codelineno-1-54"></a>    <span class="n">ops</span><span class="o">.</span><span class="n">fix</span><span class="p">(</span><span class="n">pg</span><span class="o">=</span><span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="n">bay</span><span class="si">}</span><span class="s2">.Base"</span><span class="p">,</span> <span class="n">dofs</span><span class="o">=</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">))</span>
+</span><span id="__span-1-55"><a id="__codelineno-1-55" name="__codelineno-1-55" href="#__codelineno-1-55"></a>
+</span><span id="__span-1-56"><a id="__codelineno-1-56" name="__codelineno-1-56" href="#__codelineno-1-56"></a><span class="n">ts</span> <span class="o">=</span> <span class="n">ops</span><span class="o">.</span><span class="n">timeSeries</span><span class="o">.</span><span class="n">Linear</span><span class="p">()</span>
+</span><span id="__span-1-57"><a id="__codelineno-1-57" name="__codelineno-1-57" href="#__codelineno-1-57"></a><span class="k">with</span> <span class="n">ops</span><span class="o">.</span><span class="n">pattern</span><span class="o">.</span><span class="n">Plain</span><span class="p">(</span><span class="n">series</span><span class="o">=</span><span class="n">ts</span><span class="p">)</span> <span class="k">as</span> <span class="n">pat</span><span class="p">:</span>
+</span><span id="__span-1-58"><a id="__codelineno-1-58" name="__codelineno-1-58" href="#__codelineno-1-58"></a>    <span class="k">for</span> <span class="n">bay</span> <span class="ow">in</span> <span class="p">(</span><span class="s2">"bay1"</span><span class="p">,</span> <span class="s2">"bay2"</span><span class="p">):</span>
+</span><span id="__span-1-59"><a id="__codelineno-1-59" name="__codelineno-1-59" href="#__codelineno-1-59"></a>        <span class="n">pat</span><span class="o">.</span><span class="n">load</span><span class="p">(</span><span class="n">pg</span><span class="o">=</span><span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="n">bay</span><span class="si">}</span><span class="s2">.RoofL"</span><span class="p">,</span> <span class="n">forces</span><span class="o">=</span><span class="p">(</span><span class="n">P</span> <span class="o">/</span> <span class="mf">2.0</span><span class="p">,</span> <span class="o">-</span><span class="n">W</span> <span class="o">/</span> <span class="mf">2.0</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">))</span>
+</span><span id="__span-1-60"><a id="__codelineno-1-60" name="__codelineno-1-60" href="#__codelineno-1-60"></a>        <span class="n">pat</span><span class="o">.</span><span class="n">load</span><span class="p">(</span><span class="n">pg</span><span class="o">=</span><span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="n">bay</span><span class="si">}</span><span class="s2">.RoofR"</span><span class="p">,</span> <span class="n">forces</span><span class="o">=</span><span class="p">(</span><span class="n">P</span> <span class="o">/</span> <span class="mf">2.0</span><span class="p">,</span> <span class="o">-</span><span class="n">W</span> <span class="o">/</span> <span class="mf">2.0</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">))</span>
 </span><span id="__span-1-61"><a id="__codelineno-1-61" name="__codelineno-1-61" href="#__codelineno-1-61"></a>
-</span><span id="__span-1-62"><a id="__codelineno-1-62" name="__codelineno-1-62" href="#__codelineno-1-62"></a><span class="n">ts</span> <span class="o">=</span> <span class="n">ops</span><span class="o">.</span><span class="n">timeSeries</span><span class="o">.</span><span class="n">Linear</span><span class="p">()</span>
-</span><span id="__span-1-63"><a id="__codelineno-1-63" name="__codelineno-1-63" href="#__codelineno-1-63"></a><span class="k">with</span> <span class="n">ops</span><span class="o">.</span><span class="n">pattern</span><span class="o">.</span><span class="n">Plain</span><span class="p">(</span><span class="n">series</span><span class="o">=</span><span class="n">ts</span><span class="p">)</span> <span class="k">as</span> <span class="n">pat</span><span class="p">:</span>
-</span><span id="__span-1-64"><a id="__codelineno-1-64" name="__codelineno-1-64" href="#__codelineno-1-64"></a>    <span class="n">pat</span><span class="o">.</span><span class="n">load</span><span class="p">(</span><span class="n">pg</span><span class="o">=</span><span class="s2">"RoofL"</span><span class="p">,</span>      <span class="n">forces</span><span class="o">=</span><span class="p">(</span><span class="n">P</span> <span class="o">/</span> <span class="mf">2.0</span><span class="p">,</span> <span class="o">-</span><span class="n">W</span> <span class="o">/</span> <span class="mf">2.0</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">))</span>   <span class="c1"># bay 1</span>
-</span><span id="__span-1-65"><a id="__codelineno-1-65" name="__codelineno-1-65" href="#__codelineno-1-65"></a>    <span class="n">pat</span><span class="o">.</span><span class="n">load</span><span class="p">(</span><span class="n">pg</span><span class="o">=</span><span class="s2">"RoofR"</span><span class="p">,</span>      <span class="n">forces</span><span class="o">=</span><span class="p">(</span><span class="n">P</span> <span class="o">/</span> <span class="mf">2.0</span><span class="p">,</span> <span class="o">-</span><span class="n">W</span> <span class="o">/</span> <span class="mf">2.0</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">))</span>
-</span><span id="__span-1-66"><a id="__codelineno-1-66" name="__codelineno-1-66" href="#__codelineno-1-66"></a>    <span class="n">pat</span><span class="o">.</span><span class="n">load</span><span class="p">(</span><span class="n">pg</span><span class="o">=</span><span class="s2">"bay2.RoofL"</span><span class="p">,</span> <span class="n">forces</span><span class="o">=</span><span class="p">(</span><span class="n">P</span> <span class="o">/</span> <span class="mf">2.0</span><span class="p">,</span> <span class="o">-</span><span class="n">W</span> <span class="o">/</span> <span class="mf">2.0</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">))</span>   <span class="c1"># bay 2</span>
-</span><span id="__span-1-67"><a id="__codelineno-1-67" name="__codelineno-1-67" href="#__codelineno-1-67"></a>    <span class="n">pat</span><span class="o">.</span><span class="n">load</span><span class="p">(</span><span class="n">pg</span><span class="o">=</span><span class="s2">"bay2.RoofR"</span><span class="p">,</span> <span class="n">forces</span><span class="o">=</span><span class="p">(</span><span class="n">P</span> <span class="o">/</span> <span class="mf">2.0</span><span class="p">,</span> <span class="o">-</span><span class="n">W</span> <span class="o">/</span> <span class="mf">2.0</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">))</span>
-</span><span id="__span-1-68"><a id="__codelineno-1-68" name="__codelineno-1-68" href="#__codelineno-1-68"></a>
-</span><span id="__span-1-69"><a id="__codelineno-1-69" name="__codelineno-1-69" href="#__codelineno-1-69"></a><span class="n">ops</span><span class="o">.</span><span class="n">constraints</span><span class="o">.</span><span class="n">Plain</span><span class="p">()</span>
-</span><span id="__span-1-70"><a id="__codelineno-1-70" name="__codelineno-1-70" href="#__codelineno-1-70"></a><span class="n">ops</span><span class="o">.</span><span class="n">numberer</span><span class="o">.</span><span class="n">Plain</span><span class="p">()</span>
-</span><span id="__span-1-71"><a id="__codelineno-1-71" name="__codelineno-1-71" href="#__codelineno-1-71"></a><span class="n">ops</span><span class="o">.</span><span class="n">system</span><span class="o">.</span><span class="n">BandGeneral</span><span class="p">()</span>
-</span><span id="__span-1-72"><a id="__codelineno-1-72" name="__codelineno-1-72" href="#__codelineno-1-72"></a><span class="n">ops</span><span class="o">.</span><span class="n">test</span><span class="o">.</span><span class="n">NormDispIncr</span><span class="p">(</span><span class="n">tol</span><span class="o">=</span><span class="mf">1e-10</span><span class="p">,</span> <span class="n">max_iter</span><span class="o">=</span><span class="mi">10</span><span class="p">)</span>
-</span><span id="__span-1-73"><a id="__codelineno-1-73" name="__codelineno-1-73" href="#__codelineno-1-73"></a><span class="n">ops</span><span class="o">.</span><span class="n">algorithm</span><span class="o">.</span><span class="n">Linear</span><span class="p">()</span>
-</span><span id="__span-1-74"><a id="__codelineno-1-74" name="__codelineno-1-74" href="#__codelineno-1-74"></a><span class="n">ops</span><span class="o">.</span><span class="n">integrator</span><span class="o">.</span><span class="n">LoadControl</span><span class="p">(</span><span class="n">dlam</span><span class="o">=</span><span class="mf">1.0</span><span class="p">)</span>
-</span><span id="__span-1-75"><a id="__codelineno-1-75" name="__codelineno-1-75" href="#__codelineno-1-75"></a><span class="n">ops</span><span class="o">.</span><span class="n">analysis</span><span class="o">.</span><span class="n">Static</span><span class="p">()</span>
-</span><span id="__span-1-76"><a id="__codelineno-1-76" name="__codelineno-1-76" href="#__codelineno-1-76"></a>
-</span><span id="__span-1-77"><a id="__codelineno-1-77" name="__codelineno-1-77" href="#__codelineno-1-77"></a><span class="c1"># --- 4. Solve, capturing each bay's roof drift AND base reactions ---</span>
-</span><span id="__span-1-78"><a id="__codelineno-1-78" name="__codelineno-1-78" href="#__codelineno-1-78"></a><span class="n">spec</span> <span class="o">=</span> <span class="n">DomainCaptureSpec</span><span class="p">(</span><span class="n">opensees</span><span class="o">=</span><span class="n">ops</span><span class="p">)</span>
-</span><span id="__span-1-79"><a id="__codelineno-1-79" name="__codelineno-1-79" href="#__codelineno-1-79"></a><span class="k">for</span> <span class="n">pg</span> <span class="ow">in</span> <span class="p">(</span><span class="s2">"RoofL"</span><span class="p">,</span> <span class="s2">"RoofR"</span><span class="p">,</span> <span class="s2">"bay2.RoofL"</span><span class="p">,</span> <span class="s2">"bay2.RoofR"</span><span class="p">):</span>
-</span><span id="__span-1-80"><a id="__codelineno-1-80" name="__codelineno-1-80" href="#__codelineno-1-80"></a>    <span class="n">spec</span><span class="o">.</span><span class="n">nodes</span><span class="p">(</span><span class="n">pg</span><span class="o">=</span><span class="n">pg</span><span class="p">,</span> <span class="n">components</span><span class="o">=</span><span class="p">[</span><span class="s2">"displacement"</span><span class="p">])</span>
-</span><span id="__span-1-81"><a id="__codelineno-1-81" name="__codelineno-1-81" href="#__codelineno-1-81"></a><span class="n">spec</span><span class="o">.</span><span class="n">nodes</span><span class="p">(</span><span class="n">pg</span><span class="o">=</span><span class="s2">"Base"</span><span class="p">,</span>      <span class="n">components</span><span class="o">=</span><span class="p">[</span><span class="s2">"reaction_force"</span><span class="p">])</span>
-</span><span id="__span-1-82"><a id="__codelineno-1-82" name="__codelineno-1-82" href="#__codelineno-1-82"></a><span class="n">spec</span><span class="o">.</span><span class="n">nodes</span><span class="p">(</span><span class="n">pg</span><span class="o">=</span><span class="s2">"bay2.Base"</span><span class="p">,</span> <span class="n">components</span><span class="o">=</span><span class="p">[</span><span class="s2">"reaction_force"</span><span class="p">])</span>
-</span><span id="__span-1-83"><a id="__codelineno-1-83" name="__codelineno-1-83" href="#__codelineno-1-83"></a><span class="k">with</span> <span class="n">ops</span><span class="o">.</span><span class="n">domain_capture</span><span class="p">(</span><span class="n">spec</span><span class="p">,</span> <span class="n">path</span><span class="o">=</span><span class="n">run_h5</span><span class="p">)</span> <span class="k">as</span> <span class="n">cap</span><span class="p">:</span>
-</span><span id="__span-1-84"><a id="__codelineno-1-84" name="__codelineno-1-84" href="#__codelineno-1-84"></a>    <span class="n">cap</span><span class="o">.</span><span class="n">begin_stage</span><span class="p">(</span><span class="s2">"lateral"</span><span class="p">,</span> <span class="n">kind</span><span class="o">=</span><span class="s2">"static"</span><span class="p">)</span>
-</span><span id="__span-1-85"><a id="__codelineno-1-85" name="__codelineno-1-85" href="#__codelineno-1-85"></a>    <span class="n">ops</span><span class="o">.</span><span class="n">analyze</span><span class="p">(</span><span class="n">steps</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
-</span><span id="__span-1-86"><a id="__codelineno-1-86" name="__codelineno-1-86" href="#__codelineno-1-86"></a>    <span class="n">cap</span><span class="o">.</span><span class="n">step</span><span class="p">(</span><span class="n">t</span><span class="o">=</span><span class="mf">1.0</span><span class="p">)</span>
-</span><span id="__span-1-87"><a id="__codelineno-1-87" name="__codelineno-1-87" href="#__codelineno-1-87"></a>    <span class="n">cap</span><span class="o">.</span><span class="n">end_stage</span><span class="p">()</span>
-</span><span id="__span-1-88"><a id="__codelineno-1-88" name="__codelineno-1-88" href="#__codelineno-1-88"></a>
-</span><span id="__span-1-89"><a id="__codelineno-1-89" name="__codelineno-1-89" href="#__codelineno-1-89"></a><span class="c1"># --- 5. Read each bay's drift back, by name ---</span>
-</span><span id="__span-1-90"><a id="__codelineno-1-90" name="__codelineno-1-90" href="#__codelineno-1-90"></a><span class="n">om</span> <span class="o">=</span> <span class="n">OpenSeesModel</span><span class="o">.</span><span class="n">from_h5</span><span class="p">(</span><span class="n">run_h5</span><span class="p">,</span> <span class="n">fem_root</span><span class="o">=</span><span class="s2">"/model"</span><span class="p">)</span>
-</span><span id="__span-1-91"><a id="__codelineno-1-91" name="__codelineno-1-91" href="#__codelineno-1-91"></a><span class="n">results</span> <span class="o">=</span> <span class="n">Results</span><span class="o">.</span><span class="n">from_native</span><span class="p">(</span><span class="n">run_h5</span><span class="p">,</span> <span class="n">model</span><span class="o">=</span><span class="n">om</span><span class="p">)</span>
-</span><span id="__span-1-92"><a id="__codelineno-1-92" name="__codelineno-1-92" href="#__codelineno-1-92"></a>
-</span><span id="__span-1-93"><a id="__codelineno-1-93" name="__codelineno-1-93" href="#__codelineno-1-93"></a><span class="k">def</span><span class="w"> </span><span class="nf">drift</span><span class="p">(</span><span class="n">prefix</span><span class="p">):</span>
-</span><span id="__span-1-94"><a id="__codelineno-1-94" name="__codelineno-1-94" href="#__codelineno-1-94"></a>    <span class="n">l</span>  <span class="o">=</span> <span class="n">results</span><span class="o">.</span><span class="n">nodes</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">pg</span><span class="o">=</span><span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="n">prefix</span><span class="si">}</span><span class="s2">RoofL"</span><span class="p">,</span> <span class="n">component</span><span class="o">=</span><span class="s2">"displacement_x"</span><span class="p">)</span>
-</span><span id="__span-1-95"><a id="__codelineno-1-95" name="__codelineno-1-95" href="#__codelineno-1-95"></a>    <span class="n">r</span>  <span class="o">=</span> <span class="n">results</span><span class="o">.</span><span class="n">nodes</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">pg</span><span class="o">=</span><span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="n">prefix</span><span class="si">}</span><span class="s2">RoofR"</span><span class="p">,</span> <span class="n">component</span><span class="o">=</span><span class="s2">"displacement_x"</span><span class="p">)</span>
-</span><span id="__span-1-96"><a id="__codelineno-1-96" name="__codelineno-1-96" href="#__codelineno-1-96"></a>    <span class="k">return</span> <span class="mf">0.5</span> <span class="o">*</span> <span class="p">(</span><span class="nb">float</span><span class="p">(</span><span class="n">l</span><span class="o">.</span><span class="n">values</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="mi">0</span><span class="p">])</span> <span class="o">+</span> <span class="nb">float</span><span class="p">(</span><span class="n">r</span><span class="o">.</span><span class="n">values</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="mi">0</span><span class="p">]))</span>
+</span><span id="__span-1-62"><a id="__codelineno-1-62" name="__codelineno-1-62" href="#__codelineno-1-62"></a><span class="n">ops</span><span class="o">.</span><span class="n">constraints</span><span class="o">.</span><span class="n">Plain</span><span class="p">()</span>
+</span><span id="__span-1-63"><a id="__codelineno-1-63" name="__codelineno-1-63" href="#__codelineno-1-63"></a><span class="n">ops</span><span class="o">.</span><span class="n">numberer</span><span class="o">.</span><span class="n">Plain</span><span class="p">()</span>
+</span><span id="__span-1-64"><a id="__codelineno-1-64" name="__codelineno-1-64" href="#__codelineno-1-64"></a><span class="n">ops</span><span class="o">.</span><span class="n">system</span><span class="o">.</span><span class="n">BandGeneral</span><span class="p">()</span>
+</span><span id="__span-1-65"><a id="__codelineno-1-65" name="__codelineno-1-65" href="#__codelineno-1-65"></a><span class="n">ops</span><span class="o">.</span><span class="n">test</span><span class="o">.</span><span class="n">NormDispIncr</span><span class="p">(</span><span class="n">tol</span><span class="o">=</span><span class="mf">1e-10</span><span class="p">,</span> <span class="n">max_iter</span><span class="o">=</span><span class="mi">10</span><span class="p">)</span>
+</span><span id="__span-1-66"><a id="__codelineno-1-66" name="__codelineno-1-66" href="#__codelineno-1-66"></a><span class="n">ops</span><span class="o">.</span><span class="n">algorithm</span><span class="o">.</span><span class="n">Linear</span><span class="p">()</span>
+</span><span id="__span-1-67"><a id="__codelineno-1-67" name="__codelineno-1-67" href="#__codelineno-1-67"></a><span class="n">ops</span><span class="o">.</span><span class="n">integrator</span><span class="o">.</span><span class="n">LoadControl</span><span class="p">(</span><span class="n">dlam</span><span class="o">=</span><span class="mf">1.0</span><span class="p">)</span>
+</span><span id="__span-1-68"><a id="__codelineno-1-68" name="__codelineno-1-68" href="#__codelineno-1-68"></a><span class="n">ops</span><span class="o">.</span><span class="n">analysis</span><span class="o">.</span><span class="n">Static</span><span class="p">()</span>
+</span><span id="__span-1-69"><a id="__codelineno-1-69" name="__codelineno-1-69" href="#__codelineno-1-69"></a><span class="n">asm</span><span class="o">.</span><span class="n">h5</span><span class="p">(</span><span class="n">assembly</span><span class="p">)</span>                  <span class="c1"># the assembled model.h5 + /assembly</span>
+</span><span id="__span-1-70"><a id="__codelineno-1-70" name="__codelineno-1-70" href="#__codelineno-1-70"></a>
+</span><span id="__span-1-71"><a id="__codelineno-1-71" name="__codelineno-1-71" href="#__codelineno-1-71"></a><span class="c1"># --- 4. Solve, capturing each bay's roof drift AND base reactions ---</span>
+</span><span id="__span-1-72"><a id="__codelineno-1-72" name="__codelineno-1-72" href="#__codelineno-1-72"></a><span class="n">spec</span> <span class="o">=</span> <span class="n">DomainCaptureSpec</span><span class="p">(</span><span class="n">opensees</span><span class="o">=</span><span class="n">ops</span><span class="p">)</span>
+</span><span id="__span-1-73"><a id="__codelineno-1-73" name="__codelineno-1-73" href="#__codelineno-1-73"></a><span class="k">for</span> <span class="n">bay</span> <span class="ow">in</span> <span class="p">(</span><span class="s2">"bay1"</span><span class="p">,</span> <span class="s2">"bay2"</span><span class="p">):</span>
+</span><span id="__span-1-74"><a id="__codelineno-1-74" name="__codelineno-1-74" href="#__codelineno-1-74"></a>    <span class="n">spec</span><span class="o">.</span><span class="n">nodes</span><span class="p">(</span><span class="n">pg</span><span class="o">=</span><span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="n">bay</span><span class="si">}</span><span class="s2">.RoofL"</span><span class="p">,</span> <span class="n">components</span><span class="o">=</span><span class="p">[</span><span class="s2">"displacement"</span><span class="p">])</span>
+</span><span id="__span-1-75"><a id="__codelineno-1-75" name="__codelineno-1-75" href="#__codelineno-1-75"></a>    <span class="n">spec</span><span class="o">.</span><span class="n">nodes</span><span class="p">(</span><span class="n">pg</span><span class="o">=</span><span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="n">bay</span><span class="si">}</span><span class="s2">.RoofR"</span><span class="p">,</span> <span class="n">components</span><span class="o">=</span><span class="p">[</span><span class="s2">"displacement"</span><span class="p">])</span>
+</span><span id="__span-1-76"><a id="__codelineno-1-76" name="__codelineno-1-76" href="#__codelineno-1-76"></a>    <span class="n">spec</span><span class="o">.</span><span class="n">nodes</span><span class="p">(</span><span class="n">pg</span><span class="o">=</span><span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="n">bay</span><span class="si">}</span><span class="s2">.Base"</span><span class="p">,</span>  <span class="n">components</span><span class="o">=</span><span class="p">[</span><span class="s2">"reaction_force"</span><span class="p">])</span>
+</span><span id="__span-1-77"><a id="__codelineno-1-77" name="__codelineno-1-77" href="#__codelineno-1-77"></a><span class="k">with</span> <span class="n">ops</span><span class="o">.</span><span class="n">domain_capture</span><span class="p">(</span><span class="n">spec</span><span class="p">,</span> <span class="n">path</span><span class="o">=</span><span class="n">run_h5</span><span class="p">)</span> <span class="k">as</span> <span class="n">cap</span><span class="p">:</span>
+</span><span id="__span-1-78"><a id="__codelineno-1-78" name="__codelineno-1-78" href="#__codelineno-1-78"></a>    <span class="n">cap</span><span class="o">.</span><span class="n">begin_stage</span><span class="p">(</span><span class="s2">"lateral"</span><span class="p">,</span> <span class="n">kind</span><span class="o">=</span><span class="s2">"static"</span><span class="p">)</span>
+</span><span id="__span-1-79"><a id="__codelineno-1-79" name="__codelineno-1-79" href="#__codelineno-1-79"></a>    <span class="n">ops</span><span class="o">.</span><span class="n">analyze</span><span class="p">(</span><span class="n">steps</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
+</span><span id="__span-1-80"><a id="__codelineno-1-80" name="__codelineno-1-80" href="#__codelineno-1-80"></a>    <span class="n">cap</span><span class="o">.</span><span class="n">step</span><span class="p">(</span><span class="n">t</span><span class="o">=</span><span class="mf">1.0</span><span class="p">)</span>
+</span><span id="__span-1-81"><a id="__codelineno-1-81" name="__codelineno-1-81" href="#__codelineno-1-81"></a>    <span class="n">cap</span><span class="o">.</span><span class="n">end_stage</span><span class="p">()</span>
+</span><span id="__span-1-82"><a id="__codelineno-1-82" name="__codelineno-1-82" href="#__codelineno-1-82"></a>
+</span><span id="__span-1-83"><a id="__codelineno-1-83" name="__codelineno-1-83" href="#__codelineno-1-83"></a><span class="c1"># --- 5. Read each bay's drift back, by name ---</span>
+</span><span id="__span-1-84"><a id="__codelineno-1-84" name="__codelineno-1-84" href="#__codelineno-1-84"></a><span class="n">om</span> <span class="o">=</span> <span class="n">OpenSeesModel</span><span class="o">.</span><span class="n">from_h5</span><span class="p">(</span><span class="n">run_h5</span><span class="p">,</span> <span class="n">fem_root</span><span class="o">=</span><span class="s2">"/model"</span><span class="p">)</span>
+</span><span id="__span-1-85"><a id="__codelineno-1-85" name="__codelineno-1-85" href="#__codelineno-1-85"></a><span class="n">results</span> <span class="o">=</span> <span class="n">Results</span><span class="o">.</span><span class="n">from_native</span><span class="p">(</span><span class="n">run_h5</span><span class="p">,</span> <span class="n">model</span><span class="o">=</span><span class="n">om</span><span class="p">)</span>
+</span><span id="__span-1-86"><a id="__codelineno-1-86" name="__codelineno-1-86" href="#__codelineno-1-86"></a>
+</span><span id="__span-1-87"><a id="__codelineno-1-87" name="__codelineno-1-87" href="#__codelineno-1-87"></a><span class="k">def</span><span class="w"> </span><span class="nf">drift</span><span class="p">(</span><span class="n">bay</span><span class="p">):</span>
+</span><span id="__span-1-88"><a id="__codelineno-1-88" name="__codelineno-1-88" href="#__codelineno-1-88"></a>    <span class="n">l</span> <span class="o">=</span> <span class="n">results</span><span class="o">.</span><span class="n">nodes</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">pg</span><span class="o">=</span><span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="n">bay</span><span class="si">}</span><span class="s2">.RoofL"</span><span class="p">,</span> <span class="n">component</span><span class="o">=</span><span class="s2">"displacement_x"</span><span class="p">)</span>
+</span><span id="__span-1-89"><a id="__codelineno-1-89" name="__codelineno-1-89" href="#__codelineno-1-89"></a>    <span class="n">r</span> <span class="o">=</span> <span class="n">results</span><span class="o">.</span><span class="n">nodes</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">pg</span><span class="o">=</span><span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="n">bay</span><span class="si">}</span><span class="s2">.RoofR"</span><span class="p">,</span> <span class="n">component</span><span class="o">=</span><span class="s2">"displacement_x"</span><span class="p">)</span>
+</span><span id="__span-1-90"><a id="__codelineno-1-90" name="__codelineno-1-90" href="#__codelineno-1-90"></a>    <span class="k">return</span> <span class="mf">0.5</span> <span class="o">*</span> <span class="p">(</span><span class="nb">float</span><span class="p">(</span><span class="n">l</span><span class="o">.</span><span class="n">values</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="mi">0</span><span class="p">])</span> <span class="o">+</span> <span class="nb">float</span><span class="p">(</span><span class="n">r</span><span class="o">.</span><span class="n">values</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="mi">0</span><span class="p">]))</span>
+</span><span id="__span-1-91"><a id="__codelineno-1-91" name="__codelineno-1-91" href="#__codelineno-1-91"></a>
+</span><span id="__span-1-92"><a id="__codelineno-1-92" name="__codelineno-1-92" href="#__codelineno-1-92"></a><span class="n">drift_bay1</span> <span class="o">=</span> <span class="n">drift</span><span class="p">(</span><span class="s2">"bay1"</span><span class="p">)</span>
+</span><span id="__span-1-93"><a id="__codelineno-1-93" name="__codelineno-1-93" href="#__codelineno-1-93"></a><span class="n">drift_bay2</span> <span class="o">=</span> <span class="n">drift</span><span class="p">(</span><span class="s2">"bay2"</span><span class="p">)</span>
+</span><span id="__span-1-94"><a id="__codelineno-1-94" name="__codelineno-1-94" href="#__codelineno-1-94"></a>
+</span><span id="__span-1-95"><a id="__codelineno-1-95" name="__codelineno-1-95" href="#__codelineno-1-95"></a><span class="n">bx1</span> <span class="o">=</span> <span class="n">results</span><span class="o">.</span><span class="n">nodes</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">pg</span><span class="o">=</span><span class="s2">"bay1.Base"</span><span class="p">,</span> <span class="n">component</span><span class="o">=</span><span class="s2">"reaction_force_x"</span><span class="p">)</span>
+</span><span id="__span-1-96"><a id="__codelineno-1-96" name="__codelineno-1-96" href="#__codelineno-1-96"></a><span class="n">bx2</span> <span class="o">=</span> <span class="n">results</span><span class="o">.</span><span class="n">nodes</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">pg</span><span class="o">=</span><span class="s2">"bay2.Base"</span><span class="p">,</span> <span class="n">component</span><span class="o">=</span><span class="s2">"reaction_force_x"</span><span class="p">)</span>
 </span><span id="__span-1-97"><a id="__codelineno-1-97" name="__codelineno-1-97" href="#__codelineno-1-97"></a>
-</span><span id="__span-1-98"><a id="__codelineno-1-98" name="__codelineno-1-98" href="#__codelineno-1-98"></a><span class="n">drift_bay1</span> <span class="o">=</span> <span class="n">drift</span><span class="p">(</span><span class="s2">""</span><span class="p">)</span>        <span class="c1"># host, bare names</span>
-</span><span id="__span-1-99"><a id="__codelineno-1-99" name="__codelineno-1-99" href="#__codelineno-1-99"></a><span class="n">drift_bay2</span> <span class="o">=</span> <span class="n">drift</span><span class="p">(</span><span class="s2">"bay2."</span><span class="p">)</span>   <span class="c1"># composed copy, prefixed names</span>
-</span><span id="__span-1-100"><a id="__codelineno-1-100" name="__codelineno-1-100" href="#__codelineno-1-100"></a>
-</span><span id="__span-1-101"><a id="__codelineno-1-101" name="__codelineno-1-101" href="#__codelineno-1-101"></a><span class="n">bx1</span> <span class="o">=</span> <span class="n">results</span><span class="o">.</span><span class="n">nodes</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">pg</span><span class="o">=</span><span class="s2">"Base"</span><span class="p">,</span>      <span class="n">component</span><span class="o">=</span><span class="s2">"reaction_force_x"</span><span class="p">)</span>
-</span><span id="__span-1-102"><a id="__codelineno-1-102" name="__codelineno-1-102" href="#__codelineno-1-102"></a><span class="n">bx2</span> <span class="o">=</span> <span class="n">results</span><span class="o">.</span><span class="n">nodes</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">pg</span><span class="o">=</span><span class="s2">"bay2.Base"</span><span class="p">,</span> <span class="n">component</span><span class="o">=</span><span class="s2">"reaction_force_x"</span><span class="p">)</span>
-</span><span id="__span-1-103"><a id="__codelineno-1-103" name="__codelineno-1-103" href="#__codelineno-1-103"></a>
-</span><span id="__span-1-104"><a id="__codelineno-1-104" name="__codelineno-1-104" href="#__codelineno-1-104"></a><span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"bay 1 drift      = </span><span class="si">{</span><span class="n">drift_bay1</span><span class="o">*</span><span class="mf">1e3</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2"> mm"</span><span class="p">)</span>
-</span><span id="__span-1-105"><a id="__codelineno-1-105" name="__codelineno-1-105" href="#__codelineno-1-105"></a><span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"bay 2 drift      = </span><span class="si">{</span><span class="n">drift_bay2</span><span class="o">*</span><span class="mf">1e3</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2"> mm"</span><span class="p">)</span>
-</span><span id="__span-1-106"><a id="__codelineno-1-106" name="__codelineno-1-106" href="#__codelineno-1-106"></a><span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"E1 standalone    = 8.3883 mm"</span><span class="p">)</span>
-</span><span id="__span-1-107"><a id="__codelineno-1-107" name="__codelineno-1-107" href="#__codelineno-1-107"></a><span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"bay1 vs bay2     = </span><span class="si">{</span><span class="nb">abs</span><span class="p">(</span><span class="n">drift_bay1</span><span class="o">-</span><span class="n">drift_bay2</span><span class="p">)</span><span class="o">*</span><span class="mf">1e3</span><span class="si">:</span><span class="s2">.2e</span><span class="si">}</span><span class="s2"> mm"</span><span class="p">)</span>
-</span><span id="__span-1-108"><a id="__codelineno-1-108" name="__codelineno-1-108" href="#__codelineno-1-108"></a><span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"bay 1 base shear = </span><span class="si">{</span><span class="nb">float</span><span class="p">(</span><span class="n">bx1</span><span class="o">.</span><span class="n">values</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="p">:]</span><span class="o">.</span><span class="n">sum</span><span class="p">())</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2"> N"</span><span class="p">)</span>
-</span><span id="__span-1-109"><a id="__codelineno-1-109" name="__codelineno-1-109" href="#__codelineno-1-109"></a><span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"bay 2 base shear = </span><span class="si">{</span><span class="nb">float</span><span class="p">(</span><span class="n">bx2</span><span class="o">.</span><span class="n">values</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="p">:]</span><span class="o">.</span><span class="n">sum</span><span class="p">())</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2"> N"</span><span class="p">)</span>
+</span><span id="__span-1-98"><a id="__codelineno-1-98" name="__codelineno-1-98" href="#__codelineno-1-98"></a><span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"bay 1 drift      = </span><span class="si">{</span><span class="n">drift_bay1</span><span class="o">*</span><span class="mf">1e3</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2"> mm"</span><span class="p">)</span>
+</span><span id="__span-1-99"><a id="__codelineno-1-99" name="__codelineno-1-99" href="#__codelineno-1-99"></a><span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"bay 2 drift      = </span><span class="si">{</span><span class="n">drift_bay2</span><span class="o">*</span><span class="mf">1e3</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2"> mm"</span><span class="p">)</span>
+</span><span id="__span-1-100"><a id="__codelineno-1-100" name="__codelineno-1-100" href="#__codelineno-1-100"></a><span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"E1 standalone    = 8.3883 mm"</span><span class="p">)</span>
+</span><span id="__span-1-101"><a id="__codelineno-1-101" name="__codelineno-1-101" href="#__codelineno-1-101"></a><span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"bay1 vs bay2     = </span><span class="si">{</span><span class="nb">abs</span><span class="p">(</span><span class="n">drift_bay1</span><span class="o">-</span><span class="n">drift_bay2</span><span class="p">)</span><span class="o">*</span><span class="mf">1e3</span><span class="si">:</span><span class="s2">.2e</span><span class="si">}</span><span class="s2"> mm"</span><span class="p">)</span>
+</span><span id="__span-1-102"><a id="__codelineno-1-102" name="__codelineno-1-102" href="#__codelineno-1-102"></a><span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"bay 1 base shear = </span><span class="si">{</span><span class="nb">float</span><span class="p">(</span><span class="n">bx1</span><span class="o">.</span><span class="n">values</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="p">:]</span><span class="o">.</span><span class="n">sum</span><span class="p">())</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2"> N"</span><span class="p">)</span>
+</span><span id="__span-1-103"><a id="__codelineno-1-103" name="__codelineno-1-103" href="#__codelineno-1-103"></a><span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"bay 2 base shear = </span><span class="si">{</span><span class="nb">float</span><span class="p">(</span><span class="n">bx2</span><span class="o">.</span><span class="n">values</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="p">:]</span><span class="o">.</span><span class="n">sum</span><span class="p">())</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2"> N"</span><span class="p">)</span>
 </span></code></pre></div>
 <p>Run it. You should see:</p>
 <div class="language-text highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>bay 1 drift      = 8.3883 mm
 </span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>bay 2 drift      = 8.3883 mm
 </span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>E1 standalone    = 8.3883 mm
-</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>bay1 vs bay2     = 1.07e-11 mm
+</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>bay1 vs bay2     = 6.83e-12 mm
 </span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>bay 1 base shear = -60000.0 N
 </span><span id="__span-2-6"><a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a>bay 2 base shear = -60000.0 N
 </span></code></pre></div>
 <p><strong>Both bays drift 8.3883 mm — the exact E1 number — and agree with each
 other to 1e-11 mm.</strong> Each base shear is <code>−60 000 N</code> to the last digit. The
-composed copy is mechanically <em>indistinguishable</em> from the standalone
+placed copies are mechanically <em>indistinguishable</em> from the standalone
 portal. That's compose doing its job: it relocates and renames a module
 without perturbing a single stiffness term.</p>
-<h2 id="step-1-save-a-module-with-save_to">Step 1 — Save a module with <code>save_to=</code><a class="headerlink" href="#step-1-save-a-module-with-save_to" title="Permanent link">&para;</a></h2>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="k">with</span> <span class="n">apeGmsh</span><span class="p">(</span><span class="n">model_name</span><span class="o">=</span><span class="s2">"portal_module"</span><span class="p">,</span> <span class="n">save_to</span><span class="o">=</span><span class="n">module</span><span class="p">)</span> <span class="k">as</span> <span class="n">g</span><span class="p">:</span>
-</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>    <span class="o">...</span>
-</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>    <span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">generation</span><span class="o">.</span><span class="n">generate</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
-</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="c1"># autosaved to module on context-manager exit</span>
+<h2 id="step-1-save-a-module-with-opsh5">Step 1 — Save a module with <code>ops.h5</code><a class="headerlink" href="#step-1-save-a-module-with-opsh5" title="Permanent link">&para;</a></h2>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="n">portal</span> <span class="o">=</span> <span class="n">apeSees</span><span class="p">(</span><span class="n">fem</span><span class="p">)</span>
+</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="n">portal</span><span class="o">.</span><span class="n">model</span><span class="p">(</span><span class="n">ndm</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span> <span class="n">ndf</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
+</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="n">transf</span> <span class="o">=</span> <span class="n">portal</span><span class="o">.</span><span class="n">geomTransf</span><span class="o">.</span><span class="n">Linear</span><span class="p">()</span>
+</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="n">portal</span><span class="o">.</span><span class="n">element</span><span class="o">.</span><span class="n">elasticBeamColumn</span><span class="p">(</span><span class="n">pg</span><span class="o">=</span><span class="s2">"Columns"</span><span class="p">,</span> <span class="n">transf</span><span class="o">=</span><span class="n">transf</span><span class="p">,</span> <span class="n">A</span><span class="o">=</span><span class="n">Ac</span><span class="p">,</span> <span class="n">E</span><span class="o">=</span><span class="n">E</span><span class="p">,</span> <span class="n">Iz</span><span class="o">=</span><span class="n">Ic</span><span class="p">)</span>
+</span><span id="__span-3-5"><a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="n">portal</span><span class="o">.</span><span class="n">element</span><span class="o">.</span><span class="n">elasticBeamColumn</span><span class="p">(</span><span class="n">pg</span><span class="o">=</span><span class="s2">"Beam"</span><span class="p">,</span>    <span class="n">transf</span><span class="o">=</span><span class="n">transf</span><span class="p">,</span> <span class="n">A</span><span class="o">=</span><span class="n">Ab</span><span class="p">,</span> <span class="n">E</span><span class="o">=</span><span class="n">E</span><span class="p">,</span> <span class="n">Iz</span><span class="o">=</span><span class="n">Ib</span><span class="p">)</span>
+</span><span id="__span-3-6"><a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="n">portal</span><span class="o">.</span><span class="n">h5</span><span class="p">(</span><span class="n">module</span><span class="p">)</span>
 </span></code></pre></div>
-<p>The only thing that makes this session different from E1 is <code>save_to=</code>.
-Pass it a path and the meshed model — geometry, physical groups, nodes,
-elements, the lot — is written to a native <code>model.h5</code> when the <code>with</code> block
-exits. (You can also call <code>g.save("path.h5")</code> explicitly mid-session.) That
-file <em>is</em> the module: a self-contained, reusable part you can compose any
-number of times, in this script or a different one next week.</p>
-<p>A module is just a normal model that you happened to save. Nothing special
-is declared. Every PG name you'll want to address later — <code>"Columns"</code>,
-<code>"Base"</code>, <code>"RoofL"</code> — gets named here, exactly as in E1.</p>
-<h2 id="step-2-reload-as-host-then-compose">Step 2 — Reload as host, then compose<a class="headerlink" href="#step-2-reload-as-host-then-compose" title="Permanent link">&para;</a></h2>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="n">g</span> <span class="o">=</span> <span class="n">apeGmsh</span><span class="o">.</span><span class="n">from_h5</span><span class="p">(</span><span class="n">module</span><span class="p">)</span>                          <span class="c1"># the HOST</span>
-</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="n">g</span><span class="o">.</span><span class="n">compose</span><span class="p">(</span><span class="n">module</span><span class="p">,</span> <span class="n">label</span><span class="o">=</span><span class="s2">"bay2"</span><span class="p">,</span> <span class="n">translate</span><span class="o">=</span><span class="p">(</span><span class="mf">10.0</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">))</span>
-</span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="n">g</span><span class="o">.</span><span class="n">save</span><span class="p">(</span><span class="n">assembly</span><span class="p">)</span>
-</span><span id="__span-4-4"><a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="n">fem</span> <span class="o">=</span> <span class="n">FEMData</span><span class="o">.</span><span class="n">from_h5</span><span class="p">(</span><span class="n">assembly</span><span class="p">)</span>
+<p>The geometry and mesh are E1's. What's new is where the session ends: the
+meshed model goes to a bridge, the bridge gets the dimensions and the
+elements, and <strong><code>portal.h5(module)</code></strong> writes it all — nodes, elements,
+physical groups, the transform and the element specs — to a native
+<code>model.h5</code>. That file <em>is</em> the module: a self-contained, reusable part you
+can place any number of times, in this script or a different one next week.</p>
+<p>Two things make a file a module. It must carry its model dimensions —
+<code>ops.model(ndm=2, ndf=3)</code> — because the assembly checks them; a plain
+<code>g.save()</code> file has none, and placing it is refused. And whatever it
+declares on its groups travels with every copy: the columns and the beam
+are declared <strong>once</strong>, here, and both bays get them. That's the "build
+once" story all the way down to the element properties.</p>
+<p>Every PG name you'll want to address later — <code>"Columns"</code>, <code>"Base"</code>,
+<code>"RoofL"</code> — gets named here, exactly as in E1.</p>
+<h2 id="step-2-place-the-module-twice">Step 2 — Place the module twice<a class="headerlink" href="#step-2-place-the-module-twice" title="Permanent link">&para;</a></h2>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="n">asm</span> <span class="o">=</span> <span class="n">Assembly</span><span class="p">(</span><span class="s2">"two_bay"</span><span class="p">)</span>
+</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="n">asm</span><span class="o">.</span><span class="n">instance</span><span class="p">(</span><span class="s2">"bay1"</span><span class="p">,</span> <span class="n">module</span><span class="p">)</span>
+</span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="n">asm</span><span class="o">.</span><span class="n">instance</span><span class="p">(</span><span class="s2">"bay2"</span><span class="p">,</span> <span class="n">module</span><span class="p">,</span> <span class="n">translate</span><span class="o">=</span><span class="p">(</span><span class="mf">10.0</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">))</span>
+</span><span id="__span-4-4"><a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="n">ops</span> <span class="o">=</span> <span class="n">asm</span><span class="o">.</span><span class="n">bridge</span><span class="p">(</span><span class="n">ndm</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span> <span class="n">ndf</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
 </span></code></pre></div>
-<p>Two new calls, and one gotcha.</p>
-<p><strong><code>apeGmsh.from_h5(module)</code></strong> reloads the saved module as a live session —
-but in <strong>chain phase</strong>: the FEM comes straight off disk, and there is <em>no
-gmsh kernel</em> behind it. That's fine here (we're assembling, not drawing),
-but it means geometry/meshing calls would raise. The reloaded model is the
-<strong>host</strong>, and the host keeps its physical-group names <strong>bare</strong>.</p>
-<p><strong><code>g.compose(module, label="bay2", translate=(10, 0, 0))</code></strong> grafts a second
-copy of the module into the same session, shifted 10 m in +x. The <code>label=</code>
-is required: it's the <strong>namespace prefix</strong> for the composed copy. Every
-physical group the module carried comes in renamed <code>"{label}.{pg}"</code> — so the
-second bay's columns become <code>"bay2.Columns"</code>, its base <code>"bay2.Base"</code>, and so
-on. The host's groups stay bare. (<code>translate=</code> rigidly shifts the copy's
-node coordinates; there's also <code>rotate=</code> and an <code>anchor=</code> sugar that resolves
-a PG to a translate.)</p>
-<p><strong>The gotcha:</strong> because a <code>from_h5</code> session has no live gmsh,
-<code>g.mesh.queries.get_fem_data(...)</code> can't run. So we <code>g.save(assembly)</code> the
-composed result and read the snapshot back with <strong><code>FEMData.from_h5</code></strong>. (In a
-single-session model you'd just call <code>get_fem_data</code> directly — this two-step
-is specific to chain-phase compose.)</p>
-<p>If you want to see what's inside a module <em>before</em> composing it,
-<code>g.compose_inspect(module)["pg_inventory"]</code> returns its physical-group names
-without merging anything.</p>
+<p>Three new calls.</p>
+<p><strong><code>Assembly("two_bay")</code></strong> starts an empty assembly. It draws nothing and
+meshes nothing; it only records where each file goes.</p>
+<p><strong><code>asm.instance(label, module, ...)</code></strong> places one copy of the file. The
+label is the copy's <strong>namespace prefix</strong>: every physical group the module
+carries comes in renamed <code>"{label}.{pg}"</code> — so the first bay's columns are
+<code>"bay1.Columns"</code>, the second bay's base is <code>"bay2.Base"</code>, and so on. Every
+instance is namespaced the same way; there is no privileged first copy
+with bare names. <code>translate=</code> rigidly shifts the copy; there's also
+<code>rotate=((ax, ay, az), theta)</code>, applied before the shift, and <code>anchor=</code>,
+which places a copy at a port of an earlier instance.</p>
+<p><strong><code>asm.bridge(ndm=2, ndf=3)</code></strong> merges the instances into one model and
+hands back an ordinary <code>apeSees</code> bridge, with each module's elements
+already declared on its prefixed groups. From here on it is the bridge
+you've used since E1.</p>
+<p>If you want to see what's inside a module <em>before</em> placing it,
+<code>apeGmsh.from_h5(module).compose_inspect(module)["pg_inventory"]</code> returns its
+physical-group names without merging anything — here
+<code>('Base', 'Beam', 'Columns', 'RoofL', 'RoofR')</code>.</p>
 <div class="admonition warning">
 <p class="admonition-title">Compose does not weld coincident nodes</p>
-<p>Compose is a <strong>graft, not a merge</strong>. If two modules happen to share a
-coordinate at an interface, compose leaves them as <strong>two separate
-nodes</strong> — the modules stay mechanically independent unless you explicitly
-tie them. In this example that independence is exactly what we <em>want</em>
-(the bays are 10 m apart and uncoupled). To actually <em>connect</em> adjacent
-modules — share a column line, bolt a bay to its neighbour — you declare
-an interface constraint after composing, e.g.
-<code>g.constraints.tied_contact(master_label="face", slave_label="bay2.face")</code>.
-That's a separate move; plain <code>compose</code> never couples anything.</p>
+<p>Placing an instance is a <strong>graft, not a merge</strong>. If two instances happen
+to share a coordinate at an interface, they keep <strong>two separate
+nodes</strong> — the copies stay mechanically independent unless you
+explicitly tie them. In this example that independence is exactly what
+we <em>want</em> (the bays are 10 m apart and uncoupled). To actually <em>connect</em>
+adjacent copies — share a column line, bolt a bay to its neighbour — you
+declare the join on the assembly before bridging, e.g.
+<code>asm.tie("bay1.face", "bay2.face")</code> or
+<code>asm.equal_dof("bay1.joint", "bay2.joint", dofs=[1, 2, 3])</code>. That's a
+separate move; <code>instance</code> never couples anything.</p>
 </div>
 <h2 id="step-3-address-each-copy-by-its-namespaced-name">Step 3 — Address each copy by its namespaced name<a class="headerlink" href="#step-3-address-each-copy-by-its-namespaced-name" title="Permanent link">&para;</a></h2>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="n">ops</span><span class="o">.</span><span class="n">element</span><span class="o">.</span><span class="n">elasticBeamColumn</span><span class="p">(</span><span class="n">pg</span><span class="o">=</span><span class="s2">"Columns"</span><span class="p">,</span>      <span class="o">...</span><span class="p">)</span>   <span class="c1"># host — bare</span>
-</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="n">ops</span><span class="o">.</span><span class="n">element</span><span class="o">.</span><span class="n">elasticBeamColumn</span><span class="p">(</span><span class="n">pg</span><span class="o">=</span><span class="s2">"bay2.Columns"</span><span class="p">,</span> <span class="o">...</span><span class="p">)</span>   <span class="c1"># composed — prefixed</span>
-</span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="n">ops</span><span class="o">.</span><span class="n">fix</span><span class="p">(</span><span class="n">pg</span><span class="o">=</span><span class="s2">"Base"</span><span class="p">,</span>      <span class="n">dofs</span><span class="o">=</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">))</span>
-</span><span id="__span-5-4"><a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="n">ops</span><span class="o">.</span><span class="n">fix</span><span class="p">(</span><span class="n">pg</span><span class="o">=</span><span class="s2">"bay2.Base"</span><span class="p">,</span> <span class="n">dofs</span><span class="o">=</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">))</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="k">for</span> <span class="n">bay</span> <span class="ow">in</span> <span class="p">(</span><span class="s2">"bay1"</span><span class="p">,</span> <span class="s2">"bay2"</span><span class="p">):</span>
+</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>    <span class="n">ops</span><span class="o">.</span><span class="n">fix</span><span class="p">(</span><span class="n">pg</span><span class="o">=</span><span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="n">bay</span><span class="si">}</span><span class="s2">.Base"</span><span class="p">,</span> <span class="n">dofs</span><span class="o">=</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">))</span>
+</span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>    <span class="o">...</span>
+</span><span id="__span-5-4"><a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a>        <span class="n">pat</span><span class="o">.</span><span class="n">load</span><span class="p">(</span><span class="n">pg</span><span class="o">=</span><span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="n">bay</span><span class="si">}</span><span class="s2">.RoofL"</span><span class="p">,</span> <span class="n">forces</span><span class="o">=</span><span class="p">(</span><span class="n">P</span> <span class="o">/</span> <span class="mf">2.0</span><span class="p">,</span> <span class="o">-</span><span class="n">W</span> <span class="o">/</span> <span class="mf">2.0</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">))</span>
 </span></code></pre></div>
-<p>This is the payoff of the namespacing. The host bay and the composed bay are
-<em>the same module</em>, so they'd have name-collided if compose hadn't renamed
-one. Because the copy is prefixed, every selector stays unambiguous: <code>pg=
-"Columns"</code> is bay 1's columns, <code>pg="bay2.Columns"</code> is bay 2's. You declare
-each bay's elements, fixities, and loads with the <strong>same names you'd use for
-a standalone portal</strong>, just with the <code>"bay2."</code> prefix on the copy.</p>
-<p>The loads are declared <strong>once each</strong> — bay 1 at <code>RoofL</code>/<code>RoofR</code>, bay 2 at
-<code>bay2.RoofL</code>/<code>bay2.RoofR</code>. (Remember the bridge auto-emits MP constraints,
-while <code>g.loads</code> cases are opt-in — import each into a <code>Plain</code> pattern with
-<code>p.from_model("&lt;case&gt;")</code>; masses and fixities are re-declared explicitly
-here.)</p>
+<p>This is the payoff of the namespacing. The two bays are <em>the same module</em>,
+so they'd have name-collided if the assembly hadn't prefixed them. Because
+every copy is prefixed, every selector stays unambiguous: <code>pg="bay1.Base"</code>
+is bay 1's base, <code>pg="bay2.Base"</code> is bay 2's. You declare each bay's
+fixities and loads with the <strong>same names you'd use for a standalone
+portal</strong>, just with the instance label in front — which is why a loop over
+the labels does it all.</p>
+<p>Supports, loads and the analysis are declared <strong>here, on the bridge</strong>, not
+in the module. A module carries its model — mesh, groups, elements; the
+assembly decides how the whole thing is held and pushed. (The bridge
+auto-emits MP constraints, while <code>g.loads</code> cases are opt-in — import each
+into a <code>Plain</code> pattern with <code>p.from_model("&lt;case&gt;")</code>; fixities are declared
+explicitly here.)</p>
+<p><code>asm.h5(assembly)</code> then writes the assembled model: the same <code>model.h5</code>
+the bridge's own <code>ops.h5</code> writes, plus an <code>/assembly</code> zone that lists the
+instances. <code>apeGmsh.from_h5(assembly).compose_list()</code> reads it back —
+one record per bay, with its source file and its <code>translate</code>.</p>
 <h2 id="step-4-read-each-bay-back-by-name">Step 4 — Read each bay back, by name<a class="headerlink" href="#step-4-read-each-bay-back-by-name" title="Permanent link">&para;</a></h2>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="k">def</span><span class="w"> </span><span class="nf">drift</span><span class="p">(</span><span class="n">prefix</span><span class="p">):</span>
-</span><span id="__span-6-2"><a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>    <span class="n">l</span> <span class="o">=</span> <span class="n">results</span><span class="o">.</span><span class="n">nodes</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">pg</span><span class="o">=</span><span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="n">prefix</span><span class="si">}</span><span class="s2">RoofL"</span><span class="p">,</span> <span class="n">component</span><span class="o">=</span><span class="s2">"displacement_x"</span><span class="p">)</span>
-</span><span id="__span-6-3"><a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a>    <span class="n">r</span> <span class="o">=</span> <span class="n">results</span><span class="o">.</span><span class="n">nodes</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">pg</span><span class="o">=</span><span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="n">prefix</span><span class="si">}</span><span class="s2">RoofR"</span><span class="p">,</span> <span class="n">component</span><span class="o">=</span><span class="s2">"displacement_x"</span><span class="p">)</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="k">def</span><span class="w"> </span><span class="nf">drift</span><span class="p">(</span><span class="n">bay</span><span class="p">):</span>
+</span><span id="__span-6-2"><a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>    <span class="n">l</span> <span class="o">=</span> <span class="n">results</span><span class="o">.</span><span class="n">nodes</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">pg</span><span class="o">=</span><span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="n">bay</span><span class="si">}</span><span class="s2">.RoofL"</span><span class="p">,</span> <span class="n">component</span><span class="o">=</span><span class="s2">"displacement_x"</span><span class="p">)</span>
+</span><span id="__span-6-3"><a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a>    <span class="n">r</span> <span class="o">=</span> <span class="n">results</span><span class="o">.</span><span class="n">nodes</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">pg</span><span class="o">=</span><span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="n">bay</span><span class="si">}</span><span class="s2">.RoofR"</span><span class="p">,</span> <span class="n">component</span><span class="o">=</span><span class="s2">"displacement_x"</span><span class="p">)</span>
 </span><span id="__span-6-4"><a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a>    <span class="k">return</span> <span class="mf">0.5</span> <span class="o">*</span> <span class="p">(</span><span class="nb">float</span><span class="p">(</span><span class="n">l</span><span class="o">.</span><span class="n">values</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="mi">0</span><span class="p">])</span> <span class="o">+</span> <span class="nb">float</span><span class="p">(</span><span class="n">r</span><span class="o">.</span><span class="n">values</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="mi">0</span><span class="p">]))</span>
 </span><span id="__span-6-5"><a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a>
-</span><span id="__span-6-6"><a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a><span class="n">drift_bay1</span> <span class="o">=</span> <span class="n">drift</span><span class="p">(</span><span class="s2">""</span><span class="p">)</span>        <span class="c1"># bare host names</span>
-</span><span id="__span-6-7"><a id="__codelineno-6-7" name="__codelineno-6-7" href="#__codelineno-6-7"></a><span class="n">drift_bay2</span> <span class="o">=</span> <span class="n">drift</span><span class="p">(</span><span class="s2">"bay2."</span><span class="p">)</span>   <span class="c1"># prefixed composed names</span>
+</span><span id="__span-6-6"><a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a><span class="n">drift_bay1</span> <span class="o">=</span> <span class="n">drift</span><span class="p">(</span><span class="s2">"bay1"</span><span class="p">)</span>
+</span><span id="__span-6-7"><a id="__codelineno-6-7" name="__codelineno-6-7" href="#__codelineno-6-7"></a><span class="n">drift_bay2</span> <span class="o">=</span> <span class="n">drift</span><span class="p">(</span><span class="s2">"bay2"</span><span class="p">)</span>
 </span></code></pre></div>
 <p>The read side is the same <code>results.nodes.get(pg=..., component=...)</code> you've
 used since E1 — <code>Results.from_native(..., model=...)</code> with <code>model=</code>
-required, reading the model out of the same Composed file. The <em>only</em>
-difference is which name you ask for: bare for the host, <code>"bay2."</code>-prefixed
-for the composed copy. One helper, two prefixes, two bays.</p>
+required, reading the model out of the same run file. The <em>only</em>
+difference is which name you ask for: the instance label in front of the
+group. One helper, two labels, two bays.</p>
 <h2 id="see-it">See it<a class="headerlink" href="#see-it" title="Permanent link">&para;</a></h2>
 <p>The deformed shape makes the independence obvious. We render it headless
 (matplotlib, no GPU) and look straight down the out-of-plane axis:</p>
@@ -4090,33 +4065,37 @@ kernel.) The composed viewer can even colour by source module
 (<code>set_mode('Module')</code>) so each bay gets its own hue.</p>
 <h2 id="what-you-just-learned">What you just learned<a class="headerlink" href="#what-you-just-learned" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>Build once, save, reuse.</strong> <code>save_to=</code> (or <code>g.save(path)</code>) writes a meshed
-  model to a native <code>model.h5</code>. That file is a reusable <strong>module</strong>.</li>
-<li><strong><code>apeGmsh.from_h5</code> + <code>g.compose</code>.</strong> Reload a module as a <em>host</em> (chain
-  phase — no gmsh), then <code>g.compose(module, label=..., translate=...)</code> grafts
-  copies into place, tag-offset and renamed. No re-meshing.</li>
-<li><strong>Composed PGs are label-prefixed.</strong> The host keeps bare names
-  (<code>"Columns"</code>); each composed copy is <code>"{label}.{pg}"</code> (<code>"bay2.Columns"</code>).
-  Address every part by that name from there on.</li>
-<li><strong>Compose grafts, it doesn't weld.</strong> Coincident cross-module nodes stay
-  <em>separate</em> — modules are independent until you add an interface constraint
-  (<code>tied_contact</code> / <code>embedded</code> / <code>equal_dof</code>).</li>
-<li><strong>Chain-phase read-back.</strong> A <code>from_h5</code> session has no live gmsh, so
-  <code>g.save(...)</code> then <code>FEMData.from_h5(...)</code> to get the composed snapshot.</li>
-<li><strong>Proof, not promise.</strong> Each composed bay drifts the exact E1 8.3883 mm
-  and reacts its full 60 kN base shear — a composed copy is mechanically
-  identical to the standalone original, to round-off.</li>
+<li><strong>Build once, save, reuse.</strong> A bridge with <code>ops.model(ndm=..., ndf=...)</code>
+  and its element specs, written with <code>ops.h5(path)</code>, is a reusable
+  <strong>module</strong>. A plain <code>g.save()</code> file is not: it has no model dimensions.</li>
+<li><strong><code>Assembly</code> + <code>instance</code> + <code>bridge</code>.</strong> Place each copy with
+  <code>asm.instance(label, module, translate=...)</code>, then <code>asm.bridge(...)</code>
+  merges them, tag-offset and renamed, with their elements. No re-meshing.</li>
+<li><strong>Every instance is label-prefixed.</strong> Each copy's groups are
+  <code>"{label}.{pg}"</code> (<code>"bay1.Columns"</code>, <code>"bay2.Columns"</code>). Address every part
+  by that name from there on.</li>
+<li><strong>Compose grafts, it doesn't weld.</strong> Coincident nodes of different
+  instances stay <em>separate</em> — copies are independent until you join them on
+  the assembly (<code>tie</code> / <code>equal_dof</code> / <code>rigid_link</code> / <code>embedded</code>).</li>
+<li><strong>The model travels, the analysis doesn't.</strong> Elements come with each
+  instance; supports, loads and the analysis are declared on the bridge.</li>
+<li><strong>Proof, not promise.</strong> Each bay drifts the exact E1 8.3883 mm and reacts
+  its full 60 kN base shear — a placed copy is mechanically identical to
+  the standalone original, to round-off.</li>
 </ul>
 <h2 id="where-next">Where next<a class="headerlink" href="#where-next" title="Permanent link">&para;</a></h2>
 <ul>
 <li><strong><a href="../portal-frame/">Portal frame</a></strong> — the E1 module this page stamps twice,
   if you want the walkthrough behind the 8.39 mm.</li>
+<li><strong><a href="../../how-to/assemble-saved-models/">Assemble saved models</a></strong> — the
+  full <code>Assembly</code> recipe: rotation, ties, couplings, reference nodes and
+  one MPI rank per instance.</li>
 <li><strong><a href="../multipart-assembly/">Multi-part assembly</a></strong> — the <em>in-session</em> way to
   reuse a member: build a column as a <code>Part</code> and stamp it with <code>g.parts.add</code>
-  (one gmsh kernel), versus compose's cross-session <code>model.h5</code> grafting.</li>
+  (one gmsh kernel), versus the assembly's cross-session <code>model.h5</code> placing.</li>
 <li><strong><a href="../tie-non-matching-meshes/">Tie non-matching meshes</a></strong> — when modules
-  <em>should</em> connect: the interface constraint that compose deliberately leaves
-  to you.</li>
+  <em>should</em> connect: the interface constraint that the assembly deliberately
+  leaves to you.</li>
 </ul>
 <hr />
 <p><em>Next: <a href="../pushover-steel-frame/">E10 — Pushover of a steel moment frame (fiber sections)</a>.</em></p>

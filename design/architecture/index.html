@@ -687,8 +687,6 @@
       
         
       
-        
-      
     
     
     
@@ -774,34 +772,6 @@
     
   
     Assemble saved models
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../how-to/compose-modules/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Compose modules
   
 
     
@@ -3846,8 +3816,8 @@ composites — <code>g.loads</code>, <code>g.masses</code>, <code>g.constraints<
 <code>g.rebar</code>, <code>g.embed</code>). No metaclass, no registration decorators: a
 reader tracing where <code>g.mesh</code> comes from finds one tuple in
 <code>_core.py</code>. A few surfaces are session-level facades rather than
-composites — <code>g.compose(...)</code>, which grafts a saved <code>model.h5</code> into
-the current session as a subassembly, is the notable one.</p>
+composites — the compose readers <code>g.compose_list()</code>,
+<code>g.compose_tree()</code> and <code>g.compose_inspect(...)</code> are the notable ones.</p>
 <p>Three class flavors recur everywhere, and telling them apart tells you
 what a class is allowed to do:</p>
 <ul>
@@ -3921,9 +3891,9 @@ can hash, cache, and compare across runs.</p>
 <code>FEMData.from_h5()</code> round-trip the entire snapshot — mesh, names,
 records, and the model's provenance — through a versioned neutral HDF5
 schema (<code>model.h5</code>), and <code>apeGmsh.from_h5()</code> can rehydrate a session
-around a saved snapshot with no gmsh state at all. <code>g.compose()</code>
-builds on the same file format to assemble multi-model systems from
-independently authored and saved models. The schema is versioned and
+around a saved snapshot with no gmsh state at all. <code>Assembly</code>
+(<code>apeGmsh.assembly</code>) builds on the same file format to assemble
+multi-model systems from independently authored and saved models. The schema is versioned and
 append-only precisely because saved models outlive library releases.</p>
 <h2 id="the-bridge-is-thin-on-purpose">The bridge is thin on purpose<a class="headerlink" href="#the-bridge-is-thin-on-purpose" title="Permanent link">&para;</a></h2>
 <p><code>apeSees(fem)</code> is the OpenSees adapter — a post-session class

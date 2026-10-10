@@ -687,8 +687,6 @@
       
         
       
-        
-      
     
     
     
@@ -774,34 +772,6 @@
     
   
     Assemble saved models
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../how-to/compose-modules/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Compose modules
   
 
     
@@ -4095,17 +4065,6 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#apeGmsh.mesh.FEMData.FEMData.compose" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        compose
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
   <a href="#apeGmsh.mesh.FEMData.FEMData.compose_tree" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -5196,17 +5155,6 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#apeGmsh.mesh.FEMData.FEMData.compose" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        compose
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
   <a href="#apeGmsh.mesh.FEMData.FEMData.compose_tree" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -5318,8 +5266,8 @@ refuses anything older or newer
 <p>This is the same neutral zone the session writes via
 <code>apeGmsh(save_to=...)</code> / <code>g.save()</code> — see the
 <a href="../session/#native-persistence">Session</a> page. <code>FEMData.from_h5</code>
-is also the entry point <code>apeGmsh.from_h5</code> and <code>g.compose</code> build on
-for chain-phase reassembly.</p>
+is also the entry point <code>apeGmsh.from_h5</code> builds on for chain-phase
+reassembly.</p>
 
 
 <div class="doc doc-object doc-module">
@@ -9599,341 +9547,6 @@ Record subclass                        Appended to
 <div class="doc doc-object doc-function">
 
 
-<h4 id="apeGmsh.mesh.FEMData.FEMData.compose" class="doc doc-heading">
-            <span class="doc doc-object-name doc-function-name">compose</span>
-
-
-<a href="#apeGmsh.mesh.FEMData.FEMData.compose" class="headerlink" title="Permanent link">&para;</a></h4>
-<div class="language-python doc-signature highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">compose</span><span class="p">(</span><span class="n">source</span><span class="p">:</span> <span class="s1">'str | Path'</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">label</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">translate</span><span class="p">:</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">float</span><span class="p">,</span> <span class="nb">float</span><span class="p">,</span> <span class="nb">float</span><span class="p">]</span> <span class="o">=</span> <span class="p">(</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">),</span> <span class="n">rotate</span><span class="p">:</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">float</span><span class="p">,</span> <span class="nb">float</span><span class="p">,</span> <span class="nb">float</span><span class="p">,</span> <span class="nb">float</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">anchor</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">partition_rank</span><span class="p">:</span> <span class="nb">int</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">properties</span><span class="p">:</span> <span class="s1">'dict | None'</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">compose_size_per_module</span><span class="p">:</span> <span class="nb">int</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">max_compose_depth</span><span class="p">:</span> <span class="nb">int</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="s1">'FEMData'</span>
-</span></code></pre></div>
-
-    <div class="doc doc-contents ">
-
-        <p>Return a new :class:<code>FEMData</code> extending this chain with a
-composed module.</p>
-<p>Pure transformation. <code>self</code> is unchanged.  The returned
-FEMData's <code>composed_from</code> chain is
-<code>self.composed_from + (new_record,)</code> and every IMPORT-verdict
-record from the source H5 surfaces on the result, namespaced
-with <code>label</code> and offset into a non-overlapping tag window
-per ADR 0038 §"Tag-offset scheme".</p>
-<p>Geometry / mesh build-phase operations are not part of this
-primitive — the merge runs entirely against the FEMData
-broker; no live Gmsh state is touched.  The compose API is
-the canonical entry point for cross-session composition:
-<code>FEMData.from_h5(path).compose("module.h5", label="A")</code>.</p>
-<p>Drift hazard: the returned FEMData is decoupled from any
-live gmsh state on the producing session.  Mutating the
-session's mesh/PG/label/parts AFTER calling compose without
-also re-extracting + re-applying the bundle drops the
-composed module's records on the floor.  The
-:meth:<code>apeGmsh.compose</code> shim handles this via session-level
-bundle-replay; if you call this primitive directly, replay
-is your responsibility.</p>
-<p>See :func:<code>apeGmsh.mesh._compose.Compose.compose</code> for the full
-parameter contract; <code>max_compose_depth</code> is the only
-<code>Compose.compose</code> parameter intentionally absent here
-(depth checks come in Phase 3E.1).</p>
-
-
-            <details class="mkdocstrings-source">
-              <summary>Source code in <code>src/apeGmsh/mesh/FEMData.py</code></summary>
-              <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-2318">2318</a></span>
-<span class="normal"><a href="#__codelineno-0-2319">2319</a></span>
-<span class="normal"><a href="#__codelineno-0-2320">2320</a></span>
-<span class="normal"><a href="#__codelineno-0-2321">2321</a></span>
-<span class="normal"><a href="#__codelineno-0-2322">2322</a></span>
-<span class="normal"><a href="#__codelineno-0-2323">2323</a></span>
-<span class="normal"><a href="#__codelineno-0-2324">2324</a></span>
-<span class="normal"><a href="#__codelineno-0-2325">2325</a></span>
-<span class="normal"><a href="#__codelineno-0-2326">2326</a></span>
-<span class="normal"><a href="#__codelineno-0-2327">2327</a></span>
-<span class="normal"><a href="#__codelineno-0-2328">2328</a></span>
-<span class="normal"><a href="#__codelineno-0-2329">2329</a></span>
-<span class="normal"><a href="#__codelineno-0-2330">2330</a></span>
-<span class="normal"><a href="#__codelineno-0-2331">2331</a></span>
-<span class="normal"><a href="#__codelineno-0-2332">2332</a></span>
-<span class="normal"><a href="#__codelineno-0-2333">2333</a></span>
-<span class="normal"><a href="#__codelineno-0-2334">2334</a></span>
-<span class="normal"><a href="#__codelineno-0-2335">2335</a></span>
-<span class="normal"><a href="#__codelineno-0-2336">2336</a></span>
-<span class="normal"><a href="#__codelineno-0-2337">2337</a></span>
-<span class="normal"><a href="#__codelineno-0-2338">2338</a></span>
-<span class="normal"><a href="#__codelineno-0-2339">2339</a></span>
-<span class="normal"><a href="#__codelineno-0-2340">2340</a></span>
-<span class="normal"><a href="#__codelineno-0-2341">2341</a></span>
-<span class="normal"><a href="#__codelineno-0-2342">2342</a></span>
-<span class="normal"><a href="#__codelineno-0-2343">2343</a></span>
-<span class="normal"><a href="#__codelineno-0-2344">2344</a></span>
-<span class="normal"><a href="#__codelineno-0-2345">2345</a></span>
-<span class="normal"><a href="#__codelineno-0-2346">2346</a></span>
-<span class="normal"><a href="#__codelineno-0-2347">2347</a></span>
-<span class="normal"><a href="#__codelineno-0-2348">2348</a></span>
-<span class="normal"><a href="#__codelineno-0-2349">2349</a></span>
-<span class="normal"><a href="#__codelineno-0-2350">2350</a></span>
-<span class="normal"><a href="#__codelineno-0-2351">2351</a></span>
-<span class="normal"><a href="#__codelineno-0-2352">2352</a></span>
-<span class="normal"><a href="#__codelineno-0-2353">2353</a></span>
-<span class="normal"><a href="#__codelineno-0-2354">2354</a></span>
-<span class="normal"><a href="#__codelineno-0-2355">2355</a></span>
-<span class="normal"><a href="#__codelineno-0-2356">2356</a></span>
-<span class="normal"><a href="#__codelineno-0-2357">2357</a></span>
-<span class="normal"><a href="#__codelineno-0-2358">2358</a></span>
-<span class="normal"><a href="#__codelineno-0-2359">2359</a></span>
-<span class="normal"><a href="#__codelineno-0-2360">2360</a></span>
-<span class="normal"><a href="#__codelineno-0-2361">2361</a></span>
-<span class="normal"><a href="#__codelineno-0-2362">2362</a></span>
-<span class="normal"><a href="#__codelineno-0-2363">2363</a></span>
-<span class="normal"><a href="#__codelineno-0-2364">2364</a></span>
-<span class="normal"><a href="#__codelineno-0-2365">2365</a></span>
-<span class="normal"><a href="#__codelineno-0-2366">2366</a></span>
-<span class="normal"><a href="#__codelineno-0-2367">2367</a></span>
-<span class="normal"><a href="#__codelineno-0-2368">2368</a></span>
-<span class="normal"><a href="#__codelineno-0-2369">2369</a></span>
-<span class="normal"><a href="#__codelineno-0-2370">2370</a></span>
-<span class="normal"><a href="#__codelineno-0-2371">2371</a></span>
-<span class="normal"><a href="#__codelineno-0-2372">2372</a></span>
-<span class="normal"><a href="#__codelineno-0-2373">2373</a></span>
-<span class="normal"><a href="#__codelineno-0-2374">2374</a></span>
-<span class="normal"><a href="#__codelineno-0-2375">2375</a></span>
-<span class="normal"><a href="#__codelineno-0-2376">2376</a></span>
-<span class="normal"><a href="#__codelineno-0-2377">2377</a></span>
-<span class="normal"><a href="#__codelineno-0-2378">2378</a></span>
-<span class="normal"><a href="#__codelineno-0-2379">2379</a></span>
-<span class="normal"><a href="#__codelineno-0-2380">2380</a></span>
-<span class="normal"><a href="#__codelineno-0-2381">2381</a></span>
-<span class="normal"><a href="#__codelineno-0-2382">2382</a></span>
-<span class="normal"><a href="#__codelineno-0-2383">2383</a></span>
-<span class="normal"><a href="#__codelineno-0-2384">2384</a></span>
-<span class="normal"><a href="#__codelineno-0-2385">2385</a></span>
-<span class="normal"><a href="#__codelineno-0-2386">2386</a></span>
-<span class="normal"><a href="#__codelineno-0-2387">2387</a></span>
-<span class="normal"><a href="#__codelineno-0-2388">2388</a></span>
-<span class="normal"><a href="#__codelineno-0-2389">2389</a></span>
-<span class="normal"><a href="#__codelineno-0-2390">2390</a></span>
-<span class="normal"><a href="#__codelineno-0-2391">2391</a></span>
-<span class="normal"><a href="#__codelineno-0-2392">2392</a></span>
-<span class="normal"><a href="#__codelineno-0-2393">2393</a></span>
-<span class="normal"><a href="#__codelineno-0-2394">2394</a></span>
-<span class="normal"><a href="#__codelineno-0-2395">2395</a></span>
-<span class="normal"><a href="#__codelineno-0-2396">2396</a></span>
-<span class="normal"><a href="#__codelineno-0-2397">2397</a></span>
-<span class="normal"><a href="#__codelineno-0-2398">2398</a></span>
-<span class="normal"><a href="#__codelineno-0-2399">2399</a></span>
-<span class="normal"><a href="#__codelineno-0-2400">2400</a></span>
-<span class="normal"><a href="#__codelineno-0-2401">2401</a></span>
-<span class="normal"><a href="#__codelineno-0-2402">2402</a></span>
-<span class="normal"><a href="#__codelineno-0-2403">2403</a></span>
-<span class="normal"><a href="#__codelineno-0-2404">2404</a></span>
-<span class="normal"><a href="#__codelineno-0-2405">2405</a></span>
-<span class="normal"><a href="#__codelineno-0-2406">2406</a></span>
-<span class="normal"><a href="#__codelineno-0-2407">2407</a></span>
-<span class="normal"><a href="#__codelineno-0-2408">2408</a></span>
-<span class="normal"><a href="#__codelineno-0-2409">2409</a></span>
-<span class="normal"><a href="#__codelineno-0-2410">2410</a></span>
-<span class="normal"><a href="#__codelineno-0-2411">2411</a></span>
-<span class="normal"><a href="#__codelineno-0-2412">2412</a></span>
-<span class="normal"><a href="#__codelineno-0-2413">2413</a></span>
-<span class="normal"><a href="#__codelineno-0-2414">2414</a></span>
-<span class="normal"><a href="#__codelineno-0-2415">2415</a></span>
-<span class="normal"><a href="#__codelineno-0-2416">2416</a></span>
-<span class="normal"><a href="#__codelineno-0-2417">2417</a></span>
-<span class="normal"><a href="#__codelineno-0-2418">2418</a></span>
-<span class="normal"><a href="#__codelineno-0-2419">2419</a></span>
-<span class="normal"><a href="#__codelineno-0-2420">2420</a></span>
-<span class="normal"><a href="#__codelineno-0-2421">2421</a></span>
-<span class="normal"><a href="#__codelineno-0-2422">2422</a></span>
-<span class="normal"><a href="#__codelineno-0-2423">2423</a></span>
-<span class="normal"><a href="#__codelineno-0-2424">2424</a></span>
-<span class="normal"><a href="#__codelineno-0-2425">2425</a></span>
-<span class="normal"><a href="#__codelineno-0-2426">2426</a></span>
-<span class="normal"><a href="#__codelineno-0-2427">2427</a></span>
-<span class="normal"><a href="#__codelineno-0-2428">2428</a></span>
-<span class="normal"><a href="#__codelineno-0-2429">2429</a></span>
-<span class="normal"><a href="#__codelineno-0-2430">2430</a></span>
-<span class="normal"><a href="#__codelineno-0-2431">2431</a></span>
-<span class="normal"><a href="#__codelineno-0-2432">2432</a></span>
-<span class="normal"><a href="#__codelineno-0-2433">2433</a></span>
-<span class="normal"><a href="#__codelineno-0-2434">2434</a></span>
-<span class="normal"><a href="#__codelineno-0-2435">2435</a></span>
-<span class="normal"><a href="#__codelineno-0-2436">2436</a></span>
-<span class="normal"><a href="#__codelineno-0-2437">2437</a></span>
-<span class="normal"><a href="#__codelineno-0-2438">2438</a></span>
-<span class="normal"><a href="#__codelineno-0-2439">2439</a></span>
-<span class="normal"><a href="#__codelineno-0-2440">2440</a></span>
-<span class="normal"><a href="#__codelineno-0-2441">2441</a></span>
-<span class="normal"><a href="#__codelineno-0-2442">2442</a></span>
-<span class="normal"><a href="#__codelineno-0-2443">2443</a></span>
-<span class="normal"><a href="#__codelineno-0-2444">2444</a></span>
-<span class="normal"><a href="#__codelineno-0-2445">2445</a></span>
-<span class="normal"><a href="#__codelineno-0-2446">2446</a></span>
-<span class="normal"><a href="#__codelineno-0-2447">2447</a></span>
-<span class="normal"><a href="#__codelineno-0-2448">2448</a></span>
-<span class="normal"><a href="#__codelineno-0-2449">2449</a></span>
-<span class="normal"><a href="#__codelineno-0-2450">2450</a></span>
-<span class="normal"><a href="#__codelineno-0-2451">2451</a></span>
-<span class="normal"><a href="#__codelineno-0-2452">2452</a></span>
-<span class="normal"><a href="#__codelineno-0-2453">2453</a></span>
-<span class="normal"><a href="#__codelineno-0-2454">2454</a></span>
-<span class="normal"><a href="#__codelineno-0-2455">2455</a></span>
-<span class="normal"><a href="#__codelineno-0-2456">2456</a></span>
-<span class="normal"><a href="#__codelineno-0-2457">2457</a></span>
-<span class="normal"><a href="#__codelineno-0-2458">2458</a></span>
-<span class="normal"><a href="#__codelineno-0-2459">2459</a></span>
-<span class="normal"><a href="#__codelineno-0-2460">2460</a></span>
-<span class="normal"><a href="#__codelineno-0-2461">2461</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-2318"><a id="__codelineno-0-2318" name="__codelineno-0-2318"></a><span class="k">def</span><span class="w"> </span><span class="nf">compose</span><span class="p">(</span>
-</span><span id="__span-0-2319"><a id="__codelineno-0-2319" name="__codelineno-0-2319"></a>    <span class="bp">self</span><span class="p">,</span>
-</span><span id="__span-0-2320"><a id="__codelineno-0-2320" name="__codelineno-0-2320"></a>    <span class="n">source</span><span class="p">:</span> <span class="s2">"str | Path"</span><span class="p">,</span>
-</span><span id="__span-0-2321"><a id="__codelineno-0-2321" name="__codelineno-0-2321"></a>    <span class="o">*</span><span class="p">,</span>
-</span><span id="__span-0-2322"><a id="__codelineno-0-2322" name="__codelineno-0-2322"></a>    <span class="n">label</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
-</span><span id="__span-0-2323"><a id="__codelineno-0-2323" name="__codelineno-0-2323"></a>    <span class="n">translate</span><span class="p">:</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">float</span><span class="p">,</span> <span class="nb">float</span><span class="p">,</span> <span class="nb">float</span><span class="p">]</span> <span class="o">=</span> <span class="p">(</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">),</span>
-</span><span id="__span-0-2324"><a id="__codelineno-0-2324" name="__codelineno-0-2324"></a>    <span class="n">rotate</span><span class="p">:</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">float</span><span class="p">,</span> <span class="nb">float</span><span class="p">,</span> <span class="nb">float</span><span class="p">,</span> <span class="nb">float</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
-</span><span id="__span-0-2325"><a id="__codelineno-0-2325" name="__codelineno-0-2325"></a>    <span class="n">anchor</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
-</span><span id="__span-0-2326"><a id="__codelineno-0-2326" name="__codelineno-0-2326"></a>    <span class="n">partition_rank</span><span class="p">:</span> <span class="nb">int</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
-</span><span id="__span-0-2327"><a id="__codelineno-0-2327" name="__codelineno-0-2327"></a>    <span class="n">properties</span><span class="p">:</span> <span class="s2">"dict | None"</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
-</span><span id="__span-0-2328"><a id="__codelineno-0-2328" name="__codelineno-0-2328"></a>    <span class="n">compose_size_per_module</span><span class="p">:</span> <span class="nb">int</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
-</span><span id="__span-0-2329"><a id="__codelineno-0-2329" name="__codelineno-0-2329"></a>    <span class="n">max_compose_depth</span><span class="p">:</span> <span class="nb">int</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
-</span><span id="__span-0-2330"><a id="__codelineno-0-2330" name="__codelineno-0-2330"></a><span class="p">)</span> <span class="o">-&gt;</span> <span class="s2">"FEMData"</span><span class="p">:</span>
-</span><span id="__span-0-2331"><a id="__codelineno-0-2331" name="__codelineno-0-2331"></a><span class="w">    </span><span class="sd">"""Return a new :class:`FEMData` extending this chain with a</span>
-</span><span id="__span-0-2332"><a id="__codelineno-0-2332" name="__codelineno-0-2332"></a><span class="sd">    composed module.</span>
-</span><span id="__span-0-2333"><a id="__codelineno-0-2333" name="__codelineno-0-2333"></a>
-</span><span id="__span-0-2334"><a id="__codelineno-0-2334" name="__codelineno-0-2334"></a><span class="sd">    Pure transformation. ``self`` is unchanged.  The returned</span>
-</span><span id="__span-0-2335"><a id="__codelineno-0-2335" name="__codelineno-0-2335"></a><span class="sd">    FEMData's ``composed_from`` chain is</span>
-</span><span id="__span-0-2336"><a id="__codelineno-0-2336" name="__codelineno-0-2336"></a><span class="sd">    ``self.composed_from + (new_record,)`` and every IMPORT-verdict</span>
-</span><span id="__span-0-2337"><a id="__codelineno-0-2337" name="__codelineno-0-2337"></a><span class="sd">    record from the source H5 surfaces on the result, namespaced</span>
-</span><span id="__span-0-2338"><a id="__codelineno-0-2338" name="__codelineno-0-2338"></a><span class="sd">    with ``label`` and offset into a non-overlapping tag window</span>
-</span><span id="__span-0-2339"><a id="__codelineno-0-2339" name="__codelineno-0-2339"></a><span class="sd">    per ADR 0038 §"Tag-offset scheme".</span>
-</span><span id="__span-0-2340"><a id="__codelineno-0-2340" name="__codelineno-0-2340"></a>
-</span><span id="__span-0-2341"><a id="__codelineno-0-2341" name="__codelineno-0-2341"></a><span class="sd">    Geometry / mesh build-phase operations are not part of this</span>
-</span><span id="__span-0-2342"><a id="__codelineno-0-2342" name="__codelineno-0-2342"></a><span class="sd">    primitive — the merge runs entirely against the FEMData</span>
-</span><span id="__span-0-2343"><a id="__codelineno-0-2343" name="__codelineno-0-2343"></a><span class="sd">    broker; no live Gmsh state is touched.  The compose API is</span>
-</span><span id="__span-0-2344"><a id="__codelineno-0-2344" name="__codelineno-0-2344"></a><span class="sd">    the canonical entry point for cross-session composition:</span>
-</span><span id="__span-0-2345"><a id="__codelineno-0-2345" name="__codelineno-0-2345"></a><span class="sd">    ``FEMData.from_h5(path).compose("module.h5", label="A")``.</span>
-</span><span id="__span-0-2346"><a id="__codelineno-0-2346" name="__codelineno-0-2346"></a>
-</span><span id="__span-0-2347"><a id="__codelineno-0-2347" name="__codelineno-0-2347"></a><span class="sd">    Drift hazard: the returned FEMData is decoupled from any</span>
-</span><span id="__span-0-2348"><a id="__codelineno-0-2348" name="__codelineno-0-2348"></a><span class="sd">    live gmsh state on the producing session.  Mutating the</span>
-</span><span id="__span-0-2349"><a id="__codelineno-0-2349" name="__codelineno-0-2349"></a><span class="sd">    session's mesh/PG/label/parts AFTER calling compose without</span>
-</span><span id="__span-0-2350"><a id="__codelineno-0-2350" name="__codelineno-0-2350"></a><span class="sd">    also re-extracting + re-applying the bundle drops the</span>
-</span><span id="__span-0-2351"><a id="__codelineno-0-2351" name="__codelineno-0-2351"></a><span class="sd">    composed module's records on the floor.  The</span>
-</span><span id="__span-0-2352"><a id="__codelineno-0-2352" name="__codelineno-0-2352"></a><span class="sd">    :meth:`apeGmsh.compose` shim handles this via session-level</span>
-</span><span id="__span-0-2353"><a id="__codelineno-0-2353" name="__codelineno-0-2353"></a><span class="sd">    bundle-replay; if you call this primitive directly, replay</span>
-</span><span id="__span-0-2354"><a id="__codelineno-0-2354" name="__codelineno-0-2354"></a><span class="sd">    is your responsibility.</span>
-</span><span id="__span-0-2355"><a id="__codelineno-0-2355" name="__codelineno-0-2355"></a>
-</span><span id="__span-0-2356"><a id="__codelineno-0-2356" name="__codelineno-0-2356"></a><span class="sd">    See :func:`apeGmsh.mesh._compose.Compose.compose` for the full</span>
-</span><span id="__span-0-2357"><a id="__codelineno-0-2357" name="__codelineno-0-2357"></a><span class="sd">    parameter contract; ``max_compose_depth`` is the only</span>
-</span><span id="__span-0-2358"><a id="__codelineno-0-2358" name="__codelineno-0-2358"></a><span class="sd">    ``Compose.compose`` parameter intentionally absent here</span>
-</span><span id="__span-0-2359"><a id="__codelineno-0-2359" name="__codelineno-0-2359"></a><span class="sd">    (depth checks come in Phase 3E.1).</span>
-</span><span id="__span-0-2360"><a id="__codelineno-0-2360" name="__codelineno-0-2360"></a><span class="sd">    """</span>
-</span><span id="__span-0-2361"><a id="__codelineno-0-2361" name="__codelineno-0-2361"></a>    <span class="kn">from</span><span class="w"> </span><span class="nn">._compose</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
-</span><span id="__span-0-2362"><a id="__codelineno-0-2362" name="__codelineno-0-2362"></a>        <span class="n">Compose</span><span class="p">,</span> <span class="n">ComposeAnchorError</span><span class="p">,</span>
-</span><span id="__span-0-2363"><a id="__codelineno-0-2363" name="__codelineno-0-2363"></a>        <span class="n">_compute_source_span</span><span class="p">,</span> <span class="n">_compute_reservation</span><span class="p">,</span>
-</span><span id="__span-0-2364"><a id="__codelineno-0-2364" name="__codelineno-0-2364"></a>        <span class="n">_rewrite_source_for_compose</span><span class="p">,</span> <span class="n">_merge_bundle_into_fem</span><span class="p">,</span>
-</span><span id="__span-0-2365"><a id="__codelineno-0-2365" name="__codelineno-0-2365"></a>        <span class="n">_emit_filter_warnings</span><span class="p">,</span> <span class="n">_host_max_tag</span><span class="p">,</span>
-</span><span id="__span-0-2366"><a id="__codelineno-0-2366" name="__codelineno-0-2366"></a>    <span class="p">)</span>
-</span><span id="__span-0-2367"><a id="__codelineno-0-2367" name="__codelineno-0-2367"></a>
-</span><span id="__span-0-2368"><a id="__codelineno-0-2368" name="__codelineno-0-2368"></a>    <span class="c1"># 1. Validate inputs — reuse the Compose facade's static</span>
-</span><span id="__span-0-2369"><a id="__codelineno-0-2369" name="__codelineno-0-2369"></a>    <span class="c1">#    validators so the contract stays single-sourced.</span>
-</span><span id="__span-0-2370"><a id="__codelineno-0-2370" name="__codelineno-0-2370"></a>    <span class="n">Compose</span><span class="o">.</span><span class="n">_validate_label</span><span class="p">(</span><span class="n">label</span><span class="p">)</span>
-</span><span id="__span-0-2371"><a id="__codelineno-0-2371" name="__codelineno-0-2371"></a>    <span class="n">Compose</span><span class="o">.</span><span class="n">_validate_translate_rotate_anchor</span><span class="p">(</span><span class="n">translate</span><span class="p">,</span> <span class="n">anchor</span><span class="p">)</span>
-</span><span id="__span-0-2372"><a id="__codelineno-0-2372" name="__codelineno-0-2372"></a>    <span class="n">Compose</span><span class="o">.</span><span class="n">_validate_partition_rank</span><span class="p">(</span><span class="n">partition_rank</span><span class="p">)</span>
-</span><span id="__span-0-2373"><a id="__codelineno-0-2373" name="__codelineno-0-2373"></a>    <span class="n">Compose</span><span class="o">.</span><span class="n">_validate_compose_size</span><span class="p">(</span><span class="n">compose_size_per_module</span><span class="p">)</span>
-</span><span id="__span-0-2374"><a id="__codelineno-0-2374" name="__codelineno-0-2374"></a>
-</span><span id="__span-0-2375"><a id="__codelineno-0-2375" name="__codelineno-0-2375"></a>    <span class="c1"># 2. Resolve anchor → translate when anchor is given.  Anchor</span>
-</span><span id="__span-0-2376"><a id="__codelineno-0-2376" name="__codelineno-0-2376"></a>    <span class="c1">#    + non-zero translate already raised above; an unknown</span>
-</span><span id="__span-0-2377"><a id="__codelineno-0-2377" name="__codelineno-0-2377"></a>    <span class="c1">#    PG raises ComposeAnchorError with an actionable message.</span>
-</span><span id="__span-0-2378"><a id="__codelineno-0-2378" name="__codelineno-0-2378"></a>    <span class="k">if</span> <span class="n">anchor</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
-</span><span id="__span-0-2379"><a id="__codelineno-0-2379" name="__codelineno-0-2379"></a>        <span class="n">translate</span> <span class="o">=</span> <span class="n">_resolve_anchor_to_translate</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">anchor</span><span class="p">)</span>
-</span><span id="__span-0-2380"><a id="__codelineno-0-2380" name="__codelineno-0-2380"></a>
-</span><span id="__span-0-2381"><a id="__codelineno-0-2381" name="__codelineno-0-2381"></a>    <span class="c1"># 3. Compute reservation against host's max_tag.  The merge</span>
-</span><span id="__span-0-2382"><a id="__codelineno-0-2382" name="__codelineno-0-2382"></a>    <span class="c1">#    engine doesn't track explicit (base, size) pairs on</span>
-</span><span id="__span-0-2383"><a id="__codelineno-0-2383" name="__codelineno-0-2383"></a>    <span class="c1">#    composed_from in this slice (deferred to 3D); each</span>
-</span><span id="__span-0-2384"><a id="__codelineno-0-2384" name="__codelineno-0-2384"></a>    <span class="c1">#    new compose simply rounds host_max_tag up to the next</span>
-</span><span id="__span-0-2385"><a id="__codelineno-0-2385" name="__codelineno-0-2385"></a>    <span class="c1">#    granularity boundary, which advances naturally as each</span>
-</span><span id="__span-0-2386"><a id="__codelineno-0-2386" name="__codelineno-0-2386"></a>    <span class="c1">#    bundle's tags fold into the host's id ranges.</span>
-</span><span id="__span-0-2387"><a id="__codelineno-0-2387" name="__codelineno-0-2387"></a>    <span class="n">host_max_tag</span> <span class="o">=</span> <span class="n">_host_max_tag</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span>
-</span><span id="__span-0-2388"><a id="__codelineno-0-2388" name="__codelineno-0-2388"></a>    <span class="n">source_span</span><span class="p">,</span> <span class="n">source_min_tag</span><span class="p">,</span> <span class="n">_source_max_tag</span> <span class="o">=</span> <span class="p">(</span>
-</span><span id="__span-0-2389"><a id="__codelineno-0-2389" name="__codelineno-0-2389"></a>        <span class="n">_compute_source_span</span><span class="p">(</span><span class="n">source</span><span class="p">)</span>
-</span><span id="__span-0-2390"><a id="__codelineno-0-2390" name="__codelineno-0-2390"></a>    <span class="p">)</span>
-</span><span id="__span-0-2391"><a id="__codelineno-0-2391" name="__codelineno-0-2391"></a>    <span class="n">base</span><span class="p">,</span> <span class="n">size</span> <span class="o">=</span> <span class="n">_compute_reservation</span><span class="p">(</span>
-</span><span id="__span-0-2392"><a id="__codelineno-0-2392" name="__codelineno-0-2392"></a>        <span class="n">source_span</span><span class="o">=</span><span class="n">source_span</span><span class="p">,</span>
-</span><span id="__span-0-2393"><a id="__codelineno-0-2393" name="__codelineno-0-2393"></a>        <span class="n">host_max_tag</span><span class="o">=</span><span class="n">host_max_tag</span><span class="p">,</span>
-</span><span id="__span-0-2394"><a id="__codelineno-0-2394" name="__codelineno-0-2394"></a>        <span class="n">previous_reservations</span><span class="o">=</span><span class="p">(),</span>
-</span><span id="__span-0-2395"><a id="__codelineno-0-2395" name="__codelineno-0-2395"></a>        <span class="n">granularity</span><span class="o">=</span><span class="n">Compose</span><span class="o">.</span><span class="n">RESERVATION_GRANULARITY</span><span class="p">,</span>
-</span><span id="__span-0-2396"><a id="__codelineno-0-2396" name="__codelineno-0-2396"></a>        <span class="n">compose_size_per_module</span><span class="o">=</span><span class="n">compose_size_per_module</span><span class="p">,</span>
-</span><span id="__span-0-2397"><a id="__codelineno-0-2397" name="__codelineno-0-2397"></a>    <span class="p">)</span>
-</span><span id="__span-0-2398"><a id="__codelineno-0-2398" name="__codelineno-0-2398"></a>
-</span><span id="__span-0-2399"><a id="__codelineno-0-2399" name="__codelineno-0-2399"></a>    <span class="c1"># Capacity check (ADR 0038 §"Tag-collision verifier" check 5).</span>
-</span><span id="__span-0-2400"><a id="__codelineno-0-2400" name="__codelineno-0-2400"></a>    <span class="k">if</span> <span class="n">compose_size_per_module</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">source_span</span> <span class="o">&gt;</span> <span class="n">size</span><span class="p">:</span>
-</span><span id="__span-0-2401"><a id="__codelineno-0-2401" name="__codelineno-0-2401"></a>        <span class="kn">from</span><span class="w"> </span><span class="nn">._compose</span><span class="w"> </span><span class="kn">import</span> <span class="n">ComposeCapacityError</span>
-</span><span id="__span-0-2402"><a id="__codelineno-0-2402" name="__codelineno-0-2402"></a>        <span class="k">raise</span> <span class="n">ComposeCapacityError</span><span class="p">(</span>
-</span><span id="__span-0-2403"><a id="__codelineno-0-2403" name="__codelineno-0-2403"></a>            <span class="sa">f</span><span class="s2">"compose(compose_size_per_module="</span>
-</span><span id="__span-0-2404"><a id="__codelineno-0-2404" name="__codelineno-0-2404"></a>            <span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="n">compose_size_per_module</span><span class="si">}</span><span class="s2">) is smaller than the "</span>
-</span><span id="__span-0-2405"><a id="__codelineno-0-2405" name="__codelineno-0-2405"></a>            <span class="sa">f</span><span class="s2">"source's tag span (</span><span class="si">{</span><span class="n">source_span</span><span class="si">}</span><span class="s2">); reservation size "</span>
-</span><span id="__span-0-2406"><a id="__codelineno-0-2406" name="__codelineno-0-2406"></a>            <span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="n">size</span><span class="si">}</span><span class="s2"> would not fit the imported tags."</span>
-</span><span id="__span-0-2407"><a id="__codelineno-0-2407" name="__codelineno-0-2407"></a>        <span class="p">)</span>
-</span><span id="__span-0-2408"><a id="__codelineno-0-2408" name="__codelineno-0-2408"></a>
-</span><span id="__span-0-2409"><a id="__codelineno-0-2409" name="__codelineno-0-2409"></a>    <span class="c1"># 4. Rewrite the source into an offset/namespaced bundle.</span>
-</span><span id="__span-0-2410"><a id="__codelineno-0-2410" name="__codelineno-0-2410"></a>    <span class="c1">#    Phase 3E.1: forward max_compose_depth so the rewriter's</span>
-</span><span id="__span-0-2411"><a id="__codelineno-0-2411" name="__codelineno-0-2411"></a>    <span class="c1">#    depth gate fires before any rewrite work runs.  ``None``</span>
-</span><span id="__span-0-2412"><a id="__codelineno-0-2412" name="__codelineno-0-2412"></a>    <span class="c1">#    means "use the default" (DEFAULT_MAX_COMPOSE_DEPTH = 3).</span>
-</span><span id="__span-0-2413"><a id="__codelineno-0-2413" name="__codelineno-0-2413"></a>    <span class="kn">from</span><span class="w"> </span><span class="nn">._compose</span><span class="w"> </span><span class="kn">import</span> <span class="n">DEFAULT_MAX_COMPOSE_DEPTH</span> <span class="k">as</span> <span class="n">_DEFAULT_MAX_DEPTH</span>
-</span><span id="__span-0-2414"><a id="__codelineno-0-2414" name="__codelineno-0-2414"></a>    <span class="n">depth_cap</span> <span class="o">=</span> <span class="p">(</span>
-</span><span id="__span-0-2415"><a id="__codelineno-0-2415" name="__codelineno-0-2415"></a>        <span class="n">max_compose_depth</span>
-</span><span id="__span-0-2416"><a id="__codelineno-0-2416" name="__codelineno-0-2416"></a>        <span class="k">if</span> <span class="n">max_compose_depth</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span>
-</span><span id="__span-0-2417"><a id="__codelineno-0-2417" name="__codelineno-0-2417"></a>        <span class="k">else</span> <span class="n">_DEFAULT_MAX_DEPTH</span>
-</span><span id="__span-0-2418"><a id="__codelineno-0-2418" name="__codelineno-0-2418"></a>    <span class="p">)</span>
-</span><span id="__span-0-2419"><a id="__codelineno-0-2419" name="__codelineno-0-2419"></a>    <span class="n">bundle</span> <span class="o">=</span> <span class="n">_rewrite_source_for_compose</span><span class="p">(</span>
-</span><span id="__span-0-2420"><a id="__codelineno-0-2420" name="__codelineno-0-2420"></a>        <span class="n">source_path</span><span class="o">=</span><span class="n">source</span><span class="p">,</span>
-</span><span id="__span-0-2421"><a id="__codelineno-0-2421" name="__codelineno-0-2421"></a>        <span class="n">label</span><span class="o">=</span><span class="n">label</span><span class="p">,</span>
-</span><span id="__span-0-2422"><a id="__codelineno-0-2422" name="__codelineno-0-2422"></a>        <span class="n">translate</span><span class="o">=</span><span class="n">translate</span><span class="p">,</span>
-</span><span id="__span-0-2423"><a id="__codelineno-0-2423" name="__codelineno-0-2423"></a>        <span class="n">rotate</span><span class="o">=</span><span class="n">rotate</span><span class="p">,</span>
-</span><span id="__span-0-2424"><a id="__codelineno-0-2424" name="__codelineno-0-2424"></a>        <span class="n">partition_rank</span><span class="o">=</span><span class="n">partition_rank</span><span class="p">,</span>
-</span><span id="__span-0-2425"><a id="__codelineno-0-2425" name="__codelineno-0-2425"></a>        <span class="n">properties</span><span class="o">=</span><span class="nb">dict</span><span class="p">(</span><span class="n">properties</span> <span class="ow">or</span> <span class="p">{}),</span>
-</span><span id="__span-0-2426"><a id="__codelineno-0-2426" name="__codelineno-0-2426"></a>        <span class="n">base</span><span class="o">=</span><span class="n">base</span><span class="p">,</span>
-</span><span id="__span-0-2427"><a id="__codelineno-0-2427" name="__codelineno-0-2427"></a>        <span class="n">size</span><span class="o">=</span><span class="n">size</span><span class="p">,</span>
-</span><span id="__span-0-2428"><a id="__codelineno-0-2428" name="__codelineno-0-2428"></a>        <span class="n">source_span</span><span class="o">=</span><span class="n">source_span</span><span class="p">,</span>
-</span><span id="__span-0-2429"><a id="__codelineno-0-2429" name="__codelineno-0-2429"></a>        <span class="n">source_min_tag</span><span class="o">=</span><span class="n">source_min_tag</span><span class="p">,</span>
-</span><span id="__span-0-2430"><a id="__codelineno-0-2430" name="__codelineno-0-2430"></a>        <span class="n">max_compose_depth</span><span class="o">=</span><span class="n">depth_cap</span><span class="p">,</span>
-</span><span id="__span-0-2431"><a id="__codelineno-0-2431" name="__codelineno-0-2431"></a>    <span class="p">)</span>
-</span><span id="__span-0-2432"><a id="__codelineno-0-2432" name="__codelineno-0-2432"></a>
-</span><span id="__span-0-2433"><a id="__codelineno-0-2433" name="__codelineno-0-2433"></a>    <span class="c1"># 5. Emit FILTER warnings (stages / time-series / patterns).</span>
-</span><span id="__span-0-2434"><a id="__codelineno-0-2434" name="__codelineno-0-2434"></a>    <span class="n">_emit_filter_warnings</span><span class="p">(</span><span class="n">source</span><span class="p">,</span> <span class="n">label</span><span class="p">)</span>
-</span><span id="__span-0-2435"><a id="__codelineno-0-2435" name="__codelineno-0-2435"></a>
-</span><span id="__span-0-2436"><a id="__codelineno-0-2436" name="__codelineno-0-2436"></a>    <span class="c1"># 5b. Interface-size advisory (Phase 3F.1 / ADR 0038</span>
-</span><span id="__span-0-2437"><a id="__codelineno-0-2437" name="__codelineno-0-2437"></a>    <span class="c1">#     §"v1 scope gate").  Emits one ComposeInterfaceSizeWarning</span>
-</span><span id="__span-0-2438"><a id="__codelineno-0-2438" name="__codelineno-0-2438"></a>    <span class="c1">#     when the bundle's MP-style constraint count exceeds</span>
-</span><span id="__span-0-2439"><a id="__codelineno-0-2439" name="__codelineno-0-2439"></a>    <span class="c1">#     WARN_INTERFACE_SIZE = 50_000 — silenceable per-call via</span>
-</span><span id="__span-0-2440"><a id="__codelineno-0-2440" name="__codelineno-0-2440"></a>    <span class="c1">#     ``warnings.simplefilter("ignore", ComposeInterfaceSizeWarning)``.</span>
-</span><span id="__span-0-2441"><a id="__codelineno-0-2441" name="__codelineno-0-2441"></a>    <span class="kn">from</span><span class="w"> </span><span class="nn">._compose</span><span class="w"> </span><span class="kn">import</span> <span class="n">WARN_INTERFACE_SIZE</span><span class="p">,</span> <span class="n">_warn_interface_size</span>
-</span><span id="__span-0-2442"><a id="__codelineno-0-2442" name="__codelineno-0-2442"></a>    <span class="n">_warn_interface_size</span><span class="p">(</span><span class="n">bundle</span><span class="p">,</span> <span class="n">threshold</span><span class="o">=</span><span class="n">WARN_INTERFACE_SIZE</span><span class="p">)</span>
-</span><span id="__span-0-2443"><a id="__codelineno-0-2443" name="__codelineno-0-2443"></a>
-</span><span id="__span-0-2444"><a id="__codelineno-0-2444" name="__codelineno-0-2444"></a>    <span class="c1"># 6. Merge bundle into self → new FEMData.  The merge engine</span>
-</span><span id="__span-0-2445"><a id="__codelineno-0-2445" name="__codelineno-0-2445"></a>    <span class="c1">#    runs the Phase 2.2 tag-collision verifier first</span>
-</span><span id="__span-0-2446"><a id="__codelineno-0-2446" name="__codelineno-0-2446"></a>    <span class="c1">#    (ADR 0038 §"Tag-collision verifier") and raises a typed</span>
-</span><span id="__span-0-2447"><a id="__codelineno-0-2447" name="__codelineno-0-2447"></a>    <span class="c1">#    error on violation.  Cache the bundle on the result for</span>
-</span><span id="__span-0-2448"><a id="__codelineno-0-2448" name="__codelineno-0-2448"></a>    <span class="c1">#    the session shim's replay machinery.</span>
-</span><span id="__span-0-2449"><a id="__codelineno-0-2449" name="__codelineno-0-2449"></a>    <span class="n">new_fem</span> <span class="o">=</span> <span class="n">_merge_bundle_into_fem</span><span class="p">(</span>
-</span><span id="__span-0-2450"><a id="__codelineno-0-2450" name="__codelineno-0-2450"></a>        <span class="bp">self</span><span class="p">,</span> <span class="n">bundle</span><span class="p">,</span> <span class="n">compose_size_per_module</span><span class="o">=</span><span class="n">compose_size_per_module</span><span class="p">,</span>
-</span><span id="__span-0-2451"><a id="__codelineno-0-2451" name="__codelineno-0-2451"></a>    <span class="p">)</span>
-</span><span id="__span-0-2452"><a id="__codelineno-0-2452" name="__codelineno-0-2452"></a>
-</span><span id="__span-0-2453"><a id="__codelineno-0-2453" name="__codelineno-0-2453"></a>    <span class="c1"># 7. Phase 3B.2d / ADR 0038 §"Rank model" — eager populator.</span>
-</span><span id="__span-0-2454"><a id="__codelineno-0-2454" name="__codelineno-0-2454"></a>    <span class="c1">#    Assign one partition per composed module (Layer 1) +</span>
-</span><span id="__span-0-2455"><a id="__codelineno-0-2455" name="__codelineno-0-2455"></a>    <span class="c1">#    honour partition_rank hints (Layer 2).  Existing</span>
-</span><span id="__span-0-2456"><a id="__codelineno-0-2456" name="__codelineno-0-2456"></a>    <span class="c1">#    METIS-driven partitions trigger a UserWarning (Layer 3).</span>
-</span><span id="__span-0-2457"><a id="__codelineno-0-2457" name="__codelineno-0-2457"></a>    <span class="kn">from</span><span class="w"> </span><span class="nn">._compose</span><span class="w"> </span><span class="kn">import</span> <span class="n">_rebuild_partitions_from_modules</span>
-</span><span id="__span-0-2458"><a id="__codelineno-0-2458" name="__codelineno-0-2458"></a>    <span class="n">new_fem</span> <span class="o">=</span> <span class="n">_rebuild_partitions_from_modules</span><span class="p">(</span><span class="n">new_fem</span><span class="p">)</span>
-</span><span id="__span-0-2459"><a id="__codelineno-0-2459" name="__codelineno-0-2459"></a>
-</span><span id="__span-0-2460"><a id="__codelineno-0-2460" name="__codelineno-0-2460"></a>    <span class="n">new_fem</span><span class="o">.</span><span class="n">_last_compose_bundle</span> <span class="o">=</span> <span class="n">bundle</span>  <span class="c1"># type: ignore[attr-defined]</span>
-</span><span id="__span-0-2461"><a id="__codelineno-0-2461" name="__codelineno-0-2461"></a>    <span class="k">return</span> <span class="n">new_fem</span>
-</span></code></pre></div></td></tr></table></div>
-            </details>
-    </div>
-
-</div>
-
-<div class="doc doc-object doc-function">
-
-
 <h4 id="apeGmsh.mesh.FEMData.FEMData.compose_tree" class="doc doc-heading">
             <span class="doc doc-object-name doc-function-name">compose_tree</span>
 
@@ -9959,39 +9572,39 @@ uncomposed FEMData).</p>
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>src/apeGmsh/mesh/FEMData.py</code></summary>
-              <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-2463">2463</a></span>
-<span class="normal"><a href="#__codelineno-0-2464">2464</a></span>
-<span class="normal"><a href="#__codelineno-0-2465">2465</a></span>
-<span class="normal"><a href="#__codelineno-0-2466">2466</a></span>
-<span class="normal"><a href="#__codelineno-0-2467">2467</a></span>
-<span class="normal"><a href="#__codelineno-0-2468">2468</a></span>
-<span class="normal"><a href="#__codelineno-0-2469">2469</a></span>
-<span class="normal"><a href="#__codelineno-0-2470">2470</a></span>
-<span class="normal"><a href="#__codelineno-0-2471">2471</a></span>
-<span class="normal"><a href="#__codelineno-0-2472">2472</a></span>
-<span class="normal"><a href="#__codelineno-0-2473">2473</a></span>
-<span class="normal"><a href="#__codelineno-0-2474">2474</a></span>
-<span class="normal"><a href="#__codelineno-0-2475">2475</a></span>
-<span class="normal"><a href="#__codelineno-0-2476">2476</a></span>
-<span class="normal"><a href="#__codelineno-0-2477">2477</a></span>
-<span class="normal"><a href="#__codelineno-0-2478">2478</a></span>
-<span class="normal"><a href="#__codelineno-0-2479">2479</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-2463"><a id="__codelineno-0-2463" name="__codelineno-0-2463"></a><span class="k">def</span><span class="w"> </span><span class="nf">compose_tree</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="s2">"tuple"</span><span class="p">:</span>
-</span><span id="__span-0-2464"><a id="__codelineno-0-2464" name="__codelineno-0-2464"></a><span class="w">    </span><span class="sd">"""Derived nested-compose tree view of ``self.composed_from``.</span>
-</span><span id="__span-0-2465"><a id="__codelineno-0-2465" name="__codelineno-0-2465"></a>
-</span><span id="__span-0-2466"><a id="__codelineno-0-2466" name="__codelineno-0-2466"></a><span class="sd">    Reconstructs the nested-compose hierarchy from this FEMData's</span>
-</span><span id="__span-0-2467"><a id="__codelineno-0-2467" name="__codelineno-0-2467"></a><span class="sd">    flat ``composed_from`` chain (per PR #369's flat-graft</span>
-</span><span id="__span-0-2468"><a id="__codelineno-0-2468" name="__codelineno-0-2468"></a><span class="sd">    storage).  Returns a tuple of root</span>
-</span><span id="__span-0-2469"><a id="__codelineno-0-2469" name="__codelineno-0-2469"></a><span class="sd">    :class:`~apeGmsh.mesh._compose.ComposeTreeNode` instances;</span>
-</span><span id="__span-0-2470"><a id="__codelineno-0-2470" name="__codelineno-0-2470"></a><span class="sd">    each root carries its :class:`ComposeRecord` plus any direct</span>
-</span><span id="__span-0-2471"><a id="__codelineno-0-2471" name="__codelineno-0-2471"></a><span class="sd">    children parsed from joined labels via the separator-</span>
-</span><span id="__span-0-2472"><a id="__codelineno-0-2472" name="__codelineno-0-2472"></a><span class="sd">    alternation rule (depth-1 ``.``, depth-2 ``/``, depth-3</span>
-</span><span id="__span-0-2473"><a id="__codelineno-0-2473" name="__codelineno-0-2473"></a><span class="sd">    ``.``, ...).</span>
-</span><span id="__span-0-2474"><a id="__codelineno-0-2474" name="__codelineno-0-2474"></a>
-</span><span id="__span-0-2475"><a id="__codelineno-0-2475" name="__codelineno-0-2475"></a><span class="sd">    Empty tuple when ``self.composed_from`` is empty (an</span>
-</span><span id="__span-0-2476"><a id="__codelineno-0-2476" name="__codelineno-0-2476"></a><span class="sd">    uncomposed FEMData).</span>
-</span><span id="__span-0-2477"><a id="__codelineno-0-2477" name="__codelineno-0-2477"></a><span class="sd">    """</span>
-</span><span id="__span-0-2478"><a id="__codelineno-0-2478" name="__codelineno-0-2478"></a>    <span class="kn">from</span><span class="w"> </span><span class="nn">._compose</span><span class="w"> </span><span class="kn">import</span> <span class="n">_build_compose_tree</span>
-</span><span id="__span-0-2479"><a id="__codelineno-0-2479" name="__codelineno-0-2479"></a>    <span class="k">return</span> <span class="n">_build_compose_tree</span><span class="p">(</span><span class="nb">tuple</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">composed_from</span><span class="p">))</span>
+              <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-2314">2314</a></span>
+<span class="normal"><a href="#__codelineno-0-2315">2315</a></span>
+<span class="normal"><a href="#__codelineno-0-2316">2316</a></span>
+<span class="normal"><a href="#__codelineno-0-2317">2317</a></span>
+<span class="normal"><a href="#__codelineno-0-2318">2318</a></span>
+<span class="normal"><a href="#__codelineno-0-2319">2319</a></span>
+<span class="normal"><a href="#__codelineno-0-2320">2320</a></span>
+<span class="normal"><a href="#__codelineno-0-2321">2321</a></span>
+<span class="normal"><a href="#__codelineno-0-2322">2322</a></span>
+<span class="normal"><a href="#__codelineno-0-2323">2323</a></span>
+<span class="normal"><a href="#__codelineno-0-2324">2324</a></span>
+<span class="normal"><a href="#__codelineno-0-2325">2325</a></span>
+<span class="normal"><a href="#__codelineno-0-2326">2326</a></span>
+<span class="normal"><a href="#__codelineno-0-2327">2327</a></span>
+<span class="normal"><a href="#__codelineno-0-2328">2328</a></span>
+<span class="normal"><a href="#__codelineno-0-2329">2329</a></span>
+<span class="normal"><a href="#__codelineno-0-2330">2330</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-2314"><a id="__codelineno-0-2314" name="__codelineno-0-2314"></a><span class="k">def</span><span class="w"> </span><span class="nf">compose_tree</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="s2">"tuple"</span><span class="p">:</span>
+</span><span id="__span-0-2315"><a id="__codelineno-0-2315" name="__codelineno-0-2315"></a><span class="w">    </span><span class="sd">"""Derived nested-compose tree view of ``self.composed_from``.</span>
+</span><span id="__span-0-2316"><a id="__codelineno-0-2316" name="__codelineno-0-2316"></a>
+</span><span id="__span-0-2317"><a id="__codelineno-0-2317" name="__codelineno-0-2317"></a><span class="sd">    Reconstructs the nested-compose hierarchy from this FEMData's</span>
+</span><span id="__span-0-2318"><a id="__codelineno-0-2318" name="__codelineno-0-2318"></a><span class="sd">    flat ``composed_from`` chain (per PR #369's flat-graft</span>
+</span><span id="__span-0-2319"><a id="__codelineno-0-2319" name="__codelineno-0-2319"></a><span class="sd">    storage).  Returns a tuple of root</span>
+</span><span id="__span-0-2320"><a id="__codelineno-0-2320" name="__codelineno-0-2320"></a><span class="sd">    :class:`~apeGmsh.mesh._compose.ComposeTreeNode` instances;</span>
+</span><span id="__span-0-2321"><a id="__codelineno-0-2321" name="__codelineno-0-2321"></a><span class="sd">    each root carries its :class:`ComposeRecord` plus any direct</span>
+</span><span id="__span-0-2322"><a id="__codelineno-0-2322" name="__codelineno-0-2322"></a><span class="sd">    children parsed from joined labels via the separator-</span>
+</span><span id="__span-0-2323"><a id="__codelineno-0-2323" name="__codelineno-0-2323"></a><span class="sd">    alternation rule (depth-1 ``.``, depth-2 ``/``, depth-3</span>
+</span><span id="__span-0-2324"><a id="__codelineno-0-2324" name="__codelineno-0-2324"></a><span class="sd">    ``.``, ...).</span>
+</span><span id="__span-0-2325"><a id="__codelineno-0-2325" name="__codelineno-0-2325"></a>
+</span><span id="__span-0-2326"><a id="__codelineno-0-2326" name="__codelineno-0-2326"></a><span class="sd">    Empty tuple when ``self.composed_from`` is empty (an</span>
+</span><span id="__span-0-2327"><a id="__codelineno-0-2327" name="__codelineno-0-2327"></a><span class="sd">    uncomposed FEMData).</span>
+</span><span id="__span-0-2328"><a id="__codelineno-0-2328" name="__codelineno-0-2328"></a><span class="sd">    """</span>
+</span><span id="__span-0-2329"><a id="__codelineno-0-2329" name="__codelineno-0-2329"></a>    <span class="kn">from</span><span class="w"> </span><span class="nn">._compose</span><span class="w"> </span><span class="kn">import</span> <span class="n">_build_compose_tree</span>
+</span><span id="__span-0-2330"><a id="__codelineno-0-2330" name="__codelineno-0-2330"></a>    <span class="k">return</span> <span class="n">_build_compose_tree</span><span class="p">(</span><span class="nb">tuple</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">composed_from</span><span class="p">))</span>
 </span></code></pre></div></td></tr></table></div>
             </details>
     </div>
@@ -10020,41 +9633,41 @@ accepted; anything else raises <code>TypeError</code>.</p>
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>src/apeGmsh/mesh/FEMData.py</code></summary>
-              <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-2481">2481</a></span>
-<span class="normal"><a href="#__codelineno-0-2482">2482</a></span>
-<span class="normal"><a href="#__codelineno-0-2483">2483</a></span>
-<span class="normal"><a href="#__codelineno-0-2484">2484</a></span>
-<span class="normal"><a href="#__codelineno-0-2485">2485</a></span>
-<span class="normal"><a href="#__codelineno-0-2486">2486</a></span>
-<span class="normal"><a href="#__codelineno-0-2487">2487</a></span>
-<span class="normal"><a href="#__codelineno-0-2488">2488</a></span>
-<span class="normal"><a href="#__codelineno-0-2489">2489</a></span>
-<span class="normal"><a href="#__codelineno-0-2490">2490</a></span>
-<span class="normal"><a href="#__codelineno-0-2491">2491</a></span>
-<span class="normal"><a href="#__codelineno-0-2492">2492</a></span>
-<span class="normal"><a href="#__codelineno-0-2493">2493</a></span>
-<span class="normal"><a href="#__codelineno-0-2494">2494</a></span>
-<span class="normal"><a href="#__codelineno-0-2495">2495</a></span>
-<span class="normal"><a href="#__codelineno-0-2496">2496</a></span>
-<span class="normal"><a href="#__codelineno-0-2497">2497</a></span>
-<span class="normal"><a href="#__codelineno-0-2498">2498</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-2481"><a id="__codelineno-0-2481" name="__codelineno-0-2481"></a><span class="k">def</span><span class="w"> </span><span class="nf">with_mass</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">record</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="s2">"FEMData"</span><span class="p">:</span>
-</span><span id="__span-0-2482"><a id="__codelineno-0-2482" name="__codelineno-0-2482"></a><span class="w">    </span><span class="sd">"""Return a new :class:`FEMData` with ``record`` appended to</span>
-</span><span id="__span-0-2483"><a id="__codelineno-0-2483" name="__codelineno-0-2483"></a><span class="sd">    ``nodes.masses``.</span>
-</span><span id="__span-0-2484"><a id="__codelineno-0-2484" name="__codelineno-0-2484"></a>
-</span><span id="__span-0-2485"><a id="__codelineno-0-2485" name="__codelineno-0-2485"></a><span class="sd">    Pure transform.  ``self`` is unchanged.  Only</span>
-</span><span id="__span-0-2486"><a id="__codelineno-0-2486" name="__codelineno-0-2486"></a><span class="sd">    :class:`~apeGmsh._kernel.records._masses.MassRecord` is</span>
-</span><span id="__span-0-2487"><a id="__codelineno-0-2487" name="__codelineno-0-2487"></a><span class="sd">    accepted; anything else raises ``TypeError``.</span>
-</span><span id="__span-0-2488"><a id="__codelineno-0-2488" name="__codelineno-0-2488"></a><span class="sd">    """</span>
-</span><span id="__span-0-2489"><a id="__codelineno-0-2489" name="__codelineno-0-2489"></a>    <span class="kn">from</span><span class="w"> </span><span class="nn">.._kernel.records._masses</span><span class="w"> </span><span class="kn">import</span> <span class="n">MassRecord</span>
-</span><span id="__span-0-2490"><a id="__codelineno-0-2490" name="__codelineno-0-2490"></a>
-</span><span id="__span-0-2491"><a id="__codelineno-0-2491" name="__codelineno-0-2491"></a>    <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">record</span><span class="p">,</span> <span class="n">MassRecord</span><span class="p">):</span>
-</span><span id="__span-0-2492"><a id="__codelineno-0-2492" name="__codelineno-0-2492"></a>        <span class="n">new_set</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">nodes</span><span class="o">.</span><span class="n">masses</span><span class="o">.</span><span class="n">_with_record</span><span class="p">(</span><span class="n">record</span><span class="p">)</span>
-</span><span id="__span-0-2493"><a id="__codelineno-0-2493" name="__codelineno-0-2493"></a>        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_replaced</span><span class="p">(</span>
-</span><span id="__span-0-2494"><a id="__codelineno-0-2494" name="__codelineno-0-2494"></a>            <span class="n">nodes</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">_replaced_nodes</span><span class="p">(</span><span class="n">masses</span><span class="o">=</span><span class="n">new_set</span><span class="p">))</span>
-</span><span id="__span-0-2495"><a id="__codelineno-0-2495" name="__codelineno-0-2495"></a>    <span class="k">raise</span> <span class="ne">TypeError</span><span class="p">(</span>
-</span><span id="__span-0-2496"><a id="__codelineno-0-2496" name="__codelineno-0-2496"></a>        <span class="sa">f</span><span class="s2">"FEMData.with_mass: unsupported record type "</span>
-</span><span id="__span-0-2497"><a id="__codelineno-0-2497" name="__codelineno-0-2497"></a>        <span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="nb">type</span><span class="p">(</span><span class="n">record</span><span class="p">)</span><span class="o">.</span><span class="vm">__name__</span><span class="si">!r}</span><span class="s2"> — expected MassRecord."</span>
-</span><span id="__span-0-2498"><a id="__codelineno-0-2498" name="__codelineno-0-2498"></a>    <span class="p">)</span>
+              <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-2332">2332</a></span>
+<span class="normal"><a href="#__codelineno-0-2333">2333</a></span>
+<span class="normal"><a href="#__codelineno-0-2334">2334</a></span>
+<span class="normal"><a href="#__codelineno-0-2335">2335</a></span>
+<span class="normal"><a href="#__codelineno-0-2336">2336</a></span>
+<span class="normal"><a href="#__codelineno-0-2337">2337</a></span>
+<span class="normal"><a href="#__codelineno-0-2338">2338</a></span>
+<span class="normal"><a href="#__codelineno-0-2339">2339</a></span>
+<span class="normal"><a href="#__codelineno-0-2340">2340</a></span>
+<span class="normal"><a href="#__codelineno-0-2341">2341</a></span>
+<span class="normal"><a href="#__codelineno-0-2342">2342</a></span>
+<span class="normal"><a href="#__codelineno-0-2343">2343</a></span>
+<span class="normal"><a href="#__codelineno-0-2344">2344</a></span>
+<span class="normal"><a href="#__codelineno-0-2345">2345</a></span>
+<span class="normal"><a href="#__codelineno-0-2346">2346</a></span>
+<span class="normal"><a href="#__codelineno-0-2347">2347</a></span>
+<span class="normal"><a href="#__codelineno-0-2348">2348</a></span>
+<span class="normal"><a href="#__codelineno-0-2349">2349</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-2332"><a id="__codelineno-0-2332" name="__codelineno-0-2332"></a><span class="k">def</span><span class="w"> </span><span class="nf">with_mass</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">record</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="s2">"FEMData"</span><span class="p">:</span>
+</span><span id="__span-0-2333"><a id="__codelineno-0-2333" name="__codelineno-0-2333"></a><span class="w">    </span><span class="sd">"""Return a new :class:`FEMData` with ``record`` appended to</span>
+</span><span id="__span-0-2334"><a id="__codelineno-0-2334" name="__codelineno-0-2334"></a><span class="sd">    ``nodes.masses``.</span>
+</span><span id="__span-0-2335"><a id="__codelineno-0-2335" name="__codelineno-0-2335"></a>
+</span><span id="__span-0-2336"><a id="__codelineno-0-2336" name="__codelineno-0-2336"></a><span class="sd">    Pure transform.  ``self`` is unchanged.  Only</span>
+</span><span id="__span-0-2337"><a id="__codelineno-0-2337" name="__codelineno-0-2337"></a><span class="sd">    :class:`~apeGmsh._kernel.records._masses.MassRecord` is</span>
+</span><span id="__span-0-2338"><a id="__codelineno-0-2338" name="__codelineno-0-2338"></a><span class="sd">    accepted; anything else raises ``TypeError``.</span>
+</span><span id="__span-0-2339"><a id="__codelineno-0-2339" name="__codelineno-0-2339"></a><span class="sd">    """</span>
+</span><span id="__span-0-2340"><a id="__codelineno-0-2340" name="__codelineno-0-2340"></a>    <span class="kn">from</span><span class="w"> </span><span class="nn">.._kernel.records._masses</span><span class="w"> </span><span class="kn">import</span> <span class="n">MassRecord</span>
+</span><span id="__span-0-2341"><a id="__codelineno-0-2341" name="__codelineno-0-2341"></a>
+</span><span id="__span-0-2342"><a id="__codelineno-0-2342" name="__codelineno-0-2342"></a>    <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">record</span><span class="p">,</span> <span class="n">MassRecord</span><span class="p">):</span>
+</span><span id="__span-0-2343"><a id="__codelineno-0-2343" name="__codelineno-0-2343"></a>        <span class="n">new_set</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">nodes</span><span class="o">.</span><span class="n">masses</span><span class="o">.</span><span class="n">_with_record</span><span class="p">(</span><span class="n">record</span><span class="p">)</span>
+</span><span id="__span-0-2344"><a id="__codelineno-0-2344" name="__codelineno-0-2344"></a>        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_replaced</span><span class="p">(</span>
+</span><span id="__span-0-2345"><a id="__codelineno-0-2345" name="__codelineno-0-2345"></a>            <span class="n">nodes</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">_replaced_nodes</span><span class="p">(</span><span class="n">masses</span><span class="o">=</span><span class="n">new_set</span><span class="p">))</span>
+</span><span id="__span-0-2346"><a id="__codelineno-0-2346" name="__codelineno-0-2346"></a>    <span class="k">raise</span> <span class="ne">TypeError</span><span class="p">(</span>
+</span><span id="__span-0-2347"><a id="__codelineno-0-2347" name="__codelineno-0-2347"></a>        <span class="sa">f</span><span class="s2">"FEMData.with_mass: unsupported record type "</span>
+</span><span id="__span-0-2348"><a id="__codelineno-0-2348" name="__codelineno-0-2348"></a>        <span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="nb">type</span><span class="p">(</span><span class="n">record</span><span class="p">)</span><span class="o">.</span><span class="vm">__name__</span><span class="si">!r}</span><span class="s2"> — expected MassRecord."</span>
+</span><span id="__span-0-2349"><a id="__codelineno-0-2349" name="__codelineno-0-2349"></a>    <span class="p">)</span>
 </span></code></pre></div></td></tr></table></div>
             </details>
     </div>
@@ -10081,31 +9694,31 @@ accepted; anything else raises <code>TypeError</code>.</p>
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>src/apeGmsh/mesh/FEMData.py</code></summary>
-              <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-2500">2500</a></span>
-<span class="normal"><a href="#__codelineno-0-2501">2501</a></span>
-<span class="normal"><a href="#__codelineno-0-2502">2502</a></span>
-<span class="normal"><a href="#__codelineno-0-2503">2503</a></span>
-<span class="normal"><a href="#__codelineno-0-2504">2504</a></span>
-<span class="normal"><a href="#__codelineno-0-2505">2505</a></span>
-<span class="normal"><a href="#__codelineno-0-2506">2506</a></span>
-<span class="normal"><a href="#__codelineno-0-2507">2507</a></span>
-<span class="normal"><a href="#__codelineno-0-2508">2508</a></span>
-<span class="normal"><a href="#__codelineno-0-2509">2509</a></span>
-<span class="normal"><a href="#__codelineno-0-2510">2510</a></span>
-<span class="normal"><a href="#__codelineno-0-2511">2511</a></span>
-<span class="normal"><a href="#__codelineno-0-2512">2512</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-2500"><a id="__codelineno-0-2500" name="__codelineno-0-2500"></a><span class="k">def</span><span class="w"> </span><span class="nf">assess</span><span class="p">(</span>
-</span><span id="__span-0-2501"><a id="__codelineno-0-2501" name="__codelineno-0-2501"></a>    <span class="bp">self</span><span class="p">,</span>
-</span><span id="__span-0-2502"><a id="__codelineno-0-2502" name="__codelineno-0-2502"></a>    <span class="o">*</span><span class="p">,</span>
-</span><span id="__span-0-2503"><a id="__codelineno-0-2503" name="__codelineno-0-2503"></a>    <span class="n">figures</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
-</span><span id="__span-0-2504"><a id="__codelineno-0-2504" name="__codelineno-0-2504"></a>    <span class="n">out_dir</span><span class="p">:</span> <span class="s2">"str | Path | None"</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
-</span><span id="__span-0-2505"><a id="__codelineno-0-2505" name="__codelineno-0-2505"></a><span class="p">)</span> <span class="o">-&gt;</span> <span class="s2">"AssessmentReport"</span><span class="p">:</span>
-</span><span id="__span-0-2506"><a id="__codelineno-0-2506" name="__codelineno-0-2506"></a><span class="w">    </span><span class="sd">"""Compile a v1 :class:`~apeGmsh.assess.AssessmentReport` (ADR 0094).</span>
-</span><span id="__span-0-2507"><a id="__codelineno-0-2507" name="__codelineno-0-2507"></a>
-</span><span id="__span-0-2508"><a id="__codelineno-0-2508" name="__codelineno-0-2508"></a><span class="sd">    ``figures=True`` writes one undeformed mesh still via</span>
-</span><span id="__span-0-2509"><a id="__codelineno-0-2509" name="__codelineno-0-2509"></a><span class="sd">    :meth:`render`. Default is ``False``.</span>
-</span><span id="__span-0-2510"><a id="__codelineno-0-2510" name="__codelineno-0-2510"></a><span class="sd">    """</span>
-</span><span id="__span-0-2511"><a id="__codelineno-0-2511" name="__codelineno-0-2511"></a>    <span class="kn">from</span><span class="w"> </span><span class="nn">apeGmsh.assess</span><span class="w"> </span><span class="kn">import</span> <span class="n">assess_fem</span>
-</span><span id="__span-0-2512"><a id="__codelineno-0-2512" name="__codelineno-0-2512"></a>    <span class="k">return</span> <span class="n">assess_fem</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">figures</span><span class="o">=</span><span class="n">figures</span><span class="p">,</span> <span class="n">out_dir</span><span class="o">=</span><span class="n">out_dir</span><span class="p">)</span>
+              <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-2351">2351</a></span>
+<span class="normal"><a href="#__codelineno-0-2352">2352</a></span>
+<span class="normal"><a href="#__codelineno-0-2353">2353</a></span>
+<span class="normal"><a href="#__codelineno-0-2354">2354</a></span>
+<span class="normal"><a href="#__codelineno-0-2355">2355</a></span>
+<span class="normal"><a href="#__codelineno-0-2356">2356</a></span>
+<span class="normal"><a href="#__codelineno-0-2357">2357</a></span>
+<span class="normal"><a href="#__codelineno-0-2358">2358</a></span>
+<span class="normal"><a href="#__codelineno-0-2359">2359</a></span>
+<span class="normal"><a href="#__codelineno-0-2360">2360</a></span>
+<span class="normal"><a href="#__codelineno-0-2361">2361</a></span>
+<span class="normal"><a href="#__codelineno-0-2362">2362</a></span>
+<span class="normal"><a href="#__codelineno-0-2363">2363</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-2351"><a id="__codelineno-0-2351" name="__codelineno-0-2351"></a><span class="k">def</span><span class="w"> </span><span class="nf">assess</span><span class="p">(</span>
+</span><span id="__span-0-2352"><a id="__codelineno-0-2352" name="__codelineno-0-2352"></a>    <span class="bp">self</span><span class="p">,</span>
+</span><span id="__span-0-2353"><a id="__codelineno-0-2353" name="__codelineno-0-2353"></a>    <span class="o">*</span><span class="p">,</span>
+</span><span id="__span-0-2354"><a id="__codelineno-0-2354" name="__codelineno-0-2354"></a>    <span class="n">figures</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+</span><span id="__span-0-2355"><a id="__codelineno-0-2355" name="__codelineno-0-2355"></a>    <span class="n">out_dir</span><span class="p">:</span> <span class="s2">"str | Path | None"</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+</span><span id="__span-0-2356"><a id="__codelineno-0-2356" name="__codelineno-0-2356"></a><span class="p">)</span> <span class="o">-&gt;</span> <span class="s2">"AssessmentReport"</span><span class="p">:</span>
+</span><span id="__span-0-2357"><a id="__codelineno-0-2357" name="__codelineno-0-2357"></a><span class="w">    </span><span class="sd">"""Compile a v1 :class:`~apeGmsh.assess.AssessmentReport` (ADR 0094).</span>
+</span><span id="__span-0-2358"><a id="__codelineno-0-2358" name="__codelineno-0-2358"></a>
+</span><span id="__span-0-2359"><a id="__codelineno-0-2359" name="__codelineno-0-2359"></a><span class="sd">    ``figures=True`` writes one undeformed mesh still via</span>
+</span><span id="__span-0-2360"><a id="__codelineno-0-2360" name="__codelineno-0-2360"></a><span class="sd">    :meth:`render`. Default is ``False``.</span>
+</span><span id="__span-0-2361"><a id="__codelineno-0-2361" name="__codelineno-0-2361"></a><span class="sd">    """</span>
+</span><span id="__span-0-2362"><a id="__codelineno-0-2362" name="__codelineno-0-2362"></a>    <span class="kn">from</span><span class="w"> </span><span class="nn">apeGmsh.assess</span><span class="w"> </span><span class="kn">import</span> <span class="n">assess_fem</span>
+</span><span id="__span-0-2363"><a id="__codelineno-0-2363" name="__codelineno-0-2363"></a>    <span class="k">return</span> <span class="n">assess_fem</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">figures</span><span class="o">=</span><span class="n">figures</span><span class="p">,</span> <span class="n">out_dir</span><span class="o">=</span><span class="n">out_dir</span><span class="p">)</span>
 </span></code></pre></div></td></tr></table></div>
             </details>
     </div>
@@ -10137,49 +9750,49 @@ override.</p>
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>src/apeGmsh/mesh/FEMData.py</code></summary>
-              <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-2514">2514</a></span>
-<span class="normal"><a href="#__codelineno-0-2515">2515</a></span>
-<span class="normal"><a href="#__codelineno-0-2516">2516</a></span>
-<span class="normal"><a href="#__codelineno-0-2517">2517</a></span>
-<span class="normal"><a href="#__codelineno-0-2518">2518</a></span>
-<span class="normal"><a href="#__codelineno-0-2519">2519</a></span>
-<span class="normal"><a href="#__codelineno-0-2520">2520</a></span>
-<span class="normal"><a href="#__codelineno-0-2521">2521</a></span>
-<span class="normal"><a href="#__codelineno-0-2522">2522</a></span>
-<span class="normal"><a href="#__codelineno-0-2523">2523</a></span>
-<span class="normal"><a href="#__codelineno-0-2524">2524</a></span>
-<span class="normal"><a href="#__codelineno-0-2525">2525</a></span>
-<span class="normal"><a href="#__codelineno-0-2526">2526</a></span>
-<span class="normal"><a href="#__codelineno-0-2527">2527</a></span>
-<span class="normal"><a href="#__codelineno-0-2528">2528</a></span>
-<span class="normal"><a href="#__codelineno-0-2529">2529</a></span>
-<span class="normal"><a href="#__codelineno-0-2530">2530</a></span>
-<span class="normal"><a href="#__codelineno-0-2531">2531</a></span>
-<span class="normal"><a href="#__codelineno-0-2532">2532</a></span>
-<span class="normal"><a href="#__codelineno-0-2533">2533</a></span>
-<span class="normal"><a href="#__codelineno-0-2534">2534</a></span>
-<span class="normal"><a href="#__codelineno-0-2535">2535</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-2514"><a id="__codelineno-0-2514" name="__codelineno-0-2514"></a><span class="k">def</span><span class="w"> </span><span class="nf">render</span><span class="p">(</span>
-</span><span id="__span-0-2515"><a id="__codelineno-0-2515" name="__codelineno-0-2515"></a>    <span class="bp">self</span><span class="p">,</span>
-</span><span id="__span-0-2516"><a id="__codelineno-0-2516" name="__codelineno-0-2516"></a>    <span class="n">path</span><span class="p">:</span> <span class="s2">"str | Path"</span><span class="p">,</span>
-</span><span id="__span-0-2517"><a id="__codelineno-0-2517" name="__codelineno-0-2517"></a>    <span class="o">*</span><span class="p">,</span>
-</span><span id="__span-0-2518"><a id="__codelineno-0-2518" name="__codelineno-0-2518"></a>    <span class="n">camera</span><span class="p">:</span> <span class="s2">"str | None"</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
-</span><span id="__span-0-2519"><a id="__codelineno-0-2519" name="__codelineno-0-2519"></a>    <span class="n">window_size</span><span class="p">:</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="p">(</span><span class="mi">1280</span><span class="p">,</span> <span class="mi">720</span><span class="p">),</span>
-</span><span id="__span-0-2520"><a id="__codelineno-0-2520" name="__codelineno-0-2520"></a><span class="p">)</span> <span class="o">-&gt;</span> <span class="s2">"Path | None"</span><span class="p">:</span>
-</span><span id="__span-0-2521"><a id="__codelineno-0-2521" name="__codelineno-0-2521"></a><span class="w">    </span><span class="sd">"""Write one undeformed mesh still (ADR 0094 S1).</span>
-</span><span id="__span-0-2522"><a id="__codelineno-0-2522" name="__codelineno-0-2522"></a>
-</span><span id="__span-0-2523"><a id="__codelineno-0-2523" name="__codelineno-0-2523"></a><span class="sd">    VTK offscreen — no Qt window, no event loop. Returns the</span>
-</span><span id="__span-0-2524"><a id="__codelineno-0-2524" name="__codelineno-0-2524"></a><span class="sd">    written :class:`~pathlib.Path`, or ``None`` (and prints the</span>
-</span><span id="__span-0-2525"><a id="__codelineno-0-2525" name="__codelineno-0-2525"></a><span class="sd">    ``[skip viewer]`` notice) under ``APEGMSH_SKIP_VIEWER=1`` or</span>
-</span><span id="__span-0-2526"><a id="__codelineno-0-2526" name="__codelineno-0-2526"></a><span class="sd">    with no GL.</span>
-</span><span id="__span-0-2527"><a id="__codelineno-0-2527" name="__codelineno-0-2527"></a>
-</span><span id="__span-0-2528"><a id="__codelineno-0-2528" name="__codelineno-0-2528"></a><span class="sd">    ``camera=`` defaults to ``xy`` for a planar model, ``iso``</span>
-</span><span id="__span-0-2529"><a id="__codelineno-0-2529" name="__codelineno-0-2529"></a><span class="sd">    otherwise (ADR 0094 Amendment 3); pass it explicitly to</span>
-</span><span id="__span-0-2530"><a id="__codelineno-0-2530" name="__codelineno-0-2530"></a><span class="sd">    override.</span>
-</span><span id="__span-0-2531"><a id="__codelineno-0-2531" name="__codelineno-0-2531"></a><span class="sd">    """</span>
-</span><span id="__span-0-2532"><a id="__codelineno-0-2532" name="__codelineno-0-2532"></a>    <span class="kn">from</span><span class="w"> </span><span class="nn">apeGmsh.viewers.render</span><span class="w"> </span><span class="kn">import</span> <span class="n">render_fem</span>
-</span><span id="__span-0-2533"><a id="__codelineno-0-2533" name="__codelineno-0-2533"></a>    <span class="k">return</span> <span class="n">render_fem</span><span class="p">(</span>
-</span><span id="__span-0-2534"><a id="__codelineno-0-2534" name="__codelineno-0-2534"></a>        <span class="bp">self</span><span class="p">,</span> <span class="n">path</span><span class="p">,</span> <span class="n">camera</span><span class="o">=</span><span class="n">camera</span><span class="p">,</span> <span class="n">window_size</span><span class="o">=</span><span class="n">window_size</span><span class="p">,</span>
-</span><span id="__span-0-2535"><a id="__codelineno-0-2535" name="__codelineno-0-2535"></a>    <span class="p">)</span>
+              <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-2365">2365</a></span>
+<span class="normal"><a href="#__codelineno-0-2366">2366</a></span>
+<span class="normal"><a href="#__codelineno-0-2367">2367</a></span>
+<span class="normal"><a href="#__codelineno-0-2368">2368</a></span>
+<span class="normal"><a href="#__codelineno-0-2369">2369</a></span>
+<span class="normal"><a href="#__codelineno-0-2370">2370</a></span>
+<span class="normal"><a href="#__codelineno-0-2371">2371</a></span>
+<span class="normal"><a href="#__codelineno-0-2372">2372</a></span>
+<span class="normal"><a href="#__codelineno-0-2373">2373</a></span>
+<span class="normal"><a href="#__codelineno-0-2374">2374</a></span>
+<span class="normal"><a href="#__codelineno-0-2375">2375</a></span>
+<span class="normal"><a href="#__codelineno-0-2376">2376</a></span>
+<span class="normal"><a href="#__codelineno-0-2377">2377</a></span>
+<span class="normal"><a href="#__codelineno-0-2378">2378</a></span>
+<span class="normal"><a href="#__codelineno-0-2379">2379</a></span>
+<span class="normal"><a href="#__codelineno-0-2380">2380</a></span>
+<span class="normal"><a href="#__codelineno-0-2381">2381</a></span>
+<span class="normal"><a href="#__codelineno-0-2382">2382</a></span>
+<span class="normal"><a href="#__codelineno-0-2383">2383</a></span>
+<span class="normal"><a href="#__codelineno-0-2384">2384</a></span>
+<span class="normal"><a href="#__codelineno-0-2385">2385</a></span>
+<span class="normal"><a href="#__codelineno-0-2386">2386</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-2365"><a id="__codelineno-0-2365" name="__codelineno-0-2365"></a><span class="k">def</span><span class="w"> </span><span class="nf">render</span><span class="p">(</span>
+</span><span id="__span-0-2366"><a id="__codelineno-0-2366" name="__codelineno-0-2366"></a>    <span class="bp">self</span><span class="p">,</span>
+</span><span id="__span-0-2367"><a id="__codelineno-0-2367" name="__codelineno-0-2367"></a>    <span class="n">path</span><span class="p">:</span> <span class="s2">"str | Path"</span><span class="p">,</span>
+</span><span id="__span-0-2368"><a id="__codelineno-0-2368" name="__codelineno-0-2368"></a>    <span class="o">*</span><span class="p">,</span>
+</span><span id="__span-0-2369"><a id="__codelineno-0-2369" name="__codelineno-0-2369"></a>    <span class="n">camera</span><span class="p">:</span> <span class="s2">"str | None"</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+</span><span id="__span-0-2370"><a id="__codelineno-0-2370" name="__codelineno-0-2370"></a>    <span class="n">window_size</span><span class="p">:</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="p">(</span><span class="mi">1280</span><span class="p">,</span> <span class="mi">720</span><span class="p">),</span>
+</span><span id="__span-0-2371"><a id="__codelineno-0-2371" name="__codelineno-0-2371"></a><span class="p">)</span> <span class="o">-&gt;</span> <span class="s2">"Path | None"</span><span class="p">:</span>
+</span><span id="__span-0-2372"><a id="__codelineno-0-2372" name="__codelineno-0-2372"></a><span class="w">    </span><span class="sd">"""Write one undeformed mesh still (ADR 0094 S1).</span>
+</span><span id="__span-0-2373"><a id="__codelineno-0-2373" name="__codelineno-0-2373"></a>
+</span><span id="__span-0-2374"><a id="__codelineno-0-2374" name="__codelineno-0-2374"></a><span class="sd">    VTK offscreen — no Qt window, no event loop. Returns the</span>
+</span><span id="__span-0-2375"><a id="__codelineno-0-2375" name="__codelineno-0-2375"></a><span class="sd">    written :class:`~pathlib.Path`, or ``None`` (and prints the</span>
+</span><span id="__span-0-2376"><a id="__codelineno-0-2376" name="__codelineno-0-2376"></a><span class="sd">    ``[skip viewer]`` notice) under ``APEGMSH_SKIP_VIEWER=1`` or</span>
+</span><span id="__span-0-2377"><a id="__codelineno-0-2377" name="__codelineno-0-2377"></a><span class="sd">    with no GL.</span>
+</span><span id="__span-0-2378"><a id="__codelineno-0-2378" name="__codelineno-0-2378"></a>
+</span><span id="__span-0-2379"><a id="__codelineno-0-2379" name="__codelineno-0-2379"></a><span class="sd">    ``camera=`` defaults to ``xy`` for a planar model, ``iso``</span>
+</span><span id="__span-0-2380"><a id="__codelineno-0-2380" name="__codelineno-0-2380"></a><span class="sd">    otherwise (ADR 0094 Amendment 3); pass it explicitly to</span>
+</span><span id="__span-0-2381"><a id="__codelineno-0-2381" name="__codelineno-0-2381"></a><span class="sd">    override.</span>
+</span><span id="__span-0-2382"><a id="__codelineno-0-2382" name="__codelineno-0-2382"></a><span class="sd">    """</span>
+</span><span id="__span-0-2383"><a id="__codelineno-0-2383" name="__codelineno-0-2383"></a>    <span class="kn">from</span><span class="w"> </span><span class="nn">apeGmsh.viewers.render</span><span class="w"> </span><span class="kn">import</span> <span class="n">render_fem</span>
+</span><span id="__span-0-2384"><a id="__codelineno-0-2384" name="__codelineno-0-2384"></a>    <span class="k">return</span> <span class="n">render_fem</span><span class="p">(</span>
+</span><span id="__span-0-2385"><a id="__codelineno-0-2385" name="__codelineno-0-2385"></a>        <span class="bp">self</span><span class="p">,</span> <span class="n">path</span><span class="p">,</span> <span class="n">camera</span><span class="o">=</span><span class="n">camera</span><span class="p">,</span> <span class="n">window_size</span><span class="o">=</span><span class="n">window_size</span><span class="p">,</span>
+</span><span id="__span-0-2386"><a id="__codelineno-0-2386" name="__codelineno-0-2386"></a>    <span class="p">)</span>
 </span></code></pre></div></td></tr></table></div>
             </details>
     </div>
@@ -10208,31 +9821,31 @@ mesh window, use <code>g.mesh.viewer()</code>.</p>
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>src/apeGmsh/mesh/FEMData.py</code></summary>
-              <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-2537">2537</a></span>
-<span class="normal"><a href="#__codelineno-0-2538">2538</a></span>
-<span class="normal"><a href="#__codelineno-0-2539">2539</a></span>
-<span class="normal"><a href="#__codelineno-0-2540">2540</a></span>
-<span class="normal"><a href="#__codelineno-0-2541">2541</a></span>
-<span class="normal"><a href="#__codelineno-0-2542">2542</a></span>
-<span class="normal"><a href="#__codelineno-0-2543">2543</a></span>
-<span class="normal"><a href="#__codelineno-0-2544">2544</a></span>
-<span class="normal"><a href="#__codelineno-0-2545">2545</a></span>
-<span class="normal"><a href="#__codelineno-0-2546">2546</a></span>
-<span class="normal"><a href="#__codelineno-0-2547">2547</a></span>
-<span class="normal"><a href="#__codelineno-0-2548">2548</a></span>
-<span class="normal"><a href="#__codelineno-0-2549">2549</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-2537"><a id="__codelineno-0-2537" name="__codelineno-0-2537"></a><span class="k">def</span><span class="w"> </span><span class="nf">viewer</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">blocking</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-</span><span id="__span-0-2538"><a id="__codelineno-0-2538" name="__codelineno-0-2538"></a><span class="w">    </span><span class="sd">"""Open a non-interactive mesh viewer from this snapshot.</span>
-</span><span id="__span-0-2539"><a id="__codelineno-0-2539" name="__codelineno-0-2539"></a>
-</span><span id="__span-0-2540"><a id="__codelineno-0-2540" name="__codelineno-0-2540"></a><span class="sd">    Currently disabled — the legacy ``Results.from_fem(...).viewer()``</span>
-</span><span id="__span-0-2541"><a id="__codelineno-0-2541" name="__codelineno-0-2541"></a><span class="sd">    path was removed when the Results module was rebuilt. For a</span>
-</span><span id="__span-0-2542"><a id="__codelineno-0-2542" name="__codelineno-0-2542"></a><span class="sd">    headless mesh still use :meth:`render`. For an interactive</span>
-</span><span id="__span-0-2543"><a id="__codelineno-0-2543" name="__codelineno-0-2543"></a><span class="sd">    mesh window, use ``g.mesh.viewer()``.</span>
-</span><span id="__span-0-2544"><a id="__codelineno-0-2544" name="__codelineno-0-2544"></a><span class="sd">    """</span>
-</span><span id="__span-0-2545"><a id="__codelineno-0-2545" name="__codelineno-0-2545"></a>    <span class="k">raise</span> <span class="ne">NotImplementedError</span><span class="p">(</span>
-</span><span id="__span-0-2546"><a id="__codelineno-0-2546" name="__codelineno-0-2546"></a>        <span class="s2">"fem.viewer() relied on the legacy Results class which has "</span>
-</span><span id="__span-0-2547"><a id="__codelineno-0-2547" name="__codelineno-0-2547"></a>        <span class="s2">"been rebuilt. For a headless mesh still use fem.render(); "</span>
-</span><span id="__span-0-2548"><a id="__codelineno-0-2548" name="__codelineno-0-2548"></a>        <span class="s2">"for an interactive mesh window use g.mesh.viewer()."</span>
-</span><span id="__span-0-2549"><a id="__codelineno-0-2549" name="__codelineno-0-2549"></a>    <span class="p">)</span>
+              <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-2388">2388</a></span>
+<span class="normal"><a href="#__codelineno-0-2389">2389</a></span>
+<span class="normal"><a href="#__codelineno-0-2390">2390</a></span>
+<span class="normal"><a href="#__codelineno-0-2391">2391</a></span>
+<span class="normal"><a href="#__codelineno-0-2392">2392</a></span>
+<span class="normal"><a href="#__codelineno-0-2393">2393</a></span>
+<span class="normal"><a href="#__codelineno-0-2394">2394</a></span>
+<span class="normal"><a href="#__codelineno-0-2395">2395</a></span>
+<span class="normal"><a href="#__codelineno-0-2396">2396</a></span>
+<span class="normal"><a href="#__codelineno-0-2397">2397</a></span>
+<span class="normal"><a href="#__codelineno-0-2398">2398</a></span>
+<span class="normal"><a href="#__codelineno-0-2399">2399</a></span>
+<span class="normal"><a href="#__codelineno-0-2400">2400</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-2388"><a id="__codelineno-0-2388" name="__codelineno-0-2388"></a><span class="k">def</span><span class="w"> </span><span class="nf">viewer</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">blocking</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+</span><span id="__span-0-2389"><a id="__codelineno-0-2389" name="__codelineno-0-2389"></a><span class="w">    </span><span class="sd">"""Open a non-interactive mesh viewer from this snapshot.</span>
+</span><span id="__span-0-2390"><a id="__codelineno-0-2390" name="__codelineno-0-2390"></a>
+</span><span id="__span-0-2391"><a id="__codelineno-0-2391" name="__codelineno-0-2391"></a><span class="sd">    Currently disabled — the legacy ``Results.from_fem(...).viewer()``</span>
+</span><span id="__span-0-2392"><a id="__codelineno-0-2392" name="__codelineno-0-2392"></a><span class="sd">    path was removed when the Results module was rebuilt. For a</span>
+</span><span id="__span-0-2393"><a id="__codelineno-0-2393" name="__codelineno-0-2393"></a><span class="sd">    headless mesh still use :meth:`render`. For an interactive</span>
+</span><span id="__span-0-2394"><a id="__codelineno-0-2394" name="__codelineno-0-2394"></a><span class="sd">    mesh window, use ``g.mesh.viewer()``.</span>
+</span><span id="__span-0-2395"><a id="__codelineno-0-2395" name="__codelineno-0-2395"></a><span class="sd">    """</span>
+</span><span id="__span-0-2396"><a id="__codelineno-0-2396" name="__codelineno-0-2396"></a>    <span class="k">raise</span> <span class="ne">NotImplementedError</span><span class="p">(</span>
+</span><span id="__span-0-2397"><a id="__codelineno-0-2397" name="__codelineno-0-2397"></a>        <span class="s2">"fem.viewer() relied on the legacy Results class which has "</span>
+</span><span id="__span-0-2398"><a id="__codelineno-0-2398" name="__codelineno-0-2398"></a>        <span class="s2">"been rebuilt. For a headless mesh still use fem.render(); "</span>
+</span><span id="__span-0-2399"><a id="__codelineno-0-2399" name="__codelineno-0-2399"></a>        <span class="s2">"for an interactive mesh window use g.mesh.viewer()."</span>
+</span><span id="__span-0-2400"><a id="__codelineno-0-2400" name="__codelineno-0-2400"></a>    <span class="p">)</span>
 </span></code></pre></div></td></tr></table></div>
             </details>
     </div>

@@ -687,8 +687,6 @@
       
         
       
-        
-      
     
     
     
@@ -774,34 +772,6 @@
     
   
     Assemble saved models
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../how-to/compose-modules/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Compose modules
   
 
     
@@ -3867,18 +3837,15 @@ meshes non-matching and declare a tie, as covered in
 <h2 id="composing-finished-models">Composing finished models<a class="headerlink" href="#composing-finished-models" title="Permanent link">&para;</a></h2>
 <p>Everything above happens <em>before</em> the mesh: Parts contribute geometry, the
 session stitches it, and one mesh covers the whole. apeGmsh has a second,
-later seam with a deliberately similar shape — <code>g.compose</code> merges a
-previously <em>saved</em> model (<code>model.h5</code>) into a host session as a module:
-already meshed, with its own loads, masses, and constraints resolved. Where a
-Part is a geometry template, a module is a finished sub-model; where
-instances get prefixed labels, composed modules get prefixed physical groups
-(the host keeps its bare names), and the interfaces between modules are
-coupled by constraints rather than fragmented — by compose time there is no
-geometry left to fragment. The <code>Assembly</code> builder (imported from
+later seam with a deliberately similar shape — <code>Assembly</code> (imported from
 <code>apeGmsh.assembly</code>, deliberately not top-level — the session <em>is</em> the
-assembly) is a declarative front over the same machinery: declare saved
-models as parts, declare the interface couples, and materialize the graph
-into one composed session.</p>
+assembly) places previously <em>saved</em> models (<code>model.h5</code>) as named instances:
+already meshed, with their own materials, sections and element specs. Where
+a Part is a geometry template, an instance is a finished sub-model; every
+instance gets prefixed physical groups (<code>{instance}.{group}</code>), and the
+interfaces between instances are tied by constraints rather than fragmented
+— by then there is no geometry left to fragment. <code>bridge()</code> merges the
+instances and their ties into one OpenSees model.</p>
 <p>One consequence of the two seams is worth stating as a rule, because the
 choice is sometimes forced rather than stylistic. Element order is global
 within a gmsh session — <code>set_order</code> applies to the whole mesh — so the
@@ -3886,13 +3853,13 @@ geometry seam can never produce hex20 ribs next to hex8 covers, no matter how
 the Parts are arranged. <strong>If parts need different element orders (or you want
 each part meshed, saved, and iterated independently), the compose seam is the
 route</strong>: one full session per part, each with its own recipe and order, saved
-to its own <code>model.h5</code>, assembled with <code>compose</code> or <code>Assembly</code>, interfaces
+to its own <code>model.h5</code>, assembled with <code>Assembly</code>, interfaces
 tied. Don't reach for <code>Part</code> there — a Part is a geometry template and
 cannot mesh, which is a deliberate contract (ADR 0085), not a gap awaiting a
 feature.</p>
 <p>Concept-level, that's the whole map: Parts compose geometry before meshing
-inside one session; <code>g.compose</code> composes finished models across sessions. The
-mechanics live in <a href="../../how-to/compose-modules/">Compose saved modules</a>, and
+inside one session; <code>Assembly</code> composes finished models across sessions. The
+mechanics live in <a href="../../how-to/assemble-saved-models/">Assemble saved models</a>, and
 the in-session workflow — Parts, placement, fragmentation, all the way to a
 solved frame — is walked end to end in
 <a href="../../examples/multipart-assembly/">Multipart assembly</a>.</p>

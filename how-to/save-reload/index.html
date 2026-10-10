@@ -691,8 +691,6 @@
       
         
       
-        
-      
     
     
     
@@ -858,34 +856,6 @@
     
   
     Assemble saved models
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../compose-modules/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Compose modules
   
 
     
@@ -3710,8 +3680,8 @@ as a resumable chain-phase session with <code>apeGmsh.from_h5</code>.</p>
 </span><span id="__span-0-14"><a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a>
 </span><span id="__span-0-15"><a id="__codelineno-0-15" name="__codelineno-0-15" href="#__codelineno-0-15"></a><span class="c1"># --- Reload (B): a resumable chain-phase session (no gmsh) ------------</span>
 </span><span id="__span-0-16"><a id="__codelineno-0-16" name="__codelineno-0-16" href="#__codelineno-0-16"></a><span class="n">g2</span> <span class="o">=</span> <span class="n">apeGmsh</span><span class="o">.</span><span class="n">from_h5</span><span class="p">(</span><span class="s2">"plate.h5"</span><span class="p">)</span>   <span class="c1"># skips the gmsh build entirely</span>
-</span><span id="__span-0-17"><a id="__codelineno-0-17" name="__codelineno-0-17" href="#__codelineno-0-17"></a><span class="n">g2</span><span class="o">.</span><span class="n">compose</span><span class="p">(</span><span class="s2">"bolt.h5"</span><span class="p">,</span> <span class="n">label</span><span class="o">=</span><span class="s2">"bolt"</span><span class="p">,</span> <span class="n">translate</span><span class="o">=</span><span class="p">(</span><span class="mf">0.5</span><span class="p">,</span> <span class="mf">0.5</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">))</span>
-</span><span id="__span-0-18"><a id="__codelineno-0-18" name="__codelineno-0-18" href="#__codelineno-0-18"></a><span class="n">g2</span><span class="o">.</span><span class="n">save</span><span class="p">(</span><span class="s2">"assembly.h5"</span><span class="p">)</span>
+</span><span id="__span-0-17"><a id="__codelineno-0-17" name="__codelineno-0-17" href="#__codelineno-0-17"></a><span class="n">fem2</span> <span class="o">=</span> <span class="n">g2</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">queries</span><span class="o">.</span><span class="n">get_fem_data</span><span class="p">()</span>   <span class="c1"># the chain head, read from the file</span>
+</span><span id="__span-0-18"><a id="__codelineno-0-18" name="__codelineno-0-18" href="#__codelineno-0-18"></a><span class="n">g2</span><span class="o">.</span><span class="n">save</span><span class="p">(</span><span class="s2">"plate_copy.h5"</span><span class="p">)</span>
 </span></code></pre></div>
 <p>Exact signatures (verified against <code>src/</code>):</p>
 <div class="language-python highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="n">apeGmsh</span><span class="p">(</span><span class="o">...</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">save_to</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="n">Path</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">overwrite</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">)</span>  <span class="c1"># _core.py:84</span>
@@ -3767,8 +3737,8 @@ as a resumable chain-phase session with <code>apeGmsh.from_h5</code>.</p>
   — the immutable snapshot and the full native-persistence round-trip contract.</li>
 <li><strong>Tutorial:</strong> <a href="../../tutorials/save-reload-view/">Save, reload, and view a model</a>
   — the same workflow walked end to end.</li>
-<li><strong>How-to:</strong> <a href="../compose-modules/">Compose modules into one model</a>
-  — graft saved <code>.h5</code> parts together via <code>apeGmsh.from_h5</code> + <code>g.compose</code>.</li>
+<li><strong>How-to:</strong> <a href="../assemble-saved-models/">Assemble saved models</a>
+  — place saved <code>.h5</code> models as named instances, tie them, and bridge one model with <code>Assembly</code>.</li>
 <li><strong>API:</strong> <a href="../../api/fem/#native-persistence"><code>FEMData</code> native persistence</a>
   and <a href="../../api/session/#native-persistence">Session persistence</a>.</li>
 </ul>

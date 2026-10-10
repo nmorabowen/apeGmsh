@@ -858,8 +858,6 @@
       
         
       
-        
-      
     
     
     
@@ -945,34 +943,6 @@
     
   
     Assemble saved models
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../how-to/compose-modules/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Compose modules
   
 
     
@@ -4099,8 +4069,8 @@ here, but you'll meet it the day you assemble models):</p>
 </span></code></pre></div>
 <p>Mind the difference: <strong><code>FEMData.from_h5</code> gives you a snapshot</strong>;
 <strong><code>apeGmsh.from_h5</code> gives you a session</strong> — but a <em>chain-phase</em> one with no
-live Gmsh kernel behind it. You can <code>g2.compose(...)</code> other saved models
-onto it and <code>g2.save(...)</code> the result, but <code>g2.model.*</code> and
+live Gmsh kernel behind it. You can query it and <code>g2.save(...)</code> it, but
+<code>g2.model.*</code> and
 <code>g2.mesh.generation.*</code> will fail (there's no kernel to draw into). For
 "reload one model and analyse it," <code>FEMData.from_h5</code> is the tool — that's
 what we use.</p>
@@ -4201,9 +4171,9 @@ exactly <code>PL³/48EI</code> — after the model has been saved and reopened.<
 <li><strong><a href="../../how-to/">Results &amp; export recipes</a></strong> — the alternatives we
   deliberately didn't fork into here: exporting a runnable Tcl/Py deck,
   classic recorders, and STKO <code>.mpco</code> files.</li>
-<li><strong><a href="../../how-to/">Composing saved models</a></strong> — where <code>apeGmsh.from_h5</code>
-  earns its keep: reload several saved <code>.h5</code> models and <code>g.compose(...)</code>
-  them into one assembly.</li>
+<li><strong><a href="../../how-to/assemble-saved-models/">Assemble saved models</a></strong> — place
+  several saved <code>.h5</code> models as instances with <code>Assembly</code>, tie them, and
+  build one model.</li>
 <li><strong><a href="../../concepts/mental-model/">Core mental model</a></strong> — the ideas behind
   the snapshot, the broker, and the name-everything habit, on one page.</li>
 </ul>

@@ -687,8 +687,6 @@
       
         
       
-        
-      
     
     
     
@@ -774,34 +772,6 @@
     
   
     Assemble saved models
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../how-to/compose-modules/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Compose modules
   
 
     
@@ -3814,8 +3784,7 @@ Resolving your declarations against the real mesh produces the immutable
 the canonical model. So the session <strong>freezes its build phase</strong>: geometry,
 meshing, and physical-group calls now raise a clear error instead of silently
 desynchronizing the snapshot from the kernel it came from. What remains open is
-exactly what operates <em>on</em> snapshots — composing modules with <code>g.compose</code>, and
-the interface-bridging constraints (embedded ties, tied contact, <code>equalDOF</code>,
+exactly what operates <em>on</em> snapshots — the interface-bridging constraints (embedded ties, tied contact, <code>equalDOF</code>,
 rigid links and diaphragms) that couple already-meshed regions. If you need to
 change the geometry after the freeze, you rebuild or reload; you don't mutate.</p>
 <p>The snapshot is also what persists. Pass <code>save_to="model.h5"</code> when you create
@@ -3887,11 +3856,12 @@ workflows where you want to set structured-mesh constraints on entities the
 moment you create them. Both paths converge on the same place — one session,
 one mesh, one snapshot.</p>
 <p>However you build, the hierarchy is fixed: Parts are templates, instances are
-placements, and the session is the one true model. Even the <code>Assembly</code> builder
-— a declarative front for composing already-saved <code>model.h5</code> modules, covered
-in <a href="../../how-to/compose-modules/">Compose modules</a> — resolves down to one
-session in the end. Everything the solver will ever see passes through that
-session exactly once, in the snapshot.</p>
+placements, and the session is the one true model. The <code>Assembly</code> builder
+— which places already-saved <code>model.h5</code> files as instances, covered in
+<a href="../../how-to/assemble-saved-models/">Assemble saved models</a> — works on the
+snapshots those sessions saved, and its <code>bridge()</code> merges them into one.
+Everything the solver will ever see passed through a session exactly once,
+in a snapshot.</p>
 <hr />
 <p><em>Next: <a href="../geometry-and-cad/">Geometry &amp; CAD</a>.</em></p>
 
