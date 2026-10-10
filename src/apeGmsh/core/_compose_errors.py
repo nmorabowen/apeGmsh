@@ -147,9 +147,8 @@ class ChainPhaseError(RuntimeError):
     Recovery
     --------
     Reload the session from disk (``apeGmsh.from_h5(path)``) or restart
-    the build phase before applying the mutation.  Chain-phase
-    composition (``g.compose(...)``) is the supported way to extend a
-    saved model.
+    the build phase before applying the mutation.  To combine saved
+    models, use ``apeGmsh.assembly.Assembly`` (ADR 0117).
     """
 
 

@@ -559,7 +559,7 @@ class apeGmsh(_SessionBase):
         )
 
     # ------------------------------------------------------------------
-    # Compose facade — ADR 0038
+    # Compose readers — ADR 0038 (the g.compose writer was removed in AS5-c)
     # ------------------------------------------------------------------
 
     def compose_inspect(self, path: "str | Path") -> dict:
@@ -588,7 +588,7 @@ class apeGmsh(_SessionBase):
         """Lazy-instantiate the single per-session :class:`Compose` facade.
 
         Compose is a session-level facade rather than a ``_COMPOSITES``
-        entry so the three public methods (``compose`` /
+        entry so the three public readers (``compose_tree`` /
         ``compose_inspect`` / ``compose_list``) read naturally on the
         session.  The lazy pattern keeps unused sessions free of the
         facade's import cost.

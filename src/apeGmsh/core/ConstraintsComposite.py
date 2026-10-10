@@ -1610,7 +1610,7 @@ class ConstraintsComposite(_DeclarationsMixin):
         -----------
         When the session is in chain phase (``g._fem is not None``)
         ``g.parts._instances`` is typically empty — the user came in
-        via ``apeGmsh.from_h5(...)`` or ``g.compose(...)`` rather than
+        via ``apeGmsh.from_h5(...)`` rather than
         building parts up from gmsh.  Validate labels against the
         FEMData broker's labels / physical groups via
         :class:`FEMDataSource.has_target` instead, so cross-session

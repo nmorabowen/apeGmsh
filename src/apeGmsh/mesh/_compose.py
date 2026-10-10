@@ -1,16 +1,14 @@
-"""apeGmsh.mesh._compose — Compose facade scaffold (Phase 3B.1 / ADR 0038).
+"""apeGmsh.mesh._compose — the ADR 0038 compose engine and its readers.
 
-The :class:`Compose` facade is a session-level entry point that lands the
-shell of ADR 0038's ``g.compose(...)`` API: input validation, the
-``compose_inspect`` / ``compose_list`` companion helpers, the
-:class:`ComposedModule` handle, and the typed exception hierarchy.
+The merge engine — tag-offset reservation, namespace prefix sweep,
+record rewrite, the tag-collision verifier and the merge — has one
+private entry, :func:`_compose_module`, which ``Assembly.bridge`` calls
+for each instance (ADR 0117). The public ``g.compose`` /
+``FEMData.compose`` were removed in AS5-c (ADR 0117 D7).
 
-The merge engine itself — tag-offset reservation, namespace prefix
-sweep, record rewrite + verifier — is intentionally **deferred** to
-Phase 3B.2.  Calling :meth:`Compose.compose` here raises
-:class:`NotImplementedError` after the input gates pass; ``inspect`` and
-``list`` are fully functional because they only read H5 metadata or walk
-the current broker's ``fem.composed_from``.
+The session-level :class:`Compose` facade keeps the readers
+``compose_inspect`` / ``compose_list`` / ``compose_tree``, the
+:class:`ComposedModule` handle and the typed exception hierarchy.
 
 Cross-references
 ----------------
@@ -2080,17 +2078,14 @@ class ComposedModule:
 
 
 class Compose:
-    """Facade for compose-time model assembly per ADR 0038.
+    """Session-level compose readers per ADR 0038.
 
-    Single per-session instance, exposed through the three session-level
-    entry points :meth:`apeGmsh.compose`, :meth:`apeGmsh.compose_inspect`,
-    and :meth:`apeGmsh.compose_list`.
-
-    Phase 3B.1 (this PR) scaffolds the facade — input validation, the
-    list / inspect helpers, exception types, the
-    :data:`RESERVATION_GRANULARITY` knob, and the :class:`ComposedModule`
-    handle.  The merge engine behind :meth:`compose` raises
-    :class:`NotImplementedError` pending Phase 3B.2.
+    Single per-session instance behind :meth:`apeGmsh.compose_inspect`,
+    :meth:`apeGmsh.compose_list` and :meth:`apeGmsh.compose_tree`. It also
+    holds the label / rank validators and the
+    :data:`RESERVATION_GRANULARITY` knob the engine
+    (:func:`_compose_module`) uses. The ``compose`` writer was removed in
+    AS5-c (ADR 0117 D7).
     """
 
     #: Reservation granularity for per-module tag windows per ADR 0038

@@ -172,8 +172,7 @@ class _Queries:
         ``clear()`` bumps an internal counter; the cache is fresh iff
         the counter has not advanced since the last extraction).  This
         means the session has a single canonical "chain head" snapshot
-        that ``FEMData.with_*`` transforms and the upcoming
-        ``FEMData.compose(...)`` engine (Phase 3B.2c) will update.
+        that the ``FEMData.with_*`` transforms update.
 
         Vanilla sessions (no ``_fem_counter`` attribute — direct
         ``FEMData.from_gmsh`` fixtures or test stubs) skip the cache
