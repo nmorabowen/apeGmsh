@@ -720,8 +720,8 @@ def _replay_into(
       9a. the global ``/opensees/commands`` rows (``rayleigh``, ``eigen``,
           ``modal_damping``) in their emit order: the bridge's slot 7,
           after the masses and before the patterns and the chain
-      9b. ``emitter.region`` for the top-level ``/opensees/regions`` rows
-          (B4-e, #1579), verbatim and in store order: after the global
+      9b. ``emitter.region`` for the top-level ``/opensees/regions`` rows,
+          verbatim and in store order: after the global
           ``rayleigh`` so a region-scoped one still wins per element, and
           before the recorders that reference a fan-out region by ``-R``
       10. ``emitter.pattern_open`` (+ load / sp / eleLoad +
@@ -1003,8 +1003,8 @@ def _replay_into(
             )
         _replay_command(emitter, cmd, _GLOBAL_COMMAND_METHODS)
 
-    # 9b. Top-level regions (B4-e, #1579): the archived row is the resolved
-    # OpenSees call (tag + flag tail), so every one replays verbatim, with
+    # 9b. Top-level regions: the archived row is the resolved OpenSees
+    # call (tag + flag tail), so every one replays verbatim, with
     # or without its K1-6 declaration — region-scoped ``-rayleigh`` and
     # ``-damp`` attaches, recorder fan-out and named regions alike. After
     # the global ``rayleigh`` rows (OpenSees overwrites element Rayleigh

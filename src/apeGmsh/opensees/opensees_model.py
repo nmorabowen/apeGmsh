@@ -167,11 +167,11 @@ class OpenSeesModel:
     #: D3b; empty when none emitted). Replayed before elements so an
     #: element-flag ``-damp`` resolves.
     _dampings: tuple[DampingObjectRecord, ...] = field(default_factory=tuple)
-    #: Top-level ``region`` calls read from ``/opensees/regions`` (B4-e,
-    #: #1579; empty when none emitted). The resolved rows, replayed
-    #: verbatim: ``to_h5`` writes them back, and the deck targets emit
-    #: them after the global ``rayleigh`` commands (the bridge's "region
-    #: wins" order). Stage-bound regions ride ``_stages``.
+    #: Top-level ``region`` calls read from ``/opensees/regions`` (empty
+    #: when none emitted). The resolved rows, replayed verbatim: ``to_h5``
+    #: writes them back, and the deck targets emit them after the global
+    #: ``rayleigh`` commands (the bridge's "region wins" order).
+    #: Stage-bound regions ride ``_stages``.
     _regions: tuple[RegionRecord, ...] = field(default_factory=tuple)
     #: Effective per-node ndf read from ``/opensees/nodes_ndf`` (ADR 0048).
     #: The single read-side ndf source for re-emit — element-class inference
@@ -334,9 +334,8 @@ class OpenSeesModel:
             beam_integration = tuple(model.beam_integration())
             time_series = tuple(model.time_series())
             dampings = tuple(model.dampings())
-            # B4-e (#1579): the top-level regions were written but never
-            # read, so the rewrite dropped them and the replayed deck
-            # lost its region-scoped rayleigh lines.
+            # The top-level regions: the rewrite echoes them and the deck
+            # targets replay them (a region-scoped rayleigh lives here).
             regions = tuple(model.regions())
             initial_stress = tuple(model.initial_stress())
             # ADR 0055 Phase 2: the staged-archival read side.  The
@@ -1431,8 +1430,8 @@ class OpenSeesModel:
             beam_integrations=self._beam_integration,
             time_series=self._time_series,
             dampings=self._dampings,
-            # B4-e: echo the top-level regions so ``_write_regions`` writes
-            # the group back (store order; the H5 emitter has no slot).
+            # Echo the top-level regions so ``_write_regions`` writes the
+            # group back (store order; the H5 emitter has no slot).
             regions=self._regions,
             elements=self._elements,
             fixes=self._fixes,
