@@ -90,6 +90,7 @@ from ._internal.typed_records import (
     MaterialRecord,
     PatternRecord,
     RecorderRecord,
+    RegionRecord,
     SectionComplexRecord,
     SectionSimpleRecord,
     TimeSeriesRecord,
@@ -166,6 +167,12 @@ class OpenSeesModel:
     #: D3b; empty when none emitted). Replayed before elements so an
     #: element-flag ``-damp`` resolves.
     _dampings: tuple[DampingObjectRecord, ...] = field(default_factory=tuple)
+    #: Top-level ``region`` calls read from ``/opensees/regions`` (B4-e,
+    #: #1579; empty when none emitted). The resolved rows, replayed
+    #: verbatim: ``to_h5`` writes them back, and the deck targets emit
+    #: them after the global ``rayleigh`` commands (the bridge's "region
+    #: wins" order). Stage-bound regions ride ``_stages``.
+    _regions: tuple[RegionRecord, ...] = field(default_factory=tuple)
     #: Effective per-node ndf read from ``/opensees/nodes_ndf`` (ADR 0048).
     #: The single read-side ndf source for re-emit — element-class inference
     #: cannot be re-run from rehydrated ``ElementRecord``s, so the deck's
@@ -327,6 +334,10 @@ class OpenSeesModel:
             beam_integration = tuple(model.beam_integration())
             time_series = tuple(model.time_series())
             dampings = tuple(model.dampings())
+            # B4-e (#1579): the top-level regions were written but never
+            # read, so the rewrite dropped them and the replayed deck
+            # lost its region-scoped rayleigh lines.
+            regions = tuple(model.regions())
             initial_stress = tuple(model.initial_stress())
             # ADR 0055 Phase 2: the staged-archival read side.  The
             # reader fails loud (MalformedH5Error) on a structurally
@@ -390,6 +401,7 @@ class OpenSeesModel:
             _patterns=patterns,
             _recorders=recorders,
             _dampings=dampings,
+            _regions=regions,
             _analysis_attrs=MappingProxyType(dict(analysis_attrs)),
             _analyze_call=analyze_call,
             _cuts=tuple(cuts),
@@ -510,6 +522,7 @@ class OpenSeesModel:
             _patterns=tuple(emitter._patterns_complete),
             _recorders=tuple(emitter._recorders),
             _dampings=tuple(emitter._dampings),
+            _regions=tuple(emitter._regions),
             _initial_stress=tuple(emitter._initial_stress_records),
             # ADR 0055 Phase 2: freeze any captured stage buckets into
             # read-side records (set_stage_records must have run — the
@@ -753,6 +766,16 @@ class OpenSeesModel:
     def dampings(self) -> tuple[DampingObjectRecord, ...]:
         """Return every ``damping`` object declaration (ADR 0053 D3b)."""
         return self._dampings
+
+    def regions(self) -> tuple[RegionRecord, ...]:
+        """Return every top-level ``region`` call (``/opensees/regions``).
+
+        The resolved rows in write order: region-scoped ``rayleigh`` and
+        damping attaches, recorder fan-out regions, named regions. Empty
+        when the archive emitted none. Stage-bound regions are on
+        :meth:`stages`.
+        """
+        return self._regions
 
     def stages(self) -> "tuple[Any, ...]":
         """Return every staged-analysis record (ADR 0055 Phase 2).
@@ -1279,6 +1302,7 @@ class OpenSeesModel:
             beam_integrations=self._beam_integration,
             time_series=self._time_series,
             dampings=self._dampings,
+            regions=self._regions,
             elements=elements_with_conn,
             fixes=self._fixes,
             # ADR 0112 amendment 5: a marked archive re-streams the
@@ -1407,6 +1431,9 @@ class OpenSeesModel:
             beam_integrations=self._beam_integration,
             time_series=self._time_series,
             dampings=self._dampings,
+            # B4-e: echo the top-level regions so ``_write_regions`` writes
+            # the group back (store order; the H5 emitter has no slot).
+            regions=self._regions,
             elements=self._elements,
             fixes=self._fixes,
             masses=self._masses,
