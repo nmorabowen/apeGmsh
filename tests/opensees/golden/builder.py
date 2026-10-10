@@ -377,11 +377,32 @@ def first_deck_mismatch(want: str, got: str) -> int | None:
     return None
 
 
+#: The deck header's provenance stamp (``emitter.tcl.provenance_stamp``,
+#: F2-d #1511): ``# apeGmsh <version>; backend <kind>[; build <sha>]``.
+#: The version is the release identity and the build is the fork sha of
+#: the machine that regenerated, neither an emit output, so both are
+#: masked.  ``backend`` stays: it is what the deck was emitted for.
+STAMP_LINE = re.compile(
+    r"^# apeGmsh \S+; backend (?P<kind>fork|stock)"
+    r"(?P<build>; build [0-9a-fA-F]{40})?$",
+    re.MULTILINE,
+)
+VERSION_TOKEN = "<VERSION>"
+BUILD_TOKEN = "<BUILD>"
+
+
+def _mask_stamp(m: re.Match[str]) -> str:
+    masked = f"# apeGmsh {VERSION_TOKEN}; backend {m['kind']}"
+    if m["build"] is not None:
+        masked += f"; build {BUILD_TOKEN}"
+    return masked
+
+
 def _normalise(text: str, out_dir: Path) -> str:
     text = text.replace("\r\n", "\n")
     for form in {str(out_dir), out_dir.as_posix(), str(out_dir.resolve())}:
         text = text.replace(form, OUT_TOKEN)
-    return text
+    return STAMP_LINE.sub(_mask_stamp, text)
 
 
 def _collect(out_dir: Path) -> str:

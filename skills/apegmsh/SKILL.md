@@ -18,8 +18,11 @@ description: >
   OpenSees bridge with typed primitives, post-processing OpenSees output
   via ``Results`` (``from_native`` / ``from_mpco`` / ``from_recorders``)
   and the web/Qt viewers, native ``model.h5`` persistence
-  (``FEMData.to_h5`` / ``from_h5``, ``save_to=`` / ``g.save()``), model
-  composition (``g.compose`` / ``apeGmsh.from_h5``), and exporting models
+  (``FEMData.to_h5`` / ``from_h5``, ``save_to=`` / ``g.save()``),
+  assembling saved models (``from apeGmsh.assembly import Assembly``:
+  ``instance`` / ``tie`` / ``node`` / ``rigid_link`` / ``couple`` /
+  ``bridge`` / ``partition_rank``), the older model composition
+  (``g.compose`` / ``apeGmsh.from_h5``), and exporting models
   to OpenSees Tcl or openseespy scripts. Covers apeGmsh's own abstractions
   on top of Gmsh and OpenSees. Also use it when the user says "meshing",
   "FEA mesh", "structural mesh", or "OpenSees from gmsh" in a context where
@@ -106,18 +109,22 @@ At the top level the session *is* the assembly — `apeGmsh.Assembly` does
 composite (`g.opensees` was removed) — it is the separate post-session
 bridge `apeSees(fem)`.
 
-> For spatially coupling several saved `model.h5` modules there is now a
-> declarative, **sub-path** builder: `from apeGmsh.assembly import Assembly`
-> → `.add(...).couple(...).materialize()` (shipped v2.0.0, PR #433; couple
-> kinds `equal_dof` / `tied_contact` / `tie` incl. `enforce="equation"` +
-> `method="mortar"`, ADR 0085/0086). It's a thin wrapper that *produces* a
-> composed session; see `references/compose.md`. For everything else, build
-> multi-part models with `g.compose(...)` / `apeGmsh.from_h5`. **Mixed
-> element ORDER across parts (hex20 + hex8) is ONLY possible via this
-> compose route** — `set_order` is session-global, and `Part` is
-> geometry-only by contract (ADR 0085); order-mismatched interfaces want
-> `tie(method="mortar", enforce="equation")` (ADR 0086) — see
-> `references/compose.md` §"Independent meshes per part".
+> To build one model out of several saved `model.h5` files, use
+> **Assembly v2** (ADR 0117), a sub-path import: `from apeGmsh.assembly
+> import Assembly` → `.instance(label, "part.h5", translate=, rotate=,
+> partition_rank=)` → `.tie(...)` / couplings → `.bridge(ndm, ndf)`, which
+> returns one ordinary `apeSees`. Every instance is namespaced
+> `{label}.{name}` (no host), its model content (mesh, groups, materials,
+> sections, element specs) travels, and supports, loads and the analysis
+> are declared on the bridge. See `references/compose.md` §"Assembly v2".
+> The v1 path (`g.compose`, `FEMData.compose`, `Assembly.add / couple /
+> materialize`) is scheduled for removal without deprecation (ADR 0117 D7):
+> do not start new models on it, except where v2 does not reach yet (see
+> that section). **Mixed element ORDER across parts (hex20 + hex8) needs one
+> session per part** — `set_order` is session-global, and
+> `Part` is geometry-only by contract (ADR 0085); order-mismatched
+> interfaces want `tie(method="mortar", enforce="equation")` (ADR 0086) —
+> see `references/compose.md` §"Independent meshes per part".
 
 **2. Composites split by concern.** `g.model` splits into
 `geometry / boolean / transforms / io / queries`. `g.mesh` splits into

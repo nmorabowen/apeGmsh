@@ -250,7 +250,29 @@ class Path(TimeSeries):
             raise ValueError(
                 f"Path: factor must be > 0, got {self.factor!r}"
             )
+        # A values= series needs at least one sample; a time= axis needs
+        # one point per value. OpenSees pairs them one-to-one, so an
+        # unequal pair is not one history, and a mismatch is otherwise
+        # only seen at stage close (numpy's "fp and xp are not of the
+        # same length") or not at all on a route that never interpolates.
+        if self.values is not None and len(self.values) == 0:
+            raise ValueError(
+                "Path: values= is empty; supply at least one sample, "
+                "values=(v0, ...)."
+            )
         if self.time is not None:
+            if len(self.time) == 0:
+                raise ValueError(
+                    "Path: time= is empty; supply one time per value, "
+                    "time=(t0, ...), or use dt= for a uniform axis."
+                )
+            if self.values is not None and len(self.time) != len(self.values):
+                raise ValueError(
+                    f"Path(time=..., values=...): time has {len(self.time)} "
+                    f"samples and values has {len(self.values)}; OpenSees "
+                    "pairs them one-to-one, so give exactly one time per "
+                    "value (or use dt= for a uniformly sampled history)."
+                )
             self._refuse_time_route_flags()
 
     def _refuse_time_route_flags(self) -> None:

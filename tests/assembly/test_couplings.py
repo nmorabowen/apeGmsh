@@ -711,3 +711,451 @@ def test_h5_refuses_a_node_declared_after_bridge(files, tmp_path):
     asm.node("late", REF)
     with pytest.raises(AssemblyError, match="after bridge"):
         asm.h5(tmp_path / "late.h5")
+
+
+# ---------------------------------------------------------------------------
+# AS5-b (G7): equal_dof_mixed, rigid_body and the RBE2 / RBE3 knobs
+# ---------------------------------------------------------------------------
+
+#: Reference-node motion of the rigid-body rig: (ux, uy, uz, rx, ry, rz).
+BODY_MOTION = (0.01, -0.02, 0.005, 0.001, -0.002, 0.003)
+#: The rigid body's reference node, off the wall.
+BODY_REF = (2.0, 3.0, 4.0)
+#: Prescribed shortening of the lower block in the equal_dof_mixed rig, mm.
+MIXED_DELTA = 0.01
+#: The reference node above two coincident plates.
+PLATE_REF = (SIDE / 2, SIDE / 2, 5.0)
+
+
+def _plates(files):
+    """Two coincident plates (ndf 6, 9 co-located node pairs) and ``ref``."""
+    from apeGmsh.assembly import Assembly
+
+    return (Assembly("plates")
+            .instance("p1", files["plate"])
+            .instance("p2", files["plate"])
+            .node("ref", PLATE_REF))
+
+
+def test_equal_dof_mixed_pairs_the_interface_with_the_declared_dofs(files):
+    fem = (_stack(files)
+           .equal_dof_mixed("pier_1.top", "pier_2.bot",
+                            dof_pairs=[(3, 1), (1, 3)], name="mix")
+           .bridge(ndm=3, ndf=3).fem)
+    recs = _node_records(fem, "equal_dof_mixed")
+    c = _coords(fem)
+    assert len(recs) == 9
+    assert {r.master_node for r in recs} == set(_ids(fem, pg="pier_1.top"))
+    assert {r.slave_node for r in recs} == set(_ids(fem, pg="pier_2.bot"))
+    for r in recs:
+        assert (list(r.master_dofs), list(r.dofs), r.name) == ([3, 1], [1, 3], "mix")
+        np.testing.assert_allclose(c[r.master_node], c[r.slave_node], atol=1e-12)
+
+
+def test_rigid_body_slaves_every_node_on_the_reference(files):
+    fem = (_walls(files).node("body", BODY_REF)
+           .rigid_body("body", "w1.Slab", name="rb")
+           .bridge(ndm=3, ndf=6).fem)
+    (rec,) = _node_records(fem, "rigid_body")
+    (body,) = _ids(fem, label="body")
+    c = _coords(fem)
+    assert rec.master_node == body and rec.name == "rb"
+    assert sorted(rec.slave_nodes) == _ids(fem, pg="w1.Slab")
+    assert list(rec.dofs) == [1, 2, 3, 4, 5, 6]
+    for s, off in zip(rec.slave_nodes, rec.offsets):
+        np.testing.assert_allclose(off, c[s] - np.array(BODY_REF), atol=1e-12)
+
+
+def test_rigid_body_needs_a_master_point_for_an_instance_master(files):
+    from apeGmsh.assembly import AssemblyError
+
+    asm = _walls(files)
+    with pytest.raises(AssemblyError, match=r"rigid_body\('w1.Slab', 'w2.Slab'\): "
+                                            "master_point= is required"):
+        asm.rigid_body("w1.Slab", "w2.Slab")
+    fem = (asm.rigid_body("w1.Slab", "w2.Slab", master_point=(0.0, 0.0, 0.0))
+           .bridge(ndm=3, ndf=6).fem)
+    (rec,) = _node_records(fem, "rigid_body")
+    np.testing.assert_allclose(_coords(fem)[rec.master_node], (0, 0, 0), atol=1e-12)
+    assert sorted(rec.slave_nodes) == _ids(fem, pg="w2.Slab")
+
+
+def test_the_deck_emits_the_parity_kinds(files, tmp_path):
+    ops = (_stack(files)
+           .equal_dof_mixed("pier_1.top", "pier_2.bot", dof_pairs=[(3, 1)])
+           .bridge(ndm=3, ndf=3))
+    ops.tcl(str(tmp_path / "m.tcl"), flat=True)
+    lines = [ln.split() for ln in (tmp_path / "m.tcl").read_text(
+        encoding="utf-8").splitlines() if ln.startswith("equalDOF_Mixed")]
+    assert len(lines) == 9
+    assert {tuple(t[3:]) for t in lines} == {("1", "3", "1")}
+
+    body = (_walls(files).node("body", BODY_REF)
+            .rigid_body("body", "w1.Slab").bridge(ndm=3, ndf=6))
+    body.tcl(str(tmp_path / "b.tcl"), flat=True)
+    links = [ln.split() for ln in (tmp_path / "b.tcl").read_text(
+        encoding="utf-8").splitlines() if ln.startswith("rigidLink")]
+    assert sorted(int(t[3]) for t in links) == _ids(body.fem, pg="w1.Slab")
+    (ref,) = _ids(body.fem, label="body")
+    assert {(t[1], t[2]) for t in links} == {("beam", str(ref))}
+
+
+def _rbe_line(ops, path: Path, element: str) -> list[str]:
+    ops.tcl(str(path), flat=True)
+    (line,) = [ln for ln in path.read_text(encoding="utf-8").splitlines()
+               if ln.startswith(f"element {element}")]
+    return line.split()
+
+
+def test_the_rbe_knobs_reach_the_deck(files, tmp_path):
+    # The knob flags in emit order (CouplingControl.emit_flags), after the
+    # coupling's own tokens; nothing is written at the default.
+    cases = [
+        ("kinematic", {}, []),
+        ("kinematic", {"k": 1.0e9, "kr": 2.0e9},
+         ["-k", repr(1.0e9), "-kr", repr(2.0e9)]),
+        ("kinematic", {"k": 1.0e9, "enforce": "al", "al_update": "iter"},
+         ["-k", repr(1.0e9), "-enforce", "al", "-alUpdate", "iter"]),
+        ("distributing", {}, []),
+        ("distributing", {"k": 5.0e8, "enforce": "al"},
+         ["-k", repr(5.0e8), "-enforce", "al"]),
+    ]
+    for i, (kind, knobs, flags) in enumerate(cases):
+        ops = (_stack(files).node("ref", REF)
+               .couple("pier_2.top", kind=kind, reference="ref", **knobs)
+               .bridge(ndm=3, ndf=3))
+        ops.ndf(1, ndf=6)
+        element = ("LadrunoKinematicCoupling" if kind == "kinematic"
+                   else "LadrunoDistributingCoupling")
+        tok = _rbe_line(ops, tmp_path / f"rbe{i}.tcl", element)
+        # RBE2: tag R N s1..s9; RBE3: tag R N i1..i9 (uniform: no -w).
+        assert tok[3:5] == ["1", "9"], tok
+        assert tok[14:] == flags, (kind, knobs, tok)
+
+
+@pytest.mark.parametrize("verb, match", [
+    (lambda a: a.equal_dof_mixed("pier_1.top", "pier_2.bot", dof_pairs=[]),
+     "non-empty list"),
+    (lambda a: a.equal_dof_mixed("pier_1.top", "pier_2.bot", dof_pairs=[(1, 7)]),
+     "1..6"),
+    (lambda a: a.equal_dof_mixed("pier_1.top", "pier_2.bot", dof_pairs=[(1,)]),
+     "not a .retained_dof"),
+    (lambda a: a.equal_dof_mixed("pier_1.top", "pier_2.bot",
+                                 dof_pairs=[(1, 3), (2, 3)]),
+     "constrained DOF 3 repeats"),
+    (lambda a: a.equal_dof_mixed("pier_1.top", "pier_2.bot", dof_pairs=[(1, 1)],
+                                 tolerance=0.0), "> 0"),
+    (lambda a: a.rigid_body("ref", "pier_2.top", mass=1.0), "as_element"),
+    (lambda a: a.rigid_body("ref", "pier_2.top", omega=(0, 0, 1)), "as_element"),
+    (lambda a: a.rigid_body("ref", "pier_2.top", as_element=True, mass=-1.0),
+     ">= 0"),
+    (lambda a: a.rigid_body("ref", "pier_2.top", as_element=1), "True or False"),
+    (lambda a: a.couple("pier_2.top", kind="kinematic", reference="ref",
+                        k="auto"), "host element"),
+    (lambda a: a.couple("pier_2.top", kind="kinematic", reference="ref",
+                        k_alpha=10.0), "host element"),
+    (lambda a: a.couple("pier_2.top", kind="kinematic", reference="ref",
+                        k=-1.0), "> 0"),
+    (lambda a: a.couple("pier_2.top", kind="kinematic", reference="ref",
+                        kr=0.0), "> 0"),
+    (lambda a: a.couple("pier_2.top", kind="kinematic", reference="ref",
+                        enforce="lagrange"), "'penalty' or 'al'"),
+    (lambda a: a.couple("pier_2.top", kind="kinematic", reference="ref",
+                        al_update="iter"), "enforce='al'"),
+    (lambda a: a.couple("pier_2.top", kind="kinematic", reference="ref",
+                        enforce="al", al_update="each"), "'commit' or 'iter'"),
+    (lambda a: a.couple("pier_2.top", kind="distributing", reference="ref",
+                        enforce="al", al_update="commit"),
+     "al_update= is an option of kind='kinematic'"),
+])
+def test_bad_parity_declarations_raise_and_record_nothing(files, verb, match):
+    from apeGmsh.assembly import AssemblyError
+
+    asm = _stack(files).node("ref", REF)
+    with pytest.raises(AssemblyError, match=match):
+        verb(asm)
+    assert asm.ties == ()
+
+
+@pytest.mark.parametrize("kind", ["kinematic", "distributing"])
+@pytest.mark.parametrize("knob", [{"k": "auto"}, {"k_alpha": 10.0},
+                                  {"k": "auto", "k_alpha": 10.0}])
+def test_auto_stiffness_is_refused_asking_for_an_explicit_k(files, kind, knob):
+    """Maintainer ruling on #1585 (option b): ``k="auto"`` and ``k_alpha``
+    stay refused. The message asks for an explicit ``k`` and says the
+    auto-stiffness may return as a label-based host."""
+    from apeGmsh.assembly import AssemblyError
+
+    asm = _stack(files).node("ref", REF)
+    with pytest.raises(AssemblyError) as info:
+        asm.couple("pier_2.top", kind=kind, reference="ref", **knob)
+    msg = str(info.value)
+    assert "Assembly requires an explicit k" in msg
+    assert "default 1e12" in msg
+    assert "may return later as a label-based host" in msg
+    assert asm.ties == ()
+
+
+def test_the_parity_verbs_share_the_namespace_and_fail_loud(files):
+    from apeGmsh.assembly import AssemblyError
+
+    asm = _stack(files).node("ref", REF)
+    with pytest.raises(AssemblyError, match="already declared"):
+        asm.equal_dof_mixed("pier_1.top", "pier_2.bot", dof_pairs=[(1, 1)],
+                            name="pier_1")
+    with pytest.raises(AssemblyError, match="already declared"):
+        asm.rigid_body("ref", "pier_2.top", name="ref")
+    with pytest.raises(AssemblyError, match="contains '.'"):
+        asm.rigid_body("ref", "pier_2.top", name="a.b")
+    assert asm.ties == ()
+    # INV-7: existing ports that couple nothing raise at bridge.
+    far = (_stack(files).node("ref", REF)
+           .equal_dof_mixed("pier_1.bot", "pier_2.top", dof_pairs=[(1, 1)]))
+    with pytest.raises(AssemblyError, match=r"equal_dof_mixed\('pier_1.bot', "
+                                            r"'pier_2.top'\) resolved to no record"):
+        far.bridge(ndm=3, ndf=3)
+    lone = _stack(files).node("ref", REF).rigid_body("ref", "ref")
+    with pytest.raises(AssemblyError, match=r"rigid_body\('ref', 'ref'\) "
+                                            "resolved to no record"):
+        lone.bridge(ndm=3, ndf=3)
+    missing = _stack(files).node("ref", REF).rigid_body("ref", "pier_2.nope")
+    with pytest.raises(AssemblyError, match="pier_2.nope"):
+        missing.bridge(ndm=3, ndf=3)
+
+
+def _parity(files):
+    return (_plates(files)
+            .rigid_body("ref", "p1.Slab", name="rb")
+            .couple("p2.Slab", kind="kinematic", reference="ref", k=1.0e9,
+                    enforce="al", al_update="iter", name="rbe2")
+            .couple("p1.Slab", kind="distributing", reference="ref", kr=3.0e9,
+                    name="rbe3")
+            .couple("p2.Slab", kind="kinematic", reference="ref", name="plain"))
+
+
+def test_the_parity_kinds_and_knobs_round_trip_through_the_archive(files, tmp_path):
+    from apeGmsh.assembly import Assembly
+    from apeGmsh.assembly._h5 import read_assembly_zone
+
+    asm = _parity(files)
+    asm.bridge(ndm=3, ndf=6)
+    out = tmp_path / "parity.h5"
+    asm.h5(out)
+
+    zone = read_assembly_zone(out)
+    rows = {t.name: (t.kind, json.loads(t.params), t.n_records) for t in zone.ties}
+    assert rows["rb"] == ("rigid_body", {"as_element": False, "mass": None,
+                                         "master_point": list(PLATE_REF),
+                                         "omega": None}, 1)
+    assert rows["rbe2"][1] == {"al_update": "iter", "dofs": None,
+                               "enforce": "al", "k": 1.0e9}
+    assert rows["rbe3"][1] == {"kr": 3.0e9, "weighting": "uniform"}
+    # A coupling that sets no knob writes the row 1.0.0 wrote.
+    assert rows["plain"][1] == {"dofs": None}
+
+    back = Assembly.from_h5(out)
+    assert back.ties == asm.ties
+    for a, b in zip(asm.ties, back.ties):
+        assert a.definition == b.definition
+
+
+def test_an_equal_dof_mixed_row_round_trips_but_the_deck_archive_refuses_it(
+        files, tmp_path):
+    """The ``/assembly`` row of ``equal_dof_mixed`` writes and reads back;
+    ``Assembly.h5`` cannot archive the bridge yet, because ``apeSees.h5``
+    refuses ``equalDOF_Mixed`` (ADR 0069 defers it), and it refuses before
+    the file is written."""
+    from apeGmsh.assembly import Assembly
+    from apeGmsh.assembly._assembly import _instance_rows, _tie_rows
+    from apeGmsh.assembly._h5 import read_assembly_zone, write_assembly_zone
+    from apeGmsh.opensees.emitter.h5 import H5RefusedVerb
+
+    mixed = _parity(files).equal_dof_mixed(
+        "p1.Slab", "p2.Slab", dof_pairs=[(3, 1), (1, 3)], tolerance=0.01,
+        name="mix")
+    mixed.bridge(ndm=3, ndf=6)
+    out = tmp_path / "mixed.h5"
+    with pytest.raises(H5RefusedVerb, match="equalDOF_Mixed"):
+        mixed.h5(out)
+    assert not out.exists()
+
+    # The zone itself: the same instances' archive, with the mixed rows.
+    plain = _parity(files)
+    plain.bridge(ndm=3, ndf=6)
+    plain.h5(out)
+    assert mixed._bridged is not None
+    write_assembly_zone(out, mixed.name, _instance_rows(mixed._bridged),
+                        _tie_rows(mixed._bridged))
+    (row,) = [t for t in read_assembly_zone(out).ties if t.name == "mix"]
+    assert (row.kind, json.loads(row.params), row.n_records) == (
+        "equal_dof_mixed", {"dof_pairs": [[3, 1], [1, 3]], "tolerance": 0.01}, 9)
+    back = Assembly.from_h5(out)
+    assert back.ties == mixed.ties
+    assert back.ties[-1].definition == mixed.ties[-1].definition
+
+
+@pytest.mark.parametrize("row, kind, params, match", [
+    (1, None, {"dofs": None, "enforce": "penalty"}, r"\['enforce'\] at the default"),
+    (1, None, {"dofs": None, "k": None}, r"\['k'\] at the default"),
+    (1, None, {"dofs": None, "k": 1.0, "weighting": "uniform"}, "params carry"),
+    (1, None, {"dofs": None, "al_update": "iter"}, "enforce='al'"),
+    (1, None, {"dofs": None, "k": "auto"}, "host element"),
+    (2, "equal_dof_mixed", {"dof_pairs": [[3, 1]]}, "params carry"),
+    (2, "equal_dof_mixed", {"dof_pairs": [[3, 0]], "tolerance": 0.01}, "1..6"),
+    (2, None, {"as_element": False, "mass": 2.0, "master_point": list(PLATE_REF),
+               "omega": None}, "as_element"),
+    (2, None, {"as_element": False, "mass": None, "master_point": list(PLATE_REF)},
+     "params carry"),
+])
+def test_a_bad_parity_row_is_refused_on_read(files, tmp_path, row, kind, params,
+                                             match):
+    from apeGmsh.assembly import Assembly, AssemblyError
+
+    asm = (_plates(files)
+           .couple("p2.Slab", kind="kinematic", reference="ref", name="k")
+           .rigid_body("ref", "p1.Slab", name="rb"))
+    asm.bridge(ndm=3, ndf=6)
+    out = tmp_path / "p.h5"
+    asm.h5(out)
+    assert Assembly.from_h5(out).ties == asm.ties
+
+    def edit(f):
+        f["assembly/ties/params"][row] = json.dumps(params)
+        if kind is not None:
+            f["assembly/ties/kind"][row] = kind
+    with pytest.raises(AssemblyError, match=match):
+        Assembly.from_h5(_tampered(out, tmp_path / "bad.h5", edit))
+
+
+# ---------------------------------------------------------------------------
+# AS5-b live oracles (stock): equal_dof_mixed and rigid_body closed forms
+# ---------------------------------------------------------------------------
+
+def _solve_equal_dof_mixed(workdir: Path) -> dict:
+    """Master ``uz`` of the lower block's top drives slave ``ux`` of the
+    upper block's bottom (``dof_pairs=[(3, 1)]``). The lower block (``nu =
+    0``, base fixed) is shortened by ``delta``; the upper one, held only in
+    ``uy`` and ``uz`` at its bottom, slides rigidly by ``-delta`` in ``x``."""
+    from apeGmsh.assembly import Assembly
+    from tests.assembly.test_live_couplings import _declare_block, _run, _static
+
+    block = write_instance(workdir / "block.h5", block_fem(workdir), _declare_block)
+    ops = (Assembly("mixed")
+           .instance("pier_1", block)
+           .instance("pier_2", block, translate=(0.0, 0.0, H))
+           .equal_dof_mixed("pier_1.top", "pier_2.bot", dof_pairs=[(3, 1)])
+           .bridge(ndm=3, ndf=3))
+    ops.fix(pg="pier_1.bot", dofs=(1, 1, 1))
+    ops.fix(pg="pier_2.bot", dofs=(0, 1, 1))
+    ts = ops.timeSeries.Linear()
+    with ops.pattern.Plain(series=ts) as pat:
+        pat.sp(pg="pier_1.top", dof=3, value=-MIXED_DELTA)
+    _static(ops, handler="Lagrange")
+    live = _run(ops)
+    live.reactions()
+    upper = _ids(ops.fem, pg="pier_2.Vol")
+    return {
+        "ux": [live.nodeDisp(t, 1) for t in upper],
+        "uyz": max(abs(live.nodeDisp(t, d)) for t in upper for d in (2, 3)),
+        "rz": sum(live.nodeReaction(t, 3) for t in _ids(ops.fem, pg="pier_1.bot")),
+    }
+
+
+def _solve_rigid_body(workdir: Path) -> dict:
+    """A prescribed reference motion ``(u0, theta)``: every wall node moves
+    by ``u0 + theta x (x - x_ref)`` and rotates by ``theta``."""
+    from apeGmsh.assembly import Assembly
+    from tests.assembly.test_live_couplings import _declare_wall, _run, _static
+
+    plate = write_instance(workdir / "plate.h5", plate_fem(workdir), _declare_wall)
+    ops = (Assembly("body")
+           .instance("w", plate, rotate=STAND_UP)
+           .node("body", BODY_REF)
+           .rigid_body("body", "w.Slab")
+           .bridge(ndm=3, ndf=6))
+    (body,) = _ids(ops.fem, label="body")
+    ts = ops.timeSeries.Linear()
+    with ops.pattern.Plain(series=ts) as pat:
+        for dof, value in enumerate(BODY_MOTION, start=1):
+            pat.sp(node=body, dof=dof, value=value)
+    _static(ops, handler="Lagrange")
+    live = _run(ops)
+    u0, theta = np.array(BODY_MOTION[:3]), np.array(BODY_MOTION[3:])
+    err = 0.0
+    wall = _ids(ops.fem, pg="w.Slab")
+    c = _coords(ops.fem)
+    for t in wall:
+        want = np.concatenate([u0 + np.cross(theta, c[t] - np.array(BODY_REF)),
+                               theta])
+        got = np.array([live.nodeDisp(t, d) for d in range(1, 7)])
+        err = max(err, float(np.max(np.abs(got - want))))
+    return {"err": err, "n": len(wall)}
+
+
+_LIVE_CASES = {
+    "equal_dof_mixed": _solve_equal_dof_mixed,
+    "rigid_body": _solve_rigid_body,
+}
+
+
+def _main() -> None:
+    """``python -c`` entry: argv[1] is the case, argv[2] the work directory."""
+    import sys
+
+    print("RESULT " + json.dumps(_LIVE_CASES[sys.argv[1]](Path(sys.argv[2]))))
+
+
+def _solve(case: str, workdir: Path) -> dict:
+    import os
+    import subprocess
+    import sys
+
+    root = Path(__file__).resolve().parents[2]
+    env = dict(os.environ)
+    env["PYTHONPATH"] = os.pathsep.join(
+        [str(root), str(root / "src"), env.get("PYTHONPATH", "")])
+    env.setdefault("LADRUNO_OPENSEES_QUIET", "1")
+    proc = subprocess.run(
+        [sys.executable, "-W", "ignore::UserWarning", "-c",
+         "from tests.assembly.test_couplings import _main; _main()",
+         case, str(workdir)],
+        env=env, capture_output=True, text=True, encoding="utf-8",
+        errors="replace", timeout=600,
+    )
+    lines = [ln for ln in proc.stdout.splitlines() if ln.startswith("RESULT ")]
+    assert proc.returncode == 0 and lines, (
+        f"{case} subprocess failed (rc={proc.returncode}):\n"
+        f"{proc.stdout[-2000:]}\n{proc.stderr[-2000:]}")
+    return json.loads(lines[-1][len("RESULT "):])
+
+
+def _live_ops():
+    from apeGmsh.opensees.emitter.live import _get_ops
+    try:
+        return _get_ops()
+    except ImportError as e:
+        pytest.skip(f"no OpenSees backend: {e}")
+
+
+@pytest.mark.live
+def test_equal_dof_mixed_slides_the_upper_block_by_the_lower_shortening(
+        tmp_path: Path):
+    from tests.assembly.test_two_instances_one_tie import E
+
+    _live_ops()
+    res = _solve("equal_dof_mixed", tmp_path)
+    assert len(res["ux"]) == 27, res
+    for u in res["ux"]:
+        assert u == pytest.approx(-MIXED_DELTA, abs=1e-12), res
+    assert res["uyz"] < 1e-12, res
+    # The upper block adds no stiffness: the base carries E A delta / H.
+    assert res["rz"] == pytest.approx(E * SIDE * SIDE * MIXED_DELTA / H,
+                                      rel=1e-9), res
+
+
+@pytest.mark.live
+def test_rigid_body_moves_every_wall_node_with_the_reference(tmp_path: Path):
+    _live_ops()
+    res = _solve("rigid_body", tmp_path)
+    assert res["n"] == 9, res
+    assert res["err"] < 1e-12, res

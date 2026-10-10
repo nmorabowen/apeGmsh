@@ -178,6 +178,17 @@ and `couple(kind="kinematic"|"distributing", reference=<assembly node>)`.
 `contact` is phase 6 (ADR 0092's locality rule holds when an instance is a
 rank).
 
+**Note (2026-10-09, AS5-b′, #1588; maintainer rulings on #1585).** For
+parity with v1, v2 adds `equal_dof_mixed` and `rigid_body`, the RBE2/RBE3
+knobs `k`, `kr`, `enforce` and `al_update` (RBE2 only) on `couple`, and the
+`g.constraints.tie` penalty knobs on `tie`. `k="auto"` and `k_alpha` are
+dropped by the maintainer's ruling on #1585: an assembly coupling requires an
+explicit `k` (default 1e12), and auto-stiffness may return later as a
+label-based host. Cross-instance `penalty` and
+`tied_contact` are **deferred**: v2 does not expose them, and they are
+re-added when a model needs them. They are routable in chain phase, so
+adding one is a new verb, not a design change.
+
 Every port is `{instance}.{pg|label}`. A bare port names an assembly object
 or raises, listing the instances. Each declaration takes `name=` and reads
 back by label (`ops.nodes.get(label=...)`, `Results.nodes.get(label=...)`;
@@ -236,6 +247,19 @@ two-rank test belongs to P4 (AS4, #1530), not the first slice. Until AS4
 settles the rank layout, the merge engine keeps rank 0 for a host that v2 does
 not have, so an assembly's default `tcl()` is partitioned with an empty rank 0;
 `bridge()` warns, and `tcl(flat=True)` is the serial deck (AS1, #1529).
+
+> **Note (October 2026, AS4-b #1564):** the interim paragraph above no longer
+> describes the code. The merge engine reserves rank 0 for a host only when the
+> host owns an element or a non-reference node, so an assembly whose
+> instances carry no `partition_rank` is unpartitioned and its default
+> `tcl()` is the serial deck (the same deck as `tcl(flat=True)`). `AssemblyRankWarning` is removed.
+> `instance(..., partition_rank=k)` ranks an instance; every instance carries a
+> rank or none does, one instance per rank, and `bridge()` requires the ranks
+> to run `0 .. n-1`. Reference nodes live on rank 0 and are declared on each
+> rank a coupling needs them on. An instance source whose `/composed_from`
+> modules carry a rank is refused, at `instance()` and again at `bridge()`
+> (AS4-d #1566), and so is a ranked instance whose source is itself an
+> assembly archive.
 
 ### D7 — Migration: today's compose is deleted, not deprecated
 
@@ -296,6 +320,8 @@ Each is testable.
 6. **INV-6.** Instancing is exact: for each instance, assembly coordinates
    equal `R·x + t` within 1e-12 and connectivity equals the source's plus
    `fem_id_base - source_min`.
+   **Note (2026-10-09, #1593).** Instance frame rule: points → `R·x + t`;
+   direction vectors, normals and offsets → `R·v`.
 7. **INV-7.** A tie that resolves zero records raises `AssemblyError` naming
    both ports; a bare port that names no assembly object raises, listing the
    instances.

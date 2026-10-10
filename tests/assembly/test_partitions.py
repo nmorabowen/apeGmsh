@@ -220,6 +220,32 @@ def test_an_instance_of_a_ranked_archive_is_refused(
         f"P{k}" for k in range(len(ranks) - 1)]
 
 
+def test_a_source_swapped_for_a_ranked_archive_is_refused_at_bridge(
+        files, ranked_archive, tmp_path, monkeypatch):
+    """AS4-b review: ``instance()`` checked the file, then the file at that
+    path became a ranked archive. ``bridge()`` re-checks every source and
+    raises before the first merge; without the re-check it bridges with
+    the archive's undeclared ranks."""
+    import shutil
+
+    from apeGmsh.assembly import Assembly, AssemblyError
+    from apeGmsh.mesh import FEMData
+
+    src = tmp_path / "swapped.h5"
+    shutil.copyfile(files["block"], src)
+    asm = Assembly("o").instance("X", src)
+    shutil.copyfile(ranked_archive, src)
+
+    def no_merge(*args, **kwargs):
+        raise AssertionError("bridge() merged a ranked source")
+
+    monkeypatch.setattr(FEMData, "compose", no_merge)
+    with pytest.raises(AssemblyError, match=(
+            r"instance 'X': .* composes modules \['A', 'B'\] that carry a "
+            r"partition_rank")):
+        asm.bridge(ndm=3, ndf=3)
+
+
 # ---------------------------------------------------------------------------
 # The merge engine's host rank (``_rebuild_partitions_from_modules``)
 # ---------------------------------------------------------------------------

@@ -20,6 +20,11 @@ env:
   QT_QPA_PLATFORM: offscreen
   # Harmless without openseespy; keeps parity with local invocation.
   LADRUNO_OPENSEES_QUIET: "1"
+  # Reproducible CI (#1576): every `pip install` in this workflow resolves
+  # inside the exact versions of the last green environment, so an upstream
+  # release cannot turn `main` red (#1571). deps-canary.yml tests the latest
+  # releases nightly; scripts/update_constraints.py bumps this file.
+  PIP_CONSTRAINT: ${{ github.workspace }}/.github/ci-constraints.txt
 
 jobs:
   # Fast, dedicated job for the regression-lock contract tests. These

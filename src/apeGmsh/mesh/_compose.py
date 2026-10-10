@@ -947,81 +947,114 @@ def _apply_geometric_transform(
     return out
 
 
-def _transform_contact_geometry(
+def _record_geometry_fields() -> dict[type, tuple[tuple[str, ...], ...]]:
+    """The instance frame rule (ADR 0117), field by field.
+
+    Each constraint record kind the merge carries maps to ``(points,
+    directions, nested)``: points move by ``R x + t``, directions
+    (unit vectors, normals, offsets, an angular velocity) by ``R v``
+    only, and ``nested`` names the child record lists to walk. Every
+    other field is a tag, a weight, a natural coordinate or a scalar,
+    which no rigid placement changes. A record kind missing here raises
+    in :func:`_place_record_geometry`: a new kind must be classified
+    before it can be composed.
+    """
+    from .._kernel.records._constraints import (
+        ContactPlaneRecord, ContactRecord, EmbedTieRecord, InterfaceRecord,
+        InterpolationRecord, NodeGroupRecord, NodePairRecord,
+        NodeToSurfaceRecord, ReinforceTieRecord, SurfaceCouplingRecord,
+    )
+    return {
+        NodePairRecord: ((), ("offset",), ()),
+        NodeGroupRecord: ((), ("offsets", "plane_normal", "omega"), ()),
+        InterpolationRecord: (("projected_point",), (), ()),
+        SurfaceCouplingRecord: ((), (), ("slave_records",)),
+        NodeToSurfaceRecord: (
+            ("phantom_coords",), (),
+            ("rigid_link_records", "equal_dof_records")),
+        ReinforceTieRecord: ((), ("direction",), ()),
+        EmbedTieRecord: ((), (), ()),
+        ContactRecord: ((), ("outward",), ()),
+        ContactPlaneRecord: (("point",), ("normal",), ()),
+        InterfaceRecord: (
+            ("phantom_coords",), ("orient",), ("equal_dof_records",)),
+    }
+
+
+def _place_vectors(
+    value: Any,
+    *,
+    translate: tuple[float, float, float],
+    rotate: tuple[float, float, float, float] | None,
+    what: str,
+) -> Any:
+    """Place a stack of 3-vectors, keeping the container (tuple / ndarray)."""
+    arr = np.asarray(value, dtype=np.float64)
+    if arr.size % 3:
+        raise ValueError(
+            f"compose: {what} has {arr.size} components, not a stack of "
+            f"3-vectors; it cannot be placed by the module transform.")
+    moved = _apply_geometric_transform(
+        arr.reshape(-1, 3), translate=translate, rotate=rotate,
+    )
+    if isinstance(value, np.ndarray):
+        return moved.reshape(arr.shape)
+    return tuple(float(x) for x in moved.reshape(-1))
+
+
+def _place_record_geometry(
     rec: Any,
     *,
     translate: tuple[float, float, float],
     rotate: tuple[float, float, float, float] | None,
 ) -> Any:
-    """Carry a side-list record's own geometry through the module transform.
+    """Carry a constraint record's own geometry through the module transform.
 
-    The node coords move under compose's rotate+translate, so the
-    geometry a contact / interface record carries must move with them:
+    The node coords move by ``R x + t``, so the geometry a record caches
+    must move with them (ADR 0117, the instance frame rule): a point
+    (``phantom_coords``, ``projected_point``, a contact plane's
+    ``point``) by ``R x + t``; a direction (``outward``, ``normal``,
+    ``plane_normal``, ``direction``, ``omega``, the stacked ``orient``
+    triad, the ``offset`` / ``offsets`` vectors) by ``R v``, never
+    translated. Rotating only part of an ``orient`` stack would leave
+    the pair's frame non-orthogonal, so every vector in it turns.
+    ``outward="winding"`` carries no vector: the side follows the master
+    chain's winding, whose node coords already moved.
 
-    * ``outward`` (ContactRecord) and ``normal`` (ContactPlaneRecord)
-      are direction vectors — rotated only;
-    * ``point`` (ContactPlaneRecord) is a position — rotated then
-      translated, matching the node-coord path in
-      :func:`_apply_geometric_transform`;
-    * ``orient`` (InterfaceRecord, ADR 0093 INV-2) is a stack of unit
-      direction vectors — two on a 2D line master (local-x ``x1..x3``
-      and the local-y hint ``yp1..yp3``, the zeroLength ``-orient``
-      6-tuple), three on a 3D surface master (``n``, ``t1``, ``t2``;
-      TIMs A10 S2). **Every** one is rotated, none translated. Rotating
-      only local-x would leave the pair's frame non-orthogonal and
-      silently mis-oriented, and the same holds vector by vector at
-      either width;
-    * ``phantom_coords`` (InterfaceRecord) is a position — rotated then
-      translated, exactly like the real node it stands on.
-
-    Returns ``rec`` unchanged when nothing applies (no such fields, or
-    identity transform).
+    Raises ``TypeError`` for a record kind with no entry in
+    :func:`_record_geometry_fields`. Returns ``rec`` unchanged when no
+    field applies.
     """
+    table = _record_geometry_fields()
+    try:
+        points, directions, nested = table[type(rec)]
+    except KeyError:
+        raise TypeError(
+            f"compose: record kind {type(rec).__name__} has no entry in "
+            f"the instance frame table; classify each of its point and "
+            f"direction fields in _record_geometry_fields."
+        ) from None
+    kind = type(rec).__name__
     changes: dict[str, Any] = {}
+    for fname in points:
+        value = getattr(rec, fname)
+        if value is not None:
+            changes[fname] = _place_vectors(
+                value, translate=translate, rotate=rotate,
+                what=f"{kind}.{fname}")
     if rotate is not None:
-        for fname in ("outward", "normal"):
-            vec = getattr(rec, fname, None)
-            # ``outward="winding"`` carries no vector to rotate: the side is
-            # declared by the master chain's winding, and the chain's node
-            # coords rotate with the module, so the declaration is
-            # rotation-invariant by construction.
-            if isinstance(vec, str):
+        for fname in directions:
+            value = getattr(rec, fname)
+            if value is None or isinstance(value, str):
                 continue
-            if vec is not None:
-                rotated = _apply_geometric_transform(
-                    np.asarray([vec], dtype=np.float64),
-                    translate=(0.0, 0.0, 0.0), rotate=rotate,
-                )
-                changes[fname] = tuple(float(x) for x in rotated[0])
-        orient = getattr(rec, "orient", None)
-        if orient is not None:
-            arr = np.asarray(orient, dtype=np.float64).reshape(-1)
-            if arr.size not in (6, 9):
-                raise ValueError(
-                    f"compose: {type(rec).__name__}.orient has {arr.size} "
-                    f"components — it is the 2D line master's 6-tuple "
-                    f"(x1, x2, x3, yp1, yp2, yp3) or the 3D surface "
-                    f"master's 9-tuple (n, t1, t2), ADR 0093 INV-2.")
-            rotated = _apply_geometric_transform(
-                arr.reshape(-1, 3),
-                translate=(0.0, 0.0, 0.0), rotate=rotate,
-            )
-            changes["orient"] = tuple(
-                float(x) for x in rotated.reshape(-1))
-    point = getattr(rec, "point", None)
-    if point is not None:
-        moved = _apply_geometric_transform(
-            np.asarray([point], dtype=np.float64),
-            translate=translate, rotate=rotate,
-        )
-        changes["point"] = tuple(float(x) for x in moved[0])
-    phantom_coords = getattr(rec, "phantom_coords", None)
-    if phantom_coords is not None:
-        original = np.asarray(phantom_coords, dtype=np.float64)
-        moved = _apply_geometric_transform(
-            original.reshape(-1, 3), translate=translate, rotate=rotate,
-        )
-        changes["phantom_coords"] = moved.reshape(original.shape)
+            changes[fname] = _place_vectors(
+                value, translate=(0.0, 0.0, 0.0), rotate=rotate,
+                what=f"{kind}.{fname}")
+    for fname in nested:
+        changes[fname] = [
+            _place_record_geometry(child, translate=translate, rotate=rotate)
+            for child in getattr(rec, fname)
+        ]
     return _dc_replace(rec, **changes) if changes else rec
 
 
@@ -1274,10 +1307,14 @@ def _rewrite_named_groups(
     *,
     offset: int,
     label: str,
+    translate: tuple[float, float, float],
+    rotate: tuple[float, float, float, float] | None,
 ) -> dict:
     """Return a copy of a ``{(dim, tag): info_dict}`` mapping with
     the KEY tag, ``node_ids`` / ``element_ids`` / ``connectivity``
-    offset and the ``name`` namespaced.
+    offset, the ``name`` namespaced and the cached ``node_coords``
+    placed by the module transform (the same one ``nodes.coords``
+    gets).
 
     The key's ``tag`` is offset into the module's reserved window with
     the same ``offset`` already applied to node / element ids.  Gmsh
@@ -1314,14 +1351,7 @@ def _rewrite_named_groups(
                     else:
                         new_info[k] = arr + np.int64(offset)
             elif k == "node_coords":
-                # Coords are not tag-bearing; copy as-is (geometric
-                # transform applies to fem.nodes.coords, not the
-                # PG-side mirror copies which the rewriter re-derives
-                # from the rebuilt node table when 3B.2b merges).  In
-                # 3B.2a we preserve the source coords; 3B.2b will
-                # decide whether to re-fetch from the rewritten node
-                # table or keep these PG-local copies.
-                new_info[k] = v
+                new_info[k] = _place_cached_coords(v, translate, rotate)
             else:
                 # Forward unknown keys (e.g. nested per-type 'groups')
                 # untouched — 3B.2b will handle the rewrite if needed.
@@ -1358,14 +1388,29 @@ def _rewrite_part_map(
 # ── Helper: rewrite the mesh-selection store ───────────────────────
 
 
+def _place_cached_coords(
+    v: Any,
+    translate: tuple[float, float, float],
+    rotate: tuple[float, float, float, float] | None,
+) -> Any:
+    """Place a group's cached ``(N, 3)`` ``node_coords`` like the node table."""
+    return _apply_geometric_transform(
+        np.asarray(v, dtype=np.float64).reshape(-1, 3),
+        translate=translate, rotate=rotate,
+    )
+
+
 def _rewrite_mesh_selection(
     store: Any,
     *,
     offset: int,
     label: str,
+    translate: tuple[float, float, float],
+    rotate: tuple[float, float, float, float] | None,
 ) -> Any:
     """Return a fresh ``MeshSelectionStore`` with the KEY tags and the
-    member tag arrays offset and the selection names namespaced.
+    member tag arrays offset, the selection names namespaced and the
+    cached ``node_coords`` placed by the module transform.
 
     The key offset mirrors :func:`_rewrite_named_groups` — selection
     sets re-use small per-source tags, so without it a second composed
@@ -1396,6 +1441,8 @@ def _rewrite_mesh_selection(
                         new_info[k] = arr
                     else:
                         new_info[k] = arr + np.int64(offset)
+            elif k == "node_coords":
+                new_info[k] = _place_cached_coords(v, translate, rotate)
             else:
                 new_info[k] = v
         sets[(int(dim), int(tag) + int(offset))] = new_info
@@ -1467,12 +1514,12 @@ def _rewrite_source_for_compose(
     if source_depth >= max_compose_depth:
         raise ComposeDepthExceededError(
             f"compose(label={label!r}, source={str(source_path)!r}) would "
-            f"exceed max_compose_depth={max_compose_depth}: source's own "
-            f"compose depth is {source_depth} (max label depth in "
+            f"exceed the maximum compose depth ({max_compose_depth}): "
+            f"source's own compose depth is {source_depth} (max label depth in "
             f"source.composed_from), and composing it would create a "
-            f"depth-{source_depth + 1} entry on the host. Lift the cap "
-            f"with max_compose_depth=N or flatten the source via "
-            f"re-baking before composing."
+            f"depth-{source_depth + 1} entry on the host. Flatten the "
+            f"source by re-baking it, or save an intermediate archive of "
+            f"fewer levels and instance that, before composing."
         )
     result_depth = source_depth + 1
 
@@ -1532,20 +1579,25 @@ def _rewrite_source_for_compose(
     #    on both node-side and element-side composites.
     new_node_physical = _rewrite_named_groups(
         source.nodes.physical._groups, offset=offset, label=label,
+        translate=translate, rotate=rotate,
     )
     new_elem_physical = _rewrite_named_groups(
         source.elements.physical._groups, offset=offset, label=label,
+        translate=translate, rotate=rotate,
     )
     new_node_labels = _rewrite_named_groups(
         source.nodes.labels._groups, offset=offset, label=label,
+        translate=translate, rotate=rotate,
     )
     new_elem_labels = _rewrite_named_groups(
         source.elements.labels._groups, offset=offset, label=label,
+        translate=translate, rotate=rotate,
     )
 
     # 4. Mesh selections (optional).
     new_mesh_selection = _rewrite_mesh_selection(
         source.mesh_selection, offset=offset, label=label,
+        translate=translate, rotate=rotate,
     )
 
     # 5. Parts maps — namespace the part_label keys + offset members.
@@ -1559,12 +1611,20 @@ def _rewrite_source_for_compose(
     )
 
     # 6. Constraint / load / mass / SP records — apply tag_rewrite_spec.
+    #    Every constraint record also carries its points and directions
+    #    through the module transform (_place_record_geometry).
     new_node_constraints = tuple(
-        _rewrite_record(rec, offset=offset, label=label)
+        _place_record_geometry(
+            _rewrite_record(rec, offset=offset, label=label),
+            translate=translate, rotate=rotate,
+        )
         for rec in source.nodes.constraints
     )
     new_elem_constraints = tuple(
-        _rewrite_record(rec, offset=offset, label=label)
+        _place_record_geometry(
+            _rewrite_record(rec, offset=offset, label=label),
+            translate=translate, rotate=rotate,
+        )
         for rec in source.elements.constraints
     )
     new_nodal_loads = tuple(
@@ -1594,7 +1654,10 @@ def _rewrite_source_for_compose(
     source_ties = getattr(source.elements, "reinforce_ties", None) or ()
     _guard_reinforce_cross_part(source, source_ties, label=label)
     new_reinforce_ties = tuple(
-        _rewrite_record(rec, offset=offset, label=label)
+        _place_record_geometry(
+            _rewrite_record(rec, offset=offset, label=label),
+            translate=translate, rotate=rotate,
+        )
         for rec in source_ties
     )
     # Node-to-host embedment ties (ADR 0073 g.embed): same cross-Part
@@ -1607,7 +1670,10 @@ def _rewrite_source_for_compose(
         node_attr="node", kind="embed",
     )
     new_embed_ties = tuple(
-        _rewrite_record(rec, offset=offset, label=label)
+        _place_record_geometry(
+            _rewrite_record(rec, offset=offset, label=label),
+            translate=translate, rotate=rotate,
+        )
         for rec in source_embed_ties
     )
     # Fork contacts (ADR 0073): offset-rewrite the node-tag fields
@@ -1616,14 +1682,14 @@ def _rewrite_source_for_compose(
     # point) through the module transform — the node coords moved, so
     # the contact geometry must move with them.
     new_contacts = tuple(
-        _transform_contact_geometry(
+        _place_record_geometry(
             _rewrite_record(rec, offset=offset, label=label),
             translate=translate, rotate=rotate,
         )
         for rec in (getattr(source.elements, "contacts", None) or ())
     )
     new_contact_planes = tuple(
-        _transform_contact_geometry(
+        _place_record_geometry(
             _rewrite_record(rec, offset=offset, label=label),
             translate=translate, rotate=rotate,
         )
@@ -1637,7 +1703,7 @@ def _rewrite_source_for_compose(
     # the module transform (INV-2: both orient direction vectors rotate,
     # phantom_coords rotates AND translates).
     new_interfaces = tuple(
-        _transform_contact_geometry(
+        _place_record_geometry(
             _rewrite_record(rec, offset=offset, label=label),
             translate=translate, rotate=rotate,
         )

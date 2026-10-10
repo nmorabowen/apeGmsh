@@ -96,4 +96,5 @@ FEMData.from_h5(cls, path, *, root="/") -> FEMData                          # FE
 
 ---
 
-*Next: [Compose modules into one model](compose-modules.md).*
+*Next: [Assemble saved models](assemble-saved-models.md), which places
+saved files as instances of one OpenSees model.*

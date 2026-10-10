@@ -19,10 +19,16 @@ registered.
 
 AS2a scope: materials, sections, transforms, beam integrations, dampings and
 element specs, one spec per physical group (or a disjoint set of groups).
-Rows whose args vary inside a group raise; their selector is AS2b (#1542).
+AS2b (#1542): rows whose args vary inside a group become one spec per
+distinct args row, each on an element group the rehydrator registers on
+the merged FEM as ``{instance}.{pg}#<k>`` (ADR 0117 D8).
 Bars of a rebar cage (``fem_eid = -1`` ``CorotTruss`` rows) are not
 re-declared: they travel as the carried ``/rebar_elements`` stream, whose
 material is ``{instance}.{name}`` and binds to the rehydrated material.
+Interface units (#1586) are not re-declared either: each ``/interfaces``
+record's ``zeroLength`` row and its unnamed tributary uniaxials are
+synthesised again by the build from the carried record. A point (dim-0)
+group (#1587) holds no element spec; it travels as ``{instance}.{pg}``.
 """
 from __future__ import annotations
 
@@ -367,16 +373,85 @@ def _rebar_rows(
     return out
 
 
+#: Uniaxial types the build translates an interface law to (ADR 0093 D1).
+_INTERFACE_MATERIALS = frozenset({"ENT", "Elastic", "ElasticPP", "ElasticPPGap"})
+
+
+def _interface_rows(
+    label: str, model: "OpenSeesModel", names: dict[_Key, str],
+) -> tuple[set[int], set[int]]:
+    """Tags of the ``zeroLength`` rows and uniaxial materials the carried
+    ``/interfaces`` emit (ADR 0093, ADR 0117 D4).
+
+    The build synthesises each record's unit (two or three tributary
+    uniaxials and one ``zeroLength`` from ``master_node`` to the phantom
+    or slave node) from the merged FEM's interface stream, so these rows
+    are not re-declared. Every record must match exactly one row, and a
+    matched row's materials must be unnamed uniaxials of a D1 type;
+    anything else raises.
+    """
+    records = list(model.fem.elements.interfaces)
+    if not records:
+        return set(), set()
+    uniaxial = {r.tag: r for r in model.materials_by_family().get("uniaxial", ())}
+    by_pair: dict[tuple[int, int], list["ElementRecord"]] = {}
+    for row in model.elements():
+        ends = row.args[:2]
+        if row.fem_eid < 0 and row.type_token == "zeroLength" and len(ends) == 2 \
+                and all(isinstance(n, int) and not isinstance(n, bool) for n in ends):
+            by_pair.setdefault((int(ends[0]), int(ends[1])), []).append(row)
+    rows: set[int] = set()
+    mats: set[int] = set()
+    for rec in records:
+        j = rec.phantom_node if rec.phantom_node is not None else rec.slave_node
+        what = f"instance {label!r}: interface {rec.name!r} pair ({rec.master_node}, {j})"
+        found = by_pair.get((int(rec.master_node), int(j)), [])
+        if len(found) != 1:
+            raise AssemblyError(
+                f"{what} matches {len(found)} archived zeroLength rows, not one "
+                f"(a stage-claimed interface does not travel)."
+            )
+        args = found[0].args
+        n_mat = 3 if rec.orient is not None and len(rec.orient) == 9 else 2
+        if len(args) < 3 + n_mat or args[2] != "-mat":
+            raise AssemblyError(f"{what}: archived args {args!r} are not '-mat' first.")
+        for t in (_tag(a, what) for a in args[3:3 + n_mat]):
+            mrec = uniaxial.get(t)
+            if mrec is None or mrec.type_token not in _INTERFACE_MATERIALS \
+                    or ("uniaxialMaterial", t) in names:
+                raise AssemblyError(
+                    f"{what}: material tag {t} is not an unnamed interface "
+                    f"uniaxial ({sorted(_INTERFACE_MATERIALS)})."
+                )
+            mats.add(t)
+        rows.add(found[0].tag)
+    return rows, mats
+
+
+@dataclass(frozen=True)
+class _Spec:
+    """One element spec: on source group ``pg``, or on its row subset."""
+
+    token: str
+    args: tuple[Any, ...]
+    pg: str
+    #: ``(k, source FEM ids)`` when the args vary inside ``pg``: the spec
+    #: takes the synthesized group ``{instance}.{pg}#<k>``.
+    rows: "tuple[int, tuple[int, ...]] | None" = None
+
+
 def _element_specs(
     label: str, model: "OpenSeesModel", skip: set[int],
-) -> list[tuple[str, tuple[Any, ...], str]]:
-    """``(type_token, args, pg)`` per archived element spec, in tag order.
+) -> list[_Spec]:
+    """One :class:`_Spec` per archived element spec, in tag order.
 
     Rows sharing ``(type, args)`` are one spec per physical group: the
     group whose elements (of the row's element types) are exactly the
-    rows' FEM ids, else a disjoint set of groups that covers them. Any
-    other shape (args that vary inside a group) raises: its selector is
-    AS2b (#1542).
+    rows' FEM ids, else a disjoint set of groups that covers them. Rows
+    whose args vary inside a group (AS2b, #1542) are one spec per
+    distinct args row on the first group (by name) that holds them all,
+    numbered ``k = 1, 2, ...`` per group in tag order. Rows no single
+    group holds raise.
     """
     fem = model.fem
     rows: dict[tuple[str, tuple[Any, ...]], list["ElementRecord"]] = {}
@@ -387,7 +462,7 @@ def _element_specs(
             raise AssemblyError(
                 f"instance {label!r}: element {rec.type_token} tag {rec.tag} "
                 f"has no FEM element (a node-pair or synthesised row that is "
-                f"not a carried rebar bar); the assembly rehydrates "
+                f"not a carried rebar bar or interface pair); the assembly rehydrates "
                 f"physical-group element specs only."
             )
         rows.setdefault((rec.type_token, rec.args), []).append(rec)
@@ -396,12 +471,15 @@ def _element_specs(
     for code, group in enumerate(fem.elements):
         for eid in group.ids:
             type_of[int(eid)] = code
+    # A dim-0 (point) group holds nodes only: it carries no element spec,
+    # and it travels as ``{instance}.{pg}`` through the merged FEM.
+    physical = fem.elements.physical
     pg_ids = {
         pg: frozenset(int(e) for e in fem.elements.select(pg=pg).ids)
-        for pg in sorted(set(fem.elements.physical.names()))
+        for pg in sorted({n for d in (1, 2, 3) for n in physical.names(dim=d)})
     }
 
-    specs: list[tuple[int, str, tuple[Any, ...], str]] = []
+    specs: list[tuple[int, _Spec]] = []
     for (token, args), recs in rows.items():
         eids = frozenset(r.fem_eid for r in recs)
         missing = sorted(e for e in eids if e not in type_of)
@@ -415,6 +493,7 @@ def _element_specs(
             pg: frozenset(e for e in ids if type_of.get(e) in codes)
             for pg, ids in pg_ids.items()
         }
+        tag_of = {r.fem_eid: r.tag for r in recs}
         exact = [pg for pg, ids in same_type.items() if ids == eids]
         if exact:
             chosen = exact[:1]
@@ -422,25 +501,44 @@ def _element_specs(
             chosen = [pg for pg, ids in same_type.items() if ids and ids <= eids]
             covered = [e for pg in chosen for e in same_type[pg]]
             if len(covered) != len(set(covered)) or set(covered) != eids:
-                raise AssemblyError(
-                    f"instance {label!r}: {len(recs)} {token} rows with args "
-                    f"{args!r} match no physical group or disjoint set of "
-                    f"groups (args vary inside a group); per-row element "
-                    f"rehydration needs the AS2b selector (#1542)."
-                )
-        tag_of = {r.fem_eid: r.tag for r in recs}
+                holder = [pg for pg, ids in same_type.items() if eids <= ids]
+                if not holder:
+                    raise AssemblyError(
+                        f"instance {label!r}: {len(recs)} {token} rows with "
+                        f"args {args!r} match no physical group, disjoint set "
+                        f"of groups, or single group that holds them all."
+                    )
+                specs.append((min(tag_of.values()), _Spec(
+                    token, args, holder[0], (0, tuple(sorted(eids))))))
+                continue
         for pg in chosen:
-            specs.append((min(tag_of[e] for e in same_type[pg]), token, args, pg))
+            specs.append((min(tag_of[e] for e in same_type[pg]),
+                          _Spec(token, args, pg)))
     specs.sort(key=lambda s: s[0])
-    return [(token, args, pg) for _, token, args, pg in specs]
+    out: list[_Spec] = []
+    count: dict[str, int] = {}
+    for _, spec in specs:
+        if spec.rows is not None:
+            count[spec.pg] = count.get(spec.pg, 0) + 1
+            spec = _Spec(spec.token, spec.args, spec.pg,
+                         (count[spec.pg], spec.rows[1]))
+        out.append(spec)
+    return out
 
 
 # ---------------------------------------------------------------------------
 # Rehydration
 # ---------------------------------------------------------------------------
 
-def _plan(label: str, model: "OpenSeesModel") -> list[_Decl]:
-    """Parse and check every archived declaration; register nothing."""
+#: ``(group name, merged parent PG, source parent PG, source FEM ids)``.
+_Group = tuple[str, str, str, tuple[int, ...]]
+
+
+def _plan(label: str, model: "OpenSeesModel") -> tuple[list[_Decl], list[_Group]]:
+    """Parse and check every archived declaration; register nothing.
+
+    Returns the declarations and the element groups to synthesize.
+    """
     names = {(kind, tag): name for name, kind, tag in model.names()}
 
     def prefixed(kind: str, tag: int) -> "str | None":
@@ -456,10 +554,13 @@ def _plan(label: str, model: "OpenSeesModel") -> list[_Decl]:
             f"instance {label!r}: unknown material families {sorted(unknown)}."
         )
 
+    iface_rows, iface_mats = _interface_rows(label, model, names)
     plan: list[_Decl] = []
     by_family = model.materials_by_family()
     for family, kind in _MATERIAL_FAMILIES:
         for mrec in sorted(by_family.get(family, ()), key=lambda r: r.tag):
+            if kind == "uniaxialMaterial" and mrec.tag in iface_mats:
+                continue    # the build re-synthesises it from /interfaces
             parse = _MATERIALS.get((kind, mrec.type_token))
             if parse is None:
                 raise AssemblyError(
@@ -507,17 +608,22 @@ def _plan(label: str, model: "OpenSeesModel") -> list[_Decl]:
             dm.type_token, dm.args, prefixed("damping", dm.tag),
             what("damping", dm.type_token, dm.tag))))
 
-    skip = _rebar_rows(label, model, names)
-    for token, args, pg in _element_specs(label, model, skip):
-        parse_el = _ELEMENTS.get(token)
+    skip = _rebar_rows(label, model, names) | iface_rows
+    groups: list[_Group] = []
+    for spec in _element_specs(label, model, skip):
+        parse_el = _ELEMENTS.get(spec.token)
         if parse_el is None:
             raise AssemblyError(
-                f"instance {label!r}: element {token!r} is not rehydrated; "
-                f"supported: {sorted(_ELEMENTS)}."
+                f"instance {label!r}: element {spec.token!r} is not "
+                f"rehydrated; supported: {sorted(_ELEMENTS)}."
             )
         # The merge engine's own rule, so the spec names the PG compose wrote.
-        refs, make = parse_el(str(_prefix_namespaced_name(label, pg)), args,
-                              f"instance {label!r}: element {token!r}")
+        pg = str(_prefix_namespaced_name(label, spec.pg))
+        if spec.rows is not None:
+            groups.append((f"{pg}#{spec.rows[0]}", pg, spec.pg, spec.rows[1]))
+            pg = groups[-1][0]
+        refs, make = parse_el(pg, spec.args,
+                              f"instance {label!r}: element {spec.token!r}")
         plan.append(_Decl(None, refs, make))
 
     declared: set[_Key] = set()
@@ -540,7 +646,41 @@ def _plan(label: str, model: "OpenSeesModel") -> list[_Decl]:
             f"them with an element's damp= in the source, or declare the "
             f"damping on the assembly bridge."
         )
-    return plan
+    return plan, groups
+
+
+def _group_ids(
+    label: str, ops: "apeSees", model: "OpenSeesModel", groups: list[_Group],
+) -> list[tuple[str, list[int]]]:
+    """Each synthesized group's merged FEM ids; raise on a name in use.
+
+    Compose relocates an instance's ids by one offset, so the k-th
+    smallest id of the source group is the k-th smallest of its merged
+    counterpart.
+    """
+    fem = ops.fem
+    taken = set(fem.nodes.physical.names()) | set(fem.elements.physical.names())
+    out: list[tuple[str, list[int]]] = []
+    for name, merged_pg, source_pg, rows in groups:
+        if name in taken:
+            raise AssemblyError(
+                f"instance {label!r}: the per-row element group {name!r} "
+                f"would shadow a physical group of that name; rename the "
+                f"source's group."
+            )
+        src = sorted(int(e) for e in model.fem.elements.select(pg=source_pg).ids)
+        dst = sorted(int(e) for e in fem.elements.select(pg=merged_pg).ids)
+        if len(src) != len(dst):
+            raise AssemblyError(
+                f"instance {label!r}: merged group {merged_pg!r} holds "
+                f"{len(dst)} elements, its source {source_pg!r} {len(src)}."
+            )
+        to_merged = dict(zip(src, dst))
+        ids = [to_merged[e] for e in rows]
+        if not ids:
+            raise AssemblyError(f"instance {label!r}: element group {name!r} is empty.")
+        out.append((name, ids))
+    return out
 
 
 def _region_params(g: Any) -> list[Any]:
@@ -607,7 +747,9 @@ def rehydrate(ops: "apeSees", label: str, model: "OpenSeesModel") -> None:
     archived tag order. Every declaration is parsed and checked before the
     first registration, so a refusal leaves ``ops`` untouched.
     """
-    plan = _plan(label, model)
+    plan, groups = _plan(label, model)
+    for name, ids in _group_ids(label, ops, model, groups):
+        ops.fem._add_element_group(name, ids)
     by_ref: dict[_Key, "Primitive"] = {}
 
     def ref(kind: str, tag: int) -> "Primitive":

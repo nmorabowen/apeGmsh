@@ -22,7 +22,8 @@ Encodings, each exact both ways:
   rotation";
 * ``partition_rank`` is ``-1`` for none (a rank is ``>= 0``);
 * a tie ``name`` is ``""`` when unnamed (``check_label`` refuses ``""``);
-* ``params`` is the tie's options as canonical JSON (sorted keys).
+* ``params`` is the tie's options as canonical JSON (sorted keys); a
+  knob (:data:`TIE_KNOBS`) at its default is left out.
 
 :func:`write_assembly_zone` validates every row and builds every column
 before it opens the file, replaces an existing zone rather than appending
@@ -57,27 +58,79 @@ __all__ = [
 #: The ``/assembly`` root group.
 ZONE_GROUP = "assembly"
 
-#: The ``params`` JSON keys of each kind a ``/assembly/ties`` row records
-#: (ADR 0117 D3). ``tie`` is AS3's; AS4 adds the couplings and ``node``, the
-#: assembly-owned reference node (``master`` and ``slave`` are ``""``, the
-#: name is the node's, ``n_records`` is 1). A kind outside this table, or a
-#: row whose params carry other keys, is refused on write; an unknown kind
-#: is refused on read.
+#: The ``params`` JSON keys every row of each kind records (ADR 0117 D3).
+#: ``tie`` is AS3's; AS4 adds the couplings and ``node``, the assembly-owned
+#: reference node (``master`` and ``slave`` are ``""``, the name is the
+#: node's, ``n_records`` is 1); AS5-b adds ``equal_dof_mixed`` and
+#: ``rigid_body``. A kind outside this table, or a row whose params miss
+#: one of these keys or carry a key that is neither here nor in
+#: :data:`TIE_KNOBS`, is refused on write; an unknown kind is refused on
+#: read.
 TIE_PARAMS: dict[str, frozenset[str]] = {
     "tie": frozenset({"dofs", "enforce", "method", "tolerance"}),
     "equal_dof": frozenset({"dofs", "tolerance"}),
+    "equal_dof_mixed": frozenset({"dof_pairs", "tolerance"}),
     "rigid_link": frozenset({"link_type", "master_point"}),
     "rigid_diaphragm": frozenset({
         "constrained_dofs", "master_point", "plane_normal", "plane_tolerance"}),
+    "rigid_body": frozenset({"as_element", "mass", "master_point", "omega"}),
     "embedded": frozenset({"stiffness", "tolerance"}),
     "kinematic_coupling": frozenset({"dofs"}),
     "distributing_coupling": frozenset({"weighting"}),
     "node": frozenset({"coords"}),
 }
 
+#: The penalty / enforcement knobs AS5-b adds to existing kinds, with
+#: their defaults. A knob is written only when its value differs from the
+#: default, so a row that sets none is the row 1.0.0 wrote before the
+#: knobs existed; a row that carries a knob at its default is refused
+#: (one encoding per declaration).
+TIE_KNOBS: dict[str, dict[str, Any]] = {
+    "tie": {
+        "stiffness": "auto", "stiffness_p": None, "rotational": False,
+        "pressure": False, "control": None, "outward": None,
+    },
+    "kinematic_coupling": {
+        "k": None, "k_alpha": None, "kr": None, "enforce": "penalty",
+        "al_update": None,
+    },
+    "distributing_coupling": {
+        "k": None, "k_alpha": None, "kr": None, "enforce": "penalty",
+    },
+}
+
 #: Tie kinds the zone records; a kind outside this set is refused on
 #: write and on read.
 TIE_KINDS: frozenset[str] = frozenset(TIE_PARAMS)
+
+
+def params_key_error(kind: str, params: "dict[str, Any]") -> "str | None":
+    """Why ``params`` is not a valid row of ``kind``, or ``None`` if it is.
+
+    Every key of ``TIE_PARAMS[kind]`` must be present; any key of
+    ``TIE_KNOBS[kind]`` may be, but not at its default value.
+    """
+    required = TIE_PARAMS[kind]
+    knobs = TIE_KNOBS.get(kind, {})
+    keys = set(params)
+    if not required <= keys or not keys <= required | set(knobs):
+        extra = f" plus any of {sorted(knobs)}" if knobs else ""
+        return (f"params carry {sorted(keys)}, expected "
+                f"{sorted(required)}{extra}")
+    at_default = sorted(k for k in keys & set(knobs) if params[k] == knobs[k]
+                        and type(params[k]) is type(knobs[k]))
+    if at_default:
+        return (f"params carry {at_default} at the default value; a knob "
+                f"at its default is not written")
+    return None
+
+
+def row_params(kind: str, params: "dict[str, Any]") -> "dict[str, Any]":
+    """``params`` with every knob of ``kind`` at its default dropped: the
+    form a row stores."""
+    knobs = TIE_KNOBS.get(kind, {})
+    return {k: v for k, v in params.items()
+            if k not in knobs or not (v == knobs[k] and type(v) is type(knobs[k]))}
 
 _INSTANCE_STR = ("label", "source_path", "source_fem_hash", "source_opensees_hash")
 _INSTANCE_INT = ("fem_id_base", "fem_id_span", "partition_rank")
@@ -233,11 +286,9 @@ def _columns(
             raise AssemblyError(f"/assembly tie {t.name!r}: params is not JSON: {exc}") from exc
         if not isinstance(params, dict):
             raise AssemblyError(f"/assembly tie {t.name!r}: params must be a JSON object.")
-        if set(params) != TIE_PARAMS[t.kind]:
-            raise AssemblyError(
-                f"/assembly tie {t.name!r}: {t.kind} params carry "
-                f"{sorted(params)}, expected {sorted(TIE_PARAMS[t.kind])}."
-            )
+        problem = params_key_error(t.kind, params)
+        if problem is not None:
+            raise AssemblyError(f"/assembly tie {t.name!r}: {t.kind} {problem}.")
         if t.n_records < 1:
             raise AssemblyError(
                 f"/assembly tie {t.name!r}: n_records={t.n_records}; a tie resolves "

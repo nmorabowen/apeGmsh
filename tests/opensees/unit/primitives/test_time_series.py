@@ -158,6 +158,40 @@ class TestPath:
         with pytest.raises(ValueError, match="factor must be > 0"):
             Path(file="x.txt", factor=0.0)
 
+    # -- time= / values= lengths (R0-d): refused at construction, not at
+    #    stage close, and never a silently wrong history -----------------
+
+    @pytest.mark.parametrize(
+        ("time", "values"),
+        [((0.0, 1.0, 2.0), (0.0, 1.0)), ((0.0, 1.0), (0.0, 1.0, 2.0))],
+    )
+    def test_time_and_values_of_different_length_raise(
+        self, time: tuple[float, ...], values: tuple[float, ...],
+    ) -> None:
+        with pytest.raises(ValueError) as info:
+            Path(time=time, values=values)
+        msg = str(info.value)
+        assert f"time has {len(time)} samples" in msg
+        assert f"values has {len(values)}" in msg
+        assert "one time per value" in msg
+
+    def test_equal_lengths_construct(self) -> None:
+        ts = Path(time=(0.0, 1.0, 2.0), values=(0.0, 1.0, 0.0))
+        assert len(ts.time or ()) == len(ts.values or ()) == 3
+
+    def test_empty_values_raise(self) -> None:
+        with pytest.raises(ValueError, match="values= is empty"):
+            Path(values=(), dt=0.1)
+        with pytest.raises(ValueError, match="values= is empty"):
+            Path(values=(), time=())
+
+    def test_empty_time_raises(self) -> None:
+        with pytest.raises(ValueError, match="time= is empty"):
+            Path(file="motion.txt", time=())
+
+    def test_single_sample_constructs(self) -> None:
+        assert Path(time=(0.0,), values=(1.0,)).time == (0.0,)
+
     # -- Emit shapes -----------------------------------------------------
 
     def test_emit_file_with_dt(self) -> None:
@@ -637,6 +671,16 @@ class TestTimeSeriesNamespace:
         assert ts.file == "motion.txt"
         assert ts.dt == 0.01
         assert ts.factor == 9.81
+
+    def test_path_namespace_refuses_a_length_mismatch_before_registering(
+        self,
+    ) -> None:
+        """The public route hits the construction check; nothing is
+        registered, so the next series still takes tag 1."""
+        ops = _make_ops()
+        with pytest.raises(ValueError, match="time has 3 samples and values has 2"):
+            ops.timeSeries.Path(time=(0.0, 1.0, 2.0), values=(0.0, 1.0))
+        assert ops.tag_for(ops.timeSeries.Linear()) == 1
 
     def test_trig_namespace(self) -> None:
         ops = _make_ops()

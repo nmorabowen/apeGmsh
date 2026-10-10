@@ -89,23 +89,23 @@ class ComposeInterfaceSizeWarning(UserWarning):
 
 class ComposeDepthExceededError(RuntimeError, ValueError):
     """Raised when a nested-compose operation would exceed the
-    configured ``max_compose_depth`` per ADR 0038 §"Nested composition".
+    compose depth cap per ADR 0038 §"Nested composition".
 
     Phase 3E.1.  The source's own ``composed_from`` chain has reached
-    the configured depth cap and composing it into the host would
-    push the new module-entry's depth past the cap.
+    the depth cap and composing it into the host would push the new
+    module-entry's depth past the cap.
 
     The check fires at compose time, before any merge work runs:
     ``source_depth = 1 + max(child.depth)`` over the source's own
     ``composed_from`` records (depth 0 for a never-composed source).
     Composing yields a new entry of depth ``source_depth + 1``; if
-    that exceeds ``max_compose_depth`` (default 3), this error is
-    raised.
+    that exceeds the cap of 3, this error is raised.
 
-    The default of 3 covers the canonical hierarchy connection →
-    frame → building plus one level of headroom.  The cap can be
-    lifted per-call via the ``max_compose_depth=N`` kwarg on
-    :meth:`~apeGmsh.mesh._compose.Compose.compose`.
+    The cap of 3 covers the canonical hierarchy connection → frame →
+    building plus one level of headroom. It is fixed: the depth of 3 is
+    an invariant of the assembly (ADR 0117; maintainer ruling on #1585,
+    G3). To go deeper, flatten the source by re-baking it before
+    instancing it.
 
     Inherits from both :class:`RuntimeError` (matching the other
     verifier-style errors in this module) AND :class:`ValueError` so
