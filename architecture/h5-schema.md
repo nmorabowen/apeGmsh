@@ -1262,10 +1262,13 @@ every value equal the row's argv, the list names the slots, else `""`.
 A `bool` (a flag), a mapping, a struct, an opaque or a reference without
 a single tag has no slot form, so a flag without a field (`Parallel
 -factors`), an element row (node tags), a complex section (`Fiber`) or a
-chain component (no tag) stays unnamed. The primitives whose argv is not
-their fields are the shrink-only ledger
-`tests/opensees/contract/params_names_ledger.txt`, checked by
-`test_verbs_lock.py` with the same `decl_argv_names` the writer uses.
+chain component (no tag) stays unnamed. Every concrete primitive of the
+registry that the archive does not name is a line of the ledger
+`tests/opensees/contract/params_names_ledger.txt` (`unnamed`: argv is
+not the fields; `uncheckable`: no roster sample to emit; `nostore`: a
+family without a flat argv), checked by `test_verbs_lock.py` with the
+same `decl_argv_names` the writer uses; the `unnamed` + `uncheckable`
+count may only shrink, and a primitive neither named nor listed fails.
 
 `H5Model.declarations()` returns the rows as `DeclarationTable.params`
 (`decls` row -> `DeclParamsRO`: `type`, `params` with `DeclRef` /

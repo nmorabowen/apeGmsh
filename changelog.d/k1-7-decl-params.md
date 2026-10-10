@@ -18,10 +18,13 @@ record): one row per registered primitive, hanging off its
 - **`params_names`** names the argv slots of a declaration's store row
   where the archive finds the argv equal to the fields (`Steel01`:
   `fy E b`); a flag without a field (`Parallel -factors`), an element
-  row, a `Fiber` block or a chain component stays unnamed. The sampled
-  primitives whose argv is not their fields are the shrink-only ledger
-  `tests/opensees/contract/params_names_ledger.txt` (35 lines), checked
-  in `lock-tests` by `test_verbs_lock.py` with the writer's own rule.
+  row, a `Fiber` block or a chain component stays unnamed. Every
+  concrete primitive of the registry (185) the archive does not name is
+  a line of `tests/opensees/contract/params_names_ledger.txt`
+  (`unnamed` 35, `uncheckable` 19, `nostore` 107), checked in
+  `lock-tests` by `test_verbs_lock.py` with the writer's own rule; the
+  `unnamed` + `uncheckable` count may only shrink, and a new primitive
+  that is neither named nor listed fails the test.
 - **How it reads back.** `H5Model.declarations()` returns the rows as
   `DeclarationTable.params` (`DeclParamsRO`, with `DeclRef` /
   `DeclStruct` / `DeclOpaque` values; `params_for(key)`);
