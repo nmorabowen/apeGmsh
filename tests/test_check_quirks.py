@@ -1244,6 +1244,87 @@ def test_stale_patch_target_passes_every_target_on_main() -> None:
     assert found == []
 
 
+# --- emitter-sniff: ADR 0114 D6, the two apesees.py sniffs (K1-5, #1462) ------
+
+SNIFF_COMMIT = "11690cc7"
+SNIFF_SITES = {
+    "src/apeGmsh/opensees/apesees.py": {1121, 5101},
+    "src/apeGmsh/opensees/_internal/compose.py": {1277},
+}
+
+
+def test_emitter_sniff_flags_the_sites_at_the_commit_that_had_them(tmp_path: Path) -> None:
+    for rel in SNIFF_SITES:
+        _write(tmp_path, rel, _file_at(SNIFF_COMMIT, rel))
+    found: dict[str, set[int]] = {}
+    for f in quirks.scan(tmp_path):
+        if f.rule == "emitter-sniff":
+            found.setdefault(f.path, set()).add(f.line)
+    assert found == SNIFF_SITES
+
+
+@pytest.mark.parametrize(
+    "sniff",
+    [
+        'type(emitter).__name__ == "H5Emitter"',          # BuiltModel.emit
+        '"H5Emitter" != type(emitter).__name__',
+        'emitter.__class__.__name__ == "TclEmitter"',
+        'type(e).__name__ in ("TclEmitter", "PyEmitter")',
+        "isinstance(emitter, H5Emitter)",                  # _guard_mass_from_model
+        "isinstance(emitter, h5.H5Emitter)",
+        "isinstance(emitter, (int, LiveOpsEmitter))",
+        "issubclass(type(emitter), RecordingEmitter)",
+    ],
+)
+def test_emitter_sniff_flags_every_spelling(tmp_path: Path, sniff: str) -> None:
+    _write(tmp_path, "src/apeGmsh/opensees/apesees.py", f"def archival(emitter):\n    return {sniff}\n")
+    assert _found(tmp_path) == ["emitter-sniff:apesees.py:2"]
+
+
+def test_emitter_sniff_reaches_every_package_but_the_emitter_one(tmp_path: Path) -> None:
+    body = "def live(emitter):\n    return isinstance(emitter, LiveOpsEmitter)\n"
+    _write(tmp_path, "src/apeGmsh/opensees/_internal/compose.py", body)
+    _write(tmp_path, "src/apeGmsh/results/capture/spec.py", body)
+    _write(tmp_path, "src/apeGmsh/opensees/emitter/h5.py", body)
+    _write(tmp_path, "src/apeGmsh/opensees/emitter/sub/helper.py", body)
+    assert _found(tmp_path) == ["emitter-sniff:compose.py:2", "emitter-sniff:spec.py:2"]
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        'type(emitter).__name__ == "Frame"',               # not an emitter class
+        "isinstance(emitter, Primitive)",
+        "isinstance(p, (Analysis, Recorder))",
+        'type(emitter).__name__',                          # read, not compared
+        'emitter.caps.archival',                           # the replacement
+        'name = "H5Emitter"',
+    ],
+)
+def test_emitter_sniff_passes_what_does_not_ask_for_the_class(tmp_path: Path, line: str) -> None:
+    _write(tmp_path, "src/apeGmsh/opensees/apesees.py", f"def f(emitter, p, Frame):\n    return {line}\n")
+    assert _found(tmp_path) == []
+
+
+@pytest.mark.parametrize("rel", ["tests/opensees/test_x.py", "examples/demo.py", "scripts/tool.py"])
+def test_emitter_sniff_ignores_code_outside_src(tmp_path: Path, rel: str) -> None:
+    _write(tmp_path, rel, "def f(emitter):\n    return isinstance(emitter, H5Emitter)\n")
+    assert _found(tmp_path) == []
+
+
+def test_emitter_sniff_waiver(tmp_path: Path) -> None:
+    _write(tmp_path, "src/apeGmsh/opensees/apesees.py", """\
+        def f(emitter):
+            # apegmsh-lint: emitter-sniff-ok a test double has no caps
+            return isinstance(emitter, H5Emitter)
+        """)
+    assert _found(tmp_path) == []
+
+
+def test_emitter_sniff_scope_exists_in_this_checkout() -> None:
+    assert (quirks.REPO / quirks.EMITTER_PACKAGE).is_dir(), "the emitter package moved: update EMITTER_PACKAGE"
+
+
 # --- raw-meta-ndm: #1405, fabfa042 -------------------------------------------
 
 NDM_BUG_COMMIT = "fabfa042"

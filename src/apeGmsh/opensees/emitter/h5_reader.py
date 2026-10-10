@@ -34,6 +34,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Iterator, Mapping, Sequence
 
+from .caps import SolveStamp
 from .._internal.schema_version import (
     NEUTRAL,
     OPENSEES,
@@ -1290,6 +1291,60 @@ class H5Model:
         ``stage`` (``-1`` global), from ``/opensees/program`` (ADR 0114
         Q2). See :func:`emit_index_of`."""
         return emit_index_of(self.program(), method, row, stage=stage)
+
+    def solve_stamp(self) -> SolveStamp | None:
+        """Return the ``/opensees`` solve stamp (ADR 0114 D6, opensees 2.24.0).
+
+        ``None`` when the file carries no ``@will_solve`` (every file
+        below 2.24.0, and a 2.24 file written before the bridge stamped
+        it): absent is "unknown", never a default. The three attributes
+        are written together, so a ``@will_solve`` without
+        ``@solve_refusals`` or ``@requires``, a ``@will_solve`` that is
+        not the integer scalar 0 or 1, or a token array that is not a
+        1-D array of strings raises :class:`MalformedH5Error`.
+        """
+        import numpy as np
+
+        if "opensees" not in self._f:
+            return None
+        attrs = self._f["opensees"].attrs
+        if "will_solve" not in attrs:
+            return None
+        raw = attrs["will_solve"]
+        arr = np.asarray(raw)
+        if (arr.shape != () or not np.issubdtype(arr.dtype, np.integer)
+                or int(arr) not in (0, 1)):
+            raise MalformedH5Error(
+                f"/opensees@will_solve is {raw!r}; the writer only stamps "
+                "the int8 0 or 1."
+            )
+        tokens: dict[str, tuple[str, ...]] = {}
+        for name in ("solve_refusals", "requires"):
+            if name not in attrs:
+                raise MalformedH5Error(
+                    f"/opensees@{name} is missing while @will_solve is "
+                    "present; the writer stamps the three together."
+                )
+            values = np.asarray(attrs[name])
+            if values.ndim != 1:
+                raise MalformedH5Error(
+                    f"/opensees@{name} has shape {values.shape}; expected a "
+                    "1-D array of strings."
+                )
+            decoded = tuple(str(_decode_bytes(v)) for v in values)
+            if not all(decoded):
+                raise MalformedH5Error(
+                    f"/opensees@{name} holds an empty token: {decoded!r}."
+                )
+            tokens[name] = decoded
+        try:
+            return SolveStamp(
+                will_solve=bool(int(arr)),
+                solve_refusals=tokens["solve_refusals"],
+                requires=tokens["requires"],
+            )
+        except ValueError as exc:
+            raise MalformedH5Error(f"/opensees@requires: {exc}") from None
 
     def commands(self) -> tuple[CommandRecordRO, ...]:
         """Return every ``/opensees/commands`` row, in write order.

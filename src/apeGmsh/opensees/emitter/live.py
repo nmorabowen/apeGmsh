@@ -30,6 +30,7 @@ from .._internal.analyze_rc import check_analyze_rc
 from .._rc_c2_flags import rc_c2_flags, rc_c2_live_refusal
 from .._target import BackendInfo, backend_info_of
 from .base import DroppedAxisGuard, StrategySpec, command_row, plain_scalar
+from .caps import TargetCaps
 
 if TYPE_CHECKING:
     from types import ModuleType
@@ -701,6 +702,16 @@ class LiveOpsEmitter:
     #: (auto-partitioned one-rank-per-module by ADR 0038) still emits every
     #: module's nodes/elements into the single live domain and analyzes.
     supports_partitions: bool = False
+
+    #: ADR 0114 D6: the typed form of the flag above.
+    caps: TargetCaps = TargetCaps(
+        archival=False,
+        supports_partitions=False,
+        per_rank_fragments=False,
+        suppress_analysis_chain_auto_emit=False,
+        model_reissue_purges=False,
+        emit_stage_markers=False,
+    )
 
     def __init__(self, *, wipe: bool = True) -> None:
         # The module is bound behind the numpy-scalar-coercing proxy:

@@ -299,7 +299,9 @@ EMITTER_METHOD_COUNT: Final[int] = 75
 #: Public names an emitter may define beyond the Protocol, per emitter
 #: module: emitter-specific side channels, not verbs. The class-level
 #: capability flags (``model_reissue_purges``, ``supports_partitions``)
-#: are listed too; E2 ``TargetCaps`` absorbs them in K1-5.
+#: are listed too until the bridge reads ``caps`` (E2 ``TargetCaps``,
+#: ADR 0114 D6) instead of them. ``caps`` itself is the Protocol's one
+#: attribute, declared on every emitter, so it is not a side channel.
 SIDE_CHANNELS: Final[Mapping[str, frozenset[str]]] = MappingProxyType({
     "tcl": frozenset({
         "lines", "line_count", "line_buffer", "write_to", "preamble",
@@ -320,6 +322,7 @@ SIDE_CHANNELS: Final[Mapping[str, frozenset[str]]] = MappingProxyType({
         "write_opensees_into", "set_initial_stress_records",
         "set_stage_records", "restore_partition_blocks",
         "restore_stage_blocks", "restore_program", "ledger_counts",
+        "set_solve_stamp",
     }),
     "recording": frozenset(),
 })

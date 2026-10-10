@@ -23,6 +23,7 @@ from .._target import BackendInfo
 import math
 from typing import Any, Literal, Sequence
 
+from .caps import TargetCaps
 from .base import (
     NUMPY_VALUE_TYPES,
     DroppedAxisGuard,
@@ -208,6 +209,17 @@ class PyEmitter:
     it to disk, ``python script.py`` it, and OpenSees will execute the
     deck. Top-level statements; no function wrapper.
     """
+
+    #: ADR 0114 D6: a py deck consumes partition brackets; a
+    #: ``model BasicBuilder`` re-issue purges nothing on openseespy.
+    caps: TargetCaps = TargetCaps(
+        archival=False,
+        supports_partitions=True,
+        per_rank_fragments=False,
+        suppress_analysis_chain_auto_emit=False,
+        model_reissue_purges=False,
+        emit_stage_markers=False,
+    )
 
     def __init__(self, *, backend: BackendInfo | None = None) -> None:
         # ``_lines`` is a :class:`_LineBuf` so ``partition_open`` can

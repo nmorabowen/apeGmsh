@@ -244,6 +244,16 @@ RULES: dict[str, str] = {
         "since the merge base are read, so existing comments are never flagged. Lesson: "
         "plan_expert_panel_2026-09 section 6, the comment-provenance diet"
     ),
+    "emitter-sniff": (
+        "asks an emitter for its class (`type(e).__name__ == \"H5Emitter\"`, "
+        "`e.__class__.__name__`, `isinstance(e, XEmitter)`) outside "
+        "src/apeGmsh/opensees/emitter/: the bridge then branches on a class name instead "
+        "of a declared capability, so a target that behaves like the sniffed one is "
+        "treated as a different one and the Protocol stops being the seam. Read "
+        "`emitter.caps.<field>` (TargetCaps, emitter/caps.py, ADR 0114 D6) and add a "
+        "field when none fits. Lesson: BuiltModel.emit's archival check and "
+        "_guard_mass_from_model's isinstance in apesees.py, replaced by K1-5 (#1462)"
+    ),
     "raw-meta-ndm": (
         "reads `ndm` straight off an H5 meta/attrs mapping. Since neutral 2.34.0 `/meta/ndm` "
         "is the spatial ndm, but an older file stamped the mesh dimension there, so a raw read "
@@ -1195,8 +1205,56 @@ def check_raw_meta_ndm(tree: ast.AST, rel: str, root: Path) -> Iterator[tuple[in
             yield node.lineno, RULES["raw-meta-ndm"]
 
 
+# --- emitter-sniff ------------------------------------------------------------
+
+#: The one package that may name emitter classes: it defines them.
+EMITTER_PACKAGE = "src/apeGmsh/opensees/emitter/"
+SNIFF_TEXT = re.compile(r"isinstance\(|issubclass\(|__name__")
+
+
+def _class_name_of(node: ast.expr) -> bool:
+    """`type(x).__name__` or `x.__class__.__name__`."""
+    if not (isinstance(node, ast.Attribute) and node.attr == "__name__"):
+        return False
+    owner = node.value
+    if isinstance(owner, ast.Call) and isinstance(owner.func, ast.Name):
+        return owner.func.id == "type" and len(owner.args) == 1
+    return isinstance(owner, ast.Attribute) and owner.attr == "__class__"
+
+
+def _names_an_emitter(node: ast.expr) -> bool:
+    """A string, name or dotted name ending in `Emitter`, or a collection holding one."""
+    if isinstance(node, (ast.Tuple, ast.Set, ast.List)):
+        return any(_names_an_emitter(e) for e in node.elts)
+    if isinstance(node, ast.Constant):
+        return isinstance(node.value, str) and node.value.endswith("Emitter")
+    name = node.id if isinstance(node, ast.Name) else node.attr if isinstance(node, ast.Attribute) else ""
+    return name.endswith("Emitter")
+
+
+def check_emitter_sniff(tree: ast.AST, rel: str, root: Path) -> Iterator[tuple[int, str]]:
+    """A class-name comparison or an `isinstance` / `issubclass` against an
+    emitter class, anywhere under src/apeGmsh/ except the emitter package."""
+    if not rel.startswith(GETATTR_SCOPE) or rel.startswith(EMITTER_PACKAGE):
+        return
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Compare):
+            operands = [node.left, *node.comparators]
+            if any(_class_name_of(o) for o in operands) and any(_names_an_emitter(o) for o in operands):
+                yield node.lineno, RULES["emitter-sniff"]
+        elif (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id in ("isinstance", "issubclass")
+            and len(node.args) == 2
+            and _names_an_emitter(node.args[1])
+        ):
+            yield node.lineno, RULES["emitter-sniff"]
+
+
 PYTHON_RULES: dict[str, Callable[[ast.AST, str, Path], Iterator[tuple[int, str]]]] = {
     "schema-literal": check_schema_literal,
+    "emitter-sniff": check_emitter_sniff,
     "bare-version-compare": check_bare_version_compare,
     "compose-streams": check_compose_streams,
     "resolve-swallow": check_resolve_swallow,
@@ -1337,6 +1395,8 @@ def _may_apply(rel: str, lowered: str, text: str = "") -> bool:
     if rel.startswith(GETATTR_SCOPE) and VERSION_COMPARE_TEXT.search(lowered):
         return True
     if rel.startswith(GETATTR_SCOPE) and NDM_TEXT.search(text):
+        return True
+    if rel.startswith(GETATTR_SCOPE) and "emitter" in lowered and SNIFF_TEXT.search(text):
         return True
     return "openseespy" in lowered and IMPORT_TEXT.search(re.sub(r"\\\r?\n", " ", lowered)) is not None
 

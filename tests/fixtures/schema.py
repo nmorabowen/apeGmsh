@@ -10,8 +10,8 @@ Comparing a schema version against a literal anywhere else in ``tests/``
 fails ``scripts/check_quirks.py`` (rule ``schema-literal``): it went stale
 and turned main red at 2.12.0, 2.13.0 and 2.16.0.
 """
-OPENSEES_CURRENT     = "2.23.0"  # ADR 0114 R2/R3a (/opensees/program + /opensees/commands, #1461)
-OPENSEES_PRIOR_MINOR = "2.22.0"  # ADR 0112 am. 5 (/opensees/bcs@mass_from_model marker, #1304)
+OPENSEES_CURRENT     = "2.24.0"  # ADR 0114 D6 (/opensees@will_solve, @solve_refusals, @requires; K1-5 #1462)
+OPENSEES_PRIOR_MINOR = "2.23.0"  # ADR 0114 R2/R3a (/opensees/program + /opensees/commands, #1461)
 OPENSEES_FLOOR       = "2.12.0"  # ADR 0113 D3 evidence gate (#1329): no 2.11-era file opens (neutral 2.7 stamps)
 NEUTRAL_CURRENT      = "2.35.0"  # #1338: additive `source` column on /loads/nodal (the definition kind)
 NEUTRAL_PRIOR_MINOR  = "2.34.0"  # #1291: /meta/ndm is the ops.model spatial dimension (0 = undeclared)

@@ -141,6 +141,8 @@ model.h5
 │     └── /ties                            one row per tie, coupling or reference node
 │
 └── /opensees/                             ── OpenSees zone (bridge-owned) ──
+      │   @will_solve, @solve_refusals,      the solve stamp (optional attrs,
+      │   @requires                          opensees 2.24.0; see below)
       ├── /materials
       │     ├── /uniaxial/{name}           one group per material
       │     └── /nd/{name}
@@ -1081,6 +1083,34 @@ at the bridge's slot (after the masses, before the patterns); a stage's
 `/opensees/program` records. A row whose method has no replay slot
 raises.
 
+## `/opensees` attributes: the solve stamp (optional, opensees 2.24.0)
+
+What the archive says about the solve it was emitted for (ADR 0114 D6,
+R4), as three attributes on the `/opensees` group itself:
+
+```
+/opensees
+  @will_solve       i1              1 when the model carries a solve
+                                    (`staged or any(Analysis)` at emit), else 0
+  @solve_refusals   vlen str (R,)   ids of the solve-time gates that refused
+                                    at emit, in order; empty when none did
+  @requires         vlen str (Q,)   sorted union of the archived verbs'
+                                    `VERBS.requires` tokens (`fork`: the
+                                    Ladruno build); empty when none
+```
+
+The bridge hands the writer one `SolveStamp` (`emitter/caps.py`) through
+`H5Emitter.set_solve_stamp`, and the writer stamps the three together;
+a file that lacks `@will_solve` carries **no** stamp, and
+`H5Model.solve_stamp()` returns `None` for it (every file below 2.24.0,
+and a 2.24 file written before the bridge stamped it). Absent is
+"unknown", never a default: a replay that needs the stamp must say so.
+A `@will_solve` without its two companions, one that is not the integer
+0 or 1, or a token array that is not sorted and unique raises
+`MalformedH5Error`. Replay to a deck fails closed on a non-empty
+`@solve_refusals`, and `build('live')` refuses on a backend that lacks a
+token in `@requires`. Attributes of `/opensees` fold into `model_hash`.
+
 ## `/meta/session_id` and the geometry sibling
 
 ADR 0112 D1 makes geometry an artifact of its own, and the V0
@@ -1430,7 +1460,7 @@ call `validate_zone_version(...)` for each zone before reading it.
 | Zone | `/meta` key | Root paths | Writer constant (source of truth) | Current | Floor |
 |---|---|---|---|---|---|
 | neutral (broker) | `neutral_schema_version` | `/nodes`, `/elements`, `/physical_groups`, `/labels`, `/mesh_selections`, `/partitions`, `/parts`, `/constraints`, `/reinforce_ties`, `/embed_ties`, `/rebar_elements`, `/contacts`, `/contact_planes`, `/interfaces`, `/loads`, `/masses`, `/composed_from` | [`mesh/_femdata_h5_io.py`](../src/apeGmsh/mesh/_femdata_h5_io.py) `NEUTRAL_SCHEMA_VERSION` | **2.35.0** | **2.10.0** |
-| opensees (bridge) | `opensees_schema_version` | `/opensees/*` | [`opensees/emitter/h5.py`](../src/apeGmsh/opensees/emitter/h5.py) `SCHEMA_VERSION` | **2.23.0** | **2.12.0** |
+| opensees (bridge) | `opensees_schema_version` | `/opensees/*` | [`opensees/emitter/h5.py`](../src/apeGmsh/opensees/emitter/h5.py) `SCHEMA_VERSION` | **2.24.0** | **2.12.0** |
 | results | `results_schema_version` | `/stages/*` (composed `results.h5`, at file root) | [`results/schema/_versions.py`](../src/apeGmsh/results/schema/_versions.py) `RESULTS_SCHEMA_VERSION` | **1.1.0** | **1.0.0** |
 | cuts (sub-zone of opensees) | — (no own key; rides the opensees zone) | `/opensees/cuts`, `/opensees/sweeps` | [`cuts/_h5_io.py`](../src/apeGmsh/cuts/_h5_io.py) `V4_SCHEMA_VERSION` | 2.5.0 | none of its own: it rides the opensees floor |
 | geometry (ADR 0112 D2) | `geometry_schema_version` | `/geometry` (sibling `<stem>.geometry.h5` only) | [`opensees/_internal/schema_version.py`](../src/apeGmsh/opensees/_internal/schema_version.py) `GEOMETRY_SCHEMA_VERSION` | **1.0.0** | **1.0.0** |
@@ -1836,6 +1866,13 @@ detail lives in the `SCHEMA_VERSION` docstring in
   which earlier files dropped). Both fold into `model_hash`, so an
   identical model hashes differently once at this minor (ADR 0114 Q5).
   Additive minor (a 2.22.x reader refuses a 2.23.x file, INV-4).
+- `2.24.0` — ADR 0114 D6/R4 (K1-5, #1462): additive — three optional
+  attributes on `/opensees` itself, `@will_solve`, `@solve_refusals` and
+  `@requires` (see [the solve stamp](#opensees-attributes-the-solve-stamp-optional-opensees-2240)),
+  written together once the bridge hands the writer a `SolveStamp`; a
+  file without them reads as "no stamp" (`None`). Attributes of
+  `/opensees` fold into `model_hash`. Additive minor (a 2.23.x reader
+  refuses a 2.24.x file, INV-4).
 
 This is the **current** opensees-zone version (`SCHEMA_VERSION` in
 [`opensees/emitter/h5.py`](../src/apeGmsh/opensees/emitter/h5.py)); check that constant

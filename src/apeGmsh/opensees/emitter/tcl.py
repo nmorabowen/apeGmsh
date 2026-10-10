@@ -43,6 +43,7 @@ from typing import (
     IO, Any, Callable, Literal, NamedTuple, Sequence, SupportsIndex,
 )
 
+from .caps import TargetCaps
 from .base import (
     NUMPY_VALUE_TYPES,
     DroppedAxisGuard,
@@ -491,6 +492,17 @@ class TclEmitter:
     #: so a replay on any other backend would kill the deck it exists to
     #: save.  Everyone else takes the ``getattr`` default ``False``.
     model_reissue_purges: bool = True
+
+    #: ADR 0114 D6: the typed form of the flags above and of the
+    #: per-emit ones the bridge sets on an instance.
+    caps: TargetCaps = TargetCaps(
+        archival=False,
+        supports_partitions=True,
+        per_rank_fragments=False,
+        suppress_analysis_chain_auto_emit=False,
+        model_reissue_purges=True,
+        emit_stage_markers=False,
+    )
 
     def __init__(self, *, backend: BackendInfo | None = None) -> None:
         # ``_lines`` is a :class:`_LineBuf` so ``partition_open`` can
