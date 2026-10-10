@@ -588,9 +588,15 @@ def test_a_second_load_on_a_registered_pattern_writes_again(
 
 
 def test_a_composed_model_writes(artifact_dir, tmp_path, h5_calls):
-    """A composed model reports its modules as partitions (ADR 0038) and
-    is not partitioned for D1 (`_artifact_policy`, the session's rule):
-    the bridge writes it, with no warning."""
+    """A composed model whose modules are its partitions (ADR 0038) is
+    not partitioned for D1 (`_artifact_policy`, the session's rule): the
+    bridge writes it, with no warning.
+
+    v2 (ADR 0117): the modules are instances of an assembly, ranked one
+    per partition (an unranked v2 assembly is serial, so it would not
+    exercise the partitioned branch), and the archive is ``asm.h5``."""
+    from apeGmsh.assembly import Assembly
+
     for nm in ("hostmod", "mod"):
         with apeGmsh(model_name=nm, verbose=False, _artifacts=False) as g:
             box = g.model.geometry.add_box(0, 0, 0, 1, 1, 1)
@@ -598,20 +604,33 @@ def test_a_composed_model_writes(artifact_dir, tmp_path, h5_calls):
             g.mesh.sizing.set_global_size(0.5)
             g.mesh.generation.generate(3)
             g.physical.add(3, [box], name="B")
-            g.mesh.queries.get_fem_data(dim=3).to_h5(str(tmp_path / f"{nm}.h5"))
-    g = apeGmsh.from_h5(str(tmp_path / "hostmod.h5"))
-    g.compose(str(tmp_path / "mod.h5"), label="M", translate=(2.0, 0.0, 0.0))
-    g.save(str(tmp_path / "out.h5"))
+            src = apeSees(g.mesh.queries.get_fem_data(dim=3))
+        src.model(ndm=3, ndf=3)
+        src.h5(str(tmp_path / f"{nm}.h5"))
+    asm = Assembly("hostmod")
+    asm.instance("host", tmp_path / "hostmod.h5", partition_rank=0)
+    asm.instance("M", tmp_path / "mod.h5", translate=(2.0, 0.0, 0.0),
+                 partition_rank=1)
+    asm.bridge(ndm=3, ndf=3)
+    asm.h5(str(tmp_path / "out.h5"), model_name="hostmod")
     fem = FEMData.from_h5(str(tmp_path / "out.h5"))
     assert fem.model_name == "hostmod"
     assert len(fem.partitions) == 2 and fem.composed_from
+    # The explicit source and archive writes above go through the spy;
+    # the subject is the one automatic write below.
+    n_before = len(h5_calls)
     with warnings.catch_warnings():
         warnings.simplefilter("error", UserWarning)
         # The bridge's advisory on a multi-partition deck (ADR 0027), not
         # this test's subject.
         warnings.simplefilter("ignore", OpenSeesAutoEmitWarning)
-        _bridge(fem).tcl(str(tmp_path / "c.tcl"))
-    assert len(h5_calls) == 1
+        ops = apeSees(fem)
+        ops.model(ndm=3, ndf=3)
+        mat = ops.nDMaterial.ElasticIsotropic(E=30e9, nu=0.2, rho=2400.0)
+        for pg in ("host.B", "M.B"):  # every instance PG is namespaced
+            ops.element.FourNodeTetrahedron(pg=pg, material=mat)
+        ops.tcl(str(tmp_path / "c.tcl"))
+    assert len(h5_calls) == n_before + 1
     out = artifact_dir / "hostmod.h5"
     assert {"opensees", "nodes", "partitions"} <= _zones(out)
 

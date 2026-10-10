@@ -50,7 +50,6 @@ from typing import Optional
 import numpy as np
 import pytest
 
-from apeGmsh._core import apeGmsh
 from apeGmsh.mesh._element_types import ElementGroup, make_type_info
 from apeGmsh.mesh._group_set import LabelSet, PhysicalGroupSet
 from apeGmsh.mesh.FEMData import (
@@ -127,46 +126,52 @@ def uncomposed_fem() -> FEMData:
     return _make_module_fem()
 
 
+def _write_source(fem: FEMData, path: Path) -> Path:
+    """Write ``fem`` as an assembly source (it needs ``model(ndm, ndf)``)."""
+    from apeGmsh.opensees import apeSees
+
+    ops = apeSees(fem)
+    ops.model(ndm=3, ndf=3)
+    ops.h5(str(path))
+    return path
+
+
 @pytest.fixture
 def composed_fem(tmp_path: Path) -> FEMData:
-    """Host + 2 composed modules → return the live composed FEMData
-    that ``Results.fem`` would hand to the results.viewer.
+    """Host + 2 modules, merged by a v2 assembly -> return the merged
+    FEMData that ``Results.fem`` would hand to the results.viewer.
 
     Pattern mirrors the ``composed_h5`` fixture in
     tests/test_phase_3f_2a_data.py but exposes the FEMData directly
     (no save/reload) since the results.viewer path consumes
-    ``results.fem`` after the bind step.
+    ``results.fem`` after the bind step. v2 has no live host (row-15
+    ruling), so the host is an instance named ``host``.
     """
-    host = _make_module_fem(
+    from apeGmsh.assembly import Assembly
+
+    host_path = _write_source(_make_module_fem(
         node_ids=np.array([1, 2, 3], dtype=np.int64),
         elem_ids=np.array([10, 11], dtype=np.int64),
-    )
-    host_path = tmp_path / "host.h5"
-    host.to_h5(str(host_path))
-
-    module_a = _make_module_fem(
+    ), tmp_path / "host.h5")
+    module_a_path = _write_source(_make_module_fem(
         node_ids=np.array([1, 2, 3], dtype=np.int64),
         elem_ids=np.array([10, 11], dtype=np.int64),
-    )
-    module_a_path = tmp_path / "module_a.h5"
-    module_a.to_h5(str(module_a_path))
-
-    module_b = _make_module_fem(
+    ), tmp_path / "module_a.h5")
+    module_b_path = _write_source(_make_module_fem(
         node_ids=np.array([1, 2, 3, 4], dtype=np.int64),
         elem_ids=np.array([20, 21, 22], dtype=np.int64),
-    )
-    module_b_path = tmp_path / "module_b.h5"
-    module_b.to_h5(str(module_b_path))
+    ), tmp_path / "module_b.h5")
 
-    g = apeGmsh.from_h5(host_path)
-    g.compose(module_a_path, label="A", translate=(10.0, 0.0, 0.0))
-    g.compose(module_b_path, label="B", translate=(100.0, 0.0, 0.0))
-    # Chain-phase session post-compose: ``_fem`` is the canonical
-    # composed FEMData broker (Phase 3B.2c / ADR 0038).  This is what
-    # ``Results.fem`` would yield after a bind against a results file
-    # from the same composed model.
-    assert g._fem is not None
-    return g._fem
+    asm = Assembly("composed")
+    asm.instance("host", host_path)
+    asm.instance("A", module_a_path, translate=(10.0, 0.0, 0.0))
+    asm.instance("B", module_b_path, translate=(100.0, 0.0, 0.0))
+    # ``bridge(...).fem`` is the merged FEMData broker (ADR 0117). This
+    # is what ``Results.fem`` would yield after a bind against a
+    # results file from the same composed model.
+    fem = asm.bridge(ndm=3, ndf=3).fem
+    assert fem is not None
+    return fem
 
 
 # ---------------------------------------------------------------------------

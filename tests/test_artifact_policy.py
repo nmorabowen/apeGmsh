@@ -464,24 +464,44 @@ def test_partitioned_run_gets_no_automatic_write(monkeypatch, tmp_path: Path) ->
     assert len(FEMData.from_h5(str(target)).partitions) == 2
 
 
-def test_a_composed_session_writes(monkeypatch, tmp_path: Path) -> None:
-    """``g.compose`` reports its modules as partitions (ADR 0038's rank
-    model) but is not partitioned for D1: the session writes, silently."""
+def test_a_composed_model_writes(monkeypatch, tmp_path: Path) -> None:
+    """A composed model reports its modules as partitions (ADR 0038's
+    rank model) but is not partitioned for D1: it writes, silently.
+
+    v1 composed inside a session (``g.compose``) and checked the session's
+    automatic write; v2 has no composed session (the row-15 ruling), so
+    the composed model is an assembly and its write is ``asm.h5``.
+    """
+    from apeGmsh.assembly import Assembly
+    from apeGmsh.opensees import apeSees
+
     monkeypatch.setenv("APEGMSH_ARTIFACT_DIR", str(tmp_path))
-    _run("module")
     with warnings.catch_warnings():
         warnings.simplefilter("error")
-        with apeGmsh(model_name="host") as g:
+        with apeGmsh(model_name="module") as g:
             _small_box(g)
-            g.mesh.queries.get_fem_data()
-            g.compose(tmp_path / "module.h5", label="M", translate=(3.0, 0.0, 0.0))
             fem = g.mesh.queries.get_fem_data()
-    assert len(fem.partitions) == 2                 # the module's rank
-    model = tmp_path / "host.h5"
-    assert model.is_file() and (tmp_path / "host.geometry.h5").is_file()
+        src = apeSees(fem)
+        src.model(ndm=3, ndf=3)
+        mat = src.nDMaterial.ElasticIsotropic(E=30e9, nu=0.2, rho=0.0, name="m")
+        src.element.FourNodeTetrahedron(pg="body", material=mat)
+        source = tmp_path / "module_src.h5"
+        src.h5(str(source))
+
+        asm = (Assembly("host")
+               .instance("H", source, partition_rank=0)
+               .instance("M", source, translate=(3.0, 0.0, 0.0),
+                         partition_rank=1))
+        ops = asm.bridge(ndm=3, ndf=3)
+        ops.numberer.ParallelPlain()     # declared: the ranked deck's
+        ops.system.Mumps()               # auto-emit would warn
+        model = tmp_path / "host.h5"
+        asm.h5(model)
+    assert len(ops.fem.partitions) == 2              # one per module rank
+    assert model.is_file()
     reloaded = FEMData.from_h5(str(model))
     assert len(reloaded.partitions) == 2
-    assert reloaded.session_id == fem.session_id == _meta(tmp_path / "host.geometry.h5", "session_id")
+    assert sorted(reloaded.composed_from.labels) == ["H", "M"]
 
 
 # ---------------------------------------------------------------------------

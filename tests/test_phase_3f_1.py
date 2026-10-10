@@ -8,8 +8,8 @@ MP-style constraint count crosses
 
 Pure-Python tests — no Gmsh, no openseespy, no real H5 round-trip
 for the helper unit tests (which build minimal mock bundles).  The
-integration tests use ``apeGmsh.from_h5`` + saved H5 sources so
-they run entirely in chain phase.
+integration tests instance saved H5 sources in a v2
+:class:`~apeGmsh.assembly.Assembly` and merge them with ``bridge``.
 """
 from __future__ import annotations
 
@@ -21,7 +21,6 @@ from typing import Any
 import numpy as np
 import pytest
 
-from apeGmsh._core import apeGmsh
 from apeGmsh._kernel.records._constraints import NodePairRecord
 from apeGmsh._kernel.records._kinds import ConstraintKind
 from apeGmsh.core._compose_errors import ComposeInterfaceSizeWarning
@@ -139,51 +138,49 @@ def _make_module_fem(
     return FEMData(nodes=nodes, elements=elements, info=info)
 
 
-@pytest.fixture
-def empty_host_h5(tmp_path: Path) -> Path:
-    """Minimal-host FEMData saved to H5 — chain-phase compose target.
+def _write_source(fem: FEMData, path: Path) -> Path:
+    """Write ``fem`` as an assembly source (it needs ``model(ndm, ndf)``)."""
+    from apeGmsh.opensees import apeSees
 
-    Uses a 3-node / 2-element module rather than an empty host so the
-    merge engine's :func:`np.concatenate` calls see matching ndim on
-    both sides (an empty host's (0, 3) coord array collapses to 1D
-    after the writer/reader round-trip, breaking ``axis=0`` concat).
+    ops = apeSees(fem)
+    ops.model(ndm=3, ndf=3)
+    ops.h5(str(path))
+    return path
+
+
+@pytest.fixture(scope="module")
+def sources(tmp_path_factory) -> dict[str, Path]:
+    """Every source of the integration tests, written once per module.
+
+    * ``host`` -- a 3-node / 2-element module standing in for the v1
+      live host (row-15 ruling: the host is an instance too);
+    * ``small`` -- 100 constraints, well below the threshold;
+    * ``threshold`` -- exactly 50_000 constraints: the predicate is
+      strictly-greater-than, so it must NOT trip the warning;
+    * ``large`` -- 50_001 constraints, strictly above the threshold.
     """
-    fem = _make_module_fem()
-    p = tmp_path / "host.h5"
-    fem.to_h5(str(p))
-    return p
+    d = tmp_path_factory.mktemp("phase_3f_1")
+    return {
+        "host": _write_source(_make_module_fem(), d / "host.h5"),
+        "small": _write_source(
+            _make_module_fem(extra_node_constraints=100), d / "small.h5"),
+        "threshold": _write_source(
+            _make_module_fem(extra_node_constraints=WARN_INTERFACE_SIZE),
+            d / "threshold.h5"),
+        "large": _write_source(
+            _make_module_fem(extra_node_constraints=WARN_INTERFACE_SIZE + 1),
+            d / "large.h5"),
+    }
 
 
-@pytest.fixture
-def small_module_h5(tmp_path: Path) -> Path:
-    """A source module with 100 constraints — well below the threshold."""
-    fem = _make_module_fem(extra_node_constraints=100)
-    p = tmp_path / "small.h5"
-    fem.to_h5(str(p))
-    return p
+def _bridge(sources: dict[str, Path], module: str, label: str):
+    """Instance the host and one module, then merge them (``bridge``)."""
+    from apeGmsh.assembly import Assembly
 
-
-@pytest.fixture
-def large_module_h5(tmp_path: Path) -> Path:
-    """A source module with 50_001 constraints — strictly above the
-    threshold (predicate is strictly-greater-than, so 50_001 trips
-    while 50_000 does not).
-    """
-    fem = _make_module_fem(extra_node_constraints=WARN_INTERFACE_SIZE + 1)
-    p = tmp_path / "large.h5"
-    fem.to_h5(str(p))
-    return p
-
-
-@pytest.fixture
-def threshold_module_h5(tmp_path: Path) -> Path:
-    """A source module with exactly 50_000 constraints — boundary case
-    that must NOT trip the warning (predicate is strictly-greater-than).
-    """
-    fem = _make_module_fem(extra_node_constraints=WARN_INTERFACE_SIZE)
-    p = tmp_path / "threshold.h5"
-    fem.to_h5(str(p))
-    return p
+    asm = Assembly("size")
+    asm.instance("host", sources["host"])
+    asm.instance(label, sources[module])
+    return asm.bridge(ndm=3, ndf=3)
 
 
 # ---------------------------------------------------------------------------
@@ -348,49 +345,47 @@ class TestWarningTaxonomy:
 
 
 # ---------------------------------------------------------------------------
-# Integration — through FEMData.compose / g.compose
+# Integration — through the v2 Assembly bridge (ADR 0117)
 # ---------------------------------------------------------------------------
 
 
 class TestComposeIntegration:
-    """Wired into the real compose path via ``apeGmsh.from_h5`` + saved
-    H5 sources."""
+    """Wired into the real merge path: ``Assembly.instance`` + ``bridge``
+    over saved H5 sources (the merge, and its warnings, run in
+    ``bridge``)."""
 
     def test_small_module_does_not_warn(
-        self, empty_host_h5: Path, small_module_h5: Path,
+        self, sources: dict[str, Path],
     ) -> None:
-        g = apeGmsh.from_h5(empty_host_h5)
         with warnings.catch_warnings(record=True) as rec:
             warnings.simplefilter("always")
-            g.compose(small_module_h5, label="A")
+            _bridge(sources, "small", "A")
         size_warnings = [
             w for w in rec if issubclass(w.category, ComposeInterfaceSizeWarning)
         ]
         assert size_warnings == []
 
     def test_threshold_module_does_not_warn(
-        self, empty_host_h5: Path, threshold_module_h5: Path,
+        self, sources: dict[str, Path],
     ) -> None:
         """Boundary: exactly 50_000 constraints — predicate is
         strictly-greater-than, so no warning fires."""
-        g = apeGmsh.from_h5(empty_host_h5)
         with warnings.catch_warnings(record=True) as rec:
             warnings.simplefilter("always")
-            g.compose(threshold_module_h5, label="A")
+            _bridge(sources, "threshold", "A")
         size_warnings = [
             w for w in rec if issubclass(w.category, ComposeInterfaceSizeWarning)
         ]
         assert size_warnings == []
 
     def test_large_module_warns_once(
-        self, empty_host_h5: Path, large_module_h5: Path,
+        self, sources: dict[str, Path],
     ) -> None:
         """Compose of a module above the threshold → exactly one
         ComposeInterfaceSizeWarning."""
-        g = apeGmsh.from_h5(empty_host_h5)
         with warnings.catch_warnings(record=True) as rec:
             warnings.simplefilter("always")
-            g.compose(large_module_h5, label="big")
+            _bridge(sources, "large", "big")
         size_warnings = [
             w for w in rec if issubclass(w.category, ComposeInterfaceSizeWarning)
         ]
@@ -400,21 +395,20 @@ class TestComposeIntegration:
         assert str(WARN_INTERFACE_SIZE + 1) in msg
 
     def test_large_module_simplefilter_ignore_silences(
-        self, empty_host_h5: Path, large_module_h5: Path,
+        self, sources: dict[str, Path],
     ) -> None:
         """Callers who accept the cost can silence the advisory."""
-        g = apeGmsh.from_h5(empty_host_h5)
         with warnings.catch_warnings(record=True) as rec:
             warnings.simplefilter("always")
             warnings.simplefilter("ignore", ComposeInterfaceSizeWarning)
-            g.compose(large_module_h5, label="big")
+            _bridge(sources, "large", "big")
         size_warnings = [
             w for w in rec if issubclass(w.category, ComposeInterfaceSizeWarning)
         ]
         assert size_warnings == []
 
     def test_filter_warning_independent_of_size_warning(
-        self, empty_host_h5: Path, large_module_h5: Path,
+        self, sources: dict[str, Path],
     ) -> None:
         """Ignoring the size warning does NOT swallow other compose
         warnings.  The large module fixture carries no /opensees/
@@ -422,12 +416,11 @@ class TestComposeIntegration:
         asserts the principle: silencing one category leaves the other
         category unaffected.
         """
-        g = apeGmsh.from_h5(empty_host_h5)
         # Filter out the size warning but allow others.
         with warnings.catch_warnings(record=True) as rec:
             warnings.simplefilter("always")
             warnings.simplefilter("ignore", ComposeInterfaceSizeWarning)
-            g.compose(large_module_h5, label="big")
+            _bridge(sources, "large", "big")
         # Size warning is silenced.
         size_warnings = [
             w for w in rec if issubclass(w.category, ComposeInterfaceSizeWarning)
@@ -439,16 +432,15 @@ class TestComposeIntegration:
         # above.
 
     def test_warn_as_error_contract(
-        self, empty_host_h5: Path, large_module_h5: Path,
+        self, sources: dict[str, Path],
     ) -> None:
         """When users opt into ``-W error::ComposeInterfaceSizeWarning``
-        (warn-as-contract), the compose call raises rather than
+        (warn-as-contract), the bridge call raises rather than
         warns.  This locks the warning category contract so future
         spurious UserWarnings in the same code path are caught by the
         suite's ``-W error::UserWarning`` regression gate.
         """
-        g = apeGmsh.from_h5(empty_host_h5)
         with warnings.catch_warnings():
             warnings.simplefilter("error", ComposeInterfaceSizeWarning)
             with pytest.raises(ComposeInterfaceSizeWarning):
-                g.compose(large_module_h5, label="big")
+                _bridge(sources, "large", "big")
