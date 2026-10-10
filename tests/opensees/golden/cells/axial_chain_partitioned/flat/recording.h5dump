@@ -5,8 +5,8 @@ A /meta@created_iso dtype=str[utf-8,vlen] shape=() sha1=masked
 A /meta@model_name dtype=str[utf-8,vlen] shape=() sha1=b9d13fa513214f3ee642cfb66b091bb007f26c4c
 A /meta@ndf dtype=<i8 shape=() sha1=774502a842d52103dbae64c3407b1825f50f8587
 A /meta@ndm dtype=<i8 shape=() sha1=774502a842d52103dbae64c3407b1825f50f8587
-A /meta@opensees_schema_version dtype=str[utf-8,vlen] shape=() sha1=052f8c36855361819ccc8769c3b74fbfa3651d89
-A /meta@schema_version dtype=str[utf-8,vlen] shape=() sha1=052f8c36855361819ccc8769c3b74fbfa3651d89
+A /meta@opensees_schema_version dtype=str[utf-8,vlen] shape=() sha1=5914609fd9b2170dbda307392cc97519fbb2e38a
+A /meta@schema_version dtype=str[utf-8,vlen] shape=() sha1=5914609fd9b2170dbda307392cc97519fbb2e38a
 A /meta@snapshot_id dtype=str[utf-8,vlen] shape=() sha1=be5860ffd4409e5cc12add2802a5ecf9c16828e8
 G /meta/lineage
 A /meta/lineage@model_hash dtype=str[utf-8,vlen] shape=() sha1=masked
