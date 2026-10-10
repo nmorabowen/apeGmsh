@@ -134,3 +134,4 @@ An ADR over 40 KB has a decision summary of at most 60 lines in `summaries/` und
 | [0116](0116-render-technologies.md) | Render technologies: three.js in apeGmshViewer and matplotlib; VTK in sunset | Accepted |
 | [0117](0117-assembly-compose-v2.md) | Assembly (compose v2): instances of model files, rehydrated into one forward bridge | Accepted |
 | [0119](0119-ground-spring-bed.md) | Ground-spring bed: decoupled node sets on the session, a spring bed on the bridge | Proposed |
+| [0120](0120-multi-rank-composed-models.md) | Multi-rank composed models: routed element-less nodes, one-graph repartition, a hosted assembly | Proposed |

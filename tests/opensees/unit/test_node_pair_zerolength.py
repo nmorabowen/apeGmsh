@@ -239,13 +239,18 @@ def test_node_pair_g1_allows_a_3d_pair_with_both_ends_at_least_three():
         g.end()
 
 
-def test_node_pair_partitioned_fails_loud() -> None:
-    """A node-pair element in a partitioned (len(partitions)>1) model has no
-    fem eid for build_element_partition_owner; v1 fails loud rather than
-    silently dropping the spring on every rank (ADR 0049 D6)."""
+@pytest.mark.parametrize("pair, owner", [((1, 2), 0), ((2, 3), None)])
+def test_node_pair_partitioned_routes_to_the_rank_of_both_endpoints(
+    pair, owner,
+) -> None:
+    """ADR 0120 D1 (lifting the ADR 0049 D6 refusal): a node-pair element in
+    a partitioned model is written on the lowest rank holding both
+    endpoints — nodes 1 and 2 are column A, rank 0 — and one whose
+    endpoints share no rank (2 on rank 0, 3 on rank 1) still fails loud
+    rather than being written where an endpoint is missing."""
     from typing import cast
 
-    from apeGmsh.opensees.emitter.tcl import TclEmitter
+    from apeGmsh.opensees.emitter.recording import RecordingEmitter
     from tests.opensees.fixtures.fem_stub import (
         make_two_column_frame_partitioned,
     )
@@ -260,11 +265,24 @@ def test_node_pair_partitioned_fails_loud() -> None:
     )
     k = ops.uniaxialMaterial.ElasticMaterial(E=1e6)
     ops.element.ZeroLength(
-        nodes=(1, 2), mat_dirs=(ZeroLengthMatDir(material=k, dof=1),),
+        nodes=pair, mat_dirs=(ZeroLengthMatDir(material=k, dof=1),),
     )
     bm = ops.build()
-    with pytest.raises(BridgeError, match="partitioned"):
-        bm.emit(TclEmitter())
+    rec = RecordingEmitter()
+    if owner is None:
+        with pytest.raises(BridgeError, match="no rank that holds both"):
+            bm.emit(rec)
+        return
+    bm.emit(rec)
+    rank, where = None, []
+    for name, args, _kw in rec.calls:
+        if name == "partition_open":
+            rank = int(args[0])
+        elif name == "partition_close":
+            rank = None
+        elif name == "element" and args[0] == "zeroLength":
+            where.append(rank)
+    assert where == [owner]
 
 
 def _model_hash(path: Path) -> str:

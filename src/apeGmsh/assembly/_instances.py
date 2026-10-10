@@ -8,7 +8,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Sequence, cast
+from typing import Any, Collection, Sequence, cast
 
 from ._errors import AssemblyError
 
@@ -253,18 +253,23 @@ def check_point(value: object, *, what: str) -> tuple[float, float, float]:
 
 def split_port(
     port: object, labels: Sequence[str], nodes: Sequence[str] = (),
+    host: "Collection[str]" = (),
 ) -> tuple[str, str]:
     """Split ``"{instance}.{pg|label}"`` on its first dot.
 
     A port with no dot names an assembly-owned object: one of ``nodes``
     (the reference nodes this verb accepts), returned as ``("", port)``.
-    Any other bare port raises listing the instances and those nodes. The
-    instance must already be declared, and the local name must be
-    non-empty.
+    A hosted assembly (ADR 0120 D3) also takes a host group or label by its
+    bare name, from ``host``, returned as ``("", port)`` too; a dotted host
+    name is taken whole when its prefix is no instance label. Any other
+    bare port raises listing the instances and those nodes. The instance
+    must already be declared, and the local name must be non-empty.
     """
     if not isinstance(port, str) or not port:
         raise AssemblyError(f"port must be a non-empty string, got {port!r}.")
     inst, dot, local = port.partition(".")
+    if port in host and (not dot or inst not in labels):
+        return "", port
     if not dot:
         if port in nodes:
             return "", port
@@ -289,6 +294,7 @@ def split_port(
 
 def merged_port(
     port: object, labels: Sequence[str], nodes: Sequence[str] = (),
+    host: "Collection[str]" = (),
 ) -> str:
     """The name the merged FEM carries for ``port`` (checked as
     :func:`split_port` checks it).
@@ -301,7 +307,7 @@ def merged_port(
     """
     from apeGmsh.mesh._compose import _prefix_namespaced_name
 
-    inst, local = split_port(port, labels, nodes)
+    inst, local = split_port(port, labels, nodes, host)
     if not inst:
         return local
     merged = _prefix_namespaced_name(inst, local)
