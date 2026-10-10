@@ -2227,6 +2227,34 @@ class FEMData:
             del new._snapshot_id_cache
         return new
 
+    def repartition(self, n_parts: int, *, weights=None) -> "FEMData":
+        """Return a copy split into ``n_parts`` MPI ranks as one graph (ADR 0120 D2).
+
+        Every element of the snapshot is assigned, whatever module or
+        instance it came from, by recursive coordinate bisection of the
+        element centroids, balanced on the element weights (the node
+        count by default; ``weights`` maps an element type name such as
+        ``"hex8"`` to a weight, or is a callable
+        ``f(type_name, ids, centroids)`` returning one per element). A
+        rank holds the nodes of its elements, so a node on a cut is in
+        several ranks; a node no element references is in none, and the
+        OpenSees bridge routes it to the rank of what it is tied to.
+
+        Use it for a snapshot no Gmsh session can partition: a composed
+        model (``Assembly(...).fem()``) whose modules would otherwise be
+        one rank each, or a ``FEMData.from_h5`` read. It replaces any
+        partition the snapshot carries; partition ids run ``1 ..
+        n_parts`` like the mesh partitioner's, and ``n_parts=1`` returns
+        an unpartitioned copy. ``self`` is unchanged.
+
+        Raises ``ValueError`` for ``n_parts < 1``, fewer elements than
+        ranks, a negative or non-finite weight (zero is allowed: the
+        element is placed by position and costs nothing), all weights
+        zero, or a ``weights`` mapping that misses an element type.
+        """
+        from ._fem_partition import repartition
+        return repartition(self, n_parts, weights=weights)
+
     def with_constraint(self, record) -> "FEMData":
         """Return a new :class:`FEMData` with ``record`` appended.
 

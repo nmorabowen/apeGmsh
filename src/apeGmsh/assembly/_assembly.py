@@ -12,10 +12,15 @@
     ops.fix(pg="pier_1.bot", dofs=(1, 1, 1))
     ...
 
-Every instance is namespaced; there is no host. An instance's model
-content (mesh, groups, materials, sections, element specs) travels with it
-under ``{instance}.``; analysis content (fixes, masses, patterns, recorders,
-stages, analysis) is declared on the returned bridge (ADR 0117 D4).
+Every instance is namespaced. An instance's model content (mesh, groups,
+materials, sections, element specs) travels with it under ``{instance}.``;
+analysis content (fixes, masses, patterns, recorders, stages, analysis) is
+declared on the returned bridge (ADR 0117 D4).
+
+A *hosted* assembly (``Assembly(name, host=fem)``, ADR 0120 D3) grafts the
+instances onto an existing snapshot whose ids and names stay as they are, so
+declarations written against the host's bare group names keep working;
+``fem()`` returns the merged snapshot and the caller builds ``apeSees`` on it.
 
 ``instance`` and ``tie`` only record, after validating; ``bridge`` merges the
 FEM side through the compose engine (``mesh._compose._compose_module``), resolves
@@ -101,10 +106,25 @@ class Assembly:
     See the module docstring. ``name`` is the assembly's own name.
     """
 
-    def __init__(self, name: str) -> None:
+    def __init__(
+        self, name: str, *, host: "FEMData | str | Path | None" = None,
+    ) -> None:
+        """``host`` (ADR 0120 D3): a ``FEMData`` or a ``model.h5`` path the
+        instances are grafted onto. The host keeps its node and element ids
+        and its bare group and label names, which ports name directly
+        (``"Base"``, beside ``"soil.pit"``). A hosted assembly has no
+        reference nodes and no ``partition_rank``; it is built with
+        :meth:`fem`, not :meth:`bridge` (the host carries no ``/opensees``
+        content to rehydrate): ``apeSees(asm.fem())``, or
+        ``asm.fem().repartition(n)`` for an MPI deck.
+        """
         if not isinstance(name, str) or not name:
             raise AssemblyError("Assembly(name=) requires a non-empty string.")
         self.name = name
+        self._host: "FEMData | None" = _load_host(name, host)
+        #: The host's group and label names: a bare port may name one.
+        self._host_names: frozenset[str] = (
+            frozenset() if self._host is None else _host_names(self._host))
         self._instances: list[Instance] = []
         self._nodes: list[RefNode] = []
         self._ties: "list[Tie | Coupling]" = []
@@ -180,6 +200,11 @@ class Assembly:
         or that resolves no node.
         """
         self._check_new_name(label, what="instance label")
+        if self._host is not None and partition_rank is not None:
+            raise AssemblyError(
+                f"instance {label!r}: a hosted assembly takes no "
+                f"partition_rank (ADR 0120 D3); partition the merged model "
+                f"as one graph with asm.fem().repartition(n).")
         path = Path(source)
         if not path.is_file():
             raise AssemblyError(f"instance {label!r}: no file at {str(path)!r}.")
@@ -247,8 +272,8 @@ class Assembly:
         from apeGmsh._kernel._coupling_control import CouplingControl
 
         labels = [i.label for i in self._instances]
-        m_name = merged_port(master, labels)
-        s_name = merged_port(slave, labels)
+        m_name = merged_port(master, labels, host=self._host_names)
+        s_name = merged_port(slave, labels, host=self._host_names)
         if name is not None:
             self._check_new_name(name, what="tie name")
         if control is not None and not isinstance(control, CouplingControl):
@@ -291,6 +316,11 @@ class Assembly:
         coordinates.
         """
         self._check_new_name(name, what="node name")
+        if self._host is not None:
+            raise AssemblyError(
+                f"node({name!r}): a hosted assembly has no reference nodes "
+                f"(ADR 0120 D3): they would take the ids the host already "
+                f"holds. Use a host node, or a g.decouple_node in the host.")
         xyz = check_point(coords, what="coords")
         self._provenance.capture("assembly", "ties", name, on_existing="raise")
         self._nodes.append(RefNode(name=name, coords=xyz))
@@ -580,8 +610,10 @@ class Assembly:
         labels = [i.label for i in self._instances]
         nodes = [n.name for n in self._nodes]
         master_ok, slave_ok = NODE_PORTS[kind]
-        m_name = merged_port(master, labels, nodes if master_ok else ())
-        s_name = merged_port(slave, labels, nodes if slave_ok else ())
+        m_name = merged_port(master, labels, nodes if master_ok else (),
+                             self._host_names)
+        s_name = merged_port(slave, labels, nodes if slave_ok else (),
+                             self._host_names)
         if name is not None:
             self._check_new_name(name, what=f"{kind} name")
         stored = row_params(kind, params)
@@ -602,7 +634,7 @@ class Assembly:
         """The default ``master_point``: the coordinates of ``master`` when
         it is a reference node. An instance-port master needs one given."""
         split_port(master, [i.label for i in self._instances],
-                   [n.name for n in self._nodes])
+                   [n.name for n in self._nodes], self._host_names)
         ref = self._node_coords().get(master)
         if ref is None:
             raise AssemblyError(
@@ -662,6 +694,12 @@ class Assembly:
                 f"archive itself is the model (OpenSeesModel.from_h5). Instance "
                 f"files are never re-fetched."
             )
+        if self._host is not None:
+            raise AssemblyError(
+                f"Assembly({self.name!r}).bridge(): a hosted assembly is "
+                f"built with fem() (ADR 0120 D3): the host carries no "
+                f"/opensees content to rehydrate. Build apeSees(asm.fem()) "
+                f"and declare the model on it.")
         if not self._instances:
             raise AssemblyError(f"Assembly({self.name!r}).bridge(): no instances.")
         try:
@@ -723,6 +761,44 @@ class Assembly:
         )
         return ops
 
+    def fem(self) -> "FEMData":
+        """The merged snapshot: the host (if any), every instance, every tie.
+
+        What :meth:`bridge` builds its ``apeSees`` on, without the
+        rehydration (ADR 0120 D3): instances composed in declaration
+        order, namespaced ``{instance}.``, and each tie and coupling
+        resolved into constraint records. On a hosted assembly the host
+        keeps its ids and names, and the result is unpartitioned: call
+        ``.repartition(n)`` on it for an MPI deck (the instances and the
+        host are then cut as one graph). Without a host the instance ranks
+        are as :meth:`bridge` sets them (none, or one rank per instance).
+
+        The result carries no ``/assembly`` provenance and cannot be written
+        with :meth:`h5`; ``apeSees(asm.fem()).h5(path)`` writes a plain
+        ``model.h5``.
+
+        Raises :class:`AssemblyError` as :meth:`bridge` does for the merge:
+        no instance, ranks that are not ``0 .. n-1``, an assembly read with
+        :meth:`from_h5`, and a tie that resolves to no record.
+        """
+        if self._archive is not None:
+            raise AssemblyError(
+                f"Assembly({self.name!r}).fem(): this assembly was read from "
+                f"{str(self._archive)!r}; open the archive with "
+                f"FEMData.from_h5.")
+        if not self._instances:
+            raise AssemblyError(f"Assembly({self.name!r}).fem(): no instances.")
+        try:
+            check_dense_ranks(self._instances)
+        except AssemblyError as exc:
+            raise AssemblyError(f"Assembly({self.name!r}).fem(): {exc}") from exc
+        fem = self._merged_fem()
+        if self._host is not None and fem.partitions:
+            # The merge engine ranks the host 0 and each module next; a
+            # hosted assembly is cut as one graph instead (repartition).
+            fem = fem.repartition(1)
+        return fem
+
     # ------------------------------------------------------------------
     # Persistence (ADR 0117 D5)
     # ------------------------------------------------------------------
@@ -745,6 +821,11 @@ class Assembly:
                 f"Assembly({self.name!r}).h5(): this assembly was read from "
                 f"{str(self._archive)!r}; it re-lists, it does not rebuild."
             )
+        if self._host is not None:
+            raise AssemblyError(
+                f"Assembly({self.name!r}).h5(): a hosted assembly has no "
+                f"/assembly archive (ADR 0120 D3); write the bridge built on "
+                f"asm.fem() with its own ops.h5(path).")
         b = self._bridged
         if b is None:
             raise AssemblyError(
@@ -872,7 +953,7 @@ class Assembly:
         for inst in self._instances:
             check_unranked_source(inst.source, inst.label)
             refuse_region_dampings(inst.label, inst.source)
-        fem = _base_fem(self._nodes)
+        fem = self._host if self._host is not None else _base_fem(self._nodes)
         for inst in self._instances:
             fem = _compose_module(
                 fem,
@@ -913,6 +994,37 @@ class Assembly:
                 )
             fem = routed
         return fem
+
+
+def _load_host(name: str, host: "FEMData | str | Path | None") -> "FEMData | None":
+    """The host snapshot of ``Assembly(name, host=...)`` (ADR 0120 D3)."""
+    if host is None:
+        return None
+    from apeGmsh.mesh import FEMData
+
+    if isinstance(host, FEMData):
+        return host
+    if isinstance(host, (str, Path)):
+        path = Path(host)
+        if not path.is_file():
+            raise AssemblyError(
+                f"Assembly({name!r}, host=...): no file at {str(path)!r}.")
+        return FEMData.from_h5(str(path))
+    raise AssemblyError(
+        f"Assembly({name!r}, host=...): expected a FEMData or a model.h5 "
+        f"path, got {type(host).__name__}.")
+
+
+def _host_names(fem: "FEMData") -> frozenset[str]:
+    """Every physical-group and label name the host holds, node and
+    element side: the names a bare port of a hosted assembly may use."""
+    names: set[str] = set()
+    for comp in (fem.nodes, fem.elements):
+        for groups in (getattr(comp, "physical", None),
+                       getattr(comp, "labels", None)):
+            if groups is not None:
+                names.update(str(n) for n in groups.names() if n)
+    return frozenset(names)
 
 
 def _base_fem(ref_nodes: Sequence[RefNode] = ()) -> "FEMData":

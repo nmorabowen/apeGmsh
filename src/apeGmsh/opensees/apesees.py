@@ -89,6 +89,9 @@ from ._internal.build import (
     SortedIntToInt,
     is_partitioned,
     node_index_lookup,
+    node_pair_rank,
+    resolve_element_node_pair,
+    route_element_less_nodes,
     open_builder_ndf_bracket,
     primary_owner_map,
     replay_builder_scoped_declarations,
@@ -128,6 +131,7 @@ from ._internal.build import (
 from ._internal.build import _element_transf as _build_element_transf
 from ._element_capabilities import is_builder_scoped
 from ._internal.tag_resolution import (
+    MISSING_FEM_ELEMENT_ID,
     set_current_fem_element_id,
     set_element_nodes,
     set_stage_owned_node_tags,
@@ -2527,27 +2531,15 @@ class BuiltModel:
         # pre-allocated in flat record order before the rank fan-out so
         # 1-rank and N-rank decks stay byte-comparable (ADR 0027).
 
-        # ADR 0049: a node-pair zeroLength-family element
+        # ADR 0120 D1: a node-pair zeroLength-family element
         # (ops.element.*(nodes=...)) has no backing FEM element id, so
-        # build_element_partition_owner cannot place it on a rank and
-        # emit_element_spec_partitioned would silently drop it on EVERY rank.
-        # Per-rank node-ownership routing of an explicit node-pair (whose two
-        # endpoints may straddle ranks) is deferred — fail loud rather than
-        # emit a partitioned deck missing the spring.  Fires before stage
-        # ownership / tag allocation so no node-pair sentinel reaches the
-        # per-rank fan-out.
-        if len(self.fem.partitions) > 1 and any(
-            getattr(spec, "pg", None) is None for spec in elements
-        ):
-            raise BridgeError(
-                "apeSees: node-pair elements (ops.element.<ZeroLength|"
-                "CoupledZeroLength|TwoNodeLink>(nodes=...)) are not yet "
-                "supported under partitioned (MPI) emit — per-rank "
-                "node-ownership routing of an explicit node-pair is deferred "
-                "(ADR 0049). Emit single-process (non-partitioned), or wire "
-                "the spring through a 2-node physical group (pg=) instead."
-            )
-
+        # build_element_partition_owner cannot place it. It is written on
+        # the rank that holds both endpoints: build() routed every
+        # element-less endpoint (a decoupled ground / side node) onto the
+        # rank of the mesh node it reaches (route_element_less_nodes), so a
+        # spring lands on one rank with its nodes, fix and ndf. A pair whose
+        # endpoints share no rank raises (node_pair_rank). The ranks are
+        # resolved below, before any line is written.
         # Phase SSI-2.C: compute stage ownership for partitioned + staged.
         element_owner_stage: dict[int, int] = {}
         node_owner_stage: dict[int, int] = {}
@@ -2588,6 +2580,25 @@ class BuiltModel:
         partitions = list(self.fem.partitions)
         node_owners = build_node_partition_owners(self.fem)
         element_owner = build_element_partition_owner(self.fem)
+        # ADR 0120 D1: the one rank of each node-pair element, as an
+        # owner map keyed by the node-pair sentinel id (the plan row of a
+        # node-pair spec carries MISSING_FEM_ELEMENT_ID).
+        node_pair_owner: "dict[int, dict[int, int]]" = {}
+        for spec in elements:
+            if getattr(spec, "pg", None) is not None:
+                continue
+            if staged and id(spec) in element_owner_stage:
+                raise BridgeError(
+                    f"apeSees: a stage-claimed node-pair "
+                    f"{type(spec).__name__} is not supported under "
+                    f"partitioned (MPI) emit (ADR 0120 D1); declare it "
+                    f"before the stages, or emit serial."
+                )
+            i_tag, j_tag = resolve_element_node_pair(self.fem, spec)
+            node_pair_owner[id(spec)] = {
+                MISSING_FEM_ELEMENT_ID: node_pair_rank(
+                    spec, i_tag, j_tag, node_owners),
+            }
 
         # ADR 0092 S4 (INV-1): each contact interaction's owner rank +
         # ghost node set were resolved ONCE, with its tags, by the build's
@@ -3102,6 +3113,22 @@ class BuiltModel:
                         continue
                     # ADR 0099 S5: gated specs emitted in step 1b.
                     if id(ele_spec) in hoisted_spec_ids:
+                        continue
+                    pair_owner = node_pair_owner.get(id(ele_spec))
+                    if pair_owner is not None:
+                        # ADR 0120 D1: a node-pair element, on its one rank.
+                        emit_element_spec_partitioned(
+                            spec=ele_spec,
+                            emitter=emitter,
+                            fem=self.fem,
+                            pre_allocated=_pre_alloc,
+                            base_resolver=base_resolver,
+                            transf_tag_for_element=overrides,
+                            partition_rank=rank,
+                            element_owner=pair_owner,
+                            ndm=self.ndm,
+                            envelope_ndf=self.ndf,
+                        )
                         continue
                     emit_element_spec_partitioned(
                         spec=ele_spec,
@@ -10133,12 +10160,22 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
                       for r in st.support_records),
                 ),
             )
+        # ADR 0120 D1: on a partitioned FEM, every element-less node (a
+        # decoupled node, a spring bed's ground and side nodes) gets one
+        # rank — the rank of the mesh node it reaches — so the per-rank
+        # emit declares it, its fix and the node-pair element on it.
+        fem = self._fem
+        if is_partitioned(fem):
+            fem = route_element_less_nodes(fem, [
+                resolve_element_node_pair(fem, p) for p in self._primitives
+                if isinstance(p, Element) and getattr(p, "pg", None) is None
+            ])
         return BuiltModel(
             primitives=tuple(self._primitives),
             tag_for=tag_for,
             ndm=self._ndm,
             ndf=self._ndf,
-            fem=self._fem,
+            fem=fem,
             fix_records=fix_records,
             mass_records=tuple(self._mass_records),
             region_records=tuple(self._region_records),

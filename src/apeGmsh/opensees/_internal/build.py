@@ -58,6 +58,8 @@ from typing import (
 
 import numpy as np
 
+from apeGmsh._kernel.record_sets import PartitionSet
+
 from .._orientation import _div3, _norm3, _sub3, _vec3, resolve_vecxz
 
 from ..element.beam_column import (
@@ -6836,6 +6838,7 @@ def plan_partitioned_mp_constraints(
             node_owners=node_owners,
             element_owner=element_owner,
             phantom_tags=set(phantom_coords.keys()),
+            pinned=getattr(fem.partitions, "pinned", None),
         )
     return phantom_coords, plans
 
@@ -9986,6 +9989,155 @@ def build_element_partition_owner(fem: "FEMData") -> "SortedIntToInt":
     return SortedIntToInt(uniq_eids, uniq_ranks)
 
 
+class RoutedPartitionSet(PartitionSet):
+    """``fem.partitions`` with the element-less nodes routed (ADR 0120 D1).
+
+    ``pinned`` maps each routed node to the one runtime rank that declares
+    it. The MP-constraint planner reads it: a node-pair record whose
+    constrained (slave) node is pinned is written on that rank only, so a
+    spring's side-node ``equalDOF`` never crosses ranks.
+    """
+
+    def __init__(
+        self, records: "dict[int, PartitionRecord]",
+        pinned: "Mapping[int, int]",
+    ) -> None:
+        super().__init__(records)
+        self.pinned: dict[int, int] = {
+            int(k): int(v) for k, v in pinned.items()}
+
+
+def route_element_less_nodes(
+    fem: "FEMData", node_pairs: "Sequence[tuple[int, int]]",
+) -> "FEMData":
+    """Give every element-less node of a partitioned FEM one rank (ADR 0120 D1).
+
+    A partition holds the nodes of its elements, so a node no element
+    references (a ``g.decouple_node`` node, the ground and side nodes of a
+    spring bed) is in no partition and no rank declares it. Such a node is
+    routed here when it is decoupled or linked: an endpoint of a node-pair
+    element (``node_pairs``) or a node of an MP constraint record. The
+    links join the element-less nodes into components; a component takes
+    the lowest rank among the partitioned nodes it touches (the primary
+    owner of :func:`primary_owner_map`), and the first rank when it touches
+    none. Each routed node is added to that one rank's partition, so its
+    ``node`` line, ``fix``, ``mass``, regions and the node-pair element
+    that reaches it are written on that rank only.
+
+    Returns ``fem`` itself when nothing is routed (an unpartitioned FEM, or
+    every node already held), else a shallow copy whose ``partitions`` is a
+    :class:`RoutedPartitionSet`. The input is not modified, and the copy
+    shares its ``nodes._partitions`` (what ``model.h5`` stores), so an
+    archive records the mesh partition, not the routing.
+    """
+    import copy
+
+    from apeGmsh._kernel.records._partitions import PartitionRecord
+
+    parts = list(getattr(fem, "partitions", None) or ())
+    if len(parts) < 2:
+        return fem
+    owners = build_node_partition_owners(fem)
+    primary = owners.primary_owner()
+    all_ids = np.asarray(fem.nodes.ids, dtype=np.int64)
+    held = np.isin(all_ids, owners._node_ids)
+    unowned = {int(n) for n in all_ids[~held]}
+    if not unowned:
+        return fem
+
+    links: list[tuple[int, ...]] = [
+        (int(i), int(j)) for i, j in node_pairs]
+    node_cons, surf_cons = mp_constraint_pools(fem, frozenset())
+    if node_cons is not None:
+        for rec in node_cons:
+            links.append(tuple(_constraint_node_ids(rec)))
+    interps = getattr(surf_cons, "interpolations", None)
+    if interps is not None:
+        for rec in interps():
+            links.append((int(rec.slave_node),
+                          *(int(m) for m in rec.master_nodes)))
+
+    parent: dict[int, int] = {
+        int(n): int(n) for n in getattr(fem.nodes, "decoupled_ids", ())
+        if int(n) in unowned}
+
+    def _find(x: int) -> int:
+        root = x
+        while parent[root] != root:
+            root = parent[root]
+        while parent[x] != root:
+            parent[x], x = root, parent[x]
+        return root
+
+    reach: dict[int, int] = {}      # free node -> lowest held rank it links
+    for link in links:
+        free = [n for n in link if n in unowned]
+        if not free:
+            continue
+        for n in free:
+            parent.setdefault(n, n)
+        ranks = [r for r in (primary.get(n) for n in link if n not in unowned)
+                 if r is not None]
+        if ranks:
+            low = min(ranks)
+            reach[free[0]] = min(low, reach.get(free[0], low))
+        for n in free[1:]:
+            a, b = _find(free[0]), _find(n)
+            if a != b:
+                parent[max(a, b)] = min(a, b)
+    if not parent:
+        return fem
+    best: dict[int, int] = {}
+    for n, r in reach.items():
+        root = _find(n)
+        best[root] = min(r, best.get(root, r))
+    first = runtime_rank_from_partition_record(parts[0], 0)
+    pinned = {n: best.get(_find(n), first) for n in parent}
+
+    extra: dict[int, list[int]] = {}
+    for n, r in pinned.items():
+        extra.setdefault(r, []).append(n)
+    records: "dict[int, PartitionRecord]" = {}
+    for idx, rec in enumerate(parts):
+        add = extra.get(runtime_rank_from_partition_record(rec, idx))
+        node_ids = np.asarray(rec.node_ids, dtype=np.int64)
+        if add:
+            node_ids = np.union1d(node_ids, np.asarray(add, dtype=np.int64))
+        records[int(rec.id)] = PartitionRecord(
+            id=rec.id, node_ids=node_ids, element_ids=rec.element_ids,
+            weight_sum=rec.weight_sum,
+        )
+    view = copy.copy(fem)
+    view.partitions = RoutedPartitionSet(records, pinned)
+    return view
+
+
+def node_pair_rank(
+    spec: Element, i_tag: int, j_tag: int,
+    node_owners: "NodePartitionOwners",
+) -> int:
+    """The one rank that writes a node-pair element (ADR 0120 D1).
+
+    The lowest rank that holds both endpoints. A pair whose endpoints share
+    no rank (two mesh nodes on different partitions) raises: writing it
+    would need a ghost endpoint, which is not designed here.
+    """
+    ri, rj = node_owners.get(i_tag), node_owners.get(j_tag)
+    common = ri & rj
+    if not common:
+        raise BridgeError(
+            f"apeSees: the node-pair {type(spec).__name__} between nodes "
+            f"{i_tag} (ranks {sorted(ri)}) and {j_tag} (ranks {sorted(rj)}) "
+            f"has no rank that holds both endpoints. A node-pair element is "
+            f"written on the rank of its endpoints (ADR 0120 D1); one between "
+            f"two mesh nodes on different partitions would need a ghost "
+            f"endpoint, which is not supported. Reach the second mesh node "
+            f"through a decoupled node tied to it by equal_dof, or emit "
+            f"serial."
+        )
+    return min(common)
+
+
 #: ``apeSees(fem, element_tags=...)`` modes (ADR 0111 D2).
 ElementTagMode = Literal["sequential", "fem"]
 ELEMENT_TAG_MODES: "tuple[str, ...]" = ("sequential", "fem")
@@ -11867,8 +12019,14 @@ def _plan_rank_constraints(
     node_owners: "NodePartitionOwners | Mapping[int, frozenset[int]]",
     element_owner: "SortedIntToInt",
     phantom_tags: set[int],
+    pinned: "Mapping[int, int] | None" = None,
 ) -> _RankConstraintPlan:
-    """Decide which constraint records emit on ``partition_rank``."""
+    """Decide which constraint records emit on ``partition_rank``.
+
+    ``pinned`` (ADR 0120 D1, :class:`RoutedPartitionSet`) maps each routed
+    element-less node to its one rank: a node-pair record whose slave is
+    pinned is written on that rank only, not replicated.
+    """
     from apeGmsh._kernel.records._constraints import (
         InterpolationRecord,
         NodeGroupRecord,
@@ -11948,7 +12106,12 @@ def _plan_rank_constraints(
                 # owning ranks (ADR 0027 §"Decision" — bullets 1, 2).
                 m = int(rec.master_node)
                 s = int(rec.slave_node)
-                touches = _owns(m) or _owns(s)
+                if pinned and s in pinned:
+                    # ADR 0120 D1: a routed slave (a spring's side node)
+                    # exists on its rank alone; the record goes there.
+                    touches = pinned[s] == partition_rank
+                else:
+                    touches = _owns(m) or _owns(s)
                 # Honor phantom slave on rigid_beam side: phantoms are
                 # never "owned" by ranks per the broker (they're
                 # broker-synthetic). A constraint whose master is on
