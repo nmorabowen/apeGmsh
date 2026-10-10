@@ -297,15 +297,15 @@ VERBS: Final[Mapping[str, Verb]] = MappingProxyType(
 EMITTER_METHOD_COUNT: Final[int] = 75
 
 #: Public names an emitter may define beyond the Protocol, per emitter
-#: module: emitter-specific side channels, not verbs. The class-level
-#: capability flags (``model_reissue_purges``, ``supports_partitions``)
-#: are listed too; E2 ``TargetCaps`` absorbs them in K1-5.
+#: module: emitter-specific side channels, not verbs. Capabilities are
+#: not side channels: they live on ``caps`` (E2 ``TargetCaps``, ADR 0114
+#: D6), the Protocol's one attribute, declared on every emitter.
 SIDE_CHANNELS: Final[Mapping[str, frozenset[str]]] = MappingProxyType({
     "tcl": frozenset({
         "lines", "line_count", "line_buffer", "write_to", "preamble",
         "stream_to", "stream_fragment_count", "stream_finish",
         "stream_abort", "eigen_feast_parallel", "eigen_parallel",
-        "partition_spans", "model_reissue_purges",
+        "partition_spans",
     }),
     "py": frozenset({"lines", "line_count", "line_buffer", "write_to"}),
     "live": frozenset({
@@ -313,13 +313,14 @@ SIDE_CHANNELS: Final[Mapping[str, frozenset[str]]] = MappingProxyType({
         "random_response", "ladruno_projection_tie_force",
         "ladruno_contact_force", "ladruno_contact_info",
         "ladruno_mortar_penetration", "ladruno_mortar_tie_residual",
-        "critical_time_step", "augment", "ops", "supports_partitions",
+        "critical_time_step", "augment", "ops",
     }),
     "h5": frozenset({
         "mark_mass_from_model", "add_oriented_elements", "write",
         "write_opensees_into", "set_initial_stress_records",
         "set_stage_records", "restore_partition_blocks",
         "restore_stage_blocks", "restore_program", "ledger_counts",
+        "set_solve_stamp", "solve_stamp",
     }),
     "recording": frozenset(),
 })

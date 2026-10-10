@@ -222,6 +222,7 @@ from typing import Literal, Protocol
 
 import numpy as np
 
+from .caps import TargetCaps
 from .verbs import VERBS, Verb
 
 
@@ -255,6 +256,12 @@ class Emitter(Protocol):
     See ``architecture/emitter.md`` for the full rationale and the
     matrix of how each method maps to Tcl, openseespy, and live calls.
     """
+
+    #: What this target can do (ADR 0114 D6). The one non-method name on
+    #: the Protocol: the method freeze (``verbs.EMITTER_METHOD_COUNT``)
+    #: counts methods only, and the bridge reads ``emitter.caps.<field>``
+    #: instead of probing attributes or sniffing the emitter's class.
+    caps: TargetCaps
 
     # -- Model -----------------------------------------------------------
     def model(self, *, ndm: int, ndf: int) -> None: ...

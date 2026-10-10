@@ -19,8 +19,10 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field, replace
+import warnings
 from typing import (
     TYPE_CHECKING, Any, Callable, Iterable, Mapping, Sequence, TypeVar,
+    cast,
 )
 
 from ._internal.artifact_write import BridgeArtifactWriter
@@ -212,6 +214,7 @@ if TYPE_CHECKING:
     from apeGmsh.mesh.FEMData import FEMData
     from ._internal.build import StiffnessResolver
     from .analysis.strategy import Ladder
+    from .emitter.h5 import H5Emitter
     from .emitter.tcl import PartitionSpan
     from ._target import OpenSeesCapabilities, OpenSeesTarget
     from ._solver_stats import RunSolverStats
@@ -222,6 +225,8 @@ if TYPE_CHECKING:
 
     from .emitter.live import LiveOpsEmitter
     from ._internal.tag_plan import NamedMembers, NamedRegion, RegionSite
+    from apeGmsh._kernel.defs.decoupled import DecoupledNodeSetDef
+    from ._internal.spring_bed import OrientValues, SpringBed, SpringValues
 
 
 __all__ = ["apeSees", "BuiltModel", "ExplicitRunResult"]
@@ -1122,22 +1127,67 @@ class BuiltModel:
         # counted. A partitioned flat deck with no system rides the ADR-0027
         # INV-5 auto-emit (general Mumps/UmfPack), so it is allowed.
         _staged = bool(self.stage_records)
-        _emitter_is_archival = type(emitter).__name__ == "H5Emitter"
+        _emitter_is_archival = emitter.caps.archival
         _has_analysis_chain = _staged or any(
             isinstance(p, Analysis) for p in ordered
         )
-        _will_partition = is_partitioned(self.fem) and getattr(
-            emitter, "supports_partitions", True,
+        _will_partition = (
+            is_partitioned(self.fem) and emitter.caps.supports_partitions
         )
-        validate_ladruno_up_solver(
-            elements,
+
+        # ADR 0114 D6: an archival emit skips the solve-time gates, and
+        # records instead which of them WOULD refuse the solve this model
+        # carries, per partition mode (``/opensees@solve_refusals`` under
+        # the archive's own mode, ``@solve_refusals_flat`` under the flat
+        # mode every replay target emits), so a replay fails closed on
+        # the stored verdict for the mode it emits instead of re-deriving
+        # it. Each gate runs exactly as before; the probes only happen
+        # when the emit is archival and the gate would enforce on a solve.
+        _solve_refusals: list[str] = []
+        _solve_refusals_flat: list[str] = []
+        _solve_mode = "partitioned" if _will_partition else "flat"
+
+        def _solve_gate(
+            gate_id: str, *, enforce: bool, enforce_on_solve: bool,
+            partitioned: bool, flat_partitioned: bool,
+            run: "Callable[[bool, bool], None]",
+        ) -> None:
+            # ``partitioned`` is what this emit passes the gate;
+            # ``flat_partitioned`` is what a flat emit of the same model
+            # (``ops.tcl(flat=True)``, every replay target) passes it, so
+            # the stored flat verdict equals exactly that emit's decision.
+            run(enforce, partitioned)
+            if not (_emitter_is_archival and enforce_on_solve
+                    and not enforce):
+                return
+            for mode_partitioned, ids in (
+                (partitioned, _solve_refusals),
+                (flat_partitioned, _solve_refusals_flat),
+            ):
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore")
+                    try:
+                        run(True, mode_partitioned)
+                    except BridgeError:
+                        ids.append(gate_id)
+
+        _solve_gate(
+            "ladruno_up_solver",
             enforce=_has_analysis_chain and not _emitter_is_archival,
-            staged=_staged,
+            enforce_on_solve=_has_analysis_chain,
             partitioned=_will_partition,
-            flat_systems=[p for p in ordered if isinstance(p, LinearSystem)],
-            stage_systems=[
-                (repr(st.name), st.system) for st in self.stage_records
-            ],
+            flat_partitioned=False,
+            run=lambda enforce, partitioned: validate_ladruno_up_solver(
+                elements,
+                enforce=enforce,
+                staged=_staged,
+                partitioned=partitioned,
+                flat_systems=[
+                    p for p in ordered if isinstance(p, LinearSystem)],
+                stage_systems=[
+                    (repr(st.name), st.system) for st in self.stage_records
+                ],
+            ),
         )
 
         # ADR 0106 D5: an explicit `system Mumps` on a serial (non-
@@ -1148,14 +1198,22 @@ class BuiltModel:
         # the FEM's partition count (D5's `len(fem.partitions) <= 1`), not
         # on `_will_partition`: a partitioned mesh emitted flat carries
         # the parallel chain by design (the ADR 0027 twin decks).
-        validate_serial_mumps(
+        _solve_gate(
+            "serial_mumps",
             enforce=_has_analysis_chain and not _emitter_is_archival,
-            staged=_staged,
+            enforce_on_solve=_has_analysis_chain,
             partitioned=is_partitioned(self.fem),
-            flat_systems=[p for p in ordered if isinstance(p, LinearSystem)],
-            stage_systems=[
-                (repr(st.name), st.system) for st in self.stage_records
-            ],
+            flat_partitioned=is_partitioned(self.fem),
+            run=lambda enforce, partitioned: validate_serial_mumps(
+                enforce=enforce,
+                staged=_staged,
+                partitioned=partitioned,
+                flat_systems=[
+                    p for p in ordered if isinstance(p, LinearSystem)],
+                stage_systems=[
+                    (repr(st.name), st.system) for st in self.stage_records
+                ],
+            ),
         )
 
         # A Manzari-family material with the CONSISTENT tangent
@@ -1181,12 +1239,15 @@ class BuiltModel:
         # any stage) — reuses the same flat/staged system resolution as
         # the two validators above. A deck with no ``stats=True``
         # anywhere emits byte-identically to today (INV-1).
-        emitter._emit_stage_markers = deck_requests_solver_stats(  # type: ignore[attr-defined]
-            flat_systems=[p for p in ordered if isinstance(p, LinearSystem)],
-            stage_systems=[
-                (repr(st.name), st.system) for st in self.stage_records
-            ],
-        )
+        emitter.caps = replace(emitter.caps, emit_stage_markers=(
+            deck_requests_solver_stats(
+                flat_systems=[
+                    p for p in ordered if isinstance(p, LinearSystem)],
+                stage_systems=[
+                    (repr(st.name), st.system) for st in self.stage_records
+                ],
+            )
+        ))
 
         # NormDispIncr is unreachable on a SANISAND deck -- the
         # displacement-increment residual stalls and is not mesh-neutral
@@ -1398,25 +1459,33 @@ class BuiltModel:
         # same two facts D4 above is scoped on.  Runs AFTER D4 so the
         # solver footgun still reports first on a deck with both.
         from .analysis.analysis import Static as _StaticAnalysis
-        validate_up_pressure_datum(
-            self.fem, elements, self.ndm,
-            enforce=(
-                not _emitter_is_archival
-                and (
-                    any(isinstance(p, _StaticAnalysis) for p in ordered)
-                    or any(
-                        isinstance(st.analysis, _StaticAnalysis)
-                        for st in self.stage_records
-                    )
-                )
-            ),
-            fix_records=(
-                *self.fix_records,
-                *(r for st in self.stage_records for r in st.fix_records),
-            ),
-            sp_records=tuple(sp for p in _plains for sp in p.sps),
-            support_records=tuple(
-                r for st in self.stage_records for r in st.support_records
+        _static_solve = (
+            any(isinstance(p, _StaticAnalysis) for p in ordered)
+            or any(
+                isinstance(st.analysis, _StaticAnalysis)
+                for st in self.stage_records
+            )
+        )
+        _solve_gate(
+            "up_pressure_datum",
+            enforce=not _emitter_is_archival and _static_solve,
+            enforce_on_solve=_static_solve,
+            partitioned=_will_partition,
+            flat_partitioned=False,
+            # The datum gate does not depend on the partition mode.
+            run=lambda enforce, partitioned: validate_up_pressure_datum(
+                self.fem, elements, self.ndm,
+                enforce=enforce,
+                fix_records=(
+                    *self.fix_records,
+                    *(r for st in self.stage_records
+                      for r in st.fix_records),
+                ),
+                sp_records=tuple(sp for p in _plains for sp in p.sps),
+                support_records=tuple(
+                    r for st in self.stage_records
+                    for r in st.support_records
+                ),
             ),
         )
 
@@ -1448,12 +1517,10 @@ class BuiltModel:
         # It is invisible to the emit call (``tcl`` applies it after /
         # around this), hence the emitter attribute — the same seam
         # ``supports_partitions`` uses.
-        if is_partitioned(self.fem) and getattr(
-            emitter, "supports_partitions", True,
-        ):
+        if is_partitioned(self.fem) and emitter.caps.supports_partitions:
             _scope_path = (
                 "partitioned per_rank"
-                if getattr(emitter, "per_rank_fragments", False)
+                if emitter.caps.per_rank_fragments
                 else "partitioned"
             )
         else:
@@ -1478,7 +1545,7 @@ class BuiltModel:
         # plan itself and hands it to every helper, which reads its
         # family's rows and mints nothing.  The mode matches the dispatch
         # below.
-        emitter_can_partition = getattr(emitter, "supports_partitions", True)
+        emitter_can_partition = emitter.caps.supports_partitions
         tag_plan = self._tag_plan(emit_mode(
             self, split=False, supports_partitions=emitter_can_partition))
 
@@ -1511,22 +1578,30 @@ class BuiltModel:
                 post_element=post_element,
                 base_resolver=_base_resolver,
             )
-            return 0
-
-        # Partitioned path — per-rank fan-out per ADR 0027.  Phase
-        # SSI-2.C lifted the prior (stages + partitions) gate; staging
-        # is now handled inline by :meth:`_emit_partitioned` and
-        # :meth:`_emit_stages_partitioned`.
-        self._emit_partitioned(
-            emitter=emitter,
-            tag_plan=tag_plan,
-            transforms=transforms,
-            elements=elements,
-            inferred_ndf=effective_ndf,
-            pre_element=pre_element,
-            post_element=post_element,
-            base_resolver=_base_resolver,
-        )
+        else:
+            # Partitioned path — per-rank fan-out per ADR 0027.  Phase
+            # SSI-2.C lifted the prior (stages + partitions) gate; staging
+            # is now handled inline by :meth:`_emit_partitioned` and
+            # :meth:`_emit_stages_partitioned`.
+            self._emit_partitioned(
+                emitter=emitter,
+                tag_plan=tag_plan,
+                transforms=transforms,
+                elements=elements,
+                inferred_ndf=effective_ndf,
+                pre_element=pre_element,
+                post_element=post_element,
+                base_resolver=_base_resolver,
+            )
+        if _emitter_is_archival:
+            # ADR 0114 D6: the archive records the solve it was emitted
+            # for; the writer adds ``@requires`` from the verbs it holds.
+            _archive_side_channel(emitter).set_solve_stamp(
+                will_solve=_has_analysis_chain,
+                solve_mode=_solve_mode,
+                solve_refusals=tuple(_solve_refusals),
+                solve_refusals_flat=tuple(_solve_refusals_flat),
+            )
         return 0
 
     # -- Flat (unpartitioned) emit path -----------------------------------
@@ -2106,9 +2181,7 @@ class BuiltModel:
                 for spec, sub in gated_owned:
                     if _emit_owned_spec(spec, sub):
                         stage_bracket_fired = True
-                if stage_bracket_fired and getattr(
-                    emitter, "model_reissue_purges", False,
-                ):
+                if stage_bracket_fired and emitter.caps.model_reissue_purges:
                     scoped_prims, transf_log = scoped_replay
                     replay_builder_scoped_declarations(
                         emitter,
@@ -2810,8 +2883,7 @@ class BuiltModel:
         # one of them.  Topo order is preserved within each pass, and
         # ``pre_scoped`` is empty (so this IS ``pre_element``) whenever
         # the hoist is off.
-        suppress_chain_auto = bool(getattr(
-            emitter, "suppress_analysis_chain_auto_emit", False))
+        suppress_chain_auto = emitter.caps.suppress_analysis_chain_auto_emit
         chain_auto_emitted = False
         for p in pre_survives:
             if staged and _is_analysis_chain_primitive(p):
@@ -5124,10 +5196,9 @@ class BuiltModel:
                     "— nodal mass is additive under MP assembly, so emitting "
                     "both would double-count. Use exactly one mass channel."
                 )
-        from .emitter.h5 import H5Emitter
-        if isinstance(emitter, H5Emitter):
+        if emitter.caps.archival:
             # Checked after the overlap guard, which holds on every emitter.
-            emitter.mark_mass_from_model()
+            _archive_side_channel(emitter).mark_mass_from_model()
             return False
         return True
 
@@ -7793,6 +7864,10 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
         # read by ``_resolve`` so reference kwargs accept a name string
         # as well as the object handle.
         self._names: dict[str, Primitive] = {}
+        # ``ops.spring_bed``'s shared unit Elastic / Viscous, by their
+        # synthesised provenance key. Kept out of ``_names`` so no user
+        # material name can be mistaken for them.
+        self._spring_bed_units: dict[str, UniaxialMaterial] = {}
         # ADR 0112 D3 (V2d): where in the user's source each primitive
         # was declared.  Filled by ``_register`` through the shared
         # capture helper, one record per user call, keyed
@@ -8352,6 +8427,78 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
             # A handle (DecoupledNodeDef) — store it raw; resolve_ndf_overlay
             # dereferences ``.tag`` at build (fail-loud on a None tag).
             self._ndf_records.append(NdfRecord(handle=target, tag=None, ndf=ndf))
+
+    def spring_bed(
+        self,
+        ground: "DecoupledNodeSetDef",
+        *,
+        at: "DecoupledNodeSetDef | None" = None,
+        k: "SpringValues",
+        c: "SpringValues | None" = None,
+        orient: "OrientValues | None" = None,
+        tributary: str | None = None,
+        dirs: "Sequence[int]" = (1, 2, 3),
+        do_rayleigh: bool = False,
+        fix: bool = True,
+        ndf: int = 3,
+        name: str | None = None,
+    ) -> "SpringBed":
+        """A grounded zeroLength spring (and dashpot) on every node of a
+        decoupled node set (ADR 0119 D2) — a distributed foundation bed.
+
+        Spring ``i`` joins the ``ground`` node ``i`` (a
+        ``g.decouple_node_set(...)`` handle) to the ``at`` node with the
+        same source node — the side nodes of a second set declared with
+        ``tie_dofs`` — or, with ``at=None``, to the source node itself.
+        Per spring and direction the bed registers
+        ``uniaxialMaterial Parallel <m> <E1> <V1> -factors k c`` over one
+        ``Elastic 1.0`` and one ``Viscous 1.0 1.0`` shared by every bed of
+        the bridge (``-factors k`` alone when ``c`` is ``None``), one
+        ``zeroLength`` per spring, ``fix`` on the ground nodes (all
+        ``ndf`` DOFs) and the ``ndf`` of the ground and ``at`` nodes.
+
+        Parameters
+        ----------
+        ground, at
+            Resolved ``g.decouple_node_set`` handles on one source.
+        k, c
+            Stiffness and dashpot coefficient per spring and direction:
+            an ``(n, len(dirs))`` array, ``len(dirs)`` values for every
+            spring, or a callable ``f(xyz, area)`` returning the array
+            (``xyz``: the ``(n, 3)`` source coordinates in source order;
+            ``area``: the tributary areas, ``None`` without
+            ``tributary=``). Values must be finite and ``>= 0``.
+        orient
+            ``-orient``: a 6-tuple, an ``(n, 6)`` array or ``f(xyz)``;
+            ``None`` keeps the global axes.
+        tributary
+            A 2-D label or physical group whose element areas, shared
+            equally among each element's corners, give ``area``.
+        dirs
+            The ``-dir`` DOFs, distinct, each ``<= ndf``.
+        do_rayleigh
+            ``False`` (default) keeps the springs out of Rayleigh
+            damping: the dashpots carry the foundation damping.
+        fix
+            Fix the ground nodes (default ``True``).
+        ndf
+            The DOF count stated for the ground and ``at`` nodes; it must
+            equal the ``ndf`` of the node each spring reaches.
+        name
+            A label for the returned record.
+
+        Returns the :class:`~apeGmsh.opensees._internal.spring_bed.SpringBed`
+        record (node tags, ``k``, ``c``, areas, orientations, specs).
+        Partitioned emit refuses node-pair elements (ADR 0049), so a bed
+        emits single-process only.
+        """
+        from ._internal.spring_bed import build_spring_bed
+
+        return build_spring_bed(
+            self, ground, at=at, k=k, c=c, orient=orient,
+            tributary=tributary, dirs=dirs, do_rayleigh=do_rayleigh,
+            fix=fix, ndf=ndf, name=name,
+        )
 
     def initial_stress(
         self,
@@ -9074,7 +9221,7 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
         # (live fragment routing under ``stream``, post-hoc span slicing
         # otherwise), so the INV-4 gate inside emit cannot see it. Stamp
         # it on the emitter — the same seam ``supports_partitions`` uses.
-        emitter.per_rank_fragments = bool(per_rank)  # type: ignore[attr-defined]
+        emitter.caps = replace(emitter.caps, per_rank_fragments=bool(per_rank))
         if flat:
             # Force the single-domain emit for a partition-carrying fem
             # (e.g. a composed model auto-partitioned one-rank-per-module,
@@ -9083,7 +9230,7 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
             # the contact cases ADR 0092 S4's partitioned fan-out
             # refuses — SOFT, staged, undecidable owner) emit on this
             # path.
-            emitter.supports_partitions = False  # type: ignore[attr-defined]
+            emitter.caps = replace(emitter.caps, supports_partitions=False)
         pre_prof, post_prof = self._split_profiler_records()
         if stream:
             # ADR 0065 Tier 2: write-through sink; per-rank
@@ -9329,7 +9476,7 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
         # L3 FEAST needs the FULL model on every rank — force the flat
         # (replicated) emit even for a partition-authored fem, exactly as
         # the live emitter does (ADR 0077 P2 live finding).
-        emitter.supports_partitions = False  # type: ignore[attr-defined]
+        emitter.caps = replace(emitter.caps, supports_partitions=False)
         bm.emit(emitter)
         # Deterministic eigen preamble (every rank identical). The handler
         # matters (Penalty pollutes M, Lagrange injects zero-mass DOFs →
@@ -9544,7 +9691,8 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
         # that can reach `_emit_flat` must first wire
         # the flag through those sites' `_maybe_auto_emit_*` calls, or
         # the suppression will silently not happen there.
-        emitter.suppress_analysis_chain_auto_emit = True  # type: ignore[attr-defined]
+        emitter.caps = replace(
+            emitter.caps, suppress_analysis_chain_auto_emit=True)
         bm.emit(emitter)
         # Forced eigen preamble, emitted adjacent to the solve so the deck
         # reads as one unit. `constraints Transformation` unconditionally
@@ -10387,17 +10535,36 @@ def _stage_strategy_spec(stage: "StageRecord") -> StrategySpec | None:
     return stage.strategy.to_spec(base=base)
 
 
-def _deck_requested_solver_stats(emitter: object) -> bool:
+def _deck_requested_solver_stats(emitter: "Emitter") -> bool:
     """Did the deck just emitted through *emitter* ask for ``-stats``?
 
     ADR 0106 D2/D4: "the same predicate answers D4's *was a block
     expected?*". :meth:`apeSees.emit` already ran
     :func:`deck_requests_solver_stats` over this deck's flat / staged
-    system declarations and stamped the answer on the emitter to gate
-    the ``APEGMSH_STAGE`` marker — reading it back is the same facts,
-    not a second resolution that could disagree with the bytes.
+    system declarations and stamped the answer on ``emitter.caps`` to
+    gate the ``APEGMSH_STAGE`` marker — reading it back is the same
+    facts, not a second resolution that could disagree with the bytes.
     """
-    return bool(getattr(emitter, "_emit_stage_markers", False))
+    return emitter.caps.emit_stage_markers
+
+
+def _archive_side_channel(emitter: "Emitter") -> "H5Emitter":
+    """The archival emitter behind an ``Emitter`` whose ``caps.archival``
+    is set, for the side channels only the archive has
+    (``mark_mass_from_model``, ``set_solve_stamp``).
+
+    ``TargetCaps.archival`` is the declaration that those channels
+    exist; today ``H5Emitter`` is the one target that declares it, so
+    the narrowing is a typed cast, not a class sniff.
+    """
+    from .emitter.h5 import H5Emitter
+
+    if not emitter.caps.archival:
+        raise TypeError(
+            "apeSees: the archive side channels need an emitter whose "
+            f"caps.archival is set; got {emitter.caps!r}"
+        )
+    return cast(H5Emitter, emitter)
 
 
 # ---------------------------------------------------------------------------

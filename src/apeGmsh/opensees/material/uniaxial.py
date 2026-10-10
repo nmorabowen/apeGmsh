@@ -14,6 +14,7 @@ OpenSees manual command syntax.
 """
 from __future__ import annotations
 
+import math
 import warnings
 from dataclasses import dataclass
 from typing import ClassVar, Literal
@@ -45,6 +46,7 @@ __all__ = [
     "ViscousDamper",
     "Maxwell",
     "InitialStress",
+    "Parallel",
     "ASDConcrete1D",
     "LadrunoBondSlip",
     "LadrunoUniaxialJ2",
@@ -1488,6 +1490,85 @@ class InitialStress(UniaxialMaterial):
         emitter.uniaxialMaterial(
             "InitialStressMaterial", tag, base_tag, self.sigma_init,
         )
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class Parallel(UniaxialMaterial):
+    """``uniaxialMaterial Parallel`` — uniaxial materials in parallel,
+    each scaled by an optional factor.
+
+    OpenSees command::
+
+        uniaxialMaterial Parallel $tag $tag1 $tag2 ... <-factors $f1 $f2 ...>
+
+    Every member sees the same strain and strain rate; the composite
+    returns ``Σ fᵢ σᵢ`` as stress, ``Σ fᵢ Eᵢ`` as tangent and
+    ``Σ fᵢ ηᵢ`` as damping tangent (``ParallelMaterial.cpp``). Without
+    ``-factors`` every factor is 1.
+
+    The factors let one pair of unit members serve many springs: a
+    soil-spring bed declares ``Elastic 1.0`` and ``Viscous 1.0 1.0``
+    once and gives each spring ``Parallel … -factors k c``, so the
+    per-spring stiffness and dashpot coefficient live in the factors
+    (NIST GCR 12-917-21 distributed foundation springs).
+
+    A rate-dependent member (``Viscous``) acts as a dashpot only inside
+    a rate-capable element (``ZeroLength`` / ``TwoNodeLink``);
+    ``section Aggregator`` walks the members and refuses it.
+
+    Parameters
+    ----------
+    materials
+        The member uniaxial materials, in emission order (at least
+        one). Each is held by reference; its tag is resolved at emit
+        time and :meth:`dependencies` emits it first. A member may
+        repeat.
+    factors
+        One finite scale factor per member (``-factors``), or ``None``
+        to omit the flag (all factors 1). Zero and negative factors are
+        legal OpenSees input and pass through.
+    """
+
+    materials: tuple[UniaxialMaterial, ...]
+    factors: tuple[float, ...] | None = None
+
+    def __post_init__(self) -> None:
+        if not self.materials:
+            raise ValueError("Parallel: at least one member material required.")
+        for i, mat in enumerate(self.materials):
+            if not isinstance(mat, UniaxialMaterial):
+                raise TypeError(
+                    f"Parallel: materials[{i}] must be a UniaxialMaterial "
+                    f"primitive, got {type(mat).__name__!r}."
+                )
+        if self.factors is not None:
+            if len(self.factors) != len(self.materials):
+                raise ValueError(
+                    f"Parallel: {len(self.factors)} factors for "
+                    f"{len(self.materials)} materials; -factors takes one "
+                    f"per member."
+                )
+            for i, f in enumerate(self.factors):
+                if isinstance(f, bool) or not math.isfinite(float(f)):
+                    raise ValueError(
+                        f"Parallel: factors[{i}] must be a finite number, "
+                        f"got {f!r}."
+                    )
+
+    def dependencies(self) -> tuple[Primitive, ...]:
+        # A repeated member is emitted once, in first-seen order.
+        seen: dict[int, UniaxialMaterial] = {}
+        for mat in self.materials:
+            seen.setdefault(id(mat), mat)
+        return tuple(seen.values())
+
+    def _emit(self, emitter: Emitter, tag: int) -> None:
+        params: list[float | str] = [
+            resolve_tag(emitter, mat) for mat in self.materials
+        ]
+        if self.factors is not None:
+            params += ["-factors", *(float(f) for f in self.factors)]
+        emitter.uniaxialMaterial("Parallel", tag, *params)
 
 
 # ---------------------------------------------------------------------------

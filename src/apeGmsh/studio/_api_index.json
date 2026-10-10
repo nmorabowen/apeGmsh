@@ -534,11 +534,23 @@
       "skill": "references/api-cheatsheet.md",
       "symbol": "g.decouple_node"
     },
+    "g.decouple_node_set": {
+      "doc": "Declare one decoupled node per node of a mesh node set, by name",
+      "signature": "decouple_node_set(source: 'str', *, offset: 'Any' = (0.0, 0.0, 0.0), label: \"'str | None'\" = None, tie_dofs: 'Any' = None) -> 'Any'",
+      "skill": "references/api-cheatsheet.md",
+      "symbol": "g.decouple_node_set"
+    },
     "g.decoupled_nodes.add": {
       "doc": "Declare a decoupled node; return its :class:`DecoupledNodeDef`.",
       "signature": "add(*, coords: 'tuple[float, float, float] | None' = None, point: 'str | None' = None, label: 'str | None' = None) -> 'DecoupledNodeDef'",
       "skill": "references/api-cheatsheet.md",
       "symbol": "g.decoupled_nodes.add"
+    },
+    "g.decoupled_nodes.add_set": {
+      "doc": "Declare one decoupled node per node of ``source`` (ADR 0119 D1).",
+      "signature": "add_set(source: 'str', *, offset: \"'tuple[float, float, float] | Callable[[Any], Any]'\" = (0.0, 0.0, 0.0), label: 'str | None' = None, tie_dofs: \"'Sequence[int] | None'\" = None) -> 'DecoupledNodeSetDef'",
+      "skill": "references/api-cheatsheet.md",
+      "symbol": "g.decoupled_nodes.add_set"
     },
     "g.displacements.by_case": {
       "doc": "",
@@ -3750,6 +3762,12 @@
       "skill": "references/opensees-bridge.md",
       "symbol": "ops.section.W_fiber"
     },
+    "ops.spring_bed": {
+      "doc": "A grounded zeroLength spring (and dashpot) on every node of a",
+      "signature": "spring_bed(ground: \"'DecoupledNodeSetDef'\", *, at: \"'DecoupledNodeSetDef | None'\" = None, k: \"'SpringValues'\", c: \"'SpringValues | None'\" = None, orient: \"'OrientValues | None'\" = None, tributary: 'str | None' = None, dirs: \"'Sequence[int]'\" = (1, 2, 3), do_rayleigh: 'bool' = False, fix: 'bool' = True, ndf: 'int' = 3, name: 'str | None' = None) -> \"'SpringBed'\"",
+      "skill": "references/opensees-bridge.md",
+      "symbol": "ops.spring_bed"
+    },
     "ops.stage": {
       "doc": "Open a staged-analysis block (Phase SSI-2.A).",
       "signature": "stage(name: 'str') -> \"'_StageBuilder'\"",
@@ -4079,6 +4097,12 @@
       "signature": "MultiLinear(*, points: 'Sequence[tuple[float, float]]', name: 'str | None' = None) -> 'MultiLinear'",
       "skill": "references/opensees-bridge.md",
       "symbol": "ops.uniaxialMaterial.MultiLinear"
+    },
+    "ops.uniaxialMaterial.Parallel": {
+      "doc": "``uniaxialMaterial Parallel`` — members in parallel, each",
+      "signature": "Parallel(*, materials: 'Sequence[UniaxialMaterial | str]', factors: 'Sequence[float] | None' = None, name: 'str | None' = None) -> 'Parallel'",
+      "skill": "references/opensees-bridge.md",
+      "symbol": "ops.uniaxialMaterial.Parallel"
     },
     "ops.uniaxialMaterial.PySimple1": {
       "doc": "``uniaxialMaterial PySimple1`` — lateral soil–pile (p-y) spring.",

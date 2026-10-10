@@ -21,6 +21,7 @@ from __future__ import annotations
 import pytest
 
 from apeGmsh.opensees.apesees import apeSees
+from apeGmsh.opensees.emitter.caps import TargetCaps
 from apeGmsh.opensees.emitter.live import LiveOpsEmitter
 from apeGmsh.opensees.emitter.recording import RecordingEmitter
 from tests.opensees.fixtures.fem_stub import (
@@ -195,7 +196,7 @@ def test_analyze_profile_brackets_live_run(monkeypatch) -> None:
     holder: dict[str, "_RecLive"] = {}
 
     class _RecLive(RecordingEmitter):
-        supports_partitions = False
+        caps = TargetCaps(supports_partitions=False)
 
         def __init__(self, *, wipe: bool = True) -> None:
             super().__init__()
@@ -229,7 +230,7 @@ def test_analyze_without_profile_emits_no_profiler(monkeypatch) -> None:
     holder: dict[str, "_RecLive2"] = {}
 
     class _RecLive2(RecordingEmitter):
-        supports_partitions = False
+        caps = TargetCaps(supports_partitions=False)
 
         def __init__(self, *, wipe: bool = True) -> None:
             super().__init__()

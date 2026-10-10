@@ -9127,7 +9127,7 @@ def _write_one_interpolation(
             stacklevel=2,
         )
     cnode = int(rec.slave_node)
-    master_nodes = [int(mn) for mn in rec.master_nodes]
+    master_nodes = _embedded_retained_nodes(rec)
     emitter.embeddedNode(
         ele_tag, cnode, *master_nodes,
         stiffness=stiffness,
@@ -9247,6 +9247,41 @@ def _emit_penalty_al_tie(
     ]
     args += _coupling_control_flags(rec, fem_eid_to_ops_tag)
     emitter.element("LadrunoEmbeddedNode", ele_tag, *args)
+
+
+def _embedded_retained_nodes(rec: "InterpolationRecord") -> list[int]:
+    """The ``$Rnode`` list of the ``ASDEmbeddedNodeElement`` for ``rec``.
+
+    ``ASDEmbeddedNodeElement`` reads 3 retained nodes as a triangle and
+    4 as a **tetrahedron**. A tie record carries the corners of the
+    master *face* it projected onto, so a quad4 face gives 4 coplanar
+    corners, which the element takes for a zero-volume tet: the
+    stiffness is singular and the analysis fails at the first solve
+    (measured on the fork). A quad4 tie is therefore written on the
+    triangle of the face's (0, 2) diagonal split that holds the
+    projected point, the split ``embedded`` applies to quad hosts. The
+    bilinear weights decide the side: ``w1 - w3 = (xi - eta) / 2``, so
+    the point is in triangle (0, 1, 2) when ``w1 >= w3``, else in
+    (0, 2, 3). The record keeps the four corners and their weights (the
+    ``equation`` route uses them exactly); only the element changes.
+    An ``embedded`` record with 4 nodes is a tet4 host and passes.
+    """
+    from apeGmsh._kernel.records._kinds import ConstraintKind
+
+    nodes = [int(mn) for mn in rec.master_nodes]
+    if rec.kind != ConstraintKind.TIE or len(nodes) != 4:
+        return nodes
+    w = rec.weights
+    if w is None or len(w) != 4:
+        raise ValueError(
+            f"tie (slave={rec.slave_node}) on a quad4 master face has no "
+            f"4 shape-function weights to choose the triangle of the "
+            f"ASDEmbeddedNodeElement from; got {w!r}."
+        )
+    n0, n1, n2, n3 = nodes
+    if float(w[1]) >= float(w[3]):
+        return [n0, n1, n2]
+    return [n0, n2, n3]
 
 
 def _check_embedded_rnode_count(rec: object) -> None:
