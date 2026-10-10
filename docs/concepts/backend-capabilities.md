@@ -258,8 +258,8 @@ reactions are all exactly 6× too small. That holds for every stock release
 through openseespy 3.8.0, and for upstream master as of 2026-09-25. The
 fork fixed it in PR #520. On stock, `ops.element.TenNodeTetrahedron` raises
 in the live run; mesh tet4 (`FourNodeTetrahedron`) or hexahedra instead. A
-fork build without the `ladrunoBuild` stamp (older than 2026-08-10) may
-predate the fix, so it runs with a `Tet10UnverifiedBuildWarning`.
+fork build without the `ladrunoBuild` stamp (older than 2026-08-10) reads
+as stock, so it is refused the same way; rebuild the fork.
 
 **`wipe()` keeps equation-tie rows.** Upstream `Domain::clearAll()` clears
 nodes, elements, SP/MP constraints and patterns, but not `equationConstraint`
