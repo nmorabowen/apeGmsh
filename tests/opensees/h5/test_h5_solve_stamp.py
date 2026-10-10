@@ -74,15 +74,40 @@ def test_solve_stamp_round_trips(
 ) -> None:
     out = _write(tmp_path / "m.h5", (will_solve, refusals), fork=fork)
     want = SolveStamp(will_solve, refusals, ("fork",) if fork else ())
+    assert want.solve_mode == "flat" and want.solve_refusals_flat == refusals
     with h5py.File(out, "r") as f:
         attrs = f["opensees"].attrs
         assert f["meta"].attrs["opensees_schema_version"] == OPENSEES_CURRENT
+        assert set(attrs) == {"will_solve", "solve_mode", "solve_refusals",
+                              "solve_refusals_flat", "requires"}
         assert attrs["will_solve"].dtype == np.int8
         assert int(attrs["will_solve"]) == int(will_solve)
+        assert attrs["solve_mode"] == "flat"
         assert attrs["solve_refusals"].shape == (len(refusals),)
+        assert attrs["solve_refusals_flat"].shape == (len(refusals),)
         assert attrs["requires"].shape == (len(want.requires),)
     with h5_reader.open(str(out)) as m:
         assert m.solve_stamp() == want
+
+
+def test_partitioned_stamp_round_trips_both_verdicts(tmp_path: Path) -> None:
+    e = H5Emitter()
+    e.model(ndm=3, ndf=6)
+    e.node(1, 0.0, 0.0, 0.0)
+    e.set_solve_stamp(will_solve=True, solve_mode="partitioned",
+                      solve_refusals=(), solve_refusals_flat=("ladruno_up_solver",))
+    e.write(str(tmp_path / "p.h5"))
+    with h5_reader.open(str(tmp_path / "p.h5")) as m:
+        stamp = m.solve_stamp()
+    assert stamp == SolveStamp(True, (), (), "partitioned", ("ladruno_up_solver",))
+    assert stamp.refusals_for("partitioned") == ()
+    assert stamp.refusals_for("flat") == ("ladruno_up_solver",)
+    with pytest.raises(ValueError, match="no verdict for partition mode"):
+        stamp.refusals_for("ranked")
+    with pytest.raises(ValueError, match="needs its flat verdict"):
+        SolveStamp(True, solve_mode="partitioned")
+    with pytest.raises(ValueError, match="needs its flat verdict"):
+        H5Emitter().set_solve_stamp(will_solve=True, solve_mode="partitioned")
 
 
 def test_a_writer_never_handed_a_stamp_writes_no_attribute(tmp_path: Path) -> None:
@@ -142,13 +167,19 @@ def _tamper(path: Path, **attrs: object) -> None:
     ({"will_solve": np.array([1, 0], dtype=np.int8)}, "only stamps the int8 0 or 1"),
     ({"requires": None}, "@requires is missing"),
     ({"solve_refusals": None}, "@solve_refusals is missing"),
+    ({"solve_refusals_flat": None}, "@solve_refusals_flat is missing"),
+    ({"solve_mode": None}, "@solve_mode is missing"),
+    ({"solve_mode": "ranked"}, "solve_mode must be one of"),
+    ({"solve_refusals_flat": []}, "flat stamp's solve_refusals_flat must equal"),
     ({"requires": ["mp", "fork"]}, "sorted and unique"),
     ({"requires": ["fork", "fork"]}, "sorted and unique"),
     ({"solve_refusals": ["ok", ""]}, "empty token"),
     ({"requires": "fork"}, "expected a 1-D array"),
 ], ids=[
     "will_solve-2", "will_solve-float", "will_solve-array", "no-requires",
-    "no-refusals", "unsorted", "duplicate", "empty-token", "scalar-requires",
+    "no-refusals", "no-refusals-flat", "no-mode", "unknown-mode",
+    "flat-verdicts-differ", "unsorted", "duplicate", "empty-token",
+    "scalar-requires",
 ])
 def test_malformed_stamp_fails_loud(tmp_path: Path, tamper: dict, match: str) -> None:
     out = _write(tmp_path / "m.h5", (True, ("g",)), fork=True)
@@ -213,7 +244,7 @@ def test_to_h5_echoes_the_stamp_hash_stable(tmp_path: Path) -> None:
 def test_replay_fails_closed_on_a_stored_refusal(tmp_path: Path) -> None:
     out = tmp_path / "m.h5"
     _frame_bridge(analysis=True).h5(str(out))
-    _tamper(out, solve_refusals=["serial_mumps"])
+    _tamper(out, solve_refusals=["serial_mumps"], solve_refusals_flat=["serial_mumps"])
     model = OpenSeesModel.from_h5(out)
     assert model.solve_stamp is not None
     assert model.solve_stamp.solve_refusals == ("serial_mumps",)
@@ -228,31 +259,40 @@ def test_replay_fails_closed_on_a_stored_refusal(tmp_path: Path) -> None:
 # -- an archival emit records the gates that would refuse ------------------
 
 
-def _up_column_bridge(ops_module, tmp_path: Path):
+def _up_column_bridge(*, partitions: int = 1, system: bool = False):
     pytest.importorskip("gmsh")
     from apeGmsh import apeGmsh
 
     with apeGmsh(model_name="up_stamp", verbose=False) as g:
         g.model.geometry.add_rectangle(0.0, 0.0, 0.0, 1.0, 4.0, label="soil")
         g.physical.add_surface("soil", name="Soil")
+        # A drained top line gives the pressure region its datum, so the
+        # only gate in play is the D4 solver one.
+        g.model.select(dim=1).on_plane((0, 4.0, 0), (0, 1, 0), tol=1e-6).to_physical("Top")
         g.mesh.structured.set_recombine("soil", dim=2)
         g.mesh.sizing.set_global_size(1.0)
         g.mesh.generation.generate(2)
         g.mesh.structured.recombine()
+        if partitions > 1:
+            g.mesh.partitioning.partition(partitions)
         g.mesh.partitioning.renumber(base=1)
         fem = g.mesh.queries.get_fem_data(dim=2)
+    assert (len(fem.partitions) > 1) == (partitions > 1)
     ops = apeSees(fem)
     ops.model(ndm=2, ndf=3)
     mat = ops.nDMaterial.ElasticIsotropic(E=1e4, nu=0.3, rho=2.0)
     ops.element.LadrunoUP(
         pg="Soil", material=mat, Kf=2.2e6, poro=0.4, rhoF=1.0, perm=(1e-4, 1e-4),
     )
-    ops.analysis.Static()  # solve-bearing, no system: the D4 gate refuses a deck
+    ops.fix(pg="Top", dofs=(0, 0, 1))
+    if system:
+        ops.system.UmfPack()
+    ops.analysis.Static()  # solve-bearing; with no system the D4 gate refuses a deck
     return ops
 
 
 def test_archival_emit_records_the_refusing_gates(tmp_path: Path) -> None:
-    ops = _up_column_bridge(None, tmp_path)
+    ops = _up_column_bridge()
     with pytest.raises(BridgeError, match="no linear system"):
         ops.tcl(str(tmp_path / "deck.tcl"))
     out = tmp_path / "m.h5"
@@ -260,6 +300,8 @@ def test_archival_emit_records_the_refusing_gates(tmp_path: Path) -> None:
     model = OpenSeesModel.from_h5(out)
     stamp = model.solve_stamp
     assert stamp is not None and stamp.will_solve
+    assert stamp.solve_mode == "flat"
+    assert stamp.solve_refusals_flat == stamp.solve_refusals == ("ladruno_up_solver",)
     # A fork ELEMENT type rides the generic ``element`` verb, whose VERBS
     # row requires nothing: the requirement is value-dependent, which ADR
     # 0114 D6 keeps out of ``@requires`` until K4 moves typed fork verbs
@@ -269,6 +311,50 @@ def test_archival_emit_records_the_refusing_gates(tmp_path: Path) -> None:
     assert "ladruno_up_solver" in stamp.solve_refusals
     with pytest.raises(BridgeError, match="'ladruno_up_solver'.*fails closed"):
         model.build("tcl")
+
+
+# -- Ruling A: verdicts per partition mode -----------------------------------
+
+
+@pytest.mark.filterwarnings("ignore::UserWarning")
+def test_partitioned_archive_without_system_is_refused_on_flat_replay(
+    tmp_path: Path,
+) -> None:
+    """A partitioned LadrunoUP deck with no explicit ``system`` is allowed
+    (it rides the ADR 0027 auto-emitted general solver), so the archive's
+    own verdict is empty; its flat replay has no auto-emit and would solve
+    on ProfileSPD, so the stored flat verdict refuses it."""
+    ops = _up_column_bridge(partitions=2)
+    ops.tcl(str(tmp_path / "deck.tcl"))  # the partitioned deck is legal
+    out = tmp_path / "p.h5"
+    ops.h5(str(out))
+    model = OpenSeesModel.from_h5(out)
+    stamp = model.solve_stamp
+    assert stamp is not None and stamp.will_solve
+    assert stamp.solve_mode == "partitioned"
+    assert stamp.solve_refusals == ()
+    assert stamp.solve_refusals_flat == ("ladruno_up_solver",)
+    with pytest.raises(BridgeError, match="flat solve.*'ladruno_up_solver'.*fails closed"):
+        model.build("tcl")
+    with pytest.raises(BridgeError, match="'ladruno_up_solver'"):
+        model.build("py")
+    # The echo is not a solve.
+    model.build("h5", out=str(tmp_path / "echo.h5"))
+    assert OpenSeesModel.from_h5(tmp_path / "echo.h5").solve_stamp == stamp
+
+
+@pytest.mark.filterwarnings("ignore::UserWarning")
+def test_valid_partitioned_archive_still_replays(tmp_path: Path) -> None:
+    ops = _up_column_bridge(partitions=2, system=True)
+    out = tmp_path / "p.h5"
+    ops.h5(str(out))
+    model = OpenSeesModel.from_h5(out)
+    stamp = model.solve_stamp
+    assert stamp is not None
+    assert stamp.solve_mode == "partitioned"
+    assert stamp.solve_refusals == () and stamp.solve_refusals_flat == ()
+    deck = model.build("tcl")
+    assert "LadrunoUP" in deck and "UmfPack" in deck
 
 
 # -- build('live') refuses a fork requirement on stock -----------------------

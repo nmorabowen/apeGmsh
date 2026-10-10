@@ -1131,34 +1131,45 @@ class BuiltModel:
 
         # ADR 0114 D6: an archival emit skips the solve-time gates, and
         # records instead which of them WOULD refuse the solve this model
-        # carries (``/opensees@solve_refusals``), so a replay to a deck
-        # fails closed on the stored ids instead of re-deriving them.
-        # Each gate runs exactly as before; the probe only happens when
-        # the emit is archival and the gate would enforce on a solve.
+        # carries, per partition mode (``/opensees@solve_refusals`` under
+        # the archive's own mode, ``@solve_refusals_flat`` under the flat
+        # mode every replay target emits), so a replay fails closed on
+        # the stored verdict for the mode it emits instead of re-deriving
+        # it. Each gate runs exactly as before; the probes only happen
+        # when the emit is archival and the gate would enforce on a solve.
         _solve_refusals: list[str] = []
+        _solve_refusals_flat: list[str] = []
+        _solve_mode = "partitioned" if _will_partition else "flat"
 
         def _solve_gate(
             gate_id: str, *, enforce: bool, enforce_on_solve: bool,
-            run: "Callable[[bool], None]",
+            partitioned: bool, run: "Callable[[bool, bool], None]",
         ) -> None:
-            run(enforce)
-            if _emitter_is_archival and enforce_on_solve and not enforce:
+            run(enforce, partitioned)
+            if not (_emitter_is_archival and enforce_on_solve
+                    and not enforce):
+                return
+            for mode_partitioned, ids in (
+                (partitioned, _solve_refusals),
+                (False, _solve_refusals_flat),
+            ):
                 with warnings.catch_warnings():
                     warnings.simplefilter("ignore")
                     try:
-                        run(True)
+                        run(True, mode_partitioned)
                     except BridgeError:
-                        _solve_refusals.append(gate_id)
+                        ids.append(gate_id)
 
         _solve_gate(
             "ladruno_up_solver",
             enforce=_has_analysis_chain and not _emitter_is_archival,
             enforce_on_solve=_has_analysis_chain,
-            run=lambda enforce: validate_ladruno_up_solver(
+            partitioned=_will_partition,
+            run=lambda enforce, partitioned: validate_ladruno_up_solver(
                 elements,
                 enforce=enforce,
                 staged=_staged,
-                partitioned=_will_partition,
+                partitioned=partitioned,
                 flat_systems=[
                     p for p in ordered if isinstance(p, LinearSystem)],
                 stage_systems=[
@@ -1179,10 +1190,11 @@ class BuiltModel:
             "serial_mumps",
             enforce=_has_analysis_chain and not _emitter_is_archival,
             enforce_on_solve=_has_analysis_chain,
-            run=lambda enforce: validate_serial_mumps(
+            partitioned=is_partitioned(self.fem),
+            run=lambda enforce, partitioned: validate_serial_mumps(
                 enforce=enforce,
                 staged=_staged,
-                partitioned=is_partitioned(self.fem),
+                partitioned=partitioned,
                 flat_systems=[
                     p for p in ordered if isinstance(p, LinearSystem)],
                 stage_systems=[
@@ -1445,7 +1457,9 @@ class BuiltModel:
             "up_pressure_datum",
             enforce=not _emitter_is_archival and _static_solve,
             enforce_on_solve=_static_solve,
-            run=lambda enforce: validate_up_pressure_datum(
+            partitioned=_will_partition,
+            # The datum gate does not depend on the partition mode.
+            run=lambda enforce, partitioned: validate_up_pressure_datum(
                 self.fem, elements, self.ndm,
                 enforce=enforce,
                 fix_records=(
@@ -1570,7 +1584,9 @@ class BuiltModel:
             # for; the writer adds ``@requires`` from the verbs it holds.
             _archive_side_channel(emitter).set_solve_stamp(
                 will_solve=_has_analysis_chain,
+                solve_mode=_solve_mode,
                 solve_refusals=tuple(_solve_refusals),
+                solve_refusals_flat=tuple(_solve_refusals_flat),
             )
         return 0
 

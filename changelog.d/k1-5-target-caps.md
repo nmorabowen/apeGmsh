@@ -19,21 +19,25 @@ gone, and so are the class attributes `TclEmitter.model_reissue_purges`,
 keeps the Protocol's method count at 75.
 
 The opensees schema moves to **2.24.0** (additive): every `apeSees.h5` archive
-now carries `/opensees@will_solve` (`staged or any(Analysis)`),
-`@solve_refusals` and `@requires`. An archival emit no longer skips the
-solve-time gates silently: it probes `validate_ladruno_up_solver`,
-`validate_serial_mumps` and `validate_up_pressure_datum` as a solve would and
-records the ids of those that refuse, so a LadrunoUP model with a solve and no
-system archives where `ops.tcl` refuses. `@requires` is the union of the
-`VERBS.requires` tokens over the verbs the program holds, derived by the
-writer (a fork element type rides the generic `element` verb and does not
-reach it until K4). `OpenSeesModel.build('tcl' | 'py' | 'live')` fails closed
-on a stored refusal, `build('live')` refuses a `fork` requirement on a stock
-openseespy before touching the domain, `to_h5` echoes the stamp hash-stable,
-and `H5Model.solve_stamp()` / `OpenSeesModel.solve_stamp` read it (`None`
-below 2.24.0). The attributes fold into `model_hash`, so the 86 golden
-h5dumps gain three attribute lines each; no deck byte changes. The corpus
-gains `tests/fixtures/schema_corpus/opensees_2.24.*`.
+now carries `/opensees@will_solve` (`staged or any(Analysis)`), `@solve_mode`
+(the archive's own partition mode), `@solve_refusals`, `@solve_refusals_flat`
+and `@requires`. An archival emit no longer skips the solve-time gates
+silently: it probes `validate_ladruno_up_solver`, `validate_serial_mumps` and
+`validate_up_pressure_datum` as a solve would, once under the archive's own
+partition mode and once flat (the maintainer's ruling on #1462, 2026-10-10),
+and records the ids of those that refuse per mode, so a LadrunoUP model with a
+solve and no system archives where `ops.tcl` refuses, and a partitioned one
+(legal, it rides the auto-emitted general solver) records that its flat replay
+is not. `@requires` is the union of the `VERBS.requires` tokens over the verbs
+the program holds, derived by the writer (a fork element type rides the generic
+`element` verb and does not reach it until K4). `OpenSeesModel.build('tcl' |
+'py' | 'live')` emits flat and fails closed on the stored flat verdict,
+`build('live')` refuses a `fork` requirement on a stock openseespy before
+touching the domain, `to_h5` echoes the stamp hash-stable, and
+`H5Model.solve_stamp()` / `OpenSeesModel.solve_stamp` read it (`None` below
+2.24.0). The attributes fold into `model_hash`, so the 86 golden h5dumps gain
+five attribute lines each; no deck byte changes. The corpus gains
+`tests/fixtures/schema_corpus/opensees_2.24.*`.
 
 `scripts/check_quirks.py` gains `emitter-sniff`: a `type(e).__name__ ==
 "XEmitter"` / `e.__class__.__name__` comparison or an `isinstance` /

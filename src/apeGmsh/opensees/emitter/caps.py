@@ -70,32 +70,64 @@ class TargetCaps:
     supports_stages: bool = True
 
 
+#: The partition modes a solve verdict is stored for: the archive's own
+#: mode (``"partitioned"`` when the FEM is partitioned and the target
+#: consumes the brackets, else ``"flat"``) and always ``"flat"``, the mode
+#: every replay target emits today.
+SOLVE_MODES: tuple[str, ...] = ("flat", "partitioned")
+
+
 @dataclass(frozen=True, slots=True)
 class SolveStamp:
     """What ``model.h5`` records about the solve it was emitted for.
 
-    Written as three attributes on ``/opensees`` (opensees 2.24.0) and
+    Written as five attributes on ``/opensees`` (opensees 2.24.0) and
     read back by ``H5Model.solve_stamp()``.
 
     ``will_solve``
         ``staged or any(Analysis)`` at emit: the model carries a solve.
     ``solve_refusals``
-        The ids of the solve-time gates that refused at emit, in order.
-        A replay to a deck fails closed on a non-empty tuple.
+        The ids of the solve-time gates that refused at emit **under the
+        archive's own partition mode** (``solve_mode``), in gate order.
     ``requires``
         The sorted union of the capability tokens the ``VERBS`` rows of
         every emitted verb require (``"fork"``: the Ladruno build),
         ledger rows included, so ``build('live')`` can refuse on a
         backend that lacks one. The writer derives it from its own
         program (``/opensees/program@methods``).
+    ``solve_mode``
+        The partition mode ``solve_refusals`` was judged under: one of
+        :data:`SOLVE_MODES`.
+    ``solve_refusals_flat``
+        The same gates' verdict under the flat (single-domain) mode. A
+        gate that allows a partitioned deck (no ``system`` rides the
+        ADR 0027 auto-emit) can refuse its flat replay, so the flat
+        verdict is stored on its own and a flat replay fails closed on
+        it (:meth:`refusals_for`). Equal to ``solve_refusals`` when
+        ``solve_mode`` is ``"flat"``; ``None`` at construction copies it
+        then.
     """
 
     will_solve: bool
     solve_refusals: tuple[str, ...] = ()
     requires: tuple[str, ...] = ()
+    solve_mode: str = "flat"
+    solve_refusals_flat: "tuple[str, ...] | None" = None
 
     def __post_init__(self) -> None:
-        for name in ("solve_refusals", "requires"):
+        if self.solve_mode not in SOLVE_MODES:
+            raise ValueError(
+                f"SolveStamp.solve_mode must be one of {SOLVE_MODES}, got "
+                f"{self.solve_mode!r}"
+            )
+        if self.solve_refusals_flat is None:
+            if self.solve_mode != "flat":
+                raise ValueError(
+                    "SolveStamp: a partitioned stamp needs its flat verdict "
+                    "(solve_refusals_flat)"
+                )
+            object.__setattr__(self, "solve_refusals_flat", self.solve_refusals)
+        for name in ("solve_refusals", "solve_refusals_flat", "requires"):
             value = getattr(self, name)
             if not isinstance(value, tuple) or not all(
                     isinstance(v, str) and v for v in value):
@@ -103,11 +135,35 @@ class SolveStamp:
                     f"SolveStamp.{name} must be a tuple of non-empty "
                     f"strings, got {value!r}"
                 )
+        if self.solve_mode == "flat" and (
+                self.solve_refusals_flat != self.solve_refusals):
+            raise ValueError(
+                "SolveStamp: a flat stamp's solve_refusals_flat must equal "
+                f"solve_refusals, got {self.solve_refusals_flat!r} vs "
+                f"{self.solve_refusals!r}"
+            )
         if tuple(sorted(set(self.requires))) != self.requires:
             raise ValueError(
                 f"SolveStamp.requires must be sorted and unique, got "
                 f"{self.requires!r}"
             )
 
+    def refusals_for(self, mode: str) -> tuple[str, ...]:
+        """The stored verdict for the partition mode a replay emits.
 
-__all__ = ["SolveStamp", "TargetCaps"]
+        ``mode`` is the archive's own mode or ``"flat"``; any other mode
+        has no stored verdict and raises, so a caller fails closed
+        instead of guessing.
+        """
+        if mode == self.solve_mode:
+            return self.solve_refusals
+        if mode == "flat":
+            assert self.solve_refusals_flat is not None
+            return self.solve_refusals_flat
+        raise ValueError(
+            f"SolveStamp holds no verdict for partition mode {mode!r}; it "
+            f"stores {self.solve_mode!r} and 'flat'"
+        )
+
+
+__all__ = ["SOLVE_MODES", "SolveStamp", "TargetCaps"]

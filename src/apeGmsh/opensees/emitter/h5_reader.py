@@ -1297,11 +1297,13 @@ class H5Model:
 
         ``None`` when the file carries no ``@will_solve`` (every file
         below 2.24.0, and a 2.24 file written before the bridge stamped
-        it): absent is "unknown", never a default. The three attributes
+        it): absent is "unknown", never a default. The five attributes
         are written together, so a ``@will_solve`` without
-        ``@solve_refusals`` or ``@requires``, a ``@will_solve`` that is
-        not the integer scalar 0 or 1, or a token array that is not a
-        1-D array of strings raises :class:`MalformedH5Error`.
+        ``@solve_mode``, ``@solve_refusals``, ``@solve_refusals_flat`` or
+        ``@requires``, a ``@will_solve`` that is not the integer scalar 0
+        or 1, a mode outside :data:`SOLVE_MODES`, a flat stamp whose two
+        verdicts differ, or a token array that is not a 1-D array of
+        strings raises :class:`MalformedH5Error`.
         """
         import numpy as np
 
@@ -1318,12 +1320,24 @@ class H5Model:
                 f"/opensees@will_solve is {raw!r}; the writer only stamps "
                 "the int8 0 or 1."
             )
+        if "solve_mode" not in attrs:
+            raise MalformedH5Error(
+                "/opensees@solve_mode is missing while @will_solve is "
+                "present; the writer stamps the five together."
+            )
+        mode_arr = np.asarray(attrs["solve_mode"])
+        if mode_arr.shape != ():
+            raise MalformedH5Error(
+                f"/opensees@solve_mode has shape {mode_arr.shape}; expected "
+                "one string."
+            )
+        mode = str(_decode_bytes(mode_arr))
         tokens: dict[str, tuple[str, ...]] = {}
-        for name in ("solve_refusals", "requires"):
+        for name in ("solve_refusals", "solve_refusals_flat", "requires"):
             if name not in attrs:
                 raise MalformedH5Error(
                     f"/opensees@{name} is missing while @will_solve is "
-                    "present; the writer stamps the three together."
+                    "present; the writer stamps the five together."
                 )
             values = np.asarray(attrs[name])
             if values.ndim != 1:
@@ -1342,9 +1356,11 @@ class H5Model:
                 will_solve=bool(int(arr)),
                 solve_refusals=tokens["solve_refusals"],
                 requires=tokens["requires"],
+                solve_mode=mode,
+                solve_refusals_flat=tokens["solve_refusals_flat"],
             )
         except ValueError as exc:
-            raise MalformedH5Error(f"/opensees@requires: {exc}") from None
+            raise MalformedH5Error(f"/opensees solve stamp: {exc}") from None
 
     def commands(self) -> tuple[CommandRecordRO, ...]:
         """Return every ``/opensees/commands`` row, in write order.

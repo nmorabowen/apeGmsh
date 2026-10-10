@@ -1086,37 +1086,53 @@ raises.
 ## `/opensees` attributes: the solve stamp (optional, opensees 2.24.0)
 
 What the archive says about the solve it was emitted for (ADR 0114 D6,
-R4), as three attributes on the `/opensees` group itself:
+R4; verdicts per partition mode by the maintainer's ruling of
+2026-10-10 on #1462), as five attributes on the `/opensees` group itself:
 
 ```
 /opensees
-  @will_solve       i1              1 when the model carries a solve
-                                    (`staged or any(Analysis)` at emit), else 0
-  @solve_refusals   vlen str (R,)   ids of the solve-time gates that refused
-                                    at emit, in order; empty when none did
-  @requires         vlen str (Q,)   sorted union of the archived verbs'
-                                    `VERBS.requires` tokens (`fork`: the
-                                    Ladruno build); empty when none
+  @will_solve            i1              1 when the model carries a solve
+                                         (`staged or any(Analysis)` at emit), else 0
+  @solve_mode            vlen str        the archive's own partition mode:
+                                         `partitioned` (the FEM is partitioned and
+                                         the target consumes the brackets) or `flat`
+  @solve_refusals        vlen str (R,)   ids of the solve-time gates that refuse
+                                         the solve under @solve_mode, in gate order;
+                                         empty when none does
+  @solve_refusals_flat   vlen str (F,)   the same gates' verdict under the flat
+                                         (single-domain) mode; equals
+                                         @solve_refusals when @solve_mode is `flat`
+  @requires              vlen str (Q,)   sorted union of the emitted verbs'
+                                         `VERBS.requires` tokens (`fork`: the
+                                         Ladruno build); empty when none
 ```
 
-`BuiltModel.emit` hands the writer `will_solve` and the refusal ids
-through `H5Emitter.set_solve_stamp` on every `apeSees.h5` emit; the
-writer derives `@requires` from the methods its `/opensees/program`
-holds (ledger rows included: the verb was emitted even if it stored
-nothing) and stamps the three together. The refusal ids are the
-solve-time gates of `BuiltModel.emit` with the `validate_` prefix
-dropped (`ladruno_up_solver`, `serial_mumps`, `up_pressure_datum`),
-probed as a solve would run them, under the archive's own partition
-facts. `H5Model.solve_stamp()` returns a `SolveStamp`
-(`emitter/caps.py`), or `None` for a file that lacks `@will_solve`
-(every file below 2.24.0). Absent is "unknown", never a default. A
-`@will_solve` without its two companions, one that is not the integer 0
-or 1, or a token array that is not sorted and unique raises
-`MalformedH5Error`. `OpenSeesModel.build('tcl' | 'py' | 'live')` fails
-closed on a non-empty `@solve_refusals`; `build('live')` refuses on a
-backend that lacks a token in `@requires` (`fork` needs a Ladruno
-build; an unknown token always refuses); `to_h5` echoes the stamp, and
-`@requires` regenerates from the echoed program. A fork *element or
+`BuiltModel.emit` hands the writer `will_solve`, the mode and the two
+verdicts through `H5Emitter.set_solve_stamp` on every `apeSees.h5`
+emit; the writer derives `@requires` from the methods its
+`/opensees/program` holds (ledger rows included: the verb was emitted
+even if it stored nothing) and stamps the five together. The refusal
+ids are the solve-time gates of `BuiltModel.emit` with the `validate_`
+prefix dropped (`ladruno_up_solver`, `serial_mumps`,
+`up_pressure_datum`), each probed as a solve would run it, once under
+the archive's own partition mode and once flat. The two verdicts
+differ exactly where a gate reads the mode: a partitioned deck with no
+`system` rides the ADR 0027 auto-emitted general solver (allowed) while
+its flat replay would solve on ProfileSPD (refused), and an explicit
+`Mumps` is legal partitioned and refused serial. `H5Model.solve_stamp()`
+returns a `SolveStamp` (`emitter/caps.py`, with `refusals_for(mode)`),
+or `None` for a file that lacks `@will_solve` (every file below
+2.24.0). Absent is "unknown", never a default. A `@will_solve` without
+its four companions, one that is not the integer 0 or 1, a mode outside
+`SOLVE_MODES`, a `flat` stamp whose two verdicts differ, or a token
+array that is not sorted and unique raises `MalformedH5Error`.
+`OpenSeesModel.build('tcl' | 'py' | 'live')` emits flat (the read side
+is partition-blind), so it fails closed on a non-empty
+`@solve_refusals_flat`, naming the archive's own verdict beside it;
+`build('live')` refuses on a backend that lacks a token in `@requires`
+(`fork` needs a Ladruno build; an unknown token always refuses);
+`to_h5` echoes the stamp, and `@requires` regenerates from the echoed
+program. A fork *element or
 material type* rides the generic `element` / `nDMaterial` verb, whose
 row requires nothing, so it does not reach `@requires` until K4 moves
 typed fork verbs onto the command channel. Attributes of `/opensees`
@@ -1877,13 +1893,14 @@ detail lives in the `SCHEMA_VERSION` docstring in
   which earlier files dropped). Both fold into `model_hash`, so an
   identical model hashes differently once at this minor (ADR 0114 Q5).
   Additive minor (a 2.22.x reader refuses a 2.23.x file, INV-4).
-- `2.24.0` — ADR 0114 D6/R4 (K1-5, #1462): additive — three optional
-  attributes on `/opensees` itself, `@will_solve`, `@solve_refusals` and
-  `@requires` (see [the solve stamp](#opensees-attributes-the-solve-stamp-optional-opensees-2240)),
-  written together once the bridge hands the writer a `SolveStamp`; a
-  file without them reads as "no stamp" (`None`). Attributes of
-  `/opensees` fold into `model_hash`. Additive minor (a 2.23.x reader
-  refuses a 2.24.x file, INV-4).
+- `2.24.0` — ADR 0114 D6/R4 (K1-5, #1462): additive — five optional
+  attributes on `/opensees` itself, `@will_solve`, `@solve_mode`,
+  `@solve_refusals`, `@solve_refusals_flat` and `@requires` (see
+  [the solve stamp](#opensees-attributes-the-solve-stamp-optional-opensees-2240)),
+  written together on every `apeSees.h5` emit; a file without them
+  reads as "no stamp" (`None`). Attributes of `/opensees` fold into
+  `model_hash`. Additive minor (a 2.23.x reader refuses a 2.24.x file,
+  INV-4).
 
 This is the **current** opensees-zone version (`SCHEMA_VERSION` in
 [`opensees/emitter/h5.py`](../src/apeGmsh/opensees/emitter/h5.py)); check that constant

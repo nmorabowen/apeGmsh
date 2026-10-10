@@ -798,17 +798,28 @@ class OpenSeesModel:
         ``None`` for a file that carries none (below 2.24.0)."""
         return self._solve_stamp
 
+    #: The partition mode every tcl / py / live replay emits: the read
+    #: side is partition-blind (the flat single-domain degrade), so the
+    #: stored verdict it answers to is the flat one.
+    _REPLAY_SOLVE_MODE = "flat"
+
     def _refuse_stored_solve_refusals(self, target: str) -> None:
         stamp = self._solve_stamp
-        if stamp is None or not stamp.solve_refusals:
+        if stamp is None:
+            return
+        refused = stamp.refusals_for(self._REPLAY_SOLVE_MODE)
+        if not refused:
             return
         from ._internal.build import BridgeError
 
         raise BridgeError(
             f"OpenSeesModel.build({target!r}): the archive records that "
-            "its solve was refused at emit by the gate(s) "
-            + ", ".join(repr(i) for i in stamp.solve_refusals)
-            + " (/opensees@solve_refusals). A deck built from it would "
+            f"a {self._REPLAY_SOLVE_MODE} solve of this model is refused "
+            "by the gate(s) " + ", ".join(repr(i) for i in refused)
+            + " (/opensees@solve_refusals"
+            + ("" if self._REPLAY_SOLVE_MODE == stamp.solve_mode else "_flat")
+            + f"; the archive's own {stamp.solve_mode} verdict is "
+            f"{list(stamp.solve_refusals)!r}). A deck built from it would "
             "carry the solve those gates exist to stop, so the replay "
             "fails closed. Fix the model (declare the system / datum the "
             "gate names) and archive it again; build('h5') still echoes "
@@ -1446,7 +1457,9 @@ class OpenSeesModel:
         if self._solve_stamp is not None:
             emitter_fresh.set_solve_stamp(
                 will_solve=self._solve_stamp.will_solve,
+                solve_mode=self._solve_stamp.solve_mode,
                 solve_refusals=self._solve_stamp.solve_refusals,
+                solve_refusals_flat=self._solve_stamp.solve_refusals_flat,
             )
         _compose_model_h5(
             self._fem,
