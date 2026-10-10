@@ -84,10 +84,12 @@ def test_mutation_flat_emit_instead_of_partitioned_is_caught(
     silently turns this into a replicated deck — every rank builds the
     whole model, so nothing is distributed except the linear solve, and
     the memory case that justifies the backend evaporates."""
-    # raising=False: the attribute is an instance-level seam, set only by
-    # the FEAST path — the class does not carry it.
+    # The FEAST path sets ``caps.supports_partitions`` on its instance;
+    # the mutation flips the class default every TclEmitter inherits.
+    from dataclasses import replace
+
     monkeypatch.setattr(
-        TclEmitter, "supports_partitions", False, raising=False,
+        TclEmitter, "caps", replace(TclEmitter.caps, supports_partitions=False),
     )
     _assert_fails(suite.test_arpack_deck_is_partitioned_not_flat, tmp_path)
 

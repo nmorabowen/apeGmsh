@@ -38,6 +38,7 @@ _PROVENANCE_FAMILY: dict[str, str] = {
     "contact_plane_defs": "contact_planes",
     "interface_defs": "interfaces",
     "node_defs": "decoupled_nodes",
+    "node_set_defs": "decoupled_node_sets",
     "disp_defs": "displacements",
     "embed_defs": "embeds",
     "load_defs": "loads",

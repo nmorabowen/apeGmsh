@@ -24,6 +24,7 @@ from apeGmsh.opensees._internal.tag_resolution import set_tag_resolver
 from apeGmsh.opensees.emitter.recording import RecordingEmitter
 from apeGmsh.opensees.material.uniaxial import (
     ElasticMaterial,
+    Parallel,
     Steel02,
     Viscous,
 )
@@ -95,6 +96,19 @@ class TestAggregatorValidation:
         dashpot = Viscous(C=1.0e5)
         with pytest.raises(ValueError, match="rate-dependent"):
             Aggregator(materials_by_dof={"Vy": dashpot})
+
+    def test_rate_dependent_member_of_a_parallel_raises(self) -> None:
+        # A dashpot inside a Parallel is just as inert in the aggregator.
+        spring = Parallel(
+            materials=(ElasticMaterial(E=1.0), Viscous(C=1.0)),
+            factors=(1.0e6, 1.0e3),
+        )
+        with pytest.raises(ValueError, match="rate-dependent.*Viscous"):
+            Aggregator(materials_by_dof={"Vy": spring})
+
+    def test_rate_independent_parallel_is_accepted(self) -> None:
+        spring = Parallel(materials=(ElasticMaterial(E=1.0),), factors=(1.0e6,))
+        assert Aggregator(materials_by_dof={"Vy": spring}).materials_by_dof
 
     def test_rate_dependent_material_rejected_even_with_base(self) -> None:
         dashpot = Viscous(C=1.0e5)

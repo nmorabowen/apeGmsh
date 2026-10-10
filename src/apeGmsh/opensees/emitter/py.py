@@ -23,6 +23,7 @@ from .._target import BackendInfo
 import math
 from typing import Any, Literal, Sequence
 
+from .caps import TargetCaps
 from .base import (
     NUMPY_VALUE_TYPES,
     DroppedAxisGuard,
@@ -209,6 +210,17 @@ class PyEmitter:
     deck. Top-level statements; no function wrapper.
     """
 
+    #: ADR 0114 D6: a py deck consumes partition brackets; a
+    #: ``model BasicBuilder`` re-issue purges nothing on openseespy.
+    caps: TargetCaps = TargetCaps(
+        archival=False,
+        supports_partitions=True,
+        per_rank_fragments=False,
+        suppress_analysis_chain_auto_emit=False,
+        model_reissue_purges=False,
+        emit_stage_markers=False,
+    )
+
     def __init__(self, *, backend: BackendInfo | None = None) -> None:
         # ``_lines`` is a :class:`_LineBuf` so ``partition_open`` can
         # toggle a per-rank indent without every ``append`` call site
@@ -240,16 +252,13 @@ class PyEmitter:
         # APEGMSH_PROGRESS ...)`` in the loop so the run=True streamer
         # can render a live step counter. Default off keeps decks clean.
         self._emit_progress: bool = False
-        # ADR 0106 D2 — stage-marker injection, set by
-        # ``deck_requests_solver_stats(...)`` in ``BuiltModel.emit``.
-        # When True, ``stage_open`` / ``stage_close`` drop a runtime
+        # ADR 0106 D2 — stage-marker injection: ``BuiltModel.emit`` sets
+        # ``caps.emit_stage_markers`` from ``deck_requests_solver_stats``,
+        # and ``stage_open`` / ``stage_close`` then drop a runtime
         # ``print(APEGMSH_STAGE open|close <name>)`` so a solver-stats
         # block on stderr can be attributed to the stage that paid for
-        # it. Default off keeps a deck with no ``stats=True`` anywhere
-        # byte-identical to today (INV-1). Tracks the name of the
-        # currently-open stage so ``stage_close`` (which takes no
-        # argument) can name it too.
-        self._emit_stage_markers: bool = False
+        # it. Tracks the name of the currently-open stage so
+        # ``stage_close`` (which takes no argument) can name it too.
         self._current_stage_name: str | None = None
 
     # -- Output --------------------------------------------------------------
@@ -907,7 +916,7 @@ class PyEmitter:
         prev_indent = self._lines.indent
         self._lines.indent = ""
         self._lines.append(f"# === Stage: {name} ===")
-        if self._emit_stage_markers:
+        if self.caps.emit_stage_markers:
             self._current_stage_name = name
             self._emit_stage_marker("open", name)
         self._lines.indent = prev_indent
@@ -921,7 +930,7 @@ class PyEmitter:
     def stage_close(self) -> None:
         prev_indent = self._lines.indent
         self._lines.indent = ""
-        if self._emit_stage_markers and self._current_stage_name is not None:
+        if self.caps.emit_stage_markers and self._current_stage_name is not None:
             self._emit_stage_marker("close", self._current_stage_name)
             self._current_stage_name = None
         # openseespy: ``ops.loadConst('-time', 0.0)`` matches the Tcl

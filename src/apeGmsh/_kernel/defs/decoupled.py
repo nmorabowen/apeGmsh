@@ -18,7 +18,9 @@ factory methods — pure data containers consumed by the FEM factory.
 """
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
+from typing import Any
 
 
 @dataclass
@@ -46,4 +48,44 @@ class DecoupledNodeDef:
     tag: int | None = None
 
 
-__all__ = ["DecoupledNodeDef"]
+@dataclass
+class DecoupledNodeSetDef:
+    """One decoupled node per node of a mesh node set (ADR 0119 D1).
+
+    Declared by name through ``g.decouple_node_set(source, ...)`` and
+    resolved by the FEM factory at extraction, when the source nodes
+    exist:
+
+    * ``source`` — a label or physical-group name; its mesh nodes, in
+      ascending tag order, are the *source nodes*.
+    * ``offset`` — a ``(dx, dy, dz)`` triple, or a callable taking the
+      ``(n, 3)`` source coordinates and returning ``(n, 3)`` offsets.
+      Each new node sits at its source node's coordinates plus offset.
+    * ``label`` — an optional friendly name (informational: constraint
+      verbs do not resolve it as a role).
+    * ``tie_dofs`` — when set, one ``equal_dof`` record per pair
+      (retained = source node, constrained = new node) on these dofs.
+
+    ``source_ids`` and ``tags`` are ``None`` until the factory resolves
+    the model; then they hold the source node tags and the new node
+    tags, paired by index.  Like :class:`DecoupledNodeDef`, the set
+    carries no ``ndf`` (ADR 0049).
+    """
+    source: str
+    offset: "tuple[float, float, float] | Callable[[Any], Any]" = (0.0, 0.0, 0.0)
+    label: str | None = None
+    tie_dofs: tuple[int, ...] | None = None
+    source_ids: tuple[int, ...] | None = None
+    tags: tuple[int, ...] | None = None
+
+    def pairs(self) -> dict[int, int]:
+        """``{source node tag: new node tag}``; raises before extraction."""
+        if self.source_ids is None or self.tags is None:
+            raise ValueError(
+                f"decoupled node set {self.label or self.source!r} has no "
+                f"resolved tags — call g.mesh.queries.get_fem_data(...) first."
+            )
+        return dict(zip(self.source_ids, self.tags))
+
+
+__all__ = ["DecoupledNodeDef", "DecoupledNodeSetDef"]
