@@ -6,12 +6,6 @@
       "skill": "references/compose.md",
       "symbol": "Assembly"
     },
-    "Assembly.add": {
-      "doc": "Register a part (a saved ``model.h5``). Returns ``self`` (chainable).",
-      "signature": "add(label: 'str', source: 'str', *, translate: 'tuple[float, float, float]' = (0.0, 0.0, 0.0), rotate: \"'tuple[float, float, float, float] | None'\" = None, anchor: \"'str | None'\" = None) -> \"'Assembly'\"",
-      "skill": "references/compose.md",
-      "symbol": "Assembly.add"
-    },
     "Assembly.bridge": {
       "doc": "Build one forward :class:`~apeGmsh.opensees.apeSees` (ADR 0117 D1).",
       "signature": "bridge(ndm: 'int', ndf: 'int', *, element_tags: \"Literal['sequential', 'fem']\" = 'fem') -> \"'apeSees'\"",
@@ -20,7 +14,7 @@
     },
     "Assembly.couple": {
       "doc": "Couple an instance port to a reference node. Returns ``self``.",
-      "signature": "couple(target: 'str', part_b: \"'str | None'\" = None, *, kind: 'str', reference: \"'str | None'\" = None, dofs: \"'Sequence[int] | None'\" = None, weighting: 'str' = 'uniform', name: \"'str | None'\" = None, ports: \"'Sequence[str] | None'\" = None, tolerance: \"'float | None'\" = None, k: \"'float | None'\" = None, k_alpha: \"'float | None'\" = None, kr: \"'float | None'\" = None, enforce: \"'str | None'\" = None, al_update: \"'str | None'\" = None, **options: 'Any') -> \"'Assembly'\"",
+      "signature": "couple(target: 'str', *, kind: 'str', reference: \"'str | None'\" = None, dofs: \"'Sequence[int] | None'\" = None, weighting: 'str' = 'uniform', name: \"'str | None'\" = None, k: \"'float | None'\" = None, k_alpha: \"'float | None'\" = None, kr: \"'float | None'\" = None, enforce: \"'str | None'\" = None, al_update: \"'str | None'\" = None) -> \"'Assembly'\"",
       "skill": "references/compose.md",
       "symbol": "Assembly.couple"
     },
@@ -59,12 +53,6 @@
       "signature": "instance(label: 'str', source: \"'str | Path'\", *, translate: 'Sequence[float]' = (0.0, 0.0, 0.0), rotate: \"'tuple[Sequence[float], float] | None'\" = None, partition_rank: \"'int | None'\" = None, anchor: \"'str | None'\" = None) -> \"'Assembly'\"",
       "skill": "references/compose.md",
       "symbol": "Assembly.instance"
-    },
-    "Assembly.materialize": {
-      "doc": "Run the graph: compose every part + apply every couple.",
-      "signature": "materialize() -> \"'apeGmsh'\"",
-      "skill": "references/compose.md",
-      "symbol": "Assembly.materialize"
     },
     "Assembly.node": {
       "doc": "Declare an assembly-owned reference node. Returns ``self``.",
@@ -347,12 +335,6 @@
       "signature": "begin(*, verbose: 'bool | None' = None) -> \"'_SessionBase'\"",
       "skill": "references/api-cheatsheet.md",
       "symbol": "g.begin"
-    },
-    "g.compose": {
-      "doc": "Merge a previously-saved apeGmsh model into this session.",
-      "signature": "compose(source: \"'str | Path'\", *, label: 'str', **kwargs: 'Any') -> \"'ComposedModule'\"",
-      "skill": "references/compose.md",
-      "symbol": "g.compose"
     },
     "g.compose_inspect": {
       "doc": "Read a module's H5 header without composing it.",

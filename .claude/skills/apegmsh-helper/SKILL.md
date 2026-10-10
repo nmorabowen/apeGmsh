@@ -1,6 +1,6 @@
 ---
 name: apegmsh-helper
-description: Use whenever the user is working with apeGmsh — the structural-FEM wrapper around Gmsh with OpenSees integration. Triggers on building FEM models from CAD/STEP imports, Part-based assembly workflows, composite-based geometry/mesh/constraint APIs (g.model, g.mesh, g.physical, g.constraints, etc.), void/hole authoring (as_void, add_polyline, add_void_sweep/loft, boolean.apply_voids — ADR 0097), labelled g.decouple_node as RBE2/RBE3 master, the apeSees(fem) OpenSees bridge with typed primitives and automatic MP-constraint emission, staged analysis (ops.stage), loads/masses/constraints resolution into the FEMData broker, native model.h5 persistence (FEMData.to_h5/from_h5, save_to=/g.save(), apeGmsh.from_h5), assembling saved models with Assembly v2 (from apeGmsh.assembly import Assembly: instance/tie/node/couplings/bridge/partition_rank, ADR 0117), the older model composition (g.compose), post-processing OpenSees output via Results (from_native/from_mpco/from_recorders) with the interactive and web viewers (results.viewer / results.show_web), and exporting models to OpenSees Tcl or openseespy scripts. Covers apeGmsh's own abstractions on top of Gmsh and OpenSees. For raw gmsh API questions see the gmsh-structural skill; for raw OpenSees analysis commands see opensees-expert; for FEM theory first principles see fem-mechanics-expert.
+description: Use whenever the user is working with apeGmsh — the structural-FEM wrapper around Gmsh with OpenSees integration. Triggers on building FEM models from CAD/STEP imports, Part-based assembly workflows, composite-based geometry/mesh/constraint APIs (g.model, g.mesh, g.physical, g.constraints, etc.), void/hole authoring (as_void, add_polyline, add_void_sweep/loft, boolean.apply_voids — ADR 0097), labelled g.decouple_node as RBE2/RBE3 master, the apeSees(fem) OpenSees bridge with typed primitives and automatic MP-constraint emission, staged analysis (ops.stage), loads/masses/constraints resolution into the FEMData broker, native model.h5 persistence (FEMData.to_h5/from_h5, save_to=/g.save(), apeGmsh.from_h5), assembling saved models with Assembly v2 (from apeGmsh.assembly import Assembly: instance/tie/node/couplings/bridge/partition_rank, ADR 0117), post-processing OpenSees output via Results (from_native/from_mpco/from_recorders) with the interactive and web viewers (results.viewer / results.show_web), and exporting models to OpenSees Tcl or openseespy scripts. Covers apeGmsh's own abstractions on top of Gmsh and OpenSees. For raw gmsh API questions see the gmsh-structural skill; for raw OpenSees analysis commands see opensees-expert; for FEM theory first principles see fem-mechanics-expert.
 ---
 
 # apeGmsh — structural FEM wrapper around Gmsh
@@ -39,7 +39,7 @@ has no hit **and** you are changing apeGmsh itself.
 | `apeSees` / stages / emit | `references/opensees-bridge.md` |
 | After mesh or solve check | `references/assess.md` |
 | Results / plot / stills | `references/results.md` |
-| `compose` / `from_h5` / Assembly | `references/compose.md` |
+| Assembly / compose readers / `from_h5` | `references/compose.md` |
 | Rebar cages | `references/rebar.md` |
 | ETABS / analytical import | `references/interop.md` |
 | Section properties / fiber section | `references/section-properties.md` |
@@ -55,7 +55,7 @@ What each file contains (do not read them all):
 - `opensees-bridge.md` — `apeSees`, stages, emit, ndf, remote
 - `assess.md` — verdict + stills after mesh/solve (not Qt)
 - `results.md` — `Results.from_*`, plot, render, lineage
-- `compose.md` — `g.compose`, `from_h5`, Assembly
+- `compose.md` — Assembly, compose readers, `from_h5`
 - `rebar.md` — `g.rebar` cages
 - `interop.md` — ETABS / analytical import
 - `section-properties.md` — `SectionProperties`, fiber handoff
@@ -90,9 +90,8 @@ bridge `apeSees(fem)`.
 > sections, element specs) travels, and supports, loads and the analysis
 > are declared on the bridge. See `references/compose.md` §"Assembly v2".
 > The v1 path (`g.compose`, `FEMData.compose`, `Assembly.add / couple /
-> materialize`) is scheduled for removal without deprecation (ADR 0117 D7):
-> do not start new models on it, except where v2 does not reach yet (see
-> that section). **Mixed element ORDER across parts (hex20 + hex8) needs one
+> materialize`) was removed without deprecation (ADR 0117 D7, AS5-c).
+> **Mixed element ORDER across parts (hex20 + hex8) needs one
 > session per part** — `set_order` is session-global, and
 > `Part` is geometry-only by contract (ADR 0085); order-mismatched
 > interfaces want `tie(method="mortar", enforce="equation")` (ADR 0086) —

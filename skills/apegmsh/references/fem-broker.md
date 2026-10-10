@@ -58,7 +58,7 @@ declaration invalidates the cache (every `g.constraints.X` / `g.loads.X` /
 an internal counter), so a def declared after the first extraction is in
 the next snapshot. The session
 has one canonical "chain head" snapshot that
-`FEMData.with_*` / `FEMData.compose(...)` transform (see compose.md).
+the `FEMData.with_*` shims transform.
 
 ## Top-level layout
 
@@ -372,13 +372,13 @@ Two **different** `from_h5` classmethods exist — don't confuse them:
 ```python
 from apeGmsh import apeGmsh
 g2 = apeGmsh.from_h5("plate.h5")     # verified: tests/test_femdata_from_h5.py::test_session_save_then_from_h5
-g2.compose("bolt.h5", label="bolt", translate=(10, 0, 0))   # compose works
-g2.save("assembly.h5")
+fem2 = g2.mesh.queries.get_fem_data()   # the chain head
+g2.save("plate_copy.h5")
 ```
 
 A chain-phase session has **NO gmsh state**: `g.model.*` and
-`g.mesh.generation.*` will fail. Only `compose()` / `compose_inspect()` /
-`compose_list()` / `compose_tree()` / `save()` and the chain-phase
+`g.mesh.generation.*` will fail. Only queries, the compose readers
+(`compose_inspect()` / `compose_list()` / `compose_tree()`), `save()` and the chain-phase
 interface constraints/loads/masses work. See compose.md for the full
 chain-phase contract.
 

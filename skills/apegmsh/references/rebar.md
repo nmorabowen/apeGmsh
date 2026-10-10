@@ -173,7 +173,7 @@ frozen reference `-dir`. `place()` does **not** forward `corot`; call
   `model.h5` (`/rebar_elements`, neutral schema ≥ 2.16.0).
 - Embedded-reinforcement ties (the `g.reinforce` coupling metadata)
   persist under `/reinforce_ties` (the `corot` flag rides along, neutral
-  schema ≥ 2.26.0) and survive `g.compose(...)` (node-tag offset + name/bond
+  schema ≥ 2.26.0) and survive an `Assembly` instance (node-tag offset + name/bond
   prefix); a tie that would cross a Part boundary raises
   `ComposeReinforceCrossPartError`. H5 **deck-replay** re-emits them too:
   `OpenSeesModel.build()` from a `model.h5` regenerates the

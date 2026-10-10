@@ -37,13 +37,16 @@ with apeGmsh(model_name="...", save_to="m.h5") as g:
     ...             # begin/end run automatically; m.h5 written on exit
 ```
 
-Rebuild a chain-phase session from disk (NO gmsh state — only
-`compose*`/`save` work; `g.model.*`/`g.mesh.*` raise):
+Rebuild a chain-phase session from disk (NO gmsh state — the compose
+readers, queries and `save` work; `g.model.*`/`g.mesh.*` raise):
 
 ```python
 g = apeGmsh.from_h5("host.h5", model_name=None, verbose=False)
-g.compose("module_a.h5", label="A")        # see compose.md
+g.compose_list()                            # see compose.md
 ```
+
+Assemble several saved files: `from apeGmsh.assembly import Assembly`
+(`instance` / `tie` / `bridge`, compose.md).
 
 Optional extras (pip): `matplotlib` (plots), `openseespy` (analysis),
 `[viewer]` extra = `trame`+`ipywidgets` (web viewers), `pyvista` +

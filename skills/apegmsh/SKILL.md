@@ -21,8 +21,8 @@ description: >
   (``FEMData.to_h5`` / ``from_h5``, ``save_to=`` / ``g.save()``),
   assembling saved models (``from apeGmsh.assembly import Assembly``:
   ``instance`` / ``tie`` / ``node`` / ``rigid_link`` / ``couple`` /
-  ``bridge`` / ``partition_rank``), the older model composition
-  (``g.compose`` / ``apeGmsh.from_h5``), and exporting models
+  ``bridge`` / ``partition_rank``), chain-phase reload
+  (``apeGmsh.from_h5``), and exporting models
   to OpenSees Tcl or openseespy scripts. Covers apeGmsh's own abstractions
   on top of Gmsh and OpenSees. Also use it when the user says "meshing",
   "FEA mesh", "structural mesh", or "OpenSees from gmsh" in a context where
@@ -67,7 +67,7 @@ has no hit **and** you are changing apeGmsh itself.
 | `apeSees` / stages / emit | `references/opensees-bridge.md` |
 | After mesh or solve check | `references/assess.md` |
 | Results / plot / stills | `references/results.md` |
-| `compose` / `from_h5` / Assembly | `references/compose.md` |
+| Assembly / compose readers / `from_h5` | `references/compose.md` |
 | Rebar cages | `references/rebar.md` |
 | ETABS / analytical import | `references/interop.md` |
 | Section properties / fiber section | `references/section-properties.md` |
@@ -83,7 +83,7 @@ What each file contains (do not read them all):
 - `opensees-bridge.md` — `apeSees`, stages, emit, ndf, remote
 - `assess.md` — verdict + stills after mesh/solve (not Qt)
 - `results.md` — `Results.from_*`, plot, render, lineage
-- `compose.md` — `g.compose`, `from_h5`, Assembly
+- `compose.md` — Assembly, compose readers, `from_h5`
 - `rebar.md` — `g.rebar` cages
 - `interop.md` — ETABS / analytical import
 - `section-properties.md` — `SectionProperties`, fiber handoff
@@ -118,9 +118,8 @@ bridge `apeSees(fem)`.
 > sections, element specs) travels, and supports, loads and the analysis
 > are declared on the bridge. See `references/compose.md` §"Assembly v2".
 > The v1 path (`g.compose`, `FEMData.compose`, `Assembly.add / couple /
-> materialize`) is scheduled for removal without deprecation (ADR 0117 D7):
-> do not start new models on it, except where v2 does not reach yet (see
-> that section). **Mixed element ORDER across parts (hex20 + hex8) needs one
+> materialize`) was removed without deprecation (ADR 0117 D7, AS5-c).
+> **Mixed element ORDER across parts (hex20 + hex8) needs one
 > session per part** — `set_order` is session-global, and
 > `Part` is geometry-only by contract (ADR 0085); order-mismatched
 > interfaces want `tie(method="mortar", enforce="equation")` (ADR 0086) —
