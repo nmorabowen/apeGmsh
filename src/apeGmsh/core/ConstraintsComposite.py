@@ -289,11 +289,11 @@ _TIE_CONE_COS = math.cos(math.radians(45.0))
 _ORIENT_PROBE_SCALES = (1.0, 1e-2, 1e-4)
 
 
-def _surface_outward_sign(tag: int, centres: np.ndarray, normals: np.ndarray,
-                          areas: np.ndarray, outward: np.ndarray,
+def _surface_outward_sign(tag: int, vol: int, centres: np.ndarray,
+                          normals: np.ndarray, areas: np.ndarray,
                           label: str) -> float:
-    """``+1`` when the mesh winding of surface *tag* points OUT of the one
-    volume it bounds, ``-1`` when it points in.
+    """``+1`` when the mesh winding of surface *tag* points OUT of volume
+    *vol*, which it bounds, ``-1`` when it points in.
 
     The winding is consistent across a surface but not across surfaces:
     gmsh winds a face with the orientation of the solid that CREATED it,
@@ -303,18 +303,9 @@ def _surface_outward_sign(tag: int, centres: np.ndarray, normals: np.ndarray,
     does: a point just off a facet along its normal is inside the volume
     when the winding points in. Up to 512 facets vote, at each probe
     offset of :data:`_ORIENT_PROBE_SCALES` in turn, so a plate thinner
-    than a facet still decides. A surface that bounds no volume (a shell)
-    or more than one is sign-fixed as a whole against ``outward`` by the
-    area-weighted majority of its facets: the fork's own rule for a
-    surface, applied once per surface so a mirrored shell cannot read as
-    two-sided.
+    than a facet still decides.
     """
     import gmsh
-    up, _ = gmsh.model.getAdjacencies(2, tag)
-    if len(up) != 1:
-        vote = float((areas * (normals @ outward)).sum())
-        return -1.0 if vote < 0.0 else 1.0
-    vol = int(up[0])
     step = max(1, len(centres) // 512)
     sel = slice(0, None, step)
     size = np.sqrt(2.0 * areas[sel])[:, None]
@@ -336,12 +327,21 @@ def _surface_outward_sign(tag: int, centres: np.ndarray, normals: np.ndarray,
 
 def _oriented_master_normals(entities, parts, node_tags, node_coords,
                              outward, label: str):
-    """Unit facet normals of the master surfaces, consistently oriented:
-    outward from the volume each surface bounds when the master spans
-    several surfaces (:func:`_surface_outward_sign`), and as wound when
-    it is a single surface, whose winding is already consistent and
-    whose span the orientation cannot change. Zero-area facets are
-    dropped. Returns ``(units, n_facets)``."""
+    """Unit facet normals of the master surfaces, consistently oriented.
+
+    A single-surface master keeps its winding, which is already consistent
+    and whose span the orientation cannot change. Across several surfaces
+    the reference is ONE volume, the one adjacent to the most master
+    surfaces (lowest tag on a tie): every surface bounding it is oriented
+    outward from it (:func:`_surface_outward_sign`), so a fragmented
+    slab's top and bottom read 180° apart through the slab between them
+    and a fragmented pile skin reads radial through the pile. A surface
+    the reference does not bound (a shell, or a face of another body) is
+    sign-fixed as a whole against ``outward`` by the area-weighted
+    majority of its facets, the fork's own rule applied once per surface,
+    so a mirrored shell cannot read as two-sided. Zero-area facets are
+    dropped. Returns ``(units, n_facets)``.
+    """
     import gmsh
     tags = np.asarray(node_tags, dtype=np.int64).ravel()
     xyz = np.asarray(node_coords, dtype=float).reshape(len(tags), -1)
@@ -359,6 +359,17 @@ def _oriented_master_normals(entities, parts, node_tags, node_coords,
                 abs(int(t)) for d, t in gmsh.model.getBoundary(
                     [(3, int(tag))], oriented=False) if d == 2)
     surfaces = list(dict.fromkeys(surfaces))
+
+    adjacent = {tag: {int(v) for v in gmsh.model.getAdjacencies(2, tag)[0]}
+                for tag in surfaces}
+    reference: int | None = None
+    if len(surfaces) > 1:
+        counts: dict[int, int] = {}
+        for vols in adjacent.values():
+            for v in vols:
+                counts[v] = counts.get(v, 0) + 1
+        if counts:
+            reference = min(counts, key=lambda v: (-counts[v], v))
 
     blocks: list[np.ndarray] = []
     n_facets = 0
@@ -387,43 +398,61 @@ def _oriented_master_normals(entities, parts, node_tags, node_coords,
         if not live.any():
             continue
         units = n[live] / length[live, None]
+        # |cross| is twice the facet area (edge cross for a triangle,
+        # diagonal cross for a quad).
+        areas = 0.5 * length[live]
         sign = 1.0
-        if len(surfaces) > 1:
-            # |cross| is twice the facet area (edge cross for a triangle,
-            # diagonal cross for a quad).
+        if reference is not None and reference in adjacent[tag]:
             sign = _surface_outward_sign(
-                tag, p[live].mean(axis=1), units, 0.5 * length[live], o,
-                label)
+                tag, reference, p[live].mean(axis=1), units, areas, label)
+        elif len(surfaces) > 1:
+            sign = -1.0 if float((areas * (units @ o)).sum()) < 0.0 else 1.0
         blocks.append(sign * units)
     if not blocks:
         return np.empty((0, 3)), n_facets
     return np.vstack(blocks), n_facets
 
 
+# Normals are quantised to a cubic grid of 1/_TIE_BIN_K on each component
+# (about 0.5° between neighbouring cells on the unit sphere) and
+# de-duplicated before the pairwise test: a 160k-facet sector collapses to
+# a few hundred cells. A quantised direction sits within _TIE_BIN_EPS of
+# its normal, so a pair of cells is refused only beyond 90° + 2 eps,
+# which the true pair then exceeds too: quantisation never refuses a
+# master whose true span is within 90°.
+_TIE_BIN_K = 115
+_TIE_BIN_EPS = math.asin(math.sqrt(3.0) / (2.0 * _TIE_BIN_K))
+_TIE_BIN_TOL = math.sin(2.0 * _TIE_BIN_EPS)
+
+
 def _pair_beyond_90(units: np.ndarray) -> float | None:
-    """The dot product of a pair of unit vectors more than 90° apart, or
+    """The dot product of a pair of directions more than 90° apart, or
     ``None`` when every pair is within 90°.
 
-    The cone about the mean direction accepts in O(n); otherwise the
-    normals farthest from the mean are tested against every other first
-    (a closed skin fails there at once), and the chunked pairwise sweep
-    that follows stops at the first opposed pair, so a refusal costs
-    about one pass and only an acceptance pays the full product.
+    The cone about the mean direction accepts in O(n). Otherwise the
+    normals are quantised and de-duplicated (:data:`_TIE_BIN_K`), the
+    cells farthest from the mean are tested against every other first (a
+    closed skin fails there at once), and the chunked pairwise sweep that
+    follows stops at the first opposed pair.
     """
     mean = units.sum(axis=0)
     norm = float(np.linalg.norm(mean))
-    if norm > 0.0:
-        proj = units @ (mean / norm)
-        if float(proj.min()) >= _TIE_CONE_COS - 1e-9:
-            return None                     # all within 45° of one axis
-        extreme = np.argsort(proj)[:16]
-        worst = float((units[extreme] @ units.T).min())
-        if worst < -1e-9:
+    axis = mean / norm if norm > 0.0 else None
+    if axis is not None and float((units @ axis).min()) \
+            >= _TIE_CONE_COS - 1e-9:
+        return None                         # all within 45° of one axis
+    cells = np.unique(np.rint(units * _TIE_BIN_K).astype(np.int64), axis=0)
+    reps = cells.astype(float)
+    reps /= np.linalg.norm(reps, axis=1)[:, None]
+    if axis is not None:
+        extreme = np.argsort(reps @ axis)[:16]
+        worst = float((reps[extreme] @ reps.T).min())
+        if worst < -_TIE_BIN_TOL:
             return worst
-    step = max(1, 2_000_000 // max(len(units), 1))
-    for i in range(0, len(units), step):
-        worst = float((units[i:i + step] @ units.T).min())
-        if worst < -1e-9:
+    step = max(1, 2_000_000 // max(len(reps), 1))
+    for i in range(0, len(reps), step):
+        worst = float((reps[i:i + step] @ reps.T).min())
+        if worst < -_TIE_BIN_TOL:
             return worst
     return None
 
@@ -459,7 +488,8 @@ def _refuse_tie_on_non_flat_master(
     raise ValueError(
         f"contact: tie{_contact_label(defn)} master facet normals span "
         f"more than 90°: a pair of its {len(units)} facet normals "
-        f"(oriented outward from their volume) is {worst_deg:.1f}° apart, "
+        f"(oriented outward from their volume) is about {worst_deg:.1f}° "
+        f"apart, "
         f"so the master is curved, closed or two-sided, and the single "
         f"global outward= a tie carries pairs it wrong (the fork uses "
         f"-outward only as a per-facet sign reference; a cylindrical pile "

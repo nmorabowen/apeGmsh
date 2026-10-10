@@ -104,7 +104,7 @@ def test_tie_on_closed_cylinder_master_refuses_naming_sectors(tmp_path):
         assert "span more than 90°" in msg
         # The message states what was measured: the widest pair of a
         # closed skin's outward normals is antipodal.
-        assert re.search(r"a pair of its \d+ facet normals .* is "
+        assert re.search(r"a pair of its \d+ facet normals .* is about "
                          r"1[0-8]\d\.\d° apart", msg), msg
         assert "master_entities=/slave_entities=" in msg
         assert "radial outward=" in msg
@@ -218,7 +218,7 @@ def test_tie_on_slab_top_and_bottom_refuses(tmp_path):
                               tie=True, outward=(0.0, 0.0, 1.0),
                               name="two_sided")
         with pytest.raises(ValueError, match=r"'two_sided'.*span more than "
-                                             r"90°.*a pair of.*180\.0° apart"):
+                                             r"90°.*a pair of.*about 180\.0° apart"):
             g.mesh.queries.get_fem_data(dim=3)
         g.constraints.contact_defs.clear()
 
@@ -292,8 +292,11 @@ def test_tie_on_two_shells_one_mirrored_resolves(tmp_path):
 
 def test_pair_beyond_90_on_synthetic_normals():
     """The span oracle on bare normals: a closed skin (160k facets) is
-    refused through the extreme-normals shortcut, a 60° arc and a 90° arc
-    are accepted, a 91° arc is refused by the sweep."""
+    refused through the extreme-cells shortcut; a 60° arc, a 90° arc of
+    160k normals (past the cone bound, through the quantised sweep) and
+    three perpendicular faces are accepted; a 92° arc is refused by the
+    sweep. The quantisation tolerance only ever widens the accepted span,
+    so a pair just past 90° may pass, never a pair within it."""
     from apeGmsh.core.ConstraintsComposite import _pair_beyond_90
 
     def arc(n, deg, start=0.0):
@@ -302,8 +305,44 @@ def test_pair_beyond_90_on_synthetic_normals():
 
     assert _pair_beyond_90(arc(160_000, 360.0)) < -0.99
     assert _pair_beyond_90(arc(5_000, 60.0, start=137.0)) is None
-    assert _pair_beyond_90(arc(5_000, 90.0)) is None
-    assert _pair_beyond_90(arc(5_000, 91.0)) is not None
+    assert _pair_beyond_90(arc(160_000, 90.0)) is None
+    tripod = np.repeat(np.eye(3), 50_000, axis=0)
+    assert _pair_beyond_90(tripod) is None
+    assert _pair_beyond_90(arc(5_000, 92.0)) is not None
+
+
+def test_tie_on_fragmented_slab_faces_refuses(tmp_path):
+    """Three stacked unit boxes, fragmented so every face bounds two
+    volumes; master = the z=0 and z=1 faces of the middle box. Orienting
+    outward from the ONE reference volume (the middle box bounds both)
+    reads them 180° apart, so the tie refuses — sign-fixing each surface
+    against the outward on its own would have passed it."""
+    with apeGmsh(model_name="b4_stack", verbose=False,
+                 save_to=tmp_path / "m.h5") as g:
+        a = g.model.geometry.add_box(0, 0, -1, 1, 1, 1)
+        b = g.model.geometry.add_box(0, 0, 0, 1, 1, 1)
+        c = g.model.geometry.add_box(0, 0, 1, 1, 1, 1)
+        vols = g.model.boolean.fragment([a], [b, c])
+        g.model.sync()
+        faces = [abs(t) for d, t in gmsh.model.getEntities(2)
+                 if abs(gmsh.model.occ.getCenterOfMass(2, abs(t))[2]) < 1e-9
+                 or abs(gmsh.model.occ.getCenterOfMass(2, abs(t))[2] - 1) < 1e-9]
+        assert len(faces) == 2
+        assert all(len(gmsh.model.getAdjacencies(2, f)[0]) == 2 for f in faces)
+        side = [abs(t) for d, t in gmsh.model.getEntities(2)
+                if abs(gmsh.model.occ.getCenterOfMass(2, abs(t))[0] - 1) < 1e-9]
+        g.mesh.sizing.set_global_size(0.5)
+        g.mesh.generation.generate(3)
+        g.physical.add(3, list(vols), name="solid")
+        g.physical.add(2, faces, name="faces")
+        g.physical.add(2, side, name="side")
+        g.constraints.contact("faces", "side", formulation="mortar",
+                              tie=True, outward=(0.0, 0.0, 1.0),
+                              name="stacked")
+        with pytest.raises(ValueError, match=r"'stacked'.*span more than "
+                                             r"90°.*about 180\.0° apart"):
+            g.mesh.queries.get_fem_data(dim=3)
+        g.constraints.contact_defs.clear()
 
 
 def test_non_tie_contact_on_closed_master_is_unchanged(tmp_path):
