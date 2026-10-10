@@ -50,6 +50,7 @@ from .._internal.typed_records import (
     MaterialRecord,
     PatternRecord,
     RecorderRecord,
+    RegionRecord,
     SectionComplexRecord,
     SectionSimpleRecord,
     TimeSeriesRecord,
@@ -910,6 +911,41 @@ class H5Model:
                 type_token=str(attrs.get("type", "")),
                 tag=int(attrs.get("tag", 0)),
                 args=tuple(params),
+            ))
+        return out
+
+    def regions(self) -> list[RegionRecord]:
+        """Return every top-level ``/opensees/regions/region_NNN`` group.
+
+        The flat (non-stage) regions, in write order: the region-scoped
+        ``rayleigh`` / damping attaches (``-ele ... -rayleigh ...``,
+        ``-ele ... -damp $tag``), the recorder fan-out regions and the named
+        ones. Each row is the resolved OpenSees call (``tag`` plus the flag
+        tail in ``params``), so it replays without its K1-6 declaration.
+        Stage-bound regions are on :meth:`stages`. An absent group yields
+        an empty list; a row missing ``tag`` or ``params`` raises
+        :class:`MalformedH5Error`.
+        """
+        out: list[RegionRecord] = []
+        if "opensees" not in self._f or "regions" not in self._f["opensees"]:
+            return out
+        grp = self._f["opensees"]["regions"]
+        # ``region_{idx:03d}``: the numeric index is the write order, and
+        # a plain sort scrambles it past 999 (``region_1000`` < ``region_999``).
+        for name in sorted(grp, key=_recorder_group_order):
+            g = grp[name]
+            attrs = _attrs_as_dict(g)
+            if "tag" not in attrs or "params" not in attrs:
+                raise MalformedH5Error(
+                    f"/opensees/regions/{name}: missing tag or params; the "
+                    "writer always stamps both."
+                )
+            out.append(RegionRecord(
+                tag=int(attrs["tag"]),
+                args=_rayleigh_tail_as_floats(
+                    self._read_param_array(g, "params"),
+                    where=f"/opensees/regions/{name}",
+                ),
             ))
         return out
 
@@ -2603,6 +2639,36 @@ def _attrs_as_dict(group: Any) -> dict[str, Any]:
     for key, value in group.attrs.items():
         out[key] = _decode_bytes(value)
     return out
+
+
+def _rayleigh_tail_as_floats(
+    args: "Sequence[int | float | str]", *, where: str,
+) -> tuple[int | float | str, ...]:
+    """Return a region's args with the four ``-rayleigh`` coefficients as floats.
+
+    The bridge writes ``region $tag -ele ... -rayleigh αM βK βK0 βKc``
+    with float coefficients, and ``_write_param_array`` stores every
+    numeric slot as float64, so :meth:`H5Model._read_param_array`
+    recovers a whole-valued one (``0.0``) as an int. A replayed deck
+    would then render ``0`` where the bridge wrote ``0.0``; the
+    coefficients are floats by construction, so cast them back. A
+    ``-rayleigh`` not followed by four numbers raises
+    :class:`MalformedH5Error` naming ``where``.
+    """
+    out = list(args)
+    for k, a in enumerate(out):
+        if a != "-rayleigh":
+            continue
+        tail = out[k + 1:k + 5]
+        if len(tail) < 4 or any(isinstance(v, str) for v in tail):
+            raise MalformedH5Error(
+                f"{where}: -rayleigh must be followed by four coefficients "
+                f"(alphaM betaK betaK0 betaKc); got {tuple(tail)!r}."
+            )
+        for j in range(k + 1, k + 5):
+            out[j] = float(out[j])
+        break
+    return tuple(out)
 
 
 def _is_nan(value: Any) -> bool:

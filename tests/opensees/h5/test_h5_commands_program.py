@@ -501,27 +501,25 @@ def test_upgrading_a_pre_program_file_writes_no_program(tmp_path: Path) -> None:
         OpenSeesModel.from_h5(str(out)).emit_index("analyze", 0, stage=0)
 
 
-def test_rewrite_unlinks_runs_whose_store_it_dropped(tmp_path: Path) -> None:
-    """The rewrite does not carry ``/opensees/regions`` (a main-side gap,
-    #1579); the echoed program must not name it."""
+def test_rewrite_keeps_region_runs_linked(tmp_path: Path) -> None:
+    """The rewrite carries ``/opensees/regions`` (#1579), so the echoed
+    program keeps its ``region`` runs linked to the store, row for row,
+    and nothing is warned as dropped."""
     ops = _frame(rayleigh=True, modal=False)
     ops.damping.rayleigh(alpha_m=0.5, beta_k=0.0, on="Cols")
     src = _archive(ops, tmp_path)
     with h5py.File(str(src), "r") as f:
         assert "regions" in f["opensees"]
     out = tmp_path / "rewrite.h5"
-    with pytest.warns(H5FeatureDeferredWarning, match="regions") as rec:
+    with warnings.catch_warnings(record=True) as rec:
+        warnings.simplefilter("always")
         OpenSeesModel.from_h5(str(out.parent / src.name)).to_h5(str(out))
-    (dropped_w,) = [w for w in rec if "regions" in str(w.message)]
-    assert Path(dropped_w.filename).resolve() == Path(__file__).resolve()
+    assert not _of(rec, H5FeatureDeferredWarning)
     with h5py.File(str(out), "r") as f:
-        assert "regions" not in f["opensees"]
-        stores = [s.decode() if isinstance(s, bytes) else str(s)
-                  for s in f["opensees/program"].attrs["stores"]]
-    assert not [s for s in stores if "regions" in s]
+        assert "regions" in f["opensees"]
     with h5_reader.open(str(src)) as a, h5_reader.open(str(out)) as b:
         ra, rb = a.program(), b.program()
-    # The order survives: same methods at the same emit indices.
-    assert _expand(ra) == _expand(rb)
-    dropped = [r for r in rb if r.method == "region"]
-    assert dropped and all(r.store == "" and r.row == -1 for r in dropped)
+    assert ra == rb
+    linked = [r for r in rb if r.method == "region"]
+    assert linked and all(
+        "regions" in r.store and r.row >= 0 for r in linked)

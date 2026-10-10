@@ -663,6 +663,7 @@ def _replay_into(
     beam_integrations: "Sequence[Any]" = (),
     time_series: "Sequence[Any]" = (),
     dampings: "Sequence[Any]" = (),
+    regions: "Sequence[Any]" = (),
     elements: "Sequence[Any]" = (),
     fixes: "Sequence[Any]" = (),
     masses: "Sequence[Any]" = (),
@@ -719,6 +720,10 @@ def _replay_into(
       9a. the global ``/opensees/commands`` rows (``rayleigh``, ``eigen``,
           ``modal_damping``) in their emit order: the bridge's slot 7,
           after the masses and before the patterns and the chain
+      9b. ``emitter.region`` for the top-level ``/opensees/regions`` rows,
+          verbatim and in store order: after the global
+          ``rayleigh`` so a region-scoped one still wins per element, and
+          before the recorders that reference a fan-out region by ``-R``
       10. ``emitter.pattern_open`` (+ load / sp / eleLoad +
           pattern_close)
       11. ``emitter.recorder`` (wrapped in declaration-begin/end when
@@ -923,9 +928,8 @@ def _replay_into(
     # 7b. Damping objects (ADR 0053 D3b).  After time_series (a ``-factor``
     # tail may reference a series tag) and before elements (an element's
     # ``-damp $tag`` rides in its own arg tail and resolves the object by
-    # tag).  Region ``-damp`` attaches are NOT replayed (they live in the
-    # archival-only ``/opensees/regions`` zone — same limitation as all
-    # region / rayleigh state).
+    # tag).  Region ``-damp`` attaches replay at 9b with the other
+    # top-level regions.
     for rec in dampings:
         emitter.damping(rec.type_token, int(rec.tag), *rec.args)
 
@@ -999,7 +1003,17 @@ def _replay_into(
             )
         _replay_command(emitter, cmd, _GLOBAL_COMMAND_METHODS)
 
-    # 9b. Global initial stress (ADR 0055 Phase 1).  Emitted BEFORE
+    # 9b. Top-level regions: the archived row is the resolved OpenSees
+    # call (tag + flag tail), so every one replays verbatim, with
+    # or without its K1-6 declaration — region-scoped ``-rayleigh`` and
+    # ``-damp`` attaches, recorder fan-out and named regions alike. After
+    # the global ``rayleigh`` rows (OpenSees overwrites element Rayleigh
+    # per element, so the region must come second to win, as the bridge
+    # emits it) and before the recorders that name a fan-out region.
+    for rec in regions:
+        emitter.region(int(rec.tag), *rec.args)
+
+    # 9c. Global initial stress (ADR 0055 Phase 1).  Emitted BEFORE
     # patterns / the analysis chain so ``step_hook_ramp`` registers and
     # the trailing ``analyze`` re-wraps into the hook-driven loop — without
     # this ordering the ramp procs declare but never fire (the emitter's
