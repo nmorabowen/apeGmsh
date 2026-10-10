@@ -1,0 +1,39 @@
+name: Program probe
+
+# Lessons #1567 (stalled program PRs) and #1544 (double lock holders).
+# orphans.yml's permissions plus read-only checks/statuses (the PR check
+# rollup); no secret beyond github.token.
+
+on:
+  schedule:
+    - cron: '47 5 * * *'
+  workflow_dispatch:
+
+# One run at a time: two overlapping runs could each create the tracking
+# issue before search indexing shows the other's.
+concurrency:
+  group: program-probe
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: read
+  checks: read      # statusCheckRollup: check runs on the PR head
+  statuses: read    # statusCheckRollup: commit statuses
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Probe program PRs and lock labels
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: python scripts/program_probe.py --issue
