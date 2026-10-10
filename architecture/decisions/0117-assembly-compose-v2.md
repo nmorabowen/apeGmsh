@@ -326,6 +326,11 @@ Each is testable.
    rule: authored forces, moments, line loads and pressure directions →
    `R·v`; gravity `g` and body force `bf` (and their reduced nodal loads)
    stay global; DOF indices never transform.
+   **Note (2026-10-10, #1600).** Mass frame rule: the translational and
+   rotary triples of a mass record are diagonal tensors → `R·diag·Rᵀ`; a
+   result that is diagonal (axis-aligned rotations permute the values) is
+   emitted, a non-diagonal one is refused, since OpenSees `mass` takes a
+   diagonal only; isotropic masses are unchanged.
 7. **INV-7.** A tie that resolves zero records raises `AssemblyError` naming
    both ports; a bare port that names no assembly object raises, listing the
    instances.

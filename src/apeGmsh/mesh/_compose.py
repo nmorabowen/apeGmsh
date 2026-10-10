@@ -22,6 +22,7 @@ Cross-references
 """
 from __future__ import annotations
 
+import math
 import warnings
 from dataclasses import dataclass, field, fields as _dc_fields, replace as _dc_replace
 from datetime import datetime, timezone
@@ -1088,6 +1089,107 @@ _ELEMENT_LOAD_PARAMS: dict[str, tuple[tuple[tuple[str, ...], ...], tuple[str, ..
     "bodyForce": ((), ("g", "density", "bf")),
 }
 
+#: The instance frame rule for the mass record (ADR 0117, the mass
+#: note): ``mass`` holds two diagonal tensors, the translational
+#: ``(mx, my, mz)`` and the rotary ``(Ixx, Iyy, Izz)``, which turn by
+#: ``R diag Rᵀ`` (a value per DOF is a tensor, not a DOF index); the tag
+#: and the name never transform.
+_MASS_FIELDS: dict[str, dict[str, str]] = {
+    "MassRecord": {"node_id": "tag", "mass": "diagonal", "name": "name"},
+}
+
+#: A turned mass tensor counts as diagonal when each off-diagonal entry
+#: ``(i, j)`` is within this fraction of the larger of its two turned
+#: diagonal values ``|M_ii|``, ``|M_jj|``, with a floor of ``64 eps`` times
+#: the triple's largest value for the roundoff a zero pair still carries.
+_MASS_DIAGONAL_RTOL = 1e-9
+
+
+def _place_mass_columns(
+    mass: np.ndarray,
+    *,
+    rotate: tuple[float, float, float, float] | None,
+    label: str,
+    node_ids: np.ndarray,
+) -> np.ndarray:
+    """Turn the ``(N, 6)`` mass columns by the module rotation.
+
+    Each row holds two diagonal tensors, ``(mx, my, mz)`` and
+    ``(Ixx, Iyy, Izz)``, and each turns as ``R diag(d) Rᵀ``. Rows whose
+    triple is isotropic (``d == m I``, which ``R`` leaves alone) and
+    ``rotate=None`` are left untouched. Otherwise the turned tensor must
+    be diagonal, each off-diagonal entry within :data:`_MASS_DIAGONAL_RTOL`
+    of the larger of its two turned diagonal values (axis-aligned rotations
+    permute the values; a rotation about the
+    axis of a transversely isotropic triple keeps them), and the emitted
+    values are the source entries themselves, matched to the turned
+    diagonal, so every surviving value stays byte-identical to the deck's
+    ``repr``. A row the rotation makes non-diagonal raises
+    :class:`ComposeError` naming the instance and its nodes, because
+    OpenSees ``mass`` takes a diagonal only.
+
+    ``mass`` is the caller's private copy: it is rewritten in place and
+    returned. ``node_ids`` are the source-frame ids, for the message.
+    """
+    if rotate is None or mass.shape[0] == 0:
+        return mass
+    finite = np.isfinite(mass).all(axis=1)
+    if not finite.all():
+        broken = node_ids[~finite]
+        shown = ", ".join(str(int(i)) for i in broken[:5])
+        raise ComposeError(
+            f"compose: instance {label!r} is rotated, but the mass on "
+            f"node(s) {shown} is not finite, so it cannot be turned; fix "
+            f"the source masses or compose it without rotate=.")
+    # ``_apply_geometric_transform`` maps rows by ``x @ R.T``, so the
+    # identity stack comes back as ``R.T`` (and as ``I`` for the
+    # degenerate zero axis it tolerates).
+    R = _apply_geometric_transform(
+        np.eye(3), translate=(0.0, 0.0, 0.0), rotate=rotate,
+    ).T
+    for lo, what in ((0, "translational mass"), (3, "rotary inertia")):
+        d = mass[:, lo:lo + 3]
+        aniso = ~((d[:, 0] == d[:, 1]) & (d[:, 1] == d[:, 2]))
+        if not aniso.any():
+            continue
+        rows = np.flatnonzero(aniso)
+        uniq, inverse = np.unique(d[rows], axis=0, return_inverse=True)
+        inverse = np.asarray(inverse).reshape(-1)
+        turned = np.einsum("ik,nk,jk->nij", R, uniq, R)      # (U, 3, 3)
+        diag = np.einsum("nii->ni", turned)                   # (U, 3)
+        off = np.abs(turned)
+        off[:, (0, 1, 2), (0, 1, 2)] = 0.0
+        # Each off-diagonal entry is judged against its own pair of turned
+        # diagonal values, so a tiny mass beside a huge one is not hidden
+        # by the huge one. A pair whose turned values are both zero (the
+        # diaphragm rotary ``(0, 0, Izz)``) still carries the roundoff of
+        # the triple's largest value, so the tolerance has that floor.
+        # ``~(a <= b)`` keeps a NaN from passing.
+        mag = np.abs(diag)
+        pair = np.maximum(mag[:, :, None], mag[:, None, :])     # (U, 3, 3)
+        floor = 64.0 * np.finfo(np.float64).eps * np.abs(uniq).max(axis=1)
+        tol = np.maximum(_MASS_DIAGONAL_RTOL * pair, floor[:, None, None])
+        bad = ~(off <= tol).all(axis=(1, 2))
+        if bad.any():
+            offenders = node_ids[rows[np.isin(inverse, np.flatnonzero(bad))]]
+            shown = ", ".join(str(int(i)) for i in offenders[:5])
+            more = f", … ({offenders.size} nodes)" if offenders.size > 5 else ""
+            ax = tuple(float(v) for v in rotate[:3])
+            raise ComposeError(
+                f"compose: instance {label!r} is rotated by "
+                f"{math.degrees(float(rotate[3])):g} degrees about {ax}, "
+                f"which turns the anisotropic {what} on node(s) {shown}"
+                f"{more} into a non-diagonal tensor, and OpenSees `mass` "
+                f"takes a diagonal only. Rotate the instance by a multiple "
+                f"of 90 degrees about a coordinate axis, make that mass "
+                f"isotropic, or author it on the assembled model instead.")
+        # The turned diagonal is a permutation of the source triple (same
+        # eigenvalues): emit the nearest source entry, never the product.
+        nearest = np.abs(diag[:, :, None] - uniq[:, None, :]).argmin(axis=2)
+        placed = np.take_along_axis(uniq, nearest, axis=1)
+        mass[rows, lo:lo + 3] = placed[inverse]
+    return mass
+
 
 def _place_load_record(
     rec: Any,
@@ -1290,7 +1392,13 @@ def _rewrite_record(
     return _dc_replace(rec, **changes)
 
 
-def _rewrite_mass_set(source_masses: Any, *, offset: int, label: str) -> Any:
+def _rewrite_mass_set(
+    source_masses: Any,
+    *,
+    offset: int,
+    label: str,
+    rotate: tuple[float, float, float, float] | None = None,
+) -> Any:
     """Vectorized offset-rewrite of a columnar :class:`MassSet`.
 
     ADR 0065 v2 / plan_emit_memory_columnar.md C1–C3 — the columnar fast
@@ -1299,25 +1407,53 @@ def _rewrite_mass_set(source_masses: Any, *, offset: int, label: str) -> Any:
     single ``node_ids + offset`` array add plus a namespace-prefix on the
     (sparse) named rows — identical results to per-record
     :func:`_rewrite_record`, but without boxing one record per node.
+    The mass columns then go through the module rotation
+    (:func:`_place_mass_columns`, the frame table :data:`_MASS_FIELDS`).
 
     Falls back to the generic record path for any non-columnar mass set.
+    Raises ``TypeError`` for a ``MassRecord`` field the frame table does
+    not classify.
     """
     from apeGmsh._kernel.record_sets import MassSet
+    from apeGmsh._kernel.records._masses import MassRecord
+
+    unclassified = (
+        {f.name for f in _dc_fields(MassRecord)}
+        - set(_MASS_FIELDS["MassRecord"]))
+    if unclassified:
+        raise TypeError(
+            f"compose: MassRecord fields {sorted(unclassified)} are not "
+            f"classified in the instance frame table _MASS_FIELDS.")
 
     node_ids_fn = getattr(source_masses, "node_ids", None)
     mass_arr_fn = getattr(source_masses, "mass_array", None)
     if not (callable(node_ids_fn) and callable(mass_arr_fn)):
         # Generic fallback — record-by-record (small / stub sets).
-        return MassSet([
+        recs = [
             _rewrite_record(rec, offset=offset, label=label)
             for rec in source_masses
-        ])
+        ]
+        if rotate is not None and recs:
+            placed = _place_mass_columns(
+                np.array([r.mass for r in recs], dtype=np.float64),
+                rotate=rotate, label=label,
+                node_ids=np.array([r.node_id - offset for r in recs]),
+            )
+            recs = [
+                _dc_replace(r, mass=tuple(float(v) for v in row))
+                for r, row in zip(recs, placed)
+            ]
+        return MassSet(recs)
 
     old_ids = np.asarray(node_ids_fn(), dtype=np.int64)
     new_ids = old_ids + np.int64(offset)
     # Mass values are copied verbatim (single copy) — untouched by the
-    # tag rewrite, so deck float ``repr`` is preserved bit-for-bit.
-    new_mass = np.array(mass_arr_fn(), dtype=np.float64, copy=True)
+    # tag rewrite, so deck float ``repr`` is preserved bit-for-bit; only
+    # an anisotropic row of a rotated instance is rewritten, in place.
+    new_mass = _place_mass_columns(
+        np.array(mass_arr_fn(), dtype=np.float64, copy=True),
+        rotate=rotate, label=label, node_ids=old_ids,
+    )
     old_names = getattr(source_masses, "_names", {}) or {}
     new_names: dict[int, str] = {
         int(i): str(_prefix_namespaced_name(label, str(nm)))
@@ -1765,9 +1901,10 @@ def _rewrite_source_for_compose(
     # remapped columns and is the ONLY mass channel on the bundle — no
     # record-tuple view is materialised (review hardening: the eager
     # ``tuple(new_mass_set)`` boxed every node's record on the compose
-    # hot path and had no consumer).
+    # hot path and had no consumer). The mass tensors turn with the
+    # instance, or the rewrite refuses before anything merges.
     new_mass_set = _rewrite_mass_set(
-        source.nodes.masses, offset=offset, label=label,
+        source.nodes.masses, offset=offset, label=label, rotate=rotate,
     )
     # Embedded-reinforcement ties (ADR 0067 P5.1): guard cross-Part ties
     # (broken conformal topology) BEFORE rewriting, then offset-rewrite
