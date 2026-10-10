@@ -2118,6 +2118,12 @@
       "skill": "references/api-cheatsheet.md",
       "symbol": "g.parts.add_plane_wave_box_2d"
     },
+    "g.parts.add_station_soil_box": {
+      "doc": "Build a soil box whose DRM layer sits on the stations of an ``.h5drm``.",
+      "signature": "add_station_soil_box(lattice, *, drm: 'bool' = True, exterior=None, boundary: 'str' = 'fixed', skin_thickness=None, nearfield=None, pit=None, name: 'str' = 'soil', apply_transfinite: 'bool' = True)",
+      "skill": "references/api-cheatsheet.md",
+      "symbol": "g.parts.add_station_soil_box"
+    },
     "g.parts.build_face_map": {
       "doc": "Partition surface elements by instance node ownership.",
       "signature": "build_face_map(node_map: 'dict[str, set[int]]') -> 'dict[str, np.ndarray]'",

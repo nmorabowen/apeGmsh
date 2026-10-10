@@ -645,6 +645,96 @@ class PartsRegistry(_PartsFragmentationMixin):
             apply_transfinite=apply_transfinite,
         )
 
+    def add_station_soil_box(
+        self,
+        lattice,
+        *,
+        drm: bool = True,
+        exterior=None,
+        boundary: str = "fixed",
+        skin_thickness=None,
+        nearfield=None,
+        pit=None,
+        name: str = "soil",
+        apply_transfinite: bool = True,
+    ):
+        """Build a soil box whose DRM layer sits on the stations of an ``.h5drm``.
+
+        One builder, two configurations sharing one interior (ADR 0118):
+
+        * ``drm=True`` — interior + a one-cell DRM layer between the file's
+          two station shells + ``exterior`` + a ``"fixed"`` (PG for
+          ``ops.fix``) or ``"absorbing"`` (ASD skin) outer boundary. Every
+          DRM-layer node is a station; no other node is near one.
+        * ``drm=False`` — the same interior wrapped by an absorbing skin
+          (``boundary="absorbing"``, base input on ``result.skin.bottom_pgs``),
+          no DRM layer, no exterior.
+
+        Parameters
+        ----------
+        lattice : SoilLattice
+            ``SoilLattice.from_h5drm(path, crd_scale=, transform=, x0=)``
+            with the values the deck's ``pattern H5DRM`` carries, or
+            ``SoilLattice.regular(lo=, hi=, spacing=)`` for a box with no file.
+        drm : bool
+            Build the DRM layer (needs a lattice from an ``.h5drm`` and an
+            ``exterior``).
+        exterior : Exterior | None
+            ``Exterior(thickness, size)``; ``thickness`` is ``t`` or
+            ``(lateral, bottom)``.
+        boundary : {"fixed", "absorbing", "none"}
+            Outer boundary of the soil. ``"absorbing"`` needs a z-up lattice
+            (the ASD skin's ``B`` face is its min-z face); a z-down one is
+            refused.
+        skin_thickness : float | (tx, ty, tz) | None
+            Absorbing skin thickness; ``None`` = the adjacent cell size.
+        nearfield : NearField | None
+            A block in a hole of the lattice with its own spacing, tied by
+            ``ASDEmbeddedNodeElement`` (``couple="embedded"``).
+        pit : Pit | None
+            A void reaching the free surface, cut from the near-field block
+            (or from the lattice when its planes are lattice lines).
+        name : str
+            PG-name prefix (``"<name>_domain"``, ``"<name>_drm"``, ...).
+
+        Returns
+        -------
+        StationSoilBoxResult
+            PG names, ``frame.pattern_kwargs()`` for ``ops.pattern.H5DRM``,
+            the absorbing ``skin``, expected hex / node counts and
+            ``station_check(fem)``, the check of the meshed DRM layer against
+            the stations.
+
+        Example
+        -------
+        ::
+
+            from apeGmsh.parts import SoilLattice, Exterior, NearField, Pit
+            lat = SoilLattice.from_h5drm(
+                "motion.h5drm", crd_scale=1e6,
+                transform=((0, 1, 0), (1, 0, 0), (0, 0, -1)),
+                x0=(22000.0, 15500.0, 0.0))
+            soil = g.parts.add_station_soil_box(
+                lat, exterior=Exterior((22500.0, 22500.0), 4500.0),
+                nearfield=NearField(lo=(-13000.0, -19500.0, -27500.0),
+                                    hi=(57000.0, 50500.0, 0.0),
+                                    size=(2500.0, 2500.0, 1000.0)),
+                pit=Pit(lo=(0.0, 0.0, -6000.0), hi=(44000.0, 31000.0, 0.0)))
+            # mesh; fem = ...get_fem_data(dim=3); soil.station_check(fem);
+            # apeSees(fem); stdBrick on soil.domain_pg;
+            # ops.fix(pg=soil.boundary_pg, dofs=(1, 1, 1));
+            # ops.pattern.H5DRM(factor=1000.0, **soil.frame.pattern_kwargs())
+        """
+        from apeGmsh.parts.station_box import build_station_soil_box
+
+        return build_station_soil_box(
+            self._parent, lattice,
+            drm=drm, exterior=exterior,
+            boundary=boundary,  # type: ignore[arg-type]
+            skin_thickness=skin_thickness, nearfield=nearfield, pit=pit,
+            name=name, apply_transfinite=apply_transfinite,
+        )
+
     def add_absorbing_shell(
         self,
         *,
