@@ -12,10 +12,23 @@ below except at a waived ledger site.
 
 The hub lock (S6): no ``BuiltModel`` method (the emit) except
 ``_tag_plan``, which runs the planner, no module-level function of
-``apesees.py``, no function of ``build.py`` outside its planners and its
-three replay entry points, and nothing in ``recorder.py`` may break them,
-with no waiver at all. ``max_plus_one`` is a replay-lock rule only: the
-hubs compute ``max(...) + 1`` for things that are not tags (a DOF range).
+``apesees.py``, no function of the build modules outside the planners and
+the three replay entry points, and nothing in ``recorder.py`` may break
+them, with no waiver at all. ``max_plus_one`` is a replay-lock rule only:
+the hubs compute ``max(...) + 1`` for things that are not tags (a DOF
+range).
+
+"The build" is a module *set* (S2-0, #1611): ``_internal/build.py`` today,
+every module under ``_internal/build/`` once S2 splits it, whichever
+exists (:func:`build_modules`). The minting helpers are derived over the
+union of the set, following calls across its modules through
+``from .x import name`` and ``from apeGmsh.opensees._internal.build[.x]
+import name`` (:func:`derive_minting_helpers`), and the hub scope covers
+every module of the set. Only those static ``ImportFrom`` forms are
+followed: a build module imported as a module object, or star-imported,
+fails the derivation outright rather than letting a helper that mints
+through such an import go unseen, and so does a module-level alias or
+dispatch table naming a build function.
 
 The rules:
 
@@ -38,7 +51,7 @@ The rules:
 ``allocator_param`` (hub lock)
     take a parameter annotated ``TagAllocator``.
 
-``build.py``'s minting helpers are its planners (:data:`PLANNERS`, which
+The build's minting helpers are its planners (:data:`PLANNERS`, which
 ``tag_plan.plan_tags`` runs) and exactly three standalone replay entry
 points (:data:`REPLAY_ENTRIES`), one per replay the deck archive cannot
 feed yet: the step-8b reinforce ties, and the global and staged
@@ -66,14 +79,18 @@ from __future__ import annotations
 import ast
 import re
 from collections import Counter
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
 
 _ROOT = Path(__file__).resolve().parents[3]
+_SRC = _ROOT / "src"
 _OPENSEES = _ROOT / "src" / "apeGmsh" / "opensees"
+#: The two layouts of the build: one module today, a package after S2.
 _BUILD = _OPENSEES / "_internal" / "build.py"
+_BUILD_PKG = _OPENSEES / "_internal" / "build"
 _APESEES = _OPENSEES / "apesees.py"
 _RECORDER = _OPENSEES / "recorder.py"
 _ALLOCATOR = _OPENSEES / "_internal" / "tag_allocator.py"
@@ -104,7 +121,7 @@ RECORDER_MINT_METHODS: frozenset[str] = frozenset()
 #: on that list, and the locked modules may reference none of them.
 TAG_PLAN_MINTING_HELPERS = frozenset({"plan_regions", "plan_tags"})
 
-#: ``build.py``'s planners: the allocation loops ``tag_plan.plan_tags`` runs
+#: The build's planners: the allocation loops ``tag_plan.plan_tags`` runs
 #: once per emit mode, before the emit.
 PLANNERS = frozenset({
     "allocate_element_tags",
@@ -116,7 +133,7 @@ PLANNERS = frozenset({
     "reserve_fem_element_tags",
 })
 
-#: ``build.py``'s standalone replay entry points: the only writers that
+#: The build's standalone replay entry points: the only writers that
 #: number tags from an allocator of their own, for the deck replay the
 #: archive cannot feed yet. Each is named by a ledger waiver.
 REPLAY_ENTRIES = frozenset({
@@ -125,9 +142,9 @@ REPLAY_ENTRIES = frozenset({
     "replay_reinforce_ties",
 })
 
-#: Every module-level function of ``build.py`` that mints a tag, directly or
-#: through another one. Derived by :func:`derive_minting_helpers`; this
-#: literal is the lock on that list.
+#: Every module-level function of the build module set that mints a tag,
+#: directly or through another one, in any module of the set. Derived by
+#: :func:`derive_minting_helpers`; this literal is the lock on that list.
 MINTING_HELPERS = PLANNERS | REPLAY_ENTRIES
 
 #: Every ``TagAllocator(...)`` construction in ``src/apeGmsh`` outside
@@ -158,6 +175,46 @@ def _parse(path: Path) -> ast.Module:
     return ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
 
 
+# ---------------------------------------------------------------------------
+# The build module set
+# ---------------------------------------------------------------------------
+
+
+def build_modules(file: Path = _BUILD, pkg: Path = _BUILD_PKG) -> list[Path]:
+    """The build's modules, by whichever layout exists: ``[build.py]``
+    today, ``build/**/*.py`` once S2 splits it. Both at once, or neither,
+    is a broken tree and fails here rather than locking half of it. The
+    package is its ``__init__.py``: a ``build/`` folder holding only a
+    ``__pycache__`` left by a checkout from after the split is not one."""
+    is_file, is_pkg = file.is_file(), (pkg / "__init__.py").is_file()
+    assert is_file != is_pkg, (
+        f"the build is one module or one package, not {is_file=} {is_pkg=}")
+    return [file] if is_file else sorted(pkg.rglob("*.py"))
+
+
+def module_name(path: Path, root: Path) -> str:
+    """The absolute dotted name of ``path`` under source root ``root``
+    (``pkg/__init__.py`` is ``pkg``)."""
+    parts = list(path.relative_to(root).with_suffix("").parts)
+    if parts[-1] == "__init__":
+        parts.pop()
+    return ".".join(parts)
+
+
+def module_set(paths: Iterable[Path], root: Path) -> dict[str, ast.Module]:
+    """Parse ``paths`` into ``{dotted name: tree}`` under ``root``."""
+    return {module_name(p, root): _parse(p) for p in paths}
+
+
+def _build_set() -> dict[str, ast.Module]:
+    return module_set(build_modules(), _SRC)
+
+
+#: The build modules as the hub lock keys them: paths under ``opensees/``.
+_BUILD_RELS = frozenset(
+    p.relative_to(_OPENSEES).as_posix() for p in build_modules())
+
+
 def _is_allocator_mint_attr(node: ast.AST) -> bool:
     """``x.allocate*`` / ``x.reserve_through``: a ``TagAllocator`` mint."""
     return isinstance(node, ast.Attribute) and (
@@ -176,31 +233,169 @@ def _is_mint_attr(node: ast.AST) -> bool:
 # ---------------------------------------------------------------------------
 
 
-def derive_minting_helpers(tree: ast.Module) -> frozenset[str]:
-    """``build.py`` functions that mint, directly or through each other."""
-    funcs = {
-        n.name: n for n in tree.body
-        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+_Func = tuple[str, str]  # (dotted module, top-level function name)
+
+
+def _package_of(module: str, is_pkg: bool) -> str:
+    """The package a module's relative imports resolve from. A package
+    (an ``__init__``) is recognised by having a submodule in the set; a
+    set built from ``rglob("*.py")`` contains one with every package."""
+    return module if is_pkg else module.rpartition(".")[0]
+
+
+def _resolve_import_from(
+    node: ast.ImportFrom, package: str,
+) -> str | None:
+    """The absolute dotted module an ``ImportFrom`` names, or ``None`` for
+    a relative import that climbs above the top package."""
+    if node.level == 0:
+        return node.module or ""
+    base = package.split(".") if package else []
+    climb = node.level - 1
+    if climb > len(base):
+        return None
+    base = base[:len(base) - climb] if climb else base
+    return ".".join([*base, node.module]) if node.module else ".".join(base)
+
+
+def _import_aliases(
+    nodes: Iterable[ast.AST], package: str, modules: Mapping[str, ast.Module],
+    where: str,
+) -> dict[str, _Func]:
+    """``{local name: (module, name)}`` for every name imported from a
+    module of the set, over the ``ImportFrom`` statements in ``nodes``.
+
+    Fails on the import forms the derivation cannot follow when they
+    reach into the set: a star import, or a module of the set bound as an
+    object (``from . import x``, ``import ...build.x``), whose attribute
+    calls would hide a minting helper.
+    """
+    out: dict[str, _Func] = {}
+    for node in nodes:
+        if isinstance(node, ast.Import):
+            hit = [a.name for a in node.names if a.name in modules]
+            assert not hit, (
+                f"{where}: imports build module(s) {hit} as objects; the "
+                "tag-law lock follows only `from .x import name`")
+            continue
+        if not isinstance(node, ast.ImportFrom):
+            continue
+        source = _resolve_import_from(node, package)
+        if source is None:
+            continue
+        for alias in node.names:
+            if source in modules:
+                assert alias.name != "*", (
+                    f"{where}: star-imports build module {source!r}; the "
+                    "tag-law lock follows only `from .x import name`")
+                assert f"{source}.{alias.name}" not in modules, (
+                    f"{where}: binds build module "
+                    f"{source}.{alias.name!r} as an object; the tag-law "
+                    "lock follows only `from .x import name`")
+                out[alias.asname or alias.name] = (source, alias.name)
+            elif f"{source}.{alias.name}" in modules:
+                raise AssertionError(
+                    f"{where}: binds build module "
+                    f"{source}.{alias.name!r} as an object; the tag-law "
+                    "lock follows only `from .x import name`")
+    return out
+
+
+def derive_minting_helpers(
+    modules: Mapping[str, ast.Module] | ast.Module,
+) -> frozenset[str]:
+    """The module-level functions of a module set that mint, directly or
+    through each other, across modules.
+
+    ``modules`` maps absolute dotted names to trees (:func:`module_set`);
+    a bare tree is a set of one. A call is followed when its callee is a
+    top-level function of the same module, or a name imported from a
+    module of the set at module level or inside the caller (an alias or a
+    re-export through another module of the set included). Two modules
+    defining one function name is refused: the scanner keys helpers by
+    bare name.
+    """
+    if isinstance(modules, ast.Module):
+        modules = {"<module>": modules}
+    packages = {
+        m: _package_of(m, any(o.startswith(f"{m}.") for o in modules))
+        for m in modules
     }
-    minting: set[str] = set()
-    calls: dict[str, set[str]] = {}
-    for name, fn in funcs.items():
-        calls[name] = set()
+    funcs: dict[_Func, ast.FunctionDef | ast.AsyncFunctionDef] = {}
+    for m, tree in modules.items():
+        for n in tree.body:
+            if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                funcs[(m, n.name)] = n
+    by_name = Counter(name for _m, name in funcs)
+    dupes = sorted(n for n, k in by_name.items() if k > 1)
+    assert not dupes, (
+        f"function name(s) defined in two build modules: {dupes}; the "
+        "tag-law lock keys helpers by bare name")
+
+    # Every node outside any function body (methods included): the
+    # module-level statements, and class bodies.
+    def outside_functions(tree: ast.Module) -> list[ast.AST]:
+        inside = {
+            id(k) for fn in ast.walk(tree)
+            if isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef))
+            for k in ast.walk(fn) if k is not fn}
+        return [n for n in ast.walk(tree) if id(n) not in inside]
+
+    top_level = {m: outside_functions(t) for m, t in modules.items()}
+    module_aliases = {
+        m: _import_aliases(top_level[m], packages[m], modules, m)
+        for m in modules
+    }
+
+    def target(ref: _Func, seen: frozenset[_Func] = frozenset()) -> _Func | None:
+        """The function ``ref`` names, through re-exports."""
+        if ref in funcs:
+            return ref
+        m, name = ref
+        if ref in seen or m not in modules or name not in module_aliases[m]:
+            return None
+        return target(module_aliases[m][name], seen | {ref})
+
+    # A module-level alias (``_f = plan_contacts``) or table
+    # (``{"c": plan_contacts}``) would hide a mint from the call-following
+    # below and from the scanner's bare-name rule: refuse it.
+    for m in modules:
+        for n in top_level[m]:
+            if not (isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load)):
+                continue
+            hit = target(module_aliases[m].get(n.id, (m, n.id)))
+            assert hit is None, (
+                f"{m}:{n.lineno}: module-level reference to build function "
+                f"{hit[1]!r} (an alias or a dispatch table); the tag-law lock "
+                "follows calls only, so call it by name inside a function")
+
+    minting: set[_Func] = set()
+    calls: dict[_Func, set[_Func]] = {}
+    for key, fn in funcs.items():
+        m, _name = key
+        aliases = {
+            **module_aliases[m],
+            **_import_aliases(ast.walk(fn), packages[m], modules, m),
+        }
+        calls[key] = set()
         for node in ast.walk(fn):
             if not isinstance(node, ast.Call):
                 continue
             if _is_mint_attr(node.func):
-                minting.add(name)
-            if isinstance(node.func, ast.Name) and node.func.id in funcs:
-                calls[name].add(node.func.id)
+                minting.add(key)
+            if isinstance(node.func, ast.Name):
+                ref = aliases.get(node.func.id, (m, node.func.id))
+                callee = target(ref)
+                if callee is not None:
+                    calls[key].add(callee)
     grew = True
     while grew:
         grew = False
-        for name, callees in calls.items():
-            if name not in minting and callees & minting:
-                minting.add(name)
+        for key, callees in calls.items():
+            if key not in minting and callees & minting:
+                minting.add(key)
                 grew = True
-    return frozenset(minting)
+    return frozenset(name for _m, name in minting)
 
 
 # ---------------------------------------------------------------------------
@@ -316,19 +511,21 @@ def scan(
 
 
 # ---------------------------------------------------------------------------
-# The hub lock: the emit side of apesees.py, build.py and recorder.py
+# The hub lock: the emit side of apesees.py, the build modules and recorder.py
 # ---------------------------------------------------------------------------
 
 
 def _in_hub_scope(
     module: str, function: str, module_funcs: frozenset[str] = frozenset(),
+    *, build: frozenset[str] = _BUILD_RELS,
 ) -> bool:
     """Whether the hub lock covers ``function`` (a scanner qualname) of
     ``module``: every emit-side function, which must mint nothing.
 
     ``apesees.py``: every ``BuiltModel`` method except ``_tag_plan`` (it
     runs the planner) and every module-level function (``module_funcs``);
-    the ``apeSees`` bridge registers primitive tags and is out of scope. ``build.py``:
+    the ``apeSees`` bridge registers primitive tags and is out of scope.
+    A module of the build set (``build``, paths under ``opensees/``):
     every function but the planners and the replay entry points.
     ``recorder.py``: everything.
     """
@@ -339,7 +536,7 @@ def _in_hub_scope(
         if top == "BuiltModel":
             return bool(rest) and rest[0] != "_tag_plan"
         return top in module_funcs
-    if module == "_internal/build.py":
+    if module in build:
         return top not in MINTING_HELPERS
     return module == "recorder.py"
 
@@ -349,7 +546,7 @@ def hub_violations(
 ) -> list[str]:
     """Every rule broken in the hub lock's scope, as readable strings."""
     out: list[str] = []
-    for path in (_APESEES, _BUILD, _RECORDER):
+    for path in (_APESEES, *build_modules(), _RECORDER):
         tree = (sources or {}).get(path) or _parse(path)
         rel = path.relative_to(_OPENSEES).as_posix()
         funcs = frozenset(
@@ -493,9 +690,9 @@ def test_tag_plan_minting_helper_list_is_derived() -> None:
 
 
 def test_minting_helper_list_is_derived_from_build() -> None:
-    derived = derive_minting_helpers(_parse(_BUILD))
+    derived = derive_minting_helpers(_build_set())
     assert derived == MINTING_HELPERS, (
-        "build.py's tag-minting helpers changed; update MINTING_HELPERS "
+        "the build's tag-minting helpers changed; update MINTING_HELPERS "
         f"(new: {sorted(derived - MINTING_HELPERS)}, "
         f"gone: {sorted(MINTING_HELPERS - derived)})"
     )
@@ -630,14 +827,17 @@ def test_planted_violation_in_a_locked_module_fails_the_lock(body: str) -> None:
 
 
 def test_planted_minting_helper_fails_the_list_lock() -> None:
-    """A new ``build.py`` function that mints must join MINTING_HELPERS."""
-    planted = _BUILD.read_text(encoding="utf-8") + (
+    """A new build function that mints must join MINTING_HELPERS."""
+    first = build_modules()[0]
+    planted = first.read_text(encoding="utf-8") + (
         "\n\ndef emit_planted(emitter, tags):\n"
         "    return tags.allocate('element')\n"
         "\n\ndef emit_planted_caller(emitter, tags):\n"
         "    return emit_planted(emitter, tags)\n"
     )
-    derived = derive_minting_helpers(ast.parse(planted))
+    trees = _build_set()
+    trees[module_name(first, _SRC)] = ast.parse(planted)
+    derived = derive_minting_helpers(trees)
     assert derived - MINTING_HELPERS == {"emit_planted", "emit_planted_caller"}
 
 
@@ -664,13 +864,14 @@ def test_hub_emit_side_mints_nothing() -> None:
 
 
 def test_replay_entries_are_referenced_only_under_a_waiver() -> None:
-    """Outside ``build.py``, only the ledger's waived functions of
+    """Outside the build modules, only the ledger's waived functions of
     ``compose.py`` name a replay entry point, anywhere in ``src/apeGmsh``."""
     _n, waivers = _read_ledger()
     allowed = {(w.module, w.function) for w in waivers if w.rule == "helper"}
     seen: set[tuple[str, str]] = set()
+    build = set(build_modules())
     for path in sorted(_OPENSEES.parent.rglob("*.py")):
-        if path == _BUILD:
+        if path in build:
             continue
         for v in scan(_parse(path), REPLAY_ENTRIES):
             if v.rule != "helper":
@@ -696,15 +897,19 @@ def test_allocator_constructions_are_the_known_sites() -> None:
         f"TagAllocator constructions changed: {dict(found)}")
 
 
+#: One module of the build set, for the planted hub cases below.
+_A_BUILD_REL = min(_BUILD_RELS)
+
+
 @pytest.mark.parametrize(("module", "snippet"), [
-    ("_internal/build.py",
+    (_A_BUILD_REL,
      "\n\ndef emit_planted(emitter, fem, tag_plan):\n"
      "    from .tag_allocator import TagAllocator\n"
      "    return TagAllocator()\n"),
-    ("_internal/build.py",
+    (_A_BUILD_REL,
      "\n\ndef emit_planted(emitter, fem, tags: TagAllocator):\n"
      "    return None\n"),
-    ("_internal/build.py",
+    (_A_BUILD_REL,
      "\n\ndef emit_planted(emitter, entries, tag_plan):\n"
      "    return plan_mp_elements(entries, tag_plan)\n"),
     ("apesees.py",
@@ -730,8 +935,144 @@ def test_hub_scope_spares_the_planner_and_replay_entries() -> None:
     assert _in_hub_scope(
         "apesees.py", "_planned_element_specs",
         frozenset({"_planned_element_specs"}))
-    assert not _in_hub_scope("_internal/build.py", "plan_mp_elements")
-    assert not _in_hub_scope(
-        "_internal/build.py", "replay_reinforce_ties.standalone")
-    assert _in_hub_scope("_internal/build.py", "emit_reinforce_ties")
+    for rel in sorted(_BUILD_RELS):
+        assert not _in_hub_scope(rel, "plan_mp_elements")
+        assert not _in_hub_scope(rel, "replay_reinforce_ties.standalone")
+        assert _in_hub_scope(rel, "emit_reinforce_ties")
     assert _in_hub_scope("recorder.py", "MPCO.materialize")
+    # A module outside the set is not in the build's scope, however named.
+    assert not _in_hub_scope("_internal/build_helpers.py", "emit_x")
+    assert not _in_hub_scope("_internal/build.py", "emit_x", build=frozenset())
+
+
+# ---------------------------------------------------------------------------
+# The module set (S2-0, #1611): the lock survives the split of build.py
+# ---------------------------------------------------------------------------
+
+
+def _cut(text: str, tree: ast.Module, name: str) -> tuple[str, str]:
+    """``(text without top-level function name, that function's source)``."""
+    (fn,) = [
+        n for n in tree.body
+        if isinstance(n, ast.FunctionDef) and n.name == name]
+    lines = text.splitlines(keepends=True)
+    start = (fn.decorator_list[0].lineno if fn.decorator_list else fn.lineno) - 1
+    end = fn.end_lineno or 0
+    return "".join(lines[:start] + lines[end:]), "".join(lines[start:end])
+
+
+def _simulated_split(tmp_path: Path, planted: str = "") -> dict[str, ast.Module]:
+    """``build.py`` as a two-module package ``pkg``: ``plan_contacts`` moves to
+    ``pkg/contacts.py``, the rest stays in ``pkg/core.py`` and reaches it
+    through ``from .contacts import plan_contacts``; ``planted`` is appended
+    to ``core.py``."""
+    text = _BUILD.read_text(encoding="utf-8")
+    rest, moved = _cut(text, ast.parse(text), "plan_contacts")
+    pkg = tmp_path / "pkg"
+    pkg.mkdir()
+    (pkg / "__init__.py").write_text(
+        "from .contacts import plan_contacts\n", encoding="utf-8")
+    (pkg / "contacts.py").write_text(
+        "from ..tag_allocator import TagAllocator\n\n\n" + moved,
+        encoding="utf-8")
+    (pkg / "core.py").write_text(
+        "from .contacts import plan_contacts\n" + rest + planted,
+        encoding="utf-8")
+    return module_set(sorted(pkg.rglob("*.py")), tmp_path)
+
+
+def test_simulated_split_derives_the_same_helpers(tmp_path: Path) -> None:
+    """Moving a planner into its own module changes nothing: the helper
+    set is derived over the union of the set."""
+    trees = _simulated_split(tmp_path)
+    assert set(trees) == {"pkg", "pkg.contacts", "pkg.core"}
+    assert derive_minting_helpers(trees) == MINTING_HELPERS
+    # One module alone no longer sees it: the union is what locks.
+    assert "plan_contacts" not in derive_minting_helpers(trees["pkg.core"])
+
+
+@pytest.mark.parametrize("body", [
+    # a module-level relative import
+    "    return plan_contacts(fem, entries, tags)\n",
+    # a function-local aliased relative import
+    "    from .contacts import plan_contacts as pc\n"
+    "    return pc(fem, entries, tags)\n",
+    # an absolute import of the moved module
+    "    from pkg.contacts import plan_contacts as pc\n"
+    "    return pc(fem, entries, tags)\n",
+    # a re-export through the package's __init__
+    "    from pkg import plan_contacts as pc\n"
+    "    return pc(fem, entries, tags)\n",
+    "    from . import contacts\n"
+    "    return contacts.plan_contacts(fem, entries, tags)\n",
+])
+def test_simulated_split_catches_a_mint_through_the_moved_module(
+        tmp_path: Path, body: str) -> None:
+    """A non-planner that mints only by calling the moved planner is still
+    a minting helper, so it fails the list lock, and its reference is in
+    the hub lock's scope. A module-object import of a build module is not
+    followed and fails outright instead."""
+    planted = "\n\ndef emit_planted_caller(emitter, fem, entries, tags):\n" + body
+    trees = _simulated_split(tmp_path, planted)
+    if "from . import contacts" in body:
+        with pytest.raises(AssertionError, match="as an object"):
+            derive_minting_helpers(trees)
+        return
+    derived = derive_minting_helpers(trees)
+    assert derived - MINTING_HELPERS == {"emit_planted_caller"}
+    build = frozenset({"pkg/core.py", "pkg/contacts.py", "pkg/__init__.py"})
+    hits = [
+        v for v in scan(trees["pkg.core"], MINTING_HELPERS, hub=True)
+        if v.rule != "max_plus_one"
+        and _in_hub_scope("pkg/core.py", v.function, build=build)]
+    assert [(v.function, v.rule, v.symbol) for v in hits] == [
+        ("emit_planted_caller", "helper", "plan_contacts")]
+
+
+def test_simulated_split_refuses_a_star_import(tmp_path: Path) -> None:
+    trees = _simulated_split(
+        tmp_path, "\n\nfrom .contacts import *  # noqa: F403\n")
+    with pytest.raises(AssertionError, match="star-imports"):
+        derive_minting_helpers(trees)
+
+
+@pytest.mark.parametrize("planted", [
+    # an alias of the imported planner, called from a non-planner
+    "\n\n_pc = plan_contacts\n\n\n"
+    "def emit_planted_caller(fem, entries, tags):\n"
+    "    return _pc(fem, entries, tags)\n",
+    # a dispatch table holding it
+    "\n\n_PLANTED_TABLE = {'contacts': plan_contacts}\n",
+    # an alias of a same-module function
+    "\n\n_planted = emit_contacts\n",
+])
+def test_simulated_split_refuses_a_module_level_function_reference(
+        tmp_path: Path, planted: str) -> None:
+    trees = _simulated_split(tmp_path, planted)
+    with pytest.raises(AssertionError, match="module-level reference"):
+        derive_minting_helpers(trees)
+
+
+def test_build_layout_ignores_a_pycache_only_package_folder(
+        tmp_path: Path) -> None:
+    """A ``build/`` folder holding only ``__pycache__`` (left by a checkout
+    from after the split) is not the package layout."""
+    file = tmp_path / "build.py"
+    file.write_text("", encoding="utf-8")
+    (tmp_path / "build" / "__pycache__").mkdir(parents=True)
+    (tmp_path / "build" / "__pycache__" / "x.cpython-312.pyc").write_bytes(b"")
+    assert build_modules(file, tmp_path / "build") == [file]
+    (tmp_path / "build" / "__init__.py").write_text("", encoding="utf-8")
+    with pytest.raises(AssertionError, match="one module or one package"):
+        build_modules(file, tmp_path / "build")
+    file.unlink()
+    assert build_modules(file, tmp_path / "build") == [
+        tmp_path / "build" / "__init__.py"]
+
+
+def test_simulated_split_refuses_a_duplicate_function_name(
+        tmp_path: Path) -> None:
+    trees = _simulated_split(
+        tmp_path, "\n\ndef plan_contacts(fem, entries, tags):\n    return 0\n")
+    with pytest.raises(AssertionError, match="two build modules"):
+        derive_minting_helpers(trees)
