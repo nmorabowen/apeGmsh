@@ -54,7 +54,10 @@ the realigned Tier-3 box (A3): the Tier-4 interior wrapped by an absorbing skin.
    transfinite per sub-volume) whose axes are the interior runs, then, outward,
    the one-cell DRM layer (`drm=True`), the `Exterior(thickness, size)` zone, and
    for `boundary="absorbing"` a one-cell ASD skin; `boundary="fixed"` returns a
-   dim-2 PG for `ops.fix`. `drm=True` needs an exterior. The tangential spacing
+   dim-2 PG for `ops.fix`. `drm=True` needs an exterior. The skin needs a z-up
+   lattice: `ASDAbsorbingBoundary3D` takes the min-z face of a `B` element as
+   its base, which in a z-down model faces the soil, so a z-down lattice with
+   `boundary="absorbing"` is refused. The tangential spacing
    of the exterior follows the lattice (conforming, no transition elements).
 4. **The near-field block** (`NearField(lo, hi, size, lines, couple, stiffness)`)
    fills a hole of the lattice whose faces are lattice lines, reaches the free
@@ -73,9 +76,9 @@ the realigned Tier-3 box (A3): the Tier-4 interior wrapped by an absorbing skin.
    `lattice_interface`, `nearfield_interface`.
 7. **The result carries the gates:** `frame.pattern_kwargs()` for
    `ops.pattern.H5DRM`, hex counts per PG and the node count computed from the
-   axes, and a pre-mesh `station_check` (every DRM-layer node is a station and
-   every station a DRM-layer node, maximum distance below the tolerance).
-   `h5drm_matches` reproduces the fork's matching rule on a mesh.
+   axes, and `station_check(fem)`, run on the mesh with the fork's matching
+   rule: the nodes within the tolerance of a station are exactly the DRM-layer
+   nodes, one per station. `h5drm_matches` reproduces the same rule.
 
 ## Consequences
 

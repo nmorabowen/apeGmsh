@@ -352,7 +352,8 @@ class NearField:
     surface, and stay at least one lattice cell inside the interior on the
     sides and the bottom (so no near-field node is near a station).
     ``size`` is the target spacing per axis; the block's lines also pass
-    through the pit planes and any ``lines`` given per axis.
+    through the pit planes and any ``lines`` given per axis (each inside the
+    block; a value outside it is refused).
     ``couple="embedded"`` declares ``g.constraints.embedded`` (the near-field
     interface nodes into the lattice hole faces: ``ASDEmbeddedNodeElement``,
     as the rev2_m36 decks); ``None`` leaves the coupling to the caller.
@@ -388,11 +389,15 @@ class Exterior:
 
 @dataclass(frozen=True)
 class StationCheck:
-    """Pre-mesh check of the DRM layer against the stations."""
+    """Mesh check of the DRM layer against the stations (fork matching rule)."""
 
     n_stations: int
     n_drm_nodes: int
+    """Mesh nodes in the DRM-layer PG."""
+    n_matched: int
+    """Mesh nodes within ``tolerance`` (strict) of their nearest station."""
     max_distance: float
+    """Largest node-to-station distance over the matched nodes."""
     tolerance: float
 
 
@@ -425,7 +430,40 @@ class StationSoilBoxResult:
     """Hex count per volume PG (and ``"skin"``), from the axes."""
     expected_nodes: int = 0
     """Mesh node count (lattice and near-field nodes are not shared)."""
-    station_check: StationCheck | None = None
+    stations: np.ndarray | None = field(default=None, repr=False, compare=False)
+    """Station coordinates in the model frame (DRM box only)."""
+
+    def station_check(self, fem) -> StationCheck:
+        """Check the meshed DRM layer against the stations; raise if it misses.
+
+        ``fem`` is the ``FEMData`` of the meshed session. Every mesh node is
+        tested against its nearest station with the fork's rule (``d <
+        distance_tolerance``, strict). Passes only when the matched nodes are
+        exactly the DRM-layer PG nodes and each station is matched by exactly
+        one node; raises ``RuntimeError`` with the counts otherwise.
+        """
+        if not self.drm_pg or self.stations is None or self.frame is None:
+            raise ValueError(
+                "station_check: this box has no DRM layer (built with drm=False).")
+        tol = self.frame.distance_tolerance
+        ids = np.asarray(fem.nodes.ids)
+        xyz = np.asarray(fem.nodes.coords, dtype=float)
+        d, idx = nearest_station(xyz, self.stations)
+        m = d < tol
+        drm = {int(i) for i in np.asarray(fem.nodes.select(pg=self.drm_pg).ids)}
+        matched = {int(i) for i in ids[m]}
+        n_st = len(self.stations)
+        n_hit = len(set(idx[m].tolist()))
+        if matched != drm or int(m.sum()) != n_st or n_hit != n_st:
+            raise RuntimeError(
+                f"station box: the mesh does not put one node on each of the "
+                f"{n_st} stations: {int(m.sum())} nodes within the tolerance "
+                f"{tol:g} hit {n_hit} distinct stations; {len(drm - matched)} "
+                f"of the {len(drm)} DRM-layer nodes match no station and "
+                f"{len(matched - drm)} matching nodes are outside the DRM layer.")
+        return StationCheck(
+            n_stations=n_st, n_drm_nodes=len(drm), n_matched=int(m.sum()),
+            max_distance=float(d[m].max()), tolerance=tol)
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -489,6 +527,20 @@ def build_station_soil_box(
         raise ValueError(
             f"station box: boundary must be 'fixed', 'absorbing' or 'none', got "
             f"{boundary!r}.")
+    if boundary == "absorbing" and lattice.surface == "min":
+        # ASDAbsorbingBoundary3D sorts its nodes by ascending model z and
+        # takes the lowest-z face (N_BOTTOM = {0,2,4,6}) of a "B" element as
+        # the exterior face (dashpots, base input); "L"/"R"/"F"/"K" are the
+        # min-x/max-x/min-y/max-y faces (plane_wave_box.py). In a z-down
+        # model the soil bottom is the max-z face, so a "B" skin below it
+        # would put that face on the soil side. No placement is right.
+        raise ValueError(
+            "station box: boundary='absorbing' needs a z-up model (free "
+            "surface at max z): ASDAbsorbingBoundary3D treats the min-z face "
+            "of a 'B' element as the bottom, but this lattice is z-down "
+            "(surface='min'), so the skin's base would face the soil. Read "
+            "the file with a z-up transform, e.g. transform=((1, 0, 0), "
+            "(0, 1, 0), (0, 0, -1)), or use boundary='fixed'.")
     if drm:
         if lattice.layer is None or lattice.frame is None:
             raise ValueError(
@@ -612,9 +664,7 @@ def build_station_soil_box(
         if exterior is not None:
             zsegs = zsegs + [_sized("ext", far, far + t_bot, exterior.size)]
             far += t_bot
-        if boundary == "absorbing":
-            tb = tsk[2] if tsk[2] is not None else _first_cell(zsegs, False)
-            zsegs = zsegs + [("B", far, far + tb, 1)]
+        # no "B" skin here: z-down + absorbing is refused above
     az = Axis1D("z", tuple(zsegs))
 
     # ── near-field axes ────────────────────────────────────────────
@@ -624,6 +674,13 @@ def build_station_soil_box(
         sz = ((nearfield.size,) * 3 if np.isscalar(nearfield.size)
               else tuple(nearfield.size))  # type: ignore[arg-type]
         for i, a in enumerate("xyz"):
+            outside = [float(v) for v in nearfield.lines[i]
+                       if not (nlo[i] - tol <= float(v) <= nhi[i] + tol)]
+            if outside:
+                raise ValueError(
+                    f"station box: NearField.lines[{i}] ({a}) values {outside} "
+                    f"lie outside the block {a} {nlo[i]:g}..{nhi[i]:g}; a "
+                    f"near-field line must be inside the block.")
             br = {nlo[i], nhi[i]}
             br.update(float(v) for v in nearfield.lines[i] if nlo[i] < v < nhi[i])
             if pit is not None:
@@ -789,13 +846,8 @@ def build_station_soil_box(
             structured.set_transfinite((3, vt), n=(cx + 1, cy + 1, cz + 1),
                                        recombine=True)
 
-    # ── expected counts + station check ────────────────────────────
-    expected_hex, expected_nodes, drm_nodes = _expected(
-        ax, ay, az, hole, nfax, up=up)
-    check = None
-    if drm and lattice.stations is not None and lattice.frame is not None:
-        check = _station_check(drm_nodes, lattice.stations,
-                               lattice.frame.distance_tolerance)
+    # ── expected counts (the station check runs on the mesh) ───────
+    expected_hex, expected_nodes = _expected(ax, ay, az, hole, nfax, up=up)
 
     return StationSoilBoxResult(
         domain_pg=domain_pg, interior_pg=interior_pg, lattice_pg=lattice_pg,
@@ -805,7 +857,7 @@ def build_station_soil_box(
         frame=lattice.frame if drm else None,
         axes={"x": ax, "y": ay, "z": az}, nearfield_axes=nfax,
         expected_hex=expected_hex, expected_nodes=expected_nodes,
-        station_check=check,
+        stations=lattice.stations if drm else None,
     )
 
 
@@ -829,18 +881,36 @@ def _inside(c, lo, hi, slack=0.0) -> bool:
 
 
 def _slice_box(session, ax: Axis1D, ay: Axis1D, az: Axis1D) -> list[int]:
-    """One box sliced at every axis break; returns its sub-volume tags."""
+    """One box sliced at every axis break; returns its sub-volume tags.
+
+    Each cutting plane is anchored at the box centre (``point=``), not at
+    the global origin: ``slice(offset=)`` centres its square on the origin's
+    projection with a half-size of one model-bbox diagonal, so a box placed
+    far from the origin (any ``x0``) would be missed and stay unsliced. The
+    plane's half-size (one model-bbox diagonal) always covers the box it is
+    centred on. The sub-volume count is then checked against the axes.
+    """
     geom = session.model.geometry
     before = {int(t) for _d, t in gmsh.model.getEntities(3)}
     geom.add_box(ax.lo, ay.lo, az.lo, ax.size, ay.size, az.size)
+    centre = [0.5 * (a.lo + a.hi) for a in (ax, ay, az)]
 
     def vols():
         return sorted({int(t) for _d, t in gmsh.model.getEntities(3)} - before)
 
-    for a, axis in ((ax, "x"), (ay, "y"), (az, "z")):
+    for i, (a, axis) in enumerate(((ax, "x"), (ay, "y"), (az, "z"))):
         for off in a.slice_offsets():
-            geom.slice(target=vols(), axis=axis, offset=float(off))
-    return vols()
+            point = list(centre)
+            point[i] = float(off)
+            geom.slice(target=vols(), axis=axis, point=point)
+    out = vols()
+    want = len(ax.segments) * len(ay.segments) * len(az.segments)
+    if len(out) != want:
+        raise RuntimeError(
+            f"station box: slicing the box x {ax.lo:g}..{ax.hi:g}, y "
+            f"{ay.lo:g}..{ay.hi:g}, z {az.lo:g}..{az.hi:g} gave {len(out)} "
+            f"sub-volumes, the axes need {want}.")
+    return out
 
 
 def _axis_nodes(a: Axis1D):
@@ -882,9 +952,6 @@ def _expected(ax, ay, az, hole, nfax, *, up):
         return n
 
     n_lat = int(nodes_of(kept).sum())
-    dn = nodes_of(drm)
-    I, J, K = np.nonzero(dn)
-    drm_nodes = np.stack([nx_[I], ny_[J], nz_[K]], axis=1)
     hexes = {"lattice": int(lat.sum()), "drm": int(drm.sum()),
              "exterior": int(ext.sum()), "skin": int(skin.sum())}
     n_nf = 0
@@ -899,20 +966,7 @@ def _expected(ax, ay, az, hole, nfax, *, up):
         pass                                    # pit cut from the lattice
     hexes["interior"] = hexes["lattice"] + hexes["nearfield"]
     hexes["domain"] = hexes["interior"] + hexes["drm"] + hexes["exterior"]
-    return hexes, n_lat + n_nf, drm_nodes
-
-
-def _station_check(drm_nodes, stations, tol) -> StationCheck:
-    """Every DRM-layer node is a station and every station a DRM-layer node."""
-    d, _ = nearest_station(drm_nodes, stations)
-    d2, _ = nearest_station(stations, drm_nodes)
-    if len(drm_nodes) != len(stations) or d.max() >= tol or d2.max() >= tol:
-        raise RuntimeError(
-            f"station box: internal error, the DRM layer ({len(drm_nodes)} "
-            f"nodes) does not land on the {len(stations)} stations (max "
-            f"distance {max(d.max(), d2.max()):g}, tolerance {tol:g}).")
-    return StationCheck(n_stations=len(stations), n_drm_nodes=len(drm_nodes),
-                        max_distance=float(max(d.max(), d2.max())), tolerance=tol)
+    return hexes, n_lat + n_nf
 
 
 def nearest_station(points, stations, chunk: int = 2048):

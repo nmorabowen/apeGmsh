@@ -9,5 +9,6 @@ builds from it either a DRM box (interior + a DRM layer whose nodes are exactly
 the stations + `Exterior` + fixed or absorbing boundary) or the same interior
 wrapped by an ASD absorbing skin, with an optional `NearField` block tied by
 embedded nodes and a `Pit` void. The result carries the PGs, the
-`ops.pattern.H5DRM` keyword arguments, expected counts and a pre-mesh station
-check.
+`ops.pattern.H5DRM` keyword arguments, expected counts and
+`station_check(fem)`, which checks the meshed DRM layer against the stations.
+`boundary="absorbing"` needs a z-up lattice.

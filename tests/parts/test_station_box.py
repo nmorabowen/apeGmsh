@@ -29,6 +29,7 @@ H_KM = 0.0025                       # 2.5 m grid
 CENTER = (12.5, 7.25, 0.0)          # drmbox_x0 (km)
 T_SR = ((0, 1, 0), (1, 0, 0), (0, 0, -1))   # San Ramón: x<->y, z up
 X0_SR = (22000.0, 15500.0, 0.0)              # mm
+Z_UP = ((1, 0, 0), (0, 1, 0), (0, 0, -1))   # metres-style z flip only
 NX, NY, NZ = 16, 14, 8              # distinct per axis: a swapped axis shows
 
 
@@ -226,6 +227,22 @@ class TestRefusals:
         finally:
             g.end()
 
+    def test_nearfield_lines_outside_the_block(self, sr_lattice):
+        lat = sr_lattice
+        g = apeGmsh(model_name="refuse_nf_lines", verbose=False)
+        g.begin()
+        try:
+            for lines in (((lat.x[0] - 1.0,), (), ()), ((), (), (lat.z[0] - 10.0,)),
+                          ((), (lat.y[-1] + 5.0,), ())):
+                nf = NearField(lo=(lat.x[2], lat.y[2], lat.z[1]),
+                               hi=(lat.x[-3], lat.y[-3], 0.0), size=2500.0,
+                               lines=lines)
+                with pytest.raises(ValueError, match="outside the block"):
+                    g.parts.add_station_soil_box(
+                        lat, exterior=Exterior(5000.0, 2500.0), nearfield=nf)
+        finally:
+            g.end()
+
     def test_pit_off_lines_without_nearfield(self, sr_lattice):
         lat = sr_lattice
         g = apeGmsh(model_name="refuse_pit", verbose=False)
@@ -273,8 +290,17 @@ class TestDRMBox:
         m, idx, d = fork_match(xyz_drm, stations, lat.frame.distance_tolerance)
         assert m.all() and d.max() < 1e-6
         assert len(drm) == len(stations) == len(set(idx.tolist()))
-        assert res.station_check.n_drm_nodes == len(stations)
-        assert res.station_check.max_distance < 1e-6
+        chk = res.station_check(fem)                   # on the mesh nodes
+        assert chk.n_drm_nodes == chk.n_matched == chk.n_stations == len(stations)
+        assert chk.max_distance < 1e-6
+
+    def test_station_check_reads_the_mesh(self, t4):
+        import dataclasses
+
+        _lat, _nf, _pit, res, fem = t4
+        moved = dataclasses.replace(res, stations=res.stations + 100.0)
+        with pytest.raises(RuntimeError, match="does not put one node"):
+            moved.station_check(fem)
 
     def test_no_off_grid_match(self, sr_file, t4):
         _, pts = sr_file
@@ -415,11 +441,11 @@ class TestGrids:
         assert m.sum() == len(pts) and d[m].max() < 1e-6
         assert len(ids) == res.expected_nodes
 
-    def test_z_down_frame_absorbing_drm(self, tmp_path):
+    def test_z_down_frame_drm(self, tmp_path):
         f = str(tmp_path / "zdown.h5drm")
         pts = write_two_shell(f)
         lat = SoilLattice.from_h5drm(f, crd_scale=1000.0)
-        res, fem = build(lat, exterior=Exterior(5.0, 2.5), boundary="absorbing")
+        res, fem = build(lat, exterior=Exterior(5.0, 2.5), boundary="fixed")
         ids = np.asarray(fem.nodes.ids)
         m, _idx, _d = fork_match(np.asarray(fem.nodes.coords),
                                 to_model(pts, crd_scale=1000.0, T=np.eye(3),
@@ -427,8 +453,77 @@ class TestGrids:
                                 lat.frame.distance_tolerance)
         assert {int(i) for i in ids[m]} == node_ids(fem, res.drm_pg)
         assert m.sum() == len(pts)
-        assert "B" in res.skin.skin_pgs
-        assert res.axes["z"].hi > lat.layer[4]          # skin below the bottom shell
+        assert res.station_check(fem).n_matched == len(pts)
+        bnd = coords_of(fem, node_ids(fem, res.boundary_pg))
+        assert bnd[:, 2].max() == pytest.approx(res.axes["z"].hi)   # bottom at max z
+
+    @pytest.mark.parametrize("drm", [True, False])
+    def test_z_down_absorbing_refused(self, tmp_path, drm):
+        # ASDAbsorbingBoundary3D takes the min-z face of a "B" element as its
+        # base; in a z-down model that face would sit on the soil side.
+        f = str(tmp_path / "zdown.h5drm")
+        write_two_shell(f)
+        lat = SoilLattice.from_h5drm(f, crd_scale=1000.0)
+        assert lat.surface == "min"
+        g = apeGmsh(model_name="refuse_zdown", verbose=False)
+        g.begin()
+        try:
+            with pytest.raises(ValueError, match="z-up"):
+                g.parts.add_station_soil_box(
+                    lat, drm=drm, exterior=Exterior(5.0, 2.5) if drm else None,
+                    boundary="absorbing")
+        finally:
+            g.end()
+
+    def test_z_up_absorbing_base_below_the_soil(self, tmp_path):
+        # the same file read z-up: the "B" skin is the min-z layer
+        f = str(tmp_path / "zup.h5drm")
+        write_two_shell(f)
+        lat = SoilLattice.from_h5drm(f, crd_scale=1000.0, transform=Z_UP)
+        res, fem = build(lat, drm=False, boundary="absorbing")
+        base = coords_of(fem, set().union(
+            *(node_ids(fem, pg) for pg in res.skin.bottom_pgs)))
+        soil = coords_of(fem, node_ids(fem, res.domain_pg))
+        assert base[:, 2].min() < soil[:, 2].min()
+        assert base[:, 2].max() == pytest.approx(soil[:, 2].min())
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Boxes far from the global origin (any x0)
+# ─────────────────────────────────────────────────────────────────────
+
+class TestFarFromOrigin:
+    @pytest.mark.parametrize("crd_scale, T, x0", [
+        (1000.0, Z_UP, (0.0, 500.0, 0.0)),                 # metres, 500 m off
+        (1000.0, Z_UP, (22000.0, 15500.0, 0.0)),           # metres, 27 km off
+        (1e6, T_SR, (-5.0e6, -3.2e6, -2.0e4)),             # mm, large negative
+        (1000.0, Z_UP, (0.0, -50.0, 0.0)),                 # partial miss
+    ], ids=["m-500", "m-27km", "mm-negative", "m-partial"])
+    def test_drm_box_on_the_stations(self, sr_file, crd_scale, T, x0):
+        f, pts = sr_file
+        lat = SoilLattice.from_h5drm(f, crd_scale=crd_scale, transform=T, x0=x0)
+        h = 2.5 * crd_scale / 1000.0
+        res, fem = build(lat, exterior=Exterior(2 * h, h))
+        ids = np.asarray(fem.nodes.ids)
+        assert len(ids) == res.expected_nodes
+        assert len(np.asarray(fem.elements.select(pg=res.domain_pg).ids)) ==             res.expected_hex["domain"]
+        stations = to_model(pts, crd_scale=crd_scale, T=T, x0=x0)
+        m, _idx, _d = fork_match(np.asarray(fem.nodes.coords), stations,
+                                 lat.frame.distance_tolerance)
+        assert m.sum() == len(pts)
+        assert {int(i) for i in ids[m]} == node_ids(fem, res.drm_pg)
+        assert res.station_check(fem).n_matched == len(pts)
+
+    @pytest.mark.parametrize("lo, hi", [
+        ((-16.25, -63.75, -15.0), (16.25, -36.25, 0.0)),
+        ((9983.75, -20013.75, -315.0), (10016.25, -19986.25, -300.0)),
+    ], ids=["partial", "far"])
+    def test_absorbing_regular(self, lo, hi):
+        lat = SoilLattice.regular(lo=lo, hi=hi, spacing=2.5)
+        res, fem = build(lat, drm=False, boundary="absorbing")
+        assert len(np.asarray(fem.nodes.ids)) == res.expected_nodes
+        assert len(np.asarray(fem.elements.select(pg=res.domain_pg).ids)) == 13 * 11 * 6
+        assert len(np.asarray(fem.elements.select(pg=res.skin.skin_all_pg).ids)) ==             res.expected_hex["skin"]
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -456,3 +551,4 @@ def test_real_file_tier4():
     assert m.sum() == n_st == len(set(idx[m].tolist()))
     assert {int(i) for i in ids[m]} == node_ids(fem, res.drm_pg)
     assert d[m].max() < 1e-3 * lat.frame.distance_tolerance
+    assert res.station_check(fem).n_matched == n_st

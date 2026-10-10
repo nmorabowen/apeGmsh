@@ -683,7 +683,9 @@ class PartsRegistry(_PartsFragmentationMixin):
             ``Exterior(thickness, size)``; ``thickness`` is ``t`` or
             ``(lateral, bottom)``.
         boundary : {"fixed", "absorbing", "none"}
-            Outer boundary of the soil.
+            Outer boundary of the soil. ``"absorbing"`` needs a z-up lattice
+            (the ASD skin's ``B`` face is its min-z face); a z-down one is
+            refused.
         skin_thickness : float | (tx, ty, tz) | None
             Absorbing skin thickness; ``None`` = the adjacent cell size.
         nearfield : NearField | None
@@ -699,8 +701,9 @@ class PartsRegistry(_PartsFragmentationMixin):
         -------
         StationSoilBoxResult
             PG names, ``frame.pattern_kwargs()`` for ``ops.pattern.H5DRM``,
-            the absorbing ``skin``, expected hex / node counts and the
-            pre-mesh ``station_check``.
+            the absorbing ``skin``, expected hex / node counts and
+            ``station_check(fem)``, the check of the meshed DRM layer against
+            the stations.
 
         Example
         -------
@@ -717,7 +720,8 @@ class PartsRegistry(_PartsFragmentationMixin):
                                     hi=(57000.0, 50500.0, 0.0),
                                     size=(2500.0, 2500.0, 1000.0)),
                 pit=Pit(lo=(0.0, 0.0, -6000.0), hi=(44000.0, 31000.0, 0.0)))
-            # mesh; apeSees(fem); stdBrick on soil.domain_pg;
+            # mesh; fem = ...get_fem_data(dim=3); soil.station_check(fem);
+            # apeSees(fem); stdBrick on soil.domain_pg;
             # ops.fix(pg=soil.boundary_pg, dofs=(1, 1, 1));
             # ops.pattern.H5DRM(factor=1000.0, **soil.frame.pattern_kwargs())
         """
