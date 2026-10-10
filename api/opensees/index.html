@@ -12057,8 +12057,8 @@ name
     A label for the returned record.</p>
 <p>Returns the :class:<code>~apeGmsh.opensees._internal.spring_bed.SpringBed</code>
 record (node tags, <code>k</code>, <code>c</code>, areas, orientations, specs).
-Partitioned emit refuses node-pair elements (ADR 0049), so a bed
-emits single-process only.</p>
+A partitioned emit routes each spring, its ground and side nodes and
+their <code>equalDOF</code> to the rank of the structural node (ADR 0120).</p>
 
 
             <details class="mkdocstrings-source">
@@ -12194,8 +12194,8 @@ emits single-process only.</p>
 </span><span id="__span-0-8938"><a id="__codelineno-0-8938" name="__codelineno-0-8938"></a>
 </span><span id="__span-0-8939"><a id="__codelineno-0-8939" name="__codelineno-0-8939"></a><span class="sd">    Returns the :class:`~apeGmsh.opensees._internal.spring_bed.SpringBed`</span>
 </span><span id="__span-0-8940"><a id="__codelineno-0-8940" name="__codelineno-0-8940"></a><span class="sd">    record (node tags, ``k``, ``c``, areas, orientations, specs).</span>
-</span><span id="__span-0-8941"><a id="__codelineno-0-8941" name="__codelineno-0-8941"></a><span class="sd">    Partitioned emit refuses node-pair elements (ADR 0049), so a bed</span>
-</span><span id="__span-0-8942"><a id="__codelineno-0-8942" name="__codelineno-0-8942"></a><span class="sd">    emits single-process only.</span>
+</span><span id="__span-0-8941"><a id="__codelineno-0-8941" name="__codelineno-0-8941"></a><span class="sd">    A partitioned emit routes each spring, its ground and side nodes and</span>
+</span><span id="__span-0-8942"><a id="__codelineno-0-8942" name="__codelineno-0-8942"></a><span class="sd">    their ``equalDOF`` to the rank of the structural node (ADR 0120).</span>
 </span><span id="__span-0-8943"><a id="__codelineno-0-8943" name="__codelineno-0-8943"></a><span class="sd">    """</span>
 </span><span id="__span-0-8944"><a id="__codelineno-0-8944" name="__codelineno-0-8944"></a>    <span class="kn">from</span><span class="w"> </span><span class="nn">._internal.spring_bed</span><span class="w"> </span><span class="kn">import</span> <span class="n">build_spring_bed</span>
 </span><span id="__span-0-8945"><a id="__codelineno-0-8945" name="__codelineno-0-8945"></a>
