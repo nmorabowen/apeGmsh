@@ -256,16 +256,23 @@ def test_non_blocking_still_returns_popen(small_results, monkeypatch):
     assert captured["args"][:3] == [sys.executable, "-m", "apeGmsh.viewers"]
 
 
-def test_notebook_in_memory_still_falls_back_to_web(
+def test_notebook_in_memory_raises_instead_of_web(
     small_results, monkeypatch,
 ):
+    """#1664: no fallback to the legacy web viewer; a clear error that
+    says how to get a file-backed Results instead."""
     module = sys.modules[Results.__module__]
+    monkeypatch.delenv("APEGMSH_SKIP_VIEWER", raising=False)
     monkeypatch.setattr(module, "_in_notebook_kernel", lambda: True)
-    sentinel = object()
-    monkeypatch.setattr(Results, "show_web", lambda self, **kw: sentinel)
+    calls: list = []
+    monkeypatch.setattr(
+        Results, "show_web", lambda self, **kw: calls.append(kw),
+    )
     small_results._path = None
 
-    assert small_results.viewer() is sentinel
+    with pytest.raises(RuntimeError, match="from_native"):
+        small_results.viewer()
+    assert calls == []
 
 
 # =====================================================================

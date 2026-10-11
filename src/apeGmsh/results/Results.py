@@ -1325,9 +1325,11 @@ class Results:
             ``None`` (default) — auto: ``True`` in scripts and the
             plain CLI, ``False`` inside a Jupyter / IPython ZMQ kernel,
             where the blocking Qt loop would freeze (often kill) the
-            kernel. An in-memory Results in a notebook cannot spawn a
-            subprocess and falls back to :meth:`show_web`. Either
-            notebook path announces itself with one line.
+            kernel. A hand-built, in-memory Results (no backing file)
+            in a notebook cannot spawn a subprocess and raises
+            :class:`RuntimeError` naming the ``from_*`` constructors to
+            open it from a file instead. The notebook path announces
+            itself with one line.
             ``True`` — open the window in-process and block the calling
             thread until it closes. Matches the signature of
             :meth:`g.mesh.viewer` and :meth:`g.model.viewer`.
@@ -1362,14 +1364,22 @@ class Results:
             The spawned process handle (non-blocking). Deliberately not
             unified with the blocking return — a session in this
             process is not what the child window is showing.
-        WebViewer
-            The :meth:`show_web` handle (auto mode, in-memory Results
-            in a notebook). The web client is a later client of the
-            same session; until it lands this hatch keeps today's path.
         None
             If ``APEGMSH_SKIP_VIEWER`` is set in the environment. This
             lets the same cell run under ``jupyter nbconvert --execute``
             or in CI without spawning a GUI window.
+
+        Raises
+        ------
+        RuntimeError
+            Auto mode (``blocking=None``) inside a notebook kernel on an
+            in-memory Results (``_path is None``): there is no file for
+            ``python -m apeGmsh.viewers`` to open. Open the results with
+            :meth:`from_native`, :meth:`from_mpco`, :meth:`from_ladruno`,
+            :meth:`from_recorders` or :meth:`from_fem`. Nothing is
+            converted to a temporary file: the reader protocol does not
+            carry everything a native ``.h5`` needs, so a conversion
+            would lose data (#1664).
 
         Notes
         -----
@@ -1391,13 +1401,18 @@ class Results:
             if not _in_notebook_kernel():
                 blocking = True
             elif self._path is None:
-                print(
-                    "[viewer] notebook kernel detected and this Results "
-                    "is in-memory — opening the web viewer instead of "
-                    "blocking the kernel (pass blocking=True to force "
-                    "the Qt window)."
+                raise RuntimeError(
+                    "Results.viewer(): a notebook kernel needs the viewer "
+                    "in a separate process, and this Results is in-memory "
+                    "(no backing file) so there is nothing for that "
+                    "process to open. Open it from a file with "
+                    "Results.from_native(path), Results.from_mpco(path), "
+                    "Results.from_ladruno(path), "
+                    "Results.from_recorders(spec, output_dir, fem=fem) "
+                    "or Results.from_fem(fem, path), then call viewer() "
+                    "again. (blocking=True opens the Qt window in-process, "
+                    "but that kills a Jupyter kernel.)"
                 )
-                return self.show_web()
             else:
                 print(
                     "[viewer] notebook kernel detected — spawning the "
