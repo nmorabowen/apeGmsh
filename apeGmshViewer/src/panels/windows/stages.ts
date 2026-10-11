@@ -44,6 +44,20 @@ export interface ChangeGroup {
   op: string;
   what: string;
   items: ChangeItem[];
+  /** why the pair is not in the /sequence 1.0.0 vocabulary (an unknown op or what), or null */
+  unknown: string | null;
+}
+
+/** The `/sequence/changes` vocabulary (h5-schema.md, `/sequence`, "Changes"). */
+export const OPS: readonly string[] = ["add", "remove", "activate", "set"];
+export const WHATS: readonly string[] = [
+  "pattern", "recorder", "fix", "mass", "element", "group", "region",
+  "rayleigh", "initial_stress", "absorbing", "material_stage", "constraint",
+];
+
+function unknownOf(op: string, what: string): string | null {
+  const bad = [!OPS.includes(op) ? `op '${op}'` : "", !WHATS.includes(what) ? `what '${what}'` : ""].filter(Boolean);
+  return bad.length ? `unknown ${bad.join(" and ")}: not in the /sequence 1.0.0 vocabulary` : null;
 }
 
 export interface StageCard {
@@ -194,7 +208,7 @@ export function stagesOf(s: State): StagesModel {
       const op = str(cc.get(r, "op")), what = str(cc.get(r, "what")), name = str(cc.get(r, "name")), h5 = str(cc.get(r, "source"));
       const key = resolve(h5, what, name);
       let g = out.find((x) => x.op === op && x.what === what);
-      if (!g) out.push((g = { op, what, items: [] }));
+      if (!g) out.push((g = { op, what, items: [], unknown: unknownOf(op, what) }));
       g.items.push({ label: name || (key ? handleOf(key) : "unnamed"), count: num(cc.get(r, "count")), decl: key ? linkOf(s, key) : null, h5 });
     }
     return out;
@@ -261,6 +275,13 @@ function changesEl(groups: readonly ChangeGroup[], act: (e: Event) => void, none
     const verb = el("span", "stage-verb", `${g.op} ${g.what}`);
     verb.setAttribute("style", "color: var(--muted);");
     line.append(verb, " ");
+    if (g.unknown) {
+      // Flagged, never drawn like a known change.
+      const flag = el("span", "stage-unknown", `[${g.unknown}] `);
+      flag.setAttribute("style", "color: var(--error); font-weight: 600;");
+      line.dataset["unknown"] = "1";
+      line.append(flag);
+    }
     g.items.forEach((it, i) => {
       if (i) line.append(", ");
       line.append(itemEl(it, act));

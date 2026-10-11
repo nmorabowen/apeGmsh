@@ -139,17 +139,62 @@ test("each stage's chain in the card's order, every member by its parameters' fi
     ["stage 1 · push", "/opensees/stages/stage_001/analysis"],
   ]);
   assert.deepEqual(CHAIN.map((c) => c.role), ["system", "numberer", "constraints", "integrator", "algorithm", "test", "analysis"]);
+  // integrator and test carry *_args in the fixture: the order join is verified against them and shown.
+  // The other members have no *_args and two declarations each: the join cannot be checked, so it is refused.
   assert.deepEqual(partsText(joined, 0), [
     "system: UmfPack{}", "numberer: RCM{}", "constraints: Plain{}",
     "integrator: LoadControl{dlam=0.1, num_iter=null, min_lam=null, max_lam=null}",
-    "algorithm: Newton{tangent=tangent}",
+    "algorithm: Newton{}",
     "test: NormDispIncr{tol=0.000001, max_iter=10, print_flag=0, norm_type=2}",
     "analysis: Static{}",
   ]);
   assert.deepEqual(partsText(joined, 1)[3], "integrator: Newmark{gamma=0.5, beta=0.25}");
   // Unnamed declarations show their #k key; the k-th chain joins the k-th declaration of each family.
   assert.deepEqual(analysisOf(joined).chains.map((c) => c.parts[3]!.decl?.label), ["#1", "#2"]);
-  assert.ok(analysisOf(joined).chains.every((c) => c.parts.every((p) => p.note === null)));
+  for (const c of analysisOf(joined).chains) {
+    for (const p of c.parts) {
+      if (p.role === "integrator" || p.role === "test") assert.equal(p.note, null, `${c.title} ${p.role}`);
+      else {
+        assert.deepEqual([p.decl, p.params], [null, []], `${c.title} ${p.role}: no link, no parameter`);
+        assert.equal(p.note, `cannot join (#1646): ${c.h5} has no ${p.attr}_args to check the order join against`);
+      }
+    }
+  }
+});
+
+test("F1 repro: a declaration order that is not the stage order is refused against the stage's *_args, never shown as fact", () => {
+  // Push's LoadControl (dlam 0.5) is declared first, gravity's (dlam 0.1) second; the archive's
+  // stage_000 integrator_args is [0.1] and stage_001's [0.5]. The order join would bind gravity to #1.
+  const d = defs.definitions!;
+  const [s0, s1] = d.stages;
+  const push = { ...s1!, analysis: { ...s1!.analysis!, attrs: { ...s1!.analysis!.attrs, integrator: "LoadControl", integrator_args: [0.5] } } };
+  const chains = CHAIN_PARAMS.map((c, k) => c.map((x) => (x[0] === "integrator" ? (["integrator", "LoadControl", { dlam: k === 0 ? 0.5 : 0.1 }] as (typeof x)) : x)));
+  const s = withChainDecls({ ...defs, definitions: { ...d, stages: [s0!, push] } }, chains);
+  const parts = analysisOf(s).chains.map((c) => c.parts[3]!);
+  assert.deepEqual(parts.map((p) => [p.token, p.decl, p.params]), [["LoadControl", null, []], ["LoadControl", null, []]]);
+  assert.equal(parts[0]!.note, "cannot join (#1646): the order join gives opensees/integrator/#1 (0.5), but /opensees/stages/stage_000/analysis has integrator_args [0.1]");
+  assert.equal(parts[1]!.note, "cannot join (#1646): the order join gives opensees/integrator/#2 (0.1), but /opensees/stages/stage_001/analysis has integrator_args [0.5]");
+  // No dlam is shown for gravity anywhere in the window.
+  assert.doesNotMatch(render(s).root.all((e) => e.dataset["role"] === "integrator")[0]!.textContent, /dlam/);
+});
+
+test("a joined declaration with no decl_params row is refused, with no link", () => {
+  const base = withChainDecls(defs);
+  const recs = base.definitions!.decls!.records.map((r) => (r.key === "opensees/test/#1" ? { ...r, params: [] } : r));
+  const s: State = { ...base, definitions: { ...base.definitions!, decls: { ...base.definitions!.decls!, records: recs } } };
+  const t = analysisOf(s).chains[0]!.parts.find((p) => p.role === "test")!;
+  assert.deepEqual([t.decl, t.params], [null, []]);
+  assert.equal(t.note, "cannot join (#1646): opensees/test/#1 has no /opensees/decl_params row to check the order join against");
+});
+
+test("one declaration for one chain needs no order: joined even without *_args", () => {
+  const d = defs.definitions!;
+  const one = withChainDecls({ ...defs, definitions: { ...d, stages: [d.stages[0]!] } }, [CHAIN_PARAMS[0]!]);
+  const parts = analysisOf(one).chains[0]!.parts;
+  assert.ok(parts.every((p) => p.note === null && p.decl?.label === "#1"), JSON.stringify(parts.map((p) => p.note)));
+  // ... but *_args, when present, are still checked.
+  const off = withChainDecls({ ...defs, definitions: { ...d, stages: [d.stages[0]!] } }, [CHAIN_PARAMS[0]!.map((x) => (x[0] === "integrator" ? (["integrator", "LoadControl", { dlam: 9 }] as (typeof x)) : x))]);
+  assert.match(analysisOf(off).chains[0]!.parts[3]!.note!, /^cannot join \(#1646\): the order join gives opensees\/integrator\/#1 \(9\)/);
 });
 
 test("the parameters never come from the positional *_args", () => {
@@ -252,7 +297,7 @@ test("the view: one section per stage, Token{field=value}, and a click on a decl
 });
 
 test("a {$decl} ref inside a member's parameters is a link to that declaration", () => {
-  const chains = CHAIN_PARAMS.map((c) => c.map((x) => (x[0] === "algorithm" ? (["algorithm", "Newton", { tangent: "tangent", series: { $decl: "opensees/timeSeries/ramp" } }] as (typeof x)) : x)));
-  const p = analysisOf(withChainDecls(defs, chains)).chains[0]!.parts.find((x) => x.role === "algorithm")!;
-  assert.deepEqual(p.params.map((l) => [l.field, l.text, l.ref?.label ?? null]), [["tangent", "tangent", null], ["series", "opensees/timeSeries/ramp", "ramp"]]);
+  const chains = CHAIN_PARAMS.map((c) => c.map((x) => (x[0] === "integrator" && x[1] === "LoadControl" ? (["integrator", "LoadControl", { dlam: 0.1, series: { $decl: "opensees/timeSeries/ramp" } }] as (typeof x)) : x)));
+  const p = analysisOf(withChainDecls(defs, chains)).chains[0]!.parts.find((x) => x.role === "integrator")!;
+  assert.deepEqual(p.params.map((l) => [l.field, l.text, l.ref?.label ?? null]), [["dlam", "0.1", null], ["series", "opensees/timeSeries/ramp", "ramp"]]);
 });

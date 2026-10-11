@@ -12,9 +12,14 @@
 // stage order. The join of a chain to its declarations: the archive's
 // `stage_NNN/analysis` carries no declaration link (#1646), so the k-th
 // declaration of a chain family (`integrator`, `test`, ...) is the k-th chain
-// that sets that token, in file order. The join is used only when the counts
-// agree and every declaration's type is the token the chain names; otherwise
-// the window says it cannot join, and lists no parameters.
+// that sets that token, in file order. That order is a guess, never shown as
+// fact: the family's counts must agree and every type must be the token the
+// chain names, and then each member is checked on its own (`verifyMember`)
+// against the chain's own positional `*_args`, used only as a check (the
+// parameters shown still come from decl_params). A member that disagrees, or
+// that cannot be checked (no decl_params row; no `*_args` while the family has
+// more than one declaration), says "cannot join (#1646)" and has no link and
+// no parameters. A family with one declaration and one chain needs no order.
 //
 // `analysisOf` is the pure read of the state; `view` builds the DOM. A click
 // on a declaration (or on a `{$decl}` ref inside its parameters) dispatches
@@ -108,6 +113,7 @@ function joinChains(defs: Definitions, chains: readonly AnalysisDef[]): Map<stri
       out.set(family, `cannot join: /opensees/decls has ${recs.length} ${family} declaration${recs.length === 1 ? "" : "s"} for ${setting.length} chain${setting.length === 1 ? "" : "s"} that set it (the archive records no chain↔declaration link, #1646)`);
       continue;
     }
+    // A record with no decl_params row has no type to check here; verifyMember refuses it.
     const bad = setting.findIndex((x, k) => recs[k]!.params[0] !== undefined && recs[k]!.params[0]!.type !== x.token);
     if (bad >= 0) {
       out.set(family, `cannot join: ${recs[bad]!.key} is a ${recs[bad]!.params[0]!.type}, the chain names ${String(setting[bad]!.token)} (the archive records no chain↔declaration link, #1646)`);
@@ -118,6 +124,30 @@ function joinChains(defs: Definitions, chains: readonly AnalysisDef[]): Map<stri
     out.set(family, per);
   }
   return out;
+}
+
+/** The finite numbers of a list, in order (a positional `*_args` attribute, or a declaration's field values). */
+const numbers = (xs: readonly unknown[]): number[] => xs.filter((x): x is number => typeof x === "number" && Number.isFinite(x));
+const sameNumber = (a: number, b: number): boolean => a === b || Math.abs(a - b) <= 1e-12 * Math.max(Math.abs(a), Math.abs(b));
+const JOIN_GAP = "cannot join (#1646)";
+
+/**
+ * Whether the order-joined declaration `rec` is the one chain `a` used: the
+ * finite numbers of its decl_params fields, in field order, equal the finite
+ * numbers of the chain's `<attr>_args`. The positional args are only a check;
+ * nothing is displayed from them. Null when verified, else why not.
+ */
+export function verifyMember(rec: DeclRecord, a: AnalysisDef, attr: string, unique: boolean): string | null {
+  const p = rec.params[0];
+  if (!p) return `${JOIN_GAP}: ${rec.key} has no /opensees/decl_params row to check the order join against`;
+  const args = a.attrs[`${attr}_args`];
+  if (args === undefined) {
+    return unique ? null : `${JOIN_GAP}: ${a.path} has no ${attr}_args to check the order join against`;
+  }
+  const want = numbers(Array.isArray(args) ? args : [args]);
+  const have = numbers(Object.values(p.params));
+  if (want.length === have.length && want.every((x, k) => sameNumber(x, have[k]!))) return null;
+  return `${JOIN_GAP}: the order join gives ${rec.key} (${have.join(", ") || "no number"}), but ${a.path} has ${attr}_args [${want.join(", ")}]`;
 }
 
 const STAGE_COLUMNS = ["source", "steps", "dt", "analysis"] as const;
@@ -166,8 +196,11 @@ export function analysisOf(s: State): AnalysisModel {
       if (typeof join === "string") return { role, attr, token, decl: null, params: [], note: join };
       const rec = join[i] ?? null;
       if (!rec) return { role, attr, token, decl: null, params: [], note: `no /opensees/decls ${family} declaration` };
-      const p = rec.params[0];
-      if (!p) return { role, attr, token, decl: linkOf(s, defs, rec.key), params: [], note: noParams ?? `${rec.key} has no /opensees/decl_params row` };
+      if (noParams) return { role, attr, token, decl: null, params: [], note: noParams };
+      const unique = join.filter((r) => r !== null).length === 1;
+      const refused = verifyMember(rec, a, attr, unique);
+      if (refused) return { role, attr, token, decl: null, params: [], note: refused };
+      const p = rec.params[0]!;
       const params = Object.entries(p.params).map(([field, v]): ParamLine =>
         isRef(v) ? { field, text: v.$decl, ref: linkOf(s, defs, v.$decl) } : { field, text: shortValue(v), ref: null },
       );

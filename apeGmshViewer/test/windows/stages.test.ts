@@ -304,3 +304,21 @@ test("a click on a change with a recorded source dispatches requestSource, which
   assert.deepEqual(events, [{ type: "requestSource", decl: key }]);
   assert.deepEqual(reduce(s, events[0]!).source.request, { decl: key, seq: 1 });
 });
+
+test("an op or what outside the /sequence 1.0.0 vocabulary is flagged as unknown, never drawn like a known change", () => {
+  const seq = staged.sequence;
+  if (seq.status !== "ready") throw new Error("fixture");
+  const oi = seq.changes.columns.indexOf("op"), wi = seq.changes.columns.indexOf("what");
+  const rows = seq.changes.rows.map((r, i) => (i === 6 ? r.map((v, j) => (j === oi ? "toggle" : j === wi ? "widget" : v)) : r));
+  const s: State = { ...staged, sequence: { ...seq, changes: { ...seq.changes, rows } } };
+  const groups = stagesOf(s).stages[1]!.changes;
+  assert.deepEqual(groups.map((g) => [g.op, g.what, g.unknown]), [
+    ["toggle", "widget", "unknown op 'toggle' and what 'widget': not in the /sequence 1.0.0 vocabulary"],
+    ["remove", "fix", null],
+  ]);
+  assert.ok(stagesOf(staged).stages.every((st) => st.changes.every((g) => g.unknown === null)));
+  const flagged = render(s).root.all((e) => e.dataset["unknown"] === "1");
+  assert.equal(flagged.length, 1);
+  assert.match(flagged[0]!.textContent, /toggle widget \[unknown op 'toggle' and what 'widget'/);
+  assert.match(flagged[0]!.all((e) => e.className === "stage-unknown")[0]!.attrs["style"]!, /var\(--error\)/);
+});
