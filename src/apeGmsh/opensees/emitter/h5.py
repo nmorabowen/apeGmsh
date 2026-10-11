@@ -553,7 +553,7 @@ class H5RefusedVerb(NotImplementedError):
 #:     the primitives in (``set_decl_params``); an unknown field shape
 #:     refuses the write. A 2.26 reader opens 2.12 through 2.26; a
 #:     2.25.x reader REFUSES a 2.26.x file.
-#:   * 2.27.0 — K1-8 (#1465, ADR 0114 D4 amended): additive — the
+#:   * 2.27.0 — K1-8 (ADR 0114 D4 amended): additive — the
 #:     parameter tags the build planned are archived per record, and the
 #:     two verbs the writer refused before archive. ``param_tags`` int64
 #:     (3,) attr on every ``initial_stress/stress_NNN`` (global and

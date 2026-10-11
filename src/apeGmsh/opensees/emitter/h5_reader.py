@@ -2788,7 +2788,7 @@ class H5Model:
 META_NDM_IS_SPATIAL_FROM: tuple[int, int, int] = (2, 34, 0)
 
 #: First opensees-zone version whose archive stores every parameter tag
-#: the build planned (K1-8, #1465): ``param_tags`` on each initial stress,
+#: the build planned (K1-8): ``param_tags`` on each initial stress,
 #: absorbing flip and ``s.update_parameter`` record. A replay of an
 #: archive at or above it reads them and mints none; one below it re-mints
 #: them (``compose.py``, the pre-2.27 tag-law waivers).
