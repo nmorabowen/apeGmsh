@@ -30,13 +30,22 @@ A /opensees/analysis@test_args dtype=<f8 shape=(4,) sha1=a81682c0cc5729cd4d0fcdc
 G /opensees/bcs
 D /opensees/bcs/fix dtype={target_kind:str[utf-8,vlen],target:str[utf-8,vlen],dofs:<i8[6]} shape=(2,) sha1=673123ffdfaaef312df0c07ff87d0277fb59a26c
 G /opensees/decl_params
-D /opensees/decl_params/decl dtype=<i8 shape=(16,) sha1=2121e8f91d3abcc466d982af2b95c60b4d2de4ac
-D /opensees/decl_params/integration_ref dtype=str[utf-8,vlen] shape=(16,) sha1=9d3aa7a5eb2cb287b11b573355e9376a7ad68914
-D /opensees/decl_params/params dtype=str[utf-8,vlen] shape=(16,) sha1=b9a28013cb8ba499f03994c069abfd852c8c8f24
-D /opensees/decl_params/params_names dtype=str[utf-8,vlen] shape=(16,) sha1=9d3aa7a5eb2cb287b11b573355e9376a7ad68914
-D /opensees/decl_params/section_ref dtype=str[utf-8,vlen] shape=(16,) sha1=9d3aa7a5eb2cb287b11b573355e9376a7ad68914
-D /opensees/decl_params/transf_ref dtype=str[utf-8,vlen] shape=(16,) sha1=03ac3cbcbf4a58502b6f4189aee1d2c25018bcea
-D /opensees/decl_params/type dtype=str[utf-8,vlen] shape=(16,) sha1=723689d07b22284a5339652c9d9c3f6e2d71817a
+D /opensees/decl_params/decl dtype=<i8 shape=(17,) sha1=a5ab6820667cc5ace31764daec5e9592ef3af26b
+G /opensees/decl_params/integration_ref
+D /opensees/decl_params/integration_ref/count dtype=<i8 shape=(17,) sha1=74cdce64cfe79eaa3c94629f895f48c898ba78cb
+D /opensees/decl_params/integration_ref/first dtype=<i8 shape=(17,) sha1=74cdce64cfe79eaa3c94629f895f48c898ba78cb
+D /opensees/decl_params/integration_ref/key dtype=str[utf-8,vlen] shape=(0,) sha1=65a2eebac8fa31401168b747728fdc731e239202
+D /opensees/decl_params/params dtype=str[utf-8,vlen] shape=(17,) sha1=694c17929246c7a1d990d1ea1e5afe4994537176
+D /opensees/decl_params/params_names dtype=str[utf-8,vlen] shape=(17,) sha1=6b5bb7cf5bd9e3a900c96d225cb2ecd7a64cc4bf
+G /opensees/decl_params/section_ref
+D /opensees/decl_params/section_ref/count dtype=<i8 shape=(17,) sha1=74cdce64cfe79eaa3c94629f895f48c898ba78cb
+D /opensees/decl_params/section_ref/first dtype=<i8 shape=(17,) sha1=74cdce64cfe79eaa3c94629f895f48c898ba78cb
+D /opensees/decl_params/section_ref/key dtype=str[utf-8,vlen] shape=(0,) sha1=65a2eebac8fa31401168b747728fdc731e239202
+G /opensees/decl_params/transf_ref
+D /opensees/decl_params/transf_ref/count dtype=<i8 shape=(17,) sha1=6ecb4d973f8f7c7a8bb4dae25b48df4f23905765
+D /opensees/decl_params/transf_ref/first dtype=<i8 shape=(17,) sha1=adb48004ed3794866975c31c6551ffed7fb26fc7
+D /opensees/decl_params/transf_ref/key dtype=str[utf-8,vlen] shape=(1,) sha1=1ba830d5f4d0b84e1c8c4232edaef938c309c349
+D /opensees/decl_params/type dtype=str[utf-8,vlen] shape=(17,) sha1=ae01e04de1703eddde896325f37554b437852805
 G /opensees/decls
 D /opensees/decls/family dtype=str[utf-8,vlen] shape=(17,) sha1=a20ee172b21ba30877d24465bae22403d4cfc094
 D /opensees/decls/key dtype=str[utf-8,vlen] shape=(17,) sha1=ef9295081a60d56eaacd8fc4c5b3f1b080c70c95

@@ -1213,11 +1213,15 @@ with its store, or an index past the rows, raises `MalformedH5Error`.
 
 ## `/opensees/decl_params` (optional, opensees 2.26.0)
 
-Every registered primitive's parameters **by field name** (ADR 0114 A6
-and Q4, K1-7): the K0-8 record a reader uses to show *what* a declaration
-was, without an OpenSees syntax table on either side. One row per
-primitive the bridge registered, hanging off its `/opensees/decls` row;
-tagless declarations (`fix`, `mass`, a recorder region) have no row.
+Every declaration's parameters **by field name** (ADR 0114 A6 and Q4,
+K1-7): the K0-8 record a reader uses to show *what* a declaration was,
+without an OpenSees syntax table on either side. Exactly one row per
+`/opensees/decls` row: a registered primitive, a `fix` / `mass` /
+`region` / `rayleigh` / `modal_damping` / `initial_stress` /
+`equation_constraint` record, a stage record (`support`, `remove_sp`,
+...), or the model-wide `fix_from_model()` / `mass_from_model()` object
+(its one field is `verb`); two owners that share a key (the records
+`fix_from_model()` stands for) are the first owner's row.
 Written on every `apeSees.h5` emit; a rewrite (`OpenSeesModel.to_h5`)
 echoes it verbatim. A derived view of the hashed stores, not structure:
 `decl_params` is in `MODEL_HASH_EXCLUDED_CHILDREN`, so `model_hash` is
@@ -1232,9 +1236,13 @@ unchanged for every model.
     params_names     vlen str (P,)   a JSON list naming the argv slots of the
                                      declaration's store row, when the argv
                                      equals the fields; "" otherwise
-    transf_ref       vlen str (P,)   the declaration key of the first field
-    integration_ref  vlen str (P,)   holding a GeomTransf / BeamIntegration /
-    section_ref      vlen str (P,)   Section primitive, "" when there is none
+    transf_ref/      index run       every GeomTransf / BeamIntegration /
+    integration_ref/                 Section declaration key the row's fields
+    section_ref/                     reference, in dataclass field order and
+        first  i8 (P,)               depth-first within a field: row i's keys
+        count  i8 (P,)               are key[first[i] : first[i] + count[i]]
+        key    vlen str (K,)         (a HingeRadau lists section_i, section_j,
+                                     section_interior; count 0 = none)
 ```
 
 The `params` encoding is generic, from `dataclasses.fields(prim)`, with

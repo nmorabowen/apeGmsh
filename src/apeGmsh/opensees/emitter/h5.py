@@ -79,7 +79,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from types import MappingProxyType
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any, Iterable, Literal, NamedTuple, NoReturn, Sequence
+from typing import TYPE_CHECKING, Any, Iterable, Literal, NamedTuple, NoReturn, Sequence, cast
 
 from .base import DroppedAxisGuard, command_row
 from .caps import SolveStamp, TargetCaps
@@ -3591,17 +3591,17 @@ class H5Emitter:
         for col, name in ((4, "transf_ref"), (5, "integration_ref"),
                           (6, "section_ref")):
             run = g.create_group(name)
-            keys: list[str] = []
+            run_keys: list[str] = []
             first: list[int] = []
             count: list[int] = []
             for r in rows:
-                refs = r[col]
-                first.append(len(keys))
+                refs = cast("tuple[str, ...]", r[col])
+                first.append(len(run_keys))
                 count.append(len(refs))
-                keys.extend(refs)
+                run_keys.extend(refs)
             run.create_dataset("first", data=np.array(first, dtype=np.int64))
             run.create_dataset("count", data=np.array(count, dtype=np.int64))
-            run.create_dataset("key", data=keys, dtype=str_dt)
+            run.create_dataset("key", data=run_keys, dtype=str_dt)
 
     def _write_decls(self, f: Any) -> None:
         """Persist ``/opensees/decls`` (ADR 0114 R5, K1-6, schema 2.25.0).
