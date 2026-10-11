@@ -38,7 +38,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     "LiveOpsEmitter", "get_backend_build", "get_backend_info",
-    "get_backend_name", "get_ops",
+    "domain_epoch", "get_backend_name", "get_ops",
 ]
 
 
@@ -630,6 +630,21 @@ def get_ops() -> "ModuleType":
     return _get_ops()
 
 
+#: How many :class:`LiveOpsEmitter` instances this process has made (ADR
+#: 0115 D2, Invariant 4). Each one rebuilds the process-global OpenSees
+#: domain (it wipes it, or adds a model to it), so a read session that
+#: recorded an older value no longer describes the domain.
+_DOMAIN_EPOCH: int = 0
+
+
+def domain_epoch() -> int:
+    """The live domain's rebuild counter: bumped by every
+    :class:`LiveOpsEmitter` construction, whichever bridge or procedure
+    made it (ADR 0115 D2). A read session stores it when it opens and
+    refuses to answer once it has moved."""
+    return _DOMAIN_EPOCH
+
+
 def get_backend_info() -> BackendInfo:
     """Return the resolver's :class:`BackendInfo` for the bound module.
 
@@ -713,6 +728,11 @@ class LiveOpsEmitter:
     )
 
     def __init__(self, *, wipe: bool = True) -> None:
+        # ADR 0115 D2: every emitter rebuilds the one in-process domain,
+        # so it moves the epoch first, before any call that could fail
+        # half-way through the wipe.
+        global _DOMAIN_EPOCH
+        _DOMAIN_EPOCH += 1
         # The module is bound behind the numpy-scalar-coercing proxy:
         # every ``self._ops.X(...)`` below passes its positional
         # arguments through ``plain_scalar`` before the real call.

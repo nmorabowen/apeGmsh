@@ -25,11 +25,28 @@ if TYPE_CHECKING:
         ResponseSpectrumResult,
     )
     from ..pattern.pattern import Plain
+    from .._readback import ReadState
 
 from ._host import _ProcedureHost
 
 
 class _ModalMixin(_ProcedureHost):
+    if TYPE_CHECKING:
+        # ADR 0115 D2: the bridge's read session (``apeSees.__init__``);
+        # an eigen solve wipes the domain it describes.
+        _read_state: "ReadState"
+
+    def _drop_read_session(self, verb: str) -> None:
+        """Close the read session before ``verb`` wipes the domain
+        (ADR 0115 Invariant 4), naming ``verb`` as the cause."""
+        from .._readback import DroppedSession
+
+        self._read_state = DroppedSession(
+            f"{verb} wiped the live domain to solve the eigenproblem; "
+            "read the modes from its EigenResult, or call "
+            "ops.analyze(...) again to read"
+        )
+
     def eigen(
         self,
         num_modes: int,
@@ -107,6 +124,7 @@ class _ModalMixin(_ProcedureHost):
 
         bm = self.build()
         self._assert_fork_if_required()
+        self._drop_read_session("ops.eigen(...)")
         live_emitter = LiveOpsEmitter(wipe=True)
         bm.emit(live_emitter)
         self._artifacts.after_emit(self)
@@ -635,6 +653,7 @@ class _ModalMixin(_ProcedureHost):
 
         bm = self.build()
         self._assert_fork_if_required()
+        self._drop_read_session("ops.eigen_feast(...)")
         live_emitter = LiveOpsEmitter(wipe=True)
         bm.emit(live_emitter)
         self._artifacts.after_emit(self)
