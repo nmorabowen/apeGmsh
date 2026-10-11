@@ -553,6 +553,14 @@ CLASS: dict[str, str] = {
         "domain_change", "set_time", "set_creep", "reset", "partition_open",
         "partition_close", "parallel_runtime_fallback_numberer",
         "parallel_runtime_fallback_system")},
+    # ``pending``: archived since opensees 2.27.0 (K1-8) through the
+    # ``set_stage_records`` side channel, whose stores
+    # (``update_parameter``, ``zero_velocities``) have no ``rows`` column
+    # yet: the bridge hands those columns in (``_hand_side_channel_rows``,
+    # apesees.py), a follow-up K1-8 did not hold the lock for. Their
+    # VERBS rows are ``decl=False``, so the keyed-declaration check holds.
+    **{v: "pending" for v in (
+        "update_parameter", "set_node_vel", "set_node_accel")},
 }
 
 #: The stores, below a scope, holding each ``rows`` verb's records
