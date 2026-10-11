@@ -156,16 +156,35 @@ test("each window's rows, with the decls each joins", () => {
   ]);
   assert.deepEqual(rows("recorders").map((r) => [r.section, r.title, r.declKey]), [["global", "mpco_0", "opensees/recorder/#1"], ["stage 0 · gravity", "crown", "opensees/recorder/crown"]]);
   const mats = rows("materials");
-  // The app keys an unnamed object by its listing order (`#0`); the archive by
-  // declaration order (`#1`): the row carries both, joined by the tag run.
-  assert.deepEqual(mats.map((r) => [r.section, r.declKey, r.select]), [["uniaxialMaterial", M, "opensees/uniaxialMaterial/#0"], ["section", S, "opensees/section/#0"]]);
+  // With /opensees/decls, the app keys every object by the archive's own key.
+  assert.deepEqual(mats.map((r) => [r.section, r.declKey, r.select]), [["uniaxialMaterial", M, M], ["section", S, S]]);
   assert.match(mats[0]!.detail, /ASDSteel1D tag 1 · E=200000000000 · fy=375000000/);
 });
 
 test("a window row that is a declaration selects it through the store", () => {
   const row = windowContentOf(state, "materials").rows[0]!;
   const e: Event = { type: "select", pick: { decl: row.select!, at: null, nodes: null } };
-  assert.deepEqual(reduce(state, e).selection.decls, ["opensees/uniaxialMaterial/#0"]);
+  assert.deepEqual(reduce(state, e).selection.decls, [M]);
+});
+
+test("app declaration keys are the archive's /opensees/decls keys (2.25+); a pre-2.25 file keeps the listing keys", async () => {
+  // definitions.h5: every unnamed object is keyed as the archive keys it
+  // (declaration order from #1), and the beam chain still resolves through them.
+  for (const k of [M, S, T, BI]) assert.ok(k in state.decls, k);
+  assert.ok(!Object.keys(state.decls).some((k) => /^opensees\/[^/]+\/#0$/.test(k)), "no listing-order #0 key is left");
+  const elem = Object.values(state.decls).find((d) => d.kind === "element")!;
+  assert.deepEqual(Object.values(elem.refs).sort(), [BI, T]);
+  // shoebuckle.h5 (opensees 2.22, no decls): the listing keys stay.
+  const old = load(await openModel(PLAIN));
+  assert.ok("opensees/uniaxialMaterial/#0" in old.decls);
+});
+
+test("an object no decls tag run owns keeps its listing key, with a warning", () => {
+  const m: ModelFile = structuredClone(model);
+  m.opensees!.definitions.decls!.tags = m.opensees!.definitions.decls!.tags.filter((t) => t.kind !== "section");
+  const s = load(m);
+  assert.ok("opensees/section/#0" in s.decls);
+  assert.ok(warningsOf(s).some((w) => /\/opensees\/sections\/Fiber_1: \/opensees\/decls has no tag run for section 1/.test(w)));
 });
 
 // ---- fail-closed: malformed decls / decl_params / stages, and /sequence ----

@@ -5,7 +5,7 @@
 
 import type { ElementRef } from "../chain/resolve.ts";
 import { buildMesh, colourGroups, type MeshBuffers } from "../mesh/build.ts";
-import type { Group, ModelFile, OpsFamily, Param, SequenceZone } from "../model/types.ts";
+import type { Group, ModelFile, OpsFamily, OpsObject, Param, SequenceZone } from "../model/types.ts";
 import { sourceOf, type ProvenanceZone } from "../reader/provenance.ts";
 import type { BlobStore } from "./blobs.ts";
 import { cellPath, elementLinks, objectDecl, objectPaths, opsRowPath, type Lookup } from "./decls.ts";
@@ -22,6 +22,40 @@ export const groupPath = (g: Group, kind: "physical_group" | "label"): DeclPath 
 
 function addName(names: Record<string, DeclPath[]>, name: string, path: DeclPath): void {
   (names[name] ??= []).push(path);
+}
+
+type ObjectIds = Map<OpsObject, { path: DeclPath; name: string; nameSource: string }>;
+
+/**
+ * Key each OpenSees object by the archive's own declaration key when the
+ * file carries `/opensees/decls` (opensees 2.25+): the key of the run in
+ * `decls/tags` that owns the object's `(family, tag)`, the same key
+ * `/provenance` and `decl_params` use. Without it, the app would mint its
+ * own `#k` (reader listing order, from 0) that disagrees with the archive's
+ * (declaration order, from 1). A file below 2.25 keeps the listing keys.
+ * Two objects of one declaration (a fan-out shares its spec's key) keep the
+ * key for the first and take `<key>@<tag>` after it; an object no run owns
+ * keeps its listing key, with a warning, since the writer claims every tag.
+ */
+function archiveKeys(model: ModelFile, ids: ObjectIds, warnings: string[]): ObjectIds {
+  const table = model.opensees?.definitions.decls;
+  if (!table) return ids;
+  const out: ObjectIds = new Map();
+  const taken = new Set<DeclPath>();
+  for (const [obj, id] of ids) {
+    const run = table.tags.find((t) => t.kind === obj.family && obj.tag >= t.first && obj.tag < t.first + t.count);
+    if (!run) {
+      warnings.push(`${obj.path}: /opensees/decls has no tag run for ${obj.family} ${obj.tag}; listed as ${id.path}`);
+      out.set(obj, id);
+      taken.add(id.path);
+      continue;
+    }
+    const key = table.records[run.decl]!.key;
+    const path = taken.has(key) ? `${key}@${obj.tag}` : key;
+    taken.add(path);
+    out.set(obj, { ...id, path });
+  }
+  return out;
 }
 
 /** Build the declarations and the name index of a model. Exported for the tests; `loadModel` calls it. */
@@ -59,7 +93,7 @@ export function declarationsOf(model: ModelFile, blobs: BlobStore, warnings: str
   }
 
   // OpenSees objects.
-  const ids = objectPaths(model, warnings);
+  const ids = archiveKeys(model, objectPaths(model, warnings), warnings);
   const byTag = new Map<string, DeclPath[]>();
   const byH5 = new Map<string, DeclPath>();
   for (const [obj, id] of ids) {
