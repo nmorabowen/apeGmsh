@@ -24,7 +24,7 @@ job of ``tests.yml``, ``fork`` in ``live-fork.yml``). With it set, the root
 ``tests/opensees/unit/test_warrant_rows.py`` locks the registry (node ids
 exist, markers fit the lanes, a refused row's stock test holds a
 ``pytest.raises`` that names the fork, roster rows cite the row's tests)
-and invariant 9 for the live emitter's ``_FORK_ONLY_*`` sets.
+and invariant 9 over the fork members (``GRANDFATHERED_FORK_MEMBERS``).
 """
 from __future__ import annotations
 
@@ -79,12 +79,19 @@ ROWS: tuple[WarrantRow, ...] = (
     ),
 )
 
-#: Fork-only members of the live emitter's ``_FORK_ONLY_ELEMENTS`` and
-#: ``_FORK_ONLY_INTEGRATORS`` that predate the freeze (ADR 0121 D4, ruling
-#: 5): they stay Inventory with no deadline. Invariant 9: any other name in
-#: those sets ships with a ``refused`` warrant row. Never add a name here;
-#: remove one when the member leaves the sets.
+#: The fork members that predate the freeze (ADR 0121 D4, ruling 5): the
+#: live emitter's ``_FORK_ONLY_ELEMENTS`` and ``_FORK_ONLY_INTEGRATORS``,
+#: and the ``Ladruno*`` material classes of ``material/uniaxial.py`` and
+#: ``material/nd.py``; 38 at the freeze point. They stay Inventory with no
+#: deadline (X4). Invariant 9: any other fork member ships with a
+#: ``refused`` warrant row. Never add a name here; remove one when the
+#: member goes.
 GRANDFATHERED_FORK_MEMBERS = frozenset({
+    # Ladruno* material classes
+    "LadrunoBondSlip", "LadrunoCohesiveHinge", "LadrunoCohesiveHingeBiaxial",
+    "LadrunoConcrete3D", "LadrunoJ2", "LadrunoJ2Finite", "LadrunoRCConcrete",
+    "LadrunoRCFiniteStrain", "LadrunoRebarBuckling", "LadrunoSANISAND",
+    "LadrunoUniaxialJ2",
     # _FORK_ONLY_ELEMENTS
     "BezierTri6", "BezierTet10", "LadrunoEmbeddedRebar", "LadrunoBrick",
     "LadrunoBrick20", "LadrunoLST", "LadrunoQuad", "LadrunoCST", "LadrunoUP",
@@ -97,6 +104,10 @@ GRANDFATHERED_FORK_MEMBERS = frozenset({
     "LadrunoLoadControl", "LadrunoHHT", "LadrunoGeneralizedAlpha",
     "CentralDifferenceSMS", "ExplicitBatheSMS", "ExplicitBatheLNVDSMS",
 })
+
+#: ``len(GRANDFATHERED_FORK_MEMBERS)`` at the freeze point (PR-2 #1691);
+#: the X4 handoff. The set may shrink, never grow past it.
+FREEZE_POINT_FORK_MEMBERS = 38
 
 
 def lane_from_env(environ: Mapping[str, str]) -> str | None:

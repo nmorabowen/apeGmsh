@@ -13,5 +13,7 @@ skip in `live-fork` counts for the lane and never for the member, whose side
 the terminal summary reports as not green.
 `tests/opensees/unit/test_warrant_rows.py` locks the rows (node ids, lane
 markers, a refused row's `pytest.raises` naming the fork, roster
-cross-references) and invariant 9 for the live emitter's `_FORK_ONLY_*`
-sets: a fork-only name added after the freeze needs a refused row.
+cross-references) and invariant 9: a fork member (fork-only element or
+integrator, or `Ladruno*` material) added after the freeze needs a refused
+row. The 38 fork members at the freeze point are grandfathered as Inventory
+(ruling 5, X4).

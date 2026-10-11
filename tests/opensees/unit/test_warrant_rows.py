@@ -11,8 +11,9 @@ checks, without importing openseespy:
 * invariant 10: a refused row's stock test holds a ``pytest.raises`` whose
   ``match`` names the fork; an honest row's stock test asserts;
 * a row that cites a roster id is cited back by that roster row;
-* invariant 9: every name in the live emitter's ``_FORK_ONLY_*`` sets is
-  grandfathered or has a refused row;
+* invariant 9: every fork member (the live emitter's ``_FORK_ONLY_*`` sets
+  and the ``Ladruno*`` materials) is grandfathered or has a refused row,
+  and the grandfathered set never grows past its freeze-point count;
 * the lane rule itself: a row test that skips in its lane fails it, and a
   ``ladruno_mkl`` skip counts for the fork lane but never for the member.
 """
@@ -142,10 +143,26 @@ def test_roster_row_cites_both_tests(row: wr.WarrantRow) -> None:
         assert nodeid in cited[row.roster], f"roster {row.roster} must cite {nodeid}"
 
 
-def test_fork_only_members_are_grandfathered_or_warranted() -> None:
-    """Invariant 9 for the live emitter's ``_FORK_ONLY_*`` refusals."""
+def fork_members() -> set[str]:
+    """Fork elements and integrators (the live gate sets) and materials.
+
+    A fork material is a ``Ladruno*`` class in ``material/uniaxial.py`` or
+    ``material/nd.py`` that is not a warning; read on the AST.
+    """
     from apeGmsh.opensees.emitter import live
     members = set(live._FORK_ONLY_ELEMENTS) | set(live._FORK_ONLY_INTEGRATORS)
+    for name in ("uniaxial", "nd"):
+        path = ROOT / "src" / "apeGmsh" / "opensees" / "material" / f"{name}.py"
+        for node in ast.parse(path.read_text(encoding="utf-8")).body:
+            if (isinstance(node, ast.ClassDef) and node.name.startswith("Ladruno")
+                    and not any("Warning" in ast.unparse(b) for b in node.bases)):
+                members.add(node.name)
+    return members
+
+
+def test_fork_members_are_grandfathered_or_warranted() -> None:
+    """Invariant 9: a fork member added after the freeze has a refused row."""
+    members = fork_members()
     stale = wr.GRANDFATHERED_FORK_MEMBERS - members
     assert not stale, f"grandfathered names no longer fork-only; remove: {sorted(stale)}"
     refused = {r.member for r in wr.ROWS if r.stock_state == "refused"}
@@ -154,6 +171,7 @@ def test_fork_only_members_are_grandfathered_or_warranted() -> None:
         f"fork members added after the freeze need a refused warrant row in "
         f"tests/opensees/warrant_rows.py (ADR 0121 invariant 9): {sorted(new)}"
     )
+    assert len(wr.GRANDFATHERED_FORK_MEMBERS) <= wr.FREEZE_POINT_FORK_MEMBERS
 
 
 # -- the lane rule -----------------------------------------------------------
