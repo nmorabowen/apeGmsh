@@ -224,7 +224,7 @@ ReadState = Union[ReadSession, DroppedSession, None]
 DECK_RUN_CAUSE = (
     "a deck run ({verb}) solved the model out of process, so "
     "the in-process domain does not hold its results; read them with "
-    "ops.results(path) (ADR 0115 D3)"
+    "ops.results(path) (ADR 0115 D3; it lands with slice R2-c)"
 )
 
 
@@ -255,7 +255,7 @@ def live_session(bridge: "apeSees", where: str) -> ReadSession:
             f"{where}: no live analyze has run on this bridge. .read answers "
             "on the live route only, after ops.analyze(...). A deck run "
             "(ops.tcl / ops.py with run=True) is read with ops.results(path) "
-            "(ADR 0115 D3)."
+            "(ADR 0115 D3; it lands with slice R2-c)."
         )
     if isinstance(state, DroppedSession):
         raise BridgeError(
