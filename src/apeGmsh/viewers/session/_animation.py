@@ -42,6 +42,14 @@ if TYPE_CHECKING:
 
 _SUPPORTED_SUFFIXES = (".mp4", ".gif")
 
+#: ``ResultsDirector`` attributes a pre-X2-b ``setup(plotter, director)``
+#: reaches for, none of which a ``MeshView`` has.
+_DIRECTOR_ATTRS = frozenset({
+    "registry", "geometries", "dispatcher", "results", "stages",
+    "stage_id", "set_stage", "set_step", "step_index", "n_steps",
+    "scopes",
+})
+
 
 def frame_schedule(n_steps: int, step_stride: int) -> list[int]:
     """``range(0, n, stride)`` plus the last step (the old loop's rule)."""
@@ -136,8 +144,14 @@ def export_session_animation(
                     return_img=True, transparent_background=False,
                 )
                 writer.append_data(frame)
-        if tmp.exists():
-            tmp.replace(out)
+        if not tmp.exists():
+            # The encoder closed without leaving a file: nothing was
+            # written, so never report a path as success.
+            raise RuntimeError(
+                f"export_animation: the {suffix} encoder wrote no file "
+                f"({tmp.name}); nothing was written to {out}."
+            )
+        tmp.replace(out)
         return out
     except BaseException:
         _unlink(tmp)
@@ -186,6 +200,13 @@ def _run_setup(
         try:
             setup(plotter, view)
         except AttributeError as exc:
+            # Only a callback reaching for the retired director's surface
+            # ON THE VIEW is re-diagnosed; any other AttributeError (a bug
+            # in a callback written the new way) propagates untouched.
+            if getattr(exc, "obj", None) is not view or (
+                getattr(exc, "name", None) not in _DIRECTOR_ATTRS
+            ):
+                raise
             raise TypeError(
                 "export_animation(setup=...) now calls setup(plotter, view) "
                 "with the ResultsSession MeshView (e.g. view.contour = "

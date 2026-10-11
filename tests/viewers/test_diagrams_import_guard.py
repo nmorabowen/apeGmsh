@@ -12,7 +12,7 @@ importing it privately and are expected to:
   (``Results.export_animation`` and ``studio/_verbs.py``'s INV-11 hatch
   stopped constructing it in X2-b, #1663, and ``_verbs`` was pruned).
 
-**Be honest about what this guard proves.** The allowlist is 28 modules
+**Be honest about what this guard proves.** The allowlist is 26 modules
 and eleven of them are alive *only* because the headless export reuses
 the full Qt window (``_realize_headless`` hides the docks rather than
 skipping their construction). So this is **not** "the surface is small".

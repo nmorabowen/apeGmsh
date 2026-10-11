@@ -52,7 +52,11 @@ class _NullWriter:
 
 def _stub_imageio(monkeypatch: pytest.MonkeyPatch) -> None:
     v2 = types.ModuleType("imageio.v2")
-    v2.get_writer = lambda *_a, **_k: _NullWriter()  # type: ignore[attr-defined]
+    def get_writer(path: str, **_k: Any) -> _NullWriter:
+        Path(path).touch()  # a real encoder opens its file (X2-b F5)
+        return _NullWriter()
+
+    v2.get_writer = get_writer  # type: ignore[attr-defined]
     pkg = types.ModuleType("imageio")
     pkg.v2 = v2  # type: ignore[attr-defined]
     monkeypatch.setitem(sys.modules, "imageio", pkg)

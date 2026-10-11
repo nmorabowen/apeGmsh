@@ -210,6 +210,48 @@ def test_a_director_style_setup_fails_loudly(
     assert not (tmp_path / "d.gif").exists()
 
 
+def test_a_callback_bug_is_not_misdiagnosed(
+    plate, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Review F4: only director-surface lookups on the view are mapped."""
+    _stub_imageio(monkeypatch)
+
+    def buggy(plotter: Any, view: Any) -> None:
+        object().missing  # noqa: B018 - a real bug in the callback
+
+    with pytest.raises(AttributeError, match="missing"):
+        written = plate.export_animation(
+            tmp_path / "f.gif", window_size=(160, 90), setup=buggy,
+        )
+        _require_gl(written)
+
+
+def test_an_encoder_that_wrote_nothing_is_not_success(
+    plate, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Review F5: no ``.partial`` file means nothing was written."""
+    _stub_imageio(monkeypatch)
+    import imageio.v2 as v2  # the stub
+
+    real = v2.get_writer
+
+    def no_file(path: str, **k: Any) -> Any:
+        w = real(path, **k)
+        Path(path).unlink()
+        return w
+
+    monkeypatch.setattr(v2, "get_writer", no_file)
+    out = tmp_path / "g.gif"
+    try:
+        written = plate.export_animation(out, window_size=(160, 90))
+    except RuntimeError as exc:
+        assert "wrote no file" in str(exc)
+    else:
+        _require_gl(written)
+        pytest.fail(f"reported {written!r} with no file written")
+    assert not out.exists()
+
+
 def test_bad_arguments_refuse_before_any_frame(
     plate, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -220,6 +262,95 @@ def test_bad_arguments_refuse_before_any_frame(
     monkeypatch.setenv("APEGMSH_SKIP_VIEWER", "1")
     assert plate.export_animation(tmp_path / "e.gif") is None
     assert not (tmp_path / "e.gif").exists()
+
+
+# =====================================================================
+# stage=None keeps the old resolution (review F2)
+# =====================================================================
+
+
+@pytest.fixture
+def two_stage(g, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """Stage ``s0`` (2 steps) then ``s1`` (4 steps) on one cube."""
+    from apeGmsh.results.writers import NativeWriter
+    from tests.conftest import _open_model_from_h5
+
+    monkeypatch.delenv("APEGMSH_SKIP_VIEWER", raising=False)
+    g.model.geometry.add_box(0, 0, 0, 1, 1, 1, label="cube")
+    g.physical.add_volume("cube", name="Body")
+    g.mesh.sizing.set_global_size(1.0)
+    g.mesh.generation.generate(dim=3)
+    fem = g.mesh.queries.get_fem_data(dim=3)
+    ids = np.asarray(fem.nodes.ids, dtype=np.int64)
+    xyz = np.asarray(fem.nodes.coords, dtype=np.float64)
+    path = tmp_path / "two.h5"
+    with NativeWriter(path) as w:
+        w.open(fem=fem)
+        for sid_name, n in (("s0", 2), ("s1", 4)):
+            sid = w.begin_stage(
+                name=sid_name, kind="static", stage_id=sid_name,
+                time=np.arange(n, dtype=np.float64),
+            )
+            w.write_nodes(sid, "partition_0", node_ids=ids, components={
+                f"displacement_{a}": np.stack(
+                    [xyz[:, i] * 0.01 * (t + 1) for t in range(n)])
+                for i, a in enumerate("xyz")
+            })
+            w.end_stage()
+    with Results.from_native(path, model=_open_model_from_h5(path)) as r:
+        yield r
+
+
+def _session_instants(monkeypatch: pytest.MonkeyPatch) -> list[tuple]:
+    from pyvista.plotting.plotter import BasePlotter
+
+    sessions: list[Any] = []
+    seen: list[tuple] = []
+    make, shot = Results.session, BasePlotter.screenshot
+
+    def session(self: Results) -> Any:
+        sessions.append(make(self))
+        return sessions[-1]
+
+    def screenshot(self: Any, *a: Any, **k: Any) -> Any:
+        t = sessions[-1].time
+        seen.append((t.stage, t.step))
+        return shot(self, *a, **k)
+
+    monkeypatch.setattr(Results, "session", session)
+    monkeypatch.setattr(BasePlotter, "screenshot", screenshot)
+    return seen
+
+
+@pytest.mark.parametrize("how, expected", [
+    ("scoped", [("s0", 0), ("s0", 1)]),
+    ("explicit", [("s1", 0), ("s1", 1), ("s1", 2), ("s1", 3)]),
+])
+def test_stage_resolution_matches_the_old_path(
+    two_stage, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    no_legacy: None, how: str, expected: list,
+) -> None:
+    """A ``.stage()``-scoped Results animates ITS stage, not the last."""
+    _stub_imageio(monkeypatch)
+    seen = _session_instants(monkeypatch)
+    out = tmp_path / f"{how}.gif"
+    if how == "scoped":
+        written = two_stage.stage("s0").export_animation(
+            out, window_size=(160, 90))
+    else:
+        written = two_stage.export_animation(
+            out, stage="s1", window_size=(160, 90))
+    _require_gl(written)
+    assert seen == expected
+
+
+def test_several_stages_and_no_pick_refuses(
+    two_stage, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _stub_imageio(monkeypatch)
+    with pytest.raises(RuntimeError, match="stage="):
+        two_stage.export_animation(tmp_path / "h.gif", window_size=(160, 90))
+    assert not (tmp_path / "h.gif").exists()
 
 
 # =====================================================================

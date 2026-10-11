@@ -1580,7 +1580,9 @@ class Results:
             Capture every N-th step (plus always the last). Useful to
             keep long histories short.
         stage
-            Stage id/name to animate. Defaults to the last stage.
+            Stage id/name to animate. Defaults to this Results' own
+            stage (``results.stage(...)``), else the only stage; with
+            several stages and none picked it raises.
         deform
             Deformed-shape scaling. A number applies that scale to the
             ``"displacement"`` field; a ``(field, scale)`` pair selects
@@ -1622,15 +1624,15 @@ class Results:
 
         from .session import Deform
 
-        if stage is not None:
-            stage_id = self._lookup_stage(stage).id
-        else:
-            stages = list(self.stages)
-            if not stages:
-                raise RuntimeError(
-                    "export_animation: results carry no stages to animate."
-                )
-            stage_id = stages[-1].id
+        # stage= wins, then this Results' own scope (``.stage()``), then
+        # the only stage; several stages and no pick refuse and name
+        # ``stage=`` (the director animated nothing there either).
+        try:
+            stage_id = self._resolve_stage(stage)
+        except RuntimeError as exc:
+            raise RuntimeError(
+                f"export_animation: no stage to animate — {exc}"
+            ) from exc
         session = self.session()
         view = session.panes[0]
         if deform is not None:
