@@ -142,9 +142,21 @@ test("removal comes from /sequence when the file has it", () => {
   const s: State = { ...state, sequence: { status: "ready", version: "1.0.0", attrs: {}, stages, changes } };
   const [mpco, crown] = recordersOf(s).entries;
   assert.equal(crown!.lifetime, "added by stage 0 · gravity; removed by stage 1");
-  assert.equal(mpco!.lifetime, "global, added before the first stage: every stage records it; never removed (/sequence)");
+  assert.equal(mpco!.lifetime, "global, added before the first stage: every stage records it; removal: unknown (unnamed; /sequence matches by name)");
   const refused: State = { ...state, sequence: { status: "refused", version: "9.0.0", accepted: "1.x", newer: true, reason: "newer" } };
   assert.match(recordersOf(refused).entries[1]!.lifetime, /removal: unknown \(\/sequence 9\.0\.0 was not read: newer\)$/);
+});
+
+test("an empty-name remove row in /sequence marks no unnamed recorder removed; a named one reads never removed", () => {
+  // /sequence writes "" for every unnamed recorder, so the row cannot say which #k it removes.
+  const changes = { path: "/sequence/changes", columns: ["stage", "op", "what", "name", "count", "source"], rows: [[1, "remove", "recorder", "", 1, ""]] };
+  const stages = { path: "/sequence/stages", columns: ["order", "name"], rows: [[0, "gravity"], [1, "push"]] };
+  const s: State = { ...state, sequence: { status: "ready", version: "1.0.0", attrs: {}, stages, changes } };
+  const [mpco, crown] = recordersOf(s).entries;
+  assert.equal(mpco!.handle, "#1");
+  assert.equal(mpco!.lifetime, "global, added before the first stage: every stage records it; removal: unknown (unnamed; /sequence matches by name)");
+  assert.doesNotMatch(mpco!.lifetime, /removed by stage/);
+  assert.equal(crown!.lifetime, "added by stage 0 · gravity; never removed (/sequence)");
 });
 
 test("the empty states are explicit", () => {
@@ -161,6 +173,26 @@ test("a decls row count that differs from the recorders joins nothing, and says 
   assert.equal(e.handle, "mpco_0");
   assert.equal(e.declKey, null);
   assert.equal(e.paramsNote, "parameters by field name: not joined (/opensees/decls/rows/recorders has 2 rows for 1 recorders)");
+});
+
+test("a decls row past the records leaves that one recorder unjoined, with its own reason; the others still join", () => {
+  const defs = state.definitions!;
+  const crownGroup = { ...defs.stages[0]!.recorders[0]!, path: "/opensees/recorders/Node_1" };
+  // Index order mpco_0 -> rows[0] = 7 (#1); Node_1 -> rows[1] = 999, past the 16 records.
+  const s: State = { ...state, definitions: { ...defs, recorders: [crownGroup, defs.recorders[0]!], decls: { ...defs.decls!, rows: { ...defs.decls!.rows, recorders: [7, 999] } } } };
+  const global = recordersOf(s).entries.filter((e) => e.section === "global");
+  assert.deepEqual(global.map((e) => [e.handle, e.declKey]), [["#1", "opensees/recorder/#1"], ["Node_1", null]]);
+  assert.equal(global[0]!.paramsNote, null);
+  assert.equal(global[1]!.paramsNote, "parameters by field name: not joined (/opensees/decls/rows/recorders[1] = 999 is not a row of /opensees/decls (16 records))");
+});
+
+test("a group name without a trailing _<index> joins nothing, and the reason names it", () => {
+  const defs = state.definitions!;
+  const s: State = { ...state, definitions: { ...defs, recorders: [{ ...defs.recorders[0]!, groupName: "mpco" }] } };
+  assert.equal(
+    recordersOf(s).entries[0]!.paramsNote,
+    "parameters by field name: not joined (the group name mpco has no trailing _<index>, so /opensees/decls/rows/recorders cannot be ordered)",
+  );
 });
 
 test("within a section, recorders list in declaration order, not the file's group order (kr3pb: ladruno_0 is #1)", () => {

@@ -132,7 +132,9 @@ function removalOf(s: State, handle: string | null): string {
   const [iStage, iOp, iWhat, iName] = [col("stage"), col("op"), col("what"), col("name")];
   if ([iStage, iOp, iWhat, iName].some((i) => i < 0)) return "removal: unknown (/sequence/changes lacks a stage, op, what or name column)";
   if (handle === null) return "removal: unknown (/sequence names recorders by name; this one is not joined to a declaration)";
-  const removed = seq.changes.rows.filter((r) => r[iWhat] === "recorder" && r[iOp] === "remove" && r[iName] === (handle.startsWith("#") ? "" : handle));
+  // /sequence writes "" for every unnamed recorder, so an empty name cannot say which `#k` it removes.
+  if (handle.startsWith("#")) return "removal: unknown (unnamed; /sequence matches by name)";
+  const removed = seq.changes.rows.filter((r) => r[iWhat] === "recorder" && r[iOp] === "remove" && r[iName] === handle);
   return removed.length ? `removed by stage ${removed.map((r) => String(r[iStage])).join(", ")}` : "never removed (/sequence)";
 }
 
@@ -184,13 +186,22 @@ function entryOf(s: State, r: DefObject, d: DeclRecord | undefined, st: StageDef
   };
 }
 
-/** Why the recorders of `store` join no declaration, or "" when they do. */
-function joinGap(s: State, n: number, store: string): string {
+/**
+ * Why recorder `r` of `store` joins no declaration, following the checks of
+ * selectors.recorderDecls in its order: no decls, no rows, a count mismatch,
+ * a group name without a trailing `_<index>`, then a row past the records.
+ */
+function joinGap(s: State, recs: readonly DefObject[], r: DefObject, store: string): string {
   const decls = s.definitions?.decls;
   if (!decls) return "the file has no /opensees/decls (opensees < 2.25.0)";
   const rows = decls.rows[store];
   if (!rows) return `/opensees/decls/rows/${store} is not in this file`;
-  return rows.length === n ? "" : `/opensees/decls/rows/${store} has ${rows.length} rows for ${n} recorders`;
+  if (rows.length !== recs.length) return `/opensees/decls/rows/${store} has ${rows.length} rows for ${recs.length} recorders`;
+  const idx = recs.map((x) => Number(/_(\d+)$/.exec(x.groupName)?.[1] ?? Number.NaN));
+  const bad = recs.filter((_, i) => !Number.isInteger(idx[i]));
+  if (bad.length) return `the group name ${bad.map((x) => x.groupName).join(", ")} has no trailing _<index>, so /opensees/decls/rows/${store} cannot be ordered`;
+  const k = [...idx].sort((a, b) => a - b).indexOf(idx[recs.indexOf(r)]!);
+  return `/opensees/decls/rows/${store}[${k}] = ${rows[k]} is not a row of /opensees/decls (${decls.records.length} records)`;
 }
 
 /** The recorders window's content, from the store alone. */
@@ -203,10 +214,9 @@ export function recordersOf(s: State): RecordersContent {
   const entries: RecorderEntry[] = [];
   const add = (recs: readonly DefObject[], store: string, st: StageDef | null) => {
     const joined = recorderDecls(defs, recs, store);
-    const why = joined.size ? "" : joinGap(s, recs.length, store);
     // In declaration order (the decls row) when joined; the file's group order otherwise.
     const order = recs.map((r, i) => ({ r, d: joined.get(r.path), i })).sort((a, b) => (a.d?.row ?? Infinity) - (b.d?.row ?? Infinity) || a.i - b.i);
-    for (const { r, d } of order) entries.push(entryOf(s, r, d, st, staged, why || "the group name has no trailing _<index>"));
+    for (const { r, d } of order) entries.push(entryOf(s, r, d, st, staged, d ? "" : joinGap(s, recs, r, store)));
   };
   add(defs.recorders, "recorders", null);
   for (const st of defs.stages) add(st.recorders, `stages/stage_${String(st.index).padStart(3, "0")}/recorders`, st);
