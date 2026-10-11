@@ -449,3 +449,10 @@ them as decided. The maintainer then accepted the ADR the same day.
   its scope header and two fixes; P1–P14 are unchanged. The `land_pr.py`
   Accepted refusal (PR-3) did not exist at this landing, so the
   maintainer's ruling is the explicit exception.
+
+## Errata (2026-10-11)
+
+Two wording clarifications; the text above is left as accepted (ADRs are append-only).
+
+- Invariant 13: "Holds" means "true since acceptance".
+- D3, "raises at build, emit or live-construction time" (the Refused state): this refers to live emit. Emission of decks is never gated.

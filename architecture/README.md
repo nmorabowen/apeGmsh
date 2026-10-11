@@ -41,7 +41,8 @@ For the implementation phase (multi-agent parallel execution):
 For specific decisions, see the ADRs in
 [decisions/](decisions/) — one file per major call, with the
 context, the decision, the alternatives we rejected, and the
-consequences.
+consequences. The charter's v2 scope and engine policy are in
+[ADR 0121](decisions/0121-charter-v2-b-with-amendments.md).
 
 For every known place where stock OpenSees and the Ladruno fork
 disagree, and which engine is right, see

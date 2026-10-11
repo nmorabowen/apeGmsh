@@ -15,6 +15,7 @@ The agent needs to read these in order before doing anything else:
 
 1. [README.md](README.md) — TL;DR + reading order
 2. [charter.md](charter.md) — the 14 principles + non-goals
+   (v2 scope and engine policy: [ADR 0121](decisions/0121-charter-v2-b-with-amendments.md))
 3. `python scripts/nav.py map|pkg` — folder structure + naming (live)
 4. [api-design.md](api-design.md) — the namespace API + capability shapes
 5. [emitter.md](emitter.md) — the Protocol the agent's `_emit`
