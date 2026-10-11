@@ -17,7 +17,14 @@ moment the solve returned. ``Node.read`` / ``NodeSet.read`` and
   read the same values (Invariant 3);
 - a session another rebuild of the domain has overtaken raises, naming
   the cause (Invariant 4); a component the node lacks raises, naming the
-  node and its ``ndf`` (Invariant 5).
+  node and its ``ndf`` (Invariant 5), and so does a rotational component
+  on a node whose rotational DOF slot no element establishes (a u-p
+  node's DOF 3 is pore pressure; see :meth:`ReadSession.rotation_refusal`).
+
+The staleness guard sees bridge-driven rebuilds only (every
+``LiveOpsEmitter``): a raw ``get_ops().wipe()`` followed by a raw rebuild
+is outside it. A raw wipe alone makes a node read raise (the node is no
+longer in the domain) and an element read raise (no response).
 
 Every refusal that does not depend on the live domain (an unknown
 component, an empty or unknown selector, a stale or missing session, an
@@ -36,6 +43,38 @@ import numpy as np
 
 from ._internal.build import BridgeError, _load_dof_layout
 from ._internal.tag_resolution import MISSING_FEM_ELEMENT_ID
+
+from .element.beam_column import (
+    ElasticTimoshenkoBeam,
+    LadrunoDispBeamColumn,
+    LadrunoIMKBeam,
+    dispBeamColumn,
+    elasticBeamColumn,
+    forceBeamColumn,
+)
+from .element.shell import (
+    ASDShellQ4,
+    ASDShellT3,
+    ShellDKGQ,
+    ShellMITC3,
+    ShellMITC4,
+)
+from .element.truss import CorotTruss, Truss
+
+#: Element families whose nodes carry rotations in the DOF slots
+#: ``_load_dof_layout`` calls rotations: beam-columns and shells. A
+#: rotational read is answered only on a node at least one of them
+#: touches; anything else in that slot (a u-p pore pressure) is not read.
+_ROTATIONAL_FAMILIES: tuple[type, ...] = (
+    elasticBeamColumn, forceBeamColumn, dispBeamColumn,
+    ElasticTimoshenkoBeam, LadrunoDispBeamColumn, LadrunoIMKBeam,
+    ShellMITC4, ShellMITC3, ShellDKGQ, ASDShellQ4, ASDShellT3,
+)
+
+#: Families that use the translational DOFs only, so they neither give
+#: nor take away a meaning for a rotational slot (a bracing truss on a
+#: frame node).
+_TRANSLATIONAL_ONLY: tuple[type, ...] = (Truss, CorotTruss)
 
 if TYPE_CHECKING:
     from ._internal.build import ElementPlanRows
@@ -137,7 +176,8 @@ class ReadSession:
     built on the first element read and cached here.
     """
 
-    __slots__ = ("emitter", "ndm", "epoch", "element_plan", "_index")
+    __slots__ = ("emitter", "ndm", "epoch", "element_plan", "_index",
+                 "_rot_roles")
 
     def __init__(
         self,
@@ -152,6 +192,58 @@ class ReadSession:
         self.epoch = int(epoch)
         self.element_plan = element_plan
         self._index: "tuple[np.ndarray, np.ndarray, np.ndarray] | None" = None
+        self._rot_roles: "tuple[set[int], dict[int, str]] | None" = None
+
+    def rotation_refusal(self, tag: int) -> "str | None":
+        """Why node ``tag``'s rotational DOF slots have no established
+        meaning, or ``None`` when they do.
+
+        A slot the DOF layout calls a rotation is one only where the
+        node's elements give it that meaning: the node is touched by at
+        least one beam-column or shell (:data:`_ROTATIONAL_FAMILIES`),
+        and every other element on it is translational-only
+        (:data:`_TRANSLATIONAL_ONLY`). Any other family (a u-p element,
+        whose DOF 3 at ``ndm=2, ndf=3`` is pore pressure; a solid; a
+        zero-length; a class this module does not know) leaves the slot
+        undefined, so the read refuses rather than guess.
+        """
+        rotational, blocked = self._rotation_roles()
+        if tag in blocked:
+            return (
+                f"it is touched by a {blocked[tag]}, whose DOF layout is not "
+                "a beam/shell rotation (a u-p element carries pore pressure "
+                "there; any other family, or one this reader does not know, "
+                "is left undefined)"
+            )
+        if tag not in rotational:
+            return (
+                "no beam-column or shell element touches it, so no element "
+                "establishes a rotation in that DOF slot"
+            )
+        return None
+
+    def _rotation_roles(self) -> "tuple[set[int], dict[int, str]]":
+        if self._rot_roles is None:
+            rotational: set[int] = set()
+            blocked: dict[int, str] = {}
+            for spec, sub in self.element_plan:
+                if len(sub) == 0:
+                    continue
+                if isinstance(spec, _TRANSLATIONAL_ONLY):
+                    continue
+                conn = sub.conn
+                if conn.ndim == 2:
+                    nodes = {int(n) for n in np.unique(conn)}
+                else:
+                    nodes = {int(n) for row in conn for n in row}
+                if isinstance(spec, _ROTATIONAL_FAMILIES):
+                    rotational |= nodes
+                else:
+                    name = type(spec).__name__
+                    for n in nodes:
+                        blocked.setdefault(n, name)
+            self._rot_roles = (rotational, blocked)
+        return self._rot_roles
 
     def element_rows(
         self, ids: Sequence[int], where: str,
@@ -315,6 +407,15 @@ def read_nodes(
                 f"(ndm={session.ndm}), whose DOFs carry "
                 f"{_layout_names(layout, query)}."
             )
+        if spatial >= 3:
+            why = session.rotation_refusal(int(tag))
+            if why is not None:
+                raise BridgeError(
+                    f"{where}: node {tag} (ndf={ndf}, ndm={session.ndm}) has "
+                    f"no established {component!r}: DOF "
+                    f"{layout.index(spatial) + 1} is a rotation only on a "
+                    f"beam-column or shell node, and {why}. {_RESULTS_HINT}"
+                )
         dofs.append(layout.index(spatial) + 1)
     if query == "nodeReaction":
         ops.reactions()
@@ -348,8 +449,6 @@ def read_elements(
     bridge: "apeSees", ids: Sequence[int], component: str, *, where: str,
 ) -> np.ndarray:
     """``component`` of each FEM element of ``ids``, in order."""
-    from .element.truss import CorotTruss, Truss
-
     token = _element_token(component, where)
     session = live_session(bridge, where)
     rows = session.element_rows(ids, where)
@@ -361,10 +460,18 @@ def read_elements(
                 f"{_RESULTS_HINT}"
             )
     ops = session.emitter.ops
-    return np.asarray(
-        [float(ops.eleResponse(tag, token)[0]) for _spec, tag in rows],
-        dtype=np.float64,
-    )
+    out: list[float] = []
+    for eid, (_spec, tag) in zip(ids, rows):
+        got = ops.eleResponse(tag, token)
+        if not got:
+            raise BridgeError(
+                f"{where}: element {int(eid)} (OpenSees tag {tag}) answered no "
+                f"{token!r}: the live domain no longer holds it. A raw "
+                "get_ops().wipe() (or a rebuild outside the bridge) is not "
+                "seen by the read session; call ops.analyze(...) again."
+            )
+        out.append(float(got[0]))
+    return np.asarray(out, dtype=np.float64)
 
 
 class ElementHandle:

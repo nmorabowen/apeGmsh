@@ -22,7 +22,13 @@ A read raises `BridgeError`, naming the cause, when no live analyze has run
 (a deck run is read with `ops.results(path)`), and once the session is stale:
 after `eigen`, another `analyze`, `run()`, a deck run (`tcl`/`py` with
 `run=True`, `run_remote`), or another bridge rebuilt the in-process domain.
-A component the node lacks raises, naming the node and its `ndf`.
+A component the node lacks raises, naming the node and its `ndf`. A
+rotational component (`rotation_*`, `reaction_moment_*`, `angular_*`) is read
+only on a node that a beam-column or shell touches and no other family but a
+truss: on a u-p node (`ndm=2, ndf=3`) that slot is pore pressure, and on any
+other or unknown family it is undefined, so the read raises instead of
+guessing. The staleness guard sees the bridge's own live work only; a raw
+`get_ops().wipe()` followed by a raw rebuild of the domain is outside it.
 `EigenResult.periods` is documented. `analyze` still returns `int`, and no
 verb or Protocol method was added.
 

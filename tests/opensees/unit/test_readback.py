@@ -28,8 +28,13 @@ from apeGmsh.opensees.emitter import live as live_mod
 from apeGmsh.opensees.emitter.tcl import TclEmitter
 
 from tests.opensees.live.test_readback_live import (
+    build_cantilever_fem,
     build_pratt_fem,
+    cantilever_bridge,
     pratt_bridge,
+)
+from tests.opensees.unit.test_label_selector_fix_merge import (
+    build_footing_fem,
 )
 
 
@@ -64,6 +69,26 @@ class FakeEmitter:
 @pytest.fixture(scope="module")
 def pratt() -> Any:
     return build_pratt_fem()
+
+
+@pytest.fixture(scope="module")
+def cantilever() -> Any:
+    return build_cantilever_fem()
+
+
+def up_bridge(fem: Any) -> apeSees:
+    """LadrunoUP over the footing plate, ndm=2, ndf=3 (u_x, u_y, p)."""
+    ops = apeSees(fem, default_orientation=None)
+    ops.model(ndm=2, ndf=3)
+    mat = ops.nDMaterial.ElasticIsotropic(E=1e4, nu=0.3, rho=0.0)
+    ops.element.LadrunoUP(pg="Plate", material=mat, Kf=2.2e6, poro=0.4,
+                          rhoF=1.0, perm=(1e-4, 1e-4))
+    return ops
+
+
+@pytest.fixture(scope="module")
+def footing_up() -> apeSees:
+    return up_bridge(build_footing_fem())
 
 
 def with_session(ops: apeSees, fake: FakeOps, *, ndm: int = 2) -> None:
@@ -254,8 +279,8 @@ def test_an_element_with_no_planned_element_refuses(pratt: Any) -> None:
 def test_a_component_the_node_lacks_names_the_node_and_its_ndf(
     pratt: Any,
 ) -> None:
-    """Invariant 5, and the DOF layout (not the capture table) at ndf=3,
-    ndm=2: rotation_z is DOF 3."""
+    """Invariant 5: a slot the node's ndf does not carry, and an ndf the
+    layout does not name, both refuse."""
     ops = pratt_bridge(pratt)
     fake = FakeOps(ndf=3)
     with_session(ops, fake, ndm=2)
@@ -264,19 +289,80 @@ def test_a_component_the_node_lacks_names_the_node_and_its_ndf(
                        match=rf"node {mid.tag} has no 'displacement_z': "
                              r"it has ndf=3 \(ndm=2\)"):
         mid.read("displacement_z")
-    seen: list[tuple[int, int]] = []
-
-    class Spy(FakeOps):
-        def nodeDisp(self, tag: int, dof: int) -> float:
-            seen.append((tag, dof))
-            return 0.5
-
-    with_session(ops, Spy(ndf=3), ndm=2)
-    assert mid.read("rotation_z") == 0.5
-    assert seen == [(mid.tag, 3)]
     with_session(ops, FakeOps(ndf=4), ndm=3)
     with pytest.raises(BridgeError, match="ndf=4"):
         mid.read("displacement_x")
+
+
+class DispSpy(FakeOps):
+    """Records the ``(tag, dof)`` of every ``nodeDisp``."""
+
+    def __init__(self, ndf: int) -> None:
+        super().__init__(ndf=ndf)
+        self.seen: list[tuple[int, int]] = []
+
+    def nodeDisp(self, tag: int, dof: int) -> float:
+        self.seen.append((int(tag), int(dof)))
+        return 0.5
+
+
+def test_a_beam_node_reads_rotation_z_at_dof_3(cantilever: Any) -> None:
+    """The DOF layout (not the capture table's DOF 6) at ndf=3, ndm=2, on
+    a node a beam-column establishes as rotational."""
+    ops = cantilever_bridge(cantilever)
+    spy = DispSpy(ndf=3)
+    with_session(ops, spy, ndm=2)
+    tip = ops.nodes.one(label="tip")
+    assert tip.read("rotation_z") == 0.5
+    assert spy.seen == [(tip.tag, 3)]
+
+
+def test_a_up_node_refuses_every_rotational_component(footing_up: Any) -> None:
+    """The R2-b review blocker (#1701): on a LadrunoUP node at ndm=2,
+    ndf=3, DOF 3 is pore pressure; a rotational read refuses, naming the
+    node, its ndf and the family, before any value is fetched. The
+    translations still read."""
+    ops = footing_up
+    spy = DispSpy(ndf=3)
+    with_session(ops, spy, ndm=2)
+    node = ops.nodes.get()[0]
+    for comp in ("rotation_z", "reaction_moment_z", "angular_velocity_z",
+                 "angular_acceleration_z"):
+        with pytest.raises(
+                BridgeError,
+                match=rf"node {node.tag} \(ndf=3, ndm=2\) has no "
+                      rf"established '{comp}'.*LadrunoUP.*u-p"):
+            node.read(comp)
+    assert spy.seen == []
+    assert "reactions" not in spy.calls
+    assert node.read("displacement_y") == 0.5
+    assert spy.seen == [(node.tag, 2)]
+
+
+def test_a_truss_only_node_refuses_rotation(pratt: Any) -> None:
+    """A truss uses the translations only, so it establishes no rotation
+    in an ndf=3 slot (a future or unknown family is refused the same way)."""
+    ops = pratt_bridge(pratt)
+    spy = DispSpy(ndf=3)
+    with_session(ops, spy, ndm=2)
+    mid = ops.nodes.one(label="mid")
+    with pytest.raises(BridgeError, match="no beam-column or shell"):
+        mid.read("rotation_z")
+    assert spy.seen == []
+
+
+def test_an_element_the_domain_no_longer_holds_raises(pratt: Any) -> None:
+    """A raw wipe outside the bridge leaves eleResponse empty: the read
+    raises a BridgeError naming it, not an IndexError."""
+    ops = pratt_bridge(pratt)
+
+    class Wiped(FakeOps):
+        def eleResponse(self, tag: int, token: str) -> list[float]:
+            return []
+
+    with_session(ops, Wiped())
+    with pytest.raises(BridgeError, match="no longer holds it"):
+        ops.elements.one(label="top2").read("axial_force")
 
 
 # ---------------------------------------------------------------------------

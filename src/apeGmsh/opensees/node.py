@@ -129,7 +129,16 @@ class Node:
         no live analyze has run on the bridge (a deck run is read with
         ``ops.results(path)``), and when the session is stale: an
         ``eigen``, another ``analyze``/``run``, a deck run or another
-        bridge rebuilt the domain since.
+        bridge rebuilt the domain since. A rotational component
+        (``rotation_*``, ``reaction_moment_*``, ``angular_*``) is read
+        only on a node a beam-column or shell touches, and no element
+        other than a truss: on a u-p node (``ndm=2, ndf=3``) that DOF
+        slot is pore pressure, and on any other family it is undefined,
+        so the read raises.
+
+        The staleness guard sees the bridge's own live work only: a raw
+        ``get_ops().wipe()`` followed by a raw rebuild of the domain is
+        outside it, and a read may then answer from that other domain.
         """
         from ._readback import read_nodes
 

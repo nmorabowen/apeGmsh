@@ -365,3 +365,56 @@ def test_a_second_bridge_makes_the_first_stale(pratt: Any) -> None:
     # The second bridge answers.
     assert second.elements.one(label="top2").read("axial_force") == (
         pytest.approx(F_TOP, rel=1e-9))
+
+
+# ---------------------------------------------------------------------------
+# A u-p node (the R2-b review blocker on #1701), on a LadrunoUP fork build
+# ---------------------------------------------------------------------------
+
+
+def test_up_node_rotation_read_refuses_live_on_the_fork() -> None:
+    """On the fork, a LadrunoUP plate at ndm=2, ndf=3: DOF 3 is pore
+    pressure, so ``rotation_z`` refuses, while ``displacement_y`` reads
+    the solver's DOF 2. Skips off a LadrunoUP-bearing build."""
+    from tests.opensees.integration.test_ladruno_up_emission import (
+        _skip_unless_fork_up,
+    )
+    from tests.opensees.unit.test_label_selector_fix_merge import (
+        build_footing_fem,
+    )
+
+    _skip_unless_fork_up()
+    fem = build_footing_fem()
+    ops = apeSees(fem, default_orientation=None)
+    ops.model(ndm=2, ndf=3)
+    mat = ops.nDMaterial.ElasticIsotropic(E=1e4, nu=0.3, rho=0.0)
+    ops.element.LadrunoUP(pg="Plate", material=mat, Kf=2.2e6, poro=0.4,
+                          rhoF=1.0, perm=(1e-4, 1e-4), dynSeepage="off")
+    ops.fix(label="bottom", dofs=(1, 1, 1))
+    top = max(
+        (int(n) for n in fem.nodes.ids),
+        key=lambda t: tuple(fem.nodes.coords[fem.nodes.index(t)][[1, 0]]),
+    )
+    ts = ops.timeSeries.Constant()
+    with ops.pattern.Plain(series=ts) as p:
+        p.load(node=top, forces=(0.0, -1.0, 0.0))
+    ops.constraints.Transformation()
+    ops.numberer.RCM()
+    ops.system.UmfPack()
+    ops.test.NormDispIncr(tol=1e-8, max_iter=20)
+    ops.algorithm.Newton()
+    ops.integrator.Newmark(gamma=0.6, beta=0.3025)
+    ops.analysis.Transient()
+    try:
+        assert ops.analyze(steps=1, dt=0.05) == 0
+    except RuntimeError as e:  # pragma: no cover - stock build
+        if "Ladruno fork" in str(e):
+            pytest.skip(str(e))
+        raise
+    node = ops.nodes[top]
+    with pytest.raises(BridgeError, match=r"has no established 'rotation_z'"
+                       r".*LadrunoUP"):
+        node.read("rotation_z")
+    live = ops._read_state.emitter.ops  # type: ignore[union-attr]
+    assert node.read("displacement_y") == live.nodeDisp(top, 2)
+    assert node.read("displacement_y") < 0.0
