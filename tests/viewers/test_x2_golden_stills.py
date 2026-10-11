@@ -31,7 +31,8 @@ skips.
 
 Regenerate (only when a change to the director path is intended, and
 only from CI's renderer): ``APEGMSH_REGEN_GOLDENS=1 pytest <this file>``
-rewrites the PNGs; a mismatch message also carries the actual
+rewrites the PNGs (the repo ``.gitignore`` has ``*.png``, so commit them
+with ``git add -f``); a mismatch message also carries the actual
 downsampled frame as base64 PNG so a Linux golden can be lifted from a
 CI log.
 """
@@ -194,7 +195,10 @@ def _assert_golden(frame: np.ndarray, name: str) -> None:
     if _REGEN:
         golden_path.write_bytes(_png_bytes(actual))
         return
-    verdict = _diff_verdict(actual, _read_png(golden_path))
+    if golden_path.exists():
+        verdict = _diff_verdict(actual, _read_png(golden_path))
+    else:
+        verdict = "golden file missing (PNGs are .gitignored: `git add -f`)"
     if verdict is None:
         return
     b64 = base64.b64encode(_png_bytes(actual)).decode("ascii")
