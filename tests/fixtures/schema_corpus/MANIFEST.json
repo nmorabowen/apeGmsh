@@ -1164,7 +1164,7 @@
   {
    "zone": "opensees",
    "minor": "2.26",
-   "sha": "3e9e2d8b5cdb752942a4d724e311f83f35ec58cd",
+   "sha": "c1c09dbea2bf41eebaffcf3a8678140e0afb330a",
    "date": "2026-10-10",
    "version": "2.26.0",
    "bump_commits": [
@@ -1175,7 +1175,7 @@
    "files": {
     "h5": {
      "name": "opensees_2.26.h5",
-     "sha256": "cff05fce1cd2f30ec05288dcdbe76683d0617299673ecc96be379c8221f31f28"
+     "sha256": "77a0d5d179410c8a0c0defb904946f6bb9916ad8af9fa62683ee6a22d4337260"
     },
     "dump": {
      "name": "opensees_2.26.dump.json",
