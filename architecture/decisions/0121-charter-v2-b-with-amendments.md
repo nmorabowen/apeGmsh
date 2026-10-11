@@ -1,6 +1,7 @@
 # ADR 0121 — Charter v2: B with amendments, one engine policy, a mechanized freeze
 
-**Status:** Proposed (2026-10-11)
+**Status:** Accepted (2026-10-11; accepted by the maintainer on #1193,
+comment 6112930400)
 
 **Owner:** nmora
 
@@ -12,9 +13,10 @@ benefits from a second model family). The orchestrator reconciled them on
 #1193 (comment 6112293477); the briefs themselves are comment 6112306488.
 This ADR cites them and does not copy them.
 
-**Supersedes in part, once Accepted:** [ADR 0102](0102-warrant-the-snapshot.md)
+**Supersedes in part:** [ADR 0102](0102-warrant-the-snapshot.md)
 D2 (the freeze) and D5 (the bucket table, including its Warranted row).
-Until this ADR is Accepted it supersedes nothing (D5 below). 0102's D1,
+The amendment and pointer on 0102 follow in PR-5 (see "Implementation
+log"). 0102's D1,
 D3, D4, D6 and D7 are not touched at all, and stay Proposed (maintainer
 ruling 4, 2026-10-11).
 
@@ -24,8 +26,8 @@ Each decision is marked *(ratified)* when the maintainer has already ruled
 on it and this ADR only records the ruling, or *(proposed)* when accepting
 this ADR is the ruling. *(proposed; direction ruled 2026-10-11)* marks a
 proposed decision whose open question the maintainer has already answered
-(see "Maintainer rulings" below). The ADR itself stays Proposed until the
-maintainer accepts it.
+(see "Maintainer rulings" below). The maintainer accepted the ADR on
+2026-10-11; the markers are kept as written.
 
 ## Context
 
@@ -119,7 +121,7 @@ that behaves differently on the two engines is in exactly one of four
 states.
 
 - **Refused.** On a stock build, apeGmsh raises at build, emit or
-  live-construction time, *before* `analyze`, with an error that names the
+  live-emit time, *before* `analyze`, with an error that names the
   fork, and a `pytest.raises` test pins the refusal. The run is refused;
   the domain is not necessarily untouched. The element gate
   (`LiveOpsEmitter._element_fork_gated`) issues `ops.element` first and
@@ -296,9 +298,9 @@ grandfathered.
 11. Every divergence-roster row names `stock`, `fork`, `policy` or
     `pending #<n>` as the correct engine, and its pinning tests exist.
     Holds (`tests/opensees/unit/test_fork_divergence_roster.py`).
-12. `python scripts/adr_index.py --check` passes, and ADRs 0102 and 0121
-    both parse as Proposed until PR-5. No test pins the second half: it is
-    checked at review until PR-3's Accepted refusal (invariant 8) makes it
+12. `python scripts/adr_index.py --check` passes; ADR 0102 parses as
+    Proposed (ruling 4) and 0121 as Accepted. No test pins the second
+    half: it is checked at review until PR-3's Accepted refusal (invariant 8) makes it
     mechanical for every PR landed through `land_pr.py`.
 13. After PR-5, `charter.md` claims neither three emit targets nor a
     stage-capable live target. PR-5.
@@ -323,7 +325,8 @@ maintainer clears them.
 - **PR-4, warrant rows and lane wiring.** One refused exemplar and one
   honest exemplar, and the skip-fails-the-lane rule in both live lanes. It
   builds on the F3-a roster, which has now merged.
-- **PR-5, acceptance.** 0121 goes to Accepted. ADR 0102 gets a dated
+- **PR-5, acceptance follow-through.** 0121 itself was accepted in PR-1
+  (see "Implementation log"). ADR 0102 gets a dated
   amendment section and a pointer here (D2 and D5 superseded in part, its
   Status line otherwise unchanged). `charter.md` gets the scope header and
   its two fixes, AGENTS.md and `architecture/README.md` point here, and the
@@ -400,7 +403,7 @@ account, so a required owner review could never be given.
 
 On each of the design's five questions the maintainer chose the
 recommended option (#1193, comment 6112664614); the decisions above state
-them as decided. Accepting this ADR remains the maintainer's separate act.
+them as decided. The maintainer then accepted the ADR the same day.
 
 1. **Admitting a fork member** (D4). It merges with a stock refusal naming
    the fork plus a warrant-row test, and is Warranted only when that test
@@ -436,3 +439,15 @@ them as decided. Accepting this ADR remains the maintainer's separate act.
   [ADR 0116](0116-render-technologies.md).
 - [`architecture/charter.md`](../charter.md) and
   [`architecture/fork-divergence-roster.md`](../fork-divergence-roster.md).
+
+## Implementation log
+
+- 2026-10-11: PR #1681 (slice #1678) opened the ADR as Proposed; the
+  maintainer's rulings on its five questions were folded in (#1193,
+  comment 6112664614).
+- 2026-10-11: **Accepted** by the maintainer (#1193, comment 6112930400),
+  in PR-1 rather than PR-5. The 0102 amendment and pointer and the
+  `charter.md` header and fixes, which D5 assigns to the accepting PR,
+  follow in PR-5; until it lands, neither file points here yet. The
+  `land_pr.py` Accepted refusal (PR-3) did not exist at this landing, so
+  the maintainer's ruling is the explicit exception.
