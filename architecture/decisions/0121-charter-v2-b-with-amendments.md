@@ -15,8 +15,8 @@ This ADR cites them and does not copy them.
 
 **Supersedes in part:** [ADR 0102](0102-warrant-the-snapshot.md)
 D2 (the freeze) and D5 (the bucket table, including its Warranted row).
-The amendment and pointer on 0102 follow in PR-5 (see "Implementation
-log"). 0102's D1,
+0102 carries the amendment and a pointer here, both added when this ADR
+was accepted. 0102's D1,
 D3, D4, D6 and D7 are not touched at all, and stay Proposed (maintainer
 ruling 4, 2026-10-11).
 
@@ -205,8 +205,8 @@ A decision is never rewritten. Errata go in a dated `## Amendment` section,
 as ADRs 0113 and 0114 already do. A changed decision goes in a new ADR that
 names the clauses it supersedes. Pointers and Status edits on the
 superseded ADR land in the PR that *accepts* the new one, because a
-Proposed ADR supersedes nothing. This ADR follows its own rule: it edits
-neither ADR 0102 nor `charter.md`. PR-5 does both.
+Proposed ADR supersedes nothing. This ADR followed its own rule: its
+0102 amendment and `charter.md` edits landed in the PR that accepted it.
 
 ### D6 (proposed) — Charter principles, each with its gate
 
@@ -302,13 +302,15 @@ grandfathered.
     Proposed (ruling 4) and 0121 as Accepted. No test pins the second
     half: it is checked at review until PR-3's Accepted refusal (invariant 8) makes it
     mechanical for every PR landed through `land_pr.py`.
-13. After PR-5, `charter.md` claims neither three emit targets nor a
-    stage-capable live target. PR-5.
+13. `charter.md` claims neither three emit targets nor a stage-capable
+    live target. Holds since this ADR's acceptance; checked at review.
 
 ## Slices
 
-**PR-1** is #1678: this ADR, the regenerated index and one changelog
-fragment, labelled `semantic` and `human-gate`. The rest are follow-up
+**PR-1** is #1678 (PR #1681): this ADR, the regenerated index, one
+changelog fragment and, at acceptance, the 0102 amendment and the
+`charter.md` scope header and two fixes. It is labelled `semantic` and
+`human-gate`. The rest are follow-up
 slices on #1193, each of at most about six files, started when the
 maintainer clears them.
 
@@ -325,12 +327,8 @@ maintainer clears them.
 - **PR-4, warrant rows and lane wiring.** One refused exemplar and one
   honest exemplar, and the skip-fails-the-lane rule in both live lanes. It
   builds on the F3-a roster, which has now merged.
-- **PR-5, acceptance follow-through.** 0121 itself was accepted in PR-1
-  (see "Implementation log"). ADR 0102 gets a dated
-  amendment section and a pointer here (D2 and D5 superseded in part, its
-  Status line otherwise unchanged). `charter.md` gets the scope header and
-  its two fixes, AGENTS.md and `architecture/README.md` point here, and the
-  index is regenerated. The maintainer merges it.
+- **PR-5, pointers.** AGENTS.md, `architecture/README.md` and
+  `architecture/agent-onboarding.md` point here.
 
 Owned elsewhere and not decided here: `ladrunoSchema` (F3-b, #1667), the
 census derived from it (F4), stamping `auto` decks (#1603), and X4's
@@ -374,8 +372,8 @@ Opus brief did not. They count for the lane and not for a member (D3),
 as the maintainer ruled (ruling 3).
 
 **When the 0102 amendment lands.** The Fable brief added a dated amendment
-section in PR-1. That would amend 0102 on the authority of a Proposed ADR,
-which D5 forbids; it lands in PR-5.
+section while this ADR was still Proposed. That would amend 0102 on the
+authority of a Proposed ADR, which D5 forbids; it landed at acceptance.
 
 **"Boundaries machine-checked" as a principle.** The Fable brief included
 it. PROGRAM.md §8 says structure KPIs are never a hard gate, so it stays a
@@ -445,9 +443,9 @@ them as decided. The maintainer then accepted the ADR the same day.
 - 2026-10-11: PR #1681 (slice #1678) opened the ADR as Proposed; the
   maintainer's rulings on its five questions were folded in (#1193,
   comment 6112664614).
-- 2026-10-11: **Accepted** by the maintainer (#1193, comment 6112930400),
-  in PR-1 rather than PR-5. The 0102 amendment and pointer and the
-  `charter.md` header and fixes, which D5 assigns to the accepting PR,
-  follow in PR-5; until it lands, neither file points here yet. The
-  `land_pr.py` Accepted refusal (PR-3) did not exist at this landing, so
-  the maintainer's ruling is the explicit exception.
+- 2026-10-11: **Accepted** by the maintainer (#1193, comment 6112930400)
+  in PR-1. As D5 requires, the same PR appended the dated amendment and
+  pointer to ADR 0102 (Status unchanged, Proposed) and gave `charter.md`
+  its scope header and two fixes; P1–P14 are unchanged. The `land_pr.py`
+  Accepted refusal (PR-3) did not exist at this landing, so the
+  maintainer's ruling is the explicit exception.

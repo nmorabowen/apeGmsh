@@ -1,11 +1,19 @@
 # Charter
 
+> **Scope.** This is the charter of the OpenSees bridge
+> (`apeGmsh.opensees`). The library-level Charter v2 is
+> [ADR 0121](decisions/0121-charter-v2-b-with-amendments.md); where the two
+> conflict, ADR 0121 wins.
+
 ## Mission
 
 Translate a meshed structural model — represented as a `FEMData`
-snapshot plus typed declarations — into one of three OpenSees emit
-targets: a Tcl script, a Python (openseespy) script, or a live
-`openseespy` domain. Nothing more: the bridge does not own analysis
+snapshot plus typed declarations — into one of four OpenSees emit
+targets: a Tcl script, a Python (openseespy) script, a `model.h5`
+archive ([ADR 0011](decisions/0011-h5-as-fourth-emit-target.md)), or a
+live `openseespy` domain. The live target runs flat (unstaged) models
+only; staged analyses run from an emitted deck (K24; ADR 0121 D2).
+Nothing more: the bridge does not own analysis
 strategies, recording strategies, or post-processing. It writes the
 deck and stops at "model + recorders + analysis settings + analyze
 loop are populated."

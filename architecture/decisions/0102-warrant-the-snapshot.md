@@ -2,6 +2,10 @@
 
 **Status:** Proposed (2026-08-30)
 
+**Superseded in part:** D2 and D5 by
+[ADR 0121](0121-charter-v2-b-with-amendments.md) (2026-10-11); see the
+Amendment at the end.
+
 **Owner:** nmora
 
 **Sibling:** OpenSees-fork ADR-87 (same day, same review). That ADR
@@ -220,3 +224,19 @@ Until then this document is an opinion with a number.
   D6. Studio is 11k lines; the LOC factory is `viewers/` + the 712k
   changelog, not MCP. CI-can-refuse was *not* overstated — do not
   transplant OpenSees ADR-87 D4 here.
+
+## Amendment (2026-10-11)
+
+[ADR 0121](0121-charter-v2-b-with-amendments.md), Charter v2, was accepted
+by the maintainer on 2026-10-11 (#1193, comment 6112930400). It supersedes
+two decisions of this ADR:
+
+- **D2 (freeze new families)** is superseded by ADR 0121 D4: the freeze is
+  a census lock over named registries, grown only by an Accepted ADR.
+- **D5 (the warranted / inventory / failed table)** is superseded by ADR
+  0121 D3: one engine policy, under which warrant is derived from gates
+  (fork green in `live-fork`; stock honest or refused), not narrated.
+
+D1, D3, D4, D6 and D7 stand, and this ADR stays Proposed (maintainer
+ruling 4 on ADR 0121's questions, #1193 comment 6112664614). The D2 and D5
+text above is left as written.
