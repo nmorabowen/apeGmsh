@@ -105,7 +105,7 @@ GRANDFATHERED_FORK_MEMBERS = frozenset({
     "CentralDifferenceSMS", "ExplicitBatheSMS", "ExplicitBatheLNVDSMS",
 })
 
-#: ``len(GRANDFATHERED_FORK_MEMBERS)`` at the freeze point (PR-2 #1691);
+#: ``len(GRANDFATHERED_FORK_MEMBERS)`` at the freeze point (PR-2 #1691, 1d515405);
 #: the X4 handoff. The set may shrink, never grow past it.
 FREEZE_POINT_FORK_MEMBERS = 38
 
