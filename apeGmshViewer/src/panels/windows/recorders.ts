@@ -126,7 +126,7 @@ function groupDecl(s: State, name: string): DeclPath | null {
 /** What /sequence says about the removal of recorder `handle`. */
 function removalOf(s: State, handle: string | null): string {
   const seq = s.sequence;
-  if (seq.status === "absent") return "removal: not in this file (it has no /sequence zone)";
+  if (seq.status === "absent") return "removal not in this file (no /sequence zone)";
   if (seq.status === "refused") return `removal: unknown (/sequence ${seq.version} was not read: ${seq.reason})`;
   const col = (c: string) => seq.changes.columns.indexOf(c);
   const [iStage, iOp, iWhat, iName] = [col("stage"), col("op"), col("what"), col("name")];
@@ -144,7 +144,7 @@ function entryOf(s: State, r: DefObject, d: DeclRecord | undefined, st: StageDef
   const sel = t.groups.map((g) => ({ g, decl: groupDecl(s, g) }));
   const select = sel.find((x) => x.decl !== null)?.decl ?? null;
   const missing = sel.filter((x) => x.decl === null).map((x) => x.g);
-  const added = st ? `added by stage ${st.index} · ${st.name}` : staged ? "global: added before the first stage, so every stage records it" : "global: the model is unstaged, so the whole analysis records it";
+  const added = st ? `added by stage ${st.index} · ${st.name}` : staged ? "global, added before the first stage: every stage records it" : "global, unstaged model: the whole analysis records it";
   const params: RecorderParam[] = [];
   const unset: string[] = [];
   for (const o of d?.params ?? []) {
@@ -204,7 +204,9 @@ export function recordersOf(s: State): RecordersContent {
   const add = (recs: readonly DefObject[], store: string, st: StageDef | null) => {
     const joined = recorderDecls(defs, recs, store);
     const why = joined.size ? "" : joinGap(s, recs.length, store);
-    for (const r of recs) entries.push(entryOf(s, r, joined.get(r.path), st, staged, why || "the group name has no trailing _<index>"));
+    // In declaration order (the decls row) when joined; the file's group order otherwise.
+    const order = recs.map((r, i) => ({ r, d: joined.get(r.path), i })).sort((a, b) => (a.d?.row ?? Infinity) - (b.d?.row ?? Infinity) || a.i - b.i);
+    for (const { r, d } of order) entries.push(entryOf(s, r, d, st, staged, why || "the group name has no trailing _<index>"));
   };
   add(defs.recorders, "recorders", null);
   for (const st of defs.stages) add(st.recorders, `stages/stage_${String(st.index).padStart(3, "0")}/recorders`, st);
@@ -254,6 +256,7 @@ export const view: WindowView = (s: State, act: (e: Event) => void) => {
     row.append(head, line("records", r.records), line("targets", r.targets), line("output", r.output), line("stage", r.lifetime));
     if (r.params.length) {
       const table = el("table", "fields");
+      table.style.fontSize = "12px";
       for (const p of r.params) {
         const tr = el("tr");
         tr.append(el("td", "f-label", p.field), el("td", "f-value", p.value));

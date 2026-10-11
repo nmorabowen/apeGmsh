@@ -60,11 +60,11 @@ test("what it records, on what, to which file, and the stage that adds it", () =
   assert.equal(crown!.records, "disp · dofs 2");
   assert.equal(crown!.targets, "1 node");
   assert.equal(crown!.output, "file gravity.out · archive kind typed");
-  assert.equal(crown!.lifetime, "added by stage 0 · gravity; removal: not in this file (it has no /sequence zone)");
+  assert.equal(crown!.lifetime, "added by stage 0 · gravity; removal not in this file (no /sequence zone)");
   assert.equal(mpco!.records, "no response field is set");
   assert.equal(mpco!.targets, "no target field is set (nodes, elements, pg, region)");
   assert.equal(mpco!.output, "file shoebuckle.mpco · archive kind typed");
-  assert.equal(mpco!.lifetime, "global: added before the first stage, so every stage records it; removal: not in this file (it has no /sequence zone)");
+  assert.equal(mpco!.lifetime, "global, added before the first stage: every stage records it; removal not in this file (no /sequence zone)");
 });
 
 test("parameters are decl_params' fields by name, never the positional argv", () => {
@@ -99,7 +99,7 @@ test("a file without /opensees/decls shows its recorders by group name and says 
   assert.deepEqual(e!.params, []);
   assert.equal(e!.records, "not in this file (no parameters by field name)");
   assert.equal(e!.paramsNote, "parameters by field name: not joined (the file has no /opensees/decls (opensees < 2.25.0))");
-  assert.equal(e!.lifetime, "global: the model is unstaged, so the whole analysis records it; removal: not in this file (it has no /sequence zone)");
+  assert.equal(e!.lifetime, "global, unstaged model: the whole analysis records it; removal not in this file (no /sequence zone)");
   assert.equal(e!.source, null);
 });
 
@@ -142,7 +142,7 @@ test("removal comes from /sequence when the file has it", () => {
   const s: State = { ...state, sequence: { status: "ready", version: "1.0.0", attrs: {}, stages, changes } };
   const [mpco, crown] = recordersOf(s).entries;
   assert.equal(crown!.lifetime, "added by stage 0 · gravity; removed by stage 1");
-  assert.equal(mpco!.lifetime, "global: added before the first stage, so every stage records it; never removed (/sequence)");
+  assert.equal(mpco!.lifetime, "global, added before the first stage: every stage records it; never removed (/sequence)");
   const refused: State = { ...state, sequence: { status: "refused", version: "9.0.0", accepted: "1.x", newer: true, reason: "newer" } };
   assert.match(recordersOf(refused).entries[1]!.lifetime, /removal: unknown \(\/sequence 9\.0\.0 was not read: newer\)$/);
 });
@@ -161,4 +161,15 @@ test("a decls row count that differs from the recorders joins nothing, and says 
   assert.equal(e.handle, "mpco_0");
   assert.equal(e.declKey, null);
   assert.equal(e.paramsNote, "parameters by field name: not joined (/opensees/decls/rows/recorders has 2 rows for 1 recorders)");
+});
+
+test("within a section, recorders list in declaration order, not the file's group order (kr3pb: ladruno_0 is #1)", () => {
+  const defs = state.definitions!;
+  const crownGroup = { ...defs.stages[0]!.recorders[0]!, path: "/opensees/recorders/Node_1" };
+  // File order Node_1, mpco_0; index order (rows/recorders) mpco_0 -> decl 7 (#1), Node_1 -> decl 11 (crown).
+  const s: State = { ...state, definitions: { ...defs, recorders: [crownGroup, defs.recorders[0]!], decls: { ...defs.decls!, rows: { ...defs.decls!.rows, recorders: [7, 11] } } } };
+  assert.deepEqual(recordersOf(s).entries.filter((e) => e.section === "global").map((e) => [e.handle, e.h5]), [
+    ["#1", "/opensees/recorders/mpco_0"],
+    ["crown", "/opensees/recorders/Node_1"],
+  ]);
 });
