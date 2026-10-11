@@ -18,7 +18,8 @@ from apeGmsh.sections import SectionDocument
 from apeGmsh.sections._properties import (
     BuildResult,
     PropertiesController,
-    _no_cyclic_gc,
+    _gc_hold,
+    _gc_release,
     build_document,
     canonical_state,
     fiber_identities,
@@ -251,11 +252,13 @@ def test_gc_pause_is_refcounted_across_overlapping_builds():
     """Two overlapping builds must not let the first one to finish
     re-arm the collector under the second."""
     assert gc.isenabled() is True
-    with _no_cyclic_gc():
-        assert gc.isenabled() is False
-        with _no_cyclic_gc():
-            assert gc.isenabled() is False
-        assert gc.isenabled() is False               # inner exit holds it
+    _gc_hold()
+    assert gc.isenabled() is False
+    _gc_hold()
+    assert gc.isenabled() is False
+    _gc_release()
+    assert gc.isenabled() is False                   # second holder keeps it
+    _gc_release()
     assert gc.isenabled() is True
 
 
@@ -264,8 +267,128 @@ def test_gc_pause_leaves_an_already_disabled_collector_alone():
     pause restores what it found, it does not assert a policy."""
     gc.disable()
     try:
-        with _no_cyclic_gc():
-            assert gc.isenabled() is False
+        _gc_hold()
+        assert gc.isenabled() is False
+        _gc_release()
         assert gc.isenabled() is False               # not turned back on
     finally:
         gc.enable()
+
+
+def test_gc_release_without_hold_raises():
+    """An unmatched release is a bookkeeping bug; it must not go negative."""
+    with pytest.raises(RuntimeError, match="without a matching"):
+        _gc_release()
+
+
+def test_a_stopped_controller_keeps_the_pause_until_its_worker_is_reaped():
+    """Closing a window mid-build must not re-arm the collector under the
+    still-running worker, and must not leave it paused once that worker
+    is gone."""
+    gate = threading.Event()
+
+    def blocking(doc_dict):
+        gate.wait(30.0)
+        return BuildResult(key="", kind="continuum")
+
+    delivered = []
+    ctrl = PropertiesController(builder=blocking, on_result=delivered.append,
+                                autostart_timer=False)
+    try:
+        ctrl.request({"kind": "continuum"})
+        ctrl.stop()
+        assert gc.isenabled() is False               # worker still alive
+    finally:
+        gate.set()
+        ctrl.join(30.0)
+    assert gc.isenabled() is True                    # reaped on join
+    ctrl.drain()
+    assert delivered == []                           # nothing after stop
+
+
+class _FakeTimer:
+    """Stands in for the QTimer: only start/stop/isActive are used."""
+
+    def __init__(self) -> None:
+        self.active = True
+
+    def start(self) -> None:
+        self.active = True
+
+    def stop(self) -> None:
+        self.active = False
+
+    def isActive(self) -> bool:
+        return self.active
+
+
+def test_a_request_after_stop_resumes_the_timer_that_reaps_its_worker():
+    """A closed builder window shown again calls request() on its stopped
+    controller. stop() with no live worker had already stopped the timer,
+    so the new worker had nothing to reap it, and the collector stayed
+    paused for the rest of the process. The request must resume the
+    controller, timer included, and deliver its result again."""
+    delivered = []
+    ctrl = PropertiesController(
+        builder=lambda d: BuildResult(key="", kind="continuum"),
+        on_result=delivered.append, autostart_timer=False,
+    )
+    ctrl._timer = _FakeTimer()
+    ctrl.stop()
+    assert ctrl._timer.isActive() is False           # nothing left to reap
+
+    ctrl.request({"kind": "continuum"})
+    assert ctrl._timer.isActive() is True            # something will reap it
+    for t in list(ctrl._threads):
+        t.join(30.0)
+    ctrl.drain()                                     # what the timer tick runs
+    assert gc.isenabled() is True
+    assert len(delivered) == 1
+
+
+def test_no_cyclic_collection_ever_runs_on_a_worker_thread():
+    """Regression lock (#1649): the UI thread owns the collector switch.
+
+    The pause used to be taken and released *on the worker*: the worker
+    re-armed the collector in its own ``finally`` and then kept
+    allocating (the context-manager exit, the thread's own teardown),
+    and its bootstrap ran under an armed collector before the pause.
+    Either window lets the worker trip the threshold and run the pass
+    that finalizes an earlier builder window's Qt graph off the UI
+    thread: the #1080 segfault, back whenever an import shifted the
+    allocation count (#1612, #1648).
+
+    ``gc.set_threshold(1)`` makes every tracked allocation trip the
+    collector, so any instant at which a worker runs with it armed is
+    caught deterministically; ``gc.callbacks`` names the thread that ran
+    each pass. Only the UI thread may appear.
+    """
+    main_id = threading.get_ident()
+    passes: "list[int]" = []
+
+    def record(phase, info):
+        if phase == "start":
+            passes.append(threading.get_ident())
+
+    def churn(doc_dict):
+        junk = [[i] for i in range(2000)]        # tracked allocations
+        del junk
+        return BuildResult(key="", kind="continuum", analysis=None,
+                           error="churn")
+
+    old = gc.get_threshold()
+    gc.callbacks.append(record)
+    gc.set_threshold(1, old[1], old[2])
+    try:
+        ctrl = PropertiesController(builder=churn, autostart_timer=False)
+        for i in range(5):
+            ctrl.request({"kind": "continuum", "i": i})
+            ctrl.join(30.0)
+            ctrl.drain()
+    finally:
+        gc.set_threshold(*old)
+        gc.callbacks.remove(record)
+
+    assert passes, "the probe saw no collection at all"
+    assert set(passes) == {main_id}, "a cyclic pass ran on a worker thread"
+    assert gc.isenabled() is True                    # released on the UI thread

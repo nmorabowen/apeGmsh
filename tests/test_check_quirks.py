@@ -1081,6 +1081,87 @@ def test_qt_process_isolation_passes_test_properties_from_main(tmp_path: Path) -
     assert quirks.scan(tmp_path) == []
 
 
+# --- qt-worker-gc: a worker thread that can run Qt finalizers (#1649) --------
+
+PROPERTIES = "src/apeGmsh/sections/_properties.py"
+
+
+def _show(commit: str, rel: str) -> str:
+    import subprocess
+
+    done = subprocess.run(
+        ["git", "show", f"{commit}:{rel}"], cwd=REPO_ROOT, capture_output=True, text=True, encoding="utf-8"
+    )
+    if done.returncode != 0:
+        pytest.skip(f"{commit} is not in this clone")
+    return done.stdout
+
+
+@pytest.mark.parametrize(
+    "commit",
+    [
+        "47e20ca6^",  # target=self._work: the running thread owned the controller and its Qt graph
+        "8fe1efdf",   # target=_work, whose _no_cyclic_gc re-armed gc.enable() on the worker
+    ],
+)
+def test_qt_worker_gc_flags_properties_at_the_commits_that_had_the_bug(tmp_path: Path, commit: str) -> None:
+    _write(tmp_path, PROPERTIES, _show(commit, PROPERTIES))
+    assert [f.rule for f in quirks.scan(tmp_path)] == ["qt-worker-gc"]
+
+
+def test_qt_worker_gc_passes_properties_on_main(tmp_path: Path) -> None:
+    _write(tmp_path, PROPERTIES, _real(PROPERTIES))
+    assert quirks.scan(tmp_path) == []
+
+
+QT_WORKER = '''\
+import contextlib
+import gc
+import threading
+
+def _ui():
+    from qtpy.QtCore import QTimer
+    return QTimer()
+
+@contextlib.contextmanager
+def _paused():
+    gc.disable()
+    yield
+    gc.enable()
+
+def _helper():
+    gc.collect()
+
+def _plain(q):
+    q.put(1)
+
+{body}
+'''
+
+
+@pytest.mark.parametrize(
+    ("body", "flagged"),
+    [
+        ("def _w():\n    gc.enable()\nthreading.Thread(target=_w)", True),
+        ("def _w():\n    with _paused():\n        pass\nthreading.Thread(target=_w)", True),
+        ("def _w():\n    _helper()\nthreading.Thread(target=_w)", True),
+        ("class C:\n    def go(self):\n        threading.Thread(target=self.go)", True),
+        ("threading.Thread(target=_plain, args=(None,))", False),
+        ("def _w():\n    gc.disable()\nthreading.Thread(target=_w)", False),   # disabling is safe
+        ("_paused()\nthreading.Thread(target=print)", False),                # gc off the thread
+    ],
+)
+def test_qt_worker_gc_shapes(tmp_path: Path, body: str, flagged: bool) -> None:
+    _write(tmp_path, "src/apeGmsh/sections/a.py", QT_WORKER.format(body=body))
+    assert [f.rule for f in quirks.scan(tmp_path)] == (["qt-worker-gc"] if flagged else [])
+
+
+def test_qt_worker_gc_needs_a_qt_import(tmp_path: Path) -> None:
+    source = "import gc, threading\ndef _w():\n    gc.enable()\nthreading.Thread(target=_w)\n"
+    _write(tmp_path, "src/apeGmsh/sections/a.py", source)
+    assert quirks.scan(tmp_path) == []
+
+
 # --- compose-streams: keyed by package glob, so a split keeps the rule -------
 
 

@@ -227,6 +227,16 @@ RULES: dict[str, str] = {
         "or subprocess. Lesson: #1242; tests/sections/test_builder_gui_b6.py at 8269206d "
         "crashed Linux CI; class history #1080, 3165568c, 47e20ca6"
     ),
+    "qt-worker-gc": (
+        "a `Thread(target=...)` in a module that imports a Qt binding targets a bound method of "
+        "self/cls, or a function that calls gc.enable()/gc.collect() (directly or through a "
+        "same-module helper or context manager). Either lets the worker finalize a Qt wrapper "
+        "off the UI thread: Shiboken defers the delete to the main thread, which segfaults "
+        "draining it (no traceback). Pass the target plain Qt-free arguments, and keep the GC "
+        "switch on the UI thread, held from before start() until the thread is dead. Lesson: "
+        "#1649; sections/_properties.py at 47e20ca6^ (target=self._work) and at 8fe1efdf "
+        "(the worker re-armed gc.enable() itself), class history #1080, #1242, #1612"
+    ),
     "stale-patch-target": (
         "a `mock.patch(\"a.b.c\")` or `monkeypatch.setattr(\"a.b.c\", ...)` string target "
         "that no longer resolves in src/: the module or the name moved, so the patch either "
@@ -1037,6 +1047,64 @@ def check_qt_process_isolation(tree: ast.AST, rel: str, root: Path) -> Iterator[
     yield started, RULES["qt-process-isolation"]
 
 
+# --- qt-worker-gc: a worker thread that can run Qt finalizers (#1649) --------
+
+GC_SWITCH_CALLS = {"enable", "collect"}
+
+
+def _calls_gc_switch(func: ast.AST, defs: dict[str, ast.AST], seen: set[str]) -> int | None:
+    """Line of a `gc.enable()` / `gc.collect()` reachable from `func`, through same-module
+    functions it calls or enters with `with`; None when there is none."""
+    for node in ast.walk(func):
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr in GC_SWITCH_CALLS
+            and isinstance(node.func.value, ast.Name)
+            and node.func.value.id == "gc"
+        ):
+            return node.lineno
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+            callee = node.func.id
+            if callee in defs and callee not in seen:
+                seen.add(callee)
+                if _calls_gc_switch(defs[callee], defs, seen) is not None:
+                    return node.lineno
+    return None
+
+
+def check_qt_worker_gc(tree: ast.AST, rel: str, root: Path) -> Iterator[tuple[int, str]]:
+    """`Thread(target=...)` in a src module that imports a Qt binding, whose target is a
+    bound method of self/cls, or a module-level function that can arm or run the cyclic GC.
+
+    Either lets the worker thread finalize a Qt wrapper: the first by owning the object (and
+    through it the Qt graph), the second by running the collection pass that frees someone
+    else's. Only same-module calls are followed, so a gc call behind an import stays silent."""
+    if not rel.startswith(GETATTR_SCOPE) or not isinstance(tree, ast.Module):
+        return
+    if not _imports_qt(tree):
+        return
+    defs: dict[str, ast.AST] = {
+        stmt.name: stmt for stmt in tree.body if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    for node in ast.walk(tree):
+        if not (
+            isinstance(node, ast.Call)
+            and getattr(node.func, "attr", getattr(node.func, "id", "")) == "Thread"
+        ):
+            continue
+        target = next((kw.value for kw in node.keywords if kw.arg == "target"), None)
+        if (
+            isinstance(target, ast.Attribute)
+            and isinstance(target.value, ast.Name)
+            and target.value.id in {"self", "cls"}
+        ):
+            yield node.lineno, RULES["qt-worker-gc"]
+        elif isinstance(target, ast.Name) and target.id in defs:
+            if _calls_gc_switch(defs[target.id], defs, {target.id}) is not None:
+                yield node.lineno, RULES["qt-worker-gc"]
+
+
 # --- stale-patch-target -----------------------------------------------------
 
 PATCH_TEXT = re.compile(r"(?:patch|setattr)\(\s*[rRuU]?['\"][A-Za-z_]\w*\.\w")
@@ -1309,6 +1377,7 @@ PYTHON_RULES: dict[str, Callable[[ast.AST, str, Path], Iterator[tuple[int, str]]
     "getattr-undefined": check_getattr_undefined,
     "ratchet-baseline": check_ratchet_baseline,
     "qt-process-isolation": check_qt_process_isolation,
+    "qt-worker-gc": check_qt_worker_gc,
     "stale-patch-target": check_stale_patch_target,
     "raw-meta-ndm": check_raw_meta_ndm,
 }
@@ -1443,6 +1512,8 @@ def _may_apply(rel: str, lowered: str, text: str = "") -> bool:
     if rel.startswith(GETATTR_SCOPE) and NDM_TEXT.search(text):
         return True
     if rel.startswith(GETATTR_SCOPE) and "emitter" in lowered and SNIFF_TEXT.search(text):
+        return True
+    if rel.startswith(GETATTR_SCOPE) and "thread(" in lowered and QT_BINDINGS.search(text):
         return True
     return "openseespy" in lowered and IMPORT_TEXT.search(re.sub(r"\\\r?\n", " ", lowered)) is not None
 
