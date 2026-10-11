@@ -352,7 +352,7 @@ output cell. In a notebook, this is the one to reach for.
 !!! warning "Don't pass `blocking=True` in a notebook"
     `results.viewer()` defaults to `blocking=None` (auto): scripts get
     the in-process Qt window; a Jupyter / VS Code kernel spawns a
-    subprocess (or `show_web()` for in-memory Results) — the same
+    subprocess — the same
     hazard T1 used to warn about under the old default. An **explicit**
     `blocking=True` still **crashes the kernel**. In a notebook, use
     `results.show_web()`. (At a real terminal, the desktop viewer is

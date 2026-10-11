@@ -323,8 +323,8 @@ session — do not assume the server is bound correctly.
    `results.plot.*` — never OS-screenshot the desktop or the live
    viewer. Qt / web viewers are for humans who asked to look.
    `results.viewer()` default is `blocking=None` (auto: scripts block,
-   a Jupyter kernel spawns a subprocess or falls back to `show_web()`
-   for in-memory Results). An explicit `blocking=True` still kills a
+   a Jupyter kernel spawns a subprocess; an in-memory Results there
+   raises `RuntimeError`: open it with a `from_*` constructor). An explicit `blocking=True` still kills a
    Jupyter kernel. See `references/assess.md`.
 
 Which reference covers a given failure: `BridgeError` / staged / ndf →

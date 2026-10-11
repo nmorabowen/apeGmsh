@@ -483,7 +483,7 @@ is the interactive one for notebooks.)
 !!! warning "Don't pass `blocking=True` in a notebook"
     `results.viewer()` defaults to `blocking=None` (auto): scripts get
     the in-process Qt window; a Jupyter / VS Code kernel spawns a
-    subprocess (or `show_web()` for in-memory Results). An **explicit**
+    subprocess. An **explicit**
     `blocking=True` still runs a native VTK + Qt loop that **crashes
     the kernel**. In a notebook, reach for `results.show_web()`.
 

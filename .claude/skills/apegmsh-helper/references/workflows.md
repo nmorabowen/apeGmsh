@@ -460,8 +460,8 @@ results.plot.contour("displacement_z", step=-1)
 **Agents do not open a viewer to check a solve.** Qt / web windows are
 for humans who asked to look. `results.viewer()` default is
 `blocking=None` (auto): `True` in scripts / CLI, `False` (subprocess)
-in a Jupyter kernel; in-memory Results in a notebook fall back to
-`show_web()`. An **explicit** `blocking=True` still crashes the kernel.
+in a Jupyter kernel; an in-memory Results in a notebook raises
+`RuntimeError` (open it with a `Results.from_*` constructor). An **explicit** `blocking=True` still crashes the kernel.
 
 ```python
 # Only if the human asked to look:

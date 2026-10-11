@@ -181,8 +181,8 @@ missing. Print first, query second.
 
 The same object drives the viewers. `results.viewer()` opens the
 interactive Qt/VTK viewer. The default is `blocking=None` (auto):
-in-process and blocking from a terminal script, a subprocess (or
-`show_web()` for in-memory Results) inside a Jupyter kernel. An
+in-process and blocking from a terminal script, a subprocess
+inside a Jupyter kernel. An
 **explicit** `blocking=True` is still fatal to a Jupyter kernel. In a
 notebook use the kernel-safe web viewer, or let the auto default spawn
 the Qt viewer as a subprocess:

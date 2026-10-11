@@ -201,7 +201,7 @@ def _in_notebook_kernel() -> bool:
     """True when running inside a Jupyter / IPython ZMQ kernel.
 
     The blocking Qt viewer freezes (and often kills) such a kernel, so
-    :meth:`Results.viewer` defaults to the subprocess / web path there.
+    :meth:`Results.viewer` defaults to the subprocess path there.
     The class-name probe is the standard idiom: ``ZMQInteractiveShell``
     is the notebook / lab / VS Code kernel, ``TerminalInteractiveShell``
     is plain ``ipython`` in a terminal — where blocking is fine and the
@@ -1885,8 +1885,9 @@ class Results:
             raise RuntimeError(
                 "In-memory Results cannot launch in a subprocess. Open "
                 "the Results from disk via Results.from_native(path) or "
-                "Results.from_mpco(path), or call results.viewer() with "
-                "the default blocking=True."
+                "Results.from_mpco(path), or open the window in-process "
+                "with results.viewer(blocking=True) outside a notebook "
+                "kernel."
             )
         args = [
             python_exe or sys.executable,
