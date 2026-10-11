@@ -1,18 +1,58 @@
 {
   "about": "X2-a oracle (#1662): what the director path (ResultsDirector) renders today. Read by tests/viewers/test_x2_golden_stills.py. PNGs are block-averaged by tolerance.downsample from window-sized frames. Regenerate only from CI's renderer.",
-  "fixture": {"lx": 4.0, "ly": 1.0, "n": [9, 3], "n_steps": 5, "stage": "push", "kind": "static"},
+  "fixture": {
+    "lx": 4.0,
+    "ly": 1.0,
+    "n": [
+      9,
+      3
+    ],
+    "n_steps": 5,
+    "stage": "push",
+    "kind": "static"
+  },
   "theme": "catppuccin_mocha",
-  "window": [640, 360],
+  "window": [
+    640,
+    360
+  ],
   "camera": "xy",
-  "tolerance": {"downsample": 4, "max_delta": 48, "bad_delta": 16, "max_bad_fraction": 0.01},
+  "tolerance": {
+    "downsample": 4,
+    "max_delta": 48,
+    "bad_delta": 16,
+    "max_bad_fraction": 0.01
+  },
   "render": {
-    "mesh": {"component": null, "step": -1, "golden": "render_mesh.png"},
-    "contour": {"component": "displacement_y", "step": -1, "golden": "render_contour.png"},
-    "deformed": {"component": "displacement_y", "step": -1, "golden": "render_deformed.png"},
-    "reactions": {"component": "reactions", "step": -1, "golden": "render_reactions.png"}
+    "mesh": {
+      "component": null,
+      "step": -1,
+      "golden": "render_mesh.png"
+    },
+    "contour": {
+      "component": "displacement_y",
+      "step": -1,
+      "golden": "render_contour.png"
+    },
+    "deformed": {
+      "component": "displacement_y",
+      "step": -1,
+      "golden": "render_deformed.png"
+    },
+    "reactions": {
+      "component": "reactions",
+      "step": -1,
+      "golden": "render_reactions.png"
+    }
   },
   "render_pack": {
-    "files": ["mesh.png", "contour.png", "deformed.png", "reactions.png", "history.png"],
+    "files": [
+      "mesh.png",
+      "contour.png",
+      "deformed.png",
+      "reactions.png",
+      "history.png"
+    ],
     "count": 5,
     "stills": {
       "mesh.png": "pack_mesh.png",
@@ -22,13 +62,49 @@
     }
   },
   "animation": {
-    "component": "displacement_y",
+    "about": "Results.export_animation through the public method (qt lane): tests/viewers/test_x2_export_animation_golden.py",
     "fps": 10,
     "step_stride": 3,
-    "frame_steps": [0, 3, 4],
+    "frame_steps": [
+      0,
+      3,
+      4
+    ],
     "frame_count": 3,
-    "first": "anim_first.png",
-    "last": "anim_last.png"
+    "camera": "xy",
+    "window": [
+      640,
+      360
+    ],
+    "cases": {
+      "default": {
+        "deform": null,
+        "contour": null,
+        "first": "anim_default_first.png",
+        "last": "anim_default_last.png"
+      },
+      "deform": {
+        "deform": [
+          "displacement",
+          1.0
+        ],
+        "contour": null,
+        "first": "anim_deform_first.png",
+        "last": "anim_deform_last.png"
+      },
+      "contour": {
+        "deform": null,
+        "contour": "displacement_y",
+        "first": "anim_contour_first.png",
+        "last": "anim_contour_last.png"
+      }
+    }
   },
-  "assess_figures": ["mesh.png", "contour.png", "deformed.png", "reactions.png", "history.png"]
+  "assess_figures": [
+    "mesh.png",
+    "contour.png",
+    "deformed.png",
+    "reactions.png",
+    "history.png"
+  ]
 }

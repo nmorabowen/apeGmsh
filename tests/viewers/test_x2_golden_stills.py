@@ -13,9 +13,11 @@ step, so a wrong step is a different picture, not a rescaled one):
 
 1. ``results.render`` for each ``view`` in mesh|contour|deformed|reactions;
 2. ``results.render_pack``: the file names it writes and the VTK stills;
-3. ``export_animation``: the frame schedule/count for a fixed stride plus
-   the first and last frames;
-4. ``results.assess(figures=True)``: the figure file names.
+3. ``results.assess(figures=True)``: the figure file names.
+
+``results.export_animation`` builds a Qt ``ResultsViewer`` today, so its
+oracle lives in ``test_x2_export_animation_golden.py`` (qt lane) and
+shares this module's fixture, manifest and comparison.
 
 Comparison (stills): both frames are block-averaged by ``downsample``
 (4x4 -> 160x90) and compared per channel. A frame fails when any block
@@ -34,7 +36,16 @@ only from CI's renderer): ``APEGMSH_REGEN_GOLDENS=1 pytest <this file>``
 rewrites the PNGs (the repo ``.gitignore`` has ``*.png``, so commit them
 with ``git add -f``); a mismatch message also carries the actual
 downsampled frame as base64 PNG so a Linux golden can be lifted from a
-CI log.
+CI log (``X2GOLDEN-BEGIN <name> <base64> X2GOLDEN-END``; decode the
+base64 into ``golden_stills/<name>``).
+
+Known risk: the goldens are the ubuntu-latest runner's Mesa frames, and
+Mesa is an apt package, not pinned by ``.github/ci-constraints.txt``. The
+Windows-vs-Mesa scalar-bar shift measured 1.13-1.27% of blocks against a
+1% limit, so a runner-image bump that moves the scalar-bar layout can
+redden ``main`` with no apeGmsh commit responsible. Recovery: check the
+miss is layout only (the same picture, shifted), then lift the frames
+from the failing log as above. Never widen the tolerance to absorb it.
 """
 from __future__ import annotations
 
@@ -43,7 +54,6 @@ import io
 import json
 import os
 import sys
-import types
 from pathlib import Path
 from typing import Any
 
@@ -274,114 +284,9 @@ def test_render_pack_files_and_stills(plate, tmp_path: Path) -> None:
 
 
 # =====================================================================
-# 3. export_animation: frame schedule, count, first/last frames
+# 3. export_animation: test_x2_export_animation_golden.py (qt lane: the
+#    public method builds a Qt ResultsViewer, which this process must not)
 # =====================================================================
-
-
-class _RecordingWriter:
-    """Stand-in for an imageio writer: keeps every appended frame."""
-
-    def __init__(self, sink: list[np.ndarray]) -> None:
-        self._sink = sink
-
-    def __enter__(self) -> _RecordingWriter:
-        return self
-
-    def __exit__(self, *exc: object) -> None:
-        return None
-
-    def append_data(self, frame: np.ndarray) -> None:
-        self._sink.append(np.array(frame, copy=True))
-
-
-def _install_recording_imageio(
-    monkeypatch: pytest.MonkeyPatch, sink: list[np.ndarray],
-) -> None:
-    """Shadow ``imageio.v2`` so frames are captured, not encoded.
-
-    The frame schedule and pixels are the director path's; encoding is
-    imageio's. CI's suite lane does not install the ``animation`` extra,
-    so recording the frames is what lets the oracle run there.
-    """
-    v2 = types.ModuleType("imageio.v2")
-    v2.get_writer = lambda *_a, **_k: _RecordingWriter(sink)  # type: ignore[attr-defined]
-    pkg = types.ModuleType("imageio")
-    pkg.v2 = v2  # type: ignore[attr-defined]
-    monkeypatch.setitem(sys.modules, "imageio", pkg)
-    monkeypatch.setitem(sys.modules, "imageio.v2", v2)
-
-
-def _animation_stage(results: Results, component: str):
-    """Offscreen plotter + director with one contour layer.
-
-    Mirrors ``render_results(view='contour')`` on the director path:
-    themed offscreen plotter, ``ResultsDirector.bind_plotter`` over the
-    FEM scene, one registered contour diagram, fixed camera.
-    """
-    import pyvista as pv
-
-    from apeGmsh.viewers.backends import PyVistaQtBackend
-    from apeGmsh.viewers.diagrams import DiagramSpec, ResultsDirector
-    from apeGmsh.viewers.diagrams._kinds import kind_def
-    from apeGmsh.viewers.diagrams._selectors import normalize
-    from apeGmsh.viewers.render import _apply_camera, _apply_theme, _ensure_stage
-    from apeGmsh.viewers.scene.fem_scene import build_fem_scene
-
-    try:
-        plotter = pv.Plotter(off_screen=True, window_size=list(_WINDOW))
-    except (RuntimeError, OSError):
-        return None, None
-    _apply_theme(plotter)
-    scene = build_fem_scene(results.fem)
-    director = ResultsDirector(results)
-    _ensure_stage(director)
-    director.bind_plotter(
-        PyVistaQtBackend(plotter), scene=scene, render_callback=plotter.render,
-    )
-    kdef = kind_def("contour")
-    spec = DiagramSpec(
-        kind="contour",
-        selector=normalize(component=component),
-        style=kdef.make_default_style(component),
-    )
-    director.registry.add(kdef.diagram_class(spec, director.results))
-    director.set_step(0)
-    _apply_camera(plotter, _CAMERA)
-    return plotter, director
-
-
-def test_export_animation_frames(
-    plate, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from apeGmsh.viewers.animation import export_animation
-
-    spec = _MANIFEST["animation"]
-    frames: list[np.ndarray] = []
-    _install_recording_imageio(monkeypatch, frames)
-    plotter, director = _animation_stage(plate, spec["component"])
-    if plotter is None:
-        _require_still(None, tmp_path / "anim.gif")
-    seen: list[int] = []
-    real_set_step = director.set_step
-
-    def _spy(i: int) -> None:
-        seen.append(int(i))
-        real_set_step(i)
-
-    monkeypatch.setattr(director, "set_step", _spy)
-    try:
-        out = export_animation(
-            plotter, director, tmp_path / "anim.gif",
-            fps=spec["fps"], step_stride=spec["step_stride"],
-        )
-    finally:
-        director.unbind_plotter()
-        plotter.close()
-    assert out == tmp_path / "anim.gif"
-    # The schedule visits the frame steps, then restores the prior step.
-    assert seen[:-1] == spec["frame_steps"]
-    assert len(frames) == spec["frame_count"]
-    _assert_goldens((frames[0], spec["first"]), (frames[-1], spec["last"]))
 
 
 # =====================================================================
