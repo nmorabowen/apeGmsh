@@ -2,6 +2,7 @@
 
     python scripts/land_pr.py <number>            # check, squash-merge, prove it landed
     python scripts/land_pr.py <number> --dry-run  # run the checks and stop before the merge
+    python scripts/land_pr.py <number> --verify-only  # only the post-merge proof, for a merged PR
 
 The checks run in order and the first failure refuses, naming the check and
 the lesson. Then ``gh pr merge --squash --match-head-commit <checked head>``
@@ -11,6 +12,10 @@ read ``behind`` or ``identical``; then the branch tip must still be the
 merged head, so a push that raced the merge is flagged rather than left on
 an orphaned branch. A push after the landing is the nightly orphan
 detector's job (.github/workflows/orphans.yml, #1230).
+
+Every read after the merge is retried with bounded backoff (the merge call
+never is); if one keeps failing the script exits non-zero with ``MERGED BUT
+UNVERIFIED: #N`` and the ``--verify-only`` command to run (#1682).
 
 GitHub is reached only through ``run_gh`` and the checkout only through
 ``run_git``, so tests/test_land_pr.py replays recorded responses through
@@ -116,60 +121,140 @@ def check(number: int, gh: Runner, git: Runner) -> dict[str, Any]:
     return pr
 
 
+class UnverifiedError(LandError):
+    """The merge call went through but the post-merge proof could not be completed."""
+
+
+#: Transient failures of a read: a non-zero gh/git exit, a missing binary, a cut-off body.
+_TRANSIENT = (subprocess.CalledProcessError, OSError, json.JSONDecodeError)
+READ_TRIES = 5
+READ_WAIT_S = 1.0  # doubles each retry: 1, 2, 4, 8 s
+
+
+def _retry(fn: Callable[[], Any], what: str, sleep: Callable[[float], None]) -> Any:
+    """Run a post-merge READ with bounded backoff (never the merge call itself:
+    it is not idempotent). Exhaustion raises UnverifiedError (#1682)."""
+    wait = READ_WAIT_S
+    for attempt in range(1, READ_TRIES + 1):
+        try:
+            return fn()
+        except _TRANSIENT as exc:
+            if attempt == READ_TRIES:
+                raise UnverifiedError(
+                    f"{what} failed {READ_TRIES} times ({exc}); the merge itself went through."
+                ) from exc
+            sleep(wait)
+            wait *= 2
+    raise AssertionError("unreachable")  # pragma: no cover
+
+
+def _unverified(number: int, cause: UnverifiedError) -> UnverifiedError:
+    return UnverifiedError(
+        f"MERGED BUT UNVERIFIED: #{number} is merged, but the proof it reached main did "
+        f"not complete: {cause} Run: python scripts/land_pr.py --verify-only {number}"
+    )
+
+
+def prove(
+    number: int,
+    gh: Runner,
+    git: Runner,
+    sleep: Callable[[float], None],
+    head: str | None = None,
+    branch: str | None = None,
+) -> int:
+    """The post-merge proof: compare/main...<squash> reads behind or identical, and
+    the branch tip is still the merged head. Every read is retried; raises
+    UnverifiedError (message starting MERGED BUT UNVERIFIED) if a read keeps failing."""
+    try:
+        if head is None or branch is None:
+            view = _retry(
+                lambda: json.loads(gh(["pr", "view", str(number), "--json", "state,headRefName,headRefOid"])),
+                f"reading #{number}", sleep,
+            )
+            if view["state"] != "MERGED":
+                raise LandError(f"#{number} is {view['state']}, not merged; --verify-only proves a merged PR.")
+            head, branch = view["headRefOid"], view["headRefName"]
+        merge = _retry(
+            lambda: json.loads(gh(["pr", "view", str(number), "--json", "mergeCommit"]))["mergeCommit"],
+            f"the mergeCommit lookup for #{number}", sleep,
+        )
+        if not merge:
+            raise UnverifiedError(f"gh reports no mergeCommit for #{number}.")
+        sha = merge["oid"]
+        status = ""
+        for _ in range(COMPARE_TRIES):
+            status = _retry(
+                lambda: gh(["api", "repos/{owner}/{repo}/compare/main..." + sha, "--jq", ".status"]).strip(),
+                f"compare/main...{sha[:12]}", sleep,
+            )
+            if status in ("behind", "identical"):
+                break
+            if status == "diverged":
+                raise LandError(
+                    f"merged #{number} as {sha[:12]}, but compare/main...{sha[:12]} reads "
+                    f"'diverged': the squash commit is not on main (#858). Recover it by hand."
+                )
+            sleep(COMPARE_WAIT_S)
+        else:
+            raise LandError(
+                f"compare/main...{sha[:12]} still reads {status!r} after {COMPARE_TRIES} tries; "
+                f"confirm by hand before trusting the merge."
+            )
+        tip = _retry(
+            lambda: git(["ls-remote", "origin", f"refs/heads/{branch}"]).split(),
+            f"git ls-remote for {branch}", sleep,
+        )
+    except UnverifiedError as exc:
+        if str(exc).startswith("MERGED BUT UNVERIFIED"):
+            raise
+        raise _unverified(number, exc) from exc
+    if tip and tip[0] != head:
+        raise LandError(
+            f"merged #{number} as {sha[:12]}, but {branch} now reads {tip[0][:12]}, "
+            f"not the merged head {head[:12]}: a push raced the merge and that commit is on "
+            f"an orphaned branch, not on main. Open a new PR for it."
+        )
+    if not tip:
+        print(f"{branch} is gone (auto-deleted); nothing raced the merge.")
+    print(f"landed #{number} as {sha[:12]} on main (compare: {status}).")
+    return 0
+
+
 def land(
     number: int,
     gh: Runner = run_gh,
     git: Runner = run_git,
     *,
     dry_run: bool = False,
+    verify_only: bool = False,
     sleep: Callable[[float], None] = time.sleep,
 ) -> int:
+    if verify_only:
+        return prove(number, gh, git, sleep)
     pr = check(number, gh, git)
     head = pr["headRefOid"]
     if dry_run:
         print(f"dry-run: #{number} passes checks 1-6 at {head[:12]}; not merging.")
         return 0
-    gh(["pr", "merge", str(number), "--squash", "--match-head-commit", head])
-    merge = json.loads(gh(["pr", "view", str(number), "--json", "mergeCommit"]))["mergeCommit"]
-    if not merge:
-        raise LandError(f"merged #{number} but gh reports no mergeCommit; confirm by hand.")
-    sha = merge["oid"]
-    status = ""
-    for _ in range(COMPARE_TRIES):
-        status = gh(["api", "repos/{owner}/{repo}/compare/main..." + sha, "--jq", ".status"]).strip()
-        if status in ("behind", "identical"):
-            break
-        if status == "diverged":
-            raise LandError(
-                f"merged #{number} as {sha[:12]}, but compare/main...{sha[:12]} reads "
-                f"'diverged': the squash commit is not on main (#858). Recover it by hand."
-            )
-        sleep(COMPARE_WAIT_S)
-    else:
-        raise LandError(
-            f"compare/main...{sha[:12]} still reads {status!r} after {COMPARE_TRIES} tries; "
-            f"confirm by hand before trusting the merge."
-        )
-    tip = git(["ls-remote", "origin", f"refs/heads/{pr['headRefName']}"]).split()
-    if tip and tip[0] != head:
-        raise LandError(
-            f"merged #{number} as {sha[:12]}, but {pr['headRefName']} now reads {tip[0][:12]}, "
-            f"not the merged head {head[:12]}: a push raced the merge and that commit is on "
-            f"an orphaned branch, not on main. Open a new PR for it."
-        )
-    if not tip:
-        print(f"{pr['headRefName']} is gone (auto-deleted); nothing raced the merge.")
-    print(f"landed #{number} as {sha[:12]} on main (compare: {status}).")
-    return 0
+    gh(["pr", "merge", str(number), "--squash", "--match-head-commit", head])  # never retried
+    return prove(number, gh, git, sleep, head, pr["headRefName"])
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=(__doc__ or "").splitlines()[0])
     parser.add_argument("number", type=int, help="the PR number")
     parser.add_argument("--dry-run", action="store_true", help="run the checks, then stop before the merge")
+    parser.add_argument(
+        "--verify-only", action="store_true",
+        help="skip the checks and the merge; run only the post-merge proof for an already-merged PR",
+    )
     args = parser.parse_args(argv)
     try:
-        return land(args.number, run_gh, run_git, dry_run=args.dry_run)
+        return land(args.number, run_gh, run_git, dry_run=args.dry_run, verify_only=args.verify_only, sleep=time.sleep)
+    except UnverifiedError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
     except LandError as exc:
         print(f"land_pr: {exc}", file=sys.stderr)
         return 1

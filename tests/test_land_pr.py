@@ -240,3 +240,107 @@ def test_main_reports_refusal_on_stderr(monkeypatch, capsys):
     monkeypatch.setattr(land_pr, "run_git", git)
     assert land_pr.main(["858"]) == 1
     assert "land_pr: check 1" in capsys.readouterr().err
+
+
+# --- #1682: post-merge reads are retried; --verify-only; MERGED BUT UNVERIFIED -------------------
+
+
+class Flaky(Replay):
+    """Fails the first `fail` calls whose key starts with `prefix`, then replays."""
+
+    def __init__(self, responses, prefix, fail):
+        super().__init__(responses)
+        self.prefix, self.fail, self.failed = prefix, fail, 0
+
+    def __call__(self, args):
+        key = " ".join(args)
+        if key.startswith(self.prefix) and self.failed < self.fail:
+            self.failed += 1
+            self.calls.append(key)
+            raise land_pr.subprocess.CalledProcessError(1, ["gh", *args])
+        return super().__call__(args)
+
+
+def _flaky(prefix, fail):
+    gh, git = _recording(1218, PR_1218, SQUASH_1218)
+    return Flaky(gh.responses, prefix, fail), git
+
+
+def test_first_post_merge_read_fails_then_proof_completes(capsys):
+    gh, git = _flaky("pr view 1218 --json mergeCommit", 1)
+    sleeps: list[float] = []
+    assert land_pr.land(1218, gh, git, sleep=sleeps.append) == 0
+    assert gh.calls.count("pr view 1218 --json mergeCommit") == 2
+    assert sleeps == [land_pr.READ_WAIT_S]
+    assert f"landed #1218 as {SQUASH_1218[:12]}" in capsys.readouterr().out
+
+
+def test_compare_read_is_retried():
+    gh, git = _flaky("api ", 2)
+    assert _run(1218, gh, git) == 0
+    assert gh.failed == 2
+
+
+def test_ls_remote_read_is_retried():
+    gh, git0 = _recording(1218, PR_1218, SQUASH_1218)
+    git = Flaky(git0.responses, "ls-remote", 1)
+    assert _run(1218, gh, git) == 0
+    assert git.failed == 1
+
+
+def test_all_retries_fail_is_merged_but_unverified(monkeypatch, capsys):
+    gh, git = _flaky("pr view 1218 --json mergeCommit", 99)
+    monkeypatch.setattr(land_pr, "run_gh", gh)
+    monkeypatch.setattr(land_pr, "run_git", git)
+    monkeypatch.setattr(land_pr.time, "sleep", lambda _s: None)
+    assert land_pr.main(["1218"]) == 1
+    err = capsys.readouterr().err
+    assert err.startswith("MERGED BUT UNVERIFIED: #1218")
+    assert "land_pr.py --verify-only 1218" in err
+    assert gh.calls.count("pr view 1218 --json mergeCommit") == land_pr.READ_TRIES
+
+
+def test_the_merge_call_is_never_retried():
+    gh, git = _flaky("pr view 1218 --json mergeCommit", 99)
+    with pytest.raises(land_pr.UnverifiedError, match="MERGED BUT UNVERIFIED"):
+        _run(1218, gh, git)
+    assert sum(c.startswith("pr merge") for c in gh.calls) == 1
+
+    gh, git = _flaky("pr merge", 99)  # the merge call itself fails: one attempt, no retry
+    with pytest.raises(land_pr.subprocess.CalledProcessError):
+        _run(1218, gh, git)
+    assert gh.failed == 1
+
+
+def _verify_recording(state, squash=SQUASH_1218, tip=""):
+    view = {"state": state, "headRefName": PR_1218["headRefName"], "headRefOid": PR_1218["headRefOid"]}
+    gh = Replay({
+        "pr view 1218 --json state,headRefName,headRefOid": json.dumps(view),
+        "pr view 1218 --json mergeCommit": json.dumps({"mergeCommit": {"oid": squash}}),
+        f"api repos/{{owner}}/{{repo}}/compare/main...{squash} --jq .status": "identical\n",
+    })
+    git = Replay({f"ls-remote origin refs/heads/{PR_1218['headRefName']}": tip})
+    return gh, git
+
+
+def test_verify_only_on_a_merged_pr(capsys):
+    gh, git = _verify_recording("MERGED")
+    assert _run(1218, gh, git, verify_only=True) == 0
+    assert not _merged(gh)
+    assert git.calls == [f"ls-remote origin refs/heads/{PR_1218['headRefName']}"], "no pre-checks"
+    assert f"landed #1218 as {SQUASH_1218[:12]} on main (compare: identical)" in capsys.readouterr().out
+
+
+def test_verify_only_refuses_an_open_pr():
+    gh, git = _verify_recording("OPEN")
+    with pytest.raises(land_pr.LandError, match="not merged"):
+        _run(1218, gh, git, verify_only=True)
+    assert git.calls == []
+
+
+def test_main_verify_only_exit_code(monkeypatch, capsys):
+    gh, git = _verify_recording("OPEN")
+    monkeypatch.setattr(land_pr, "run_gh", gh)
+    monkeypatch.setattr(land_pr, "run_git", git)
+    assert land_pr.main(["1218", "--verify-only"]) == 1
+    assert "not merged" in capsys.readouterr().err
