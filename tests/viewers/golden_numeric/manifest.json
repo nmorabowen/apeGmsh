@@ -1,0 +1,72 @@
+{
+  "anim.contour": {
+    "contour": "displacement_x",
+    "deform_scale": 0.0,
+    "frame_steps": [
+      0,
+      3,
+      4
+    ],
+    "frames": 3
+  },
+  "anim.default": {
+    "contour": null,
+    "deform_scale": 0.0,
+    "frame_steps": [
+      0,
+      3,
+      4
+    ],
+    "frames": 3
+  },
+  "anim.deform": {
+    "contour": null,
+    "deform_scale": 1.0,
+    "frame_steps": [
+      0,
+      3,
+      4
+    ],
+    "frames": 3
+  },
+  "render.contour": {
+    "arrows": 0,
+    "contour": "displacement_y",
+    "deform_scale": 0.0,
+    "step": 4
+  },
+  "render.deformed": {
+    "arrows": 0,
+    "contour": "displacement_y",
+    "deform_scale": 0.9895453501482383,
+    "step": 4
+  },
+  "render.mesh": {
+    "arrows": 0,
+    "contour": null,
+    "deform_scale": 0.0,
+    "step": 4
+  },
+  "render.reactions": {
+    "arrows": 3,
+    "contour": null,
+    "deform_scale": 0.0,
+    "step": 4
+  },
+  "render_pack": {
+    "contour": {
+      "contour.png": "displacement_x",
+      "deformed.png": "displacement_x"
+    },
+    "deform_scale": {
+      "deformed.png": 0.9895453501482383
+    },
+    "files": [
+      "mesh.png",
+      "contour.png",
+      "deformed.png",
+      "reactions.png",
+      "history.png"
+    ]
+  }
+}
