@@ -31,17 +31,19 @@ s.show()                       # the same window, from Python
 !!! warning "Explicit `blocking=True` still crashes the Jupyter kernel"
     `results.viewer()` defaults to `blocking=None` (auto): `True`
     (in-process Qt) in scripts / the CLI, `False` (subprocess) inside
-    a Jupyter kernel. An in-memory Results in a notebook cannot spawn
-    a subprocess and falls back to `results.show_web()`. An **explicit**
+    a Jupyter kernel. A hand-built, in-memory Results (no backing
+    file) in a notebook has nothing for that subprocess to open, so it
+    raises `RuntimeError`: open it from a file with a `Results.from_*`
+    constructor first. An **explicit**
     `blocking=True` still drives the VTK+Qt event loop in-process and
     **kills the ipykernel**.
 
 The blocking call returns the `ResultsSession` once the window closes —
 still live, so you can query it, render stills off it, or snapshot it.
-`blocking=False` returns the `subprocess.Popen` handle instead, and the
-notebook in-memory fallback returns the `WebViewer`: three different
-things on purpose, because a session in *this* process is not what a
-child window is showing.
+`blocking=False` (and the notebook default) returns the
+`subprocess.Popen` handle instead: two different things on purpose,
+because a session in *this* process is not what a child window is
+showing.
 
 ### Saving and restoring
 
