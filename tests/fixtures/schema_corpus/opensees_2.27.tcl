@@ -24,6 +24,173 @@ element forceBeamColumn 8 6 3 1 1
 fix 1 1 1 1 1 1 1
 fix 4 1 1 1 1 1 1
 mass 2 100.0 100.0 100.0 0.0 0.0 0.0
+# === Stage: params ===
+domainChange
+# apeSees per-step hook dispatcher (Phase SSI-1)
+set _apesees_before_step_hooks {}
+set _apesees_after_step_hooks {}
+proc _apesees_call_before_step {} {
+    global _apesees_before_step_hooks
+    foreach _f $_apesees_before_step_hooks { $_f }
+}
+proc _apesees_call_after_step {} {
+    global _apesees_after_step_hooks
+    foreach _f $_apesees_after_step_hooks { $_f }
+}
+parameter 1
+parameter 2
+parameter 3
+proc insitu {} {
+    global insitu_state
+    if {![info exists insitu_state(count)]} {
+        set insitu_state(count) 0
+        set insitu_state(cum_1) 0.0
+        set insitu_state(cum_2) 0.0
+        set insitu_state(cum_3) 0.0
+    }
+    set insitu_state(count) [expr {$insitu_state(count) + 1}]
+    set _factor [expr {$insitu_state(count) / 2.0}]
+    if {$_factor > 1.0} { set _factor 1.0 }
+    set _cur [expr {-1.0 * $_factor}]
+    set _delta [expr {$_cur - $insitu_state(cum_1)}]
+    updateParameter 1 $_delta
+    set insitu_state(cum_1) $_cur
+    set _cur [expr {-1.0 * $_factor}]
+    set _delta [expr {$_cur - $insitu_state(cum_2)}]
+    updateParameter 2 $_delta
+    set insitu_state(cum_2) $_cur
+    set _cur [expr {-1.0 * $_factor}]
+    set _delta [expr {$_cur - $insitu_state(cum_3)}]
+    updateParameter 3 $_delta
+    set insitu_state(cum_3) $_cur
+}
+lappend _apesees_before_step_hooks insitu
+addToParameter 1 element 3 commitStressIncrementXX
+addToParameter 2 element 3 commitStressIncrementYY
+addToParameter 3 element 3 commitStressIncrementZZ
+addToParameter 1 element 4 commitStressIncrementXX
+addToParameter 2 element 4 commitStressIncrementYY
+addToParameter 3 element 4 commitStressIncrementZZ
+addToParameter 1 element 5 commitStressIncrementXX
+addToParameter 2 element 5 commitStressIncrementYY
+addToParameter 3 element 5 commitStressIncrementZZ
+addToParameter 1 element 6 commitStressIncrementXX
+addToParameter 2 element 6 commitStressIncrementYY
+addToParameter 3 element 6 commitStressIncrementZZ
+parameter 4
+addToParameter 4 element 7 stage
+addToParameter 4 element 8 stage
+updateParameter 4 1
+remove parameter 4
+parameter 5
+addToParameter 5 element 3 E
+addToParameter 5 element 4 E
+addToParameter 5 element 5 E
+addToParameter 5 element 6 E
+updateParameter 5 210000000000.0
+remove parameter 5
+constraints Plain
+numberer RCM
+system UmfPack
+test NormDispIncr 1e-06 10 0 2
+algorithm Newton
+integrator LoadControl 0.5
+analysis Static
 pattern Plain 1 1 {
     load 2 5000.0 0.0 0.0 0.0 0.0 0.0
 }
+setNodeVel 1 1 0.0 -commit
+setNodeVel 1 2 0.0 -commit
+setNodeVel 1 3 0.0 -commit
+setNodeVel 1 4 0.0 -commit
+setNodeVel 1 5 0.0 -commit
+setNodeVel 1 6 0.0 -commit
+setNodeAccel 1 1 0.0 -commit
+setNodeAccel 1 2 0.0 -commit
+setNodeAccel 1 3 0.0 -commit
+setNodeAccel 1 4 0.0 -commit
+setNodeAccel 1 5 0.0 -commit
+setNodeAccel 1 6 0.0 -commit
+setNodeVel 2 1 0.0 -commit
+setNodeVel 2 2 0.0 -commit
+setNodeVel 2 3 0.0 -commit
+setNodeVel 2 4 0.0 -commit
+setNodeVel 2 5 0.0 -commit
+setNodeVel 2 6 0.0 -commit
+setNodeAccel 2 1 0.0 -commit
+setNodeAccel 2 2 0.0 -commit
+setNodeAccel 2 3 0.0 -commit
+setNodeAccel 2 4 0.0 -commit
+setNodeAccel 2 5 0.0 -commit
+setNodeAccel 2 6 0.0 -commit
+setNodeVel 3 1 0.0 -commit
+setNodeVel 3 2 0.0 -commit
+setNodeVel 3 3 0.0 -commit
+setNodeVel 3 4 0.0 -commit
+setNodeVel 3 5 0.0 -commit
+setNodeVel 3 6 0.0 -commit
+setNodeAccel 3 1 0.0 -commit
+setNodeAccel 3 2 0.0 -commit
+setNodeAccel 3 3 0.0 -commit
+setNodeAccel 3 4 0.0 -commit
+setNodeAccel 3 5 0.0 -commit
+setNodeAccel 3 6 0.0 -commit
+setNodeVel 4 1 0.0 -commit
+setNodeVel 4 2 0.0 -commit
+setNodeVel 4 3 0.0 -commit
+setNodeVel 4 4 0.0 -commit
+setNodeVel 4 5 0.0 -commit
+setNodeVel 4 6 0.0 -commit
+setNodeAccel 4 1 0.0 -commit
+setNodeAccel 4 2 0.0 -commit
+setNodeAccel 4 3 0.0 -commit
+setNodeAccel 4 4 0.0 -commit
+setNodeAccel 4 5 0.0 -commit
+setNodeAccel 4 6 0.0 -commit
+setNodeVel 5 1 0.0 -commit
+setNodeVel 5 2 0.0 -commit
+setNodeVel 5 3 0.0 -commit
+setNodeVel 5 4 0.0 -commit
+setNodeVel 5 5 0.0 -commit
+setNodeVel 5 6 0.0 -commit
+setNodeAccel 5 1 0.0 -commit
+setNodeAccel 5 2 0.0 -commit
+setNodeAccel 5 3 0.0 -commit
+setNodeAccel 5 4 0.0 -commit
+setNodeAccel 5 5 0.0 -commit
+setNodeAccel 5 6 0.0 -commit
+setNodeVel 6 1 0.0 -commit
+setNodeVel 6 2 0.0 -commit
+setNodeVel 6 3 0.0 -commit
+setNodeVel 6 4 0.0 -commit
+setNodeVel 6 5 0.0 -commit
+setNodeVel 6 6 0.0 -commit
+setNodeAccel 6 1 0.0 -commit
+setNodeAccel 6 2 0.0 -commit
+setNodeAccel 6 3 0.0 -commit
+setNodeAccel 6 4 0.0 -commit
+setNodeAccel 6 5 0.0 -commit
+setNodeAccel 6 6 0.0 -commit
+setNodeVel 7 1 0.0 -commit
+setNodeVel 7 2 0.0 -commit
+setNodeVel 7 3 0.0 -commit
+setNodeVel 7 4 0.0 -commit
+setNodeVel 7 5 0.0 -commit
+setNodeVel 7 6 0.0 -commit
+setNodeAccel 7 1 0.0 -commit
+setNodeAccel 7 2 0.0 -commit
+setNodeAccel 7 3 0.0 -commit
+setNodeAccel 7 4 0.0 -commit
+setNodeAccel 7 5 0.0 -commit
+setNodeAccel 7 6 0.0 -commit
+for {set _apesees_i 0} {$_apesees_i < 2} {incr _apesees_i} {
+    _apesees_call_before_step
+    if {[analyze 1] != 0} {
+        error "apeGmsh: analyze FAILED at increment [expr {$_apesees_i + 1}]/2 of stage 'params' (pseudo-time [getTime]) -- aborting, the remaining deck would run on a partial state"
+    }
+    _apesees_call_after_step
+}
+loadConst -time 0.0
+wipeAnalysis
+set _apesees_before_step_hooks {}
+set _apesees_after_step_hooks {}

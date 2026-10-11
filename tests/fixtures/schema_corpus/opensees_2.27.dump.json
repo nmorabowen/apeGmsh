@@ -48,7 +48,8 @@
  "generator_notes": {
   "declared_ndm": 3,
   "neutral_case_api": "g.loads.case",
-  "neutral_load_api": "g.loads.point.force(pg=, force=)"
+  "neutral_load_api": "g.loads.point.force(pg=, force=)",
+  "param_tags_stage": true
  },
  "meta": {
   "ndf": 6,
@@ -262,33 +263,7 @@
   "model_name": "opensees_2.27",
   "ndf": 6,
   "ndm": 3,
-  "patterns": [
-   {
-    "__type__": "PatternRecord",
-    "args": [
-     1
-    ],
-    "ele_loads": [],
-    "loads": [
-     {
-      "__type__": "LoadRecord",
-      "forces": [
-       5000.0,
-       0.0,
-       0.0,
-       0.0,
-       0.0,
-       0.0
-      ],
-      "target": 2
-     }
-    ],
-    "sp_holds": [],
-    "sps": [],
-    "tag": 1,
-    "type_token": "Plain"
-   }
-  ],
+  "patterns": [],
   "recorders": [],
   "sections": [
    {

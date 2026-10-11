@@ -1,6 +1,6 @@
 {
  "about": "ADR 0113 D8 schema corpus. One entry per minor from each zone's floor to its current minor; status 'gap' entries carry the reason no real file exists. Built by scripts/build_schema_corpus.py.",
- "base": "43a731774afd46bf1292f21829449296d1ee3bf7",
+ "base": "cabc8b5aad9122d546abc389488c7f5b5a8fb8ed",
  "floors": {
   "neutral": "2.10.0",
   "opensees": "2.12.0"
@@ -1194,7 +1194,7 @@
   {
    "zone": "opensees",
    "minor": "2.27",
-   "sha": "7332fd988dcfa8b8d32191c19de0501eb383cd95",
+   "sha": "3a1165006559957c6e1cd1a85bbc4eaac26779ef",
    "date": "2026-10-10",
    "version": "2.27.0",
    "bump_commits": [
@@ -1205,15 +1205,15 @@
    "files": {
     "h5": {
      "name": "opensees_2.27.h5",
-     "sha256": "3d2d5d8838088c066aa7475eaff52f2ccc661cc595b39e1f383b2c07dd6592ce"
+     "sha256": "acec238c8a900bc586594094514170d8454be5b2d53442c143dea656ee1d416f"
     },
     "dump": {
      "name": "opensees_2.27.dump.json",
-     "sha256": "0760bb2ab600e2cdcfd6fa1b5953eb49723e52c08e1bcfcad64f8c83e88f4bc3"
+     "sha256": "18e5a1f4464839815079f1d9621beeb483b945d07c94f13f0cde84087d892ca7"
     },
     "tcl": {
      "name": "opensees_2.27.tcl",
-     "sha256": "5a0d3a8374c78f2bd38c5ffc940359033a69726b0bf8e5e1442dc13f8643873e"
+     "sha256": "fdcecdf002eb4c5770cbf7af0a8e0c8e1e6df12183f63169a563ab1cd4cf72ab"
     }
    },
    "stamps": {
