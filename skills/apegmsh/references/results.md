@@ -312,16 +312,16 @@ def viewer(self, *, blocking=None, title=None,
 
 - The **default is `blocking=None` (auto)**: `True` (in-process Qt) in
   scripts / the plain CLI; `False` (subprocess) inside a Jupyter /
-  IPython ZMQ kernel. An in-memory Results in a notebook cannot spawn a
-  subprocess and falls back to `show_web()`. Either notebook path
-  prints one `[viewer]` line.
+  IPython ZMQ kernel. A hand-built, in-memory Results (no backing file)
+  in a notebook raises `RuntimeError` naming the `from_*` constructors;
+  open it from a file first (no web fallback, no temp `.h5`). The
+  notebook spawn prints one `[viewer]` line.
 - An **explicit** `blocking=True` still runs the VTK+Qt event loop
   in-process and **native-crashes a Jupyter / VS Code kernel**.
 - **Returns differ by path, on purpose**: blocking returns the
   `ResultsSession` (still live after the window closes — query it,
   `render()` off it, `snapshot()` it); `blocking=False` returns the
-  `subprocess.Popen`; the notebook in-memory fallback returns the
-  `WebViewer`.
+  `subprocess.Popen`, as does auto mode in a notebook.
 - `viewer(blocking=False)` always spawns a subprocess; needs a Results
   opened from disk, raises `RuntimeError` for in-memory.
 - `viewer()` already shows the window — never chain
