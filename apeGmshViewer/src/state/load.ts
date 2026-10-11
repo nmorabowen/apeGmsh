@@ -5,7 +5,7 @@
 
 import type { ElementRef } from "../chain/resolve.ts";
 import { buildMesh, colourGroups, type MeshBuffers } from "../mesh/build.ts";
-import type { Group, ModelFile, OpsFamily, Param } from "../model/types.ts";
+import type { Group, ModelFile, OpsFamily, OpsObject, Param, SequenceZone } from "../model/types.ts";
 import { sourceOf, type ProvenanceZone } from "../reader/provenance.ts";
 import type { BlobStore } from "./blobs.ts";
 import { cellPath, elementLinks, objectDecl, objectPaths, opsRowPath, type Lookup } from "./decls.ts";
@@ -22,6 +22,37 @@ export const groupPath = (g: Group, kind: "physical_group" | "label"): DeclPath 
 
 function addName(names: Record<string, DeclPath[]>, name: string, path: DeclPath): void {
   (names[name] ??= []).push(path);
+}
+
+type ObjectIds = Map<OpsObject, { path: DeclPath; name: string; nameSource: string }>;
+
+/**
+ * Key each OpenSees object by the archive's own declaration key when the
+ * file carries `/opensees/decls` (opensees 2.25+): the key of the run in
+ * `decls/tags` that owns the object's `(family, tag)`, the same key
+ * `/provenance` and `decl_params` use. Without it, the app would mint its
+ * own `#k` (reader listing order, from 0) that disagrees with the archive's
+ * (declaration order, from 1). A file below 2.25 keeps the listing keys.
+ * Two objects of one declaration (a fan-out shares its spec's key) keep the
+ * key for the first and take `<key>@<tag>` after it. An object no run owns is
+ * refused (the reader already refuses such a file, read.ts), and so is a key
+ * two objects would share: no declaration is ever overwritten.
+ */
+function archiveKeys(model: ModelFile, ids: ObjectIds): ObjectIds {
+  const table = model.opensees?.definitions.decls;
+  if (!table) return ids;
+  const out: ObjectIds = new Map();
+  const taken = new Set<DeclPath>();
+  for (const [obj, id] of ids) {
+    const run = table.tags.find((t) => t.kind === obj.family && obj.tag >= t.first && obj.tag < t.first + t.count);
+    if (!run) throw new Error(`${obj.path}: /opensees/decls/tags has no run for ${obj.family} ${obj.tag}`);
+    const key = table.records[run.decl]!.key;
+    const path = taken.has(key) ? `${key}@${obj.tag}` : key;
+    if (taken.has(path)) throw new Error(`${obj.path}: declaration key ${path} is already taken by another object`);
+    taken.add(path);
+    out.set(obj, { ...id, path });
+  }
+  return out;
 }
 
 /** Build the declarations and the name index of a model. Exported for the tests; `loadModel` calls it. */
@@ -59,7 +90,7 @@ export function declarationsOf(model: ModelFile, blobs: BlobStore, warnings: str
   }
 
   // OpenSees objects.
-  const ids = objectPaths(model, warnings);
+  const ids = archiveKeys(model, objectPaths(model, warnings));
   const byTag = new Map<string, DeclPath[]>();
   const byH5 = new Map<string, DeclPath>();
   for (const [obj, id] of ids) {
@@ -300,6 +331,22 @@ export function provenanceEntries(zone: ProvenanceZone): ProvenanceEntry[] {
   return rows.sort((a, b) => a.seq - b.seq);
 }
 
+/** The /sequence zone as the model artifact's zone status: `absent` is "not in this file", never an error. */
+export function sequenceStatus(z: SequenceZone): ZoneStatus {
+  switch (z.status) {
+    case "absent":
+      return { status: "absent" };
+    case "ready":
+      return { status: "ready", version: z.version };
+    case "refused":
+      return { status: "refused", version: z.version, accepted: z.accepted, newer: z.newer, reason: z.reason };
+    default: {
+      const unknown: never = z;
+      throw new Error(`sequenceStatus: unknown /sequence state ${JSON.stringify(unknown)}`);
+    }
+  }
+}
+
 /**
  * Everything `fileLoaded` carries for a model artifact. `provenance` is the
  * file's /provenance zone when main read it (null: the file has none);
@@ -335,6 +382,7 @@ export function loadModel(
       neutral: { status: "ready", version: model.neutralVersion },
       opensees: model.opensees ? { status: "ready", version: model.opensees.version } : { status: "absent" },
       provenance: provenanceRefused ?? (provenance ? { status: "ready", version: provenance.version } : { status: "absent" }),
+      sequence: sequenceStatus(model.sequence),
     },
     sessionId: typeof sid === "string" ? sid : null,
     warnings: [...warnings, ...mesh.warnings],
@@ -352,5 +400,7 @@ export function loadModel(
     mesh: meshInfoOf(model, mesh, blobs),
     provenance: provenance ? provenanceEntries(provenance) : [],
     provenanceOrigin: provenance?.originColumn ?? false,
+    definitions: model.opensees ? model.opensees.definitions : null,
+    sequence: model.sequence,
   };
 }

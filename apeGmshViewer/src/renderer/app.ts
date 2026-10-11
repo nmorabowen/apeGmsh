@@ -11,10 +11,11 @@ import { mountInspector } from "../panels/inspector.ts";
 import { mountLegend } from "../panels/legend.ts";
 import { mountPhase } from "../panels/phase.ts";
 import { mountSources } from "../panels/sources.ts";
+import { mountWindows } from "../panels/windows/frame.ts";
 import { BlobStore } from "../state/blobs.ts";
 import { chainOf } from "../state/selectors.ts";
 import { Store } from "../state/store.ts";
-import type { DeclPath } from "../state/types.ts";
+import { WINDOW_KINDS, type DeclPath } from "../state/types.ts";
 import { applyTheme } from "../theme/tokens.ts";
 import { Viewport } from "./viewport.ts";
 
@@ -26,7 +27,7 @@ const blobs = new BlobStore();
 const effects = new Effects(store, blobs, bridge);
 const viewport = new Viewport(document.getElementById("viewport")!, store, blobs);
 effects.setFrameTarget(viewport);
-const panels = [mountHeader(store), mountBanner(store), mountLegend(store), mountInspector(store), mountEmpty(store), mountPhase(store), mountSources(store)];
+const panels = [mountHeader(store), mountBanner(store), mountLegend(store), mountInspector(store), mountEmpty(store), mountPhase(store), mountSources(store), mountWindows(store)];
 window.addEventListener("beforeunload", () => {
   for (const d of panels) d();
   effects.dispose();
@@ -249,6 +250,16 @@ async function main() {
   await settle();
   viewport.renderNow();
   await bridge.captureStill("role");
+  // One still per model-definition window, `<out>.window-<kind>.png`, each
+  // opened alone through the store, as the window menu opens it.
+  store.dispatch({ type: "setColourBy", by: "group" });
+  for (const kind of WINDOW_KINDS) {
+    store.dispatch({ type: "openWindow", window: kind });
+    await settle();
+    viewport.renderNow();
+    await bridge.captureStill(`window-${kind}`);
+    store.dispatch({ type: "closeWindow", window: kind });
+  }
   await bridge.captureDone();
 }
 

@@ -10,7 +10,7 @@ import { test } from "node:test";
 import * as h5wasm from "h5wasm/node";
 import { resolveChain } from "../src/chain/resolve.ts";
 import type { ModelFile, OpsObject, Param } from "../src/model/types.ts";
-import { readModel, type H5Module } from "../src/reader/read.ts";
+import { emptyDefinitions, readModel, type H5Module } from "../src/reader/read.ts";
 
 const DIRS: Record<OpsObject["family"], string> = {
   uniaxialMaterial: "/opensees/materials/uniaxial",
@@ -48,7 +48,9 @@ function model(objects: OpsObject[], type: string, args: Param[]): ModelFile {
         inlineConnectivity: null,
       }],
       names: [],
+      definitions: emptyDefinitions(),
     },
+    sequence: { status: "absent" },
     warnings: [],
     readMs: 0,
   };

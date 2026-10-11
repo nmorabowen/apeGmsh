@@ -10,6 +10,7 @@ import { resolveChain, walk, type Chain, type ChainNode, type ElementRef } from 
 import { buildMesh } from "../src/mesh/build.ts";
 import type { ElementMeta, ModelFile, OpsObject, Param } from "../src/model/types.ts";
 import { openModel } from "../src/reader/node.ts";
+import { emptyDefinitions } from "../src/reader/read.ts";
 import { BlobStore } from "../src/state/blobs.ts";
 import { cellPath, opsRowPath } from "../src/state/decls.ts";
 import { loadModel } from "../src/state/load.ts";
@@ -525,7 +526,8 @@ function synthetic(objects: OpsObject[], elementMeta: ElementMeta[], opensees = 
     blocks: [{ alias: "line2", code: 1, dim: 1, npe: 2, ids: new Float64Array([1]), connectivity: new Float64Array([1, 2]) }],
     physicalGroups: [{ name: "G", dim: 1, tag: 1, path: "/physical_groups/element_side/G", elementIds: new Float64Array([1]) }],
     labels: [],
-    opensees: opensees ? { version: "2.21.0", objects, elementMeta, names: [] } : null,
+    opensees: opensees ? { version: "2.21.0", objects, elementMeta, names: [], definitions: emptyDefinitions() } : null,
+    sequence: { status: "absent" },
     warnings: [], readMs: 0,
   };
 }
