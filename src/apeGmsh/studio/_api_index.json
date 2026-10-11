@@ -3114,6 +3114,18 @@
       "skill": "references/opensees-bridge.md",
       "symbol": "ops.element.stdBrick"
     },
+    "ops.elements.get": {
+      "doc": "An :class:`ElementSet` of the FEM elements one selector picks",
+      "signature": "get(*, pg: 'str | None' = None, label: 'str | Sequence[str] | None' = None, ids: 'Sequence[int] | None' = None) -> 'ElementSet'",
+      "skill": "references/opensees-bridge.md",
+      "symbol": "ops.elements.get"
+    },
+    "ops.elements.one": {
+      "doc": "The single element exactly one selector picks; raises",
+      "signature": "one(*, pg: 'str | None' = None, label: 'str | Sequence[str] | None' = None, ids: 'Sequence[int] | None' = None) -> 'ElementHandle'",
+      "skill": "references/opensees-bridge.md",
+      "symbol": "ops.elements.one"
+    },
     "ops.equation_constraint": {
       "doc": "Declare one ``equationConstraint`` row (OpenSees ``EQ_Constraint``).",
       "signature": "equation_constraint(*, constrained: \"'tuple[int | Node, int]'\", retained: \"'Iterable[tuple[int | Node, int, float]]'\", coef: 'float' = 1.0) -> 'None'",
@@ -3650,7 +3662,7 @@
     },
     "ops.recorder.Element": {
       "doc": "Construct + register a ``recorder Element``.",
-      "signature": "Element(*, file: 'str', response: 'tuple[str, ...]', elements: 'tuple[int, ...] | None' = None, pg: 'str | None' = None, dT: 'float | None' = None, time_format: 'str' = 'step', name: 'str | None' = None) -> 'Element'",
+      "signature": "Element(*, file: 'str', response: 'tuple[str, ...]', elements: 'tuple[int, ...] | None' = None, pg: 'str | None' = None, label: 'str | Sequence[str] | None' = None, dT: 'float | None' = None, time_format: 'str' = 'step', name: 'str | None' = None) -> 'Element'",
       "skill": "references/opensees-bridge.md",
       "symbol": "ops.recorder.Element"
     },
