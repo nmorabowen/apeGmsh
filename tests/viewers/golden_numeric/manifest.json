@@ -1,4 +1,34 @@
 {
+  "anim.contour": {
+    "contour": "displacement_x",
+    "deform_scale": 0.0,
+    "frame_steps": [
+      0,
+      3,
+      4
+    ],
+    "frames": 3
+  },
+  "anim.default": {
+    "contour": null,
+    "deform_scale": 0.0,
+    "frame_steps": [
+      0,
+      3,
+      4
+    ],
+    "frames": 3
+  },
+  "anim.deform": {
+    "contour": null,
+    "deform_scale": 1.0,
+    "frame_steps": [
+      0,
+      3,
+      4
+    ],
+    "frames": 3
+  },
   "render.contour": {
     "arrows": 0,
     "contour": "displacement_y",

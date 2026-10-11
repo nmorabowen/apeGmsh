@@ -117,10 +117,10 @@ def _glyph_instances(ds: Any) -> dict[str, np.ndarray]:
     coordinate (an arrow's tail disc is centred on the node). Anything
     else (ragged blocks, a non-constant block) raises: fail closed.
     """
-    pts = np.asarray(ds.points, dtype=np.float64)
-    vec = np.asarray(ds.point_data["GlyphVector"], dtype=np.float64)
+    pts = np.array(ds.points, dtype=np.float64)
+    vec = np.array(ds.point_data["GlyphVector"], dtype=np.float64)
     size = (
-        np.asarray(ds.point_data["_size"], dtype=np.float64).reshape(-1)
+        np.array(ds.point_data["_size"], dtype=np.float64).reshape(-1)
         if "_size" in ds.point_data else np.ones(len(pts))
     )
     key = np.column_stack([vec, size])
@@ -162,7 +162,13 @@ def _mapped_range(mapper: Any) -> np.ndarray:
 
 
 def extract_drawn(plotter: Any) -> dict[str, Any]:
-    """The drawn data of a pyvista plotter's scene (see module doc)."""
+    """The drawn data of a pyvista plotter's scene (see module doc).
+
+    Every array is COPIED (``np.array``): a VTK array can share memory
+    with a diagram buffer that the next step overwrites in place (the
+    contour's ``_scalar_values``), so a view would make every captured
+    frame read as the last step drawn.
+    """
     mesh_pts: list[np.ndarray] = []
     contours: list[dict[str, Any]] = []
     glyphs: list[dict[str, np.ndarray]] = []
@@ -175,7 +181,7 @@ def extract_drawn(plotter: Any) -> dict[str, Any]:
             if "GlyphVector" in ds.point_data:
                 glyphs.append(_glyph_instances(ds))
                 continue
-            pts = np.asarray(ds.points, dtype=np.float64)
+            pts = np.array(ds.points, dtype=np.float64)
             mesh_pts.append(pts)
             if not mapper.GetScalarVisibility():
                 continue
@@ -184,7 +190,7 @@ def extract_drawn(plotter: Any) -> dict[str, Any]:
                 contours.append({
                     "name": str(name),
                     "points": pts,
-                    "scalars": np.asarray(
+                    "scalars": np.array(
                         ds.point_data[name], dtype=np.float64),
                     "clim": _mapped_range(mapper),
                 })
@@ -212,8 +218,8 @@ def extract_drawn(plotter: Any) -> dict[str, Any]:
 
 def _figure_lines(fig: Any) -> dict[str, Any]:
     lines = [
-        (np.asarray(ln.get_xdata(), dtype=np.float64),
-         np.asarray(ln.get_ydata(), dtype=np.float64))
+        (np.array(ln.get_xdata(), dtype=np.float64),
+         np.array(ln.get_ydata(), dtype=np.float64))
         for ax in fig.axes for ln in ax.lines
     ]
     return {"kind": "mpl", "lines": lines}
