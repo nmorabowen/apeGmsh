@@ -201,20 +201,23 @@ def test_notebook_auto_default_spawns_subprocess(small_results, monkeypatch):
     assert captured["args"][1:3] == ["-m", "apeGmsh.viewers"]
 
 
-def test_notebook_auto_default_in_memory_falls_back_to_web(
+def test_notebook_auto_default_in_memory_raises(
     small_results, monkeypatch,
 ):
     """In-memory Results cannot subprocess, so the notebook auto
-    default opens the web viewer instead of raising (or blocking)."""
+    default raises a clear error instead of blocking or opening the
+    legacy web viewer (#1664)."""
     monkeypatch.setattr(
         _results_module(), "_in_notebook_kernel", lambda: True,
     )
-    sentinel = object()
+    calls: list = []
     monkeypatch.setattr(
-        Results, "show_web", lambda self, **kw: sentinel,
+        Results, "show_web", lambda self, **kw: calls.append(kw),
     )
     small_results._path = None
-    assert small_results.viewer() is sentinel
+    with pytest.raises(RuntimeError, match="in-memory"):
+        small_results.viewer()
+    assert calls == []
 
 
 def test_script_auto_default_blocks(small_results, monkeypatch):
