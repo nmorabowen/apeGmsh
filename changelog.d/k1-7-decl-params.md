@@ -1,27 +1,31 @@
 ### ADDED — `/opensees/decl_params`: every declaration's parameters by field name, `transf_ref` / `integration_ref` / `section_ref`, and `params_names` under a ratchet (opensees 2.26.0; K1-7, #1464)
 
 `model.h5` gains `/opensees/decl_params` (ADR 0114 A6/Q4, the K0-8
-record): one row per registered primitive, hanging off its
-`/opensees/decls` row, holding the primitive's class and its parameters
-**by field name**, encoded generically from `dataclasses.fields(prim)`.
+record): exactly one row per `/opensees/decls` row (a registered
+primitive, a fix / mass / region / damping / initial-stress /
+equation-constraint / stage record, or a model-wide declaration),
+holding the owner's class and its parameters **by field name**, encoded
+generically from `dataclasses.fields(owner)`.
 
 - **Every field shape is stored or refused, never skipped.** Scalars,
   tuples (nested kept), `str`-keyed mappings, a referenced primitive as
   its declaration key (`{"$decl": key}`), a value dataclass a field holds
   (a `Fiber` patch, a `ShellLayer`) as a struct, and the orientation and
-  `SectionProperties` objects by class name. An `ndarray`, a set, a
-  non-finite float, an unlisted object or an unregistered primitive
-  raises `H5DeclParamsError` at write.
+  `SectionProperties` objects by class name. An `ndarray`, a set, an
+  `Enum`, a `Fraction`, a non-finite float, an unlisted object or an
+  unregistered primitive raises `H5DeclParamsError` at write.
 - **References are declaration keys.** `transf_ref`, `integration_ref`
-  and `section_ref` carry the key of the first field holding a
-  `GeomTransf` / `BeamIntegration` / `Section` (the V1 add-on).
+  and `section_ref` list every `GeomTransf` / `BeamIntegration` /
+  `Section` key the row references, in field order (a `HingeRadau`'s
+  three sections), as index runs (the V1 add-on).
 - **`params_names`** names the argv slots of a declaration's store row
   where the archive finds the argv equal to the fields (`Steel01`:
   `fy E b`); a flag without a field (`Parallel -factors`), an element
   row, a `Fiber` block or a chain component stays unnamed. Every
-  concrete primitive of the registry (185) the archive does not name is
-  a line of `tests/opensees/contract/params_names_ledger.txt`
-  (`unnamed` 35, `uncheckable` 19, `nostore` 107), checked in
+  concrete registered primitive (187, inherited `_emit` included) the
+  archive does not name is a line of
+  `tests/opensees/contract/params_names_ledger.txt`
+  (`unnamed` 35, `uncheckable` 21, `nostore` 107), checked in
   `lock-tests` by `test_verbs_lock.py` with the writer's own rule; the
   `unnamed` + `uncheckable` count may only shrink, and a new primitive
   that is neither named nor listed fails the test.
