@@ -24,7 +24,6 @@ so tests never touch Gmsh.
 """
 from __future__ import annotations
 
-import contextlib
 import gc
 import json
 import queue
@@ -33,8 +32,6 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Callable
 
 if TYPE_CHECKING:  # pragma: no cover
-    from collections.abc import Iterator
-
     from ._analysis import SectionProperties
 
 __all__ = [
@@ -68,17 +65,19 @@ class BuildResult:
 # Qt-safety: the cyclic GC must not run on the worker thread
 # ─────────────────────────────────────────────────────────────────────
 
-#: Serializes the pause/resume bookkeeping below.
+#: Serializes the hold/release bookkeeping below.
 _GC_GUARD = threading.Lock()
-#: How many workers are currently inside :func:`_no_cyclic_gc`.
+#: How many worker threads are currently alive and unreaped.
 _GC_HOLDERS = 0
 #: Whether the cyclic GC was enabled when the first holder arrived.
 _GC_WAS_ENABLED = False
 
 
-@contextlib.contextmanager
-def _no_cyclic_gc() -> "Iterator[None]":
-    """Pause automatic cyclic collection for the length of one build.
+def _gc_hold() -> None:
+    """Pause automatic cyclic collection for one worker's whole life.
+
+    **UI thread only**: called before the worker starts, and paired with
+    :func:`_gc_release` once that worker is dead.
 
     **Why this exists.** Qt objects belong to the thread that created
     them: a PySide6 wrapper finalized off the GUI thread is handed to
@@ -88,19 +87,26 @@ def _no_cyclic_gc() -> "Iterator[None]":
     call jumps through it — SIGSEGV inside ``runDeletionInMainThread()``,
     with no Python traceback and below the reach of any ``except``.
 
-    :func:`_work` already keeps Qt out of everything this thread can
-    *reach* (see its docstring). That is necessary and was not
-    sufficient: the cyclic collector runs on whichever thread happens to
-    trip the allocation threshold, and this one allocates hard —
-    document parse, ``FEMData`` unpickle, the NumPy solve. One gen-2
-    pass landing here while some earlier builder window's widget tree is
-    unreachable finalizes *that* Qt graph on this thread, and the main
-    thread dies draining the queue at whatever test it had reached.
+    :func:`_work` keeps Qt out of everything the worker can *reach*.
+    That is necessary and not sufficient: the cyclic collector runs on
+    whichever thread trips the allocation threshold, and one pass on the
+    worker finalizes any unreachable builder window's Qt graph there
+    (#1080).
 
-    Refcount-driven frees are unaffected, so this does not leak: it only
-    defers *cyclic* garbage to the next collection after the build, on
-    whatever thread runs it then. Overlapping builds are refcounted, and
-    an interpreter that already had the collector off keeps it off.
+    **Why the UI thread holds the switch.** The pause used to be a
+    context manager *inside* the worker. Its bootstrap then ran before
+    the pause, and its ``finally`` re-armed the collector while the
+    worker still had a context-manager exit and its own teardown left to
+    allocate through. A pass in either window crashed the process, and
+    whether one landed there depended on the allocation count, so any
+    new import could move it (#1612, #1648 → #1649). Held from before
+    ``start()`` until the UI thread has seen the thread dead, the pause
+    covers every instruction the worker runs.
+
+    Refcount-driven frees are unaffected, so this does not leak: cyclic
+    garbage waits for the first collection after the last worker is
+    reaped. Overlapping workers are refcounted, and an interpreter that
+    already had the collector off keeps it off.
     """
     global _GC_HOLDERS, _GC_WAS_ENABLED
     with _GC_GUARD:
@@ -108,13 +114,17 @@ def _no_cyclic_gc() -> "Iterator[None]":
             _GC_WAS_ENABLED = gc.isenabled()
             gc.disable()
         _GC_HOLDERS += 1
-    try:
-        yield
-    finally:
-        with _GC_GUARD:
-            _GC_HOLDERS -= 1
-            if _GC_HOLDERS == 0 and _GC_WAS_ENABLED:
-                gc.enable()
+
+
+def _gc_release() -> None:
+    """Undo one :func:`_gc_hold`, on the UI thread, for a dead worker."""
+    global _GC_HOLDERS
+    with _GC_GUARD:
+        if _GC_HOLDERS == 0:
+            raise RuntimeError("_gc_release without a matching _gc_hold")
+        _GC_HOLDERS -= 1
+        if _GC_HOLDERS == 0 and _GC_WAS_ENABLED:
+            gc.enable()
 
 
 def canonical_state(doc_dict: "dict[str, Any]") -> str:
@@ -207,21 +217,21 @@ def _work(
     reachable set Qt-free, so the last drop always lands on the UI
     thread.
 
-    **That is necessary but not sufficient**, which is why the body runs
-    under :func:`_no_cyclic_gc`. Reachability governs only what *this*
-    thread's own references can free; the cyclic collector can run here
-    and finalize a Qt graph this thread never touched. See #1080 — the
-    crash survived the reachability fix and the core still named
-    ``runDeletionInMainThread``.
+    **That is necessary but not sufficient.** Reachability governs only
+    what *this* thread's own references can free; the cyclic collector
+    could run here and finalize a Qt graph this thread never touched
+    (#1080). The UI thread therefore keeps the collector paused for this
+    thread's whole life (:func:`_gc_hold`), and nothing here may touch
+    the ``gc`` switch: re-arming it from this side is what let the crash
+    back in (#1649).
     """
-    with _no_cyclic_gc():
-        try:
-            res = builder(doc_dict)
-        except Exception as exc:  # pragma: no cover - builder isolation
-            res = BuildResult(key=key, kind="?", error=str(exc))
-        res.key = key
-        res.worker_thread_id = threading.get_ident()
-        results.put(res)
+    try:
+        res = builder(doc_dict)
+    except Exception as exc:  # pragma: no cover - builder isolation
+        res = BuildResult(key=key, kind="?", error=str(exc))
+    res.key = key
+    res.worker_thread_id = threading.get_ident()
+    results.put(res)
 
 
 class PropertiesController:
@@ -251,6 +261,10 @@ class PropertiesController:
         self._running = False
         self._pending: "tuple[str, dict[str, Any]] | None" = None
         self._threads: list[threading.Thread] = []
+        #: workers still holding the collector pause (see _gc_hold);
+        #: only the UI thread adds to or reaps from this list.
+        self._unreaped: list[threading.Thread] = []
+        self._stopped = False
         #: total number of heavy builds actually dispatched (the
         #: coalescing/memoization test surface).
         self.build_count = 0
@@ -293,15 +307,22 @@ class PropertiesController:
             args=(self._builder, self._results, key, doc_dict),
             daemon=True,
         )
+        _gc_hold()                              # UI thread, before start()
+        try:
+            t.start()
+        except BaseException:
+            _gc_release()
+            raise
         self._threads.append(t)
-        t.start()
+        self._unreaped.append(t)
 
     # ── drain (UI thread: QTimer tick or manual in tests) ────────────
 
     def drain(self) -> int:
         """Deliver any completed results on the UI thread; dispatch the
         coalesced pending build if the current one just finished.
-        Returns the number of results drained."""
+        Returns the number of results drained. After :meth:`stop` it
+        only reaps: nothing is delivered and nothing new is launched."""
         n = 0
         while True:
             try:
@@ -311,19 +332,42 @@ class PropertiesController:
             n += 1
             self._cache[res.key] = res
             self._running = False
-            if res.key == self._latest_key and self._on_result is not None:
+            if (not self._stopped and res.key == self._latest_key
+                    and self._on_result is not None):
                 self._on_result(res)
-        if not self._running and self._pending is not None:
+        if (not self._stopped and not self._running
+                and self._pending is not None):
             key, doc_dict = self._pending
             self._pending = None
             self._launch_or_serve(key, doc_dict)
+        self._reap()
         return n
 
+    def _reap(self) -> None:
+        """Release the collector pause of every worker that has died.
+
+        UI thread only. ``is_alive()`` turns false once the thread can run
+        no more Python, so the release can never re-arm the collector
+        under a live worker. A stopped controller keeps its timer ticking
+        until its last worker is reaped, then stops it.
+        """
+        for t in list(self._unreaped):
+            if not t.is_alive():
+                self._unreaped.remove(t)
+                _gc_release()
+        if self._stopped and not self._unreaped and self._timer is not None:
+            self._timer.stop()
+
     def join(self, timeout: "float | None" = None) -> None:
-        """Join every worker thread started so far (test helper)."""
+        """Join every worker thread started so far, then reap the ones
+        that finished (UI thread)."""
         for t in list(self._threads):
             t.join(timeout)
+        self._reap()
 
     def stop(self) -> None:
-        if self._timer is not None:
-            self._timer.stop()
+        """Stop delivering results. A worker still running keeps the
+        collector paused until it is reaped (by the timer, :meth:`drain`
+        or :meth:`join`), so the timer outlives this call until then."""
+        self._stopped = True
+        self._reap()
