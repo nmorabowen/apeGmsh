@@ -344,3 +344,28 @@ def test_main_verify_only_exit_code(monkeypatch, capsys):
     monkeypatch.setattr(land_pr, "run_git", git)
     assert land_pr.main(["1218", "--verify-only"]) == 1
     assert "not merged" in capsys.readouterr().err
+
+
+def test_null_merge_commit_is_retried_then_succeeds():
+    gh, git = _recording(1218, PR_1218, SQUASH_1218)
+    answers = iter([{"mergeCommit": None}, {"mergeCommit": {"oid": SQUASH_1218}}])
+    responses = dict(gh.responses)
+    key = "pr view 1218 --json mergeCommit"
+
+    class Seq(Replay):
+        def __call__(self, args):
+            if " ".join(args) == key:
+                self.calls.append(key)
+                return json.dumps(next(answers))
+            return super().__call__(args)
+
+    seq = Seq(responses)
+    assert _run(1218, seq, git) == 0
+    assert seq.calls.count(key) == 2
+
+
+def test_verify_only_with_dry_run_is_refused(capsys):
+    with pytest.raises(SystemExit) as exc:
+        land_pr.main(["1218", "--verify-only", "--dry-run"])
+    assert exc.value.code == 2
+    assert "mutually exclusive" in capsys.readouterr().err

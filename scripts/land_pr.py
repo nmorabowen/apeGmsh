@@ -126,7 +126,11 @@ class UnverifiedError(LandError):
 
 
 #: Transient failures of a read: a non-zero gh/git exit, a missing binary, a cut-off body.
-_TRANSIENT = (subprocess.CalledProcessError, OSError, json.JSONDecodeError)
+class _NotYet(Exception):
+    """A read that came back empty right after the merge (eventual consistency)."""
+
+
+_TRANSIENT = (subprocess.CalledProcessError, OSError, json.JSONDecodeError, _NotYet)
 READ_TRIES = 5
 READ_WAIT_S = 1.0  # doubles each retry: 1, 2, 4, 8 s
 
@@ -175,13 +179,14 @@ def prove(
             if view["state"] != "MERGED":
                 raise LandError(f"#{number} is {view['state']}, not merged; --verify-only proves a merged PR.")
             head, branch = view["headRefOid"], view["headRefName"]
-        merge = _retry(
-            lambda: json.loads(gh(["pr", "view", str(number), "--json", "mergeCommit"]))["mergeCommit"],
-            f"the mergeCommit lookup for #{number}", sleep,
-        )
-        if not merge:
-            raise UnverifiedError(f"gh reports no mergeCommit for #{number}.")
-        sha = merge["oid"]
+
+        def merge_oid() -> str:
+            merge = json.loads(gh(["pr", "view", str(number), "--json", "mergeCommit"])).get("mergeCommit")
+            if not merge or not merge.get("oid"):  # null right after the merge: retry
+                raise _NotYet("gh reports no mergeCommit yet")
+            return str(merge["oid"])
+
+        sha = _retry(merge_oid, f"the mergeCommit lookup for #{number}", sleep)
         status = ""
         for _ in range(COMPARE_TRIES):
             status = _retry(
@@ -250,6 +255,8 @@ def main(argv: list[str] | None = None) -> int:
         help="skip the checks and the merge; run only the post-merge proof for an already-merged PR",
     )
     args = parser.parse_args(argv)
+    if args.verify_only and args.dry_run:
+        parser.error("--verify-only and --dry-run are mutually exclusive")  # exit 2
     try:
         return land(args.number, run_gh, run_git, dry_run=args.dry_run, verify_only=args.verify_only, sleep=time.sleep)
     except UnverifiedError as exc:
