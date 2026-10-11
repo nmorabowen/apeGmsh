@@ -50,6 +50,11 @@ it (``gh run download <run> -n emit-gate-baseline``) and commit
 ``emit_gate_baseline.json`` in the same PR as the change that moved it,
 so the diff shows the cost being accepted. Its ``_provenance`` block
 names the run.
+
+A ``write_emit_gate_baseline`` dispatch checks the gate against the
+baseline it has just written, so it always passes. A green write-baseline
+run is therefore NOT evidence that the gate passes; only the ordinary
+PR/push lane (reading the committed file) is (#1677).
 """
 from __future__ import annotations
 
@@ -81,23 +86,32 @@ BASELINE_PATH = Path(__file__).with_name("emit_gate_baseline.json")
 
 #: Multiple of the baseline ``emit / parse`` ratio that still passes.
 #:
-#: Calibrated against the real thing rather than guessed. Replaying this
-#: gate on the pre-fix tree (``c87a8936``, before #876) measures
-#: **2.32x** baseline on tet and **1.99x** on hex — hex is the tighter
-#: side because its larger deck makes ``parse`` bigger, shrinking the
-#: ratio for the same emit cost. A tolerance of 2.0 therefore catches
-#: tet but lets hex through by 0.5%, so the ceiling has to sit below
-#: 1.99. At 1.7 both cells trip with margin (tet 27%, hex 15%) while
-#: steady-state idle runs sit at ~60% of the ceiling, against a
-#: measured run-to-run spread of ~1.5%.
+#: Calibrated against the #876 shape (the scalar-lookup-in-a-loop
+#: regression this gate exists to catch) and against the noise of the CI
+#: runner (#1658, #1671, #1677). Against the CI-written baseline (tet
+#: 0.6316, hex 0.5755; ``emit_gate_baseline.json``) the #876 shape adds a
+#: roughly fixed *ratio delta*, not a multiple: hex ~ +0.406, tet
+#: ~ +0.589 (Windows median-of-3 estimates). Hex is the tighter side. At
+#: 1.55 the hex ceiling is 0.892 against ~0.981 for #876-shaped hex
+#: (~10% margin), and the tet ceiling is 0.979 against ~1.22. The worst
+#: observed CI CPU is the Xeon Platinum 8370C (0.801 tet / 0.724 hex, i.e.
+#: 0.818 / 0.812 of the ceilings), which keeps ~18% headroom. The earlier
+#: 1.7 caught #876 hex by only 0.3% (0.9815 vs a 0.978 ceiling), no usable
+#: margin.
 #:
-#: Do not tighten this toward the observed spread. Emit allocates and
+#: Do not tighten this further without re-measuring. Emit allocates and
 #: ``compile`` mostly does not, so the ratio drifts upward under memory
-#: pressure — up to ~1.6x on a dev box with 10 of 24 cores busy. A
-#: dedicated CI runner should stay far below that, but the headroom is
-#: deliberate: a gate that cries wolf gets ignored, which is the same
-#: failure mode as having no gate.
-RATIO_TOLERANCE = 1.7
+#: pressure and between CPU models (up to ~20% on hosted runners); a gate
+#: that cries wolf gets ignored, which is the same failure mode as having
+#: no gate. Raising it needs the maintainer; the tightening was ruled by
+#: T on #1677.
+RATIO_TOLERANCE = 1.55
+
+
+def ratio_within_ceiling(ratio: float, base_ratio: float,
+                         tolerance: float = RATIO_TOLERANCE) -> bool:
+    """The gate's pass/fail decision, factored out so it is testable."""
+    return ratio <= base_ratio * tolerance
 
 ELEMENT_KINDS = ("tet_host_line_embed", "hex_host_line_embed")
 
@@ -342,7 +356,7 @@ def test_emit_cost_has_not_regressed(kind: str, measured: dict) -> None:
     got = measured[kind]
     ceiling = base["ratio"] * RATIO_TOLERANCE
     _report_gate_line(kind, got, base, ceiling)
-    assert got["ratio"] <= ceiling, (
+    assert ratio_within_ceiling(got["ratio"], base["ratio"]), (
         f"{kind}: emit/parse ratio {got['ratio']:.3f} exceeds "
         f"{ceiling:.3f} (baseline {base['ratio']:.3f} x {RATIO_TOLERANCE}). "
         f"Raw: emit={got['emit_sec']:.3f}s parse={got['parse_sec']:.3f}s. "
@@ -351,6 +365,33 @@ def test_emit_cost_has_not_regressed(kind: str, measured: dict) -> None:
         "means emit-side work got more expensive. See ADR 0065 / #876 "
         "for the scalar-lookup-in-a-loop shape this was built to catch."
     )
+
+
+#: Hand-measured anchors for :func:`test_tolerance_catches_876_shape`.
+_BASE_HEX, _BASE_TET = 0.5755, 0.6316
+_DELTA_876_HEX, _DELTA_876_TET = 0.406, 0.589
+_WORST_8370C_HEX, _WORST_8370C_TET = 0.724, 0.801
+
+
+def test_tolerance_catches_876_shape() -> None:
+    """Deterministic (no timing): the tolerance separates #876 from noise (#1677).
+
+    A synthetic #876-shaped delta must fail at the configured tolerance with margin (at the
+    old 1.7 hex was within 0.3% of its ceiling); the worst observed CI run (Xeon 8370C) must still pass.
+    """
+    for base, delta, worst in (
+        (_BASE_HEX, _DELTA_876_HEX, _WORST_8370C_HEX),
+        (_BASE_TET, _DELTA_876_TET, _WORST_8370C_TET),
+    ):
+        assert not ratio_within_ceiling(base + delta, base, RATIO_TOLERANCE)
+        # Margins: the #876 shape sits >= 10% over the ceiling (hex is
+        # the tight side), the worst CI run keeps >= 15% headroom. At the
+        # old 1.7 the #876 hex reading (0.9815) sat within 0.3% of the
+        # 0.978 ceiling, i.e. no usable margin.
+        assert (base + delta) / (base * RATIO_TOLERANCE) >= 1.10
+        assert worst / (base * RATIO_TOLERANCE) <= 0.85
+        assert ratio_within_ceiling(worst, base, RATIO_TOLERANCE)
+        assert ratio_within_ceiling(base, base, RATIO_TOLERANCE)
 
 
 @pytest.mark.bench

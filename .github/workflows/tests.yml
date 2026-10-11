@@ -157,7 +157,9 @@ jobs:
       #
       # The baseline must be written HERE, on this runner, not on a dev
       # box: a Windows-written file sat ~1.2x below CI (#1658). Dispatch
-      # this workflow with write_emit_gate_baseline=true; on pull_request
+      # this workflow with write_emit_gate_baseline=true. That run checks the
+      # gate against the baseline it just wrote, so it always passes and is
+      # NOT evidence the gate passes (#1677). On pull_request
       # and push `inputs` is empty, so the flag is never passed.
       - name: Emit-cost regression gate (10k x 4)
         env:
