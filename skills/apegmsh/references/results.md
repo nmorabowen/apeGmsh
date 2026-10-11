@@ -320,8 +320,8 @@ def viewer(self, *, blocking=None, title=None,
   in-process and **native-crashes a Jupyter / VS Code kernel**.
 - **Returns differ by path, on purpose**: blocking returns the
   `ResultsSession` (still live after the window closes — query it,
-  `render()` off it, `snapshot()` it); `blocking=False` (and the
-  notebook default) returns the `subprocess.Popen`.
+  `render()` off it, `snapshot()` it); `blocking=False` returns the
+  `subprocess.Popen`, as does auto mode in a notebook.
 - `viewer(blocking=False)` always spawns a subprocess; needs a Results
   opened from disk, raises `RuntimeError` for in-memory.
 - `viewer()` already shows the window — never chain

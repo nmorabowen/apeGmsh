@@ -40,8 +40,8 @@ s.show()                       # the same window, from Python
 
 The blocking call returns the `ResultsSession` once the window closes —
 still live, so you can query it, render stills off it, or snapshot it.
-`blocking=False` (and the notebook default) returns the
-`subprocess.Popen` handle instead: two different things on purpose,
+`blocking=False` returns the `subprocess.Popen` handle instead, as
+does auto mode in a notebook: two different things on purpose,
 because a session in *this* process is not what a child window is
 showing.
 
