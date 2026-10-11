@@ -1,0 +1,3 @@
+### ADDED — The freeze is a lock (ADR 0121 D4, #1685)
+
+`tests/test_freeze_lock.py`, run in `lock-tests`, holds the registries ADR 0121 D4 freezes equal to the census in `tests/freeze_census.py`: the primitive family names in `tests/families.py`, the `ConstraintKind` constants, the Studio `@mcp.tool` functions and `HABITAT_TOOLS`, and the emitter verb families of `verbs.py`. An unlisted member or a stale census entry fails the lock. The census as it stands at this PR's merge commit, the freeze point, is grandfathered and pinned by digest; any later entry goes in `ADMITTED` and must cite an ADR whose Status `scripts/adr_index.py::parse_adr` reads as Accepted.
