@@ -220,6 +220,31 @@ def measured(tmp_path_factory, request) -> dict:
     return out
 
 
+def _report_gate_line(kind: str, got: dict, base: dict, ceiling: float) -> None:
+    """Print one greppable ``EMIT-GATE`` line per cell, pass or fail (#1658).
+
+    Printed (the CI lane runs ``-s``) and appended to
+    ``$GITHUB_STEP_SUMMARY`` when set, so the margin trend is visible
+    from passing runs, not only from a failing assertion. Reporting
+    only: it does not touch the measurement or the pass/fail logic.
+    """
+    margin = got["ratio"] / ceiling
+    line = (
+        f"EMIT-GATE cell={kind} ratio={got['ratio']:.3f} "
+        f"ceiling={ceiling:.3f} baseline={base['ratio']:.3f} "
+        f"margin={margin:.3f} headroom={(1 - margin) * 100:.1f}% "
+        f"emit={got['emit_sec']:.3f}s parse={got['parse_sec']:.3f}s"
+    )
+    print(f"\n{line}")
+    summary = os.environ.get("GITHUB_STEP_SUMMARY")
+    if summary:
+        try:
+            with open(summary, "a", encoding="utf-8") as fh:
+                fh.write(f"`{line}`\n\n")
+        except OSError:  # pragma: no cover - reporting must never fail the gate
+            pass
+
+
 def _load_baseline() -> dict:
     if not BASELINE_PATH.exists():  # pragma: no cover - repo always ships it
         pytest.fail(
@@ -254,6 +279,7 @@ def test_emit_cost_has_not_regressed(kind: str, measured: dict) -> None:
     base = _load_baseline()[kind]
     got = measured[kind]
     ceiling = base["ratio"] * RATIO_TOLERANCE
+    _report_gate_line(kind, got, base, ceiling)
     assert got["ratio"] <= ceiling, (
         f"{kind}: emit/parse ratio {got['ratio']:.3f} exceeds "
         f"{ceiling:.3f} (baseline {base['ratio']:.3f} x {RATIO_TOLERANCE}). "
