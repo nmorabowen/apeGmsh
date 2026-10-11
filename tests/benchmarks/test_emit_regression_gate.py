@@ -38,19 +38,24 @@ shift the denominator.
 
 Re-baselining
 -------------
-When a change legitimately moves these numbers, regenerate with::
+When a change legitimately moves these numbers, regenerate the file ON
+THE CI RUNNER, not on a dev box (a Windows-written baseline sat ~1.2x
+below CI; #1658). Dispatch the Tests workflow on the PR branch with the
+``write_emit_gate_baseline`` input, which runs::
 
     pytest tests/benchmarks/test_emit_regression_gate.py --emit-gate-write-baseline
 
-and commit ``emit_gate_baseline.json`` in the same PR as the change
-that moved it, so the diff shows the cost being accepted.
+and uploads the result as the ``emit-gate-baseline`` artifact. Download
+it (``gh run download <run> -n emit-gate-baseline``) and commit
+``emit_gate_baseline.json`` in the same PR as the change that moved it,
+so the diff shows the cost being accepted. Its ``_provenance`` block
+names the run.
 """
 from __future__ import annotations
 
 import json
 import time
 from pathlib import Path
-from statistics import median
 from typing import cast
 
 import pytest
@@ -97,15 +102,35 @@ RATIO_TOLERANCE = 1.7
 ELEMENT_KINDS = ("tet_host_line_embed", "hex_host_line_embed")
 
 
-#: Timed repeats per cell. The FEM build dominates setup cost and is
-#: hoisted out of the loop, so extra emits are nearly free — and the
-#: median shrugs off a transient spike on a shared CI runner, which a
-#: single shot would report as a regression.
-REPS = 3
+#: Timed repeats per cell; the gate keeps the MINIMUM of each (#1658).
+#:
+#: The FEM build dominates setup cost and is hoisted out of the loop, so
+#: extra emits are cheap. Timing noise on a shared runner is one-sided:
+#: interference (another tenant, a GC pass, page faults) only ever makes
+#: a rep slower, never faster than the code allows. The minimum estimates
+#: that floor; a median of 3 still reports the middle of the noise, and
+#: on CI it swung hex 0.716 -> 0.627 across two runs of the same commit.
+#:
+#: Why 7: on the CI runner ``parse`` is still warming up for the first
+#: ~4 reps (it falls ~15-20% by rep 5), so a short run reports a
+#: too-small parse and a too-small ratio. Measured with 12 reps on CI,
+#: the min-of-N ratio settles within 0.5% of its 12-rep value by N=7 on
+#: both cells, while the median keeps drifting up as reps are added.
+#: Each rep costs ~3 s per cell on the slowest runner seen, so 7 instead
+#: of 3 adds ~25 s to the lane. The PR (#1658) records the table.
+REPS = 7
 
 
 def _measure(kind: str, tmp: Path) -> dict:
-    """Emit + parse the gate cell ``REPS`` times; return the medians.
+    """Emit + parse the gate cell ``REPS`` times; return the minima.
+
+    ``emit_sec`` and ``parse_sec`` are each the minimum over the reps,
+    taken separately, and ``ratio`` is their quotient. Not
+    ``min(emit_i / parse_i)``: a rep whose *parse* was inflated by noise
+    has a deflated ratio, so a minimum over per-rep ratios selects for
+    noisy parses and biases the gate low, which can hide a regression.
+    Both quantities have one-sided noise, so each one's minimum is its
+    own best estimate of the uncontended cost.
 
     Mirrors ``test_cross_rank_constraint_cost`` step for step so the
     two report the same quantities: Tcl emit is the timed region,
@@ -168,13 +193,15 @@ def _measure(kind: str, tmp: Path) -> dict:
         compile(py_src, str(py_path), "exec")
         parses.append(time.perf_counter() - t1)
 
-    emit = median(emits)
-    parse = median(parses)
+    emit = min(emits)
+    parse = min(parses)
     return {
         "deck_lines": deck_lines,
         "emit_sec": emit,
         "parse_sec": parse,
         "ratio": emit / parse,
+        "emits": emits,
+        "parses": parses,
     }
 
 
@@ -198,26 +225,60 @@ def measured(tmp_path_factory, request) -> dict:
         print(
             f"\n[emit-gate] {kind} lines={m['deck_lines']} "
             f"emit={m['emit_sec']:.3f}s parse={m['parse_sec']:.3f}s "
-            f"ratio={m['ratio']:.3f}",
+            f"ratio={m['ratio']:.3f} (min of {REPS})"
+            f"\n[emit-gate] {kind} reps emit="
+            + ",".join(f"{t:.3f}" for t in m["emits"])
+            + " parse="
+            + ",".join(f"{t:.3f}" for t in m["parses"]),
         )
 
     if request.config.getoption("--emit-gate-write-baseline"):
+        baseline: dict = {
+            kind: {
+                "deck_lines": m["deck_lines"],
+                "ratio": round(m["ratio"], 4),
+            }
+            for kind, m in out.items()
+        }
+        # The ratio is only comparable to a run on the same kind of
+        # machine with the same estimator: the previous file was written
+        # on Windows, ~1.2x below the CI runner (#1658).
+        baseline["_provenance"] = {
+            "estimator": f"min of {REPS} reps, emit and parse separately",
+            "runner": " ".join(
+                filter(None, (os.environ.get("RUNNER_OS"),
+                              os.environ.get("ImageOS"))),
+            ) or "local",
+            "github_run_id": os.environ.get("GITHUB_RUN_ID"),
+            "sha": os.environ.get("GITHUB_SHA"),
+            "cpu": _cpu_model(),
+        }
         BASELINE_PATH.write_text(
-            json.dumps(
-                {
-                    kind: {
-                        "deck_lines": m["deck_lines"],
-                        "ratio": round(m["ratio"], 4),
-                    }
-                    for kind, m in out.items()
-                },
-                indent=2,
-            )
+            json.dumps(baseline, indent=2)
             + "\n",
             encoding="utf-8",
         )
         print(f"\n[emit-gate] wrote baseline -> {BASELINE_PATH}")
     return out
+
+
+def _cpu_model() -> str:
+    """The CPU this run landed on, for reading the ratio (#1658).
+
+    GitHub's hosted runners are a hardware mix, and the min-of-N ratio
+    still moves by up to ~20% between CPU models. Naming the CPU on every
+    line lets a high reading be told apart from a regression.
+    """
+    try:
+        with open("/proc/cpuinfo", encoding="utf-8") as fh:
+            for row in fh:
+                if row.startswith("model name"):
+                    return row.split(":", 1)[1].strip()
+    except OSError:
+        pass
+    import platform
+
+    return platform.processor() or "unknown"
 
 
 def _report_gate_line(kind: str, got: dict, base: dict, ceiling: float) -> None:
@@ -233,7 +294,8 @@ def _report_gate_line(kind: str, got: dict, base: dict, ceiling: float) -> None:
         f"EMIT-GATE cell={kind} ratio={got['ratio']:.3f} "
         f"ceiling={ceiling:.3f} baseline={base['ratio']:.3f} "
         f"margin={margin:.3f} headroom={(1 - margin) * 100:.1f}% "
-        f"emit={got['emit_sec']:.3f}s parse={got['parse_sec']:.3f}s"
+        f"emit={got['emit_sec']:.3f}s parse={got['parse_sec']:.3f}s "
+        f"cpu=\"{_cpu_model()}\""
     )
     print(f"\n{line}")
     summary = os.environ.get("GITHUB_STEP_SUMMARY")
@@ -331,7 +393,7 @@ def test_artifact_write_cost_is_reported(tmp_path: Path, monkeypatch) -> None:
     emit_off: list[float] = []
     emit_on: list[float] = []
     repeat_on: list[float] = []
-    for i in range(REPS):
+    for i in range(3):  # a report, not the gate: keeps its own median of 3
         target.unlink(missing_ok=True)
         ops = _bridge(False)
         t0 = time.perf_counter()

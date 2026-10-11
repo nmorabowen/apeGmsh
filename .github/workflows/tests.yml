@@ -5,6 +5,13 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      write_emit_gate_baseline:
+        description: >-
+          Rewrite tests/benchmarks/emit_gate_baseline.json on the runner and
+          upload it as the emit-gate-baseline artifact (#1658)
+        type: boolean
+        default: false
 
 # Cancel superseded runs for the same ref only on pull_request events
 # (saves CI minutes on force-push / rapid re-push to a PR). Every other
@@ -147,10 +154,24 @@ jobs:
       # -s so the measured ratios land in the log even on a pass —
       # a regression is much easier to read as a trend than as a
       # single failing assertion.
+      #
+      # The baseline must be written HERE, on this runner, not on a dev
+      # box: a Windows-written file sat ~1.2x below CI (#1658). Dispatch
+      # this workflow with write_emit_gate_baseline=true; on pull_request
+      # and push `inputs` is empty, so the flag is never passed.
       - name: Emit-cost regression gate (10k x 4)
+        env:
+          WRITE_BASELINE: ${{ inputs.write_emit_gate_baseline && '--emit-gate-write-baseline' || '' }}
         run: |
           pytest -q -p no:cacheprovider -s -m bench \
-            tests/benchmarks/test_emit_regression_gate.py
+            tests/benchmarks/test_emit_regression_gate.py $WRITE_BASELINE
+
+      - name: Upload rewritten emit-gate baseline
+        if: ${{ inputs.write_emit_gate_baseline }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: emit-gate-baseline
+          path: tests/benchmarks/emit_gate_baseline.json
 
   # Static gates for the strictly-typed bridge package (charter P12;
   # architecture/testing.md § "CI gating" declared
