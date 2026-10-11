@@ -94,7 +94,7 @@
       },
       "contour": {
         "deform": null,
-        "contour": "displacement_y",
+        "contour": "add_default_contour (S1 starter -> displacement_x)",
         "first": "anim_contour_first.png",
         "last": "anim_contour_last.png"
       }

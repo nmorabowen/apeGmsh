@@ -18,8 +18,9 @@ Cases (``manifest.json`` ``animation.cases``):
 
 * ``default``: no ``deform=``, no ``setup=``: the viewer's boot scene;
 * ``deform``: ``deform=("displacement", 1.0)``: the public deform knob;
-* ``contour``: ``setup=`` adds a ``displacement_y`` contour through the
-  public ``apeGmsh.viewers.diagrams`` classes. ``setup(plotter, director)``
+* ``contour``: ``setup=`` adds the viewer's default contour (the S1
+  starter, ``add_default_contour``; with no ``displacement_z`` recorded
+  it picks ``displacement_x``). ``setup(plotter, director)``
   is the documented escape hatch; X2-b may re-express this callback for
   the session, while the other two cases must run unchanged.
 
@@ -92,20 +93,17 @@ def plate(plate_h5: Path, monkeypatch: pytest.MonkeyPatch):
         yield r
 
 
-def _contour_setup(component: str):
-    def setup(plotter: Any, director: Any) -> None:
-        from apeGmsh.viewers.diagrams import (
-            ContourDiagram, ContourStyle, DiagramSpec, SlabSelector,
-        )
+def _contour_setup(plotter: Any, director: Any) -> None:
+    """The viewer's own "add a contour" path (the S1 starter).
 
-        spec = DiagramSpec(
-            kind="contour",
-            selector=SlabSelector(component=component),
-            style=ContourStyle(),
-        )
-        director.registry.add(ContourDiagram(spec, director.results))
+    A bare ``registry.add`` attaches the layer (its scalar bar shows) but
+    never joins a composition or fires ``DIAGRAM_ATTACHED``, so the
+    substrate keeps painting over it: measured on the qt lane, every
+    frame came out the same gray. The starter does all three.
+    """
+    from apeGmsh.viewers.diagrams._starter import add_default_contour
 
-    return setup
+    add_default_contour(director)
 
 
 @pytest.mark.parametrize("case", sorted(_ANIM["cases"]))
@@ -118,7 +116,7 @@ def test_export_animation_matches_golden(
     if spec.get("deform") is not None:
         kwargs["deform"] = tuple(spec["deform"])
     if spec.get("contour") is not None:
-        kwargs["setup"] = _contour_setup(spec["contour"])
+        kwargs["setup"] = _contour_setup
     out = tmp_path / f"{case}.gif"
     written = plate.export_animation(
         out,
