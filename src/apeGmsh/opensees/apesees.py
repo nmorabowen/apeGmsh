@@ -8308,7 +8308,11 @@ def _merge_homogeneous_fixes(
                 runs.append((mask, [nid]))
         for mask, nids in runs:
             trimmed = FixRecord(pg=None, nodes=tuple(nids), dofs=mask)
-            decls[id(trimmed)] = decls[id(rec)]
+            # A record assembled without ``_declare_record`` has no row;
+            # its trimmed parts then have none either, and an archival
+            # emit refuses them exactly as it would refuse the original.
+            if id(rec) in decls:
+                decls[id(trimmed)] = decls[id(rec)]
             out.append(trimmed)
     return tuple(out) if changed else records
 
