@@ -14,14 +14,18 @@ This ADR cites them and does not copy them.
 
 **Supersedes in part, once Accepted:** [ADR 0102](0102-warrant-the-snapshot.md)
 D2 (the freeze) and D5 (the bucket table, including its Warranted row).
-Until this ADR is Accepted it supersedes nothing (D5 below), and 0102's D1,
-D3, D4, D6 and D7 are not touched at all.
+Until this ADR is Accepted it supersedes nothing (D5 below). 0102's D1,
+D3, D4, D6 and D7 are not touched at all, and stay Proposed (maintainer
+ruling 4, 2026-10-11).
 
 **Program slice:** #1678 (link P0.2; chain issue #1193).
 
 Each decision is marked *(ratified)* when the maintainer has already ruled
 on it and this ADR only records the ruling, or *(proposed)* when accepting
-this ADR is the ruling.
+this ADR is the ruling. *(proposed; direction ruled 2026-10-11)* marks a
+proposed decision whose open question the maintainer has already answered
+(see "Maintainer rulings" below). The ADR itself stays Proposed until the
+maintainer accepts it.
 
 ## Context
 
@@ -39,7 +43,7 @@ The second is ADR 0102, Proposed since 2026-08-30. It froze new families in
 prose (D2) and defined "Warranted" in a hand-filled table (D5). The prose
 freeze did not hold: ADRs 0117 (assembly), 0119 (ground-spring bed) and
 0120 (multi-rank routing) all landed after it. Its own acceptance clause is
-unmet, too. `CHANGELOG.md` is 880 kB under one Unreleased heading, and
+unmet, too. `CHANGELOG.md` is 869 kB under one Unreleased heading, and
 `architecture/README.md` still reports Phase 8.6, 81 primitives and schema
 2.2.0. So 0102 cannot be accepted as written without a release cut, and
 accepting it would quietly ratify D6 (a named human on every row) and D7
@@ -54,8 +58,7 @@ freeze may lift only as fast as `live-fork` can verify. The P0.3 rulings
 that followed live only as comments on #1193. This ADR is the one place
 they are written down together.
 
-Here is what `main` actually holds, probed on `origin/main` `f65d55dd`
-(2026-10-11) rather than taken from the briefs:
+What `main` holds, probed on `origin/main` `f65d55dd` (2026-10-11):
 
 | Claim | State on `main` |
 |---|---|
@@ -63,7 +66,7 @@ Here is what `main` actually holds, probed on `origin/main` `f65d55dd`
 | A pinned fork build and a nightly lane | Shipped. `FORK_PIN` names `ladruno-v20261005` (`011b0258`). `.github/workflows/live-fork.yml` runs nightly as a non-required check and asserts that `ladrunoBuild()` equals the pin. The last five scheduled nights (2026-10-07 to 10-11) were green |
 | `live-stock` required, on Python 3.12 | Shipped. `scripts/land_pr.py::REQUIRED_CHECKS` names it, and `tests.yml` runs it on 3.12 |
 | Capabilities as data | Shipped. `emitter/caps.py::TargetCaps` (one frozen value per emitter) and `SolveStamp` (`will_solve`, `requires`) |
-| Stock refusals | Shipped. `emitter/live.py::_FORK_ONLY_ELEMENTS` and `_FORK_ONLY_INTEGRATORS` gate the live path, and `opensees_model.py::refuse_live_requires` refuses a stamp that requires the fork on a stock build. `tests/opensees/unit/test_live_stock_gates.py` pins them |
+| Stock refusals | Shipped. `emitter/live.py::_FORK_ONLY_ELEMENTS` and `_FORK_ONLY_INTEGRATORS` gate the live path, and `opensees_model.py::refuse_live_requires` refuses a stamp that requires the fork on a stock build. Pinned by `tests/opensees/unit/test_bezier_run_gate.py` (the element gate), `tests/test_capability_map_drift.py` (both sets equal the documented map) and `tests/opensees/h5/test_h5_solve_stamp.py` (`refuse_live_requires`) |
 | Deck provenance | Partial. `emitter/tcl.py::provenance_stamp` stamps decks built for a pinned target. `mode="auto"` decks stay unstamped by ruling (#1511; follow-up #1603, open). `results.h5` carries `opensees_backend` and `opensees_build` from DomainCapture and footfall |
 | Two-sided divergence roster | Shipped after the briefs were written. [`architecture/fork-divergence-roster.md`](../fork-divergence-roster.md) holds rows D1–D9 and is locked by `tests/opensees/unit/test_fork_divergence_roster.py` (F3-a, #1666, merged as #1672 on 2026-10-11). Both briefs recorded it as not shipped |
 | `ladrunoSchema` | Not shipped (F3-b, #1667, open) |
@@ -109,15 +112,20 @@ all:
   `origin/ladruno`; the base checkout is never edited, and
   `OpenSees_Compile` is never touched.
 
-### D3 (proposed) — One engine policy: fork green, stock honest or refused
+### D3 (proposed; direction ruled 2026-10-11) — One engine policy: fork green, stock honest or refused
 
 This replaces 0102 D5's bucket table, Warranted row included. Every member
 that behaves differently on the two engines is in exactly one of four
 states.
 
-- **Refused.** On a stock build, apeGmsh raises at build or live time,
-  before it touches the domain, and the message names the fork. Emission is
-  never gated: a Tcl or py deck for a fork class is written on any build.
+- **Refused.** On a stock build, apeGmsh raises at build, emit or
+  live-construction time, *before* `analyze`, with an error that names the
+  fork, and a `pytest.raises` test pins the refusal. The run is refused;
+  the domain is not necessarily untouched. The element gate
+  (`LiveOpsEmitter._element_fork_gated`) issues `ops.element` first and
+  raises when the build rejects or silently drops it, so a stock domain may
+  be left partly built. The integrator gate raises before its call. Emission
+  is never gated: a Tcl or py deck for a fork class is written on any build.
 - **Honest.** The stock result meets a closed-form or cross-engine oracle in
   `live-stock`. A known divergence has a row in the divergence roster that
   names the correct engine, and the live path either refuses it or warns
@@ -132,14 +140,14 @@ Promoting a member is work (a refusal, an oracle, a test that passes),
 never a status edit. Warrant is derived from gates, and nobody fills in a
 table.
 
-Two kinds of green are kept apart. The *lane* is green when `live-fork`
-passes with its `ladruno_mkl` skips-with-reason counted; that is the
-panel's definition, and the one the K3 30-day trigger reads. A *member* is
-fork green only when its own test passed. A warrant test that skips in its
-own lane fails that lane. How the lane enforces this, whether through an
-environment switch or a marker, is left to the slice that wires it (PR-4).
+Two kinds of green are kept apart (ruling 3). The *lane* is green when
+`live-fork` passes with its `ladruno_mkl` skips-with-reason counted, the
+panel's definition and the one the K3 30-day trigger reads. A *member* is
+fork green only when its own test passed; a skip never counts for it. A
+warrant test that skips in its own lane fails that lane. How the lane
+enforces this, an environment switch or a marker, is left to PR-4.
 
-### D4 (proposed) — The freeze is a lock
+### D4 (proposed; direction ruled 2026-10-11) — The freeze is a lock
 
 This replaces 0102 D2. A census lock in the `lock-tests` job holds four
 registries, the ones that map onto 0102 D2's list:
@@ -159,20 +167,31 @@ below.
 Growing a registry needs an ADR whose Status, as
 `scripts/adr_index.py::parse_adr` reads it, is Accepted, and the new census
 entry cites that ADR. Two checks in `scripts/land_pr.py` keep the exception
-a maintainer act. It refuses (a) a diff that changes any ADR's Status to
-Accepted, so only the maintainer's own merge can accept one, and (b) a diff
-that edits the census baseline on a PR without the `human-gate` label. The
-two close different holes: (a) stops an agent from accepting the ADR that
-admits its own exception, and (b) stops it from editing the baseline around
-one.
+a maintainer act. It refuses (a) a diff that sets any ADR's Status to
+Accepted, whether it changes an existing ADR or adds a new ADR file born
+with Status Accepted, and (b) a diff that edits the census baseline on a PR
+without the `human-gate` label. The two close different holes: (a) stops
+an agent from accepting the ADR that admits its own exception, and (b)
+stops it from editing the baseline around one.
 
-New *members* of existing families are not frozen. A new fork member (a
-material, an element, an integrator) merges with a stock refusal, either a
-`_FORK_ONLY_*` entry or a `requires=("fork",)` stamp, and with a warrant
-row. It stays Inventory until its row's test passes in `live-fork`. That is
-how warrant moves only as fast as `live-fork` verifies, without making a
-merge wait on a non-required lane. Fixes, fail-loud guards, deletions and
-stock primitives are not frozen either.
+Like every `land_pr.py` check, these bind only PRs landed through the
+script. The maintainer's own merge in the GitHub web UI bypasses them, and
+that is by design: the web merge is the exception path, and it is a human
+act. An agent lands through `land_pr.py` (AGENTS.md, "How work lands").
+
+New *members* of existing families are not frozen. As the maintainer ruled
+(ruling 1), a new fork member (a material, an element, an integrator)
+merges with a stock refusal whose error names the fork, and with a
+warrant-row test. The refusal is the member's own: a `_FORK_ONLY_*` entry or
+a raise at build time. A `requires` stamp does not serve, because
+`requires` is set per `VERBS` row (`verbs.py::_FORK`), not per member. The
+member is Warranted only once that test *passes*, not skips, in the nightly
+`live-fork`; until then it is Inventory. That is how warrant moves only as
+fast as `live-fork` verifies, without making a merge wait on a non-required
+lane. The fork members that predate the freeze, roughly 48 by the
+architects' count (PR-2's census fixes the exact number), stay Inventory
+with no deadline, tracked in X4 (ruling 5). Fixes, fail-loud guards,
+deletions and stock primitives are not frozen either.
 
 A full stock/fork classification of every primitive is deliberately not
 part of this lock. Classified by hand before `ladrunoSchema` exists, it
@@ -189,49 +208,59 @@ neither ADR 0102 nor `charter.md`. PR-5 does both.
 
 ### D6 (proposed) — Charter principles, each with its gate
 
-The strains report (§5) proposed eight principles for the next phase. Six
-become charter principles here, and each names the gate that enforces it.
+The strains report (§5) proposed eight principles for the next phase. Five
+of them are adopted here: its principles 1, 2, 5, 7 and 8. Principle 6 is
+already ADR 0113. Principles 3 and 4 are excluded (below). Warrant, from D3,
+is new. Each of the six charter principles names the gate that enforces
+it; the strains number is in parentheses.
 
-1. **Local-change safety.** Adding a member is one registration, and a
-   completeness gate fails closed when something does not participate.
-   Gates: C1 (`tests/test_family_completeness.py`) and the verbs lock.
-2. **Fail closed at seams.** An unknown class, capability or stream raises
-   or warns loudly. Gates: the `scripts/check_quirks.py` rules, and fork
-   rule (e), which gives every divergence a roster row.
-3. **Variants are data.** One capability model, read from the binary.
-   Gates: `TargetCaps` and `BackendInfo`, locked by
+1. **Local-change safety** (§5.1). Adding a member is one registration,
+   and a completeness gate fails closed when something does not
+   participate. Gates: C1 (`tests/test_family_completeness.py`) and the
+   verbs lock.
+2. **Fail closed at seams** (§5.2). An unknown class, capability or stream
+   raises or warns loudly. Gates: the `scripts/check_quirks.py` rules, and
+   fork rule (e), which gives every divergence a roster row.
+3. **Variants are data** (§5.5). One capability model, read from the
+   binary. Gates: `TargetCaps` and `BackendInfo`, locked by
    `tests/opensees/contract/test_target_caps.py` and
    `tests/opensees/unit/test_backend_info.py`.
-4. **State is derived, not narrated.** Gates: the `adr-number` and
+4. **State is derived, not narrated** (§5.7). Gates: the `adr-number` and
    `doc-path` quirk rules, and the generated ADR index
    (`scripts/adr_index.py --check`).
-5. **Retire by deletion.** A retirement gets a ledger entry and an exit
-   criterion. Gate: X4's ledger, still pending.
-6. **Warrant.** D3 of this ADR.
+5. **Retire by deletion** (§5.8). A retirement gets a ledger entry and an
+   exit criterion. Gate: X4's ledger, still pending.
+6. **Warrant** (new). D3 of this ADR.
 
-Three more are already decided, so they are cited and not restated:
-compatibility ([ADR 0113](0113-compatibility-is-a-floor-per-zone.md),
-whose D5 rejects "additive changes do not bump"), the archive (ADR 0114)
-and the viewers ([ADR 0112](0112-files-are-the-model-and-a-read-only-app.md),
-with [ADR 0116](0116-render-technologies.md)). Two are not charter
-material. Explicit IRs at every lowering were rejected by the panel (S13:
-no DeckProgram, ColumnSpec or picture IR). Machine-checked boundaries stay
-a measurement, because PROGRAM.md §8 keeps structure KPIs out of the hard
+Compatibility (§5.6) is already decided by
+[ADR 0113](0113-compatibility-is-a-floor-per-zone.md), whose D5 rejects
+"additive changes do not bump", so it is cited and not restated. So are the
+archive (ADR 0114) and the viewers
+([ADR 0112](0112-files-are-the-model-and-a-read-only-app.md), with
+[ADR 0116](0116-render-technologies.md)), which §5 did not list. The two
+excluded principles are not charter material. Semantics surviving lowering
+through explicit IRs (§5.3) was rejected by the panel (S13: no DeckProgram,
+ColumnSpec or picture IR). Machine-checked boundaries (§5.4) stay a
+measurement, because PROGRAM.md §8 keeps structure KPIs out of the hard
 gates.
 
-### D7 (proposed) — `charter.md` stays the bridge charter
+### D7 (proposed; direction ruled 2026-10-11) — `charter.md` stays the bridge charter
 
 `architecture/charter.md` keeps its job: it binds the bridge, and CI cites
-its principles by number ("charter P12" in `tests.yml`). The accepting PR
-adds a scope header that points here for library-level policy, and fixes
-its two stale facts: HDF5 is a fourth emit target, and live runs flat
-(unstaged) models only. P1–P14 are not rewritten. Where one conflicts with
-this ADR, this ADR wins.
+its principles by number ("charter P12" in `tests.yml`). As the maintainer
+ruled (ruling 2), the accepting PR adds a scope header that points here for
+library-level policy, and fixes its two stale facts: HDF5 is a fourth emit
+target, and live runs flat (unstaged) models only. There is no full
+rewrite: P1–P14 stay as they are. Where one conflicts with this ADR, this
+ADR wins.
 
 ## Invariants
 
 Each one is testable. "Holds" means a test on `main` already pins it; the
-others become true in the slice named.
+others become true in the slice named. Invariants 7 and 9 share one
+cut-off, *the freeze point*: the merge commit of PR-2, which commits the
+census baseline. Entries and members already on `main` at that commit are
+grandfathered.
 
 1. `OpenSeesTarget().mode == "auto"`, and for an auto target
    `resolve_kind(info) == info.kind`. Holds
@@ -250,13 +279,16 @@ others become true in the slice named.
    (`tests/opensees/h5/test_h5_solve_stamp.py::test_build_live_refuses_before_touching_the_domain`).
 6. Each frozen registry equals its census. An extra registry member, or a
    census entry with no member behind it, fails `lock-tests`. PR-2.
-7. Every census entry added after the freeze cites an ADR file whose parsed
-   Status is Accepted; an entry that cites a Proposed ADR fails. PR-2.
-8. `land_pr.py` refuses a diff that changes an ADR's Status to Accepted,
-   and a diff that touches the census baseline on a PR without
+7. Every census entry added after the freeze point cites an ADR file whose
+   parsed Status is Accepted; an entry that cites a Proposed ADR fails.
+   PR-2.
+8. `land_pr.py` refuses a diff that sets an ADR's Status to Accepted,
+   whether by changing an existing ADR or by adding a new ADR file born
+   Accepted, and a diff that touches the census baseline on a PR without
    `human-gate`. PR-3.
-9. A fork member added after acceptance ships a stock refusal and a
-   warrant row in the same PR. PR-4.
+9. A fork member added after the freeze point ships, in the same PR, a
+   stock refusal of its own (a `_FORK_ONLY_*` entry or a build-time raise)
+   and a warrant-row test. PR-4.
 10. A member counts as Warranted only when its own warrant test passed in
     its lane, and a warrant test that skips in its lane fails the lane.
     Every *refused* row's test contains `pytest.raises`, checked on the
@@ -265,16 +297,18 @@ others become true in the slice named.
     `pending #<n>` as the correct engine, and its pinning tests exist.
     Holds (`tests/opensees/unit/test_fork_divergence_roster.py`).
 12. `python scripts/adr_index.py --check` passes, and ADRs 0102 and 0121
-    both parse as Proposed until PR-5. Holds once this ADR merges.
+    both parse as Proposed until PR-5. No test pins the second half: it is
+    checked at review until PR-3's Accepted refusal (invariant 8) makes it
+    mechanical for every PR landed through `land_pr.py`.
 13. After PR-5, `charter.md` claims neither three emit targets nor a
     stage-capable live target. PR-5.
 
 ## Slices
 
 **PR-1** is #1678: this ADR, the regenerated index and one changelog
-fragment, labelled `semantic` and `human-gate`. The rest wait for the
-maintainer to ratify the design on #1193, and each is a follow-up slice of
-at most about six files.
+fragment, labelled `semantic` and `human-gate`. The rest are follow-up
+slices on #1193, each of at most about six files, started when the
+maintainer clears them.
 
 - **PR-2, the freeze lock.** The census, the lock test for invariants 6
   and 7 wired into `lock-tests`, a `gates.md` row and a fragment. Its
@@ -283,8 +317,9 @@ at most about six files.
   a Proposed ADR must each turn it red, and reverting each must turn it
   green.
 - **PR-3, the `land_pr.py` checks.** Invariant 8, with replay cases in
-  `tests/test_land_pr.py`: a recorded Proposed-to-Accepted diff, and a
-  baseline edit without `human-gate`.
+  `tests/test_land_pr.py`: a recorded Proposed-to-Accepted diff, a new ADR
+  file born with Status Accepted, and a baseline edit without
+  `human-gate`.
 - **PR-4, warrant rows and lane wiring.** One refused exemplar and one
   honest exemplar, and the skip-fails-the-lane rule in both live lanes. It
   builds on the F3-a roster, which has now merged.
@@ -300,8 +335,8 @@ retirement ledger.
 
 ## Alternatives rejected
 
-The two briefs agreed on the substance. They differed on eight points, and
-each resolution is part of the decision above.
+The briefs agreed on the substance and differed on eight points; each
+resolution is part of the decision above.
 
 **Changing `charter.md`.** The Opus brief rewrote it in the acceptance PR,
 with a v2 mission, the principles and a P1–P14 status column. The Fable
@@ -309,7 +344,8 @@ brief kept it, with a scope header and two corrected sentences, edited in
 PR-1. A rewrite re-decides live rules, breaks CI's citations of principles
 by number, and contradicts the Opus brief's own "no P1–P14 rewrites"; an
 edit in PR-1 changes a norm while this ADR is still Proposed. The minimal
-edit, made at acceptance, keeps the best of each (D7).
+edit, made at acceptance, keeps the best of each (D7). The maintainer
+ruled for it (ruling 2).
 
 **Admitting a new fork member.** The Opus brief required a warrant row
 plus a green `live-fork` run on the PR head, which forces a `FORK_PIN` bump
@@ -318,7 +354,7 @@ depend on a lane that fork rule (d) keeps non-required. The Fable brief
 froze nothing, provided stock refused and an effect test shipped, which
 drops the panel's rule that warrant moves only as fast as `live-fork`. D4
 takes the middle: refusal and warrant row at merge, Warranted only once
-green. This is open question 1.
+green. The maintainer ruled for it (ruling 1).
 
 **Which registries are frozen.** The Opus brief classified every primitive
 as stock or fork; the Fable brief froze `FAMILIES`, the constraint verbs,
@@ -331,8 +367,8 @@ classification before `ladrunoSchema` is a second roster.
 Each leaves the other's hole open, so D4 keeps both.
 
 **Whether `ladruno_mkl` skips count.** The Fable brief counted them; the
-Opus brief did not. They count for the lane and not for a member (D3).
-This is open question 3.
+Opus brief did not. They count for the lane and not for a member (D3),
+as the maintainer ruled (ruling 3).
 
 **When the 0102 amendment lands.** The Fable brief added a dated amendment
 section in PR-1. That would amend 0102 on the authority of a Proposed ADR,
@@ -346,42 +382,46 @@ KPI (D6).
 `APEGMSH_WARRANT_STRICT=fork|stock`. The mechanism belongs to PR-4; this
 ADR states only the invariant (invariant 10).
 
-Four options that the briefs rejected outright are worth recording. A **prose or label
-freeze** is what 0102 already tried: the prose did not hold, and
-`freeze:` labels are file-keyed, bind only PRs landed through `land_pr.py`,
-and are bypassed by a web merge. A **quirk rule as the freeze** is AST-only,
+Four options that the briefs rejected outright are worth recording. A
+**prose or label freeze** is what 0102 already tried. The prose did not
+hold, and `freeze:` labels are file-keyed: a new family lands inside a file
+that already exists without touching a frozen path. Like D4's checks, the
+labels bind only PRs landed through `land_pr.py`, and the maintainer's web
+merge bypasses both; that shared property is by design, since the web merge
+is the maintainer's exception path. The labels fail on being file-keyed,
+not on the bypass. A **quirk rule as the freeze** is AST-only,
 cannot see C1's family walk, and skips when there is no base to diff.
 **Accepting 0102 as amended** needs a CHANGELOG cut that CI refuses outside
 `--assemble`, and would ratify D6 and D7 without anyone deciding them.
 **CODEOWNERS** does not work here: agents act through the maintainer's
 account, so a required owner review could never be given.
 
-## Open questions for the maintainer
+## Maintainer rulings (2026-10-11)
 
-These are asked one at a time through T, each with its recommendation.
+On each of the design's five questions the maintainer chose the
+recommended option (#1193, comment 6112664614); the decisions above state
+them as decided. Accepting this ADR remains the maintainer's separate act.
 
-1. **Admitting a fork member.** Require a stock refusal and a warrant row
-   at merge, and count the member Warranted only once its test is green in
-   `live-fork` (*recommended*)? The alternatives are a head-SHA `live-fork`
-   run at merge, or freezing every new fork wrapper until the lane's 30-day
-   green.
-2. **`charter.md`.** Keep it as the bridge charter, with a scope header and
-   the two factual fixes made at acceptance (*recommended*), or rewrite it
-   as a v2 charter?
-3. **`ladruno_mkl` skips.** Count them for the lane's green but not for a
-   member's warrant (*recommended*)?
-4. **The rest of ADR 0102** (D1, D3, D4, D6, D7). Leave it Proposed
-   (*recommended*), accept it after the release cut, or reject it?
-5. **The grandfathered fork members**, roughly 48 by the architects' count
-   (PR-2's census fixes the exact number). Leave them Inventory with no
-   deadline, tracked in X4 (*recommended*), or set a deadline for their
-   warrant rows?
+1. **Admitting a fork member** (D4). It merges with a stock refusal naming
+   the fork plus a warrant-row test, and is Warranted only when that test
+   passes, not skips, in the nightly `live-fork`. Rejected: a head-SHA
+   `live-fork` run at merge, or freezing new fork wrappers until the
+   lane's 30-day green.
+2. **`charter.md`** (D7) stays the bridge charter, with a scope header and
+   the two factual fixes at acceptance. Rejected: a v2 rewrite.
+3. **`ladruno_mkl` skips** (D3). They count for the lane's green, never for
+   a member's warrant.
+4. **The rest of ADR 0102** (D1, D3, D4, D6, D7) stays Proposed. Rejected:
+   accepting it after the release cut, or rejecting it.
+5. **The grandfathered fork members** (D4) stay Inventory with no
+   deadline, tracked in X4. Rejected: a deadline for their warrant rows.
 
 ## References
 
 - Chain issue #1193: the reconciled design (comment 6112293477), the two
   briefs (6112306488), and the P0.3 rulings (5897056544, 5981886601,
-  6004282361). Fork rule (a) as restated: #1198. Panel rules P3 R6 and P8
+  6004282361), and the maintainer's rulings on this ADR's five questions
+  (6112664614). Fork rule (a) as restated: #1198. Panel rules P3 R6 and P8
   R7: #1192. This slice: #1678.
 - `internal_docs/plan_expert_panel_2026-09.md` §0 (decisions at a glance),
   §1 (the fork: "B with amendments") and §9.1 (the Charter v2 ask).

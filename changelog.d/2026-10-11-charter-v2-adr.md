@@ -8,5 +8,6 @@ is Warranted when its fork test passes in `live-fork` and stock refuses it
 or meets an oracle), a census lock over four registries that only an
 Accepted ADR can grow, an amendment rule (pointers and status edits land in
 the accepting PR), six charter principles each tied to a gate, and
-`charter.md` kept as the bridge charter. It ships Proposed with five open
-questions for the maintainer; it edits neither ADR 0102 nor `charter.md`.
+`charter.md` kept as the bridge charter. It records the maintainer's
+rulings of 2026-10-11 on its five questions (each the recommended option)
+and ships Proposed; it edits neither ADR 0102 nor `charter.md`.
