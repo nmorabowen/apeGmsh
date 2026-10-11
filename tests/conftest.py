@@ -77,6 +77,103 @@ def pytest_runtest_setup(item: pytest.Item) -> None:
         )
 
 
+def pytest_configure(config: pytest.Config) -> None:
+    """Fail closed on a misspelt ``APEGMSH_WARRANT_LANE`` (ADR 0121 D3)."""
+    from tests.opensees.warrant_rows import lane_from_env
+    try:
+        lane_from_env(os.environ)
+    except ValueError as e:
+        raise pytest.UsageError(str(e)) from None
+
+
+@pytest.hookimpl(trylast=True)
+def pytest_collection_modifyitems(
+    session: pytest.Session, config: pytest.Config, items: list[pytest.Item],
+) -> None:
+    """In a warrant lane, every row test of the lane must be selected.
+
+    ``trylast`` so the ``-m`` deselection has already run: a row test the
+    lane's marker expression drops would otherwise never run and never skip.
+    """
+    from tests.opensees.warrant_rows import lane_from_env, lane_tests
+    lane = lane_from_env(os.environ)
+    if lane is None:
+        return
+    missing = sorted(set(lane_tests(lane)) - {item.nodeid for item in items})
+    if missing:
+        raise pytest.UsageError(
+            f"warrant lane {lane!r}: these warrant-row tests were not "
+            f"selected, so the lane cannot pass them (ADR 0121 D3): {missing}"
+        )
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_makereport(item: pytest.Item, call: pytest.CallInfo):
+    """In a warrant lane, a row test of the lane that skips fails it."""
+    outcome = yield
+    apply_warrant_rule(item, outcome.get_result())
+
+
+def apply_warrant_rule(item: Any, report: pytest.TestReport) -> None:
+    """Turn a skipped row test of this lane into a failure (ADR 0121 D3).
+
+    Ruling 3's ``ladruno_mkl`` skip is the one skip left alone; see
+    :func:`tests.opensees.warrant_rows.skip_failure`.
+    """
+    if not report.skipped:
+        return
+    from tests.opensees.warrant_rows import lane_from_env, lane_tests, skip_failure
+    lane = lane_from_env(os.environ)
+    if lane is None:
+        return
+    row = lane_tests(lane).get(report.nodeid)
+    if row is None:
+        return
+    xfail = hasattr(report, "wasxfail")
+    if xfail:
+        reason = f"xfail: {report.wasxfail}"
+    elif isinstance(report.longrepr, tuple):
+        reason = str(report.longrepr[2]).removeprefix("Skipped: ")
+    else:
+        reason = str(report.longrepr)
+    markers = frozenset(m.name for m in item.iter_markers())
+    message = skip_failure(lane, row, reason, markers, xfail=xfail)
+    if message is None:
+        return
+    if xfail:
+        del report.wasxfail
+    report.outcome = "failed"
+    report.longrepr = message
+
+
+def pytest_terminal_summary(terminalreporter: Any) -> None:
+    """Report each warrant row's side in this lane: green only if passed."""
+    from tests.opensees.warrant_rows import lane_from_env, lane_tests, side_green
+    lane = lane_from_env(os.environ)
+    if lane is None:
+        return
+    bad = ("failed", "error", "skipped", "xfailed", "xpassed")
+    seen: dict[str, str] = {}
+    for status, reports in terminalreporter.stats.items():
+        if status not in bad and status != "passed":
+            continue
+        for rep in reports:
+            nodeid = getattr(rep, "nodeid", None)
+            if nodeid is None:
+                continue
+            if status in bad:
+                seen[nodeid] = status
+            else:
+                seen.setdefault(nodeid, status)
+    terminalreporter.write_sep("-", f"warrant rows ({lane} lane, ADR 0121 D3)")
+    for nodeid, row in lane_tests(lane).items():
+        status = seen.get(nodeid, "not run")
+        verdict = "green" if side_green(status) else "NOT green"
+        terminalreporter.write_line(
+            f"{row.member} [{row.stock_state}] {lane} side: {verdict} ({status})"
+        )
+
+
 @pytest.fixture
 def gmsh_session():
     """Bare Gmsh session for low-level tests (Labels, helpers)."""
