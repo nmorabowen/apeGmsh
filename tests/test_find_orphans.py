@@ -81,13 +81,19 @@ def _run():
     return fo.find_orphans(fetch, REPO, SINCE)
 
 
-def test_858_diverged_is_flagged():
+def _no_acks(monkeypatch):
+    monkeypatch.setattr(fo, "ACKNOWLEDGED", {})
+
+
+def test_858_diverged_is_flagged(monkeypatch):
+    _no_acks(monkeypatch)
     hits = [f for f in _run() if f["pr"] == 858]
     assert [h["kind"] for h in hits] == ["not-on-main"]
     assert "diverged" in hits[0]["detail"]
 
 
-def test_1097_branch_moved_past_head_is_flagged():
+def test_1097_branch_moved_past_head_is_flagged(monkeypatch):
+    _no_acks(monkeypatch)
     hits = [f for f in _run() if f["pr"] == 1097]
     assert [h["kind"] for h in hits] == ["pushed-after-merge"]
 
@@ -104,7 +110,8 @@ def test_old_pr_outside_window_ignored():
     assert not [f for f in _run() if f["pr"] == 5]
 
 
-def test_main_exit_codes_and_formats(capsys):
+def test_main_exit_codes_and_formats(capsys, monkeypatch):
+    _no_acks(monkeypatch)
     dirty = make_fetch([PR858, PR1097])
     assert fo.main(["--since", "36500", "--format", "json"], fetch=dirty) == 1
     assert {f["pr"] for f in json.loads(capsys.readouterr().out)} == {858, 1097}
@@ -112,3 +119,26 @@ def test_main_exit_codes_and_formats(capsys):
     assert "#858" in capsys.readouterr().out
     clean = make_fetch([PR_CLEAN, PR_DELETED])
     assert fo.main(["--since", "36500"], fetch=clean) == 0
+
+
+def test_acknowledged_rows_are_suppressed():
+    assert (858, "not-on-main") in fo.ACKNOWLEDGED
+    assert (1097, "pushed-after-merge") in fo.ACKNOWLEDGED
+    assert (1057, "not-on-main") in fo.ACKNOWLEDGED
+    assert not [f for f in _run() if f["pr"] in (858, 1097)]
+
+
+def test_unacknowledged_orphan_still_reports():
+    # Same PR as an acknowledged one but a different kind, plus a new PR.
+    new = _pr(1300, "new orphan", "feature/new", "a" * 40, "main",
+              "a300" + "0" * 36, "2026-09-12T00:00:00Z")
+    COMPARE[new["merge_commit_sha"]] = "diverged"
+    BRANCHES["feature/new"] = "a" * 40
+    try:
+        hits = fo.find_orphans(make_fetch([PR858, new]), REPO, SINCE)
+    finally:
+        COMPARE.pop(new["merge_commit_sha"])
+        BRANCHES.pop("feature/new")
+    assert [(h["pr"], h["kind"]) for h in hits] == [(1300, "not-on-main")]
+    assert fo.main(["--since", "36500"],
+                   fetch=make_fetch([PR858])) == 0
