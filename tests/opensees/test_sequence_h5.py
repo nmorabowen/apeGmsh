@@ -113,23 +113,38 @@ def _stage_of(source: str) -> int | None:
 def _expected_sources(path: Path) -> set[str]:
     """Every record a change row must name, walked straight off the file."""
     want: set[str] = set()
+
+    def indexed(g: h5py.Group, key: str, pre: str) -> set[str]:
+        return ({f"{pre}/{key}[{i}]" for i in range(len(g[key]))}
+                if key in g else set())
+
+    def keyed(g: h5py.Group, key: str, pre: str) -> set[str]:
+        return ({f"{pre}/{key}/{n}" for n in g[key]
+                 if not n.endswith("_emit_index")} if key in g else set())
+
     with h5py.File(path, "r") as f:
         ops = f["opensees"]
-        if "patterns" in ops:
-            want |= {f"/opensees/patterns/{n}" for n in ops["patterns"]}
-        if "recorders" in ops:
-            want |= {f"/opensees/recorders[{i}]"
-                     for i in range(len(ops["recorders"]))}
+        want |= keyed(ops, "patterns", "/opensees")
+        want |= keyed(ops, "bcs", "/opensees")
+        want |= keyed(ops, "constraints", "/opensees")
+        for key in ("recorders", "regions", "initial_stress"):
+            want |= indexed(ops, key, "/opensees")
+        if "commands" in ops:
+            cmds = ops["commands"]
+            want |= {f"/opensees/commands[{j}]"
+                     for j, (m, s) in enumerate(zip(
+                         cmds["method"][()], cmds["stage"][()]))
+                     if _text(m) == "rayleigh" and int(s) == -1}
         if "stages" in ops:
             for sname, sg in ops["stages"].items():
                 pre = f"/opensees/stages/{sname}"
-                if "patterns" in sg:
-                    want |= {f"{pre}/patterns/{n}" for n in sg["patterns"]}
-                if "recorders" in sg:
-                    want |= {f"{pre}/recorders[{i}]"
-                             for i in range(len(sg["recorders"]))}
-                if "bcs" in sg:
-                    want |= {f"{pre}/bcs/{n}" for n in sg["bcs"]}
+                for key in ("patterns", "bcs", "constraints"):
+                    want |= keyed(sg, key, pre)
+                for key in ("recorders", "regions", "initial_stress",
+                            "activate_absorbing"):
+                    want |= indexed(sg, key, pre)
+                if "rayleigh" in sg:
+                    want.add(f"{pre}/rayleigh")
     return want
 
 
@@ -279,6 +294,100 @@ def test_names_stage_bound_records_and_an_empty_stage(tmp_path: Path) -> None:
     # The second stage only re-binds the chain: no change row.
     assert not [r for r in changes if r["stage"] == 1]
     _check_single_source(path)
+
+
+def _site_models() -> dict[str, apeSees]:
+    """One model per family of change sites the deriver walks, together
+    covering every loop of ``_global_changes`` and ``_stage_changes``."""
+    from tests.opensees.contract._tag_streams import stage_claimed_regions
+    from tests.opensees.h5.test_h5_param_tags import (
+        _flat_quad_initial_stress_bridge,
+        _update_then_stress_bridge,
+    )
+    from tests.opensees.integration.test_diaphragm_master_free_dofs import (
+        _bridge,
+        _frame_with_master,
+    )
+    from tests.opensees.integration.test_emit_partitioned_staged_mp_constraints import (  # noqa: E501
+        _frame_ops,
+        _frame_with_cross_rank_tie,
+        _two_stages,
+    )
+
+    # Global and stage regions, global and stage Rayleigh.
+    damped = stage_claimed_regions("staged")
+    damped.damping.rayleigh(alpha_m=0.1, beta_k=0.01)
+    with damped.stage(name="damp") as s:
+        s.damping.rayleigh(alpha_m=0.2, beta_k=0.02)
+        s.analysis(**_chain(damped, False))
+        s.run(n_increments=1)
+    # Global initial stresses, under an implicit stage.
+    stressed = _flat_quad_initial_stress_bridge()
+    stressed.constraints.Plain()
+    stressed.numberer.RCM()
+    stressed.system.BandGeneral()
+    # A stage-bound equalDOF.
+    tied = _frame_ops(_frame_with_cross_rank_tie())
+    tied.fix(pg="Base", dofs=(1,) * 6, name="base")
+    _two_stages(tied, lambda s: s.equal_dof(name="x_tie"))
+    return {
+        # Global fix, mass and a mesh-carried rigidDiaphragm.
+        "diaphragm": _bridge(_frame_with_master(), fix_master=True),
+        "damped": damped,
+        "stressed": stressed,
+        "tied": tied,
+        # A stage initial stress and absorbing flip.
+        "staged_stress": _update_then_stress_bridge(),
+    }
+
+
+#: Every source family the site models must exercise (a regex on the
+#: change row's ``source``), so no deriver loop goes untested.
+_SITE_FAMILIES = {
+    "global fix": r"^/opensees/bcs/fix$",
+    "global mass": r"^/opensees/bcs/mass$",
+    "global constraint": r"^/opensees/constraints/rigidDiaphragm$",
+    "global region": r"^/opensees/regions\[\d+\]$",
+    "global rayleigh": r"^/opensees/commands\[\d+\]$",
+    "global initial_stress": r"^/opensees/initial_stress\[\d+\]$",
+    "stage constraint": r"^/opensees/stages/stage_\d{3}/constraints/equalDOF$",
+    "stage region": r"^/opensees/stages/stage_\d{3}/regions\[\d+\]$",
+    "stage rayleigh": r"^/opensees/stages/stage_\d{3}/rayleigh$",
+    "stage initial_stress":
+        r"^/opensees/stages/stage_\d{3}/initial_stress\[\d+\]$",
+    "stage absorbing":
+        r"^/opensees/stages/stage_\d{3}/activate_absorbing\[\d+\]$",
+}
+
+
+def test_every_change_site_is_single_sourced(tmp_path: Path) -> None:
+    """Each site model passes the single-source check, which walks the
+    file for constraints, regions, initial stresses, absorbing flips,
+    global bcs and Rayleigh; together they reach every family."""
+    seen: set[str] = set()
+    for name, ops in _site_models().items():
+        path = _write(ops, tmp_path, f"{name}.h5")
+        _check_single_source(path)
+        for row in _read(path)[2]:
+            seen |= {fam for fam, rx in _SITE_FAMILIES.items()
+                     if re.match(rx, row["source"])}
+    assert seen == set(_SITE_FAMILIES), sorted(set(_SITE_FAMILIES) - seen)
+
+
+def test_global_mesh_constraint_is_one_unnamed_row(tmp_path: Path) -> None:
+    from tests.opensees.integration.test_diaphragm_master_free_dofs import (
+        _bridge,
+        _frame_with_master,
+    )
+
+    path = _write(_bridge(_frame_with_master(), fix_master=True),
+                  tmp_path, "diaphragm.h5")
+    rows = [(r["stage"], r["op"], r["what"], r["name"], r["count"])
+            for r in _read(path)[2]
+            if r["source"] == "/opensees/constraints/rigidDiaphragm"]
+    with h5py.File(path, "r") as f:
+        n = len(f["opensees/constraints/rigidDiaphragm"])
+    assert rows == [(0, "add", "constraint", "", n)]
 
 
 # ---------------------------------------------------------------------------
@@ -447,15 +556,17 @@ def test_zone_key_registered() -> None:
 
 _ALLOWED_IMPORTS = {
     "__future__", "json", "math", "dataclasses", "typing", "numpy", "h5py",
-    "..emitter.h5_reader", ".schema_version", ".lineage",
+    "..emitter.h5_reader", "..emitter.verbs", ".schema_version",
+    ".lineage",
 }
 #: The reader methods the deriver may call.
 _READER_API = {
     "stages", "analysis", "declarations", "regions", "commands",
-    "patterns", "recorders", "initial_stress",
+    "patterns", "recorders", "initial_stress", "program",
 }
 #: The functions that see the H5Model (the deriver proper).
-_DERIVER_FUNCS = {"derive_sequence", "_global_changes", "_stage_changes"}
+_DERIVER_FUNCS = {"derive_sequence", "_global_changes",
+                  "_global_constraint_changes", "_stage_changes"}
 
 
 def _tree() -> ast.Module:

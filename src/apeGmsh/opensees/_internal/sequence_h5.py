@@ -24,9 +24,9 @@ A staged archive gives one ``stages`` row per ``/opensees/stages/stage_NNN``
 (``@staged`` 1).  A vanilla deck gives one implicit stage from
 ``/opensees/analysis`` (``@staged`` 0); a model-only file (neither) gives
 none.  Global declarations (``/opensees/patterns``, ``recorders``,
-``regions``, ``initial_stress``, ``bcs`` and the global ``rayleigh``
-command) are in force from the first analysis, so their change rows carry
-stage 0.  Every row's ``source`` names the archive path it was read from;
+``regions``, ``initial_stress``, ``bcs``, ``constraints`` and the global
+``rayleigh`` command) are in force from the first analysis, so their
+change rows carry stage 0.  Every row's ``source`` names the archive path it was read from;
 ``<path>[i]`` is the ``i``-th record of that container in reader order.
 """
 from __future__ import annotations
@@ -39,6 +39,7 @@ from typing import Any, Final
 import numpy as np
 
 from ..emitter.h5_reader import H5Model
+from ..emitter.verbs import VERBS
 from .schema_version import SEQUENCE_KEY, SEQUENCE_SCHEMA_VERSION
 
 __all__ = [
@@ -90,6 +91,9 @@ _CONSTRAINT_KINDS: Final[tuple[tuple[str, str], ...]] = (
     ("rigidDiaphragm", "rigid_diaphragms"),
     ("embeddedNode", "embedded_nodes"),
 )
+
+#: The store prefix of an archived MP constraint's program run.
+_CONSTRAINT_STORE: Final[str] = "{scope}/constraints/"
 
 _INT32_MAX: Final[int] = 2**31 - 1
 _INT32_MIN: Final[int] = -(2**31)
@@ -273,6 +277,7 @@ def _global_changes(model: H5Model, names: _Names) -> list[ChangeRow]:
     for store, what in (("bcs/fix", "fix"), ("bcs/mass", "mass")):
         for nm, c in names.global_rows(store):
             add("add", what, nm, c, f"/opensees/{store}")
+    rows.extend(_global_constraint_changes(model, names))
     for i, reg in enumerate(model.regions()):
         add("add", "region",
             names.tag("region", reg.tag, f"/opensees/regions[{i}]"),
@@ -295,6 +300,57 @@ def _global_changes(model: H5Model, names: _Names) -> list[ChangeRow]:
         add("add", "initial_stress", str(st.name), 1,
             f"/opensees/initial_stress[{i}]")
     return rows
+
+
+def _global_constraint_changes(
+    model: H5Model, names: _Names,
+) -> list[ChangeRow]:
+    """Stage-0 rows for the global MP constraints.
+
+    The reader exposes ``/opensees/constraints/<kind>`` only through
+    ``/opensees/program``: one run per ``add constraint`` call (the
+    ``seq`` of :data:`VERBS`), with its store and count.  An archived
+    kind is one row per declaration when ``/opensees/decls`` covers its
+    store, else one unnamed row (a constraint the mesh carried, not a
+    bridge declaration); a ledger verb, which the archive does not carry,
+    is one row naming its program run.  An ``add constraint`` run whose
+    store is neither refuses.
+    """
+    counts: dict[str, int] = {}
+    ledger: list[ChangeRow] = []
+    for i, run in enumerate(model.program()):
+        verb = VERBS.get(run.method)
+        if run.stage != -1 or verb is None or (
+                verb.seq_op, verb.seq_what) != ("add", "constraint"):
+            continue
+        if run.store == "":
+            ledger.append(ChangeRow(
+                0, "add", "constraint", "", run.count,
+                f"/opensees/program[{i}]"))
+            continue
+        if not run.store.startswith(_CONSTRAINT_STORE):
+            raise SequenceError(
+                f"/opensees/program[{i}]: {run.method} writes "
+                f"{run.store!r}, not a constraints/<kind> store."
+            )
+        kind = run.store[len(_CONSTRAINT_STORE):]
+        counts[kind] = counts.get(kind, 0) + run.count
+    rows: list[ChangeRow] = []
+    for kind, n in counts.items():
+        store = f"constraints/{kind}"
+        src = f"/opensees/{store}"
+        named = names.global_rows(store)
+        if not named:
+            rows.append(ChangeRow(0, "add", "constraint", "", n, src))
+            continue
+        if sum(c for _nm, c in named) != n:
+            raise SequenceError(
+                f"{src}: /opensees/decls covers "
+                f"{sum(c for _nm, c in named)} of its {n} record(s)."
+            )
+        rows.extend(ChangeRow(0, "add", "constraint", nm, c, src)
+                    for nm, c in named)
+    return rows + ledger
 
 
 def _stage_changes(k: int, st: Any, names: _Names) -> list[ChangeRow]:

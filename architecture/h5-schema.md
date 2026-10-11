@@ -1677,8 +1677,9 @@ of equal-length column datasets.
   `material_stage`, `constraint`. The pairs are the `seq` column of
   `emitter/verbs.py::VERBS` plus `(activate, group)` (a stage's
   `activated_pgs`). Global declarations (`/opensees/patterns`,
-  `recorders`, `regions`, `initial_stress`, `bcs/fix`, `bcs/mass` and a
-  global `rayleigh` command) are in force from the first analysis, so
+  `recorders`, `regions`, `initial_stress`, `bcs/fix`, `bcs/mass`,
+  `constraints/<kind>` and a global `rayleigh` command) are in force from
+  the first analysis, so
   their rows carry stage `0`. `name` is the declaration's `name=` from
   `/opensees/decls`, `""` when unnamed or when the file has no `decls`
   (below opensees 2.25.0). A tagless store (`fix`, `mass`, `remove_sp`,
@@ -1688,7 +1689,15 @@ of equal-length column datasets.
 * **Source.** Every row names the archive path it was read from;
   `<path>[i]` is the `i`-th record of that container in reader order.
   Global `bcs/fix` and `bcs/mass` are read through the `decls` row join
-  only, so a file below opensees 2.25.0 lists none.
+  only, so a file below opensees 2.25.0 lists none. Global constraints are
+  read through `/opensees/program` (one run per `add constraint` call):
+  one row per declaration when `decls` covers `constraints/<kind>`, else
+  one unnamed row (a constraint the mesh carried); a ledger constraint
+  verb, which the archive does not carry, names its `program[i]` run. A
+  file below opensees 2.23.0 (no program) lists none.
+* **Not projected.** The stage verbs whose `seq` is empty in `VERBS`
+  (`update_parameter`, `zero_velocities`, `set_creep`, the pre-analyze
+  `reset`) have no `what` in the vocabulary and give no row.
 * **Integers** follow the integer policy above: a value outside `int32`
   raises `SequenceOverflowError` before anything is written.
 * **Writes.** An existing `/sequence` and its key are dropped first, the
