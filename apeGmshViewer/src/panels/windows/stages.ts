@@ -283,7 +283,7 @@ function stageEl(st: StageCard, act: (e: Event) => void): HTMLElement {
   card.append(el("div", "window-row-detail", st.chain));
   card.append(el("div", "window-row-detail", st.steps));
   card.append(el("div", "window-row-detail", [st.dt, ...(st.setTime ? [st.setTime] : []), ...(st.domainChange ? ["domain change"] : [])].join(" · ")));
-  card.append(changesEl(st.changes, act, "no change recorded in /sequence"));
+  card.append(changesEl(st.changes, act, "no change of its own recorded in /sequence"));
   card.append(el("div", "f-src", st.h5));
   return card;
 }
