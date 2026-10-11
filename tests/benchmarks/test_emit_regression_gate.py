@@ -50,7 +50,6 @@ from __future__ import annotations
 import json
 import time
 from pathlib import Path
-from statistics import median
 from typing import cast
 
 import pytest
@@ -97,15 +96,28 @@ RATIO_TOLERANCE = 1.7
 ELEMENT_KINDS = ("tet_host_line_embed", "hex_host_line_embed")
 
 
-#: Timed repeats per cell. The FEM build dominates setup cost and is
-#: hoisted out of the loop, so extra emits are nearly free — and the
-#: median shrugs off a transient spike on a shared CI runner, which a
-#: single shot would report as a regression.
-REPS = 3
+#: Timed repeats per cell; the gate keeps the MINIMUM of each (#1658).
+#:
+#: The FEM build dominates setup cost and is hoisted out of the loop, so
+#: extra emits are cheap. Timing noise on a shared runner is one-sided:
+#: interference (another tenant, a GC pass, page faults) only ever makes
+#: a rep slower, never faster than the code allows. The minimum estimates
+#: that floor; a median of 3 still reports the middle of the noise, and
+#: on CI it swung hex 0.716 -> 0.627 across two runs of the same commit.
+#: The PR that set this value (#1658) records the spread-vs-cost table.
+REPS = 12  # WIP: data collection for N (#1658)
 
 
 def _measure(kind: str, tmp: Path) -> dict:
-    """Emit + parse the gate cell ``REPS`` times; return the medians.
+    """Emit + parse the gate cell ``REPS`` times; return the minima.
+
+    ``emit_sec`` and ``parse_sec`` are each the minimum over the reps,
+    taken separately, and ``ratio`` is their quotient. Not
+    ``min(emit_i / parse_i)``: a rep whose *parse* was inflated by noise
+    has a deflated ratio, so a minimum over per-rep ratios selects for
+    noisy parses and biases the gate low, which can hide a regression.
+    Both quantities have one-sided noise, so each one's minimum is its
+    own best estimate of the uncontended cost.
 
     Mirrors ``test_cross_rank_constraint_cost`` step for step so the
     two report the same quantities: Tcl emit is the timed region,
@@ -168,13 +180,15 @@ def _measure(kind: str, tmp: Path) -> dict:
         compile(py_src, str(py_path), "exec")
         parses.append(time.perf_counter() - t1)
 
-    emit = median(emits)
-    parse = median(parses)
+    emit = min(emits)
+    parse = min(parses)
     return {
         "deck_lines": deck_lines,
         "emit_sec": emit,
         "parse_sec": parse,
         "ratio": emit / parse,
+        "emits": emits,
+        "parses": parses,
     }
 
 
@@ -198,21 +212,35 @@ def measured(tmp_path_factory, request) -> dict:
         print(
             f"\n[emit-gate] {kind} lines={m['deck_lines']} "
             f"emit={m['emit_sec']:.3f}s parse={m['parse_sec']:.3f}s "
-            f"ratio={m['ratio']:.3f}",
+            f"ratio={m['ratio']:.3f} (min of {REPS})"
+            f"\n[emit-gate] {kind} reps emit="
+            + ",".join(f"{t:.3f}" for t in m["emits"])
+            + " parse="
+            + ",".join(f"{t:.3f}" for t in m["parses"]),
         )
 
     if request.config.getoption("--emit-gate-write-baseline"):
+        baseline: dict = {
+            kind: {
+                "deck_lines": m["deck_lines"],
+                "ratio": round(m["ratio"], 4),
+            }
+            for kind, m in out.items()
+        }
+        # The ratio is only comparable to a run on the same kind of
+        # machine with the same estimator: the previous file was written
+        # on Windows, ~1.2x below the CI runner (#1658).
+        baseline["_provenance"] = {
+            "estimator": f"min of {REPS} reps, emit and parse separately",
+            "runner": " ".join(
+                filter(None, (os.environ.get("RUNNER_OS"),
+                              os.environ.get("ImageOS"))),
+            ) or "local",
+            "github_run_id": os.environ.get("GITHUB_RUN_ID"),
+            "sha": os.environ.get("GITHUB_SHA"),
+        }
         BASELINE_PATH.write_text(
-            json.dumps(
-                {
-                    kind: {
-                        "deck_lines": m["deck_lines"],
-                        "ratio": round(m["ratio"], 4),
-                    }
-                    for kind, m in out.items()
-                },
-                indent=2,
-            )
+            json.dumps(baseline, indent=2)
             + "\n",
             encoding="utf-8",
         )
@@ -331,7 +359,7 @@ def test_artifact_write_cost_is_reported(tmp_path: Path, monkeypatch) -> None:
     emit_off: list[float] = []
     emit_on: list[float] = []
     repeat_on: list[float] = []
-    for i in range(REPS):
+    for i in range(3):  # a report, not the gate: keeps its own median of 3
         target.unlink(missing_ok=True)
         ops = _bridge(False)
         t0 = time.perf_counter()
