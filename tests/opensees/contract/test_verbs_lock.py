@@ -22,10 +22,15 @@ apeGmsh package is imported. What it pins:
     call under ``src/apeGmsh/opensees/`` passes a literal verb that is a
     ``via == "command"`` row, from a ``_emit`` method of a class (or from
     ``_internal/compose.py``, K2's replay). A non-literal verb, a token
-    without such a row, or any other caller fails.
+    without such a row, or any other caller fails;
+(h) the ``params_names`` ratchet (K1-7, ADR 0114 Q4): the sampled
+    primitives whose store argv is not their dataclass fields, by the
+    writer's own ``decl_argv_names``, are exactly the lines of
+    ``params_names_ledger.txt``, whose ``N_LEDGER`` may only go down.
 
-It reads source, not behaviour: an archive body that stores the wrong
-thing is K2's round-trip oracle.
+(a)-(g) read source, not behaviour: an archive body that stores the wrong
+thing is K2's round-trip oracle. (h) is the one check that imports
+apeGmsh, inside its own functions, since the argv exists only at emit.
 """
 from __future__ import annotations
 
@@ -115,10 +120,10 @@ def _assigned_names(cls: ast.ClassDef) -> set[str]:
     return names
 
 
-def _read_ledger() -> tuple[int, frozenset[str]]:
+def _read_ledger(path: Path = _LEDGER_FILE) -> tuple[int, frozenset[str]]:
     n_ledger: int | None = None
     names: list[str] = []
-    for raw in _LEDGER_FILE.read_text(encoding="utf-8").splitlines():
+    for raw in path.read_text(encoding="utf-8").splitlines():
         line = raw.strip()
         if not line or line.startswith("#"):
             continue
@@ -126,8 +131,8 @@ def _read_ledger() -> tuple[int, frozenset[str]]:
             n_ledger = int(line.split("=", 1)[1])
             continue
         names.append(line)
-    assert n_ledger is not None, "verbs_ledger.txt has no N_LEDGER line"
-    assert len(names) == len(set(names)), "verbs_ledger.txt repeats a verb"
+    assert n_ledger is not None, f"{path.name} has no N_LEDGER line"
+    assert len(names) == len(set(names)), f"{path.name} repeats a line"
     return n_ledger, frozenset(names)
 
 
@@ -631,3 +636,270 @@ class H5Emitter:
     assert _raises_refusal(methods["mass"], methods, names, skip=skip)
     assert _raises_refusal(methods["element"], methods, names, skip=skip)
     assert not _raises_refusal(methods["node"], methods, names, skip=skip)
+
+
+# ---------------------------------------------------------------------------
+# (h) The params_names ratchet (K1-7, #1464): argv equals fields, over
+#     every concrete primitive
+# ---------------------------------------------------------------------------
+
+#: The ledger: every concrete primitive of the registry that the archive
+#: does NOT name, one line each, as ``<category> <kind>.<Class>``:
+#:   ``unnamed``      its store row's argv is not its dataclass fields;
+#:   ``uncheckable``  a flat-argv family, but no roster sample to emit
+#:                    (``: <reason>`` follows);
+#:   ``nostore``      a family whose rows carry no flat argv (elements,
+#:                    patterns, recorders, transforms, the chain), so
+#:                    ``params_names`` is ``""`` by rule.
+#: ``N_LEDGER`` counts the ``unnamed`` + ``uncheckable`` lines and may
+#: only go down; ``N_NOSTORE`` pins the ``nostore`` lines exactly. A
+#: primitive that is neither named nor on a line fails the test.
+_PARAMS_LEDGER_FILE = Path(__file__).with_name("params_names_ledger.txt")
+_LEDGER_CATEGORIES = ("unnamed", "uncheckable", "nostore")
+
+
+def _read_params_ledger() -> tuple[int, int, dict[str, str]]:
+    """``(N_LEDGER, N_NOSTORE, {"<kind>.<Class>": category})``."""
+    n_ledger: int | None = None
+    n_nostore: int | None = None
+    lines: dict[str, str] = {}
+    for raw in _PARAMS_LEDGER_FILE.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("N_LEDGER"):
+            n_ledger = int(line.split("=", 1)[1])
+            continue
+        if line.startswith("N_NOSTORE"):
+            n_nostore = int(line.split("=", 1)[1])
+            continue
+        category, rest = line.split(" ", 1)
+        assert category in _LEDGER_CATEGORIES, f"params_names_ledger.txt: {line!r}"
+        name = rest.split(":", 1)[0].strip()
+        assert name not in lines, f"params_names_ledger.txt repeats {name}"
+        lines[name] = category
+    assert n_ledger is not None and n_nostore is not None, (
+        "params_names_ledger.txt needs N_LEDGER and N_NOSTORE lines")
+    return n_ledger, n_nostore, lines
+
+
+def _registry() -> dict[type, str]:
+    """Every concrete primitive (a non-abstract dataclass below
+    ``Primitive``, its ``_emit`` own or inherited) the
+    ``apeGmsh.opensees`` package defines, with its allocator kind."""
+    import dataclasses
+    import importlib
+    import inspect
+    import pkgutil
+
+    import apeGmsh.opensees as pkg
+    from apeGmsh.opensees._internal.types import Primitive
+    from apeGmsh.opensees.apesees import _KIND_BY_FAMILY
+
+    for mod in pkgutil.walk_packages(pkg.__path__, pkg.__name__ + "."):
+        importlib.import_module(mod.name)
+    out: dict[type, str] = {}
+    stack: list[type] = [Primitive]
+    seen: set[type] = set()
+    while stack:
+        for sub in stack.pop().__subclasses__():
+            if sub in seen:
+                continue
+            seen.add(sub)
+            stack.append(sub)
+            # ``@dataclass(slots=True)`` rebuilds the class; the pre-slots
+            # original survives in ``__subclasses__`` through its methods'
+            # ``__class__`` cells. The module's attribute is the live one.
+            live = getattr(sys.modules[sub.__module__], sub.__qualname__, None)
+            if live is not sub or not sub.__module__.startswith(pkg.__name__ + "."):
+                continue  # a test's own fake primitive is not the registry
+            if dataclasses.is_dataclass(sub) and not inspect.isabstract(sub):
+                kind = next(k for base, k in _KIND_BY_FAMILY if issubclass(sub, base))
+                out[sub] = kind
+    return out
+
+
+def _samples() -> dict[type, object]:
+    """One instance per primitive the contract rosters can construct
+    (their minimal instances), plus one of each integration rule and
+    damping object, which have no roster of their own."""
+    from apeGmsh.opensees import integration as integ
+    from apeGmsh.opensees.damping import damping as damp
+    from apeGmsh.opensees.section.beam import ElasticSection
+
+    from .test_analysis_contract import ALL_ANALYSIS_COMPONENTS
+    from .test_analysis_contract import _minimal as analysis
+    from .test_element_beam_column_contract import ALL_BEAM_COLUMN_ELEMENTS
+    from .test_element_beam_column_contract import _minimal as beam
+    from .test_element_shell_contract import ALL_SHELL_ELEMENTS
+    from .test_element_shell_contract import _make_minimal as shell
+    from .test_element_solid_contract import ALL_SOLID_ELEMENTS
+    from .test_element_solid_contract import _make_minimal as solid
+    from .test_element_truss_contract import ALL_TRUSS_ELEMENTS
+    from .test_element_truss_contract import _minimal as truss
+    from .test_element_zero_length_contract import ALL_ZERO_LENGTH_ELEMENTS
+    from .test_element_zero_length_contract import _minimal as zero
+    from .test_nd_material_contract import ALL_ND, _instantiate
+    from .test_pattern_contract import ALL_PATTERNS
+    from .test_pattern_contract import _minimal_instance as pattern
+    from .test_recorder_contract import ALL_RECORDERS
+    from .test_recorder_contract import _minimal_instance as recorder
+    from .test_section_contract import ALL_SECTIONS, _make_minimal
+    from .test_time_series_contract import ALL_TIME_SERIES, _minimal_instance
+    from .test_uniaxial_material_contract import ALL_UNIAXIAL, _minimal
+
+    sec = ElasticSection(E=200e9, A=0.01, Iz=1e-4)
+    rosters: list[tuple[list[type], object]] = [
+        (ALL_UNIAXIAL, _minimal), (ALL_ND, _instantiate),
+        (ALL_SECTIONS, _make_minimal), (ALL_TIME_SERIES, _minimal_instance),
+        (ALL_BEAM_COLUMN_ELEMENTS, beam), (ALL_TRUSS_ELEMENTS, truss),
+        (ALL_ZERO_LENGTH_ELEMENTS, zero), (ALL_SHELL_ELEMENTS, shell),
+        (ALL_SOLID_ELEMENTS, solid), (ALL_PATTERNS, pattern),
+        (ALL_RECORDERS, recorder), (ALL_ANALYSIS_COMPONENTS, analysis),
+    ]
+    out: dict[type, object] = {}
+    for roster, make in rosters:
+        out.update({cls: make(cls) for cls in roster})
+    out.update({cls: cls(section=sec, n_ip=3) for cls in (
+        integ.Lobatto, integ.Legendre, integ.NewtonCotes, integ.Radau,
+        integ.Trapezoidal)})
+    out.update({cls: cls(
+        section_i=sec, lp_i=0.1, section_j=sec, lp_j=0.1, section_interior=sec,
+    ) for cls in (integ.HingeRadau, integ.HingeRadauTwo, integ.HingeMidpoint,
+                  integ.HingeEndpoint)})
+    out[damp.Uniform] = damp.Uniform(zeta=0.05, freq1=1.0, freq2=10.0)
+    out[damp.SecStif] = damp.SecStif(beta=0.01)
+    out[damp.URD] = damp.URD(points=((1.0, 0.05), (10.0, 0.05)))
+    out[damp.URDbeta] = damp.URDbeta(points=((1.0, 0.01), (10.0, 0.01)))
+    return out
+
+
+def _argv_is_fields(kind: str, prim: object) -> bool:
+    """The writer's own rule (``decl_argv_names``) on one primitive: it is
+    emitted into a ``RecordingEmitter`` with a stub resolver; its store
+    row is the one ``kind`` call's args after the type token and the tag
+    (a primitive that emits anything else, a ``Fiber`` section's block,
+    has no flat row and is unnamed)."""
+    from apeGmsh.opensees._internal.tag_resolution import set_tag_resolver
+    from apeGmsh.opensees.emitter.h5 import decl_argv_names, encode_decl_params
+    from apeGmsh.opensees.emitter.recording import RecordingEmitter
+
+    rec = RecordingEmitter()
+    tags: dict[int, int] = {}
+    set_tag_resolver(rec, lambda p: tags.setdefault(id(p), 100 + len(tags)))
+    prim._emit(rec, tag=1)  # type: ignore[attr-defined]
+    params = encode_decl_params(prim, lambda p: f"k{id(p)}")
+    calls = rec.calls
+    if len(calls) != 1 or calls[0][0] != kind:
+        return False
+    return decl_argv_names(
+        params, calls[0][1][2:], lambda k: tags.get(int(k[1:]))) is not None
+
+
+def _classify_registry() -> tuple[dict[str, str], frozenset[str]]:
+    """``({"<kind>.<Class>": category}, {named "<kind>.<Class>"})`` over
+    every concrete primitive: ``nostore`` outside the flat-argv families,
+    ``uncheckable`` without a sample, else named or ``unnamed``."""
+    from apeGmsh.opensees.emitter.h5 import _ARGV_STORE_KINDS
+
+    registry = _registry()
+    samples = _samples()
+    ledger: dict[str, str] = {}
+    named: set[str] = set()
+    for cls, kind in registry.items():
+        name = f"{kind}.{cls.__name__}"
+        if kind not in _ARGV_STORE_KINDS:
+            ledger[name] = "nostore"
+        elif cls not in samples:
+            ledger[name] = "uncheckable"
+        elif _argv_is_fields(kind, samples[cls]):
+            named.add(name)
+        else:
+            ledger[name] = "unnamed"
+    assert len(ledger) + len(named) == len(registry), "a kind.Class repeats"
+    return ledger, frozenset(named)
+
+
+def _check_params_ledger(
+    n_ledger: int, n_nostore: int, listed: dict[str, str],
+    computed: dict[str, str],
+) -> None:
+    shrink = {n for n, c in listed.items() if c != "nostore"}
+    nostore = {n for n, c in listed.items() if c == "nostore"}
+    assert len(shrink) == n_ledger, (
+        f"params_names_ledger.txt lists {len(shrink)} unnamed + uncheckable "
+        f"primitives but N_LEDGER = {n_ledger}")
+    assert len(nostore) == n_nostore, (
+        f"params_names_ledger.txt lists {len(nostore)} nostore primitives "
+        f"but N_NOSTORE = {n_nostore}")
+    computed_shrink = {n for n, c in computed.items() if c != "nostore"}
+    assert len(computed_shrink) <= n_ledger, (
+        f"{len(computed_shrink)} unnamed + uncheckable primitives exceed "
+        f"N_LEDGER = {n_ledger}; the ledger may only shrink")
+    assert computed == listed, (
+        f"primitives neither named nor ledgered, or in another category: "
+        f"{sorted(set(computed.items()) - set(listed.items()))}; lines "
+        f"to delete (now named, or gone): "
+        f"{sorted(set(listed.items()) - set(computed.items()))}")
+
+
+def test_h_params_names_ledger_covers_every_primitive_and_only_shrinks() -> None:
+    n_ledger, n_nostore, listed = _read_params_ledger()
+    computed, named = _classify_registry()
+    # The rule names something: a plain material's argv is its fields.
+    assert "uniaxialMaterial.Steel01" in named
+    assert not (named & set(listed)), "a named primitive is on the ledger"
+    _check_params_ledger(n_ledger, n_nostore, listed, computed)
+
+
+def test_h_a_grown_stale_or_incomplete_ledger_fails() -> None:
+    n_ledger, n_nostore, listed = _read_params_ledger()
+    computed, _named = _classify_registry()
+    # A line for a primitive that is named (stale), with or without the
+    # count raised; a new unlisted primitive in each category; and a
+    # primitive listed under the wrong category.
+    with pytest.raises(AssertionError):
+        _check_params_ledger(
+            n_ledger + 1, n_nostore,
+            {**listed, "uniaxialMaterial.Steel01": "unnamed"}, computed)
+    with pytest.raises(AssertionError):
+        _check_params_ledger(
+            n_ledger, n_nostore,
+            {**listed, "uniaxialMaterial.Steel01": "unnamed"}, computed)
+    for category in _LEDGER_CATEGORIES:
+        with pytest.raises(AssertionError):
+            _check_params_ledger(
+                n_ledger, n_nostore, listed,
+                {**computed, "uniaxialMaterial.New": category})
+    name = next(n for n, c in listed.items() if c == "nostore")
+    with pytest.raises(AssertionError):
+        _check_params_ledger(
+            n_ledger, n_nostore, listed, {**computed, name: "unnamed"})
+
+
+def test_h_an_inheriting_subclass_outside_the_ledger_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A concrete primitive that only inherits ``_emit`` (the
+    ``LadrunoRCConcrete`` shape) is in the registry; a new one that is
+    neither named nor listed fails the ledger check."""
+    import dataclasses
+
+    from apeGmsh.opensees.material import uniaxial
+    from apeGmsh.opensees.material.uniaxial import Steel01
+
+    @dataclasses.dataclass(frozen=True, kw_only=True, slots=True)
+    class Steel01Plus(Steel01):  # inherits Steel01._emit; one extra field
+        extra: float = 1.0
+
+    Steel01Plus.__module__ = uniaxial.__name__
+    Steel01Plus.__qualname__ = "Steel01Plus"
+    monkeypatch.setattr(uniaxial, "Steel01Plus", Steel01Plus, raising=False)
+    n_ledger, n_nostore, listed = _read_params_ledger()
+    computed, named = _classify_registry()
+    assert "uniaxialMaterial.Steel01Plus" in computed
+    assert computed["uniaxialMaterial.Steel01Plus"] == "uncheckable"
+    assert "uniaxialMaterial.Steel01Plus" not in listed
+    with pytest.raises(AssertionError):
+        _check_params_ledger(n_ledger, n_nostore, listed, computed)
+

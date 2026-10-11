@@ -323,7 +323,7 @@ SIDE_CHANNELS: Final[Mapping[str, frozenset[str]]] = MappingProxyType({
         "set_solve_stamp", "solve_stamp", "set_declarations",
         "set_declaration", "restore_declarations", "unclaimed_fix_rows",
         "claim_fix_rows", "set_declaration_rows", "unclaimed_remove_sp_rows",
-        "claim_remove_sp_rows",
+        "claim_remove_sp_rows", "set_decl_params",
     }),
     "recording": frozenset(),
 })

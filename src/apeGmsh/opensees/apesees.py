@@ -391,15 +391,14 @@ def _call_site_text() -> str:
     return f"{f.f_code.co_filename}:{f.f_lineno} ({f.f_code.co_name})"
 
 
+@dataclass(frozen=True, slots=True)
 class _ModelWideDeclaration:
     """The object a model-wide verb (``mass_from_model()``,
     ``fix_from_model()``) is declared under: it has no record of its own
-    at call time, so this stands in for one in ``apeSees._decls``."""
+    at call time, so this stands in for one in ``apeSees._decls``. A
+    dataclass, so its ``/opensees/decl_params`` row is its ``verb``."""
 
-    __slots__ = ("verb",)
-
-    def __init__(self, verb: str) -> None:
-        self.verb = verb
+    verb: str
 
 
 class _DeclCursor:
@@ -908,6 +907,10 @@ class BuiltModel:
     # emit writes it as ``/opensees/decls``; a deck never reads it.
     _decls:                  "Mapping[int, _DeclRow]" = field(
         default_factory=dict, compare=False, repr=False)
+    # K1-7 — ``id(owner) -> owner`` for the same keys: the records and
+    # primitives whose fields ``/opensees/decl_params`` stores by name.
+    _decl_owners:            "Mapping[int, object]" = field(
+        default_factory=dict, compare=False, repr=False)
     # The declaration rows in first-seen order and ``id(owner) -> row``,
     # derived from ``_decls`` once (``_declaration_rows``).
     _decl_memo:              "list[Any]" = field(
@@ -937,6 +940,12 @@ class BuiltModel:
                 index[owner] = row
             self._decl_memo[:] = [tuple(rows), index]
         return self._decl_memo[0], self._decl_memo[1]
+
+    def _declaration_key(self, owner: object) -> str:
+        """The declaration key of ``owner`` (a registered primitive);
+        :class:`KeyError` for one the bridge never registered (K1-7:
+        ``/opensees/decl_params`` stores a reference as this key)."""
+        return self._decls[id(owner)][0]
 
     def _declaration_table(
         self, tag_plan: "TagPlan",
@@ -1894,6 +1903,24 @@ class BuiltModel:
             _decl_rows, _decl_runs = self._declaration_table(tag_plan)
             _archive_side_channel(emitter).set_declarations(
                 _decl_rows, _decl_runs)
+            # K1-7: every declaration's parameters by field name
+            # (``/opensees/decl_params``): every owner of each row, in
+            # call order (a primitive, a fix / mass / region / damping /
+            # initial-stress / equation-constraint record, a model-wide
+            # declaration; a ``region`` or ``initial_stress`` key that
+            # merged several calls gets one entry per call), a field that
+            # holds a primitive as that primitive's declaration key. The
+            # records ``fix_from_model()`` expands to are the model-wide
+            # declaration's expansion, not owners.
+            _rows_, _decl_index = self._declaration_rows()
+            _archive_side_channel(emitter).set_decl_params(
+                sorted(
+                    ((_decl_index[oid], owner)
+                     for oid, owner in self._decl_owners.items()),
+                    key=lambda item: item[0],
+                ),
+                self._declaration_key,
+            )
 
         # ADR 0027: partitioned vs unpartitioned branch.  The
         # unpartitioned path must be **byte-identical** to the pre-ADR
@@ -10924,6 +10951,8 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
             mass_from_model=self._mass_from_model,
             element_tags=self._element_tags,
             _decls=decls,
+            _decl_owners={
+                oid: owner for oid, (owner, _decl) in self._decls.items()},
         )
 
     # -- Internal helpers ------------------------------------------------

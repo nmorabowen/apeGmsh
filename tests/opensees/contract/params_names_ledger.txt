@@ -1,0 +1,181 @@
+# The params_names ledger (ADR 0114 Q4, K1-7 #1464): every concrete
+# primitive of the apeGmsh.opensees registry that /opensees/decl_params
+# does NOT name, one line each, as "<category> <kind>.<Class>":
+#   unnamed      its store argv is not its dataclass fields (a flag
+#                without a field, a reordered or omitted-by-default
+#                field, a block spanning several calls), on the sample
+#                the contract roster constructs;
+#   uncheckable  a flat-argv family with no roster sample to emit;
+#   nostore      a family whose rows carry no flat argv (elements,
+#                patterns, recorders, transforms, the analysis chain),
+#                so params_names is "" by rule.
+# Checked by test_verbs_lock.py (h) with the writer's own decl_argv_names
+# over every concrete primitive; one that is neither named nor listed
+# fails the test. N_LEDGER counts the unnamed + uncheckable lines and
+# may only go down (name the argv, or add a roster sample, and delete
+# the line); N_NOSTORE pins the nostore lines exactly.
+N_LEDGER = 56
+N_NOSTORE = 107
+unnamed damping.URD
+unnamed damping.URDbeta
+unnamed nDMaterial.DruckerPrager
+unnamed nDMaterial.LadrunoJ2
+unnamed nDMaterial.LadrunoJ2Finite
+unnamed nDMaterial.LadrunoSANISAND
+unnamed nDMaterial.ManzariDafalias
+unnamed nDMaterial.SAniSandMS
+unnamed section.Aggregator
+unnamed section.ElasticMembranePlateSection
+unnamed section.Fiber
+unnamed section.LadrunoShellModifier
+unnamed section.LayeredShell
+unnamed section.LayeredShellFiberSection
+unnamed timeSeries.ASCE41Protocol
+unnamed timeSeries.Constant
+unnamed timeSeries.FEMA461Protocol
+unnamed timeSeries.Linear
+unnamed timeSeries.ModifiedATC24Protocol
+unnamed timeSeries.Path
+unnamed timeSeries.Pulse
+unnamed timeSeries.Ricker
+unnamed timeSeries.Trig
+unnamed uniaxialMaterial.ASDSteel1D
+unnamed uniaxialMaterial.ENT
+unnamed uniaxialMaterial.ElasticMaterial
+unnamed uniaxialMaterial.ElasticPPGap
+unnamed uniaxialMaterial.Hysteretic
+unnamed uniaxialMaterial.LadrunoRebarBuckling
+unnamed uniaxialMaterial.LadrunoUniaxialJ2
+unnamed uniaxialMaterial.Parallel
+unnamed uniaxialMaterial.PySimple1
+unnamed uniaxialMaterial.QzSimple1
+unnamed uniaxialMaterial.TzSimple1
+unnamed uniaxialMaterial.Viscous
+uncheckable nDMaterial.ASDConcrete3D: no contract sample
+uncheckable nDMaterial.ASDPlasticMaterial3D: no contract sample
+uncheckable nDMaterial.InitDefGrad: no contract sample
+uncheckable nDMaterial.LadrunoCohesiveHingeBiaxial: no contract sample
+uncheckable nDMaterial.LadrunoConcrete3D: no contract sample
+uncheckable nDMaterial.LadrunoRCConcrete: no contract sample
+uncheckable nDMaterial.LadrunoRCFiniteStrain: no contract sample
+uncheckable nDMaterial.LogStrain: no contract sample
+uncheckable nDMaterial.LogStrain2D: no contract sample
+uncheckable nDMaterial.PlaneStrain: no contract sample
+uncheckable nDMaterial.PlaneStressRebar: no contract sample
+uncheckable nDMaterial.PlateFiber: no contract sample
+uncheckable nDMaterial.PlateFromPlaneStress: no contract sample
+uncheckable nDMaterial.PlateRebar: no contract sample
+uncheckable nDMaterial.StagedStrain: no contract sample
+uncheckable nDMaterial._LadrunoRC: no contract sample
+uncheckable section.ComputedSection: no contract sample
+uncheckable timeSeries.MomentStep: no contract sample
+uncheckable timeSeries.Yoffe: no contract sample
+uncheckable uniaxialMaterial.ASDConcrete1D: no contract sample
+uncheckable uniaxialMaterial.LadrunoCohesiveHinge: no contract sample
+nostore algorithm.BFGS
+nostore algorithm.Broyden
+nostore algorithm.KrylovNewton
+nostore algorithm.Linear
+nostore algorithm.ModifiedNewton
+nostore algorithm.Newton
+nostore algorithm.NewtonLineSearch
+nostore analysis.Static
+nostore analysis.Transient
+nostore analysis.VariableTransient
+nostore constraints.Auto
+nostore constraints.LadrunoContact
+nostore constraints.LadrunoProjection
+nostore constraints.Lagrange
+nostore constraints.Penalty
+nostore constraints.Plain
+nostore constraints.Transformation
+nostore element.ASDAbsorbingBoundary2D
+nostore element.ASDAbsorbingBoundary3D
+nostore element.ASDShellQ4
+nostore element.ASDShellT3
+nostore element.BezierTet10
+nostore element.BezierTri6
+nostore element.CorotTruss
+nostore element.CoupledZeroLength
+nostore element.ElasticTimoshenkoBeam
+nostore element.FourNodeQuad
+nostore element.FourNodeTetrahedron
+nostore element.InertiaTruss
+nostore element.LadrunoBrick
+nostore element.LadrunoBrick20
+nostore element.LadrunoCST
+nostore element.LadrunoDispBeamColumn
+nostore element.LadrunoIMKBeam
+nostore element.LadrunoLST
+nostore element.LadrunoQuad
+nostore element.LadrunoUP
+nostore element.ShellDKGQ
+nostore element.ShellMITC3
+nostore element.ShellMITC4
+nostore element.SixNodeTri
+nostore element.TenNodeTetrahedron
+nostore element.Tri31
+nostore element.Truss
+nostore element.TwoNodeLink
+nostore element.ZeroLength
+nostore element.ZeroLengthSection
+nostore element.dispBeamColumn
+nostore element.elasticBeamColumn
+nostore element.forceBeamColumn
+nostore element.stdBrick
+nostore geomTransf.Corotational
+nostore geomTransf.Linear
+nostore geomTransf.PDelta
+nostore integrator.ArcLength
+nostore integrator.CentralDifference
+nostore integrator.CentralDifferenceLadruno
+nostore integrator.CentralDifferenceSMS
+nostore integrator.DisplacementControl
+nostore integrator.ExplicitBathe
+nostore integrator.ExplicitBatheLNVD
+nostore integrator.ExplicitBatheLNVDSMS
+nostore integrator.ExplicitBatheSMS
+nostore integrator.ExplicitDifference
+nostore integrator.HHT
+nostore integrator.LadrunoArcLength
+nostore integrator.LadrunoDynamicRelaxation
+nostore integrator.LadrunoGeneralizedAlpha
+nostore integrator.LadrunoHHT
+nostore integrator.LadrunoIndirectControl
+nostore integrator.LadrunoLoadControl
+nostore integrator.LoadControl
+nostore integrator.Newmark
+nostore numberer.AMD
+nostore numberer.LadrunoParallelRCM
+nostore numberer.ParallelPlain
+nostore numberer.ParallelRCM
+nostore numberer.Plain
+nostore numberer.RCM
+nostore pattern.H5DRM
+nostore pattern.Plain
+nostore pattern.UniformExcitation
+nostore recorder.Element
+nostore recorder.Ladruno
+nostore recorder.MPCO
+nostore recorder.Monitor
+nostore recorder.Node
+nostore recorder.RecorderDeclaration
+nostore system.BandGeneral
+nostore system.BandSPD
+nostore system.Diagonal
+nostore system.FullGeneral
+nostore system.MPIDiagonal
+nostore system.Mumps
+nostore system.ParallelProfileSPD
+nostore system.Pardiso
+nostore system.ProfileSPD
+nostore system.SProfileSPD
+nostore system.SparseGeneral
+nostore system.SparseSYM
+nostore system.UmfPack
+nostore test.EnergyIncr
+nostore test.FixedNumIter
+nostore test.LadrunoStabilizedUnbalance
+nostore test.NormDispIncr
+nostore test.NormUnbalance
+nostore test.RelativeNormDispIncr

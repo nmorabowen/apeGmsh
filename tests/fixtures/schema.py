@@ -10,8 +10,8 @@ Comparing a schema version against a literal anywhere else in ``tests/``
 fails ``scripts/check_quirks.py`` (rule ``schema-literal``): it went stale
 and turned main red at 2.12.0, 2.13.0 and 2.16.0.
 """
-OPENSEES_CURRENT     = "2.25.0"  # ADR 0114 R5 (/opensees/decls, hash-excluded; K1-6 #1463)
-OPENSEES_PRIOR_MINOR = "2.24.0"  # ADR 0114 D6 (/opensees@will_solve, @solve_refusals, @requires; K1-5 #1462)
+OPENSEES_CURRENT     = "2.26.0"  # ADR 0114 A6/Q4 (/opensees/decl_params, hash-excluded; K1-7 #1464)
+OPENSEES_PRIOR_MINOR = "2.25.0"  # ADR 0114 R5 (/opensees/decls, hash-excluded; K1-6 #1463)
 OPENSEES_SOLVE_STAMP_FROM = "2.24.0"  # the minor that added the /opensees solve stamp (K1-5 #1462); fixed history
 OPENSEES_FLOOR       = "2.12.0"  # ADR 0113 D3 evidence gate (#1329): no 2.11-era file opens (neutral 2.7 stamps)
 NEUTRAL_CURRENT      = "2.35.0"  # #1338: additive `source` column on /loads/nodal (the definition kind)

@@ -170,8 +170,10 @@ model.h5
       ├── /analysis                        attrs + sub-attrs (optional)
       ├── /commands                        calls with no typed store (optional, opensees 2.23.0)
       ├── /program                         run-length emit order (opensees 2.23.0)
-      └── /decls                           the bridge's declarations, hash-excluded
-                                           (optional, opensees 2.25.0)
+      ├── /decls                           the bridge's declarations, hash-excluded
+      │                                    (optional, opensees 2.25.0)
+      └── /decl_params                     each declaration's parameters by field name,
+                                           hash-excluded (optional, opensees 2.26.0)
 ```
 
 The user's PG names, material names, etc. are HDF5 group names — they
@@ -1209,6 +1211,94 @@ user name of the `@<k>` form is refused. `H5Model.declarations()` returns a
 `OpenSeesModel.declarations` delegates. A column whose length disagrees
 with its store, or an index past the rows, raises `MalformedH5Error`.
 
+## `/opensees/decl_params` (optional, opensees 2.26.0)
+
+Every declaration's parameters **by field name** (ADR 0114 A6 and Q4,
+K1-7): the K0-8 record a reader uses to show *what* a declaration was,
+without an OpenSees syntax table on either side. At least one row (one
+per owner) per `/opensees/decls` row: a registered primitive, a `fix` / `mass` /
+`region` / `rayleigh` / `modal_damping` / `initial_stress` /
+`equation_constraint` record, a stage record (`support`, `remove_sp`,
+...), or the model-wide `fix_from_model()` / `mass_from_model()` object
+(its one field is `verb`). **A key with several owners has one entry per
+owner**, consecutive rows with the same `decl`, in call order: the one
+such family is `region`, whose name is the declaration's identity, so
+`ops.region(name="core", nodes=[1]); ops.region(name="core", nodes=[2])`
+stores two `RegionAssignmentRecord` entries (the merged membership is
+the `/opensees/regions` store's). `initial_stress` shares a key by name
+too, but its own validation refuses a repeated name at build, so it never
+reaches the archive with two owners. The per-node records
+`fix_from_model()` expands to are that declaration's expansion
+(`/opensees/bcs`), not owners; its one entry is the `verb`. Nothing is
+dropped: the writer refuses a declaration with no owner, and the
+reader returns every entry.
+Written on every `apeSees.h5` emit; a rewrite (`OpenSeesModel.to_h5`)
+echoes it verbatim. A derived view of the hashed stores, not structure:
+`decl_params` is in `MODEL_HASH_EXCLUDED_CHILDREN`, so `model_hash` is
+unchanged for every model.
+
+```
+/opensees/decl_params/
+    decl             i8 (P,)         the /opensees/decls row of the declaration;
+                                     repeated, consecutively, once per owner
+    type             vlen str (P,)   the primitive class (Steel01, Fiber, ...)
+    params           vlen str (P,)   one JSON object, field name -> value, in
+                                     dataclasses.fields order (see below)
+    params_names     vlen str (P,)   a JSON list naming the argv slots of the
+                                     declaration's store row, when the argv
+                                     equals the fields; "" otherwise
+    transf_ref/      index run       every GeomTransf / BeamIntegration /
+    integration_ref/                 Section declaration key the row's fields
+    section_ref/                     reference, in dataclass field order and
+        first  i8 (P,)               depth-first within a field: row i's keys
+        count  i8 (P,)               are key[first[i] : first[i] + count[i]]
+        key    vlen str (K,)         (a HingeRadau lists section_i, section_j,
+                                     section_interior; count 0 = none)
+```
+
+The `params` encoding is generic, from `dataclasses.fields(prim)`, with
+every field shape either stored or refused at write (never skipped):
+`None`, `bool`, `int`, finite `float` and `str` as JSON values; a
+referenced primitive as `{"$decl": <key>}`, its `/opensees/decls` key
+(the one its own `(kind, tag)` joins to, so a reference is resolved with
+`DeclarationTable.by_key`); a tuple or list as a list, nested lists
+kept; a mapping with plain `str` keys as an object; a value dataclass a
+field holds (a `Fiber` patch, a `ShellLayer`, a `ZeroLengthMatDir`) as
+`{"$struct": <class>, "fields": {...}}`; and the listed opaque objects
+(`Cartesian`, `Cylindrical`, `Spherical`, `AlongBeam`,
+`SectionProperties`) as `{"$opaque": <class>}`, since their lowering is
+in the hashed stores. An `ndarray`, a set, an `Enum`, a non-finite
+float, a mapping keyed by anything else or an unlisted object raises
+`H5DeclParamsError` from `H5Emitter.set_decl_params`, before the emit.
+
+`params_names` (Q4) is derived at write from the stores whose rows carry
+one flat argv per tag: `materials`, the one-line sections,
+`beam_integration`, `time_series` and `dampings`. The fields are
+flattened in order (a scalar one slot named after its field, a sequence
+one slot per element as `points[0]`, nested as `m_ij[0][1]`, a
+reference its tag, an omitted optional no slot); when the slot count and
+every value equal the row's argv, the list names the slots, else `""`.
+A `bool` (a flag), a mapping, a struct, an opaque or a reference without
+a single tag has no slot form, so a flag without a field (`Parallel
+-factors`), an element row (node tags), a complex section (`Fiber`) or a
+chain component (no tag) stays unnamed. Every concrete primitive of the
+registry that the archive does not name is a line of the ledger
+`tests/opensees/contract/params_names_ledger.txt` (`unnamed`: argv is
+not the fields; `uncheckable`: no roster sample to emit; `nostore`: a
+family without a flat argv), checked by `test_verbs_lock.py` with the
+same `decl_argv_names` the writer uses; the `unnamed` + `uncheckable`
+count may only shrink, and a primitive neither named nor listed fails.
+
+`H5Model.declarations()` returns the rows as `DeclarationTable.params`
+(`decls` row -> a tuple of `DeclParamsRO`, one per owner in call order:
+`type`, `params` with `DeclRef` / `DeclStruct` / `DeclOpaque` values,
+`params_names`, the three refs and the stored `params_json`);
+`params_for(key)` looks a key's tuple up. A
+column that differs in length, a `decl` out of range, a
+`params` that is not a JSON object, a reference or `*_ref` to a key the
+declarations lack, an object with an unknown `$` tag, or a
+`params_names` that is not a list of str raises `MalformedH5Error`.
+
 ## `/meta/session_id` and the geometry sibling
 
 ADR 0112 D1 makes geometry an artifact of its own, and the V0
@@ -1558,7 +1648,7 @@ call `validate_zone_version(...)` for each zone before reading it.
 | Zone | `/meta` key | Root paths | Writer constant (source of truth) | Current | Floor |
 |---|---|---|---|---|---|
 | neutral (broker) | `neutral_schema_version` | `/nodes`, `/elements`, `/physical_groups`, `/labels`, `/mesh_selections`, `/partitions`, `/parts`, `/constraints`, `/reinforce_ties`, `/embed_ties`, `/rebar_elements`, `/contacts`, `/contact_planes`, `/interfaces`, `/loads`, `/masses`, `/composed_from` | [`mesh/_femdata_h5_io.py`](../src/apeGmsh/mesh/_femdata_h5_io.py) `NEUTRAL_SCHEMA_VERSION` | **2.35.0** | **2.10.0** |
-| opensees (bridge) | `opensees_schema_version` | `/opensees/*` | [`opensees/emitter/h5.py`](../src/apeGmsh/opensees/emitter/h5.py) `SCHEMA_VERSION` | **2.25.0** | **2.12.0** |
+| opensees (bridge) | `opensees_schema_version` | `/opensees/*` | [`opensees/emitter/h5.py`](../src/apeGmsh/opensees/emitter/h5.py) `SCHEMA_VERSION` | **2.26.0** | **2.12.0** |
 | results | `results_schema_version` | `/stages/*` (composed `results.h5`, at file root) | [`results/schema/_versions.py`](../src/apeGmsh/results/schema/_versions.py) `RESULTS_SCHEMA_VERSION` | **1.1.0** | **1.0.0** |
 | cuts (sub-zone of opensees) | — (no own key; rides the opensees zone) | `/opensees/cuts`, `/opensees/sweeps` | [`cuts/_h5_io.py`](../src/apeGmsh/cuts/_h5_io.py) `V4_SCHEMA_VERSION` | 2.5.0 | none of its own: it rides the opensees floor |
 | geometry (ADR 0112 D2) | `geometry_schema_version` | `/geometry` (sibling `<stem>.geometry.h5` only) | [`opensees/_internal/schema_version.py`](../src/apeGmsh/opensees/_internal/schema_version.py) `GEOMETRY_SCHEMA_VERSION` | **1.0.0** | **1.0.0** |
@@ -1980,6 +2070,14 @@ detail lives in the `SCHEMA_VERSION` docstring in
   (`MODEL_HASH_EXCLUDED_CHILDREN`), so `model_hash` is unchanged for
   every model. Additive minor (a 2.24.x reader refuses a 2.25.x file,
   INV-4).
+- `2.26.0` — ADR 0114 A6/Q4 (K1-7, #1464): additive — new optional
+  [`/opensees/decl_params`](#opensees-decl_params-optional-opensees-2260),
+  every registered primitive's parameters by field name (references as
+  declaration keys), with `params_names` where the argv equals the
+  fields and the `transf_ref` / `integration_ref` / `section_ref`
+  columns. Hash-excluded (`MODEL_HASH_EXCLUDED_CHILDREN`), so
+  `model_hash` is unchanged for every model. Additive minor (a 2.25.x
+  reader refuses a 2.26.x file, INV-4).
 
 This is the **current** opensees-zone version (`SCHEMA_VERSION` in
 [`opensees/emitter/h5.py`](../src/apeGmsh/opensees/emitter/h5.py)); check that constant
