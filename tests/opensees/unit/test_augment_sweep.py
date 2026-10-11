@@ -219,7 +219,7 @@ def test_facade_augment_requires_a_live_analysis() -> None:
     # users to call ``ops.augment(...)``; it has to exist on the bridge and
     # say why it cannot run without a live step.
     from apeGmsh.opensees import apeSees
-    from apeGmsh.opensees._internal.build import BridgeError
+    from apeGmsh.opensees._internal.build.errors import BridgeError
 
     from tests.opensees.fixtures.fem_stub import make_two_node_beam
 

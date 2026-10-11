@@ -20,12 +20,12 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from .build import (
+from .build.validators.solver import (
     _GENERAL_SOLVER_MSG,
     _UNSYMMETRIC_SAFE_SYSTEMS,
-    BridgeError,
-    contact_records,
 )
+from .build.errors import BridgeError
+from .build.contacts import contact_records
 
 if TYPE_CHECKING:
     from collections.abc import Sequence

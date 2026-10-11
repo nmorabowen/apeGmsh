@@ -31,7 +31,9 @@ import pytest
 
 from apeGmsh._kernel.records._constraints import InterpolationRecord
 from apeGmsh._kernel.records._kinds import ConstraintKind
-from apeGmsh.opensees._internal.build import _embedded_retained_nodes
+from apeGmsh.opensees._internal.build.constraints import (
+    _embedded_retained_nodes,
+)
 
 E, NU = 30_000.0, 0.2
 K = 1.0e8
@@ -143,7 +145,9 @@ def stack(tmp_path_factory):
 
 
 def test_every_tie_line_has_three_retained_nodes(stack) -> None:
-    from apeGmsh.opensees._internal.build import interpolation_records
+    from apeGmsh.opensees._internal.build.constraints_plan import (
+        interpolation_records,
+    )
 
     fem, deck = stack
     lines = _tie_lines(deck)
@@ -177,7 +181,9 @@ def test_the_slave_lies_in_its_triangle(stack) -> None:
 
 def test_the_record_keeps_the_four_quad_corners(stack) -> None:
     fem, _deck = stack
-    from apeGmsh.opensees._internal.build import interpolation_records
+    from apeGmsh.opensees._internal.build.constraints_plan import (
+        interpolation_records,
+    )
 
     recs = [r for r in interpolation_records(fem.elements.constraints)
             if r.kind == ConstraintKind.TIE]

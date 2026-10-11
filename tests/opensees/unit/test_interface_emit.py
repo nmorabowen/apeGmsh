@@ -30,7 +30,8 @@ from apeGmsh._kernel.records._constraints import (
     TangentialLaw,
 )
 from apeGmsh._kernel.records._kinds import ConstraintKind
-from apeGmsh.opensees._internal.build import BridgeError, emit_interfaces
+from apeGmsh.opensees._internal.build.errors import BridgeError
+from apeGmsh.opensees._internal.build.interfaces import emit_interfaces
 from apeGmsh.opensees._internal.tag_allocator import TagAllocator
 from apeGmsh.opensees._internal.tag_resolution import is_phantom_node
 from apeGmsh.opensees.emitter.py import PyEmitter
@@ -735,7 +736,9 @@ def _flat_3d_lines(records):
 
 
 def test_3d_staged_emit_matches_the_flat_lines():
-    from apeGmsh.opensees._internal.build import emit_stage_interfaces
+    from apeGmsh.opensees._internal.build.interfaces import (
+        emit_stage_interfaces,
+    )
 
     recs = [_rec3d(10, 20, a_trib=0.25), _rec3d(11, 21, a_trib=0.5)]
     em = TclEmitter()
@@ -755,8 +758,9 @@ def test_3d_staged_emit_matches_the_flat_lines():
 def test_3d_partitioned_emit_matches_the_flat_lines():
     from dataclasses import dataclass
 
-    from apeGmsh.opensees._internal.build import (
-        _emit_interface_record, _plan_rank_interfaces,
+    from apeGmsh.opensees._internal.build.interfaces import (
+        _emit_interface_record,
+        _plan_rank_interfaces,
         allocate_interface_tags,
     )
 

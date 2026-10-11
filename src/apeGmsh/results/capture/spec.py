@@ -807,7 +807,7 @@ class DomainCaptureSpec:
         bridge = self._opensees
         if bridge is None:
             return None
-        from ...opensees._internal.build import expand_pg_to_elements
+        from ...opensees._internal.build.pg_expand import expand_pg_to_elements
         from ...opensees._internal.types import Element
         from ...opensees.section.plate import (
             LayeredShell,

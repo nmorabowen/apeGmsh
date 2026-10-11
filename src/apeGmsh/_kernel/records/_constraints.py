@@ -835,7 +835,7 @@ class NormalLaw:
     A flat-scalar description of the interface's normal constitutive
     response — stored on :class:`InterfaceRecord` (h5-serializable),
     translated to a typed uniaxial material only at emit time in
-    ``build.py``, scaled per pair by ``A_trib``. Kernel data — imports
+    ``build/``, scaled per pair by ``A_trib``. Kernel data — imports
     nothing from ``apeGmsh.opensees`` (INV-4). The sign convention is
     owned by the emit-time translation, never the caller (INV-1): the
     fields here are positive-magnitude physical quantities.

@@ -7,8 +7,8 @@ inference became the only path.)
 """
 import pytest
 
-from apeGmsh.opensees._internal.build import (
-    BridgeError,
+from apeGmsh.opensees._internal.build.errors import BridgeError
+from apeGmsh.opensees._internal.build.ndf import (
     _infer_ndf_from_incidence,
     assert_ndm_compatible,
     infer_node_ndf,

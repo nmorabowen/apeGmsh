@@ -32,7 +32,7 @@ from apeGmsh.opensees.recorder import (
     RecorderRecord,
 )
 
-from apeGmsh.opensees._internal.build import BridgeError
+from apeGmsh.opensees._internal.build.errors import BridgeError
 from tests.opensees.fixtures.fem_stub import (
     make_two_column_frame_with_labels_and_selection,
     make_two_node_beam,

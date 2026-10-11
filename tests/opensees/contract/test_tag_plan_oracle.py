@@ -64,7 +64,7 @@ from typing import Any, NamedTuple
 import numpy as np
 import pytest
 
-from apeGmsh.opensees._internal.build import TagPlanMiss
+from apeGmsh.opensees._internal.build.errors import TagPlanMiss
 from apeGmsh.opensees._internal.tag_allocator import TagAllocator, TagLawError
 from apeGmsh.opensees._internal.tag_plan import (
     FAMILIES,
@@ -859,7 +859,7 @@ def test_short_or_empty_transform_plan_fails_the_oracle() -> None:
 
 
 def _arch_transform_inputs(case: Case) -> tuple[list[Any], list[Any]]:
-    from apeGmsh.opensees._internal.build import topological_order
+    from apeGmsh.opensees._internal.build.topo import topological_order
     from apeGmsh.opensees._internal.types import Element, GeomTransf
 
     ordered = topological_order(case.bm.primitives)
@@ -880,7 +880,9 @@ def test_geomtransf_is_frozen_in_the_plan() -> None:
 
 def test_emit_transform_specs_reads_the_plan() -> None:
     """The writer writes the fan-out the plan holds, overrides included."""
-    from apeGmsh.opensees._internal.build import emit_transform_specs
+    from apeGmsh.opensees._internal.build.transforms import (
+        emit_transform_specs,
+    )
 
     case = _case("arch_with_orientation_fan_out/flat")
     bm, plan = case.bm, case.plan
@@ -902,7 +904,9 @@ def test_emit_transform_specs_refuses_a_fork_of_another_models_plan() -> None:
     snapshots. Model B's emit handed model A's plan must say the plan is
     another model's, before any count or order check.
     """
-    from apeGmsh.opensees._internal.build import emit_transform_specs
+    from apeGmsh.opensees._internal.build.transforms import (
+        emit_transform_specs,
+    )
 
     case = _case("arch_with_orientation_fan_out/flat")
     other = _MODELS["arch_with_orientation_fan_out/flat"]().build()
@@ -1045,7 +1049,7 @@ def test_a_stray_contact_mint_raises(
     a deck.
     """
     import apeGmsh.opensees.apesees as apesees_mod
-    from apeGmsh.opensees._internal import build
+    from apeGmsh.opensees._internal.build import contacts as build
     from apeGmsh.opensees.apesees import BuiltModel
 
     def minting_lines(fem: Any, tag_plan: TagPlan, kind: str) -> Any:
@@ -1140,7 +1144,7 @@ def test_emit_refuses_a_contact_plan_with_a_swapped_record(name: str) -> None:
 def test_emit_contacts_reads_the_plan() -> None:
     """The writers write the plan's rows; another model's plan, or a plan
     handed another model's FEM, is refused as such."""
-    from apeGmsh.opensees._internal.build import (
+    from apeGmsh.opensees._internal.build.contacts import (
         emit_contact_planes,
         emit_contacts,
     )
@@ -1167,7 +1171,7 @@ def test_emit_contacts_reads_the_plan() -> None:
 
 
 def test_emit_contacts_refuses_a_plan_for_other_records() -> None:
-    from apeGmsh.opensees._internal.build import ContactPlan
+    from apeGmsh.opensees._internal.build.contacts import ContactPlan
 
     flat = _case("contact_ranks_4/flat").plan.contacts.for_fem(
         _case("contact_ranks_4/flat").bm.fem)
@@ -1752,7 +1756,7 @@ def test_a_stray_parameter_mint_raises(
     frozen one. The emit must raise on the path named, not write a deck.
     """
     import apeGmsh.opensees.apesees as apesees_mod
-    from apeGmsh.opensees._internal import build
+    from apeGmsh.opensees._internal.build import stage_emit as build
 
     if verb == "step_hook_ramp":
         orig = build._planned_parameters
@@ -1892,10 +1896,12 @@ def test_parameter_writers_read_the_plan() -> None:
     """The three writers write the plan's rows, flat and over 2 ranks, the
     flips and updates over the elements the plan resolved; another
     model's plan holds none of these records."""
-    from apeGmsh.opensees._internal.build import (
+    from apeGmsh.opensees._internal.build.stage_emit import (
         emit_activate_absorbing,
         emit_initial_stress_global,
         emit_update_parameters,
+    )
+    from apeGmsh.opensees._internal.build.ownership import (
         runtime_rank_from_partition_record,
     )
 
@@ -1931,8 +1937,8 @@ def test_parameter_writers_read_the_plan() -> None:
 def test_flip_lines_carry_the_elements_the_plan_resolved() -> None:
     """Closed form: the plan resolves each flip and update once, and its
     lines carry the element tags the writers address (S5 review (1))."""
-    from apeGmsh.opensees._internal.build import (
-        FemToOpsTagMap,
+    from apeGmsh.opensees._internal.build.ownership import FemToOpsTagMap
+    from apeGmsh.opensees._internal.build.stage_emit import (
         absorbing_ele_tags,
         update_parameter_ele_tags,
     )
@@ -1969,7 +1975,7 @@ def test_an_unknown_flip_element_raises_when_the_emit_plans(
     """A flat staged flip or update naming an element no primitive emits
     raises its ``BridgeError`` when the emit plans its tags, before any
     line is written, with the message the writer gave before the plan."""
-    from apeGmsh.opensees._internal.build import BridgeError
+    from apeGmsh.opensees._internal.build.errors import BridgeError
 
     ops = _param_ranks(2, partitioned=False, staged=False)
     with ops.stage(name="bad") as s:
@@ -1999,8 +2005,8 @@ def test_parameter_writers_refuse_a_line_they_do_not_write() -> None:
     """The writers write the planned lines they are given, and refuse a
     line of another verb, a tag count that does not match the line's
     elements, or a list of elements per line of another length."""
-    from apeGmsh.opensees._internal.build import (
-        BridgeError,
+    from apeGmsh.opensees._internal.build.errors import BridgeError
+    from apeGmsh.opensees._internal.build.stage_emit import (
         ParameterSite,
         plan_parameters,
         write_planned_flips,
@@ -2165,7 +2171,11 @@ def test_a_stray_element_mint_raises(
     interface, on every path, must raise rather than write a deck.
     """
     import apeGmsh.opensees.apesees as apesees_mod
-    from apeGmsh.opensees._internal import build
+    from apeGmsh.opensees._internal.build import (
+        constraints as constraints_mod,
+        constraints_ranked as ranked_mod,
+        interfaces as interfaces_mod,
+    )
 
     def minting_tagger(tag_plan: TagPlan) -> Any:
         return lambda entry: tag_plan.allocator.allocate("element")
@@ -2176,8 +2186,13 @@ def test_a_stray_element_mint_raises(
                         tags.allocate("uniaxialMaterial"),
                         tags.allocate("element")) for r in records}
 
-    monkeypatch.setattr(build, "_mp_element_tagger", minting_tagger)
-    monkeypatch.setattr(build, "allocate_interface_tags", minting_interfaces)
+    # ``_mp_element_tagger`` is called from both ``constraints`` and
+    # ``constraints_ranked`` (each holds its own binding), so it is patched
+    # in both; ``allocate_interface_tags`` is called inside ``interfaces``.
+    monkeypatch.setattr(constraints_mod, "_mp_element_tagger", minting_tagger)
+    monkeypatch.setattr(ranked_mod, "_mp_element_tagger", minting_tagger)
+    monkeypatch.setattr(
+        interfaces_mod, "allocate_interface_tags", minting_interfaces)
     monkeypatch.setattr(
         apesees_mod, "allocate_interface_tags", minting_interfaces)
     with pytest.raises(TagLawError, match="froze this allocator"):
@@ -2187,7 +2202,7 @@ def test_a_stray_element_mint_raises(
 def test_mp_writers_read_the_plan() -> None:
     """The flat MP writers write the plan's rows; another model's plan is
     refused as made over another FEM."""
-    from apeGmsh.opensees._internal.build import (
+    from apeGmsh.opensees._internal.build.constraints import (
         emit_embed_ties,
         emit_mp_constraints,
         emit_rebar_elements,
@@ -2218,7 +2233,9 @@ def test_reinforce_tie_replay_numbers_the_ties_as_the_plan() -> None:
     """The waived standalone entry (``reinforce-tie-replay``): handed an
     allocator whose ``element`` counter stands where the plan began the
     ties, it numbers them as the plan did, through the planner's loop."""
-    from apeGmsh.opensees._internal.build import replay_reinforce_ties
+    from apeGmsh.opensees._internal.build.constraints import (
+        replay_reinforce_ties,
+    )
 
     case = _case("mp_ranks_4/flat")
     bm, plan = case.bm, case.plan
@@ -2236,8 +2253,10 @@ def test_reinforce_tie_replay_numbers_the_ties_as_the_plan() -> None:
 def test_allocate_interface_tags_reads_the_plan() -> None:
     """Every record's tags are the plan's; another model's plan holds
     none of these records."""
-    from apeGmsh.opensees._internal.build import (
+    from apeGmsh.opensees._internal.build.interfaces import (
         allocate_interface_tags,
+    )
+    from apeGmsh.opensees._internal.build.constraints_plan import (
         interface_records,
     )
 
@@ -2262,7 +2281,7 @@ def test_partitioned_mp_routing_runs_once_per_plan(
     once per rank. Now the plan runs it once per rank and every emit
     reads it: two emits of the 4-rank model, four routings.
     """
-    from apeGmsh.opensees._internal import build
+    from apeGmsh.opensees._internal.build import constraints_ranked as build
 
     calls: list[int] = []
     orig = build._plan_rank_constraints
@@ -2317,7 +2336,10 @@ def test_mp_plan_refuses_a_swapped_dropped_or_doubled_element(
     """
     import dataclasses
 
-    from apeGmsh.opensees._internal.build import MP_ELEMENT_SITES, MPElementPlan
+    from apeGmsh.opensees._internal.build.constraints_plan import (
+        MP_ELEMENT_SITES,
+        MPElementPlan,
+    )
 
     assert set(_MP_SITE_CASES) == set(MP_ELEMENT_SITES)
     for name in _MP_SITE_CASES[site]:
@@ -2345,7 +2367,7 @@ def test_mp_plan_refuses_a_swapped_dropped_or_doubled_element(
 def test_interface_plan_refuses_a_swapped_dropped_or_doubled_record() -> None:
     import dataclasses
 
-    from apeGmsh.opensees._internal.build import PlannedInterface
+    from apeGmsh.opensees._internal.build.interfaces import PlannedInterface
 
     plan = _case("iface_embed/flat").plan.interfaces.planned()
     other = _MODELS["iface_embed/flat"]().build()
@@ -2365,7 +2387,9 @@ def test_interface_plan_refuses_a_swapped_dropped_or_doubled_record() -> None:
 
 def test_mp_plan_refuses_other_reads() -> None:
     """A record, a rank, a FEM or a claim set the plan was not made for."""
-    from apeGmsh.opensees._internal.build import mp_element_entry
+    from apeGmsh.opensees._internal.build.constraints_plan import (
+        mp_element_entry,
+    )
 
     flat = _case("mp_ranks_4/flat").plan.mp_elements.planned()
     part = _case("mp_ranks_4/partitioned").plan.mp_elements.planned()
@@ -2762,7 +2786,8 @@ def test_a_plan_miss_is_a_bridge_error_naming_family_and_owner() -> None:
     """A plan miss raises :class:`TagPlanMiss`, which is both a
     :class:`BridgeError` and a :class:`TagLawError`, and names the family
     and the owner it misses."""
-    from apeGmsh.opensees._internal.build import BridgeError, ParameterSite
+    from apeGmsh.opensees._internal.build.errors import BridgeError
+    from apeGmsh.opensees._internal.build.stage_emit import ParameterSite
 
     plan = _case("initial_stress_frame/flat").plan
     stranger = object()
@@ -2950,7 +2975,7 @@ def test_a_cut_contact_plan_is_a_named_plan_miss(name: str) -> None:
     the plan lacks."""
     import dataclasses
 
-    from apeGmsh.opensees._internal.build import BridgeError, plan_owner
+    from apeGmsh.opensees._internal.build.errors import BridgeError, plan_owner
     from apeGmsh.opensees._internal.tag_plan import ContactTagPlan
 
     bm = _MODELS[name]().build()
@@ -2977,10 +3002,9 @@ def test_a_cut_interface_plan_is_a_named_plan_miss() -> None:
     family and the record."""
     import dataclasses
 
-    from apeGmsh.opensees._internal.build import (
-        BridgeError,
+    from apeGmsh.opensees._internal.build.errors import BridgeError, plan_owner
+    from apeGmsh.opensees._internal.build.constraints_plan import (
         interface_records,
-        plan_owner,
     )
 
     iface = _case("iface_embed/flat").plan.interfaces.planned()
@@ -3004,7 +3028,7 @@ def test_a_cut_mp_or_parameter_plan_is_a_named_plan_miss() -> None:
     :class:`TagPlanMiss` naming the family and the owner."""
     import dataclasses
 
-    from apeGmsh.opensees._internal.build import BridgeError, plan_owner
+    from apeGmsh.opensees._internal.build.errors import BridgeError, plan_owner
     from apeGmsh.opensees._internal.tag_plan import ParameterTagPlan
 
     mp = _case("mp_ranks_4/flat").plan.mp_elements.planned()

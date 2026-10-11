@@ -164,10 +164,12 @@ def test_arch_orientation_fan_out_is_planned_once(mode: str) -> None:
 
 def _oriented_element_ids(bm: "object") -> "list[int]":
     """The FEM ids of every element whose transform fans out."""
-    from apeGmsh.opensees._internal.build import (
+    from apeGmsh.opensees._internal.build.transforms import (
         _element_transf,
-        expand_pg_to_elements,
         is_orientation_transform,
+    )
+    from apeGmsh.opensees._internal.build.pg_expand import (
+        expand_pg_to_elements,
     )
 
     out: "list[int]" = []

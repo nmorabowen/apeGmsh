@@ -20,8 +20,8 @@ import pytest
 
 from apeGmsh.opensees.apesees import apeSees
 from apeGmsh.opensees.stage._builder import _StageBuilder
-from apeGmsh.opensees._internal.build import (
-    BridgeError,
+from apeGmsh.opensees._internal.build.errors import BridgeError
+from apeGmsh.opensees._internal.build.records import (
     ElementRemovalRecord,
     MassRecord,
     MaterialStageRecord,

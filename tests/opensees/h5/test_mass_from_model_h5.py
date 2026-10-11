@@ -25,7 +25,7 @@ import pytest
 from apeGmsh import apeGmsh
 from apeGmsh.mesh.FEMData import FEMData
 from apeGmsh.opensees import OpenSeesModel, apeSees
-from apeGmsh.opensees._internal.build import BridgeError
+from apeGmsh.opensees._internal.build.errors import BridgeError
 from apeGmsh.opensees._internal.lineage import read_stored_lineage
 from apeGmsh.opensees.emitter.h5_reader import MalformedH5Error
 

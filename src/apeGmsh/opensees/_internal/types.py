@@ -26,7 +26,7 @@ if TYPE_CHECKING:
     from apeGmsh.mesh.FEMData import FEMData
 
     from ..emitter.base import Emitter
-    from .build import FemToOpsTagMap
+    from .build.ownership import FemToOpsTagMap
     from .tag_plan import TagPlan
 
 

@@ -63,7 +63,7 @@ if TYPE_CHECKING:
     import h5py
 
     from apeGmsh._kernel.records._compose import ComposeRecord
-    from .._internal.build import InitialStressRecord
+    from .._internal.build.records import InitialStressRecord
 
 
 __all__ = [
@@ -1212,7 +1212,7 @@ class H5Model:
         """Reconstruct ``stress_NNN`` children of ``grp`` (shared by the
         global zone and each ``stage_NNN/initial_stress`` sub-group —
         same declarative field set, ADR 0055)."""
-        from .._internal.build import InitialStressRecord
+        from .._internal.build.records import InitialStressRecord
 
         out: "list[InitialStressRecord]" = []
         # Zero-padded ``stress_NNN`` names sort in registration order.
@@ -1602,7 +1602,7 @@ class H5Model:
     ) -> "tuple[tuple[Any, ...], tuple[tuple[tuple[int, int], ...], ...]]":
         """A stage's ``update_parameter/update_NNN`` records and their
         ``param_tags`` rows (schema 2.27.0, K1-8); empty below it."""
-        from .._internal.build import UpdateParameterRecord
+        from .._internal.build.records import UpdateParameterRecord
 
         if "update_parameter" not in g:
             return (), ()
@@ -1646,7 +1646,7 @@ class H5Model:
     def _zero_velocities_from_stage(g: Any) -> "tuple[Any, ...]":
         """A stage's ``zero_velocities/zero_NNN`` records (schema 2.27.0,
         K1-8): a ``nodes`` dataset, or none for the whole domain."""
-        from .._internal.build import ZeroVelocityRecord
+        from .._internal.build.records import ZeroVelocityRecord
 
         if "zero_velocities" not in g:
             return ()

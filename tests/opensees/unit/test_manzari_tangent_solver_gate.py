@@ -20,7 +20,7 @@ import warnings
 
 import pytest
 
-from apeGmsh.opensees._internal.build import (
+from apeGmsh.opensees._internal.build.validators.materials import (
     ManzariTangentSolverWarning,
     validate_manzari_tangent_solver,
 )

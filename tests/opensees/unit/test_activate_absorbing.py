@@ -14,9 +14,9 @@ from unittest.mock import MagicMock
 import pytest
 
 from apeGmsh.opensees import apeSees
-from apeGmsh.opensees._internal.build import (
-    ActivateAbsorbingRecord,
-    BridgeError,
+from apeGmsh.opensees._internal.build.records import ActivateAbsorbingRecord
+from apeGmsh.opensees._internal.build.errors import BridgeError
+from apeGmsh.opensees._internal.build.stage_emit import (
     absorbing_ele_tags,
     emit_activate_absorbing,
     parameter_flip_sites,

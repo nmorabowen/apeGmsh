@@ -23,9 +23,8 @@ from apeGmsh._kernel.records._constraints import (
 )
 from apeGmsh._kernel.records._kinds import ConstraintKind
 from apeGmsh.opensees import DetachedDiaphragmMasterWarning, apeSees
-from apeGmsh.opensees._internal.build import (
-    FixRecord,
-    SupportRecord,
+from apeGmsh.opensees._internal.build.records import FixRecord, SupportRecord
+from apeGmsh.opensees._internal.build.ndf import (
     validate_diaphragm_master_stiffness,
 )
 from apeGmsh.opensees.pattern.pattern import _SPRecord

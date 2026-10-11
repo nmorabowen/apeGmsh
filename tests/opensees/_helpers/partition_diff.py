@@ -10,7 +10,7 @@ The intentional textual divergence is that **native-side** ``node(tag,
 *xyz)`` decls omit ``-ndf`` (the model envelope ``ndf`` set via the
 ``model`` directive applies), while **foreign-side** decls force
 ``-ndf <broker_ndf>`` (per
-``src/apeGmsh/opensees/_internal/build.py::_emit_node_with_broker_ndf``).
+``src/apeGmsh/opensees/_internal/build/::_emit_node_with_broker_ndf``).
 Everything else — the constraint declaration line, the
 ``mp_constraint_comment`` line, the argument order, the trailing
 whitespace, the line terminator — must be byte-for-byte identical

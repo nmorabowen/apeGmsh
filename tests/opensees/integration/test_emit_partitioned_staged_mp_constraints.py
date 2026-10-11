@@ -67,10 +67,8 @@ from apeGmsh._kernel.records._constraints import (
     SurfaceCouplingRecord,
 )
 from apeGmsh._kernel.records._kinds import ConstraintKind
-from apeGmsh.opensees._internal.build import (
-    AUTO_STIFFNESS_ALPHA,
-    BridgeError,
-)
+from apeGmsh.opensees._internal.build.constraints import AUTO_STIFFNESS_ALPHA
+from apeGmsh.opensees._internal.build.errors import BridgeError
 from apeGmsh.opensees.apesees import apeSees
 
 from tests.opensees.fixtures.fem_stub import (

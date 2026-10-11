@@ -37,7 +37,7 @@ import numpy as np
 import pytest
 
 from apeGmsh.opensees import apeSees
-from apeGmsh.opensees._internal.build import BridgeError
+from apeGmsh.opensees._internal.build.errors import BridgeError
 
 
 # ---------------------------------------------------------------------------
@@ -220,7 +220,7 @@ def test_domain_capture_forwards_sidecar_for_initial_stress_builds(tmp_path):
     like a plain build — only PARTITIONED staged builds gate it off
     (see test_h5_staged_domain_capture.py).
     """
-    from apeGmsh.opensees._internal.build import InitialStressRecord
+    from apeGmsh.opensees._internal.build.records import InitialStressRecord
     from apeGmsh.results.capture.spec import DomainCaptureSpec
 
     nodes = _NodesStub(

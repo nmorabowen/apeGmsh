@@ -143,7 +143,7 @@ def test_global_emits_before_region(tmp_path: Path) -> None:
 def test_on_non_element_group_fails_loud(tmp_path: Path) -> None:
     # "Top" is a NODE group — region Rayleigh needs elements for βK, so
     # resolving it to elements fails loud (BridgeError: not an element PG).
-    from apeGmsh.opensees._internal.build import BridgeError
+    from apeGmsh.opensees._internal.build.errors import BridgeError
 
     ops = _frame_with_rayleigh(alpha_m=0.1, on="Top")
     with pytest.raises(BridgeError, match="not found"):
@@ -412,7 +412,7 @@ def test_element_damp_runs_live() -> None:
 def test_damping_attached_to_nothing_fails_loud_at_build(
     tmp_path: Path,
 ) -> None:
-    from apeGmsh.opensees._internal.build import BridgeError
+    from apeGmsh.opensees._internal.build.errors import BridgeError
 
     fem = make_two_column_frame()
     ops = apeSees(cast("object", fem))

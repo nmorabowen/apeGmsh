@@ -13,10 +13,8 @@ from __future__ import annotations
 
 import pytest
 
-from apeGmsh.opensees._internal.build import (
-    BridgeError,
-    broker_load_components,
-)
+from apeGmsh.opensees._internal.build.errors import BridgeError
+from apeGmsh.opensees._internal.build.patterns import broker_load_components
 
 
 class _Rec:

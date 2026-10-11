@@ -207,7 +207,7 @@ def test_support_touching_the_last_increment_is_silent() -> None:
 def test_unknown_analysis_class_raises() -> None:
     """Fail closed: an analysis this check cannot read the clock of is a
     TypeError, not a silent skip."""
-    from apeGmsh.opensees._internal.build import StageRecord
+    from apeGmsh.opensees._internal.build.records import StageRecord
     from apeGmsh.opensees.pattern.pattern import Plain
     from apeGmsh.opensees.time_series.time_series import Path
 

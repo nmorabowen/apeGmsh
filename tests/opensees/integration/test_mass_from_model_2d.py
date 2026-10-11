@@ -16,11 +16,9 @@ import pytest
 
 from apeGmsh import apeGmsh
 from apeGmsh.opensees import apeSees
-from apeGmsh.opensees._internal.build import (
-    BridgeError,
-    broker_mass_components,
-    fit_dof_vector,
-)
+from apeGmsh.opensees._internal.build.errors import BridgeError
+from apeGmsh.opensees._internal.build.patterns import broker_mass_components
+from apeGmsh.opensees._internal.build.ndf import fit_dof_vector
 
 
 def _mass_lines(ops) -> "dict[int, tuple[float, ...]]":

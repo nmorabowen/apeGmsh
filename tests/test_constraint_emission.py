@@ -138,7 +138,7 @@ def test_embedded_emit_rejects_unsupported_rnode_count():
     """
     from apeGmsh._kernel.records._constraints import InterpolationRecord
     from apeGmsh._kernel.records._kinds import ConstraintKind
-    from apeGmsh.opensees._internal.build import (
+    from apeGmsh.opensees._internal.build.constraints import (
         _check_embedded_rnode_count,
     )
 

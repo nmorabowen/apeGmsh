@@ -28,7 +28,7 @@ from apeGmsh import apeGmsh
 from apeGmsh._kernel.record_sets import NodalLoadSet
 from apeGmsh._kernel.records._loads import NodalLoadRecord
 from apeGmsh.opensees import apeSees
-from apeGmsh.opensees._internal.build import (
+from apeGmsh.opensees._internal.build.validators.loads import (
     WarnLoadBasisMismatch,
     validate_load_basis_vs_elements,
 )

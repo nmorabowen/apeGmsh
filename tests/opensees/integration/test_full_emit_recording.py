@@ -257,7 +257,7 @@ def test_element_recorder_pg_unmatched_pg_fails_loud() -> None:
     write an output file with only a time column — the loud failure
     surfaces the misuse immediately.
     """
-    from apeGmsh.opensees._internal.build import BridgeError
+    from apeGmsh.opensees._internal.build.errors import BridgeError
 
     fem = make_two_column_frame()  # PG "Cols" -> FEM eids (1, 2)
 
@@ -464,7 +464,7 @@ def test_mpco_elements_pg_unmatched_pg_fails_loud() -> None:
     record nothing for the intended target — the loud failure surfaces
     the misuse immediately, mirroring the Element-recorder policy.
     """
-    from apeGmsh.opensees._internal.build import BridgeError
+    from apeGmsh.opensees._internal.build.errors import BridgeError
 
     fem = make_two_column_frame()  # PG "Cols" -> FEM eids (1, 2)
 
@@ -521,7 +521,7 @@ def test_mpco_empty_nodes_pg_raises_bridge_error() -> None:
     bridge must refuse at build time with a clear BridgeError, never
     emit a bare ``region $tag`` line.
     """
-    from apeGmsh.opensees._internal.build import BridgeError
+    from apeGmsh.opensees._internal.build.errors import BridgeError
     from tests.opensees.fixtures.fem_stub import (
         FEMStub, _ElementGroupView, _ElementsStub, _NodesStub,
     )
@@ -555,7 +555,7 @@ def test_mpco_empty_explicit_nodes_raises_bridge_error() -> None:
     matching response set construction-validates but the materialize
     pipeline must still refuse the empty region)."""
     from dataclasses import replace
-    from apeGmsh.opensees._internal.build import BridgeError
+    from apeGmsh.opensees._internal.build.errors import BridgeError
     from apeGmsh.opensees.recorder import MPCO as _MPCO
     from tests.opensees._helpers.tag_plan import emit_tags
     from tests.opensees.fixtures.fem_stub import (
@@ -1084,7 +1084,7 @@ def test_pattern_pg_load_fans_to_per_node_calls() -> None:
 def test_unregistered_dependency_raises_bridge_error() -> None:
     """A standalone primitive used as a dependency without registering it
     must raise BridgeError at emit time (per ADR P11 Option A)."""
-    from apeGmsh.opensees._internal.build import BridgeError
+    from apeGmsh.opensees._internal.build.errors import BridgeError
     from apeGmsh.opensees.material.uniaxial import Steel02
     from apeGmsh.opensees.section.fiber import Fiber, FiberPoint
     import pytest
@@ -1343,7 +1343,7 @@ def test_from_model_typo_raises_bridge_error() -> None:
     no importable record raises at build instead of silently importing
     nothing."""
     from apeGmsh._kernel.record_sets import NodalLoadSet
-    from apeGmsh.opensees._internal.build import BridgeError
+    from apeGmsh.opensees._internal.build.errors import BridgeError
 
     fem = make_two_column_frame(ndm=2)
     fem.nodes.loads = NodalLoadSet([  # type: ignore[attr-defined]
@@ -1379,7 +1379,7 @@ def test_from_model_homogeneous_only_case_names_the_reason() -> None:
     is never importable by design — the guard says so explicitly."""
     from apeGmsh._kernel.record_sets import SPSet
     from apeGmsh._kernel.records._loads import SPRecord
-    from apeGmsh.opensees._internal.build import BridgeError
+    from apeGmsh.opensees._internal.build.errors import BridgeError
 
     fem = make_two_column_frame(ndm=2)
     fem.nodes.sp = SPSet([  # type: ignore[attr-defined]
@@ -1401,7 +1401,7 @@ def test_from_model_missing_case_hints_at_legacy_flattening() -> None:
     at the stale-file remedy."""
     from apeGmsh._kernel.record_sets import SPSet
     from apeGmsh._kernel.records._loads import SPRecord
-    from apeGmsh.opensees._internal.build import BridgeError
+    from apeGmsh.opensees._internal.build.errors import BridgeError
 
     fem = make_two_column_frame(ndm=2)
     fem.nodes.sp = SPSet([  # type: ignore[attr-defined]
@@ -1454,7 +1454,7 @@ def test_2d_geomtransf_with_orientation_raises_bridgeerror() -> None:
     ``architecture/_DEFERRED.md`` § "Cylindrical / Spherical in
     2-D models".
     """
-    from apeGmsh.opensees._internal.build import BridgeError
+    from apeGmsh.opensees._internal.build.errors import BridgeError
     from apeGmsh.opensees.transform import Cylindrical
 
     fem = make_two_column_frame(ndm=2)

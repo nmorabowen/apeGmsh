@@ -15,7 +15,7 @@ from types import SimpleNamespace
 import numpy as np
 
 from apeGmsh._kernel.records._partitions import PartitionRecord
-from apeGmsh.opensees._internal.build import (
+from apeGmsh.opensees._internal.build.ownership import (
     build_element_partition_owner,
     build_node_partition_owners,
     primary_owner_map,

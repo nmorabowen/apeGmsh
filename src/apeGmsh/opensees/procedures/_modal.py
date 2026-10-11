@@ -7,9 +7,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Sequence
 
-from .._internal.build import (
-    BridgeError,
-)
+from .._internal.build.errors import BridgeError
 from .._internal.types import (
     TimeSeries,
 )

@@ -183,7 +183,7 @@ def test_replay_registers_hook_before_analyze() -> None:
     ramp ``step_hook_ramp`` BEFORE ``analyze`` so the analyze takes the
     hook-wrapped (for-loop) form — not the bare ``analyze N``.  Without the
     initial-stress wiring the ramp procs declare but never fire."""
-    from apeGmsh.opensees._internal.build import InitialStressRecord
+    from apeGmsh.opensees._internal.build.records import InitialStressRecord
     from apeGmsh.opensees._internal.compose import _replay_into
     from apeGmsh.opensees._internal.schema_version import (
         OPENSEES,

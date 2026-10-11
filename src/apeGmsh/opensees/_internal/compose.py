@@ -686,7 +686,7 @@ def _write_archived_ramps(
     ``stress_NNN@param_tags``). Returns ``{name: tags}`` for the
     ``addToParameter`` fan-out, as the minting writer does.
     """
-    from .build import PlannedParameter, write_planned_ramps
+    from .build.stage_emit import PlannedParameter, write_planned_ramps
 
     if len(param_tags) != len(records):
         raise ValueError(
@@ -719,7 +719,7 @@ def _write_archived_flips(
     holds each record's ``(rank, pid)`` rows: one pid, written on every
     rank holding the record's elements.
     """
-    from .build import (
+    from .build.stage_emit import (
         PlannedParameter,
         absorbing_ele_tags,
         update_parameter_ele_tags,
@@ -911,7 +911,7 @@ def _replay_into(
     field names; see :mod:`apeGmsh.opensees.opensees_model` for the
     canonical instantiation pattern.
     """
-    from .build import node_coords_as_floats
+    from .build.ndf import node_coords_as_floats
 
     if fem is not None:
         _warn_skipped_replay_streams(fem, stage_mp_keys=stage_mp_keys)
@@ -937,7 +937,7 @@ def _replay_into(
         # ``ndm`` coordinates only — a trailing 0.0 in a 2-D deck
         # swallows the following ``-ndf K`` (node_coords_as_floats).
         # The replay path has to do this itself: it never touches
-        # build.py's node-emit helpers.
+        # build/'s node-emit helpers.
         cs = node_coords_as_floats(coords)
         if node_ndf is None:
             emitter.node(int(tag), *cs)
@@ -968,7 +968,7 @@ def _replay_into(
             emitter.layer(layer.kind, *layer.args)
         emitter.section_close()
 
-    from .build import needs_builder_ndf_bracket_for_token
+    from .build.builder_scope import needs_builder_ndf_bracket_for_token
 
     # 4b. ADR 0099 INV-1 — the builder-ndf-GATED elements, hoisted above
     # the declarations their bracket would destroy.  Everything they need
@@ -1023,7 +1023,7 @@ def _replay_into(
             # aborts at the element line), so the guard would buy nothing
             # there while costing a full per-element arg scan — measured
             # +13.8-22.3% on a gated-but-unscoped 200k-element replay.
-            from .build import validate_builder_scope_replay
+            from .build.builder_scope import validate_builder_scope_replay
 
             validate_builder_scope_replay(
                 _gated, ndm=int(ndm), envelope_ndf=int(ndf),
@@ -1093,7 +1093,7 @@ def _replay_into(
         if fem is not None else None
     )
     if reinforce_ties:
-        from .build import replay_reinforce_ties
+        from .build.constraints import replay_reinforce_ties
         from .tag_allocator import TagAllocator
 
         # tag-law waiver reinforce-tie-replay (tag_law_ledger.txt): replay
@@ -1149,7 +1149,8 @@ def _replay_into(
     # the bridge minted.  The H5 target never reaches here (its
     # initial-stress persists via the side-channel, not _replay_into).
     if initial_stress:
-        from .build import FemToOpsTagMap, emit_initial_stress_addtoparameter
+        from .build.ownership import FemToOpsTagMap
+        from .build.stage_emit import emit_initial_stress_addtoparameter
 
         # ADR 0065 v2 B3: the emit helpers now take a FemToOpsTagMap.
         fem_eid_to_ops_tag = FemToOpsTagMap.from_pairs(
@@ -1163,7 +1164,7 @@ def _replay_into(
                 "/opensees/initial_stress",
             )
         else:
-            from .build import replay_initial_stress_global
+            from .build.stage_emit import replay_initial_stress_global
             from .tag_allocator import TagAllocator
 
             # ADR 0055 P2.3: the staged caller threads its SHARED allocator
@@ -1407,8 +1408,8 @@ def _replay_staged_into(
     ``analyze``. ``program`` (the ``/opensees/program`` runs) says which
     side of the analyze each row was emitted on.
     """
-    from .build import (
-        ActivateAbsorbingRecord,
+    from .build.records import ActivateAbsorbingRecord
+    from .build.stage_emit import (
         emit_initial_stress_addtoparameter,
         emit_zero_velocities,
         replay_activate_absorbing,
@@ -1461,7 +1462,7 @@ def _replay_staged_into(
     )
     _gated_stage_tokens: "set[str]" = set()
     if owned_element_tags and _scoped_present:
-        from .build import needs_builder_ndf_bracket_for_token
+        from .build.builder_scope import needs_builder_ndf_bracket_for_token
 
         # ``ndm`` / ``ndf`` are required keyword args of ``_replay_into``
         # and always present here — indexed, not ``.get``-defaulted,
@@ -1483,7 +1484,7 @@ def _replay_staged_into(
             # ``quad ... -damp N`` record dies at its own line (measured).
             # The global ``_replay_into`` scan skips stage-owned records,
             # so scan them here.  Only a pre-S1 archive can carry one.
-            from .build import validate_builder_scope_replay
+            from .build.builder_scope import validate_builder_scope_replay
 
             validate_builder_scope_replay(
                 [r for r in _owned_recs
@@ -1549,7 +1550,8 @@ def _replay_staged_into(
     _ndf = int(replay_kwargs["ndf"])
     # ADR 0065 v2 B3: the stage emit helpers (initial_stress /
     # activate_absorbing) now take a FemToOpsTagMap.
-    from .build import FemToOpsTagMap, node_coords_as_floats
+    from .build.ownership import FemToOpsTagMap
+    from .build.ndf import node_coords_as_floats
 
     fem_eid_to_ops_tag = FemToOpsTagMap.from_pairs(
         (int(r.fem_eid), int(r.tag)) for r in elements if int(r.fem_eid) >= 0

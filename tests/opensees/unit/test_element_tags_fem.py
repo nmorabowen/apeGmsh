@@ -35,8 +35,8 @@ import pytest
 from apeGmsh import apeGmsh
 from apeGmsh._kernel.records._constraints import NormalLaw, TangentialLaw
 from apeGmsh.opensees import apeSees
-from apeGmsh.opensees._internal.build import (
-    BridgeError,
+from apeGmsh.opensees._internal.build.errors import BridgeError
+from apeGmsh.opensees._internal.build.element_emit import (
     allocate_element_tags,
     reserve_fem_element_tags,
 )
@@ -346,9 +346,9 @@ def test_allocation_without_the_reservation_is_refused() -> None:
 #: tag above every FEM id. A new site must be checked the same way before
 #: it joins this set.
 _AUDITED_ELEMENT_ALLOCATIONS = {
-    ("_internal/build.py", "plan_mp_elements"),
-    ("_internal/build.py", "plan_interface_tags"),
-    ("_internal/build.py", "allocate_element_tags"),
+    ("_internal/build/constraints_plan.py", "plan_mp_elements"),
+    ("_internal/build/interfaces.py", "plan_interface_tags"),
+    ("_internal/build/element_emit.py", "allocate_element_tags"),
 }
 
 

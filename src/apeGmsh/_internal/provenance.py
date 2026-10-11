@@ -215,7 +215,7 @@ def _capture_frames(
 ) -> tuple[FrameType | None, FrameType | None, FrameType | None]:
     """Return ``(site, entry, script)`` walking out from ``start``.
 
-    Generalises ``opensees/_internal/build.py::_stacklevel_outside_package``
+    Generalises ``opensees/_internal/_stacklevel.py::_stacklevel_outside_package``
     to two frames.  ``site`` is the first frame outside apeGmsh and the
     stdlib, and ``entry`` the frame it called (``None`` when ``start`` is
     already outside).  ``script`` is the outermost ``__main__`` frame of

@@ -239,14 +239,14 @@ single-partition models and `BuiltModel.emit → _emit_partitioned →
 _emit_stages_partitioned` for MP-partitioned models (per Phase
 SSI-2.C; see "MP partitioned + stages" below). Both branches live
 in [apesees.py](../src/apeGmsh/opensees/apesees.py). Per-stage helpers live in
-`opensees/_internal/build.py::compute_stage_ownership` /
+`opensees/_internal/build/ownership.py::compute_stage_ownership` /
 `emit_initial_stress_global` /
 `emit_initial_stress_addtoparameter`.
 
 ## Ownership computation (Phase SSI-2.B)
 
 `compute_stage_ownership(stage_records, elements, fem)` in
-[`_internal/build.py:1830-1902`](../src/apeGmsh/opensees/_internal/build.py) returns two
+[`_internal/build/:1830-1902`](../src/apeGmsh/opensees/_internal/build/) returns two
 maps:
 
 - `element_owner: dict[id(spec), stage_index]` — element-primitive
@@ -579,23 +579,23 @@ authoritative; see ADR 0051 §7. The no-mixing guard stays.)
 | Concern | Source |
 |---|---|
 | User surface (`ops.stage`, `_StageBuilder`) | [`apesees.py`](../src/apeGmsh/opensees/apesees.py) `class _StageBuilder` |
-| `StageRecord` dataclass (+ SSI-2.D `fix_records` / `mass_records` / `region_records` / `recorder_specs` + SSI-2.D ext `stage_constraint_records`) | [`_internal/build.py`](../src/apeGmsh/opensees/_internal/build.py) `class StageRecord` |
-| `InitialStressRecord` dataclass | [`_internal/build.py`](../src/apeGmsh/opensees/_internal/build.py) `class InitialStressRecord` |
+| `StageRecord` dataclass (+ SSI-2.D `fix_records` / `mass_records` / `region_records` / `recorder_specs` + SSI-2.D ext `stage_constraint_records`) | [`_internal/build/records.py`](../src/apeGmsh/opensees/_internal/build/records.py) `class StageRecord` |
+| `InitialStressRecord` dataclass | [`_internal/build/records.py`](../src/apeGmsh/opensees/_internal/build/records.py) `class InitialStressRecord` |
 | Per-stage emit pipeline (single-partition) | [`apesees.py`](../src/apeGmsh/opensees/apesees.py) `BuiltModel._emit_stages_flat` |
 | Per-stage emit pipeline (MP — Phase SSI-2.C / SSI-2.D) | [`apesees.py`](../src/apeGmsh/opensees/apesees.py) `BuiltModel._emit_stages_partitioned` |
 | Per-stage region emit helpers (Phase SSI-2.D PR-C) | [`apesees.py`](../src/apeGmsh/opensees/apesees.py) `_emit_stage_regions` / `_emit_stage_regions_partitioned` |
 | Recorder claiming + skip in global emit | [`apesees.py`](../src/apeGmsh/opensees/apesees.py) `apeSees._stage_claimed_recorder_ids`, `BuiltModel._claimed_recorder_ids` |
-| Stage-scoped pattern builder + claim + skip (ADR 0051 BL-3) | [`apesees.py`](../src/apeGmsh/opensees/apesees.py) `_StageBuilder.pattern`, `apeSees._stage_claimed_pattern_ids`, `BuiltModel._claimed_pattern_ids`; per-rank `_emit_one_pattern_partitioned` / `_stage_pattern_specs_have_owned_content`; `StageRecord.pattern_specs` in [`_internal/build.py`](../src/apeGmsh/opensees/_internal/build.py) |
+| Stage-scoped pattern builder + claim + skip (ADR 0051 BL-3) | [`apesees.py`](../src/apeGmsh/opensees/apesees.py) `_StageBuilder.pattern`, `apeSees._stage_claimed_pattern_ids`, `BuiltModel._claimed_pattern_ids`; per-rank `_emit_one_pattern_partitioned` / `_stage_pattern_specs_have_owned_content`; `StageRecord.pattern_specs` in [`_internal/build/`](../src/apeGmsh/opensees/_internal/build/) |
 | Stage-bound MP-constraint claim + skip in global emit (SSI-2.D ext) | [`apesees.py`](../src/apeGmsh/opensees/apesees.py) `apeSees._stage_claimed_constraint_ids`, `BuiltModel._claimed_constraint_ids`, `_StageBuilder._claim_constraints_by_name` |
-| Stage-bound MP-constraint emit orchestrators (SSI-2.D ext) | [`_internal/build.py`](../src/apeGmsh/opensees/_internal/build.py) `emit_stage_mp_constraints`, `plan_stage_mp_constraints_partitioned` + `emit_stage_mp_constraints_partitioned` (split so the per-rank content gate and the emit share one plan — ADR 0034, amended 2026-07-28), `StageConstraintRankPlan`, `_StageConstraintAdapter`, `_ExcludeClaimedConstraints` |
-| Ghost SP synchronisation across stages (ADR 0027 INV-2, amended 2026-07-28) | [`apesees.py`](../src/apeGmsh/opensees/apesees.py) `_emit_stages_partitioned` locals `sp_ops_so_far` / `ghosts_held` / `stage_sp_delta`; [`_internal/build.py`](../src/apeGmsh/opensees/_internal/build.py) `emit_ghost_sp_ops`, `GhostSPOp`, `_emit_foreign_node_declarations` |
+| Stage-bound MP-constraint emit orchestrators (SSI-2.D ext) | [`_internal/build/constraints.py`](../src/apeGmsh/opensees/_internal/build/constraints.py) `emit_stage_mp_constraints`, `plan_stage_mp_constraints_partitioned` + `emit_stage_mp_constraints_partitioned` (split so the per-rank content gate and the emit share one plan — ADR 0034, amended 2026-07-28), `StageConstraintRankPlan`, `_StageConstraintAdapter`, `_ExcludeClaimedConstraints` |
+| Ghost SP synchronisation across stages (ADR 0027 INV-2, amended 2026-07-28) | [`apesees.py`](../src/apeGmsh/opensees/apesees.py) `_emit_stages_partitioned` locals `sp_ops_so_far` / `ghosts_held` / `stage_sp_delta`; [`_internal/build/stage_emit.py`](../src/apeGmsh/opensees/_internal/build/stage_emit.py) `emit_ghost_sp_ops`, `GhostSPOp`, `_emit_foreign_node_declarations` |
 | Stage-bound MP-constraint builder methods (SSI-2.D ext) | [`apesees.py`](../src/apeGmsh/opensees/apesees.py) `_StageBuilder.embedded` / `.tie` / `.distributing` / `.equal_dof` / `.rigid_link` / `.rigid_diaphragm` / `.kinematic_coupling` / `.node_to_surface` / `.node_to_surface_spring` |
 | `s.initial_stress(...)` PUSH builder + shared validation helper (SSI-2.D ext) | [`apesees.py`](../src/apeGmsh/opensees/apesees.py) `_StageBuilder.initial_stress`, `_build_initial_stress_record` |
 | `apeSees.h5` staged archival (#313 guard lifted by ADR 0055 Phases 2+5) | [`apesees.py`](../src/apeGmsh/opensees/apesees.py) `apeSees.h5` |
-| Ownership computation | [`_internal/build.py`](../src/apeGmsh/opensees/_internal/build.py) `compute_stage_ownership` |
-| Tag pre-allocation | [`_internal/build.py`](../src/apeGmsh/opensees/_internal/build.py) `allocate_element_tags` |
-| Initial-stress global emit | [`_internal/build.py`](../src/apeGmsh/opensees/_internal/build.py) `emit_initial_stress_global` |
-| Initial-stress `addToParameter` fan-out | [`_internal/build.py`](../src/apeGmsh/opensees/_internal/build.py) `emit_initial_stress_addtoparameter` |
+| Ownership computation | [`_internal/build/ownership.py`](../src/apeGmsh/opensees/_internal/build/ownership.py) `compute_stage_ownership` |
+| Tag pre-allocation | [`_internal/build/element_emit.py`](../src/apeGmsh/opensees/_internal/build/element_emit.py) `allocate_element_tags` |
+| Initial-stress global emit | [`_internal/build/stage_emit.py`](../src/apeGmsh/opensees/_internal/build/stage_emit.py) `emit_initial_stress_global` |
+| Initial-stress `addToParameter` fan-out | [`_internal/build/stage_emit.py`](../src/apeGmsh/opensees/_internal/build/stage_emit.py) `emit_initial_stress_addtoparameter` |
 | Tcl emitter SSI methods | [`emitter/tcl.py`](../src/apeGmsh/opensees/emitter/tcl.py) |
 | Py emitter SSI methods | [`emitter/py.py`](../src/apeGmsh/opensees/emitter/py.py) |
 | Live emitter SSI methods + raises | [`emitter/live.py`](../src/apeGmsh/opensees/emitter/live.py) |

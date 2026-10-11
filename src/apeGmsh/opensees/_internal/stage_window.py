@@ -10,7 +10,7 @@ deck exits 0 having applied none of that pattern's loads (#1334).
 The bridge knows both the stage's clock and the series at declaration,
 so :func:`warn_stage_series_outside_window` evaluates the series at the
 pseudo-time of every increment when a stage closes (it is called from
-``StageRecord.__post_init__`` in ``build.py``) and raises
+``StageRecord.__post_init__`` in ``build/``) and raises
 :class:`SeriesOutsideStageWindowWarning` when every one of those factors
 is zero.
 
@@ -57,7 +57,7 @@ from ..analysis.integrator import LadrunoLoadControl, LoadControl
 from ..time_series.time_series import Path
 
 if TYPE_CHECKING:
-    from .build import StageRecord
+    from .build.records import StageRecord
 
 
 __all__ = [

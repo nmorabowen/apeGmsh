@@ -15,8 +15,9 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from apeGmsh.opensees._internal import build as build_mod
-from apeGmsh.opensees._internal.build import BridgeError, allocate_element_tags
+from apeGmsh.opensees._internal.build import pg_expand as build_mod
+from apeGmsh.opensees._internal.build.errors import BridgeError
+from apeGmsh.opensees._internal.build.element_emit import allocate_element_tags
 from apeGmsh.opensees._internal.tag_allocator import TagAllocator
 
 from ..fixtures.fem_stub import _ElementGroupView, _ElementsStub, _NodesStub, FEMStub

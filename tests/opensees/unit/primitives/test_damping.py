@@ -17,7 +17,10 @@ from dataclasses import dataclass
 from apeGmsh.opensees import apeSees
 from apeGmsh.opensees.analysis.rayleigh import rayleigh_from_ratio
 from apeGmsh.opensees.apesees import BuiltModel
-from apeGmsh.opensees._internal.build import ModalDampingRecord, RayleighRecord
+from apeGmsh.opensees._internal.build.records import (
+    ModalDampingRecord,
+    RayleighRecord,
+)
 from apeGmsh.opensees._internal.tag_resolution import set_tag_resolver
 from apeGmsh.opensees._internal.types import Primitive, TimeSeries
 from apeGmsh.opensees.damping.damping import URD, SecStif, Uniform, URDbeta

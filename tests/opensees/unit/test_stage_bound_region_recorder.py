@@ -11,10 +11,8 @@ import pytest
 
 from apeGmsh.opensees.apesees import apeSees
 from apeGmsh.opensees.stage._builder import _StageBuilder
-from apeGmsh.opensees._internal.build import (
-    BridgeError,
-    RegionAssignmentRecord,
-)
+from apeGmsh.opensees._internal.build.errors import BridgeError
+from apeGmsh.opensees._internal.build.records import RegionAssignmentRecord
 from apeGmsh.opensees.emitter.recording import RecordingEmitter
 from apeGmsh.opensees.emitter.tcl import TclEmitter
 from apeGmsh.opensees.recorder import Element as ElementRec

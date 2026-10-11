@@ -19,7 +19,7 @@ from apeGmsh.opensees._element_capabilities import (
     _ELEM_REGISTRY,
     element_propagates_material_refusal,
 )
-from apeGmsh.opensees._internal.build import (
+from apeGmsh.opensees._internal.build.validators.materials import (
     ASDPlasticHostWarning,
     validate_asdplastic_host,
 )

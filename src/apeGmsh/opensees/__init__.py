@@ -26,10 +26,8 @@ removed in the Phase-8 teardown (ADR 0009 — no back-compat shim).
 from __future__ import annotations
 
 from .apesees import apeSees
-from ._internal.build import (
-    DetachedDiaphragmMasterWarning,
-    UnconsumedModelDefinitionWarning,
-)
+from ._internal.build.ndf import DetachedDiaphragmMasterWarning
+from ._internal.build.validators.loads import UnconsumedModelDefinitionWarning
 from ._internal.stage_window import (
     SeriesEndsMidStageWarning,
     SeriesOutsideStageWindowWarning,

@@ -941,7 +941,7 @@ DroppedAxisGuard.BEFORE_MODEL = DroppedAxisGuard(None)
 def _raise_off_plane(
     ndm: int, axis: int, ref_tag: int, ref_val: float, tag: int, val: float,
 ) -> None:
-    from .._internal.build import BridgeError
+    from .._internal.build.errors import BridgeError
 
     axes = ("x", "y", "z")
     a = axes[axis]

@@ -7,9 +7,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from .._internal.build import (
-    BridgeError,
-)
+from .._internal.build.errors import BridgeError
 
 if TYPE_CHECKING:
     from ..emitter.live import ContactInfo, LiveOpsEmitter

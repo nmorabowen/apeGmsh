@@ -279,7 +279,7 @@ class Path(TimeSeries):
         """Refuse the flags OpenSees drops on the ``time=`` route (#1363)."""
         # Lazy: ``_internal.build`` imports ``stage_window``, which imports
         # this module.
-        from .._internal.build import BridgeError
+        from .._internal.build.errors import BridgeError
 
         assert self.time is not None
         if self.start_time != 0.0:

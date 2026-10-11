@@ -21,7 +21,7 @@ from typing import Any, cast
 import pytest
 
 from apeGmsh.opensees.apesees import apeSees
-from apeGmsh.opensees._internal.build import BridgeError
+from apeGmsh.opensees._internal.build.errors import BridgeError
 from apeGmsh.opensees.emitter.recording import RecordingEmitter
 
 from tests.opensees.fixtures.fem_stub import make_two_column_frame

@@ -22,7 +22,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from apeGmsh.opensees._internal.build import node_coords_as_floats
+from apeGmsh.opensees._internal.build.ndf import node_coords_as_floats
 from apeGmsh.opensees.emitter.base import trim_coords_to_ndm
 
 

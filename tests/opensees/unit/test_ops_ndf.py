@@ -22,13 +22,15 @@ import pytest
 from apeGmsh import apeGmsh
 from apeGmsh.opensees import apeSees
 from apeGmsh.opensees.emitter import h5_reader
-from apeGmsh.opensees._internal.build import (
-    BridgeError,
+from apeGmsh.opensees._internal.build.errors import BridgeError
+from apeGmsh.opensees._internal.build.records import (
     FixRecord,
     MassRecord,
     NdfRecord,
-    fit_fix_mask,
     SupportRecord,
+)
+from apeGmsh.opensees._internal.build.ndf import (
+    fit_fix_mask,
     resolve_ndf_overlay,
     validate_constraint_master_ndf,
     validate_record_ndf_consistency,

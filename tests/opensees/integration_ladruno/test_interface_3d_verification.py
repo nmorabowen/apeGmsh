@@ -563,7 +563,7 @@ def test_up_deck_declares_the_pressure_datum_the_gate_wants(
     sealed static u-p region is singular in p and every serial solver
     factorises it through round-off, returning rc = 0 with an arbitrary
     pressure level.)"""
-    from apeGmsh.opensees._internal.build import BridgeError
+    from apeGmsh.opensees._internal.build.errors import BridgeError
 
     fem = _fem_3d(slave_ndf=3)
     ops = apeSees(fem)

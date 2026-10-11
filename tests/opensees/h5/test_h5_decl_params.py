@@ -745,7 +745,7 @@ def test_duplicate_initial_stress_name_is_refused_not_merged(tmp_path: Path) -> 
     but its own validation refuses a repeated name at build (flat, and
     across stages), so the key never has two owners: the archive is never
     reached with one to drop."""
-    from apeGmsh.opensees._internal.build import BridgeError
+    from apeGmsh.opensees._internal.build.errors import BridgeError
 
     ops = _params_frame()
     ops.initial_stress(

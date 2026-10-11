@@ -48,7 +48,7 @@ def test_constraint_tie_force_canonical_mapping():
 
 def test_apesees_tie_force_requires_live_analyze():
     from apeGmsh.opensees import apeSees
-    from apeGmsh.opensees._internal.build import BridgeError
+    from apeGmsh.opensees._internal.build.errors import BridgeError
     from tests.opensees.fixtures.fem_stub import make_two_node_beam
 
     bridge = apeSees(cast("object", make_two_node_beam()))

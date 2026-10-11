@@ -16,10 +16,7 @@ import pytest
 
 from apeGmsh.opensees.apesees import apeSees
 from apeGmsh.opensees.stage._builder import _StageBuilder
-from apeGmsh.opensees._internal.build import (
-    FixRecord,
-    MassRecord,
-)
+from apeGmsh.opensees._internal.build.records import FixRecord, MassRecord
 from apeGmsh.opensees.emitter.recording import RecordingEmitter
 from apeGmsh.opensees.emitter.tcl import TclEmitter
 

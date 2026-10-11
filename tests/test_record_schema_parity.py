@@ -336,7 +336,7 @@ def test_surface_coupling_sr_lane_mirrors_interpolation_dtype() -> None:
 
     Why this matters: a tied_contact's ``slave_records`` flow
     through the bridge as ``emitter.embeddedNode(stiffness=...)``
-    at ``src/apeGmsh/opensees/_internal/build.py:1831`` — the same
+    at ``src/apeGmsh/opensees/_internal/build/:1831`` — the same
     callsite as a standalone ``embedded`` record.  If a field is
     added to ``InterpolationRecord`` and to the top-level
     ``interpolation_payload_dtype`` but NOT mirrored into the

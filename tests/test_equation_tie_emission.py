@@ -20,7 +20,9 @@ import pytest
 from apeGmsh._kernel.defs.constraints import TieDef, TiedContactDef
 from apeGmsh._kernel.records._constraints import InterpolationRecord
 from apeGmsh._kernel.records._kinds import ConstraintKind as K
-from apeGmsh.opensees._internal.build import _emit_one_interpolation
+from apeGmsh.opensees._internal.build.constraints import (
+    _emit_one_interpolation,
+)
 from apeGmsh.opensees._internal.tag_allocator import TagAllocator
 from apeGmsh.opensees.emitter.recording import RecordingEmitter
 
@@ -396,7 +398,7 @@ def test_ladruno_projection_ic_tol_requires_project_ics():
 def test_equation_tie_enforced_in_live_solve():
     ops = pytest.importorskip("openseespy.opensees")
     from apeGmsh.opensees.emitter.live import LiveOpsEmitter
-    from apeGmsh.opensees._internal.build import _emit_equation_tie
+    from apeGmsh.opensees._internal.build.constraints import _emit_equation_tie
 
     # Construct the live emitter FIRST (it wipes on construction); its
     # ._ops is the openseespy singleton we build the model through.

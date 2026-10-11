@@ -724,7 +724,7 @@ class StageRecordRO:
     #: analysis + ``*_args`` tuples), stored as a plain dict.
     chain_attrs: "Mapping[str, Any]" = field(default_factory=dict)
     #: Declarative ``build.InitialStressRecord`` instances (typed
-    #: ``Any`` to avoid a build.py import cycle; duck-typed fields).
+    #: ``Any`` to avoid a build/ import cycle; duck-typed fields).
     initial_stress: tuple[Any, ...] = ()
     #: ``(pg, elements)`` pairs — exactly one non-None per entry.
     activate_absorbing: tuple[

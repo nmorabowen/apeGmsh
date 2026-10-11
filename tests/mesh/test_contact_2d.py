@@ -29,7 +29,7 @@ import pytest
 import gmsh
 from apeGmsh import apeGmsh
 from apeGmsh.opensees import apeSees
-from apeGmsh.opensees._internal.build import BridgeError
+from apeGmsh.opensees._internal.build.errors import BridgeError
 
 THICKNESS = 0.5
 

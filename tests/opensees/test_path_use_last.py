@@ -30,7 +30,7 @@ from apeGmsh.opensees import (
     SeriesEndsMidStageWarning,
     SeriesOutsideStageWindowWarning,
 )
-from apeGmsh.opensees._internal.build import BridgeError
+from apeGmsh.opensees._internal.build.errors import BridgeError
 from apeGmsh.opensees.apesees import apeSees
 from apeGmsh.opensees.emitter.recording import RecordingEmitter
 from apeGmsh.opensees.time_series.time_series import Path
