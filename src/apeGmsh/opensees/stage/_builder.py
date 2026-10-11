@@ -989,8 +989,12 @@ class _StageBuilder:
         Raises
         ------
         ValueError
-            If both or neither of ``pg`` / ``nodes`` is supplied, or
-            ``name`` is already a ``fix`` declaration's.
+            If not exactly one of ``pg`` / ``nodes`` / ``label`` is
+            supplied, ``label`` is empty or blank, or ``name`` is
+            already a ``fix`` declaration's.
+        BridgeError
+            If ``label`` names no label of the snapshot (the message
+            lists the labels that exist) or selects no node.
         """
         pg, nodes_tuple = _select_nodes(
             self._bridge.fem, pg=pg, nodes=nodes, label=label,
@@ -1191,7 +1195,11 @@ class _StageBuilder:
         Raises
         ------
         ValueError
-            If both or neither of ``pg`` / ``nodes`` is supplied.
+            If not exactly one of ``pg`` / ``nodes`` / ``label`` is
+            supplied, or ``label`` is empty or blank.
+        BridgeError
+            If ``label`` names no label of the snapshot (the message
+            lists the labels that exist) or selects no node.
         """
         pg, nodes_tuple = _select_nodes(
             self._bridge.fem, pg=pg, nodes=nodes, label=label,
