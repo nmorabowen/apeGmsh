@@ -143,8 +143,11 @@ def _expected_sources(path: Path) -> set[str]:
                 for key in ("recorders", "regions", "initial_stress",
                             "activate_absorbing"):
                     want |= indexed(sg, key, pre)
-                if "rayleigh" in sg:
-                    want.add(f"{pre}/rayleigh")
+                for key in ("rayleigh", "owned_element_ids", "activated_pgs",
+                            "remove_sp", "remove_element",
+                            "update_material_stage"):
+                    if key in sg and len(sg[key]):
+                        want.add(f"{pre}/{key}")
     return want
 
 
@@ -304,6 +307,11 @@ def _site_models() -> dict[str, apeSees]:
         _flat_quad_initial_stress_bridge,
         _update_then_stress_bridge,
     )
+    from tests.opensees.h5.test_h5_stages_writer import (
+        _build_kitchen_sink_bridge,
+        _make_two_quad_fem_stub,
+        build_material_stage_bridge,
+    )
     from tests.opensees.integration.test_diaphragm_master_free_dofs import (
         _bridge,
         _frame_with_master,
@@ -336,8 +344,14 @@ def _site_models() -> dict[str, apeSees]:
         "damped": damped,
         "stressed": stressed,
         "tied": tied,
-        # A stage initial stress and absorbing flip.
+        # A stage initial stress and absorbing flip; activated elements
+        # and an activated group.
         "staged_stress": _update_then_stress_bridge(),
+        # Stage removals (remove_sp, remove_element) and a stage mass.
+        "kitchen_sink": _build_kitchen_sink_bridge(),
+        # A stage material flip (update_material_stage).
+        "material_stage": build_material_stage_bridge(
+            _make_two_quad_fem_stub()),
     }
 
 
@@ -357,6 +371,18 @@ _SITE_FAMILIES = {
         r"^/opensees/stages/stage_\d{3}/initial_stress\[\d+\]$",
     "stage absorbing":
         r"^/opensees/stages/stage_\d{3}/activate_absorbing\[\d+\]$",
+    "stage activate element": r"^/opensees/stages/stage_\d{3}/owned_element_ids$",
+    "stage activate group": r"^/opensees/stages/stage_\d{3}/activated_pgs$",
+    "stage fix": r"^/opensees/stages/stage_\d{3}/bcs/fix$",
+    "stage mass": r"^/opensees/stages/stage_\d{3}/bcs/mass$",
+    "stage pattern": r"^/opensees/stages/stage_\d{3}/patterns/",
+    "stage recorder": r"^/opensees/stages/stage_\d{3}/recorders\[\d+\]$",
+    "stage remove fix": r"^/opensees/stages/stage_\d{3}/remove_sp$",
+    "stage remove element": r"^/opensees/stages/stage_\d{3}/remove_element$",
+    "stage material_stage":
+        r"^/opensees/stages/stage_\d{3}/update_material_stage$",
+    "global pattern": r"^/opensees/patterns/",
+    "global recorder": r"^/opensees/recorders\[\d+\]$",
 }
 
 
