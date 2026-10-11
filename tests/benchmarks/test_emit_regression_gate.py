@@ -251,6 +251,7 @@ def measured(tmp_path_factory, request) -> dict:
             ) or "local",
             "github_run_id": os.environ.get("GITHUB_RUN_ID"),
             "sha": os.environ.get("GITHUB_SHA"),
+            "cpu": _cpu_model(),
         }
         BASELINE_PATH.write_text(
             json.dumps(baseline, indent=2)
@@ -259,6 +260,25 @@ def measured(tmp_path_factory, request) -> dict:
         )
         print(f"\n[emit-gate] wrote baseline -> {BASELINE_PATH}")
     return out
+
+
+def _cpu_model() -> str:
+    """The CPU this run landed on, for reading the ratio (#1658).
+
+    GitHub's hosted runners are a hardware mix, and the min-of-N ratio
+    still moves by up to ~20% between CPU models. Naming the CPU on every
+    line lets a high reading be told apart from a regression.
+    """
+    try:
+        with open("/proc/cpuinfo", encoding="utf-8") as fh:
+            for row in fh:
+                if row.startswith("model name"):
+                    return row.split(":", 1)[1].strip()
+    except OSError:
+        pass
+    import platform
+
+    return platform.processor() or "unknown"
 
 
 def _report_gate_line(kind: str, got: dict, base: dict, ceiling: float) -> None:
@@ -274,7 +294,8 @@ def _report_gate_line(kind: str, got: dict, base: dict, ceiling: float) -> None:
         f"EMIT-GATE cell={kind} ratio={got['ratio']:.3f} "
         f"ceiling={ceiling:.3f} baseline={base['ratio']:.3f} "
         f"margin={margin:.3f} headroom={(1 - margin) * 100:.1f}% "
-        f"emit={got['emit_sec']:.3f}s parse={got['parse_sec']:.3f}s"
+        f"emit={got['emit_sec']:.3f}s parse={got['parse_sec']:.3f}s "
+        f"cpu=\"{_cpu_model()}\""
     )
     print(f"\n{line}")
     summary = os.environ.get("GITHUB_STEP_SUMMARY")
