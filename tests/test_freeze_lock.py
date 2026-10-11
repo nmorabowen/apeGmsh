@@ -12,13 +12,14 @@ Never edit ``FROZEN`` or ``FREEZE_POINT_DIGEST`` to make room.
 """
 from __future__ import annotations
 
-import ast
 import hashlib
 import importlib.util
 import json
 import re
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
+from unittest import mock
 
 import pytest
 
@@ -26,7 +27,6 @@ from tests.freeze_census import ADMITTED, FROZEN
 
 ROOT = Path(__file__).resolve().parents[1]
 DECISIONS = ROOT / "architecture" / "decisions"
-MCP_FILE = ROOT / "src" / "apeGmsh" / "studio" / "mcp.py"
 
 #: sha256 of ``FROZEN`` at the freeze point (see ``_digest``).
 FREEZE_POINT_DIGEST = "aab89c40784a30bd7e55ff980381675c26870052d95e8a5117521f37b45bf307"
@@ -49,18 +49,43 @@ def _constraint_kinds() -> set[str]:
             if k.isupper() and isinstance(v, str)}
 
 
+class _RecordingServer:
+    """Stands in for ``FastMCP``: records every tool ``build_server`` registers.
+
+    It covers ``@mcp.tool()``, ``mcp.tool()(f)``, ``mcp.tool(f)`` and
+    ``mcp.add_tool(f)``, under the function's name or ``name=``. Any other
+    server attribute raises ``AttributeError``, so a new way of registering
+    fails the lock instead of slipping past it.
+    """
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        self.tools: list[str] = []
+
+    def tool(self, name_or_fn: Any = None, *args: Any,
+             name: str | None = None, **kwargs: Any) -> Any:
+        if callable(name_or_fn):
+            return self._record(name_or_fn, name)
+        return lambda fn: self._record(fn, name or name_or_fn)
+
+    def add_tool(self, fn: Any, *args: Any, name: str | None = None,
+                 **kwargs: Any) -> None:
+        self._record(fn, name or (args[0] if args else None))
+
+    def _record(self, fn: Any, name: str | None) -> Any:
+        self.tools.append(name or fn.__name__)
+        return fn
+
+
 def _mcp_tools() -> set[str]:
-    # AST, not import: the MCP SDK is optional and absent in lock-tests.
-    tree = ast.parse(MCP_FILE.read_text(encoding="utf-8"), filename=str(MCP_FILE))
-    names: set[str] = set()
-    for node in ast.walk(tree):
-        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            continue
-        for dec in node.decorator_list:
-            func = dec.func if isinstance(dec, ast.Call) else dec
-            if isinstance(func, ast.Attribute) and func.attr == "tool":
-                names.add(node.name)
-    return names
+    # Build the real server against a recording stub: the MCP SDK is
+    # optional and absent in lock-tests, and reading decorators off the
+    # AST misses a tool registered by a direct call or an alias.
+    from apeGmsh.studio import mcp
+
+    with mock.patch.object(mcp, "_require_fastmcp", lambda: _RecordingServer):
+        server = mcp.build_server()
+    assert isinstance(server, _RecordingServer)
+    return set(server.tools)
 
 
 def _habitat_tools() -> set[str]:
