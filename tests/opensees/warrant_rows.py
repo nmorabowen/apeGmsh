@@ -81,17 +81,18 @@ ROWS: tuple[WarrantRow, ...] = (
 
 #: The fork members that predate the freeze (ADR 0121 D4, ruling 5): the
 #: live emitter's ``_FORK_ONLY_ELEMENTS`` and ``_FORK_ONLY_INTEGRATORS``,
-#: and the ``Ladruno*`` material classes of ``material/uniaxial.py`` and
-#: ``material/nd.py``; 38 at the freeze point. They stay Inventory with no
-#: deadline (X4). Invariant 9: any other fork member ships with a
-#: ``refused`` warrant row. Never add a name here; remove one when the
-#: member goes.
+#: and the material classes whose docstring carries the fork command header
+#: or a 33xxx tag (``test_warrant_rows.py::is_fork_material``); 42 at the
+#: freeze point. They stay Inventory with no deadline (X4). Invariant 9: any
+#: other fork member ships with a ``refused`` warrant row. Never add a name
+#: here; remove one when the member goes.
 GRANDFATHERED_FORK_MEMBERS = frozenset({
-    # Ladruno* material classes
+    # fork material classes
     "LadrunoBondSlip", "LadrunoCohesiveHinge", "LadrunoCohesiveHingeBiaxial",
     "LadrunoConcrete3D", "LadrunoJ2", "LadrunoJ2Finite", "LadrunoRCConcrete",
     "LadrunoRCFiniteStrain", "LadrunoRebarBuckling", "LadrunoSANISAND",
-    "LadrunoUniaxialJ2",
+    "LadrunoUniaxialJ2", "LogStrain", "LogStrain2D", "InitDefGrad",
+    "StagedStrain",
     # _FORK_ONLY_ELEMENTS
     "BezierTri6", "BezierTet10", "LadrunoEmbeddedRebar", "LadrunoBrick",
     "LadrunoBrick20", "LadrunoLST", "LadrunoQuad", "LadrunoCST", "LadrunoUP",
@@ -107,7 +108,7 @@ GRANDFATHERED_FORK_MEMBERS = frozenset({
 
 #: ``len(GRANDFATHERED_FORK_MEMBERS)`` at the freeze point (PR-2 #1691, 1d515405);
 #: the X4 handoff. The set may shrink, never grow past it.
-FREEZE_POINT_FORK_MEMBERS = 38
+FREEZE_POINT_FORK_MEMBERS = 42
 
 
 def lane_from_env(environ: Mapping[str, str]) -> str | None:

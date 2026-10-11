@@ -14,6 +14,6 @@ the terminal summary reports as not green.
 `tests/opensees/unit/test_warrant_rows.py` locks the rows (node ids, lane
 markers, a refused row's `pytest.raises` naming the fork, roster
 cross-references) and invariant 9: a fork member (fork-only element or
-integrator, or `Ladruno*` material) added after the freeze needs a refused
-row. The 38 fork members at the freeze point are grandfathered as Inventory
-(ruling 5, X4).
+integrator, or a material whose docstring carries the fork command header
+or a 33xxx tag) added after the freeze needs a refused row. The 42 fork
+members at the freeze point are grandfathered as Inventory (ruling 5, X4).

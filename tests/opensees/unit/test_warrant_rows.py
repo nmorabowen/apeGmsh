@@ -12,7 +12,8 @@ checks, without importing openseespy:
   ``match`` names the fork; an honest row's stock test asserts;
 * a row that cites a roster id is cited back by that roster row;
 * invariant 9: every fork member (the live emitter's ``_FORK_ONLY_*`` sets
-  and the ``Ladruno*`` materials) is grandfathered or has a refused row,
+  and the materials whose docstring carries the fork command header or a
+  33xxx tag) is grandfathered or has a refused row,
   and the grandfathered set never grows past its freeze-point count;
 * the lane rule itself: a row test that skips in its lane fails it, and a
   ``ladruno_mkl`` skip counts for the fork lane but never for the member.
@@ -143,21 +144,51 @@ def test_roster_row_cites_both_tests(row: wr.WarrantRow) -> None:
         assert nodeid in cited[row.roster], f"roster {row.roster} must cite {nodeid}"
 
 
+#: The two structural signals of a fork material in a class docstring: the
+#: command header the fork classes carry, and a tag in the fork's private
+#: 33xxx band. ``PlaneStressRebar`` names the fork only in passing, under a
+#: "stock OpenSees" header, and stays out.
+FORK_COMMAND_RE = re.compile(r"OpenSees command \(Ladruno fork[,)]")
+FORK_TAG_RE = re.compile(r"``(?:ND|MAT)_TAG`` \*\*33\d{3}\*\*")
+
+
+def is_fork_material(node: ast.ClassDef) -> bool:
+    """A public, non-warning class whose docstring carries a fork signal."""
+    doc = ast.get_docstring(node) or ""
+    return (not node.name.startswith("_")
+            and not any("Warning" in ast.unparse(b) for b in node.bases)
+            and bool(FORK_COMMAND_RE.search(doc) or FORK_TAG_RE.search(doc)))
+
+
 def fork_members() -> set[str]:
     """Fork elements and integrators (the live gate sets) and materials.
 
-    A fork material is a ``Ladruno*`` class in ``material/uniaxial.py`` or
-    ``material/nd.py`` that is not a warning; read on the AST.
+    A fork material is a class in ``src/apeGmsh/opensees/material/`` that
+    :func:`is_fork_material` accepts; read on the AST, never by name.
     """
     from apeGmsh.opensees.emitter import live
     members = set(live._FORK_ONLY_ELEMENTS) | set(live._FORK_ONLY_INTEGRATORS)
-    for name in ("uniaxial", "nd"):
-        path = ROOT / "src" / "apeGmsh" / "opensees" / "material" / f"{name}.py"
+    for path in sorted((ROOT / "src" / "apeGmsh" / "opensees" / "material").glob("*.py")):
         for node in ast.parse(path.read_text(encoding="utf-8")).body:
-            if (isinstance(node, ast.ClassDef) and node.name.startswith("Ladruno")
-                    and not any("Warning" in ast.unparse(b) for b in node.bases)):
+            if isinstance(node, ast.ClassDef) and is_fork_material(node):
                 members.add(node.name)
     return members
+
+
+def test_the_classifier_reads_structure_not_names() -> None:
+    def cls(src: str) -> ast.ClassDef:
+        node = ast.parse(src).body[0]
+        assert isinstance(node, ast.ClassDef)
+        return node
+    assert is_fork_material(cls(
+        'class FooFork(NDMaterial):\n    """``nDMaterial Foo``.\n\n'
+        '    ``ND_TAG`` **33099**\n    """'))
+    assert is_fork_material(cls(
+        'class Bar(NDMaterial):\n    """OpenSees command (Ladruno fork)::"""'))
+    assert not is_fork_material(cls(
+        'class LadrunoLookalike(NDMaterial):\n    """Tcl signature (stock OpenSees)."""'))
+    assert not is_fork_material(cls(
+        'class LadrunoW(UserWarning):\n    """OpenSees command (Ladruno fork)::"""'))
 
 
 def test_fork_members_are_grandfathered_or_warranted() -> None:
