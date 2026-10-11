@@ -53,9 +53,10 @@ The rules:
 
 The build's minting helpers are its planners (:data:`PLANNERS`, which
 ``tag_plan.plan_tags`` runs) and exactly three standalone replay entry
-points (:data:`REPLAY_ENTRIES`), one per replay the deck archive cannot
-feed yet: the step-8b reinforce ties, and the global and staged
-initial-stress and absorbing parameter tags. ``compose.py`` reaches them
+points (:data:`REPLAY_ENTRIES`): the step-8b reinforce ties, which no
+archive carries yet, and the global and staged initial-stress and
+absorbing parameter tags, which an archive stores from opensees 2.27.0, so
+those two serve pre-2.27 archives only. ``compose.py`` reaches them
 under the waivers of ``tag_law_ledger.txt``. That ledger is shrink-only,
 each waiver is commented at its site, and each one is pinned by
 ``test_tag_law_replay_pins.py``. ``src/`` constructs a ``TagAllocator``
@@ -134,8 +135,9 @@ PLANNERS = frozenset({
 })
 
 #: The build's standalone replay entry points: the only writers that
-#: number tags from an allocator of their own, for the deck replay the
-#: archive cannot feed yet. Each is named by a ledger waiver.
+#: number tags from an allocator of their own: the reinforce ties, which no
+#: archive carries yet, and the parameter tags of a pre-2.27 archive. Each is
+#: named by a ledger waiver.
 REPLAY_ENTRIES = frozenset({
     "replay_activate_absorbing",
     "replay_initial_stress_global",

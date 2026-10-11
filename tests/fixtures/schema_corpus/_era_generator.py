@@ -186,10 +186,45 @@ def opensees_frame(path: str, *, ndm: int = 3) -> "tuple[object, dict]":
     ops.fix(pg="Base", dofs=fix)
     ops.mass(pg="Top", values=mass)
     ts = ops.timeSeries.Linear()
-    with ops.pattern.Plain(series=ts) as pat:
-        pat.load(pg="Top", forces=forces)
+    if _opensees_minor() < (2, 27):
+        with ops.pattern.Plain(series=ts) as pat:
+            pat.load(pg="Top", forces=forces)
+    else:
+        # opensees 2.27.0 (K1-8): one stage that pins the per-record
+        # ``param_tags`` and the two formerly refused verbs, carrying the
+        # load pattern (a staged model scopes every pattern to a stage).
+        # Earlier eras' writers refuse these verbs, so the block runs at
+        # 2.27+ only and their files are unchanged.
+        notes["param_tags_stage"] = True
+        with ops.stage(name="params") as s:
+            with s.pattern(series=ts) as pat:
+                pat.load(pg="Top", forces=forces)
+            s.initial_stress(
+                name="insitu", pg="Cols",
+                sigma_xx=-1.0, sigma_yy=-1.0, sigma_zz=-1.0, ramp_steps=2)
+            s.activate_absorbing(pg="Beam")
+            s.update_parameter("E", 2.1e11, pg="Cols")
+            s.zero_velocities(nodes=None)
+            s.analysis(
+                test=ops.test.NormDispIncr(tol=1e-6, max_iter=10),
+                algorithm=ops.algorithm.Newton(),
+                integrator=ops.integrator.LoadControl(dlam=0.5),
+                constraints=ops.constraints.Plain(),
+                numberer=ops.numberer.RCM(),
+                system=ops.system.UmfPack(),
+                analysis=ops.analysis.Static(),
+            )
+            s.run(n_increments=2)
     ops.h5(path)
     return fem, notes
+
+
+def _opensees_minor() -> "tuple[int, int]":
+    """The (major, minor) the era's opensees writer stamps."""
+    from apeGmsh.opensees.emitter.h5 import SCHEMA_VERSION
+
+    major, minor = (int(p) for p in SCHEMA_VERSION.split(".")[:2])
+    return major, minor
 
 
 def assembly_stack(path: str) -> dict:

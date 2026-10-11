@@ -733,14 +733,22 @@ def _write_archived_flips(
     ele_tags = []
     for rec, rows in zip(records, param_tags):
         pids = {int(pid) for _rank, pid in rows}
-        if len(pids) != 1:
-            raise ValueError(
-                f"replay: {where}: a record's param_tags rows {tuple(rows)!r} "
-                "do not name one parameter tag.")
         ops_tags = (
             absorbing_ele_tags(rec, fem, fem_eid_to_ops_tag)
             if verb == "flip_element_stage"
             else update_parameter_ele_tags(rec, fem, fem_eid_to_ops_tag))
+        if not rows:
+            # A record that wrote no flip (a rewritten pre-2.27 record
+            # whose target holds no element): it must still hold none.
+            if ops_tags:
+                raise ValueError(
+                    f"replay: {where}: a record stores no parameter tag but "
+                    f"resolves {len(ops_tags)} element(s) on this mesh.")
+            continue
+        if len(pids) != 1:
+            raise ValueError(
+                f"replay: {where}: a record's param_tags rows {tuple(rows)!r} "
+                "do not name one parameter tag.")
         if not ops_tags:
             raise ValueError(
                 f"replay: {where}: a record stores parameter tag "

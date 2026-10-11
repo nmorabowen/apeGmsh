@@ -494,3 +494,73 @@ def test_the_absorbing_rows_dtype_is_int64(tmp_path: Path) -> None:
         ds = f["opensees/stages/stage_000/activate_absorbing/absorb_000/"
                "param_tags"]
         assert ds.dtype == np.int64 and ds.shape == (1, 2)
+
+
+# ---------------------------------------------------------------------------
+# 6. A pre-2.27 archive with an empty-target absorbing flip still re-saves
+# ---------------------------------------------------------------------------
+
+
+def _absorb_and_stress_bridge() -> apeSees:
+    """One stage: a stage initial stress and an absorbing flip on ``Fill``."""
+    ops = apeSees(build_two_quad_fem(), default_orientation=None)
+    ops.model(ndm=2, ndf=2)
+    mat = ops.nDMaterial.ElasticIsotropic(E=1e6, nu=0.3, rho=0.0)
+    ops.element.FourNodeQuad(pg="Rock", thickness=1.0, material=mat)
+    ops.element.FourNodeQuad(pg="Fill", thickness=1.0, material=mat)
+    ops.fix(pg="Base", dofs=(1, 1))
+    with ops.stage(name="shake") as s:
+        s.initial_stress(
+            name="insitu", pg="Rock",
+            sigma_xx=-1.0e3, sigma_yy=-1.0e3, sigma_zz=-2.0e3, ramp_steps=4,
+        )
+        s.activate_absorbing(pg="Fill")
+        s.analysis(**_chain(ops))
+        s.run(n_increments=2, dt=0.01)
+    return ops
+
+
+def _prepend_empty_absorbing(path: Path) -> None:
+    """Give the archive's stage an ``s.activate_absorbing(elements=[])``
+    record ahead of its ``pg="Fill"`` one, as a pre-2.27 writer archived
+    it (an empty ``elements`` dataset; the declaration rows column grows
+    with it, sharing the existing row)."""
+    with h5py.File(path, "r+") as f:
+        absorb = f["opensees/stages/stage_000/activate_absorbing"]
+        absorb.move("absorb_000", "absorb_001")
+        g = absorb.create_group("absorb_000")
+        g.create_dataset("elements", data=np.zeros(0, dtype=np.int64))
+        key = "opensees/decls/rows/stages/stage_000/activate_absorbing"
+        if key in f:
+            col = f[key][()]
+            del f[key]
+            f.create_dataset(key, data=np.concatenate([col[:1], col]))
+
+
+def test_pre_2_27_empty_target_absorbing_archive_re_saves(
+    tmp_path: Path,
+) -> None:
+    """Main archived an empty-target flip record; such an old file must
+    keep re-saving (the T ruling on #1465). The rewrite stores an empty run
+    for that record and the flip's tag for the other, and its deck equals
+    the old archive's own replay and the bridge's deck."""
+    bridge = _strip_comments(_bridge_deck(_absorb_and_stress_bridge, tmp_path))
+    src = _archive(_absorb_and_stress_bridge, tmp_path)
+    downgrade_to_pre_param_tags(src)
+    _prepend_empty_absorbing(src)
+    old = OpenSeesModel.from_h5(str(src))
+    assert [e for _pg, e in old.stages()[0].activate_absorbing] == [(), None]
+    old_deck = _strip_comments(old.build("tcl"))
+    assert old_deck == bridge
+
+    out = tmp_path / "rewrite.h5"
+    old.to_h5(str(out))
+    with h5py.File(out) as f:
+        absorb = f["opensees/stages/stage_000/activate_absorbing"]
+        assert absorb["absorb_000/param_tags"].shape == (0, 2)
+        assert absorb["absorb_001/param_tags"][:].tolist() == [[-1, 4]]
+        assert f["opensees/stages/stage_000/initial_stress/stress_000"].attrs[
+            "param_tags"].tolist() == [1, 2, 3]
+    new = OpenSeesModel.from_h5(str(out))
+    assert new.stages()[0].absorbing_param_tags == ((), ((-1, 4),))
+    assert _strip_comments(new.build("tcl")) == bridge

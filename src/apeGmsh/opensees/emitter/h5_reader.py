@@ -2831,14 +2831,16 @@ def _param_rows(
 ) -> "tuple[tuple[tuple[int, int], ...], ...]":
     """The ``param_tags`` ``(rank, pid)`` rows of each flip or update
     group, in order; ``()`` when none carries them. Some but not all, or
-    rows naming more than one tag, refuses."""
+    rows naming more than one tag, refuses. A zero-row run is a record
+    that wrote no flip (a rewritten pre-2.27 record whose target holds no
+    element); the replay checks it still resolves none."""
     out: "list[tuple[tuple[int, int], ...]]" = []
     for name, g in groups:
         if "param_tags" not in g:
             continue
         data = g["param_tags"][:]
         rows = tuple((int(r[0]), int(r[1])) for r in data)
-        if not rows or len({pid for _r, pid in rows}) != 1:
+        if rows and len({pid for _r, pid in rows}) != 1:
             raise MalformedH5Error(
                 f"{where}/{name}/param_tags rows {rows!r} do not name one "
                 "parameter tag.")

@@ -1026,7 +1026,13 @@ def _with_param_rows(
 ) -> "list[tuple[Any, tuple[tuple[int, int], ...]]]":
     """Pair each flip or update record with its stored ``(rank, pid)``
     rows; a record without its rows refuses (a 2.27.0 archive never
-    leaves its replay a tag to mint)."""
+    leaves its replay a tag to mint).
+
+    An empty run (no row) is a record that wrote no flip: the rewrite of a
+    pre-2.27 archive whose record targets no element. The authoring path
+    never makes one, since :func:`_attribute_param_calls` refuses such a
+    record first; the replay checks that the record still resolves no
+    element."""
     if len(param_tags) != len(records):
         raise RuntimeError(
             f"H5Emitter._write_stages: stage {stage!r} holds "
@@ -1035,7 +1041,7 @@ def _with_param_rows(
             "(schema 2.27.0)."
         )
     for rows in param_tags:
-        if not rows or len({pid for _rank, pid in rows}) != 1:
+        if rows and len({pid for _rank, pid in rows}) != 1:
             raise RuntimeError(
                 f"H5Emitter._write_stages: stage {stage!r}: a {verb} "
                 f"record's param_tags rows {tuple(rows)!r} do not name one "

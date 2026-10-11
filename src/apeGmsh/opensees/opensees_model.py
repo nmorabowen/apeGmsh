@@ -1568,19 +1568,43 @@ class OpenSeesModel:
                     f"wrote no ramp for initial stress {missing}.")
             return tuple(held[r.name] for r in records)
 
+        # The replay writes a flip for each record that resolves an element,
+        # in record order, and none for one whose target is empty (allowed
+        # before 2.27.0): such a record keeps an empty run of rows.
+        from ._internal.build import (
+            ActivateAbsorbingRecord,
+            FemToOpsTagMap,
+            absorbing_ele_tags,
+        )
+
+        eid_to_tag = FemToOpsTagMap.from_pairs(
+            (int(e.fem_eid), int(e.tag))
+            for e in self._elements if int(e.fem_eid) >= 0)
         out = []
         for k, st in enumerate(stages):
-            pids = flips.get(k, [])
-            if len(pids) != len(st.activate_absorbing):
+            pids = iter(flips.get(k, []))
+            rows: "list[tuple[tuple[int, int], ...]]" = []
+            for pg, els in st.activate_absorbing:
+                rec = ActivateAbsorbingRecord(pg=pg, elements=els)
+                if not absorbing_ele_tags(rec, self._fem, eid_to_tag):
+                    rows.append(())
+                    continue
+                pid = next(pids, None)
+                if pid is None:
+                    raise RuntimeError(
+                        f"OpenSeesModel.to_h5: stage {st.name!r} of this "
+                        "pre-2.27 archive: its replay wrote fewer absorbing "
+                        "flips than its records address.")
+                rows.append(((-1, pid),))
+            if next(pids, None) is not None:
                 raise RuntimeError(
                     f"OpenSeesModel.to_h5: stage {st.name!r} of this pre-2.27 "
-                    f"archive holds {len(st.activate_absorbing)} absorbing "
-                    f"flip record(s) but its replay wrote {len(pids)} flips; "
-                    "a 2.27.0 archive stores one tag per record.")
+                    "archive: its replay wrote more absorbing flips than its "
+                    "records address.")
             out.append(dataclasses.replace(
                 st,
                 initial_stress_param_tags=ramp_tags(st.initial_stress, k),
-                absorbing_param_tags=tuple(((-1, pid),) for pid in pids),
+                absorbing_param_tags=tuple(rows),
             ))
         return ramp_tags(self._initial_stress, -1), tuple(out)
 

@@ -48,4 +48,7 @@ has no earlier hash to change.
 element has no parameter tag. The archive could not tell which record each
 of the others belongs to, so `ops.h5()` now refuses the stage. The message
 names the stage, the verb and the records' targets. The Tcl and openseespy
-decks are unaffected.
+decks are unaffected. The refusal covers authoring only: a pre-2.27 archive
+that already holds such a record still re-saves through `to_h5`, storing an
+empty `param_tags` run (0 rows) for it, and its replay checks that the
+record still resolves no element.
