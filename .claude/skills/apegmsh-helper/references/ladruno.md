@@ -255,7 +255,7 @@ MEASURED to propagate a material refusal — `LadrunoBrick` /
 ADR-94 B2: `Brick::update()` returns 0 regardless, measured 20/20
 "success" on a deck `LadrunoBrick` refuses 0/20); the build warns
 `ASDPlasticHostWarning` once per deck
-(`_internal/build.py::validate_asdplastic_host`, keyed on the measured
+(`_internal/build/validators/materials.py::validate_asdplastic_host`, keyed on the measured
 per-element flag, not on element names). A vanilla-host deck stays
 legal — it was the SSI-1 default — it just means the fail-loud contract
 never reaches it.

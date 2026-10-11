@@ -433,7 +433,7 @@ decoupled node only, state it explicitly:
 ops.ndf(target, *, ndf: int)   # target = g.decouple_node handle OR int tag
                                # fails loud on a mesh / element-touched node
 ```
-`# src/apeGmsh/opensees/apesees.py (apeSees.ndf); build.py (resolve_ndf_overlay, G1–G3)`
+`# src/apeGmsh/opensees/apesees.py (apeSees.ndf); build/ (resolve_ndf_overlay, G1–G3)`
 
 ## `g.sections` — section-geometry builder (`SectionsBuilder`)
 
@@ -777,7 +777,7 @@ g.constraints.interface(
     name="RockLiner",                                  # the handle for s.interface(name=)
 )
 ```
-`# src/apeGmsh/core/ConstraintsComposite.py:610 (interface); _kernel/resolvers/_interface_resolver.py; opensees/_internal/build.py (emit_interfaces)`
+`# src/apeGmsh/core/ConstraintsComposite.py:610 (interface); _kernel/resolvers/_interface_resolver.py; opensees/_internal/build/ (emit_interfaces)`
 
 ## `g.loads` — load patterns & definitions
 
