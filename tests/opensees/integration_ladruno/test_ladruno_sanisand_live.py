@@ -55,7 +55,6 @@ run — but such builds fail the probe anyway.
 """
 from __future__ import annotations
 
-import sys
 from collections.abc import Callable
 
 import numpy as np
@@ -191,6 +190,15 @@ def _make_ladruno_pinned(ops: apeSees):
     CONSISTENT tangent (2) and :class:`ManzariDafalias` to vanilla's
     ELASTIC one (0), so leaving it out would A/B two different code
     paths and I1 would no longer be testing what it says it tests.
+
+    ``flip_alpha_in="vanilla"`` is part of the pin for the same reason.
+    The fork's default since WP-112 (fork ``25136af9c``, #849) is
+    ``init``: it sets ``alpha_in := alpha`` at the stage flip, where
+    ``ManzariDafalias`` leaves ``alpha_in`` to its own loading-reversal
+    sign test.  That is an intended default, not a defect (#1523), and it
+    moves the I1 settlement by about 2e-7 relative; the effect test I5
+    asserts it.  ``flip_alpha_in`` defaults to ``None``, which omits the
+    flag and so gets the fork's ``init``.
     """
     return ops.nDMaterial.LadrunoSANISAND(
         **_GORINI,
@@ -198,6 +206,19 @@ def _make_ladruno_pinned(ops: apeSees):
         p_residual=_VANILLA_P_RESIDUAL,
         p_min=_VANILLA_P_MIN,
         honor_tol_r=False,
+        flip_alpha_in="vanilla",
+    )
+
+
+def _make_ladruno_pinned_init(ops: apeSees):
+    """The I1 pin with ONE change: ``-flipAlphaIn init`` named explicitly."""
+    return ops.nDMaterial.LadrunoSANISAND(
+        **_GORINI,
+        tan_type=0,
+        p_residual=_VANILLA_P_RESIDUAL,
+        p_min=_VANILLA_P_MIN,
+        honor_tol_r=False,
+        flip_alpha_in="init",
     )
 
 
@@ -224,6 +245,8 @@ def _triaxial_run(
     dq: float = 100.0,
     n_confine: int = 10,
     n_dev: int = 40,
+    n_dev_stage0: int = 0,
+    probe: dict[str, np.ndarray] | None = None,
 ) -> float:
     """The §4.2 ordering on a NON-proportional path: isotropic confine
     (η = 0 — the safest possible stage-0 leg), flip, triaxial deviatoric
@@ -235,6 +258,13 @@ def _triaxial_run(
     forces (a corner of a unit bilinear face carries A/4); the smooth
     rigid base reacts the sixth face.  3-2-1 in-plane supports so the
     confinement stays statically determinate and exactly homogeneous.
+
+    ``n_dev_stage0 > 0`` moves the flip INTO the deviatoric leg: the first
+    ``n_dev_stage0`` of the ``n_dev`` steps run in stage 0, so the flip
+    happens at a sheared state (I5).  ``probe``, when given, receives the
+    ``alpha`` of every Gauss point at the flip (``alpha_flip``) and the
+    ``alpha`` / ``alpha_in`` of every Gauss point at the end
+    (``alpha_end`` / ``alpha_in_end``), each shaped ``(8, 6)``.
     """
     coords = _node_coords(fem)
     bottom = _plane(fem, 2, 0.0)
@@ -277,10 +307,25 @@ def _triaxial_run(
 
     em = LiveOpsEmitter(wipe=True)
     ops.build().emit(em)
+    (etag,) = em.ops.getEleTags()
+
+    def every_gp(what: str) -> np.ndarray:
+        return np.asarray([
+            em.ops.eleResponse(etag, "material", gp, what)
+            for gp in range(1, 9)
+        ], float)
+
     assert em.analyze(steps=n_confine) == 0, "isotropic confinement diverged"
+    if n_dev_stage0:
+        assert em.analyze(steps=n_dev_stage0) == 0, "stage-0 shear diverged"
+    if probe is not None:
+        probe["alpha_flip"] = every_gp("alpha")
     if flip:
         em.update_material_stage(ops.tag_for(sand), 1)
-    assert em.analyze(steps=n_dev) == 0, "deviatoric leg diverged"
+    assert em.analyze(steps=n_dev - n_dev_stage0) == 0, "deviatoric leg diverged"
+    if probe is not None:
+        probe["alpha_end"] = every_gp("alpha")
+        probe["alpha_in_end"] = every_gp("alpha_in")
     return float(np.mean([em.ops.nodeDisp(int(n), 3) for n in top]))
 
 
@@ -381,11 +426,6 @@ def _naive_uniaxial_run(
 
 
 @pytest.mark.live
-@pytest.mark.xfail(
-    sys.platform.startswith("linux"),
-    reason="Linux fork build differs ~4e-10 from ManzariDafalias; F3 roster #1523",
-    strict=True,
-)
 def test_i1_pinned_ladruno_sanisand_reproduces_manzari_bit_identically() -> None:
     _require_ladruno_sanisand()
     fem = _single_hex_fem()
