@@ -556,3 +556,95 @@ def test_i4_proportional_ramp_at_zero_p_residual_freezes() -> None:
     assert triax_flipped != pytest.approx(triax_elastic, rel=1e-6), (
         "the rotating stress path should have yielded"
     )
+
+
+# ---------------------------------------------------------------------------
+# I5 — the effect of the fork's -flipAlphaIn init default (WP-112, #1523)
+# ---------------------------------------------------------------------------
+
+#: Stage-0 steps of the 40-step deviatoric leg in I5: the flip lands at
+#: ``q = dq/2 = 50`` kPa on a ``p_c = 100`` kPa confinement, so the
+#: back-stress ratio at the flip is ``|alpha| ~ sqrt(2/3)·q/p``, about 0.35,
+#: not round-off.
+_I5_DEV_STAGE0 = 20
+
+
+@pytest.mark.live
+def test_i5_flip_alpha_in_init_resets_alpha_in_where_vanilla_keeps_it() -> None:
+    """``-flipAlphaIn init`` against ``vanilla``, flipped at a sheared state.
+
+    The two rules (fork ``25136af9c``, ``LadrunoSANISAND::
+    ladrunoRunStageFlipOnce``; ``ManzariDafalias::integrate``):
+
+    * ``vanilla`` leaves ``alpha_in`` to the loading-reversal test, which
+      resets ``alpha_in := alpha_n`` only when
+      ``(alpha_n - alpha_in_n):Ce:d_eps < 0``.  On this monotone path
+      (isotropic confinement, then a ``q`` ramp that never reverses) no
+      product is clearly negative, so ``alpha_in`` keeps its start value:
+      zero, or a round-off ``alpha`` picked up on the isotropic leg, where
+      ``|alpha|`` is about 1e-16.
+    * ``init`` sets ``alpha_in := alpha_n`` at the flip.  After that the
+      first product is exactly 0 and every later one is positive, so
+      neither resets, and ``alpha_in`` ends equal to the flip's ``alpha``
+      bit for bit.
+
+    The flip happens at ``|alpha| ~ 0.35``, so the two answers differ by
+    many orders of magnitude and no round-off sign decides either one.
+    (The F3-d proposal compared the modes at an isotropic flip, where
+    ``|alpha| ~ 3e-16`` and the vanilla branch is a round-off sign that
+    differs between MSVC and Linux; it was rejected for that reason.)
+    The plastic modulus ``h = b0 / ((alpha - alpha_in):n)`` then predicts
+    the response: under ``init`` the denominator starts at zero
+    (``h = 1e10``), under ``vanilla`` at ``alpha:n ~ |alpha|``, so the
+    ``init`` run is stiffer and settles less over the post-flip leg.
+    """
+    _require_ladruno_sanisand()
+    fem = _single_hex_fem()
+
+    vanilla: dict[str, np.ndarray] = {}
+    uz_vanilla = _triaxial_run(
+        fem, _make_ladruno_pinned, n_dev_stage0=_I5_DEV_STAGE0, probe=vanilla,
+    )
+    init: dict[str, np.ndarray] = {}
+    uz_init = _triaxial_run(
+        fem, _make_ladruno_pinned_init, n_dev_stage0=_I5_DEV_STAGE0, probe=init,
+    )
+
+    # Same deck up to the flip: stage 0 runs one code path in both modes.
+    assert np.array_equal(init["alpha_flip"], vanilla["alpha_flip"]), (
+        "the legs differ before the flip; the A/B no longer isolates "
+        "-flipAlphaIn"
+    )
+    alpha_flip = init["alpha_flip"]
+    norms = np.linalg.norm(alpha_flip, axis=1)
+    # Non-vacuity: the flip is at a sheared state, far from round-off.
+    assert np.all(norms > 0.1), (
+        f"|alpha| at the flip is {norms}; the deck no longer shears "
+        "before the flip"
+    )
+
+    # init: alpha_in is the flip's alpha, exactly, at every Gauss point.
+    assert np.array_equal(init["alpha_in_end"], alpha_flip), (
+        "under -flipAlphaIn init, alpha_in should equal alpha at the flip "
+        f"bit for bit; max gap "
+        f"{np.abs(init['alpha_in_end'] - alpha_flip).max()}"
+    )
+    # vanilla: alpha_in never left its start value (zero, up to the
+    # isotropic leg's round-off).
+    assert np.abs(vanilla["alpha_in_end"]).max() < 1e-12, (
+        "under -flipAlphaIn vanilla, alpha_in should keep its pre-flip "
+        "value on a monotone path; got max |alpha_in| = "
+        f"{np.abs(vanilla['alpha_in_end']).max()}"
+    )
+
+    # The response: init's larger plastic modulus settles less.
+    assert uz_init < 0.0 and uz_vanilla < 0.0
+    assert abs(uz_init) < abs(uz_vanilla), (
+        "init should be stiffer than vanilla after the flip: "
+        f"uz_init={uz_init!r}, uz_vanilla={uz_vanilla!r}"
+    )
+    print(
+        f"I5: min|alpha_flip|={norms.min():.6g}, uz_init={uz_init!r}, "
+        f"uz_vanilla={uz_vanilla!r}, "
+        f"rel={(uz_vanilla - uz_init) / uz_vanilla:.6g}"
+    )
