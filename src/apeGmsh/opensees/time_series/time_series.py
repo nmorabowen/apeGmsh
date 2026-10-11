@@ -208,7 +208,7 @@ class Path(TimeSeries):
     ``-useLast`` and holds the last value instead.
 
     ``start_time``, ``prepend_zero`` and ``use_last`` are refused with
-    ``time=`` (:class:`~apeGmsh.opensees._internal.build.BridgeError`).
+    ``time=`` (:class:`~apeGmsh.opensees._internal.build.errors.BridgeError`).
     ``OPS_PathSeries`` builds a ``time=`` series as a ``PathTimeSeries``
     and never passes it ``-startTime`` or ``-prependZero``, on stock or on
     the fork, so both flags would be dropped without a word.  Stock

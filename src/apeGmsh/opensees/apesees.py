@@ -878,7 +878,7 @@ class BuiltModel:
         time into a single ``region $tag -node ...`` command with one
         freshly-allocated tag.
     initial_stress_records
-        :class:`~apeGmsh.opensees._internal.build.InitialStressRecord`
+        :class:`~apeGmsh.opensees._internal.build.records.InitialStressRecord`
         directives collected through ``apeSees.initial_stress(...)``
         — each is a ramped in-situ stress tensor that fans out into
         parameter declarations + per-rank ``addToParameter`` calls +
@@ -5808,7 +5808,7 @@ class BuiltModel:
           declarations need (ADR 0027 INV-2). A ghost is by definition
           NOT owned by the declaring rank, so it never appears in that
           rank's ``by_rank`` bucket and its BCs would otherwise be missing
-          there — see :func:`~apeGmsh.opensees._internal.build.emit_mp_constraints_partitioned`.
+          there — see :func:`~apeGmsh.opensees._internal.build.constraints_ranked.emit_mp_constraints_partitioned`.
           Tagged ``("fix", …)`` because a staged model extends the same
           stream with ``("remove", dof)`` entries per stage.
           Built inside this same walk rather than by a second

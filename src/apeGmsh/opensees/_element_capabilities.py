@@ -773,7 +773,7 @@ def element_class_ndf_ok(class_name: str) -> "frozenset[int] | None":
     fallback).
 
     Used by the build-time shell-on-solid node-sharing guard
-    (:func:`apeGmsh.opensees._internal.build.validate_node_ndf_element_compat`):
+    (:func:`apeGmsh.opensees._internal.build.ndf.validate_node_ndf_element_compat`):
     a node shared by two elements whose ``ndf_ok`` sets are disjoint
     cannot be assembled by OpenSees (``FE_Element::setID`` sizes the
     element's equation map to its own ``numDOF`` and truncates when a

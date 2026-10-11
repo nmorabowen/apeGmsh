@@ -67,7 +67,7 @@ pattern-controlled route instead: author ``g.loads.gravity(...)`` at the
 geometry and import it with ``p.from_model(case)`` inside the stage.  Mixing
 the two — a ``body_force`` element whose nodes also receive a ``from_model``
 gravity case — double-counts self-weight and raises
-:class:`~apeGmsh.opensees._internal.build.WarnBodyForceDoubleCount` at build.
+:class:`~apeGmsh.opensees._internal.build.validators.loads.WarnBodyForceDoubleCount` at build.
 """
 from __future__ import annotations
 

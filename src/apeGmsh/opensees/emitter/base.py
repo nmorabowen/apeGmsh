@@ -273,7 +273,7 @@ class Emitter(Protocol):
 
     # -- MP constraints (ADR 0022, Phase 7b) -----------------------------
     # Five methods closing the §3.3 deferral. Build-time fan-out in
-    # ``opensees._internal.build.emit_mp_constraints`` calls these after
+    # ``opensees._internal.build.constraints.emit_mp_constraints`` calls these after
     # element emission and before pattern emission (INV-5). Phantom
     # nodes from ``NodeToSurfaceRecord`` are emitted via ``node(...,
     # ndf=6)`` before any constraint references them (INV-3).
@@ -886,7 +886,7 @@ class DroppedAxisGuard:
     One guard per ``model()`` call.  The first trimmed node fixes the
     reference values of the dropped axes; every later node must match
     them within :data:`_PLANE_RTOL`, or :meth:`trim` raises
-    :class:`~apeGmsh.opensees._internal.build.BridgeError` naming both
+    :class:`~apeGmsh.opensees._internal.build.errors.BridgeError` naming both
     nodes, the axis and the two values.  The common case, an exact match
     (``(0.0,) == (0.0,)``), is one tuple comparison per node.
 

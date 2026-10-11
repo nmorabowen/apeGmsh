@@ -729,7 +729,7 @@ class DomainCaptureSpec:
         """Can every element on ``pgs`` report a real out-of-plane σ_zz?
 
         The live-capture twin of the emit-side gate
-        (:meth:`apeGmsh.opensees._internal.build.FemToOpsTagMap.all_sigma_zz_capable`):
+        (:meth:`apeGmsh.opensees._internal.build.ownership.FemToOpsTagMap.all_sigma_zz_capable`):
         same predicate, same all-or-nothing rule over the record's targets,
         same tri-state.  ``None`` means "cannot tell, do not promote and do
         not complain" — a 3-D model (whose ``stresses`` carries σ_zz

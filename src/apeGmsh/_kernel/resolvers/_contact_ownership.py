@@ -253,7 +253,7 @@ def _owning_ranks(
     Ranks are the 0-based ``enumerate`` position over ``partitions``
     sorted by :attr:`PartitionRecord.id`, matching the codebase's single
     source of truth for the Gmsh-id → runtime-rank conversion
-    (``opensees._internal.build.runtime_rank_from_partition_record``). A
+    (``opensees._internal.build.ownership.runtime_rank_from_partition_record``). A
     node present in more than one partition's ``node_ids`` (a replicated
     boundary node) is natively owned by every rank listed.
     """

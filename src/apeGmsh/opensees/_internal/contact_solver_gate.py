@@ -9,7 +9,7 @@ coupling at assembly, and returns a plausible but WRONG solve with rc 0 —
 nothing checked this before #1273. Fail-LOUD, like the u-p gate: the answer
 is not "less accurate", it is a different system.
 
-Scope mirrors :func:`~apeGmsh.opensees._internal.build.validate_ladruno_up_solver`
+Scope mirrors :func:`~apeGmsh.opensees._internal.build.validators.solver.validate_ladruno_up_solver`
 exactly: a DECLARED symmetric system is wrong whether or not this emit
 solves; the MISSING-system branch (OpenSees' no-``system`` default is
 ProfileSPD) is gated on ``enforce`` and skipped for a partitioned deck,

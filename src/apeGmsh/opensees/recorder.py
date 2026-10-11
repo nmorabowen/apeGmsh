@@ -19,7 +19,7 @@ command sees fully-allocated node and element tags.
 
 The ``pg=`` form (physical-group fan-out into node/element tags) is
 materialized at build time by
-:func:`apeGmsh.opensees._internal.build.emit_recorder_spec`, which
+:func:`apeGmsh.opensees._internal.build.recorders.emit_recorder_spec`, which
 resolves ``pg`` through the FEM snapshot, rewrites the spec to its
 explicit ``nodes=`` / ``elements=`` form via :func:`dataclasses.replace`,
 and then delegates to ``_emit``. End users drive this through
@@ -571,7 +571,7 @@ class FilterableRecorder(Recorder):
 
         Read from ``tag_plan`` (ADR 0114 D4, amended): a plan made for
         another model, or one that lacks a region this recorder writes,
-        raises :class:`~._internal.build.TagPlanMiss`.
+        raises :class:`~._internal.build.errors.TagPlanMiss`.
         """
         return tag_plan.regions.tags_for(
             fem, ("recorder", id(self)), self.region_keys())
@@ -855,7 +855,7 @@ class MPCO(FilterableRecorder):
     The bridge does not interpret ``-R``-bearing MPCO arg tails when
     ``_emit`` is called directly (outside the build pipeline); the
     ``pg=`` form is materialised by
-    :func:`apeGmsh.opensees._internal.build.emit_recorder_spec`,
+    :func:`apeGmsh.opensees._internal.build.recorders.emit_recorder_spec`,
     which resolves selectors, reads its planned region tag, emits the
     region, and replaces the spec via :func:`dataclasses.replace`
     with explicit ``nodes=``/``elements=`` before driving ``_emit``.

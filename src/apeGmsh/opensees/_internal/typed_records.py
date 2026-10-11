@@ -470,7 +470,7 @@ class DampingObjectRecord:
 class FixRecord:
     """One ``fix`` directive (model-level boundary fixity).
 
-    Not to be confused with the build-time ``apeGmsh.opensees._internal.build.FixRecord``
+    Not to be confused with the build-time ``apeGmsh.opensees._internal.build.records.FixRecord``
     which is the *bridge-side* fix-record before fan-out; this one is
     the *emitter-side* per-node call after fan-out.
     """
@@ -484,7 +484,7 @@ class MassRecord:
     """One ``mass`` directive (per-node nodal mass).
 
     Like :class:`FixRecord`, distinct from the bridge-side
-    pre-fan-out :class:`apeGmsh.opensees._internal.build.MassRecord`.
+    pre-fan-out :class:`apeGmsh.opensees._internal.build.records.MassRecord`.
     """
 
     tag: int

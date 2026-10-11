@@ -17,7 +17,7 @@ to get individual :class:`Node` instances.
 Per P1 (relaxed): the bridge **still** exposes the flat
 ``ops.fix(pg=..., dofs=...)`` shape. ``Node.fix`` and ``NodeSet.fix``
 are convenience layers on top — both routes go through the same
-:class:`apeGmsh.opensees._internal.build.FixRecord` and the same
+:class:`apeGmsh.opensees._internal.build.records.FixRecord` and the same
 fan-out at emit time.
 
 Examples

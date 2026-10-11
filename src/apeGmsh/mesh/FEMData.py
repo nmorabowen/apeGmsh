@@ -825,7 +825,7 @@ class ElementComposite:
         # Embedded-reinforcement ties (g.reinforce, ADR 20 / R2b). A plain
         # list of ReinforceTieRecord — one LadrunoEmbeddedRebar coupling
         # per rebar node. The bridge build step consumes it
-        # (opensees._internal.build.emit_reinforce_ties); it also round-trips
+        # (opensees._internal.build.constraints.emit_reinforce_ties); it also round-trips
         # through the neutral model.h5 (/reinforce_ties group, neutral schema
         # 2.15.0, ADR 0067 P5.1). A model with no ties omits the group, so its
         # snapshot stays byte-identical (the snapshot_id hash excludes ties).
@@ -834,7 +834,7 @@ class ElementComposite:
         # General node-to-host embedment ties (g.embed). A plain list of
         # EmbedTieRecord — one LadrunoEmbeddedNode coupling per node. The
         # bridge build step consumes it
-        # (opensees._internal.build.emit_embed_ties); it also round-trips
+        # (opensees._internal.build.constraints.emit_embed_ties); it also round-trips
         # through the neutral model.h5 (/embed_ties group, neutral schema
         # 2.22.0, ADR 0073). A model with no ties omits the group, so its
         # snapshot stays byte-identical (the snapshot_id hash excludes ties).
@@ -842,7 +842,7 @@ class ElementComposite:
 
         # Face-to-face contact interactions (g.constraints.contact). A plain
         # list of ContactRecord. Consumed by
-        # opensees._internal.build.emit_contacts; serial-only; it also
+        # opensees._internal.build.contacts.emit_contacts; serial-only; it also
         # round-trips through the neutral model.h5 (/contacts group, neutral
         # schema 2.21.0, ADR 0073), mirroring /contact_planes. A model with no
         # contacts omits the group, so its snapshot stays byte-identical.
@@ -850,14 +850,14 @@ class ElementComposite:
 
         # Rigid analytical-plane contacts (g.constraints.contact_plane). A plain
         # list of ContactPlaneRecord — one fork `contactPlane` per record.
-        # Consumed by opensees._internal.build.emit_contact_planes; serial-only;
+        # Consumed by opensees._internal.build.contacts.emit_contact_planes; serial-only;
         # round-trips through the neutral model.h5 (/contact_planes group),
         # mirroring /contacts.
         self.contact_planes: list = list(contact_planes or [])
         # Oriented coincident-pair zeroLength interfaces
         # (g.constraints.interface, ADR 0093). A plain list of
         # InterfaceRecord — one zeroLength spring per coincident node
-        # pair. Consumed by opensees._internal.build.emit_interfaces
+        # pair. Consumed by opensees._internal.build.interfaces.emit_interfaces
         # (S5); serial-only until S8. ADR 0093 S3: the resolver/verb
         # that populates this list don't exist yet (S4), so it is
         # always empty for now — the slot exists so downstream code has
@@ -869,7 +869,7 @@ class ElementComposite:
         # auto-emitted CorotTruss/dispBeamColumn intents from
         # g.rebar.place(emit_elements=True). A plain list of
         # RebarElementRecord — one per placed bar PG. The bridge build step
-        # consumes it (opensees._internal.build.emit_rebar_elements), fanning
+        # consumes it (opensees._internal.build.constraints.emit_rebar_elements), fanning
         # each across its PG's line cells. Empty unless emit_elements was set.
         self.rebar_elements: list = list(rebar_elements or [])
 
