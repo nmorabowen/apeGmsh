@@ -16,6 +16,11 @@ jobs:
     timeout-minutes: 45
     env:
       APEGMSH_FORK_PIN_ENFORCE: '1'
+      # ADR 0121 D3: a warrant-row test (tests/opensees/warrant_rows.py)
+      # that skips or goes unselected fails the job, except a
+      # `ladruno_mkl:` skip, which counts for the lane and never for the
+      # member (ruling 3).
+      APEGMSH_WARRANT_LANE: fork
     steps:
       - uses: actions/checkout@v4
 

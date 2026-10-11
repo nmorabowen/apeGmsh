@@ -76,8 +76,19 @@ def _block_stiffness(tmp_path: Path, order: int, element: str) -> float:
 
 
 def test_tet4_block_matches_closed_form(tmp_path: Path) -> None:
-    """Control: FourNodeTetrahedron is right on every build."""
+    """Control: FourNodeTetrahedron is right on every build.
+
+    The stock side of its warrant row (``tests/opensees/warrant_rows.py``):
+    run in ``live-stock``, it is the honest oracle.
+    """
     _ops()
+    k = _block_stiffness(tmp_path, 1, "FourNodeTetrahedron")
+    assert k == pytest.approx(K_EXACT, rel=1e-9)
+
+
+@pytest.mark.ladruno_fork
+def test_tet4_block_matches_closed_form_on_the_fork(tmp_path: Path) -> None:
+    """The fork side of FourNodeTetrahedron's warrant row: the same E*A/H."""
     k = _block_stiffness(tmp_path, 1, "FourNodeTetrahedron")
     assert k == pytest.approx(K_EXACT, rel=1e-9)
 
@@ -106,6 +117,6 @@ def test_tet10_block_matches_closed_form_on_a_fixed_fork(tmp_path: Path) -> None
 def test_live_emitter_refuses_tet10_on_stock(tmp_path: Path) -> None:
     if live._tet10_volume_fixed(_ops()) is not False:
         pytest.skip("stock-only")
-    with pytest.raises(RuntimeError, match="6x too small"):
+    with pytest.raises(RuntimeError, match=r"(?s)6x too small.*Ladruno fork"):
         _block_stiffness(tmp_path, 2, "TenNodeTetrahedron")
     live.LiveOpsEmitter(wipe=True)   # leave a clean domain behind

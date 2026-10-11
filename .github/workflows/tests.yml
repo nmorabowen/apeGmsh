@@ -561,6 +561,10 @@ jobs:
           "
 
       - name: Run the live surface (stock backend)
+        # ADR 0121 D3: a warrant-row test (tests/opensees/warrant_rows.py)
+        # that skips or goes unselected here fails the job.
+        env:
+          APEGMSH_WARRANT_LANE: stock
         run: |
           # `not qt` must be repeated: -m is single-valued, so this
           # REPLACES pyproject's addopts -m rather than anding with it
