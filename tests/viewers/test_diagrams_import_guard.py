@@ -1,16 +1,16 @@
 """ADR 0098 S6b — who may still import ``apeGmsh.viewers.diagrams``.
 
 S6 is **de-publication, not deletion**. The old Geometry / Composition /
-Diagram ontology is no longer a public surface, but four hatches keep
+Diagram ontology is no longer a public surface, but three hatches keep
 importing it privately and are expected to:
 
 * ``viewers/render.py`` — its closed view tokens;
 * ``viewers/web_viewer.py`` — ``show_web`` holds the live
   ``ResultsDirector``, which is what ADR 0098 Amendment 2 rests the six
   slotless kinds on (see ``test_diagram_hatch_survival.py``);
-* ``studio/_verbs.py`` — ``_yield_setup``, the 0095 INV-11 hatch;
-* ``viewers/results_viewer.py`` — still constructed offscreen by
-  ``Results.export_animation`` (also INV-11).
+* ``viewers/results_viewer.py`` — the retired window, deleted by X3
+  (``Results.export_animation`` and ``studio/_verbs.py``'s INV-11 hatch
+  stopped constructing it in X2-b, #1663, and ``_verbs`` was pruned).
 
 **Be honest about what this guard proves.** The allowlist is 28 modules
 and eleven of them are alive *only* because the headless export reuses
@@ -40,10 +40,9 @@ PKG = "apeGmsh.viewers.diagrams"
 #: Modules allowed to import the retired ontology. Ratcheted BOTH ways.
 #: Grouped by why they are here, because "why" is the thing that rots.
 _ALLOWED: frozenset[str] = frozenset({
-    # -- the four hatches --------------------------------------------
+    # -- the three hatches -------------------------------------------
     "apeGmsh.viewers.render",
     "apeGmsh.viewers.web_viewer",
-    "apeGmsh.studio._verbs",
     "apeGmsh.viewers.results_viewer",
     # -- the NEW session window (reuses per-kind emit code in place) --
     "apeGmsh.viewers.session._realize",
