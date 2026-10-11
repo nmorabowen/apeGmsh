@@ -1215,8 +1215,8 @@ with its store, or an index past the rows, raises `MalformedH5Error`.
 
 Every declaration's parameters **by field name** (ADR 0114 A6 and Q4,
 K1-7): the K0-8 record a reader uses to show *what* a declaration was,
-without an OpenSees syntax table on either side. Exactly one row per
-`/opensees/decls` row: a registered primitive, a `fix` / `mass` /
+without an OpenSees syntax table on either side. At least one row (one
+per owner) per `/opensees/decls` row: a registered primitive, a `fix` / `mass` /
 `region` / `rayleigh` / `modal_damping` / `initial_stress` /
 `equation_constraint` record, a stage record (`support`, `remove_sp`,
 ...), or the model-wide `fix_from_model()` / `mass_from_model()` object

@@ -802,3 +802,39 @@ def test_every_owner_of_every_key_is_represented(
                     getattr(owner, f.name), bm._declaration_key), (d.key, f.name)
     assert sum(len(v) for v in table.params.values()) == sum(
         len(v) for v in owners.values())
+
+
+# ---------------------------------------------------------------------------
+# The new dataclasses import and instantiate on every supported Python
+# ---------------------------------------------------------------------------
+
+
+def test_new_dataclasses_instantiate_with_defaults() -> None:
+    """Python 3.11 refuses a dataclass default whose class is unhashable
+    (a mappingproxy, a dict, a list, a set) at class creation, so the
+    reader failed to import on CI while 3.12 accepted it. Every field
+    default of every dataclass this slice touched hashes, and the
+    defaults construct."""
+    import dataclasses
+
+    from apeGmsh.opensees import apesees
+    from apeGmsh.opensees.emitter import h5 as h5_mod
+
+    table = h5_reader.DeclarationTable(decls=(), tags=(), rows={})
+    assert dict(table.params) == {}
+    assert h5_reader.DeclRef(key="k").key == "k"
+    assert h5_reader.DeclStruct(type="S", fields={}).fields == {}
+    assert h5_reader.DeclOpaque(type="O").type == "O"
+    ro = h5_reader.DeclParamsRO(
+        type="T", params={}, params_names=None, transf_ref=(),
+        integration_ref=(), section_ref=(), params_json="{}")
+    assert ro.section_ref == ()
+    assert apesees._ModelWideDeclaration("fix_from_model").verb == "fix_from_model"
+    for module in (h5_reader, h5_mod, apesees):
+        for obj in vars(module).values():
+            if not (isinstance(obj, type) and dataclasses.is_dataclass(obj)
+                    and obj.__module__ == module.__name__):
+                continue
+            for f in dataclasses.fields(obj):
+                if f.default is not dataclasses.MISSING:
+                    hash(f.default)  # the 3.11 rule: raises for an instance

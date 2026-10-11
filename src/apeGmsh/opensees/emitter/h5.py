@@ -4753,8 +4753,9 @@ class H5Emitter:
         Side channel, not a Protocol call. ``items`` pairs each owner (a
         primitive or a declared record) with its ``decls`` row, in the
         order the rows are written: a key that merged several calls (a
-        ``region`` name, a repeated ``initial_stress`` name) appears once
-        per owner, in call order, so no owner is dropped. ``key_of`` maps
+        ``region`` name; the one other name-shared family, ``initial_stress``,
+        refuses a repeated name at build on every path) appears once per
+        owner, in call order, so no owner is dropped. ``key_of`` maps
         a primitive a field references to its declaration key
         (:class:`KeyError` for an unregistered one). Each owner is
         encoded now by :func:`encode_decl_params`, so an unknown field

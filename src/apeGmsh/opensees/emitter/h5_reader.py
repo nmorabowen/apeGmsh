@@ -30,7 +30,7 @@ Schema-version compatibility (ADR 0023):
 from __future__ import annotations
 
 import builtins
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Iterator, Mapping, Sequence
@@ -274,7 +274,10 @@ class DeclarationTable:
     decls: tuple[DeclarationRO, ...]
     tags: tuple[tuple[str, int, int, int], ...]
     rows: Mapping[str, tuple[int, ...]]
-    params: Mapping[int, tuple[DeclParamsRO, ...]] = MappingProxyType({})
+    # A factory, not an instance: Python 3.11 refuses an unhashable
+    # dataclass default (a mappingproxy is one); 3.12 accepts it.
+    params: Mapping[int, tuple[DeclParamsRO, ...]] = field(
+        default_factory=lambda: MappingProxyType({}))
 
     def params_for(self, key: str) -> tuple[DeclParamsRO, ...]:
         """The parameter entries of the declaration keyed ``key``, one
