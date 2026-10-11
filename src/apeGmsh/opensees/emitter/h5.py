@@ -536,16 +536,18 @@ class H5RefusedVerb(NotImplementedError):
 #:     2.25.x file.
 #:   * 2.26.0 — ADR 0114 A6/Q4 (K1-7): additive — new optional
 #:     ``/opensees/decl_params`` group hanging off ``decls``: every
-#:     registered primitive's parameters **by field name**, encoded
-#:     generically from ``dataclasses.fields(prim)`` (``decl`` = the
-#:     ``decls`` row; ``type`` = the primitive class; ``params`` = one
-#:     JSON object per row, a reference to another primitive stored as
-#:     its declaration key ``{"$decl": key}``; ``params_names`` = the
-#:     field name of every argv slot of the declaration's store row when
-#:     the argv equals the fields, ``""`` otherwise; ``transf_ref``,
-#:     ``integration_ref``, ``section_ref`` = the declaration key of the
-#:     primitive's ``GeomTransf`` / ``BeamIntegration`` / ``Section``
-#:     field, ``""`` when it has none). A derived view of the hashed
+#:     declaration's parameters **by field name** (one row per ``decls``
+#:     row: a primitive, a fix / mass / region / damping / initial-stress
+#:     / equation-constraint record, a model-wide declaration), encoded
+#:     generically from ``dataclasses.fields(owner)`` (``decl`` = the
+#:     ``decls`` row; ``type`` = the owner's class; ``params`` = one
+#:     JSON object per row, a reference to a primitive stored as its
+#:     declaration key ``{"$decl": key}``; ``params_names`` = the field
+#:     name of every argv slot of the declaration's store row when the
+#:     argv equals the fields, ``""`` otherwise; ``transf_ref/``,
+#:     ``integration_ref/``, ``section_ref/`` = index runs (``first``,
+#:     ``count``, ``key``) of every ``GeomTransf`` / ``BeamIntegration``
+#:     / ``Section`` key the row references, in field order). A derived view of the hashed
 #:     stores: ``decl_params`` is in ``MODEL_HASH_EXCLUDED_CHILDREN``, so
 #:     ``model_hash`` is unchanged. Written only when the bridge handed
 #:     the primitives in (``set_decl_params``); an unknown field shape
@@ -1140,7 +1142,10 @@ _OPAQUE_FIELD_TYPES: frozenset[str] = frozenset({
 })
 
 #: The ``decls`` families a ``*_ref`` column of ``decl_params`` names:
-#: the first top-level field holding a primitive of that family.
+#: every reference to a primitive of that family among the row's fields,
+#: in dataclass field order and depth-first within a field (a ``Hinge*``
+#: integration's ``section_i``, ``section_j``, ``section_interior``;
+#: the sections of a tuple field in tuple order).
 _REF_COLUMNS: tuple[tuple[str, str], ...] = (
     ("transf_ref", "geomTransf"),
     ("integration_ref", "beamIntegration"),
@@ -1202,11 +1207,21 @@ def _encode_field(
     value: Any, key_of: Callable[[object], str], where: str,
 ) -> Any:
     import dataclasses
+    import enum
+    import fractions
     import math
     import numbers
 
     from .._internal.types import Primitive
 
+    if isinstance(value, (enum.Enum, fractions.Fraction)):
+        # A str- or int-Enum passes the scalar checks below as its base
+        # value, a Fraction as a float: both would read back as another
+        # type, so neither is stored by name.
+        raise H5DeclParamsError(
+            f"decl_params: {where} is a {_qualname(value)} ({value!r}); an "
+            "Enum member or a Fraction has no exact JSON form, so the field "
+            "cannot be stored by name.")
     if value is None or isinstance(value, (bool, str)):
         return value
     if isinstance(value, numbers.Integral):
@@ -1326,8 +1341,10 @@ def decl_argv_names(
 #: One ``/opensees/decl_params`` row as the writer holds it:
 #: ``(decl, type, params, params_names, transf_ref, integration_ref,
 #: section_ref)``, ``params`` the JSON text, ``params_names`` the JSON
-#: list text or ``""``.
-DeclParamsRow = tuple[int, str, str, str, str, str, str]
+#: list text or ``""``, each ``*_ref`` the declaration keys of that
+#: family in field order (``()`` when the row references none).
+DeclParamsRow = tuple[
+    int, str, str, str, tuple[str, ...], tuple[str, ...], tuple[str, ...]]
 
 
 def _json_text(value: Any) -> str:
@@ -3520,17 +3537,17 @@ class H5Emitter:
                     found = decl_argv_names(params, argv, tag_of_key)
                     if found is not None:
                         names = _json_text(list(found))
-            refs: dict[str, str] = {col: "" for col, _f in _REF_COLUMNS}
+            refs: dict[str, list[str]] = {col: [] for col, _f in _REF_COLUMNS}
             for value in params.values():
-                if not (isinstance(value, dict) and set(value) == {"$decl"}):
-                    continue
-                family = decls[row_of_key[value["$decl"]]].family
-                for col, want in _REF_COLUMNS:
-                    if family == want and not refs[col]:
-                        refs[col] = value["$decl"]
+                for key in _decl_refs(value):
+                    family = decls[row_of_key[key]].family
+                    for col, want in _REF_COLUMNS:
+                        if family == want:
+                            refs[col].append(key)
             out.append((decl, type_name, _json_text(params), names,
-                        refs["transf_ref"], refs["integration_ref"],
-                        refs["section_ref"]))
+                        tuple(refs["transf_ref"]),
+                        tuple(refs["integration_ref"]),
+                        tuple(refs["section_ref"])))
         return out
 
     def _write_decl_params(self, f: Any) -> None:
@@ -3567,10 +3584,24 @@ class H5Emitter:
         g = self._ops_group(f).create_group("decl_params")
         g.create_dataset(
             "decl", data=np.array([r[0] for r in rows], dtype=np.int64))
-        for col, name in ((1, "type"), (2, "params"), (3, "params_names"),
-                          (4, "transf_ref"), (5, "integration_ref"),
-                          (6, "section_ref")):
+        for col, name in ((1, "type"), (2, "params"), (3, "params_names")):
             g.create_dataset(name, data=[r[col] for r in rows], dtype=str_dt)
+        # Each ``*_ref`` is an index run: row i's keys are
+        # ``key[first[i] : first[i] + count[i]]``, in field order.
+        for col, name in ((4, "transf_ref"), (5, "integration_ref"),
+                          (6, "section_ref")):
+            run = g.create_group(name)
+            keys: list[str] = []
+            first: list[int] = []
+            count: list[int] = []
+            for r in rows:
+                refs = r[col]
+                first.append(len(keys))
+                count.append(len(refs))
+                keys.extend(refs)
+            run.create_dataset("first", data=np.array(first, dtype=np.int64))
+            run.create_dataset("count", data=np.array(count, dtype=np.int64))
+            run.create_dataset("key", data=keys, dtype=str_dt)
 
     def _write_decls(self, f: Any) -> None:
         """Persist ``/opensees/decls`` (ADR 0114 R5, K1-6, schema 2.25.0).

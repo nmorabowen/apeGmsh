@@ -391,15 +391,14 @@ def _call_site_text() -> str:
     return f"{f.f_code.co_filename}:{f.f_lineno} ({f.f_code.co_name})"
 
 
+@dataclass(frozen=True, slots=True)
 class _ModelWideDeclaration:
     """The object a model-wide verb (``mass_from_model()``,
     ``fix_from_model()``) is declared under: it has no record of its own
-    at call time, so this stands in for one in ``apeSees._decls``."""
+    at call time, so this stands in for one in ``apeSees._decls``. A
+    dataclass, so its ``/opensees/decl_params`` row is its ``verb``."""
 
-    __slots__ = ("verb",)
-
-    def __init__(self, verb: str) -> None:
-        self.verb = verb
+    verb: str
 
 
 class _DeclCursor:
@@ -907,6 +906,10 @@ class BuiltModel:
     # and every model-wide declaration, from ``apeSees.build``. An archival
     # emit writes it as ``/opensees/decls``; a deck never reads it.
     _decls:                  "Mapping[int, _DeclRow]" = field(
+        default_factory=dict, compare=False, repr=False)
+    # K1-7 — ``id(owner) -> owner`` for the same keys: the records and
+    # primitives whose fields ``/opensees/decl_params`` stores by name.
+    _decl_owners:            "Mapping[int, object]" = field(
         default_factory=dict, compare=False, repr=False)
     # The declaration rows in first-seen order and ``id(owner) -> row``,
     # derived from ``_decls`` once (``_declaration_rows``).
@@ -1900,12 +1903,19 @@ class BuiltModel:
             _decl_rows, _decl_runs = self._declaration_table(tag_plan)
             _archive_side_channel(emitter).set_declarations(
                 _decl_rows, _decl_runs)
-            # K1-7: every registered primitive's parameters by field name
-            # (``/opensees/decl_params``), a field that holds another
-            # primitive as that primitive's declaration key.
+            # K1-7: every declaration's parameters by field name
+            # (``/opensees/decl_params``): the first-seen owner of each
+            # row (a primitive, a fix / mass / region / damping /
+            # initial-stress / equation-constraint record, a model-wide
+            # declaration), a field that holds a primitive as that
+            # primitive's declaration key.
             _rows_, _decl_index = self._declaration_rows()
+            _first_owner: dict[int, int] = {}
+            for _oid, _row in _decl_index.items():
+                _first_owner.setdefault(_row, _oid)
             _archive_side_channel(emitter).set_decl_params(
-                [(_decl_index[id(p)], p) for p in self.primitives],
+                [(row, self._decl_owners[oid])
+                 for row, oid in sorted(_first_owner.items())],
                 self._declaration_key,
             )
 
@@ -10938,6 +10948,8 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
             mass_from_model=self._mass_from_model,
             element_tags=self._element_tags,
             _decls=decls,
+            _decl_owners={
+                oid: owner for oid, (owner, _decl) in self._decls.items()},
         )
 
     # -- Internal helpers ------------------------------------------------

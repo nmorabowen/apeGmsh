@@ -235,18 +235,20 @@ class DeclParamsRO:
     ``params_names`` names the argv slots of the declaration's store row,
     one per slot, when the archive found the argv equal to the fields,
     else ``None`` (the slots are unnamed). ``transf_ref``,
-    ``integration_ref`` and ``section_ref`` are the declaration key of
-    the first field holding a ``GeomTransf`` / ``BeamIntegration`` /
-    ``Section``, ``""`` when there is none. ``params_json`` is the row's
-    stored text, which a rewrite echoes verbatim.
+    ``integration_ref`` and ``section_ref`` are the declaration keys of
+    every ``GeomTransf`` / ``BeamIntegration`` / ``Section`` the row's
+    fields reference, in dataclass field order and depth-first within a
+    field (a ``HingeRadau`` lists ``section_i``, ``section_j``,
+    ``section_interior``), ``()`` when there is none. ``params_json`` is
+    the row's stored text, which a rewrite echoes verbatim.
     """
 
     type: str
     params: Mapping[str, Any]
     params_names: tuple[str, ...] | None
-    transf_ref: str
-    integration_ref: str
-    section_ref: str
+    transf_ref: tuple[str, ...]
+    integration_ref: tuple[str, ...]
+    section_ref: tuple[str, ...]
     params_json: str
 
 
@@ -368,15 +370,40 @@ def _read_decl_params(g: Any, keys: "Sequence[str]") -> dict[int, DeclParamsRO]:
 
     decl = [int(v) for v in np.asarray(g["decl"][()])]
     columns = {
-        name: strings(name)
-        for name in ("type", "params", "params_names", "transf_ref",
-                     "integration_ref", "section_ref")}
+        name: strings(name) for name in ("type", "params", "params_names")}
     n = len(decl)
     if any(len(c) != n for c in columns.values()):
         raise MalformedH5Error(
-            "/opensees/decl_params: decl, type, params, params_names and "
-            "the *_ref columns differ in length.")
+            "/opensees/decl_params: decl, type, params and params_names "
+            "differ in length.")
     known = set(keys)
+    # Each ``*_ref`` is an index run: row i's keys are
+    # ``key[first[i] : first[i] + count[i]]``, in field order.
+    ref_runs: dict[str, list[tuple[str, ...]]] = {}
+    for col in ("transf_ref", "integration_ref", "section_ref"):
+        run = g[col]
+        first = [int(v) for v in np.asarray(run["first"][()])]
+        count = [int(v) for v in np.asarray(run["count"][()])]
+        run_keys = [str(_decode_bytes(v)) for v in run["key"][()]]
+        if len(first) != n or len(count) != n:
+            raise MalformedH5Error(
+                f"/opensees/decl_params/{col}: first and count have "
+                f"{len(first)} and {len(count)} entries; there are {n} rows.")
+        rows_refs: list[tuple[str, ...]] = []
+        for i in range(n):
+            a, c = first[i], count[i]
+            if a < 0 or c < 0 or a + c > len(run_keys):
+                raise MalformedH5Error(
+                    f"/opensees/decl_params/{col} row {i} runs "
+                    f"{a}..{a + c} past its {len(run_keys)} keys.")
+            refs = tuple(run_keys[a:a + c])
+            for ref in refs:
+                if ref not in known:
+                    raise MalformedH5Error(
+                        f"/opensees/decl_params/{col} row {i} is {ref!r}, "
+                        "which /opensees/decls does not declare.")
+            rows_refs.append(refs)
+        ref_runs[col] = rows_refs
     out: dict[int, DeclParamsRO] = {}
     for i in range(n):
         row = decl[i]
@@ -415,19 +442,11 @@ def _read_decl_params(g: Any, keys: "Sequence[str]") -> dict[int, DeclParamsRO]:
                     f"/opensees/decl_params: params_names of {where} is "
                     "not a JSON list of str.")
             names = tuple(names_raw)
-        refs = {}
-        for col in ("transf_ref", "integration_ref", "section_ref"):
-            ref = columns[col][i]
-            if ref and ref not in known:
-                raise MalformedH5Error(
-                    f"/opensees/decl_params: {col} of {where} is {ref!r}, "
-                    "which /opensees/decls does not declare.")
-            refs[col] = ref
         out[row] = DeclParamsRO(
             type=columns["type"][i], params=params, params_names=names,
-            transf_ref=refs["transf_ref"],
-            integration_ref=refs["integration_ref"],
-            section_ref=refs["section_ref"],
+            transf_ref=ref_runs["transf_ref"][i],
+            integration_ref=ref_runs["integration_ref"][i],
+            section_ref=ref_runs["section_ref"][i],
             params_json=columns["params"][i])
     return out
 
