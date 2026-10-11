@@ -49,6 +49,10 @@ MASKS: dict[str, str] = {
         "(lineage.compute_model_hash), so a last-ulp libm difference "
         "changes it; every dataset it summarises is pinned line by line"
     ),
+    "/sequence@model_hash": (
+        "a copy of /meta/lineage@model_hash (ADR 0112 D2b), masked for the "
+        "same reason"
+    ),
 }
 
 

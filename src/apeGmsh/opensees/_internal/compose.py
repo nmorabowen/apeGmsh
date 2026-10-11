@@ -166,6 +166,7 @@ def _compose_model_h5(
         compute_model_hash,
         write_lineage_attrs,
     )
+    from .sequence_h5 import write_sequence_into
 
     if int(ndm) < 1:
         raise ValueError(
@@ -271,6 +272,10 @@ def _compose_model_h5(
                 fem_hash=fem_hash if fem_hash else None,
                 model_hash=model_hash,
             )
+        # ADR 0112 D2b: /sequence, derived by reading the finished
+        # /opensees back (after lineage, for its @model_hash; no hash
+        # reads it).
+        write_sequence_into(f)
 
 
 def _merge_provenance(

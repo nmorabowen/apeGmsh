@@ -152,7 +152,7 @@ class BridgeArtifactWriter:
             from ..._core import default_artifact_dir
             from ..emitter.h5 import H5FeatureDeferredWarning
             from .build import is_partitioned
-            from .schema_version import NEUTRAL, OPENSEES, PROVENANCE
+            from .schema_version import NEUTRAL, OPENSEES, PROVENANCE, SEQUENCE
 
             # P3: under MPI only rank 0 writes automatically.
             if mpi_rank() not in (None, 0):
@@ -197,10 +197,11 @@ class BridgeArtifactWriter:
             digest = _declaration_digest(bridge, name)
             if _LAST_WRITTEN.get(target) == digest and target.exists():
                 return
-            # The zones ``h5()`` writes: ``/provenance`` only when the
-            # merged table has records (compose.py, ``_merge_provenance``).
+            # The zones ``h5()`` writes: ``/sequence`` always (derived
+            # from ``/opensees``, ADR 0112 D2b), ``/provenance`` only when
+            # the merged table has records (compose.py, ``_merge_provenance``).
             bridge_prov = bridge._provenance.snapshot()
-            writes = frozenset({NEUTRAL, OPENSEES})
+            writes = frozenset({NEUTRAL, OPENSEES, SEQUENCE})
             if fem.provenance is not None or bridge_prov.records:
                 writes |= {PROVENANCE}
             scripts = provenance_scripts(fem.provenance) | provenance_scripts(

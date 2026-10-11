@@ -1635,6 +1635,79 @@ reads it. Each table is a group of equal-length column datasets.
   `/assembly`: `fem_hash` reads the neutral zone and `model_hash`
   reads `/opensees`.
 
+## `/sequence`
+
+Version key: `/meta/sequence_schema_version` (current `1.0.0`, floor
+`1.0.0`; [ADR 0112](decisions/0112-files-are-the-model-and-a-read-only-app.md)
+D2b, V0 decisions 8-10 on #1283). The readable view of the analysis
+program: one row per stage, one row per change a stage makes. It is a
+projection, not a second registry. `_compose_model_h5` writes it last,
+after `/meta/lineage`, by reading the `/opensees` zone it has just
+written back through `H5Model`
+([`_internal/sequence_h5.py`](../src/apeGmsh/opensees/_internal/sequence_h5.py)).
+The deriver imports no record or primitive module; an AST lock in
+`tests/opensees/test_sequence_h5.py` holds that. Each table is a group
+of equal-length column datasets.
+
+```
+/sequence   @derived_from str ("/opensees") · @model_hash str · @staged i1
+  /stages   order i4 · name str · analysis · integrator · algorithm · test ·
+            system · numberer · handler (str, "" when unset) ·
+            integrator_args · algorithm_args · test_args · system_args ·
+            handler_args (str, JSON list) · steps i4 · dt f8 · set_time f8 ·
+            domain_change i1 · source str
+  /changes  stage i4 · op str · what str · name str · count i4 · source str
+```
+
+* **Stages.** A staged archive gives one row per
+  `/opensees/stages/stage_NNN`, in order, with `@staged` 1. A deck with
+  no stage gives one implicit row from `/opensees/analysis`
+  (`name` `""`, `@staged` 0). A model-only file (neither) gives an empty
+  table. `steps` is `-1` when the archive holds no `analyze_steps` (a
+  deck that loops by hand); `dt` is NaN for a static stage or when no
+  `analyze_dt` is archived; `set_time` is NaN when the stage does not
+  set it. The `*_args` columns are the chain's positional arguments as
+  JSON (`[]` when there are none; a non-finite number becomes `null`).
+  A partitioned deck's `numberer_runtime_fallback` and
+  `system_runtime_fallback` have no column: the token column holds the
+  primary, the canonical choice (ADR 0027 INV-5).
+* **Changes.** `op` is one of `add`, `remove`, `activate`, `set`;
+  `what` is one of `pattern`, `recorder`, `fix`, `mass`, `element`,
+  `group`, `region`, `rayleigh`, `initial_stress`, `absorbing`,
+  `material_stage`, `constraint`. The pairs are the `seq` column of
+  `emitter/verbs.py::VERBS` plus `(activate, group)` (a stage's
+  `activated_pgs`). Global declarations (`/opensees/patterns`,
+  `recorders`, `regions`, `initial_stress`, `bcs/fix`, `bcs/mass`,
+  `constraints/<kind>` and a global `rayleigh` command) are in force from
+  the first analysis, so
+  their rows carry stage `0`. `name` is the declaration's `name=` from
+  `/opensees/decls`, `""` when unnamed or when the file has no `decls`
+  (below opensees 2.25.0). A tagless store (`fix`, `mass`, `remove_sp`,
+  ...) gives one row per declaration, with `count` its records; a
+  pattern, recorder, region, initial stress or absorbing flip gives one
+  row per record.
+* **Source.** Every row names the archive path it was read from;
+  `<path>[i]` is the `i`-th record of that container in reader order.
+  Global `bcs/fix` and `bcs/mass` are read through the `decls` row join
+  only, so a file below opensees 2.25.0 lists none. Global constraints are
+  read through `/opensees/program` (one run per `add constraint` call):
+  one row per declaration when `decls` covers `constraints/<kind>`, else
+  one unnamed row (a constraint the mesh carried); a ledger constraint
+  verb, which the archive does not carry, names its `program[i]` run. A
+  file below opensees 2.23.0 (no program) lists none.
+* **Not projected.** The stage verbs whose `seq` is empty in `VERBS`
+  (`update_parameter`, `zero_velocities`, `set_creep`, the pre-analyze
+  `reset`) have no `what` in the vocabulary and give no row.
+* **Integers** follow the integer policy above: a value outside `int32`
+  raises `SequenceOverflowError` before anything is written.
+* **Writes.** An existing `/sequence` and its key are dropped first, the
+  tables are built in memory, written to a scratch group and moved into
+  place, and the key is stamped last. A failure leaves neither a stale nor
+  a half-written zone, and a rewrite (`OpenSeesModel.to_h5`) re-derives
+  the zone. A chain attribute the zone has no column for refuses
+  (`SequenceError`).
+* No hash reads `/sequence`, and no model reader reads it.
+
 ## Cross-references
 
 Every reference uses an HDF5 path string. Examples:
@@ -1685,8 +1758,9 @@ call `validate_zone_version(...)` for each zone before reading it.
 | geometry (ADR 0112 D2) | `geometry_schema_version` | `/geometry` (sibling `<stem>.geometry.h5` only) | [`opensees/_internal/schema_version.py`](../src/apeGmsh/opensees/_internal/schema_version.py) `GEOMETRY_SCHEMA_VERSION` | **1.0.0** | **1.0.0** |
 | provenance (ADR 0112 D3) | `provenance_schema_version` | `/provenance` | [`opensees/_internal/schema_version.py`](../src/apeGmsh/opensees/_internal/schema_version.py) `PROVENANCE_SCHEMA_VERSION` | **1.1.0** | **1.0.0** |
 | assembly (ADR 0117 D5) | `assembly_schema_version` | `/assembly` (`Assembly.h5` archives only) | [`opensees/_internal/schema_version.py`](../src/apeGmsh/opensees/_internal/schema_version.py) `ASSEMBLY_SCHEMA_VERSION` | **1.0.0** | **1.0.0** |
+| sequence (ADR 0112 D2b) | `sequence_schema_version` | `/sequence` | [`opensees/_internal/schema_version.py`](../src/apeGmsh/opensees/_internal/schema_version.py) `SEQUENCE_SCHEMA_VERSION` | **1.0.0** | **1.0.0** |
 
-> The geometry, provenance and assembly keys never fall back to the legacy
+> The geometry, provenance, assembly and sequence keys never fall back to the legacy
 > envelope: they postdate it, so an absent key means the zone was not
 > written (`read_zone_version` returns `None`). Their writers import the
 > version constants from `schema_version.py` until they have modules of

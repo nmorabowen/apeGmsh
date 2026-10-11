@@ -183,8 +183,9 @@ def artifact_zones(path: "str | Path") -> frozenset[str]:
     """The zones an apeGmsh artifact holds, judged by root group.
 
     ``opensees`` is ``/opensees``, ``results`` is ``/stages``, ``geometry``
-    is ``/geometry``, ``provenance`` is ``/provenance`` (h5-schema.md,
-    "Zone registry"); ``neutral`` is any other root group than ``/meta``.
+    is ``/geometry``, ``provenance`` is ``/provenance``, ``sequence`` is
+    ``/sequence`` (h5-schema.md, "Zone registry"); ``neutral`` is any other
+    root group than ``/meta``.
     Root groups, not ``/meta`` keys: the neutral writer stamps
     ``opensees_schema_version`` on a file with no ``/opensees`` zone.
 
@@ -193,11 +194,12 @@ def artifact_zones(path: "str | Path") -> frozenset[str]:
     the ``with`` block keeps its ``/opensees`` zone.
     """
     from apeGmsh.opensees._internal.schema_version import (
-        GEOMETRY, NEUTRAL, OPENSEES, PROVENANCE, RESULTS,
+        GEOMETRY, NEUTRAL, OPENSEES, PROVENANCE, RESULTS, SEQUENCE,
     )
 
     root_of = {OPENSEES: "opensees", RESULTS: "stages",
-               GEOMETRY: "geometry", PROVENANCE: "provenance"}
+               GEOMETRY: "geometry", PROVENANCE: "provenance",
+               SEQUENCE: "sequence"}
     with h5py.File(str(path), "r") as f:
         roots = set(f.keys()) - {"meta"}
     zones = {zone for zone, root in root_of.items() if root in roots}

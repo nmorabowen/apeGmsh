@@ -88,10 +88,10 @@ def test_new_zones_never_fall_back_to_envelope(zone):
 
 
 def test_unknown_zone_still_refused():
-    with pytest.raises(ValueError, match="unknown zone 'sequence'"):
-        read_zone_version({}, "sequence")
-    with pytest.raises(ValueError, match="unknown zone 'sequence'"):
-        reader_version("sequence")
+    with pytest.raises(ValueError, match="unknown zone 'readable'"):
+        read_zone_version({}, "readable")
+    with pytest.raises(ValueError, match="unknown zone 'readable'"):
+        reader_version("readable")
 
 
 def test_schema_doc_specifies_new_zones_and_session_id():

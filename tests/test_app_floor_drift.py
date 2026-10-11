@@ -154,7 +154,7 @@ def test_comparison_catches_a_zone_once_added() -> None:
 
 
 def test_comparison_rejects_a_zone_python_does_not_know() -> None:
-    findings = floor_drift({"sequence": 0}, {"sequence": 1})
+    findings = floor_drift({"readable": 0}, {"readable": 1})
     assert len(findings) == 1 and "Python has no floor" in findings[0], findings
 
 

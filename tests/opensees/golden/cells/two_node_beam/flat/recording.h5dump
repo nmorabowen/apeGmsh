@@ -7,6 +7,7 @@ A /meta@ndf dtype=<i8 shape=() sha1=0cf6c361d9199e18f10de459b59db53c79258106
 A /meta@ndm dtype=<i8 shape=() sha1=3e8c1c43b68367ba858df7b619c5b31131c2e887
 A /meta@opensees_schema_version dtype=str[utf-8,vlen] shape=() sha1=3836e8df65c5f6be03a3dc3a9075825ac803189a
 A /meta@schema_version dtype=str[utf-8,vlen] shape=() sha1=3836e8df65c5f6be03a3dc3a9075825ac803189a
+A /meta@sequence_schema_version dtype=str[utf-8,vlen] shape=() sha1=574830b7eb8184cf13569334fc0f251220597a69
 A /meta@snapshot_id dtype=str[utf-8,vlen] shape=() sha1=be5860ffd4409e5cc12add2802a5ecf9c16828e8
 G /meta/lineage
 A /meta/lineage@model_hash dtype=str[utf-8,vlen] shape=() sha1=masked
@@ -112,3 +113,34 @@ A /opensees/transforms/Linear_1@tag dtype=<i8 shape=() sha1=e88bf9a567e8136424d5
 A /opensees/transforms/Linear_1@type dtype=str[utf-8,vlen] shape=() sha1=0ab74d50cd02e0d39e18f70e0b1123762abda8c4
 D /opensees/transforms/Linear_1/per_element_emitted_tag dtype=<i8 shape=(1,) sha1=03fe253f42ae9efd6305afc507b5d5fa178911e2
 D /opensees/transforms/Linear_1/per_element_vecxz dtype=<f8 shape=(1, 3) sha1=371e63e427cbea00773d94f56b1da42b1af0a1db
+G /sequence
+A /sequence@derived_from dtype=str[utf-8,vlen] shape=() sha1=094a426087beb48bed0d3ee13291cf11f684a485
+A /sequence@model_hash dtype=str[utf-8,vlen] shape=() sha1=masked
+A /sequence@staged dtype=|i1 shape=() sha1=b53b310ff9e7858c92c6ff079e6773a477fb96da
+G /sequence/changes
+D /sequence/changes/count dtype=<i4 shape=(6,) sha1=65e0f2ad1202c7c8337b82cfa19716d30dcaf7fb
+D /sequence/changes/name dtype=str[utf-8,vlen] shape=(6,) sha1=f4d2982b9f66076e8d92f7f0e31c5d908c125987
+D /sequence/changes/op dtype=str[utf-8,vlen] shape=(6,) sha1=f221ecb33a56fad26d79709d14cd63cd3b137e44
+D /sequence/changes/source dtype=str[utf-8,vlen] shape=(6,) sha1=24346800f9e486b263c3417956a57761d9f54d5c
+D /sequence/changes/stage dtype=<i4 shape=(6,) sha1=e68494ec67464cdf6ddce2b32f474fc945fbdc86
+D /sequence/changes/what dtype=str[utf-8,vlen] shape=(6,) sha1=a6382e0e7cf77777a1fbd7710a0a495626366235
+G /sequence/stages
+D /sequence/stages/algorithm dtype=str[utf-8,vlen] shape=(1,) sha1=9fb1d58a430d3c7b2bd312836ae7dd0954454221
+D /sequence/stages/algorithm_args dtype=str[utf-8,vlen] shape=(1,) sha1=dc40c38a8c0bd4e4d396a50e83319249271d4057
+D /sequence/stages/analysis dtype=str[utf-8,vlen] shape=(1,) sha1=e8a847ed9265732ca2d8b26a8d0e8230da9c458e
+D /sequence/stages/domain_change dtype=|i1 shape=(1,) sha1=f737807d791fcd4f39d888e2c6f5aacbba7c1def
+D /sequence/stages/dt dtype=<f8 shape=(1,) sha1=51e5ea7b6fae4f2cf9b21ab782aca62ea308b64e
+D /sequence/stages/handler dtype=str[utf-8,vlen] shape=(1,) sha1=7fc2e8874dbd8f3acb1d9c23ad6c56eb5dba6b9c
+D /sequence/stages/handler_args dtype=str[utf-8,vlen] shape=(1,) sha1=dc40c38a8c0bd4e4d396a50e83319249271d4057
+D /sequence/stages/integrator dtype=str[utf-8,vlen] shape=(1,) sha1=77aee72ef26782abe08b106eeecdf3c862055818
+D /sequence/stages/integrator_args dtype=str[utf-8,vlen] shape=(1,) sha1=d6c897ec01f69b94f4cdafd278ae0b9140d19591
+D /sequence/stages/name dtype=str[utf-8,vlen] shape=(1,) sha1=915f5f2697c36a6b68a43264f5fed9302e0d27d4
+D /sequence/stages/numberer dtype=str[utf-8,vlen] shape=(1,) sha1=f66c8f2db31bcfbd63caecb7d0064de0d6092097
+D /sequence/stages/order dtype=<i4 shape=(1,) sha1=d6a66d7770c2c259e1d16c02044b3fd21ec204d7
+D /sequence/stages/set_time dtype=<f8 shape=(1,) sha1=51e5ea7b6fae4f2cf9b21ab782aca62ea308b64e
+D /sequence/stages/source dtype=str[utf-8,vlen] shape=(1,) sha1=d237db025d5e80b4bec65071008091bb95720e22
+D /sequence/stages/steps dtype=<i4 shape=(1,) sha1=808c9fc82c1f4903f31facd5fe15e4105ade971c
+D /sequence/stages/system dtype=str[utf-8,vlen] shape=(1,) sha1=9cddfe3ef502a57a4a2e5773abed55e427bb92c7
+D /sequence/stages/system_args dtype=str[utf-8,vlen] shape=(1,) sha1=dc40c38a8c0bd4e4d396a50e83319249271d4057
+D /sequence/stages/test dtype=str[utf-8,vlen] shape=(1,) sha1=f51f630f1d19aedc24188d03fb78b03b76d31775
+D /sequence/stages/test_args dtype=str[utf-8,vlen] shape=(1,) sha1=fb094c73195ba548d134e51aaf896b894b4b1c57
