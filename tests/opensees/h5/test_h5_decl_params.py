@@ -34,9 +34,12 @@ emit; nothing here feeds the archive by hand.
 from __future__ import annotations
 
 import dataclasses
+import enum
+import fractions
 import json
 import numbers
 import shutil
+import warnings
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -153,7 +156,9 @@ def _assert_params_read_back(ops: apeSees, path: Path) -> None:
     def key_of(prim: object) -> str:
         return bm._decls[id(prim)][0]
 
-    assert set(table.params) == {index[id(p)] for p in bm.primitives}
+    # Every declaration has exactly one row; the primitives are among them.
+    assert set(table.params) == set(range(len(table.decls)))
+    assert {index[id(p)] for p in bm.primitives} <= set(table.params)
     for prim in bm.primitives:
         ro = table.params[index[id(prim)]]
         assert ro.type == type(prim).__name__
@@ -229,11 +234,11 @@ def test_refs_resolve_to_declaration_keys(tmp_path: Path) -> None:
     assert el.params["transf"] == DeclRef(key=transf_key)
     assert el.params["integration"] == DeclRef(key=integ_key)
     assert (el.transf_ref, el.integration_ref, el.section_ref) == (
-        transf_key, integ_key, "")
+        (transf_key,), (integ_key,), ())
     lob = rows["Lobatto"]
     assert lob.params["section"] == DeclRef(key=sec_key)
     assert (lob.transf_ref, lob.integration_ref, lob.section_ref) == (
-        "", "", sec_key)
+        (), (), (sec_key,))
     parallels = [ro for ro in table.params.values() if ro.type == "Parallel"]
     steel_key = key_of_tag("uniaxialMaterial", by_type["Steel01"])
     visc_key = key_of_tag("uniaxialMaterial", by_type["Viscous"])
@@ -248,9 +253,8 @@ def test_refs_resolve_to_declaration_keys(tmp_path: Path) -> None:
                     assert table.by_key(ref.key).family in {
                         "uniaxialMaterial", "section", "geomTransf",
                         "beamIntegration"}
-    # A declaration without a row (a fix) raises, as does an unknown key.
-    with pytest.raises(KeyError):
-        table.params_for("opensees/fix/#1")
+    # A fix has a row of its own fields; an unknown key raises.
+    assert set(table.params_for("opensees/fix/#1").params) == {"pg", "nodes", "dofs"}
     with pytest.raises(KeyError):
         table.params_for("opensees/uniaxialMaterial/nope")
 
@@ -407,7 +411,7 @@ def test_the_hook_writes_the_group_and_model_hash_excludes_it(
     with h5py.File(str(with_), "r") as f:
         assert "decl_params" in f["opensees"]
         assert len(f["opensees"]["decl_params"]["decl"]) == len(
-            _params_frame().build().primitives)
+            _table(with_).decls)
     assert "decl_params" in MODEL_HASH_EXCLUDED_CHILDREN
     stripped = tmp_path / "stripped.h5"
     shutil.copy(with_, stripped)
@@ -518,7 +522,6 @@ def _tamper(path: Path, column: str, values: list[Any]) -> None:
      "does not declare"),
     ("params", '{"m": {"$weird": 1}}', "unknown tag"),
     ("params_names", "{}", "not a JSON list"),
-    ("transf_ref", "opensees/geomTransf/ghost", "does not declare"),
 ])
 def test_reader_refuses_malformed_rows(
     tmp_path: Path, column: str, value: Any, message: str,
@@ -532,6 +535,174 @@ def test_reader_refuses_malformed_rows(
     _tamper(p, column, values)
     with pytest.raises(MalformedH5Error, match=message):
         _table(p)
+
+
+def test_reader_refuses_a_dangling_ref_run(tmp_path: Path) -> None:
+    p = tmp_path / "m.h5"
+    _params_frame().h5(str(p))
+    with h5py.File(str(p), "a") as f:
+        run = f["opensees"]["decl_params"]["transf_ref"]
+        n_keys = len(run["key"])
+        assert n_keys == 1
+        dt = run["key"].dtype
+        del run["key"]
+        run.create_dataset("key", data=["opensees/geomTransf/ghost"], dtype=dt)
+    with pytest.raises(MalformedH5Error, match="does not declare"):
+        _table(p)
+    _params_frame().h5(str(p))
+    with h5py.File(str(p), "a") as f:
+        run = f["opensees"]["decl_params"]["section_ref"]
+        n = len(run["count"])
+        del run["count"]
+        run.create_dataset("count", data=np.full(n, 5, dtype=np.int64))
+    with pytest.raises(MalformedH5Error, match="past its"):
+        _table(p)
+
+
+# ---------------------------------------------------------------------------
+# Every key of /opensees/decls has exactly one row
+# ---------------------------------------------------------------------------
+
+
+def _broad_staged() -> apeSees:
+    """The staged two-quad model plus global and region-scoped Rayleigh,
+    a damping object attached ``on=`` a group, modal damping, a named
+    region and a staged support (an equation constraint needs a Lagrange
+    handler on the stage; the frame carries one)."""
+    ops = _staged(named=True)
+    ops.damping.rayleigh(alpha_m=0.1, beta_k=0.01)
+    ops.damping.rayleigh(alpha_m=0.2, beta_k=0.02, on="Fill")
+    ops.damping.uniform(ratio=0.05, freq_lower=1.0, freq_upper=10.0, on="Rock")
+    ops.damping.modal((0.02, 0.03), modes=2)
+    ops.region(name="rock_region", pg="Rock")
+    return ops
+
+
+def _broad_frame() -> apeSees:
+    """The force-based frame plus an initial stress, a region and an
+    equation constraint."""
+    ops = _params_frame()
+    ops.initial_stress(
+        name="insitu", pg="Cols", sigma_xx=-100.0, sigma_yy=-200.0,
+        sigma_zz=-300.0, ramp_steps=10, lambda_install=0.5)
+    ops.region(name="cols_region", pg="Cols")
+    ops.equation_constraint(constrained=(1, 1), retained=[(2, 1, 1.0)])
+    ops.damping.rayleigh(alpha_m=0.1, beta_k=0.01, on="Cols")
+    return ops
+
+
+def _broad_partitioned() -> apeSees:
+    return build_model("two_column_frame_partitioned", "staged_partitioned", "recording")
+
+
+@pytest.mark.parametrize("build", [_broad_staged, _broad_frame, _broad_partitioned])
+def test_every_key_has_exactly_one_row(
+    tmp_path: Path, build: Callable[[], apeSees],
+) -> None:
+    ops = build()
+    p = tmp_path / "m.h5"
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")  # the equation-constraint ledger warning
+        ops.h5(str(p))
+    table = _table(p)
+    with h5py.File(str(p), "r") as f:
+        decl = f["opensees"]["decl_params"]["decl"][()].tolist()
+    assert sorted(decl) == list(range(len(table.decls)))
+    families = {d.family for d in table.decls}
+    assert {"fix", "element"} <= families
+    if build is _broad_staged:
+        assert {"mass", "recorder", "rayleigh", "modal_damping", "damping",
+                "region"} <= families
+    if build is _broad_frame:
+        assert {"initial_stress", "region", "equation_constraint",
+                "rayleigh"} <= families
+    # Each tagless record's own fields are its row: a fix's dofs, a
+    # Rayleigh's coefficients and ``on``; a damping object its own fields.
+    for i, d in enumerate(table.decls):
+        ro = table.params[i]
+        if d.family == "fix":
+            assert "dofs" in ro.params, d.key
+        if d.family == "rayleigh":
+            assert {"alpha_m", "beta_k", "on"} <= set(ro.params), d.key
+        if d.family == "damping":
+            assert ro.type in {"Uniform", "SecStif", "URD", "URDbeta"}, d.key
+            assert {"activate_time", "factor"} <= set(ro.params), d.key
+    _assert_params_read_back(ops, p)
+
+
+def test_model_wide_declaration_has_a_row(tmp_path: Path) -> None:
+    ops = _flat_frame(named=False)
+    ops.mass_from_model()
+    p = tmp_path / "m.h5"
+    ops.h5(str(p))
+    table = _table(p)
+    rows = [ro for ro in table.params.values() if ro.type == "_ModelWideDeclaration"]
+    assert [dict(ro.params) for ro in rows] == [{"verb": "mass_from_model"}]
+    assert set(table.params) == set(range(len(table.decls)))
+
+
+# ---------------------------------------------------------------------------
+# Every reference of a family, in field order
+# ---------------------------------------------------------------------------
+
+
+def test_hinge_integration_lists_every_section_in_field_order(
+    tmp_path: Path,
+) -> None:
+    ops = apeSees(cast("Any", build_simple_frame_fem()))
+    ops.model(ndm=3, ndf=6)
+    transf = ops.geomTransf.Linear(vecxz=(1.0, 0.0, 0.0))
+    s_i = ops.section.Elastic(E=1.0, A=1.0, Iz=1.0, Iy=1.0, G=1.0, J=1.0)
+    s_j = ops.section.Elastic(E=2.0, A=1.0, Iz=1.0, Iy=1.0, G=1.0, J=1.0)
+    s_e = ops.section.Elastic(E=3.0, A=1.0, Iz=1.0, Iy=1.0, G=1.0, J=1.0)
+    hinge = ops.beamIntegration.HingeRadau(
+        section_i=s_i, lp_i=0.1, section_j=s_j, lp_j=0.2, section_interior=s_e)
+    ops.element.forceBeamColumn(pg="Cols", transf=transf, integration=hinge)
+    p = tmp_path / "m.h5"
+    ops.h5(str(p))
+    table = _table(p)
+    bm = ops.build()
+    keys = [bm._declaration_key(s) for s in (s_i, s_j, s_e)]
+    assert len(set(keys)) == 3
+    ro = table.params_for(bm._declaration_key(hinge))
+    assert ro.section_ref == tuple(keys)
+    assert [ro.params[n] for n in ("section_i", "section_j", "section_interior")] == [
+        DeclRef(key=k) for k in keys]
+    assert ro.transf_ref == () and ro.integration_ref == ()
+    el = table.params_for(bm._declaration_key(
+        next(p_ for p_ in bm.primitives if type(p_).__name__ == "forceBeamColumn")))
+    assert el.integration_ref == (bm._declaration_key(hinge),)
+    # Echoed verbatim by a rewrite.
+    q = tmp_path / "out.h5"
+    OpenSeesModel.from_h5(str(p)).to_h5(str(q))
+    assert _table(q).params_for(bm._declaration_key(hinge)).section_ref == tuple(keys)
+
+
+# ---------------------------------------------------------------------------
+# Enum and Fraction refuse explicitly
+# ---------------------------------------------------------------------------
+
+
+class _Colour(enum.Enum):
+    RED = 1
+
+
+class _Mode(str, enum.Enum):
+    FAST = "fast"
+
+
+class _Level(enum.IntEnum):
+    LOW = 1
+
+
+@pytest.mark.parametrize("weird", [
+    _Colour.RED, _Mode.FAST, _Level.LOW, fractions.Fraction(1, 3),
+    (1.0, _Level.LOW), {"a": fractions.Fraction(2, 5)},
+], ids=["enum", "str-enum", "int-enum", "fraction", "nested-int-enum",
+        "nested-fraction"])
+def test_enum_and_fraction_refuse(weird: Any) -> None:
+    with pytest.raises(H5DeclParamsError, match="Enum member or a Fraction"):
+        encode_decl_params(_Odd(weird=weird), lambda p: "k")
 
 
 def test_reader_refuses_a_repeated_declaration(tmp_path: Path) -> None:

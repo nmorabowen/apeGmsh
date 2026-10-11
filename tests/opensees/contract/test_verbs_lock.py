@@ -684,10 +684,12 @@ def _read_params_ledger() -> tuple[int, int, dict[str, str]]:
 
 
 def _registry() -> dict[type, str]:
-    """Every concrete primitive (a dataclass with its own ``_emit``) the
+    """Every concrete primitive (a non-abstract dataclass below
+    ``Primitive``, its ``_emit`` own or inherited) the
     ``apeGmsh.opensees`` package defines, with its allocator kind."""
     import dataclasses
     import importlib
+    import inspect
     import pkgutil
 
     import apeGmsh.opensees as pkg
@@ -711,7 +713,7 @@ def _registry() -> dict[type, str]:
             live = getattr(sys.modules[sub.__module__], sub.__qualname__, None)
             if live is not sub or not sub.__module__.startswith(pkg.__name__ + "."):
                 continue  # a test's own fake primitive is not the registry
-            if dataclasses.is_dataclass(sub) and "_emit" in sub.__dict__:
+            if dataclasses.is_dataclass(sub) and not inspect.isabstract(sub):
                 kind = next(k for base, k in _KIND_BY_FAMILY if issubclass(sub, base))
                 out[sub] = kind
     return out
@@ -873,4 +875,31 @@ def test_h_a_grown_stale_or_incomplete_ledger_fails() -> None:
     with pytest.raises(AssertionError):
         _check_params_ledger(
             n_ledger, n_nostore, listed, {**computed, name: "unnamed"})
+
+
+def test_h_an_inheriting_subclass_outside_the_ledger_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A concrete primitive that only inherits ``_emit`` (the
+    ``LadrunoRCConcrete`` shape) is in the registry; a new one that is
+    neither named nor listed fails the ledger check."""
+    import dataclasses
+
+    from apeGmsh.opensees.material import uniaxial
+    from apeGmsh.opensees.material.uniaxial import Steel01
+
+    @dataclasses.dataclass(frozen=True, kw_only=True, slots=True)
+    class Steel01Plus(Steel01):  # inherits Steel01._emit; one extra field
+        extra: float = 1.0
+
+    Steel01Plus.__module__ = uniaxial.__name__
+    Steel01Plus.__qualname__ = "Steel01Plus"
+    monkeypatch.setattr(uniaxial, "Steel01Plus", Steel01Plus, raising=False)
+    n_ledger, n_nostore, listed = _read_params_ledger()
+    computed, named = _classify_registry()
+    assert "uniaxialMaterial.Steel01Plus" in computed
+    assert computed["uniaxialMaterial.Steel01Plus"] == "uncheckable"
+    assert "uniaxialMaterial.Steel01Plus" not in listed
+    with pytest.raises(AssertionError):
+        _check_params_ledger(n_ledger, n_nostore, listed, computed)
 

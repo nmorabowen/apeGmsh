@@ -14,7 +14,7 @@
 # fails the test. N_LEDGER counts the unnamed + uncheckable lines and
 # may only go down (name the argv, or add a roster sample, and delete
 # the line); N_NOSTORE pins the nostore lines exactly.
-N_LEDGER = 54
+N_LEDGER = 56
 N_NOSTORE = 107
 unnamed damping.URD
 unnamed damping.URDbeta
@@ -56,6 +56,8 @@ uncheckable nDMaterial.ASDPlasticMaterial3D: no contract sample
 uncheckable nDMaterial.InitDefGrad: no contract sample
 uncheckable nDMaterial.LadrunoCohesiveHingeBiaxial: no contract sample
 uncheckable nDMaterial.LadrunoConcrete3D: no contract sample
+uncheckable nDMaterial.LadrunoRCConcrete: no contract sample
+uncheckable nDMaterial.LadrunoRCFiniteStrain: no contract sample
 uncheckable nDMaterial.LogStrain: no contract sample
 uncheckable nDMaterial.LogStrain2D: no contract sample
 uncheckable nDMaterial.PlaneStrain: no contract sample
