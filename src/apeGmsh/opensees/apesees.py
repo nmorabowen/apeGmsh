@@ -195,7 +195,7 @@ from ._internal.types import (
 )
 from ._run import resolve_log_path, run_label, stream_run
 from .emitter.base import Emitter, StrategySpec
-from .node import Node, _NodeAccessor, _iter_tags
+from .node import Node, _NodeAccessor, _iter_tags, _select_nodes
 from .recorder import FilterableRecorder, Ladruno
 from .procedures._contact import _ContactQueryMixin
 from .procedures._explicit import ExplicitRunResult, _ExplicitMixin
@@ -2054,6 +2054,13 @@ class BuiltModel:
             # zeroLength referencing a node that only exists inside the
             # stage block.
             self._validate_interfaces_not_stage_bound(node_owner_stage)
+        else:
+            # ADR 0115 D6: V2 (duplicate fix / mass) runs on every build,
+            # staged or not; an unstaged overlap the build's fix merge
+            # cannot absorb (a repeated mass, a fix the merge never saw)
+            # is refused here instead of failing late inside OpenSees.
+            # It reads no stage ownership.
+            self._validate_no_duplicate_fix_mass_across_tiers({})
 
         # 1a. Nodes — emit every node from the FEM snapshot, EXCEPT
         # nodes bound to a stage (those emit inside that stage's
@@ -3060,6 +3067,13 @@ class BuiltModel:
             # interface pass (step 7c-bis) emits before any stage
             # block.
             self._validate_interfaces_not_stage_bound(node_owner_stage)
+        else:
+            # ADR 0115 D6: V2 (duplicate fix / mass) runs on every build,
+            # staged or not; an unstaged overlap the build's fix merge
+            # cannot absorb (a repeated mass, a fix the merge never saw)
+            # is refused here instead of failing late inside OpenSees.
+            # It reads no stage ownership.
+            self._validate_no_duplicate_fix_mass_across_tiers({})
 
         partitions = list(self.fem.partitions)
         node_owners = build_node_partition_owners(self.fem)
@@ -4989,8 +5003,13 @@ class BuiltModel:
         first occurrence of a ``(node, DOF)`` pair wins; the second
         is reported as the offender with both source tiers named.
 
-        PR-A ships the validator; until PR-B populates the stage-
-        bound pools this is a no-op on existing test fixtures.
+        ADR 0115 D6: it runs on every emit, staged (inside
+        :meth:`_run_staged_bc_validators`) or not.  Same-tier
+        homogeneous fixes reach it already merged by
+        :meth:`apeSees.build`, so a fix repeat it still reports is
+        cross-tier, a fix against an ``s.support`` HOLD, or a record
+        that bypassed the build's merge; a repeated mass is always
+        reported unless ``overwrite=True``.
         """
         # (node, DOF_index_1_based) → tier label of first occurrence.
         fix_owner: dict[tuple[int, int], str] = {}
@@ -8232,6 +8251,72 @@ def _emit_pattern_sp_partitioned(
 # apeSees — the bridge
 # ---------------------------------------------------------------------------
 
+def _merge_homogeneous_fixes(
+    fem: "FEMData",
+    records: "tuple[FixRecord, ...]",
+    decls: "dict[int, _DeclRow]",
+) -> "tuple[FixRecord, ...]":
+    """Merge one tier's homogeneous fixes into a set of ``(node, DOF)``
+    pairs (ADR 0115 D6, Invariant 8).
+
+    Records are taken in declaration order.  The first record to fix a
+    ``(node, DOF)`` keeps it; a later record emits only the DOFs it adds
+    on that node, or nothing (a homogeneous SP is idempotent at zero, so
+    nothing is lost).  A record that overlaps nothing is returned as the
+    same object, and a tier with no overlap is returned as ``records``
+    itself, so a model without an overlap keeps its records, its deck
+    and its archive (Invariant 7).  A trimmed record becomes one
+    ``nodes=`` record per run of consecutive nodes sharing a remaining
+    mask, in the original node order, and inherits the trimmed record's
+    declaration in ``decls``.
+    """
+    seen: set[tuple[int, int]] = set()
+    out: list[FixRecord] = []
+    changed = False
+    for rec in records:
+        node_ids = (
+            expand_pg_to_nodes(fem, rec.pg) if rec.pg is not None
+            else rec.nodes
+        )
+        if node_ids is None:
+            raise BridgeError(
+                "BuiltModel: a fix record names neither pg= nor nodes=; "
+                "declare fixes through apeSees.fix / s.fix."
+            )
+        pairs = [
+            (int(n), d) for n in node_ids
+            for d, flag in enumerate(rec.dofs, start=1) if flag
+        ]
+        if seen.isdisjoint(pairs):
+            seen.update(pairs)
+            out.append(rec)
+            continue
+        changed = True
+        runs: list[tuple[tuple[int, ...], list[int]]] = []
+        for n in node_ids:
+            nid = int(n)
+            mask = tuple(
+                flag if flag and (nid, d) not in seen else 0
+                for d, flag in enumerate(rec.dofs, start=1)
+            )
+            seen.update((nid, d) for d, flag in enumerate(mask, start=1) if flag)
+            if not any(mask):
+                continue
+            if runs and runs[-1][0] == mask:
+                runs[-1][1].append(nid)
+            else:
+                runs.append((mask, [nid]))
+        for mask, nids in runs:
+            trimmed = FixRecord(pg=None, nodes=tuple(nids), dofs=mask)
+            # A record assembled without ``_declare_record`` has no row;
+            # its trimmed parts then have none either, and an archival
+            # emit refuses them exactly as it would refuse the original.
+            if id(rec) in decls:
+                decls[id(trimmed)] = decls[id(rec)]
+            out.append(trimmed)
+    return tuple(out) if changed else records
+
+
 def _warn_if_shown(message: str, category: type[Warning]) -> bool:
     """Warn at the first caller outside apeGmsh; ``True`` iff the active
     filters let it through to the user.
@@ -8713,16 +8798,26 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
         *,
         pg: str | None = None,
         nodes: Iterable[int | Node] | None = None,
+        label: str | Sequence[str] | None = None,
         dofs: tuple[int, ...],
         name: str | None = None,
     ) -> None:
         """Apply homogeneous SP constraints (``fix``).
 
-        Exactly one of ``pg`` / ``nodes`` must be supplied. ``nodes``
-        accepts a mix of plain integer tags and :class:`Node`
+        Exactly one of ``pg`` / ``nodes`` / ``label`` must be supplied.
+        ``nodes`` accepts a mix of plain integer tags and :class:`Node`
         instances (from ``ops.nodes.get(...)``); both are normalized
         to tags. The build pipeline expands ``pg`` to a per-node
-        fan-out at emit time.
+        fan-out at emit time. ``label`` (one geometry label or a list)
+        resolves on the snapshot here, so an unknown label raises
+        before anything registers, listing the labels that exist; it
+        never falls back to a physical group (ADR 0115 D4).
+
+        Homogeneous fixes merge within a tier (ADR 0115 D6): a later
+        ``fix`` (or ``fix_from_model``) on a ``(node, DOF)`` this tier
+        already fixes emits only its remaining DOFs on that node, or
+        nothing. An overlap with a stage's ``s.fix`` / ``s.support``
+        still raises at build.
 
         ``name`` labels the declaration (``opensees/fix/<name>`` in
         ``model.h5``'s ``/opensees/decls``, read back through
@@ -8730,12 +8825,8 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
         are unique among the fixes (flat and staged).  A label only: the
         deck and ``model_hash`` do not change with it.
         """
-        if (pg is None) == (nodes is None):
-            raise ValueError(
-                "apeSees.fix: supply exactly one of pg= or nodes= "
-                f"(got pg={pg!r}, nodes={nodes!r})."
-            )
-        nodes_tuple = _iter_tags(nodes) if nodes is not None else None
+        pg, nodes_tuple = _select_nodes(
+            self._fem, pg=pg, nodes=nodes, label=label, where="apeSees.fix")
         rec = FixRecord(pg=pg, nodes=nodes_tuple, dofs=tuple(dofs))
         self._declare_record(rec, "fix", name)
         self._fix_records.append(rec)
@@ -8806,14 +8897,18 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
         *,
         pg: str | None = None,
         nodes: Iterable[int | Node] | None = None,
+        label: str | Sequence[str] | None = None,
         values: tuple[float, ...],
         overwrite: bool = False,
         name: str | None = None,
     ) -> None:
         """Attach lumped nodal mass.
 
-        Exactly one of ``pg`` / ``nodes`` must be supplied. ``nodes``
-        accepts plain integers or :class:`Node` instances.
+        Exactly one of ``pg`` / ``nodes`` / ``label`` must be supplied.
+        ``nodes`` accepts plain integers or :class:`Node` instances;
+        ``label`` resolves as for :meth:`fix`. Masses never merge: a
+        second mass on a node raises at build unless ``overwrite=True``
+        (``setMass`` is not idempotent; ADR 0115 D6).
 
         ``overwrite`` (Phase SSI-2.E) opts the record out of validator
         V2's cross-tier duplicate-mass check.  Rare at the global tier
@@ -8823,12 +8918,8 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
         ``name`` labels the declaration (``opensees/mass/<name>`` in
         ``/opensees/decls``), as for :meth:`fix`; a label only.
         """
-        if (pg is None) == (nodes is None):
-            raise ValueError(
-                "apeSees.mass: supply exactly one of pg= or nodes= "
-                f"(got pg={pg!r}, nodes={nodes!r})."
-            )
-        nodes_tuple = _iter_tags(nodes) if nodes is not None else None
+        pg, nodes_tuple = _select_nodes(
+            self._fem, pg=pg, nodes=nodes, label=label, where="apeSees.mass")
         rec = MassRecord(
             pg=pg, nodes=nodes_tuple, values=tuple(values),
             overwrite=bool(overwrite),
@@ -8878,10 +8969,12 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
 
         Model-wide declaration (no arguments), materialized into
         ordinary fix records at :meth:`build`, so every emit path treats
-        them like :meth:`fix`. May be combined with explicit
-        :meth:`fix` / ``s.fix`` / ``s.support`` only on *disjoint*
-        (node, DOF) pairs: an overlap raises at build, since OpenSees
-        refuses a second SP on a constrained DOF.
+        them like :meth:`fix`. It belongs to the global tier, so it
+        merges with explicit :meth:`fix` calls (ADR 0115 D6, Q1): a
+        ``(node, DOF)`` both fix emits once. It may be combined with a
+        stage's ``s.fix`` / ``s.support`` only on *disjoint* (node, DOF)
+        pairs: that overlap raises at build, since OpenSees refuses a
+        second SP on a constrained DOF and the lifecycles differ.
         """
         if not self._fix_from_model:
             # One declaration; the records build() materializes share it.
@@ -10912,8 +11005,10 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
                 [p for p in self._primitives if isinstance(p, Element)],
                 self._ndm, self._ndf,
                 ndf_records=self._ndf_records,
+                # ADR 0115 D6/Q1: the global ``fix`` calls share
+                # fix_from_model's tier and merge with it below; only the
+                # stages' fix / support pools are another tier.
                 explicit=(
-                    *fix_records,
                     *(r for st in self._stage_records for r in st.fix_records),
                     *(r for st in self._stage_records
                       for r in st.support_records),
@@ -10924,6 +11019,18 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
             model_wide = decls[id(self._fix_from_model_owner)]
             decls.update((id(r), model_wide) for r in from_model)
             fix_records += from_model
+        # ADR 0115 D6: identical homogeneous fixes merge within a tier
+        # (the global pool, or one stage); a tier without an overlap
+        # keeps its records unchanged.
+        fix_records = _merge_homogeneous_fixes(self._fem, fix_records, decls)
+        stage_records = tuple(
+            st if merged is st.fix_records
+            else replace(st, fix_records=merged)
+            for st, merged in (
+                (st, _merge_homogeneous_fixes(self._fem, st.fix_records, decls))
+                for st in self._stage_records
+            )
+        )
         # ADR 0120 D1: on a partitioned FEM, every element-less node (a
         # decoupled node, a spring bed's ground and side nodes) gets one
         # rank — the rank of the mesh node it reaches — so the per-rank
@@ -10945,7 +11052,7 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
             region_records=tuple(self._region_records),
             ndf_records=tuple(self._ndf_records),
             initial_stress_records=tuple(self._initial_stress_records),
-            stage_records=tuple(self._stage_records),
+            stage_records=stage_records,
             rayleigh_records=tuple(self._rayleigh_records),
             damping_attach_records=tuple(self._damping_attach_records),
             modal_damping_records=tuple(self._modal_damping_records),

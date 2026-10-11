@@ -13,7 +13,7 @@ at the user-facing surface (charter P12).
 """
 from __future__ import annotations
 
-from typing import Iterable
+from typing import Iterable, Sequence
 
 from ...recorder import (
     MPCO,
@@ -24,6 +24,7 @@ from ...recorder import (
     RecorderDeclaration,
     build_recorder_declaration,
 )
+from ...node import _resolve_label
 from ._base import _BridgeNamespace
 
 
@@ -41,6 +42,7 @@ class _RecorderNS(_BridgeNamespace):
         response: str,
         nodes: tuple[int, ...] | None = None,
         pg: str | None = None,
+        label: str | Sequence[str] | None = None,
         dofs: tuple[int, ...],
         dT: float | None = None,
         time_format: str = "step",
@@ -48,15 +50,31 @@ class _RecorderNS(_BridgeNamespace):
     ) -> Node:
         """Construct + register a ``recorder Node``.
 
-        Exactly one of ``nodes`` or ``pg`` must be supplied. See
-        :class:`apeGmsh.opensees.recorder.Node` for the full parameter
-        contract.
+        Exactly one of ``nodes``, ``pg`` or ``label`` must be supplied.
+        See :class:`apeGmsh.opensees.recorder.Node` for the full
+        parameter contract.
+
+        ``label`` (one geometry label or a list) resolves on the
+        snapshot here, before anything registers, to the recorder's
+        ``nodes``: node tags are FEM node ids, so the deck is the one
+        ``pg=`` over the same nodes gives (ADR 0115 D4). An unknown
+        label raises, listing the labels that exist; it never falls
+        back to a physical group.
 
         ``name`` labels the recorder's declaration (its
         ``opensees/recorder/<name>`` key, unique among the recorders,
         read back from ``/opensees/decls``); a label only,
         the deck and ``model_hash`` do not change with it.
         """
+        if label is not None:
+            if nodes is not None or pg is not None:
+                raise ValueError(
+                    "ops.recorder.Node: supply exactly one of nodes=, pg= "
+                    f"or label= (got nodes={nodes!r}, pg={pg!r}, "
+                    f"label={label!r})."
+                )
+            nodes = _resolve_label(
+                self._bridge.fem, label, where="ops.recorder.Node")
         return self._bridge._register(
             Node(
                 file=file,

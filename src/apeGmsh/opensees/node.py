@@ -47,10 +47,12 @@ Examples
 """
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Iterable, Iterator
+from typing import TYPE_CHECKING, Iterable, Iterator, Sequence
 
 if TYPE_CHECKING:
     import pandas as pd
+
+    from apeGmsh.mesh.FEMData import FEMData
 
     from .apesees import apeSees
 
@@ -256,27 +258,76 @@ class _NodeAccessor:
         *,
         tag: int | None = None,
         pg: str | None = None,
+        label: str | Sequence[str] | None = None,
     ) -> "Node | NodeSet":
-        """Return a :class:`Node` (single tag) or :class:`NodeSet` (PG / all).
+        """Return a :class:`Node` (tag) or :class:`NodeSet` (PG, label, all).
 
-        Exactly-one-of-or-neither:
+        At most one selector:
 
         - ``tag=N`` → :class:`Node` with that tag (raises ``KeyError``
           if absent from the FEM).
         - ``pg=name`` → :class:`NodeSet` of every node in the PG
           (raises ``KeyError`` if the PG is unknown).
+        - ``label=name`` (or a list of names) → :class:`NodeSet` of
+          every node under the geometry label(s), in snapshot order
+          (ADR 0115 D4). An unknown label raises :class:`BridgeError`
+          listing the labels that exist; it never falls back to a
+          physical group of the same name.
         - no args → :class:`NodeSet` of every FEM node.
+
+        A ``pg=`` / ``label=`` selection is always a set, whatever its
+        size (ADR 0115 D5); :meth:`one` is the single-node form.
         """
-        if tag is not None and pg is not None:
+        given = [k for k, v in (("tag", tag), ("pg", pg), ("label", label))
+                 if v is not None]
+        if len(given) > 1:
             raise ValueError(
-                "ops.nodes.get: supply at most one of tag= or pg= "
-                f"(got tag={tag!r}, pg={pg!r})."
+                "ops.nodes.get: supply at most one of tag=, pg= or label= "
+                f"(got {', '.join(given)})."
             )
         if tag is not None:
             return self._node_by_tag(tag)
         if pg is not None:
             return self._set_by_pg(pg)
+        if label is not None:
+            return self._set_by_ids(_resolve_label(
+                self._bridge.fem, label, where="ops.nodes.get"))
         return self._all()
+
+    def one(
+        self,
+        *,
+        pg: str | None = None,
+        label: str | Sequence[str] | None = None,
+    ) -> Node:
+        """Return the single :class:`Node` a selector picks (ADR 0115 D2/D5).
+
+        Exactly one of ``pg=`` / ``label=``. Raises :class:`BridgeError`,
+        naming the count, unless exactly one node is selected; use
+        :meth:`get` for a set.
+        """
+        from ._internal.build import BridgeError
+
+        if pg is not None and label is None:
+            found = self._set_by_pg(pg)
+            what = f"pg={pg!r}"
+        elif label is not None and pg is None:
+            found = self._set_by_ids(_resolve_label(
+                self._bridge.fem, label, where="ops.nodes.one"))
+            what = f"label={label!r}"
+        else:
+            raise ValueError(
+                "ops.nodes.one: supply exactly one of pg= or label= "
+                f"(got pg={pg!r}, label={label!r})."
+            )
+        if len(found) != 1:
+            raise BridgeError(
+                f"ops.nodes.one({what}) selects {len(found)} nodes, not "
+                f"exactly one (tags {list(found.tags)[:10]}"
+                f"{' ...' if len(found) > 10 else ''}). Use "
+                "ops.nodes.get(...) for a set."
+            )
+        return found[0]
 
     # -- Container protocol --------------------------------------------------
 
@@ -357,6 +408,12 @@ class _NodeAccessor:
             )
         return NodeSet(nodes=tuple(members), bridge=self._bridge)
 
+    def _set_by_ids(self, ids: tuple[int, ...]) -> NodeSet:
+        return NodeSet(
+            nodes=tuple(self._node_by_tag(int(n)) for n in ids),
+            bridge=self._bridge,
+        )
+
     def _all(self) -> NodeSet:
         nodes_comp = self._bridge.fem.nodes
         members: list[Node] = []
@@ -385,3 +442,87 @@ def _to_tag(node_or_tag: "int | Node") -> int:
 def _iter_tags(nodes: "Iterable[int | Node]") -> tuple[int, ...]:
     """Coerce an iterable of (Node | int) to a tuple of tags."""
     return tuple(_to_tag(n) for n in nodes)
+
+
+def _resolve_label(
+    fem: "FEMData", label: "str | Sequence[str]", *, where: str,
+) -> tuple[int, ...]:
+    """Node ids under the geometry label(s) ``label``, in snapshot order
+    (ADR 0115 D4).
+
+    ``label`` is one name or a non-empty list of names; several names
+    union, first-seen order kept.  The lookup is the snapshot's own
+    ``fem.nodes.select(label=...)``: a label never falls back to a
+    physical group (or a part) of the same name.
+
+    Raises
+    ------
+    ValueError
+        ``label`` is empty, or a name is not a non-blank string.
+    BridgeError
+        A name is not a label of the snapshot (the message lists the
+        labels that exist), or the labels select no node.
+    """
+    from ._internal.build import BridgeError
+
+    if isinstance(label, str):
+        names: tuple[str, ...] = (label,)
+    elif isinstance(label, (list, tuple)):
+        names = tuple(label)
+    else:
+        raise ValueError(
+            f"{where}: label= must be a string or a list of strings, got "
+            f"{type(label).__name__} ({label!r})."
+        )
+    if not names:
+        raise ValueError(f"{where}: label= is empty; name at least one label.")
+    bad = [n for n in names if not isinstance(n, str) or not n.strip()]
+    if bad:
+        raise ValueError(
+            f"{where}: every label must be a non-blank string, got {bad!r}."
+        )
+    labels = fem.nodes.labels
+    missing = [n for n in names if n not in labels]
+    if missing:
+        raise BridgeError(
+            f"{where}: no label {', '.join(repr(n) for n in missing)} on the "
+            f"FEM snapshot. Labels that exist: {sorted(set(labels.names()))}. "
+            "A label never falls back to a physical group of the same name."
+        )
+    selector: "str | list[str]" = names[0] if len(names) == 1 else list(names)
+    out = tuple(int(n) for n in fem.nodes.select(label=selector).ids)
+    if not out:
+        raise BridgeError(
+            f"{where}: label={label!r} selects 0 nodes on the FEM snapshot."
+        )
+    return out
+
+
+def _select_nodes(
+    fem: "FEMData",
+    *,
+    pg: str | None,
+    nodes: "Iterable[int | Node] | None",
+    label: "str | Sequence[str] | None",
+    where: str,
+) -> tuple[str | None, tuple[int, ...] | None]:
+    """The ``(pg, nodes)`` pair a ``fix`` / ``mass`` record stores, from
+    exactly one of ``pg=`` / ``nodes=`` / ``label=`` (ADR 0115 D4).
+
+    A label resolves here, at the call, to its node ids, so every
+    refusal (no selector, two selectors, an empty or unknown label, a
+    label with no nodes) raises before the caller registers anything.
+    The record then carries those ids as ``nodes``: it emits exactly
+    the lines ``pg=`` over the same nodes emits (Invariant 6), and the
+    record classes, the deck and the archive of every existing model
+    are unchanged (Invariants 7 and 9).
+    """
+    given = sum(x is not None for x in (pg, nodes, label))
+    if given != 1:
+        raise ValueError(
+            f"{where}: supply exactly one of pg= or nodes= (or label=) "
+            f"(got pg={pg!r}, nodes={nodes!r}, label={label!r})."
+        )
+    if label is not None:
+        return None, _resolve_label(fem, label, where=where)
+    return pg, (_iter_tags(nodes) if nodes is not None else None)
