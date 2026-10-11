@@ -43,6 +43,10 @@ For specific decisions, see the ADRs in
 context, the decision, the alternatives we rejected, and the
 consequences.
 
+For every known place where stock OpenSees and the Ladruno fork
+disagree, and which engine is right, see
+[fork-divergence-roster.md](fork-divergence-roster.md).
+
 For things we agreed to defer, see
 [_DEFERRED.md](_DEFERRED.md).
 
