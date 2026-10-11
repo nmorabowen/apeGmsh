@@ -174,7 +174,10 @@ function patternCard(s: State, defs: Definitions, p: DefObject, stage: string): 
     series: seriesV !== undefined && isRef(seriesV) ? refOf(s, defs, seriesV.$decl) : null,
     seriesH5: seriesV === undefined && typeof seriesRef === "string" ? seriesRef : null,
     params: rec ? paramLines(s, defs, rec.params, new Set(["series"])) : [],
-    tables: Object.entries(p.tables).map(([name, t]) => `${t.rows.length} ${TABLES[name] ?? "rows"} (${name})`),
+    tables: Object.entries(p.tables).map(([name, t]) => {
+      const n = t.rows.length, what = TABLES[name] ?? "rows";
+      return `${n} ${n === 1 ? what.replace(/s$/, "") : what} (${name})`;
+    }),
     targets: targetsOf(p, rec?.params ?? null),
     paramsNote: rec ? null : NO_PARAMS(d, defs),
   };
