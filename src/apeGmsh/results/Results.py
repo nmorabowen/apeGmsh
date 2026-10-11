@@ -1498,10 +1498,11 @@ class Results:
     ) -> "Optional[Path]":
         """Write one offscreen still (ADR 0094 S1).
 
-        VTK offscreen from the viewer scene / diagram pipeline — no
-        Qt window, no event loop, no ``setup(plotter, director)``.
-        ``view`` is a closed set: ``mesh`` / ``contour`` / ``deformed``
-        / ``reactions``.
+        Drawn by :meth:`ResultsSession.render` (X2-d): ``view`` is
+        translated into one session mesh view (slots, pose, instant)
+        and rendered VTK-offscreen — no Qt window, no event loop, no
+        ``setup(plotter, director)``. ``view`` is a closed set:
+        ``mesh`` / ``contour`` / ``deformed`` / ``reactions``.
 
         ``camera=`` defaults to ``xy`` for a planar model, ``iso``
         otherwise (ADR 0094 Amendment 3); pass it explicitly to
@@ -1511,8 +1512,10 @@ class Results:
         prints the ``[skip viewer]`` notice) under
         ``APEGMSH_SKIP_VIEWER=1`` or with no GL.
         """
-        from apeGmsh.viewers.render import render_results
-        return render_results(
+        from apeGmsh.viewers.session._results_stills import (
+            render_results_still,
+        )
+        return render_results_still(
             self, path,
             view=view, component=component, step=step,
             deform=deform, camera=camera, window_size=window_size,
@@ -1527,7 +1530,8 @@ class Results:
     ) -> tuple[Path, ...]:
         """Write the canned report pack (ADR 0094 S3).
 
-        Returns the tuple of written paths, or ``()`` under
+        Each still is a :meth:`render` call, so the pack is drawn by
+        :meth:`ResultsSession.render` too. Returns the tuple of written paths, or ``()`` under
         ``APEGMSH_SKIP_VIEWER=1`` / no GL (and prints the
         ``[skip viewer]`` notice). Closed ``view=`` set only; no
         ``setup()``. There is no ``fem.render_pack``.
@@ -1536,8 +1540,10 @@ class Results:
         otherwise (ADR 0094 Amendment 3); pass it explicitly to
         override.
         """
-        from apeGmsh.viewers.render import render_pack as _render_pack
-        return _render_pack(
+        from apeGmsh.viewers.session._results_stills import (
+            render_results_pack,
+        )
+        return render_results_pack(
             self, out_dir, camera=camera, window_size=window_size,
         )
 
