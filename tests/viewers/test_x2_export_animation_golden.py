@@ -42,8 +42,6 @@ import pytest
 from apeGmsh.results import Results
 from tests.viewers import test_x2_golden_stills as G
 
-pytestmark = pytest.mark.qt
-
 _ANIM = G._MANIFEST["animation"]
 
 
@@ -84,7 +82,6 @@ def plate(plate_h5: Path, monkeypatch: pytest.MonkeyPatch):
     from apeGmsh.viewers.ui.theme import PALETTES, THEME
     from tests.conftest import _open_model_from_h5
 
-    pytest.importorskip("qtpy.QtWidgets")
     monkeypatch.delenv("APEGMSH_SKIP_VIEWER", raising=False)
     monkeypatch.setattr(THEME, "_current", PALETTES[G._MANIFEST["theme"]])
     with Results.from_native(
