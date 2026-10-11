@@ -35,7 +35,9 @@ loops through ``plotter.screenshot(return_img=True)``. The figure in
 
 Nothing here knows which path built the scene, so X2-b / X2-d point the
 SAME tests at the session path by changing ``Results`` internals only:
-neither this file nor the ``.npz`` is edited. A path that stops ending
+neither this file nor the ``.npz`` is edited. The one exception is
+the bypass test's patch target, which follows the live still path
+(X2-d: ``viewers/session/_stills._screenshot``). A path that stops ending
 in ``BasePlotter.screenshot`` captures nothing and the oracle fails
 closed (frame-count / missing-record assertions), it never passes
 vacuously.
@@ -724,7 +726,10 @@ def test_a_written_still_without_a_captured_shot_fails(
 ) -> None:
     """A path that writes its still around ``BasePlotter.screenshot``
     must FAIL the oracle, not skip it (even off a GL lane)."""
-    from apeGmsh.viewers import render as render_mod
+    # X2-d: ``results.render`` shoots through the session still client
+    # (``viewers/session/_stills.render_still``), so that is the shot
+    # the bypass replaces.
+    from apeGmsh.viewers.session import _stills as still_mod
 
     def _bypass(plotter: Any, path: Any) -> Path:
         out = Path(path)
@@ -732,7 +737,7 @@ def test_a_written_still_without_a_captured_shot_fails(
         return out
 
     monkeypatch.delenv("APEGMSH_EXPECT_GL", raising=False)
-    monkeypatch.setattr(render_mod, "_screenshot", _bypass)
+    monkeypatch.setattr(still_mod, "_screenshot", _bypass)
     for call in (
         lambda: _render_view(plate, tmp_path, "contour"),
         lambda: _require_shots([], 1, (tmp_path / "x.png",)),

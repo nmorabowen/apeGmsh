@@ -73,6 +73,27 @@ gives one scale and it says stress.
 See [Results session](../api/results-session.md) for the whole catalog
 and the legend law.
 
+## The one-call shortcut
+
+`results.render(path, view=...)` is the same session with the slots
+filled for you. `view=` is `mesh`, `contour`, `deformed` or
+`reactions`. `results.render_pack(dir)`, `results.assess(figures=True)`
+and `python -m apeGmsh.viewers render` all draw the same way.
+
+```python
+results.render("uy.png", view="deformed", component="displacement_y")
+results.render_pack("figures/")    # mesh, contour, deformed, reactions, history
+```
+
+The shortcut refuses two requests that the session cannot draw:
+
+- `view="reactions"` with `component="reaction_x"` (or `_y` / `_z`).
+  The reactions slot draws every axis, so pass `component="reactions"`.
+  For one axis's numbers, read `results.nodes.get(component="reaction_force_x")`.
+- `deform=(field, scale)` with a field other than `displacement`,
+  `velocity` or `acceleration`. Pass `deform=SCALE` to warp by
+  displacement.
+
 ## Narrow it down
 
 Scope picks the one cell set the whole view is a function of — one
