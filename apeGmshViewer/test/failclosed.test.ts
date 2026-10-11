@@ -16,6 +16,7 @@ import { parseRefusal } from "../src/effects.ts";
 import { readGeometry } from "../src/reader/geometry.ts";
 import { readProvenance } from "../src/reader/provenance.ts";
 import {
+  emptyDefinitions,
   GEOMETRY_TARGET,
   NEUTRAL_TARGET,
   OPENSEES_TARGET,
@@ -53,7 +54,8 @@ function model(objects: OpsObject[], elementMeta: ElementMeta[]): ModelFile {
     blocks: [{ alias: "line2", code: 1, dim: 1, npe: 2, ids: new Float64Array([1]), connectivity: new Float64Array([1, 2]) }],
     physicalGroups: [],
     labels: [],
-    opensees: { version: "2.21.0", objects, elementMeta, names: [] },
+    opensees: { version: "2.21.0", objects, elementMeta, names: [], definitions: emptyDefinitions() },
+    sequence: { status: "absent" },
     warnings: [],
     readMs: 0,
   };

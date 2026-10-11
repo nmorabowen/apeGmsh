@@ -5,7 +5,7 @@
 // code does not know raises at run time.
 
 import { geometryPairing } from "./selectors.ts";
-import type { ArtifactInfo, ArtifactKind, DeclPath, Event, PhaseKey, State } from "./types.ts";
+import { WINDOW_KINDS, type ArtifactInfo, type ArtifactKind, type DeclPath, type Event, type PhaseKey, type State } from "./types.ts";
 
 /** A record with no prototype: a key named `constructor` or `__proto__` is just a key. */
 export const emptyRecord = <T>(): Record<string, T> => Object.create(null) as Record<string, T>;
@@ -28,6 +28,8 @@ export const initialState: State = {
   provenanceOrigin: false,
   source: { seq: 0, request: null, last: null },
   view: { frameSeq: 0 },
+  definitions: null,
+  sequence: { status: "absent" },
 };
 
 const NO_SELECTION: State["selection"] = { decls: [], picks: [] };
@@ -97,7 +99,7 @@ export function reduce(s: State, e: Event): State {
       if (e.artifact === "geometry") {
         return withPhase({ ...s, artifacts: { ...s.artifacts, geometry: info }, geometry: e.load.geometry });
       }
-      const { decls, names, blocks, mesh, provenance, provenanceOrigin } = e.load;
+      const { decls, names, blocks, mesh, provenance, provenanceOrigin, definitions, sequence } = e.load;
       // A model read for the first time opens on the mesh. A re-read of the
       // same file (D1 rewrites it every run) keeps the phase shown only while
       // that phase is still on the axis: a re-read model with a new
@@ -115,6 +117,8 @@ export function reduce(s: State, e: Event): State {
         mesh,
         provenance,
         provenanceOrigin,
+        definitions,
+        sequence,
         selection: NO_SELECTION,
         hover: null,
         visibility: { ...s.visibility, hidden: [] },
@@ -221,6 +225,7 @@ export function reduce(s: State, e: Event): State {
     case "inspectorUnpin":
       return { ...s, inspector: { pinned: s.inspector.pinned.filter((d) => d !== e.decl) } };
     case "openWindow":
+      if (!WINDOW_KINDS.includes(e.window)) throw new RangeError(`openWindow: ${JSON.stringify(e.window)} is not a window kind`);
       if (s.windows.open.includes(e.window)) return s;
       return { ...s, windows: { open: [...s.windows.open, e.window] } };
     case "closeWindow":

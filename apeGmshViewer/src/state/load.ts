@@ -5,7 +5,7 @@
 
 import type { ElementRef } from "../chain/resolve.ts";
 import { buildMesh, colourGroups, type MeshBuffers } from "../mesh/build.ts";
-import type { Group, ModelFile, OpsFamily, Param } from "../model/types.ts";
+import type { Group, ModelFile, OpsFamily, Param, SequenceZone } from "../model/types.ts";
 import { sourceOf, type ProvenanceZone } from "../reader/provenance.ts";
 import type { BlobStore } from "./blobs.ts";
 import { cellPath, elementLinks, objectDecl, objectPaths, opsRowPath, type Lookup } from "./decls.ts";
@@ -300,6 +300,22 @@ export function provenanceEntries(zone: ProvenanceZone): ProvenanceEntry[] {
   return rows.sort((a, b) => a.seq - b.seq);
 }
 
+/** The /sequence zone as the model artifact's zone status: `absent` is "not in this file", never an error. */
+export function sequenceStatus(z: SequenceZone): ZoneStatus {
+  switch (z.status) {
+    case "absent":
+      return { status: "absent" };
+    case "ready":
+      return { status: "ready", version: z.version };
+    case "refused":
+      return { status: "refused", version: z.version, accepted: z.accepted, newer: z.newer, reason: z.reason };
+    default: {
+      const unknown: never = z;
+      throw new Error(`sequenceStatus: unknown /sequence state ${JSON.stringify(unknown)}`);
+    }
+  }
+}
+
 /**
  * Everything `fileLoaded` carries for a model artifact. `provenance` is the
  * file's /provenance zone when main read it (null: the file has none);
@@ -335,6 +351,7 @@ export function loadModel(
       neutral: { status: "ready", version: model.neutralVersion },
       opensees: model.opensees ? { status: "ready", version: model.opensees.version } : { status: "absent" },
       provenance: provenanceRefused ?? (provenance ? { status: "ready", version: provenance.version } : { status: "absent" }),
+      sequence: sequenceStatus(model.sequence),
     },
     sessionId: typeof sid === "string" ? sid : null,
     warnings: [...warnings, ...mesh.warnings],
@@ -352,5 +369,7 @@ export function loadModel(
     mesh: meshInfoOf(model, mesh, blobs),
     provenance: provenance ? provenanceEntries(provenance) : [],
     provenanceOrigin: provenance?.originColumn ?? false,
+    definitions: model.opensees ? model.opensees.definitions : null,
+    sequence: model.sequence,
   };
 }
