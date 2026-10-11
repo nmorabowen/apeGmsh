@@ -43,6 +43,18 @@ with h5py (the zone writers, V2b and V2c, are not on `main` yet):
 - `zones.geometry.h5` is a `/geometry` zone (1.0.0) for a unit cube with the
   same `session_id`: 8 points, 12 straight curves of 32 samples, and 6
   two-triangle faces with outward normals, bounding 1 volume.
+- `definitions.h5` (V3c0) is `shoebuckle.h5` restamped as a staged OpenSees
+  2.26.0 file: `/opensees/decls` (16 keys: the beam chain, three time series,
+  three patterns, two recorders, a named fix, a region with two owners, one
+  synthesised series) with their tag runs and tagless rows,
+  `/opensees/decl_params` (17 rows; `$decl`, `$struct` and `$opaque` values,
+  a `params_names` list, the `transf_ref` / `integration_ref` / `section_ref`
+  runs), and two stages in place of the global `/opensees/analysis`:
+  `gravity` (static, a pattern, a fix, a recorder) and `push` (transient, a
+  pattern, a `remove_sp`). It has no `/sequence` zone. Python's own reader
+  (`H5Model.declarations()`) reads it with the same keys and owners as the app.
+  `test/zones/definitions.test.ts` checks the store and every window against
+  the literals of the script.
 
 ```powershell
 & C:\Users\nmora\venv\opensees_venv\Scripts\python.exe apeGmshViewer/fixtures/make_zone_fixtures.py

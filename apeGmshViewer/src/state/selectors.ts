@@ -2,12 +2,31 @@
 // from. A panel imports this module and store.ts, nothing else of the app.
 
 import type { Chain, ChainNode, Field } from "../chain/resolve.ts";
-import type { OpsFamily } from "../model/types.ts";
+import type { OpsFamily, Param } from "../model/types.ts";
 import { elementFields, elementLinks, type Lookup } from "./decls.ts";
 import { pairSessions } from "../reader/geometry.ts";
 import { PROVENANCE_ORIGIN_FROM } from "../reader/provenance.ts";
 import { roleColouring } from "./roles.ts";
-import type { ArtifactInfo, Decl, DeclPath, DeclSource, LegendEntry, Origin, Pick, State, ZoneStatus } from "./types.ts";
+import type {
+  AnalysisDef,
+  ArtifactInfo,
+  Decl,
+  DeclPath,
+  DeclRecord,
+  DeclSource,
+  DeclValue,
+  Definitions,
+  DefObject,
+  LegendEntry,
+  Origin,
+  Pick,
+  StageDef,
+  State,
+  WindowContent,
+  WindowKind,
+  WindowRow,
+  ZoneStatus,
+} from "./types.ts";
 
 function lookupOf(s: State): Lookup {
   // Tags are not keys of the state; an element's links are followed by the
@@ -309,4 +328,175 @@ export function sourceFailure(s: State, decl: DeclPath): string | null {
 export function failureOf(s: State): string | null {
   const a = s.artifacts.model;
   return a && a.status === "failed" ? `${a.path}: ${a.error ?? "failed"}` : null;
+}
+
+// ---- model-definition windows (V3c0) ----------------------------------------
+
+/** One value, short: a `$decl` ref as `-> key`, a `$struct` as `Class{...}`, an `$opaque` as its class. */
+export function shortValue(v: DeclValue | Param[] | undefined): string {
+  if (v === undefined) return "";
+  if (v === null) return "null";
+  if (Array.isArray(v)) {
+    const head = (v as DeclValue[]).slice(0, 6).map(shortValue).join(", ");
+    return v.length > 6 ? `[${head}, ... ${v.length}]` : `[${head}]`;
+  }
+  if (typeof v === "object") {
+    if (typeof v["$decl"] === "string") return `-> ${v["$decl"]}`;
+    if (typeof v["$struct"] === "string") return `${v["$struct"]}{...}`;
+    if (typeof v["$opaque"] === "string") return v["$opaque"];
+    return `{${Object.keys(v).join(", ")}}`;
+  }
+  return String(v);
+}
+
+/** A declaration's parameters by field name (its first owner), `field=value` each. */
+export function namedParams(d: DeclRecord | null): string {
+  const p = d?.params[0];
+  if (!p) return "";
+  return Object.entries(p.params).map(([k, v]) => `${k}=${shortValue(v)}`).join(" · ");
+}
+
+/** The `/opensees/decls` row that owns tag `tag` of allocator kind `kind`, or null. */
+export function declOfTag(defs: Definitions, kind: string, tag: number | null): DeclRecord | null {
+  if (!defs.decls || tag === null) return null;
+  const run = defs.decls.tags.find((t) => t.kind === kind && tag >= t.first && tag < t.first + t.count);
+  return run ? (defs.decls.records[run.decl] ?? null) : null;
+}
+
+/**
+ * The declaration of each recorder group, from `rows/<store>`: "one per
+ * group, in index order" (h5-schema.md), the index being the trailing `_<i>`
+ * of the group name. No join (an empty map) when the counts differ.
+ */
+export function recorderDecls(defs: Definitions, recorders: readonly DefObject[], store: string): Map<string, DeclRecord> {
+  const out = new Map<string, DeclRecord>();
+  const rows = defs.decls?.rows[store];
+  if (!defs.decls || !rows || rows.length !== recorders.length) return out;
+  const idx = recorders.map((r) => Number(/_(\d+)$/.exec(r.groupName)?.[1] ?? Number.NaN));
+  if (idx.some((i) => !Number.isInteger(i))) return out;
+  const order = recorders.map((r, i) => ({ r, i: idx[i]! })).sort((a, b) => a.i - b.i);
+  order.forEach(({ r }, k) => {
+    const d = defs.decls!.records[rows[k]!];
+    if (d) out.set(r.path, d);
+  });
+  return out;
+}
+
+const stageSection = (st: StageDef): string => `stage ${st.index} · ${st.name}`;
+const countOf = (o: DefObject, table: string): number => o.tables[table]?.rows.length ?? 0;
+const CHAIN = ["analysis", "integrator", "algorithm", "test", "system", "numberer", "handler"] as const;
+
+function analysisRow(a: AnalysisDef, section: string): WindowRow {
+  const t = a.attrs;
+  const chain = CHAIN.filter((k) => t[k] !== undefined).map((k) => {
+    const args = t[`${k}_args`];
+    return `${k}=${shortValue(t[k])}` + (args === undefined ? "" : `(${(Array.isArray(args) ? args : [args]).map((x) => shortValue(x)).join(", ")})`);
+  });
+  const title = (["analysis", "integrator", "algorithm"] as const).filter((k) => t[k] !== undefined).map((k) => shortValue(t[k])).join(" · ");
+  return { key: a.path, section, title: title || "(no chain tokens)", detail: chain.join(" · "), h5: a.path, declKey: null, select: null };
+}
+
+function patternRow(defs: Definitions, p: DefObject, section: string): WindowRow {
+  const d = declOfTag(defs, "pattern", p.tag);
+  const ref = p.attrs["series_ref"];
+  const parts = [
+    `${p.type} tag ${p.tag ?? "?"}`,
+    typeof ref === "string" ? `series ${ref.slice(ref.lastIndexOf("/") + 1)}` : "",
+    countOf(p, "loads") ? `${countOf(p, "loads")} loads` : "",
+    countOf(p, "sps") ? `${countOf(p, "sps")} sps` : "",
+    countOf(p, "element_loads") ? `${countOf(p, "element_loads")} element loads` : "",
+    countOf(p, "sp_holds") ? `${countOf(p, "sp_holds")} holds` : "",
+  ];
+  return { key: p.path, section, title: d?.name || p.groupName, detail: parts.filter(Boolean).join(" · "), h5: p.path, declKey: d?.key ?? null, select: null };
+}
+
+function recorderRow(r: DefObject, section: string, d: DeclRecord | undefined): WindowRow {
+  const file = r.attrs["file"], kind = r.attrs["kind"];
+  const parts = [r.type, typeof file === "string" ? file : "", typeof kind === "string" ? kind : ""];
+  return { key: r.path, section, title: d?.name || r.groupName, detail: parts.filter(Boolean).join(" · "), h5: r.path, declKey: d?.key ?? null, select: null };
+}
+
+const MATERIAL_KINDS: ReadonlySet<string> = new Set(["uniaxialMaterial", "nDMaterial", "section"]);
+
+/**
+ * What each model-definition window lists, from the store alone (ADR 0112
+ * D6): the five V3c0 placeholders show these rows, and the V3 slice that owns
+ * a window renders them in full. A row that is a declaration of the store (a
+ * material or a section) carries it in `select`, which a click dispatches.
+ */
+export function windowContentOf(s: State, kind: WindowKind): WindowContent {
+  const model = s.artifacts.model;
+  if (!model || model.status !== "ready") return { rows: [], note: "no model is open" };
+  const defs = s.definitions;
+  if (kind === "materials") {
+    const rows: WindowRow[] = Object.values(s.decls)
+      .filter((d) => MATERIAL_KINDS.has(d.kind))
+      .map((d) => {
+        const rec = defs ? declOfTag(defs, d.kind, d.tag) : null;
+        const named = namedParams(rec);
+        const positional = d.params.map((x) => shortValue(x)).join(" ");
+        return {
+          key: d.h5,
+          section: d.kind,
+          title: d.name,
+          detail: `${d.type} tag ${d.tag ?? "?"}` + (named ? ` · ${named}` : positional ? ` · ${positional}` : ""),
+          h5: d.h5,
+          declKey: rec?.key ?? null,
+          select: d.path,
+        };
+      });
+    return { rows, note: rows.length ? null : "the model declares no material or section" };
+  }
+  if (!defs) return { rows: [], note: "the model has no /opensees zone" };
+  const rows: WindowRow[] = [];
+  switch (kind) {
+    case "stages": {
+      for (const st of defs.stages) {
+        const steps = st.attrs["analyze_steps"], dt = st.attrs["analyze_dt"];
+        const parts = [
+          steps !== undefined ? `${shortValue(steps)} steps` : "",
+          dt !== undefined ? `dt ${shortValue(dt)}` : "static",
+          `${st.patterns.length} patterns`,
+          `${st.recorders.length} recorders`,
+          st.bcs.fix ? `${st.bcs.fix.rows.length} fix` : "",
+          ...st.other,
+        ];
+        rows.push({ key: st.path, section: "stages", title: `${st.index} · ${st.name}`, detail: parts.filter(Boolean).join(" · "), h5: st.path, declKey: null, select: null });
+      }
+      const seq = s.sequence;
+      const seqNote =
+        seq.status === "ready" ? `/sequence ${seq.version}: ${seq.stages.rows.length} stages, ${seq.changes.rows.length} changes` :
+        seq.status === "refused" ? `/sequence ${seq.version} was not read (${seq.reason})` :
+        "this file has no /sequence zone; the stages are read from /opensees/stages";
+      const none = defs.analysis ? "unstaged model: one implicit stage, from /opensees/analysis" : "the model declares no stage";
+      return { rows, note: rows.length ? seqNote : `${none}; ${seqNote}` };
+    }
+    case "analysis":
+      if (defs.analysis) rows.push(analysisRow(defs.analysis, "global"));
+      for (const st of defs.stages) if (st.analysis) rows.push(analysisRow(st.analysis, stageSection(st)));
+      return { rows, note: rows.length ? null : "the model declares no analysis" };
+    case "patterns": {
+      for (const p of defs.patterns) rows.push(patternRow(defs, p, "global"));
+      for (const st of defs.stages) for (const p of st.patterns) rows.push(patternRow(defs, p, stageSection(st)));
+      for (const t of defs.timeSeries) {
+        const d = declOfTag(defs, "timeSeries", t.tag);
+        const named = namedParams(d);
+        rows.push({ key: t.path, section: "time series", title: d?.name || t.groupName, detail: `${t.type} tag ${t.tag ?? "?"}` + (named ? ` · ${named}` : ""), h5: t.path, declKey: d?.key ?? null, select: null });
+      }
+      return { rows, note: rows.length ? null : "the model declares no pattern or time series" };
+    }
+    case "recorders": {
+      const global = recorderDecls(defs, defs.recorders, "recorders");
+      for (const r of defs.recorders) rows.push(recorderRow(r, "global", global.get(r.path)));
+      for (const st of defs.stages) {
+        const staged = recorderDecls(defs, st.recorders, `stages/stage_${String(st.index).padStart(3, "0")}/recorders`);
+        for (const r of st.recorders) rows.push(recorderRow(r, stageSection(st), staged.get(r.path)));
+      }
+      return { rows, note: rows.length ? null : "the model declares no recorder" };
+    }
+    default: {
+      const unknown: never = kind;
+      throw new Error(`windowContentOf: unknown window ${JSON.stringify(unknown)}`);
+    }
+  }
 }

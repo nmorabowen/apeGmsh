@@ -8,11 +8,13 @@
 // returns and fails on a TypedArray, an ArrayBuffer, a Map or a Set.
 
 import type { Field } from "../chain/resolve.ts";
-import type { OpsFamily, Param } from "../model/types.ts";
+import type { Definitions, OpsFamily, Param, SequenceZone } from "../model/types.ts";
 
 // Panels import their chain types from here, never from src/chain (the
 // panel allow-list: state/store, state/selectors, state/types, ui/).
 export type { Chain, ChainNode, Field } from "../chain/resolve.ts";
+// The model-definition data, as the reader read it (plain data: no typed array).
+export type { AnalysisDef, DeclParams, DeclRecord, DeclValue, Definitions, DefObject, SequenceZone, StageDef, Table } from "../model/types.ts";
 
 /**
  * A declaration path, `<zone>/<family>/<name|#k>` (decision 11): the key of
@@ -233,6 +235,32 @@ export interface BlockInfo {
 
 export type WindowKind = "stages" | "analysis" | "patterns" | "recorders" | "materials";
 
+/** Every window kind, in menu order (the registry in panels/windows/ has one view per kind). */
+export const WINDOW_KINDS: readonly WindowKind[] = ["stages", "analysis", "patterns", "recorders", "materials"];
+
+/**
+ * One row of a model-definition window: what the reader read, where (`h5`),
+ * the `/opensees/decls` key it joins when it joins one, and the declaration a
+ * click selects (null when the row is not a declaration of the store).
+ */
+export interface WindowRow {
+  /** the row's HDF5 path (unique within a window) */
+  key: string;
+  /** the group the row is listed under (`global`, `stage 0 · gravity`, `time series`, ...) */
+  section: string;
+  title: string;
+  detail: string;
+  h5: string;
+  declKey: string | null;
+  select: DeclPath | null;
+}
+
+/** What a window lists: its rows, and a sentence when there is nothing (or something missing) to say why. */
+export interface WindowContent {
+  rows: WindowRow[];
+  note: string | null;
+}
+
 export interface Layout {
   open: WindowKind[];
 }
@@ -273,6 +301,10 @@ export interface State {
   };
   /** view requests: `frameSeq` counts `frameSelection` events; the frame effect acts on each change */
   view: { frameSeq: number };
+  /** the model's definition data (decls, decl_params, analysis, series, patterns, recorders, stages); null with no model or no /opensees */
+  definitions: Definitions | null;
+  /** the model's root /sequence zone; `absent` when the file has none (or no model is loaded) */
+  sequence: SequenceZone;
 }
 
 /** The payload of `fileLoaded` for the model artifact: what the loader derived from the file. */
@@ -286,6 +318,9 @@ export interface ModelLoad {
   provenance: ProvenanceEntry[];
   /** the zone carries `records/origin` (false with no zone) */
   provenanceOrigin: boolean;
+  /** the opensees zone's definition data; null when the file has no /opensees */
+  definitions: Definitions | null;
+  sequence: SequenceZone;
 }
 
 /** The payload of `fileLoaded` for the geometry artifact. */

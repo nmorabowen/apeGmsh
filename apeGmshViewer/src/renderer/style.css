@@ -178,3 +178,51 @@ code { font-family: var(--mono); }
   border: 1px dashed var(--muted);
 }
 .source-off, .source-row .source-failed { grid-column: 1 / -1; margin: 1px 0 0; }
+
+/* V3c0: the model-definition windows. The menu sits bottom-centre; open
+   windows stack in a column left of the rail, above the legend's corner. */
+#windows-menu {
+  position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%);
+  display: flex; align-items: center; gap: 4px; padding: 4px 6px; border-radius: 9px;
+  background: var(--panel); border: 1px solid var(--line);
+}
+#windows-menu[hidden], #windows[hidden] { display: none; }
+.window-menu-label {
+  margin: 0 4px; font-size: 11px; font-weight: 600;
+  letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted);
+}
+.window-toggle {
+  padding: 2px 10px; border-radius: 6px; cursor: pointer;
+  font: 600 12px var(--font); color: var(--text);
+  background: var(--hover); border: 1px solid var(--line);
+}
+.window-toggle.on { color: var(--accent-ink); background: var(--accent); border-color: var(--accent); }
+#windows {
+  position: fixed; top: 100px; bottom: 64px; right: 498px; width: 440px;
+  display: flex; flex-direction: column; gap: 10px; overflow: auto;
+}
+.window {
+  flex: 0 0 auto; padding: 10px 12px; border-radius: 10px;
+  background: var(--panel); border: 1px solid var(--line);
+}
+.window h3 {
+  display: flex; align-items: center; gap: 8px;
+  margin: 0 0 6px; font-size: 12px; font-weight: 600;
+  letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted);
+}
+.window-close {
+  margin-left: auto; padding: 0 6px; border-radius: 4px; cursor: pointer;
+  font: 600 13px var(--font); color: var(--text); background: var(--hover); border: 1px solid var(--line);
+}
+.window-note { color: var(--muted); font-size: 12px; margin: 0 0 6px; }
+.window-section {
+  margin: 8px 0 2px; font-size: 11px; font-weight: 600; color: var(--accent);
+  letter-spacing: 0.04em; text-transform: uppercase;
+}
+.window-row { padding: 4px 0; border-top: 1px solid var(--line); }
+.window-row.clickable { cursor: pointer; }
+.window-row.clickable:hover { background: var(--hover); }
+.window-row-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; }
+.window-row-title { font-weight: 600; }
+.window-row-decl { font: 11px var(--mono); color: var(--muted); }
+.window-row-detail { font-size: 13px; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
