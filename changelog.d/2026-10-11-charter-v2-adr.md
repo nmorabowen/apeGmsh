@@ -1,0 +1,12 @@
+### ADDED — ADR 0121, Charter v2: B with amendments, one engine policy, a mechanized freeze (Proposed; program slice P0.2, #1678)
+
+ADR 0121 records the expert panel's fork decision ("B with amendments":
+stock first-class, the fork invested, AUTO default target) and the P0.3
+rulings in one place, and proposes what replaces ADR 0102's prose freeze
+and hand-filled Warranted table. Its proposals: one engine policy (a member
+is Warranted when its fork test passes in `live-fork` and stock refuses it
+or meets an oracle), a census lock over four registries that only an
+Accepted ADR can grow, an amendment rule (pointers and status edits land in
+the accepting PR), six charter principles each tied to a gate, and
+`charter.md` kept as the bridge charter. It ships Proposed with five open
+questions for the maintainer; it edits neither ADR 0102 nor `charter.md`.
