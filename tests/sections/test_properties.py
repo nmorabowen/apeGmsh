@@ -306,6 +306,46 @@ def test_a_stopped_controller_keeps_the_pause_until_its_worker_is_reaped():
     assert delivered == []                           # nothing after stop
 
 
+class _FakeTimer:
+    """Stands in for the QTimer: only start/stop/isActive are used."""
+
+    def __init__(self) -> None:
+        self.active = True
+
+    def start(self) -> None:
+        self.active = True
+
+    def stop(self) -> None:
+        self.active = False
+
+    def isActive(self) -> bool:
+        return self.active
+
+
+def test_a_request_after_stop_resumes_the_timer_that_reaps_its_worker():
+    """A closed builder window shown again calls request() on its stopped
+    controller. stop() with no live worker had already stopped the timer,
+    so the new worker had nothing to reap it, and the collector stayed
+    paused for the rest of the process. The request must resume the
+    controller, timer included, and deliver its result again."""
+    delivered = []
+    ctrl = PropertiesController(
+        builder=lambda d: BuildResult(key="", kind="continuum"),
+        on_result=delivered.append, autostart_timer=False,
+    )
+    ctrl._timer = _FakeTimer()
+    ctrl.stop()
+    assert ctrl._timer.isActive() is False           # nothing left to reap
+
+    ctrl.request({"kind": "continuum"})
+    assert ctrl._timer.isActive() is True            # something will reap it
+    for t in list(ctrl._threads):
+        t.join(30.0)
+    ctrl.drain()                                     # what the timer tick runs
+    assert gc.isenabled() is True
+    assert len(delivered) == 1
+
+
 def test_no_cyclic_collection_ever_runs_on_a_worker_thread():
     """Regression lock (#1649): the UI thread owns the collector switch.
 

@@ -286,7 +286,15 @@ class PropertiesController:
     def request(self, doc_dict: "dict[str, Any]") -> None:
         """Ask for the properties of ``doc_dict``. Cheap and non-blocking
         — the heavy build runs on a worker thread; ``on_result`` fires
-        later on the UI thread."""
+        later on the UI thread.
+
+        A request after :meth:`stop` (a closed builder window shown again)
+        resumes the controller, timer included: a worker launched with
+        no timer to reap it would hold the collector pause for good."""
+        if self._stopped:
+            self._stopped = False
+            if self._timer is not None and not self._timer.isActive():
+                self._timer.start()
         key = canonical_state(doc_dict)
         self._latest_key = key
         if self._running:
