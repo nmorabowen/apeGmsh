@@ -928,7 +928,7 @@ class _StageBuilder:
         *,
         pg: str | None = None,
         nodes: "Iterable[int | Node] | None" = None,
-        label: "str | Sequence[str] | None" = None,
+        label: str | Sequence[str] | None = None,
         dofs: tuple[int, ...],
         name: str | None = None,
     ) -> None:
@@ -1140,7 +1140,7 @@ class _StageBuilder:
         *,
         pg: str | None = None,
         nodes: "Iterable[int | Node] | None" = None,
-        label: "str | Sequence[str] | None" = None,
+        label: str | Sequence[str] | None = None,
         values: tuple[float, ...],
         overwrite: bool = False,
         name: str | None = None,

@@ -42,7 +42,7 @@ class _RecorderNS(_BridgeNamespace):
         response: str,
         nodes: tuple[int, ...] | None = None,
         pg: str | None = None,
-        label: "str | Sequence[str] | None" = None,
+        label: str | Sequence[str] | None = None,
         dofs: tuple[int, ...],
         dT: float | None = None,
         time_format: str = "step",

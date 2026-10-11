@@ -258,10 +258,9 @@ class _NodeAccessor:
         *,
         tag: int | None = None,
         pg: str | None = None,
-        label: "str | Sequence[str] | None" = None,
+        label: str | Sequence[str] | None = None,
     ) -> "Node | NodeSet":
-        """Return a :class:`Node` (single tag) or :class:`NodeSet` (PG,
-        label or all).
+        """Return a :class:`Node` (tag) or :class:`NodeSet` (PG, label, all).
 
         At most one selector:
 
@@ -299,7 +298,7 @@ class _NodeAccessor:
         self,
         *,
         pg: str | None = None,
-        label: "str | Sequence[str] | None" = None,
+        label: str | Sequence[str] | None = None,
     ) -> Node:
         """Return the single :class:`Node` a selector picks (ADR 0115 D2/D5).
 

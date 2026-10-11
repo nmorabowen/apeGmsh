@@ -3128,7 +3128,7 @@
     },
     "ops.fix": {
       "doc": "Apply homogeneous SP constraints (``fix``).",
-      "signature": "fix(*, pg: 'str | None' = None, nodes: 'Iterable[int | Node] | None' = None, dofs: 'tuple[int, ...]', name: 'str | None' = None) -> 'None'",
+      "signature": "fix(*, pg: 'str | None' = None, nodes: 'Iterable[int | Node] | None' = None, label: 'str | Sequence[str] | None' = None, dofs: 'tuple[int, ...]', name: 'str | None' = None) -> 'None'",
       "skill": "references/opensees-bridge.md",
       "symbol": "ops.fix"
     },
@@ -3332,7 +3332,7 @@
     },
     "ops.mass": {
       "doc": "Attach lumped nodal mass.",
-      "signature": "mass(*, pg: 'str | None' = None, nodes: 'Iterable[int | Node] | None' = None, values: 'tuple[float, ...]', overwrite: 'bool' = False, name: 'str | None' = None) -> 'None'",
+      "signature": "mass(*, pg: 'str | None' = None, nodes: 'Iterable[int | Node] | None' = None, label: 'str | Sequence[str] | None' = None, values: 'tuple[float, ...]', overwrite: 'bool' = False, name: 'str | None' = None) -> 'None'",
       "skill": "references/opensees-bridge.md",
       "symbol": "ops.mass"
     },
@@ -3535,10 +3535,16 @@
       "symbol": "ops.ndf"
     },
     "ops.nodes.get": {
-      "doc": "Return a :class:`Node` (single tag) or :class:`NodeSet` (PG / all).",
-      "signature": "get(*, tag: 'int | None' = None, pg: 'str | None' = None) -> \"'Node | NodeSet'\"",
+      "doc": "Return a :class:`Node` (tag) or :class:`NodeSet` (PG, label, all).",
+      "signature": "get(*, tag: 'int | None' = None, pg: 'str | None' = None, label: 'str | Sequence[str] | None' = None) -> \"'Node | NodeSet'\"",
       "skill": "references/opensees-bridge.md",
       "symbol": "ops.nodes.get"
+    },
+    "ops.nodes.one": {
+      "doc": "Return the single :class:`Node` a selector picks (ADR 0115 D2/D5).",
+      "signature": "one(*, pg: 'str | None' = None, label: 'str | Sequence[str] | None' = None) -> 'Node'",
+      "skill": "references/opensees-bridge.md",
+      "symbol": "ops.nodes.one"
     },
     "ops.nodes.summary": {
       "doc": "DataFrame of every FEM node — columns ``tag``, ``x``, ``y``, ``z``.",
@@ -3668,7 +3674,7 @@
     },
     "ops.recorder.Node": {
       "doc": "Construct + register a ``recorder Node``.",
-      "signature": "Node(*, file: 'str', response: 'str', nodes: 'tuple[int, ...] | None' = None, pg: 'str | None' = None, dofs: 'tuple[int, ...]', dT: 'float | None' = None, time_format: 'str' = 'step', name: 'str | None' = None) -> 'Node'",
+      "signature": "Node(*, file: 'str', response: 'str', nodes: 'tuple[int, ...] | None' = None, pg: 'str | None' = None, label: 'str | Sequence[str] | None' = None, dofs: 'tuple[int, ...]', dT: 'float | None' = None, time_format: 'str' = 'step', name: 'str | None' = None) -> 'Node'",
       "skill": "references/opensees-bridge.md",
       "symbol": "ops.recorder.Node"
     },

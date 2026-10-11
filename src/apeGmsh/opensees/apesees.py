@@ -5003,8 +5003,13 @@ class BuiltModel:
         first occurrence of a ``(node, DOF)`` pair wins; the second
         is reported as the offender with both source tiers named.
 
-        PR-A ships the validator; until PR-B populates the stage-
-        bound pools this is a no-op on existing test fixtures.
+        ADR 0115 D6: it runs on every emit, staged (inside
+        :meth:`_run_staged_bc_validators`) or not.  Same-tier
+        homogeneous fixes reach it already merged by
+        :meth:`apeSees.build`, so a fix repeat it still reports is
+        cross-tier, a fix against an ``s.support`` HOLD, or a record
+        that bypassed the build's merge; a repeated mass is always
+        reported unless ``overwrite=True``.
         """
         # (node, DOF_index_1_based) → tier label of first occurrence.
         fix_owner: dict[tuple[int, int], str] = {}
@@ -8789,7 +8794,7 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
         *,
         pg: str | None = None,
         nodes: Iterable[int | Node] | None = None,
-        label: "str | Sequence[str] | None" = None,
+        label: str | Sequence[str] | None = None,
         dofs: tuple[int, ...],
         name: str | None = None,
     ) -> None:
@@ -8888,7 +8893,7 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
         *,
         pg: str | None = None,
         nodes: Iterable[int | Node] | None = None,
-        label: "str | Sequence[str] | None" = None,
+        label: str | Sequence[str] | None = None,
         values: tuple[float, ...],
         overwrite: bool = False,
         name: str | None = None,
