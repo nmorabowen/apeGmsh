@@ -57,6 +57,10 @@ _HISTORY_LABEL = "[matplotlib]"
 #: still would be a new session feature, so it is refused, not widened.
 _PER_AXIS_REACTIONS = frozenset({"reaction_x", "reaction_y", "reaction_z"})
 
+#: The fields a session ``Deform`` pose warps by (``results.session``'s
+#: ``Deform.field``). The old path warped by any recorded ``{field}_*``.
+_DEFORM_FIELDS = frozenset({"displacement", "velocity", "acceleration"})
+
 
 # =====================================================================
 # Public verbs (called by Results.render / Results.render_pack)
@@ -81,6 +85,7 @@ def render_results_still(
     """
     view = _require_view(view)
     deform_spec = _require_deform(deform)
+    _refuse_unsupported(view, component, deform_spec)
     if results.fem is None:
         raise RuntimeError(
             "results.render requires a bound FEMData "
@@ -224,12 +229,6 @@ def session_for_view(
         pane.style = MeshStyle(mesh=False, outlines=False)
         pane.contour = Contour(quantity)
     elif view == "reactions":
-        if component in _PER_AXIS_REACTIONS:
-            raise ValueError(
-                f"view='reactions' draws every reaction axis on the "
-                f"session path; component={component!r} (one axis) is "
-                f"not supported. Pass component=None or 'reactions'."
-            )
         pane.style = MeshStyle(mesh=True, outlines=False)
         pane.reactions = Reactions()
     else:  # mesh
@@ -237,6 +236,35 @@ def session_for_view(
     if pose is not None:
         pane.deform = pose
     return session
+
+
+def _refuse_unsupported(
+    view: str,
+    component: Optional[str],
+    deform_spec: Optional[tuple[str, Optional[float]]],
+) -> None:
+    """The two old-path stills the session path does not draw (maintainer
+    ruling 2026-10-11, #1665). Refused before the skip check, so the
+    answer does not depend on whether a GL context exists."""
+    if view == "reactions" and component in _PER_AXIS_REACTIONS:
+        raise ValueError(
+            f"view='reactions' draws every reaction axis; a one-axis "
+            f"still (component={component!r}) is not supported. Use "
+            f"component='reactions' (or None) for the reaction arrows, "
+            f"and results.nodes.get(component='reaction_force_"
+            f"{component[-1]}') for that axis's values."
+        )
+    if (
+        deform_spec is not None
+        and view != "mesh"
+        and deform_spec[0] not in _DEFORM_FIELDS
+    ):
+        raise ValueError(
+            f"deform= warps by displacement, velocity or acceleration; "
+            f"field {deform_spec[0]!r} is not supported. Use "
+            f"deform=SCALE (displacement) or deform=(FIELD, SCALE) with "
+            f"FIELD one of {sorted(_DEFORM_FIELDS)}."
+        )
 
 
 def default_contour_component(results: Any) -> Optional[str]:
