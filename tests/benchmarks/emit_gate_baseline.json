@@ -1,10 +1,16 @@
 {
   "tet_host_line_embed": {
     "deck_lines": 100020,
-    "ratio": 0.4462
+    "ratio": 0.6316
   },
   "hex_host_line_embed": {
     "deck_lines": 140020,
-    "ratio": 0.4094
+    "ratio": 0.5755
+  },
+  "_provenance": {
+    "estimator": "min of 7 reps, emit and parse separately",
+    "runner": "Linux ubuntu24",
+    "github_run_id": "38159461593",
+    "sha": "b66991ef0b37cdd6943077979d9b0425e53a1d5c"
   }
 }
