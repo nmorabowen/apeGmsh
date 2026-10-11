@@ -649,6 +649,106 @@ def _replay_elements_bracketed(
         emitter.model(ndm=int(ndm), ndf=int(envelope_ndf))
 
 
+def _archives_param_tags(opensees_version: Any) -> bool:
+    """The replay's version check (K1-8, #1465): True iff an archive at
+    ``opensees_version`` stores its parameter tags (schema 2.27.0,
+    :data:`~apeGmsh.opensees.emitter.h5_reader.PARAM_TAGS_FROM`), so the
+    replay reads them and mints none; False for an older archive, which
+    the pre-2.27 tag-law waivers re-mint. A caller that replays a
+    parameter-bearing record without saying which archive it came from
+    refuses, rather than guess either way."""
+    from ..emitter.h5_reader import archives_param_tags
+
+    if opensees_version is None:
+        raise ValueError(
+            "replay: an initial stress, absorbing flip or update_parameter "
+            "record needs the archive's opensees schema version "
+            "(opensees_version=) — at 2.27.0 or above the replay reads its "
+            "stored parameter tags, below it the replay re-mints them."
+        )
+    return archives_param_tags(opensees_version)
+
+
+def _write_archived_ramps(
+    emitter: Any,
+    records: "Sequence[Any]",
+    param_tags: "Sequence[tuple[int, int, int]]",
+    where: str,
+) -> "dict[str, tuple[int, int, int]]":
+    """Write each initial stress's ramp under its stored tags; mint none.
+
+    ``param_tags`` holds one ``(xx, yy, zz)`` per record (a 2.27 archive's
+    ``stress_NNN@param_tags``). Returns ``{name: tags}`` for the
+    ``addToParameter`` fan-out, as the minting writer does.
+    """
+    from .build import PlannedParameter, write_planned_ramps
+
+    if len(param_tags) != len(records):
+        raise ValueError(
+            f"replay: {where} holds {len(records)} initial stress record(s) "
+            f"but {len(param_tags)} stored param_tags; a 2.27.0 archive "
+            "stores them on every record."
+        )
+    return write_planned_ramps(emitter, [
+        PlannedParameter(rec, None, "step_hook_ramp", tuple(tags))
+        for rec, tags in zip(records, param_tags)
+    ])
+
+
+def _write_archived_flips(
+    emitter: Any,
+    verb: str,
+    records: "Sequence[Any]",
+    param_tags: "Sequence[Sequence[tuple[int, int]]]",
+    fem: Any,
+    fem_eid_to_ops_tag: Any,
+    where: str,
+) -> None:
+    """Write each absorbing flip or ``s.update_parameter`` under its stored
+    tag; mint none.
+
+    The replay deck is flat (partition-blind), so each record addresses
+    every element it resolves to on the whole mesh
+    (:func:`~.build.absorbing_ele_tags` /
+    :func:`~.build.update_parameter_ele_tags`, no rank). ``param_tags``
+    holds each record's ``(rank, pid)`` rows: one pid, written on every
+    rank holding the record's elements.
+    """
+    from .build import (
+        PlannedParameter,
+        absorbing_ele_tags,
+        update_parameter_ele_tags,
+        write_planned_flips,
+    )
+
+    resolve = {
+        "flip_element_stage": absorbing_ele_tags,
+        "update_parameter": update_parameter_ele_tags,
+    }[verb]
+    if len(param_tags) != len(records):
+        raise ValueError(
+            f"replay: {where} holds {len(records)} record(s) but "
+            f"{len(param_tags)} stored param_tags entries; a 2.27.0 archive "
+            "stores them on every record."
+        )
+    lines = []
+    ele_tags = []
+    for rec, rows in zip(records, param_tags):
+        pids = {int(pid) for _rank, pid in rows}
+        if len(pids) != 1:
+            raise ValueError(
+                f"replay: {where}: a record's param_tags rows {tuple(rows)!r} "
+                "do not name one parameter tag.")
+        ops_tags = resolve(rec, fem, fem_eid_to_ops_tag)
+        if not ops_tags:
+            raise ValueError(
+                f"replay: {where}: a record stores parameter tag "
+                f"{next(iter(pids))} but resolves no element on this mesh.")
+        lines.append(PlannedParameter(rec, None, verb, (pids.pop(),), ops_tags))
+        ele_tags.append(ops_tags)
+    write_planned_flips(emitter, lines, ele_tags)
+
+
 def _replay_into(
     emitter: Any,
     *,
@@ -676,6 +776,8 @@ def _replay_into(
     skip_node_tags: "frozenset[int]" = frozenset(),
     skip_element_tags: "frozenset[int]" = frozenset(),
     initial_stress_tags: Any = None,
+    initial_stress_param_tags: "Sequence[tuple[int, int, int]]" = (),
+    opensees_version: Any = None,
     reinforce_name_to_tag: "dict[str, int] | None" = None,
     deck_ordering: bool = True,
     stage_mp_keys: "frozenset[tuple[Any, ...]]" = frozenset(),
@@ -782,6 +884,14 @@ def _replay_into(
         lines its stage blocks re-emit, which are therefore not skipped.
         The H5 re-emit path passes no ``fem``; its archive keeps those
         streams in the neutral zone that ``_compose_model_h5`` rewrites.
+
+        **Parameter tags (K1-8, #1465).**  ``opensees_version`` is the
+        archive's opensees-zone version, required whenever an initial
+        stress is replayed. At or above
+        :data:`~apeGmsh.opensees.emitter.h5_reader.PARAM_TAGS_FROM` the
+        archive stores every ramp's tags (``initial_stress_param_tags``,
+        one per record) and the replay writes them, minting none; below
+        it the replay re-mints them under the pre-2.27 tag-law waiver.
 
     Parameters mirror :class:`apeGmsh.opensees._internal.typed_records`
     field names; see :mod:`apeGmsh.opensees.opensees_model` for the
@@ -1019,36 +1129,42 @@ def _replay_into(
     # this ordering the ramp procs declare but never fire (the emitter's
     # ``analyze`` emits the bare form when ``_step_hooks_registered`` is
     # False; tcl.py:402).  Mirrors the bridge's 7d-before-8 order.  Re-runs
-    # the bridge emit helpers against the rehydrated declarative records:
-    # parameter tags are freshly allocated (INV-5 — tags diverge across
-    # round-trip) but deterministically, so the deck regenerates the same
-    # bytes on every replay.  The H5 target never reaches here (its
+    # the bridge emit helpers against the rehydrated declarative records,
+    # under the parameter tags the archive stores (K1-8, schema 2.27.0);
+    # an archive below 2.27.0 stores none and re-mints them, the same tags
+    # the bridge minted.  The H5 target never reaches here (its
     # initial-stress persists via the side-channel, not _replay_into).
     if initial_stress:
-        from .build import (
-            FemToOpsTagMap,
-            emit_initial_stress_addtoparameter,
-            replay_initial_stress_global,
-        )
-        from .tag_allocator import TagAllocator
+        from .build import FemToOpsTagMap, emit_initial_stress_addtoparameter
 
-        # ADR 0055 P2.3: the staged caller threads its SHARED allocator
-        # so global + per-stage parameter tags accumulate on one counter
-        # (the bridge reuses one ``tags`` across everything).  Flat
-        # callers pass None → fresh allocator (unchanged behaviour).
-        # tag-law waiver initial-stress-replay (tag_law_ledger.txt): replay
-        # mints the parameter tags (replay_initial_stress_global) because
-        # the archive stores the declarative record, not the allocated tags.
-        _is_tags = initial_stress_tags or TagAllocator()
         # ADR 0065 v2 B3: the emit helpers now take a FemToOpsTagMap.
         fem_eid_to_ops_tag = FemToOpsTagMap.from_pairs(
             (int(e.fem_eid), int(e.tag))
             for e in elements
             if int(e.fem_eid) >= 0
         )
-        name_to_param_tags = replay_initial_stress_global(
-            initial_stress, emitter, _is_tags,
-        )
+        if _archives_param_tags(opensees_version):
+            name_to_param_tags = _write_archived_ramps(
+                emitter, initial_stress, initial_stress_param_tags,
+                "/opensees/initial_stress",
+            )
+        else:
+            from .build import replay_initial_stress_global
+            from .tag_allocator import TagAllocator
+
+            # ADR 0055 P2.3: the staged caller threads its SHARED allocator
+            # so global + per-stage parameter tags accumulate on one counter
+            # (the bridge reuses one ``tags`` across everything).  Flat
+            # callers pass None → fresh allocator (unchanged behaviour).
+            # tag-law waiver pre-2-27-initial-stress-replay (ledger): an
+            # archive below 2.27.0 stores the declarative record and not
+            # its parameter tags, so replay mints them
+            # (replay_initial_stress_global); pre-2.27 archives only,
+            # behind the version check above.
+            _is_tags = initial_stress_tags or TagAllocator()
+            name_to_param_tags = replay_initial_stress_global(
+                initial_stress, emitter, _is_tags,
+            )
         emit_initial_stress_addtoparameter(
             initial_stress, emitter, fem,
             name_to_param_tags=name_to_param_tags,
@@ -1280,8 +1396,10 @@ def _replay_staged_into(
     from .build import (
         ActivateAbsorbingRecord,
         emit_initial_stress_addtoparameter,
+        emit_zero_velocities,
         replay_activate_absorbing,
         replay_initial_stress_global,
+        zero_velocity_target_nodes,
     )
     from .tag_allocator import TagAllocator
 
@@ -1361,13 +1479,23 @@ def _replay_staged_into(
                 already_gated=True,
             )
 
-    # ONE allocator threaded across the global prefix AND every stage
-    # (the bridge reuses a single ``tags``; a per-stage allocator would
-    # restart parameter counters at stage boundaries — gate-1 FATAL).
-    # tag-law waiver staged-replay-params (tag_law_ledger.txt): replay mints
-    # the stage parameter tags (replay_initial_stress_global and
-    # replay_activate_absorbing) because the archive stores no parameter tag.
-    tags = TagAllocator()
+    # K1-8 (schema 2.27.0): a 2.27 archive stores every parameter tag the
+    # build planned, and the stage blocks below write those, minting none.
+    # Below 2.27.0 the replay re-mints them, with ONE allocator threaded
+    # across the global prefix AND every stage (the bridge reuses a single
+    # ``tags``; a per-stage allocator would restart parameter counters at
+    # stage boundaries — gate-1 FATAL).  ``opensees_version`` is checked
+    # where a record needs a tag, so a caller replaying none passes none.
+    opensees_version = replay_kwargs.get("opensees_version")
+    tags: "TagAllocator | None" = None
+    if opensees_version is not None and not _archives_param_tags(
+        opensees_version,
+    ):
+        # tag-law waiver pre-2-27-staged-replay-params (ledger): an archive
+        # below 2.27.0 stores no parameter tag, so replay mints the stage
+        # tags (replay_initial_stress_global, replay_activate_absorbing);
+        # pre-2.27 archives only, behind the version check above.
+        tags = TagAllocator()
 
     # 1. Global prefix — _replay_into with stage-owned topology filtered
     # out and the shared allocator threaded for any GLOBAL initial_stress.
@@ -1599,28 +1727,56 @@ def _replay_staged_into(
             else:
                 emitter.region(int(payload.tag), *payload.args)
 
-        # stage initial_stress — re-run the bridge helpers with the
-        # SHARED allocator (parameter tags accumulate across stages).
+        # stage initial_stress — re-run the bridge helpers under the
+        # stored ramp tags (2.27+), or under tags re-minted from the SHARED
+        # allocator (parameter tags accumulate across stages; pre-2.27).
+        where = f"/opensees/stages/stage_{k:03d}"
         if st.initial_stress:
-            name_to_param_tags = replay_initial_stress_global(
-                st.initial_stress, emitter, tags,
-            )
+            if _archives_param_tags(opensees_version):
+                name_to_param_tags = _write_archived_ramps(
+                    emitter, st.initial_stress, st.initial_stress_param_tags,
+                    f"{where}/initial_stress",
+                )
+            else:
+                assert tags is not None  # set above for a pre-2.27 archive
+                name_to_param_tags = replay_initial_stress_global(
+                    st.initial_stress, emitter, tags,
+                )
             emit_initial_stress_addtoparameter(
                 st.initial_stress, emitter, fem,
                 name_to_param_tags=name_to_param_tags,
                 fem_eid_to_ops_tag=fem_eid_to_ops_tag,
             )
 
-        # activate_absorbing — declarative (pg/elements); re-run the
-        # helper (allocates a fresh parameter tag from the shared pool).
+        # activate_absorbing — declarative (pg/elements); the helper
+        # resolves the elements and writes each flip under its stored tag
+        # (2.27+), or under one re-minted from the shared pool (pre-2.27).
         if st.activate_absorbing:
             ab_records = tuple(
                 ActivateAbsorbingRecord(pg=pg, elements=els)
                 for pg, els in st.activate_absorbing
             )
-            replay_activate_absorbing(
-                ab_records, emitter, fem,
-                fem_eid_to_ops_tag=fem_eid_to_ops_tag, tags=tags,
+            if _archives_param_tags(opensees_version):
+                _write_archived_flips(
+                    emitter, "flip_element_stage", ab_records,
+                    st.absorbing_param_tags, fem, fem_eid_to_ops_tag,
+                    f"{where}/activate_absorbing",
+                )
+            else:
+                assert tags is not None  # set above for a pre-2.27 archive
+                replay_activate_absorbing(
+                    ab_records, emitter, fem,
+                    fem_eid_to_ops_tag=fem_eid_to_ops_tag, tags=tags,
+                )
+
+        # s.update_parameter (schema 2.27.0, K1-8; refused before it, so
+        # an archive that holds one stores its tags) — the general form of
+        # the absorbing flip, in the bridge's slot 6c.
+        if st.update_parameters:
+            _write_archived_flips(
+                emitter, "update_parameter", st.update_parameters,
+                st.update_parameter_param_tags, fem, fem_eid_to_ops_tag,
+                f"{where}/update_parameter",
             )
 
         # stage analysis chain.
@@ -1644,6 +1800,24 @@ def _replay_staged_into(
 
         if st.pre_analyze_reset:
             emitter.reset()
+
+        # s.zero_velocities (schema 2.27.0, K1-8) — the bridge's slot 8b:
+        # after ``reset`` (which would restore the velocities) and last
+        # before the analyze, over the archived nodes at their effective
+        # ndf (``/opensees/nodes_ndf``, else the envelope).
+        if st.zero_velocities:
+            if fem is None:
+                raise ValueError(
+                    f"replay: {where} zeroes velocities, which needs the "
+                    "neutral zone's node ids (pass fem=).")
+            emit_zero_velocities(
+                zero_velocity_target_nodes(st.zero_velocities, fem.nodes.ids),
+                emitter,
+                effective_ndf={
+                    nid: int(nndf) for nid, (_c, nndf) in node_map.items()
+                    if nndf is not None},
+                envelope_ndf=_ndf,
+            )
 
         # TIMs A8: the stage's ``profiler`` rows (ADR 0114 R3a) bracket
         # its analyze; the program's emit order says which side each is.

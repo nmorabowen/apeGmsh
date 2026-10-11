@@ -51,10 +51,12 @@ companion test suite.
 allocates none of its own.  A tag is written once, by the bridge's
 build, and the archive keeps it (ADR 0114 D4, which supersedes ADR
 0019 INV-5), so the replayed deck carries the same tags as the build
-that wrote the archive, with no masking.  Three waived replay paths
-still re-derive tags for rows the archive does not carry yet
-(reinforce ties, and the initial-stress and staged parameters); each
-is waived on
+that wrote the archive, with no masking.  Since opensees 2.27.0 (K1-8)
+that includes every ``parameter`` tag (initial stress, absorbing flip,
+``s.update_parameter``).  Three waived replay paths still re-derive
+tags: the reinforce ties, which no archive carries yet, and the
+initial-stress and staged parameters of an archive below 2.27.0 only,
+behind a version check in ``compose.py``; each is waived on
 ``tests/opensees/contract/tag_law_ledger.txt`` and pinned to the
 forward deck's tags by ``test_tag_law_replay_pins.py``.
 
@@ -187,6 +189,18 @@ class OpenSeesModel:
     _initial_stress: "tuple[InitialStressRecord, ...]" = field(
         default_factory=tuple,
     )
+    #: The stored ramp tags of each ``_initial_stress`` record (K1-8,
+    #: opensees 2.27.0): ``(xx, yy, zz)`` each, in order. Empty below
+    #: 2.27.0, where the replay re-mints them (the stage records carry
+    #: their own, on :class:`StageRecordRO`).
+    _initial_stress_param_tags: "tuple[tuple[int, int, int], ...]" = field(
+        default_factory=tuple,
+    )
+    #: The archive's opensees-zone schema version (the reader's
+    #: ``SchemaVersion``), which the replay's parameter-tag check reads
+    #: (``compose._archives_param_tags``). ``None`` for a model not read
+    #: from a file, whose replay of a parameter-bearing record refuses.
+    _opensees_version: "Any | None" = None
     #: Staged-analysis records read from ``/opensees/stages`` (ADR 0055
     #: Phase 2; empty for vanilla and pre-2.18.0 archives).  Value-form
     #: :class:`StageRecordRO` instances — ``to_h5`` echoes them back
@@ -338,6 +352,11 @@ class OpenSeesModel:
             # targets replay them (a region-scoped rayleigh lives here).
             regions = tuple(model.regions())
             initial_stress = tuple(model.initial_stress())
+            # K1-8: the ramps' stored tags, and the version that says
+            # whether the archive stores them (2.27.0) or the replay
+            # re-mints them (below it).
+            initial_stress_param_tags = model.initial_stress_param_tags()
+            opensees_version = model.opensees_zone_version()
             # ADR 0055 Phase 2: the staged-archival read side.  The
             # reader fails loud (MalformedH5Error) on a structurally
             # inconsistent stages zone; an absent group (vanilla /
@@ -410,6 +429,8 @@ class OpenSeesModel:
             _computed_sections=tuple(computed_sections),
             _nodes_ndf=nodes_ndf,
             _initial_stress=initial_stress,
+            _initial_stress_param_tags=initial_stress_param_tags,
+            _opensees_version=opensees_version,
             _stages=stages,
             _partitions=partitions,
             _mass_from_model=mass_from_model,
@@ -454,6 +475,7 @@ class OpenSeesModel:
             would later mark them attached, laundering the truncated
             state past the write-side guard (ADR 0055 gate-2).
         """
+        from ._internal.schema_version import OPENSEES, reader_version
         from .emitter.h5 import _partition_blocks_to_ro, _stage_block_to_ro
 
         if emitter._stage_current is not None:
@@ -523,6 +545,11 @@ class OpenSeesModel:
             _dampings=tuple(emitter._dampings),
             _regions=tuple(emitter._regions),
             _initial_stress=tuple(emitter._initial_stress_records),
+            # K1-8: the buffers are this writer's own, so they hold the
+            # tags a 2.27.0 archive stores.
+            _initial_stress_param_tags=tuple(
+                emitter._initial_stress_param_tags),
+            _opensees_version=reader_version(OPENSEES),
             # ADR 0055 Phase 2: freeze any captured stage buckets into
             # read-side records (set_stage_records must have run — the
             # buckets carry the declarative complement by then).
@@ -1313,6 +1340,10 @@ class OpenSeesModel:
             recorders=self._recorders,
             fem=self._fem,
             initial_stress=self._initial_stress,
+            # K1-8: the stored ramp tags, and the version compose checks
+            # before reading them (2.27.0) or re-minting them (below it).
+            initial_stress_param_tags=self._initial_stress_param_tags,
+            opensees_version=self._opensees_version,
             analysis_attrs=dict(self._analysis_attrs),
             analyze_call=self._analyze_call,
             reinforce_name_to_tag=reinforce_name_to_tag,
@@ -1386,7 +1417,11 @@ class OpenSeesModel:
                 index[int(ids[i])] = tuple(int(c) for c in conn[i])
         return index
 
-    def _populate_emitter_h5(self, emitter: "H5Emitter") -> None:
+    def _populate_emitter_h5(
+        self,
+        emitter: "H5Emitter",
+        initial_stress_param_tags: "Sequence[tuple[int, int, int]] | None" = None,
+    ) -> None:
         """H5-only population: skip ``model``+``node`` emit so the
         compose path keeps producing byte-equivalent output.
 
@@ -1455,12 +1490,99 @@ class OpenSeesModel:
         # persist the group.  Instead hand the declarative records to the
         # emitter side-channel (mirroring ``apeSees.h5``) so
         # ``_write_initial_stress`` re-emits the group on ``to_h5`` and the
-        # round-trip stays byte-stable.
-        emitter.set_initial_stress_records(self._initial_stress)
+        # round-trip stays byte-stable.  K1-8: with the stored ramp tags
+        # (re-minted once for a pre-2.27 source, :meth:`_echo_param_tags`).
+        emitter.set_initial_stress_records(
+            self._initial_stress,
+            param_tags=(self._initial_stress_param_tags
+                        if initial_stress_param_tags is None
+                        else initial_stress_param_tags))
         # ADR 0112 amendment 5: re-mark, never re-stream, so the rewrite
         # keeps the archive (and model_hash) a fixed point.
         if self._mass_from_model:
             emitter.mark_mass_from_model()
+
+    def _echo_param_tags(
+        self,
+    ) -> "tuple[tuple[tuple[int, int, int], ...], tuple[Any, ...]]":
+        """The parameter tags a rewrite stores (K1-8, opensees 2.27.0):
+        ``(global ramp tags, stage records)``.
+
+        A 2.27.0 file stores every one, so a source at or above
+        ``PARAM_TAGS_FROM`` echoes its own. A source below it stores none;
+        its replay re-mints them (the pre-2.27 tag-law waivers), and the
+        rewrite stores what that replay mints, so it replays to the same
+        deck and its own replay mints nothing. The capture replays the
+        model once into a recorder that keeps only the parameter calls.
+        That replay is flat, so a flip's row is ``(-1, pid)`` even when
+        the source was partitioned.
+        """
+        from .emitter.h5_reader import archives_param_tags
+
+        stages = tuple(self._stages)
+        needs = bool(self._initial_stress) or any(
+            st.initial_stress or st.activate_absorbing for st in stages)
+        if (not needs or self._opensees_version is None
+                or archives_param_tags(self._opensees_version)):
+            return tuple(self._initial_stress_param_tags), stages
+
+        import dataclasses
+        import warnings
+
+        from ._internal.compose import ReplaySkippedStreamWarning
+        from .emitter.recording import RecordingEmitter
+
+        keep = frozenset({"stage_open", "step_hook_ramp", "flip_element_stage"})
+
+        class _ParamCalls(list):  # type: ignore[type-arg]
+            def append(self, call: Any) -> None:
+                if call[0] in keep:
+                    super().append(call)
+
+        capture = RecordingEmitter()
+        capture.calls = _ParamCalls()
+        with warnings.catch_warnings():
+            # The capture is no deck; the build that makes one warns.
+            warnings.simplefilter("ignore", ReplaySkippedStreamWarning)
+            self._populate_emitter(capture)
+        stage = -1
+        ramps: "dict[int, dict[str, tuple[int, int, int]]]" = {}
+        flips: "dict[int, list[int]]" = {}
+        for name, args, kwargs in capture.calls:
+            if name == "stage_open":
+                stage += 1
+            elif name == "step_hook_ramp":
+                xx, yy, zz = (int(t) for t, _v in kwargs["targets"])
+                ramps.setdefault(stage, {})[str(args[0])] = (xx, yy, zz)
+            else:
+                flips.setdefault(stage, []).append(int(args[0]))
+
+        def ramp_tags(
+            records: "Sequence[Any]", k: int,
+        ) -> "tuple[tuple[int, int, int], ...]":
+            held = ramps.get(k, {})
+            missing = [r.name for r in records if r.name not in held]
+            if missing:
+                raise RuntimeError(
+                    f"OpenSeesModel.to_h5: the replay of this pre-2.27 archive "
+                    f"wrote no ramp for initial stress {missing}.")
+            return tuple(held[r.name] for r in records)
+
+        out = []
+        for k, st in enumerate(stages):
+            pids = flips.get(k, [])
+            if len(pids) != len(st.activate_absorbing):
+                raise RuntimeError(
+                    f"OpenSeesModel.to_h5: stage {st.name!r} of this pre-2.27 "
+                    f"archive holds {len(st.activate_absorbing)} absorbing "
+                    f"flip record(s) but its replay wrote {len(pids)} flips; "
+                    "a 2.27.0 archive stores one tag per record.")
+            out.append(dataclasses.replace(
+                st,
+                initial_stress_param_tags=ramp_tags(st.initial_stress, k),
+                absorbing_param_tags=tuple(((-1, pid),) for pid in pids),
+            ))
+        return ramp_tags(self._initial_stress, -1), tuple(out)
 
     def _compose_h5(self, emitter: "H5Emitter", path: str) -> None:
         """Compose the H5 file at ``path`` using the shared composer.
@@ -1480,12 +1602,17 @@ class OpenSeesModel:
             model_name=self._model_name,
             snapshot_id=self._snapshot_id,
         )
-        self._populate_emitter_h5(emitter_fresh)
+        # K1-8: the parameter tags the rewrite stores (a 2.27.0 file stores
+        # every one): the source's own, or for a pre-2.27 source the tags
+        # its replay re-mints, captured once.
+        global_tags, stages = self._echo_param_tags()
+        self._populate_emitter_h5(
+            emitter_fresh, initial_stress_param_tags=global_tags)
         # ADR 0055 Phase 2: echo the staged records back into capture
         # buckets so ``_write_stages`` re-emits the stages zone — the
         # from_h5 → to_h5 round trip is hash-stable by store-and-echo.
-        if self._stages:
-            emitter_fresh.restore_stage_blocks(self._stages)
+        if stages:
+            emitter_fresh.restore_stage_blocks(stages)
         # P5.0b: echo the partition blocks back so /opensees/partitions
         # + the element_meta partition_ids columns survive the re-write
         # (must run AFTER _populate_emitter_h5 — the restore re-stamps

@@ -553,7 +553,25 @@ class H5RefusedVerb(NotImplementedError):
 #:     the primitives in (``set_decl_params``); an unknown field shape
 #:     refuses the write. A 2.26 reader opens 2.12 through 2.26; a
 #:     2.25.x reader REFUSES a 2.26.x file.
-SCHEMA_VERSION: str = "2.26.0"
+#:   * 2.27.0 — K1-8 (#1465, ADR 0114 D4 amended): additive — the
+#:     parameter tags the build planned are archived per record, and the
+#:     two verbs the writer refused before archive. ``param_tags`` int64
+#:     (3,) attr on every ``initial_stress/stress_NNN`` (global and
+#:     stage); a ``param_tags`` (k, 2) int64 dataset of ``(rank, pid)``
+#:     rows on every ``stages/stage_NNN/activate_absorbing/absorb_NNN``;
+#:     new optional ``stages/stage_NNN/update_parameter/update_NNN``
+#:     (``s.update_parameter``: ``name``, ``value``, optional ``mat_tag``,
+#:     ``pg`` XOR ``elements``, and its ``param_tags`` rows) and
+#:     ``stages/stage_NNN/zero_velocities/zero_NNN`` (``s.zero_velocities``:
+#:     an optional ``nodes`` dataset, absent for the whole domain). A
+#:     replay of a 2.27 archive reads the stored tags and mints none; one
+#:     of an older archive keeps re-minting them (``compose.py``, behind
+#:     :data:`~apeGmsh.opensees.emitter.h5_reader.PARAM_TAGS_FROM`).
+#:     Authored model state: the tags fold into ``model_hash``, so an
+#:     initial-stress or absorbing archive hashes differently once at this
+#:     minor; a file without either is unchanged. A 2.27 reader opens 2.12
+#:     through 2.27; a 2.26.x reader REFUSES a 2.27.x file.
+SCHEMA_VERSION: str = "2.27.0"
 
 #: Oldest opensees-zone minor the reader opens (ADR 0113 (#1303)). The
 #: zone's last non-additive minor is 2.11.0, the 0-based rank flip, but
@@ -905,11 +923,155 @@ class _StageEmitBlock:
     activated_pgs: "tuple[str, ...]" = ()
     initial_stress_records: "tuple[Any, ...]" = ()
     activate_absorbing_records: "tuple[Any, ...]" = ()
+    #: ``s.update_parameter`` / ``s.zero_velocities`` records (schema
+    #: 2.27.0, K1-8), attached by ``set_stage_records``.
+    update_parameter_records: "tuple[Any, ...]" = ()
+    zero_velocity_records: "tuple[Any, ...]" = ()
+    # K1-8 (schema 2.27.0): the parameter tags the build planned, as the
+    # in-band calls handed them in. ``ramp_tags`` maps an initial
+    # stress's name to its (XX, YY, ZZ) ramp tags; ``flip_calls`` and
+    # ``update_calls`` hold one ``(rank, pid)`` per call (``rank`` ``-1``
+    # outside a partition bracket), and ``update_calls`` also the call's
+    # ``(args, value)`` for the cross-check. ``node_kinematics_calls``
+    # counts the ``setNodeVel`` / ``setNodeAccel`` calls.
+    ramp_tags: "dict[str, tuple[int, int, int]]" = field(default_factory=dict)
+    flip_calls: "list[tuple[int, int]]" = field(default_factory=list)
+    update_calls: "list[tuple[int, int, tuple[str | int, ...], float]]" = (
+        field(default_factory=list))
+    node_kinematics_calls: int = 0
+    # The stored tags, one entry per declarative record above
+    # (``set_stage_records`` attributes the calls; the echo path
+    # restores them): an initial stress's three ramp tags, and every
+    # ``(rank, pid)`` a flip or update was written with.
+    initial_stress_param_tags: "tuple[tuple[int, int, int], ...]" = ()
+    absorbing_param_tags: "tuple[tuple[tuple[int, int], ...], ...]" = ()
+    update_parameter_param_tags: "tuple[tuple[tuple[int, int], ...], ...]" = ()
 
     def next_emit_index(self) -> int:
         """Monotone per-stage sequence number (1-based, emit order)."""
         self.emit_seq += 1
         return self.emit_seq
+
+
+def _ramp_tags_by_name(
+    records: "Sequence[Any]",
+    held: "Mapping[str, tuple[int, int, int]]",
+    where: str,
+) -> "tuple[tuple[int, int, int], ...]":
+    """Each initial-stress record's ramp tags, read from ``held`` by name
+    (schema 2.27.0, K1-8).
+
+    ``held`` is what the scope's ``step_hook_ramp`` calls handed in. A
+    record with no ramp, or a ramp with no record, is capture drift and
+    refuses: the archive would store a tag its record never had.
+    """
+    names = [str(rec.name) for rec in records]
+    if len(set(names)) != len(names) or set(names) != set(held):
+        raise RuntimeError(
+            f"H5Emitter: {where} declares initial stress {sorted(names)} "
+            f"but its step_hook_ramp calls named {sorted(held)}; each record "
+            "stores the tags of its own ramp (schema 2.27.0)."
+        )
+    return tuple(held[name] for name in names)
+
+
+def _attribute_param_calls(
+    where: str,
+    verb: str,
+    records: "Sequence[Any]",
+    calls: "Sequence[tuple[int, int]]",
+) -> "tuple[tuple[tuple[int, int], ...], ...]":
+    """Each record's ``(rank, pid)`` rows, from the stage's calls in order
+    (schema 2.27.0, K1-8).
+
+    The build gives each flip or update record one ``parameter`` tag,
+    minted in record order (the canonical flat walk,
+    ``tag_plan._plan_parameters``), and a partitioned emit writes that tag
+    on every rank holding the record's elements. So the distinct tags,
+    ascending, are the records in order. A record that addresses no
+    element has no tag and no call, and leaves the attribution ambiguous:
+    that refuses rather than store a tag under the wrong record.
+    """
+    pids = sorted({int(pid) for _rank, pid in calls})
+    if len(pids) != len(records):
+        raise RuntimeError(
+            f"H5Emitter.set_stage_records: {where} declares "
+            f"{len(records)} {verb} record(s) but its calls carry "
+            f"{len(pids)} distinct parameter tag(s) {pids}. Each record "
+            "stores its own tag (schema 2.27.0), so every record must "
+            "address at least one element; drop a record whose target is "
+            "empty, or use ops.tcl(path) / ops.py(path)."
+        )
+    slot = {pid: k for k, pid in enumerate(pids)}
+    rows: "list[list[tuple[int, int]]]" = [[] for _ in records]
+    for rank, pid in calls:
+        rows[slot[int(pid)]].append((int(rank), int(pid)))
+    return tuple(tuple(r) for r in rows)
+
+
+def _with_param_rows(
+    stage: str,
+    verb: str,
+    records: "Sequence[Any]",
+    param_tags: "Sequence[tuple[tuple[int, int], ...]]",
+) -> "list[tuple[Any, tuple[tuple[int, int], ...]]]":
+    """Pair each flip or update record with its stored ``(rank, pid)``
+    rows; a record without its rows refuses (a 2.27.0 archive never
+    leaves its replay a tag to mint)."""
+    if len(param_tags) != len(records):
+        raise RuntimeError(
+            f"H5Emitter._write_stages: stage {stage!r} holds "
+            f"{len(records)} {verb} record(s) but {len(param_tags)} "
+            "param_tags entries; every record stores its tag rows "
+            "(schema 2.27.0)."
+        )
+    for rows in param_tags:
+        if not rows or len({pid for _rank, pid in rows}) != 1:
+            raise RuntimeError(
+                f"H5Emitter._write_stages: stage {stage!r}: a {verb} "
+                f"record's param_tags rows {tuple(rows)!r} do not name one "
+                "parameter tag."
+            )
+    return list(zip(records, param_tags))
+
+
+def _write_param_rows(
+    group: Any, rows: "Sequence[tuple[int, int]]",
+) -> None:
+    """Write a record's ``param_tags`` (k, 2) int64 dataset: one
+    ``(rank, pid)`` row per call (``rank`` ``-1`` for a flat build)."""
+    import numpy as np
+
+    group.create_dataset(
+        "param_tags",
+        data=np.asarray(
+            [[int(r), int(p)] for r, p in rows], dtype=np.int64,
+        ).reshape(len(rows), 2),
+    )
+
+
+def _check_update_calls(
+    where: str,
+    records: "Sequence[Any]",
+    param_tags: "Sequence[tuple[tuple[int, int], ...]]",
+    calls: "Sequence[tuple[int, int, tuple[str | int, ...], float]]",
+) -> None:
+    """Every ``updateParameter`` call says what its attributed record says
+    (its name, material tag and value), or the attribution is drift."""
+    owner = {
+        pid: rec for rec, rows in zip(records, param_tags)
+        for _rank, pid in rows}
+    for _rank, pid, args, value in calls:
+        rec = owner[int(pid)]
+        want = ((rec.name,) if rec.mat_tag is None
+                else (rec.name, int(rec.mat_tag)))
+        if tuple(args) != want or float(value) != float(rec.value):
+            raise RuntimeError(
+                f"H5Emitter.set_stage_records: {where}: updateParameter "
+                f"{pid} writes {tuple(args)!r} = {value!r}, but the record "
+                f"its tag belongs to is {want!r} = {rec.value!r} — the emit "
+                "stream and the build diverged."
+            )
 
 
 def _merge_node_region_args(
@@ -1028,6 +1190,11 @@ def _stage_block_to_ro(blk: "_StageEmitBlock") -> "Any":
             (rec.pg, None if rec.elements is None else tuple(rec.elements))
             for rec in blk.activate_absorbing_records
         ),
+        update_parameters=tuple(blk.update_parameter_records),
+        zero_velocities=tuple(blk.zero_velocity_records),
+        initial_stress_param_tags=tuple(blk.initial_stress_param_tags),
+        absorbing_param_tags=tuple(blk.absorbing_param_tags),
+        update_parameter_param_tags=tuple(blk.update_parameter_param_tags),
     )
 
 
@@ -1081,6 +1248,11 @@ def _ro_to_stage_block(ro: "Any") -> "_StageEmitBlock":
         )
         for pg, elements in ro.activate_absorbing
     )
+    blk.update_parameter_records = tuple(ro.update_parameters)
+    blk.zero_velocity_records = tuple(ro.zero_velocities)
+    blk.initial_stress_param_tags = tuple(ro.initial_stress_param_tags)
+    blk.absorbing_param_tags = tuple(ro.absorbing_param_tags)
+    blk.update_parameter_param_tags = tuple(ro.update_parameter_param_tags)
     return blk
 
 
@@ -1697,6 +1869,11 @@ class H5Emitter:
         # ``.ramp_steps`` / ``.lambda_install`` without importing the
         # record class (avoids a build.py import cycle).
         self._initial_stress_records: list[Any] = []
+        # K1-8 (schema 2.27.0): the global ramps' parameter tags as the
+        # ``step_hook_ramp`` calls handed them in, by record name, and the
+        # stored ``param_tags`` of each record above (one per record).
+        self._ramp_tags: dict[str, tuple[int, int, int]] = {}
+        self._initial_stress_param_tags: tuple[tuple[int, int, int], ...] = ()
 
         # Recorders.
         self._recorders: list[_RecorderRecord] = []
@@ -3109,14 +3286,22 @@ class H5Emitter:
     # ADR 0055 Phase 2 (schema 2.18.0): the staged-analysis bracket
     # methods CAPTURE into per-stage :class:`_StageEmitBlock` buckets;
     # :meth:`_write_stages` persists them under ``/opensees/stages``.
-    # The stress-control trio (``addToParameter`` / ``step_hook_ramp``
-    # / ``flip_element_stage``) stays no-op: those calls carry the
-    # RESOLVED form (allocated parameter tags, rendered ramp targets),
-    # which is non-deterministic across a round-trip.  Their
-    # information persists declaratively instead — the global
-    # ``set_initial_stress_records`` side-channel (Phase 1) and the
-    # per-stage ``initial_stress`` / ``activate_absorbing`` sub-tables
-    # attached by :meth:`set_stage_records` (Phase 2).
+    # The parameter verbs' information persists declaratively — the
+    # global ``set_initial_stress_records`` side-channel (Phase 1) and the
+    # per-stage ``initial_stress`` / ``activate_absorbing`` /
+    # ``update_parameter`` sub-tables attached by
+    # :meth:`set_stage_records` (Phase 2).  Since schema 2.27.0 (K1-8)
+    # ``step_hook_ramp`` / ``flip_element_stage`` / ``update_parameter``
+    # also capture the parameter tags the build planned, which each record
+    # stores as ``param_tags``: the replay reads them and mints none.
+    # ``addToParameter`` names a ramp tag ``step_hook_ramp`` already
+    # captured, so it stays a no-op.
+
+    def _call_rank(self) -> int:
+        """The runtime rank of the open partition bracket, ``-1`` outside
+        one (the ``rank`` column of a stored ``(rank, pid)`` row)."""
+        part = self._partition_current
+        return _NO_ROW if part is None else int(part.rank)
 
     def addToParameter(
         self, tag: int, ele_tag: int, response: str,
@@ -3127,9 +3312,16 @@ class H5Emitter:
     def flip_element_stage(
         self, pid: int, ele_tags: tuple[int, ...],
     ) -> None:
-        """No-op — resolved form; persists declaratively via the
-        per-stage ``activate_absorbing`` sub-table (ADR 0055 Phase 2)."""
-        del pid, ele_tags
+        """Capture the flip's parameter tag (schema 2.27.0, K1-8).
+
+        The record itself persists declaratively via the per-stage
+        ``activate_absorbing`` sub-table (ADR 0055 Phase 2);
+        :meth:`set_stage_records` gives each record the ``(rank, pid)``
+        rows of its calls.
+        """
+        del ele_tags
+        blk = self._stage_block("flip_element_stage")
+        blk.flip_calls.append((self._call_rank(), int(pid)))
 
     def update_parameter(
         self,
@@ -3138,23 +3330,17 @@ class H5Emitter:
         args: tuple[str | int, ...],
         value: float,
     ) -> None:
-        """Deferred — ``s.update_parameter`` has no per-stage sub-table.
+        """Capture an ``s.update_parameter`` call (schema 2.27.0, K1-8).
 
-        Unlike :meth:`flip_element_stage`, whose declarative record IS
-        re-attached in :meth:`set_stage_records`, this verb has nowhere
-        to persist to.  Refuse rather than write an archive that replays
-        the stage with the parameter left at its declared value.
+        The record persists declaratively under the stage's
+        ``update_parameter`` sub-table (:meth:`set_stage_records` attaches
+        it and gives it the ``(rank, pid)`` rows of its calls, after
+        checking each call's ``args`` and ``value`` against it).
         """
-        del pid, ele_tags, value
+        del ele_tags
         blk = self._stage_block("update_parameter")
-        self._refuse(
-            "update_parameter",
-            f"Stage {blk.name!r} emits updateParameter for {args[0]!r} "
-            "(s.update_parameter). The stage block has no store for it, so "
-            "the archive would be irreplayable; H5 archival of "
-            "s.update_parameter is deferred. Use ops.tcl(path) / "
-            "ops.py(path).",
-        )
+        blk.update_calls.append(
+            (self._call_rank(), int(pid), tuple(args), float(value)))
 
     def step_hook_ramp(
         self,
@@ -3164,10 +3350,30 @@ class H5Emitter:
         n_steps_to_full: float,
         phase: Literal["before", "after"] = "before",
     ) -> None:
-        """No-op — resolved form; persists declaratively via
-        ``set_initial_stress_records`` / the per-stage
-        ``initial_stress`` sub-table (ADR 0055)."""
-        del name, targets, n_steps_to_full, phase
+        """Capture the ramp's three parameter tags (schema 2.27.0, K1-8).
+
+        The record persists declaratively via
+        ``set_initial_stress_records`` / the per-stage ``initial_stress``
+        sub-table (ADR 0055); its ``param_tags`` are these, by name. A
+        second ramp of one name in one scope with other tags refuses: the
+        archive could not tell which record they belong to.
+        """
+        del n_steps_to_full, phase
+        if len(targets) != 3:
+            raise RuntimeError(
+                f"H5Emitter.step_hook_ramp: ramp {name!r} has "
+                f"{len(targets)} targets; an initial-stress ramp has three "
+                "(XX, YY, ZZ)."
+            )
+        xx, yy, zz = (int(tag) for tag, _value in targets)
+        tags = (xx, yy, zz)
+        blk = self._stage_current
+        held = self._ramp_tags if blk is None else blk.ramp_tags
+        if held.setdefault(str(name), tags) != tags:
+            raise RuntimeError(
+                f"H5Emitter.step_hook_ramp: initial stress {name!r} ramps "
+                f"twice in one scope, with tags {held[str(name)]} and {tags}."
+            )
 
     def stage_open(self, name: str) -> None:
         """Open a per-stage capture bucket (ADR 0055 Phase 2)."""
@@ -3225,32 +3431,29 @@ class H5Emitter:
         self._stage_block("reset").pre_analyze_reset = True
 
     def set_node_vel(self, node: int, dof: int, value: float) -> None:
-        self._refuse_node_kinematics_archival("set_node_vel", "setNodeVel")
+        self._count_node_kinematics("set_node_vel", value)
 
     def set_node_accel(self, node: int, dof: int, value: float) -> None:
-        self._refuse_node_kinematics_archival("set_node_accel", "setNodeAccel")
+        self._count_node_kinematics("set_node_accel", value)
 
-    def _refuse_node_kinematics_archival(
-        self, verb: str, command: str,
-    ) -> NoReturn:
-        """``s.zero_velocities`` has no H5 stage-block store yet.
+    def _count_node_kinematics(self, verb: str, value: float) -> None:
+        """Count one ``s.zero_velocities`` call (schema 2.27.0, K1-8).
 
-        Fail loud rather than write an archive that silently drops the
-        zeroing — replaying it would run the static stage on the
-        transient stage's inherited velocities, which is exactly the
-        artefact the verb exists to remove.  Mirrors the deferred
-        stage-claimed phantom-node archival refusal in
-        :meth:`set_stage_records`.
+        The stage's ``ZeroVelocityRecord``s persist declaratively under
+        its ``zero_velocities`` sub-table (:meth:`set_stage_records`
+        attaches them); replay re-expands them over the archived nodes
+        and their ndf.  The count cross-checks that a stage which zeroed
+        anything declared a record, and a nonzero value refuses: the
+        record can only say "zero".
         """
         blk = self._stage_block(verb)
-        self._refuse(
-            verb,
-            f"Stage {blk.name!r} emits {command} (s.zero_velocities). The "
-            "stage block has no store for nodal velocity / acceleration "
-            "zeroing, so the archive would be irreplayable; H5 archival of "
-            "s.zero_velocities is deferred. Use ops.tcl(path) / "
-            "ops.py(path).",
-        )
+        if float(value) != 0.0:
+            raise RuntimeError(
+                f"H5Emitter.{verb}: stage {blk.name!r} sets a nonzero "
+                f"value ({value!r}); the archive stores s.zero_velocities "
+                "records, which zero the state."
+            )
+        blk.node_kinematics_calls += 1
 
     def remove_sp(self, node: int, dof: int) -> None:
         blk = self._stage_block("remove_sp")
@@ -4428,17 +4631,36 @@ class H5Emitter:
             _set_attr(g, "tag", rec.tag)
             _write_param_array(g, "params", rec.args)
 
-    def set_initial_stress_records(self, records: "Iterable[Any]") -> None:
+    def set_initial_stress_records(
+        self,
+        records: "Iterable[Any]",
+        *,
+        param_tags: "Sequence[tuple[int, int, int]] | None" = None,
+    ) -> None:
         """Buffer the bridge's global ``InitialStressRecord``s for archival.
 
         Side-channel (ADR 0055 Phase 1): :meth:`apeGmsh.opensees.apeSees.h5`
         calls this after ``bm.emit(self)`` and before the compose write, so
         :meth:`_write_initial_stress` can persist the declarative records.
-        The Protocol ``addToParameter`` / ``step_hook_ramp`` calls stay
-        no-ops — they carry the resolved (parameter-tag-bearing) form, which
-        is non-deterministic across a round-trip.
+        Each record's ``param_tags`` (schema 2.27.0, K1-8) are the tags its
+        ``step_hook_ramp`` call handed in, by name; a record no ramp named
+        refuses. The echo path (``OpenSeesModel._compose_h5``) has no
+        ramps and passes the stored ``param_tags`` instead, one per record.
         """
         self._initial_stress_records = list(records)
+        if param_tags is None:
+            self._initial_stress_param_tags = _ramp_tags_by_name(
+                self._initial_stress_records, self._ramp_tags,
+                "the global initial stress")
+            return
+        tags = tuple(
+            (int(xx), int(yy), int(zz)) for xx, yy, zz in param_tags)
+        if len(tags) != len(self._initial_stress_records):
+            raise RuntimeError(
+                "H5Emitter.set_initial_stress_records: "
+                f"{len(self._initial_stress_records)} record(s) but "
+                f"{len(tags)} param_tags entries; one per record.")
+        self._initial_stress_param_tags = tags
 
     def _write_initial_stress(self, f: Any) -> None:
         """Persist ``/opensees/initial_stress/stress_NNN`` groups (ADR 0055).
@@ -4447,31 +4669,44 @@ class H5Emitter:
         pre-resolve declarative field set: ``name`` + ``sigma_xx/yy/zz`` +
         ``ramp_steps`` + ``lambda_install`` scalar attrs, and EITHER a ``pg``
         attr (PG-targeted) XOR an ``elements`` int64 dataset (explicit element
-        list).  No parameter tags, no rendered ramp proc — replay re-runs
-        :func:`emit_initial_stress_global` /
-        :func:`emit_initial_stress_addtoparameter` to regenerate the deck.
-        Empty when no global initial-stress record exists (vanilla files stay
-        byte-identical).  Folds into ``model_hash`` (authored state).
+        list), plus the ``param_tags`` int64 (3,) attr (schema 2.27.0, K1-8):
+        the XX / YY / ZZ parameter tags the build planned.  No rendered
+        ramp proc — replay re-runs :func:`write_planned_ramps` /
+        :func:`emit_initial_stress_addtoparameter` over the stored tags to
+        regenerate the deck.  Empty when no global initial-stress record
+        exists (vanilla files stay byte-identical).  Folds into
+        ``model_hash`` (authored state).
         """
         if not self._initial_stress_records:
             return
         grp = self._ops_group(f).create_group("initial_stress")
         self._write_initial_stress_records_into(
             grp, self._initial_stress_records,
+            self._initial_stress_param_tags,
         )
 
     def _write_initial_stress_records_into(
-        self, grp: Any, records: "Iterable[Any]",
+        self, grp: Any, records: "Sequence[Any]",
+        param_tags: "Sequence[tuple[int, int, int]]",
     ) -> None:
         """Write ``stress_NNN`` declarative sub-groups under ``grp``.
 
         Shared by the global ``/opensees/initial_stress`` zone (Phase 1)
         and each stage's ``initial_stress`` sub-group (Phase 2) — same
-        pre-resolve field set, same pg-XOR-elements discriminant.
+        pre-resolve field set, same pg-XOR-elements discriminant, and one
+        ``param_tags`` entry per record (a missing one refuses: a 2.27.0
+        archive never leaves its replay a tag to mint).
         """
         import numpy as np
 
-        for idx, rec in enumerate(records):
+        if len(param_tags) != len(records):
+            raise RuntimeError(
+                f"H5Emitter: {grp.name} holds {len(records)} initial "
+                f"stress record(s) but {len(param_tags)} param_tags "
+                "entries; every record stores its ramp tags (schema "
+                "2.27.0)."
+            )
+        for idx, (rec, tags) in enumerate(zip(records, param_tags)):
             g = grp.create_group(f"stress_{idx:03d}")
             _set_attr(g, "name", rec.name)
             _set_attr(g, "sigma_xx", float(rec.sigma_xx))
@@ -4488,6 +4723,7 @@ class H5Emitter:
                 )
             else:
                 _set_attr(g, "pg", rec.pg)
+            _set_attr(g, "param_tags", [int(t) for t in tags])
 
     # -- Stages (ADR 0055 Phase 2, schema 2.18.0) -------------------------
 
@@ -4584,6 +4820,30 @@ class H5Emitter:
             blk.activate_absorbing_records = tuple(
                 rec.activate_absorbing_records
             )
+            # K1-8 (schema 2.27.0): the two formerly refused verbs'
+            # records, and every record's parameter tags from its calls.
+            blk.update_parameter_records = tuple(
+                rec.update_parameter_records)
+            blk.zero_velocity_records = tuple(rec.zero_velocity_records)
+            where = f"stage {rec.name!r}"
+            blk.initial_stress_param_tags = _ramp_tags_by_name(
+                blk.initial_stress_records, blk.ramp_tags, where)
+            blk.absorbing_param_tags = _attribute_param_calls(
+                where, "activate_absorbing", blk.activate_absorbing_records,
+                blk.flip_calls)
+            blk.update_parameter_param_tags = _attribute_param_calls(
+                where, "update_parameter", blk.update_parameter_records,
+                [(rank, pid) for rank, pid, _a, _v in blk.update_calls])
+            _check_update_calls(
+                where, blk.update_parameter_records,
+                blk.update_parameter_param_tags, blk.update_calls)
+            if blk.node_kinematics_calls and not blk.zero_velocity_records:
+                raise RuntimeError(
+                    f"H5Emitter.set_stage_records: {where} emitted "
+                    f"{blk.node_kinematics_calls} setNodeVel / setNodeAccel "
+                    "call(s) but declares no s.zero_velocities record — the "
+                    "emit stream and the build diverged."
+                )
         self._stage_records_attached = True
 
     def restore_partition_blocks(
@@ -5366,14 +5626,18 @@ class H5Emitter:
                 self._write_initial_stress_records_into(
                     g.create_group("initial_stress"),
                     blk.initial_stress_records,
+                    blk.initial_stress_param_tags,
                 )
             # Absorbing-boundary stage flip (ADR 0054 AB-3) — declarative
-            # pg XOR elements, mirroring the initial-stress discriminant.
+            # pg XOR elements, mirroring the initial-stress discriminant,
+            # plus the ``param_tags`` (rank, pid) rows (schema 2.27.0).
             if blk.activate_absorbing_records:
                 absorb = g.create_group("activate_absorbing")
-                for a_idx, ab_rec in enumerate(
-                    blk.activate_absorbing_records
-                ):
+                for a_idx, (ab_rec, rows) in enumerate(_with_param_rows(
+                    blk.name, "activate_absorbing",
+                    blk.activate_absorbing_records,
+                    blk.absorbing_param_tags,
+                )):
                     ag = absorb.create_group(f"absorb_{a_idx:03d}")
                     if ab_rec.elements is not None:
                         ag.create_dataset(
@@ -5385,6 +5649,48 @@ class H5Emitter:
                         )
                     else:
                         _set_attr(ag, "pg", ab_rec.pg)
+                    _write_param_rows(ag, rows)
+            # ``s.update_parameter`` (schema 2.27.0, K1-8) — the same
+            # declarative target discriminant, the parameter name, value
+            # and optional material tag, and the (rank, pid) rows.
+            if blk.update_parameter_records:
+                upd = g.create_group("update_parameter")
+                for u_idx, (up_rec, rows) in enumerate(_with_param_rows(
+                    blk.name, "update_parameter",
+                    blk.update_parameter_records,
+                    blk.update_parameter_param_tags,
+                )):
+                    ug = upd.create_group(f"update_{u_idx:03d}")
+                    _set_attr(ug, "name", str(up_rec.name))
+                    _set_attr(ug, "value", float(up_rec.value))
+                    if up_rec.mat_tag is not None:
+                        _set_attr(ug, "mat_tag", int(up_rec.mat_tag))
+                    if up_rec.elements is not None:
+                        ug.create_dataset(
+                            "elements",
+                            data=np.asarray(
+                                [int(e) for e in up_rec.elements],
+                                dtype=np.int64,
+                            ),
+                        )
+                    else:
+                        _set_attr(ug, "pg", up_rec.pg)
+                    _write_param_rows(ug, rows)
+            # ``s.zero_velocities`` (schema 2.27.0, K1-8) — one group per
+            # record; a ``nodes`` dataset when it names nodes, none when it
+            # zeroes the whole domain (``nodes=None``).
+            if blk.zero_velocity_records:
+                zero = g.create_group("zero_velocities")
+                for z_idx, z_rec in enumerate(blk.zero_velocity_records):
+                    zg = zero.create_group(f"zero_{z_idx:03d}")
+                    if z_rec.nodes is not None:
+                        zg.create_dataset(
+                            "nodes",
+                            data=np.asarray(
+                                [int(n) for n in z_rec.nodes],
+                                dtype=np.int64,
+                            ),
+                        )
             # Per-stage analysis chain + patterns + recorders.
             if blk.chain_attrs:
                 chain = g.create_group("analysis")

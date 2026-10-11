@@ -7,9 +7,13 @@
 # standalone replay entry points (K1-3d S6, #1458); every other emit helper
 # reads the TagPlan. Remove a row in the PR that stops that replay minting,
 # and lower N_WAIVED with it. Never add a row or raise N_WAIVED.
+# K1-8 (#1465) archives every parameter tag from opensees 2.27.0, so the
+# pre-2-27-* rows mint for an archive below 2.27.0 only, behind the version
+# check in compose.py (the T ruling on #1465, option A: the floor stays, so
+# those archives keep replaying).
 N_WAIVED = 5
 reinforce-tie-replay _internal/compose.py _replay_into counters _counters  # retired by K2, which archives the tie tags
 reinforce-tie-replay _internal/compose.py _replay_into helper replay_reinforce_ties  # retired by K2, which archives the tie tags
-initial-stress-replay _internal/compose.py _replay_into helper replay_initial_stress_global  # retired by K1-8 (#1465), which archives the parameter tags per row
-staged-replay-params _internal/compose.py _replay_staged_into helper replay_initial_stress_global  # retired by K1-8 (#1465), which archives the parameter tags per row
-staged-replay-params _internal/compose.py _replay_staged_into helper replay_activate_absorbing  # retired by K1-8 (#1465), which archives the parameter tags per row
+pre-2-27-initial-stress-replay _internal/compose.py _replay_into helper replay_initial_stress_global  # pre-2.27 archives only; retired by the major bump that raises the opensees floor past 2.26
+pre-2-27-staged-replay-params _internal/compose.py _replay_staged_into helper replay_initial_stress_global  # pre-2.27 archives only; retired by the major bump that raises the opensees floor past 2.26
+pre-2-27-staged-replay-params _internal/compose.py _replay_staged_into helper replay_activate_absorbing  # pre-2.27 archives only; retired by the major bump that raises the opensees floor past 2.26

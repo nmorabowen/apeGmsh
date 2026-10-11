@@ -730,3 +730,17 @@ class StageRecordRO:
     activate_absorbing: tuple[
         tuple[str | None, tuple[int, ...] | None], ...
     ] = ()
+    #: Declarative ``build.UpdateParameterRecord`` /
+    #: ``build.ZeroVelocityRecord`` instances (schema 2.27.0, K1-8; empty
+    #: before it, when the H5 writer refused both verbs).
+    update_parameters: tuple[Any, ...] = ()
+    zero_velocities: tuple[Any, ...] = ()
+    #: The parameter tags the build planned (schema 2.27.0, K1-8), one
+    #: entry per ``initial_stress`` / ``activate_absorbing`` /
+    #: ``update_parameters`` record: an initial stress's (XX, YY, ZZ) ramp
+    #: tags, and every ``(rank, pid)`` a flip or update was written with
+    #: (``rank`` ``-1`` for a flat build). Empty for an archive below
+    #: 2.27.0, whose replay re-mints them.
+    initial_stress_param_tags: tuple[tuple[int, int, int], ...] = ()
+    absorbing_param_tags: tuple[tuple[tuple[int, int], ...], ...] = ()
+    update_parameter_param_tags: tuple[tuple[tuple[int, int], ...], ...] = ()

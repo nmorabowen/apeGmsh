@@ -39,6 +39,7 @@ from .caps import SolveStamp
 from .._internal.schema_version import (
     NEUTRAL,
     OPENSEES,
+    SchemaVersion,
     SchemaVersionError,
     read_zone_version,
     reader_version,
@@ -1181,6 +1182,31 @@ class H5Model:
             return []
         return self._initial_stress_from_group(ops["initial_stress"])
 
+    def initial_stress_param_tags(self) -> "tuple[tuple[int, int, int], ...]":
+        """The stored ramp tags of every :meth:`initial_stress` record, in
+        the same order (schema 2.27.0, K1-8): ``(xx, yy, zz)`` each.
+
+        Empty when the archive carries no global initial stress, or when
+        it predates :data:`PARAM_TAGS_FROM` (its replay re-mints them).
+        """
+        if "opensees" not in self._f:
+            return ()
+        ops = self._f["opensees"]
+        if "initial_stress" not in ops:
+            return ()
+        return _initial_stress_param_tags(
+            ops["initial_stress"], "/opensees/initial_stress")
+
+    def opensees_zone_version(self) -> SchemaVersion:
+        """The file's opensees-zone schema version (per-zone stamp, else
+        the envelope fallback :func:`open` validated)."""
+        version = read_zone_version(
+            _attrs_as_dict(self._f[self._meta_path]), OPENSEES)
+        if version is None:
+            raise MalformedH5Error(
+                f"/{self._meta_path} carries no opensees zone version")
+        return version
+
     @staticmethod
     def _initial_stress_from_group(grp: Any) -> "list[InitialStressRecord]":
         """Reconstruct ``stress_NNN`` children of ``grp`` (shared by the
@@ -1475,9 +1501,19 @@ class H5Model:
                 self._initial_stress_from_group(g["initial_stress"])
                 if "initial_stress" in g else []
             )
+            initial_stress_tags = (
+                _initial_stress_param_tags(
+                    g["initial_stress"],
+                    f"/opensees/stages/{gname}/initial_stress")
+                if "initial_stress" in g else ()
+            )
             absorb: "list[tuple[str | None, tuple[int, ...] | None]]" = []
+            absorb_tags: "tuple[tuple[tuple[int, int], ...], ...]" = ()
             if "activate_absorbing" in g:
                 agrp = g["activate_absorbing"]
+                absorb_tags = _param_rows(
+                    [(a, agrp[a]) for a in sorted(agrp)],
+                    f"/opensees/stages/{gname}/activate_absorbing")
                 for aname in sorted(agrp):
                     ag = agrp[aname]
                     if "elements" in ag:
@@ -1496,6 +1532,10 @@ class H5Model:
                             "attr nor elements dataset — corrupt "
                             "absorbing-flip record."
                         )
+            # K1-8 (schema 2.27.0): the two formerly refused verbs.
+            updates, update_tags = self._update_parameters_from_stage(
+                g, gname)
+            zero_velocities = self._zero_velocities_from_stage(g)
 
             # -- Tri-state attrs (presence-encoded) --------------------
             set_creep_attr = attrs.get("set_creep_on")
@@ -1548,8 +1588,74 @@ class H5Model:
                 chain_attrs=chain_attrs,
                 initial_stress=tuple(initial_stress),
                 activate_absorbing=tuple(absorb),
+                update_parameters=updates,
+                zero_velocities=zero_velocities,
+                initial_stress_param_tags=initial_stress_tags,
+                absorbing_param_tags=absorb_tags,
+                update_parameter_param_tags=update_tags,
             ))
         return out
+
+    @staticmethod
+    def _update_parameters_from_stage(
+        g: Any, gname: str,
+    ) -> "tuple[tuple[Any, ...], tuple[tuple[tuple[int, int], ...], ...]]":
+        """A stage's ``update_parameter/update_NNN`` records and their
+        ``param_tags`` rows (schema 2.27.0, K1-8); empty below it."""
+        from .._internal.build import UpdateParameterRecord
+
+        if "update_parameter" not in g:
+            return (), ()
+        ugrp = g["update_parameter"]
+        where = f"/opensees/stages/{gname}/update_parameter"
+        names = sorted(ugrp)
+        records: "list[Any]" = []
+        for uname in names:
+            ug = ugrp[uname]
+            attrs = _attrs_as_dict(ug)
+            if "name" not in attrs or "value" not in attrs:
+                raise MalformedH5Error(
+                    f"{where}/{uname}: no name / value attr — corrupt "
+                    "s.update_parameter record.")
+            if "elements" in ug:
+                elements: "tuple[int, ...] | None" = tuple(
+                    int(e) for e in ug["elements"][:])
+                pg: "str | None" = None
+            elif "pg" in attrs:
+                elements, pg = None, str(attrs["pg"])
+            else:
+                raise MalformedH5Error(
+                    f"{where}/{uname}: neither pg attr nor elements "
+                    "dataset — corrupt s.update_parameter record.")
+            records.append(UpdateParameterRecord(
+                name=str(attrs["name"]),
+                value=float(attrs["value"]),
+                pg=pg,
+                elements=elements,
+                mat_tag=(int(attrs["mat_tag"]) if "mat_tag" in attrs
+                         else None),
+            ))
+        tags = _param_rows([(u, ugrp[u]) for u in names], where)
+        if len(tags) != len(records):
+            raise MalformedH5Error(
+                f"{where}: an s.update_parameter record carries no "
+                "param_tags; the 2.27.0 writer stores them on every one.")
+        return tuple(records), tags
+
+    @staticmethod
+    def _zero_velocities_from_stage(g: Any) -> "tuple[Any, ...]":
+        """A stage's ``zero_velocities/zero_NNN`` records (schema 2.27.0,
+        K1-8): a ``nodes`` dataset, or none for the whole domain."""
+        from .._internal.build import ZeroVelocityRecord
+
+        if "zero_velocities" not in g:
+            return ()
+        zgrp = g["zero_velocities"]
+        return tuple(
+            ZeroVelocityRecord(nodes=(
+                tuple(int(n) for n in zgrp[z]["nodes"][:])
+                if "nodes" in zgrp[z] else None))
+            for z in sorted(zgrp))
 
     def patterns(self) -> list[PatternRecord]:
         """Return every ``/opensees/patterns/{name}`` group.
@@ -2680,6 +2786,68 @@ class H5Model:
 #: Older writers stamped the highest element dimension of the mesh, so
 #: a 3-D frame of line elements read ``1``.
 META_NDM_IS_SPATIAL_FROM: tuple[int, int, int] = (2, 34, 0)
+
+#: First opensees-zone version whose archive stores every parameter tag
+#: the build planned (K1-8, #1465): ``param_tags`` on each initial stress,
+#: absorbing flip and ``s.update_parameter`` record. A replay of an
+#: archive at or above it reads them and mints none; one below it re-mints
+#: them (``compose.py``, the pre-2.27 tag-law waivers).
+PARAM_TAGS_FROM: tuple[int, int, int] = (2, 27, 0)
+
+
+def archives_param_tags(version: "SchemaVersion") -> bool:
+    """True iff an archive at opensees-zone ``version`` stores its
+    parameter tags (``>= PARAM_TAGS_FROM``)."""
+    return (version.major, version.minor, version.patch) >= PARAM_TAGS_FROM
+
+
+def _initial_stress_param_tags(
+    grp: Any, where: str,
+) -> "tuple[tuple[int, int, int], ...]":
+    """The ``param_tags`` of each ``stress_NNN`` child of ``grp``, in name
+    order; ``()`` when none carries one (an archive below
+    :data:`PARAM_TAGS_FROM`). Some but not all refuses."""
+    out: "list[tuple[int, int, int]]" = []
+    names = sorted(grp)
+    for name in names:
+        attrs = _attrs_as_dict(grp[name])
+        if "param_tags" not in attrs:
+            continue
+        tags = tuple(int(t) for t in attrs["param_tags"])
+        if len(tags) != 3:
+            raise MalformedH5Error(
+                f"{where}/{name}@param_tags holds {len(tags)} tags; an "
+                "initial stress has three (XX, YY, ZZ).")
+        out.append((tags[0], tags[1], tags[2]))
+    if out and len(out) != len(names):
+        raise MalformedH5Error(
+            f"{where}: {len(out)} of {len(names)} stress_NNN groups carry "
+            "param_tags; a 2.27.0 writer stores them on every record.")
+    return tuple(out)
+
+
+def _param_rows(
+    groups: "Sequence[tuple[str, Any]]", where: str,
+) -> "tuple[tuple[tuple[int, int], ...], ...]":
+    """The ``param_tags`` ``(rank, pid)`` rows of each flip or update
+    group, in order; ``()`` when none carries them. Some but not all, or
+    rows naming more than one tag, refuses."""
+    out: "list[tuple[tuple[int, int], ...]]" = []
+    for name, g in groups:
+        if "param_tags" not in g:
+            continue
+        data = g["param_tags"][:]
+        rows = tuple((int(r[0]), int(r[1])) for r in data)
+        if not rows or len({pid for _r, pid in rows}) != 1:
+            raise MalformedH5Error(
+                f"{where}/{name}/param_tags rows {rows!r} do not name one "
+                "parameter tag.")
+        out.append(rows)
+    if out and len(out) != len(groups):
+        raise MalformedH5Error(
+            f"{where}: {len(out)} of {len(groups)} groups carry param_tags; "
+            "a 2.27.0 writer stores them on every record.")
+    return tuple(out)
 
 
 def read_spatial_ndm(
