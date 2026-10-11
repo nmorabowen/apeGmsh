@@ -136,3 +136,4 @@ An ADR over 40 KB has a decision summary of at most 60 lines in `summaries/` und
 | [0118](0118-station-aligned-drm-soil-box.md) | Station-aligned DRM soil box: one builder for the DRM box and the absorbing box | Proposed |
 | [0119](0119-ground-spring-bed.md) | Ground-spring bed: decoupled node sets on the session, a spring bed on the bridge | Proposed |
 | [0120](0120-multi-rank-composed-models.md) | Multi-rank composed models: routed element-less nodes, one-graph repartition, a hosted assembly | Proposed |
+| [0121](0121-charter-v2-b-with-amendments.md) | Charter v2: B with amendments, one engine policy, a mechanized freeze | Accepted |
