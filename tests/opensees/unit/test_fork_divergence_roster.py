@@ -179,6 +179,14 @@ def test_unpinned_baseline_is_tight(rows) -> None:
 # The lock bites: each mutation of a real row must be caught
 # ---------------------------------------------------------------------
 
+def test_fork_citations_are_unquoted_and_parse(rows) -> None:
+    """Fork citations stay out of backticks (the doc-path quirk rule reads
+    a backticked path as a file in this repo) and still parse here."""
+    fork = [c for r in rows for c in citations(r["pinning tests"])
+            if c.startswith("fork:")]
+    assert fork and all(FORK_RE.match(c) for c in fork)
+
+
 def _mutated(rows, rid: str, column: str, value: str):
     return [dict(r, **{column: value}) if r["id"] == rid else r for r in rows]
 

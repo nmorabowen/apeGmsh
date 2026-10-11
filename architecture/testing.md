@@ -313,6 +313,26 @@ against expected tag sequences in tests.
 Where randomness is intrinsic (e.g. ground-motion sampling for a
 visualization sanity check), seed it explicitly and document.
 
+### Fork-option effect tests
+
+Any fork-only option, token or class that apeGmsh emits ships with a
+live test that asserts its **effect**: the result with the option
+differs from the result without it, in the direction or by the amount
+the oracle predicts. A test that only checks that the token is emitted,
+or that the build accepts it, is not an effect test. A build that
+ignores the token passes such a test: a `ladruno` build silently
+dropped #1184's `-crackedNu`/`-betaC` (errata E4 in
+`internal_docs/plan_architectural_strains_2026-09.md`).
+
+A divergence that an effect test exposes gets a row in the
+[fork divergence roster](fork-divergence-roster.md), with the engine
+that is correct and the oracle that decides it.
+
+The fork applies the same rule on its side (P7 in
+`internal_docs/plan_expert_panel_2026-09.md`): a new fork option ships
+with a fork test that asserts its effect. apeGmsh states that rule here
+and does not edit the fork.
+
 ## What every PR adds
 
 | Adding a new… | Test file required | Other tests touched |
