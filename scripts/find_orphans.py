@@ -32,6 +32,29 @@ PER_PAGE = 100
 MAX_PAGES = 20
 
 
+# Rows verified redone on ``main`` (issue #1237, maintainer ruling 2026-10-11).
+# Key: (orphan PR number, finding kind) -> (redoing PR(s), one-line reason).
+# A finding with a matching key is dropped from the report; any other
+# orphan, or the same PR under a different kind, still reports.
+ACKNOWLEDGED: dict[tuple[int, str], tuple[str, str]] = {
+    (858, "not-on-main"): (
+        "#1169",
+        "merged into a stacked base after its parent squashed; LogStrain2D "
+        "and geom= recovered by #1169",
+    ),
+    (1057, "not-on-main"): (
+        "#1058",
+        "merged into a stacked base; von_mises_shell thickness-per-element "
+        "carried to main by #1058 (merge 125cdd36)",
+    ),
+    (1097, "pushed-after-merge"): (
+        "#1099",
+        "post-merge commit a7237433 (-maxSubsteps, convergence-test gate, "
+        "ADR 0103) landed as #1099",
+    ),
+}
+
+
 def gh_fetch(path: str) -> Any:
     """GET ``path`` through ``gh api``; ``None`` on a 404."""
     proc = subprocess.run(
@@ -100,7 +123,7 @@ def find_orphans(fetch: Fetch, repo: str, since: datetime) -> list[dict]:
                             f"!= PR head {head['sha'][:8]}"
                         ),
                     })
-    return findings
+    return [f for f in findings if (f["pr"], f["kind"]) not in ACKNOWLEDGED]
 
 
 def render_md(findings: list[dict]) -> str:
