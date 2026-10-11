@@ -208,7 +208,7 @@ test("a click on a referenced series with a recorded source dispatches requestSo
 // ---- the plot: closed forms ------------------------------------------------------
 
 test("Constant and Linear draw their factor; Constant v = f, Linear v = f*t", () => {
-  assert.deepEqual(sampleSeries("Constant", { factor: 2.5 }), { ok: true, samples: { t: [0, 1], v: [2.5, 2.5], caption: "constant · factor 2.5" } });
+  assert.deepEqual(sampleSeries("Constant", { factor: 2.5 }), { ok: true, samples: { t: [0, 1], v: [2.5, 2.5], caption: "constant · factor 2.5, drawn over pseudo-time 0..1" } });
   const lin = sampleSeries("Linear", { factor: -3 });
   assert.ok(lin.ok);
   assert.deepEqual([lin.samples.t, lin.samples.v], [[0, 1], [0, -3]]);
@@ -239,9 +239,50 @@ test("Trig: v = factor*sin(2*pi*(t - t_start)/period + shift) + zero_shift insid
   assert.ok(Math.abs(at(0.5) - 3) < 1e-12, "a quarter period: the peak");
   assert.ok(Math.abs(at(1.5) + 3) < 1e-12, "three quarters: the trough");
   assert.ok(Math.abs(at(1)) < 1e-12);
-  const late = sampleSeries("Trig", { t_start: 1, t_end: 2, period: 1 });
+  // A late start with a phase shift starts at (t_start, factor*sin(shift)): no (0, 0) point that would draw a false ramp up to it.
+  const late = sampleSeries("Trig", { t_start: 1, t_end: 2, period: 1, factor: 2, shift: Math.PI / 2 });
   assert.ok(late.ok);
-  assert.deepEqual([late.samples.t[0], late.samples.v[0]], [0, 0], "zero before t_start");
+  assert.equal(late.samples.t[0], 1);
+  assert.ok(Math.abs(late.samples.v[0]! - 2) < 1e-12);
+  // 0 after t_end: the curve's last value at t_end, then the drop to 0 at t_end, then zero.
+  assert.deepEqual(late.samples.t.slice(-2), [2, 2.1]);
+  assert.deepEqual(late.samples.v.slice(-2), [0, 0]);
+  assert.ok(Math.abs(late.samples.v.at(-3)! - 2) < 1e-12, "the value just before the drop is the curve's (2*sin(2*pi + pi/2) = 2)");
+});
+
+test("Trig zero_shift: the phase is corrected by TrigSeries.cpp's phi = shift - period/(2*pi)*asin(zero_shift/factor)", () => {
+  // factor 2, zero_shift 1, period 1, shift 0: phi = -1/(2*pi) * asin(1/2) = -1/(2*pi) * pi/6 = -1/12.
+  const r = sampleSeries("Trig", { t_start: 0, t_end: 1, period: 1, factor: 2, zero_shift: 1 });
+  assert.ok(r.ok);
+  assert.ok(Math.abs(r.samples.v[0]! - (2 * Math.sin(-1 / 12) + 1)) < 1e-12);
+  // A quarter period on: 2*sin(pi/2 - 1/12) + 1.
+  assert.ok(Math.abs(r.samples.v[50]! - (2 * Math.sin(Math.PI / 2 - 1 / 12) + 1)) < 1e-12);
+  const out = sampleSeries("Trig", { t_start: 0, t_end: 1, period: 1, factor: 1, zero_shift: 2 });
+  assert.match(!out.ok ? out.reason : "", /outside \[-1, 1\]/, "asin out of its domain is refused, not drawn as NaN");
+});
+
+test("Path prepend_zero (PathSeries.cpp): the zero sits at start_time and the samples move one dt later; with a time list it is refused", () => {
+  const a = sampleSeries("Path", { values: [1, 2], dt: 0.5, prepend_zero: true });
+  assert.ok(a.ok);
+  assert.deepEqual([a.samples.t, a.samples.v], [[0, 0.5, 1], [0, 1, 2]]);
+  const b = sampleSeries("Path", { values: [1, 2], dt: 0.5, start_time: 1, prepend_zero: true, factor: 3 });
+  assert.ok(b.ok);
+  assert.deepEqual([b.samples.t, b.samples.v], [[1, 1.5, 2], [0, 3, 6]]);
+  const c = sampleSeries("Path", { values: [1, 2], time: [0, 1], prepend_zero: true });
+  assert.match(!c.ok ? c.reason : "", /prepend_zero with a time list/);
+});
+
+test("a pattern whose series field is not a {$decl} ref shows the value as written, never 'series none'", () => {
+  const recs = defs.definitions!.decls!.records.map((r) =>
+    r.key === "opensees/pattern/gravity" ? { ...r, params: [{ ...r.params[0]!, params: { series: { $opaque: "InlineSeries" } } }] } : r,
+  );
+  const s: State = { ...defs, definitions: { ...defs.definitions!, decls: { ...defs.definitions!.decls!, records: recs } } };
+  const g = patternsOf(s).sections.flatMap((x) => x.patterns).find((p) => p.title === "gravity")!;
+  assert.equal(g.series, null);
+  assert.equal(g.seriesValue, "InlineSeries");
+  const row = rowsOf(render(s).root).find((r) => /gravity/.test(r.textContent))!;
+  assert.match(row.textContent, /series InlineSeries/);
+  assert.doesNotMatch(row.textContent, /series none/);
 });
 
 test("an unplotted type, or a field that is not a number, is a sentence and never a guessed curve", () => {

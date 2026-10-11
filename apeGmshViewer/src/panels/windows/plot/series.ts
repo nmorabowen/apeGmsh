@@ -8,7 +8,9 @@
 //   Constant  v(t) = factor
 //   Linear    v(t) = factor * t
 //   Path      v(t_i) = factor * values[i], t_i = time[i] or start_time + i*dt
-//   Trig      v(t) = factor * sin(2*pi*(t - t_start)/period + shift) + zero_shift, t_start <= t <= t_end; 0 outside
+//             (prepend_zero: the path is [0, values...] on the same dt grid, PathSeries.cpp)
+//   Trig      v(t) = factor * sin(2*pi*(t - t_start)/period + phi) + zero_shift, t_start <= t <= t_end; 0 outside,
+//             phi = shift - period/(2*pi) * asin(zero_shift/factor) (TrigSeries.cpp getFactor)
 // A Constant or Linear series has no time span of its own; it is drawn over
 // pseudo-time 0..1 and its caption gives the factor. Any other type, or a
 // field the archive does not carry, is a sentence, never a guessed curve.
@@ -52,7 +54,7 @@ export function sampleSeries(type: string, p: Record<string, DeclValue>): Series
     switch (type) {
       case "Constant": {
         const f = num(p, "factor", 1);
-        return { ok: true, samples: { t: [0, 1], v: [f, f], caption: `constant · factor ${fmt(f)}` } };
+        return { ok: true, samples: { t: [0, 1], v: [f, f], caption: `constant · factor ${fmt(f)}, drawn over pseudo-time 0..1` } };
       }
       case "Linear": {
         const f = num(p, "factor", 1);
@@ -66,20 +68,21 @@ export function sampleSeries(type: string, p: Record<string, DeclValue>): Series
         }
         const f = num(p, "factor", 1);
         const time = nums(p, "time");
+        const prepend = p["prepend_zero"] === true;
         let t: number[];
         let v = values.map((x) => f * x);
         if (time) {
+          // The bridge refuses time= with prepend_zero (time_series.py); a file that carries both is not drawn.
+          if (prepend) throw new Error("prepend_zero with a time list (the bridge refuses this combination)");
           if (time.length !== values.length) throw new Error(`time has ${time.length} entries and values ${values.length}`);
           t = [...time];
         } else {
+          // PathSeries.cpp: -prependZero makes the path [0, values...] and keeps t_i = startTime + i*dt,
+          // so the zero sits at startTime and every sample moves one dt later.
           const dt = num(p, "dt");
           const t0 = num(p, "start_time", 0);
-          t = values.map((_, i) => t0 + i * dt);
-        }
-        if (p["prepend_zero"] === true) {
-          // OpenSees -prependZero: a zero value ahead of the first sample (and time 0 ahead of a time list).
-          t = time ? [0, ...t] : [t[0]! - num(p, "dt"), ...t];
-          v = [0, ...v];
+          if (prepend) v = [0, ...v];
+          t = v.map((_, i) => t0 + i * dt);
         }
         if (t.length === 0) return { ok: false, reason: "a Path series with no samples" };
         return { ok: true, samples: { t, v, caption: `path · ${values.length} samples · factor ${fmt(f)}` } };
@@ -88,14 +91,20 @@ export function sampleSeries(type: string, p: Record<string, DeclValue>): Series
         const t0 = num(p, "t_start"), t1 = num(p, "t_end"), T = num(p, "period");
         const f = num(p, "factor", 1), shift = num(p, "shift", 0), zs = num(p, "zero_shift", 0);
         if (!(t1 > t0) || !(T > 0)) throw new Error(`t_start ${t0}, t_end ${t1}, period ${T} span no time`);
+        // TrigSeries.cpp getFactor: phi = phaseShift - period/(2*pi)*asin(zeroShift/cFactor).
+        const ratio = zs === 0 ? 0 : zs / f;
+        if (!(Math.abs(ratio) <= 1)) throw new Error(`zero_shift ${zs} / factor ${f} is outside [-1, 1]`);
+        const phi = shift - (T / (2 * Math.PI)) * Math.asin(ratio);
         const n = 200;
         const t: number[] = [], v: number[] = [];
-        if (t0 > 0) t.push(0), v.push(0);
         for (let i = 0; i <= n; i++) {
           const ti = t0 + ((t1 - t0) * i) / n;
           t.push(ti);
-          v.push(f * Math.sin((2 * Math.PI * (ti - t0)) / T + shift) + zs);
+          v.push(f * Math.sin((2 * Math.PI * (ti - t0)) / T + phi) + zs);
         }
+        // 0 after t_end: the drop, then a tenth of the span at zero.
+        t.push(t1, t1 + (t1 - t0) / 10);
+        v.push(0, 0);
         return { ok: true, samples: { t, v, caption: `trig · period ${fmt(T)} · factor ${fmt(f)} · t ${fmt(t0)}..${fmt(t1)}` } };
       }
       default:

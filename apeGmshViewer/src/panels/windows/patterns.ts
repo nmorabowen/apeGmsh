@@ -54,6 +54,8 @@ export interface PatternCard {
   series: RefLink | null;
   /** the series as the archive attribute names it, when no decl_params ref does */
   seriesH5: string | null;
+  /** the `series` field as written when it is not a `{$decl}` ref (an inline value, null), shown verbatim */
+  seriesValue: string | null;
   params: ParamLine[];
   /** each archive table with its row count (`loads: 258 rows`) */
   tables: string[];
@@ -173,6 +175,7 @@ function patternCard(s: State, defs: Definitions, p: DefObject, stage: string): 
     role: typeof role === "string" ? role : null,
     series: seriesV !== undefined && isRef(seriesV) ? refOf(s, defs, seriesV.$decl) : null,
     seriesH5: seriesV === undefined && typeof seriesRef === "string" ? seriesRef : null,
+    seriesValue: seriesV !== undefined && !isRef(seriesV) ? shortValue(seriesV) : null,
     params: rec ? paramLines(s, defs, rec.params, new Set(["series"])) : [],
     tables: Object.entries(p.tables).map(([name, t]) => {
       const n = t.rows.length, what = TABLES[name] ?? "rows";
@@ -281,7 +284,7 @@ function patternEl(p: PatternCard, act: (e: Event) => void): HTMLElement {
   row.dataset["h5"] = p.h5;
   row.append(head(p.title, p.self, p.synth, act));
   const series = el("span");
-  series.append("series ", p.series ? refEl(p.series, act) : (p.seriesH5 ?? "none"));
+  series.append("series ", p.series ? refEl(p.series, act) : (p.seriesValue ?? p.seriesH5 ?? "none"));
   row.append(detail([`${p.type} · tag ${p.tag ?? "?"}`, ...(p.role ? [`role ${p.role}`] : []), series]));
   const params = paramsEl(p.params, p.paramsNote, act);
   if (params) row.append(params);
