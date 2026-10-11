@@ -1,4 +1,4 @@
-"""X2-e â€” numeric oracle for ``Results.export_animation`` (qt lane).
+"""X2-e — numeric oracle for ``Results.export_animation`` (qt lane).
 
 The drawn-data counterpart of ``test_x2_export_animation_golden.py``:
 the same three cases (``default``, ``deform=``, ``setup=`` contour), the

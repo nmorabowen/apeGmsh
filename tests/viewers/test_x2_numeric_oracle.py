@@ -173,10 +173,17 @@ def extract_drawn(plotter: Any) -> dict[str, Any]:
     contours: list[dict[str, Any]] = []
     glyphs: list[dict[str, np.ndarray]] = []
     for renderer in plotter.renderers:
-        for actor in renderer.actors.values():
+        for name, actor in renderer.actors.items():
+            if not actor.GetVisibility() or actor.IsA("vtkActor2D"):
+                continue  # hidden, or 2-D overlay (scalar bar, text)
             mapper = getattr(actor, "mapper", None)
             ds = getattr(mapper, "dataset", None) if mapper is not None else None
-            if ds is None or not actor.GetVisibility() or ds.n_points == 0:
+            if ds is None:
+                raise AssertionError(
+                    f"visible 3-D prop {name!r} ({actor.GetClassName()}) "
+                    "has no dataset the oracle can read (fail closed)",
+                )
+            if ds.n_points == 0:
                 continue
             if "GlyphVector" in ds.point_data:
                 glyphs.append(_glyph_instances(ds))
@@ -467,10 +474,24 @@ def plate(plate_h5: Path, monkeypatch: pytest.MonkeyPatch):
         yield r
 
 
-def _require_shots(records: list[dict[str, Any]], expected: int) -> None:
-    """GL lane: missing shots fail. Elsewhere, no GL skips."""
+def _require_shots(
+    records: list[dict[str, Any]], expected: int, written: Any,
+) -> None:
+    """Fail closed when a call wrote output the seam did not see.
+
+    ``written`` is what the public call returned. Only a call that wrote
+    nothing (``None`` / empty: no GL) may skip, and not on a GL lane.
+    Output written with fewer captured shots means the path bypassed
+    ``BasePlotter.screenshot``: that is a failure, never a skip.
+    """
     if len(records) >= expected:
         return
+    if written:
+        raise AssertionError(
+            f"the call wrote {written!r} but the seam captured "
+            f"{len(records)} shot(s), expected {expected}: the path no "
+            "longer shoots through BasePlotter.screenshot (fail closed)",
+        )
     if os.environ.get("APEGMSH_EXPECT_GL"):
         raise AssertionError(f"{len(records)} shots, expected {expected}")
     pytest.skip("no offscreen GL context")
@@ -500,8 +521,8 @@ def _render_view(plate: Results, tmp_path: Path, which: str, **over: Any):
               camera=_CAMERA, window_size=_WINDOW)
     kw.update(over)
     with capture_drawn() as recs:
-        plate.render(tmp_path / f"{which}.png", **kw)
-    _require_shots(recs, 1)
+        written = plate.render(tmp_path / f"{which}.png", **kw)
+    _require_shots(recs, 1, written)
     assert len(recs) == 1, f"render shot {len(recs)} frames"
     return recs[0]
 
@@ -532,7 +553,7 @@ def test_render_draws_golden_data(plate, tmp_path: Path, view: str) -> None:
 def _pack_records(fn: Any) -> tuple[list[str], dict[str, dict[str, Any]]]:
     with capture_drawn() as recs:
         names = fn()
-    _require_shots(recs, 1)
+    _require_shots(recs, 1, names or None)
     return names, _by_name(recs)
 
 
@@ -660,3 +681,68 @@ def test_oracle_rejects_tampered_data(plate, tmp_path: Path) -> None:
     assert "arrow origins" in _rejects(missing, "render.reactions", gold)
     none = {**reac, "arrows": None}
     assert "arrows missing" in _rejects(none, "render.reactions", gold)
+
+
+# =====================================================================
+# 6. The seam fails closed (review of #1690)
+# =====================================================================
+
+
+def test_seam_rejects_an_unreadable_3d_prop() -> None:
+    """A visible 3-D actor the oracle cannot read raises, never skips."""
+    import pyvista as pv
+    import vtk
+
+    try:
+        plotter = pv.Plotter(off_screen=True)
+    except (RuntimeError, OSError):  # pragma: no cover
+        pytest.skip("no offscreen render context")
+    try:
+        plotter.add_mesh(pv.Plane())
+        rec = extract_drawn(plotter)  # control: readable scene passes
+        assert rec["points"].shape[0] > 0
+        src = vtk.vtkSphereSource()
+        mapper = vtk.vtkPolyDataMapper()
+        mapper.SetInputConnection(src.GetOutputPort())
+        raw = vtk.vtkActor()
+        raw.SetMapper(mapper)
+        plotter.add_actor(raw)
+        with pytest.raises(AssertionError, match="fail closed"):
+            extract_drawn(plotter)
+        raw.SetVisibility(False)
+        extract_drawn(plotter)  # hidden: nothing drawn, nothing to read
+        text = vtk.vtkTextActor()
+        text.SetInput("2-D overlay")
+        plotter.add_actor(text)
+        extract_drawn(plotter)
+    finally:
+        plotter.close()
+
+
+def test_a_written_still_without_a_captured_shot_fails(
+    plate, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A path that writes its still around ``BasePlotter.screenshot``
+    must FAIL the oracle, not skip it (even off a GL lane)."""
+    from apeGmsh.viewers import render as render_mod
+
+    def _bypass(plotter: Any, path: Any) -> Path:
+        out = Path(path)
+        out.write_bytes(b"not a shot")
+        return out
+
+    monkeypatch.delenv("APEGMSH_EXPECT_GL", raising=False)
+    monkeypatch.setattr(render_mod, "_screenshot", _bypass)
+    for call in (
+        lambda: _render_view(plate, tmp_path, "contour"),
+        lambda: _require_shots([], 1, (tmp_path / "x.png",)),
+    ):
+        # A skip is an outcome too (BaseException): it must not escape.
+        try:
+            call()
+        except AssertionError as exc:
+            assert "fail closed" in str(exc), exc
+        except BaseException as exc:  # noqa: BLE001
+            pytest.fail(f"a bypassed shot did not fail closed: {exc!r}")
+        else:
+            pytest.fail("a bypassed shot was accepted")
