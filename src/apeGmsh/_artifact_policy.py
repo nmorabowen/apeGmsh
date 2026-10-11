@@ -92,7 +92,8 @@ Verdict = Literal["write", "keep", "refuse"]
 
 #: Root groups that are not neutral-zone content (h5-schema.md, "Zone
 #: registry"): the other zones, and ``/meta`` with its timestamp and ids.
-_NON_NEUTRAL_ROOTS = frozenset({"meta", "provenance", "opensees", "stages", "geometry"})
+_NON_NEUTRAL_ROOTS = frozenset(
+    {"meta", "provenance", "opensees", "stages", "geometry", "sequence"})
 
 #: A notebook cell as ipykernel names it: a file under a per-kernel
 #: temp directory (``ipykernel_<pid>``), or IPython's older pseudo-file.

@@ -365,11 +365,11 @@ def test_reader_below_its_floor_is_a_caller_error() -> None:
 
 
 def test_floor_unknown_zone_refused() -> None:
-    with pytest.raises(ValueError, match="unknown zone 'sequence'"):
-        reader_floor("sequence")
-    with pytest.raises(ValueError, match="unknown zone 'sequence'"):
+    with pytest.raises(ValueError, match="unknown zone 'readable'"):
+        reader_floor("readable")
+    with pytest.raises(ValueError, match="unknown zone 'readable'"):
         validate_zone_version(
-            SchemaVersion(1, 0, 0), SchemaVersion(1, 0, 0), zone="sequence",
+            SchemaVersion(1, 0, 0), SchemaVersion(1, 0, 0), zone="readable",
         )
 
 
@@ -404,6 +404,9 @@ def test_reader_version_reflects_writer_constants() -> None:
     from apeGmsh.opensees._internal.schema_version import (
         ASSEMBLY_SCHEMA_FLOOR,
         ASSEMBLY_SCHEMA_VERSION,
+        SEQUENCE,
+        SEQUENCE_SCHEMA_FLOOR,
+        SEQUENCE_SCHEMA_VERSION,
         GEOMETRY_SCHEMA_FLOOR,
         GEOMETRY_SCHEMA_VERSION,
         PROVENANCE_SCHEMA_FLOOR,
@@ -430,6 +433,8 @@ def test_reader_version_reflects_writer_constants() -> None:
         # writer constant is its own fixture (no tests/fixtures/schema.py
         # row until its first minor bump).
         ASSEMBLY: (ASSEMBLY_SCHEMA_FLOOR, ASSEMBLY_SCHEMA_VERSION),
+        # ADR 0112 D2b (V3a #1640): likewise its first version.
+        SEQUENCE: (SEQUENCE_SCHEMA_FLOOR, SEQUENCE_SCHEMA_VERSION),
     }
     assert set(writer_floors) == set(_ZONE_KEY)
     for zone, (writer_floor, fixture_floor) in writer_floors.items():

@@ -33,6 +33,7 @@ Per-zone version stamps + one envelope (ADR 0023):
 - ``/meta/geometry_schema_version``   -> :data:`GEOMETRY_KEY` (ADR 0112 D2)
 - ``/meta/provenance_schema_version`` -> :data:`PROVENANCE_KEY` (ADR 0112 D3)
 - ``/meta/assembly_schema_version``   -> :data:`ASSEMBLY_KEY` (ADR 0117 D5)
+- ``/meta/sequence_schema_version``   -> :data:`SEQUENCE_KEY` (ADR 0112 D2b)
 - ``/meta/schema_version``            -> :data:`ENVELOPE_KEY` (back-compat only)
 
 Files written before Phase 7a (envelope-only) read via the envelope-fallback
@@ -67,6 +68,10 @@ __all__ = [
     "PROVENANCE_SCHEMA_VERSION",
     "RESULTS",
     "RESULTS_KEY",
+    "SEQUENCE",
+    "SEQUENCE_KEY",
+    "SEQUENCE_SCHEMA_FLOOR",
+    "SEQUENCE_SCHEMA_VERSION",
     "SchemaVersion",
     "SchemaVersionError",
     "read_zone_version",
@@ -100,6 +105,10 @@ PROVENANCE: str = "provenance"
 #: archive written by ``Assembly.h5`` carries it.
 ASSEMBLY: str = "assembly"
 
+#: Readable-stages zone identifier (``/sequence`` root zone, ADR 0112 D2b),
+#: derived from ``/opensees`` by ``_internal/sequence_h5.py``.
+SEQUENCE: str = "sequence"
+
 
 # ---------------------------------------------------------------------------
 # /meta/ attribute keys
@@ -127,6 +136,9 @@ PROVENANCE_KEY: str = "provenance_schema_version"
 #: Per-zone key for the assembly zone (ADR 0117 D5; its own key, ADR 0112 D2).
 ASSEMBLY_KEY: str = "assembly_schema_version"
 
+#: Per-zone key for the sequence zone (ADR 0112 D2b).
+SEQUENCE_KEY: str = "sequence_schema_version"
+
 
 # ---------------------------------------------------------------------------
 # Writer versions of the zones whose writers import them from here
@@ -152,6 +164,12 @@ PROVENANCE_SCHEMA_FLOOR: str = "1.0.0"
 ASSEMBLY_SCHEMA_VERSION: str = "1.0.0"  # the zone's first version: floor and current coincide
 ASSEMBLY_SCHEMA_FLOOR: str = "1.0.0"
 
+#: Current version and floor of the ``/sequence`` zone. Its writer
+#: (``_internal/sequence_h5.py``) imports them from here
+#: (``architecture/h5-schema.md``, "/sequence").
+SEQUENCE_SCHEMA_VERSION: str = "1.0.0"  # first version: floor and current coincide
+SEQUENCE_SCHEMA_FLOOR: str = "1.0.0"
+
 #: First ``/provenance`` version whose ``records`` table carries the
 #: ``origin`` column (#1378), as a ``(major, minor, patch)`` triple.  The
 #: reader requires the column from this version on and fills ``"user"``
@@ -168,13 +186,14 @@ _ZONE_KEY: dict[str, str] = {
     GEOMETRY: GEOMETRY_KEY,
     PROVENANCE: PROVENANCE_KEY,
     ASSEMBLY: ASSEMBLY_KEY,
+    SEQUENCE: SEQUENCE_KEY,
 }
 
 # Zones born after the per-zone split. The legacy envelope predates them, so
 # it never stands in for their version: an absent key means the zone was not
 # written, never "use the envelope" (ADR 0023 INV-2).
 _NO_ENVELOPE_ZONES: frozenset[str] = frozenset(
-    {GEOMETRY, PROVENANCE, ASSEMBLY})
+    {GEOMETRY, PROVENANCE, ASSEMBLY, SEQUENCE})
 
 
 # ---------------------------------------------------------------------------
@@ -257,8 +276,8 @@ def reader_version(zone: str) -> SchemaVersion:
     ----------
     zone
         One of the keys of ``_ZONE_KEY``: :data:`NEUTRAL`, :data:`OPENSEES`,
-        :data:`RESULTS`, :data:`GEOMETRY`, :data:`PROVENANCE` or
-        :data:`ASSEMBLY`.
+        :data:`RESULTS`, :data:`GEOMETRY`, :data:`PROVENANCE`,
+        :data:`ASSEMBLY` or :data:`SEQUENCE`.
 
     Raises
     ------
@@ -280,6 +299,8 @@ def reader_version(zone: str) -> SchemaVersion:
         return SchemaVersion.parse(PROVENANCE_SCHEMA_VERSION)
     if zone == ASSEMBLY:
         return SchemaVersion.parse(ASSEMBLY_SCHEMA_VERSION)
+    if zone == SEQUENCE:
+        return SchemaVersion.parse(SEQUENCE_SCHEMA_VERSION)
     raise ValueError(
         f"reader_version: unknown zone {zone!r} "
         f"(expected one of {tuple(_ZONE_KEY)!r})"
@@ -312,6 +333,8 @@ def reader_floor(zone: str) -> SchemaVersion:
         return SchemaVersion.parse(PROVENANCE_SCHEMA_FLOOR)
     if zone == ASSEMBLY:
         return SchemaVersion.parse(ASSEMBLY_SCHEMA_FLOOR)
+    if zone == SEQUENCE:
+        return SchemaVersion.parse(SEQUENCE_SCHEMA_FLOOR)
     raise ValueError(
         f"reader_floor: unknown zone {zone!r} "
         f"(expected one of {tuple(_ZONE_KEY)!r})"
