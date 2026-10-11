@@ -231,16 +231,19 @@ _ROWS: Final[tuple[Verb, ...]] = (
        "/opensees/analysis@analyze_steps|" + _S + "@analyze_steps",
        returns="int"),
     # -- Stress control ---------------------------------------------------
-    # The trio's calls carry resolved tags and write nothing; their
-    # information is archived declaratively through the
+    # The records are archived declaratively through the
     # ``set_initial_stress_records`` / ``set_stage_records`` side
-    # channels (ADR 0055).
+    # channels (ADR 0055); ``addToParameter`` writes nothing more. The
+    # ramp, flip and update calls hand in the parameter tags the build
+    # planned, which each record stores as ``param_tags`` (opensees
+    # 2.27.0, K1-8), so a replay reads them and mints none.
     _p("addToParameter", "parameter", "both", "archive",
        "{scope}/initial_stress/stress_{k:03d}"),
     _p("flip_element_stage", "parameter", "stage", "archive",
        _S + "/activate_absorbing/absorb_{k:03d}",
        seq=("activate", "absorbing")),
-    _p("update_parameter", "parameter", "stage", "refuse", ""),
+    _p("update_parameter", "parameter", "stage", "archive",
+       _S + "/update_parameter/update_{k:03d}"),
     _p("step_hook_ramp", "parameter", "both", "archive",
        "{scope}/initial_stress/stress_{k:03d}",
        seq=("add", "initial_stress")),
@@ -251,8 +254,13 @@ _ROWS: Final[tuple[Verb, ...]] = (
     _p("set_time", "domain", "stage", "archive", _S + "@set_time"),
     _p("set_creep", "domain", "stage", "archive", _S + "@set_creep_on"),
     _p("reset", "domain", "stage", "archive", _S + "@pre_analyze_reset"),
-    _p("set_node_vel", "domain", "stage", "refuse", ""),
-    _p("set_node_accel", "domain", "stage", "refuse", ""),
+    # ``s.zero_velocities`` (opensees 2.27.0, K1-8): the declarative
+    # records are archived through ``set_stage_records``; each call is
+    # counted, to cross-check them.
+    _p("set_node_vel", "domain", "stage", "archive",
+       _S + "/zero_velocities/zero_{k:03d}"),
+    _p("set_node_accel", "domain", "stage", "archive",
+       _S + "/zero_velocities/zero_{k:03d}"),
     _p("remove_sp", "bc", "stage", "archive", _S + "/remove_sp",
        seq=("remove", "fix")),
     _p("remove_element", "element", "stage", "archive",

@@ -387,6 +387,7 @@ def test_stage_recorder_order_survives_numeric_suffix(tmp_path: Path) -> None:
     e.set_stage_records([SimpleNamespace(
         name="s", n_increments=1, dt=None, activated_pgs=(),
         initial_stress_records=(), activate_absorbing_records=(),
+        update_parameter_records=(), zero_velocity_records=(),
     )])
     out = tmp_path / "rec_order.h5"
     e.write(str(out))
@@ -442,6 +443,7 @@ def test_stage_equal_dof_pads_trimmed(tmp_path: Path) -> None:
     e.set_stage_records([SimpleNamespace(
         name="s", n_increments=1, dt=None, activated_pgs=(),
         initial_stress_records=(), activate_absorbing_records=(),
+        update_parameter_records=(), zero_velocity_records=(),
     )])
     out = tmp_path / "eqdof.h5"
     e.write(str(out))

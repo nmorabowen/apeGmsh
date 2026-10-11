@@ -4,7 +4,8 @@ Round-trips the GLOBAL initial-stress bucket (the staged bucket stays
 fail-loud — see ``test_h5_staged_fail_loud.py``).  Locks:
 
 1. ``ops.h5`` writes ``/opensees/initial_stress/stress_NNN`` with the
-   declarative field set (no parameter tags, no rendered ramp proc).
+   declarative field set (no rendered ramp proc) and, since opensees
+   2.27.0 (K1-8), the ramp's ``param_tags`` (``test_h5_param_tags.py``).
 2. ``OpenSeesModel.from_h5(...).initial_stress()`` rehydrates the records.
 3. The H5 → H5 round-trip is ``model_hash``-stable, and the group folds
    into ``model_hash`` (a model with initial stress hashes differently
@@ -184,6 +185,10 @@ def test_replay_registers_hook_before_analyze() -> None:
     initial-stress wiring the ramp procs declare but never fire."""
     from apeGmsh.opensees._internal.build import InitialStressRecord
     from apeGmsh.opensees._internal.compose import _replay_into
+    from apeGmsh.opensees._internal.schema_version import (
+        OPENSEES,
+        reader_version,
+    )
     from apeGmsh.opensees._internal.typed_records import ElementRecord
 
     fem = build_simple_frame_fem()
@@ -205,6 +210,9 @@ def test_replay_registers_hook_before_analyze() -> None:
         elements=(ele,),
         fem=fem,
         initial_stress=(rec,),
+        # K1-8: a 2.27 archive's stored ramp tags, read, not re-minted.
+        initial_stress_param_tags=((1, 2, 3),),
+        opensees_version=reader_version(OPENSEES),
         analyze_call=(10, None),
     )
     text = "\n".join(emitter.lines())

@@ -197,16 +197,17 @@ _STAGE_ONLY_CALLS: list[tuple[str, tuple[Any, ...]]] = [
     ("update_parameter", (1, (1,), ("xPerm",), 1e-5)),
     ("set_node_vel", (1, 1, 0.0)),
     ("set_node_accel", (1, 1, 0.0)),
+    ("flip_element_stage", (1, (1,))),
     ("profiler", ("start",)),
 ]
 
 
 def test_stage_only_calls_cover_the_stage_rows() -> None:
-    """Every ``scope == "stage"`` row is listed, except the bracket pair and
-    ``flip_element_stage`` (archived by ``set_stage_records``; the lock pins
-    its body trivial, so it cannot carry the raise)."""
+    """Every ``scope == "stage"`` row is listed, except the bracket pair.
+    ``flip_element_stage`` joined at opensees 2.27.0 (K1-8): its body now
+    captures the flip's parameter tag into the open stage."""
     stage_rows = {k for k, v in VERBS.items() if v.scope == "stage"}
-    exempt = {"stage_open", "stage_close", "flip_element_stage"}
+    exempt = {"stage_open", "stage_close"}
     assert {name for name, _ in _STAGE_ONLY_CALLS} == stage_rows - exempt
 
 
@@ -240,15 +241,22 @@ def test_stage_only_verbs_inside_a_bracket_capture() -> None:
     assert blk.update_material_stages == [(3, 1)]
 
 
-def test_refused_stage_verbs_inside_a_bracket_still_refuse() -> None:
+def test_formerly_refused_stage_verbs_inside_a_bracket_capture() -> None:
+    """K1-8 (opensees 2.27.0): ``update_parameter`` and ``set_node_vel`` /
+    ``set_node_accel`` archive. Inside a bracket they capture what
+    ``set_stage_records`` cross-checks: the update's ``(rank, pid)``, args
+    and value, and the zeroing calls' count."""
     e = H5Emitter()
     e.stage_open("s1")
-    with pytest.raises(H5RefusedVerb, match="updateParameter for 'xPerm'") as info:
-        e.update_parameter(1, (1,), ("xPerm",), 1e-5)
-    assert info.value.verb == "update_parameter"
-    with pytest.raises(H5RefusedVerb, match="setNodeVel") as info:
-        e.set_node_vel(1, 1, 0.0)
-    assert info.value.verb == "set_node_vel"
-    with pytest.raises(H5RefusedVerb, match="setNodeAccel") as info:
-        e.set_node_accel(1, 1, 0.0)
-    assert info.value.verb == "set_node_accel"
+    e.update_parameter(1, (1,), ("xPerm",), 1e-5)
+    e.flip_element_stage(2, (1,))
+    e.set_node_vel(1, 1, 0.0)
+    e.set_node_accel(1, 1, 0.0)
+    e.analyze(steps=1)
+    e.stage_close()
+    (blk,) = e._stage_blocks
+    assert blk.update_calls == [(-1, 1, ("xPerm",), 1e-5)]
+    assert blk.flip_calls == [(-1, 2)]
+    assert blk.node_kinematics_calls == 2
+    assert all(VERBS[v].h5 == "archive" for v in (
+        "update_parameter", "set_node_vel", "set_node_accel"))

@@ -523,6 +523,8 @@ class _StageBuilder:
                     "empty — omit the argument to zero the whole domain."
                 )
             record = ZeroVelocityRecord(nodes=nodes_tuple)
+        self._bridge._declare_record(  # K1-6
+            record, "zero_velocities", None)
         self._zero_velocity_records.append(record)
         return record
 
@@ -1545,6 +1547,8 @@ class _StageBuilder:
             ),
             mat_tag=mat_tag,
         )
+        self._bridge._declare_record(  # K1-6
+            record, "update_parameter", None)
         self._update_parameter_records.append(record)
         return record
 

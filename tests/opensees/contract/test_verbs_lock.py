@@ -231,9 +231,10 @@ _FuncDef = ast.FunctionDef | ast.AsyncFunctionDef
 #: ``archive`` rows whose H5 call writes nothing: their information
 #: reaches the archive through the ``set_initial_stress_records`` /
 #: ``set_stage_records`` side channels (ADR 0055). Each must stay a
-#: trivial body; an entry that grows a real body is stale.
-_ARCHIVED_BY_SIDE_CHANNEL = frozenset(
-    {"addToParameter", "flip_element_stage", "step_hook_ramp"})
+#: trivial body; an entry that grows a real body is stale. At opensees
+#: 2.27.0 (K1-8) ``flip_element_stage`` and ``step_hook_ramp`` left: their
+#: bodies capture the parameter tags each record stores.
+_ARCHIVED_BY_SIDE_CHANNEL = frozenset({"addToParameter"})
 
 
 #: The exception classes an H5 refusal raises by name. ``H5RefusedVerb``

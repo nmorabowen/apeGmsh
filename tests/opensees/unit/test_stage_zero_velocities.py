@@ -336,21 +336,63 @@ def test_py_emits_setnodevel_and_setnodeaccel() -> None:
 
 
 # ===========================================================================
-# H5 archival — deferred, fail-loud
+# H5 archival — archived since opensees 2.27.0 (K1-8, #1465)
 # ===========================================================================
 
 
-def test_h5_archive_refuses_a_stage_that_zeroes_velocities(tmp_path) -> None:
-    """The stage block has no store for the zeroing, so the archive would
-    replay the static stage on the transient stage's velocities — exactly
-    the artefact the verb removes.  Refuse rather than drop it silently."""
-    ops = _quad_ops()
-    with ops.stage(name="static") as s:
-        s.zero_velocities(nodes=[1])
-        s.analysis(**_full_chain(ops))
-        s.run(n_increments=1)
-    with pytest.raises(NotImplementedError, match="s.zero_velocities"):
-        ops.h5(str(tmp_path / "model.h5"))
+def _zeroing_tcl_lines(deck: str) -> list[str]:
+    return [ln.strip() for ln in deck.splitlines()
+            if "setNodeVel" in ln or "setNodeAccel" in ln]
+
+
+@pytest.mark.parametrize("nodes", [None, [1, 5]], ids=["domain", "named"])
+def test_h5_archive_stores_a_stage_that_zeroes_velocities(
+    tmp_path, nodes, monkeypatch,
+) -> None:
+    """The stage's ``s.zero_velocities`` record archives (it was refused
+    before 2.27.0), and the replayed deck zeroes the same nodes at the same
+    effective ndf as the bridge's (a 2-DOF quad node and a 3-DOF beam node)."""
+    from apeGmsh.opensees._internal import compose
+    from apeGmsh.opensees.emitter import h5_reader
+
+    # The stub FEM has no constraint sets for the skipped-stream census.
+    monkeypatch.setattr(compose, "_warn_skipped_replay_streams",
+                        lambda *_a, **_k: None)
+
+    def build() -> apeSees:
+        ops = _mixed_ops()
+        with ops.stage(name="static") as s:
+            s.zero_velocities(nodes=nodes)
+            s.analysis(**_full_chain(ops))
+            s.run(n_increments=1)
+        return ops
+
+    bridge = RecordingEmitter()
+    build().build().emit(bridge)
+    out = tmp_path / "model.h5"
+    ops = build()
+    ops.h5(str(out))
+    with h5_reader.open(str(out)) as model:
+        (stage,) = model.stages()
+    assert [z.nodes for z in stage.zero_velocities] == [
+        None if nodes is None else tuple(nodes)]
+    # Replay the stage the way OpenSeesModel.build does: the node tuple
+    # carries the effective ndf where it differs from the envelope (a
+    # broker archive's ``/opensees/nodes_ndf``; this stub writes none, so
+    # the fixture's own map: quad nodes 1-4 at 2, beam nodes 5-6 at 3).
+    nodes_ndf = {1: 2, 2: 2, 3: 2, 4: 2, 5: 3, 6: 3}
+    fem = ops._fem
+    replayed = RecordingEmitter()
+    compose._replay_staged_into(
+        replayed, stages=(stage,), ndm=2, ndf=3, fem=fem,
+        nodes=tuple(
+            (int(n), (0.0, 0.0, 0.0),
+             None if int(nodes_ndf[int(n)]) == 3 else int(nodes_ndf[int(n)]))
+            for n in fem.nodes.ids),
+    )
+    kin = ("set_node_vel", "set_node_accel")
+    want = [c for c in bridge.calls if c[0] in kin]
+    assert want and [c for c in replayed.calls if c[0] in kin] == want
 
 
 def test_h5_archive_unaffected_when_the_stage_does_not_zero(tmp_path) -> None:

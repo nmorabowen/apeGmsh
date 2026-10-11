@@ -411,6 +411,7 @@ def test_set_stage_records_mp_constraint_roundtrips_to_stage_group(
     rec = SimpleNamespace(
         name="s", n_increments=1, dt=None, activated_pgs=(),
         initial_stress_records=(), activate_absorbing_records=(),
+        update_parameter_records=(), zero_velocity_records=(),
     )
     e.set_stage_records([rec])
     out = tmp_path / "mp.h5"
@@ -440,6 +441,7 @@ def test_set_stage_records_dt_mismatch_raises(tmp_path: Path) -> None:
     rec = SimpleNamespace(
         name="s", n_increments=1, dt=0.1, activated_pgs=(),
         initial_stress_records=(), activate_absorbing_records=(),
+        update_parameter_records=(), zero_velocity_records=(),
     )
     with pytest.raises(RuntimeError, match="analyze capture mismatch"):
         e.set_stage_records([rec])
@@ -465,6 +467,7 @@ def test_stage_phantom_node_fails_loud(tmp_path: Path) -> None:
     rec = SimpleNamespace(
         name="s", n_increments=1, dt=None, activated_pgs=(),
         initial_stress_records=(), activate_absorbing_records=(),
+        update_parameter_records=(), zero_velocity_records=(),
     )
     with pytest.raises(NotImplementedError, match="phantom"):
         e.set_stage_records([rec])

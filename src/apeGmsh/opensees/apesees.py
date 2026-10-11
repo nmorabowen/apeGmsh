@@ -1080,7 +1080,8 @@ class BuiltModel:
         """Hand the archive the rows columns of the stores its side
         channels fill (K1-6): the global initial stress (``ops.h5`` passes
         the bridge's pool, which ``set_initial_stress_records`` took) and
-        each stage's initial stress and absorbing flips."""
+        each stage's initial stress, absorbing flips, parameter updates and
+        velocity zeroings."""
         index = self._declaration_rows()[1]
 
         def column(records: "Sequence[object]") -> list[int]:
@@ -1102,6 +1103,12 @@ class BuiltModel:
             side.set_declaration_rows(
                 f"{base}/activate_absorbing",
                 column(stage.activate_absorbing_records))
+            side.set_declaration_rows(
+                f"{base}/update_parameter",
+                column(stage.update_parameter_records))
+            side.set_declaration_rows(
+                f"{base}/zero_velocities",
+                column(stage.zero_velocity_records))
 
     def _claim_ghost_removals(self, side: "H5Emitter") -> None:
         """The ``remove_sp`` twin of :meth:`_claim_ghost_fixes`: a ghost in

@@ -742,8 +742,9 @@ LAST in the stage block (after `s.reset()`, immediately before `analyze`).
   Pass `nodes=` to scope it. The `-commit` flag is mandatory, not
   cosmetic: `OPS_setNodeVel` rebuilds from the COMMITTED vector and sets
   only TRIAL, so without it each DOF re-reads the old value and only the
-  last DOF ends up zeroed. H5 archival of the verb is deferred — the
-  staged archive raises `NotImplementedError`; emit Tcl / openseespy.
+  last DOF ends up zeroed. `ops.h5` archives the record (opensees 2.27.0,
+  `stages/stage_NNN/zero_velocities`); the replayed deck zeroes the same
+  nodes at their archived ndf.
 - **`s.remove_sp` `dofs=` are 1-based DOF INDICES** (one `remove sp
   $node $dof` line each), **not** the 0/1 fixity-flag vector that
   `s.fix` / `s.mass` use. Same kwarg name, different meaning.
@@ -761,8 +762,9 @@ LAST in the stage block (after `s.reset()`, immediately before `analyze`).
   `parameter` / `addToParameter` address `node` / `element` / `region` /
   `loadPattern` and nothing else, so a material is unreachable without an
   element hosting it — always pass `pg=` or `elements=`, and add
-  `material=` only to append the tag the material matches on. H5 archival
-  of the verb is deferred (the staged archive raises).
+  `material=` only to append the tag the material matches on. `ops.h5`
+  archives the record with its parameter tag (opensees 2.27.0); a record
+  whose target holds no element refuses the archive (it has no tag).
 - **Live execution refuses staged models.** `ops.analyze()` and
   `ops.eigen()` raise `NotImplementedError` when any stage is
   registered. Only `ops.tcl(path, run=)` / `ops.py(path, run=)` drive

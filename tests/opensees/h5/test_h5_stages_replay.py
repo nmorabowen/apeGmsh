@@ -5,15 +5,13 @@
 the bridge emits directly (`ops.tcl`) must equal the deck the archive
 replays (`from_h5(...).build("tcl")`).
 
-- For fixtures with NO freshly-allocated tags (no initial_stress /
-  activate_absorbing / embedded), the decks are **exactly** equal
-  (every node/element/region/pattern tag is stored and replayed
-  verbatim — only parameter / absorbing-flip / embedded ele_tags
-  diverge across round-trip, INV-5).
-- For an initial-stress fixture, the only divergence is the freshly
-  allocated `parameter` tag numbers; normalize those and the decks
-  are equal. This also exercises the shared TagAllocator + per-stage
-  hook-wrap.
+- Every node/element/region/pattern tag is stored and replayed
+  verbatim, and since opensees 2.27.0 (K1-8, #1465) so is every
+  ``parameter`` tag (initial stress, absorbing flip): the decks are
+  **exactly** equal, with no parameter-tag mask, for the initial-stress
+  and absorbing fixtures too. This also exercises the per-stage
+  hook-wrap. (An archive below 2.27.0 re-mints its parameter tags;
+  ``test_h5_param_tags.py`` covers that side of the version check.)
 
 Plus structural assertions (stage delimiters, owned topology inside
 the block, HOLD-before-domainChange) and the build-target guards.
@@ -139,50 +137,32 @@ def test_staged_deck_equality_no_divergent_tags(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# 2. initial-stress fixture — equal after normalizing parameter tags
+# 2. initial-stress / absorbing fixtures — exactly equal, unmasked (K1-8)
 # ---------------------------------------------------------------------------
 
 
-def _norm_param_tags(lines: list[str]) -> list[str]:
-    """Canonicalize freshly-allocated parameter tags (initial_stress /
-    activate_absorbing) so two decks that differ ONLY in those tag
-    values compare equal. Replaces the tag in parameter/updateParameter/
-    addToParameter/remove-parameter lines with a sequential alias."""
-    alias: dict[str, str] = {}
-
-    def sub(m: "re.Match[str]") -> str:
-        raw = m.group(2)
-        if raw not in alias:
-            alias[raw] = f"P{len(alias)}"
-        return m.group(1) + alias[raw]
-
-    pat = re.compile(
-        r"\b(parameter |updateParameter |addToParameter |"
-        r"remove parameter )(\d+)"
-    )
-    return [pat.sub(sub, ln) for ln in lines]
-
-
 def test_staged_deck_equality_with_initial_stress(tmp_path: Path) -> None:
-    bridge = _norm_param_tags(_strip_comments(
+    """The archive stores the ramp tags (opensees 2.27.0), so the replayed
+    deck equals the bridge's with no parameter-tag mask."""
+    bridge = _strip_comments(
         _bridge_deck(_real_two_stage_bridge(), tmp_path),
-    ))
-    archive = _norm_param_tags(_strip_comments(
+    )
+    archive = _strip_comments(
         _archive_deck(_real_two_stage_bridge(), tmp_path),
-    ))
+    )
     assert archive == bridge
 
 
 def test_staged_deck_equality_kitchen_sink(tmp_path: Path) -> None:
     """Kitchen-sink exercises HOLD/support, rayleigh, removals,
-    set_creep/reset, activate_absorbing (param tag) — equal after
-    parameter-tag normalization."""
-    bridge = _norm_param_tags(_strip_comments(
+    set_creep/reset, activate_absorbing (its stored flip tag) — exactly
+    equal, unmasked."""
+    bridge = _strip_comments(
         _bridge_deck(_real_kitchen_sink_bridge(), tmp_path),
-    ))
-    archive = _norm_param_tags(_strip_comments(
+    )
+    archive = _strip_comments(
         _archive_deck(_real_kitchen_sink_bridge(), tmp_path),
-    ))
+    )
     assert archive == bridge
 
 
