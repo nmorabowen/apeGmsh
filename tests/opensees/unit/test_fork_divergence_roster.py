@@ -4,8 +4,11 @@ Every row of the roster names the engine that is correct and the oracle
 that decides it, and cites the tests that pin it. This file keeps those
 three claims true:
 
+* every table row is a roster row: a line the parser does not recognise
+  (``D9b``, ``d10``, a backticked id) fails instead of being skipped;
 * every row names a correct engine (``stock|fork|policy|pending #<n>``)
-  and a non-empty oracle;
+  and an oracle that opens with a kind from a fixed vocabulary and says
+  something after it;
 * every apeGmsh node id a row cites still exists (an AST check of the
   file and the test function, with no import);
 * every fork-side citation has the ``fork:<path>::<name>@<sha>`` form;
@@ -38,6 +41,18 @@ COLUMNS = (
     "oracle", "evidence", "pinning tests", "status",
 )
 ENGINE_RE = re.compile(r"^(stock|fork|policy|pending #\d+)$")
+#: An oracle opens with its kind. ``closed form`` / ``cross-engine`` /
+#: ``reference run`` / ``contract`` and ``n/a (policy)`` need a body that
+#: names the answer; ``pending #<n>`` needs the reason in parentheses.
+ORACLE_RE = re.compile(
+    r"^(?:(?:closed form|cross-engine|reference run|contract): (?P<body>.+)"
+    r"|n/a \(policy\)[.:] (?P<policy>.+)"
+    r"|pending #\d+ \((?P<why>[^)]+)\))$"
+)
+PLACEHOLDER_RE = re.compile(r"^(?:tbd|todo|tba|n/?a|none|unknown|\?+|-+|—)\W*$",
+                            re.IGNORECASE)
+MIN_BODY_WORDS = 4
+SEPARATOR_RE = re.compile(r"^:?-{3,}:?$")
 FORK_RE = re.compile(r"^fork:[\w./-]+\.py::\w+@[0-9a-f]{7,40}$")
 NODE_RE = re.compile(r"^(?P<path>tests/[\w./-]+\.py)::(?P<name>\w+(::\w+)?)$")
 
@@ -46,31 +61,59 @@ def _cells(line: str) -> list[str]:
     return [c.strip() for c in line.strip().strip("|").split("|")]
 
 
-def parse_roster(text: str) -> list[dict[str, str]]:
-    """Every table row whose first cell is a roster id ``D<n>``.
+def parse_roster(text: str) -> tuple[list[dict[str, str]], list[str]]:
+    """The roster rows, and every table line that is not one.
 
-    Each table must carry the full header, so a dropped column fails
-    instead of shifting every cell one place left.
+    A table line is the full header, a separator, or a row whose first cell
+    is a bare ``D<n>``. Anything else in a table (``D9b``, ``d10``, a
+    backticked id, a row before any header) comes back as unrecognised, so
+    the lock fails on it instead of skipping it. Each table must carry the
+    full header, so a dropped column fails instead of shifting every cell.
     """
     rows: list[dict[str, str]] = []
+    unrecognised: list[str] = []
     header: tuple[str, ...] | None = None
-    for line in text.splitlines():
-        if not line.startswith("|"):
+    for number, line in enumerate(text.splitlines(), 1):
+        if not line.lstrip().startswith("|"):
             header = None
             continue
         cells = _cells(line)
-        if cells and cells[0] == "id":
+        if cells[0] == "id":
             header = tuple(cells)
-            assert header == COLUMNS, f"roster header drifted: {header}"
+            if header != COLUMNS:
+                unrecognised.append(f"line {number}: header drifted: {header}")
             continue
-        if cells and re.fullmatch(r"D\d+", cells[0]):
-            assert header is not None, f"row {cells[0]} sits outside a table"
-            assert len(cells) == len(COLUMNS), (
-                f"row {cells[0]} has {len(cells)} cells, expected "
-                f"{len(COLUMNS)} (an unescaped '|' in a cell?)"
+        if all(SEPARATOR_RE.match(c) for c in cells):
+            continue
+        if header is None or not line.startswith("|"):
+            unrecognised.append(f"line {number}: table row outside a roster table")
+        elif not re.fullmatch(r"D\d+", cells[0]):
+            unrecognised.append(
+                f"line {number}: {cells[0]!r} is not a roster id D<n>"
             )
+        elif len(cells) != len(COLUMNS):
+            unrecognised.append(
+                f"line {number}: row {cells[0]} has {len(cells)} cells, "
+                f"expected {len(COLUMNS)} (an unescaped '|' in a cell?)"
+            )
+        else:
             rows.append(dict(zip(COLUMNS, cells)))
-    return rows
+    return rows, unrecognised
+
+
+def oracle_problem(cell: str) -> str | None:
+    """Why an oracle cell is not substantive, or ``None`` if it is."""
+    m = ORACLE_RE.match(cell)
+    if m is None:
+        return (f"oracle {cell[:40]!r} does not open with closed form: / "
+                "cross-engine: / reference run: / contract: / n/a (policy) / "
+                "pending #<n> (<why>)")
+    body = m["body"] or m["policy"] or m["why"]
+    if PLACEHOLDER_RE.match(body.strip()):
+        return f"oracle body {body!r} is a placeholder"
+    if (m["body"] or m["policy"]) and len(re.findall(r"\w+", body)) < MIN_BODY_WORDS:
+        return f"oracle body {body!r} is too thin to name an answer"
+    return None
 
 
 def citations(cell: str) -> list[str]:
@@ -129,8 +172,10 @@ def check_rows(rows: list[dict[str, str]]) -> list[str]:
                 f"{rid}: correct engine {r['correct engine']!r} is not "
                 "stock|fork|policy|pending #<issue>"
             )
-        if not r["oracle"] or r["oracle"] in {"-", "—", "?"}:
+        if not r["oracle"]:
             problems.append(f"{rid}: no oracle")
+        elif (why := oracle_problem(r["oracle"])) is not None:
+            problems.append(f"{rid}: {why}")
         if not r["status"]:
             problems.append(f"{rid}: no status")
         cites = citations(r["pinning tests"])
@@ -155,8 +200,17 @@ def check_rows(rows: list[dict[str, str]]) -> list[str]:
 
 
 @pytest.fixture(scope="module")
-def rows() -> list[dict[str, str]]:
-    return parse_roster(ROSTER.read_text(encoding="utf-8"))
+def text() -> str:
+    return ROSTER.read_text(encoding="utf-8")
+
+
+@pytest.fixture(scope="module")
+def rows(text) -> list[dict[str, str]]:
+    return parse_roster(text)[0]
+
+
+def test_every_table_line_is_recognised(text) -> None:
+    assert parse_roster(text)[1] == []
 
 
 def test_roster_parses_every_required_row(rows) -> None:
@@ -231,3 +285,24 @@ def test_dropping_a_pin_trips_the_ratchet(rows) -> None:
 def test_deleted_row_is_caught(rows) -> None:
     assert any("disappeared" in p
                for p in check_rows([r for r in rows if r["id"] != "D9"]))
+
+
+@pytest.mark.parametrize("bad_id", ["D9b", "d10", "`D10`", "X1"])
+def test_unrecognised_row_fails_instead_of_being_skipped(text, bad_id) -> None:
+    """A row the parser cannot read is a finding, never a silent skip."""
+    junk = f"| {bad_id} | s | s | f | | | | none | |"
+    mutated = text.replace("\n| D9 |", f"\n{junk}\n| D9 |", 1)
+    assert mutated != text
+    rows, unrecognised = parse_roster(mutated)
+    assert any(repr(bad_id) in u for u in unrecognised)
+    assert {r["id"] for r in rows} == {r["id"] for r in parse_roster(text)[0]}
+
+
+@pytest.mark.parametrize("oracle", [
+    "TBD", "closed form: TBD", "closed form: ?", "todo", "n/a",
+    "cross-engine: see PR", "pending #1523", "pending #1523 ()",
+    "n/a (policy): tbd",
+])
+def test_placeholder_oracle_is_caught(rows, oracle) -> None:
+    assert any("D2: oracle" in p
+               for p in check_rows(_mutated(rows, "D2", "oracle", oracle)))
