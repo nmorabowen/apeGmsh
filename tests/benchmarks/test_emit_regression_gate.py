@@ -94,8 +94,10 @@ BASELINE_PATH = Path(__file__).with_name("emit_gate_baseline.json")
 #: ~ +0.589 (Windows median-of-3 estimates). Hex is the tighter side. At
 #: 1.55 the hex ceiling is 0.892 against ~0.981 for #876-shaped hex
 #: (~10% margin), and the tet ceiling is 0.979 against ~1.22. The worst
-#: observed EPYC 7763 run (0.736 tet / 0.667 hex) keeps ~20% headroom
-#: under the ceilings. The earlier 1.7 let hex through.
+#: observed CI CPU is the Xeon Platinum 8370C (0.801 tet / 0.724 hex, i.e.
+#: 0.818 / 0.812 of the ceilings), which keeps ~18% headroom. The earlier
+#: 1.7 caught #876 hex by only 0.3% (0.9815 vs a 0.978 ceiling), no usable
+#: margin.
 #:
 #: Do not tighten this further without re-measuring. Emit allocates and
 #: ``compile`` mostly does not, so the ratio drifts upward under memory
@@ -368,29 +370,28 @@ def test_emit_cost_has_not_regressed(kind: str, measured: dict) -> None:
 #: Hand-measured anchors for :func:`test_tolerance_catches_876_shape`.
 _BASE_HEX, _BASE_TET = 0.5755, 0.6316
 _DELTA_876_HEX, _DELTA_876_TET = 0.406, 0.589
-_WORST_7763_HEX, _WORST_7763_TET = 0.667, 0.736
+_WORST_8370C_HEX, _WORST_8370C_TET = 0.724, 0.801
 
 
 def test_tolerance_catches_876_shape() -> None:
     """Deterministic (no timing): the tolerance separates #876 from noise (#1677).
 
-    A synthetic #876-shaped delta must fail at 1.55 with margin (at the
-    old 1.7 hex was within 0.4% of its ceiling); the worst observed EPYC 7763 run must still pass.
+    A synthetic #876-shaped delta must fail at the configured tolerance with margin (at the
+    old 1.7 hex was within 0.3% of its ceiling); the worst observed CI run (Xeon 8370C) must still pass.
     """
-    assert RATIO_TOLERANCE == 1.55
     for base, delta, worst in (
-        (_BASE_HEX, _DELTA_876_HEX, _WORST_7763_HEX),
-        (_BASE_TET, _DELTA_876_TET, _WORST_7763_TET),
+        (_BASE_HEX, _DELTA_876_HEX, _WORST_8370C_HEX),
+        (_BASE_TET, _DELTA_876_TET, _WORST_8370C_TET),
     ):
-        assert not ratio_within_ceiling(base + delta, base, 1.55)
+        assert not ratio_within_ceiling(base + delta, base, RATIO_TOLERANCE)
         # Margins: the #876 shape sits >= 10% over the ceiling (hex is
-        # the tight side), the worst CI run keeps >= 20% headroom. At the
-        # old 1.7 the #876 hex reading (0.9815) sat within 0.4% of the
+        # the tight side), the worst CI run keeps >= 15% headroom. At the
+        # old 1.7 the #876 hex reading (0.9815) sat within 0.3% of the
         # 0.978 ceiling, i.e. no usable margin.
-        assert (base + delta) / (base * 1.55) >= 1.10
-        assert worst / (base * 1.55) <= 0.80
-        assert ratio_within_ceiling(worst, base, 1.55)
-        assert ratio_within_ceiling(base, base, 1.55)
+        assert (base + delta) / (base * RATIO_TOLERANCE) >= 1.10
+        assert worst / (base * RATIO_TOLERANCE) <= 0.85
+        assert ratio_within_ceiling(worst, base, RATIO_TOLERANCE)
+        assert ratio_within_ceiling(base, base, RATIO_TOLERANCE)
 
 
 @pytest.mark.bench
