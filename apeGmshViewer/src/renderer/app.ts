@@ -11,6 +11,7 @@ import { mountInspector } from "../panels/inspector.ts";
 import { mountLegend } from "../panels/legend.ts";
 import { mountPhase } from "../panels/phase.ts";
 import { mountSources } from "../panels/sources.ts";
+import { mountWindows } from "../panels/windows/frame.ts";
 import { BlobStore } from "../state/blobs.ts";
 import { chainOf } from "../state/selectors.ts";
 import { Store } from "../state/store.ts";
@@ -26,7 +27,7 @@ const blobs = new BlobStore();
 const effects = new Effects(store, blobs, bridge);
 const viewport = new Viewport(document.getElementById("viewport")!, store, blobs);
 effects.setFrameTarget(viewport);
-const panels = [mountHeader(store), mountBanner(store), mountLegend(store), mountInspector(store), mountEmpty(store), mountPhase(store), mountSources(store)];
+const panels = [mountHeader(store), mountBanner(store), mountLegend(store), mountInspector(store), mountEmpty(store), mountPhase(store), mountSources(store), mountWindows(store)];
 window.addEventListener("beforeunload", () => {
   for (const d of panels) d();
   effects.dispose();
