@@ -408,8 +408,27 @@ def test_a_record_without_a_flip_refuses() -> None:
     _one_stage(e, lambda e: e.flip_element_stage(7, (1,)))
     recs = (ActivateAbsorbingRecord(pg="A", elements=None),
             ActivateAbsorbingRecord(pg="B", elements=None))
-    with pytest.raises(RuntimeError, match="distinct parameter tag"):
+    with pytest.raises(RuntimeError) as info:
         e.set_stage_records([_stage_record(activate_absorbing_records=recs)])
+    msg = str(info.value)
+    # The message names the stage, the verb and the targets.
+    assert "stage 's1'" in msg and "s.activate_absorbing" in msg
+    assert "pg='A'" in msg and "pg='B'" in msg
+    assert "holds no element" in msg
+
+
+def test_an_update_record_without_a_call_names_its_target() -> None:
+    from apeGmsh.opensees._internal.build import UpdateParameterRecord
+
+    e = H5Emitter()
+    _one_stage(e, lambda e: None)
+    rec = UpdateParameterRecord(
+        name="xPerm", value=1.0, pg=None, elements=(9,), mat_tag=None)
+    with pytest.raises(RuntimeError) as info:
+        e.set_stage_records([_stage_record(update_parameter_records=(rec,))])
+    msg = str(info.value)
+    assert "stage 's1'" in msg and "s.update_parameter" in msg
+    assert "elements=[9]" in msg
 
 
 def test_partitioned_flips_keep_every_rank_row() -> None:

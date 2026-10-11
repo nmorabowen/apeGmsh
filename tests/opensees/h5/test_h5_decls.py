@@ -540,7 +540,8 @@ CLASS: dict[str, str] = {
         "fix", "mass", "recorder", "sp_hold", "remove_sp", "remove_element",
         "update_material_stage", "addToParameter", "step_hook_ramp",
         "flip_element_stage", "rayleigh", "modal_damping", "eigen",
-        "profiler", "command")},
+        "profiler", "command", "update_parameter", "set_node_vel",
+        "set_node_accel")},
     **{v: "part" for v in (
         "section_close", "patch", "fiber", "layer", "pattern_close", "load",
         "eleLoad", "sp", "recorder_declaration_begin",
@@ -553,14 +554,6 @@ CLASS: dict[str, str] = {
         "domain_change", "set_time", "set_creep", "reset", "partition_open",
         "partition_close", "parallel_runtime_fallback_numberer",
         "parallel_runtime_fallback_system")},
-    # ``pending``: archived since opensees 2.27.0 (K1-8) through the
-    # ``set_stage_records`` side channel, whose stores
-    # (``update_parameter``, ``zero_velocities``) have no ``rows`` column
-    # yet: the bridge hands those columns in (``_hand_side_channel_rows``,
-    # apesees.py), a follow-up K1-8 did not hold the lock for. Their
-    # VERBS rows are ``decl=False``, so the keyed-declaration check holds.
-    **{v: "pending" for v in (
-        "update_parameter", "set_node_vel", "set_node_accel")},
 }
 
 #: The stores, below a scope, holding each ``rows`` verb's records
@@ -573,6 +566,9 @@ ROWS_STORE: dict[str, tuple[str, ...]] = {
     "addToParameter": ("initial_stress",),
     "step_hook_ramp": ("initial_stress",),
     "flip_element_stage": ("activate_absorbing",),
+    "update_parameter": ("update_parameter",),
+    "set_node_vel": ("zero_velocities",),
+    "set_node_accel": ("zero_velocities",),
     "rayleigh": ("commands", "rayleigh"),
     "modal_damping": ("commands",), "eigen": ("commands",),
     "profiler": ("commands",), "command": ("commands",),
@@ -635,6 +631,43 @@ def test_every_registry_verb_is_classified() -> None:
     assert set(ROWS_STORE) == {v for v, c in CLASS.items() if c == "rows"}
 
 
+def _param_stage_model() -> apeSees:
+    """A stage with two ``s.update_parameter`` and two ``s.zero_velocities``
+    records (opensees 2.27.0, K1-8): side-channel stores with rows columns."""
+    ops = apeSees(_two_quad_stub(), default_orientation=None)
+    ops.model(ndm=2, ndf=2)
+    mat = ops.nDMaterial.ElasticIsotropic(E=1e6, nu=0.3, rho=0.0)
+    ops.element.FourNodeQuad(pg="Rock", thickness=1.0, material=mat)
+    ops.fix(pg="Base", dofs=(1, 1))
+    with ops.stage(name="params") as s:
+        s.update_parameter("xPerm", 1e-5, pg="Rock")
+        s.update_parameter("E", 2e6, pg="Rock", material=mat)
+        s.zero_velocities(nodes=[3])
+        s.zero_velocities()
+        s.analysis(**_chain(ops))
+        s.run(n_increments=1)
+    return ops
+
+
+def test_update_parameter_and_zero_velocity_rows_join_their_keys(
+    tmp_path: Path,
+) -> None:
+    """Every ``update_parameter/update_NNN`` and ``zero_velocities/zero_NNN``
+    row joins its own ``/opensees/decls`` key, of its own family."""
+    p = tmp_path / "params.h5"
+    _param_stage_model().h5(str(p))
+    table = _decls(p)
+    for store, family, n in (
+        ("stages/stage_000/update_parameter", "update_parameter", 2),
+        ("stages/stage_000/zero_velocities", "zero_velocities", 2),
+    ):
+        assert len(table.rows[store]) == n, store
+        keys = [table.for_row(store, i).key for i in range(n)]
+        assert len(set(keys)) == n, keys
+        assert all(table.for_row(store, i).family == family
+                   for i in range(n)), store
+
+
 def _all_verb_models() -> list[apeSees]:
     from tests.opensees.h5.test_h5_stages_writer import (
         _build_kitchen_sink_bridge,
@@ -667,7 +700,8 @@ def _all_verb_models() -> list[apeSees]:
         s.analysis(**_chain(prof))
         s.run(n_increments=1)
     return [
-        flat, prof, _staged(named=True), _build_kitchen_sink_bridge(),
+        flat, prof, _param_stage_model(), _staged(named=True),
+        _build_kitchen_sink_bridge(),
         _build_two_stage_bridge(),
         build_material_stage_bridge(_make_two_quad_fem_stub()),
     ]

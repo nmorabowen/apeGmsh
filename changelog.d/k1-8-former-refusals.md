@@ -21,11 +21,31 @@ stored tags and mints none, so it equals the bridge's own deck with no
 parameter-tag mask, flat and staged. An archive below 2.27.0 still opens
 and replays: its replay re-mints the tags, behind a version check
 (`PARAM_TAGS_FROM`), and `to_h5` of it stores the tags that replay mints.
-The tags fold into `model_hash`, so an initial-stress or absorbing archive
-hashes differently once at this minor; other files hash as before.
+Each new `update_parameter` / `zero_velocities` record is a declaration
+with its own `/opensees/decls` key and rows column.
 
-A flip or update record whose target holds no element now refuses the
-write: it has no tag, so the archive cannot tell which record the others
-belong to. The tag-law waivers `initial-stress-replay` and
-`staged-replay-params` become `pre-2-27-initial-stress-replay` and
+The tag-law waivers `initial-stress-replay` and `staged-replay-params`
+become `pre-2-27-initial-stress-replay` and
 `pre-2-27-staged-replay-params`, scoped to pre-2.27 archives.
+
+**Changed (behaviour): `model_hash`.** The maintainer ruled that the stored
+`param_tags` are hashed: they are authored model state, since they appear
+in the deck. Two kinds of archive therefore hash differently once:
+
+- every archive holding a global or per-stage initial stress, or a stage
+  absorbing flip, written from 2.27.0 on, because its new `param_tags`
+  fold into `/opensees`;
+- a pre-2.27 archive of that kind re-saved through
+  `OpenSeesModel.to_h5`, because the rewrite stores the tags its replay
+  re-mints.
+
+An archive with neither hashes as before. A stage `s.update_parameter` or
+`s.zero_velocities` had no archive before (the writer refused it), so it
+has no earlier hash to change.
+
+**Changed (behaviour): an empty flip or update target refuses.** An
+`s.activate_absorbing` or `s.update_parameter` record whose target holds no
+element has no parameter tag. The archive could not tell which record each
+of the others belongs to, so `ops.h5()` now refuses the stage. The message
+names the stage, the verb and the records' targets. The Tcl and openseespy
+decks are unaffected.

@@ -994,19 +994,28 @@ def _attribute_param_calls(
     """
     pids = sorted({int(pid) for _rank, pid in calls})
     if len(pids) != len(records):
+        targets = ", ".join(_param_target(rec) for rec in records)
         raise RuntimeError(
-            f"H5Emitter.set_stage_records: {where} declares "
-            f"{len(records)} {verb} record(s) but its calls carry "
-            f"{len(pids)} distinct parameter tag(s) {pids}. Each record "
-            "stores its own tag (schema 2.27.0), so every record must "
-            "address at least one element; drop a record whose target is "
-            "empty, or use ops.tcl(path) / ops.py(path)."
+            f"H5Emitter.set_stage_records: {where}: s.{verb} declares "
+            f"{len(records)} record(s) (targets: {targets}) but its calls "
+            f"carry {len(pids)} distinct parameter tag(s) {pids}, so a "
+            "target holds no element. Each record stores its own tag "
+            "(schema 2.27.0), so the tags cannot be attributed; drop the "
+            "record whose target is empty, or use ops.tcl(path) / "
+            "ops.py(path)."
         )
     slot = {pid: k for k, pid in enumerate(pids)}
     rows: "list[list[tuple[int, int]]]" = [[] for _ in records]
     for rank, pid in calls:
         rows[slot[int(pid)]].append((int(rank), int(pid)))
     return tuple(tuple(r) for r in rows)
+
+
+def _param_target(rec: Any) -> str:
+    """A flip or update record's target, as the user wrote it."""
+    if rec.elements is not None:
+        return f"elements={list(rec.elements)!r}"
+    return f"pg={rec.pg!r}"
 
 
 def _with_param_rows(
@@ -3869,6 +3878,12 @@ class H5Emitter:
                 (f"{base}/activate_absorbing",
                  side.get(f"{base}/activate_absorbing", []),
                  blk.activate_absorbing_records),
+                (f"{base}/update_parameter",
+                 side.get(f"{base}/update_parameter", []),
+                 blk.update_parameter_records),
+                (f"{base}/zero_velocities",
+                 side.get(f"{base}/zero_velocities", []),
+                 blk.zero_velocity_records),
                 (f"{base}/rayleigh", blk.rayleigh_decls, blk.rayleighs),
             ]
             stores += [
@@ -5081,14 +5096,15 @@ class H5Emitter:
     #: The stores a side channel fills (no Protocol call notes a row), by
     #: their path below a scope: their rows columns come from the bridge.
     _SIDE_ROW_STORES: "frozenset[str]" = frozenset(
-        {"initial_stress", "activate_absorbing"})
+        {"initial_stress", "activate_absorbing", "update_parameter",
+         "zero_velocities"})
 
     def set_declaration_rows(
         self, store: str, column: "Sequence[int]",
     ) -> None:
         """Hand in the rows column of a side-channel store (K1-6):
         ``initial_stress`` or ``stages/stage_NNN/{initial_stress,
-        activate_absorbing}``, one declaration per record the side channel
+        activate_absorbing, update_parameter, zero_velocities}``, one declaration per record the side channel
         attached, in its order. The writer checks the length; a second
         call for one store, or another store, refuses."""
         if self._declarations is None:
