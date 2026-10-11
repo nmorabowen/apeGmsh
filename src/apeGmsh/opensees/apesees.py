@@ -1904,18 +1904,21 @@ class BuiltModel:
             _archive_side_channel(emitter).set_declarations(
                 _decl_rows, _decl_runs)
             # K1-7: every declaration's parameters by field name
-            # (``/opensees/decl_params``): the first-seen owner of each
-            # row (a primitive, a fix / mass / region / damping /
+            # (``/opensees/decl_params``): every owner of each row, in
+            # call order (a primitive, a fix / mass / region / damping /
             # initial-stress / equation-constraint record, a model-wide
-            # declaration), a field that holds a primitive as that
-            # primitive's declaration key.
+            # declaration; a ``region`` or ``initial_stress`` key that
+            # merged several calls gets one entry per call), a field that
+            # holds a primitive as that primitive's declaration key. The
+            # records ``fix_from_model()`` expands to are the model-wide
+            # declaration's expansion, not owners.
             _rows_, _decl_index = self._declaration_rows()
-            _first_owner: dict[int, int] = {}
-            for _oid, _row in _decl_index.items():
-                _first_owner.setdefault(_row, _oid)
             _archive_side_channel(emitter).set_decl_params(
-                [(row, self._decl_owners[oid])
-                 for row, oid in sorted(_first_owner.items())],
+                sorted(
+                    ((_decl_index[oid], owner)
+                     for oid, owner in self._decl_owners.items()),
+                    key=lambda item: item[0],
+                ),
                 self._declaration_key,
             )
 

@@ -1,11 +1,13 @@
 ### ADDED — `/opensees/decl_params`: every declaration's parameters by field name, `transf_ref` / `integration_ref` / `section_ref`, and `params_names` under a ratchet (opensees 2.26.0; K1-7, #1464)
 
 `model.h5` gains `/opensees/decl_params` (ADR 0114 A6/Q4, the K0-8
-record): exactly one row per `/opensees/decls` row (a registered
+record): one entry per owner of every `/opensees/decls` row (a registered
 primitive, a fix / mass / region / damping / initial-stress /
-equation-constraint / stage record, or a model-wide declaration),
+equation-constraint / stage record, or a model-wide declaration; a
+`region` name declared by several calls lists every call, in order),
 holding the owner's class and its parameters **by field name**, encoded
-generically from `dataclasses.fields(owner)`.
+generically from `dataclasses.fields(owner)`. `DeclarationTable.params`
+and `params_for(key)` return the entries as a tuple.
 
 - **Every field shape is stored or refused, never skipped.** Scalars,
   tuples (nested kept), `str`-keyed mappings, a referenced primitive as

@@ -104,6 +104,11 @@ def _table(path: Path) -> h5_reader.DeclarationTable:
     return table
 
 
+def _entries(table: h5_reader.DeclarationTable) -> list[h5_reader.DeclParamsRO]:
+    """Every params entry of every declaration, in row order."""
+    return [ro for row in sorted(table.params) for ro in table.params[row]]
+
+
 def _stored_model_hash(path: Path) -> str:
     with h5py.File(str(path), "r") as f:
         return str(f["meta"]["lineage"].attrs["model_hash"])
@@ -160,7 +165,7 @@ def _assert_params_read_back(ops: apeSees, path: Path) -> None:
     assert set(table.params) == set(range(len(table.decls)))
     assert {index[id(p)] for p in bm.primitives} <= set(table.params)
     for prim in bm.primitives:
-        ro = table.params[index[id(prim)]]
+        (ro,) = table.params[index[id(prim)]]
         assert ro.type == type(prim).__name__
         assert list(ro.params) == [f.name for f in dataclasses.fields(prim)]
         for f in dataclasses.fields(prim):
@@ -200,7 +205,7 @@ def test_orientation_reads_back_opaque(tmp_path: Path) -> None:
     ops.h5(str(p))
     table = _table(p)
     opaque = [
-        v for ro in table.params.values() for v in ro.params.values()
+        v for ro in _entries(table) for v in ro.params.values()
         if isinstance(v, DeclOpaque)]
     assert opaque and {o.type for o in opaque} <= {
         "Cartesian", "Cylindrical", "Spherical", "AlongBeam"}
@@ -219,7 +224,7 @@ def test_refs_resolve_to_declaration_keys(tmp_path: Path) -> None:
     table = _table(p)
     bm = ops.build()
     by_type = {type(prim).__name__: prim for prim in bm.primitives}
-    rows = {name: table.params_for(bm._decls[id(prim)][0])
+    rows = {name: table.params_for(bm._decls[id(prim)][0])[0]
             for name, prim in by_type.items()}
 
     def key_of_tag(kind: str, prim: object) -> str:
@@ -239,14 +244,14 @@ def test_refs_resolve_to_declaration_keys(tmp_path: Path) -> None:
     assert lob.params["section"] == DeclRef(key=sec_key)
     assert (lob.transf_ref, lob.integration_ref, lob.section_ref) == (
         (), (), (sec_key,))
-    parallels = [ro for ro in table.params.values() if ro.type == "Parallel"]
+    parallels = [ro for ro in _entries(table) if ro.type == "Parallel"]
     steel_key = key_of_tag("uniaxialMaterial", by_type["Steel01"])
     visc_key = key_of_tag("uniaxialMaterial", by_type["Viscous"])
     for ro in parallels:
         assert ro.params["materials"] == (
             DeclRef(key=steel_key), DeclRef(key=visc_key))
     # Every reference is a row of /opensees/decls.
-    for ro in table.params.values():
+    for ro in _entries(table):
         for v in ro.params.values():
             for ref in (v if isinstance(v, tuple) else (v,)):
                 if isinstance(ref, DeclRef):
@@ -254,7 +259,7 @@ def test_refs_resolve_to_declaration_keys(tmp_path: Path) -> None:
                         "uniaxialMaterial", "section", "geomTransf",
                         "beamIntegration"}
     # A fix has a row of its own fields; an unknown key raises.
-    assert set(table.params_for("opensees/fix/#1").params) == {"pg", "nodes", "dofs"}
+    assert set(table.params_for("opensees/fix/#1")[0].params) == {"pg", "nodes", "dofs"}
     with pytest.raises(KeyError):
         table.params_for("opensees/uniaxialMaterial/nope")
 
@@ -324,10 +329,12 @@ def test_set_decl_params_refuses_before_declarations_and_twice() -> None:
         [("opensees/uniaxialMaterial/#1", "uniaxialMaterial", "", False)], [])
     with pytest.raises(IndexError):
         emitter.set_decl_params([(1, _Odd(weird=1.0))], lambda p: "k")
-    with pytest.raises(ValueError, match="two primitives"):
-        emitter.set_decl_params(
-            [(0, _Odd(weird=1.0)), (0, _Odd(weird=2.0))], lambda p: "k")
-    emitter.set_decl_params([(0, _Odd(weird=1.0))], lambda p: "k")
+    with pytest.raises(ValueError, match="no owner"):
+        emitter.set_decl_params([], lambda p: "k")
+    # Two owners of one key are two entries, in order.
+    emitter.set_decl_params(
+        [(0, _Odd(weird=1.0)), (0, _Odd(weird=2.0))], lambda p: "k")
+    assert [r[2]["weird"] for r in emitter._decl_params] == [1.0, 2.0]
     with pytest.raises(RuntimeError, match="already set"):
         emitter.set_decl_params([(0, _Odd(weird=1.0))], lambda p: "k")
 
@@ -440,8 +447,8 @@ def test_rewrite_echoes_decl_params(tmp_path: Path) -> None:
     src, out = _table(p), _table(q)
     assert out.decls == src.decls and out.tags == src.tags
     assert dict(out.params) == dict(src.params)
-    assert [r.params_json for r in out.params.values()] == [
-        r.params_json for r in src.params.values()]
+    assert [r.params_json for r in _entries(out)] == [
+        r.params_json for r in _entries(src)]
     assert _stored_model_hash(q) == _stored_model_hash(p)
 
 
@@ -468,7 +475,7 @@ def test_params_names_where_argv_equals_fields(tmp_path: Path) -> None:
     ops.h5(str(p))
     table = _table(p)
     by_type: dict[str, list[tuple[str, ...] | None]] = {}
-    for ro in table.params.values():
+    for ro in _entries(table):
         by_type.setdefault(ro.type, []).append(ro.params_names)
     assert by_type["Steel01"] == [("fy", "E", "b")]
     assert by_type["Lobatto"] == [("section", "n_ip")]
@@ -619,7 +626,7 @@ def test_every_key_has_exactly_one_row(
     # Each tagless record's own fields are its row: a fix's dofs, a
     # Rayleigh's coefficients and ``on``; a damping object its own fields.
     for i, d in enumerate(table.decls):
-        ro = table.params[i]
+        (ro,) = table.params[i]
         if d.family == "fix":
             assert "dofs" in ro.params, d.key
         if d.family == "rayleigh":
@@ -636,7 +643,7 @@ def test_model_wide_declaration_has_a_row(tmp_path: Path) -> None:
     p = tmp_path / "m.h5"
     ops.h5(str(p))
     table = _table(p)
-    rows = [ro for ro in table.params.values() if ro.type == "_ModelWideDeclaration"]
+    rows = [ro for ro in _entries(table) if ro.type == "_ModelWideDeclaration"]
     assert [dict(ro.params) for ro in rows] == [{"verb": "mass_from_model"}]
     assert set(table.params) == set(range(len(table.decls)))
 
@@ -664,18 +671,18 @@ def test_hinge_integration_lists_every_section_in_field_order(
     bm = ops.build()
     keys = [bm._declaration_key(s) for s in (s_i, s_j, s_e)]
     assert len(set(keys)) == 3
-    ro = table.params_for(bm._declaration_key(hinge))
+    (ro,) = table.params_for(bm._declaration_key(hinge))
     assert ro.section_ref == tuple(keys)
     assert [ro.params[n] for n in ("section_i", "section_j", "section_interior")] == [
         DeclRef(key=k) for k in keys]
     assert ro.transf_ref == () and ro.integration_ref == ()
-    el = table.params_for(bm._declaration_key(
+    (el,) = table.params_for(bm._declaration_key(
         next(p_ for p_ in bm.primitives if type(p_).__name__ == "forceBeamColumn")))
     assert el.integration_ref == (bm._declaration_key(hinge),)
     # Echoed verbatim by a rewrite.
     q = tmp_path / "out.h5"
     OpenSeesModel.from_h5(str(p)).to_h5(str(q))
-    assert _table(q).params_for(bm._declaration_key(hinge)).section_ref == tuple(keys)
+    assert _table(q).params_for(bm._declaration_key(hinge))[0].section_ref == tuple(keys)
 
 
 # ---------------------------------------------------------------------------
@@ -705,11 +712,93 @@ def test_enum_and_fraction_refuse(weird: Any) -> None:
         encode_decl_params(_Odd(weird=weird), lambda p: "k")
 
 
-def test_reader_refuses_a_repeated_declaration(tmp_path: Path) -> None:
+# ---------------------------------------------------------------------------
+# A key with several owners keeps every owner, in call order
+# ---------------------------------------------------------------------------
+
+
+def _owners_by_key(ops: apeSees) -> dict[str, list[object]]:
+    out: dict[str, list[object]] = {}
+    for owner, (key, _f, _n, _s) in ops._decls.values():
+        out.setdefault(key, []).append(owner)
+    return out
+
+
+def test_multi_call_region_keeps_every_call(tmp_path: Path) -> None:
+    ops = _flat_frame(named=False)
+    ops.region(name="core", nodes=[1])
+    ops.region(name="core", nodes=[2])
+    ops.region(name="core", pg="Cols")
     p = tmp_path / "m.h5"
-    _params_frame().h5(str(p))
-    with h5py.File(str(p), "r") as f:
-        n = len(f["opensees"]["decl_params"]["decl"])
-    _tamper(p, "decl", [0] * n)
-    with pytest.raises(MalformedH5Error, match="repeat"):
-        _table(p)
+    ops.h5(str(p))
+    entries = _table(p).params_for("opensees/region/core")
+    assert [dict(e.params) for e in entries] == [
+        {"name": "core", "pg": None, "nodes": (1,)},
+        {"name": "core", "pg": None, "nodes": (2,)},
+        {"name": "core", "pg": "Cols", "nodes": None},
+    ]
+    assert {e.type for e in entries} == {"RegionAssignmentRecord"}
+
+
+def test_duplicate_initial_stress_name_is_refused_not_merged(tmp_path: Path) -> None:
+    """``initial_stress`` is the other family that shares a key by name,
+    but its own validation refuses a repeated name at build (flat, and
+    across stages), so the key never has two owners: the archive is never
+    reached with one to drop."""
+    from apeGmsh.opensees._internal.build import BridgeError
+
+    ops = _params_frame()
+    ops.initial_stress(
+        name="insitu", pg="Cols", sigma_xx=-1.0, sigma_yy=-2.0, sigma_zz=-3.0,
+        ramp_steps=2)
+    ops.initial_stress(
+        name="insitu", pg="Cols", sigma_xx=-4.0, sigma_yy=-5.0, sigma_zz=-6.0,
+        ramp_steps=3, lambda_install=0.5)
+    assert len(_owners_by_key(ops)["opensees/initial_stress/insitu"]) == 2
+    with pytest.raises(BridgeError, match="registered twice"):
+        ops.h5(str(tmp_path / "m.h5"))
+    assert not (tmp_path / "m.h5").exists()
+
+
+def test_multi_owner_region_rewrite_echoes_every_entry(tmp_path: Path) -> None:
+    ops = _flat_frame(named=False)
+    ops.region(name="core", nodes=[1])
+    ops.region(name="core", nodes=[2])
+    p, q = tmp_path / "src.h5", tmp_path / "out.h5"
+    ops.h5(str(p))
+    OpenSeesModel.from_h5(str(p)).to_h5(str(q))
+    entries = _table(q).params_for("opensees/region/core")
+    assert entries == _table(p).params_for("opensees/region/core")
+    assert len(entries) == 2
+
+
+@pytest.mark.parametrize("build", [_broad_staged, _broad_frame, _broad_partitioned])
+def test_every_owner_of_every_key_is_represented(
+    tmp_path: Path, build: Callable[[], apeSees],
+) -> None:
+    """Entry for entry: a key's entries are its owners' fields, in the
+    order the owners were declared; nothing dropped, nothing added."""
+    ops = build()
+    if build is not _broad_partitioned:
+        ops.region(name="twice", nodes=[1])
+        ops.region(name="twice", nodes=[2])
+    p = tmp_path / "m.h5"
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        ops.h5(str(p))
+    table = _table(p)
+    bm = ops.build()
+    owners = _owners_by_key(ops)
+    assert set(owners) == {d.key for d in table.decls}
+    for i, d in enumerate(table.decls):
+        got = table.params[i]
+        want = owners[d.key]
+        assert len(got) == len(want), d.key
+        for ro, owner in zip(got, want):
+            assert ro.type == type(owner).__name__, d.key
+            assert list(ro.params) == [f.name for f in dataclasses.fields(owner)]  # type: ignore[arg-type]
+            for f in dataclasses.fields(owner):  # type: ignore[arg-type]
+                assert _plain(ro.params[f.name]) == _expect(
+                    getattr(owner, f.name), bm._declaration_key), (d.key, f.name)
+    assert sum(len(v) for v in table.params.values()) == sum(
+        len(v) for v in owners.values())

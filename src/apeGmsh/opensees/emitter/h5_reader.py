@@ -264,19 +264,23 @@ class DeclarationTable:
     (``bcs/fix``, ``bcs/mass``, ``recorders``,
     ``stages/stage_NNN/bcs/fix`` ...) to one declaration index per row.
     ``params`` maps a declaration index to its :class:`DeclParamsRO`
-    (``/opensees/decl_params``, K1-7); empty for a file below 2.26.0 or
-    one no bridge emit wrote.
+    entries (``/opensees/decl_params``, K1-7): one per owner of the key,
+    in call order, so a ``region`` name declared by several calls or a
+    repeated ``initial_stress`` name lists every call; every other key
+    has exactly one. Empty for a file below 2.26.0 or one no bridge emit
+    wrote.
     """
 
     decls: tuple[DeclarationRO, ...]
     tags: tuple[tuple[str, int, int, int], ...]
     rows: Mapping[str, tuple[int, ...]]
-    params: Mapping[int, DeclParamsRO] = MappingProxyType({})
+    params: Mapping[int, tuple[DeclParamsRO, ...]] = MappingProxyType({})
 
-    def params_for(self, key: str) -> DeclParamsRO:
-        """The parameters of the declaration keyed ``key``; a key the
-        table lacks, or one without a ``decl_params`` row (a fix, a
-        mass, a recorder region), raises :class:`KeyError`."""
+    def params_for(self, key: str) -> tuple[DeclParamsRO, ...]:
+        """The parameter entries of the declaration keyed ``key``, one
+        per owner in call order; a key the table lacks, or one without a
+        ``decl_params`` row (a file without the group), raises
+        :class:`KeyError`."""
         for i, d in enumerate(self.decls):
             if d.key == key:
                 if i not in self.params:
@@ -354,13 +358,15 @@ def _decode_decl_value(value: Any, keys: "set[str]", where: str) -> Any:
         f"{sorted(tags)}; the reader knows $decl, $struct and $opaque.")
 
 
-def _read_decl_params(g: Any, keys: "Sequence[str]") -> dict[int, DeclParamsRO]:
+def _read_decl_params(
+    g: Any, keys: "Sequence[str]",
+) -> dict[int, tuple[DeclParamsRO, ...]]:
     """Read ``/opensees/decl_params`` (K1-7, opensees 2.26.0) into
-    ``decl row -> DeclParamsRO``. Columns that differ in length, a
-    ``decl`` out of range or repeated, ``params`` that is not a JSON
-    object, a reference or ``*_ref`` to a key the declarations lack, or a
-    ``params_names`` that is not a JSON list of str raise
-    :class:`MalformedH5Error`."""
+    ``decl row -> (DeclParamsRO, ...)``, one entry per owner of the key in
+    row (call) order. Columns that differ in length, a ``decl`` out of
+    range, ``params`` that is not a JSON object, a reference or ``*_ref``
+    to a key the declarations lack, or a ``params_names`` that is not a
+    JSON list of str raise :class:`MalformedH5Error`."""
     import json
 
     import numpy as np
@@ -404,17 +410,13 @@ def _read_decl_params(g: Any, keys: "Sequence[str]") -> dict[int, DeclParamsRO]:
                         "which /opensees/decls does not declare.")
             rows_refs.append(refs)
         ref_runs[col] = rows_refs
-    out: dict[int, DeclParamsRO] = {}
+    out: dict[int, list[DeclParamsRO]] = {}
     for i in range(n):
         row = decl[i]
         if not 0 <= row < len(keys):
             raise MalformedH5Error(
                 f"/opensees/decl_params row {i} points at declaration "
                 f"{row}; there are {len(keys)}.")
-        if row in out:
-            raise MalformedH5Error(
-                f"/opensees/decl_params rows for declaration {row} "
-                f"({keys[row]!r}) repeat; a declaration has one.")
         where = f"{keys[row]!r}"
         try:
             raw = json.loads(columns["params"][i])
@@ -442,13 +444,13 @@ def _read_decl_params(g: Any, keys: "Sequence[str]") -> dict[int, DeclParamsRO]:
                     f"/opensees/decl_params: params_names of {where} is "
                     "not a JSON list of str.")
             names = tuple(names_raw)
-        out[row] = DeclParamsRO(
+        out.setdefault(row, []).append(DeclParamsRO(
             type=columns["type"][i], params=params, params_names=names,
             transf_ref=ref_runs["transf_ref"][i],
             integration_ref=ref_runs["integration_ref"][i],
             section_ref=ref_runs["section_ref"][i],
-            params_json=columns["params"][i])
-    return out
+            params_json=columns["params"][i]))
+    return {row: tuple(entries) for row, entries in out.items()}
 
 
 #: The ``/opensees`` solve-stamp attributes (ADR 0114 D6, opensees

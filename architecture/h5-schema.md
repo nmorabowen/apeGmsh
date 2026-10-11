@@ -1220,8 +1220,18 @@ without an OpenSees syntax table on either side. Exactly one row per
 `region` / `rayleigh` / `modal_damping` / `initial_stress` /
 `equation_constraint` record, a stage record (`support`, `remove_sp`,
 ...), or the model-wide `fix_from_model()` / `mass_from_model()` object
-(its one field is `verb`); two owners that share a key (the records
-`fix_from_model()` stands for) are the first owner's row.
+(its one field is `verb`). **A key with several owners has one entry per
+owner**, consecutive rows with the same `decl`, in call order: the one
+such family is `region`, whose name is the declaration's identity, so
+`ops.region(name="core", nodes=[1]); ops.region(name="core", nodes=[2])`
+stores two `RegionAssignmentRecord` entries (the merged membership is
+the `/opensees/regions` store's). `initial_stress` shares a key by name
+too, but its own validation refuses a repeated name at build, so it never
+reaches the archive with two owners. The per-node records
+`fix_from_model()` expands to are that declaration's expansion
+(`/opensees/bcs`), not owners; its one entry is the `verb`. Nothing is
+dropped: the writer refuses a declaration with no owner, and the
+reader returns every entry.
 Written on every `apeSees.h5` emit; a rewrite (`OpenSeesModel.to_h5`)
 echoes it verbatim. A derived view of the hashed stores, not structure:
 `decl_params` is in `MODEL_HASH_EXCLUDED_CHILDREN`, so `model_hash` is
@@ -1229,7 +1239,8 @@ unchanged for every model.
 
 ```
 /opensees/decl_params/
-    decl             i8 (P,)         the /opensees/decls row of the declaration
+    decl             i8 (P,)         the /opensees/decls row of the declaration;
+                                     repeated, consecutively, once per owner
     type             vlen str (P,)   the primitive class (Steel01, Fiber, ...)
     params           vlen str (P,)   one JSON object, field name -> value, in
                                      dataclasses.fields order (see below)
@@ -1279,10 +1290,11 @@ same `decl_argv_names` the writer uses; the `unnamed` + `uncheckable`
 count may only shrink, and a primitive neither named nor listed fails.
 
 `H5Model.declarations()` returns the rows as `DeclarationTable.params`
-(`decls` row -> `DeclParamsRO`: `type`, `params` with `DeclRef` /
-`DeclStruct` / `DeclOpaque` values, `params_names`, the three refs and
-the stored `params_json`); `params_for(key)` looks one up by key. A
-column that differs in length, a `decl` out of range or repeated, a
+(`decls` row -> a tuple of `DeclParamsRO`, one per owner in call order:
+`type`, `params` with `DeclRef` / `DeclStruct` / `DeclOpaque` values,
+`params_names`, the three refs and the stored `params_json`);
+`params_for(key)` looks a key's tuple up. A
+column that differs in length, a `decl` out of range, a
 `params` that is not a JSON object, a reference or `*_ref` to a key the
 declarations lack, an object with an unknown `$` tag, or a
 `params_names` that is not a list of str raises `MalformedH5Error`.

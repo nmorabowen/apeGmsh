@@ -4750,15 +4750,19 @@ class H5Emitter:
         """Hand in the registered primitives for ``/opensees/decl_params``
         (ADR 0114 A6/Q4, K1-7, schema 2.26.0).
 
-        Side channel, not a Protocol call. ``items`` pairs each primitive
-        with its ``decls`` row; ``key_of`` maps a primitive a field
-        references to its declaration key (:class:`KeyError` for an
-        unregistered one). Each primitive is encoded now by
-        :func:`encode_decl_params`, so an unknown field shape refuses
-        here, before the emit, with :class:`H5DeclParamsError`. Called
-        once, after :meth:`set_declarations`; a second call, a row out of
-        range or two items on one row refuses. The ``params_names`` and
-        ``*_ref`` columns are derived at :meth:`write` from the stores.
+        Side channel, not a Protocol call. ``items`` pairs each owner (a
+        primitive or a declared record) with its ``decls`` row, in the
+        order the rows are written: a key that merged several calls (a
+        ``region`` name, a repeated ``initial_stress`` name) appears once
+        per owner, in call order, so no owner is dropped. ``key_of`` maps
+        a primitive a field references to its declaration key
+        (:class:`KeyError` for an unregistered one). Each owner is
+        encoded now by :func:`encode_decl_params`, so an unknown field
+        shape refuses here, before the emit, with
+        :class:`H5DeclParamsError`. Called once, after
+        :meth:`set_declarations`; a second call, a row out of range or a
+        row with no owner refuses. The ``params_names`` and ``*_ref``
+        columns are derived at :meth:`write` from the stores.
         """
         if self._declarations is None:
             raise RuntimeError(
@@ -4768,21 +4772,20 @@ class H5Emitter:
                 "H5Emitter.set_decl_params: the declaration parameters are "
                 "already set; they are handed in once per emit.")
         rows: list[tuple[int, str, dict[str, Any]]] = []
-        seen: set[int] = set()
         for decl, prim in items:
             decl = int(decl)
             if not 0 <= decl < len(self._declarations):
                 raise IndexError(
                     f"H5Emitter.set_decl_params: declaration {decl} is out "
                     f"of range (there are {len(self._declarations)}).")
-            if decl in seen:
-                raise ValueError(
-                    "H5Emitter.set_decl_params: two primitives on "
-                    f"declaration {decl} ({self._declarations[decl].key!r}); "
-                    "a declaration has one parameter set.")
-            seen.add(decl)
             rows.append((decl, type(prim).__name__,
                          encode_decl_params(prim, key_of)))
+        missing = set(range(len(self._declarations))) - {r[0] for r in rows}
+        if missing:
+            raise ValueError(
+                "H5Emitter.set_decl_params: declaration(s) "
+                f"{sorted(self._declarations[i].key for i in missing)} have "
+                "no owner; every declaration stores its parameters.")
         self._decl_params = rows
 
     def restore_declarations(self, table: Any) -> None:
@@ -4810,7 +4813,8 @@ class H5Emitter:
                 (int(decl), p.type, p.params_json,
                  "" if p.params_names is None else _json_text(list(p.params_names)),
                  p.transf_ref, p.integration_ref, p.section_ref)
-                for decl, p in sorted(table.params.items())
+                for decl, entries in sorted(table.params.items())
+                for p in entries
             ]
 
     #: The stores a side channel fills (no Protocol call notes a row), by
