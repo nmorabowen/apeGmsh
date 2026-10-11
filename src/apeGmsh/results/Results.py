@@ -1401,18 +1401,15 @@ class Results:
             if not _in_notebook_kernel():
                 blocking = True
             elif self._path is None:
-                # Named from the class, so a new or renamed ``from_*``
-                # constructor shows up here without an edit.
-                constructors = ", ".join(
-                    f"Results.{name}(...)"
-                    for name in vars(Results) if name.startswith("from_")
-                )
                 raise RuntimeError(
                     "Results.viewer(): a notebook kernel needs the viewer "
                     "in a separate process, and this Results is in-memory "
                     "(no backing file) so there is nothing for that "
-                    f"process to open. Open it from a file with one of "
-                    f"{constructors}, then call viewer() again. "
+                    "process to open. Open it from a file with "
+                    "Results.from_native(path), Results.from_mpco(path), "
+                    "Results.from_recorders(spec, output_dir, fem=fem), "
+                    "Results.from_fem(fem, path) or another "
+                    "Results.from_* constructor, then call viewer() again. "
                     "(blocking=True opens the Qt window in-process, but "
                     "that kills a Jupyter kernel.)"
                 )

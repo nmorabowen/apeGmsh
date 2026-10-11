@@ -36,9 +36,7 @@ _MPCO = (
     / "fixtures" / "results" / "elasticFrame.mpco"
 )
 _SRC = Path(__file__).resolve().parents[2] / "src"
-_CONSTRUCTORS = (
-    "from_native", "from_mpco", "from_ladruno", "from_recorders", "from_fem",
-)
+_CONSTRUCTORS = ("from_native", "from_mpco", "from_recorders", "from_fem")
 
 
 # =====================================================================
@@ -119,6 +117,7 @@ def test_in_memory_results_raises_and_spawns_nothing(native_results, notebook):
     assert "in-memory" in msg
     for name in _CONSTRUCTORS:
         assert f"Results.{name}(" in msg, name
+    assert "another Results.from_* constructor" in msg
     assert notebook["show_web"] == 0
     assert notebook["popen"] == []
 
