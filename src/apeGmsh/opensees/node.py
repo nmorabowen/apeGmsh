@@ -494,7 +494,7 @@ def _resolve_label(
     out = tuple(int(n) for n in fem.nodes.select(label=selector).ids)
     if not out:
         raise BridgeError(
-            f"{where}: label={label!r} selects no nodes on the FEM snapshot."
+            f"{where}: label={label!r} selects 0 nodes on the FEM snapshot."
         )
     return out
 

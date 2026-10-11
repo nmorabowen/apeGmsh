@@ -444,12 +444,18 @@ def test_fix_from_model_combines_with_disjoint_explicit_fix() -> None:
     ]
 
 
-def test_fix_from_model_overlapping_explicit_fix_raises() -> None:
+def test_fix_from_model_overlapping_explicit_fix_merges() -> None:
+    """ADR 0115 D6/Q1: an explicit global fix shares fix_from_model's
+    tier, so the overlap merges (one SP per (node, DOF)), not raises."""
     ops = _ops(_model())
     ops.fix_from_model()
     ops.fix(nodes=[3], dofs=(0, 0, 1))
-    with pytest.raises(BridgeError, match="fix_from_model"):
-        ops.build()
+    ops.mass_from_model()
+    pairs = [
+        (c[0], d) for c in _calls(_emit_silent(ops), "fix")
+        for d, flag in enumerate(c[1:], start=1) if flag
+    ]
+    assert (3, 3) in pairs and len(pairs) == len(set(pairs))
 
 
 def test_fix_from_model_overlapping_stage_fix_raises() -> None:
