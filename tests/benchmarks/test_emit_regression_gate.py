@@ -38,12 +38,18 @@ shift the denominator.
 
 Re-baselining
 -------------
-When a change legitimately moves these numbers, regenerate with::
+When a change legitimately moves these numbers, regenerate the file ON
+THE CI RUNNER, not on a dev box (a Windows-written baseline sat ~1.2x
+below CI; #1658). Dispatch the Tests workflow on the PR branch with the
+``write_emit_gate_baseline`` input, which runs::
 
     pytest tests/benchmarks/test_emit_regression_gate.py --emit-gate-write-baseline
 
-and commit ``emit_gate_baseline.json`` in the same PR as the change
-that moved it, so the diff shows the cost being accepted.
+and uploads the result as the ``emit-gate-baseline`` artifact. Download
+it (``gh run download <run> -n emit-gate-baseline``) and commit
+``emit_gate_baseline.json`` in the same PR as the change that moved it,
+so the diff shows the cost being accepted. Its ``_provenance`` block
+names the run.
 """
 from __future__ import annotations
 
@@ -104,8 +110,15 @@ ELEMENT_KINDS = ("tet_host_line_embed", "hex_host_line_embed")
 #: a rep slower, never faster than the code allows. The minimum estimates
 #: that floor; a median of 3 still reports the middle of the noise, and
 #: on CI it swung hex 0.716 -> 0.627 across two runs of the same commit.
-#: The PR that set this value (#1658) records the spread-vs-cost table.
-REPS = 12  # WIP: data collection for N (#1658)
+#:
+#: Why 7: on the CI runner ``parse`` is still warming up for the first
+#: ~4 reps (it falls ~15-20% by rep 5), so a short run reports a
+#: too-small parse and a too-small ratio. Measured with 12 reps on CI,
+#: the min-of-N ratio settles within 0.5% of its 12-rep value by N=7 on
+#: both cells, while the median keeps drifting up as reps are added.
+#: Each rep costs ~3 s per cell on the slowest runner seen, so 7 instead
+#: of 3 adds ~25 s to the lane. The PR (#1658) records the table.
+REPS = 7
 
 
 def _measure(kind: str, tmp: Path) -> dict:
