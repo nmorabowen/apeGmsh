@@ -2054,6 +2054,13 @@ class BuiltModel:
             # zeroLength referencing a node that only exists inside the
             # stage block.
             self._validate_interfaces_not_stage_bound(node_owner_stage)
+        else:
+            # ADR 0115 D6: V2 (duplicate fix / mass) runs on every build,
+            # staged or not; an unstaged overlap the build's fix merge
+            # cannot absorb (a repeated mass, a fix the merge never saw)
+            # is refused here instead of failing late inside OpenSees.
+            # It reads no stage ownership.
+            self._validate_no_duplicate_fix_mass_across_tiers({})
 
         # 1a. Nodes — emit every node from the FEM snapshot, EXCEPT
         # nodes bound to a stage (those emit inside that stage's
@@ -3060,6 +3067,13 @@ class BuiltModel:
             # interface pass (step 7c-bis) emits before any stage
             # block.
             self._validate_interfaces_not_stage_bound(node_owner_stage)
+        else:
+            # ADR 0115 D6: V2 (duplicate fix / mass) runs on every build,
+            # staged or not; an unstaged overlap the build's fix merge
+            # cannot absorb (a repeated mass, a fix the merge never saw)
+            # is refused here instead of failing late inside OpenSees.
+            # It reads no stage ownership.
+            self._validate_no_duplicate_fix_mass_across_tiers({})
 
         partitions = list(self.fem.partitions)
         node_owners = build_node_partition_owners(self.fem)
@@ -11018,7 +11032,7 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
                 resolve_element_node_pair(fem, p) for p in self._primitives
                 if isinstance(p, Element) and getattr(p, "pg", None) is None
             ])
-        built = BuiltModel(
+        return BuiltModel(
             primitives=tuple(self._primitives),
             tag_for=tag_for,
             ndm=self._ndm,
@@ -11045,12 +11059,6 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
             _decl_owners={
                 oid: owner for oid, (owner, _decl) in self._decls.items()},
         )
-        # ADR 0115 D6: the duplicate fix / mass validator (V2) runs on
-        # every build, staged or not, so an unstaged overlap the merge
-        # above cannot absorb (a repeated mass) is refused here instead
-        # of failing late inside OpenSees.  It reads no stage ownership.
-        built._validate_no_duplicate_fix_mass_across_tiers({})
-        return built
 
     # -- Internal helpers ------------------------------------------------
 
