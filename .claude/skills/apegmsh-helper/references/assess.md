@@ -58,8 +58,13 @@ run, `figures` is `()`, prints
 Unbound `results.render` / `render_pack` raise even under that env
 (need `model=` / `model_h5=` / `bind`).
 
-Stills come from `viewers.render` (VTK offscreen). Closed `view=`:
-`mesh` / `contour` / `deformed` / `reactions`. No `setup=`. In-process
+`results.render` / `render_pack` stills are drawn by
+`ResultsSession.render` (VTK offscreen; one session mesh view per
+still). Closed `view=`: `mesh` / `contour` / `deformed` / `reactions`.
+Refused with a `ValueError` that names the alternative:
+`view="reactions"` with `component="reaction_x|_y|_z"` (use
+`"reactions"`), and `deform=(field, s)` with a field other than
+displacement / velocity / acceleration. No `setup=`. In-process
 is the default; `python -m apeGmsh.viewers render …` is the
 out-of-kernel door so a GL crash does not kill the notebook.
 
