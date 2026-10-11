@@ -13,12 +13,22 @@ the file and from [`architecture/h5-schema.md`](../architecture/h5-schema.md).
 
 ## Install (Windows)
 
-Build the installer from this directory, then run it:
+apeGmsh writes `model.h5` (and `<stem>.geometry.h5`) on every run, but it
+does not install the viewer: until you install it once, "Open with" does not
+list apeGmshViewer and double-clicking a `.h5` does nothing for it. You need
+Node 22.18 or newer and this repository checked out. Build the installer from
+this directory, then run the `.exe` it writes:
 
 ```powershell
+cd apeGmshViewer
 npm ci
 npm run dist        # writes out/installer/apeGmshViewer Setup <version>.exe
+& ".\out\installer\apeGmshViewer Setup 0.0.1.exe"
 ```
+
+To try it without installing, `npm start -- path\to\model.h5` runs it from the
+checkout (see [Commands](#commands)); "Open with" lists it only once the
+installer has run.
 
 The installer is per-user: it installs under `%LOCALAPPDATA%\Programs` and
 adds apeGmshViewer to the **"Open with"** list of `.h5` files under `HKCU`, so
@@ -47,6 +57,10 @@ Then:
   it uses VS Code (`code -g file:line`) when `code` is on PATH, and otherwise
   the OS text editor, without the line (Notepad on Windows). It never uses
   the OS default opener, because on Windows that runs a `.py` file.
+- **Model-definition windows.** The **Windows** menu at the bottom of the
+  window opens Stages, Analysis, Patterns & series, Recorders, and Materials &
+  sections. Each lists what the file declares, with the HDF5 path of every
+  row; a material or section row selects it in the inspector.
 
 ## Commands
 
@@ -60,7 +74,7 @@ through Node's type stripping; nothing is compiled for the tests).
 | `npm test` | reader, chain resolution, mesh and navigation tests, on the fixture and on synthetic files |
 | `npm start -- <model.h5>` | open the app on a file; without a file, drop one on the window |
 | `npm run measure -- <model.h5> [--uncapped]` | print one [MEASUREMENTS.md](MEASUREMENTS.md) row; `--uncapped` lifts the vsync cap and prints the throughput row |
-| `npm run capture -- <model.h5> <out.png> [--pick=<OpenSees type>]` | write a still from a hidden window, with a beam selected (or an element of the `--pick` type); a second still `<out>.chain-end.png` when the chain is taller than the window |
+| `npm run capture -- <model.h5> <out.png> [--pick=<OpenSees type>]` | write a still from a hidden window, with a beam selected (or an element of the `--pick` type); a second still `<out>.chain-end.png` when the chain is taller than the window; `<out>.framed.png`, `<out>.groups.png` and `<out>.role.png`; and one `<out>.window-<kind>.png` per model-definition window |
 | `npm run dist` | build the Windows installer into `out/installer/` (see [Install](#install-windows)) |
 
 ## Layout
@@ -72,6 +86,7 @@ through Node's type stripping; nothing is compiled for the tests).
 | `src/mesh/build.ts` | flat render buffers coloured by physical group (pure, tested in Node) |
 | `src/state/store.ts` | the single state store and its reducer (ADR 0112 D6) |
 | `src/main/` | the Electron main process (file reads, measurement, capture) and the preload bridge; `pairing.ts` (the set of a stem), `session.ts` (the open set), `watch.ts` (watch the set), `source.ts` (go to source) and `zones.ts` (reads `/geometry` and `/provenance` for the renderer) |
+| `src/panels/windows/` | the model-definition windows: `registry.ts` (one view per `WindowKind`), `frame.ts` (the Windows menu and the open windows, driven by `openWindow` / `closeWindow`) and one pure `(state) → DOM` view per kind, `<kind>.ts` |
 | `src/renderer/` | the three.js viewport, the panels and the page; `navigation.ts` is the Z-up turntable camera, and `bindings.ts` is the only table of mouse and key bindings (left-click selects, right-drag orbits about the point under the cursor, middle-drag or shift + right-drag pans, the wheel zooms to the cursor, `F` fits) |
 | `scripts/` | `build.mjs` (esbuild bundles) and `launch.mjs` (starts Electron in a mode) |
 | `fixtures/` | a small committed `model.h5` with beams; its README names the command that made it |
@@ -91,7 +106,17 @@ through Node's type stripping; nothing is compiled for the tests).
   `src/reader/read.ts`: neutral 2.10, opensees 2.12, geometry 1.0, provenance
   1.0). A file from the floor to the app's version opens with no banner. A
   newer minor of the same major opens with one banner. A file below the floor,
-  or of another major, is refused with a sentence naming the floor.
+  or of another major, is refused with a sentence naming the floor. The root
+  `/sequence` zone (1.0, V3a) is read when a file carries it and is otherwise
+  "not in this file", never an error; its floor sits beside the table
+  (`SEQUENCE_FLOOR`) until Python ships its own.
+- The model-definition data: `/opensees/decls` and `/opensees/decl_params`
+  (each declaration's parameters by field name, references as
+  `{"$decl": key}`), the analysis chain, time series, patterns, recorders, fix
+  records and `/opensees/stages/stage_NNN`, all into the one store. A
+  malformed `decl_params` row (an unknown `$` tag, a reference to an undeclared
+  key, a row out of range) refuses the file with its path, as Python's reader
+  does.
 - Colour: each element takes the colour of the smallest element-side physical
   group that contains it. Elements in no group are grey; OpenSees elements with
   no mesh cell (embedded rebar trusses) are drawn from their inline

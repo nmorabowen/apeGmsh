@@ -15,7 +15,7 @@ import { mountWindows } from "../panels/windows/frame.ts";
 import { BlobStore } from "../state/blobs.ts";
 import { chainOf } from "../state/selectors.ts";
 import { Store } from "../state/store.ts";
-import type { DeclPath } from "../state/types.ts";
+import { WINDOW_KINDS, type DeclPath } from "../state/types.ts";
 import { applyTheme } from "../theme/tokens.ts";
 import { Viewport } from "./viewport.ts";
 
@@ -250,6 +250,16 @@ async function main() {
   await settle();
   viewport.renderNow();
   await bridge.captureStill("role");
+  // One still per model-definition window, `<out>.window-<kind>.png`, each
+  // opened alone through the store, as the window menu opens it.
+  store.dispatch({ type: "setColourBy", by: "group" });
+  for (const kind of WINDOW_KINDS) {
+    store.dispatch({ type: "openWindow", window: kind });
+    await settle();
+    viewport.renderNow();
+    await bridge.captureStill(`window-${kind}`);
+    store.dispatch({ type: "closeWindow", window: kind });
+  }
   await bridge.captureDone();
 }
 
