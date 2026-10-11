@@ -189,24 +189,41 @@ def _diff_verdict(actual: np.ndarray, golden: np.ndarray) -> str | None:
     )
 
 
-def _assert_golden(frame: np.ndarray, name: str) -> None:
-    actual = _downsample(frame)
-    golden_path = _GOLDEN_DIR / name
-    if _REGEN:
-        golden_path.write_bytes(_png_bytes(actual))
+def _assert_goldens(*stills: tuple[np.ndarray, str]) -> None:
+    """Compare every ``(frame, golden name)``; report all misses at once.
+
+    The goldens are CI's renderer (Linux + Mesa). Windows desktop GL lays
+    the scalar bar out several blocks to the right, so off Linux a miss
+    is a skip naming the platform. On Linux it is a failure that carries
+    each actual frame as base64 PNG, so a golden can be lifted from the
+    CI log.
+    """
+    misses: list[str] = []
+    for frame, name in stills:
+        actual = _downsample(frame)
+        golden_path = _GOLDEN_DIR / name
+        if _REGEN:
+            golden_path.write_bytes(_png_bytes(actual))
+            continue
+        if golden_path.exists():
+            verdict = _diff_verdict(actual, _read_png(golden_path))
+        else:
+            verdict = "golden file missing (PNGs are .gitignored: add -f)"
+        if verdict is None:
+            continue
+        b64 = base64.b64encode(_png_bytes(actual)).decode("ascii")
+        misses.append(
+            f"golden still {name!r} differs: {verdict}.\n"
+            f"X2GOLDEN-BEGIN {name} {b64} X2GOLDEN-END"
+        )
+    if not misses:
         return
-    if golden_path.exists():
-        verdict = _diff_verdict(actual, _read_png(golden_path))
-    else:
-        verdict = "golden file missing (PNGs are .gitignored: `git add -f`)"
-    if verdict is None:
-        return
-    b64 = base64.b64encode(_png_bytes(actual)).decode("ascii")
-    raise AssertionError(
-        f"golden still {name!r} differs: {verdict}.\n"
-        f"actual (downsampled PNG, base64) for {name}:\n"
-        f"X2GOLDEN-BEGIN {name} {b64} X2GOLDEN-END"
-    )
+    if not sys.platform.startswith("linux"):
+        pytest.skip(
+            f"goldens are CI's Linux/Mesa frames; {sys.platform} rendered "
+            f"{len(misses)} still(s) differently (judged on CI only)",
+        )
+    raise AssertionError("\n".join(misses))
 
 
 def _require_still(written: Any, out: Path) -> None:
@@ -233,7 +250,7 @@ def test_render_view_matches_golden(plate, tmp_path: Path, view: str) -> None:
         camera=_CAMERA, window_size=_WINDOW,
     )
     _require_still(written, out)
-    _assert_golden(_read_png(out), spec["golden"])
+    _assert_goldens((_read_png(out), spec["golden"]))
 
 
 # =====================================================================
@@ -250,8 +267,10 @@ def test_render_pack_files_and_stills(plate, tmp_path: Path) -> None:
     names = [p.name for p in written]
     assert names == spec["files"]
     assert len(written) == spec["count"]
-    for name, golden in spec["stills"].items():
-        _assert_golden(_read_png(dest / name), golden)
+    _assert_goldens(*(
+        (_read_png(dest / name), golden)
+        for name, golden in spec["stills"].items()
+    ))
 
 
 # =====================================================================
@@ -362,8 +381,7 @@ def test_export_animation_frames(
     # The schedule visits the frame steps, then restores the prior step.
     assert seen[:-1] == spec["frame_steps"]
     assert len(frames) == spec["frame_count"]
-    _assert_golden(frames[0], spec["first"])
-    _assert_golden(frames[-1], spec["last"])
+    _assert_goldens((frames[0], spec["first"]), (frames[-1], spec["last"]))
 
 
 # =====================================================================
