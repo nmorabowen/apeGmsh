@@ -355,17 +355,16 @@ def _term_table() -> "list[tuple[str, list[tuple[str, int, int]]]]":
         # allocations inside inverse() carry this caller frame.
         ("R8", ap, "ops_tag_to_fem_eid = fem_eid_to_ops_tag.inverse()",
          1, 0, 0),
-        # R1 — node_idx_lookup and its siblings, post-P3 columnar
-        # (build.node_index_lookup -> SortedIntToInt).  Occurrence
-        # order in the file: 1 = staged-flat (~2209), 2 = partitioned
-        # base (~2806).  The staged partitioned co-resident twin
-        # (~3527) is GONE — P3 passes the base lookup into
+        # R1 — node_idx_lookup, post-P3 columnar
+        # (build.node_index_lookup -> SortedIntToInt).  Exactly two
+        # sites remain in apesees.py (re-verified after X1-b, #1505,
+        # removed the ADR 0043 ``split=`` mode and its ``node_idx = ...``
+        # sibling): occurrence 1 = the staged emit (~2476), occurrence 2
+        # = the partitioned base (~3205).  The staged partitioned
+        # co-resident twin is GONE — P3 passes the base lookup into
         # _emit_stages_partitioned instead of rebuilding it.
         ("R1", ap, "node_idx_lookup = node_index_lookup(", 2, 0, 0),
         ("R1", ap, "node_idx_lookup = node_index_lookup(", 1, 0, 0),
-        # The 4th sibling near ~1962 (split='parts') is spelled
-        # ``node_idx = ...`` — anchored on the actual text.
-        ("R1", ap, "node_idx = node_index_lookup(", 1, 0, 0),
         # R3 — plan_by_rank; post-P3 the resident form is
         # LazyRankBuckets (one argsort permutation per spec, 8 B/row)
         # and the per-rank select_rows copies are TRANSIENT — whatever
