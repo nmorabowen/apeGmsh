@@ -68,7 +68,20 @@ class EigenResult:
 
     @property
     def periods(self) -> np.ndarray:
-        """Natural periods ``T_i = 1 / f_i`` (s)."""
+        """Natural periods ``T_i = 2π / ω_i = 1 / f_i``, one per mode.
+
+        A 1-D ``np.ndarray`` in the order of :attr:`eigenvalues` (mode 1
+        first, so the longest period first for the default solver), in
+        seconds when the model's time unit is the second: ``λ_i`` comes
+        from the model's own mass and stiffness, with no unit conversion.
+        A zero eigenvalue (a mechanism, or a DOF with no mass) gives
+        ``inf``; a negative one gives ``nan``.
+
+        This is the eigen read-back ADR 0115 D1 documents: ``eigen``
+        keeps returning :class:`EigenResult`, and the periods are read
+        here rather than through ``Node.read`` (which reads the static
+        or transient state an ``analyze`` left).
+        """
         return 1.0 / self.freq
 
     def mode_shape(self, node: "int | Node", mode: int) -> np.ndarray:

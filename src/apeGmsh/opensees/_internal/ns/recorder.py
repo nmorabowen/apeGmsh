@@ -13,7 +13,7 @@ at the user-facing surface (charter P12).
 """
 from __future__ import annotations
 
-from typing import Iterable, Sequence
+from typing import TYPE_CHECKING, Iterable, Sequence
 
 from ...recorder import (
     MPCO,
@@ -25,10 +25,38 @@ from ...recorder import (
     build_recorder_declaration,
 )
 from ...node import _resolve_label
+from ..._readback import resolve_element_label
+from ..build import BridgeError
 from ._base import _BridgeNamespace
+
+if TYPE_CHECKING:
+    from ...apesees import apeSees
 
 
 __all__ = ["_RecorderNS"]
+
+
+def _element_label_ids(bridge: "apeSees", label: str | Sequence[str]) -> tuple[int, ...]:
+    """The element tags ``label`` names, for ``recorder.Element(label=)``.
+
+    Only under ``element_tags="fem"`` is an element's OpenSees tag its
+    FEM id, so only there can a label resolve at the call, the way a
+    node label does (ADR 0115 D4; maintainer ruling on #1695). The
+    sequential refusal raises first, before the label is even looked up.
+    """
+    where = "ops.recorder.Element"
+    if bridge._element_tags != "fem":
+        raise BridgeError(
+            f"{where}(label=...): an element label resolves at the call "
+            "only on a bridge built with element_tags=\"fem\", where an "
+            "element's OpenSees tag is its FEM id; this bridge numbers "
+            f"elements {bridge._element_tags!r}. Build with "
+            "apeSees(fem, element_tags=\"fem\"), or use pg=; label= under "
+            "sequential tags arrives with R2-f (#1661)."
+        )
+    ids = resolve_element_label(bridge, label, where=where)
+    index = bridge.fem.elements.index
+    return tuple(sorted(ids, key=index))
 
 
 class _RecorderNS(_BridgeNamespace):
@@ -96,21 +124,39 @@ class _RecorderNS(_BridgeNamespace):
         response: tuple[str, ...],
         elements: tuple[int, ...] | None = None,
         pg: str | None = None,
+        label: str | Sequence[str] | None = None,
         dT: float | None = None,
         time_format: str = "step",
         name: str | None = None,
     ) -> Element:
         """Construct + register a ``recorder Element``.
 
-        Exactly one of ``elements`` or ``pg`` must be supplied. See
-        :class:`apeGmsh.opensees.recorder.Element` for the full
-        parameter contract.
+        Exactly one of ``elements``, ``pg`` or ``label`` must be
+        supplied. See :class:`apeGmsh.opensees.recorder.Element` for the
+        full parameter contract.
+
+        ``label`` (one geometry label or a list) is accepted only on a
+        bridge built with ``element_tags="fem"``, where an element's
+        OpenSees tag is its FEM id: it resolves on the snapshot here,
+        before anything registers, to the recorder's ``elements``
+        (ADR 0115 D4). Under ``element_tags="sequential"`` it raises
+        :class:`BridgeError`; the full form arrives with R2-f (#1661).
+        An unknown label raises, listing the labels that exist; it
+        never falls back to a physical group.
 
         ``name`` labels the recorder's declaration (its
         ``opensees/recorder/<name>`` key, unique among the recorders,
         read back from ``/opensees/decls``); a label only,
         the deck and ``model_hash`` do not change with it.
         """
+        if label is not None:
+            if elements is not None or pg is not None:
+                raise ValueError(
+                    "ops.recorder.Element: supply exactly one of elements=, "
+                    f"pg= or label= (got elements={elements!r}, pg={pg!r}, "
+                    f"label={label!r})."
+                )
+            elements = _element_label_ids(self._bridge, label)
         return self._bridge._register(
             Element(
                 file=file,

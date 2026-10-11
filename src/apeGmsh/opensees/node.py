@@ -50,6 +50,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Iterable, Iterator, Sequence
 
 if TYPE_CHECKING:
+    import numpy as np
     import pandas as pd
 
     from apeGmsh.mesh.FEMData import FEMData
@@ -110,6 +111,31 @@ class Node:
         method.
         """
         self._bridge.region(name=name, nodes=(self.tag,))
+
+    # -- Live read-back (ADR 0115 D2) ---------------------------------------
+
+    def read(self, component: str) -> float:
+        """``component`` at this node, in model units, at the last
+        committed state of the bridge's live :meth:`~apeSees.analyze`.
+
+        ``component`` is a canonical results name (``displacement_x``,
+        ``rotation_z``, ``velocity_y``, ``acceleration_x``,
+        ``reaction_force_y``, ``reaction_moment_z``, ...), mapped to this
+        node's DOF through the bridge's DOF layout for its ``ndf``; a
+        reaction read calls ``reactions()`` first.
+
+        Raises :class:`BridgeError` for an unknown component, a
+        component the node lacks (naming the node and its ``ndf``), when
+        no live analyze has run on the bridge (a deck run is read with
+        ``ops.results(path)``), and when the session is stale: an
+        ``eigen``, another ``analyze``/``run``, a deck run or another
+        bridge rebuilt the domain since.
+        """
+        from ._readback import read_nodes
+
+        return float(read_nodes(
+            self._bridge, (self.tag,), component,
+            where=f"Node {self.tag}.read")[0])
 
     # -- Container conveniences ---------------------------------------------
 
@@ -194,6 +220,18 @@ class NodeSet:
             name=name,
             nodes=tuple(n.tag for n in self._nodes),
         )
+
+    # -- Live read-back (ADR 0115 D2) ---------------------------------------
+
+    def read(self, component: str) -> "np.ndarray":
+        """``component`` at every node, ``ndarray (N,)`` in :attr:`tags`
+        order; see :meth:`Node.read`. A sum over a group is plain numpy:
+        ``ops.nodes.get(pg="base").read("reaction_force_y").sum()``.
+        """
+        from ._readback import read_nodes
+
+        return read_nodes(
+            self._bridge, self.tags, component, where="NodeSet.read")
 
     # -- Container protocol --------------------------------------------------
 

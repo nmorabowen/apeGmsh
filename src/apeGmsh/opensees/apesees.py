@@ -196,6 +196,13 @@ from ._internal.types import (
 from ._run import resolve_log_path, run_label, stream_run
 from .emitter.base import Emitter, StrategySpec
 from .node import Node, _NodeAccessor, _iter_tags, _select_nodes
+from ._readback import (
+    DECK_RUN_CAUSE,
+    DroppedSession,
+    ReadState,
+    _ElementAccessor,
+    open_session,
+)
 from .recorder import FilterableRecorder, Ladruno
 from .procedures._contact import _ContactQueryMixin
 from .procedures._explicit import ExplicitRunResult, _ExplicitMixin
@@ -8408,6 +8415,11 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
         # queries (e.g. :meth:`ladruno_projection_tie_force`) can reach the
         # openseespy session that just ran. ``None`` until a live analyze runs.
         self._live_emitter: "LiveOpsEmitter | None" = None
+        # ADR 0115 D2: the read session ``Node.read`` / ``ops.elements``
+        # answer from. ``None`` until a live analyze completes; a
+        # :class:`DroppedSession` (naming why) once this bridge wipes or
+        # replaces the domain it solved, or runs a deck.
+        self._read_state: ReadState = None
         # Which OpenSees runtime the subprocess paths bind, and the live
         # fork expectation.  ``None`` → env-var / PATH fallback (the
         # pre-target behaviour).  See :mod:`apeGmsh.opensees._target`.
@@ -8565,6 +8577,9 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
 
         # FEM-aware aggregates (Phase 5A) — query-and-act over fem.nodes.
         self.nodes            = _NodeAccessor(self)
+        # ADR 0115 D2 / Q2: FEM elements by pg= / label= / ids=, for
+        # read-back. ``self.element`` (singular) holds the constructors.
+        self.elements         = _ElementAccessor(self)
         self.constraints      = _ConstraintsNS(self)
         self.numberer         = _NumbererNS(self)
         self.system           = _SystemNS(self)
@@ -9585,7 +9600,18 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
         declared) are NOT supported by live execution.  Emit a Tcl
         or Py deck via :meth:`tcl` / :meth:`py` and run it via the
         OpenSees binary / openseespy subprocess instead.
+
+        ADR 0115 D2: once the solve returns (whatever its return code),
+        the bridge keeps a read session, so ``Node.read`` /
+        ``NodeSet.read`` and ``ops.elements.get(...).read`` answer at the
+        last committed state. Calling ``analyze`` again closes it at the
+        start; ``eigen``, ``run``, a deck run and another bridge's live
+        work close it too.
         """
+        self._read_state = DroppedSession(
+            "a later ops.analyze(...) started on this bridge and did not "
+            "complete"
+        )
         if self._stage_records:
             raise NotImplementedError(
                 "apeSees.analyze: live execution does not support "
@@ -9631,6 +9657,16 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
             spec = strategy.to_spec(base=base)
         result: int = int(
             live_emitter.analyze(steps=steps, dt=dt, strategy=spec)
+        )
+        # ADR 0115 D2: the element plan the live emit just read (memoised
+        # by ``bm.emit``, so this mints nothing) rides the session, which
+        # then never needs the allocator or a build to answer a read.
+        live_plan = bm._tag_plan(emit_mode(
+            bm, split=False,
+            supports_partitions=live_emitter.caps.supports_partitions))
+        self._read_state = open_session(
+            live_emitter, ndm=bm.ndm,
+            element_plan=tuple(live_plan.elements.specs),
         )
         if profile is not None:
             report_args: list[str] = [profile]
@@ -9894,6 +9930,8 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
         if not run:
             return None
 
+        self._read_state = DroppedSession(
+            DECK_RUN_CAUSE.format(verb="ops.tcl(..., run=True)"))
         binary = _resolve_opensees_binary(bin, self._opensees)
         return stream_run(
             [binary, path],
@@ -10388,6 +10426,8 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
         if not run:
             return None
 
+        self._read_state = DroppedSession(
+            DECK_RUN_CAUSE.format(verb="ops.py(..., run=True)"))
         python_bin = _resolve_python_binary(python, self._opensees)
         # PYTHONUNBUFFERED so the child's stdout streams live through the
         # pipe rather than block-buffering until exit (the tee + live
@@ -10414,6 +10454,10 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
         """
         from .emitter.live import LiveOpsEmitter
 
+        self._read_state = DroppedSession(
+            "ops.run() re-emitted the model into the live domain without "
+            "solving it; call ops.analyze(...) to read"
+        )
         bm = self.build()
         emitter = LiveOpsEmitter(wipe=wipe)
         bm.emit(emitter)
@@ -10484,6 +10528,8 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
         ranks = np if np is not None else max(1, len(self._fem.partitions))
         path = _Path(job_dir)
         path.mkdir(parents=True, exist_ok=True)
+        self._read_state = DroppedSession(
+            DECK_RUN_CAUSE.format(verb="ops.run_remote(...)"))
         self.tcl(
             str(path / deck),
             analyze_steps=analyze_steps,
