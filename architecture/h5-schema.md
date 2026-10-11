@@ -1299,6 +1299,37 @@ column that differs in length, a `decl` out of range, a
 declarations lack, an object with an unknown `$` tag, or a
 `params_names` that is not a list of str raises `MalformedH5Error`.
 
+## Parameter tags (opensees 2.27.0)
+
+The `parameter` tags of an initial stress, an absorbing flip and an
+`s.update_parameter` are the build's (its tag plan mints them once, ADR
+0114 D4); from 2.27.0 each record stores its own, so a deck replay writes
+them and allocates none (`OpenSeesModel` INV-5).
+
+```
+/opensees/initial_stress/stress_NNN       @param_tags (3,) int64: XX, YY, ZZ ramp tags
+/opensees/stages/stage_NNN/
+├── initial_stress/stress_NNN             @param_tags (3,) int64, as above
+├── activate_absorbing/absorb_NNN/
+│     └── param_tags  (k, 2) int64        one (rank, pid) row per flip written
+├── update_parameter/update_NNN/          (optional) one per s.update_parameter
+│     @name, @value, @mat_tag (optional), @pg XOR elements (n,) int64
+│     └── param_tags  (k, 2) int64        one (rank, pid) row per update written
+└── zero_velocities/zero_NNN/             (optional) one per s.zero_velocities
+      └── nodes  (n,) int64               absent: the whole domain
+```
+
+A flip or update record holds one `pid`, written once per rank that holds
+its elements (`rank` is `-1` for a flat build), so its `(k, 2)` rows share
+the `pid`. The writer attributes each call to its record by tag: the plan
+mints the records' tags in record order, so the distinct tags, ascending,
+are the records in order. A record whose target holds no element has no
+tag and refuses the write. A replay resolves each record's elements on the
+whole mesh (the deck replay is flat) and writes them under the stored
+`pid`. `s.zero_velocities` replays over the archived node ids at their
+`/opensees/nodes_ndf` width. A rewrite (`OpenSeesModel.to_h5`) of a pre-2.27
+archive stores the tags that archive's replay mints.
+
 ## `/meta/session_id` and the geometry sibling
 
 ADR 0112 D1 makes geometry an artifact of its own, and the V0
@@ -1648,7 +1679,7 @@ call `validate_zone_version(...)` for each zone before reading it.
 | Zone | `/meta` key | Root paths | Writer constant (source of truth) | Current | Floor |
 |---|---|---|---|---|---|
 | neutral (broker) | `neutral_schema_version` | `/nodes`, `/elements`, `/physical_groups`, `/labels`, `/mesh_selections`, `/partitions`, `/parts`, `/constraints`, `/reinforce_ties`, `/embed_ties`, `/rebar_elements`, `/contacts`, `/contact_planes`, `/interfaces`, `/loads`, `/masses`, `/composed_from` | [`mesh/_femdata_h5_io.py`](../src/apeGmsh/mesh/_femdata_h5_io.py) `NEUTRAL_SCHEMA_VERSION` | **2.35.0** | **2.10.0** |
-| opensees (bridge) | `opensees_schema_version` | `/opensees/*` | [`opensees/emitter/h5.py`](../src/apeGmsh/opensees/emitter/h5.py) `SCHEMA_VERSION` | **2.26.0** | **2.12.0** |
+| opensees (bridge) | `opensees_schema_version` | `/opensees/*` | [`opensees/emitter/h5.py`](../src/apeGmsh/opensees/emitter/h5.py) `SCHEMA_VERSION` | **2.27.0** | **2.12.0** |
 | results | `results_schema_version` | `/stages/*` (composed `results.h5`, at file root) | [`results/schema/_versions.py`](../src/apeGmsh/results/schema/_versions.py) `RESULTS_SCHEMA_VERSION` | **1.1.0** | **1.0.0** |
 | cuts (sub-zone of opensees) | — (no own key; rides the opensees zone) | `/opensees/cuts`, `/opensees/sweeps` | [`cuts/_h5_io.py`](../src/apeGmsh/cuts/_h5_io.py) `V4_SCHEMA_VERSION` | 2.5.0 | none of its own: it rides the opensees floor |
 | geometry (ADR 0112 D2) | `geometry_schema_version` | `/geometry` (sibling `<stem>.geometry.h5` only) | [`opensees/_internal/schema_version.py`](../src/apeGmsh/opensees/_internal/schema_version.py) `GEOMETRY_SCHEMA_VERSION` | **1.0.0** | **1.0.0** |
@@ -2078,6 +2109,17 @@ detail lives in the `SCHEMA_VERSION` docstring in
   columns. Hash-excluded (`MODEL_HASH_EXCLUDED_CHILDREN`), so
   `model_hash` is unchanged for every model. Additive minor (a 2.25.x
   reader refuses a 2.26.x file, INV-4).
+- `2.27.0` — K1-8 (#1465; ADR 0114 D4 amended, the T ruling on #1465
+  option A): additive — the archive stores every
+  [parameter tag](#parameter-tags-opensees-2270) the build planned, per
+  record, and the two stage verbs the writer refused before archive
+  (`s.update_parameter`, `s.zero_velocities`). A replay of a 2.27 archive
+  reads the tags and mints none; a replay of an older one keeps re-minting
+  them (the pre-2.27 tag-law waivers, behind `PARAM_TAGS_FROM` in
+  `h5_reader.py`). The tags fold into `model_hash`, so an initial-stress or
+  absorbing archive hashes differently once at this minor; every other
+  file hashes as before. Additive minor (a 2.26.x reader refuses a 2.27.x
+  file, INV-4).
 
 This is the **current** opensees-zone version (`SCHEMA_VERSION` in
 [`opensees/emitter/h5.py`](../src/apeGmsh/opensees/emitter/h5.py)); check that constant
