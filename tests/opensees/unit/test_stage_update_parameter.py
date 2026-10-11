@@ -336,15 +336,37 @@ def test_absent_verb_emits_nothing() -> None:
 
 
 # ===========================================================================
-# H5 archival — deferred, fail-loud
+# H5 archival — archived since opensees 2.27.0 (K1-8, #1465)
 # ===========================================================================
 
 
-def test_h5_archive_refuses_a_stage_that_updates_a_parameter(tmp_path) -> None:
-    ops, _mat = _soil_ops()
-    with ops.stage(name="perm") as s:
-        s.update_parameter("xPerm", 1.0, pg="soil")
-        s.analysis(**_full_chain(ops))
-        s.run(n_increments=1)
-    with pytest.raises(NotImplementedError, match="s.update_parameter"):
-        ops.h5(str(tmp_path / "model.h5"))
+def test_h5_archive_stores_a_stage_that_updates_a_parameter(tmp_path) -> None:
+    """The record archives (it was refused before 2.27.0) with the
+    parameter tag the bridge's deck writes; ``test_h5_param_tags.py``
+    replays one over a real FEMData."""
+    from apeGmsh.opensees.emitter import h5_reader
+
+    def build() -> apeSees:
+        ops, mat = _soil_ops()
+        with ops.stage(name="perm") as s:
+            s.update_parameter("xPerm", 1.0, pg="soil")
+            s.update_parameter("poissonRatio", 0.2, elements=[2], material=mat)
+            s.analysis(**_full_chain(ops))
+            s.run(n_increments=1)
+        return ops
+
+    deck = TclEmitter()
+    build().build().emit(deck)
+    pids = [int(ln.split()[1]) for ln in deck.lines()
+            if ln.strip().startswith("updateParameter")]
+    out = tmp_path / "model.h5"
+    build().h5(str(out))
+    with h5_reader.open(str(out)) as model:
+        (stage,) = model.stages()
+    assert [(r.name, r.value, r.pg, r.elements, r.mat_tag)
+            for r in stage.update_parameters] == [
+        ("xPerm", 1.0, "soil", None, None),
+        ("poissonRatio", 0.2, None, (2,), 1),
+    ]
+    assert stage.update_parameter_param_tags == tuple(
+        ((-1, pid),) for pid in pids)
