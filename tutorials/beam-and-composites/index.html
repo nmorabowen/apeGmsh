@@ -4372,7 +4372,7 @@ is the interactive one for notebooks.)</p>
 <p class="admonition-title">Don't pass <code>blocking=True</code> in a notebook</p>
 <p><code>results.viewer()</code> defaults to <code>blocking=None</code> (auto): scripts get
 the in-process Qt window; a Jupyter / VS Code kernel spawns a
-subprocess (or <code>show_web()</code> for in-memory Results). An <strong>explicit</strong>
+subprocess. An <strong>explicit</strong>
 <code>blocking=True</code> still runs a native VTK + Qt loop that <strong>crashes
 the kernel</strong>. In a notebook, reach for <code>results.show_web()</code>.</p>
 </div>

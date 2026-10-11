@@ -9874,17 +9874,19 @@ what the window saves is that object.</p>
 <p class="admonition-title">Explicit <code>blocking=True</code> still crashes the Jupyter kernel</p>
 <p><code>results.viewer()</code> defaults to <code>blocking=None</code> (auto): <code>True</code>
 (in-process Qt) in scripts / the CLI, <code>False</code> (subprocess) inside
-a Jupyter kernel. An in-memory Results in a notebook cannot spawn
-a subprocess and falls back to <code>results.show_web()</code>. An <strong>explicit</strong>
+a Jupyter kernel. A hand-built, in-memory Results (no backing
+file) in a notebook has nothing for that subprocess to open, so it
+raises <code>RuntimeError</code>: open it from a file with a <code>Results.from_*</code>
+constructor first. An <strong>explicit</strong>
 <code>blocking=True</code> still drives the VTK+Qt event loop in-process and
 <strong>kills the ipykernel</strong>.</p>
 </div>
 <p>The blocking call returns the <code>ResultsSession</code> once the window closes —
 still live, so you can query it, render stills off it, or snapshot it.
-<code>blocking=False</code> returns the <code>subprocess.Popen</code> handle instead, and the
-notebook in-memory fallback returns the <code>WebViewer</code>: three different
-things on purpose, because a session in <em>this</em> process is not what a
-child window is showing.</p>
+<code>blocking=False</code> returns the <code>subprocess.Popen</code> handle instead, as
+does auto mode in a notebook: two different things on purpose,
+because a session in <em>this</em> process is not what a child window is
+showing.</p>
 <h3 id="saving-and-restoring">Saving and restoring<a class="headerlink" href="#saving-and-restoring" title="Permanent link">&para;</a></h3>
 <p><code>save_session=True</code> (the default) writes the session —  panes, slots,
 pose, time link, selection — to <code>&lt;results&gt;.viewer-session.json</code> when

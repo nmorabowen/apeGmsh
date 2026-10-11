@@ -4133,7 +4133,7 @@ output cell. In a notebook, this is the one to reach for.</p>
 <p class="admonition-title">Don't pass <code>blocking=True</code> in a notebook</p>
 <p><code>results.viewer()</code> defaults to <code>blocking=None</code> (auto): scripts get
 the in-process Qt window; a Jupyter / VS Code kernel spawns a
-subprocess (or <code>show_web()</code> for in-memory Results) — the same
+subprocess — the same
 hazard T1 used to warn about under the old default. An <strong>explicit</strong>
 <code>blocking=True</code> still <strong>crashes the kernel</strong>. In a notebook, use
 <code>results.show_web()</code>. (At a real terminal, the desktop viewer is
