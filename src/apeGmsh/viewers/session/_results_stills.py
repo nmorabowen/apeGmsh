@@ -271,8 +271,6 @@ def default_contour_component(results: Any) -> Optional[str]:
     """The S1 starter heuristic (uz, ux, uy, then the first nodal
     component in canonical-axis order), over every stage's nodal
     components. ``None`` when nothing nodal is recorded."""
-    from apeGmsh.viewers.diagrams._kind_catalog import _component_sort_key
-
     nodal: set[str] = set()
     for stage in results.stages:
         try:
@@ -285,6 +283,24 @@ def default_contour_component(results: Any) -> Optional[str]:
         if comp in nodal:
             return comp
     return sorted(nodal, key=_component_sort_key)[0]
+
+
+#: Canonical axis order of the S1 starter (the diagram catalog's sort,
+#: restated so this session-side module does not import the retired
+#: ``viewers.diagrams`` ontology; ``test_diagrams_import_guard.py``).
+_AXIS_ORDER: dict[str, int] = {
+    "x": 0, "y": 1, "z": 2,
+    "xx": 10, "yy": 11, "zz": 12, "xy": 13, "yz": 14, "xz": 15,
+}
+
+
+def _component_sort_key(name: str) -> tuple[int, str]:
+    from apeGmsh.opensees._response_catalog import split_canonical_component
+
+    parts = split_canonical_component(name)
+    if parts is None:
+        return (999, name)
+    return (_AXIS_ORDER.get(parts[1], 99), name)
 
 
 def _resolve_stage(results: Any) -> str:
