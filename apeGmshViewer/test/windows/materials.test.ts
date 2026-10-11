@@ -243,6 +243,29 @@ test("a row click selects its declaration; a link click selects the referenced o
   assert.deepEqual(reduce(state, events[1]!).selection.decls, [M], "the store selects the referenced declaration");
 });
 
+test("when the chain follows nothing to a declaration that decl_params names, the row says the two sources disagree (kr3pb's LadrunoQuad case)", () => {
+  // Cut the chain's only link to the material (the section's material_ref
+  // rows) while decl_params still names it from the section.
+  const m: ModelFile = structuredClone(model);
+  const sec = m.opensees!.objects.find((o) => o.family === "section")!;
+  sec.tables = {};
+  const s = load(m);
+  const mat = materialsOf(s).groups[0]!.rows[0]!;
+  assert.deepEqual(mat.usedBy, { elements: 0, objects: [] });
+  assert.deepEqual(mat.referencedBy.map((u) => u.ref.key), [S]);
+  const row = rowsOf(render(s).root)[0]!;
+  const detail = row.all((n) => n.className === "window-row-detail")[0]!;
+  assert.match(detail.textContent, /^the definition chain follows no element or object to it, but decl_params names it \(below\): the two sources disagree/);
+  assert.match(detail.textContent, /decl_params names it from section #1 Fiber/);
+  assert.doesNotMatch(detail.textContent, /used by nothing/);
+  // With no decl_params user either, the plain sentence stays.
+  // (a fresh clone: the window's reverse indexes are keyed by the loaded definitions object)
+  const m2: ModelFile = structuredClone(m);
+  m2.opensees!.definitions.decls!.records.find((r) => r.key === S)!.params[0]!.params = { GJ: null };
+  const lone = rowsOf(render(load(m2)).root)[0]!.all((n) => n.className === "window-row-detail")[0]!;
+  assert.equal(lone.textContent, "used by nothing in the definition chain");
+});
+
 test("a link with no store target is drawn but dispatches nothing", () => {
   const { root, events } = render(state);
   const bi = rowsOf(root)[2]!;

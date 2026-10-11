@@ -310,10 +310,20 @@ function valEl(v: Val, act: (e: Event) => void): HTMLElement {
 
 function usedByEl(r: MaterialRow, act: (e: Event) => void): HTMLElement {
   const e = el("div", "window-row-detail");
-  e.append(muted("used by "));
   const n = r.usedBy.elements, objs = r.usedBy.objects;
-  if (n === 0 && objs.length === 0) e.append(el("span", undefined, "nothing in the definition chain"));
-  else {
+  if (n === 0 && objs.length === 0) {
+    // The two sources disagree when decl_params names a user the chain does
+    // not follow (an element type the chain cannot decode): say so, never a
+    // bare "nothing".
+    e.append(
+      muted(
+        r.referencedBy.length
+          ? "the definition chain follows no element or object to it, but decl_params names it (below): the two sources disagree"
+          : "used by nothing in the definition chain",
+      ),
+    );
+  } else {
+    e.append(muted("used by "));
     const parts: (string | HTMLElement)[] = [];
     if (n) parts.push(`${n.toLocaleString()} element${n === 1 ? "" : "s"}`);
     for (const o of objs) parts.push(refEl(o, act));
@@ -324,7 +334,7 @@ function usedByEl(r: MaterialRow, act: (e: Event) => void): HTMLElement {
   }
   if (r.referencedBy.length) {
     const d = el("div");
-    d.append(muted("named in decl_params by "));
+    d.append(muted(n === 0 && objs.length === 0 ? "decl_params names it from " : "named in decl_params by "));
     r.referencedBy.forEach((u, i) => {
       if (i) d.append(muted(" · "));
       d.append(refEl(u.ref, act), muted(` ${u.type}` + (u.elements ? ` (${u.elements.toLocaleString()} element${u.elements === 1 ? "" : "s"})` : "")));
