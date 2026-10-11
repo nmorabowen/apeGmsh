@@ -49,7 +49,7 @@ jobs:
 
       - name: Run cross-rank constraint cost benchmark
         run: |
-          pytest tests/benchmarks -m bench -v -p no:cacheprovider
+          pytest tests/benchmarks -m bench -v -s -p no:cacheprovider
 
       - name: Upload populated markdown table
         # Always upload — even on failure we want to see partial
