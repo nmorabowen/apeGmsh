@@ -21,7 +21,13 @@ session feature.
 The style buttons are the old still's picture, not the session's boot
 picture: the old ``view='mesh'`` drew the raw mesh with element edges
 and no feature-edge pass, and the old contour drew the bare contour
-(``test_session_stills.py`` pins both parities).
+(the X2-a image goldens, ``tests/viewers/test_x2_golden_stills.py``,
+and the X2-e numeric oracle, ``tests/viewers/test_x2_numeric_oracle.py``,
+pin the picture and the drawn data).
+
+A contour of a component the stage cannot produce raises
+:class:`ContourDataError`: a ``RuntimeError`` like the old path's
+``NoDataError``, and also a ``ValueError`` like the session's refusal.
 
 The session is built with ``ResultsSession(results=...)`` +
 ``add_view()`` rather than ``results.session()``: the latter boots
@@ -227,6 +233,7 @@ def session_for_view(
                 "none is recorded. Pass component= explicitly."
             )
         pane.style = MeshStyle(mesh=False, outlines=False)
+        _require_contour_data(results, stage_id, quantity)
         pane.contour = Contour(quantity)
     elif view == "reactions":
         pane.style = MeshStyle(mesh=True, outlines=False)
@@ -326,6 +333,28 @@ def _resolve_step(results: Any, stage_id: str, step: int) -> int:
             f"(valid 0..{n - 1}, or Python negatives)."
         )
     return idx
+
+
+class ContourDataError(RuntimeError, ValueError):
+    """No data for the requested contour component.
+
+    The old path raised ``viewers.diagrams.NoDataError``, a
+    ``RuntimeError``, from the contour's attach. The session path
+    refuses earlier with a ``ValueError`` (``_specs``). This type is
+    both, so ``except RuntimeError`` and ``except ValueError`` callers
+    keep working. This module cannot subclass ``NoDataError`` itself:
+    that would import the retired ``viewers.diagrams`` ontology
+    (``test_diagrams_import_guard.py``).
+    """
+
+
+def _require_contour_data(results: Any, stage_id: str, quantity: str) -> None:
+    from ._specs import resolve_contour_topology
+
+    try:
+        resolve_contour_topology(quantity, results, stage_id)
+    except ValueError as exc:
+        raise ContourDataError(str(exc)) from exc
 
 
 def _require_deform_field(results: Any, stage_id: str, field: str) -> None:

@@ -182,6 +182,22 @@ def test_arbitrary_deform_field_refused_naming_alternative(
     assert "'displacement'" in str(info.value)
 
 
+@pytest.mark.parametrize("view", ["contour", "deformed"])
+def test_unrecorded_contour_keeps_the_runtimeerror_type(
+    plate, tmp_path: Path, view: str,
+) -> None:
+    """The old path raised ``NoDataError`` (a ``RuntimeError``) for a
+    contour of an unrecorded component. The session path keeps that
+    type, and is a ``ValueError`` as well. Raised before any plotter
+    opens, so no GL is needed."""
+    with pytest.raises(RuntimeError, match="not recorded") as info:
+        plate.render(
+            tmp_path / "c.png", view=view, component="no_such_component",
+        )
+    assert isinstance(info.value, ValueError)
+    assert not (tmp_path / "c.png").exists()
+
+
 def test_supported_forms_still_skip_cleanly(
     plate, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:

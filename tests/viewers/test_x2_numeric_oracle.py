@@ -35,7 +35,9 @@ loops through ``plotter.screenshot(return_img=True)``. The figure in
 
 Nothing here knows which path built the scene, so X2-b / X2-d point the
 SAME tests at the session path by changing ``Results`` internals only:
-neither this file nor the ``.npz`` is edited. A path that stops ending
+neither this file nor the ``.npz`` is edited. The one exception is
+the bypass test's patch target, which follows the live still path
+(X2-d: ``viewers/session/_stills._screenshot``). A path that stops ending
 in ``BasePlotter.screenshot`` captures nothing and the oracle fails
 closed (frame-count / missing-record assertions), it never passes
 vacuously.
