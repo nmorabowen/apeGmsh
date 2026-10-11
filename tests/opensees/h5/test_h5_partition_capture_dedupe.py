@@ -204,11 +204,12 @@ def test_shared_node_load_captured_once() -> None:
             )
 
 
-def test_flat_build_duplicate_fixes_keep_both_rows() -> None:
-    """OUTSIDE partition brackets nothing changes: a flat build that
-    genuinely declares the same fix twice keeps both rows (today's
-    behavior — the dedupe is scoped to partition-bracketed captures
-    only)."""
+def test_flat_build_duplicate_fixes_merge_to_one_row() -> None:
+    """OUTSIDE partition brackets the partition dedupe does nothing; a
+    flat build that declares the same fix twice now archives one row
+    because ``apeSees.build`` merges identical homogeneous fixes within
+    a tier (ADR 0115 D6).  Before D6 it kept both rows, and the deck
+    failed inside OpenSees on the second SP."""
     fem = make_two_column_frame()  # unpartitioned
     ops = _bridge(fem)
     ops.fix(nodes=[1], dofs=(1, 1, 1, 1, 1, 1))
@@ -220,7 +221,7 @@ def test_flat_build_duplicate_fixes_keep_both_rows() -> None:
         with h5py.File(path, "r") as f:
             rows = f["/opensees/bcs/fix"][:]
             targets = [r["target"].decode() for r in rows]
-            assert targets.count("1") == 2, (
-                "flat-build duplicate fix capture must stay unchanged "
-                f"(2 rows), got {targets!r}"
+            assert targets.count("1") == 1, (
+                "a flat build's repeated fix merges to one row "
+                f"(ADR 0115 D6), got {targets!r}"
             )
