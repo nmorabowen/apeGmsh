@@ -721,10 +721,8 @@ def _write_archived_flips(
         write_planned_flips,
     )
 
-    resolve = {
-        "flip_element_stage": absorbing_ele_tags,
-        "update_parameter": update_parameter_ele_tags,
-    }[verb]
+    if verb not in ("flip_element_stage", "update_parameter"):
+        raise ValueError(f"replay: unknown parameter verb {verb!r}.")
     if len(param_tags) != len(records):
         raise ValueError(
             f"replay: {where} holds {len(records)} record(s) but "
@@ -739,7 +737,10 @@ def _write_archived_flips(
             raise ValueError(
                 f"replay: {where}: a record's param_tags rows {tuple(rows)!r} "
                 "do not name one parameter tag.")
-        ops_tags = resolve(rec, fem, fem_eid_to_ops_tag)
+        ops_tags = (
+            absorbing_ele_tags(rec, fem, fem_eid_to_ops_tag)
+            if verb == "flip_element_stage"
+            else update_parameter_ele_tags(rec, fem, fem_eid_to_ops_tag))
         if not ops_tags:
             raise ValueError(
                 f"replay: {where}: a record stores parameter tag "
