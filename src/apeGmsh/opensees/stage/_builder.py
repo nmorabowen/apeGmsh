@@ -29,7 +29,7 @@ from .._internal.build import (
 )
 from .._internal.ns import _StageDampingNS
 from .._internal.types import Primitive, Recorder, TimeSeries
-from ..node import Node, _iter_tags
+from ..node import Node, _iter_tags, _select_nodes
 
 if TYPE_CHECKING:
     from apeGmsh._kernel.records._constraints import (
@@ -928,17 +928,21 @@ class _StageBuilder:
         *,
         pg: str | None = None,
         nodes: "Iterable[int | Node] | None" = None,
+        label: "str | Sequence[str] | None" = None,
         dofs: tuple[int, ...],
         name: str | None = None,
     ) -> None:
         """Apply homogeneous SP constraints (``fix``) bound to this stage.
 
         Signature mirrors :meth:`apeSees.fix` verbatim: exactly one of
-        ``pg`` / ``nodes`` must be supplied; ``nodes`` accepts a mix
-        of plain integer tags and :class:`Node` instances; ``dofs``
-        is a tuple of 0/1 flags per ndf.  The bridge expands ``pg``
-        to a per-node fan-out at emit time, same as the global
-        :meth:`apeSees.fix` path.
+        ``pg`` / ``nodes`` / ``label`` must be supplied; ``nodes``
+        accepts a mix of plain integer tags and :class:`Node`
+        instances; ``label`` resolves on the snapshot at the call
+        (ADR 0115 D4); ``dofs`` is a tuple of 0/1 flags per ndf.  The
+        bridge expands ``pg`` to a per-node fan-out at emit time, same
+        as the global :meth:`apeSees.fix` path.  Two ``s.fix`` calls of
+        one stage on the same ``(node, DOF)`` merge (ADR 0115 D6); an
+        overlap with another tier, or with an ``s.support``, raises.
 
         Stage-bound fix lines emit **inside this stage's block**, after
         the stage's topology (nodes + elements activated via
@@ -965,10 +969,14 @@ class _StageBuilder:
         ----------
         pg
             Physical group whose nodes receive the fix.  XOR with
-            ``nodes``.
+            ``nodes`` / ``label``.
         nodes
             Explicit list of node tags (or :class:`Node` instances).
-            XOR with ``pg``.
+            XOR with ``pg`` / ``label``.
+        label
+            Geometry label (or list of labels) whose nodes receive the
+            fix.  XOR with ``pg`` / ``nodes``; never falls back to a
+            physical group.
         dofs
             ``ndf``-length tuple of 0/1 flags — ``1`` means fix that
             DOF, ``0`` leaves it free.
@@ -984,12 +992,9 @@ class _StageBuilder:
             If both or neither of ``pg`` / ``nodes`` is supplied, or
             ``name`` is already a ``fix`` declaration's.
         """
-        if (pg is None) == (nodes is None):
-            raise ValueError(
-                f"Stage {self._name!r}.fix: supply exactly one of "
-                f"pg= or nodes= (got pg={pg!r}, nodes={nodes!r})."
-            )
-        nodes_tuple = _iter_tags(nodes) if nodes is not None else None
+        pg, nodes_tuple = _select_nodes(
+            self._bridge.fem, pg=pg, nodes=nodes, label=label,
+            where=f"Stage {self._name!r}.fix")
         rec = FixRecord(pg=pg, nodes=nodes_tuple, dofs=tuple(dofs))
         # K1-6: one key space with the flat ``ops.fix`` declarations.
         self._bridge._declare_record(rec, "fix", name)
@@ -1135,6 +1140,7 @@ class _StageBuilder:
         *,
         pg: str | None = None,
         nodes: "Iterable[int | Node] | None" = None,
+        label: "str | Sequence[str] | None" = None,
         values: tuple[float, ...],
         overwrite: bool = False,
         name: str | None = None,
@@ -1163,10 +1169,14 @@ class _StageBuilder:
         ----------
         pg
             Physical group whose nodes receive the mass.  XOR with
-            ``nodes``.
+            ``nodes`` / ``label``.
         nodes
             Explicit list of node tags (or :class:`Node` instances).
-            XOR with ``pg``.
+            XOR with ``pg`` / ``label``.
+        label
+            Geometry label (or list of labels) whose nodes receive the
+            mass, resolved at the call (ADR 0115 D4).  XOR with ``pg``
+            / ``nodes``.
         values
             ``ndf``-length tuple of mass values per DOF.
         overwrite
@@ -1183,12 +1193,9 @@ class _StageBuilder:
         ValueError
             If both or neither of ``pg`` / ``nodes`` is supplied.
         """
-        if (pg is None) == (nodes is None):
-            raise ValueError(
-                f"Stage {self._name!r}.mass: supply exactly one of "
-                f"pg= or nodes= (got pg={pg!r}, nodes={nodes!r})."
-            )
-        nodes_tuple = _iter_tags(nodes) if nodes is not None else None
+        pg, nodes_tuple = _select_nodes(
+            self._bridge.fem, pg=pg, nodes=nodes, label=label,
+            where=f"Stage {self._name!r}.mass")
         rec = MassRecord(
             pg=pg, nodes=nodes_tuple, values=tuple(values),
             overwrite=bool(overwrite),
