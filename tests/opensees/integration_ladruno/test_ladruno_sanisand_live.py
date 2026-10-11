@@ -594,8 +594,9 @@ def test_i5_flip_alpha_in_init_resets_alpha_in_where_vanilla_keeps_it() -> None:
     ``|alpha| ~ 3e-16`` and the vanilla branch is a round-off sign that
     differs between MSVC and Linux; it was rejected for that reason.)
     The plastic modulus ``h = b0 / ((alpha - alpha_in):n)`` then predicts
-    the response: under ``init`` the denominator starts at zero
-    (``h = 1e10``), under ``vanilla`` at ``alpha:n ~ |alpha|``, so the
+    the response: under ``init`` the denominator starts at zero, which the
+    fork floors at 1e-10 (so ``h = b0·1e10``), under ``vanilla`` at
+    ``alpha:n ~ |alpha|``, so the
     ``init`` run is stiffer and settles less over the post-flip leg.
     """
     _require_ladruno_sanisand()
