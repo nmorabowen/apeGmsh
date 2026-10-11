@@ -333,7 +333,7 @@ export function failureOf(s: State): string | null {
 // ---- model-definition windows (V3c0) ----------------------------------------
 
 /** One value, short: a `$decl` ref as `-> key`, a `$struct` as `Class{...}`, an `$opaque` as its class. */
-function shortValue(v: DeclValue | Param[] | undefined): string {
+export function shortValue(v: DeclValue | Param[] | undefined): string {
   if (v === undefined) return "";
   if (v === null) return "null";
   if (Array.isArray(v)) {
@@ -350,14 +350,14 @@ function shortValue(v: DeclValue | Param[] | undefined): string {
 }
 
 /** A declaration's parameters by field name (its first owner), `field=value` each. */
-function namedParams(d: DeclRecord | null): string {
+export function namedParams(d: DeclRecord | null): string {
   const p = d?.params[0];
   if (!p) return "";
   return Object.entries(p.params).map(([k, v]) => `${k}=${shortValue(v)}`).join(" · ");
 }
 
 /** The `/opensees/decls` row that owns tag `tag` of allocator kind `kind`, or null. */
-function declOfTag(defs: Definitions, kind: string, tag: number | null): DeclRecord | null {
+export function declOfTag(defs: Definitions, kind: string, tag: number | null): DeclRecord | null {
   if (!defs.decls || tag === null) return null;
   const run = defs.decls.tags.find((t) => t.kind === kind && tag >= t.first && tag < t.first + t.count);
   return run ? (defs.decls.records[run.decl] ?? null) : null;
@@ -368,7 +368,7 @@ function declOfTag(defs: Definitions, kind: string, tag: number | null): DeclRec
  * group, in index order" (h5-schema.md), the index being the trailing `_<i>`
  * of the group name. No join (an empty map) when the counts differ.
  */
-function recorderDecls(defs: Definitions, recorders: readonly DefObject[], store: string): Map<string, DeclRecord> {
+export function recorderDecls(defs: Definitions, recorders: readonly DefObject[], store: string): Map<string, DeclRecord> {
   const out = new Map<string, DeclRecord>();
   const rows = defs.decls?.rows[store];
   if (!defs.decls || !rows || rows.length !== recorders.length) return out;

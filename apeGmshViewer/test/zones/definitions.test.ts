@@ -179,20 +179,59 @@ test("app declaration keys are the archive's /opensees/decls keys (2.25+); a pre
   assert.ok("opensees/uniaxialMaterial/#0" in old.decls);
 });
 
-test("an object no decls tag run owns keeps its listing key, with a warning", () => {
+test("the loader never falls back for an object no decls tag run owns: it throws, naming it", () => {
+  // The reader refuses such a file (see the fail-closed cases); a ModelFile
+  // that skipped it is refused again here, never keyed by the listing order.
   const m: ModelFile = structuredClone(model);
   m.opensees!.definitions.decls!.tags = m.opensees!.definitions.decls!.tags.filter((t) => t.kind !== "section");
+  assert.throws(() => load(m), /\/opensees\/sections\/Fiber_1: \/opensees\/decls\/tags has no run for section 1/);
+});
+
+test("a declaration that owns several tags (a geomTransf fan-out): the first object takes the key, the rest <key>@<tag>", () => {
+  const m: ModelFile = structuredClone(model);
+  const ops = m.opensees!;
+  const t1 = ops.objects.find((o) => o.family === "geomTransf")!;
+  ops.objects.push({ ...t1, tag: 2, path: "/opensees/transforms/Linear_2", groupName: "Linear_2" });
+  const run = ops.definitions.decls!.tags.find((t) => t.kind === "geomTransf")!;
+  run.count = 2;
   const s = load(m);
-  assert.ok("opensees/section/#0" in s.decls);
-  assert.ok(warningsOf(s).some((w) => /\/opensees\/sections\/Fiber_1: \/opensees\/decls has no tag run for section 1/.test(w)));
+  assert.equal(s.decls[T]?.h5, "/opensees/transforms/Linear_1");
+  assert.equal(s.decls[`${T}@2`]?.h5, "/opensees/transforms/Linear_2");
+  assert.equal(s.decls[`${T}@2`]?.tag, 2);
+  // Both are listed: no object overwrote another.
+  assert.equal(Object.values(s.decls).filter((d) => d.kind === "geomTransf").length, 2);
 });
 
 // ---- fail-closed: malformed decls / decl_params / stages, and /sequence ----
 
 const KEYS = ["opensees/timeSeries/#1", "opensees/pattern/#1"];
 function decls(over: Tree = {}): Tree {
-  return { key: KEYS, family: ["timeSeries", "pattern"], name: ["", ""], synth: new Int8Array([0, 0]), ...over };
+  return {
+    key: KEYS,
+    family: ["timeSeries", "pattern"],
+    name: ["", ""],
+    synth: new Int8Array([0, 0]),
+    tags: { kind: ["timeSeries", "pattern"], first: new Int32Array([1, 1]), count: new Int32Array([1, 1]), decl: new Int32Array([0, 1]) },
+    rows: {},
+    ...over,
+  };
 }
+/** Two uniaxial materials, tags 1 and 2; the decls own only tag 1 (the review's overwrite case). */
+const TWO_MATERIALS: Tree = {
+  materials: {
+    uniaxial: {
+      Elastic_1: { attrs: { type: "Elastic", tag: 1, params: new Float64Array([2e11]) } },
+      Elastic_2: { attrs: { type: "Elastic", tag: 2, params: new Float64Array([3e10]) } },
+    },
+  },
+  decls: decls({
+    key: ["opensees/uniaxialMaterial/#1"],
+    family: ["uniaxialMaterial"],
+    name: [""],
+    synth: new Int8Array([0]),
+    tags: { kind: ["uniaxialMaterial"], first: new Int32Array([1]), count: new Int32Array([1]), decl: new Int32Array([0]) },
+  }),
+};
 function params(over: Tree = {}): Tree {
   const ref = { first: new Int32Array([0, 0]), count: new Int32Array([0, 0]), key: [""] };
   return {
@@ -239,7 +278,27 @@ const MALFORMED: [string, Tree, RegExp][] = [
   ["a tag run whose decl is out of range", { decls: decls({ tags: { kind: ["pattern"], first: new Int32Array([1]), count: new Int32Array([1]), decl: new Int32Array([5]) } }) }, /tags\/decl\[0\] is 5, outside the 2 rows/],
   ["a stage count that disagrees with @n_stages", { stages: { attrs: { n_stages: 2 }, stage_000: { attrs: { name: "a" } } } }, /@n_stages is 2 but the group holds 1 stage_NNN groups/],
   ["a stage with no name", { stages: { stage_000: { attrs: { analyze_steps: 1 } } } }, /stage_000 has no string 'name' attribute/],
+  // Mirrors of Python's declarations(): tags and rows are required, and each
+  // rows/<store> column has one entry per record of the store.
+  ["decls with no tags", { decls: decls({ tags: undefined }) }, /\/opensees\/decls\/tags is missing/],
+  ["decls with no rows", { decls: decls({ rows: undefined }) }, /\/opensees\/decls\/rows is missing/],
+  ["rows for a store the file lacks", { decls: decls({ rows: { recorders: new Int32Array([0]) } }) }, /\/opensees\/decls\/rows\/recorders has 1 entries; \/opensees\/recorders has 0 records/],
+  [
+    "rows longer than their store",
+    { recorders: { Node_1: { attrs: { type: "Node", kind: "typed" } } }, decls: decls({ rows: { recorders: new Int32Array([0, 1]) } }) },
+    /\/opensees\/decls\/rows\/recorders has 2 entries; \/opensees\/recorders has 1 records/,
+  ],
+  ["an object no decls tag run owns", TWO_MATERIALS, /Elastic_2: \/opensees\/decls\/tags has no run for uniaxialMaterial 2/],
 ];
+
+test("rows that match their store read; a dataset store counts its rows", () => {
+  const m = read(file("rows-ok.h5", {
+    recorders: { Node_1: { attrs: { type: "Node", kind: "typed" } } },
+    bcs: { fix: { data: new Int32Array([1, 2, 3, 4]), shape: [2, 2] } },
+    decls: decls({ rows: { recorders: new Int32Array([1]), bcs: { fix: new Int32Array([0, 0]) } } }),
+  }));
+  assert.deepEqual(m.opensees!.definitions.decls!.rows, Object.assign(Object.create(null), { recorders: [1], "bcs/fix": [0, 0] }));
+});
 
 for (const [what, opensees, msg] of MALFORMED) {
   test(`fail-closed: ${what} raises, naming the path`, () => {

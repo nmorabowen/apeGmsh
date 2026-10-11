@@ -34,24 +34,21 @@ type ObjectIds = Map<OpsObject, { path: DeclPath; name: string; nameSource: stri
  * own `#k` (reader listing order, from 0) that disagrees with the archive's
  * (declaration order, from 1). A file below 2.25 keeps the listing keys.
  * Two objects of one declaration (a fan-out shares its spec's key) keep the
- * key for the first and take `<key>@<tag>` after it; an object no run owns
- * keeps its listing key, with a warning, since the writer claims every tag.
+ * key for the first and take `<key>@<tag>` after it. An object no run owns is
+ * refused (the reader already refuses such a file, read.ts), and so is a key
+ * two objects would share: no declaration is ever overwritten.
  */
-function archiveKeys(model: ModelFile, ids: ObjectIds, warnings: string[]): ObjectIds {
+function archiveKeys(model: ModelFile, ids: ObjectIds): ObjectIds {
   const table = model.opensees?.definitions.decls;
   if (!table) return ids;
   const out: ObjectIds = new Map();
   const taken = new Set<DeclPath>();
   for (const [obj, id] of ids) {
     const run = table.tags.find((t) => t.kind === obj.family && obj.tag >= t.first && obj.tag < t.first + t.count);
-    if (!run) {
-      warnings.push(`${obj.path}: /opensees/decls has no tag run for ${obj.family} ${obj.tag}; listed as ${id.path}`);
-      out.set(obj, id);
-      taken.add(id.path);
-      continue;
-    }
+    if (!run) throw new Error(`${obj.path}: /opensees/decls/tags has no run for ${obj.family} ${obj.tag}`);
     const key = table.records[run.decl]!.key;
     const path = taken.has(key) ? `${key}@${obj.tag}` : key;
+    if (taken.has(path)) throw new Error(`${obj.path}: declaration key ${path} is already taken by another object`);
     taken.add(path);
     out.set(obj, { ...id, path });
   }
@@ -93,7 +90,7 @@ export function declarationsOf(model: ModelFile, blobs: BlobStore, warnings: str
   }
 
   // OpenSees objects.
-  const ids = archiveKeys(model, objectPaths(model, warnings), warnings);
+  const ids = archiveKeys(model, objectPaths(model, warnings));
   const byTag = new Map<string, DeclPath[]>();
   const byH5 = new Map<string, DeclPath>();
   for (const [obj, id] of ids) {

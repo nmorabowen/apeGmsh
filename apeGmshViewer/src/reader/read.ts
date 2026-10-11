@@ -325,7 +325,19 @@ class Reader {
         names.push({ name: nm[i]!, kind: kd[i]!, tag: tg[i]! });
       }
     }
-    return { version, objects, elementMeta, names, definitions: this.readDefinitions(g) };
+    const definitions = this.readDefinitions(g);
+    // A 2.25+ file declares every tag (the writer refuses a row no declaration
+    // claims): an object no `decls/tags` run owns is a broken file, never a
+    // fallback to an app-made key.
+    const table = definitions.decls;
+    if (table) {
+      for (const o of objects) {
+        if (!table.tags.some((r) => r.kind === o.family && o.tag >= r.first && o.tag < r.first + r.count)) {
+          throw new SchemaError(`${o.path}: /opensees/decls/tags has no run for ${o.family} ${o.tag}; a 2.25+ file declares every tag`);
+        }
+      }
+    }
+    return { version, objects, elementMeta, names, definitions };
   }
 
   /**
@@ -465,37 +477,61 @@ class Reader {
     };
     const records: DeclRecord[] = key.map((k, i) => ({ row: i, key: k, family: family[i]!, name: name[i]!, synth: synth[i] !== 0, params: [] }));
 
+    // `tags` and `rows` are required children (Python reads both unguarded).
     const tags: DeclTagRun[] = [];
-    if (has(d, "tags")) {
-      const t = this.group(d, "tags");
-      const kind = strings(this.dataset(t, "kind"));
-      const first = numbers(this.dataset(t, "first"));
-      const count = numbers(this.dataset(t, "count"));
-      const decl = numbers(this.dataset(t, "decl"));
-      if (first.length !== kind.length || count.length !== kind.length || decl.length !== kind.length) {
-        throw new SchemaError(`${t.path}: kind, first, count and decl lengths differ`);
-      }
-      kind.forEach((k, i) => tags.push({ kind: k, first: first[i]!, count: count[i]!, decl: inRange(decl[i]!, `${t.path}/decl[${i}]`) }));
+    const t = this.group(d, "tags");
+    const kind = strings(this.dataset(t, "kind"));
+    const first = numbers(this.dataset(t, "first"));
+    const count = numbers(this.dataset(t, "count"));
+    const decl = numbers(this.dataset(t, "decl"));
+    if (first.length !== kind.length || count.length !== kind.length || decl.length !== kind.length) {
+      throw new SchemaError(`${t.path}: kind, first, count and decl lengths differ`);
     }
+    kind.forEach((k, i) => tags.push({ kind: k, first: first[i]!, count: count[i]!, decl: inRange(decl[i]!, `${t.path}/decl[${i}]`) }));
 
+    // `rows/<store>` holds one declaration row per record of `/opensees/<store>`:
+    // as many as the store has (a dataset's rows, a group's children, the
+    // columnar `commands` group's `method` entries; 0 for a store not in the file).
     const rows: Record<string, number[]> = Object.create(null) as Record<string, number[]>;
-    if (has(d, "rows")) {
-      const walk = (grp: H5Group, prefix: string) => {
-        for (const k of grp.keys()) {
-          const node = grp.get(k);
-          const p = prefix ? `${prefix}/${k}` : k;
-          if (node instanceof this.h5.Group) walk(node as H5Group, p);
-          else rows[p] = Array.from(numbers(this.dataset(grp, k)), (v, i) => inRange(v, `${grp.path}/${k}[${i}]`));
+    const walk = (grp: H5Group, prefix: string) => {
+      for (const k of grp.keys()) {
+        const node = grp.get(k);
+        const p = prefix ? `${prefix}/${k}` : k;
+        if (node instanceof this.h5.Group) {
+          walk(node as H5Group, p);
+          continue;
         }
-      };
-      walk(this.group(d, "rows"), "");
-    }
+        const column = Array.from(numbers(this.dataset(grp, k)), (v, i) => inRange(v, `${grp.path}/${k}[${i}]`));
+        const expected = this.storeCount(g, p);
+        if (column.length !== expected) {
+          throw new SchemaError(`${d.path}/rows/${p} has ${column.length} entries; ${joinPath(g.path, p)} has ${expected} records`);
+        }
+        rows[p] = column;
+      }
+    };
+    walk(this.group(d, "rows"), "");
 
     const hasParams = has(g, "decl_params");
     if (hasParams) {
       for (const p of this.readDeclParams(this.group(g, "decl_params"), keys, n)) records[p.decl]!.params.push(p.params);
     }
     return { hasParams, records, tags, rows };
+  }
+
+  /** The record count of the store at `path` under `ops`, as Python's `declarations()` counts it. */
+  private storeCount(ops: H5Group, path: string): number {
+    let node: unknown = ops;
+    for (const seg of path.split("/")) {
+      if (!(node instanceof this.h5.Group) || !has(node as H5Group, seg)) return 0;
+      node = (node as H5Group).get(seg);
+    }
+    if (node instanceof this.h5.Group) {
+      const grp = node as H5Group;
+      if (has(grp, "method")) return this.dataset(grp, "method").shape?.[0] ?? 0;
+      return grp.keys().length;
+    }
+    if (node instanceof this.h5.Dataset) return (node as H5Dataset).shape?.[0] ?? 1;
+    throw new SchemaError(`${joinPath(ops.path, path)} is neither a group nor a dataset`);
   }
 
   private readDeclParams(g: H5Group, keys: Set<string>, nDecls: number): { decl: number; params: DeclParams }[] {
