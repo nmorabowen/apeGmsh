@@ -20,6 +20,10 @@
 // that cannot be checked (no decl_params row; no `*_args` while the family has
 // more than one declaration), says "cannot join (#1646)" and has no link and
 // no parameters. A family with one declaration and one chain needs no order.
+// When every declaration of the family has the same type and identical
+// decl_params, the parameters are the same whichever one the chain used: they
+// are shown, marked "declaration ambiguous (#1646)", with no single link
+// (the `*_args`, when present, must still agree).
 //
 // `analysisOf` is the pure read of the state; `view` builds the DOM. A click
 // on a declaration (or on a `{$decl}` ref inside its parameters) dispatches
@@ -130,6 +134,16 @@ function joinChains(defs: Definitions, chains: readonly AnalysisDef[]): Map<stri
 const numbers = (xs: readonly unknown[]): number[] => xs.filter((x): x is number => typeof x === "number" && Number.isFinite(x));
 const sameNumber = (a: number, b: number): boolean => a === b || Math.abs(a - b) <= 1e-12 * Math.max(Math.abs(a), Math.abs(b));
 const JOIN_GAP = "cannot join (#1646)";
+const AMBIGUOUS = "declaration ambiguous (#1646)";
+
+/** The family's declarations all have one type and identical decl_params (and there is more than one). */
+export function identicalCandidates(cands: readonly DeclRecord[]): boolean {
+  if (cands.length < 2) return false;
+  const first = cands[0]!.params[0];
+  if (!first) return false;
+  const sig = JSON.stringify(first.params);
+  return cands.every((c) => c.params[0] !== undefined && c.params[0].type === first.type && JSON.stringify(c.params[0].params) === sig);
+}
 
 /**
  * Whether the order-joined declaration `rec` is the one chain `a` used: the
@@ -144,10 +158,21 @@ export function verifyMember(rec: DeclRecord, a: AnalysisDef, attr: string, uniq
   if (args === undefined) {
     return unique ? null : `${JOIN_GAP}: ${a.path} has no ${attr}_args to check the order join against`;
   }
-  const want = numbers(Array.isArray(args) ? args : [args]);
+  const list: unknown[] = Array.isArray(args) ? args : [args];
+  const want = numbers(list);
   const have = numbers(Object.values(p.params));
-  if (want.length === have.length && want.every((x, k) => sameNumber(x, have[k]!))) return null;
-  return `${JOIN_GAP}: the order join gives ${rec.key} (${have.join(", ") || "no number"}), but ${a.path} has ${attr}_args [${want.join(", ")}]`;
+  if (want.length !== have.length || !want.every((x, k) => sameNumber(x, have[k]!))) {
+    return `${JOIN_GAP}: the order join gives ${rec.key} (${have.join(", ") || "no number"}), but ${a.path} has ${attr}_args [${want.join(", ")}]`;
+  }
+  // String slots, where the args carry them: the declaration's string fields, in field order, must be the same strings.
+  const wantS = list.filter((x): x is string => typeof x === "string" && x !== "");
+  if (wantS.length) {
+    const haveS = Object.values(p.params).filter((x): x is string => typeof x === "string");
+    if (wantS.length !== haveS.length || wantS.some((x, k) => x !== haveS[k])) {
+      return `${JOIN_GAP}: the order join gives ${rec.key} (${haveS.join(", ") || "no string"}), but ${a.path} has ${attr}_args strings [${wantS.join(", ")}]`;
+    }
+  }
+  return null;
 }
 
 const STAGE_COLUMNS = ["source", "steps", "dt", "analysis"] as const;
@@ -197,13 +222,19 @@ export function analysisOf(s: State): AnalysisModel {
       const rec = join[i] ?? null;
       if (!rec) return { role, attr, token, decl: null, params: [], note: `no /opensees/decls ${family} declaration` };
       if (noParams) return { role, attr, token, decl: null, params: [], note: noParams };
-      const unique = join.filter((r) => r !== null).length === 1;
-      const refused = verifyMember(rec, a, attr, unique);
+      const cands = join.filter((r): r is DeclRecord => r !== null);
+      const ambiguous = identicalCandidates(cands);
+      // Identical candidates need no order (any one gives the same parameters), but *_args, when present, must agree.
+      const refused = verifyMember(rec, a, attr, cands.length === 1 || ambiguous);
       if (refused) return { role, attr, token, decl: null, params: [], note: refused };
       const p = rec.params[0]!;
       const params = Object.entries(p.params).map(([field, v]): ParamLine =>
         isRef(v) ? { field, text: v.$decl, ref: linkOf(s, defs, v.$decl) } : { field, text: shortValue(v), ref: null },
       );
+      if (ambiguous) {
+        const note = `${AMBIGUOUS}: ${cands.length} identical ${family} declarations (${cands.map((c) => handleOf(c.key)).join(", ")}); the archive does not say which one this chain uses`;
+        return { role, attr, token, decl: null, params, note };
+      }
       return { role, attr, token, decl: linkOf(s, defs, rec.key), params, note: null };
     });
     // Steps and dt: /sequence when the file has it; else the stage's own attributes, said as such.
