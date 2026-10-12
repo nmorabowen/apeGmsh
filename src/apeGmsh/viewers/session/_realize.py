@@ -897,7 +897,7 @@ def _stage_active_scope(
         (int(e) for e, c in cell_of.items() if not hidden[int(c)]),
         dtype=np.int64,
     )
-    if not scoped.is_unscoped:
+    if scoped.element_ids is not None:  # scoped: draw scope AND active
         active = np.intersect1d(active, scoped.element_ids)
     if active.size == 0:
         raise ValueError(
