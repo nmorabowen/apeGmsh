@@ -568,25 +568,17 @@ def test_mesh_pane_without_backend_refuses(session_results):
         realize_pane(session, view)
 
 
-@pytest.mark.parametrize(
-    "mutate, match",
-    [
-        (lambda v: setattr(v, "overlay", True), "overlay"),
-    ],
-    ids=["overlay"],
-)
-def test_unrealized_state_refuses_loudly(
-    session_results, backend, mutate, match,
-):
+def test_overlay_realizes_the_ghost(session_results, backend):
     """A still that silently drops session state is a wrong picture.
 
-    The style buttons and the view clips left this list at S3 — they
-    realize now (see the INV-MESH-4 and clip tests below).
+    The style buttons and the view clips left the refusal list at S3,
+    and ``overlay`` left it at X3-c (ADR 0098 A7.5): it now draws the
+    undeformed ghost (``tests/viewers/test_x3c_style_ghost.py``).
     """
     session, view = _session_view(session_results)
-    mutate(view)
-    with pytest.raises(NotImplementedError, match=match):
-        realize_pane(session, view, backend)
+    view.overlay = True
+    realized = realize_pane(session, view, backend)
+    assert any(e.key == f"{view.id}:ghost" for e in realized.layers)
 
 
 # =====================================================================
