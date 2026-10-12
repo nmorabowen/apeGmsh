@@ -518,7 +518,7 @@ class MeshView:
             for name, mine, theirs in (
                 ("clim", clim, o_clim), ("cmap", cmap, o_cmap),
             ):
-                if mine is not None and theirs is not None                         and mine != theirs:
+                if mine is not None and theirs is not None and mine != theirs:
                     raise ValueError(
                         f"The {category!r} slot sets {name}={mine!r} "
                         f"for field {field!r}, but the occupied "
