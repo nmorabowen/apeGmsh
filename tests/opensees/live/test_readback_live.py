@@ -24,7 +24,7 @@ import gmsh
 import pytest
 
 from apeGmsh import apeGmsh
-from apeGmsh.opensees._internal.build import BridgeError
+from apeGmsh.opensees._internal.build.errors import BridgeError
 from apeGmsh.opensees.apesees import apeSees
 
 pytestmark = pytest.mark.live

@@ -26,7 +26,7 @@ from ...recorder import (
 )
 from ...node import _resolve_label
 from ..._readback import resolve_element_label
-from ..build import BridgeError
+from ..build.errors import BridgeError
 from ._base import _BridgeNamespace
 
 if TYPE_CHECKING:

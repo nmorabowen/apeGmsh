@@ -41,7 +41,8 @@ from typing import TYPE_CHECKING, Iterator, Sequence, Union
 
 import numpy as np
 
-from ._internal.build import BridgeError, _load_dof_layout
+from ._internal.build.errors import BridgeError
+from ._internal.build.ndf import _load_dof_layout
 from ._internal.tag_resolution import MISSING_FEM_ELEMENT_ID
 
 from .element.beam_column import (
@@ -77,7 +78,7 @@ _ROTATIONAL_FAMILIES: tuple[type, ...] = (
 _TRANSLATIONAL_ONLY: tuple[type, ...] = (Truss, CorotTruss)
 
 if TYPE_CHECKING:
-    from ._internal.build import ElementPlanRows
+    from ._internal.build.pg_expand import ElementPlanRows
     from ._internal.types import Element
     from .apesees import apeSees
     from .emitter.live import LiveOpsEmitter
