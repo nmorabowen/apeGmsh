@@ -187,3 +187,40 @@ def test_sequential_build_emits_the_built_tags(tmp_path: Path) -> None:
     [line] = _spec(_element_record(ids=beam)).to_tcl_commands(model=model)
     expected = " ".join(str(pairing[e]) for e in beam)
     assert f" -ele {expected} " in line
+
+# ---------------------------------------------------------------------------
+# The public bridge path never reaches these routes and already translates
+# ---------------------------------------------------------------------------
+
+
+def test_bridge_declared_recorders_carry_ops_tags(tmp_path: Path) -> None:
+    """``ops.recorder.declare`` / ``ops.recorder.Element`` are emitted by
+    the bridge build, which translates FEM ids itself and never calls the
+    spec routes; under sequential tags their ``-ele`` lists are the beam's
+    ops tags, with no ``model=`` anywhere."""
+    from tests.test_results_recorder_tag_parity import (
+        _portal_bridge,
+        _portal_fem,
+    )
+
+    fem = _portal_fem()
+    ops = _portal_bridge(fem)
+    beam = [int(e) for e in fem.elements.select(pg="Beam").ids]
+    ops.recorder.declare(elements=("nodal_resisting_force_x",), pg="Beam",
+                         name="beamrec", file_root="out")
+    ops.recorder.Element(file="out/b.out", response=("globalForce",),
+                         pg="Beam")
+    deck = tmp_path / "m.tcl"
+    ops.tcl(str(deck))
+    lines = deck.read_text().splitlines()
+    tags = {}
+    for line in lines:
+        parts = line.split()
+        if parts[:2] == ["element", "elasticBeamColumn"]:
+            tags[(int(parts[3]), int(parts[4]))] = int(parts[2])
+    beam_tags = sorted(tags.values())
+    assert beam_tags != sorted(beam)                    # not vacuous
+    recorders = [ln for ln in lines if ln.startswith("recorder Element")]
+    assert len(recorders) == 2
+    for ln in recorders:
+        assert f" -ele {' '.join(map(str, beam_tags))} globalForce" in ln

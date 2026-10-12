@@ -19,8 +19,16 @@ The three routes now take a keyword-only `model=`, the built
 the spec's FEM ids, which are now the elements that were recorded. An
 `element_tags="fem"` build emits exactly the commands it emitted before.
 
-**Changed (behaviour):** an element-scoped recorder emit without `model=`
-now refuses with a `ValueError` that names `model=`, and so does a FEM id the
-model has no element for. Identity is never assumed. The live route refuses
-at `__enter__`, before any recorder reaches the domain. Node-only specs need
-no `model=`.
+**Changed (behaviour):** direct callers of
+`ResolvedRecorderSpec.emit_recorders`, `to_tcl_commands` or
+`to_python_commands` (and of `LiveRecorders`) whose spec holds an
+`elements`, `gauss` or `line_stations` record must now pass `model=`.
+Without it the emit raises a `ValueError` that names `model=`, because the
+spec carries no tag mode or pairing, so identity cannot be proven from it.
+That includes callers whose ids happen to equal the tags (an
+`element_tags="fem"` build, or a hand-written deck numbered by FEM id). A FEM
+id the model has no element for raises too. The live route refuses at
+`__enter__`, before any recorder is issued. Node-only specs, MPCO emits, and
+recorders declared on the bridge (`ops.recorder.declare`,
+`ops.recorder.Element`) are unaffected: the bridge build already emits them
+under OpenSees tags.
