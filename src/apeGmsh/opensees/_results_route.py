@@ -405,17 +405,24 @@ class _NodeRoles:
             built.fem, built.ndf_records, inferred, built.ndm)
         self.ndm = int(built.ndm)
         self.ndf = {int(k): int(v) for k, v in {**inferred, **overlay}.items()}
+        self.envelope = int(built.ndf)
+        self._fem_nodes = frozenset(int(n) for n in built.fem.nodes.ids)
         self._run = run
         self._rot: "RotationRoles | None" = None
 
     def node_ndf(self, tag: int, origin: str) -> int:
-        if tag not in self.ndf:
+        """The ndf the deck gave node ``tag``: inferred, ``ops.ndf``, or
+        (a node only adaptive elements touch, or none) the ``ops.model``
+        envelope the emit writes it at."""
+        if tag in self.ndf:
+            ndf = self.ndf[tag]
+        elif tag in self._fem_nodes:
+            ndf = self.envelope
+        else:
             raise BridgeError(
-                f"{_WHERE}: {origin} records node {tag}, which no element "
-                "and no ops.ndf gives a DOF count, so its columns have no "
-                "established meaning."
+                f"{_WHERE}: {origin} records node {tag}, which is not a node "
+                "of the model the deck ran."
             )
-        ndf = self.ndf[tag]
         if ndf not in _LAID_OUT_NDF:
             raise BridgeError(
                 f"{_WHERE}: {origin} records node {tag} with ndf={ndf}; the "

@@ -19,10 +19,21 @@ from __future__ import annotations
 
 from typing import Any, cast
 
+import numpy as np
 import pytest
 
 from apeGmsh.opensees import apeSees
 from apeGmsh.opensees._internal.build.errors import BridgeError
+from apeGmsh.opensees._internal.types import Element
+from apeGmsh.opensees._readback import rotation_roles
+from apeGmsh.opensees.element.beam_column import elasticBeamColumn
+from apeGmsh.opensees.element.solid import LadrunoUP
+from apeGmsh.opensees.element.zero_length import (
+    CoupledZeroLength,
+    ZeroLength,
+    ZeroLengthMatDir,
+    ZeroLengthSection,
+)
 from apeGmsh.opensees._recorder_translate import (
     group_node_components_by_ops_token,
     node_component_to_ops,
@@ -258,3 +269,188 @@ def test_model_data_ndf2_rotation_refuses() -> None:
     md.recorders(nodes=("rotation_z",), pg="Top")
     with pytest.raises(BridgeError, match="rotation_z.*no DOF"):
         md.recorder_commands(target="tcl")
+
+
+# ---------------------------------------------------------------------------
+# The shared rotation-role table (``_readback.rotation_roles``): the rule the
+# declare emit, ``ops.results`` and ``.read`` all apply
+# ---------------------------------------------------------------------------
+
+
+class _Rows:
+    """Plan rows stand-in: connectivity only."""
+
+    def __init__(self, *conn: tuple[int, ...]) -> None:
+        self.conn = np.asarray(conn, dtype=np.int64)
+
+    def __len__(self) -> int:
+        return len(self.conn)
+
+
+def _spec(cls: type) -> Any:
+    """An instance of ``cls`` for an ``isinstance`` role check."""
+    return object.__new__(cls)
+
+
+def test_role_table_blocked_wins_over_rotational() -> None:
+    """A beam and a LadrunoUP share node 2: the u-p class blocks it."""
+    roles = rotation_roles([(_spec(elasticBeamColumn), _Rows((1, 2))),
+                            (_spec(LadrunoUP), _Rows((2, 3, 4, 5)))])
+    assert roles.refusal(1) is None
+    assert "LadrunoUP" in str(roles.refusal(2))
+
+
+def test_role_table_unknown_class_blocks() -> None:
+    class Unknown(Element):
+        def dependencies(self) -> tuple[Any, ...]:
+            return ()
+
+        def _emit(self, emitter: Any, tag: int) -> None:
+            raise AssertionError("never emitted")
+
+    roles = rotation_roles([(_spec(elasticBeamColumn), _Rows((1, 2))),
+                            (_spec(Unknown), _Rows((2, 3)))])
+    assert "Unknown" in str(roles.refusal(2))
+    assert "Unknown" in str(roles.refusal(3))
+
+
+@pytest.mark.parametrize(
+    "cls", [ZeroLength, ZeroLengthSection, CoupledZeroLength])
+def test_role_table_zero_length_family_is_rotational(cls: type) -> None:
+    roles = rotation_roles([(_spec(cls), _Rows((1, 2)))])
+    assert roles.refusal(1) is None and roles.refusal(2) is None
+
+
+def test_role_table_element_less_node_needs_a_model_without_up() -> None:
+    """Node 9 is touched by no element: it carries a rotation in a frame,
+    but not beside a u-p class, whose pressure DOF a constraint could tie
+    to its slot."""
+    frame = [(_spec(elasticBeamColumn), _Rows((1, 2)))]
+    assert rotation_roles(frame).refusal(9) is None
+    mixed = frame + [(_spec(LadrunoUP), _Rows((3, 4, 5, 6)))]
+    assert "LadrunoUP" in str(rotation_roles(mixed).refusal(9))
+
+
+# ---------------------------------------------------------------------------
+# No false refusals: the zero-length family and a decoupled master record
+# as on main (byte-identical lines in 3-D)
+# ---------------------------------------------------------------------------
+
+
+def _tcl_recorder_lines(ops: apeSees, tmp_path: Any) -> list[str]:
+    deck = tmp_path / "m.tcl"
+    ops.tcl(str(deck))
+    return [ln for ln in deck.read_text().splitlines()
+            if ln.startswith("recorder Node")]
+
+
+def test_3d_zero_length_rotational_spring_records_dof_6(tmp_path: Any) -> None:
+    ops = apeSees(cast("object", make_two_node_beam(ndm=3)))
+    ops.model(ndm=3, ndf=6)
+    k = ops.uniaxialMaterial.ElasticMaterial(E=1e6)
+    ops.element.ZeroLength(
+        pg="Cols", mat_dirs=(ZeroLengthMatDir(material=k, dof=6),))
+    ops.recorder.declare(nodes=("rotation_z", "reaction_moment_z"),
+                         pg="Top", file_root="out", name="r")
+    assert _tcl_recorder_lines(ops, tmp_path) == [
+        "recorder Node -file out/r__default__disp.out -time -node 2 "
+        "-dof 6 disp",
+        "recorder Node -file out/r__default__reaction.out -time -node 2 "
+        "-dof 6 reaction",
+    ]
+
+
+def test_3d_zero_length_section_base_records_rotations(tmp_path: Any) -> None:
+    ops = apeSees(cast("object", make_two_node_beam(ndm=3)))
+    ops.model(ndm=3, ndf=6)
+    k = ops.uniaxialMaterial.ElasticMaterial(E=1e6)
+    agg = ops.section.Aggregator(materials_by_dof={"P": k, "Mz": k, "My": k})
+    ops.element.ZeroLengthSection(pg="Cols", section=agg)
+    ops.recorder.declare(nodes=("rotation",), pg="Base",
+                         file_root="out", name="r")
+    assert _tcl_recorder_lines(ops, tmp_path) == [
+        "recorder Node -file out/r__default__disp.out -time -node 1 "
+        "-dof 4 5 6 disp",
+    ]
+
+
+def _frame_with_master(name: str) -> tuple[Any, Any, Any]:
+    """A beam line plus an element-less decoupled master node."""
+    from apeGmsh import apeGmsh
+
+    g = apeGmsh(model_name=name)
+    g.begin()
+    a = g.model.geometry.add_point(0.0, 0.0, 0.0)
+    b = g.model.geometry.add_point(1.0, 0.0, 0.0)
+    g.physical.add(1, [g.model.geometry.add_line(a, b)], name="Beam")
+    h = g.decouple_node(coords=(0.5, 1.0, 0.0), label="master")
+    g.mesh.generation.generate(dim=1)
+    return g, g.mesh.queries.get_fem_data(dim=1), h
+
+
+def test_decoupled_ndf6_master_records_rotations(tmp_path: Any) -> None:
+    g, fem, h = _frame_with_master("b5_master_3d")
+    try:
+        ops = apeSees(fem)
+        ops.model(ndm=3, ndf=6)
+        ops.element.elasticBeamColumn(
+            pg="Beam", transf=ops.geomTransf.Linear(vecxz=(0.0, 0.0, 1.0)),
+            A=0.01, E=200e9, Iz=1e-4, Iy=1e-4, G=80e9, J=1e-4,
+        )
+        ops.ndf(h, ndf=6)
+        ops.recorder.declare(nodes=("rotation",), ids=(int(h.tag),),
+                             file_root="out", name="m")
+        assert _tcl_recorder_lines(ops, tmp_path) == [
+            f"recorder Node -file out/m__default__disp.out -time -node "
+            f"{int(h.tag)} -dof 4 5 6 disp",
+        ]
+    finally:
+        g.end()
+
+
+def test_decoupled_planar_master_rotation_is_dof_3(tmp_path: Any) -> None:
+    g, fem, h = _frame_with_master("b5_master_2d")
+    try:
+        ops = apeSees(fem, default_orientation=None)
+        ops.model(ndm=2, ndf=3)
+        ops.element.elasticBeamColumn(
+            pg="Beam", transf=ops.geomTransf.Linear(), A=0.01, E=200e9,
+            Iz=1e-4)
+        ops.ndf(h, ndf=3)
+        ops.recorder.declare(nodes=("rotation_z",), ids=(int(h.tag),),
+                             file_root="out", name="m")
+        assert _tcl_recorder_lines(ops, tmp_path) == [
+            f"recorder Node -file out/m__default__disp.out -time -node "
+            f"{int(h.tag)} -dof 3 disp",
+        ]
+    finally:
+        g.end()
+
+
+# ---------------------------------------------------------------------------
+# pore_pressure: never a silent ``-dof -1``
+# ---------------------------------------------------------------------------
+
+
+def test_pore_pressure_refuses_on_a_frame() -> None:
+    ops = _beam_2d()
+    ops.recorder.declare(nodes=("pore_pressure",), pg="Top")
+    with pytest.raises(BridgeError, match="pore_pressure.*PFEM"):
+        _node_recorders(ops)
+
+
+def test_pore_pressure_refuses_on_a_up_node() -> None:
+    """The OpenSees ``pressure`` node response is the PFEM pressure
+    constraint: on a u-p node it is not the pore pressure either."""
+    from tests.opensees.unit.test_label_selector_fix_merge import (
+        build_footing_fem,
+    )
+
+    ops = apeSees(build_footing_fem(), default_orientation=None)
+    ops.model(ndm=2, ndf=3)
+    mat = ops.nDMaterial.ElasticIsotropic(E=1e4, nu=0.3, rho=0.0)
+    ops.element.LadrunoUP(pg="Plate", material=mat, Kf=2.2e6, poro=0.4,
+                          rhoF=1.0, perm=(1e-4, 1e-4))
+    ops.recorder.declare(nodes=("pore_pressure",), pg="Bottom")
+    with pytest.raises(BridgeError, match=r"pore_pressure.*DOF \(3\)"):
+        _node_recorders(ops)
