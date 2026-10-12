@@ -19,6 +19,8 @@ NEUTRAL_CURRENT      = "2.35.0"  # #1338: additive `source` column on /loads/nod
 NEUTRAL_PRIOR_MINOR  = "2.34.0"  # #1291: /meta/ndm is the ops.model spatial dimension (0 = undeclared)
 NEUTRAL_FLOOR        = "2.10.0"  # B2 layout split; every later minor is additive or shimmed
 RESULTS_FLOOR        = "1.0.0"   # the results zone's first version
+RESULTS_CURRENT      = "1.2.0"   # #1746: optional root element_index_space stamp
+RESULTS_PRIOR_MINOR  = "1.1.0"   # Phase 6 (ADR 0021): /meta/lineage
 # ADR 0112 D2/D3 root zones (#1304). Both start at 1.0.0; a zone's floor
 # is its first version. Geometry has no prior minor yet; add
 # GEOMETRY_PRIOR_MINOR at its first minor bump.

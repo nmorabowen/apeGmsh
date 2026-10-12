@@ -1720,7 +1720,7 @@ and read by `NativeReader`
 The path names and attribute keys are constants in
 [`results/schema/_native.py`](../src/apeGmsh/results/schema/_native.py).
 This section describes the layout those modules write at results zone
-**1.1.0** (floor **1.0.0**). It is the contract apeGmshViewer reads
+**1.2.0** (floor **1.0.0**). It is the contract apeGmshViewer reads
 (ADR 0112 D4). It is not a `model.h5`: the version keys are root attrs,
 `/meta` holds only the lineage, and the model is embedded under `/model`
 rather than written at the root.
@@ -1746,8 +1746,9 @@ results.h5
 │   @schema_version, @results_schema_version,      root attrs (see below)
 │   @neutral_schema_version, @opensees_schema_version,
 │   @source_type, @source_path, @created_at, @apegmsh_version,
-│   @analysis_label, @opensees_backend, @opensees_build
-├── /meta                                  lineage only (results 1.1.0; always present at 1.1.0)
+│   @analysis_label, @opensees_backend, @opensees_build,
+│   @element_index_space                     (optional, results 1.2.0)
+├── /meta                                  lineage only (always present from results 1.1.0)
 │     └── /lineage                         @fem_hash, @model_hash, @results_hash
 ├── /model                                 (optional) the neutral zone, embedded
 │     ├── /meta                            the model's /meta attrs, plus /meta/lineage
@@ -1789,7 +1790,7 @@ All strings are variable-length UTF-8.
 
 | Attribute | Type | Meaning |
 |---|---|---|
-| `results_schema_version` | string | the results-zone version (`"1.1.0"`). The reader validates it against the results floor before any read ([The floor rule](#the-floor-rule)). |
+| `results_schema_version` | string | the results-zone version (`"1.2.0"`). The reader validates it against the results floor before any read ([The floor rule](#the-floor-rule)). |
 | `schema_version` | string | the envelope stamp (`SCHEMA_VERSION`, `"1.1.0"` today). The reader falls back to it only when `results_schema_version` is missing. A file with neither is refused as "not a native apeGmsh results.h5". |
 | `neutral_schema_version` | string | forwarded from `/model/meta`. Present only when `/model` is embedded. |
 | `opensees_schema_version` | string | forwarded from the source `model.h5`. Present only when `/opensees` is embedded. |
@@ -1799,6 +1800,61 @@ All strings are variable-length UTF-8.
 | `apegmsh_version` | string | the producing apeGmsh version, or `""` if unknown |
 | `analysis_label` | string | free text; `""` by default |
 | `opensees_backend`, `opensees_build` | string | optional build provenance ([`results.h5` root attrs](#resultsh5-root-attrs-opensees-build-provenance)) |
+| `element_index_space` | string | optional, results 1.2.0: the element row ids are provably FEM element ids ([`element_index_space`](#element_index_space)) |
+
+### `element_index_space`
+
+Results 1.2.0 (#1746) adds this optional root attribute. When present, it
+says that every element row id in the file (each group's `_element_index`)
+is provably a FEM element id, the id `/model/elements` carries. This is
+the complete value set. A reader must treat any value not listed here as
+unverified:
+
+| Value | Meaning |
+|---|---|
+| `"fem"` | element row ids are provably FEM element ids. It is the only value any writer emits (`ELEMENT_INDEX_SPACES` in `results/schema/_native.py`; `NativeWriter.stamp_element_index_space` refuses any other) |
+
+**Absent** means unverified: the file does not prove which ids its element
+rows carry. Every 1.0.0 and 1.1.0 file lacks the attribute, and so does a
+1.2.0 file whose writer could not prove it. Absence is not a refusal: the
+file reads exactly as before. The version number alone never makes a file
+verified; only the stamp does. The Python reader exposes the verdict as
+`NativeReader.element_index_verified` (true only for `"fem"`) and the raw
+value as `NativeReader.element_index_space`.
+
+Who writes it:
+
+| Writer (`source_type`) | Writes `element_index_space`? |
+|---|---|
+| recorder transcoder (`tcl_recorders`) | `"fem"` when it can prove it, whatever apeGmsh version emitted the recorders; otherwise absent (below) |
+| `DomainCapture` (`domain_capture`) | never: absent |
+| `make_demo_results` (`domain_capture`) | never: absent |
+| `ParallelModalResult` (`parallel_modal`) | never: absent |
+| `FootfallResult` (`footfall_walking`) | never: absent |
+| `NativeWriter` itself | only when a caller invokes `stamp_element_index_space`; the transcoder is the only caller in `src/` |
+| MPCO (`Results.from_mpco`) | writes no `results.h5` at all: it reads the `.mpco` file directly |
+
+The transcoder labels element rows with the recorder spec's FEM ids. Those
+are the recorded elements only if the emit put each element's OpenSees tag
+in the `-ele` list, and a `.out` file does not record which emit wrote it
+(before #1740 the emits wrote the FEM ids unchanged). The transcoder therefore
+stamps `"fem"` only when all of these hold:
+
+1. `model=` was given, so the model's `/opensees` zone is embedded;
+2. that model's `lineage.fem_hash` equals the spec's `fem_snapshot_id`;
+3. either no record yields element rows (node ids are FEM ids, because the
+   bridge emits every node under its FEM id), or every element id that a
+   `gauss`, `line_stations` or `elements` record names is its own OpenSees
+   tag in the model's `(fem_eid, tag)` pairing. Then an emit that
+   translated the ids and one that did not wrote the same `-ele` list.
+
+What the stamp does **not** certify: that the recorder files came from a
+deck built from the embedded model, or that the deck recorded what the spec
+names. It certifies the index space only, relative to the embedded
+`/opensees`. Element records under `element_tags="sequential"` (the bridge
+default), whose FEM ids differ from their tags, stay unverified even when a
+translating emit wrote them, until an emit-side manifest can prove the
+translation.
 
 ### The embedded model, and how to pair a file with its `model.h5`
 
@@ -1985,6 +2041,10 @@ in. Nothing in `results.h5` or `/model` records that system.
   1.0.0 file may carry `/opensees`. A file that predates the key carries
   only the envelope `schema_version` and no `/opensees`. Otherwise all of
   them have the same `/stages` layout.
+* **No `element_index_space`** in 1.0.0 and 1.1.0 files, nor in a 1.2.0
+  file whose writer could not prove its element ids
+  ([`element_index_space`](#element_index_space)). Such a file reads as
+  unverified.
 
 ## Cross-references
 
@@ -2031,7 +2091,7 @@ call `validate_zone_version(...)` for each zone before reading it.
 |---|---|---|---|---|---|
 | neutral (broker) | `neutral_schema_version` | `/nodes`, `/elements`, `/physical_groups`, `/labels`, `/mesh_selections`, `/partitions`, `/parts`, `/constraints`, `/reinforce_ties`, `/embed_ties`, `/rebar_elements`, `/contacts`, `/contact_planes`, `/interfaces`, `/loads`, `/masses`, `/composed_from` | [`mesh/_femdata_h5_io.py`](../src/apeGmsh/mesh/_femdata_h5_io.py) `NEUTRAL_SCHEMA_VERSION` | **2.35.0** | **2.10.0** |
 | opensees (bridge) | `opensees_schema_version` | `/opensees/*` | [`opensees/emitter/h5.py`](../src/apeGmsh/opensees/emitter/h5.py) `SCHEMA_VERSION` | **2.27.0** | **2.12.0** |
-| results | `results_schema_version` | `/stages/*` (composed `results.h5`, at file root; layout in [`results.h5`](#resultsh5-the-native-results-file)) | [`results/schema/_versions.py`](../src/apeGmsh/results/schema/_versions.py) `RESULTS_SCHEMA_VERSION` | **1.1.0** | **1.0.0** |
+| results | `results_schema_version` | `/stages/*` (composed `results.h5`, at file root; layout in [`results.h5`](#resultsh5-the-native-results-file)) | [`results/schema/_versions.py`](../src/apeGmsh/results/schema/_versions.py) `RESULTS_SCHEMA_VERSION` | **1.2.0** | **1.0.0** |
 | cuts (sub-zone of opensees) | — (no own key; rides the opensees zone) | `/opensees/cuts`, `/opensees/sweeps` | [`cuts/_h5_io.py`](../src/apeGmsh/cuts/_h5_io.py) `V4_SCHEMA_VERSION` | 2.5.0 | none of its own: it rides the opensees floor |
 | geometry (ADR 0112 D2) | `geometry_schema_version` | `/geometry` (sibling `<stem>.geometry.h5` only) | [`opensees/_internal/schema_version.py`](../src/apeGmsh/opensees/_internal/schema_version.py) `GEOMETRY_SCHEMA_VERSION` | **1.0.0** | **1.0.0** |
 | provenance (ADR 0112 D3) | `provenance_schema_version` | `/provenance` | [`opensees/_internal/schema_version.py`](../src/apeGmsh/opensees/_internal/schema_version.py) `PROVENANCE_SCHEMA_VERSION` | **1.1.0** | **1.0.0** |
