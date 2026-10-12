@@ -296,6 +296,160 @@ test("a truncated file is refused at open, not opened as an empty file", () => {
   refuses(p, "open", /HDF5 could not open/);
 });
 
+// -- review round 1 (#1717): each guard below has a test that fails when it is reverted --
+
+test("the envelope's two-part form opens as Python's SchemaVersion.parse reads it", () => {
+  for (const [stamp, warns] of [
+    ["1.0", 0],
+    ["1.1", 0],
+  ] as const) {
+    const p = edited((f) => {
+      setRootAttr(f, "results_schema_version", null);
+      setRootAttr(f, "schema_version", stamp);
+    });
+    const r = openResults(H5, p);
+    assert.equal(r.index.version, stamp);
+    assert.equal(r.index.warnings.length, warns);
+    r.close();
+  }
+  for (const bad of ["1", "1.0.0.0", "1.x", "", "1..0", "v1.0"]) {
+    refuses(edited((f) => setRootAttr(f, "results_schema_version", bad)), "version", /is empty|is not X\.Y or X\.Y\.Z|non-integer parts/);
+  }
+});
+
+function setModelMeta(f: h5wasm.File, key: string, value: string): void {
+  const m = f.get("model/meta") as h5wasm.Group;
+  if (Object.keys(m.attrs).includes(key)) m.delete_attribute(key);
+  m.create_attribute(key, value);
+}
+
+test("an embedded neutral zone of a newer major refuses the whole file (ADR 0113 D9)", () => {
+  refuses(edited((f) => setModelMeta(f, "neutral_schema_version", "3.0.0")), "version", /embedded neutral zone is a newer major/);
+});
+
+test("an embedded opensees zone of a newer major refuses the whole file", () => {
+  const p = edited((f) => {
+    f.create_group("opensees");
+    setRootAttr(f, "opensees_schema_version", "3.1.0");
+  });
+  refuses(p, "version", /@opensees_schema_version 3\.1\.0: the embedded opensees zone is a newer major/);
+});
+
+test("an embedded zone below its floor leaves /stages readable and is reported unavailable", () => {
+  const p = edited((f) => {
+    setModelMeta(f, "neutral_schema_version", "2.5.0");
+    f.create_group("opensees");
+    setRootAttr(f, "opensees_schema_version", "2.12.0");
+  });
+  const r = openResults(H5, p);
+  try {
+    assert.deepEqual(r.index.unavailableZones, ["neutral"]);
+    assert.equal(r.index.warnings.length, 1);
+    assert.match(r.index.warnings[0]!, /neutral zone is below its floor 2\.10\.0/);
+    assert.equal(r.readNodalStep(STAGE, ["displacement_x"], 1)[0]!.length, 18);
+  } finally {
+    r.close();
+  }
+  assert.deepEqual(openResults(H5, FIXTURE).index.unavailableZones, []);
+});
+
+/** A minimal gauss group: E elements, G points, components {name: shape}. */
+function gaussGroup(parent: h5wasm.Group, id: string, E: number, G: number, comps: Record<string, number[]>, extra: string[] = []): void {
+  const g = parent.create_group(id);
+  g.create_attribute("class_tag", 4);
+  g.create_attribute("int_rule", 0);
+  g.create_dataset({ name: "_element_index", data: new BigInt64Array(E).map((_, i) => BigInt(i + 1)) });
+  g.create_dataset({ name: "_natural_coords", data: new Float64Array(G * 2), shape: [G, 2] });
+  for (const [name, shape] of Object.entries(comps)) {
+    g.create_dataset({ name, data: new Float64Array(shape.reduce((a, b) => a * b, 1)), shape });
+  }
+  for (const name of extra) g.create_dataset({ name, data: new Float64Array([0]) });
+}
+
+function oneStageWithElements(build: (elements: h5wasm.Group) => void): string {
+  return minimal((s) => {
+    s.create_dataset({ name: "time", data: new Float64Array([0, 1]) });
+    build(s.create_group("partitions").create_group("partition_0").create_group("elements"));
+  });
+}
+
+test("stages come back in stage_<int> order, not HDF5's listing order", () => {
+  const p = join(mkdtempSync(join(tmpdir(), "agv-results-")), "stages.results.h5");
+  const f = new h5wasm.File(p, "w");
+  f.create_attribute("results_schema_version", "1.1.0");
+  const st = f.create_group("stages");
+  for (const id of ["stage_10", "stage_2", "stage_0"]) {
+    const s = st.create_group(id);
+    s.create_attribute("name", id);
+    s.create_attribute("kind", "static");
+    s.create_dataset({ name: "time", data: new Float64Array([0]) });
+    s.create_group("partitions").create_group("partition_0");
+  }
+  f.close();
+  const r = openResults(H5, p);
+  assert.deepEqual(r.index.stages.map((s) => s.id), ["stage_0", "stage_2", "stage_10"]);
+  r.close();
+});
+
+test("an unknown element category is refused", () => {
+  refuses(oneStageWithElements((e) => e.create_group("springs")), "layout", /elements\/springs: not an element category/);
+});
+
+test("an element category the spike does not read is listed in unread, not dropped", () => {
+  const p = oneStageWithElements((e) => {
+    e.create_group("fibers").create_group("group_0");
+    gaussGroup(e.create_group("gauss_points"), "group_0", 3, 2, { stress_xx: [2, 3, 2] });
+  });
+  const r = openResults(H5, p);
+  try {
+    assert.deepEqual(r.stage(STAGE).unread, ["fibers (1 groups)"]);
+    assert.equal(r.stage(STAGE).gauss.length, 1);
+  } finally {
+    r.close();
+  }
+});
+
+test("a gauss component whose shape is not (T, E, G) is refused", () => {
+  refuses(
+    oneStageWithElements((e) => gaussGroup(e.create_group("gauss_points"), "group_0", 3, 2, { stress_xx: [2, 3, 1] })),
+    "layout",
+    /stress_xx has shape \(2, 3, 1\); expected \(2, 3, 2\)/,
+  );
+});
+
+test("an unknown _ index dataset in a gauss group is refused", () => {
+  refuses(
+    oneStageWithElements((e) => gaussGroup(e.create_group("gauss_points"), "group_0", 3, 2, { stress_xx: [2, 3, 2] }, ["_weights"])),
+    "layout",
+    /group_0\/_weights: not a gauss index dataset/,
+  );
+});
+
+test("a stage kind outside static, transient and mode is refused", () => {
+  const p = edited((f) => {
+    const s = f.get(`stages/${STAGE}`) as h5wasm.Group;
+    s.delete_attribute("kind");
+    s.create_attribute("kind", "dynamic");
+  });
+  refuses(p, "layout", /@kind = "dynamic"/);
+});
+
+test("an unknown stage child is refused", () => {
+  refuses(edited((f) => (f.get(`stages/${STAGE}`) as h5wasm.Group).create_group("notes")), "layout", /stage_0\/notes: not a stage child/);
+});
+
+test("a negative or fractional step is refused", () => {
+  const r = openResults(H5, FIXTURE);
+  try {
+    for (const k of [-1, 1.5]) {
+      assert.throws(() => r.readNodalStep(STAGE, ["displacement_x"], k), (e: unknown) => e instanceof ResultsError && e.kind === "argument");
+      assert.throws(() => r.readGaussStep(STAGE, "group_0", "stress_xx", k), (e: unknown) => e instanceof ResultsError && e.kind === "argument");
+    }
+  } finally {
+    r.close();
+  }
+});
+
 test("stage ids sort by their integer suffix, then lexically", () => {
   assert.deepEqual(sortStageIds(["stage_10", "b", "stage_2", "a", "stage_0"]), ["stage_0", "stage_2", "stage_10", "a", "b"]);
 });

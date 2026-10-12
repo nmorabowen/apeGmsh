@@ -23,6 +23,8 @@
 // several is refused ("unsupported"), not merged (the doc's union rule is a
 // follow-up for the real reader).
 
+import { NEUTRAL_TARGET, OPENSEES_TARGET, ZONE_FLOOR } from "./read.ts";
+
 /** The results zone this reader was written against, and its floor (ADR 0113). */
 export const RESULTS_TARGET = { major: 1, minor: 1 } as const;
 export const RESULTS_FLOOR = { major: 1, minor: 0 } as const;
@@ -109,6 +111,8 @@ export interface ResultsIndex {
   path: string;
   version: string;
   sourceType: string | null;
+  /** Embedded zones below their floor (ADR 0113 D9): `/stages` reads, these do not. */
+  unavailableZones: string[];
   stages: StageInfo[];
   warnings: string[];
 }
@@ -138,11 +142,20 @@ export class ResultsFile {
     this.f = f;
     const warnings: string[] = [];
     const version = checkResultsVersion(f.attrs, warnings);
+    const modelMeta = f.keys().includes("model") && this.group(f, "model").keys().includes("meta") ? this.group(this.group(f, "model"), "meta") : null;
+    const unavailableZones = checkEmbeddedZones(f, modelMeta, warnings);
     const st = f.attrs["source_type"]?.value;
     const sourceType = typeof st === "string" ? st : null;
     const stagesGroup = this.group(f, "stages");
     const ids = sortStageIds(stagesGroup.keys());
-    this.index = { path, version, sourceType, stages: ids.map((id) => this.readStage(this.group(stagesGroup, id), id)), warnings };
+    this.index = {
+      path,
+      version,
+      sourceType,
+      unavailableZones,
+      stages: ids.map((id) => this.readStage(this.group(stagesGroup, id), id)),
+      warnings,
+    };
   }
 
   close(): void {
@@ -330,22 +343,90 @@ export function checkResultsVersion(attrs: Record<string, { value: unknown }>, w
     key = "schema_version";
   }
   if (raw === undefined) throw new ResultsError("version", "no results_schema_version or schema_version root attribute: not a native apeGmsh results.h5");
-  if (typeof raw !== "string") throw new ResultsError("version", `${key} is not a string`);
-  const m = /^(\d+)\.(\d+)\.(\d+)$/.exec(raw);
-  if (!m) throw new ResultsError("version", `${key} ${JSON.stringify(raw)} is not X.Y.Z`);
-  const major = Number(m[1]);
-  const minor = Number(m[2]);
+  const { major, minor } = parseSchemaVersion(raw, key);
+  const stamp = String(raw);
   const floor = `${RESULTS_FLOOR.major}.${RESULTS_FLOOR.minor}.0`;
   if (major < RESULTS_FLOOR.major || (major === RESULTS_FLOOR.major && minor < RESULTS_FLOOR.minor)) {
-    throw new ResultsError("version", `${key} ${raw}: below the results floor ${floor}`);
+    throw new ResultsError("version", `${key} ${stamp}: below the results floor ${floor}`);
   }
   if (major > RESULTS_TARGET.major) {
-    throw new ResultsError("version", `${key} ${raw}: a newer major than this app reads (${RESULTS_TARGET.major}.x)`);
+    throw new ResultsError("version", `${key} ${stamp}: a newer major than this app reads (${RESULTS_TARGET.major}.x)`);
   }
   if (minor > RESULTS_TARGET.minor) {
-    warnings.push(`${key} ${raw} is newer than this app (${RESULTS_TARGET.major}.${RESULTS_TARGET.minor}.x): the file opens, and what that apeGmsh added is not shown`);
+    warnings.push(`${key} ${stamp} is newer than this app (${RESULTS_TARGET.major}.${RESULTS_TARGET.minor}.x): the file opens, and what that apeGmsh added is not shown`);
   }
-  return raw;
+  return stamp;
+}
+
+/** One Python `int()` part: optional whitespace and sign, digits with single `_` separators. */
+const PY_INT = /^\s*[+-]?\d+(?:_\d+)*\s*$/;
+
+/**
+ * A version stamp parsed as Python's `SchemaVersion.parse` parses it
+ * (`opensees/_internal/schema_version.py`): `"X.Y.Z"` or `"X.Y"` (patch 0;
+ * pre-key envelope stamps such as `"1.0"` are two-part), each part an integer
+ * as `int()` reads it. Anything else is refused.
+ */
+export function parseSchemaVersion(raw: unknown, key: string): { major: number; minor: number; patch: number } {
+  if (typeof raw !== "string") throw new ResultsError("version", `${key} is not a string`);
+  if (raw === "") throw new ResultsError("version", `${key} is empty`);
+  const parts = raw.split(".");
+  if (parts.length < 2 || parts.length > 3) throw new ResultsError("version", `${key} ${JSON.stringify(raw)} is not X.Y or X.Y.Z`);
+  if (!parts.every((p) => PY_INT.test(p))) throw new ResultsError("version", `${key} ${JSON.stringify(raw)} has non-integer parts`);
+  const n = (p: string) => Number(p.replace(/_/g, "").trim());
+  return { major: n(parts[0]!), minor: n(parts[1]!), patch: parts.length === 3 ? n(parts[2]!) : 0 };
+}
+
+/**
+ * The embedded model zones (ADR 0113 D9, h5-schema.md "The embedded model"):
+ * the neutral zone when `/model/meta` is present, the opensees zone when
+ * `/opensees` is. A newer major than this app reads refuses the whole file; a
+ * zone below its floor leaves `/stages` readable and is reported in
+ * `unavailable` with a warning; a newer minor opens with a warning (the app's
+ * rule for its other zones, read.ts `checkZoneVersion`).
+ */
+export function checkEmbeddedZones(
+  root: { attrs: Record<string, { value: unknown }>; keys(): string[] },
+  modelMeta: { attrs: Record<string, { value: unknown }> } | null,
+  warnings: string[],
+): string[] {
+  const unavailable: string[] = [];
+  const zones: { zone: "neutral" | "opensees"; raw: unknown; key: string; target: { major: number; minor: number }; floor: number }[] = [];
+  if (modelMeta) {
+    const own = modelMeta.attrs["neutral_schema_version"]?.value;
+    zones.push({
+      zone: "neutral",
+      raw: own ?? modelMeta.attrs["schema_version"]?.value,
+      key: own !== undefined ? "/model/meta@neutral_schema_version" : "/model/meta@schema_version",
+      target: NEUTRAL_TARGET,
+      floor: ZONE_FLOOR.neutral,
+    });
+  }
+  if (root.keys().includes("opensees")) {
+    const sources: [string, unknown][] = [
+      ["@opensees_schema_version", root.attrs["opensees_schema_version"]?.value],
+      ["/model/meta@opensees_schema_version", modelMeta?.attrs["opensees_schema_version"]?.value],
+      ["/model/meta@schema_version", modelMeta?.attrs["schema_version"]?.value],
+    ];
+    const hit = sources.find(([, v]) => v !== undefined);
+    if (!hit) throw new ResultsError("version", "/opensees is embedded but no opensees_schema_version stamp was found");
+    zones.push({ zone: "opensees", raw: hit[1], key: hit[0], target: OPENSEES_TARGET, floor: ZONE_FLOOR.opensees });
+  }
+  for (const z of zones) {
+    if (z.raw === undefined) throw new ResultsError("version", `the embedded ${z.zone} zone has no version stamp`);
+    const v = parseSchemaVersion(z.raw, z.key);
+    const raw = String(z.raw);
+    if (v.major > z.target.major) {
+      throw new ResultsError("version", `${z.key} ${raw}: the embedded ${z.zone} zone is a newer major than this app reads (${z.target.major}.x)`);
+    }
+    if (v.major < z.target.major || v.minor < z.floor) {
+      unavailable.push(z.zone);
+      warnings.push(`${z.key} ${raw}: the embedded ${z.zone} zone is below its floor ${z.target.major}.${z.floor}.0; /stages still reads, the ${z.zone} zone is unavailable`);
+    } else if (v.minor > z.target.minor) {
+      warnings.push(`${z.key} ${raw} is newer than this app (${z.target.major}.${z.target.minor}.x): the file opens, and what that apeGmsh added is not shown`);
+    }
+  }
+  return unavailable;
 }
 
 /** `stage_<int>` by the integer, then the other ids lexically (h5-schema.md). */
