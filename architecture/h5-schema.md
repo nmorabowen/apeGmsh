@@ -1818,9 +1818,20 @@ unverified:
 rows carry. Every 1.0.0 and 1.1.0 file lacks the attribute, and so does a
 1.2.0 file whose writer could not prove it. Absence is not a refusal: the
 file reads exactly as before. The version number alone never makes a file
-verified; only the stamp does. The Python reader exposes the verdict as
-`NativeReader.element_index_verified` (true only for `"fem"`) and the raw
-value as `NativeReader.element_index_space`.
+verified; only the stamp does.
+
+The on-disk contract is this one root attribute, `element_index_space`:
+its value set is exactly `"fem"`, and absence means unverified. No other
+attribute carries the verdict. apeGmsh's Python reader derives a
+convenience property from it, `NativeReader.element_index_verified`
+(true only when the attribute is `"fem"`), and exposes the raw value as
+`NativeReader.element_index_space`. Both are Python properties, not HDF5
+attributes: no file holds an attribute named `element_index_verified`.
+
+`Results.from_recorders` caches transcoded files under a key that includes
+a digest of `model=` (its `lineage.model_hash` and its `(fem_eid, tag)`
+pairing). A cached file, its stamp and its embedded `/opensees` are
+therefore never served to a call with another model.
 
 Who writes it:
 

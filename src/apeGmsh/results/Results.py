@@ -411,6 +411,7 @@ class Results:
             source_files,
             parser_version=PARSER_VERSION,
             fem_snapshot_id=fem.snapshot_id,
+            model_token=_cache.model_cache_token(model),
         )
         cached_h5, _ = _cache.cache_paths(cache_dir, key)
 

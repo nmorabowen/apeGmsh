@@ -254,3 +254,36 @@ def test_schema_doc_lists_exactly_the_value_set() -> None:
     section = text[start:text.index("\n### ", start + 1)]
     documented = tuple(re.findall(r'^\| `"([^"]*)"` \|', section, re.M))
     assert documented == _native.ELEMENT_INDEX_SPACES
+
+
+# ---------------------------------------------------------------------------
+# The cache keys on the model: one call's stamp is never served to another
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "order", [("fem", "sequential"), ("sequential", "fem")],
+    ids=["identity_then_sequential", "sequential_then_identity"],
+)
+def test_cached_stamp_follows_each_calls_model(
+    tmp_path: Path, portal: dict, order: tuple[str, str],
+) -> None:
+    # Same spec, same recorder files, same cache_root; only model= differs.
+    from apeGmsh.results import Results
+
+    fem = portal["femdata"]
+    spec = ResolvedRecorderSpec(
+        fem_snapshot_id=str(fem.snapshot_id),
+        records=(_element_record(COLS),),
+    )
+    out_dir = tmp_path / "out"
+    _write_outputs(spec, out_dir)
+    cache_root = tmp_path / "cache"
+    expected = {"fem": True, "sequential": False}
+    for build in order:
+        results = Results.from_recorders(
+            spec, out_dir, fem=fem, cache_root=cache_root,
+            model=OpenSeesModel.from_h5(portal[build]),
+        )
+        with NativeReader(results._path) as r:
+            assert r.element_index_verified is expected[build], build
