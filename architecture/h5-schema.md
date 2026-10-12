@@ -1898,6 +1898,15 @@ capture queries OpenSees by ops tag and translates the ids back before
 it writes, so a model whose gmsh ids differ from its ops tags still
 stores `fem_eid`s.
 
+> **Unverified for recorder transcodes (#1711).** The `fem_eid` claim is
+> verified only for files whose `source_type` is `domain_capture`. It is
+> **unverified** for files whose `source_type` is `tcl_recorders`, which
+> the recorder transcoder writes (`Results.from_recorders`). Until #1711
+> resolves, a reader must treat the element mapping of a `tcl_recorders`
+> file as unverified. It must show an "unverified" state for that file's
+> element results, and it must never guess a join between
+> `_element_index` and `/model/elements`.
+
 | Category | Group attrs | Index datasets | Component shape |
 |---|---|---|---|
 | `gauss_points` | `class_tag` int64 (OpenSees classTag), `int_rule` int64, `custom_rule_idx` int64 | `_element_index` `(E,)` int64; `_natural_coords` `(G, dim)` float64; `_local_axes_quaternion` `(E, 4)` float64, shells only, optional | `(T, E, G)` float64: `[k, e, g]` is element `_element_index[e]` at Gauss point `g` |
