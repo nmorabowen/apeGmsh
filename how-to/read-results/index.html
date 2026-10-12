@@ -3754,9 +3754,10 @@ model units, at the last committed state:</p>
 Anything richer, such as beam end forces, raises and points you to <code>Results</code>.</p>
 <p><code>label=</code> is accepted wherever <code>pg=</code> is, on <code>ops.fix</code>, <code>ops.mass</code>, <code>ops.recorder.Node</code> and the
 selectors above, so a model script can name a support or a master once, in the geometry, and
-use that name to constrain it, record it and read it back. One restriction: <code>recorder.Element</code>
-takes <code>label=</code> only on a bridge built with <code>element_tags="fem"</code>, because only there does an
-element's OpenSees tag equal its FEM id; on the default tag mode it raises.</p>
+use that name to constrain it, record it and read it back. <code>recorder.Element(label=...)</code> works
+under either tag mode: the label resolves to FEM element ids, and the build translates them to
+the emitted OpenSees tags as it does for <code>pg=</code>. The archive keeps each label beside the ids it
+resolved to, as provenance only: replaying a <code>model.h5</code> uses the stored ids, never the label.</p>
 <p>A <code>.read</code> answers only from a domain this bridge solved live. After <code>ops.py(path, run=True)</code> or
 <code>ops.tcl(path, run=True)</code> the solve happened in another process, so <code>.read</code> raises and names the
 way out: <code>ops.results(path)</code> returns the same <code>Results</code> object as above, built from the
