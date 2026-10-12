@@ -32,11 +32,11 @@ These rules cover user model scripts, not library code.
 7. **One action per statement.** No nested comprehensions, no long one-line formulas, no
    arithmetic inside an f-string. Dividing by a named unit (`{force / KN:.1f}`) is the one
    exception.
-8. **One OpenSees handle.** Drive OpenSees through the `apeSees` bridge. Read results from its
-   recorders with `np.loadtxt`, under a comment that says what one row holds. For live
-   read-back, import raw openseespy at the top as `ops_raw` and mark each use
-   `# raw-ops: <why>`. Name a beam `geomTransf` after its member family, and say which way its
-   `vecxz` points and why.
+8. **One OpenSees handle.** Drive OpenSees through the `apeSees` bridge. Read results back after
+   `ops.analyze` with `.read`: `ops.nodes.one(label=...).read("displacement_y")` for one node,
+   `ops.elements.get(pg=...).read("axial_force")` for a truss family. Read a history from
+   recorder files with `np.loadtxt`, under a comment that says what one row holds. Name a beam
+   `geomTransf` after its member family, and say which way its `vecxz` points and why.
 9. **Check, assert, report.** Write the hand check as a few named steps, with a comment giving
    the formula or source. Assert that the run succeeded, and that each check agrees within a
    named tolerance whose comment says why it has that size. Report only numbers the run
@@ -59,7 +59,7 @@ your task:
 
 | Script | Shows |
 |---|---|
-| `pratt_truss.py` | 2-D truss: one element per member (`set_transfinite_curve(list_of_groups, n_nodes=2)`), member families as groups, recorders read with `np.loadtxt`, method-of-sections check |
+| `pratt_truss.py` | 2-D truss: one element per member (`set_transfinite_curve(list_of_groups, n_nodes=2)`), member families as groups, bar forces and midspan deflection read back live with `.read`, method-of-sections check |
 | `frame_modal.py` | 3-D frame: `geomTransf` per member family with its `vecxz` reason, rigid floor diaphragms with a fixed master, eigen, then a lateral load and a Rayleigh check |
 | `staged_footing.py` | 2-D staged soil: `g.constraints.bc` + `ops.fix_from_model()`, a self-weight case and a pressure case, two `ops.stage` blocks, deck run, equilibrium and Flamant checks |
 
@@ -87,23 +87,16 @@ Procedure:
     3. Groups and loads: one group per member family, supports, loaded joints
     4. Mesh: one truss element per member
     5. OpenSees model: material, members, supports, load pattern
-    6. Analysis: one linear static step, with recorders on every family
+    6. Analysis: one linear static step
     7. Checks and report: bottom chord by sections, end posts by joints,
        then the axial-force range per family and the midspan deflection
 """
 import math
-from pathlib import Path
-
-import numpy as np
-import openseespy.opensees as ops_raw
 
 from apeGmsh import apeGmsh
 from apeGmsh.opensees import apeSees
 
 # --- 1. Data
-OUT_DIR = Path(__file__).parent / "out_pratt_truss"
-OUT_DIR.mkdir(exist_ok=True)
-
 N_PANELS = 6              # number of panels along the span
 PANEL = 4.0               # m, panel length
 DEPTH = 4.0               # m, chord centreline to chord centreline
@@ -122,8 +115,8 @@ TOL_UNBALANCE = 1e-3      # N, out-of-balance force norm (1e-8 of one joint load
 MAX_ITER = 10             # iterations allowed per step (a linear model needs one)
 
 # The truss is statically determinate (21 bars + 3 reactions = 2 x 12 joints), so
-# its bar forces follow from statics alone; what is left is the recorder file's
-# rounding to 6 significant digits (API gap: the bridge exposes no -precision).
+# its bar forces follow from statics alone. The live read is full precision, so this
+# bound only has to cover the solver's roundoff; it is kept loose on purpose.
 TOL_STATICS = 1e-5        # relative, FE vs hand bar force
 
 KN = 1e3                  # N per kN, for printing
@@ -185,10 +178,6 @@ with ops.pattern.Plain(series=ops.timeSeries.Linear()) as p:
     p.from_model("gravity")
 
 # --- 6. Analysis
-for family in MEMBERS:
-    ops.recorder.Element(file=str(OUT_DIR / f"{family}.out"), pg=family, response=("axialForce",))
-ops.recorder.Node(file=str(OUT_DIR / "midspan.out"), pg=MIDSPAN_JOINT, dofs=(2,), response="disp")
-
 # Plain: the model has no multi-point constraints. RCM + BandGeneral: a small banded system.
 ops.constraints.Plain()
 ops.numberer.RCM()
@@ -200,16 +189,14 @@ ops.analysis.Static()
 status = ops.analyze(steps=1)
 assert status == 0, f"static analysis failed (code {status})"
 
-# API gap: no bridge verb closes live recorders, and OpenSees buffers their rows until then.
-ops_raw.wipe()   # raw-ops: clearing the domain closes the recorder files, flushing every row
-
 # --- 7. Checks and report
-# One row per step; each column is the axial force of one bar of the family (N, tension +).
+# Live read at the last committed state: one axial force per bar of the family, in the
+# group's element order (N, tension +).
 axial_force = {}
 for family in MEMBERS:
-    axial_force[family] = np.loadtxt(OUT_DIR / f"{family}.out")
-# One row per step: the vertical displacement of the midspan joint (m, up +).
-midspan_deflection = float(np.loadtxt(OUT_DIR / "midspan.out"))
+    axial_force[family] = ops.elements.get(pg=family).read("axial_force")
+# The vertical displacement of the midspan joint, by its geometry label (m, up +).
+midspan_deflection = ops.nodes.one(label=MIDSPAN_JOINT).read("displacement_y")
 
 reaction = len(LOADED_JOINTS) * JOINT_LOAD / 2   # N, at each support, by symmetry
 
@@ -270,7 +257,6 @@ Procedure:
 import math
 from pathlib import Path
 
-import openseespy.opensees as ops_raw
 
 from apeGmsh import apeGmsh
 from apeGmsh.opensees import apeSees
@@ -447,13 +433,12 @@ assert status == 0, f"static analysis failed with status {status}"
 
 # --- 8. Checks and report
 # Floor displacement in X at each master, and the storey drift ratio below it.
-# A one-node group still returns a set, and there is no read-back by label (API gap).
+# Live read at each floor master, by its label.
 floor_ux = {}
 drift_ratio = {}
 ux_below = 0.0   # m, the base is fixed
 for k in FLOORS:
-    [master] = ops.nodes.get(pg=f"floor_{k}_master")
-    floor_ux[k] = ops_raw.nodeDisp(master.tag, 1)   # raw-ops: live displacement read-back
+    floor_ux[k] = ops.nodes.one(label=f"floor_{k}_master").read("displacement_x")
     drift_ratio[k] = (floor_ux[k] - ux_below) / STOREY
     ux_below = floor_ux[k]
 
