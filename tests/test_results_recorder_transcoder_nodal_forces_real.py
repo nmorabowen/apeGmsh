@@ -109,7 +109,7 @@ def test_elastic_beam_3d_global_and_local_three_way_agreement(
         ),
     )
 
-    recorder_lines = spec.to_tcl_commands(model=identity_model([1]))
+    recorder_lines = spec.to_tcl_commands(model=identity_model([1], spec.fem_snapshot_id))
     # Two records → two Tcl recorder lines.
     assert len(recorder_lines) == 2
     global_line = next(ln for ln in recorder_lines if "globalForce" in ln)

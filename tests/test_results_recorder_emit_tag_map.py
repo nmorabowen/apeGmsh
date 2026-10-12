@@ -26,8 +26,10 @@ from tests.test_results_live_recorders import FakeOps
 SEQ = {8: 3, 9: 4, 10: 5}
 
 
-def _spec(*records: ResolvedRecorderRecord) -> ResolvedRecorderSpec:
-    return ResolvedRecorderSpec(fem_snapshot_id="h", records=records)
+def _spec(*records: ResolvedRecorderRecord,
+          fem_snapshot_id: str = "h") -> ResolvedRecorderSpec:
+    return ResolvedRecorderSpec(fem_snapshot_id=fem_snapshot_id,
+                                records=records)
 
 
 def _element_record(category: str = "elements",
@@ -68,7 +70,7 @@ def _ele_ids(args: tuple) -> list[int]:
 @pytest.mark.parametrize("category", ["elements", "gauss", "line_stations"])
 def test_tcl_and_python_commands_carry_ops_tags(category: str) -> None:
     spec = _spec(_element_record(category))
-    model = TagMapModel(SEQ)
+    model = TagMapModel(SEQ, "h")
     tcl = spec.to_tcl_commands(model=model)
     py = spec.to_python_commands(model=model)
     assert tcl and len(tcl) == len(py)
@@ -83,7 +85,7 @@ def test_live_route_issues_ops_tags(category: str, tmp_path: Path) -> None:
     fake = FakeOps()
     spec = _spec(_node_record(), _element_record(category))
     with spec.emit_recorders(str(tmp_path), ops=fake,
-                             model=TagMapModel(SEQ)) as live:
+                             model=TagMapModel(SEQ, "h")) as live:
         live.begin_stage("s")
         live.end_stage()
     ele_calls = [c for c in fake.recorder_calls if "-ele" in c]
@@ -124,10 +126,10 @@ def test_live_route_refuses_before_issuing_any_recorder(tmp_path: Path) -> None:
 def test_an_id_the_model_lacks_is_refused(tmp_path: Path) -> None:
     spec = _spec(_element_record(ids=(8, 9, 99)))
     with pytest.raises(ValueError, match=r"\[99\]"):
-        spec.to_tcl_commands(model=TagMapModel(SEQ))
+        spec.to_tcl_commands(model=TagMapModel(SEQ, "h"))
     with pytest.raises(ValueError, match=r"\[99\]"):
         with spec.emit_recorders(str(tmp_path), ops=FakeOps(),
-                                 model=TagMapModel(SEQ)):
+                                 model=TagMapModel(SEQ, "h")):
             pass
 
 
@@ -171,7 +173,7 @@ def _built_model(element_tags: str, tmp_path: Path):
 def test_fem_tag_build_emits_the_untranslated_commands(tmp_path: Path) -> None:
     model, beam = _built_model("fem", tmp_path)
     rec = _element_record(ids=beam)
-    spec = _spec(rec)
+    spec = _spec(rec, fem_snapshot_id=model.lineage.fem_hash)
     assert spec.to_tcl_commands(model=model) == [
         format_tcl(lr) for lr in emit_logical(rec)
     ]
@@ -184,7 +186,9 @@ def test_sequential_build_emits_the_built_tags(tmp_path: Path) -> None:
     model, beam = _built_model("sequential", tmp_path)
     pairing = {int(r.fem_eid): int(r.tag) for r in model.elements()}
     assert any(pairing[e] != e for e in beam)         # not vacuous
-    [line] = _spec(_element_record(ids=beam)).to_tcl_commands(model=model)
+    [line] = _spec(_element_record(ids=beam),
+                   fem_snapshot_id=model.lineage.fem_hash,
+                   ).to_tcl_commands(model=model)
     expected = " ".join(str(pairing[e]) for e in beam)
     assert f" -ele {expected} " in line
 
@@ -224,3 +228,50 @@ def test_bridge_declared_recorders_carry_ops_tags(tmp_path: Path) -> None:
     assert len(recorders) == 2
     for ln in recorders:
         assert f" -ele {' '.join(map(str, beam_tags))} globalForce" in ln
+
+
+# ---------------------------------------------------------------------------
+# model= must belong to the spec
+# ---------------------------------------------------------------------------
+
+
+def test_a_model_of_another_fem_is_refused(tmp_path: Path) -> None:
+    spec = _spec(_element_record())                   # fem_snapshot_id "h"
+    other = TagMapModel(SEQ, "another-mesh")
+    with pytest.raises(ValueError, match=r"not built from this spec's FEMData"):
+        spec.to_tcl_commands(model=other)
+    with pytest.raises(ValueError, match=r"not built from this spec's FEMData"):
+        spec.to_python_commands(model=other)
+    fake = FakeOps()
+    with pytest.raises(ValueError, match=r"not built from this spec's FEMData"):
+        spec.emit_recorders(str(tmp_path), ops=fake, model=other)
+    assert fake.recorder_calls == []
+
+
+def test_a_remeshed_model_with_overlapping_ids_is_refused(
+    tmp_path: Path,
+) -> None:
+    """A real model built from a re-meshed portal shares the beam's FEM ids
+    yet pairs them with other tags; its lineage gives it away."""
+    from apeGmsh.opensees.apesees import apeSees
+    from apeGmsh.opensees.opensees_model import OpenSeesModel
+
+    from tests.test_results_recorder_tag_parity import _portal_fem
+
+    model, beam = _built_model("sequential", tmp_path)
+    fem_b = _portal_fem(n=5)
+    ops_b = apeSees(fem_b, default_orientation=None)
+    ops_b.model(ndm=2, ndf=3)
+    tr = ops_b.geomTransf.Linear()
+    for pg in ("Cols", "Beam"):
+        ops_b.element.elasticBeamColumn(pg=pg, transf=tr,
+                                        A=0.02, E=2.0e11, Iz=3.0e-4)
+    ops_b.h5(str(tmp_path / "b.h5"))
+    model_b = OpenSeesModel.from_h5(str(tmp_path / "b.h5"))
+    pairing_b = {int(r.fem_eid): int(r.tag) for r in model_b.elements()}
+    assert all(e in pairing_b for e in beam)          # the ids overlap
+    spec = ResolvedRecorderSpec(fem_snapshot_id=model.lineage.fem_hash,
+                                records=(_element_record(ids=beam),))
+    assert spec.to_tcl_commands(model=model)          # its own model emits
+    with pytest.raises(ValueError, match=r"not built from this spec's FEMData"):
+        spec.to_tcl_commands(model=model_b)

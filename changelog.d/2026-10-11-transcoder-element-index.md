@@ -27,7 +27,7 @@ Without it the emit raises a `ValueError` that names `model=`, because the
 spec carries no tag mode or pairing, so identity cannot be proven from it.
 That includes callers whose ids happen to equal the tags (an
 `element_tags="fem"` build, or a hand-written deck numbered by FEM id). A FEM
-id the model has no element for raises too. The live route refuses at
+id the model has no element for raises too. So does a `model=` built from another FEMData (its `lineage.fem_hash` differs from the spec's `fem_snapshot_id`), which could share the spec's FEM ids yet pair them with other tags. The live route refuses at
 `__enter__`, before any recorder is issued. Node-only specs, MPCO emits, and
 recorders declared on the bridge (`ops.recorder.declare`,
 `ops.recorder.Element`) are unaffected: the bridge build already emits them

@@ -330,7 +330,7 @@ def test_emit_recorders_gauss_stress(tmp_path: Path) -> None:
     ))
     fake = FakeOps()
 
-    with spec.emit_recorders(str(tmp_path), ops=fake, model=identity_model([100, 101, 102])) as live:
+    with spec.emit_recorders(str(tmp_path), ops=fake, model=identity_model([100, 101, 102], spec.fem_snapshot_id)) as live:
         live.begin_stage("dyn")
 
         assert len(fake.recorder_calls) == 1
@@ -361,7 +361,7 @@ def test_emit_recorders_gauss_strain(tmp_path: Path) -> None:
         element_ids=np.array([1]),
     ))
     fake = FakeOps()
-    with spec.emit_recorders(str(tmp_path), ops=fake, model=identity_model([1])) as live:
+    with spec.emit_recorders(str(tmp_path), ops=fake, model=identity_model([1], spec.fem_snapshot_id)) as live:
         live.begin_stage("s")
         args = fake.recorder_calls[0]
         assert args[-1] == "strains"
@@ -376,7 +376,7 @@ def test_emit_recorders_elements_global_force(tmp_path: Path) -> None:
         element_ids=np.array([1, 2]),
     ))
     fake = FakeOps()
-    with spec.emit_recorders(str(tmp_path), ops=fake, model=identity_model([1, 2])) as live:
+    with spec.emit_recorders(str(tmp_path), ops=fake, model=identity_model([1, 2], spec.fem_snapshot_id)) as live:
         live.begin_stage("s")
         args = fake.recorder_calls[0]
         assert args[0] == "Element"
@@ -396,7 +396,7 @@ def test_emit_recorders_line_stations_emits_pair(tmp_path: Path) -> None:
     ))
     fake = FakeOps()
 
-    with spec.emit_recorders(str(tmp_path), ops=fake, model=identity_model([1, 2, 3])) as live:
+    with spec.emit_recorders(str(tmp_path), ops=fake, model=identity_model([1, 2, 3], spec.fem_snapshot_id)) as live:
         live.begin_stage("s")
         assert len(fake.recorder_calls) == 2
 
@@ -445,7 +445,7 @@ def test_emit_recorders_mixed_categories(tmp_path: Path) -> None:
     fake = FakeOps()
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
-        with spec.emit_recorders(str(tmp_path), ops=fake, model=identity_model([10, 20, 30])) as live:
+        with spec.emit_recorders(str(tmp_path), ops=fake, model=identity_model([10, 20, 30], spec.fem_snapshot_id)) as live:
             live.begin_stage("s")
             # 1 (nodes) + 1 (gauss) + 2 (line_stations pair) = 4
             assert len(fake.recorder_calls) == 4

@@ -139,7 +139,9 @@ class LiveRecorders:
         model=None,
     ) -> None:
         self._spec = spec
-        self._tag_map = None if model is None else element_tag_map(model)
+        self._tag_map = None if model is None else element_tag_map(
+            model, fem_snapshot_id=spec.fem_snapshot_id,
+        )
         self._output_dir = str(output_dir) if output_dir else ""
         self._file_format = file_format
         self._ops = ops

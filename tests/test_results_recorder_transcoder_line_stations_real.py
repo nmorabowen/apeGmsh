@@ -141,7 +141,7 @@ def test_force_beam_3d_lobatto5_aggregated_three_way_agreement(
     )
 
     # ── Emit the paired Tcl commands and write a complete model script ──
-    recorder_lines = spec.to_tcl_commands(model=identity_model([1]))
+    recorder_lines = spec.to_tcl_commands(model=identity_model([1], spec.fem_snapshot_id))
     # Step 2c.1 emits two recorders: section.force + integrationPoints.
     assert len(recorder_lines) == 2
     section_line = next(

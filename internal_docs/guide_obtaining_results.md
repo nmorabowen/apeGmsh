@@ -134,7 +134,9 @@ script written, no subprocess**.
 ```python
 import openseespy.opensees as ops
 
-with spec.emit_recorders("out/") as live:
+# model: the OpenSeesModel built from the same FEMData (needed for element
+# records: it maps their FEM ids to the OpenSees tags they were built with)
+with spec.emit_recorders("out/", model=model) as live:
     # First stage
     live.begin_stage("gravity", kind="static")
     ops.system("BandSPD"); ops.numberer("RCM"); ops.constraints("Plain")
@@ -457,7 +459,7 @@ with spec.capture("modes.h5", fem=fem) as cap:
     cap.capture_modes(n_modes=10)
 
 # Other records → emit_recorders separately
-with spec.emit_recorders("out/") as live:
+with spec.emit_recorders("out/", model=model) as live:
     live.begin_stage("dynamic")
     ...
 ```

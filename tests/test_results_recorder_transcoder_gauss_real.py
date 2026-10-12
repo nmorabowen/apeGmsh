@@ -99,7 +99,7 @@ def test_tet_stress_full_cycle_through_transcoder(tmp_path: Path) -> None:
     out_dir.mkdir()
     # The spec emits the `recorder Element ...` line; we paste it into
     # the Tcl model alongside the rest of the analysis.
-    [recorder_line] = spec.to_tcl_commands(model=identity_model([1]), output_dir=str(out_dir).replace("\\", "/"))
+    [recorder_line] = spec.to_tcl_commands(model=identity_model([1], spec.fem_snapshot_id), output_dir=str(out_dir).replace("\\", "/"))
     assert recorder_line.startswith("recorder Element ")
     assert recorder_line.rstrip().endswith("stresses  ;# solid_stress gauss")
 

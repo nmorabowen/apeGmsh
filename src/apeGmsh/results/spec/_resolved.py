@@ -354,7 +354,7 @@ class ResolvedRecorderSpec:
         from ._emit import emit_spec_tcl
         return emit_spec_tcl(
             self.records, output_dir=output_dir, file_format=file_format,
-            model=model,
+            model=model, fem_snapshot_id=self.fem_snapshot_id,
         )
 
     def to_python_commands(
@@ -368,7 +368,7 @@ class ResolvedRecorderSpec:
         from ._emit import emit_spec_python
         return emit_spec_python(
             self.records, output_dir=output_dir, file_format=file_format,
-            model=model,
+            model=model, fem_snapshot_id=self.fem_snapshot_id,
         )
 
     # ---------- MPCO bridge (Phase 8) ----------

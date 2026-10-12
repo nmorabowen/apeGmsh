@@ -292,16 +292,31 @@ def emit_logical(
 # (``opensees/_internal/compose.py``, node emit).
 
 
-def element_tag_map(model: object) -> dict[int, int]:
+def element_tag_map(model: object, *, fem_snapshot_id: str) -> dict[int, int]:
     """Return the ``{fem_eid: ops_tag}`` pairing a built model records.
 
-    ``model`` is an :class:`~apeGmsh.opensees.OpenSeesModel`. The pairing
+    ``model`` is an :class:`~apeGmsh.opensees.OpenSeesModel`, and it must
+    be built from the FEMData the spec was resolved against: its
+    ``lineage.fem_hash`` (equal to ``FEMData.snapshot_id``) must equal the
+    spec's ``fem_snapshot_id``. A model from another or a re-meshed
+    FEMData can share FEM ids with this one and would translate them to
+    the wrong tags, so a mismatch raises. The pairing
     is its element records' ``(fem_eid, tag)``: the same source
     ``ElementTagTranslator.from_model`` reads for ``from_mpco`` and
     domain capture. Rows with the sentinel ``fem_eid < 0`` are skipped.
     Read strictly here: that translator passes an unknown id through,
     which an emit must refuse instead (:func:`to_ops_tags`).
     """
+    fem_hash = model.lineage.fem_hash  # type: ignore[attr-defined]
+    if fem_hash != fem_snapshot_id:
+        raise ValueError(
+            f"model= was not built from this spec's FEMData: its "
+            f"lineage.fem_hash is {fem_hash!r}, the spec's fem_snapshot_id "
+            f"is {fem_snapshot_id!r}. Translating the spec's element ids "
+            f"through another model's pairing would record the wrong "
+            f"elements. Pass the OpenSeesModel built from the FEMData the "
+            f"spec was resolved against."
+        )
     out: dict[int, int] = {}
     for rec in model.elements():  # type: ignore[attr-defined]
         fem = int(rec.fem_eid)
@@ -667,6 +682,7 @@ def emit_spec_tcl(
     output_dir: str = "",
     file_format: str = "out",
     model: object = None,
+    fem_snapshot_id: str = "",
 ) -> list[str]:
     """Emit Tcl recorder commands for an iterable of resolved records.
 
@@ -674,7 +690,8 @@ def emit_spec_tcl(
     OpenSees tags; an element record without it raises
     (:func:`to_ops_tags`).
     """
-    tag_map = None if model is None else element_tag_map(model)
+    tag_map = (None if model is None else
+               element_tag_map(model, fem_snapshot_id=fem_snapshot_id))
     lines: list[str] = []
     for rec in records:
         if rec.category in _DEFERRED_CATEGORIES:
@@ -701,12 +718,14 @@ def emit_spec_python(
     output_dir: str = "",
     file_format: str = "out",
     model: object = None,
+    fem_snapshot_id: str = "",
 ) -> list[str]:
     """Emit ``ops.recorder(...)`` calls for an iterable of resolved records.
 
     ``model`` translates element ids as in :func:`emit_spec_tcl`.
     """
-    tag_map = None if model is None else element_tag_map(model)
+    tag_map = (None if model is None else
+               element_tag_map(model, fem_snapshot_id=fem_snapshot_id))
     lines: list[str] = []
     for rec in records:
         if rec.category in _DEFERRED_CATEGORIES:

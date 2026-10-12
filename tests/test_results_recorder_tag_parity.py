@@ -50,7 +50,7 @@ def _backend() -> None:
 # ---------------------------------------------------------------------------
 
 
-def _portal_fem() -> Any:
+def _portal_fem(n: int = 4) -> Any:
     with apeGmsh(model_name="b5c_portal", verbose=False) as g:
         geo = g.model.geometry
         p0 = geo.add_point(0.0, 0.0, 0.0)
@@ -61,7 +61,7 @@ def _portal_fem() -> Any:
         bm = geo.add_line(p1, p2)
         c2 = geo.add_line(p3, p2)
         for c in (c1, bm, c2):
-            gmsh.model.mesh.setTransfiniteCurve(c, 4)
+            gmsh.model.mesh.setTransfiniteCurve(c, n)
         g.physical.add(1, [c1, c2], name="Cols")
         g.physical.add(1, [bm], name="Beam")
         g.labels.add(0, [p0, p3], "base")
