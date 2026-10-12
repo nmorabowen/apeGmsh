@@ -356,6 +356,7 @@ def _read_instant(raw: Any, what: str) -> Optional[Instant]:
 
 def _read_slot(
     category: str, raw: Any, pane_id: str, version: int = SNAPSHOT_VERSION,
+    notices: Optional[list[str]] = None,
 ) -> Slot:
     record_type = SLOT_CATALOG.get(category)
     if record_type is None:
@@ -381,7 +382,21 @@ def _read_slot(
                 f"Mark the file version 2."
             )
     try:
-        return record_type(**fields)
+        try:
+            return record_type(**fields)
+        except ImportError:
+            # A7 review (#1737): a v2 cmap this build cannot validate
+            # (no matplotlib) degrades to the default, with a notice —
+            # the rest of the slot, and of the file, still restores.
+            if fields.get("cmap") is None or notices is None:
+                raise
+            notices.append(
+                f"Pane {pane_id!r} slot {category!r}: dropped "
+                f"cmap={fields['cmap']!r} — matplotlib is not installed "
+                f"(the 'plot' extra), so the name cannot be validated; "
+                f"the slot uses its default colormap."
+            )
+            return record_type(**{**fields, "cmap": None})
     except TypeError as exc:
         raise SnapshotError(
             f"Pane {pane_id!r} slot {category!r} does not fit "
@@ -441,7 +456,8 @@ def _restore_mesh_view(
         raw.get("slots") or {}, f"pane {pane_id!r} slots",
     ).items():
         setattr(
-            view, category, _read_slot(category, payload, pane_id, version),
+            view, category,
+            _read_slot(category, payload, pane_id, version, notices),
         )
 
     live = {legend.field for legend in view.legends()}

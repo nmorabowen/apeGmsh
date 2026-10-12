@@ -77,10 +77,14 @@ def _check_style(record: object, owner: str) -> None:
         _require_token(cmap, owner, "cmap")
         try:
             import matplotlib
-        except ImportError:  # pragma: no cover - plot extra missing
-            raise ValueError(
-                f"{owner}.cmap={cmap!r} cannot be validated: matplotlib "
-                f"is not installed (pip install apeGmsh[plot])."
+        except ImportError:
+            # A7 review (#1737): an explicit cmap needs the `plot`
+            # extra to be validated; None needs nothing. Imported here,
+            # never at module import time.
+            raise ImportError(
+                f"{owner}.cmap={cmap!r} needs matplotlib to validate the "
+                f"name; install the 'plot' extra "
+                f"(pip install 'apeGmsh[plot]') or leave cmap=None."
             ) from None
         if cmap not in matplotlib.colormaps:
             raise ValueError(

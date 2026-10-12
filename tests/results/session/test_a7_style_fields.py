@@ -295,3 +295,70 @@ def test_catalog_is_unchanged_by_a7_narrow():
     assert list(SLOT_CATALOG) == [
         "contour", "vector", "gauss", "line", "sand", "loads", "reactions",
     ]
+
+
+# =====================================================================
+# A7 review (#1737): the conflict rule is per view; matplotlib is
+# needed only for an explicit cmap
+# =====================================================================
+
+def test_the_conflict_rule_is_per_view():
+    session = ResultsSession()
+    a, b = session.add_view(), session.add_view()
+    a.contour = Contour("S", clim=(0.0, 1.0), cmap="jet")
+    b.contour = Contour("S", clim=(0.0, 2.0), cmap="viridis")  # no raise
+    assert a.legends()[0].cmap == "jet"
+    assert b.legends()[0].cmap == "viridis"
+
+
+@pytest.fixture
+def no_matplotlib(monkeypatch):
+    """matplotlib absent: ``import matplotlib`` raises ImportError.
+    monkeypatch restores sys.modules afterwards."""
+    import sys
+    monkeypatch.setitem(sys.modules, "matplotlib", None)
+
+
+def test_an_explicit_cmap_without_matplotlib_names_the_plot_extra(
+    no_matplotlib,
+):
+    with pytest.raises(ImportError, match="'plot' extra"):
+        Contour("S", cmap="jet")
+    # None needs nothing; clim needs nothing either.
+    assert Contour("S", clim=(0.0, 1.0)).cmap is None
+
+
+def test_a_v2_cmap_without_matplotlib_restores_as_default_with_a_notice(
+    no_matplotlib,
+):
+    data = _v1(version=2, panes=[{"pane": "mesh", "id": "mesh-1", "slots": {
+        "contour": {"quantity": "S", "clim": [0, 1], "cmap": "jet"},
+        "gauss": {"quantity": "E"}}}])
+
+    restored = restore_snapshot(data)
+
+    view = restored.session.panes[0]
+    assert view.contour == Contour("S", clim=(0.0, 1.0))
+    assert view.gauss == Gauss("E")
+    (notice,) = restored.notices
+    assert "mesh-1" in notice and "'jet'" in notice and "plot" in notice
+
+
+def test_results_session_never_imports_matplotlib_at_module_level():
+    import ast
+    from pathlib import Path
+
+    import apeGmsh.results.session as pkg
+
+    offenders = []
+    for path in Path(pkg.__file__).parent.glob("*.py"):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in tree.body:  # module level only
+            names: list[str] = []
+            if isinstance(node, ast.Import):
+                names = [a.name for a in node.names]
+            elif isinstance(node, ast.ImportFrom) and node.module:
+                names = [node.module]
+            if any(n.split(".")[0] == "matplotlib" for n in names):
+                offenders.append(path.name)
+    assert offenders == []
