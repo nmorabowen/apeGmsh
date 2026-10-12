@@ -257,7 +257,7 @@ def _node_record_layout(
     element_plan: "ElementPlan | None",
 ) -> tuple[int, ...]:
     """The DOF layout (``_load_dof_layout``) every node of ``node_ids``
-    carries for ``record``'s components; raise when one has none (#1723).
+    carries for ``record``'s components; raise when one has none.
 
     Without an element plan (``ModelData``: a hand-written deck), every
     node carries the deck's declared ``(decl.ndm, decl.ndf)`` layout.

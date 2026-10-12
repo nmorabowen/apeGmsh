@@ -58,8 +58,7 @@ class StressZZNotRecordedWarning(UserWarning):
 # and a truss node not at all.  That map is the bridge's own DOF layout
 # (``_internal/build/ndf.py::_load_dof_layout``, the one loads, masses,
 # SPs and readback use); callers pass it in.  There is no fixed 6-DOF
-# fallback: mapping ``rotation_z`` straight to DOF 6 recorded a 2-D
-# frame's rotation as 0 with no warning (#1723).
+# fallback: ``-dof 6`` on a planar frame node records 0, silently.
 
 _TRANS_AXIS_TO_SPATIAL: dict[str, int] = {"x": 0, "y": 1, "z": 2}
 _ROT_AXIS_TO_SPATIAL: dict[str, int] = {"x": 3, "y": 4, "z": 5}
