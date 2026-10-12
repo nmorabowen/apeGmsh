@@ -68,6 +68,7 @@ from ._slots import (
     Slot,
     Vector,
     slot_field,
+    slot_style,
 )
 from ._time import Instant
 from ._views import (
@@ -116,6 +117,7 @@ __all__ = [
     "SLOT_CATALOG",
     "COLOUR_MAPPED",
     "slot_field",
+    "slot_style",
     # selection
     "SessionSelection",
     "node_target",

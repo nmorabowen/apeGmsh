@@ -2,9 +2,13 @@
 
 Seven categories, at most one occupant each per mesh view; different
 categories stack; filling an occupied slot **replaces** the occupant.
-The records here carry only what §4 puts *inside* the slot (quantity /
-component / averaging / pattern) — render style (cmap, clim, scale …)
-is not slot identity and is a later, additive widening.
+The records here carry what §4 puts *inside* the slot (quantity /
+component / averaging / pattern) and, on the four colour-mapped
+records, the two stored style fields of Amendment 7 (A7.3): ``clim``
+and ``cmap``. Both default to ``None`` = the kind's existing default,
+so no default changed. They are display state: they never enter field
+identity (:func:`slot_field`), so two slots of one quantity still share
+one scale, and the view refuses two of them that disagree (§5, A7.3).
 
 Tokens are opaque at this layer: ``quantity`` / ``component`` /
 ``pattern`` are broker vocabulary strings resolved by S1's realize
@@ -19,6 +23,8 @@ and spring-as-its-own-kind do not open an eighth slot.
 """
 from __future__ import annotations
 
+import math
+import numbers
 from dataclasses import dataclass
 from typing import Optional
 
@@ -29,6 +35,58 @@ def _require_token(value: object, owner: str, field_name: str) -> None:
             f"{owner}.{field_name} must be a non-empty string token; "
             f"got {value!r}."
         )
+
+
+def _check_style(record: object, owner: str) -> None:
+    """Validate and normalise A7.3's ``clim`` / ``cmap`` on a
+    colour-mapped record, at assignment (fail closed: a bad value never
+    reaches a renderer, nor a snapshot).
+
+    ``clim`` is two finite numbers, low < high, stored as a float
+    tuple (a JSON list from a snapshot normalises to the same record).
+    ``cmap`` is any name matplotlib resolves — ``'jet'`` included; an
+    unknown name raises here, not at first paint.
+    """
+    clim = getattr(record, "clim")
+    if clim is not None:
+        if isinstance(clim, (str, bytes)) or not hasattr(clim, "__len__"):
+            raise ValueError(
+                f"{owner}.clim must be (low, high) or None; got {clim!r}."
+            )
+        if len(clim) != 2:
+            raise ValueError(
+                f"{owner}.clim must be two numbers (low, high); got "
+                f"{len(clim)}: {clim!r}."
+            )
+        pair = []
+        for v in clim:
+            if isinstance(v, bool) or not isinstance(v, numbers.Real):
+                raise ValueError(
+                    f"{owner}.clim values must be numbers; got {v!r}."
+                )
+            pair.append(float(v))
+        lo, hi = pair
+        if not (math.isfinite(lo) and math.isfinite(hi)) or not lo < hi:
+            raise ValueError(
+                f"{owner}.clim must be finite with low < high; got "
+                f"({lo!r}, {hi!r})."
+            )
+        object.__setattr__(record, "clim", (lo, hi))
+    cmap = getattr(record, "cmap")
+    if cmap is not None:
+        _require_token(cmap, owner, "cmap")
+        try:
+            import matplotlib
+        except ImportError:  # pragma: no cover - plot extra missing
+            raise ValueError(
+                f"{owner}.cmap={cmap!r} cannot be validated: matplotlib "
+                f"is not installed (pip install apeGmsh[plot])."
+            ) from None
+        if cmap not in matplotlib.colormaps:
+            raise ValueError(
+                f"{owner}.cmap {cmap!r} is not a colormap matplotlib "
+                f"knows (e.g. 'viridis', 'jet', 'coolwarm')."
+            )
 
 
 @dataclass(frozen=True)
@@ -50,6 +108,8 @@ class Contour(Slot):
 
     quantity: str
     averaging: str = "averaged"
+    clim: Optional[tuple[float, float]] = None
+    cmap: Optional[str] = None
 
     def __post_init__(self) -> None:
         _require_token(self.quantity, "Contour", "quantity")
@@ -58,6 +118,7 @@ class Contour(Slot):
                 f"Contour.averaging must be 'averaged' or 'unaveraged'; "
                 f"got {self.averaging!r}."
             )
+        _check_style(self, "Contour")
 
 
 @dataclass(frozen=True)
@@ -68,9 +129,12 @@ class Vector(Slot):
     S1's resolver routes the token to the right emit path."""
 
     quantity: str
+    clim: Optional[tuple[float, float]] = None
+    cmap: Optional[str] = None
 
     def __post_init__(self) -> None:
         _require_token(self.quantity, "Vector", "quantity")
+        _check_style(self, "Vector")
 
 
 @dataclass(frozen=True)
@@ -81,9 +145,12 @@ class Gauss(Slot):
     field here."""
 
     quantity: str
+    clim: Optional[tuple[float, float]] = None
+    cmap: Optional[str] = None
 
     def __post_init__(self) -> None:
         _require_token(self.quantity, "Gauss", "quantity")
+        _check_style(self, "Gauss")
 
 
 @dataclass(frozen=True)
@@ -104,9 +171,12 @@ class Sand(Slot):
     """Sand field of a quantity (§4). Colour-mapped."""
 
     quantity: str
+    clim: Optional[tuple[float, float]] = None
+    cmap: Optional[str] = None
 
     def __post_init__(self) -> None:
         _require_token(self.quantity, "Sand", "quantity")
+        _check_style(self, "Sand")
 
 
 @dataclass(frozen=True)
@@ -157,6 +227,14 @@ def slot_field(category: str, record: Slot) -> Optional[str]:
     return record.quantity  # type: ignore[attr-defined]
 
 
+def slot_style(record: Slot) -> tuple[
+    Optional[tuple[float, float]], Optional[str],
+]:
+    """``(clim, cmap)`` a slot sets explicitly (A7.3); ``(None, None)``
+    for a record with no style fields or none set."""
+    return (getattr(record, "clim", None), getattr(record, "cmap", None))
+
+
 __all__ = [
     "Slot",
     "Contour",
@@ -169,4 +247,5 @@ __all__ = [
     "SLOT_CATALOG",
     "COLOUR_MAPPED",
     "slot_field",
+    "slot_style",
 ]
