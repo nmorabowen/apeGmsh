@@ -22,6 +22,7 @@ import numpy as np
 import pytest
 
 from tests.conftest import _open_model_from_h5
+from tests.fixtures.recorder_models import identity_model
 
 
 _DEFAULT_TCL_LAUNCHERS = [
@@ -108,7 +109,7 @@ def test_elastic_beam_3d_global_and_local_three_way_agreement(
         ),
     )
 
-    recorder_lines = spec.to_tcl_commands()
+    recorder_lines = spec.to_tcl_commands(model=identity_model([1]))
     # Two records → two Tcl recorder lines.
     assert len(recorder_lines) == 2
     global_line = next(ln for ln in recorder_lines if "globalForce" in ln)

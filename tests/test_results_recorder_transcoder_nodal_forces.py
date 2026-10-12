@@ -25,6 +25,7 @@ from apeGmsh.results.spec._resolved import (
 )
 
 from tests.conftest import _open_model_from_h5
+from tests.fixtures.recorder_models import identity_model
 
 
 class _MinimalFem:
@@ -81,7 +82,7 @@ class TestEmitFrameDerivation:
             ),
             snapshot_id="dummy",
         )
-        [line] = spec.to_tcl_commands()
+        [line] = spec.to_tcl_commands(model=identity_model([1]))
         assert "globalForce" in line
         assert "localForce" not in line
 
@@ -95,7 +96,7 @@ class TestEmitFrameDerivation:
             ),
             snapshot_id="dummy",
         )
-        [line] = spec.to_tcl_commands()
+        [line] = spec.to_tcl_commands(model=identity_model([1]))
         assert "localForce" in line
         # Should NOT contain globalForce — the recorder line ends in
         # 'localForce' as the response token.

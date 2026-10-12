@@ -60,7 +60,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional
 
-from ..spec._emit import emit_logical, to_ops_args
+from ..spec._emit import (
+    element_tag_map,
+    emit_logical,
+    to_ops_args,
+    to_ops_tags,
+)
 
 if TYPE_CHECKING:
     from ..spec._resolved import ResolvedRecorderSpec
@@ -78,6 +83,8 @@ _NON_RECORDER_CATEGORIES = frozenset({"fibers", "layers"})
 # Modal records need ``ops.eigen`` driving — out of scope for the
 # classic recorder path. Raises at ``__enter__``.
 _MODAL_CATEGORIES = frozenset({"modal"})
+
+_WHERE = "ResolvedRecorderSpec.emit_recorders"
 
 
 @dataclass(frozen=True)
@@ -106,11 +113,20 @@ class LiveRecorders:
         (:func:`~apeGmsh.opensees.emitter.live.get_ops`), resolved
         lazily on ``__enter__``. Pass it when you drive another
         module by hand.
+    model
+        The built :class:`~apeGmsh.opensees.OpenSeesModel`. Records name
+        elements by FEM id; OpenSees records by element tag, and under
+        ``element_tags="sequential"`` (the bridge default) the two differ.
+        The model's ``(fem_eid, tag)`` pairing translates every ``-ele``
+        list. Required whenever the spec holds an element-level record.
 
     Raises
     ------
     RuntimeError
         On ``__enter__`` if the spec contains any modal records.
+    ValueError
+        On ``__enter__`` if an element-level record is emitted without
+        ``model=``, or names a FEM id the model has no element for.
     """
 
     def __init__(
@@ -120,8 +136,10 @@ class LiveRecorders:
         *,
         file_format: str = "out",
         ops=None,
+        model=None,
     ) -> None:
         self._spec = spec
+        self._tag_map = None if model is None else element_tag_map(model)
         self._output_dir = str(output_dir) if output_dir else ""
         self._file_format = file_format
         self._ops = ops
@@ -158,6 +176,17 @@ class LiveRecorders:
                     f"opensees=ops), path=...) then "
                     f"cap.capture_modes(n)."
                 )
+
+        # Translate (or refuse) every element recorder before any
+        # recorder reaches the domain, so a refusal never leaves a
+        # stage half-issued.
+        for record in self._spec.records:
+            if record.category in _SUPPORTED_CATEGORIES:
+                for logical in emit_logical(
+                    record, output_dir=self._output_dir,
+                    file_format=self._file_format,
+                ):
+                    to_ops_tags(logical, self._tag_map, where=_WHERE)
 
         if self._ops is None:
             from ...opensees.emitter.live import get_ops
@@ -201,7 +230,9 @@ class LiveRecorders:
                     file_format=self._file_format,
                     stage_id=name,
                 ):
-                    args = to_ops_args(logical)
+                    args = to_ops_args(
+                        to_ops_tags(logical, self._tag_map, where=_WHERE),
+                    )
                     tag = self._ops.recorder(*args)
                     if isinstance(tag, int):
                         self._current_tags.append(tag)
