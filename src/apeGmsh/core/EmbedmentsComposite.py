@@ -7,7 +7,7 @@ isotropic sibling of ``g.reinforce`` / ``LadrunoEmbeddedRebar``. It ties a
 **constrained node set** into a **non-matching** solid host: at FEM-build
 time each node is inverse-mapped into the host element it falls inside,
 producing one :class:`~apeGmsh._kernel.records._constraints.EmbedTieRecord`
-per node. The bridge build step (``opensees._internal.build.emit_embed_ties``)
+per node. The bridge build step (``opensees._internal.build.constraints.emit_embed_ties``)
 turns each record into ``element LadrunoEmbeddedNode`` via the
 ``embedded_node_args`` builder.
 

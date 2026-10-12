@@ -16,7 +16,7 @@ from __future__ import annotations
 import pytest
 
 from apeGmsh.opensees.apesees import apeSees
-from apeGmsh.opensees._internal.build import InitialStressRecord
+from apeGmsh.opensees._internal.build.records import InitialStressRecord
 from apeGmsh.opensees.pattern.pattern import Plain
 from apeGmsh.opensees.time_series.time_series import Linear
 

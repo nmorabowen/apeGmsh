@@ -15,8 +15,8 @@ from __future__ import annotations
 
 import pytest
 
-from apeGmsh.opensees._internal.build import (
-    BridgeError,
+from apeGmsh.opensees._internal.build.errors import BridgeError
+from apeGmsh.opensees._internal.build.validators.solver import (
     validate_serial_mumps,
 )
 

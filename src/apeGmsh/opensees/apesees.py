@@ -28,8 +28,8 @@ from typing import (
 )
 
 from ._internal.artifact_write import BridgeArtifactWriter
-from ._internal.build import (
-    BridgeError,
+from ._internal.build.errors import BridgeError, TagPlanMiss
+from ._internal.build.records import (
     DampingAttachRecord,
     FixRecord,
     InitialStressRecord,
@@ -42,83 +42,18 @@ from ._internal.build import (
     SPRemovalRecord,
     StageRecord,
     SupportRecord,
+    EquationConstraintRecord,
+    make_equation_constraint_record,
+)
+from ._internal.build.element_emit import (
     ELEMENT_TAG_MODES,
     ElementTagMode,
-    _emit_node_with_inferred_ndf,
-    bucket_primary_nodes_by_rank,
-    build_element_partition_owner,
-    build_node_partition_owners,
-    close_builder_ndf_bracket,
-    compute_stage_ownership,
-    emit_activate_absorbing,
     emit_element_spec_partitioned,
-    emit_initial_stress_addtoparameter,
-    emit_initial_stress_global,
-    EquationConstraintRecord,
-    emit_equation_constraints,
-    emit_mp_constraints,
-    emit_mp_constraints_partitioned,
-    make_equation_constraint_record,
-    emit_reinforce_ties,
-    emit_update_parameters,
-    emit_embed_ties,
-    emit_contacts,
-    emit_contact_planes,
-    PlannedContact,
-    write_planned_contact,
-    emit_interfaces,
-    emit_rebar_elements,
-    emit_zero_velocities,
-    zero_velocity_target_nodes,
-    emit_ghost_sp_ops,
-    emit_stage_interfaces,
-    allocate_interface_tags,
-    _emit_interface_record,
-    _plan_rank_interfaces,
-    _register_interface_phantoms,
-    _validate_interface_records,
-    emit_stage_mp_constraints,
-    emit_stage_mp_constraints_partitioned,
-    plan_stage_mp_constraints_partitioned,
-    emit_pattern_spec,
-    emit_recorder_spec,
-    emit_transform_specs,
-    expand_pg_to_elements,
-    expand_pg_to_nodes,
-    ElementPlanRows,
-    FemToOpsTagMap,
     LazyRankBuckets,
-    NodePartitionOwners,
-    SortedIntSet,
-    SortedIntToInt,
-    is_partitioned,
-    node_index_lookup,
-    node_pair_rank,
-    resolve_element_node_pair,
-    route_element_less_nodes,
-    open_builder_ndf_bracket,
-    primary_owner_map,
-    replay_builder_scoped_declarations,
-    runtime_rank_from_partition_record,
-    topological_order,
-    needs_builder_ndf_bracket,
-    validate_builder_scope_ordering,
+)
+from ._internal.build.ndf import (
+    _emit_node_with_inferred_ndf,
     validate_node_ndf_element_compat,
-    validate_absorbing_quad_geometry,
-    validate_body_force_double_count,
-    validate_from_model_cases,
-    validate_load_basis_vs_elements,
-    validate_model_definition_consumed,
-    validate_ladruno_up_specs,
-    validate_ladruno_up_pressure_dof,
-    validate_ladruno_up_solver,
-    validate_serial_mumps,
-    deck_requests_solver_stats,
-    validate_up_pressure_datum,
-    validate_manzari_convergence_test,
-    validate_manzari_tangent_solver,
-    validate_sanisand_substep_cap,
-    validate_asdplastic_host,
     infer_node_ndf,
     validate_adaptive_element_endpoints,
     resolve_ndf_overlay,
@@ -127,12 +62,105 @@ from ._internal.build import (
     validate_record_ndf_consistency,
     fit_dof_vector,
     fit_fix_mask,
-    fix_records_from_model,
-    broker_mass_components,
     assert_ndm_compatible,
-    TagPlanMiss,
 )
-from ._internal.build import _element_transf as _build_element_transf
+from ._internal.build.ownership import (
+    bucket_primary_nodes_by_rank,
+    build_element_partition_owner,
+    build_node_partition_owners,
+    compute_stage_ownership,
+    FemToOpsTagMap,
+    NodePartitionOwners,
+    SortedIntSet,
+    SortedIntToInt,
+    is_partitioned,
+    node_index_lookup,
+    node_pair_rank,
+    primary_owner_map,
+    runtime_rank_from_partition_record,
+)
+from ._internal.build.builder_scope import (
+    close_builder_ndf_bracket,
+    open_builder_ndf_bracket,
+    replay_builder_scoped_declarations,
+    needs_builder_ndf_bracket,
+    validate_builder_scope_ordering,
+)
+from ._internal.build.stage_emit import (
+    emit_activate_absorbing,
+    emit_initial_stress_addtoparameter,
+    emit_initial_stress_global,
+    emit_update_parameters,
+    emit_zero_velocities,
+    zero_velocity_target_nodes,
+    emit_ghost_sp_ops,
+)
+from ._internal.build.constraints import (
+    emit_equation_constraints,
+    emit_mp_constraints,
+    emit_reinforce_ties,
+    emit_embed_ties,
+    emit_rebar_elements,
+    emit_stage_mp_constraints,
+)
+from ._internal.build.constraints_ranked import (
+    emit_mp_constraints_partitioned,
+    emit_stage_mp_constraints_partitioned,
+    plan_stage_mp_constraints_partitioned,
+    route_element_less_nodes,
+)
+from ._internal.build.contacts import (
+    emit_contacts,
+    emit_contact_planes,
+    PlannedContact,
+    write_planned_contact,
+)
+from ._internal.build.interfaces import (
+    emit_interfaces,
+    emit_stage_interfaces,
+    allocate_interface_tags,
+    _emit_interface_record,
+    _plan_rank_interfaces,
+    _register_interface_phantoms,
+    _validate_interface_records,
+)
+from ._internal.build.patterns import emit_pattern_spec, broker_mass_components
+from ._internal.build.recorders import emit_recorder_spec
+from ._internal.build.transforms import emit_transform_specs
+from ._internal.build.pg_expand import (
+    expand_pg_to_elements,
+    expand_pg_to_nodes,
+    ElementPlanRows,
+    resolve_element_node_pair,
+)
+from ._internal.build.topo import topological_order
+from ._internal.build.validators.mesh import validate_absorbing_quad_geometry
+from ._internal.build.validators.loads import (
+    validate_body_force_double_count,
+    validate_from_model_cases,
+    validate_load_basis_vs_elements,
+    validate_model_definition_consumed,
+    fix_records_from_model,
+)
+from ._internal.build.validators.up import (
+    validate_ladruno_up_specs,
+    validate_ladruno_up_pressure_dof,
+    validate_up_pressure_datum,
+)
+from ._internal.build.validators.solver import (
+    validate_ladruno_up_solver,
+    validate_serial_mumps,
+    deck_requests_solver_stats,
+)
+from ._internal.build.validators.materials import (
+    validate_manzari_convergence_test,
+    validate_manzari_tangent_solver,
+    validate_sanisand_substep_cap,
+    validate_asdplastic_host,
+)
+from ._internal.build.transforms import (
+    _element_transf as _build_element_transf,
+)
 from ._internal.contact_solver_gate import validate_consistent_tan_solver
 from ._element_capabilities import is_builder_scoped
 from ._internal.tag_resolution import (
@@ -223,7 +251,7 @@ if TYPE_CHECKING:
     # similarly-named submodule ``apeGmsh.mesh.FEMData`` under mypy.
     from apeGmsh.cuts import SectionCutDef, SectionSweepDef
     from apeGmsh.mesh.FEMData import FEMData
-    from ._internal.build import StiffnessResolver
+    from ._internal.build.records import StiffnessResolver
     from .analysis.strategy import Ladder
     from .emitter.h5 import H5Emitter
     from .emitter.tcl import PartitionSpan
@@ -612,7 +640,7 @@ def _fem_has_handler_requiring_mp(fem: "FEMData") -> bool:
     interpolation ties). Node-side records emit MP_Constraints EXCEPT
     ``kinematic_coupling`` (→ ``LadrunoKinematicCoupling`` element) and
     ``penalty`` (g.constraints.penalty → a stiff spring element, NOT an
-    MP_Constraint — it has no MP emit path in build.py), which are
+    MP_Constraint — it has no MP emit path in build/), which are
     handler-independent. The interpolation ties (``tie`` / ``embedded`` /
     ``distributing``) all emit penalty/coupling ELEMENTS — handler-independent
     too; their only handler-requiring route is ``enforce="equation"``, caught
@@ -850,7 +878,7 @@ class BuiltModel:
         time into a single ``region $tag -node ...`` command with one
         freshly-allocated tag.
     initial_stress_records
-        :class:`~apeGmsh.opensees._internal.build.InitialStressRecord`
+        :class:`~apeGmsh.opensees._internal.build.records.InitialStressRecord`
         directives collected through ``apeSees.initial_stress(...)``
         — each is a ramped in-situ stress tensor that fans out into
         parameter declarations + per-rank ``addToParameter`` calls +
@@ -1282,7 +1310,7 @@ class BuiltModel:
         no auto records costs nothing (BuiltModel is frozen+slots, so
         no instance cache — each call returns a fresh lazy resolver).
         """
-        from ._internal.build import make_auto_stiffness_resolver
+        from ._internal.build.constraints import make_auto_stiffness_resolver
         elements = [p for p in self.primitives if isinstance(p, Element)]
         return make_auto_stiffness_resolver(self.fem, elements)
 
@@ -5780,7 +5808,7 @@ class BuiltModel:
           declarations need (ADR 0027 INV-2). A ghost is by definition
           NOT owned by the declaring rank, so it never appears in that
           rank's ``by_rank`` bucket and its BCs would otherwise be missing
-          there — see :func:`~apeGmsh.opensees._internal.build.emit_mp_constraints_partitioned`.
+          there — see :func:`~apeGmsh.opensees._internal.build.constraints_ranked.emit_mp_constraints_partitioned`.
           Tagged ``("fix", …)`` because a staged model extends the same
           stream with ``("remove", dof)`` entries per stage.
           Built inside this same walk rather than by a second
@@ -6883,7 +6911,7 @@ class BuiltModel:
         """Resolve a damping ``on=`` physical-group name to OpenSees element
         tags (fail-loud on an empty / unmapped group). Shared by region
         Rayleigh (D2) and the Damping-object attach (D3)."""
-        from ._internal.build import expand_pg_to_elements
+        from ._internal.build.pg_expand import expand_pg_to_elements
 
         if fem_eid_to_ops_tag is None:
             raise BridgeError(
@@ -7345,7 +7373,7 @@ class BuiltModel:
         """
         if not plan:
             return
-        from ._internal.build import BridgeError
+        from ._internal.build.errors import BridgeError
         for entry in plan.values():
             kind = type(entry.materialised_spec).__name__
             # A recorder may carry several regions (value-channel filter +
@@ -7398,9 +7426,9 @@ class BuiltModel:
     # / _emit_broker_loads_partitioned / _broker_load_components) were
     # removed. g.loads reach the deck only via an explicit
     # ops.pattern.Plain(...).from_model(case) import — expanded in
-    # _internal/build.py::emit_pattern_spec (flat) and
+    # _internal/build/patterns.py::emit_pattern_spec (flat) and
     # _emit_patterns_partitioned (per-rank). The DOF-agnostic 3D→ndf
-    # mapping now lives in build.py::broker_load_components.
+    # mapping now lives in build/patterns.py::broker_load_components.
 
     def _emit_patterns_partitioned(
         self,
@@ -7594,7 +7622,7 @@ class BuiltModel:
         onto **each node's** effective ndf (``inferred_ndf`` — envelope
         fallback), not the model envelope.
         """
-        from ._internal.build import broker_load_components
+        from ._internal.build.patterns import broker_load_components
 
         eff = inferred_ndf or {}
 
@@ -7640,7 +7668,7 @@ class BuiltModel:
         lines are rank-filtered, so the per-rank union reproduces the same
         deck the flat path emits. Returns ``[(node, components), ...]``.
         """
-        from ._internal.build import (
+        from ._internal.build.patterns import (
             broker_load_components,
             resolve_moment_tensor_pairs,
         )
@@ -8335,7 +8363,7 @@ def _warn_if_shown(message: str, category: type[Warning]) -> bool:
     """
     import warnings as _warnings
 
-    from ._internal.build import _stacklevel_outside_package
+    from ._internal._stacklevel import _stacklevel_outside_package
 
     with _warnings.catch_warnings(record=True) as seen:
         _warnings.warn(
@@ -10744,7 +10772,7 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
         self._ledger_warned.add(verbs)
         import warnings as _warnings
 
-        from ._internal.build import _stacklevel_outside_package
+        from ._internal._stacklevel import _stacklevel_outside_package
         from .emitter.h5 import H5LedgerWarning
         detail = ", ".join(f"{v} x{counts[v]}" for v in sorted(verbs))
         # The explicit ``ops.h5()`` and the automatic write after an emit

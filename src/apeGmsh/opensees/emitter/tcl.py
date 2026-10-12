@@ -33,7 +33,8 @@ see the constant's docstring.
 from __future__ import annotations
 
 from .._internal.analyze_rc import COMMIT_ABORT_MESSAGE, COMMIT_ABORT_RC
-from .._internal.build import BridgeError, stage_marker_name
+from .._internal.build.errors import BridgeError
+from .._internal.build.validators.solver import stage_marker_name
 from .._rc_c2_flags import warn_rc_c2_deck
 from .._target import BackendInfo, OpenSeesTarget
 

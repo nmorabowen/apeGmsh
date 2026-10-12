@@ -20,7 +20,7 @@ import numpy as np
 import pytest
 
 from apeGmsh.opensees import apeSees
-from apeGmsh.opensees._internal.build import BridgeError
+from apeGmsh.opensees._internal.build.errors import BridgeError
 from apeGmsh.opensees.emitter.base import StrategySpec
 from apeGmsh.opensees.emitter.py import PyEmitter, _ops_call
 from apeGmsh.opensees.emitter.tcl import TclEmitter, _join

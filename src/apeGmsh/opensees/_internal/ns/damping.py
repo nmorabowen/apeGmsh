@@ -18,7 +18,7 @@ from collections.abc import Sequence
 
 from ...analysis.rayleigh import Stiffness, rayleigh_from_ratio
 from ...damping.damping import URD, SecStif, Uniform, URDbeta
-from ..build import (
+from ..build.records import (
     DampingAttachRecord,
     ModalDampingRecord,
     RayleighRecord,

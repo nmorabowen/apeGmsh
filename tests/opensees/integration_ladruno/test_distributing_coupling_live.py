@@ -19,7 +19,9 @@ from __future__ import annotations
 import pytest
 
 from apeGmsh._kernel.records._constraints import InterpolationRecord
-from apeGmsh.opensees._internal.build import _emit_one_interpolation
+from apeGmsh.opensees._internal.build.constraints import (
+    _emit_one_interpolation,
+)
 from apeGmsh.opensees.emitter.live import LiveOpsEmitter
 
 from tests.opensees._helpers.tag_plan import emit_tags, stub_fem

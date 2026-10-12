@@ -21,7 +21,7 @@ from apeGmsh._kernel.records._constraints import (
     InterpolationRecord,
     NodeGroupRecord,
 )
-from apeGmsh.opensees._internal.build import (
+from apeGmsh.opensees._internal.build.constraints import (
     _emit_kinematic_couplings,
     _emit_one_interpolation,
 )

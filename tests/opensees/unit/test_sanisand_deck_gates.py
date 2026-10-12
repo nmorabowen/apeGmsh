@@ -20,8 +20,8 @@ import warnings
 
 import pytest
 
-from apeGmsh.opensees._internal.build import (
-    BridgeError,
+from apeGmsh.opensees._internal.build.errors import BridgeError
+from apeGmsh.opensees._internal.build.validators.materials import (
     ManzariConvergenceTestWarning,
     validate_manzari_convergence_test,
     validate_sanisand_substep_cap,

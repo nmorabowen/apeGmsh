@@ -122,7 +122,7 @@ def _collect_offences(path: Path) -> list[tuple[int, str]]:
         # AttributeError in the C3 round of this feature.  The v2
         # idiom is ``.select(pg=).groups()`` / ``.select(pg=).ids``;
         # ``ModelData`` delegates to
-        # ``apeGmsh.opensees._internal.build.expand_pg_to_elements``
+        # ``apeGmsh.opensees._internal.build.pg_expand.expand_pg_to_elements``
         # for PG → (eid, conn) expansion.
         if (
             isinstance(node, ast.Call)

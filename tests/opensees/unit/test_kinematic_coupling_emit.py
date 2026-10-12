@@ -23,8 +23,10 @@ from __future__ import annotations
 import pytest
 
 from apeGmsh._kernel.records._constraints import NodeGroupRecord
-from apeGmsh.opensees._internal.build import (
+from apeGmsh.opensees._internal.build.constraints import (
     _emit_kinematic_couplings,
+)
+from apeGmsh.opensees._internal.build.constraints_ranked import (
     _plan_rank_constraints,
 )
 from apeGmsh.opensees.emitter.recording import RecordingEmitter

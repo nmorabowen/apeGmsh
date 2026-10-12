@@ -19,7 +19,7 @@ from apeGmsh import apeGmsh
 from apeGmsh._kernel.defs.constraints import ReinforceDef
 from apeGmsh._kernel.records._constraints import ReinforceTieRecord
 from apeGmsh.opensees import apeSees
-from apeGmsh.opensees._internal.build import emit_reinforce_ties
+from apeGmsh.opensees._internal.build.constraints import emit_reinforce_ties
 from apeGmsh.opensees.emitter.recording import RecordingEmitter
 
 from tests.opensees._helpers.tag_plan import emit_tags

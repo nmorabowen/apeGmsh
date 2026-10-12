@@ -13,7 +13,7 @@ import pytest
 
 from apeGmsh.opensees.apesees import apeSees
 from apeGmsh.opensees.stage._builder import _StageBuilder
-from apeGmsh.opensees._internal.build import SPRemovalRecord
+from apeGmsh.opensees._internal.build.records import SPRemovalRecord
 from apeGmsh.opensees.emitter.recording import RecordingEmitter
 
 from tests.opensees.fixtures.fem_stub import (

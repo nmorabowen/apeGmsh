@@ -15,7 +15,7 @@ import pytest
 
 from apeGmsh._kernel.defs.constraints import ContactDef
 from apeGmsh._kernel.records._constraints import ContactRecord
-from apeGmsh.opensees._internal.build import emit_contacts
+from apeGmsh.opensees._internal.build.contacts import emit_contacts
 from apeGmsh.opensees.element.contact import contact_args, contact_surface_args
 from apeGmsh.opensees.emitter.recording import RecordingEmitter
 
@@ -765,7 +765,7 @@ def _contact_plus_master_box(g):
 def test_contact_and_rigid_body_as_element_guard_raises(tmp_path):
     from apeGmsh import apeGmsh
     from apeGmsh.opensees import apeSees
-    from apeGmsh.opensees._internal.build import BridgeError
+    from apeGmsh.opensees._internal.build.errors import BridgeError
 
     g = apeGmsh(model_name="contact_rb_guard", verbose=False)
     g.begin()
@@ -1135,7 +1135,7 @@ def test_emit_refuses_a_2d_record_in_a_3d_model():
     independent of the resolve-time ``gmsh.model.getDimension()`` gate — so
     this catches a 2D mesh declared into a 3D model, and the compose /
     from_h5 hole where an archived 2D record lands in a 3D assembly."""
-    from apeGmsh.opensees._internal.build import BridgeError
+    from apeGmsh.opensees._internal.build.errors import BridgeError
     em = RecordingEmitter()
     fem = _Fem([_nts_2d_rec(name="joint")])
     tags = emit_tags(fem)
@@ -1146,7 +1146,7 @@ def test_emit_refuses_a_2d_record_in_a_3d_model():
 
 
 def test_emit_refuses_a_3d_record_in_a_2d_model():
-    from apeGmsh.opensees._internal.build import BridgeError
+    from apeGmsh.opensees._internal.build.errors import BridgeError
     em = RecordingEmitter()
     fem = _Fem([_nts_rec()])
     tags = emit_tags(fem)

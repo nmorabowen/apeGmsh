@@ -17,7 +17,7 @@ import pytest
 
 from apeGmsh._kernel.defs.constraints import EmbedDef
 from apeGmsh._kernel.records._constraints import EmbedTieRecord
-from apeGmsh.opensees._internal.build import emit_embed_ties
+from apeGmsh.opensees._internal.build.constraints import emit_embed_ties
 from apeGmsh.opensees.element.embedded_node import embedded_node_args
 from apeGmsh.opensees.emitter.recording import RecordingEmitter
 

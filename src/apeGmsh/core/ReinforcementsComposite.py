@@ -7,7 +7,7 @@ embeds a **pre-meshed rebar line physical group** into a **non-matching**
 solid host: at FEM-build time each rebar node is inverse-mapped into the
 host element it falls inside, producing one
 :class:`~apeGmsh._kernel.records._constraints.ReinforceTieRecord` per rebar
-node. The bridge build step (``opensees._internal.build.emit_reinforce_ties``)
+node. The bridge build step (``opensees._internal.build.constraints.emit_reinforce_ties``)
 turns each record into ``element LadrunoEmbeddedRebar`` via the R0
 ``embedded_rebar_args`` builder.
 

@@ -28,7 +28,7 @@ import gmsh
 from apeGmsh import apeGmsh
 from apeGmsh._kernel.records._constraints import NormalLaw, TangentialLaw
 from apeGmsh.opensees import apeSees
-from apeGmsh.opensees._internal.build import BridgeError
+from apeGmsh.opensees._internal.build.errors import BridgeError
 
 NORMAL = NormalLaw(kind="ent", k_per_area=1.0e9)
 TANGENTIAL = TangentialLaw(kind="epp", k_per_area=1.0e8, tau_b=2.5e5)

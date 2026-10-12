@@ -135,7 +135,9 @@ def test_mutation_mass_on_every_owner_is_caught(
     wrong. Nothing errors; the spectrum just comes back biased low.
     There is no guard for this anywhere in the C++ stack, which is why
     apeGmsh has to own it."""
-    from apeGmsh.opensees._internal.build import build_node_partition_owners
+    from apeGmsh.opensees._internal.build.ownership import (
+        build_node_partition_owners,
+    )
 
     def every_owner(self, primary_owner):
         owners = build_node_partition_owners(self.fem)

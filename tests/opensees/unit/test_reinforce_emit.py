@@ -13,7 +13,7 @@ import numpy as np
 import pytest
 
 from apeGmsh._kernel.records._constraints import ReinforceTieRecord
-from apeGmsh.opensees._internal.build import emit_reinforce_ties
+from apeGmsh.opensees._internal.build.constraints import emit_reinforce_ties
 from apeGmsh.opensees.emitter.recording import RecordingEmitter
 from apeGmsh.opensees.emitter.tcl import TclEmitter
 from apeGmsh.opensees.emitter.h5 import H5Emitter

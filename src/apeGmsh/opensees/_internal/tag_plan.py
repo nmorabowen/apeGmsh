@@ -44,15 +44,12 @@ if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping, Sequence
 
     from ..apesees import BuiltModel
-    from .build import (
-        ContactPlan,
-        ElementPlanRows,
-        InterfacePlan,
-        MPElementPlan,
-        ParameterSite,
-        PlannedParameter,
-        TransformFanout,
-    )
+    from .build.contacts import ContactPlan
+    from .build.pg_expand import ElementPlanRows
+    from .build.interfaces import InterfacePlan
+    from .build.constraints_plan import MPElementPlan
+    from .build.stage_emit import ParameterSite, PlannedParameter
+    from .build.transforms import TransformFanout
     from .types import Element, GeomTransf
 
 #: One planned emission: ``(kind, tag)`` in the emit's verb vocabulary.
@@ -74,7 +71,7 @@ def _miss(message: str) -> Exception:
     and a :class:`TagLawError` at once; ``message`` names the family and
     the owner.
     """
-    from .build import TagPlanMiss
+    from .build.errors import TagPlanMiss
 
     return TagPlanMiss(message)
 
@@ -96,7 +93,7 @@ def emit_mode(
     cannot drive OpenSeesMP brackets emits a partitioned mesh flat).
     ``split`` wins over partitioning, as in the emit dispatch.
     """
-    from .build import is_partitioned
+    from .build.ownership import is_partitioned
 
     return TagMode(
         split=bool(split),
@@ -225,7 +222,7 @@ def check_distinct_nodes(spec: Element, rows: ElementPlanRows) -> None:
     i = _first_repeated_row(rows.conn)
     if i is None:
         return
-    from .build import BridgeError
+    from .build.errors import BridgeError
     from .tag_resolution import MISSING_FEM_ELEMENT_ID
 
     eid, nodes, tag = rows[i]
@@ -281,7 +278,7 @@ class TransformTagPlan(FamilyTagPlan):
 
     def stream(self) -> tuple[TagRow, ...]:
         """One ``("geomTransf:<type>", tag)`` row per planned tag."""
-        from .build import _TRANSF_TYPE_TOKEN
+        from .build.transforms import _TRANSF_TYPE_TOKEN
 
         rows: list[TagRow] = []
         for transf, lines in self._planned().specs:
@@ -642,7 +639,7 @@ class ParameterTagPlan(FamilyTagPlan):
         default_factory=dict, init=False, compare=False, repr=False)
 
     def __post_init__(self) -> None:
-        from .build import PARAMETER_VERBS
+        from .build.stage_emit import PARAMETER_VERBS
 
         if self.rows:
             raise TagLawError(
@@ -683,7 +680,7 @@ class ParameterTagPlan(FamilyTagPlan):
             a is not b or r != s
             for (a, r), (b, s) in zip(planned, self.owners)
         ):
-            from .build import plan_owner
+            from .build.errors import plan_owner
 
             i = next((i for i, ((a, r), (b, s)) in enumerate(
                 zip(planned, self.owners)) if a is not b or r != s),
@@ -1083,12 +1080,12 @@ def plan_tags(bm: BuiltModel, mode: TagMode) -> TagPlan:
     describe the tags the model was registered with.
     """
     from ..apesees import _kind_of
-    from .build import (
+    from .build.element_emit import (
         allocate_element_tags,
-        plan_transform_specs,
         reserve_fem_element_tags,
-        topological_order,
     )
+    from .build.transforms import plan_transform_specs
+    from .build.topo import topological_order
     from .types import Element, GeomTransf
 
     if not isinstance(mode, TagMode):
@@ -1199,15 +1196,15 @@ def _plan_mp_elements_and_interfaces(
     written there. Each plan checks, as it is made, that it holds every
     element and record the emit of ``bm.fem`` writes, once.
     """
-    from .build import (
+    from .build.interfaces import (
         InterfacePlan,
+        PlannedInterface,
+        plan_interface_tags,
+    )
+    from .build.constraints_plan import (
         MPElementEntry,
         MPElementPlan,
-        PlannedInterface,
         PlannedMPElement,
-        _StageConstraintAdapter,
-        build_element_partition_owner,
-        build_node_partition_owners,
         constraint_pass_entries,
         embed_tie_records,
         interface_records,
@@ -1216,14 +1213,20 @@ def _plan_mp_elements_and_interfaces(
         mp_element_entry,
         number_constraint_pass,
         number_mp_elements,
-        plan_interface_tags,
         plan_mp_elements,
-        plan_partitioned_mp_constraints,
-        plan_stage_mp_constraints_partitioned,
         rebar_cell_entries,
         rebar_element_records,
         reinforce_tie_records,
+    )
+    from .build.constraints import _StageConstraintAdapter
+    from .build.ownership import (
+        build_element_partition_owner,
+        build_node_partition_owners,
         runtime_rank_from_partition_record,
+    )
+    from .build.constraints_ranked import (
+        plan_partitioned_mp_constraints,
+        plan_stage_mp_constraints_partitioned,
     )
 
     fem = bm.fem
@@ -1351,15 +1354,17 @@ def _plan_parameters(
     partitioned emit gives a record the tag the flat emit gives it, on
     every rank that writes it (:func:`~.build.number_parameters`).
     """
-    from .build import (
+    from .build.ownership import (
         FemToOpsTagMap,
-        absorbing_ele_tags,
         build_element_partition_owner,
+        runtime_rank_from_partition_record,
+    )
+    from .build.stage_emit import (
+        absorbing_ele_tags,
         initial_stress_sites,
         number_parameters,
         parameter_flip_sites,
         plan_parameters,
-        runtime_rank_from_partition_record,
         update_parameter_ele_tags,
     )
 
@@ -1420,7 +1425,7 @@ def _plan_contacts(
     ghost set and raises every routing refusal before any emission. Its
     warnings ride on the plan, and each emit repeats them.
     """
-    from .build import (
+    from .build.contacts import (
         flat_contact_entries,
         partitioned_contact_entries,
         plan_contacts,

@@ -968,7 +968,12 @@ def _simulated_split(tmp_path: Path, planted: str = "") -> dict[str, ast.Module]
     ``pkg/contacts.py``, the rest stays in ``pkg/core.py`` and reaches it
     through ``from .contacts import plan_contacts``; ``planted`` is appended
     to ``core.py``."""
-    text = _BUILD.read_text(encoding="utf-8")
+    # The monolith is gone (S2-a): re-fuse the package's modules into one
+    # text, so the simulation still cuts ``plan_contacts`` out of "the build".
+    text = "\n\n".join(
+        re.sub(r"^from __future__ import annotations\n", "",
+               m.read_text(encoding="utf-8"), flags=re.M)
+        for m in build_modules())
     rest, moved = _cut(text, ast.parse(text), "plan_contacts")
     pkg = tmp_path / "pkg"
     pkg.mkdir()

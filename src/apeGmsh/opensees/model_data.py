@@ -80,11 +80,9 @@ from __future__ import annotations
 
 from typing import Any, Iterable, Literal, cast
 
-from ._internal.build import (
-    BridgeError,
-    _emit_recorder_declaration,
-    expand_pg_to_elements,
-)
+from ._internal.build.errors import BridgeError
+from ._internal.build.recorders import _emit_recorder_declaration
+from ._internal.build.pg_expand import expand_pg_to_elements
 from ._internal.compose import _compose_model_h5, _path_stem
 from .emitter.base import Emitter
 from .emitter.h5 import H5Emitter

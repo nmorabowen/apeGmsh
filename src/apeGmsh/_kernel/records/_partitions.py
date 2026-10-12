@@ -40,7 +40,7 @@ class PartitionRecord:
         ranks (ADR 0038 rank model, ADR 0117 D6). The OpenSees bridge does **not** read this value
         as a runtime rank — it derives the 0-based rank from the
         enumerate position in sorted ``fem.partitions`` (see
-        ``opensees._internal.build.runtime_rank_from_partition_record``,
+        ``opensees._internal.build.ownership.runtime_rank_from_partition_record``,
         the single source of truth), so the two bases coexist without
         affecting emission. Note ``fem.{nodes,elements}.select(
         partition=N)`` keys on this raw ``id``, so its meaning is

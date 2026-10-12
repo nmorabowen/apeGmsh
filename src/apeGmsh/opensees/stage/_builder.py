@@ -9,8 +9,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Callable, Iterable, Sequence
 
-from .._internal.build import (
-    BridgeError,
+from .._internal.build.errors import BridgeError
+from .._internal.build.records import (
     DampingAttachRecord,
     ActivateAbsorbingRecord,
     ElementRemovalRecord,

@@ -28,7 +28,9 @@ import pytest
 
 from apeGmsh import apeGmsh
 from apeGmsh.opensees import apeSees
-from apeGmsh.opensees._internal.build import WarnLoadBasisMismatch
+from apeGmsh.opensees._internal.build.validators.loads import (
+    WarnLoadBasisMismatch,
+)
 from apeGmsh.opensees.emitter.live import LiveOpsEmitter
 
 pytestmark = pytest.mark.ladruno_fork

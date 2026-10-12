@@ -34,12 +34,12 @@ from apeGmsh.mesh.FEMData import (
     MeshInfo,
     NodeComposite,
 )
-from apeGmsh.opensees._internal.build import (
+from apeGmsh.opensees._internal.build.constraints import (
     AUTO_STIFFNESS_ALPHA,
-    BridgeError,
     _emit_one_interpolation,
     make_auto_stiffness_resolver,
 )
+from apeGmsh.opensees._internal.build.errors import BridgeError
 from apeGmsh.opensees.emitter.recording import RecordingEmitter
 
 from tests.opensees._helpers.tag_plan import emit_tags, stub_fem

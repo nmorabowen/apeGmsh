@@ -307,7 +307,7 @@ def test_mrh_load_channel_needs_series() -> None:
 
 
 def test_mrh_rejects_unregistered_time_series_handle() -> None:
-    from apeGmsh.opensees._internal.build import BridgeError
+    from apeGmsh.opensees._internal.build.errors import BridgeError
     from apeGmsh.opensees.time_series.time_series import Path
 
     ops = _mrh_ops()
@@ -357,7 +357,7 @@ def test_random_response_rejects_wrong_kind_handle_as_input_psd() -> None:
 
 
 def test_mrh_rejects_pattern_with_sp_constraints() -> None:
-    from apeGmsh.opensees._internal.build import BridgeError
+    from apeGmsh.opensees._internal.build.errors import BridgeError
 
     ops = _mrh_ops()
     ts = ops.timeSeries.Path(values=(0.0, 1.0), dt=0.01)
@@ -516,7 +516,7 @@ def test_random_response_requires_two_sweep_points() -> None:
 
 
 def test_random_response_rejects_unregistered_psd_handle() -> None:
-    from apeGmsh.opensees._internal.build import BridgeError
+    from apeGmsh.opensees._internal.build.errors import BridgeError
     from apeGmsh.opensees.time_series.time_series import Constant
 
     ops = _mrh_ops()

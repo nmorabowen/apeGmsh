@@ -17,7 +17,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from apeGmsh.opensees import apeSees
-from apeGmsh.opensees._internal.build import BridgeError
+from apeGmsh.opensees._internal.build.errors import BridgeError
 from apeGmsh.opensees.apesees import OpenSeesExplicitSolverWarning
 
 

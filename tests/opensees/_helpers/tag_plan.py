@@ -1,4 +1,4 @@
-"""Tag plans for direct test calls of the ``build.py`` writers.
+"""Tag plans for direct test calls of the ``build/`` writers.
 
 The MP-element, interface, contact and recorder-region writers read their
 tags from the build's :class:`TagPlan`, which every emit helper takes in
@@ -126,7 +126,7 @@ def parameter_plan(
     from a fresh planner, so a parameter writer (``emit_activate_absorbing``,
     ``emit_update_parameters``) can be called directly with a plan.
     """
-    from apeGmsh.opensees._internal.build import plan_parameters
+    from apeGmsh.opensees._internal.build.stage_emit import plan_parameters
 
     planner = TagAllocator()
     lines = plan_parameters(sites, planner)

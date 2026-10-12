@@ -32,7 +32,7 @@ import numpy as np
 import pytest
 
 from apeGmsh.opensees import OpenSeesModel, apeSees
-from apeGmsh.opensees._internal.build import BridgeError
+from apeGmsh.opensees._internal.build.errors import BridgeError
 from apeGmsh.opensees._internal.lineage import compute_model_hash, read_stored_lineage
 from apeGmsh.opensees._target import BackendInfo
 from apeGmsh.opensees.emitter import h5_reader

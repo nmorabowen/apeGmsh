@@ -125,7 +125,7 @@ def _ratchet_violations(exceptions: dict[str, str]) -> list[str]:
 def _concrete_element_classes() -> dict[str, type[Element]]:
     """Every non-abstract ``Element`` subclass defined under
     ``apeGmsh.opensees.element`` (the bridge's emitting primitives), keyed
-    by class name — the key ``_internal/build.py`` looks up
+    by class name — the key ``_internal/build/`` looks up
     (``type(spec).__name__``)."""
     found: dict[str, type[Element]] = {}
     for info in pkgutil.walk_packages(

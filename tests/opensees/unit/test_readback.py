@@ -14,7 +14,7 @@ from typing import Any
 import pytest
 
 from apeGmsh.opensees import _readback
-from apeGmsh.opensees._internal.build import BridgeError
+from apeGmsh.opensees._internal.build.errors import BridgeError
 from apeGmsh.opensees._internal.ns.element import _ElementNS
 from apeGmsh.opensees._internal.tag_plan import emit_mode
 from apeGmsh.opensees._readback import (

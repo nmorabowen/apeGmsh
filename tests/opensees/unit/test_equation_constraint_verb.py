@@ -16,7 +16,7 @@ from typing import cast
 import pytest
 
 from apeGmsh.opensees import apeSees
-from apeGmsh.opensees._internal.build import BridgeError
+from apeGmsh.opensees._internal.build.errors import BridgeError
 from apeGmsh.opensees.emitter.h5 import H5FeatureDeferredWarning
 from apeGmsh.opensees.emitter.recording import RecordingEmitter
 

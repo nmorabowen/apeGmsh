@@ -41,7 +41,7 @@ import gmsh
 from apeGmsh import apeGmsh
 from apeGmsh._kernel.records._constraints import ContactRecord
 from apeGmsh.opensees import apeSees
-from apeGmsh.opensees._internal.build import BridgeError
+from apeGmsh.opensees._internal.build.errors import BridgeError
 
 from tests.opensees.fixtures.fem_stub import (
     FEMStub,

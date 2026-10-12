@@ -208,7 +208,7 @@ class Path(TimeSeries):
     ``-useLast`` and holds the last value instead.
 
     ``start_time``, ``prepend_zero`` and ``use_last`` are refused with
-    ``time=`` (:class:`~apeGmsh.opensees._internal.build.BridgeError`).
+    ``time=`` (:class:`~apeGmsh.opensees._internal.build.errors.BridgeError`).
     ``OPS_PathSeries`` builds a ``time=`` series as a ``PathTimeSeries``
     and never passes it ``-startTime`` or ``-prependZero``, on stock or on
     the fork, so both flags would be dropped without a word.  Stock
@@ -279,7 +279,7 @@ class Path(TimeSeries):
         """Refuse the flags OpenSees drops on the ``time=`` route (#1363)."""
         # Lazy: ``_internal.build`` imports ``stage_window``, which imports
         # this module.
-        from .._internal.build import BridgeError
+        from .._internal.build.errors import BridgeError
 
         assert self.time is not None
         if self.start_time != 0.0:

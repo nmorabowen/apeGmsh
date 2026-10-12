@@ -127,7 +127,7 @@ def test_total_contacts_is_zero_only_with_no_engine():
 )
 def test_facade_requires_a_live_analysis(verb):
     from apeGmsh.opensees import apeSees
-    from apeGmsh.opensees._internal.build import BridgeError
+    from apeGmsh.opensees._internal.build.errors import BridgeError
     from tests.opensees.fixtures.fem_stub import make_two_node_beam
 
     bridge = apeSees(cast("object", make_two_node_beam()))
@@ -140,7 +140,7 @@ def test_facade_error_states_there_is_no_recorded_route():
     """The obvious next question after "call analyze first" is "or can I just
     record it?" — the answer is no, and the message has to say so."""
     from apeGmsh.opensees import apeSees
-    from apeGmsh.opensees._internal.build import BridgeError
+    from apeGmsh.opensees._internal.build.errors import BridgeError
     from tests.opensees.fixtures.fem_stub import make_two_node_beam
 
     bridge = apeSees(cast("object", make_two_node_beam()))

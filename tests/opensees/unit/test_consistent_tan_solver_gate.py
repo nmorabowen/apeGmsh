@@ -24,7 +24,7 @@ from types import SimpleNamespace as NS
 
 import pytest
 
-from apeGmsh.opensees._internal.build import BridgeError
+from apeGmsh.opensees._internal.build.errors import BridgeError
 from apeGmsh.opensees._internal.contact_solver_gate import (
     validate_consistent_tan_solver,
 )

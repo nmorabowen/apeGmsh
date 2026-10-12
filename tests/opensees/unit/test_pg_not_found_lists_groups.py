@@ -17,8 +17,8 @@ import pytest
 
 from apeGmsh import apeGmsh
 from apeGmsh.opensees import apeSees
-from apeGmsh.opensees._internal.build import (
-    BridgeError,
+from apeGmsh.opensees._internal.build.errors import BridgeError
+from apeGmsh.opensees._internal.build.pg_expand import (
     expand_pg_to_elements,
     expand_pg_to_nodes,
 )

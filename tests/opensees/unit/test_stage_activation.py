@@ -22,11 +22,9 @@ from typing import get_type_hints
 import pytest
 
 from apeGmsh.opensees.apesees import apeSees
-from apeGmsh.opensees._internal.build import (
-    BridgeError,
-    StageRecord,
-    compute_stage_ownership,
-)
+from apeGmsh.opensees._internal.build.errors import BridgeError
+from apeGmsh.opensees._internal.build.records import StageRecord
+from apeGmsh.opensees._internal.build.ownership import compute_stage_ownership
 from apeGmsh.opensees.emitter.base import Emitter
 from apeGmsh.opensees.emitter.py import PyEmitter
 from apeGmsh.opensees.emitter.recording import RecordingEmitter

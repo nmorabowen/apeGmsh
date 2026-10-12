@@ -57,7 +57,7 @@ Protocol cannot supply the spec-level grouping the schema asks for:
 schema groups elements by element-type token
 (``/elements/forceBeamColumn/``, ``/elements/FourNodeTetrahedron/``,
 ...).  The streaming Protocol does not surface the PG (``spec.pg`` is
-known only inside ``_internal/build.py``'s element fan-out), so the
+known only inside ``_internal/build/``'s element fan-out), so the
 H5 emitter bins by type.  Each group's ``ids`` and ``connectivity``
 datasets stack every element of that type across all PGs; the
 ``args`` / ``args_str`` dataset pair encodes the element's positional
@@ -873,7 +873,7 @@ class _StageEmitBlock:
     # ADR 0055 P2.3: per-MP-record emit_index. The bridge interleaves
     # the four MP kinds across one emit pass — crucially a
     # kinematic_coupling emits its equalDOF AFTER rigidDiaphragm
-    # (build.py _emit_kinematic_couplings, step 5), so the genuine vs
+    # (build/ _emit_kinematic_couplings, step 5), so the genuine vs
     # kinematic equalDOFs straddle the rigid_diaphragm emit.  Four
     # separate typed buckets lose that cross-bucket order; the seq
     # stamps recover it (merge-sort on replay, same design as
@@ -1219,7 +1219,7 @@ def _ro_to_stage_block(ro: "Any") -> "_StageEmitBlock":
     inverse of :func:`_stage_block_to_ro`; the writer then re-emits
     equivalent stage bytes (hash stability is the acceptance test,
     not raw file bytes — attr creation order may differ)."""
-    from .._internal.build import ActivateAbsorbingRecord
+    from .._internal.build.records import ActivateAbsorbingRecord
 
     blk = _StageEmitBlock(name=str(ro.name))
     blk.analyze_call = (
@@ -1882,7 +1882,7 @@ class H5Emitter:
         # declarative ``InitialStressRecord`` field set).  Duck-typed: the
         # writer reads ``.name`` / ``.pg`` / ``.elements`` / ``.sigma_*`` /
         # ``.ramp_steps`` / ``.lambda_install`` without importing the
-        # record class (avoids a build.py import cycle).
+        # record class (avoids a build/ import cycle).
         self._initial_stress_records: list[Any] = []
         # K1-8 (schema 2.27.0): the global ramps' parameter tags as the
         # ``step_hook_ramp`` calls handed them in, by record name, and the
@@ -2659,7 +2659,7 @@ class H5Emitter:
     ) -> None:
         # The bridge sets _current_element_nodes via
         # set_element_nodes(emitter, ...) right before each element call
-        # (see _internal/build.py emit_element_spec). Reading it here
+        # (see _internal/build/ emit_element_spec). Reading it here
         # gives us the connectivity for the schema's
         # /elements/{type}/connectivity dataset.
         connectivity = getattr(self, ATTR_ELEMENT_NODES, None)
@@ -3206,7 +3206,7 @@ class H5Emitter:
         RuntimeError
             If another partition block is already open.  Nested
             partition brackets are not supported — the bridge fan-out
-            in ``_internal/build.py`` calls
+            in ``_internal/build/`` calls
             ``partition_open(rank) ... partition_close()`` in strict
             sequence, one rank at a time (ADR 0027 §"Implementation
             pointer").
@@ -5423,7 +5423,7 @@ class H5Emitter:
                 (r[0], r[1], r[2], remap[r[3]], r[4], r[5], r[6]))
             for r in rows
         )
-        from .._internal.build import _stacklevel_outside_package
+        from .._internal._stacklevel import _stacklevel_outside_package
 
         names = sorted(stores[i] for i in absent)
         warnings.warn(

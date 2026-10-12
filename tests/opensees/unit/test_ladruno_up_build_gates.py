@@ -23,16 +23,17 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from apeGmsh.opensees._internal.build import (
-    BridgeError,
-    FixRecord,
-    SupportRecord,
-    infer_node_ndf,
+from apeGmsh.opensees._internal.build.errors import BridgeError
+from apeGmsh.opensees._internal.build.records import FixRecord, SupportRecord
+from apeGmsh.opensees._internal.build.ndf import infer_node_ndf
+from apeGmsh.opensees._internal.build.validators.up import (
     up_pressure_components,
     validate_ladruno_up_pressure_dof,
-    validate_ladruno_up_solver,
     validate_ladruno_up_specs,
     validate_up_pressure_datum,
+)
+from apeGmsh.opensees._internal.build.validators.solver import (
+    validate_ladruno_up_solver,
 )
 from apeGmsh.opensees.element.solid import LadrunoUP
 from apeGmsh.opensees.material.nd import ElasticIsotropic

@@ -17,7 +17,7 @@ pytest.importorskip("gmsh")
 
 from apeGmsh import apeGmsh  # noqa: E402
 from apeGmsh.opensees import apeSees  # noqa: E402
-from apeGmsh.opensees._internal.build import (  # noqa: E402
+from apeGmsh.opensees._internal.build.validators.materials import (  # noqa: E402
     ManzariConvergenceTestWarning,
     ManzariTangentSolverWarning,
 )

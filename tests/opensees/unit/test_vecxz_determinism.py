@@ -20,7 +20,9 @@ import numpy as np
 import pytest
 
 from apeGmsh.opensees import _orientation
-from apeGmsh.opensees._internal.build import compute_vecxz_for_element
+from apeGmsh.opensees._internal.build.transforms import (
+    compute_vecxz_for_element,
+)
 from apeGmsh.opensees._orientation import (
     AlongBeam,
     Cartesian,

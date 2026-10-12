@@ -17,7 +17,7 @@ to get individual :class:`Node` instances.
 Per P1 (relaxed): the bridge **still** exposes the flat
 ``ops.fix(pg=..., dofs=...)`` shape. ``Node.fix`` and ``NodeSet.fix``
 are convenience layers on top — both routes go through the same
-:class:`apeGmsh.opensees._internal.build.FixRecord` and the same
+:class:`apeGmsh.opensees._internal.build.records.FixRecord` and the same
 fan-out at emit time.
 
 Examples
@@ -353,7 +353,7 @@ class _NodeAccessor:
         naming the count, unless exactly one node is selected; use
         :meth:`get` for a set.
         """
-        from ._internal.build import BridgeError
+        from ._internal.build.errors import BridgeError
 
         if pg is not None and label is None:
             found = self._set_by_pg(pg)
@@ -510,7 +510,7 @@ def _resolve_label(
         A name is not a label of the snapshot (the message lists the
         labels that exist), or the labels select no node.
     """
-    from ._internal.build import BridgeError
+    from ._internal.build.errors import BridgeError
 
     if isinstance(label, str):
         names: tuple[str, ...] = (label,)

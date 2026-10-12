@@ -14,7 +14,9 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from apeGmsh.opensees._internal.build import sweep_asdconcrete_element_size
+from apeGmsh.opensees._internal.build.validators.materials import (
+    sweep_asdconcrete_element_size,
+)
 from apeGmsh.opensees.material.nd import (
     ASDConcrete3D,
     ASDRegularizationWarning,

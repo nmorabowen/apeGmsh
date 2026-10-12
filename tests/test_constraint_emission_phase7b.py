@@ -35,7 +35,7 @@ from apeGmsh._kernel.records._constraints import (
 )
 from apeGmsh._kernel.records._kinds import ConstraintKind
 from apeGmsh.opensees import apeSees
-from apeGmsh.opensees._internal.build import emit_mp_constraints
+from apeGmsh.opensees._internal.build.constraints import emit_mp_constraints
 from apeGmsh.opensees.emitter.h5 import H5Emitter
 from apeGmsh.opensees.emitter.py import PyEmitter
 from apeGmsh.opensees.emitter.recording import RecordingEmitter

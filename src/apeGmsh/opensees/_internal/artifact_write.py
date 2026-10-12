@@ -151,7 +151,7 @@ class BridgeArtifactWriter:
             from ..._atomic_io import replace_with_retry
             from ..._core import default_artifact_dir
             from ..emitter.h5 import H5FeatureDeferredWarning
-            from .build import is_partitioned
+            from .build.ownership import is_partitioned
             from .schema_version import NEUTRAL, OPENSEES, PROVENANCE, SEQUENCE
 
             # P3: under MPI only rank 0 writes automatically.

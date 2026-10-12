@@ -13,7 +13,7 @@ import pytest
 from apeGmsh import apeGmsh
 from apeGmsh._kernel.geometry._moment_tensor import unit_moment_tensor
 from apeGmsh.opensees import apeSees
-from apeGmsh.opensees._internal.build import BridgeError
+from apeGmsh.opensees._internal.build.errors import BridgeError
 from apeGmsh.opensees.emitter.recording import RecordingEmitter
 from apeGmsh.opensees.material.nd import ElasticIsotropic
 
@@ -212,7 +212,7 @@ def test_host_search_runs_once_regardless_of_ranks(monkeypatch):
     import os
     import tempfile
 
-    import apeGmsh.opensees._internal.build as build_mod
+    import apeGmsh.opensees._internal.build.patterns as build_mod
 
     def _emit_at(nparts):
         g = apeGmsh(model_name=f"mt_ranks_{nparts}", verbose=False)

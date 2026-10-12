@@ -293,7 +293,7 @@ class TestGuards:
         # The 2D element has NO source-side distortion handling — the
         # bridge build gate must reject a non-axis-aligned absorbing quad.
         from apeGmsh.opensees import apeSees
-        from apeGmsh.opensees._internal.build import BridgeError
+        from apeGmsh.opensees._internal.build.errors import BridgeError
 
         g = apeGmsh(model_name="pwb2d_guard", verbose=False)
         g.begin()

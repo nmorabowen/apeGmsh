@@ -470,7 +470,7 @@ class DampingObjectRecord:
 class FixRecord:
     """One ``fix`` directive (model-level boundary fixity).
 
-    Not to be confused with the build-time ``apeGmsh.opensees._internal.build.FixRecord``
+    Not to be confused with the build-time ``apeGmsh.opensees._internal.build.records.FixRecord``
     which is the *bridge-side* fix-record before fan-out; this one is
     the *emitter-side* per-node call after fan-out.
     """
@@ -484,7 +484,7 @@ class MassRecord:
     """One ``mass`` directive (per-node nodal mass).
 
     Like :class:`FixRecord`, distinct from the bridge-side
-    pre-fan-out :class:`apeGmsh.opensees._internal.build.MassRecord`.
+    pre-fan-out :class:`apeGmsh.opensees._internal.build.records.MassRecord`.
     """
 
     tag: int
@@ -724,7 +724,7 @@ class StageRecordRO:
     #: analysis + ``*_args`` tuples), stored as a plain dict.
     chain_attrs: "Mapping[str, Any]" = field(default_factory=dict)
     #: Declarative ``build.InitialStressRecord`` instances (typed
-    #: ``Any`` to avoid a build.py import cycle; duck-typed fields).
+    #: ``Any`` to avoid a build/ import cycle; duck-typed fields).
     initial_stress: tuple[Any, ...] = ()
     #: ``(pg, elements)`` pairs — exactly one non-None per entry.
     activate_absorbing: tuple[

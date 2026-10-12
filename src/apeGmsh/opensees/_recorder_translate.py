@@ -16,7 +16,7 @@ The :class:`Node`, :class:`Element`, and :class:`MPCO` typed
 primitives in :mod:`apeGmsh.opensees.recorder` continue to take raw
 OpenSees tokens directly (no translation needed); only the unified
 ``RecorderDeclaration`` consumed by
-:func:`~apeGmsh.opensees._internal.build.emit_recorder_spec` flows
+:func:`~apeGmsh.opensees._internal.build.recorders.emit_recorder_spec` flows
 through these tables.
 """
 from __future__ import annotations

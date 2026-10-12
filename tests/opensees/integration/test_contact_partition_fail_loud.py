@@ -19,7 +19,7 @@ import pytest
 import gmsh
 from apeGmsh import apeGmsh
 from apeGmsh.opensees import apeSees
-from apeGmsh.opensees._internal.build import BridgeError
+from apeGmsh.opensees._internal.build.errors import BridgeError
 
 
 def _face_at_z(volume_tag: int, z: float, tol: float = 1e-3) -> int:

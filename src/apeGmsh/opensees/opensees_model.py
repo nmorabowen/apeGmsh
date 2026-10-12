@@ -105,7 +105,7 @@ if TYPE_CHECKING:  # pragma: no cover - import for type checkers only
     from apeGmsh.mesh.FEMData import FEMData
     from apeGmsh.results.Results import Results
 
-    from ._internal.build import InitialStressRecord
+    from ._internal.build.records import InitialStressRecord
     from ._target import BackendInfo
     from .emitter.base import Emitter
     from .emitter.h5 import H5Emitter
@@ -879,7 +879,7 @@ class OpenSeesModel:
         refused = stamp.refusals_for(self._REPLAY_SOLVE_MODE)
         if not refused:
             return
-        from ._internal.build import BridgeError
+        from ._internal.build.errors import BridgeError
 
         raise BridgeError(
             f"OpenSeesModel.build({target!r}): the archive records that "
@@ -1195,7 +1195,7 @@ class OpenSeesModel:
         """
         if not self._mass_from_model:
             return ()
-        from ._internal.build import broker_mass_components
+        from ._internal.build.patterns import broker_mass_components
 
         out: list[MassRecord] = []
         for m in self._fem.nodes.masses:
@@ -1571,11 +1571,9 @@ class OpenSeesModel:
         # The replay writes a flip for each record that resolves an element,
         # in record order, and none for one whose target is empty (allowed
         # before 2.27.0): such a record keeps an empty run of rows.
-        from ._internal.build import (
-            ActivateAbsorbingRecord,
-            FemToOpsTagMap,
-            absorbing_ele_tags,
-        )
+        from ._internal.build.records import ActivateAbsorbingRecord
+        from ._internal.build.ownership import FemToOpsTagMap
+        from ._internal.build.stage_emit import absorbing_ele_tags
 
         eid_to_tag = FemToOpsTagMap.from_pairs(
             (int(e.fem_eid), int(e.tag))
@@ -1748,7 +1746,7 @@ def refuse_live_requires(
     """
     if stamp is None or not stamp.requires:
         return
-    from ._internal.build import BridgeError
+    from ._internal.build.errors import BridgeError
 
     missing = [
         t for t in stamp.requires

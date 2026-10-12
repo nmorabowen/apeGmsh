@@ -141,7 +141,7 @@ def test_apesees_analyze_drives_full_chain() -> None:
 def test_apesees_analyze_raises_when_chain_incomplete() -> None:
     """Calling ``analyze`` without a complete analysis chain raises
     BridgeError naming the missing pieces."""
-    from apeGmsh.opensees._internal.build import BridgeError
+    from apeGmsh.opensees._internal.build.errors import BridgeError
 
     fem = make_two_node_beam()
     ops = apeSees(cast("object", fem))  # type: ignore[arg-type]

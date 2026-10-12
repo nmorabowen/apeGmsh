@@ -348,7 +348,7 @@ def test_partition_predicate_is_resolved_once_per_distinct_token(
     A call-count pin, deliberately NOT a timing assertion — wall-clock
     tests on this repo's warm bench cells are not trustworthy.
     """
-    from apeGmsh.opensees._internal import build as _build
+    from apeGmsh.opensees._internal.build import builder_scope as _build
     from apeGmsh.opensees._internal.compose import _replay_into
     from apeGmsh.opensees.emitter.recording import RecordingEmitter
 
@@ -581,7 +581,7 @@ def test_stage_owned_gated_element_is_no_longer_refused() -> None:
     global alike.  The end-to-end tests carry the behavioural pins; this
     one pins the guard's surface.
     """
-    from apeGmsh.opensees._internal.build import (
+    from apeGmsh.opensees._internal.build.builder_scope import (
         validate_builder_scope_replay,
     )
 

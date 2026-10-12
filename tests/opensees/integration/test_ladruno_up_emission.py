@@ -34,7 +34,7 @@ pytest.importorskip("gmsh")
 
 from apeGmsh import apeGmsh  # noqa: E402
 from apeGmsh.opensees import apeSees  # noqa: E402
-from apeGmsh.opensees._internal.build import BridgeError  # noqa: E402
+from apeGmsh.opensees._internal.build.errors import BridgeError  # noqa: E402
 
 
 # ---------------------------------------------------------------------------

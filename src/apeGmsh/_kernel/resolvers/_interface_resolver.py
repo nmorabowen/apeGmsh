@@ -95,7 +95,7 @@ def accepts_3d_ndf_pair(ndf_i: int, ndf_j: int) -> bool:
 
     ADR 96's rule verbatim: both ends ndf >= 3, nothing else. Declared
     here and imported by the emit-time gate
-    (``opensees/_internal/build.py``) so the resolver's ``slave_ndf``
+    (``opensees/_internal/build/``) so the resolver's ``slave_ndf``
     contract and the deck's cannot drift — and deliberately the SAME
     rule ``validate_adaptive_element_endpoints`` already applies to
     every other zeroLength-family element in 3D.

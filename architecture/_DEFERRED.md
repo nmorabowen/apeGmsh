@@ -43,7 +43,7 @@ Deferred capability:
 - Emit a warning naming the affected PG and suggesting `roll_deg`
   on one of the legs.
 
-Lives in `_internal/build.py::emit_transform_specs` (around the
+Lives in `_internal/build/transforms.py::emit_transform_specs` (around the
 `compute_vecxz_for_element` call at line 601) once we get there.
 
 **Load-bearing blocker — needs a section asymmetry predicate.**
@@ -206,7 +206,7 @@ The "removal BEFORE new BCs" design question landed on **BEFORE**
 between topology and the new fix/mass/region/MP block. Atomic
 replace works by construction.
 
-Lives in `_internal/build.py` (`SPRemovalRecord`,
+Lives in `_internal/build/` (`SPRemovalRecord`,
 `ElementRemovalRecord`, `MassRecord.overwrite`,
 `StageRecord.{remove_sp_records, remove_element_records, set_time,
 set_creep_on, pre_analyze_reset}`), `apesees.py`
@@ -325,7 +325,7 @@ covers the canonical SSI workflow ergonomically, and Path A's
 "third pattern" concern from the architecture critics still
 holds.
 
-Lives in `_internal/build.py::compute_stage_ownership` (would
+Lives in `_internal/build/ownership.py::compute_stage_ownership` (would
 gain constraint-record promotion logic) + `apesees.py::
 _run_staged_bc_validators` (a new V6 for cross-stage spans).
 
@@ -354,7 +354,7 @@ explicitly).
 The apeGmsh-side blockers are two:
 
 1. **No per-record MP tag tracking in emit today.** The fan-out
-   helpers in `_internal/build.py::emit_mp_constraints`
+   helpers in `_internal/build/constraints.py::emit_mp_constraints`
    (`_emit_rigid_links`, `_emit_equal_dofs`,
    `_emit_rigid_diaphragms`, `_emit_kinematic_couplings`) emit
    pure OpenSees commands with no `tags.allocate("MPconstraint")`
@@ -402,7 +402,7 @@ forces it, the deferral holds.
 
 **File map for the eventual implementation:**
 
-- `_internal/build.py` — extend `MassRecord`-style records with
+- `_internal/build/` — extend `MassRecord`-style records with
   a frozen `MPConstraintRemovalRecord(name=, kind=)` per kind;
   the per-kind emit helpers would also need per-record name +
   tag tracking on the way out.
@@ -509,7 +509,7 @@ Independent of any immediate consumer, the per-record tag-
 identity gap in the MP emit fan-out is a worthwhile target for
 opportunistic landing.
 
-Today, `_internal/build.py::emit_mp_constraints` and its
+Today, `_internal/build/constraints.py::emit_mp_constraints` and its
 per-kind helpers (`_emit_rigid_links`, `_emit_equal_dofs`,
 `_emit_rigid_diaphragms`, `_emit_kinematic_couplings`) write
 pure OpenSees commands with no allocator interaction — the
@@ -546,7 +546,7 @@ PR lands.
 H5 readback of MP identity).
 
 **Cost estimate (informational):** lift touches
-`_internal/build.py::emit_mp_constraints`,
+`_internal/build/constraints.py::emit_mp_constraints`,
 the MP-constraint rows in `emitter/h5.py`, and per-dialect
 tag-capture work in every emitter (Tcl / Py / Live / Recording
 — shape TBD per "Refactor shape" note above; the Emitter
@@ -562,7 +562,7 @@ intrinsically 3-D and stays out of scope.
 
 Today the build step raises :class:`BridgeError` when
 ``orientation=`` is supplied with ``ndm=2`` (see
-`_internal/build.py::emit_transform_specs`).  This is the
+`_internal/build/transforms.py::emit_transform_specs`).  This is the
 defensive landing — the path used to silently produce an invalid
 deck (``geomTransf Linear $tag $x $y $z`` with a 3-component
 vecxz tail, which OpenSees rejects at parse time).  Refusing

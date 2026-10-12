@@ -22,8 +22,8 @@ import pytest
 
 from apeGmsh.mesh._mesh_structured import RecombineEmptyMeshWarning
 from apeGmsh.opensees import apeSees
-from apeGmsh.opensees._internal.build import (
-    BridgeError,
+from apeGmsh.opensees._internal.build.errors import BridgeError
+from apeGmsh.opensees._internal.build.validators.mesh import (
     check_quad_element_on_triangles,
 )
 from apeGmsh.opensees.element.shell import ShellMITC3, ShellMITC4

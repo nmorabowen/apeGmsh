@@ -1589,7 +1589,7 @@ class LiveOpsEmitter:
             after the passes when ``tol`` was never met within
             ``max_passes``, with the violation history in the message.
         """
-        from .._internal.build import BridgeError
+        from .._internal.build.errors import BridgeError
 
         self._stock_build_gate(_AUGMENT_FORK_REQUIRED)
         if self._in_augment:

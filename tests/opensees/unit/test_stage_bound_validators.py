@@ -30,8 +30,8 @@ from dataclasses import replace
 import pytest
 
 from apeGmsh.opensees.apesees import apeSees
-from apeGmsh.opensees._internal.build import (
-    BridgeError,
+from apeGmsh.opensees._internal.build.errors import BridgeError
+from apeGmsh.opensees._internal.build.records import (
     FixRecord,
     MassRecord,
     RegionAssignmentRecord,

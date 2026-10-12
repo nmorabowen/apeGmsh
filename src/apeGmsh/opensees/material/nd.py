@@ -976,7 +976,7 @@ class LadrunoSANISAND(NDMaterial):
            ``BandSPD`` / ``SparseSYM`` / ``Pardiso`` or ``Mumps`` in a
            half-storage ``matrix_type``) silently solves a *different*
            system. apeGmsh warns at emit
-           (:class:`~apeGmsh.opensees._internal.build.ManzariTangentSolverWarning`);
+           (:class:`~apeGmsh.opensees._internal.build.validators.materials.ManzariTangentSolverWarning`);
            use ``UmfPack`` / ``Pardiso`` / ``FullGeneral`` /
            ``BandGeneral`` / ``SparseGeneral`` / ``Mumps``.
     jaco_type

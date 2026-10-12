@@ -316,10 +316,14 @@ def _term_table() -> "list[tuple[str, list[tuple[str, int, int]]]]":
     if _TERMS_CACHE is not None:
         return _TERMS_CACHE
 
-    import apeGmsh.opensees._internal.build as _build_mod
+    import apeGmsh.opensees._internal.build.element_emit as _el_mod
+    import apeGmsh.opensees._internal.build.ndf as _ndf_mod
+    import apeGmsh.opensees._internal.build.pg_expand as _pg_mod
     import apeGmsh.opensees.apesees as _apesees_mod
     ap = _apesees_mod.__file__
-    bd = _build_mod.__file__
+    bd_pg = _pg_mod.__file__
+    bd_ndf = _ndf_mod.__file__
+    bd_el = _el_mod.__file__
 
     specs: "list[tuple[str, str, str, int, int, int]]" = [
         # (term, path, anchor, occurrence, before, after)
@@ -327,16 +331,16 @@ def _term_table() -> "list[tuple[str, list[tuple[str, int, int]]]]":
         # np.concatenate outputs (uniform-npe path) and the object-dtype
         # container (mixed-npe path) in _fanout_arrays_from_group_result
         # (~1876 / 1879 / 1886).  Claims before R7 (see TERM_ORDER).
-        ("CACHE", bd, "eids = np.concatenate(id_blocks)", 1, 0, 0),
-        ("CACHE", bd, "return eids, np.concatenate(conn_blocks, axis=0)",
+        ("CACHE", bd_pg, "eids = np.concatenate(id_blocks)", 1, 0, 0),
+        ("CACHE", bd_pg, "return eids, np.concatenate(conn_blocks, axis=0)",
          1, 0, 0),
-        ("CACHE", bd, "conn_obj = np.empty((len(rows),), dtype=object)",
+        ("CACHE", bd_pg, "conn_obj = np.empty((len(rows),), dtype=object)",
          1, 0, 2),
         # R7 — class_chunks dict + the chunks.append(node_tags) loop
-        # (build.py ~420-424).  The node_tags tuples allocate inside the
+        # (build/ ~420-424).  The node_tags tuples allocate inside the
         # expand_spec_to_elements generator, but the caller frame at the
         # for-loop line is in this span, so nframe>=2 catches them.
-        ("R7", bd, "class_chunks: dict[str, list[tuple[int, ...]]] = {}",
+        ("R7", bd_ndf, "class_chunks: dict[str, list[tuple[int, ...]]] = {}",
          1, 0, 4),
         # R6 — the inferred per-node-ndf dict.  Three faces: the emit-side
         # call site (~1251), the co-resident effective_ndf merge (~1263),
@@ -344,7 +348,7 @@ def _term_table() -> "list[tuple[str, list[tuple[str, int, int]]]]":
         # (~504-507).
         ("R6", ap, "inferred_ndf = infer_node_ndf(", 1, 0, 0),
         ("R6", ap, "effective_ndf = {**inferred_ndf", 1, 0, 0),
-        ("R6", bd, "for t, f in zip(all_ids.tolist(), floors.tolist())",
+        ("R6", bd_ndf, "for t, f in zip(all_ids.tolist(), floors.tolist())",
          1, 2, 1),
         # R8 — the {ops_tag: fem_eid} reverse tag map.  Pre-P3 this was
         # a per-stage dict comprehension (~3674, measured 103-228 B/elem
@@ -371,9 +375,9 @@ def _term_table() -> "list[tuple[str, list[tuple[str, int, int]]]]":
         # the anchor still sees under select_rows is the one live
         # rank's materialisation, honestly charged to R3.
         ("R3", ap, "plan_by_rank = {", 1, 0, 3),
-        ("R3", bd, "owners = _plan_owner_ranks(pre_allocated, element_owner)",
+        ("R3", bd_el, "owners = _plan_owner_ranks(pre_allocated, element_owner)",
          1, 0, 10),
-        ("R3", bd, "def select_rows(", 1, 0, 20),
+        ("R3", bd_pg, "def select_rows(", 1, 0, 20),
         # R2 — per-rank owned / primary node sets, post-P3 columnar
         # (SortedIntSet, 8 B/node).  Spans cover the decl + fill lines;
         # allocations inside from_ids / bucket_primary_nodes_by_rank
@@ -904,8 +908,8 @@ def emit_instrumented(
         hooks.append(entry)
 
     # -- hook 2 mechanism: patch the SOURCE module's element_class_ndf_ok.
-    # build.py's infer_node_ndf imports it function-locally at call time
-    # (build.py ~407), so patching the source module is picked up; patching
+    # build/'s infer_node_ndf imports it function-locally at call time
+    # (build/ ~407), so patching the source module is picked up; patching
     # build's module globals would NOT be.  The first element_class_ndf_ok
     # call inside infer_node_ndf happens right after class_chunks is
     # complete — R7 at its peak.  NOTE (measured, contra the naive plan):

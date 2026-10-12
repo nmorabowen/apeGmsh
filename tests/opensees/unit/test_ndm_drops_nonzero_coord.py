@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import pytest
 
-from apeGmsh.opensees._internal.build import BridgeError
+from apeGmsh.opensees._internal.build.errors import BridgeError
 from apeGmsh.opensees.apesees import apeSees
 from apeGmsh.opensees.emitter.base import DroppedAxisGuard
 from apeGmsh.opensees.emitter.h5 import H5Emitter

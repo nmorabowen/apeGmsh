@@ -19,7 +19,7 @@ command sees fully-allocated node and element tags.
 
 The ``pg=`` form (physical-group fan-out into node/element tags) is
 materialized at build time by
-:func:`apeGmsh.opensees._internal.build.emit_recorder_spec`, which
+:func:`apeGmsh.opensees._internal.build.recorders.emit_recorder_spec`, which
 resolves ``pg`` through the FEM snapshot, rewrites the spec to its
 explicit ``nodes=`` / ``elements=`` form via :func:`dataclasses.replace`,
 and then delegates to ``_emit``. End users drive this through
@@ -70,7 +70,7 @@ from ._internal.types import Primitive, Recorder
 if TYPE_CHECKING:
     from apeGmsh.mesh.FEMData import FEMData
 
-    from ._internal.build import FemToOpsTagMap
+    from ._internal.build.ownership import FemToOpsTagMap
     from ._internal.tag_plan import TagPlan
     from .emitter.base import Emitter
 
@@ -182,7 +182,7 @@ class Node(Recorder):
         del fem_eid_to_ops_tag
         if self.pg is None:
             return self
-        from ._internal.build import expand_pg_to_nodes
+        from ._internal.build.pg_expand import expand_pg_to_nodes
         node_ids = expand_pg_to_nodes(fem, self.pg)
         return replace(self, pg=None, nodes=node_ids)
 
@@ -288,7 +288,8 @@ class Element(Recorder):
     ) -> "Element":
         if self.pg is None:
             return self
-        from ._internal.build import BridgeError, expand_pg_to_elements
+        from ._internal.build.errors import BridgeError
+        from ._internal.build.pg_expand import expand_pg_to_elements
         # ``expand_pg_to_elements`` yields FEM-side element ids; the
         # OpenSees element tags assigned by the bridge's fan-out differ
         # whenever an element primitive consumed an allocator slot in
@@ -570,7 +571,7 @@ class FilterableRecorder(Recorder):
 
         Read from ``tag_plan`` (ADR 0114 D4, amended): a plan made for
         another model, or one that lacks a region this recorder writes,
-        raises :class:`~._internal.build.TagPlanMiss`.
+        raises :class:`~._internal.build.errors.TagPlanMiss`.
         """
         return tag_plan.regions.tags_for(
             fem, ("recorder", id(self)), self.region_keys())
@@ -608,8 +609,8 @@ class FilterableRecorder(Recorder):
         a no-op pass-through — callers should not invoke this method
         in that case.
         """
-        from ._internal.build import (
-            BridgeError,
+        from ._internal.build.errors import BridgeError
+        from ._internal.build.pg_expand import (
             expand_pg_to_elements,
             expand_pg_to_nodes,
         )
@@ -721,7 +722,7 @@ class FilterableRecorder(Recorder):
         if not keys:
             return self
 
-        from ._internal.build import BridgeError
+        from ._internal.build.errors import BridgeError
 
         if tag_plan is None:
             raise BridgeError(
@@ -854,7 +855,7 @@ class MPCO(FilterableRecorder):
     The bridge does not interpret ``-R``-bearing MPCO arg tails when
     ``_emit`` is called directly (outside the build pipeline); the
     ``pg=`` form is materialised by
-    :func:`apeGmsh.opensees._internal.build.emit_recorder_spec`,
+    :func:`apeGmsh.opensees._internal.build.recorders.emit_recorder_spec`,
     which resolves selectors, reads its planned region tag, emits the
     region, and replaces the spec via :func:`dataclasses.replace`
     with explicit ``nodes=``/``elements=`` before driving ``_emit``.
@@ -1043,7 +1044,8 @@ class Ladruno(FilterableRecorder):
         :class:`BridgeError`. Energy is an element quantity, so the
         region carries ``-ele`` only (the fork auto-derives the nodes).
         """
-        from ._internal.build import BridgeError, expand_pg_to_elements
+        from ._internal.build.errors import BridgeError
+        from ._internal.build.pg_expand import expand_pg_to_elements
 
         assert self.energy_pg is not None  # caller-guarded
         fem_eids = tuple(
@@ -1246,7 +1248,7 @@ class Monitor(Recorder):
         del fem_eid_to_ops_tag
         if self.pg is None:
             return self
-        from ._internal.build import expand_pg_to_nodes
+        from ._internal.build.pg_expand import expand_pg_to_nodes
         return replace(self, pg=None, nodes=expand_pg_to_nodes(fem, self.pg))
 
     def _emit(self, emitter: "Emitter", tag: int) -> None:
@@ -1283,7 +1285,7 @@ class Monitor(Recorder):
 # gauss / fibers / layers / modal categories with shorthand expansion.
 #
 # This commit (Phase 9 commit 2) defines the types only; emit-time
-# fan-out lands in commit 3 (`_internal/build.py::emit_recorder_spec`).
+# fan-out lands in commit 3 (`_internal/build/recorders.py::emit_recorder_spec`).
 
 ALL_RECORDER_CATEGORIES: tuple[str, ...] = (
     "nodes",

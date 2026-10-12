@@ -26,8 +26,8 @@ import h5py
 from apeGmsh import apeGmsh
 from apeGmsh.opensees import apeSees, ModelData
 from apeGmsh.opensees.opensees_model import OpenSeesModel
-from apeGmsh.opensees._internal.build import (
-    BridgeError,
+from apeGmsh.opensees._internal.build.errors import BridgeError
+from apeGmsh.opensees._internal.build.pg_expand import (
     resolve_element_node_pair,
 )
 from apeGmsh.opensees.element.zero_length import (

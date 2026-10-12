@@ -36,8 +36,8 @@ from apeGmsh._kernel.records._constraints import (
     TangentialLaw,
 )
 from apeGmsh._kernel.records._kinds import ConstraintKind
-from apeGmsh.opensees._internal.build import (
-    BridgeError,
+from apeGmsh.opensees._internal.build.errors import BridgeError
+from apeGmsh.opensees._internal.build.interfaces import (
     _plan_rank_interfaces,
     allocate_interface_tags,
 )

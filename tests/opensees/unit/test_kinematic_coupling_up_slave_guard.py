@@ -20,7 +20,7 @@ import pytest
 
 from apeGmsh import apeGmsh
 from apeGmsh.opensees import apeSees
-from apeGmsh.opensees._internal.build import BridgeError
+from apeGmsh.opensees._internal.build.errors import BridgeError
 
 _WORK_PT = (0.5, 0.5, 1.0)
 

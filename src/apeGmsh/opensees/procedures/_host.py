@@ -16,9 +16,8 @@ if TYPE_CHECKING:
     from ...mesh.FEMData import FEMData
     from .._internal.artifact_write import BridgeArtifactWriter
     from ..transform import Orientation
-    from .._internal.build import (
+    from .._internal.build.records import (
         DampingAttachRecord,
-        ElementTagMode,
         EquationConstraintRecord,
         FixRecord,
         InitialStressRecord,
@@ -29,6 +28,7 @@ if TYPE_CHECKING:
         RegionAssignmentRecord,
         StageRecord,
     )
+    from .._internal.build.element_emit import ElementTagMode
     from .._internal.types import Primitive
     from ..pattern.pattern import Plain
     from .._target import OpenSeesCapabilities

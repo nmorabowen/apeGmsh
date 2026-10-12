@@ -14,19 +14,21 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from apeGmsh.opensees._internal.build import (
-    ElementPlanRows,
+from apeGmsh.opensees._internal.build.pg_expand import ElementPlanRows
+from apeGmsh.opensees._internal.build.ownership import (
     FemToOpsTagMap,
-    LazyRankBuckets,
-    MISSING_FEM_ELEMENT_ID,
     NodePartitionOwners,
     SortedIntSet,
     SortedIntToInt,
-    _plan_owner_ranks,
     bucket_primary_nodes_by_rank,
     build_node_partition_owners,
     node_index_lookup,
 )
+from apeGmsh.opensees._internal.build.element_emit import (
+    LazyRankBuckets,
+    _plan_owner_ranks,
+)
+from apeGmsh.opensees._internal.tag_resolution import MISSING_FEM_ELEMENT_ID
 
 
 # ---------------------------------------------------------------------------

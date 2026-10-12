@@ -27,7 +27,7 @@ import numpy as np
 import pytest
 
 from apeGmsh.opensees import OpenSeesModel
-from apeGmsh.opensees._internal import build as build_mod
+from apeGmsh.opensees._internal.build import stage_emit as build_mod
 from apeGmsh.opensees.apesees import apeSees
 from apeGmsh.opensees.emitter.h5 import H5Emitter
 
@@ -402,7 +402,9 @@ def _one_stage(e: H5Emitter, body: Callable[[H5Emitter], None]) -> None:
 def test_a_record_without_a_flip_refuses() -> None:
     """Two absorbing records but one flip tag (a record whose target holds
     no element): the tag cannot be attributed, so the archive refuses."""
-    from apeGmsh.opensees._internal.build import ActivateAbsorbingRecord
+    from apeGmsh.opensees._internal.build.records import (
+        ActivateAbsorbingRecord,
+    )
 
     e = H5Emitter()
     _one_stage(e, lambda e: e.flip_element_stage(7, (1,)))
@@ -418,7 +420,7 @@ def test_a_record_without_a_flip_refuses() -> None:
 
 
 def test_an_update_record_without_a_call_names_its_target() -> None:
-    from apeGmsh.opensees._internal.build import UpdateParameterRecord
+    from apeGmsh.opensees._internal.build.records import UpdateParameterRecord
 
     e = H5Emitter()
     _one_stage(e, lambda e: None)
@@ -435,7 +437,9 @@ def test_partitioned_flips_keep_every_rank_row() -> None:
     """A partitioned emit writes a record's tag once per rank holding its
     elements; the record stores every ``(rank, pid)`` row, ascending tags in
     record order."""
-    from apeGmsh.opensees._internal.build import ActivateAbsorbingRecord
+    from apeGmsh.opensees._internal.build.records import (
+        ActivateAbsorbingRecord,
+    )
 
     def body(e: H5Emitter) -> None:
         for rank, calls in ((0, [(4, (1,)), (5, (2,))]), (1, [(5, (3,))])):
@@ -454,7 +458,7 @@ def test_partitioned_flips_keep_every_rank_row() -> None:
 
 
 def test_an_update_call_that_disagrees_with_its_record_refuses() -> None:
-    from apeGmsh.opensees._internal.build import UpdateParameterRecord
+    from apeGmsh.opensees._internal.build.records import UpdateParameterRecord
 
     e = H5Emitter()
     _one_stage(e, lambda e: e.update_parameter(3, (1,), ("E", 1), 9.0))

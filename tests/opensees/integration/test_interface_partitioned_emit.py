@@ -62,7 +62,7 @@ import gmsh
 from apeGmsh import apeGmsh
 from apeGmsh._kernel.records._constraints import NormalLaw, TangentialLaw
 from apeGmsh.opensees import apeSees
-from apeGmsh.opensees._internal.build import BridgeError
+from apeGmsh.opensees._internal.build.errors import BridgeError
 
 from tests.opensees._helpers.partition_diff import (
     assert_partition_blocks_equivalent,

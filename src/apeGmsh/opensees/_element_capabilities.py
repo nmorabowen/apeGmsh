@@ -213,7 +213,7 @@ class _ElemSpec:
 # (2,3) T3 · (2,4) Q4 · (2,6) Bézier T6-TH · (3,8) H8 · (3,10) Bézier
 # Tet10-TH (OPS_LadrunoUP.cpp:149-157).  Every consumer — the typed class's
 # ``_emit`` dispatch (element/solid.py), the build-time legality /
-# straight-side pass and the per-slot ndf inference (_internal/build.py) —
+# straight-side pass and the per-slot ndf inference (_internal/build/) —
 # imports THESE tables; when the fork grows a P5 shape (Q9/H20) it is added
 # here once.  Node counts do not collide across ndm today, but shape identity
 # is authoritative by ETYPE where the mesh provides it (a quad8 surface has
@@ -773,7 +773,7 @@ def element_class_ndf_ok(class_name: str) -> "frozenset[int] | None":
     fallback).
 
     Used by the build-time shell-on-solid node-sharing guard
-    (:func:`apeGmsh.opensees._internal.build.validate_node_ndf_element_compat`):
+    (:func:`apeGmsh.opensees._internal.build.ndf.validate_node_ndf_element_compat`):
     a node shared by two elements whose ``ndf_ok`` sets are disjoint
     cannot be assembled by OpenSees (``FE_Element::setID`` sizes the
     element's equation map to its own ``numDOF`` and truncates when a

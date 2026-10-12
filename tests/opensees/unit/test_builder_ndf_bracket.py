@@ -40,8 +40,8 @@ import re
 import pytest
 
 from apeGmsh.opensees._element_capabilities import element_builder_ndf
-from apeGmsh.opensees._internal.build import (
-    BridgeError,
+from apeGmsh.opensees._internal.build.errors import BridgeError
+from apeGmsh.opensees._internal.build.builder_scope import (
     close_builder_ndf_bracket,
     open_builder_ndf_bracket,
     validate_builder_scope_ordering,

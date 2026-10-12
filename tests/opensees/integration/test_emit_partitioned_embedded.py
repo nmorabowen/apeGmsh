@@ -5,7 +5,7 @@ Locks three ADR 0027 invariants for the surface-coupling fan-out:
 * **INV-OWN (single host-rank).** An ``embeddedNode`` line emits on
   exactly one rank — the canonical host rank
   ``min(intersection(node_owners[m] for m in masters))`` per
-  ``_canonical_host_rank`` (build.py).
+  ``_canonical_host_rank`` (build/).
 
 * **INV-TAG (globally unique element tag).** Each emitted
   ``ASDEmbeddedNodeElement`` line carries a globally unique integer
@@ -260,7 +260,7 @@ def _make_shared_master_fem() -> FEMStub:
 
     A single embedded record ``slave=4, masters=[1, 2, 3]`` has every
     master owned by both ranks. Under the current
-    ``if partition_rank in host_owners`` rule (``build.py:2532``) the
+    ``if partition_rank in host_owners`` rule (``build/``) the
     embeddedNode line emits on BOTH ranks (duplicate stiffness
     contribution at solve time). The intended Phase 1 rule —
     ``min(intersection(node_owners[m] for m in masters))`` — yields the

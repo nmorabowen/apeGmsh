@@ -16,7 +16,8 @@ import gmsh
 import pytest
 
 from apeGmsh import apeGmsh
-from apeGmsh.opensees._internal.build import BridgeError, FixRecord
+from apeGmsh.opensees._internal.build.errors import BridgeError
+from apeGmsh.opensees._internal.build.records import FixRecord
 from apeGmsh.opensees.apesees import apeSees
 from apeGmsh.opensees.emitter.tcl import TclEmitter
 from apeGmsh.opensees.node import Node, NodeSet, _resolve_label

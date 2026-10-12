@@ -26,7 +26,7 @@ from __future__ import annotations
 import pytest
 
 from apeGmsh.opensees.apesees import apeSees
-from apeGmsh.opensees._internal.build import BridgeError
+from apeGmsh.opensees._internal.build.errors import BridgeError
 from apeGmsh.opensees.emitter.tcl import TclEmitter
 
 from tests.opensees.fixtures.fem_stub import (

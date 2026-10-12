@@ -26,8 +26,8 @@ from apeGmsh import apeGmsh
 from apeGmsh._kernel.record_sets import NodalLoadSet
 from apeGmsh._kernel.records._loads import NodalLoadRecord
 from apeGmsh.opensees import apeSees
-from apeGmsh.opensees._internal.build import (
-    BridgeError,
+from apeGmsh.opensees._internal.build.errors import BridgeError
+from apeGmsh.opensees._internal.build.validators.loads import (
     WarnBodyForceDoubleCount,
 )
 from apeGmsh.opensees.emitter.recording import RecordingEmitter

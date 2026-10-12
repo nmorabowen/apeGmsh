@@ -38,7 +38,7 @@ from apeGmsh._kernel.records._constraints import (
     TangentialLaw,
 )
 from apeGmsh._kernel.records._kinds import ConstraintKind
-from apeGmsh.opensees._internal.build import BridgeError
+from apeGmsh.opensees._internal.build.errors import BridgeError
 from apeGmsh.opensees.apesees import apeSees
 
 from tests.opensees.fixtures.fem_stub import (
