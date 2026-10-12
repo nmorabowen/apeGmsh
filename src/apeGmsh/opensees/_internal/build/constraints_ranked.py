@@ -39,7 +39,11 @@ from .element_emit import _node_coords_safe
 from .stage_emit import GhostSPOp, emit_ghost_sp_ops
 
 
+from .errors import BridgeError
+
 if TYPE_CHECKING:
+    from ..types import Primitive
+    from .records import StageRecord
     from apeGmsh._kernel.records._constraints import (
         ConstraintRecord,
         InterpolationRecord,
@@ -84,7 +88,11 @@ def plan_partitioned_mp_constraints(
             node_owners=node_owners,
             element_owner=element_owner,
             phantom_tags=set(phantom_coords.keys()),
-            pinned=getattr(fem.partitions, "pinned", None),
+            # Only a routed snapshot (ADR 0120 D1) pins element-less
+            # nodes; a plain PartitionSet pins none.
+            pinned=(fem.partitions.pinned
+                    if isinstance(fem.partitions, RoutedPartitionSet)
+                    else None),
         )
     return phantom_coords, plans
 
@@ -361,7 +369,9 @@ def emit_stage_mp_constraints_partitioned(
     ``rank_plan`` comes from
     :func:`plan_stage_mp_constraints_partitioned`, which already
     established that this rank contributes something — there is no
-    no-op path here.
+    no-op path here. A copy that a stage's constraint handler would
+    multiply was refused before the emit began
+    (:func:`refuse_multiplied_mp_constraints`).
     """
     from ..tag_resolution import ATTR_PHANTOM_NODE_TAGS, set_phantom_node_tags
 
@@ -451,6 +461,10 @@ def emit_mp_constraints_partitioned(
     it declares) are resolved once per tag plan, every rank at once, by
     :func:`plan_partitioned_mp_constraints` (ADR 0114 D4, amended); this
     reads them, and the element tags, from ``tag_plan`` (:func:`_mp_plan`).
+
+    Replication is exact only under ``Transformation``; a copy another
+    handler would multiply was refused before the emit began
+    (:func:`refuse_multiplied_mp_constraints`).
     """
     from ..tag_resolution import set_phantom_node_tags
 
@@ -525,6 +539,132 @@ def emit_mp_constraints_partitioned(
     return plan.foreign_node_tags
 
 
+def refuse_multiplied_mp_constraints(
+    fem: "FEMData",
+    tag_plan: "TagPlan",
+    node_owners: "NodePartitionOwners",
+    element_owner: "SortedIntToInt",
+    *,
+    pre_element: "Sequence[Primitive]",
+    chain_forced: bool,
+    has_equation_tie: bool,
+    stage_records: "Sequence[StageRecord]",
+) -> None:
+    """Refuse a partitioned emit whose MP copies a handler would multiply.
+
+    Called once, before the partitioned emit writes anything.
+
+    The partitioned emit writes a replicable record (equalDOF, rigidLink,
+    rigidDiaphragm, rigid_body chain, node_to_surface) on every rank that
+    holds one of its nodes (ADR 0027). ``Transformation`` needs that: it
+    eliminates the constrained DOFs on each rank. ``Penalty``,
+    ``Lagrange`` and ``Auto`` instead assemble one penalty or multiplier
+    per ``MP_Constraint`` copy, so the partitioned model is stiffer than
+    the serial one (measured 4.9e-5 on 2 ranks and 7.3e-5 on 4 on the
+    eigenvalues of a rigid diaphragm spanning ranks), and nothing warned.
+    Writing each record on one rank instead is exact for a static solve
+    but not for ``eigen``: a rank that holds no ``PenaltyMP_FE`` disagrees
+    with the others in ``ArpackSOE``'s diagonal-mass flag, and the spectrum
+    collapses to 1.0. So the emit refuses.
+
+    The handler checked is the one each analysis runs under:
+
+    * unstaged: the handler declared in ``pre_element``. When none is
+      declared, the bridge auto-emits ``Transformation``, or, when
+      ``has_equation_tie``, ``LadrunoProjection`` under an explicit
+      integrator and ``Lagrange`` otherwise. When ``chain_forced`` (the
+      emitter suppresses the analysis-chain auto-emit: the ARPACK modal
+      deck, which forces ``constraints Transformation`` before ``eigen``,
+      ADR 0077 INV-10) and ``pre_element`` declares no ``Analysis``, the
+      deck runs under ``Transformation``. A declared ``Analysis`` is
+      built with the declared handler, so it is still checked;
+    * staged: the global records run under every stage's handler, and a
+      stage's claimed records under its own and every later stage's
+      (a record stays in the domain). A stage that declares none runs
+      OpenSees' default ``Plain``.
+
+    ``Transformation`` and ``Plain`` (which ignores MP constraints) keep
+    the replication. Any other handler raises :class:`BridgeError` when a
+    record it runs under is written on two ranks or more.
+    """
+    from ...analysis.constraint_handler import Plain, Transformation
+    from ...apesees import _is_explicit_integrator
+    from ..types import Analysis, ConstraintHandler, Integrator
+
+    def multiplying(handlers: "Iterable[Primitive | None]", *,
+                    auto: str) -> "list[str]":
+        names = set()
+        for h in handlers:
+            if h is None:
+                if auto:
+                    names.add(auto)
+            elif not isinstance(h, (Transformation, Plain)):
+                names.add(type(h).__name__)
+        return sorted(names)
+
+    if stage_records:
+        stage_handlers = [st.constraints for st in stage_records]
+        global_names = multiplying(stage_handlers, auto="")
+    else:
+        stage_handlers = []
+        declared = next(
+            (p for p in pre_element if isinstance(p, ConstraintHandler)), None)
+        integrator = next(
+            (p for p in pre_element if isinstance(p, Integrator)), None)
+        auto = ""
+        if has_equation_tie:
+            auto = ("LadrunoProjection" if _is_explicit_integrator(integrator)
+                    else "Lagrange") + " (auto-emitted for an equation tie)"
+        forced = chain_forced and not any(
+            isinstance(p, Analysis) for p in pre_element)
+        global_names = [] if forced else multiplying((declared,), auto=auto)
+    if global_names:
+        mp_plan = _mp_plan(tag_plan, fem)
+        if mp_plan.rank_plans:
+            _refuse_copies(global_names, mp_plan.rank_plans.values())
+
+    ranks = [runtime_rank_from_partition_record(part, idx)
+             for idx, part in enumerate(fem.partitions)]
+    for i, stage in enumerate(stage_records):
+        records = stage.stage_constraint_records
+        if not records:
+            continue
+        names = multiplying(stage_handlers[i:], auto="")
+        if not names:
+            continue
+        plans = []
+        for rank in ranks:
+            rp = plan_stage_mp_constraints_partitioned(
+                records, partition_rank=rank,
+                node_owners=node_owners, element_owner=element_owner)
+            if rp is not None:
+                plans.append(rp.plan)
+        _refuse_copies(names, plans)
+
+
+def _refuse_copies(
+    names: "Sequence[str]", plans: "Iterable[_RankConstraintPlan]",
+) -> None:
+    """Raise when a plan in ``plans`` writes a record another rank writes."""
+    copied = next((p.replicated_records for p in plans
+                   if p.replicated_records), ())
+    if not copied:
+        return
+    rec = copied[0]
+    kind = getattr(rec, "kind", type(rec).__name__)
+    name = getattr(rec, "name", None) or "<unnamed>"
+    master = getattr(rec, "master_node", "?")
+    raise BridgeError(
+        f"A partitioned emit would write the {kind} constraint {name!r} "
+        f"(master node {master}) on more than one rank under the "
+        f"constraint handler {', '.join(names)}. Each rank's copy assembles "
+        "its own penalty or multiplier, so the partitioned model would "
+        "silently answer stiffer than the serial one (#1625). Nothing was "
+        "written. Declare ops.constraints.Transformation(), which is exact "
+        "across ranks, or run serially (ops.tcl(path, flat=True))."
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class _RankConstraintPlan:
     """What the per-rank MP-constraint pass will emit on this rank."""
@@ -537,6 +677,11 @@ class _RankConstraintPlan:
     # rank that owns the slave OR any master (domain-level EQ_Constraint,
     # NOT a single-host-rank element). Emitted via _emit_equation_tie.
     equation_records: tuple[object, ...] = ()
+    # The replicable records (equalDOF, rigidLink, rigidDiaphragm,
+    # rigid_body chain, node_to_surface) this rank writes that another
+    # rank writes too: a non-phantom node of theirs is foreign here or
+    # also held by another rank.
+    replicated_records: tuple[object, ...] = ()
 
     def any(self) -> bool:
         return (
@@ -602,6 +747,7 @@ def _plan_rank_constraints(
     referenced_phantoms: set[int] = set()
     embedded: list[object] = []
     equation: list[object] = []
+    replicated: list[object] = []
 
     # Materialise both record streams up front so every node id they can
     # reference is resolved against ``node_owners`` in ONE vectorised
@@ -653,6 +799,22 @@ def _plan_rank_constraints(
     def _is_phantom(node_tag: int) -> bool:
         return int(node_tag) in phantom_tags
 
+    alone = frozenset((partition_rank,))
+
+    def _copied(rec: object, nodes: "Iterable[int]") -> None:
+        """Note ``rec`` (written here) when another rank writes it too:
+        a non-phantom node of it is not held by this rank alone."""
+        for n in nodes:
+            t = int(n)
+            if _is_phantom(t):
+                continue
+            o = owners.get(t)
+            if o is None:
+                o = node_owners.get(t, frozenset())
+            if frozenset(o) != alone:
+                replicated.append(rec)
+                return
+
     def _add_foreign_or_phantom(node_tag: int) -> None:
         t = int(node_tag)
         if _owns(t):
@@ -691,6 +853,8 @@ def _plan_rank_constraints(
                     allowed_ids.add(id(rec))
                     _add_foreign_or_phantom(m)
                     _add_foreign_or_phantom(s)
+                    if not (pinned and s in pinned):
+                        _copied(rec, (m, s))
             elif isinstance(rec, NodeGroupRecord):
                 # rigid_body / rigid_diaphragm / kinematic_coupling.
                 # Per ADR 0027 §"Decision" bullet 3:
@@ -756,6 +920,7 @@ def _plan_rank_constraints(
                     _add_foreign_or_phantom(m)
                     for s in slaves:
                         _add_foreign_or_phantom(s)
+                    _copied(rec, (m, *slaves))
             elif isinstance(rec, NodeToSurfaceRecord):
                 # NodeToSurface is a compound record. Its rigid_link
                 # rows and equal_dof rows reference phantom nodes; we
@@ -785,6 +950,10 @@ def _plan_rank_constraints(
                     for pair in rec.equal_dof_records:
                         _add_foreign_or_phantom(int(pair.master_node))
                         _add_foreign_or_phantom(int(pair.slave_node))
+                    _copied(rec, (
+                        n for pair in (*rec.rigid_link_records,
+                                       *rec.equal_dof_records)
+                        for n in (pair.master_node, pair.slave_node)))
 
     if surface_constraints is not None:
         # ASDEmbeddedNodeElement ownership (ADR 0027 §"ASDEmbeddedNode-
@@ -838,6 +1007,7 @@ def _plan_rank_constraints(
         referenced_phantoms=frozenset(referenced_phantoms),
         embedded_records=tuple(embedded),
         equation_records=tuple(equation),
+        replicated_records=tuple(replicated),
     )
 
 
