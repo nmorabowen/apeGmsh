@@ -2174,6 +2174,13 @@ matplotlib resolves (`'jet'` included); an unknown name raises when the
 slot is filled. `clim` is two finite numbers with low < high; anything
 else raises at the same point. A bad value never reaches a picture.
 
+**`cmap` needs matplotlib, which is an optional extra.** Assigning a
+non-`None` `cmap` without matplotlib installed raises an `ImportError`
+that names the `plot` extra. `None` needs nothing. Restoring a v2 file
+whose slot carries a `cmap` on an install without matplotlib keeps the
+slot, drops its `cmap` back to the default, and records a restore
+notice.
+
 **The scale law gains a conflict rule.** §5 says the same quantity on
 two slots gives one scale. With style on the slot, two slots that share
 a field identity (`slot_field`, §5) could ask for two different scales.
@@ -2183,9 +2190,15 @@ The rule:
 2. Its range and map come from the slot that sets them explicitly. A
    slot left at `None` takes the other slot's explicit values.
 3. Filling a slot whose explicit `clim` or `cmap` **differs** from the
-   explicit value of another occupied slot with the same field identity
-   **raises**. A silent winner would be a legend that is wrong for one
-   of the two pictures it labels.
+   explicit value of another occupied slot **in the same view** with the
+   same field identity **raises**. A silent winner would be a legend
+   that is wrong for one of the two pictures it labels. The rule is per
+   view because legends are (INV-LEGEND-5): two views may scale the same
+   quantity differently.
+
+The API cannot produce a session that breaks rule 3, so a v2 snapshot
+that holds conflicting values in one view was not written by it and is
+**refused** on restore, like any other invalid record.
 
 **Style is display state.** `clim` and `cmap` never change field
 identity: they do not enter `slot_field`, so they never split one
@@ -2206,6 +2219,11 @@ field: they emit no scale for one to set.
 - the same **stage-activation set** as the posed mesh (#1722). On a
   staged model the ghost draws only the cells active at the view's
   instant, or it would show elements that do not exist yet;
+- the same **clip planes** as the posed mesh: a section plane cuts the
+  ghost where it cuts the mesh;
+- **independent of the Outlines button.** The ghost is its own layer,
+  drawn whenever `overlay` is set; "in the Outlines style" names how it
+  looks, not a dependency on that toggle;
 - never colour-mapped, and it emits no legend. It is not a slot, so
   INV-LEGEND-1 is untouched: deform on, overlay on, every slot empty
   still gives zero legends.
@@ -2214,6 +2232,11 @@ The ghost is not CAD and not a second Geometry (§3). The realize
 refusal for `overlay` in `_refuse_unrealized_state`
 (`viewers/session/_realize.py`) is removed by the slice that implements
 this section, and by no other.
+
+**Under Amendment 4.** Toggling `overlay` is a **structure** change: it
+takes a full realize, not the A4 re-step. A time change with `overlay`
+on re-steps the ghost with the posed mesh, since its activation set
+follows the instant.
 
 ### A7.7 Snapshot v2; the `path` plot kind goes
 
@@ -2233,13 +2256,23 @@ cannot give. Keeping it advertised a picture nobody could draw.
 `PlotView(kind='path')` then raises at construction, like any unknown
 kind.
 
-**An old snapshot with a `path` plot pane** is not refused. The reader
+**A v1 snapshot with a `path` plot pane** is not refused. The reader
 drops that pane and records a restore notice in
 `RestoredSession.notices` naming the dropped pane, the same way other
 degradations surface. A restore that refused the whole session for a
 pane that could never draw would lose every pane that could.
 
+**A v2 snapshot with a `path` plot pane is refused.** A v2 writer never
+writes one, so such a file did not come from this API. Only v1 files
+get the drop-with-notice treatment.
+
 `xy` stays in the kind list, unchanged by this amendment.
+
+### A7 alternatives rejected
+
+| Rejected | Why |
+|---|---|
+| Key `clim`/`cmap` by field on the view, next to A5's legend placement (the argument A5.7 makes for placement) | The maintainer ruled slot fields: the setting lives where the quantity is chosen, which keeps the API local. The sharing A5.7 worries about is contained by A7.3's same-view conflict raise: two slots of one field in one view cannot disagree, so the one legend they share is never wrong |
 
 ### A2.5(1): the trigger moves to V4
 
@@ -2267,8 +2300,8 @@ window.
   conflicting explicit `clim`s on a contour and a Gauss slot of the
   same quantity raise; with both fields unset the X2 golden and numeric
   oracles are unchanged; the ghost's cell count equals the view's scoped
-  and activated cell count; an old snapshot with a `path` pane restores
-  with one notice and the other panes intact.
+  and activated cell count; a v1 snapshot with a `path` pane restores
+  with one notice and the other panes intact, and a v2 one is refused.
 - The six kinds remain second-class until V4: no UI, not in a snapshot,
   not pinnable, not renderable by MCP (A2.3). That is the accepted cost
   of KEEP.

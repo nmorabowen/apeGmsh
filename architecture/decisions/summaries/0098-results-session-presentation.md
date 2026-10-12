@@ -53,8 +53,8 @@ D6–D7), 0081, 0083, 0094 INV-10 (snapshot realization only) and narrows 0045 p
   (`test_inspector_picker_law.py`), G3 real-gesture test deferred, G4 done.
 - A7 (2026-10-11, **Proposed**), KEEP: the six stay behind the director until V4 (A2.5(1)'s
   trigger moves there). Colour-mapped slots gain `clim`/`cmap` (`None` = default; validated at
-  assignment; conflicting explicit values on one field raise); `overlay` draws scoped, activated
-  cells at scale 0; snapshot v2 reads v1; `path` leaves §6, an old `path` pane drops with a notice.
+  assignment; conflicting explicit values on one field in a view raise); `overlay` draws scoped, activated
+  cells at scale 0; snapshot v2 reads v1; `path` leaves §6, a v1 `path` pane drops with a notice.
 
 Full text: [../0098-results-session-presentation.md](../0098-results-session-presentation.md).
 Precedence (AGENTS.md): the code wins over the ADR, and the ADR wins over this summary.
