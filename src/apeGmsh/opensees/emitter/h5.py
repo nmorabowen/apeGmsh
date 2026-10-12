@@ -571,7 +571,7 @@ class H5RefusedVerb(NotImplementedError):
 #:     initial-stress or absorbing archive hashes differently once at this
 #:     minor; a file without either is unchanged. A 2.27 reader opens 2.12
 #:     through 2.27; a 2.26.x reader REFUSES a 2.27.x file.
-#:   * 2.28.0 — ADR 0115 amendment R2-f (#1735): additive — the
+#:   * 2.28.0 — ADR 0115 amendment R2-f: additive — the
 #:     ``decl_params`` rows of ``FixRecord`` / ``MassRecord`` and the typed
 #:     ``recorder.Node`` / ``recorder.Element`` gain a ``label`` field, the
 #:     names a ``label=`` declaration was given (``null`` otherwise).

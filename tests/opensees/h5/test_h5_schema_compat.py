@@ -785,10 +785,10 @@ def test_single_stamp_file_fallback_lineage_is_envelope(tmp_path: Any) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_opensees_reader_version_is_2_27_0() -> None:
-    """Schema 2.27.0 — per-record ``param_tags``; ``s.update_parameter`` and
-    ``s.zero_velocities`` archive (K1-8, #1465)."""
-    assert reader_version(OPENSEES) == SchemaVersion(2, 27, 0)
+def test_opensees_reader_version_is_2_28_0() -> None:
+    """Schema 2.28.0 — ``decl_params`` rows keep ``label=`` provenance
+    (ADR 0115 amendment R2-f, #1735)."""
+    assert reader_version(OPENSEES) == SchemaVersion(2, 28, 0)
 
 
 def test_constraints_group_present_when_emitted(tmp_path: Any) -> None:
