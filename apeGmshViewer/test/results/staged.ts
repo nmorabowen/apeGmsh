@@ -18,6 +18,7 @@ import type { ModelLoad, ResultsInfo } from "../../src/state/types.ts";
 
 export const MODEL = fileURLToPath(new URL("../../fixtures/staged_activation.h5", import.meta.url));
 export const RESULTS = fileURLToPath(new URL("../../fixtures/staged_activation.results.h5", import.meta.url));
+export const FEM_ONLY = fileURLToPath(new URL("../../fixtures/staged_activation.femonly.results.h5", import.meta.url));
 export const ORACLE = fileURLToPath(new URL("../../fixtures/staged_activation.oracle.json", import.meta.url));
 
 export const host = new ResultsHost(h5wasm as unknown as ResultsH5, h5wasm.ready);

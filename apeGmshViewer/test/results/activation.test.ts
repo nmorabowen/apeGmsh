@@ -10,12 +10,12 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { activationOf } from "../../src/state/activation.ts";
-import { activationNow, inactiveElements, noticesOf } from "../../src/state/selectors.ts";
+import { activationNow, inactiveElements, noticesOf, resultsPairing } from "../../src/state/selectors.ts";
 import { reduce, type State } from "../../src/state/store.ts";
 import type { Definitions, SequenceZone, StageElements } from "../../src/state/types.ts";
 import { BlobStore } from "../../src/state/blobs.ts";
 import { elementMaskOf, visibleMaps } from "../../src/renderer/visible.ts";
-import { femIdsOf, ORACLE, stagedModelLoad, stagedResults, stagedState } from "./staged.ts";
+import { FEM_ONLY, femIdsOf, ORACLE, stagedModelLoad, stagedResults, stagedState } from "./staged.ts";
 
 const oracle = JSON.parse(readFileSync(ORACLE, "utf8")) as { elements: number; hidden_fem_ids: Record<string, number[]> };
 const base = await stagedState();
@@ -124,18 +124,62 @@ test("ambiguous: two /sequence stages of that name, or a results stage with no n
   assert.match((empty as { reason: string }).reason, /no name/);
 });
 
-test("absent: no /sequence, no stage of that name, or element rows that cannot be read without guessing", () => {
-  const reason = (seq: SequenceZone, sets: StageElements, name = "a") => {
+test("absent: no /sequence, or no stage of that name; refused: element rows that cannot be read without guessing", () => {
+  const stated = (want: string) => (seq: SequenceZone, sets: StageElements, name = "a") => {
     const a = activationOf(seq, sets, DEFS(3), name);
-    assert.equal(a.state, "absent", JSON.stringify(a));
+    assert.equal(a.state, want, JSON.stringify(a));
     return (a as { reason: string }).reason;
   };
-  assert.match(reason({ status: "absent" }, { status: "none" }), /no \/sequence zone/);
-  assert.match(reason(seqOf(["a", "b", "c"], CHANGES), SETS, "mode_1"), /no \/sequence stage is named "mode_1"/);
+  const absent = stated("absent");
+  const reason = stated("refused");
+  assert.match(absent({ status: "absent" }, { status: "none" }), /no \/sequence zone/);
+  assert.match(absent(seqOf(["a", "b", "c"], CHANGES), SETS, "mode_1"), /no \/sequence stage is named "mode_1"/);
   assert.match(reason(seqOf(["a", "b", "c"], [...CHANGES, [2, "detach", "element", "", 1, REMOVED]]), SETS), /outside the \/sequence 1\.0\.0 vocabulary/);
   assert.match(reason(seqOf(["a", "b", "c"], CHANGES), { status: "ready", sets: { [OWNED]: [10], [REMOVED]: [3] } }), /holds 1 tags, and its \/sequence rows count 2/);
   assert.match(reason(seqOf(["a", "b", "c"], CHANGES), { status: "error", reason: "boom" }), /boom/);
   assert.match(reason(seqOf(["a", "b", "c"], [[1, "activate", "element", "", 2, "/opensees/stages/stage_002/owned_element_ids"]]), SETS), /names .*stage_002.*not .*stage_001\/owned_element_ids/);
+});
+
+test("refused: an element op this app does not apply ((add|set), element) refuses with the reason, never skipped", () => {
+  for (const op of ["add", "set"]) {
+    const seq = seqOf(["a", "b", "c"], [...CHANGES, [2, op, "element", "", 1, REMOVED]]);
+    const a = activationOf(seq, SETS, DEFS(3), "c");
+    assert.equal(a.state, "refused", op);
+    assert.match((a as { reason: string }).reason, new RegExp(`row 3 is \\(${op}, element\\), which this app does not know how to apply`));
+  }
+  // The other read failures are refusals too, not "absent".
+  assert.equal(activationOf(seqOf(["a", "b", "c"], CHANGES), { status: "error", reason: "boom" }, DEFS(3), "a").state, "refused");
+});
+
+test("unbound: results paired by fem_hash only are never joined to /sequence names (the review's reproducer)", async () => {
+  // A fem-only NativeWriter file (no model_h5_src) of the same mesh, on a model whose /sequence repeats a name.
+  const fem = await stagedResults(FEM_ONLY);
+  assert.equal(fem.info.lineage!.modelHash, null);
+  const dupLoad = await stagedModelLoad();
+  const seq = dupLoad.sequence;
+  assert.equal(seq.status, "ready");
+  if (seq.status !== "ready") return;
+  const nc = seq.stages.columns.indexOf("name");
+  const dup = { ...seq, stages: { ...seq.stages, rows: seq.stages.rows.map((r) => r.map((c, i) => (i === nc ? "base" : c))) } };
+  let s = reduce(base, { type: "fileLoaded", artifact: "model", load: { ...dupLoad, sequence: dup } });
+  s = reduce(s, { type: "fileOpened", artifact: "results", path: fem.info.path });
+  s = reduce(s, { type: "resultsLoaded", ...fem });
+  assert.deepEqual(resultsPairing(s), { state: "paired", by: "fem_hash" });
+  for (const i of [0, 1, 2]) {
+    const t = atStage(s, i);
+    assert.equal(activationNow(t)!.activation.state, "unbound", `stage ${i}`);
+    assert.equal(inactiveElements(t), null, "unbound hides nothing");
+    assert.match(noticesOf(t).join("\n"), /Stage activation unbound for results stage .*fem_hash only/);
+  }
+  // The undoubled model with the same fem-only file: still unbound, never filtered.
+  let u = reduce(base, { type: "fileOpened", artifact: "results", path: fem.info.path });
+  u = reduce(u, { type: "resultsLoaded", ...fem });
+  assert.equal(activationNow(atStage(u, 0))!.activation.state, "unbound");
+  // And the model_hash results on the doubled model: ambiguous, as before.
+  const r = await stagedResults();
+  let m = reduce(s, { type: "fileOpened", artifact: "results", path: r.info.path });
+  m = reduce(m, { type: "resultsLoaded", ...r });
+  assert.equal(activationNow(atStage(m, 0))!.activation.state, "ambiguous");
 });
 
 test("the ambiguous and absent states are a visible banner; filtered and unstaged are not", () => {

@@ -18,7 +18,8 @@
 // by physical-group name (`owned_element_ids` is its resolved list), so they
 // add nothing; `activate absorbing`, `set material_stage` and every other
 // pair change no element's existence. An op or what outside the /sequence
-// 1.0.0 vocabulary refuses the activation (`absent`, with the reason):
+// 1.0.0 vocabulary, or any element row this code cannot apply, refuses the
+// activation (`refused`, with the reason; never skipped):
 // it might remove an element this code cannot see.
 //
 // A results stage pairs with a `/sequence` stage by name: h5-schema.md calls
@@ -36,7 +37,15 @@ export type Activation =
   /** two or more `/sequence` stages match, or the results stage has no name */
   | { state: "ambiguous"; reason: string }
   /** no `/sequence`, no stage of that name, or change rows that cannot be read without guessing */
-  | { state: "absent"; reason: string };
+  | { state: "absent"; reason: string }
+  /** the `/sequence` element rows cannot be applied without guessing (an op this code does not know, a source or count that disagrees, a read error) */
+  | { state: "refused"; reason: string }
+  /**
+   * the results pair with this model by fem_hash only: the mesh matches, the
+   * OpenSees program is not proven to be the one that ran, so no `/sequence`
+   * stage is joined to them (selectors.activationNow decides it)
+   */
+  | { state: "unbound"; reason: string };
 
 /** The `/sequence/changes` vocabulary (h5-schema.md, `/sequence`, "Changes"). */
 const OPS: ReadonlySet<string> = new Set(["add", "remove", "activate", "set"]);
@@ -94,7 +103,7 @@ export function activationOf(
     return { state: "absent", reason: `stage activation is not applied: /sequence/stages order[${row}] is ${JSON.stringify(order)}, not an integer` };
   }
   const tags = inactiveAt(seq, stageElements, order);
-  if (typeof tags === "string") return { state: "absent", reason: `stage activation is not applied: ${tags}` };
+  if (typeof tags === "string") return { state: "refused", reason: tags };
   return { state: "filtered", row, name, inactiveTags: tags };
 }
 
@@ -153,6 +162,10 @@ export function activationNotice(a: Activation, resultsStage: string): string | 
       return `Stage activation ambiguous for results stage ${JSON.stringify(resultsStage)}: ${a.reason}. Every element is drawn.`;
     case "absent":
       return `Stage activation absent for results stage ${JSON.stringify(resultsStage)}: ${a.reason}. Every element is drawn.`;
+    case "refused":
+      return `Stage activation refused for results stage ${JSON.stringify(resultsStage)}: ${a.reason}. Every element is drawn.`;
+    case "unbound":
+      return `Stage activation unbound for results stage ${JSON.stringify(resultsStage)}: ${a.reason}. Every element is drawn.`;
     default: {
       const unknown: never = a;
       throw new Error(`activationNotice: unknown activation ${JSON.stringify(unknown)}`);

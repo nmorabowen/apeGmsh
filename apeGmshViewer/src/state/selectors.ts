@@ -281,9 +281,19 @@ export function activationNow(s: State): { activation: Activation; stageName: st
   if (at?.kind !== "results" || !s.results) return null;
   const st = s.results.stages[at.stage];
   if (!st) return null;
-  const key = [s.sequence, s.stageElements, s.definitions, st.name];
+  // A fem_hash pairing proves the mesh, not the program: joining /sequence
+  // stage names to these results would be a guess, so it is not made.
+  const p = resultsPairing(s);
+  const byFem = p.state === "paired" && p.by === "fem_hash";
+  const key = [s.sequence, s.stageElements, s.definitions, st.name, byFem];
   if (activationMemo && activationMemo.key.every((k, i) => k === key[i])) return activationMemo.value;
-  const value = { activation: activationOf(s.sequence, s.stageElements, s.definitions, st.name), stageName: st.name };
+  const activation: Activation = byFem
+    ? {
+        state: "unbound",
+        reason: "the results pair with this model by fem_hash only (the mesh matches; they carry no model_hash), so they are not tied to this model's /sequence program",
+      }
+    : activationOf(s.sequence, s.stageElements, s.definitions, st.name);
+  const value = { activation, stageName: st.name };
   activationMemo = { key, value };
   return value;
 }

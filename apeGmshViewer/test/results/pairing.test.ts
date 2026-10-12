@@ -21,6 +21,15 @@ test("paired by model_hash when the results carry one; by fem_hash only when the
   assert.deepEqual(pairResults({ lineage: lin(H("a"), H("b")) }, res(lin(H("a"), null))), { state: "paired", by: "fem_hash" });
 });
 
+test("fem_hash fall-through: a model with no model_hash still pairs fem-only results; a model with no fem_hash refuses them", () => {
+  assert.deepEqual(pairResults({ lineage: lin(H("a"), null) }, res(lin(H("a"), null))), { state: "paired", by: "fem_hash" });
+  const none = pairResults({ lineage: lin(null, null) }, res(lin(H("a"), null)));
+  assert.equal(none.state, "mismatch");
+  assert.match((none as { reason: string }).reason, /the results name a fem_hash, and the open model has none to compare/);
+  const noLineage = pairResults({ lineage: null }, res(lin(H("a"), null)));
+  assert.match((noLineage as { reason: string }).reason, /has none to compare/);
+});
+
 test("mismatch: another model_hash refuses even when the mesh (fem_hash) is the same", () => {
   const p = pairResults({ lineage: lin(H("a"), H("b")) }, res(lin(H("a"), H("c"))));
   assert.equal(p.state, "mismatch");

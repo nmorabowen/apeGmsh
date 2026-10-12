@@ -200,7 +200,19 @@ def staged_activation(out_dir: Path) -> None:
                             eigenvalue=4.0, frequency_hz=1 / np.pi, period_s=np.pi, mode_index=1)
         w.write_nodes(sid, "partition_0", node_ids=node_ids, components={"displacement_x": node_ids[None, :] * 0.0})
         w.end_stage()
-    print(f"wrote {model_path.name} and {res_path.name}: {node_ids.size} nodes, {len(fem.elements.ids)} elements")
+    # The same stages with no model_h5_src: no /opensees, so no model_hash. It
+    # pairs with the model by fem_hash only, which proves the mesh and not the
+    # program (the V4b review's reproducer: activation must stay unbound).
+    fem_only = out_dir / "staged_activation.femonly.results.h5"
+    with NativeWriter(fem_only) as w:
+        w.open(fem=fem, source_type="domain_capture", analysis_label="V4b synthetic, fem_hash only (#1728)")
+        for name, n in STAGED_STEPS.items():
+            k = np.arange(n, dtype=np.float64)
+            sid = w.begin_stage(name=name, kind="static", time=(k + 1) / n)
+            w.write_nodes(sid, "partition_0", node_ids=node_ids,
+                          components={"displacement_x": node_ids[None, :] + 0.001 * k[:, None]})
+            w.end_stage()
+    print(f"wrote {model_path.name}, {res_path.name} and {fem_only.name}: {node_ids.size} nodes, {len(fem.elements.ids)} elements")
     staged_oracle(model_path, out_dir / "staged_activation.oracle.json")
 
 
