@@ -519,23 +519,28 @@ npm run measure -- out/results/c_maintainer_5000.h5
 | 5 | (c) | 5 000 | 69 / 66 % | 494 | 272.7 | 3.30 / 11.7 | 398 (163 + 235) |
 | 6 | (a) | 100 | 59 / 71 % | 57 | 256.8 | 3.80 / 6.6 | 302 (148 + 154) |
 | 6 | (c) | 5 000 | 61 / 63 % | 488 | 306.6 | 3.10 / 10.3 | 392 (170 + 222) |
+| R | (a) | 100 | n/a / 91 % | n/a | 103 | n/a / 188 | 310 |
+
+Row R is the reviewer's re-measure of (a) at `07e6fd03` (#1761 round 1), at 91 % CPU; the
+reviewer reported the scrub, the worst step and the peak, not the other columns.
 
 Ranges and the conservative (worst) value of each, which is the one to quote.
-The worst values are all from runs 4 to 6, under a busier machine (54 to 71 %
-CPU against 42 to 60 % for runs 1 to 3), so the drop from runs 1 to 3 cannot be
-put on the new vertex map alone:
+The worst (a) values are the reviewer's run R at 91 % CPU; the worst (c) values
+are from runs 4 to 6, under a busier machine (54 to 71 % CPU against 42 to 60 %
+for runs 1 to 3). The scrub follows the machine's load more than the code:
 
 | file | scrub (steps/s): range over runs 1 to 6, **worst** | step max (ms), worst | history scan (ms), worst | peak MB, worst | CPU during |
 |---|---|---|---|---|---|
-| (a) | 246 to 326, **246** | 8.3 | 57 | 306 | 42 to 71 % |
+| (a) | 103 to 326, **103** | 188 | 57 | 310 | 42 to 91 % |
 | (c) | 271 to 383, **271** | 11.7 | 600 | 398 | 43 to 68 % |
 
-- **The D5 revisit trigger does not fire**: the worst scrub, 246 steps/s,
-  is eight times the 30 steps/s floor, and the worst peak, 398 MB, is a fifth
+- **The D5 revisit trigger does not fire**: the worst scrub, 103 steps/s
+  at 91 % CPU, is three times the 30 steps/s floor (one step took 188 ms
+  there, so a loaded machine shows single stalls), and the worst peak, 398 MB, is a fifth
   of 2 GB. These are synthetic files, not a solve (the trigger names a real
   file).
 - With contours on, the worst scrub is below V4a's worst for the same files
-  ((a) 246 against 584, (c) 271 against 475 steps/s): the step range, the
+  ((a) 103 against 584, (c) 271 against 475 steps/s): the step range, the
   per-vertex colours and a finished draw (`gl.finish()`, which V4a's
   raw-WebGL apply did not wait for) are now inside each step. Both are
   measured on a loaded machine, and the ranges say how much that moves them.

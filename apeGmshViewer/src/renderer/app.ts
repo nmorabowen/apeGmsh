@@ -17,6 +17,7 @@ import { chainOf, contourFieldsOf, contourView } from "../state/selectors.ts";
 import { Store } from "../state/store.ts";
 import { WINDOW_KINDS, type DeclPath } from "../state/types.ts";
 import { applyTheme } from "../theme/tokens.ts";
+import { contourKey } from "./contour.ts";
 import { Viewport } from "./viewport.ts";
 
 const bridge = (window as unknown as { viewer: Bridge }).viewer;
@@ -243,7 +244,7 @@ async function until(ok: () => boolean, ms = 15000): Promise<boolean> {
 /** The contour colours on screen are the step the state shows, at its range (renderer/contour.ts keys). */
 function contourShown(): boolean {
   const v = contourView(store.get());
-  return v.state === "ready" && v.stepMeasured && (viewport.contourApplied?.startsWith(`${v.keys.step}|`) ?? false);
+  return v.state === "ready" && v.stepMeasured && viewport.contourApplied === contourKey(v);
 }
 
 /**

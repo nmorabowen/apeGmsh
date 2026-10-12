@@ -12,7 +12,7 @@ import { WINDOW_KINDS, type ArtifactInfo, type ArtifactKind, type ContourState, 
 export const emptyRecord = <T>(): Record<string, T> => Object.create(null) as Record<string, T>;
 
 /** The contour before anything is picked: whole-history range, jet (V4c1). */
-export const initialContour: ContourState = { field: null, component: null, range: "history", fixed: null, cmap: "jet", stepRange: null, scan: null, notice: null };
+export const initialContour: ContourState = { field: null, component: null, range: "history", fixed: null, cmap: "jet", stepRange: null, scan: null, notice: null, reads: 0 };
 
 export const initialState: State = {
   artifacts: { geometry: null, model: null, results: null },
@@ -310,7 +310,7 @@ export function reduce(s: State, e: Event): State {
         artifacts: { ...s.artifacts, results: info },
         results: e.info,
         phase: keep ? s.phase : { ...s.phase, at: null },
-        contour: { ...s.contour, stepRange: null, scan: null },
+        contour: { ...s.contour, stepRange: null, scan: null, reads: s.contour.reads + 1 },
       });
       const c = next.contour;
       if (c.field === null || c.component === null) return next;

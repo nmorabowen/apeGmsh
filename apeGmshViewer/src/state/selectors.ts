@@ -9,7 +9,7 @@ import { PROVENANCE_ORIGIN_FROM } from "../reader/provenance.ts";
 import { roleColouring } from "./roles.ts";
 import { activationNotice, activationOf, type Activation } from "./activation.ts";
 import { pairingNotice, pairResults, type ResultsPairing } from "./results.ts";
-import { climOf, componentName, componentOf, contourKeysOf, nodalFields, type Clim, type FieldComponent, type NodalField } from "./contour.ts";
+import { climOf, componentName, componentOf, contourKeysOf, fieldsOf, type Clim, type FieldComponent, type NodalField } from "./contour.ts";
 import type { BlobRef, ContourCmap } from "./types.ts";
 
 export type { Clim, FieldComponent, NodalField } from "./contour.ts";
@@ -262,6 +262,8 @@ export type ContourView =
       nodeIds: BlobRef;
       /** the measured range is for the step shown (else it is still loading) */
       stepMeasured: boolean;
+      /** how many times the results were read (each read can carry other data at the same path, so the colour key names it) */
+      reads: number;
     };
 
 /** What the contour colours, or why it cannot (V4c1). */
@@ -274,7 +276,7 @@ export function contourView(s: State): ContourView {
   const st = s.results.stages[at.stage];
   if (!st) return { state: "unavailable", reason: `results stage ${at.stage} is not in the file` };
   const label = st.name || st.id;
-  if (nodalFields(st.nodal).length === 0) return { state: "unavailable", reason: `stage ${label} records no nodal results` };
+  if (fieldsOf(st).length === 0) return { state: "unavailable", reason: `stage ${label} records no nodal results` };
   const c = s.contour;
   if (c.field === null || c.component === null) return { state: "unavailable", reason: "pick a field" };
   const hit = componentOf(st, c.field, c.component);
@@ -294,6 +296,7 @@ export function contourView(s: State): ContourView {
     cmap: c.cmap,
     nodeIds: st.nodeIds,
     stepMeasured: measured,
+    reads: c.reads,
   };
 }
 
@@ -301,7 +304,7 @@ export function contourView(s: State): ContourView {
 export function contourFieldsOf(s: State): { fields: NodalField[]; refused: { component: string; reason: string }[] } | null {
   const at = s.phase.at;
   const st = at?.kind === "results" ? s.results?.stages[at.stage] : undefined;
-  return st ? { fields: nodalFields(st.nodal), refused: st.refusedNodal } : null;
+  return st ? { fields: fieldsOf(st), refused: st.refusedNodal } : null;
 }
 
 // -- V4b: results pairing, the time axis and stage activation ---------------------

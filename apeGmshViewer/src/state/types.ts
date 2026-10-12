@@ -326,6 +326,8 @@ export interface ContourState {
   scan: ContourScan | null;
   /** a typed notice, such as a selection cleared by a re-read that no longer has the field */
   notice: string | null;
+  /** results reads so far (`resultsLoaded`): a re-read at the same path may hold other values, so what the contour shows is keyed by it */
+  reads: number;
 }
 
 /** What the user clicked: the declaration, the hit point, and the cell's node tags as the viewport read them from the connectivity blob. */

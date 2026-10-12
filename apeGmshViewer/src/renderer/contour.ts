@@ -36,8 +36,12 @@ export function noDataColours(map: Int32Array, perPrim: number): Float32Array {
 
 let columnMemo: { ids: Float64Array; column: Map<number, number> } | null = null;
 
-/** What a set of contour colours shows: the step and component, the range and the colormap (the viewport skips a recolour with the same key). */
-export const contourKey = (view: Extract<ContourView, { state: "ready" }>): string => `${view.keys.step}|${view.clim.min}|${view.clim.max}|${view.cmap}`;
+/**
+ * What a set of contour colours shows: the results read (a re-read at the
+ * same path can hold other values), the step and component, the range and
+ * the colormap. The viewport skips a recolour with the same key.
+ */
+export const contourKey = (view: Extract<ContourView, { state: "ready" }>): string => `read ${view.reads}|${view.keys.step}|${view.clim.min}|${view.clim.max}|${view.cmap}`;
 
 /**
  * The linear vertex colours of the drawn lines and triangles for the step

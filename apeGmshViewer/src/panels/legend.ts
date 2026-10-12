@@ -150,6 +150,9 @@ export function mountLegend(store: Store): () => void {
       legend.append(row);
     }
     for (const r of picker?.refused ?? []) legend.append(el("div", "legend-note refused-field", `${r.component}: not read (${r.reason})`));
+    for (const f of picker?.fields ?? []) {
+      if (f.magnitudeRefused) legend.append(el("div", "legend-note refused-field", `${f.name} magnitude: refused, ${f.magnitudeRefused}`));
+    }
     if (v.state !== "ready") {
       legend.append(el("div", "legend-note", v.state === "unavailable" ? `Nothing to colour: ${v.reason}.` : ""));
       legend.append(noDataRow());

@@ -12,7 +12,8 @@ import * as h5wasm from "h5wasm/node";
 import { ResultsHost } from "../../src/main/results.ts";
 import type { ResultsH5 } from "../../src/reader/results.ts";
 import { contourLines } from "../../src/panels/legend.ts";
-import { CMAP_NAMES, climOf, MAGNITUDE, NO_DATA_RGB, nodalFields, primitiveColours, sampleCmap, vertexValues } from "../../src/state/contour.ts";
+import { contourKey } from "../../src/renderer/contour.ts";
+import { CMAP_NAMES, climOf, fieldsOf, MAGNITUDE, NO_DATA_RGB, nodalFields, primitiveColours, sampleCmap, vertexValues } from "../../src/state/contour.ts";
 import { contourFieldsOf, contourView, noticesOf } from "../../src/state/selectors.ts";
 import type { ContourScan } from "../../src/state/types.ts";
 import { opened, STAGED_RESULTS, tick, until } from "./harness.ts";
@@ -190,6 +191,82 @@ test("ResultsHost: a cancel stops a running scan, and so does opening the file a
   const c = await host.scan({ ...req, scanId: 9 }, () => {});
   assert.ok(c.ok && c.steps === 4);
   host.close();
+});
+
+test("a refused translational axis withdraws the magnitude: it is shown refused, never offered over the surviving axes, never scanned", async () => {
+  // The review's reproducer: x and y are (2, 3), z is (2, 2) with 3 _ids, so z is refused.
+  await h5wasm.ready;
+  const path = join(mkdtempSync(join(tmpdir(), "v4c1-")), "zrefused.results.h5");
+  const f = new h5wasm.File(path, "w");
+  f.create_attribute("results_schema_version", "1.0.0");
+  const st = f.create_group("stages").create_group("stage_0");
+  st.create_attribute("name", "pushover");
+  st.create_attribute("kind", "static");
+  st.create_dataset({ name: "time", data: new Float64Array([0, 1]) });
+  const n = st.create_group("partitions").create_group("partition_0").create_group("nodes");
+  n.create_dataset({ name: "_ids", data: new BigInt64Array([1n, 2n, 3n]) });
+  n.create_dataset({ name: "displacement_x", data: new Float64Array([0, 1, 2, 3, 4, 5]), shape: [2, 3] });
+  n.create_dataset({ name: "displacement_y", data: new Float64Array([0, 0, 0, 0, 0, 0]), shape: [2, 3] });
+  n.create_dataset({ name: "displacement_z", data: new Float64Array([100, 100, 100, 100]), shape: [2, 2] });
+  f.close();
+  const host = new ResultsHost(h5wasm as unknown as ResultsH5, h5wasm.ready);
+  const a = await host.open(path);
+  assert.ok(a.ok, a.ok ? "" : a.error);
+  const stage = a.meta.stages[0]!;
+  assert.deepEqual(stage.nodal, ["displacement_x", "displacement_y"]);
+  const [disp] = fieldsOf({ ...stage, refusedNodal: stage.refusedNodal });
+  assert.deepEqual(disp!.components.map((c) => c.label), ["x", "y"], "no magnitude over x and y alone");
+  assert.match(disp!.magnitudeRefused!, /^displacement_z not read \(.*has 2 value columns and _ids has 3 node ids/);
+  assert.equal(nodalFields(stage.nodal).find((x) => x.name === "displacement")!.components[0]!.label, "magnitude", "without the refusal the axes would offer one");
+  host.close();
+  // In the app: the refused stage shown, colour by contour; the default pick is x, a magnitude pick is refused, and no scan reads a magnitude.
+  const h = await opened();
+  const s = h.store.get();
+  const info = {
+    ...s.results!,
+    stages: s.results!.stages.map((x, i) => (i === 2 ? { ...x, nodal: x.nodal.filter((c) => c !== "displacement_z"), refusedNodal: [{ component: "displacement_z", reason: "a partial write" }] } : x)),
+  };
+  h.store.dispatch({ type: "resultsLoaded", info, sizeBytes: 0, readMs: 0, warnings: [] });
+  h.store.dispatch({ type: "setPhase", at: { kind: "results", stage: 2, step: 0 } });
+  h.store.dispatch({ type: "setColourBy", by: "contour" });
+  assert.deepEqual([h.store.get().contour.field, h.store.get().contour.component], ["displacement", "displacement_x"]);
+  assert.throws(() => h.store.dispatch({ type: "setContourField", field: "displacement", component: MAGNITUDE }), RangeError);
+  assert.equal(contourFieldsOf(h.store.get())!.fields[0]!.magnitudeRefused, "displacement_z not read (a partial write)");
+  await until(() => h.store.get().contour.scan?.status === "done", "the history scan");
+  assert.ok(h.calls.scans.length > 0 && h.calls.scans.every((c) => !c.magnitude), JSON.stringify(h.calls.scans));
+  h.effects.dispose();
+});
+
+test("a re-read always recolours: the colour key changes although the step, the component and the range do not", async () => {
+  const h = await opened();
+  const shown = () => {
+    const v = contourView(h.store.get());
+    return v.state === "ready" && v.stepMeasured && h.effects.currentStep()?.step === 3 ? v : null;
+  };
+  h.store.dispatch({ type: "setPhase", at: { kind: "results", stage: 2, step: 0 } });
+  h.store.dispatch({ type: "setResultStep", step: 3 });
+  h.store.dispatch({ type: "setColourBy", by: "contour" });
+  // Path 1: a fixed range, unchanged across the re-read.
+  h.store.dispatch({ type: "setContourRange", range: "fixed", fixed: { min: 0, max: 1 } });
+  await until(() => shown() !== null, "the step, fixed range");
+  const before = shown()!;
+  await h.effects.openResults(STAGED_RESULTS);
+  await until(() => shown() !== null, "the step after the re-read");
+  const after = shown()!;
+  assert.deepEqual([after.keys.step, after.clim.min, after.clim.max], [before.keys.step, before.clim.min, before.clim.max]);
+  assert.notEqual(contourKey(after), contourKey(before), "fixed range: the re-read changes the key");
+  // Path 2: history mode at the last step, where the step range equals the history range.
+  h.store.dispatch({ type: "setContourRange", range: "history" });
+  await until(() => h.store.get().contour.scan?.status === "done" && shown() !== null, "the history range");
+  const hist = shown()!;
+  const sr = h.store.get().contour.stepRange!;
+  assert.deepEqual([hist.clim.mode, hist.clim.min, hist.clim.max], ["history", sr.min, sr.max], "the step range equals the history range here");
+  await h.effects.openResults(STAGED_RESULTS);
+  await until(() => h.store.get().contour.scan?.status === "done" && shown() !== null, "the history range after the re-read");
+  const hist2 = shown()!;
+  assert.deepEqual([hist2.keys.step, hist2.clim.min, hist2.clim.max], [hist.keys.step, hist.clim.min, hist.clim.max]);
+  assert.notEqual(contourKey(hist2), contourKey(hist), "history range: the re-read changes the key");
+  h.effects.dispose();
 });
 
 test("partial write: a component whose value columns disagree with _ids is refused alone, with a banner; the file still opens", async () => {

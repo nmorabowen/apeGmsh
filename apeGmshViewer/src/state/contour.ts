@@ -51,6 +51,12 @@ export interface FieldComponent {
 export interface NodalField {
   name: string;
   components: FieldComponent[];
+  /**
+   * Why the magnitude is not offered although the field is a translational
+   * vector: an axis of it was refused (a partial write). A magnitude of the
+   * axes that survived would be a guessed value. Null otherwise.
+   */
+  magnitudeRefused: string | null;
 }
 
 /**
@@ -59,9 +65,11 @@ export interface NodalField {
  * is an unnamed component of the name before it, labelled `[k]` (its
  * position in that field), never a guessed axis; any other name is a scalar
  * field of its own (`pore_pressure`). The magnitude comes first for a
- * translational field with two or more axis components.
+ * translational field with two or more axis components, none of them
+ * `refused` (the reader's per-component refusals: a magnitude without a
+ * refused axis is not the magnitude).
  */
-export function nodalFields(names: readonly string[]): NodalField[] {
+export function nodalFields(names: readonly string[], refused: readonly { component: string; reason: string }[] = []): NodalField[] {
   const order: string[] = [];
   const parts = new Map<string, { axis: Map<string, string>; other: string[] }>();
   const at = (f: string) => {
@@ -83,7 +91,9 @@ export function nodalFields(names: readonly string[]): NodalField[] {
     const p = parts.get(name)!;
     const comps: FieldComponent[] = [];
     const axis = AXES.filter((a) => p.axis.has(a)).map((a) => p.axis.get(a)!);
-    if (TRANSLATIONAL.has(name) && axis.length >= 2) comps.push({ key: MAGNITUDE, label: "magnitude", datasets: axis, magnitude: true });
+    const lost = TRANSLATIONAL.has(name) ? refused.filter((r) => AXES.some((a) => r.component === `${name}_${a}`)) : [];
+    const magnitudeRefused = lost.length ? `${lost.map((r) => r.component).join(", ")} not read (${lost.map((r) => r.reason).join("; ")})` : null;
+    if (TRANSLATIONAL.has(name) && axis.length >= 2 && !magnitudeRefused) comps.push({ key: MAGNITUDE, label: "magnitude", datasets: axis, magnitude: true });
     for (const a of AXES) if (p.axis.has(a)) comps.push({ key: p.axis.get(a)!, label: a, datasets: [p.axis.get(a)!], magnitude: false });
     let k = comps.filter((c) => !c.magnitude).length;
     for (const o of p.other) {
@@ -91,20 +101,23 @@ export function nodalFields(names: readonly string[]): NodalField[] {
       comps.push({ key: o, label, datasets: [o], magnitude: false });
       k++;
     }
-    return { name, components: comps };
+    return { name, components: comps, magnitudeRefused };
   });
 }
 
+/** A stage's nodal fields, with its refused components taken into account. */
+export const fieldsOf = (stage: ResultsStage): NodalField[] => nodalFields(stage.nodal, stage.refusedNodal);
+
 /** The field and component of a stage that a selection names, or null when the stage does not have it. */
 export function componentOf(stage: ResultsStage, field: string, component: string): { field: NodalField; component: FieldComponent } | null {
-  const f = nodalFields(stage.nodal).find((x) => x.name === field);
+  const f = fieldsOf(stage).find((x) => x.name === field);
   const c = f?.components.find((x) => x.key === component);
   return f && c ? { field: f, component: c } : null;
 }
 
 /** The default pick on a stage: the first field, its first component (the magnitude when offered). */
 export function defaultPick(stage: ResultsStage | undefined): { field: string; component: string } | null {
-  const f = stage ? nodalFields(stage.nodal)[0] : undefined;
+  const f = stage ? fieldsOf(stage)[0] : undefined;
   const c = f?.components[0];
   return f && c ? { field: f.name, component: c.key } : null;
 }
