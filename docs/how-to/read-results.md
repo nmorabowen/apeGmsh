@@ -65,6 +65,46 @@ apeGmsh vocabulary: `displacement_x/y/z`, `reaction_force_x/y/z`,
 - **Target names, never raw tags.** `pg="Base"` is stable across remesh
   and boolean ops; a hard-coded node tag is not.
 
+## Read a result straight after the run
+
+You do not always need a results file. After a live `ops.analyze(...)`, the bridge can answer
+from the domain it just solved. `ops.nodes.one(label=...)` picks the one node a geometry label
+names (it raises if the label picks none or several), and `.read(component)` returns a float in
+model units, at the last committed state:
+
+```python
+tip_ux = ops.nodes.one(label="tip").read("displacement_x")
+
+base = ops.nodes.get(pg="Base")                  # a NodeSet: several nodes
+base_shear = base.read("reaction_force_x").sum()  # ndarray (N,), summed with numpy
+```
+
+Elements read the same way, with `ops.elements.get(pg=...)` or `label=` or `ids=`. An element
+`.read` answers only components that hold one value per element, which today means
+`"axial_force"` on `Truss` and `CorotTruss`; it returns an array in the set's order.
+Anything richer, such as beam end forces, raises and points you to `Results`.
+
+`label=` is accepted wherever `pg=` is, on `ops.fix`, `ops.mass`, `ops.recorder.Node` and the
+selectors above, so a model script can name a support or a master once, in the geometry, and
+use that name to constrain it, record it and read it back. One restriction: `recorder.Element`
+takes `label=` only on a bridge built with `element_tags="fem"`, because only there does an
+element's OpenSees tag equal its FEM id; on the default tag mode it raises.
+
+A `.read` answers only from a domain this bridge solved live. After `ops.py(path, run=True)` or
+`ops.tcl(path, run=True)` the solve happened in another process, so `.read` raises and names the
+way out: `ops.results(path)` returns the same `Results` object as above, built from the
+recorders you declared. A single value is `.item()` on a slab narrowed to one node and one step:
+
+```python
+tip_uy = ops.results("model.tcl").nodes.get(
+    label="tip", component="displacement_y", time=-1).item()
+```
+
+`.item()` raises unless the slab holds exactly one value, which is the point: it replaces
+`values[-1, 0]`, which answers silently from whatever the slab holds. Running a Tcl deck with
+`run=True` also writes a driver, `<deck>.run.tcl`, next to the deck. It sources the deck and
+prints a completion marker, and the next run overwrites it.
+
 ## See also
 
 - **Concept:** [Reading & filtering results](../concepts/results.md)

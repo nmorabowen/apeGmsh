@@ -78,9 +78,10 @@ def test_reference_scripts_are_clean(name: str) -> None:
     assert findings == [], [(f.line, f.rule, f.message) for f in findings]
 
 
-def test_raw_ops_lines_pass_t2() -> None:
-    assert "# raw-ops:" in REFERENCES["frame_modal.py"]
-    assert "# raw-ops:" in REFERENCES["pratt_truss.py"]
+def test_reference_scripts_use_no_raw_ops() -> None:
+    # ADR 0115 R2: live read-back is `.read`, so no reference script needs raw openseespy.
+    for name, body in REFERENCES.items():
+        assert "raw-ops:" not in body and "ops_raw" not in body, name
 
 
 # ------------------------------------------------------------ synthetic
