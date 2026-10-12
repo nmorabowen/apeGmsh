@@ -681,6 +681,33 @@ advance (`DisplacementControl`, `ArcLength`, an adaptive `LoadControl` with
 `min_lam`/`max_lam`, `VariableTransient`).
 <!-- verified: tests/opensees/unit/test_stage_series_window.py -->
 
+### What a stage boundary does
+
+Stage close emits, in this order (`apesees.py::BuiltModel._emit_stages_flat`,
+step 10, then the next stage's open):
+
+```text
+ops.loadConst('-time', 0.0)
+ops.wipeAnalysis()
+# === Stage: s2 ===
+ops.setTime(1.0)               # only when s2 called s.set_time(1.0)
+ops.domainChange()
+ops.constraints('Plain') ... ops.analysis('Static')   # all 7 chain lines again
+ops.pattern('Plain', 2, 2)
+```
+
+- **Loads held constant:** `loadConst` freezes every pattern so far.
+- **Time reset to 0** by that `-time 0.0`, unless the next stage calls
+  `s.set_time(t)` (emits `setTime` after the wipe). #1366 warns on a zero `Path`.
+- **Analysis chain wiped** (`wipeAnalysis`) and **re-emitted** in full per stage
+  from its own `s.analysis(...)`; nothing carries over.
+- **Domain state and recorders kept:** `wipeAnalysis` leaves the domain alone;
+  recorders are emitted once, before the first stage, never again.
+- **Static ignores `s.run(dt=)`.** The deck writes `ops.analyze(1, <dt>)` but
+  `LoadControl.dlam` alone sets the step (`_internal/stage_window.py::
+  stage_increment_times`). `dt` is the step only under `Transient`.
+<!-- verified: tests/opensees/test_stage_boundary_docs_claims.py -->
+
 ### Stage verbs — PUSH vs PULL vs CLAIM
 
 The three semantics are distinct (don't confuse them):
