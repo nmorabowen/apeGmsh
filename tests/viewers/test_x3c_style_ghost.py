@@ -31,17 +31,22 @@ import pytest
 
 pytest.importorskip("pyvista")
 
+from tests.viewers import test_x2_numeric_oracle as _oracle  # noqa: E402
+from tests.viewers import test_x2f_animation_stage_activation as _x2f  # noqa: E402
 from tests.viewers.test_x2_numeric_oracle import (  # noqa: E402
     _require_shots,
     capture_drawn,
-    plate,  # noqa: F401  (fixture)
-    plate_h5,  # noqa: F401  (fixture)
 )
 from tests.viewers.test_x2f_animation_stage_activation import (  # noqa: E402
     _EXPECT,
     _pg_eids,
-    staged,  # noqa: F401  (fixture)
 )
+
+# The shared fixtures: the X2 plate (deforms; nodal displacement) and
+# the X2-f staged model (Rock / Fill activated and removed by stage).
+plate_h5 = _oracle.plate_h5
+plate = _oracle.plate
+staged = _x2f.staged
 
 _WINDOW = (240, 180)
 _CLIM = (-0.25, 0.75)

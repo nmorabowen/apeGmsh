@@ -423,7 +423,12 @@ s.render("wall.png", v.id)                        # a still, no Qt
   matplotlib name (`'jet'` included), validated when the record is
   built. Two slots of the same quantity with different explicit values
   raise (one field, one scale); `v.legends()` reports the set values.
-  Stored and saved only: the window and `render()` do not apply them yet.
+  Every realize applies them (stills, the window, `export_animation`);
+  a same-quantity slot left at `None` draws with its neighbour's values.
+- **`v.overlay = True` draws the undeformed ghost** (A7.5) — the view's
+  own cells at scale 0 in the Outlines style, under the same scope,
+  stage activation and clip planes; independent of the Outlines button,
+  never colour-mapped, no legend.
 - **Plot kinds are `history` and `xy`** — `path` was removed (A7.7).
 - **Snapshot is v2** — `SNAPSHOT_VERSION = 2`, `kind:
   "apegmsh.results.session"` (`results/session/_snapshot.py`).
