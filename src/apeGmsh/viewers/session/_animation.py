@@ -11,9 +11,9 @@ when the fast path refuses. Each frame is the plotter's screenshot,
 appended to an imageio writer exactly as the old loop did.
 
 Moved, not extended (ADR 0112 D8): no feature is added to the session
-path. Stage activation is the exception that is not a feature: on a
-staged model each frame draws only the elements active in the
-animated stage, as the Qt path did (X2-f, #1722). What the Qt window
+path. On a staged model each frame draws only the elements active in
+the animated stage, as the Qt path did; ``realize`` applies that rule
+to every mesh pane (X2-f, #1722). What the Qt window
 drew and this does not (the axes triad, the
 window chrome, the viewer's substrate shading) are accepted look gaps
 (maintainer ruling 2026-10-11, #1663).
@@ -127,9 +127,7 @@ def export_session_animation(
         _apply_theme(plotter)
         backend = LedgerBackend(PyVistaQtBackend(plotter))
         session.time = Instant(stage_id, indices[0])
-        realized = realize_pane(
-            session, view, backend, _stage_activation=True,
-        )
+        realized = realize_pane(session, view, backend)
         if token:
             _apply_camera(plotter, camera)
         else:
@@ -175,8 +173,8 @@ def _step_to(
     """Re-step in place when the fast path allows, else re-realize.
 
     The re-step reuses the realized cell set, which carries the stage's
-    activation (X2-f): sound because one export animates ONE stage, so
-    the active set cannot change between frames.
+    activation (X2-f); one export animates ONE stage, and
+    ``restep_pane`` refuses a stage change anyway.
     """
     if can_restep(realized, view):
         return restep_pane(session, view, realized, backend)
@@ -191,7 +189,7 @@ def _rerealize(
         backend.remove_scalar_bar(bar_key)
     for handle in list(backend.layer_handles):
         backend.remove_layer(handle)
-    return realize_pane(session, view, backend, _stage_activation=True)
+    return realize_pane(session, view, backend)
 
 
 def _run_setup(

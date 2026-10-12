@@ -1,12 +1,14 @@
-"""X2-f (#1722) — ``Results.export_animation`` honours stage activation.
+"""X2-f (#1722) — every realized mesh pane honours stage activation.
 
-Before X2-b (#1700) the verb drove the Qt ``ResultsViewer``, whose
-``director.set_stage`` fired ``_apply_stage_activation``: on a STAGED
-model each animated stage drew only the elements active in it. X2-b
-moved the verb onto the session path, which applied no activation and
-drew every element at every stage. This pins the restored behaviour,
-and pins that the stills (``Results.render``) still draw every element:
-they never filtered, and whether they should is a separate question.
+Before X2-b (#1700) ``Results.export_animation`` drove the Qt
+``ResultsViewer``, whose ``_apply_stage_activation`` drew only the
+elements active in the animated stage of a STAGED model; the session
+path drew every element. Maintainer ruling 2026-10-11 (#1722 card
+amendment): the filter applies everywhere, in ``_realize_mesh``. This
+pins it per entry point: ``export_animation``, ``render`` (each view),
+``render_pack``, ``assess(figures=True)``, the CLI ``render`` (a real
+subprocess) and the session window's realized pane (headless
+``SessionReconciler``), plus the fail-soft / fail-closed edges.
 
 Fixture (``test_stage_activation.py::staged_results``, two steps per
 stage so the re-step fast path runs): Rock (z 0-1) is global, Fill
@@ -250,18 +252,184 @@ def test_export_animation_draws_only_active_elements(
                 assert actor["zmax"] <= zhi + 1e-9, actor
 
 
-def test_render_still_draws_every_element(staged, tmp_path):
-    """Stills never filtered (measured at 52fe77b9); X2-f leaves them so."""
+#: Stills draw the LAST stage (``_results_stills._resolve_stage``; a
+#: stage-scoped Results lists every stage too), so on this fixture they
+#: draw ``excavate``: Fill only.
+_STILL_STAGE = "excavate"
+
+
+def _assert_stage_frames(
+    results: Any, frames: list[list[dict[str, Any]]], stage: str,
+) -> None:
+    """Every frame draws exactly ``stage``'s active cells (undeformed:
+    the fixture's displacements are zero, so the z range is exact)."""
+    pgs = _pg_eids(results)
+    (zlo, zhi), rock, fill = _EXPECT[stage]
+    active = (pgs["Rock"] if rock else set()) | (pgs["Fill"] if fill else set())
+    want = _surface_cells(results, active)
+    assert frames
+    for frame in frames:
+        sub = _substrate(frame)
+        assert sub["n_cells"] == want, (stage, sub["n_cells"], want)
+        assert sub["zmin"] == pytest.approx(zlo)
+        assert sub["zmax"] == pytest.approx(zhi)
+
+
+@pytest.mark.parametrize("view", ["mesh", "contour", "deformed"])
+def test_render_still_hides_inactive_elements(staged, tmp_path, view):
     results, _n_total = staged
-    everything = _surface_cells(results, None)
-    for stage in _EXPECT:
-        with _capture() as frames:
-            results.stage(stage).render(tmp_path / f"{stage}.png")
-        assert frames, "render took no shot"
-        sub = _substrate(frames[-1])
-        assert sub["n_cells"] == everything
-        assert sub["zmin"] == pytest.approx(0.0)
-        assert sub["zmax"] == pytest.approx(2.0)
+    kw: dict[str, Any] = {"window_size": (160, 120)}
+    if view != "mesh":
+        kw["component"] = "displacement_z"
+    with _capture() as frames:
+        out = results.render(tmp_path / f"{view}.png", view=view, **kw)
+    assert out is not None
+    _assert_stage_frames(results, frames, _STILL_STAGE)
+
+
+def test_render_pack_hides_inactive_elements(staged, tmp_path):
+    results, _n_total = staged
+    with _capture() as frames:
+        written = results.render_pack(tmp_path / "pack", window_size=(160, 120))
+    names = {p.name for p in written}
+    assert {"mesh.png", "contour.png", "deformed.png"} <= names, names
+    assert len(frames) == 3  # the three VTK stills (history is mpl)
+    _assert_stage_frames(results, frames, _STILL_STAGE)
+
+
+def test_assess_figures_hide_inactive_elements(staged, tmp_path):
+    results, _n_total = staged
+    with _capture() as frames:
+        results.assess(figures=True, out_dir=tmp_path / "assess")
+    assert len(frames) == 3
+    _assert_stage_frames(results, frames, _STILL_STAGE)
+
+
+#: The real CLI ``main`` with the shot hook installed; prints the drawn
+#: render-surface actors of every shot as one JSON line.
+_CLI_HOOKED_MAIN = """
+import json, sys
+import numpy as np
+from pyvista.plotting.plotter import BasePlotter
+SHOTS = []
+_shot = BasePlotter.screenshot
+def _hook(self, *a, **k):
+    rec = []
+    for ren in self.renderers:
+        for name, actor in ren.actors.items():
+            if not actor.GetVisibility() or actor.IsA("vtkActor2D"):
+                continue
+            ds = getattr(getattr(actor, "mapper", None), "dataset", None)
+            if ds is None or ds.n_points == 0:
+                continue
+            if "_apegmsh_orig_cell_ids" not in ds.cell_data:
+                continue
+            z = np.asarray(ds.points)[:, 2]
+            rec.append([int(ds.n_cells), float(z.min()), float(z.max())])
+    SHOTS.append(rec)
+    return _shot(self, *a, **k)
+BasePlotter.screenshot = _hook
+from apeGmsh.viewers.__main__ import main
+rc = main(sys.argv[1:])
+print("SHOTS=" + json.dumps(SHOTS))
+sys.exit(rc)
+"""
+
+
+@pytest.mark.subprocess
+def test_cli_render_hides_inactive_elements(staged, tmp_path):
+    import json
+    import os
+    import subprocess
+
+    results, _n_total = staged
+    src = str(Path(__file__).resolve().parents[2] / "src")
+    env = dict(os.environ)
+    env["PYTHONPATH"] = src + os.pathsep + env.get("PYTHONPATH", "")
+    env.pop("APEGMSH_SKIP_VIEWER", None)
+    h5 = str(tmp_path / "staged_run.h5")
+    proc = subprocess.run(
+        [sys.executable, "-c", _CLI_HOOKED_MAIN, "render", h5,
+         str(tmp_path / "cli.png"), "--view", "mesh", "--window", "160x120"],
+        env=env, capture_output=True, text=True, timeout=300,
+    )
+    assert proc.returncode == 0, proc.stderr
+    line = [ln for ln in proc.stdout.splitlines() if ln.startswith("SHOTS=")]
+    assert line, proc.stdout
+    shots = json.loads(line[-1][len("SHOTS="):])
+    frames = [
+        [{"n_cells": n, "zmin": lo, "zmax": hi, "surface": True}
+         for n, lo, hi in shot]
+        for shot in shots
+    ]
+    _assert_stage_frames(results, frames, _STILL_STAGE)
+
+
+def test_session_window_pane_follows_stage(staged):
+    """The window's realized pane (``SessionReconciler``, headless on a
+    recording backend): each stage's cell set, a re-step inside a stage
+    keeps it, and a stage change re-realizes rather than re-stepping a
+    stale set."""
+    from apeGmsh.results.session import Instant
+    from apeGmsh.viewers.scene.fem_scene import build_fem_scene
+    from apeGmsh.viewers.session import SessionReconciler
+
+    from tests.viewers.conftest import RecordingBackend
+
+    results, _n_total = staged
+    scene = build_fem_scene(results.fem)
+    pgs = _pg_eids(results)
+    ids = {s.name: s.id for s in results.stages}
+    session = results.session()
+    queue: list = []
+    rec = SessionReconciler(session, RecordingBackend(), defer_fn=queue.append)
+
+    def drain() -> None:
+        while queue:
+            queue.pop(0)()
+
+    def drawn_cells() -> int:
+        realized = rec.realized
+        assert realized is not None
+        subs = [e for e in realized.layers if e.key.endswith(":substrate")]
+        assert len(subs) == 1
+        return int(subs[0].layer.cells.n_cells)
+
+    def want(stage: str) -> int:
+        _z, rock, fill = _EXPECT[stage]
+        eids = (pgs["Rock"] if rock else set()) | (pgs["Fill"] if fill else set())
+        return sum(1 for e in eids if e in scene.element_id_to_cell)
+
+    try:
+        for stage in ("g", "construction", "excavate", "g"):
+            session.time = Instant(ids[stage], 0)
+            drain()
+            assert drawn_cells() == want(stage), stage
+            session.time = Instant(ids[stage], 1)   # re-step in-stage
+            drain()
+            assert drawn_cells() == want(stage), stage
+    finally:
+        rec.dispose()
+
+
+def test_restep_refuses_a_stage_change(staged):
+    """Belt and braces under the reconciler's own stage guard: a pane
+    realized at one stage never re-steps to another."""
+    from apeGmsh.results.session import Instant
+    from apeGmsh.viewers.session._realize import realize_pane, restep_pane
+
+    from tests.viewers.conftest import RecordingBackend
+
+    results, _n_total = staged
+    ids = {s.name: s.id for s in results.stages}
+    session = results.session()
+    view = session.panes[0]
+    backend = RecordingBackend()
+    session.time = Instant(ids["g"], 0)
+    realized = realize_pane(session, view, backend)
+    session.time = Instant(ids["excavate"], 0)
+    with pytest.raises(RuntimeError, match="across stages"):
+        restep_pane(session, view, realized, backend)
 
 
 @pytest.mark.parametrize("why", ["no_program", "unmatched_stage"])

@@ -228,6 +228,10 @@ class PaneRestep:
     #: targets are read off ITS cloud (INV-MESH-4), so a re-step must
     #: read the same object rather than re-deriving a probe cloud.
     gauss_occupant: Any = None
+    #: The stage this pane was realized at. The cell set carries that
+    #: stage's activation (X2-f), so a re-step to another stage would
+    #: draw a stale cell set: ``restep_pane`` refuses it.
+    stage_id: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -345,6 +349,13 @@ def restep_pane(
     if rs is None:
         raise RuntimeError("realize recorded no re-step context")
     stage_id, step = _resolve_instant(session, view, results)
+    if rs.stage_id is not None and stage_id != rs.stage_id:
+        # The cell set is the realized stage's active elements (X2-f):
+        # another stage needs a full realize, never a stale set.
+        raise RuntimeError(
+            f"re-step across stages ({rs.stage_id!r} -> {stage_id!r}) "
+            "needs a full realize"
+        )
     posed = view.deform is not None
 
     if posed:
@@ -494,7 +505,6 @@ class _NullLegendController:
 
 def realize_pane(
     session: "ResultsSession", pane: Any, backend: Any = None,
-    *, _stage_activation: bool = False,
 ) -> Any:
     """Realize one pane of ``session``.
 
@@ -503,10 +513,9 @@ def realize_pane(
     and returns a :class:`~._plots.RealizedPlot` (no backend needed —
     §6: a plot is a pane, and its client draws the numbers).
 
-    ``_stage_activation`` is private to ``export_animation`` (X2-f,
-    #1722): it narrows a mesh pane's cell set to the elements active in
-    the realized stage, as the retired Qt path did. Stills and the
-    session window never filtered and do not pass it.
+    On a staged model a mesh pane draws only the elements active in
+    the stage it realizes (X2-f, #1722): stills, the session window
+    and ``export_animation`` alike.
     """
     from apeGmsh.results.session import MeshView, PlotView
 
@@ -522,14 +531,11 @@ def realize_pane(
         raise TypeError(
             "Realizing a mesh pane needs a RenderBackend to emit into."
         )
-    return _realize_mesh(
-        session, pane, backend, stage_activation=_stage_activation,
-    )
+    return _realize_mesh(session, pane, backend)
 
 
 def _realize_mesh(
     session: "ResultsSession", view: "MeshView", backend: Any,
-    *, stage_activation: bool = False,
 ) -> RealizedPane:
     results = _require_results(session)
     _require_member(session, view)
@@ -545,8 +551,9 @@ def _realize_mesh(
     view_data = ViewerData.from_fem(results.fem)
     # INV-MESH-1: ONE cell set; every layer below is a function of it.
     scoped = resolve_scope(view.scope, view_data)
-    if stage_activation:
-        scoped = _stage_active_scope(results, scene, view_data, scoped, stage_id)
+    # X2-f (#1722): on a staged model the cell set is also the stage's
+    # ACTIVE elements, so every layer below follows the stage.
+    scoped = _stage_active_scope(results, scene, view_data, scoped, stage_id)
 
     # Decision 5: pose first — every extraction below copies posed points.
     _apply_pose(view, results, scene, stage_id, step)
@@ -678,6 +685,7 @@ def _realize_mesh(
             grid=grid,
             substrate_rows=substrate_rows,
             gauss_occupant=slot_diagrams.get("gauss"),
+            stage_id=stage_id,
         ),
         reference_bounds=_reference_bounds(scene, substrate_rows),
     )
