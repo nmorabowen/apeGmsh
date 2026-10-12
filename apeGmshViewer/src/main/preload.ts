@@ -49,6 +49,8 @@ contextBridge.exposeInMainWorld("viewer", {
   captureStill: (suffix: string) => ipcRenderer.invoke("capture:still", suffix),
   captureDone: () => ipcRenderer.invoke("capture:done"),
   fail: (message: string) => ipcRenderer.invoke("app:fail", message),
+  // V4a (#1707): one results step for --mode=measure-results; main answers only in that mode.
+  resultsStep: (req: { kind: "nodal" | "gauss"; step: number }) => ipcRenderer.invoke("results:step", req),
 
   onOpen: (cb: (set: OpenSet) => void) => {
     // The set already open is replayed to this callback only, unless a live
