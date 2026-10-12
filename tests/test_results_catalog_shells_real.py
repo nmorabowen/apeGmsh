@@ -35,7 +35,7 @@ ops = openseespy
 from apeGmsh.opensees._response_catalog import IntRule, lookup
 
 from tests.conftest import _open_model_from_h5
-from tests.fixtures.capture_tags import identity_tags
+from tests.fixtures.capture_tags import identity_tags  # noqa: E402
 
 
 # =====================================================================
