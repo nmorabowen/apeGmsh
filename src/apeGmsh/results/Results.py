@@ -1508,6 +1508,11 @@ class Results:
         ``setup(plotter, director)``. ``view`` is a closed set:
         ``mesh`` / ``contour`` / ``deformed`` / ``reactions``.
 
+        The stage drawn is the scope of ``results.stage(s)`` (or
+        ``results.modes[i]``), else the only stage; an unscoped
+        multi-stage Results draws its LAST stage. ``step`` indexes that
+        stage.
+
         ``camera=`` defaults to ``xy`` for a planar model, ``iso``
         otherwise (ADR 0094 Amendment 3); pass it explicitly to
         override.
@@ -1538,7 +1543,8 @@ class Results:
         :meth:`ResultsSession.render` too. Returns the tuple of written paths, or ``()`` under
         ``APEGMSH_SKIP_VIEWER=1`` / no GL (and prints the
         ``[skip viewer]`` notice). Closed ``view=`` set only; no
-        ``setup()``. There is no ``fem.render_pack``.
+        ``setup()``. There is no ``fem.render_pack``. The stage is
+        :meth:`render`'s: a stage-scoped Results packs that stage.
 
         ``camera=`` defaults to ``xy`` for a planar model, ``iso``
         otherwise (ADR 0094 Amendment 3); pass it explicitly to

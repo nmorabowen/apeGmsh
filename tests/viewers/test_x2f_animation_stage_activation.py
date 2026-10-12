@@ -252,9 +252,9 @@ def test_export_animation_draws_only_active_elements(
                 assert actor["zmax"] <= zhi + 1e-9, actor
 
 
-#: Stills draw the LAST stage (``_results_stills._resolve_stage``; a
-#: stage-scoped Results lists every stage too), so on this fixture they
-#: draw ``excavate``: Fill only.
+#: Unscoped stills draw the LAST stage (``_results_stills._resolve_stage``),
+#: so on this fixture they draw ``excavate``: Fill only. A stage-scoped
+#: still draws its scope (X2-g, ``test_x2g_stage_scoped_render.py``).
 _STILL_STAGE = "excavate"
 
 
