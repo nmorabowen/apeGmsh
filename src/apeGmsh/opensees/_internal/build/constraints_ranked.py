@@ -88,7 +88,7 @@ def plan_partitioned_mp_constraints(
             element_owner=element_owner,
             phantom_tags=set(phantom_coords.keys()),
             # Only a routed snapshot (ADR 0120 D1) pins element-less
-            # nodes; a plain PartitionSet pins none (#1620 item 2).
+            # nodes; a plain PartitionSet pins none.
             pinned=(fem.partitions.pinned
                     if isinstance(fem.partitions, RoutedPartitionSet)
                     else None),
@@ -619,7 +619,7 @@ class _RankConstraintPlan:
     # rank that owns the slave OR any master (domain-level EQ_Constraint,
     # NOT a single-host-rank element). Emitted via _emit_equation_tie.
     equation_records: tuple[object, ...] = ()
-    # #1625: the replicable records (equalDOF, rigidLink, rigidDiaphragm,
+    # The replicable records (equalDOF, rigidLink, rigidDiaphragm,
     # rigid_body chain, node_to_surface) this rank writes that another
     # rank writes too: a non-phantom node of theirs is foreign here or
     # also held by another rank.
