@@ -1278,6 +1278,12 @@
       "skill": "references/api-cheatsheet.md",
       "symbol": "g.mesh.structured.build_graded_box"
     },
+    "g.mesh.structured.one_element_per_curve": {
+      "doc": "Mesh each free curve as exactly one 1-D element (two nodes).",
+      "signature": "one_element_per_curve(*labels: 'str') -> \"'_Structured'\"",
+      "skill": "references/api-cheatsheet.md",
+      "symbol": "g.mesh.structured.one_element_per_curve"
+    },
     "g.mesh.structured.recombine": {
       "doc": "Globally recombine all triangular elements into quads.",
       "signature": "recombine() -> \"'_Structured'\"",
