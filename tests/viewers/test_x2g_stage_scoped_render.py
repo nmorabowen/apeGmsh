@@ -19,6 +19,7 @@ On ``main`` before the fix, ``g`` and ``construction`` fail (they drew
 """
 from __future__ import annotations
 
+import warnings
 from typing import Any
 
 import numpy as np
@@ -26,7 +27,11 @@ import pytest
 
 pytest.importorskip("pyvista")
 
-from tests.viewers.test_x2_numeric_oracle import capture_drawn  # noqa: E402
+from tests.viewers.test_x2_numeric_oracle import (  # noqa: E402,F401
+    capture_drawn,
+    plate,
+    plate_h5,
+)
 from tests.viewers.test_x2f_animation_stage_activation import (  # noqa: E402
     _EXPECT,
     _capture,
@@ -307,3 +312,52 @@ def test_scoped_pack_reactions_follow_the_scope(
     }
     assert ("reactions.png" in names) == (stage == "construction"), (
         stage, names)
+
+
+# ---------------------------------------------------------------------
+# #1750 (maintainer ruling: WARN): an unscoped multi-stage still keeps
+# the last-stage default, and says so.
+# ---------------------------------------------------------------------
+
+_REMEDY = r"results\.stage\('excavate'\)\.render"
+
+
+def _unscoped_warnings(rec: Any) -> list[str]:
+    return [
+        str(w.message) for w in rec
+        if issubclass(w.category, UserWarning) and "LAST stage" in str(w.message)
+    ]
+
+
+def test_unscoped_multistage_render_warns(staged_disp, tmp_path):
+    with pytest.warns(UserWarning, match=_REMEDY) as rec:
+        staged_disp.render(
+            tmp_path / "u.png", view="mesh", window_size=_WIN)
+    msgs = _unscoped_warnings(rec)
+    assert len(msgs) == 1 and "'excavate'" in msgs[0], msgs
+
+
+@pytest.mark.parametrize("verb", ["render_pack", "assess"])
+def test_unscoped_multistage_pack_warns_once(staged_disp, tmp_path, verb):
+    with pytest.warns(UserWarning, match=_REMEDY + "_pack") as rec:
+        if verb == "render_pack":
+            staged_disp.render_pack(tmp_path / "p", window_size=_WIN)
+        else:
+            staged_disp.assess(figures=True, out_dir=tmp_path / "a")
+    assert len(_unscoped_warnings(rec)) == 1, _unscoped_warnings(rec)
+
+
+@pytest.mark.parametrize("stage", _STAGES)
+def test_scoped_stills_are_silent(staged_disp, tmp_path, stage):
+    scoped = staged_disp.stage(stage)
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", UserWarning)
+        scoped.render(tmp_path / f"{stage}.png", view="mesh", window_size=_WIN)
+        scoped.render_pack(tmp_path / stage, window_size=_WIN)
+
+
+def test_single_stage_stills_are_silent(plate, tmp_path):  # noqa: F811
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", UserWarning)
+        plate.render(tmp_path / "one.png", view="mesh", window_size=_WIN)
+        plate.render_pack(tmp_path / "pack", window_size=_WIN)

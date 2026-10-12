@@ -7,3 +7,8 @@ silently wrong picture on any multi-stage file. They now draw stage `s`, as
 unscoped multi-stage Results still draws its last stage, as documented, and
 the pack's default contour component and reactions still follow the scope. A
 scope that names no stage in the file raises instead of drawing another one.
+
+An unscoped multi-stage `render()` / `render_pack()` (and so
+`assess(figures=True)`) now raises a `UserWarning` that names the stage it
+drew and the remedy, `results.stage(name).render()` (#1750). Scoped calls and
+single-stage files stay silent.
