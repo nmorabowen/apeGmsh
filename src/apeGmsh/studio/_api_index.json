@@ -3714,6 +3714,12 @@
       "skill": "references/opensees-bridge.md",
       "symbol": "ops.response_spectrum_analysis"
     },
+    "ops.results": {
+      "doc": "The history of this bridge's last deck run, as a ``Results``",
+      "signature": "results(path: 'str') -> \"'Results'\"",
+      "skill": "references/opensees-bridge.md",
+      "symbol": "ops.results"
+    },
     "ops.run": {
       "doc": "Drive an in-process LiveOpsEmitter through the full deck.",
       "signature": "run(*, wipe: 'bool' = True) -> 'None'",

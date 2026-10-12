@@ -3,7 +3,7 @@
 An ``add_key_event`` binding fires only while the VTK viewport has
 keyboard focus, so with focus in a dock those keypresses never reach it
 (measured 2026-09-25; internal_docs/viewer_lessons.md, "Key bindings in
-a VTK-hosted window"). The same law applies to ResultsViewer Esc and the
+a VTK-hosted window"). The same law applies to the
 section-builder F7/F8/F9 shortcuts. The 0/1/2/3/4 contract is
 ``QShortcut`` / ``add_shortcut(..., application=True)``.
 """
@@ -78,11 +78,3 @@ def test_mesh_viewer_dim_keys_are_not_vtk_events() -> None:
     assert _lines(unit) == []
     src = _src(unit)
     assert "application=True" in src
-
-
-def test_results_viewer_dim_keys_are_not_vtk_events() -> None:
-    unit = _unit("ResultsViewer")
-    assert _lines(unit) == []
-    src = _src(unit)
-    assert "ApplicationShortcut" in src
-    assert "_results_filter.toggle" in src

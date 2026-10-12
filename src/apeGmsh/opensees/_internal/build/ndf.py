@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import warnings
-from typing import Iterable, Mapping, Sequence
+from typing import Container, Iterable, Mapping, Sequence
 
 import numpy as np
 
@@ -27,6 +27,7 @@ from .pg_expand import (
 if TYPE_CHECKING:
     from apeGmsh._kernel.records._constraints import ConstraintRecord
     from ...emitter.base import Emitter
+    from .ownership import SortedIntToInt
     from apeGmsh.mesh.FEMData import FEMData
 
 
@@ -1118,6 +1119,48 @@ def _emit_node_with_inferred_ndf(
     else:
         emitter.node(int(tag), *cs, ndf=int(ndf_val))
 
+
+
+def emit_owned_nodes_with_inferred_ndf(
+    emitter: "Emitter",
+    inferred: "dict[int, int]",
+    node_ids: "Iterable[int] | np.ndarray",
+    node_idx_lookup: "SortedIntToInt",
+    coords: "np.ndarray",
+    envelope_ndf: int,
+    exclude: "Sequence[Container[int]]" = (),
+) -> None:
+    """Emit one rank's owned ``node`` lines in ascending id order.
+
+    Equivalent to
+    ``for nid in sorted(node_ids): ... _emit_node_with_inferred_ndf(...)``,
+    in array form: the ids are sorted once, resolved to coordinate rows with ONE
+    vectorised :meth:`SortedIntToInt.get_many`, and the coordinates are
+    read with one indexed gather and converted to plain Python floats
+    by ``.tolist()``, the same values ``float(xyz[i])`` gives. Each node
+    still goes through ``emitter.node`` one call at a time, so the
+    emitter's ``ndm`` trim and its float fast path see the same arguments
+    as the scalar form, and the lines, their order and their bytes match.
+
+    An id absent from ``node_idx_lookup`` is skipped. An id
+    in any set of ``exclude`` is skipped (stage-bound nodes, and nodes a
+    hoisted block already declared). Duplicate ids emit once per
+    occurrence, as ``sorted`` kept them.
+    """
+    ids = np.sort(np.asarray(node_ids, dtype=np.int64).reshape(-1))
+    rows, found = node_idx_lookup.get_many(ids)
+    ids_l = ids[found].tolist()
+    xyz_l = np.asarray(coords[rows[found]], dtype=np.float64)[:, :3].tolist()
+    env = int(envelope_ndf)
+    node = emitter.node
+    for nid, (x, y, z) in zip(ids_l, xyz_l):
+        if exclude and any(nid in s for s in exclude):
+            continue
+        ndf_val = inferred.get(nid, env)
+        if ndf_val == env:
+            node(nid, x, y, z)
+        else:
+            node(nid, x, y, z, ndf=int(ndf_val))
 
 def _load_dof_layout(ndf: int, ndm: int) -> tuple[int, ...]:
     """Spatial-component index placed at each DOF, for an ``(ndm, ndf)`` model.

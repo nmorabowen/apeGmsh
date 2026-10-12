@@ -552,17 +552,18 @@ def _select_nodes(
     nodes: "Iterable[int | Node] | None",
     label: "str | Sequence[str] | None",
     where: str,
-) -> tuple[str | None, tuple[int, ...] | None]:
-    """The ``(pg, nodes)`` pair a ``fix`` / ``mass`` record stores, from
+) -> tuple[str | None, tuple[int, ...] | None, tuple[str, ...] | None]:
+    """The ``(pg, nodes, label)`` a ``fix`` / ``mass`` record stores, from
     exactly one of ``pg=`` / ``nodes=`` / ``label=`` (ADR 0115 D4).
 
     A label resolves here, at the call, to its node ids, so every
     refusal (no selector, two selectors, an empty or unknown label, a
     label with no nodes) raises before the caller registers anything.
     The record then carries those ids as ``nodes``: it emits exactly
-    the lines ``pg=`` over the same nodes emits (Invariant 6), and the
-    record classes, the deck and the archive of every existing model
-    are unchanged (Invariants 7 and 9).
+    the lines ``pg=`` over the same nodes emits (Invariant 6). The
+    label names come back as a tuple, the record's provenance only
+    (ADR 0115 amendment R2-f): ``nodes`` stays authoritative and nothing
+    re-resolves the label. A ``pg=`` / ``nodes=`` call gives ``None``.
     """
     given = sum(x is not None for x in (pg, nodes, label))
     if given != 1:
@@ -571,5 +572,13 @@ def _select_nodes(
             f"(got pg={pg!r}, nodes={nodes!r}, label={label!r})."
         )
     if label is not None:
-        return None, _resolve_label(fem, label, where=where)
-    return pg, (_iter_tags(nodes) if nodes is not None else None)
+        ids = _resolve_label(fem, label, where=where)
+        return None, ids, _label_names(label)
+    return pg, (_iter_tags(nodes) if nodes is not None else None), None
+
+
+def _label_names(label: "str | Sequence[str]") -> tuple[str, ...]:
+    """``label=`` as the tuple of names a record keeps as provenance
+    (ADR 0115 amendment R2-f): one name is a 1-tuple, a list keeps its
+    order. Call only after the label resolved (it validated the names)."""
+    return (label,) if isinstance(label, str) else tuple(label)

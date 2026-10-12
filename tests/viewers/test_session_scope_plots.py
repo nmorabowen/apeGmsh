@@ -409,9 +409,9 @@ def test_unbound_session_plot_refuses():
         realize_pane(session, plot)
 
 
-@pytest.mark.parametrize("kind", ["path", "xy"])
+@pytest.mark.parametrize("kind", ["xy"])  # A7.7 removed `path` from §6
 def test_non_history_plot_kinds_refuse(two_body_results, kind):
-    """Plan decision 10 (settled S4-2): path / xy stay refusals, and
+    """Plan decision 10 (settled S4-2): xy stays a refusal, and
     the refusal names the missing IR / authoring surface rather than a
     slice number, so it stays true whenever they land."""
     session = two_body_results.session()

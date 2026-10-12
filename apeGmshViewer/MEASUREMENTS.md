@@ -259,3 +259,224 @@ sibling; `model.h5` is the bridge's composed file (`ops.h5`, neutral +
   the case.
 - Capture cost at `generate()` exit is below the build noise: San Ramon
   1A builds in 6.7 s with the capture and both writes included.
+
+## Results sizes (V4)
+
+ADR 0112 D5 leaves the results-size strategy (read lazily in-process, or a
+thin local data server that imports only a reader) to measured results sizes.
+These rows are that input (V4a, #1707). They time the smallest real read
+path, `src/reader/results.ts`; no UI and no store are built on it. The
+layout read is `architecture/h5-schema.md`, "`results.h5`: the native results
+file" (V4s, #1709), results zone 1.1.0, floor 1.0.0.
+
+### Machine (not the P0 machine above)
+
+| Item | Value |
+|---|---|
+| OS | Windows 11 IoT Enterprise LTSC 10.0.26100 |
+| CPU, RAM | Intel Core i7-13700KF, 64 GB |
+| GPU | NVIDIA GeForce RTX 3070, through ANGLE on Direct3D 11 |
+| Disk | the files sit on a Samsung 980 PRO NVMe SSD |
+| Stack | Electron 44.5.1, h5wasm 0.10.3 (HDF5 2.0.0), Node 24 |
+
+### Method
+
+`npm run build`, then one fresh Electron process per run:
+
+```
+node_modules/.bin/electron . --mode=measure-results --file=<x.results.h5> --out=<json> --commit=<sha>
+```
+
+It prints the row and a `detail:` line (`src/main/main.ts`, the
+`measure-results` block). All reads are in the main process, by hyperslab
+(`Dataset.slice`); the datasets are contiguous, as `NativeWriter` writes them.
+
+- **open+index**: `openResults`: the version gate, every stage's `time`,
+  every `_ids` and `_element_index`, and the shape and dtype of every
+  component. No component data is read.
+- **nodal step**: `displacement_x/y/z` at the middle step, 3 hyperslabs of
+  `(1, N)`. **cold** is the first read of that step in the process; **warm**
+  is the median of 21 repeats. The OS file cache was not flushed (the files
+  had just been written or read), so cold means a cold HDF5 and h5wasm, not a
+  cold disk.
+- **element step**: the first stress component of the gauss group at the
+  middle step, one `(1, E, G)` hyperslab.
+- **node history**: `displacement_x` of the middle node over all steps, one
+  `(T, 1)` hyperslab: a strided read, one value per row of a contiguous
+  `(T, N)` dataset.
+- **transfer main→renderer**: bytes of one nodal step (3 float64 arrays) and
+  the mean, over the scrub, of the `ipcRenderer.invoke` round trip minus the
+  read time in main (structured clone both ways). The `detail:` line has the
+  same for one gauss step.
+- **apply**: per step in the renderer, mean over the scrub: the displacement
+  magnitude mapped through jet into a `Float32Array(3N)` colour buffer
+  (colour), then `bufferSubData` of the whole buffer, a points draw of N
+  vertices and `gl.finish()` (upload/draw). That is the WebGL work three.js
+  r186 does for a `needsUpdate` colour attribute, as raw WebGL2 calls: the
+  renderer is a blank hidden page, because the app page would start its own
+  flow on the file, and three.js is bundled inside that page.
+- **scrub**: steps 0 to 99 end to end (invoke, read, transfer, colour, upload,
+  draw, finish), one after the other; steps per second.
+- **peak memory**: the largest working set of the main and renderer
+  processes (`app.getAppMetrics()`), sampled every 20 ms over the whole run.
+- **eager whole-history**: the float64 bytes every component of the stage
+  would take in memory if it were loaded at once.
+
+### Measured files
+
+None of the ledger's model files is on this machine (`ladruno_4D6-24_coarse`
+and `stress_box.h5` were on the maintainer's other machine), so the meshes are
+rebuilt to the same size. Every file is written by apeGmsh's own
+`NativeWriter` (`src/apeGmsh/results/writers/_native.py`) with
+`source_type = "domain_capture"`, `/model` embedded and one partition, by
+the repository's `scripts/make_viewer_results_fixtures.py` (then at
+`apeGmshViewer/fixtures/make_results_fixtures.py.txt`; same code) on `9a6d3239`. **The values are
+synthetic: no solve ran.** They are closed forms of the ids and the step
+(the generator's docstring), fed to the writer; `domain_capture` here does
+not mean a capture ran. The read path does not look at the values, and a
+solve writes the same dtypes and shapes. The files are not committed
+(`out/results/`, git-ignored).
+
+- **(a)** `a_maintainer_100`: the maintainer-sized model. A unit square of
+  13 x 13 structured triangles extruded in 21 layers: 4 312 nodes and 7 098
+  6-node wedges (the ledger's largest maintainer model is 4 254 nodes and
+  7 104 elements). 100 steps; `displacement_x/y/z` and 6 stress components at
+  6 Gauss points.
+- **(b)** `b_stress_box_100`: the scale probe. Two touching tet-meshed blocks,
+  as `stress_box.h5` was; the unstructured mesher gave 217 820 tets and
+  40 843 nodes (the ledger's probe had 220 889 tets and 40 093 nodes, 1.4 %
+  more tets). 100 steps; 3 nodal and 6 stress components at 1 Gauss point.
+- **(c)** `c_maintainer_5000`: the (a) mesh over 5 000 steps (a ground-motion
+  history at dt = 0.01 s); 3 nodal components and `stress_xx` only, at 6
+  Gauss points (6 stress components would have been a 10 GB file).
+
+### Rows
+
+Two cold runs of each file, one after the other, at `9a6d3239`.
+
+| date | commit | file | size (MB) | nodes | elements | steps | fields | open+index (ms) | nodal step cold / warm (ms) | element step cold / warm (ms) | node history (ms) | transfer main→renderer | apply colour + upload/draw (ms) | scrub (steps/s) | peak memory MB main+renderer | eager whole-history (MB) |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| 2026-10-12 | 9a6d3239 | (a) `a_maintainer_100` (synthetic, real NativeWriter), run 1 | 206.1 | 4312 | 7098 | 100 | 3 nodal + 6 x 6-pt gauss | 25.1 | 2.87 / 0.96 | 0.77 / 0.37 | 1.3 | 101 KB in 0.77 ms | 0.08 + 0.03 | 609.0 | 234 (134 + 102) | 204.8 |
+| 2026-10-12 | 9a6d3239 | (a) `a_maintainer_100` (synthetic, real NativeWriter), run 2 | 206.1 | 4312 | 7098 | 100 | 3 nodal + 6 x 6-pt gauss | 26.9 | 2.92 / 0.93 | 0.61 / 0.42 | 1.8 | 101 KB in 0.72 ms | 0.09 + 0.03 | 584.1 | 234 (134 + 102) | 204.8 |
+| 2026-10-12 | 9a6d3239 | (b) `b_stress_box_100` (synthetic, real NativeWriter), run 1 | 1118.4 | 40843 | 217820 | 100 | 3 nodal + 6 x 1-pt gauss | 21.2 | 2.05 / 0.82 | 1.16 / 0.70 | 3.9 | 957 KB in 1.82 ms | 0.53 + 0.05 | 274.9 | 393 (198 + 200) | 1090.6 |
+| 2026-10-12 | 9a6d3239 | (b) `b_stress_box_100` (synthetic, real NativeWriter), run 2 | 1118.4 | 40843 | 217820 | 100 | 3 nodal + 6 x 1-pt gauss | 24.3 | 2.62 / 1.09 | 1.42 / 0.92 | 3.8 | 957 KB in 1.60 ms | 0.49 + 0.06 | 313.1 | 386 (196 + 201) | 1090.6 |
+| 2026-10-12 | 9a6d3239 | (c) `c_maintainer_5000` (synthetic, real NativeWriter), run 1 | 2119.4 | 4312 | 7098 | 5000 | 3 nodal + 1 x 6-pt gauss | 22.8 | 3.15 / 0.99 | 0.75 / 0.36 | 36.8 | 101 KB in 0.40 ms | 0.06 + 0.02 | 989.1 | 239 (134 + 106) | 2118.1 |
+| 2026-10-12 | 9a6d3239 | (c) `c_maintainer_5000` (synthetic, real NativeWriter), run 2 | 2119.4 | 4312 | 7098 | 5000 | 3 nodal + 1 x 6-pt gauss | 20.6 | 2.55 / 0.68 | 0.72 / 0.35 | 38.9 | 101 KB in 0.51 ms | 0.10 + 0.02 | 808.4 | 244 (134 + 111) | 2118.1 |
+
+`detail:` lines, run 1 / run 2:
+
+- (a): element step 42 588 values; node history warm 0.69 / 1.01 ms; scrub
+  round trip 1.53 / 1.58 ms, of which read in main 0.76 / 0.87 ms; one gauss
+  step (333 KB) transfers in 0.86 / 0.60 ms. Eager: nodal 9.9 MB + gauss
+  195.0 MB.
+- (b): element step 217 820 values; history warm 1.86 / 2.10 ms; round trip
+  3.05 / 2.64 ms, read in main 1.23 / 1.04 ms; one gauss step (1 702 KB) in
+  3.30 / 2.59 ms. Eager: nodal 93.5 MB + gauss 997.1 MB.
+- (c): element step 42 588 values; history warm 36.50 / 36.69 ms; round trip
+  0.93 / 1.12 ms, read in main 0.53 / 0.61 ms; one gauss step (333 KB) in
+  0.52 / 0.65 ms. Eager: nodal 493.5 MB + gauss 1 624.6 MB.
+
+**Repeatability (the card's 20 % rule), first two runs.** Within 20 % between
+the two runs: open+index, the nodal cold read, the node history of (b) and
+(c), the transfer, the scrub rate (largest gap: (c), 989 against 808 steps/s,
+18 %), peak memory and every size. **Outside 20 %**: the warm nodal read of
+(b) and (c) (0.82 / 1.09 and 0.99 / 0.68 ms), the element reads of (a) and
+(b) (cold 0.77 / 0.61; warm 0.70 / 0.92 ms) and the 100-step history of (a)
+(1.3 / 1.8 ms). Each of those is a single read under 2 ms, where one OS
+scheduling slice is a third of the value; the apply columns are means of 100
+steps for the same reason (the renderer's clock is coarsened to 0.1 ms). The
+re-measure below shows the scrub rate of (c) does **not** repeat within 20 %
+once the machine's load varies.
+
+### Re-measure of (a) and (c), with the machine's load (review round 1, #1717)
+
+The reviewer re-ran (c) four times while other sessions held the CPU at 87
+to 100 %. They got a scrub of 475 to 561 steps/s and a 5 000-step history of
+55 to 60 ms, against 808 to 989 steps/s and 37 to 39 ms above; peak memory
+matched. These are four more cold runs of each, interleaved (a, c, a, c, …),
+at `967f565a`, which changes only the version gate, so the read path is the
+same. **CPU** is the machine's total processor time
+(`\Processor(_Total)\% Processor Time`): the mean of 3 s just before the run,
+and the mean and maximum of the run's first 5 s. Other sessions were running
+on the machine throughout. The values are synthetic, written by the real
+`NativeWriter`.
+
+| run | file | CPU before / during mean / during max | open+index (ms) | nodal step cold / warm (ms) | element step cold / warm (ms) | node history (ms) | transfer | apply (ms) | scrub (steps/s) | peak MB main+renderer |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 1 | (a) (synthetic, real NativeWriter) | 57 / 52 / 74 % | 24.9 | 3.05 / 0.76 | 0.88 / 0.43 | 1.4 | 101 KB in 0.55 ms | 0.08 + 0.03 | 726.7 | 234 (135 + 102) |
+| 1 | (c) (synthetic, real NativeWriter) | 43 / 46 / 60 % | 23.7 | 3.06 / 0.84 | 0.58 / 0.27 | 38.4 | 101 KB in 0.46 ms | 0.10 + 0.01 | 792.4 | 237 (135 + 104) |
+| 2 | (a) | 46 / 56 / 66 % | 26.5 | 2.81 / 0.85 | 0.61 / 0.43 | 2.1 | 101 KB in 0.58 ms | 0.10 + 0.02 | 704.7 | 234 (134 + 103) |
+| 2 | (c) | 78 / 55 / 68 % | 26.4 | 2.81 / 0.92 | 0.80 / 0.45 | 46.3 | 101 KB in 0.52 ms | 0.07 + 0.02 | 825.1 | 239 (136 + 104) |
+| 3 | (a) | 47 / 42 / 51 % | 22.4 | 3.01 / 0.73 | 0.64 / 0.30 | 1.3 | 101 KB in 0.68 ms | 0.09 + 0.03 | 670.2 | 234 (133 + 102) |
+| 3 | (c) | 49 / 50 / 58 % | 20.3 | 1.91 / 0.90 | 1.24 / 0.36 | 43.6 | 101 KB in 0.85 ms | 0.11 + 0.03 | 536.2 | 240 (137 + 104) |
+| 4 | (a) | 41 / 43 / 59 % | 29.2 | 3.04 / 0.86 | 1.50 / 0.41 | 1.7 | 101 KB in 0.55 ms | 0.08 + 0.02 | 766.9 | 234 (134 + 102) |
+| 4 | (c) | 40 / 48 / 56 % | 22.8 | 2.52 / 1.04 | 0.85 / 0.39 | 40.3 | 101 KB in 0.43 ms | 0.07 + 0.02 | 885.0 | 237 (134 + 103) |
+
+Ranges over every run of each file, including the two at `9a6d3239` and,
+for (c), the reviewer's four. The **conservative** value is the worst of the
+range, and it is what the evidence table uses:
+
+| file | scrub (steps/s): range, conservative | node history (ms): range, conservative | within 20 %? |
+|---|---|---|---|
+| (a) | 584 to 767; **584** | 1.3 to 2.1; **2.1** | scrub: no (31 %) across both rounds, yes (14 %) within this round; history: no (sub-2 ms reads) |
+| (c) | 475 to 989 (this round 536 to 885; reviewer 475 to 561); **475** | 37 to 60 (this round 38 to 46; reviewer 55 to 60); **60** | no: both move with the machine's load |
+
+**The "(c) scrubs faster than (a)" reading is retracted.** The first rows put
+(c) at 808 to 989 steps/s against 584 to 609 for (a), at the same per-step
+payload (101 KB, 3 components of 4 312 nodes). In this round (a) runs 670 to
+767 and (c) 536 to 885: the ranges overlap, and the (c) spread is about as
+wide as the gap was. The per-step read is a hyperslab of one row, so it does
+not depend on how many steps the dataset has. The scrub rate measures the
+machine's load as much as the read path, and nothing here shows that (a) and
+(c) differ. Peak memory, the transfer bytes and the open time do repeat, at
+every load seen.
+
+### MPCO data point (raw HDF5 open and one dataset, no MPCO reader)
+
+`--mode=measure-results --file=<x.mpco> --dataset=<path>` opens the file with
+h5wasm and reads one dataset; it decodes nothing.
+
+| file | size (MB) | open (ms), run 1 / 2 | dataset | read (ms), run 1 / 2 | bytes |
+|---|---|---|---|---|---|
+| `STKO_to_python/src/STKO_to_python/examples/New/results_nodes.mpco` (the card's file) | 36.5 | 4.3 / 4.8: **refused** | none | n/a | n/a |
+| `STKO_to_python/stko_results_examples/elasticFrame/QuadFrame_results/results.part-0.mpco` | 7.3 | 3.8 / 3.8 | `/MODEL_STAGE[1]/RESULTS/ON_NODES/DISPLACEMENT/DATA/STEP_0`, (347, 3) float64 | 4.9 / 5.0 | 8 328 |
+
+- The card's 37 MB file is **truncated** on this machine: HDF5 reads
+  `eof = 38 273 024` against a stored end of `41 135 603` and refuses the
+  superblock. h5py refuses it too, so the file is damaged, not the reader.
+  The intact QuadFrame partition (one of two) stands in.
+- **Finding:** h5wasm does not throw when HDF5 refuses a file. It returns a
+  `File` whose `file_id` is `-1`, and the next call fails with an unrelated
+  message. `results.ts` and the MPCO probe check the id and refuse by name
+  (`test/results/results.test.ts`, "a truncated file is refused at open").
+  `reader/read.ts`, the model reader, does not check it.
+
+### Evidence for the two options (ADR 0112 D5)
+
+What the rows say about each option. This is not a recommendation; the
+maintainer decides. Every number comes from the **synthetic files written by
+the real `NativeWriter`** above; no solve ran. Where runs differ by more than
+20 %, the table gives the conservative (worst) value, with the range in
+brackets.
+
+| Question | In-process lazy read (main reads with h5wasm, IPC to the renderer), as measured (synthetic, real NativeWriter) | Thin local data server (a separate process that imports a reader) |
+|---|---|---|
+| Time to open the largest file | 20 to 29 ms for every file, 206 MB to 2.1 GB: the index reads no component data | not measured: the same index read, plus the server's start-up and a connection |
+| One step on screen (read, transfer, colour, upload, draw) | conservative scrub, end to end: (a) **584** steps/s [584 to 767], 1.7 ms per step; (b) **275** [275 to 313], 3.6 ms; (c) **475** [475 to 989, under 40 to 100 % CPU load from other work], 2.1 ms. The read in main is 0.5 to 1.2 ms of a step | the same read, plus one more hop for the same bytes (101 KB for (a) and (c), 957 KB for (b) per nodal step; the measured main→renderer hop costs 0.4 to 1.8 ms for those sizes) |
+| A node's history | 100 steps: (a) **2.1** ms [1.3 to 2.1], (b) **3.9** ms [3.8 to 3.9]; 5 000 steps: (c) **60** ms [37 to 60, under load]. A strided read of a contiguous `(T, N)` dataset; chunked datasets in the writer would change it | the same read, in another process |
+| Memory | peak 234 to 393 MB, main plus renderer, on files of 206 MB to 2.1 GB: memory follows the step, not the file | the reader's memory moves out of the app's processes |
+| Eager whole-history load, for comparison | 205 MB (a), 1.09 GB (b), 2.1 GB (c), against those peaks | the same bytes, in the server's process |
+| What only a server adds | none measured | a reader the app cannot run: Python decoders (the MPCO layout, `.ladruno`, derived results such as von Mises, computed on read). Raw HDF5 is not one: h5wasm opened an MPCO file and read a dataset in 4 + 5 ms |
+| Failure modes seen | h5wasm's silent open failure (above), refused by `results.ts` | not measured |
+
+### D5 revisit trigger (V4b, #1728)
+
+The maintainer ruled for the in-process lazy read (#1283, 2026-10-11), and
+V4b builds on it. Reopen ADR 0112 D5, with the row that shows it, when a
+**real** results file (a solve, not a synthetic one):
+
+- scrubs below **30 steps/s** end to end (the "scrub" column above, measured
+  with `--mode=measure-results`), or
+- peaks above **2 GB** of memory, main plus renderer, while it is open.
+
+Add that file's row to "Rows" above first, with its machine.

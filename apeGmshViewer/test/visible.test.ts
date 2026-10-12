@@ -26,6 +26,15 @@ test("isolate swap: LeftColumn only, then RightColumn only, draws different segm
   assert.equal(sameDrawn(left, visibleMaps(legend, ["mesh/physical_group/RightColumn"], lineGroup, triGroup)), true);
 });
 
+test("an element mask (V4b stage activation) drops that element's primitives and composes with a hidden group", () => {
+  // segment i is element i: 0,1 LeftColumn; 2,3 RightColumn; 4 in no group
+  const elements = { mask: Uint8Array.from([0, 1, 0, 0, 1]), lineElement: Int32Array.from([0, 1, 2, 3, 4]), triElement: Int32Array.from([]) };
+  assert.deepEqual(Array.from(visibleMaps(legend, [], lineGroup, triGroup, elements).lineMap), [0, 2, 3]);
+  assert.deepEqual(Array.from(visibleMaps(legend, ["mesh/physical_group/RightColumn"], lineGroup, triGroup, elements).lineMap), [0]);
+  const none = { ...elements, mask: new Uint8Array(5) };
+  assert.equal(sameDrawn(visibleMaps(legend, [], lineGroup, triGroup, none), visibleMaps(legend, [], lineGroup, triGroup)), true);
+});
+
 test("nothing hidden draws everything in order; a synthetic row cannot be hidden", () => {
   const all = visibleMaps(legend, [], lineGroup, triGroup);
   assert.deepEqual(Array.from(all.lineMap), [0, 1, 2, 3, 4]);

@@ -110,7 +110,9 @@ never implement.
   - If the verdict is `changes`, send the findings back to the same worker
     (SendMessage), or re-dispatch.
 - **Mechanical move PRs** must carry `verify_move` evidence in the body, once
-  C2 has landed.
+  C2 has landed: `python scripts/verify_move.py --base <base-sha> --head
+  <pushed-sha> <src paths> <dst paths>`; a pre-push `--head WORKTREE` run
+  must add `--strict`.
 
 - **Never end a turn on "waiting for CI or review" (lesson #1567).** At the start
   of every turn, re-check `gh pr checks <n>` and the PR's `Review-verdict`

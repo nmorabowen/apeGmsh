@@ -12,8 +12,7 @@ Three surfaces, one PR, and this file covers all three:
   ``blocking=False`` keeps ``Popen``; the notebook fallback keeps the
   ``WebViewer`` handle — documented, not unified);
 * the de-publication — ``apeGmsh.viewers`` no longer exports
-  ``ResultsViewer``, while the MODULE stays importable, because S6a is
-  de-publication and S6b is deletion;
+  ``ResultsViewer``, and since X3-d (#1734) the module is deleted;
 * the argv hop — the child process must honour the same open policy
   the caller asked for, which before this flip it silently did not.
 
@@ -153,25 +152,6 @@ def test_viewer_boots_the_default_empty_mesh_view(small_results, shown):
     assert view.deform is None
 
 
-def test_viewer_does_not_construct_the_retired_viewer(
-    small_results, shown, monkeypatch,
-):
-    """The flip's negative half. ``results_viewer`` is still importable
-    (S6a is de-publication, S6b is deletion) — but this door must not
-    touch it."""
-    from apeGmsh.viewers import results_viewer as viewer_mod
-
-    def _boom(*_a, **_kw):
-        raise AssertionError(
-            "viewer() constructed the retired ResultsViewer"
-        )
-
-    monkeypatch.setattr(viewer_mod, "ResultsViewer", _boom)
-    small_results.viewer(restore_session=False)
-
-    assert len(shown) == 1
-
-
 def test_viewer_passes_the_title_through(small_results, shown):
     small_results.viewer(title="My Run", restore_session=False)
 
@@ -204,7 +184,7 @@ def test_cuts_kwarg_is_retired(small_results, shown):
 
 
 # =====================================================================
-# De-publication (not deletion)
+# De-publication, then deletion (X3-d)
 # =====================================================================
 
 def test_viewers_package_no_longer_exports_results_viewer():
@@ -227,12 +207,13 @@ def test_the_root_package_no_longer_exports_it_either():
     assert not hasattr(apeGmsh, "ResultsViewer")
 
 
-def test_the_module_is_still_importable_by_path():
-    """S6a de-publishes; S6b deletes. The ``show_web`` hatch and
-    ``export_animation`` (INV-11) still import it by module path."""
-    from apeGmsh.viewers.results_viewer import ResultsViewer
+def test_the_retired_module_is_deleted():
+    """S6a de-published it; X3-d (#1734) deleted it. ``show_web`` runs on
+    the ``ResultsDirector`` and ``export_animation`` on the session, so
+    nothing may import it by module path any more."""
+    import importlib.util
 
-    assert ResultsViewer is not None
+    assert importlib.util.find_spec("apeGmsh.viewers.results_viewer") is None
 
 
 def test_the_other_viewers_are_untouched():

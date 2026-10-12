@@ -115,3 +115,57 @@ ops.h5("model.h5")
 
 `test/zones/provenance.test.ts` checks the fixture against this block: the
 digest, and the synthesised records' line, which is the `s.support(` line.
+
+## `results_small.h5`
+
+A native `results.h5` (results zone 1.1.0, `source_type = "domain_capture"`,
+`/model` embedded, one partition). It is written by apeGmsh's own
+`NativeWriter`, with synthetic values and no solve. The mesh is 2 x 2
+triangles extruded in 1 layer: 18 nodes and 8 `prism6`. It has 5 steps,
+`displacement_x/y/z`, and one gauss group of 6 points holding `stress_xx`
+and `stress_yy`. The generator imports apeGmsh, so it lives outside this
+app, at `scripts/make_viewer_results_fixtures.py` in the repository. Run it
+from the repository root with `PYTHONPATH=src` and the opensees venv
+interpreter:
+
+```powershell
+$env:PYTHONPATH = "src"
+& C:\Users\nmora\venv\opensees_venv\Scripts\python.exe scripts/make_viewer_results_fixtures.py
+```
+
+The same script with `--measure <dir>` writes the large files that
+`MEASUREMENTS.md` ("Results sizes (V4)") measures; they are not committed.
+`test/results/results.test.ts` checks the reader against the closed forms in
+the script's docstring, not against values copied from the app. A re-run
+changes `@created_at` and the lineage hashes.
+
+## `staged_activation.h5`, `staged_activation.results.h5` and `staged_activation.oracle.json`
+
+The V4b staged pair (#1728). `staged_activation.h5` is a composed `model.h5`
+(neutral 2.35.0, OpenSees 2.27.0, `/sequence` 1.0.0) of three touching
+tet-meshed boxes, 314 nodes and 743 `FourNodeTetrahedron` elements: `Col`
+(348) and `Prop` (220) are global, and three stages run `base`, then
+`erect` (`s.activate(pgs=["Top"])`, the 175 `Top` elements), then `unprop`
+(`s.remove_element(pg="Prop")`). `staged_activation.results.h5` is written by
+`NativeWriter` with `model_h5_src=` the model, so its `/meta/lineage`
+carries the model's `model_hash`; it has one `static` stage per program
+stage, by name (3, 2 and 4 steps, `time[k] = (k + 1) / T`), and a `mode`
+stage `mode_1` that no program stage names. The values are synthetic
+(`displacement_x[k, j] = id_j + 0.001 k`); no solve runs.
+`staged_activation.femonly.results.h5` holds the same three stages written
+without `model_h5_src`: no `/opensees`, so no `model_hash`; it pairs with the
+model by `fem_hash` only, and its stage activation must stay `unbound`.
+`staged_activation.oracle.json` is Python's
+`viewers/data/_stage_activation.py::build_from_model` on the model, run by
+the same script outside the app: the FEM ids each program stage hides.
+`test/results/activation.test.ts` compares the app's activation with it.
+
+```powershell
+$env:PYTHONPATH = "src"
+& C:\Users\nmb\venv\opensees_venv\Scripts\python.exe scripts/make_viewer_results_fixtures.py --staged
+```
+
+The session writes its own `model.h5` and geometry sibling into a temporary
+directory, not here; `/provenance` records the generating checkout's paths.
+A re-run changes the lineage hashes, `/meta/session_id` and the timestamps;
+re-run all three files together, since the oracle is read from this model.

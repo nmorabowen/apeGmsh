@@ -8,8 +8,6 @@ lands on screen and what the user can then click:
   side; flip inverts it.
 * **C-REBUILD** — a glyph layer stepping through ``update_layer``'s
   rebuild path keeps the cut (probe P1's regression test).
-* **C-SUBSTRATE** — off-seam actors created while a cut is live arrive
-  clipped (probe P2).
 * **C-PICK** — a click on a clipped-away cell is a miss; the same click
   with cuts off resolves (probe P3).
 * **C-DEFORM** — the cut tracks the warp: a fixed plane clips a
@@ -276,86 +274,6 @@ def test_removed_layers_leave_the_registry(cut_backend):
     cut_backend.set_clip_planes(
         [ClipPlaneSpec(origin=(0.0, 0.0, 0.0), normal=(1.0, 0.0, 0.0))],
     )
-
-
-# =====================================================================
-# C-SUBSTRATE — off-seam actors arrive clipped (probe P2)
-# =====================================================================
-
-class _Palette:
-    substrate_color = "#808080"
-    substrate_edge_color = "#c0c0c0"
-    node_accent = "#ff8800"
-
-
-class _Prefs:
-    mesh_surface_opacity = 1.0
-    mesh_line_width = 1.0
-    point_size = 6.0
-
-
-class _Scene:
-    """Just enough ``FEMSceneData`` for the off-seam actor builders."""
-
-    def __init__(self) -> None:
-        import pyvista as pv
-
-        self.grid = pv.Box(bounds=(-1, 1, -1, 1, -1, 1)).cast_to_unstructured_grid()
-        self.model_diagonal = 3.46
-
-
-def test_substrate_and_node_cloud_are_cut_at_creation(cut_backend):
-    """A geometry materialized *after* the cut renders clipped.
-
-    ``_add_substrate_actors`` runs once at boot and again per
-    materialized geometry, so a cut set up before a second geometry
-    appears has to reach the later pair — which is why the attachment
-    lives inside the builder rather than at the boot call site.
-    """
-    from apeGmsh.viewers.results_viewer import (
-        add_node_cloud_actor, add_substrate_actors,
-    )
-
-    plotter = cut_backend.plotter
-    scene = _Scene()
-    specs = [ClipPlaneSpec(origin=(0.0, 0.0, 0.0), normal=(1.0, 0.0, 0.0))]
-
-    fill, wf = add_substrate_actors(
-        plotter, scene, palette=_Palette(), prefs=_Prefs(),
-        clip_planes=(), name_suffix="@first",
-    )
-    assert _n_planes(fill) == 0 and _n_planes(wf) == 0
-
-    fill2, wf2 = add_substrate_actors(
-        plotter, scene, palette=_Palette(), prefs=_Prefs(),
-        clip_planes=specs, name_suffix="@second",
-    )
-    assert _n_planes(fill2) == 1 and _n_planes(wf2) == 1
-
-    cloud = add_node_cloud_actor(
-        plotter, scene, marker_size=6.0, color="#ff8800",
-        clip_planes=specs,
-    )
-    assert cloud is not None and _n_planes(cloud) == 1
-
-
-def test_substrate_pair_renders_only_the_kept_half(cut_backend):
-    """The pixel half of C-SUBSTRATE — the actors really are cut.
-
-    This pair includes the **wireframe**, whose cut edge is the line
-    primitive that exposed the split-column problem (#873); the guard
-    that covers it now lives in :func:`_halves` for every call site.
-    """
-    from apeGmsh.viewers.results_viewer import add_substrate_actors
-
-    add_substrate_actors(
-        cut_backend.plotter, _Scene(), palette=_Palette(), prefs=_Prefs(),
-        clip_planes=[
-            ClipPlaneSpec(origin=(0.0, 0.0, 0.0), normal=(1.0, 0.0, 0.0)),
-        ],
-    )
-    left, right = _halves(_frame(cut_backend))
-    assert left == 0 and right > 0
 
 
 # =====================================================================
@@ -697,7 +615,7 @@ def test_the_controller_pushes_its_set_to_the_backend(backend):
 
 
 # =====================================================================
-# The panel is a projection, not a second copy of the state
+# Shared Qt application
 # =====================================================================
 
 @pytest.fixture(scope="module")
@@ -705,88 +623,6 @@ def qapp():
     pytest.importorskip("qtpy.QtCore")
     from qtpy import QtWidgets
     yield QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
-
-
-@pytest.fixture
-def panel(qapp):
-    from apeGmsh.viewers.ui._clip_planes_panel import ClipPlanesPanel
-    return ClipPlanesPanel()
-
-
-def test_panel_drives_the_controller(panel):
-    controller = ClipPlaneSetController(None)
-    panel.bind(controller, bbox=(-1.0, -1.0, -1.0, 1.0, 1.0, 1.0))
-
-    panel._combo_add.setCurrentText("Z")
-    panel._on_add()
-    planes = controller.planes()
-    assert len(planes) == 1
-    assert planes[0].normal == (0.0, 0.0, 1.0)
-    assert panel.selected_id == planes[0].plane_id
-
-    # The slider spans the bbox along the plane normal, not a raw
-    # 0..1 range — the far end must land on the far face.
-    panel._slider.setValue(1000)
-    assert controller.plane(panel.selected_id).offset == pytest.approx(1.0)
-
-    # The numeric field is unclamped: deformation can push geometry
-    # well outside the reference bbox the slider maps.
-    panel._spin_offset.setValue(250.0)
-    assert controller.plane(panel.selected_id).offset == pytest.approx(250.0)
-
-    panel._on_flip(panel.selected_id, True)
-    assert controller.plane(panel.selected_id).flipped is True
-
-    panel._on_delete(panel.selected_id)
-    assert controller.planes() == []
-
-
-def test_panel_refuses_to_show_a_seventh_cut(panel):
-    """A refused activation leaves the checkbox where the scene is."""
-    controller = ClipPlaneSetController(None)
-    panel.bind(controller)
-    for _ in range(MAX_ACTIVE_PLANES + 1):
-        panel._on_add()
-
-    seventh = controller.planes()[-1]
-    assert seventh.active is False
-    panel._on_active(seventh.plane_id, True)
-    assert controller.plane(seventh.plane_id).active is False
-    assert len(controller.specs()) == MAX_ACTIVE_PLANES
-
-
-def test_gizmo_eye_is_live(panel):
-    """S2 flips the S1 placeholder: the eye now drives per-plane gizmo
-    visibility through the controller (``set_gizmo_visible``), like
-    every other control on the row."""
-    from qtpy import QtWidgets
-
-    controller = ClipPlaneSetController(None)
-    panel.bind(controller)
-    panel._on_add()
-    plane_id = controller.planes()[0].plane_id
-
-    row = panel._list_layout.itemAt(0).widget()
-    buttons = row.findChildren(QtWidgets.QToolButton)
-    # The eye is a factory glyph now (ADR 0087 INV-4) — no text, a
-    # drawn icon; locate it by its tooltip.
-    eyes = [b for b in buttons if b.toolTip().startswith("Show this plane")]
-    assert len(eyes) == 1
-    assert eyes[0].text() == ""
-    assert not eyes[0].icon().isNull()
-    assert eyes[0].isEnabled() is True
-    assert eyes[0].isChecked() is True
-
-    eyes[0].click()
-    assert controller.plane(plane_id).gizmo_visible is False
-    eyes[0].click()
-    assert controller.plane(plane_id).gizmo_visible is True
-
-    # S3 flips the last placeholder too: the cut-face checkbox is live
-    # and drives the controller. Its own behaviour is pinned in
-    # ``test_clip_cut_face.py`` (F-TOGGLE); this is the panel-shape
-    # assertion that used to say "disabled".
-    assert panel._cb_cut_face.isEnabled() is True
 
 
 # =====================================================================
@@ -862,45 +698,3 @@ def test_a_planes_only_session_is_restorable():
         ]),
     )
     assert session_restorable(planes_only) is True
-
-
-def test_numeric_fields_commit_on_enter_not_per_keystroke(panel):
-    """B3: per-keystroke valueChanged fires CLIP_PLANES_CHANGED, whose
-    UI-lane refresh rewrites the focused editor between keystrokes and
-    eats the decimal point. Commit-on-enter is the contract."""
-    assert panel._spin_offset.keyboardTracking() is False
-    for box in panel._normal_fields:
-        assert box.keyboardTracking() is False
-
-
-def test_custom_expansion_survives_unrelated_refreshes(panel):
-    """B3 (same family): "the user clicked Custom" is panel state; an
-    axis-aligned normal must not collapse the fields on refresh."""
-    controller = ClipPlaneSetController(None)
-    panel.bind(controller)
-    panel._on_add()
-
-    panel._on_chip("Custom")
-    assert panel._custom_host.isVisibleTo(panel.widget)
-
-    controller.set_apply_cuts(False)   # any unrelated mutation
-    panel.refresh()
-    assert panel._custom_host.isVisibleTo(panel.widget)
-    assert panel._chips["Custom"].isChecked()
-
-    # Selecting a different plane starts from its own orientation.
-    second = controller.add((0.0, 1.0, 0.0))
-    panel.select(second.plane_id)
-    assert not panel._custom_host.isVisibleTo(panel.widget)
-    assert panel._chips["Y"].isChecked()
-
-
-def test_added_plane_lands_mid_geometry(panel):
-    """B4: for a bbox that does not straddle the origin, a new plane at
-    world offset 0 cuts nothing — or everything. Add must land the
-    plane at the centre of the bbox's span along its normal."""
-    controller = ClipPlaneSetController(None)
-    panel.bind(controller, bbox=(-200.0, -50.0, -10.0, -100.0, 50.0, 10.0))
-    panel._combo_add.setCurrentText("X")
-    panel._on_add()
-    assert controller.planes()[0].offset == pytest.approx(-150.0)

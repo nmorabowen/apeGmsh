@@ -55,13 +55,20 @@ Laws realized here:
   emitted are the ones this module derives from ``view.legends()`` —
   the pose can never cause a bar, and hiding a scale never clears a
   slot.
+* **A7.3, slot style**: a colour-mapped slot's explicit ``clim`` /
+  ``cmap`` reach its diagram's style, merged per field exactly as
+  ``view.legends()`` merges them, so the picture and its scale bar
+  agree. Unset, the spec is the kind's default, untouched.
+* **A7.5, the undeformed ghost**: ``view.overlay`` draws the view's
+  own cell set at scale 0 in the Outlines style — same scope, same
+  stage-activation set, same clip planes, independent of the Outlines
+  button, never colour-mapped and never a legend.
 
 Session state with no realization yet refuses loudly
 (``NotImplementedError`` naming the owning slice) rather than emitting
-a picture that silently drops it: the undeformed overlay, and a scoped
-view carrying the `loads` slot (the kind draws every node of its
-pattern regardless of scope, so honouring INV-MESH-1 needs a change
-inside that kind).
+a picture that silently drops it: a scoped view carrying the `loads`
+slot (the kind draws every node of its pattern regardless of scope, so
+honouring INV-MESH-1 needs a change inside that kind).
 """
 from __future__ import annotations
 
@@ -82,7 +89,7 @@ from ..scene.fem_scene import build_fem_scene
 from ..scene_ir import ColorSpec, MeshLayer, PointSet
 from ._gauss_addr import gp_index_within_element, probe_component
 from ._plots import realize_plot
-from ._scope import ScopedSet, resolve_scope
+from ._scope import ScopedSet, _nodes_of_elements, resolve_scope
 from ._specs import OCCLUDING_KINDS, slot_spec
 
 if TYPE_CHECKING:
@@ -228,6 +235,10 @@ class PaneRestep:
     #: targets are read off ITS cloud (INV-MESH-4), so a re-step must
     #: read the same object rather than re-deriving a probe cloud.
     gauss_occupant: Any = None
+    #: The stage this pane was realized at. The cell set carries that
+    #: stage's activation, so a re-step to another stage would
+    #: draw a stale cell set: ``restep_pane`` refuses it.
+    stage_id: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -274,7 +285,9 @@ class RealizedPane:
 
 #: Layer roles realize OWNS — the ones a re-step has to move itself.
 #: Every other key belongs to a slot diagram, which
-#: ``sync_substrate_points`` already moved.
+#: ``sync_substrate_points`` already moved — or is the A7.5 ghost
+#: (``ghost``), which sits in REFERENCE geometry and so never moves
+#: inside one stage (a stage change is a full realize, never a re-step).
 _REALIZE_OWNED_ROLES = ("substrate", "outlines", "nodes", "gauss", "selection")
 
 
@@ -345,6 +358,13 @@ def restep_pane(
     if rs is None:
         raise RuntimeError("realize recorded no re-step context")
     stage_id, step = _resolve_instant(session, view, results)
+    if rs.stage_id is not None and stage_id != rs.stage_id:
+        # The cell set is the realized stage's active elements:
+        # another stage needs a full realize, never a stale set.
+        raise RuntimeError(
+            f"re-step across stages ({rs.stage_id!r} -> {stage_id!r}) "
+            "needs a full realize"
+        )
     posed = view.deform is not None
 
     if posed:
@@ -501,6 +521,10 @@ def realize_pane(
     :class:`RealizedPane`; a plot pane resolves its series to arrays
     and returns a :class:`~._plots.RealizedPlot` (no backend needed —
     §6: a plot is a pane, and its client draws the numbers).
+
+    On a staged model a mesh pane draws only the elements active in
+    the stage it realizes (X2-f, #1722): stills, the session window
+    and ``export_animation`` alike.
     """
     from apeGmsh.results.session import MeshView, PlotView
 
@@ -536,6 +560,9 @@ def _realize_mesh(
     view_data = ViewerData.from_fem(results.fem)
     # INV-MESH-1: ONE cell set; every layer below is a function of it.
     scoped = resolve_scope(view.scope, view_data)
+    # On a staged model the cell set is also the stage's
+    # ACTIVE elements, so every layer below follows the stage.
+    scoped = _stage_active_scope(results, scene, view_data, scoped, stage_id)
 
     # Decision 5: pose first — every extraction below copies posed points.
     _apply_pose(view, results, scene, stage_id, step)
@@ -569,6 +596,18 @@ def _realize_mesh(
     # than adding a second wire mesh over it (INV-MESH-2).
     resolved = [
         (category, kind_id, _with_surface_edges(spec, kind_id, view.style))
+        for category, kind_id, spec in resolved
+    ]
+    # A7.3: a slot's explicit clim / cmap become its diagram's style,
+    # merged per field the way the legend is (rule 2), so a slot left at
+    # None draws with the scale its same-field neighbour sets.
+    slot_styles = {
+        category: (legend.clim, legend.cmap)
+        for legend in view.legends()
+        for category in legend.categories
+    }
+    resolved = [
+        (category, kind_id, _with_slot_style(spec, slot_styles.get(category)))
         for category, kind_id, spec in resolved
     ]
 
@@ -619,6 +658,20 @@ def _realize_mesh(
         diagrams.append(diagram)
         slot_diagrams[category] = diagram
 
+    # A7.5 — the undeformed ghost: this cell set at scale 0. Added after
+    # _apply_clips like every layer, so the backend cuts it where it
+    # cuts the posed mesh.
+    if view.overlay:
+        ghost = _ghost_layer(view.id, scene, scoped)
+        if ghost is not None:
+            handle = backend.add_layer(ghost)
+            layers.append(RealizedLayer(
+                key=f"{view.id}:ghost",
+                layer_id=ghost.layer_id,
+                handle=handle,
+                layer=ghost,
+            ))
+
     # INV-MESH-3/4 — outlines / nodes / gauss as layers of the SAME cell
     # set, emitted after the slots so they read above the surface. The
     # same pass resolves the §8 pick targets: the glyph clouds ARE the
@@ -667,6 +720,7 @@ def _realize_mesh(
             grid=grid,
             substrate_rows=substrate_rows,
             gauss_occupant=slot_diagrams.get("gauss"),
+            stage_id=stage_id,
         ),
         reference_bounds=_reference_bounds(scene, substrate_rows),
     )
@@ -799,12 +853,6 @@ def _refuse_unrealized_state(view: "MeshView") -> None:
             "kind renders every node of the pattern regardless of "
             "scope (INV-MESH-1). Clear the scope or the loads slot."
         )
-    if view.overlay:
-        raise NotImplementedError(
-            "The undeformed overlay does not realize yet: it is this "
-            "mesh at scale 0 in the Outlines style (§3), which needs "
-            "the unposed cell set emitted alongside the posed one."
-        )
 
 
 # =====================================================================
@@ -848,6 +896,67 @@ def _resolve_instant(
             f"{instant.stage!r} with {n} step(s)."
         )
     return instant.stage, instant.step
+
+
+def _stage_active_scope(
+    results: "Results", scene: "FEMSceneData", view_data: ViewerData,
+    scoped: ScopedSet, stage_id: str,
+) -> ScopedSet:
+    """``scoped`` narrowed to the elements active in ``stage_id``.
+
+    X2-f (#1722): the rule the retired ``ResultsViewer.
+    _apply_stage_activation`` applied, from the same data
+    (``build_from_model`` + ``pair_capture_to_program``). Fail-soft
+    exactly where the old path was: no staged program, or a capture
+    stage that pairs with no program stage, leaves ``scoped`` as it is
+    (every element drawn). A stage that activates NONE of the view's
+    elements raises rather than drawing the full mesh.
+    """
+    from ..data._stage_activation import (
+        build_from_model, pair_capture_to_program,
+    )
+
+    cell_of = scene.element_id_to_cell
+    act = build_from_model(
+        getattr(results, "model", None), cell_of, int(scene.grid.n_cells),
+    )
+    if act is None:
+        return scoped
+    names = pair_capture_to_program(
+        [(s.id, str(s.name)) for s in results.stages],
+        list(act.hidden_by_name),
+    )
+    hidden = act.mask_for(names.get(stage_id))
+    if hidden is None:
+        # A staged model whose stage has no program counterpart: draw
+        # everything, and say so (the old window's status-bar hint).
+        import warnings
+
+        stage_name = next(
+            (str(s.name) for s in results.stages if s.id == stage_id),
+            stage_id,
+        )
+        warnings.warn(
+            f"Stage activation: no program stage named {stage_name!r} "
+            "— showing all elements.",
+            UserWarning,
+            stacklevel=2,
+        )
+        return scoped
+    hidden = np.asarray(hidden, dtype=bool)
+    active = np.fromiter(
+        (int(e) for e, c in cell_of.items() if not hidden[int(c)]),
+        dtype=np.int64,
+    )
+    if scoped.element_ids is not None:  # scoped: draw scope AND active
+        active = np.intersect1d(active, scoped.element_ids)
+    if active.size == 0:
+        raise ValueError(
+            f"Stage {stage_id!r} activates none of the view's elements "
+            "— nothing to draw."
+        )
+    active = np.unique(active)
+    return ScopedSet(active, _nodes_of_elements(active, view_data))
 
 
 def _scoped_element_ids(
@@ -1162,6 +1271,30 @@ _GAUSS_POINT_SIZE = 6.0
 _SELECTION_POINT_SIZE = 12.0
 
 
+def _with_slot_style(
+    spec: Any, style: "Optional[tuple[Any, Any]]",
+) -> Any:
+    """A7.3: the slot's explicit ``(clim, cmap)`` onto its diagram style.
+
+    ``None`` (a slot with no legend: `line`, `loads`, `reactions`) and
+    an unset field leave the kind's default spec untouched, so a view
+    that never sets either draws exactly what it drew before.
+    """
+    from dataclasses import replace
+
+    if style is None:
+        return spec
+    clim, cmap = style
+    changes: dict[str, Any] = {}
+    if clim is not None:
+        changes["clim"] = (float(clim[0]), float(clim[1]))
+    if cmap is not None:
+        changes["cmap"] = str(cmap)
+    if not changes:
+        return spec
+    return replace(spec, style=replace(spec.style, **changes))
+
+
 def _with_surface_edges(spec: Any, kind_id: str, style: Any) -> Any:
     """Ride the "Mesh" button onto an occluding slot's own style."""
     from dataclasses import replace
@@ -1296,6 +1429,45 @@ def _outlines_layer(
         line_width=2.0,
         pickable=False,
     ), rows
+
+
+def _ghost_layer(
+    pane_id: str, scene: "FEMSceneData", scoped: "ScopedSet",
+) -> "Optional[MeshLayer]":
+    """The undeformed ghost (ADR 0098 A7.5): ``scoped`` at scale 0.
+
+    The SAME cell set as the posed mesh — ``scoped`` already carries
+    the view's scope and the realized stage's activation (#1722) — cut
+    from a copy of the scene grid that holds the REFERENCE points, then
+    drawn exactly as the Outlines button draws. Its own extraction
+    rather than the posed grid's rows, because feature edges are a
+    function of the shape: the ghost's edges are the undeformed mesh's
+    edges. It never reads ``view.style.outlines``, is never colour-
+    mapped and registers no scale. ``None`` when the cell set has no
+    such edges (as for the Outlines button).
+    """
+    from dataclasses import replace
+    from types import SimpleNamespace
+
+    import pyvista as pv
+
+    reference = scene.grid.copy(deep=False)
+    # A NEW vtkPoints, never ``reference.points = ...``: a shallow copy
+    # shares the scene grid's vtkPoints, and pyvista's setter writes
+    # into it, which would un-pose the scene under every later layer.
+    reference.SetPoints(pv.vtk_points(
+        np.array(scene.reference_points, dtype=np.float64), deep=True,
+    ))
+    grid, _rows = _scoped_grid(
+        SimpleNamespace(
+            grid=reference, element_id_to_cell=scene.element_id_to_cell,
+        ),
+        scoped,
+    )
+    layer, _rows = _outlines_layer(pane_id, grid)
+    if layer is None:
+        return None
+    return replace(layer, layer_id=f"{pane_id}:ghost")
 
 
 def _two_point_lines(edges: Any) -> "Optional[np.ndarray]":

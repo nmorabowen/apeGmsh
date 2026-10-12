@@ -27,9 +27,11 @@ Two rules settled in S4-2:
   the first time. A chart with hundreds of curves is unreadable anyway;
   what the cap really prevents is reading them.
 
-``path`` / ``xy`` plot kinds stay refusals (plan decision 10): neither
-has an authoring surface in v1, and ``xy`` has nowhere in the IR to put
-a second axis source.
+The ``xy`` plot kind stays a refusal (plan decision 10): it has no
+authoring surface in v1, and nowhere in the IR to put a second axis
+source. ``path`` is no longer a kind at all: ADR 0098 Amendment 7
+(A7.7) took it out of ``PLOT_KINDS``, so ``PlotView(kind='path')``
+raises at construction and never reaches this resolver.
 """
 from __future__ import annotations
 
@@ -100,12 +102,9 @@ def realize_plot(
     if plot.kind != "history":
         raise NotImplementedError(
             f"This resolver draws 'history' plots; {plot.kind!r} plots "
-            f"have no v1 authoring surface. A 'path' plot needs an "
-            f"ORDERED source and an arc-length abscissa — §8's "
-            f"selection is a SET, and so is the outline's select-all — "
-            f"and an 'xy' plot needs a second axis source, which "
-            f"PlotSeries(source, quantity) has nowhere to hold. Both "
-            f"are IR widenings, not resolver work."
+            f"have no v1 authoring surface. An 'xy' plot needs a second "
+            f"axis source, which PlotSeries(source, quantity) has "
+            f"nowhere to hold: an IR widening, not resolver work."
         )
     # Cheap gate first: with N concrete sources the reads are N slabs,
     # and "select all nodes" → "New plot from selection" makes N as

@@ -82,6 +82,15 @@ test("a complete synthetic chain resolves with no problems", () => {
   assert.equal(c.root.children.length, 2);
 });
 
+test("LadrunoQuad (kr3pb's element): `matTag -formulation ssp -thick t` resolves its nDMaterial with no problem", () => {
+  // kr3pb.h5 /opensees/element_meta/LadrunoQuad row 0, verbatim: args
+  // [1, NaN, NaN, NaN, 0.1] with args_str ['', '-formulation', 'ssp', '-thick', ''].
+  const nd = obj("nDMaterial", "/opensees/materials/nd", "LadrunoConcrete3D", 1, [2e10, 0.2]);
+  const c = resolveChain(model([nd], [meta("LadrunoQuad", [1, "-formulation", "ssp", "-thick", 0.1])]), ref);
+  assert.deepEqual(c.problems, []);
+  assert.deepEqual(c.root.children.map((n) => [n.role, n.path, n.via?.label, n.via?.interpreted]), [["nDMaterial", "/opensees/materials/nd/LadrunoConcrete3D_1", "matTag", true]]);
+});
+
 test("an element type outside the syntax table is reported, not guessed", () => {
   const c = resolveChain(model(complete(), [meta("FooBeam", [1, 1])]), ref);
   assert.deepEqual(c.root.children, []);
@@ -172,8 +181,28 @@ const v = (t: { major: number }, minor: number) => `${t.major}.${minor}.0`;
 // the floor to the target opens with no banner; a newer minor of the same
 // major opens with exactly one banner naming the file's stamp and the target.
 
-test("ADR 0113 floors: the app's table (neutral 2.10, opensees 2.12, geometry 1.0, provenance 1.0)", () => {
-  assert.deepEqual(ZONE_FLOOR, { neutral: 10, opensees: 12, geometry: 0, provenance: 0 });
+test("ADR 0113 floors: the app's table (neutral 2.10, opensees 2.12, geometry 1.0, provenance 1.0, sequence 1.0)", () => {
+  assert.deepEqual(ZONE_FLOOR, { neutral: 10, opensees: 12, geometry: 0, provenance: 0, sequence: 0 });
+});
+
+test("opensees 2.27.0 is the target: the 2.27 stage records (update_parameter, zero_velocities, param_tags) open with no warning", () => {
+  // h5-schema.md "Parameter tags (opensees 2.27.0)": the two new optional
+  // stage children are listed by name, never warned about; the param_tags a
+  // stage's initial_stress / activate_absorbing carry are inside groups the
+  // reader lists and does not interpret.
+  assert.deepEqual(OPENSEES_TARGET, { major: 2, minor: 27 });
+  const path = writeFile("o-227.h5", v(NEUTRAL_TARGET, NEUTRAL_TARGET.minor), true, "2.27.0");
+  const f = new h5wasm.File(path, "a");
+  const st = (f.get("opensees") as h5wasm.Group).create_group("stages").create_group("stage_000");
+  st.create_attribute("name", "push");
+  st.create_group("update_parameter").create_group("update_000").create_dataset({ name: "param_tags", data: new BigInt64Array([-1n, 7n]), shape: [1, 2] });
+  st.create_group("zero_velocities").create_group("zero_000");
+  st.create_group("activate_absorbing").create_group("absorb_000").create_dataset({ name: "param_tags", data: new BigInt64Array([-1n, 8n]), shape: [1, 2] });
+  f.close();
+  const m = read(path);
+  assert.equal(m.opensees?.version, "2.27.0");
+  assert.deepEqual(m.warnings, []);
+  assert.deepEqual([...(m.opensees?.definitions.stages[0]?.other ?? [])].sort(), ["activate_absorbing", "update_parameter", "zero_velocities"]);
 });
 
 test("neutral: the floor and an older minor above it open with no banner", () => {

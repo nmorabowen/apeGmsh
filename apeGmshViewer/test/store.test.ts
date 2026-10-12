@@ -139,6 +139,15 @@ const EVERY: Record<EventType, Event> = {
   requestSource: { type: "requestSource", decl: archPath },
   sourceResult: { type: "sourceResult", decl: archPath, ok: false, reason: "missing: x.py" },
   frameSelection: { type: "frameSelection" },
+  selectStage: { type: "selectStage", index: null },
+  resultsLoaded: {
+    type: "resultsLoaded",
+    info: { path: "x.results.h5", version: "1.1.0", sourceType: "domain_capture", lineage: null, partial: null, stages: [], unavailableZones: [] },
+    sizeBytes: 0,
+    readMs: 0,
+    warnings: [],
+  },
+  resultStep: { type: "resultStep", status: { stage: 0, step: 0, status: "loading", error: null } },
 };
 
 test("reducer purity: every event leaves a frozen state untouched and returns plain data", () => {
@@ -154,7 +163,55 @@ test("reducer purity: every event leaves a frozen state untouched and returns pl
     }
     assertPlain(next, e.type);
   }
-  assert.equal(Object.keys(EVERY).length, 26, "decision 17's 20 events plus fileClosed, requestSource, sourceResult, setLoaded (V2f), frameSelection and setColourBy");
+  assert.equal(Object.keys(EVERY).length, 29, "decision 17's 20 events plus fileClosed, requestSource, sourceResult, setLoaded (V2f), frameSelection, setColourBy, selectStage (V4f), resultsLoaded and resultStep (V4b)");
+});
+
+// ---- V4f: stage selection -------------------------------------------------------
+
+/** A /sequence zone with the given (order, name, source) stage rows. */
+const seqOf = (rows: [number, string, string][]): State["sequence"] => ({
+  status: "ready",
+  version: "1.0.0",
+  attrs: { staged: 1 },
+  stages: { path: "/sequence/stages", columns: ["order", "name", "source"], rows },
+  changes: { path: "/sequence/changes", columns: ["stage", "op", "what", "name", "count", "source"], rows: [] },
+});
+const TWO: [number, string, string][] = [[0, "gravity", "/opensees/stages/stage_000"], [1, "", "/opensees/stages/stage_001"]];
+const withSeq = (rows: [number, string, string][]): ModelLoad => ({ ...load, sequence: seqOf(rows) });
+const staged2 = reduce(initialState, { type: "fileLoaded", artifact: "model", load: withSeq(TWO) });
+
+test("selectStage selects a /sequence/stages row by index (an unnamed stage too) and null clears it", () => {
+  assert.equal(staged2.stage, null, "a first load selects no stage");
+  const s1 = reduce(staged2, { type: "selectStage", index: 1 });
+  assert.equal(s1.stage, 1, "the unnamed stage selects by its index");
+  assertPlain(s1);
+  assert.equal(reduce(s1, { type: "selectStage", index: 1 }), s1, "the same stage again is a no-op");
+  assert.equal(reduce(s1, { type: "selectStage", index: null }).stage, null);
+  assert.equal(reduce(staged2, { type: "selectStage", index: null }), staged2, "clearing nothing is a no-op");
+});
+
+test("selectStage fails closed on an index that is not a stage row, and on a model with no /sequence", () => {
+  for (const index of [2, -1, 0.5, Number.NaN]) {
+    assert.throws(() => reduce(staged2, { type: "selectStage", index }), (e: unknown) => e instanceof RangeError && /is not a \/sequence\/stages row \(the loaded model has 2\)/.test((e as Error).message), String(index));
+  }
+  assert.throws(() => reduce(loaded, { type: "selectStage", index: 0 }), /the loaded model has 0/);
+});
+
+test("reload seams: fileChanged keeps the stage; a re-read keeps it only while that row names the same stage", () => {
+  const sel = reduce(staged2, { type: "selectStage", index: 1 });
+  const changed = reduce(sel, { type: "fileChanged", path: load.info.path });
+  assert.equal(changed.stage, 1, "fileChanged only marks the file stale; the sequence shown is unchanged");
+  const reread = (s: State, rows: [number, string, string][]) => reduce(s, { type: "fileLoaded", artifact: "model", load: withSeq(rows) });
+  assert.equal(reread(changed, TWO).stage, 1, "the same stage at that index: kept");
+  assert.equal(reread(changed, [TWO[0]!]).stage, null, "the stage index no longer exists: cleared, never a dangling index");
+  assert.equal(reread(changed, [TWO[0]!, [1, "push", "/opensees/stages/stage_001"]]).stage, null, "another stage at that index: cleared");
+  const gone = reduce(changed, { type: "fileLoaded", artifact: "model", load: { ...load, sequence: { status: "absent" } } });
+  assert.equal(gone.stage, null, "the re-read has no /sequence: cleared");
+  // Another file, a failed read and a close all clear it.
+  const other = reduce(sel, { type: "fileLoaded", artifact: "model", load: { ...withSeq(TWO), info: { ...load.info, path: "other.h5" } } });
+  assert.equal(other.stage, null);
+  assert.equal(reduce(sel, { type: "fileFailed", artifact: "model", path: load.info.path, error: "x" }).stage, null);
+  assert.equal(reduce(sel, { type: "fileClosed", artifact: "model" }).stage, null);
 });
 
 test("frameSelection counts a view request; without a mesh it is a no-op", () => {

@@ -315,9 +315,9 @@ jobs:
       - name: App wall lint (scripts/check_app_wall.py)
         run: python scripts/check_app_wall.py
 
-  # Real-window Qt lifecycle tests (ADR 0084 D7, fork F-B). These 15
-  # tests across 9 files build actual ResultsViewer/QtInteractor
-  # windows; they were deselected by addopts (`-m "not qt"`) and
+  # Real-window Qt lifecycle tests (ADR 0084 D7, fork F-B). These
+  # tests build actual QtInteractor windows (the legacy ResultsViewer
+  # ones went with that viewer, X3-d #1734); they were deselected by addopts (`-m "not qt"`) and
   # skipped everywhere because pytest-qt was never installed — the
   # historical first real run found genuine bugs (ActiveObjects never
   # seeded), so this lane exists to keep that class visible.

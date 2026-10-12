@@ -170,10 +170,12 @@ def test_plot_from_empty_selection_refuses() -> None:
 
 def test_plot_kind_vocabulary_is_closed() -> None:
     session = ResultsSession()
-    for kind in ("history", "path", "xy"):
+    for kind in ("history", "xy"):
         assert session.add_plot(kind=kind).kind == kind
-    with pytest.raises(ValueError, match="kind"):
-        session.add_plot(kind="scatter")
+    # A7.7 removed `path`; it refuses like any unknown kind.
+    for kind in ("scatter", "path"):
+        with pytest.raises(ValueError, match="kind"):
+            session.add_plot(kind=kind)
 
 
 def test_plot_series_are_typed() -> None:
@@ -278,6 +280,6 @@ def test_direct_view_construction_needs_no_session() -> None:
     view = MeshView("mesh-x")
     view.contour = Contour("S")
     assert [legend.field for legend in view.legends()] == ["S"]
-    plot = PlotView("plot-x", kind="path")
+    plot = PlotView("plot-x", kind="xy")
     plot.cursor = Instant("push", 0)
     assert plot.cursor == Instant("push", 0)

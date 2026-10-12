@@ -212,11 +212,73 @@ export interface GeometryInfo {
   radius: number;
 }
 
+/**
+ * A position on the phase axis. A results position names a stage of the
+ * results file (`stage`, an index into `State.results.stages`) and a step of
+ * it; the axis holds one results entry per stage (at step 0), and two results
+ * keys are the same phase when they name the same stage (the step is the
+ * position within it, moved by `setResultStep`).
+ */
 export type PhaseKey =
   | { kind: "geometry" }
   | { kind: "mesh" }
   | { kind: "stage"; index: number }
-  | { kind: "results"; step: number };
+  | { kind: "results"; stage: number; step: number };
+
+/** `/meta/lineage` of a model.h5 or a results.h5: the ADR 0021 hashes, null where the writer stamped none. */
+export interface Lineage {
+  femHash: string | null;
+  modelHash: string | null;
+  resultsHash: string | null;
+}
+
+/** One `/stages/{id}` of a results file, as the store holds it: metadata only, never a component array. */
+export interface ResultsStage {
+  id: string;
+  /** the user's stage name (`begin_stage(name=)`), `mode_<k>` for a mode stage; "" is a name too (and pairs with nothing) */
+  name: string;
+  kind: "static" | "transient" | "mode";
+  /** the stage's `time` vector: step k is time[k] */
+  time: number[];
+  /** nodal components (`displacement_x`, ...) */
+  nodal: string[];
+  /** gauss groups and their components (listed, never read in V4b) */
+  gauss: { id: string; components: string[] }[];
+  /** element categories the reader does not read */
+  unread: string[];
+}
+
+/** The results artifact as read (V4b): what the store keeps of a results.h5. Step arrays stay in main. */
+export interface ResultsInfo {
+  path: string;
+  version: string;
+  sourceType: string | null;
+  /** null: the file has no /meta/lineage (it cannot be paired by content) */
+  lineage: Lineage | null;
+  /** why the file looks unfinished (no results_hash), or null; it is read as it stands */
+  partial: string | null;
+  stages: ResultsStage[];
+  unavailableZones: string[];
+}
+
+/**
+ * The element tags a model's `/sequence` element change rows name, read from
+ * each row's `source` dataset (`/opensees/stages/stage_NNN/owned_element_ids`,
+ * `.../remove_element`). `error` when a source could not be read, or its
+ * length disagrees with its rows' counts; activation is then not applied.
+ */
+export type StageElements =
+  | { status: "none" }
+  | { status: "ready"; sets: Record<string, number[]> }
+  | { status: "error"; reason: string };
+
+/** The current results step's data, fetched lazily from main (the values themselves stay in the effects). */
+export interface ResultStepStatus {
+  stage: number;
+  step: number;
+  status: "loading" | "ready" | "failed";
+  error: string | null;
+}
 
 /** What the user clicked: the declaration, the hit point, and the cell's node tags as the viewport read them from the connectivity blob. */
 export interface Pick {
@@ -305,6 +367,22 @@ export interface State {
   definitions: Definitions | null;
   /** the model's root /sequence zone; `absent` when the file has none (or no model is loaded) */
   sequence: SequenceZone;
+  /**
+   * The selected stage: a row index into `/sequence/stages` (0-based, file
+   * order), or null. A selection of its own, not a phase: the phase axis is
+   * what the viewport draws (D7), and a stage is not drawable yet. A re-read
+   * of the same file keeps it only while that row still names the same stage
+   * (selectors.stageIdentity); any other load clears it.
+   */
+  stage: number | null;
+  /** the model's `/meta/lineage`; null with no model, or a model file without one */
+  lineage: Lineage | null;
+  /** the element tags of the model's `/sequence` element change rows (state/activation.ts reads them) */
+  stageElements: StageElements;
+  /** the results artifact's metadata (V4b); null until a results file is read. Paired with the model by selectors.resultsPairing */
+  results: ResultsInfo | null;
+  /** the fetch of the current results step; null when the phase is not a results step */
+  resultStep: ResultStepStatus | null;
 }
 
 /** The payload of `fileLoaded` for the model artifact: what the loader derived from the file. */
@@ -321,6 +399,8 @@ export interface ModelLoad {
   /** the opensees zone's definition data; null when the file has no /opensees */
   definitions: Definitions | null;
   sequence: SequenceZone;
+  lineage: Lineage | null;
+  stageElements: StageElements;
 }
 
 /** The payload of `fileLoaded` for the geometry artifact. */
@@ -335,7 +415,8 @@ export interface GeometryLoad {
  * V2f's go-to-source pair: `requestSource` (a panel asks; the effects act)
  * and `sourceResult` (the effects answer), and `setLoaded`: the model and its
  * geometry sibling re-read together after a D1 re-run, applied as one step so
- * no state pairs a new file with an old one.
+ * no state pairs a new file with an old one; and V4f's `selectStage` (a
+ * stage card click); and V4b's `resultsLoaded` and `resultStep`.
  */
 export type Event =
   | { type: "fileOpened"; artifact: ArtifactKind; path: string }
@@ -365,6 +446,12 @@ export type Event =
   | { type: "requestSource"; decl: DeclPath }
   | { type: "sourceResult"; decl: DeclPath; ok: boolean; reason: string | null }
   /** frame the selection, or the whole model when nothing is selected (`F`, or any panel); the frame effect moves the camera */
-  | { type: "frameSelection" };
+  | { type: "frameSelection" }
+  /** select a `/sequence/stages` row by index (a stage card click), or clear the stage selection with null */
+  | { type: "selectStage"; index: number | null }
+  /** V4b: a results file was read (metadata only); the effects send it after `fileOpened` */
+  | { type: "resultsLoaded"; info: ResultsInfo; sizeBytes: number; readMs: number; warnings: string[] }
+  /** V4b: the effects started (`loading`) or finished fetching the current step; they drop a reply that is not the latest */
+  | { type: "resultStep"; status: ResultStepStatus };
 
 export type EventType = Event["type"];

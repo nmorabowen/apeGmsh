@@ -243,22 +243,16 @@ def _max_displacement(results: Any) -> float:
 
 
 def _yield_setup(component: str):
-    """Internal ``export_animation(setup=)`` — not an MCP argument (INV-11)."""
+    """Internal ``export_animation(setup=)`` — not an MCP argument (INV-11).
 
-    def setup(_plotter: Any, director: Any) -> None:
-        from apeGmsh.viewers.diagrams._base import DiagramSpec
-        from apeGmsh.viewers.diagrams._kinds import kind_def
-        from apeGmsh.viewers.diagrams._selectors import (
-            normalize as normalize_selector,
-        )
+    The callback receives the session's mesh view (X2-b, #1663) and
+    fills its contour slot; no viewer or director is built.
+    """
 
-        kdef = kind_def("contour")
-        spec = DiagramSpec(
-            kind="contour",
-            selector=normalize_selector(component=component),
-            style=kdef.make_default_style(component),
-        )
-        director.registry.add(kdef.diagram_class(spec, director.results))
+    def setup(_plotter: Any, view: Any) -> None:
+        from apeGmsh.results.session import Contour
+
+        view.contour = Contour(component)
 
     return setup
 

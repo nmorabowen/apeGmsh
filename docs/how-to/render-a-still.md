@@ -52,6 +52,10 @@ stage = results.stages[-1]
 s.time = Instant(stage.id, stage.n_steps - 1)      # the last recorded step
 ```
 
+On a staged model (stages that `activate` or `remove_element`), the
+still draws only the elements active in the instant's stage: an element
+activated in a later stage, or removed by this one, is not drawn.
+
 ## Swap the picture
 
 The picture lives in the view's **slots** — a closed catalog of seven
@@ -69,6 +73,28 @@ view.contour = None                        # clears
 warps the mesh and causes no colour scale. The scale you see is
 named by the slot, so warping by displacement while contouring stress
 gives one scale and it says stress.
+
+A colour-mapped slot (`contour`, `vector`, `gauss`, `sand`) can fix its
+own scale. `clim` is the colour range and `cmap` any colour map
+matplotlib knows; left at `None`, the picture keeps its automatic range
+and the kind's usual map.
+
+```python
+view.contour = Contour("displacement_z", clim=(-0.05, 0.05), cmap="jet")
+```
+
+A bad value raises when you fill the slot, not when you render. Two
+slots of the same quantity share one scale, so they may not set
+different values; a slot left at `None` uses the other one's.
+
+To see the deformed shape against where it started, turn on the ghost.
+It draws the view's undeformed cells as outlines, under the same scope,
+stage and section planes as the posed mesh, and adds no scale:
+
+```python
+view.deform = Deform("displacement", 50.0)
+view.overlay = True
+```
 
 See [Results session](../api/results-session.md) for the whole catalog
 and the legend law.

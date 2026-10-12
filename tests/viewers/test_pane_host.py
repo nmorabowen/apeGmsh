@@ -1147,12 +1147,6 @@ def test_c24_the_seam_is_additive_and_opt_in():
         ).parameters["central_interactor"].default
         assert default is True, f"{cls.__name__} defaults to no interactor"
 
-    from apeGmsh.viewers import results_viewer
-
-    source = Path(results_viewer.__file__).read_text(encoding="utf-8")
-    assert "central_interactor" not in source
-    assert "set_plotter_provider" not in source
-
 
 def test_c24_plotter_without_a_provider_is_the_windows_own(window):
     """The identity the old path relies on: with no provider installed

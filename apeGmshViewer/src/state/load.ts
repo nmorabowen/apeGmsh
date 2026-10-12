@@ -12,7 +12,7 @@ import { cellPath, elementLinks, objectDecl, objectPaths, opsRowPath, type Looku
 import { groupAdjacency } from "./adjacency.ts";
 import { assignSlots, NO_GROUP, OPS_ONLY, slotColour } from "./palette.ts";
 import { emptyRecord } from "./reduce.ts";
-import type { ArtifactInfo, BlockInfo, Decl, DeclPath, DeclSource, ElementFacts, LegendEntry, MeshInfo, ModelLoad, ProvenanceEntry, ZoneStatus } from "./types.ts";
+import type { ArtifactInfo, BlockInfo, Decl, DeclPath, DeclSource, ElementFacts, LegendEntry, Lineage, MeshInfo, ModelLoad, ProvenanceEntry, StageElements, ZoneStatus } from "./types.ts";
 
 /** The legend rows that are not a physical group (build.ts names them). */
 const NO_GROUP_ROW = "(no physical group)";
@@ -358,8 +358,10 @@ export function loadModel(
   blobs: BlobStore,
   provenance: ProvenanceZone | null = null,
   provenanceRefused: ZoneStatus | null = null,
+  /** V4b: the model's /meta/lineage and the tags of its /sequence element rows, as main read them */
+  results: { lineage: Lineage | null; stageElements: StageElements; warnings?: string[] } = { lineage: null, stageElements: { status: "none" } },
 ): ModelLoad {
-  const warnings: string[] = [...model.warnings];
+  const warnings: string[] = [...model.warnings, ...(results.warnings ?? [])];
   const mesh = buildMesh(model);
   const { decls, names } = declarationsOf(model, blobs, warnings);
   if (provenance) {
@@ -402,5 +404,7 @@ export function loadModel(
     provenanceOrigin: provenance?.originColumn ?? false,
     definitions: model.opensees ? model.opensees.definitions : null,
     sequence: model.sequence,
+    lineage: results.lineage,
+    stageElements: results.stageElements,
   };
 }

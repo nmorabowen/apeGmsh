@@ -1,21 +1,29 @@
 """ADR 0117 INV-9 (AS4-b): a two-instance, two-rank assembly deck.
 
 Two instances of the 2x2x2 block, ``pier_1`` on rank 0 and ``pier_2`` on
-rank 1, stacked and joined across the ranks by a ``tie``
-(``enforce="equation"``), an ``equal_dof``, and from the rank-0 reference
-nodes a ``rigid_diaphragm`` and the AS4-a couplings ``rigid_link`` and
-``couple(kind="kinematic")``.
+rank 1, stacked and joined across the ranks by an ``equal_dof``, and from
+the rank-0 reference nodes a ``rigid_diaphragm`` and the AS4-a couplings
+``rigid_link`` and ``couple(kind="kinematic")``, under an explicit
+``constraints Transformation``.
+
+The fixture once also carried a ``tie(enforce="equation")``. With no handler
+declared, that tie makes the bridge auto-emit ``Lagrange``. Under
+``Lagrange``, each rank's copy of a cross-rank MP line adds its own
+multiplier, and the run fails (#1625). The partitioned emit now refuses that
+deck (#1719): :func:`test_the_original_fixture_is_refused` pins the refusal.
+So the line-distribution oracles below run under ``Transformation``, which
+needs exactly the per-rank copies they assert. ``equationConstraint`` line
+distribution is covered by #1724.
 
 Oracles, each naming the right answer independently of the code under test:
 
 * ownership is closed form: instance ``k`` occupies the FEM-id window
   ``k * 1_000_000`` (ADR 0038), so a node below ``2_000_000`` is rank 0's
   (``pier_1`` and the reference nodes) and the rest are rank 1's;
-* each MP line of the flat deck (``equalDOF``, ``equationConstraint``,
-  ``rigidLink``, ``rigidDiaphragm``) is written once, identically, on
-  exactly the ranks that own one of its nodes (INV-9; ADR 0027), and the
-  closed-form counts of cross-rank lines are reached: 9 face-node pairs,
-  9 x 3 equation rows, 9 links, 1 diaphragm;
+* each MP line of the flat deck (``equalDOF``, ``rigidLink``,
+  ``rigidDiaphragm``) is written once, identically, on exactly the ranks
+  that own one of its nodes (INV-9; ADR 0027), and the closed-form counts
+  of cross-rank lines are reached: 9 face-node pairs, 9 links, 1 diaphragm;
 * so the set of MP lines over both ranks equals the flat deck's (the tags
   are the node ids a line names, the same in both decks);
 * the RBE2 coupling element is written once, with the flat deck's tag, on
@@ -31,6 +39,7 @@ import warnings
 
 import pytest
 
+from apeGmsh.opensees._internal.build.errors import BridgeError
 from tests.assembly.test_two_instances_one_tie import (
     GRANULE,
     H,
@@ -42,7 +51,7 @@ from tests.assembly.test_two_instances_one_tie import (
 
 #: Nodes on one face of the 2x2x2 block: (2 + 1) ** 2.
 FACE = 9
-MP = ("equalDOF", "equationConstraint", "rigidLink", "rigidDiaphragm")
+MP = ("equalDOF", "rigidLink", "rigidDiaphragm")
 PID_BLOCK = re.compile(r"^if \{\[getPID\] == (\d+)\} \{$")
 #: The reference node above the top of the stack: FEM id 1.
 REF = (SIDE / 2, SIDE / 2, 2 * H + 5.0)
@@ -51,18 +60,20 @@ REF = (SIDE / 2, SIDE / 2, 2 * H + 5.0)
 CM = (SIDE + 5.0, SIDE / 2, H)
 
 
-@pytest.fixture(scope="module")
-def decks(tmp_path_factory) -> tuple[dict[int, list[str]], list[str]]:
+def _bridge(d, *, equation_tie: bool):
+    """The two-rank assembly's bridge; ``equation_tie`` adds the original
+    fixture's ``tie(enforce="equation")``."""
     from apeGmsh.assembly import Assembly
 
-    d = tmp_path_factory.mktemp("inv9")
     block = write_instance(d / "block.h5", block_fem(d), declare_block)
     asm = (Assembly("inv9")
            .instance("pier_1", block, partition_rank=0)
            .instance("pier_2", block, translate=(0.0, 0.0, H), partition_rank=1)
            .node("ref", REF)
-           .node("cm", CM)
-           .tie("pier_1.top", "pier_2.bot", enforce="equation", dofs=[1, 2, 3])
+           .node("cm", CM))
+    if equation_tie:
+        asm = asm.tie("pier_1.top", "pier_2.bot", enforce="equation", dofs=[1, 2, 3])
+    asm = (asm
            .equal_dof("pier_1.top", "pier_2.bot", dofs=[1, 2, 3])
            .rigid_diaphragm("cm", "pier_2.bot", constrained_dofs=(1, 2, 6))
            .rigid_link("ref", "pier_2.top", link_type="rod")
@@ -71,6 +82,14 @@ def decks(tmp_path_factory) -> tuple[dict[int, list[str]], list[str]]:
     assert ops.fem.nodes.partitions == [0, 1]
     ops.ndf(1, ndf=6)
     ops.ndf(2, ndf=6)
+    return ops
+
+
+@pytest.fixture(scope="module")
+def decks(tmp_path_factory) -> tuple[dict[int, list[str]], list[str]]:
+    d = tmp_path_factory.mktemp("inv9")
+    ops = _bridge(d, equation_tie=False)
+    ops.constraints.Transformation()
     with warnings.catch_warnings():
         # The emit-time advisories (auto handler, parallel numberer and
         # system, a detached diaphragm master) do not bear on INV-9.
@@ -108,8 +127,6 @@ def _nodes_of(line: str) -> set[int]:
     tok = line.split()
     if tok[0] == "equalDOF":
         return {int(tok[1]), int(tok[2])}
-    if tok[0] == "equationConstraint":        # cnode cdof c (rnode rdof c)*
-        return {int(t) for t in tok[1::3]}
     if tok[0] == "rigidLink":                  # rigidLink bar|beam m s
         return {int(tok[2]), int(tok[3])}
     if tok[0] == "rigidDiaphragm":             # rigidDiaphragm perp m s...
@@ -129,7 +146,6 @@ def test_two_blocks_and_no_other(decks):
 
 @pytest.mark.parametrize("kind, n_cross", [
     ("equalDOF", FACE),
-    ("equationConstraint", 3 * FACE),
     ("rigidLink", FACE),
     ("rigidDiaphragm", 1),
 ])
@@ -161,3 +177,17 @@ def test_the_coupling_is_written_once_with_its_reference_node_ghosted(decks):
         lines = blocks[1]
         assert decl in lines                    # ghosted on rank 1 ...
         assert lines.index(decl) < lines.index(use)    # ... before its use
+
+
+def test_the_original_fixture_is_refused(tmp_path):
+    """The equation tie with no declared handler auto-emits ``Lagrange``,
+    which multiplies each cross-rank MP copy: the partitioned emit raises
+    and writes no deck (#1625)."""
+    ops = _bridge(tmp_path, equation_tie=True)
+    deck = tmp_path / "ranked.tcl"
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        with pytest.raises(BridgeError, match="Lagrange") as err:
+            ops.tcl(str(deck))
+    assert "#1625" in str(err.value)
+    assert not deck.exists()

@@ -4,7 +4,7 @@
 // fails to compile when an event is added without a case, and an event the
 // code does not know raises at run time.
 
-import { geometryPairing } from "./selectors.ts";
+import { geometryPairing, resultsPairing, stageCount, stageIdentity } from "./selectors.ts";
 import { WINDOW_KINDS, type ArtifactInfo, type ArtifactKind, type DeclPath, type Event, type PhaseKey, type State } from "./types.ts";
 
 /** A record with no prototype: a key named `constructor` or `__proto__` is just a key. */
@@ -30,6 +30,11 @@ export const initialState: State = {
   view: { frameSeq: 0 },
   definitions: null,
   sequence: { status: "absent" },
+  stage: null,
+  lineage: null,
+  stageElements: { status: "none" },
+  results: null,
+  resultStep: null,
 };
 
 const NO_SELECTION: State["selection"] = { decls: [], picks: [] };
@@ -52,8 +57,19 @@ function opened(path: string): ArtifactInfo {
 function samePhase(a: PhaseKey, b: PhaseKey): boolean {
   if (a.kind !== b.kind) return false;
   if (a.kind === "stage" && b.kind === "stage") return a.index === b.index;
-  if (a.kind === "results" && b.kind === "results") return a.step === b.step;
+  // The same results stage is the same phase; the step is the position within it.
+  if (a.kind === "results" && b.kind === "results") return a.stage === b.stage;
   return true;
+}
+
+/** The steps of results stage `stage`, or 0 when there is no such stage. */
+const stepsOf = (s: State, stage: number): number => s.results?.stages[stage]?.time.length ?? 0;
+
+function checkStep(s: State, stage: number, step: number, who: string): void {
+  const n = stepsOf(s, stage);
+  if (!Number.isInteger(step) || step < 0 || step >= n) {
+    throw new RangeError(`${who}: step ${JSON.stringify(step)} is outside results stage ${stage} (0..${n - 1})`);
+  }
 }
 
 function artifactAt(s: State, path: string): ArtifactKind | null {
@@ -78,9 +94,22 @@ function withPhase(s: State): State {
   const axis: PhaseKey[] = [];
   if (geometryPairing(s).draw) axis.push({ kind: "geometry" });
   if (s.mesh) axis.push({ kind: "mesh" });
+  // V4b: one entry per results stage, only while the results pair with the
+  // model by content (a mismatch draws nothing of them).
+  if (s.mesh && s.results && resultsPairing(s).state === "paired") {
+    s.results.stages.forEach((_, i) => axis.push({ kind: "results", stage: i, step: 0 }));
+  }
   const prev = s.phase.at;
-  const at = prev && axis.some((k) => samePhase(k, prev)) ? prev : (axis.find((k) => k.kind === "mesh") ?? axis[0] ?? null);
-  return { ...s, phase: { axis, at } };
+  let at = prev && axis.some((k) => samePhase(k, prev)) ? prev : (axis.find((k) => k.kind === "mesh") ?? axis[0] ?? null);
+  // A results position keeps its step while the stage still has it; a stage
+  // that shrank (a re-read) clamps it to its last step.
+  if (at?.kind === "results") {
+    const n = stepsOf(s, at.stage);
+    if (n === 0) at = axis.find((k) => k.kind === "mesh") ?? null;
+    else if (at.step >= n) at = { ...at, step: n - 1 };
+  }
+  const resultStep = at?.kind === "results" && s.resultStep && s.resultStep.stage === at.stage && s.resultStep.step === at.step ? s.resultStep : null;
+  return { ...s, phase: { axis, at }, resultStep };
 }
 
 export function reduce(s: State, e: Event): State {
@@ -89,7 +118,9 @@ export function reduce(s: State, e: Event): State {
       const prev = s.artifacts[e.artifact];
       // The same path again (a reload after fileChanged) keeps what was read until the new read lands.
       const info: ArtifactInfo = prev && prev.path === e.path ? { ...prev, stale: false, error: null } : opened(e.path);
-      return withPhase({ ...s, artifacts: { ...s.artifacts, [e.artifact]: info } });
+      // Another results file: the metadata read from the old one goes with it.
+      const results = e.artifact === "results" && !(prev && prev.path === e.path) ? null : s.results;
+      return withPhase({ ...s, artifacts: { ...s.artifacts, [e.artifact]: info }, results });
     }
     case "fileLoaded": {
       // A fileChanged that arrived while this read ran keeps the artifact
@@ -99,7 +130,7 @@ export function reduce(s: State, e: Event): State {
       if (e.artifact === "geometry") {
         return withPhase({ ...s, artifacts: { ...s.artifacts, geometry: info }, geometry: e.load.geometry });
       }
-      const { decls, names, blocks, mesh, provenance, provenanceOrigin, definitions, sequence } = e.load;
+      const { decls, names, blocks, mesh, provenance, provenanceOrigin, definitions, sequence, lineage, stageElements } = e.load;
       // A model read for the first time opens on the mesh. A re-read of the
       // same file (D1 rewrites it every run) keeps the phase shown only while
       // that phase is still on the axis: a re-read model with a new
@@ -107,6 +138,9 @@ export function reduce(s: State, e: Event): State {
       // phase leaves the axis. That is why a D1 re-run re-reads the model and
       // its geometry together and lands them in one `setLoaded`.
       const reread = prev !== null && prev.status === "ready" && prev.path === info.path;
+      // The stage selection survives a re-read only while its row still
+      // names the same stage; a new file, or a changed row, clears it.
+      const keep = reread && s.stage !== null && stageIdentity(s.sequence, s.stage) === stageIdentity(sequence, s.stage);
       return withPhase({
         ...s,
         phase: reread ? s.phase : { ...s.phase, at: null },
@@ -119,6 +153,9 @@ export function reduce(s: State, e: Event): State {
         provenanceOrigin,
         definitions,
         sequence,
+        lineage,
+        stageElements,
+        stage: keep ? s.stage : null,
         selection: NO_SELECTION,
         hover: null,
         visibility: { ...s.visibility, hidden: [] },
@@ -141,33 +178,39 @@ export function reduce(s: State, e: Event): State {
       const stale = prev !== null && prev.path === e.path && prev.stale;
       const info: ArtifactInfo = { ...(prev && prev.path === e.path ? prev : opened(e.path)), status: "failed", error: e.error, stale };
       if (e.artifact === "geometry") return withPhase({ ...s, artifacts: { ...s.artifacts, geometry: info }, geometry: null });
-      if (e.artifact !== "model") return { ...s, artifacts: { ...s.artifacts, [e.artifact]: info } };
+      if (e.artifact === "results") return withPhase({ ...s, artifacts: { ...s.artifacts, results: info }, results: null });
       // The model is gone with its derivations; the failure is shown instead.
+      // The results stay read (they re-pair when a model loads).
       return withPhase({
         ...initialState,
         artifacts: { ...s.artifacts, model: info },
         visibility: s.visibility,
         windows: s.windows,
         geometry: s.geometry,
+        results: s.results,
         source: { ...initialState.source, seq: s.source.seq },
       });
     }
     case "fileClosed": {
       if (!s.artifacts[e.artifact]) return s;
       if (e.artifact === "geometry") return withPhase({ ...s, artifacts: { ...s.artifacts, geometry: null }, geometry: null });
-      if (e.artifact !== "model") return { ...s, artifacts: { ...s.artifacts, [e.artifact]: null } };
+      if (e.artifact === "results") return withPhase({ ...s, artifacts: { ...s.artifacts, results: null }, results: null });
       return withPhase({
         ...initialState,
         artifacts: { ...s.artifacts, model: null },
         visibility: s.visibility,
         windows: s.windows,
         geometry: s.geometry,
+        results: s.results,
         source: { ...initialState.source, seq: s.source.seq },
       });
     }
     case "fileChanged": {
       const k = artifactAt(s, e.path);
       if (!k) return s;
+      // Only marks the file stale: the sequence shown is still the one read,
+      // so the stage selection stands until the re-read lands (fileLoaded
+      // keeps it only if that row still names the same stage).
       return { ...s, artifacts: { ...s.artifacts, [k]: { ...s.artifacts[k]!, stale: true } } };
     }
     case "zoneRefused": {
@@ -213,10 +256,47 @@ export function reduce(s: State, e: Event): State {
       return s.visibility.colourBy === e.by ? s : { ...s, visibility: { ...s.visibility, colourBy: e.by } };
     case "setPhase":
       if (!s.phase.axis.some((k) => samePhase(k, e.at))) throw new Error(`setPhase: ${JSON.stringify(e.at)} is not on the phase axis`);
-      return { ...s, phase: { ...s.phase, at: e.at } };
+      if (e.at.kind === "results") checkStep(s, e.at.stage, e.at.step, "setPhase");
+      return withPhase({ ...s, phase: { ...s.phase, at: e.at } });
     case "setResultStep": {
       if (!s.phase.axis.some((k) => k.kind === "results")) throw new Error("setResultStep: the phase axis has no results");
-      return { ...s, phase: { ...s.phase, at: { kind: "results", step: e.step } } };
+      const at = s.phase.at;
+      if (at?.kind !== "results") throw new Error("setResultStep: the phase shown is not a results stage (setPhase to one first)");
+      checkStep(s, at.stage, e.step, "setResultStep");
+      if (at.step === e.step) return s;
+      return withPhase({ ...s, phase: { ...s.phase, at: { kind: "results", stage: at.stage, step: e.step } } });
+    }
+    case "resultsLoaded": {
+      const prev = s.artifacts.results;
+      if (!prev || prev.path !== e.info.path) throw new Error(`resultsLoaded: ${e.info.path} is not the open results artifact`);
+      const info: ArtifactInfo = {
+        ...prev,
+        status: "ready",
+        error: null,
+        sizeBytes: e.sizeBytes,
+        readMs: e.readMs,
+        zones: { results: { status: "ready", version: e.info.version } },
+        warnings: [...e.warnings, ...(e.info.partial ? [`${e.info.path.split(/[\\/]/).pop()}: ${e.info.partial}; it is read as it stands`] : [])],
+      };
+      // A re-read keeps the results position only while that index still
+      // names the same stage (its id and name); otherwise the phase leaves it.
+      const at = s.phase.at;
+      const old = at?.kind === "results" ? s.results?.stages[at.stage] : undefined;
+      const now = at?.kind === "results" ? e.info.stages[at.stage] : undefined;
+      const keep = !old || (now !== undefined && now.id === old.id && now.name === old.name);
+      return withPhase({
+        ...s,
+        artifacts: { ...s.artifacts, results: info },
+        results: e.info,
+        phase: keep ? s.phase : { ...s.phase, at: null },
+      });
+    }
+    case "resultStep": {
+      // A status for a step that is no longer shown is dropped (the effects
+      // also drop replies that are not their latest request).
+      const at = s.phase.at;
+      if (at?.kind !== "results" || at.stage !== e.status.stage || at.step !== e.status.step) return s;
+      return { ...s, resultStep: e.status };
     }
     case "inspectorPin":
       if (!(e.decl in s.decls)) throw new Error(`inspectorPin: ${e.decl} is not a declaration of the loaded model`);
@@ -244,6 +324,14 @@ export function reduce(s: State, e: Event): State {
     case "frameSelection":
       if (!s.mesh) return s;
       return { ...s, view: { frameSeq: s.view.frameSeq + 1 } };
+    case "selectStage": {
+      if (e.index === null) return s.stage === null ? s : { ...s, stage: null };
+      const n = stageCount(s.sequence);
+      if (!Number.isInteger(e.index) || e.index < 0 || e.index >= n) {
+        throw new RangeError(`selectStage: ${JSON.stringify(e.index)} is not a /sequence/stages row (the loaded model has ${n})`);
+      }
+      return s.stage === e.index ? s : { ...s, stage: e.index };
+    }
     default: {
       const unknown: never = e;
       throw new Error(`reduce: unknown event ${JSON.stringify(unknown)}`);

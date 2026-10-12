@@ -221,12 +221,15 @@ Attributes only.
 > composer additionally computes and stamps `model_hash` once
 > `/opensees/...` exists. The composed `results.h5` carries its
 > version keys at the **file root** (not `/meta`) — see
-> [Schema versioning](#versioning).
+> [Schema versioning](#versioning) and
+> [`results.h5`: the native results file](#resultsh5-the-native-results-file).
 
 ### `results.h5` root attrs: OpenSees build provenance
 
 A `results.h5` written by the native writer (`NativeWriter.open`) may carry
-two root attrs naming the OpenSees build that produced its data. They come
+two root attrs naming the OpenSees build that produced its data. The whole
+file layout, including the other root attrs, is in
+[`results.h5`: the native results file](#resultsh5-the-native-results-file). They come
 from the bridge's `BackendInfo` (`apeGmsh.opensees._target`), whose one fork
 signal is `ladrunoBuild()` returning a git sha, and are written with the
 other root attrs, before any stage data.
@@ -1289,6 +1292,24 @@ family without a flat argv), checked by `test_verbs_lock.py` with the
 same `decl_argv_names` the writer uses; the `unnamed` + `uncheckable`
 count may only shrink, and a primitive neither named nor listed fails.
 
+**`label`: provenance only (opensees 2.28.0; ADR 0115 amendment R2-f).**
+The rows of `FixRecord`, `MassRecord` (flat and staged) and of the typed
+`recorder.Node` / `recorder.Element` carry a `label` field. A declaration
+made with `label=` stores the names it was given as a list (`"left"` is
+stored `["left"]`, a list keeps its order) beside the ids the call
+resolved them to (`nodes`; for `recorder.Element`, `elements`). A
+`recorder.Element` row's `elements` are always **OpenSees element tags**,
+whichever way it was declared: a `label=` declaration resolves to FEM ids,
+and the archive stores them translated through the build's FEM id → tag
+map, exactly as the deck's `-ele` list (identical under
+`element_tags="fem"`). So one reader reads every row the same way. A declaration made with `pg=` or `nodes=` / `elements=`
+stores **`label: null`** (the generic encoder writes every field, so the
+key is present and empty rather than absent). The ids are authoritative:
+no reader, replay (`OpenSeesModel.from_h5`, `derive_sequence`) or rewrite
+re-resolves a label, so a label that no longer names those ids, or names
+nothing, changes nothing that runs. An archive written before 2.28.0 has
+no `label` key in these rows; it reads exactly as before.
+
 `H5Model.declarations()` returns the rows as `DeclarationTable.params`
 (`decls` row -> a tuple of `DeclParamsRO`, one per owner in call order:
 `type`, `params` with `DeclRef` / `DeclStruct` / `DeclOpaque` values,
@@ -1708,6 +1729,352 @@ of equal-length column datasets.
   (`SequenceError`).
 * No hash reads `/sequence`, and no model reader reads it.
 
+## `results.h5`: the native results file
+
+A native results file is written by `NativeWriter`
+([`results/writers/_native.py`](../src/apeGmsh/results/writers/_native.py))
+and read by `NativeReader`
+([`results/readers/_native.py`](../src/apeGmsh/results/readers/_native.py)).
+The path names and attribute keys are constants in
+[`results/schema/_native.py`](../src/apeGmsh/results/schema/_native.py).
+This section describes the layout those modules write at results zone
+**1.2.0** (floor **1.0.0**). It is the contract apeGmshViewer reads
+(ADR 0112 D4). It is not a `model.h5`: the version keys are root attrs,
+`/meta` holds only the lineage, and the model is embedded under `/model`
+rather than written at the root.
+
+Five writers produce the file. `source_type` names the writer, but it is a stamp, not proof of origin:
+
+| `source_type` | Writer | `/model` | `/opensees` | Stages |
+|---|---|---|---|---|
+| `domain_capture` | `DomainCapture` (`ops.domain_capture`) | yes | yes when the bridge archives a `model.h5` sidecar; otherwise absent, with a warning | the user's `begin_stage` calls, then one `mode` stage per mode from `capture_modes` |
+| `tcl_recorders` | the recorder transcoder (`Results.from_recorders`) | yes | when `model=` is given | one stage per transcode |
+| `parallel_modal` | `ParallelModalResult` harvest (`opensees/analysis/modal.py`) | yes | no | one `mode` stage per mode |
+| `footfall_walking` | `FootfallResult` (`opensees/analysis/footfall_result.py`) | no | no | one `static` stage named `footfall` |
+| `domain_capture` (the `NativeWriter.open` default) | `make_demo_results` (`results/demo.py`): synthetic nodal displacements, no element groups | yes | yes | one `static` stage named `pushover` |
+
+Because `domain_capture` is also `NativeWriter.open`'s default, that stamp
+does not prove that `DomainCapture` wrote the file: the demo writer, or
+any caller that keeps the default, stamps it too.
+
+### Layout
+
+```
+results.h5
+│   @schema_version, @results_schema_version,      root attrs (see below)
+│   @neutral_schema_version, @opensees_schema_version,
+│   @source_type, @source_path, @created_at, @apegmsh_version,
+│   @analysis_label, @opensees_backend, @opensees_build,
+│   @element_index_space                     (optional, results 1.2.0)
+├── /meta                                  lineage only (always present from results 1.1.0)
+│     └── /lineage                         @fem_hash, @model_hash, @results_hash
+├── /model                                 (optional) the neutral zone, embedded
+│     ├── /meta                            the model's /meta attrs, plus /meta/lineage
+│     ├── /nodes, /elements, /physical_groups, …   same layout as a model.h5 root
+├── /opensees                              (optional) the bridge zone, copied verbatim
+└── /stages
+      └── /{stage_id}                      @name, @kind (+ mode attrs)
+            ├── time                       (T,) float64 (coerced by the writer)
+            └── /partitions
+                  └── /{partition_id}
+                        ├── /nodes
+                        │     ├── _ids                     (N,) int64
+                        │     └── {component}              (T, N) float, see below
+                        └── /elements
+                              ├── _ids                     (reserved; see "What is absent")
+                              ├── /gauss_points/{group_id}
+                              ├── /line_stations/{group_id}
+                              ├── /nodal_forces/{group_id}
+                              ├── /fibers/{group_id}
+                              └── /layers/{group_id}
+```
+
+Every component dataset has the step axis first, and its length equals
+the stage's `time` length `T`; the writer refuses any other shape.
+**Component dtypes are not guaranteed.** The writer stores a component
+array as the caller passed it, with no dtype coercion. Every caller in
+`src/` passes float64 today, so the tables below say float64, but that is
+a convention: a float32 array round-trips as float32. A reader must accept
+any floating dtype and cast on read. The `time` vector, the index
+datasets (`_ids`, `_element_index`, …) and the stage attrs are coerced by
+the writer to the dtypes stated.
+Names that start with `_` are index and metadata datasets. A name with
+no `_` prefix is a result component. A reader lists a group's
+components by dropping the `_` names.
+
+### Root attributes
+
+All strings are variable-length UTF-8.
+
+| Attribute | Type | Meaning |
+|---|---|---|
+| `results_schema_version` | string | the results-zone version (`"1.2.0"`). The reader validates it against the results floor before any read ([The floor rule](#the-floor-rule)). |
+| `schema_version` | string | the envelope stamp (`SCHEMA_VERSION`, `"1.1.0"` today). The reader falls back to it only when `results_schema_version` is missing. A file with neither is refused as "not a native apeGmsh results.h5". |
+| `neutral_schema_version` | string | forwarded from `/model/meta`. Present only when `/model` is embedded. |
+| `opensees_schema_version` | string | forwarded from the source `model.h5`. Present only when `/opensees` is embedded. |
+| `source_type` | string | the writer, from the table above |
+| `source_path` | string | where the data came from: the recorder output directory, or a tag such as `<openseespy>`. Informational only. |
+| `created_at` | string | ISO 8601 UTC timestamp |
+| `apegmsh_version` | string | the producing apeGmsh version, or `""` if unknown |
+| `analysis_label` | string | free text; `""` by default |
+| `opensees_backend`, `opensees_build` | string | optional build provenance ([`results.h5` root attrs](#resultsh5-root-attrs-opensees-build-provenance)) |
+| `element_index_space` | string | optional, results 1.2.0: the element row ids are provably FEM element ids ([`element_index_space`](#element_index_space)) |
+
+### `element_index_space`
+
+Results 1.2.0 (#1746) adds this optional root attribute. When present, it
+says that every element row id in the file (each group's `_element_index`)
+is provably a FEM element id, the id `/model/elements` carries. This is
+the complete value set. A reader must treat any value not listed here as
+unverified:
+
+| Value | Meaning |
+|---|---|
+| `"fem"` | element row ids are provably FEM element ids. It is the only value any writer emits (`ELEMENT_INDEX_SPACES` in `results/schema/_native.py`; `NativeWriter.stamp_element_index_space` refuses any other) |
+
+**Absent** means unverified: the file does not prove which ids its element
+rows carry. Every 1.0.0 and 1.1.0 file lacks the attribute, and so does a
+1.2.0 file whose writer could not prove it. Absence is not a refusal: the
+file reads exactly as before. The version number alone never makes a file
+verified; only the stamp does.
+
+The on-disk contract is this one root attribute, `element_index_space`:
+its value set is exactly `"fem"`, and absence means unverified. No other
+attribute carries the verdict. apeGmsh's Python reader derives a
+convenience property from it, `NativeReader.element_index_verified`
+(true only when the attribute is `"fem"`), and exposes the raw value as
+`NativeReader.element_index_space`. Both are Python properties, not HDF5
+attributes: no file holds an attribute named `element_index_verified`.
+
+`Results.from_recorders` caches transcoded files under a key that includes
+a digest of `model=` (its `lineage.fem_hash`, its `lineage.model_hash` and
+its `(fem_eid, tag)` pairing). A cached file, its stamp and its embedded `/opensees` are
+therefore never served to a call with another model.
+
+Who writes it:
+
+| Writer (`source_type`) | Writes `element_index_space`? |
+|---|---|
+| recorder transcoder (`tcl_recorders`) | `"fem"` when it can prove it, whatever apeGmsh version emitted the recorders; otherwise absent (below) |
+| `DomainCapture` (`domain_capture`) | never: absent |
+| `make_demo_results` (`domain_capture`) | never: absent |
+| `ParallelModalResult` (`parallel_modal`) | never: absent |
+| `FootfallResult` (`footfall_walking`) | never: absent |
+| `NativeWriter` itself | only when a caller invokes `stamp_element_index_space`; the transcoder is the only caller in `src/` |
+| MPCO (`Results.from_mpco`) | writes no `results.h5` at all: it reads the `.mpco` file directly |
+
+The transcoder labels element rows with the recorder spec's FEM ids. Those
+are the recorded elements only if the emit put each element's OpenSees tag
+in the `-ele` list, and a `.out` file does not record which emit wrote it
+(before #1740 the emits wrote the FEM ids unchanged). The transcoder therefore
+stamps `"fem"` only when all of these hold:
+
+1. `model=` was given, so the model's `/opensees` zone is embedded;
+2. that model's `lineage.fem_hash` equals the spec's `fem_snapshot_id`;
+3. either no record yields element rows (node ids are FEM ids, because the
+   bridge emits every node under its FEM id), or every element id that a
+   `gauss`, `line_stations` or `elements` record names is its own OpenSees
+   tag in the model's `(fem_eid, tag)` pairing. Then an emit that
+   translated the ids and one that did not wrote the same `-ele` list.
+
+What the stamp does **not** certify: that the recorder files came from a
+deck built from the embedded model, or that the deck recorded what the spec
+names. It certifies the index space only, relative to the embedded
+`/opensees`. Element records under `element_tags="sequential"` (the bridge
+default), whose FEM ids differ from their tags, stay unverified even when a
+translating emit wrote them, until an emit-side manifest can prove the
+translation.
+
+### The embedded model, and how to pair a file with its `model.h5`
+
+`/model` is the neutral zone that `fem.to_native_h5` writes. It has the
+same groups and the same `/meta` attrs as the root of a `model.h5`
+(`/model/nodes/ids`, `/model/nodes/coords`, `/model/elements/{alias}`, and
+so on), at the neutral version stamped in `/model/meta`. The writer
+overwrites `/model/meta/ndm`, `ndf`, `model_name` and
+`opensees_schema_version` with the source `model.h5`'s values, and copies
+its `/meta/lineage` into `/model/meta/lineage`. `/opensees` is that
+`model.h5`'s `/opensees` group, copied byte for byte. The copy keeps
+`/opensees/cuts` and `/opensees/sweeps`.
+
+`/meta/lineage` carries the ADR 0021 hash chain. Each value is a
+32-character hex string:
+
+| Attr | Present when | Value |
+|---|---|---|
+| `fem_hash` | `/model` is embedded | the neutral zone's content hash, equal to `/model/meta/snapshot_id` |
+| `model_hash` | `/opensees` is embedded | `blake2b(fem_hash ‖ /opensees)`. The hash skips `cuts`, `sweeps`, `regions`, `names`, `computed_sections`, `decls` and `decl_params`. |
+| `results_hash` | always; stamped at close | `blake2b(model_hash ‖ /stages)`, chained on `""` when `model_hash` is absent |
+
+**Pairing rule.** A results file belongs to a given `model.h5` when its
+`/meta/lineage/model_hash` equals that `model.h5`'s
+`/meta/lineage/model_hash`. When the results file has no `/opensees`, it
+belongs when its `fem_hash` equals the `model.h5`'s `fem_hash`. That
+matches the mesh only, not the OpenSees model. A file with no `fem_hash`
+(no `/model`, or results 1.0.0, which predates `/meta/lineage`) cannot be
+paired by content. Such a 1.1.0 file still has `/meta/lineage`, holding
+`results_hash` alone.
+
+`/model/meta/session_id`, when present, equals the session id of the
+`model.h5` the run was built from. It is a weaker signal: it identifies
+the session, not the content
+([`/meta/session_id`](#metasession_id-and-the-geometry-sibling)).
+Do not pair on `/model/meta/model_name`. A domain capture stamps the
+sidecar's stem (`run.model` for `run.h5`), not the session's model name.
+
+The stored hashes are the writer's claims. Recomputing `fem_hash` needs
+apeGmsh, because it rebuilds the snapshot. `Results.lineage` recomputes
+all three and warns on drift; it never raises (ADR 0021 INV-2).
+
+An embedded zone below its floor does not refuse the file. `/stages`
+still opens, read-only, and only the model zone is unavailable. An
+embedded zone newer than the reader refuses the whole file
+([The floor rule](#the-floor-rule), ADR 0113 D9).
+
+### Stages and the time vector
+
+`/stages/{stage_id}` holds one analysis stage. Stage ids are arbitrary
+strings. The writers name them `stage_0`, `stage_1`, … in write order, and
+readers order `stage_<int>` ids by their integer suffix (HDF5 lists
+`stage_10` before `stage_2`), then any other ids in lexical order.
+
+| Stage attr | Type | Meaning |
+|---|---|---|
+| `name` | string | the user's stage name (`begin_stage(name=)`), or `mode_<k>` for a mode stage |
+| `kind` | string | `"static"`, `"transient"` or `"mode"`; the writer refuses anything else |
+| `eigenvalue` | float64 | `mode` only: λ = ω² |
+| `frequency_hz` | float64 | `mode` only: √λ / 2π; `0.0` when λ ≤ 0 |
+| `period_s` | float64 | `mode` only: 2π / √λ; `0.0` when λ ≤ 0 |
+| `mode_index` | int64 | `mode` only, optional: the 1-based mode number |
+
+`time` is `(T,)` float64: the OpenSees domain time at each recorded step,
+in the order recorded. For a static stage that is the load factor
+(`getTime()` under `LoadControl`). A `mode` stage has `T = 1` and
+`time = [0.0]`, and its nodal `displacement_*` / `rotation_*` are
+eigenvector components, not displacements. Step `k` of every component in
+a stage is `time[k]`.
+
+### Partitions
+
+`/stages/{sid}/partitions/{pid}` splits a stage's rows by partition. Every
+writer in `src/` today writes exactly one partition, `partition_0`. A
+reader must still handle several. It takes the union of the partitions in
+name order: nodal columns are concatenated and then de-duplicated by node
+id (first occurrence wins, because boundary nodes repeat across
+partitions), and element rows are concatenated.
+
+### Nodal results: `nodes/`
+
+| Dataset | Shape, dtype | Meaning |
+|---|---|---|
+| `_ids` | `(N,)` int64 | node ids. They are the ids of `/model/nodes/ids` (the same ids `model.h5` carries). They are ascending when a stage merges several nodal records; otherwise they keep the record's order, so do not assume they are sorted |
+| `{component}` | `(T, N)` float64 | column `j` is node `_ids[j]` |
+
+**Example.** To read the nodal displacement of node `n` at step `k` of
+stage `s`: open `/stages/s/partitions/partition_0/nodes`, find `j` with
+`_ids[j] == n`, and read `displacement_x[k, j]`, `displacement_y[k, j]`
+and, in 3-D, `displacement_z[k, j]`.
+
+A component is present only if it was recorded. A shorthand request
+such as `"displacement"` is clipped to the model's `ndm` and `ndf`, so a
+2-D file normally has no `displacement_z`, and a file has `rotation_*`
+only when the node DOFs include rotations. When a stage merges several nodal records, the
+id list is their union, and a node that a record did not cover is `NaN`
+in that record's components.
+
+### Element results: the five categories
+
+Element results live in **groups**. Each group holds one homogeneous
+bucket: one element class and one integration layout. `group_id` is an
+arbitrary string; the writers use `<record name>_<class name>_<i>`, for
+example `wall_stress_FourNodeQuad_0`. A component can appear in several
+groups. The reader concatenates its rows across groups and partitions.
+
+**Element ids.** `_element_index` holds **element ids**, not row
+positions. They are the ids of `/model/elements` (`fem_eid`). Domain
+capture queries OpenSees by ops tag and translates the ids back before
+it writes, so a model whose gmsh ids differ from its ops tags still
+stores `fem_eid`s.
+
+> **Unverified for recorder transcodes (#1711).** The `fem_eid` claim is
+> verified only for files whose `source_type` is `domain_capture`. It is
+> **unverified** for files whose `source_type` is `tcl_recorders`, which
+> the recorder transcoder writes (`Results.from_recorders`). Until #1711
+> resolves, a reader must treat the element mapping of a `tcl_recorders`
+> file as unverified. It must show an "unverified" state for that file's
+> element results, and it must never guess a join between
+> `_element_index` and `/model/elements`.
+
+| Category | Group attrs | Index datasets | Component shape |
+|---|---|---|---|
+| `gauss_points` | `class_tag` int64 (OpenSees classTag), `int_rule` int64, `custom_rule_idx` int64 | `_element_index` `(E,)` int64; `_natural_coords` `(G, dim)` float64; `_local_axes_quaternion` `(E, 4)` float64, shells only, optional | `(T, E, G)` float64: `[k, e, g]` is element `_element_index[e]` at Gauss point `g` |
+| `line_stations` | `class_tag`, `int_rule` int64 | `_element_index` `(E,)` int64; `_station_natural_coord` `(S,)` float64, ξ ∈ [-1, +1] | `(T, E, S)` float64: `[k, e, s]` is element `e` at station `s` |
+| `nodal_forces` | `class_tag` int64, `frame` string (`"global"` or `"local"`) | `_element_index` `(E,)` int64 | `(T, E, n)` float64: `[k, e, a]` is element `e` at its `a`-th node, in connectivity order |
+| `fibers` | `section_tag` int64, `section_class` string (`-1` and `"(domain_capture)"` from capture) | one row per fiber, each `(F,)`: `_element_index` int64, `_gp_index` int64 (0-based section), `_y`, `_z`, `_area` float64, `_material_tag` int64, `_station_natural_coord` float64 (optional; `NaN` where unknown) | `(T, F)` float64: column `f` is the fiber described by row `f` of the index datasets |
+| `layers` | none | one row per (element, surface Gauss point, layer, sub-point), each `(L,)`: `_element_index`, `_gp_index`, `_layer_index`, `_sub_gp_index` int64 (all 0-based), `_thickness` float64; `_local_axes_quaternion` `(L, 4)` float64 | `(T, L)` float64 |
+
+* `_natural_coords` row `g` is Gauss point `g` in the parent element's
+  natural coordinates (`dim` is the parent dimension; a truss has
+  `(1, 1)`). The rows are in the element's own Gauss-point order.
+* Quaternions are scalar-first `(w, x, y, z)` and rotate global to local.
+* `nodal_forces` components are named `nodal_resisting_force_{x,y,z}` and
+  `nodal_resisting_moment_{x,y,z}`, with `_local_` before the axis when
+  `frame` is `"local"`.
+
+**Example.** To read element `e`'s stress components at step `k` of stage
+`s`: for each group under
+`/stages/s/partitions/partition_0/elements/gauss_points/`, find `i` with
+`_element_index[i] == e`. `stress_xx[k, i, :]` then holds one value per
+Gauss point, at the points `_natural_coords[g]`. The other `stress_*`
+components follow the same pattern.
+
+### Component names and units
+
+Component names are the canonical vocabulary in
+[`src/apeGmsh/_vocabulary.py`](../src/apeGmsh/_vocabulary.py), for
+example `displacement_x`, `rotation_z`, `reaction_force_y`,
+`stress_xx`, `stress_xy`, `axial_force`, `bending_moment_z`,
+`membrane_force_xx` and `fiber_stress`. Tensors use Voigt suffixes
+`xx yy zz xy yz xz`, and shear strains are engineering strains. A
+plane-stress element stores only `stress_xx`, `stress_yy` and
+`stress_xy`. A writer outside the recording path may use names that are
+not canonical: footfall writes `footfall_ap`, `footfall_ratio` and
+`footfall_fdom`. A reader must take component names from the file, not
+from a fixed list. Derived scalars such as `von_mises_stress` and the
+principal stresses are computed on read and are never stored.
+
+The file stores **no units**. Values are in the model's own consistent
+unit system, the one its coordinates and material constants were given
+in. Nothing in `results.h5` or `/model` records that system.
+
+### What is absent
+
+* **No springs.** The native writer has no spring path. A reader asked
+  for springs returns an empty result. Spring data exists only in MPCO
+  and `.ladruno` files.
+* **No model change across steps or stages.** `/model` and `/opensees`
+  are written once, at open. A stage does not record which elements were
+  active. The stage `name` is the only link to a staged build's program
+  stages, and the viewer pairs the two by name
+  (`viewers/data/_stage_activation.py::pair_capture_to_program`). That
+  pairing is a viewer convention, not a stored reference.
+* **No element-level `_ids`.** `NativeWriter.write_element_ids` can write
+  `elements/_ids`, but no writer in `src/` calls it and no reader reads
+  it. Take element ids from each group's `_element_index`.
+* **No `/model`** in a footfall file, so its `/meta/lineage` holds only
+  `results_hash` (chained on `""`). There is no `model_hash` when
+  `/opensees` is absent.
+* **Results 1.0.0 files** (the floor) have no `/meta/lineage`: 1.1.0
+  added only that sub-group (ADR 0021). The `results_schema_version` key
+  itself arrived with the embedded `/opensees` zone (ADRs 0020, 0023), so a
+  1.0.0 file may carry `/opensees`. A file that predates the key carries
+  only the envelope `schema_version` and no `/opensees`. Otherwise all of
+  them have the same `/stages` layout.
+* **No `element_index_space`** in 1.0.0 and 1.1.0 files, nor in a 1.2.0
+  file whose writer could not prove its element ids
+  ([`element_index_space`](#element_index_space)). Such a file reads as
+  unverified.
+
 ## Cross-references
 
 Every reference uses an HDF5 path string. Examples:
@@ -1752,8 +2119,8 @@ call `validate_zone_version(...)` for each zone before reading it.
 | Zone | `/meta` key | Root paths | Writer constant (source of truth) | Current | Floor |
 |---|---|---|---|---|---|
 | neutral (broker) | `neutral_schema_version` | `/nodes`, `/elements`, `/physical_groups`, `/labels`, `/mesh_selections`, `/partitions`, `/parts`, `/constraints`, `/reinforce_ties`, `/embed_ties`, `/rebar_elements`, `/contacts`, `/contact_planes`, `/interfaces`, `/loads`, `/masses`, `/composed_from` | [`mesh/_femdata_h5_io.py`](../src/apeGmsh/mesh/_femdata_h5_io.py) `NEUTRAL_SCHEMA_VERSION` | **2.35.0** | **2.10.0** |
-| opensees (bridge) | `opensees_schema_version` | `/opensees/*` | [`opensees/emitter/h5.py`](../src/apeGmsh/opensees/emitter/h5.py) `SCHEMA_VERSION` | **2.27.0** | **2.12.0** |
-| results | `results_schema_version` | `/stages/*` (composed `results.h5`, at file root) | [`results/schema/_versions.py`](../src/apeGmsh/results/schema/_versions.py) `RESULTS_SCHEMA_VERSION` | **1.1.0** | **1.0.0** |
+| opensees (bridge) | `opensees_schema_version` | `/opensees/*` | [`opensees/emitter/h5.py`](../src/apeGmsh/opensees/emitter/h5.py) `SCHEMA_VERSION` | **2.28.0** | **2.12.0** |
+| results | `results_schema_version` | `/stages/*` (composed `results.h5`, at file root; layout in [`results.h5`](#resultsh5-the-native-results-file)) | [`results/schema/_versions.py`](../src/apeGmsh/results/schema/_versions.py) `RESULTS_SCHEMA_VERSION` | **1.2.0** | **1.0.0** |
 | cuts (sub-zone of opensees) | — (no own key; rides the opensees zone) | `/opensees/cuts`, `/opensees/sweeps` | [`cuts/_h5_io.py`](../src/apeGmsh/cuts/_h5_io.py) `V4_SCHEMA_VERSION` | 2.5.0 | none of its own: it rides the opensees floor |
 | geometry (ADR 0112 D2) | `geometry_schema_version` | `/geometry` (sibling `<stem>.geometry.h5` only) | [`opensees/_internal/schema_version.py`](../src/apeGmsh/opensees/_internal/schema_version.py) `GEOMETRY_SCHEMA_VERSION` | **1.0.0** | **1.0.0** |
 | provenance (ADR 0112 D3) | `provenance_schema_version` | `/provenance` | [`opensees/_internal/schema_version.py`](../src/apeGmsh/opensees/_internal/schema_version.py) `PROVENANCE_SCHEMA_VERSION` | **1.1.0** | **1.0.0** |
@@ -2194,6 +2561,14 @@ detail lives in the `SCHEMA_VERSION` docstring in
   absorbing archive hashes differently once at this minor; every other
   file hashes as before. Additive minor (a 2.26.x reader refuses a 2.27.x
   file, INV-4).
+- `2.28.0` — ADR 0115 amendment R2-f (#1735; the maintainer's option (a)
+  on #1661): additive — the [`decl_params`](#opensees-decl_params-optional-opensees-2260)
+  rows of fix, mass and typed Node / Element recorder declarations gain a
+  `label` field, the names a `label=` declaration was given (`null` for
+  `pg=` or explicit ids). Provenance only: the ids stay authoritative and
+  replay never re-resolves a label. No path or dtype changes, and
+  `decl_params` is hash-excluded. Additive minor (a 2.27.x reader refuses
+  a 2.28.x file, INV-4).
 
 This is the **current** opensees-zone version (`SCHEMA_VERSION` in
 [`opensees/emitter/h5.py`](../src/apeGmsh/opensees/emitter/h5.py)); check that constant

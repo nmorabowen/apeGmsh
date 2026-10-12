@@ -62,7 +62,7 @@
     }
   },
   "animation": {
-    "about": "Results.export_animation through the public method (qt lane): tests/viewers/test_x2_export_animation_golden.py",
+    "about": "Results.export_animation through the public method (suite lane, session path; anim_* re-baselined from CI session frames by X2-b #1663, maintainer ruling 2026-10-11): tests/viewers/test_x2_export_animation_golden.py",
     "fps": 10,
     "step_stride": 3,
     "frame_steps": [

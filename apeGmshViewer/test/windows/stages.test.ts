@@ -68,8 +68,11 @@ class FakeEl {
   get clickable(): boolean {
     return this.listeners.length > 0;
   }
-  click(): void {
-    for (const f of this.listeners) f({ stopPropagation() {} });
+  /** Fire this element's click listeners; true when one stopped propagation (the event would not reach the card). */
+  click(): boolean {
+    let stopped = false;
+    for (const f of this.listeners) f({ stopPropagation: () => (stopped = true) });
+    return stopped;
   }
   all(pred: (e: FakeEl) => boolean): FakeEl[] {
     const out: FakeEl[] = pred(this) ? [this] : [];
@@ -174,7 +177,7 @@ const render = (s: State): { root: FakeEl; events: Event[] } => {
   const root = view(s, (e) => events.push(e)) as unknown as FakeEl;
   return { root, events };
 };
-const cardsOf = (root: FakeEl) => root.all((e) => e.className === "stage-card");
+const cardsOf = (root: FakeEl) => root.all((e) => e.className.split(" ").includes("stage-card"));
 
 test("the registry's stages entry is this window's view", () => {
   assert.equal(WINDOWS.stages.view, view);
@@ -287,8 +290,56 @@ test("the diagram: a horizontal timeline of stage cards, the global block, and t
   assert.ok(refs.every((r) => !r.clickable));
   assert.match(refs.find((r) => r.textContent === "gravity")!.title, /no \/provenance record for opensees\/pattern\/gravity/);
   assert.match(refs.find((r) => r.textContent === "unnamed")!.title, /remove_sp: no \/opensees\/decls row names it/);
-  assert.equal(cards.some((c) => c.clickable), false, "the store has no stage selection: a stage card dispatches nothing");
-  assert.deepEqual(events, []);
+  assert.ok(cards.every((c) => c.clickable), "every stage card selects its stage (V4f)");
+  assert.deepEqual(events, [], "drawing dispatches nothing");
+});
+
+// ---- V4f: stage selection ----
+
+test("a click on a stage card dispatches selectStage with its /sequence/stages row index; the store selects it", () => {
+  const { root, events } = render(staged);
+  const cards = cardsOf(root);
+  assert.deepEqual(cards.map((c) => c.dataset["stage"]), ["0", "1"]);
+  assert.deepEqual(stagesOf(staged).stages.map((st) => [st.index, st.selected]), [[0, false], [1, false]]);
+  cards[1]!.click();
+  assert.deepEqual(events, [{ type: "selectStage", index: 1 }]);
+  const s = reduce(staged, events[0]!);
+  assert.equal(s.stage, 1);
+  assert.deepEqual(stagesOf(s).stages.map((st) => st.selected), [false, true]);
+});
+
+test("the selected card is highlighted (class and accent style), the others are not; a click on it clears the selection", () => {
+  const s = reduce(staged, { type: "selectStage", index: 0 });
+  const { root, events } = render(s);
+  const cards = cardsOf(root);
+  assert.deepEqual(cards.map((c) => c.className), ["stage-card selected", "stage-card"]);
+  assert.match(cards[0]!.attrs["style"]!, /border: 1px solid var\(--accent\).*background: var\(--accent-wash\)/);
+  assert.doesNotMatch(cards[1]!.attrs["style"]!, /--accent/);
+  assert.match(cards[0]!.title, /gravity: selected/);
+  cards[0]!.click();
+  assert.deepEqual(events, [{ type: "selectStage", index: null }]);
+  assert.equal(reduce(s, events[0]!).stage, null);
+});
+
+test("a click on a change inside a card asks for its source and stops there: it never selects the stage", () => {
+  const key = "opensees/pattern/gravity";
+  const s: State = {
+    ...staged,
+    provenance: [{ key, origin: "user", seq: 0, source: { file: "/work/model.py", line: 7, function: "<module>", sha256: "ab", recorded: true, script: null } }],
+  };
+  const { root, events } = render(s);
+  const ref = root.all((e) => e.className === "window-ref" && e.clickable)[0]!;
+  assert.equal(ref.click(), true, "the change's click stops propagation, so the card's selectStage does not fire");
+  assert.deepEqual(events, [{ type: "requestSource", decl: key }]);
+});
+
+test("an unnamed stage (an unstaged deck's implicit stage) still selects and highlights", () => {
+  assert.equal(stagesOf(deck).stages[0]!.title, "implicit stage");
+  const { root, events } = render(deck);
+  cardsOf(root)[0]!.click();
+  assert.deepEqual(events, [{ type: "selectStage", index: 0 }]);
+  const s = reduce(deck, events[0]!);
+  assert.equal(cardsOf(render(s).root)[0]!.className, "stage-card selected");
 });
 
 test("a click on a change with a recorded source dispatches requestSource, which the store accepts", () => {

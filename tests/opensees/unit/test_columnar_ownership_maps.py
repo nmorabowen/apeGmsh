@@ -583,3 +583,48 @@ def test_tag_map_inverse_matches_reference_reverse_dict() -> None:
     assert inv_dup.get(50, -1) == 6
     assert inv_dup.get(60, -1) == 8
     assert len(inv_dup) == 2
+
+
+# ---------------------------------------------------------------------------
+# SortedIntToInt.get_many — parity vs the scalar .get (#1670)
+# ---------------------------------------------------------------------------
+
+
+def _scalar_parity(m: SortedIntToInt, q: "list[int]") -> None:
+    vals, found = m.get_many(np.asarray(q, dtype=np.int64))
+    assert vals.shape == found.shape == (len(q),)
+    assert found.dtype == bool
+    for i, k in enumerate(q):
+        ref = m.get(k)
+        assert bool(found[i]) == (ref is not None), k
+        if ref is not None:
+            assert int(vals[i]) == ref, k
+
+
+def test_get_many_hits_misses_and_unsorted_match_scalar_get() -> None:
+    m = SortedIntToInt(
+        np.array([2, 5, 9, 40], dtype=np.int64),
+        np.array([7, 0, 3, 11], dtype=np.int64),
+    )
+    # unsorted, repeated, below/between/above every key
+    _scalar_parity(m, [40, 1, 5, 9, 9, 2, 100, 6, -3, 41, 5])
+
+
+def test_get_many_empty_query_and_empty_map() -> None:
+    m = SortedIntToInt(
+        np.array([1, 3], dtype=np.int64), np.array([10, 30], dtype=np.int64),
+    )
+    vals, found = m.get_many(np.array([], dtype=np.int64))
+    assert vals.shape == found.shape == (0,)
+    empty = SortedIntToInt(
+        np.array([], dtype=np.int64), np.array([], dtype=np.int64),
+    )
+    vals, found = empty.get_many([4, 1])
+    assert not found.any() and found.shape == (2,)
+
+
+def test_get_many_matches_scalar_on_node_index_lookup() -> None:
+    rng = np.random.default_rng(7)
+    ids = rng.permutation(np.arange(1, 400, 3)).astype(object)  # unsorted, object
+    m = node_index_lookup(ids)
+    _scalar_parity(m, rng.integers(-5, 420, size=300).tolist())

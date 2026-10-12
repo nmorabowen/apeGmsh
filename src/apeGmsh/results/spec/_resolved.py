@@ -255,6 +255,7 @@ class ResolvedRecorderSpec:
         *,
         file_format: str = "out",
         ops=None,
+        model=None,
     ) -> "LiveRecorders":
         """Emit classic OpenSees recorders into the running ops domain.
 
@@ -262,7 +263,7 @@ class ResolvedRecorderSpec:
         and closes recorders around stages you declare with
         :meth:`LiveRecorders.begin_stage` / :meth:`end_stage`::
 
-            with spec.emit_recorders("out/") as live:
+            with spec.emit_recorders("out/", model=model) as live:
                 live.begin_stage("gravity", kind="static")
                 for _ in range(n_grav):
                     ops.analyze(1, 1.0)
@@ -274,10 +275,10 @@ class ResolvedRecorderSpec:
                 live.end_stage()
 
             grav = Results.from_recorders(
-                spec, "out/", fem=fem, stage_id="gravity",
+                spec, "out/", fem=fem, stage_id="gravity", model=model,
             )
             dyn = Results.from_recorders(
-                spec, "out/", fem=fem, stage_id="dynamic",
+                spec, "out/", fem=fem, stage_id="dynamic", model=model,
             )
 
         Each stage's output filenames are prefixed with ``<stage>__``
@@ -289,10 +290,18 @@ class ResolvedRecorderSpec:
         ``ops.domain_capture(DomainCaptureSpec(opensees=ops),
         path=...)`` or :meth:`emit_mpco` instead);
         modal records raise on ``__enter__``.
+
+        ``model`` is the built :class:`~apeGmsh.opensees.OpenSeesModel`
+        (for example ``OpenSeesModel.from_h5`` of the bridge's
+        ``ops.h5(...)`` file). Records name elements by FEM id and
+        OpenSees records by element tag; under
+        ``element_tags="sequential"`` (the bridge default) the two differ,
+        so the model's pairing translates every ``-ele`` list. A spec
+        with an element-level record raises without it.
         """
         from ..live._recorders import LiveRecorders
         return LiveRecorders(
-            self, output_dir, file_format=file_format, ops=ops,
+            self, output_dir, file_format=file_format, ops=ops, model=model,
         )
 
     def emit_mpco(self, path, *, ops=None) -> "LiveMPCO":
@@ -325,6 +334,7 @@ class ResolvedRecorderSpec:
 
     def to_tcl_commands(
         self, *, output_dir: str = "", file_format: str = "out",
+        model=None,
     ) -> list[str]:
         """Emit ``recorder ...`` Tcl command lines.
 
@@ -336,19 +346,29 @@ class ResolvedRecorderSpec:
         file_format : str
             ``"out"`` (text) or ``"xml"`` (self-describing). Defaults
             to text.
+        model : OpenSeesModel, optional
+            The built model whose ``(fem_eid, tag)`` pairing translates
+            element ids to OpenSees tags (see :meth:`emit_recorders`).
+            Required when the spec holds an element-level record.
         """
         from ._emit import emit_spec_tcl
         return emit_spec_tcl(
             self.records, output_dir=output_dir, file_format=file_format,
+            model=model, fem_snapshot_id=self.fem_snapshot_id,
         )
 
     def to_python_commands(
         self, *, output_dir: str = "", file_format: str = "out",
+        model=None,
     ) -> list[str]:
-        """Emit ``ops.recorder(...)`` Python call lines."""
+        """Emit ``ops.recorder(...)`` Python call lines.
+
+        ``model`` translates element ids as in :meth:`to_tcl_commands`.
+        """
         from ._emit import emit_spec_python
         return emit_spec_python(
             self.records, output_dir=output_dir, file_format=file_format,
+            model=model, fem_snapshot_id=self.fem_snapshot_id,
         )
 
     # ---------- MPCO bridge (Phase 8) ----------

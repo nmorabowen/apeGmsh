@@ -53,6 +53,7 @@ from ._internal.build.element_emit import (
 )
 from ._internal.build.ndf import (
     _emit_node_with_inferred_ndf,
+    emit_owned_nodes_with_inferred_ndf,
     validate_node_ndf_element_compat,
     infer_node_ndf,
     validate_adaptive_element_endpoints,
@@ -107,6 +108,7 @@ from ._internal.build.constraints_ranked import (
     emit_mp_constraints_partitioned,
     emit_stage_mp_constraints_partitioned,
     plan_stage_mp_constraints_partitioned,
+    refuse_multiplied_mp_constraints,
     route_element_less_nodes,
 )
 from ._internal.build.contacts import (
@@ -231,6 +233,14 @@ from ._readback import (
     _ElementAccessor,
     open_session,
 )
+from ._results_route import (
+    DeckRun,
+    begin_deck_run,
+    log_proves_completion,
+    open_results,
+    write_tcl_driver,
+)
+from .recorder import Element as _ElementRecorder
 from .recorder import FilterableRecorder, Ladruno
 from .procedures._contact import _ContactQueryMixin
 from .procedures._explicit import ExplicitRunResult, _ExplicitMixin
@@ -260,6 +270,7 @@ if TYPE_CHECKING:
     from .pattern.pattern import Plain
     from apeGmsh.results.capture._domain import DomainCapture
     from apeGmsh.results.capture.spec import DomainCaptureSpec
+    from apeGmsh.results.Results import Results
     from apeGmsh.hpc import Cluster, Job
 
     from .emitter.live import LiveOpsEmitter
@@ -1954,10 +1965,27 @@ class BuiltModel:
             # holds a primitive as that primitive's declaration key. The
             # records ``fix_from_model()`` expands to are the model-wide
             # declaration's expansion, not owners.
+            # An ``Element`` recorder declared with ``label=`` holds FEM
+            # ids until the emit translates them; its row stores the
+            # translated OpenSees tags, the id space of every other
+            # ``Element`` recorder row (ADR 0115 amendment R2-f).
             _rows_, _decl_index = self._declaration_rows()
+            _label_tag_map: "list[FemToOpsTagMap]" = []
+
+            def _archived(owner: object) -> object:
+                if not (isinstance(owner, _ElementRecorder)
+                        and owner.label is not None):
+                    return owner
+                if not _label_tag_map:
+                    _label_tag_map.append(
+                        FemToOpsTagMap.from_plan(tag_plan.elements.specs))
+                return owner.materialize(
+                    emitter, self.fem, tag_plan,
+                    fem_eid_to_ops_tag=_label_tag_map[0])
+
             _archive_side_channel(emitter).set_decl_params(
                 sorted(
-                    ((_decl_index[oid], owner)
+                    ((_decl_index[oid], _archived(owner))
                      for oid, owner in self._decl_owners.items()),
                     key=lambda item: item[0],
                 ),
@@ -2394,6 +2422,7 @@ class BuiltModel:
                     p, emitter, tag, self.fem,
                     tag_plan=tag_plan,
                     fem_eid_to_ops_tag=fem_eid_to_ops_tag,
+                    effective_ndf=inferred_ndf,
                 )
                 rec_cursor.close()
             else:  # pragma: no cover  - unreachable per partition above
@@ -2838,6 +2867,7 @@ class BuiltModel:
                     rec_spec, emitter, rec_spec_tag, self.fem,
                     tag_plan=tag_plan,
                     fem_eid_to_ops_tag=fem_eid_to_ops_tag,
+                    effective_ndf=inferred_ndf,
                 )
             rec_cursor.close()
 
@@ -3113,6 +3143,12 @@ class BuiltModel:
         partitions = list(self.fem.partitions)
         node_owners = build_node_partition_owners(self.fem)
         element_owner = build_element_partition_owner(self.fem)
+        refuse_multiplied_mp_constraints(
+            self.fem, tag_plan, node_owners, element_owner,
+            pre_element=pre_element,
+            chain_forced=emitter.caps.suppress_analysis_chain_auto_emit,
+            has_equation_tie=self._has_equation_constraints(),
+            stage_records=self.stage_records)
         # ADR 0120 D1: the one rank of each node-pair element, as an
         # owner map keyed by the node-pair sentinel id (the plan row of a
         # node-pair spec carries MISSING_FEM_ELEMENT_ID).
@@ -3614,26 +3650,20 @@ class BuiltModel:
                 # partition MP constraints happen in the constraint
                 # pass below (INV-2).
                 _hoisted: set[int] = hoisted_nodes_by_rank.get(rank) or set()
-                for nid in sorted(int(n) for n in part.node_ids):
-                    # Phase SSI-2.C: stage-bound nodes emit inside
-                    # their stage's block, not in the global pre-stage
-                    # per-rank pass.  S2 (ADR 0033): per-node ndf via
-                    # broker.
-                    if staged and nid in node_owner_stage:
-                        continue
-                    # ADR 0099 S5: already emitted in this rank's
-                    # hoisted gated block (step 1b).
-                    if nid in _hoisted:
-                        continue
-                    node_idx = node_idx_lookup.get(nid)
-                    if node_idx is None:
-                        continue
-                    xyz = self.fem.nodes.coords[node_idx]
-                    _emit_node_with_inferred_ndf(
-                        emitter, inferred_ndf, int(nid),
-                        (float(xyz[0]), float(xyz[1]), float(xyz[2])),
-                        self.ndf,
-                    )
+                # Skipped: stage-bound nodes (Phase SSI-2.C, they emit
+                # inside their stage's block) and nodes this rank's
+                # hoisted gated block already declared (ADR 0099 S5,
+                # step 1b).  S2 (ADR 0033): per-node ndf via broker.
+                # The helper resolves the rank's ids in one vectorised
+                # lookup and emits them in ascending id order.
+                _exclude: "list[Any]" = [_hoisted] if _hoisted else []
+                if staged and node_owner_stage:
+                    _exclude.append(node_owner_stage)
+                emit_owned_nodes_with_inferred_ndf(
+                    emitter, inferred_ndf, part.node_ids,
+                    node_idx_lookup, self.fem.nodes.coords, self.ndf,
+                    exclude=_exclude,
+                )
 
                 # 6. Elements — per-rank fan-out (tags pre-allocated;
                 # plan pre-bucketed by owner rank so each rank walks
@@ -3902,6 +3932,7 @@ class BuiltModel:
                     p, emitter, tag, self.fem,
                     tag_plan=tag_plan,
                     fem_eid_to_ops_tag=fem_eid_to_ops_tag,
+                    effective_ndf=inferred_ndf,
                 )
         rec_cursor.close()
 
@@ -4668,6 +4699,7 @@ class BuiltModel:
                     rec_spec, emitter, rec_spec_tag, self.fem,
                     tag_plan=tag_plan,
                     fem_eid_to_ops_tag=fem_eid_to_ops_tag,
+                    effective_ndf=inferred_ndf,
                 )
             rec_cursor.close()
 
@@ -8342,7 +8374,8 @@ def _merge_homogeneous_fixes(
             else:
                 runs.append((mask, [nid]))
         for mask, nids in runs:
-            trimmed = FixRecord(pg=None, nodes=tuple(nids), dofs=mask)
+            trimmed = FixRecord(pg=None, nodes=tuple(nids), dofs=mask,
+                                label=rec.label)
             # A record assembled without ``_declare_record`` has no row;
             # its trimmed parts then have none either, and an archival
             # emit refuses them exactly as it would refuse the original.
@@ -8448,6 +8481,10 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
         # :class:`DroppedSession` (naming why) once this bridge wipes or
         # replaces the domain it solved, or runs a deck.
         self._read_state: ReadState = None
+        # ADR 0115 D3: the last deck run (``py``/``tcl`` with
+        # ``run=True``) that ``ops.results(path)`` reads; ``None`` until one
+        # starts, unfinished until its subprocess exits cleanly.
+        self._deck_run: DeckRun | None = None
         # Which OpenSees runtime the subprocess paths bind, and the live
         # fork expectation.  ``None`` → env-var / PATH fallback (the
         # pre-target behaviour).  See :mod:`apeGmsh.opensees._target`.
@@ -8868,9 +8905,10 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
         are unique among the fixes (flat and staged).  A label only: the
         deck and ``model_hash`` do not change with it.
         """
-        pg, nodes_tuple = _select_nodes(
+        pg, nodes_tuple, label_names = _select_nodes(
             self._fem, pg=pg, nodes=nodes, label=label, where="apeSees.fix")
-        rec = FixRecord(pg=pg, nodes=nodes_tuple, dofs=tuple(dofs))
+        rec = FixRecord(pg=pg, nodes=nodes_tuple, dofs=tuple(dofs),
+                        label=label_names)
         self._declare_record(rec, "fix", name)
         self._fix_records.append(rec)
 
@@ -8961,11 +8999,11 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
         ``name`` labels the declaration (``opensees/mass/<name>`` in
         ``/opensees/decls``), as for :meth:`fix`; a label only.
         """
-        pg, nodes_tuple = _select_nodes(
+        pg, nodes_tuple, label_names = _select_nodes(
             self._fem, pg=pg, nodes=nodes, label=label, where="apeSees.mass")
         rec = MassRecord(
             pg=pg, nodes=nodes_tuple, values=tuple(values),
-            overwrite=bool(overwrite),
+            overwrite=bool(overwrite), label=label_names,
         )
         self._declare_record(rec, "mass", name)
         self._mass_records.append(rec)
@@ -9960,16 +9998,27 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
 
         self._read_state = DroppedSession(
             DECK_RUN_CAUSE.format(verb="ops.tcl(..., run=True)"))
+        deck_run = begin_deck_run(
+            self, bm, emitter, path, verb="ops.tcl(..., run=True)")
+        self._deck_run = deck_run
         binary = _resolve_opensees_binary(bin, self._opensees)
-        return stream_run(
-            [binary, path],
-            log_path=resolve_log_path(log, path),
+        # OpenSees.exe exits 0 after a Tcl ``error`` (an aborted analyze
+        # included), so the exit code proves nothing: a sibling driver
+        # sources the deck unchanged and prints a marker only when the
+        # deck ran to its end (ADR 0115 D3).
+        log_path = resolve_log_path(log, path)
+        stats = stream_run(
+            [binary, write_tcl_driver(path)],
+            log_path=log_path,
             verbose=verbose,
             label=run_label(path, analyze_steps, analyze_dt),
             header="OpenSees",
             deck_path=path,
             expect_solver_stats=_deck_requested_solver_stats(emitter),
         )
+        if log_proves_completion(log_path):
+            self._deck_run = deck_run.finish()
+        return stats
 
     def modal_deck(
         self,
@@ -10456,12 +10505,15 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
 
         self._read_state = DroppedSession(
             DECK_RUN_CAUSE.format(verb="ops.py(..., run=True)"))
+        deck_run = begin_deck_run(
+            self, bm, emitter, path, verb="ops.py(..., run=True)")
+        self._deck_run = deck_run
         python_bin = _resolve_python_binary(python, self._opensees)
         # PYTHONUNBUFFERED so the child's stdout streams live through the
         # pipe rather than block-buffering until exit (the tee + live
         # counter depend on it).
         child_env = {**os.environ, "PYTHONUNBUFFERED": "1"}
-        return stream_run(
+        stats = stream_run(
             [python_bin, path],
             log_path=resolve_log_path(log, path),
             verbose=verbose,
@@ -10471,6 +10523,44 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
             deck_path=path,
             expect_solver_stats=_deck_requested_solver_stats(emitter),
         )
+        self._deck_run = deck_run.finish()
+        return stats
+
+    def results(self, path: str) -> "Results":
+        """The history of this bridge's last deck run, as a ``Results``
+        (ADR 0115 D3).
+
+        ``path`` is required and must be the deck that
+        ``ops.py(path, run=True)`` or ``ops.tcl(path, run=True)`` wrote
+        and ran on this bridge (Q5). What the run recorded decides the
+        reader:
+
+        - one ``ops.recorder.MPCO`` -> :meth:`Results.from_mpco`;
+        - ``ops.recorder.declare(nodes=...)`` and typed
+          ``ops.recorder.Node(..., time_format="dt")`` records -> one
+          recorder spec synthesised from them, read by
+          :meth:`Results.from_recorders` (Q3).
+
+        It raises :class:`BridgeError`, naming why, before writing any
+        file: when no deck run happened on this bridge, the last solve
+        was a live ``analyze`` (read that with ``.read``; Q4), ``path``
+        is another deck, the run did not finish, the declarations changed
+        since the run, no recorder was declared, or a record cannot be
+        read here (a typed ``recorder.Element``, a ``declare`` element
+        category or ``raw_*`` token, a typed record without a time
+        column, a staged or partitioned run's text records, a missing or
+        malformed output file). It never returns a ``Results`` that
+        silently lacks a declared record.
+
+        A read writes under ``<path>.results/``: the model archive
+        (``model.h5``) the reader binds, the text records in the reader's
+        layout (``out/``) and the reader's cache.
+
+        A single value, one node at one step, is
+        ``ops.results(path).nodes.get(label="tip",
+        component="displacement_y").item()``.
+        """
+        return open_results(self, path)
 
     def run(self, *, wipe: bool = True) -> None:
         """Drive an in-process LiveOpsEmitter through the full deck.
@@ -10659,6 +10749,26 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
         # initial-stress persists with its stage under
         # ``/opensees/stages`` (Phase 2).
 
+        self._write_h5(
+            path, self.build(), model_name=model_name, cuts=cuts,
+            sweeps=sweeps,
+        )
+
+    def _write_h5(
+        self,
+        path: str,
+        bm: BuiltModel,
+        *,
+        model_name: str | None = None,
+        cuts: "Sequence[SectionCutDef]" = (),
+        sweeps: "Sequence[SectionSweepDef]" = (),
+    ) -> None:
+        """:meth:`h5`'s composition over a given :class:`BuiltModel`.
+
+        :meth:`h5` passes a fresh ``build()``; ``ops.results`` (ADR 0115
+        D3) passes the frozen model a deck run emitted, so a read builds
+        nothing (Invariant 2).
+        """
         from .emitter.h5 import H5Emitter
 
         snapshot_id = ""
@@ -10672,7 +10782,6 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
             snapshot_id = ""
 
         name = model_name or _path_stem(path)
-        bm = self.build()
         emitter = H5Emitter(model_name=name, snapshot_id=snapshot_id)
         bm.emit(emitter)
         # Ledgered verbs whose own deferred warning reached the user; the

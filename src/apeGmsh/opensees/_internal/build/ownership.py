@@ -186,6 +186,30 @@ class SortedIntToInt:
         for i in range(self._vals.shape[0]):
             yield int(self._vals[i])
 
+    def get_many(
+        self, keys: "Any",
+    ) -> "tuple[np.ndarray, np.ndarray]":
+        """Vectorised :meth:`get`: one ``searchsorted`` for a whole id array.
+
+        Returns ``(vals, found)``, both parallel to ``keys`` and in the
+        caller's order (``keys`` need not be sorted). ``found[i]`` is
+        True iff ``keys[i]`` is a key, and then ``vals[i]`` equals
+        ``self.get(keys[i])``. ``vals`` is undefined where ``found`` is
+        False, so a caller reads it only through the mask; a miss is
+        never folded into a sentinel value.
+        """
+        q = np.asarray(keys, dtype=np.int64).reshape(-1)
+        k = self._keys
+        vals = np.zeros(q.shape[0], dtype=np.int64)
+        if k.shape[0] == 0 or q.shape[0] == 0:
+            return vals, np.zeros(q.shape[0], dtype=bool)
+        pos = np.searchsorted(k, q)
+        in_range = pos < k.shape[0]
+        pos_c = np.where(in_range, pos, 0)
+        found = in_range & (k[pos_c] == q)
+        vals[found] = self._vals[pos_c[found]]
+        return vals, found
+
     def translate_ranks(
         self, keys: "np.ndarray", missing: int = -1,
     ) -> "np.ndarray":

@@ -41,6 +41,7 @@ path.
 """
 from __future__ import annotations
 
+import warnings
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional
 
@@ -83,12 +84,17 @@ def render_results_still(
     deform: DeformArg = None,
     camera: Optional[str] = None,
     window_size: tuple[int, int] = _DEFAULT_WINDOW,
+    _warn_unscoped: bool = True,
 ) -> Optional[Path]:
     """Write one still of ``results``. Returns the Path or ``None``.
 
     ``None`` (and the ``[skip viewer]`` notice) only under
-    ``APEGMSH_SKIP_VIEWER=1`` or with no GL context.
+    ``APEGMSH_SKIP_VIEWER=1`` or with no GL context. An unscoped
+    multi-stage Results draws its last stage and warns (#1750);
+    ``_warn_unscoped=False`` is the pack's, which warned once already.
     """
+    if _warn_unscoped:
+        _warn_if_unscoped(results, "render")
     view = _require_view(view)
     deform_spec = _require_deform(deform)
     _refuse_unsupported(view, component, deform_spec)
@@ -121,7 +127,11 @@ def render_results_pack(
     ``contour.png`` + ``deformed.png`` (default component, last step),
     ``reactions.png`` (static stages with reactions), ``history.png``
     (matplotlib, at the extrema node).
+
+    An unscoped multi-stage Results packs its last stage and warns
+    once (#1750).
     """
+    _warn_if_unscoped(results, "render_pack")
     if results.fem is None:
         raise RuntimeError(
             "results.render_pack requires a bound FEMData "
@@ -138,6 +148,7 @@ def render_results_pack(
     mesh = render_results_still(
         results, dest / "mesh.png",
         view="mesh", camera=camera, window_size=window_size,
+        _warn_unscoped=False,
     )
     if mesh is None:
         return ()
@@ -152,6 +163,7 @@ def render_results_pack(
             results, dest / "contour.png",
             view="contour", component=component, step=-1,
             camera=camera, window_size=window_size,
+            _warn_unscoped=False,
         )
         if contour is not None:
             written.append(contour)
@@ -160,6 +172,7 @@ def render_results_pack(
                 results, dest / "deformed.png",
                 view="deformed", component=component, step=-1, deform=None,
                 camera=camera, window_size=window_size,
+                _warn_unscoped=False,
             )
         except ValueError:
             # No recorded displacement: omit, do not fail the pack.
@@ -172,6 +185,7 @@ def render_results_pack(
             results, dest / "reactions.png",
             view="reactions", component="reactions", step=-1,
             camera=camera, window_size=window_size,
+            _warn_unscoped=False,
         )
         if reactions is not None:
             written.append(reactions)
@@ -277,9 +291,10 @@ def _refuse_unsupported(
 def default_contour_component(results: Any) -> Optional[str]:
     """The S1 starter heuristic (uz, ux, uy, then the first nodal
     component in canonical-axis order), over every stage's nodal
-    components. ``None`` when nothing nodal is recorded."""
+    components (the scoped stage's only, on a stage-scoped Results).
+    ``None`` when nothing nodal is recorded."""
     nodal: set[str] = set()
-    for stage in results.stages:
+    for stage in _pack_stages(results):
         try:
             nodal.update(results.stage(stage.id).nodes.available_components())
         except Exception:
@@ -313,11 +328,58 @@ def _component_sort_key(name: str) -> tuple[int, str]:
 
 
 def _resolve_stage(results: Any) -> str:
-    """The last stage (the only one, for a single-stage file)."""
+    """The stage a still draws (X2-g, #1742).
+
+    Mirrors ``Results._resolve_stage`` (``export_animation``): the
+    ``results.stage(s)`` / ``results.modes[i]`` scope first, then the
+    only stage. Where ``Results._resolve_stage`` raises (several stages,
+    none scoped), a still keeps its documented unscoped default: the
+    LAST stage. A scope that names no stage in the file raises; a still
+    never silently draws another stage.
+    """
     stages = list(results.stages)
     if not stages:
         raise RuntimeError("results.render requires at least one stage.")
+    scoped = getattr(results, "_stage_id", None)
+    if scoped is not None:
+        if not any(str(s.id) == str(scoped) for s in stages):
+            raise RuntimeError(
+                f"results.render: the scoped stage {scoped!r} is not in "
+                f"this results file (stages: {[s.id for s in stages]})."
+            )
+        return str(scoped)
     return str(stages[-1].id)
+
+
+def _warn_if_unscoped(results: Any, verb: str) -> None:
+    """Warn when a still falls back to the last of several stages
+    (maintainer ruling on #1750): the picture is one stage of many, and
+    the caller never said which."""
+    if getattr(results, "_stage_id", None) is not None:
+        return
+    stages = list(results.stages)
+    if len(stages) <= 1:
+        return
+    last = stages[-1]
+    name = getattr(last, "name", None) or last.id
+    warnings.warn(
+        f"results.{verb}() on a Results with {len(stages)} stages and "
+        f"none selected draws the LAST stage, {name!r}. Pick one with "
+        f"results.stage({name!r}).{verb}(...) (any stage name or id).",
+        UserWarning,
+        stacklevel=4,
+    )
+
+
+def _pack_stages(results: Any) -> list[Any]:
+    """The stages the pack's choices look at: the scoped stage alone on
+    a stage-scoped Results (so the default component and the reactions
+    still are that stage's), else every stage (unscoped, unchanged)."""
+    scoped = getattr(results, "_stage_id", None)
+    stages = list(results.stages)
+    if scoped is None:
+        return stages
+    return [s for s in stages if str(s.id) == str(scoped)]
 
 
 def _resolve_step(results: Any, stage_id: str, step: int) -> int:
@@ -376,9 +438,11 @@ def _require_deform_field(results: Any, stage_id: str, field: str) -> None:
 
 
 def _has_static_reactions(results: Any) -> bool:
-    """True when a ``kind='static'`` stage recorded a reaction_* field."""
+    """True when a ``kind='static'`` stage recorded a reaction_* field
+    (the scoped stage, on a stage-scoped Results)."""
     static = [
-        s for s in results.stages if getattr(s, "kind", None) == "static"
+        s for s in _pack_stages(results)
+        if getattr(s, "kind", None) == "static"
     ]
     for stage in static:
         try:

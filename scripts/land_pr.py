@@ -54,9 +54,11 @@ PR_FIELDS = (
     "state,isDraft,baseRefName,headRefName,headRefOid,mergeable,statusCheckRollup,"
     "labels,body,closingIssuesReferences"
 )
-#: The PR files listing for checks 7 and 8: one compact JSON row per file.
-#: `previous_filename` makes a rename away from a baseline file visible.
+#: The one PR files listing, read by checks 5, 7 and 8: one compact JSON row per
+#: file, [filename, status, previous_filename, changes, patch]. `previous_filename`
+#: makes a rename out of a frozen or baseline path visible (#1775).
 FILES_JQ = ".[] | [.filename, .status, .previous_filename, .changes, (.patch // null)] | @json"
+FileRow = list[Any]
 #: ADR 0121 D4 (b): the census baseline. `freeze_census.py` holds FROZEN and
 #: ADMITTED; `test_freeze_lock.py` holds FREEZE_POINT_DIGEST and the lock that
 #: compares them, so editing either one edits the baseline.
@@ -201,10 +203,16 @@ def _born(path: str, status: str, previous: str | None) -> bool:
     return previous.rsplit("/", 1)[-1][:4] != path.rsplit("/", 1)[-1][:4]
 
 
-def _check_adr_and_baseline(number: int, pr: dict[str, Any], gh: Runner, git: Runner) -> None:
+def _changed_files(number: int, gh: Runner) -> list[FileRow]:
+    """The PR's changed files. `pr view --json files` stops at 100 files, and `pr diff`
+    is refused (HTTP 406) past 20000 diff lines (#1775); the paginated files endpoint
+    has neither cap."""
+    listing = gh(["api", f"repos/{{owner}}/{{repo}}/pulls/{number}/files", "--paginate", "--jq", FILES_JQ])
+    return [json.loads(line) for line in listing.splitlines() if line.strip()]
+
+
+def _check_adr_and_baseline(number: int, pr: dict[str, Any], rows: list[FileRow], git: Runner) -> None:
     """Checks 7 and 8 (ADR 0121 D4, invariant 8), read from the PR files listing."""
-    listing = gh(["api", "--paginate", f"repos/{{owner}}/{{repo}}/pulls/{number}/files", "--jq", FILES_JQ])
-    rows = [json.loads(line) for line in listing.splitlines() if line.strip()]
     for path, status, previous, changes, patch in rows:
         if not ADR_FILE.fullmatch(path) or status == "removed":
             continue
@@ -275,8 +283,9 @@ def check(number: int, gh: Runner, git: Runner) -> dict[str, Any]:
         raise LandError("check 4: the working tree is not clean (git status --porcelain).")
     labels = json.loads(gh(["label", "list", "--limit", "200", "--json", "name"]))
     frozen = [lab["name"][len("freeze:") :] for lab in labels if lab["name"].startswith("freeze:")]
-    # `pr view --json files` stops at 100 files; the diff listing does not.
-    paths = gh(["pr", "diff", str(number), "--name-only"]).splitlines()
+    rows = _changed_files(number, gh)
+    # A rename lists both names, so moving a file OUT of a frozen path is caught too.
+    paths = [name for row in rows for name in (row[0], row[2]) if name]
     _check_freeze(number, pr, paths, frozen, gh)
     if pr["mergeable"] != "MERGEABLE":
         why = "merge main locally and push" if pr["mergeable"] == "CONFLICTING" else "retry once GitHub has computed it"
@@ -297,7 +306,7 @@ def check(number: int, gh: Runner, git: Runner) -> dict[str, Any]:
                     f"check 6: required check {name!r} is {seen} on {head[:12]}, not SUCCESS "
                     f"(every run of a required check must be). Pending is a refusal, not a wait."
                 )
-    _check_adr_and_baseline(number, pr, gh, git)
+    _check_adr_and_baseline(number, pr, rows, git)
     return pr
 
 

@@ -1,6 +1,6 @@
 """scripts/land_pr.py replays: the lost-work PRs are refused or flagged, a clean PR lands.
 
-The recordings are what `gh pr view --json ...`, `gh pr diff --name-only`,
+The recordings are what `gh pr view --json ...`, `gh api .../pulls/N/files`,
 `gh api .../compare` and `git ls-remote` returned for the real PRs, trimmed
 to the fields the script reads. Nothing here needs `gh` or a network: both
 seams are replaced by `Replay`, which fails on any call that was not
@@ -112,6 +112,11 @@ LABELS = [{"name": "program"}, {"name": "slice"}, {"name": "semantic"}]
 FREEZE_STUDIO = [*LABELS, {"name": "freeze:src/apeGmsh/studio/*"}]
 
 
+def _files_call(number):
+    """The one files listing checks 5, 7 and 8 read (#1775, #1686)."""
+    return f"api repos/{{owner}}/{{repo}}/pulls/{number}/files --paginate --jq {land_pr.FILES_JQ}"
+
+
 def _row(path, status="modified", previous=None, patch="@@ -1 +1 @@\n-a\n+b"):
     """One `gh api .../pulls/N/files --jq FILES_JQ` line: [filename, status, previous, changes, patch]."""
     changes = 0 if patch is None else sum(ln[:1] in "+-" for ln in patch.splitlines() if not ln.startswith("@@"))
@@ -127,8 +132,7 @@ def _recording(number, pr, squash, files=FILES_1218, *, compare="behind", tip=""
     gh = Replay({
         f"pr view {number} --json {land_pr.PR_FIELDS}": json.dumps(pr),
         "label list --limit 200 --json name": json.dumps(labels),
-        f"pr diff {number} --name-only": "".join(f + "\n" for f in files),
-        f"api --paginate repos/{{owner}}/{{repo}}/pulls/{number}/files --jq {land_pr.FILES_JQ}": "".join(r + "\n" for r in rows),
+        _files_call(number): "".join(r + "\n" for r in rows),
         **{
             f"issue view {n} --json labels": json.dumps({"labels": [{"name": lab} for lab in names]})
             for n, names in (issues or {}).items()
@@ -177,7 +181,7 @@ def test_clean_landing_1218(capsys):
     merge = f"pr merge 1218 --squash --match-head-commit {PR_1218['headRefOid']}"
     assert merge in gh.calls, "the merge pins the head the checks saw"
     assert not any("--auto" in c or "--delete-branch" in c for c in gh.calls)
-    assert gh.calls.index(merge) > gh.calls.index("pr diff 1218 --name-only")
+    assert gh.calls.index(merge) > gh.calls.index(_files_call(1218))
     out = capsys.readouterr().out
     assert f"landed #1218 as {SQUASH_1218[:12]}" in out
     assert f"{PR_1218['headRefName']} is gone" in out
@@ -667,7 +671,7 @@ def test_mains_copy_does_not_hop_again(monkeypatch):
 def test_a_pr_that_strips_check_7_is_still_judged_by_it(monkeypatch, tmp_path, capsys):
     """The revert-proof: the PR's checkout of land_pr.py drops the D4 checks; run from
     that checkout, main's copy (this file's real text) still refuses #1512's flip."""
-    call = "    _check_adr_and_baseline(number, pr, gh, git)\n"
+    call = "    _check_adr_and_baseline(number, pr, rows, git)\n"
     real = SCRIPT.read_text(encoding="utf-8")
     assert real.count(call) == 1
     stripped_path = tmp_path / "checkout" / "land_pr.py"
@@ -699,3 +703,36 @@ def test_a_pr_that_strips_check_7_is_still_judged_by_it(monkeypatch, tmp_path, c
     err = capsys.readouterr().err
     assert "running origin/main's scripts/land_pr.py" in err
     assert "check 7: architecture/decisions/0116-render-technologies.md sets Status Accepted" in err
+
+
+def test_big_pr_file_list_never_calls_pr_diff(capsys):
+    """#1775: `gh pr diff` is refused with HTTP 406 past 20000 lines (#1772). The
+    file list must come from the paginated files endpoint, never from `pr diff`."""
+    import subprocess
+
+    gh, git = _recording(1218, PR_1218, SQUASH_1218, [f"src/f{i}.py" for i in range(250)])
+    inner = gh.__call__
+
+    def guarded(args):
+        if args[:2] == ["pr", "diff"]:
+            gh.calls.append(" ".join(args))
+            raise subprocess.CalledProcessError(1, ["gh", *args], stderr="HTTP 406: diff exceeded the maximum number of lines (20000)")
+        return inner(args)
+
+    assert _run(1218, guarded, git) == 0
+    assert not any(c.startswith("pr diff") for c in gh.calls)
+    assert gh.calls.count(_files_call(1218)) == 1, "checks 5, 7 and 8 share one listing"
+    assert "landed #1218" in capsys.readouterr().out
+
+
+def test_rename_out_of_a_frozen_file_is_refused():
+    """A rename lists the new name in `filename` and the old in `previous_filename`;
+    check 5 must see both, or moving a file out of a freeze window slips past."""
+    rows = [
+        _row("src/apeGmsh/opensees/moved.py", "renamed", previous="src/apeGmsh/studio/old.py"),
+        _row("src/apeGmsh/opensees/other.py"),
+    ]
+    gh, git = _recording(1218, PR_1218, SQUASH_1218, [], labels=FREEZE_STUDIO, rows=rows)
+    with pytest.raises(land_pr.LandError, match=r"check 5: src/apeGmsh/studio/old\.py.*freeze:"):
+        _run(1218, gh, git)
+    assert not _merged(gh)

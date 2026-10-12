@@ -480,6 +480,11 @@ def test_an_unknown_slot_category_refuses_loudly():
     ("sand", {"quantity": "s"}),
     ("loads", {"pattern": "p1"}),
     ("reactions", {}),
+    # A7.3 (v2): the colour-mapped records carry clim / cmap.
+    ("contour", {"quantity": "s", "clim": [0, 1], "cmap": "jet"}),
+    ("vector", {"quantity": "s", "cmap": "viridis"}),
+    ("gauss", {"quantity": "s", "clim": [-1, 1]}),
+    ("sand", {"quantity": "s", "clim": None, "cmap": None}),
 ])
 def test_every_catalog_category_restores(category, payload):
     """The complement of the refusal: all seven really do come back, so

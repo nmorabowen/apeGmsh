@@ -280,6 +280,8 @@ export const view: WindowView = (s: State, act: (e: Event) => void) => {
     row.append(el("div", "f-src", r.h5));
     const decl = r.select;
     if (decl) {
+      // The frame highlights the row while the store selects its group (frame.ts markSelected).
+      row.dataset["decl"] = decl;
       row.title = `select ${decl}`;
       row.addEventListener("click", () => act({ type: "select", pick: { decl, at: null, nodes: null } }));
     }

@@ -10,8 +10,8 @@ Comparing a schema version against a literal anywhere else in ``tests/``
 fails ``scripts/check_quirks.py`` (rule ``schema-literal``): it went stale
 and turned main red at 2.12.0, 2.13.0 and 2.16.0.
 """
-OPENSEES_CURRENT     = "2.27.0"  # K1-8 #1465 (per-record param_tags; s.update_parameter + s.zero_velocities archive)
-OPENSEES_PRIOR_MINOR = "2.26.0"  # ADR 0114 A6/Q4 (/opensees/decl_params, hash-excluded; K1-7 #1464)
+OPENSEES_CURRENT     = "2.28.0"  # ADR 0115 amendment R2-f #1735 (decl_params label provenance)
+OPENSEES_PRIOR_MINOR = "2.27.0"  # K1-8 #1465 (per-record param_tags; s.update_parameter + s.zero_velocities archive)
 OPENSEES_SOLVE_STAMP_FROM = "2.24.0"  # the minor that added the /opensees solve stamp (K1-5 #1462); fixed history
 OPENSEES_PARAM_TAGS_FROM = "2.27.0"  # the minor whose archives store every parameter tag (K1-8 #1465); fixed history
 OPENSEES_FLOOR       = "2.12.0"  # ADR 0113 D3 evidence gate (#1329): no 2.11-era file opens (neutral 2.7 stamps)
@@ -19,6 +19,8 @@ NEUTRAL_CURRENT      = "2.35.0"  # #1338: additive `source` column on /loads/nod
 NEUTRAL_PRIOR_MINOR  = "2.34.0"  # #1291: /meta/ndm is the ops.model spatial dimension (0 = undeclared)
 NEUTRAL_FLOOR        = "2.10.0"  # B2 layout split; every later minor is additive or shimmed
 RESULTS_FLOOR        = "1.0.0"   # the results zone's first version
+RESULTS_CURRENT      = "1.2.0"   # #1746: optional root element_index_space stamp
+RESULTS_PRIOR_MINOR  = "1.1.0"   # Phase 6 (ADR 0021): /meta/lineage
 # ADR 0112 D2/D3 root zones (#1304). Both start at 1.0.0; a zone's floor
 # is its first version. Geometry has no prior minor yet; add
 # GEOMETRY_PRIOR_MINOR at its first minor bump.

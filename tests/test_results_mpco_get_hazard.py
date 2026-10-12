@@ -166,7 +166,6 @@ _OTHER_H5_READERS = (
     "results/readers/_ladruno.py",
     "results/session/_cuts.py",
     "viewers/__main__.py",
-    "viewers/ui/_open_results.py",
 )
 
 

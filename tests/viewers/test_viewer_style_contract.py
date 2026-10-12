@@ -36,17 +36,12 @@ UI_DIR = VIEWERS_DIR / "ui"
 _HEX_ALLOW: dict[str, int] = {
     # "color: gray" hint styling — migrate to an EmptyHint objectName.
     "ui/_clip_plane_panel.py": 1,
-    "ui/_clip_planes_panel.py": 2,
-    "ui/_diagram_settings_tab.py": 1,
     # Neutral mid-gray fallback when the Qt palette isn't queryable.
     "ui/_eye_icon_delegate.py": 1,
     # "color: gray" hint styling — same burn-down as the clip panels.
     "ui/_measure_panel.py": 1,
     # Legacy Catppuccin-hardcoded row tints (pre-Palette roles).
     "ui/_selection_tree.py": 6,
-    # Matplotlib line-color default (plot content, not chrome).
-    "ui/_thickness_panel.py": 1,
-    "ui/_time_history.py": 1,
     # Per-DOF constraint color table — needs a palette-role home.
     "ui/constraints_tab.py": 14,
     # Per-pattern load color table — same burn-down as constraints_tab.
@@ -78,15 +73,9 @@ _SHOUT_ACRONYMS = frozenset({"FEM", "HUD", "ID", "IDS", "X Y Z"})
 _INLINE_ALLOW: dict[str, int] = {
     "ui/_bg_toggle_gear.py": 1,
     "ui/_clip_plane_panel.py": 1,
-    "ui/_clip_planes_panel.py": 2,
-    "ui/_diagram_settings_tab.py": 1,
-    # Section-header weight styling (Deformation / Threshold / Scope /
-    # Display) — migrate to a shared SectionHeader objectName block.
-    "ui/_geometry_settings_panel.py": 4,
     "ui/_measure_panel.py": 1,
     "ui/_parts_tree.py": 2,
     "ui/_selection_tree.py": 1,
-    "ui/_session_panel.py": 1,
     "ui/constraints_tab.py": 3,
     "ui/loads_tab.py": 3,
     "ui/mass_tab.py": 3,

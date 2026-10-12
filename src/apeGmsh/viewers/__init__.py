@@ -1,13 +1,9 @@
 from .model_viewer import ModelViewer
 from .mesh_viewer import MeshViewer
 
-# ``ResultsViewer`` is DE-PUBLISHED here at ADR 0098 S6a, not deleted.
-# ``results.viewer()`` now opens a ``ResultsSession`` window
-# (``apeGmsh.viewers.session``); the retired Geometry / Composition /
-# Diagram viewer survives only as private implementation of the
-# ``show_web`` hatch and ``Results.export_animation`` (INV-11), both of
-# which import ``apeGmsh.viewers.results_viewer`` by module path. Nothing
-# public may re-export it — the S6b import guard is the enforcement.
+# Results open in a ``ResultsSession`` window (``results.viewer()``,
+# ``apeGmsh.viewers.session``); ``show_web`` runs on the
+# ``ResultsDirector`` and ``Results.export_animation`` on the session.
 
 
 def settings() -> int:

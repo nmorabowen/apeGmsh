@@ -8,9 +8,9 @@ successive times); the same picture serves a soil column under shaking,
 a story-drift profile over a building's height, or a wave travelling
 down a pile.
 
-The diagram's real product is 2-D, so it lives mostly in its
-``make_side_panel`` chart (see
-:class:`~apeGmsh.viewers.ui._isochrone_panel.IsochroneProfilePanel`).
+The diagram's real product is 2-D. Its Qt chart panel went with the
+legacy ``ResultsViewer`` (X3-d, #1734), so the diagram inherits the base
+``make_side_panel`` (``None``) and exposes the profile data below.
 Its 3-D presence is deliberately minimal — the sampled path drawn as a
 polyline — because the one thing a chart cannot tell you is *which
 nodes it came from*.
@@ -172,21 +172,7 @@ class IsochroneProfileDiagram(Diagram):
             self._backend.set_layer_visible(self._handle, bool(visible))
 
     # ------------------------------------------------------------------
-    # Side panel (the diagram's actual product)
-    # ------------------------------------------------------------------
-
-    def make_side_panel(self, director: Any) -> Any:
-        if not self.is_attached:
-            return None
-        try:
-            from ..ui._isochrone_panel import IsochroneProfilePanel
-        except ImportError:
-            # matplotlib / Qt absent — the 3-D path still renders.
-            return None
-        return IsochroneProfilePanel(self, director)
-
-    # ------------------------------------------------------------------
-    # Data access for the panel
+    # Profile data access
     # ------------------------------------------------------------------
 
     @property

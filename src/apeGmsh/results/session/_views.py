@@ -29,6 +29,7 @@ from ._slots import (
     Slot,
     Vector,
     slot_field,
+    slot_style,
 )
 from ._time import Instant
 
@@ -206,11 +207,18 @@ class Legend:
     slot quantity (INV-LEGEND-4); ``categories`` are the slots that
     cause it — two slots of the same field share the one scale.
     ``hidden`` is view chrome (INV-LEGEND-3): hiding the scale does not
-    hide the picture, and does not clear the slot."""
+    hide the picture, and does not clear the slot.
+
+    ``clim`` / ``cmap`` are the scale's range and map as a slot set
+    them explicitly (Amendment 7, A7.3), or ``None`` = the kind's
+    default. One field, one scale: the view refuses two slots that set
+    them differently, so there is never a silent winner to report."""
 
     field: str
     categories: tuple[str, ...]
     hidden: bool = False
+    clim: Optional[tuple[float, float]] = None
+    cmap: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -473,6 +481,7 @@ class MeshView:
         else:
             if self._slots.get(category) == record:
                 return
+            self._refuse_style_conflict(category, record)
             self._slots[category] = record
         # Legend chrome lives only as long as its legend (INV-LEGEND-2:
         # turning the slot off destroys the legend) — prune hidden
@@ -491,6 +500,34 @@ class MeshView:
         }
         self._changed()
 
+    def _refuse_style_conflict(self, category: str, record: Slot) -> None:
+        """A7.3's scale law: one scale per field identity, its range and
+        map from the slot that sets them. A second occupied slot of the
+        same field that sets a DIFFERENT explicit ``clim``/``cmap``
+        raises — a silent winner would be a wrong legend. ``None`` on
+        either side is not a conflict (it defers to the one that sets
+        it). The occupant being replaced does not count."""
+        field = slot_field(category, record)
+        if field is None:
+            return
+        clim, cmap = slot_style(record)
+        for other, occupant in self._slots.items():
+            if other == category or slot_field(other, occupant) != field:
+                continue
+            o_clim, o_cmap = slot_style(occupant)
+            for name, mine, theirs in (
+                ("clim", clim, o_clim), ("cmap", cmap, o_cmap),
+            ):
+                if mine is not None and theirs is not None and mine != theirs:
+                    raise ValueError(
+                        f"The {category!r} slot sets {name}={mine!r} "
+                        f"for field {field!r}, but the occupied "
+                        f"{other!r} slot of the same field sets "
+                        f"{name}={theirs!r}. One field is one scale "
+                        f"(ADR 0098 §5, A7.3): match them, or leave "
+                        f"one as None."
+                    )
+
     # -- legends (§5) --------------------------------------------------
 
     def legends(self) -> tuple[Legend, ...]:
@@ -499,17 +536,26 @@ class MeshView:
         (INV-LEGEND-1/-2/-5). Same quantity on two slots → one scale.
         Deform on with every slot empty → zero legends."""
         fields: dict[str, list[str]] = {}
+        styles: dict[str, list] = {}
         for category in _COLOUR_ORDER:
             record = self._slots.get(category)
             if record is None:
                 continue
             field = slot_field(category, record)
             fields.setdefault(field, []).append(category)
+            # The slot that sets a style field supplies it (A7.3);
+            # _refuse_style_conflict guarantees they agree.
+            style = styles.setdefault(field, [None, None])
+            for i, value in enumerate(slot_style(record)):
+                if value is not None:
+                    style[i] = value
         return tuple(
             Legend(
                 field=field,
                 categories=tuple(categories),
                 hidden=self._legend_hidden.get(field, False),
+                clim=styles[field][0],
+                cmap=styles[field][1],
             )
             for field, categories in fields.items()
         )
@@ -690,7 +736,10 @@ class MeshView:
 # PlotView (§6)
 # ======================================================================
 
-PLOT_KINDS = ("history", "path", "xy")
+#: §6 as amended by A7.7: ``path`` is gone. It was never realizable (it
+#: needs an ORDERED source, and the §8 selection is a set), and a v1
+#: snapshot that holds one drops it with a notice on restore.
+PLOT_KINDS = ("history", "xy")
 
 _SOURCE_KINDS = ("node", "gauss", "label", "physical_group")
 
@@ -768,8 +817,8 @@ class PlotView:
 
     ``kind`` is fixed at creation; series are live queries against
     ``Results`` evaluated at the cursor. A history plot shows the whole
-    record with the cursor as time; a path plot is evaluated at the
-    current instant (§7)."""
+    record with the cursor as time (§7). ``kind`` is ``history`` or
+    ``xy`` (A7.7 removed ``path``)."""
 
     def __init__(
         self,

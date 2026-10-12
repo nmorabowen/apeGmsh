@@ -994,14 +994,10 @@ def build_stylesheet(p: Palette, density: object = None) -> str:
 
     /* ── Results viewer chrome ─────────────────────────────── */
     /* Empty-state hints — one muted italic line per ADR 0087 INV-2
-       (hint role of the type scale). Shared by the diagram settings
-       tab, the Details idle hint, the Definitions panel, and the
-       Inspector's empty / color-section hints (ADR 0088 D2/D4). */
-    QLabel#DiagramSettingsEmptyHint,
-    QLabel#DetailsHint,
-    QLabel#DefinitionsEmptyHint,
-    QLabel#InspectorEmptyHint,
-    QLabel#ColorMapEmptyHint {{
+       (hint role of the type scale), shared by the model viewer's
+       loads / masses / transform / boolean panels (ADR 0088 D2/D4).
+       The legacy results-viewer hints went with it at X3-d (#1734). */
+    QLabel#DiagramSettingsEmptyHint {{
         color: {p.overlay};
         font-style: italic;
     }}
@@ -1012,71 +1008,22 @@ def build_stylesheet(p: Palette, density: object = None) -> str:
         background-color: {p.mantle};
         border-bottom: 1px solid {p.surface0};
     }}
-    QPushButton#OutlineAddButton {{
-        background-color: transparent;
-        border: 1px solid transparent;
-        color: {p.text};
-        padding: 2px 6px;
-        font-size: 11px;
-    }}
-    QPushButton#OutlineAddButton:hover {{
-        background-color: {p.surface0};
-        border-color: {p.surface1};
-    }}
     /* Outline trees — ParaView-compact rows. Scoped by id so they
        win over the density ``QTreeWidget::item`` block (regardless of
        order) while every other panel keeps the current density. Tight
        row + small font ≈ the ParaView Pipeline Browser's ~20px rows.
-       Applied to all three: model / mesh / results viewers. */
+       Applied to the model and mesh viewers. */
     QTreeWidget#ModelOutlineTreeWidget,
-    QTreeWidget#MeshOutlineTreeWidget,
-    QTreeWidget#OutlineTreeWidget {{
+    QTreeWidget#MeshOutlineTreeWidget {{
         border: none;
         font-size: 11px;
     }}
     QTreeWidget#ModelOutlineTreeWidget::item,
-    QTreeWidget#MeshOutlineTreeWidget::item,
-    QTreeWidget#OutlineTreeWidget::item {{
+    QTreeWidget#MeshOutlineTreeWidget::item {{
         min-height: 20px;
         padding-top: 1px;
         padding-bottom: 1px;
         padding-left: 2px;
-    }}
-
-    /* Plot pane (right rail, top) */
-    QFrame#PlotPaneNewPlot {{
-        background-color: {p.mantle};
-        border-bottom: 1px solid {p.surface0};
-    }}
-    QLabel#PlotPaneEmpty {{
-        color: {p.overlay};
-        font-size: 11px;
-    }}
-    QFrame#PlotPaneTabRow {{
-        border-left: 2px solid transparent;
-        background: transparent;
-    }}
-    QFrame#PlotPaneTabRow[active="true"] {{
-        border-left: 2px solid {p.accent};
-        background-color: {p.surface0};
-    }}
-    QLabel#PlotPaneTabDot {{
-        color: {p.overlay};
-        font-size: 10px;
-    }}
-    QFrame#PlotPaneTabRow[active="true"] QLabel#PlotPaneTabDot {{
-        color: {p.accent};
-    }}
-    QLabel#PlotPaneTabLabel {{
-        color: {p.text};
-        font-size: 11px;
-    }}
-    QToolButton#PlotPaneTabClose {{
-        color: {p.overlay};
-        border: none;
-    }}
-    QToolButton#PlotPaneTabClose:hover {{
-        color: {p.text};
     }}
 
     /* Pane host (ADR 0098 Amendment 1) — the tiled centre. One block
@@ -1175,114 +1122,6 @@ def build_stylesheet(p: Palette, density: object = None) -> str:
         border-left: 2px solid {p.accent};
         background-color: {p.surface0};
         color: {p.text};
-    }}
-
-    /* Details panel (right rail, bottom) */
-    QWidget#DetailsPanel {{
-        background-color: {p.mantle};
-        border-top: 1px solid {p.surface0};
-    }}
-
-    /* Probe palette HUD (viewport overlay) */
-    QFrame#ProbeHUD {{
-        background-color: {_rgba(p.mantle, 0.92)};
-        border: 1px solid {p.surface0};
-        border-radius: 6px;
-    }}
-    QFrame#ProbeHUD QToolButton {{
-        background: transparent;
-        border: 1px solid transparent;
-        border-radius: 3px;
-        color: {p.text};
-        padding: 3px;
-        font-size: 14px;
-    }}
-    QFrame#ProbeHUD QToolButton:hover {{
-        background-color: {p.surface0};
-        border-color: {p.surface1};
-    }}
-    QFrame#ProbeHUD QToolButton[active="true"] {{
-        background-color: {_rgba(p.accent, 0.18)};
-        border: 1px solid {p.accent};
-        color: {p.text};
-    }}
-    QFrame#ProbeHUDSep {{
-        color: {p.surface0};
-    }}
-
-    /* Pick readout HUD (top-left viewport overlay) */
-    QFrame#PickReadoutHUD {{
-        background-color: {_rgba(p.mantle, 0.92)};
-        border: 1px solid {p.surface0};
-        border-radius: 6px;
-    }}
-    QLabel#PickReadoutHeader {{
-        color: {p.text};
-        font-weight: 600;
-        font-family: "JetBrains Mono", "Cascadia Code", "Consolas", monospace;
-        font-size: 11px;
-    }}
-    QLabel#PickReadoutCoords {{
-        color: {p.subtext};
-        font-family: "JetBrains Mono", "Cascadia Code", "Consolas", monospace;
-        font-size: 10px;
-    }}
-    QLabel#PickReadoutValues {{
-        color: {p.text};
-        font-family: "JetBrains Mono", "Cascadia Code", "Consolas", monospace;
-        font-size: 10px;
-    }}
-    QLabel#PickReadoutHint {{
-        color: {p.overlay};
-        font-size: 9px;
-        margin-top: 2px;
-    }}
-
-    /* First-run empty-state HUD (bottom-center viewport overlay) */
-    QFrame#EmptyStateHUD {{
-        background-color: {_rgba(p.mantle, 0.92)};
-        border: 1px solid {p.surface0};
-        border-radius: 6px;
-    }}
-    QLabel#EmptyStateTitle {{
-        color: {p.text};
-        font-weight: 600;
-        font-size: 11px;
-    }}
-    QPushButton#EmptyStateAction {{
-        background-color: {p.surface0};
-        border: 1px solid {p.surface1};
-        border-radius: 4px;
-        color: {p.text};
-        font-size: 11px;
-        padding: 4px 10px;
-    }}
-    QPushButton#EmptyStateAction:hover {{
-        background-color: {p.surface1};
-        border-color: {p.accent};
-    }}
-    QPushButton#EmptyStateAction:disabled {{
-        color: {p.overlay};
-        border-color: {p.surface0};
-    }}
-    QToolButton#EmptyStateDismiss {{
-        color: {p.overlay};
-        border: none;
-        font-size: 12px;
-    }}
-    QToolButton#EmptyStateDismiss:hover {{
-        color: {p.text};
-    }}
-
-    /* Output console (log dock) — surface bg + canonical mono stack
-       (ADR 0087 D1.3 value/readout role); severity colors ride the
-       per-message char formats in _output_dock.py. */
-    QPlainTextEdit#OutputConsole {{
-        background-color: {p.mantle};
-        color: {p.text};
-        border: 1px solid {p.surface0};
-        font-family: "JetBrains Mono", "Cascadia Code", "Consolas", monospace;
-        font-size: 10px;
     }}
 
     /* Disabled form controls — inactive must READ as inactive

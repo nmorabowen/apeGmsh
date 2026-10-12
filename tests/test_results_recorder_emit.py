@@ -15,6 +15,7 @@ from apeGmsh.results.spec._resolved import (
     ResolvedRecorderRecord,
     ResolvedRecorderSpec,
 )
+from tests.fixtures.recorder_models import identity_model
 
 
 def _make_spec(*records: ResolvedRecorderRecord) -> ResolvedRecorderSpec:
@@ -186,7 +187,7 @@ def test_gauss_emits_element_stress_recorder() -> None:
         dt=0.01, n_steps=None,
         element_ids=np.array([10, 20]),
     ))
-    [line] = spec.to_tcl_commands()
+    [line] = spec.to_tcl_commands(model=identity_model([10, 20], spec.fem_snapshot_id))
     assert line.startswith("recorder Element ")
     assert "-ele 10 20" in line
     assert "-dT 0.01" in line
@@ -202,7 +203,7 @@ def test_elements_emits_globalForce() -> None:
         dt=None, n_steps=None,
         element_ids=np.array([1]),
     ))
-    [line] = spec.to_tcl_commands()
+    [line] = spec.to_tcl_commands(model=identity_model([1], spec.fem_snapshot_id))
     assert "globalForce" in line
 
 
@@ -215,7 +216,7 @@ def test_line_stations_emits_section_force_and_gpx_pair() -> None:
         dt=None, n_steps=None,
         element_ids=np.array([1]),
     ))
-    lines = spec.to_tcl_commands()
+    lines = spec.to_tcl_commands(model=identity_model([1], spec.fem_snapshot_id))
     # Two recorders: section.force + paired integrationPoints.
     assert len(lines) == 2
     section_lines = [ln for ln in lines if "section force" in ln]
@@ -318,7 +319,7 @@ def test_python_element() -> None:
         dt=None, n_steps=None,
         element_ids=np.array([100]),
     ))
-    [line] = spec.to_python_commands()
+    [line] = spec.to_python_commands(model=identity_model([100], spec.fem_snapshot_id))
     assert "'Element'" in line
     assert "'-ele', 100" in line
     assert "'stresses'" in line

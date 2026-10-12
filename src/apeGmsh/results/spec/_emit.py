@@ -38,7 +38,7 @@ per emitted recorder (``disp``, ``vel`` etc.).
 from __future__ import annotations
 
 import warnings
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Iterable, Optional
 
 from ._resolved import ResolvedRecorderRecord
@@ -276,6 +276,91 @@ def emit_logical(
         # when it sees an unsupported category.
         return []
     return []
+
+
+# =====================================================================
+# FEM id → OpenSees tag translation at emit
+# =====================================================================
+#
+# A resolved record names elements by FEM id (the contract DomainCapture
+# honours too), but an OpenSees ``-ele`` list takes OpenSees tags, and
+# under ``element_tags="sequential"`` (the bridge default) the two differ.
+# :func:`emit_logical` stays in FEM-id space: the transcoder and the cache
+# read it back to label rows and to find files. Only the command that
+# reaches OpenSees is translated, through :func:`to_ops_tags`. Node
+# records need no map: the bridge emits every node under its FEM id
+# (``opensees/_internal/compose.py``, node emit).
+
+
+def element_tag_map(model: object, *, fem_snapshot_id: str) -> dict[int, int]:
+    """Return the ``{fem_eid: ops_tag}`` pairing a built model records.
+
+    ``model`` is an :class:`~apeGmsh.opensees.OpenSeesModel`, and it must
+    be built from the FEMData the spec was resolved against: its
+    ``lineage.fem_hash`` (equal to ``FEMData.snapshot_id``) must equal the
+    spec's ``fem_snapshot_id``. A model from another or a re-meshed
+    FEMData can share FEM ids with this one and would translate them to
+    the wrong tags, so a mismatch raises. The pairing
+    is its element records' ``(fem_eid, tag)``: the same source
+    ``ElementTagTranslator.from_model`` reads for ``from_mpco`` and
+    domain capture. Rows with the sentinel ``fem_eid < 0`` are skipped.
+    Read strictly here: that translator passes an unknown id through,
+    which an emit must refuse instead (:func:`to_ops_tags`).
+    """
+    fem_hash = model.lineage.fem_hash  # type: ignore[attr-defined]
+    if fem_hash != fem_snapshot_id:
+        raise ValueError(
+            f"model= was not built from this spec's FEMData: its "
+            f"lineage.fem_hash is {fem_hash!r}, the spec's fem_snapshot_id "
+            f"is {fem_snapshot_id!r}. Translating the spec's element ids "
+            f"through another model's pairing would record the wrong "
+            f"elements. Pass the OpenSeesModel built from the FEMData the "
+            f"spec was resolved against."
+        )
+    out: dict[int, int] = {}
+    for rec in model.elements():  # type: ignore[attr-defined]
+        fem = int(rec.fem_eid)
+        if fem >= 0:
+            out[fem] = int(rec.tag)
+    return out
+
+
+def to_ops_tags(
+    rec: LogicalRecorder,
+    tag_map: "dict[int, int] | None",
+    *,
+    where: str,
+) -> LogicalRecorder:
+    """Return ``rec`` with its ``-ele`` ids translated FEM id → ops tag.
+
+    Node recorders pass through. An element recorder with no map raises:
+    the FEM ids may not be the OpenSees tags, and identity is never
+    assumed. An id the map does not hold raises too (never a partial
+    or pass-through translation).
+    """
+    if rec.target_kind != "ele":
+        return rec
+    if tag_map is None:
+        raise ValueError(
+            f"{where}: record {rec.record_name!r} names elements by FEM id, "
+            f"and OpenSees records by element tag; under "
+            f"element_tags=\"sequential\" (the bridge default) the two "
+            f"differ, so emitting the FEM ids would record other elements. "
+            f"Pass model= (the built OpenSeesModel, e.g. "
+            f"OpenSeesModel.from_h5(<ops.h5(...) path>)) so the ids are "
+            f"translated to the tags the model was built with."
+        )
+    missing = [int(e) for e in rec.target_ids if int(e) not in tag_map]
+    if missing:
+        raise ValueError(
+            f"{where}: record {rec.record_name!r} names FEM element ids "
+            f"{missing[:10]}{' ...' if len(missing) > 10 else ''} that the "
+            f"model= passed has no OpenSees element for. Pass the model "
+            f"built from the same FEMData."
+        )
+    return replace(
+        rec, target_ids=tuple(tag_map[int(e)] for e in rec.target_ids),
+    )
 
 
 def format_tcl(rec: LogicalRecorder) -> str:
@@ -596,8 +681,17 @@ def emit_spec_tcl(
     *,
     output_dir: str = "",
     file_format: str = "out",
+    model: object = None,
+    fem_snapshot_id: str = "",
 ) -> list[str]:
-    """Emit Tcl recorder commands for an iterable of resolved records."""
+    """Emit Tcl recorder commands for an iterable of resolved records.
+
+    ``model`` (the built ``OpenSeesModel``) translates element ids to
+    OpenSees tags; an element record without it raises
+    (:func:`to_ops_tags`).
+    """
+    tag_map = (None if model is None else
+               element_tag_map(model, fem_snapshot_id=fem_snapshot_id))
     lines: list[str] = []
     for rec in records:
         if rec.category in _DEFERRED_CATEGORIES:
@@ -612,7 +706,9 @@ def emit_spec_tcl(
         ))
         # Empty sub means "no targets" (e.g. zero IDs) — silently skip.
         for lr in sub:
-            lines.append(format_tcl(lr))
+            lines.append(format_tcl(to_ops_tags(
+                lr, tag_map, where="ResolvedRecorderSpec.to_tcl_commands",
+            )))
     return lines
 
 
@@ -621,8 +717,15 @@ def emit_spec_python(
     *,
     output_dir: str = "",
     file_format: str = "out",
+    model: object = None,
+    fem_snapshot_id: str = "",
 ) -> list[str]:
-    """Emit ``ops.recorder(...)`` calls for an iterable of resolved records."""
+    """Emit ``ops.recorder(...)`` calls for an iterable of resolved records.
+
+    ``model`` translates element ids as in :func:`emit_spec_tcl`.
+    """
+    tag_map = (None if model is None else
+               element_tag_map(model, fem_snapshot_id=fem_snapshot_id))
     lines: list[str] = []
     for rec in records:
         if rec.category in _DEFERRED_CATEGORIES:
@@ -636,7 +739,9 @@ def emit_spec_python(
             rec, output_dir=output_dir, file_format=file_format,
         ))
         for lr in sub:
-            lines.append(format_python(lr))
+            lines.append(format_python(to_ops_tags(
+                lr, tag_map, where="ResolvedRecorderSpec.to_python_commands",
+            )))
     return lines
 
 

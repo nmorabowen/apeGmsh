@@ -6,6 +6,7 @@ state is the working tree after the "move" to ``b.py``.
 from __future__ import annotations
 
 import importlib.util
+import json
 import subprocess
 import sys
 from pathlib import Path
@@ -398,3 +399,90 @@ def test_class_map_annassign_shadow_refused(tmp_path, capsys):
     repo = _cm_repo(tmp_path, head_m=head_m)
     code, out = _cm_run(repo, capsys, "--class-map", "A=M")
     assert code == 1
+
+
+# --- #1705: ignored / untracked files under --head WORKTREE ----------------
+
+def _s2a_repo(tmp_path, gitignore="build/\n"):
+    """S2-a: tracked pkg/build.py replaced by an ignored package pkg/build/."""
+    _git(tmp_path, "init", "-q")
+    (tmp_path / ".gitignore").write_text(gitignore)
+    (tmp_path / "pkg").mkdir()
+    (tmp_path / "pkg" / "build.py").write_text(A)
+    _git(tmp_path, "add", ".")
+    _git(tmp_path, "commit", "-q", "-m", "base")
+    (tmp_path / "pkg" / "build.py").unlink()
+    pkg = tmp_path / "pkg" / "build"
+    pkg.mkdir()
+    (pkg / "__init__.py").write_text("from .more import g\n")
+    (pkg / "more.py").write_text(A)
+    return tmp_path
+
+
+def _run_pkg(repo, *extra):
+    return vm.main(["--repo", str(repo), "--base", "HEAD", "--head",
+                    "WORKTREE", *extra, "pkg"])
+
+
+def test_ignored_package_warns_and_strict_fails(tmp_path, capsys):
+    repo = _s2a_repo(tmp_path)
+    _run_pkg(repo)
+    err = capsys.readouterr().err
+    assert "pkg/build/__init__.py: ignored by git" in err
+    assert "pkg/build/more.py: ignored by git" in err
+    assert _run_pkg(repo, "--strict") == 1
+    assert "--strict" in capsys.readouterr().err
+
+
+def test_committed_with_negation_is_clean(tmp_path, capsys):
+    repo = _s2a_repo(tmp_path, gitignore="build/\n!pkg/build/\n")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "split")
+    _run_pkg(repo, "--strict")
+    assert "WARNING" not in capsys.readouterr().err
+
+
+def test_plain_untracked_file_flagged(tmp_path, capsys):
+    repo = _repo(tmp_path)
+    _move(repo)
+    code = vm.main(["--repo", str(repo), "--base", "HEAD", "--head",
+                    "WORKTREE", "--strict", "a.py", "b.py"])
+    assert code == 1
+    assert "b.py: untracked by git" in capsys.readouterr().err
+
+
+def test_sha_mode_unaffected(tmp_path, capsys):
+    repo = _repo(tmp_path)
+    (repo / "b.py").write_text(A)
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "m")
+    vm.main(["--repo", str(repo), "--base", "HEAD~1", "--head", "HEAD",
+             "--strict", "a.py", "b.py"])
+    assert "WARNING" not in capsys.readouterr().err
+
+
+def test_non_ascii_untracked_name_warns(tmp_path, capsys):
+    repo = _repo(tmp_path)
+    (repo / "zz_ñ.py").write_text(A)
+    code = vm.main(["--repo", str(repo), "--base", "HEAD", "--head",
+                    "WORKTREE", "--strict", "a.py", "zz_ñ.py"])
+    assert code == 1
+    assert "zz_ñ.py: untracked by git" in capsys.readouterr().err
+
+
+def test_json_ok_agrees_with_strict_exit(tmp_path, capsys):
+    repo = _repo(tmp_path)
+    _move(repo)
+    args = ["--repo", str(repo), "--base", "HEAD", "--head", "WORKTREE",
+            "--json", "a.py", "b.py"]
+    assert vm.main(args) == 0
+    assert json.loads(capsys.readouterr().out)["ok"] is True
+    assert vm.main(["--strict", *args]) == 1
+    assert json.loads(capsys.readouterr().out)["ok"] is False
+
+
+def test_shas_as_paths_fail_closed(tmp_path, capsys):
+    repo = _repo(tmp_path)
+    code = vm.main(["--repo", str(repo), "--base", "HEAD", "HEAD", "HEAD"])
+    assert code == 1
+    assert "no path matches" in capsys.readouterr().err

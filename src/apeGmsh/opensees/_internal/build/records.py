@@ -33,6 +33,34 @@ StiffnessResolver = Callable[["InterpolationRecord"], float]
 # Model-level records collected on the bridge between build() calls.
 # ---------------------------------------------------------------------------
 
+def _check_label_provenance(
+    label: "tuple[str, ...] | None",
+    pg: str | None,
+    nodes: "tuple[int, ...] | None",
+    where: str,
+) -> None:
+    """Refuse a ``label`` that is not the provenance of resolved ``nodes``
+    (ADR 0115 amendment R2-f): a label rides only beside the node ids it
+    resolved to, never beside ``pg=``, and is a non-empty tuple of
+    non-blank names."""
+    if label is None:
+        return
+    if (
+        type(label) is not tuple or not label
+        or any(not isinstance(n, str) or not n.strip() for n in label)
+    ):
+        raise ValueError(
+            f"{where}: label must be a non-empty tuple of non-blank "
+            f"names (the provenance of a label= declaration), got {label!r}."
+        )
+    if pg is not None or nodes is None:
+        raise ValueError(
+            f"{where}: label={label!r} is the provenance of the node ids "
+            f"a label= declaration resolved to, so it needs nodes= and no "
+            f"pg= (got pg={pg!r}, nodes={nodes!r})."
+        )
+
+
 @dataclass(frozen=True, slots=True)
 class FixRecord:
     """One ``fix`` directive registered through ``apeSees.fix``.
@@ -40,11 +68,21 @@ class FixRecord:
     Either ``pg`` or ``nodes`` is non-None (validated at the call site).
     The build pipeline expands ``pg`` into a per-node fan-out at emit
     time (one ``emitter.fix(node, *dofs)`` per node).
+
+    ``label`` is the provenance of a ``label=`` declaration (ADR 0115
+    D4, amendment R2-f): the geometry label name(s) the call resolved to
+    ``nodes``. Provenance only: ``nodes`` stays authoritative, nothing
+    downstream re-resolves the label, and the deck never reads it. It is
+    ``None`` for a ``pg=`` / ``nodes=`` declaration.
     """
 
     pg: str | None
     nodes: tuple[int, ...] | None
     dofs: tuple[int, ...]
+    label: tuple[str, ...] | None = None
+
+    def __post_init__(self) -> None:
+        _check_label_provenance(self.label, self.pg, self.nodes, "FixRecord")
 
 
 @dataclass(frozen=True, slots=True)
@@ -166,12 +204,19 @@ class MassRecord:
     acknowledge the overwrite explicitly.  Emits the same ``mass`` line
     either way (OpenSees has no syntactic distinction); the flag is a
     build-time validator-bypass marker only.
+
+    ``label`` is the provenance of a ``label=`` declaration, exactly as
+    on :class:`FixRecord`: never re-resolved, never emitted.
     """
 
     pg: str | None
     nodes: tuple[int, ...] | None
     values: tuple[float, ...]
     overwrite: bool = False
+    label: tuple[str, ...] | None = None
+
+    def __post_init__(self) -> None:
+        _check_label_provenance(self.label, self.pg, self.nodes, "MassRecord")
 
 
 @dataclass(frozen=True, slots=True)

@@ -133,28 +133,15 @@ def _viewers_source(filename: str) -> str:
 
 
 class TestResultsViewerHasNoColorModeController:
-    """``results_viewer.py`` must stay free of the mesh-side
-    ColorMode dropdown wiring.  If someone wants to add per-element
+    """The results window must stay free of the mesh-side ColorMode
+    dropdown wiring (``results_viewer.py`` itself was deleted at X3-d,
+    #1734).  If someone wants to add per-element
     ColorMode (e.g. ``Module`` coloring on the substrate) they MUST
     update this test alongside the new controller so the test
     surface for ``_module_idle`` / Root / Leaf lands together — same
     rigour the mesh-side has in
     ``tests/test_phase_3f_2b_callback.py`` and
     ``tests/test_phase_3f_2d_root_leaf.py``."""
-
-    @pytest.mark.parametrize("token", _COLOR_MODE_TOKENS)
-    def test_results_viewer_source_has_no_color_mode_token(
-        self, token: str,
-    ) -> None:
-        """No mesh-side ColorMode token appears in results_viewer.py."""
-        src = _viewers_source("results_viewer.py")
-        assert token not in src, (
-            f"Found mesh-side ColorMode token {token!r} in "
-            f"results_viewer.py.  If you're porting the mesh-side "
-            f"ColorMode dropdown into results.viewer, update this "
-            f"test AND mirror the 3F.2b / 3F.2d coverage onto the "
-            f"new controller path."
-        )
 
     @pytest.mark.parametrize("token", _COLOR_MODE_TOKENS)
     def test_results_window_source_has_no_color_mode_token(
@@ -243,4 +230,3 @@ def test_v1_1_b_a_data_layer_is_still_results_side_callable() -> None:
     that's the route taken) would consume.  If this import breaks,
     a downstream port of mesh-side ColorMode would also break."""
     from apeGmsh.viewers.data import ViewerData  # noqa: F401
-    from apeGmsh.viewers.results_viewer import ResultsViewer  # noqa: F401

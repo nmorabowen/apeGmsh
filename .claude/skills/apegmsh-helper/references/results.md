@@ -361,16 +361,20 @@ results.export_animation("run.mp4", fps=30, step_stride=2,
 
 Renders the time history to **`.mp4`** (H.264 — needs the
 `apegmsh[animation]` extra) or **`.gif`** (Pillow, no extra); the path
-suffix picks the format. It builds its own off-screen window on the
-private diagram stack — which is why `setup=` hands you a `director` —
-so it is not a projection of a `ResultsSession` (the window flashes
-briefly: the OpenGL context needs a realized surface, but no blocking
-event loop runs). `step_stride=N` captures every N-th step plus the
-last; `deform=None` (default) renders undeformed; `setup=` takes a
-`callback(plotter, director)` invoked after the scene builds and before
-capture (the escape hatch for contours / section cuts / camera work).
-It is script-only — the session window has no File menu and no export
-path. `# src/apeGmsh/results/Results.py:1452`
+suffix picks the format. It re-steps one `ResultsSession` mesh view
+(the `results.session()` picture) through an off-screen plotter — no
+Qt window, no event loop: the pane is realized once, then each captured
+step moves the session instant and re-steps it in place.
+`step_stride=N` captures every N-th step plus the last; `deform=None`
+(default) renders undeformed; `stage=None` animates the last stage;
+`camera=None` is `xy` for a planar model, `iso` otherwise. `setup=`
+takes a `callback(plotter, view)` invoked once before capture, where
+`view` is the session `MeshView` — fill a slot there
+(`view.contour = Contour("displacement_x")`). Before X2-b (#1663) the
+second argument was a `ResultsDirector`; a callback still written
+against it raises `TypeError`. A failed frame leaves no file at the
+path. It is script-only — the session window has no File menu and no
+export path. `# src/apeGmsh/results/Results.py:1544`
 
 ### Per-pane state — the `MeshView` (ADR 0098 §3–§7)
 
@@ -381,7 +385,12 @@ checked on it, never a boolean `concrete AND hex`), **pose**
 (`view.deform`, a field + scale; a pose, not a slot, and it causes no
 legend), **time** (`view.time`, an `Instant(stage, step)`), style, clips
 and slots. Comparing two states is two panes — a second deform state is
-not a second scene instance.
+not a second scene instance. On a **staged** model (`ops.stage(...)`
+with `activate` / `remove_element`) a mesh pane draws only the elements
+active in the stage of its instant, intersected with its scope: stills,
+`export_animation`, the CLI `render` and the window alike (#1722). A
+scope with no active element in that stage raises rather than drawing
+the full mesh.
 
 ```python
 from apeGmsh.results.session import Contour, Deform, Instant, Scope
@@ -409,9 +418,22 @@ s.render("wall.png", v.id)                        # a still, no Qt
   the occupied colour-mapped slots (`contour` / `vector` / `gauss` /
   `sand`); two slots on the same quantity share one scale
   (`INV-LEGEND-1..5`). Deform on with every slot empty draws no scale.
-- **Snapshot is v1** — `SNAPSHOT_VERSION = 1`, `kind:
+- **Colour-mapped slots take `clim=(lo, hi)` and `cmap=`** (ADR 0098
+  A7.3) — `None` (default) keeps the kind's default; `cmap` is any
+  matplotlib name (`'jet'` included), validated when the record is
+  built. Two slots of the same quantity with different explicit values
+  raise (one field, one scale); `v.legends()` reports the set values.
+  Every realize applies them (stills, the window, `export_animation`);
+  a same-quantity slot left at `None` draws with its neighbour's values.
+- **`v.overlay = True` draws the undeformed ghost** (A7.5) — the view's
+  own cells at scale 0 in the Outlines style, under the same scope,
+  stage activation and clip planes; independent of the Outlines button,
+  never colour-mapped, no legend.
+- **Plot kinds are `history` and `xy`** — `path` was removed (A7.7).
+- **Snapshot is v2** — `SNAPSHOT_VERSION = 2`, `kind:
   "apegmsh.results.session"` (`results/session/_snapshot.py`).
-  `s.snapshot()` returns the dict, `s.save_snapshot()` writes it;
+  `s.snapshot()` returns the dict, `s.save_snapshot()` writes it; the
+  reader takes v1 and v2 (a v1 `path` plot pane drops with a notice).
   `restore_snapshot` refuses an unknown slot category. A v13 file from
   the retired window is renamed `.legacy`, never restored.
 

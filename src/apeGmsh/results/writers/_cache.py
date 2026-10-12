@@ -22,7 +22,7 @@ from __future__ import annotations
 import hashlib
 import os
 from pathlib import Path
-from typing import TYPE_CHECKING, Iterable
+from typing import TYPE_CHECKING, Any, Iterable
 
 if TYPE_CHECKING:
     from ..spec._resolved import ResolvedRecorderSpec
@@ -49,13 +49,26 @@ def compute_cache_key(
     *,
     parser_version: str,
     fem_snapshot_id: str,
+    model_token: str | None = None,
 ) -> str:
-    """Return a 16-char hex cache key from input fingerprints."""
+    """Return a 16-char hex cache key from input fingerprints.
+
+    ``model_token`` is :func:`model_cache_token` of the ``model=`` the
+    transcode embeds and checks its element ids against. Two models
+    built from one FEMData (``element_tags="fem"`` and
+    ``"sequential"``) must not share a cached file: its ``/opensees``
+    zone and its ``element_index_space`` stamp both come from the model.
+    ``None`` (no model) keys apart from every model-bearing key.
+    """
     h = hashlib.blake2b(digest_size=16)
     h.update(parser_version.encode("utf-8"))
     h.update(b"|")
     h.update(fem_snapshot_id.encode("utf-8"))
     h.update(b"|")
+    if model_token is None:
+        h.update(b"model:none|")
+    else:
+        h.update(b"model:" + model_token.encode("utf-8") + b"|")
     for f in sorted(source_files, key=lambda p: str(p)):
         try:
             stat = f.stat()
@@ -70,6 +83,27 @@ def compute_cache_key(
             # the cache when they appear later.
             h.update(str(f).encode("utf-8"))
             h.update(b"|missing\n")
+    return h.hexdigest()
+
+
+def model_cache_token(model: Any) -> str:
+    """Return a hex digest of what a cached transcode takes from ``model``.
+
+    It covers the model's ``lineage.fem_hash`` and ``lineage.model_hash``
+    (its ``/opensees`` content, when stamped) and its ``(fem_eid, tag)``
+    element pairing. The stamp depends on the pairing and on the
+    ``fem_hash``, so both are hashed directly: the token separates two
+    models even when ``model_hash`` is ``None`` (a composed model).
+    """
+    lineage = model.lineage
+    h = hashlib.blake2b(digest_size=16)
+    h.update(str(lineage.fem_hash).encode("utf-8"))
+    h.update(b"|")
+    h.update(str(lineage.model_hash).encode("utf-8"))
+    h.update(b"|")
+    pairs = sorted((int(r.fem_eid), int(r.tag)) for r in model.elements())
+    for fem_eid, tag in pairs:
+        h.update(f"{fem_eid}:{tag};".encode("ascii"))
     return h.hexdigest()
 
 
