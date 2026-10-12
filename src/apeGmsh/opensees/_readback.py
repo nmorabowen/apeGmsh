@@ -120,6 +120,7 @@ _TRANSLATIONAL_ONLY: tuple[type, ...] = (
 #: u-p families: their pressure DOF sits in a slot an element-less node's
 #: layout calls a rotation, so a constraint could tie the two. A model
 #: holding one refuses rotations on element-less nodes.
+# Any element class added later that carries a pressure DOF must join this tuple.
 _UP_FAMILIES: tuple[type, ...] = (LadrunoUP,)
 
 
