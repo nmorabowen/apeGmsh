@@ -78,7 +78,7 @@ def _check_style(record: object, owner: str) -> None:
         try:
             import matplotlib
         except ImportError:
-            # A7 review (#1737): an explicit cmap needs the `plot`
+            # An explicit cmap needs the `plot`
             # extra to be validated; None needs nothing. Imported here,
             # never at module import time.
             raise ImportError(

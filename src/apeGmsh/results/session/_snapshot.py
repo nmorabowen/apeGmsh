@@ -385,7 +385,7 @@ def _read_slot(
         try:
             return record_type(**fields)
         except ImportError:
-            # A7 review (#1737): a v2 cmap this build cannot validate
+            # A v2 cmap this build cannot validate
             # (no matplotlib) degrades to the default, with a notice —
             # the rest of the slot, and of the file, still restores.
             if fields.get("cmap") is None or notices is None:
