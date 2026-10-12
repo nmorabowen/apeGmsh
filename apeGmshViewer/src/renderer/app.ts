@@ -251,13 +251,30 @@ async function main() {
   viewport.renderNow();
   await bridge.captureStill("role");
   // One still per model-definition window, `<out>.window-<kind>.png`, each
-  // opened alone through the store, as the window menu opens it.
+  // opened alone through the store, as the window menu opens it. A window
+  // with something to select gets a second still, `<out>.window-<kind>-selected.png`
+  // (V4f, D7): its first row that selects a declaration (`.window-row[data-decl]`)
+  // selected through the store, or, in a window of stage cards, the last stage
+  // selected (`selectStage`). The rule is fixed, so no flag is needed and the
+  // stills come from committed code.
   store.dispatch({ type: "setColourBy", by: "group" });
   for (const kind of WINDOW_KINDS) {
     store.dispatch({ type: "openWindow", window: kind });
     await settle();
     viewport.renderNow();
     await bridge.captureStill(`window-${kind}`);
+    const row = document.querySelector<HTMLElement>("#windows .window-row[data-decl]");
+    const decl = row?.dataset["decl"];
+    const cards = document.querySelectorAll("#windows .stage-card").length;
+    if (decl) store.dispatch({ type: "select", pick: { decl, at: null, nodes: null } });
+    else if (cards) store.dispatch({ type: "selectStage", index: cards - 1 });
+    if (decl || cards) {
+      await settle();
+      viewport.renderNow();
+      await bridge.captureStill(`window-${kind}-selected`);
+      store.dispatch({ type: "clearSelection" });
+      store.dispatch({ type: "selectStage", index: null });
+    }
     store.dispatch({ type: "closeWindow", window: kind });
   }
   await bridge.captureDone();

@@ -16,6 +16,7 @@ import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { recordersOf, view } from "../../src/panels/windows/recorders.ts";
+import { markSelected, SELECTED_STYLE } from "../../src/panels/windows/frame.ts";
 import { WINDOWS } from "../../src/panels/windows/registry.ts";
 import { openModel } from "../../src/reader/node.ts";
 import { BlobStore } from "../../src/state/blobs.ts";
@@ -204,4 +205,52 @@ test("within a section, recorders list in declaration order, not the file's grou
     ["#1", "/opensees/recorders/mpco_0"],
     ["crown", "/opensees/recorders/Node_1"],
   ]);
+});
+
+// ---- V4f: the selected row's highlight (a minimal DOM: only what the view and markSelected touch) ----
+
+class RecNode {
+  children: RecNode[] = [];
+  className = "";
+  title = "";
+  textContent = "";
+  disabled = false;
+  dataset: Record<string, string> = {};
+  style: Record<string, string> = {};
+  private handlers: (() => void)[] = [];
+  append(...xs: (RecNode | string)[]): void {
+    for (const x of xs) if (typeof x !== "string") this.children.push(x);
+  }
+  addEventListener(_t: string, fn: () => void): void {
+    this.handlers.push(fn);
+  }
+  click(): void {
+    for (const h of this.handlers) h();
+  }
+  all(pred: (n: RecNode) => boolean): RecNode[] {
+    return [...(pred(this) ? [this] : []), ...this.children.flatMap((c) => c.all(pred))];
+  }
+}
+
+test("V4f: a row that selects a group carries data-decl, and the frame highlights it while the store selects that group", () => {
+  const g = globalThis as { document?: unknown };
+  const saved = g.document;
+  g.document = { createElement: () => new RecNode() };
+  try {
+    const s = withCrown({ file: "a.out", response: "disp", pg: "Arch", dofs: [2] });
+    const events: unknown[] = [];
+    const rows = (view(s, (e) => events.push(e)) as unknown as RecNode).all((n) => n.className.split(" ").includes("window-row"));
+    const arch = rows.filter((r) => r.dataset["decl"] === "mesh/physical_group/Arch");
+    assert.equal(arch.length, 1, "the crown row names the group it selects");
+    assert.ok(rows.filter((r) => r !== arch[0]).every((r) => r.dataset["decl"] === undefined), "a row that selects nothing carries no data-decl");
+    arch[0]!.click();
+    const selected = reduce(s, events[0] as Parameters<typeof reduce>[1]);
+    const again = view(selected, () => {}) as unknown as RecNode;
+    assert.equal(markSelected(again as unknown as HTMLElement, selected.selection.decls), 1);
+    const hit = again.all((n) => n.className.split(" ").includes("selected"));
+    assert.deepEqual(hit.map((r) => r.dataset["decl"]), ["mesh/physical_group/Arch"]);
+    assert.equal(hit[0]!.style["background"], SELECTED_STYLE.background);
+  } finally {
+    g.document = saved;
+  }
 });
