@@ -240,6 +240,7 @@ from ._results_route import (
     open_results,
     write_tcl_driver,
 )
+from .recorder import Element as _ElementRecorder
 from .recorder import FilterableRecorder, Ladruno
 from .procedures._contact import _ContactQueryMixin
 from .procedures._explicit import ExplicitRunResult, _ExplicitMixin
@@ -1964,10 +1965,27 @@ class BuiltModel:
             # holds a primitive as that primitive's declaration key. The
             # records ``fix_from_model()`` expands to are the model-wide
             # declaration's expansion, not owners.
+            # An ``Element`` recorder declared with ``label=`` holds FEM
+            # ids until the emit translates them; its row stores the
+            # translated OpenSees tags, the id space of every other
+            # ``Element`` recorder row (ADR 0115 amendment R2-f).
             _rows_, _decl_index = self._declaration_rows()
+            _label_tag_map: "list[FemToOpsTagMap]" = []
+
+            def _archived(owner: object) -> object:
+                if not (isinstance(owner, _ElementRecorder)
+                        and owner.label is not None):
+                    return owner
+                if not _label_tag_map:
+                    _label_tag_map.append(
+                        FemToOpsTagMap.from_plan(tag_plan.elements.specs))
+                return owner.materialize(
+                    emitter, self.fem, tag_plan,
+                    fem_eid_to_ops_tag=_label_tag_map[0])
+
             _archive_side_channel(emitter).set_decl_params(
                 sorted(
-                    ((_decl_index[oid], owner)
+                    ((_decl_index[oid], _archived(owner))
                      for oid, owner in self._decl_owners.items()),
                     key=lambda item: item[0],
                 ),

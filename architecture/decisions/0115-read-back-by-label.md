@@ -221,4 +221,6 @@ one field.
    translates them to the emitted tags through the bridge's FEM id → tag
    map, as it does for `pg=` (chain B #1711 / #1740 audited that map). A
    recorder whose `label` is set holds FEM ids, so emitting it without the
-   map refuses.
+   map refuses. Its archived `decl_params` row stores the translated
+   OpenSees tags, so the `elements` of every `Element` recorder row share
+   one id space, the deck's (the maintainer's condition on #1773).

@@ -1297,8 +1297,12 @@ The rows of `FixRecord`, `MassRecord` (flat and staged) and of the typed
 `recorder.Node` / `recorder.Element` carry a `label` field. A declaration
 made with `label=` stores the names it was given as a list (`"left"` is
 stored `["left"]`, a list keeps its order) beside the ids the call
-resolved them to (`nodes`; for `recorder.Element`, the FEM element ids in
-`elements`). A declaration made with `pg=` or `nodes=` / `elements=`
+resolved them to (`nodes`; for `recorder.Element`, `elements`). A
+`recorder.Element` row's `elements` are always **OpenSees element tags**,
+whichever way it was declared: a `label=` declaration resolves to FEM ids,
+and the archive stores them translated through the build's FEM id → tag
+map, exactly as the deck's `-ele` list (identical under
+`element_tags="fem"`). So one reader reads every row the same way. A declaration made with `pg=` or `nodes=` / `elements=`
 stores **`label: null`** (the generic encoder writes every field, so the
 key is present and empty rather than absent). The ids are authoritative:
 no reader, replay (`OpenSeesModel.from_h5`, `derive_sequence`) or rewrite

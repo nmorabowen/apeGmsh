@@ -439,6 +439,40 @@ def test_recorder_element_label_translates_under_sequential_tags(
     assert line.endswith(f"-ele {tag} axialForce")
 
 
+@pytest.mark.parametrize("element_tags", ["sequential", "fem"])
+def test_archived_element_recorder_ids_share_one_id_space(
+    pratt: Any, tmp_path: Any, element_tags: str,
+) -> None:
+    """ADR 0115 amendment R2-f, the maintainer's condition on #1773: the
+    archived ``decl_params`` ``elements`` of an ``Element`` recorder are
+    OpenSees tags whether it was declared by ``label=`` or by explicit
+    ids, under both tag modes. The ids-declared twin names the tag the
+    deck's ``element`` line gives the labelled bar (the connectivity
+    oracle above)."""
+    from apeGmsh.opensees.emitter import h5_reader
+
+    ops = pratt_bridge(pratt, element_tags=element_tags, reverse=True)
+    eid = ops.elements.one(label="diag2").id
+    conn = _truss_conn(_deck(pratt_bridge(pratt, element_tags="fem")))[eid]
+    [tag] = [t for t, c in _truss_conn(_deck(ops)).items() if c == conn]
+    ops.recorder.Element(file="l.out", response=("axialForce",),
+                         label="diag2", name="by_label")
+    ops.recorder.Element(file="i.out", response=("axialForce",),
+                         elements=(tag,), name="by_ids")
+    path = tmp_path / "ids.h5"
+    ops.h5(str(path))
+    with h5_reader.open(str(path)) as m:
+        table = m.declarations()
+    assert table is not None
+    (by_label,) = table.params_for("opensees/recorder/by_label")
+    (by_ids,) = table.params_for("opensees/recorder/by_ids")
+    assert by_label.params["elements"] == by_ids.params["elements"] == (tag,)
+    assert by_label.params["label"] == ("diag2",)
+    assert by_ids.params["label"] is None
+    if element_tags == "sequential":
+        assert tag != eid  # the case where the id spaces differ
+
+
 def test_recorder_element_label_needs_the_tag_map(pratt: Any) -> None:
     """A label recorder's ids are FEM ids: without the bridge's map,
     materialize refuses rather than emit them as tags."""

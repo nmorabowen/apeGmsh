@@ -312,7 +312,9 @@ class Element(Recorder):
         declaration (ADR 0115 amendment R2-f): the geometry label
         name(s) the call resolved to FEM element ids. Never
         re-resolved and never emitted; it marks ``elements`` as FEM
-        ids. Needs ``elements=``, refuses ``pg=``.
+        ids. Needs ``elements=``, refuses ``pg=``. The archive stores
+        the translated OpenSees tags, as for every other ``Element``
+        recorder.
     dT
         Optional cadence — record only every ``dT`` simulation
         seconds. ``None`` records every step.
