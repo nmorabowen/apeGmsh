@@ -108,7 +108,7 @@ def _recording(number, pr, squash, files=FILES_1218, *, compare="behind", tip=""
     gh = Replay({
         f"pr view {number} --json {land_pr.PR_FIELDS}": json.dumps(pr),
         "label list --limit 200 --json name": json.dumps(labels),
-        f"api repos/{{owner}}/{{repo}}/pulls/{number}/files --paginate --jq .[].filename": "".join(f + "\n" for f in files),
+        f"api repos/{{owner}}/{{repo}}/pulls/{number}/files --paginate --jq .[] | .filename, (.previous_filename // empty)": "".join(f + "\n" for f in files),
         f"pr merge {number} --squash --match-head-commit {head}": "",
         f"pr view {number} --json mergeCommit": json.dumps({"mergeCommit": {"oid": squash}}),
         f"api repos/{{owner}}/{{repo}}/compare/main...{squash} --jq .status": compare + "\n",
@@ -152,7 +152,7 @@ def test_clean_landing_1218(capsys):
     merge = f"pr merge 1218 --squash --match-head-commit {PR_1218['headRefOid']}"
     assert merge in gh.calls, "the merge pins the head the checks saw"
     assert not any("--auto" in c or "--delete-branch" in c for c in gh.calls)
-    assert gh.calls.index(merge) > gh.calls.index("api repos/{owner}/{repo}/pulls/1218/files --paginate --jq .[].filename")
+    assert gh.calls.index(merge) > gh.calls.index("api repos/{owner}/{repo}/pulls/1218/files --paginate --jq .[] | .filename, (.previous_filename // empty)")
     out = capsys.readouterr().out
     assert f"landed #1218 as {SQUASH_1218[:12]}" in out
     assert f"{PR_1218['headRefName']} is gone" in out
@@ -387,5 +387,31 @@ def test_big_pr_file_list_never_calls_pr_diff(capsys):
 
     assert _run(1218, guarded, git) == 0
     assert not any(c.startswith("pr diff") for c in gh.calls)
-    assert "api repos/{owner}/{repo}/pulls/1218/files --paginate --jq .[].filename" in gh.calls
+    assert "api repos/{owner}/{repo}/pulls/1218/files --paginate --jq .[] | .filename, (.previous_filename // empty)" in gh.calls
     assert "landed #1218" in capsys.readouterr().out
+
+
+def test_rename_out_of_a_frozen_file_is_refused():
+    """A rename lists the new name in `filename` and the old in `previous_filename`;
+    check 5 must see both, or moving a file out of a freeze window slips past."""
+    records = [
+        {"filename": "src/apeGmsh/opensees/moved.py", "previous_filename": "src/apeGmsh/studio/old.py"},
+        {"filename": "src/apeGmsh/opensees/other.py"},
+    ]
+    gh, git = _recording(1218, PR_1218, SQUASH_1218, [], labels=FREEZE_STUDIO)
+    inner = gh.__call__
+
+    def with_jq(args):  # emulate the jq filter the script passes
+        if args[:1] == ["api"] and args[1].endswith("/files"):
+            gh.calls.append(" ".join(args))
+            names = []
+            for r in records:
+                names.append(r["filename"])
+                if "previous_filename" in args[-1] and "previous_filename" in r:
+                    names.append(r["previous_filename"])
+            return "".join(n + "\n" for n in names)
+        return inner(args)
+
+    with pytest.raises(land_pr.LandError, match=r"check 5: src/apeGmsh/studio/old\.py.*freeze:"):
+        _run(1218, with_jq, git)
+    assert not _merged(gh)

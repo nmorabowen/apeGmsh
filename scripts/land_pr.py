@@ -92,9 +92,10 @@ def check(number: int, gh: Runner, git: Runner) -> dict[str, Any]:
     labels = json.loads(gh(["label", "list", "--limit", "200", "--json", "name"]))
     frozen = [lab["name"][len("freeze:") :] for lab in labels if lab["name"].startswith("freeze:")]
     # `pr view --json files` stops at 100 files, and `pr diff` is refused (HTTP 406)
-    # past 20000 diff lines (#1775); the paginated files endpoint has neither cap.
+    # past 20000 diff lines (#1775); the paginated files endpoint has neither cap. A rename lists both
+    # names, so moving a file OUT of a frozen path is caught too.
     files_api = f"repos/{{owner}}/{{repo}}/pulls/{number}/files"
-    for path in gh(["api", files_api, "--paginate", "--jq", ".[].filename"]).splitlines():
+    for path in gh(["api", files_api, "--paginate", "--jq", ".[] | .filename, (.previous_filename // empty)"]).splitlines():
         for pattern in frozen:
             if fnmatch.fnmatchcase(path, pattern):
                 raise LandError(
