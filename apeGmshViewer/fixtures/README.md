@@ -115,3 +115,26 @@ ops.h5("model.h5")
 
 `test/zones/provenance.test.ts` checks the fixture against this block: the
 digest, and the synthesised records' line, which is the `s.support(` line.
+
+## `results_small.h5`
+
+A native `results.h5` (results zone 1.1.0, `source_type = "domain_capture"`,
+`/model` embedded, one partition). It is written by apeGmsh's own
+`NativeWriter`, with synthetic values and no solve. The mesh is 2 x 2
+triangles extruded in 1 layer: 18 nodes and 8 `prism6`. It has 5 steps,
+`displacement_x/y/z`, and one gauss group of 6 points holding `stress_xx`
+and `stress_yy`. The generator imports apeGmsh, so it lives outside this
+app, at `scripts/make_viewer_results_fixtures.py` in the repository. Run it
+from the repository root with `PYTHONPATH=src` and the opensees venv
+interpreter:
+
+```powershell
+$env:PYTHONPATH = "src"
+& C:\Users\nmora\venv\opensees_venv\Scripts\python.exe scripts/make_viewer_results_fixtures.py
+```
+
+The same script with `--measure <dir>` writes the large files that
+`MEASUREMENTS.md` ("Results sizes (V4)") measures; they are not committed.
+`test/results/results.test.ts` checks the reader against the closed forms in
+the script's docstring, not against values copied from the app. A re-run
+changes `@created_at` and the lineage hashes.

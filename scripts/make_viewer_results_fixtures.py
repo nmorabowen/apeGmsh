@@ -1,15 +1,14 @@
 """Write the V4a results.h5 files with apeGmsh's own NativeWriter (#1707).
 
-This generator imports apeGmsh, so it is kept as text (``.py.txt``) and never
-as a ``.py`` file of the app: the app wall (ADR 0112 D4,
-``scripts/check_app_wall.py`` rule W1) forbids a ``.py`` file under
-``apeGmshViewer/`` that imports apeGmsh, and ``fixtures/README.md`` keeps the
-``bridge_provenance.h5`` generator as text for the same reason. Run it from
-the repository root with the venv interpreter and the checkout's ``src``:
+This generator imports apeGmsh, so it lives here, outside ``apeGmshViewer/``:
+the app never imports or runs apeGmsh (ADR 0112 D4,
+``scripts/check_app_wall.py``). It writes into ``apeGmshViewer/fixtures/``.
+Run it from the repository root with the venv interpreter and the
+checkout's ``src``:
 
     $env:PYTHONPATH = "src"
-    python apeGmshViewer/fixtures/make_results_fixtures.py.txt            # results_small.h5
-    python apeGmshViewer/fixtures/make_results_fixtures.py.txt --measure apeGmshViewer/out/results
+    python scripts/make_viewer_results_fixtures.py            # results_small.h5
+    python scripts/make_viewer_results_fixtures.py --measure apeGmshViewer/out/results
 
 The values are SYNTHETIC: no solve runs. They are closed forms of the node
 id, the element id, the Gauss point and the step, so a test can recompute
@@ -54,7 +53,7 @@ import numpy as np
 from apeGmsh import apeGmsh
 from apeGmsh.results.writers._native import NativeWriter
 
-HERE = Path(__file__).resolve().parent
+HERE = Path(__file__).resolve().parents[1] / "apeGmshViewer" / "fixtures"
 # The session writes its own model.h5 + geometry sibling at end() (ADR 0112 D1);
 # send them to a throw-away directory, not beside the fixtures.
 SESSION_DIR = Path(tempfile.mkdtemp(prefix="v4a-session-"))

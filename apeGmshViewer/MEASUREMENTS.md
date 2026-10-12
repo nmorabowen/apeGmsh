@@ -329,7 +329,8 @@ and `stress_box.h5` were on the maintainer's other machine), so the meshes are
 rebuilt to the same size. Every file is written by apeGmsh's own
 `NativeWriter` (`src/apeGmsh/results/writers/_native.py`) with
 `source_type = "domain_capture"`, `/model` embedded and one partition, by
-`fixtures/make_results_fixtures.py.txt` on `9a6d3239`. **The values are
+the repository's `scripts/make_viewer_results_fixtures.py` (then at
+`apeGmshViewer/fixtures/make_results_fixtures.py.txt`; same code) on `9a6d3239`. **The values are
 synthetic: no solve ran.** They are closed forms of the ids and the step
 (the generator's docstring), fed to the writer; `domain_capture` here does
 not mean a capture ran. The read path does not look at the values, and a

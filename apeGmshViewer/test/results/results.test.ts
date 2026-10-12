@@ -1,5 +1,5 @@
 // reader/results.ts against fixtures/results_small.h5, written by apeGmsh's
-// own NativeWriter (fixtures/make_results_fixtures.py.txt). The expected
+// own NativeWriter (the repository's scripts/make_viewer_results_fixtures.py). The expected
 // values are the generator's closed forms, recomputed here:
 //   time[k]                 = 0.01 k
 //   nodes/<comp c>[k, j]    = id_j + 0.001 (c + 1) k
