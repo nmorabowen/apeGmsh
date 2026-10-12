@@ -161,7 +161,9 @@ def write_tcl_driver(deck: str) -> str:
 
 def log_proves_completion(log_path: str) -> bool:
     """True iff the run's log holds the completion marker on a line of
-    its own."""
+    its own. No log is no proof."""
+    if not os.path.isfile(log_path):
+        return False
     with open(log_path, encoding="utf-8", errors="replace") as f:
         return any(line.strip() == RUN_COMPLETE_MARKER for line in f)
 
