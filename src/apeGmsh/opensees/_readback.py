@@ -62,6 +62,7 @@ from .element.shell import (
 )
 from .element.solid import (
     BezierTet10,
+    LadrunoUP,
     BezierTri6,
     FourNodeQuad,
     FourNodeTetrahedron,
@@ -112,9 +113,14 @@ _TRANSLATIONAL_ONLY: tuple[type, ...] = (
     stdBrick, LadrunoBrick, LadrunoBrick20,
 )
 
-# Every other class BLOCKS a rotational slot: a u-p element (``LadrunoUP``)
-# carries pore pressure at DOF ``ndm + 1``, and a class this table does not
-# name is not guessed.
+# Every other class BLOCKS a rotational slot on the nodes it touches: a u-p
+# element (``LadrunoUP``) carries pore pressure at DOF ``ndm + 1``, and a
+# class this table does not name is not guessed.
+
+#: u-p families: their pressure DOF sits in a slot an element-less node's
+#: layout calls a rotation, so a constraint could tie the two. A model
+#: holding one refuses rotations on element-less nodes.
+_UP_FAMILIES: tuple[type, ...] = (LadrunoUP,)
 
 
 @dataclass(frozen=True)
@@ -128,14 +134,14 @@ class RotationRoles:
     blocked: "dict[int, str]"
     #: Nodes any element touches.
     touched: frozenset[int]
-    #: A blocking class anywhere in the model, or ``None``.
+    #: A u-p class anywhere in the model (:data:`_UP_FAMILIES`), or ``None``.
     model_blocker: "str | None"
 
     def refusal(self, tag: int) -> "str | None":
         """Why node ``tag``'s rotational DOF slots carry no rotation, or
         ``None`` when they do. A blocking class wins over a rotational one
         on the same node. An element-less node (a decoupled or diaphragm
-        master) carries a rotation only in a model with no blocking class:
+        master) carries a rotation only in a model with no u-p class:
         a constraint could tie its slot to a pore-pressure DOF."""
         if tag in self.blocked:
             return (
@@ -183,7 +189,7 @@ def rotation_roles(
                 (int(n) for row in conn for n in row), dtype=np.int64))
         is_rot = isinstance(spec, _ROTATIONAL_FAMILIES)
         is_trans = isinstance(spec, _TRANSLATIONAL_ONLY)
-        if not (is_rot or is_trans) and model_blocker is None:
+        if isinstance(spec, _UP_FAMILIES) and model_blocker is None:
             model_blocker = type(spec).__name__
         hit = flat if want is None else np.intersect1d(flat, want)
         nodes = [int(n) for n in hit]
