@@ -52,6 +52,10 @@ stage = results.stages[-1]
 s.time = Instant(stage.id, stage.n_steps - 1)      # the last recorded step
 ```
 
+On a staged model (stages that `activate` or `remove_element`), the
+still draws only the elements active in the instant's stage: an element
+activated in a later stage, or removed by this one, is not drawn.
+
 ## Swap the picture
 
 The picture lives in the view's **slots** — a closed catalog of seven
