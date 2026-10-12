@@ -9,7 +9,8 @@ element.  Oracles are counts read straight from gmsh after ``generate``:
   == curves, both with the family labels and with no labels;
 * a mixed frame + meshed slab: called with no labels, the slab's 2-D
   element count equals the count of the same model meshed without it;
-* the fail-closed refusals.
+* the fail-closed refusals, and the CurvesSkippedWarning the no-argument
+  form emits when a definition makes it skip a curve (and only then).
 """
 from __future__ import annotations
 
@@ -19,6 +20,8 @@ import gmsh
 import pytest
 
 from apeGmsh import apeGmsh
+from apeGmsh.core._declarations import _DeclarationsMixin
+from apeGmsh.mesh._mesh_structured import CurvesSkippedWarning
 
 # --- Pratt truss, restated from model-scripts.md --------------------------
 N_PANELS = 6
@@ -67,6 +70,7 @@ def _transfinite_directives(g) -> list[dict]:
 # Truss oracle
 # ---------------------------------------------------------------------------
 
+@pytest.mark.filterwarnings("error::apeGmsh.mesh._mesh_structured.CurvesSkippedWarning")
 @pytest.mark.parametrize("by_labels", [True, False], ids=["labels", "no_labels"])
 def test_pratt_truss_one_element_per_bar(by_labels):
     with apeGmsh(model_name="r3s3_truss", verbose=False) as g:
@@ -135,6 +139,7 @@ def _build_frame_and_slab(g) -> int:
     return slab
 
 
+@pytest.mark.filterwarnings("error::apeGmsh.mesh._mesh_structured.CurvesSkippedWarning")
 def test_no_labels_leaves_slab_mesh_unchanged():
     with apeGmsh(model_name="r3s3_mixed_ref", verbose=False) as g:
         slab = _build_frame_and_slab(g)
@@ -192,6 +197,7 @@ def test_surface_boundary_curve_is_refused():
         assert _transfinite_directives(g) == []
 
 
+@pytest.mark.filterwarnings("error::apeGmsh.mesh._mesh_structured.CurvesSkippedWarning")
 def test_curve_embedded_in_surface_is_refused():
     with apeGmsh(model_name="r3s3_embed", verbose=False) as g:
         slab = _build_frame_and_slab(g)
@@ -249,7 +255,7 @@ def _build_beam_with_bar(g) -> None:
 @dataclasses.dataclass
 class _FutureTieDef:
     """A definition kind the helper has never heard of, using the role
-    naming convention (``*_label``)."""
+    naming convention (``*_label``) and naming a host volume."""
     host_label: str
     follower_label: str
     name: str | None = None
@@ -257,10 +263,20 @@ class _FutureTieDef:
 
 @dataclasses.dataclass
 class _OddlyNamedDef:
-    """Another unknown kind whose curve reference is in an arbitrary field."""
+    """Another unknown kind whose only reference is the curve, in an
+    arbitrary field: node-level, no host."""
     kind: str
     curve: str
     name: str | None = None
+
+
+class _FutureComposite(_DeclarationsMixin):
+    """A declaration composite added after the helper was written."""
+    _DECLARATION_STORES = {"future_defs": (_FutureTieDef,)}
+
+    def __init__(self, parent) -> None:
+        self._parent = parent
+        self.future_defs: list = []
 
 
 def _tie(g, source: str) -> None:
@@ -270,8 +286,6 @@ def _tie(g, source: str) -> None:
         g.constraints.tie("beam", "bar")
     elif source == "constraints.tied_contact":
         g.constraints.tied_contact("beam", "bar")
-    elif source == "constraints.bc":
-        g.constraints.bc("bar", dofs=[1, 1, 1])
     elif source == "reinforce":
         g.reinforce.reinforce(
             host="beam", bars="bar", perfect=1.0e10, bar_diameter=0.02,
@@ -280,6 +294,13 @@ def _tie(g, source: str) -> None:
         g.embed(host="beam", nodes="bar")
     elif source == "stub_label":
         g.constraints.constraint_defs.append(_FutureTieDef("beam", "bar"))
+    elif source == "stub_composite":
+        g.future = _FutureComposite(g)
+        g.future.future_defs.append(_FutureTieDef("beam", "bar"))
+    elif source == "constraints.bc":
+        g.constraints.bc("bar", dofs=[1, 1, 1])
+    elif source == "constraints.rigid_diaphragm":
+        g.constraints.rigid_diaphragm("q0", "bar")
     else:
         g.constraints.constraint_defs.append(_OddlyNamedDef("future", "bar"))
 
@@ -289,18 +310,25 @@ def _curve_elements(g, label: str) -> int:
     return _n_elements(1, c)
 
 
-#: source -> the "<DefClass> g.<composite>.<store>" its refusal names.
-_TIE_WHERE = {
+#: Definitions that tie the bar into the beam volume -> what the
+#: message names.  The named form refuses these.
+_HOST_TIES = {
     "constraints.embedded": "EmbeddedDef g.constraints.constraint_defs[0]",
     "constraints.tie": "TieDef g.constraints.constraint_defs[0]",
     "constraints.tied_contact": "TiedContactDef g.constraints.constraint_defs[0]",
-    "constraints.bc": "BCDef g.constraints._bc_defs[0]",
     "reinforce": "ReinforceDef g.reinforce.reinforce_defs[0]",
     "embed": "EmbedDef g.embed.embed_defs[0]",
     "stub_label": "_FutureTieDef g.constraints.constraint_defs[0]",
+    "stub_composite": "_FutureTieDef g.future.future_defs[0]",
+}
+#: Node-level definitions (no host): skipped with a warning by the
+#: no-argument form, allowed by name.
+_NODE_LEVEL = {
+    "constraints.bc": "BCDef g.constraints._bc_defs[0]",
+    "constraints.rigid_diaphragm": "RigidDiaphragmDef g.constraints.constraint_defs[0]",
     "stub_any_field": "_OddlyNamedDef g.constraints.constraint_defs[0]",
 }
-_TIE_SOURCES = list(_TIE_WHERE)
+_ALL_SOURCES = {**_HOST_TIES, **_NODE_LEVEL}
 
 # Tie definitions resolve only on a mesh (and the stubs never), so the
 # session's exit autosave may warn; that is not what these tests check.
@@ -308,8 +336,8 @@ _ignore_autosave = pytest.mark.filterwarnings("ignore:autosave to")
 
 
 @_ignore_autosave
-@pytest.mark.parametrize("source", _TIE_SOURCES)
-def test_no_labels_keeps_a_tied_bar_at_its_sizing_count(source):
+@pytest.mark.parametrize("source", list(_ALL_SOURCES))
+def test_no_labels_skips_a_referenced_bar_and_warns(source):
     with apeGmsh(model_name="r3s3_bar_ref", verbose=False) as g:
         _build_beam_with_bar(g)
         g.mesh.generation.generate(dim=3)
@@ -319,7 +347,13 @@ def test_no_labels_keeps_a_tied_bar_at_its_sizing_count(source):
     with apeGmsh(model_name="r3s3_bar", verbose=False) as g:
         _build_beam_with_bar(g)
         _tie(g, source)
-        g.mesh.structured.one_element_per_curve()
+        with pytest.warns(CurvesSkippedWarning) as rec:
+            g.mesh.structured.one_element_per_curve()
+        msg = str(rec[0].message)
+        (bar,) = g.labels.entities("bar", dim=1)
+        assert f"curve {bar} ['bar']" in msg
+        assert _ALL_SOURCES[source] in msg
+        assert "Pass a curve by name to override" in msg
         tags = {d["tag"] for d in _transfinite_directives(g)}
         assert tags == set(g.labels.entities("post", dim=1))
         g.mesh.generation.generate(dim=3)
@@ -328,15 +362,59 @@ def test_no_labels_keeps_a_tied_bar_at_its_sizing_count(source):
 
 
 @_ignore_autosave
-@pytest.mark.parametrize("source", _TIE_SOURCES)
-def test_named_tied_bar_is_refused_naming_the_def(source):
+@pytest.mark.parametrize("source", list(_HOST_TIES))
+def test_named_bar_tied_into_a_host_is_refused_naming_the_def(source):
     with apeGmsh(model_name="r3s3_bar_named", verbose=False) as g:
         _build_beam_with_bar(g)
         _tie(g, source)
         with pytest.raises(ValueError, match="not free") as exc:
             g.mesh.structured.one_element_per_curve("post", "bar")
-        assert _TIE_WHERE[source] in str(exc.value)
+        assert _HOST_TIES[source] in str(exc.value)
+        assert "tied into a host" in str(exc.value)
         assert _transfinite_directives(g) == []
+
+
+@_ignore_autosave
+@pytest.mark.filterwarnings("error::apeGmsh.mesh._mesh_structured.CurvesSkippedWarning")
+@pytest.mark.parametrize("source", list(_NODE_LEVEL))
+def test_named_bar_under_a_node_level_def_is_allowed(source):
+    with apeGmsh(model_name="r3s3_bar_nodelevel", verbose=False) as g:
+        _build_beam_with_bar(g)
+        _tie(g, source)
+        g.mesh.structured.one_element_per_curve("bar")
+        g.mesh.generation.generate(dim=3)
+        assert _curve_elements(g, "bar") == 1
+
+
+@_ignore_autosave
+@pytest.mark.filterwarnings("error::apeGmsh.mesh._mesh_structured.CurvesSkippedWarning")
+def test_loads_and_masses_do_not_make_a_curve_skipped():
+    """Loads, masses and decoupled nodes tie no node to another, so a
+    loaded truss bar is still meshed as one element, silently."""
+    with apeGmsh(model_name="r3s3_loaded", verbose=False) as g:
+        _build_beam_with_bar(g)
+        with g.loads.case("dead"):
+            g.loads.line("post", magnitude=1.0)
+        g.masses.line("post", linear_density=1.0)
+        g.mesh.structured.one_element_per_curve()
+        tags = {d["tag"] for d in _transfinite_directives(g)}
+        # No tie here, so the bar is free too.
+        assert tags == {*g.labels.entities("post", dim=1),
+                        *g.labels.entities("bar", dim=1)}
+
+
+@_ignore_autosave
+def test_frame_beam_under_a_diaphragm_warns_by_label():
+    """The reviewer's case: a frame beam inside a diaphragm floor keeps the
+    global size under the no-argument form, and that is reported."""
+    with apeGmsh(model_name="r3s3_diaphragm", verbose=False) as g:
+        _build_frame_and_slab(g)
+        g.constraints.rigid_diaphragm("b0", "beam")
+        with pytest.warns(CurvesSkippedWarning, match=r"\['beam'\].*RigidDiaphragmDef"):
+            g.mesh.structured.one_element_per_curve()
+        g.mesh.generation.generate(dim=1)
+        assert _curve_elements(g, "beam") > 1
+        assert _curve_elements(g, "col0") == 1
 
 
 @_ignore_autosave

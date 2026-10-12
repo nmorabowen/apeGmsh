@@ -8,6 +8,7 @@ Laplacian smoothing, and compound merging.
 from __future__ import annotations
 
 import math
+import warnings
 from typing import TYPE_CHECKING, Any
 
 import gmsh
@@ -26,6 +27,17 @@ class RecombineEmptyMeshWarning(UserWarning):
     ``generate()`` it is a no-op, the mesh comes out all-triangle, and a
     quad-only element fails much later at emit (#1327). Promote it with
     ``pytest -W error::...RecombineEmptyMeshWarning`` (warn-as-contract).
+    """
+
+
+class CurvesSkippedWarning(UserWarning):
+    """``g.mesh.structured.one_element_per_curve()`` skipped curves that a
+    constraint, embed or reinforce definition references.
+
+    The no-argument form never coarsens such a curve; this names each one
+    and the definition, so a frame beam under a diaphragm or a BC is not
+    left at the global size unnoticed.  Promote it with
+    ``pytest -W error::...CurvesSkippedWarning`` (warn-as-contract).
     """
 
 
@@ -163,51 +175,72 @@ class _Structured:
             )
         return self
 
-    #: Session composites whose definition stores are scanned for curve
-    #: references.  Every store each one lists in ``_DECLARATION_STORES``
-    #: is read, and every definition in it, whatever its class.
-    _TIE_COMPOSITES = ("constraints", "embed", "reinforce")
+    @staticmethod
+    def _untied_composite_types() -> tuple[type, ...]:
+        """Declaration composites whose definitions are not read.
 
-    def _tied_curves(self) -> dict[int, str]:
+        Loads, masses and decoupled nodes put forces, mass or extra
+        nodes **on** entities; they tie no mesh node to another, so a
+        curve they name keeps its meaning at one element.  Every other
+        declaration composite on the session is read, including any
+        added later.
+        """
+        from apeGmsh.core.DecoupledNodesComposite import (
+            DecoupledNodesComposite,
+        )
+        from apeGmsh.core.LoadsComposite import LoadsComposite
+        from apeGmsh.core.MassesComposite import MassesComposite
+        return (LoadsComposite, MassesComposite, DecoupledNodesComposite)
+
+    def _tied_curves(self) -> dict[int, tuple[str, bool, bool]]:
         """Curves another surface, volume or definition depends on.
 
-        Maps each such curve tag to the reason, for the refusal message:
+        Maps each such curve tag to ``(reason, from_definition, hard)``:
 
-        - a curve that bounds a surface (``getAdjacencies``);
-        - a curve embedded with ``g.mesh.editing.embed`` (``getEmbedded``);
+        - a curve that bounds a surface (``getAdjacencies``): hard;
+        - a curve embedded with ``g.mesh.editing.embed`` (``getEmbedded``):
+          hard;
         - a curve referenced, **in any role**, by any definition in any
-          store of ``g.constraints``, ``g.embed`` or ``g.reinforce``.
+          store of any declaration composite on the session (every
+          ``_DeclarationsMixin`` attribute, less those of
+          :meth:`_untied_composite_types`).  It is **hard** when the same
+          definition also references a surface or volume, i.e. it ties
+          the curve into a host (embedded, reinforce, tie, tied contact);
+          otherwise it is node-level (a BC, a diaphragm over beam lines)
+          and may still be coarsened by name.
 
-        The third rule has no allow-list of definition classes: a
-        definition is read field by field.  A field named ``*_label``,
-        ``*_labels`` or ``target`` is a name and must resolve; a field
-        named ``*_entities`` (or a ``target`` list) holds ``(dim, tag)``
-        pairs; any other string field that happens to resolve to a
-        label, group or part is counted too.  A definition that is not
-        a dataclass, a role field of an unexpected type, a role name
-        that does not resolve, or a definition with no reference at all
-        is refused, so an unknown kind can never leave a curve "free".
+        There is no allow-list of definition classes: a definition is
+        read field by field.  A field named ``*_label``, ``*_labels`` or
+        ``target`` names entities and must resolve; a field named
+        ``*_entities`` holds ``(dim, tag)`` pairs; any other string field
+        that happens to resolve to a label, group or part is counted too.
+        A definition that is not a dataclass, a role field of an
+        unexpected type, a role name that does not resolve, or a
+        definition with no reference at all is refused, so an unknown
+        kind can never leave a curve "free".
         """
         import dataclasses
 
+        from apeGmsh.core._declarations import _DeclarationsMixin
         from apeGmsh.core._helpers import resolve_to_dimtags
 
-        tied: dict[int, str] = {}
+        tied: dict[int, tuple[str, bool, bool]] = {}
         for _, c in gmsh.model.getEntities(1):
             upward, _down = gmsh.model.getAdjacencies(1, c)
             if len(upward):
-                tied.setdefault(
-                    int(c), f"bounds surface(s) {[int(s) for s in upward]}",
-                )
+                tied.setdefault(int(c), (
+                    f"bounds surface(s) {[int(s) for s in upward]}",
+                    False, True,
+                ))
         for host_dim in (2, 3):
             for _, h in gmsh.model.getEntities(host_dim):
                 for d, t in gmsh.model.mesh.getEmbedded(host_dim, h):
                     if d == 1:
-                        tied.setdefault(
-                            int(t),
+                        tied.setdefault(int(t), (
                             f"is embedded in ({host_dim}, {h}) "
                             "(g.mesh.editing.embed)",
-                        )
+                            False, True,
+                        ))
 
         session = self._mesh._parent
 
@@ -230,16 +263,28 @@ class _Structured:
                                         f"{exc}") from exc
                 return []
 
-        def as_dimtags(value: Any, where: str) -> list[DimTag]:
-            try:
-                return [(int(d), int(t)) for d, t in value]
-            except (TypeError, ValueError) as exc:
-                raise refuse(where, f"{value!r} is not (dim, tag) "
-                                    "pairs") from exc
+        def role_refs(value: Any, key: str, where: str) -> list[DimTag]:
+            if isinstance(value, str):
+                return resolve(value, where, strict=True)
+            if isinstance(value, (list, tuple)):
+                if all(isinstance(v, str) for v in value):
+                    out: list[DimTag] = []
+                    for v in value:
+                        out.extend(resolve(v, where, strict=True))
+                    return out
+                if (len(value) == 2
+                        and all(isinstance(v, int) for v in value)):
+                    return [(int(value[0]), int(value[1]))]
+                try:
+                    return [(int(d), int(t)) for d, t in value]
+                except (TypeError, ValueError):
+                    pass
+            raise refuse(where, f"field {key!r} holds {value!r}")
 
-        for comp_name in self._TIE_COMPOSITES:
-            comp = getattr(session, comp_name, None)
-            if comp is None:
+        untied = self._untied_composite_types()
+        for comp_name, comp in list(vars(session).items()):
+            if (not isinstance(comp, _DeclarationsMixin)
+                    or isinstance(comp, untied)):
                 continue
             # Read without a default: a renamed store list must raise
             # here, not leave every curve looking free.
@@ -257,39 +302,32 @@ class _Structured:
                     for f in dataclasses.fields(defn):
                         value = getattr(defn, f.name)
                         key = f.name
-                        is_name = (key.endswith("_label")
-                                   or key.endswith("_labels")
-                                   or key == "target")
-                        is_ents = key.endswith("_entities")
                         if value is None:
                             continue
-                        if is_ents or (key == "target"
-                                       and not isinstance(value, str)):
+                        if (key.endswith("_label") or key.endswith("_labels")
+                                or key.endswith("_entities")
+                                or key == "target"):
                             n_roles += 1
-                            hits.extend((key, dt)
-                                        for dt in as_dimtags(value, where))
-                        elif is_name:
-                            n_roles += 1
-                            names = [value] if isinstance(value, str) else value
-                            if not (isinstance(names, (list, tuple))
-                                    and all(isinstance(n, str) for n in names)):
-                                raise refuse(where, f"field {key!r} holds "
-                                                    f"{value!r}")
-                            for n in names:
-                                hits.extend((key, dt) for dt in
-                                            resolve(n, where, strict=True))
+                            hits.extend((key, dt) for dt in
+                                        role_refs(value, key, where))
                         elif isinstance(value, str):
                             hits.extend((key, dt) for dt in
                                         resolve(value, where, strict=False))
                     if not n_roles and not hits:
                         raise refuse(where, "it has no label or entity "
                                             "field")
+                    into_host = any(d >= 2 for _, (d, _t) in hits)
                     for key, (d, t) in hits:
-                        if d == 1:
-                            tied.setdefault(
-                                int(t),
-                                f"is referenced by {where}, field {key!r}",
-                            )
+                        if d != 1:
+                            continue
+                        prev = tied.get(int(t))
+                        if prev is not None and (prev[2] or not into_host):
+                            continue
+                        tied[int(t)] = (
+                            f"is referenced by {where}, field {key!r}"
+                            + (" (tied into a host)" if into_host else ""),
+                            True, into_host,
+                        )
         return tied
 
     def one_element_per_curve(self, *labels: str) -> "_Structured":
@@ -307,7 +345,7 @@ class _Structured:
             curve under each name is selected; entities of other
             dimensions under the same name are ignored.  With **no
             labels**, every *free* curve in the model (see below) is
-            selected, so no surface edge and no tied member is
+            selected, so no surface edge and no referenced curve is
             constrained.
 
         Returns
@@ -321,10 +359,17 @@ class _Structured:
             A name is not a label, physical group or part (the message
             lists the existing labels and groups).
         ValueError
-            A name resolves to no curve; a named curve is not free (the
-            message names the surface or the tie that uses it); a tie
-            definition's member cannot be resolved; or, with no labels,
-            the model has no free curve.
+            A name resolves to no curve; a named curve bounds or is
+            embedded in a surface, or is tied into a host (the message
+            names the surface or the definition); a definition's
+            references cannot be enumerated; or, with no labels, the
+            model has no free curve.
+
+        Warns
+        -----
+        CurvesSkippedWarning
+            The no-argument form skipped curves that a definition
+            references.
         TypeError
             A name is not a ``str``.
 
@@ -336,27 +381,38 @@ class _Structured:
         - it is embedded in no surface or volume
           (``g.mesh.editing.embed``, read back with
           ``gmsh.model.mesh.getEmbedded``);
-        - no definition in any store of ``g.constraints``, ``g.embed``
-          or ``g.reinforce`` references it, in any role (a tie, an
-          embedded member, a bar, a BC target, a kind added later).
-          Gmsh does not know these definitions, so they are read from
-          the session's stores, field by field and without a list of
-          known classes.  A definition whose references cannot be
-          enumerated is refused rather than ignored.
+        - no definition references it, in any role, in any store of any
+          declaration composite on the session (``g.constraints``,
+          ``g.embed``, ``g.reinforce``, ``g.rebar``,
+          ``g.displacements``, and any composite added later; loads,
+          masses and decoupled nodes are not read, since they tie no
+          node to another).  Gmsh does not know these definitions, so
+          they are read field by field, without a list of known
+          classes.  A definition whose references cannot be enumerated
+          is refused rather than ignored.
 
         All three are known before meshing.  The helper constrains no
         surface edge; it does not promise an identical surface mesh,
         since gmsh's meshing order can still shift a count slightly.
 
+        The no-argument form skips every curve that is not free.  When
+        it skips one because a definition references it, it emits a
+        :class:`CurvesSkippedWarning` naming each such curve and the
+        definition; it is silent otherwise.
+
+        By name, a curve is **refused** when it bounds a surface, is
+        embedded in one, or is referenced by a definition that also
+        references a surface or volume, i.e. ties it into a host
+        (embedded, reinforce, tie, tied contact).  Two nodes there would
+        rewrite that surface's mesh, or tie a rebar to its host at two
+        points only.  A curve referenced only by a node-level definition
+        (a BC, a diaphragm over beam lines) is **allowed** by name.  To
+        coarsen a refused curve anyway, say so explicitly with
+        ``set_transfinite_curve(curve, n_nodes=2)``.
+
         **Order:** the definitions are read when the helper is called,
         so call it **after every tie is declared**.  A tie declared
         later does not undo the two-node constraint already set.
-
-        A named curve that is not free is **refused**, never silently
-        coarsened: two nodes on a slab edge would rewrite that surface's
-        mesh, and one element on a rebar would tie it to its host at two
-        points only.  When that is really wanted, say so explicitly with
-        ``set_transfinite_curve(curve, n_nodes=2)``.
 
         Examples
         --------
@@ -385,6 +441,25 @@ class _Structured:
                 int(c) for _, c in gmsh.model.getEntities(1)
                 if int(c) not in tied
             ]
+            skipped = sorted(t for t, (_r, from_def, _h) in tied.items()
+                             if from_def)
+            if skipped:
+                labels_comp = getattr(self._mesh._parent, "labels", None)
+                lines = []
+                for t in skipped:
+                    names = (labels_comp.labels_for_entity(1, t)
+                             if labels_comp is not None else [])
+                    who = f"curve {t}" + (f" {names}" if names else "")
+                    lines.append(f"  {who} {tied[t][0]}")
+                warnings.warn(
+                    "one_element_per_curve(): skipped "
+                    f"{len(skipped)} curve(s) that a definition "
+                    "references:\n" + "\n".join(lines) + "\n"
+                    "Pass a curve by name to override, if it is not a "
+                    "tie (a curve tied into a host is refused by name; "
+                    "use set_transfinite_curve(curve, n_nodes=2)).",
+                    CurvesSkippedWarning, stacklevel=2,
+                )
             if not curves:
                 raise ValueError(
                     "one_element_per_curve(): the model has no free curve "
@@ -405,10 +480,10 @@ class _Structured:
                         f"one_element_per_curve: {name!r} resolves to no "
                         f"curve (it holds entities of dim {dims} only)."
                     )
-                not_free = [t for t in named if t in tied]
+                not_free = [t for t in named if t in tied and tied[t][2]]
                 if not_free:
                     reasons = "; ".join(
-                        f"curve {t} {tied[t]}" for t in not_free
+                        f"curve {t} {tied[t][0]}" for t in not_free
                     )
                     raise ValueError(
                         f"one_element_per_curve: {name!r} names curve(s) "
