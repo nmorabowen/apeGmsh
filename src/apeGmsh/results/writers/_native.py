@@ -893,6 +893,22 @@ class NativeWriter:
             grp, _native.DSET_IDS, np.asarray(ids, dtype=np.int64),
         )
 
+    def stamp_element_index_space(self, space: str) -> None:
+        """Stamp root ``element_index_space`` (results 1.2.0, #1746).
+
+        The stamp says the file's element row ids are provably FEM
+        element ids. Call it only with that proof in hand; without it,
+        leave the attribute absent (absent reads as unverified).
+        ``space`` must be one of ``ELEMENT_INDEX_SPACES`` (``"fem"`` is
+        the only value); anything else raises ``ValueError``.
+        """
+        if space not in _native.ELEMENT_INDEX_SPACES:
+            raise ValueError(
+                f"NativeWriter.stamp_element_index_space({space!r}): "
+                f"expected one of {list(_native.ELEMENT_INDEX_SPACES)}."
+            )
+        self._require_open().attrs[_native.ATTR_ELEMENT_INDEX_SPACE] = space
+
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------

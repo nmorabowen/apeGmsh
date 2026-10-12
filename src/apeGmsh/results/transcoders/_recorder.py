@@ -59,8 +59,10 @@ from ...opensees._response_catalog import (
     unflatten_nodal,
 )
 from ...opensees._recorder_translate import stress_zz_keyword
+from ..schema._native import ELEMENT_INDEX_SPACE_FEM
 from ..spec._emit import (
     _DEFERRED_CATEGORIES,
+    element_tag_map,
     emit_logical,
     line_station_gpx_path,
 )
@@ -73,6 +75,10 @@ if TYPE_CHECKING:
         ResolvedRecorderRecord,
         ResolvedRecorderSpec,
     )
+
+
+# Spec categories whose records become element rows in the file.
+_ELEMENT_ROW_CATEGORIES = frozenset({"gauss", "line_stations", "elements"})
 
 
 class RecorderTranscoder:
@@ -229,6 +235,8 @@ class RecorderTranscoder:
                     time_vec = nr.time
                     break
 
+        proven_fem_index = self._element_index_is_fem()
+
         # Write
         with NativeWriter(self._target_path) as w:
             w.open(
@@ -237,6 +245,8 @@ class RecorderTranscoder:
                 source_path=str(self._output_dir),
                 model_h5_src=self._model_h5_src,
             )
+            if proven_fem_index:
+                w.stamp_element_index_space(ELEMENT_INDEX_SPACE_FEM)
             sid = w.begin_stage(
                 name=self._stage_name,
                 kind=self._stage_kind,
@@ -249,6 +259,54 @@ class RecorderTranscoder:
             w.end_stage()
 
         return self._target_path
+
+    # ------------------------------------------------------------------
+    # Element index provenance (results 1.2.0)
+    # ------------------------------------------------------------------
+
+    def _element_index_is_fem(self) -> bool:
+        """True only when the element rows provably carry FEM element ids.
+
+        The transcoder labels element rows with the spec's FEM ids. They
+        are the recorded elements only if the emit put the right OpenSees
+        tags in each ``-ele`` list, and the ``.out`` files do not say
+        which emit wrote them. So the proof uses only what is in hand,
+        whatever the emit era:
+
+        - no model (``model_h5_src`` absent): no proof;
+        - the model's ``lineage.fem_hash`` differs from the spec's
+          ``fem_snapshot_id``: no proof;
+        - no element-scoped record that yields rows: proven (node rows
+          are FEM ids, because the bridge emits nodes under them);
+        - otherwise proven only if every recorded FEM element id is its
+          own OpenSees tag in the model's pairing, so an emit that
+          translated and one that did not wrote the same ``-ele`` list.
+
+        The proof is relative to the model embedded in the file: it
+        cannot show that the files came from a deck built from that
+        model, nor that the deck honoured the spec.
+        """
+        if self._model_h5_src is None:
+            return False
+        from ...opensees import OpenSeesModel
+
+        model = OpenSeesModel.from_h5(self._model_h5_src)
+        if model.lineage.fem_hash != self._spec.fem_snapshot_id:
+            return False
+        recorded: set[int] = set()
+        for rec in self._spec.records:
+            if rec.category in _DEFERRED_CATEGORIES or rec.category == "nodes":
+                continue
+            if rec.category not in _ELEMENT_ROW_CATEGORIES:
+                return False   # unknown category: no proof
+            if rec.element_ids is not None:
+                recorded.update(int(e) for e in rec.element_ids)
+        if not recorded:
+            return True
+        tags = element_tag_map(
+            model, fem_snapshot_id=self._spec.fem_snapshot_id,
+        )
+        return all(tags.get(e) == e for e in recorded)
 
     # ------------------------------------------------------------------
     # Per-record parsing
