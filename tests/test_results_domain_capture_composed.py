@@ -116,6 +116,11 @@ class TestComposedDomainCapture:
         assert FEM_EID_A not in ops.queried_eids
         assert FEM_EID_B not in ops.queried_eids
 
+        # A complete pairing translated every id, so the file is stamped.
+        from apeGmsh.results.readers._native import NativeReader
+        with NativeReader(out) as r:
+            assert r.element_index_space == "fem"
+
         from apeGmsh.results import Results
 
         with Results.from_native(out, model=_open(model_h5)) as r:
