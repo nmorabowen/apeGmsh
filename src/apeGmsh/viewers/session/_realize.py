@@ -82,7 +82,7 @@ from ..scene.fem_scene import build_fem_scene
 from ..scene_ir import ColorSpec, MeshLayer, PointSet
 from ._gauss_addr import gp_index_within_element, probe_component
 from ._plots import realize_plot
-from ._scope import ScopedSet, resolve_scope
+from ._scope import ScopedSet, _nodes_of_elements, resolve_scope
 from ._specs import OCCLUDING_KINDS, slot_spec
 
 if TYPE_CHECKING:
@@ -494,6 +494,7 @@ class _NullLegendController:
 
 def realize_pane(
     session: "ResultsSession", pane: Any, backend: Any = None,
+    *, _stage_activation: bool = False,
 ) -> Any:
     """Realize one pane of ``session``.
 
@@ -501,6 +502,11 @@ def realize_pane(
     :class:`RealizedPane`; a plot pane resolves its series to arrays
     and returns a :class:`~._plots.RealizedPlot` (no backend needed —
     §6: a plot is a pane, and its client draws the numbers).
+
+    ``_stage_activation`` is private to ``export_animation`` (X2-f,
+    #1722): it narrows a mesh pane's cell set to the elements active in
+    the realized stage, as the retired Qt path did. Stills and the
+    session window never filtered and do not pass it.
     """
     from apeGmsh.results.session import MeshView, PlotView
 
@@ -516,11 +522,14 @@ def realize_pane(
         raise TypeError(
             "Realizing a mesh pane needs a RenderBackend to emit into."
         )
-    return _realize_mesh(session, pane, backend)
+    return _realize_mesh(
+        session, pane, backend, stage_activation=_stage_activation,
+    )
 
 
 def _realize_mesh(
     session: "ResultsSession", view: "MeshView", backend: Any,
+    *, stage_activation: bool = False,
 ) -> RealizedPane:
     results = _require_results(session)
     _require_member(session, view)
@@ -536,6 +545,8 @@ def _realize_mesh(
     view_data = ViewerData.from_fem(results.fem)
     # INV-MESH-1: ONE cell set; every layer below is a function of it.
     scoped = resolve_scope(view.scope, view_data)
+    if stage_activation:
+        scoped = _stage_active_scope(results, scene, view_data, scoped, stage_id)
 
     # Decision 5: pose first — every extraction below copies posed points.
     _apply_pose(view, results, scene, stage_id, step)
@@ -848,6 +859,53 @@ def _resolve_instant(
             f"{instant.stage!r} with {n} step(s)."
         )
     return instant.stage, instant.step
+
+
+def _stage_active_scope(
+    results: "Results", scene: "FEMSceneData", view_data: ViewerData,
+    scoped: ScopedSet, stage_id: str,
+) -> ScopedSet:
+    """``scoped`` narrowed to the elements active in ``stage_id``.
+
+    X2-f (#1722): the rule the retired ``ResultsViewer.
+    _apply_stage_activation`` applied, from the same data
+    (``build_from_model`` + ``pair_capture_to_program``). Fail-soft
+    exactly where the old path was: no staged program, or a capture
+    stage that pairs with no program stage, leaves ``scoped`` as it is
+    (every element drawn). A stage that activates NONE of the view's
+    elements raises rather than drawing the full mesh.
+    """
+    from ..data._stage_activation import (
+        build_from_model, pair_capture_to_program,
+    )
+
+    cell_of = scene.element_id_to_cell
+    act = build_from_model(
+        getattr(results, "model", None), cell_of, int(scene.grid.n_cells),
+    )
+    if act is None:
+        return scoped
+    names = pair_capture_to_program(
+        [(s.id, str(s.name)) for s in results.stages],
+        list(act.hidden_by_name),
+    )
+    hidden = act.mask_for(names.get(stage_id))
+    if hidden is None:
+        return scoped
+    hidden = np.asarray(hidden, dtype=bool)
+    active = np.fromiter(
+        (int(e) for e, c in cell_of.items() if not hidden[int(c)]),
+        dtype=np.int64,
+    )
+    if not scoped.is_unscoped:
+        active = np.intersect1d(active, scoped.element_ids)
+    if active.size == 0:
+        raise ValueError(
+            f"Stage {stage_id!r} activates none of the view's elements "
+            "— nothing to draw."
+        )
+    active = np.unique(active)
+    return ScopedSet(active, _nodes_of_elements(active, view_data))
 
 
 def _scoped_element_ids(

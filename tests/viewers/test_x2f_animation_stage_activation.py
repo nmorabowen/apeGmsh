@@ -264,13 +264,18 @@ def test_render_still_draws_every_element(staged, tmp_path):
         assert sub["zmax"] == pytest.approx(2.0)
 
 
-def test_unmatched_stage_draws_everything(staged, tmp_path, monkeypatch):
-    """Fail-soft as the old viewer: no program stage for the capture
-    stage -> no filter (the whole mesh), never an empty picture."""
+@pytest.mark.parametrize("why", ["no_program", "unmatched_stage"])
+def test_no_activation_data_draws_everything(staged, tmp_path, monkeypatch, why):
+    """Fail-soft where the old viewer was: no staged program, or a
+    capture stage pairing with no program stage -> no filter (the whole
+    mesh), never an empty picture."""
     from apeGmsh.viewers.data import _stage_activation as SA
 
-    results, n_total = staged
-    monkeypatch.setattr(SA, "build_from_model", lambda *a, **k: None)
+    results, _n_total = staged
+    if why == "no_program":
+        monkeypatch.setattr(SA, "build_from_model", lambda *a, **k: None)
+    else:
+        monkeypatch.setattr(SA, "pair_capture_to_program", lambda *a, **k: {})
     with _capture() as frames:
         results.export_animation(
             tmp_path / "g.gif", stage="g", fps=2, window_size=(160, 120),
@@ -279,3 +284,46 @@ def test_unmatched_stage_draws_everything(staged, tmp_path, monkeypatch):
     everything = _surface_cells(results, None)
     for frame in frames:
         assert _substrate(frame)["n_cells"] == everything
+
+
+def test_stage_with_no_active_element_refuses(staged, tmp_path):
+    """Fail closed: a view scoped to Fill, animated at 'g' (Fill not yet
+    active), has nothing to draw: it raises and leaves no file, instead
+    of silently drawing the unfiltered mesh."""
+    from apeGmsh.results.session import Scope
+
+    results, _n_total = staged
+
+    def setup(plotter: Any, view: Any) -> None:
+        view.scope = Scope("physical_groups", ("Fill",))
+
+    with pytest.raises(ValueError, match="activates none"):
+        results.export_animation(
+            tmp_path / "g.gif", stage="g", fps=2,
+            window_size=(160, 120), setup=setup,
+        )
+    assert not (tmp_path / "g.gif").exists()
+    assert not (tmp_path / "g.partial.gif").exists()
+
+
+def test_scope_and_activation_intersect(staged, tmp_path):
+    """A scoped view draws scope AND active: Rock-scoped at
+    'construction' draws Rock only (Fill is active but out of scope)."""
+    from apeGmsh.results.session import Scope
+
+    results, _n_total = staged
+    want = _surface_cells(results, _pg_eids(results)["Rock"])
+
+    def setup(plotter: Any, view: Any) -> None:
+        view.scope = Scope("physical_groups", ("Rock",))
+
+    with _capture() as frames:
+        results.export_animation(
+            tmp_path / "c.gif", stage="construction", fps=2,
+            window_size=(160, 120), setup=setup,
+        )
+    assert len(frames) == 2
+    for frame in frames:
+        sub = _substrate(frame)
+        assert sub["n_cells"] == want
+        assert sub["zmax"] == pytest.approx(1.0)
