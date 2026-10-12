@@ -68,6 +68,9 @@ export interface Bridge {
   >;
   /** V4c1: stop scan `scanId` (it answers `cancelled`). */
   cancelResultsScan?(scanId: number): Promise<unknown>;
+  /** V4c1, measure mode: the machine's CPU load (%) since the last call, and the main and renderer working sets (MB). */
+  measureCpu?(): Promise<number>;
+  measureMemory?(): Promise<{ main: number; renderer: number }>;
   /** V4c1: the progress of the running scans; returns the unsubscribe. */
   onScanProgress?(cb: (p: { scanId: number; done: number; total: number }) => void): (() => void) | void;
   /** V4b: one step of the open results file; the reply echoes `seq`. */

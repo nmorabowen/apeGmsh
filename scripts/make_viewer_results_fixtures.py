@@ -312,14 +312,14 @@ def main() -> None:
     todo = set(args.only or ["a", "b", "c"])
     if todo & {"a", "c"}:
         fem = wedge_mesh(13, 21, "v4a_maintainer")
-        # V4c1: the session's model.h5 beside each file, as <stem>.h5, so the app pairs them (fem_hash).
-        import shutil
+        # V4c1: the model of each file beside it, as <stem>.h5, written from the
+        # same FEMData, so the app pairs the two by fem_hash (the contour rows).
         if "a" in todo:
             write(out / "a_maintainer_100.results.h5", fem, 100, STRESS6, WEDGE_GP, 0)
-            shutil.copyfile(SESSION_DIR / "v4a_maintainer.h5", out / "a_maintainer_100.h5")
+            fem.to_h5(str(out / "a_maintainer_100.h5"), model_name="v4a_maintainer")
         if "c" in todo:
             write(out / "c_maintainer_5000.results.h5", fem, 5000, ["stress_xx"], WEDGE_GP, 0)
-            shutil.copyfile(SESSION_DIR / "v4a_maintainer.h5", out / "c_maintainer_5000.h5")
+            fem.to_h5(str(out / "c_maintainer_5000.h5"), model_name="v4a_maintainer")
     if "b" in todo:
         write(out / "b_stress_box_100.results.h5", tet_blocks(args.tet_size, "v4a_stress_box"), 100, STRESS6, TET_GP, 179)
 

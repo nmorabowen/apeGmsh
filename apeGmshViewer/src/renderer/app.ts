@@ -297,6 +297,90 @@ async function captureContours(settle: (ms?: number) => Promise<unknown>, width:
   }
 }
 
+/** Resolves once the contour shows the step the state names (checked after every store change; the viewport listens first). */
+function contourShowsNow(): Promise<void> {
+  return new Promise((resolve) => {
+    if (contourShown()) return resolve();
+    const off = store.subscribe(() => {
+      if (!contourShown()) return;
+      off();
+      resolve();
+    });
+  });
+}
+
+/**
+ * The V4c1 contour scrub (MEASUREMENTS.md, the contour rows): on the results
+ * stage with the most steps, coloured by its first field's first component
+ * (the magnitude when offered) over the whole-history range, every step in
+ * turn, end to end: `setResultStep`, the step read in main, the IPC, the
+ * step range, the vertex colours, the upload and a draw with `gl.finish()`.
+ * The history scan's time comes first; the machine's CPU load is sampled
+ * before (1 s idle) and during the scrub, and the working sets every 100 ms.
+ */
+async function measureContour(path: string) {
+  store.dispatch({ type: "clearSelection" });
+  if (!(await effects.openResults(path))) throw new Error(`measure: results ${path} did not open: ${store.get().artifacts.results?.error}`);
+  const s = store.get();
+  if (!s.phase.axis.some((k) => k.kind === "results")) throw new Error(`measure: ${path} does not pair with the model, so there is nothing to scrub`);
+  const stages = s.results!.stages;
+  let best = -1;
+  stages.forEach((st, i) => {
+    if (st.nodal.length && (best < 0 || st.time.length > stages[best]!.time.length)) best = i;
+  });
+  if (best < 0) throw new Error(`measure: ${path} has no stage with nodal results`);
+  const cpu = bridge.measureCpu!;
+  const memory = bridge.measureMemory!;
+  await cpu();
+  await new Promise((r) => setTimeout(r, 1000));
+  const cpuBefore = await cpu();
+  const peak = { main: 0, renderer: 0 };
+  const sample = async () => {
+    const m = await memory();
+    if (m.main + m.renderer > peak.main + peak.renderer) Object.assign(peak, m);
+  };
+  const sampler = setInterval(() => void sample(), 100);
+  try {
+    const t0 = performance.now();
+    store.dispatch({ type: "setPhase", at: { kind: "results", stage: best, step: 0 } });
+    store.dispatch({ type: "setColourBy", by: "contour" });
+    if (!(await until(() => store.get().contour.scan?.status === "done", 600000))) throw new Error(`measure: the history scan did not finish: ${JSON.stringify(store.get().contour.scan)}`);
+    const scanMs = performance.now() - t0;
+    await contourShowsNow();
+    const v = contourView(store.get());
+    const field = v.state === "ready" ? `${v.field} ${v.component.label}` : "?";
+    const T = stages[best]!.time.length;
+    const gl = viewport.renderer.getContext();
+    const stepMs: number[] = [];
+    await cpu();
+    const start = performance.now();
+    for (let k = 1; k < T; k++) {
+      const t = performance.now();
+      store.dispatch({ type: "setResultStep", step: k });
+      await contourShowsNow();
+      viewport.renderNow();
+      gl.finish();
+      stepMs.push(performance.now() - t);
+    }
+    const total = performance.now() - start;
+    const cpuDuring = await cpu();
+    await sample();
+    const sorted = [...stepMs].sort((a, b) => a - b);
+    return {
+      file: path,
+      field: `${field} (stage ${stages[best]!.name || stages[best]!.id})`,
+      steps: T,
+      scanMs,
+      scrubStepsPerSec: ((T - 1) * 1000) / total,
+      stepMs: { median: sorted[Math.floor((sorted.length - 1) / 2)] ?? NaN, max: sorted[sorted.length - 1] ?? NaN },
+      peakMB: peak,
+      cpu: { before: cpuBefore, during: cpuDuring },
+    };
+  } finally {
+    clearInterval(sampler);
+  }
+}
+
 async function main() {
   const cfg = await bridge.config();
   if (cfg.mode === "view") {
@@ -311,7 +395,9 @@ async function main() {
     return;
   }
   if (cfg.mode === "measure") {
-    await bridge.measureDone(await measure(cfg.t0, cfg));
+    const result = await measure(cfg.t0, cfg);
+    // V4c1: with a results sibling, the contour scrub row too (main prints it).
+    await bridge.measureDone({ ...result, contour: cfg.results ? await measureContour(cfg.results) : null });
     return;
   }
   // capture: select the scripted target and let main grab the page; when the
