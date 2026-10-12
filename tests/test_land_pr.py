@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -37,6 +38,13 @@ def _load():
 
 
 land_pr = _load()
+
+
+@pytest.fixture(autouse=True)
+def _as_mains_copy(monkeypatch):
+    """Run `main` in-process as if it were origin/main's copy (no re-exec); the
+    ruling-2 tests at the bottom drop this to exercise the hop itself."""
+    monkeypatch.setenv(land_pr.MAIN_COPY_ENV, os.path.abspath(land_pr.__file__))
 
 
 class Replay:
@@ -111,7 +119,7 @@ def _row(path, status="modified", previous=None, patch="@@ -1 +1 @@\n-a\n+b"):
 
 
 def _recording(number, pr, squash, files=FILES_1218, *, compare="behind", tip="", labels=LABELS, local=None,
-               porcelain="", rows=None, issues=None):
+               porcelain="", rows=None, issues=None, shows=None):
     pr = {"labels": [], "body": "", "closingIssuesReferences": [], **pr}
     head = pr["headRefOid"]
     if rows is None:
@@ -133,6 +141,7 @@ def _recording(number, pr, squash, files=FILES_1218, *, compare="behind", tip=""
         "rev-parse HEAD": (local or head) + "\n",
         "status --porcelain": porcelain,
         f"ls-remote origin refs/heads/{pr['headRefName']}": tip,
+        **{f"show {head}:{path}": text for path, text in (shows or {}).items()},
     })
     return gh, git
 
@@ -432,8 +441,14 @@ def test_proposed_to_accepted_flip_is_refused_1512():
     assert not _merged(gh)
 
 
+#: The head's copy of the born file, as `git show <head>:<path>` returns it.
+HEAD_0117 = "".join(line[1:] + "\n" for line in PATCH_1522.splitlines()[1:])
+ADR_0117 = "architecture/decisions/0117-assembly-compose-v2.md"
+PROPOSED = "# ADR 0131 — new\n\n**Status:** Proposed (2026-10-11).\n"
+
+
 def test_new_adr_born_accepted_is_refused_1522():
-    gh, git = _d4(ROWS_1522)
+    gh, git = _d4(ROWS_1522, shows={ADR_0117: HEAD_0117})
     with pytest.raises(land_pr.LandError, match=r"check 7: .*0117-assembly-compose-v2\.md is a new ADR born with Status Accepted"):
         _run(1218, gh, git)
     assert not _merged(gh)
@@ -462,10 +477,53 @@ def test_status_edits_that_do_not_accept_pass(patch):
 
 
 def test_adr_with_no_patch_fails_closed():
-    rows = [json.dumps(["architecture/decisions/0117-assembly-compose-v2.md", "added", None, 383, None])]
+    rows = [json.dumps([ADR_0117, "modified", None, 383, None])]
     gh, git = _d4(rows)
     with pytest.raises(land_pr.LandError, match=r"check 7: GitHub returned no patch"):
         _run(1218, gh, git)
+
+
+# The review's rename hole (round 2): a rename's patch is against the OLD file, so an
+# Accepted header inherited through the rename never shows as an added line.
+ADR_0131 = "architecture/decisions/0131-new.md"
+REPRO_B = (  # the reviewer's reproducer B: 0050 renamed to 0131, header rewritten, Accepted kept
+    "@@ -1,3 +1,3 @@\n-# ADR 0050 — old\n+# ADR 0131 — new\n \n"
+    "-**Status:** Accepted (2025).\n+**Status:** Accepted (2026-10-11).\n"
+)
+ACCEPTED_0131 = "# ADR 0131 — new\n\n**Status:** Accepted (2026-10-11).\n"
+
+
+@pytest.mark.parametrize("previous, patch", [
+    ("internal_docs/plan_new.md", None),  # a non-ADR file renamed in whole (pure rename: no patch)
+    ("internal_docs/plan_new.md", "@@ -1 +1 @@\n-# Plan\n+# ADR 0131 — new\n"),  # Status line untouched
+    ("architecture/decisions/0050-old.md", REPRO_B),  # one ADR number to another (reproducer B)
+    ("architecture/decisions/0050-old.md", None),  # 0050 -> 0131 with no content change
+])
+def test_rename_into_a_new_adr_born_accepted_is_refused(previous, patch):
+    row = json.dumps([ADR_0131, "renamed", previous, 0 if patch is None else 4, patch])
+    gh, git = _d4([row], shows={ADR_0131: ACCEPTED_0131})
+    with pytest.raises(land_pr.LandError, match=rf"check 7: .*0131-new\.md \(renamed from {previous}\) is a new ADR born with Status Accepted"):
+        _run(1218, gh, git)
+    assert not _merged(gh)
+
+
+def test_reproducer_b_patch_alone_reads_as_no_flip():
+    """Why the rename needs the head's file: judged as a patch, B is not a flip."""
+    assert land_pr._sets_accepted(REPRO_B) is False
+
+
+@pytest.mark.parametrize("status, previous", [("added", None), ("renamed", "internal_docs/plan_new.md")])
+def test_new_adr_born_proposed_passes(status, previous):
+    gh, git = _d4([json.dumps([ADR_0131, status, previous, 3, None])], shows={ADR_0131: PROPOSED})
+    assert _run(1218, gh, git) == 0
+
+
+def test_rename_within_one_adr_number_is_judged_as_a_patch():
+    """0121's slug renamed with its Accepted Status untouched: not a birth, not a flip."""
+    row = json.dumps(["architecture/decisions/0121-charter-v2.md", "renamed",
+                      "architecture/decisions/0121-charter-v2-b-with-amendments.md", 0, None])
+    gh, git = _d4([row])
+    assert _run(1218, gh, git) == 0
 
 
 def test_status_reading_agrees_with_adr_index_on_every_adr():
@@ -541,3 +599,89 @@ def test_freeze_non_holder_is_refused(body, issues):
     with pytest.raises(land_pr.LandError, match=r"check 5: .*build\.py.*holds the freeze"):
         _run(1218, gh, git)
     assert not _merged(gh)
+
+
+# --- Ruling 2 on #1686: the rules that run are origin/main's, never the checkout's ----------------
+
+SHOW_MAIN = f"show origin/main:{land_pr.SELF}"
+
+
+def _load_as(path: Path, name: str):
+    spec = importlib.util.spec_from_file_location(name, path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_main_runs_origin_mains_copy_in_a_subprocess(monkeypatch, capfd):
+    """The checkout's copy fetches main, writes main's file out and runs THAT; the
+    copy recognises itself by MAIN_COPY_ENV naming its own path."""
+    monkeypatch.delenv(land_pr.MAIN_COPY_ENV)
+    fake_main = (
+        "import os, sys\n"
+        f"print('main copy', os.environ[{land_pr.MAIN_COPY_ENV!r}] == os.path.abspath(__file__), sys.argv[1:])\n"
+        "sys.exit(7)\n"
+    )
+    git = Replay({"fetch origin main": "", SHOW_MAIN: fake_main})
+    monkeypatch.setattr(land_pr, "run_git", git)
+    assert land_pr.main(["1218", "--dry-run"]) == 7
+    assert git.calls == ["fetch origin main", SHOW_MAIN]
+    assert "main copy True ['1218', '--dry-run']" in capfd.readouterr().out
+
+
+@pytest.mark.parametrize("env", [None, "C:/elsewhere/land_pr.py"])
+def test_a_missing_or_stale_marker_still_hops(monkeypatch, env):
+    if env is None:
+        monkeypatch.delenv(land_pr.MAIN_COPY_ENV)
+    else:
+        monkeypatch.setenv(land_pr.MAIN_COPY_ENV, env)
+    seen: list[list[str]] = []
+    monkeypatch.setattr(land_pr, "run_git", Replay({"fetch origin main": "", SHOW_MAIN: "pass\n"}))
+    monkeypatch.setattr(land_pr, "run_python", lambda argv, e: seen.append(argv) or 0)
+    assert land_pr.main(["1218", "--verify-only"]) == 0
+    assert seen and seen[0][1:] == ["1218", "--verify-only"]
+
+
+def test_mains_copy_does_not_hop_again(monkeypatch):
+    """The loop guard: with the marker naming this file, main never re-executes."""
+    def no_hop(*_a):
+        raise AssertionError("main's copy re-executed itself")
+    monkeypatch.setattr(land_pr, "run_python", no_hop)
+    monkeypatch.setattr(land_pr, "run_git", Replay({}))
+    gh, _ = _verify_recording("OPEN")
+    monkeypatch.setattr(land_pr, "run_gh", gh)
+    assert land_pr.main(["1218", "--verify-only"]) == 1
+
+
+def test_a_pr_that_strips_check_7_is_still_judged_by_it(monkeypatch, tmp_path, capsys):
+    """The revert-proof: the PR's checkout of land_pr.py drops the D4 checks; run from
+    that checkout, main's copy (this file's real text) still refuses #1512's flip."""
+    call = "    _check_adr_and_baseline(number, pr, gh, git)\n"
+    real = SCRIPT.read_text(encoding="utf-8")
+    assert real.count(call) == 1
+    stripped_path = tmp_path / "checkout" / "land_pr.py"
+    stripped_path.parent.mkdir()
+    stripped_path.write_text(real.replace(call, ""), encoding="utf-8")
+    pr_copy = _load_as(stripped_path, "land_pr_checkout")
+
+    # The mutation is real: run as if it were main's copy, the stripped file lands the flip.
+    gh, git = _d4(ROWS_1512)
+    assert pr_copy.land(1218, gh, git, sleep=lambda _s: None) == 0
+
+    def run_main_copy(argv, env):  # stands in for the subprocess, with the recorded seams
+        main_copy = _load_as(Path(argv[0]), "land_pr_main_copy")
+        main_gh, main_git = _d4(ROWS_1512)
+        main_copy.run_gh, main_copy.run_git = main_gh, main_git
+        monkeypatch.setenv(land_pr.MAIN_COPY_ENV, env[land_pr.MAIN_COPY_ENV])
+        rc = main_copy.main(argv[1:])
+        assert not _merged(main_gh)
+        return rc
+
+    monkeypatch.delenv(land_pr.MAIN_COPY_ENV)
+    pr_copy.run_git = Replay({"fetch origin main": "", SHOW_MAIN: real})
+    pr_copy.run_python = run_main_copy
+    assert pr_copy.main(["1218"]) == 1
+    err = capsys.readouterr().err
+    assert "running origin/main's scripts/land_pr.py" in err
+    assert "check 7: architecture/decisions/0116-render-technologies.md sets Status Accepted" in err

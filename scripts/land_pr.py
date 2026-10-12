@@ -8,7 +8,12 @@ The checks run in order and the first failure refuses, naming the check and
 the lesson. Checks 7 and 8 are ADR 0121 D4 (invariant 8): a diff that sets an
 ADR's Status to Accepted is refused outright, and an edit to the freeze census
 baseline needs the ``human-gate`` label. The maintainer's web merge is the
-exception path for both, by design. Then ``gh pr merge --squash --match-head-commit <checked head>``
+exception path for both, by design.
+
+Whatever copy is invoked, the rules that run are origin/main's: ``main``
+fetches origin/main and re-executes ``git show origin/main:scripts/land_pr.py``
+from a temp file (maintainer ruling 2 on #1686), so a PR that edits this file
+is judged by the rules it would replace. Then ``gh pr merge --squash --match-head-commit <checked head>``
 (never ``--auto``, never ``--delete-branch``), so a push between the checks
 and the merge is refused by GitHub; then ``compare/main...<squash sha>`` must
 read ``behind`` or ``identical``; then the branch tip must still be the
@@ -30,9 +35,11 @@ from __future__ import annotations
 import argparse
 import fnmatch
 import json
+import os
 import re
 import subprocess
 import sys
+import tempfile
 import time
 from collections.abc import Callable
 from typing import Any
@@ -70,11 +77,43 @@ class LandError(Exception):
 
 
 def run_gh(args: list[str]) -> str:
-    return subprocess.run(["gh", *args], check=True, stdout=subprocess.PIPE, text=True).stdout
+    # utf-8, not the locale codec: PR bodies and ADRs carry non-ASCII text.
+    return subprocess.run(["gh", *args], check=True, stdout=subprocess.PIPE, encoding="utf-8").stdout
 
 
 def run_git(args: list[str]) -> str:
-    return subprocess.run(["git", *args], check=True, stdout=subprocess.PIPE, text=True).stdout
+    return subprocess.run(["git", *args], check=True, stdout=subprocess.PIPE, encoding="utf-8").stdout
+
+
+def run_python(argv: list[str], env: dict[str, str]) -> int:
+    return subprocess.run([sys.executable, *argv], env=env).returncode
+
+
+#: Set to the path of main's copy when it runs (ruling 2 on #1686); see `_run_mains_copy`.
+MAIN_COPY_ENV = "APEGMSH_LAND_PR_MAIN_COPY"
+SELF = "scripts/land_pr.py"
+
+
+def _is_mains_copy() -> bool:
+    return os.environ.get(MAIN_COPY_ENV) == os.path.abspath(__file__)
+
+
+def _run_mains_copy(argv: list[str]) -> int:
+    """Run origin/main's land_pr.py, never the checkout's (maintainer ruling 2 on #1686).
+
+    The checkout is the PR head (check 3), so the PR's own copy of this file could
+    have dropped a check. Main's copy runs from a temp file with MAIN_COPY_ENV set
+    to that file's path: the copy sees itself and runs in-process, which ends the
+    re-exec; a stale MAIN_COPY_ENV in the shell names no other path, so it cannot
+    switch the hop off for the checkout's copy."""
+    run_git(["fetch", "origin", "main"])
+    source = run_git(["show", f"origin/main:{SELF}"])
+    with tempfile.TemporaryDirectory(prefix="land_pr_main_") as tmp:
+        path = os.path.abspath(os.path.join(tmp, "land_pr.py"))
+        with open(path, "w", encoding="utf-8", newline="") as out:
+            out.write(source)
+        print(f"land_pr: running origin/main's {SELF}, not the checkout's.", file=sys.stderr)
+        return run_python([path, *argv], {**os.environ, MAIN_COPY_ENV: path})
 
 
 def _green(check: dict[str, Any]) -> bool:
@@ -149,12 +188,37 @@ def _check_freeze(number: int, pr: dict[str, Any], paths: list[str], frozen: lis
             print(f"check 5: {path} is inside freeze:{pattern}, held by {by}; allowed.")
 
 
-def _check_adr_and_baseline(number: int, pr: dict[str, Any], gh: Runner) -> None:
+def _born(path: str, status: str, previous: str | None) -> bool:
+    """Whether this row brings an ADR number into being: an added or copied file, or
+    a rename from a non-ADR file or from another ADR number. Its whole header is
+    judged, since a patch against the old file would hide an inherited Accepted."""
+    if status in ("added", "copied"):
+        return True
+    if status != "renamed":
+        return False
+    if previous is None or not ADR_FILE.fullmatch(previous):
+        return True
+    return previous.rsplit("/", 1)[-1][:4] != path.rsplit("/", 1)[-1][:4]
+
+
+def _check_adr_and_baseline(number: int, pr: dict[str, Any], gh: Runner, git: Runner) -> None:
     """Checks 7 and 8 (ADR 0121 D4, invariant 8), read from the PR files listing."""
     listing = gh(["api", "--paginate", f"repos/{{owner}}/{{repo}}/pulls/{number}/files", "--jq", FILES_JQ])
     rows = [json.loads(line) for line in listing.splitlines() if line.strip()]
-    for path, status, _previous, changes, patch in rows:
+    for path, status, previous, changes, patch in rows:
         if not ADR_FILE.fullmatch(path) or status == "removed":
+            continue
+        if _born(path, status, previous):
+            # Local HEAD is the PR head (check 3), so the head's file is readable here.
+            header = git(["show", f"{pr['headRefOid']}:{path}"]).splitlines()[:ADR_HEADER_LINES]
+            if any(_accepted(line) for line in header):
+                how = "is a new ADR born with" if status != "renamed" else f"(renamed from {previous}) is a new ADR born with"
+                raise LandError(
+                    f"check 7: {path} {how} Status Accepted. Accepting an ADR is the "
+                    f"maintainer's act (ADR 0121 D4 (a)): an agent must not accept the ADR "
+                    f"that admits its own exception. Leave it Proposed; the maintainer "
+                    f"accepts it, through the GitHub web merge if need be."
+                )
             continue
         if patch is None:
             if changes:
@@ -164,7 +228,7 @@ def _check_adr_and_baseline(number: int, pr: dict[str, Any], gh: Runner) -> None
                 )
             continue
         if _sets_accepted(patch):
-            how = "is a new ADR born with" if status == "added" else "sets"
+            how = "sets"
             raise LandError(
                 f"check 7: {path} {how} Status Accepted. Accepting an ADR is the "
                 f"maintainer's act (ADR 0121 D4 (a)): an agent must not accept the ADR "
@@ -233,7 +297,7 @@ def check(number: int, gh: Runner, git: Runner) -> dict[str, Any]:
                     f"check 6: required check {name!r} is {seen} on {head[:12]}, not SUCCESS "
                     f"(every run of a required check must be). Pending is a refusal, not a wait."
                 )
-    _check_adr_and_baseline(number, pr, gh)
+    _check_adr_and_baseline(number, pr, gh, git)
     return pr
 
 
@@ -363,6 +427,8 @@ def land(
 
 
 def main(argv: list[str] | None = None) -> int:
+    if not _is_mains_copy():
+        return _run_mains_copy(sys.argv[1:] if argv is None else argv)
     parser = argparse.ArgumentParser(description=(__doc__ or "").splitlines()[0])
     parser.add_argument("number", type=int, help="the PR number")
     parser.add_argument("--dry-run", action="store_true", help="run the checks, then stop before the merge")
