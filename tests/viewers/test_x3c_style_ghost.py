@@ -460,3 +460,165 @@ def test_overlay_leaves_every_posed_layer_unchanged(plate):
         np.testing.assert_array_equal(
             on_layers[key].points.coords, layer.points.coords, err_msg=key,
         )
+
+
+# ---------------------------------------------------------------------
+# A7.3 under Amendment 4: an explicit clim opens the in-place re-step
+# ---------------------------------------------------------------------
+#
+# ``can_restep`` refuses the auto-fit LUT kinds (vector_glyph,
+# principal_glyph, gauss_marker, sand) only while their style's clim is
+# None; a slot clim now reaches that style, so those kinds re-step in
+# place. The re-stepped pane must draw what a fresh realize draws.
+#
+# The X2-f staged fixture records all-zero displacements (``_FakeOps``),
+# so a stale re-step would compare equal there. This cube records a
+# nodal displacement and a 1-GP Gauss stress tensor that change every
+# step, so the Gauss slot and the principal (tensor) vector are covered.
+
+_RESTEP_STEPS = (0, 2)
+
+
+@pytest.fixture
+def cube(g, tmp_path, monkeypatch):
+    from apeGmsh.results import Results
+    from apeGmsh.results.writers import NativeWriter
+
+    from tests.conftest import _open_model_from_h5
+
+    monkeypatch.delenv("APEGMSH_SKIP_VIEWER", raising=False)
+    g.model.geometry.add_box(0, 0, 0, 1, 1, 1, label="cube")
+    g.physical.add_volume("cube", name="Body")
+    g.mesh.sizing.set_global_size(0.5)
+    g.mesh.generation.generate(dim=3)
+    fem = g.mesh.queries.get_fem_data(dim=3)
+
+    nids = np.asarray(fem.nodes.ids, dtype=np.int64)
+    xyz = np.asarray(fem.nodes.coords, dtype=np.float64)
+    eids = np.concatenate([
+        np.asarray(grp.ids, dtype=np.int64) for grp in fem.elements
+    ])
+    n_steps = 3
+    k = np.arange(1, n_steps + 1, dtype=np.float64).reshape(-1, 1)
+    disp = {
+        "displacement_x": 0.01 * k * xyz[:, 2],
+        "displacement_y": 0.02 * k * xyz[:, 0] * xyz[:, 2],
+        "displacement_z": 0.03 * k ** 2 * xyz[:, 0],
+    }
+    e = eids.astype(np.float64).reshape(1, -1, 1)
+    kk = k.reshape(-1, 1, 1)
+    stress = {
+        "stress_xx": kk * (1.0 + 0.1 * e),
+        "stress_yy": -0.5 * kk ** 2 * (1.0 + 0.05 * e),
+        "stress_zz": 0.2 * kk * np.ones_like(e),
+        "stress_xy": 0.3 * kk * np.sin(e),
+        "stress_yz": 0.1 * kk * np.cos(e),
+        "stress_xz": 0.05 * kk ** 2 * np.ones_like(e),
+    }
+    path = tmp_path / "cube.h5"
+    with NativeWriter(path) as w:
+        w.open(fem=fem)
+        sid = w.begin_stage(
+            name="push", kind="static",
+            time=np.arange(n_steps, dtype=np.float64),
+        )
+        w.write_nodes(sid, "partition_0", node_ids=nids, components=disp)
+        w.write_gauss_group(
+            sid, "partition_0", "g1", class_tag=4, int_rule=1,
+            element_index=eids,
+            natural_coords=np.array([[0.25, 0.25, 0.25]]),
+            components=stress,
+        )
+        w.end_stage()
+    results = Results.from_native(path, model=_open_model_from_h5(path))
+    try:
+        yield results
+    finally:
+        results.close()
+
+
+def _restep_slot(category: str, quantity: str) -> Any:
+    from apeGmsh.results import session as S
+
+    kind = {"vector": S.Vector, "gauss": S.Gauss, "sand": S.Sand,
+            "contour": S.Contour}[category]
+    return kind(quantity, clim=_CLIM, cmap="jet")
+
+
+def _drawn_slot(backend: Any, layer_id: str) -> dict[str, Any]:
+    layer = backend.layers[layer_id]
+    color = backend.colors[layer_id]
+    if hasattr(layer, "color_scalar"):
+        points = layer.positions.coords
+        scalars = layer.color_scalar
+    else:
+        points = layer.points.coords
+        scalars = next(
+            f.values for f in layer.fields if f.name == color.array_name
+        )
+    # COPIES: the contour re-steps by overwriting its scalar buffer in
+    # place, so a view would make step a read as step b.
+    return {
+        "lut": (color.lut.name, float(color.lut.vmin), float(color.lut.vmax)),
+        "points": np.array(points, dtype=np.float64),
+        "scalars": np.array(scalars, dtype=np.float64),
+    }
+
+
+@pytest.mark.parametrize(
+    "category, quantity, kind_id, deform",
+    [
+        ("vector", "displacement", "vector_glyph", False),
+        ("vector", "displacement", "vector_glyph", True),
+        ("vector", "stress", "principal_glyph", False),
+        ("gauss", "stress_xx", "gauss_marker", False),
+        ("sand", "displacement_z", "sand", False),
+        ("contour", "displacement_z", "contour", False),
+        ("contour", "displacement_z", "contour", True),
+    ],
+    ids=[
+        "vector", "vector-deform", "principal", "gauss", "sand",
+        "contour", "contour-deform",
+    ],
+)
+def test_explicit_clim_restep_matches_a_fresh_realize(
+    cube, category, quantity, kind_id, deform,
+):
+    from apeGmsh.results.session import Deform, Instant
+    from apeGmsh.viewers.session._realize import (
+        can_restep, realize_pane, restep_pane,
+    )
+
+    from tests.viewers.conftest import RecordingBackend
+
+    session = cube.session()
+    view = session.panes[0]
+    setattr(view, category, _restep_slot(category, quantity))
+    if deform:
+        view.deform = Deform("displacement", scale=1.0)
+    stage = cube.stages[-1].id
+    a, b = _RESTEP_STEPS
+
+    session.time = Instant(stage, a)
+    backend = RecordingBackend()
+    realized = realize_pane(session, view, backend)
+    (diagram,) = realized.diagrams
+    assert diagram.spec.kind == kind_id
+    layer_id = diagram._handle.layer_id  # noqa: SLF001
+    at_a = _drawn_slot(backend, layer_id)
+
+    session.time = Instant(stage, b)
+    assert can_restep(realized, view), "explicit clim must allow the re-step"
+    restep_pane(session, view, realized, backend)
+    stepped = _drawn_slot(backend, layer_id)
+
+    fresh_backend = RecordingBackend()
+    fresh = realize_pane(session, view, fresh_backend)
+    want = _drawn_slot(fresh_backend, fresh.diagrams[0]._handle.layer_id)  # noqa: SLF001
+
+    assert want["lut"] == ("jet", *_CLIM)
+    assert stepped["lut"] == want["lut"]
+    np.testing.assert_allclose(stepped["scalars"], want["scalars"], rtol=1e-9, atol=1e-12)
+    np.testing.assert_allclose(stepped["points"], want["points"], rtol=1e-9, atol=1e-12)
+    # Non-vacuous: the data moved between the two instants.
+    assert not np.allclose(at_a["scalars"], want["scalars"])
