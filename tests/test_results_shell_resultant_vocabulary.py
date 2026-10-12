@@ -40,6 +40,7 @@ from apeGmsh.results.capture.spec import DomainCaptureSpec
 ops = pytest.importorskip("openseespy.opensees")
 
 from tests.conftest import _open_model_from_h5  # noqa: E402
+from tests.fixtures.capture_tags import identity_tags  # noqa: E402
 
 
 # =====================================================================
@@ -189,7 +190,8 @@ def _capture(spec: DomainCaptureSpec, fem: _MinimalFem, path: Path) -> None:
     from apeGmsh.results.capture._domain import DomainCapture
 
     resolved = spec._resolve_with_explicit_ndm_ndf(fem, ndm=3, ndf=6)
-    with DomainCapture(resolved, path, fem) as cap:
+    with DomainCapture(resolved, path, fem,
+                       element_tags=identity_tags(resolved)) as cap:
         cap.begin_stage("static_load", kind="static")
         cap.step(t=ops.getTime())
         cap.end_stage()

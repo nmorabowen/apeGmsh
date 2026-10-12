@@ -17,6 +17,7 @@ import numpy as np
 import pytest
 
 from tests.conftest import _open_model_from_h5
+from tests.fixtures.capture_tags import identity_tags
 
 openseespy = pytest.importorskip(
     "openseespy.opensees", reason="openseespy required",
@@ -112,7 +113,7 @@ def test_elastic_beam_3d_global_and_local(tmp_path: Path) -> None:
     )
 
     path = tmp_path / "cap.h5"
-    with DomainCapture(spec, path, fem, ops=ops) as cap:
+    with DomainCapture(spec, path, fem, ops=ops, element_tags=identity_tags(spec)) as cap:
         cap.begin_stage("static", kind="static")
         ops.analyze(1)
         cap.step(t=ops.getTime())

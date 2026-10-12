@@ -18,6 +18,7 @@ import numpy as np
 import pytest
 
 from tests.conftest import _open_model_from_h5
+from tests.fixtures.capture_tags import identity_tags
 
 openseespy = pytest.importorskip(
     "openseespy.opensees", reason="openseespy required",
@@ -135,7 +136,7 @@ def test_layered_shell_capture_round_trip(tmp_path: Path) -> None:
 
     from apeGmsh.results.capture._domain import DomainCapture
     cap_path = tmp_path / "shell.h5"
-    with DomainCapture(spec, cap_path, fem) as cap:
+    with DomainCapture(spec, cap_path, fem, element_tags=identity_tags(spec)) as cap:
         cap.begin_stage("g", kind="static")
         for _ in range(2):
             assert ops.analyze(1) == 0

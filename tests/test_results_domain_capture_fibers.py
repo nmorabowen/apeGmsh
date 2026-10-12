@@ -29,6 +29,7 @@ from apeGmsh.results.capture.spec import (
 )
 
 from tests.conftest import _open_model_from_h5
+from tests.fixtures.capture_tags import identity_tags
 
 
 # =====================================================================
@@ -145,7 +146,7 @@ class TestSingleBeamSingleSection:
         ]
 
         path = tmp_path / "cap.h5"
-        with DomainCapture(spec, path, fem, ops=ops) as cap:
+        with DomainCapture(spec, path, fem, ops=ops, element_tags=identity_tags(spec)) as cap:
             cap.begin_stage("static", kind="static")
             for t_idx, t in enumerate((0.0, 1.0)):
                 # Stress = 100*step + 10*sec + fiberIdx; strain = stress/1000
@@ -256,7 +257,7 @@ class TestStationXiRoundTrip:
         geom = [(0.10, 0.10, 0.01, 5), (-0.10, 0.10, 0.02, 6)]
 
         path = tmp_path / "cap_xi.h5"
-        with DomainCapture(spec, path, fem, ops=ops) as cap:
+        with DomainCapture(spec, path, fem, ops=ops, element_tags=identity_tags(spec)) as cap:
             cap.begin_stage("static", kind="static")
             for sec in (1, 2):
                 ops.fiber_data[(10, sec)] = _fiber_block([
@@ -303,7 +304,7 @@ class TestStressOnlyFilter:
         ])
 
         path = tmp_path / "cap.h5"
-        with DomainCapture(spec, path, fem, ops=ops) as cap:
+        with DomainCapture(spec, path, fem, ops=ops, element_tags=identity_tags(spec)) as cap:
             cap.begin_stage("g", kind="static")
             cap.step(t=0.0)
             cap.end_stage()
@@ -350,7 +351,7 @@ class TestMultiClassFiberCapture:
         ])
 
         path = tmp_path / "cap.h5"
-        with DomainCapture(spec, path, fem, ops=ops) as cap:
+        with DomainCapture(spec, path, fem, ops=ops, element_tags=identity_tags(spec)) as cap:
             cap.begin_stage("g", kind="static")
             cap.step(t=0.0)
             cap.end_stage()
@@ -396,7 +397,7 @@ class TestSkippedUncatalogued:
         ])
 
         path = tmp_path / "cap.h5"
-        with DomainCapture(spec, path, fem, ops=ops) as cap:
+        with DomainCapture(spec, path, fem, ops=ops, element_tags=identity_tags(spec)) as cap:
             cap.begin_stage("g", kind="static")
             cap.step(t=0.0)
             cap.end_stage()
@@ -431,7 +432,7 @@ class TestValidation:
         )
         ops = _FakeOpsFibers()
         with pytest.raises(ValueError, match="recognised components"):
-            with DomainCapture(spec, tmp_path / "x.h5", fem, ops=ops):
+            with DomainCapture(spec, tmp_path / "x.h5", fem, ops=ops, element_tags=identity_tags(spec)):
                 pass
 
     def test_fiberData2_wrong_size_raises_at_step(
@@ -454,6 +455,6 @@ class TestValidation:
         ops.fiber_data[(10, 1)] = np.array([1.0, 2.0, 3.0, 4.0, 5.0])
 
         with pytest.raises(RuntimeError, match="multiple of 6"):
-            with DomainCapture(spec, tmp_path / "x.h5", fem, ops=ops) as cap:
+            with DomainCapture(spec, tmp_path / "x.h5", fem, ops=ops, element_tags=identity_tags(spec)) as cap:
                 cap.begin_stage("g", kind="static")
                 cap.step(t=0.0)

@@ -29,6 +29,7 @@ from apeGmsh.results.capture.spec import (
 )
 
 from tests.conftest import _open_model_from_h5
+from tests.fixtures.capture_tags import identity_tags
 
 
 # =====================================================================
@@ -117,7 +118,7 @@ class TestFourNodeTetCapture:
         # We push values via per-step priming below.
 
         path = tmp_path / "cap.h5"
-        with DomainCapture(spec, path, fem, ops=ops) as cap:
+        with DomainCapture(spec, path, fem, ops=ops, element_tags=identity_tags(spec)) as cap:
             cap.begin_stage("static", kind="static")
             for t in (0.0, 1.0):
                 offset = int(t) * 10
@@ -168,7 +169,7 @@ class TestFourNodeTetCapture:
         ops.ele_response[(7, "stresses")] = np.zeros(6)
 
         path = tmp_path / "cap.h5"
-        with DomainCapture(spec, path, fem, ops=ops) as cap:
+        with DomainCapture(spec, path, fem, ops=ops, element_tags=identity_tags(spec)) as cap:
             cap.begin_stage("g", kind="static")
             cap.step(t=0.0)
             cap.end_stage()
@@ -209,7 +210,7 @@ class TestMixedClassCapture:
         ops.ele_response[(200, "stresses")] = np.arange(24, dtype=np.float64) + 100
 
         path = tmp_path / "cap.h5"
-        with DomainCapture(spec, path, fem, ops=ops) as cap:
+        with DomainCapture(spec, path, fem, ops=ops, element_tags=identity_tags(spec)) as cap:
             cap.begin_stage("g", kind="static")
             cap.step(t=0.0)
             cap.end_stage()
@@ -256,7 +257,7 @@ class TestCatalogFiltering:
         # No ele_response set for element 2 — must never be queried.
 
         path = tmp_path / "cap.h5"
-        with DomainCapture(spec, path, fem, ops=ops) as cap:
+        with DomainCapture(spec, path, fem, ops=ops, element_tags=identity_tags(spec)) as cap:
             cap.begin_stage("g", kind="static")
             cap.step(t=0.0)
             cap.end_stage()
@@ -288,7 +289,7 @@ class TestErrorPaths:
         path = tmp_path / "cap.h5"
         # _GaussCapturer construction raises in __enter__.
         with pytest.raises(ValueError, match="mixes work-conjugate families"):
-            with DomainCapture(spec, path, fem, ops=_FakeOpsElements()):
+            with DomainCapture(spec, path, fem, ops=_FakeOpsElements(), element_tags=identity_tags(spec)):
                 pass
 
     def test_response_size_mismatch_raises(self, tmp_path: Path) -> None:
@@ -308,7 +309,7 @@ class TestErrorPaths:
         ops.ele_response[(1, "stresses")] = np.zeros(5)
 
         path = tmp_path / "cap.h5"
-        with DomainCapture(spec, path, fem, ops=ops) as cap:
+        with DomainCapture(spec, path, fem, ops=ops, element_tags=identity_tags(spec)) as cap:
             cap.begin_stage("g", kind="static")
             with pytest.raises(ValueError, match="returned 5 values"):
                 cap.step(t=0.0)
@@ -332,7 +333,7 @@ class TestErrorPaths:
         ops.ele_response[(1, "stresses")] = np.zeros(48)
 
         path = tmp_path / "cap.h5"
-        with DomainCapture(spec, path, fem, ops=ops) as cap:
+        with DomainCapture(spec, path, fem, ops=ops, element_tags=identity_tags(spec)) as cap:
             cap.begin_stage("g", kind="static")
             with pytest.raises(ValueError, match=r"formulation uri"):
                 cap.step(t=0.0)

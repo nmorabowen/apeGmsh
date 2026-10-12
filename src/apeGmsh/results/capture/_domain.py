@@ -778,9 +778,19 @@ class DomainCapture:
             fem, ndm=ndm, ndf=ndf,
         )
         # The model's fem_eid -> ops-tag pairing, so capturers query the
-        # live domain with the right tags. A read failure raises here.
-        pairing = _capture_pairing(model_path)
-        return cls(resolved, output, fem, ops=ops, element_tags=pairing)
+        # live domain with the right tags. A node-only capture needs none,
+        # so a read failure is kept as the reason an element-scoped
+        # capture refuses at ``__enter__``.
+        try:
+            pairing: "dict[int, int] | None" = _capture_pairing(model_path)
+            missing = ""
+        except Exception as e:
+            pairing = None
+            missing = f"reading the pairing from {model_path!s} failed: {e!r}"
+        cap = cls(resolved, output, fem, ops=ops, element_tags=pairing)
+        if pairing is None:
+            cap._pairing_missing = missing
+        return cap
 
     # ------------------------------------------------------------------
     # Stage lifecycle

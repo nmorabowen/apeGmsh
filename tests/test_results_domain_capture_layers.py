@@ -26,6 +26,7 @@ from apeGmsh.results.capture.spec import (
 )
 
 from tests.conftest import _open_model_from_h5
+from tests.fixtures.capture_tags import identity_tags
 
 
 # =====================================================================
@@ -150,7 +151,7 @@ class TestSingleASDShellQ4:
                     )
 
         path = tmp_path / "layers.h5"
-        with DomainCapture(spec, path, fem, ops=ops) as cap:
+        with DomainCapture(spec, path, fem, ops=ops, element_tags=identity_tags(spec)) as cap:
             cap.begin_stage("static", kind="static")
             for step_idx in range(2):
                 # Re-arm tables so step values reflect step_idx.
@@ -258,7 +259,7 @@ class TestMultiComponentPerLayer:
                 )
 
         path = tmp_path / "multi.h5"
-        with DomainCapture(spec, path, fem, ops=ops) as cap:
+        with DomainCapture(spec, path, fem, ops=ops, element_tags=identity_tags(spec)) as cap:
             cap.begin_stage("g", kind="static")
             cap.step(t=0.0)
             cap.end_stage()
@@ -331,7 +332,7 @@ class TestSkippedNoSection:
         ops.layer_response[(200, 4, 1, "stress")] = np.array([4.0])
 
         path = tmp_path / "skip.h5"
-        with DomainCapture(spec, path, fem, ops=ops) as cap:
+        with DomainCapture(spec, path, fem, ops=ops, element_tags=identity_tags(spec)) as cap:
             cap.begin_stage("g", kind="static")
             cap.step(t=0.0)
             cap.end_stage()
@@ -372,5 +373,5 @@ class TestValidation:
         )
         ops = _FakeOpsLayers()
         with pytest.raises(ValueError, match="recognised components"):
-            with DomainCapture(spec, tmp_path / "x.h5", fem, ops=ops):
+            with DomainCapture(spec, tmp_path / "x.h5", fem, ops=ops, element_tags=identity_tags(spec)):
                 pass

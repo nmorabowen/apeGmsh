@@ -20,6 +20,7 @@ from apeGmsh.results.capture.spec import (
 )
 
 from tests.conftest import _open_model_from_h5
+from tests.fixtures.capture_tags import identity_tags
 from tests.fixtures.schema import OPENSEES_CURRENT
 
 
@@ -543,7 +544,8 @@ def test_layer_records_without_metadata_raise(tmp_path: Path) -> None:
 
     path = tmp_path / "run.h5"
     with pytest.raises(ValueError, match="layer_section_metadata"):
-        with DomainCapture(spec, path, fem, ops=fake):
+        with DomainCapture(spec, path, fem, ops=fake,
+                           element_tags=identity_tags(spec)):
             pass
 
 
