@@ -2404,6 +2404,7 @@ class BuiltModel:
                     p, emitter, tag, self.fem,
                     tag_plan=tag_plan,
                     fem_eid_to_ops_tag=fem_eid_to_ops_tag,
+                    effective_ndf=inferred_ndf,
                 )
                 rec_cursor.close()
             else:  # pragma: no cover  - unreachable per partition above
@@ -2848,6 +2849,7 @@ class BuiltModel:
                     rec_spec, emitter, rec_spec_tag, self.fem,
                     tag_plan=tag_plan,
                     fem_eid_to_ops_tag=fem_eid_to_ops_tag,
+                    effective_ndf=inferred_ndf,
                 )
             rec_cursor.close()
 
@@ -3912,6 +3914,7 @@ class BuiltModel:
                     p, emitter, tag, self.fem,
                     tag_plan=tag_plan,
                     fem_eid_to_ops_tag=fem_eid_to_ops_tag,
+                    effective_ndf=inferred_ndf,
                 )
         rec_cursor.close()
 
@@ -4678,6 +4681,7 @@ class BuiltModel:
                     rec_spec, emitter, rec_spec_tag, self.fem,
                     tag_plan=tag_plan,
                     fem_eid_to_ops_tag=fem_eid_to_ops_tag,
+                    effective_ndf=inferred_ndf,
                 )
             rec_cursor.close()
 

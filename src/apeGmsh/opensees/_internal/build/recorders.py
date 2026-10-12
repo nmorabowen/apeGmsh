@@ -40,6 +40,7 @@ def emit_recorder_spec(
     *,
     tag_plan: "TagPlan | None" = None,
     fem_eid_to_ops_tag: "FemToOpsTagMap | None" = None,
+    effective_ndf: "Mapping[int, int] | None" = None,
 ) -> None:
     """Drive a recorder's emit through its :meth:`Recorder.materialize`.
 
@@ -65,12 +66,18 @@ def emit_recorder_spec(
     elements whenever an element primitive consumed an allocator slot
     in ``_register`` — the bridge always supplies the map on the
     recorder emit pass.
+
+    ``effective_ndf`` is the bridge's per-node ``{node: ndf}`` (inferred
+    plus the ``ops.ndf`` overlay; a node absent from it takes the
+    ``ops.model`` envelope): a declared node component maps through the
+    layout of the ndf the deck gives that node.
     """
     if isinstance(spec, RecorderDeclaration):
         _emit_recorder_declaration(
             spec, emitter, fem, fem_eid_to_ops_tag=fem_eid_to_ops_tag,
             element_plan=(
                 tag_plan.elements.specs if tag_plan is not None else None),
+            node_ndf=effective_ndf,
         )
         return
     materialised = spec.materialize(
@@ -90,16 +97,18 @@ def _emit_recorder_declaration(
     *,
     fem_eid_to_ops_tag: "FemToOpsTagMap | None" = None,
     element_plan: "ElementPlan | None" = None,
+    node_ndf: "Mapping[int, int] | None" = None,
 ) -> None:
     """Walk a :class:`RecorderDeclaration` and emit one
     ``emitter.recorder(...)`` call per (ops_token, target_set) group.
 
     ``element_plan`` is the bridge's element tag plan (each element spec
-    with its rows). Node components map to DOFs through the per-node
-    layout (:func:`_node_record_layout`): with the plan, each node's own
-    ndf, and a rotational component only where the node's rotation role
-    allows it; without it (``ModelData``, a hand-written deck) every node
-    carries the declared ``(decl.ndm, decl.ndf)`` layout.
+    with its rows), and ``node_ndf`` its effective per-node ndf. Node
+    components map to DOFs through the per-node layout
+    (:func:`_node_record_layout`): with the plan, each node's own ndf, and
+    a rotational component only where the node's rotation role allows it;
+    without it (``ModelData``, a hand-written deck) every node carries the
+    declared ``(decl.ndm, decl.ndf)`` layout.
 
     Per Phase 9 commit 3a, only the ``"nodes"`` category is handled
     end-to-end. Other categories raise :class:`NotImplementedError`
@@ -158,7 +167,8 @@ def _emit_recorder_declaration(
             if record.category == "nodes":
                 _emit_nodes_record(record, decl, emitter, fem,
                                    group_node_components_by_ops_token,
-                                   element_plan=element_plan)
+                                   element_plan=element_plan,
+                                   node_ndf=node_ndf)
             else:
                 _emit_element_level_record(
                     record, decl, emitter, fem,
@@ -177,6 +187,7 @@ def _emit_nodes_record(
     group: object,  # callable; passed in to keep imports local to caller
     *,
     element_plan: "ElementPlan | None" = None,
+    node_ndf: "Mapping[int, int] | None" = None,
 ) -> None:
     """Emit one node-level :class:`RecorderRecord`.
 
@@ -201,9 +212,10 @@ def _emit_nodes_record(
     # _emit_recorder_declaration function.
     grouped: dict[str, tuple[int, ...]] = {}
     if record.components:
-        node_ndf = (
-            _inferred_node_ndf(fem, element_plan, int(decl.ndm))
-            if element_plan is not None else None)
+        if not node_ndf and element_plan is not None:
+            # A caller without the bridge's effective map: the inferred
+            # one (no ops.ndf overlay is known here).
+            node_ndf = _inferred_node_ndf(fem, element_plan, int(decl.ndm))
         layout = _node_record_layout(
             record, decl, node_ids, element_plan, node_ndf=node_ndf)
         grouped = group(record.components, layout)  # type: ignore[operator]
@@ -289,7 +301,8 @@ def _node_record_layout(
     - Without an element plan (``ModelData``: a hand-written deck) every
       node carries the deck's declared ``(decl.ndm, decl.ndf)`` layout.
     - With the plan, each node carries the layout of its own ndf
-      (``node_ndf``, the envelope ``decl.ndf`` where absent), and a
+      (``node_ndf``: inferred plus ``ops.ndf``; the envelope ``decl.ndf``
+      where absent), and a
       rotational component also needs the node's rotation role
       (:meth:`~apeGmsh.opensees._readback.RotationRoles.refusal`, the
       rule ``.read`` applies): a u-p node's DOF ``ndm + 1`` is pore
@@ -323,7 +336,8 @@ def _node_record_layout(
         )
 
     if element_plan is None:
-        layouts = {n: _load_dof_layout(int(decl.ndf), ndm) for n in node_ids}
+        ndfs = {n: int(decl.ndf) for n in node_ids}
+        layouts = {n: _load_dof_layout(ndfs[n], ndm) for n in node_ids}
     else:
         rotational = [c for c, s in spatial.items()
                       if s is not None and s[1] >= 3]
@@ -341,8 +355,8 @@ def _node_record_layout(
                     "a rotation, or drop the rotational component."
                 )
         ndf_of = node_ndf or {}
-        layouts = {n: _node_layout(int(ndf_of.get(n, decl.ndf)), ndm)
-                   for n in node_ids}
+        ndfs = {n: int(ndf_of.get(n, decl.ndf)) for n in node_ids}
+        layouts = {n: _node_layout(ndfs[n], ndm) for n in node_ids}
 
     first: "tuple[int, dict[str, tuple[int, ...]]] | None" = None
     for n, layout in layouts.items():
@@ -350,17 +364,9 @@ def _node_record_layout(
             grouped = group_node_components_by_ops_token(
                 record.components, layout)
         except ValueError as e:
-            envelope = (element_plan is not None
-                        and n not in (node_ndf or {}))
             raise BridgeError(
-                f"{where}: node {n} (ndm={ndm}) has no DOF for a declared "
-                f"component: {e}"
-                + (f" No element sizes node {n}, so the recorder emit takes "
-                   f"the ops.model envelope ndf={decl.ndf} for it. If "
-                   f"ops.ndf raised node {n} above that, the emit cannot "
-                   "see it yet and refuses rather than guess a DOF: a "
-                   "temporary regression, tracked in #1745."
-                   if envelope else "")
+                f"{where}: node {n} (ndm={ndm}, ndf={ndfs[n]}) has no DOF "
+                f"for a declared component: {e}"
             ) from e
         if first is None:
             first = (n, grouped)

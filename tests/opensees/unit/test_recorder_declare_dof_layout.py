@@ -448,31 +448,6 @@ def test_two_node_link_end_node_records_rotation(
     ]
 
 
-def test_overlay_master_in_an_ndf3_solid_model_names_the_cause() -> None:
-    """Open gap: an element-less master given ``ops.ndf(h, 6)`` in an
-    ``ndf=3`` solid model. The emit cannot see the overlay, so it refuses
-    and says why, rather than guess a DOF."""
-    from tests.opensees.unit.test_node_pair_zerolength import (
-        _box_with_ground,
-    )
-
-    g, fem, h = _box_with_ground("master")
-    try:
-        ops = apeSees(fem)
-        ops.model(ndm=3, ndf=3)
-        mat = ops.nDMaterial.ElasticIsotropic(E=30e9, nu=0.2, rho=0.0)
-        ops.element.FourNodeTetrahedron(pg="Body", material=mat)
-        ops.ndf(h, ndf=6)
-        ops.recorder.declare(nodes=("rotation_x",), ids=(int(h.tag),))
-        tag = int(h.tag)
-        with pytest.raises(BridgeError, match=(
-                rf"node {tag} .*'rotation_x' has no DOF.*envelope ndf=3.*"
-                rf"ops\.ndf raised node {tag}.*temporary regression.*#1745")):
-            _node_recorders(ops)
-    finally:
-        g.end()
-
-
 # ---------------------------------------------------------------------------
 # pore_pressure: never a silent ``-dof -1``
 # ---------------------------------------------------------------------------
