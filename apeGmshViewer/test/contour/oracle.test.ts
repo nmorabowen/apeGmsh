@@ -29,11 +29,10 @@ function expected(key: string, xyz: readonly [number, number, number], stage: nu
 
 const close = (a: number, b: number) => Math.abs(a - b) <= 1e-12 * Math.max(1, Math.abs(b));
 
-test("every drawn vertex is tied to exactly one node, at that node's coordinates", async () => {
+test("every drawn vertex names a model node, and sits at that node's coordinates", async () => {
   const h = await opened();
   const s = h.store.get();
-  const vn = s.mesh!.vertexNodes!;
-  assert.equal(vn.unresolved, 0);
+  const vn = s.mesh!.vertexNodes;
   const coords = await coordsOf(STAGED);
   for (const [pos, nodes] of [
     [h.blobs.f32(s.mesh!.triPositions), h.blobs.get(vn.tri)],

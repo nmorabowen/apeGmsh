@@ -16,15 +16,12 @@
 //   "no data": never zero, never a value taken from a neighbour. A primitive
 //   that touches such a node is drawn whole in the no-data colour, so no
 //   colour is interpolated toward it;
-// - a vertex is tied to a node only by an exact match: its drawn position
-//   (float32, as mesh/build.ts wrote it) equals the float32 coordinates of
-//   exactly one node of its own element. No match, or two nodes of the
-//   element at that position, leaves the vertex NaN ("unresolved", no data).
+// - a vertex's node is the one mesh/build.ts read its position from (the
+//   element connectivity, `MeshInfo.vertexNodes`), never a node found by
+//   position: coincident nodes (interfaces, ties) keep their own values.
 
-import type { ModelFile } from "../model/types.ts";
 import { hexToRgb, OFFICE, type RGB } from "../theme/tokens.ts";
-import type { BlobStore } from "./blobs.ts";
-import type { ContourCmap, ContourRange, ContourScan, ContourState, Decl, DeclPath, MeshInfo, ResultsStage, State } from "./types.ts";
+import type { ContourCmap, ContourRange, ContourScan, ContourState, ResultsStage, State } from "./types.ts";
 
 // -- fields -------------------------------------------------------------------
 
@@ -284,70 +281,6 @@ export const RANGE_MODES: readonly { range: ContourRange; label: string }[] = [
 
 // -- vertices -------------------------------------------------------------------
 
-/**
- * The node tag at every drawn vertex of a mesh: 2 per segment, 3 per
- * triangle, in the order of `mesh.linePositions` / `mesh.triPositions`. A
- * vertex is tied to a node of its own element (the cell's connectivity row,
- * or an OpenSees-only row's inline nodes) whose float32 coordinates equal
- * the vertex position exactly; it is NaN when no node or more than one node
- * of the element sits there (counted in `unresolved`).
- */
-export function vertexNodesOf(
-  model: Pick<ModelFile, "nodeIds" | "nodeCoords" | "blocks">,
-  mesh: MeshInfo,
-  decls: Readonly<Record<DeclPath, Decl>>,
-  blobs: BlobStore,
-): { line: Float64Array; tri: Float64Array; unresolved: number } {
-  const index = new Map<number, number>();
-  model.nodeIds.forEach((id, i) => index.set(id, i));
-  const f = Math.fround;
-  const xyz = model.nodeCoords;
-  const nodesOfElement = new Map<number, readonly number[]>();
-  const nodesOf = (e: number): readonly number[] => {
-    let ns = nodesOfElement.get(e);
-    if (ns) return ns;
-    const d = decls[mesh.elements[e]!];
-    const cell = d?.element?.cell;
-    if (cell) {
-      const b = model.blocks[cell.block];
-      if (!b) throw new Error(`vertexNodesOf: ${d!.path} names block ${cell.block}, which the model does not have`);
-      ns = Array.from(b.connectivity.subarray(cell.row * b.npe, (cell.row + 1) * b.npe));
-    } else ns = d?.element?.inlineNodes ?? [];
-    nodesOfElement.set(e, ns);
-    return ns;
-  };
-  let unresolved = 0;
-  const resolve = (pos: Float32Array, element: Int32Array, perPrim: number): Float64Array => {
-    const out = new Float64Array(element.length * perPrim);
-    for (let p = 0; p < element.length; p++) {
-      const cands = nodesOf(element[p]!);
-      for (let v = 0; v < perPrim; v++) {
-        const o = 3 * (p * perPrim + v);
-        let hit = NaN;
-        let n = 0;
-        for (const tag of cands) {
-          if (tag === hit) continue;
-          const i = index.get(tag);
-          if (i === undefined) continue;
-          if (f(xyz[3 * i]!) === pos[o] && f(xyz[3 * i + 1]!) === pos[o + 1] && f(xyz[3 * i + 2]!) === pos[o + 2]) {
-            n++;
-            hit = tag;
-          }
-        }
-        if (n === 1) out[p * perPrim + v] = hit;
-        else {
-          out[p * perPrim + v] = NaN;
-          unresolved++;
-        }
-      }
-    }
-    return out;
-  };
-  const line = resolve(blobs.f32(mesh.linePositions), blobs.i32(mesh.lineElement), 2);
-  const tri = resolve(blobs.f32(mesh.triPositions), blobs.i32(mesh.triElement), 3);
-  return { line, tri, unresolved };
-}
-
 /** The column of each node id in a field's `_ids`. */
 export function columnOf(ids: Float64Array): Map<number, number> {
   const m = new Map<number, number>();
@@ -359,8 +292,8 @@ export function columnOf(ids: Float64Array): Map<number, number> {
 
 /**
  * The value at every vertex: the component (or the magnitude of `rows`) at
- * the vertex's node. NaN ("no data") when the vertex has no node, the node
- * is not in the field's `_ids`, or its value is not finite. Never 0.
+ * the vertex's node. NaN ("no data") when the node is not in the field's
+ * `_ids`, or its value is not finite. Never 0.
  */
 export function vertexValues(vertexNodes: Float64Array, column: ReadonlyMap<number, number>, rows: readonly Float64Array[], magnitude: boolean): Float64Array {
   const out = new Float64Array(vertexNodes.length);

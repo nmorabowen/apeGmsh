@@ -62,7 +62,7 @@ export function contourColours(
   const ids = blobs.get(view.nodeIds);
   if (!(ids instanceof Float64Array)) throw new TypeError(`contour: ${view.nodeIds.id} is not f64`);
   if (!columnMemo || columnMemo.ids !== ids) columnMemo = { ids, column: columnOf(ids) };
-  const vn = mesh.vertexNodes!;
+  const vn = mesh.vertexNodes;
   const lineNodes = blobs.get(vn.line) as Float64Array;
   const triNodes = blobs.get(vn.tri) as Float64Array;
   const clim = { min: view.clim.min, max: view.clim.max };

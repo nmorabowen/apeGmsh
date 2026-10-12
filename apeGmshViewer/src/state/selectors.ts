@@ -262,8 +262,6 @@ export type ContourView =
       nodeIds: BlobRef;
       /** the measured range is for the step shown (else it is still loading) */
       stepMeasured: boolean;
-      /** drawn vertices tied to no single node (state/contour.ts `vertexNodesOf`) */
-      unresolved: number;
     };
 
 /** What the contour colours, or why it cannot (V4c1). */
@@ -282,8 +280,7 @@ export function contourView(s: State): ContourView {
   const hit = componentOf(st, c.field, c.component);
   if (!hit) return { state: "unavailable", reason: `stage ${label} has no ${c.field} ${componentName(c.component)}` };
   if (!st.nodeIds) return { state: "unavailable", reason: `the node ids of stage ${label} are not loaded` };
-  const vn = s.mesh?.vertexNodes;
-  if (!vn) return { state: "unavailable", reason: "the mesh has no vertex-to-node index" };
+  if (!s.mesh) return { state: "unavailable", reason: "no mesh is loaded" };
   const keys = contourKeysOf(s)!;
   const measured = c.stepRange !== null && c.stepRange.key === keys.step;
   const clim = climOf(c, measured ? c.stepRange : null, c.scan, keys.scan);
@@ -297,7 +294,6 @@ export function contourView(s: State): ContourView {
     cmap: c.cmap,
     nodeIds: st.nodeIds,
     stepMeasured: measured,
-    unresolved: vn.unresolved,
   };
 }
 

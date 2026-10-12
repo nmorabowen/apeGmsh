@@ -167,7 +167,6 @@ export function mountLegend(store: Store): () => void {
     if (lines.state) legend.append(el("div", "legend-note", lines.state));
     legend.append(el("div", "legend-note", "Units: not stored in the results file."));
     legend.append(noDataRow());
-    if (v.unresolved) legend.append(el("div", "legend-note", `${v.unresolved.toLocaleString()} drawn vertices match no single node of their element: drawn as no data.`));
 
     const modes = el("div", "legend-mode contour-modes");
     for (const m of RANGE_MODES) {
@@ -228,7 +227,9 @@ function noDataRow(): HTMLElement {
   const chip = el("span", "chip");
   chip.style.backgroundColor = css(NO_DATA_RGB);
   const text = el("span", "contour-nodata", "no data");
-  text.title = "a face or line that touches a node the field does not record (not in its _ids, or NaN): never zero, never taken from a neighbour";
+  text.title =
+    "a node the field does not record (not in its _ids, or NaN) is never zero and never taken from a neighbour: " +
+    "every face or line that touches one is drawn in this grey over its whole area, including its part next to recorded nodes";
   row.append(chip, text);
   return row;
 }
@@ -239,7 +240,7 @@ function contourSignature(s: State): string {
   const picker = contourFieldsOf(s);
   return JSON.stringify([
     v.state === "ready" ? contourLines(s, v) : v,
-    v.state === "ready" ? [v.cmap, v.unresolved] : null,
+    v.state === "ready" ? v.cmap : null,
     picker,
     s.contour.field,
     s.contour.component,

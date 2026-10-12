@@ -15,11 +15,11 @@ import { GEOMETRY_TARGET, NEUTRAL_TARGET, OPENSEES_TARGET, PROVENANCE_TARGET, ZO
 import type { BlobStore } from "./state/blobs.ts";
 import { loadGeometry } from "./state/geometry.ts";
 import { loadModel } from "./state/load.ts";
-import { finiteRange, vertexNodesOf } from "./state/contour.ts";
+import { finiteRange } from "./state/contour.ts";
 import { contourView, sourceFor } from "./state/selectors.ts";
 import type { Store } from "./state/store.ts";
 import { focusOf, type Focus } from "./renderer/selection.ts";
-import type { ArtifactKind, BlobRef, ContourScan, Lineage, ModelLoad, ResultsInfo, StageElements, State, ZoneStatus } from "./state/types.ts";
+import type { ArtifactKind, BlobRef, ContourScan, Lineage, ResultsInfo, StageElements, State, ZoneStatus } from "./state/types.ts";
 
 const TARGET = { neutral: NEUTRAL_TARGET, opensees: OPENSEES_TARGET, geometry: GEOMETRY_TARGET, provenance: PROVENANCE_TARGET } as const;
 
@@ -125,23 +125,12 @@ export function blobRefsOf(s: State): BlobRef[] {
   for (const d of Object.values(s.decls)) if (d.group) out.push(d.group.ids);
   for (const b of s.blocks) out.push(b.connectivity);
   if (s.geometry) out.push(s.geometry.curvePositions, s.geometry.surfacePositions, s.geometry.pointPositions);
-  // V4c1: the vertex-to-node index of the mesh, and each results stage's nodal `_ids`.
-  if (s.mesh?.vertexNodes) out.push(s.mesh.vertexNodes.line, s.mesh.vertexNodes.tri);
+  // V4c1: the node tag of every drawn vertex, and each results stage's nodal `_ids`.
+  if (s.mesh) out.push(s.mesh.vertexNodes.line, s.mesh.vertexNodes.tri);
   for (const st of s.results?.stages ?? []) if (st.nodeIds) out.push(st.nodeIds);
   return out;
 }
 
-/**
- * A model load with its vertex-to-node index (V4c1): the node at every drawn
- * vertex, from the model file the load came from (state/contour.ts
- * `vertexNodesOf`), put in the BlobStore beside the mesh's other arrays.
- */
-export function withVertexNodes(load: ModelLoad, model: ModelFile, blobs: BlobStore): ModelLoad {
-  const v = vertexNodesOf(model, load.mesh, load.decls, blobs);
-  const vertexNodes = { line: blobs.put("model/mesh/lineNodes", v.line), tri: blobs.put("model/mesh/triNodes", v.tri), unresolved: v.unresolved };
-  if (v.unresolved) console.warn(`apeGmshViewer: ${v.unresolved} drawn vertices match no single node of their element; a contour draws them as no data`);
-  return { ...load, mesh: { ...load.mesh, vertexNodes } };
-}
 
 /**
  * A /provenance read error as the model artifact's zone status; the model
@@ -518,7 +507,7 @@ export class Effects {
         if (!mr.ok) fail("model", mPath, mr.error);
         else {
           const prov = mr.provenance;
-          model = withVertexNodes(loadModel(mr.model, this.blobs, prov?.ok ? prov.zone : null, prov && !prov.ok ? provenanceStatus(prov) : null, modelExtras(mr)), mr.model, this.blobs);
+          model = loadModel(mr.model, this.blobs, prov?.ok ? prov.zone : null, prov && !prov.ok ? provenanceStatus(prov) : null, modelExtras(mr));
         }
       }
       if (gPath && gr && gt === this.geometryToken) {
@@ -603,7 +592,7 @@ export class Effects {
         return false;
       }
       const prov = res.provenance;
-      const load = withVertexNodes(loadModel(res.model, this.blobs, prov?.ok ? prov.zone : null, prov && !prov.ok ? provenanceStatus(prov) : null, modelExtras(res)), res.model, this.blobs);
+      const load = loadModel(res.model, this.blobs, prov?.ok ? prov.zone : null, prov && !prov.ok ? provenanceStatus(prov) : null, modelExtras(res));
       for (const w of load.info.warnings) console.warn(w);
       // One line per read, so a double load shows in the Electron log.
       console.info(`apeGmshViewer: loaded ${path} (read ${Math.round(load.info.readMs)} ms)`);

@@ -56,7 +56,7 @@ test("jet is matplotlib's segment data at its breakpoints; the no-data colour is
   }
 });
 
-test("vertex values: a node not in _ids, a NaN, and an unresolved vertex are no data (NaN), never 0", () => {
+test("vertex values: a node not in _ids, and a NaN, are no data (NaN), never 0", () => {
   const column = new Map([[10, 0], [11, 1], [12, 2]]);
   const x = Float64Array.of(1, NaN, -3);
   const y = Float64Array.of(0, 2, 4);

@@ -199,11 +199,10 @@ export interface MeshInfo {
   warnings: string[];
   /**
    * V4c1: the node tag at every drawn vertex (f64: 2 per segment, 3 per
-   * triangle; NaN where the vertex matches no single node of its element),
-   * and how many vertices are NaN. The effects add it after the load
-   * (state/contour.ts `vertexNodesOf`); a contour colours through it.
+   * triangle), as mesh/build.ts read it from the connectivity; a contour
+   * colours through it.
    */
-  vertexNodes?: { line: BlobRef; tri: BlobRef; unresolved: number };
+  vertexNodes: { line: BlobRef; tri: BlobRef };
 }
 
 /** The render derivation of the geometry artifact (the `/geometry` sibling, V2a spec). */

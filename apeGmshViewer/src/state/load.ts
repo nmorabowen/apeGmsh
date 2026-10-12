@@ -269,6 +269,8 @@ export function meshInfoOf(model: ModelFile, mesh: MeshBuffers, blobs: BlobStore
     triElement: blobs.put("model/mesh/triElement", tris.element),
     lineGroup: blobs.put("model/mesh/lineGroup", lines.group),
     triGroup: blobs.put("model/mesh/triGroup", tris.group),
+    // V4c1: the node tag of every drawn vertex (mesh/build.ts), what a contour colours through.
+    vertexNodes: { line: blobs.put("model/mesh/lineNodes", mesh.lineNodes), tri: blobs.put("model/mesh/triNodes", mesh.triNodes) },
     elements,
     legend,
     adjacency,
