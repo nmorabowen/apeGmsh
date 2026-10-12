@@ -27,8 +27,17 @@ export const changed = (s: State, p: State): boolean =>
   s.stage !== p.stage ||
   s.source !== p.source;
 
-/** The highlight of a selected row: the office accent, as the selection is drawn everywhere else. */
-export const SELECTED_STYLE = { background: "var(--accent-wash)", boxShadow: "inset 3px 0 0 var(--accent)" } as const;
+/**
+ * The highlight of a selected row: the office accent, as the selection is drawn
+ * everywhere else. The row reaches 8px into the card padding so the accent bar
+ * sits beside the text, never over it, and the text does not move.
+ */
+export const SELECTED_STYLE = {
+  background: "var(--accent-wash)",
+  boxShadow: "inset 3px 0 0 var(--accent)",
+  marginLeft: "-8px",
+  paddingLeft: "8px",
+} as const;
 
 interface Markable {
   readonly children: ArrayLike<unknown>;
