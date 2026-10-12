@@ -163,6 +163,120 @@ class _Structured:
             )
         return self
 
+    def one_element_per_curve(self, *labels: str) -> "_Structured":
+        """Mesh each free curve as exactly one 1-D element (two nodes).
+
+        The one-element-per-member switch for trusses and frames: each
+        selected curve gets ``set_transfinite_curve(curve, n_nodes=2)``,
+        so its only mesh nodes are its two end points.
+
+        Parameters
+        ----------
+        *labels : str
+            Label, physical-group or part names (the precedence of
+            :func:`~apeGmsh.core._helpers.resolve_to_dimtags`).  Every
+            curve under each name is selected; entities of other
+            dimensions under the same name are ignored.  With **no
+            labels**, every curve in the model that is *free* (see
+            below) is selected, so the surfaces and volumes of a mixed
+            model mesh exactly as before.
+
+        Returns
+        -------
+        _Structured
+            ``self`` for chaining.
+
+        Raises
+        ------
+        KeyError
+            A name is not a label, physical group or part (the message
+            lists the existing labels and groups).
+        ValueError
+            A name resolves to no curve; a named curve is not free; or,
+            with no labels, the model has no free curve.
+        TypeError
+            A name is not a ``str``.
+
+        Notes
+        -----
+        A curve is **free** when no surface or volume uses it: it bounds
+        no surface (``gmsh.model.getAdjacencies``) and is embedded in no
+        surface or volume (``gmsh.model.mesh.getEmbedded``).  Both are
+        geometry-topology queries, so no mesh is needed.
+
+        A named curve that is not free is **refused**, never silently
+        coarsened: two nodes on a slab or shell edge would rewrite that
+        surface's mesh.  When that is really wanted, say so explicitly
+        with ``set_transfinite_curve(curve, n_nodes=2)``.
+
+        Examples
+        --------
+        One element per bar of a truss::
+
+            g.mesh.structured.one_element_per_curve("chords", "diagonals")
+
+        Every frame member of a frame-plus-slab model, slab untouched::
+
+            g.mesh.structured.one_element_per_curve()
+        """
+        self._guard("one_element_per_curve")
+        for name in labels:
+            if not isinstance(name, str):
+                raise TypeError(
+                    "one_element_per_curve: labels must be names (str); "
+                    f"got {type(name).__name__} {name!r}.  Use "
+                    "set_transfinite_curve(tag, n_nodes=2) for raw tags."
+                )
+
+        bound: set[int] = set()
+        for _, c in gmsh.model.getEntities(1):
+            upward, _down = gmsh.model.getAdjacencies(1, c)
+            if len(upward):
+                bound.add(int(c))
+        for host_dim in (2, 3):
+            for _, h in gmsh.model.getEntities(host_dim):
+                for d, t in gmsh.model.mesh.getEmbedded(host_dim, h):
+                    if d == 1:
+                        bound.add(int(t))
+
+        curves: list[int] = []
+        if not labels:
+            curves = [
+                int(c) for _, c in gmsh.model.getEntities(1)
+                if int(c) not in bound
+            ]
+            if not curves:
+                raise ValueError(
+                    "one_element_per_curve(): the model has no free curve "
+                    "(every curve bounds or is embedded in a surface or "
+                    "volume).  Nothing to mesh as one element."
+                )
+        else:
+            from apeGmsh.core._helpers import resolve_to_dimtags
+            for name in labels:
+                hits = resolve_to_dimtags(
+                    name, default_dim=1, session=self._mesh._parent,
+                )
+                named = [int(t) for d, t in hits if d == 1]
+                if not named:
+                    dims = sorted({d for d, _ in hits})
+                    raise ValueError(
+                        f"one_element_per_curve: {name!r} resolves to no "
+                        f"curve (it holds entities of dim {dims} only)."
+                    )
+                not_free = [t for t in named if t in bound]
+                if not_free:
+                    raise ValueError(
+                        f"one_element_per_curve: {name!r} names curve(s) "
+                        f"{not_free} that bound or are embedded in a "
+                        "surface or volume; two nodes there would rewrite "
+                        "that mesh.  If that is intended, call "
+                        "set_transfinite_curve(curve, n_nodes=2) explicitly."
+                    )
+                curves.extend(t for t in named if t not in curves)
+
+        return self.set_transfinite_curve(curves, n_nodes=2)
+
     def set_transfinite_surface(
         self,
         tag,
