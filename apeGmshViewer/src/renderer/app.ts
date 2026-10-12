@@ -13,7 +13,7 @@ import { mountPhase } from "../panels/phase.ts";
 import { mountSources } from "../panels/sources.ts";
 import { mountWindows } from "../panels/windows/frame.ts";
 import { BlobStore } from "../state/blobs.ts";
-import { chainOf } from "../state/selectors.ts";
+import { chainOf, contourFieldsOf, contourView } from "../state/selectors.ts";
 import { Store } from "../state/store.ts";
 import { WINDOW_KINDS, type DeclPath } from "../state/types.ts";
 import { applyTheme } from "../theme/tokens.ts";
@@ -231,6 +231,72 @@ async function captureResults(path: string, settle: (ms?: number) => Promise<unk
   }
 }
 
+/** Poll the store (every 20 ms, at most `ms`) until `ok` holds; false on timeout. */
+async function until(ok: () => boolean, ms = 15000): Promise<boolean> {
+  for (let t = 0; t < ms; t += 20) {
+    if (ok()) return true;
+    await new Promise((r) => setTimeout(r, 20));
+  }
+  return ok();
+}
+
+/** The contour colours on screen are the step the state shows, at its range (renderer/contour.ts keys). */
+function contourShown(): boolean {
+  const v = contourView(store.get());
+  return v.state === "ready" && v.stepMeasured && (viewport.contourApplied?.startsWith(`${v.keys.step}|`) ?? false);
+}
+
+/**
+ * The V4c1 contour stills (D7), by a fixed rule so no flag is needed: on the
+ * results stage with the most steps (the last of a tie), coloured by its
+ * first nodal field's first component (the magnitude when offered), the
+ * legend while the history scan runs (main paces a capture's scan, one step
+ * per 400 ms), then after it at the first and the last step, then the first
+ * axis component at the last step, and that last still again at 1280 px.
+ * `<out>.contour-<n>-<what>.png`.
+ */
+async function captureContours(settle: (ms?: number) => Promise<unknown>, width: number, height: number) {
+  const s0 = store.get();
+  if (!s0.results || !s0.phase.axis.some((k) => k.kind === "results")) return;
+  const stages = s0.results.stages;
+  let best = -1;
+  stages.forEach((st, i) => {
+    if (st.nodal.length && (best < 0 || st.time.length >= stages[best]!.time.length)) best = i;
+  });
+  if (best < 0) return;
+  if (typeof bridge.captureResize === "function") await bridge.captureResize(width, height);
+  const still = async (name: string) => {
+    if (!(await until(contourShown))) throw new Error(`capture ${name}: the contour did not show the step on screen`);
+    await settle(100);
+    viewport.renderNow();
+    await painted();
+    await painted();
+    await bridge.captureStill(name);
+  };
+  store.dispatch({ type: "setPhase", at: { kind: "results", stage: best, step: 0 } });
+  store.dispatch({ type: "setColourBy", by: "contour" });
+  const scan = () => store.get().contour.scan;
+  if (!(await until(() => scan()?.status === "running" && scan()!.done > 0))) throw new Error(`capture: the history scan did not report progress (${JSON.stringify(scan())})`);
+  await still("contour-1-scan-running");
+  if (!(await until(() => scan()?.status === "done"))) throw new Error(`capture: the history scan did not finish (${JSON.stringify(scan())})`);
+  await still("contour-2-history-first-step");
+  const last = stages[best]!.time.length - 1;
+  store.dispatch({ type: "setResultStep", step: last });
+  await still("contour-3-history-last-step");
+  const v = contourView(store.get());
+  const axis = v.state === "ready" ? contourFieldsOf(store.get())?.fields.find((f) => f.name === v.field)?.components.find((c) => !c.magnitude) : undefined;
+  if (axis && v.state === "ready") {
+    store.dispatch({ type: "setContourField", field: v.field, component: axis.key });
+    await until(() => scan()?.status === "done");
+    await still(`contour-4-component-${axis.label}`);
+  }
+  if (typeof bridge.captureResize === "function") {
+    await bridge.captureResize(1280, height);
+    await settle();
+    await still("contour-5-last-step.1280");
+  }
+}
+
 async function main() {
   const cfg = await bridge.config();
   if (cfg.mode === "view") {
@@ -320,7 +386,12 @@ async function main() {
   // stage activation (inactive elements hidden), and the banner when the
   // activation is `ambiguous` or `absent`, or the results do not pair. The
   // rule is fixed, so no flag is needed.
-  if (cfg.results) await captureResults(cfg.results, settle);
+  if (cfg.results) {
+    const width = window.innerWidth, height = window.innerHeight;
+    await captureResults(cfg.results, settle);
+    // V4c1 (D7): the contour stills, at the capture window's own width, then 1280 px.
+    await captureContours(settle, width, height);
+  }
   await bridge.captureDone();
 }
 

@@ -277,7 +277,7 @@ export function climOf(c: Pick<ContourState, "range" | "fixed">, step: { min: nu
 }
 
 export const RANGE_MODES: readonly { range: ContourRange; label: string }[] = [
-  { range: "history", label: "whole history" },
+  { range: "history", label: "history" },
   { range: "step", label: "this step" },
   { range: "fixed", label: "fixed" },
 ];
