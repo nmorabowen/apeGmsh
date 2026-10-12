@@ -208,6 +208,7 @@ def test_a_director_style_setup_fails_loudly(
         )
         _require_gl(written)
     assert not (tmp_path / "d.gif").exists()
+    assert not (tmp_path / "d.partial.gif").exists()
 
 
 def test_a_callback_bug_is_not_misdiagnosed(
@@ -351,6 +352,19 @@ def test_several_stages_and_no_pick_refuses(
     with pytest.raises(RuntimeError, match="stage="):
         two_stage.export_animation(tmp_path / "h.gif", window_size=(160, 90))
     assert not (tmp_path / "h.gif").exists()
+
+
+def test_combined_stage_refuses_and_names_the_alternative(
+    two_stage, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Maintainer ruling 2026-10-11 (#1663): ``stage='__all__'`` (the
+    director's combined stage) refuses clearly instead of a KeyError."""
+    _stub_imageio(monkeypatch)
+    out = tmp_path / "all.gif"
+    with pytest.raises(ValueError, match=r"stage=<id or name>") as info:
+        two_stage.export_animation(out, stage="__all__")
+    assert "'s0'" in str(info.value) and "'s1'" in str(info.value)
+    assert not out.exists() and not (tmp_path / "all.partial.gif").exists()
 
 
 # =====================================================================

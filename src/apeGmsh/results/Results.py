@@ -1624,6 +1624,17 @@ class Results:
 
         from .session import Deform
 
+        if stage == "__all__":
+            # The retired director's combined stage (every stage on one
+            # concatenated time axis). The session has one instant per
+            # (stage, step), so there is no combined animation to draw
+            # (maintainer ruling 2026-10-11, #1663).
+            names = [s.name for s in self._all_stages()]
+            raise ValueError(
+                "export_animation: stage='__all__' (all stages on one "
+                "time axis) is no longer supported. Animate one stage "
+                f"at a time with stage=<id or name> (have: {names})."
+            )
         # stage= wins, then this Results' own scope (``.stage()``), then
         # the only stage; several stages and no pick refuse and name
         # ``stage=`` (the director animated nothing there either).
