@@ -138,3 +138,31 @@ The same script with `--measure <dir>` writes the large files that
 `test/results/results.test.ts` checks the reader against the closed forms in
 the script's docstring, not against values copied from the app. A re-run
 changes `@created_at` and the lineage hashes.
+
+## `staged_activation.h5`, `staged_activation.results.h5` and `staged_activation.oracle.json`
+
+The V4b staged pair (#1728). `staged_activation.h5` is a composed `model.h5`
+(neutral 2.35.0, OpenSees 2.27.0, `/sequence` 1.0.0) of three touching
+tet-meshed boxes, 314 nodes and 743 `FourNodeTetrahedron` elements: `Col`
+(348) and `Prop` (220) are global, and three stages run `base`, then
+`erect` (`s.activate(pgs=["Top"])`, the 175 `Top` elements), then `unprop`
+(`s.remove_element(pg="Prop")`). `staged_activation.results.h5` is written by
+`NativeWriter` with `model_h5_src=` the model, so its `/meta/lineage`
+carries the model's `model_hash`; it has one `static` stage per program
+stage, by name (3, 2 and 4 steps, `time[k] = (k + 1) / T`), and a `mode`
+stage `mode_1` that no program stage names. The values are synthetic
+(`displacement_x[k, j] = id_j + 0.001 k`); no solve runs.
+`staged_activation.oracle.json` is Python's
+`viewers/data/_stage_activation.py::build_from_model` on the model, run by
+the same script outside the app: the FEM ids each program stage hides.
+`test/results/activation.test.ts` compares the app's activation with it.
+
+```powershell
+$env:PYTHONPATH = "src"
+& C:\Users\nmb\venv\opensees_venv\Scripts\python.exe scripts/make_viewer_results_fixtures.py --staged
+```
+
+The session writes its own `model.h5` and geometry sibling into a temporary
+directory, not here; `/provenance` records the generating checkout's paths.
+A re-run changes the lineage hashes, `/meta/session_id` and the timestamps;
+re-run all three files together, since the oracle is read from this model.

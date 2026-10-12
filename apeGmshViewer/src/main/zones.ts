@@ -1,6 +1,7 @@
 // The ADR 0112 zones, read from disk in the main process (like
-// ../reader/node.ts for the model): the /geometry sibling and a model's
-// /provenance. Each answer is plain data for the IPC; a reader error becomes
+// ../reader/node.ts for the model): the /geometry sibling, a model's
+// /provenance, and (V4b) a model's /meta/lineage and the element tags its
+// /sequence element rows name. Each answer is plain data for the IPC; a reader error becomes
 // `{ok: false, error}` with the reader's message, which names the zone and
 // its version when it is a refusal (effects.parseRefusal reads it).
 

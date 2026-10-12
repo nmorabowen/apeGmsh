@@ -221,7 +221,8 @@ export function noticesOf(s: State): string[] {
   const out: string[] = [];
   const n = geometryPairing(s).notice;
   if (n) out.push(n);
-  if (s.results) {
+  // While the model of the set is still being read, "no model is open" would only flash.
+  if (s.results && s.artifacts.model?.status !== "opened") {
     const p = pairingNotice(resultsPairing(s), baseName(s.results.path));
     if (p) out.push(p);
   }

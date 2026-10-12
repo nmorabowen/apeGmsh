@@ -468,3 +468,15 @@ brackets.
 | Eager whole-history load, for comparison | 205 MB (a), 1.09 GB (b), 2.1 GB (c), against those peaks | the same bytes, in the server's process |
 | What only a server adds | none measured | a reader the app cannot run: Python decoders (the MPCO layout, `.ladruno`, derived results such as von Mises, computed on read). Raw HDF5 is not one: h5wasm opened an MPCO file and read a dataset in 4 + 5 ms |
 | Failure modes seen | h5wasm's silent open failure (above), refused by `results.ts` | not measured |
+
+### D5 revisit trigger (V4b, #1728)
+
+The maintainer ruled for the in-process lazy read (#1283, 2026-10-11), and
+V4b builds on it. Reopen ADR 0112 D5, with the row that shows it, when a
+**real** results file (a solve, not a synthetic one):
+
+- scrubs below **30 steps/s** end to end (the "scrub" column above, measured
+  with `--mode=measure-results`), or
+- peaks above **2 GB** of memory, main plus renderer, while it is open.
+
+Add that file's row to "Rows" above first, with its machine.

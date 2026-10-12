@@ -8,6 +8,7 @@
 //                   argument (a double-clicked file), or an empty drop target
 //   --mode=measure  open, orbit, pick, write a JSON measurement to --out
 //   --mode=capture  open hidden, select a beam, write a PNG still to --out
+//                   (and, with a results sibling, one still per results stage)
 //   --mode=measure-results  time the results.h5 read path (V4a, #1707; the
 //                   block at the end of this file), write a JSON to --out and
 //                   print a MEASUREMENTS row. Started directly, after
