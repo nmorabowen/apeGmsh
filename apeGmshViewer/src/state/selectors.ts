@@ -7,6 +7,11 @@ import { elementFields, elementLinks, type Lookup } from "./decls.ts";
 import { pairSessions } from "../reader/geometry.ts";
 import { PROVENANCE_ORIGIN_FROM } from "../reader/provenance.ts";
 import { roleColouring } from "./roles.ts";
+import { activationNotice, activationOf, type Activation } from "./activation.ts";
+import { pairingNotice, pairResults, type ResultsPairing } from "./results.ts";
+
+export type { Activation } from "./activation.ts";
+export type { ResultsPairing } from "./results.ts";
 import type {
   AnalysisDef,
   ArtifactInfo,
@@ -211,10 +216,122 @@ export function stageIdentity(seq: SequenceZone, index: number): string | null {
   return JSON.stringify(at.includes(-1) ? row : at.map((i) => row[i]));
 }
 
-/** Notices that are not warnings: the stale-geometry notice. */
+/** Notices that are not warnings: the stale-geometry notice, and (V4b) why results or their stage activation are not drawn. */
 export function noticesOf(s: State): string[] {
+  const out: string[] = [];
   const n = geometryPairing(s).notice;
-  return n ? [n] : [];
+  if (n) out.push(n);
+  // While the model of the set is still being read, "no model is open" would only flash.
+  if (s.results && s.artifacts.model?.status !== "opened") {
+    const p = pairingNotice(resultsPairing(s), baseName(s.results.path));
+    if (p) out.push(p);
+  }
+  const a = activationNow(s);
+  if (a) {
+    const t = activationNotice(a.activation, a.stageName);
+    if (t) out.push(t);
+  }
+  return out;
+}
+
+// -- V4b: results pairing, the time axis and stage activation ---------------------
+
+/** Whether the read results file pairs with the loaded model by content (state/results.ts). */
+export function resultsPairing(s: State): ResultsPairing {
+  const m = s.artifacts.model;
+  return pairResults(m?.status === "ready" ? { lineage: s.lineage } : null, s.results);
+}
+
+/**
+ * Whether the phase bar carries the results scrubber (results are on the axis).
+ * Then it takes its own row under the header, and the banner moves below it
+ * (panels/phase.ts, panels/banner.ts): the scrubber is too wide to sit beside
+ * the header without covering it.
+ */
+export const scrubberRow = (s: State): boolean => s.phase.axis.some((k) => k.kind === "results");
+/** The scrubber row's top (the header row is 14 px to about 50 px), and the banner's top below it. */
+export const SCRUBBER_TOP_PX = 58;
+export const BANNER_BELOW_SCRUBBER_PX = 106;
+
+/** What the time scrubber shows:the results stage on screen, its step and time, or null off the results phases. */
+export interface Timeline {
+  /** the results stages, in reader order, with the index `setPhase` names */
+  stages: { index: number; label: string }[];
+  stage: number;
+  step: number;
+  steps: number;
+  time: number;
+  kind: "static" | "transient" | "mode";
+  /** the current step's fetch: `loading`, `ready`, `failed: <why>` */
+  fetch: string;
+}
+
+export function timelineOf(s: State): Timeline | null {
+  const at = s.phase.at;
+  if (at?.kind !== "results" || !s.results) return null;
+  const st = s.results.stages[at.stage];
+  if (!st) return null;
+  const r = s.resultStep;
+  const fetch = !r ? "loading" : r.status === "failed" ? `failed: ${r.error ?? "unknown error"}` : r.status;
+  return {
+    stages: s.results.stages.map((x, i) => ({ index: i, label: x.name === "" ? `${x.id} (unnamed)` : x.name })),
+    stage: at.stage,
+    step: at.step,
+    steps: st.time.length,
+    time: st.time[at.step]!,
+    kind: st.kind,
+    fetch,
+  };
+}
+
+let activationMemo: { key: readonly unknown[]; value: { activation: Activation; stageName: string } | null } | null = null;
+
+/** The stage activation of the results stage on screen (state/activation.ts), or null off the results phases. */
+export function activationNow(s: State): { activation: Activation; stageName: string } | null {
+  const at = s.phase.at;
+  if (at?.kind !== "results" || !s.results) return null;
+  const st = s.results.stages[at.stage];
+  if (!st) return null;
+  // A fem_hash pairing proves the mesh, not the program: joining /sequence
+  // stage names to these results would be a guess, so it is not made.
+  const p = resultsPairing(s);
+  const byFem = p.state === "paired" && p.by === "fem_hash";
+  const key = [s.sequence, s.stageElements, s.definitions, st.name, byFem];
+  if (activationMemo && activationMemo.key.every((k, i) => k === key[i])) return activationMemo.value;
+  const activation: Activation = byFem
+    ? {
+        state: "unbound",
+        reason: "the results pair with this model by fem_hash only (the mesh matches; they carry no model_hash), so they are not tied to this model's /sequence program",
+      }
+    : activationOf(s.sequence, s.stageElements, s.definitions, st.name);
+  const value = { activation, stageName: st.name };
+  activationMemo = { key, value };
+  return value;
+}
+
+let inactiveMemo: { key: readonly unknown[]; value: { mask: Uint8Array; hidden: number; inactive: number } } | null = null;
+
+/**
+ * The elements a `filtered` activation hides, as a mask over `mesh.elements`
+ * (1 = not drawn); `hidden` counts the drawn elements it masks and
+ * `inactive` the elements the stage does not have (a solid's interior
+ * elements draw no face, so `hidden` can be the smaller). Null when the
+ * phase shown has no `filtered` activation. The viewport draws through
+ * renderer/visible.ts with it, the one visibility path.
+ */
+export function inactiveElements(s: State): { mask: Uint8Array; hidden: number; inactive: number } | null {
+  const a = activationNow(s);
+  if (!a || a.activation.state !== "filtered" || !s.mesh) return null;
+  const key = [a.activation, s.mesh, s.decls];
+  if (inactiveMemo && inactiveMemo.key.every((k, i) => k === key[i])) return inactiveMemo.value;
+  const tags = a.activation.inactiveTags;
+  const mask = new Uint8Array(s.mesh.elements.length);
+  s.mesh.elements.forEach((p, i) => {
+    for (const m of s.decls[p]?.element?.metas ?? []) if (tags.has(m.tag)) mask[i] = 1;
+  });
+  const value = { mask, hidden: mask.reduce((n, v) => n + v, 0), inactive: tags.size };
+  inactiveMemo = { key, value };
+  return value;
 }
 
 /**

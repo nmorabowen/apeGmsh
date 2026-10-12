@@ -1,7 +1,16 @@
 // Which drawn primitives the hidden set leaves visible: pure, so the
 // viewport's rebuild decision is testable without a GPU.
 
-import type { DeclPath, LegendEntry } from "../state/types.ts";
+import type { BlobStore } from "../state/blobs.ts";
+import { inactiveElements } from "../state/selectors.ts";
+import type { DeclPath, LegendEntry, MeshInfo, State } from "../state/types.ts";
+
+/** The stage-activation mask of the phase shown (V4b), or null when activation hides nothing. */
+export function elementMaskOf(s: State, info: MeshInfo, blobs: BlobStore): ElementMask | null {
+  const inactive = inactiveElements(s);
+  if (!inactive || inactive.hidden === 0) return null;
+  return { mask: inactive.mask, lineElement: blobs.i32(info.lineElement), triElement: blobs.i32(info.triElement) };
+}
 
 /** Original indices of the segments, triangles and outline edges to draw, in order. */
 export interface Drawn {
@@ -11,19 +20,39 @@ export interface Drawn {
   edgeMask: Uint8Array | null;
 }
 
-/** The maps of the primitives whose legend row is not hidden. */
-export function visibleMaps(legend: readonly LegendEntry[], hidden: readonly DeclPath[], lineGroup: Int32Array, triGroup: Int32Array): { lineMap: Int32Array; triMap: Int32Array } {
+/**
+ * Elements hidden one by one (V4b stage activation, selectors.inactiveElements):
+ * `mask[i]` is 1 for `mesh.elements[i]`, and `lineElement` / `triElement` map
+ * each drawn primitive to its element.
+ */
+export interface ElementMask {
+  mask: Uint8Array;
+  lineElement: Int32Array;
+  triElement: Int32Array;
+}
+
+/** The maps of the primitives whose legend row is not hidden and whose element is not masked. */
+export function visibleMaps(
+  legend: readonly LegendEntry[],
+  hidden: readonly DeclPath[],
+  lineGroup: Int32Array,
+  triGroup: Int32Array,
+  elements: ElementMask | null = null,
+): { lineMap: Int32Array; triMap: Int32Array } {
   const set = new Set(hidden);
   const rowHidden = legend.map((e) => e.decl !== null && set.has(e.decl));
-  const keep = (group: Int32Array): Int32Array => {
-    if (!rowHidden.some(Boolean)) return Int32Array.from(group.keys());
+  const anyRow = rowHidden.some(Boolean);
+  const keep = (group: Int32Array, element: Int32Array | null): Int32Array => {
+    if (!anyRow && !element) return Int32Array.from(group.keys());
     const out: number[] = [];
     group.forEach((g, i) => {
-      if (!rowHidden[g]) out.push(i);
+      if (rowHidden[g]) return;
+      if (element && elements!.mask[element[i]!]) return;
+      out.push(i);
     });
     return Int32Array.from(out);
   };
-  return { lineMap: keep(lineGroup), triMap: keep(triGroup) };
+  return { lineMap: keep(lineGroup, elements?.lineElement ?? null), triMap: keep(triGroup, elements?.triElement ?? null) };
 }
 
 /** Whether two draws show the same primitives (the contents, not the counts: two groups of equal size differ). */

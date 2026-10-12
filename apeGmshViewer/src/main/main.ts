@@ -8,6 +8,7 @@
 //                   argument (a double-clicked file), or an empty drop target
 //   --mode=measure  open, orbit, pick, write a JSON measurement to --out
 //   --mode=capture  open hidden, select a beam, write a PNG still to --out
+//                   (and, with a results sibling, one still per results stage)
 //   --mode=measure-results  time the results.h5 read path (V4a, #1707; the
 //                   block at the end of this file), write a JSON to --out and
 //                   print a MEASUREMENTS row. Started directly, after
@@ -29,11 +30,12 @@ import { fileURLToPath } from "node:url";
 import * as h5wasm from "h5wasm/node";
 import { openModel } from "../reader/node.ts";
 import { openResults, type ResultsFile, type ResultsH5 } from "../reader/results.ts";
-import { fileFromArgv } from "./pairing.ts";
+import { fileFromArgv, pairSet } from "./pairing.ts";
+import { ResultsHost, type StepRequest } from "./results.ts";
 import { OpenSession } from "./session.ts";
 import { goToSource } from "./source.ts";
 import { SetWatcher } from "./watch.ts";
-import { openGeometry, openProvenance } from "./zones.ts";
+import { openGeometry, openLineage, openProvenance, openStageElements } from "./zones.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -117,6 +119,9 @@ ipcMain.handle("app:config", () => ({
   appReadyMs: appReadyAt - t0,
   configMs: Date.now() - t0,
   pick: arg("pick") ?? null,
+  // capture: the results sibling of the captured model, when one exists (the
+  // V4b stills come from the set the file belongs to, as a double-click opens it)
+  results: mode === "capture" && file ? pairSet(resolve(file), existsSync).results : null,
 }));
 
 ipcMain.handle("model:open", async (_e, path: string) => {
@@ -131,8 +136,31 @@ ipcMain.handle("model:open", async (_e, path: string) => {
   }
   // /provenance rides with the model; a refused or broken zone does not stop
   // the model from loading (the renderer shows why go-to-source is off).
-  return { ok: true, model, provenance: await openProvenance(path) };
+  return {
+    ok: true,
+    model,
+    provenance: await openProvenance(path),
+    // V4b: the results pairing key, and the element tags of the /sequence element rows.
+    lineage: await openLineage(path),
+    stageElements: await openStageElements(path, model.sequence),
+  };
 });
+
+// V4b (#1728): the results file, read lazily here; the renderer holds its
+// metadata and asks for one step at a time (./results.ts).
+const resultsHost = new ResultsHost(h5wasm as unknown as ResultsH5, h5wasm.ready);
+ipcMain.handle("results:open", (_e, path: unknown) => {
+  if (typeof path !== "string") return { ok: false, error: `results:open needs a path; got ${JSON.stringify(path)}` };
+  return resultsHost.open(path);
+});
+ipcMain.handle("results:readStep", (_e, req: unknown) => {
+  const r = req as StepRequest | null;
+  if (!r || typeof r.path !== "string" || typeof r.stage !== "string" || typeof r.step !== "number" || typeof r.seq !== "number") {
+    return { ok: false, seq: -1, error: `results:readStep: malformed request ${JSON.stringify(req)}` };
+  }
+  return resultsHost.readStep(r);
+});
+ipcMain.handle("results:close", () => resultsHost.close());
 
 ipcMain.handle("geometry:open", (_e, path: unknown) => {
   if (typeof path !== "string") return { ok: false, error: `geometry:open needs a path; got ${JSON.stringify(path)}` };
@@ -195,6 +223,13 @@ ipcMain.handle("capture:still", async (e, suffix: string) => {
 
 ipcMain.handle("capture:done", () => app.quit());
 
+/** Capture only (V4b): resize the page to `width` x `height` CSS pixels, for a still at another window width. */
+ipcMain.handle("capture:resize", (e, width: unknown, height: unknown) => {
+  if (mode !== "capture") throw new Error("capture:resize: only in --mode=capture");
+  if (typeof width !== "number" || typeof height !== "number") throw new Error("capture:resize needs a width and a height");
+  BrowserWindow.fromWebContents(e.sender)?.setContentSize(Math.round(width), Math.round(height));
+});
+
 ipcMain.handle("app:fail", (_e, message: string) => {
   process.stderr.write(`apeGmshViewer: ${message}\n`);
   if (mode !== "view") {
@@ -240,6 +275,7 @@ app.whenReady().then(() => {
 
 app.on("window-all-closed", () => {
   session.close();
+  resultsHost.close();
   app.quit();
 });
 

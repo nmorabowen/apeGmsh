@@ -194,6 +194,41 @@ function countLinks(n: { children: { children: unknown[] }[] }): number {
   return n.children.reduce((a, c) => a + 1 + countLinks(c as typeof n), 0);
 }
 
+/** The results stills of a capture (see the call site); each waits for its step fetch to settle. */
+async function captureResults(path: string, settle: (ms?: number) => Promise<unknown>) {
+  if (!(await effects.openResults(path))) throw new Error(`capture: results ${path} did not open: ${store.get().artifacts.results?.error}`);
+  const s = store.get();
+  const stages = s.results?.stages ?? [];
+  const onAxis = s.phase.axis.some((k) => k.kind === "results");
+  const still = async (name: string) => {
+    for (let i = 0; i < 100 && store.get().resultStep?.status === "loading"; i++) await settle(20);
+    await settle();
+    viewport.renderNow();
+    // Two painted frames: a hidden window's first capture after a burst of DOM changes can be the frame before them.
+    await painted();
+    await painted();
+    await bridge.captureStill(name);
+  };
+  if (!onAxis) {
+    // Not paired: one still of the banner that says why.
+    await still("results-unpaired");
+    return;
+  }
+  const safe = (n: string) => n.replace(/[^A-Za-z0-9_.-]+/g, "_") || "unnamed";
+  for (const [i, st] of stages.entries()) {
+    store.dispatch({ type: "setPhase", at: { kind: "results", stage: i, step: 0 } });
+    if (st.time.length > 1) store.dispatch({ type: "setResultStep", step: st.time.length - 1 });
+    await still(`results-${i}-${safe(st.name)}`);
+  }
+  // The first stage again at a 1280 px window: the scrubber row must still clear the header.
+  if (typeof bridge.captureResize === "function" && stages.length) {
+    await bridge.captureResize(1280, window.innerHeight);
+    store.dispatch({ type: "setPhase", at: { kind: "results", stage: 0, step: 0 } });
+    if (stages[0]!.time.length > 1) store.dispatch({ type: "setResultStep", step: stages[0]!.time.length - 1 });
+    await still(`results-0-${safe(stages[0]!.name)}.1280`);
+  }
+}
+
 async function main() {
   const cfg = await bridge.config();
   if (cfg.mode === "view") {
@@ -277,6 +312,13 @@ async function main() {
     }
     store.dispatch({ type: "closeWindow", window: kind });
   }
+  // V4b (D7): with a results sibling (`<stem>.results.h5`, which main names
+  // in `config().results`), one still per results stage,
+  // `<out>.results-<i>-<stage name>.png`, at its last step: the scrubber, the
+  // stage activation (inactive elements hidden), and the banner when the
+  // activation is `ambiguous` or `absent`, or the results do not pair. The
+  // rule is fixed, so no flag is needed.
+  if (cfg.results) await captureResults(cfg.results, settle);
   await bridge.captureDone();
 }
 
