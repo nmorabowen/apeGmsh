@@ -195,6 +195,30 @@ class NativeReader:
         """
         return dict(self._unavailable)
 
+    @property
+    def element_index_space(self) -> "str | None":
+        """The root ``element_index_space`` stamp, or ``None`` if absent.
+
+        Results 1.2.0 (#1746). The recorder transcoder writes ``"fem"``
+        only when it can prove its element row ids are FEM element ids.
+        Read the verdict from :attr:`element_index_verified`.
+        """
+        if _native.ATTR_ELEMENT_INDEX_SPACE not in self._h5.attrs:
+            return None
+        return str(self._h5.attrs[_native.ATTR_ELEMENT_INDEX_SPACE])
+
+    @property
+    def element_index_verified(self) -> bool:
+        """True only when the file stamps ``element_index_space = "fem"``.
+
+        Absent (any 1.0.0 or 1.1.0 file, or a 1.2.0 file whose writer
+        could not prove it) and any value outside
+        ``ELEMENT_INDEX_SPACES`` read as unverified. That is not a
+        refusal: the file still reads. The version number alone never
+        makes a file verified.
+        """
+        return self.element_index_space == _native.ELEMENT_INDEX_SPACE_FEM
+
     def _require_zone(self, zone: str) -> None:
         reason = self._unavailable.get(zone)
         if reason is not None:

@@ -40,15 +40,21 @@ for the additive ``/meta/lineage/`` sub-group stamped by
 :meth:`NativeWriter.close`.  Old result files lacking the sub-group
 keep working (``Results.lineage`` surfaces a "lineage absent" warning
 without raising).
+
+Results 1.2.0 (#1746, additive minor, ADR 0113) — optional root attr
+``element_index_space = "fem"``, written by the recorder transcoder only
+when it can prove its element rows carry FEM element ids. Absent means
+unverified; 1.0.0 and 1.1.0 files keep reading. ``PARSER_VERSION`` bumps
+to ``"1.1"`` with it, so a cached pre-stamp transcode is re-made.
 """
 from __future__ import annotations
 
 SCHEMA_VERSION = "1.1.0"
-RESULTS_SCHEMA_VERSION = "1.1.0"
+RESULTS_SCHEMA_VERSION = "1.2.0"
 #: Oldest results-zone version the reader opens (ADR 0113 (#1303)). It moves
 #: only with a major bump; ``schema_version.reader_floor`` reads it here.
 RESULTS_SCHEMA_FLOOR = "1.0.0"
-PARSER_VERSION = "1.0"
+PARSER_VERSION = "1.1"
 
 # Ladruno recorder on-disk format — the integer ``INFO/FORMAT_VERSION``
 # the ``.ladruno`` HDF5 writer stamps (currently 1). The reader is pinned
