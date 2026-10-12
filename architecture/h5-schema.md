@@ -1725,7 +1725,7 @@ This section describes the layout those modules write at results zone
 `/meta` holds only the lineage, and the model is embedded under `/model`
 rather than written at the root.
 
-Four writers produce the file. `source_type` names which one wrote it:
+Five writers produce the file. `source_type` names the writer, but it is a stamp, not proof of origin:
 
 | `source_type` | Writer | `/model` | `/opensees` | Stages |
 |---|---|---|---|---|
@@ -1733,6 +1733,11 @@ Four writers produce the file. `source_type` names which one wrote it:
 | `tcl_recorders` | the recorder transcoder (`Results.from_recorders`) | yes | when `model=` is given | one stage per transcode |
 | `parallel_modal` | `ParallelModalResult` harvest (`opensees/analysis/modal.py`) | yes | no | one `mode` stage per mode |
 | `footfall_walking` | `FootfallResult` (`opensees/analysis/footfall_result.py`) | no | no | one `static` stage named `footfall` |
+| `domain_capture` (the `NativeWriter.open` default) | `make_demo_results` (`results/demo.py`): synthetic nodal displacements, no element groups | yes | yes | one `static` stage named `pushover` |
+
+Because `domain_capture` is also `NativeWriter.open`'s default, that stamp
+does not prove that `DomainCapture` wrote the file: the demo writer, or
+any caller that keeps the default, stamps it too.
 
 ### Layout
 
@@ -1742,20 +1747,20 @@ results.h5
 │   @neutral_schema_version, @opensees_schema_version,
 │   @source_type, @source_path, @created_at, @apegmsh_version,
 │   @analysis_label, @opensees_backend, @opensees_build
-├── /meta                                  lineage only (results 1.1.0)
+├── /meta                                  lineage only (results 1.1.0; always present at 1.1.0)
 │     └── /lineage                         @fem_hash, @model_hash, @results_hash
 ├── /model                                 (optional) the neutral zone, embedded
 │     ├── /meta                            the model's /meta attrs, plus /meta/lineage
 │     ├── /nodes, /elements, /physical_groups, …   same layout as a model.h5 root
-├── /opensees                              (optional, results 1.1.0) the bridge zone, copied verbatim
+├── /opensees                              (optional) the bridge zone, copied verbatim
 └── /stages
       └── /{stage_id}                      @name, @kind (+ mode attrs)
-            ├── time                       (T,) float64
+            ├── time                       (T,) float64 (coerced by the writer)
             └── /partitions
                   └── /{partition_id}
                         ├── /nodes
                         │     ├── _ids                     (N,) int64
-                        │     └── {component}              (T, N) float64
+                        │     └── {component}              (T, N) float, see below
                         └── /elements
                               ├── _ids                     (reserved; see "What is absent")
                               ├── /gauss_points/{group_id}
@@ -1767,6 +1772,13 @@ results.h5
 
 Every component dataset has the step axis first, and its length equals
 the stage's `time` length `T`; the writer refuses any other shape.
+**Component dtypes are not guaranteed.** The writer stores a component
+array as the caller passed it, with no dtype coercion. Every caller in
+`src/` passes float64 today, so the tables below say float64, but that is
+a convention: a float32 array round-trips as float32. A reader must accept
+any floating dtype and cast on read. The `time` vector, the index
+datasets (`_ids`, `_element_index`, …) and the stage attrs are coerced by
+the writer to the dtypes stated.
 Names that start with `_` are index and metadata datasets. A name with
 no `_` prefix is a result component. A reader lists a group's
 components by dropping the `_` names.
@@ -1813,9 +1825,10 @@ its `/meta/lineage` into `/model/meta/lineage`. `/opensees` is that
 `/meta/lineage/model_hash` equals that `model.h5`'s
 `/meta/lineage/model_hash`. When the results file has no `/opensees`, it
 belongs when its `fem_hash` equals the `model.h5`'s `fem_hash`. That
-matches the mesh only, not the OpenSees model. A file without
-`/meta/lineage` (results 1.0.0, or no `/model`) cannot be paired by
-content.
+matches the mesh only, not the OpenSees model. A file with no `fem_hash`
+(no `/model`, or results 1.0.0, which predates `/meta/lineage`) cannot be
+paired by content. Such a 1.1.0 file still has `/meta/lineage`, holding
+`results_hash` alone.
 
 `/model/meta/session_id`, when present, equals the session id of the
 `model.h5` the run was built from. It is a weaker signal: it identifies
@@ -1963,10 +1976,15 @@ in. Nothing in `results.h5` or `/model` records that system.
 * **No element-level `_ids`.** `NativeWriter.write_element_ids` can write
   `elements/_ids`, but no writer in `src/` calls it and no reader reads
   it. Take element ids from each group's `_element_index`.
-* **No `/model` or lineage** in a footfall file, and no `model_hash`
-  when `/opensees` is absent.
-* **Results 1.0.0 files** (the floor) have no `/opensees` and no
-  `/meta/lineage`. Otherwise they have the same `/stages` layout.
+* **No `/model`** in a footfall file, so its `/meta/lineage` holds only
+  `results_hash` (chained on `""`). There is no `model_hash` when
+  `/opensees` is absent.
+* **Results 1.0.0 files** (the floor) have no `/meta/lineage`: 1.1.0
+  added only that sub-group (ADR 0021). The `results_schema_version` key
+  itself arrived with the embedded `/opensees` zone (ADRs 0020, 0023), so a
+  1.0.0 file may carry `/opensees`. A file that predates the key carries
+  only the envelope `schema_version` and no `/opensees`. Otherwise all of
+  them have the same `/stages` layout.
 
 ## Cross-references
 
