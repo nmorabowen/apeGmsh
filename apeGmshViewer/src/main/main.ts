@@ -25,13 +25,14 @@
 
 import { app, BrowserWindow, dialog, ipcMain } from "electron";
 import { existsSync, statSync, writeFileSync } from "node:fs";
+import { cpus } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import * as h5wasm from "h5wasm/node";
 import { openModel } from "../reader/node.ts";
 import { openResults, type ResultsFile, type ResultsH5 } from "../reader/results.ts";
 import { fileFromArgv, pairSet } from "./pairing.ts";
-import { ResultsHost, type StepRequest } from "./results.ts";
+import { ResultsHost, type ScanRequest, type StepRequest } from "./results.ts";
 import { OpenSession } from "./session.ts";
 import { goToSource } from "./source.ts";
 import { SetWatcher } from "./watch.ts";
@@ -120,8 +121,9 @@ ipcMain.handle("app:config", () => ({
   configMs: Date.now() - t0,
   pick: arg("pick") ?? null,
   // capture: the results sibling of the captured model, when one exists (the
-  // V4b stills come from the set the file belongs to, as a double-click opens it)
-  results: mode === "capture" && file ? pairSet(resolve(file), existsSync).results : null,
+  // V4b stills come from the set the file belongs to, as a double-click opens it);
+  // measure (V4c1): the same sibling, for the contour scrub row
+  results: (mode === "capture" || mode === "measure") && file ? pairSet(resolve(file), existsSync).results : null,
 }));
 
 ipcMain.handle("model:open", async (_e, path: string) => {
@@ -161,6 +163,23 @@ ipcMain.handle("results:readStep", (_e, req: unknown) => {
   return resultsHost.readStep(r);
 });
 ipcMain.handle("results:close", () => resultsHost.close());
+// V4c1 (#1756): the history-range scan of a contour's field; progress goes to
+// the asking page. In capture mode it reads one step per chunk, 400 ms apart,
+// so a still can show the legend while the scan is still running.
+ipcMain.handle("results:scan", (e, req: unknown) => {
+  const r = req as ScanRequest | null;
+  if (!r || typeof r.path !== "string" || typeof r.stage !== "string" || !Array.isArray(r.components) || typeof r.magnitude !== "boolean" || typeof r.scanId !== "number") {
+    return { ok: false, scanId: -1, error: `results:scan: malformed request ${JSON.stringify(req)}` };
+  }
+  const sender = e.sender;
+  const progress = (p: { scanId: number; done: number; total: number }) => {
+    if (!sender.isDestroyed()) sender.send("results:scanProgress", p);
+  };
+  return resultsHost.scan(r, progress, mode === "capture" ? { chunkSteps: 1, paceMs: 400 } : {});
+});
+ipcMain.handle("results:scanCancel", (_e, scanId: unknown) => {
+  if (typeof scanId === "number") resultsHost.cancelScan(scanId);
+});
 
 ipcMain.handle("geometry:open", (_e, path: unknown) => {
   if (typeof path !== "string") return { ok: false, error: `geometry:open needs a path; got ${JSON.stringify(path)}` };
@@ -203,6 +222,9 @@ ipcMain.handle("measure:metrics", async () => {
 
 ipcMain.handle("measure:done", (_e, result: unknown) => {
   writeFileSync(out!, JSON.stringify(result, null, 2));
+  // V4c1: the contour scrub (a model with a results sibling) prints its own ledger row.
+  const contour = (result as { contour?: ContourMeasure | null } | null)?.contour;
+  if (contour) printContourRow(contour);
   app.quit();
 });
 
@@ -228,6 +250,55 @@ ipcMain.handle("capture:resize", (e, width: unknown, height: unknown) => {
   if (mode !== "capture") throw new Error("capture:resize: only in --mode=capture");
   if (typeof width !== "number" || typeof height !== "number") throw new Error("capture:resize needs a width and a height");
   BrowserWindow.fromWebContents(e.sender)?.setContentSize(Math.round(width), Math.round(height));
+});
+
+/** The renderer's V4c1 contour scrub measurement (renderer/app.ts `measureContour`). */
+interface ContourMeasure {
+  file: string;
+  field: string;
+  steps: number;
+  scanMs: number;
+  scrubStepsPerSec: number;
+  stepMs: { median: number; max: number };
+  peakMB: { main: number; renderer: number };
+  cpu: { before: number; during: number };
+}
+
+function printContourRow(c: ContourMeasure): void {
+  const name = c.file.split(/[\\/]/).pop();
+  const peak = `${(c.peakMB.main + c.peakMB.renderer).toFixed(0)} (${c.peakMB.main.toFixed(0)} + ${c.peakMB.renderer.toFixed(0)})`;
+  process.stdout.write(
+    "| file | field | steps | CPU before / during | history scan (ms) | scrub (steps/s) | step median / max (ms) | peak MB main+renderer |\n" +
+      "|---|---|---|---|---|---|---|---|\n" +
+      `| ${name} | ${c.field} | ${c.steps} | ${c.cpu.before.toFixed(0)} / ${c.cpu.during.toFixed(0)} % | ${c.scanMs.toFixed(0)} | ` +
+      `${c.scrubStepsPerSec.toFixed(1)} | ${c.stepMs.median.toFixed(2)} / ${c.stepMs.max.toFixed(1)} | ${peak} |\n`,
+  );
+}
+
+/** Summed os.cpus() ticks: idle and total, for the CPU load of the machine. */
+function cpuTicks(): { idle: number; total: number } {
+  let idle = 0;
+  let total = 0;
+  for (const c of cpus()) {
+    idle += c.times.idle;
+    total += c.times.user + c.times.nice + c.times.sys + c.times.idle + c.times.irq;
+  }
+  return { idle, total };
+}
+let cpuMark = cpuTicks();
+/** V4c1 measure: the machine's CPU load (%) since the last call (a reviewer re-runs under other loads). */
+ipcMain.handle("measure:cpu", () => {
+  const now = cpuTicks();
+  const d = now.total - cpuMark.total;
+  const busy = d > 0 ? (100 * (d - (now.idle - cpuMark.idle))) / d : NaN;
+  cpuMark = now;
+  return busy;
+});
+/** V4c1 measure: the main and renderer working sets now (MB). */
+ipcMain.handle("measure:memory", () => {
+  const m = app.getAppMetrics();
+  const mb = (type: string) => m.filter((x) => x.type === type).reduce((s, x) => s + (x.memory?.workingSetSize ?? 0), 0) / 1024;
+  return { main: mb("Browser"), renderer: mb("Tab") };
 });
 
 ipcMain.handle("app:fail", (_e, message: string) => {

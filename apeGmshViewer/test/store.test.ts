@@ -148,6 +148,11 @@ const EVERY: Record<EventType, Event> = {
     warnings: [],
   },
   resultStep: { type: "resultStep", status: { stage: 0, step: 0, status: "loading", error: null } },
+  setContourField: { type: "setContourField", field: "displacement", component: "displacement_x" },
+  setContourRange: { type: "setContourRange", range: "fixed", fixed: { min: 0, max: 1 } },
+  setContourCmap: { type: "setContourCmap", cmap: "viridis" },
+  contourStepRange: { type: "contourStepRange", key: "x", min: 0, max: 1 },
+  contourScan: { type: "contourScan", scan: { key: "x", status: "running", done: 1, total: 2, min: null, max: null, error: null } },
 };
 
 test("reducer purity: every event leaves a frozen state untouched and returns plain data", () => {
@@ -163,7 +168,11 @@ test("reducer purity: every event leaves a frozen state untouched and returns pl
     }
     assertPlain(next, e.type);
   }
-  assert.equal(Object.keys(EVERY).length, 29, "decision 17's 20 events plus fileClosed, requestSource, sourceResult, setLoaded (V2f), frameSelection, setColourBy, selectStage (V4f), resultsLoaded and resultStep (V4b)");
+  assert.equal(
+    Object.keys(EVERY).length,
+    34,
+    "decision 17's 20 events plus fileClosed, requestSource, sourceResult, setLoaded (V2f), frameSelection, setColourBy, selectStage (V4f), resultsLoaded and resultStep (V4b), and the five contour events (V4c1)",
+  );
 });
 
 // ---- V4f: stage selection -------------------------------------------------------

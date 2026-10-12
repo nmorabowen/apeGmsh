@@ -9,6 +9,11 @@ import { PROVENANCE_ORIGIN_FROM } from "../reader/provenance.ts";
 import { roleColouring } from "./roles.ts";
 import { activationNotice, activationOf, type Activation } from "./activation.ts";
 import { pairingNotice, pairResults, type ResultsPairing } from "./results.ts";
+import { climOf, componentName, componentOf, contourKeysOf, nodalFields, type Clim, type FieldComponent, type NodalField } from "./contour.ts";
+import type { BlobRef, ContourCmap } from "./types.ts";
+
+export type { Clim, FieldComponent, NodalField } from "./contour.ts";
+export { CMAP_NAMES, CMAPS, MAGNITUDE, NO_DATA_RGB, RANGE_MODES, sampleCmap } from "./contour.ts";
 
 export type { Activation } from "./activation.ts";
 export type { ResultsPairing } from "./results.ts";
@@ -231,7 +236,76 @@ export function noticesOf(s: State): string[] {
     const t = activationNotice(a.activation, a.stageName);
     if (t) out.push(t);
   }
+  // V4c1: nodal components refused one by one on the stage shown, and a contour pick a re-read cleared.
+  const at = s.phase.at;
+  const st = at?.kind === "results" ? s.results?.stages[at.stage] : undefined;
+  for (const r of st?.refusedNodal ?? []) out.push(`Nodal component ${r.component} not read: ${r.reason}.`);
+  if (s.contour.notice) out.push(s.contour.notice);
   return out;
+}
+
+// -- V4c1: the nodal contour ----------------------------------------------------
+
+export type ContourView =
+  | { state: "off" }
+  /** colouring by contour, and nothing can be coloured: the sentence says why (the mesh is drawn as no data) */
+  | { state: "unavailable"; reason: string }
+  | {
+      state: "ready";
+      field: string;
+      component: FieldComponent;
+      stageName: string;
+      keys: { step: string; scan: string };
+      clim: Clim;
+      cmap: ContourCmap;
+      /** the stage's `_ids` blob */
+      nodeIds: BlobRef;
+      /** the measured range is for the step shown (else it is still loading) */
+      stepMeasured: boolean;
+      /** drawn vertices tied to no single node (state/contour.ts `vertexNodesOf`) */
+      unresolved: number;
+    };
+
+/** What the contour colours, or why it cannot (V4c1). */
+export function contourView(s: State): ContourView {
+  if (s.visibility.colourBy !== "contour") return { state: "off" };
+  const p = resultsPairing(s);
+  if (!s.results || p.state !== "paired") return { state: "unavailable", reason: "no results file pairs with this model, so there is no field to colour by" };
+  const at = s.phase.at;
+  if (at?.kind !== "results") return { state: "unavailable", reason: "contours colour a results step: choose results in the phase bar" };
+  const st = s.results.stages[at.stage];
+  if (!st) return { state: "unavailable", reason: `results stage ${at.stage} is not in the file` };
+  const label = st.name || st.id;
+  if (nodalFields(st.nodal).length === 0) return { state: "unavailable", reason: `stage ${label} records no nodal results` };
+  const c = s.contour;
+  if (c.field === null || c.component === null) return { state: "unavailable", reason: "pick a field" };
+  const hit = componentOf(st, c.field, c.component);
+  if (!hit) return { state: "unavailable", reason: `stage ${label} has no ${c.field} ${componentName(c.component)}` };
+  if (!st.nodeIds) return { state: "unavailable", reason: `the node ids of stage ${label} are not loaded` };
+  const vn = s.mesh?.vertexNodes;
+  if (!vn) return { state: "unavailable", reason: "the mesh has no vertex-to-node index" };
+  const keys = contourKeysOf(s)!;
+  const measured = c.stepRange !== null && c.stepRange.key === keys.step;
+  const clim = climOf(c, measured ? c.stepRange : null, c.scan, keys.scan);
+  return {
+    state: "ready",
+    field: c.field,
+    component: hit.component,
+    stageName: label,
+    keys,
+    clim,
+    cmap: c.cmap,
+    nodeIds: st.nodeIds,
+    stepMeasured: measured,
+    unresolved: vn.unresolved,
+  };
+}
+
+/** The field picker's rows: the nodal fields of the results stage shown, and the refused components. */
+export function contourFieldsOf(s: State): { fields: NodalField[]; refused: { component: string; reason: string }[] } | null {
+  const at = s.phase.at;
+  const st = at?.kind === "results" ? s.results?.stages[at.stage] : undefined;
+  return st ? { fields: nodalFields(st.nodal), refused: st.refusedNodal } : null;
 }
 
 // -- V4b: results pairing, the time axis and stage activation ---------------------

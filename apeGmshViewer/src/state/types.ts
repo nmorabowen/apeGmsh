@@ -170,8 +170,11 @@ export interface LegendEntry {
   slot: number | null;
 }
 
-/** What colours the model: its physical groups, or the structural role each element's file records. */
-export type ColourBy = "group" | "role";
+/**
+ * What colours the model: its physical groups, the structural role each
+ * element's file records, or (V4c1) a nodal results field at the current step.
+ */
+export type ColourBy = "group" | "role" | "contour";
 
 /** The render derivation of the model artifact: blob refs, per-primitive indices, legend and bounds. */
 export interface MeshInfo {
@@ -194,6 +197,13 @@ export interface MeshInfo {
   radius: number;
   counts: { lineCells: number; faceCells: number; solidCells: number; opsOnly: number; points: number };
   warnings: string[];
+  /**
+   * V4c1: the node tag at every drawn vertex (f64: 2 per segment, 3 per
+   * triangle; NaN where the vertex matches no single node of its element),
+   * and how many vertices are NaN. The effects add it after the load
+   * (state/contour.ts `vertexNodesOf`); a contour colours through it.
+   */
+  vertexNodes?: { line: BlobRef; tri: BlobRef; unresolved: number };
 }
 
 /** The render derivation of the geometry artifact (the `/geometry` sibling, V2a spec). */
@@ -242,6 +252,10 @@ export interface ResultsStage {
   time: number[];
   /** nodal components (`displacement_x`, ...) */
   nodal: string[];
+  /** V4c1: nodal components the reader refused one by one (value columns that disagree with `_ids`: a partial write) */
+  refusedNodal: { component: string; reason: string }[];
+  /** V4c1: the stage's nodal `_ids` (f64), put in the BlobStore by the effects; absent before that, or with no nodal results */
+  nodeIds?: BlobRef;
   /** gauss groups and their components (listed, never read in V4b) */
   gauss: { id: string; components: string[] }[];
   /** element categories the reader does not read */
@@ -278,6 +292,41 @@ export interface ResultStepStatus {
   step: number;
   status: "loading" | "ready" | "failed";
   error: string | null;
+}
+
+/** How a contour's colour range is chosen (V4c1): the whole history of the stage (the default), the step shown, or a user's min and max. */
+export type ContourRange = "history" | "step" | "fixed";
+
+/** The contour colormaps (state/contour.ts `CMAPS`); jet is the default. */
+export type ContourCmap = "jet" | "viridis" | "coolwarm";
+
+/** The history-range scan of the contour's field (main reads every step; the effects report it). */
+export interface ContourScan {
+  /** `<results path>|<stage id>|<field>|<component>` (state/contour.ts `contourKeys`) */
+  key: string;
+  status: "running" | "done" | "failed";
+  done: number;
+  total: number;
+  /** null until done, or when the history holds no finite value */
+  min: number | null;
+  max: number | null;
+  error: string | null;
+}
+
+/** The contour colouring (V4c1, #1756): what is picked, and the ranges the effects measured. */
+export interface ContourState {
+  /** the field (`displacement`) and its component (a dataset name such as `displacement_x`, or `magnitude`); null until picked */
+  field: string | null;
+  component: string | null;
+  range: ContourRange;
+  /** the user's min and max (`range: fixed`) */
+  fixed: { min: number; max: number } | null;
+  cmap: ContourCmap;
+  /** the finite min and max of the step shown, over every recorded node; `key` names the step and component it is for */
+  stepRange: { key: string; min: number | null; max: number | null } | null;
+  scan: ContourScan | null;
+  /** a typed notice, such as a selection cleared by a re-read that no longer has the field */
+  notice: string | null;
 }
 
 /** What the user clicked: the declaration, the hit point, and the cell's node tags as the viewport read them from the connectivity blob. */
@@ -383,6 +432,8 @@ export interface State {
   results: ResultsInfo | null;
   /** the fetch of the current results step; null when the phase is not a results step */
   resultStep: ResultStepStatus | null;
+  /** V4c1: the nodal contour (shown when `visibility.colourBy` is `contour`) */
+  contour: ContourState;
 }
 
 /** The payload of `fileLoaded` for the model artifact: what the loader derived from the file. */
@@ -452,6 +503,15 @@ export type Event =
   /** V4b: a results file was read (metadata only); the effects send it after `fileOpened` */
   | { type: "resultsLoaded"; info: ResultsInfo; sizeBytes: number; readMs: number; warnings: string[] }
   /** V4b: the effects started (`loading`) or finished fetching the current step; they drop a reply that is not the latest */
-  | { type: "resultStep"; status: ResultStepStatus };
+  | { type: "resultStep"; status: ResultStepStatus }
+  /** V4c1: pick the contour's field and component (a component of state/contour.ts `nodalFields` of the stage shown) */
+  | { type: "setContourField"; field: string; component: string }
+  /** V4c1: the colour range mode; `fixed` takes the user's min and max */
+  | { type: "setContourRange"; range: ContourRange; fixed?: { min: number; max: number } }
+  | { type: "setContourCmap"; cmap: ContourCmap }
+  /** V4c1 (effects): the finite range of the step shown, for the key it was measured on */
+  | { type: "contourStepRange"; key: string; min: number | null; max: number | null }
+  /** V4c1 (effects): the history scan started, progressed, finished or failed */
+  | { type: "contourScan"; scan: ContourScan };
 
 export type EventType = Event["type"];
