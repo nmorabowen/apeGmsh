@@ -13,6 +13,8 @@ element.  Oracles are counts read straight from gmsh after ``generate``:
 """
 from __future__ import annotations
 
+import dataclasses
+
 import gmsh
 import pytest
 
@@ -243,15 +245,43 @@ def _build_beam_with_bar(g) -> None:
     g.mesh.sizing.set_global_size(0.1)
 
 
+
+@dataclasses.dataclass
+class _FutureTieDef:
+    """A definition kind the helper has never heard of, using the role
+    naming convention (``*_label``)."""
+    host_label: str
+    follower_label: str
+    name: str | None = None
+
+
+@dataclasses.dataclass
+class _OddlyNamedDef:
+    """Another unknown kind whose curve reference is in an arbitrary field."""
+    kind: str
+    curve: str
+    name: str | None = None
+
+
 def _tie(g, source: str) -> None:
     if source == "constraints.embedded":
         g.constraints.embedded("beam", "bar")
+    elif source == "constraints.tie":
+        g.constraints.tie("beam", "bar")
+    elif source == "constraints.tied_contact":
+        g.constraints.tied_contact("beam", "bar")
+    elif source == "constraints.bc":
+        g.constraints.bc("bar", dofs=[1, 1, 1])
     elif source == "reinforce":
         g.reinforce.reinforce(
             host="beam", bars="bar", perfect=1.0e10, bar_diameter=0.02,
         )
-    else:
+    elif source == "embed":
         g.embed(host="beam", nodes="bar")
+    elif source == "stub_label":
+        g.constraints.constraint_defs.append(_FutureTieDef("beam", "bar"))
+    else:
+        g.constraints.constraint_defs.append(_OddlyNamedDef("future", "bar"))
 
 
 def _curve_elements(g, label: str) -> int:
@@ -259,14 +289,25 @@ def _curve_elements(g, label: str) -> int:
     return _n_elements(1, c)
 
 
-_TIE_SOURCES = ["constraints.embedded", "reinforce", "embed"]
-_TIE_VERB = {
-    "constraints.embedded": "g.constraints.embedded",
-    "reinforce": "g.reinforce",
-    "embed": "g.embed",
+#: source -> the "<DefClass> g.<composite>.<store>" its refusal names.
+_TIE_WHERE = {
+    "constraints.embedded": "EmbeddedDef g.constraints.constraint_defs[0]",
+    "constraints.tie": "TieDef g.constraints.constraint_defs[0]",
+    "constraints.tied_contact": "TiedContactDef g.constraints.constraint_defs[0]",
+    "constraints.bc": "BCDef g.constraints._bc_defs[0]",
+    "reinforce": "ReinforceDef g.reinforce.reinforce_defs[0]",
+    "embed": "EmbedDef g.embed.embed_defs[0]",
+    "stub_label": "_FutureTieDef g.constraints.constraint_defs[0]",
+    "stub_any_field": "_OddlyNamedDef g.constraints.constraint_defs[0]",
 }
+_TIE_SOURCES = list(_TIE_WHERE)
+
+# Tie definitions resolve only on a mesh (and the stubs never), so the
+# session's exit autosave may warn; that is not what these tests check.
+_ignore_autosave = pytest.mark.filterwarnings("ignore:autosave to")
 
 
+@_ignore_autosave
 @pytest.mark.parametrize("source", _TIE_SOURCES)
 def test_no_labels_keeps_a_tied_bar_at_its_sizing_count(source):
     with apeGmsh(model_name="r3s3_bar_ref", verbose=False) as g:
@@ -286,19 +327,19 @@ def test_no_labels_keeps_a_tied_bar_at_its_sizing_count(source):
         assert _curve_elements(g, "post") == 1
 
 
-@pytest.mark.filterwarnings("ignore:autosave to")  # ties resolve only on a mesh
+@_ignore_autosave
 @pytest.mark.parametrize("source", _TIE_SOURCES)
-def test_named_tied_bar_is_refused_naming_the_tie(source):
+def test_named_tied_bar_is_refused_naming_the_def(source):
     with apeGmsh(model_name="r3s3_bar_named", verbose=False) as g:
         _build_beam_with_bar(g)
         _tie(g, source)
         with pytest.raises(ValueError, match="not free") as exc:
             g.mesh.structured.one_element_per_curve("post", "bar")
-        assert f"{_TIE_VERB[source]}(host='beam', member='bar')" in str(exc.value)
+        assert _TIE_WHERE[source] in str(exc.value)
         assert _transfinite_directives(g) == []
 
 
-@pytest.mark.filterwarnings("ignore:autosave to")  # the broken tie cannot save
+@_ignore_autosave
 def test_tie_with_unresolvable_member_fails_closed():
     with apeGmsh(model_name="r3s3_bar_bad", verbose=False) as g:
         _build_beam_with_bar(g)
@@ -307,3 +348,37 @@ def test_tie_with_unresolvable_member_fails_closed():
             g.mesh.structured.one_element_per_curve()
         assert _transfinite_directives(g) == []
 
+
+@dataclasses.dataclass
+class _OpaqueDef:
+    """An unknown kind with no label or entity field at all."""
+    kind: str
+    stiffness: float
+
+
+@_ignore_autosave
+@pytest.mark.parametrize(
+    "defn, why",
+    [(_OpaqueDef("future", 1.0), "no label or entity field"),
+     (object(), "not a dataclass")],
+    ids=["no_reference_field", "not_a_dataclass"],
+)
+def test_def_whose_references_cannot_be_enumerated_is_refused(defn, why):
+    with apeGmsh(model_name="r3s3_opaque", verbose=False) as g:
+        _build_beam_with_bar(g)
+        g.constraints.constraint_defs.append(defn)
+        with pytest.raises(ValueError, match=why):
+            g.mesh.structured.one_element_per_curve()
+        assert _transfinite_directives(g) == []
+
+
+@_ignore_autosave
+def test_tie_declared_after_the_call_is_not_seen():
+    """Pins the documented order rule: the helper reads the ties that
+    exist when it is called, so call it after every tie is declared."""
+    with apeGmsh(model_name="r3s3_order", verbose=False) as g:
+        _build_beam_with_bar(g)
+        g.mesh.structured.one_element_per_curve()
+        g.constraints.embedded("beam", "bar")
+        g.mesh.generation.generate(dim=3)
+        assert _curve_elements(g, "bar") == 1

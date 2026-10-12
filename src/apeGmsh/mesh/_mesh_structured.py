@@ -163,20 +163,33 @@ class _Structured:
             )
         return self
 
+    #: Session composites whose definition stores are scanned for curve
+    #: references.  Every store each one lists in ``_DECLARATION_STORES``
+    #: is read, and every definition in it, whatever its class.
+    _TIE_COMPOSITES = ("constraints", "embed", "reinforce")
+
     def _tied_curves(self) -> dict[int, str]:
-        """Curves another surface, volume or constraint depends on.
+        """Curves another surface, volume or definition depends on.
 
         Maps each such curve tag to the reason, for the refusal message:
-        a curve that bounds a surface, one embedded with
-        ``g.mesh.editing.embed`` (gmsh ``getEmbedded``), and the member
-        curves of every non-conformal tie definition: the embedded side
-        of ``g.constraints.embedded`` (``EmbeddedDef``), the bars of
-        ``g.reinforce`` (``ReinforceDef``) and the node set of
-        ``g.embed`` (``EmbedDef``).  Those ties are only definitions
-        until ``get_fem_data``, so gmsh does not know them; they are
-        read from the session's def stores.
+
+        - a curve that bounds a surface (``getAdjacencies``);
+        - a curve embedded with ``g.mesh.editing.embed`` (``getEmbedded``);
+        - a curve referenced, **in any role**, by any definition in any
+          store of ``g.constraints``, ``g.embed`` or ``g.reinforce``.
+
+        The third rule has no allow-list of definition classes: a
+        definition is read field by field.  A field named ``*_label``,
+        ``*_labels`` or ``target`` is a name and must resolve; a field
+        named ``*_entities`` (or a ``target`` list) holds ``(dim, tag)``
+        pairs; any other string field that happens to resolve to a
+        label, group or part is counted too.  A definition that is not
+        a dataclass, a role field of an unexpected type, a role name
+        that does not resolve, or a definition with no reference at all
+        is refused, so an unknown kind can never leave a curve "free".
         """
-        from apeGmsh._kernel.defs.constraints import EmbeddedDef
+        import dataclasses
+
         from apeGmsh.core._helpers import resolve_to_dimtags
 
         tied: dict[int, str] = {}
@@ -197,52 +210,86 @@ class _Structured:
                         )
 
         session = self._mesh._parent
-        # (verb, host label, member label, member entities, def name)
-        sources: list[tuple[str, Any, Any, Any, Any]] = []
-        constraints = getattr(session, "constraints", None)
-        for defn in getattr(constraints, "constraint_defs", ()):
-            if isinstance(defn, EmbeddedDef):
-                sources.append((
-                    "g.constraints.embedded", defn.master_label,
-                    defn.slave_label, defn.embedded_entities, defn.name,
-                ))
-        reinforce = getattr(session, "reinforce", None)
-        for defn in getattr(reinforce, "reinforce_defs", ()):
-            sources.append((
-                "g.reinforce", defn.master_label,
-                defn.slave_label, defn.bars_entities, defn.name,
-            ))
-        embed = getattr(session, "embed", None)
-        for defn in getattr(embed, "embed_defs", ()):
-            sources.append((
-                "g.embed", defn.master_label,
-                defn.slave_label, defn.nodes_entities, defn.name,
-            ))
 
-        for verb, host, member, entities, def_name in sources:
-            where = (
-                f"{verb}(host={host!r}, member={member!r}"
-                + (f", name={def_name!r}" if def_name else "")
-                + ")"
+        def refuse(where: str, why: str) -> ValueError:
+            return ValueError(
+                f"one_element_per_curve: cannot tell which curves {where} "
+                f"references ({why}), so no curve can be proven free.  "
+                "Name the curves to coarsen with set_transfinite_curve("
+                "curve, n_nodes=2) instead."
             )
-            if entities is not None:
-                hits = [(int(d), int(t)) for d, t in entities]
-            else:
-                try:
-                    hits = resolve_to_dimtags(
-                        member, default_dim=1, session=session,
-                    )
-                except (KeyError, ValueError) as exc:
-                    raise ValueError(
-                        f"one_element_per_curve: cannot tell which curves "
-                        f"{where} ties into its host, so none can be "
-                        f"proven free: {exc}"
-                    ) from exc
-            for d, t in hits:
-                if d == 1:
-                    tied.setdefault(
-                        int(t), f"is the embedded member of {where}",
-                    )
+
+        def resolve(name: str, where: str, strict: bool) -> list[DimTag]:
+            try:
+                return resolve_to_dimtags(
+                    name, default_dim=1, session=session,
+                )
+            except (KeyError, ValueError) as exc:
+                if strict:
+                    raise refuse(where, f"{name!r} does not resolve: "
+                                        f"{exc}") from exc
+                return []
+
+        def as_dimtags(value: Any, where: str) -> list[DimTag]:
+            try:
+                return [(int(d), int(t)) for d, t in value]
+            except (TypeError, ValueError) as exc:
+                raise refuse(where, f"{value!r} is not (dim, tag) "
+                                    "pairs") from exc
+
+        for comp_name in self._TIE_COMPOSITES:
+            comp = getattr(session, comp_name, None)
+            if comp is None:
+                continue
+            # Read without a default: a renamed store list must raise
+            # here, not leave every curve looking free.
+            for store in type(comp)._DECLARATION_STORES:
+                for i, defn in enumerate(getattr(comp, store)):
+                    where = (f"{type(defn).__name__} "
+                             f"g.{comp_name}.{store}[{i}]")
+                    def_name = getattr(defn, "name", None)
+                    if def_name:
+                        where += f" (name={def_name!r})"
+                    if not dataclasses.is_dataclass(defn):
+                        raise refuse(where, "not a dataclass definition")
+                    hits: list[tuple[str, DimTag]] = []
+                    n_roles = 0
+                    for f in dataclasses.fields(defn):
+                        value = getattr(defn, f.name)
+                        key = f.name
+                        is_name = (key.endswith("_label")
+                                   or key.endswith("_labels")
+                                   or key == "target")
+                        is_ents = key.endswith("_entities")
+                        if value is None:
+                            continue
+                        if is_ents or (key == "target"
+                                       and not isinstance(value, str)):
+                            n_roles += 1
+                            hits.extend((key, dt)
+                                        for dt in as_dimtags(value, where))
+                        elif is_name:
+                            n_roles += 1
+                            names = [value] if isinstance(value, str) else value
+                            if not (isinstance(names, (list, tuple))
+                                    and all(isinstance(n, str) for n in names)):
+                                raise refuse(where, f"field {key!r} holds "
+                                                    f"{value!r}")
+                            for n in names:
+                                hits.extend((key, dt) for dt in
+                                            resolve(n, where, strict=True))
+                        elif isinstance(value, str):
+                            hits.extend((key, dt) for dt in
+                                        resolve(value, where, strict=False))
+                    if not n_roles and not hits:
+                        raise refuse(where, "it has no label or entity "
+                                            "field")
+                    for key, (d, t) in hits:
+                        if d == 1:
+                            tied.setdefault(
+                                int(t),
+                                f"is referenced by {where}, field {key!r}",
+                            )
         return tied
 
     def one_element_per_curve(self, *labels: str) -> "_Structured":
@@ -289,14 +336,21 @@ class _Structured:
         - it is embedded in no surface or volume
           (``g.mesh.editing.embed``, read back with
           ``gmsh.model.mesh.getEmbedded``);
-        - it is not the member side of a non-conformal tie definition:
-          ``g.constraints.embedded``, ``g.reinforce`` or ``g.embed``.
+        - no definition in any store of ``g.constraints``, ``g.embed``
+          or ``g.reinforce`` references it, in any role (a tie, an
+          embedded member, a bar, a BC target, a kind added later).
           Gmsh does not know these definitions, so they are read from
-          the session's definition stores.
+          the session's stores, field by field and without a list of
+          known classes.  A definition whose references cannot be
+          enumerated is refused rather than ignored.
 
         All three are known before meshing.  The helper constrains no
         surface edge; it does not promise an identical surface mesh,
         since gmsh's meshing order can still shift a count slightly.
+
+        **Order:** the definitions are read when the helper is called,
+        so call it **after every tie is declared**.  A tie declared
+        later does not undo the two-node constraint already set.
 
         A named curve that is not free is **refused**, never silently
         coarsened: two nodes on a slab edge would rewrite that surface's
