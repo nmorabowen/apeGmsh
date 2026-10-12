@@ -2,23 +2,18 @@
 
 Covers the results substrate's designed presentation:
 
-* the frozen module constants (``SUBSTRATE_AMBIENT``,
-  ``CONTOUR_EDGE_OPACITY``, ``CONTOUR_ACTIVE_OUTLINE_PX``) and the
-  criterion-10 factory width defaults (2.5 / 1.0 / 6 px);
+* the criterion-10 factory width defaults (2.5 / 1.0 / 6 px);
 * the static feature-edge outline: extraction, deform-follow through
   ``sync_render_surface_points`` (no new pump), and in-place
   re-extraction after a ghost change;
-* the D3 "edges over fields" truth table
-  (:func:`_substrate_edge_style` × ``_geometries_occluded_by_diagrams``);
 * nodes-off boot default + the session snapshot that beats it;
 * ``ContourStyle.cmap`` no longer defaulting to ``"jet"``;
-* width defaults persisting through ``PreferencesManager``;
-* qt: the boot actor state, the criterion-9 toolbar toggles (two-way
-  panel ↔ toolbar sync), and live contour demotion / restore.
+* width defaults persisting through ``PreferencesManager``.
 
+The legacy ``ResultsViewer`` constants, the edges-over-fields truth
+table and its real-window tests went with that viewer (X3-d, #1734).
 Headless tests use the same tiny-scene idiom as
-``test_scene_instances_s2a.py``; the qt tests run per-file via
-``pytest -m qt`` like every other real-window test.
+``test_scene_instances_s2a.py``.
 """
 from __future__ import annotations
 
@@ -29,17 +24,8 @@ import pytest
 
 
 # =====================================================================
-# Constants + factory defaults
+# Factory defaults
 # =====================================================================
-
-def test_presentation_constants_match_adr_0089():
-    from apeGmsh.viewers import results_viewer as rv
-
-    assert rv.SUBSTRATE_AMBIENT == pytest.approx(0.35)
-    assert rv.SUBSTRATE_DIFFUSE == pytest.approx(0.85)
-    assert rv.CONTOUR_EDGE_OPACITY == pytest.approx(0.40)
-    assert rv.CONTOUR_ACTIVE_OUTLINE_PX == pytest.approx(2.0)
-
 
 def test_width_factory_defaults_are_adr_0089_values():
     """Criterion 10 — 2.5 / 1.0 / 6 px are the factory settings the
@@ -83,100 +69,6 @@ def test_legacy_prefs_json_without_outline_width_gets_default(
     mgr = PreferencesManager(path)
     assert mgr.current.outline_width == pytest.approx(2.5)
     assert mgr.current.point_size == pytest.approx(12.0)
-
-
-# =====================================================================
-# D3 — "edges over fields" truth table (headless)
-# =====================================================================
-
-def test_substrate_edge_style_full_strength_without_field():
-    from apeGmsh.viewers.results_viewer import _substrate_edge_style
-    from apeGmsh.viewers.ui.theme import PALETTE_CATPPUCCIN_MOCHA as pal
-
-    edge = _substrate_edge_style(pal, demoted=False, outline_width=2.5)
-    assert edge["edge_color"] == pal.substrate_edge_color
-    assert edge["edge_opacity"] == pytest.approx(1.0)
-    assert edge["outline_width"] == pytest.approx(2.5)
-
-
-def test_substrate_edge_style_demotes_over_fields():
-    from apeGmsh.viewers.results_viewer import (
-        CONTOUR_ACTIVE_OUTLINE_PX,
-        CONTOUR_EDGE_OPACITY,
-        _substrate_edge_style,
-    )
-    from apeGmsh.viewers.ui.theme import PALETTE_CATPPUCCIN_MOCHA as pal
-
-    edge = _substrate_edge_style(pal, demoted=True, outline_width=2.5)
-    assert edge["edge_color"] == pal.outline_color
-    assert edge["edge_opacity"] == pytest.approx(CONTOUR_EDGE_OPACITY)
-    assert edge["outline_width"] == pytest.approx(CONTOUR_ACTIVE_OUTLINE_PX)
-
-
-def test_substrate_edge_style_honors_user_outline_width():
-    """A user-sized outline restores to the USER's width, not 2.5."""
-    from apeGmsh.viewers.results_viewer import _substrate_edge_style
-    from apeGmsh.viewers.ui.theme import PALETTE_PAPER as pal
-
-    edge = _substrate_edge_style(pal, demoted=False, outline_width=5.0)
-    assert edge["outline_width"] == pytest.approx(5.0)
-
-
-class _StubDiagram:
-    def __init__(self, *, attached=True, visible=True, effective=True,
-                 occludes=True):
-        self.is_attached = attached
-        self.is_visible = visible
-        self.is_effectively_visible = effective
-        self.occludes_substrate = occludes
-
-
-class _StubDirector:
-    """Just enough director for ``_geometries_occluded_by_diagrams``."""
-
-    def __init__(self, diagrams, owner):
-        class _Registry:
-            def __init__(self, ds):
-                self._ds = ds
-
-            def diagrams(self):
-                return list(self._ds)
-
-        class _Geoms:
-            def __init__(self, o):
-                self._o = o
-
-            def geometry_for_layer(self, _d):
-                return self._o
-
-        self.registry = _Registry(diagrams)
-        self.geometries = _Geoms(owner)
-
-
-class _StubGeom:
-    def __init__(self, gid="g1"):
-        self.id = gid
-
-
-def test_demotion_truth_table_via_occlusion_set():
-    """The demotion predicate IS the occlusion set: an effectively
-    visible field diagram demotes its owner; a gate-hidden, detached,
-    intent-hidden, or non-occluding one does not."""
-    from apeGmsh.viewers.results_viewer import (
-        _geometries_occluded_by_diagrams,
-    )
-
-    owner = _StubGeom()
-    cases = [
-        (_StubDiagram(), {"g1"}),
-        (_StubDiagram(effective=False), set()),
-        (_StubDiagram(visible=False), set()),
-        (_StubDiagram(attached=False), set()),
-        (_StubDiagram(occludes=False), set()),
-    ]
-    for diagram, expected in cases:
-        director = _StubDirector([diagram], owner)
-        assert _geometries_occluded_by_diagrams(director) == expected
 
 
 # =====================================================================
@@ -364,232 +256,3 @@ def test_icon_factory_has_mesh_and_dot_glyphs():
 
     names = set(glyph_names())
     assert {"mesh", "dot"} <= names
-
-
-# =====================================================================
-# Qt — real-window boot state, toolbar toggles, contour demotion
-# (local-only; run per-file: ``pytest -m qt <this file>``)
-# =====================================================================
-
-@pytest.fixture
-def presentation_results(g, tmp_path: Path):
-    """Tiny native Results on a solid box, with a displacement field so
-    contours and deform have data."""
-    from apeGmsh.results import Results
-    from apeGmsh.results.writers import NativeWriter
-    from tests.conftest import _open_model_from_h5
-
-    g.model.geometry.add_box(0, 0, 0, 1, 1, 2, label="col")
-    g.physical.add_volume("col", name="Body")
-    g.mesh.sizing.set_global_size(1.0)
-    g.mesh.generation.generate(dim=3)
-    fem = g.mesh.queries.get_fem_data(dim=3)
-    node_ids = np.asarray(fem.nodes.ids, dtype=np.int64)
-    n_nodes = node_ids.size
-
-    path = tmp_path / "presentation.h5"
-    with NativeWriter(path) as w:
-        w.open(fem=fem)
-        sid = w.begin_stage(
-            name="push", kind="static", time=np.array([0.0, 1.0]),
-        )
-        w.write_nodes(
-            sid, "partition_0",
-            node_ids=node_ids,
-            components={
-                "displacement_x": np.vstack(
-                    [np.zeros(n_nodes), np.ones(n_nodes)],
-                ),
-            },
-        )
-        w.end_stage()
-    return Results.from_native(path, model=_open_model_from_h5(path))
-
-
-def _factory_prefs(monkeypatch):
-    """Pin PREFERENCES to the code defaults (the dev machine's saved
-    preferences.json must not leak into assertions) and disable the
-    JSON write the width callbacks perform."""
-    from apeGmsh.viewers.ui import preferences_manager as pm
-
-    monkeypatch.setattr(pm.PREFERENCES, "_current", pm.DEFAULT_PREFERENCES)
-    monkeypatch.setattr(pm.PREFERENCES, "_save", lambda *_a, **_k: None)
-
-
-@pytest.mark.qt
-def test_boot_presentation_state(presentation_results, monkeypatch):
-    """Checklist 1/2 boot half: outline actor on at the user width,
-    interior edges 1 px, node cloud OFF, ambient lift applied."""
-    pytest.importorskip("pyvistaqt")
-    QtWidgets = pytest.importorskip("qtpy.QtWidgets")
-    QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
-    from qtpy import QtCore
-
-    from apeGmsh.viewers.results_viewer import (
-        SUBSTRATE_AMBIENT,
-        ResultsViewer,
-    )
-
-    _factory_prefs(monkeypatch)
-    viewer = ResultsViewer(
-        presentation_results, title="0089-boot",
-        restore_session=False, save_session=False,
-    )
-    seen: dict = {}
-
-    def _drive_then_close():
-        try:
-            gid = viewer._director.geometries.active.id
-            fill, wf = viewer._scene_actors[gid]
-            outline = viewer._outline_actors.get(gid)
-            seen["ambient"] = float(fill.GetProperty().GetAmbient())
-            seen["wf_width"] = float(wf.GetProperty().GetLineWidth())
-            seen["outline_exists"] = outline is not None
-            if outline is not None:
-                seen["outline_visible"] = bool(outline.GetVisibility())
-                seen["outline_width"] = float(
-                    outline.GetProperty().GetLineWidth(),
-                )
-            seen["nodes_hidden"] = (
-                viewer._node_cloud_actor is None
-                or not bool(viewer._node_cloud_actor.GetVisibility())
-            )
-        finally:
-            viewer._win.window.close()
-
-    QtCore.QTimer.singleShot(400, _drive_then_close)
-    viewer.show()
-
-    assert seen["ambient"] == pytest.approx(SUBSTRATE_AMBIENT)
-    assert seen["wf_width"] == pytest.approx(1.0)
-    assert seen["outline_exists"]
-    assert seen["outline_visible"]
-    assert seen["outline_width"] == pytest.approx(2.5)
-    assert seen["nodes_hidden"]
-
-
-@pytest.mark.qt
-def test_toolbar_toggles_flip_display_state_both_ways(
-    presentation_results, monkeypatch,
-):
-    """Criterion 9 — the ``dot`` / ``mesh`` toolbar actions flip the
-    active geometry's flags, and an external ``set_display`` reflects
-    back into the checked state AND the panel checkboxes."""
-    pytest.importorskip("pyvistaqt")
-    QtWidgets = pytest.importorskip("qtpy.QtWidgets")
-    QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
-    from qtpy import QtCore
-
-    from apeGmsh.viewers.results_viewer import ResultsViewer
-
-    _factory_prefs(monkeypatch)
-    viewer = ResultsViewer(
-        presentation_results, title="0089-toggles",
-        restore_session=False, save_session=False,
-    )
-    seen: dict = {}
-
-    def _drive_then_close():
-        try:
-            geoms = viewer._director.geometries
-            geom = geoms.active
-            nodes_act = viewer._show_nodes_action
-            mesh_act = viewer._show_mesh_action
-            seen["boot_nodes_unchecked"] = not nodes_act.isChecked()
-            seen["boot_mesh_checked"] = mesh_act.isChecked()
-            # Toolbar → state.
-            nodes_act.setChecked(True)      # fires toggled
-            seen["nodes_on_after_action"] = geom.show_nodes is True
-            node_actor = viewer._node_cloud_actor
-            seen["node_actor_visible"] = bool(node_actor.GetVisibility())
-            mesh_act.setChecked(False)
-            seen["mesh_off_after_action"] = geom.show_mesh is False
-            # State → toolbar (external mutator, e.g. session restore).
-            geoms.set_display(geom.id, show_nodes=False, show_mesh=True)
-            seen["nodes_action_synced"] = not nodes_act.isChecked()
-            seen["mesh_action_synced"] = mesh_act.isChecked()
-            # …and the panel checkboxes mirror too.
-            panel = viewer._geometry_panel
-            panel.show_geometry(geom.id)
-            geoms.set_display(geom.id, show_nodes=True)
-            seen["panel_checkbox_synced"] = (
-                panel._cb_show_nodes.isChecked() is True
-            )
-            seen["panel_flip_reaches_action"] = nodes_act.isChecked()
-        finally:
-            viewer._win.window.close()
-
-    QtCore.QTimer.singleShot(400, _drive_then_close)
-    viewer.show()
-
-    for key, ok in seen.items():
-        assert ok, f"{key} failed: {seen}"
-
-
-@pytest.mark.qt
-def test_contour_demotes_edges_and_restores_on_detach(
-    presentation_results, monkeypatch,
-):
-    """Checklist 3 — attaching a contour drops the wireframe to 40%
-    ``outline_color`` and the outline to 2.0 px; removing it restores
-    the D1 widths/colors."""
-    pytest.importorskip("pyvistaqt")
-    QtWidgets = pytest.importorskip("qtpy.QtWidgets")
-    QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
-    from qtpy import QtCore
-
-    from apeGmsh.viewers.results_viewer import (
-        CONTOUR_ACTIVE_OUTLINE_PX,
-        CONTOUR_EDGE_OPACITY,
-        ResultsViewer,
-    )
-
-    _factory_prefs(monkeypatch)
-    viewer = ResultsViewer(
-        presentation_results, title="0089-demotion",
-        restore_session=False, save_session=False,
-    )
-    seen: dict = {}
-
-    def _drive_then_close():
-        try:
-            from apeGmsh.viewers.diagrams._starter import (
-                add_default_contour,
-            )
-
-            director = viewer._director
-            gid = director.geometries.active.id
-            _fill, wf = viewer._scene_actors[gid]
-            outline = viewer._outline_actors.get(gid)
-            diagram = add_default_contour(director)
-            seen["wf_opacity_demoted"] = float(
-                wf.GetProperty().GetOpacity(),
-            )
-            seen["outline_width_demoted"] = (
-                float(outline.GetProperty().GetLineWidth())
-                if outline is not None else None
-            )
-            geom = director.geometries.active
-            geom.compositions.remove_layer(diagram)
-            director.registry.remove(diagram)
-            seen["wf_opacity_restored"] = float(
-                wf.GetProperty().GetOpacity(),
-            )
-            seen["outline_width_restored"] = (
-                float(outline.GetProperty().GetLineWidth())
-                if outline is not None else None
-            )
-        finally:
-            viewer._win.window.close()
-
-    QtCore.QTimer.singleShot(400, _drive_then_close)
-    viewer.show()
-
-    assert seen["wf_opacity_demoted"] == pytest.approx(
-        CONTOUR_EDGE_OPACITY,
-    )
-    assert seen["outline_width_demoted"] == pytest.approx(
-        CONTOUR_ACTIVE_OUTLINE_PX,
-    )
-    assert seen["wf_opacity_restored"] == pytest.approx(1.0)
-    assert seen["outline_width_restored"] == pytest.approx(2.5)

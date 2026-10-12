@@ -17,8 +17,6 @@ the four contracts that make that safe:
 * **F-PARITY / F-VIS** — the surface renders pixel-identical to the
   volumetric mapper, including after a visibility-mask change (hidden
   faces dropped, interior faces revealed by re-extraction).
-* **F-SUBSTRATE** — the off-seam substrate pair maps one shared
-  surface; deform steps scatter onto it; ghost changes re-extract it.
 """
 from __future__ import annotations
 
@@ -51,7 +49,6 @@ def _tet_grid(n_side: int = 5):
     tri.SetInputData(img.cast_to_unstructured_grid())
     tri.Update()
     return pv.UnstructuredGrid(tri.GetOutput())
-
 
 
 def _tet_layer(grid, layer_id: str = "tets", *, scale: float = 1.0,
@@ -365,92 +362,3 @@ def test_line_layers_bypass_the_surface_path(backend):
     assert handle.render_surface is None
     assert handle.actor.GetMapper().GetInput() is handle.dataset
 
-
-# =====================================================================
-# F-SUBSTRATE — the off-seam pair
-# =====================================================================
-
-
-class _Palette:
-    substrate_color = "#808080"
-    substrate_edge_color = "#c0c0c0"
-
-
-class _Prefs:
-    mesh_surface_opacity = 1.0
-    mesh_line_width = 1.0
-    point_size = 6.0
-
-
-class _Scene:
-    def __init__(self, grid) -> None:
-        self.grid = grid
-        self.model_diagonal = 3.46
-
-
-def test_substrate_pair_maps_one_shared_render_surface(offscreen_plotter):
-    from apeGmsh.viewers.results_viewer import add_substrate_actors
-
-    scene = _Scene(_tet_grid())
-    fill, wf = add_substrate_actors(
-        offscreen_plotter, scene, palette=_Palette(), prefs=_Prefs(),
-    )
-    rs = scene.render_surface
-    assert rs is not None
-    assert fill.GetMapper().GetInput() is rs.surface
-    assert wf.GetMapper().GetInput() is rs.surface
-    # The volumetric grid remains the untouched source of truth.
-    assert scene.grid.n_cells > rs.surface.n_cells
-
-
-def test_substrate_deform_scatter_follows_the_grid(offscreen_plotter):
-    from apeGmsh.viewers.results_viewer import (
-        add_substrate_actors, sync_render_surface_points,
-    )
-
-    scene = _Scene(_tet_grid())
-    add_substrate_actors(
-        offscreen_plotter, scene, palette=_Palette(), prefs=_Prefs(),
-        reset_camera=True,
-    )
-    before = _frame(offscreen_plotter)
-
-    deformed = np.asarray(scene.grid.points, dtype=np.float64) * 1.3
-    scene.grid.points = deformed
-    sync_render_surface_points(scene, deformed)
-    after = _frame(offscreen_plotter)
-
-    rs = scene.render_surface
-    assert np.allclose(
-        np.asarray(rs.surface.points), deformed[rs.point_ids],
-    )
-    assert not np.array_equal(before, after), "deform step did not repaint"
-
-
-def test_substrate_ghost_change_reextracts_and_swaps(offscreen_plotter):
-    from apeGmsh.viewers.backends.pyvista_qt import refresh_render_surface
-    from apeGmsh.viewers.results_viewer import add_substrate_actors
-
-    scene = _Scene(_tet_grid())
-    fill, wf = add_substrate_actors(
-        offscreen_plotter, scene, palette=_Palette(), prefs=_Prefs(),
-    )
-    rs = scene.render_surface
-    surface0 = rs.surface
-
-    # No ghost change -> memcmp short-circuit, no re-extraction.
-    assert refresh_render_surface(scene.grid, rs, (fill, wf)) is False
-    assert rs.surface is surface0
-
-    # Hide a boundary cell with the true HIDDENCELL bit -> re-extract,
-    # its faces drop, and both mappers swap to the new surface.
-    hidden_cell = int(np.asarray(rs.cell_ids)[0])
-    ghosts = np.zeros(scene.grid.n_cells, dtype=np.uint8)
-    ghosts[hidden_cell] = 0x20
-    scene.grid.cell_data["vtkGhostType"] = ghosts
-
-    assert refresh_render_surface(scene.grid, rs, (fill, wf)) is True
-    assert rs.surface is not surface0
-    assert hidden_cell not in np.asarray(rs.cell_ids)
-    assert fill.GetMapper().GetInput() is rs.surface
-    assert wf.GetMapper().GetInput() is rs.surface

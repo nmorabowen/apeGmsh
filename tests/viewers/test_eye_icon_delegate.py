@@ -61,24 +61,6 @@ def _add_row(tree, label: str, *, visible=None):
 
 
 # =====================================================================
-# ROLE_VISIBLE contract
-# =====================================================================
-
-
-def test_role_visible_constant_distinct():
-    """ROLE_VISIBLE must not collide with existing outline roles."""
-    from apeGmsh.viewers.ui._outline_tree import (
-        _ROLE_STAGE_ID, _ROLE_DIAGRAM_OBJ, _ROLE_GROUP_KEY,
-        _ROLE_PLOT_KEY, _ROLE_COMPOSITION_KEY, _ROLE_GEOMETRY_KEY,
-    )
-    other_roles = {
-        _ROLE_STAGE_ID, _ROLE_DIAGRAM_OBJ, _ROLE_GROUP_KEY,
-        _ROLE_PLOT_KEY, _ROLE_COMPOSITION_KEY, _ROLE_GEOMETRY_KEY,
-    }
-    assert ROLE_VISIBLE not in other_roles
-
-
-# =====================================================================
 # Click handling
 # =====================================================================
 
@@ -217,18 +199,9 @@ def test_visible_and_hidden_glyphs_are_different(qapp, delegate):
 
 
 def test_role_effective_constant_distinct():
-    """ROLE_EFFECTIVE must not collide with ROLE_VISIBLE or the
-    outline's existing roles."""
-    from apeGmsh.viewers.ui._outline_tree import (
-        _ROLE_STAGE_ID, _ROLE_DIAGRAM_OBJ, _ROLE_GROUP_KEY,
-        _ROLE_PLOT_KEY, _ROLE_COMPOSITION_KEY, _ROLE_GEOMETRY_KEY,
-    )
-    other_roles = {
-        ROLE_VISIBLE,
-        _ROLE_STAGE_ID, _ROLE_DIAGRAM_OBJ, _ROLE_GROUP_KEY,
-        _ROLE_PLOT_KEY, _ROLE_COMPOSITION_KEY, _ROLE_GEOMETRY_KEY,
-    }
-    assert ROLE_EFFECTIVE not in other_roles
+    """ROLE_EFFECTIVE must not collide with ROLE_VISIBLE. (The legacy
+    outline's role constants went with ``ui/_outline_tree.py``, X3-d.)"""
+    assert ROLE_EFFECTIVE != ROLE_VISIBLE
 
 
 def test_dimmed_glyph_differs_from_both_binary_states(qapp, delegate):
