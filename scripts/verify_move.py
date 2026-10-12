@@ -129,10 +129,10 @@ def untracked_py(repo: str, specs: list[str]) -> list[tuple[str, str]]:
     from disk, so it proves nothing about the commit for them (#1705).
     """
     files = set(list_files(repo, "WORKTREE", specs))
-    ignored = set(_git(repo, "ls-files", "--others", "--ignored",
-                       "--exclude-standard").splitlines())
-    untracked = set(_git(repo, "ls-files", "--others",
-                         "--exclude-standard").splitlines())
+    ignored = set(_git(repo, "ls-files", "-z", "--others", "--ignored",
+                       "--exclude-standard").split("\0"))
+    untracked = set(_git(repo, "ls-files", "-z", "--others",
+                         "--exclude-standard").split("\0"))
     return sorted((f, "ignored" if f in ignored else "untracked")
                   for f in files if f in ignored or f in untracked)
 
@@ -407,6 +407,12 @@ def main(argv: list[str] | None = None) -> int:
         print(f"verify_move: WARNING {path}: {kind} by git; a WORKTREE-green "
               f"verify proves nothing about the commit for this file "
               f"(verify against the pushed SHA)", file=sys.stderr)
+    if not any(list_files(a.repo, rev, [spec])
+               for spec in a.paths for rev in (a.base, a.head)):
+        print(f"verify_move: FAIL — no path matches a .py file in {a.base} or "
+              f"{a.head} (SHAs belong after --base/--head, not in the path "
+              f"list)", file=sys.stderr)
+        return 1
     base_defs, base_mod = gather(a.repo, a.base, a.paths)
     head_defs, head_mod = gather(a.repo, a.head, a.paths)
     moved: list = []
@@ -420,7 +426,12 @@ def main(argv: list[str] | None = None) -> int:
             head_info(a.repo, a.head, a.paths))
     delta = {"removed": sum((base_mod - head_mod).values()),
              "added": sum((head_mod - base_mod).values())}
+    if total == 0:
+        print("verify_move: FAIL — 0 defs checked; nothing was verified",
+              file=sys.stderr)
+        return 1
     ok = not (removed or added or changed)
+    strict_bad = bool(a.strict and untracked)
     review = ok and bool(headers or moved)
     info = (f"module-level delta (informational): "
             f"-{delta['removed']} +{delta['added']} statements")
@@ -437,7 +448,7 @@ def main(argv: list[str] | None = None) -> int:
                     print("    " + line)
 
     if a.json:
-        out = {"ok": ok and not review, "defs": total, "removed": removed,
+        out = {"ok": ok and not review and not strict_bad, "defs": total, "removed": removed,
                "added": added, "changed": changed,
                "module_level_delta": delta,
                "untracked": [{"file": f, "kind": k} for f, k in untracked]}
@@ -474,7 +485,7 @@ def main(argv: list[str] | None = None) -> int:
             for line in c["diff"].splitlines():
                 print("    " + line)
         print(info)
-    if a.strict and untracked:
+    if strict_bad:
         print(f"verify_move: FAIL (--strict) — {len(untracked)} checked file(s) "
               f"not tracked by git", file=sys.stderr)
         return 1

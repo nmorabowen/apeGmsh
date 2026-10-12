@@ -6,6 +6,7 @@ state is the working tree after the "move" to ``b.py``.
 from __future__ import annotations
 
 import importlib.util
+import json
 import subprocess
 import sys
 from pathlib import Path
@@ -458,3 +459,30 @@ def test_sha_mode_unaffected(tmp_path, capsys):
     vm.main(["--repo", str(repo), "--base", "HEAD~1", "--head", "HEAD",
              "--strict", "a.py", "b.py"])
     assert "WARNING" not in capsys.readouterr().err
+
+
+def test_non_ascii_untracked_name_warns(tmp_path, capsys):
+    repo = _repo(tmp_path)
+    (repo / "zz_ñ.py").write_text(A)
+    code = vm.main(["--repo", str(repo), "--base", "HEAD", "--head",
+                    "WORKTREE", "--strict", "a.py", "zz_ñ.py"])
+    assert code == 1
+    assert "zz_ñ.py: untracked by git" in capsys.readouterr().err
+
+
+def test_json_ok_agrees_with_strict_exit(tmp_path, capsys):
+    repo = _repo(tmp_path)
+    _move(repo)
+    args = ["--repo", str(repo), "--base", "HEAD", "--head", "WORKTREE",
+            "--json", "a.py", "b.py"]
+    assert vm.main(args) == 0
+    assert json.loads(capsys.readouterr().out)["ok"] is True
+    assert vm.main(["--strict", *args]) == 1
+    assert json.loads(capsys.readouterr().out)["ok"] is False
+
+
+def test_shas_as_paths_fail_closed(tmp_path, capsys):
+    repo = _repo(tmp_path)
+    code = vm.main(["--repo", str(repo), "--base", "HEAD", "HEAD", "HEAD"])
+    assert code == 1
+    assert "no path matches" in capsys.readouterr().err
