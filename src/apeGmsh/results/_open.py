@@ -6,9 +6,10 @@ the readers, not in a command-line module. It was living in
 render door (S5c) needs the same dispatch without building on a module
 scheduled to retire — so it lives here and ``viewers/__main__`` delegates.
 
-``viewers/ui/_open_results.build_results`` is deliberately NOT folded in:
-it sniffs the file's contents rather than its extension because the Qt
-open dialog accepts whatever a human picked. Same words, different job.
+The legacy ``viewers/ui/_open_results.build_results`` (deleted at X3-d,
+#1734) was deliberately NOT folded in: it sniffed the file's contents
+rather than its extension because the Qt open dialog accepted whatever a
+human picked. Same words, different job.
 
 Refusals are ``ValueError`` so each caller maps them to its own exit
 code or error envelope; nothing here calls ``sys.exit``.

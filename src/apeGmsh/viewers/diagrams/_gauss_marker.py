@@ -21,11 +21,11 @@ the only mitigation is global VTK state that also disturbs the
 wireframe overlay. Real spheres sit a finite radius above / below the
 plane and render unambiguously.
 
-Picking stays on the legacy ``PickInventory`` path (deferred to R-D): the
-diagram registers the backend's glyph actor and reverse-maps a picked
-cell index back to a GP. Because the backend rebuilds the glyph actor
-on each ``update_layer``, the registration is refreshed whenever the
-actor identity changes.
+Picking was on the legacy ``PickInventory`` path (deleted at X3-e,
+#1769): the diagram registers the backend's glyph actor with
+``scene.pick_engine`` and reverse-maps a picked cell index back to a GP.
+Nothing sets ``scene.pick_engine`` any more, so the registration is a
+no-op; session GP picking goes through ``session/_pick.py``.
 """
 from __future__ import annotations
 
@@ -85,7 +85,7 @@ class GaussPointDiagram(ScalarColorSupport, Diagram):
         self._glyph_cells_per_center: int = 0
         # Scalar-bar + runtime colour state + LUT mirror (mixin).
         self._init_scalar_color_state()
-        # The glyph actor currently registered on the scene PickInventory.
+        # The glyph actor currently registered on ``scene.pick_engine``.
         self._registered_actor: Any = None
 
     # ------------------------------------------------------------------
@@ -254,7 +254,7 @@ class GaussPointDiagram(ScalarColorSupport, Diagram):
     def detach(self) -> None:
         self._unregister_scalar_bar()
         self._teardown_lut()
-        # Drop the GP actor from the PickInventory inventory before
+        # Drop the GP actor from the scene's pick inventory before
         # clearing local state.
         self._unregister_pick()
         if self._backend is not None and self._handle is not None:
@@ -333,7 +333,7 @@ class GaussPointDiagram(ScalarColorSupport, Diagram):
 
     def _register_pick(self) -> None:
         """(Re)register the current backend glyph actor with the
-        scene's :class:`PickInventory`.
+        scene's pick inventory (``scene.pick_engine``).
 
         The backend rebuilds the glyph actor on every ``update_layer``,
         so the registration is refreshed whenever the actor identity

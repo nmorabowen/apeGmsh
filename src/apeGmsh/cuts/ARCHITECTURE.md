@@ -210,7 +210,7 @@ src/apeGmsh/viewers/diagrams/
 src/apeGmsh/viewers/diagrams/_director.py
 └── model_h5 setter, tag_map property, add_section_cut*, add_section_cut_sweep*  (added)
 
-src/apeGmsh/viewers/results_viewer.py
+src/apeGmsh/viewers/results_viewer.py   (deleted at X3-d, #1734)
 └── cuts= kwarg threaded into director at boot  (added)
 ```
 
@@ -405,8 +405,9 @@ FEM, OK is gated and the report explains why.
 ### Locked design decisions
 
 > **Editorial note (2026-08):** `AddDiagramDialog` has since been removed;
-> the live dialog ingress is the in-panel Add Diagram card in
-> `viewers/ui/_diagram_settings_tab.py`. The table below is kept as the
+> the in-panel Add Diagram card that replaced it
+> (`viewers/ui/_diagram_settings_tab.py`) was itself deleted with the Qt
+> ResultsViewer at X3-d (#1734). The table below is kept as the
 > historical design record.
 
 | # | Decision | Choice | Rationale |
@@ -630,8 +631,9 @@ specs would land under its own namespace and not collide.
 ### Locked design decisions
 
 > **Editorial note (2026-08):** `AddDiagramDialog` (H16) has since been
-> removed; the live dialog ingress is the in-panel Add Diagram card in
-> `viewers/ui/_diagram_settings_tab.py`. The table below is kept as the
+> removed; the in-panel Add Diagram card that replaced it
+> (`viewers/ui/_diagram_settings_tab.py`) was itself deleted with the Qt
+> ResultsViewer at X3-d (#1734). The table below is kept as the
 > historical design record.
 
 | # | Decision | Choice | Rationale |
@@ -816,14 +818,14 @@ src/apeGmsh/opensees/apesees.py
 src/apeGmsh/viewers/diagrams/_director.py
 └── ResultsDirector.load_cuts_from_h5() -> list[Diagram]
 
-src/apeGmsh/viewers/results_viewer.py
+src/apeGmsh/viewers/results_viewer.py   (deleted at X3-d, #1734)
 └── _apply_pending_cuts: auto-load branch when pending_cuts is empty and model_h5 is set
 
 src/apeGmsh/viewers/ui/_add_diagram_dialog.py
 └── Source combo + h5-cut dropdown + repopulate-on-h5-change wiring
 
 tests/cuts/test_h5_io.py                            ← new
-tests/viewers/test_results_viewer_h5_cuts.py        ← new
+tests/viewers/test_results_viewer_h5_cuts.py        ← new (deleted at X3-d, #1734)
 tests/viewers/test_add_diagram_section_cut.py       ← extended with h5-source tests
 ```
 

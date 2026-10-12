@@ -168,21 +168,20 @@ class FEMSceneData:
     node_tree
         scipy ``cKDTree`` over the node coordinates — built lazily.
     pick_engine
-        :class:`PickInventory` actor inventory for 3-D diagram picking
-        (gauss markers, etc.). Set by :class:`ResultsViewer` at open;
-        ``None`` in headless / test contexts where no picker is wired.
-        Diagrams check for ``None`` before calling ``register_actor``.
+        Legacy actor inventory for 3-D diagram picking (gauss markers).
+        Its only setter, the Qt ``ResultsViewer``, was deleted at X3-d
+        and its class (``PickInventory``) at X3-e (#1769), so it is
+        always ``None`` now. Diagrams check for ``None`` before calling
+        ``register_actor``.
     element_visibility
         :class:`ElementVisibility` controller for per-cell hiding via
-        the substrate's ``vtkGhostType`` array. Set by
-        :class:`ResultsViewer`; ``None`` in headless contexts. The
-        box-pick path (``results_pick._build_box_result``) reads the
-        underlying ghost array directly without going through this
-        attribute, so this field is for explicit hide/show callers.
+        the substrate's ``vtkGhostType`` array. Set by the viewer;
+        ``None`` in headless contexts. This field is for explicit
+        hide/show callers.
     opacity_controller
-        :class:`OpacityController` for per-actor opacity + depth-peel
-        auto-toggle. Set by :class:`ResultsViewer` after the plotter
-        exists; ``None`` in headless contexts.
+        Legacy per-actor opacity controller. Its class
+        (``OpacityController``) was deleted at X3-e (#1769), so it is
+        always ``None`` now.
     """
 
     grid: pv.UnstructuredGrid
@@ -208,9 +207,9 @@ class FEMSceneData:
     )
     actor: Any = None
     node_tree: Any = None              # scipy.spatial.cKDTree, lazy
-    pick_engine: Any = None            # PickInventory (results_pick_engine)
+    pick_engine: Any = None            # legacy; always None since X3-e
     element_visibility: Any = None     # ElementVisibility (element_visibility)
-    opacity_controller: Any = None     # OpacityController (opacity_controller)
+    opacity_controller: Any = None     # legacy; always None since X3-e
     # Render-surface fast path: the pre-extracted surface the substrate
     # fill / wireframe actors map, with its scatter maps (a backend
     # ``RenderSurface``). Built by ``add_substrate_actors``; ``None``

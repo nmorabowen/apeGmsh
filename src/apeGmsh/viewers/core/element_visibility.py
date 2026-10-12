@@ -5,9 +5,9 @@ directly so VTK pickers and renderers skip cells with the HIDDENCELL
 bit set. No polydata rebuild — the array is allocated once, then
 recomposed with vectorised writes that share the underlying buffer.
 
-The box-pick path (``results_pick._build_box_result`` in MODE_ELEMENT)
-ANDs the hidden-mask into its hit set so rubber-band picks don't
-return cells the user just hid.
+The legacy element box-pick (``results_pick._build_box_result``,
+deleted at X3-e #1769) ANDed the hidden-mask into its hit set so
+rubber-band picks didn't return cells the user just hid.
 
 Layered model (ADR 0045 — results visual dim-hide)
 --------------------------------------------------

@@ -6,9 +6,9 @@ view, every plot cursor. "Drag the scrubber → the cursor rides the
 curve. Drag the curve → the meshes move. If the link is on and moving
 the plot does not move the meshes, the link is a lie."
 
-Adapted from :class:`~..ui._time_scrubber.TimeScrubberDock` — the
-transport, the drag coalescing, the fps/loop machinery and the
-animation state machine are that widget's, and they were already
+Adapted from the legacy ``ui/_time_scrubber.TimeScrubberDock`` (deleted
+at X3-d, #1734) — the transport, the drag coalescing, the fps/loop
+machinery and the animation state machine are that widget's, and they were already
 director-agnostic. What changes is the binding, exactly as the plan
 sized it: ``director.n_steps`` / ``step_index`` / ``set_step`` /
 ``subscribe_step`` become ``session.time`` and the session's change

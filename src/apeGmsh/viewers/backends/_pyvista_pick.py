@@ -4,8 +4,9 @@ The pick-side counterpart of :class:`PyVistaBackend
 <apeGmsh.viewers.backends.pyvista_qt.PyVistaBackend>`, implementing the
 :class:`PickBackend <apeGmsh.viewers.scene_ir._pick.PickBackend>` Protocol
 (ADR 0047, Phase R-D).  It owns *all* the VTK that the two legacy pick
-engines (``core/pick_engine.py`` mesh, ``core/results_pick.py`` results)
-each used to construct independently:
+engines (``core/pick_engine.py`` mesh, and the results engine
+``core/results_pick.py``, deleted at X3-e #1769) each used to construct
+independently:
 
 * the ``vtkCellPicker`` ray-cast (the stateless :meth:`resolve_pick` core,
   reused verbatim by the web request/response face in R-D.3),
@@ -71,8 +72,8 @@ def _project_points_to_display(points: "np.ndarray", renderer: Any) -> "np.ndarr
     Vectorized via the camera's composite projection matrix (~40x faster
     than per-point ``WorldToDisplay`` at 100k pts), falling back to the
     per-point loop when the renderer doesn't expose the camera-matrix API
-    (test stubs).  Relocated verbatim from ``core/results_pick.py`` — the
-    canonical home is now the backend so both engines share one copy.
+    (test stubs).  Relocated verbatim from the legacy results pick engine
+    (deleted at X3-e #1769); the canonical home is the backend.
     """
     n = points.shape[0]
     if n == 0:

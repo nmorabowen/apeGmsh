@@ -1,7 +1,7 @@
 """``WebViewer`` — the web / Jupyter results viewer shell (ADR 0042, R-C).
 
-The web counterpart of the Qt :class:`~apeGmsh.viewers.results_viewer.ResultsViewer`.
-It owns the same domain stack — a :class:`ResultsDirector`, a substrate
+The web counterpart of the retired Qt ``ResultsViewer`` (deleted at X3-d,
+#1734). It owns the same domain stack — a :class:`ResultsDirector`, a substrate
 ``FEMSceneData``, and the diagram registry — but renders through a
 :class:`~apeGmsh.viewers.backends.trame.TrameBackend` (a plain
 ``pyvista.Plotter`` served via ``pyvista.trame``) instead of a

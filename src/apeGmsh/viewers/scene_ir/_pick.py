@@ -49,8 +49,7 @@ class PickMode(str, Enum):
     compare equal to these members during the R-D.2 migration.
 
     ``FIBER`` is **reserved**: fiber selection is driven from the 2-D
-    section side panel, not a viewport click (see
-    ``results_pick_engine`` module docstring), so no click-pick path
+    section side panel, not a viewport click, so no click-pick path
     resolves to it yet.  It is named here so the vocabulary is complete
     when a viewport fiber pick is added.
     """
