@@ -51,7 +51,7 @@ D6–D7), 0081, 0083, 0094 INV-10 (snapshot realization only) and narrows 0045 p
   existence stays derived; placements for legends no longer caused drop loudly on restore.
 - A6 (2026-08-20), reachability gates: G1 capability parity, G2 the picker law
   (`test_inspector_picker_law.py`), G3 real-gesture test deferred, G4 done.
-- A7 (2026-10-11, **Proposed**), KEEP: the six stay behind the director until V4 (A2.5(1)'s
+- A7 (2026-10-11, Accepted), KEEP: the six stay behind the director until V4 (A2.5(1)'s
   trigger moves there). Colour-mapped slots gain `clim`/`cmap` (`None` = default; validated at
   assignment; conflicting explicit values on one field in a view raise); `overlay` draws scoped, activated
   cells at scale 0; snapshot v2 reads v1; `path` leaves §6, a v1 `path` pane drops with a notice.
