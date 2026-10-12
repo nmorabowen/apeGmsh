@@ -92,7 +92,7 @@ import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import TracebackType
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any, Mapping, Optional
 
 import numpy as np
 from numpy import ndarray
@@ -137,6 +137,7 @@ from ...opensees._response_catalog import (
 )
 from ...opensees._recorder_translate import _stress_zz_tokens
 from .._shell_geometry import shell_quaternion
+from ..schema._native import ELEMENT_INDEX_SPACE_FEM
 
 # Re-exports under their original underscore-prefixed names so the
 # Step 2b tests (which import the private names) keep working
@@ -171,8 +172,8 @@ if TYPE_CHECKING:
 # transparently uses the right tag, then relabel the captured
 # ``element_index`` ops→fem at ``write_to`` (native result files are
 # fem_eid-keyed by contract — see the MPCO read-join in ADR 0043 slice
-# 1.3). The translator is built only for a composed model and is ``None``
-# otherwise, so non-composed capture is byte-identical.
+# 1.3). The translator comes from the model's pairing; an element-scoped
+# capture without a pairing that covers every id refuses at ``__enter__``.
 
 
 def _record_eids_to_ops(
@@ -194,28 +195,90 @@ def _index_to_fem(arr: ndarray, tag_map: Any) -> ndarray:
     return arr if tag_map is None else tag_map.to_fem(arr)
 
 
-def _maybe_build_capture_tag_map(model_h5_path: Any) -> Any:
-    """Build an :class:`ElementTagTranslator` from a model.h5, or ``None``.
+def _capture_pairing(model_h5_path: Any) -> "dict[int, int]":
+    """Return the ``{fem_eid: ops_tag}`` pairing a model.h5 records.
 
-    Returns the translator whenever the model records a real
-    ``element_meta`` pairing — NOT only for composed models: gmsh numbers
-    lower-dimensional elements first, so an uncomposed solid model's
-    ``fem_eid``s are offset from the allocator-assigned ops tags too
-    (the former compose-provenance gate mis-attributed captured element
-    results for that case — fixed 2026-08-04, with the reader-side twin
-    in ``Results.from_mpco`` / ``from_ladruno``). Returns ``None`` when
-    the model carries no pairing or on any failure to read it — capture
-    then behaves exactly as before this slice.
+    gmsh numbers lower-dimensional elements first, and the bridge's
+    default ``element_tags="sequential"`` allocates ops tags in
+    declaration order, so a capture's ``fem_eid``s are generally not the
+    ops tags. Rows with the sentinel ``fem_eid < 0`` are skipped. A read
+    failure raises: the caller decides whether a capture can go on
+    without the pairing (:func:`_require_element_pairing`).
     """
-    try:
-        from ...opensees.opensees_model import OpenSeesModel
-        from ..readers._tag_translation import ElementTagTranslator
+    from ...opensees.opensees_model import OpenSeesModel
 
-        model = OpenSeesModel.from_h5(str(model_h5_path))
-        tag_map = ElementTagTranslator.from_model(model)
-        return None if tag_map.is_empty else tag_map
-    except Exception:
+    model = OpenSeesModel.from_h5(str(model_h5_path))
+    out: dict[int, int] = {}
+    for rec in model.elements():
+        fem = int(rec.fem_eid)
+        if fem >= 0:
+            out[fem] = int(rec.tag)
+    return out
+
+
+def _translator(pairing: "Mapping[int, int] | None") -> Any:
+    """An :class:`ElementTagTranslator` over ``pairing``, or ``None``."""
+    if not pairing:
         return None
+    from ..readers._tag_translation import ElementTagTranslator
+
+    fem_to_ops = {int(f): int(t) for f, t in pairing.items()}
+    return ElementTagTranslator(
+        fem_to_ops, {t: f for f, t in fem_to_ops.items()},
+    )
+
+
+#: Record categories that are not element-scoped.
+_NON_ELEMENT_CATEGORIES = frozenset({"nodes", "modal"})
+
+
+def _require_element_pairing(
+    spec: "ResolvedDomainCaptureSpec",
+    pairing: "Mapping[int, int] | None",
+    why_missing: str,
+) -> None:
+    """Refuse an element-scoped capture the pairing does not fully cover.
+
+    A capture queries the live domain by ops tag and labels each row
+    with the record's ``fem_eid``. Without a pairing that covers every
+    recorded id, a ``fem_eid`` would be queried as if it were an ops
+    tag, so the row would hold another element's response (or the
+    element would be dropped), with nothing to say so. Node-only
+    captures need no pairing.
+    """
+    wanted: list[int] = []
+    for rec in spec.records:
+        if rec.category in _NON_ELEMENT_CATEGORIES:
+            continue
+        ids = getattr(rec, "element_ids", None)
+        if ids is not None:
+            wanted.extend(int(e) for e in np.asarray(ids).ravel())
+    if not wanted:
+        return
+    remedy = (
+        "Open the capture through ops.domain_capture(spec, path=...) on "
+        "the bridge that built the model, or DomainCapture.from_h5("
+        "<model.h5>, ...), or pass element_tags= (the model's "
+        "{fem_eid: ops_tag} pairing) to DomainCapture."
+    )
+    if pairing is None:
+        raise ValueError(
+            "DomainCapture: the spec records elements by fem_eid, but no "
+            f"fem_eid -> ops-tag pairing is available ({why_missing}). "
+            "OpenSees answers by ops tag, and under the bridge's default "
+            "element_tags=\"sequential\" the two differ, so the capture "
+            "would record other elements under these ids. " + remedy
+        )
+    missing = sorted({e for e in wanted if e not in pairing})
+    if missing:
+        raise ValueError(
+            f"DomainCapture: the spec records fem_eids {missing[:10]}"
+            f"{' ...' if len(missing) > 10 else ''} that the model's "
+            "fem_eid -> ops-tag pairing has no element for (the bridge did "
+            "not build them, or the pairing comes from another model). "
+            "Recording them would query those ids as ops tags. Record only "
+            "elements the model built. " + remedy
+        )
 
 
 # =====================================================================
@@ -413,15 +476,20 @@ class DomainCapture:
         *,
         ops: Any = None,
         bridge: Any = None,
-        tag_map: Any = None,
+        element_tags: "Mapping[int, int] | None" = None,
     ) -> None:
         self._spec = spec
         self._path = Path(path)
-        # ADR 0043 slice 1.3 follow-up — fem_eid↔ops-tag translator for a
-        # composed model. ``None`` (uncomposed / no model) ⇒ no
-        # translation. Set here when supplied (``from_h5``); otherwise
-        # built from the bridge sidecar at ``__enter__``.
-        self._tag_map = tag_map
+        # The model's {fem_eid: ops_tag} pairing. Supplied here
+        # (``from_h5``, or a caller that knows it), otherwise read from
+        # the bridge sidecar at ``__enter__``. An element-scoped capture
+        # refuses at ``__enter__`` unless it covers every recorded id.
+        self._pairing: "dict[int, int] | None" = (
+            None if element_tags is None
+            else {int(f): int(t) for f, t in element_tags.items()}
+        )
+        self._pairing_missing = "no bridge, no model and no element_tags="
+        self._tag_map: Any = _translator(self._pairing)
         self._fem = fem
         # Per Phase 9 D8 ``ndm`` / ``ndf`` ride on the resolved spec —
         # set at resolve time by ``ops.domain_capture`` (live bridge)
@@ -499,17 +567,29 @@ class DomainCapture:
                     stacklevel=2,
                 )
                 model_h5_src = None
+                self._pairing_missing = (
+                    f"the bridge could not archive a model.h5 sidecar: {e}"
+                )
             else:
                 self._model_h5_sidecar = model_h5_src
-                # ADR 0043 slice 1.3 follow-up — for a composed model the
-                # live ops domain's element tags differ from the record's
-                # fem_eids; build the translator from the freshly-written
-                # sidecar (which carries element_meta) so capturers query
-                # the right ops tags.
-                if self._tag_map is None:
-                    self._tag_map = _maybe_build_capture_tag_map(
-                        model_h5_src,
-                    )
+                # The sidecar's element_meta pairs each fem_eid with the
+                # ops tag the live domain answers to.
+                if self._pairing is None:
+                    try:
+                        self._pairing = _capture_pairing(model_h5_src)
+                    except Exception as e:  # reported by the refusal below
+                        self._pairing_missing = (
+                            f"reading the sidecar's pairing failed: {e!r}"
+                        )
+                    else:
+                        self._tag_map = _translator(self._pairing)
+        try:
+            _require_element_pairing(
+                self._spec, self._pairing, self._pairing_missing,
+            )
+        except ValueError:
+            self.close()
+            raise
 
         # F2-b provenance: the module this capture samples is the one that
         # runs the analysis, so its BackendInfo (one signal,
@@ -525,6 +605,9 @@ class DomainCapture:
             opensees_backend=backend.kind,
             opensees_build=backend.build,
         )
+        # Every element-scoped record passed _require_element_pairing, so
+        # each row's fem_eid is the element the domain answered for.
+        self._writer.stamp_element_index_space(ELEMENT_INDEX_SPACE_FEM)
         # Categorise records up-front
         for rec in self._spec.records:
             if rec.category == "nodes":
@@ -694,12 +777,10 @@ class DomainCapture:
         resolved = spec._resolve_with_explicit_ndm_ndf(
             fem, ndm=ndm, ndf=ndf,
         )
-        # ADR 0043 slice 1.3 follow-up — when the model.h5 is composed,
-        # build the fem_eid↔ops-tag translator so capturers query the
-        # live ops domain with the right tags. ``None`` for an uncomposed
-        # model (translation would be a no-op).
-        tag_map = _maybe_build_capture_tag_map(model_path)
-        return cls(resolved, output, fem, ops=ops, tag_map=tag_map)
+        # The model's fem_eid -> ops-tag pairing, so capturers query the
+        # live domain with the right tags. A read failure raises here.
+        pairing = _capture_pairing(model_path)
+        return cls(resolved, output, fem, ops=ops, element_tags=pairing)
 
     # ------------------------------------------------------------------
     # Stage lifecycle
