@@ -297,7 +297,7 @@ class ResolvedRecorderSpec:
         OpenSees records by element tag; under
         ``element_tags="sequential"`` (the bridge default) the two differ,
         so the model's pairing translates every ``-ele`` list. A spec
-        with an element-level record raises without it (#1711).
+        with an element-level record raises without it.
         """
         from ..live._recorders import LiveRecorders
         return LiveRecorders(

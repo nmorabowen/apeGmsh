@@ -279,7 +279,7 @@ def emit_logical(
 
 
 # =====================================================================
-# FEM id → OpenSees tag translation at emit (#1711)
+# FEM id → OpenSees tag translation at emit
 # =====================================================================
 #
 # A resolved record names elements by FEM id (the contract DomainCapture
