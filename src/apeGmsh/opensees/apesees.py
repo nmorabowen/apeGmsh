@@ -107,6 +107,7 @@ from ._internal.build.constraints_ranked import (
     emit_mp_constraints_partitioned,
     emit_stage_mp_constraints_partitioned,
     plan_stage_mp_constraints_partitioned,
+    refuse_multiplied_mp_constraints,
     route_element_less_nodes,
 )
 from ._internal.build.contacts import (
@@ -3121,6 +3122,12 @@ class BuiltModel:
         partitions = list(self.fem.partitions)
         node_owners = build_node_partition_owners(self.fem)
         element_owner = build_element_partition_owner(self.fem)
+        refuse_multiplied_mp_constraints(
+            self.fem, tag_plan, node_owners, element_owner,
+            pre_element=pre_element,
+            chain_forced=emitter.caps.suppress_analysis_chain_auto_emit,
+            has_equation_tie=self._has_equation_constraints(),
+            stage_records=self.stage_records)
         # ADR 0120 D1: the one rank of each node-pair element, as an
         # owner map keyed by the node-pair sentinel id (the plan row of a
         # node-pair spec carries MISSING_FEM_ELEMENT_ID).
