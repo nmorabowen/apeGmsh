@@ -271,12 +271,18 @@ class _OddlyNamedDef:
 
 
 class _FutureComposite(_DeclarationsMixin):
-    """A declaration composite added after the helper was written."""
-    _DECLARATION_STORES = {"future_defs": (_FutureTieDef,)}
+    """A declaration composite added after the helper was written.
+
+    Its store reuses an existing store name: this class stays registered
+    in ``_DeclarationsMixin.__subclasses__()`` for the rest of the
+    process, and ``test_every_declaration_store_has_a_family`` requires
+    every store name there to have a provenance family.
+    """
+    _DECLARATION_STORES = {"constraint_defs": (_FutureTieDef,)}
 
     def __init__(self, parent) -> None:
         self._parent = parent
-        self.future_defs: list = []
+        self.constraint_defs: list = []
 
 
 def _tie(g, source: str) -> None:
@@ -296,7 +302,7 @@ def _tie(g, source: str) -> None:
         g.constraints.constraint_defs.append(_FutureTieDef("beam", "bar"))
     elif source == "stub_composite":
         g.future = _FutureComposite(g)
-        g.future.future_defs.append(_FutureTieDef("beam", "bar"))
+        g.future.constraint_defs.append(_FutureTieDef("beam", "bar"))
     elif source == "constraints.bc":
         g.constraints.bc("bar", dofs=[1, 1, 1])
     elif source == "constraints.rigid_diaphragm":
@@ -319,7 +325,7 @@ _HOST_TIES = {
     "reinforce": "ReinforceDef g.reinforce.reinforce_defs[0]",
     "embed": "EmbedDef g.embed.embed_defs[0]",
     "stub_label": "_FutureTieDef g.constraints.constraint_defs[0]",
-    "stub_composite": "_FutureTieDef g.future.future_defs[0]",
+    "stub_composite": "_FutureTieDef g.future.constraint_defs[0]",
 }
 #: Node-level definitions (no host): skipped with a warning by the
 #: no-argument form, allowed by name.
