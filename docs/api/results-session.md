@@ -56,7 +56,7 @@ outline and the MCP verb address a pane, so a stale one raises
 A plot is a **pane**, not a dock hanging off a contour: several curves
 on one chart are one `PlotView`, and its series are live queries
 against `Results` evaluated at the cursor. `plot.kind` is fixed at
-creation (`history`, `path` or `xy`); `plot.series` and `plot.cursor`
+creation (`history` or `xy`); `plot.series` and `plot.cursor`
 are assignable, and `plot.name` is a label.
 
 `session.remove_pane(pane_id)` drops a pane and detaches it, so a
@@ -107,6 +107,24 @@ view.contour = Deform("displacement")
 # TypeError: The 'contour' slot takes a Contour record or None; got Deform.
 ```
 
+The four colour-mapped records (`Contour`, `Vector`, `Gauss`, `Sand`)
+also carry `clim=(low, high)` and `cmap=` (ADR 0098 Amendment 7).
+`None`, the default, keeps the kind's own range and colormap. `cmap`
+takes any name matplotlib knows, `'jet'` included, and a bad value
+raises when the record is built. One quantity is one scale, so two
+slots of the same quantity that set different values refuse:
+
+```python
+view.contour = Contour("stress_xx", clim=(-5.0, 5.0), cmap="jet")
+view.gauss = Gauss("stress_xx")                 # fine: defers to the contour
+view.legends()[0].cmap                          # 'jet'
+view.gauss = Gauss("stress_xx", cmap="viridis")
+# ValueError: ... One field is one scale (ADR 0098 §5, A7.3) ...
+```
+
+The session stores, validates and saves these fields; the window and
+`render()` do not apply them yet.
+
 Fibers, shell layers and isochrones do not open an eighth slot: a new
 category is an ADR 0098 amendment, not a subclass.
 
@@ -124,6 +142,7 @@ category is an ADR 0098 amendment, not a subclass.
         - SLOT_CATALOG
         - COLOUR_MAPPED
         - slot_field
+        - slot_style
 
 ## Deform is a pose, not a slot
 
@@ -280,7 +299,10 @@ restored.notices                      # () — nothing degraded
 `load_snapshot` returns a `RestoredSession` carrying `notices`:
 degradation is not refusal, so a snapshot naming a stage these results
 no longer have still restores its panes and slots, drops the instant,
-and says so. A file from the retired v13 viewer is not restorable — it
+and says so. The writer writes schema version 2, and the reader also
+takes version 1: its slots restore with no `clim`/`cmap`, and a `path`
+plot pane in it (a kind that was never drawable, now removed) is
+dropped with a notice. A file from the retired v13 viewer is not restorable — it
 is renamed aside to `…​.viewer-session.json.legacy` and never
 overwritten.
 
