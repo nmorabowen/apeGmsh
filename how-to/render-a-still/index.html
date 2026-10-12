@@ -3807,6 +3807,9 @@ both off the broker:</p>
 </span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="n">stage</span> <span class="o">=</span> <span class="n">results</span><span class="o">.</span><span class="n">stages</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span>
 </span><span id="__span-1-6"><a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="n">s</span><span class="o">.</span><span class="n">time</span> <span class="o">=</span> <span class="n">Instant</span><span class="p">(</span><span class="n">stage</span><span class="o">.</span><span class="n">id</span><span class="p">,</span> <span class="n">stage</span><span class="o">.</span><span class="n">n_steps</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span>      <span class="c1"># the last recorded step</span>
 </span></code></pre></div>
+<p>On a staged model (stages that <code>activate</code> or <code>remove_element</code>), the
+still draws only the elements active in the instant's stage: an element
+activated in a later stage, or removed by this one, is not drawn.</p>
 <h2 id="swap-the-picture">Swap the picture<a class="headerlink" href="#swap-the-picture" title="Permanent link">&para;</a></h2>
 <p>The picture lives in the view's <strong>slots</strong> — a closed catalog of seven
 (<code>contour</code>, <code>vector</code>, <code>gauss</code>, <code>line</code>, <code>sand</code>, <code>loads</code>, <code>reactions</code>).
