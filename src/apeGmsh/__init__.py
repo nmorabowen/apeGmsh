@@ -100,12 +100,8 @@ from apeGmsh.mesh._numberer import Numberer, NumberedMesh
 from apeGmsh.mesh._mesh_partitioning import RenumberResult, PartitionInfo
 from apeGmsh.viewers.mesh_viewer import MeshViewer
 from apeGmsh.viewers.model_viewer import ModelViewer
-# ``ResultsViewer`` is DE-PUBLISHED at ADR 0098 S6a (not deleted):
-# ``results.viewer()`` opens a ``ResultsSession`` window, and the retired
-# viewer survives only as private implementation of the ``show_web``
-# hatch and ``Results.export_animation`` (INV-11), which import it by
-# module path. It must not be re-exported from here or from
-# ``apeGmsh.viewers``.
+# The legacy Qt ``ResultsViewer`` was deleted at X3-d (#1734);
+# ``results.viewer()`` opens a ``ResultsSession`` window.
 from apeGmsh.viewers import settings, theme_editor
 from apeGmsh._workdir import workdir
 from apeGmsh import profiler
