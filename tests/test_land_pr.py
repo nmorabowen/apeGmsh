@@ -1,6 +1,6 @@
 """scripts/land_pr.py replays: the lost-work PRs are refused or flagged, a clean PR lands.
 
-The recordings are what `gh pr view --json ...`, `gh pr diff --name-only`,
+The recordings are what `gh pr view --json ...`, `gh api .../pulls/N/files`,
 `gh api .../compare` and `git ls-remote` returned for the real PRs, trimmed
 to the fields the script reads. Nothing here needs `gh` or a network: both
 seams are replaced by `Replay`, which fails on any call that was not
@@ -108,7 +108,7 @@ def _recording(number, pr, squash, files=FILES_1218, *, compare="behind", tip=""
     gh = Replay({
         f"pr view {number} --json {land_pr.PR_FIELDS}": json.dumps(pr),
         "label list --limit 200 --json name": json.dumps(labels),
-        f"pr diff {number} --name-only": "".join(f + "\n" for f in files),
+        f"api repos/{{owner}}/{{repo}}/pulls/{number}/files --paginate --jq .[].filename": "".join(f + "\n" for f in files),
         f"pr merge {number} --squash --match-head-commit {head}": "",
         f"pr view {number} --json mergeCommit": json.dumps({"mergeCommit": {"oid": squash}}),
         f"api repos/{{owner}}/{{repo}}/compare/main...{squash} --jq .status": compare + "\n",
@@ -152,7 +152,7 @@ def test_clean_landing_1218(capsys):
     merge = f"pr merge 1218 --squash --match-head-commit {PR_1218['headRefOid']}"
     assert merge in gh.calls, "the merge pins the head the checks saw"
     assert not any("--auto" in c or "--delete-branch" in c for c in gh.calls)
-    assert gh.calls.index(merge) > gh.calls.index("pr diff 1218 --name-only")
+    assert gh.calls.index(merge) > gh.calls.index("api repos/{owner}/{repo}/pulls/1218/files --paginate --jq .[].filename")
     out = capsys.readouterr().out
     assert f"landed #1218 as {SQUASH_1218[:12]}" in out
     assert f"{PR_1218['headRefName']} is gone" in out
@@ -231,7 +231,7 @@ def test_compare_retry_is_bounded():
     gh, git = _recording(1218, PR_1218, SQUASH_1218, compare="ahead")
     with pytest.raises(land_pr.LandError, match=rf"after {land_pr.COMPARE_TRIES} tries"):
         _run(1218, gh, git)
-    assert sum(c.startswith("api ") for c in gh.calls) == land_pr.COMPARE_TRIES
+    assert sum(c.startswith("api ") and "/compare/" in c for c in gh.calls) == land_pr.COMPARE_TRIES
 
 
 def test_main_reports_refusal_on_stderr(monkeypatch, capsys):
@@ -276,7 +276,7 @@ def test_first_post_merge_read_fails_then_proof_completes(capsys):
 
 
 def test_compare_read_is_retried():
-    gh, git = _flaky("api ", 2)
+    gh, git = _flaky("api repos/{owner}/{repo}/compare", 2)
     assert _run(1218, gh, git) == 0
     assert gh.failed == 2
 
@@ -369,3 +369,23 @@ def test_verify_only_with_dry_run_is_refused(capsys):
         land_pr.main(["1218", "--verify-only", "--dry-run"])
     assert exc.value.code == 2
     assert "mutually exclusive" in capsys.readouterr().err
+
+
+def test_big_pr_file_list_never_calls_pr_diff(capsys):
+    """#1775: `gh pr diff` is refused with HTTP 406 past 20000 lines (#1772). The
+    file list must come from the paginated files endpoint, never from `pr diff`."""
+    import subprocess
+
+    gh, git = _recording(1218, PR_1218, SQUASH_1218, [f"src/f{i}.py" for i in range(250)])
+    inner = gh.__call__
+
+    def guarded(args):
+        if args[:2] == ["pr", "diff"]:
+            gh.calls.append(" ".join(args))
+            raise subprocess.CalledProcessError(1, ["gh", *args], stderr="HTTP 406: diff exceeded the maximum number of lines (20000)")
+        return inner(args)
+
+    assert _run(1218, guarded, git) == 0
+    assert not any(c.startswith("pr diff") for c in gh.calls)
+    assert "api repos/{owner}/{repo}/pulls/1218/files --paginate --jq .[].filename" in gh.calls
+    assert "landed #1218" in capsys.readouterr().out
