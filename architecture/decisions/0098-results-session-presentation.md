@@ -2125,9 +2125,7 @@ bench is what made that cheap, and it should stay a human step.
 
 ## Amendment 7 (2026-10-11) — style enters the slot; the ghost draws; `path` goes
 
-**Status:** Proposed (2026-10-11). Acceptance is the maintainer's: this
-line changes to *Accepted (date)* when the maintainer accepts it, and
-not before. Until then the code keeps v1 behaviour.
+**Status:** Accepted (2026-10-11), by the maintainer.
 
 Append-only. §1–§11, INV-MESH-1…4, INV-LEGEND-1…5, the slot catalog,
 the rejected-alternatives table and Amendments 1–6 all stand except
