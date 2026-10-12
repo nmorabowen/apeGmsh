@@ -37,7 +37,7 @@ package; this is the one place to repoint).
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Iterator, Sequence, Union
+from typing import TYPE_CHECKING, Iterable, Iterator, Sequence, Union
 
 import numpy as np
 
@@ -60,22 +60,142 @@ from .element.shell import (
     ShellMITC3,
     ShellMITC4,
 )
-from .element.truss import CorotTruss, Truss
+from .element.solid import (
+    BezierTet10,
+    BezierTri6,
+    FourNodeQuad,
+    FourNodeTetrahedron,
+    LadrunoBrick,
+    LadrunoBrick20,
+    LadrunoCST,
+    LadrunoLST,
+    LadrunoQuad,
+    SixNodeTri,
+    TenNodeTetrahedron,
+    Tri31,
+    stdBrick,
+)
+from .element.truss import CorotTruss, InertiaTruss, Truss
+from .element.zero_length import (
+    CoupledZeroLength,
+    ZeroLength,
+    ZeroLengthSection,
+)
 
-#: Element families whose nodes carry rotations in the DOF slots
-#: ``_load_dof_layout`` calls rotations: beam-columns and shells. A
-#: rotational read is answered only on a node at least one of them
-#: touches; anything else in that slot (a u-p pore pressure) is not read.
+# ---------------------------------------------------------------------------
+# Rotation roles: the one table ``.read``, the ``recorder.declare`` emit
+# (``_internal/build/recorders.py``) and ``ops.results``
+# (``_results_route.py``) consult before calling a DOF slot a rotation.
+# ---------------------------------------------------------------------------
+
+#: Element families that establish a rotation in the DOF slots
+#: ``_load_dof_layout`` calls rotations: beam-columns, shells, and the
+#: zero-length family (a rotational spring or a fiber section at a base acts
+#: on those slots).
 _ROTATIONAL_FAMILIES: tuple[type, ...] = (
     elasticBeamColumn, forceBeamColumn, dispBeamColumn,
     ElasticTimoshenkoBeam, LadrunoDispBeamColumn, LadrunoIMKBeam,
     ShellMITC4, ShellMITC3, ShellDKGQ, ASDShellQ4, ASDShellT3,
+    ZeroLength, ZeroLengthSection, CoupledZeroLength,
 )
 
 #: Families that use the translational DOFs only, so they neither give
-#: nor take away a meaning for a rotational slot (a bracing truss on a
-#: frame node).
-_TRANSLATIONAL_ONLY: tuple[type, ...] = (Truss, CorotTruss)
+#: nor take away a meaning for a rotational slot: trusses (a bracing truss
+#: on a frame node; ``InertiaTruss`` is a mass-only truss) and the
+#: displacement-only continua (a shell on a solid).
+_TRANSLATIONAL_ONLY: tuple[type, ...] = (
+    Truss, CorotTruss, InertiaTruss,
+    FourNodeQuad, Tri31, SixNodeTri, BezierTri6, LadrunoQuad, LadrunoCST,
+    LadrunoLST, FourNodeTetrahedron, TenNodeTetrahedron, BezierTet10,
+    stdBrick, LadrunoBrick, LadrunoBrick20,
+)
+
+# Every other class BLOCKS a rotational slot: a u-p element (``LadrunoUP``)
+# carries pore pressure at DOF ``ndm + 1``, and a class this table does not
+# name is not guessed.
+
+
+@dataclass(frozen=True)
+class RotationRoles:
+    """What the element plan says about the rotational DOF slots of a set
+    of nodes (:func:`rotation_roles`)."""
+
+    #: Nodes at least one :data:`_ROTATIONAL_FAMILIES` element touches.
+    rotational: frozenset[int]
+    #: Node -> the first blocking class that touches it.
+    blocked: "dict[int, str]"
+    #: Nodes any element touches.
+    touched: frozenset[int]
+    #: A blocking class anywhere in the model, or ``None``.
+    model_blocker: "str | None"
+
+    def refusal(self, tag: int) -> "str | None":
+        """Why node ``tag``'s rotational DOF slots carry no rotation, or
+        ``None`` when they do. A blocking class wins over a rotational one
+        on the same node. An element-less node (a decoupled or diaphragm
+        master) carries a rotation only in a model with no blocking class:
+        a constraint could tie its slot to a pore-pressure DOF."""
+        if tag in self.blocked:
+            return (
+                f"a {self.blocked[tag]} touches it, whose DOF layout is not "
+                "a beam/shell rotation (a u-p element carries pore pressure "
+                "there; any other family, or one this table does not know, "
+                "is left undefined)"
+            )
+        if tag in self.rotational:
+            return None
+        if tag in self.touched:
+            return (
+                "no beam-column or shell (or zero-length) element touches it, so "
+                "no element establishes a rotation in that DOF slot"
+            )
+        if self.model_blocker is not None:
+            return (
+                "no element touches it, and the model holds a "
+                f"{self.model_blocker}, so a constraint could tie that DOF "
+                "slot to a pore pressure"
+            )
+        return None
+
+
+def rotation_roles(
+    element_plan: "Iterable[tuple[Element, ElementPlanRows]]",
+    targets: "Iterable[int] | None" = None,
+) -> RotationRoles:
+    """The :class:`RotationRoles` of ``targets`` (every node when ``None``)
+    under ``element_plan`` (each element spec with its rows)."""
+    want = (None if targets is None
+            else np.unique(np.asarray(list(targets), dtype=np.int64)))
+    rotational: set[int] = set()
+    touched: set[int] = set()
+    blocked: dict[int, str] = {}
+    model_blocker: "str | None" = None
+    for spec, sub in element_plan:
+        if len(sub) == 0:
+            continue
+        conn = sub.conn
+        if conn.ndim == 2:
+            flat = np.unique(np.asarray(conn, dtype=np.int64))
+        else:
+            flat = np.unique(np.fromiter(
+                (int(n) for row in conn for n in row), dtype=np.int64))
+        is_rot = isinstance(spec, _ROTATIONAL_FAMILIES)
+        is_trans = isinstance(spec, _TRANSLATIONAL_ONLY)
+        if not (is_rot or is_trans) and model_blocker is None:
+            model_blocker = type(spec).__name__
+        hit = flat if want is None else np.intersect1d(flat, want)
+        nodes = [int(n) for n in hit]
+        touched.update(nodes)
+        if is_rot:
+            rotational.update(nodes)
+        elif not is_trans:
+            name = type(spec).__name__
+            for n in nodes:
+                blocked.setdefault(n, name)
+    return RotationRoles(
+        rotational=frozenset(rotational), blocked=blocked,
+        touched=frozenset(touched), model_blocker=model_blocker,
+    )
 
 if TYPE_CHECKING:
     from ._internal.build.pg_expand import ElementPlanRows
@@ -193,58 +313,16 @@ class ReadSession:
         self.epoch = int(epoch)
         self.element_plan = element_plan
         self._index: "tuple[np.ndarray, np.ndarray, np.ndarray] | None" = None
-        self._rot_roles: "tuple[set[int], dict[int, str]] | None" = None
+        self._rot_roles: "RotationRoles | None" = None
 
     def rotation_refusal(self, tag: int) -> "str | None":
         """Why node ``tag``'s rotational DOF slots have no established
-        meaning, or ``None`` when they do.
-
-        A slot the DOF layout calls a rotation is one only where the
-        node's elements give it that meaning: the node is touched by at
-        least one beam-column or shell (:data:`_ROTATIONAL_FAMILIES`),
-        and every other element on it is translational-only
-        (:data:`_TRANSLATIONAL_ONLY`). Any other family (a u-p element,
-        whose DOF 3 at ``ndm=2, ndf=3`` is pore pressure; a solid; a
-        zero-length; a class this module does not know) leaves the slot
-        undefined, so the read refuses rather than guess.
-        """
-        rotational, blocked = self._rotation_roles()
-        if tag in blocked:
-            return (
-                f"it is touched by a {blocked[tag]}, whose DOF layout is not "
-                "a beam/shell rotation (a u-p element carries pore pressure "
-                "there; any other family, or one this reader does not know, "
-                "is left undefined)"
-            )
-        if tag not in rotational:
-            return (
-                "no beam-column or shell element touches it, so no element "
-                "establishes a rotation in that DOF slot"
-            )
-        return None
-
-    def _rotation_roles(self) -> "tuple[set[int], dict[int, str]]":
+        meaning, or ``None`` when they do (:meth:`RotationRoles.refusal`,
+        the rule the ``recorder.declare`` emit and ``ops.results`` apply
+        too)."""
         if self._rot_roles is None:
-            rotational: set[int] = set()
-            blocked: dict[int, str] = {}
-            for spec, sub in self.element_plan:
-                if len(sub) == 0:
-                    continue
-                if isinstance(spec, _TRANSLATIONAL_ONLY):
-                    continue
-                conn = sub.conn
-                if conn.ndim == 2:
-                    nodes = {int(n) for n in np.unique(conn)}
-                else:
-                    nodes = {int(n) for row in conn for n in row}
-                if isinstance(spec, _ROTATIONAL_FAMILIES):
-                    rotational |= nodes
-                else:
-                    name = type(spec).__name__
-                    for n in nodes:
-                        blocked.setdefault(n, name)
-            self._rot_roles = (rotational, blocked)
-        return self._rot_roles
+            self._rot_roles = rotation_roles(self.element_plan)
+        return self._rot_roles.refusal(int(tag))
 
     def element_rows(
         self, ids: Sequence[int], where: str,
@@ -415,7 +493,7 @@ def read_nodes(
                     f"{where}: node {tag} (ndf={ndf}, ndm={session.ndm}) has "
                     f"no established {component!r}: DOF "
                     f"{layout.index(spatial) + 1} is a rotation only on a "
-                    f"beam-column or shell node, and {why}. {_RESULTS_HINT}"
+                    f"beam-column, shell or zero-length node, and {why}. {_RESULTS_HINT}"
                 )
         dofs.append(layout.index(spatial) + 1)
     if query == "nodeReaction":
