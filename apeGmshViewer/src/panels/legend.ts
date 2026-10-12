@@ -117,6 +117,13 @@ export function mountLegend(store: Store): () => void {
       const row = el("div", "contour-pick");
       const field = el("select", "contour-field");
       field.title = "nodal field";
+      if (s.contour.field === null) {
+        // Nothing picked (a re-read cleared the pick): a placeholder, so picking the first field is a change.
+        const o = el("option", undefined, "pick a field");
+        o.disabled = true;
+        o.selected = true;
+        field.append(o);
+      }
       for (const f of picker.fields) {
         const o = el("option", undefined, f.name);
         o.value = f.name;

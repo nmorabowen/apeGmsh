@@ -120,9 +120,13 @@ function withPhase(s: State): State {
 /** The stage a contour pick is checked against: the results stage shown. */
 const shownStage = (s: State) => (s.phase.at?.kind === "results" ? s.results?.stages[s.phase.at.stage] : undefined);
 
-/** Colouring by contour with nothing picked, on a results stage: its first field and component (V4c1). */
+/**
+ * Colouring by contour with nothing picked, on a results stage: its first
+ * field and component (V4c1). Not after a re-read cleared the pick: the
+ * notice stands, and the user picks again (`setContourField` clears it).
+ */
 function withContourPick(s: State): State {
-  if (s.visibility.colourBy !== "contour" || s.contour.field !== null) return s;
+  if (s.visibility.colourBy !== "contour" || s.contour.field !== null || s.contour.notice !== null) return s;
   const pick = defaultPick(shownStage(s));
   return pick ? { ...s, contour: { ...s.contour, ...pick } } : s;
 }
@@ -317,7 +321,7 @@ export function reduce(s: State, e: Event): State {
       const notice =
         `The re-read ${e.info.path.split(/[\\/]/).pop()} has no ${field} ${componentName(component)}` +
         `${stage ? ` in stage ${stage.name || stage.id}` : ""}: the contour pick was cleared.`;
-      return withContourPick({ ...next, contour: { ...c, field: null, component: null, notice } });
+      return { ...next, contour: { ...c, field: null, component: null, notice } };
     }
     case "setContourField": {
       const stage = shownStage(s);
