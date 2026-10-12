@@ -6,9 +6,11 @@ one of its nodes (ADR 0027). ``Transformation`` needs that copy per rank.
 ``Penalty``, ``Lagrange`` and ``Auto`` assemble one penalty or multiplier
 per copy, so the partitioned model answered stiffer than the serial one
 (eigenvalues 4.9e-5 off on 2 ranks, 7.3e-5 on 4) and nothing said so.
-The emit now refuses that combination, before any rank writes a
-constraint, and names the remedies. The numeric oracle (serial vs 2 and 4
-ranks, run) is ``tests/opensees/subprocess/test_partitioned_mp_penalty_parity.py``.
+The emit now refuses that combination before it writes anything, keyed
+on the handler the deck actually runs under (declared, auto-emitted, or
+each stage's), and names the two remedies the numeric oracle verifies:
+``Transformation`` and a serial run. That oracle (serial vs 2 and 4 ranks,
+run) is ``tests/opensees/subprocess/test_partitioned_mp_penalty_parity.py``.
 
 Oracles, independent of the code under test:
 
@@ -29,10 +31,16 @@ import pytest
 
 import gmsh
 from apeGmsh import apeGmsh
-from apeGmsh._kernel.records._constraints import NodeGroupRecord, NodePairRecord
+from apeGmsh._kernel.records._constraints import (
+    InterpolationRecord,
+    NodeGroupRecord,
+    NodePairRecord,
+)
+from apeGmsh._kernel.records._kinds import ConstraintKind
 from apeGmsh.opensees import apeSees
 from apeGmsh.opensees._internal.build.errors import BridgeError
 from apeGmsh.opensees.element.zero_length import ZeroLengthMatDir
+from apeGmsh.opensees.emitter.recording import RecordingEmitter
 
 pytestmark = pytest.mark.filterwarnings("ignore:partitioned run")
 
@@ -134,10 +142,10 @@ def diaphragm_ops(n_parts: int, name: str):
     return ops
 
 
-def emit(ops, path: Path) -> str:
+def emit(ops, path: Path, **kw) -> str:
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        ops.tcl(str(path))
+        ops.tcl(str(path), **kw)
     return path.read_text(encoding="utf-8")
 
 
@@ -161,14 +169,51 @@ def test_a_diaphragm_spanning_ranks_is_refused_under_a_multiplying_handler(
         tmp_path, n_parts, name):
     ops = diaphragm_ops(n_parts, name)
     deck = tmp_path / "model.tcl"
+    deck.write_text("SENTINEL: the user's previous deck\n", encoding="utf-8")
     with pytest.raises(BridgeError) as err:
         emit(ops, deck)
     msg = str(err.value)
     assert "#1625" in msg and "'floor'" in msg
     assert "Transformation" in msg and "flat=True" in msg
-    # the stream is aborted: no deck is left to run
-    assert not deck.exists()
-    assert not any(tmp_path.iterdir())
+    # the deck already at the path is untouched, and no other file appears
+    assert deck.read_text(encoding="utf-8") == "SENTINEL: the user's previous deck\n"
+    assert [f.name for f in tmp_path.iterdir()] == ["model.tcl"]
+
+
+def test_the_refusal_comes_before_the_partitioned_emit_writes():
+    """Only the ``model`` header precedes the partitioned emit; nothing of
+    it (no global primitive, no rank block) is written."""
+    rec = RecordingEmitter()
+    bm = diaphragm_ops(2, "Penalty").build()
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        with pytest.raises(BridgeError, match="#1625"):
+            bm.emit(rec)
+    assert [name for name, _a, _k in rec.calls] == ["model"]
+
+
+def test_the_auto_emitted_lagrange_of_an_equation_tie_is_refused(tmp_path):
+    """No handler declared + an ``enforce="equation"`` tie: the bridge
+    auto-emits Lagrange, which multiplies the diaphragm's copies."""
+    fem, grounds, master = diaphragm_plate(2)
+    a, b = _one_rank_pair(fem)
+    fem = with_diaphragm(fem, master)
+    fem = fem.with_constraint(InterpolationRecord(
+        kind=ConstraintKind.TIE, name="eq", slave_node=b, master_nodes=[a],
+        weights=np.array([1.0]), dofs=[3], enforce="equation"))
+    ops = declare_model(fem, grounds, master)
+    chain(ops, "none", 2)
+    with pytest.raises(BridgeError, match="Lagrange") as err:
+        emit(ops, tmp_path / "model.tcl")
+    assert "#1625" in str(err.value)
+
+
+@pytest.mark.parametrize("name", ["Penalty", "Lagrange", "Auto"])
+def test_the_serial_remedy_emits(tmp_path, name):
+    """``flat=True``, the refusal's serial remedy, writes the deck."""
+    text = emit(diaphragm_ops(2, name), tmp_path / "model.tcl", flat=True)
+    assert "getPID" not in text
+    assert text.count("rigidDiaphragm 3 ") == 1
 
 
 @pytest.mark.parametrize("n_parts", [2, 4])

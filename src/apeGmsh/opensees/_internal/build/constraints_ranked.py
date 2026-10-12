@@ -42,7 +42,8 @@ from .stage_emit import GhostSPOp, emit_ghost_sp_ops
 from .errors import BridgeError
 
 if TYPE_CHECKING:
-    from ..types import ConstraintHandler
+    from ..types import ConstraintHandler, Primitive
+    from .records import StageRecord
     from apeGmsh._kernel.records._constraints import (
         ConstraintRecord,
         InterpolationRecord,
@@ -355,7 +356,6 @@ def emit_stage_mp_constraints_partitioned(
     fem_eid_to_ops_tag: "FemToOpsTagMap | None" = None,
     ghost_sp_ops: "dict[int, list[GhostSPOp]] | None" = None,
     stiffness_resolver: "StiffnessResolver | None" = None,
-    constraint_handlers: "Sequence[ConstraintHandler | None]",
 ) -> None:
     """Per-rank stage-bound MP-constraint fan-out.
 
@@ -369,19 +369,15 @@ def emit_stage_mp_constraints_partitioned(
     ``rank_plan`` comes from
     :func:`plan_stage_mp_constraints_partitioned`, which already
     established that this rank contributes something — there is no
-    no-op path here.
-
-    ``constraint_handlers`` are the handlers of this stage and of every
-    later one (a stage's records stay in the domain); a record copied on
-    two ranks under any of them that is not ``Transformation`` is refused
-    before this rank writes a line (#1625, :func:`refuse_replicated_mp`).
+    no-op path here. A copy that a stage's constraint handler would
+    multiply was refused before the emit began
+    (:func:`refuse_multiplied_mp_constraints`).
     """
     from ..tag_resolution import ATTR_PHANTOM_NODE_TAGS, set_phantom_node_tags
 
     adapter = rank_plan.adapter
     phantom_coords = rank_plan.phantom_coords
     plan = rank_plan.plan
-    refuse_replicated_mp(constraint_handlers, (plan,))
 
     if phantom_coords:
         existing: frozenset[int] = getattr(emitter, ATTR_PHANTOM_NODE_TAGS, frozenset())
@@ -429,7 +425,6 @@ def emit_mp_constraints_partitioned(
     fem_eid_to_ops_tag: "FemToOpsTagMap | None" = None,
     ghost_sp_ops: "dict[int, list[GhostSPOp]] | None" = None,
     stiffness_resolver: "StiffnessResolver | None" = None,
-    constraint_handlers: "Sequence[ConstraintHandler | None]",
 ) -> "frozenset[int]":
     """Per-rank MP-constraint fan-out (ADR 0027 §"Decision").
 
@@ -467,12 +462,9 @@ def emit_mp_constraints_partitioned(
     :func:`plan_partitioned_mp_constraints` (ADR 0114 D4, amended); this
     reads them, and the element tags, from ``tag_plan`` (:func:`_mp_plan`).
 
-    ``constraint_handlers`` are the handlers the deck's analyses enforce
-    these records under: the declared one (``None`` when none is) for an
-    unstaged model, every stage's for a staged one. Replication is exact
-    only under ``Transformation``; under any other handler a record
-    copied on two ranks is refused, every rank checked, before this rank
-    writes a line (#1625, :func:`refuse_replicated_mp`).
+    Replication is exact only under ``Transformation``; a copy another
+    handler would multiply was refused before the emit began
+    (:func:`refuse_multiplied_mp_constraints`).
     """
     from ..tag_resolution import set_phantom_node_tags
 
@@ -489,7 +481,6 @@ def emit_mp_constraints_partitioned(
     # tags they reference (replicate-on-both / replicate-everywhere-
     # with-a-slave rules from ADR 0027), and the phantom nodes.
     phantom_coords, plan = mp_plan.rank_constraints(partition_rank)
-    refuse_replicated_mp(constraint_handlers, mp_plan.rank_plans.values())
 
     # Pre-load the phantom-tag predicate on the emitter (ADR 0033 —
     # stateless replacement for the prior phantom-mode flag).
@@ -548,45 +539,98 @@ def emit_mp_constraints_partitioned(
     return plan.foreign_node_tags
 
 
-def refuse_replicated_mp(
-    handlers: "Iterable[ConstraintHandler | None]",
-    plans: "Iterable[_RankConstraintPlan]",
+def refuse_multiplied_mp_constraints(
+    fem: "FEMData",
+    tag_plan: "TagPlan",
+    node_owners: "NodePartitionOwners",
+    element_owner: "SortedIntToInt",
+    *,
+    declared: "ConstraintHandler | None",
+    has_equation_tie: bool,
+    stage_records: "Sequence[StageRecord]",
 ) -> None:
-    """Refuse an MP record copied on two ranks under a handler that
-    multiplies it (#1625).
+    """Refuse a partitioned emit whose MP copies a handler would multiply.
 
-    The partitioned emit writes a replicable record on every rank that
+    Called once, before the partitioned emit writes anything.
+
+    The partitioned emit writes a replicable record (equalDOF, rigidLink,
+    rigidDiaphragm, rigid_body chain, node_to_surface) on every rank that
     holds one of its nodes (ADR 0027). ``Transformation`` needs that: it
     eliminates the constrained DOFs on each rank. ``Penalty``,
     ``Lagrange`` and ``Auto`` instead assemble one penalty or multiplier
     per ``MP_Constraint`` copy, so the partitioned model is stiffer than
-    the serial one: measured 4.9e-5 (2 ranks) and 7.3e-5 (4 ranks) on
-    eigenvalues, with nothing warning. Writing each record on one rank is
-    exact for a static solve but not for ``eigen``: a rank that holds no
-    ``PenaltyMP_FE`` disagrees with the others in ``ArpackSOE``'s
-    diagonal-mass flag and the spectrum collapses to 1.0. So the emit
-    refuses instead.
+    the serial one (measured 4.9e-5 on 2 ranks and 7.3e-5 on 4 on the
+    eigenvalues of a rigid diaphragm spanning ranks), and nothing warned.
+    Writing each record on one rank instead is exact for a static solve
+    but not for ``eigen``: a rank that holds no ``PenaltyMP_FE`` disagrees
+    with the others in ``ArpackSOE``'s diagonal-mass flag, and the spectrum
+    collapses to 1.0. So the emit refuses.
 
-    ``handlers``: ``None`` (none declared: the bridge auto-emits
-    ``Transformation``, or a stage runs OpenSees' default ``Plain``),
+    The handler checked is the one each analysis runs under:
+
+    * unstaged: ``declared``, the model-level handler. When none is
+      declared, the bridge auto-emits ``Transformation``, or ``Lagrange`` /
+      ``LadrunoProjection`` when ``has_equation_tie``;
+    * staged: the global records run under every stage's handler, and a
+      stage's claimed records under its own and every later stage's
+      (a record stays in the domain). A stage that declares none runs
+      OpenSees' default ``Plain``.
+
     ``Transformation`` and ``Plain`` (which ignores MP constraints) keep
     the replication. Any other handler raises :class:`BridgeError` when a
-    plan in ``plans`` holds a copied record.
+    record it runs under is written on two ranks or more.
     """
     from ...analysis.constraint_handler import Plain, Transformation
 
-    handlers = tuple(handlers)
-    if not handlers:
-        raise BridgeError(
-            "partitioned MP-constraint emit: no constraint handler was "
-            "passed; pass the handler(s) the deck runs under, None for "
-            "an undeclared one (#1625)."
+    def multiplying(handlers: "Iterable[Primitive | None]", *,
+                    auto: str) -> "list[str]":
+        names = set()
+        for h in handlers:
+            if h is None:
+                if auto:
+                    names.add(auto)
+            elif not isinstance(h, (Transformation, Plain)):
+                names.add(type(h).__name__)
+        return sorted(names)
+
+    if stage_records:
+        stage_handlers = [st.constraints for st in stage_records]
+        global_names = multiplying(stage_handlers, auto="")
+    else:
+        stage_handlers = []
+        global_names = multiplying(
+            (declared,),
+            auto="Lagrange (auto-emitted for an equation tie)"
+            if has_equation_tie else "",
         )
-    multiplying = sorted({
-        type(h).__name__ for h in handlers
-        if h is not None and not isinstance(h, (Transformation, Plain))})
-    if not multiplying:
-        return
+    if global_names:
+        mp_plan = _mp_plan(tag_plan, fem)
+        if mp_plan.rank_plans:
+            _refuse_copies(global_names, mp_plan.rank_plans.values())
+
+    ranks = [runtime_rank_from_partition_record(part, idx)
+             for idx, part in enumerate(fem.partitions)]
+    for i, stage in enumerate(stage_records):
+        records = stage.stage_constraint_records
+        if not records:
+            continue
+        names = multiplying(stage_handlers[i:], auto="")
+        if not names:
+            continue
+        plans = []
+        for rank in ranks:
+            rp = plan_stage_mp_constraints_partitioned(
+                records, partition_rank=rank,
+                node_owners=node_owners, element_owner=element_owner)
+            if rp is not None:
+                plans.append(rp.plan)
+        _refuse_copies(names, plans)
+
+
+def _refuse_copies(
+    names: "Sequence[str]", plans: "Iterable[_RankConstraintPlan]",
+) -> None:
+    """Raise when a plan in ``plans`` writes a record another rank writes."""
     copied = next((p.replicated_records for p in plans
                    if p.replicated_records), ())
     if not copied:
@@ -598,12 +642,11 @@ def refuse_replicated_mp(
     raise BridgeError(
         f"A partitioned emit would write the {kind} constraint {name!r} "
         f"(master node {master}) on more than one rank under the "
-        f"constraint handler {', '.join(multiplying)}. Each rank's copy "
-        "assembles its own penalty or multiplier, so the partitioned model "
-        "would silently answer stiffer than the serial one (#1625). "
-        "Declare ops.constraints.Transformation() (exact across ranks), "
-        "run serial (emit unpartitioned: ops.tcl(path, flat=True)), or "
-        "repartition so every node of each MP constraint stays on one rank."
+        f"constraint handler {', '.join(names)}. Each rank's copy assembles "
+        "its own penalty or multiplier, so the partitioned model would "
+        "silently answer stiffer than the serial one (#1625). Nothing was "
+        "written. Declare ops.constraints.Transformation(), which is exact "
+        "across ranks, or run serially (ops.tcl(path, flat=True))."
     )
 
 
