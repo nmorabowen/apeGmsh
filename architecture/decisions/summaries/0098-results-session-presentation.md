@@ -41,20 +41,20 @@ D6–D7), 0081, 0083, 0094 INV-10 (snapshot realization only) and narrows 0045 p
 
 - A1 (2026-08-17), pane host: nested `QSplitter`s auto-tiled by `T(N)` in the central
   widget, one `QtInteractor` per mesh pane, no shell interactor. UI, not IR.
-- A2 (2026-08-18), the six slotless kinds (`fiber_section`, `layer_stack`, three isochrone
-  kinds, `spring_force`) survive internally behind the `show_web` hatch; the catalog stays
-  at seven; the disposition expires with the hatch.
+- A2 (2026-08-18), the six slotless kinds (fiber, layer, three isochrone, spring) survive
+  behind the `show_web` hatch; the catalog stays at seven; expires with the hatch.
 - A3 (2026-08-19), **reverses A1.1**: each pane is its own `QDockWidget`. The session is
   authoritative for pane existence, the saved `QSettings` arrangement advisory for placement.
-- A4 (2026-08-19), a cursor-only change within one stage re-steps in place
-  (`signature = (structure, cursor)`) with parity, zero-realize, one-render, no-bar-churn and
-  pose-current-pick invariants; it refuses and falls back to a full realize otherwise.
-- A5 (2026-08-19), reaches the IR: `MeshView` gains per-field legend placement
-  `(anchor, font_scale)` read via `view.legend_placement(field)`; existence stays derived;
-  placements for legends no longer caused are dropped loudly on restore.
-- A6 (2026-08-20), reachability gates: G1 capability parity
-  (`test_session_capability_parity.py`), G2 the picker law (`test_inspector_picker_law.py`),
-  G3 real-gesture test deferred (`manual_legend_gesture.py`), G4 done.
+- A4 (2026-08-19), a cursor-only change in one stage re-steps in place (`signature =
+  (structure, cursor)`), with parity invariants; otherwise it falls back to a full realize.
+- A5 (2026-08-19), `MeshView` gains per-field legend placement `(anchor, font_scale)`;
+  existence stays derived; placements for legends no longer caused drop loudly on restore.
+- A6 (2026-08-20), reachability gates: G1 capability parity, G2 the picker law
+  (`test_inspector_picker_law.py`), G3 real-gesture test deferred, G4 done.
+- A7 (2026-10-11, Accepted), KEEP: the six stay behind the director until V4 (A2.5(1)'s
+  trigger moves there). Colour-mapped slots gain `clim`/`cmap` (`None` = default; validated at
+  assignment; conflicting explicit values on one field in a view raise); `overlay` draws scoped, activated
+  cells at scale 0; snapshot v2 reads v1; `path` leaves §6, a v1 `path` pane drops with a notice.
 
 Full text: [../0098-results-session-presentation.md](../0098-results-session-presentation.md).
 Precedence (AGENTS.md): the code wins over the ADR, and the ADR wins over this summary.
