@@ -138,7 +138,7 @@ class DeckRun:
     deck_as_given: str
     cwd: Path                      # the subprocess's working directory
     built: "BuiltModel"
-    element_plan: "tuple[tuple[Element, ElementPlanRows], ...]"
+    supports_partitions: bool      # the deck emitter's capability
     partitioned: bool
     digest: str | None             # None: the declarations would not digest
     finished: bool = False
@@ -164,22 +164,15 @@ def begin_deck_run(
     *, verb: str,
 ) -> DeckRun:
     """The record of a deck run that is about to start (not finished)."""
-    partitioned = bool(
-        is_partitioned(built.fem) and emitter.caps.supports_partitions)
-    # The plan the deck emit just read (memoised by ``bm.emit``): the
-    # element families on each node decide whether a rotational DOF slot
-    # is a rotation.
-    plan = built._tag_plan(emit_mode(
-        built, split=False,
-        supports_partitions=emitter.caps.supports_partitions))
+    caps = bool(emitter.caps.supports_partitions)
     return DeckRun(
         verb=verb,
         deck=_norm(path),
         deck_as_given=str(path),
         cwd=Path(os.getcwd()),
         built=built,
-        element_plan=tuple(plan.elements.specs),
-        partitioned=partitioned,
+        supports_partitions=caps,
+        partitioned=bool(is_partitioned(built.fem) and caps),
         digest=_digest(bridge),
     )
 
@@ -360,7 +353,7 @@ class _NodeRoles:
             built.fem, built.ndf_records, inferred, built.ndm)
         self.ndm = int(built.ndm)
         self.ndf = {int(k): int(v) for k, v in {**inferred, **overlay}.items()}
-        self._plan = run.element_plan
+        self._run = run
         self._rot: "tuple[set[int], dict[int, str]] | None" = None
 
     def node_ndf(self, tag: int, origin: str) -> int:
@@ -379,6 +372,18 @@ class _NodeRoles:
             )
         return ndf
 
+    def _element_plan(
+        self,
+    ) -> "tuple[tuple[Element, ElementPlanRows], ...]":
+        """The element plan the deck emit read: memoised by ``bm.emit``
+        for the run's emit mode (a text read reaches here only on an
+        unpartitioned run), so this mints nothing."""
+        built = self._run.built
+        plan = built._tag_plan(emit_mode(
+            built, split=False,
+            supports_partitions=self._run.supports_partitions))
+        return tuple(plan.elements.specs)
+
     def rotation_refusal(self, tag: int) -> str | None:
         """Why node ``tag``'s rotational DOF slots are not rotations, or
         ``None`` when a beam-column or shell establishes them (the rule
@@ -386,7 +391,7 @@ class _NodeRoles:
         if self._rot is None:
             rotational: set[int] = set()
             blocked: dict[int, str] = {}
-            for spec, sub in self._plan:
+            for spec, sub in self._element_plan():
                 if len(sub) == 0 or isinstance(spec, _TRANSLATIONAL_ONLY):
                     continue
                 conn = sub.conn
