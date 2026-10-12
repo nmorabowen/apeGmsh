@@ -4,7 +4,7 @@
 // fails to compile when an event is added without a case, and an event the
 // code does not know raises at run time.
 
-import { geometryPairing } from "./selectors.ts";
+import { geometryPairing, stageCount, stageIdentity } from "./selectors.ts";
 import { WINDOW_KINDS, type ArtifactInfo, type ArtifactKind, type DeclPath, type Event, type PhaseKey, type State } from "./types.ts";
 
 /** A record with no prototype: a key named `constructor` or `__proto__` is just a key. */
@@ -30,6 +30,7 @@ export const initialState: State = {
   view: { frameSeq: 0 },
   definitions: null,
   sequence: { status: "absent" },
+  stage: null,
 };
 
 const NO_SELECTION: State["selection"] = { decls: [], picks: [] };
@@ -107,6 +108,9 @@ export function reduce(s: State, e: Event): State {
       // phase leaves the axis. That is why a D1 re-run re-reads the model and
       // its geometry together and lands them in one `setLoaded`.
       const reread = prev !== null && prev.status === "ready" && prev.path === info.path;
+      // The stage selection survives a re-read only while its row still
+      // names the same stage; a new file, or a changed row, clears it.
+      const keep = reread && s.stage !== null && stageIdentity(s.sequence, s.stage) === stageIdentity(sequence, s.stage);
       return withPhase({
         ...s,
         phase: reread ? s.phase : { ...s.phase, at: null },
@@ -119,6 +123,7 @@ export function reduce(s: State, e: Event): State {
         provenanceOrigin,
         definitions,
         sequence,
+        stage: keep ? s.stage : null,
         selection: NO_SELECTION,
         hover: null,
         visibility: { ...s.visibility, hidden: [] },
@@ -168,6 +173,9 @@ export function reduce(s: State, e: Event): State {
     case "fileChanged": {
       const k = artifactAt(s, e.path);
       if (!k) return s;
+      // Only marks the file stale: the sequence shown is still the one read,
+      // so the stage selection stands until the re-read lands (fileLoaded
+      // keeps it only if that row still names the same stage).
       return { ...s, artifacts: { ...s.artifacts, [k]: { ...s.artifacts[k]!, stale: true } } };
     }
     case "zoneRefused": {
@@ -244,6 +252,14 @@ export function reduce(s: State, e: Event): State {
     case "frameSelection":
       if (!s.mesh) return s;
       return { ...s, view: { frameSeq: s.view.frameSeq + 1 } };
+    case "selectStage": {
+      if (e.index === null) return s.stage === null ? s : { ...s, stage: null };
+      const n = stageCount(s.sequence);
+      if (!Number.isInteger(e.index) || e.index < 0 || e.index >= n) {
+        throw new RangeError(`selectStage: ${JSON.stringify(e.index)} is not a /sequence/stages row (the loaded model has ${n})`);
+      }
+      return s.stage === e.index ? s : { ...s, stage: e.index };
+    }
     default: {
       const unknown: never = e;
       throw new Error(`reduce: unknown event ${JSON.stringify(unknown)}`);

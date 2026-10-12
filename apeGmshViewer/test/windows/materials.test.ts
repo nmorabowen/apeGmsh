@@ -18,6 +18,7 @@ import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import type { ModelFile } from "../../src/model/types.ts";
 import { materialsOf, view, type MaterialRow, type Val } from "../../src/panels/windows/materials.ts";
+import { markSelected, SELECTED_STYLE } from "../../src/panels/windows/frame.ts";
 import { WINDOWS } from "../../src/panels/windows/registry.ts";
 import { openModel } from "../../src/reader/node.ts";
 import { BlobStore } from "../../src/state/blobs.ts";
@@ -273,4 +274,22 @@ test("a link with no store target is drawn but dispatches nothing", () => {
   assert.equal(el.click(), false);
   assert.deepEqual(events, []);
   assert.match(el.title, /not a declaration the app lists/);
+});
+
+test("V4f: the frame highlights the row of the selected declaration (an unnamed #k one), and only that row", () => {
+  const { root, events } = render(state);
+  rowsOf(root).find((r) => r.dataset["decl"] === M)!.click();
+  const selected = reduce(state, events[0]!);
+  assert.deepEqual(selected.selection.decls, [M]);
+  // The frame redraws from the store and marks the rows the selection names.
+  const again = render(selected).root;
+  assert.equal(markSelected(again as unknown as HTMLElement, selected.selection.decls), 1);
+  const rows = rowsOf(again);
+  const hit = rows.filter((r) => r.className.split(" ").includes("selected"));
+  assert.deepEqual(hit.map((r) => r.dataset["decl"]), [M]);
+  assert.equal(hit[0]!.style["background"], SELECTED_STYLE.background);
+  assert.equal(hit[0]!.style["boxShadow"], SELECTED_STYLE.boxShadow);
+  assert.ok(rows.filter((r) => r !== hit[0]).every((r) => !r.className.includes("selected") && r.style["background"] === undefined));
+  // Nothing selected: nothing marked.
+  assert.equal(markSelected(render(state).root as unknown as HTMLElement, []), 0);
 });

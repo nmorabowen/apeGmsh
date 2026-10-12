@@ -11,10 +11,12 @@
 // readable stages; the window never rebuilds a sequence from `/opensees`.
 //
 // `stagesOf` is the pure read of the state (selectors only); `view` builds
-// the DOM from it. The store has no stage selection and no stage on the
-// phase axis, so a stage card is not clickable: the only store action is
-// `requestSource` (go-to-source) on a change whose declaration has a
-// recorded source. Tags are evidence, names are handles (D2c).
+// the DOM from it. A click on a stage card selects that stage (`selectStage`,
+// V4f; a click on the selected card clears it), and the card the store names
+// in `State.stage` is highlighted; the stage is not a phase, so the viewport
+// does not change. A click on a change whose declaration has a recorded
+// source asks for go-to-source (`requestSource`) and does not select the
+// stage. Tags are evidence, names are handles (D2c).
 
 import { declOfTag, sourceFor } from "../../state/selectors.ts";
 import type { Event, State } from "../../state/store.ts";
@@ -61,6 +63,10 @@ function unknownOf(op: string, what: string): string | null {
 }
 
 export interface StageCard {
+  /** the row index in `/sequence/stages`: what `selectStage` and `State.stage` name */
+  index: number;
+  /** this is the store's selected stage */
+  selected: boolean;
   order: number;
   /** `gravity`, `stage 2` for an unnamed stage, `implicit stage` for an unstaged deck */
   title: string;
@@ -217,13 +223,15 @@ export function stagesOf(s: State): StagesModel {
   const isStaged = (r: unknown[]): boolean => str(cc.get(r, "source")).startsWith("/opensees/stages/");
   const global = groupsOf(seq.changes.rows.filter((r) => !isStaged(r)));
 
-  const stages = seq.stages.rows.map((r): StageCard => {
+  const stages = seq.stages.rows.map((r, index): StageCard => {
     const order = num(sc.get(r, "order"));
     const name = str(sc.get(r, "name"));
     const analysis = str(sc.get(r, "analysis"));
     const token = (k: "integrator" | "algorithm" | "test"): string => str(sc.get(r, k)) || `no ${k}`;
     const setTime = num(sc.get(r, "set_time"));
     return {
+      index,
+      selected: s.stage === index,
       order,
       title: name || (staged ? `stage ${order}` : "implicit stage"),
       analysis: analysis || "no analysis",
@@ -291,12 +299,18 @@ function changesEl(groups: readonly ChangeGroup[], act: (e: Event) => void, none
   return box;
 }
 
-const CARD = "flex: 0 0 186px; padding: 6px 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--faint);";
+const CARD = "flex: 0 0 186px; padding: 6px 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--faint); cursor: pointer;";
+/** The selected card: the office accent, as a selected row is drawn (frame.ts SELECTED_STYLE). */
+const CARD_SELECTED =
+  "flex: 0 0 186px; padding: 6px 8px; border: 1px solid var(--accent); border-radius: 8px; background: var(--accent-wash); box-shadow: inset 3px 0 0 var(--accent); cursor: pointer;";
 
 function stageEl(st: StageCard, act: (e: Event) => void): HTMLElement {
-  const card = el("div", "stage-card");
+  const card = el("div", st.selected ? "stage-card selected" : "stage-card");
   card.dataset["h5"] = st.h5;
-  card.setAttribute("style", CARD);
+  card.dataset["stage"] = String(st.index);
+  card.setAttribute("style", st.selected ? CARD_SELECTED : CARD);
+  card.title = st.selected ? `${st.title}: selected (click to clear)` : `select ${st.title}`;
+  card.addEventListener("click", () => act({ type: "selectStage", index: st.selected ? null : st.index }));
   const head = el("div", "window-row-head");
   head.append(el("span", "window-row-decl", String(st.order)), el("span", "window-row-title", st.title));
   card.append(head);

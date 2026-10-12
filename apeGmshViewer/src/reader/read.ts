@@ -62,21 +62,28 @@ export interface H5File extends H5Group {
 
 /** The schema versions this reader was written against (ADR 0023). */
 export const NEUTRAL_TARGET = { major: 2, minor: 35 } as const;
-/** opensees 2.26.0: `/opensees/decls` (2.25) and `/opensees/decl_params` (2.26, K1-7). */
-export const OPENSEES_TARGET = { major: 2, minor: 26 } as const;
+/**
+ * opensees 2.27.0: `/opensees/decls` (2.25), `/opensees/decl_params` (2.26,
+ * K1-7), and 2.27's additions (K1-8, h5-schema.md "Parameter tags (opensees
+ * 2.27.0)"), none of which this app needs to read:
+ * - `@param_tags` on an initial stress and a `param_tags` dataset under an
+ *   absorbing flip: the build's `parameter` tags, stored so a deck replay
+ *   mints none. Replay data: no window shows a parameter tag, and the stage
+ *   children that carry them (`initial_stress`, `activate_absorbing`) are
+ *   listed by name, not interpreted (`STAGE_OTHER`).
+ * - two new optional stage children, `update_parameter/update_NNN` and
+ *   `zero_velocities/zero_NNN` (`s.update_parameter`, `s.zero_velocities`):
+ *   listed by name in `STAGE_OTHER` like the other uninterpreted stage
+ *   records, so a 2.27 file that has them opens with no warning. `/sequence`
+ *   does not record either verb (archive gap #1646), which the stage diagram
+ *   already says on every file (`NOT_RECORDED`).
+ */
+export const OPENSEES_TARGET = { major: 2, minor: 27 } as const;
 /** The ADR 0112 zones (V2a specs): read by geometry.ts and provenance.ts. */
 export const GEOMETRY_TARGET = { major: 1, minor: 0 } as const;
 export const PROVENANCE_TARGET = { major: 1, minor: 1 } as const;
-/**
- * The root `/sequence` zone (ADR 0112 D2(b), V0 decision 8: "1.0.0"), read
- * here when a file carries it. Its floor is `SEQUENCE_FLOOR`, not a
- * `ZONE_FLOOR` row, until V3a ships Python's writer and its floor constant:
- * tests/test_app_floor_drift.py compares every `ZONE_FLOOR` row with
- * Python's `reader_floor(zone)`, which has no sequence zone yet.
- * TODO(V3a): move `sequence: 0` into ZONE_FLOOR when Python's floor lands.
- */
+/** The root `/sequence` zone (ADR 0112 D2(b), V0 decision 8: "1.0.0"), read here when a file carries it. */
 export const SEQUENCE_TARGET = { major: 1, minor: 0 } as const;
-export const SEQUENCE_FLOOR = 0;
 /**
  * The lowest minor of each zone this reader opens, under the zone's target
  * major (ADR 0113 D1/D7: one floor table, the only place the version check
@@ -84,10 +91,12 @@ export const SEQUENCE_FLOOR = 0;
  * split (physical groups and labels side-partitioned); opensees 2.12 is the
  * first era whose files open (2.11 is the 0-based rank flip, but every 2.11
  * writer stamped a neutral zone below the neutral floor, so no 2.11 file
- * opens); the ADR 0112 zones start at their first version.
+ * opens); the ADR 0112 zones (geometry, provenance, sequence) start at their
+ * first version. tests/test_app_floor_drift.py compares every row with
+ * Python's `reader_floor(zone)`.
  * TODO(V4): results 1.0 joins this table with the app's results reader.
  */
-export const ZONE_FLOOR = { neutral: 10, opensees: 12, geometry: 0, provenance: 0 } as const;
+export const ZONE_FLOOR = { neutral: 10, opensees: 12, geometry: 0, provenance: 0, sequence: 0 } as const;
 
 /**
  * ADR 0113 D7, the app's rule for one zone's `/meta/<key>` stamp:
@@ -618,7 +627,7 @@ class Reader {
     const key = "sequence_schema_version";
     let version: string;
     try {
-      version = checkZoneVersion(raw, key, SEQUENCE_TARGET, SEQUENCE_FLOOR, this.warnings);
+      version = checkZoneVersion(raw, key, SEQUENCE_TARGET, ZONE_FLOOR.sequence, this.warnings);
     } catch (e) {
       const m = typeof raw === "string" ? /^(\d+)\.(\d+)\.(\d+)$/.exec(raw) : null;
       if (!m || !(e instanceof SchemaError)) throw e;
@@ -626,7 +635,7 @@ class Reader {
       return {
         status: "refused",
         version: raw as string,
-        accepted: `${t.major}.${SEQUENCE_FLOOR} and any later ${t.major}.x`,
+        accepted: `${t.major}.${ZONE_FLOOR.sequence} and any later ${t.major}.x`,
         newer: Number(m[1]) > t.major,
         reason: e.message.slice(e.message.indexOf(": ") + 2),
       };
@@ -742,7 +751,7 @@ class Reader {
 
 /**
  * The children of a `stage_NNN` group the reader lists by name and does not
- * interpret (h5-schema.md, opensees 2.18.0 and 2.21.0); the stage windows
+ * interpret (h5-schema.md, opensees 2.18.0, 2.21.0 and 2.27.0); the stage windows
  * that need them read them. Any other child is a loud warning.
  */
 const STAGE_OTHER = new Set([
@@ -758,6 +767,9 @@ const STAGE_OTHER = new Set([
   "initial_stress",
   "activate_absorbing",
   "update_material_stage",
+  // opensees 2.27.0 (OPENSEES_TARGET says why the app does not read them)
+  "update_parameter",
+  "zero_velocities",
 ]);
 
 /** The tags a `decl_params` JSON object may carry (h5-schema.md, 2.26.0). */

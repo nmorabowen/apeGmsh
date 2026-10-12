@@ -305,6 +305,14 @@ export interface State {
   definitions: Definitions | null;
   /** the model's root /sequence zone; `absent` when the file has none (or no model is loaded) */
   sequence: SequenceZone;
+  /**
+   * The selected stage: a row index into `/sequence/stages` (0-based, file
+   * order), or null. A selection of its own, not a phase: the phase axis is
+   * what the viewport draws (D7), and a stage is not drawable yet. A re-read
+   * of the same file keeps it only while that row still names the same stage
+   * (selectors.stageIdentity); any other load clears it.
+   */
+  stage: number | null;
 }
 
 /** The payload of `fileLoaded` for the model artifact: what the loader derived from the file. */
@@ -335,7 +343,8 @@ export interface GeometryLoad {
  * V2f's go-to-source pair: `requestSource` (a panel asks; the effects act)
  * and `sourceResult` (the effects answer), and `setLoaded`: the model and its
  * geometry sibling re-read together after a D1 re-run, applied as one step so
- * no state pairs a new file with an old one.
+ * no state pairs a new file with an old one; and V4f's `selectStage` (a
+ * stage card click).
  */
 export type Event =
   | { type: "fileOpened"; artifact: ArtifactKind; path: string }
@@ -365,6 +374,8 @@ export type Event =
   | { type: "requestSource"; decl: DeclPath }
   | { type: "sourceResult"; decl: DeclPath; ok: boolean; reason: string | null }
   /** frame the selection, or the whole model when nothing is selected (`F`, or any panel); the frame effect moves the camera */
-  | { type: "frameSelection" };
+  | { type: "frameSelection" }
+  /** select a `/sequence/stages` row by index (a stage card click), or clear the stage selection with null */
+  | { type: "selectStage"; index: number | null };
 
 export type EventType = Event["type"];
