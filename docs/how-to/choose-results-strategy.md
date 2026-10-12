@@ -26,7 +26,7 @@ On this page `ops` is always the bridge and `opspy` is the openseespy module
 
 |  | **Read: native capture** → `from_native` | **Read: classic recorders** → `from_recorders` | **Read: MPCO** → `from_mpco` |
 |---|---|---|---|
-| **Run: in-process** | `ops.domain_capture(capture_spec, path=...)`. The default: every category from nodes to fibers and layers, plus mode shapes via `cap.capture_modes(n)`. | `recorder_spec.emit_recorders("out")`. Nodes, element forces, gauss points and line stations; fiber and layer records are skipped and modal ones raise. | `ops.recorder.MPCO(...)` before `ops.run()`, or `recorder_spec.emit_mpco(...)`. Fibers, layers and modes, on a build that has the MPCO recorder. |
+| **Run: in-process** | `ops.domain_capture(capture_spec, path=...)`. The default: every category from nodes to fibers and layers, plus mode shapes via `cap.capture_modes(n)`. | `recorder_spec.emit_recorders("out", model=model)`. Nodes, element forces, gauss points and line stations; fiber and layer records are skipped and modal ones raise. | `ops.recorder.MPCO(...)` before `ops.run()`, or `recorder_spec.emit_mpco(...)`. Fibers, layers and modes, on a build that has the MPCO recorder. |
 | **Run: export** | *(none: capture needs a live domain in your Python session)* | `recorder_spec.to_tcl_commands(...)` in a driver around `ops.tcl(...)`. Reproducible, check-in-able, cluster-friendly. | `ops.recorder.MPCO(...)` before `ops.tcl(...)`. One `recorder mpco` line in the deck; run it under an OpenSees that has the recorder. |
 
 `capture_spec` is a `DomainCaptureSpec`, which names what to record by
@@ -138,8 +138,9 @@ recorder_spec = ResolvedRecorderSpec(
 
 ops = build_bridge()
 ops.h5("model.h5")                  # the model archive the read needs
+model = OpenSeesModel.from_h5("model.h5")
 ops.run()
-with recorder_spec.emit_recorders("out") as live:
+with recorder_spec.emit_recorders("out", model=model) as live:
     live.begin_stage("load", kind="static")
     for _ in range(10):
         opspy.analyze(1)
@@ -147,11 +148,16 @@ with recorder_spec.emit_recorders("out") as live:
 opspy.wipe()
 
 results = Results.from_recorders(recorder_spec, "out", fem=fem, stage_id="load",
-                                 model=OpenSeesModel.from_h5("model.h5"))
+                                 model=model)
 ```
 
 Each stage's files are prefixed `<stage>__`, which is why the read names
-`stage_id=`.
+`stage_id=`. The spec names elements by FEM id, but OpenSees records them
+by element tag, and the bridge numbers elements sequentially by default,
+so the two differ. `model=` carries the pairing the model was built with,
+and every element recorder is emitted under the right tags. A spec with an
+element record refuses to emit without it; a node-only spec does not need
+it, because nodes keep their FEM ids.
 
 ### In-process, MPCO
 
@@ -186,11 +192,12 @@ from pathlib import Path
 
 ops = build_bridge()
 ops.h5("model.h5")
+model = OpenSeesModel.from_h5("model.h5")
 ops.tcl("model.tcl")
 Path("run.tcl").write_text("\n".join([
     "source model.tcl",
     "file mkdir out",
-    *recorder_spec.to_tcl_commands(output_dir="out"),
+    *recorder_spec.to_tcl_commands(output_dir="out", model=model),
     "analyze 10",
     "wipe",
 ]) + "\n")
@@ -201,12 +208,12 @@ and read it. A deck's files carry no stage prefix, so the read takes no
 `stage_id=`:
 
 ```python
-results = Results.from_recorders(recorder_spec, "out", fem=fem,
-                                 model=OpenSeesModel.from_h5("model.h5"))
+results = Results.from_recorders(recorder_spec, "out", fem=fem, model=model)
 ```
 
-For an openseespy deck, `recorder_spec.to_python_commands(output_dir="out")`
-returns the same recorders as `ops.recorder(...)` lines.
+For an openseespy deck,
+`recorder_spec.to_python_commands(output_dir="out", model=model)` returns
+the same recorders as `ops.recorder(...)` lines.
 
 ### Export, MPCO
 

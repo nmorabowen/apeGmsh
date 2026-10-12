@@ -374,9 +374,13 @@ class Results:
         ``stage_id`` if not overridden. ``None`` (default) keeps the
         legacy flat-naming used by Tcl/Py exports.
 
-        Phase 6 v1 supports nodal records only; element-level records
-        in the spec are skipped with a note. The capture flow
-        (Phase 7) handles modal recorders.
+        Nodes, element forces, gauss points and line stations are
+        transcoded; fiber and layer records are skipped (``.out`` cannot
+        carry them; use MPCO) and modal records are not emitted. Rows
+        are labelled with the spec's FEM ids, so the files must come from
+        an emit that translated them to OpenSees tags
+        (``spec.emit_recorders(..., model=)`` or
+        ``spec.to_tcl_commands(model=)``).
         """
         if model is None:
             raise TypeError(_MODEL_REQUIRED_MESSAGE)

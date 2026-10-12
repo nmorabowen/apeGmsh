@@ -202,7 +202,7 @@ spec = ResolvedRecorderSpec(
     ),),
 )
 
-with spec.emit_recorders("out/") as live:
+with spec.emit_recorders("out/", model=model) as live:
     live.begin_stage("gravity", kind="static")
     for _ in range(n_grav):
         ops.analyze(1, 1.0)
@@ -213,8 +213,8 @@ with spec.emit_recorders("out/") as live:
         ops.analyze(1, dt)
     live.end_stage()
 
-grav = Results.from_recorders(spec, "out/", fem=fem, stage_id="gravity")
-dyn  = Results.from_recorders(spec, "out/", fem=fem, stage_id="dynamic")
+grav = Results.from_recorders(spec, "out/", fem=fem, model=model, stage_id="gravity")
+dyn  = Results.from_recorders(spec, "out/", fem=fem, model=model, stage_id="dynamic")
 ```
 
 Same recorder commands as A₁/A₂, but pushed **directly into the
