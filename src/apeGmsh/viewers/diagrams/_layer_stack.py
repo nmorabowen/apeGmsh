@@ -17,8 +17,9 @@ emitted as a substrate-submesh :class:`MeshLayer` carrying a per-cell
 :class:`ScalarField` through the backend; the diagram holds no VTK
 objects. The submesh is still extracted via the handed scene grid
 (``scene.grid.extract_cells`` — a method call, no pyvista import) and
-re-expressed as neutral IR via ``cellblocks_from_grid``; the matplotlib
-through-thickness panel stays OUT of the IR (own ``make_side_panel``).
+re-expressed as neutral IR via ``cellblocks_from_grid``. The Qt
+through-thickness panel went with the legacy ``ResultsViewer`` (X3-d,
+#1734); the diagram inherits the base ``make_side_panel`` (``None``).
 
 Performance: aggregation is done in numpy via grouped reduction. At
 attach we precompute per-cell row indices into the layer slab and the
@@ -358,20 +359,7 @@ class LayerStackDiagram(ScalarColorSupport, Diagram):
         super().detach()
 
     # ------------------------------------------------------------------
-    # Side panel
-    # ------------------------------------------------------------------
-
-    def make_side_panel(self, director: Any) -> Any:
-        if not self.is_attached:
-            return None
-        try:
-            from ..ui._thickness_panel import LayerThicknessPanel
-        except ImportError:
-            return None
-        return LayerThicknessPanel(self, director)
-
-    # ------------------------------------------------------------------
-    # Side-panel helpers
+    # Through-thickness data helpers
     # ------------------------------------------------------------------
 
     def available_gps(self) -> list[tuple[int, int]]:

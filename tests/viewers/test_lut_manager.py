@@ -60,16 +60,6 @@ def test_diverging_presets_resolve_in_matplotlib():
         assert name in matplotlib.colormaps, name
 
 
-def test_preset_lists_are_in_sync():
-    # The combo lists are hand-copied duplicates of PRESETS; a partial
-    # edit yields a combo entry that silently renders as viridis.
-    from apeGmsh.viewers.ui._color_map_editor import _COMBO_PRESETS
-    from apeGmsh.viewers.ui._diagram_settings_tab import _CMAP_PRESETS
-
-    assert tuple(_COMBO_PRESETS) == PRESETS
-    assert tuple(_CMAP_PRESETS) == PRESETS
-
-
 def test_is_preset_recognises_known_names():
     assert is_preset("viridis")
     assert is_preset("jet")

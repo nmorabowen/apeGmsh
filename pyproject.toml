@@ -189,8 +189,8 @@ pythonpath = ["src"]
 # test FILE in the same process) hits a native access violation in
 # interactor init (VTK/Qt state pollution). Every qt test passes when
 # its file runs in a fresh process — run them per-file:
-#   pytest -m qt tests/viewers/test_results_viewer_smoke.py
-#   pytest -m qt tests/viewers/test_stage_activation.py
+#   pytest -m qt tests/viewers/test_session_window.py
+#   pytest -m qt tests/viewers/test_pane_host_window_qt.py
 # A CLI ``-m`` overrides this default (last -m wins) — so any CI lane
 # passing its own marker expression must repeat ``and not qt``, or it
 # silently runs the real-window tests. It does NOT save you that these

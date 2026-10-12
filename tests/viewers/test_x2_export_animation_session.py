@@ -72,15 +72,14 @@ def _stub_imageio(
 
 @pytest.fixture
 def no_legacy(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Constructing the old window, its director, or calling the old
-    loop fails the test."""
-    from apeGmsh.viewers import animation, results_viewer
+    """Constructing the old director, or calling the old loop, fails the
+    test. (The old window itself was deleted at X3-d, #1734.)"""
+    from apeGmsh.viewers import animation
     from apeGmsh.viewers.diagrams import _director
 
     def _boom(*_a: Any, **_k: Any) -> None:
         raise AssertionError("the legacy viewer / director path was reached")
 
-    monkeypatch.setattr(results_viewer.ResultsViewer, "__init__", _boom)
     monkeypatch.setattr(_director.ResultsDirector, "__init__", _boom)
     monkeypatch.setattr(animation, "export_animation", _boom)
 

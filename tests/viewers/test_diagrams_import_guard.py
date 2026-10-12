@@ -1,23 +1,23 @@
 """ADR 0098 S6b — who may still import ``apeGmsh.viewers.diagrams``.
 
-S6 is **de-publication, not deletion**. The old Geometry / Composition /
-Diagram ontology is no longer a public surface, but three hatches keep
+S6 was **de-publication, not deletion**. The old Geometry / Composition /
+Diagram ontology is no longer a public surface, but two hatches keep
 importing it privately and are expected to:
 
 * ``viewers/render.py`` — its closed view tokens;
 * ``viewers/web_viewer.py`` — ``show_web`` holds the live
   ``ResultsDirector``, which is what ADR 0098 Amendment 2 rests the six
-  slotless kinds on (see ``test_diagram_hatch_survival.py``);
-* ``viewers/results_viewer.py`` — the retired window, deleted by X3
-  (``Results.export_animation`` and ``studio/_verbs.py``'s INV-11 hatch
-  stopped constructing it in X2-b, #1663, and ``_verbs`` was pruned).
+  slotless kinds on (see ``test_diagram_hatch_survival.py``).
 
-**Be honest about what this guard proves.** The allowlist is 26 modules
-and eleven of them are alive *only* because the headless export reuses
-the full Qt window (``_realize_headless`` hides the docks rather than
-skipping their construction). So this is **not** "the surface is small".
-It is a **ratchet**: a new importer must be argued for, and an entry
-that stops importing must be pruned. Same two-way discipline as
+The third, ``viewers/results_viewer.py`` (the retired window), was
+deleted at X3-d (#1734) with its three side panels and the private
+modules only it reached, and their entries were pruned here.
+
+**Be honest about what this guard proves.** It is **not** "the surface
+is small": the public-named modules once reached only through the
+deleted window (the last block, plus ``core.opacity_controller``) stay
+until X3-e removes them. It is a **ratchet**: a new importer must be
+argued for, and an entry that stops importing must be pruned. Same two-way discipline as
 ``test_skill_docs_drift``'s signature registry — a registry that can
 only grow rots.
 
@@ -40,10 +40,9 @@ PKG = "apeGmsh.viewers.diagrams"
 #: Modules allowed to import the retired ontology. Ratcheted BOTH ways.
 #: Grouped by why they are here, because "why" is the thing that rots.
 _ALLOWED: frozenset[str] = frozenset({
-    # -- the three hatches -------------------------------------------
+    # -- the two hatches ---------------------------------------------
     "apeGmsh.viewers.render",
     "apeGmsh.viewers.web_viewer",
-    "apeGmsh.viewers.results_viewer",
     # -- the NEW session window (reuses per-kind emit code in place) --
     "apeGmsh.viewers.session._realize",
     "apeGmsh.viewers.session._specs",
@@ -57,25 +56,11 @@ _ALLOWED: frozenset[str] = frozenset({
     "apeGmsh.viewers.core.element_visibility",  # transitive (director)
     "apeGmsh.viewers.core._clip_planes",        # transitive (registry)
     "apeGmsh.viewers.core.opacity_controller",  # transitive, fragile
-    # -- alive ONLY because the headless export reuses the fat window;
-    #    slimming export_animation kills this whole block at once -----
+    # -- public-named modules once reachable only through the deleted
+    #    ResultsViewer; their removal is X3-e, which prunes this block --
     "apeGmsh.viewers.animation",
     "apeGmsh.viewers.overlays.local_axes_overlay",
     "apeGmsh.viewers.overlays.probe_overlay",
-    "apeGmsh.viewers.ui._diagram_settings_tab",
-    "apeGmsh.viewers.ui._geometry_settings_panel",
-    "apeGmsh.viewers.ui._outline_tree",
-    "apeGmsh.viewers.ui._pick_readout_hud",
-    "apeGmsh.viewers.ui._time_scrubber",
-    "apeGmsh.viewers.ui._isochrone_panel",     # via make_side_panel only
-    "apeGmsh.viewers.ui._section_panel",       # via make_side_panel only
-    "apeGmsh.viewers.ui._thickness_panel",     # via make_side_panel only
-    # -- DEAD, deletion deferred out of S6b --------------------------
-    #    Reachable from nothing; removing them needs surgery inside the
-    #    hatch-live results_viewer.py, which buys no behaviour. Delete
-    #    with the export_animation slimming, and prune these two lines.
-    "apeGmsh.viewers._session_apply",
-    "apeGmsh.viewers.ui._time_history",
 })
 
 #: NOT allowlisted on purpose — ``apeGmsh.results.session.*`` is

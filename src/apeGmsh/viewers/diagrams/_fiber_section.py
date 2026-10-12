@@ -17,8 +17,9 @@ a vertex-cell point-cloud :class:`MeshLayer` through the backend
 (flat GL points via ``point_size``; sphere billboards draw nothing on
 some GL stacks — see ``_build_layer``;
 ``pickable=False`` so clicks pass through to the substrate). The diagram
-holds no VTK objects. The matplotlib side panel stays OUT of the IR —
-it remains a diagram-owned ``make_side_panel`` hook.
+holds no VTK objects. The Qt side panel that drew the section scatter
+went with the legacy ``ResultsViewer`` (X3-d, #1734); the diagram
+inherits the base ``make_side_panel`` (``None``).
 
 Performance contract: endpoints, local frames, and per-fiber world
 positions are computed **once at attach**. Per-step update is one h5py
@@ -460,20 +461,7 @@ class FiberSectionDiagram(ScalarColorSupport, Diagram):
         super().detach()
 
     # ------------------------------------------------------------------
-    # Side panel
-    # ------------------------------------------------------------------
-
-    def make_side_panel(self, director: Any) -> Any:
-        if not self.is_attached:
-            return None
-        try:
-            from ..ui._section_panel import FiberSectionPanel
-        except ImportError:
-            return None
-        return FiberSectionPanel(self, director)
-
-    # ------------------------------------------------------------------
-    # Side-panel helpers
+    # Section data helpers
     # ------------------------------------------------------------------
 
     def available_gps(self) -> list[tuple[int, int]]:

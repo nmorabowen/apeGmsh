@@ -2,7 +2,7 @@
 name: apegmsh-viewers-change
 description: >
   Checklist for CHANGING apeGmsh's viewer code: src/apeGmsh/viewers/ (results
-  session/panes/slots, ResultsViewer, mesh/model viewers, web/trame viewer,
+  session/panes/slots, mesh/model viewers, web/trame viewer,
   backends/, diagrams/, scene/, session/, overlays/, ui/), tests/viewers/ and
   viewer_bench/. Use before touching dispatcher/pumps/reconciler, a diagram kind,
   a dock/pane/window, key bindings, a VTK/pyvista call, or a viewer test. Every
@@ -57,8 +57,8 @@ Read this before changing anything under `src/apeGmsh/viewers/`, `tests/viewers/
 
 ## Qt / VTK lifecycle
 
-- [ ] Create the QApplication before any QWidget. This bit twice (b6af330a, then #246); see
-      `test_results_viewer_qapplication.py` › "must ensure a QApplication".
+- [ ] Create the QApplication before any QWidget. This bit twice (b6af330a, then #246); its
+      test went with the legacy `ResultsViewer` (X3-d, #1734), so read commit b6af330a.
 - [ ] **[guard]** Every `QApplication(...)` call is preceded, in the same function, by
       `prepare_qt_environment()`. G-QAPP-ENV in `test_viewer_recurrence_guards.py`: #743 guarded
       three sites and #782 found the fourth.
@@ -91,7 +91,8 @@ Read this before changing anything under `src/apeGmsh/viewers/`, `tests/viewers/
       `and not qt`; see `.github/workflows/tests.yml` › "`not qt` must be repeated".
 - [ ] Test the widget a person uses, not only the session IR (bb0f3388, "gates for the class
       of defect the bench keeps finding"): `test_inspector_picker_law.py` asserts on the Add
-      button, and `test_session_capability_parity.py` must list any dropped capability.
+      button. A dropped capability is a row in the #1199 parity tables (the parsing guard
+      `test_session_capability_parity.py` retired with the legacy viewer, X3-d #1734).
 - [ ] Added a new open or load door? Add it to `DOORS`; see
       `test_every_door_opens.py` › "A new door must be".
 - [ ] Break each new test once: revert the fix and watch it fail. 03666479 is
