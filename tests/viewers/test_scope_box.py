@@ -59,12 +59,6 @@ from apeGmsh.viewers.core.threshold_controller import (
 from apeGmsh.viewers.diagrams._geometries import GeometryManager
 from apeGmsh.viewers.scene_ir import BBox
 
-# The qt-lane fixture, imported rather than re-typed: the meshed cube +
-# NativeWriter stage the threshold suite already builds is exactly the
-# shape the two real-window tests at the bottom need, and a second copy
-# of a 30-line HDF5 writer would be a second thing to keep honest.
-from tests.viewers.test_threshold import cube_results  # noqa: F401
-
 
 # =====================================================================
 # Meshes and fakes

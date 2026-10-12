@@ -1,9 +1,8 @@
 from .model_viewer import ModelViewer
 from .mesh_viewer import MeshViewer
 
-# The legacy Qt ``ResultsViewer`` was de-published at ADR 0098 S6a and
-# deleted at X3-d (#1734). ``results.viewer()`` opens a ``ResultsSession``
-# window (``apeGmsh.viewers.session``); ``show_web`` runs on the
+# Results open in a ``ResultsSession`` window (``results.viewer()``,
+# ``apeGmsh.viewers.session``); ``show_web`` runs on the
 # ``ResultsDirector`` and ``Results.export_animation`` on the session.
 
 
