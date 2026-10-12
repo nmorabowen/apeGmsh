@@ -65,12 +65,13 @@ from ._internal.build.ndf import (
 from ._internal.build.ownership import is_partitioned
 from ._internal.build.pg_expand import expand_pg_to_nodes
 from ._internal.build.recorders import (
+    _node_record_layout,
     _recorder_file_path,
     _resolve_node_targets,
 )
 from ._internal.tag_plan import emit_mode
 from ._internal.types import Element, Recorder
-from ._readback import ReadSession, _ROTATIONAL_FAMILIES, _TRANSLATIONAL_ONLY
+from ._readback import ReadSession, RotationRoles, rotation_roles
 from ._recorder_translate import (
     group_node_components_by_ops_token,
     node_component_to_ops,
@@ -120,6 +121,11 @@ _TYPED_RESPONSES: dict[str, tuple[str, str | None]] = {
 _LAID_OUT_NDF: frozenset[int] = frozenset({1, 2, 3, 6})
 
 _AXES = "xyz"
+
+#: The reader's file convention (``results.spec._emit.emit_logical``): DOFs
+#: 1-6 are ``(x, y, z, rx, ry, rz)`` whatever the model's ``(ndm, ndf)``.
+#: The transcription writes each deck column at its component's slot here.
+_READER_LAYOUT: tuple[int, ...] = _load_dof_layout(6, 3)
 
 #: Canonical node-component prefix of ``recorder.declare`` -> whether it
 #: names a rotational slot. Anything else (``pore_pressure``) is refused.
@@ -399,17 +405,24 @@ class _NodeRoles:
             built.fem, built.ndf_records, inferred, built.ndm)
         self.ndm = int(built.ndm)
         self.ndf = {int(k): int(v) for k, v in {**inferred, **overlay}.items()}
+        self.envelope = int(built.ndf)
+        self._fem_nodes = frozenset(int(n) for n in built.fem.nodes.ids)
         self._run = run
-        self._rot: "tuple[set[int], dict[int, str]] | None" = None
+        self._rot: "RotationRoles | None" = None
 
     def node_ndf(self, tag: int, origin: str) -> int:
-        if tag not in self.ndf:
+        """The ndf the deck gave node ``tag``: inferred, ``ops.ndf``, or
+        (a node only adaptive elements touch, or none) the ``ops.model``
+        envelope the emit writes it at."""
+        if tag in self.ndf:
+            ndf = self.ndf[tag]
+        elif tag in self._fem_nodes:
+            ndf = self.envelope
+        else:
             raise BridgeError(
-                f"{_WHERE}: {origin} records node {tag}, which no element "
-                "and no ops.ndf gives a DOF count, so its columns have no "
-                "established meaning."
+                f"{_WHERE}: {origin} records node {tag}, which is not a node "
+                "of the model the deck ran."
             )
-        ndf = self.ndf[tag]
         if ndf not in _LAID_OUT_NDF:
             raise BridgeError(
                 f"{_WHERE}: {origin} records node {tag} with ndf={ndf}; the "
@@ -432,31 +445,11 @@ class _NodeRoles:
 
     def rotation_refusal(self, tag: int) -> str | None:
         """Why node ``tag``'s rotational DOF slots are not rotations, or
-        ``None`` when a beam-column or shell establishes them (the rule
-        of :meth:`ReadSession.rotation_refusal`)."""
+        ``None`` (:meth:`RotationRoles.refusal`: the table ``.read`` and
+        the ``recorder.declare`` emit use)."""
         if self._rot is None:
-            rotational: set[int] = set()
-            blocked: dict[int, str] = {}
-            for spec, sub in self._element_plan():
-                if len(sub) == 0 or isinstance(spec, _TRANSLATIONAL_ONLY):
-                    continue
-                conn = sub.conn
-                if conn.ndim == 2:
-                    nodes = {int(n) for n in np.unique(conn)}
-                else:
-                    nodes = {int(n) for row in conn for n in row}
-                if isinstance(spec, _ROTATIONAL_FAMILIES):
-                    rotational |= nodes
-                else:
-                    for n in nodes:
-                        blocked.setdefault(n, type(spec).__name__)
-            self._rot = (rotational, blocked)
-        rotational, blocked = self._rot
-        if tag in blocked:
-            return f"a {blocked[tag]} touches it"
-        if tag not in rotational:
-            return "no beam-column or shell element touches it"
-        return None
+            self._rot = rotation_roles(self._element_plan())
+        return self._rot.refusal(int(tag))
 
     def component(
         self, tag: int, dof: int, prefixes: tuple[str, str | None],
@@ -477,8 +470,8 @@ class _NodeRoles:
         if rot is None or why is not None:
             reason = (
                 f"{trans!r} has no rotational component" if rot is None
-                else f"DOF {dof} is a rotation only on a beam-column or "
-                f"shell node, and {why}"
+                else f"DOF {dof} is a rotation only where the node's "
+                f"elements establish one, and {why}"
             )
             raise BridgeError(
                 f"{_WHERE}: {origin} records DOF {dof} of node {tag} "
@@ -548,45 +541,33 @@ def _declared_sources(
                 f"{_WHERE}: {origin} nodes= record selects no node, so the "
                 "deck emitted no recorder for it."
             )
-        grouped = group_node_components_by_ops_token(record.components)
+        for n in nodes:
+            roles.node_ndf(n, origin)
+        for comp in record.components:
+            prefix, _, axis = comp.rpartition("_")
+            if prefix not in _DECLARED_PREFIXES or axis not in _AXES:
+                raise BridgeError(
+                    f"{_WHERE}: {origin} records {comp!r}, which the "
+                    "node DOF layout does not name. "
+                    f"{_ALTERNATIVES}."
+                )
+        # The deck's own DOF mapping, re-derived by the emit's function
+        # over this run's per-node ndf (inferred plus ops.ndf): it raises,
+        # naming the node, wherever a column is not that component.
+        try:
+            layout = _node_record_layout(
+                record, decl, nodes, roles._element_plan(),
+                node_ndf=roles.ndf)
+        except BridgeError as e:
+            raise BridgeError(f"{_WHERE}: {e} {_ALTERNATIVES}.") from e
+        grouped = group_node_components_by_ops_token(
+            record.components, layout)
         for token, dofs in grouped.items():
-            columns: list[str] = []
-            for dof in dofs:
-                named = [c for c in record.components
-                         if node_component_to_ops(c) == (token, dof)]
-                comp = named[0]
-                prefix, _, axis = comp.rpartition("_")
-                if prefix not in _DECLARED_PREFIXES or axis not in _AXES:
-                    raise BridgeError(
-                        f"{_WHERE}: {origin} records {comp!r}, which the "
-                        "node DOF layout does not name. "
-                        f"{_ALTERNATIVES}."
-                    )
-                rot = _DECLARED_PREFIXES[prefix]
-                for n in nodes:
-                    # The declaration's DOF table is the 3-D one; the
-                    # column is that component only where the node's own
-                    # layout puts it at that DOF.
-                    ndf = roles.node_ndf(n, origin)
-                    layout = _load_dof_layout(ndf, roles.ndm)
-                    spatial = _AXES.index(axis) + (3 if rot else 0)
-                    if dof > ndf or layout[dof - 1] != spatial:
-                        raise BridgeError(
-                            f"{_WHERE}: {origin} records {comp!r} as DOF "
-                            f"{dof} of node {n}, which has ndf={ndf} "
-                            f"(ndm={roles.ndm}); that DOF is not {comp!r} "
-                            f"there. {_ALTERNATIVES}."
-                        )
-                    if rot:
-                        why = roles.rotation_refusal(n)
-                        if why is not None:
-                            raise BridgeError(
-                                f"{_WHERE}: {origin} records {comp!r} on "
-                                f"node {n}, where DOF {dof} is a rotation "
-                                f"only on a beam-column or shell node, and "
-                                f"{why}."
-                            )
-                columns.append(comp)
+            columns = [
+                next(c for c in record.components
+                     if node_component_to_ops(c, layout) == (token, dof))
+                for dof in dofs
+            ]
             file = _recorder_file_path(
                 decl.file_root, decl.name, record.name or "default", token)
             out.append(_TextSource(
@@ -733,7 +714,7 @@ def _write_and_read_text(
         # component the reader maps to that dof.
         by_dof: dict[int, int] = {}
         for k, comp in enumerate(src.components):
-            pair = node_component_to_ops(comp)
+            pair = node_component_to_ops(comp, _READER_LAYOUT)
             if pair is None or pair[0] != token:
                 raise BridgeError(
                     f"{_WHERE}: {src.origin}: component {comp!r} does not "

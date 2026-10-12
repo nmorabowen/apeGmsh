@@ -19,6 +19,13 @@ if TYPE_CHECKING:
     from ...emitter.base import Emitter
     from apeGmsh.mesh.FEMData import FEMData
     from ..tag_plan import TagPlan
+    from ..types import Element
+    from typing import Mapping
+
+    from .pg_expand import ElementPlanRows
+
+    #: The element tag plan: each element spec with its columnar rows.
+    ElementPlan = tuple[tuple[Element, ElementPlanRows], ...]
 
 
 # ---------------------------------------------------------------------------
@@ -62,6 +69,8 @@ def emit_recorder_spec(
     if isinstance(spec, RecorderDeclaration):
         _emit_recorder_declaration(
             spec, emitter, fem, fem_eid_to_ops_tag=fem_eid_to_ops_tag,
+            element_plan=(
+                tag_plan.elements.specs if tag_plan is not None else None),
         )
         return
     materialised = spec.materialize(
@@ -80,9 +89,17 @@ def _emit_recorder_declaration(
     fem: "FEMData",
     *,
     fem_eid_to_ops_tag: "FemToOpsTagMap | None" = None,
+    element_plan: "ElementPlan | None" = None,
 ) -> None:
     """Walk a :class:`RecorderDeclaration` and emit one
     ``emitter.recorder(...)`` call per (ops_token, target_set) group.
+
+    ``element_plan`` is the bridge's element tag plan (each element spec
+    with its rows). Node components map to DOFs through the per-node
+    layout (:func:`_node_record_layout`): with the plan, each node's own
+    ndf, and a rotational component only where the node's rotation role
+    allows it; without it (``ModelData``, a hand-written deck) every node
+    carries the declared ``(decl.ndm, decl.ndf)`` layout.
 
     Per Phase 9 commit 3a, only the ``"nodes"`` category is handled
     end-to-end. Other categories raise :class:`NotImplementedError`
@@ -140,7 +157,8 @@ def _emit_recorder_declaration(
         try:
             if record.category == "nodes":
                 _emit_nodes_record(record, decl, emitter, fem,
-                                   group_node_components_by_ops_token)
+                                   group_node_components_by_ops_token,
+                                   element_plan=element_plan)
             else:
                 _emit_element_level_record(
                     record, decl, emitter, fem,
@@ -157,6 +175,8 @@ def _emit_nodes_record(
     emitter: "Emitter",
     fem: "FEMData",
     group: object,  # callable; passed in to keep imports local to caller
+    *,
+    element_plan: "ElementPlan | None" = None,
 ) -> None:
     """Emit one node-level :class:`RecorderRecord`.
 
@@ -175,10 +195,18 @@ def _emit_nodes_record(
     if not node_ids:
         return  # nothing to record — silent skip mirrors typed-primitive behavior
 
-    # Group canonical components by ops token (e.g. "disp": (1, 2)).
-    # Caller passes the translator to keep its import scoped to the
+    # Group canonical components by ops token (e.g. "disp": (1, 2)),
+    # each mapped through the targets' DOF layout. Caller passes the
+    # translator to keep its import scoped to the
     # _emit_recorder_declaration function.
-    grouped = group(record.components) if record.components else {}  # type: ignore[operator]
+    grouped: dict[str, tuple[int, ...]] = {}
+    if record.components:
+        node_ndf = (
+            _inferred_node_ndf(fem, element_plan, int(decl.ndm))
+            if element_plan is not None else None)
+        layout = _node_record_layout(
+            record, decl, node_ids, element_plan, node_ndf=node_ndf)
+        grouped = group(record.components, layout)  # type: ignore[operator]
     record_name = record.name or "default"
 
     for ops_token, dofs in grouped.items():
@@ -215,6 +243,134 @@ def _emit_nodes_record(
             args += ["-dof", *all_dofs]
             args.append(raw_token)
             emitter.recorder("Node", *args)
+
+
+#: The ``ndf`` values ``_load_dof_layout`` lays out exactly; any other
+#: (a 3-D u-p node's 4) names only its leading ``ndm`` translations here.
+_LAID_OUT_NDF: frozenset[int] = frozenset({1, 2, 3, 6})
+
+
+def _inferred_node_ndf(
+    fem: "FEMData", element_plan: "ElementPlan", ndm: int,
+) -> "dict[int, int]":
+    """``{node: ndf}`` the bridge infers from the planned element specs
+    (ADR 0048). A node absent from it (element-less, or touched only by
+    adaptive elements) takes the ``ops.model`` envelope."""
+    from .ndf import infer_node_ndf
+
+    return {int(k): int(v) for k, v in infer_node_ndf(
+        fem, [spec for spec, _sub in element_plan], ndm).items()}
+
+
+def _node_layout(ndf: int, ndm: int) -> tuple[int, ...]:
+    """The spatial slot each DOF of an ``(ndm, ndf)`` node carries."""
+    from .ndf import _load_dof_layout
+
+    if ndf in _LAID_OUT_NDF:
+        return _load_dof_layout(ndf, ndm)
+    return tuple(range(min(ndf, ndm)))
+
+
+def _node_record_layout(
+    record: RecorderRecord,
+    decl: RecorderDeclaration,
+    node_ids: tuple[int, ...],
+    element_plan: "ElementPlan | None",
+    *,
+    node_ndf: "Mapping[int, int] | None" = None,
+) -> tuple[int, ...]:
+    """The DOF layout that maps ``record``'s components to the same DOFs
+    on every node of ``node_ids``; raise a :class:`BridgeError` naming a
+    node where one has no DOF.
+
+    Shared by the ``recorder.declare`` emit and ``ops.results`` (which
+    re-derives the deck's columns), so the two agree.
+
+    - Without an element plan (``ModelData``: a hand-written deck) every
+      node carries the deck's declared ``(decl.ndm, decl.ndf)`` layout.
+    - With the plan, each node carries the layout of its own ndf
+      (``node_ndf``, the envelope ``decl.ndf`` where absent), and a
+      rotational component also needs the node's rotation role
+      (:meth:`~apeGmsh.opensees._readback.RotationRoles.refusal`, the
+      rule ``.read`` applies): a u-p node's DOF ``ndm + 1`` is pore
+      pressure, never a rotation.
+    - ``pore_pressure`` refuses: OpenSees' ``recorder Node ... pressure``
+      response is the PFEM pressure constraint, not a u-p pressure DOF.
+
+    The layouts ``_load_dof_layout`` names place a spatial slot at the
+    same DOF wherever they hold it, so one ``-dof`` list serves every
+    node and a recorder line never needs splitting; a disagreement raises.
+    """
+    from ..._readback import rotation_roles
+    from ..._recorder_translate import (
+        group_node_components_by_ops_token,
+        node_component_spatial,
+    )
+    from .ndf import _load_dof_layout
+
+    where = f"recorder.declare({decl.name!r})"
+    ndm = int(decl.ndm)
+    spatial = {c: node_component_spatial(c) for c in record.components}
+    pressure = [c for c, s in spatial.items() if s is not None and s[1] < 0]
+    if pressure:
+        raise BridgeError(
+            f"{where}: {pressure[0]!r} is not recorded by a declared node "
+            "record: the OpenSees 'pressure' node response is the PFEM "
+            "pressure constraint, not a u-p pressure DOF. Record the u-p "
+            f"pressure DOF ({ndm + 1}) with ops.recorder.Node(response="
+            "'disp', dofs=...) on the u-p vertex nodes, or with "
+            "ops.recorder.MPCO."
+        )
+
+    if element_plan is None:
+        layouts = {n: _load_dof_layout(int(decl.ndf), ndm) for n in node_ids}
+    else:
+        rotational = [c for c, s in spatial.items()
+                      if s is not None and s[1] >= 3]
+        if rotational:
+            roles = rotation_roles(element_plan, node_ids)
+            refused = [(n, why) for n in node_ids
+                       if (why := roles.refusal(n)) is not None]
+            if refused:
+                shown = "; ".join(f"node {n} ({why})" for n, why in refused[:3])
+                more = len(refused) - min(len(refused), 3)
+                raise BridgeError(
+                    f"{where}: {rotational[0]!r} has no established DOF at "
+                    f"{shown}" + (f"; and {more} more node(s)" if more else "")
+                    + ". Narrow the selector to nodes whose elements carry "
+                    "a rotation, or drop the rotational component."
+                )
+        ndf_of = node_ndf or {}
+        layouts = {n: _node_layout(int(ndf_of.get(n, decl.ndf)), ndm)
+                   for n in node_ids}
+
+    first: "tuple[int, dict[str, tuple[int, ...]]] | None" = None
+    for n, layout in layouts.items():
+        try:
+            grouped = group_node_components_by_ops_token(
+                record.components, layout)
+        except ValueError as e:
+            envelope = (element_plan is not None
+                        and n not in (node_ndf or {}))
+            raise BridgeError(
+                f"{where}: node {n} (ndm={ndm}) has no DOF for a declared "
+                f"component: {e}"
+                + (f" No element sizes node {n}, so the recorder emit takes "
+                   f"the ops.model envelope ndf={decl.ndf} for it. If "
+                   f"ops.ndf raised node {n} above that, the emit cannot "
+                   "see it yet and refuses rather than guess a DOF: a "
+                   "temporary regression, tracked in #1745."
+                   if envelope else "")
+            ) from e
+        if first is None:
+            first = (n, grouped)
+        elif grouped != first[1]:
+            raise BridgeError(  # pragma: no cover - laid-out layouts agree
+                f"{where}: nodes {first[0]} and {n} carry the components at "
+                f"different DOFs ({first[1]} vs {grouped}); declare them in "
+                "separate records."
+            )
+    return layouts[node_ids[0]]
 
 
 def _resolve_node_targets(

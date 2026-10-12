@@ -323,16 +323,46 @@ def test_mismatched_time_columns_refuse(
     refuses(ops, "run/deck.py", run_dir, r"other times")
 
 
-def test_declared_rotation_on_an_ndf3_node_refuses(
+def test_declared_rotation_on_an_ndf3_beam_node_reads_back(
     cantilever: Any, run_dir: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """``declare`` sends ``rotation_z`` to DOF 6, which an ndf=3 node
-    lacks: the column would not be the rotation."""
+    """B5-b (#1723): ``declare`` maps a planar ``rotation_z`` to DOF 3 of
+    the beam node, and the read names that column ``rotation_z``."""
     ops = cantilever_bridge(cantilever)
-    ops.recorder.declare(nodes=("rotation_z",), label="tip",
+    ops.recorder.declare(nodes=("displacement_y", "rotation_z"), label="tip",
                          file_root="run", name="r")
-    ran(ops, monkeypatch, write_rows("run/r__default__disp.out", [1.0, RZ]))
-    refuses(ops, "run/deck.py", run_dir, r"'rotation_z' as DOF 6.*ndf=3")
+    ran(ops, monkeypatch,
+        write_rows("run/r__default__disp.out", [1.0, UY, RZ]))
+    assert "'-dof', 2, 3, 'disp'" in (run_dir / "run" / "deck.py").read_text()
+    r = ops.results("run/deck.py")
+    assert r.nodes.get(label="tip", component="rotation_z").item() == RZ
+    assert r.nodes.get(label="tip", component="displacement_y").item() == UY
+
+
+def test_declared_rotation_on_a_up_node_refuses_on_read(
+    run_dir: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A deck whose declare recorded DOF 3 of a LadrunoUP node (pore
+    pressure) is refused by the read too, by the shared rotation-role
+    table, even when the emit is stood in for by one that let it through
+    (a deck from a build before the emit refused)."""
+    from apeGmsh.opensees._internal.build import recorders as rec_mod
+
+    ops = up_bridge(build_footing_fem())
+    corner = ops.nodes.one(label="corner").tag
+    ops.recorder.declare(nodes=("rotation_z",), ids=(corner,),
+                         file_root="run", name="p")
+    permissive = rec_mod._node_record_layout
+
+    def _no_role_check(record: Any, decl: Any, node_ids: Any,
+                       element_plan: Any, **kw: Any) -> tuple[int, ...]:
+        return permissive(record, decl, node_ids, None)
+
+    with monkeypatch.context() as m:
+        m.setattr(rec_mod, "_node_record_layout", _no_role_check)
+        ran(ops, m, write_rows("run/p__default__disp.out", [1.0, 0.5]))
+    refuses(ops, "run/deck.py", run_dir,
+            r"'rotation_z' has no established DOF at node .*LadrunoUP")
 
 
 def test_a_rotational_slot_no_beam_establishes_refuses(
