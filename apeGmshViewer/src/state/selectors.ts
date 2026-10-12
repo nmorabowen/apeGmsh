@@ -20,6 +20,7 @@ import type {
   LegendEntry,
   Origin,
   Pick,
+  SequenceZone,
   StageDef,
   State,
   WindowContent,
@@ -193,6 +194,21 @@ export function geometryPairing(s: State): { draw: boolean; notice: string | nul
   if (m.status !== "ready") return { draw: false, notice: null };
   const p = pairSessions(m.sessionId, g.sessionId, baseName(g.path));
   return p.paired ? { draw: true, notice: null } : { draw: false, notice: `Geometry not drawn: ${p.reason}.` };
+}
+
+/** The rows of `/sequence/stages`: what `State.stage` indexes (0 when the zone is not ready). */
+export const stageCount = (seq: SequenceZone): number => (seq.status === "ready" ? seq.stages.rows.length : 0);
+
+/**
+ * What a `/sequence/stages` row is, to tell whether a re-read still has the
+ * same stage at that index: its `order`, `name` and `source` cells (the
+ * whole row when a column is missing). Null when the index is not a row.
+ */
+export function stageIdentity(seq: SequenceZone, index: number): string | null {
+  if (seq.status !== "ready" || !Number.isInteger(index) || index < 0 || index >= seq.stages.rows.length) return null;
+  const row = seq.stages.rows[index]!;
+  const at = ["order", "name", "source"].map((c) => seq.stages.columns.indexOf(c));
+  return JSON.stringify(at.includes(-1) ? row : at.map((i) => row[i]));
 }
 
 /** Notices that are not warnings: the stale-geometry notice. */

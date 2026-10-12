@@ -76,7 +76,8 @@ export interface Bridge {
 export function parseRefusal(error: string): { zone: string; version: string; accepted: string; newer: boolean; reason: string } | null {
   const m = /^(neutral|opensees|geometry|provenance)_schema_version (\d+)\.(\d+)\.(\d+): (.+)$/.exec(error);
   if (!m) return null;
-  const zone = m[1] as keyof typeof ZONE_FLOOR;
+  // `/sequence` is not here: its refusal is a zone status (`SequenceZone`), never a thrown message.
+  const zone = m[1] as keyof typeof TARGET;
   const major = Number(m[2]);
   const t = TARGET[zone];
   const accepted = `${t.major}.${ZONE_FLOOR[zone]} and any later ${t.major}.x`;
