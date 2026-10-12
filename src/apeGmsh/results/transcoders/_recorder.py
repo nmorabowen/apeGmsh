@@ -261,7 +261,7 @@ class RecorderTranscoder:
         return self._target_path
 
     # ------------------------------------------------------------------
-    # Element index provenance (results 1.2.0, #1746)
+    # Element index provenance (results 1.2.0)
     # ------------------------------------------------------------------
 
     def _element_index_is_fem(self) -> bool:

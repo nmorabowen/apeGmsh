@@ -37,7 +37,7 @@ ATTR_SOURCE_PATH = "source_path"
 ATTR_CREATED_AT = "created_at"
 ATTR_APEGMSH_VERSION = "apegmsh_version"
 ATTR_ANALYSIS_LABEL = "analysis_label"
-# Results 1.2.0 (#1746): the element row ids are provably FEM element ids.
+# Results 1.2.0: the element row ids are provably FEM element ids.
 # Written only by the recorder transcoder, and only when it can prove it;
 # absent means unverified. ``ELEMENT_INDEX_SPACES`` is the closed value
 # set: ``NativeWriter.stamp_element_index_space`` refuses anything else.
