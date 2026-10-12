@@ -22,6 +22,12 @@ the only value; `NativeWriter.stamp_element_index_space` refuses any
 other. `architecture/h5-schema.md` lists the value set, which writer
 writes it, what it does not certify, and what absence means.
 
+**Fixed with it:** the `Results.from_recorders` cache key ignored `model=`.
+A second call with another model on the same files and `cache_root` got
+the first call's file, with that model's `/opensees` and, now, its stamp.
+The key now includes a digest of the model's `lineage.model_hash` and its
+`(fem_eid, tag)` pairing.
+
 **Limit:** element records under `element_tags="sequential"` (the bridge
 default), whose FEM ids differ from their tags, stay unverified until an
 emit-side manifest can prove the translation. `PARSER_VERSION` bumps to
