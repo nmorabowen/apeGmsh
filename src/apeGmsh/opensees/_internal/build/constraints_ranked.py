@@ -39,7 +39,10 @@ from .element_emit import _node_coords_safe
 from .stage_emit import GhostSPOp, emit_ghost_sp_ops
 
 
+from .errors import BridgeError
+
 if TYPE_CHECKING:
+    from ..types import ConstraintHandler
     from apeGmsh._kernel.records._constraints import (
         ConstraintRecord,
         InterpolationRecord,
@@ -84,7 +87,11 @@ def plan_partitioned_mp_constraints(
             node_owners=node_owners,
             element_owner=element_owner,
             phantom_tags=set(phantom_coords.keys()),
-            pinned=getattr(fem.partitions, "pinned", None),
+            # Only a routed snapshot (ADR 0120 D1) pins element-less
+            # nodes; a plain PartitionSet pins none (#1620 item 2).
+            pinned=(fem.partitions.pinned
+                    if isinstance(fem.partitions, RoutedPartitionSet)
+                    else None),
         )
     return phantom_coords, plans
 
@@ -348,6 +355,7 @@ def emit_stage_mp_constraints_partitioned(
     fem_eid_to_ops_tag: "FemToOpsTagMap | None" = None,
     ghost_sp_ops: "dict[int, list[GhostSPOp]] | None" = None,
     stiffness_resolver: "StiffnessResolver | None" = None,
+    constraint_handlers: "Sequence[ConstraintHandler | None]",
 ) -> None:
     """Per-rank stage-bound MP-constraint fan-out.
 
@@ -362,12 +370,18 @@ def emit_stage_mp_constraints_partitioned(
     :func:`plan_stage_mp_constraints_partitioned`, which already
     established that this rank contributes something — there is no
     no-op path here.
+
+    ``constraint_handlers`` are the handlers of this stage and of every
+    later one (a stage's records stay in the domain); a record copied on
+    two ranks under any of them that is not ``Transformation`` is refused
+    before this rank writes a line (#1625, :func:`refuse_replicated_mp`).
     """
     from ..tag_resolution import ATTR_PHANTOM_NODE_TAGS, set_phantom_node_tags
 
     adapter = rank_plan.adapter
     phantom_coords = rank_plan.phantom_coords
     plan = rank_plan.plan
+    refuse_replicated_mp(constraint_handlers, (plan,))
 
     if phantom_coords:
         existing: frozenset[int] = getattr(emitter, ATTR_PHANTOM_NODE_TAGS, frozenset())
@@ -415,6 +429,7 @@ def emit_mp_constraints_partitioned(
     fem_eid_to_ops_tag: "FemToOpsTagMap | None" = None,
     ghost_sp_ops: "dict[int, list[GhostSPOp]] | None" = None,
     stiffness_resolver: "StiffnessResolver | None" = None,
+    constraint_handlers: "Sequence[ConstraintHandler | None]",
 ) -> "frozenset[int]":
     """Per-rank MP-constraint fan-out (ADR 0027 §"Decision").
 
@@ -451,6 +466,13 @@ def emit_mp_constraints_partitioned(
     it declares) are resolved once per tag plan, every rank at once, by
     :func:`plan_partitioned_mp_constraints` (ADR 0114 D4, amended); this
     reads them, and the element tags, from ``tag_plan`` (:func:`_mp_plan`).
+
+    ``constraint_handlers`` are the handlers the deck's analyses enforce
+    these records under: the declared one (``None`` when none is) for an
+    unstaged model, every stage's for a staged one. Replication is exact
+    only under ``Transformation``; under any other handler a record
+    copied on two ranks is refused, every rank checked, before this rank
+    writes a line (#1625, :func:`refuse_replicated_mp`).
     """
     from ..tag_resolution import set_phantom_node_tags
 
@@ -467,6 +489,7 @@ def emit_mp_constraints_partitioned(
     # tags they reference (replicate-on-both / replicate-everywhere-
     # with-a-slave rules from ADR 0027), and the phantom nodes.
     phantom_coords, plan = mp_plan.rank_constraints(partition_rank)
+    refuse_replicated_mp(constraint_handlers, mp_plan.rank_plans.values())
 
     # Pre-load the phantom-tag predicate on the emitter (ADR 0033 —
     # stateless replacement for the prior phantom-mode flag).
@@ -525,6 +548,65 @@ def emit_mp_constraints_partitioned(
     return plan.foreign_node_tags
 
 
+def refuse_replicated_mp(
+    handlers: "Iterable[ConstraintHandler | None]",
+    plans: "Iterable[_RankConstraintPlan]",
+) -> None:
+    """Refuse an MP record copied on two ranks under a handler that
+    multiplies it (#1625).
+
+    The partitioned emit writes a replicable record on every rank that
+    holds one of its nodes (ADR 0027). ``Transformation`` needs that: it
+    eliminates the constrained DOFs on each rank. ``Penalty``,
+    ``Lagrange`` and ``Auto`` instead assemble one penalty or multiplier
+    per ``MP_Constraint`` copy, so the partitioned model is stiffer than
+    the serial one: measured 4.9e-5 (2 ranks) and 7.3e-5 (4 ranks) on
+    eigenvalues, with nothing warning. Writing each record on one rank is
+    exact for a static solve but not for ``eigen``: a rank that holds no
+    ``PenaltyMP_FE`` disagrees with the others in ``ArpackSOE``'s
+    diagonal-mass flag and the spectrum collapses to 1.0. So the emit
+    refuses instead.
+
+    ``handlers``: ``None`` (none declared: the bridge auto-emits
+    ``Transformation``, or a stage runs OpenSees' default ``Plain``),
+    ``Transformation`` and ``Plain`` (which ignores MP constraints) keep
+    the replication. Any other handler raises :class:`BridgeError` when a
+    plan in ``plans`` holds a copied record.
+    """
+    from ...analysis.constraint_handler import Plain, Transformation
+
+    handlers = tuple(handlers)
+    if not handlers:
+        raise BridgeError(
+            "partitioned MP-constraint emit: no constraint handler was "
+            "passed; pass the handler(s) the deck runs under, None for "
+            "an undeclared one (#1625)."
+        )
+    multiplying = sorted({
+        type(h).__name__ for h in handlers
+        if h is not None and not isinstance(h, (Transformation, Plain))})
+    if not multiplying:
+        return
+    copied = next((p.replicated_records for p in plans
+                   if p.replicated_records), ())
+    if not copied:
+        return
+    rec = copied[0]
+    kind = getattr(rec, "kind", type(rec).__name__)
+    name = getattr(rec, "name", None) or "<unnamed>"
+    master = getattr(rec, "master_node", "?")
+    raise BridgeError(
+        f"A partitioned emit would write the {kind} constraint {name!r} "
+        f"(master node {master}) on more than one rank under the "
+        f"constraint handler {', '.join(multiplying)}. Each rank's copy "
+        "assembles its own penalty or multiplier, so the partitioned model "
+        "would silently answer stiffer than the serial one (#1625). "
+        "Declare ops.constraints.Transformation() (exact across ranks), "
+        "run serial (emit unpartitioned: ops.tcl(path, flat=True)), or "
+        "repartition so every node of each MP constraint stays on one rank."
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class _RankConstraintPlan:
     """What the per-rank MP-constraint pass will emit on this rank."""
@@ -537,6 +619,11 @@ class _RankConstraintPlan:
     # rank that owns the slave OR any master (domain-level EQ_Constraint,
     # NOT a single-host-rank element). Emitted via _emit_equation_tie.
     equation_records: tuple[object, ...] = ()
+    # #1625: the replicable records (equalDOF, rigidLink, rigidDiaphragm,
+    # rigid_body chain, node_to_surface) this rank writes that another
+    # rank writes too: a non-phantom node of theirs is foreign here or
+    # also held by another rank.
+    replicated_records: tuple[object, ...] = ()
 
     def any(self) -> bool:
         return (
@@ -602,6 +689,7 @@ def _plan_rank_constraints(
     referenced_phantoms: set[int] = set()
     embedded: list[object] = []
     equation: list[object] = []
+    replicated: list[object] = []
 
     # Materialise both record streams up front so every node id they can
     # reference is resolved against ``node_owners`` in ONE vectorised
@@ -653,6 +741,22 @@ def _plan_rank_constraints(
     def _is_phantom(node_tag: int) -> bool:
         return int(node_tag) in phantom_tags
 
+    alone = frozenset((partition_rank,))
+
+    def _copied(rec: object, nodes: "Iterable[int]") -> None:
+        """Note ``rec`` (written here) when another rank writes it too:
+        a non-phantom node of it is not held by this rank alone."""
+        for n in nodes:
+            t = int(n)
+            if _is_phantom(t):
+                continue
+            o = owners.get(t)
+            if o is None:
+                o = node_owners.get(t, frozenset())
+            if frozenset(o) != alone:
+                replicated.append(rec)
+                return
+
     def _add_foreign_or_phantom(node_tag: int) -> None:
         t = int(node_tag)
         if _owns(t):
@@ -691,6 +795,8 @@ def _plan_rank_constraints(
                     allowed_ids.add(id(rec))
                     _add_foreign_or_phantom(m)
                     _add_foreign_or_phantom(s)
+                    if not (pinned and s in pinned):
+                        _copied(rec, (m, s))
             elif isinstance(rec, NodeGroupRecord):
                 # rigid_body / rigid_diaphragm / kinematic_coupling.
                 # Per ADR 0027 §"Decision" bullet 3:
@@ -756,6 +862,7 @@ def _plan_rank_constraints(
                     _add_foreign_or_phantom(m)
                     for s in slaves:
                         _add_foreign_or_phantom(s)
+                    _copied(rec, (m, *slaves))
             elif isinstance(rec, NodeToSurfaceRecord):
                 # NodeToSurface is a compound record. Its rigid_link
                 # rows and equal_dof rows reference phantom nodes; we
@@ -785,6 +892,10 @@ def _plan_rank_constraints(
                     for pair in rec.equal_dof_records:
                         _add_foreign_or_phantom(int(pair.master_node))
                         _add_foreign_or_phantom(int(pair.slave_node))
+                    _copied(rec, (
+                        n for pair in (*rec.rigid_link_records,
+                                       *rec.equal_dof_records)
+                        for n in (pair.master_node, pair.slave_node)))
 
     if surface_constraints is not None:
         # ASDEmbeddedNodeElement ownership (ADR 0027 §"ASDEmbeddedNode-
@@ -838,6 +949,7 @@ def _plan_rank_constraints(
         referenced_phantoms=frozenset(referenced_phantoms),
         embedded_records=tuple(embedded),
         equation_records=tuple(equation),
+        replicated_records=tuple(replicated),
     )
 
 

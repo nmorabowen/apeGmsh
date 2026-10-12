@@ -139,10 +139,10 @@ def emit_mp_constraints(
        *slaves)`` per record.
 
     5. **Kinematic couplings** — :class:`NodeGroupRecord` rows with
-       kind ``kinematic_coupling`` are emitted as one ``equalDOF``
-       per ``(master, slave)`` pair (the per-DOF selectivity makes
-       ``rigidLink`` / ``rigidDiaphragm`` wrong for this family —
-       see the docstring on :meth:`rigid_link_groups`).
+       kind ``kinematic_coupling`` are emitted as one fork element
+       ``element LadrunoKinematicCoupling`` (RBE2) per record, under its
+       planned element tag, by :func:`_emit_kinematic_couplings`. It
+       replaced the earlier ``equalDOF``-per-slave expansion.
 
     6. **Surface couplings** — :meth:`fem.elements.constraints.interpolations`
        yields :class:`InterpolationRecord` rows (one slave node ↔ N
