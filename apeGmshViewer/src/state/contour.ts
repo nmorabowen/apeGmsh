@@ -22,6 +22,7 @@
 //   element at that position, leaves the vertex NaN ("unresolved", no data).
 
 import type { ModelFile } from "../model/types.ts";
+import { hexToRgb, OFFICE, type RGB } from "../theme/tokens.ts";
 import type { BlobStore } from "./blobs.ts";
 import type { ContourCmap, ContourRange, ContourScan, ContourState, Decl, DeclPath, MeshInfo, ResultsStage, State } from "./types.ts";
 
@@ -188,11 +189,11 @@ export const CMAPS: Readonly<Record<ContourCmap, Stops>> = {
 export const CMAP_NAMES: readonly ContourCmap[] = ["jet", "viridis", "coolwarm"];
 
 /**
- * The "no data" colour (sRGB): a dark neutral grey, away from every ramp
- * above (test/contour.test.ts checks its distance to each sample of each
- * ramp), and named in the legend.
+ * The "no data" colour (sRGB): the office's muted grey (theme/tokens.ts),
+ * away from every ramp above (test/contour.test.ts checks its distance to
+ * each sample of each ramp), and named in the legend.
  */
-export const NO_DATA_RGB: readonly [number, number, number] = [0.33, 0.33, 0.33];
+export const NO_DATA_RGB: RGB = hexToRgb(OFFICE.muted);
 
 /** The ramp colour (sRGB, 0..1) at `t` in [0, 1] (clamped). */
 export function sampleCmap(cmap: ContourCmap, t: number): [number, number, number] {

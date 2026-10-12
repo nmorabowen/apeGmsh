@@ -16,7 +16,8 @@ import { LineMaterial } from "three/addons/lines/LineMaterial.js";
 import { LineSegments2 } from "three/addons/lines/LineSegments2.js";
 import { LineSegmentsGeometry } from "three/addons/lines/LineSegmentsGeometry.js";
 import type { BlobStore } from "../state/blobs.ts";
-import { geometryPairing } from "../state/selectors.ts";
+import { contourView, geometryPairing } from "../state/selectors.ts";
+import { contourColours, noDataColours, type StepValues } from "./contour.ts";
 import type { State, Store } from "../state/store.ts";
 import { roleColouring } from "../state/roles.ts";
 import type { DeclPath, GeometryInfo, LegendEntry, MeshInfo, Pick } from "../state/types.ts";
@@ -76,6 +77,10 @@ export class Viewport {
   /** CPU time of the last renderer.render call (ms). */
   lastRenderMs = 0;
   continuous = false;
+  /** V4c1: the step data the effects fetched (effects.currentStep); the contour colours from it. */
+  private stepSource: () => StepValues | null = () => null;
+  /** V4c1: what the contour colours show now: the step, range and colormap key, or `no-data`; null when not colouring by contour. */
+  contourApplied: string | null = null;
 
   constructor(host: HTMLElement, store: Store, blobs: BlobStore) {
     this.host = host;
@@ -155,6 +160,48 @@ export class Viewport {
     if (s.visibility.colourBy !== prev.visibility.colourBy && s.mesh) this.rebuild(s, s.mesh);
     else if (s.visibility !== prev.visibility || s.phase !== prev.phase) this.applyVisibility(s);
     if (s.selection !== prev.selection) this.setHighlight(s);
+    if (s.visibility.colourBy === "contour") this.recolour(s);
+  }
+
+  /** V4c1: where the contour's step data comes from (app.ts wires the effects). */
+  setStepSource(source: () => StepValues | null): void {
+    this.stepSource = source;
+    this.recolour(this.store.get());
+  }
+
+  /**
+   * The contour colours of the drawn primitives: the step on screen once its
+   * data and range are here, no data everywhere when nothing can be coloured
+   * (the legend says why), else null (the step is still loading).
+   */
+  private contourFor(s: State, info: MeshInfo, drawn: Drawn): { line: Float32Array; tri: Float32Array; key: string } | null {
+    const v = contourView(s);
+    if (v.state === "off") throw new Error("viewport: contour colours while not colouring by contour");
+    if (v.state === "unavailable") {
+      return { line: noDataColours(drawn.lineMap, 2), tri: noDataColours(drawn.triMap, 3), key: `no-data:${v.reason}` };
+    }
+    return contourColours(s, v, info, this.blobs, this.stepSource(), drawn.lineMap, drawn.triMap);
+  }
+
+  /** Update the colour attributes in place when what the contour shows changed (a scrub: no rebuild). */
+  private recolour(s: State): void {
+    const info = s.mesh;
+    if (!info || !this.drawn || s.visibility.colourBy !== "contour") return;
+    const c = this.contourFor(s, info, this.drawn);
+    if (!c || c.key === this.contourApplied) return;
+    if (this.faces) {
+      const a = this.faces.geometry.getAttribute("color") as THREE.BufferAttribute;
+      (a.array as Float32Array).set(c.tri);
+      a.needsUpdate = true;
+    }
+    if (this.lines) {
+      // LineSegmentsGeometry keeps the colours as one interleaved buffer, 6 floats per segment (start rgb, end rgb).
+      const attr = this.lines.geometry.getAttribute("instanceColorStart") as THREE.InterleavedBufferAttribute;
+      (attr.data.array as Float32Array).set(c.line);
+      attr.data.needsUpdate = true;
+    }
+    this.contourApplied = c.key;
+    this.requestRender();
   }
 
   /**
@@ -329,13 +376,18 @@ export class Viewport {
     this.edges = null;
     const drawn = this.visible(s, info);
     this.drawn = drawn;
-    const source = this.colourSource(s, info);
+    // V4c1: a contour colours per vertex from the step on screen; until its
+    // data is here, every drawn primitive is no data (never a group colour).
+    const contour = s.visibility.colourBy === "contour";
+    const cc = contour ? (this.contourFor(s, info, drawn) ?? { line: noDataColours(drawn.lineMap, 2), tri: noDataColours(drawn.triMap, 3), key: "no-data:loading" }) : null;
+    this.contourApplied = cc?.key ?? null;
+    const source = contour ? { legend: [], line: new Int32Array(0), tri: new Int32Array(0), edge: toHexNumber(DARK.edge) } : this.colourSource(s, info);
 
     const tri = Viewport.gather(this.blobs.f32(info.triPositions), drawn.triMap, 9);
     if (tri.length) {
       const g = new THREE.BufferGeometry();
       g.setAttribute("position", new THREE.BufferAttribute(tri, 3));
-      g.setAttribute("color", new THREE.BufferAttribute(this.colours(source.legend, source.tri, drawn.triMap, 3), 3));
+      g.setAttribute("color", new THREE.BufferAttribute(cc ? cc.tri : this.colours(source.legend, source.tri, drawn.triMap, 3), 3));
       g.computeVertexNormals();
       const m = new THREE.MeshStandardMaterial({
         vertexColors: true,
@@ -364,7 +416,7 @@ export class Viewport {
     }
     const line = Viewport.gather(this.blobs.f32(info.linePositions), drawn.lineMap, 6);
     if (line.length) {
-      this.lines = this.makeLines(line, this.colours(source.legend, source.line, drawn.lineMap, 2), 3);
+      this.lines = this.makeLines(line, cc ? cc.line : this.colours(source.legend, source.line, drawn.lineMap, 2), 3);
       this.content.add(this.lines);
     }
     this.applyVisibility(s, false);

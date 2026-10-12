@@ -27,6 +27,8 @@ const blobs = new BlobStore();
 const effects = new Effects(store, blobs, bridge);
 const viewport = new Viewport(document.getElementById("viewport")!, store, blobs);
 effects.setFrameTarget(viewport);
+// V4c1: the contour colours from the step the effects fetched (never kept in the store).
+viewport.setStepSource(() => effects.currentStep());
 const panels = [mountHeader(store), mountBanner(store), mountLegend(store), mountInspector(store), mountEmpty(store), mountPhase(store), mountSources(store), mountWindows(store)];
 window.addEventListener("beforeunload", () => {
   for (const d of panels) d();

@@ -15,10 +15,11 @@ import { GEOMETRY_TARGET, NEUTRAL_TARGET, OPENSEES_TARGET, PROVENANCE_TARGET, ZO
 import type { BlobStore } from "./state/blobs.ts";
 import { loadGeometry } from "./state/geometry.ts";
 import { loadModel } from "./state/load.ts";
-import { sourceFor } from "./state/selectors.ts";
+import { finiteRange, vertexNodesOf } from "./state/contour.ts";
+import { contourView, sourceFor } from "./state/selectors.ts";
 import type { Store } from "./state/store.ts";
 import { focusOf, type Focus } from "./renderer/selection.ts";
-import type { ArtifactKind, BlobRef, Lineage, ResultsInfo, StageElements, State, ZoneStatus } from "./state/types.ts";
+import type { ArtifactKind, BlobRef, ContourScan, Lineage, ModelLoad, ResultsInfo, StageElements, State, ZoneStatus } from "./state/types.ts";
 
 const TARGET = { neutral: NEUTRAL_TARGET, opensees: OPENSEES_TARGET, geometry: GEOMETRY_TARGET, provenance: PROVENANCE_TARGET } as const;
 
@@ -56,8 +57,19 @@ export interface Bridge {
       }
     | { ok: false; error: string }
   >;
-  /** V4b: read a results.h5's index in main (src/main/results.ts). */
-  openResults?(path: string): Promise<{ ok: true; meta: ResultsInfo; warnings: string[]; sizeBytes: number; readMs: number } | { ok: false; error: string }>;
+  /** V4b: read a results.h5's index in main (src/main/results.ts); V4c1 adds each stage's nodal `_ids`. */
+  openResults?(
+    path: string,
+  ): Promise<{ ok: true; meta: ResultsInfo; nodeIds?: Record<string, Float64Array>; warnings: string[]; sizeBytes: number; readMs: number } | { ok: false; error: string }>;
+  /** V4c1: the history range of a contour field (main/results.ts `ResultsHost.scan`); the reply echoes `scanId`. */
+  scanResults?(req: { path: string; stage: string; components: string[]; magnitude: boolean; scanId: number }): Promise<
+    | { ok: true; scanId: number; min: number | null; max: number | null; steps: number; ms: number }
+    | { ok: false; scanId: number; error: string; cancelled?: true; changed?: true }
+  >;
+  /** V4c1: stop scan `scanId` (it answers `cancelled`). */
+  cancelResultsScan?(scanId: number): Promise<unknown>;
+  /** V4c1: the progress of the running scans; returns the unsubscribe. */
+  onScanProgress?(cb: (p: { scanId: number; done: number; total: number }) => void): (() => void) | void;
   /** V4b: one step of the open results file; the reply echoes `seq`. */
   readResultsStep?(req: { path: string; stage: string; step: number; seq: number }): Promise<
     { ok: true; seq: number; stage: string; step: number; nodal: Record<string, Float64Array> } | { ok: false; seq: number; error: string; changed?: true }
@@ -110,7 +122,22 @@ export function blobRefsOf(s: State): BlobRef[] {
   for (const d of Object.values(s.decls)) if (d.group) out.push(d.group.ids);
   for (const b of s.blocks) out.push(b.connectivity);
   if (s.geometry) out.push(s.geometry.curvePositions, s.geometry.surfacePositions, s.geometry.pointPositions);
+  // V4c1: the vertex-to-node index of the mesh, and each results stage's nodal `_ids`.
+  if (s.mesh?.vertexNodes) out.push(s.mesh.vertexNodes.line, s.mesh.vertexNodes.tri);
+  for (const st of s.results?.stages ?? []) if (st.nodeIds) out.push(st.nodeIds);
   return out;
+}
+
+/**
+ * A model load with its vertex-to-node index (V4c1): the node at every drawn
+ * vertex, from the model file the load came from (state/contour.ts
+ * `vertexNodesOf`), put in the BlobStore beside the mesh's other arrays.
+ */
+export function withVertexNodes(load: ModelLoad, model: ModelFile, blobs: BlobStore): ModelLoad {
+  const v = vertexNodesOf(model, load.mesh, load.decls, blobs);
+  const vertexNodes = { line: blobs.put("model/mesh/lineNodes", v.line), tri: blobs.put("model/mesh/triNodes", v.tri), unresolved: v.unresolved };
+  if (v.unresolved) console.warn(`apeGmshViewer: ${v.unresolved} drawn vertices match no single node of their element; a contour draws them as no data`);
+  return { ...load, mesh: { ...load.mesh, vertexNodes } };
 }
 
 /**
@@ -214,7 +241,17 @@ export class Effects {
         void this.openResults(r.path);
       }),
       this.store.subscribe((s) => this.syncStep(s)),
+      // V4c1: the contour's step range and history scan follow what is shown.
+      this.store.subscribe((s) => this.syncContour(s)),
     );
+    if (typeof this.bridge.onScanProgress === "function") {
+      const off = this.bridge.onScanProgress((p) => {
+        const run = this.scanRun;
+        if (!run || p.scanId !== run.id) return;
+        this.store.dispatch({ type: "contourScan", scan: { key: run.key, status: "running", done: p.done, total: p.total, min: null, max: null, error: null } });
+      });
+      if (typeof off === "function") this.off.push(off);
+    }
     // frameSelection: the camera frames the selection's bounds (from the
     // mesh blobs), or the whole model when nothing is selected.
     this.off.push(
@@ -250,6 +287,98 @@ export class Effects {
     return this.step;
   }
 
+  // -- V4c1: the contour's step range and history scan ------------------------
+
+  /** The step data the last step range was measured on, and its key (a re-fetch or another pick measures again). */
+  private rangeFor: { key: string; data: StepData } | null = null;
+  /** The running history scan: its id (main echoes it) and key. */
+  private scanRun: { id: number; key: string } | null = null;
+  private scanSeq = 0;
+  /** Finished scans of the file read now, by key (cleared when it is read again). */
+  private readonly scanCache = new Map<string, { min: number | null; max: number | null; total: number }>();
+
+  /** Stop the running scan, in main too; its late answer is dropped. */
+  private stopScan(): void {
+    const run = this.scanRun;
+    if (!run) return;
+    this.scanRun = null;
+    if (typeof this.bridge.cancelResultsScan === "function") void this.bridge.cancelResultsScan(run.id).catch(() => undefined);
+  }
+
+  /**
+   * Measure the step range of the pick on screen once its step data is here,
+   * and run the history scan the range mode needs: one scan at a time, for
+   * the key on screen; a new field, component, stage or file cancels it.
+   */
+  private syncContour(s: State): void {
+    const v = contourView(s);
+    if (v.state !== "ready") {
+      if (this.scanRun) this.stopScan();
+      return;
+    }
+    const at = s.phase.at;
+    const data = this.step;
+    if (at?.kind === "results" && data && data.stage === at.stage && data.step === at.step && s.resultStep?.status === "ready") {
+      if (!v.stepMeasured && !(this.rangeFor && this.rangeFor.key === v.keys.step && this.rangeFor.data === data)) {
+        this.rangeFor = { key: v.keys.step, data };
+        const rows = v.component.datasets.map((d) => data.nodal[d]);
+        const r = rows.every((x): x is Float64Array => x instanceof Float64Array) ? finiteRange(rows, v.component.magnitude) : null;
+        const key = v.keys.step;
+        queueMicrotask(() => this.store.dispatch({ type: "contourStepRange", key, min: r?.min ?? null, max: r?.max ?? null }));
+      }
+    }
+    const want = s.contour.range === "history" ? v.keys.scan : null;
+    if (want === (this.scanRun?.key ?? null)) return;
+    if (this.scanRun) this.stopScan();
+    if (want === null) return;
+    // A scan already in the store for this key (done or failed) is not run again.
+    if (s.contour.scan?.key === want && s.contour.scan.status !== "running") return;
+    const cached = this.scanCache.get(want);
+    if (cached) {
+      queueMicrotask(() =>
+        this.store.dispatch({ type: "contourScan", scan: { key: want, status: "done", done: cached.total, total: cached.total, min: cached.min, max: cached.max, error: null } }),
+      );
+      return;
+    }
+    this.startScan(s, want, v.component.datasets, v.component.magnitude);
+  }
+
+  private startScan(s: State, key: string, components: string[], magnitude: boolean): void {
+    const info = s.results!;
+    const at = s.phase.at as { kind: "results"; stage: number };
+    const st = info.stages[at.stage]!;
+    const id = ++this.scanSeq;
+    this.scanRun = { id, key };
+    const total = st.time.length;
+    const report = (scan: ContourScan) =>
+      this.store.dispatch({ type: "contourScan", scan });
+    queueMicrotask(() => {
+      if (this.scanRun?.id !== id) return;
+      report({ key, status: "running", done: 0, total, min: null, max: null, error: null });
+      if (typeof this.bridge.scanResults !== "function") {
+        this.scanRun = null;
+        report({ key, status: "failed", done: 0, total, min: null, max: null, error: "this build has no history scan" });
+        return;
+      }
+      void this.bridge
+        .scanResults({ path: info.path, stage: st.id, components, magnitude, scanId: id })
+        .catch((err: unknown) => ({ ok: false as const, scanId: id, error: err instanceof Error ? err.message : String(err) }))
+        .then((res) => {
+          // A cancelled or replaced scan never lands.
+          if (this.scanRun?.id !== id || res.scanId !== id) return;
+          this.scanRun = null;
+          if (res.ok) {
+            this.scanCache.set(key, { min: res.min, max: res.max, total: res.steps });
+            report({ key, status: "done", done: res.steps, total: res.steps, min: res.min, max: res.max, error: null });
+            return;
+          }
+          if ("cancelled" in res && res.cancelled) return;
+          report({ key, status: "failed", done: 0, total, min: null, max: null, error: res.error });
+          if ("changed" in res && res.changed) this.store.dispatch({ type: "fileChanged", path: info.path });
+        });
+    });
+  }
+
   /** Read a results file's index into the store; the latest open wins. */
   async openResults(path: string): Promise<boolean> {
     const token = ++this.resultsToken;
@@ -262,6 +391,10 @@ export class Effects {
     // A re-read invalidates the step on screen: its data may have changed.
     this.step = null;
     this.stepKey = null;
+    // V4c1 seam "reload": the scan of the old file stops, and its ranges are forgotten.
+    this.stopScan();
+    this.scanCache.clear();
+    this.rangeFor = null;
     try {
       const res = await this.bridge.openResults(path).catch((err: unknown) => ({ ok: false as const, error: err instanceof Error ? err.message : String(err) }));
       if (token !== this.resultsToken) return false;
@@ -270,7 +403,13 @@ export class Effects {
         return false;
       }
       for (const w of res.warnings) console.warn(w);
-      this.store.dispatch({ type: "resultsLoaded", info: res.meta, sizeBytes: res.sizeBytes, readMs: res.readMs, warnings: res.warnings });
+      // V4c1: each stage's nodal `_ids` into the BlobStore; the store holds the ref.
+      const stages = res.meta.stages.map((st) => {
+        const ids = res.nodeIds?.[st.id];
+        return ids ? { ...st, nodeIds: this.blobs.put(`results/${st.id}/nodeIds`, ids) } : st;
+      });
+      this.store.dispatch({ type: "resultsLoaded", info: { ...res.meta, stages }, sizeBytes: res.sizeBytes, readMs: res.readMs, warnings: res.warnings });
+      this.blobs.retain(blobRefsOf(this.store.get()));
       return true;
     } finally {
       if (token === this.resultsToken) {
@@ -376,7 +515,7 @@ export class Effects {
         if (!mr.ok) fail("model", mPath, mr.error);
         else {
           const prov = mr.provenance;
-          model = loadModel(mr.model, this.blobs, prov?.ok ? prov.zone : null, prov && !prov.ok ? provenanceStatus(prov) : null, modelExtras(mr));
+          model = withVertexNodes(loadModel(mr.model, this.blobs, prov?.ok ? prov.zone : null, prov && !prov.ok ? provenanceStatus(prov) : null, modelExtras(mr)), mr.model, this.blobs);
         }
       }
       if (gPath && gr && gt === this.geometryToken) {
@@ -461,7 +600,7 @@ export class Effects {
         return false;
       }
       const prov = res.provenance;
-      const load = loadModel(res.model, this.blobs, prov?.ok ? prov.zone : null, prov && !prov.ok ? provenanceStatus(prov) : null, modelExtras(res));
+      const load = withVertexNodes(loadModel(res.model, this.blobs, prov?.ok ? prov.zone : null, prov && !prov.ok ? provenanceStatus(prov) : null, modelExtras(res)), res.model, this.blobs);
       for (const w of load.info.warnings) console.warn(w);
       // One line per read, so a double load shows in the Electron log.
       console.info(`apeGmshViewer: loaded ${path} (read ${Math.round(load.info.readMs)} ms)`);
