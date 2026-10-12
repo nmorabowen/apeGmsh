@@ -122,6 +122,21 @@ def list_files(repo: str, rev: str, specs: list[str]) -> list[str]:
                   if n.endswith(".py") and any(_matches(n, s) for s in specs))
 
 
+def untracked_py(repo: str, specs: list[str]) -> list[tuple[str, str]]:
+    """``.py`` files under ``specs`` on disk that git does not track.
+
+    Returns ``(path, "ignored" | "untracked")``. A WORKTREE verify reads these
+    from disk, so it proves nothing about the commit for them (#1705).
+    """
+    files = set(list_files(repo, "WORKTREE", specs))
+    ignored = set(_git(repo, "ls-files", "--others", "--ignored",
+                       "--exclude-standard").splitlines())
+    untracked = set(_git(repo, "ls-files", "--others",
+                         "--exclude-standard").splitlines())
+    return sorted((f, "ignored" if f in ignored else "untracked")
+                  for f in files if f in ignored or f in untracked)
+
+
 def read_file(repo: str, rev: str, path: str) -> str:
     if rev == "WORKTREE":
         with open(os.path.join(repo, path), encoding="utf-8") as fh:
@@ -368,6 +383,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--head", default="WORKTREE", help="git rev or WORKTREE")
     ap.add_argument("--repo", default=".", help="repository root (default: cwd)")
     ap.add_argument("--json", action="store_true")
+    ap.add_argument("--strict", action="store_true",
+                    help="with --head WORKTREE, fail (exit 1) when any checked "
+                         ".py file is ignored or untracked by git")
     ap.add_argument("--class-map", action="append", default=[],
                     metavar="OLD=NEW[,NEW...]",
                     help="treat methods moved from class OLD into the NEW "
@@ -384,6 +402,11 @@ def main(argv: list[str] | None = None) -> int:
             if old in names:
                 ap.error(f"--class-map: {old} cannot be mapped to itself")
             class_map.setdefault(old, []).extend(names)
+    untracked = untracked_py(a.repo, a.paths) if a.head == "WORKTREE" else []
+    for path, kind in untracked:
+        print(f"verify_move: WARNING {path}: {kind} by git; a WORKTREE-green "
+              f"verify proves nothing about the commit for this file "
+              f"(verify against the pushed SHA)", file=sys.stderr)
     base_defs, base_mod = gather(a.repo, a.base, a.paths)
     head_defs, head_mod = gather(a.repo, a.head, a.paths)
     moved: list = []
@@ -416,7 +439,8 @@ def main(argv: list[str] | None = None) -> int:
     if a.json:
         out = {"ok": ok and not review, "defs": total, "removed": removed,
                "added": added, "changed": changed,
-               "module_level_delta": delta}
+               "module_level_delta": delta,
+               "untracked": [{"file": f, "kind": k} for f, k in untracked]}
         if class_map is not None:
             out["moved"] = moved
             out["class_headers"] = headers
@@ -450,6 +474,10 @@ def main(argv: list[str] | None = None) -> int:
             for line in c["diff"].splitlines():
                 print("    " + line)
         print(info)
+    if a.strict and untracked:
+        print(f"verify_move: FAIL (--strict) — {len(untracked)} checked file(s) "
+              f"not tracked by git", file=sys.stderr)
+        return 1
     return 2 if review else (0 if ok else 1)
 
 
