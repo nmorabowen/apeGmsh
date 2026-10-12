@@ -152,6 +152,9 @@ carries the model's `model_hash`; it has one `static` stage per program
 stage, by name (3, 2 and 4 steps, `time[k] = (k + 1) / T`), and a `mode`
 stage `mode_1` that no program stage names. The values are synthetic
 (`displacement_x[k, j] = id_j + 0.001 k`); no solve runs.
+`staged_activation.femonly.results.h5` holds the same three stages written
+without `model_h5_src`: no `/opensees`, so no `model_hash`; it pairs with the
+model by `fem_hash` only, and its stage activation must stay `unbound`.
 `staged_activation.oracle.json` is Python's
 `viewers/data/_stage_activation.py::build_from_model` on the model, run by
 the same script outside the app: the FEM ids each program stage hides.

@@ -13,7 +13,9 @@ stage of a staged model, the elements that stage does not have are hidden,
 as the model's `/sequence` element rows say (`activate element`,
 `remove element`); the results stage pairs with a `/sequence` stage by name,
 and no match, two matches or an unnamed stage draws every element under a
-banner. The activation equals Python's `build_from_model` on the committed
+banner, as does a results file paired by `fem_hash` only (it is not tied to
+the model's program). Main closes the results file after half a second
+idle, so a writer can replace it. The activation equals Python's `build_from_model` on the committed
 staged fixture. Contours and the deformed shape come later.
 `apeGmshViewer/MEASUREMENTS.md` records when to reopen D5: a real results
 file that scrubs below 30 steps/s or peaks above 2 GB.

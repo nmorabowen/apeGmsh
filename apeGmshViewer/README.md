@@ -66,6 +66,8 @@ Then:
   yet). A paired file adds **results** to the phase bar, with the time
   scrubber: the results stage, the step slider, the time, play/pause and
   step -1/+1. Steps are read one at a time in the main process, when shown;
+  the file is closed after half a second without a read (so a writer can
+  replace it), and a file that changed is re-read before any step is shown;
   the newest request wins. The viewport draws the undeformed mesh (contours
   and the deformed shape come later).
 - **Stage activation.** On a results stage of a staged model, the elements
@@ -75,7 +77,10 @@ Then:
   results stage pairs with a `/sequence` stage by name. No match (a `mode_1`
   stage), two matches, an unnamed results stage, or a model with no
   `/sequence` draws every element under a banner that names the state; a
-  model with no stages draws every element without one.
+  model with no stages draws every element without one. Results paired by
+  `fem_hash` only are not tied to the model's program, so they are drawn whole
+  under an `unbound` banner; `/sequence` element rows the app cannot apply
+  without guessing are `refused`, also with a banner.
 - **Model-definition windows.** The **Windows** menu at the bottom of the
   window opens Stages, Analysis, Patterns & series, Recorders, and Materials &
   sections. Each lists what the file declares, with the HDF5 path of every
