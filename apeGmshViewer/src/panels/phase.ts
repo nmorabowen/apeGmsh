@@ -23,12 +23,12 @@ export const PLAY_MS = 100;
 
 const fmtTime = (t: number): string => (Number.isInteger(t) ? String(t) : Math.abs(t) >= 1e-3 && Math.abs(t) < 1e4 ? t.toPrecision(4).replace(/\.?0+$/, "") : t.toExponential(3));
 
-/** The scrubber's readout: `step 3 / 5 · t = 0.6` and the fetch and activation state. */
-export function readoutOf(t: Timeline, hidden: number | null): string {
+/** The scrubber's readout: `step 3/5 · t = 0.6`, the elements the stage does not have, and a fetch that is not done. */
+export function readoutOf(t: Timeline, inactive: number | null): string {
   const time = t.kind === "mode" ? "mode shape" : `t = ${fmtTime(t.time)}`;
-  const act = hidden === null ? "" : ` · ${hidden} inactive hidden`;
+  const act = inactive === null ? "" : ` · ${inactive} inactive`;
   const fetch = t.fetch === "ready" ? "" : ` · step ${t.fetch}`;
-  return `step ${t.step + 1} / ${t.steps} · ${time}${act}${fetch}`;
+  return `step ${t.step + 1}/${t.steps} · ${time}${act}${fetch}`;
 }
 
 export function mountPhase(store: Store): () => void {
@@ -99,10 +99,10 @@ export function mountPhase(store: Store): () => void {
     slider.max = String(t.steps - 1);
     slider.value = String(t.step);
     slider.disabled = t.steps < 2;
-    slider.style.cssText = "width: 220px; accent-color: var(--accent);";
+    slider.style.cssText = "width: 130px; accent-color: var(--accent);";
     const inactive = inactiveElements(s);
-    const readout = el("span", "results-readout", readoutOf(t, inactive ? inactive.hidden : null));
-    readout.style.cssText = "min-width: 180px; color: var(--muted); font: 600 12px var(--mono);";
+    const readout = el("span", "results-readout", readoutOf(t, inactive ? inactive.inactive : null));
+    readout.style.cssText = "white-space: nowrap; color: var(--muted); font: 600 12px var(--mono);";
     unlisten.push(
       listen(back, "click", () => {
         stop();

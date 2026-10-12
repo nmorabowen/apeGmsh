@@ -287,32 +287,27 @@ export function activationNow(s: State): { activation: Activation; stageName: st
   return value;
 }
 
-let inactiveMemo: { key: readonly unknown[]; value: { mask: Uint8Array; hidden: number; unmapped: number } | null } | null = null;
+let inactiveMemo: { key: readonly unknown[]; value: { mask: Uint8Array; hidden: number; inactive: number } } | null = null;
 
 /**
  * The elements a `filtered` activation hides, as a mask over `mesh.elements`
- * (1 = not drawn), with the count hidden and the inactive tags that name no
- * drawn element; null when nothing is hidden by activation. The viewport
- * draws through renderer/visible.ts with it, the one visibility path.
+ * (1 = not drawn); `hidden` counts the drawn elements it masks and
+ * `inactive` the elements the stage does not have (a solid's interior
+ * elements draw no face, so `hidden` can be the smaller). Null when the
+ * phase shown has no `filtered` activation. The viewport draws through
+ * renderer/visible.ts with it, the one visibility path.
  */
-export function inactiveElements(s: State): { mask: Uint8Array; hidden: number; unmapped: number } | null {
+export function inactiveElements(s: State): { mask: Uint8Array; hidden: number; inactive: number } | null {
   const a = activationNow(s);
   if (!a || a.activation.state !== "filtered" || !s.mesh) return null;
   const key = [a.activation, s.mesh, s.decls];
   if (inactiveMemo && inactiveMemo.key.every((k, i) => k === key[i])) return inactiveMemo.value;
   const tags = a.activation.inactiveTags;
   const mask = new Uint8Array(s.mesh.elements.length);
-  const found = new Set<number>();
   s.mesh.elements.forEach((p, i) => {
-    for (const m of s.decls[p]?.element?.metas ?? []) {
-      if (tags.has(m.tag)) {
-        mask[i] = 1;
-        found.add(m.tag);
-      }
-    }
+    for (const m of s.decls[p]?.element?.metas ?? []) if (tags.has(m.tag)) mask[i] = 1;
   });
-  const hidden = mask.reduce((n, v) => n + v, 0);
-  const value = { mask, hidden, unmapped: tags.size - found.size };
+  const value = { mask, hidden: mask.reduce((n, v) => n + v, 0), inactive: tags.size };
   inactiveMemo = { key, value };
   return value;
 }

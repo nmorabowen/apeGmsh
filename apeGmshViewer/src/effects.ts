@@ -42,6 +42,8 @@ export interface Bridge {
     appReadyMs: number;
     configMs: number;
     pick: string | null;
+    /** V4b, capture mode: the results sibling of the captured model, or null */
+    results?: string | null;
   }>;
   /** V2f: a successful answer also carries the model file's /provenance (absent from older builds); V4b its /meta/lineage and /sequence element tags. */
   openModel(path: string): Promise<
