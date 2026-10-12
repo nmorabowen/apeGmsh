@@ -361,4 +361,3 @@ def test_line_layers_bypass_the_surface_path(backend):
     handle = backend.add_layer(layer)
     assert handle.render_surface is None
     assert handle.actor.GetMapper().GetInput() is handle.dataset
-

@@ -329,11 +329,11 @@ def guard_hits(viewers_dir: Path) -> dict[str, list[str]]:
 
 def test_scope_covers_the_incident_files() -> None:
     # A scan that stops seeing the files the incidents lived in passes vacuously.
+    # (#782's ``results_viewer.py`` was deleted with the legacy viewer, X3-d #1734.)
     scanned = {p.relative_to(VIEWERS_DIR).as_posix() for p in VIEWERS_DIR.rglob("*.py")}
     assert {
         "backends/pyvista_qt.py",
         "backends/_pyvista_pick.py",
-        "results_viewer.py",
         "ui/viewer_window.py",
         "core/element_visibility.py",
         "core/results_pick.py",

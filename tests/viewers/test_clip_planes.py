@@ -698,4 +698,3 @@ def test_a_planes_only_session_is_restorable():
         ]),
     )
     assert session_restorable(planes_only) is True
-
