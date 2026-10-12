@@ -86,9 +86,10 @@ Anything richer, such as beam end forces, raises and points you to `Results`.
 
 `label=` is accepted wherever `pg=` is, on `ops.fix`, `ops.mass`, `ops.recorder.Node` and the
 selectors above, so a model script can name a support or a master once, in the geometry, and
-use that name to constrain it, record it and read it back. One restriction: `recorder.Element`
-takes `label=` only on a bridge built with `element_tags="fem"`, because only there does an
-element's OpenSees tag equal its FEM id; on the default tag mode it raises.
+use that name to constrain it, record it and read it back. `recorder.Element(label=...)` works
+under either tag mode: the label resolves to FEM element ids, and the build translates them to
+the emitted OpenSees tags as it does for `pg=`. The archive keeps each label beside the ids it
+resolved to, as provenance only: replaying a `model.h5` uses the stored ids, never the label.
 
 A `.read` answers only from a domain this bridge solved live. After `ops.py(path, run=True)` or
 `ops.tcl(path, run=True)` the solve happened in another process, so `.read` raises and names the

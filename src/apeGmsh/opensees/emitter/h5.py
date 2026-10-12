@@ -571,7 +571,15 @@ class H5RefusedVerb(NotImplementedError):
 #:     initial-stress or absorbing archive hashes differently once at this
 #:     minor; a file without either is unchanged. A 2.27 reader opens 2.12
 #:     through 2.27; a 2.26.x reader REFUSES a 2.27.x file.
-SCHEMA_VERSION: str = "2.27.0"
+#:   * 2.28.0 — ADR 0115 amendment R2-f (#1735): additive — the
+#:     ``decl_params`` rows of ``FixRecord`` / ``MassRecord`` and the typed
+#:     ``recorder.Node`` / ``recorder.Element`` gain a ``label`` field, the
+#:     names a ``label=`` declaration was given (``null`` otherwise).
+#:     Provenance only: ids stay authoritative and replay never
+#:     re-resolves a label. No path or dtype changes; ``decl_params`` is
+#:     hash-excluded. A 2.28 reader opens 2.12 through 2.28; a 2.27.x
+#:     reader REFUSES a 2.28.x file.
+SCHEMA_VERSION: str = "2.28.0"
 
 #: Oldest opensees-zone minor the reader opens (ADR 0113 (#1303)). The
 #: zone's last non-additive minor is 2.11.0, the 0-based rank flip, but
