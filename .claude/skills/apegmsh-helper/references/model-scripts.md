@@ -257,7 +257,6 @@ Procedure:
 import math
 from pathlib import Path
 
-
 from apeGmsh import apeGmsh
 from apeGmsh.opensees import apeSees
 

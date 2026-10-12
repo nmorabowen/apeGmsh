@@ -93,7 +93,8 @@ element's OpenSees tag equal its FEM id; on the default tag mode it raises.
 A `.read` answers only from a domain this bridge solved live. After `ops.py(path, run=True)` or
 `ops.tcl(path, run=True)` the solve happened in another process, so `.read` raises and names the
 way out: `ops.results(path)` returns the same `Results` object as above, built from the
-recorders you declared. A single value is `.item()` on a slab narrowed to one node and one step:
+recorders you declared. A typed `ops.recorder.Node` must use `time_format="dt"` to be read
+this way; without it the text file has no time column and `ops.results` refuses. A single value is `.item()` on a slab narrowed to one node and one step:
 
 ```python
 tip_uy = ops.results("model.tcl").nodes.get(
@@ -102,7 +103,8 @@ tip_uy = ops.results("model.tcl").nodes.get(
 
 `.item()` raises unless the slab holds exactly one value, which is the point: it replaces
 `values[-1, 0]`, which answers silently from whatever the slab holds. Running a Tcl deck with
-`run=True` also writes a driver, `<deck>.run.tcl`, next to the deck. It sources the deck and
+`run=True` also writes a driver next to the deck, named `<deck>.run.tcl`, so `model.tcl` gives
+`model.tcl.run.tcl`. It sources the deck and
 prints a completion marker, and the next run overwrites it.
 
 ## See also
