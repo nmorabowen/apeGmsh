@@ -99,16 +99,32 @@ FILES_1218 = [
     "src/apeGmsh/studio/_index_build.py", "tests/studio/test_lookup.py",
 ]
 SQUASH_1218 = "21de232c633892deb7d5e38da3fbd3af207c7617"
+COMPARE = "api repos/{owner}/{repo}/compare/"
 LABELS = [{"name": "program"}, {"name": "slice"}, {"name": "semantic"}]
 FREEZE_STUDIO = [*LABELS, {"name": "freeze:src/apeGmsh/studio/*"}]
 
 
-def _recording(number, pr, squash, files=FILES_1218, *, compare="behind", tip="", labels=LABELS, local=None, porcelain=""):
+def _row(path, status="modified", previous=None, patch="@@ -1 +1 @@\n-a\n+b"):
+    """One `gh api .../pulls/N/files --jq FILES_JQ` line: [filename, status, previous, changes, patch]."""
+    changes = 0 if patch is None else sum(ln[:1] in "+-" for ln in patch.splitlines() if not ln.startswith("@@"))
+    return json.dumps([path, status, previous, changes, patch])
+
+
+def _recording(number, pr, squash, files=FILES_1218, *, compare="behind", tip="", labels=LABELS, local=None,
+               porcelain="", rows=None, issues=None):
+    pr = {"labels": [], "body": "", "closingIssuesReferences": [], **pr}
     head = pr["headRefOid"]
+    if rows is None:
+        rows = [_row(f) for f in files]
     gh = Replay({
         f"pr view {number} --json {land_pr.PR_FIELDS}": json.dumps(pr),
         "label list --limit 200 --json name": json.dumps(labels),
         f"pr diff {number} --name-only": "".join(f + "\n" for f in files),
+        f"api --paginate repos/{{owner}}/{{repo}}/pulls/{number}/files --jq {land_pr.FILES_JQ}": "".join(r + "\n" for r in rows),
+        **{
+            f"issue view {n} --json labels": json.dumps({"labels": [{"name": lab} for lab in names]})
+            for n, names in (issues or {}).items()
+        },
         f"pr merge {number} --squash --match-head-commit {head}": "",
         f"pr view {number} --json mergeCommit": json.dumps({"mergeCommit": {"oid": squash}}),
         f"api repos/{{owner}}/{{repo}}/compare/main...{squash} --jq .status": compare + "\n",
@@ -231,7 +247,7 @@ def test_compare_retry_is_bounded():
     gh, git = _recording(1218, PR_1218, SQUASH_1218, compare="ahead")
     with pytest.raises(land_pr.LandError, match=rf"after {land_pr.COMPARE_TRIES} tries"):
         _run(1218, gh, git)
-    assert sum(c.startswith("api ") for c in gh.calls) == land_pr.COMPARE_TRIES
+    assert sum(c.startswith(COMPARE) for c in gh.calls) == land_pr.COMPARE_TRIES
 
 
 def test_main_reports_refusal_on_stderr(monkeypatch, capsys):
@@ -276,7 +292,7 @@ def test_first_post_merge_read_fails_then_proof_completes(capsys):
 
 
 def test_compare_read_is_retried():
-    gh, git = _flaky("api ", 2)
+    gh, git = _flaky(COMPARE, 2)
     assert _run(1218, gh, git) == 0
     assert gh.failed == 2
 
@@ -369,3 +385,159 @@ def test_verify_only_with_dry_run_is_refused(capsys):
         land_pr.main(["1218", "--verify-only", "--dry-run"])
     assert exc.value.code == 2
     assert "mutually exclusive" in capsys.readouterr().err
+
+
+# --- #1686: ADR 0121 D4 (invariant 8) and the check-5 freeze holder ---------------------------------
+#
+# The two ADR patches are what `gh api repos/{owner}/{repo}/pulls/N/files` returned for the real
+# PRs, trimmed to the header: #1512 flipped ADR 0116 from Proposed to Accepted; #1522 added ADR
+# 0117 born Accepted. Both landed before this check existed.
+
+PATCH_1512 = (
+    "@@ -1,7 +1,7 @@\n"
+    " # ADR 0116 — Render technologies: three.js in apeGmshViewer and matplotlib; VTK in sunset\n"
+    " \n"
+    "-**Status:** Proposed (2026-10-05). The maintainer accepts it by merging the\n"
+    "-X1-c slice (#1483), which is a human gate (PROGRAM.md §4).\n"
+    "+**Status:** Accepted (2026-10-06). The maintainer accepted it by merging the\n"
+    "+X1-c slice (#1483) as #1493 (`2e6626d6`), and confirmed it in the T session.\n"
+    " \n"
+    " **Owner:** nmora\n"
+)
+ROWS_1512 = [
+    _row("architecture/decisions/0116-render-technologies.md", patch=PATCH_1512),
+    _row("architecture/decisions/README.md"),
+]
+PATCH_1522 = (
+    "@@ -0,0 +1,383 @@\n"
+    "+# ADR 0117 — Assembly (compose v2): instances of model files, rehydrated into one forward bridge\n"
+    "+\n"
+    "+**Status:** Accepted (2026-10-06). Design brief by the Fable architect on\n"
+    "+issue #1517 (grounded on `main` `ad515ffe`), ratified by the maintainer on\n"
+)
+ROWS_1522 = [
+    _row("architecture/decisions/0117-assembly-compose-v2.md", "added", patch=PATCH_1522),
+    _row("architecture/decisions/README.md"),
+]
+
+
+def _d4(rows, **kw):
+    return _recording(1218, kw.pop("pr", PR_1218), SQUASH_1218, [json.loads(r)[0] for r in rows], rows=rows, **kw)
+
+
+def test_proposed_to_accepted_flip_is_refused_1512():
+    gh, git = _d4(ROWS_1512)
+    with pytest.raises(land_pr.LandError, match=r"check 7: .*0116-render-technologies\.md sets Status Accepted"):
+        _run(1218, gh, git)
+    assert not _merged(gh)
+
+
+def test_new_adr_born_accepted_is_refused_1522():
+    gh, git = _d4(ROWS_1522)
+    with pytest.raises(land_pr.LandError, match=r"check 7: .*0117-assembly-compose-v2\.md is a new ADR born with Status Accepted"):
+        _run(1218, gh, git)
+    assert not _merged(gh)
+
+
+def test_human_gate_does_not_lift_the_accepted_refusal():
+    """D4 (a) has no label exemption: accepting an ADR is the maintainer's web merge."""
+    gh, git = _d4(ROWS_1512, pr={**PR_1218, "labels": [{"name": land_pr.HUMAN_GATE}]})
+    with pytest.raises(land_pr.LandError, match=r"check 7"):
+        _run(1218, gh, git)
+
+
+@pytest.mark.parametrize("patch", [
+    # an Accepted ADR's Status line reworded: it was already Accepted
+    "@@ -1,3 +1,3 @@\n # ADR 0121 — x\n \n-**Status:** Accepted (2026-10-11).\n+**Status:** Accepted (2026-10-11; errata below).\n",
+    # a body edit that never touches the Status line (#1689's errata)
+    "@@ -449,3 +449,5 @@ them\n   its scope\n+\n+## Errata (2026-10-11)\n",
+    # a Status line quoted below the 30-line header parse_adr reads
+    "@@ -40,2 +40,3 @@\n text\n+**Status:** Accepted is what the maintainer sets.\n text\n",
+    # a new ADR born Proposed
+    "@@ -0,0 +1,3 @@\n+# ADR 0199 — x\n+\n+**Status:** Proposed (2026-10-11).\n",
+])
+def test_status_edits_that_do_not_accept_pass(patch):
+    gh, git = _d4([_row("architecture/decisions/0121-charter-v2-b-with-amendments.md", patch=patch)])
+    assert _run(1218, gh, git) == 0
+
+
+def test_adr_with_no_patch_fails_closed():
+    rows = [json.dumps(["architecture/decisions/0117-assembly-compose-v2.md", "added", None, 383, None])]
+    gh, git = _d4(rows)
+    with pytest.raises(land_pr.LandError, match=r"check 7: GitHub returned no patch"):
+        _run(1218, gh, git)
+
+
+def test_status_reading_agrees_with_adr_index_on_every_adr():
+    """`_accepted` mirrors scripts/adr_index.py::parse_adr; if that parser changes, this fails."""
+    root = SCRIPT.parents[1]
+    spec = importlib.util.spec_from_file_location("adr_index", root / "scripts" / "adr_index.py")
+    assert spec is not None and spec.loader is not None
+    adr_index = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(adr_index)
+    adrs = sorted((root / "architecture" / "decisions").glob("[0-9][0-9][0-9][0-9]-*.md"))
+    assert len(adrs) > 100
+    for path in adrs:
+        header = path.read_text(encoding="utf-8").splitlines()[: land_pr.ADR_HEADER_LINES]
+        status = next(ln for ln in header if ln.startswith("**Status:**"))
+        assert land_pr._accepted(status) == (adr_index.parse_adr(path)[1] == "Accepted"), path.name
+
+
+@pytest.mark.parametrize("path", land_pr.BASELINE)
+def test_baseline_edit_without_human_gate_is_refused(path):
+    gh, git = _d4([_row(path)])
+    with pytest.raises(land_pr.LandError, match=rf"check 8: .*{path}.*'human-gate'"):
+        _run(1218, gh, git)
+    assert not _merged(gh)
+
+
+def test_baseline_renamed_away_is_refused():
+    gh, git = _d4([_row("tests/freeze_census_v2.py", "renamed", previous="tests/freeze_census.py")])
+    with pytest.raises(land_pr.LandError, match=r"check 8: .*tests/freeze_census\.py"):
+        _run(1218, gh, git)
+
+
+def test_baseline_edit_with_human_gate_lands():
+    gh, git = _d4([_row("tests/freeze_census.py")], pr={**PR_1218, "labels": [{"name": land_pr.HUMAN_GATE}]})
+    assert _run(1218, gh, git) == 0
+    assert _merged(gh)
+
+
+# Check 5's holder: S2-a #1702 (body "Slice: #1696 ...") split build.py under the
+# freeze:src/apeGmsh/opensees/_internal/build.py label that its slice issue #1696 carried.
+# The label had to be lifted by hand before #1702 could land.
+BUILD = "src/apeGmsh/opensees/_internal/build.py"
+FREEZE_BUILD = [*LABELS, {"name": f"freeze:{BUILD}"}]
+BODY_1702 = "Slice: #1696 (link S2-a, chain #1200)\nAuthor-model: Sonnet (prog-mechanic)\n"
+
+
+def test_freeze_holder_via_slice_issue_lands_1702(capsys):
+    gh, git = _recording(1218, {**PR_1218, "body": BODY_1702}, SQUASH_1218, [BUILD], labels=FREEZE_BUILD,
+                         issues={1696: ["program", "slice", f"freeze:{BUILD}"]})
+    assert _run(1218, gh, git) == 0
+    assert "issue view 1696 --json labels" in gh.calls
+    assert "held by #1696; allowed" in capsys.readouterr().out
+
+
+def test_freeze_holder_via_closing_reference_lands():
+    pr = {**PR_1218, "closingIssuesReferences": [{"number": 1696}]}
+    gh, git = _recording(1218, pr, SQUASH_1218, [BUILD], labels=FREEZE_BUILD, issues={1696: [f"freeze:{BUILD}"]})
+    assert _run(1218, gh, git) == 0
+
+
+def test_freeze_holder_via_pr_label_lands():
+    pr = {**PR_1218, "labels": [{"name": f"freeze:{BUILD}"}]}
+    gh, git = _recording(1218, pr, SQUASH_1218, [BUILD], labels=FREEZE_BUILD)
+    assert _run(1218, gh, git) == 0
+
+
+@pytest.mark.parametrize("body, issues", [
+    ("", {}),  # names no issue
+    ("Slice: #1661\n", {1661: ["program", "slice"]}),  # names an issue that does not hold the freeze
+    ("Overlap with #1696 (whichever lands second rebases).\n", {}),  # a mention is not a Slice: line
+])
+def test_freeze_non_holder_is_refused(body, issues):
+    gh, git = _recording(1218, {**PR_1218, "body": body}, SQUASH_1218, [BUILD], labels=FREEZE_BUILD, issues=issues)
+    with pytest.raises(land_pr.LandError, match=r"check 5: .*build\.py.*holds the freeze"):
+        _run(1218, gh, git)
+    assert not _merged(gh)
