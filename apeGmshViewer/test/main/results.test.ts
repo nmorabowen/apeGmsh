@@ -6,12 +6,12 @@
 // owned_element_ids or remove_element.
 
 import assert from "node:assert/strict";
-import { copyFileSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdtempSync, readFileSync, renameSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import * as h5wasm from "h5wasm/node";
-import { ResultsHost } from "../../src/main/results.ts";
+import { IDLE_CLOSE_MS, ResultsHost } from "../../src/main/results.ts";
 import { openLineage, openStageElements } from "../../src/main/zones.ts";
 import { openModel } from "../../src/reader/node.ts";
 import { partialOf, type ResultsH5 } from "../../src/reader/results.ts";
@@ -82,6 +82,63 @@ test("partial writes: no results_hash, or no /meta/lineage at 1.1.0, opens read-
   assert.match(partialOf("1.1.0", null)!, /results 1\.1\.0 has no \/meta\/lineage/);
   assert.equal(partialOf("1.0.0", null), null, "results 1.0.0 predates the lineage: not partial, just unpairable");
   assert.equal(partialOf("1.1.0", { femHash: "a", modelHash: "b", resultsHash: "c" }), null);
+});
+
+// -- the Windows lock (review round 1): the handle closes when idle, and a changed file is never read under the old index
+
+const SMALL = RESULTS.replace(/staged_activation\.results\.h5$/, "results_small.h5");
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+function scratchCopy(src: string): string {
+  const p = join(mkdtempSync(join(tmpdir(), "agv-v4b-lock-")), "run.results.h5");
+  copyFileSync(src, p);
+  return p;
+}
+
+test("idle close: the handle closes after idleMs without a read, and the next read re-opens it", async () => {
+  const p = scratchCopy(RESULTS);
+  const h = new ResultsHost(h5wasm as unknown as ResultsH5, h5wasm.ready, { idleMs: 30 });
+  assert.ok((await h.open(p)).ok);
+  assert.equal(h.isOpen(), true);
+  await sleep(80);
+  assert.equal(h.isOpen(), false, "closed while idle");
+  const s = h.readStep({ path: p, stage: "stage_0", step: 1, seq: 1 });
+  assert.ok(s.ok, JSON.stringify(s));
+  assert.equal(h.isOpen(), true, "re-opened by the read");
+  assert.equal(IDLE_CLOSE_MS <= 1000, true);
+  h.close();
+});
+
+test("a writer's temp-file-and-replace onto the path succeeds while idle; the next read answers `changed` and a re-open re-indexes", async () => {
+  const p = scratchCopy(RESULTS);
+  const h = new ResultsHost(h5wasm as unknown as ResultsH5, h5wasm.ready, { idleMs: 30 });
+  assert.ok((await h.open(p)).ok);
+  await sleep(80);
+  // os.replace: write a temp file beside it, rename it over the path (fails on Windows while a handle is open).
+  const tmp = `${p}.tmp`;
+  copyFileSync(SMALL, tmp);
+  renameSync(tmp, p);
+  const s = h.readStep({ path: p, stage: "stage_0", step: 1, seq: 2 });
+  assert.equal(s.ok, false, "the new file is never read under the old index");
+  assert.equal((s as { changed?: true }).changed, true);
+  const again = await h.open(p);
+  assert.ok(again.ok);
+  if (!again.ok) return;
+  assert.deepEqual(again.meta.stages.map((x) => x.name), ["history"], "the re-index is the new file's");
+  assert.ok(h.readStep({ path: p, stage: "stage_0", step: 1, seq: 3 }).ok);
+  h.close();
+});
+
+test("an in-place rewrite under an open handle is caught before the read (size/mtime), never served under the old index", async () => {
+  const p = scratchCopy(RESULTS);
+  const h = new ResultsHost(h5wasm as unknown as ResultsH5, h5wasm.ready, { idleMs: 10_000 });
+  assert.ok((await h.open(p)).ok);
+  assert.ok(h.readStep({ path: p, stage: "stage_0", step: 0, seq: 1 }).ok);
+  const later = new Date(Date.now() + 5000);
+  utimesSync(p, later, later);
+  const s = h.readStep({ path: p, stage: "stage_0", step: 0, seq: 2 });
+  assert.equal((s as { changed?: true }).changed, true);
+  assert.equal(h.isOpen(), false, "the stale handle is closed");
+  h.close();
 });
 
 test("a truncated results file is a refusal answer, never a crash", async () => {

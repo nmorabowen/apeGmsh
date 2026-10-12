@@ -60,7 +60,7 @@ export interface Bridge {
   openResults?(path: string): Promise<{ ok: true; meta: ResultsInfo; warnings: string[]; sizeBytes: number; readMs: number } | { ok: false; error: string }>;
   /** V4b: one step of the open results file; the reply echoes `seq`. */
   readResultsStep?(req: { path: string; stage: string; step: number; seq: number }): Promise<
-    { ok: true; seq: number; stage: string; step: number; nodal: Record<string, Float64Array> } | { ok: false; seq: number; error: string }
+    { ok: true; seq: number; stage: string; step: number; nodal: Record<string, Float64Array> } | { ok: false; seq: number; error: string; changed?: true }
   >;
   /** V2f: read a /geometry sibling (null: the file has no such zone). */
   openGeometry?(path: string): Promise<{ ok: true; geometry: GeometryZone | null; sizeBytes: number; readMs: number } | { ok: false; error: string }>;
@@ -317,6 +317,8 @@ export class Effects {
     if (seq !== this.stepSeq || res.seq !== seq) return;
     if (!res.ok) {
       this.store.dispatch({ type: "resultStep", status: { stage, step, status: "failed", error: res.error } });
+      // The file is not the one indexed (main checked): mark it changed, so it is re-indexed and the step fetched again.
+      if ("changed" in res && res.changed) this.store.dispatch({ type: "fileChanged", path });
       return;
     }
     this.step = { stage, step, nodal: res.nodal };

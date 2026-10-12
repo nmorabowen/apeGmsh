@@ -54,12 +54,16 @@ test("a step status for a step no longer shown is dropped by the reducer", () =>
 
 /** A bridge whose step replies the test releases by hand, in any order. */
 function harness() {
+  let opens = 0;
   type Reply = Awaited<ReturnType<NonNullable<Bridge["readResultsStep"]>>>;
   const pending: { req: { stage: string; step: number; seq: number }; resolve: (r: Reply) => void }[] = [];
   const bridge = {
     readResultsStep: (req: { path: string; stage: string; step: number; seq: number }) =>
       new Promise<Reply>((resolve) => pending.push({ req, resolve })),
-    openResults: async () => ({ ok: true as const, meta: r.info, warnings: [], sizeBytes: r.sizeBytes, readMs: 0 }),
+    openResults: async () => {
+      opens++;
+      return { ok: true as const, meta: r.info, warnings: [], sizeBytes: r.sizeBytes, readMs: 0 };
+    },
   } as unknown as Bridge;
   const store = new Store();
   // The loaded pair, as the effects leave it.
@@ -71,7 +75,7 @@ function harness() {
     const p = pending[i]!;
     p.resolve({ ok: true, seq: p.req.seq, stage: p.req.stage, step: p.req.step, nodal: { displacement_x: Float64Array.of(p.req.step) } });
   };
-  return { store, effects, pending, reply };
+  return { store, effects, pending, reply, opens: () => opens };
 }
 
 const tick = () => new Promise((res) => setTimeout(res, 0));
@@ -117,6 +121,22 @@ test("latest wins also across a step that comes back: k, k+1, k, with the first 
   reply(2);
   await tick();
   assert.equal(effects.currentStep()?.step, 0);
+  effects.dispose();
+});
+
+test("a `changed` reply (the file is not the one indexed) re-indexes the results and fetches the step again", async () => {
+  const { store, effects, pending, reply, opens } = harness();
+  store.dispatch({ type: "setPhase", at: { kind: "results", stage: 2, step: 1 } });
+  await tick();
+  pending[0]!.resolve({ ok: false, seq: pending[0]!.req.seq, error: "changed on disk", changed: true });
+  await tick();
+  await tick();
+  assert.equal(opens(), 1, "the results were read again");
+  assert.equal(store.get().artifacts.results?.status, "ready");
+  assert.equal(pending.length, 2, "the step is fetched again under the new index");
+  reply(1);
+  await tick();
+  assert.equal(effects.currentStep()?.step, 1);
   effects.dispose();
 });
 
