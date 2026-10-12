@@ -99,6 +99,12 @@ const quadMat: Decoder = (args) =>
     ? { syntax: "thick type matTag", slots: [{ slot: 2, family: "nDMaterial", label: "matTag" }] }
     : { reason: "args are not 'thick type matTag'" };
 
+// LadrunoQuad (Ladruno fork): `matTag` then flags only, `<-formulation f>
+// <-type t> <-geom g> <-thick t> <-rho r> <-body b1 b2> <-pressure p>`
+// (SRC/element/ladrunoPlane/OPS_LadrunoQuad.cpp, the usage comment and the
+// first OPS_GetIntInput: the one positional argument is the nDMaterial tag).
+// The same shape as a solid's, so it shares `solidMat`.
+
 // SSPquad: `matTag type thickness ...` (SSPquad.cpp).
 const sspQuadMat: Decoder = (args) =>
   isNum(args[0]) && typeof args[1] === "string" && isNum(args[2])
@@ -121,6 +127,7 @@ export const ELEMENT_SYNTAX: Readonly<Record<string, Decoder>> = {
   ShellNLDKGQ: shellSec,
   ASDShellQ4: shellSec,
   quad: quadMat,
+  LadrunoQuad: solidMat,
   SSPquad: sspQuadMat,
 };
 

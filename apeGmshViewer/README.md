@@ -104,12 +104,12 @@ through Node's type stripping; nothing is compiled for the tests).
   fibers and layers name their material by HDF5 path (`material_ref`).
 - Schema versions follow ADR 0113, with one floor per zone (`ZONE_FLOOR` in
   `src/reader/read.ts`: neutral 2.10, opensees 2.12, geometry 1.0, provenance
-  1.0). A file from the floor to the app's version opens with no banner. A
-  newer minor of the same major opens with one banner. A file below the floor,
-  or of another major, is refused with a sentence naming the floor. The root
-  `/sequence` zone (1.0, V3a) is read when a file carries it and is otherwise
-  "not in this file", never an error; its floor sits beside the table
-  (`SEQUENCE_FLOOR`) until Python ships its own.
+  1.0, sequence 1.0), equal to Python's `reader_floor(zone)`
+  (`tests/test_app_floor_drift.py`). A file from the floor to the app's version
+  opens with no banner. A newer minor of the same major opens with one banner.
+  A file below the floor, or of another major, is refused with a sentence
+  naming the floor. The root `/sequence` zone (1.0, V3a) is read when a file
+  carries it and is otherwise "not in this file", never an error.
 - The model-definition data: `/opensees/decls` and `/opensees/decl_params`
   (each declaration's parameters by field name, references as
   `{"$decl": key}`), the analysis chain, time series, patterns, recorders, fix

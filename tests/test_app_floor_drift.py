@@ -22,6 +22,7 @@ import pytest
 
 from apeGmsh.opensees._internal.schema_version import (
     RESULTS,
+    SEQUENCE,
     reader_floor,
     reader_version,
 )
@@ -120,7 +121,29 @@ def test_app_floor_table_covers_the_zones_the_app_reads(read_ts: str) -> None:
     results, which the app does not read yet (see the next test).
     """
     floors = parse_zone_floors(read_ts)
-    assert {"neutral", "opensees", "geometry", "provenance"} <= set(floors), floors
+    assert {"neutral", "opensees", "geometry", "provenance", "sequence"} <= set(floors), floors
+
+
+def test_sequence_floor_is_a_zone_floor_row(read_ts: str) -> None:
+    """The ``/sequence`` floor is a ``ZONE_FLOOR`` row (V4f, #1708), so the
+    drift test above compares it with ``SEQUENCE_SCHEMA_FLOOR``; the old
+    side constant ``SEQUENCE_FLOOR`` is gone and cannot drift unseen."""
+    floors = parse_zone_floors(read_ts)
+    assert floors["sequence"] == reader_floor(SEQUENCE).minor, floors
+    assert "SEQUENCE_TARGET" in read_ts
+    assert not re.search(r"\bSEQUENCE_FLOOR\b", read_ts), (
+        "read.ts still defines or uses SEQUENCE_FLOOR; the sequence floor "
+        "lives in ZONE_FLOOR only"
+    )
+
+
+def test_comparison_catches_a_sequence_floor_drift() -> None:
+    """Self-test: a sequence row one minor off Python's is reported."""
+    py = reader_floor(SEQUENCE)
+    majors = {SEQUENCE: reader_version(SEQUENCE).major}
+    findings = floor_drift({SEQUENCE: py.minor + 1}, majors)
+    assert len(findings) == 1 and f"ZONE_FLOOR.sequence = {py.minor + 1}" in findings[0], findings
+    assert floor_drift({SEQUENCE: py.minor}, majors) == []
 
 
 def test_results_zone_is_absent_until_v4(read_ts: str) -> None:
