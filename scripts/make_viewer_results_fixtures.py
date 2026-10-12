@@ -138,11 +138,11 @@ def write(path: Path, fem, n_steps: int, stress: list[str], gp: np.ndarray, clas
 STAGED_STEPS = {"base": 3, "erect": 2, "unprop": 4}
 
 
-def staged_activation(out_dir: Path) -> None:
-    """The V4b staged pair: a composed model.h5 and its results.h5 (see the docstring)."""
+def staged_model(out_dir: Path, name: str):
+    """The three-box staged model (see the docstring), written to ``out_dir/<name>.h5``; returns ``(fem, path)``."""
     from apeGmsh.opensees import apeSees
 
-    with apeGmsh(model_name="staged_activation", verbose=False, save_to=SESSION_DIR / "staged_activation.h5") as g:
+    with apeGmsh(model_name=name, verbose=False, save_to=SESSION_DIR / f"{name}.h5") as g:
         g.model.geometry.add_box(0, 0, 0, 1, 1, 3, label="col")
         g.model.geometry.add_box(1, 0, 0, 1, 1, 1.5, label="prop")
         g.model.geometry.add_box(0, 0, 3, 2, 1, 0.5, label="top")
@@ -183,9 +183,14 @@ def staged_activation(out_dir: Path) -> None:
         s.remove_element(pg="Prop")
         chain(s)
         s.run(n_increments=STAGED_STEPS["unprop"])
-    model_path = out_dir / "staged_activation.h5"
+    model_path = out_dir / f"{name}.h5"
     ops.h5(str(model_path))
+    return fem, model_path
 
+
+def staged_activation(out_dir: Path) -> None:
+    """The V4b staged pair: a composed model.h5 and its results.h5 (see the docstring)."""
+    fem, model_path = staged_model(out_dir, "staged_activation")
     node_ids = np.asarray(fem.nodes.ids, dtype=np.int64)
     res_path = out_dir / "staged_activation.results.h5"
     with NativeWriter(res_path) as w:
@@ -240,15 +245,64 @@ def staged_oracle(model_path: Path, out: Path) -> None:
     print(f"wrote {out.name}: " + ", ".join(f"{k} hides {len(v)}" for k, v in hidden.items()))
 
 
+def contour_values(xyz: np.ndarray, stage: int, k: int, n: int) -> dict[str, np.ndarray]:
+    """The V4c1 closed form: one step's displacement_x/y/z of nodes at ``xyz`` (N, 3)."""
+    s = 0.01 * (stage + 1) * (k + 1) / n
+    x, z = xyz[:, 0], xyz[:, 2]
+    return {"displacement_x": s * z, "displacement_y": 0.5 * s * x, "displacement_z": -0.2 * s * (x + z)}
+
+
+def contour_fixtures(out_dir: Path) -> None:
+    """The V4c1 contour pairs (#1756): the staged model with a vector field, and a copy whose results miss nodes.
+
+    ``contour_staged.h5`` is the three-box staged model; ``contour_staged.results.h5``
+    holds the three program stages with ``displacement_x/y/z`` of every node,
+    closed forms of the node coordinates (``contour_values``):
+
+        s = 0.01 * (stage + 1) * (k + 1) / T
+        displacement_x = s * z,  displacement_y = 0.5 * s * x,  displacement_z = -0.2 * s * (x + z)
+
+    ``contour_nodata.h5`` is the same model file under another stem (the same
+    hashes), and ``contour_nodata.results.h5`` records only the nodes with
+    ``z <= 3`` (the ``Top`` box's own nodes are absent: "no data").
+    """
+    import shutil
+
+    fem, model_path = staged_model(out_dir, "contour_staged")
+    node_ids = np.asarray(fem.nodes.ids, dtype=np.int64)
+    xyz = np.asarray(fem.nodes.coords, dtype=np.float64).reshape(-1, 3)
+    nodata_model = out_dir / "contour_nodata.h5"
+    shutil.copyfile(model_path, nodata_model)
+    keep = xyz[:, 2] <= 3.0 + 1e-9
+    for res_path, ids, coords in (
+        (out_dir / "contour_staged.results.h5", node_ids, xyz),
+        (out_dir / "contour_nodata.results.h5", node_ids[keep], xyz[keep]),
+    ):
+        with NativeWriter(res_path) as w:
+            w.open(fem=fem, source_type="domain_capture", analysis_label="V4c1 synthetic (#1756)", model_h5_src=model_path)
+            for si, (name, n) in enumerate(STAGED_STEPS.items()):
+                k = np.arange(n, dtype=np.float64)
+                sid = w.begin_stage(name=name, kind="static", time=(k + 1) / n)
+                steps = [contour_values(coords, si, kk, n) for kk in range(n)]
+                w.write_nodes(sid, "partition_0", node_ids=ids,
+                              components={c: np.stack([st[c] for st in steps]) for c in steps[0]})
+                w.end_stage()
+        print(f"wrote {res_path.name}: {ids.size} of {node_ids.size} nodes")
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--measure", type=Path, help="write the measured files a, b, c into this directory")
     ap.add_argument("--only", choices=["a", "b", "c"], action="append")
     ap.add_argument("--tet-size", type=float, default=0.0335)
     ap.add_argument("--staged", action="store_true", help="write the V4b staged pair (staged_activation.h5 + .results.h5)")
+    ap.add_argument("--contour", action="store_true", help="write the V4c1 contour pairs (contour_staged.*, contour_nodata.*)")
     args = ap.parse_args()
     if args.staged:
         staged_activation(HERE)
+        return
+    if args.contour:
+        contour_fixtures(HERE)
         return
     if args.measure is None:
         write(HERE / "results_small.h5", wedge_mesh(2, 1, "results_small"), 5, ["stress_xx", "stress_yy"], WEDGE_GP, 0)
@@ -258,10 +312,14 @@ def main() -> None:
     todo = set(args.only or ["a", "b", "c"])
     if todo & {"a", "c"}:
         fem = wedge_mesh(13, 21, "v4a_maintainer")
+        # V4c1: the session's model.h5 beside each file, as <stem>.h5, so the app pairs them (fem_hash).
+        import shutil
         if "a" in todo:
             write(out / "a_maintainer_100.results.h5", fem, 100, STRESS6, WEDGE_GP, 0)
+            shutil.copyfile(SESSION_DIR / "v4a_maintainer.h5", out / "a_maintainer_100.h5")
         if "c" in todo:
             write(out / "c_maintainer_5000.results.h5", fem, 5000, ["stress_xx"], WEDGE_GP, 0)
+            shutil.copyfile(SESSION_DIR / "v4a_maintainer.h5", out / "c_maintainer_5000.h5")
     if "b" in todo:
         write(out / "b_stress_box_100.results.h5", tet_blocks(args.tet_size, "v4a_stress_box"), 100, STRESS6, TET_GP, 179)
 
