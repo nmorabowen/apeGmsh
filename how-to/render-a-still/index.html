@@ -3823,6 +3823,21 @@ occupant, and assigning <code>None</code> clears it.</p>
 warps the mesh and causes no colour scale. The scale you see is
 named by the slot, so warping by displacement while contouring stress
 gives one scale and it says stress.</p>
+<p>A colour-mapped slot (<code>contour</code>, <code>vector</code>, <code>gauss</code>, <code>sand</code>) can fix its
+own scale. <code>clim</code> is the colour range and <code>cmap</code> any colour map
+matplotlib knows; left at <code>None</code>, the picture keeps its automatic range
+and the kind's usual map.</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="n">view</span><span class="o">.</span><span class="n">contour</span> <span class="o">=</span> <span class="n">Contour</span><span class="p">(</span><span class="s2">"displacement_z"</span><span class="p">,</span> <span class="n">clim</span><span class="o">=</span><span class="p">(</span><span class="o">-</span><span class="mf">0.05</span><span class="p">,</span> <span class="mf">0.05</span><span class="p">),</span> <span class="n">cmap</span><span class="o">=</span><span class="s2">"jet"</span><span class="p">)</span>
+</span></code></pre></div>
+<p>A bad value raises when you fill the slot, not when you render. Two
+slots of the same quantity share one scale, so they may not set
+different values; a slot left at <code>None</code> uses the other one's.</p>
+<p>To see the deformed shape against where it started, turn on the ghost.
+It draws the view's undeformed cells as outlines, under the same scope,
+stage and section planes as the posed mesh, and adds no scale:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="n">view</span><span class="o">.</span><span class="n">deform</span> <span class="o">=</span> <span class="n">Deform</span><span class="p">(</span><span class="s2">"displacement"</span><span class="p">,</span> <span class="mf">50.0</span><span class="p">)</span>
+</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="n">view</span><span class="o">.</span><span class="n">overlay</span> <span class="o">=</span> <span class="kc">True</span>
+</span></code></pre></div>
 <p>See <a href="../../api/results-session/">Results session</a> for the whole catalog
 and the legend law.</p>
 <h2 id="the-one-call-shortcut">The one-call shortcut<a class="headerlink" href="#the-one-call-shortcut" title="Permanent link">&para;</a></h2>
@@ -3830,8 +3845,8 @@ and the legend law.</p>
 filled for you. <code>view=</code> is <code>mesh</code>, <code>contour</code>, <code>deformed</code> or
 <code>reactions</code>. <code>results.render_pack(dir)</code>, <code>results.assess(figures=True)</code>
 and <code>python -m apeGmsh.viewers render</code> all draw the same way.</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="n">results</span><span class="o">.</span><span class="n">render</span><span class="p">(</span><span class="s2">"uy.png"</span><span class="p">,</span> <span class="n">view</span><span class="o">=</span><span class="s2">"deformed"</span><span class="p">,</span> <span class="n">component</span><span class="o">=</span><span class="s2">"displacement_y"</span><span class="p">)</span>
-</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="n">results</span><span class="o">.</span><span class="n">render_pack</span><span class="p">(</span><span class="s2">"figures/"</span><span class="p">)</span>    <span class="c1"># mesh, contour, deformed, reactions, history</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="n">results</span><span class="o">.</span><span class="n">render</span><span class="p">(</span><span class="s2">"uy.png"</span><span class="p">,</span> <span class="n">view</span><span class="o">=</span><span class="s2">"deformed"</span><span class="p">,</span> <span class="n">component</span><span class="o">=</span><span class="s2">"displacement_y"</span><span class="p">)</span>
+</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="n">results</span><span class="o">.</span><span class="n">render_pack</span><span class="p">(</span><span class="s2">"figures/"</span><span class="p">)</span>    <span class="c1"># mesh, contour, deformed, reactions, history</span>
 </span></code></pre></div>
 <p>The shortcut refuses two requests that the session cannot draw:</p>
 <ul>
@@ -3846,12 +3861,12 @@ and <code>python -m apeGmsh.viewers render</code> all draw the same way.</p>
 <p>Scope picks the one cell set the whole view is a function of — one
 composition axis plus checked names. Clips are the view's own section
 planes.</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">apeGmsh.results.session</span><span class="w"> </span><span class="kn">import</span> <span class="n">Scope</span>
-</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>
-</span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="n">view</span><span class="o">.</span><span class="n">scope</span> <span class="o">=</span> <span class="n">Scope</span><span class="p">(</span><span class="s2">"physical_groups"</span><span class="p">,</span> <span class="p">(</span><span class="s2">"Cols"</span><span class="p">,))</span>     <span class="c1"># or materials / element_types</span>
-</span><span id="__span-4-4"><a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="n">view</span><span class="o">.</span><span class="n">add_clip</span><span class="p">((</span><span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">1</span><span class="p">),</span> <span class="n">offset</span><span class="o">=</span><span class="mf">5.0</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="s2">"mid-height"</span><span class="p">)</span>
-</span><span id="__span-4-5"><a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a>
-</span><span id="__span-4-6"><a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a><span class="n">s</span><span class="o">.</span><span class="n">render</span><span class="p">(</span><span class="s2">"scoped.png"</span><span class="p">)</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">apeGmsh.results.session</span><span class="w"> </span><span class="kn">import</span> <span class="n">Scope</span>
+</span><span id="__span-6-2"><a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>
+</span><span id="__span-6-3"><a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="n">view</span><span class="o">.</span><span class="n">scope</span> <span class="o">=</span> <span class="n">Scope</span><span class="p">(</span><span class="s2">"physical_groups"</span><span class="p">,</span> <span class="p">(</span><span class="s2">"Cols"</span><span class="p">,))</span>     <span class="c1"># or materials / element_types</span>
+</span><span id="__span-6-4"><a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="n">view</span><span class="o">.</span><span class="n">add_clip</span><span class="p">((</span><span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">1</span><span class="p">),</span> <span class="n">offset</span><span class="o">=</span><span class="mf">5.0</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="s2">"mid-height"</span><span class="p">)</span>
+</span><span id="__span-6-5"><a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a>
+</span><span id="__span-6-6"><a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a><span class="n">s</span><span class="o">.</span><span class="n">render</span><span class="p">(</span><span class="s2">"scoped.png"</span><span class="p">)</span>
 </span></code></pre></div>
 <p>A name the model does not carry raises <code>ValueError</code> at render, and the
 message lists the names it does have.</p>
@@ -3859,11 +3874,11 @@ message lists the names it does have.</p>
 <p>With one pane <code>render()</code> needs no address. Add a second and every call
 takes a pane id — the same stable id the snapshot and the window's
 outline use.</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="n">second</span> <span class="o">=</span> <span class="n">s</span><span class="o">.</span><span class="n">add_view</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="s2">"undeformed"</span><span class="p">)</span>
-</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="p">[</span><span class="n">p</span><span class="o">.</span><span class="n">id</span> <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">s</span><span class="o">.</span><span class="n">panes</span><span class="p">]</span>                    <span class="c1"># ['mesh-1', 'mesh-2']</span>
-</span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>
-</span><span id="__span-5-4"><a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="n">s</span><span class="o">.</span><span class="n">render</span><span class="p">(</span><span class="s2">"deformed.png"</span><span class="p">,</span> <span class="n">pane</span><span class="o">=</span><span class="n">view</span><span class="o">.</span><span class="n">id</span><span class="p">)</span>
-</span><span id="__span-5-5"><a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="n">s</span><span class="o">.</span><span class="n">render</span><span class="p">(</span><span class="s2">"plain.png"</span><span class="p">,</span> <span class="n">pane</span><span class="o">=</span><span class="n">second</span><span class="o">.</span><span class="n">id</span><span class="p">)</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="n">second</span> <span class="o">=</span> <span class="n">s</span><span class="o">.</span><span class="n">add_view</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="s2">"undeformed"</span><span class="p">)</span>
+</span><span id="__span-7-2"><a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="p">[</span><span class="n">p</span><span class="o">.</span><span class="n">id</span> <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">s</span><span class="o">.</span><span class="n">panes</span><span class="p">]</span>                    <span class="c1"># ['mesh-1', 'mesh-2']</span>
+</span><span id="__span-7-3"><a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a>
+</span><span id="__span-7-4"><a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a><span class="n">s</span><span class="o">.</span><span class="n">render</span><span class="p">(</span><span class="s2">"deformed.png"</span><span class="p">,</span> <span class="n">pane</span><span class="o">=</span><span class="n">view</span><span class="o">.</span><span class="n">id</span><span class="p">)</span>
+</span><span id="__span-7-5"><a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a><span class="n">s</span><span class="o">.</span><span class="n">render</span><span class="p">(</span><span class="s2">"plain.png"</span><span class="p">,</span> <span class="n">pane</span><span class="o">=</span><span class="n">second</span><span class="o">.</span><span class="n">id</span><span class="p">)</span>
 </span></code></pre></div>
 <div class="admonition note">
 <p class="admonition-title">Plot panes are arrays, not stills</p>
@@ -3871,14 +3886,14 @@ outline use.</p>
 plot pane raises <code>NotImplementedError</code>. Use
 <code>session.realize(pane=...)</code> to get the resolved arrays and draw
 them however you like:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">apeGmsh.results.session</span><span class="w"> </span><span class="kn">import</span> <span class="n">PlotSeries</span><span class="p">,</span> <span class="n">PlotSource</span>
-</span><span id="__span-6-2"><a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>
-</span><span id="__span-6-3"><a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="n">plot</span> <span class="o">=</span> <span class="n">s</span><span class="o">.</span><span class="n">add_plot</span><span class="p">(</span>
-</span><span id="__span-6-4"><a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a>    <span class="s2">"history"</span><span class="p">,</span> <span class="n">series</span><span class="o">=</span><span class="p">[</span><span class="n">PlotSeries</span><span class="p">(</span><span class="n">PlotSource</span><span class="o">.</span><span class="n">node</span><span class="p">(</span><span class="mi">9</span><span class="p">),</span> <span class="s2">"displacement_x"</span><span class="p">)],</span>
-</span><span id="__span-6-5"><a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a><span class="p">)</span>
-</span><span id="__span-6-6"><a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a><span class="n">realized</span> <span class="o">=</span> <span class="n">s</span><span class="o">.</span><span class="n">realize</span><span class="p">(</span><span class="n">pane</span><span class="o">=</span><span class="n">plot</span><span class="o">.</span><span class="n">id</span><span class="p">)</span>
-</span><span id="__span-6-7"><a id="__codelineno-6-7" name="__codelineno-6-7" href="#__codelineno-6-7"></a><span class="n">realized</span><span class="o">.</span><span class="n">series</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">time</span>      <span class="c1"># array([0. , 0.4, 0.8, 1.2, 1.6, 2. ])</span>
-</span><span id="__span-6-8"><a id="__codelineno-6-8" name="__codelineno-6-8" href="#__codelineno-6-8"></a><span class="n">realized</span><span class="o">.</span><span class="n">series</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">values</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">apeGmsh.results.session</span><span class="w"> </span><span class="kn">import</span> <span class="n">PlotSeries</span><span class="p">,</span> <span class="n">PlotSource</span>
+</span><span id="__span-8-2"><a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a>
+</span><span id="__span-8-3"><a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a><span class="n">plot</span> <span class="o">=</span> <span class="n">s</span><span class="o">.</span><span class="n">add_plot</span><span class="p">(</span>
+</span><span id="__span-8-4"><a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a>    <span class="s2">"history"</span><span class="p">,</span> <span class="n">series</span><span class="o">=</span><span class="p">[</span><span class="n">PlotSeries</span><span class="p">(</span><span class="n">PlotSource</span><span class="o">.</span><span class="n">node</span><span class="p">(</span><span class="mi">9</span><span class="p">),</span> <span class="s2">"displacement_x"</span><span class="p">)],</span>
+</span><span id="__span-8-5"><a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a><span class="p">)</span>
+</span><span id="__span-8-6"><a id="__codelineno-8-6" name="__codelineno-8-6" href="#__codelineno-8-6"></a><span class="n">realized</span> <span class="o">=</span> <span class="n">s</span><span class="o">.</span><span class="n">realize</span><span class="p">(</span><span class="n">pane</span><span class="o">=</span><span class="n">plot</span><span class="o">.</span><span class="n">id</span><span class="p">)</span>
+</span><span id="__span-8-7"><a id="__codelineno-8-7" name="__codelineno-8-7" href="#__codelineno-8-7"></a><span class="n">realized</span><span class="o">.</span><span class="n">series</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">time</span>      <span class="c1"># array([0. , 0.4, 0.8, 1.2, 1.6, 2. ])</span>
+</span><span id="__span-8-8"><a id="__codelineno-8-8" name="__codelineno-8-8" href="#__codelineno-8-8"></a><span class="n">realized</span><span class="o">.</span><span class="n">series</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">values</span>
 </span></code></pre></div>
 <p>For a ready-made chart, <code>results.plot.history(...)</code> is the
 matplotlib route.</p>
@@ -3886,7 +3901,7 @@ matplotlib route.</p>
 <h2 id="hand-the-same-picture-to-the-window">Hand the same picture to the window<a class="headerlink" href="#hand-the-same-picture-to-the-window" title="Permanent link">&para;</a></h2>
 <p>The session is what the window saves, so a scripted arrangement can be
 opened by a human — and vice versa.</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="n">s</span><span class="o">.</span><span class="n">save_snapshot</span><span class="p">()</span>          <span class="c1"># -&gt; &lt;results&gt;.viewer-session.json</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-9-1"><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="n">s</span><span class="o">.</span><span class="n">save_snapshot</span><span class="p">()</span>          <span class="c1"># -&gt; &lt;results&gt;.viewer-session.json</span>
 </span></code></pre></div>
 <p><code>results.viewer()</code> picks that file up on the next open (it asks first
 by default), and returns the session it projected once the window
@@ -3896,9 +3911,9 @@ closes.</p>
 no file, and return <code>None</code> — so the same script runs headless without a
 GL context, and a <code>None</code> return is the signal that no picture was
 produced.</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="n">png</span> <span class="o">=</span> <span class="n">s</span><span class="o">.</span><span class="n">render</span><span class="p">(</span><span class="s2">"tip.png"</span><span class="p">,</span> <span class="n">pane</span><span class="o">=</span><span class="n">view</span><span class="o">.</span><span class="n">id</span><span class="p">)</span>
-</span><span id="__span-8-2"><a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="k">if</span> <span class="n">png</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
-</span><span id="__span-8-3"><a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a>    <span class="o">...</span>        <span class="c1"># skipped: no GL, or APEGMSH_SKIP_VIEWER is set</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-10-1"><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="n">png</span> <span class="o">=</span> <span class="n">s</span><span class="o">.</span><span class="n">render</span><span class="p">(</span><span class="s2">"tip.png"</span><span class="p">,</span> <span class="n">pane</span><span class="o">=</span><span class="n">view</span><span class="o">.</span><span class="n">id</span><span class="p">)</span>
+</span><span id="__span-10-2"><a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a><span class="k">if</span> <span class="n">png</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+</span><span id="__span-10-3"><a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a>    <span class="o">...</span>        <span class="c1"># skipped: no GL, or APEGMSH_SKIP_VIEWER is set</span>
 </span></code></pre></div>
 <hr />
 <p><em>Next: <a href="../../api/results-session/">Results session</a> — the full API of

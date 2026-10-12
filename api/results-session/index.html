@@ -7753,8 +7753,11 @@ slots of the same quantity that set different values refuse:</p>
 </span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="n">view</span><span class="o">.</span><span class="n">gauss</span> <span class="o">=</span> <span class="n">Gauss</span><span class="p">(</span><span class="s2">"stress_xx"</span><span class="p">,</span> <span class="n">cmap</span><span class="o">=</span><span class="s2">"viridis"</span><span class="p">)</span>
 </span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="c1"># ValueError: ... One field is one scale (ADR 0098 §5, A7.3) ...</span>
 </span></code></pre></div>
-<p>The session stores, validates and saves these fields; the window and
-<code>render()</code> do not apply them yet.</p>
+<p>The session stores, validates and saves these fields, and the window,
+<code>render()</code> and <code>export_animation</code> all draw with them. <code>view.overlay =
+True</code> adds the undeformed ghost: the view's cells at scale 0 as
+outlines, under the same scope, stage and section planes, with no
+scale bar.</p>
 <p>Fibers, shell layers and isochrones do not open an eighth slot: a new
 category is an ADR 0098 amendment, not a subclass.</p>
 
