@@ -11,7 +11,7 @@ captured fem 5's row as Fy = 6257.8, which is tag 5's response (column fem
 
 Each silent path now refuses before the run file is written:
 
-- no bridge, no model and no ``element_tags=``;
+- no bridge, no model and no ``tag_map=``;
 - the bridge could not archive its sidecar model.h5;
 - reading the pairing raised (it was swallowed);
 - the pairing does not cover every recorded id (``to_ops`` passes a
@@ -186,7 +186,7 @@ def test_incomplete_pairing_refuses(tmp_path: Path) -> None:
     path = tmp_path / "run.h5"
     with pytest.raises(ValueError, match=r"fem_eids \[7\]"):
         _run(DomainCapture(spec, path, fem, ops=_FakeOps(),
-                           element_tags={4: 4}))
+                           tag_map={4: 4}))
     assert not path.exists()
 
 
@@ -251,3 +251,46 @@ def test_bridge_node_capture_is_stamped(tmp_path: Path, portal: dict) -> None:
     path = tmp_path / "run.h5"
     _run(ops.domain_capture(spec, path=str(path), ops=_FakeOps()))
     assert _verified(path)
+
+
+def test_empty_mapping_refuses(tmp_path: Path) -> None:
+    # An empty map is a pairing that covers nothing, not "no pairing".
+    fem = _MockFem([1])
+    spec = _make_spec(_element_record([4]), snapshot_id=fem.snapshot_id)
+    path = tmp_path / "run.h5"
+    with pytest.raises(ValueError, match=r"fem_eids \[4\]"):
+        _run(DomainCapture(spec, path, fem, ops=_FakeOps(), tag_map={}))
+    assert not path.exists()
+
+
+@pytest.mark.parametrize("as_translator", [False, True],
+                         ids=["mapping", "translator"])
+@pytest.mark.parametrize("pairing, refused", [
+    ({4: 4, 7: 9}, False),   # covers both ids (7 -> tag 9)
+    ({4: 4, 9: 7}, True),    # 7 is an ops tag here, not a fem_eid
+    ({4: 4}, True),          # 7 unknown
+])
+def test_tag_map_must_cover_every_id(
+    tmp_path: Path, pairing: dict, refused: bool, as_translator: bool,
+) -> None:
+    # tag_map= takes a plain {fem_eid: ops_tag} mapping, or the
+    # ElementTagTranslator it took before.
+    from apeGmsh.results.readers._tag_translation import ElementTagTranslator
+
+    tag_map: Any = pairing
+    if as_translator:
+        tag_map = ElementTagTranslator(
+            pairing, {t: f for f, t in pairing.items()},
+        )
+    fem = _MockFem([1])
+    spec = _make_spec(_element_record([4, 7]), snapshot_id=fem.snapshot_id)
+    cap = DomainCapture(spec, tmp_path / "run.h5", fem, ops=_FakeOps(),
+                        tag_map=tag_map)
+    if refused:
+        with pytest.raises(ValueError, match=r"fem_eids \[7\]"):
+            cap.__enter__()
+    else:
+        cap.__enter__()
+        cap.close()
+        with h5py.File(tmp_path / "run.h5", "r") as f:
+            assert f.attrs[_native.ATTR_ELEMENT_INDEX_SPACE] == "fem"

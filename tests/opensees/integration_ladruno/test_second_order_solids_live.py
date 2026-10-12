@@ -190,7 +190,7 @@ def test_ladruno_brick20_domain_capture_gauss_std(tmp_path) -> None:
         ndm=3, ndf=3,
     )
     capture_path = Path(tmp_path) / "cap.h5"
-    with DomainCapture(spec, capture_path, fem, ops=live, element_tags=identity_tags(spec)) as cap:
+    with DomainCapture(spec, capture_path, fem, ops=live, tag_map=identity_tags(spec)) as cap:
         cap.begin_stage("static", kind="static")
         cap.step(t=float(live.getTime()))
         # The catalog fix: std must not land in skipped_elements.
@@ -269,7 +269,7 @@ def test_ladruno_brick20_domain_capture_uri_refuses_loud(tmp_path) -> None:
         ),),
         ndm=3, ndf=3,
     )
-    with DomainCapture(spec, Path(tmp_path) / "uri.h5", fem, ops=live, element_tags=identity_tags(spec)) as cap:
+    with DomainCapture(spec, Path(tmp_path) / "uri.h5", fem, ops=live, tag_map=identity_tags(spec)) as cap:
         cap.begin_stage("static", kind="static")
         with pytest.raises(ValueError, match=r"formulation uri|uri"):
             cap.step(t=float(live.getTime()))

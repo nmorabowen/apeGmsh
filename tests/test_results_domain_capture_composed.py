@@ -105,7 +105,7 @@ class TestComposedDomainCapture:
 
         out = tmp_path / "composed_capture.h5"
         # tag_map injected (the bridge / from_h5 paths build it the same way).
-        with DomainCapture(spec, out, fem, ops=ops, element_tags=pairing) as cap:
+        with DomainCapture(spec, out, fem, ops=ops, tag_map=pairing) as cap:
             cap.begin_stage("static", kind="static")
             cap.step(t=1.0)
             cap.end_stage()

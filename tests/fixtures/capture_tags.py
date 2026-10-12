@@ -1,4 +1,4 @@
-"""``element_tags=`` for DomainCapture tests whose domains number elements by FEM id.
+"""``tag_map=`` for DomainCapture tests whose domains number elements by FEM id.
 
 An element-scoped ``DomainCapture`` refuses without a ``{fem_eid: ops_tag}``
 pairing that covers every recorded id. These tests build their OpenSees

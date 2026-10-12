@@ -263,7 +263,7 @@ def test_real_2d_capture_for_class(
     )
 
     capture_path = tmp_path / "cap.h5"
-    with DomainCapture(spec, capture_path, fem, element_tags=identity_tags(spec)) as cap:
+    with DomainCapture(spec, capture_path, fem, tag_map=identity_tags(spec)) as cap:
         cap.begin_stage("static_load", kind="static")
         cap.step(t=ops.getTime())
         cap.end_stage()

@@ -217,8 +217,12 @@ def _capture_pairing(model_h5_path: Any) -> "dict[int, int]":
 
 
 def _translator(pairing: "Mapping[int, int] | None") -> Any:
-    """An :class:`ElementTagTranslator` over ``pairing``, or ``None``."""
-    if not pairing:
+    """An :class:`ElementTagTranslator` over ``pairing``, or ``None``.
+
+    ``None`` means no pairing is known. An empty mapping is a pairing
+    that covers nothing, so it gives an empty translator, not ``None``.
+    """
+    if pairing is None:
         return None
     from ..readers._tag_translation import ElementTagTranslator
 
@@ -228,13 +232,29 @@ def _translator(pairing: "Mapping[int, int] | None") -> Any:
     )
 
 
+def _as_translator(tag_map: Any) -> Any:
+    """``tag_map=`` as a translator: a mapping is wrapped, a translator kept."""
+    if tag_map is None or isinstance(tag_map, Mapping):
+        return _translator(tag_map)
+    return tag_map
+
+
+def _covers(tag_map: Any, ids: ndarray) -> bool:
+    """True when ``tag_map`` translates every id in ``ids`` fem -> ops.
+
+    ``to_ops`` is all-or-nothing: a list with any unknown id comes back
+    untranslated, so every id must be covered.
+    """
+    return bool(tag_map.covers_fem(ids))
+
+
 #: Record categories that are not element-scoped.
 _NON_ELEMENT_CATEGORIES = frozenset({"nodes", "modal"})
 
 
 def _require_element_pairing(
     spec: "ResolvedDomainCaptureSpec",
-    pairing: "Mapping[int, int] | None",
+    tag_map: Any,
     why_missing: str,
 ) -> None:
     """Refuse an element-scoped capture the pairing does not fully cover.
@@ -258,10 +278,10 @@ def _require_element_pairing(
     remedy = (
         "Open the capture through ops.domain_capture(spec, path=...) on "
         "the bridge that built the model, or DomainCapture.from_h5("
-        "<model.h5>, ...), or pass element_tags= (the model's "
+        "<model.h5>, ...), or pass tag_map= (the model's "
         "{fem_eid: ops_tag} pairing) to DomainCapture."
     )
-    if pairing is None:
+    if tag_map is None:
         raise ValueError(
             "DomainCapture: the spec records elements by fem_eid, but no "
             f"fem_eid -> ops-tag pairing is available ({why_missing}). "
@@ -269,7 +289,10 @@ def _require_element_pairing(
             "element_tags=\"sequential\" the two differ, so the capture "
             "would record other elements under these ids. " + remedy
         )
-    missing = sorted({e for e in wanted if e not in pairing})
+    arr = np.asarray(sorted(set(wanted)), dtype=np.int64)
+    if _covers(tag_map, arr):
+        return
+    missing = [int(e) for e in arr if not _covers(tag_map, arr[arr == e])]
     if missing:
         raise ValueError(
             f"DomainCapture: the spec records fem_eids {missing[:10]}"
@@ -476,20 +499,17 @@ class DomainCapture:
         *,
         ops: Any = None,
         bridge: Any = None,
-        element_tags: "Mapping[int, int] | None" = None,
+        tag_map: Any = None,
     ) -> None:
         self._spec = spec
         self._path = Path(path)
-        # The model's {fem_eid: ops_tag} pairing. Supplied here
-        # (``from_h5``, or a caller that knows it), otherwise read from
-        # the bridge sidecar at ``__enter__``. An element-scoped capture
-        # refuses at ``__enter__`` unless it covers every recorded id.
-        self._pairing: "dict[int, int] | None" = (
-            None if element_tags is None
-            else {int(f): int(t) for f, t in element_tags.items()}
-        )
-        self._pairing_missing = "no bridge, no model and no element_tags="
-        self._tag_map: Any = _translator(self._pairing)
+        # The model's fem_eid -> ops-tag pairing: an ElementTagTranslator
+        # or a {fem_eid: ops_tag} mapping. Supplied here (``from_h5``, or
+        # a caller that knows it), otherwise read from the bridge sidecar
+        # at ``__enter__``. An element-scoped capture refuses at
+        # ``__enter__`` unless it covers every recorded id.
+        self._tag_map: Any = _as_translator(tag_map)
+        self._pairing_missing = "no bridge, no model and no tag_map="
         self._fem = fem
         # Per Phase 9 D8 ``ndm`` / ``ndf`` ride on the resolved spec —
         # set at resolve time by ``ops.domain_capture`` (live bridge)
@@ -574,18 +594,18 @@ class DomainCapture:
                 self._model_h5_sidecar = model_h5_src
                 # The sidecar's element_meta pairs each fem_eid with the
                 # ops tag the live domain answers to.
-                if self._pairing is None:
+                if self._tag_map is None:
                     try:
-                        self._pairing = _capture_pairing(model_h5_src)
+                        self._tag_map = _translator(
+                            _capture_pairing(model_h5_src),
+                        )
                     except Exception as e:  # reported by the refusal below
                         self._pairing_missing = (
                             f"reading the sidecar's pairing failed: {e!r}"
                         )
-                    else:
-                        self._tag_map = _translator(self._pairing)
         try:
             _require_element_pairing(
-                self._spec, self._pairing, self._pairing_missing,
+                self._spec, self._tag_map, self._pairing_missing,
             )
         except ValueError:
             self.close()
@@ -787,7 +807,7 @@ class DomainCapture:
         except Exception as e:
             pairing = None
             missing = f"reading the pairing from {model_path!s} failed: {e!r}"
-        cap = cls(resolved, output, fem, ops=ops, element_tags=pairing)
+        cap = cls(resolved, output, fem, ops=ops, tag_map=_translator(pairing))
         if pairing is None:
             cap._pairing_missing = missing
         return cap

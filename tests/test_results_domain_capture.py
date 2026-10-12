@@ -545,7 +545,7 @@ def test_layer_records_without_metadata_raise(tmp_path: Path) -> None:
     path = tmp_path / "run.h5"
     with pytest.raises(ValueError, match="layer_section_metadata"):
         with DomainCapture(spec, path, fem, ops=fake,
-                           element_tags=identity_tags(spec)):
+                           tag_map=identity_tags(spec)):
             pass
 
 

@@ -130,6 +130,15 @@ class ElementTagTranslator:
             return False
         return all(int(x) in self._ops_to_fem for x in arr)
 
+    def covers_fem(self, fem_ids: "ndarray") -> bool:
+        """True when the pairing describes **every** given ``fem_eid``, so
+        :meth:`to_ops` translates them all. An empty id array or empty
+        pairing is ``False``, as in :meth:`covers_ops`."""
+        arr = np.asarray(fem_ids, dtype=np.int64)
+        if arr.size == 0 or not self._fem_to_ops:
+            return False
+        return all(int(x) in self._fem_to_ops for x in arr)
+
     def to_ops(self, fem_ids: "Optional[ndarray]") -> "Optional[ndarray]":
         """Translate a ``fem_eid`` filter to ops tags (all-or-nothing)."""
         return self._relabel(fem_ids, self._fem_to_ops)

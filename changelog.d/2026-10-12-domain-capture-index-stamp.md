@@ -18,14 +18,18 @@ which is the response of tag 5 (column fem 6); fem 5's own value is
 pairing covers every recorded `fem_eid`. The message names the cause and
 the remedy. It affects:
 
-- code that constructs `DomainCapture(...)` directly, without a bridge.
-  Pass `element_tags=` (the model's `{fem_eid: ops_tag}` pairing), or use
+- code that constructs `DomainCapture(...)` directly, without a bridge:
+  `tag_map=None` (the default) now refuses for element records. Pass
+  `tag_map=` (the model's `{fem_eid: ops_tag}` pairing), or use
   `ops.domain_capture(...)` or `DomainCapture.from_h5(...)`;
 - `ops.domain_capture` runs whose bridge could not archive its sidecar;
 - records that name an element the bridge did not build.
 
-`DomainCapture`'s `tag_map=` keyword is replaced by `element_tags=`.
-Node-only captures are unchanged.
+`tag_map=` keeps its name. It accepts the `ElementTagTranslator` it took
+before, or a plain `{fem_eid: ops_tag}` mapping; an empty mapping is a
+pairing that covers nothing, so it refuses too.
+`ElementTagTranslator.covers_fem(ids)` is new. Node-only captures are
+unchanged.
 
 **Added:** every capture that runs, and `make_demo_results` (nodal rows
 only), writes `element_index_space = "fem"` (results 1.2.0). Unstamped

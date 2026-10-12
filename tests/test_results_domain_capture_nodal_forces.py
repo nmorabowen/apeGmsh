@@ -156,7 +156,7 @@ class TestElasticBeam3dGlobalCapture:
         ops.ele_class[11] = "ElasticBeam3d"
 
         path = tmp_path / "cap.h5"
-        with DomainCapture(spec, path, fem, ops=ops, element_tags=identity_tags(spec)) as cap:
+        with DomainCapture(spec, path, fem, ops=ops, tag_map=identity_tags(spec)) as cap:
             cap.begin_stage("static", kind="static")
             for t in (0.0, 1.0):
                 offset = int(t) * 1000
@@ -214,7 +214,7 @@ class TestElasticBeam3dLocalCapture:
         ops.ele_response[(1, "localForce")] = np.arange(12, dtype=np.float64) + 100
 
         path = tmp_path / "cap.h5"
-        with DomainCapture(spec, path, fem, ops=ops, element_tags=identity_tags(spec)) as cap:
+        with DomainCapture(spec, path, fem, ops=ops, tag_map=identity_tags(spec)) as cap:
             cap.begin_stage("g", kind="static")
             cap.step(t=0.0)
             cap.end_stage()
@@ -258,7 +258,7 @@ class TestElasticBeam2dGlobalCapture:
         )
 
         path = tmp_path / "cap.h5"
-        with DomainCapture(spec, path, fem, ops=ops, element_tags=identity_tags(spec)) as cap:
+        with DomainCapture(spec, path, fem, ops=ops, tag_map=identity_tags(spec)) as cap:
             cap.begin_stage("g", kind="static")
             cap.step(t=0.0)
             cap.end_stage()
@@ -297,7 +297,7 @@ class TestMixedClassCapture:
         )
 
         path = tmp_path / "cap.h5"
-        with DomainCapture(spec, path, fem, ops=ops, element_tags=identity_tags(spec)) as cap:
+        with DomainCapture(spec, path, fem, ops=ops, tag_map=identity_tags(spec)) as cap:
             cap.begin_stage("g", kind="static")
             cap.step(t=0.0)
             cap.end_stage()
@@ -332,7 +332,7 @@ class TestSkipBehaviours:
         ops.ele_class[5] = "MysteryBeam3d"
 
         path = tmp_path / "cap.h5"
-        with DomainCapture(spec, path, fem, ops=ops, element_tags=identity_tags(spec)) as cap:
+        with DomainCapture(spec, path, fem, ops=ops, tag_map=identity_tags(spec)) as cap:
             cap.begin_stage("g", kind="static")
             cap.step(t=0.0)
             cap.end_stage()
@@ -359,7 +359,7 @@ class TestSkipBehaviours:
         ops.ele_response[(1, "globalForce")] = np.zeros(11, dtype=np.float64)
 
         path = tmp_path / "cap.h5"
-        with DomainCapture(spec, path, fem, ops=ops, element_tags=identity_tags(spec)) as cap:
+        with DomainCapture(spec, path, fem, ops=ops, tag_map=identity_tags(spec)) as cap:
             cap.begin_stage("g", kind="static")
             with pytest.raises(ValueError, match="returned 11 values"):
                 cap.step(t=0.0)
@@ -396,7 +396,7 @@ class TestMixedCategoriesAllPhases:
         )
 
         path = tmp_path / "mixed.h5"
-        with DomainCapture(spec, path, fem, ops=ops, element_tags=identity_tags(spec)) as cap:
+        with DomainCapture(spec, path, fem, ops=ops, tag_map=identity_tags(spec)) as cap:
             cap.begin_stage("g", kind="static")
             cap.step(t=0.0)
             cap.end_stage()

@@ -191,7 +191,7 @@ def _capture(spec: DomainCaptureSpec, fem: _MinimalFem, path: Path) -> None:
 
     resolved = spec._resolve_with_explicit_ndm_ndf(fem, ndm=3, ndf=6)
     with DomainCapture(resolved, path, fem,
-                       element_tags=identity_tags(resolved)) as cap:
+                       tag_map=identity_tags(resolved)) as cap:
         cap.begin_stage("static_load", kind="static")
         cap.step(t=ops.getTime())
         cap.end_stage()

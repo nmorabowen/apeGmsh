@@ -164,7 +164,7 @@ def test_force_beam_fiber_capture(tmp_path: Path) -> None:
     )
 
     cap_path = tmp_path / "fbc.h5"
-    with DomainCapture(spec, cap_path, fem, element_tags=identity_tags(spec)) as cap:
+    with DomainCapture(spec, cap_path, fem, tag_map=identity_tags(spec)) as cap:
         cap.begin_stage("push", kind="static")
         for _ in range(3):
             assert ops.analyze(1) == 0
@@ -249,7 +249,7 @@ def test_disp_beam_fiber_capture(tmp_path: Path) -> None:
     )
 
     cap_path = tmp_path / "dbc.h5"
-    with DomainCapture(spec, cap_path, fem, element_tags=identity_tags(spec)) as cap:
+    with DomainCapture(spec, cap_path, fem, tag_map=identity_tags(spec)) as cap:
         cap.begin_stage("push", kind="static")
         for _ in range(2):
             assert ops.analyze(1) == 0
@@ -308,7 +308,7 @@ def test_geometry_matches_section_definition(tmp_path: Path) -> None:
     )
 
     cap_path = tmp_path / "geom.h5"
-    with DomainCapture(spec, cap_path, fem, element_tags=identity_tags(spec)) as cap:
+    with DomainCapture(spec, cap_path, fem, tag_map=identity_tags(spec)) as cap:
         cap.begin_stage("g", kind="static")
         ops.analyze(1)
         cap.step(t=ops.getTime())
