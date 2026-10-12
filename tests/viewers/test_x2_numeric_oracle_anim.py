@@ -6,10 +6,11 @@ same public call, but what is compared is the data in the scene at each
 captured frame (``capture_drawn`` in ``test_x2_numeric_oracle.py``, which
 holds the seam, the store and the tolerances), not its pixels.
 
-``qt``-marked because the old path builds a Qt ``ResultsViewer``; the qt
-lane runs it in its own process. When X2-b moves the verb onto the
-session path (no Qt), drop the mark: the calls, the ``.npz`` and these
-assertions stay as they are.
+X2-b (#1663) moved the verb onto the session path (no Qt), so the
+``qt`` mark is dropped and this runs in ``suite``; the calls, the
+``.npz`` and these assertions are unchanged. Only ``setup=`` is
+re-expressed: it now receives the session ``MeshView`` and fills its
+contour slot with the S1 starter's component.
 
 Per case and frame the oracle holds the drawn (deformed) coordinates
 and, for the contour case, the scalars and their clim. The frame
@@ -31,8 +32,6 @@ from apeGmsh.results import Results
 from tests.viewers import test_x2_golden_stills as G
 from tests.viewers import test_x2_numeric_oracle as NO
 
-pytestmark = pytest.mark.qt
-
 _ANIM = G._MANIFEST["animation"]
 _CASES = sorted(_ANIM["cases"])
 _STEPS = list(range(int(G._MANIFEST["fixture"]["n_steps"])))
@@ -53,7 +52,11 @@ class _NullWriter:
 
 def _stub_imageio(monkeypatch: pytest.MonkeyPatch) -> None:
     v2 = types.ModuleType("imageio.v2")
-    v2.get_writer = lambda *_a, **_k: _NullWriter()  # type: ignore[attr-defined]
+    def get_writer(path: str, **_k: Any) -> _NullWriter:
+        Path(path).touch()  # a real encoder opens its file (X2-b F5)
+        return _NullWriter()
+
+    v2.get_writer = get_writer  # type: ignore[attr-defined]
     pkg = types.ModuleType("imageio")
     pkg.v2 = v2  # type: ignore[attr-defined]
     monkeypatch.setitem(sys.modules, "imageio", pkg)
@@ -70,7 +73,6 @@ def plate(plate_h5: Path, monkeypatch: pytest.MonkeyPatch):
     from apeGmsh.viewers.ui.theme import PALETTES, THEME
     from tests.conftest import _open_model_from_h5
 
-    pytest.importorskip("qtpy.QtWidgets")
     monkeypatch.delenv("APEGMSH_SKIP_VIEWER", raising=False)
     monkeypatch.setattr(THEME, "_current", PALETTES[G._MANIFEST["theme"]])
     _stub_imageio(monkeypatch)
@@ -80,11 +82,22 @@ def plate(plate_h5: Path, monkeypatch: pytest.MonkeyPatch):
         yield r
 
 
-def _contour_setup(plotter: Any, director: Any) -> None:
-    """X2-a's ``setup=``: the viewer's S1 starter contour."""
-    from apeGmsh.viewers.diagrams._starter import add_default_contour
+def _contour_setup(results: Results):
+    """X2-a's ``setup=`` on the session: the S1 starter's contour.
 
-    add_default_contour(director)
+    The starter's component heuristic (``default_contour_component``,
+    read through the module so a patch of it reaches here) fills the
+    view's contour slot.
+    """
+    from apeGmsh.results.session import Contour
+    from apeGmsh.viewers.diagrams import _starter
+
+    def setup(plotter: Any, view: Any) -> None:
+        owner = types.SimpleNamespace(
+            results=results, stages=lambda: list(results.stages))
+        view.contour = Contour(_starter.default_contour_component(owner))
+
+    return setup
 
 
 def _animate(
@@ -99,7 +112,7 @@ def _animate(
     if spec.get("deform") is not None:
         kw["deform"] = tuple(spec["deform"])
     if spec.get("contour") is not None:
-        kw["setup"] = _contour_setup
+        kw["setup"] = _contour_setup(plate)
     kw.update(over)
     with NO.capture_drawn() as recs:
         out = plate.export_animation(tmp_path / f"{case}.gif", **kw)

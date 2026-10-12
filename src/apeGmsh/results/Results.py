@@ -1561,14 +1561,14 @@ class Results:
     ):
         """Render the time history to a video / GIF without a GUI session.
 
-        Builds the full results viewer off-screen (so deformation,
-        contours, camera, and theming are pixel-identical to the
-        interactive viewer), walks every step capturing a frame, and
-        encodes to the format chosen by ``path``'s suffix — ``.mp4``
-        (H.264, needs the ``apegmsh[animation]`` extra) or ``.gif``
-        (Pillow, no extra). The viewer window is shown briefly while
-        rendering (the OpenGL context requires a realized surface) but
-        no blocking event loop is entered.
+        Re-steps one :class:`~apeGmsh.results.session.ResultsSession`
+        mesh view (the ``results.session()`` picture) through an
+        offscreen plotter: the scene is realized once, then each
+        captured step moves the session instant and re-steps the pane
+        in place. No Qt window and no event loop. Frames are encoded to
+        the format chosen by ``path``'s suffix: ``.mp4`` (H.264, needs
+        the ``apegmsh[animation]`` extra) or ``.gif`` (Pillow, no
+        extra). A failed frame leaves no file at ``path``.
 
         Parameters
         ----------
@@ -1580,79 +1580,82 @@ class Results:
             Capture every N-th step (plus always the last). Useful to
             keep long histories short.
         stage
-            Stage id/name to animate. Defaults to the active stage.
+            Stage id/name to animate. Defaults to this Results' own
+            stage (``results.stage(...)``), else the only stage; with
+            several stages and none picked it raises.
         deform
             Deformed-shape scaling. A number applies that scale to the
             ``"displacement"`` field; a ``(field, scale)`` pair selects
             another field. ``None`` (default) renders the undeformed
             mesh.
         camera
-            Optional value assigned to ``plotter.camera_position`` (e.g.
-            ``"iso"``, ``"xy"``, or an explicit position triple) before
-            rendering. ``None`` keeps the auto-framed camera.
+            ``"iso"`` / ``"xy"`` / ``"xz"`` / ``"yz"``, or an explicit
+            value assigned to ``plotter.camera_position``. ``None``
+            uses the still rule: ``xy`` for a planar model, ``iso``
+            otherwise.
         window_size
-            ``(width, height)`` of the rendered frames. ``None`` keeps
-            the viewer's default size.
+            ``(width, height)`` of the rendered frames. ``None`` uses
+            ``(1280, 720)``.
         setup
-            Optional ``callback(plotter, director)`` invoked after the
-            scene is built and before capture — the escape hatch for
-            adding contours / section cuts / custom camera work via the
-            same APIs the interactive viewer uses.
+            Optional ``callback(plotter, view)`` invoked once after the
+            first frame's scene is built and the camera applied, before
+            capture. ``view`` is the session's
+            :class:`~apeGmsh.results.session.MeshView`: fill a slot
+            (``view.contour = Contour("displacement_x")``) and the
+            pane is realized again before the first frame. Before
+            X2-b (#1663) the second argument was the retired
+            ``ResultsDirector``; a callback still written against it
+            fails loudly.
 
         Returns
         -------
         pathlib.Path
             The resolved output path, or ``None`` when
-            ``APEGMSH_SKIP_VIEWER`` is set in the environment.
+            ``APEGMSH_SKIP_VIEWER`` is set or no GL context is
+            available.
         """
         import os
         if os.environ.get("APEGMSH_SKIP_VIEWER"):
             print("[skip viewer] APEGMSH_SKIP_VIEWER set")
             return None
-        from ..viewers.results_viewer import ResultsViewer
-
-        viewer = ResultsViewer(
-            self, restore_session=False, save_session=False,
+        from apeGmsh.viewers.session._animation import (
+            export_session_animation,
         )
-        # Borrow this live Results — don't close its HDF5 handle on
-        # teardown (the caller keeps using it). Set BEFORE show() so a
-        # build failure that triggers teardown still leaves it open.
-        viewer._own_results_close = False  # noqa: SLF001
-        try:
-            # show() is inside the try so a failed off-screen realize
-            # (GL / pixel-format error) still hits ``viewer.close()`` —
-            # otherwise a half-built, possibly-visible window leaks.
-            viewer.show(run_loop=False, window_size=window_size)
-            director = viewer.director
-            plotter = viewer.plotter
-            if stage is not None:
-                director.set_stage(stage)
-            if deform is not None:
-                if isinstance(deform, (tuple, list)):
-                    d_field, d_scale = deform[0], float(deform[1])
-                else:
-                    d_field, d_scale = "displacement", float(deform)
-                geoms = director.geometries
-                active = geoms.active or (
-                    geoms.geometries[0] if geoms.geometries else None
-                )
-                if active is not None:
-                    geoms.set_deformation(
-                        active.id, enabled=True,
-                        field=d_field, scale=d_scale,
-                    )
-            if camera is not None:
-                try:
-                    plotter.camera_position = camera
-                except Exception:
-                    pass
-            if setup is not None:
-                setup(plotter, director)
-            return viewer.export_animation(
-                path, fps=fps, step_stride=step_stride,
+
+        from .session import Deform
+
+        if stage == "__all__":
+            # The director's combined stage (every stage on one
+            # concatenated time axis). The session has one instant per
+            # (stage, step), so there is no combined animation to draw.
+            names = [s.name for s in self._all_stages()]
+            raise ValueError(
+                "export_animation: stage='__all__' (all stages on one "
+                "time axis) is no longer supported. Animate one stage "
+                f"at a time with stage=<id or name> (have: {names})."
             )
-        finally:
-            viewer.close()
+        # stage= wins, then this Results' own scope (``.stage()``), then
+        # the only stage; several stages and no pick refuse and name
+        # ``stage=`` (the director animated nothing there either).
+        try:
+            stage_id = self._resolve_stage(stage)
+        except RuntimeError as exc:
+            raise RuntimeError(
+                f"export_animation: no stage to animate — {exc}"
+            ) from exc
+        session = self.session()
+        view = session.panes[0]
+        if deform is not None:
+            if isinstance(deform, (tuple, list)):
+                d_field, d_scale = deform[0], float(deform[1])
+            else:
+                d_field, d_scale = "displacement", float(deform)
+            view.deform = Deform(field=d_field, scale=d_scale)
+        return export_session_animation(
+            session, view, path,
+            stage_id=stage_id, fps=fps, step_stride=step_stride,
+            camera=camera, window_size=window_size, setup=setup,
+        )
 
     def show_web(
         self,
