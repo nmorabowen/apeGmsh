@@ -1292,6 +1292,20 @@ family without a flat argv), checked by `test_verbs_lock.py` with the
 same `decl_argv_names` the writer uses; the `unnamed` + `uncheckable`
 count may only shrink, and a primitive neither named nor listed fails.
 
+**`label`: provenance only (opensees 2.28.0; ADR 0115 amendment R2-f).**
+The rows of `FixRecord`, `MassRecord` (flat and staged) and of the typed
+`recorder.Node` / `recorder.Element` carry a `label` field. A declaration
+made with `label=` stores the names it was given as a list (`"left"` is
+stored `["left"]`, a list keeps its order) beside the ids the call
+resolved them to (`nodes`; for `recorder.Element`, the FEM element ids in
+`elements`). A declaration made with `pg=` or `nodes=` / `elements=`
+stores **`label: null`** (the generic encoder writes every field, so the
+key is present and empty rather than absent). The ids are authoritative:
+no reader, replay (`OpenSeesModel.from_h5`, `derive_sequence`) or rewrite
+re-resolves a label, so a label that no longer names those ids, or names
+nothing, changes nothing that runs. An archive written before 2.28.0 has
+no `label` key in these rows; it reads exactly as before.
+
 `H5Model.declarations()` returns the rows as `DeclarationTable.params`
 (`decls` row -> a tuple of `DeclParamsRO`, one per owner in call order:
 `type`, `params` with `DeclRef` / `DeclStruct` / `DeclOpaque` values,

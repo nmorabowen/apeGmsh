@@ -182,3 +182,43 @@ return values for `analyze` or `py` (R3).
 | Q5 | Is `path=` required? | Required (ADR 0112 D1: every file is explicit) |
 | Q6 | `label=` on `p.load` and the `rigid_diaphragm` master | Defer to R3; it removes the frame's `master_point` marker |
 | Q7 | Are per-element scalars enough for R2's element read? | Yes |
+
+## Amendment R2-f (2026-10-12): the label is kept as provenance only
+
+**Status:** Proposed; the maintainer accepts it with the PR (`human-gate`).
+**Ruling:** the maintainer's option (a) on #1661, relayed 2026-10-11.
+**Slice:** #1735 (R2-f).
+
+D4 says a record "keeps" its `label=`. R2-a resolved the label to node
+ids at the call and kept only the ids, so nothing kept the label. This
+amendment says what keeping it means, and narrows Invariant 9 for that
+one field.
+
+1. **Provenance, not a selector.** `FixRecord` and `MassRecord` (flat and
+   staged) and the typed `recorder.Node` / `recorder.Element` gain a
+   `label` field: the names `label=` was given, as a tuple. The ids the
+   call resolved stay authoritative. Replay (`OpenSeesModel.from_h5`,
+   `derive_sequence`) and rewrites never re-resolve a label, and the deck
+   never reads it, so Invariant 6 holds unchanged.
+2. **Where it is stored.** The field rides the generic
+   `/opensees/decl_params` encoding (ADR 0114 A6), so it adds no path, no
+   dataset and no dtype. A `pg=` / `nodes=` / `elements=` declaration
+   stores `label: null`.
+3. **Invariant 9, narrowed.** The `/opensees` zone takes one additive
+   minor bump (2.27.0 → 2.28.0, ADR 0113): an older reader would
+   otherwise open a file whose rows it does not describe. The floor does
+   not move, and an archive without the field still reads. No other
+   path, dtype or zone version changes.
+4. **Invariant 7, archive half, narrowed by the same field.** Decks stay
+   byte-identical for every model that builds today. Archives differ only
+   by the zone stamp and by the `label` key in the `decl_params` rows of
+   fix, mass and typed Node / Element recorder declarations.
+   `decl_params` is in `MODEL_HASH_EXCLUDED_CHILDREN`, so `model_hash`
+   does not change. The golden corpus is regenerated for this reason.
+5. **`recorder.Element(label=)` under `element_tags="sequential"`.** The
+   R2-b refusal (the ruling on #1695) is lifted. The label resolves at the
+   call to FEM element ids, as under `element_tags="fem"`, and the build
+   translates them to the emitted tags through the bridge's FEM id → tag
+   map, as it does for `pg=` (chain B #1711 / #1740 audited that map). A
+   recorder whose `label` is set holds FEM ids, so emitting it without the
+   map refuses.
