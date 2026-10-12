@@ -52,6 +52,7 @@ contextBridge.exposeInMainWorld("viewer", {
   measureDone: (result: unknown) => ipcRenderer.invoke("measure:done", result),
   captureStill: (suffix: string) => ipcRenderer.invoke("capture:still", suffix),
   captureDone: () => ipcRenderer.invoke("capture:done"),
+  captureResize: (width: number, height: number) => ipcRenderer.invoke("capture:resize", width, height),
   fail: (message: string) => ipcRenderer.invoke("app:fail", message),
   // V4a (#1707): one results step for --mode=measure-results; main answers only in that mode.
   resultsStep: (req: { kind: "nodal" | "gauss"; step: number }) => ipcRenderer.invoke("results:step", req),

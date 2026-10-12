@@ -69,6 +69,8 @@ export interface Bridge {
   measureDone(result: unknown): Promise<void>;
   captureStill(suffix: string): Promise<string | null>;
   captureDone(): Promise<void>;
+  /** V4b, capture mode: resize the page for a still at another window width. */
+  captureResize?(width: number, height: number): Promise<void>;
   fail(message: string): Promise<void>;
   /** V2f: replays the set already open at subscription, then every later open; the page must not also load `config().file`. Returns the unsubscribe. */
   onOpen?(cb: (set: OpenSet) => void): (() => void) | void;

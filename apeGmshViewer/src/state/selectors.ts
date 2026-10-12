@@ -242,7 +242,18 @@ export function resultsPairing(s: State): ResultsPairing {
   return pairResults(m?.status === "ready" ? { lineage: s.lineage } : null, s.results);
 }
 
-/** What the time scrubber shows: the results stage on screen, its step and time, or null off the results phases. */
+/**
+ * Whether the phase bar carries the results scrubber (results are on the axis).
+ * Then it takes its own row under the header, and the banner moves below it
+ * (panels/phase.ts, panels/banner.ts): the scrubber is too wide to sit beside
+ * the header without covering it.
+ */
+export const scrubberRow = (s: State): boolean => s.phase.axis.some((k) => k.kind === "results");
+/** The scrubber row's top (the header row is 14 px to about 50 px), and the banner's top below it. */
+export const SCRUBBER_TOP_PX = 58;
+export const BANNER_BELOW_SCRUBBER_PX = 106;
+
+/** What the time scrubber shows:the results stage on screen, its step and time, or null off the results phases. */
 export interface Timeline {
   /** the results stages, in reader order, with the index `setPhase` names */
   stages: { index: number; label: string }[];

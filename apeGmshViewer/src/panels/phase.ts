@@ -8,7 +8,7 @@
 // dispatches the next step. (style.css is not this panel's file, so the
 // scrubber's layout is inline, with the theme's variables only.)
 
-import { inactiveElements, timelineOf, type Timeline } from "../state/selectors.ts";
+import { inactiveElements, SCRUBBER_TOP_PX, scrubberRow, timelineOf, type Timeline } from "../state/selectors.ts";
 import type { State, Store } from "../state/store.ts";
 import type { PhaseKey } from "../state/types.ts";
 import { byId, el, listen } from "../ui/dom.ts";
@@ -17,6 +17,9 @@ const label = (k: PhaseKey): string => (k.kind === "stage" ? `stage ${k.index + 
 
 const same = (a: PhaseKey | null, b: PhaseKey): boolean =>
   a !== null && a.kind === b.kind && (a.kind !== "stage" || (b.kind === "stage" && a.index === b.index));
+
+/** The readout's widest extent; longer text ends in an ellipsis, with the full text as its tooltip. */
+export const READOUT_MAX_PX = 240;
 
 /** Milliseconds between steps while playing (10 steps/s; the D5 trigger is 30 steps/s, so playback never outruns it). */
 export const PLAY_MS = 100;
@@ -54,6 +57,8 @@ export function mountPhase(store: Store): () => void {
     const t = timelineOf(s);
     if (!t) stop();
     bar.hidden = s.phase.axis.length < 2;
+    // With the scrubber, the bar takes its own row under the header (style.css centres it on the header row).
+    bar.style.cssText = scrubberRow(s) ? `top: ${SCRUBBER_TOP_PX}px; left: 16px; transform: none; max-width: calc(100vw - 32px);` : "";
     // One button per non-results phase, and one "results" button for the results stages (the picker chooses among them).
     const firstResults = s.phase.axis.find((k) => k.kind === "results");
     const keys: PhaseKey[] = s.phase.axis.filter((k) => k.kind !== "results");
@@ -102,7 +107,9 @@ export function mountPhase(store: Store): () => void {
     slider.style.cssText = "width: 130px; accent-color: var(--accent);";
     const inactive = inactiveElements(s);
     const readout = el("span", "results-readout", readoutOf(t, inactive ? inactive.inactive : null));
-    readout.style.cssText = "white-space: nowrap; color: var(--muted); font: 600 12px var(--mono);";
+    // Bounded: a long fetch error ends in an ellipsis; the full text is the tooltip.
+    readout.title = readout.textContent ?? "";
+    readout.style.cssText = `display: inline-block; max-width: ${READOUT_MAX_PX}px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font: 600 12px var(--mono);`;
     unlisten.push(
       listen(back, "click", () => {
         stop();

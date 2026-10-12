@@ -223,6 +223,13 @@ ipcMain.handle("capture:still", async (e, suffix: string) => {
 
 ipcMain.handle("capture:done", () => app.quit());
 
+/** Capture only (V4b): resize the page to `width` x `height` CSS pixels, for a still at another window width. */
+ipcMain.handle("capture:resize", (e, width: unknown, height: unknown) => {
+  if (mode !== "capture") throw new Error("capture:resize: only in --mode=capture");
+  if (typeof width !== "number" || typeof height !== "number") throw new Error("capture:resize needs a width and a height");
+  BrowserWindow.fromWebContents(e.sender)?.setContentSize(Math.round(width), Math.round(height));
+});
+
 ipcMain.handle("app:fail", (_e, message: string) => {
   process.stderr.write(`apeGmshViewer: ${message}\n`);
   if (mode !== "view") {

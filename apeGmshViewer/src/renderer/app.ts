@@ -220,6 +220,13 @@ async function captureResults(path: string, settle: (ms?: number) => Promise<unk
     if (st.time.length > 1) store.dispatch({ type: "setResultStep", step: st.time.length - 1 });
     await still(`results-${i}-${safe(st.name)}`);
   }
+  // The first stage again at a 1280 px window: the scrubber row must still clear the header.
+  if (typeof bridge.captureResize === "function" && stages.length) {
+    await bridge.captureResize(1280, window.innerHeight);
+    store.dispatch({ type: "setPhase", at: { kind: "results", stage: 0, step: 0 } });
+    if (stages[0]!.time.length > 1) store.dispatch({ type: "setResultStep", step: stages[0]!.time.length - 1 });
+    await still(`results-0-${safe(stages[0]!.name)}.1280`);
+  }
 }
 
 async function main() {
