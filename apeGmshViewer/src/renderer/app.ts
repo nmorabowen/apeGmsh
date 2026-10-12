@@ -251,7 +251,7 @@ function contourShown(): boolean {
  * results stage with the most steps (the last of a tie), coloured by its
  * first nodal field's first component (the magnitude when offered), the
  * legend while the history scan runs (main paces a capture's scan, one step
- * per 400 ms), then after it at the first and the last step, then the first
+ * per 2 s), then after it at the first and the last step, then the first
  * axis component at the last step, and that last still again at 1280 px.
  * `<out>.contour-<n>-<what>.png`.
  */
@@ -278,7 +278,9 @@ async function captureContours(settle: (ms?: number) => Promise<unknown>, width:
   const scan = () => store.get().contour.scan;
   if (!(await until(() => scan()?.status === "running" && scan()!.done > 0))) throw new Error(`capture: the history scan did not report progress (${JSON.stringify(scan())})`);
   await still("contour-1-scan-running");
-  if (!(await until(() => scan()?.status === "done"))) throw new Error(`capture: the history scan did not finish (${JSON.stringify(scan())})`);
+  // The still must show a scan in progress: one that finished first would show "whole history" under this name.
+  if (scan()?.status !== "running") throw new Error(`capture: the history scan finished before its still was taken (${JSON.stringify(scan())})`);
+  if (!(await until(() => scan()?.status === "done", 30000))) throw new Error(`capture: the history scan did not finish (${JSON.stringify(scan())})`);
   await still("contour-2-history-first-step");
   const last = stages[best]!.time.length - 1;
   store.dispatch({ type: "setResultStep", step: last });
@@ -287,7 +289,7 @@ async function captureContours(settle: (ms?: number) => Promise<unknown>, width:
   const axis = v.state === "ready" ? contourFieldsOf(store.get())?.fields.find((f) => f.name === v.field)?.components.find((c) => !c.magnitude) : undefined;
   if (axis && v.state === "ready") {
     store.dispatch({ type: "setContourField", field: v.field, component: axis.key });
-    await until(() => scan()?.status === "done");
+    await until(() => scan()?.status === "done" && scan()!.key.endsWith(`|${axis.key}`), 30000);
     await still(`contour-4-component-${axis.label}`);
   }
   if (typeof bridge.captureResize === "function") {

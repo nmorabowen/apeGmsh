@@ -164,8 +164,9 @@ ipcMain.handle("results:readStep", (_e, req: unknown) => {
 });
 ipcMain.handle("results:close", () => resultsHost.close());
 // V4c1 (#1756): the history-range scan of a contour's field; progress goes to
-// the asking page. In capture mode it reads one step per chunk, 400 ms apart,
-// so a still can show the legend while the scan is still running.
+// the asking page. In capture mode it reads one step per chunk, 2 s apart,
+// so a still can show the legend while the scan is still running (a hidden
+// window paints slowly; renderer/app.ts checks the scan was still running).
 ipcMain.handle("results:scan", (e, req: unknown) => {
   const r = req as ScanRequest | null;
   if (!r || typeof r.path !== "string" || typeof r.stage !== "string" || !Array.isArray(r.components) || typeof r.magnitude !== "boolean" || typeof r.scanId !== "number") {
@@ -175,7 +176,7 @@ ipcMain.handle("results:scan", (e, req: unknown) => {
   const progress = (p: { scanId: number; done: number; total: number }) => {
     if (!sender.isDestroyed()) sender.send("results:scanProgress", p);
   };
-  return resultsHost.scan(r, progress, mode === "capture" ? { chunkSteps: 1, paceMs: 400 } : {});
+  return resultsHost.scan(r, progress, mode === "capture" ? { chunkSteps: 1, paceMs: 2000 } : {});
 });
 ipcMain.handle("results:scanCancel", (_e, scanId: unknown) => {
   if (typeof scanId === "number") resultsHost.cancelScan(scanId);
