@@ -41,8 +41,10 @@ _STAGES = ["g", "construction", "excavate"]
 _WIN = (160, 120)
 
 
-@pytest.fixture
-def staged_disp(g, tmp_path, monkeypatch):
+def _build(g, tmp_path, monkeypatch, reactions_in=None):
+    """The staged-disp file; with ``reactions_in``, reactions are
+    recorded too and then stripped from every OTHER stage, so exactly
+    that stage carries a reaction field."""
     from apeGmsh.opensees.apesees import apeSees
     from apeGmsh.results import Results
     from apeGmsh.results.capture.spec import DomainCaptureSpec
@@ -98,6 +100,8 @@ def staged_disp(g, tmp_path, monkeypatch):
         components=["displacement_x", "displacement_y", "displacement_z"],
         name="all",
     )
+    if reactions_in is not None:
+        spec.nodes(ids=ids, components=["reaction_force_z"], name="rxn")
     out = tmp_path / "staged_disp.h5"
     fake = _FakeOps()
     with ops.domain_capture(spec, path=str(out), ops=fake) as cap:
@@ -107,9 +111,51 @@ def staged_disp(g, tmp_path, monkeypatch):
                 fake.disp_table = {
                     (n, 3): _AMP[name] * (k + 1) * (1.0 + z[n]) for n in ids
                 }
+                fake.reaction_table = {(n, 3): 1.0 + z[n] for n in ids}
                 cap.step(t=float(i + 1) + 0.5 * k)
             cap.end_stage()
-    results = Results.from_native(out, model=_open_model_from_h5(out))
+    if reactions_in is not None:
+        _strip_reactions(out, keep=reactions_in)
+    return Results.from_native(out, model=_open_model_from_h5(out))
+
+
+def _strip_reactions(path: Any, keep: str) -> None:
+    """Delete every reaction dataset outside stage ``keep``."""
+    import h5py
+
+    with h5py.File(path, "r+") as f:
+        doomed: list[str] = []
+
+        def visit(name: str, obj: Any) -> None:
+            if isinstance(obj, h5py.Dataset) and "reaction" in name:
+                doomed.append(name)
+
+        f.visititems(visit)
+        stage_of = {
+            sid: str(grp.attrs.get("name", sid))
+            for sid, grp in f["stages"].items()
+        }
+        dropped = 0
+        for name in doomed:
+            parts = name.split("/")
+            if parts[0] == "stages" and stage_of.get(parts[1]) != keep:
+                del f[name]
+                dropped += 1
+        assert dropped, f"no reaction datasets stripped; paths {doomed}"
+
+
+@pytest.fixture
+def staged_disp(g, tmp_path, monkeypatch):
+    results = _build(g, tmp_path, monkeypatch)
+    try:
+        yield results
+    finally:
+        results.close()
+
+
+@pytest.fixture
+def staged_reactions(g, tmp_path, monkeypatch):
+    results = _build(g, tmp_path, monkeypatch, reactions_in="construction")
     try:
         yield results
     finally:
@@ -245,3 +291,19 @@ def test_unknown_scope_refuses(staged_disp, tmp_path):
     scoped._stage_id = "no-such-stage"
     with pytest.raises(RuntimeError, match="no-such-stage"):
         scoped.render(tmp_path / "x.png", view="mesh", window_size=_WIN)
+
+
+@pytest.mark.parametrize("stage", _STAGES)
+def test_scoped_pack_reactions_follow_the_scope(
+    staged_reactions, tmp_path, stage,
+):
+    """Reactions are recorded in ``construction`` only: its scoped pack
+    writes ``reactions.png``; the other stages' scoped packs do not
+    (unscoped, any stage's reactions counted, so every pack drew one)."""
+    results = staged_reactions
+    names = {
+        p.name for p in results.stage(stage).render_pack(
+            tmp_path / stage, window_size=_WIN)
+    }
+    assert ("reactions.png" in names) == (stage == "construction"), (
+        stage, names)
