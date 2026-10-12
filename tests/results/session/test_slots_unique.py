@@ -68,6 +68,15 @@ def test_replace_holds_for_every_category(view) -> None:
         assert list(view.slots).count(category) == 1
 
 
+def test_a_style_change_is_a_replace_not_a_second_occupant(view) -> None:
+    # A7.3: clim / cmap are inside the record, so restyling the slot
+    # replaces its occupant like any other fill.
+    view.contour = Contour("S", cmap="jet")
+    view.contour = Contour("S", clim=(0.0, 1.0))
+    assert view.contour == Contour("S", clim=(0.0, 1.0))
+    assert list(view.slots) == ["contour"]
+
+
 # ----------------------------------------------------------------------
 # Different categories stack
 # ----------------------------------------------------------------------

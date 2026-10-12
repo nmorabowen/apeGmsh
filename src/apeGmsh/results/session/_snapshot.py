@@ -6,7 +6,7 @@ a still of what a human arranged (``render`` of a snapshot, S5c) and a
 pin can carry it (``results_pin``, S5b, under the record key
 ``session_snapshot``).
 
-**The schema is frozen at version 1** against exactly what S0 shipped.
+**Version 1 was frozen** against exactly what S0 shipped (v2 below).
 S4 never widened the time surface — plan decision 9 landed on a
 one-stage-at-a-time scrubber, which is a WIDGET choice: ``Instant`` is
 ``(stage, step)`` under either traversal — so S5b's contract can
@@ -18,6 +18,16 @@ automatic legend stack (the pre-amendment behaviour, and the default),
 and a reader that does not know the key ignores it. Additive and
 compatible in both directions is the bar for staying at 1; anything
 that changed the meaning of an existing key would not clear it.
+
+**Version 2 (ADR 0098 Amendment 7, A7.7).** The colour-mapped slot
+records gained two stored fields, ``clim`` and ``cmap`` (A7.3), so the
+writer writes v2. The reader accepts **v1 and v2**: a v1 file has no
+style fields, so they restore as ``None`` (the defaults), and a v1 file
+that carries one anyway refuses — it was not written by a v1 writer.
+A v1 plot pane of kind ``path`` (removed from §6, never realizable) is
+dropped with a restore notice rather than refusing the whole file; in a
+v2 file it is a schema violation like any other unknown plot kind. An
+unknown slot category still refuses, in both versions.
 
 Two failure families, deliberately not alike (plan decision 15):
 
@@ -87,10 +97,16 @@ if TYPE_CHECKING:  # pragma: no cover
 #: exists, never by comparing 1 against 13.
 SNAPSHOT_KIND = "apegmsh.results.session"
 
-#: Frozen against S0's IR (see the module docstring). A new slot
-#: category, a new pane kind or a new *stored* field is an ADR 0098
-#: amendment AND a bump here.
-SNAPSHOT_VERSION = 1
+#: The version the writer writes. A new slot category, a new pane kind
+#: or a new *stored* field is an ADR 0098 amendment AND a bump here;
+#: v2 is Amendment 7's ``clim``/``cmap`` (A7.7).
+SNAPSHOT_VERSION = 2
+
+#: Every version the reader restores (A7.7: v1 and v2).
+READABLE_VERSIONS = (1, 2)
+
+#: Slot fields a v1 writer could not have written (A7.3).
+_V2_SLOT_FIELDS = ("clim", "cmap")
 
 #: Suffix appended (never substituted) when an old viewer session is
 #: moved out of the new session's way.
@@ -161,8 +177,12 @@ def _dump_instant(instant: Optional[Instant]) -> Optional[dict]:
 
 def _dump_slot(record: Slot) -> dict:
     # The seven records are frozen dataclasses of plain tokens, so
-    # asdict IS the payload — Reactions correctly yields {}.
-    return asdict(record)  # type: ignore[call-overload]
+    # asdict IS the payload — Reactions correctly yields {}. A clim
+    # tuple becomes a JSON list; the record normalises it back.
+    payload = asdict(record)  # type: ignore[call-overload]
+    if payload.get("clim") is not None:
+        payload["clim"] = list(payload["clim"])
+    return payload
 
 
 def _dump_source(source: PlotSource) -> dict:
@@ -334,7 +354,10 @@ def _read_instant(raw: Any, what: str) -> Optional[Instant]:
         ) from None
 
 
-def _read_slot(category: str, raw: Any, pane_id: str) -> Slot:
+def _read_slot(
+    category: str, raw: Any, pane_id: str, version: int = SNAPSHOT_VERSION,
+    notices: Optional[list[str]] = None,
+) -> Slot:
     record_type = SLOT_CATALOG.get(category)
     if record_type is None:
         # THE amended-0094-INV-10 enforcement point (§4). The catalog is
@@ -350,8 +373,30 @@ def _read_slot(category: str, raw: Any, pane_id: str) -> Slot:
             f"amendment, not a snapshot field."
         )
     fields = _require_dict(raw, f"pane {pane_id!r} slot {category!r}")
+    if version < 2:
+        late = [f for f in _V2_SLOT_FIELDS if f in fields]
+        if late:
+            raise SnapshotError(
+                f"Pane {pane_id!r} slot {category!r} carries {late} in "
+                f"a v1 snapshot; those fields are v2 (ADR 0098 A7.7). "
+                f"Mark the file version 2."
+            )
     try:
-        return record_type(**fields)
+        try:
+            return record_type(**fields)
+        except ImportError:
+            # A v2 cmap this build cannot validate
+            # (no matplotlib) degrades to the default, with a notice —
+            # the rest of the slot, and of the file, still restores.
+            if fields.get("cmap") is None or notices is None:
+                raise
+            notices.append(
+                f"Pane {pane_id!r} slot {category!r}: dropped "
+                f"cmap={fields['cmap']!r} — matplotlib is not installed "
+                f"(the 'plot' extra), so the name cannot be validated; "
+                f"the slot uses its default colormap."
+            )
+            return record_type(**{**fields, "cmap": None})
     except TypeError as exc:
         raise SnapshotError(
             f"Pane {pane_id!r} slot {category!r} does not fit "
@@ -359,7 +404,9 @@ def _read_slot(category: str, raw: Any, pane_id: str) -> Slot:
         ) from None
 
 
-def _restore_mesh_view(raw: dict, notices: list[str]) -> MeshView:
+def _restore_mesh_view(
+    raw: dict, notices: list[str], version: int = SNAPSHOT_VERSION,
+) -> MeshView:
     pane_id = raw.get("id")
     if not isinstance(pane_id, str) or not pane_id:
         raise SnapshotError(
@@ -408,7 +455,10 @@ def _restore_mesh_view(raw: dict, notices: list[str]) -> MeshView:
     for category, payload in _require_dict(
         raw.get("slots") or {}, f"pane {pane_id!r} slots",
     ).items():
-        setattr(view, category, _read_slot(category, payload, pane_id))
+        setattr(
+            view, category,
+            _read_slot(category, payload, pane_id, version, notices),
+        )
 
     live = {legend.field for legend in view.legends()}
     for field in raw.get("legend_hidden") or ():
@@ -600,10 +650,10 @@ def restore_snapshot(
             )
         )
     version = payload.get("version")
-    if version != SNAPSHOT_VERSION:
+    if isinstance(version, bool) or version not in READABLE_VERSIONS:
         raise SnapshotError(
             f"Session snapshot schema v{version!r} — this build reads "
-            f"v{SNAPSHOT_VERSION}."
+            f"v{' and v'.join(str(v) for v in READABLE_VERSIONS)}."
         )
 
     notices: list[str] = []
@@ -612,8 +662,18 @@ def restore_snapshot(
         pane_raw = _require_dict(raw_pane, "A pane")
         pane_kind = pane_raw.get("pane")
         if pane_kind == "mesh":
-            pane = _restore_mesh_view(pane_raw, notices)
+            pane = _restore_mesh_view(pane_raw, notices, version)
         elif pane_kind == "plot":
+            if version < 2 and pane_raw.get("kind") == "path":
+                # A7.7: `path` left §6. It was never realizable, so the
+                # pane held nothing a human saw drawn — dropping it is a
+                # data degrade, not a schema violation, in a v1 file.
+                notices.append(
+                    f"Plot {pane_raw.get('id')!r}: dropped — 'path' "
+                    f"plots were removed (ADR 0098 A7.7) and were never "
+                    f"drawable; the rest of the session restores."
+                )
+                continue
             pane = _restore_plot_view(pane_raw)
         else:
             raise SnapshotError(
@@ -778,6 +838,7 @@ def load_snapshot(
 __all__ = [
     "SNAPSHOT_KIND",
     "SNAPSHOT_VERSION",
+    "READABLE_VERSIONS",
     "LEGACY_SUFFIX",
     "SnapshotError",
     "LegacySessionFile",

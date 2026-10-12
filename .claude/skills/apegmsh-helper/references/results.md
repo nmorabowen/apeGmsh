@@ -418,9 +418,17 @@ s.render("wall.png", v.id)                        # a still, no Qt
   the occupied colour-mapped slots (`contour` / `vector` / `gauss` /
   `sand`); two slots on the same quantity share one scale
   (`INV-LEGEND-1..5`). Deform on with every slot empty draws no scale.
-- **Snapshot is v1** — `SNAPSHOT_VERSION = 1`, `kind:
+- **Colour-mapped slots take `clim=(lo, hi)` and `cmap=`** (ADR 0098
+  A7.3) — `None` (default) keeps the kind's default; `cmap` is any
+  matplotlib name (`'jet'` included), validated when the record is
+  built. Two slots of the same quantity with different explicit values
+  raise (one field, one scale); `v.legends()` reports the set values.
+  Stored and saved only: the window and `render()` do not apply them yet.
+- **Plot kinds are `history` and `xy`** — `path` was removed (A7.7).
+- **Snapshot is v2** — `SNAPSHOT_VERSION = 2`, `kind:
   "apegmsh.results.session"` (`results/session/_snapshot.py`).
-  `s.snapshot()` returns the dict, `s.save_snapshot()` writes it;
+  `s.snapshot()` returns the dict, `s.save_snapshot()` writes it; the
+  reader takes v1 and v2 (a v1 `path` plot pane drops with a notice).
   `restore_snapshot` refuses an unknown slot category. A v13 file from
   the retired window is renamed `.legacy`, never restored.
 
