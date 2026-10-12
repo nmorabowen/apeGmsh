@@ -105,14 +105,15 @@ def test_style_is_not_field_identity(view):
 # The scale law: one field, one scale, no silent winner
 # ---------------------------------------------------------------------
 
-@pytest.mark.parametrize("first,second", [
-    (Contour("S", clim=(0.0, 1.0)), Gauss("S", clim=(0.0, 2.0))),
-    (Contour("S", cmap="jet"), Gauss("S", cmap="viridis")),
-    (Vector("S", cmap="jet"), Sand("S", cmap="coolwarm")),
-])
+@pytest.mark.parametrize("make", [
+    lambda: (Contour("S", clim=(0.0, 1.0)), Gauss("S", clim=(0.0, 2.0))),
+    lambda: (Contour("S", cmap="jet"), Gauss("S", cmap="viridis")),
+    lambda: (Vector("S", cmap="jet"), Sand("S", cmap="coolwarm")),
+], ids=["clim", "cmap", "vector-sand"])
 def test_a_conflicting_explicit_style_raises_and_changes_nothing(
-    view, first, second,
+    view, make,
 ):
+    first, second = make()
     categories = {Contour: "contour", Vector: "vector",
                   Gauss: "gauss", Sand: "sand"}
     setattr(view, categories[type(first)], first)
