@@ -1,14 +1,22 @@
-"""#1711 / #1727 parity: recorder-transcoded element rows vs the live domain.
+"""#1711 parity: recorder-emitted rows vs the live domain, sequential tags.
 
-A 2-D portal frame on a default (``element_tags="sequential"``) bridge,
-the beam declared before the columns, so each beam element's OpenSees tag
-is not its FEM id (FEM ids [8, 9, 10] -> ops tags [3, 4, 5]). A
-:class:`ResolvedRecorderSpec` names elements by FEM id (its contract,
-the same one ``DomainCapture`` honours), is emitted live through
-``spec.emit_recorders``, and is read back through
-``Results.from_recorders``. Every transcoded row must equal
-``eleResponse`` on the OpenSees tag of the FEM id that row is labelled
-with: the oracle is the live domain itself.
+A :class:`ResolvedRecorderSpec` names elements by FEM id (the contract
+``DomainCapture`` honours too). Under ``element_tags="sequential"`` (the
+bridge default) an element's OpenSees tag is not its FEM id, so the
+``-ele`` list must be translated at emit. Each test below declares the
+element families out of mesh order, so the case is never vacuous, emits
+the spec live through ``spec.emit_recorders(..., model=)``, and checks
+every recorded row against the live domain itself: ``eleResponse`` on the
+OpenSees tag of the FEM id the row is labelled with (``nodeDisp`` for
+nodes). Before the fix (origin/main) the ``-ele`` list carried the FEM
+ids verbatim, so OpenSees recorded other elements: the portal beam's rows
+held column forces (Fy 57034 / 102966 against -2965.7), with no warning.
+
+Covered emit sites: ``elements`` (globalForce), ``gauss`` (stresses) and
+``nodes`` through ``Results.from_recorders``; ``line_stations``
+(section force) on the recorded file itself, because transcoding a
+line-stations record on a real FEMData fails before any row is read
+(``_resolve_element_lengths``, filed separately).
 """
 from __future__ import annotations
 
@@ -25,11 +33,21 @@ from apeGmsh.opensees.apesees import apeSees
 pytestmark = pytest.mark.live
 
 H, L = 3.0, 5.0
+#: A ``.out`` file holds 6 significant digits; a wrong element is off by
+#: orders of magnitude more than that (see the module docstring).
+_TOL = {"rtol": 1e-5, "atol": 1e-6}
+NODAL_FORCE = ("nodal_resisting_force_x", "nodal_resisting_force_y",
+               "nodal_resisting_moment_z")
 
 
 @pytest.fixture(autouse=True)
 def _backend() -> None:
     pytest.importorskip("openseespy.opensees")
+
+
+# ---------------------------------------------------------------------------
+# Models
+# ---------------------------------------------------------------------------
 
 
 def _portal_fem() -> Any:
@@ -53,6 +71,16 @@ def _portal_fem() -> Any:
         return g.mesh.queries.get_fem_data(dim=1)
 
 
+def _static_chain(ops: apeSees) -> None:
+    ops.constraints.Plain()
+    ops.numberer.RCM()
+    ops.system.BandGeneral()
+    ops.test.NormDispIncr(tol=1e-10, max_iter=10)
+    ops.algorithm.Linear()
+    ops.integrator.LoadControl(dlam=1.0)
+    ops.analysis.Static()
+
+
 def _portal_bridge(fem: Any) -> apeSees:
     ops = apeSees(fem, default_orientation=None)   # sequential tags
     ops.model(ndm=2, ndf=3)
@@ -68,70 +96,247 @@ def _portal_bridge(fem: Any) -> apeSees:
     with ops.pattern.Plain(series=ts) as p:
         p.load(node=ops.nodes.one(label="tl"), forces=(10e3, -30e3, 0.0))
         p.load(node=ops.nodes.one(label="tr"), forces=(0.0, -50e3, 4e3))
-    ops.constraints.Plain()
-    ops.numberer.RCM()
-    ops.system.BandGeneral()
-    ops.test.NormDispIncr(tol=1e-10, max_iter=10)
-    ops.algorithm.Linear()
-    ops.integrator.LoadControl(dlam=1.0)
-    ops.analysis.Static()
+    _static_chain(ops)
     return ops
 
 
-def test_transcoded_global_force_rows_are_the_labelled_elements(
-    tmp_path: Path,
-) -> None:
-    from apeGmsh.opensees.emitter.live import get_ops
-    from apeGmsh.opensees.opensees_model import OpenSeesModel
-    from apeGmsh.results import Results
-    from apeGmsh.results.spec._resolved import (
-        ResolvedRecorderRecord,
-        ResolvedRecorderSpec,
-    )
+def _curve_at_y(surface: int, y: float, tol: float = 1e-6) -> int:
+    for _dim, tag in gmsh.model.getBoundary([(2, surface)], oriented=False):
+        bb = gmsh.model.getBoundingBox(1, abs(tag))
+        if abs(bb[1] - y) < tol and abs(bb[4] - y) < tol:
+            return abs(tag)
+    raise AssertionError(f"no boundary curve of surface {surface} at y={y}")
 
-    fem = _portal_fem()
-    ops = _portal_bridge(fem)
+
+def _two_blocks_fem() -> Any:
+    with apeGmsh(model_name="b5c_blocks", verbose=False) as g:
+        left = g.model.geometry.add_rectangle(0, 0, 0, 1, 1)
+        right = g.model.geometry.add_rectangle(2, 0, 0, 1, 1)
+        g.model.sync()
+        g.mesh.structured.set_transfinite([(2, left), (2, right)], n=3)
+        g.mesh.generation.generate(2)
+        g.physical.add(2, [left], name="Left")
+        g.physical.add(2, [right], name="Right")
+        g.labels.add(1, [_curve_at_y(left, 0.0), _curve_at_y(right, 0.0)],
+                     "base")
+        g.labels.add(1, [_curve_at_y(left, 1.0), _curve_at_y(right, 1.0)],
+                     "top")
+        return g.mesh.queries.get_fem_data(dim=2)
+
+
+def _blocks_bridge(fem: Any) -> apeSees:
+    ops = apeSees(fem)   # sequential tags
+    ops.model(ndm=2, ndf=2)
+    mat = ops.nDMaterial.ElasticIsotropic(E=30e9, nu=0.2)
+    # Right first: the left block's sequential tags follow the right's.
+    ops.element.FourNodeQuad(pg="Right", thickness=0.5, material=mat)
+    ops.element.FourNodeQuad(pg="Left", thickness=0.5, material=mat)
+    ops.fix(label="base", dofs=(1, 1))
+    ts = ops.timeSeries.Linear()
+    top = fem.nodes.select(label="top").ids
+    with ops.pattern.Plain(series=ts) as p:
+        for k, n in enumerate(top):
+            p.load(node=int(n), forces=(1e5 * (k + 1), -2e5 * (k % 3 + 1)))
+    _static_chain(ops)
+    return ops
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def _solve_and_map(ops: apeSees) -> dict[int, int]:
+    """Run step 1 through the bridge; return its ``{fem_eid: ops_tag}``."""
     assert ops.analyze(steps=1) == 0
     plan = ops._read_state.element_plan  # type: ignore[union-attr]
-    fem_to_ops = {int(e): int(t) for _s, sub in plan for e, _c, t in sub}
-    beam = [int(e) for e in ops.elements.get(pg="Beam").ids]
-    # The case is not vacuous: sequential tags differ from FEM ids.
-    assert any(fem_to_ops[e] != e for e in beam)
+    return {int(e): int(t) for _s, sub in plan for e, _c, t in sub}
 
-    ops.h5(str(tmp_path / "model.h5"))
-    model = OpenSeesModel.from_h5(str(tmp_path / "model.h5"))
-    spec = ResolvedRecorderSpec(
-        fem_snapshot_id=fem.snapshot_id,
-        records=(ResolvedRecorderRecord(
-            category="elements", name="beam",
-            components=("nodal_resisting_force_x", "nodal_resisting_force_y",
-                        "nodal_resisting_moment_z"),
-            dt=None, n_steps=None, element_ids=np.asarray(beam),
-            element_class_name="ElasticBeam2d",
-        ),),
-    )
+
+def _model(ops: apeSees, tmp_path: Path) -> Any:
+    from apeGmsh.opensees.opensees_model import OpenSeesModel
+
+    path = tmp_path / "model.h5"
+    ops.h5(str(path))
+    return OpenSeesModel.from_h5(str(path))
+
+
+def _record_step(spec: Any, out: Path, model: Any) -> Any:
+    """Emit ``spec`` live for one more solve step (stage ``"s"``)."""
+    from apeGmsh.opensees.emitter.live import get_ops
+
     osp = get_ops()
-    with spec.emit_recorders(str(tmp_path / "out"), ops=osp) as live:
+    with spec.emit_recorders(str(out), ops=osp, model=model) as live:
         live.begin_stage("s", kind="static")
         assert osp.analyze(1) == 0
         live.end_stage()
+    return osp
 
+
+def _spec(fem: Any, *records: Any) -> Any:
+    from apeGmsh.results.spec._resolved import ResolvedRecorderSpec
+
+    return ResolvedRecorderSpec(fem_snapshot_id=fem.snapshot_id,
+                                records=tuple(records))
+
+
+def _record(category: str, name: str, components: tuple[str, ...],
+            **ids: Any) -> Any:
+    from apeGmsh.results.spec._resolved import ResolvedRecorderRecord
+
+    return ResolvedRecorderRecord(category=category, name=name,
+                                  components=components, dt=None,
+                                  n_steps=None, **ids)
+
+
+# ---------------------------------------------------------------------------
+# elements: globalForce
+# ---------------------------------------------------------------------------
+
+
+def test_elements_global_force_rows_are_the_labelled_elements(
+    tmp_path: Path,
+) -> None:
+    from apeGmsh.results import Results
+
+    fem = _portal_fem()
+    ops = _portal_bridge(fem)
+    fem_to_ops = _solve_and_map(ops)
+    beam = [int(e) for e in ops.elements.get(pg="Beam").ids]
+    assert any(fem_to_ops[e] != e for e in beam)     # not vacuous
+    model = _model(ops, tmp_path)
+    spec = _spec(fem, _record(
+        "elements", "beam", NODAL_FORCE, element_ids=np.asarray(beam),
+        element_class_name="ElasticBeam2d",
+    ))
+    osp = _record_step(spec, tmp_path / "out", model)
     truth = {e: np.asarray(osp.eleResponse(fem_to_ops[e], "globalForce"))
              for e in beam}
-    res = Results.from_recorders(
-        spec, tmp_path / "out", fem=fem, stage_id="s", model=model,
-        cache_root=tmp_path / "cache",
-    )
-    for k, comp in enumerate(("nodal_resisting_force_x",
-                              "nodal_resisting_force_y",
-                              "nodal_resisting_moment_z")):
+
+    res = Results.from_recorders(spec, tmp_path / "out", fem=fem,
+                                 stage_id="s", model=model,
+                                 cache_root=tmp_path / "cache")
+    for k, comp in enumerate(NODAL_FORCE):
         slab = res.elements.get(component=comp, ids=beam)
         got_ids = [int(i) for i in np.asarray(slab.element_ids)]
         assert sorted(got_ids) == sorted(beam)
         vals = np.asarray(slab.values)[-1]          # (E, n_nodes)
         for row, eid in enumerate(got_ids):
-            expected = truth[eid][[k, k + 3]]       # node 1, node 2
             np.testing.assert_allclose(
-                vals[row], expected, rtol=1e-9, atol=1e-6,
+                vals[row], truth[eid][[k, k + 3]], **_TOL,
                 err_msg=f"{comp} of element {eid} (ops tag {fem_to_ops[eid]})",
             )
+    # The beam carries the shear of its end loads, not a column's.
+    slab = res.elements.get(component="nodal_resisting_force_y", ids=beam)
+    np.testing.assert_allclose(np.asarray(slab.values)[-1][:, 0], -2965.73,
+                               atol=0.01)
+
+
+# ---------------------------------------------------------------------------
+# gauss: stresses
+# ---------------------------------------------------------------------------
+
+
+def test_gauss_stress_rows_are_the_labelled_elements(tmp_path: Path) -> None:
+    from apeGmsh.results import Results
+
+    fem = _two_blocks_fem()
+    ops = _blocks_bridge(fem)
+    fem_to_ops = _solve_and_map(ops)
+    left = [int(e) for e in ops.elements.get(pg="Left").ids]
+    assert any(fem_to_ops[e] != e for e in left)
+    model = _model(ops, tmp_path)
+    spec = _spec(fem, _record(
+        "gauss", "left", ("stress_xx", "stress_yy", "stress_xy"),
+        element_ids=np.asarray(left), element_class_name="FourNodeQuad",
+    ))
+    osp = _record_step(spec, tmp_path / "out", model)
+    truth = {e: np.asarray(osp.eleResponse(fem_to_ops[e], "stresses"))
+             for e in left}
+
+    res = Results.from_recorders(spec, tmp_path / "out", fem=fem,
+                                 stage_id="s", model=model,
+                                 cache_root=tmp_path / "cache")
+    for k, comp in enumerate(("stress_xx", "stress_yy", "stress_xy")):
+        slab = res.elements.gauss.get(component=comp, ids=left)
+        index = [int(i) for i in np.asarray(slab.element_index)]
+        vals = np.asarray(slab.values)[-1]
+        assert sorted(set(index)) == sorted(left)
+        for eid in left:
+            rows = [i for i, x in enumerate(index) if x == eid]
+            np.testing.assert_allclose(
+                vals[rows], truth[eid][k::3], **_TOL,
+                err_msg=f"{comp} of element {eid} (ops tag {fem_to_ops[eid]})",
+            )
+
+
+# ---------------------------------------------------------------------------
+# line_stations: section force, on the recorded file
+# ---------------------------------------------------------------------------
+
+
+def test_line_station_section_force_file_holds_the_labelled_elements(
+    tmp_path: Path,
+) -> None:
+    from apeGmsh.results.spec._emit import emit_logical
+
+    fem = _portal_fem()
+    ops = _portal_bridge(fem)
+    fem_to_ops = _solve_and_map(ops)
+    cols = [int(e) for e in ops.elements.get(pg="Cols").ids]
+    assert any(fem_to_ops[e] != e for e in cols)
+    model = _model(ops, tmp_path)
+    rec = _record("line_stations", "cols", ("axial_force", "bending_moment_z"),
+                  element_ids=np.asarray(cols),
+                  element_class_name="ForceBeamColumn2d")
+    spec = _spec(fem, rec)
+    osp = _record_step(spec, tmp_path / "out", model)
+
+    section_file = emit_logical(rec, output_dir=str(tmp_path / "out"),
+                                stage_id="s")[0].file_path
+    row = np.loadtxt(section_file, ndmin=2)[-1, 1:]   # drop the time column
+    n_ip = 4
+    assert row.size == len(cols) * n_ip * 2
+    for i, eid in enumerate(cols):
+        tag = fem_to_ops[eid]
+        expected = np.concatenate([
+            np.asarray(osp.eleResponse(tag, "section", ip, "force"))
+            for ip in range(1, n_ip + 1)
+        ])
+        np.testing.assert_allclose(
+            row[i * n_ip * 2:(i + 1) * n_ip * 2], expected,
+            **_TOL,
+            err_msg=f"section force of element {eid} (ops tag {tag})",
+        )
+
+
+# ---------------------------------------------------------------------------
+# nodes: identity by construction, guarded anyway
+# ---------------------------------------------------------------------------
+
+
+def test_node_displacement_rows_are_the_labelled_nodes(tmp_path: Path) -> None:
+    """The bridge emits every node under its FEM id, so node records need
+    no map; this pins that, should node tags ever be renumbered."""
+    from apeGmsh.results import Results
+
+    fem = _portal_fem()
+    ops = _portal_bridge(fem)
+    _solve_and_map(ops)
+    model = _model(ops, tmp_path)
+    nodes = [int(n) for n in fem.nodes.ids]
+    spec = _spec(fem, _record(
+        "nodes", "all", ("displacement_x", "displacement_y"),
+        node_ids=np.asarray(nodes),
+    ))
+    osp = _record_step(spec, tmp_path / "out", model)
+    res = Results.from_recorders(spec, tmp_path / "out", fem=fem,
+                                 stage_id="s", model=model,
+                                 cache_root=tmp_path / "cache")
+    for k, comp in enumerate(("displacement_x", "displacement_y")):
+        slab = res.nodes.get(component=comp, ids=nodes)
+        got = [int(i) for i in np.asarray(slab.node_ids)]
+        vals = np.asarray(slab.values)[-1]
+        for col, nid in enumerate(got):
+            assert vals[col] == pytest.approx(osp.nodeDisp(nid, k + 1),
+                                              rel=1e-5, abs=1e-12), nid
