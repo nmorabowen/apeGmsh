@@ -169,3 +169,29 @@ The session writes its own `model.h5` and geometry sibling into a temporary
 directory, not here; `/provenance` records the generating checkout's paths.
 A re-run changes the lineage hashes, `/meta/session_id` and the timestamps;
 re-run all three files together, since the oracle is read from this model.
+
+## `contour_staged.*` and `contour_nodata.*`
+
+The V4c1 contour pairs (#1756). `contour_staged.h5` is the staged model
+above, built again under its own name (314 nodes, 743 tets; `Col`, `Prop`,
+`Top`; stages `base`, `erect`, `unprop`). `contour_staged.results.h5`, written
+by `NativeWriter` with `model_h5_src=` the model, holds the three program
+stages (3, 2 and 4 steps, `time[k] = (k + 1) / T`) with `displacement_x`,
+`displacement_y` and `displacement_z` of every node, closed forms of the
+node coordinates, for stage index `i` and step `k`:
+
+    s = 0.01 (i + 1) (k + 1) / T
+    displacement_x = s z,   displacement_y = 0.5 s x,   displacement_z = -0.2 s (x + z)
+
+`contour_nodata.h5` is the same model file under another stem (so the same
+hashes), and `contour_nodata.results.h5` records only the nodes with
+`z <= 3`: the 48 nodes of the `Top` box above its base are absent from
+`_ids`, the "no data" case. `test/contour/oracle.test.ts` checks the app's
+per-vertex values, colours and history range against the closed form,
+restated in `test/contour/harness.ts`, not copied from the app. The values
+are synthetic; no solve runs.
+
+```powershell
+$env:PYTHONPATH = "src"
+& C:\Users\nmb\venv\opensees_venv\Scripts\python.exe scripts/make_viewer_results_fixtures.py --contour
+```

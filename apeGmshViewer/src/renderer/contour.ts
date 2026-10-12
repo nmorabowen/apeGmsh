@@ -36,6 +36,9 @@ export function noDataColours(map: Int32Array, perPrim: number): Float32Array {
 
 let columnMemo: { ids: Float64Array; column: Map<number, number> } | null = null;
 
+/** What a set of contour colours shows: the step and component, the range and the colormap (the viewport skips a recolour with the same key). */
+export const contourKey = (view: Extract<ContourView, { state: "ready" }>): string => `${view.keys.step}|${view.clim.min}|${view.clim.max}|${view.cmap}`;
+
 /**
  * The linear vertex colours of the drawn lines and triangles for the step
  * on screen, and the key of that step; null when the step's data or its
@@ -65,5 +68,5 @@ export function contourColours(
   const clim = { min: view.clim.min, max: view.clim.max };
   const line = primitiveColours(vertexValues(lineNodes, columnMemo.column, rows, view.component.magnitude), lineMap, 2, clim, view.cmap).rgb;
   const tri = primitiveColours(vertexValues(triNodes, columnMemo.column, rows, view.component.magnitude), triMap, 3, clim, view.cmap).rgb;
-  return { line: linearise(line), tri: linearise(tri), key: `${view.keys.step}|${view.clim.min}|${view.clim.max}|${view.cmap}` };
+  return { line: linearise(line), tri: linearise(tri), key: contourKey(view) };
 }

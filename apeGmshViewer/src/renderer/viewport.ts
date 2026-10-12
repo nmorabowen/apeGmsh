@@ -17,7 +17,7 @@ import { LineSegments2 } from "three/addons/lines/LineSegments2.js";
 import { LineSegmentsGeometry } from "three/addons/lines/LineSegmentsGeometry.js";
 import type { BlobStore } from "../state/blobs.ts";
 import { contourView, geometryPairing } from "../state/selectors.ts";
-import { contourColours, noDataColours, type StepValues } from "./contour.ts";
+import { contourColours, contourKey, noDataColours, type StepValues } from "./contour.ts";
 import type { State, Store } from "../state/store.ts";
 import { roleColouring } from "../state/roles.ts";
 import type { DeclPath, GeometryInfo, LegendEntry, MeshInfo, Pick } from "../state/types.ts";
@@ -187,6 +187,9 @@ export class Viewport {
   private recolour(s: State): void {
     const info = s.mesh;
     if (!info || !this.drawn || s.visibility.colourBy !== "contour") return;
+    // Most state changes (a hover, a panel) leave what the contour shows alone: compare keys before computing colours.
+    const v = contourView(s);
+    if ((v.state === "ready" ? contourKey(v) : v.state === "unavailable" ? `no-data:${v.reason}` : null) === this.contourApplied) return;
     const c = this.contourFor(s, info, this.drawn);
     if (!c || c.key === this.contourApplied) return;
     if (this.faces) {

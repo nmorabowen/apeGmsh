@@ -54,6 +54,14 @@ The results hold one stage per program stage, by name, plus ``mode_1`` (a
 ``mode`` stage no program stage names: the viewer's ``absent`` state). The
 values are synthetic, ``displacement_x[k, j] = id_j + 0.001 * k`` with the
 stage's ``time[k] = (k + 1) / T``; no solve runs.
+
+``--contour`` (V4c1, #1756; committed) writes the contour pairs: the same
+staged model as ``fixtures/contour_staged.h5`` with ``displacement_x/y/z``
+closed forms of the node coordinates (``contour_fixtures``), and
+``fixtures/contour_nodata.h5`` (the same model file) whose results record
+only the nodes with ``z <= 3``. ``--measure`` also writes each measured
+file's model beside it, ``<stem>.h5``, from the same FEMData, so the app
+pairs the two by ``fem_hash`` for the contour scrub rows.
 """
 
 from __future__ import annotations
