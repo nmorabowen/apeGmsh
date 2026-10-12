@@ -86,7 +86,14 @@ if TYPE_CHECKING:
     from .emitter.base import Emitter
 
 
-__all__ = ["DeckRun", "begin_deck_run", "open_results"]
+__all__ = [
+    "DeckRun",
+    "RUN_COMPLETE_MARKER",
+    "begin_deck_run",
+    "log_proves_completion",
+    "open_results",
+    "write_tcl_driver",
+]
 
 _WHERE = "ops.results"
 
@@ -124,6 +131,39 @@ _DECLARED_PREFIXES: dict[str, bool] = {
     "reaction_force": False, "reaction_moment": True,
     "force": False, "moment": True,
 }
+
+
+# ---------------------------------------------------------------------------
+# Proof that a Tcl deck ran to its end
+# ---------------------------------------------------------------------------
+
+#: Printed by the Tcl run driver after the deck returns. ``OpenSees.exe``
+#: exits 0 after a Tcl ``error`` (the deck's aborted-analyze guard
+#: included), so only this line proves the deck ran to its end.
+RUN_COMPLETE_MARKER = "APEGMSH_RUN_COMPLETE"
+
+
+def write_tcl_driver(deck: str) -> str:
+    """Write ``<deck>.run.tcl``, which sources ``deck`` (its bytes
+    unchanged) and then prints :data:`RUN_COMPLETE_MARKER`; return its
+    path."""
+    driver = os.path.abspath(deck) + ".run.tcl"
+    target = Path(os.path.abspath(deck)).as_posix()
+    with open(driver, "w", encoding="utf-8") as f:
+        f.write(
+            "# apeGmsh run driver (ADR 0115 D3): source the deck, then\n"
+            "# prove it ran to its end.\n"
+            f"source {{{target}}}\n"
+            f'puts "{RUN_COMPLETE_MARKER}"\n'
+        )
+    return driver
+
+
+def log_proves_completion(log_path: str) -> bool:
+    """True iff the run's log holds the completion marker on a line of
+    its own."""
+    with open(log_path, encoding="utf-8", errors="replace") as f:
+        return any(line.strip() == RUN_COMPLETE_MARKER for line in f)
 
 
 # ---------------------------------------------------------------------------
@@ -231,8 +271,10 @@ def _the_run(bridge: "apeSees", path: str) -> DeckRun:
     if not run.finished:
         raise BridgeError(
             f"{_WHERE}({path!r}): the deck run ({run.verb}) did not finish "
-            "(a non-zero exit or an interrupt), so its output files may be "
-            "partial. Fix the run and run the deck again."
+            "(a non-zero exit, an interrupt, or a Tcl deck that stopped "
+            f"before its end: no {RUN_COMPLETE_MARKER} line in its log), so "
+            "its output files may be partial. Fix the run and run the deck "
+            "again."
         )
     if run.digest is None:
         raise BridgeError(
@@ -599,14 +641,20 @@ def _check_time_columns(
 def _mpco_files(run: DeckRun, rec: MPCO) -> list[Path]:
     path = _resolve_file(run, rec.file)
     if run.partitioned:
-        parts = sorted(path.parent.glob(f"{path.stem}.part-*{path.suffix}"))
-        if not parts:
+        # Exactly one file per rank of this run: a missing rank is a
+        # partial run, an extra one is stale (another run's).
+        n_ranks = len(run.built.fem.partitions)
+        files = [path.with_name(f"{path.stem}.part-{k}{path.suffix}")
+                 for k in range(n_ranks)]
+        found = set(path.parent.glob(f"{path.stem}.part-*{path.suffix}"))
+        stale = sorted(str(p.name) for p in found - set(files))
+        if stale:
             raise BridgeError(
-                f"{_WHERE}: recorder.MPCO(file={rec.file!r}) wrote no "
-                f"partition file {path.stem}.part-<N>{path.suffix} in "
-                f"{str(path.parent)!r}."
+                f"{_WHERE}: recorder.MPCO(file={rec.file!r}): the run has "
+                f"{n_ranks} rank(s), but {str(path.parent)!r} also holds "
+                f"{stale}, which this run did not write. Remove them and "
+                "run the deck again."
             )
-        files = parts
     else:
         files = [path]
     for f in files:
@@ -629,7 +677,9 @@ def _results_dir(bridge: "apeSees", run: DeckRun) -> tuple[Path, Path]:
     root = Path(os.path.abspath(run.deck_as_given) + ".results")
     root.mkdir(exist_ok=True)
     archive = root / "model.h5"
-    bridge.h5(str(archive))
+    # The archive of the model the deck ran, from the frozen BuiltModel:
+    # a read builds nothing (Invariant 2).
+    bridge._write_h5(str(archive), run.built)
     return root, archive
 
 

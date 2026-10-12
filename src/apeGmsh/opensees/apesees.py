@@ -231,7 +231,13 @@ from ._readback import (
     _ElementAccessor,
     open_session,
 )
-from ._results_route import DeckRun, begin_deck_run, open_results
+from ._results_route import (
+    DeckRun,
+    begin_deck_run,
+    log_proves_completion,
+    open_results,
+    write_tcl_driver,
+)
 from .recorder import FilterableRecorder, Ladruno
 from .procedures._contact import _ContactQueryMixin
 from .procedures._explicit import ExplicitRunResult, _ExplicitMixin
@@ -9970,16 +9976,22 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
             self, bm, emitter, path, verb="ops.tcl(..., run=True)")
         self._deck_run = deck_run
         binary = _resolve_opensees_binary(bin, self._opensees)
+        # OpenSees.exe exits 0 after a Tcl ``error`` (an aborted analyze
+        # included), so the exit code proves nothing: a sibling driver
+        # sources the deck unchanged and prints a marker only when the
+        # deck ran to its end (ADR 0115 D3).
+        log_path = resolve_log_path(log, path)
         stats = stream_run(
-            [binary, path],
-            log_path=resolve_log_path(log, path),
+            [binary, write_tcl_driver(path)],
+            log_path=log_path,
             verbose=verbose,
             label=run_label(path, analyze_steps, analyze_dt),
             header="OpenSees",
             deck_path=path,
             expect_solver_stats=_deck_requested_solver_stats(emitter),
         )
-        self._deck_run = deck_run.finish()
+        if log_proves_completion(log_path):
+            self._deck_run = deck_run.finish()
         return stats
 
     def modal_deck(
@@ -10711,6 +10723,26 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
         # initial-stress persists with its stage under
         # ``/opensees/stages`` (Phase 2).
 
+        self._write_h5(
+            path, self.build(), model_name=model_name, cuts=cuts,
+            sweeps=sweeps,
+        )
+
+    def _write_h5(
+        self,
+        path: str,
+        bm: BuiltModel,
+        *,
+        model_name: str | None = None,
+        cuts: "Sequence[SectionCutDef]" = (),
+        sweeps: "Sequence[SectionSweepDef]" = (),
+    ) -> None:
+        """:meth:`h5`'s composition over a given :class:`BuiltModel`.
+
+        :meth:`h5` passes a fresh ``build()``; ``ops.results`` (ADR 0115
+        D3) passes the frozen model a deck run emitted, so a read builds
+        nothing (Invariant 2).
+        """
         from .emitter.h5 import H5Emitter
 
         snapshot_id = ""
@@ -10724,7 +10756,6 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
             snapshot_id = ""
 
         name = model_name or _path_stem(path)
-        bm = self.build()
         emitter = H5Emitter(model_name=name, snapshot_id=snapshot_id)
         bm.emit(emitter)
         # Ledgered verbs whose own deferred warning reached the user; the

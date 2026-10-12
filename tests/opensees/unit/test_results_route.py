@@ -16,13 +16,16 @@ The real-run oracles are in ``tests/opensees/live/test_results_route_live.py``.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Callable
+from types import SimpleNamespace
+from typing import Any, Callable, cast
 
 import numpy as np
 import pytest
 
 from apeGmsh.opensees import apesees as apesees_mod
 from apeGmsh.opensees._internal.build.errors import BridgeError
+from apeGmsh.opensees._internal.tag_allocator import TagAllocator
+from apeGmsh.opensees._results_route import RUN_COMPLETE_MARKER, _mpco_files
 from apeGmsh.opensees.apesees import apeSees
 
 from tests.opensees.live.test_readback_live import (
@@ -63,12 +66,19 @@ def run_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 def fake_run(
     monkeypatch: pytest.MonkeyPatch,
     write: Callable[[], None] | None = None,
-    *, fail: bool = False,
+    *, fail: bool = False, complete: bool = True,
 ) -> None:
-    """Replace the subprocess: ``write`` stands for what the run records."""
+    """Replace the subprocess: ``write`` stands for what the run records;
+    the log holds the Tcl driver's completion line iff ``complete``."""
     def _stream_run(argv: list[str], **kw: Any) -> None:
         if write is not None:
             write()
+        with open(kw["log_path"], "w", encoding="utf-8") as log:
+            log.write("OpenSees -- Open System For Earthquake Engineering\n")
+            if complete:
+                log.write(RUN_COMPLETE_MARKER + "\n")
+            else:
+                log.write("apeGmsh: analyze FAILED at increment 2/2\n")
         if fail:
             raise RuntimeError("OpenSees exited with code 1")
         return None
@@ -370,3 +380,108 @@ def test_a_missing_mpco_file_refuses(
     ops.recorder.MPCO(file="run/r.mpco", nodal_responses=("displacement",))
     ran(ops, monkeypatch)
     refuses(ops, "run/deck.py", run_dir, r"MPCO.*does not exist or is empty")
+
+
+# ---------------------------------------------------------------------------
+# Completion proof on the Tcl route; Invariant 2; MPCO partition count
+# ---------------------------------------------------------------------------
+
+
+def test_a_tcl_deck_that_stopped_before_its_end_refuses(
+    cantilever: Any, run_dir: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """OpenSees.exe exits 0 after a Tcl ``error``: an exit code of 0 with
+    no completion line in the log is not a finished run."""
+    ops = cantilever_bridge(cantilever)
+    typed_tip(ops)
+    fake_run(monkeypatch, write_rows("run/tip.out", [1.0, UY]),
+             complete=False)
+    ops.tcl("run/deck.tcl", run=True)          # rc 0: no raise
+    refuses(ops, "run/deck.tcl", run_dir,
+            rf"did not finish.*no {RUN_COMPLETE_MARKER} line")
+
+
+def test_the_tcl_run_sources_the_deck_unchanged_through_a_driver(
+    cantilever: Any, run_dir: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ops = cantilever_bridge(cantilever)
+    typed_tip(ops)
+    seen: list[list[str]] = []
+
+    def _stream_run(argv: list[str], **kw: Any) -> None:
+        seen.append(argv)
+        Path(kw["log_path"]).write_text(RUN_COMPLETE_MARKER + "\n")
+
+    fake_run(monkeypatch)
+    monkeypatch.setattr(apesees_mod, "stream_run", _stream_run)
+    ops.tcl("run/deck.tcl", run=False)
+    deck_bytes = (run_dir / "run" / "deck.tcl").read_bytes()
+    ops.tcl("run/deck.tcl", run=True)
+    assert (run_dir / "run" / "deck.tcl").read_bytes() == deck_bytes
+    [argv] = seen
+    driver = Path(argv[1])
+    assert driver.name == "deck.tcl.run.tcl"
+    text = driver.read_text(encoding="utf-8")
+    deck = (run_dir / "run" / "deck.tcl").resolve().as_posix()
+    assert f"source {{{deck}}}" in text
+    assert text.rstrip().endswith(f'puts "{RUN_COMPLETE_MARKER}"')
+
+
+def test_a_read_builds_nothing_and_allocates_nothing(
+    cantilever: Any, run_dir: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Invariant 2: the archive is written from the frozen BuiltModel the
+    deck ran; ops.results makes no build() and no allocate* call."""
+    ops = cantilever_bridge(cantilever)
+    typed_tip(ops)
+    ran(ops, monkeypatch, write_rows("run/tip.out", [1.0, UY]))
+    calls: list[str] = []
+    real_build = apeSees.build
+
+    def spy_build(self: apeSees) -> Any:
+        calls.append("build")
+        return real_build(self)
+
+    monkeypatch.setattr(apeSees, "build", spy_build)
+    for name in dir(TagAllocator):
+        if name.startswith("allocate"):
+            real = getattr(TagAllocator, name)
+
+            def spy(*a: Any, _n: str = name, _r: Any = real,
+                    **k: Any) -> Any:
+                calls.append(_n)
+                return _r(*a, **k)
+
+            monkeypatch.setattr(TagAllocator, name, spy)
+    r = ops.results("run/deck.py")
+    assert r.nodes.get(label="tip", component="displacement_y").item() == UY
+    assert calls == []
+
+
+def _partitioned_run(root: Path, n_ranks: int) -> Any:
+    fem = SimpleNamespace(partitions=list(range(n_ranks)))
+    return cast(Any, SimpleNamespace(
+        cwd=root, partitioned=True, built=SimpleNamespace(fem=fem)))
+
+
+@pytest.mark.parametrize("files, match", [
+    (["r.part-0.mpco"], r"r\.part-1\.mpco' does not exist"),
+    (["r.part-0.mpco", "r.part-1.mpco", "r.part-2.mpco"],
+     r"2 rank\(s\).*\['r\.part-2\.mpco'\]"),
+])
+def test_partitioned_mpco_reads_exactly_the_runs_ranks(
+    tmp_path: Path, files: list[str], match: str,
+) -> None:
+    for name in files:
+        (tmp_path / name).write_bytes(b"x")
+    rec = SimpleNamespace(file="r.mpco")
+    with pytest.raises(BridgeError, match=match):
+        _mpco_files(_partitioned_run(tmp_path, 2), cast(Any, rec))
+
+
+def test_partitioned_mpco_returns_one_file_per_rank(tmp_path: Path) -> None:
+    for k in range(2):
+        (tmp_path / f"r.part-{k}.mpco").write_bytes(b"x")
+    rec = SimpleNamespace(file="r.mpco")
+    got = _mpco_files(_partitioned_run(tmp_path, 2), cast(Any, rec))
+    assert [p.name for p in got] == ["r.part-0.mpco", "r.part-1.mpco"]

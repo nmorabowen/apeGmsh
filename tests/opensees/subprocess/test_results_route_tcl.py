@@ -61,3 +61,37 @@ def test_tcl_run_reads_back_typed_and_declared_records(
         pytest.approx(RZ, rel=1e-9))
     assert get(label="tip", component="displacement_x").item() == (
         pytest.approx(0.0, abs=1e-15))
+
+
+def test_an_aborted_tcl_deck_exits_0_and_the_read_refuses(
+    cantilever: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A deck whose analyze fails stops at the deck's own Tcl ``error``,
+    and OpenSees.exe still exits 0: ``ops.tcl`` returns, and only the
+    missing completion line tells the read the run did not finish."""
+    from apeGmsh.opensees._internal.build.errors import BridgeError
+    from apeGmsh.opensees.apesees import apeSees
+
+    monkeypatch.chdir(tmp_path)
+    ops = apeSees(cantilever, default_orientation=None)
+    ops.model(ndm=2, ndf=3)
+    t = ops.geomTransf.Linear()
+    ops.element.elasticBeamColumn(pg="Beam", transf=t, A=1e-2, E=E,
+                                  Iz=I_BEAM)
+    # No support: the stiffness is singular, so analyze fails.
+    with ops.pattern.Plain(series=ops.timeSeries.Linear()) as p:
+        p.load(node=ops.nodes.one(label="tip"), forces=(0.0, -P_TIP, 0.0))
+    ops.recorder.Node(file="tip.out", label="tip", dofs=(2,),
+                      response="disp", time_format="dt")
+    ops.constraints.Plain()
+    ops.numberer.RCM()
+    ops.system.BandGeneral()
+    ops.test.NormDispIncr(tol=1e-10, max_iter=10)
+    ops.algorithm.Linear()
+    ops.integrator.LoadControl(dlam=1.0)
+    ops.analysis.Static()
+    ops.tcl("deck.tcl", run=True, analyze_steps=2)   # rc 0: returns
+    log = (tmp_path / "deck.log").read_text(encoding="utf-8")
+    assert "analyze FAILED" in log
+    with pytest.raises(BridgeError, match=r"did not finish"):
+        ops.results("deck.tcl")
