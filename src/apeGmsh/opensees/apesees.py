@@ -231,6 +231,13 @@ from ._readback import (
     _ElementAccessor,
     open_session,
 )
+from ._results_route import (
+    DeckRun,
+    begin_deck_run,
+    log_proves_completion,
+    open_results,
+    write_tcl_driver,
+)
 from .recorder import FilterableRecorder, Ladruno
 from .procedures._contact import _ContactQueryMixin
 from .procedures._explicit import ExplicitRunResult, _ExplicitMixin
@@ -260,6 +267,7 @@ if TYPE_CHECKING:
     from .pattern.pattern import Plain
     from apeGmsh.results.capture._domain import DomainCapture
     from apeGmsh.results.capture.spec import DomainCaptureSpec
+    from apeGmsh.results.Results import Results
     from apeGmsh.hpc import Cluster, Job
 
     from .emitter.live import LiveOpsEmitter
@@ -8448,6 +8456,10 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
         # :class:`DroppedSession` (naming why) once this bridge wipes or
         # replaces the domain it solved, or runs a deck.
         self._read_state: ReadState = None
+        # ADR 0115 D3: the last deck run (``py``/``tcl`` with
+        # ``run=True``) that ``ops.results(path)`` reads; ``None`` until one
+        # starts, unfinished until its subprocess exits cleanly.
+        self._deck_run: DeckRun | None = None
         # Which OpenSees runtime the subprocess paths bind, and the live
         # fork expectation.  ``None`` → env-var / PATH fallback (the
         # pre-target behaviour).  See :mod:`apeGmsh.opensees._target`.
@@ -9960,16 +9972,27 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
 
         self._read_state = DroppedSession(
             DECK_RUN_CAUSE.format(verb="ops.tcl(..., run=True)"))
+        deck_run = begin_deck_run(
+            self, bm, emitter, path, verb="ops.tcl(..., run=True)")
+        self._deck_run = deck_run
         binary = _resolve_opensees_binary(bin, self._opensees)
-        return stream_run(
-            [binary, path],
-            log_path=resolve_log_path(log, path),
+        # OpenSees.exe exits 0 after a Tcl ``error`` (an aborted analyze
+        # included), so the exit code proves nothing: a sibling driver
+        # sources the deck unchanged and prints a marker only when the
+        # deck ran to its end (ADR 0115 D3).
+        log_path = resolve_log_path(log, path)
+        stats = stream_run(
+            [binary, write_tcl_driver(path)],
+            log_path=log_path,
             verbose=verbose,
             label=run_label(path, analyze_steps, analyze_dt),
             header="OpenSees",
             deck_path=path,
             expect_solver_stats=_deck_requested_solver_stats(emitter),
         )
+        if log_proves_completion(log_path):
+            self._deck_run = deck_run.finish()
+        return stats
 
     def modal_deck(
         self,
@@ -10456,12 +10479,15 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
 
         self._read_state = DroppedSession(
             DECK_RUN_CAUSE.format(verb="ops.py(..., run=True)"))
+        deck_run = begin_deck_run(
+            self, bm, emitter, path, verb="ops.py(..., run=True)")
+        self._deck_run = deck_run
         python_bin = _resolve_python_binary(python, self._opensees)
         # PYTHONUNBUFFERED so the child's stdout streams live through the
         # pipe rather than block-buffering until exit (the tee + live
         # counter depend on it).
         child_env = {**os.environ, "PYTHONUNBUFFERED": "1"}
-        return stream_run(
+        stats = stream_run(
             [python_bin, path],
             log_path=resolve_log_path(log, path),
             verbose=verbose,
@@ -10471,6 +10497,44 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
             deck_path=path,
             expect_solver_stats=_deck_requested_solver_stats(emitter),
         )
+        self._deck_run = deck_run.finish()
+        return stats
+
+    def results(self, path: str) -> "Results":
+        """The history of this bridge's last deck run, as a ``Results``
+        (ADR 0115 D3).
+
+        ``path`` is required and must be the deck that
+        ``ops.py(path, run=True)`` or ``ops.tcl(path, run=True)`` wrote
+        and ran on this bridge (Q5). What the run recorded decides the
+        reader:
+
+        - one ``ops.recorder.MPCO`` -> :meth:`Results.from_mpco`;
+        - ``ops.recorder.declare(nodes=...)`` and typed
+          ``ops.recorder.Node(..., time_format="dt")`` records -> one
+          recorder spec synthesised from them, read by
+          :meth:`Results.from_recorders` (Q3).
+
+        It raises :class:`BridgeError`, naming why, before writing any
+        file: when no deck run happened on this bridge, the last solve
+        was a live ``analyze`` (read that with ``.read``; Q4), ``path``
+        is another deck, the run did not finish, the declarations changed
+        since the run, no recorder was declared, or a record cannot be
+        read here (a typed ``recorder.Element``, a ``declare`` element
+        category or ``raw_*`` token, a typed record without a time
+        column, a staged or partitioned run's text records, a missing or
+        malformed output file). It never returns a ``Results`` that
+        silently lacks a declared record.
+
+        A read writes under ``<path>.results/``: the model archive
+        (``model.h5``) the reader binds, the text records in the reader's
+        layout (``out/``) and the reader's cache.
+
+        A single value, one node at one step, is
+        ``ops.results(path).nodes.get(label="tip",
+        component="displacement_y").item()``.
+        """
+        return open_results(self, path)
 
     def run(self, *, wipe: bool = True) -> None:
         """Drive an in-process LiveOpsEmitter through the full deck.
@@ -10659,6 +10723,26 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
         # initial-stress persists with its stage under
         # ``/opensees/stages`` (Phase 2).
 
+        self._write_h5(
+            path, self.build(), model_name=model_name, cuts=cuts,
+            sweeps=sweeps,
+        )
+
+    def _write_h5(
+        self,
+        path: str,
+        bm: BuiltModel,
+        *,
+        model_name: str | None = None,
+        cuts: "Sequence[SectionCutDef]" = (),
+        sweeps: "Sequence[SectionSweepDef]" = (),
+    ) -> None:
+        """:meth:`h5`'s composition over a given :class:`BuiltModel`.
+
+        :meth:`h5` passes a fresh ``build()``; ``ops.results`` (ADR 0115
+        D3) passes the frozen model a deck run emitted, so a read builds
+        nothing (Invariant 2).
+        """
         from .emitter.h5 import H5Emitter
 
         snapshot_id = ""
@@ -10672,7 +10756,6 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
             snapshot_id = ""
 
         name = model_name or _path_stem(path)
-        bm = self.build()
         emitter = H5Emitter(model_name=name, snapshot_id=snapshot_id)
         bm.emit(emitter)
         # Ledgered verbs whose own deferred warning reached the user; the

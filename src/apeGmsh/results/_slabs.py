@@ -100,6 +100,25 @@ class NodeSlab:
     node_ids: ndarray            # (N,)
     time: ndarray                # (T,)
 
+    def item(self) -> float:
+        """The slab's one value, as a ``float`` (ADR 0115 D3).
+
+        Raises :class:`ValueError` unless ``values`` holds exactly one
+        value: one node at one time step. Narrow the read first, by node
+        (``label=``, ``pg=``, ``ids=``) and by time (``time=-1``). It
+        replaces ``.values[-1, 0]``, which answers silently from whatever
+        the slab holds.
+        """
+        values = np.asarray(self.values)
+        if values.size != 1:
+            raise ValueError(
+                f"NodeSlab.item(): {self.component!r} holds {values.size} "
+                f"values (shape {values.shape}: time steps x nodes); item() "
+                "needs exactly one. Narrow the read to one node "
+                "(label=, pg=, ids=) and one step (time=-1)."
+            )
+        return float(values.reshape(-1)[0])
+
 
 @dataclass(frozen=True)
 class ElementSlab:
