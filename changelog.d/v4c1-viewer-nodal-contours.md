@@ -11,6 +11,6 @@ field does not record is drawn in a named no-data grey, never as zero and
 never blended from a neighbour. A nodal component whose value columns
 disagree with `_ids` (a partial write) is refused on its own, with a
 banner, instead of refusing the file. `apeGmshViewer/MEASUREMENTS.md` has
-the contour scrub rows (worst 273 steps/s, peak 382 MB on the V4a files),
+the contour scrub rows (worst 246 steps/s, peak 398 MB on the V4a files),
 and `scripts/make_viewer_results_fixtures.py --contour` writes the new
 contour fixtures.
