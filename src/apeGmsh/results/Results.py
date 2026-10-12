@@ -1625,10 +1625,9 @@ class Results:
         from .session import Deform
 
         if stage == "__all__":
-            # The retired director's combined stage (every stage on one
+            # The director's combined stage (every stage on one
             # concatenated time axis). The session has one instant per
-            # (stage, step), so there is no combined animation to draw
-            # (maintainer ruling 2026-10-11, #1663).
+            # (stage, step), so there is no combined animation to draw.
             names = [s.name for s in self._all_stages()]
             raise ValueError(
                 "export_animation: stage='__all__' (all stages on one "
