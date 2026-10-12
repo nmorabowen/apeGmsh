@@ -507,6 +507,16 @@ def test_rename_into_a_new_adr_born_accepted_is_refused(previous, patch):
     assert not _merged(gh)
 
 
+@pytest.mark.parametrize("previous", ["architecture/decisions/0050-old.md", "internal_docs/plan_new.md"])
+def test_copy_into_a_new_adr_born_accepted_is_refused(previous):
+    """A copied row has no patch against an empty file either: judge the head's header."""
+    row = json.dumps([ADR_0131, "copied", previous, 0, None])
+    gh, git = _d4([row], shows={ADR_0131: ACCEPTED_0131})
+    with pytest.raises(land_pr.LandError, match=r"check 7: .*0131-new\.md is a new ADR born with Status Accepted"):
+        _run(1218, gh, git)
+    assert not _merged(gh)
+
+
 def test_reproducer_b_patch_alone_reads_as_no_flip():
     """Why the rename needs the head's file: judged as a patch, B is not a flip."""
     assert land_pr._sets_accepted(REPRO_B) is False
@@ -679,7 +689,11 @@ def test_a_pr_that_strips_check_7_is_still_judged_by_it(monkeypatch, tmp_path, c
         return rc
 
     monkeypatch.delenv(land_pr.MAIN_COPY_ENV)
-    pr_copy.run_git = Replay({"fetch origin main": "", SHOW_MAIN: real})
+    # Hermetic even with the hop reverted: the checkout's own seams are recorded too, so
+    # an in-process run lands the flip offline (and the assertion below fails fast).
+    local_gh, local_git = _d4(ROWS_1512)
+    pr_copy.run_gh = local_gh
+    pr_copy.run_git = Replay({**local_git.responses, "fetch origin main": "", SHOW_MAIN: real})
     pr_copy.run_python = run_main_copy
     assert pr_copy.main(["1218"]) == 1
     err = capsys.readouterr().err
