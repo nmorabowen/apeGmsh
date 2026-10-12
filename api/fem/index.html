@@ -6635,7 +6635,7 @@ fem.elements.loads           → ElementLoadSet
 </span><span id="__span-0-825"><a id="__codelineno-0-825" name="__codelineno-0-825"></a>    <span class="c1"># Embedded-reinforcement ties (g.reinforce, ADR 20 / R2b). A plain</span>
 </span><span id="__span-0-826"><a id="__codelineno-0-826" name="__codelineno-0-826"></a>    <span class="c1"># list of ReinforceTieRecord — one LadrunoEmbeddedRebar coupling</span>
 </span><span id="__span-0-827"><a id="__codelineno-0-827" name="__codelineno-0-827"></a>    <span class="c1"># per rebar node. The bridge build step consumes it</span>
-</span><span id="__span-0-828"><a id="__codelineno-0-828" name="__codelineno-0-828"></a>    <span class="c1"># (opensees._internal.build.emit_reinforce_ties); it also round-trips</span>
+</span><span id="__span-0-828"><a id="__codelineno-0-828" name="__codelineno-0-828"></a>    <span class="c1"># (opensees._internal.build.constraints.emit_reinforce_ties); it also round-trips</span>
 </span><span id="__span-0-829"><a id="__codelineno-0-829" name="__codelineno-0-829"></a>    <span class="c1"># through the neutral model.h5 (/reinforce_ties group, neutral schema</span>
 </span><span id="__span-0-830"><a id="__codelineno-0-830" name="__codelineno-0-830"></a>    <span class="c1"># 2.15.0, ADR 0067 P5.1). A model with no ties omits the group, so its</span>
 </span><span id="__span-0-831"><a id="__codelineno-0-831" name="__codelineno-0-831"></a>    <span class="c1"># snapshot stays byte-identical (the snapshot_id hash excludes ties).</span>
@@ -6644,7 +6644,7 @@ fem.elements.loads           → ElementLoadSet
 </span><span id="__span-0-834"><a id="__codelineno-0-834" name="__codelineno-0-834"></a>    <span class="c1"># General node-to-host embedment ties (g.embed). A plain list of</span>
 </span><span id="__span-0-835"><a id="__codelineno-0-835" name="__codelineno-0-835"></a>    <span class="c1"># EmbedTieRecord — one LadrunoEmbeddedNode coupling per node. The</span>
 </span><span id="__span-0-836"><a id="__codelineno-0-836" name="__codelineno-0-836"></a>    <span class="c1"># bridge build step consumes it</span>
-</span><span id="__span-0-837"><a id="__codelineno-0-837" name="__codelineno-0-837"></a>    <span class="c1"># (opensees._internal.build.emit_embed_ties); it also round-trips</span>
+</span><span id="__span-0-837"><a id="__codelineno-0-837" name="__codelineno-0-837"></a>    <span class="c1"># (opensees._internal.build.constraints.emit_embed_ties); it also round-trips</span>
 </span><span id="__span-0-838"><a id="__codelineno-0-838" name="__codelineno-0-838"></a>    <span class="c1"># through the neutral model.h5 (/embed_ties group, neutral schema</span>
 </span><span id="__span-0-839"><a id="__codelineno-0-839" name="__codelineno-0-839"></a>    <span class="c1"># 2.22.0, ADR 0073). A model with no ties omits the group, so its</span>
 </span><span id="__span-0-840"><a id="__codelineno-0-840" name="__codelineno-0-840"></a>    <span class="c1"># snapshot stays byte-identical (the snapshot_id hash excludes ties).</span>
@@ -6652,7 +6652,7 @@ fem.elements.loads           → ElementLoadSet
 </span><span id="__span-0-842"><a id="__codelineno-0-842" name="__codelineno-0-842"></a>
 </span><span id="__span-0-843"><a id="__codelineno-0-843" name="__codelineno-0-843"></a>    <span class="c1"># Face-to-face contact interactions (g.constraints.contact). A plain</span>
 </span><span id="__span-0-844"><a id="__codelineno-0-844" name="__codelineno-0-844"></a>    <span class="c1"># list of ContactRecord. Consumed by</span>
-</span><span id="__span-0-845"><a id="__codelineno-0-845" name="__codelineno-0-845"></a>    <span class="c1"># opensees._internal.build.emit_contacts; serial-only; it also</span>
+</span><span id="__span-0-845"><a id="__codelineno-0-845" name="__codelineno-0-845"></a>    <span class="c1"># opensees._internal.build.contacts.emit_contacts; serial-only; it also</span>
 </span><span id="__span-0-846"><a id="__codelineno-0-846" name="__codelineno-0-846"></a>    <span class="c1"># round-trips through the neutral model.h5 (/contacts group, neutral</span>
 </span><span id="__span-0-847"><a id="__codelineno-0-847" name="__codelineno-0-847"></a>    <span class="c1"># schema 2.21.0, ADR 0073), mirroring /contact_planes. A model with no</span>
 </span><span id="__span-0-848"><a id="__codelineno-0-848" name="__codelineno-0-848"></a>    <span class="c1"># contacts omits the group, so its snapshot stays byte-identical.</span>
@@ -6660,14 +6660,14 @@ fem.elements.loads           → ElementLoadSet
 </span><span id="__span-0-850"><a id="__codelineno-0-850" name="__codelineno-0-850"></a>
 </span><span id="__span-0-851"><a id="__codelineno-0-851" name="__codelineno-0-851"></a>    <span class="c1"># Rigid analytical-plane contacts (g.constraints.contact_plane). A plain</span>
 </span><span id="__span-0-852"><a id="__codelineno-0-852" name="__codelineno-0-852"></a>    <span class="c1"># list of ContactPlaneRecord — one fork `contactPlane` per record.</span>
-</span><span id="__span-0-853"><a id="__codelineno-0-853" name="__codelineno-0-853"></a>    <span class="c1"># Consumed by opensees._internal.build.emit_contact_planes; serial-only;</span>
+</span><span id="__span-0-853"><a id="__codelineno-0-853" name="__codelineno-0-853"></a>    <span class="c1"># Consumed by opensees._internal.build.contacts.emit_contact_planes; serial-only;</span>
 </span><span id="__span-0-854"><a id="__codelineno-0-854" name="__codelineno-0-854"></a>    <span class="c1"># round-trips through the neutral model.h5 (/contact_planes group),</span>
 </span><span id="__span-0-855"><a id="__codelineno-0-855" name="__codelineno-0-855"></a>    <span class="c1"># mirroring /contacts.</span>
 </span><span id="__span-0-856"><a id="__codelineno-0-856" name="__codelineno-0-856"></a>    <span class="bp">self</span><span class="o">.</span><span class="n">contact_planes</span><span class="p">:</span> <span class="nb">list</span> <span class="o">=</span> <span class="nb">list</span><span class="p">(</span><span class="n">contact_planes</span> <span class="ow">or</span> <span class="p">[])</span>
 </span><span id="__span-0-857"><a id="__codelineno-0-857" name="__codelineno-0-857"></a>    <span class="c1"># Oriented coincident-pair zeroLength interfaces</span>
 </span><span id="__span-0-858"><a id="__codelineno-0-858" name="__codelineno-0-858"></a>    <span class="c1"># (g.constraints.interface, ADR 0093). A plain list of</span>
 </span><span id="__span-0-859"><a id="__codelineno-0-859" name="__codelineno-0-859"></a>    <span class="c1"># InterfaceRecord — one zeroLength spring per coincident node</span>
-</span><span id="__span-0-860"><a id="__codelineno-0-860" name="__codelineno-0-860"></a>    <span class="c1"># pair. Consumed by opensees._internal.build.emit_interfaces</span>
+</span><span id="__span-0-860"><a id="__codelineno-0-860" name="__codelineno-0-860"></a>    <span class="c1"># pair. Consumed by opensees._internal.build.interfaces.emit_interfaces</span>
 </span><span id="__span-0-861"><a id="__codelineno-0-861" name="__codelineno-0-861"></a>    <span class="c1"># (S5); serial-only until S8. ADR 0093 S3: the resolver/verb</span>
 </span><span id="__span-0-862"><a id="__codelineno-0-862" name="__codelineno-0-862"></a>    <span class="c1"># that populates this list don't exist yet (S4), so it is</span>
 </span><span id="__span-0-863"><a id="__codelineno-0-863" name="__codelineno-0-863"></a>    <span class="c1"># always empty for now — the slot exists so downstream code has</span>
@@ -6679,7 +6679,7 @@ fem.elements.loads           → ElementLoadSet
 </span><span id="__span-0-869"><a id="__codelineno-0-869" name="__codelineno-0-869"></a>    <span class="c1"># auto-emitted CorotTruss/dispBeamColumn intents from</span>
 </span><span id="__span-0-870"><a id="__codelineno-0-870" name="__codelineno-0-870"></a>    <span class="c1"># g.rebar.place(emit_elements=True). A plain list of</span>
 </span><span id="__span-0-871"><a id="__codelineno-0-871" name="__codelineno-0-871"></a>    <span class="c1"># RebarElementRecord — one per placed bar PG. The bridge build step</span>
-</span><span id="__span-0-872"><a id="__codelineno-0-872" name="__codelineno-0-872"></a>    <span class="c1"># consumes it (opensees._internal.build.emit_rebar_elements), fanning</span>
+</span><span id="__span-0-872"><a id="__codelineno-0-872" name="__codelineno-0-872"></a>    <span class="c1"># consumes it (opensees._internal.build.constraints.emit_rebar_elements), fanning</span>
 </span><span id="__span-0-873"><a id="__codelineno-0-873" name="__codelineno-0-873"></a>    <span class="c1"># each across its PG's line cells. Empty unless emit_elements was set.</span>
 </span><span id="__span-0-874"><a id="__codelineno-0-874" name="__codelineno-0-874"></a>    <span class="bp">self</span><span class="o">.</span><span class="n">rebar_elements</span><span class="p">:</span> <span class="nb">list</span> <span class="o">=</span> <span class="nb">list</span><span class="p">(</span><span class="n">rebar_elements</span> <span class="ow">or</span> <span class="p">[])</span>
 </span><span id="__span-0-875"><a id="__codelineno-0-875" name="__codelineno-0-875"></a>
