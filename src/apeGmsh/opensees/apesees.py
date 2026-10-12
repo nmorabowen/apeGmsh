@@ -53,6 +53,7 @@ from ._internal.build.element_emit import (
 )
 from ._internal.build.ndf import (
     _emit_node_with_inferred_ndf,
+    emit_owned_nodes_with_inferred_ndf,
     validate_node_ndf_element_compat,
     infer_node_ndf,
     validate_adaptive_element_endpoints,
@@ -3629,26 +3630,20 @@ class BuiltModel:
                 # partition MP constraints happen in the constraint
                 # pass below (INV-2).
                 _hoisted: set[int] = hoisted_nodes_by_rank.get(rank) or set()
-                for nid in sorted(int(n) for n in part.node_ids):
-                    # Phase SSI-2.C: stage-bound nodes emit inside
-                    # their stage's block, not in the global pre-stage
-                    # per-rank pass.  S2 (ADR 0033): per-node ndf via
-                    # broker.
-                    if staged and nid in node_owner_stage:
-                        continue
-                    # ADR 0099 S5: already emitted in this rank's
-                    # hoisted gated block (step 1b).
-                    if nid in _hoisted:
-                        continue
-                    node_idx = node_idx_lookup.get(nid)
-                    if node_idx is None:
-                        continue
-                    xyz = self.fem.nodes.coords[node_idx]
-                    _emit_node_with_inferred_ndf(
-                        emitter, inferred_ndf, int(nid),
-                        (float(xyz[0]), float(xyz[1]), float(xyz[2])),
-                        self.ndf,
-                    )
+                # Skipped: stage-bound nodes (Phase SSI-2.C, they emit
+                # inside their stage's block) and nodes this rank's
+                # hoisted gated block already declared (ADR 0099 S5,
+                # step 1b).  S2 (ADR 0033): per-node ndf via broker.
+                # The helper resolves the rank's ids in one vectorised
+                # lookup and emits them in ascending id order.
+                _exclude: "list[Any]" = [_hoisted] if _hoisted else []
+                if staged and node_owner_stage:
+                    _exclude.append(node_owner_stage)
+                emit_owned_nodes_with_inferred_ndf(
+                    emitter, inferred_ndf, part.node_ids,
+                    node_idx_lookup, self.fem.nodes.coords, self.ndf,
+                    exclude=_exclude,
+                )
 
                 # 6. Elements — per-rank fan-out (tags pre-allocated;
                 # plan pre-bucketed by owner rank so each rank walks
