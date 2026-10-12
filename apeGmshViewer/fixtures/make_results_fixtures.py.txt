@@ -1,0 +1,146 @@
+"""Write the V4a results.h5 files with apeGmsh's own NativeWriter (#1707).
+
+This generator imports apeGmsh, so it is kept as text (``.py.txt``) and never
+as a ``.py`` file of the app: the app wall (ADR 0112 D4,
+``scripts/check_app_wall.py`` rule W1) forbids a ``.py`` file under
+``apeGmshViewer/`` that imports apeGmsh, and ``fixtures/README.md`` keeps the
+``bridge_provenance.h5`` generator as text for the same reason. Run it from
+the repository root with the venv interpreter and the checkout's ``src``:
+
+    $env:PYTHONPATH = "src"
+    python apeGmshViewer/fixtures/make_results_fixtures.py.txt            # results_small.h5
+    python apeGmshViewer/fixtures/make_results_fixtures.py.txt --measure apeGmshViewer/out/results
+
+The values are SYNTHETIC: no solve runs. They are closed forms of the node
+id, the element id, the Gauss point and the step, so a test can recompute
+them without this script (``test/results/results.test.ts``):
+
+    time[k]                      = 0.01 * k
+    nodes/<comp c>[k, j]         = id_j + 0.001 * (c + 1) * k
+    gauss <comp c>[k, e, g]      = eid_e + 0.1 * g + 0.001 * (c + 1) * k
+
+with ``c`` the component's position in the lists below. Every file is a
+``domain_capture`` file with ``/model`` embedded and one partition,
+``partition_0``, which is what ``DomainCapture`` writes today.
+
+Files:
+
+* ``small`` (committed, ``fixtures/results_small.h5``): an extruded
+  triangle mesh, 2 x 2 cells x 1 layer (18 nodes, 8 wedges), 5 steps,
+  ``displacement_x/y/z`` and one gauss group of 6 points with
+  ``stress_xx``, ``stress_yy``.
+* ``a`` (measured, not committed): the same mesh at 13 x 13 x 21
+  (4 312 nodes, 7 098 wedges, the size of the ledger's largest maintainer
+  model, 4 254 nodes / 7 104 elements), 100 steps, 3 nodal components and 6
+  stress components at 6 Gauss points.
+* ``b`` (measured): two tet-meshed blocks, the ledger's ``stress_box`` scale
+  probe rebuilt (about 220 900 tets), 100 steps, 3 nodal and 6 stress
+  components at 1 Gauss point.
+* ``c`` (measured): the ``a`` mesh, 5 000 steps (a ground-motion history at
+  dt = 0.01 s), 3 nodal components and ``stress_xx`` only at 6 Gauss points
+  (6 stress components would be 10 GB).
+"""
+
+from __future__ import annotations
+
+import argparse
+import tempfile
+import time as _time
+from pathlib import Path
+
+import gmsh
+import numpy as np
+
+from apeGmsh import apeGmsh
+from apeGmsh.results.writers._native import NativeWriter
+
+HERE = Path(__file__).resolve().parent
+# The session writes its own model.h5 + geometry sibling at end() (ADR 0112 D1);
+# send them to a throw-away directory, not beside the fixtures.
+SESSION_DIR = Path(tempfile.mkdtemp(prefix="v4a-session-"))
+NODAL = ["displacement_x", "displacement_y", "displacement_z"]
+STRESS6 = ["stress_xx", "stress_yy", "stress_zz", "stress_xy", "stress_yz", "stress_xz"]
+WEDGE_GP = np.array(  # 6-point wedge rule: (xi, eta, zeta)
+    [[1 / 6, 1 / 6, -1 / np.sqrt(3)], [2 / 3, 1 / 6, -1 / np.sqrt(3)], [1 / 6, 2 / 3, -1 / np.sqrt(3)],
+     [1 / 6, 1 / 6, 1 / np.sqrt(3)], [2 / 3, 1 / 6, 1 / np.sqrt(3)], [1 / 6, 2 / 3, 1 / np.sqrt(3)]]
+)
+TET_GP = np.array([[0.25, 0.25, 0.25]])
+
+
+def wedge_mesh(n: int, layers: int, name: str):
+    """A unit square, n x n structured triangles (2 per cell), extruded in `layers` wedge layers."""
+    with apeGmsh(model_name=name, verbose=False, save_to=SESSION_DIR / f"{name}.h5") as g:
+        p = gmsh.model.geo.addPoint(0, 0, 0)
+        line = gmsh.model.geo.extrude([(0, p)], 1, 0, 0, numElements=[n])
+        surf = gmsh.model.geo.extrude([line[1]], 0, 1, 0, numElements=[n])
+        vol = gmsh.model.geo.extrude([surf[1]], 0, 0, 1.5, numElements=[layers], recombine=True)
+        gmsh.model.geo.synchronize()
+        g.model.sync()
+        g.physical.add(3, [vol[1][1]], name="Body")
+        g.mesh.generation.generate(3)
+        return g.mesh.queries.get_fem_data(dim=3)
+
+
+def tet_blocks(size: float, name: str):
+    """Two touching tet-meshed blocks (1 x 1 x 1 and 1 x 1 x 0.6), the stress_box probe's shape."""
+    with apeGmsh(model_name=name, verbose=False, save_to=SESSION_DIR / f"{name}.h5") as g:
+        a = g.model.geometry.add_box(0, 0, 0, 1, 1, 1, label="lower")
+        b = g.model.geometry.add_box(0, 0, 1, 1, 1, 0.6, label="upper")
+        g.model.sync()
+        g.physical.add_volume("lower", name="Lower")
+        g.physical.add_volume("upper", name="Upper")
+        g.mesh.sizing.set_global_size(size)
+        g.mesh.generation.generate(dim=3)
+        del a, b
+        return g.mesh.queries.get_fem_data(dim=3)
+
+
+def write(path: Path, fem, n_steps: int, stress: list[str], gp: np.ndarray, class_tag: int) -> None:
+    node_ids = np.asarray(fem.nodes.ids, dtype=np.int64)
+    eids = np.asarray(fem.elements.ids, dtype=np.int64)
+    k = np.arange(n_steps, dtype=np.float64)
+    t0 = _time.perf_counter()
+    with NativeWriter(path) as w:
+        w.open(fem=fem, source_type="domain_capture", analysis_label="V4a synthetic (#1707)")
+        sid = w.begin_stage(name="history", kind="transient", time=0.01 * k)
+        w.write_nodes(
+            sid, "partition_0", node_ids=node_ids,
+            components={c: node_ids[None, :] + 0.001 * (i + 1) * k[:, None] for i, c in enumerate(NODAL)},
+        )
+        base = eids[:, None] + 0.1 * np.arange(gp.shape[0])[None, :]  # (E, G)
+        w.write_gauss_group(
+            sid, "partition_0", "group_0", class_tag=class_tag, int_rule=0,
+            element_index=eids, natural_coords=gp,
+            components={c: base[None, :, :] + (0.001 * (i + 1) * k)[:, None, None] for i, c in enumerate(stress)},
+        )
+        w.end_stage()
+    mb = path.stat().st_size / 1048576
+    print(f"{path.name}: {node_ids.size} nodes, {eids.size} elements, {n_steps} steps, "
+          f"{len(NODAL)} nodal + {len(stress)} x {gp.shape[0]}-point gauss components; "
+          f"{mb:.2f} MB in {_time.perf_counter() - t0:.1f} s")
+
+
+def main() -> None:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--measure", type=Path, help="write the measured files a, b, c into this directory")
+    ap.add_argument("--only", choices=["a", "b", "c"], action="append")
+    ap.add_argument("--tet-size", type=float, default=0.0335)
+    args = ap.parse_args()
+    if args.measure is None:
+        write(HERE / "results_small.h5", wedge_mesh(2, 1, "results_small"), 5, ["stress_xx", "stress_yy"], WEDGE_GP, 0)
+        return
+    out = args.measure
+    out.mkdir(parents=True, exist_ok=True)
+    todo = set(args.only or ["a", "b", "c"])
+    if todo & {"a", "c"}:
+        fem = wedge_mesh(13, 21, "v4a_maintainer")
+        if "a" in todo:
+            write(out / "a_maintainer_100.results.h5", fem, 100, STRESS6, WEDGE_GP, 0)
+        if "c" in todo:
+            write(out / "c_maintainer_5000.results.h5", fem, 5000, ["stress_xx"], WEDGE_GP, 0)
+    if "b" in todo:
+        write(out / "b_stress_box_100.results.h5", tet_blocks(args.tet_size, "v4a_stress_box"), 100, STRESS6, TET_GP, 179)
+
+
+if __name__ == "__main__":
+    main()
