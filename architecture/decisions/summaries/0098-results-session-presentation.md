@@ -55,6 +55,12 @@ D6–D7), 0081, 0083, 0094 INV-10 (snapshot realization only) and narrows 0045 p
 - A6 (2026-08-20), reachability gates: G1 capability parity
   (`test_session_capability_parity.py`), G2 the picker law (`test_inspector_picker_law.py`),
   G3 real-gesture test deferred (`manual_legend_gesture.py`), G4 done.
+- A7 (2026-10-11, **Proposed**), narrow KEEP form: the six slotless kinds stay behind
+  `show_web().director` until V4 and the catalog stays at seven. Colour-mapped slots gain
+  `clim`/`cmap` (`None` = today's default; validated at assignment; conflicting explicit values
+  on one field identity raise). `overlay` draws the scoped, stage-activated cells at scale 0 in
+  the Outlines style. Snapshot v2 (reader accepts v1); `path` leaves §6, and an old `path` pane is
+  dropped with a notice. A2.5(1)'s trigger moves to V4.
 
 Full text: [../0098-results-session-presentation.md](../0098-results-session-presentation.md).
 Precedence (AGENTS.md): the code wins over the ADR, and the ADR wins over this summary.
