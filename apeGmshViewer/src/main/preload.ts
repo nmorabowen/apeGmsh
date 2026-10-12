@@ -9,7 +9,11 @@
 //   requestOpen(path)       open the set of `path` (a dropped file), as a
 //                          double-click would; Promise<{ok, reason?}>
 //   openGeometry(path)      read a /geometry sibling (./zones.ts); openModel's
-//                          answer also carries the model's /provenance
+//                          answer also carries the model's /provenance, its
+//                          /meta/lineage and its /sequence element tags (V4b)
+//   openResults(path)       read a results.h5's index (./results.ts, V4b)
+//   readResultsStep(req)    one step of the open results file; the reply
+//                          echoes `req.seq` so the renderer keeps the latest
 // onOpen and onFileChanged return a function that removes the listener.
 // Until the page subscribes to a channel, main reloads the page instead of
 // sending on it, so the P0 page (which reads the model from config) follows.
@@ -72,4 +76,7 @@ contextBridge.exposeInMainWorld("viewer", {
   goToSource: (file: string, line: number) => ipcRenderer.invoke("source:goto", file, line),
   requestOpen: (path: string) => ipcRenderer.invoke("viewer:requestOpen", path),
   openGeometry: (path: string) => ipcRenderer.invoke("geometry:open", path),
+  // V4b (#1728): a results file's metadata, then one step at a time (./results.ts).
+  openResults: (path: string) => ipcRenderer.invoke("results:open", path),
+  readResultsStep: (req: { path: string; stage: string; step: number; seq: number }) => ipcRenderer.invoke("results:readStep", req),
 });

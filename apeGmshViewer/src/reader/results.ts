@@ -115,6 +115,26 @@ export interface ResultsIndex {
   unavailableZones: string[];
   stages: StageInfo[];
   warnings: string[];
+  /**
+   * `/meta/lineage` (results 1.1.0, h5-schema.md "how to pair a file with its
+   * `model.h5`"): the hashes the pairing rule compares. Null when the file has
+   * no `/meta/lineage` (results 1.0.0, or a 1.1.0 file whose writer has not
+   * stamped it): such a file cannot be paired by content (V4b, #1728).
+   */
+  lineage: ResultsLineage | null;
+  /**
+   * Why the file looks unfinished, or null: a 1.1.0 file whose lineage has no
+   * `results_hash`, which the writer stamps at close. It opens read-only; the
+   * steps it lists are what was written so far (V4b seam "partial writes").
+   */
+  partial: string | null;
+}
+
+/** The `/meta/lineage` hashes, each a 32-character hex string or null when the writer did not stamp it. */
+export interface ResultsLineage {
+  femHash: string | null;
+  modelHash: string | null;
+  resultsHash: string | null;
 }
 
 /** Open a results.h5 and index it; reads go through the returned object. */
@@ -148,6 +168,7 @@ export class ResultsFile {
     const sourceType = typeof st === "string" ? st : null;
     const stagesGroup = this.group(f, "stages");
     const ids = sortStageIds(stagesGroup.keys());
+    const lineage = this.readLineage(f);
     this.index = {
       path,
       version,
@@ -155,7 +176,24 @@ export class ResultsFile {
       unavailableZones,
       stages: ids.map((id) => this.readStage(this.group(stagesGroup, id), id)),
       warnings,
+      lineage,
+      partial: partialOf(version, lineage),
     };
+  }
+
+  /** `/meta/lineage@{fem,model,results}_hash`; a stamp that is not a string is refused, never read as absent. */
+  private readLineage(f: RFile): ResultsLineage | null {
+    if (!f.keys().includes("meta")) return null;
+    const meta = this.group(f, "meta");
+    if (!meta.keys().includes("lineage")) return null;
+    const g = this.group(meta, "lineage");
+    const hash = (key: string): string | null => {
+      const v = g.attrs[key]?.value;
+      if (v === undefined) return null;
+      if (typeof v !== "string" || v === "") throw new ResultsError("layout", `${g.path}@${key} is not a non-empty string`);
+      return v;
+    };
+    return { femHash: hash("fem_hash"), modelHash: hash("model_hash"), resultsHash: hash("results_hash") };
   }
 
   close(): void {
@@ -427,6 +465,20 @@ export function checkEmbeddedZones(
     }
   }
   return unavailable;
+}
+
+/**
+ * Whether a file looks unfinished (V4b seam "partial writes"): from results
+ * 1.1.0 on, `/meta/lineage` is always written and `results_hash` is stamped
+ * when the writer closes the file, so a 1.1.0 file without either is still
+ * being written (or its writer died). A 1.0.0 file predates the lineage.
+ */
+export function partialOf(version: string, lineage: ResultsLineage | null): string | null {
+  const { major, minor } = parseSchemaVersion(version, "results version");
+  if (major === 1 && minor < 1) return null;
+  if (lineage === null) return `results ${version} has no /meta/lineage, which its writer always stamps: the file may still be being written`;
+  if (lineage.resultsHash === null) return "/meta/lineage has no results_hash, which the writer stamps when it closes the file: it may still be being written";
+  return null;
 }
 
 /** `stage_<int>` by the integer, then the other ids lexically (h5-schema.md). */

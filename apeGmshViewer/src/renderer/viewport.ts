@@ -23,7 +23,7 @@ import type { DeclPath, GeometryInfo, LegendEntry, MeshInfo, Pick } from "../sta
 import { DARK, toHexNumber } from "../theme/tokens.ts";
 import { headingOf, Navigator, nearestHit, type Heading } from "./navigation.ts";
 import { fitDistance, type Focus, highlightObjects, SELECTION_COLOUR, SelectionHalo } from "./selection.ts";
-import { edgeMask, sameDrawn, visibleMaps, type Drawn } from "./visible.ts";
+import { edgeMask, elementMaskOf, sameDrawn, visibleMaps, type Drawn } from "./visible.ts";
 
 /** The right rail's width plus its margins (style.css #rail: the inspector above the sources). */
 const INSPECTOR_PX = 470 + 28;
@@ -153,7 +153,7 @@ export class Viewport {
       return;
     }
     if (s.visibility.colourBy !== prev.visibility.colourBy && s.mesh) this.rebuild(s, s.mesh);
-    else if (s.visibility !== prev.visibility) this.applyVisibility(s);
+    else if (s.visibility !== prev.visibility || s.phase !== prev.phase) this.applyVisibility(s);
     if (s.selection !== prev.selection) this.setHighlight(s);
   }
 
@@ -292,7 +292,7 @@ export class Viewport {
 
   /** Which original primitives the hidden set leaves visible (visible.ts). */
   private visible(s: State, info: MeshInfo): Drawn {
-    const { lineMap, triMap } = visibleMaps(info.legend, s.visibility.hidden, this.blobs.i32(info.lineGroup), this.blobs.i32(info.triGroup));
+    const { lineMap, triMap } = visibleMaps(info.legend, s.visibility.hidden, this.blobs.i32(info.lineGroup), this.blobs.i32(info.triGroup), elementMaskOf(s, info, this.blobs));
     const nTri = info.triPositions.shape[0]!;
     const mask = triMap.length === nTri ? null : edgeMask(this.blobs.f32(info.triPositions), this.blobs.f32(info.edgePositions), triMap);
     return { lineMap, triMap, edgeMask: mask };
@@ -379,7 +379,7 @@ export class Viewport {
     if (rebuild) {
       // Compare what would be drawn with what is drawn, element by element:
       // isolating one 22-element group after another changes no count.
-      const want = visibleMaps(info.legend, s.visibility.hidden, this.blobs.i32(info.lineGroup), this.blobs.i32(info.triGroup));
+      const want = visibleMaps(info.legend, s.visibility.hidden, this.blobs.i32(info.lineGroup), this.blobs.i32(info.triGroup), elementMaskOf(s, info, this.blobs));
       if (!sameDrawn(want, this.drawn)) {
         this.rebuild(s, info);
         return;

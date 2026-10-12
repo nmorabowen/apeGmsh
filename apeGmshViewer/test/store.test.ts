@@ -140,6 +140,14 @@ const EVERY: Record<EventType, Event> = {
   sourceResult: { type: "sourceResult", decl: archPath, ok: false, reason: "missing: x.py" },
   frameSelection: { type: "frameSelection" },
   selectStage: { type: "selectStage", index: null },
+  resultsLoaded: {
+    type: "resultsLoaded",
+    info: { path: "x.results.h5", version: "1.1.0", sourceType: "domain_capture", lineage: null, partial: null, stages: [], unavailableZones: [] },
+    sizeBytes: 0,
+    readMs: 0,
+    warnings: [],
+  },
+  resultStep: { type: "resultStep", status: { stage: 0, step: 0, status: "loading", error: null } },
 };
 
 test("reducer purity: every event leaves a frozen state untouched and returns plain data", () => {
@@ -155,7 +163,7 @@ test("reducer purity: every event leaves a frozen state untouched and returns pl
     }
     assertPlain(next, e.type);
   }
-  assert.equal(Object.keys(EVERY).length, 27, "decision 17's 20 events plus fileClosed, requestSource, sourceResult, setLoaded (V2f), frameSelection, setColourBy and selectStage (V4f)");
+  assert.equal(Object.keys(EVERY).length, 29, "decision 17's 20 events plus fileClosed, requestSource, sourceResult, setLoaded (V2f), frameSelection, setColourBy, selectStage (V4f), resultsLoaded and resultStep (V4b)");
 });
 
 // ---- V4f: stage selection -------------------------------------------------------

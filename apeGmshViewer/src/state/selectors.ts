@@ -7,6 +7,11 @@ import { elementFields, elementLinks, type Lookup } from "./decls.ts";
 import { pairSessions } from "../reader/geometry.ts";
 import { PROVENANCE_ORIGIN_FROM } from "../reader/provenance.ts";
 import { roleColouring } from "./roles.ts";
+import { activationNotice, activationOf, type Activation } from "./activation.ts";
+import { pairingNotice, pairResults, type ResultsPairing } from "./results.ts";
+
+export type { Activation } from "./activation.ts";
+export type { ResultsPairing } from "./results.ts";
 import type {
   AnalysisDef,
   ArtifactInfo,
@@ -211,10 +216,105 @@ export function stageIdentity(seq: SequenceZone, index: number): string | null {
   return JSON.stringify(at.includes(-1) ? row : at.map((i) => row[i]));
 }
 
-/** Notices that are not warnings: the stale-geometry notice. */
+/** Notices that are not warnings: the stale-geometry notice, and (V4b) why results or their stage activation are not drawn. */
 export function noticesOf(s: State): string[] {
+  const out: string[] = [];
   const n = geometryPairing(s).notice;
-  return n ? [n] : [];
+  if (n) out.push(n);
+  if (s.results) {
+    const p = pairingNotice(resultsPairing(s), baseName(s.results.path));
+    if (p) out.push(p);
+  }
+  const a = activationNow(s);
+  if (a) {
+    const t = activationNotice(a.activation, a.stageName);
+    if (t) out.push(t);
+  }
+  return out;
+}
+
+// -- V4b: results pairing, the time axis and stage activation ---------------------
+
+/** Whether the read results file pairs with the loaded model by content (state/results.ts). */
+export function resultsPairing(s: State): ResultsPairing {
+  const m = s.artifacts.model;
+  return pairResults(m?.status === "ready" ? { lineage: s.lineage } : null, s.results);
+}
+
+/** What the time scrubber shows: the results stage on screen, its step and time, or null off the results phases. */
+export interface Timeline {
+  /** the results stages, in reader order, with the index `setPhase` names */
+  stages: { index: number; label: string }[];
+  stage: number;
+  step: number;
+  steps: number;
+  time: number;
+  kind: "static" | "transient" | "mode";
+  /** the current step's fetch: `loading`, `ready`, `failed: <why>` */
+  fetch: string;
+}
+
+export function timelineOf(s: State): Timeline | null {
+  const at = s.phase.at;
+  if (at?.kind !== "results" || !s.results) return null;
+  const st = s.results.stages[at.stage];
+  if (!st) return null;
+  const r = s.resultStep;
+  const fetch = !r ? "loading" : r.status === "failed" ? `failed: ${r.error ?? "unknown error"}` : r.status;
+  return {
+    stages: s.results.stages.map((x, i) => ({ index: i, label: x.name === "" ? `${x.id} (unnamed)` : x.name })),
+    stage: at.stage,
+    step: at.step,
+    steps: st.time.length,
+    time: st.time[at.step]!,
+    kind: st.kind,
+    fetch,
+  };
+}
+
+let activationMemo: { key: readonly unknown[]; value: { activation: Activation; stageName: string } | null } | null = null;
+
+/** The stage activation of the results stage on screen (state/activation.ts), or null off the results phases. */
+export function activationNow(s: State): { activation: Activation; stageName: string } | null {
+  const at = s.phase.at;
+  if (at?.kind !== "results" || !s.results) return null;
+  const st = s.results.stages[at.stage];
+  if (!st) return null;
+  const key = [s.sequence, s.stageElements, s.definitions, st.name];
+  if (activationMemo && activationMemo.key.every((k, i) => k === key[i])) return activationMemo.value;
+  const value = { activation: activationOf(s.sequence, s.stageElements, s.definitions, st.name), stageName: st.name };
+  activationMemo = { key, value };
+  return value;
+}
+
+let inactiveMemo: { key: readonly unknown[]; value: { mask: Uint8Array; hidden: number; unmapped: number } | null } | null = null;
+
+/**
+ * The elements a `filtered` activation hides, as a mask over `mesh.elements`
+ * (1 = not drawn), with the count hidden and the inactive tags that name no
+ * drawn element; null when nothing is hidden by activation. The viewport
+ * draws through renderer/visible.ts with it, the one visibility path.
+ */
+export function inactiveElements(s: State): { mask: Uint8Array; hidden: number; unmapped: number } | null {
+  const a = activationNow(s);
+  if (!a || a.activation.state !== "filtered" || !s.mesh) return null;
+  const key = [a.activation, s.mesh, s.decls];
+  if (inactiveMemo && inactiveMemo.key.every((k, i) => k === key[i])) return inactiveMemo.value;
+  const tags = a.activation.inactiveTags;
+  const mask = new Uint8Array(s.mesh.elements.length);
+  const found = new Set<number>();
+  s.mesh.elements.forEach((p, i) => {
+    for (const m of s.decls[p]?.element?.metas ?? []) {
+      if (tags.has(m.tag)) {
+        mask[i] = 1;
+        found.add(m.tag);
+      }
+    }
+  });
+  const hidden = mask.reduce((n, v) => n + v, 0);
+  const value = { mask, hidden, unmapped: tags.size - found.size };
+  inactiveMemo = { key, value };
+  return value;
 }
 
 /**

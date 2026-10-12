@@ -18,7 +18,7 @@ import { loadModel } from "./state/load.ts";
 import { sourceFor } from "./state/selectors.ts";
 import type { Store } from "./state/store.ts";
 import { focusOf, type Focus } from "./renderer/selection.ts";
-import type { ArtifactKind, BlobRef, State, ZoneStatus } from "./state/types.ts";
+import type { ArtifactKind, BlobRef, Lineage, ResultsInfo, StageElements, State, ZoneStatus } from "./state/types.ts";
 
 const TARGET = { neutral: NEUTRAL_TARGET, opensees: OPENSEES_TARGET, geometry: GEOMETRY_TARGET, provenance: PROVENANCE_TARGET } as const;
 
@@ -43,10 +43,22 @@ export interface Bridge {
     configMs: number;
     pick: string | null;
   }>;
-  /** V2f: a successful answer also carries the model file's /provenance (absent from older builds). */
+  /** V2f: a successful answer also carries the model file's /provenance (absent from older builds); V4b its /meta/lineage and /sequence element tags. */
   openModel(path: string): Promise<
-    | { ok: true; model: ModelFile; provenance?: { ok: true; zone: ProvenanceZone | null } | { ok: false; error: string } }
+    | {
+        ok: true;
+        model: ModelFile;
+        provenance?: { ok: true; zone: ProvenanceZone | null } | { ok: false; error: string };
+        lineage?: { ok: true; lineage: Lineage | null } | { ok: false; error: string };
+        stageElements?: { ok: true; sets: Record<string, number[]> } | { ok: false; error: string };
+      }
     | { ok: false; error: string }
+  >;
+  /** V4b: read a results.h5's index in main (src/main/results.ts). */
+  openResults?(path: string): Promise<{ ok: true; meta: ResultsInfo; warnings: string[]; sizeBytes: number; readMs: number } | { ok: false; error: string }>;
+  /** V4b: one step of the open results file; the reply echoes `seq`. */
+  readResultsStep?(req: { path: string; stage: string; step: number; seq: number }): Promise<
+    { ok: true; seq: number; stage: string; step: number; nodal: Record<string, Float64Array> } | { ok: false; seq: number; error: string }
   >;
   /** V2f: read a /geometry sibling (null: the file has no such zone). */
   openGeometry?(path: string): Promise<{ ok: true; geometry: GeometryZone | null; sizeBytes: number; readMs: number } | { ok: false; error: string }>;
@@ -109,6 +121,31 @@ export function provenanceStatus(a: { ok: false; error: string }): ZoneStatus {
   return { status: "malformed", reason: a.error };
 }
 
+/**
+ * The V4b parts of an `openModel` answer as `loadModel` takes them: a lineage
+ * or element-tag read that failed is a loud warning, and the model loads
+ * without it (results then do not pair, or activation is not applied, and
+ * the banner says why).
+ */
+export function modelExtras(res: {
+  lineage?: { ok: true; lineage: Lineage | null } | { ok: false; error: string };
+  stageElements?: { ok: true; sets: Record<string, number[]> } | { ok: false; error: string };
+}): { lineage: Lineage | null; stageElements: StageElements; warnings: string[] } {
+  const warnings: string[] = [];
+  const l = res.lineage;
+  if (l && !l.ok) warnings.push(`/meta/lineage could not be read (results cannot pair with this model): ${l.error}`);
+  const e = res.stageElements;
+  const stageElements: StageElements = !e ? { status: "none" } : e.ok ? { status: "ready", sets: e.sets } : { status: "error", reason: e.error };
+  return { lineage: l?.ok ? l.lineage : null, stageElements, warnings };
+}
+
+/** The current results step's data: kept here, outside the store, and only the latest one (D5). */
+export interface StepData {
+  stage: number;
+  step: number;
+  nodal: Record<string, Float64Array>;
+}
+
 export class Effects {
   private readonly store: Store;
   private readonly blobs: BlobStore;
@@ -163,6 +200,17 @@ export class Effects {
         void this.jumpTo(r.decl);
       }),
     );
+    // V4b: a results file rewritten on disk is read again (the pairing is a
+    // selector, so the re-read re-pairs); the current results step is
+    // fetched whenever the phase names a step that is not the one fetched.
+    this.off.push(
+      this.store.subscribe((s) => {
+        const r = s.artifacts.results;
+        if (!r || !r.stale || this.readingResults) return;
+        void this.openResults(r.path);
+      }),
+      this.store.subscribe((s) => this.syncStep(s)),
+    );
     // frameSelection: the camera frames the selection's bounds (from the
     // mesh blobs), or the whole model when nothing is selected.
     this.off.push(
@@ -182,6 +230,96 @@ export class Effects {
   private readingGeometry = false;
   private geometryToken = 0;
   private sourceSeq = 0;
+
+  // -- V4b: results ----------------------------------------------------------
+
+  private readingResults = false;
+  private resultsToken = 0;
+  /** The request number of the latest step fetch; a reply with another number is dropped (latest wins). */
+  private stepSeq = 0;
+  /** What the latest fetch asked for: `<path>|<stage id>|<step>`. */
+  private stepKey: string | null = null;
+  private step: StepData | null = null;
+
+  /** The current step's data, or null; never a step other than the one the store shows. */
+  currentStep(): StepData | null {
+    return this.step;
+  }
+
+  /** Read a results file's index into the store; the latest open wins. */
+  async openResults(path: string): Promise<boolean> {
+    const token = ++this.resultsToken;
+    this.store.dispatch({ type: "fileOpened", artifact: "results", path });
+    if (typeof this.bridge.openResults !== "function") {
+      this.store.dispatch({ type: "fileFailed", artifact: "results", path, error: "this build has no results reader" });
+      return false;
+    }
+    this.readingResults = true;
+    // A re-read invalidates the step on screen: its data may have changed.
+    this.step = null;
+    this.stepKey = null;
+    try {
+      const res = await this.bridge.openResults(path).catch((err: unknown) => ({ ok: false as const, error: err instanceof Error ? err.message : String(err) }));
+      if (token !== this.resultsToken) return false;
+      if (!res.ok) {
+        this.store.dispatch({ type: "fileFailed", artifact: "results", path, error: res.error });
+        return false;
+      }
+      for (const w of res.warnings) console.warn(w);
+      this.store.dispatch({ type: "resultsLoaded", info: res.meta, sizeBytes: res.sizeBytes, readMs: res.readMs, warnings: res.warnings });
+      return true;
+    } finally {
+      if (token === this.resultsToken) {
+        this.readingResults = false;
+        // A change during the read: read once more (the writer may still be going).
+        const r = this.store.get().artifacts.results;
+        if (r && r.path === path && r.stale && r.status === "ready") void this.openResults(path);
+      }
+    }
+  }
+
+  /** Fetch the step the phase names when it is not the one fetched (latest wins). */
+  private syncStep(s: State): void {
+    const at = s.phase.at;
+    const info = s.results;
+    if (at?.kind !== "results" || !info || s.artifacts.results?.status !== "ready") {
+      if (this.stepKey !== null) {
+        this.stepKey = null;
+        this.step = null;
+        this.stepSeq++;
+      }
+      return;
+    }
+    const st = info.stages[at.stage];
+    if (!st) return;
+    const key = `${info.path}|${st.id}|${at.step}`;
+    if (key === this.stepKey) return;
+    this.stepKey = key;
+    const seq = ++this.stepSeq;
+    this.step = null;
+    // Not from inside this listener: the other listeners have not seen `s` yet.
+    queueMicrotask(() => void this.fetchStep(info.path, at.stage, st.id, at.step, seq));
+  }
+
+  private async fetchStep(path: string, stage: number, stageId: string, step: number, seq: number): Promise<void> {
+    if (seq !== this.stepSeq) return;
+    this.store.dispatch({ type: "resultStep", status: { stage, step, status: "loading", error: null } });
+    if (typeof this.bridge.readResultsStep !== "function") {
+      this.store.dispatch({ type: "resultStep", status: { stage, step, status: "failed", error: "this build has no results reader" } });
+      return;
+    }
+    const res = await this.bridge
+      .readResultsStep({ path, stage: stageId, step, seq })
+      .catch((err: unknown) => ({ ok: false as const, seq, error: err instanceof Error ? err.message : String(err) }));
+    // Latest wins: a slow reply for an older request never paints over a newer step.
+    if (seq !== this.stepSeq || res.seq !== seq) return;
+    if (!res.ok) {
+      this.store.dispatch({ type: "resultStep", status: { stage, step, status: "failed", error: res.error } });
+      return;
+    }
+    this.step = { stage, step, nodal: res.nodal };
+    this.store.dispatch({ type: "resultStep", status: { stage, step, status: "ready", error: null } });
+  }
 
   /** A loaded model with a loaded geometry sibling: their rewrites reload as one set. */
   private static isSet(s: State): boolean {
@@ -232,7 +370,7 @@ export class Effects {
         if (!mr.ok) fail("model", mPath, mr.error);
         else {
           const prov = mr.provenance;
-          model = loadModel(mr.model, this.blobs, prov?.ok ? prov.zone : null, prov && !prov.ok ? provenanceStatus(prov) : null);
+          model = loadModel(mr.model, this.blobs, prov?.ok ? prov.zone : null, prov && !prov.ok ? provenanceStatus(prov) : null, modelExtras(mr));
         }
       }
       if (gPath && gr && gt === this.geometryToken) {
@@ -317,7 +455,7 @@ export class Effects {
         return false;
       }
       const prov = res.provenance;
-      const load = loadModel(res.model, this.blobs, prov?.ok ? prov.zone : null, prov && !prov.ok ? provenanceStatus(prov) : null);
+      const load = loadModel(res.model, this.blobs, prov?.ok ? prov.zone : null, prov && !prov.ok ? provenanceStatus(prov) : null, modelExtras(res));
       for (const w of load.info.warnings) console.warn(w);
       // One line per read, so a double load shows in the Electron log.
       console.info(`apeGmshViewer: loaded ${path} (read ${Math.round(load.info.readMs)} ms)`);
@@ -353,9 +491,8 @@ export class Effects {
   static readonly MAX_RETRIES = 3;
 
   /**
-   * The files a V2f `onOpen` names: the model and the geometry are read; the
-   * results are recorded until their reader exists (V4); a kind the set does
-   * not name is closed.
+   * The files a V2f `onOpen` names: the model, the geometry and (V4b) the
+   * results are read; a kind the set does not name is closed.
    */
   openSet(set: OpenSet): void {
     if (set.geometry) void this.openGeometry(set.geometry);
@@ -363,8 +500,11 @@ export class Effects {
       this.geometryToken++;
       this.store.dispatch({ type: "fileClosed", artifact: "geometry" });
     }
-    if (set.results) this.store.dispatch({ type: "fileOpened", artifact: "results", path: set.results });
-    else this.store.dispatch({ type: "fileClosed", artifact: "results" });
+    if (set.results) void this.openResults(set.results);
+    else {
+      this.resultsToken++;
+      this.store.dispatch({ type: "fileClosed", artifact: "results" });
+    }
     if (set.model) void this.open(set.model);
     else this.store.dispatch({ type: "fileClosed", artifact: "model" });
   }

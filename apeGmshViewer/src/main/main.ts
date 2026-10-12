@@ -29,11 +29,12 @@ import { fileURLToPath } from "node:url";
 import * as h5wasm from "h5wasm/node";
 import { openModel } from "../reader/node.ts";
 import { openResults, type ResultsFile, type ResultsH5 } from "../reader/results.ts";
-import { fileFromArgv } from "./pairing.ts";
+import { fileFromArgv, pairSet } from "./pairing.ts";
+import { ResultsHost, type StepRequest } from "./results.ts";
 import { OpenSession } from "./session.ts";
 import { goToSource } from "./source.ts";
 import { SetWatcher } from "./watch.ts";
-import { openGeometry, openProvenance } from "./zones.ts";
+import { openGeometry, openLineage, openProvenance, openStageElements } from "./zones.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -117,6 +118,9 @@ ipcMain.handle("app:config", () => ({
   appReadyMs: appReadyAt - t0,
   configMs: Date.now() - t0,
   pick: arg("pick") ?? null,
+  // capture: the results sibling of the captured model, when one exists (the
+  // V4b stills come from the set the file belongs to, as a double-click opens it)
+  results: mode === "capture" && file ? pairSet(resolve(file), existsSync).results : null,
 }));
 
 ipcMain.handle("model:open", async (_e, path: string) => {
@@ -131,8 +135,31 @@ ipcMain.handle("model:open", async (_e, path: string) => {
   }
   // /provenance rides with the model; a refused or broken zone does not stop
   // the model from loading (the renderer shows why go-to-source is off).
-  return { ok: true, model, provenance: await openProvenance(path) };
+  return {
+    ok: true,
+    model,
+    provenance: await openProvenance(path),
+    // V4b: the results pairing key, and the element tags of the /sequence element rows.
+    lineage: await openLineage(path),
+    stageElements: await openStageElements(path, model.sequence),
+  };
 });
+
+// V4b (#1728): the results file, read lazily here; the renderer holds its
+// metadata and asks for one step at a time (./results.ts).
+const resultsHost = new ResultsHost(h5wasm as unknown as ResultsH5, h5wasm.ready);
+ipcMain.handle("results:open", (_e, path: unknown) => {
+  if (typeof path !== "string") return { ok: false, error: `results:open needs a path; got ${JSON.stringify(path)}` };
+  return resultsHost.open(path);
+});
+ipcMain.handle("results:readStep", (_e, req: unknown) => {
+  const r = req as StepRequest | null;
+  if (!r || typeof r.path !== "string" || typeof r.stage !== "string" || typeof r.step !== "number" || typeof r.seq !== "number") {
+    return { ok: false, seq: -1, error: `results:readStep: malformed request ${JSON.stringify(req)}` };
+  }
+  return resultsHost.readStep(r);
+});
+ipcMain.handle("results:close", () => resultsHost.close());
 
 ipcMain.handle("geometry:open", (_e, path: unknown) => {
   if (typeof path !== "string") return { ok: false, error: `geometry:open needs a path; got ${JSON.stringify(path)}` };
@@ -240,6 +267,7 @@ app.whenReady().then(() => {
 
 app.on("window-all-closed", () => {
   session.close();
+  resultsHost.close();
   app.quit();
 });
 
