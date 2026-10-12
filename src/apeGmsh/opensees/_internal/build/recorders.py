@@ -19,6 +19,11 @@ if TYPE_CHECKING:
     from ...emitter.base import Emitter
     from apeGmsh.mesh.FEMData import FEMData
     from ..tag_plan import TagPlan
+    from ..types import Element
+    from .pg_expand import ElementPlanRows
+
+    #: The element tag plan: each element spec with its columnar rows.
+    ElementPlan = tuple[tuple[Element, ElementPlanRows], ...]
 
 
 # ---------------------------------------------------------------------------
@@ -62,6 +67,8 @@ def emit_recorder_spec(
     if isinstance(spec, RecorderDeclaration):
         _emit_recorder_declaration(
             spec, emitter, fem, fem_eid_to_ops_tag=fem_eid_to_ops_tag,
+            element_plan=(
+                tag_plan.elements.specs if tag_plan is not None else None),
         )
         return
     materialised = spec.materialize(
@@ -80,9 +87,17 @@ def _emit_recorder_declaration(
     fem: "FEMData",
     *,
     fem_eid_to_ops_tag: "FemToOpsTagMap | None" = None,
+    element_plan: "ElementPlan | None" = None,
 ) -> None:
     """Walk a :class:`RecorderDeclaration` and emit one
     ``emitter.recorder(...)`` call per (ops_token, target_set) group.
+
+    ``element_plan`` is the bridge's element tag plan (each element spec
+    with its rows). Node components map to DOFs through the per-node
+    layout (:func:`_node_record_layout`): with the plan, a rotational
+    component is recorded only where a beam-column or shell establishes
+    the rotation; without it (``ModelData``, a hand-written deck) every
+    node carries the declared ``(decl.ndm, decl.ndf)`` layout.
 
     Per Phase 9 commit 3a, only the ``"nodes"`` category is handled
     end-to-end. Other categories raise :class:`NotImplementedError`
@@ -140,7 +155,8 @@ def _emit_recorder_declaration(
         try:
             if record.category == "nodes":
                 _emit_nodes_record(record, decl, emitter, fem,
-                                   group_node_components_by_ops_token)
+                                   group_node_components_by_ops_token,
+                                   element_plan=element_plan)
             else:
                 _emit_element_level_record(
                     record, decl, emitter, fem,
@@ -157,6 +173,8 @@ def _emit_nodes_record(
     emitter: "Emitter",
     fem: "FEMData",
     group: object,  # callable; passed in to keep imports local to caller
+    *,
+    element_plan: "ElementPlan | None" = None,
 ) -> None:
     """Emit one node-level :class:`RecorderRecord`.
 
@@ -175,10 +193,20 @@ def _emit_nodes_record(
     if not node_ids:
         return  # nothing to record — silent skip mirrors typed-primitive behavior
 
-    # Group canonical components by ops token (e.g. "disp": (1, 2)).
-    # Caller passes the translator to keep its import scoped to the
+    # Group canonical components by ops token (e.g. "disp": (1, 2)),
+    # each mapped through the targets' DOF layout. Caller passes the
+    # translator to keep its import scoped to the
     # _emit_recorder_declaration function.
-    grouped = group(record.components) if record.components else {}  # type: ignore[operator]
+    grouped: dict[str, tuple[int, ...]] = {}
+    if record.components:
+        layout = _node_record_layout(record, decl, node_ids, element_plan)
+        try:
+            grouped = group(record.components, layout)  # type: ignore[operator]
+        except ValueError as e:
+            raise BridgeError(
+                f"recorder.declare({decl.name!r}): a node component has no "
+                f"DOF on the targeted nodes (ndm={decl.ndm}): {e}"
+            ) from e
     record_name = record.name or "default"
 
     for ops_token, dofs in grouped.items():
@@ -215,6 +243,106 @@ def _emit_nodes_record(
             args += ["-dof", *all_dofs]
             args.append(raw_token)
             emitter.recorder("Node", *args)
+
+
+#: ``ndf`` of a node a beam-column or shell establishes, per ``ndm``: the
+#: layout whose rotational slots :func:`_node_record_layout` reads.
+_FRAME_NDF: dict[int, int] = {1: 1, 2: 3, 3: 6}
+
+
+def _node_record_layout(
+    record: RecorderRecord,
+    decl: RecorderDeclaration,
+    node_ids: tuple[int, ...],
+    element_plan: "ElementPlan | None",
+) -> tuple[int, ...]:
+    """The DOF layout (``_load_dof_layout``) every node of ``node_ids``
+    carries for ``record``'s components; raise when one has none (#1723).
+
+    Without an element plan (``ModelData``: a hand-written deck), every
+    node carries the deck's declared ``(decl.ndm, decl.ndf)`` layout.
+
+    With the bridge's plan, translations sit at DOFs ``1..ndm`` on every
+    node, and a rotational slot is a rotation only where the node's
+    elements establish one: at least one beam-column or shell touches
+    it, and every other element on it is translational-only (the rule
+    ``ReadSession.rotation_refusal`` applies to ``.read``). A u-p node's
+    DOF 3 at ``ndm=2, ndf=3`` is pore pressure, and a solid or truss
+    node has no rotation, so a rotational component there refuses,
+    naming the node, instead of recording another quantity or a 0.
+    Where it is established, each node has the frame layout of its
+    ``ndm``, so one ``-dof`` list serves every target: the line never
+    needs splitting.
+    """
+    from ..._recorder_translate import node_component_spatial
+    from .ndf import _load_dof_layout
+
+    ndm = int(decl.ndm)
+    if element_plan is None:
+        return _load_dof_layout(int(decl.ndf), ndm)
+    if ndm not in _FRAME_NDF:
+        raise BridgeError(
+            f"recorder.declare({decl.name!r}): ndm={ndm} has no node DOF "
+            f"layout; expected one of {sorted(_FRAME_NDF)}."
+        )
+    rotational = [
+        c for c in record.components
+        if (s := node_component_spatial(c)) is not None and s[1] >= 3
+    ]
+    if rotational:
+        refusals = _rotation_refusals(node_ids, element_plan)
+        if refusals:
+            shown = list(refusals.items())[:3]
+            more = len(refusals) - len(shown)
+            raise BridgeError(
+                f"recorder.declare({decl.name!r}): {rotational[0]!r} has no "
+                f"established DOF at "
+                + "; ".join(f"node {n} ({why})" for n, why in shown)
+                + (f"; and {more} more node(s)" if more else "")
+                + ". A rotation is recorded only on a beam-column or shell "
+                "node; narrow the selector to those nodes, or drop the "
+                "rotational component."
+            )
+    return _load_dof_layout(_FRAME_NDF[ndm], ndm)
+
+
+def _rotation_refusals(
+    node_ids: tuple[int, ...], element_plan: "ElementPlan",
+) -> dict[int, str]:
+    """``{node: why}`` for each node of ``node_ids`` whose rotational DOF
+    slots no element establishes, in ``node_ids`` order."""
+    import numpy as np
+
+    from ..._readback import _ROTATIONAL_FAMILIES, _TRANSLATIONAL_ONLY
+
+    targets = np.unique(np.asarray(node_ids, dtype=np.int64))
+    rotational: set[int] = set()
+    blocked: dict[int, str] = {}
+    for spec, sub in element_plan:
+        if len(sub) == 0 or isinstance(spec, _TRANSLATIONAL_ONLY):
+            continue
+        conn = sub.conn
+        if conn.ndim == 2:
+            flat = np.asarray(conn, dtype=np.int64).ravel()
+        else:
+            flat = np.fromiter(
+                (int(n) for row in conn for n in row), dtype=np.int64)
+        hit = np.intersect1d(flat, targets)
+        if isinstance(spec, _ROTATIONAL_FAMILIES):
+            rotational.update(int(n) for n in hit)
+        else:
+            name = type(spec).__name__
+            for n in hit:
+                blocked.setdefault(int(n), name)
+    out: dict[int, str] = {}
+    for n in node_ids:
+        if n in blocked:
+            out[n] = (f"a {blocked[n]} touches it, whose DOF there is not a "
+                      "beam/shell rotation; a u-p element carries pore "
+                      "pressure in that slot")
+        elif n not in rotational:
+            out[n] = "no beam-column or shell element touches it"
+    return out
 
 
 def _resolve_node_targets(

@@ -48,23 +48,29 @@ class StressZZNotRecordedWarning(UserWarning):
 
 
 # =====================================================================
-# Per-axis DOF index tables
+# Per-axis spatial index tables
 # =====================================================================
+#
+# A canonical node component names a SPATIAL slot, indexed
+# ``(x, y, z, rx, ry, rz)`` = ``0..5``.  Which deck DOF carries that slot
+# depends on the node's ``(ndm, ndf)``: a planar frame node
+# (``ndm=2, ndf=3``) carries ``rz`` at DOF 3, a 3-D frame node at DOF 6,
+# and a truss node not at all.  That map is the bridge's own DOF layout
+# (``_internal/build/ndf.py::_load_dof_layout``, the one loads, masses,
+# SPs and readback use); callers pass it in.  There is no fixed 6-DOF
+# fallback: mapping ``rotation_z`` straight to DOF 6 recorded a 2-D
+# frame's rotation as 0 with no warning (#1723).
 
-_TRANS_AXIS_TO_DOF: dict[str, int] = {"x": 1, "y": 2, "z": 3}
-_ROT_AXIS_TO_DOF: dict[str, int] = {"x": 4, "y": 5, "z": 6}
+_TRANS_AXIS_TO_SPATIAL: dict[str, int] = {"x": 0, "y": 1, "z": 2}
+_ROT_AXIS_TO_SPATIAL: dict[str, int] = {"x": 3, "y": 4, "z": 5}
 
 
 # =====================================================================
 # Canonical-prefix → (ops_recorder_token, axis_kind) table
 # =====================================================================
 #
-# axis_kind ∈ {"trans", "rot"} selects which DOF table the axis
-# suffix is read against. ``displacement_z`` → ("disp", 3); a 2-D
-# ``rotation_z`` → ("disp", 6) (z-rotation in ndf=3 lives at DOF 3,
-# but OpenSees promotes to the 3-D convention by default; emit-time
-# clipping handles ndm/ndf consistency via the canonical-name set
-# the bridge already validated).
+# axis_kind ∈ {"trans", "rot"} selects which spatial table the axis
+# suffix is read against.
 
 _NODAL_PREFIX_TABLE: dict[str, tuple[str, str]] = {
     "displacement":           ("disp",      "trans"),
@@ -101,23 +107,18 @@ _NODAL_SCALAR_TABLE: dict[str, tuple[str, int]] = {
 # =====================================================================
 
 
-def node_component_to_ops(canonical: str) -> Optional[tuple[str, int]]:
-    """Map a canonical node component to ``(ops_recorder_token, dof)``.
+def node_component_spatial(canonical: str) -> Optional[tuple[str, int]]:
+    """Map a canonical node component to ``(ops_recorder_token, spatial)``.
 
-    Returns ``None`` if ``canonical`` is not a recognized node-level
-    component (caller should fall through to error).
+    ``spatial`` indexes ``(x, y, z, rx, ry, rz)`` (``0..5``); it is ``-1``
+    for the scalar ``pore_pressure``, which has no spatial slot. Returns
+    ``None`` if ``canonical`` is not a recognized node-level component.
 
     Examples
     --------
-    >>> node_component_to_ops("displacement_x")
-    ('disp', 1)
-    >>> node_component_to_ops("rotation_z")
-    ('disp', 6)
-    >>> node_component_to_ops("reaction_force_y")
-    ('reaction', 2)
-    >>> node_component_to_ops("pore_pressure")
-    ('pressure', -1)
-    >>> node_component_to_ops("bogus") is None
+    >>> node_component_spatial("rotation_z")
+    ('disp', 5)
+    >>> node_component_spatial("bogus") is None
     True
     """
     if canonical in _NODAL_SCALAR_TABLE:
@@ -129,21 +130,64 @@ def node_component_to_ops(canonical: str) -> Optional[tuple[str, int]]:
     if entry is None:
         return None
     ops_token, axis_kind = entry
-    dof_table = _TRANS_AXIS_TO_DOF if axis_kind == "trans" else _ROT_AXIS_TO_DOF
-    if axis not in dof_table:
+    table = (_TRANS_AXIS_TO_SPATIAL if axis_kind == "trans"
+             else _ROT_AXIS_TO_SPATIAL)
+    if axis not in table:
         return None
-    return (ops_token, dof_table[axis])
+    return (ops_token, table[axis])
+
+
+def node_component_to_ops(
+    canonical: str, layout: tuple[int, ...],
+) -> Optional[tuple[str, int]]:
+    """Map a canonical node component to ``(ops_recorder_token, dof)``
+    through ``layout``: the spatial slot each DOF carries, as
+    ``_load_dof_layout(ndf, ndm)`` gives it.
+
+    Returns ``None`` if ``canonical`` is not a recognized node-level
+    component (caller should fall through to error). Raises
+    :class:`ValueError` if the layout has no DOF for it (a rotation on a
+    truss node, ``displacement_z`` in 2-D): never a guessed DOF.
+
+    Examples
+    --------
+    >>> node_component_to_ops("displacement_x", (0, 1, 2, 3, 4, 5))
+    ('disp', 1)
+    >>> node_component_to_ops("rotation_z", (0, 1, 2, 3, 4, 5))
+    ('disp', 6)
+    >>> node_component_to_ops("rotation_z", (0, 1, 5))
+    ('disp', 3)
+    >>> node_component_to_ops("reaction_force_y", (0, 1, 5))
+    ('reaction', 2)
+    >>> node_component_to_ops("pore_pressure", (0, 1))
+    ('pressure', -1)
+    >>> node_component_to_ops("bogus", (0, 1)) is None
+    True
+    """
+    translated = node_component_spatial(canonical)
+    if translated is None:
+        return None
+    ops_token, spatial = translated
+    if spatial < 0:
+        return (ops_token, spatial)
+    if spatial not in layout:
+        raise ValueError(
+            f"{canonical!r} has no DOF in the node layout {layout} "
+            f"(spatial slots 0..5 = x, y, z, rx, ry, rz)."
+        )
+    return (ops_token, layout.index(spatial) + 1)
 
 
 def group_node_components_by_ops_token(
-    components: tuple[str, ...],
+    components: tuple[str, ...], layout: tuple[int, ...],
 ) -> dict[str, tuple[int, ...]]:
-    """Group node components by their OpenSees token.
+    """Group node components by their OpenSees token, each mapped
+    through ``layout`` (see :func:`node_component_to_ops`).
 
     Components sharing the same ``ops_recorder_token`` collapse into
     one ``recorder Node`` line with a ``-dof`` list of all their DOFs.
     For example, ``("displacement_x", "displacement_y", "reaction_force_z")``
-    produces:
+    over the 3-D frame layout ``(0, 1, 2, 3, 4, 5)`` produces:
 
         {"disp": (1, 2), "reaction": (3,)}
 
@@ -159,11 +203,12 @@ def group_node_components_by_ops_token(
     ValueError
         If any component is not a recognized node-level canonical
         (caller is responsible for validating against the canonical
-        vocabulary upstream; this raise is a defensive backstop).
+        vocabulary upstream; this raise is a defensive backstop), or
+        if it has no DOF in ``layout``.
     """
     grouped: dict[str, list[int]] = {}
     for comp in components:
-        translated = node_component_to_ops(comp)
+        translated = node_component_to_ops(comp, layout)
         if translated is None:
             raise ValueError(
                 f"_recorder_translate.group_node_components_by_ops_token: "

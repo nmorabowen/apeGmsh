@@ -135,10 +135,7 @@ def test_planar_beam_translations_are_dofs_1_2() -> None:
 @pytest.mark.parametrize("component", ["rotation_x", "rotation_y"])
 def test_planar_beam_out_of_plane_rotation_refuses(component: str) -> None:
     ops = _beam_2d()
-    try:
-        ops.recorder.declare(nodes=(component,), pg="Top")
-    except (ValueError, KeyError):
-        return  # refused at declaration time: also fail closed
+    ops.recorder.declare(nodes=(component,), pg="Top")
     with pytest.raises(BridgeError, match=component):
         _node_recorders(ops)
 
@@ -187,10 +184,7 @@ def test_truss_model_rotation_refuses() -> None:
     ops.model(ndm=2, ndf=2)
     mat = ops.uniaxialMaterial.ElasticMaterial(E=200e9)
     ops.element.Truss(pg="Cols", A=0.01, material=mat)
-    try:
-        ops.recorder.declare(nodes=("rotation_z",), pg="Top")
-    except (ValueError, KeyError):
-        return  # refused at declaration time: also fail closed
+    ops.recorder.declare(nodes=("rotation_z",), pg="Top")
     with pytest.raises(BridgeError, match=r"rotation_z.*node 2"):
         _node_recorders(ops)
 
@@ -261,9 +255,6 @@ def test_model_data_planar_rotation_is_dof_3() -> None:
 
 def test_model_data_ndf2_rotation_refuses() -> None:
     md = ModelData(make_two_node_beam(ndm=2), ndm=2, ndf=2)
-    try:
-        md.recorders(nodes=("rotation_z",), pg="Top")
-    except (ValueError, KeyError):
-        return  # refused at declaration time: also fail closed
-    with pytest.raises((BridgeError, ValueError), match="rotation_z"):
+    md.recorders(nodes=("rotation_z",), pg="Top")
+    with pytest.raises(BridgeError, match="rotation_z.*no DOF"):
         md.recorder_commands(target="tcl")
