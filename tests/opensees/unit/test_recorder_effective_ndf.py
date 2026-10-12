@@ -106,6 +106,74 @@ def test_raised_master_reads_live_at_dof_4(
 
 
 # ---------------------------------------------------------------------------
+# Case 1 through each recorder emit call site of ``BuiltModel``: flat,
+# staged (``s.recorder``), partitioned, staged + partitioned. Each test fails
+# when only that site's ``effective_ndf=`` argument is removed.
+# ---------------------------------------------------------------------------
+
+
+def _raised_master_model(
+    *, staged: bool, partitions: int,
+) -> tuple[apeSees, int, Any]:
+    from apeGmsh import apeGmsh
+
+    g = apeGmsh(model_name=f"b5e_sites_{int(staged)}_{partitions}")
+    g.begin()
+    g.model.geometry.add_box(0, 0, 0, 1, 1, 1, label="body")
+    g.physical.add_volume("body", name="Body")
+    h = g.decouple_node(coords=(0.0, 0.0, 2.0), label="master")
+    g.mesh.sizing.set_global_size(0.5)
+    g.mesh.generation.generate(dim=3)
+    if partitions > 1:
+        g.mesh.partitioning.partition(partitions)
+        g.mesh.partitioning.renumber(base=1)
+    fem = g.mesh.queries.get_fem_data(dim=3)
+    assert (len(fem.partitions) > 1) == (partitions > 1)
+    ops = apeSees(fem)
+    ops.model(ndm=3, ndf=3)
+    mat = ops.nDMaterial.ElasticIsotropic(E=30e9, nu=0.2, rho=0.0)
+    ops.element.FourNodeTetrahedron(pg="Body", material=mat)
+    ops.ndf(h, ndf=6)
+    tag = int(h.tag)
+    decl = ops.recorder.declare(
+        nodes=("rotation_x", "rotation_y", "rotation_z"), ids=(tag,),
+        file_root="run", name="m")
+    if staged:
+        with ops.stage(name="load") as s:
+            s.recorder(decl)
+            s.analysis(
+                test=ops.test.NormDispIncr(tol=1e-8, max_iter=10),
+                algorithm=ops.algorithm.Linear(),
+                integrator=ops.integrator.LoadControl(dlam=1.0),
+                constraints=ops.constraints.Penalty(alpha_sp=1e12,
+                                                    alpha_mp=1e12),
+                numberer=ops.numberer.RCM(),
+                system=ops.system.UmfPack(),
+                analysis=ops.analysis.Static(),
+            )
+            s.run(n_increments=1)
+    return ops, tag, g
+
+
+@pytest.mark.parametrize(("staged", "partitions"), [
+    (False, 1), (True, 1), (False, 2), (True, 2)],
+    ids=["flat", "staged", "partitioned", "staged_partitioned"])
+def test_raised_master_records_dofs_4_to_6_through_each_emit_site(
+    staged: bool, partitions: int, tmp_path: Path,
+) -> None:
+    ops, tag, g = _raised_master_model(staged=staged, partitions=partitions)
+    try:
+        deck = tmp_path / "m.tcl"
+        ops.tcl(str(deck))
+        lines = [ln for ln in deck.read_text().splitlines()
+                 if ln.lstrip().startswith("recorder Node")]
+        assert len(lines) == 1, lines
+        assert lines[0].strip().endswith(f"-node {tag} -dof 4 5 6 disp"), lines
+    finally:
+        g.end()
+
+
+# ---------------------------------------------------------------------------
 # Case 2: an element-less master beside an absorbing boundary (or a u-p
 # plate, which still blocks it)
 # ---------------------------------------------------------------------------
