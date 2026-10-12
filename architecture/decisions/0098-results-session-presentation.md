@@ -2122,3 +2122,157 @@ Nothing here catches "the picture is wrong but plausible". They catch
 **unreachable** and **inconsistent**, which is this week's entire class.
 Visual correctness still rests on a person opening the window; the
 bench is what made that cheap, and it should stay a human step.
+
+## Amendment 7 (2026-10-11) — style enters the slot; the ghost draws; `path` goes
+
+**Status:** Proposed (2026-10-11). Acceptance is the maintainer's: this
+line changes to *Accepted (date)* when the maintainer accepts it, and
+not before. Until then the code keeps v1 behaviour.
+
+Append-only. §1–§11, INV-MESH-1…4, INV-LEGEND-1…5, the slot catalog,
+the rejected-alternatives table and Amendments 1–6 all stand except
+where a section below names what it changes.
+
+**The ruling this amendment records.** X3 (#1199) asked whether the six
+slotless kinds of Amendment 2 should be ported into the slot catalog
+before the old Qt viewer is deleted. The maintainer ruled **KEEP**
+(2026-10-11, recorded on #1199). The six stay Python-only through
+`show_web().director`, exactly as A2.2 and A2.3 describe, until V4
+(the web-client work) hosts them. The catalog stays closed at seven.
+
+Three smaller things are ported now, and two of them need this
+amendment. Slot style fields add a *stored* field, and
+`results/session/_snapshot.py` makes a new stored field an ADR 0098
+amendment and a version bump. Dropping the `path` plot kind changes
+§6. The undeformed ghost needs no new IR (`overlay` is already in §3
+and in snapshot v1); it is recorded here so the realize contract is
+written down before the slice that implements it.
+
+**Numbering.** The section ids follow the architect brief on #1199
+(the comment "X3 / ADR 0098 Amendment 7: the six slotless kinds, KEEP
+vs PORT", §2), so the brief and this text cite the same ids. That
+brief drafted the PORT form. Under KEEP only A7.3, A7.5 and A7.7 are
+adopted; A7.1, A7.2, A7.4 and A7.6 are **not adopted** and have no
+text here. A7.8 (re-pinning the catalog ratchets) falls away with
+them: the catalog does not change.
+
+### A7.3 Style fields on the colour-mapped slots
+
+Every colour-mapped slot (the §4 *yes* column: `contour`, `vector`,
+`gauss`, `sand`) gains two fields:
+
+- `clim: (float, float) | None`, the colour range;
+- `cmap: str | None`, the colour map.
+
+**`None` means today's default, so no default changes.** An unset
+`clim` keeps the auto-fit the realize path does now. An unset `cmap`
+keeps the per-kind default map. A session that never sets either draws
+exactly what it drew before this amendment.
+
+**Validated at assignment, not at realize.** `cmap` is any name
+matplotlib resolves (`'jet'` included); an unknown name raises when the
+slot is filled. `clim` is two finite numbers with low < high; anything
+else raises at the same point. A bad value never reaches a picture.
+
+**The scale law gains a conflict rule.** §5 says the same quantity on
+two slots gives one scale. With style on the slot, two slots that share
+a field identity (`slot_field`, §5) could ask for two different scales.
+The rule:
+
+1. One scale per field identity, as before.
+2. Its range and map come from the slot that sets them explicitly. A
+   slot left at `None` takes the other slot's explicit values.
+3. Filling a slot whose explicit `clim` or `cmap` **differs** from the
+   explicit value of another occupied slot with the same field identity
+   **raises**. A silent winner would be a legend that is wrong for one
+   of the two pictures it labels.
+
+**Style is display state.** `clim` and `cmap` never change field
+identity: they do not enter `slot_field`, so they never split one
+legend into two and never break A5's placement key. They are not slot
+identity either, so filling a slot with the same quantity and new
+style is the ordinary §4 replacement. This is the "later, additive
+widening" the `results/session/_slots.py` module docstring reserves.
+
+Non-colour-mapped slots (`line`, `loads`, `reactions`) get neither
+field: they emit no scale for one to set.
+
+### A7.5 The undeformed ghost
+
+`MeshView.overlay` (§3) realizes. When it is on, the view also draws
+**its own scoped cells at scale 0, in the Outlines style**:
+
+- the same scope as the posed mesh (INV-MESH-1: one cell set);
+- the same **stage-activation set** as the posed mesh (#1722). On a
+  staged model the ghost draws only the cells active at the view's
+  instant, or it would show elements that do not exist yet;
+- never colour-mapped, and it emits no legend. It is not a slot, so
+  INV-LEGEND-1 is untouched: deform on, overlay on, every slot empty
+  still gives zero legends.
+
+The ghost is not CAD and not a second Geometry (§3). The realize
+refusal for `overlay` in `_refuse_unrealized_state`
+(`viewers/session/_realize.py`) is removed by the slice that implements
+this section, and by no other.
+
+### A7.7 Snapshot v2; the `path` plot kind goes
+
+**`SNAPSHOT_VERSION` becomes 2.** The writer writes v2, with `clim` and
+`cmap` on every colour-mapped slot record. The reader accepts **v1 and
+v2**. A v1 file has no style fields; they restore as `None`, which is
+today's default, so a v1 snapshot restores to the picture it always
+gave. An unknown slot category, pane kind or version still refuses
+loudly. A v2 file opened by an apeGmsh that predates this amendment is
+refused by that reader's version check, which is the correct failure.
+
+**§6's `kind` becomes `history | xy`.** `path` leaves `PLOT_KINDS`.
+It was never realizable: the plot resolver refuses every kind but
+`history` (`viewers/session/_plots.py`), because a path needs an
+ordered source and an arc-length abscissa that §8's selection, a set,
+cannot give. Keeping it advertised a picture nobody could draw.
+`PlotView(kind='path')` then raises at construction, like any unknown
+kind.
+
+**An old snapshot with a `path` plot pane** is not refused. The reader
+drops that pane and records a restore notice in
+`RestoredSession.notices` naming the dropped pane, the same way other
+degradations surface. A restore that refused the whole session for a
+pane that could never draw would lose every pane that could.
+
+`xy` stays in the kind list, unchanged by this amendment.
+
+### A2.5(1): the trigger moves to V4
+
+A2.5(1) ends the six kinds' disposition when "the web-client ADR
+retires `show_web` or the director". X3 retires neither. `show_web`
+and `serve_web` build a `ResultsDirector` and stay until V4 (the
+cluster-2 ruling on #1199), so the director, its registry and the six
+kinds survive X3 untouched. A2.5(1)'s trigger therefore fires at **V4**,
+not X3: the ADR that retires `show_web` or the director records a fresh
+disposition for all six before it merges. A2.5(2) is unchanged and
+still unmet: nobody has asked for one of the six in the session
+window.
+
+### Consequences
+
+- Two code slices follow, in this order. First, the stored fields and
+  the format: `clim`/`cmap` on the slot records with the conflict rule,
+  snapshot v2 with the v1 reader, and `path` out of `PLOT_KINDS`
+  (`results/session/`). Second, the realize side: applying
+  `clim`/`cmap` and drawing the ghost (`viewers/session/_realize.py`),
+  after #1722's activation fix lands, because the ghost must use the
+  same activation set.
+- Oracles the slices owe: a v1 snapshot fixture restores identically;
+  `'jet'` is accepted and a misspelled map raises at assignment; two
+  conflicting explicit `clim`s on a contour and a Gauss slot of the
+  same quantity raise; with both fields unset the X2 golden and numeric
+  oracles are unchanged; the ghost's cell count equals the view's scoped
+  and activated cell count; an old snapshot with a `path` pane restores
+  with one notice and the other panes intact.
+- The six kinds remain second-class until V4: no UI, not in a snapshot,
+  not pinnable, not renderable by MCP (A2.3). That is the accepted cost
+  of KEEP.
+- The side panels (fiber section scatter, layer thickness plot,
+  isochrone profile chart) were already unreachable: their only caller
+  is the old viewer X3 deletes. They go with it, and nothing in this
+  amendment brings them back.
