@@ -20,8 +20,9 @@ Survive the watchdog (PROGRAM.md §7 item 5): skeleton first, WIP commits, push 
 "Mechanical" means the change preserves behaviour:
 
 - **A move PR changes no def or class body.**
-  - Prove it with `python scripts/verify_move.py <base-sha> HEAD` once that
-    script exists (chain C2).
+  - Prove it with `python scripts/verify_move.py --base <base-sha> --head
+    <pushed-sha> <src paths> <dst paths>`; a pre-push `--head WORKTREE` run
+    must add `--strict`.
   - Rewrite every in-repo import in the same PR (src, tests, docs, skill).
   - Give underscore modules no facade. A public facade gets a ledger row with a
     dated expiry.
