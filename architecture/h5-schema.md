@@ -1729,7 +1729,7 @@ Five writers produce the file. `source_type` names the writer, but it is a stamp
 
 | `source_type` | Writer | `/model` | `/opensees` | Stages |
 |---|---|---|---|---|
-| `domain_capture` | `DomainCapture` (`ops.domain_capture`) | yes | yes when the bridge archives a `model.h5` sidecar; otherwise absent, with a warning | the user's `begin_stage` calls, then one `mode` stage per mode from `capture_modes` |
+| `domain_capture` | `DomainCapture` (`ops.domain_capture`) | yes | yes when the bridge archives a `model.h5` sidecar; otherwise absent, with a warning, and an element-scoped capture then refuses (#1764) | the user's `begin_stage` calls, then one `mode` stage per mode from `capture_modes` |
 | `tcl_recorders` | the recorder transcoder (`Results.from_recorders`) | yes | when `model=` is given | one stage per transcode |
 | `parallel_modal` | `ParallelModalResult` harvest (`opensees/analysis/modal.py`) | yes | no | one `mode` stage per mode |
 | `footfall_walking` | `FootfallResult` (`opensees/analysis/footfall_result.py`) | no | no | one `static` stage named `footfall` |
@@ -1818,7 +1818,9 @@ unverified:
 rows carry. Every 1.0.0 and 1.1.0 file lacks the attribute, and so does a
 1.2.0 file whose writer could not prove it. Absence is not a refusal: the
 file reads exactly as before. The version number alone never makes a file
-verified; only the stamp does.
+verified, and neither does `source_type`: the rule is the same for every
+writer, `domain_capture` included. A file is verified if and only if its
+root attribute `element_index_space` is `"fem"`.
 
 The on-disk contract is this one root attribute, `element_index_space`:
 its value set is exactly `"fem"`, and absence means unverified. No other
@@ -1838,11 +1840,11 @@ Who writes it:
 | Writer (`source_type`) | Writes `element_index_space`? |
 |---|---|
 | recorder transcoder (`tcl_recorders`) | `"fem"` when it can prove it, whatever apeGmsh version emitted the recorders; otherwise absent (below) |
-| `DomainCapture` (`domain_capture`) | never: absent |
-| `make_demo_results` (`domain_capture`) | never: absent |
+| `DomainCapture` (`domain_capture`) | `"fem"` on every capture that runs, from #1764 on. An element-scoped capture refuses unless a `{fem_eid: ops_tag}` pairing covers every recorded id ([Domain capture eras](#domain-capture-eras)) |
+| `make_demo_results` (`domain_capture`) | `"fem"`, from #1764 on. It writes nodal rows only, in every version |
 | `ParallelModalResult` (`parallel_modal`) | never: absent |
 | `FootfallResult` (`footfall_walking`) | never: absent |
-| `NativeWriter` itself | only when a caller invokes `stamp_element_index_space`; the transcoder is the only caller in `src/` |
+| `NativeWriter` itself | only when a caller invokes `stamp_element_index_space`; the transcoder, `DomainCapture` and `make_demo_results` are the callers in `src/` |
 | MPCO (`Results.from_mpco`) | writes no `results.h5` at all: it reads the `.mpco` file directly |
 
 The transcoder labels element rows with the recorder spec's FEM ids. Those
@@ -1866,6 +1868,38 @@ names. It certifies the index space only, relative to the embedded
 default), whose FEM ids differ from their tags, stay unverified even when a
 translating emit wrote them, until an emit-side manifest can prove the
 translation.
+
+#### Domain capture eras
+
+A domain capture asks OpenSees for each element by ops tag and labels the
+row with the record's `fem_eid`. That row is the right element only if the
+capture translated `fem_eid` to the ops tag first. Under the bridge's
+default `element_tags="sequential"`, and on any mesh where gmsh numbers
+lower-dimensional elements first, the two differ. **Unstamped
+`domain_capture` files are not grandfathered: they read unverified**,
+because the writer did not translate in every era:
+
+| Era (commits) | Element-id translation | Element rows of an unstamped file |
+|---|---|---|
+| `483633df` → `fbf68c11` (2026-04-26 → 2026-05-29) | none: the capture queried OpenSees with the `fem_eid` | wrong element, or dropped, wherever `fem_eid` ≠ ops tag |
+| `fbf68c11` → `2d159362` (→ 2026-08-04) | only for a composed model | wrong for an uncomposed model whose `fem_eid`s are offset from its ops tags |
+| `2d159362` → #1764 | whenever a pairing was read, but silently none when it was not (no bridge or model, a sidecar failure, any read error), and none for a whole record the pairing only partly covered | wrong on those paths |
+| #1764 on | refuses an element-scoped capture without a covering pairing; stamps `"fem"` | stamped, verified |
+
+`2d159362`'s own note: the translator was gated on compose provenance,
+"assuming an uncomposed model has ops tag == fem_eid by allocator
+construction", which is false whenever gmsh numbers lower-dimensional
+elements first. Every Gauss value was then attributed to a different
+element, and elements whose `fem_eid` exceeded the largest ops tag were
+dropped from filtered reads (it reproduced the fault on a 65,798-element
+tet10 model offset by 683). On b23c182c a 2-D portal under sequential tags
+(pairing `{5: 3, 4: 4, 6: 5}`) captured without a pairing wrote fem 5's row
+as Fy = 6257.8, tag 5's response (column fem 6); fem 5's own value is
+−6257.8.
+
+A file whose model had `element_tags="fem"` and no offset mesh is correct
+in every era, but nothing in an unstamped file proves that, so a reader
+cannot tell it apart.
 
 ### The embedded model, and how to pair a file with its `model.h5`
 
@@ -1973,19 +2007,18 @@ example `wall_stress_FourNodeQuad_0`. A component can appear in several
 groups. The reader concatenates its rows across groups and partitions.
 
 **Element ids.** `_element_index` holds **element ids**, not row
-positions. They are the ids of `/model/elements` (`fem_eid`). Domain
-capture queries OpenSees by ops tag and translates the ids back before
-it writes, so a model whose gmsh ids differ from its ops tags still
-stores `fem_eid`s.
+positions. Every writer means them as the ids of `/model/elements`
+(`fem_eid`), but only the root attribute `element_index_space = "fem"`
+proves it.
 
-> **Unverified for recorder transcodes (#1711).** The `fem_eid` claim is
-> verified only for files whose `source_type` is `domain_capture`. It is
-> **unverified** for files whose `source_type` is `tcl_recorders`, which
-> the recorder transcoder writes (`Results.from_recorders`). Until #1711
-> resolves, a reader must treat the element mapping of a `tcl_recorders`
-> file as unverified. It must show an "unverified" state for that file's
-> element results, and it must never guess a join between
-> `_element_index` and `/model/elements`.
+> **Verified only by the stamp.** A file's element mapping is verified if
+> and only if its root attribute `element_index_space` is `"fem"`
+> ([`element_index_space`](#element_index_space)). The rule is the same for
+> every `source_type`; no `source_type` is an exception, `domain_capture`
+> included ([Domain capture eras](#domain-capture-eras)). For any other
+> file, a reader must show an "unverified" state for its element results,
+> and it must never guess a join between `_element_index` and
+> `/model/elements`.
 
 | Category | Group attrs | Index datasets | Component shape |
 |---|---|---|---|
