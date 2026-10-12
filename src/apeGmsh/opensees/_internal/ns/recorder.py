@@ -24,9 +24,8 @@ from ...recorder import (
     RecorderDeclaration,
     build_recorder_declaration,
 )
-from ...node import _resolve_label
+from ...node import _label_names, _resolve_label
 from ..._readback import resolve_element_label
-from ..build.errors import BridgeError
 from ._base import _BridgeNamespace
 
 if TYPE_CHECKING:
@@ -37,24 +36,16 @@ __all__ = ["_RecorderNS"]
 
 
 def _element_label_ids(bridge: "apeSees", label: str | Sequence[str]) -> tuple[int, ...]:
-    """The element tags ``label`` names, for ``recorder.Element(label=)``.
+    """The FEM element ids ``label`` names, for ``recorder.Element(label=)``,
+    in snapshot order.
 
-    Only under ``element_tags="fem"`` is an element's OpenSees tag its
-    FEM id, so only there can a label resolve at the call, the way a
-    node label does (ADR 0115 D4; maintainer ruling on #1695). The
-    sequential refusal raises first, before the label is even looked up.
+    The label resolves at the call to FEM ids under either tag mode (ADR
+    0115 D4); the recorder keeps the label beside them, which marks them
+    as FEM ids, and the build translates them to the emitted OpenSees
+    tags exactly as it does for ``pg=`` (ADR 0115 amendment R2-f). Under
+    ``element_tags="fem"`` that translation is the identity.
     """
-    where = "ops.recorder.Element"
-    if bridge._element_tags != "fem":
-        raise BridgeError(
-            f"{where}(label=...): an element label resolves at the call "
-            "only on a bridge built with element_tags=\"fem\", where an "
-            "element's OpenSees tag is its FEM id; this bridge numbers "
-            f"elements {bridge._element_tags!r}. Build with "
-            "apeSees(fem, element_tags=\"fem\"), or use pg=; label= under "
-            "sequential tags arrives with R2-f (#1661)."
-        )
-    ids = resolve_element_label(bridge, label, where=where)
+    ids = resolve_element_label(bridge, label, where="ops.recorder.Element")
     index = bridge.fem.elements.index
     return tuple(sorted(ids, key=index))
 
@@ -87,7 +78,9 @@ class _RecorderNS(_BridgeNamespace):
         ``nodes``: node tags are FEM node ids, so the deck is the one
         ``pg=`` over the same nodes gives (ADR 0115 D4). An unknown
         label raises, listing the labels that exist; it never falls
-        back to a physical group.
+        back to a physical group. The recorder keeps the label names
+        as provenance (``/opensees/decl_params``); the ids stay
+        authoritative and nothing re-resolves the label.
 
         ``name`` labels the recorder's declaration (its
         ``opensees/recorder/<name>`` key, unique among the recorders,
@@ -109,6 +102,7 @@ class _RecorderNS(_BridgeNamespace):
                 response=response,
                 nodes=nodes,
                 pg=pg,
+                label=None if label is None else _label_names(label),
                 dofs=dofs,
                 dT=dT,
                 time_format=time_format,
@@ -135,14 +129,14 @@ class _RecorderNS(_BridgeNamespace):
         supplied. See :class:`apeGmsh.opensees.recorder.Element` for the
         full parameter contract.
 
-        ``label`` (one geometry label or a list) is accepted only on a
-        bridge built with ``element_tags="fem"``, where an element's
-        OpenSees tag is its FEM id: it resolves on the snapshot here,
-        before anything registers, to the recorder's ``elements``
-        (ADR 0115 D4). Under ``element_tags="sequential"`` it raises
-        :class:`BridgeError`; the full form arrives with R2-f (#1661).
-        An unknown label raises, listing the labels that exist; it
-        never falls back to a physical group.
+        ``label`` (one geometry label or a list) resolves on the
+        snapshot here, before anything registers, to FEM element ids
+        (ADR 0115 D4); the build translates them to the emitted
+        OpenSees tags as it does for ``pg=``, under either
+        ``element_tags`` mode. The recorder keeps the label names as
+        provenance (``/opensees/decl_params``). An unknown label
+        raises, listing the labels that exist; it never falls back to
+        a physical group.
 
         ``name`` labels the recorder's declaration (its
         ``opensees/recorder/<name>`` key, unique among the recorders,
@@ -163,6 +157,7 @@ class _RecorderNS(_BridgeNamespace):
                 response=response,
                 elements=elements,
                 pg=pg,
+                label=None if label is None else _label_names(label),
                 dT=dT,
                 time_format=time_format,
             ),

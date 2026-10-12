@@ -1,6 +1,6 @@
 """ADR 0115 D2 (R2-b, #1695) without a solver: the read session's
 refusals, the route refusals, ``ops.elements`` beside ``ops.element``,
-and ``recorder.Element(label=)``.
+and ``recorder.Element(label=)`` under both tag modes.
 
 A fake openseespy module records every call, so each refusal is shown to
 raise before any call into openseespy (the card's "a raise after
@@ -381,7 +381,7 @@ def test_ops_elements_and_ops_element_do_not_shadow(pratt: Any) -> None:
 
 
 # ---------------------------------------------------------------------------
-# recorder.Element(label=) (maintainer ruling on #1695: option (a))
+# recorder.Element(label=) (ruling on #1695; full form, ADR 0115 amendment R2-f)
 # ---------------------------------------------------------------------------
 
 
@@ -408,15 +408,79 @@ def test_recorder_element_label_resolves_under_fem_tags(pratt: Any) -> None:
          ops.elements.one(label="bot2").id), key=index))
 
 
-def test_recorder_element_label_refused_under_sequential_tags(
+def _truss_conn(deck: list[str]) -> dict[int, tuple[str, str]]:
+    """``{tag: (iNode, jNode)}`` of every ``element Truss`` line."""
+    return {
+        int(ln.split()[2]): (ln.split()[3], ln.split()[4])
+        for ln in deck if ln.startswith("element Truss ")
+    }
+
+
+def test_recorder_element_label_translates_under_sequential_tags(
     pratt: Any,
 ) -> None:
+    """ADR 0115 amendment R2-f: under sequential tags (families declared
+    in reverse, so tags are not FEM ids) ``label=`` resolves to FEM ids
+    at the call and the build translates them. The oracle is the
+    connectivity: the recorded tag is the one whose ``element`` line
+    joins the nodes the FEM element joins in an ``element_tags="fem"``
+    deck, where the tag is the FEM id."""
+    ops = pratt_bridge(pratt, reverse=True)
+    eid = ops.elements.one(label="diag2").id
+    rec = ops.recorder.Element(file="d.out", response=("axialForce",),
+                               label="diag2")
+    assert rec.elements == (eid,) and rec.label == ("diag2",)
+    deck = _deck(ops)
+    fem_deck = _deck(pratt_bridge(pratt, element_tags="fem"))
+    conn = _truss_conn(fem_deck)[eid]
+    [tag] = [t for t, c in _truss_conn(deck).items() if c == conn]
+    assert tag != eid  # the case the translation exists for
+    line = next(ln for ln in deck if ln.startswith("recorder Element"))
+    assert line.endswith(f"-ele {tag} axialForce")
+
+
+@pytest.mark.parametrize("element_tags", ["sequential", "fem"])
+def test_archived_element_recorder_ids_share_one_id_space(
+    pratt: Any, tmp_path: Any, element_tags: str,
+) -> None:
+    """ADR 0115 amendment R2-f, the maintainer's condition on #1773: the
+    archived ``decl_params`` ``elements`` of an ``Element`` recorder are
+    OpenSees tags whether it was declared by ``label=`` or by explicit
+    ids, under both tag modes. The ids-declared twin names the tag the
+    deck's ``element`` line gives the labelled bar (the connectivity
+    oracle above)."""
+    from apeGmsh.opensees.emitter import h5_reader
+
+    ops = pratt_bridge(pratt, element_tags=element_tags, reverse=True)
+    eid = ops.elements.one(label="diag2").id
+    conn = _truss_conn(_deck(pratt_bridge(pratt, element_tags="fem")))[eid]
+    [tag] = [t for t, c in _truss_conn(_deck(ops)).items() if c == conn]
+    ops.recorder.Element(file="l.out", response=("axialForce",),
+                         label="diag2", name="by_label")
+    ops.recorder.Element(file="i.out", response=("axialForce",),
+                         elements=(tag,), name="by_ids")
+    path = tmp_path / "ids.h5"
+    ops.h5(str(path))
+    with h5_reader.open(str(path)) as m:
+        table = m.declarations()
+    assert table is not None
+    (by_label,) = table.params_for("opensees/recorder/by_label")
+    (by_ids,) = table.params_for("opensees/recorder/by_ids")
+    assert by_label.params["elements"] == by_ids.params["elements"] == (tag,)
+    assert by_label.params["label"] == ("diag2",)
+    assert by_ids.params["label"] is None
+    if element_tags == "sequential":
+        assert tag != eid  # the case where the id spaces differ
+
+
+def test_recorder_element_label_needs_the_tag_map(pratt: Any) -> None:
+    """A label recorder's ids are FEM ids: without the bridge's map,
+    materialize refuses rather than emit them as tags."""
     ops = pratt_bridge(pratt)
-    before = len(ops._primitives)
-    with pytest.raises(BridgeError, match=r'element_tags="fem".*R2-f \(#1661\)'):
-        ops.recorder.Element(file="d.out", response=("axialForce",),
-                             label="diag2")
-    assert len(ops._primitives) == before
+    rec = ops.recorder.Element(file="d.out", response=("axialForce",),
+                               label="diag2")
+    with pytest.raises(BridgeError, match="FEM element ids"):
+        rec.materialize(TclEmitter(), pratt, None, None)
 
 
 def test_recorder_element_label_refusals(pratt: Any) -> None:

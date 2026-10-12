@@ -96,6 +96,58 @@ __all__ = [
 ]
 
 
+def _check_label_provenance(
+    label: "tuple[str, ...] | None",
+    ids: "tuple[int, ...] | None",
+    where: str,
+) -> None:
+    """Refuse a ``label`` that is not the provenance of resolved ids (ADR
+    0115 amendment R2-f): a label rides only beside the ids it resolved
+    to (``nodes=`` / ``elements=``), never beside ``pg=``, and is a
+    non-empty tuple of non-blank names."""
+    if label is None:
+        return
+    if (
+        type(label) is not tuple or not label
+        or any(not isinstance(n, str) or not n.strip() for n in label)
+    ):
+        raise ValueError(
+            f"{where}: label must be a non-empty tuple of non-blank "
+            f"names (the provenance of a label= declaration), got {label!r}."
+        )
+    if ids is None:
+        raise ValueError(
+            f"{where}: label={label!r} is the provenance of the ids a "
+            "label= declaration resolved to, so it needs the explicit ids "
+            "and no pg=."
+        )
+
+
+def _fem_ids_to_ops_tags(
+    fem_eids: "tuple[int, ...]",
+    fem_eid_to_ops_tag: "FemToOpsTagMap | dict[int, int]",
+    selector: str,
+    covers: str,
+) -> tuple[int, ...]:
+    """The emitted OpenSees tag of every FEM element id an ``Element``
+    recorder's ``selector`` resolved to; an id no element was emitted at
+    raises (a recorder never silently records another element)."""
+    from ._internal.build.errors import BridgeError
+
+    ops_tags: list[int] = []
+    for eid in fem_eids:
+        ops_tag = fem_eid_to_ops_tag.get(int(eid))
+        if ops_tag is None:
+            raise BridgeError(
+                f"Element recorder {selector} resolves to FEM "
+                f"eid {eid} but no element was emitted at that "
+                "eid — declare an ``ops.element.X(pg=...)`` "
+                f"primitive whose pg includes {covers}."
+            )
+        ops_tags.append(int(ops_tag))
+    return tuple(ops_tags)
+
+
 # ---------------------------------------------------------------------------
 # Node — ``recorder Node ...``
 # ---------------------------------------------------------------------------
@@ -129,6 +181,11 @@ class Node(Recorder):
         Physical-group label whose nodes the recorder targets.
         Mutually exclusive with ``nodes``. Resolved by the bridge
         build pipeline at emit time.
+    label
+        Provenance of an ``ops.recorder.Node(label=...)`` declaration
+        (ADR 0115 amendment R2-f): the geometry label name(s) the call
+        resolved to ``nodes``. Never re-resolved and never emitted;
+        ``nodes`` stays authoritative. Needs ``nodes=``, refuses ``pg=``.
     dofs
         DOF indices (1-based, OpenSees convention). At least one
         required.
@@ -145,6 +202,7 @@ class Node(Recorder):
     response: str
     nodes: tuple[int, ...] | None = None
     pg: str | None = None
+    label: tuple[str, ...] | None = None
     dofs: tuple[int, ...]
     dT: float | None = None
     time_format: str = "step"
@@ -155,6 +213,7 @@ class Node(Recorder):
                 "Node recorder: supply exactly one of nodes= or pg= "
                 f"(got nodes={self.nodes!r}, pg={self.pg!r})."
             )
+        _check_label_provenance(self.label, self.nodes, "Node recorder")
         if not self.dofs:
             raise ValueError(
                 "Node recorder: at least one dof required."
@@ -241,10 +300,21 @@ class Element(Recorder):
         Tuple of OpenSees response tokens (at least one).
     elements
         Explicit tuple of element tags. Mutually exclusive with ``pg``.
+        With ``label`` set they are the FEM element ids the label
+        resolved to, which the bridge translates to the emitted
+        OpenSees tags at build (as it does for ``pg=``).
     pg
         Physical-group label whose elements the recorder targets.
         Mutually exclusive with ``elements``. Resolved by the bridge
         build pipeline at emit time.
+    label
+        Provenance of an ``ops.recorder.Element(label=...)``
+        declaration (ADR 0115 amendment R2-f): the geometry label
+        name(s) the call resolved to FEM element ids. Never
+        re-resolved and never emitted; it marks ``elements`` as FEM
+        ids. Needs ``elements=``, refuses ``pg=``. The archive stores
+        the translated OpenSees tags, as for every other ``Element``
+        recorder.
     dT
         Optional cadence — record only every ``dT`` simulation
         seconds. ``None`` records every step.
@@ -257,6 +327,7 @@ class Element(Recorder):
     response: tuple[str, ...]
     elements: tuple[int, ...] | None = None
     pg: str | None = None
+    label: tuple[str, ...] | None = None
     dT: float | None = None
     time_format: str = "step"
 
@@ -266,6 +337,8 @@ class Element(Recorder):
                 "Element recorder: supply exactly one of elements= or "
                 f"pg= (got elements={self.elements!r}, pg={self.pg!r})."
             )
+        _check_label_provenance(
+            self.label, self.elements, "Element recorder")
         if not self.response:
             raise ValueError(
                 "Element recorder: response token required."
@@ -286,9 +359,26 @@ class Element(Recorder):
         tag_plan: "TagPlan | None",
         fem_eid_to_ops_tag: "FemToOpsTagMap | dict[int, int] | None" = None,
     ) -> "Element":
+        if self.label is not None:
+            # ``elements`` are the FEM ids the label resolved to at the
+            # call (ADR 0115 amendment R2-f); translate them exactly as
+            # the ``pg=`` form's below. Under ``element_tags="fem"`` the
+            # map is the identity.
+            assert self.elements is not None  # __post_init__
+            if fem_eid_to_ops_tag is None:
+                from ._internal.build.errors import BridgeError
+                raise BridgeError(
+                    f"Element recorder label={list(self.label)!r} holds FEM "
+                    "element ids, which only the bridge's FEM id -> "
+                    "OpenSees tag map can translate; emit it through "
+                    "apeSees(fem).tcl()/py()/h5()/analyze()."
+                )
+            return replace(self, elements=_fem_ids_to_ops_tags(
+                self.elements, fem_eid_to_ops_tag,
+                f"label={list(self.label)!r}",
+                f"the elements of label {list(self.label)!r}"))
         if self.pg is None:
             return self
-        from ._internal.build.errors import BridgeError
         from ._internal.build.pg_expand import expand_pg_to_elements
         # ``expand_pg_to_elements`` yields FEM-side element ids; the
         # OpenSees element tags assigned by the bridge's fan-out differ
@@ -306,18 +396,8 @@ class Element(Recorder):
             # bridge) get the raw FEM eids; the bridge always supplies
             # the map on the recorder emit pass.
             return replace(self, pg=None, elements=fem_eids)
-        ops_tags: list[int] = []
-        for eid in fem_eids:
-            ops_tag = fem_eid_to_ops_tag.get(int(eid))
-            if ops_tag is None:
-                raise BridgeError(
-                    f"Element recorder pg={self.pg!r} resolves to FEM "
-                    f"eid {eid} but no element was emitted at that "
-                    "eid — declare an ``ops.element.X(pg=...)`` "
-                    f"primitive whose pg includes {self.pg!r}."
-                )
-            ops_tags.append(int(ops_tag))
-        return replace(self, pg=None, elements=tuple(ops_tags))
+        return replace(self, pg=None, elements=_fem_ids_to_ops_tags(
+            fem_eids, fem_eid_to_ops_tag, f"pg={self.pg!r}", repr(self.pg)))
 
     def _emit(self, emitter: "Emitter", tag: int) -> None:
         args: list[int | float | str] = ["-file", self.file]
