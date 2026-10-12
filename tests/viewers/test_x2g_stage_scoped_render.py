@@ -152,6 +152,13 @@ def _assert_stage_drawn(
     for rec, frame in zip(vtk, frames):
         assert _substrate(frame)["n_cells"] == want_cells, (
             stage, rec["name"], _substrate(frame)["n_cells"], want_cells)
+        if not _is_deformed(rec):
+            # Rock and Fill mesh alike, so the cell COUNT cannot tell
+            # ``g`` from ``excavate``; the undeformed z range can.
+            (zlo, zhi), _rock, _fill = _EXPECT[stage]
+            sub = _substrate(frame)
+            assert sub["zmin"] == pytest.approx(zlo), (stage, rec["name"])
+            assert sub["zmax"] == pytest.approx(zhi), (stage, rec["name"])
         contour = rec["contour"]
         if contour is None:
             continue
