@@ -541,9 +541,11 @@ def fix_records_from_model(
     Raises
     ------
     BridgeError
-        If an *explicit* fix / support already constrains a DOF the
-        snapshot fixes: the second ``fix`` on it would fail when the
-        deck runs.  Use exactly one channel per DOF.
+        If a stage's ``s.fix`` / ``s.support`` (``explicit``) already
+        constrains a DOF the snapshot fixes: the stage is another tier,
+        so the second SP on it would fail when the deck runs.  A global
+        ``ops.fix`` never clashes: it shares this tier and merges with
+        it (ADR 0115 D6/Q1).
     """
     sp_set = getattr(getattr(fem, "nodes", None), "sp", None)
     spatial_by_node: dict[int, set[int]] = {}
@@ -578,11 +580,13 @@ def fix_records_from_model(
         shown = ", ".join(f"node {n} DOF {d}" for n, d in clash[:5])
         more = f" (+{len(clash) - 5} more)" if len(clash) > 5 else ""
         raise BridgeError(
-            f"fix_from_model() and an explicit ops.fix / s.fix / s.support "
-            f"both constrain {shown}{more} — OpenSees refuses a second SP "
-            f"on a constrained DOF, so the deck would fail when it runs. "
-            f"Use exactly one channel per DOF: drop the explicit fix, or "
-            f"drop fix_from_model() and restate every support explicitly."
+            f"fix_from_model() and a stage's s.fix / s.support both "
+            f"constrain {shown}{more}. The stage is another tier, so "
+            f"they do not merge the way a global ops.fix does (ADR 0115 "
+            f"D6), and OpenSees refuses a second SP on a constrained DOF: "
+            f"the deck would fail when it runs. Drop the stage's fix / "
+            f"support on those DOFs, or drop fix_from_model() and restate "
+            f"every support explicitly."
         )
 
     by_mask: dict[tuple[int, ...], list[int]] = {}

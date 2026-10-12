@@ -996,10 +996,11 @@ class _StageBuilder:
             If ``label`` names no label of the snapshot (the message
             lists the labels that exist) or selects no node.
         """
-        pg, nodes_tuple = _select_nodes(
+        pg, nodes_tuple, label_names = _select_nodes(
             self._bridge.fem, pg=pg, nodes=nodes, label=label,
             where=f"Stage {self._name!r}.fix")
-        rec = FixRecord(pg=pg, nodes=nodes_tuple, dofs=tuple(dofs))
+        rec = FixRecord(pg=pg, nodes=nodes_tuple, dofs=tuple(dofs),
+                        label=label_names)
         # K1-6: one key space with the flat ``ops.fix`` declarations.
         self._bridge._declare_record(rec, "fix", name)
         self._fix_records.append(rec)
@@ -1201,12 +1202,12 @@ class _StageBuilder:
             If ``label`` names no label of the snapshot (the message
             lists the labels that exist) or selects no node.
         """
-        pg, nodes_tuple = _select_nodes(
+        pg, nodes_tuple, label_names = _select_nodes(
             self._bridge.fem, pg=pg, nodes=nodes, label=label,
             where=f"Stage {self._name!r}.mass")
         rec = MassRecord(
             pg=pg, nodes=nodes_tuple, values=tuple(values),
-            overwrite=bool(overwrite),
+            overwrite=bool(overwrite), label=label_names,
         )
         # K1-6: one key space with the flat ``ops.mass`` declarations.
         self._bridge._declare_record(rec, "mass", name)

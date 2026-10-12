@@ -164,8 +164,10 @@ def test_a_label_list_unions_its_labels_in_first_seen_order(fem: Any) -> None:
     want = dict.fromkeys(
         [*fem.nodes.select(label="left").ids,
          *fem.nodes.select(label="bottom").ids])
+    # The record keeps the label as provenance (ADR 0115 amendment R2-f).
     assert ops._fix_records[0] == FixRecord(
-        pg=None, nodes=tuple(int(n) for n in want), dofs=(1, 1))
+        pg=None, nodes=tuple(int(n) for n in want), dofs=(1, 1),
+        label=("left", "bottom"))
 
 
 # ---------------------------------------------------------------------------

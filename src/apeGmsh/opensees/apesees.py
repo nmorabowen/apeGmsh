@@ -8356,7 +8356,8 @@ def _merge_homogeneous_fixes(
             else:
                 runs.append((mask, [nid]))
         for mask, nids in runs:
-            trimmed = FixRecord(pg=None, nodes=tuple(nids), dofs=mask)
+            trimmed = FixRecord(pg=None, nodes=tuple(nids), dofs=mask,
+                                label=rec.label)
             # A record assembled without ``_declare_record`` has no row;
             # its trimmed parts then have none either, and an archival
             # emit refuses them exactly as it would refuse the original.
@@ -8886,9 +8887,10 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
         are unique among the fixes (flat and staged).  A label only: the
         deck and ``model_hash`` do not change with it.
         """
-        pg, nodes_tuple = _select_nodes(
+        pg, nodes_tuple, label_names = _select_nodes(
             self._fem, pg=pg, nodes=nodes, label=label, where="apeSees.fix")
-        rec = FixRecord(pg=pg, nodes=nodes_tuple, dofs=tuple(dofs))
+        rec = FixRecord(pg=pg, nodes=nodes_tuple, dofs=tuple(dofs),
+                        label=label_names)
         self._declare_record(rec, "fix", name)
         self._fix_records.append(rec)
 
@@ -8979,11 +8981,11 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
         ``name`` labels the declaration (``opensees/mass/<name>`` in
         ``/opensees/decls``), as for :meth:`fix`; a label only.
         """
-        pg, nodes_tuple = _select_nodes(
+        pg, nodes_tuple, label_names = _select_nodes(
             self._fem, pg=pg, nodes=nodes, label=label, where="apeSees.mass")
         rec = MassRecord(
             pg=pg, nodes=nodes_tuple, values=tuple(values),
-            overwrite=bool(overwrite),
+            overwrite=bool(overwrite), label=label_names,
         )
         self._declare_record(rec, "mass", name)
         self._mass_records.append(rec)

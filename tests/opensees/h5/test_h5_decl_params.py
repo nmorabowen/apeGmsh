@@ -259,7 +259,8 @@ def test_refs_resolve_to_declaration_keys(tmp_path: Path) -> None:
                         "uniaxialMaterial", "section", "geomTransf",
                         "beamIntegration"}
     # A fix has a row of its own fields; an unknown key raises.
-    assert set(table.params_for("opensees/fix/#1")[0].params) == {"pg", "nodes", "dofs"}
+    assert set(table.params_for("opensees/fix/#1")[0].params) == {
+        "pg", "nodes", "dofs", "label"}  # label: ADR 0115 amendment R2-f
     with pytest.raises(KeyError):
         table.params_for("opensees/uniaxialMaterial/nope")
 
