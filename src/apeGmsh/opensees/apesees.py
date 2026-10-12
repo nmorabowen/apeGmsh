@@ -3634,8 +3634,8 @@ class BuiltModel:
                 # inside their stage's block) and nodes this rank's
                 # hoisted gated block already declared (ADR 0099 S5,
                 # step 1b).  S2 (ADR 0033): per-node ndf via broker.
-                # One vectorised id lookup per rank, not one per node
-                # (#1670); the lines and their order are unchanged.
+                # The helper resolves the rank's ids in one vectorised
+                # lookup and emits them in ascending id order.
                 _exclude: "list[Any]" = [_hoisted] if _hoisted else []
                 if staged and node_owner_stage:
                     _exclude.append(node_owner_stage)

@@ -1130,19 +1130,19 @@ def emit_owned_nodes_with_inferred_ndf(
     envelope_ndf: int,
     exclude: "Sequence[Container[int]]" = (),
 ) -> None:
-    """Emit one rank's owned ``node`` lines in ascending id order (#1670).
+    """Emit one rank's owned ``node`` lines in ascending id order.
 
-    The array form of the per-node loop
-    ``for nid in sorted(node_ids): ... _emit_node_with_inferred_ndf(...)``:
-    the ids are sorted once, resolved to coordinate rows with ONE
+    Equivalent to
+    ``for nid in sorted(node_ids): ... _emit_node_with_inferred_ndf(...)``,
+    in array form: the ids are sorted once, resolved to coordinate rows with ONE
     vectorised :meth:`SortedIntToInt.get_many`, and the coordinates are
     read with one indexed gather and converted to plain Python floats
     by ``.tolist()``, the same values ``float(xyz[i])`` gives. Each node
     still goes through ``emitter.node`` one call at a time, so the
-    emitter's ``ndm`` trim and its float fast path see exactly what they
-    saw before, and the lines, their order and their bytes are unchanged.
+    emitter's ``ndm`` trim and its float fast path see the same arguments
+    as the scalar form, and the lines, their order and their bytes match.
 
-    An id absent from ``node_idx_lookup`` is skipped, as before. An id
+    An id absent from ``node_idx_lookup`` is skipped. An id
     in any set of ``exclude`` is skipped (stage-bound nodes, and nodes a
     hoisted block already declared). Duplicate ids emit once per
     occurrence, as ``sorted`` kept them.
