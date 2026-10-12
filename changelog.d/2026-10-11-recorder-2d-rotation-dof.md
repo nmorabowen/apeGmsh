@@ -11,8 +11,10 @@ planar rotation is DOF 3. A 3-D frame deck writes the same lines as before.
 One rotation-role table (`_readback.py`) now decides where a DOF slot is a
 rotation. `.read`, the `declare` emit and `ops.results` all share it.
 
-- A rotation is recorded on a beam-column, shell or zero-length node
-  (`ZeroLength`, `ZeroLengthSection`, `CoupledZeroLength`).
+- A rotation is recorded on a beam-column, shell, zero-length or link node
+  (`ZeroLength`, `ZeroLengthSection`, `CoupledZeroLength`, `TwoNodeLink`).
+  `InertiaTruss` is a mass-only truss, so its nodes count as
+  translational-only.
 - It is also recorded on an element-less node, such as a decoupled or diaphragm
   master, when the model holds no u-p or unknown element class.
 - A node touched by `LadrunoUP` refuses, because DOF `ndm + 1` there is pore
@@ -21,6 +23,13 @@ rotation. `.read`, the `declare` emit and `ops.results` all share it.
 - A node with no DOF for the component (a truss node, or `displacement_z` in
   2-D) raises a `BridgeError` that names the node.
 - `.read` no longer refuses a zero-length node's rotation (#1703).
+
+**TEMPORARY REGRESSION ([#1745](https://github.com/nmorabowen/apeGmsh/issues/1745)):**
+take an element-less master raised above the `ops.model` envelope with
+`ops.ndf`, for example `ops.ndf(h, 6)` in an `ndf=3` solid model. A declared
+rotation on that master now refuses at build. The recorder emit cannot yet see
+the `ops.ndf` value, so it sizes the node at the envelope. The refusal names
+the node and links #1745. Before, the line was emitted as `-dof 4..6`.
 
 `ops.results` now re-derives a declared record's columns with the same function
 the emit uses, and it reads a declared planar `rotation_z`. Before, it refused

@@ -350,9 +350,17 @@ def _node_record_layout(
             grouped = group_node_components_by_ops_token(
                 record.components, layout)
         except ValueError as e:
+            envelope = (element_plan is not None
+                        and n not in (node_ndf or {}))
             raise BridgeError(
                 f"{where}: node {n} (ndm={ndm}) has no DOF for a declared "
                 f"component: {e}"
+                + (f" No element sizes node {n}, so the recorder emit takes "
+                   f"the ops.model envelope ndf={decl.ndf} for it. If "
+                   f"ops.ndf raised node {n} above that, the emit cannot "
+                   "see it yet and refuses rather than guess a DOF: a "
+                   "temporary regression, tracked in #1745."
+                   if envelope else "")
             ) from e
         if first is None:
             first = (n, grouped)

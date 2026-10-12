@@ -427,6 +427,52 @@ def test_decoupled_planar_master_rotation_is_dof_3(tmp_path: Any) -> None:
         g.end()
 
 
+@pytest.mark.parametrize(("ndm", "rot_dir", "line_dofs"), [
+    (2, 3, "-dof 3"), (3, 6, "-dof 4 5 6")])
+def test_two_node_link_end_node_records_rotation(
+    ndm: int, rot_dir: int, line_dofs: str, tmp_path: Any,
+) -> None:
+    """A twoNodeLink with a rotational ``-dir`` carries the rotation of its
+    end node: DOF 3 in 2-D, DOFs 4-6 in 3-D."""
+    ops = apeSees(cast("object", make_two_node_beam(ndm=ndm)),
+                  default_orientation=None)
+    ops.model(ndm=ndm, ndf=3 if ndm == 2 else 6)
+    k = ops.uniaxialMaterial.ElasticMaterial(E=1e6)
+    ops.element.TwoNodeLink(
+        pg="Cols", mat_dirs=(ZeroLengthMatDir(material=k, dof=rot_dir),))
+    comps = ("rotation_z",) if ndm == 2 else ("rotation",)
+    ops.recorder.declare(nodes=comps, pg="Top", file_root="out", name="r")
+    assert _tcl_recorder_lines(ops, tmp_path) == [
+        f"recorder Node -file out/r__default__disp.out -time -node 2 "
+        f"{line_dofs} disp",
+    ]
+
+
+def test_overlay_master_in_an_ndf3_solid_model_names_the_cause() -> None:
+    """Open gap: an element-less master given ``ops.ndf(h, 6)`` in an
+    ``ndf=3`` solid model. The emit cannot see the overlay, so it refuses
+    and says why, rather than guess a DOF."""
+    from tests.opensees.unit.test_node_pair_zerolength import (
+        _box_with_ground,
+    )
+
+    g, fem, h = _box_with_ground("master")
+    try:
+        ops = apeSees(fem)
+        ops.model(ndm=3, ndf=3)
+        mat = ops.nDMaterial.ElasticIsotropic(E=30e9, nu=0.2, rho=0.0)
+        ops.element.FourNodeTetrahedron(pg="Body", material=mat)
+        ops.ndf(h, ndf=6)
+        ops.recorder.declare(nodes=("rotation_x",), ids=(int(h.tag),))
+        tag = int(h.tag)
+        with pytest.raises(BridgeError, match=(
+                rf"node {tag} .*'rotation_x' has no DOF.*envelope ndf=3.*"
+                rf"ops\.ndf raised node {tag}.*temporary regression.*#1745")):
+            _node_recorders(ops)
+    finally:
+        g.end()
+
+
 # ---------------------------------------------------------------------------
 # pore_pressure: never a silent ``-dof -1``
 # ---------------------------------------------------------------------------

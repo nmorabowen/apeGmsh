@@ -76,6 +76,7 @@ from .element.solid import (
     stdBrick,
 )
 from .element.truss import CorotTruss, InertiaTruss, Truss
+from .element.two_node_link import TwoNodeLink
 from .element.zero_length import (
     CoupledZeroLength,
     ZeroLength,
@@ -90,13 +91,14 @@ from .element.zero_length import (
 
 #: Element families that establish a rotation in the DOF slots
 #: ``_load_dof_layout`` calls rotations: beam-columns, shells, and the
-#: zero-length family (a rotational spring or a fiber section at a base acts
-#: on those slots).
+#: zero-length family and ``twoNodeLink`` (a rotational spring, a fiber
+#: section at a base, or a link's rotational ``-dir`` 3 in 2-D / 4-6 in 3-D
+#: acts on those slots).
 _ROTATIONAL_FAMILIES: tuple[type, ...] = (
     elasticBeamColumn, forceBeamColumn, dispBeamColumn,
     ElasticTimoshenkoBeam, LadrunoDispBeamColumn, LadrunoIMKBeam,
     ShellMITC4, ShellMITC3, ShellDKGQ, ASDShellQ4, ASDShellT3,
-    ZeroLength, ZeroLengthSection, CoupledZeroLength,
+    ZeroLength, ZeroLengthSection, CoupledZeroLength, TwoNodeLink,
 )
 
 #: Families that use the translational DOFs only, so they neither give
