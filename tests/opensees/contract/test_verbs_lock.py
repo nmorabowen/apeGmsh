@@ -883,8 +883,16 @@ def test_h_an_inheriting_subclass_outside_the_ledger_fails(
 ) -> None:
     """A concrete primitive that only inherits ``_emit`` (the
     ``LadrunoRCConcrete`` shape) is in the registry; a new one that is
-    neither named nor listed fails the ledger check."""
+    neither named nor listed fails the ledger check.
+
+    The subclass is process state: ``Steel01.__subclasses__()`` keeps
+    it (and the ``slots=True`` pre-image) until the class's reference
+    cycles are collected, so other files' class walks would see it
+    (#1694). The ``finally`` undoes the module attribute, drops the
+    last strong reference and collects, then proves the walk forgot it.
+    """
     import dataclasses
+    import gc
 
     from apeGmsh.opensees.material import uniaxial
     from apeGmsh.opensees.material.uniaxial import Steel01
@@ -893,14 +901,23 @@ def test_h_an_inheriting_subclass_outside_the_ledger_fails(
     class Steel01Plus(Steel01):  # inherits Steel01._emit; one extra field
         extra: float = 1.0
 
-    Steel01Plus.__module__ = uniaxial.__name__
-    Steel01Plus.__qualname__ = "Steel01Plus"
-    monkeypatch.setattr(uniaxial, "Steel01Plus", Steel01Plus, raising=False)
-    n_ledger, n_nostore, listed = _read_params_ledger()
-    computed, named = _classify_registry()
-    assert "uniaxialMaterial.Steel01Plus" in computed
-    assert computed["uniaxialMaterial.Steel01Plus"] == "uncheckable"
-    assert "uniaxialMaterial.Steel01Plus" not in listed
-    with pytest.raises(AssertionError):
-        _check_params_ledger(n_ledger, n_nostore, listed, computed)
+    try:
+        Steel01Plus.__module__ = uniaxial.__name__
+        Steel01Plus.__qualname__ = "Steel01Plus"
+        monkeypatch.setattr(
+            uniaxial, "Steel01Plus", Steel01Plus, raising=False)
+        n_ledger, n_nostore, listed = _read_params_ledger()
+        computed, named = _classify_registry()
+        assert "uniaxialMaterial.Steel01Plus" in computed
+        assert computed["uniaxialMaterial.Steel01Plus"] == "uncheckable"
+        assert "uniaxialMaterial.Steel01Plus" not in listed
+        with pytest.raises(AssertionError):
+            _check_params_ledger(n_ledger, n_nostore, listed, computed)
+    finally:
+        monkeypatch.undo()
+        del Steel01Plus
+        gc.collect()
+    leaked = [c for c in Steel01.__subclasses__()
+              if c.__name__ == "Steel01Plus"]
+    assert not leaked, "the test subclass outlived the test (#1694)"
 
