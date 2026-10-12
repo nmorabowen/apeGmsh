@@ -229,7 +229,7 @@ class PaneRestep:
     #: read the same object rather than re-deriving a probe cloud.
     gauss_occupant: Any = None
     #: The stage this pane was realized at. The cell set carries that
-    #: stage's activation (X2-f), so a re-step to another stage would
+    #: stage's activation, so a re-step to another stage would
     #: draw a stale cell set: ``restep_pane`` refuses it.
     stage_id: Optional[str] = None
 
@@ -350,7 +350,7 @@ def restep_pane(
         raise RuntimeError("realize recorded no re-step context")
     stage_id, step = _resolve_instant(session, view, results)
     if rs.stage_id is not None and stage_id != rs.stage_id:
-        # The cell set is the realized stage's active elements (X2-f):
+        # The cell set is the realized stage's active elements:
         # another stage needs a full realize, never a stale set.
         raise RuntimeError(
             f"re-step across stages ({rs.stage_id!r} -> {stage_id!r}) "
@@ -551,7 +551,7 @@ def _realize_mesh(
     view_data = ViewerData.from_fem(results.fem)
     # INV-MESH-1: ONE cell set; every layer below is a function of it.
     scoped = resolve_scope(view.scope, view_data)
-    # X2-f (#1722): on a staged model the cell set is also the stage's
+    # On a staged model the cell set is also the stage's
     # ACTIVE elements, so every layer below follows the stage.
     scoped = _stage_active_scope(results, scene, view_data, scoped, stage_id)
 
