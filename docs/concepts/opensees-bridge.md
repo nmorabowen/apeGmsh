@@ -150,6 +150,43 @@ raises at build, because it would double-apply across stage boundaries. The
 [staged-construction example](../examples/staged-gravity-ssi.md) shows the
 idiom at full length.
 
+### What a stage boundary does
+
+When a stage closes, the emitted deck does five things before the next stage
+opens. Each is read off the emitted `py` deck, in this order:
+
+```text
+ops.loadConst('-time', 0.0)    # end of stage 1
+ops.wipeAnalysis()
+# === Stage: s2 ===
+ops.setTime(1.0)               # only if s2 called s.set_time(1.0)
+ops.domainChange()
+ops.constraints('Plain')       # the whole analysis chain, again
+...
+ops.analysis('Static')
+ops.pattern('Plain', 2, 2)
+```
+
+- **Loads are held constant.** `loadConst` freezes every pattern applied so
+  far; they stay on the model as a baseline and the next stage adds to them.
+- **Time returns to 0.** The `-time 0.0` in that `loadConst` resets the
+  pseudo-time. It stays at 0 unless the next stage calls `s.set_time(t)`, which
+  emits `setTime` right after the wipe. A `Path` series that would read 0 at
+  every increment raises `SeriesOutsideStageWindowWarning`.
+- **The analysis chain is wiped and re-emitted.** `wipeAnalysis` discards the
+  test, algorithm, integrator, constraints handler, numberer, system and
+  analysis; every stage writes all seven again from its own `s.analysis(...)`.
+  Nothing carries over, so a stage that omits one is an error, not a default.
+- **Domain state and recorders are kept.** Nodes, elements, fixes, the
+  displacements reached and the recorders declared once at the top of the deck
+  survive the boundary. `wipeAnalysis` does not touch the domain, and the
+  recorders are not re-emitted.
+- **Under `Static`, `s.run(dt=)` has no effect.** The deck still writes
+  `ops.analyze(1, <dt>)`, but a static analysis ignores it: the
+  `LoadControl` `dlam` alone sets the step, so a stage with `dlam=0.25` and
+  `n_increments=4` reaches `t0 + 1.0` whatever `dt` says. `dt` is the step only
+  under `Transient`.
+
 ## One declaration surface, four outputs
 
 Everything above — model, materials, elements, fixes, patterns, stages, and
