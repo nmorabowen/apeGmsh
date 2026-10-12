@@ -277,9 +277,10 @@ def _refuse_unsupported(
 def default_contour_component(results: Any) -> Optional[str]:
     """The S1 starter heuristic (uz, ux, uy, then the first nodal
     component in canonical-axis order), over every stage's nodal
-    components. ``None`` when nothing nodal is recorded."""
+    components (the scoped stage's only, on a stage-scoped Results).
+    ``None`` when nothing nodal is recorded."""
     nodal: set[str] = set()
-    for stage in results.stages:
+    for stage in _pack_stages(results):
         try:
             nodal.update(results.stage(stage.id).nodes.available_components())
         except Exception:
@@ -313,11 +314,38 @@ def _component_sort_key(name: str) -> tuple[int, str]:
 
 
 def _resolve_stage(results: Any) -> str:
-    """The last stage (the only one, for a single-stage file)."""
+    """The stage a still draws (X2-g, #1742).
+
+    Mirrors ``Results._resolve_stage`` (``export_animation``): the
+    ``results.stage(s)`` / ``results.modes[i]`` scope first, then the
+    only stage. Where ``Results._resolve_stage`` raises (several stages,
+    none scoped), a still keeps its documented unscoped default: the
+    LAST stage. A scope that names no stage in the file raises; a still
+    never silently draws another stage.
+    """
     stages = list(results.stages)
     if not stages:
         raise RuntimeError("results.render requires at least one stage.")
+    scoped = getattr(results, "_stage_id", None)
+    if scoped is not None:
+        if not any(str(s.id) == str(scoped) for s in stages):
+            raise RuntimeError(
+                f"results.render: the scoped stage {scoped!r} is not in "
+                f"this results file (stages: {[s.id for s in stages]})."
+            )
+        return str(scoped)
     return str(stages[-1].id)
+
+
+def _pack_stages(results: Any) -> list[Any]:
+    """The stages the pack's choices look at: the scoped stage alone on
+    a stage-scoped Results (so the default component and the reactions
+    still are that stage's), else every stage (unscoped, unchanged)."""
+    scoped = getattr(results, "_stage_id", None)
+    stages = list(results.stages)
+    if scoped is None:
+        return stages
+    return [s for s in stages if str(s.id) == str(scoped)]
 
 
 def _resolve_step(results: Any, stage_id: str, step: int) -> int:
@@ -376,9 +404,11 @@ def _require_deform_field(results: Any, stage_id: str, field: str) -> None:
 
 
 def _has_static_reactions(results: Any) -> bool:
-    """True when a ``kind='static'`` stage recorded a reaction_* field."""
+    """True when a ``kind='static'`` stage recorded a reaction_* field
+    (the scoped stage, on a stage-scoped Results)."""
     static = [
-        s for s in results.stages if getattr(s, "kind", None) == "static"
+        s for s in _pack_stages(results)
+        if getattr(s, "kind", None) == "static"
     ]
     for stage in static:
         try:
