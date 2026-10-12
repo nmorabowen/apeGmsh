@@ -4,7 +4,9 @@ Added: the four colour-mapped slot records (`Contour`, `Vector`, `Gauss`,
 `Sand`) take `clim=(low, high)` and `cmap=`. `None`, the default, keeps each
 kind's existing range and colormap, so no default changed. `cmap` accepts any
 matplotlib name, `'jet'` included, and an unknown name or a malformed `clim`
-raises a `ValueError` when the record is built. Two occupied slots of one
+raises a `ValueError` when the record is built. An explicit `cmap` needs
+matplotlib (the `plot` extra) and raises an `ImportError` without it; a saved
+`cmap` restored without matplotlib falls back to the default with a notice. Two occupied slots of one
 quantity that set different values raise a `ValueError` (one field, one
 scale). `MeshView.legends()` reports the values a slot set, and
 `slot_style(record)` reads them. The session stores, validates and saves the
