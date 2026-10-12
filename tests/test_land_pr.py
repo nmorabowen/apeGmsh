@@ -639,6 +639,7 @@ def test_main_runs_origin_mains_copy_in_a_subprocess(monkeypatch, capfd):
     )
     git = Replay({"fetch origin main": "", SHOW_MAIN: fake_main})
     monkeypatch.setattr(land_pr, "run_git", git)
+    monkeypatch.setattr(land_pr, "run_gh", Replay({}))  # hermetic if the hop is reverted
     assert land_pr.main(["1218", "--dry-run"]) == 7
     assert git.calls == ["fetch origin main", SHOW_MAIN]
     assert "main copy True ['1218', '--dry-run']" in capfd.readouterr().out
@@ -651,6 +652,7 @@ def test_a_missing_or_stale_marker_still_hops(monkeypatch, env):
     else:
         monkeypatch.setenv(land_pr.MAIN_COPY_ENV, env)
     seen: list[list[str]] = []
+    monkeypatch.setattr(land_pr, "run_gh", Replay({}))  # hermetic if the hop is reverted
     monkeypatch.setattr(land_pr, "run_git", Replay({"fetch origin main": "", SHOW_MAIN: "pass\n"}))
     monkeypatch.setattr(land_pr, "run_python", lambda argv, e: seen.append(argv) or 0)
     assert land_pr.main(["1218", "--verify-only"]) == 0
