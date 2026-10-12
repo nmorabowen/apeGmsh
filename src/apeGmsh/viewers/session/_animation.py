@@ -11,7 +11,10 @@ when the fast path refuses. Each frame is the plotter's screenshot,
 appended to an imageio writer exactly as the old loop did.
 
 Moved, not extended (ADR 0112 D8): no feature is added to the session
-path. What the Qt window drew and this does not (the axes triad, the
+path. On a staged model each frame draws only the elements active in
+the animated stage, as the Qt path did; ``realize`` applies that rule
+to every mesh pane (X2-f, #1722). What the Qt window
+drew and this does not (the axes triad, the
 window chrome, the viewer's substrate shading) are accepted look gaps
 (maintainer ruling 2026-10-11, #1663).
 
@@ -167,7 +170,12 @@ def _step_to(
     session: "ResultsSession", view: "MeshView", backend: LedgerBackend,
     realized: Any,
 ) -> Any:
-    """Re-step in place when the fast path allows, else re-realize."""
+    """Re-step in place when the fast path allows, else re-realize.
+
+    The re-step reuses the realized cell set, which carries the stage's
+    activation (X2-f); one export animates ONE stage, and
+    ``restep_pane`` refuses a stage change anyway.
+    """
     if can_restep(realized, view):
         return restep_pane(session, view, realized, backend)
     return _rerealize(session, view, backend)

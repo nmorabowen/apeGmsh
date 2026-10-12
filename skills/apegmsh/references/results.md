@@ -385,7 +385,12 @@ checked on it, never a boolean `concrete AND hex`), **pose**
 (`view.deform`, a field + scale; a pose, not a slot, and it causes no
 legend), **time** (`view.time`, an `Instant(stage, step)`), style, clips
 and slots. Comparing two states is two panes — a second deform state is
-not a second scene instance.
+not a second scene instance. On a **staged** model (`ops.stage(...)`
+with `activate` / `remove_element`) a mesh pane draws only the elements
+active in the stage of its instant, intersected with its scope: stills,
+`export_animation`, the CLI `render` and the window alike (#1722). A
+scope with no active element in that stage raises rather than drawing
+the full mesh.
 
 ```python
 from apeGmsh.results.session import Contour, Deform, Instant, Scope
