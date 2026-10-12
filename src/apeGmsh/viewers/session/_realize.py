@@ -899,6 +899,20 @@ def _stage_active_scope(
     )
     hidden = act.mask_for(names.get(stage_id))
     if hidden is None:
+        # A staged model whose stage has no program counterpart: draw
+        # everything, and say so (the old window's status-bar hint).
+        import warnings
+
+        stage_name = next(
+            (str(s.name) for s in results.stages if s.id == stage_id),
+            stage_id,
+        )
+        warnings.warn(
+            f"Stage activation: no program stage named {stage_name!r} "
+            "— showing all elements.",
+            UserWarning,
+            stacklevel=2,
+        )
         return scoped
     hidden = np.asarray(hidden, dtype=bool)
     active = np.fromiter(
