@@ -134,11 +134,13 @@ def chain(ops, name: str, n_parts: int) -> None:
     ops.analysis.Transient()
 
 
-def diaphragm_ops(n_parts: int, name: str):
+def diaphragm_ops(n_parts: int, name: str, *, serial_chain: bool = False):
+    """The diaphragm model; ``serial_chain`` declares the serial
+    numberer and system on a partitioned FEM (the ``flat=True`` remedy)."""
     fem, grounds, master = diaphragm_plate(n_parts)
     fem = with_diaphragm(fem, master)
     ops = declare_model(fem, grounds, master)
-    chain(ops, name, n_parts)
+    chain(ops, name, 1 if serial_chain else n_parts)
     return ops
 
 
@@ -211,7 +213,8 @@ def test_the_auto_emitted_lagrange_of_an_equation_tie_is_refused(tmp_path):
 @pytest.mark.parametrize("name", ["Penalty", "Lagrange", "Auto"])
 def test_the_serial_remedy_emits(tmp_path, name):
     """``flat=True``, the refusal's serial remedy, writes the deck."""
-    text = emit(diaphragm_ops(2, name), tmp_path / "model.tcl", flat=True)
+    text = emit(diaphragm_ops(2, name, serial_chain=True), tmp_path / "model.tcl",
+                flat=True)
     assert "getPID" not in text
     assert text.count("rigidDiaphragm 3 ") == 1
 
