@@ -55,13 +55,20 @@ Laws realized here:
   emitted are the ones this module derives from ``view.legends()`` —
   the pose can never cause a bar, and hiding a scale never clears a
   slot.
+* **A7.3, slot style**: a colour-mapped slot's explicit ``clim`` /
+  ``cmap`` reach its diagram's style, merged per field exactly as
+  ``view.legends()`` merges them, so the picture and its scale bar
+  agree. Unset, the spec is the kind's default, untouched.
+* **A7.5, the undeformed ghost**: ``view.overlay`` draws the view's
+  own cell set at scale 0 in the Outlines style — same scope, same
+  stage-activation set, same clip planes, independent of the Outlines
+  button, never colour-mapped and never a legend.
 
 Session state with no realization yet refuses loudly
 (``NotImplementedError`` naming the owning slice) rather than emitting
-a picture that silently drops it: the undeformed overlay, and a scoped
-view carrying the `loads` slot (the kind draws every node of its
-pattern regardless of scope, so honouring INV-MESH-1 needs a change
-inside that kind).
+a picture that silently drops it: a scoped view carrying the `loads`
+slot (the kind draws every node of its pattern regardless of scope, so
+honouring INV-MESH-1 needs a change inside that kind).
 """
 from __future__ import annotations
 
@@ -278,7 +285,9 @@ class RealizedPane:
 
 #: Layer roles realize OWNS — the ones a re-step has to move itself.
 #: Every other key belongs to a slot diagram, which
-#: ``sync_substrate_points`` already moved.
+#: ``sync_substrate_points`` already moved — or is the A7.5 ghost
+#: (``ghost``), which sits in REFERENCE geometry and so never moves
+#: inside one stage (a stage change is a full realize, never a re-step).
 _REALIZE_OWNED_ROLES = ("substrate", "outlines", "nodes", "gauss", "selection")
 
 
@@ -589,6 +598,18 @@ def _realize_mesh(
         (category, kind_id, _with_surface_edges(spec, kind_id, view.style))
         for category, kind_id, spec in resolved
     ]
+    # A7.3: a slot's explicit clim / cmap become its diagram's style,
+    # merged per field the way the legend is (rule 2), so a slot left at
+    # None draws with the scale its same-field neighbour sets.
+    slot_styles = {
+        category: (legend.clim, legend.cmap)
+        for legend in view.legends()
+        for category in legend.categories
+    }
+    resolved = [
+        (category, kind_id, _with_slot_style(spec, slot_styles.get(category)))
+        for category, kind_id, spec in resolved
+    ]
 
     # INV-MESH-2, one surface: the grey substrate is drawn only while
     # nothing opaque and coincident occupies a slot — generalized from
@@ -636,6 +657,20 @@ def _realize_mesh(
             ))
         diagrams.append(diagram)
         slot_diagrams[category] = diagram
+
+    # A7.5 — the undeformed ghost: this cell set at scale 0. Added after
+    # _apply_clips like every layer, so the backend cuts it where it
+    # cuts the posed mesh.
+    if view.overlay:
+        ghost = _ghost_layer(view.id, scene, scoped)
+        if ghost is not None:
+            handle = backend.add_layer(ghost)
+            layers.append(RealizedLayer(
+                key=f"{view.id}:ghost",
+                layer_id=ghost.layer_id,
+                handle=handle,
+                layer=ghost,
+            ))
 
     # INV-MESH-3/4 — outlines / nodes / gauss as layers of the SAME cell
     # set, emitted after the slots so they read above the surface. The
@@ -817,12 +852,6 @@ def _refuse_unrealized_state(view: "MeshView") -> None:
             "A scoped view cannot draw the loads slot yet: the loads "
             "kind renders every node of the pattern regardless of "
             "scope (INV-MESH-1). Clear the scope or the loads slot."
-        )
-    if view.overlay:
-        raise NotImplementedError(
-            "The undeformed overlay does not realize yet: it is this "
-            "mesh at scale 0 in the Outlines style (§3), which needs "
-            "the unposed cell set emitted alongside the posed one."
         )
 
 
@@ -1242,6 +1271,30 @@ _GAUSS_POINT_SIZE = 6.0
 _SELECTION_POINT_SIZE = 12.0
 
 
+def _with_slot_style(
+    spec: Any, style: "Optional[tuple[Any, Any]]",
+) -> Any:
+    """A7.3: the slot's explicit ``(clim, cmap)`` onto its diagram style.
+
+    ``None`` (a slot with no legend: `line`, `loads`, `reactions`) and
+    an unset field leave the kind's default spec untouched, so a view
+    that never sets either draws exactly what it drew before.
+    """
+    from dataclasses import replace
+
+    if style is None:
+        return spec
+    clim, cmap = style
+    changes: dict[str, Any] = {}
+    if clim is not None:
+        changes["clim"] = (float(clim[0]), float(clim[1]))
+    if cmap is not None:
+        changes["cmap"] = str(cmap)
+    if not changes:
+        return spec
+    return replace(spec, style=replace(spec.style, **changes))
+
+
 def _with_surface_edges(spec: Any, kind_id: str, style: Any) -> Any:
     """Ride the "Mesh" button onto an occluding slot's own style."""
     from dataclasses import replace
@@ -1376,6 +1429,45 @@ def _outlines_layer(
         line_width=2.0,
         pickable=False,
     ), rows
+
+
+def _ghost_layer(
+    pane_id: str, scene: "FEMSceneData", scoped: "ScopedSet",
+) -> "Optional[MeshLayer]":
+    """The undeformed ghost (ADR 0098 A7.5): ``scoped`` at scale 0.
+
+    The SAME cell set as the posed mesh — ``scoped`` already carries
+    the view's scope and the realized stage's activation (#1722) — cut
+    from a copy of the scene grid that holds the REFERENCE points, then
+    drawn exactly as the Outlines button draws. Its own extraction
+    rather than the posed grid's rows, because feature edges are a
+    function of the shape: the ghost's edges are the undeformed mesh's
+    edges. It never reads ``view.style.outlines``, is never colour-
+    mapped and registers no scale. ``None`` when the cell set has no
+    such edges (as for the Outlines button).
+    """
+    from dataclasses import replace
+    from types import SimpleNamespace
+
+    import pyvista as pv
+
+    reference = scene.grid.copy(deep=False)
+    # A NEW vtkPoints, never ``reference.points = ...``: a shallow copy
+    # shares the scene grid's vtkPoints, and pyvista's setter writes
+    # into it, which would un-pose the scene under every later layer.
+    reference.SetPoints(pv.vtk_points(
+        np.array(scene.reference_points, dtype=np.float64), deep=True,
+    ))
+    grid, _rows = _scoped_grid(
+        SimpleNamespace(
+            grid=reference, element_id_to_cell=scene.element_id_to_cell,
+        ),
+        scoped,
+    )
+    layer, _rows = _outlines_layer(pane_id, grid)
+    if layer is None:
+        return None
+    return replace(layer, layer_id=f"{pane_id}:ghost")
 
 
 def _two_point_lines(edges: Any) -> "Optional[np.ndarray]":
