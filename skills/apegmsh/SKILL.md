@@ -385,9 +385,10 @@ signatures) lives in the references.
   inferred from element classes + `ops.ndf` for element-less nodes (ADR
   0048/0049, see `opensees-bridge.md`); flat v0.x forms (`g.add_point`,
   `g.model.fuse`, `g.initialize`) → sub-composite forms; `apeGmshViewer` →
-  `results.viewer()` / `results.session()`. `ResultsViewer` is **not** an
-  export of `apeGmsh` or `apeGmsh.viewers` — importing it from either
-  raises `ImportError`; the post-solve document is a `ResultsSession`.
+  `results.viewer()` / `results.session()`. The legacy Qt `ResultsViewer`
+  is **deleted** (X3-d, #1734) — no import path reaches it; the post-solve
+  document is a `ResultsSession` (`results.viewer()` or
+  `python -m apeGmsh.viewers <results.h5>`).
 - **Removed (ADR 0116):** the plotly preview (`apeGmsh.preview`,
   `g.model.preview`, `g.mesh.preview`), `GeomTransfViewer`,
   `apeGmsh.sensitivity` and the import banner. Inline pictures are

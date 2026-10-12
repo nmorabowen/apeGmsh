@@ -63,11 +63,10 @@ _KNOWN_RELATIVE_LEAKS: dict[tuple[str, str], str] = {
      "apeGmsh.opensees._response_catalog.split_canonical_component"):
         "relative `from ...opensees._response_catalog import "
         "split_canonical_component` (found by B2-3, #1414); fix tracked in #1421",
-    ("apeGmsh/viewers/ui/_diagram_settings_tab.py",
-     "apeGmsh.opensees._response_catalog.split_canonical_component"):
-        "function-local relative import of the same symbol; fix tracked in #1421",
 }
-_KNOWN_RELATIVE_LEAK_BASELINE = 2
+# 2 -> 1 at X3-d (#1734): the ``ui/_diagram_settings_tab.py`` leak was
+# deleted with the legacy ResultsViewer.
+_KNOWN_RELATIVE_LEAK_BASELINE = 1
 
 
 def _collect_offending_imports(path: Path) -> list[tuple[int, str]]:
