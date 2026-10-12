@@ -8,7 +8,7 @@ Laplacian smoothing, and compound merging.
 from __future__ import annotations
 
 import math
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import gmsh
 
@@ -163,6 +163,88 @@ class _Structured:
             )
         return self
 
+    def _tied_curves(self) -> dict[int, str]:
+        """Curves another surface, volume or constraint depends on.
+
+        Maps each such curve tag to the reason, for the refusal message:
+        a curve that bounds a surface, one embedded with
+        ``g.mesh.editing.embed`` (gmsh ``getEmbedded``), and the member
+        curves of every non-conformal tie definition: the embedded side
+        of ``g.constraints.embedded`` (``EmbeddedDef``), the bars of
+        ``g.reinforce`` (``ReinforceDef``) and the node set of
+        ``g.embed`` (``EmbedDef``).  Those ties are only definitions
+        until ``get_fem_data``, so gmsh does not know them; they are
+        read from the session's def stores.
+        """
+        from apeGmsh._kernel.defs.constraints import EmbeddedDef
+        from apeGmsh.core._helpers import resolve_to_dimtags
+
+        tied: dict[int, str] = {}
+        for _, c in gmsh.model.getEntities(1):
+            upward, _down = gmsh.model.getAdjacencies(1, c)
+            if len(upward):
+                tied.setdefault(
+                    int(c), f"bounds surface(s) {[int(s) for s in upward]}",
+                )
+        for host_dim in (2, 3):
+            for _, h in gmsh.model.getEntities(host_dim):
+                for d, t in gmsh.model.mesh.getEmbedded(host_dim, h):
+                    if d == 1:
+                        tied.setdefault(
+                            int(t),
+                            f"is embedded in ({host_dim}, {h}) "
+                            "(g.mesh.editing.embed)",
+                        )
+
+        session = self._mesh._parent
+        # (verb, host label, member label, member entities, def name)
+        sources: list[tuple[str, Any, Any, Any, Any]] = []
+        constraints = getattr(session, "constraints", None)
+        for defn in getattr(constraints, "constraint_defs", ()):
+            if isinstance(defn, EmbeddedDef):
+                sources.append((
+                    "g.constraints.embedded", defn.master_label,
+                    defn.slave_label, defn.embedded_entities, defn.name,
+                ))
+        reinforce = getattr(session, "reinforce", None)
+        for defn in getattr(reinforce, "reinforce_defs", ()):
+            sources.append((
+                "g.reinforce", defn.master_label,
+                defn.slave_label, defn.bars_entities, defn.name,
+            ))
+        embed = getattr(session, "embed", None)
+        for defn in getattr(embed, "embed_defs", ()):
+            sources.append((
+                "g.embed", defn.master_label,
+                defn.slave_label, defn.nodes_entities, defn.name,
+            ))
+
+        for verb, host, member, entities, def_name in sources:
+            where = (
+                f"{verb}(host={host!r}, member={member!r}"
+                + (f", name={def_name!r}" if def_name else "")
+                + ")"
+            )
+            if entities is not None:
+                hits = [(int(d), int(t)) for d, t in entities]
+            else:
+                try:
+                    hits = resolve_to_dimtags(
+                        member, default_dim=1, session=session,
+                    )
+                except (KeyError, ValueError) as exc:
+                    raise ValueError(
+                        f"one_element_per_curve: cannot tell which curves "
+                        f"{where} ties into its host, so none can be "
+                        f"proven free: {exc}"
+                    ) from exc
+            for d, t in hits:
+                if d == 1:
+                    tied.setdefault(
+                        int(t), f"is the embedded member of {where}",
+                    )
+        return tied
+
     def one_element_per_curve(self, *labels: str) -> "_Structured":
         """Mesh each free curve as exactly one 1-D element (two nodes).
 
@@ -177,9 +259,9 @@ class _Structured:
             :func:`~apeGmsh.core._helpers.resolve_to_dimtags`).  Every
             curve under each name is selected; entities of other
             dimensions under the same name are ignored.  With **no
-            labels**, every curve in the model that is *free* (see
-            below) is selected, so the surfaces and volumes of a mixed
-            model mesh exactly as before.
+            labels**, every *free* curve in the model (see below) is
+            selected, so no surface edge and no tied member is
+            constrained.
 
         Returns
         -------
@@ -192,22 +274,35 @@ class _Structured:
             A name is not a label, physical group or part (the message
             lists the existing labels and groups).
         ValueError
-            A name resolves to no curve; a named curve is not free; or,
-            with no labels, the model has no free curve.
+            A name resolves to no curve; a named curve is not free (the
+            message names the surface or the tie that uses it); a tie
+            definition's member cannot be resolved; or, with no labels,
+            the model has no free curve.
         TypeError
             A name is not a ``str``.
 
         Notes
         -----
-        A curve is **free** when no surface or volume uses it: it bounds
-        no surface (``gmsh.model.getAdjacencies``) and is embedded in no
-        surface or volume (``gmsh.model.mesh.getEmbedded``).  Both are
-        geometry-topology queries, so no mesh is needed.
+        A curve is **free** when nothing else depends on its mesh:
+
+        - it bounds no surface (``gmsh.model.getAdjacencies``);
+        - it is embedded in no surface or volume
+          (``g.mesh.editing.embed``, read back with
+          ``gmsh.model.mesh.getEmbedded``);
+        - it is not the member side of a non-conformal tie definition:
+          ``g.constraints.embedded``, ``g.reinforce`` or ``g.embed``.
+          Gmsh does not know these definitions, so they are read from
+          the session's definition stores.
+
+        All three are known before meshing.  The helper constrains no
+        surface edge; it does not promise an identical surface mesh,
+        since gmsh's meshing order can still shift a count slightly.
 
         A named curve that is not free is **refused**, never silently
-        coarsened: two nodes on a slab or shell edge would rewrite that
-        surface's mesh.  When that is really wanted, say so explicitly
-        with ``set_transfinite_curve(curve, n_nodes=2)``.
+        coarsened: two nodes on a slab edge would rewrite that surface's
+        mesh, and one element on a rebar would tie it to its host at two
+        points only.  When that is really wanted, say so explicitly with
+        ``set_transfinite_curve(curve, n_nodes=2)``.
 
         Examples
         --------
@@ -215,7 +310,7 @@ class _Structured:
 
             g.mesh.structured.one_element_per_curve("chords", "diagonals")
 
-        Every frame member of a frame-plus-slab model, slab untouched::
+        Every free frame member of a frame-plus-slab model::
 
             g.mesh.structured.one_element_per_curve()
         """
@@ -228,28 +323,20 @@ class _Structured:
                     "set_transfinite_curve(tag, n_nodes=2) for raw tags."
                 )
 
-        bound: set[int] = set()
-        for _, c in gmsh.model.getEntities(1):
-            upward, _down = gmsh.model.getAdjacencies(1, c)
-            if len(upward):
-                bound.add(int(c))
-        for host_dim in (2, 3):
-            for _, h in gmsh.model.getEntities(host_dim):
-                for d, t in gmsh.model.mesh.getEmbedded(host_dim, h):
-                    if d == 1:
-                        bound.add(int(t))
+        tied = self._tied_curves()
 
         curves: list[int] = []
         if not labels:
             curves = [
                 int(c) for _, c in gmsh.model.getEntities(1)
-                if int(c) not in bound
+                if int(c) not in tied
             ]
             if not curves:
                 raise ValueError(
                     "one_element_per_curve(): the model has no free curve "
                     "(every curve bounds or is embedded in a surface or "
-                    "volume).  Nothing to mesh as one element."
+                    "volume, or is tied into a host).  Nothing to mesh as "
+                    "one element."
                 )
         else:
             from apeGmsh.core._helpers import resolve_to_dimtags
@@ -264,14 +351,17 @@ class _Structured:
                         f"one_element_per_curve: {name!r} resolves to no "
                         f"curve (it holds entities of dim {dims} only)."
                     )
-                not_free = [t for t in named if t in bound]
+                not_free = [t for t in named if t in tied]
                 if not_free:
+                    reasons = "; ".join(
+                        f"curve {t} {tied[t]}" for t in not_free
+                    )
                     raise ValueError(
                         f"one_element_per_curve: {name!r} names curve(s) "
-                        f"{not_free} that bound or are embedded in a "
-                        "surface or volume; two nodes there would rewrite "
-                        "that mesh.  If that is intended, call "
-                        "set_transfinite_curve(curve, n_nodes=2) explicitly."
+                        f"that are not free: {reasons}.  Two nodes there "
+                        "would rewrite that mesh or tie.  If that is "
+                        "intended, call set_transfinite_curve(curve, "
+                        "n_nodes=2) explicitly."
                     )
                 curves.extend(t for t in named if t not in curves)
 

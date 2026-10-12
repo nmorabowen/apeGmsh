@@ -185,7 +185,7 @@ def test_surface_boundary_curve_is_refused():
         slab = _build_frame_and_slab(g)
         _up, down = gmsh.model.getAdjacencies(2, slab)
         g.labels.add(1, [int(down[0])], name="slab_edge")
-        with pytest.raises(ValueError, match="bound or are embedded"):
+        with pytest.raises(ValueError, match="not free"):
             g.mesh.structured.one_element_per_curve("columns", "slab_edge")
         assert _transfinite_directives(g) == []
 
@@ -198,7 +198,7 @@ def test_curve_embedded_in_surface_is_refused():
         g.model.geometry.add_line("e0", "e1", label="rib")
         (rib,) = g.labels.entities("rib", dim=1)
         gmsh.model.mesh.embed(1, [rib], 2, slab)
-        with pytest.raises(ValueError, match="bound or are embedded"):
+        with pytest.raises(ValueError, match="not free"):
             g.mesh.structured.one_element_per_curve("rib")
         # No labels: the embedded rib is not free, so it is skipped.
         g.mesh.structured.one_element_per_curve()
@@ -220,5 +220,90 @@ def test_non_string_label_raises():
         (c,) = g.labels.entities("B0-B1", dim=1)
         with pytest.raises(TypeError, match="set_transfinite_curve"):
             g.mesh.structured.one_element_per_curve(c)
+        assert _transfinite_directives(g) == []
+
+
+# ---------------------------------------------------------------------------
+# Non-conformal ties (review of #1783): a tied member is never coarsened
+# ---------------------------------------------------------------------------
+
+def _build_beam_with_bar(g) -> None:
+    """The reviewer's reproducer: a 4 x 0.3 x 0.5 box with a bar inside it
+    (not fragmented, so gmsh sees a free curve), plus one free post."""
+    g.model.geometry.add_box(0.0, 0.0, 0.0, 4.0, 0.3, 0.5, label="beam")
+    g.model.geometry.add_point(0.1, 0.15, 0.1, label="p0")
+    g.model.geometry.add_point(3.9, 0.15, 0.1, label="p1")
+    g.model.geometry.add_line("p0", "p1", label="bar")
+    g.model.geometry.add_point(5.0, 0.0, 0.0, label="q0")
+    g.model.geometry.add_point(5.0, 0.0, 3.0, label="q1")
+    g.model.geometry.add_line("q0", "q1", label="post")
+    # g.reinforce / g.embed resolve host and bars as physical groups.
+    g.labels.promote_to_physical("beam")
+    g.labels.promote_to_physical("bar")
+    g.mesh.sizing.set_global_size(0.1)
+
+
+def _tie(g, source: str) -> None:
+    if source == "constraints.embedded":
+        g.constraints.embedded("beam", "bar")
+    elif source == "reinforce":
+        g.reinforce.reinforce(
+            host="beam", bars="bar", perfect=1.0e10, bar_diameter=0.02,
+        )
+    else:
+        g.embed(host="beam", nodes="bar")
+
+
+def _curve_elements(g, label: str) -> int:
+    (c,) = g.labels.entities(label, dim=1)
+    return _n_elements(1, c)
+
+
+_TIE_SOURCES = ["constraints.embedded", "reinforce", "embed"]
+_TIE_VERB = {
+    "constraints.embedded": "g.constraints.embedded",
+    "reinforce": "g.reinforce",
+    "embed": "g.embed",
+}
+
+
+@pytest.mark.parametrize("source", _TIE_SOURCES)
+def test_no_labels_keeps_a_tied_bar_at_its_sizing_count(source):
+    with apeGmsh(model_name="r3s3_bar_ref", verbose=False) as g:
+        _build_beam_with_bar(g)
+        g.mesh.generation.generate(dim=3)
+        ref_bar = _curve_elements(g, "bar")
+    assert ref_bar > 30  # 38 at size 0.1
+
+    with apeGmsh(model_name="r3s3_bar", verbose=False) as g:
+        _build_beam_with_bar(g)
+        _tie(g, source)
+        g.mesh.structured.one_element_per_curve()
+        tags = {d["tag"] for d in _transfinite_directives(g)}
+        assert tags == set(g.labels.entities("post", dim=1))
+        g.mesh.generation.generate(dim=3)
+        assert _curve_elements(g, "bar") == ref_bar
+        assert _curve_elements(g, "post") == 1
+
+
+@pytest.mark.filterwarnings("ignore:autosave to")  # ties resolve only on a mesh
+@pytest.mark.parametrize("source", _TIE_SOURCES)
+def test_named_tied_bar_is_refused_naming_the_tie(source):
+    with apeGmsh(model_name="r3s3_bar_named", verbose=False) as g:
+        _build_beam_with_bar(g)
+        _tie(g, source)
+        with pytest.raises(ValueError, match="not free") as exc:
+            g.mesh.structured.one_element_per_curve("post", "bar")
+        assert f"{_TIE_VERB[source]}(host='beam', member='bar')" in str(exc.value)
+        assert _transfinite_directives(g) == []
+
+
+@pytest.mark.filterwarnings("ignore:autosave to")  # the broken tie cannot save
+def test_tie_with_unresolvable_member_fails_closed():
+    with apeGmsh(model_name="r3s3_bar_bad", verbose=False) as g:
+        _build_beam_with_bar(g)
+        g.constraints.embedded("beam", "rebar")
+        with pytest.raises(ValueError, match="cannot tell which curves"):
+            g.mesh.structured.one_element_per_curve()
         assert _transfinite_directives(g) == []
 
