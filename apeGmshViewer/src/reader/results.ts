@@ -35,7 +35,7 @@ const ELEMENT_CATEGORIES = new Set(["gauss_points", "line_stations", "nodal_forc
 const GAUSS_INDEX = new Set(["_element_index", "_natural_coords", "_local_axes_quaternion"]);
 const H5T_FLOAT = 1;
 
-export type ResultsErrorKind = "version" | "layout" | "dtype" | "unsupported" | "argument";
+export type ResultsErrorKind = "open" | "version" | "layout" | "dtype" | "unsupported" | "argument";
 
 export class ResultsError extends Error {
   readonly kind: ResultsErrorKind;
@@ -66,6 +66,7 @@ interface RDataset extends RNode {
   slice(ranges: ([] | [number | null] | [number | null, number | null])[]): unknown;
 }
 interface RFile extends RGroup {
+  file_id: bigint | number;
   close(): unknown;
 }
 
@@ -115,6 +116,9 @@ export interface ResultsIndex {
 /** Open a results.h5 and index it; reads go through the returned object. */
 export function openResults(h5: ResultsH5, path: string): ResultsFile {
   const f = new h5.File(path, "r");
+  // h5wasm does not throw when HDF5 cannot open a file (a truncated file, a
+  // file that is not HDF5): it returns a File whose id is negative.
+  if (Number(f.file_id) < 0) throw new ResultsError("open", `HDF5 could not open ${path} (truncated, or not an HDF5 file)`);
   try {
     return new ResultsFile(h5, f, path);
   } catch (err) {

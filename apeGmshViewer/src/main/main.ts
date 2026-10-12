@@ -259,6 +259,8 @@ const median = (xs: number[]) => {
   const s = [...xs].sort((a, b) => a - b);
   return s.length ? s[Math.floor((s.length - 1) / 2)]! : NaN;
 };
+/** Scrub columns are means over the steps: the renderer's clock is coarsened to 0.1 ms. */
+const mean = (xs: number[]) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : NaN);
 const timed = <T>(f: () => T): [T, number] => {
   const t = performance.now();
   const v = f();
@@ -288,6 +290,8 @@ async function measureMpco(path: string, dataset: string) {
   const t = performance.now();
   try {
     f = new h5wasm.File(path, "r");
+    // h5wasm returns a negative id instead of throwing when HDF5 refuses the file.
+    if (Number(f.file_id) < 0) throw new Error("HDF5 could not open the file (truncated, or not HDF5)");
   } catch (err) {
     return { kind: "mpco", file: path, sizeBytes: size, openMs: performance.now() - t, openError: err instanceof Error ? err.message : String(err) };
   }
@@ -340,9 +344,9 @@ async function measureOpen(rf: ResultsFile, path: string, sizeBytes: number, ope
   const comp = g.components[0]!;
   const T = s.nSteps;
   const mid = Math.floor(T / 2);
-  const rep = 5;
+  const rep = 21;
 
-  // Cold: the first read of this step in this process. Warm: the same read again (median of 5).
+  // Cold: the first read of this step in this process. Warm: the same read again (median of 21).
   const [, nodalColdMs] = timed(() => rf.readNodalStep(s.id, vec, mid));
   const nodalWarm = Array.from({ length: rep }, () => timed(() => rf.readNodalStep(s.id, vec, mid))[1]);
   const [, elemColdMs] = timed(() => rf.readGaussStep(s.id, g.id, comp, mid));
@@ -394,13 +398,13 @@ async function measureOpen(rf: ResultsFile, path: string, sizeBytes: number, ope
     nodeHistory: { node, values: hist.length, coldMs: historyColdMs, warmMs: median(historyWarm) },
     transfer: {
       nodalBytes: steps[0]?.bytes ?? 0,
-      nodalRoundTripMs: median(steps.map((x) => x.roundTripMs)),
-      nodalReadInMainMs: median(steps.map((x) => x.readMs)),
-      nodalTransferMs: median(steps.map((x) => x.roundTripMs - x.readMs)),
+      nodalRoundTripMs: mean(steps.map((x) => x.roundTripMs)),
+      nodalReadInMainMs: mean(steps.map((x) => x.readMs)),
+      nodalTransferMs: mean(steps.map((x) => x.roundTripMs - x.readMs)),
       gaussBytes: rr.gauss.bytes,
       gaussTransferMs: rr.gauss.transferMs,
     },
-    apply: { colourMs: median(steps.map((x) => x.colourMs)), uploadDrawMs: median(steps.map((x) => x.uploadDrawMs)) },
+    apply: { colourMs: mean(steps.map((x) => x.colourMs)), uploadDrawMs: mean(steps.map((x) => x.uploadDrawMs)) },
     scrub: { steps: SCRUB, totalMs: rr.totalMs, stepsPerSecond: (1000 * SCRUB) / rr.totalMs },
     peakMemory: mem.peak,
     eagerBytes: { nodal: nodalEager, gauss: gaussEager, total: nodalEager + gaussEager },

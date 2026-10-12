@@ -4,12 +4,13 @@
 //   time[k]                 = 0.01 k
 //   nodes/<comp c>[k, j]    = id_j + 0.001 (c + 1) k
 //   gauss <comp c>[k, e, g] = eid_e + 0.1 g + 0.001 (c + 1) k
-// Each refusal (version below the floor, newer major, missing dataset,
-// non-float data, unknown layout, several partitions) is a typed error, and
+// Each refusal (an unopenable file, version below the floor, newer major,
+// missing dataset, non-float data, unknown layout, several partitions) is a
+// typed error, and
 // the element-id mapping is "fem_eid" for domain_capture only (#1711).
 
 import assert from "node:assert/strict";
-import { copyFileSync, mkdtempSync } from "node:fs";
+import { copyFileSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -285,6 +286,14 @@ test("an unknown partition child and several partitions are refused", () => {
     ps.create_group("partition_1");
   });
   refuses(two, "unsupported", /has 2 partitions/);
+});
+
+test("a truncated file is refused at open, not opened as an empty file", () => {
+  // h5wasm returns a File with a negative id instead of throwing; the reader checks it.
+  const p = join(mkdtempSync(join(tmpdir(), "agv-results-")), "truncated.results.h5");
+  const bytes = readFileSync(FIXTURE);
+  writeFileSync(p, bytes.subarray(0, Math.floor(bytes.length / 2)));
+  refuses(p, "open", /HDF5 could not open/);
 });
 
 test("stage ids sort by their integer suffix, then lexically", () => {
