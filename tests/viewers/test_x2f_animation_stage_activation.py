@@ -436,18 +436,35 @@ def test_restep_refuses_a_stage_change(staged):
 def test_no_activation_data_draws_everything(staged, tmp_path, monkeypatch, why):
     """Fail-soft where the old viewer was: no staged program, or a
     capture stage pairing with no program stage -> no filter (the whole
-    mesh), never an empty picture."""
+    mesh), never an empty picture. The unmatched case warns, naming the
+    stage; the unstaged case is silent."""
     from apeGmsh.viewers.data import _stage_activation as SA
 
     results, _n_total = staged
+    import warnings
+
     if why == "no_program":
         monkeypatch.setattr(SA, "build_from_model", lambda *a, **k: None)
     else:
         monkeypatch.setattr(SA, "pair_capture_to_program", lambda *a, **k: {})
-    with _capture() as frames:
+    with _capture() as frames, warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
         results.export_animation(
             tmp_path / "g.gif", stage="g", fps=2, window_size=(160, 120),
         )
+    hints = [
+        w for w in caught
+        if "Stage activation" in str(w.message)
+        and "showing all elements" in str(w.message)
+    ]
+    if why == "unmatched_stage":
+        # Unfiltered on a STAGED model is said out loud, naming the stage.
+        assert hints, [str(w.message) for w in caught]
+        assert all(issubclass(w.category, UserWarning) for w in hints)
+        assert all("'g'" in str(w.message) for w in hints)
+    else:
+        # No staged program: nothing to filter, nothing to say.
+        assert not hints, [str(w.message) for w in hints]
     assert frames
     everything = _surface_cells(results, None)
     for frame in frames:
