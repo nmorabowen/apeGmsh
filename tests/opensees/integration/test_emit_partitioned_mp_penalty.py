@@ -210,6 +210,78 @@ def test_the_auto_emitted_lagrange_of_an_equation_tie_is_refused(tmp_path):
     assert "#1625" in str(err.value)
 
 
+def test_the_auto_emitted_projection_of_an_equation_tie_is_named(tmp_path):
+    """Under an explicit integrator the equation tie auto-emits
+    ``LadrunoProjection``, and the refusal names that handler. Whether
+    projection multiplies MP copies is unmeasured, so it is refused."""
+    fem, grounds, master = diaphragm_plate(2)
+    a, b = _one_rank_pair(fem)
+    fem = with_diaphragm(fem, master)
+    fem = fem.with_constraint(InterpolationRecord(
+        kind=ConstraintKind.TIE, name="eq", slave_node=b, master_nodes=[a],
+        weights=np.array([1.0]), dofs=[3], enforce="equation"))
+    ops = declare_model(fem, grounds, master)
+    ops.integrator.CentralDifferenceLadruno()
+    with pytest.raises(BridgeError, match="LadrunoProjection") as err:
+        emit(ops, tmp_path / "model.tcl")
+    assert "Lagrange" not in str(err.value)
+
+
+@pytest.mark.parametrize("n_parts", [2, 4])
+def test_the_routed_spring_bed_is_not_refused_under_penalty(tmp_path, n_parts):
+    """ADR 0120 D1 pins each side node to one rank, so its ``equalDOF`` has
+    one copy: Penalty multiplies nothing and the deck is written."""
+    from tests.opensees.integration.test_emit_partitioned_node_pair_routing import (
+        declare, plate_on_springs,
+    )
+
+    fem, sides, grounds = plate_on_springs(n_parts)
+    ops, fem = declare(fem, sides, grounds)
+    ops.constraints.Penalty(alpha_sp=1e12, alpha_mp=1e12)
+    text = emit(ops, tmp_path / "model.tcl")
+    assert text.count("equalDOF ") == len(sides)
+
+
+def _modal_ops(*, analysis: bool):
+    fem, grounds, master = diaphragm_plate(2)
+    fem = with_diaphragm(fem, master)
+    ops = declare_model(fem, grounds, master)
+    ops.constraints.Penalty(alpha_sp=1e12, alpha_mp=1e12)
+    if analysis:
+        ops.numberer.ParallelPlain()
+        ops.system.Mumps()
+        ops.test.NormDispIncr(tol=1e-12, max_iter=10)
+        ops.algorithm.Linear()
+        ops.integrator.LoadControl(dlam=1.0)
+        ops.analysis.Static()
+    return ops
+
+
+def test_the_arpack_modal_deck_forces_transformation_and_is_not_refused(tmp_path):
+    """``modal_deck(solver="arpack")`` forces ``constraints Transformation``
+    before ``eigen`` (ADR 0077 INV-10): with no Analysis of the user's, the
+    declared Penalty never runs, so the replicated diaphragm is right."""
+    deck = tmp_path / "modal.tcl"
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        _modal_ops(analysis=False).modal_deck(str(deck), solver="arpack", num_modes=6)
+    text = deck.read_text(encoding="utf-8")
+    assert diaphragm_lines_by_rank(text) == {0: 1, 1: 1}
+    assert "constraints Transformation" in text
+
+
+def test_the_arpack_modal_deck_with_a_user_analysis_is_refused(tmp_path):
+    """A declared Analysis is built with the declared Penalty, which then
+    multiplies the diaphragm's copies: still refused."""
+    deck = tmp_path / "modal.tcl"
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        with pytest.raises(BridgeError, match="#1625"):
+            _modal_ops(analysis=True).modal_deck(
+                str(deck), solver="arpack", num_modes=6)
+    assert not deck.exists()
+
+
 @pytest.mark.parametrize("name", ["Penalty", "Lagrange", "Auto"])
 def test_the_serial_remedy_emits(tmp_path, name):
     """``flat=True``, the refusal's serial remedy, writes the deck."""

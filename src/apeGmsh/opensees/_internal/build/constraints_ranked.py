@@ -42,7 +42,7 @@ from .stage_emit import GhostSPOp, emit_ghost_sp_ops
 from .errors import BridgeError
 
 if TYPE_CHECKING:
-    from ..types import ConstraintHandler, Primitive
+    from ..types import Primitive
     from .records import StageRecord
     from apeGmsh._kernel.records._constraints import (
         ConstraintRecord,
@@ -545,7 +545,8 @@ def refuse_multiplied_mp_constraints(
     node_owners: "NodePartitionOwners",
     element_owner: "SortedIntToInt",
     *,
-    declared: "ConstraintHandler | None",
+    pre_element: "Sequence[Primitive]",
+    chain_forced: bool,
     has_equation_tie: bool,
     stage_records: "Sequence[StageRecord]",
 ) -> None:
@@ -568,9 +569,15 @@ def refuse_multiplied_mp_constraints(
 
     The handler checked is the one each analysis runs under:
 
-    * unstaged: ``declared``, the model-level handler. When none is
-      declared, the bridge auto-emits ``Transformation``, or ``Lagrange`` /
-      ``LadrunoProjection`` when ``has_equation_tie``;
+    * unstaged: the handler declared in ``pre_element``. When none is
+      declared, the bridge auto-emits ``Transformation``, or, when
+      ``has_equation_tie``, ``LadrunoProjection`` under an explicit
+      integrator and ``Lagrange`` otherwise. When ``chain_forced`` (the
+      emitter suppresses the analysis-chain auto-emit: the ARPACK modal
+      deck, which forces ``constraints Transformation`` before ``eigen``,
+      ADR 0077 INV-10) and ``pre_element`` declares no ``Analysis``, the
+      deck runs under ``Transformation``. A declared ``Analysis`` is
+      built with the declared handler, so it is still checked;
     * staged: the global records run under every stage's handler, and a
       stage's claimed records under its own and every later stage's
       (a record stays in the domain). A stage that declares none runs
@@ -581,6 +588,8 @@ def refuse_multiplied_mp_constraints(
     record it runs under is written on two ranks or more.
     """
     from ...analysis.constraint_handler import Plain, Transformation
+    from ...apesees import _is_explicit_integrator
+    from ..types import Analysis, ConstraintHandler, Integrator
 
     def multiplying(handlers: "Iterable[Primitive | None]", *,
                     auto: str) -> "list[str]":
@@ -598,11 +607,17 @@ def refuse_multiplied_mp_constraints(
         global_names = multiplying(stage_handlers, auto="")
     else:
         stage_handlers = []
-        global_names = multiplying(
-            (declared,),
-            auto="Lagrange (auto-emitted for an equation tie)"
-            if has_equation_tie else "",
-        )
+        declared = next(
+            (p for p in pre_element if isinstance(p, ConstraintHandler)), None)
+        integrator = next(
+            (p for p in pre_element if isinstance(p, Integrator)), None)
+        auto = ""
+        if has_equation_tie:
+            auto = ("LadrunoProjection" if _is_explicit_integrator(integrator)
+                    else "Lagrange") + " (auto-emitted for an equation tie)"
+        forced = chain_forced and not any(
+            isinstance(p, Analysis) for p in pre_element)
+        global_names = [] if forced else multiplying((declared,), auto=auto)
     if global_names:
         mp_plan = _mp_plan(tag_plan, fem)
         if mp_plan.rank_plans:
