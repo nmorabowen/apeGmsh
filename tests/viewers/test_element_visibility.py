@@ -3,7 +3,7 @@
 Mutates the substrate grid's ``vtkGhostType`` cell-data array in place
 to mark cells hidden. Asserts the in-place contract (mirrors the
 ``test_line_force_perf.py`` no-rebuild pattern), the box-pick
-integration (results_pick masks hidden cells out of the hit set), and
+integration (a box pick masks hidden cells out of the hit set), and
 the storm-resistant performance gate (100k cells in <5 ms).
 """
 from __future__ import annotations
@@ -148,7 +148,7 @@ def test_hide_mutates_in_place_no_rebuild(small_grid):
 def test_box_pick_excludes_hidden_cells():
     """Wire ElementVisibility + the box-pick mask path together and
     confirm hidden cells are dropped from the hit list."""
-    from apeGmsh.viewers.core.results_pick import _inside_box
+    from apeGmsh.viewers.session._pick import _inside_box
 
     # Build a 100-cell grid and a simulated "all cells inside box" mask.
     grid = pv.ImageData(dimensions=(11, 11, 2))  # 10x10x1 = 100
@@ -161,8 +161,8 @@ def test_box_pick_excludes_hidden_cells():
     hidden = [0, 5, 25, 99]
     ev.hide(hidden)
 
-    # The masking step that the ELEMENT box-pick performs in
-    # results_pick._build_box_result. Uses the shared constant on
+    # The masking step the retired ELEMENT box-pick performed (the
+    # legacy results_pick, deleted at X3-e #1769). Uses the shared constant on
     # purpose: this line used to hard-code 0x01, the same wrong bit
     # production used, so it re-implemented the defect and could
     # never have caught it (see element_visibility.HIDDENCELL).

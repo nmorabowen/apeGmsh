@@ -106,7 +106,6 @@ _RENDER_ALLOW: dict[str, int] = {
     # renders + the on_changed render subscriber were deleted at V4.
     "model_viewer.py": 8,
     "overlays/clip_plane_overlay.py": 5,
-    "overlays/local_axes_overlay.py": 1,
     "overlays/measure_overlay.py": 3,
     "overlays/mesh_tangent_normal_overlay.py": 1,
     "overlays/origin_markers_overlay.py": 2,
@@ -133,11 +132,9 @@ _ARTIFACT_ALLOW: dict[str, int] = {
     # V4-out-of-scope teardown call per ADR 0056.
     "model_viewer.py": 4,
     "overlays/glyph_helpers.py": 2,
-    "overlays/local_axes_overlay.py": 2,
     "overlays/measure_overlay.py": 2,
     "overlays/mesh_tangent_normal_overlay.py": 7,
     "overlays/origin_markers_overlay.py": 1,
-    "overlays/probe_overlay.py": 8,
     "overlays/tangent_normal_overlay.py": 7,
 }
 
@@ -154,10 +151,8 @@ _IMPORT_ALLOW: dict[str, int] = {
     "overlays/constraint_overlay.py": 1,
     # glyph_helpers / measure_overlay / origin_markers_overlay dropped
     # out (0 hits, stale since before #1170; removed with the ratchet fix).
-    "overlays/local_axes_overlay.py": 1,
     "overlays/mesh_tangent_normal_overlay.py": 1,
     "overlays/moment_glyph.py": 1,
-    "overlays/probe_overlay.py": 1,
     "overlays/tangent_normal_overlay.py": 1,
 }
 
