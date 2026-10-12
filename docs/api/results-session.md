@@ -122,8 +122,11 @@ view.gauss = Gauss("stress_xx", cmap="viridis")
 # ValueError: ... One field is one scale (ADR 0098 §5, A7.3) ...
 ```
 
-The session stores, validates and saves these fields; the window and
-`render()` do not apply them yet.
+The session stores, validates and saves these fields, and the window,
+`render()` and `export_animation` all draw with them. `view.overlay =
+True` adds the undeformed ghost: the view's cells at scale 0 as
+outlines, under the same scope, stage and section planes, with no
+scale bar.
 
 Fibers, shell layers and isochrones do not open an eighth slot: a new
 category is an ADR 0098 amendment, not a subclass.
