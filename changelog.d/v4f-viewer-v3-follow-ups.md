@@ -8,7 +8,7 @@ does not change the viewport.
 
 The model-definition windows now redraw when the selection changes or a
 go-to-source answer arrives, so the row of the selected declaration is
-highlighted in the **Materials & sections** window, and the window keeps its
+highlighted in the **Materials & sections** and **Recorders** windows, and each window keeps its
 scroll position.
 
 `LadrunoQuad` elements now resolve to their material, so the materials window
