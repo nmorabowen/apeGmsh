@@ -53,14 +53,13 @@ _SCHEMA_DOC = Path(__file__).resolve().parents[1] / "architecture" / "h5-schema.
 # ---------------------------------------------------------------------------
 
 
-@pytest.fixture(scope="module")
-def portal(tmp_path_factory: pytest.TempPathFactory) -> dict[str, Any]:
+def _portal_fem(length: float) -> Any:
     with apeGmsh(model_name="b5d_portal", verbose=False) as g:
         geo = g.model.geometry
         p0 = geo.add_point(0.0, 0.0, 0.0)
         p1 = geo.add_point(0.0, H, 0.0)
-        p2 = geo.add_point(L, H, 0.0)
-        p3 = geo.add_point(L, 0.0, 0.0)
+        p2 = geo.add_point(length, H, 0.0)
+        p3 = geo.add_point(length, 0.0, 0.0)
         c1 = geo.add_line(p0, p1)
         bm = geo.add_line(p1, p2)
         c2 = geo.add_line(p3, p2)
@@ -72,27 +71,41 @@ def portal(tmp_path_factory: pytest.TempPathFactory) -> dict[str, Any]:
         fem = g.mesh.queries.get_fem_data(dim=1)
     assert tuple(fem.elements.select(pg="Beam").ids) == BEAM
     assert tuple(fem.elements.select(pg="Cols").ids) == COLS
+    return fem
 
+
+def _build(fem: Any, mode: str, path: Path) -> Path:
+    ops = apeSees(fem, default_orientation=None, element_tags=mode)
+    ops.model(ndm=2, ndf=3)
+    tr = ops.geomTransf.Linear()
+    # Beam first: under sequential tags the columns' tags move.
+    ops.element.elasticBeamColumn(pg="Beam", transf=tr,
+                                  A=0.02, E=2.0e11, Iz=3.0e-4)
+    ops.element.elasticBeamColumn(pg="Cols", transf=tr,
+                                  A=0.02, E=2.0e11, Iz=3.0e-4)
+    ops.h5(str(path))
+    return path
+
+
+@pytest.fixture(scope="module")
+def portal(tmp_path_factory: pytest.TempPathFactory) -> dict[str, Any]:
+    fem = _portal_fem(L)
     root = tmp_path_factory.mktemp("b5d_models")
     out: dict[str, Any] = {"femdata": fem}
     for mode in ("sequential", "fem"):
-        ops = apeSees(fem, default_orientation=None, element_tags=mode)
-        ops.model(ndm=2, ndf=3)
-        tr = ops.geomTransf.Linear()
-        # Beam first: under sequential tags the columns' tags move.
-        ops.element.elasticBeamColumn(pg="Beam", transf=tr,
-                                      A=0.02, E=2.0e11, Iz=3.0e-4)
-        ops.element.elasticBeamColumn(pg="Cols", transf=tr,
-                                      A=0.02, E=2.0e11, Iz=3.0e-4)
-        path = root / f"{mode}.model.h5"
-        ops.h5(str(path))
-        out[mode] = path
+        out[mode] = _build(fem, mode, root / f"{mode}.model.h5")
+    # The same ids and identity tags on a longer portal: another FEMData.
+    other = _portal_fem(L + 1.0)
+    assert other.snapshot_id != fem.snapshot_id
+    out["other_fem"] = _build(other, "fem", root / "other_fem.model.h5")
     # Guard the premise, so no case below is vacuous.
     seq = {r.fem_eid: r.tag for r in OpenSeesModel.from_h5(out["sequential"]).elements()}
     fem_tags = {r.fem_eid: r.tag for r in OpenSeesModel.from_h5(out["fem"]).elements()}
+    other_tags = {r.fem_eid: r.tag for r in OpenSeesModel.from_h5(out["other_fem"]).elements()}
     assert all(seq[e] == e for e in BEAM)
     assert all(seq[e] != e for e in COLS)
     assert all(fem_tags[e] == e for e in BEAM + COLS)
+    assert other_tags == fem_tags
     return out
 
 
@@ -287,3 +300,41 @@ def test_cached_stamp_follows_each_calls_model(
         )
         with NativeReader(results._path) as r:
             assert r.element_index_verified is expected[build], build
+
+
+def test_cache_separates_models_without_model_hash_by_fem_hash(
+    tmp_path: Path, portal: dict, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A composed model carries lineage.model_hash = None. Two such models
+    # with the same (fem_eid, tag) pairing but different FEMData must not
+    # share a cached file: only the one built from the spec's FEMData
+    # proves the stamp.
+    import dataclasses
+
+    from apeGmsh.results import Results
+
+    original = OpenSeesModel.lineage
+    monkeypatch.setattr(
+        OpenSeesModel, "lineage",
+        property(lambda self: dataclasses.replace(
+            original.fget(self), model_hash=None)),
+    )
+    fem = portal["femdata"]
+    spec = ResolvedRecorderSpec(
+        fem_snapshot_id=str(fem.snapshot_id),
+        records=(_element_record(COLS),),
+    )
+    out_dir = tmp_path / "out"
+    _write_outputs(spec, out_dir)
+    cache_root = tmp_path / "cache"
+    paths = []
+    for build, verified in (("fem", True), ("other_fem", False)):
+        model = OpenSeesModel.from_h5(portal[build])
+        assert model.lineage.model_hash is None
+        results = Results.from_recorders(
+            spec, out_dir, fem=fem, cache_root=cache_root, model=model,
+        )
+        paths.append(results._path)
+        with NativeReader(results._path) as r:
+            assert r.element_index_verified is verified, build
+    assert paths[0] != paths[1]

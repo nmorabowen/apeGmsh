@@ -89,14 +89,17 @@ def compute_cache_key(
 def model_cache_token(model: Any) -> str:
     """Return a hex digest of what a cached transcode takes from ``model``.
 
-    It covers the model's ``lineage.model_hash`` (its ``/opensees``
-    content, when stamped) and its ``(fem_eid, tag)`` element pairing,
-    which decides the ``element_index_space`` stamp. The pairing is
-    hashed directly, so the token separates two tag plans even when
-    ``model_hash`` is absent.
+    It covers the model's ``lineage.fem_hash`` and ``lineage.model_hash``
+    (its ``/opensees`` content, when stamped) and its ``(fem_eid, tag)``
+    element pairing. The stamp depends on the pairing and on the
+    ``fem_hash``, so both are hashed directly: the token separates two
+    models even when ``model_hash`` is ``None`` (a composed model).
     """
+    lineage = model.lineage
     h = hashlib.blake2b(digest_size=16)
-    h.update(str(model.lineage.model_hash).encode("utf-8"))
+    h.update(str(lineage.fem_hash).encode("utf-8"))
+    h.update(b"|")
+    h.update(str(lineage.model_hash).encode("utf-8"))
     h.update(b"|")
     pairs = sorted((int(r.fem_eid), int(r.tag)) for r in model.elements())
     for fem_eid, tag in pairs:

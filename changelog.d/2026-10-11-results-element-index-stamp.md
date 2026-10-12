@@ -25,8 +25,8 @@ writes it, what it does not certify, and what absence means.
 **Fixed with it:** the `Results.from_recorders` cache key ignored `model=`.
 A second call with another model on the same files and `cache_root` got
 the first call's file, with that model's `/opensees` and, now, its stamp.
-The key now includes a digest of the model's `lineage.model_hash` and its
-`(fem_eid, tag)` pairing.
+The key now includes a digest of the model's `lineage.fem_hash`, its
+`lineage.model_hash` and its `(fem_eid, tag)` pairing.
 
 **Limit:** element records under `element_tags="sequential"` (the bridge
 default), whose FEM ids differ from their tags, stay unverified until an

@@ -1829,8 +1829,8 @@ convenience property from it, `NativeReader.element_index_verified`
 attributes: no file holds an attribute named `element_index_verified`.
 
 `Results.from_recorders` caches transcoded files under a key that includes
-a digest of `model=` (its `lineage.model_hash` and its `(fem_eid, tag)`
-pairing). A cached file, its stamp and its embedded `/opensees` are
+a digest of `model=` (its `lineage.fem_hash`, its `lineage.model_hash` and
+its `(fem_eid, tag)` pairing). A cached file, its stamp and its embedded `/opensees` are
 therefore never served to a call with another model.
 
 Who writes it:
