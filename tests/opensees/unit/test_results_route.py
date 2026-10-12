@@ -22,7 +22,7 @@ import numpy as np
 import pytest
 
 from apeGmsh.opensees import apesees as apesees_mod
-from apeGmsh.opensees._internal.build import BridgeError
+from apeGmsh.opensees._internal.build.errors import BridgeError
 from apeGmsh.opensees.apesees import apeSees
 
 from tests.opensees.live.test_readback_live import (

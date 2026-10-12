@@ -43,8 +43,8 @@ archive ``model.h5`` the readers bind, the text records transcribed to
 the layout :meth:`Results.from_recorders` reads (``out/``), and that
 reader's cache.
 
-All imports from the build module live here (S2-a moves it into a
-package; this is the one place to repoint).
+This route imports the build package's names from their defining
+submodules (``_internal/build/<module>.py``) here only.
 """
 from __future__ import annotations
 
@@ -56,15 +56,17 @@ from typing import TYPE_CHECKING, Sequence
 import numpy as np
 
 from ._internal.artifact_write import _declaration_digest
-from ._internal.build import (
-    BridgeError,
+from ._internal.build.errors import BridgeError
+from ._internal.build.ndf import (
     _load_dof_layout,
+    infer_node_ndf,
+    resolve_ndf_overlay,
+)
+from ._internal.build.ownership import is_partitioned
+from ._internal.build.pg_expand import expand_pg_to_nodes
+from ._internal.build.recorders import (
     _recorder_file_path,
     _resolve_node_targets,
-    expand_pg_to_nodes,
-    infer_node_ndf,
-    is_partitioned,
-    resolve_ndf_overlay,
 )
 from ._internal.tag_plan import emit_mode
 from ._internal.types import Element, Recorder
@@ -79,7 +81,7 @@ from .recorder import Node as NodeRecorder
 
 if TYPE_CHECKING:
     from ..results.Results import Results
-    from ._internal.build import ElementPlanRows
+    from ._internal.build.pg_expand import ElementPlanRows
     from .apesees import BuiltModel, apeSees
     from .emitter.base import Emitter
 
