@@ -226,6 +226,18 @@ def _translator(pairing: "Mapping[int, int] | None") -> Any:
         return None
     from ..readers._tag_translation import ElementTagTranslator
 
+    for f, t in pairing.items():
+        for v in (f, t):
+            if isinstance(v, (bool, np.bool_)) or not isinstance(
+                v, (int, np.integer),
+            ):
+                raise ValueError(
+                    f"DomainCapture: tag_map= entry {f!r}: {t!r} is not an "
+                    "int fem_eid -> int ops tag. tag_map= takes the model's "
+                    "{fem_eid: ops_tag} pairing with integer keys and values "
+                    "(no float, str or bool, even when it looks integral)."
+                )
+
     fem_to_ops = {int(f): int(t) for f, t in pairing.items()}
     return ElementTagTranslator(
         fem_to_ops, {t: f for f, t in fem_to_ops.items()},
@@ -234,9 +246,16 @@ def _translator(pairing: "Mapping[int, int] | None") -> Any:
 
 def _as_translator(tag_map: Any) -> Any:
     """``tag_map=`` as a translator: a mapping is wrapped, a translator kept."""
+    from ..readers._tag_translation import ElementTagTranslator
+
     if tag_map is None or isinstance(tag_map, Mapping):
         return _translator(tag_map)
-    return tag_map
+    if isinstance(tag_map, ElementTagTranslator):
+        return tag_map
+    raise TypeError(
+        f"DomainCapture: tag_map= must be a {{fem_eid: ops_tag}} mapping or "
+        f"an ElementTagTranslator, not {type(tag_map).__name__}."
+    )
 
 
 def _covers(tag_map: Any, ids: ndarray) -> bool:

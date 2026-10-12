@@ -253,6 +253,37 @@ def test_bridge_node_capture_is_stamped(tmp_path: Path, portal: dict) -> None:
     assert _verified(path)
 
 
+@pytest.mark.parametrize("eid, bad, match", [
+    (5, {5.7: 3}, "is not an int"),
+    (5, {"5": 3}, "is not an int"),
+    (1, {True: 3}, "is not an int"),       # int(True) == 1 would cover eid 1
+    (5, {5: 3.0}, "is not an int"),
+    (5, {5.0: 3}, "is not an int"),
+    (5, [(5, 3)], "must be a"),
+], ids=["float_key", "str_key", "bool_key", "float_value",
+        "integral_float_key", "list"])
+def test_malformed_tag_map_refuses(
+    tmp_path: Path, eid: int, bad: Any, match: str,
+) -> None:
+    # Coercing these would truncate 5.7 -> 5 (or similar), cover the
+    # record, and stamp the file as if the pairing were the model's.
+    fem = _MockFem([1])
+    spec = _make_spec(_element_record([eid]), snapshot_id=fem.snapshot_id)
+    path = tmp_path / "run.h5"
+    with pytest.raises((TypeError, ValueError), match=match):
+        _run(DomainCapture(spec, path, fem, ops=_FakeOps(), tag_map=bad))
+    assert not path.exists()
+
+
+def test_numpy_int_tag_map_is_accepted(tmp_path: Path) -> None:
+    fem = _MockFem([1])
+    spec = _make_spec(_node_record(), snapshot_id=fem.snapshot_id)
+    path = tmp_path / "run.h5"
+    _run(DomainCapture(spec, path, fem, ops=_FakeOps(),
+                       tag_map={np.int64(5): np.int32(3)}))
+    assert _verified(path)
+
+
 def test_empty_mapping_refuses(tmp_path: Path) -> None:
     # An empty map is a pairing that covers nothing, not "no pairing".
     fem = _MockFem([1])
