@@ -446,6 +446,110 @@ def test_openseespy_import_scope_exists_in_this_checkout() -> None:
         assert (quirks.REPO / path).exists(), f"{path} moved: update the openseespy-import scope"
 
 
+# --- vtk-import / render-tech-import: ADR 0116 D3/D4 (X1-c #1493, X4-d #1808) ---
+
+RENDER_ALLOW = "scripts/quirks_render_allowlist.txt"
+#: The allowlist as this rule shipped it. It may only shrink: removing a line here (after
+#: the import goes) is fine; adding one needs a superseding ADR (ADR 0116 D4).
+RENDER_ALLOWLIST_BASELINE = frozenset({"src/apeGmsh/viewers/web_viewer.py::trame"})
+
+
+def test_render_tech_import_flags_the_removed_plotly_preview(tmp_path: Path) -> None:
+    # X1-c removed `viz/NotebookPreview.py`, which imported plotly with no ADR.
+    _write(tmp_path, "src/apeGmsh/viz/NotebookPreview.py", """\
+        def preview(g):
+            import plotly.graph_objects as go
+            return go.Figure()
+        """)
+    assert _found(tmp_path) == ["render-tech-import:NotebookPreview.py:2"]
+
+
+@pytest.mark.parametrize("statement", [
+    "import plotly",
+    "from bokeh.plotting import figure",
+    "import k3d",
+    "from pythreejs import Mesh",
+    "from trame.app import get_server",
+    "import trame_vtk",
+    "import os, plotly.express as px",
+    "px = importlib.import_module('plotly.express')",
+])
+def test_render_tech_import_flags_every_spelling_anywhere_in_src(tmp_path: Path, statement: str) -> None:
+    # D4 holds inside viewers/ too, and in src/sections.
+    for rel in ("src/apeGmsh/viewers/new_web.py", "src/sections/_draw.py"):
+        _write(tmp_path, rel, f"def f():\n    {statement}\n")
+    assert _found(tmp_path) == ["render-tech-import:new_web.py:2", "render-tech-import:_draw.py:2"]
+
+
+def test_vtk_import_flags_vtk_outside_the_viewers_package(tmp_path: Path) -> None:
+    _write(tmp_path, "src/apeGmsh/results/plot/_still.py", """\
+        import pyvista as pv
+        from pyvistaqt import BackgroundPlotter
+        from vtkmodules.vtkCommonCore import vtkPoints
+
+        def draw():
+            import vtk
+        """)
+    assert _found(tmp_path) == [f"vtk-import:_still.py:{n}" for n in (1, 2, 3, 6)]
+
+
+def test_vtk_import_passes_the_viewers_package_and_non_imports(tmp_path: Path) -> None:
+    # D3 keeps VTK in viewers/; a .vtu writer, a string and a probe bind nothing.
+    _write(tmp_path, "src/apeGmsh/viewers/scene/fem_scene.py", "import pyvista as pv\nimport vtk\n")
+    _write(tmp_path, "src/apeGmsh/viz/VTKExport.py", '''\
+        """Write .vtu for ParaView; ``import pyvista`` is not needed."""
+        from importlib.util import find_spec
+        HAS_PV = find_spec("pyvista") is not None
+        from .vtk_writer import write_vtu
+        import pyvista_like
+        ''')
+    assert _found(tmp_path) == []
+
+
+@pytest.mark.parametrize("rel", ["tests/test_scene.py", "examples/plot.py", "scripts/render.py"])
+def test_render_rules_ignore_code_outside_src(tmp_path: Path, rel: str) -> None:
+    _write(tmp_path, rel, "import pyvista\nimport plotly\n")
+    assert _found(tmp_path) == []
+
+
+def test_render_rules_have_no_waiver(tmp_path: Path) -> None:
+    _write(tmp_path, "src/apeGmsh/results/plot/_still.py", """\
+        # apegmsh-lint: vtk-import-ok just this once
+        import pyvista as pv
+        """)
+    assert _found(tmp_path) == ["waiver:_still.py:1", "vtk-import:_still.py:2"]
+
+
+def test_render_allowlist_holds_a_listed_import_and_rejects_a_new_one(tmp_path: Path) -> None:
+    _write(tmp_path, "src/apeGmsh/viewers/web_viewer.py", """\
+        def build():
+            from trame.app import get_server
+            import plotly
+        """)
+    _write(tmp_path, RENDER_ALLOW, "# comment\nsrc/apeGmsh/viewers/web_viewer.py::trame  # backend\n")
+    assert _found(tmp_path) == ["render-tech-import:web_viewer.py:3"]
+
+
+def test_render_allowlist_line_matching_nothing_is_a_finding(tmp_path: Path) -> None:
+    _write(tmp_path, "src/apeGmsh/viewers/web_viewer.py", "def build():\n    return 1\n")
+    _write(tmp_path, RENDER_ALLOW, "# comment\nsrc/apeGmsh/viewers/web_viewer.py::trame\n")
+    assert _found(tmp_path) == ["render-allowlist:quirks_render_allowlist.txt:2"]
+
+
+def test_the_checkout_render_allowlist_only_shrinks() -> None:
+    keys = set(quirks._key_file(quirks.REPO / quirks.RENDER_ALLOWLIST))
+    assert keys <= RENDER_ALLOWLIST_BASELINE, (
+        f"{sorted(keys - RENDER_ALLOWLIST_BASELINE)} added to {RENDER_ALLOW}: a render "
+        "technology enters src/ only by a superseding ADR (ADR 0116 D4)"
+    )
+
+
+def test_render_rule_scope_exists_in_this_checkout() -> None:
+    # A moved viewers package would turn D3 into a blanket ban, or the scope off.
+    for path in (quirks.RENDER_SCOPE, quirks.VTK_HOME):
+        assert (quirks.REPO / path).is_dir(), f"{path} moved: update the render-rule scope"
+
+
 # --- getattr-private / getattr-undefined: the capture outages (14445604, 7c7c1541) ---
 
 BRIDGE = """\
