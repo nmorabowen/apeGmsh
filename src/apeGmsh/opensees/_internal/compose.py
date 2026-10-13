@@ -698,9 +698,10 @@ def _rebar_cell_tags(elements: "Sequence[Any]", fem: Any) -> "set[int]":
     cells (#1828), which the replay writes in the bridge's slot 7b'', after
     the reinforce ties, not with the other elements at step 8.
 
-    A cell is a bridge-minted ``CorotTruss`` row (sentinel fem id) whose node
-    pair is a line cell of a bar in the neutral zone, matched one for one.
-    Refuses when the archived cells and the neutral zone disagree in count.
+    A cell is a bridge-minted ``CorotTruss`` row (sentinel fem id; only
+    ``emit_rebar_elements`` mints one) whose node pair is a line cell of a
+    bar in the neutral zone, matched one for one. Refuses both ways: a
+    neutral cell with no row, or a minted row the neutral zone does not name.
     """
     from collections import Counter
 
@@ -713,14 +714,14 @@ def _rebar_cell_tags(elements: "Sequence[Any]", fem: Any) -> "set[int]":
         for rec in rebar_element_records(fem)
         for i, j in rec.connectivity
     ]
-    if not entries:
-        return set()
     want: "Counter[tuple[int, int]]" = Counter(entries)
     tags: "set[int]" = set()
+    minted = 0
     for rec in elements:
         if (rec.type_token != "CorotTruss"
                 or int(rec.fem_eid) != MISSING_FEM_ELEMENT_ID):
             continue
+        minted += 1
         conn = tuple(rec.connectivity)
         if len(conn) != 2:
             continue
@@ -728,11 +729,12 @@ def _rebar_cell_tags(elements: "Sequence[Any]", fem: Any) -> "set[int]":
         if want[pair] > 0:
             want[pair] -= 1
             tags.add(int(rec.tag))
-    if len(tags) != len(entries):
+    if len(tags) != len(entries) or minted != len(entries):
         raise ValueError(
             f"replay: the neutral zone carries {len(entries)} rebar cell(s) "
-            f"but the archive's element store holds {len(tags)} matching "
-            "CorotTruss row(s); the two zones disagree."
+            f"but the archive's element store holds {minted} minted "
+            f"CorotTruss row(s), {len(tags)} of them matching; the two "
+            "zones disagree."
         )
     return tags
 

@@ -280,6 +280,29 @@ def test_rebar_cells_the_archive_lacks_refuse(
         OpenSeesModel.from_h5(str(archive)).build("tcl")
 
 
+def test_rebar_cells_the_neutral_zone_lacks_refuse(
+    built, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An element store holding a minted bar cell the neutral zone does not
+    name refuses too, rather than leaving the surplus cell at step 8."""
+    deck, archive = built(cells=True)
+    n = len(_lines(deck, _CELL))
+    real = constraints_plan.rebar_element_records
+
+    def one_cell_less(fem: Any) -> list[Any]:
+        recs = real(fem)
+        return [*recs[:-1], dataclasses.replace(
+            recs[-1], connectivity=tuple(recs[-1].connectivity)[:-1])]
+
+    monkeypatch.setattr(
+        constraints_plan, "rebar_element_records", one_cell_less)
+    with pytest.raises(ValueError, match=(
+        rf"carries {n - 1} rebar cell\(s\) but the archive's element store "
+        rf"holds {n} minted CorotTruss row\(s\), {n - 1} of them"
+    )):
+        OpenSeesModel.from_h5(str(archive)).build("tcl")
+
+
 def test_new_archive_never_takes_the_fallback(
     built, tmp_path: Path, planted_fallback: list[int],
 ) -> None:
