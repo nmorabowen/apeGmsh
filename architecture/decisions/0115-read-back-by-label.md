@@ -224,3 +224,23 @@ one field.
    map refuses. Its archived `decl_params` row stores the translated
    OpenSees tags, so the `elements` of every `Element` recorder row share
    one id space, the deck's (the maintainer's condition on #1773).
+
+## Note R3-S4 (2026-10-12): Q6 closed
+
+**Rulings:** D3 and D4 of the maintainer's R3 rulings on #1372
+(https://github.com/nmorabowen/apeGmsh/issues/1372#issuecomment-6135150217).
+**Slice:** #1786 (R3-S4); it closes #1778.
+
+Q6 deferred two label questions to R3. Both are now decided, and neither
+adds a verb, a record field or an archive path.
+
+1. **The diaphragm master (ruling D3).** `rigid_diaphragm` takes
+   `master_point=None` by default. With the point omitted, the master
+   label must resolve to exactly one node, which is both the master and
+   the point the diaphragm plane passes through. Zero or several nodes are
+   refused, naming the count. A given `master_point` keeps the
+   nearest-plane-node rule. A plane that collects no master or no slave is
+   refused either way, so `rigidDiaphragm 3 0` is no longer emitted (#1778).
+2. **Loads by label (ruling D4).** There is no `p.load(label=)`. The
+   idiom is `p.load(node=ops.nodes.one(label=...), forces=...)`.
+   `ops.nodes.one` raises unless the label picks exactly one node (D5).

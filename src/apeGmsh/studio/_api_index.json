@@ -494,7 +494,7 @@
     },
     "g.constraints.rigid_diaphragm": {
       "doc": "In-plane rigid floor — slaves follow master in the",
-      "signature": "rigid_diaphragm(master_label, slave_label, *, master_point=(0.0, 0.0, 0.0), plane_normal=(0.0, 0.0, 1.0), constrained_dofs=None, plane_tolerance=1.0, name=None) -> 'RigidDiaphragmDef'",
+      "signature": "rigid_diaphragm(master_label, slave_label, *, master_point=None, plane_normal=(0.0, 0.0, 1.0), constrained_dofs=None, plane_tolerance=1.0, name=None) -> 'RigidDiaphragmDef'",
       "skill": "references/api-cheatsheet.md",
       "symbol": "g.constraints.rigid_diaphragm"
     },

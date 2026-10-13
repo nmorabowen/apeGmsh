@@ -381,8 +381,12 @@ class RigidDiaphragmDef(ConstraintDef):
 
     Parameters
     ----------
-    master_point : (x, y, z)
-        Master node location (typically center of mass).
+    master_point : (x, y, z) or None
+        ``None`` (the default): the master label must resolve to
+        exactly one node, which is both the master and the point the
+        diaphragm plane passes through; any other count is refused at
+        resolution.  A point: the plane passes through it, and the
+        master is the plane node nearest to it.
     plane_normal : (nx, ny, nz)
         Normal to the diaphragm plane.  (0,0,1) = horizontal floor.
     constrained_dofs : list[int]
@@ -392,7 +396,7 @@ class RigidDiaphragmDef(ConstraintDef):
         Distance from the plane within which nodes are collected.
     """
     kind: str = field(init=False, default="rigid_diaphragm")
-    master_point: tuple[float, float, float] = (0.0, 0.0, 0.0)
+    master_point: tuple[float, float, float] | None = None
     plane_normal: tuple[float, float, float] = (0.0, 0.0, 1.0)
     constrained_dofs: list[int] = field(default_factory=lambda: [1, 2, 6])
     plane_tolerance: float = 1.0

@@ -2452,7 +2452,7 @@ class ConstraintsComposite(_DeclarationsMixin):
 
     # ── Tier 2 — Node-to-Group ───────────────────────────────────────
     def rigid_diaphragm(self, master_label, slave_label, *,
-                        master_point=(0., 0., 0.),
+                        master_point=None,
                         plane_normal=(0., 0., 1.),
                         constrained_dofs=None, plane_tolerance=1.0,
                         name=None) -> RigidDiaphragmDef:
@@ -2487,16 +2487,21 @@ class ConstraintsComposite(_DeclarationsMixin):
         Parameters
         ----------
         master_label : str
-            Part, physical-group, or label name that contains (or whose
-            proximity will
-            select) the master node — typically a centre-of-mass
-            point.
+            Part, physical-group, or label name of the master node —
+            typically a centre-of-mass point. With ``master_point``
+            omitted it must resolve to exactly one node.
         slave_label : str
             Part, physical-group, or label name whose nodes are
             gathered into the diaphragm.
-        master_point : (x, y, z), default (0, 0, 0)
-            Coordinates of the master node. Used to disambiguate
-            when the master part has more than one node.
+        master_point : (x, y, z), optional
+            Omitted (the default): ``master_label`` must resolve to
+            exactly one node; that node is the master and the diaphragm
+            plane passes through it. A master that resolves to zero or
+            to several nodes is refused at resolution, and so is a
+            plane that collects no slave node. Given: the plane passes
+            through this point and the master is the plane node nearest
+            to it (use it when the master label holds several nodes);
+            a plane that collects no master or no slave is refused.
         plane_normal : (nx, ny, nz), default (0, 0, 1)
             Unit normal to the diaphragm plane. ``(0, 0, 1)`` is a
             horizontal floor; ``(0, 1, 0)`` is a vertical wall, etc.
@@ -2520,6 +2525,10 @@ class ConstraintsComposite(_DeclarationsMixin):
         ------
         KeyError
             If either label is not in ``g.parts``.
+        ValueError
+            At resolution, with ``master_point`` omitted, when the master
+            does not resolve to exactly one node or no slave node lies in
+            the plane through it.
 
         See Also
         --------
@@ -2530,11 +2539,11 @@ class ConstraintsComposite(_DeclarationsMixin):
         Examples
         --------
         A horizontal slab at z = 3.0 m, its master a labelled point
-        at the centre of mass (master first, slaves second)::
+        at the centre of mass (master first, slaves second). The master
+        group holds that one point, so it sets the slab plane::
 
             g.constraints.rigid_diaphragm(
                 "slab_master", "slab",
-                master_point=(2.5, 2.5, 3.0),
                 plane_normal=(0, 0, 1),
                 constrained_dofs=[1, 2, 6],
                 plane_tolerance=0.05,
@@ -3696,7 +3705,7 @@ class ConstraintsComposite(_DeclarationsMixin):
     def _resolve_diaphragm(self, resolver, defn, node_map, face_map, all_nodes):
         m = self._resolve_nodes(defn.master_label, "master", defn, node_map, all_nodes)
         s = self._resolve_nodes(defn.slave_label, "slave", defn, node_map, all_nodes)
-        return resolver.resolve_rigid_diaphragm(defn, m | s)
+        return resolver.resolve_rigid_diaphragm(defn, m | s, master_nodes=m)
 
     def _resolve_kinematic(self, resolver, defn, node_map, face_map, all_nodes):
         m = self._resolve_nodes(defn.master_label, "master", defn, node_map, all_nodes)

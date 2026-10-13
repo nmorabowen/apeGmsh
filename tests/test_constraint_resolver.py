@@ -344,7 +344,8 @@ class TestResolveRigidDiaphragm(unittest.TestCase):
             plane_tolerance=0.01,
         )
 
-        rec = r.resolve_rigid_diaphragm(defn, all_nodes={1, 2, 3, 4, 5})
+        rec = r.resolve_rigid_diaphragm(
+            defn, all_nodes={1, 2, 3, 4, 5}, master_nodes={1})
         self.assertIsInstance(rec, NodeGroupRecord)
         self.assertEqual(rec.master_node, 1)
         self.assertEqual(sorted(rec.slave_nodes), [2, 3, 4])
@@ -354,7 +355,7 @@ class TestResolveRigidDiaphragm(unittest.TestCase):
         # Plane normal stored (normalised)
         np.testing.assert_allclose(rec.plane_normal, [0.0, 0.0, 1.0])
 
-    def test_empty_when_no_nodes_on_plane(self):
+    def test_refused_when_no_nodes_on_plane(self):
         coords = {1: (0, 0, 5), 2: (1, 0, 5)}
         r = _make_resolver(coords)
         defn = RigidDiaphragmDef(
@@ -363,8 +364,9 @@ class TestResolveRigidDiaphragm(unittest.TestCase):
             plane_normal=(0, 0, 1),
             plane_tolerance=0.1,
         )
-        rec = r.resolve_rigid_diaphragm(defn, {1, 2})
-        self.assertEqual(rec.slave_nodes, [])
+        # #1786: an empty plane used to return a master-less record.
+        with self.assertRaisesRegex(ValueError, r"collects 0 node"):
+            r.resolve_rigid_diaphragm(defn, {1, 2}, master_nodes={1, 2})
 
     def test_expand_to_pairs_produces_rigid_beam_pairs(self):
         group = NodeGroupRecord(

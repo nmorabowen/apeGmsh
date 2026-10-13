@@ -317,24 +317,24 @@ class TestRigidDiaphragmChainPhase:
         assert rec.plane_normal is not None
         np.testing.assert_allclose(rec.plane_normal, [0.0, 0.0, 1.0])
 
-    def test_diaphragm_with_no_nodes_in_plane_does_not_append(
+    def test_diaphragm_with_no_nodes_in_plane_is_refused(
         self, tmp_path: Path,
     ) -> None:
-        """No slabs in plane → empty NodeGroupRecord — skipped to avoid phantom."""
-        # Place master at z=5, slabs at z=5 — but require plane at z=0.
+        """No node in the plane -> refused, never a phantom record
+        (``rigidDiaphragm 3 0``; #1778, #1786)."""
+        # Master and slabs at z=5, but the given point puts the plane at z=0.
         path = _save(_master_plus_slab_fem(), tmp_path)
         g = apeGmsh.from_h5(path)
         fem_before = g._fem
 
-        g.constraints.rigid_diaphragm(
-            "master_pt", "slab",
-            master_point=(0.0, 0.0, 0.0),
-            plane_normal=(0.0, 0.0, 1.0),
-            constrained_dofs=[1, 2, 6],
-            plane_tolerance=0.01,
-        )
-
-        # No matching nodes → no record appended.
+        with pytest.raises(ValueError, match=r"collects 0 node\(s\)"):
+            g.constraints.rigid_diaphragm(
+                "master_pt", "slab",
+                master_point=(0.0, 0.0, 0.0),
+                plane_normal=(0.0, 0.0, 1.0),
+                constrained_dofs=[1, 2, 6],
+                plane_tolerance=0.01,
+            )
         assert g._fem is fem_before
         assert len(list(g._fem.nodes.constraints)) == 0
 
