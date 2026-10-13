@@ -322,9 +322,9 @@ class LazyRankBuckets:
 class _OwnedRows:
     """Lazy, re-iterable view of one rank's owned rows of an element plan.
 
-    Replaces the ``owned`` list :func:`emit_element_spec_partitioned`
-    used to build (S3-b, #1894): that list kept every owned row's
-    node-tag tuple alive for the whole spec.  ``mask`` is ``None`` when
+    Holding no per-row Python objects is the point: a list of the owned
+    rows would keep every row's node-tag tuple alive for the whole spec
+    (ADR 0100).  ``mask`` is ``None`` when
     the whole plan is owned (a rank bucket), else a ``bool[N]`` row
     mask.  Each iteration walks the plan afresh, yielding one transient
     row at a time.
@@ -390,10 +390,10 @@ def emit_element_spec_partitioned(
     # One vectorised owner probe for the whole plan, shared by the ADR
     # 0044 sweep and the emit loop below (see :func:`_plan_owner_ranks`),
     # reduced at once to a 1 B/row ownership mask.  -1 is the unowned
-    # sentinel, so it can never equal a real rank.  S3-b (#1894): no
-    # per-row Python list (owner ranks, or the ``owned`` row tuples) is
-    # held — rows stream from ``pre_allocated`` to the emitter, so only
-    # the row being emitted is alive.
+    # sentinel, so it can never equal a real rank.  No per-row Python
+    # list (owner ranks or row tuples) is held: rows stream from
+    # ``pre_allocated`` to the emitter, so only the row being emitted is
+    # alive.
     owned_mask = _plan_owner_ranks(pre_allocated, element_owner) == partition_rank
     n_owned = int(np.count_nonzero(owned_mask))
     if n_owned == 0:
@@ -408,8 +408,7 @@ def emit_element_spec_partitioned(
     # ADR 0044: sweep only this rank's owned elements (avoids cross-rank
     # duplicate warnings — each rank reports its own over-ceiling
     # elements).  The view re-iterates lazily, and only an ASDConcrete
-    # spec iterates it at all.  It runs before any element is written,
-    # as it did when it took the materialised list.
+    # spec iterates it at all.  It runs before any element is written.
     # The cast is duck typing: the sweep reads only ``len`` and
     # ``(eid, node_tags)`` iteration, both of which the view provides.
     sweep_asdconcrete_element_size(
@@ -424,10 +423,9 @@ def emit_element_spec_partitioned(
     )
 
     # Partial writes: a raise from ``spec._emit`` (or the resolver) leaves
-    # this spec's earlier rows written and the bracket open, exactly as
-    # the list form did — it emitted row by row too.  The rows were never
-    # validated as a batch before the first write, and the only checks
-    # that run before it (owner probe, ADR 0044 sweep) still do.
+    # this spec's earlier rows written and the bracket open, and
+    # propagates.  The checks that must precede the first write (owner
+    # probe, ADR 0044 sweep) run above, over the whole owned set.
     for eid, node_tags, ele_tag in owned_rows.triples():
         set_element_nodes(emitter, node_tags)
         set_current_fem_element_id(emitter, eid)

@@ -161,15 +161,45 @@ def test_emitted_rows_match_the_owner_filter(
     assert spec.emitted == expected
 
 
-def test_rank_owning_nothing_opens_no_bracket(monkeypatch) -> None:
-    from apeGmsh.opensees._internal.build import element_emit
+def _node_pair_plan() -> ElementPlanRows:
+    """A 1-row node-pair plan: the whole plan goes to every rank."""
+    from apeGmsh.opensees._internal.tag_resolution import MISSING_FEM_ELEMENT_ID
 
-    calls: list[object] = []
+    return ElementPlanRows(
+        np.asarray([MISSING_FEM_ELEMENT_ID], dtype=np.int64),
+        np.asarray([[11, 12]], dtype=np.int64),
+        tag_start=300,
+    )
+
+
+@pytest.mark.parametrize("case", ["mixed_plan", "node_pair"])
+@pytest.mark.parametrize("rank", [0, 1, 5])
+def test_bracket_opens_iff_this_rank_owns_a_row(
+    monkeypatch, case: str, rank: int,
+) -> None:
+    """The bracket gate is "this rank owns >= 1 row", not "the plan is
+    non-empty": a node-pair plan reaches every rank whole."""
+    from apeGmsh.opensees._internal.build import element_emit
+    from apeGmsh.opensees._internal.tag_resolution import MISSING_FEM_ELEMENT_ID
+
+    opened: list[object] = []
+    closed: list[object] = []
     monkeypatch.setattr(
         element_emit, "open_builder_ndf_bracket",
-        lambda *a, **kw: calls.append(a) or True,
+        lambda *a, **kw: opened.append(a) or True,
     )
-    plan = _plan(3)
+    monkeypatch.setattr(
+        element_emit, "close_builder_ndf_bracket",
+        lambda *a, **kw: closed.append(a),
+    )
+    if case == "node_pair":
+        plan: Any = _node_pair_plan()
+        owner: Any = {MISSING_FEM_ELEMENT_ID: 0}   # the pair's one rank
+        owns = rank == 0
+    else:
+        plan = _plan(3)
+        owner = _owner([0, 1, 0])
+        owns = rank in (0, 1)
     spec = _Spec()
     emit_element_spec_partitioned(
         spec=spec,  # type: ignore[arg-type]
@@ -178,13 +208,13 @@ def test_rank_owning_nothing_opens_no_bracket(monkeypatch) -> None:
         pre_allocated=plan,
         base_resolver=lambda p: 0,
         transf_tag_for_element=None,
-        partition_rank=5,
-        element_owner=_owner([0, 1, 2]),
+        partition_rank=rank,
+        element_owner=owner,
         ndm=3,
         envelope_ndf=3,
     )
-    assert spec.emitted == []
-    assert calls == []
+    assert len(opened) == len(closed) == (1 if owns else 0)
+    assert bool(spec.emitted) is owns
 
 
 # ---------------------------------------------------------------------------
@@ -216,22 +246,46 @@ def _conc() -> ASDConcrete3D:
                                  lch_ref=50.0)
 
 
-def test_asdconcrete_sweep_warns_once_over_owned_rows_before_any_write() -> None:
+@pytest.mark.parametrize("path", ["node_pair_mask", "bucket"])
+def test_asdconcrete_sweep_warns_once_over_owned_rows(path: str) -> None:
+    from apeGmsh.opensees._internal.build.validators.materials import (
+        sweep_asdconcrete_element_size,
+    )
+
     ranks = [0, 1, 1, 0, 1]
-    plan = _two_node_plan(len(ranks))
+    plan: Any = _two_node_plan(len(ranks))
+    if path == "bucket":
+        plan = plan.select_rows(np.flatnonzero(np.asarray(ranks) == 1))
     spec = _Spec(material=_conc())
-    fem = _line_fem(spacing=_LMAX * 1.5, n_nodes=2 * len(ranks))
+    # Spacing grows along x, so the owned rows' lengths differ and the
+    # warning's ``worst`` value depends on which rows were swept.
+    coords = np.zeros((2 * len(ranks), 3))
+    coords[1::2, 0] = _LMAX * (1.2 + 0.1 * np.arange(len(ranks)))
+    coords[0::2, 1] = 10.0 * np.arange(len(ranks))
+    coords[1::2, 1] = coords[0::2, 1]
+    fem = SimpleNamespace(nodes=SimpleNamespace(
+        index=lambda nid: int(nid) - 1, coords=coords))
 
     with warnings.catch_warnings(record=True) as rec:
         warnings.simplefilter("always")
         _emit(spec, plan, _owner(ranks), rank=1, fem=fem)
-
     hits = [w for w in rec if issubclass(w.category, ASDRegularizationWarning)]
     assert len(hits) == 1
     msg = str(hits[0].message)
-    # Rank 1 owns 3 of 5 rows; all 3 are over the ceiling.
+
+    # Oracle: the sweep handed the materialised owned list, as main did.
+    owned = [
+        (e, tuple(int(t) for t in c))
+        for e, c, _ in _two_node_plan(len(ranks)) if ranks[e - 1] == 1
+    ]
+    with warnings.catch_warnings(record=True) as ref:
+        warnings.simplefilter("always")
+        sweep_asdconcrete_element_size(spec, owned, fem)  # type: ignore[arg-type]
+    assert len(ref) == 1
+    assert msg == str(ref[0].message)
+    # Rank 1 owns rows 2, 3, 5 (eids); all are over, the worst is eid 5.
     assert msg.startswith("ASDConcrete: 3/3 elements in PG 'block' exceed")
-    assert f"worst lch={_LMAX * 1.5:g}" in msg
+    assert f"worst lch={_LMAX * 1.6:g}" in msg
     assert len(spec.emitted) == 3
 
 
