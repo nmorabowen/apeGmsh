@@ -122,8 +122,23 @@ that silently dropped `emit_elements` or the ties cannot pass as a match.
   group (ids 9 to 330), plus every other line. This is
   `rebar._bar_nodes_only`. It fails closed: an element line that is not a
   `CorotTruss` on bar nodes raises, so the filter can never hide a node an
-  element uses. The shared-node property of a conformal placement lives in
-  the host mesh, so it is outside this oracle.
+  element uses.
+
+**The coupling is pinned by count.** Neither deck emits a host element, so
+neither can show whether `place` embedded the bars. Each rebar golden
+therefore opens with a `=== <coupling> ===` section that is not an
+emitted file:
+
+| Placement | `bar_nodes` | `bar_nodes_in_host_connectivity` |
+|---|---|---|
+| `conformal` | 270 | 270 |
+| `embedded` | 400 | 0 |
+
+These are counts of shared nodes in the topology, not coordinates, so they
+hold on every host. A conformal placement whose embed is skipped drops to
+0 of 270 and fails the cell. `test_rebar_golden_pins_the_coupling` pins
+the counts in the committed goldens too, so a regen over a broken embed
+cannot pass as a match (review F1).
 
 **Decks only.** The issue asks for the decks. There is no `.h5dump`: a
 real `FEMData` archive carries a neutral zone whose `/provenance@base_dir`

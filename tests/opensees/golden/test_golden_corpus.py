@@ -171,6 +171,27 @@ def test_rebar_golden_exercises_both_emit_paths(
     assert got == count, f"{placement}: {got} x {token.strip()!r}, want {count}"
 
 
+@pytest.mark.parametrize(
+    ("placement", "bar_nodes", "in_host"),
+    [("conformal", 270, 270), ("embedded", 400, 0)],
+)
+def test_rebar_golden_pins_the_coupling(
+    placement: str, bar_nodes: int, in_host: int,
+) -> None:
+    """Conformal bars live in the host connectivity; embedded bars do not.
+
+    The decks emit no host element, so only the ``<coupling>`` section
+    shows whether ``place(coupling=...)`` embedded the bars (review F1).
+    """
+    for output in rebar.OUTPUTS:
+        head = _read_golden(rebar.golden_path(placement, output)).split("\n")
+        assert head[:3] == [
+            rebar.COUPLING_HEADER,
+            f"bar_nodes {bar_nodes}",
+            f"bar_nodes_in_host_connectivity {in_host}",
+        ], f"{placement}/{output}: {head[:3]}"
+
+
 def test_manifest_is_the_grid() -> None:
     """MANIFEST.json lists all 105 cells, each golden or n/a with a reason."""
     text = _read_golden(builder.MANIFEST_PATH)

@@ -44,6 +44,10 @@ _ELEMENT_LINE = re.compile(
     r"|ops\.element\('(?P<ptype>\w+)', \d+, (?P<pi>\d+), (?P<pj>\d+)\b)"
 )
 
+#: The first section of every rebar golden: not an emitted file, so its
+#: header is bracketed (see :func:`_coupling_section`).
+COUPLING_HEADER = "=== <coupling> ==="
+
 #: ADR 0112 D1's artifact directory variable (``tests/conftest.py`` sets it
 #: for the suite).
 _ARTIFACT_DIR_ENV = "APEGMSH_ARTIFACT_DIR"
@@ -81,15 +85,18 @@ def _artifacts_in(path: Path) -> Iterator[None]:
             os.environ[_ARTIFACT_DIR_ENV] = previous
 
 
-def build_model(placement: str) -> tuple[apeSees, frozenset[int]]:
-    """Mesh the column, place the cage; return the bridge model and bar nodes.
+def build_model(
+    placement: str,
+) -> tuple[apeSees, frozenset[int], frozenset[int]]:
+    """Mesh the column; return the bridge model, bar nodes and host nodes.
 
     A 0.4 x 0.4 x 1.5 box, a 3x3 cage of #6 bars with #3 ties @ 0.25
     under ``ACI318_seismic`` (the X4-e harness, #1848).  ``conformal``
     embeds the bars into a tet host; ``embedded`` adds cross-ties and
     couples through ``LadrunoEmbeddedRebar`` into a transfinite tet host.
-    Both auto-emit a ``CorotTruss`` per bar cell.  The node ids returned
-    are every node on a bar physical group of the placement.
+    Both auto-emit a ``CorotTruss`` per bar cell.  The bar nodes are every
+    node on a bar physical group of the placement; the host nodes are every
+    node the 3-D elements of ``Col`` connect.
     """
     if placement not in PLACEMENTS:
         raise KeyError(f"unknown rebar placement {placement!r}")
@@ -127,13 +134,17 @@ def build_model(placement: str) -> tuple[apeSees, frozenset[int]]:
         int(n) for m in placed.members
         for n in fem.nodes.select(pg=m.pg).ids
     )
+    host_nodes = frozenset(
+        int(n) for n in
+        fem.elements.select(pg="Col", dim=3).connectivity.ravel()
+    )
     # Pinned target, as in the grid: the stamp reads ``backend stock``.
     ops = apeSees(fem, opensees=OpenSeesTarget(mode="stock"))
     ops.model(ndm=3, ndf=3)
     ops.uniaxialMaterial.Steel02(
         fy=420e6, E=200e9, b=0.01, name=BAR_MATERIAL,
     )
-    return ops, bar_nodes
+    return ops, bar_nodes, host_nodes
 
 
 def _bar_nodes_only(text: str, bar_nodes: frozenset[int]) -> str:
@@ -173,7 +184,7 @@ def render_deck(placement: str, output: str, scratch: Path) -> str:
     artifacts.mkdir(parents=True, exist_ok=False)
     deck = str(deck_dir / f"model.{output}")
     with _artifacts_in(artifacts):
-        ops, bar_nodes = build_model(placement)
+        ops, bar_nodes, host_nodes = build_model(placement)
         if output == "py":
             ops.py(deck)
         else:
@@ -181,7 +192,24 @@ def render_deck(placement: str, output: str, scratch: Path) -> str:
     text = builder._collect(deck_dir)
     if placement == "conformal":
         text = _bar_nodes_only(text, bar_nodes)
-    return text
+    return _coupling_section(bar_nodes, host_nodes) + text
+
+
+def _coupling_section(
+    bar_nodes: frozenset[int], host_nodes: frozenset[int],
+) -> str:
+    """The coupling, as counts the deck itself cannot show.
+
+    No host element is emitted, so neither deck says whether the bars share
+    nodes with the host mesh.  A conformal placement embeds every bar node
+    in the host connectivity; an embedded one shares none.  Both counts
+    are topology, not Delaunay coordinates, so they hold on every host.
+    """
+    return (
+        f"{COUPLING_HEADER}\n"
+        f"bar_nodes {len(bar_nodes)}\n"
+        f"bar_nodes_in_host_connectivity {len(bar_nodes & host_nodes)}\n"
+    )
 
 
 def manifest() -> dict[str, object]:
