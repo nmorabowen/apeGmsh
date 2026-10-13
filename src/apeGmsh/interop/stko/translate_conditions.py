@@ -1278,10 +1278,13 @@ def declare_session(g: Any, scd: ScdModel, plan: ConditionsPlan, mesh: MeshMap) 
     route is ``g.constraints.rigid_diaphragm(master_pg, slave_pg, ...)``, which
     the resolver (``resolve_rigid_diaphragm``) turns into one record by geometry
     -- it keeps the nodes of ``master_pg | slave_pg`` within ``plane_tolerance``
-    of the plane through ``master_point``. ``master_point`` only sets that plane:
-    a one-node master label is always the master (refused if it is off the
-    plane), while a multi-node master label falls back to the nearest in-plane
-    node, a master-set node winning ties (``_pick_diaphragm_master``). Each :class:`~.translate_types.DiaphragmGroup` is carried so
+    of the plane through ``master_point``. ``master_point`` only sets that plane;
+    it does not choose the master. The master comes from the MASTER set
+    (``_pick_diaphragm_master``): a one-node master label is the master wherever
+    the point is (refused if it is off the plane); otherwise it is the master-set
+    node nearest the point among the in-plane ones. A slave node is never
+    promoted to master, and the resolver refuses when no master-set node is in
+    the plane. Each :class:`~.translate_types.DiaphragmGroup` is carried so
     that this geometry reproduces STKO's pairs exactly:
 
     * its master and its slaves are owned by two carrier entities (the mesh
