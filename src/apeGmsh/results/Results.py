@@ -125,6 +125,51 @@ _MODEL_H5_REQUIRED_MESSAGE = (
 )
 
 
+#: The phrase a ``model hash mismatch`` lineage warning carries when one
+#: side's ``model_hash`` hashes the declaration ids of
+#: ``/opensees/program.decl`` and the other's does not (the
+#: ``/opensees/decls@program_decl`` completeness marker). ``assess`` keys
+#: its ``RES.LINEAGE`` message on it.
+MODEL_HASH_ERA_CAUSE = "hash change (declaration ids entered model_hash)"
+
+
+def _model_hash_era_cause(
+    results_records: bool | None, model_records: bool,
+) -> str | None:
+    """Name the cause of a ``model_hash`` mismatch, or ``None``.
+
+    ``results_records`` / ``model_records`` say whether each side's
+    archive records its program declarations
+    (:func:`h5_reader.records_program_decl`): only then does its
+    ``model_hash`` include the declaration ids. The version stamp is not
+    used, because a ``to_h5`` rewrite of an older archive is stamped
+    current but keeps the old hash. Returns the cause text when the two
+    sides differ; ``None`` when they agree, or when the results side is
+    unknown (no ``/opensees`` zone): the cause is then never guessed.
+    """
+    from ..opensees.emitter.h5_reader import PROGRAM_DECL_FROM
+
+    if results_records is None or results_records == model_records:
+        return None
+    boundary = ".".join(str(part) for part in PROGRAM_DECL_FROM)
+    if model_records:
+        sides = "the model's hash includes declaration ids, the results file's does not"
+        remedy = (
+            "re-run the analysis against the re-saved model, or open the "
+            "results with the model.h5 they were run on"
+        )
+    else:
+        sides = "the results file's hash includes declaration ids, the model's does not"
+        remedy = (
+            "open the results with the model.h5 they were run on, or "
+            "re-run the analysis against this model"
+        )
+    return (
+        f"likely cause: the opensees schema {boundary} {MODEL_HASH_ERA_CAUSE} "
+        f"({sides}); {remedy}"
+    )
+
+
 def _resolve_results_kind(kind: str, path: Any) -> str:
     """Resolve ``Results.from_fem``'s ``kind`` to a concrete reader.
 
@@ -925,6 +970,7 @@ class Results:
             WARNING_PREFIX,
             Lineage,
         )
+        from ..opensees.emitter.h5_reader import records_program_decl
 
         # Layer 1: inherit from the bound OpenSeesModel.
         base = self._model.lineage
@@ -957,12 +1003,25 @@ class Results:
                 and model_hash is not None
                 and stored_model != model_hash
             ):
-                warnings.append(
+                message = (
                     WARNING_PREFIX
                     + "model hash mismatch between Results and OpenSeesModel: "
                     f"results-file stamp {stored_model!r} != "
                     f"OpenSeesModel.lineage.model_hash {model_hash!r}"
                 )
+                # Name the declaration-id hash change when exactly one
+                # side's hash includes the ids, per the completeness
+                # marker: records_program_decl on the model,
+                # /opensees/decls@program_decl on the results file.
+                # Still a warning; a results file with no /opensees zone
+                # keeps the text.
+                cause = _model_hash_era_cause(
+                    self._results_records_program_decl(),
+                    records_program_decl(self._model.declarations),
+                )
+                if cause is not None:
+                    message += "; " + cause
+                warnings.append(message)
             # Recompute results_hash from /stages/ and compare to
             # the stamped value.  When the model_hash link is
             # absent (bridge-only files, recorder-only runs) we
@@ -994,6 +1053,34 @@ class Results:
             results_hash=results_hash,
             warnings=tuple(warnings),
         )
+
+    def _results_records_program_decl(self) -> "bool | None":
+        """Whether the results file's embedded ``/opensees`` records its
+        program declarations: ``/opensees/decls@program_decl`` is
+        ``"complete"`` (the zone is copied verbatim from the source
+        model.h5). A missing ``decls`` group or marker is the old hash
+        (``False``). ``None`` for a non-native reader, a file with no
+        ``/opensees`` zone, or a closed handle. Reads the reader's open
+        handle; called only on a ``model_hash`` mismatch.
+        """
+        from ..opensees.emitter.h5_reader import PROGRAM_DECL_COMPLETE
+        from .readers._native import NativeReader
+
+        if not isinstance(self._reader, NativeReader):
+            return None
+        h5 = self._reader._h5
+        try:
+            if "opensees" not in h5:
+                return None
+            ops = h5["opensees"]
+            if "decls" not in ops:
+                return False
+            marker = ops["decls"].attrs.get("program_decl")
+        except (KeyError, OSError, ValueError):
+            return None
+        if isinstance(marker, bytes):
+            marker = marker.decode("utf-8", "replace")
+        return marker is not None and str(marker) == PROGRAM_DECL_COMPLETE
 
     def bind(self, fem: "FEMData") -> "Results":
         """Re-bind to ``fem``.
