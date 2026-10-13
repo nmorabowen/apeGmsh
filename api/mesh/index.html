@@ -15593,12 +15593,12 @@ m.mesh.structured.set_transfinite_curve(
 selected curve gets <code>set_transfinite_curve(curve, n_nodes=2)</code>,
 so its only mesh nodes are its two end points.</p>
 <h5 id="apeGmsh.mesh._mesh_structured._Structured.one_element_per_curve--parameters">Parameters<a class="headerlink" href="#apeGmsh.mesh._mesh_structured._Structured.one_element_per_curve--parameters" title="Permanent link">&para;</a></h5>
-<p><em>labels : str
+<p>*labels : str
     Label, physical-group or part names (the precedence of
     :func:<code>~apeGmsh.core._helpers.resolve_to_dimtags</code>).  Every
     curve under each name is selected; entities of other
-    dimensions under the same name are ignored.  With </em><em>no
-    labels</em><em>, every </em>free* curve in the model (see below) is
+    dimensions under the same name are ignored.  With <strong>no
+    labels</strong>, every <em>free</em> curve in the model (see below) is
     selected, so no surface edge and no referenced curve is
     constrained.</p>
 <h5 id="apeGmsh.mesh._mesh_structured._Structured.one_element_per_curve--returns">Returns<a class="headerlink" href="#apeGmsh.mesh._mesh_structured._Structured.one_element_per_curve--returns" title="Permanent link">&para;</a></h5>
