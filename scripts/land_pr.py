@@ -90,8 +90,15 @@ IMPLICIT_ALLOWED = ("changelog.d/*.md",)
 #: The card sections whose backticked paths a slice PR may change (slice_card.md).
 _OWNED_HEADING = re.compile(r"^#{2,4}\s*(owned files?|append-only|allowed)\b", re.IGNORECASE)
 _HEADING = re.compile(r"^#{1,6}\s")
-#: A ruling-style card names its list after a label: "Owned: `tests/test_loc_ratchet.py` ..." (#1851).
-_OWNED_LABEL = re.compile(r"\bowned(?: files?)?:", re.IGNORECASE)
+#: A ruling-style card names its list after a label that opens a line or a sentence:
+#: "Owned: `tests/test_loc_ratchet.py`" (#1851), "**D1.** Owned files:". "A file not
+#: owned: `x`" and "unowned:" are not labels (review of #1858).
+_OWNED_LABEL = re.compile(r"(?:^\s*(?:[-*+]\s+)?|[.!?]\**\s+)\**owned(?: files?)?\**:", re.IGNORECASE)
+#: A bold pseudo-heading ("**Do not read:** ...") ends an Owned section as a `#` heading does.
+_BOLD_LABEL = re.compile(r"^\s*\*\*[^*\n]+?(?::\*\*|\*\*:)")
+#: An Owned line that negates ("`a.py` (never touch `b.py`)") cannot be read safely: refuse it.
+_NEGATION = re.compile(r"\b(?:never|not|don't|do not|except)\b", re.IGNORECASE)
+_HTML_COMMENT = re.compile(r"<!--.*?-->", re.DOTALL)
 _LIST_LINE = re.compile(r"\s*(?:[-*+]|\d+[.)])\s|\s")
 _AMENDMENT = re.compile(r"^\s*\**\s*card amendment", re.IGNORECASE)
 _TICKED = re.compile(r"`([^`\n]+)`")
@@ -310,22 +317,31 @@ def _line_paths(line: str) -> list[str]:
 
 def _card_paths(body: str) -> list[str] | None:
     """The backticked paths of a card's `### Owned files`, `### Append-only` and
-    `### Allowed` sections, or of an "Owned files:" label line and the list under it.
-    None when the card has no such section at all."""
+    `### Allowed` sections, or of an "Owned:" label line and the list under it.
+    None when the card has no such section at all. A section ends at any `#` heading
+    or bold-label line; an Owned line with a backtick and a negation refuses (fail
+    closed). HTML comments (the template's guidance) are not card text."""
     paths: list[str] = []
     found = in_section = in_label = False
-    for line in body.splitlines():
+    for line in _HTML_COMMENT.sub("", body).splitlines():
         if _HEADING.match(line):
             in_section, in_label = _OWNED_HEADING.match(line) is not None, False
             found |= in_section
             continue
+        if _BOLD_LABEL.match(line):
+            in_section = in_label = False
         if in_label and line.strip() and not _LIST_LINE.match(line):
             in_label = False  # the label's list ends at its first line that is not a list item
         label = None if in_section or in_label else _OWNED_LABEL.search(line)
         if label:
             in_label = found = True
             line = line[label.end():]
-        if in_section or in_label:
+        if (in_section or in_label) and "`" in line:
+            if _NEGATION.search(line):
+                raise LandError(
+                    f"check 9: an Owned line negates, so which paths it owns is ambiguous; "
+                    f"refusing. Reword it (a '**Card amendment' comment): {line.strip()!r}"
+                )
             paths.extend(_line_paths(line))
     return paths if found else None
 

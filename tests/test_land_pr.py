@@ -955,3 +955,36 @@ def test_owned_only_with_dry_run_is_refused(capsys):
 ])
 def test_line_paths(line, paths):
     assert land_pr._line_paths(line) == paths
+
+
+@pytest.mark.parametrize("card", [
+    # review of #1858, finding 1: a negated "not owned:" in a Stop line is not a label
+    "### Owned files\n- `scripts/a.py`\n\n### Stop conditions\n- A file not owned: `src/apeGmsh/opensees/apesees.py`\n",
+    "### Goal\nThe unowned: `src/apeGmsh/opensees/apesees.py` stays.\n\n### Owned files\n- `scripts/a.py`\n",
+    # finding 2: a bold pseudo-heading ends the Owned section
+    "### Owned files\n- `scripts/a.py`\n\n**Do not read:** `src/apeGmsh/opensees/apesees.py`\n",
+    "### Owned files\n- `scripts/a.py`\n**Hub lock:**\n- `src/apeGmsh/opensees/apesees.py`\n",
+    # the template's HTML guidance is not card text
+    "### Owned files\n<!-- e.g. `src/apeGmsh/opensees/apesees.py` -->\n- `scripts/a.py`\n",
+])
+def test_paths_outside_a_real_owned_list_are_not_owned(card):
+    assert land_pr._card_paths(card) == ["scripts/a.py"]
+
+
+@pytest.mark.parametrize("line", [
+    "- `scripts/a.py` (never touch `src/x.py`)",
+    "- `src/apeGmsh/rebar/`, except `src/apeGmsh/rebar/detailing.py`",
+    "- Do not edit `src/x.py`",
+    "- `scripts/a.py`; `src/x.py` is not owned",
+])
+def test_negated_owned_line_fails_closed(line):
+    gh, git = _scope(["scripts/a.py"], card=f"### Owned files\n{line}\n")
+    with pytest.raises(land_pr.LandError, match=r"check 9: an Owned line negates.*ambiguous") as exc:
+        _run(1218, gh, git)
+    assert line.strip() in str(exc.value)
+    assert not _merged(gh)
+
+
+def test_owned_label_mid_line_after_a_sentence_still_counts_1851():
+    card = "**Maintainer ruling (2026-10-13): YES.** Lower it. Owned: `tests/x.py` (that one value)."
+    assert land_pr._card_paths(card) == ["tests/x.py"]
