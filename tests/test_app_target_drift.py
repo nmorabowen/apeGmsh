@@ -66,36 +66,91 @@ NOT_READ_BY_APP: dict[str, str] = {
     ),
 }
 
-_TARGET = re.compile(
-    r"^export const (?P<zone>[A-Z_]+)_TARGET\s*=\s*\{\s*major:\s*(?P<major>\d+)"
-    r"\s*,\s*minor:\s*(?P<minor>\d+)\s*\}\s*as const;",
-    re.MULTILINE,
+#: A declaration of a target, exported or not, in comment-free source.
+_DECL = re.compile(r"\bconst\s+(?P<zone>[A-Z][A-Z0-9_]*)_TARGET\b")
+#: The value that must follow it: an optional type annotation, then
+#: ``{ major: X, minor: Y }`` (any whitespace, newlines and an optional
+#: trailing comma), then ``as const`` / ``satisfies T`` / nothing.
+_VALUE = re.compile(
+    r"\s*(?::[^=]*)?=\s*\{\s*major\s*:\s*(?P<major>\d+)\s*,"
+    r"\s*minor\s*:\s*(?P<minor>\d+)\s*,?\s*\}"
 )
+
+
+def strip_comments(text: str) -> str:
+    """``text`` with every ``//`` and ``/* */`` comment blanked, string
+    literals (``'``, ``"``, `````) kept, so a commented-out target is
+    never read as the real one. Newlines inside a block comment are kept."""
+    out: list[str] = []
+    i, n = 0, len(text)
+    while i < n:
+        c = text[i]
+        if c in "'\"`":
+            j = i + 1
+            while j < n and text[j] != c:
+                if text[j] == "\\":
+                    j += 1
+                elif c != "`" and text[j] == "\n":
+                    break  # an unterminated ' or " string ends at the line
+                j += 1
+            out.append(text[i:j + 1])
+            i = j + 1
+        elif text.startswith("//", i):
+            j = text.find("\n", i)
+            i = n if j < 0 else j
+        elif text.startswith("/*", i):
+            j = text.find("*/", i + 2)
+            j = n if j < 0 else j + 2
+            out.append("".join(ch for ch in text[i:j] if ch == "\n"))
+            i = j
+        else:
+            out.append(c)
+            i += 1
+    return "".join(out)
 
 
 def const_of(zone: str) -> str:
     return f"{zone.upper()}_TARGET"
 
 
-def parse_targets(sources: dict[str, str]) -> tuple[dict[str, tuple[str, int, int]], list[str]]:
-    """``{zone: (file, major, minor)}`` from ``{repo-relative file: text}``.
+def parse_targets(
+    sources: dict[str, str],
+) -> tuple[dict[str, tuple[str, int, int]], list[str], set[str]]:
+    """``({zone: (file, major, minor)}, findings, declared zones)`` from
+    ``{repo-relative file: text}``, comments stripped first.
 
-    A target defined in two files is a finding (the second one could drift
-    unseen), returned beside the table.
+    A target defined in two files, or declared in a shape this parser cannot
+    read ("could not parse"), is a finding returned beside the table; the
+    declared set lets :func:`target_drift` tell an unparsable target from a
+    missing one.
     """
     found: dict[str, tuple[str, int, int]] = {}
     findings: list[str] = []
+    declared: set[str] = set()
+    seen: dict[str, str] = {}
     for path, text in sorted(sources.items()):
-        for m in _TARGET.finditer(text):
-            zone = m.group("zone").lower()
-            if zone in found:
+        code = strip_comments(text)
+        for d in _DECL.finditer(code):
+            zone = d.group("zone").lower()
+            declared.add(zone)
+            if zone in seen:
                 findings.append(
-                    f"`{const_of(zone)}` is defined in both `{found[zone][0]}` and "
+                    f"`{const_of(zone)}` is defined in both `{seen[zone]}` and "
                     f"`{path}`; keep one"
                 )
                 continue
+            seen[zone] = path
+            m = _VALUE.match(code, d.end())
+            if m is None:
+                snippet = code[d.start():d.end() + 60].split(";")[0]
+                findings.append(
+                    f"could not parse `{const_of(zone)}` in `{path}` "
+                    f"(`{' '.join(snippet.split())}`): write it as "
+                    f"`export const {const_of(zone)} = {{ major: X, minor: Y }} as const;`"
+                )
+                continue
             found[zone] = (path, int(m.group("major")), int(m.group("minor")))
-    return found, findings
+    return found, findings, declared
 
 
 def target_drift(
@@ -103,8 +158,13 @@ def target_drift(
     writers: dict[str, tuple[int, int, int]],
     not_read: dict[str, str] = NOT_READ_BY_APP,
     homes: dict[str, str] = EXPECTED_HOME,
+    declared: frozenset[str] | set[str] = frozenset(),
 ) -> list[str]:
-    """Every way the app's targets disagree with the Python writers, one line each."""
+    """Every way the app's targets disagree with the Python writers, one line each.
+
+    A zone in ``declared`` but not in ``app`` was reported by
+    :func:`parse_targets` as unparsable, so it is not reported missing too.
+    """
     findings: list[str] = []
     for zone, (path, major, minor) in sorted(app.items()):
         const = const_of(zone)
@@ -139,7 +199,7 @@ def target_drift(
                 f"{wanted}; the app cannot target a version main does not write"
             )
     for zone in sorted(writers):
-        if zone in app or zone in not_read:
+        if zone in app or zone in not_read or zone in declared:
             continue
         home = homes.get(zone, "apeGmshViewer/src/reader/read.ts")
         w_major, w_minor, _ = writers[zone]
@@ -170,15 +230,16 @@ def sources() -> dict[str, str]:
 
 
 def test_app_targets_equal_python_writers(sources: dict[str, str]) -> None:
-    app, findings = parse_targets(sources)
-    findings += target_drift(app, _writer_versions())
+    app, findings, declared = parse_targets(sources)
+    findings += target_drift(app, _writer_versions(), declared=declared)
     assert findings == [], "\n".join(findings)
 
 
 def test_every_expected_target_is_parsed(sources: dict[str, str]) -> None:
     """The parser reads each target the app has today, from its home file,
     so a reformat of a target line fails loudly rather than parsing nothing."""
-    app, _ = parse_targets(sources)
+    app, findings, _ = parse_targets(sources)
+    assert findings == [], findings
     assert {z: app[z][0] for z in app} == EXPECTED_HOME
 
 
@@ -230,9 +291,67 @@ def test_a_target_in_the_wrong_file_or_twice_fails() -> None:
     f = target_drift({OPENSEES: ("apeGmshViewer/src/reader/x.ts", 2, 28), NEUTRAL: (_RT, 2, 35)}, _W, not_read={})
     assert len(f) == 1 and "this test expects it in" in f[0], f
     line = "export const OPENSEES_TARGET = { major: 2, minor: 28 } as const;\n"
-    _, dup = parse_targets({"a.ts": line, "b.ts": line})
+    _, dup, _ = parse_targets({"a.ts": line, "b.ts": line})
     assert len(dup) == 1 and "defined in both" in dup[0], dup
 
 
 def test_equal_targets_pass_and_the_patch_is_ignored() -> None:
     assert target_drift({OPENSEES: (_RT, 2, 28), NEUTRAL: (_RT, 2, 35)}, {OPENSEES: (2, 28, 3), NEUTRAL: (2, 35, 0)}, not_read={}) == []
+
+
+def _drift_of(source: str) -> list[str]:
+    """parse_targets then target_drift on one read.ts text, writers ``_W``."""
+    app, findings, declared = parse_targets({_RT: source})
+    return findings + target_drift(app, _W, not_read={}, declared=declared)
+
+
+_NEUTRAL_LINE = "export const NEUTRAL_TARGET = { major: 2, minor: 35 } as const;\n"
+
+
+def test_a_commented_decoy_does_not_hide_a_behind_target() -> None:
+    """Review round 1 reproducer: a block-commented decoy at 28 and the real
+    line at 27 with ``satisfies``. The decoy is not read; the real line is
+    behind. A line-comment decoy is not read either."""
+    src = (
+        "/*\nexport const OPENSEES_TARGET = { major: 2, minor: 28 } as const;\n*/\n"
+        "export const OPENSEES_TARGET = { major: 2, minor: 27 } satisfies Version;\n"
+        + _NEUTRAL_LINE
+    )
+    f = _drift_of(src)
+    assert len(f) == 1 and "is 2.27, behind" in f[0] and "bump `OPENSEES_TARGET`" in f[0], f
+    line = (
+        "// export const OPENSEES_TARGET = { major: 2, minor: 28 } as const;\n"
+        "export const OPENSEES_TARGET = { major: 2, minor: 27 } as const; // was 28\n"
+        + _NEUTRAL_LINE
+    )
+    f = _drift_of(line)
+    assert len(f) == 1 and "is 2.27, behind" in f[0], f
+    # A commented-out target alone is a missing target, not a present one.
+    f = _drift_of("/* export const OPENSEES_TARGET = { major: 2, minor: 28 } as const; */\n" + _NEUTRAL_LINE)
+    assert len(f) == 1 and "the app has no `OPENSEES_TARGET`" in f[0], f
+
+
+def test_comment_markers_inside_strings_are_not_comments() -> None:
+    src = 'const url = "http://x/*y"; ' + "export const OPENSEES_TARGET = { major: 2, minor: 28 } as const;\n" + _NEUTRAL_LINE
+    assert _drift_of(src) == []
+
+
+def test_a_multi_line_target_with_a_trailing_comma_parses() -> None:
+    src = "export const OPENSEES_TARGET = {\n  major: 2,\n  minor: 27,\n} as const;\n" + _NEUTRAL_LINE
+    f = _drift_of(src)
+    assert len(f) == 1 and "is 2.27, behind" in f[0], f
+    assert _drift_of(src.replace("minor: 27", "minor: 28")) == []
+    typed = "export const OPENSEES_TARGET: Version = { major: 2, minor: 28 };\n" + _NEUTRAL_LINE
+    assert _drift_of(typed) == []
+
+
+def test_an_unparsable_target_says_could_not_parse_never_missing() -> None:
+    for bad in (
+        "export const OPENSEES_TARGET = { minor: 28, major: 2 } as const;\n",
+        "export const OPENSEES_TARGET = version(2, 28);\n",
+        "const OPENSEES_TARGET = BASE;\nexport { OPENSEES_TARGET };\n",
+    ):
+        f = _drift_of(bad + _NEUTRAL_LINE)
+        assert len(f) == 1, (bad, f)
+        assert f[0].startswith("could not parse `OPENSEES_TARGET` in `apeGmshViewer/src/reader/read.ts`"), f
+        assert "missing" not in f[0] and "has no" not in f[0], f

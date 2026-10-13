@@ -12,6 +12,13 @@
 // recorder's key reaches a /provenance frame (selectors.sourceFor says why
 // not otherwise). Parameters are never re-derived from the positional
 // `params` / `params_str` argv: a file without decl_params says so.
+//
+// `label` (opensees 2.28.0, ADR 0115 amendment R2-f) is not an OpenSees
+// parameter: it is the names a `label=` declaration was given, kept as
+// provenance beside the ids they resolved to. The window shows it on the
+// targets line (`label left`), never among the parameters or the unset
+// fields, and a null label (a `pg=` or explicit-id declaration) shows nothing.
+// It is never re-resolved, so it selects nothing.
 
 import type { Event, State } from "../../state/store.ts";
 import { recorderDecls, shortValue, sourceFor } from "../../state/selectors.ts";
@@ -81,10 +88,13 @@ function recordsOf(p: Record<string, DeclValue>): string {
   return parts.join(" · ");
 }
 
+/** The 2.28.0 provenance field: the names a `label=` declaration was given; not a parameter. */
+const LABEL_FIELD = "label";
+
 /** A field that names a group: `pg`, or `<what>_pg`. */
 const isGroupField = (k: string): boolean => k === "pg" || k.endsWith("_pg");
 
-/** The target fields: `nodes` / `elements` lists as counts, `*pg` as group names, regions as given. */
+/** The target fields: `nodes` / `elements` lists as counts, `*pg` as group names, regions as given, and the declaration's label. */
 function targetsOf(p: Record<string, DeclValue>): { text: string; groups: string[] } {
   const parts: string[] = [];
   const groups: string[] = [];
@@ -99,6 +109,8 @@ function targetsOf(p: Record<string, DeclValue>): { text: string; groups: string
       parts.push(`${what}group ${names.length ? names.join(", ") : shortValue(v)}`);
     } else if (/region/.test(k)) {
       parts.push(`${k} ${list(v)}`);
+    } else if (k === LABEL_FIELD) {
+      parts.push(`label ${list(v)}`);
     }
   }
   return { text: parts.length ? parts.join(" · ") : "no target field is set (nodes, elements, pg, region)", groups };
@@ -151,6 +163,7 @@ function entryOf(s: State, r: DefObject, d: DeclRecord | undefined, st: StageDef
   const unset: string[] = [];
   for (const o of d?.params ?? []) {
     for (const [k, v] of Object.entries(o.params)) {
+      if (k === LABEL_FIELD) continue; // provenance, on the targets line
       if (isEmpty(v)) unset.push(k);
       else params.push({ field: (d!.params.length > 1 ? `#${o.row} ` : "") + k, value: shortValue(v) });
     }

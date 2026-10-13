@@ -82,11 +82,13 @@ export const NEUTRAL_TARGET = { major: 2, minor: 35 } as const;
  * only (opensees 2.28.0)"): the `decl_params` rows of fix, mass and typed
  * Node / Element recorder declarations gain a `label` field, the names a
  * `label=` declaration was given (`null` for `pg=` or explicit ids). No path
- * or dtype changes. The app needs no new read: `decl_params` rows are read
- * field by field, so `label` is one more parameter (the Recorders window lists
- * it beside the others, or among the unset fields when null), exactly as a
- * 2.27 app already showed it under the banner. The ids stay authoritative and
- * nothing the app draws or selects resolves a label.
+ * or dtype changes, so the reader needs no new read: `decl_params` rows are
+ * read field by field and `label` arrives as a field. The rule for every
+ * window: `label` is provenance, not an OpenSees parameter. No window lists it
+ * as a parameter or an unset field; the Recorders window, the one window that
+ * renders those declarations' fields, shows it on the targets line, and a null
+ * label shows nothing. The ids stay authoritative: nothing the app draws or
+ * selects resolves a label.
  *
  * tests/test_app_target_drift.py fails when any `*_TARGET` here (or
  * `RESULTS_TARGET` in results.ts) differs from its Python writer's version:
