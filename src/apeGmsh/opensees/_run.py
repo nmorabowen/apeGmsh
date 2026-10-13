@@ -99,7 +99,8 @@ class RunReport:
     ``returncode``
         The child's exit code (``0``: a non-zero exit raises).
     ``log``
-        The tee'd log (``<deck>.log`` unless ``log=`` overrode it).
+        The tee'd log, absolute (``<deck>.log`` unless ``log=`` overrode
+        it).
     ``elapsed_s``
         Wall-clock seconds from launch to exit.
     ``increments``
@@ -371,7 +372,7 @@ def stream_run(
             )
         return RunReport(
             returncode=rc,
-            log=Path(log_path),
+            log=Path(os.path.abspath(log_path)),
             elapsed_s=elapsed,
             increments=counted.value if count_increments else None,
             solver_stats=stats,
