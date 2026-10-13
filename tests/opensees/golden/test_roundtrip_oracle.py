@@ -20,8 +20,9 @@ header records that.
 - Class B: the same lines in another order, once every number is
   normalised (so float text may differ too), **and** the replayed deck
   still declares every tag before a line uses it (K2c, #1816).
-- Class C: a semantic difference (#1798), or a reorder that uses a tag
-  before its declaration, which aborts the deck (#1814).
+- Class C: a semantic difference, cited to its open issue (#1832), or a
+  reorder that uses a tag before its declaration, which aborts the deck
+  (#1814).
 - Class S: the model is not replayable, and replay raises the named error
   (#1797).
 
