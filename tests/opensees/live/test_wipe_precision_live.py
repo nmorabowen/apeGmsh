@@ -141,7 +141,7 @@ def test_wipe_moves_the_epoch_for_every_bridge(cantilever: Any) -> None:
 
 def test_wipe_never_reaches_a_deck(cantilever: Any, tmp_path: Path) -> None:
     ops = _bridge(cantilever)
-    ops.recorder.Node(file="tip.out", response="disp",
+    ops.recorder.Node(file=str(tmp_path / "tip.out"), response="disp",
                       nodes=(ops.nodes.one(label="tip").tag,), dofs=(2,))
     ops.tcl(str(tmp_path / "before.tcl"))
     ops.py(str(tmp_path / "before.py"))
