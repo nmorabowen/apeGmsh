@@ -2,7 +2,7 @@
 <!-- skill-freshness: verified against apeGmsh main@8eeda7a3 (2026-07-06) · signatures: python -m apeGmsh.studio.lookup SYMBOL (ADR 0096); src/ is not the authoring lookup -->
 
 `g.rebar` is a session composite (`RebarComposite`, registered at
-`src/apeGmsh/_core.py:53`) that authors **RC reinforcement cages** —
+`src/apeGmsh/_core.py:96`) that authors **RC reinforcement cages** —
 longitudinal bars + ties/hoops + ACI-318 detailing — as solver-agnostic
 geometry, then couples them to a host continuum. It sits **above** the
 lower-level `g.reinforce` embedded-rebar generator: `g.rebar` is the
@@ -36,7 +36,7 @@ nodes* on the true curve.
 ## Detailing standard — set it first
 
 ```python
-g.rebar.use_standard(standard) -> None       # src/apeGmsh/core/RebarComposite.py:99
+g.rebar.use_standard(standard) -> None       # src/apeGmsh/rebar/_composite.py:89
 ```
 
 Binds the default `DetailingStandard` for the session; resolves `"<k>db"`
@@ -58,8 +58,8 @@ pass a numeric `db` in model units or call `use_standard(...)` first.
 
 ## Standardised member generators → a `Cage`
 
-All keyword-only; all return a `Cage`. (`src/apeGmsh/core/RebarComposite.py`
-:147 `column`, :269 `beam`, :386 `circular_column`, :503 `wall`.)
+All keyword-only; all return a `Cage`. (`src/apeGmsh/rebar/_composite.py`
+:137 `column`, :259 `beam`, :376 `circular_column`, :493 `wall`.)
 
 ```python
 g.rebar.column(*, section, height, cover, longitudinal: BarLayout, ties: TieLayout,
@@ -102,19 +102,19 @@ db_value=None, hook=None)` are the layout records. `hinge_spacing` +
 ```python
 g.rebar.bar(points=None, *, db, material, role="longitudinal", element="truss",
     start_hook=None, end_hook=None, corner_radius=METADATA, curve="polyline",
-    arc_center=None, name=None) -> Bar | BarBuilder            # :105
+    arc_center=None, name=None) -> Bar | BarBuilder            # :95
 #   points given → Bar; points None → fluent BarBuilder.
 #   element: "truss" (CorotTruss) | "beam" (dowel; gated, curved bars NotImplemented).
 #   curve: "polyline" (default) | "arc" (true arc about arc_center) | "spline" (C2).
 
 g.rebar.stirrup(points, *, db, material, closure_hook=None, role="tie",
-    corner_radius=METADATA, curve="polyline", arc_center=None, name=None) -> Stirrup   # :131
+    corner_radius=METADATA, curve="polyline", arc_center=None, name=None) -> Stirrup   # :121
 #   open polyline returning near origin; closure_hook defaults to Hook.seismic_135().
-g.rebar.stirrup_rect(bx, by, cover, *, db, material, **kw) -> Stirrup                   # :142
+g.rebar.stirrup_rect(bx, by, cover, *, db, material, **kw) -> Stirrup                   # :132
 
 g.rebar.bundle(points, *, n, db, material, toward, pattern="auto", spacing=None,
     role="longitudinal", element="truss", start_hook=None, end_hook=None,
-    name=None) -> tuple[Bar, ...]                              # :841 (ACI 318-19 §25.6)
+    name=None) -> tuple[Bar, ...]                              # :808 (ACI 318-19 §25.6)
 #   n in 1..4 parallel contact bars; pattern "line"/"triangle"/"square"/"auto";
 #   stacks toward an interior point. #14/#18 capped at 2 per §25.6.1.1.
 ```
@@ -130,7 +130,7 @@ g.rebar.place(cage: Cage, into: str, *, coupling="conformal",
     per_member_coupling=None, bond=None, perfect=None, kt=None, kt_alpha=None,
     enforce="penalty", bipenalty=False, dtcr=None, tolerance=1.0e-6, snap=False,
     host_dim=None, true_arc=False, on_conformal_infeasible="fail", twin_tail=True,
-    emit_elements=False, name=None) -> RebarPlacement           # :1040
+    emit_elements=False, name=None) -> RebarPlacement           # :979
 ```
 
 **Call before `g.mesh.generation.generate()`** for conformal coupling

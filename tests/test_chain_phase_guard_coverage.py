@@ -46,7 +46,7 @@ COMPOSITES: dict[str, tuple[str, str | None]] = {
     "g.labels":            ("core/Labels.py", "Labels"),
     "g.parts":             ("core/_parts_registry.py", "PartsRegistry"),
     "g.sections":          ("sections/_builder.py", None),
-    "g.rebar":             ("core/RebarComposite.py", "RebarComposite"),
+    "g.rebar":             ("rebar/_composite.py", "RebarComposite"),
 }
 
 FREEZE_GUARDS = {"chain_phase_guard", "_check_chain_phase",
