@@ -364,9 +364,9 @@ with apeGmsh(model_name="rc_frame_2storey") as g:
     for k in FLOORS:
         g.physical.add_point(joints_at_level[k], name=f"floor_{k}_joints")
         g.physical.add_point([f"floor_{k}_master"], name=f"floor_{k}_master")
-        # Rigid slab: every floor joint follows the master in ux, uy and rz. master_point
-        # sets the slab plane and picks the nearest node as master, so it repeats the
-        # master's position although the master group holds one node (API gap).
+        # Rigid slab: every floor joint follows the master in ux, uy and rz. The master
+        # group holds one node, so that node is the master even where joint J11 coincides
+        # with it; master_point only sets the slab plane and could be omitted here.
         g.constraints.rigid_diaphragm(
             f"floor_{k}_master", f"floor_{k}_joints",
             master_point=(PLAN_CENTRE, PLAN_CENTRE, k * STOREY),

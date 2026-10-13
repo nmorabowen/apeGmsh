@@ -2499,9 +2499,12 @@ class ConstraintsComposite(_DeclarationsMixin):
             plane passes through it. A master that resolves to zero or
             to several nodes is refused at resolution, and so is a
             plane that collects no slave node. Given: the plane passes
-            through this point and the master is the plane node nearest
-            to it (use it when the master label holds several nodes);
-            a plane that collects no master or no slave is refused.
+            through this point. A master label of one node stays the
+            master, and is refused if it lies off that plane. A master
+            label of several nodes takes the plane node nearest the
+            point, preferring a master-label node over a coincident
+            slave node; a plane that collects no master-label node, no
+            master or no slave is refused.
         plane_normal : (nx, ny, nz), default (0, 0, 1)
             Unit normal to the diaphragm plane. ``(0, 0, 1)`` is a
             horizontal floor; ``(0, 1, 0)`` is a vertical wall, etc.
@@ -2528,7 +2531,8 @@ class ConstraintsComposite(_DeclarationsMixin):
         ValueError
             At resolution, with ``master_point`` omitted, when the master
             does not resolve to exactly one node or no slave node lies in
-            the plane through it.
+            the plane through it; with ``master_point`` given, when a
+            one-node master lies off the plane through the point.
 
         See Also
         --------

@@ -11,12 +11,11 @@ Oracles, each naming the right answer independently of the code:
   and its slaves are exactly the nine ``floor_k_joints`` nodes, by
   construction of the frame.
 * **Frame oracle.** The reference frame (``model-scripts.md``,
-  ``frame_modal.py``) gives the same diaphragm node sets, the same deck
-  apart from the master pick on a tie, and the same eigen periods with
-  the point omitted as with it given. The given point of floor 2 is
-  coincident with beam-column joint ``J11_L2``, so the nearest-node rule
-  picks either of two nodes at zero distance; the one-node rule picks the
-  labelled master, the node the script fixes and masses.
+  ``frame_modal.py``) gives the same diaphragm records, the same deck
+  and the same eigen periods with the point omitted as with it given.
+  The given point of floor 2 is coincident with beam-column joint
+  ``J11_L2``; the one-node rule picks the labelled master, the node the
+  script fixes and masses, in both cases (B5, #1804).
 * **Refusals.** A master resolving to 0 or to several nodes, and a plane
   through the master that holds no slave, raise naming the count or the
   plane.
@@ -99,7 +98,7 @@ def _diaphragms(fem) -> list[tuple[int, int, list[int]]]:
             for p, m, ss in fem.nodes.constraints.rigid_diaphragms()]
 
 
-def _bridge(fem):
+def _bridge(fem, *, master_fix=(0, 0, 1, 1, 1, 0)):
     from apeGmsh.opensees import apeSees
 
     e, nu = 25e9, 0.2
@@ -119,7 +118,7 @@ def _bridge(fem):
         J=0.229 * bd * bw**3, Iy=bw * bd**3 / 12, Iz=bd * bw**3 / 12)
     ops.fix(pg="column_bases", dofs=(1, 1, 1, 1, 1, 1))
     for k in FLOORS:
-        ops.fix(pg=f"floor_{k}_master", dofs=(0, 0, 1, 1, 1, 0))
+        ops.fix(pg=f"floor_{k}_master", dofs=master_fix)
         ops.mass(pg=f"floor_{k}_master", values=(mass, mass, 0.0, 0.0, 0.0, rot))
     ops.constraints.Transformation()
     ops.numberer.RCM()
@@ -177,23 +176,20 @@ def test_frame_without_point_ties_the_same_nodes_as_with_it(frames):
     for (pg, mg, sg), (po, mo, so) in zip(given, omitted):
         assert pg == po == 3
         assert sorted([mg, *sg]) == sorted([mo, *so])
-    # Floor 1: the given point's nearest node is the labelled master, so
-    # the records are identical.
-    assert given[0] == omitted[0]
+    # Both floors: the one-node master wins with the point given too
+    # (B5, #1804), so the records are identical.
+    assert given == omitted
 
 
-def test_frame_decks_differ_only_in_the_tied_master_pick(frames, tmp_path):
+def test_frame_decks_are_identical_with_and_without_the_point(frames, tmp_path):
     texts = {}
     for mode, fem in frames.items():
         path = tmp_path / f"{mode}.tcl"
         _bridge(fem).tcl(str(path))
         texts[mode] = path.read_text().splitlines()
-    assert len(texts["given"]) == len(texts["omitted"])
-    for a, b in zip(texts["given"], texts["omitted"]):
-        if a.startswith("rigidDiaphragm"):
-            assert sorted(a.split()[2:]) == sorted(b.split()[2:])
-        else:
-            assert a == b
+    # Before B5 (#1804) floor 2's rigidDiaphragm line named the coincident
+    # joint J11_L2 as master when the point was given.
+    assert texts["given"] == texts["omitted"]
 
 
 @pytest.mark.live
@@ -265,12 +261,13 @@ def test_one_node_master_sets_the_plane_and_the_offsets():
     np.testing.assert_allclose(rec.offsets, [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]])
 
 
-def test_given_point_keeps_the_nearest_plane_node_rule():
-    # Point (0.9, 0, 3): the nearest plane node is 2, though master_nodes={1}.
+def test_given_point_keeps_a_one_node_master():
+    # Point (0.9, 0, 3): the nearest plane node is 2, but the master label
+    # names node 1 alone, so node 1 stays the master (B5, #1804).
     rec = _resolver().resolve_rigid_diaphragm(
         _defn(master_point=(0.9, 0.0, 3.0)), {1, 2, 3}, master_nodes={1})
-    assert rec.master_node == 2
-    assert sorted(rec.slave_nodes) == [1, 3]
+    assert rec.master_node == 1
+    assert sorted(rec.slave_nodes) == [2, 3]
 
 
 def test_given_point_whose_plane_is_empty_is_refused():
