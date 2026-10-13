@@ -139,9 +139,9 @@ source = "#1199 X4 ruling 1 (must be dated); review_by proposed by X4-a"
 id = "studio-spin-out"
 kind = "spin-out"
 paths = ["src/apeGmsh/studio/"]
-expires = 2026-12-11
+expires = 2026-12-12
 basis = "ruling"
-source = "#1199 X4 ruling 5: X4-a's landing date + 60 days (2026-12-11 for a 2026-10-12 landing; re-checked at landing)"
+source = "#1199 X4 ruling 5: X4-a landed 2026-10-13 (6e14c894), so landing date + 60 days = 2026-12-12 (coordinator amendment on #1807)"
 
 # --- Prototypes folder -----------------------------------------------------
 

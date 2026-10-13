@@ -63,10 +63,12 @@ FileRow = list[Any]
 #: ADMITTED; `test_freeze_lock.py` holds FREEZE_POINT_DIGEST and the lock that
 #: compares them, so editing either one edits the baseline. X4-a (#1806) adds
 #: the retirement ledger: adding, re-dating or removing a row is a maintainer gate.
+#: `test_loc_ratchet.py` holds the X4-b shrink-only LOC baselines (#1807).
 BASELINE = (
     "tests/freeze_census.py",
     "tests/test_freeze_lock.py",
     "internal_docs/program/retirement_ledger.toml",
+    "tests/test_loc_ratchet.py",
 )
 HUMAN_GATE = "human-gate"
 ADR_FILE = re.compile(r"architecture/decisions/\d{4}-[^/]*\.md")
