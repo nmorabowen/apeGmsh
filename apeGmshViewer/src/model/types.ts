@@ -151,6 +151,14 @@ export interface DeclTable {
    * `stages/stage_000/bcs/fix`, ...).
    */
   rows: Record<string, number[]>;
+  /**
+   * `/opensees/decls@program_decl` (opensees 2.31.0): "complete" when the
+   * program's hashed `decl` column records each call's declaration, "absent"
+   * when it does not; a file below 2.31.0 has no marker and reads as
+   * "absent" (h5-schema.md). Another value is kept verbatim (a non-string as
+   * its JSON) and names no era. Read only for the results pairing (V4h).
+   */
+  programDecl?: string;
 }
 
 /**
