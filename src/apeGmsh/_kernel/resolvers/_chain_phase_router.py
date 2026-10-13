@@ -428,8 +428,8 @@ def _route_rigid_diaphragm(fem: "FEMData", source, defn) -> "FEMData":
     s = {int(t) for t in source.nodes_for(defn.slave_label)}
     all_in = m | s
     resolver = _build_resolver(fem, ConstraintResolver)
-    # The resolver refuses a plane with no master or no slave (#1778,
-    # #1786), so every record here has both.
+    # The resolver refuses a plane with no master or no slave, so every
+    # record here has both.
     record = resolver.resolve_rigid_diaphragm(defn, all_in, master_nodes=m)
     return fem.with_constraint(record)
 
