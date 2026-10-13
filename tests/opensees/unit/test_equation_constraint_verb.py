@@ -4,8 +4,8 @@ Unit layer: declaration validation, the emitted row, and the handler rules
 it shares with an ``enforce="equation"`` tie (ADR 0068 INV-4): with no
 declared handler the bridge auto-emits ``Lagrange`` (``Transformation``
 would drop the row silently), a declared ``Transformation`` / ``Auto``
-raises, a partitioned emit refuses, and ``ops.h5`` warns that the row is
-not archived.
+raises, a partitioned emit refuses, and ``ops.h5`` archives the row
+without a warning.
 """
 from __future__ import annotations
 
