@@ -314,6 +314,9 @@ async function captureElements(settle: (ms?: number) => Promise<unknown>, width:
   if (typeof bridge.captureResize === "function") {
     await bridge.captureResize(1280, height);
     await settle();
+    // Nothing is selected: frame the whole model in the narrower window.
+    store.dispatch({ type: "frameSelection" });
+    await settle();
     await still(`${first}.1280`);
   }
 }
