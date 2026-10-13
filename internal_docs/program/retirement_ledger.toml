@@ -227,11 +227,3 @@ texts = ['tests/opensees/integration/test_emit_partitioned_auto_numberer_and_sys
 expires = 2026-12-11
 basis = "policy"
 source = "PROGRAM.md section 8 KC4 (60 days); clock start 2026-10-12 proposed by X4-a; this xfail is strict=False"
-
-[[row]]
-id = "xfail-ladruno-sanisand-linux"
-kind = "xfail"
-texts = ['tests/opensees/integration_ladruno/test_ladruno_sanisand_live.py::reason="Linux fork build differs ~4e-10 from ManzariDafalias; F3 roster #1523"']
-expires = 2026-12-11
-basis = "policy"
-source = "PROGRAM.md section 8 KC4 (60 days); clock start 2026-10-12 proposed by X4-a; depends on F3 roster #1523"

@@ -23,6 +23,7 @@ import {
   PROVENANCE_TARGET,
   readModel,
   SchemaError,
+  tieBonds,
   ZONE_FLOOR,
   type H5Module,
 } from "../src/reader/read.ts";
@@ -203,6 +204,112 @@ test("opensees 2.31.0 is the target: a 2.31 file with a 2.29 embeddedRebar store
   const m = read(path);
   assert.equal(m.opensees?.version, "2.31.0");
   assert.deepEqual(m.warnings, []);
+  // V4m: a group missing the string and kind columns opens; its ties are unknown, not 0
+  assert.deepEqual(m.opensees?.definitions.embeddedRebar, {
+    path: "/opensees/constraints/embeddedRebar",
+    count: 1,
+    bond: [],
+    unbonded: 0,
+    unresolved: [{ why: "/opensees/constraints/embeddedRebar has no args_str, arg_kinds", ties: 1 }],
+  });
+});
+
+// ---- V4m (#1846): the bond tag of a LadrunoEmbeddedRebar tie (tieBonds) ------
+//
+// The grammar (src/apeGmsh/opensees/element/embedded_rebar.py, mirroring the
+// fork's OPS_LadrunoEmbeddedRebar.cpp): `-bond matTag` or `-perfect kAxial`.
+// A token is an int (kind 0), a float (kind 1, written here as {f: x}) or a
+// string (kind 2), encoded as /opensees/commands is.
+
+type Tok = number | string | { f: number };
+function cols(rows: Tok[][]) {
+  const arg_offsets = [0], args: number[] = [], args_str: string[] = [], arg_kinds: number[] = [];
+  for (const r of rows) {
+    for (const t of r) {
+      if (typeof t === "string") (args.push(Number.NaN), args_str.push(t), arg_kinds.push(2));
+      else if (typeof t === "number") (args.push(t), args_str.push(""), arg_kinds.push(0));
+      else (args.push(t.f), args_str.push(""), arg_kinds.push(1));
+    }
+    arg_offsets.push(args.length);
+  }
+  return { arg_offsets, args, args_str, arg_kinds };
+}
+const P = "/opensees/constraints/embeddedRebar";
+const host = [7, "-host", 3, "-shape", { f: 0.5 }, { f: 0.5 }, "-dir", { f: 0 }, { f: 0 }, { f: 1 }];
+
+test("V4m tieBonds: the integer after the one -bond token, counted per tag; -perfect names no material", () => {
+  const t = tieBonds(P, cols([[...host, "-bond", 5, "-bondScale", { f: 2 }], [...host, "-bond", 5], [...host, "-bond", 3, "-kt", "auto"], [...host, "-perfect", { f: 1.5e8 }]]));
+  assert.deepEqual(t, { path: P, count: 4, bond: [{ tag: 3, ties: 1 }, { tag: 5, ties: 2 }], unbonded: 1, unresolved: [] });
+});
+
+test("V4m tieBonds: -bond with no tag, a non-integer tag, a string, or -bond twice is unresolved, never a tag and never 0", () => {
+  const cases: [Tok[], string][] = [
+    [[...host, "-bond"], "-bond has no tag after it"],
+    [[...host, "-bond", { f: 5 }], "the value after -bond is not an integer tag"],
+    [[...host, "-bond", "bond1"], "the value after -bond is not an integer tag"],
+    [[...host, "-bond", 5, "-bond", 6], "-bond appears more than once in the tie's arguments"],
+  ];
+  for (const [row, why] of cases) {
+    const t = tieBonds(P, cols([row]));
+    assert.deepEqual(t.bond, [], why);
+    assert.equal(t.unbonded, 0, why);
+    assert.deepEqual(t.unresolved, [{ why, ties: 1 }], why);
+  }
+  // a kind-0 slot whose value is not an integer (a corrupt file) is no tag either
+  const c = cols([[...host, "-bond", 5]]);
+  c.args[c.args.length - 1] = 5.5;
+  assert.deepEqual(tieBonds(P, c).unresolved, [{ why: "the value after -bond is not an integer tag", ties: 1 }]);
+  // a "-bond" number-slot token is not the flag: only a string token (kind 2) is
+  const d = cols([[...host, "-perfect", { f: 1 }]]);
+  d.args_str[0] = "-bond"; // the rebar node slot, an int
+  assert.deepEqual(tieBonds(P, d), { path: P, count: 1, bond: [], unbonded: 1, unresolved: [] });
+});
+
+test("V4m tieBonds: a row's -bond never reads the next row's first token (rows are bounded by arg_offsets)", () => {
+  const t = tieBonds(P, cols([[...host, "-bond"], [9, "-host", 3, "-bond", 4]]));
+  assert.deepEqual(t.bond, [{ tag: 4, ties: 1 }]);
+  assert.deepEqual(t.unresolved, [{ why: "-bond has no tag after it", ties: 1 }]);
+});
+
+test("V4m tieBonds: a missing column, columns of different lengths or broken offsets make every tie unknown", () => {
+  const ok = cols([[...host, "-bond", 5], [...host, "-bond", 6]]);
+  for (const k of ["args", "args_str", "arg_kinds"] as const) {
+    const t = tieBonds(P, { ...ok, [k]: null });
+    assert.deepEqual(t.bond, []);
+    assert.deepEqual(t.unresolved, [{ why: `${P} has no ${k}`, ties: 2 }]);
+  }
+  assert.deepEqual(tieBonds(P, { ...ok, arg_offsets: null }).unresolved, [{ why: `${P} has no arg_offsets`, ties: null }]);
+  assert.deepEqual(tieBonds(P, { ...ok, arg_kinds: ok.arg_kinds.slice(1) }).unresolved[0]!.ties, 2);
+  assert.match(tieBonds(P, { ...ok, arg_kinds: ok.arg_kinds.slice(1) }).unresolved[0]!.why, /differ in length/);
+  for (const off of [[0, 12, 23], [1, 12, 24], [0, 25, 24], [0, 12]]) {
+    const t = tieBonds(P, { ...ok, arg_offsets: off });
+    assert.deepEqual(t.bond, [], JSON.stringify(off));
+    assert.match(t.unresolved[0]!.why, /arg_offsets does not run from 0 to 24/, JSON.stringify(off));
+  }
+});
+
+test("V4m: the reader reads a full embeddedRebar group through h5wasm, with the writer's dtypes", () => {
+  const path = writeFile("o-231-er.h5", v(NEUTRAL_TARGET, NEUTRAL_TARGET.minor), true, "2.31.0");
+  const c = cols([[...host, "-bond", 5], [...host, "-perfect", { f: 1e8 }], [...host, "-bond", { f: 5 }]]);
+  const f = new h5wasm.File(path, "a");
+  const er = (f.get("opensees") as h5wasm.Group).create_group("constraints").create_group("embeddedRebar");
+  er.create_dataset({ name: "ele_tag", data: new BigInt64Array([10n, 11n, 12n]) });
+  er.create_dataset({ name: "arg_offsets", data: new Int32Array(c.arg_offsets) });
+  er.create_dataset({ name: "args", data: new Float64Array(c.args) });
+  er.create_dataset({ name: "args_str", data: c.args_str });
+  er.create_dataset({ name: "arg_kinds", data: new Int8Array(c.arg_kinds) });
+  f.close();
+  const m = read(path);
+  assert.deepEqual(m.warnings, []);
+  assert.deepEqual(m.opensees?.definitions.embeddedRebar, {
+    path: P,
+    count: 3,
+    bond: [{ tag: 5, ties: 1 }],
+    unbonded: 1,
+    unresolved: [{ why: "the value after -bond is not an integer tag", ties: 1 }],
+  });
+  // and a file without the group reads none
+  assert.equal(read(writeFile("o-231-none.h5", v(NEUTRAL_TARGET, NEUTRAL_TARGET.minor), true, "2.31.0")).opensees?.definitions.embeddedRebar, null);
 });
 
 test("opensees 2.27.0: the 2.27 stage records (update_parameter, zero_velocities, param_tags) open with no warning", () => {
