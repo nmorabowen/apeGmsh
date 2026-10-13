@@ -128,6 +128,25 @@ def test_wipe_leaves_every_row_and_closes_the_session(
     ops.wipe()
 
 
+def test_live_queries_after_wipe_name_the_wipe(cantilever: Any) -> None:
+    # The queries refuse before any call into OpenSees, so no fork is
+    # needed: after a wipe the bridge has no live emitter to ask, and the
+    # refusal repeats the closed session's cause instead of claiming no
+    # analysis ran.
+    ops = _bridge(cantilever)
+    assert ops.analyze(steps=N) == 0
+    ops.wipe()
+    closed = r"the live domain is closed: ops\.wipe\(\) closed the live domain"
+    with pytest.raises(BridgeError, match=rf"ladruno_contact_force: {closed}"):
+        ops.ladruno_contact_force(1)
+    with pytest.raises(BridgeError,
+                       match=rf"ladruno_projection_tie_force: {closed}"):
+        ops.ladruno_projection_tie_force(1, 1)
+    with pytest.raises(BridgeError, match=rf"augment: {closed}"):
+        with ops.augment(element=1):
+            pass
+
+
 def test_wipe_moves_the_epoch_for_every_bridge(cantilever: Any) -> None:
     first = _bridge(cantilever)
     first.analyze(steps=N)

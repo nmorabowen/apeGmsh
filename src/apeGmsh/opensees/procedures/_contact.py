@@ -8,19 +8,42 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from .._internal.build.errors import BridgeError
+from .._readback import DroppedSession
 
 if TYPE_CHECKING:
+    from .._readback import ReadState
     from ..emitter.live import ContactInfo, LiveOpsEmitter
 
 from ._host import _ProcedureHost
 
 
+def no_live_domain_error(
+    verb: str, read_state: "ReadState", hint: str,
+) -> BridgeError:
+    """The error of a live query with no live emitter to ask.
+
+    When the bridge closed its live domain (``ops.wipe()``, a deck run,
+    ``ops.run()``), the read session's :class:`DroppedSession` names why,
+    and the error repeats that cause; otherwise no live analysis ran.
+    """
+    if isinstance(read_state, DroppedSession):
+        return BridgeError(
+            f"apeSees.{verb}: the live domain is closed: {read_state.cause}. "
+            f"{hint}"
+        )
+    return BridgeError(f"apeSees.{verb}: no live analysis has run. {hint}")
+
+
 class _ContactQueryMixin(_ProcedureHost):
+    if TYPE_CHECKING:
+        _read_state: "ReadState"
+
     def _require_live_for_contact_query(self, verb: str) -> "LiveOpsEmitter":
         """The shared no-live-analysis guard for the contact queries."""
         if self._live_emitter is None:
-            raise BridgeError(
-                f"apeSees.{verb}: no live analysis has run. Call analyze(...) "
+            raise no_live_domain_error(
+                verb, self._read_state,
+                "Call analyze(...) "
                 "first (the live path) — the contact queries read the CURRENT "
                 "state of the contact engine, so they only mean anything after "
                 "a step. There is no recorded alternative: the LadrunoContact "

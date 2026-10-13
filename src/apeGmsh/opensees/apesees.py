@@ -242,7 +242,7 @@ from ._results_route import (
 )
 from .recorder import Element as _ElementRecorder
 from .recorder import FilterableRecorder, Ladruno
-from .procedures._contact import _ContactQueryMixin
+from .procedures._contact import _ContactQueryMixin, no_live_domain_error
 from .procedures._explicit import ExplicitRunResult, _ExplicitMixin
 from .procedures._frf import _FrfMixin
 from .procedures._modal import _ModalMixin
@@ -9766,9 +9766,9 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
         ``CentralDifferenceLadruno`` integrator).
         """
         if self._live_emitter is None:
-            raise BridgeError(
-                "apeSees.ladruno_projection_tie_force: no live analysis has "
-                "run. Call analyze(...) first (the live path); the query reads "
+            raise no_live_domain_error(
+                "ladruno_projection_tie_force", self._read_state,
+                "Call analyze(...) first (the live path); the query reads "
                 "the last projection step. For a recorded time history, record "
                 "ops.recorder.Ladruno(nodal_responses=('constraintTieForce',)) "
                 "and read results.nodes.get(component='constraint_tie_force_x')."
@@ -9822,8 +9822,9 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
             sweep (``RuntimeError``).
         """
         if self._live_emitter is None:
-            raise BridgeError(
-                "apeSees.augment: no live analysis has run. Call "
+            raise no_live_domain_error(
+                "augment", self._read_state,
+                "Call "
                 "analyze(...) first (the live path) — the sweep drives the "
                 "in-process domain that step left standing. There is no "
                 "deck-emission equivalent: ladrunoBeginAugment / "
