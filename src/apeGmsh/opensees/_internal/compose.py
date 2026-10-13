@@ -693,6 +693,49 @@ def _replays_tie_fallback(opensees_version: Any, n_ties: int) -> bool:
     return not archives_embedded_rebar(opensees_version)
 
 
+def _rebar_cell_tags(elements: "Sequence[Any]", fem: Any) -> "set[int]":
+    """The element tags of the archived ``g.rebar.place(emit_elements=True)``
+    cells (#1828), which the replay writes in the bridge's slot 7b'', after
+    the reinforce ties, not with the other elements at step 8.
+
+    A cell is a bridge-minted ``CorotTruss`` row (sentinel fem id) whose node
+    pair is a line cell of a bar in the neutral zone, matched one for one.
+    Refuses when the archived cells and the neutral zone disagree in count.
+    """
+    from collections import Counter
+
+    from .build.constraints_plan import (
+        rebar_cell_entries,
+        rebar_element_records,
+    )
+    from .tag_resolution import MISSING_FEM_ELEMENT_ID
+
+    entries = rebar_cell_entries(rebar_element_records(fem))
+    if not entries:
+        return set()
+    want: "Counter[tuple[int, int]]" = Counter(
+        (int(e.key[1]), int(e.key[2])) for e in entries)
+    tags: "set[int]" = set()
+    for rec in elements:
+        if (rec.type_token != "CorotTruss"
+                or int(rec.fem_eid) != MISSING_FEM_ELEMENT_ID):
+            continue
+        conn = tuple(rec.connectivity)
+        if len(conn) != 2:
+            continue
+        pair = (int(conn[0]), int(conn[1]))
+        if want[pair] > 0:
+            want[pair] -= 1
+            tags.add(int(rec.tag))
+    if len(tags) != len(entries):
+        raise ValueError(
+            f"replay: the neutral zone carries {len(entries)} rebar cell(s) "
+            f"but the archive's element store holds {len(tags)} matching "
+            "CorotTruss row(s); the two zones disagree."
+        )
+    return tags
+
+
 def _write_archived_ramps(
     emitter: Any,
     records: "Sequence[Any]",
@@ -863,6 +906,9 @@ def _replay_into(
           archive, re-derived from the neutral-zone ``fem``; the bridge's
           slot 7b', after the fixes, masses and equation
           constraints
+      9c''. the ``g.rebar.place(emit_elements=True)`` ``CorotTruss``
+          cells, taken out of step 8 when ``fem`` is given: the bridge's
+          slot 7b'', after the ties (#1828)
       10. ``emitter.pattern_open`` (+ load / sp / eleLoad +
           pattern_close)
       11. ``emitter.recorder`` (wrapped in declaration-begin/end when
@@ -1008,7 +1054,22 @@ def _replay_into(
     # Per-element evaluation measured +13-15% on the emit of an
     # ungated-only 200k-element deck, i.e. a cost on exactly the models
     # this hoist does nothing for.
-    _kept = [rec for rec in elements if int(rec.tag) not in skip_element_tags]
+    # The g.rebar.place(emit_elements=True) cells leave step 8: the bridge
+    # writes them after the reinforce ties (slot 7b''), and so does 9c''
+    # below (#1828). Only a deck target (``fem`` given) moves them; the H5
+    # rewrite keeps its element order.
+    _cell_tags = (
+        _rebar_cell_tags(elements, fem) if fem is not None else set())
+    _cells = [
+        rec for rec in elements
+        if int(rec.tag) in _cell_tags
+        and int(rec.tag) not in skip_element_tags
+    ]
+    _kept = [
+        rec for rec in elements
+        if int(rec.tag) not in skip_element_tags
+        and int(rec.tag) not in _cell_tags
+    ]
     _gated: "list[Any]" = []
     _ungated = _kept
     # A bracket is only harmful when there is a builder-scoped declaration
@@ -1189,6 +1250,15 @@ def _replay_into(
         replay_reinforce_ties(
             emitter, fem, _rt_tags,
             name_to_tag=dict(reinforce_name_to_tag or {}),
+        )
+
+    # 9c''. The g.rebar.place(emit_elements=True) CorotTruss cells, in
+    # archive order: the bridge's slot 7b'', after the ties (#1828). Of what
+    # the bridge writes in between, the embed ties and contacts are streams
+    # this replay skips, and an interface's zeroLength stays at step 8.
+    if _cells:
+        _replay_elements_bracketed(
+            emitter, _cells, ndm=int(ndm), envelope_ndf=int(ndf),
         )
 
     # 9c. Global initial stress (ADR 0055 Phase 1).  Emitted BEFORE
