@@ -13,6 +13,7 @@
 // the view call. A click on a row or a link must dispatch a store `select`.
 
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
@@ -140,9 +141,9 @@ test("$decl refs are links to the declaration a click selects: section -> patch 
 
 test("used by, from the definition chain's refs: material <- section <- integration <- 123 elements", () => {
   const [mat, sec, bi] = materialsOf(state).groups.map((g) => g.rows[0]!);
-  assert.deepEqual(mat!.usedBy, { elements: 0, objects: [{ key: S, label: "section #1", target: S, why: null }] });
-  assert.deepEqual(sec!.usedBy, { elements: 0, objects: [{ key: BI, label: "beamIntegration #1", target: BI, why: null }] });
-  assert.deepEqual(bi!.usedBy, { elements: 123, objects: [] });
+  assert.deepEqual(mat!.usedBy, { elements: 0, objects: [{ key: S, label: "section #1", target: S, why: null }], ties: 0 });
+  assert.deepEqual(sec!.usedBy, { elements: 0, objects: [{ key: BI, label: "beamIntegration #1", target: BI, why: null }], ties: 0 });
+  assert.deepEqual(bi!.usedBy, { elements: 123, objects: [], ties: 0 });
 });
 
 test("named in decl_params by: the declarations whose parameters reference it; an element declaration has no store target", () => {
@@ -252,7 +253,7 @@ test("when the chain follows nothing to a declaration that decl_params names, th
   sec.tables = {};
   const s = load(m);
   const mat = materialsOf(s).groups[0]!.rows[0]!;
-  assert.deepEqual(mat.usedBy, { elements: 0, objects: [] });
+  assert.deepEqual(mat.usedBy, { elements: 0, objects: [], ties: 0 });
   assert.deepEqual(mat.referencedBy.map((u) => u.ref.key), [S]);
   const row = rowsOf(render(s).root)[0]!;
   const detail = row.all((n) => n.className === "window-row-detail")[0]!;
@@ -292,4 +293,111 @@ test("V4f: the frame highlights the row of the selected declaration (an unnamed 
   assert.ok(rows.filter((r) => r !== hit[0]).every((r) => !r.className.includes("selected") && r.style["background"] === undefined));
   // Nothing selected: nothing marked.
   assert.equal(markSelected(render(state).root as unknown as HTMLElement, []), 0);
+});
+
+// ---- V4m (#1846): embeddedRebar tie users -------------------------------------
+//
+// Oracle: fixtures/reinforced.h5, written by main's apeGmsh through
+// scripts/make_viewer_results_fixtures.py --reinforced (opensees 2.31.0), and
+// fixtures/reinforced.oracle.json beside it: Python's count of ties per bond
+// tag from apeGmsh's own reader (h5_reader.embedded_rebars), not the app's
+// parse. bond1 is named only by ties; bond2 by ties and by its own CorotTruss
+// cells; the third bar is tied by perfect bond (no material).
+
+const reinforced = await openModel(join(fixtures, "reinforced.h5"));
+const oracle = JSON.parse(readFileSync(join(fixtures, "reinforced.oracle.json"), "utf-8")) as { ties: number; unbonded: number; bond: Record<string, number> };
+const B1 = "opensees/uniaxialMaterial/bond1", B2 = "opensees/uniaxialMaterial/bond2";
+const rowOf = (s: State, path: string): MaterialRow => materialsOf(s).groups.flatMap((g) => g.rows).find((r) => r.path === path)!;
+const detailOf = (s: State, path: string): string =>
+  rowsOf(render(s).root).find((r) => r.dataset["decl"] === path)!.all((n) => n.className === "window-row-detail").map((n) => n.textContent).join(" | ");
+/** reinforced.h5 with its tie summary changed (a fresh clone: the window's indexes are keyed by the loaded definitions) */
+const withTies = (edit: (t: NonNullable<ModelFile["opensees"]>["definitions"]["embeddedRebar"] & object) => void): State => {
+  const m: ModelFile = structuredClone(reinforced);
+  edit(m.opensees!.definitions.embeddedRebar!);
+  return load(m);
+};
+
+test("V4m: per bond material, the app's tie count equals Python's count over the same group (reinforced.h5, 2.31)", () => {
+  const s = load(reinforced);
+  assert.equal(reinforced.opensees!.version, "2.31.0");
+  assert.deepEqual(reinforced.warnings, []);
+  const er = reinforced.opensees!.definitions.embeddedRebar!;
+  assert.equal(er.count, oracle.ties);
+  assert.equal(er.unbonded, oracle.unbonded);
+  assert.deepEqual(er.unresolved, []);
+  const uni = materialsOf(s).groups.find((g) => g.kind === "uniaxialMaterial")!.rows;
+  // joined by the tag each row carries, never by position
+  const app = Object.fromEntries(uni.filter((r) => r.usedBy.ties > 0).map((r) => [String(r.tag), r.usedBy.ties]));
+  assert.deepEqual(app, oracle.bond);
+  assert.ok(uni.every((r) => r.tiesUnknown === null));
+});
+
+test("V4m: a material used only by ties says 'used by N embeddedRebar ties', never 'used by nothing'", () => {
+  const s = load(reinforced);
+  const r = rowOf(s, B1);
+  assert.deepEqual(r.usedBy, { elements: 0, objects: [], ties: oracle.bond[String(r.tag)] });
+  const text = detailOf(s, B1);
+  assert.equal(text, `used by ${r.usedBy.ties} embeddedRebar ties`);
+  assert.doesNotMatch(text, /nothing/);
+});
+
+test("V4m: a material used by elements and ties shows both counts", () => {
+  const s = load(reinforced);
+  const r = rowOf(s, B2);
+  assert.ok(r.usedBy.elements > 0);
+  assert.equal(r.usedBy.ties, oracle.bond[String(r.tag)]);
+  assert.equal(detailOf(s, B2), `used by ${r.usedBy.elements} element${r.usedBy.elements === 1 ? "" : "s"} · ${r.usedBy.ties} embeddedRebar ties`);
+  // an nD material is never a bond law (the grammar's -bond reads a uniaxial tag)
+  const nd = materialsOf(s).groups.find((g) => g.kind === "nDMaterial")!.rows[0]!;
+  assert.equal(nd.usedBy.ties, 0);
+  assert.equal(nd.tiesUnknown, null);
+});
+
+test("V4m: ties whose bond tag the reader could not read make every uniaxial row say 'users unknown', never 0 or 'used by nothing'", () => {
+  const s = withTies((t) => {
+    t.bond = [];
+    t.unresolved = [{ why: "the value after -bond is not an integer tag", ties: 10 }];
+  });
+  const r = rowOf(s, B1);
+  assert.deepEqual(r.usedBy, { elements: 0, objects: [], ties: 0 });
+  assert.deepEqual(r.tiesUnknown, [{ why: "the value after -bond is not an integer tag", ties: 10 }]);
+  const text = detailOf(s, B1);
+  assert.match(text, /^users unknown: referenced by embeddedRebar ties10 ties: the value after -bond is not an integer tag$/);
+  assert.doesNotMatch(text, /nothing|0/);
+  // a row with known users keeps them and says the rest are unknown
+  const both = detailOf(s, B2);
+  assert.match(both, /^used by \d+ elementsusers unknown beyond these: referenced by embeddedRebar ties; 10 ties: /);
+  // an unknown count is drawn as unknown, not as a number
+  const u = withTies((t) => {
+    t.bond = [];
+    t.unresolved = [{ why: "/opensees/constraints/embeddedRebar has no arg_kinds", ties: null }];
+  });
+  assert.match(detailOf(u, B1), /users unknown: referenced by embeddedRebar tiesunknown number of ties: .*has no arg_kinds/);
+});
+
+test("V4m: a bond tag that names no uniaxial material of the file is 'users unknown', not dropped", () => {
+  const s = withTies((t) => {
+    t.bond = [{ tag: 99, ties: 4 }];
+  });
+  const r = rowOf(s, B1);
+  assert.equal(r.usedBy.ties, 0);
+  assert.deepEqual(r.tiesUnknown, [{ why: "bond tag 99 is no uniaxial material of this file", ties: 4 }]);
+  assert.match(detailOf(s, B1), /^users unknown: referenced by embeddedRebar ties/);
+});
+
+test("V4m: ties with no -bond (perfect bond) name no material and leave the rows unchanged", () => {
+  const s = withTies((t) => {
+    t.bond = [];
+    t.unbonded = 30;
+  });
+  assert.equal(rowOf(s, B1).tiesUnknown, null);
+  assert.equal(detailOf(s, B1), "used by nothing in the definition chain");
+});
+
+test("V4m: a file without the group is unchanged: no tie count, no unknown", () => {
+  assert.equal(model.opensees!.definitions.embeddedRebar, null);
+  const mat = materialsOf(state).groups[0]!.rows[0]!;
+  assert.equal(mat.usedBy.ties, 0);
+  assert.equal(mat.tiesUnknown, null);
+  assert.doesNotMatch(rowsOf(render(state).root)[0]!.textContent, /embeddedRebar|users unknown/);
 });

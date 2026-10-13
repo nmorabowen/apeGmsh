@@ -421,6 +421,65 @@ def stamp_variants(out_dir: Path) -> None:
     print("wrote stamp_variants: " + ", ".join(f"{k}={v['verified']}" for k, v in oracle.items()))
 
 
+def reinforced_fixture(out_dir: Path) -> None:
+    """The V4m reinforced model (#1846): ``reinforced.h5`` and its oracle.
+
+    A tet-meshed box with three embedded bars: ``L1`` tied with the bond law
+    ``bond1`` (a LadrunoBondSlip no element uses), ``L2`` tied with
+    ``bond2`` and its own ``CorotTruss`` cells on the same material, so the
+    material has element and tie users, and ``L3`` tied by perfect bond (no
+    material). ``reinforced.oracle.json`` is Python's count of ties per bond
+    material, from apeGmsh's own reader (``h5_reader.embedded_rebars``), not
+    from the app's parse. No results: the window reads the model only.
+    """
+    import json
+
+    from apeGmsh._kernel.defs.rebar import Cage
+    from apeGmsh.opensees import apeSees
+    from apeGmsh.opensees.emitter import h5_reader
+
+    name = "reinforced"
+    with apeGmsh(model_name=name, verbose=False) as g:
+        g.model.geometry.add_box(0, 0, 0, 0.5, 0.5, 2.0, label="Box")
+        g.physical.add_volume(g.model.select(dim=3).tags(), name="Concrete")
+        g.physical.add_surface(
+            g.model.select(dim=2).in_box((-0.01, -0.01, -0.01), (0.51, 0.51, 0.01)).tags(), name="Base")
+        bars = [g.rebar.bar([(x, 0.15, 0.1), (x, 0.15, 1.9)], db=0.0254, material=mat, name=n)
+                for x, mat, n in ((0.1, "steel", "L1"), (0.25, "bond2", "L2"), (0.4, "steel", "L3"))]
+        g.rebar.place(Cage(bars=(bars[0],)), into="Concrete", coupling="embedded", name="cage1", bond="bond1")
+        g.rebar.place(Cage(bars=(bars[1],)), into="Concrete", coupling="embedded", name="cage2", bond="bond2",
+                      emit_elements=True)
+        g.rebar.place(Cage(bars=(bars[2],)), into="Concrete", coupling="embedded", name="cage3", perfect=1.5e8)
+        g.mesh.sizing.set_global_size(0.4)
+        g.mesh.generation.generate(dim=3)
+        fem = g.mesh.queries.get_fem_data(dim=None)
+
+    ops = apeSees(fem)
+    ops.model(ndm=3, ndf=3)
+    ops.uniaxialMaterial.LadrunoBondSlip(tau_max=10.5, s1=0.001, s2=0.003, s3=0.01, tau_f=2.5, alpha=0.4, name="bond1")
+    ops.uniaxialMaterial.LadrunoBondSlip(tau_max=8.5, s1=0.001, s2=0.003, s3=0.01, tau_f=2.0, alpha=0.4, name="bond2")
+    conc = ops.nDMaterial.ElasticIsotropic(E=30000.5, nu=0.2, rho=2.5e-6, name="concrete")
+    ops.element.FourNodeTetrahedron(pg="Concrete", material=conc)
+    ops.fix(pg="Base", dofs=(1, 1, 1))
+    path = out_dir / f"{name}.h5"
+    ops.h5(str(path))
+
+    by_tag: dict[int, int] = {}
+    unbonded = 0
+    with h5_reader.open(str(path)) as m:
+        ties = m.embedded_rebars()
+    for t in ties:
+        if "-bond" in t.args:
+            tag = t.args[t.args.index("-bond") + 1]
+            assert isinstance(tag, int), t
+            by_tag[tag] = by_tag.get(tag, 0) + 1
+        else:
+            unbonded += 1
+    oracle = {"ties": len(ties), "unbonded": unbonded, "bond": {str(k): v for k, v in sorted(by_tag.items())}}
+    (out_dir / f"{name}.oracle.json").write_text(json.dumps(oracle, indent=2) + chr(10), encoding="utf-8")
+    print(f"wrote {path.name}: {len(ties)} ties, by bond tag {by_tag}, {unbonded} perfect-bond")
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--measure", type=Path, help="write the measured files a, b, c into this directory")
@@ -430,7 +489,11 @@ def main() -> None:
     ap.add_argument("--contour", action="store_true", help="write the V4c1 contour pairs (contour_staged.*, contour_nodata.*)")
     ap.add_argument("--deform", action="store_true", help="write the V4d 2-D pair (deform_2d.h5 + .results.h5)")
     ap.add_argument("--stamped", action="store_true", help="write results_stamped.h5, the small file with element_index_space='fem' (V4g)")
+    ap.add_argument("--reinforced", action="store_true", help="write reinforced.h5 + oracle, a 2.31 model with embeddedRebar ties (V4m)")
     args = ap.parse_args()
+    if args.reinforced:
+        reinforced_fixture(HERE)
+        return
     if args.deform:
         deform_fixtures(HERE)
         return
