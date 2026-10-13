@@ -9,9 +9,10 @@ comment and docstring lines count 1.  A surface is the sum over its files.
 ``Results.from_recorders`` is counted over its AST line span
 (``lineno`` through ``end_lineno``, decorators excluded), non-blank lines only.
 
-The assertion is ``current == baseline`` in effect: growth fails, and a
-shrink also fails with the lower number to adopt, so the ratchet tightens
-and never idles.  Baselines are the exact counts at the X4-b landing commit,
+The assertion is ``current <= baseline``: growth fails; a shrink passes and
+prints the lower number to adopt (lowering a baseline is optional and
+human-gated, so a deletion PR need not touch this file).  Baselines are the
+exact counts at the X4-b landing commit,
 with no slack.  Raising one is a maintainer gate (PROGRAM section 4,
 ``human-gate`` label), never a fix for a red test.
 """
@@ -85,20 +86,23 @@ def count(surface: str, root: Path = SRC) -> int:
     return total
 
 
-def _verdict(surface: str, current: int, baseline: int) -> str | None:
+def _verdict(surface: str, current: int, baseline: int) -> tuple[bool, str | None]:
+    """(ok, message): growth is not ok; a shrink is ok and names the number to adopt."""
     if current > baseline:
-        return (f"{surface}: {current} LOC > baseline {baseline}. This surface is "
-                "frozen or being retired; it may only shrink. Do not raise the baseline.")
+        return False, (f"{surface}: {current} LOC > baseline {baseline}. This surface is "
+                       "frozen or being retired; it may only shrink. Do not raise the baseline.")
     if current < baseline:
-        return (f"{surface}: {current} LOC < baseline {baseline}. Shrinking is "
-                f"welcome: lower BASELINE[{surface!r}] to {current}.")
-    return None
+        return True, (f"{surface}: {current} LOC < baseline {baseline}. Shrinking is "
+                      f"welcome: lower BASELINE[{surface!r}] to {current}.")
+    return True, None
 
 
 @pytest.mark.parametrize("surface", sorted(BASELINE))
 def test_loc_does_not_grow(surface: str) -> None:
-    msg = _verdict(surface, count(surface), BASELINE[surface])
-    assert msg is None, msg
+    ok, msg = _verdict(surface, count(surface), BASELINE[surface])
+    if ok and msg:
+        print(msg)  # visible with -s / in the CI log summary
+    assert ok, msg
 
 
 def test_loc_definition() -> None:
@@ -110,13 +114,13 @@ def test_self_test_growth_fails_and_shrink_prints_number(tmp_path: Path) -> None
     pkg.mkdir()
     (pkg / "m.py").write_text("x = 1\ny = 2\n", encoding="utf-8")
     base = count("hpc", tmp_path)
-    assert base == 2 and _verdict("hpc", base, base) is None
+    assert base == 2 and _verdict("hpc", base, base) == (True, None)
     (pkg / "m.py").write_text("x = 1\ny = 2\nz = 3\n", encoding="utf-8")
     grown = _verdict("hpc", count("hpc", tmp_path), base)
-    assert grown is not None and "Do not raise the baseline" in grown
+    assert grown[0] is False and "Do not raise the baseline" in grown[1]
     (pkg / "m.py").write_text("x = 1\n", encoding="utf-8")
     shrunk = _verdict("hpc", count("hpc", tmp_path), base)
-    assert shrunk is not None and "to 1" in shrunk
+    assert shrunk[0] is True and "lower BASELINE['hpc'] to 1" in shrunk[1]
 
 
 def test_from_recorders_span() -> None:
