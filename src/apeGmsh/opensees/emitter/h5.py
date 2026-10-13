@@ -612,7 +612,10 @@ class H5RefusedVerb(NotImplementedError):
 #:     now also break where ``decl`` changes. The column is hashed, so
 #:     every archive the bridge writes hashes differently once at this
 #:     minor; a rewrite echoes its source's column (an older source's
-#:     ``-1`` values included). A 2.31 reader opens 2.12 through 2.31 and
+#:     ``-1`` values included), and the hash-excluded
+#:     ``/opensees/decls@program_decl`` marker (``"complete"`` from an
+#:     emit, ``"absent"`` echoed by a rewrite of an older file) says which
+#:     it is. A 2.31 reader opens 2.12 through 2.31 and
 #:     refuses a ``decl`` outside ``{-1} ∪ [0, n_decls)``; a 2.30.x reader
 #:     REFUSES a 2.31.x file.
 SCHEMA_VERSION: str = "2.31.0"
