@@ -254,6 +254,34 @@ def test_rigid_diaphragm_needs_a_master_point_for_a_multi_node_master(files):
     assert len(rec.slave_nodes) == 17  # 9 + 9 wall nodes, less the master
 
 
+def test_rigid_diaphragm_without_point_round_trips_as_null(files, tmp_path):
+    """D3 (#1786): an omitted master_point is archived as ``null``; the
+    reloaded coupling carries the same definition, and the archived FEM
+    holds the record mastered on the one-node reference port, slaving
+    every node of the plate in its plane."""
+    from apeGmsh.assembly import Assembly
+    from apeGmsh.assembly._h5 import read_assembly_zone
+    from apeGmsh.mesh import FEMData
+
+    asm = _walls(files).rigid_diaphragm(
+        "cm", "w1.Slab", plane_normal=(0, 1, 0), constrained_dofs=(1, 3, 5),
+        name="rd")
+    fem = asm.bridge(ndm=3, ndf=6).fem
+    (rec,) = _node_records(fem, "rigid_diaphragm")
+    assert rec.master_node == 1
+    assert sorted(rec.slave_nodes) == _ids(fem, pg="w1.Slab")
+    out = tmp_path / "rd_null.h5"
+    asm.h5(out)
+    (row,) = [t for t in read_assembly_zone(out).ties if t.name == "rd"]
+    assert json.loads(row.params)["master_point"] is None
+    back = Assembly.from_h5(out)
+    assert back.ties == asm.ties
+    assert back.ties[-1].definition.master_point is None
+    (rec_back,) = _node_records(FEMData.from_h5(str(out)), "rigid_diaphragm")
+    assert rec_back.master_node == rec.master_node
+    assert sorted(rec_back.slave_nodes) == sorted(rec.slave_nodes)
+
+
 def test_embedded_ties_every_cube_node_into_the_block(files):
     from apeGmsh.assembly import Assembly
 
