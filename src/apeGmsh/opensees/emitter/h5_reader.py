@@ -2890,7 +2890,7 @@ def archives_embedded_rebar(version: "SchemaVersion") -> bool:
 
 
 #: The first opensees minor whose ``/opensees/program`` ``decl`` column
-#: records each call's declaration (A7, #1839). Below it the column is
+#: records each call's declaration (A7). Below it the column is
 #: ``-1`` throughout, so a ``-1`` there says nothing about the call; and
 #: the column is hashed, so a tool comparing a model's ``model_hash``
 #: across this boundary sees the archive's one-time change, not corruption.

@@ -601,9 +601,8 @@ class H5RefusedVerb(NotImplementedError):
 #:     no flag). No path or dtype changes; ``decl_params`` is
 #:     hash-excluded. A 2.30 reader opens 2.12 through 2.30; a 2.29.x
 #:     reader REFUSES a 2.30.x file.
-#:   * 2.31.0 — A7 (#1839, ruling of 2026-10-11 on #1646 item 1): the
-#:     ``/opensees/program`` ``decl`` column, ``-1`` on every run until
-#:     now, holds the ``/opensees/decls`` row of the declaration that
+#:   * 2.31.0 — A7: the ``/opensees/program`` ``decl`` column, ``-1`` on
+#:     every run below this minor, holds the ``/opensees/decls`` row of the declaration that
 #:     made each call when the emit proves it: a tagged call by its
 #:     ``(kind, tag)`` run, a tagless call (``fix``, ``mass``,
 #:     ``recorder``, the stage removals and flips, ``sp_hold``,
