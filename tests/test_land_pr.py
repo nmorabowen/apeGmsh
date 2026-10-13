@@ -985,6 +985,16 @@ def test_negated_owned_line_fails_closed(line):
     assert not _merged(gh)
 
 
+def test_negated_amendment_line_adds_no_path(capsys):
+    amendment = "**Card amendment (T):** also edit `src/a.py`.\nDo NOT touch `src/b.py`.\n"
+    gh, git = _scope(["src/a.py"], comments=(amendment,))
+    assert _run(1218, gh, git, dry_run=True) == 0
+    assert "skipped a negated card-amendment line" in capsys.readouterr().out
+    gh, git = _scope(["src/a.py", "src/b.py"], comments=(amendment,))
+    with pytest.raises(land_pr.LandError, match=r"check 9: #1218 changes 1 file\(s\)(.|\n)*\n  src/b\.py"):
+        _run(1218, gh, git)
+
+
 def test_owned_label_mid_line_after_a_sentence_still_counts_1851():
     card = "**Maintainer ruling (2026-10-13): YES.** Lower it. Owned: `tests/x.py` (that one value)."
     assert land_pr._card_paths(card) == ["tests/x.py"]

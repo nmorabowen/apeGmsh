@@ -389,8 +389,13 @@ def check_owned(number: int, pr: dict[str, Any], rows: list[FileRow], gh: Runner
         )
     for comment in issue.get("comments") or []:
         text = comment.get("body") or ""
-        if _AMENDMENT.match(text):
-            allowed += [p for line in text.splitlines() for p in _line_paths(line)]
+        if not _AMENDMENT.match(text):
+            continue
+        for line in text.splitlines():
+            if "`" in line and _NEGATION.search(line):  # "Do NOT touch `b.py`": no paths (fail closed)
+                print(f"check 9: skipped a negated card-amendment line on #{card}: {line.strip()!r}")
+                continue
+            allowed += _line_paths(line)
     if not allowed:
         raise LandError(
             f"check 9: slice card #{card}'s Owned section names no backticked path, nor does any "

@@ -41,7 +41,7 @@
 ### Allowed
 <!-- Optional: files the PR may change but does not own, such as regenerated goldens or the skill mirror. -->
 
-<!-- Amendments: to add files after the card is filed, post an issue comment whose first words are `**Card amendment` and name each path in backticks; check 9 adds them. Any other comment, a maintainer ruling included, adds nothing. Limitation: the amendment's author is not checked, because every account here is the same user today.
+<!-- Amendments: to add files after the card is filed, post an issue comment whose first words are `**Card amendment` and name each path in backticks; check 9 adds them. An amendment line with a negation (`never`, `not`, `don't`, `do not`, `except`) adds no path; check 9 says it skipped it. Any other comment, a maintainer ruling included, adds nothing. Limitation: the amendment's author is not checked, because every account here is the same user today.
      Override: the maintainer or coordinator applies the `scope-ok` label to the PR, and check 9 passes with an OVERRIDDEN notice, the way `human-gate` admits a baseline edit at check 8. -->
 
 
