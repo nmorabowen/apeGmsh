@@ -174,6 +174,26 @@ test("unverified: an unstamped copy of the same file is refused with a banner, d
   h.effects.dispose();
 });
 
+test("a results info with no elementIndex verdict reads as unverified: its element fields are refused, never joined (fail closed)", async () => {
+  const h = await opened(MIXED, MIXED_RESULTS);
+  const info = h.store.get().results!;
+  assert.equal(info.elementIndex?.verified, true);
+  // The same info (element-id blobs included) with the verdict left out.
+  const { elementIndex: _dropped, ...noVerdict } = info;
+  h.store.dispatch({ type: "fileOpened", artifact: "results", path: info.path });
+  h.store.dispatch({ type: "resultsLoaded", info: noVerdict, sizeBytes: 0, readMs: 0, warnings: [] });
+  h.store.dispatch({ type: "setPhase", at: { kind: "results", stage: 0, step: 0 } });
+  h.store.dispatch({ type: "setColourBy", by: "contour" });
+  h.store.dispatch({ type: "setContourField", field: "stress", component: "stress_xx", source: "element" });
+  assert.equal(contourFieldsOf(h.store.get())!.elementsVerified, false);
+  await new Promise((r) => setTimeout(r, 50));
+  const v = contourView(h.store.get());
+  assert.ok(v.state === "refused" && v.code === "unverified", `state ${v.state}`);
+  assert.match(v.reason, /this results info carries no element-index verdict/);
+  assert.equal(h.store.get().contour.join, null, "never joined");
+  h.effects.dispose();
+});
+
 test("an _element_index id the mesh does not have refuses the field, with a typed state naming it; never mapped silently", async () => {
   const h = await opened(BADID, BADID_RESULTS);
   h.store.dispatch({ type: "setPhase", at: { kind: "results", stage: 0, step: 0 } });

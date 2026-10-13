@@ -637,10 +637,18 @@ timed in the first pass only (the deformed pass finds it done: 1 ms).
 | 2 | the same, deformed ×1 | 19 / 33 % | n/a | 184.5 | 4.90 / 9.5 | 355 (158 + 197) |
 | 3 | element stress xx, element_mean | 20 / 27 % | 65 | 274.2 | 3.40 / 5.9 | 351 (170 + 181) |
 | 3 | the same, deformed ×1 | 24 / 29 % | n/a | 192.1 | 4.90 / 8.2 | 357 (166 + 191) |
+| R | element stress xx, element_mean | 39 / 53 % | n/a | 241.2 | n/a / 6.9 | 358 |
+| R | the same, deformed ×1 | 39 / 53 % | n/a | 192.6 | n/a / 9.5 | 358 |
 
-Worst over the three runs: element scrub **253** steps/s (worst step
-6.5 ms), deformed element scrub **185** steps/s (worst step 9.5 ms), peak
-**360 MB**, at 23 to 34 % CPU during the scrub. The nodal rows of the same
+Row R is the reviewer's re-measure at the head under review, `ee8440b3`
+(#1860), on the same file (e_solid_100: 7 098 wedges x 6 Gauss points, 100
+steps), at 39 / 53 % CPU; the reviewer reported the scrub, the worst step,
+the peak and the CPU load, not the other columns.
+
+Worst over every row (runs 1 to 3 and R): element scrub **241** steps/s
+(R; worst step 6.9 ms, R), deformed element scrub **185** steps/s (run 2;
+worst step 9.5 ms, run 2 and R), peak **360 MB** (run 1), at 23 to 53 % CPU
+during the scrub. The nodal rows of the same
 runs read 339 (nodal) and 230 (nodal, deformed) steps/s.
 
 - **The D5 revisit trigger does not fire**: the worst element scrub, 185
