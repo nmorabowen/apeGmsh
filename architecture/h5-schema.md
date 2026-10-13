@@ -1041,9 +1041,9 @@ Every file the bridge writes from 2.23.0 on carries it; it is hashed.
     row     i4   the record's ordinal among the records `method` wrote
                  to `store` in this stage, in emit order; -1 with store -1
     stage   i4   -1 global, else the `stage_NNN` ordinal
-    decl    i4   always -1: the column is hashed and a declaration is a
-                 label (A7), so the join lives in the hash-excluded
-                 `/opensees/decls` (opensees 2.25.0)
+    decl    i4   the `/opensees/decls` row of the declaration that made the
+                 calls, when the emit proves it, else -1 (opensees 2.31.0,
+                 A7; -1 throughout below 2.31.0)
   @methods     vlen str (M,)
   @stores      vlen str (S,)   VERBS templates, e.g. `{scope}/bcs/fix`;
                                `stage` resolves `{scope}`
@@ -1065,6 +1065,62 @@ below 2.23.0 writes **no** program (it never invents an order), and
 rewrite does not carry a store an echoed run names (today
 `/opensees/regions`), that run keeps its emit indices with `store` and
 `row` `-1`, `@stores` drops the name, and the rewrite warns.
+
+### `decl`: each call's declaration (opensees 2.31.0)
+
+From 2.31.0 (A7, #1839; the maintainer's ruling of 2026-10-11 on #1646
+item 1) `decl` names the `/opensees/decls` row of the declaration that
+made the call, so a stage's calls join to their declarations through the
+program alone. The writer records it at emit time and never guesses:
+
+| The call | Its `decl` |
+|---|---|
+| a tagged verb (`uniaxialMaterial`, `nDMaterial`, `section`, `section_open`, `geomTransf`, `beamIntegration`, `timeSeries`, `pattern_open`, `damping`, `region`, `element`) | the `/opensees/decls/tags` run that holds its `(kind, tag)`; a fan-out element its spec's |
+| a tagless verb whose row has a `/opensees/decls/rows` entry filled at the call (`fix`, `mass`, `recorder`, `sp_hold`, `remove_sp`, `remove_element`, `update_material_stage`, a stage `rayleigh`, and the `/opensees/commands` rows: global `rayleigh`, `eigen`, `modal_damping`, `profiler`, `command`) | the declaration the bridge opened on it (`set_declaration`) |
+
+Everything else is an explicit **`-1`**:
+
+- **no declaration of its own**: `node` and the MP constraints
+  `equalDOF`, `rigidLink`, `rigidDiaphragm`, `embeddedNode`,
+  `embedded_rebar` (the FEM snapshot declares them, in the neutral zone);
+  the parts of a tagged record (`section_close`, `patch`, `fiber`, `layer`,
+  `pattern_close`, `load`, `eleLoad`, `sp`, the recorder declaration
+  brackets, `mp_constraint_comment`); and the control calls (`model`, the
+  analysis chain, `analyze`, the stage brackets and domain calls,
+  partition brackets and runtime fallbacks), whose primitives are
+  declarations in `/opensees/decls/tags` but whose calls carry no tag to
+  join on;
+- **not proved at emit time**: the side-channel stores' calls
+  (`addToParameter`, `step_hook_ramp`, `flip_element_stage`,
+  `update_parameter`, `set_node_vel`, `set_node_accel`), whose records'
+  declarations the bridge hands in after the emit
+  (`set_declaration_rows`) and whose calls are not one per record; a
+  tagged call whose `(kind, tag)` no run holds (an element a side pass
+  mints with no declaration); and a tagless call with no declaration open,
+  such as a ghost replay (ADR 0027 INV-2), whose row the
+  `/opensees/decls/rows` column claims afterwards;
+- the `ledger` verbs, which write no row.
+
+A run breaks where `decl` changes. The reader refuses a `decl` outside
+`{-1} ∪ [0, n_decls)` (`n_decls = 0` when the file has no
+`/opensees/decls`) with `MalformedH5Error`, and the writer refuses to
+write one. A rewrite echoes the source's column, an older source's `-1`
+values included. Below 2.31.0 the column is `-1` throughout and says
+nothing about the call (`PROGRAM_DECL_FROM` in `h5_reader.py`). The
+rewrite of such a file is stamped 2.31.0 but keeps that column, since the
+rewrite cannot prove a call's declaration it did not emit: a 2.31 file
+whose program is all `-1` beside a non-empty `/opensees/decls` is such a
+rewrite, and its `-1` still means "not recorded".
+
+`decl` is hashed, so every archive the bridge writes changes its
+`model_hash` once at 2.31.0. Declaration ids are first-seen row indices,
+so a name (a label) still leaves the hash alone; declaration *order*
+now enters it. A file written before 2.31.0 keeps its stored hash, and a
+recompute over it gives the same value (its column is still `-1`); only
+a re-emit through `apeSees` writes the new column. A tool that compares a
+model's `model_hash` with a results file's across that boundary can read
+`/meta@opensees_schema_version` on both sides to tell the one-time change
+from a different model.
 
 ## `/opensees/commands` (optional, opensees 2.23.0)
 
@@ -1154,8 +1210,8 @@ each tag and each tagless row came from, under the declaration key of
 its `/provenance` record (ADR 0112 D3). Written on every `apeSees.h5`
 emit; a rewrite (`OpenSeesModel.to_h5`) echoes it. A label, not
 structure: `decls` is in `MODEL_HASH_EXCLUDED_CHILDREN`, so `model_hash`
-does not read it, and the hashed `/opensees/program` `decl` column stays
-`-1`.
+does not read it. From 2.31.0 the hashed `/opensees/program` `decl`
+column names these rows (its section above).
 
 ```
 /opensees/decls/
@@ -2217,7 +2273,7 @@ call `validate_zone_version(...)` for each zone before reading it.
 | Zone | `/meta` key | Root paths | Writer constant (source of truth) | Current | Floor |
 |---|---|---|---|---|---|
 | neutral (broker) | `neutral_schema_version` | `/nodes`, `/elements`, `/physical_groups`, `/labels`, `/mesh_selections`, `/partitions`, `/parts`, `/constraints`, `/reinforce_ties`, `/embed_ties`, `/rebar_elements`, `/contacts`, `/contact_planes`, `/interfaces`, `/loads`, `/masses`, `/composed_from` | [`mesh/_femdata_h5_io.py`](../src/apeGmsh/mesh/_femdata_h5_io.py) `NEUTRAL_SCHEMA_VERSION` | **2.35.0** | **2.10.0** |
-| opensees (bridge) | `opensees_schema_version` | `/opensees/*` | [`opensees/emitter/h5.py`](../src/apeGmsh/opensees/emitter/h5.py) `SCHEMA_VERSION` | **2.30.0** | **2.12.0** |
+| opensees (bridge) | `opensees_schema_version` | `/opensees/*` | [`opensees/emitter/h5.py`](../src/apeGmsh/opensees/emitter/h5.py) `SCHEMA_VERSION` | **2.31.0** | **2.12.0** |
 | results | `results_schema_version` | `/stages/*` (composed `results.h5`, at file root; layout in [`results.h5`](#resultsh5-the-native-results-file)) | [`results/schema/_versions.py`](../src/apeGmsh/results/schema/_versions.py) `RESULTS_SCHEMA_VERSION` | **1.2.0** | **1.0.0** |
 | cuts (sub-zone of opensees) | — (no own key; rides the opensees zone) | `/opensees/cuts`, `/opensees/sweeps` | [`cuts/_h5_io.py`](../src/apeGmsh/cuts/_h5_io.py) `V4_SCHEMA_VERSION` | 2.5.0 | none of its own: it rides the opensees floor |
 | geometry (ADR 0112 D2) | `geometry_schema_version` | `/geometry` (sibling `<stem>.geometry.h5` only) | [`opensees/_internal/schema_version.py`](../src/apeGmsh/opensees/_internal/schema_version.py) `GEOMETRY_SCHEMA_VERSION` | **1.0.0** | **1.0.0** |
@@ -2686,6 +2742,17 @@ detail lives in the `SCHEMA_VERSION` docstring in
   dtype changes, and `decl_params` is hash-excluded, so every file hashes
   as before. Additive minor (a 2.29.x reader refuses a 2.30.x file,
   INV-4).
+- `2.31.0` — A7 (#1839; the maintainer's ruling of 2026-10-11 on #1646
+  item 1): the [`/opensees/program`](#opensees-program-opensees-2230)
+  `decl` column, `-1` on every run until now, holds the `/opensees/decls`
+  row of the declaration that made each call when the emit proves it,
+  and an explicit, documented `-1` otherwise; runs also break where it
+  changes. No path or dtype changes. The column is hashed, so every
+  archive the bridge writes hashes differently once at this minor; an
+  untouched older file keeps (and recomputes to) its stored hash, and a
+  rewrite echoes its source's column. The reader refuses a `decl` outside
+  `{-1} ∪ [0, n_decls)`. Additive minor (a 2.30.x reader refuses a 2.31.x
+  file, INV-4).
 
 This is the **current** opensees-zone version (`SCHEMA_VERSION` in
 [`opensees/emitter/h5.py`](../src/apeGmsh/opensees/emitter/h5.py)); check that constant
