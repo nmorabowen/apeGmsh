@@ -8,7 +8,7 @@ body changed.  The class is private, so there is no facade in
 from __future__ import annotations
 
 import math
-from typing import TYPE_CHECKING, Callable, Iterable, Sequence
+from typing import TYPE_CHECKING, Any, Callable, Iterable, Sequence
 
 from .._internal.build.errors import BridgeError
 from .._internal.build.records import (
@@ -130,6 +130,20 @@ def _build_initial_stress_record(
 # ---------------------------------------------------------------------------
 # _StageBuilder — context manager backing ops.stage(name) (Phase SSI-2.A)
 # ---------------------------------------------------------------------------
+
+
+class _Omitted:
+    """Marks a ``s.analysis`` keyword the caller did not pass."""
+
+    __slots__ = ()
+
+    def __repr__(self) -> str:
+        return "<omitted>"
+
+
+#: Default of the ``s.analysis`` chain keywords: tells "not passed" apart
+#: from an explicit ``None`` (a chain plus any explicit slot is refused).
+_OMITTED: Any = _Omitted()
 
 
 class _StageBuilder:
@@ -1961,12 +1975,12 @@ class _StageBuilder:
         /,
         *,
         integrator: Primitive,
-        test: Primitive | None = None,
-        algorithm: Primitive | None = None,
-        constraints: Primitive | None = None,
-        numberer: Primitive | None = None,
-        system: Primitive | None = None,
-        analysis: Primitive | None = None,
+        test: Primitive | None = _OMITTED,
+        algorithm: Primitive | None = _OMITTED,
+        constraints: Primitive | None = _OMITTED,
+        numberer: Primitive | None = _OMITTED,
+        system: Primitive | None = _OMITTED,
+        analysis: Primitive | None = _OMITTED,
     ) -> None:
         """Bind the analysis chain for this stage.
 
@@ -2004,7 +2018,7 @@ class _StageBuilder:
                 f"Stage {self._name!r}.analysis: already called; "
                 "stages support one analysis chain each."
             )
-        slots: dict[str, Primitive | None] = {
+        given: dict[str, Primitive | None] = {
             "test": test,
             "algorithm": algorithm,
             "constraints": constraints,
@@ -2019,7 +2033,7 @@ class _StageBuilder:
                     "argument must be a chain from ops.analysis.chain(...), "
                     f"got {type(chain).__name__}."
                 )
-            doubled = [k for k, v in slots.items() if v is not None]
+            doubled = [k for k, v in given.items() if v is not _OMITTED]
             if doubled:
                 raise ValueError(
                     f"Stage {self._name!r}.analysis: "
@@ -2029,9 +2043,16 @@ class _StageBuilder:
                 )
             slots = {k: getattr(chain, k) for k in CHAIN_SLOTS}
         else:
+            # The keyword form binds what it is given, as before; only an
+            # omitted slot is refused (the test may be omitted for a
+            # non-iterating algorithm, checked below).
             missing = [
-                k for k, v in slots.items() if v is None and k != "test"
+                k for k, v in given.items()
+                if v is _OMITTED and k != "test"
             ]
+            slots = {
+                k: (None if v is _OMITTED else v) for k, v in given.items()
+            }
             if missing:
                 raise TypeError(
                     f"Stage {self._name!r}.analysis: missing "
