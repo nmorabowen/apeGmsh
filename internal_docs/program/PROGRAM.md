@@ -104,7 +104,7 @@ Model and effort are pinned in `.claude/agents/prog-*.md`, so routing depends on
 - it is labelled `mechanical`;
 - the required checks are green on the head SHA;
 - the card's done-when holds;
-- it passes `python scripts/land_pr.py <n> --dry-run`, and the merge itself is `python scripts/land_pr.py <n>`, which runs the "How work lands" checks in AGENTS.md, squash-merges, and proves the merge reached `main`;
+- it passes `python <tmp>/land_pr.py <n> --dry-run`, and the merge itself is (after `git fetch origin main`) `git show origin/main:scripts/land_pr.py > <tmp>/land_pr.py && python <tmp>/land_pr.py <n>`, which runs the "How work lands" checks in AGENTS.md, squash-merges, and proves the merge reached `main`;
 - it carries no `human-gate` label.
 
 After merging, confirm the PR reached `main`:
@@ -126,7 +126,7 @@ The result must be `behind` or `identical`.
 - MEMORY or global-config changes;
 - anything labelled `human-gate`.
 
-**Self-landing of semantic PRs.** A session lands its own semantic PR, with `python scripts/land_pr.py <n>`, once the PR is Opus-approved at the head SHA and every required check is green. The maintainer click for semantic PRs therefore narrows to the list above: ADR acceptance, charter changes, deletions of user-facing features, GitHub settings, and anything labelled `human-gate`.
+**Self-landing of semantic PRs.** A session lands its own semantic PR, with `git show origin/main:scripts/land_pr.py > <tmp>/land_pr.py && python <tmp>/land_pr.py <n>` (after `git fetch origin main`), once the PR is Opus-approved at the head SHA and every required check is green. The maintainer click for semantic PRs therefore narrows to the list above: ADR acceptance, charter changes, deletions of user-facing features, GitHub settings, and anything labelled `human-gate`.
 
 **Workflow mode.** When the maintainer opts in, a coordinator may run a slice as a background workflow (build, Opus review, land). The workflow's lander obeys the same rules as above. It may not close an issue whose PR says `Refs` rather than `Closes` (observed in #1511, 2026-10-10).
 
