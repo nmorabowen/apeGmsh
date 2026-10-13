@@ -1019,19 +1019,35 @@ def test_negation_opening_a_multi_line_list_excludes_the_list_1872(capsys):
 
 
 @pytest.mark.parametrize("amendment", [
-    pytest.param("**Card amendment:** add `src/a.py`.\n- Do not touch these\n  - `src/b.py`\n", id="sub-items"),
+    pytest.param("**Card amendment:** add `src/a.py`.\n- Do not touch `src/b0.py` or these\n  - `src/b.py`\n",
+                 id="sub-items"),
     pytest.param("**Card amendment:** add `src/a.py`.\n- Do not touch:\n- `src/b.py`\n", id="bullet-ending-in-colon"),
+    # review of #1883, F2 (a): an unmarked continuation line, at any indent, stays in the item
+    pytest.param("**Card amendment:** add `src/a.py`.\n- do not touch `src/b0.py`,\n`src/b.py`, `src/b3.py`\n",
+                 id="unindented-continuation"),
+    # F2 (b): a negated bullet naming no path is a lead-in for the sibling bullets after it
+    pytest.param("**Card amendment:**\n- add `src/a.py`\n- Do not touch the following\n- `src/b.py`\n",
+                 id="pathless-bullet-lead-in"),
 ])
 def test_a_negated_bullet_excludes_the_list_it_opens_1872(amendment):
-    """Revert-proof: without the bullet's sub-item rule (sub-items) or the trailing-colon
-    lead-in rule (bullet-ending-in-colon), `src/b.py` is owned."""
+    """Revert-proof, one rule per case: without the bullet's sub-item rule, the trailing-colon
+    lead-in, the unmarked-continuation rule, or the pathless-bullet lead-in, `src/b.py` is owned."""
     _refused_b(amendment)
 
 
+@pytest.mark.parametrize("gap", ["\n", "\n\n"])
+def test_a_colon_lead_in_spans_blank_lines_to_its_list_1872(gap):
+    """Review of #1883, F1: a blank line between "Do not touch:" and its list (23 of 355
+    program issues use that layout) must not end the exclusion. Revert-proof: with the
+    lead-in ending at a blank line, `src/b.py` is owned."""
+    _refused_b(f"**Card amendment:** add `src/a.py`.\n\nDo not touch:{gap}\n- `src/b.py`\n")
+
+
 def test_a_negated_bullet_does_not_swallow_its_siblings_1872():
-    """Amendments are often prose bullets (#1663, #1722): one negated bullet must not drop
-    the paths its sibling bullets add. Fails if any negation excluded to the paragraph's end."""
-    amendment = "**Card amendment:**\n- add `src/a.py`\n- do not reformat anything\n- add `src/c.py`\n"
+    """Amendments are often prose bullets naming a path (#1663, #1722): one negated bullet
+    must not drop the paths its siblings add. Fails if a negated bullet excluded to the
+    paragraph's end."""
+    amendment = "**Card amendment:**\n- add `src/a.py`\n- do not reformat `src/z.py`\n- add `src/c.py`\n"
     gh, git = _scope(["src/a.py", "src/c.py"], comments=(amendment,))
     assert _run(1218, gh, git, dry_run=True) == 0
 
@@ -1058,6 +1074,13 @@ def test_a_negated_list_ends_where_an_owned_section_does_1872(tail):
     pytest.param("No changes to `src/b.py`.", id="no-changes-to"),
     pytest.param("It cannot touch `src/b.py`.", id="cannot"),
     pytest.param("Excluding `src/b.py`.", id="excluding"),
+    # review of #1883, F4
+    pytest.param("Keep `src/b.py` untouched.", id="untouched"),
+    pytest.param("Editing `src/b.py` is forbidden.", id="forbidden"),
+    pytest.param("`src/b.py` is out of scope.", id="out-of-scope"),
+    pytest.param("`src/b.py` is removed from Owned.", id="removed-from-1856"),
+    pytest.param("No `src/b.py`.", id="bare-no"),
+    pytest.param("Neither `src/b.py` nor `src/b2.py`.", id="neither"),
 ])
 def test_negation_vocabulary_adds_no_path_1872(line):
     """Revert-proof, one form per case: drop the form from `_NEGATION` and `src/b.py` is owned."""
@@ -1080,3 +1103,21 @@ def test_a_negation_word_inside_a_backticked_path_is_not_a_negation_1872():
     assert land_pr._card_paths(card) == ["src/x/not_found.py", "src/x/test_never_twice.py"]
     gh, git = _scope(["tests/avoid-cannot.py"], comments=("**Card amendment:** add `tests/avoid-cannot.py`.",))
     assert _run(1218, gh, git, dry_run=True) == 0
+
+
+def test_a_negation_word_inside_a_quoted_code_string_is_not_a_negation_1857():
+    """#1857's Owned line (open PR #1887) quotes `cannot join:` templates. Revert-proof:
+    masking only path spans keeps `cannot` and refuses the card."""
+    card = ("### Owned files\n- `apeGmshViewer/src/panels/windows/analysis.ts` (the note strings `JOIN_GAP`, "
+            "`AMBIGUOUS`, the two `cannot join:` templates, and the file's header comment only)\n")
+    assert land_pr._card_paths(card) == ["apeGmshViewer/src/panels/windows/analysis.ts"]
+
+
+def test_mispaired_backticks_do_not_hide_a_negation_1250():
+    """A ``double`` run pairs the following ticks wrongly, so masking would swallow the
+    prose "Never" (#1250's Owned line). Revert-proof: masking regardless of the pairing
+    lets this line through."""
+    line = ("- `scripts/a.py`: RST ``double`` docstrings get `(pinned)`. Never put a URL in single "
+            "backticks: the `doc-path` rule reads `x/y.md`.")
+    with pytest.raises(land_pr.LandError, match=r"check 9: an Owned line negates"):
+        land_pr._card_paths(f"### Owned files\n{line}\n")

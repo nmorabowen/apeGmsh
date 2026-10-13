@@ -100,12 +100,16 @@ _BOLD_LABEL = re.compile(r"^\s*\*\*[^*\n]+?(?::\*\*|\*\*:)")
 #: Letter boundaries, not `\b`, so "Do _not_ touch" negates (#1872); any n't contraction
 #: (straight or curly apostrophe) counts. Keep the list in slice_card.md in sync.
 _NEGATION = re.compile(
-    r"(?<![a-z])(?:never|not|cannot|[a-z]*n['\u2019]t|except|exclud(?:e|es|ing)|avoid(?:s|ing)?"
-    r"|leave(?![a-z]).*?(?<![a-z])alone|no\s+(?:changes?|edits?)\s+to)(?![a-z])",
+    r"(?<![a-z])(?:never|not|cannot|[a-z]*n['\u2019]t|neither|except|exclud(?:e|es|ing)|avoid(?:s|ing)?"
+    r"|untouched|forbidden|out\s+of\s+scope|removed\s+from|leave(?![a-z]).*?(?<![a-z])alone"
+    r"|no\s+(?:changes?|edits?)\s+to|no\s*(?=`))(?![a-z])",
     re.IGNORECASE,
 )
 _HTML_COMMENT = re.compile(r"<!--.*?-->", re.DOTALL)
 _LIST_LINE = re.compile(r"\s*(?:[-*+]|\d+[.)])\s|\s")
+_BULLET = re.compile(r"\s*(?:[-*+]|\d+[.)])\s")
+#: How far a negation in a card amendment reaches (`_amendment_paths`); wider is larger.
+_FREE, _ITEM, _PARA, _LIST = range(4)
 _AMENDMENT = re.compile(r"^\s*\**\s*card amendment", re.IGNORECASE)
 _TICKED = re.compile(r"`([^`\n]+)`")
 _PATHLIKE = re.compile(r"[\w.\-/*?\[\]]+")
@@ -322,13 +326,14 @@ def _line_paths(line: str) -> list[str]:
 
 
 def _negates(line: str) -> bool:
-    """Whether a card line carries a negation outside its backticked paths. A path span
-    is masked so `src/not_found.py` is not a "not"; a ticked non-path such as `never`
-    is kept, so it still negates (fail closed)."""
-    def mask(match: re.Match[str]) -> str:
-        token = match.group(1).split("::", 1)[0].strip()
-        return " " if _PATHLIKE.fullmatch(token) and ("/" in token or "." in token) else match.group(0)
-    return _NEGATION.search(_TICKED.sub(mask, line)) is not None
+    """Whether a card line's prose negates. Every backticked span is emptied to "``"
+    first: a path (`src/not_found.py`) or a quoted code string (#1857's "the two
+    `cannot join:` templates") is data, not a negation, while "No `b.py`" still negates.
+    Only single backticks in pairs are masked: a ``double`` run or an odd count pairs
+    the ticks wrongly and would hide prose (#1250), so such a line is read whole."""
+    if line.count("`") % 2 == 0 and "``" not in line:
+        line = _TICKED.sub("``", line)
+    return _NEGATION.search(line) is not None
 
 
 def _card_paths(body: str) -> list[str] | None:
@@ -363,26 +368,40 @@ def _card_paths(body: str) -> list[str] | None:
 
 
 def _amendment_paths(text: str, card: int) -> list[str]:
-    """The paths a `**Card amendment` comment adds. A negated line adds none, nor does
-    the list it opens (#1872). A negated lead-in ("Do not touch:" then bullets: any
-    negated line that is not a bullet, or that ends in ":") excludes up to where an
-    Owned section ends in `_card_paths`: a blank line, a heading or a bold label. A
-    negated bullet excludes itself and its sub-items only, so one "do not" bullet does
-    not swallow the sibling bullets of a prose amendment."""
+    """The paths a `**Card amendment` comment adds. A negated line adds none, nor do
+    the lines it governs (#1872). Every exclusion ends at a heading or a bold label;
+    the widest one in force wins, and a narrower negation inside it never shortens it.
+
+    - LIST: a negated line ending in ":", or a negated bullet that names no path ("Do
+      not touch the following"), opens a list. It runs across blank lines and ends at
+      the first non-list line that follows a blank line.
+    - PARA: any other negated line that is not a bullet excludes to the paragraph's
+      end (a blank line).
+    - ITEM: a negated bullet that names a path excludes itself, its sub-items and its
+      unmarked continuation lines, up to a sibling or shallower bullet or a blank line,
+      so one "do not" bullet does not drop the siblings of a prose amendment."""
     paths: list[str] = []
-    excluding, bullet = False, -1  # bullet: the negated bullet's indent, while inside it
+    mode, depth, after_blank = _FREE, -1, False
     for line in text.splitlines():
         indent = len(line) - len(line.lstrip())
-        if not line.strip() or _HEADING.match(line) or _BOLD_LABEL.match(line):
-            excluding, bullet = False, -1
-        elif indent <= bullet:
-            bullet = -1
+        if _HEADING.match(line) or _BOLD_LABEL.match(line):
+            mode = _FREE
+        elif not line.strip():
+            mode = _LIST if mode == _LIST else _FREE
+        elif mode == _LIST and after_blank and not _LIST_LINE.match(line):
+            mode = _FREE  # the list ended at the blank line; this is new prose
+        elif mode == _ITEM and _BULLET.match(line) and indent <= depth:
+            mode = _FREE  # a sibling or shallower bullet ends the negated item
+        after_blank = not line.strip()
         if _negates(line):
-            if _LIST_LINE.match(line) and not line.rstrip(" *").endswith(":"):
-                bullet = indent if bullet < 0 else bullet  # inside one already: keep the outer
+            bullet = _BULLET.match(line) is not None
+            if line.rstrip(" *").endswith(":") or (bullet and not _line_paths(line)):
+                new = _LIST
             else:
-                excluding = True
-        if excluding or bullet >= 0:
+                new = _ITEM if bullet else _PARA
+            if new > mode:
+                mode, depth = new, indent
+        if mode != _FREE:
             if "`" in line:
                 print(f"check 9: skipped a negated card-amendment line on #{card}: {line.strip()!r}")
             continue
