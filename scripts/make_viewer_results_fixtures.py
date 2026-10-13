@@ -317,8 +317,9 @@ def stamp_variants(out_dir: Path) -> None:
     ``stamp_variants.oracle.json`` records what ``NativeReader`` makes of
     each (``element_index_verified`` and the ``element_index_space`` string),
     so the app's verdict is checked against Python's, not against itself.
-    Only a variable-length string scalar ``"fem"`` is what
-    ``NativeWriter.stamp_element_index_space`` writes.
+    Only a scalar variable-length UTF-8 string ``"fem"`` is what
+    ``NativeWriter.stamp_element_index_space`` writes, and the only form
+    that verifies (h5-schema.md §``element_index_space``, #1811).
     """
     import json
     import shutil
@@ -331,9 +332,12 @@ def stamp_variants(out_dir: Path) -> None:
     cases = {
         "vlen_str": lambda a: a.create(key, "fem", dtype=h5py.string_dtype("utf-8")),
         "vlen_bytes": lambda a: a.create(key, b"fem", dtype=h5py.string_dtype("ascii")),
+        "vlen_ascii_str": lambda a: a.create(key, "fem", dtype=h5py.string_dtype("ascii")),
         "np_bytes_S3": lambda a: a.__setitem__(key, np.bytes_(b"fem")),
         "fixed_S3": lambda a: a.create(key, b"fem", dtype="S3"),
-        "fixed_S8_nullpad": lambda a: a.create(key, np.bytes_(b"fem"), dtype="S8"),
+        "fixed_utf8_3": lambda a: a.create(key, "fem".encode(), dtype=h5py.string_dtype("utf-8", length=3)),
+        "fixed_utf8_8_nullpad": lambda a: a.create(key, "fem".encode(), dtype=h5py.string_dtype("utf-8", length=8)),
+        "fixed_S8_nullpad":lambda a: a.create(key, np.bytes_(b"fem"), dtype="S8"),
         "vlen_array": lambda a: a.create(key, np.array(["fem"], dtype=object), dtype=h5py.string_dtype("utf-8")),
     }
     src = out_dir / "results_stamped.h5"

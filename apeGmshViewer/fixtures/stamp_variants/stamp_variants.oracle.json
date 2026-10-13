@@ -6,7 +6,11 @@
    "element_index_space": "fem"
   },
   "vlen_bytes": {
-   "verified": true,
+   "verified": false,
+   "element_index_space": "fem"
+  },
+  "vlen_ascii_str": {
+   "verified": false,
    "element_index_space": "fem"
   },
   "np_bytes_S3": {
@@ -14,6 +18,14 @@
    "element_index_space": "b'fem'"
   },
   "fixed_S3": {
+   "verified": false,
+   "element_index_space": "b'fem'"
+  },
+  "fixed_utf8_3": {
+   "verified": false,
+   "element_index_space": "b'fem'"
+  },
+  "fixed_utf8_8_nullpad": {
    "verified": false,
    "element_index_space": "b'fem'"
   },

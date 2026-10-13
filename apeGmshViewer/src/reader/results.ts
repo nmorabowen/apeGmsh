@@ -15,10 +15,10 @@
 // - element categories the spike does not read (line_stations, nodal_forces,
 //   fibers, layers) are listed in `unread`, not skipped silently;
 // - `_element_index` is a FEM element id if and only if the root attribute
-//   `element_index_space` is the scalar variable-length string "fem", the
+//   `element_index_space` is the scalar variable-length UTF-8 string "fem", the
 //   encoding NativeWriter.stamp_element_index_space writes and the one
 //   Python's NativeReader.element_index_verified accepts (h5-schema.md
-//   §`element_index_space`, results 1.2.0; stamp-only, #1768). `source_type`
+//   §`element_index_space`, results 1.2.0; stamp-only, #1768, #1811). `source_type`
 //   and the version never verify a file: an absent stamp, a non-string one,
 //   or any other value gives the typed "unverified" mapping, whose rows carry
 //   another field name so a caller cannot join them to /model/elements by
@@ -38,10 +38,10 @@ export const RESULTS_FLOOR = { major: 1, minor: 0 } as const;
  * The root attribute that verifies element row ids, and its one verifying value
  * (h5-schema.md §`element_index_space`; Python `ELEMENT_INDEX_SPACES`). Any other
  * value, a non-string, or no attribute at all reads as unverified (#1768).
- * The stamp must also be a scalar *variable-length* string: h5wasm strips a
- * fixed-length string's padding, so S3 or NUL-padded S8 bytes "fem" read as
- * "fem" here, while h5py reads them as bytes and Python's
- * `NativeReader.element_index_verified` rejects them (#1810 review).
+ * The stamp must also be a scalar, variable-length, UTF-8 string (#1811): h5wasm
+ * strips a fixed-length string's padding and decodes an ASCII one, so S3, NUL-padded
+ * S8 or variable-length ASCII "fem" all read as "fem" here, while Python's
+ * `NativeReader.element_index_verified` rejects every one of them (#1810 review).
  */
 const ELEMENT_INDEX_SPACE = "element_index_space";
 const ELEMENT_INDEX_SPACE_FEM = "fem";
@@ -51,6 +51,8 @@ const ELEMENT_CATEGORIES = new Set(["gauss_points", "line_stations", "nodal_forc
 const GAUSS_INDEX = new Set(["_element_index", "_natural_coords", "_local_axes_quaternion"]);
 const H5T_FLOAT = 1;
 const H5T_STRING = 3;
+/** HDF5 `H5T_CSET_UTF8`; h5wasm reports it as `metadata.cset` (`H5T_CSET_ASCII` is 0). */
+const H5T_CSET_UTF8 = 1;
 
 export type ResultsErrorKind = "open" | "version" | "layout" | "dtype" | "unsupported" | "argument";
 
@@ -74,7 +76,7 @@ interface RNode {
 }
 interface RAttr {
   value: unknown;
-  metadata: { type: number; vlen: boolean; shape: number[] | null };
+  metadata: { type: number; vlen: boolean; cset?: number; shape: number[] | null };
 }
 interface RGroup extends RNode {
   keys(): string[];
@@ -423,21 +425,25 @@ export class ResultsFile {
 
 /**
  * The element-id verdict from the root `@element_index_space` alone (#1768):
- * verified iff it is the string "fem". `source_type` and the version play no part.
+ * verified iff it is a scalar, variable-length, UTF-8 string equal to "fem".
+ * `source_type` and the version play no part.
  */
 function elementSpaceVerdict(attr: RAttr | undefined): { verified: true } | { verified: false; reason: string } {
   const value = attr?.value;
   const m = attr?.metadata;
-  const vlenScalar = m !== undefined && m.type === H5T_STRING && m.vlen === true && Array.isArray(m.shape) && m.shape.length === 0;
-  if (vlenScalar && value === ELEMENT_INDEX_SPACE_FEM) return { verified: true };
+  const scalarString = m !== undefined && m.type === H5T_STRING && Array.isArray(m.shape) && m.shape.length === 0;
+  const stampForm = scalarString && m.vlen === true && m.cset === H5T_CSET_UTF8;
+  if (stampForm && value === ELEMENT_INDEX_SPACE_FEM) return { verified: true };
   const why =
     attr === undefined
       ? `the file has no @${ELEMENT_INDEX_SPACE}`
-      : typeof value !== "string"
+      : typeof value !== "string" || !scalarString
         ? `@${ELEMENT_INDEX_SPACE} is not a string scalar`
-        : !vlenScalar
-          ? `@${ELEMENT_INDEX_SPACE} is a fixed-length string, not the variable-length string the writer stamps (Python reads it as bytes)`
-          : `@${ELEMENT_INDEX_SPACE} = ${JSON.stringify(value)} is not "${ELEMENT_INDEX_SPACE_FEM}"`;
+        : m.vlen !== true
+          ? `@${ELEMENT_INDEX_SPACE} is a fixed-length string, not the variable-length UTF-8 string the writer stamps`
+          : m.cset !== H5T_CSET_UTF8
+            ? `@${ELEMENT_INDEX_SPACE} is an ASCII-charset string, not the variable-length UTF-8 string the writer stamps`
+            : `@${ELEMENT_INDEX_SPACE} = ${JSON.stringify(value)} is not "${ELEMENT_INDEX_SPACE_FEM}"`;
   return { verified: false, reason: `${why}: _element_index is not verified to hold FEM element ids (only @${ELEMENT_INDEX_SPACE} = "${ELEMENT_INDEX_SPACE_FEM}" verifies it)` };
 }
 
