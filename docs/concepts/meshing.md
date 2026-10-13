@@ -176,9 +176,10 @@ For trusses and frames the structured case is one element per member.
 nodes, so each member meshes as a single 1-D element between its end points;
 pass labels, physical-group or part names to restrict it to those curves. A
 curve is free when it bounds no surface, is embedded in none, and
-no constraint, embed, reinforce or displacement declaration references it. The
-call refuses a curve you name that is not free, and with no names it skips the
-others and emits `CurvesSkippedWarning` for the ones a declaration references,
+no constraint, embed, reinforce or displacement declaration references it. A
+named curve is refused when it bounds or is embedded in a surface, or is tied
+into a surface or volume host; one referenced only by a support or a diaphragm
+is accepted. With no names, the call skips every non-free curve and emits `CurvesSkippedWarning` for the ones a declaration references,
 so a beam under a diaphragm is not left at the global size unnoticed.
 
 Structured and unstructured regions compose in one model — Gmsh uses the
