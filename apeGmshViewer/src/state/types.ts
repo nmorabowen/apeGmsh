@@ -416,6 +416,33 @@ export interface DeformState {
   measured: { key: string; drawn: number; missing: number } | null;
 }
 
+/**
+ * V4e1 (#1834, ADR 0083 Part 1): one section plane. World-space: it cuts
+ * whatever is drawn, so the deformed shape moves through it while scrubbing.
+ * The half-space `normal` points into survives; `flipped` keeps the other.
+ */
+export interface ClipPlane {
+  /** `plane-<n>`, unique for the window session */
+  id: string;
+  /** unit, world-space */
+  normal: readonly [number, number, number];
+  /** signed distance from the origin to the plane along `normal`; never clamped */
+  offset: number;
+  flipped: boolean;
+  /** cutting; at most MAX_ACTIVE_PLANES (state/clip.ts) are */
+  active: boolean;
+}
+
+/** V4e1: the section planes and the global "Apply cuts" toggle (window session only: the app has no session store yet). */
+export interface ClipState {
+  planes: readonly ClipPlane[];
+  applyCuts: boolean;
+  /** the last plane number handed out (ids are never reused) */
+  seq: number;
+  /** why the last clip event was refused (the 7th active plane, a zero normal, a NaN offset); cleared by the next accepted one */
+  notice: string | null;
+}
+
 /** What the user clicked: the declaration, the hit point, and the cell's node tags as the viewport read them from the connectivity blob. */
 export interface Pick {
   decl: DeclPath;
@@ -525,6 +552,8 @@ export interface State {
   ndm: SpatialNdm;
   /** V4d: the deformed shape */
   deform: DeformState;
+  /** V4e1: the section planes */
+  clip: ClipState;
 }
 
 /** The payload of `fileLoaded` for the model artifact: what the loader derived from the file. */
@@ -621,6 +650,18 @@ export type Event =
   /** V4d: the undeformed reference ghost behind the deformed mesh */
   | { type: "setReferenceGhost"; on: boolean }
   /** V4d (effects): how many drawn nodes the step shown leaves with no displacement, for the key it was counted on */
-  | { type: "deformMeasured"; key: string; drawn: number; missing: number };
+  | { type: "deformMeasured"; key: string; drawn: number; missing: number }
+  /** V4e1: add a section plane through the reference mesh centre (created inactive, with a notice, when six already cut) */
+  | { type: "addClipPlane"; normal: readonly number[] }
+  | { type: "removeClipPlane"; id: string }
+  /** V4e1: activating a 7th plane is refused with a notice (C-LIMIT) */
+  | { type: "setClipActive"; id: string; active: boolean }
+  | { type: "setClipFlipped"; id: string; flipped: boolean }
+  /** V4e1: unclamped; a non-finite offset is refused with a notice */
+  | { type: "setClipOffset"; id: string; offset: number }
+  /** V4e1: normalised on entry; a zero or non-finite normal is refused with a notice */
+  | { type: "setClipNormal"; id: string; normal: readonly number[] }
+  /** V4e1: the global "Apply cuts" toggle */
+  | { type: "setApplyCuts"; on: boolean };
 
 export type EventType = Event["type"];

@@ -19,9 +19,11 @@ import type { BlobStore } from "../state/blobs.ts";
 import type { DisplacementData } from "../effects.ts";
 import { contourView, geometryPairing } from "../state/selectors.ts";
 import { contourColours, contourShownKey, elementColours, noDataColours, type StepValues } from "./contour.ts";
+import { SectionClip, sliderBox } from "./clip.ts";
 import { basePositions, drawnPositions, edgesShown, frameFocus, gatherInto, ghostObjects, missingMarkerObjects, positionsFor, selectionOutline, writePositions, type FullPositions } from "./deform.ts";
 import type { State, Store } from "../state/store.ts";
 import { roleColouring } from "../state/roles.ts";
+import type { Box } from "../state/clip.ts";
 import type { DeclPath, GeometryInfo, LegendEntry, MeshInfo, Pick } from "../state/types.ts";
 import { DARK, toHexNumber } from "../theme/tokens.ts";
 import { headingOf, Navigator, nearestHit, type Heading } from "./navigation.ts";
@@ -92,6 +94,8 @@ export class Viewport {
   /** V4d: the reference ghost (the undeformed mesh, faint) and the markers of drawn nodes with no displacement. */
   private readonly ghost = new THREE.Group();
   private readonly markers = new THREE.Group();
+  /** V4e1: the section planes, on every drawn material before every render (renderer/clip.ts). */
+  private readonly clip = new SectionClip();
   /** V4d: what the drawn positions show now: `base`, or the displacement key and scale; null with no mesh. */
   get deformApplied(): string | null {
     return this.full?.key ?? null;
@@ -104,6 +108,8 @@ export class Viewport {
     this.renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
     this.renderer.setPixelRatio(window.devicePixelRatio);
     this.renderer.setClearColor(toHexNumber(DARK.bg0), 0);
+    // V4e1: the section planes are per material (renderer/clip.ts), never the renderer's global ones.
+    this.renderer.localClippingEnabled = true;
     host.appendChild(this.renderer.domElement);
 
     this.camera = new THREE.PerspectiveCamera(35, 1, 0.01, 1000);
@@ -169,6 +175,10 @@ export class Viewport {
   }
 
   private onState(s: State, prev: State | null): void {
+    // V4e1: the planes move in place; every material already shares them.
+    if (!prev || s.clip !== prev.clip) {
+      if (this.clip.sync(s.clip)) this.requestRender();
+    }
     this.onGeometry(s, prev);
     if (!prev || s.mesh !== prev.mesh) {
       this.setMesh(s.mesh);
@@ -654,7 +664,8 @@ export class Viewport {
     const lineElement = this.blobs.i32(info.lineElement), triElement = this.blobs.i32(info.triElement);
     this.aim(clientX, clientY);
     // The objects hold the drawn positions (deformed when the deformed shape shows, V4d).
-    const hit = hitElement(this.raycaster, this.lines, this.faces, drawn, info.elements, lineElement, triElement, info.radius);
+    // V4e1: a hit the section planes cut away is a miss (C-PICK).
+    const hit = hitElement(this.raycaster, this.lines, this.faces, drawn, info.elements, lineElement, triElement, info.radius, (p) => this.clip.clipped(p, 1e-6 * info.radius));
     if (!hit) return null;
     const decl = info.elements[hit.element];
     if (decl === undefined) throw new Error(`viewport: element index ${hit.element} is not in the mesh`);
@@ -713,10 +724,28 @@ export class Viewport {
 
   renderNow(): void {
     const t = performance.now();
+    this.clip.beforeRender(this.scene);
     this.renderer.render(this.scene, this.camera);
     if (this.highlight.children.length) this.halo.render(this.scene, this.camera);
     this.lastRenderMs = performance.now() - t;
     if (this.halo.pulsing) this.requestRender();
+  }
+
+  /** V4e1: the box the offset slider maps, the reference (undeformed) mesh (renderer/clip.ts sliderBox); null with no mesh. */
+  sliderBox(): Box | null {
+    const info = this.store.get().mesh;
+    return info ? sliderBox(this.full, info, this.blobs) : null;
+  }
+
+  /** V4e1: the unit direction the camera looks along (a plane with this normal keeps what lies beyond it). */
+  viewNormal(): [number, number, number] {
+    const d = this.camera.getWorldDirection(new THREE.Vector3());
+    return [d.x, d.y, d.z];
+  }
+
+  /** V4e1: how many section planes cut now. */
+  get clipCount(): number {
+    return this.clip.count;
   }
 
   gpuName(): string {

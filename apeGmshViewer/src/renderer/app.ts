@@ -10,6 +10,7 @@ import { mountHeader } from "../panels/header.ts";
 import { mountInspector } from "../panels/inspector.ts";
 import { mountLegend } from "../panels/legend.ts";
 import { mountPhase } from "../panels/phase.ts";
+import { mountPlanes } from "../panels/planes.ts";
 import { mountSources } from "../panels/sources.ts";
 import { mountWindows } from "../panels/windows/frame.ts";
 import { BlobStore } from "../state/blobs.ts";
@@ -34,6 +35,8 @@ viewport.setStepSource(() => effects.currentStep());
 // V4d: the deformed shape moves the drawn vertices by the displacement the effects computed for the step shown.
 viewport.setDisplacementSource(() => effects.currentDisplacement());
 const panels = [mountHeader(store), mountBanner(store), mountLegend(store), mountInspector(store), mountEmpty(store), mountPhase(store), mountSources(store), mountWindows(store)];
+// V4e1: the section planes panel; its slider box and the view direction come from the viewport.
+panels.push(mountPlanes(store, { box: () => viewport.sliderBox(), viewNormal: () => viewport.viewNormal() }));
 window.addEventListener("beforeunload", () => {
   for (const d of panels) d();
   effects.dispose();

@@ -945,3 +945,8 @@ export function windowContentOf(s: State, kind: WindowKind): WindowContent {
     }
   }
 }
+
+// -- V4e1: section planes (ADR 0083 Part 1) --------------------------------------
+
+export { activeCount, MAX_ACTIVE_PLANES, offsetRange, orientationOf } from "./clip.ts";
+export type { Box, Vec3 } from "./clip.ts";
