@@ -3925,9 +3925,12 @@ are unaffected and run on any build.</p>
   <a href="#stock-engine-defects">Stock engine defects</a>. The same holds for
   <strong><code>ops.equation_constraint(...)</code></strong>, a hand-written row
   (<code>constrained=(node, dof)</code>, <code>retained=[(node, dof, coef), ...]</code>): <code>Lagrange</code>
-  / <code>LadrunoProjection</code> auto-emitted, <code>Transformation</code> refused, serial only,
-  and not archived by <code>ops.h5(...)</code>. What <em>is</em> fork-only is the explicit
-  path: under an explicit integrator the bridge picks <code>LadrunoProjection</code>.</li>
+  / <code>LadrunoProjection</code> auto-emitted, <code>Transformation</code> refused, serial only.
+  <code>ops.h5(...)</code> archives each row, and <code>OpenSeesModel.from_h5(...)</code> replays
+  it. An <code>enforce="equation"</code> interface tie is different: deck replay does
+  not re-emit it, and <code>ops.h5(...)</code> says so with an <code>H5LedgerWarning</code>. What
+  <em>is</em> fork-only is the explicit path: under an explicit integrator the
+  bridge picks <code>LadrunoProjection</code>.</li>
 <li><strong>Contact.</strong> <code>g.constraints.contact(...)</code> → <code>contactSurface</code> / <code>contact</code>, and
   <code>g.constraints.contact_plane(...)</code> → <code>contactPlane</code> (rigid analytical plane).
   Both lanes work in 2D as well as 3D, and both are <strong>serial only</strong> — parallel
