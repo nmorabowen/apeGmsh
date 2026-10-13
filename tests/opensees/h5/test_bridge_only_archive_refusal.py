@@ -98,3 +98,55 @@ def test_an_archive_with_a_neutral_zone_still_replays(tmp_path: Path) -> None:
     path, fem = build_simple_frame_h5(tmp_path)
     model = OpenSeesModel.from_h5(str(path))
     assert len(model.fem.nodes.ids) == len(fem.nodes.ids)
+
+
+# Other files without a neutral zone keep the error main raised: the guard
+# fires only for a stamped /meta beside the /opensees bridge zone.
+
+
+def _results_only(tmp_path: Path) -> Path:
+    """A results-only file: a lineage-stub /meta (no schema_version)."""
+    path = tmp_path / "results_only.h5"
+    with h5py.File(path, "w") as f:
+        f.create_group("meta").attrs["source"] = "lineage stub"
+        f.create_group("results")
+    return path
+
+
+def _composed_without_nodes(tmp_path: Path) -> Path:
+    """A composed results.h5 whose /model carries no ``nodes``: the root
+    has a lineage-stub /meta and the verbatim /opensees zone, /model has
+    the stamped bridge meta and nothing else."""
+    flat = _bridge_only_archive(tmp_path)
+    path = tmp_path / "composed_no_nodes.h5"
+    with h5py.File(flat, "r") as src, h5py.File(path, "w") as dst:
+        dst.create_group("meta").attrs["source"] = "lineage stub"
+        src.copy(src["opensees"], dst, name="opensees")
+        src.copy(src["meta"], dst.create_group("model"), name="meta")
+    return path
+
+
+def _main_error(path: Path, monkeypatch: pytest.MonkeyPatch) -> Exception:
+    """What ``from_h5`` raised before this guard (main's behaviour)."""
+    from apeGmsh.opensees import opensees_model
+
+    with monkeypatch.context() as m:
+        m.setattr(opensees_model, "_refuse_bridge_only", lambda *_a: None)
+        with pytest.raises(Exception) as info:
+            OpenSeesModel.from_h5(str(path))
+    return info.value
+
+
+@pytest.mark.parametrize("make", [_results_only, _composed_without_nodes],
+                         ids=["results-only", "composed-model-no-nodes"])
+def test_other_no_fem_files_keep_mains_error(
+    make: object, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = make(tmp_path)  # type: ignore[operator]
+    want = _main_error(path, monkeypatch)
+    assert type(want) is MalformedH5Error
+    assert "/meta/schema_version attribute is empty" in str(want)
+    with pytest.raises(MalformedH5Error) as info:
+        OpenSeesModel.from_h5(str(path))
+    assert type(info.value) is type(want)  # not BridgeOnlyArchiveError
+    assert str(info.value) == str(want)

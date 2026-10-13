@@ -2140,11 +2140,14 @@ def _resolve_neutral_group(f: Any, fem_root: str) -> Any:
 def _refuse_bridge_only(path: str, fem_root: str) -> None:
     """Raise ``BridgeOnlyArchiveError`` when ``fem_root`` has no neutral zone.
 
-    A bridge-only archive (``/meta`` and ``/opensees`` but no ``nodes``,
-    e.g. one written from a ``FEMStub``) cannot be replayed (#1797).
-    Checked up front so the caller sees a named refusal instead of h5py's
-    raw ``KeyError`` from deep inside the neutral-zone read.  A missing
-    root group or ``/meta`` is left to the reader's own errors.
+    A bridge-only archive (a stamped ``/meta`` and the ``/opensees``
+    bridge zone, but no ``nodes``, e.g. one written from a ``FEMStub``)
+    cannot be replayed (#1797).  Checked up front so the caller sees a
+    named refusal instead of h5py's raw ``KeyError`` from deep inside the
+    neutral-zone read.  Any other file without a neutral zone (a missing
+    root group or ``/meta``, a results-only file whose ``/meta`` is an
+    unstamped lineage stub, a root with no ``opensees`` group) is left to
+    the reader's own errors, unchanged.
     """
     import h5py
 
@@ -2155,7 +2158,11 @@ def _refuse_bridge_only(path: str, fem_root: str) -> None:
         if key and key not in f:
             return
         group = f[key] if key else f
-        if "meta" not in group or "nodes" in group:
+        if "nodes" in group or "opensees" not in group:
+            return
+        if "meta" not in group or not str(
+            group["meta"].attrs.get("schema_version", "")
+        ):
             return
         prefix = f"/{key}/" if key else "/"
         present = ", ".join(prefix + name for name in sorted(group.keys()))
