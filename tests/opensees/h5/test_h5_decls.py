@@ -547,7 +547,9 @@ CLASS: dict[str, str] = {
         "eleLoad", "sp", "recorder_declaration_begin",
         "recorder_declaration_end", "mp_constraint_comment")},
     **{v: "neutral" for v in (
-        "node", "equalDOF", "rigidLink", "rigidDiaphragm", "embeddedNode")},
+        "node", "equalDOF", "rigidLink", "rigidDiaphragm", "embeddedNode",
+        # K2b: g.reinforce ties, declared by the FEM snapshot.
+        "embedded_rebar")},
     **{v: "control" for v in (
         "model", "constraints", "numberer", "system", "test", "algorithm",
         "integrator", "analysis", "analyze", "stage_open", "stage_close",
