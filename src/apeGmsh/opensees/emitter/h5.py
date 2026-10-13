@@ -623,7 +623,22 @@ class H5RefusedVerb(NotImplementedError):
 #:     it is. A 2.31 reader opens 2.12 through 2.31 and
 #:     refuses a ``decl`` outside ``{-1} ∪ [0, n_decls)``; a 2.30.x reader
 #:     REFUSES a 2.31.x file.
-SCHEMA_VERSION: str = "2.31.0"
+#:   * 2.32.0 — #1853 (chain K): the six side-channel verbs
+#:     (``step_hook_ramp``, ``addToParameter``, ``flip_element_stage``,
+#:     ``update_parameter``, ``set_node_vel``, ``set_node_accel``) carry
+#:     the ``/opensees/program`` ``decl`` of the record that drove them,
+#:     which the bridge opens around each record's calls; ``-1`` before
+#:     this minor. A ``set_node_vel`` / ``set_node_accel`` call on a node
+#:     two ``s.zero_velocities`` records name is the first record's (the
+#:     deck zeroes it once). No path or dtype changes, and the
+#:     ``/opensees/decls@program_decl`` marker keeps its meaning
+#:     (``"complete"``: every provable join recorded). The column is
+#:     hashed, so an archive with any of these calls (an initial stress,
+#:     an absorbing flip, ``s.update_parameter``, ``s.zero_velocities``)
+#:     hashes differently once at this minor; any other archive is
+#:     unchanged. A 2.32 reader opens 2.12 through 2.32; a 2.31.x reader
+#:     REFUSES a 2.32.x file.
+SCHEMA_VERSION: str = "2.32.0"
 
 #: Oldest opensees-zone minor the reader opens (ADR 0113 (#1303)). The
 #: zone's last non-additive minor is 2.11.0, the 0-based rank flip, but
@@ -1333,8 +1348,8 @@ _NO_ROW = -1
 #: proved at emit time (A7, schema 2.31.0): a call no declaration opens
 #: (a node, a part row, the analysis chain), a neutral-declared row, a
 #: tagged call whose ``(kind, tag)`` no ``/opensees/decls/tags`` run
-#: holds, a side-channel store's call, and a tagless call with no
-#: declaration open (a ghost replay). Never a guessed id.
+#: holds, and a tagless call with no declaration open (a ghost replay,
+#: or a side-channel store's call before 2.32.0). Never a guessed id.
 #: Also the "no declaration open" state of :meth:`H5Emitter.set_declaration`.
 _NO_DECL = -1
 
@@ -3437,8 +3452,13 @@ class H5Emitter:
     def addToParameter(
         self, tag: int, ele_tag: int, response: str,
     ) -> None:
-        """No-op — resolved form; persists declaratively (ADR 0055)."""
+        """No-op — resolved form; persists declaratively (ADR 0055).
+
+        The call is its initial stress's declaration's: the bridge opens
+        it around the record's calls (opensees 2.32.0, #1853).
+        """
         del tag, ele_tag, response
+        self._program.decl = self._decl_open
 
     def flip_element_stage(
         self, pid: int, ele_tags: tuple[int, ...],
@@ -3448,11 +3468,13 @@ class H5Emitter:
         The record itself persists declaratively via the per-stage
         ``activate_absorbing`` sub-table (ADR 0055 Phase 2);
         :meth:`set_stage_records` gives each record the ``(rank, pid)``
-        rows of its calls.
+        rows of its calls. The call is its record's declaration's, which
+        the bridge opens around it (opensees 2.32.0, #1853).
         """
         del ele_tags
         blk = self._stage_block("flip_element_stage")
         blk.flip_calls.append((self._call_rank(), int(pid)))
+        self._program.decl = self._decl_open
 
     def update_parameter(
         self,
@@ -3466,12 +3488,15 @@ class H5Emitter:
         The record persists declaratively under the stage's
         ``update_parameter`` sub-table (:meth:`set_stage_records` attaches
         it and gives it the ``(rank, pid)`` rows of its calls, after
-        checking each call's ``args`` and ``value`` against it).
+        checking each call's ``args`` and ``value`` against it). The call
+        is the record's declaration's, which the bridge opens around it
+        (opensees 2.32.0, #1853).
         """
         del ele_tags
         blk = self._stage_block("update_parameter")
         blk.update_calls.append(
             (self._call_rank(), int(pid), tuple(args), float(value)))
+        self._program.decl = self._decl_open
 
     def step_hook_ramp(
         self,
@@ -3487,7 +3512,9 @@ class H5Emitter:
         ``set_initial_stress_records`` / the per-stage ``initial_stress``
         sub-table (ADR 0055); its ``param_tags`` are these, by name. A
         second ramp of one name in one scope with other tags refuses: the
-        archive could not tell which record they belong to.
+        archive could not tell which record they belong to. The call is
+        the record's declaration's, which the bridge opens around it
+        (opensees 2.32.0, #1853).
         """
         del n_steps_to_full, phase
         if len(targets) != 3:
@@ -3505,6 +3532,7 @@ class H5Emitter:
                 f"H5Emitter.step_hook_ramp: initial stress {name!r} ramps "
                 f"twice in one scope, with tags {held[str(name)]} and {tags}."
             )
+        self._program.decl = self._decl_open
 
     def stage_open(self, name: str) -> None:
         """Open a per-stage capture bucket (ADR 0055 Phase 2)."""
@@ -3563,9 +3591,11 @@ class H5Emitter:
 
     def set_node_vel(self, node: int, dof: int, value: float) -> None:
         self._count_node_kinematics("set_node_vel", value)
+        self._program.decl = self._decl_open  # #1853
 
     def set_node_accel(self, node: int, dof: int, value: float) -> None:
         self._count_node_kinematics("set_node_accel", value)
+        self._program.decl = self._decl_open  # #1853
 
     def _count_node_kinematics(self, verb: str, value: float) -> None:
         """Count one ``s.zero_velocities`` call (schema 2.27.0, K1-8).

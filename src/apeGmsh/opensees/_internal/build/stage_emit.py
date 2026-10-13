@@ -8,6 +8,7 @@ from typing import (
     Iterable,
     Mapping,
     NamedTuple,
+    Protocol,
     Sequence,
     TypeAlias,
 )
@@ -32,6 +33,42 @@ if TYPE_CHECKING:
     from ...emitter.base import Emitter
     from apeGmsh.mesh.FEMData import FEMData
     from ..tag_plan import TagPlan
+
+
+class DeclCursor(Protocol):
+    """Opens the declaration of the record whose calls follow (K1-6, #1853).
+
+    The bridge's ``BuiltModel._decl_cursor`` gives an archival emitter one
+    that forwards to ``H5Emitter.set_declaration``; a deck's does nothing.
+    The writers below bracket each record's calls with :meth:`open` /
+    :meth:`close`, so ``/opensees/program`` records the declaration that
+    made each ``step_hook_ramp``, ``addToParameter``,
+    ``flip_element_stage``, ``update_parameter``, ``set_node_vel`` and
+    ``set_node_accel`` call: a proof at emit time, as for ``fix``.
+    """
+
+    def open(self, owner: object) -> None:
+        """The calls that follow are ``owner``'s declaration's."""
+
+    def close(self) -> None:
+        """The calls that follow belong to no declaration."""
+
+
+class _NoDeclCursor:
+    """The cursor that opens nothing: a deck, and the archive replays of
+    ``compose.py``, whose records carry no declaration row."""
+
+    __slots__ = ()
+
+    def open(self, owner: object) -> None:
+        del owner
+
+    def close(self) -> None:
+        pass
+
+
+#: The no-op :class:`DeclCursor`, the default where ``compose.py`` calls in.
+NO_DECL_CURSOR: DeclCursor = _NoDeclCursor()
 
 
 class ParameterSite(NamedTuple):
@@ -195,11 +232,13 @@ def _planned_parameters(
 
 def write_planned_ramps(
     emitter: "Emitter", lines: "Iterable[PlannedParameter]",
+    *, cursor: DeclCursor = NO_DECL_CURSOR,
 ) -> dict[str, tuple[int, int, int]]:
     """Write each planned initial-stress ramp; mint nothing.
 
     One :meth:`Emitter.step_hook_ramp` per line, under the line's three
-    planned tags (XX, YY, ZZ). Returns ``{record_name: (xx, yy, zz)}``.
+    planned tags (XX, YY, ZZ), with the line's record's declaration open
+    on ``cursor``. Returns ``{record_name: (xx, yy, zz)}``.
     """
     out: dict[str, tuple[int, int, int]] = {}
     for line in lines:
@@ -214,12 +253,16 @@ def write_planned_ramps(
             (yy_tag, rec.sigma_yy * rec.lambda_install),
             (zz_tag, rec.sigma_zz * rec.lambda_install),
         )
-        emitter.step_hook_ramp(
-            name=rec.name,
-            targets=targets,
-            n_steps_to_full=float(rec.ramp_steps),
-            phase="before",
-        )
+        cursor.open(rec)
+        try:
+            emitter.step_hook_ramp(
+                name=rec.name,
+                targets=targets,
+                n_steps_to_full=float(rec.ramp_steps),
+                phase="before",
+            )
+        finally:
+            cursor.close()
         out[rec.name] = (xx_tag, yy_tag, zz_tag)
     return out
 
@@ -228,6 +271,7 @@ def emit_initial_stress_global(
     records: "Iterable[InitialStressRecord]",
     emitter: "Emitter",
     tag_plan: "TagPlan",
+    *, cursor: DeclCursor,
 ) -> dict[str, tuple[int, int, int]]:
     """Emit the global side of each :class:`InitialStressRecord`.
 
@@ -243,7 +287,7 @@ def emit_initial_stress_global(
     tags without re-allocating.
     """
     return write_planned_ramps(emitter, _planned_parameters(
-        initial_stress_sites(records), tag_plan))
+        initial_stress_sites(records), tag_plan), cursor=cursor)
 
 
 def replay_initial_stress_global(
@@ -271,8 +315,11 @@ def emit_initial_stress_addtoparameter(
     fem_eid_to_ops_tag: "FemToOpsTagMap",
     element_owner: "SortedIntToInt | None" = None,
     partition_rank: int | None = None,
+    *, cursor: DeclCursor = NO_DECL_CURSOR,
 ) -> None:
     """Emit ``addToParameter`` for each element covered by each record.
+
+    Each record's calls run with its declaration open on ``cursor``.
 
     Per-rank semantics: if ``partition_rank`` is supplied (MP-mode
     emission inside a ``partition_open`` block), elements are filtered
@@ -298,27 +345,31 @@ def emit_initial_stress_addtoparameter(
     is_partitioned_mode = partition_rank is not None
     for rec in records:
         param_tags = name_to_param_tags[rec.name]
-        for eid in resolve_initial_stress_elements(rec, fem):
-            if is_partitioned_mode and element_owner is not None:
-                owner = element_owner.get(int(eid))
-                if owner is None or owner != partition_rank:
-                    continue
-            ops_tag = fem_eid_to_ops_tag.get(int(eid))
-            if ops_tag is None:
-                if is_partitioned_mode:
-                    continue  # owned by another rank; silent skip OK.
-                raise BridgeError(
-                    f"initial_stress {rec.name!r}: element id {int(eid)} "
-                    "is not registered with any Element primitive "
-                    "(would silently no-op the addToParameter response).  "
-                    "Either remove it from ``elements=`` or register the "
-                    "matching Element primitive via "
-                    "``ops.element.<Type>(pg=...)``."
-                )
-            for response, idx in components:
-                emitter.addToParameter(
-                    int(param_tags[idx]), int(ops_tag), response,
-                )
+        cursor.open(rec)
+        try:
+            for eid in resolve_initial_stress_elements(rec, fem):
+                if is_partitioned_mode and element_owner is not None:
+                    owner = element_owner.get(int(eid))
+                    if owner is None or owner != partition_rank:
+                        continue
+                ops_tag = fem_eid_to_ops_tag.get(int(eid))
+                if ops_tag is None:
+                    if is_partitioned_mode:
+                        continue  # owned by another rank; silent skip OK.
+                    raise BridgeError(
+                        f"initial_stress {rec.name!r}: element id {int(eid)} "
+                        "is not registered with any Element primitive "
+                        "(would silently no-op the addToParameter response).  "
+                        "Either remove it from ``elements=`` or register the "
+                        "matching Element primitive via "
+                        "``ops.element.<Type>(pg=...)``."
+                    )
+                for response, idx in components:
+                    emitter.addToParameter(
+                        int(param_tags[idx]), int(ops_tag), response,
+                    )
+        finally:
+            cursor.close()
 
 
 def _flip_ele_tags(
@@ -406,6 +457,7 @@ def emit_update_parameters(
     emitter: "Emitter",
     tag_plan: "TagPlan",
     partition_rank: int | None = None,
+    *, cursor: DeclCursor,
 ) -> None:
     """Emit ``s.update_parameter`` for each record.
 
@@ -420,7 +472,8 @@ def emit_update_parameters(
     """
     lines = tag_plan.parameters.flip_lines(
         "update_parameter", tuple(records), partition_rank)
-    write_planned_flips(emitter, lines, [line.ele_tags for line in lines])
+    write_planned_flips(emitter, lines, [line.ele_tags for line in lines],
+                        cursor=cursor)
 
 
 def emit_activate_absorbing(
@@ -428,6 +481,7 @@ def emit_activate_absorbing(
     emitter: "Emitter",
     tag_plan: "TagPlan",
     partition_rank: int | None = None,
+    *, cursor: DeclCursor,
 ) -> None:
     """Emit the absorbing-boundary stage flip for each record (ADR 0054 AB-3).
 
@@ -447,7 +501,8 @@ def emit_activate_absorbing(
     """
     lines = tag_plan.parameters.flip_lines(
         "flip_element_stage", tuple(records), partition_rank)
-    write_planned_flips(emitter, lines, [line.ele_tags for line in lines])
+    write_planned_flips(emitter, lines, [line.ele_tags for line in lines],
+                        cursor=cursor)
 
 
 def replay_activate_absorbing(
@@ -478,8 +533,12 @@ def write_planned_flips(
     emitter: "Emitter",
     lines: "Sequence[PlannedParameter]",
     ele_tags: "Sequence[tuple[int, ...]]",
+    *, cursor: DeclCursor = NO_DECL_CURSOR,
 ) -> None:
     """Write each planned absorbing flip or update; mint nothing.
+
+    Each call runs with its line's record's declaration open on
+    ``cursor``.
 
     ``ele_tags`` holds, per line, the OpenSees tags its record addresses
     on the line's rank (:func:`absorbing_ele_tags`,
@@ -504,15 +563,51 @@ def write_planned_flips(
         if not line.tags:
             continue
         (pid,) = line.tags
-        if line.verb == "flip_element_stage":
-            emitter.flip_element_stage(pid, ops_tags)
-            continue
         rec = line.record
-        args: tuple[str | int, ...] = (
-            (rec.name,) if rec.mat_tag is None
-            else (rec.name, int(rec.mat_tag))
-        )
-        emitter.update_parameter(pid, ops_tags, args, float(rec.value))
+        cursor.open(rec)
+        try:
+            if line.verb == "flip_element_stage":
+                emitter.flip_element_stage(pid, ops_tags)
+                continue
+            args: tuple[str | int, ...] = (
+                (rec.name,) if rec.mat_tag is None
+                else (rec.name, int(rec.mat_tag))
+            )
+            emitter.update_parameter(pid, ops_tags, args, float(rec.value))
+        finally:
+            cursor.close()
+
+
+def zero_velocity_targets_by_record(
+    records: "Iterable[ZeroVelocityRecord]",
+    all_node_ids: "Iterable[int]",
+) -> "list[tuple[ZeroVelocityRecord, list[int]]]":
+    """Resolve a stage's ``s.zero_velocities`` pool, record by record.
+
+    ``nodes=None`` expands to ``all_node_ids`` (the whole domain). Each
+    record keeps the nodes no earlier record named, in first-seen order,
+    so a node named by two records is the first one's (the rule of
+    ``BuiltModel._claim_ghost_fixes``) and the deck zeroes it once.
+    Concatenated, the lists are :func:`zero_velocity_target_nodes`.
+    """
+    out: list[tuple[ZeroVelocityRecord, list[int]]] = []
+    seen: set[int] = set()
+    domain: tuple[int, ...] | None = None
+    for rec in records:
+        if rec.nodes is None:
+            if domain is None:
+                domain = tuple(int(n) for n in all_node_ids)
+            targets: "Iterable[int]" = domain
+        else:
+            targets = rec.nodes
+        mine: list[int] = []
+        for nid in targets:
+            n = int(nid)
+            if n not in seen:
+                seen.add(n)
+                mine.append(n)
+        out.append((rec, mine))
+    return out
 
 
 def zero_velocity_target_nodes(
@@ -525,22 +620,8 @@ def zero_velocity_target_nodes(
     Order is first-seen; duplicates across records collapse, so calling
     the verb twice on overlapping sets does not double the deck.
     """
-    out: list[int] = []
-    seen: set[int] = set()
-    domain: tuple[int, ...] | None = None
-    for rec in records:
-        if rec.nodes is None:
-            if domain is None:
-                domain = tuple(int(n) for n in all_node_ids)
-            targets: "Iterable[int]" = domain
-        else:
-            targets = rec.nodes
-        for nid in targets:
-            n = int(nid)
-            if n not in seen:
-                seen.add(n)
-                out.append(n)
-    return out
+    return [n for _rec, nodes in zero_velocity_targets_by_record(
+        records, all_node_ids) for n in nodes]
 
 
 def emit_zero_velocities(
@@ -565,6 +646,28 @@ def emit_zero_velocities(
             emitter.set_node_vel(node, dof, 0.0)
         for dof in range(1, ndf + 1):
             emitter.set_node_accel(node, dof, 0.0)
+
+
+def emit_zero_velocities_by_record(
+    targets: "Iterable[tuple[ZeroVelocityRecord, Sequence[int]]]",
+    emitter: "Emitter",
+    effective_ndf: "Mapping[int, int]",
+    envelope_ndf: int,
+    *, cursor: DeclCursor,
+) -> None:
+    """:func:`emit_zero_velocities` over each record's nodes
+    (:func:`zero_velocity_targets_by_record`), with the record's
+    declaration open on ``cursor``. A record with no node left writes
+    nothing; the deck is :func:`emit_zero_velocities` over the
+    concatenated nodes."""
+    for rec, nodes in targets:
+        if not nodes:
+            continue
+        cursor.open(rec)
+        try:
+            emit_zero_velocities(nodes, emitter, effective_ndf, envelope_ndf)
+        finally:
+            cursor.close()
 
 
 #: One SP-constraint operation in a node's owner-side command stream,
