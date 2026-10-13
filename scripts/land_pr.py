@@ -108,6 +108,13 @@ _NEGATION = re.compile(
 _HTML_COMMENT = re.compile(r"<!--.*?-->", re.DOTALL)
 _LIST_LINE = re.compile(r"\s*(?:[-*+]|\d+[.)])\s|\s")
 _BULLET = re.compile(r"\s*(?:[-*+]|\d+[.)])\s")
+#: Words that may sit around a negation in a backticked span that is only a negation
+#: phrase (`_quoted_negation`): "`do not` touch", "`must never edit`".
+_FILLER = frozenset(
+    "do does did must should shall will may please touch edit edits change changes modify add use it this that"
+    " these those them file files".split()
+)
+_DOT_EXT = re.compile(r"\.\w")
 #: How far a negation in a card amendment reaches (`_amendment_paths`); wider is larger.
 _FREE, _ITEM, _PARA, _LIST = range(4)
 _AMENDMENT = re.compile(r"^\s*\**\s*card amendment", re.IGNORECASE)
@@ -325,14 +332,26 @@ def _line_paths(line: str) -> list[str]:
     return out
 
 
+def _quoted_negation(token: str) -> bool:
+    """A backticked span that is only a negation phrase (`never`, `do not`, `don't
+    touch`): no path character, and nothing but filler words around the negation.
+    `cannot join:` and `not-yet` carry other words, so they are code, not negations."""
+    if "/" in token or _DOT_EXT.search(token):
+        return False
+    rest = _NEGATION.sub(" ", token)
+    return rest != token and all(word in _FILLER for word in re.findall(r"[a-z]+", rest.lower()))
+
+
 def _negates(line: str) -> bool:
-    """Whether a card line's prose negates. Every backticked span is emptied to "``"
+    """Whether a card line's prose negates. Each backticked span is emptied to "``"
     first: a path (`src/not_found.py`) or a quoted code string (#1857's "the two
     `cannot join:` templates") is data, not a negation, while "No `b.py`" still negates.
-    Only single backticks in pairs are masked: a ``double`` run or an odd count pairs
-    the ticks wrongly and would hide prose (#1250), so such a line is read whole."""
+    A span that is only a negation phrase (`do not`, `never`) stays, so it negates
+    (review of #1883, G1). Only single backticks in pairs are masked: a ``double`` run
+    or an odd count pairs the ticks wrongly and would hide prose (#1250), so such a
+    line is read whole."""
     if line.count("`") % 2 == 0 and "``" not in line:
-        line = _TICKED.sub("``", line)
+        line = _TICKED.sub(lambda m: m.group(0) if _quoted_negation(m.group(1)) else "``", line)
     return _NEGATION.search(line) is not None
 
 

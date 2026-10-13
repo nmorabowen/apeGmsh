@@ -1113,6 +1113,22 @@ def test_a_negation_word_inside_a_quoted_code_string_is_not_a_negation_1857():
     assert land_pr._card_paths(card) == ["apeGmshViewer/src/panels/windows/analysis.ts"]
 
 
+@pytest.mark.parametrize("line", [
+    pytest.param("- `do not` touch `src/b.py`", id="ticked-do-not"),
+    pytest.param("`never` `src/b.py`", id="ticked-never"),
+])
+def test_a_backticked_negation_phrase_still_negates_g1(line):
+    """Review of #1883, G1. Revert-proof: masking every span hides the negation and
+    `src/b.py` is owned."""
+    _refused_b(f"**Card amendment (T):** also edit `src/a.py`.\n{line}\n")
+
+
+def test_a_backticked_negation_in_an_owned_line_refuses_g1():
+    """Review of #1883, G1. Revert-proof: masking every span lets this Owned line own `b.py`."""
+    with pytest.raises(land_pr.LandError, match=r"check 9: an Owned line negates"):
+        land_pr._card_paths("### Owned files\n- `src/a.py` (`never` `src/b.py`)\n")
+
+
 def test_mispaired_backticks_do_not_hide_a_negation_1250():
     """A ``double`` run pairs the following ticks wrongly, so masking would swallow the
     prose "Never" (#1250's Owned line). Revert-proof: masking regardless of the pairing
