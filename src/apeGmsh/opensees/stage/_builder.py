@@ -32,7 +32,6 @@ from .._internal.build.records import (
 from .._internal.ns import _StageDampingNS
 from .._internal.types import Primitive, Recorder, TimeSeries
 from ..analysis.analysis import Static
-from ..analysis.integrator import LadrunoLoadControl, LoadControl
 from ..node import Node, _iter_tags, _select_nodes
 from ._chain import (
     CHAIN_SLOTS,
@@ -364,11 +363,15 @@ class _StageBuilder:
 
         * A test omitted for ``Linear`` stays required when a strategy
           ladder is attached: the ladder's rungs iterate.
-        * D1 (R3, #1785): under ``Static`` + ``LoadControl`` the step is
-          ``dlam``; OpenSees ignores ``analyze``'s ``dt``.  A ``dt`` that
-          differs from ``dlam`` never acted, so it warns
-          (:class:`InertStaticDtWarning`).  Omitting ``dt`` or giving
-          ``dt == dlam`` is silent.  ``Transient`` keeps ``dt``.
+        * D1 (R3, #1785; extended R3-S1b, #1822): under ``Static``
+          OpenSees ignores ``analyze``'s ``dt``; the integrator sets the
+          step.  A given ``dt`` never acts, so it warns
+          (:class:`InertStaticDtWarning`), except when it equals the
+          integrator's declared step field (``static_step_field``,
+          ``"dlam"`` for ``LoadControl`` / ``LadrunoLoadControl``).  An
+          integrator without a step field, or without the declaration,
+          warns on any ``dt`` (fail loud).  Omitting ``dt`` is silent.
+          ``Transient`` keeps ``dt``.
         """
         if self._test is None and self._strategy is not None:
             raise ValueError(
@@ -376,19 +379,26 @@ class _StageBuilder:
                 "convergence test, because its rungs iterate; pass "
                 "test= to s.analysis (or drop s.run(strategy=))."
             )
+        if self._dt is None or not isinstance(self._analysis, Static):
+            return
         integ = self._integrator
-        if (
-            self._dt is not None
-            and isinstance(self._analysis, Static)
-            and isinstance(integ, (LoadControl, LadrunoLoadControl))
-            and not math.isclose(
-                self._dt, float(integ.dlam), rel_tol=1e-12, abs_tol=0.0,
-            )
-        ):
+        kind = type(integ).__name__
+        field = getattr(type(integ), "static_step_field", None)
+        if field is None:
             warnings.warn(
-                "dt has no effect under Static; dlam sets the step "
+                f"dt has no effect under Static; {kind} sets the step "
+                "and has no dlam for dt to match, so omit dt "
+                f"(stage {self._name!r}: dt={self._dt!r}).",
+                InertStaticDtWarning,
+                stacklevel=3,
+            )
+            return
+        step = float(getattr(integ, field))
+        if not math.isclose(self._dt, step, rel_tol=1e-12, abs_tol=0.0):
+            warnings.warn(
+                f"dt has no effect under Static; {field} sets the step "
                 f"(stage {self._name!r}: dt={self._dt!r}, "
-                f"dlam={integ.dlam!r}).",
+                f"{field}={getattr(integ, field)!r}).",
                 InertStaticDtWarning,
                 stacklevel=3,
             )

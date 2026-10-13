@@ -206,12 +206,14 @@ ops.pattern('Plain', 2, 2)
   displacements reached and the recorders declared once at the top of the deck
   survive the boundary. `wipeAnalysis` does not touch the domain, and the
   recorders are not re-emitted.
-- **dt has no effect under Static; a differing dt warns.** A static
-  analysis ignores `analyze`'s `dt`: the `LoadControl` `dlam` alone sets the
-  step, so a stage with `dlam=0.25` and `n_increments=4` reaches `t0 + 1.0`.
+- **dt has no effect under Static; a given dt warns.** A static
+  analysis ignores `analyze`'s `dt`: the integrator alone sets the step, so a
+  `LoadControl` stage with `dlam=0.25` and `n_increments=4` reaches `t0 + 1.0`.
   A `dt` that differs from `dlam` raises `InertStaticDtWarning` (from
   `apeGmsh.opensees`) when the stage closes; leave `dt` out, or set it equal
-  to `dlam`. `dt` is the step only under `Transient`.
+  to `dlam`. Every other static integrator (`DisplacementControl`,
+  `ArcLength` and the fork's path-following ones) has no `dlam`, so any `dt`
+  given to it warns: leave it out. `dt` is the step only under `Transient`.
 
 ## One declaration surface, four outputs
 

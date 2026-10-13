@@ -21,7 +21,7 @@ _CHAIN = ("constraints", "numberer", "system", "test", "algorithm",
 
 
 def _deck(tmp_path: Path, *, set_time: float | None = None,
-          dt2: float = 0.9, dt1: float = 0.1) -> list[str]:
+          dt2: float = 0.25, dt1: float = 0.25) -> list[str]:
     ops = apeSees(_make_single_quad_fem(), default_orientation=None)
     ops.model(ndm=2, ndf=2)
     mat = ops.nDMaterial.ElasticIsotropic(E=1e6, nu=0.3, rho=0.0)
@@ -97,7 +97,7 @@ def test_domain_and_recorders_kept(tmp_path: Path) -> None:
 def test_static_ignores_dt_dlam_sets_step(tmp_path: Path) -> None:
     """dt has no effect under Static; a differing dt warns (R3 D1, #1785)."""
     with pytest.warns(InertStaticDtWarning) as rec:
-        a = _deck(tmp_path, dt2=0.9)
+        a = _deck(tmp_path, dt2=0.9, dt1=0.1)
     # s1 (dt=0.1) and s2 (dt=0.9) both differ from dlam=0.25.
     assert len(rec) == 2
     assert all(
@@ -106,7 +106,7 @@ def test_static_ignores_dt_dlam_sets_step(tmp_path: Path) -> None:
         for w in rec
     )
     with pytest.warns(InertStaticDtWarning):
-        b = _deck(tmp_path, dt2=0.05)
+        b = _deck(tmp_path, dt2=0.05, dt1=0.1)
     s2a = a[_idx(a, "# === Stage: s2"):]
     s2b = b[_idx(b, "# === Stage: s2"):]
     # dt reaches only the analyze call ...

@@ -27,13 +27,14 @@ __all__ = ["InertStaticDtWarning", "StageChain", "algorithm_needs_test"]
 
 
 class InertStaticDtWarning(UserWarning):
-    """A ``Static`` stage's ``s.run(dt=)`` differs from its ``LoadControl``
-    ``dlam`` (R3 ruling D1, #1785).
+    """A ``Static`` stage was given an ``s.run(dt=)`` that never acts.
 
-    OpenSees ignores ``analyze``'s ``dt`` under ``Static``; each increment
-    advances the load factor by ``dlam``.  A differing ``dt`` never acted,
-    so the stage warns when it closes.  Omit ``dt`` or set it equal to
-    ``dlam`` to silence it.
+    OpenSees ignores ``analyze``'s ``dt`` under ``Static``; the integrator
+    sets the step.  When the stage closes, a given ``dt`` warns unless it
+    equals the integrator's declared ``static_step_field`` (``dlam`` for
+    ``LoadControl`` / ``LadrunoLoadControl``).  An integrator whose step
+    field is ``None``, or that does not declare one, warns on any ``dt``.
+    Omit ``dt`` to silence it.  ``Transient`` stages never warn.
     """
 
 
