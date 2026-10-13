@@ -157,7 +157,7 @@ class H5LedgerWarning(UserWarning):
     ``enforce="equation"`` tie's ``equationConstraint`` rows; some persist in
     the neutral zone instead). A bridge-level ``apeSees.equation_constraint``
     row is not counted: its ``EquationConstraintRecord`` is a
-    ``/opensees/decl_params`` row that replay re-emits (#1801, #1805).
+    ``/opensees/decl_params`` row that replay re-emits.
     The bridge raises it at most once per ``apeSees`` instance for each
     distinct set of ledgered verbs. It is not an ``H5FeatureDeferredWarning``,
     so the automatic ``model.h5`` write does not silence it."""
@@ -169,9 +169,9 @@ class H5FeatureDeferredWarning(UserWarning):
     so the feature is lost on round-trip. Emit to Tcl / openseespy (or run live)
     for the complete model.
 
-    ``apeSees.h5`` no longer raises it for ``apeSees.equation_constraint``
+    ``apeSees.h5`` does not raise it for ``apeSees.equation_constraint``
     rows: each is archived as an ``EquationConstraintRecord`` row of
-    ``/opensees/decl_params`` and replayed (#1801, #1805). The ``model.h5``
+    ``/opensees/decl_params`` and replayed. The ``model.h5``
     rewrite raises it for program stores it does not write. g.reinforce ties,
     g.constraints.contact,
     g.embed ties, and the ``enforce="equation"`` tie all persist via the
@@ -2529,8 +2529,8 @@ class H5Emitter:
         # Counted, not stored: the deck zone has no equationConstraint store.
         # A bridge-level ``apeSees.equation_constraint`` row is archived
         # anyway, as its ``EquationConstraintRecord`` ``/opensees/decl_params``
-        # row, which replay re-emits (#1801); ``apeSees._write_h5`` takes
-        # those rows off this count before warning (#1805). The rest come
+        # row, which replay re-emits; ``apeSees._write_h5`` takes
+        # those rows off this count before warning. The rest come
         # from an ``enforce="equation"`` tie (ADR 0068, Open item 4,
         # RESOLVED), which deck replay skips. It is NOT data loss: the tie
         # is a resolved ``InterpolationRecord``, and the NEUTRAL zone

@@ -8933,7 +8933,7 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
         ``wipe()`` keeps the rows — or the fork); a partitioned emit
         refuses the rows. ``ops.h5(...)`` archives each one as an
         ``EquationConstraintRecord`` row of ``/opensees/decl_params``, and
-        ``OpenSeesModel.from_h5(...)`` replays it (#1801).
+        ``OpenSeesModel.from_h5(...)`` replays it.
         """
         try:
             cnode, cdof = constrained
@@ -10876,7 +10876,7 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
         # The emitter ledgers every ``equationConstraint`` call, but a
         # bridge-level ``apeSees.equation_constraint`` row IS archived: its
         # ``EquationConstraintRecord`` is a ``/opensees/decl_params`` row and
-        # deck replay re-emits it (#1801). Only the remainder (an
+        # deck replay re-emits it. Only the remainder (an
         # ``enforce="equation"`` interface tie, which replay skips) is dropped.
         counts = dict(emitter.ledger_counts)
         counts["equationConstraint"] = (
