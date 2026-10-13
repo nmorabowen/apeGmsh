@@ -1,18 +1,9 @@
 """
 ``g.rebar`` — the L2 reinforcement-cage authoring composite (ADR 0067).
 
-Sits **above** the shipped ``g.reinforce`` binding composite: it owns the
-L1 spec objects (:mod:`apeGmsh._kernel.defs.rebar`) + geometry generation
-+ standardized-member generators, and **delegates** coupling —
-*conformal* via ``g.mesh.editing.embed`` (this module, P1) and *embedded*
-via ``g.reinforce`` (P2). It never emits an OpenSees element itself.
-
-P1 scope: ``bar`` / ``stirrup`` / ``stirrup_rect`` spec emitters, eager
-**polyline** geometry emission (``true_arc`` is deferred to P3), and
-``place(cage, into, coupling="conformal")`` which embeds the bar curves
-into the host solid before meshing so the host mesh conforms and the bars
-share its nodes (perfect bond — the ``ladruno_rc.py`` behaviour
-generalised off the grid).
+Turns the L1 specs (:mod:`apeGmsh._kernel.defs.rebar`) into gmsh geometry
+and delegates coupling: *conformal* via ``g.mesh.editing.embed``, *embedded*
+via ``g.reinforce``. It never emits an OpenSees element itself.
 """
 
 from __future__ import annotations
@@ -42,11 +33,7 @@ _AXIS_TOKENS = {
     "+z": (0.0, 0.0, 1.0), "-z": (0.0, 0.0, -1.0),
 }
 
-# Transverse-reinforcement roles. A member with one of these roles is a
-# tie / hoop / cross-tie, so its end hooks resolve with the seismic-hoop
-# detailing kind (135° 6db, the §25.3.4 hook) and are OPTIONAL (dropped
-# with a warning when no standard is set, like a stirrup closure) rather
-# than mandatory the way a longitudinal-bar development hook is.
+# Transverse roles: end hooks resolve as seismic hoops and are optional.
 _TRANSVERSE_ROLES = frozenset({"tie", "crosstie", "hoop", "stirrup"})
 
 if TYPE_CHECKING:
@@ -95,10 +82,7 @@ class RebarComposite(_DeclarationsMixin):
         self._standard: Any = None
         self._place_seq = 0          # per-session counter → unique default PG base
         self.placements: list[RebarPlacement] = []
-        # Auto-emit structural-element members from place(emit_elements=True).
-        # Captured at place() time; mesh._fem_factory calls resolve() at
-        # get_fem_data to extract their line-cell connectivity from the live
-        # mesh → fem.elements.rebar_elements (ADR 0067 P5.2 / B1).
+        # place(emit_elements=True) members; resolve() reads their cells.
         self._emit_members: list[RebarMember] = []
 
     # ---- detailing standard (used at resolve time, P3) --------------
@@ -669,13 +653,8 @@ class RebarComposite(_DeclarationsMixin):
     def _beam_crossties(self, top: BarLayout, bottom: BarLayout,
                         face_ys: dict, face_z: dict, stations,
                         *, db, material) -> list[Bar]:
-        """Supplementary legs for the intermediate beam bars. Each interior
-        bar (top and bottom) is tied to the **nearest** bar on the opposite
-        face — so every interior bar is engaged (both leg ends hook a real
-        bar) regardless of a top/bottom count mismatch. When the counts and
-        positions align the legs are vertical; otherwise a leg may be
-        slightly inclined and a warning notes the mismatch. Duplicate legs
-        (the same bottom↔top pair reached from both faces) are coalesced."""
+        """Tie each interior bar to its nearest opposite-face bar (see
+        :meth:`beam`); a pair reached from both faces is emitted once."""
         top_ys, bot_ys = face_ys[True], face_ys[False]
         top_z, bot_z = face_z[True], face_z[False]
         if top.n_x != bottom.n_x:
@@ -684,8 +663,6 @@ class RebarComposite(_DeclarationsMixin):
                 "bar is tied to its nearest opposite-face bar (legs may be "
                 "inclined, not vertical) so none is left unsupported (ACI 318 "
                 "§25.7.2.3).", stacklevel=3)
-        # interior bars need lateral support (corners are held by the
-        # perimeter stirrup); tie each to the nearest opposite-face bar.
         pairs: list[tuple[float, float]] = []
         seen: set[tuple[float, float]] = set()
 
@@ -710,13 +687,8 @@ class RebarComposite(_DeclarationsMixin):
     def _beam_overlapping_hoops(self, top_ys, bot_ys, top_z: float,
                                 bot_z: float, stations, *, db,
                                 material) -> list[Stirrup]:
-        """Closed overlapping cell-stirrups tiling the beam cross-section, at
-        every station. One rectangular hoop per adjacent bar column — the
-        bottom edge on the bottom bars, the top edge on the top bars — so
-        neighbouring cells share a vertical edge (overlap) and every bar sits
-        at a hoop corner. The wide-beam alternative to vertical cross-tie
-        legs; emitted alongside the outer perimeter stirrup. Requires equal
-        top/bottom counts (same number of bar columns)."""
+        """One closed cell-stirrup per adjacent bar column, at every station
+        (``confinement_style="overlapping_hoops"``, see :meth:`beam`)."""
         out: list[Stirrup] = []
         for x in stations:
             for i in range(len(bot_ys) - 1):
@@ -777,14 +749,9 @@ class RebarComposite(_DeclarationsMixin):
     # ---- bundled bars (ACI 318-19 §25.6) ----------------------------
     @staticmethod
     def _bundle_local_offsets(n: int, pattern: str) -> list[tuple[float, float]]:
-        """Cluster offsets in local ``(pu_inward, pv_tangential)`` units of
-        the centre-to-centre spacing, for an ``n``-bar contact bundle.
-
-        Every shape keeps ``min pu == 0`` so the outer bars sit on the
-        nominal cover line (cover preserved) and the cluster stacks inward
-        toward the section interior; the tangential offsets are centred about
-        the nominal position. ``"auto"`` maps the count → line / triangle /
-        square."""
+        """``(pu_inward, pv_tangential)`` offsets, in spacing units, of an
+        ``n``-bar bundle. ``min pu == 0`` keeps the outer bars on the cover
+        line; ``"auto"`` maps the count to line / triangle / square."""
         shape = pattern
         if pattern == "auto":
             shape = {2: "line", 3: "triangle", 4: "square"}[n]
@@ -797,9 +764,7 @@ class RebarComposite(_DeclarationsMixin):
 
     @staticmethod
     def _bundle_max_pu(n: int, pattern: str) -> float:
-        """The deepest inward offset (in spacing units) a bundle reaches —
-        0 for 1–2 bars, 1 for a 3/4-bar cluster. Used by the generators to
-        guard that the inward stack does not cross the section centre."""
+        """Deepest inward offset (spacing units): 0 for 1-2 bars, else 1."""
         if n <= 2:
             return 0.0
         return 1.0
@@ -807,14 +772,10 @@ class RebarComposite(_DeclarationsMixin):
     def _expand_bundle(self, points, *, n: int, pattern: str, dia: float,
                        center, spacing: float | None = None,
                        corner_radius=METADATA, **bar_kw) -> list[Bar]:
-        """Expand one bar polyline into a contact bundle of ``n`` parallel
-        bars (ACI §25.6). ``n == 1`` is the identity (a single :class:`Bar`).
-        The cluster is offset rigidly in the bar's cross-section frame: the
-        inward axis ``u`` points from the bar toward ``center`` (projected
-        perpendicular to the bar), the tangential axis ``v = axis × u``.
-        ``spacing`` (centre-to-centre, default the bar diameter) sizes the
-        contact offset. ``bar_kw`` (db, material, role, element, hooks, name)
-        are forwarded to each :class:`Bar`; a ``name`` is suffixed ``_b<k>``."""
+        """Expand one bar polyline into ``n`` parallel bars (``n == 1``: one
+        :class:`Bar`), offset in the frame ``u`` (toward ``center``, normal
+        to the bar), ``v = axis × u``. ``bar_kw`` goes to each :class:`Bar`;
+        a ``name`` is suffixed ``_b<k>``."""
         pts = [np.asarray(p, dtype=float) for p in points]
         if n == 1:
             return [Bar(path=Path(tuple(tuple(p) for p in pts),
@@ -916,19 +877,10 @@ class RebarComposite(_DeclarationsMixin):
                              height: float, inset: float, dia: float,
                              n_x: int, n_y: int,
                              supported_all: bool) -> TieLayout:
-        """Auto-derive the §18.7.5 confined-end hinge length ``l_o`` and
-        dense tie spacing ``s_o`` from the column geometry when a seismic
-        standard is set and the :class:`TieLayout` left them unspecified.
-        A standard that does not expose ``confinement_length`` (e.g. plain
-        ``ACI318``/``Raw``) is a no-op, and an explicit hinge layout is
-        respected verbatim — so the user can always override the code rule.
-
-        ``h_x`` (the §18.7.5.3 bar support spacing) is the maximum bar
-        centre-to-centre spacing when every bar is laterally supported
-        (cross-ties present, or a corner-only 2×2 cage); with intermediate
-        bars left unsupported (``crossties=False``) only the corners count,
-        so ``h_x`` is the full clear distance — a larger, more demanding
-        spacing."""
+        """Auto-derive the §18.7.5 hinge ``l_o`` / ``s_o`` (see :meth:`column`).
+        No-op without ``confinement_length`` on the standard or with an
+        explicit hinge layout. ``h_x`` is the max bar spacing when every bar
+        is supported, else the full clear distance (corners only)."""
         if not hasattr(std, "confinement_length"):
             return ties
         if ties.hinge_spacing is not None and ties.hinge_length is not None:
@@ -951,13 +903,8 @@ class RebarComposite(_DeclarationsMixin):
     def _seismic_confinement_beam(stirrups: TieLayout, std, *, height: float,
                                   cover: float, dia_st: float, dia_top: float,
                                   dia_bottom: float) -> TieLayout:
-        """Auto-derive the §18.6.4 special-beam hoop zone (length ``2h``,
-        spacing min(d/4, 6·d_b, 6 in)) when a seismic standard is set and the
-        :class:`TieLayout` left the hinge fields unset. A standard without
-        ``beam_confinement_length`` (plain ``ACI318``/``Raw``) is a no-op, and
-        an explicit hinge layout is respected. ``d_b`` is the smallest
-        longitudinal bar; the effective depth ``d`` is taken to the tension
-        (bottom) bar centroid."""
+        """Auto-derive the §18.6.4 beam hoop zone (see :meth:`beam`); ``d_b``
+        is the smaller bar, ``d`` runs to the bottom bar centroid."""
         if not hasattr(std, "beam_confinement_length"):
             return stirrups
         if (stirrups.hinge_spacing is not None
@@ -977,14 +924,9 @@ class RebarComposite(_DeclarationsMixin):
     # ---- cross-ties / supplementary legs (ACI 318 §25.7.2.3) --------
     @staticmethod
     def _crosstie_bar(p0, p1, *, db, material, level_idx: int, leg_idx: int):
-        """A straight transverse cross-tie leg between two longitudinal-bar
-        positions ``p0``→``p1``, hooked at both ends. One end gets a 135°
-        seismic hook, the other a 90° hook; which end carries which is
-        flipped on consecutive levels (``level_idx``) and adjacent legs
-        (``leg_idx``) so consecutive cross-ties engaging the same bar
-        alternate end-for-end (ACI 318 §18.7.5.2). The tails resolve from
-        the cage's DetailingStandard at ``place`` time (seismic-hoop kind);
-        with no standard they are dropped (warned), leaving the bare leg."""
+        """A cross-tie leg ``p0``→``p1``: a 135° hook at one end and a 90°
+        hook at the other, alternated by ``level_idx + leg_idx`` parity
+        (ACI 318 §18.7.5.2)."""
         flip = (level_idx + leg_idx) % 2 == 1
         h_seismic, h_90 = Hook.standard_135(), Hook.standard_90()
         start_hook, end_hook = (h_90, h_seismic) if flip else (h_seismic, h_90)
@@ -996,13 +938,8 @@ class RebarComposite(_DeclarationsMixin):
 
     def _column_crossties(self, xs, ys, ox: float, oy: float, levels,
                           *, db, material) -> list[Bar]:
-        """Cross-ties for every intermediate perimeter bar, at every tie
-        level. An intermediate top/bottom bar (interior ``x``) is engaged by
-        a leg spanning the section in ``y`` (bottom↔top); an intermediate
-        left/right bar (interior ``y``) by a leg spanning in ``x``
-        (left↔right). Each leg engages the two opposite-face bars it
-        connects, so supporting every intermediate bar trivially satisfies
-        the §25.7.2.3 "every corner and alternate bar" rule."""
+        """One cross-tie per intermediate perimeter bar at every tie level,
+        spanning the section to the opposite-face bar (§25.7.2.3)."""
         interior_xs, interior_ys = xs[1:-1], ys[1:-1]
         out: list[Bar] = []
         for z_idx, z in enumerate(levels):
@@ -1021,12 +958,8 @@ class RebarComposite(_DeclarationsMixin):
 
     def _column_overlapping_hoops(self, xs, ys, ox: float, oy: float, levels,
                                   *, db, material) -> list[Stirrup]:
-        """Closed overlapping cell-hoops tiling the core, at every tie level.
-        One rectangular hoop per adjacent 2×2 bar block — corners on the
-        longitudinal bar centerlines — so neighbouring cells share an edge
-        (overlap) and every bar sits at a hoop corner. The wide-section
-        alternative to straight cross-ties; emitted alongside the outer
-        perimeter hoop."""
+        """One closed cell-hoop per adjacent 2×2 bar block, at every tie level
+        (``confinement_style="overlapping_hoops"``, see :meth:`column`)."""
         out: list[Stirrup] = []
         for z in levels:
             for i in range(len(xs) - 1):
@@ -1115,16 +1048,9 @@ class RebarComposite(_DeclarationsMixin):
         return placement
 
     def _capture_element_intents(self, placement: RebarPlacement) -> None:
-        """Mark each placed bar for structural-element auto-emit (ADR 0067
-        P5.2 / B1).
-
-        Accumulates the bars onto ``self._emit_members``; ``mesh._fem_factory``
-        calls :meth:`resolve` at ``get_fem_data`` to extract their line-cell
-        connectivity from the live mesh. A bar with a non-string (callable)
-        material name is skipped with a warning: the bridge resolves rebar
-        materials by name at emit, so a non-name material can't be
-        auto-emitted.
-        """
+        """Mark each placed bar for auto-emit (:meth:`resolve` reads it). A
+        non-name material is skipped with a warning: the bridge resolves
+        rebar materials by name."""
         for m in placement.members:
             if not isinstance(m.material, str):
                 warnings.warn(
@@ -1141,17 +1067,11 @@ class RebarComposite(_DeclarationsMixin):
         """Resolve every emit-marked bar to a :class:`RebarElementRecord`
         carrying its line-cell connectivity (ADR 0067 P5.2 / B1).
 
-        Called by ``mesh._fem_factory`` at ``get_fem_data`` time (after the
-        mesh exists). Reads each bar PG's 1-D Line2/Line3 cells from the live
-        Gmsh session — the dim-1 cells are dropped from a dim-3 ``FEMData``,
-        so the connectivity is captured here (the rebar node tags are the same
-        Gmsh tags the bridge emits as OpenSees nodes, like the reinforce
-        path). A Line3 cell keeps its two corner endpoints (the structural
-        bar is straight-segment in v1). No-op when nothing opted in.
+        Called by ``mesh._fem_factory`` at ``get_fem_data``: a dim-3
+        ``FEMData`` drops the 1-D cells, so each bar PG's Line2/Line3 cells
+        are read here (a Line3 keeps its corner nodes). No-op when nothing
+        opted in.
         """
-        # Reached only from the live extraction path (_fem_factory,
-        # itself gated on a non-empty _emit_members), so this fires
-        # only for a direct call on a chain-phase session.
         from ..core._compose_errors import raise_if_no_live_kernel
         raise_if_no_live_kernel(
             self._parent, "g.rebar.resolve()",
@@ -1263,9 +1183,6 @@ class RebarComposite(_DeclarationsMixin):
                 else:
                     has_conf = True
                 dia = self._dia(std, m.db)
-                # Transverse members (ties, cross-ties) detail their end
-                # hooks as seismic hoops and tolerate a missing standard;
-                # longitudinal-bar development hooks stay primary + required.
                 transverse = is_stirrup or role in _TRANSVERSE_ROLES
                 hk_kind = "seismic_hoop" if transverse else "primary"
                 hk_required = not transverse
@@ -1276,12 +1193,7 @@ class RebarComposite(_DeclarationsMixin):
                 start = self._resolve_hook(
                     std, getattr(m, "start_hook", None), dia, hk_kind,
                     required=hk_required, true_arc=true_arc)
-                # Twin-tail: a real hoop/tie is bent from straight stock, so
-                # BOTH free ends carry the closure hook (the two tails overlap
-                # at the seam corner). When a stirrup leaves its start end free
-                # (no explicit start_hook) and twin_tail is on, mirror the
-                # closure detail onto the start so the seam shows two tails,
-                # not one.
+                # twin_tail: mirror the closure hook onto a free start end.
                 if is_stirrup and twin_tail and start is None:
                     start = closure
                 hooks = {
@@ -1403,10 +1315,8 @@ class RebarComposite(_DeclarationsMixin):
                 lts += t
                 arc_centers += centers
             emitted.append((role, eff, m, pg, elem, dia, area, lts))
-        # Drop the arc-center construction points so they don't survive as
-        # stray meshed nodes inside the host (occ bakes the arc geometry).
-        # Pop their apeGmsh registry entries too, or the geometry validator
-        # flags them as stale metadata at mesh/get_fem_data time.
+        # Drop arc-center points (and their registry entries) so no stray
+        # node or stale metadata survives; occ has baked the arcs.
         if arc_centers:
             gmsh.model.occ.remove([(0, c) for c in arc_centers], recursive=False)
             for c in arc_centers:
@@ -1460,9 +1370,7 @@ class RebarComposite(_DeclarationsMixin):
     def _register_embedded(self, into: str, pg: str, diameter: float,
                            area: float, *, bond, perfect, kt, kt_alpha,
                            enforce, bipenalty, dtcr, tolerance, snap) -> None:
-        """Forward one embedded member to the shipped ``g.reinforce`` binding
-        composite (→ ``LadrunoEmbeddedRebar``), whose declaration invalidates
-        the FEMData cache (ADR §9: a def-append is a broker mutation)."""
+        """Forward one embedded member to ``g.reinforce``."""
         self._parent.reinforce.reinforce(
             host=into, bars=pg, bond=bond, perfect=perfect,
             bar_diameter=diameter, bar_area=area,
@@ -1484,20 +1392,19 @@ class RebarComposite(_DeclarationsMixin):
     def _dia(std, db) -> float:
         if isinstance(db, (int, float)) and not isinstance(db, bool):
             return float(db)
-        if std is not None:
-            return float(std.bar_diameter(db))
-        raise ValueError(
-            f"g.rebar: db {db!r} is a designation but no DetailingStandard is "
-            f"set; pass a numeric db, a Cage(standard=...), or call "
-            f"g.rebar.use_standard(ACI318())."
-        )
+        return float(RebarComposite._designated(std, db).bar_diameter(db))
 
     @staticmethod
     def _area(std, db) -> float:
         if isinstance(db, (int, float)) and not isinstance(db, bool):
             return math.pi * float(db) ** 2 / 4.0
+        return float(RebarComposite._designated(std, db).bar_area(db))
+
+    @staticmethod
+    def _designated(std, db) -> Any:
+        """The standard that resolves designation ``db``; raise if unset."""
         if std is not None:
-            return float(std.bar_area(db))
+            return std
         raise ValueError(
             f"g.rebar: db {db!r} is a designation but no DetailingStandard is "
             f"set; pass a numeric db, a Cage(standard=...), or call "
@@ -1539,13 +1446,9 @@ class RebarComposite(_DeclarationsMixin):
 
     # ---- geometry helpers -------------------------------------------
     def _emit_curve(self, geom, path: Path):
-        """Weld a :class:`Path`'s control points into gmsh curve(s) per
-        ``path.curve``: straight lines (``"polyline"``), true circular arcs
-        about ``arc_center`` (``"arc"``), or one C2 spline through the points
-        (``"spline"``). Returns ``(curve_tags, point_tags, center_tags)`` —
-        the caller drops the arc-center construction points (occ bakes the
-        arc geometry). A closed loop (first == last) reuses the first point so
-        the loop welds into one node ring."""
+        """Weld a :class:`Path` into gmsh lines / arcs / one spline per
+        ``path.curve``; a closed loop reuses its first point. Returns
+        ``(curve_tags, point_tags, center_tags)``."""
         points = path.points
         closed = len(points) >= 2 and points[0] == points[-1]
         pt_tags: list[int] = []
@@ -1574,10 +1477,8 @@ class RebarComposite(_DeclarationsMixin):
 
     def _emit_hook(self, geom, anchor_tag: int, anchor_xyz, tangent,
                    hook: Hook, centroid) -> tuple[list[int], list[int]]:
-        """Realise a resolved hook as gmsh curves appended at ``anchor_tag``,
-        reusing point tags between primitives so the chain welds without
-        make_conformal. Returns ``(curve_tags, arc_center_point_tags)`` — the
-        caller deletes the centers (stray construction points)."""
+        """Append a resolved hook's curves at ``anchor_tag``, sharing point
+        tags so it welds. Returns ``(curve_tags, arc_center_point_tags)``."""
         turn_dir = self._turn_dir(hook.turn, anchor_xyz, centroid)
         prims, fell_back = hook_primitives(
             anchor_xyz, tangent, turn_dir, hook.angle, hook.tail,
