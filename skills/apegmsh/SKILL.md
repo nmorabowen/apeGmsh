@@ -302,7 +302,6 @@ JSON-RPC)::
           "args": ["-m", "apeGmsh.studio.mcp"],
           "env": {
             "LADRUNO_OPENSEES_QUIET": "1",
-            "APEGMSH_QUIET": "1",
             "APEGMSH_ROOT": "<studio root>",
             "APEGMSH_STUDIO_ROOT": "<studio root>",
             "APEGMSH_PYTHON": "<venv>/Scripts/python.exe",

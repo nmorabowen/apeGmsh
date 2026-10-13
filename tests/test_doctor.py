@@ -318,7 +318,6 @@ def _cli(*args: str) -> subprocess.CompletedProcess:
     case one slips through under a non-UTF-8 console codepage.
     """
     env = dict(os.environ)
-    env["APEGMSH_QUIET"] = "1"
     env["LADRUNO_OPENSEES_QUIET"] = "1"
     env["PYTHONIOENCODING"] = "utf-8"
     src_dir = Path(doctor_mod.__file__).resolve().parents[1]

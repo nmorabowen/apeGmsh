@@ -103,7 +103,6 @@ def ensure_pythonpath() -> Path | None:
         if s not in sys.path:
             sys.path.insert(0, s)
     os.environ["APEGMSH_STUDIO_ROOT"] = str(HABITAT)
-    os.environ.setdefault("APEGMSH_QUIET", "1")
     os.environ.setdefault("LADRUNO_OPENSEES_QUIET", "1")
     return src
 

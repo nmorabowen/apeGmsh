@@ -138,7 +138,6 @@ echo       and gmsh, so expect a few hundred MB and several minutes ...
 REM -- 5. Verify --------------------------------------------------------
 echo.
 echo === apeGmsh doctor ===
-set "APEGMSH_QUIET=1"
 set "LADRUNO_OPENSEES_QUIET=1"
 "%VPY%" -m apeGmsh doctor
 set "DOCTOR=%ERRORLEVEL%"

@@ -52,9 +52,6 @@ def index_path() -> Path:
 
 def build_index() -> dict[str, Any]:
     """Import public composites and return the index payload."""
-    import os
-
-    os.environ.setdefault("APEGMSH_QUIET", "1")
     entries: dict[str, dict[str, str]] = {}
     _walk_session(entries)
     _walk_apesees(entries)

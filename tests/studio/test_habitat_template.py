@@ -28,7 +28,6 @@ TEMPLATE_DIR = SRC / "apeGmsh" / "studio" / "template"
 def _subprocess_env() -> dict:
     env = os.environ.copy()
     env["PYTHONPATH"] = str(SRC)
-    env["APEGMSH_QUIET"] = "1"
     env["LADRUNO_OPENSEES_QUIET"] = "1"
     return env
 
@@ -208,7 +207,6 @@ def test_init_points_mcp_json_at_the_running_interpreter(tmp_path: Path) -> None
     # Quiet-before-startup still holds: the banner prints from a .pth at
     # interpreter startup, and MCP applies env before exec.
     assert env["LADRUNO_OPENSEES_QUIET"] == "1"
-    assert env["APEGMSH_QUIET"] == "1"
 
 
 # ---------------------------------------------------------------------------

@@ -13,7 +13,8 @@ in the comment block directly above it:
 
 The reason is mandatory, and a waiver that no longer suppresses anything
 is itself a finding. The repo-level rules `adr-number`, `arch-path` and `doc-path` have no
-waiver: a collision is never right, and a dead citation is fixed in the doc.
+waiver: a collision is never right, and a dead citation is fixed in the doc. Nor do
+`vtk-import` and `render-tech-import`: a render technology enters only by ADR (ADR 0116).
 
     python scripts/check_quirks.py              # this checkout
     python scripts/check_quirks.py --root DIR   # another tree, e.g. a `git archive`
@@ -31,7 +32,8 @@ base branch. Its waiver is the same `# apegmsh-lint: comment-provenance-ok <reas
 
 `getattr-private` and `getattr-undefined` also read a ratchet baseline
 (`scripts/quirks_getattr_baseline.txt`, `path::name` per line): it may only
-shrink, and a line matching no site is a finding.
+shrink, and a line matching no site is a finding. `vtk-import` and `render-tech-import`
+read `scripts/quirks_render_allowlist.txt` the same way.
 
 Stdlib only, a few seconds. `tests/test_check_quirks.py` holds one case per
 shape each rule must flag or pass; CI runs this scan as the last step of
@@ -93,6 +95,21 @@ IMPORT_TEXT = re.compile(
     r"|(?<![`\w.])from\s+openseespy\b[\w.]*\s+import\b"
     r"|\b(?:import_module|__import__)\(\s*[rbu]?['\"]openseespy\b"
 )
+
+#: ADR 0116 D3/D4: render technologies. VTK stays inside the frozen Qt viewers and the
+#: stills (VTK_HOME); nothing else new enters `src/`. Imports that predate the rules sit in
+#: RENDER_ALLOWLIST (`path::module` per line), which may only shrink: a line matching no
+#: import is a finding, and tests/test_check_quirks.py pins its upper bound.
+RENDER_SCOPE = "src/"
+VTK_HOME = "src/apeGmsh/viewers/"
+VTK_MODULES = {"pyvista", "pyvistaqt", "vtk", "vtkmodules"}
+RENDER_MODULES = {"plotly", "bokeh", "k3d", "pythreejs", "trame"}  # and any `trame_*` wheel
+RENDER_ALLOWLIST = Path("scripts/quirks_render_allowlist.txt")
+#: Supersets of the import text each rule flags, so a file without it is skipped unparsed.
+VTK_TEXT = re.compile(r"\b(?:pyvista|pyvistaqt|vtk|vtkmodules)\b")
+RENDER_TEXT = re.compile(r"\b(?:plotly|bokeh|k3d|pythreejs|trame\w*)\b")
+#: Rules with no per-site waiver: the only way past them is an ADR and the allowlist.
+NO_WAIVER = {"vtk-import", "render-tech-import"}
 
 #: The agent-facing docs whose citations must resolve: AGENTS.md, the task
 #: guides (not the derived user-skill mirror) and the non-ADR architecture
@@ -273,6 +290,21 @@ RULES: dict[str, str] = {
         "emitter.h5_reader.read_spatial_ndm(meta, f, coords). Lesson: #1405; the raw reads at "
         "model_data.py, results/capture/_domain.py and emitter/h5_reader.py (fabfa042) were "
         "each fixed in turn after #1358"
+    ),
+    "vtk-import": (
+        "imports pyvista, pyvistaqt or vtk in src/ outside src/apeGmsh/viewers/. VTK is in "
+        "sunset (ADR 0116 D3): it stays only in the frozen Qt viewers and the headless stills, "
+        "and leaves with them. Draw a static picture with matplotlib (g.plot) or a render(...) "
+        "still, and an interactive view as an apeGmshViewer window. Writing .vtu files needs no "
+        "VTK import. No waiver; scripts/quirks_render_allowlist.txt only shrinks. Lesson: X1 "
+        "(#1493) removed viz/NotebookPreview.py, which had imported pyvista beside plotly "
+        "outside the viewers package with no ADR"
+    ),
+    "render-tech-import": (
+        "imports plotly, bokeh, k3d, pythreejs or trame in src/. No render technology enters "
+        "without a superseding ADR (ADR 0116 D4); trame leaves with the legacy results viewer. "
+        "No waiver; scripts/quirks_render_allowlist.txt only shrinks. Lesson: X1 (#1493) "
+        "removed the plotly NotebookPreview, which entered src/ with no ADR"
     ),
 }
 
@@ -742,6 +774,63 @@ def check_openseespy_import(tree: ast.AST, rel: str, root: Path) -> Iterator[tup
             yield node.lineno, RULES["openseespy-import"]
 
 
+# --- vtk-import / render-tech-import (ADR 0116 D3/D4) -------------------------
+
+_render_seen: dict[Path, set[str]] = {}
+_render_allow_cache: dict[Path, dict[str, int]] = {}
+
+
+def _render_allowlist(root: Path) -> dict[str, int]:
+    """`path::module` -> its line in the render allowlist file."""
+    if root not in _render_allow_cache:
+        _render_allow_cache[root] = _key_file(root / RENDER_ALLOWLIST)
+    return _render_allow_cache[root]
+
+
+def _render_rule(module: str) -> str | None:
+    top = module.split(".")[0]
+    if top in VTK_MODULES:
+        return "vtk-import"
+    if top in RENDER_MODULES or top.startswith("trame_"):
+        return "render-tech-import"
+    return None
+
+
+def _render_sites(tree: ast.AST, rel: str, root: Path, rule: str) -> Iterator[tuple[int, str]]:
+    if not rel.startswith(RENDER_SCOPE) or (rule == "vtk-import" and rel.startswith(VTK_HOME)):
+        return
+    allow = _render_allowlist(root)
+    for node in ast.walk(tree):
+        for module in _imported_modules(node):
+            if _render_rule(module) != rule:
+                continue
+            key = f"{rel}::{module.split('.')[0]}"
+            if key in allow:
+                _render_seen.setdefault(root, set()).add(key)
+                continue
+            yield node.lineno, f"{RULES[rule]} [allowlist key {key}]"
+
+
+def check_vtk_import(tree: ast.AST, rel: str, root: Path) -> Iterator[tuple[int, str]]:
+    """pyvista / pyvistaqt / vtk imported in src/ outside src/apeGmsh/viewers/."""
+    yield from _render_sites(tree, rel, root, "vtk-import")
+
+
+def check_render_tech_import(tree: ast.AST, rel: str, root: Path) -> Iterator[tuple[int, str]]:
+    """plotly / bokeh / k3d / pythreejs / trame imported anywhere in src/."""
+    yield from _render_sites(tree, rel, root, "render-tech-import")
+
+
+def _stale_render_allowlist(root: Path) -> list[Finding]:
+    """An allowlist line no import matches any more: the list only shrinks, so delete it."""
+    seen = _render_seen.get(root, set())
+    return [
+        Finding(RENDER_ALLOWLIST.as_posix(), number, "render-allowlist",
+                f"{key} matches no import any more; delete the line")
+        for key, number in _render_allowlist(root).items() if key not in seen
+    ]
+
+
 # --- getattr-private / getattr-undefined --------------------------------------
 
 _GETATTR_CALLS = {"getattr": (2, 3), "hasattr": (2, 2)}
@@ -819,17 +908,20 @@ def _getattr_index(root: Path) -> dict[str, set[str]]:
 
 def _baseline_keys(root: Path) -> dict[str, int]:
     """`path::name` -> its line in the baseline file."""
-    if root in _baseline_cache:
-        return _baseline_cache[root]
-    path = root / GETATTR_BASELINE
-    if not path.is_file():
-        return _baseline_cache.setdefault(root, {})
+    if root not in _baseline_cache:
+        _baseline_cache[root] = _key_file(root / GETATTR_BASELINE)
+    return _baseline_cache[root]
+
+
+def _key_file(path: Path) -> dict[str, int]:
+    """A ratchet file's `path::name` keys -> their line (`#` comments; none if absent)."""
     keys: dict[str, int] = {}
-    for number, raw in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
-        key = raw.split("#", 1)[0].strip()
-        if key:
-            keys.setdefault(key, number)
-    return _baseline_cache.setdefault(root, keys)
+    if path.is_file():
+        for number, raw in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            key = raw.split("#", 1)[0].strip()
+            if key:
+                keys.setdefault(key, number)
+    return keys
 
 
 def _getattr_sites(tree: ast.AST, rel: str, root: Path, rule: str) -> Iterator[tuple[int, str]]:
@@ -1380,6 +1472,8 @@ PYTHON_RULES: dict[str, Callable[[ast.AST, str, Path], Iterator[tuple[int, str]]
     "qt-worker-gc": check_qt_worker_gc,
     "stale-patch-target": check_stale_patch_target,
     "raw-meta-ndm": check_raw_meta_ndm,
+    "vtk-import": check_vtk_import,
+    "render-tech-import": check_render_tech_import,
 }
 
 
@@ -1515,6 +1609,10 @@ def _may_apply(rel: str, lowered: str, text: str = "") -> bool:
         return True
     if rel.startswith(GETATTR_SCOPE) and "thread(" in lowered and QT_BINDINGS.search(text):
         return True
+    if rel.startswith(RENDER_SCOPE) and RENDER_TEXT.search(lowered):
+        return True
+    if rel.startswith(RENDER_SCOPE) and not rel.startswith(VTK_HOME) and VTK_TEXT.search(lowered):
+        return True
     return "openseespy" in lowered and IMPORT_TEXT.search(re.sub(r"\\\r?\n", " ", lowered)) is not None
 
 
@@ -1541,7 +1639,7 @@ def scan_file(path: Path, rel: str, root: Path) -> list[Finding]:
         if match is None:
             continue
         rule, reason = match.group("rule"), match.group("reason").strip(" —-:")
-        if rule not in PYTHON_RULES and rule not in DIFF_RULES:
+        if (rule not in PYTHON_RULES and rule not in DIFF_RULES) or rule in NO_WAIVER:
             findings.append(Finding(rel, line, "waiver", f"no waivable rule {rule!r}"))
         elif not reason:
             findings.append(Finding(rel, line, "waiver", f"`{rule}-ok` needs a reason"))
@@ -1576,7 +1674,7 @@ def _python_files(root: Path) -> list[Path]:
     tests = root / "tests"
     if tests.is_dir():
         found += sorted(tests.rglob("*.py"))
-    for path in IMPORT_SCOPE:
+    for path in (*IMPORT_SCOPE, Path(RENDER_SCOPE)):
         target = root / path
         found += sorted(target.rglob("*.py")) if target.is_dir() else []
     return list(dict.fromkeys(found))  # src/apeGmsh holds the narrow scopes too: scan each once
@@ -1597,6 +1695,8 @@ def _scan(root: Path, base: str | None = None) -> list[Finding]:
     _getattr_cache.pop(root, None)
     _baseline_seen.pop(root, None)
     _baseline_cache.pop(root, None)
+    _render_seen.pop(root, None)
+    _render_allow_cache.pop(root, None)
     for cache in (_sites_cache, _probe_cache, _tree_cache):
         for key in [k for k in cache if k[0] == root]:
             del cache[key]
@@ -1606,6 +1706,7 @@ def _scan(root: Path, base: str | None = None) -> list[Finding]:
     for path in _python_files(root):
         findings.extend(scan_file(path, path.relative_to(root).as_posix(), root))
     findings.extend(_stale_baseline(root))
+    findings.extend(_stale_render_allowlist(root))
     _tree_cache.clear()
     _probe_cache.clear()
     return sorted(findings, key=lambda f: (f.path, f.line, f.rule))
