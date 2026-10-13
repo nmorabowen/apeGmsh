@@ -298,6 +298,69 @@ def contour_fixtures(out_dir: Path) -> None:
         print(f"wrote {res_path.name}: {ids.size} of {node_ids.size} nodes")
 
 
+DEFORM_STEPS = 3
+
+
+def deform_values(xyz: np.ndarray, k: int) -> dict[str, np.ndarray]:
+    """The V4d 2-D closed form: one step's displacement_x/y of nodes at ``xyz`` (N, 3); no z (ndm 2)."""
+    s = 0.05 * (k + 1)
+    x, y = xyz[:, 0], xyz[:, 1]
+    return {"displacement_x": s * y, "displacement_y": s * (0.5 * x + 0.25 * y)}
+
+
+def deform_fixtures(out_dir: Path) -> None:
+    """The V4d 2-D pair (#1765): a plane model declared ``ndm=2``, with quads and truss chords.
+
+    ``deform_2d.h5`` is composed by the bridge with ``ops.model(ndm=2, ndf=2)``,
+    so ``/meta/ndm`` is 2 (neutral 2.34.0 on): a 2 x 1 rectangle of 4 x 2
+    ``FourNodeQuad`` (``Panel``) at z = 0, and a 2 m tie of 4 ``Truss``
+    segments (``Tie``) along y = 1.5. ``deform_2d.results.h5`` holds one
+    static stage, ``load``, of ``DEFORM_STEPS`` steps with only
+    ``displacement_x`` and ``displacement_y`` (the shorthand clipped to
+    ``ndm``, as h5-schema.md says a 2-D file has no ``displacement_z``)::
+
+        s = 0.05 * (k + 1)
+        displacement_x = s * y,  displacement_y = s * (0.5 * x + 0.25 * y)
+    """
+    from apeGmsh.opensees import apeSees
+
+    name = "deform_2d"
+    with apeGmsh(model_name=name, verbose=False, save_to=SESSION_DIR / f"{name}.h5") as g:
+        p0 = gmsh.model.geo.addPoint(0, 0, 0)
+        edge = gmsh.model.geo.extrude([(0, p0)], 2, 0, 0, numElements=[4])
+        surf = gmsh.model.geo.extrude([edge[1]], 0, 1, 0, numElements=[2], recombine=True)
+        q0 = gmsh.model.geo.addPoint(0, 1.5, 0)
+        tie = gmsh.model.geo.extrude([(0, q0)], 2, 0, 0, numElements=[4])
+        gmsh.model.geo.synchronize()
+        g.model.sync()
+        g.physical.add(2, [surf[1][1]], name="Panel")
+        g.physical.add(1, [tie[1][1]], name="Tie")
+        g.mesh.generation.generate(2)
+        fem = g.mesh.queries.get_fem_data(remove_orphans=True)
+
+    ops = apeSees(fem)
+    ops.model(ndm=2, ndf=2)
+    plate = ops.nDMaterial.ElasticIsotropic(E=30e9, nu=0.2, rho=2400.0, name="plate")
+    steel = ops.uniaxialMaterial.ElasticMaterial(E=200e9, name="steel")
+    ops.element.FourNodeQuad(pg="Panel", thickness=0.2, material=plate)
+    ops.element.Truss(pg="Tie", A=1e-3, material=steel)
+    model_path = out_dir / f"{name}.h5"
+    ops.h5(str(model_path))
+
+    node_ids = np.asarray(fem.nodes.ids, dtype=np.int64)
+    xyz = np.asarray(fem.nodes.coords, dtype=np.float64).reshape(-1, 3)
+    res_path = out_dir / f"{name}.results.h5"
+    with NativeWriter(res_path) as w:
+        w.open(fem=fem, source_type="domain_capture", analysis_label="V4d synthetic 2-D (#1765)", model_h5_src=model_path)
+        k = np.arange(DEFORM_STEPS, dtype=np.float64)
+        sid = w.begin_stage(name="load", kind="static", time=(k + 1) / DEFORM_STEPS)
+        steps = [deform_values(xyz, kk) for kk in range(DEFORM_STEPS)]
+        w.write_nodes(sid, "partition_0", node_ids=node_ids,
+                      components={c: np.stack([st[c] for st in steps]) for c in steps[0]})
+        w.end_stage()
+    print(f"wrote {model_path.name} and {res_path.name}: {node_ids.size} nodes, {len(fem.elements.ids)} elements, ndm 2")
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--measure", type=Path, help="write the measured files a, b, c into this directory")
@@ -305,7 +368,11 @@ def main() -> None:
     ap.add_argument("--tet-size", type=float, default=0.0335)
     ap.add_argument("--staged", action="store_true", help="write the V4b staged pair (staged_activation.h5 + .results.h5)")
     ap.add_argument("--contour", action="store_true", help="write the V4c1 contour pairs (contour_staged.*, contour_nodata.*)")
+    ap.add_argument("--deform", action="store_true", help="write the V4d 2-D pair (deform_2d.h5 + .results.h5)")
     args = ap.parse_args()
+    if args.deform:
+        deform_fixtures(HERE)
+        return
     if args.staged:
         staged_activation(HERE)
         return

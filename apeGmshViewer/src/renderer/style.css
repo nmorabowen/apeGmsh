@@ -76,6 +76,21 @@ html, body {
 .contour-cmap { width: 100%; }
 .refused-field { color: var(--error); }
 
+/* V4d: the deformed shape's section of the legend (toggle, ghost, scale, notes).
+   The marker chip repeats the viewport marker: its no-data grey is set inline (data), ringed in the text colour. */
+.deform { margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--line); max-width: 260px; }
+.deform-title { font-weight: 600; margin: 0 0 6px; }
+.legend-mode button:disabled { cursor: default; opacity: 0.45; }
+.deform-scale-row { display: flex; align-items: center; gap: 6px; margin: 0 0 4px; font-size: 13px; }
+.deform-scale {
+  width: 72px; font: 600 12px var(--mono); color: var(--text); background: var(--hover);
+  border: 1px solid var(--line); border-radius: 5px; padding: 1px 4px;
+}
+.deform-scale-label { color: var(--muted); }
+.deform-scale-label.scaled { color: var(--accent); font-weight: 600; }
+.deform-marker { width: 8px; height: 8px; flex: none; outline: 2.5px solid var(--text); margin: 0 3px; }
+.deform-missing { font-size: 13px; }
+
 /* The right rail (V2g, design brief on #1426): the inspector on top, the
    sources below, never overlapping. The rail itself takes no clicks. */
 #rail {

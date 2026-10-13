@@ -161,7 +161,9 @@ export function mountLegend(store: Store): () => void {
     for (const n of lines.notes) box.append(el("div", "legend-note" + (n.refused ? " refused-field" : ""), n.text));
     if (lines.partial) {
       const m = el("div", "legend-row deform-missing");
-      m.append(el("span", "deform-marker"), el("span", undefined, lines.partial));
+      const chip = el("span", "deform-marker");
+      chip.style.backgroundColor = css(NO_DATA_RGB);
+      m.append(chip, el("span", undefined, lines.partial));
       box.append(m);
     }
     legend.append(box);

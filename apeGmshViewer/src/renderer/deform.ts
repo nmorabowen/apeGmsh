@@ -89,9 +89,9 @@ export function writePositions(
   }
 }
 
-/** The colour of a marker's core: the contour's no-data grey (state/contour.ts `NO_DATA_RGB`), ringed in white. */
+/** The colour of a marker's core: the contour's no-data grey (state/contour.ts `NO_DATA_RGB`), ringed in the text colour (the legend chip repeats both). */
 export const MISSING_CORE = toHexNumber(OFFICE.muted);
-export const MISSING_RING = toHexNumber(DARK.halo);
+export const MISSING_RING = toHexNumber(DARK.text);
 /** Marker sizes in CSS pixels: the white ring, then the grey core over it. */
 export const MISSING_PX = [13, 8] as const;
 
