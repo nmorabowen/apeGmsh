@@ -15,8 +15,8 @@ Oracles, each naming the right answer:
 * **Labels, not structure (A7).** Two models that differ only in those
   names have the same ``model_hash``, and the deck bytes are equal; the
   ``decls`` group is excluded (the hash recomputed with it deleted is the
-  stamped one), and ``/opensees/program``'s hashed ``decl`` column stays
-  ``-1``.
+  stamped one). ``/opensees/program``'s hashed ``decl`` column holds
+  declaration row ids (opensees 2.31.0), which a name does not change.
 * **The ``declare`` name.** ``RecorderDeclaration``'s own ``name``
   (default ``"default"``, the ``.out`` stem) is forwarded as the bridge
   name only when given: two unnamed declarations still coexist, a repeated
@@ -191,9 +191,12 @@ def _assert_every_declaration_keyed(ops: apeSees, path: Path) -> None:
                            if s in ops_grp["stages"][stage]]
         for store in stores:
             assert len(table.rows[store]) == len(ops_grp[store]), store
-    # And /opensees/program's hashed decl column never carries one.
+    # And /opensees/program's hashed decl column names these rows (A7,
+    # 2.31.0; test_h5_program_decl.py joins every call): declared calls
+    # carry one, the rest an explicit -1.
     with h5py.File(str(path), "r") as f:
-        assert set(f["opensees"]["program"]["decl"][()].tolist()) == {-1}
+        column = set(f["opensees"]["program"]["decl"][()].tolist())
+    assert column - {-1} and column <= {-1, *range(len(keys))}
 
 
 def test_every_declaration_has_a_key_staged(tmp_path: Path) -> None:
