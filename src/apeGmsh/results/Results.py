@@ -125,53 +125,48 @@ _MODEL_H5_REQUIRED_MESSAGE = (
 )
 
 
-#: The phrase a ``model hash mismatch`` lineage warning carries when the
-#: results file and the model straddle the opensees schema minor whose
-#: ``/opensees/program.decl`` entered ``model_hash``
-#: (``h5_reader.PROGRAM_DECL_FROM``). ``assess`` keys its
-#: ``RES.LINEAGE`` message on it.
+#: The phrase a ``model hash mismatch`` lineage warning carries when one
+#: side's ``model_hash`` hashes the declaration ids of
+#: ``/opensees/program.decl`` and the other's does not (the
+#: ``/opensees/decls@program_decl`` completeness marker). ``assess`` keys
+#: its ``RES.LINEAGE`` message on it.
 MODEL_HASH_ERA_CAUSE = "hash change (declaration ids entered model_hash)"
 
 
 def _model_hash_era_cause(
-    results_version: Any | None, model_version: Any | None,
+    results_records: bool | None, model_records: bool,
 ) -> str | None:
     """Name the cause of a ``model_hash`` mismatch, or ``None``.
 
-    Returns the cause text when the results file's and the model's
-    opensees-zone versions lie on opposite sides of
-    ``PROGRAM_DECL_FROM``, where the archive's ``model_hash`` changed
-    once. ``None`` when both sit on one side, or when either
-    version is unknown: the cause is then never guessed.
+    ``results_records`` / ``model_records`` say whether each side's
+    archive records its program declarations
+    (:func:`h5_reader.records_program_decl`): only then does its
+    ``model_hash`` include the declaration ids. The version stamp is not
+    used, because a ``to_h5`` rewrite of an older archive is stamped
+    current but keeps the old hash. Returns the cause text when the two
+    sides differ; ``None`` when they agree, or when the results side is
+    unknown (no ``/opensees`` zone): the cause is then never guessed.
     """
     from ..opensees.emitter.h5_reader import PROGRAM_DECL_FROM
 
-    if results_version is None or model_version is None:
-        return None
-    results_new = (
-        results_version.major, results_version.minor, results_version.patch,
-    ) >= PROGRAM_DECL_FROM
-    model_new = (
-        model_version.major, model_version.minor, model_version.patch,
-    ) >= PROGRAM_DECL_FROM
-    if results_new == model_new:
+    if results_records is None or results_records == model_records:
         return None
     boundary = ".".join(str(part) for part in PROGRAM_DECL_FROM)
-    if model_new:
+    if model_records:
+        sides = "the model's hash includes declaration ids, the results file's does not"
         remedy = (
             "re-run the analysis against the re-saved model, or open the "
             "results with the model.h5 they were run on"
         )
     else:
+        sides = "the results file's hash includes declaration ids, the model's does not"
         remedy = (
-            "open the results with the model.h5 they were run on (it was "
-            f"re-saved at {results_version}), or re-run the analysis "
-            "against this model"
+            "open the results with the model.h5 they were run on, or "
+            "re-run the analysis against this model"
         )
     return (
         f"likely cause: the opensees schema {boundary} {MODEL_HASH_ERA_CAUSE} "
-        f"(results file written against {results_version}, model "
-        f"{model_version}); {remedy}"
+        f"({sides}); {remedy}"
     )
 
 
@@ -975,6 +970,7 @@ class Results:
             WARNING_PREFIX,
             Lineage,
         )
+        from ..opensees.emitter.h5_reader import records_program_decl
 
         # Layer 1: inherit from the bound OpenSeesModel.
         base = self._model.lineage
@@ -1017,8 +1013,8 @@ class Results:
                 # change (PROGRAM_DECL_FROM) says so. Still a warning;
                 # an unreadable version on either side keeps the text.
                 cause = _model_hash_era_cause(
-                    self._results_opensees_version(),
-                    self._model._opensees_version,
+                    self._results_records_program_decl(),
+                    records_program_decl(self._model.declarations),
                 )
                 if cause is not None:
                     message += "; " + cause
@@ -1055,38 +1051,33 @@ class Results:
             warnings=tuple(warnings),
         )
 
-    def _results_opensees_version(self) -> "Any | None":
-        """The opensees-zone version the results file was written against.
-
-        The root ``opensees_schema_version`` stamp, else the embedded
-        ``/model/meta`` one (both forwarded from the source model.h5 by
-        :class:`NativeWriter`). No envelope fallback: the root envelope
-        is the results zone's own version. ``None`` for a non-native
-        reader or an absent or unreadable stamp. Reads the reader's
-        open handle; called only on a ``model_hash`` mismatch.
+    def _results_records_program_decl(self) -> "bool | None":
+        """Whether the results file's embedded ``/opensees`` records its
+        program declarations: ``/opensees/decls@program_decl`` is
+        ``"complete"`` (the zone is copied verbatim from the source
+        model.h5). A missing ``decls`` group or marker is the old hash
+        (``False``). ``None`` for a non-native reader, a file with no
+        ``/opensees`` zone, or a closed handle. Reads the reader's open
+        handle; called only on a ``model_hash`` mismatch.
         """
-        from ..opensees._internal.schema_version import (
-            OPENSEES,
-            read_zone_version,
-        )
+        from ..opensees.emitter.h5_reader import PROGRAM_DECL_COMPLETE
         from .readers._native import NativeReader
 
         if not isinstance(self._reader, NativeReader):
             return None
         h5 = self._reader._h5
         try:
-            version = read_zone_version(
-                h5.attrs, OPENSEES, envelope_fallback=False,
-            )
-            if version is None and "model" in h5 and "meta" in h5["model"]:
-                version = read_zone_version(
-                    h5["model/meta"].attrs, OPENSEES, envelope_fallback=False,
-                )
-        except (ValueError, KeyError, OSError):
-            # Malformed stamp or closed handle: no version, so no
-            # cause is named (never guess).
+            if "opensees" not in h5:
+                return None
+            ops = h5["opensees"]
+            if "decls" not in ops:
+                return False
+            marker = ops["decls"].attrs.get("program_decl")
+        except (KeyError, OSError, ValueError):
             return None
-        return version
+        if isinstance(marker, bytes):
+            marker = marker.decode("utf-8", "replace")
+        return marker is not None and str(marker) == PROGRAM_DECL_COMPLETE
 
     def bind(self, fem: "FEMData") -> "Results":
         """Re-bind to ``fem``.
