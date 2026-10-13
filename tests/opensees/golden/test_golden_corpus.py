@@ -19,7 +19,7 @@ from pathlib import Path
 import pytest
 
 from tests.opensees.fixtures import fem_stub
-from tests.opensees.golden import builder
+from tests.opensees.golden import builder, rebar
 
 _DIFF_LINES = 80
 _CELLS = builder.all_cells()
@@ -130,6 +130,68 @@ def test_cell_matches_golden(
     )
 
 
+_REBAR_CELLS = rebar.all_cells()
+
+
+@pytest.mark.parametrize(
+    ("placement", "output"), _REBAR_CELLS,
+    ids=[rebar.cell_id(*c) for c in _REBAR_CELLS],
+)
+def test_rebar_cell_matches_golden(
+    placement: str, output: str, tmp_path: Path,
+) -> None:
+    """The ``g.rebar`` column cage deck (README "Rebar cells")."""
+    _assert_same(
+        rebar.cell_id(placement, output), "deck",
+        rebar.golden_path(placement, output),
+        rebar.render_deck(placement, output, tmp_path),
+    )
+
+
+@pytest.mark.parametrize(
+    ("placement", "token", "count"),
+    [
+        ("conformal", "element CorotTruss ", 262),
+        ("conformal", "element LadrunoEmbeddedRebar ", 0),
+        ("embedded", "element CorotTruss ", 366),
+        ("embedded", "element LadrunoEmbeddedRebar ", 400),
+    ],
+)
+def test_rebar_golden_exercises_both_emit_paths(
+    placement: str, token: str, count: int,
+) -> None:
+    """The committed Tcl decks carry the bar elements and the ties.
+
+    Guards the oracle itself: a regen that silently dropped
+    ``emit_elements`` or the embedded coupling would still match its own
+    golden, so the line counts of the X4-e harness (#1848) are pinned.
+    """
+    text = _read_golden(rebar.golden_path(placement, "tcl"))
+    got = sum(1 for line in text.split("\n") if line.startswith(token))
+    assert got == count, f"{placement}: {got} x {token.strip()!r}, want {count}"
+
+
+@pytest.mark.parametrize(
+    ("placement", "bar_nodes", "in_host"),
+    [("conformal", 270, 270), ("embedded", 400, 0)],
+)
+def test_rebar_golden_pins_the_coupling(
+    placement: str, bar_nodes: int, in_host: int,
+) -> None:
+    """Conformal bars live in the host connectivity; embedded bars do not.
+
+    The decks emit no host element, so only the ``<coupling>`` section
+    shows whether ``place(coupling=...)`` embedded the bars (review F1).
+    """
+    for output in rebar.OUTPUTS:
+        head = _read_golden(rebar.golden_path(placement, output)).split("\n")
+        assert head[:3] == [
+            rebar.COUPLING_HEADER,
+            f"bar_nodes {bar_nodes}",
+            f"bar_nodes_in_host_connectivity {in_host}",
+        ], f"{placement}/{output}: {head[:3]}"
+
+
 def test_manifest_is_the_grid() -> None:
     """MANIFEST.json lists all 105 cells, each golden or n/a with a reason."""
     text = _read_golden(builder.MANIFEST_PATH)
@@ -160,12 +222,15 @@ def test_fixture_roster_is_every_make_factory() -> None:
 
 
 def test_no_orphan_goldens() -> None:
-    """Every file under cells/ belongs to a golden cell (no silent leftovers)."""
+    """Every file under cells/ and rebar_cells/ belongs to a golden cell."""
     owned = {
         p for c in _CELLS if builder.applicability(*c) is None
         for p in builder.golden_paths(*c)
+    } | {rebar.golden_path(*c) for c in _REBAR_CELLS}
+    on_disk = {
+        p for d in (builder.CELLS_DIR, rebar.REBAR_CELLS_DIR)
+        for p in d.rglob("*") if p.is_file()
     }
-    on_disk = {p for p in builder.CELLS_DIR.rglob("*") if p.is_file()}
     assert on_disk == owned, (
         f"orphans: {sorted(str(p) for p in on_disk - owned)}; "
         f"missing: {sorted(str(p) for p in owned - on_disk)}"
