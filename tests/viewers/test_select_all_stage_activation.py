@@ -172,3 +172,49 @@ def test_no_activation_data_selects_everything_silently(
     selected = {int(i) for i in session.selection.nodes}
     pgs = _pg_eids(results)
     assert selected == _nodes_of(results, pgs["Rock"] | pgs["Fill"])
+
+
+@pytest.mark.parametrize("stage", sorted(_EXPECT))
+def test_no_view_follows_the_linked_session_instant(staged, stage):
+    """With no mesh view in hand (a plot pane in focus, or a code
+    caller), the linked session instant is the stage every linked pane
+    draws, so select-all means that stage, not the last one (#1743
+    review)."""
+    from apeGmsh.results.session import Instant
+    from apeGmsh.viewers.session import select_all
+    from apeGmsh.viewers.session._select_all import counts
+
+    results, _n = staged
+    ids = {s.name: s.id for s in results.stages}
+    session = results.session()
+    assert session.time_linked
+    session.time = Instant(ids[stage], 0)
+    pgs = _pg_eids(results)
+    _z, rock, fill = _EXPECT[stage]
+    for category, on in (("Rock", rock), ("Fill", fill)):
+        want = _nodes_of(results, pgs[category]) if on else set()
+        n_nodes, _g = counts(
+            session, axis="physical_groups", names=(category,), view=None,
+        )
+        assert n_nodes == len(want), (stage, category)
+    active = (pgs["Rock"] if rock else set()) | (pgs["Fill"] if fill else set())
+    select_all(session, "nodes", axis="physical_groups", names=_BOTH)
+    assert {int(i) for i in session.selection.nodes} == _nodes_of(
+        results, active,
+    ), stage
+
+
+def test_no_view_unlinked_falls_back_to_the_last_stage(staged):
+    """Link off and no view: no instant every pane shares, so the last
+    stage ('excavate': Rock removed) is what a code caller means."""
+    from apeGmsh.results.session import Instant
+    from apeGmsh.viewers.session._select_all import counts
+
+    results, _n = staged
+    ids = {s.name: s.id for s in results.stages}
+    session = results.session()
+    session.time = Instant(ids["g"], 0)
+    session.time_linked = False
+    assert counts(
+        session, axis="physical_groups", names=("Rock",), view=None,
+    ) == (0, 0)

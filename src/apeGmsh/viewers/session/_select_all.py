@@ -220,7 +220,9 @@ def _activation_stage(
     code caller with no view on a Results that has no stages, which
     has no activation to apply.
     """
-    if view is None and not list(_require_results(session).stages):
+    if view is None and session.time is None and not list(
+        _require_results(session).stages,
+    ):
         return None
     return _stage_of(session, view)
 
@@ -241,8 +243,10 @@ def _stage_of(
     """The stage whose integration points a Gauss select-all means.
 
     Resolved through realize's own §7 instant law when a view is in
-    hand, so the outline and the picture agree; the session's last
-    stage otherwise (no pane selected — a code caller).
+    hand, so the outline and the picture agree. With no mesh view (a
+    plot pane in focus, or a code caller) the linked session instant is
+    the stage every linked pane draws (#1743 review), so it wins; only
+    with no linked instant does the session's last stage apply.
     """
     results = _require_results(session)
     if view is not None:
@@ -250,6 +254,9 @@ def _stage_of(
 
         stage_id, _step = _resolve_instant(session, view, results)
         return stage_id
+    instant = session.time
+    if session.time_linked and instant is not None:
+        return instant.stage
     stages = list(results.stages)
     if not stages:
         raise RuntimeError("This Results has no stages to select from.")
