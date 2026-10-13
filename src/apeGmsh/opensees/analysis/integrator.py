@@ -192,8 +192,8 @@ class LoadControl(Integrator):
     """
 
     #: Under ``Static``, the field a stage's ``s.run(dt=)`` may equal
-    #: without :class:`~apeGmsh.opensees.InertStaticDtWarning` (R3-S1b,
-    #: #1822).  ``None`` means no step field exists, so any given ``dt``
+    #: without :class:`~apeGmsh.opensees.InertStaticDtWarning`.  ``None``
+    #: means no step field exists, so any given ``dt``
     #: warns; an integrator that does not declare it is treated as ``None``.
     static_step_field: ClassVar[str | None] = "dlam"
 
