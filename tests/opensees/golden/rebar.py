@@ -16,6 +16,7 @@ writes goldens.
 from __future__ import annotations
 
 import os
+import re
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
@@ -34,6 +35,14 @@ REBAR_CELLS_DIR = builder.GOLDEN_DIR / "rebar_cells"
 #: The cage material: ``emit_elements=True`` resolves each bar's
 #: ``CorotTruss`` material by this name at emit time.
 BAR_MATERIAL = "rebar"
+
+#: A node line in either deck: ``node <id> ...`` or ``ops.node(<id>, ...)``.
+_NODE_LINE = re.compile(r"^(?:node |ops\.node\()(\d+)\b")
+#: An element line in either deck, with its type and first two nodes.
+_ELEMENT_LINE = re.compile(
+    r"^(?:element (?P<type>\w+) \d+ (?P<i>\d+) (?P<j>\d+)\b"
+    r"|ops\.element\('(?P<ptype>\w+)', \d+, (?P<pi>\d+), (?P<pj>\d+)\b)"
+)
 
 #: ADR 0112 D1's artifact directory variable (``tests/conftest.py`` sets it
 #: for the suite).
@@ -72,14 +81,15 @@ def _artifacts_in(path: Path) -> Iterator[None]:
             os.environ[_ARTIFACT_DIR_ENV] = previous
 
 
-def build_model(placement: str) -> apeSees:
-    """Mesh the column, place the cage, and return the bridge model.
+def build_model(placement: str) -> tuple[apeSees, frozenset[int]]:
+    """Mesh the column, place the cage; return the bridge model and bar nodes.
 
     A 0.4 x 0.4 x 1.5 box, a 3x3 cage of #6 bars with #3 ties @ 0.25
     under ``ACI318_seismic`` (the X4-e harness, #1848).  ``conformal``
     embeds the bars into a tet host; ``embedded`` adds cross-ties and
     couples through ``LadrunoEmbeddedRebar`` into a transfinite tet host.
-    Both auto-emit a ``CorotTruss`` per bar cell.
+    Both auto-emit a ``CorotTruss`` per bar cell.  The node ids returned
+    are every node on a bar physical group of the placement.
     """
     if placement not in PLACEMENTS:
         raise KeyError(f"unknown rebar placement {placement!r}")
@@ -97,7 +107,7 @@ def build_model(placement: str) -> apeSees:
             crossties=embedded,
         )
         if embedded:
-            g.rebar.place(
+            placed = g.rebar.place(
                 cage, into="Col", coupling="embedded", perfect=1.0e8,
                 emit_elements=True,
             )
@@ -107,19 +117,51 @@ def build_model(placement: str) -> apeSees:
                 "Col", size=0.2, recombine=False,
             )
         else:
-            g.rebar.place(
+            placed = g.rebar.place(
                 cage, into="Col", coupling="conformal", emit_elements=True,
             )
         g.mesh.sizing.set_global_size(0.15)
         g.mesh.generation.generate(dim=3)
         fem = g.mesh.queries.get_fem_data(dim=3)
+    bar_nodes = frozenset(
+        int(n) for m in placed.members
+        for n in fem.nodes.select(pg=m.pg).ids
+    )
     # Pinned target, as in the grid: the stamp reads ``backend stock``.
     ops = apeSees(fem, opensees=OpenSeesTarget(mode="stock"))
     ops.model(ndm=3, ndf=3)
     ops.uniaxialMaterial.Steel02(
         fy=420e6, E=200e9, b=0.01, name=BAR_MATERIAL,
     )
-    return ops
+    return ops, bar_nodes
+
+
+def _bar_nodes_only(text: str, bar_nodes: frozenset[int]) -> str:
+    """Drop every node line whose node lies on no bar.
+
+    The conformal deck declares no host element, so a host-only node is
+    referenced by nothing in it: it is gmsh's 3-D Delaunay output, and
+    that differs between hosts (gmsh 4.15.0 on Windows against 4.15.2 on
+    Linux CI kept nodes 1-434 identical and diverged after them).
+    """
+    lines = text.split("\n")
+    # Fail closed: the filter is sound only while every element in the
+    # deck is a bar CorotTruss on bar nodes.
+    for line in lines:
+        if not line.startswith(("element ", "ops.element(")):
+            continue
+        e = _ELEMENT_LINE.match(line)
+        if e is None or (e["type"] or e["ptype"]) != "CorotTruss" or not {
+            int(e["i"] or e["pi"]), int(e["j"] or e["pj"]),
+        } <= bar_nodes:
+            raise AssertionError(
+                f"conformal deck: {line!r} is not a CorotTruss on bar "
+                "nodes, so dropping host-only node lines would hide it"
+            )
+    return "\n".join(
+        line for line in lines
+        if (m := _NODE_LINE.match(line)) is None or int(m[1]) in bar_nodes
+    )
 
 
 def render_deck(placement: str, output: str, scratch: Path) -> str:
@@ -131,12 +173,15 @@ def render_deck(placement: str, output: str, scratch: Path) -> str:
     artifacts.mkdir(parents=True, exist_ok=False)
     deck = str(deck_dir / f"model.{output}")
     with _artifacts_in(artifacts):
-        ops = build_model(placement)
+        ops, bar_nodes = build_model(placement)
         if output == "py":
             ops.py(deck)
         else:
             ops.tcl(deck)
-    return builder._collect(deck_dir)
+    text = builder._collect(deck_dir)
+    if placement == "conformal":
+        text = _bar_nodes_only(text, bar_nodes)
+    return text
 
 
 def manifest() -> dict[str, object]:
