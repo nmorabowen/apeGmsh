@@ -95,6 +95,7 @@ the quoted heading. Paths are from the repo root; `architecture/` is
 - [ ] Tests read versions from `tests/fixtures/schema.py`, never a literal.
       The `schema-literal` quirk rule holds this: hard-coded versions
       turned main red at 2.12.0, 2.13.0 and 2.16.0 (#642, #738).
+- [ ] A schema bump must bump the app target in the same PR (`tests/test_app_target_drift.py` fails otherwise).
 
 ## Emitted decks
 

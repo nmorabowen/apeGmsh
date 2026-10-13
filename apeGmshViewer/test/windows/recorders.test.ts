@@ -91,6 +91,43 @@ test("null and empty fields are listed as unset, not as values", () => {
   assert.equal(e.targets, "no target field is set (nodes, elements, pg, region)");
 });
 
+// opensees 2.28.0 (ADR 0115 amendment R2-f): `label` is the names a `label=`
+// declaration was given, provenance beside the ids. It is not an OpenSees
+// parameter, so it is never a parameter row nor "unset"; the targets line
+// shows it, and it is never re-resolved (it selects nothing).
+test("a labelled recorder (2.28) lists no `label` parameter; the targets line shows the label", () => {
+  const e = recordersOf(withCrown({ file: "a.out", nodes: [62, 63], dofs: [2], response: "disp", label: ["Arch", "crown_top"] })).entries[1]!;
+  assert.deepEqual(e.params.map((p) => p.field), ["file", "nodes", "dofs", "response"]);
+  assert.ok(!e.params.some((p) => p.field.includes("label")));
+  assert.deepEqual(e.unset, []);
+  assert.equal(e.targets, "2 nodes · label Arch, crown_top");
+  // "Arch" is a group of the store, but a label is never re-resolved: no selection.
+  assert.equal(e.select, null);
+  assert.equal(e.selectNote, null);
+});
+
+test("a null label (a pg= or explicit-id declaration, 2.28) is never unset and shows nothing", () => {
+  const e = recordersOf(withCrown({ file: "a.out", nodes: [62], dofs: [2], response: "disp", label: null })).entries[1]!;
+  assert.deepEqual(e.unset, []);
+  assert.ok(!e.params.some((p) => p.field.includes("label")));
+  assert.equal(e.targets, "1 node");
+  const empty = recordersOf(withCrown({ file: "a.out", pg: null, label: [] })).entries[1]!;
+  assert.deepEqual(empty.unset, ["pg"]);
+  assert.equal(empty.targets, "no target field is set (nodes, elements, pg, region)");
+});
+
+// opensees 2.30.0 (R3-S5): `precision` is a real OpenSees option
+// (`-precision N`). A value is a parameter row; null means "not given, the
+// deck carries no -precision, OpenSees' default", so it is truthfully unset.
+test("precision (2.30) is a parameter when given and unset when null", () => {
+  const given = recordersOf(withCrown({ file: "a.out", nodes: [62], dofs: [2], response: "disp", precision: 8 })).entries[1]!;
+  assert.deepEqual(given.params.find((p) => p.field === "precision"), { field: "precision", value: "8" });
+  assert.deepEqual(given.unset, []);
+  const unset = recordersOf(withCrown({ file: "a.out", nodes: [62], dofs: [2], response: "disp", precision: null, label: null })).entries[1]!;
+  assert.ok(!unset.params.some((p) => p.field === "precision"));
+  assert.deepEqual(unset.unset, ["precision"]);
+});
+
 test("a file without /opensees/decls shows its recorders by group name and says why there are no fields", () => {
   const c = recordersOf(plain);
   assert.equal(c.note, "1 recorder · this file has no /opensees/decl_params, so no parameters by field name");

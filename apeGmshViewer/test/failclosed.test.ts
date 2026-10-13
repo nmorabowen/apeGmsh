@@ -185,12 +185,31 @@ test("ADR 0113 floors: the app's table (neutral 2.10, opensees 2.12, geometry 1.
   assert.deepEqual(ZONE_FLOOR, { neutral: 10, opensees: 12, geometry: 0, provenance: 0, sequence: 0 });
 });
 
-test("opensees 2.27.0 is the target: the 2.27 stage records (update_parameter, zero_velocities, param_tags) open with no warning", () => {
+test("opensees 2.31.0 is the target: a 2.31 file with a 2.29 embeddedRebar store opens with no banner", () => {
+  // h5-schema.md: 2.28 adds decl_params `label`, 2.29 the optional
+  // /opensees/constraints/embeddedRebar group (replay data the app does not
+  // read), 2.30 decl_params `precision`, 2.31 /opensees/program's `decl`
+  // column and the /opensees/decls@program_decl marker (neither read here).
+  // A file at the target opens silently; tests/test_app_target_drift.py
+  // holds the target equal to the Python writer's SCHEMA_VERSION.
+  assert.deepEqual(OPENSEES_TARGET, { major: 2, minor: 31 });
+  const path = writeFile("o-231.h5", v(NEUTRAL_TARGET, NEUTRAL_TARGET.minor), true, "2.31.0");
+  const f = new h5wasm.File(path, "a");
+  const er = (f.get("opensees") as h5wasm.Group).create_group("constraints").create_group("embeddedRebar");
+  er.create_dataset({ name: "ele_tag", data: new BigInt64Array([10n]) });
+  er.create_dataset({ name: "arg_offsets", data: new Int32Array([0, 1]) });
+  er.create_dataset({ name: "args", data: new Float64Array([1]) });
+  f.close();
+  const m = read(path);
+  assert.equal(m.opensees?.version, "2.31.0");
+  assert.deepEqual(m.warnings, []);
+});
+
+test("opensees 2.27.0: the 2.27 stage records (update_parameter, zero_velocities, param_tags) open with no warning", () => {
   // h5-schema.md "Parameter tags (opensees 2.27.0)": the two new optional
   // stage children are listed by name, never warned about; the param_tags a
   // stage's initial_stress / activate_absorbing carry are inside groups the
   // reader lists and does not interpret.
-  assert.deepEqual(OPENSEES_TARGET, { major: 2, minor: 27 });
   const path = writeFile("o-227.h5", v(NEUTRAL_TARGET, NEUTRAL_TARGET.minor), true, "2.27.0");
   const f = new h5wasm.File(path, "a");
   const st = (f.get("opensees") as h5wasm.Group).create_group("stages").create_group("stage_000");

@@ -168,6 +168,17 @@ through Node's type stripping; nothing is compiled for the tests).
   A file below the floor, or of another major, is refused with a sentence
   naming the floor. The root `/sequence` zone (1.0, V3a) is read when a file
   carries it and is otherwise "not in this file", never an error.
+- The app's version of each zone (`NEUTRAL_TARGET`, `OPENSEES_TARGET`,
+  `GEOMETRY_TARGET`, `PROVENANCE_TARGET`, `SEQUENCE_TARGET` in
+  `src/reader/read.ts`; `RESULTS_TARGET` in `src/reader/results.ts`) equals
+  main's Python writer version for that zone, major and minor
+  (`tests/test_app_target_drift.py`, which fails when a target is behind or
+  ahead). So a PR that bumps a writer's schema version also bumps the app's
+  target, in the same PR: read the zone's history entry for the new version in
+  `architecture/h5-schema.md` first, then either read the new data or say,
+  above the target constant, why the app does not need it. Never bump blind.
+  The `/assembly` zone is the one Python zone the app does not read; the test
+  lists it by name with the reason.
 - The model-definition data: `/opensees/decls` and `/opensees/decl_params`
   (each declaration's parameters by field name, references as
   `{"$decl": key}`), the analysis chain, time series, patterns, recorders, fix

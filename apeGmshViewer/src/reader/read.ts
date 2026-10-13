@@ -77,8 +77,55 @@ export const NEUTRAL_TARGET = { major: 2, minor: 35 } as const;
  *   records, so a 2.27 file that has them opens with no warning. `/sequence`
  *   does not record either verb (archive gap #1646), which the stage diagram
  *   already says on every file (`NOT_RECORDED`).
+ *
+ * opensees 2.28.0 (ADR 0115 amendment R2-f, h5-schema.md "`label`: provenance
+ * only (opensees 2.28.0)"): the `decl_params` rows of fix, mass and typed
+ * Node / Element recorder declarations gain a `label` field, the names a
+ * `label=` declaration was given (`null` for `pg=` or explicit ids). No path
+ * or dtype changes, so the reader needs no new read: `decl_params` rows are
+ * read field by field and `label` arrives as a field. The rule for every
+ * window: `label` is provenance, not an OpenSees parameter. No window lists it
+ * as a parameter or an unset field; the Recorders window, the one window that
+ * renders those declarations' fields, shows it on the targets line, and a null
+ * label shows nothing. The ids stay authoritative: nothing the app draws or
+ * selects resolves a label.
+ *
+ * opensees 2.29.0 (K2b #1795, h5-schema.md "`/opensees/constraints/
+ * embeddedRebar` (optional, opensees 2.29.0)"): a new optional group holding
+ * every `g.reinforce` LadrunoEmbeddedRebar tie the build wrote (its tag and
+ * positional arguments). Replay data, which this app does not read: the ties
+ * are not elements (`element_meta` does not list them, so the chain and the
+ * element tables never meet one), they get no `/opensees/decls` row, and the
+ * reader reads only the `/opensees` children it knows, so the group opens
+ * with no warning. What the app does not say yet: a bond material that only
+ * the ties use shows no users in the materials window, as it did before
+ * 2.29 when the ties were not archived at all.
+ *
+ * opensees 2.30.0 (R3-S5 #1789, h5-schema.md "`precision` (opensees
+ * 2.30.0)"): typed Node / Element recorder `decl_params` rows gain
+ * `precision`, a real OpenSees option (`-precision N`). Unlike `label` it is a
+ * parameter: a value is a parameter row in the Recorders window, and `null`
+ * means "not given; the deck carries no `-precision`, OpenSees' default",
+ * so it is listed among the unset fields, truthfully. No new read.
+ *
+ * opensees 2.31.0 (A7 #1839, h5-schema.md "`/opensees/program`"): the
+ * program's `decl` column now holds the `/opensees/decls` row that made each
+ * call (`-1` where unproved), and `/opensees/decls@program_decl`
+ * ("complete" | "absent") says whether those joins are recorded. This app
+ * reads neither: it does not read `/opensees/program` at all, and reads only
+ * the datasets of `/opensees/decls`, so `decl` can never appear as an
+ * OpenSees parameter in any window, and no join is made from it. The joins the
+ * windows make are unchanged and do not depend on the marker: recorders join
+ * through `/opensees/decls/rows` (recorded by the writer, not guessed); the
+ * analysis window's chain ↔ declaration join is by count and type order, and
+ * a refused or ambiguous join says the archive records no link (#1646). Using `program.decl` for that join when the
+ * marker is "complete" is a follow-up, not this target bump.
+ *
+ * tests/test_app_target_drift.py fails when any `*_TARGET` here (or
+ * `RESULTS_TARGET` in results.ts) differs from its Python writer's version:
+ * bump it only after reading that zone's history entry in h5-schema.md.
  */
-export const OPENSEES_TARGET = { major: 2, minor: 27 } as const;
+export const OPENSEES_TARGET = { major: 2, minor: 31 } as const;
 /** The ADR 0112 zones (V2a specs): read by geometry.ts and provenance.ts. */
 export const GEOMETRY_TARGET = { major: 1, minor: 0 } as const;
 export const PROVENANCE_TARGET = { major: 1, minor: 1 } as const;
