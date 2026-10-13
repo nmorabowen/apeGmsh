@@ -141,6 +141,11 @@ MAIN_COMMITS = f"repos/{{owner}}/{{repo}}/commits?sha=main&per_page={MAIN_PAGE}"
 MAIN_COMMITS_JQ = "[.[].sha]"
 MAIN_RUNS = f"repos/{{owner}}/{{repo}}/actions/workflows/tests.yml/runs?branch=main&event=push&per_page={MAIN_PAGE}"
 MAIN_RUNS_JQ = "[.workflow_runs[] | {id, head_sha, status, conclusion}]"
+#: The jobs of one main Tests run (the latest attempt); only REQUIRED_CHECKS among them judge main.
+MAIN_JOBS = "repos/{{owner}}/{{repo}}/actions/runs/{run}/jobs?per_page=100"
+MAIN_JOBS_JQ = "{total: .total_count, jobs: [.jobs[] | {name, status, conclusion}]}"
+#: A required job that ended so is red; any other non-success (cancelled, skipped) asks for a re-run.
+RED_CONCLUSIONS = ("failure", "timed_out")
 FIXES_RED_MAIN = "fixes-red-main"
 UNVERIFIED = (
     "Merge main and re-run, or wait for main's run; the fix or the revert of a red main lands "
@@ -593,9 +598,21 @@ def check_main_green(number: int, pr: dict[str, Any], gh: Runner, bases: Bases) 
             by_sha.setdefault(str(run["head_sha"]), []).append(run)
         tip = order[0]
         # The latest completed run by main's commit order, not by completion time: the newest
-        # commit whose every Tests push run has completed.
-        latest = next((sha for sha in order if by_sha.get(sha) and all(r["status"] == "completed" for r in by_sha[sha])), None)
-        red = [] if latest is None else [r for r in by_sha[latest] if r["conclusion"] != "success"]
+        # commit whose five required jobs have all completed. Only those five judge main, so a
+        # red or slow qt-window-tests / app-tests neither blocks nor leaves main unverified.
+        latest: str | None = None
+        jobs: list[tuple[int, str, str | None]] = []
+        for sha in order:
+            found: list[tuple[int, str, str, str | None]] = []
+            for run in by_sha.get(sha, []):
+                listing = json.loads(gh(["api", MAIN_JOBS.format(run=int(run["id"])), "--jq", MAIN_JOBS_JQ]))
+                if int(listing["total"]) > len(listing["jobs"]):
+                    raise ValueError(f"run {run['id']}'s jobs page is truncated")
+                found += [(run["id"], job["name"], job["status"], job["conclusion"])
+                          for job in listing["jobs"] if job["name"] in REQUIRED_CHECKS]
+            if {job[1] for job in found} >= set(REQUIRED_CHECKS) and all(job[2] == "completed" for job in found):
+                latest, jobs = sha, [(run_id, name, conclusion) for run_id, name, _status, conclusion in found]
+                break
     except _UNREADABLE as exc:
         raise LandError(f"check 10: main unverified: its Tests runs could not be read ({exc!r}). {UNVERIFIED}") from exc
     if latest is None:
@@ -603,12 +620,20 @@ def check_main_green(number: int, pr: dict[str, Any], gh: Runner, bases: Bases) 
             f"check 10: main unverified at {tip[:12]}: none of main's last {len(order)} commits has a "
             f"completed Tests run. {UNVERIFIED}"
         )
-    if red:  # cancelled, skipped, timed_out... are red too: only success proves main
-        raise LandError(
-            f"check 10: main is red: its latest completed Tests run ({red[0]['id']}, on {latest[:12]}) is "
-            f"{red[0]['conclusion']}. Landing now buries the break under another merge (#1858, #1866). "
-            f"Only the fix or the revert lands, under the {FIXES_RED_MAIN!r} label (lesson #1877)."
-        )
+    for run_id, name, conclusion in jobs:
+        if conclusion in RED_CONCLUSIONS:
+            raise LandError(
+                f"check 10: main is red: required job {name!r} of its latest completed Tests run ({run_id}, on "
+                f"{latest[:12]}) is {conclusion}. Landing now buries the break under another merge (#1858, "
+                f"#1866). Only the fix or the revert lands, under the {FIXES_RED_MAIN!r} label (lesson #1877)."
+            )
+    for run_id, name, conclusion in jobs:
+        if conclusion != "success":  # cancelled, skipped, ...: no verdict either way, so no landing
+            raise LandError(
+                f"check 10: main unverified at {latest[:12]}: required job {name!r} of its Tests run ({run_id}) "
+                f"is {conclusion}, which proves nothing. Re-run main's Tests on {latest[:12]} "
+                f"(gh run rerun {run_id}), then land."
+            )
     if tip not in by_sha:
         raise LandError(f"check 10: main unverified at {tip[:12]}: no Tests run on main's head. {UNVERIFIED}")
     if latest == tip:

@@ -5,11 +5,18 @@ two days old. In between, X4-a had added a retirement-ledger row for the xfail #
 deletes, so the merge turned `lock-tests` red. #1858 and #1866 then landed while `main`'s
 run on `3af31061` was still in progress, on bases without it.
 
-Check 10 reads `main`'s recent commits and its `tests.yml` push runs. It refuses when the
-latest completed run in commit order is anything but `success`, when `main`'s head H has
-no run, and, while H's run is in progress, unless the PR's checks ran on a merge-ref base
-that contains H. A failed read refuses too. The `fixes-red-main` label lets the fix or
-the revert through.
+Check 10 reads `main`'s recent commits and, from each `tests.yml` push run, the five
+required jobs. Other jobs never block. A commit counts as completed once its five have
+finished. Check 10 refuses in these cases:
+
+- The latest completed commit, in commit order, has a required job that failed or timed
+  out.
+- A required job was cancelled or skipped; the message asks for a re-run of `main`'s Tests.
+- `main`'s head H has no run.
+- H's five are still running, unless the PR's checks ran on a merge-ref base that contains H.
+- A read fails.
+
+The `fixes-red-main` label lets the fix or the revert through.
 
 Check 11 refuses a PR that touches `tests/` or a baseline file when its required checks
 ran on a base more than 10 commits behind `main`, or when `main`'s tip landed more than

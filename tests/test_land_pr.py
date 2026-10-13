@@ -20,6 +20,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -149,6 +150,23 @@ def _run_row(run_id, sha, status="completed", conclusion="success"):
 MAIN_GREEN = [_run_row(38373760364, MAIN_TIP)]
 
 
+def _jobs_call(run_id):
+    return f"api {land_pr.MAIN_JOBS.format(run=run_id)} --jq {land_pr.MAIN_JOBS_JQ}"
+
+
+def _job_rows(status="completed", conclusion="success", **overrides):
+    """`gh api MAIN_JOBS --jq MAIN_JOBS_JQ` for one run: the five required jobs plus a
+    non-required one, each `status`/`conclusion` unless overridden by name."""
+    jobs = [{"name": n, "status": status, "conclusion": conclusion} for n in (*land_pr.REQUIRED_CHECKS, "qt-window-tests")]
+    jobs = [dict(job, **overrides.get(job["name"], {})) for job in jobs]
+    return {"total": len(jobs), "jobs": jobs}
+
+
+def _jobs_for(run):
+    """By default a run's jobs mirror its row: in progress, or completed with its conclusion."""
+    return _job_rows(run["status"], run["conclusion"])
+
+
 def _ancestry_call(tip, base):
     """Check 10's question: does the checks' base contain main's head (ahead or identical)?"""
     return f"api repos/{{owner}}/{{repo}}/compare/{tip}...{base} --jq .status"
@@ -169,7 +187,7 @@ def _behind_call(base=FRESH_BASE):
 
 def _recording(number, pr, squash, files=FILES_1218, *, compare="behind", tip="", labels=LABELS, local=None,
                porcelain="", rows=None, issues=None, shows=None, cards=None, main=MAIN_GREEN, main_order=(MAIN_TIP,),
-               logs=None, behind=(0, None)):
+               logs=None, behind=(0, None), jobs=None):
     pr = {"labels": [], "body": "", "closingIssuesReferences": [], **pr}
     head = pr["headRefOid"]
     if rows is None:
@@ -188,6 +206,7 @@ def _recording(number, pr, squash, files=FILES_1218, *, compare="behind", tip=""
         f"api repos/{{owner}}/{{repo}}/compare/main...{squash} --jq .status": compare + "\n",
         MAIN_COMMITS_CALL: json.dumps(list(main_order)),
         MAIN_RUNS_CALL: json.dumps(main),
+        **{_jobs_call(run["id"]): json.dumps((jobs or {}).get(run["id"]) or _jobs_for(run)) for run in main},
         **{
             _log_call(run["detailsUrl"]): _checkout(head)
             for run in pr["statusCheckRollup"] if "/actions/runs/" in (run.get("detailsUrl") or "")
@@ -1252,6 +1271,12 @@ RUNS_RED_471 = [  # 16:36Z: 471432f3's run is the latest completed, and red
     _run_row(38429723003, SHA_1ACF, "in_progress", None), _run_row(38429075356, SHA_471, "completed", "failure"),
     _run_row(38428776331, SHA_3AF, "completed", "failure"), RUN_6F66,
 ]
+#: actions/runs/38429075356/jobs (471432f3), recorded: lock-tests and suite failed.
+JOBS_471 = {"total": 8, "jobs": [
+    {"name": name, "status": "completed", "conclusion": "failure" if name in ("lock-tests", "suite") else "success"}
+    for name in ("lock-tests", "static-gates", "suite", "app-tests", "qt-window-tests", "live-stock",
+                 "subprocess-tests", "emit-cost-gate")
+]}
 
 
 def _landed_pr(head, run, jobs, started, files, slice_no):
@@ -1319,10 +1344,10 @@ ORDER_AT_1866 = (SHA_471, SHA_3AF, MAIN_TIP, SHA_53F)
 ORDER_RED = (SHA_1ACF, SHA_471, SHA_3AF, MAIN_TIP)
 
 
-def _landing(number, pr, files, cards, base, *, main, order, ancestry, behind):
+def _landing(number, pr, files, cards, base, *, main, order, ancestry, behind, jobs=None):
     """A PR whose required checks ran on `base`, landing on main as `main`/`order` read."""
     job = pr["statusCheckRollup"][0]["detailsUrl"]
-    gh, git = _recording(number, pr, "unused", files, cards=cards, main=main, main_order=order,
+    gh, git = _recording(number, pr, "unused", files, cards=cards, main=main, main_order=order, jobs=jobs,
                          logs={_log_call(job): _checkout(pr["headRefOid"], base)})
     gh.responses[_ancestry_call(order[0], base)] = ancestry + "\n"
     gh.responses[_behind_call(base)] = json.dumps(list(behind))
@@ -1382,10 +1407,11 @@ def test_a_src_only_pr_still_has_its_base_read_by_check_10():
 def test_any_pr_is_refused_while_main_is_red_471432f3(number, pr, files):
     """Replay: at 16:36Z, 471432f3's run is main's latest completed one, and red; no PR lands,
     whatever its base. Revert-proof: without the red branch, both merge."""
-    gh, git = _recording(number, pr, "unused", files, main=RUNS_RED_471, main_order=ORDER_RED)
+    gh, git = _recording(number, pr, "unused", files, main=RUNS_RED_471, main_order=ORDER_RED,
+                         jobs={38429075356: JOBS_471})
     with pytest.raises(land_pr.LandError, match=(
-        r"check 10: main is red: its latest completed Tests run \(38429075356, on 471432f39b90\) is failure.*"
-        r"'fixes-red-main'"
+        r"check 10: main is red: required job 'lock-tests' of its latest completed Tests run \(38429075356, "
+        r"on 471432f39b90\) is failure.*'fixes-red-main'"
     )):
         _run(number, gh, git)
     assert not _merged(gh)
@@ -1402,11 +1428,80 @@ def test_latest_completed_is_by_commit_order_not_by_listing():
     assert _run(1218, gh, git) == 0
 
 
-@pytest.mark.parametrize("conclusion", ["cancelled", "skipped", "timed_out", None])
-def test_a_cancelled_or_skipped_run_is_red(conclusion):
-    """Only success proves main. Revert-proof: judging only `failure` as red lands these."""
-    gh, git = _recording(1218, PR_1218, SQUASH_1218, main=[_run_row(1, MAIN_TIP, "completed", conclusion)])
-    with pytest.raises(land_pr.LandError, match=rf"check 10: main is red: .* is {conclusion}\."):
+def test_timed_out_required_job_is_red():
+    """Revert-proof: judging only `failure` as red sends this to the re-run message."""
+    gh, git = _recording(1218, PR_1218, SQUASH_1218, jobs={38373760364: _job_rows(suite={"conclusion": "timed_out"})})
+    with pytest.raises(land_pr.LandError, match=r"check 10: main is red: required job 'suite' .* is timed_out\."):
+        _run(1218, gh, git)
+
+
+@pytest.mark.parametrize("conclusion", ["cancelled", "skipped", None])
+def test_a_cancelled_or_skipped_required_job_asks_for_a_rerun(conclusion):
+    """Coordinator ruling on #1898: no verdict is not a red main, but it is no proof either.
+    Revert-proof: without the re-run branch, these land; treating them as red changes the message."""
+    gh, git = _recording(1218, PR_1218, SQUASH_1218,
+                         jobs={38373760364: _job_rows(**{"live-stock": {"conclusion": conclusion}})})
+    with pytest.raises(land_pr.LandError) as refused:
+        _run(1218, gh, git)
+    message = str(refused.value)
+    assert message.startswith(f"check 10: main unverified at {MAIN_TIP[:12]}: required job 'live-stock'")
+    assert f"is {conclusion}, which proves nothing. Re-run main's Tests on {MAIN_TIP[:12]} (gh run rerun 38373760364)" in message
+    assert re.search(r"\bred\b", message) is None, "a cancelled or skipped job does not make main red"
+    assert not _merged(gh)
+
+
+@pytest.mark.parametrize("name", ["qt-window-tests", "app-tests", "subprocess-tests", "docs-check"])
+def test_a_red_non_required_job_does_not_block(name, capsys):
+    """Coordinator ruling on #1898: only the five required jobs judge main. The run's own
+    conclusion is failure. Revert-proof: judging the run's conclusion, or every job, refuses."""
+    jobs = _job_rows()
+    jobs = {"total": jobs["total"] + 1, "jobs": [*jobs["jobs"], {"name": name, "status": "completed", "conclusion": "failure"}]}
+    gh, git = _recording(1218, PR_1218, SQUASH_1218, main=[_run_row(38373760364, MAIN_TIP, "completed", "failure")],
+                         jobs={38373760364: jobs})
+    assert _run(1218, gh, git) == 0
+    assert f"check 10: main's Tests run on its head {MAIN_TIP[:12]} is green." in capsys.readouterr().out
+
+
+def test_a_slow_non_required_job_does_not_leave_main_unverified(capsys):
+    """Reviewer add-on: "completed" means the five required jobs finished. H's run is still
+    in_progress because qt-window-tests is; the five are green, so H is judged and the PR (whose
+    base does NOT contain H) lands without the ancestry read. Revert-proof: defining completed
+    by the run's status refuses it as "main unverified at H"."""
+    tip = "e" * 40
+    jobs = _job_rows(**{"qt-window-tests": {"status": "in_progress", "conclusion": None}})
+    gh, git = _recording(1218, PR_1218, SQUASH_1218, main=[_run_row(7, tip, "in_progress", None), RUN_6F66],
+                         main_order=(tip, MAIN_TIP), jobs={7: jobs})
+    assert _run(1218, gh, git) == 0
+    assert not any(call.startswith(f"api repos/{{owner}}/{{repo}}/compare/{tip}") for call in gh.calls)
+    assert f"check 10: main's Tests run on its head {tip[:12]} is green." in capsys.readouterr().out
+
+
+def test_a_required_job_still_running_keeps_the_head_in_progress():
+    """The converse: one of the five still running is not completed, so the ancestry rule
+    applies (base FRESH_BASE does not contain H here)."""
+    tip = "e" * 40
+    jobs = _job_rows(suite={"status": "in_progress", "conclusion": None})
+    gh, git = _recording(1218, PR_1218, SQUASH_1218, main=[_run_row(7, tip, "in_progress", None), RUN_6F66],
+                         main_order=(tip, MAIN_TIP), jobs={7: jobs})
+    gh.responses[_ancestry_call(tip, FRESH_BASE)] = "behind\n"
+    with pytest.raises(land_pr.LandError, match=r"check 10: main unverified at eeeeeeeeeeee: its Tests run is in progress"):
+        _run(1218, gh, git)
+
+
+def test_a_run_missing_a_required_job_is_not_completed():
+    """Fail closed: a completed run that lacks `live-stock` (a renamed job, say) proves nothing;
+    the walk finds no completed commit. Revert-proof: without the all-five test, it lands."""
+    jobs = _job_rows()
+    jobs = {"total": 5, "jobs": [job for job in jobs["jobs"] if job["name"] != "live-stock"]}
+    gh, git = _recording(1218, PR_1218, SQUASH_1218, jobs={38373760364: jobs})
+    with pytest.raises(land_pr.LandError, match=r"check 10: main unverified at 6f66fd238325: none of main's last 1"):
+        _run(1218, gh, git)
+
+
+def test_a_truncated_jobs_page_refuses():
+    jobs = _job_rows()
+    gh, git = _recording(1218, PR_1218, SQUASH_1218, jobs={38373760364: {**jobs, "total": 101}})
+    with pytest.raises(land_pr.LandError, match=r"check 10: main unverified: .*jobs page is truncated"):
         _run(1218, gh, git)
 
 
