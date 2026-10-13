@@ -1244,10 +1244,16 @@ def emit_phased(ops, ph: dict, deck_path: str, *, stream: bool,
                 and len(rows)):
             # A LazyRankBuckets bucket: every row is owned by this rank.
             countdown = [len(rows), len(rows)]
+        del rows
         try:
             return orig["elem"](*a, **k)
         finally:
             countdown = None
+            # Drop the wrapper's own references first: ``k`` holds the
+            # materialised rank bucket, which production frees when the
+            # call returns (measured: kept alive, it billed 76 B/node
+            # to fix_mass_regions).
+            k.clear()
             trk.event("elem_exit")
 
     def _fem_eid(emitter_, fem_eid):
@@ -1933,8 +1939,8 @@ def main():
                          "R3/R6/R7 (their bytes allocate below the owning "
                          "site); default 12. --phases: default 3, the "
                          "fewest that still names the retaining caller "
-                         "(measured: emit cost grows ~3x per extra frame "
-                         "pair; 12 frames took 44 min at n=100).")
+                         "(measured: emit cost roughly doubles per extra "
+                         "frame; 12 frames took 44 min at n=100).")
     ap.add_argument("--tm-poll-ms", type=float, default=1.0,
                     help="--mem: sampler-thread tick for the peak_tracked "
                          "tracker (default 1 ms - measured to convert "
