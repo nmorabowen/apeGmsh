@@ -121,7 +121,8 @@ FILES_1218 = [
 ]
 SQUASH_1218 = "21de232c633892deb7d5e38da3fbd3af207c7617"
 COMPARE = "api repos/{owner}/{repo}/compare/main..."  # the post-merge proof, not check 11
-MAIN_CHECKS_CALL = f"api {land_pr.MAIN_CHECKS} --jq {land_pr.MAIN_CHECKS_JQ}"
+MAIN_COMMITS_CALL = f"api {land_pr.MAIN_COMMITS} --jq {land_pr.MAIN_COMMITS_JQ}"
+MAIN_RUNS_CALL = f"api {land_pr.MAIN_RUNS} --jq {land_pr.MAIN_RUNS_JQ}"
 MAIN_TIP = "6f66fd2383255cc7d19daed275ce7665e0b2853a"
 FRESH_BASE = "f" * 40
 LABELS = [{"name": "program"}, {"name": "slice"}, {"name": "semantic"}]
@@ -139,11 +140,18 @@ def _row(path, status="modified", previous=None, patch="@@ -1 +1 @@\n-a\n+b"):
     return json.dumps([path, status, previous, changes, patch])
 
 
-def _main_checks(tip=MAIN_TIP, **overrides):
-    """`gh api MAIN_CHECKS --jq MAIN_CHECKS_JQ` on main's tip: every required check green by default."""
-    runs = [{"name": n, "status": "completed", "conclusion": "success", "head_sha": tip} for n in land_pr.REQUIRED_CHECKS]
-    runs = [dict(run, **overrides.get(run["name"], {})) for run in runs]
-    return {"total": len(runs), "runs": runs}
+def _run_row(run_id, sha, status="completed", conclusion="success"):
+    """One row of `gh api MAIN_RUNS --jq MAIN_RUNS_JQ`: main's Tests push runs, newest first."""
+    return {"id": run_id, "head_sha": sha, "status": status, "conclusion": conclusion}
+
+
+#: By default main's head is MAIN_TIP and its Tests run there is completed and green.
+MAIN_GREEN = [_run_row(38373760364, MAIN_TIP)]
+
+
+def _ancestry_call(tip, base):
+    """Check 10's question: does the checks' base contain main's head (ahead or identical)?"""
+    return f"api repos/{{owner}}/{{repo}}/compare/{tip}...{base} --jq .status"
 
 
 def _checkout(head, base=FRESH_BASE):
@@ -160,8 +168,8 @@ def _behind_call(base=FRESH_BASE):
 
 
 def _recording(number, pr, squash, files=FILES_1218, *, compare="behind", tip="", labels=LABELS, local=None,
-               porcelain="", rows=None, issues=None, shows=None, cards=None, main=None, logs=None,
-               behind=(0, None)):
+               porcelain="", rows=None, issues=None, shows=None, cards=None, main=MAIN_GREEN, main_order=(MAIN_TIP,),
+               logs=None, behind=(0, None)):
     pr = {"labels": [], "body": "", "closingIssuesReferences": [], **pr}
     head = pr["headRefOid"]
     if rows is None:
@@ -178,7 +186,8 @@ def _recording(number, pr, squash, files=FILES_1218, *, compare="behind", tip=""
         f"pr merge {number} --squash --match-head-commit {head}": "",
         f"pr view {number} --json mergeCommit": json.dumps({"mergeCommit": {"oid": squash}}),
         f"api repos/{{owner}}/{{repo}}/compare/main...{squash} --jq .status": compare + "\n",
-        MAIN_CHECKS_CALL: json.dumps(_main_checks() if main is None else main),
+        MAIN_COMMITS_CALL: json.dumps(list(main_order)),
+        MAIN_RUNS_CALL: json.dumps(main),
         **{
             _log_call(run["detailsUrl"]): _checkout(head)
             for run in pr["statusCheckRollup"] if "/actions/runs/" in (run.get("detailsUrl") or "")
@@ -1224,15 +1233,62 @@ LOG_1698 = (
 )
 #: compare/e6bd0b6d...6f66fd23 (main's tip just before 3af31061): ahead_by, the tip's date.
 BEHIND_1698 = (68, "2026-10-13T09:04:47Z")
-#: commits/471432f3/check-runs: main red after #1858 landed on top of 3af31061.
-MAIN_471432F3 = _main_checks(
-    "471432f3" + "0" * 32, **{"lock-tests": {"conclusion": "failure"}, "suite": {"conclusion": "failure"}},
+SHA_3AF = "3af31061bd34d600f42f1a2d3eeaea20e14d6f9d"
+SHA_471 = "471432f39b9096a0db0c8cf32b8885dfe8d2d812"
+SHA_1ACF = "1acff395a9cf66b3bd3688f5c285a511aea44d34"
+SHA_53F = "53f1c4b87f780be46fbc52550fd270f2f1bb28d5"
+#: main's Tests push runs (newest first) at each landing, rebuilt from the recorded run list's
+#: created_at/updated_at: 38428776331 on 3af31061 ran 16:13:51Z-16:30:16Z (failure),
+#: 38429075356 on 471432f3 16:16:00Z-16:35:38Z (failure), 38429723003 on 1acff395
+#: 16:20:42Z-16:42:00Z (failure); 38373760364 on 6f66fd23 had completed green at 09:24:56Z.
+RUN_6F66 = _run_row(38373760364, MAIN_TIP)
+RUN_53F1 = _run_row(38373316012, SHA_53F)
+RUNS_AT_1858 = [_run_row(38428776331, SHA_3AF, "in_progress", None), RUN_6F66, RUN_53F1]  # 16:15:57Z
+RUNS_AT_1866 = [  # 16:20:38Z
+    _run_row(38429075356, SHA_471, "in_progress", None), _run_row(38428776331, SHA_3AF, "in_progress", None),
+    RUN_6F66, RUN_53F1,
+]
+RUNS_RED_471 = [  # 16:36Z: 471432f3's run is the latest completed, and red
+    _run_row(38429723003, SHA_1ACF, "in_progress", None), _run_row(38429075356, SHA_471, "completed", "failure"),
+    _run_row(38428776331, SHA_3AF, "completed", "failure"), RUN_6F66,
+]
+
+
+def _landed_pr(head, run, jobs, started, files, slice_no):
+    """A PR as it stood at its landing: green required checks from one Actions run."""
+    rollup = [
+        {"__typename": "CheckRun", "name": name, "status": "COMPLETED", "conclusion": "SUCCESS", "startedAt": started,
+         "detailsUrl": f"https://github.com/nmorabowen/apeGmsh/actions/runs/{run}/job/{job}"}
+        for name, job in jobs.items()
+    ]
+    pr = {"state": "OPEN", "isDraft": False, "baseRefName": "main", "headRefName": f"pr-{slice_no}",
+          "headRefOid": head, "mergeable": "MERGEABLE", "labels": [{"name": "program"}, {"name": "semantic"}],
+          "body": f"Slice: #{slice_no}\n", "statusCheckRollup": rollup}
+    card = {"body": "### Owned files\n" + "".join(f"- `{p}`\n" for p in files), "comments": []}
+    return pr, files, {slice_no: card}
+
+
+#: #1858 (squash 471432f3): checks in run 38368430040, merge ref `Merge a756c51e into a46fe539`.
+HEAD_1858, BASE_1858 = "a756c51e4058da90b26749158157792ea745826f", "a46fe53964eb7088d6a02a8e0775ed0d5f177406"
+PR_1858, FILES_1858, CARD_1858 = _landed_pr(
+    HEAD_1858, 38368430040,
+    {"lock-tests": 115199113581, "emit-cost-gate": 115199113454, "static-gates": 115199113732,
+     "suite": 115199112987, "live-stock": 115199113353},
+    "2026-10-13T08:19:07Z",
+    ["AGENTS.md", "changelog.d/land-pr-owned-files.md", "internal_docs/program/slice_card.md",
+     "scripts/land_pr.py", "tests/test_land_pr.py"],
+    1855,
 )
-#: commits/3af31061/check-runs while #1858 landed (16:15:56Z; the run started 16:13:54Z). The run has
-#: since completed red; the in-progress state is that recording with status/conclusion reset.
-MAIN_3AF31061_RUNNING = _main_checks(
-    "3af31061bd34d600f42f1a2d3eeaea20e14d6f9d",
-    **{n: {"status": "in_progress", "conclusion": None} for n in ("lock-tests", "suite")},
+#: #1866 (squash 1acff395): checks in run 38369618270, merge ref `Merge 2da1057d into 686840f6`.
+HEAD_1866, BASE_1866 = "2da1057d07edeb9f59a9d7d89c73bac44a92d0c8", "686840f602ee08383460732eb15a870c146d25ee"
+PR_1866, FILES_1866, CARD_1866 = _landed_pr(
+    HEAD_1866, 38369618270,
+    {"lock-tests": 115203195794, "emit-cost-gate": 115203196012, "static-gates": 115203196086,
+     "suite": 115203196122, "live-stock": 115203196098},
+    "2026-10-13T08:30:00Z",
+    ["changelog.d/2026-10-12-chunk-owned-nodes.md", "src/apeGmsh/opensees/_internal/build/ndf.py",
+     "tests/opensees/unit/test_emit_owned_nodes.py"],
+    1758,
 )
 
 
@@ -1257,63 +1313,163 @@ def test_1698_stale_base_is_refused_3af31061():
     assert sum("/logs" in c for c in gh.calls) == 1, "one log per workflow run, not per job"
 
 
+#: main's commit order (newest first) at each landing, as `commits?sha=main` lists it.
+ORDER_AT_1858 = (SHA_3AF, MAIN_TIP, SHA_53F)
+ORDER_AT_1866 = (SHA_471, SHA_3AF, MAIN_TIP, SHA_53F)
+ORDER_RED = (SHA_1ACF, SHA_471, SHA_3AF, MAIN_TIP)
+
+
+def _landing(number, pr, files, cards, base, *, main, order, ancestry, behind):
+    """A PR whose required checks ran on `base`, landing on main as `main`/`order` read."""
+    job = pr["statusCheckRollup"][0]["detailsUrl"]
+    gh, git = _recording(number, pr, "unused", files, cards=cards, main=main, main_order=order,
+                         logs={_log_call(job): _checkout(pr["headRefOid"], base)})
+    gh.responses[_ancestry_call(order[0], base)] = ancestry + "\n"
+    gh.responses[_behind_call(base)] = json.dumps(list(behind))
+    return gh, git
+
+
+def test_1858_landing_on_an_in_progress_main_is_refused():
+    """Replay: #1858 landed (16:15:57Z) while 3af31061's Tests run was in progress, on its real
+    merge-ref base a46fe539, which lacks 3af31061; the latest completed run (6f66fd23) was green.
+    Revert-proof: without the ancestry branch (or `check_main_green`), it merges; check 11
+    passes it (9 commits, 8 h behind)."""
+    gh, git = _landing(1858, PR_1858, FILES_1858, CARD_1858, BASE_1858, main=RUNS_AT_1858, order=ORDER_AT_1858,
+                       ancestry="behind", behind=(9, "2026-10-13T16:13:47Z"))
+    with pytest.raises(land_pr.LandError, match=(
+        r"check 10: main unverified at 3af31061bd34: its Tests run is in progress and #1858's required checks "
+        r"in run 38368430040 \(job 115199113581\) ran on base a46fe53964eb, which does not contain it "
+        r"\(compare: behind\)\. Merge main and re-run, or wait"
+    )):
+        _run(1858, gh, git)
+    assert not _merged(gh)
+
+
+def test_1866_landing_on_an_in_progress_main_is_refused():
+    """Replay: #1866 landed (16:20:38Z) while 471432f3's and 3af31061's runs were in progress,
+    on base 686840f6. Revert-proof: without the ancestry branch, it merges."""
+    gh, git = _landing(1866, PR_1866, FILES_1866, CARD_1866, BASE_1866, main=RUNS_AT_1866, order=ORDER_AT_1866,
+                       ancestry="behind", behind=(8, "2026-10-13T16:15:56Z"))
+    with pytest.raises(land_pr.LandError, match=r"check 10: main unverified at 471432f39b90: .*686840f602ee"):
+        _run(1866, gh, git)
+    assert not _merged(gh)
+
+
+@pytest.mark.parametrize("ancestry", ["identical", "ahead"])
+def test_a_base_that_contains_the_in_progress_head_lands(ancestry, capsys):
+    """The ruling's throughput clause: a PR that has just merged main lands while main's run
+    is in progress. Revert-proof: without the ancestry branch (refusing every in-progress
+    head), it is refused."""
+    gh, git = _landing(1218, PR_1218, FILES_1218, None, SHA_3AF, main=RUNS_AT_1858, order=ORDER_AT_1858,
+                       ancestry=ancestry, behind=(0, None))
+    assert _run(1218, gh, git) == 0
+    assert _ancestry_call(SHA_3AF, SHA_3AF) in gh.calls
+    assert "check 10: main's Tests run on 3af31061bd34 is in progress; the latest completed one (6f66fd238325)" in (
+        capsys.readouterr().out
+    )
+
+
+def test_a_src_only_pr_still_has_its_base_read_by_check_10():
+    """Check 11 skips a PR outside tests/, but check 10 needs its base whenever H is in
+    progress. Revert-proof: if check 10 skipped the base read, this merges."""
+    gh, git = _recording(1097, PR_1097, SQUASH_1097, FILES_1097, main=RUNS_AT_1858, main_order=ORDER_AT_1858)
+    gh.responses[_log_call(_job("lock-tests"))] = "no checkout line\n"
+    with pytest.raises(land_pr.LandError, match=r"check 10: the base #1097's required checks ran on .*could not be read"):
+        _run(1097, gh, git)
+
+
 @pytest.mark.parametrize("number, pr, files", [(1218, PR_1218, FILES_1218), (1097, PR_1097, FILES_1097)])
 def test_any_pr_is_refused_while_main_is_red_471432f3(number, pr, files):
-    """Replay (a): main's run at 471432f3 is red, so no PR lands, whatever it touches.
-    Revert-proof: without `check_main_green` in `check`, both merge."""
-    gh, git = _recording(number, pr, "unused", files, main=MAIN_471432F3)
+    """Replay: at 16:36Z, 471432f3's run is main's latest completed one, and red; no PR lands,
+    whatever its base. Revert-proof: without the red branch, both merge."""
+    gh, git = _recording(number, pr, "unused", files, main=RUNS_RED_471, main_order=ORDER_RED)
     with pytest.raises(land_pr.LandError, match=(
-        r"check 10: main is red: required check 'lock-tests' is failure on 471432f30000.*'fixes-red-main'"
+        r"check 10: main is red: its latest completed Tests run \(38429075356, on 471432f39b90\) is failure.*"
+        r"'fixes-red-main'"
     )):
         _run(number, gh, git)
     assert not _merged(gh)
 
 
-def test_main_still_running_is_unverified_1858():
-    """#1858 landed while main's run on 3af31061 was in progress. Revert-proof: without
-    `check_main_green`, it merges."""
-    gh, git = _recording(1218, PR_1218, SQUASH_1218, main=MAIN_3AF31061_RUNNING)
-    with pytest.raises(land_pr.LandError, match=(
-        r"check 10: main unverified: required check 'lock-tests' is in_progress on 3af31061bd34"
-    )):
+def test_latest_completed_is_by_commit_order_not_by_listing():
+    """Two runs created in the same second list in either order (01e7d4a7 and 9e44756b, 17:03:27Z).
+    The latest completed run is the newest COMMIT's: here X, green, not Y, red. Revert-proof:
+    taking the first completed run in the listing refuses this PR as red."""
+    tip, x, y = "a" * 40, "b" * 40, "c" * 40
+    runs = [_run_row(3, y, "completed", "failure"), _run_row(2, tip, "in_progress", None), _run_row(1, x)]
+    gh, git = _landing(1218, PR_1218, FILES_1218, None, tip, main=runs, order=(tip, x, y),
+                       ancestry="identical", behind=(0, None))
+    assert _run(1218, gh, git) == 0
+
+
+@pytest.mark.parametrize("conclusion", ["cancelled", "skipped", "timed_out", None])
+def test_a_cancelled_or_skipped_run_is_red(conclusion):
+    """Only success proves main. Revert-proof: judging only `failure` as red lands these."""
+    gh, git = _recording(1218, PR_1218, SQUASH_1218, main=[_run_row(1, MAIN_TIP, "completed", conclusion)])
+    with pytest.raises(land_pr.LandError, match=rf"check 10: main is red: .* is {conclusion}\."):
         _run(1218, gh, git)
-    assert not _merged(gh)
 
 
-@pytest.mark.parametrize("main, message", [
-    pytest.param({"total": 6, "runs": _main_checks()["runs"]}, r"truncated", id="truncated-page"),
-    pytest.param(_main_checks(**{"live-stock": {"name": "other"}}), r"'live-stock' has not reported", id="missing"),
-    pytest.param({"total": 0, "runs": []}, r"'lock-tests' has not reported on main", id="nothing-reported"),
-    pytest.param(_main_checks(suite={"head_sha": "1" * 40}), r"mixed", id="two-tips"),
-    pytest.param({"runs": []}, r"could not be read \(KeyError", id="garbled"),
+def test_no_run_for_main_head_refuses():
+    """H was pushed but its Tests run has not been created (or is off the page). Revert-proof:
+    without the no-run branch, the PR is judged on 6f66fd23's green run and merges."""
+    tip = "d" * 40
+    gh, git = _landing(1218, PR_1218, FILES_1218, None, tip, main=[RUN_6F66], order=(tip, MAIN_TIP),
+                       ancestry="identical", behind=(0, None))
+    with pytest.raises(land_pr.LandError, match=r"check 10: main unverified at dddddddddddd: no Tests run on main's head"):
+        _run(1218, gh, git)
+
+
+def test_no_completed_run_refuses():
+    """Revert-proof: without the no-completed branch, this raises a TypeError, not a refusal."""
+    gh, git = _recording(1218, PR_1218, SQUASH_1218, main=[_run_row(1, MAIN_TIP, "in_progress", None)])
+    with pytest.raises(land_pr.LandError, match=r"check 10: main unverified at 6f66fd238325: none of main's last 1"):
+        _run(1218, gh, git)
+
+
+@pytest.mark.parametrize("call, response, message", [
+    pytest.param(MAIN_COMMITS_CALL, None, r"CalledProcessError", id="commits-call-fails"),
+    pytest.param(MAIN_RUNS_CALL, None, r"CalledProcessError", id="runs-call-fails"),
+    pytest.param(MAIN_COMMITS_CALL, '["main"]', r"main's commits read", id="commits-garbled"),
+    pytest.param(MAIN_COMMITS_CALL, "[]", r"main's commits read", id="commits-empty"),
+    pytest.param(MAIN_RUNS_CALL, '[{"id": 1}]', r"KeyError", id="runs-garbled"),
 ])
-def test_main_state_that_cannot_be_verified_refuses(main, message):
-    """Fail closed: every shape that does not prove main green refuses. Revert-proof: without
-    `check_main_green`, each merges."""
-    gh, git = _recording(1218, PR_1218, SQUASH_1218, main=main)
+def test_a_failed_or_garbled_main_read_refuses(call, response, message):
+    """Fail closed, one bounded read each, no retry. Revert-proof: without the try/except
+    (or the sha validation), these raise a non-LandError or merge."""
+    gh, git = _recording(1218, PR_1218, SQUASH_1218)
+    if response is None:
+        gh = Flaky(gh.responses, call, 99)
+    else:
+        gh.responses[call] = response
     with pytest.raises(land_pr.LandError, match=rf"check 10: main unverified: .*{message}"):
         _run(1218, gh, git)
     assert not _merged(gh)
+    if response is None:
+        assert gh.failed == 1
 
 
-def test_main_read_failure_refuses():
-    """A failed `gh` call (network, auth, rate limit) is not green. Revert-proof: without
-    `check_main_green`, it merges."""
-    gh, git = _recording(1218, PR_1218, SQUASH_1218)
-    gh = Flaky(gh.responses, MAIN_CHECKS_CALL, 99)
-    with pytest.raises(land_pr.LandError, match=r"check 10: main unverified: .*CalledProcessError"):
+def test_a_failed_ancestry_read_refuses():
+    gh, git = _landing(1218, PR_1218, FILES_1218, None, SHA_3AF, main=RUNS_AT_1858, order=ORDER_AT_1858,
+                       ancestry="identical", behind=(0, None))
+    gh = Flaky(gh.responses, _ancestry_call(SHA_3AF, SHA_3AF), 99)
+    with pytest.raises(land_pr.LandError, match=r"check 10: main unverified at 3af31061bd34: compare with .*failed"):
         _run(1218, gh, git)
-    assert gh.failed == 1, "one bounded read, no retry loop"
-    assert not _merged(gh)
+
+
+def test_only_tests_yml_push_runs_are_read():
+    """Review of #1898, point 1: deps-canary's scheduled `suite` (check suite 104084451041 on
+    6f66fd23) must not count; only tests.yml's push runs do."""
+    assert "/actions/workflows/tests.yml/runs?branch=main&event=push&" in land_pr.MAIN_RUNS
 
 
 def test_fixes_red_main_label_admits_the_fix(capsys):
     """The named override: the fix (or the revert) lands on a red main. Revert-proof:
-    without `check_main_green`, no OVERRIDDEN line is printed."""
+    without the override branch, it is refused as red."""
     pr = {**PR_1218, "labels": [{"name": land_pr.FIXES_RED_MAIN}]}
-    gh, git = _recording(1218, pr, SQUASH_1218, main=MAIN_471432F3)
+    gh, git = _recording(1218, pr, SQUASH_1218, main=RUNS_RED_471, main_order=ORDER_RED)
     assert _run(1218, gh, git) == 0
-    assert MAIN_CHECKS_CALL not in gh.calls
+    assert MAIN_COMMITS_CALL not in gh.calls and MAIN_RUNS_CALL not in gh.calls
     assert "check 10: OVERRIDDEN by the 'fixes-red-main' label" in capsys.readouterr().out
 
 
@@ -1331,7 +1487,7 @@ def test_green_main_and_fresh_base_land(capsys):
     gh, git = _recording(1218, PR_1218, SQUASH_1218)
     assert _run(1218, gh, git) == 0
     out = capsys.readouterr().out
-    assert f"check 10: main's required checks are green on {MAIN_TIP[:12]}." in out
+    assert f"check 10: main's Tests run on its head {MAIN_TIP[:12]} is green." in out
     assert f"check 11: run {RUN_ID} (job {JOB_IDS['lock-tests']}) ran on base ffffffffffff, 0 commit(s)" in out
 
 

@@ -16,9 +16,10 @@ label, applied by the maintainer or coordinator, overrides it, the way
 alone on any PR, merged ones included.
 
 Checks 10 and 11 are lesson #1877 (3af31061 merged #1698 into a red ``main``).
-Check 10 refuses while ``main``'s own required checks are red, or cannot be read
-as completed and green; the ``fixes-red-main`` label, for the fix or the revert,
-overrides it. Check 11 refuses a PR that touches ``tests/`` or a BASELINE file
+Check 10 refuses while ``main``'s latest completed Tests run is red, when main's
+head H has no run, and, while H's run is in progress, unless the PR's checks ran
+on a base that contains H; a read that fails refuses. The ``fixes-red-main``
+label, for the fix or the revert, overrides it. Check 11 refuses a PR that touches ``tests/`` or a BASELINE file
 when its required checks ran on a merge base more than STALE_COMMITS commits, or
 STALE_HOURS hours, behind ``main``. The base is read from the job log's
 ``Merge <head> into <base>`` checkout line, the only place the API exposes it.
@@ -132,11 +133,23 @@ _PATHLIKE = re.compile(r"[\w.\-/*?\[\]]+")
 _GLOB = re.compile(r"[*?\[]")
 COMPARE_TRIES = 5
 COMPARE_WAIT_S = 3.0
-#: Check 10 (lesson #1877): `main`'s required checks, in one bounded read (one page, no
-#: --paginate, no wait). The endpoint's default `filter=latest` lets a green rerun count.
-MAIN_CHECKS = "repos/{owner}/{repo}/commits/main/check-runs?per_page=100"
-MAIN_CHECKS_JQ = "{total: .total_count, runs: [.check_runs[] | {name, status, conclusion, head_sha}]}"
+#: Check 10 (lesson #1877, T's ruling on #1877): main's recent commits (head H first) and
+#: its recent Tests push runs, in bounded reads (one page each, no --paginate, no wait).
+#: Only tests.yml's push runs count: deps-canary's scheduled `suite` on the same commit does not.
+MAIN_PAGE = 30
+MAIN_COMMITS = f"repos/{{owner}}/{{repo}}/commits?sha=main&per_page={MAIN_PAGE}"
+MAIN_COMMITS_JQ = "[.[].sha]"
+MAIN_RUNS = f"repos/{{owner}}/{{repo}}/actions/workflows/tests.yml/runs?branch=main&event=push&per_page={MAIN_PAGE}"
+MAIN_RUNS_JQ = "[.workflow_runs[] | {id, head_sha, status, conclusion}]"
 FIXES_RED_MAIN = "fixes-red-main"
+UNVERIFIED = (
+    "Merge main and re-run, or wait for main's run; the fix or the revert of a red main lands "
+    f"under the {FIXES_RED_MAIN!r} label (lesson #1877)."
+)
+RERUN = (
+    "Re-run them on a fresh merge ref: merge main into the branch (or push an empty commit) "
+    "and wait for the checks. The Re-run button reuses the old merge ref."
+)
 #: Check 11 (lesson #1877): a PR that touches tests/ or a BASELINE file refuses when its
 #: required checks ran on a base more than STALE_COMMITS commits behind main, or when
 #: main's tip landed more than STALE_HOURS after those checks started. #1698 was 68
@@ -519,65 +532,20 @@ def check_owned(number: int, pr: dict[str, Any], rows: list[FileRow], gh: Runner
 
 #: A failed or garbled read: refuse, never treat it as green (fail closed).
 _UNREADABLE = (subprocess.CalledProcessError, OSError, ValueError, KeyError, TypeError, IndexError, AttributeError)
-
-
-def check_main_green(pr: dict[str, Any], gh: Runner) -> None:
-    """Check 10 (lesson #1877). `main`'s own required checks are completed and green.
-    #1858 and #1866 landed while main's run on 3af31061 was still in progress and then
-    failed; a PR landing on a red main buries the break under more merges."""
-    if FIXES_RED_MAIN in {lab["name"] for lab in pr["labels"]}:
-        print(f"check 10: OVERRIDDEN by the {FIXES_RED_MAIN!r} label; main's state is not read.")
-        return
-    unverified = (
-        f"Wait for main's run, then retry; the fix or the revert of a red main lands under the "
-        f"{FIXES_RED_MAIN!r} label (lesson #1877)."
-    )
-    try:
-        data = json.loads(gh(["api", MAIN_CHECKS, "--jq", MAIN_CHECKS_JQ]))
-        total, runs = int(data["total"]), list(data["runs"])
-        tips = {str(run["head_sha"]) for run in runs}
-    except _UNREADABLE as exc:
-        raise LandError(f"check 10: main unverified: its required checks could not be read ({exc!r}). {unverified}") from exc
-    tip = next(iter(tips))[:12] if len(tips) == 1 else "main"
-    if total > len(runs) or len(tips) > 1:
-        raise LandError(f"check 10: main unverified: the check-runs read for {tip} is truncated or mixed. {unverified}")
-    for name in REQUIRED_CHECKS:
-        named = [run for run in runs if run["name"] == name]
-        if not named:
-            raise LandError(f"check 10: main unverified: required check {name!r} has not reported on {tip}. {unverified}")
-        for run in named:
-            if run["status"] != "completed":
-                raise LandError(
-                    f"check 10: main unverified: required check {name!r} is {run['status']} on {tip} "
-                    f"(#1858 and #1866 landed while main's run on 3af31061 was in progress). {unverified}"
-                )
-            if run["conclusion"] != "success":
-                raise LandError(
-                    f"check 10: main is red: required check {name!r} is {run['conclusion']} on {tip}. "
-                    f"Landing now buries the break under another merge (#1858, #1866). Only the fix or "
-                    f"the revert lands, under the {FIXES_RED_MAIN!r} label (lesson #1877)."
-                )
-    print(f"check 10: main's required checks are green on {tip}.")
+#: (where, base sha, earliest start) for each Actions run of a PR's required checks.
+Base = tuple[str, str, datetime]
+Bases = Callable[[int], list[Base]]
 
 
 def _when(stamp: str) -> datetime:
     return datetime.fromisoformat(stamp.replace("Z", "+00:00"))
 
 
-def check_fresh_base(number: int, pr: dict[str, Any], rows: list[FileRow], gh: Runner) -> None:
-    """Check 11 (lesson #1877). A PR that touches tests/ or a BASELINE file had its
-    required checks run on a base no more than STALE_COMMITS commits and STALE_HOURS
-    behind main. #1698's checks ran on 10-11; X4-a added the retirement-ledger row for
-    the xfail #1698 deleted on 10-12, so the merge 3af31061 turned lock-tests red."""
-    touched = sorted({n for row in rows for n in (row[0], row[2]) if n and (n.startswith("tests/") or n in BASELINE)})
-    if not touched:
-        print(f"check 11: #{number} touches neither tests/ nor a baseline file; the base age does not apply.")
-        return
+def _check_bases(number: int, pr: dict[str, Any], gh: Runner, check_no: int) -> list[Base]:
+    """The merge-ref base each Actions run of the PR's required checks checked out, read
+    from the job log's `Merge <head> into <base>` line (the only place the API exposes
+    it). Every run is returned, as check 6 judges every run. Fails closed."""
     head = pr["headRefOid"]
-    rerun = (
-        "Re-run them on a fresh merge ref: merge main into the branch (or push an empty commit) "
-        "and wait for the checks. The Re-run button reuses the old merge ref."
-    )
     # Run id -> (one job id, start times). Every job of a run checks out the same merge
     # ref, so one log per run is read: lock-tests's, the shortest, when it is there.
     workflow_runs: dict[str, tuple[str, list[str]]] = {}
@@ -587,10 +555,11 @@ def check_fresh_base(number: int, pr: dict[str, Any], rows: list[FileRow], gh: R
         job = _ACTIONS_JOB.search(run.get("detailsUrl") or "")
         if job is None or not run.get("startedAt"):
             raise LandError(
-                f"check 11: required check {name!r} names no Actions job and start time, so the base "
-                f"it ran on cannot be read; refusing. {rerun}"
+                f"check {check_no}: required check {name!r} names no Actions job and start time, so the "
+                f"base it ran on cannot be read; refusing. {RERUN}"
             )
         workflow_runs.setdefault(job.group(1), (job.group(2), []))[1].append(run["startedAt"])
+    bases: list[Base] = []
     for run_id, (job_id, starts) in sorted(workflow_runs.items()):
         where = f"run {run_id} (job {job_id})"
         try:
@@ -598,24 +567,100 @@ def check_fresh_base(number: int, pr: dict[str, Any], rows: list[FileRow], gh: R
             merge = _CHECKOUT.search(log)
             if merge is None or merge.group(1) != head:
                 raise ValueError(f"no 'Merge {head[:12]} into <base>' checkout line")
-            base = merge.group(2)
+            bases.append((where, merge.group(2), min(_when(stamp) for stamp in starts)))
+        except _UNREADABLE as exc:
+            raise LandError(
+                f"check {check_no}: the base #{number}'s required checks ran on in {where} could not be "
+                f"read ({exc!r}); refusing. {RERUN}"
+            ) from exc
+    return bases
+
+
+def check_main_green(number: int, pr: dict[str, Any], gh: Runner, bases: Bases) -> None:
+    """Check 10 (lesson #1877; T's ruling on #1877). main's latest completed Tests run is
+    green, and a run still in progress on main's head H admits only a PR whose required
+    checks ran on a base that contains H. #1858 and #1866 landed while 3af31061's run was
+    in progress, on bases without it, and the latest completed run (6f66fd23) was green."""
+    if FIXES_RED_MAIN in {lab["name"] for lab in pr["labels"]}:
+        print(f"check 10: OVERRIDDEN by the {FIXES_RED_MAIN!r} label; main's state is not read.")
+        return
+    try:
+        order = json.loads(gh(["api", MAIN_COMMITS, "--jq", MAIN_COMMITS_JQ]))
+        if not order or not all(re.fullmatch(r"[0-9a-f]{40}", str(sha)) for sha in order):
+            raise ValueError(f"main's commits read {order!r}")
+        by_sha: dict[str, list[dict[str, Any]]] = {}
+        for run in json.loads(gh(["api", MAIN_RUNS, "--jq", MAIN_RUNS_JQ])):
+            by_sha.setdefault(str(run["head_sha"]), []).append(run)
+        tip = order[0]
+        # The latest completed run by main's commit order, not by completion time: the newest
+        # commit whose every Tests push run has completed.
+        latest = next((sha for sha in order if by_sha.get(sha) and all(r["status"] == "completed" for r in by_sha[sha])), None)
+        red = [] if latest is None else [r for r in by_sha[latest] if r["conclusion"] != "success"]
+    except _UNREADABLE as exc:
+        raise LandError(f"check 10: main unverified: its Tests runs could not be read ({exc!r}). {UNVERIFIED}") from exc
+    if latest is None:
+        raise LandError(
+            f"check 10: main unverified at {tip[:12]}: none of main's last {len(order)} commits has a "
+            f"completed Tests run. {UNVERIFIED}"
+        )
+    if red:  # cancelled, skipped, timed_out... are red too: only success proves main
+        raise LandError(
+            f"check 10: main is red: its latest completed Tests run ({red[0]['id']}, on {latest[:12]}) is "
+            f"{red[0]['conclusion']}. Landing now buries the break under another merge (#1858, #1866). "
+            f"Only the fix or the revert lands, under the {FIXES_RED_MAIN!r} label (lesson #1877)."
+        )
+    if tip not in by_sha:
+        raise LandError(f"check 10: main unverified at {tip[:12]}: no Tests run on main's head. {UNVERIFIED}")
+    if latest == tip:
+        print(f"check 10: main's Tests run on its head {tip[:12]} is green.")
+        return
+    checked = bases(10)
+    if not checked:  # check 6 makes this unreachable; never let an empty list read as "contains H"
+        raise LandError(f"check 10: main unverified at {tip[:12]}: no base for #{number}'s checks. {UNVERIFIED}")
+    for where, base, _started in checked:
+        try:
+            status = gh(["api", f"repos/{{owner}}/{{repo}}/compare/{tip}...{base}", "--jq", ".status"]).strip()
+        except _UNREADABLE as exc:
+            raise LandError(f"check 10: main unverified at {tip[:12]}: compare with {base[:12]} failed ({exc!r}). {UNVERIFIED}") from exc
+        if status not in ("ahead", "identical"):
+            raise LandError(
+                f"check 10: main unverified at {tip[:12]}: its Tests run is in progress and #{number}"
+                f"'s required checks in {where} ran on base {base[:12]}, which does not contain it "
+                f"(compare: {status}). {UNVERIFIED}"
+            )
+    print(
+        f"check 10: main's Tests run on {tip[:12]} is in progress; the latest completed one "
+        f"({latest[:12]}) is green, and the PR's checks ran on a base that contains {tip[:12]}."
+    )
+
+
+def check_fresh_base(number: int, rows: list[FileRow], gh: Runner, bases: Bases) -> None:
+    """Check 11 (lesson #1877). A PR that touches tests/ or a BASELINE file had its
+    required checks run on a base no more than STALE_COMMITS commits and STALE_HOURS
+    behind main. #1698's checks ran on 10-11; X4-a added the retirement-ledger row for
+    the xfail #1698 deleted on 10-12, so the merge 3af31061 turned lock-tests red."""
+    touched = sorted({n for row in rows for n in (row[0], row[2]) if n and (n.startswith("tests/") or n in BASELINE)})
+    if not touched:
+        print(f"check 11: #{number} touches neither tests/ nor a baseline file; the base age does not apply.")
+        return
+    for where, base, started in bases(11):
+        try:
             behind_raw, tip_date = json.loads(
                 gh(["api", f"repos/{{owner}}/{{repo}}/compare/{base}...main", "--jq", BEHIND_JQ])
             )
             behind = int(behind_raw)
-            started = min(_when(stamp) for stamp in starts)
             hours = (_when(tip_date) - started) / timedelta(hours=1) if behind else 0.0
         except _UNREADABLE as exc:
             raise LandError(
                 f"check 11: the base #{number}'s required checks ran on in {where} could not be "
-                f"read ({exc!r}); refusing. {rerun}"
+                f"read ({exc!r}); refusing. {RERUN}"
             ) from exc
         if behind > STALE_COMMITS or hours > STALE_HOURS:
             raise LandError(
                 f"check 11: #{number} touches {', '.join(touched[:3])}{' ...' if len(touched) > 3 else ''} "
                 f"but its required checks in {where} ran on base {base[:12]}, {behind} commit(s) and "
                 f"{hours:.0f} h behind main (limits: {STALE_COMMITS} commits, {STALE_HOURS} h). #1698 "
-                f"was green on a 2-day-old base and its merge 3af31061 turned main red (lesson #1877). {rerun}"
+                f"was green on a 2-day-old base and its merge 3af31061 turned main red (lesson #1877). {RERUN}"
             )
         print(f"check 11: {where} ran on base {base[:12]}, {behind} commit(s) and {hours:.0f} h behind main.")
 
@@ -673,8 +718,15 @@ def check(number: int, gh: Runner, git: Runner) -> dict[str, Any]:
                 )
     _check_adr_and_baseline(number, pr, rows, git)
     check_owned(number, pr, rows, gh)
-    check_main_green(pr, gh)
-    check_fresh_base(number, pr, rows, gh)
+    found: list[list[Base]] = []
+
+    def bases(check_no: int) -> list[Base]:  # read once, by whichever check needs them first
+        if not found:
+            found.append(_check_bases(number, pr, gh, check_no))
+        return found[0]
+
+    check_main_green(number, pr, gh, bases)
+    check_fresh_base(number, rows, gh, bases)
     return pr
 
 
