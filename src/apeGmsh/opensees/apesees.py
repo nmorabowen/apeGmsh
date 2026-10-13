@@ -2396,7 +2396,7 @@ class BuiltModel:
         # the case where some records weren't staged — they emit here
         # globally before any stage starts.
         if self.initial_stress_records:
-            ist_cursor = self._decl_cursor(emitter)  # #1853
+            ist_cursor = self._decl_cursor(emitter)
             name_to_param_tags = emit_initial_stress_global(
                 self.initial_stress_records, emitter, tag_plan,
                 cursor=ist_cursor,
@@ -2814,7 +2814,7 @@ class BuiltModel:
             )
 
             # 6. Initial stress.
-            side_cursor = self._decl_cursor(emitter)  # #1853
+            side_cursor = self._decl_cursor(emitter)
             if stage.initial_stress_records:
                 name_to_param_tags = emit_initial_stress_global(
                     stage.initial_stress_records, emitter, tag_plan,
@@ -3546,7 +3546,7 @@ class BuiltModel:
         # but parameter / proc / lappend state is rank-local in MP, so
         # each rank ends up with the same local setup.
         init_stress_param_tags: dict[str, tuple[int, int, int]] = {}
-        ist_cursor = self._decl_cursor(emitter)  # #1853
+        ist_cursor = self._decl_cursor(emitter)
         if self.initial_stress_records:
             init_stress_param_tags = emit_initial_stress_global(
                 self.initial_stress_records, emitter, tag_plan,
@@ -4605,7 +4605,7 @@ class BuiltModel:
             )
 
             # 4. Initial-stress globals + per-rank ``addToParameter``.
-            side_cursor = self._decl_cursor(emitter)  # #1853
+            side_cursor = self._decl_cursor(emitter)
             if stage.initial_stress_records:
                 name_to_param_tags = emit_initial_stress_global(
                     stage.initial_stress_records, emitter, tag_plan,

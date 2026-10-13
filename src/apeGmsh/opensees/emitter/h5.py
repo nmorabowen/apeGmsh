@@ -623,7 +623,7 @@ class H5RefusedVerb(NotImplementedError):
 #:     it is. A 2.31 reader opens 2.12 through 2.31 and
 #:     refuses a ``decl`` outside ``{-1} ∪ [0, n_decls)``; a 2.30.x reader
 #:     REFUSES a 2.31.x file.
-#:   * 2.32.0 — #1853 (chain K): the six side-channel verbs
+#:   * 2.32.0 — K (side-channel decls): the six side-channel verbs
 #:     (``step_hook_ramp``, ``addToParameter``, ``flip_element_stage``,
 #:     ``update_parameter``, ``set_node_vel``, ``set_node_accel``) carry
 #:     the ``/opensees/program`` ``decl`` of the record that drove them,
@@ -3455,7 +3455,7 @@ class H5Emitter:
         """No-op — resolved form; persists declaratively (ADR 0055).
 
         The call is its initial stress's declaration's: the bridge opens
-        it around the record's calls (opensees 2.32.0, #1853).
+        it around the record's calls (opensees 2.32.0).
         """
         del tag, ele_tag, response
         self._program.decl = self._decl_open
@@ -3469,7 +3469,7 @@ class H5Emitter:
         ``activate_absorbing`` sub-table (ADR 0055 Phase 2);
         :meth:`set_stage_records` gives each record the ``(rank, pid)``
         rows of its calls. The call is its record's declaration's, which
-        the bridge opens around it (opensees 2.32.0, #1853).
+        the bridge opens around it (opensees 2.32.0).
         """
         del ele_tags
         blk = self._stage_block("flip_element_stage")
@@ -3490,7 +3490,7 @@ class H5Emitter:
         it and gives it the ``(rank, pid)`` rows of its calls, after
         checking each call's ``args`` and ``value`` against it). The call
         is the record's declaration's, which the bridge opens around it
-        (opensees 2.32.0, #1853).
+        (opensees 2.32.0).
         """
         del ele_tags
         blk = self._stage_block("update_parameter")
@@ -3514,7 +3514,7 @@ class H5Emitter:
         second ramp of one name in one scope with other tags refuses: the
         archive could not tell which record they belong to. The call is
         the record's declaration's, which the bridge opens around it
-        (opensees 2.32.0, #1853).
+        (opensees 2.32.0).
         """
         del n_steps_to_full, phase
         if len(targets) != 3:
@@ -3591,11 +3591,11 @@ class H5Emitter:
 
     def set_node_vel(self, node: int, dof: int, value: float) -> None:
         self._count_node_kinematics("set_node_vel", value)
-        self._program.decl = self._decl_open  # #1853
+        self._program.decl = self._decl_open
 
     def set_node_accel(self, node: int, dof: int, value: float) -> None:
         self._count_node_kinematics("set_node_accel", value)
-        self._program.decl = self._decl_open  # #1853
+        self._program.decl = self._decl_open
 
     def _count_node_kinematics(self, verb: str, value: float) -> None:
         """Count one ``s.zero_velocities`` call (schema 2.27.0, K1-8).

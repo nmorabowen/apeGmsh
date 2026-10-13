@@ -36,7 +36,7 @@ if TYPE_CHECKING:
 
 
 class DeclCursor(Protocol):
-    """Opens the declaration of the record whose calls follow (K1-6, #1853).
+    """Opens the declaration of the record whose calls follow (K1-6).
 
     The bridge's ``BuiltModel._decl_cursor`` gives an archival emitter one
     that forwards to ``H5Emitter.set_declaration``; a deck's does nothing.
