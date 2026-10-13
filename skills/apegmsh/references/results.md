@@ -56,6 +56,10 @@ Results.from_recorders(spec, "out/", fem=fem)   # TypeError: model= is required
 ```
 
 Notes:
+- In-process runs: call `ops.wipe()` before opening the files. It flushes and closes every
+  recorder, so a text file holds every row and an `.mpco` is complete. Recorders take
+  `precision=<int>` (significant digits per value). A deck run with `ops.py/tcl(run=True)`
+  returns a `RunReport`, and a failed run raises.
 - `from_recorders` also requires `fem=` (a separate `TypeError`) — the
   spec's `snapshot_id` is part of the transcode cache key. Phase 6 v1
   supports **nodal records only**; element-level records in the spec
