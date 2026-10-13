@@ -9,5 +9,10 @@ line uses it. The check is static and reads the archive's own reference
 metadata (`/opensees/decls` tags and the `decl_params` references), not the
 Tcl grammar; node and element tag references are outside it. A new `live`
 test runs the bridge and replay openseespy decks of the B rows in a
-subprocess as the second net. `test_h5_decl_params::_params_frame` moves
-from B to C, citing #1814. The ledger count does not change.
+subprocess as the second net.
+
+`test_h5_decl_params::_params_frame` escalates from B to C, citing #1814.
+`_broad_frame` is now derived as C, so the interim hand-held C override from
+#1812 is removed: a ledger label must equal the derived class. The ledger
+transition guard always allows an escalation (A/B to C), and every C or
+escalated row must cite a `#NNNN` issue. The ledger count stays at 35.
