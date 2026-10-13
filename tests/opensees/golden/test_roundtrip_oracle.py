@@ -39,7 +39,10 @@ A re-pinned row drops its #1798 citation, so the C rows citing #1798 are
 exactly what it still has open. The one stricter label: a C row may be held
 over a diff the oracle derives as A or B when the reorder breaks a
 dependency the multiset rule cannot see (``_broad_frame``: a ``Parallel``
-material declared before the materials it combines, #1814).
+material declared before the materials it combines, #1814). Escalate-only:
+such a row must cite an open issue other than #1798, and its C-to-C re-pin
+is allowed only when the citation moves to that new issue (openness is not
+checkable offline; the PR states it).
 ``N_WAIVED_ORACLE`` may only go down, and must reach 0 by 2026-12-11 (K2,
 KC4).
 """
@@ -292,6 +295,14 @@ def _check(model: Model, waiver: Waiver | None, out_dir: Path) -> None:
         f"{model.id}: the ledger says class {waiver.klass}, the diff is "
         f"class {derived}:\n{diff}"
     )
+    if waiver.klass != derived:
+        # An escalated C row: #1798 tracks only the semantic diffs, so the
+        # override must name the open issue that holds it at C.
+        cited = _cited_issues(waiver.reason)
+        assert cited and _SEMANTIC_ISSUE not in cited, (
+            f"{model.id}: held at C over a class-{derived} diff, so it must "
+            f"cite the open issue that holds it there, not {_SEMANTIC_ISSUE} "
+            f"(cites {sorted(cited)})")
     assert _pin(diff) == waiver.pin, (
         f"{model.id} differs in a new way (pin {_pin(diff)}, ledger "
         f"{waiver.pin}); a fix that changes the diff deletes its row, or "
@@ -307,6 +318,15 @@ _REPO = Path(__file__).resolve().parents[3]
 _LEDGER_REL = "tests/opensees/golden/roundtrip_oracle_ledger.txt"
 #: Every class change the carve-out allows: a semantic row downgraded.
 _DOWNGRADES = frozenset({("C", "A"), ("C", "B")})
+
+
+#: The issue the class-C (semantic) rows cite.
+_SEMANTIC_ISSUE = "#1798"
+
+
+def _cited_issues(reason: str) -> frozenset[str]:
+    """The ``#NNNN`` issue numbers a row's reason cites."""
+    return frozenset(re.findall(r"#\d+", reason))
 
 
 def _label_fits(label: str, derived: str) -> bool:
@@ -330,10 +350,11 @@ def _ledger_transition_errors(
     A row may stay as it is (its reason text may change), be deleted, or be
     re-pinned from class C to A or B. A C row may also be re-pinned within
     C when ``derived`` (the class the oracle derives for the new diff) is A
-    or B: its semantic difference is gone and the row is held at C for an
-    order dependency. Anything else is a replay regression: an added row, a
-    re-pin within A, B or S, a C re-pin that is still semantic, or a class
-    that rises.
+    or B and the row's citation moves to a new issue: its semantic
+    difference is gone and another (open) issue holds it at C. Anything
+    else is a replay regression: an added row, a re-pin within A, B or S, a
+    C re-pin that is still semantic or keeps its citation, or a class that
+    rises.
     """
     derived = derived or {}
     errors: list[str] = []
@@ -347,7 +368,11 @@ def _ledger_transition_errors(
             continue
         if (b.klass, w.klass) in _DOWNGRADES:
             continue
-        if b.klass == w.klass == "C" and derived.get(model) in ("A", "B"):
+        if (b.klass == w.klass == "C" and derived.get(model) in ("A", "B")
+                and _cited_issues(w.reason)
+                and _cited_issues(w.reason) != _cited_issues(b.reason)):
+            # Escalate-only: the semantic loss is fixed and the row is now
+            # held at C by a different (open) issue, which it cites.
             continue
         errors.append(
             f"{model}: re-pinned {b.klass} {b.pin} -> {w.klass} {w.pin}; "
@@ -462,15 +487,36 @@ def test_the_carve_out_allows_only_downgrades(
         assert "replay regression" in errors[0]
 
 
-@pytest.mark.parametrize(("derived", "ok"), [("B", True), ("A", True), ("C", False)])
+@pytest.mark.parametrize(("derived", "base_why", "head_why", "ok"), [
+    ("B", "#1798 item 1", "#1814", True),  # the _broad_frame case
+    ("A", "#1798 item 1", "#1814", True),
+    ("C", "#1798 item 1", "#1814", False),  # still semantic
+    ("B", "#1798 item 1", "#1798 item 1", False),  # same citation
+    ("B", "#1798 item 1", "order", False),  # no citation
+], ids=["B-new-issue", "A-new-issue", "C-derived", "same-citation",
+        "no-citation"])
 def test_a_c_row_is_held_only_over_a_non_semantic_diff(
-    derived: str, ok: bool,
+    derived: str, base_why: str, head_why: str, ok: bool,
 ) -> None:
     errors = _ledger_transition_errors(
-        {"m": _W("m", "C", "1" * 16, "r")},
-        {"m": _W("m", "C", "2" * 16, "r")},
+        {"m": _W("m", "C", "1" * 16, base_why)},
+        {"m": _W("m", "C", "2" * 16, head_why)},
         {"m": derived})
     assert (not errors) is ok, errors
+    if not ok:
+        assert "replay regression" in errors[0]
+
+
+_HELD = next(m for m in CORPUS if m.id == "test_h5_decl_params::_broad_frame")
+
+
+def test_a_held_c_row_citing_the_semantic_issue_fails(tmp_path: Path) -> None:
+    """An escalated C row (derived B) may not cite #1798."""
+    w = _waivers()[_HELD.id]
+    assert w.klass == "C" and _cited_issues(w.reason) == {"#1814"}
+    stale = Waiver(w.model, "C", w.pin, "#1798 item 1: equationConstraint dropped")
+    with pytest.raises(AssertionError, match="must cite the open issue"):
+        _check(_HELD, stale, tmp_path)
 
 
 @pytest.mark.parametrize(("label", "derived", "ok"), [
