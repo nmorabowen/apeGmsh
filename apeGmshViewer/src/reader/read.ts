@@ -90,11 +90,29 @@ export const NEUTRAL_TARGET = { major: 2, minor: 35 } as const;
  * label shows nothing. The ids stay authoritative: nothing the app draws or
  * selects resolves a label.
  *
+ * opensees 2.29.0 (K2b #1795, h5-schema.md "`/opensees/constraints/
+ * embeddedRebar` (optional, opensees 2.29.0)"): a new optional group holding
+ * every `g.reinforce` LadrunoEmbeddedRebar tie the build wrote (its tag and
+ * positional arguments). Replay data, which this app does not read: the ties
+ * are not elements (`element_meta` does not list them, so the chain and the
+ * element tables never meet one), they get no `/opensees/decls` row, and the
+ * reader reads only the `/opensees` children it knows, so the group opens
+ * with no warning. What the app does not say yet: a bond material that only
+ * the ties use shows no users in the materials window, as it did before
+ * 2.29 when the ties were not archived at all.
+ *
+ * opensees 2.30.0 (R3-S5 #1789, h5-schema.md "`precision` (opensees
+ * 2.30.0)"): typed Node / Element recorder `decl_params` rows gain
+ * `precision`, a real OpenSees option (`-precision N`). Unlike `label` it is a
+ * parameter: a value is a parameter row in the Recorders window, and `null`
+ * means "not given; the deck carries no `-precision`, OpenSees' default",
+ * so it is listed among the unset fields, truthfully. No new read.
+ *
  * tests/test_app_target_drift.py fails when any `*_TARGET` here (or
  * `RESULTS_TARGET` in results.ts) differs from its Python writer's version:
  * bump it only after reading that zone's history entry in h5-schema.md.
  */
-export const OPENSEES_TARGET = { major: 2, minor: 28 } as const;
+export const OPENSEES_TARGET = { major: 2, minor: 30 } as const;
 /** The ADR 0112 zones (V2a specs): read by geometry.ts and provenance.ts. */
 export const GEOMETRY_TARGET = { major: 1, minor: 0 } as const;
 export const PROVENANCE_TARGET = { major: 1, minor: 1 } as const;
