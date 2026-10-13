@@ -3,13 +3,12 @@
 # refuse, and lower N_LEDGER with it. Never add a line or raise N_LEDGER.
 # Ratified end state: the contact, rebar and embed rows and
 # equationConstraint (#1341, comment 5981885789, Q3).
-N_LEDGER = 10
+N_LEDGER = 9
 contact
 contact_plane
 contact_surface
 eigen_feast
 embedded_node
-embedded_rebar
 equationConstraint
 modal_properties
 modal_response_history

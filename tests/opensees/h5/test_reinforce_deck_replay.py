@@ -1,20 +1,17 @@
 """OpenSeesModel.build() deck-replay re-emits g.reinforce ties (ADR 0067 P5.1
-"A4 full").
+"A4 full"; archived from opensees 2.29.0, K2b).
 
-The ``/opensees`` deck zone never stored a dedicated reinforce-tie record (the
-H5 emitter no-ops it; persistence is the neutral zone's job). Before this fix a
-reinforced ``model.h5`` loaded via ``OpenSeesModel.from_h5().build("tcl"|"py")``
-silently DROPPED its ``LadrunoEmbeddedRebar`` ties — the deck-replay path
-(``_replay_into``) re-emitted nothing for them. Now ``_replay_into`` re-emits the
-ties from the neutral-zone ``fem`` (``fem.elements.reinforce_ties``), allocating
+From opensees 2.29.0 the archive stores every ``LadrunoEmbeddedRebar`` tie
+the build wrote (``/opensees/constraints/embeddedRebar``: its tag and its
+arguments, the bond tag already resolved), and ``_replay_into`` writes those
+rows. An archive below 2.29.0 stores none; its replay re-derives the ties
+from the neutral-zone ``fem`` (``fem.elements.reinforce_ties``), allocating
 tie element tags past the max replayed element tag and resolving a ``-bond
-<name>`` via the ``/opensees/names`` sidecar.
+<name>`` via the ``/opensees/names`` sidecar (``test_h5_embedded_rebar_archive``
+covers that path and the version gate).
 
-The canonical recovery (``FEMData.from_h5`` → forward re-emit) is unchanged; this
-closes the deck-replay gap for the reinforce-tie leg specifically (the broader
-MP-constraint family stays a documented follow-on). Built on a real non-matching
-mesh (g.reinforce needs gmsh + the inverse map); emit/replay only — no fork
-build needed.
+Built on a real non-matching mesh (g.reinforce needs gmsh + the inverse map);
+emit/replay only — no fork build needed.
 """
 from __future__ import annotations
 
@@ -54,6 +51,61 @@ def _reinforced_ops(*, bond_by_name: bool) -> apeSees:
         ops.uniaxialMaterial.LadrunoBondSlip(
             tau_max=10.0e6, s1=0.001, s2=0.003, s3=0.01, tau_f=2.0e6,
             alpha=0.4, name="bond1")
+    return ops
+
+
+def _reinforced_fixed_ops(*, bond_by_name: bool = False,
+                          rebar_cells: bool = False,
+                          equation: bool = False) -> apeSees:
+    """A reinforced model with fixes whose deck round-trips byte for byte
+    (K2b, #1795): an embedded bar in a tet-meshed box, its base fixed.
+
+    Every material value is non-integral and the uniaxial material is
+    declared before the nD one, so the replay's integral-float and
+    declaration-order differences (the oracle's classes A and B) cannot
+    arise. ``rebar_cells`` also places the bar's own ``CorotTruss`` cells
+    (``emit_elements=True``): the tag plan numbers them after the ties, so
+    the archived cells raise the highest element tag above the ties and a
+    replay that re-derived the ties would tag them differently.
+    ``equation`` also ties two top nodes with an ``equation_constraint``,
+    which the bridge writes just before the reinforce ties.
+    """
+    from apeGmsh._kernel.defs.rebar import Cage
+
+    name = f"k2b_fixed_{int(bond_by_name)}{int(rebar_cells)}{int(equation)}"
+    with apeGmsh(model_name=name, verbose=False) as g:
+        g.model.geometry.add_box(0, 0, 0, 0.5, 0.5, 2.0, label="Box")
+        g.physical.add_volume(g.model.select(dim=3).tags(), name="Concrete")
+        g.physical.add_surface(
+            g.model.select(dim=2).in_box(
+                (-0.01, -0.01, -0.01), (0.51, 0.51, 0.01)).tags(),
+            name="Base")
+        bar = g.rebar.bar([(0.15, 0.15, 0.1), (0.15, 0.15, 1.9)],
+                          db=0.0254, material="steel", name="L1")
+        law = {"bond": "bond1"} if bond_by_name else {"perfect": 1.5e8}
+        g.rebar.place(Cage(bars=(bar,)), into="Concrete", coupling="embedded",
+                      emit_elements=rebar_cells, name="cage1", **law)
+        g.mesh.sizing.set_global_size(0.4)
+        g.mesh.generation.generate(dim=3)
+        fem = g.mesh.queries.get_fem_data(dim=None)
+
+    ops = apeSees(fem)
+    ops.model(ndm=3, ndf=3)
+    if bond_by_name:
+        ops.uniaxialMaterial.LadrunoBondSlip(
+            tau_max=10.5, s1=0.001, s2=0.003, s3=0.01, tau_f=2.5,
+            alpha=0.4, name="bond1")
+    if rebar_cells:
+        ops.uniaxialMaterial.ElasticMaterial(
+            E=200000.5, eta=0.05, name="steel")
+    conc = ops.nDMaterial.ElasticIsotropic(E=30000.5, nu=0.2, rho=2.5e-6)
+    ops.element.FourNodeTetrahedron(pg="Concrete", material=conc)
+    ops.fix(pg="Base", dofs=(1, 1, 1))
+    if equation:
+        top = [int(n) for n, c in zip(fem.nodes.ids, fem.nodes.coords)
+               if float(c[2]) > 1.99]
+        ops.equation_constraint(
+            constrained=(top[0], 1), retained=[(top[1], 1, 0.75)])
     return ops
 
 
@@ -115,16 +167,16 @@ def test_deck_replay_py_target_reemits_ties(tmp_path):
 
 
 def test_deck_replay_tie_tags_dont_collide(tmp_path):
-    # The tie element tags are freshly allocated PAST the max replayed element
-    # tag (they share the element namespace); every element tag in the replayed
-    # deck must stay unique.
+    # The tie element tags share the element namespace with the hosts; every
+    # element tag in the replayed deck must stay unique. On this model (no
+    # bar cells) the planned tie tags run contiguously above the hosts.
     ops = _reinforced_ops(bond_by_name=False)
     path = str(tmp_path / "model.h5")
     ops.h5(path)
     replayed = OpenSeesModel.from_h5(path).build("tcl")
     tags = _element_tags(replayed)
     assert len(tags) == len(set(tags)), "duplicate element tags in replayed deck"
-    # the tie tags are the highest (seeded past the host element tags)
+    # the tie tags are the highest (planned after the host elements)
     tie_tags = [
         int(ln.split()[2]) for ln in replayed.splitlines()
         if ln.strip().startswith("element LadrunoEmbeddedRebar")

@@ -674,6 +674,25 @@ def _archives_param_tags(opensees_version: Any) -> bool:
     return archives_param_tags(opensees_version)
 
 
+def _replays_tie_fallback(opensees_version: Any, n_ties: int) -> bool:
+    """The replay's version check (K2b): True iff an archive at
+    ``opensees_version`` predates the stored reinforce ties (schema 2.29.0,
+    :data:`~apeGmsh.opensees.emitter.h5_reader.EMBEDDED_REBAR_FROM`), so
+    the replay re-derives its ``n_ties`` ties from the neutral zone. A
+    caller that replays ties without saying which archive they came from
+    refuses, rather than guess either way."""
+    from ..emitter.h5_reader import archives_embedded_rebar
+
+    if opensees_version is None:
+        raise ValueError(
+            f"replay: {n_ties} reinforce tie(s) need the archive's opensees "
+            "schema version (opensees_version=) — at 2.29.0 or above the "
+            "replay reads the stored ties, below it the replay re-derives "
+            "them from the neutral zone."
+        )
+    return not archives_embedded_rebar(opensees_version)
+
+
 def _write_archived_ramps(
     emitter: Any,
     records: "Sequence[Any]",
@@ -793,6 +812,7 @@ def _replay_into(
     initial_stress_param_tags: "Sequence[tuple[int, int, int]]" = (),
     opensees_version: Any = None,
     reinforce_name_to_tag: "dict[str, int] | None" = None,
+    embedded_rebars: "Sequence[Any]" = (),
     deck_ordering: bool = True,
     stage_mp_keys: "frozenset[tuple[Any, ...]]" = frozenset(),
     commands: "Sequence[Any]" = (),
@@ -828,11 +848,6 @@ def _replay_into(
       8. ``emitter.element``  (the UNGATED elements when the 4b hoist
          ran; all of them otherwise) — with ``set_element_nodes`` /
          ``set_current_fem_element_id`` side channels for the H5 path
-      8b. ``emit_reinforce_ties`` — g.reinforce ``LadrunoEmbeddedRebar``
-          couplings, re-emitted from the neutral-zone ``fem`` (no dedicated
-          deck record; tags allocated past the max element tag). Skipped when
-          ``fem`` is ``None`` (the H5 re-emit path; ties persist via the
-          neutral zone there). Scoped/best-effort — see the inline note.
       9. ``emitter.fix`` / ``emitter.mass``
       9a. the global ``/opensees/commands`` rows (``rayleigh``, ``eigen``,
           ``modal_damping``) in their emit order: the bridge's slot 7,
@@ -843,6 +858,11 @@ def _replay_into(
           before the recorders that reference a fan-out region by ``-R``
       9b'. ``emitter.equationConstraint`` for ``equation_constraints``,
           in call order
+      9c'. the g.reinforce ``LadrunoEmbeddedRebar`` ties: the stored
+          ``embedded_rebars`` rows (opensees 2.29.0), else, for an older
+          archive, re-derived from the neutral-zone ``fem``; the bridge's
+          slot 7b', after the fixes, masses and equation
+          constraints
       10. ``emitter.pattern_open`` (+ load / sp / eleLoad +
           pattern_close)
       11. ``emitter.recorder`` (wrapped in declaration-begin/end when
@@ -1070,48 +1090,6 @@ def _replay_into(
         emitter, _ungated, ndm=int(ndm), envelope_ndf=int(ndf),
     )
 
-    # 8b. Embedded-reinforcement ties (g.reinforce → LadrunoEmbeddedRebar).
-    # The deck-replay path re-emits these from the NEUTRAL-zone ``fem`` (which
-    # carries ``fem.elements.reinforce_ties`` from the /reinforce_ties group,
-    # ADR 0067 P5.1) rather than a dedicated /opensees deck record — the deck
-    # zone never stored them (the H5 emitter no-ops the tie deck record;
-    # persistence is the neutral zone's job). This mirrors how _replay_into
-    # already leans on ``fem`` for element-connectivity rehydration. Tie element
-    # tags are freshly allocated PAST the max replayed element tag (the ties
-    # share the element namespace, so a fresh 1-based counter would collide with
-    # the directly-replayed element tags); only intra-deck uniqueness matters
-    # (ADR 0019 INV-5 — tags may diverge across round-trip). The bond material
-    # name→tag map is threaded from OpenSeesModel._names.
-    #
-    # SCOPED / best-effort: the broader MP-constraint family (equalDOF /
-    # rigidLink / rigidDiaphragm / embeddedNode / contact / equation ties) is
-    # still NOT replayed by _replay_into — reinforce ties are the first ("A4
-    # full", plan_rebar_p5.md). The canonical recovery for ALL of these remains
-    # FEMData.from_h5 → forward re-emit; deck-replay is a secondary, partial
-    # path. The H5 re-emit caller (OpenSeesModel._replay_into_h5) passes no
-    # ``fem``, so this is skipped there (the H5 target persists ties via the
-    # neutral zone).
-    reinforce_ties = (
-        getattr(getattr(fem, "elements", None), "reinforce_ties", None)
-        if fem is not None else None
-    )
-    if reinforce_ties:
-        from .build.constraints import replay_reinforce_ties
-        from .tag_allocator import TagAllocator
-
-        # tag-law waiver reinforce-tie-replay (tag_law_ledger.txt): replay
-        # mints the tie element tags (the _counters seed below and
-        # replay_reinforce_ties) because replay has no archived tie tags.
-        _rt_tags = TagAllocator()
-        # Seed the element counter past the max replayed element tag so the tie
-        # element tags don't collide with the directly-replayed elements.
-        max_elem_tag = max((int(e.tag) for e in elements), default=0)
-        _rt_tags._counters["element"] = max_elem_tag
-        replay_reinforce_ties(
-            emitter, fem, _rt_tags,
-            name_to_tag=dict(reinforce_name_to_tag or {}),
-        )
-
     # 9. Fix / mass (model-level).
     for rec in fixes:
         emitter.fix(int(rec.tag), *(int(d) for d in rec.dofs))
@@ -1163,6 +1141,54 @@ def _replay_into(
         emit_equation_constraints(
             emitter, fem, equation_constraints,
             node_ndf=eq_node_ndf, default_ndf=int(ndf),
+        )
+
+    # 9c'. Embedded-reinforcement ties (g.reinforce → LadrunoEmbeddedRebar),
+    # after the fixes, masses, global commands, regions and the equation
+    # constraints (9b'): the bridge's slot 7b', so a reinforced deck
+    # replays in the bridge's line order.
+    # From opensees 2.29.0 (K2b) the archive stores every tie the build
+    # wrote (``embedded_rebars``, its tag and arguments), and the replay
+    # writes those, minting nothing and reading nothing else; the H5
+    # rewrite path (no ``fem``) echoes them the same way. An archive below
+    # 2.29.0 stores none, so the replay re-derives its ties from the
+    # neutral-zone ``fem`` behind the version check below.
+    from .build.constraints_plan import reinforce_tie_records
+
+    # The bridge's own reading of the stream (``emit_reinforce_ties``).
+    fem_ties = reinforce_tie_records(fem) if fem is not None else []
+    if embedded_rebars:
+        if fem is not None and len(fem_ties) != len(embedded_rebars):
+            raise ValueError(
+                f"replay: the archive stores {len(embedded_rebars)} reinforce "
+                f"tie(s) but its neutral zone carries {len(fem_ties)}; the "
+                "two zones disagree."
+            )
+        for tie in embedded_rebars:
+            if tie.name:
+                emitter.mp_constraint_comment(tie.name)
+            emitter.embedded_rebar(int(tie.ele_tag), *tie.args)
+    elif fem_ties:
+        if not _replays_tie_fallback(opensees_version, len(fem_ties)):
+            raise ValueError(
+                f"replay: the neutral zone carries {len(fem_ties)} reinforce "
+                "tie(s) but the archive, at opensees 2.29.0 or above, "
+                "stores none; it is not an archive this writer produced."
+            )
+        from .build.constraints import replay_reinforce_ties
+        from .tag_allocator import TagAllocator
+
+        # tag-law waiver pre-2-29-reinforce-tie-replay (tag_law_ledger.txt):
+        # an archive below 2.29.0 stores no tie, so the replay mints the
+        # tie element tags (the _counters seed below and
+        # replay_reinforce_ties), past the highest replayed element tag;
+        # pre-2.29 archives only, behind the version check above.
+        _rt_tags = TagAllocator()
+        max_elem_tag = max((int(e.tag) for e in elements), default=0)
+        _rt_tags._counters["element"] = max_elem_tag
+        replay_reinforce_ties(
+            emitter, fem, _rt_tags,
+            name_to_tag=dict(reinforce_name_to_tag or {}),
         )
 
     # 9c. Global initial stress (ADR 0055 Phase 1).  Emitted BEFORE

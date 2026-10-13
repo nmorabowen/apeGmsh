@@ -166,13 +166,15 @@ def test_h5_ledger_counts_dropped_calls_silently(
 
 def test_h5_legacy_counters_read_the_ledger() -> None:
     e = H5Emitter()
-    e.embedded_rebar(1, 2)
     e.embedded_node(3, 4)
     e.contact_surface(5, 6)
     e.contact_surface(7, 8)
     e.equationConstraint(1, 1, 1.0, [(2, 1, -1.0)])
-    assert (e._skipped_reinforce_ties, e._skipped_embed_ties,
-            e._skipped_contacts, e._skipped_equation_constraints) == (1, 1, 2, 1)
+    # K2b: embedded_rebar archives (opensees 2.29.0), so it counts nowhere.
+    e.embedded_rebar(1, 2)
+    assert (e._skipped_embed_ties, e._skipped_contacts,
+            e._skipped_equation_constraints) == (1, 2, 1)
+    assert "embedded_rebar" not in e.ledger_counts
 
 
 def test_h5_helpers_refuse_a_row_of_the_wrong_kind() -> None:

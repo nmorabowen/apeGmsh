@@ -169,6 +169,12 @@ CORPUS: tuple[Model, ...] = (
     _m("test_opensees_model_build_targets", "_author_simple_frame_apesees"),
     *(_m("test_reinforce_deck_replay", "_reinforced_ops", bond_by_name=b)
       for b in _B),
+    # K2b (#1795): reinforce ties replayed from the stored rows, after the
+    # fixes; exact matches.
+    *(_m("test_reinforce_deck_replay", "_reinforced_fixed_ops", bond_by_name=b)
+      for b in _B),
+    # ... and after the equationConstraint rows (B5-g's 9b'), as the bridge.
+    _m("test_reinforce_deck_replay", "_reinforced_fixed_ops", equation=True),
 )
 
 
