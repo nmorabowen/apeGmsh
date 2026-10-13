@@ -484,3 +484,70 @@ per-stage split matching a two-stage deck. Auto-skipped without
 - Fork: PR #821, `tests/test_pardiso_stats.py`,
   `SRC/interpreter/OpenSeesOutputCommands.cpp:4683` (`OPS_logFile`),
   `SRC/handler/StandardStream.cpp:52` (`setFile` echo semantics).
+
+## Amendment 1 (2026-10-13) — `run=True` returns a `RunReport`; the record is its `solver_stats`
+
+**Status:** Proposed (2026-10-13). Awaits the maintainer's acceptance.
+Ruling D2 on #1372; program link R3-S6 (#1790).
+
+D1 had `apeSees.tcl()` / `apeSees.py()` hand back `RunSolverStats | None`.
+A `None` then meant two things, "the deck never asked for `-stats`" and
+"nothing to report", and a successful run said nothing about what ran.
+This amendment replaces D1's return value. D1's record, its parser and
+its two entry points are unchanged.
+
+**The return.** `ops.py(path, run=True)` and `ops.tcl(path, run=True)`
+always return a frozen `RunReport` (`opensees/_run.py`):
+
+| Field | Meaning |
+|---|---|
+| `returncode` | the child's exit code; always `0`, because a failed run raises |
+| `log` | the absolute path of the tee'd log (`<deck>.log` unless `log=`) |
+| `elapsed_s` | wall-clock seconds from launch to exit |
+| `increments` | the analyze increments completed, summed over every analyze loop |
+| `solver_stats` | D1's `RunSolverStats` when the deck asked for `-stats`, else `None` |
+
+`-stats` callers read `rep.solver_stats` where they read the return
+before. `run=False` still returns `None`. `run_remote` does not share
+this return: it emits with `tcl(run=False)` and returns its `Job`.
+
+**`increments` comes from the deck's own markers.** Every deck analyze
+loop (the flat `analyze_steps` drive and each stage's `run`) is the
+emitters' per-increment loop, and with `progress=True` (the default)
+it prints `APEGMSH_PROGRESS i=.. n=..` on a throttled subset of its
+increments and always on the last (`i == n`). `stream_run` already
+parses these for the live counter; it now also sums `n` over each loop
+whose `i == n` marker arrived. The count is `None`, never a guess,
+when it is not established: the deck carried no markers
+(`progress=False`), or the markers do not form whole loops (a loop
+left before `i == n`, a loop still open at the end, two processes
+printing into one stream). A deck with markers and no analyze loop
+reports `0`.
+
+**Failure still raises, and on Tcl it now always does.** py raises on a
+non-zero exit, as before. `OpenSees.exe` exits 0 after a Tcl `error`,
+the deck's aborted-analyze guard included, so before this amendment an
+aborted Tcl deck returned normally and only `ops.results` refused it
+(ADR 0115 D3's completion marker). A `RunReport` from that run would
+claim a success that did not happen. `stream_run` therefore takes the
+completion proof (`_results_route.log_proves_completion`) and raises
+the same tail-carrying `RuntimeError` when a Tcl run exits 0 without
+the `APEGMSH_RUN_COMPLETE` line. INV-6's warning stays on the success
+path, which is now "exit 0 and proven complete".
+
+**What does not change.** No verb, no Emitter Protocol method, no
+archive or H5 field: `RunReport` is a run-side return value, the same
+call as D1's "Rejected — mutate a build-side record". The R2-c
+`DeckRun` record is untouched, and `ops.results(path)` reads a finished
+run as before. Changing the return to `RunReport | None` stales
+`studio/_api_index.json` again; this slice rebuilds it.
+
+**Verification.** `tests/opensees/unit/test_run_report_stream.py`
+(the marker arithmetic, the `None` cases, the completion proof);
+`tests/opensees/subprocess/test_run_report.py` (a 2-increment deck on
+py and Tcl gives `increments == 2`, `returncode == 0`, an existing log,
+and an `ops.results` read with two rows at `PL^3/3EI` per step; 45
+throttled increments count 45; aborting decks raise on both routes);
+`tests/opensees/integration_ladruno/test_solver_stats_live.py` (the
+fork lane: the record is `rep.solver_stats`, and `increments` is 1, 3
+and 1 + 2 on its decks).
