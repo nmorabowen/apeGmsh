@@ -21,11 +21,11 @@ import pytest
 
 pytest.importorskip("pyvista")
 
-from tests.viewers.test_x2f_animation_stage_activation import (  # noqa: F401
-    _EXPECT,
-    _pg_eids,
-    staged,
-)
+from tests.viewers import test_x2f_animation_stage_activation as _x2f
+from tests.viewers.test_x2f_animation_stage_activation import _EXPECT, _pg_eids
+
+#: The X2-f staged fixture, shared rather than copied.
+staged = _x2f.staged
 
 _BOTH = ("Rock", "Fill")
 
