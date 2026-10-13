@@ -137,10 +137,11 @@ class ProgramRun:
     ``row`` ``-1`` for calls the archive does not carry (``ledger``
     verbs). ``row`` is the record's ordinal among the records ``method``
     wrote to ``store`` in that stage, in emit order; a partition-
-    replicated call repeats its first capture's row. ``decl`` is always
-    ``-1``: the column is hashed and a declaration is a label (A7), so the
-    declaration of a call's row is read from the hash-excluded
-    ``/opensees/decls`` instead (:meth:`H5Model.declarations`, 2.25.0).
+    replicated call repeats its first capture's row. ``decl`` is the
+    ``/opensees/decls`` row of the declaration that made the calls, when
+    the emit proved it (A7, opensees 2.31.0), else ``-1``; every file
+    below 2.31.0 holds ``-1`` throughout (:data:`PROGRAM_DECL_FROM`), so
+    there ``-1`` means "not recorded", not "no declaration".
     """
 
     first: int
@@ -1802,6 +1803,9 @@ class H5Model:
         methods = [str(_decode_bytes(m)) for m in ds.attrs["methods"]]
         stores = [str(_decode_bytes(m)) for m in ds.attrs["stores"]]
         emit_count = int(ds.attrs["emit_count"])
+        ops = self._f["opensees"]
+        # A7: a run's decl is -1 or a /opensees/decls row.
+        n_decls = len(ops["decls"]["key"]) if "decls" in ops else 0
         runs: list[ProgramRun] = []
         expected = 1
         for rec in ds[()]:
@@ -1812,6 +1816,11 @@ class H5Model:
                     f"/opensees/program run {len(runs)} "
                     f"(first={first}, count={count}, method={m}, store={st}) "
                     "does not continue the emit order."
+                )
+            if decl != -1 and not 0 <= decl < n_decls:
+                raise MalformedH5Error(
+                    f"/opensees/program run {len(runs)} names declaration "
+                    f"{decl}; /opensees/decls holds {n_decls}."
                 )
             expected = first + count
             runs.append(ProgramRun(
@@ -2878,6 +2887,21 @@ def archives_embedded_rebar(version: "SchemaVersion") -> bool:
     ties (``>= EMBEDDED_REBAR_FROM``)."""
     return (
         (version.major, version.minor, version.patch) >= EMBEDDED_REBAR_FROM)
+
+
+#: The first opensees minor whose ``/opensees/program`` ``decl`` column
+#: records each call's declaration (A7, #1839). Below it the column is
+#: ``-1`` throughout, so a ``-1`` there says nothing about the call; and
+#: the column is hashed, so a tool comparing a model's ``model_hash``
+#: across this boundary sees the archive's one-time change, not corruption.
+PROGRAM_DECL_FROM: tuple[int, int, int] = (2, 31, 0)
+
+
+def records_program_decl(version: "SchemaVersion") -> bool:
+    """True iff an archive at opensees-zone ``version`` records the
+    declaration of its program runs (``>= PROGRAM_DECL_FROM``)."""
+    return (
+        (version.major, version.minor, version.patch) >= PROGRAM_DECL_FROM)
 
 
 def _initial_stress_param_tags(
