@@ -23,7 +23,7 @@ import {
   type ContourView,
 } from "../state/selectors.ts";
 import type { State, Store } from "../state/store.ts";
-import type { ColourBy, ContourCmap, LegendEntry } from "../state/types.ts";
+import type { ColourBy, ContourCmap, ContourSource, GaussMode, LegendEntry } from "../state/types.ts";
 import { byId, el, listen } from "../ui/dom.ts";
 
 const MODES: readonly { by: ColourBy; label: string }[] = [
@@ -44,8 +44,16 @@ export function fmtValue(v: number): string {
   return a >= 1e-3 && a < 1e4 ? String(Number(v.toPrecision(4))) : v.toExponential(3);
 }
 
-/** What the contour legend states, as plain lines (tested in Node; the DOM below shows them). */
-export function contourLines(s: State, v: Extract<ContourView, { state: "ready" }>): { title: string; min: string; max: string; range: string; state: string | null } {
+/**
+ * What the contour legend states, as plain lines (tested in Node; the DOM
+ * below shows them). V4c2a: an element field also states its topology (the
+ * Qt name and the averaging in words) and, when the component's name says so,
+ * that its axes are local.
+ */
+export function contourLines(
+  s: State,
+  v: Extract<ContourView, { state: "ready" | "element" }>,
+): { title: string; min: string; max: string; range: string; state: string | null; topology: string | null; axes: string | null } {
   const c = v.clim;
   const constant = c.min !== null && c.max !== null && c.min === c.max;
   return {
@@ -54,8 +62,17 @@ export function contourLines(s: State, v: Extract<ContourView, { state: "ready" 
     max: c.max === null ? "" : constant ? "(constant)" : fmtValue(c.max),
     range: c.label,
     state: !v.stepMeasured ? `step ${s.phase.at?.kind === "results" ? s.phase.at.step + 1 : "?"} loading` : null,
+    topology: v.state === "element" ? v.topologyLabel : null,
+    axes: v.state === "element" && v.component.local ? "Axes: local (the component's name says so)." : null,
   };
 }
+
+/** The element-field draw modes (V4c2a): flat per cell now; the extrapolations to nodes arrive with V4c2b. */
+const GAUSS_MODES: readonly { mode: GaussMode; label: string; title: string }[] = [
+  { mode: "cell", label: "per cell", title: "flat per cell: gauss_cell (one Gauss point) or gauss_cell_averaged (the mean of the element's Gauss points)" },
+  { mode: "node", label: "at nodes", title: "gauss_node: extrapolated to the nodes and averaged across elements (not yet available, V4c2b)" },
+  { mode: "node_discrete", label: "at nodes, per element", title: "gauss_node_discrete: extrapolated per element, no averaging (not yet available, V4c2b)" },
+];
 
 export function mountLegend(store: Store): () => void {
   const legend = byId("legend");
@@ -172,10 +189,16 @@ export function mountLegend(store: Store): () => void {
   const renderContour = (s: State) => {
     const v = contourView(s);
     const picker = contourFieldsOf(s);
-    if (picker && picker.fields.length) {
+    // V4c2a: one list of nodal fields, then element (Gauss) fields; an option's value names its source.
+    const options: { source: ContourSource; name: string; components: { key: string; label: string }[] }[] = [
+      ...(picker?.fields ?? []).map((f) => ({ source: "nodal" as const, name: f.name, components: f.components })),
+      ...(picker?.elements ?? []).map((f) => ({ source: "element" as const, name: f.name, components: f.components })),
+    ];
+    const valueOf = (source: ContourSource, name: string) => `${source}:${name}`;
+    if (options.length) {
       const row = el("div", "contour-pick");
       const field = el("select", "contour-field");
-      field.title = "nodal field";
+      field.title = "field: nodal, or element (Gauss points)";
       if (s.contour.field === null) {
         // Nothing picked (a re-read cleared the pick): a placeholder, so picking the first field is a change.
         const o = el("option", undefined, "pick a field");
@@ -183,13 +206,20 @@ export function mountLegend(store: Store): () => void {
         o.selected = true;
         field.append(o);
       }
-      for (const f of picker.fields) {
-        const o = el("option", undefined, f.name);
-        o.value = f.name;
-        o.selected = f.name === s.contour.field;
-        field.append(o);
+      for (const source of ["nodal", "element"] as const) {
+        const of = options.filter((x) => x.source === source);
+        if (!of.length) continue;
+        const group = el("optgroup");
+        group.label = source === "nodal" ? "nodal" : picker?.elementsVerified ? "element (Gauss points)" : "element (Gauss points, unverified file)";
+        for (const f of of) {
+          const o = el("option", undefined, f.name);
+          o.value = valueOf(f.source, f.name);
+          o.selected = f.source === s.contour.source && f.name === s.contour.field;
+          group.append(o);
+        }
+        field.append(group);
       }
-      const current = picker.fields.find((f) => f.name === s.contour.field) ?? picker.fields[0]!;
+      const current = options.find((f) => f.source === s.contour.source && f.name === s.contour.field) ?? options[0]!;
       const comp = el("select", "contour-component");
       comp.title = "component";
       for (const c of current.components) {
@@ -200,10 +230,10 @@ export function mountLegend(store: Store): () => void {
       }
       unlisten.push(
         listen(field, "change", () => {
-          const f = picker.fields.find((x) => x.name === field.value)!;
-          store.dispatch({ type: "setContourField", field: f.name, component: f.components[0]!.key });
+          const f = options.find((x) => valueOf(x.source, x.name) === field.value)!;
+          store.dispatch({ type: "setContourField", field: f.name, component: f.components[0]!.key, source: f.source });
         }),
-        listen(comp, "change", () => store.dispatch({ type: "setContourField", field: current.name, component: comp.value })),
+        listen(comp, "change", () => store.dispatch({ type: "setContourField", field: current.name, component: comp.value, source: current.source })),
       );
       row.append(field, comp);
       legend.append(row);
@@ -212,13 +242,36 @@ export function mountLegend(store: Store): () => void {
     for (const f of picker?.fields ?? []) {
       if (f.magnitudeRefused) legend.append(el("div", "legend-note refused-field", `${f.name} magnitude: refused, ${f.magnitudeRefused}`));
     }
-    if (v.state !== "ready") {
-      legend.append(el("div", "legend-note", v.state === "unavailable" ? `Nothing to colour: ${v.reason}.` : ""));
+    for (const f of picker?.elements ?? []) {
+      if (f.refused) legend.append(el("div", "legend-note refused-field", `element field ${f.name}: refused, ${f.refused}`));
+    }
+    if (s.contour.source === "element") {
+      const modes = el("div", "legend-mode contour-gauss");
+      for (const m of GAUSS_MODES) {
+        const b = el("button", s.contour.gauss === m.mode ? "on" : "", m.label);
+        b.title = m.title;
+        unlisten.push(listen(b, "click", () => store.dispatch({ type: "setContourGauss", mode: m.mode })));
+        modes.append(b);
+      }
+      legend.append(modes);
+    }
+    if (v.state !== "ready" && v.state !== "element") {
+      const note =
+        v.state === "unavailable"
+          ? `Nothing to colour: ${v.reason}.`
+          : v.state === "refused"
+            ? `Refused: ${v.reason}.`
+            : v.state === "not-yet"
+              ? `Not yet available: ${v.reason}.`
+              : "";
+      legend.append(el("div", "legend-note" + (v.state === "refused" ? " refused-field" : ""), note));
       legend.append(noDataRow());
       return;
     }
     const lines = contourLines(s, v);
     legend.append(el("div", "contour-title", lines.title));
+    if (lines.topology) legend.append(el("div", "legend-note contour-topology", lines.topology));
+    if (lines.axes) legend.append(el("div", "legend-note contour-axes", lines.axes));
     const ramp = el("div", "contour-ramp");
     ramp.style.backgroundImage = rampCss(v.cmap);
     legend.append(ramp);
@@ -238,7 +291,7 @@ export function mountLegend(store: Store): () => void {
           if (m.range !== "fixed") return store.dispatch({ type: "setContourRange", range: m.range });
           // A fixed range starts from the range shown, when it has one.
           const c = contourView(store.get());
-          const from = store.get().contour.fixed ?? (c.state === "ready" && c.clim.min !== null && c.clim.max !== null && c.clim.min < c.clim.max ? { min: c.clim.min, max: c.clim.max } : null);
+          const from = store.get().contour.fixed ?? ((c.state === "ready" || c.state === "element") && c.clim.min !== null && c.clim.max !== null && c.clim.min < c.clim.max ? { min: c.clim.min, max: c.clim.max } : null);
           if (from) store.dispatch({ type: "setContourRange", range: "fixed", fixed: from });
         }),
       );
@@ -291,7 +344,8 @@ function noDataRow(): HTMLElement {
   const text = el("span", "contour-nodata", "no data");
   text.title =
     "a node the field does not record (not in its _ids, or NaN) is never zero and never taken from a neighbour: " +
-    "every face or line that touches one is drawn in this grey over its whole area, including its part next to recorded nodes";
+    "every face or line that touches one is drawn in this grey over its whole area, including its part next to recorded nodes. " +
+    "For an element field: a drawn element no group of the field records, or one with a non-finite Gauss value, is drawn in this grey";
   row.append(chip, text);
   return row;
 }
@@ -336,9 +390,11 @@ function contourSignature(s: State): string {
   const v = contourView(s);
   const picker = contourFieldsOf(s);
   return JSON.stringify([
-    v.state === "ready" ? contourLines(s, v) : v,
-    v.state === "ready" ? v.cmap : null,
+    v.state === "ready" || v.state === "element" ? contourLines(s, v) : v,
+    v.state === "ready" || v.state === "element" ? v.cmap : null,
     picker,
+    s.contour.source,
+    s.contour.gauss,
     s.contour.field,
     s.contour.component,
     s.contour.range,
