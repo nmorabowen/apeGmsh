@@ -33,7 +33,9 @@ Files:
   version with ``NativeWriter.stamp_element_index_space("fem")``, so its
   element rows are verified FEM ids (h5-schema.md §``element_index_space``).
   ``results_small.h5`` stays unstamped: a ``domain_capture`` file without
-  the stamp, which reads as unverified.
+  the stamp, which reads as unverified. ``--stamped`` also writes
+  ``fixtures/stamp_variants/`` (``stamp_variants``): the stamp in other
+  HDF5 encodings, with Python's verdict on each in an oracle JSON.
 * ``a`` (measured, not committed): the same mesh at 13 x 13 x 21
   (4 312 nodes, 7 098 wedges, the size of the ledger's largest maintainer
   model, 4 254 nodes / 7 104 elements), 100 steps, 3 nodal components and 6
@@ -307,6 +309,51 @@ def contour_fixtures(out_dir: Path) -> None:
         print(f"wrote {res_path.name}: {ids.size} of {node_ids.size} nodes")
 
 
+def stamp_variants(out_dir: Path) -> None:
+    """V4g review (#1810): ``results_stamped.h5`` with the stamp re-encoded, and Python's verdict on each.
+
+    Each file is a copy of ``results_stamped.h5`` whose root
+    ``element_index_space`` is rewritten with h5py in one HDF5 encoding.
+    ``stamp_variants.oracle.json`` records what ``NativeReader`` makes of
+    each (``element_index_verified`` and the ``element_index_space`` string),
+    so the app's verdict is checked against Python's, not against itself.
+    Only a variable-length string scalar ``"fem"`` is what
+    ``NativeWriter.stamp_element_index_space`` writes.
+    """
+    import json
+    import shutil
+
+    import h5py
+
+    from apeGmsh.results.readers._native import NativeReader
+
+    key = "element_index_space"
+    cases = {
+        "vlen_str": lambda a: a.create(key, "fem", dtype=h5py.string_dtype("utf-8")),
+        "vlen_bytes": lambda a: a.create(key, b"fem", dtype=h5py.string_dtype("ascii")),
+        "np_bytes_S3": lambda a: a.__setitem__(key, np.bytes_(b"fem")),
+        "fixed_S3": lambda a: a.create(key, b"fem", dtype="S3"),
+        "fixed_S8_nullpad": lambda a: a.create(key, np.bytes_(b"fem"), dtype="S8"),
+        "vlen_array": lambda a: a.create(key, np.array(["fem"], dtype=object), dtype=h5py.string_dtype("utf-8")),
+    }
+    src = out_dir / "results_stamped.h5"
+    vdir = out_dir / "stamp_variants"
+    vdir.mkdir(exist_ok=True)
+    oracle = {}
+    for name, encode in cases.items():
+        p = vdir / f"{name}.results.h5"
+        shutil.copyfile(src, p)
+        with h5py.File(p, "a") as f:
+            del f.attrs[key]
+            encode(f.attrs)
+        with NativeReader(str(p)) as r:
+            oracle[name] = {"verified": bool(r.element_index_verified), "element_index_space": r.element_index_space}
+    (vdir / "stamp_variants.oracle.json").write_text(
+        json.dumps({"source": "apeGmsh.results.readers._native.NativeReader.element_index_verified", "cases": oracle}, indent=1) + "\n"
+    )
+    print("wrote stamp_variants: " + ", ".join(f"{k}={v['verified']}" for k, v in oracle.items()))
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--measure", type=Path, help="write the measured files a, b, c into this directory")
@@ -324,6 +371,7 @@ def main() -> None:
         return
     if args.stamped:
         write(HERE / "results_stamped.h5", wedge_mesh(2, 1, "results_stamped"), 5, ["stress_xx", "stress_yy"], WEDGE_GP, 0, stamp=True)
+        stamp_variants(HERE)
         return
     if args.measure is None:
         write(HERE / "results_small.h5", wedge_mesh(2, 1, "results_small"), 5, ["stress_xx", "stress_yy"], WEDGE_GP, 0)

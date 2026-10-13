@@ -212,6 +212,37 @@ for (const [value, label, reason] of [
   });
 }
 
+// -- #1810 review: the stamp's HDF5 encoding, against Python's verdict -------------
+// fixtures/stamp_variants/ holds results_stamped.h5 with the stamp re-encoded by
+// h5py; the oracle JSON is NativeReader.element_index_verified on each file. Only
+// a scalar variable-length string "fem" verifies (str or bytes, as in Python).
+
+const VARIANTS = fileURLToPath(new URL("../../fixtures/stamp_variants/", import.meta.url));
+const ORACLE = JSON.parse(readFileSync(join(VARIANTS, "stamp_variants.oracle.json"), "utf8")) as {
+  cases: Record<string, { verified: boolean; element_index_space: string }>;
+};
+
+for (const [name, expected, label] of [
+  ["vlen_str", true, "a variable-length str (what NativeWriter writes)"],
+  ["vlen_bytes", true, "a variable-length ASCII bytes string (Python verifies it; so does the app)"],
+  ["np_bytes_S3", false, "np.bytes_(b\"fem\"), fixed-length S3"],
+  ["fixed_S3", false, "an exact fixed-length S3"],
+  ["fixed_S8_nullpad", false, "a NUL-padded fixed-length S8"],
+  ["vlen_array", false, "a one-element array [\"fem\"]"],
+] as const) {
+  test(`stamp encoded as ${label}: ${expected ? "verified" : "unverified"}, as Python reads it`, () => {
+    assert.equal(ORACLE.cases[name]?.verified, expected, "the Python oracle disagrees with this table: regenerate or re-read");
+    const r = openResults(H5, join(VARIANTS, `${name}.results.h5`));
+    try {
+      const map = r.elementIds(STAGE, "group_0");
+      assert.equal(map.mapping, expected ? "fem_eid" : "unverified");
+      if (map.mapping === "unverified") assert.match(map.reason, /fixed-length string|not a string scalar/);
+    } finally {
+      r.close();
+    }
+  });
+}
+
 // -- dtype: float32 is cast, non-float is refused --------------------------------
 
 test("a float32 component is read and cast to float64", () => {

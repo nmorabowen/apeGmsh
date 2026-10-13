@@ -151,6 +151,13 @@ verified FEM ids. `test/results/results.test.ts` uses it for the verified
 mapping and for the stamp cases (removed, unknown value, non-string). Write
 it with the same command plus `--stamped`.
 
+`--stamped` also writes `stamp_variants/`: copies of `results_stamped.h5`
+whose stamp h5py re-encodes (variable-length str and bytes, fixed-length S3
+and NUL-padded S8, a one-element array), and `stamp_variants.oracle.json`,
+Python's `NativeReader.element_index_verified` on each. The test checks the
+app's verdict against it: only a scalar variable-length string `"fem"`
+verifies (#1810 review).
+
 ## `staged_activation.h5`, `staged_activation.results.h5` and `staged_activation.oracle.json`
 
 The V4b staged pair (#1728). `staged_activation.h5` is a composed `model.h5`

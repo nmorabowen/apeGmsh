@@ -15,7 +15,9 @@
 // - element categories the spike does not read (line_stations, nodal_forces,
 //   fibers, layers) are listed in `unread`, not skipped silently;
 // - `_element_index` is a FEM element id if and only if the root attribute
-//   `element_index_space` is the string "fem" (h5-schema.md
+//   `element_index_space` is the scalar variable-length string "fem", the
+//   encoding NativeWriter.stamp_element_index_space writes and the one
+//   Python's NativeReader.element_index_verified accepts (h5-schema.md
 //   §`element_index_space`, results 1.2.0; stamp-only, #1768). `source_type`
 //   and the version never verify a file: an absent stamp, a non-string one,
 //   or any other value gives the typed "unverified" mapping, whose rows carry
@@ -36,6 +38,10 @@ export const RESULTS_FLOOR = { major: 1, minor: 0 } as const;
  * The root attribute that verifies element row ids, and its one verifying value
  * (h5-schema.md §`element_index_space`; Python `ELEMENT_INDEX_SPACES`). Any other
  * value, a non-string, or no attribute at all reads as unverified (#1768).
+ * The stamp must also be a scalar *variable-length* string: h5wasm strips a
+ * fixed-length string's padding, so S3 or NUL-padded S8 bytes "fem" read as
+ * "fem" here, while h5py reads them as bytes and Python's
+ * `NativeReader.element_index_verified` rejects them (#1810 review).
  */
 const ELEMENT_INDEX_SPACE = "element_index_space";
 const ELEMENT_INDEX_SPACE_FEM = "fem";
@@ -44,6 +50,7 @@ const STAGE_KINDS = new Set(["static", "transient", "mode"]);
 const ELEMENT_CATEGORIES = new Set(["gauss_points", "line_stations", "nodal_forces", "fibers", "layers"]);
 const GAUSS_INDEX = new Set(["_element_index", "_natural_coords", "_local_axes_quaternion"]);
 const H5T_FLOAT = 1;
+const H5T_STRING = 3;
 
 export type ResultsErrorKind = "open" | "version" | "layout" | "dtype" | "unsupported" | "argument";
 
@@ -63,7 +70,11 @@ export interface ResultsH5 {
 }
 interface RNode {
   path: string;
-  attrs: Record<string, { value: unknown }>;
+  attrs: Record<string, RAttr>;
+}
+interface RAttr {
+  value: unknown;
+  metadata: { type: number; vlen: boolean; shape: number[] | null };
 }
 interface RGroup extends RNode {
   keys(): string[];
@@ -187,8 +198,9 @@ export class ResultsFile {
     const unavailableZones = checkEmbeddedZones(f, modelMeta, warnings);
     const st = f.attrs["source_type"]?.value;
     const sourceType = typeof st === "string" ? st : null;
-    const eis = f.attrs[ELEMENT_INDEX_SPACE]?.value;
-    this.elementSpace = elementSpaceVerdict(eis);
+    const eisAttr = f.attrs[ELEMENT_INDEX_SPACE];
+    const eis = eisAttr?.value;
+    this.elementSpace = elementSpaceVerdict(eisAttr);
     const stagesGroup = this.group(f, "stages");
     const ids = sortStageIds(stagesGroup.keys());
     const lineage = this.readLineage(f);
@@ -413,14 +425,19 @@ export class ResultsFile {
  * The element-id verdict from the root `@element_index_space` alone (#1768):
  * verified iff it is the string "fem". `source_type` and the version play no part.
  */
-function elementSpaceVerdict(value: unknown): { verified: true } | { verified: false; reason: string } {
-  if (value === ELEMENT_INDEX_SPACE_FEM) return { verified: true };
+function elementSpaceVerdict(attr: RAttr | undefined): { verified: true } | { verified: false; reason: string } {
+  const value = attr?.value;
+  const m = attr?.metadata;
+  const vlenScalar = m !== undefined && m.type === H5T_STRING && m.vlen === true && Array.isArray(m.shape) && m.shape.length === 0;
+  if (vlenScalar && value === ELEMENT_INDEX_SPACE_FEM) return { verified: true };
   const why =
-    value === undefined
+    attr === undefined
       ? `the file has no @${ELEMENT_INDEX_SPACE}`
       : typeof value !== "string"
-        ? `@${ELEMENT_INDEX_SPACE} is not a string`
-        : `@${ELEMENT_INDEX_SPACE} = ${JSON.stringify(value)} is not "${ELEMENT_INDEX_SPACE_FEM}"`;
+        ? `@${ELEMENT_INDEX_SPACE} is not a string scalar`
+        : !vlenScalar
+          ? `@${ELEMENT_INDEX_SPACE} is a fixed-length string, not the variable-length string the writer stamps (Python reads it as bytes)`
+          : `@${ELEMENT_INDEX_SPACE} = ${JSON.stringify(value)} is not "${ELEMENT_INDEX_SPACE_FEM}"`;
   return { verified: false, reason: `${why}: _element_index is not verified to hold FEM element ids (only @${ELEMENT_INDEX_SPACE} = "${ELEMENT_INDEX_SPACE_FEM}" verifies it)` };
 }
 

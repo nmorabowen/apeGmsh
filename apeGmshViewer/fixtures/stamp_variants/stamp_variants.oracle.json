@@ -1,0 +1,29 @@
+{
+ "source": "apeGmsh.results.readers._native.NativeReader.element_index_verified",
+ "cases": {
+  "vlen_str": {
+   "verified": true,
+   "element_index_space": "fem"
+  },
+  "vlen_bytes": {
+   "verified": true,
+   "element_index_space": "fem"
+  },
+  "np_bytes_S3": {
+   "verified": false,
+   "element_index_space": "b'fem'"
+  },
+  "fixed_S3": {
+   "verified": false,
+   "element_index_space": "b'fem'"
+  },
+  "fixed_S8_nullpad": {
+   "verified": false,
+   "element_index_space": "b'fem'"
+  },
+  "vlen_array": {
+   "verified": false,
+   "element_index_space": "['fem']"
+  }
+ }
+}
