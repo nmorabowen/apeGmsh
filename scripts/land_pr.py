@@ -79,11 +79,14 @@ FileRow = list[Any]
 #: compares them, so editing either one edits the baseline. X4-a (#1806) adds
 #: the retirement ledger: adding, re-dating or removing a row is a maintainer gate.
 #: `test_loc_ratchet.py` holds the X4-b shrink-only LOC baselines (#1807).
+#: `test_loc_ratchet_escapes.py` holds the escape guards' pins (PACKAGES_BASELINE,
+#: FROM_RECORDERS_CLOSURE_BASELINE), gated like the ratchet's own (maintainer G4 on #1884, #1886).
 BASELINE = (
     "tests/freeze_census.py",
     "tests/test_freeze_lock.py",
     "internal_docs/program/retirement_ledger.toml",
     "tests/test_loc_ratchet.py",
+    "tests/test_loc_ratchet_escapes.py",
 )
 HUMAN_GATE = "human-gate"
 ADR_FILE = re.compile(r"architecture/decisions/\d{4}-[^/]*\.md")
