@@ -31,7 +31,15 @@ is unaffected.
 
 On a non-zero exit the raised :class:`RuntimeError` carries only the
 last few lines plus the log path — never the whole buffer (it is on
-disk already).
+disk already). A caller that can prove more than the exit code passes
+``proves_completion`` (the Tcl route: ``OpenSees.exe`` exits 0 after a
+Tcl ``error``, so its driver's completion line is the proof); a run
+that exits 0 without that proof raises the same way.
+
+A run that returns is reported as a frozen :class:`RunReport`
+(ADR 0106 Amendment 1): exit code, log path, wall time, the analyze
+increments the deck's own progress markers prove completed, and the
+``-stats`` record.
 
 ASCII-only console markers (``>>`` / ``[OK]`` / ``[FAIL]`` / ``[warn]``);
 Windows cp1252 terminals choke on unicode.
@@ -44,7 +52,9 @@ import subprocess
 import time
 import warnings
 from collections import deque
-from typing import TYPE_CHECKING, Iterator
+from dataclasses import dataclass
+from pathlib import Path
+from typing import TYPE_CHECKING, Callable, Iterator
 
 from ._solver_stats import RunSolverStats, parse_solver_stats
 from ._target import TIMS_FORK_BATCH_MIN_BUILD
@@ -53,6 +63,7 @@ if TYPE_CHECKING:  # type-only — no runtime edge onto the habitat
     from ..studio._progress import ProgressSidecar
 
 __all__ = [
+    "RunReport",
     "stream_run",
     "resolve_log_path",
     "run_label",
@@ -76,6 +87,80 @@ class SolverStatsWarning(UserWarning):
 #: (``puts "APEGMSH_PROGRESS i=.. n=.. t=.."`` — see the Tcl / Py
 #: emitters' ``analyze``). Parsed for the ``verbose`` live counter.
 _PROGRESS_RE = re.compile(r"APEGMSH_PROGRESS i=(\d+) n=(\d+) t=(\S+)")
+
+@dataclass(frozen=True, slots=True)
+class RunReport:
+    """What a finished ``ops.py`` / ``ops.tcl(path, run=True)`` reports.
+
+    ADR 0106 Amendment 1 (ruling D2 on #1372). Returned only by a run
+    that finished: a failed run raises ``RuntimeError`` instead, so a
+    report is always a success.
+
+    ``returncode``
+        The child's exit code (``0``: a non-zero exit raises).
+    ``log``
+        The tee'd log (``<deck>.log`` unless ``log=`` overrode it).
+    ``elapsed_s``
+        Wall-clock seconds from launch to exit.
+    ``increments``
+        The analyze increments completed, summed over every analyze
+        loop of the deck. Read from the deck's own ``APEGMSH_PROGRESS``
+        markers: each loop prints ``i=n`` on its last increment, so a
+        finished loop proves ``n``. ``None`` when the deck carried no
+        markers (``progress=False``) or the markers do not form whole
+        loops (a loop left before ``i=n``, more than one process
+        printing): the count is then not established, and is never
+        guessed. A deck with markers on and no analyze loop reports 0.
+    ``solver_stats``
+        The ADR 0106 D1 :class:`RunSolverStats` when the deck asked a
+        solver for ``-stats``, else ``None``.
+    """
+
+    returncode: int
+    log: Path
+    elapsed_s: float
+    increments: int | None
+    solver_stats: RunSolverStats | None
+
+
+class _IncrementCount:
+    """Sum of the analyze increments the progress markers prove.
+
+    Every emitted analyze loop prints ``APEGMSH_PROGRESS i=.. n=..`` on
+    a throttled subset of its increments and always on the last one
+    (``i == n``). A loop is counted when that last marker arrives. A
+    marker that does not continue the open loop (another ``n``, an
+    ``i`` that does not grow) while that loop is short of ``i == n``,
+    or a loop still open at the end, breaks the count: the stream is
+    not one clean sequence of whole loops, so :attr:`value` is
+    ``None``.
+    """
+
+    __slots__ = ("total", "open", "broken")
+
+    def __init__(self) -> None:
+        self.total = 0
+        self.open: tuple[int, int] | None = None
+        self.broken = False
+
+    def see(self, i: int, n: int) -> None:
+        if not 1 <= i <= n:
+            self.broken = True
+            return
+        if self.open is not None and (n != self.open[1] or i <= self.open[0]):
+            self.broken = True
+        if i == n:
+            self.total += n
+            self.open = None
+        else:
+            self.open = (i, n)
+
+    @property
+    def value(self) -> int | None:
+        if self.broken or self.open is not None:
+            return None
+        return self.total
+
 
 #: Lines worth surfacing live in ``verbose`` mode and tallying always.
 _WARN_RE = re.compile(r"WARNING|FATAL|FAILED|failed to converge")
@@ -133,11 +218,20 @@ def stream_run(
     env: dict[str, str] | None = None,
     deck_path: str | None = None,
     expect_solver_stats: bool = False,
-) -> RunSolverStats | None:
+    count_increments: bool = False,
+    proves_completion: Callable[[str], bool] | None = None,
+) -> RunReport:
     """Run ``argv``, tee stdout+stderr to ``log_path``, report to console.
 
     Raises :class:`RuntimeError` on a non-zero exit, with the last
-    ``_TAIL`` lines and the log path.
+    ``_TAIL`` lines and the log path. With *proves_completion*, an exit
+    of 0 is a success only when ``proves_completion(log_path)`` is true;
+    otherwise the same ``RuntimeError`` is raised, saying the run
+    stopped before its end.
+
+    Returns a :class:`RunReport`. *count_increments* says the deck
+    carries the ``APEGMSH_PROGRESS`` markers; without it
+    ``RunReport.increments`` is ``None``.
 
     *deck_path* is recorded in the habitat progress sidecar so a
     consumer knows which deck the counter belongs to; omitting it costs
@@ -154,9 +248,10 @@ def stream_run(
     ``RuntimeError`` is raised as before and the record is *not*
     smuggled through it — the log is on disk and
     ``parse_solver_stats(log_path)`` reads the same record back (D1,
-    INV-7).
+    INV-7). The record is :attr:`RunReport.solver_stats`.
     """
     started = time.perf_counter()
+    counted = _IncrementCount()
     n_lines = 0
     n_warn = 0
     warn_at: list[int] = []
@@ -207,6 +302,7 @@ def stream_run(
                 m = _PROGRESS_RE.search(raw)
                 if m is not None:
                     i, n = int(m.group(1)), int(m.group(2))
+                    counted.see(i, n)
                     if verbose:
                         pct = (100 * i) // n if n else 0
                         el = time.perf_counter() - started
@@ -234,11 +330,17 @@ def stream_run(
 
     elapsed = time.perf_counter() - started
     rc = proc.returncode
+    # Exit 0 is not proof on every route: OpenSees.exe exits 0 after a
+    # Tcl ``error``, so the Tcl route also needs its completion line.
+    stopped_early = rc == 0 and (
+        proves_completion is not None and not proves_completion(log_path)
+    )
+    ok = rc == 0 and not stopped_early
     if progress is not None:
         # Before the raise below — a failed solve must still close its
         # sidecar, or a consumer polls a ``done: false`` file forever.
-        progress.finish(ok=rc == 0, warnings=n_warn)
-    if rc == 0:
+        progress.finish(ok=ok, warnings=n_warn)
+    if ok:
         print(
             f"[OK] finished in {elapsed:.1f}s  (exit 0)  |  "
             f"{n_lines:,} log lines, {n_warn} warnings"
@@ -267,15 +369,34 @@ def stream_run(
                 SolverStatsWarning,
                 stacklevel=2,
             )
-        return stats
+        return RunReport(
+            returncode=rc,
+            log=Path(log_path),
+            elapsed_s=elapsed,
+            increments=counted.value if count_increments else None,
+            solver_stats=stats,
+        )
 
-    print(f"[FAIL] exited {rc} after {elapsed:.1f}s  |  see {log_path}")
+    if stopped_early:
+        print(
+            f"[FAIL] exited 0 after {elapsed:.1f}s but did not run to its "
+            f"end  |  see {log_path}"
+        )
+    else:
+        print(f"[FAIL] exited {rc} after {elapsed:.1f}s  |  see {log_path}")
     tail_lines = list(tail)
     if verbose and tail_lines:
         print(f"     ---- last {len(tail_lines)} log lines ----")
         for ln in tail_lines:
             print(f"     {ln}")
     tail_txt = "\n".join(tail_lines)
+    if stopped_early:
+        raise RuntimeError(
+            f"{header} subprocess exited 0 but the deck did not run to its "
+            "end: the log has no completion line (an aborted analyze or "
+            f"another Tcl error stopped it). Full log: {log_path}\n"
+            f"---- last {len(tail_lines)} lines ----\n{tail_txt}"
+        )
     raise RuntimeError(
         f"{header} subprocess returned {rc}. Full log: {log_path}\n"
         f"---- last {len(tail_lines)} lines ----\n{tail_txt}"
