@@ -1341,15 +1341,16 @@ def test_green_main_and_fresh_base_land(capsys):
     pytest.param((1, "2026-10-14T10:01:00Z"), True, id="1-commit-24h01"),
     pytest.param((0, None), False, id="current"),
 ])
-def test_stale_base_limits(behind, refused):
+def test_stale_base_limits(behind, refused, capsys):
     """N commits and 24 h, from the checks' start to main's tip. Revert-proof: without
-    `check_fresh_base`, the refused cases merge."""
+    `check_fresh_base`, the refused cases merge and the others print no check-11 line."""
     gh, git = _recording(1218, PR_1218, SQUASH_1218, behind=behind)
     if refused:
         with pytest.raises(land_pr.LandError, match=r"check 11: .*limits: 10 commits, 24 h"):
             _run(1218, gh, git)
     else:
         assert _run(1218, gh, git) == 0
+        assert f"ran on base ffffffffffff, {behind[0]} commit(s)" in capsys.readouterr().out
 
 
 @pytest.mark.parametrize("path", ["internal_docs/program/retirement_ledger.toml", "tests/test_x.py"])

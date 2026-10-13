@@ -578,11 +578,12 @@ def check_fresh_base(number: int, pr: dict[str, Any], rows: list[FileRow], gh: R
         "Re-run them on a fresh merge ref: merge main into the branch (or push an empty commit) "
         "and wait for the checks. The Re-run button reuses the old merge ref."
     )
-    workflow_runs: dict[str, tuple[str, list[str]]] = {}  # run id -> (one job id, start times)
-    for run in pr["statusCheckRollup"]:
+    # Run id -> (one job id, start times). Every job of a run checks out the same merge
+    # ref, so one log per run is read: lock-tests's, the shortest, when it is there.
+    workflow_runs: dict[str, tuple[str, list[str]]] = {}
+    required = [run for run in pr["statusCheckRollup"] if (run.get("name") or run.get("context")) in REQUIRED_CHECKS]
+    for run in sorted(required, key=lambda run: REQUIRED_CHECKS.index(run.get("name") or run.get("context"))):
         name = run.get("name") or run.get("context")
-        if name not in REQUIRED_CHECKS:
-            continue
         job = _ACTIONS_JOB.search(run.get("detailsUrl") or "")
         if job is None or not run.get("startedAt"):
             raise LandError(
