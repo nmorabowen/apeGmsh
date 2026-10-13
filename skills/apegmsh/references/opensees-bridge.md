@@ -614,8 +614,8 @@ otherwise. The resolved per-node `ndf` (inferred ∪ stated) persists to
 Open a stage as a **context manager**. Stages accumulate by
 registration order; they do **not** nest (a second open while one is
 live raises `RuntimeError`). Every stage MUST call `s.analysis(...)`
-(all 7 chain kwargs) **and** `s.run(...)` before the `with` exits, or
-`__exit__` raises `ValueError`.
+(all 7 chain kwargs, or a shared chain plus `integrator=`) **and**
+`s.run(...)` before the `with` exits, or `__exit__` raises `ValueError`.
 
 ```python
 ops = apeSees(fem)
@@ -647,6 +647,34 @@ with ops.stage(name="install_lining") as s:
 ops.tcl("model.tcl", run=True)   # staged decks emit via Tcl/Py text ONLY
 ```
 <!-- verified: tests/opensees/unit/test_stages.py::test_stage_builder_records_complete_stage, tests/opensees/unit/test_stages.py::test_stage_builder_missing_analysis_raises -->
+
+**One chain for several stages: `ops.analysis.chain`.** It bundles every
+slot but the integrator into a frozen value (not a primitive: it registers
+and emits nothing), and each stage passes it with its own integrator. The
+deck is byte-identical to the keyword form:
+
+```python
+solver = ops.analysis.chain(
+    test=ops.test.NormDispIncr(tol=1e-8, max_iter=50),
+    algorithm=ops.algorithm.Newton(),
+    constraints=ops.constraints.Plain(), numberer=ops.numberer.RCM(),
+    system=ops.system.UmfPack(), analysis=ops.analysis.Static(),
+)
+with ops.stage(name="geostatic") as s:
+    with s.pattern(series=ops.timeSeries.Linear()) as p:
+        p.from_model("self_weight")
+    s.analysis(solver, integrator=ops.integrator.LoadControl(dlam=0.1))
+    s.run(n_increments=10)                  # Static: the step is dlam; no dt
+```
+
+- A chain plus a keyword for a slot it holds (`s.analysis(solver, test=...)`)
+  raises `ValueError`; build a second chain instead.
+- **`Linear` needs no test.** With `ops.algorithm.Linear()` the test may be
+  omitted (in the chain or the keyword form) and the stage emits no `test`
+  line; the H5 archive stores none and replays without one. Every other
+  algorithm iterates (`needs_test` is True) and still requires it, and so
+  does a stage with `s.run(strategy=)`.
+<!-- verified: tests/opensees/unit/test_stage_chain.py, tests/opensees/live/test_stage_linear_without_test_live.py -->
 
 **The stage clock restarts at 0.** Every stage closes with
 `loadConst -time 0.0`: its loads become the permanent baseline and the
@@ -700,13 +728,17 @@ ops.pattern('Plain', 2, 2)
 - **Time reset to 0** by that `-time 0.0`, unless the next stage calls
   `s.set_time(t)` (emits `setTime` after the wipe). #1366 warns on a zero `Path`.
 - **Analysis chain wiped** (`wipeAnalysis`) and **re-emitted** in full per stage
-  from its own `s.analysis(...)`; nothing carries over.
+  from its own `s.analysis(...)` (a `Linear` stage without a test writes no
+  `test` line); nothing carries over.
 - **Domain state and recorders kept:** `wipeAnalysis` leaves the domain alone;
   recorders are emitted once, before the first stage, never again.
-- **Static ignores `s.run(dt=)`.** The deck writes `ops.analyze(1, <dt>)` but
-  `LoadControl.dlam` alone sets the step (`_internal/stage_window.py::
-  stage_increment_times`). `dt` is the step only under `Transient`.
-<!-- verified: tests/opensees/test_stage_boundary_docs_claims.py -->
+- **Under Static the step is `dlam`; leave `dt` out.** OpenSees ignores
+  `analyze`'s `dt` under `Static`; `LoadControl.dlam` alone sets the step
+  (`_internal/stage_window.py::stage_increment_times`). A `Static` +
+  `LoadControl` stage whose `s.run(dt=)` differs from `dlam` raises
+  `ValueError` at stage close, naming `dlam`; `dt == dlam` is accepted. `dt` is
+  the step only under `Transient`.
+<!-- verified: tests/opensees/test_stage_boundary_docs_claims.py, tests/opensees/unit/test_stage_chain.py -->
 
 ### Stage verbs — PUSH vs PULL vs CLAIM
 
