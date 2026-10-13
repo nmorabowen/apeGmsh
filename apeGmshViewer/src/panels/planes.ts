@@ -122,10 +122,11 @@ export function mountPlanes(store: Store, host: PlanesHost): () => void {
     on(view, "click", () => store.dispatch({ type: "addClipPlane", normal: [...host.viewNormal()] }));
     add.append(view);
     panel.replaceChildren(head, add);
+    // The notice first: with six rows the panel scrolls, and a refusal must be seen where it was asked for.
+    if (s.clip.notice) panel.append(el("div", "planes-notice", s.clip.notice));
 
     for (const r of planeRows(s.clip.planes, box)) panel.append(row(r));
 
-    if (s.clip.notice) panel.append(el("div", "planes-notice", s.clip.notice));
     if (!s.clip.planes.length) panel.append(el("div", "legend-note", "No section planes. A plane keeps the side its normal points to; flip keeps the other."));
 
     const foot = el("div", "legend-mode planes-foot");

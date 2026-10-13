@@ -263,7 +263,7 @@ code { font-family: var(--mono); }
 /* V4e1: the section planes panel (ADR 0083 Part 4), at the top of the rail,
    above the inspector; it scrolls past 45 % of the rail. */
 #planes {
-  flex: 0 1 auto; min-height: 0; max-height: 45%; margin-bottom: auto;
+  flex: 0 0 auto; min-height: 0; max-height: 45%; margin-bottom: auto;
   overflow: auto; padding: 10px 12px; border-radius: 10px;
   background: var(--panel); border: 1px solid var(--line);
 }
@@ -294,5 +294,5 @@ code { font-family: var(--mono); }
 }
 .plane-normal .plane-number { width: 64px; }
 .plane-number.outside { border-color: var(--interp); }
-.planes-notice { color: var(--error); font-size: 13px; margin: 6px 0 0; }
+.planes-notice { color: var(--error); font-size: 13px; margin: 0 0 6px; }
 .planes-foot { margin: 8px 0 0; padding-top: 8px; border-top: 1px solid var(--line); flex-wrap: wrap; }
