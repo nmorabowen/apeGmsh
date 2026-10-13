@@ -161,6 +161,30 @@ def test_emitted_rows_match_the_owner_filter(
     assert spec.emitted == expected
 
 
+@pytest.mark.parametrize("block", [1, 3, 7, 1 << 20])
+def test_blocked_owner_probe_matches_the_whole_plan_probe(
+    monkeypatch, block: int,
+) -> None:
+    """The owner probe runs in fixed blocks; any block size, including
+    ones that do not divide the row count, gives the whole-plan answer."""
+    from apeGmsh.opensees._internal.build import element_emit
+
+    rng = np.random.default_rng(1894)
+    ranks = rng.integers(-1, 4, size=23).tolist()
+    owner = _owner(ranks)
+    plan = _plan(len(ranks))
+    monkeypatch.setattr(element_emit, "_OWNER_PROBE_BLOCK", block)
+    for rank in range(-1, 5):
+        got = element_emit._owned_mask(plan, owner, rank)
+        ref = element_emit._plan_owner_ranks(plan, owner) == rank
+        assert got.dtype == bool
+        assert np.array_equal(got, ref)
+        spec = _Spec()
+        _emit(spec, plan, owner, rank=rank)
+        assert spec.emitted == _reference(
+            plan, {i + 1: r for i, r in enumerate(ranks)}, rank)
+
+
 def _node_pair_plan() -> ElementPlanRows:
     """A 1-row node-pair plan: the whole plan goes to every rank."""
     from apeGmsh.opensees._internal.tag_resolution import MISSING_FEM_ELEMENT_ID

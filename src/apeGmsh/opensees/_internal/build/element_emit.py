@@ -319,6 +319,39 @@ class LazyRankBuckets:
         return self._plan.select_rows(idx)
 
 
+#: Rows per owner-probe block in :func:`_owned_mask`.  ``translate_ranks``
+#: allocates ~5 ``int64`` temporaries per query row, so probing a whole
+#: rank bucket at once peaks at ~40 B/row; a fixed block bounds that.
+_OWNER_PROBE_BLOCK = 16_384
+
+
+def _owned_mask(
+    pre_allocated: "ElementPlanRows | list[tuple[int, tuple[int, ...], int]]",
+    element_owner: "SortedIntToInt | Mapping[int, int]",
+    partition_rank: int,
+) -> "np.ndarray":
+    """``bool[N]``: row ``i`` is owned by ``partition_rank``.
+
+    Same answer as ``_plan_owner_ranks(...) == partition_rank``.  A
+    columnar plan with a columnar owner map is probed in fixed blocks,
+    so the owner probe's temporaries stay O(block) rather than O(rows);
+    any other pairing takes :func:`_plan_owner_ranks` whole.
+    """
+    translate = getattr(element_owner, "translate_ranks", None)
+    eids = getattr(pre_allocated, "eids", None)
+    if translate is None or eids is None:
+        return cast(
+            "np.ndarray",
+            _plan_owner_ranks(pre_allocated, element_owner) == partition_rank,
+        )
+    n =int(eids.shape[0])
+    mask = np.empty(n, dtype=bool)
+    for s in range(0, n, _OWNER_PROBE_BLOCK):
+        e = min(s + _OWNER_PROBE_BLOCK, n)
+        np.equal(translate(eids[s:e], -1), partition_rank, out=mask[s:e])
+    return mask
+
+
 class _OwnedRows:
     """Lazy, re-iterable view of one rank's owned rows of an element plan.
 
@@ -394,7 +427,7 @@ def emit_element_spec_partitioned(
     # list (owner ranks or row tuples) is held: rows stream from
     # ``pre_allocated`` to the emitter, so only the row being emitted is
     # alive.
-    owned_mask = _plan_owner_ranks(pre_allocated, element_owner) == partition_rank
+    owned_mask = _owned_mask(pre_allocated, element_owner, partition_rank)
     n_owned = int(np.count_nonzero(owned_mask))
     if n_owned == 0:
         return
