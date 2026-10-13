@@ -65,6 +65,7 @@ class _RecorderNS(_BridgeNamespace):
         dofs: tuple[int, ...],
         dT: float | None = None,
         time_format: str = "step",
+        precision: int | None = None,
         name: str | None = None,
     ) -> Node:
         """Construct + register a ``recorder Node``.
@@ -81,6 +82,10 @@ class _RecorderNS(_BridgeNamespace):
         back to a physical group. The recorder keeps the label names
         as provenance (``/opensees/decl_params``); the ids stay
         authoritative and nothing re-resolves the label.
+
+        ``precision`` (a positive ``int``) emits ``-precision N``, the
+        significant digits OpenSees writes per value (its default is 6);
+        ``None`` emits no flag.
 
         ``name`` labels the recorder's declaration (its
         ``opensees/recorder/<name>`` key, unique among the recorders,
@@ -106,6 +111,7 @@ class _RecorderNS(_BridgeNamespace):
                 dofs=dofs,
                 dT=dT,
                 time_format=time_format,
+                precision=precision,
             ),
             name=name, alias=False,
         )
@@ -121,6 +127,7 @@ class _RecorderNS(_BridgeNamespace):
         label: str | Sequence[str] | None = None,
         dT: float | None = None,
         time_format: str = "step",
+        precision: int | None = None,
         name: str | None = None,
     ) -> Element:
         """Construct + register a ``recorder Element``.
@@ -137,6 +144,10 @@ class _RecorderNS(_BridgeNamespace):
         provenance (``/opensees/decl_params``). An unknown label
         raises, listing the labels that exist; it never falls back to
         a physical group.
+
+        ``precision`` (a positive ``int``) emits ``-precision N``, the
+        significant digits OpenSees writes per value (its default is 6);
+        ``None`` emits no flag.
 
         ``name`` labels the recorder's declaration (its
         ``opensees/recorder/<name>`` key, unique among the recorders,
@@ -160,6 +171,7 @@ class _RecorderNS(_BridgeNamespace):
                 label=None if label is None else _label_names(label),
                 dT=dT,
                 time_format=time_format,
+                precision=precision,
             ),
             name=name, alias=False,
         )

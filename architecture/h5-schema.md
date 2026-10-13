@@ -1310,6 +1310,15 @@ re-resolves a label, so a label that no longer names those ids, or names
 nothing, changes nothing that runs. An archive written before 2.28.0 has
 no `label` key in these rows; it reads exactly as before.
 
+**`precision` (opensees 2.30.0; R3-S5 #1789, maintainer ruling D7).**
+The rows of the typed `recorder.Node` / `recorder.Element` carry a
+`precision` field: the significant digits per written value that
+`precision=N` asked for, which the deck carries as `-precision N` right
+after `-file`. A recorder declared without it stores **`precision: null`**
+and its deck line has no flag, byte-identical to an earlier writer's. An
+archive written before 2.30.0 has no `precision` key in these rows; it
+reads exactly as before.
+
 `H5Model.declarations()` returns the rows as `DeclarationTable.params`
 (`decls` row -> a tuple of `DeclParamsRO`, one per owner in call order:
 `type`, `params` with `DeclRef` / `DeclStruct` / `DeclOpaque` values,
@@ -2208,7 +2217,7 @@ call `validate_zone_version(...)` for each zone before reading it.
 | Zone | `/meta` key | Root paths | Writer constant (source of truth) | Current | Floor |
 |---|---|---|---|---|---|
 | neutral (broker) | `neutral_schema_version` | `/nodes`, `/elements`, `/physical_groups`, `/labels`, `/mesh_selections`, `/partitions`, `/parts`, `/constraints`, `/reinforce_ties`, `/embed_ties`, `/rebar_elements`, `/contacts`, `/contact_planes`, `/interfaces`, `/loads`, `/masses`, `/composed_from` | [`mesh/_femdata_h5_io.py`](../src/apeGmsh/mesh/_femdata_h5_io.py) `NEUTRAL_SCHEMA_VERSION` | **2.35.0** | **2.10.0** |
-| opensees (bridge) | `opensees_schema_version` | `/opensees/*` | [`opensees/emitter/h5.py`](../src/apeGmsh/opensees/emitter/h5.py) `SCHEMA_VERSION` | **2.29.0** | **2.12.0** |
+| opensees (bridge) | `opensees_schema_version` | `/opensees/*` | [`opensees/emitter/h5.py`](../src/apeGmsh/opensees/emitter/h5.py) `SCHEMA_VERSION` | **2.30.0** | **2.12.0** |
 | results | `results_schema_version` | `/stages/*` (composed `results.h5`, at file root; layout in [`results.h5`](#resultsh5-the-native-results-file)) | [`results/schema/_versions.py`](../src/apeGmsh/results/schema/_versions.py) `RESULTS_SCHEMA_VERSION` | **1.2.0** | **1.0.0** |
 | cuts (sub-zone of opensees) | — (no own key; rides the opensees zone) | `/opensees/cuts`, `/opensees/sweeps` | [`cuts/_h5_io.py`](../src/apeGmsh/cuts/_h5_io.py) `V4_SCHEMA_VERSION` | 2.5.0 | none of its own: it rides the opensees floor |
 | geometry (ADR 0112 D2) | `geometry_schema_version` | `/geometry` (sibling `<stem>.geometry.h5` only) | [`opensees/_internal/schema_version.py`](../src/apeGmsh/opensees/_internal/schema_version.py) `GEOMETRY_SCHEMA_VERSION` | **1.0.0** | **1.0.0** |
@@ -2669,6 +2678,14 @@ detail lives in the `SCHEMA_VERSION` docstring in
   `model_hash`, so a reinforced archive hashes differently once at this
   minor; every other file hashes as before. Additive minor (a 2.28.x
   reader refuses a 2.29.x file, INV-4).
+- `2.30.0` — R3-S5 (#1789; maintainer ruling D7 on #1372, the R2-f
+  precedent): additive — the
+  [`decl_params`](#opensees-decl_params-optional-opensees-2260) rows of
+  typed Node / Element recorder declarations gain a `precision` field
+  (`null` when unset; the deck then carries no `-precision`). No path or
+  dtype changes, and `decl_params` is hash-excluded, so every file hashes
+  as before. Additive minor (a 2.29.x reader refuses a 2.30.x file,
+  INV-4).
 
 This is the **current** opensees-zone version (`SCHEMA_VERSION` in
 [`opensees/emitter/h5.py`](../src/apeGmsh/opensees/emitter/h5.py)); check that constant
