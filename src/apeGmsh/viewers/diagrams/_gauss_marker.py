@@ -21,11 +21,9 @@ the only mitigation is global VTK state that also disturbs the
 wireframe overlay. Real spheres sit a finite radius above / below the
 plane and render unambiguously.
 
-Picking was on the legacy ``PickInventory`` path (deleted at X3-e,
-#1769): the diagram registers the backend's glyph actor with
-``scene.pick_engine`` and reverse-maps a picked cell index back to a GP.
-Nothing sets ``scene.pick_engine`` any more, so the registration is a
-no-op; session GP picking goes through ``session/_pick.py``.
+Session GP picking goes through ``session/_pick.py``;
+:meth:`GaussPointDiagram.resolve_picked_cell` reverse-maps a picked cell
+index back to a GP.
 """
 from __future__ import annotations
 
@@ -85,8 +83,6 @@ class GaussPointDiagram(ScalarColorSupport, Diagram):
         self._glyph_cells_per_center: int = 0
         # Scalar-bar + runtime colour state + LUT mirror (mixin).
         self._init_scalar_color_state()
-        # The glyph actor currently registered on ``scene.pick_engine``.
-        self._registered_actor: Any = None
 
     # ------------------------------------------------------------------
     # Attach / detach / update
@@ -182,9 +178,8 @@ class GaussPointDiagram(ScalarColorSupport, Diagram):
         self._layer = self._build_layer(self._gp_values)
         self._handle = self._backend.add_layer(self._layer)
 
-        # Picking + LUT mirror.
+        # LUT mirror.
         self._update_glyph_cells_per_center()
-        self._register_pick()
         self._init_lut()
         self._register_scalar_bar()
 
@@ -214,7 +209,6 @@ class GaussPointDiagram(ScalarColorSupport, Diagram):
         self._gp_values = slab_values
         self._layer = self._build_layer(self._gp_values)
         self._backend.update_layer(self._handle, self._layer)
-        self._register_pick()
 
     def sync_substrate_points(
         self, deformed_pts: "ndarray | None", scene: "FEMSceneData",
@@ -249,14 +243,10 @@ class GaussPointDiagram(ScalarColorSupport, Diagram):
         self._coords = np.asarray(new_centers, dtype=np.float64)
         self._layer = self._build_layer(self._gp_values)
         self._backend.update_layer(self._handle, self._layer)
-        self._register_pick()
 
     def detach(self) -> None:
         self._unregister_scalar_bar()
         self._teardown_lut()
-        # Drop the GP actor from the scene's pick inventory before
-        # clearing local state.
-        self._unregister_pick()
         if self._backend is not None and self._handle is not None:
             self._backend.remove_layer(self._handle)
         self._layer = None
@@ -330,34 +320,6 @@ class GaussPointDiagram(ScalarColorSupport, Diagram):
         except Exception:
             return None
         return (element_id, int(center_idx), world)
-
-    def _register_pick(self) -> None:
-        """(Re)register the current backend glyph actor with the
-        scene's pick inventory (``scene.pick_engine``).
-
-        The backend rebuilds the glyph actor on every ``update_layer``,
-        so the registration is refreshed whenever the actor identity
-        changes. No-op when the scene has no pick engine (headless) or
-        the backend exposes no actor (recording stub).
-        """
-        scene = getattr(self, "_scene", None)
-        pick_engine = getattr(scene, "pick_engine", None) if scene else None
-        if pick_engine is None:
-            return
-        actor = getattr(self._handle, "actor", None)
-        if actor is None or actor is self._registered_actor:
-            return
-        if self._registered_actor is not None:
-            pick_engine.unregister_actor(self._registered_actor)
-        pick_engine.register_actor(actor, "gp", self.resolve_picked_cell)
-        self._registered_actor = actor
-
-    def _unregister_pick(self) -> None:
-        scene = getattr(self, "_scene", None)
-        pick_engine = getattr(scene, "pick_engine", None) if scene else None
-        if pick_engine is not None and self._registered_actor is not None:
-            pick_engine.unregister_actor(self._registered_actor)
-        self._registered_actor = None
 
     def _update_glyph_cells_per_center(self) -> None:
         """Derive cells-per-sphere from the backend handle's dataset.

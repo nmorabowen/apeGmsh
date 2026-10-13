@@ -526,8 +526,8 @@ class MeshInspectorPage:
         gesture, but a plane that only ``view.add_clip(...)`` can create
         is the A6.1 "works from Python, unreachable in the window" row
         the parity gate exists to end — the old viewer's clip dock has
-        exactly one caller, ``results_viewer.py:975``, so the session
-        window had no way to make a plane at all.
+        exactly one caller, the since-deleted ``results_viewer.py``, so the
+        session window had no way to make a plane at all.
 
         0087 INV-2 is why the offset controls live on the plane ROWS
         rather than in a fixed block: with no planes there is no offset

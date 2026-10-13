@@ -2,7 +2,7 @@
 
 ADR 0084 D7 (PR 7). These four primitives — STEP, DEFORM, GATE,
 RESTACK — used to be closures defined inside
-``ResultsViewer._show_impl`` and handed to ``Dispatcher.bind()`` a few
+the Qt ``ResultsViewer._show_impl`` (deleted at X3-d) and handed to ``Dispatcher.bind()`` a few
 hundred lines later. That made them unreachable without a real window:
 every headless test of the pump semantics had to re-type the pump body
 (see ``tests/viewers/test_gate_effective_visibility.py`` before this
@@ -27,8 +27,7 @@ of.
 ``_pump_failed``, ``_gate_visible_layer_ids``,
 ``_compose_substrate_points`` and ``sync_render_surface_points`` moved
 here with the pumps (they were module-level helpers in
-``results_viewer.py`` serving only these bodies); ``results_viewer``
-re-exports all four, so their existing import paths still resolve.
+the deleted ``results_viewer.py`` serving only these bodies).
 """
 from __future__ import annotations
 
