@@ -704,17 +704,18 @@ def _rebar_cell_tags(elements: "Sequence[Any]", fem: Any) -> "set[int]":
     """
     from collections import Counter
 
-    from .build.constraints_plan import (
-        rebar_cell_entries,
-        rebar_element_records,
-    )
+    from .build.constraints_plan import rebar_element_records
     from .tag_resolution import MISSING_FEM_ELEMENT_ID
 
-    entries = rebar_cell_entries(rebar_element_records(fem))
+    # One pair per line cell of each bar, as ``rebar_cell_entries`` plans them.
+    entries = [
+        (int(i), int(j))
+        for rec in rebar_element_records(fem)
+        for i, j in rec.connectivity
+    ]
     if not entries:
         return set()
-    want: "Counter[tuple[int, int]]" = Counter(
-        (int(e.key[1]), int(e.key[2])) for e in entries)
+    want: "Counter[tuple[int, int]]" = Counter(entries)
     tags: "set[int]" = set()
     for rec in elements:
         if (rec.type_token != "CorotTruss"
@@ -1056,7 +1057,7 @@ def _replay_into(
     # this hoist does nothing for.
     # The g.rebar.place(emit_elements=True) cells leave step 8: the bridge
     # writes them after the reinforce ties (slot 7b''), and so does 9c''
-    # below (#1828). Only a deck target (``fem`` given) moves them; the H5
+    # below. Only a deck target (``fem`` given) moves them; the H5
     # rewrite keeps its element order.
     _cell_tags = (
         _rebar_cell_tags(elements, fem) if fem is not None else set())
@@ -1253,7 +1254,7 @@ def _replay_into(
         )
 
     # 9c''. The g.rebar.place(emit_elements=True) CorotTruss cells, in
-    # archive order: the bridge's slot 7b'', after the ties (#1828). Of what
+    # archive order: the bridge's slot 7b'', after the ties. Of what
     # the bridge writes in between, the embed ties and contacts are streams
     # this replay skips, and an interface's zeroLength stays at step 8.
     if _cells:
