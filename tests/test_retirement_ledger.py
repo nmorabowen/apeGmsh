@@ -175,13 +175,22 @@ def problems(rows: Any, root: Path, today: dt.date) -> list[str]:
     return errors
 
 
-def load_rows(path: Path = LEDGER) -> Any:
+def ledger_problems(doc: dict[str, Any], root: Path, today: dt.date) -> list[str]:
+    """``problems`` for a parsed ledger file. Any top-level key but ``row`` fails:
+    a ``[[rows]]`` or ``[row]`` typo would otherwise drop its rows silently."""
+    stray = sorted(set(doc) - {"row"})
+    if stray:
+        return [f"unknown top-level keys {stray}: every row is a [[row]] table"]
+    return problems(doc.get("row"), root, today)
+
+
+def load_doc(path: Path = LEDGER) -> dict[str, Any]:
     with path.open("rb") as fh:
-        return tomllib.load(fh).get("row")
+        return tomllib.load(fh)
 
 
 def test_ledger_is_well_formed_alive_and_not_overdue() -> None:
-    errors = problems(load_rows(), ROOT, dt.date.today())
+    errors = ledger_problems(load_doc(), ROOT, dt.date.today())
     assert not errors, "retirement ledger:\n  " + "\n  ".join(errors)
 
 
@@ -276,3 +285,17 @@ def test_selftest_duplicate_ids_and_empty_ledger_fail(tree: Path) -> None:
     assert problems([_row(), _row()], tree, TODAY)
     assert problems([], tree, TODAY)
     assert problems(None, tree, TODAY)
+
+
+def test_selftest_stray_top_level_key_fails(tree: Path) -> None:
+    """A ``[[rows]]`` typo beside valid ``[[row]]`` tables must not drop rows silently."""
+    ledger = tree / "ledger.toml"
+    ledger.write_text(
+        '[[row]]\nid = "ok"\nkind = "facade"\npaths = ["pkg/mod.py"]\n'
+        'expires = 2026-12-01\nbasis = "policy"\nsource = "test"\n\n'
+        '[[rows]]\nid = "dropped"\nkind = "facade"\npaths = ["pkg/mod.py"]\n'
+        'expires = 2026-01-01\nbasis = "policy"\nsource = "test"\n',
+        encoding="utf-8")
+    errors = ledger_problems(load_doc(ledger), tree, TODAY)
+    assert len(errors) == 1 and "['rows']" in errors[0]
+    assert ledger_problems({"row": [_row()]}, tree, TODAY) == []

@@ -112,6 +112,14 @@ trame (and `show_web`/`serve_web`) leave when V4 covers interactive results
 (chain X, X3)"; the retirement ledger
 (`internal_docs/program/retirement_ledger.toml`) dates the review.
 
+This amendment departs from two earlier statements, per the maintainer's X3
+KEEP ruling (2026-10-11, #1199), which keeps the `ResultsDirector`
+chain, `viewers/diagrams/`, `show_web`/`serve_web` and the trame deps until
+V4: ADR 0112's relation-table row "X3, delete the legacy `ResultsViewer`,
+director chain and trame" (**Stands**), and this ADR's own "changes nothing in 0112" (Relation to
+earlier decisions). Both still read as written; this amendment, once
+accepted, governs when trame leaves.
+
 "Not built" is overtaken: X4-d (#1813) adds the quirk lint rules
 `vtk-import` (D3) and `render-tech-import` (D4) to `scripts/check_quirks.py`,
 with the allowlist `scripts/quirks_render_allowlist.txt`, so review no longer

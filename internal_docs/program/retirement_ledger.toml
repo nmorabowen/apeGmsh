@@ -141,7 +141,7 @@ kind = "spin-out"
 paths = ["src/apeGmsh/studio/"]
 expires = 2026-12-11
 basis = "ruling"
-source = "#1199 X4 ruling 5: 60 days from X4-a's landing (anchored 2026-10-12)"
+source = "#1199 X4 ruling 5: X4-a's landing date + 60 days (2026-12-11 for a 2026-10-12 landing; re-checked at landing)"
 
 # --- Prototypes folder -----------------------------------------------------
 
@@ -208,9 +208,9 @@ texts = [
     'tests/opensees/contract/test_tag_plan_oracle.py::reason=f"{family}: tags still minted at emit time"',
     'tests/opensees/contract/test_tag_plan_oracle.py::reason="families still pending: "',
 ]
-expires = 2026-12-11
-basis = "policy"
-source = "PROGRAM.md section 8 KC4 (60 days); clock start 2026-10-12 proposed by X4-a"
+expires = 2026-12-04
+basis = "ruling"
+source = "PROGRAM.md section 8 KC4: 60 days from the xfails' addition on 2026-10-05"
 
 [[row]]
 id = "xfail-partitioned-parallel-plain"
