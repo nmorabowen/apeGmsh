@@ -796,6 +796,7 @@ def _replay_into(
     deck_ordering: bool = True,
     stage_mp_keys: "frozenset[tuple[Any, ...]]" = frozenset(),
     commands: "Sequence[Any]" = (),
+    equation_constraints: "Sequence[Any]" = (),
 ) -> None:
     """Walk a typed-record graph and re-emit it through ``emitter``.
 
@@ -840,6 +841,8 @@ def _replay_into(
           verbatim and in store order: after the global
           ``rayleigh`` so a region-scoped one still wins per element, and
           before the recorders that reference a fan-out region by ``-R``
+      9b'. ``emitter.equationConstraint`` for ``equation_constraints``,
+          in call order
       10. ``emitter.pattern_open`` (+ load / sp / eleLoad +
           pattern_close)
       11. ``emitter.recorder`` (wrapped in declaration-begin/end when
@@ -1136,6 +1139,31 @@ def _replay_into(
     # emits it) and before the recorders that name a fan-out region.
     for rec in regions:
         emitter.region(int(rec.tag), *rec.args)
+
+    # 9b'. User ``equationConstraint`` rows, in call order,
+    # where the bridge emits them: after the regions, before the initial
+    # stress. The archive keeps each one only as its ``/opensees/decl_params``
+    # row (``H5Emitter`` ledgers the verb), which the caller decodes into
+    # ``EquationConstraintRecord``s. The bridge's own emit helper re-checks
+    # every node and DOF against the replayed nodes' ndf.
+    if equation_constraints:
+        if fem is None:
+            raise ValueError(
+                "_replay_into: equation_constraints need the broker fem to "
+                "check their nodes; this caller passed none."
+            )
+        from .build.constraints import emit_equation_constraints
+
+        # The ndf each node replays with (``None`` = the envelope).
+        eq_node_ndf: "dict[int, int]" = {}
+        for entry in nodes:
+            entry_ndf = entry[2] if len(entry) == 3 else None
+            if entry_ndf is not None:
+                eq_node_ndf[int(entry[0])] = int(entry_ndf)
+        emit_equation_constraints(
+            emitter, fem, equation_constraints,
+            node_ndf=eq_node_ndf, default_ndf=int(ndf),
+        )
 
     # 9c. Global initial stress (ADR 0055 Phase 1).  Emitted BEFORE
     # patterns / the analysis chain so ``step_hook_ramp`` registers and

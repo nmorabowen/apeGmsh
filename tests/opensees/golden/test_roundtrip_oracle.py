@@ -17,14 +17,32 @@ header records that.
 ``roundtrip_oracle_ledger.txt`` holds one row per differing model:
 
 - Class A: integral floats only (``1e6`` comes back as ``1000000``).
-- Class B: the same lines in another order.
+- Class B: the same lines in another order, once every number is
+  normalised (so float text may differ too).
 - Class C: a semantic difference (#1798).
 - Class S: the model is not replayable, and replay raises the named error
   (#1797).
 
-A/B/C rows pin the sha256 of the exact normalised diff, and the test also
-re-derives the class. A waived model that starts to match fails, and so does
-one that differs in a new way, which forces the ledger to shrink.
+A/B/C rows pin the sha256 of the exact normalised diff. The class is never
+taken on trust: the oracle derives it from the two decks and fails a row whose
+label differs, so a B row is the mechanical proof that its diff is order and
+float text only. A waived model that starts to match fails, and so does one
+that differs in a new way, which forces the ledger to shrink.
+
+**Re-pin carve-out.** A fix can remove a row's semantic difference and leave
+its order or float text. Then the row may be re-pinned, but only to downgrade
+its class: C to A or B. Otherwise a row may only be deleted. The ledger is
+compared row by row with the copy at the merge base with ``origin/main``
+(:func:`_ledger_transition_errors`): an added row, a re-pin that keeps or
+raises the class, and any other change of class fail as a replay regression.
+A re-pinned row drops its #1798 citation, so the C rows citing #1798 are
+exactly what it still has open. The one stricter label: a C row may be held
+over a diff the oracle derives as A or B when the reorder breaks a
+dependency the multiset rule cannot see (``_broad_frame``: a ``Parallel``
+material declared before the materials it combines, #1814). Escalate-only:
+such a row must cite an open issue other than #1798, and its C-to-C re-pin
+is allowed only when the citation moves to that new issue (openness is not
+checkable offline; the PR states it).
 ``N_WAIVED_ORACLE`` may only go down, and must reach 0 by 2026-12-11 (K2,
 KC4).
 """
@@ -35,6 +53,8 @@ import difflib
 import hashlib
 import importlib
 import re
+import subprocess
+import tempfile
 import warnings
 from dataclasses import dataclass
 from pathlib import Path
@@ -48,7 +68,7 @@ from tests.opensees.golden import builder
 _LEDGER = Path(__file__).with_name("roundtrip_oracle_ledger.txt")
 
 #: ``N_WAIVED_ORACLE`` when the ledger opened (K2a, #1794). It may only go down.
-_CEILING = 36
+_CEILING = 35
 #: The K2 deadline: the ledger is empty by then, or KC4 applies.
 DEADLINE = "2026-12-11"
 _CLASSES = frozenset({"A", "B", "C", "S"})
@@ -270,15 +290,116 @@ def _check(model: Model, waiver: Waiver | None, out_dir: Path) -> None:
         f"{model.id} now round-trips byte for byte: delete its ledger row "
         "and lower N_WAIVED_ORACLE"
     )
+    derived = _classify(bridge, replay)
+    assert _label_fits(waiver.klass, derived), (
+        f"{model.id}: the ledger says class {waiver.klass}, the diff is "
+        f"class {derived}:\n{diff}"
+    )
+    if waiver.klass != derived:
+        # An escalated C row: #1798 tracks only the semantic diffs, so the
+        # override must name the open issue that holds it at C.
+        cited = _cited_issues(waiver.reason)
+        assert cited and _SEMANTIC_ISSUE not in cited, (
+            f"{model.id}: held at C over a class-{derived} diff, so it must "
+            f"cite the open issue that holds it there, not {_SEMANTIC_ISSUE} "
+            f"(cites {sorted(cited)})")
     assert _pin(diff) == waiver.pin, (
         f"{model.id} differs in a new way (pin {_pin(diff)}, ledger "
-        f"{waiver.pin}); a fix that changes the diff updates its row only "
-        f"when the row shrinks to nothing:\n{diff}"
+        f"{waiver.pin}); a fix that changes the diff deletes its row, or "
+        f"re-pins it only to downgrade its class (C to A or B):\n{diff}"
     )
-    assert _classify(bridge, replay) == waiver.klass, (
-        f"{model.id}: the ledger says class {waiver.klass}, the diff is "
-        f"class {_classify(bridge, replay)}"
-    )
+
+
+# ---------------------------------------------------------------------------
+# The carve-out, enforced against the ledger at the merge base
+# ---------------------------------------------------------------------------
+
+_REPO = Path(__file__).resolve().parents[3]
+_LEDGER_REL = "tests/opensees/golden/roundtrip_oracle_ledger.txt"
+#: Every class change the carve-out allows: a semantic row downgraded.
+_DOWNGRADES = frozenset({("C", "A"), ("C", "B")})
+
+
+#: The issue the class-C (semantic) rows cite.
+_SEMANTIC_ISSUE = "#1798"
+
+
+def _cited_issues(reason: str) -> frozenset[str]:
+    """The ``#NNNN`` issue numbers a row's reason cites."""
+    return frozenset(re.findall(r"#\d+", reason))
+
+
+def _label_fits(label: str, derived: str) -> bool:
+    """Whether a row's class label fits the class the oracle derived.
+
+    A and B must equal the derived class: B is the mechanical proof that the
+    normalised line multisets match. C may also sit over a derived A or B,
+    the one stricter label: the multiset rule cannot see a reorder that
+    breaks a dependency (a material used before it is declared), so such a
+    row is held at C and cites the issue that tracks it.
+    """
+    return label == derived or (label == "C" and derived in ("A", "B"))
+
+
+def _ledger_transition_errors(
+    base: dict[str, Waiver], head: dict[str, Waiver],
+    derived: "dict[str, str] | None" = None,
+) -> list[str]:
+    """Each change from ``base`` to ``head`` the carve-out forbids.
+
+    A row may stay as it is (its reason text may change), be deleted, or be
+    re-pinned from class C to A or B. A C row may also be re-pinned within
+    C when ``derived`` (the class the oracle derives for the new diff) is A
+    or B and the row's citation moves to a new issue: its semantic
+    difference is gone and another (open) issue holds it at C. Anything
+    else is a replay regression: an added row, a re-pin within A, B or S, a
+    C re-pin that is still semantic or keeps its citation, or a class that
+    rises.
+    """
+    derived = derived or {}
+    errors: list[str] = []
+    for model, w in head.items():
+        b = base.get(model)
+        if b is None:
+            errors.append(f"{model}: added row (class {w.klass}); a replay "
+                          "regression, not a new waiver")
+            continue
+        if (w.klass, w.pin) == (b.klass, b.pin):
+            continue
+        if (b.klass, w.klass) in _DOWNGRADES:
+            continue
+        if (b.klass == w.klass == "C" and derived.get(model) in ("A", "B")
+                and _cited_issues(w.reason)
+                and _cited_issues(w.reason) != _cited_issues(b.reason)):
+            # Escalate-only: the semantic loss is fixed and the row is now
+            # held at C by a different (open) issue, which it cites.
+            continue
+        errors.append(
+            f"{model}: re-pinned {b.klass} {b.pin} -> {w.klass} {w.pin}; "
+            "a replay regression: a re-pin may only downgrade C to A or B, "
+            "or hold C over a diff the oracle derives as A or B")
+    return errors
+
+
+def _git(*args: str) -> str:
+    return subprocess.run(
+        ["git", "-C", str(_REPO), *args],
+        capture_output=True, text=True, check=True,
+    ).stdout
+
+
+def _base_ledger_text() -> str | None:
+    """The ledger at the merge base of ``HEAD`` and ``origin/main``.
+
+    ``None`` when the base predates the ledger. The suite lane checks out
+    the full history (``fetch-depth: 0``), so a missing ``git`` or
+    ``origin/main`` fails here rather than skipping the check.
+    """
+    base = _git("merge-base", "HEAD", "refs/remotes/origin/main").strip()
+    listed = _git("ls-tree", "--name-only", base, "--", _LEDGER_REL).strip()
+    if not listed:
+        return None
+    return _git("show", f"{base}:{_LEDGER_REL}")
 
 
 # ---------------------------------------------------------------------------
@@ -321,6 +442,106 @@ def test_ledger_only_shrinks() -> None:
     assert len({w.model for w in rows}) == len(rows), "duplicate ledger rows"
 
 
+def test_ledger_changes_only_by_the_carve_out() -> None:
+    """Against the merge base: rows are deleted, or C re-pins to A or B."""
+    text = _base_ledger_text()
+    if text is None:
+        return  # the ledger is new on this branch: nothing to compare to
+    base_n, base_rows, _bh = _read_ledger(text)
+    n, rows, _h = _read_ledger()
+    assert n <= base_n, f"N_WAIVED_ORACLE rose from {base_n} to {n}"
+    base = {w.model: w for w in base_rows}
+    head = {w.model: w for w in rows}
+    corpus = {m.id: m for m in CORPUS}
+    derived: dict[str, str] = {}
+    for model, w in head.items():
+        b = base.get(model)
+        if b is not None and b.klass == w.klass == "C" and b.pin != w.pin:
+            with tempfile.TemporaryDirectory() as out:
+                derived[model] = _classify(
+                    *_emit_and_replay(corpus[model], Path(out)))
+    errors = _ledger_transition_errors(base, head, derived)
+    assert not errors, "\n".join(errors)
+
+
+_W = Waiver  # short alias for the carve-out cases below
+
+
+@pytest.mark.parametrize(("base", "head", "ok"), [
+    (_W("m", "C", "1" * 16, "r"), _W("m", "B", "2" * 16, "r"), True),
+    (_W("m", "C", "1" * 16, "r"), _W("m", "A", "2" * 16, "r"), True),
+    (_W("m", "B", "1" * 16, "r"), _W("m", "B", "1" * 16, "new reason"), True),
+    (_W("m", "C", "1" * 16, "r"), _W("m", "C", "2" * 16, "r"), False),
+    (_W("m", "B", "1" * 16, "r"), _W("m", "B", "2" * 16, "r"), False),
+    (_W("m", "B", "1" * 16, "r"), _W("m", "A", "2" * 16, "r"), False),
+    (_W("m", "A", "1" * 16, "r"), _W("m", "C", "2" * 16, "r"), False),
+    (_W("m", "S", "KeyError:nodes", "r"), _W("m", "B", "2" * 16, "r"), False),
+], ids=["C-to-B", "C-to-A", "reason-only", "C-to-C", "B-to-B", "B-to-A",
+        "A-to-C", "S-to-B"])
+def test_the_carve_out_allows_only_downgrades(
+    base: Waiver, head: Waiver, ok: bool,
+) -> None:
+    errors = _ledger_transition_errors({"m": base}, {"m": head})
+    assert (not errors) is ok, errors
+    if not ok:
+        assert "replay regression" in errors[0]
+
+
+@pytest.mark.parametrize(("derived", "base_why", "head_why", "ok"), [
+    ("B", "#1798 item 1", "#1814", True),  # the _broad_frame case
+    ("A", "#1798 item 1", "#1814", True),
+    ("C", "#1798 item 1", "#1814", False),  # still semantic
+    ("B", "#1798 item 1", "#1798 item 1", False),  # same citation
+    ("B", "#1798 item 1", "order", False),  # no citation
+], ids=["B-new-issue", "A-new-issue", "C-derived", "same-citation",
+        "no-citation"])
+def test_a_c_row_is_held_only_over_a_non_semantic_diff(
+    derived: str, base_why: str, head_why: str, ok: bool,
+) -> None:
+    errors = _ledger_transition_errors(
+        {"m": _W("m", "C", "1" * 16, base_why)},
+        {"m": _W("m", "C", "2" * 16, head_why)},
+        {"m": derived})
+    assert (not errors) is ok, errors
+    if not ok:
+        assert "replay regression" in errors[0]
+
+
+_HELD = next(m for m in CORPUS if m.id == "test_h5_decl_params::_broad_frame")
+
+
+def test_a_held_c_row_citing_the_semantic_issue_fails(tmp_path: Path) -> None:
+    """An escalated C row (derived B) may not cite #1798."""
+    w = _waivers()[_HELD.id]
+    assert w.klass == "C" and _cited_issues(w.reason) == {"#1814"}
+    stale = Waiver(w.model, "C", w.pin, "#1798 item 1: equationConstraint dropped")
+    with pytest.raises(AssertionError, match="must cite the open issue"):
+        _check(_HELD, stale, tmp_path)
+
+
+@pytest.mark.parametrize(("label", "derived", "ok"), [
+    ("A", "A", True), ("B", "B", True), ("C", "C", True),
+    ("C", "B", True), ("C", "A", True),
+    ("B", "C", False), ("A", "B", False), ("A", "C", False), ("B", "A", False),
+])
+def test_only_c_may_sit_over_the_derived_class(
+    label: str, derived: str, ok: bool,
+) -> None:
+    assert _label_fits(label, derived) is ok
+
+
+def test_an_added_row_fails_the_carve_out() -> None:
+    errors = _ledger_transition_errors(
+        {}, {"m": _W("m", "B", "1" * 16, "r")})
+    assert len(errors) == 1 and "added row" in errors[0]
+    assert "replay regression" in errors[0]
+
+
+def test_a_deleted_row_passes_the_carve_out() -> None:
+    assert _ledger_transition_errors(
+        {"m": _W("m", "C", "1" * 16, "r")}, {}) == []
+
+
 def test_every_row_names_a_corpus_model() -> None:
     corpus = {m.id for m in CORPUS}
     orphans = [w.model for w in _read_ledger()[1] if w.model not in corpus]
@@ -330,7 +551,7 @@ def test_every_row_names_a_corpus_model() -> None:
 def test_rows_cite_their_issue() -> None:
     for w in _read_ledger()[1]:
         if w.klass == "C":
-            assert re.search(r"#1798 item [123]\b", w.reason), w
+            assert re.search(r"#1798 item [123]\b|#1814\b", w.reason), w
         if w.klass == "S":
             assert "#1797" in w.reason and w.pin in _S_ERRORS, w
         if w.klass in "ABC":
@@ -350,6 +571,8 @@ _PASSING = next(m for m in CORPUS if m.id ==
                 "test_h5_commands_program::_frame[rayleigh=False,modal=False]")
 _WAIVED_A = next(m for m in CORPUS if m.id ==
                  "test_h5_decls::_flat_frame[named=False]")
+_SEMANTIC = next(m for m in CORPUS if m.id ==
+                 "test_h5_partitions_roundtrip::_build_bridge")
 
 
 def test_a_differing_model_with_no_row_fails(tmp_path: Path) -> None:
@@ -361,6 +584,15 @@ def test_a_stale_row_fails(tmp_path: Path) -> None:
     bogus = Waiver(_PASSING.id, "A", "0" * 16, "bogus")
     with pytest.raises(AssertionError, match="now round-trips byte for byte"):
         _check(_PASSING, bogus, tmp_path)
+
+
+def test_a_b_label_on_a_semantic_diff_fails(tmp_path: Path) -> None:
+    """The class is derived: a C diff labelled B fails, even with its pin."""
+    w = _waivers()[_SEMANTIC.id]
+    assert w.klass == "C"
+    fake = Waiver(w.model, "B", w.pin, w.reason)
+    with pytest.raises(AssertionError, match="the ledger says class B, the diff is class C"):
+        _check(_SEMANTIC, fake, tmp_path)
 
 
 def test_a_changed_diff_fails(tmp_path: Path) -> None:
