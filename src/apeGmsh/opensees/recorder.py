@@ -123,6 +123,22 @@ def _check_label_provenance(
         )
 
 
+def _check_precision(precision: "int | None", where: str) -> None:
+    """Refuse a ``precision`` that is not a positive Python ``int`` (R3-S5,
+    D7): ``-precision N`` sets the significant digits OpenSees writes per
+    value, so ``0``, a negative, a ``bool`` or a float has no meaning."""
+    if precision is None:
+        return
+    if (
+        isinstance(precision, bool) or not isinstance(precision, int)
+        or precision <= 0
+    ):
+        raise ValueError(
+            f"{where}: precision must be a positive int (the significant "
+            f"digits per written value), got {precision!r}."
+        )
+
+
 def _fem_ids_to_ops_tags(
     fem_eids: "tuple[int, ...]",
     fem_eid_to_ops_tag: "FemToOpsTagMap | dict[int, int]",
@@ -196,6 +212,10 @@ class Node(Recorder):
         ``"step"`` (default) writes only response columns;
         ``"dt"`` emits the OpenSees ``-time`` flag, prepending the
         simulation-time column.
+    precision
+        Significant digits per written value (OpenSees ``-precision N``;
+        its default is 6). ``None`` (default) emits no flag, so the deck
+        is unchanged. A positive ``int``; anything else raises.
     """
 
     file: str
@@ -206,6 +226,7 @@ class Node(Recorder):
     dofs: tuple[int, ...]
     dT: float | None = None
     time_format: str = "step"
+    precision: int | None = None
 
     def __post_init__(self) -> None:
         if (self.nodes is None) == (self.pg is None):
@@ -223,6 +244,7 @@ class Node(Recorder):
                 "Node recorder: time_format must be 'step' or 'dt', "
                 f"got {self.time_format!r}."
             )
+        _check_precision(self.precision, "Node recorder")
 
     def dependencies(self) -> tuple[Primitive, ...]:
         return ()
@@ -247,6 +269,8 @@ class Node(Recorder):
 
     def _emit(self, emitter: "Emitter", tag: int) -> None:
         args: list[int | float | str] = ["-file", self.file]
+        if self.precision is not None:
+            args += ["-precision", self.precision]
         if self.dT is not None:
             args += ["-dT", self.dT]
         if self.time_format == "dt":
@@ -321,6 +345,10 @@ class Element(Recorder):
     time_format
         ``"step"`` (default) writes only response columns;
         ``"dt"`` emits the OpenSees ``-time`` flag.
+    precision
+        Significant digits per written value (OpenSees ``-precision N``;
+        its default is 6). ``None`` (default) emits no flag, so the deck
+        is unchanged. A positive ``int``; anything else raises.
     """
 
     file: str
@@ -330,6 +358,7 @@ class Element(Recorder):
     label: tuple[str, ...] | None = None
     dT: float | None = None
     time_format: str = "step"
+    precision: int | None = None
 
     def __post_init__(self) -> None:
         if (self.elements is None) == (self.pg is None):
@@ -348,6 +377,7 @@ class Element(Recorder):
                 "Element recorder: time_format must be 'step' or "
                 f"'dt', got {self.time_format!r}."
             )
+        _check_precision(self.precision, "Element recorder")
 
     def dependencies(self) -> tuple[Primitive, ...]:
         return ()
@@ -401,6 +431,8 @@ class Element(Recorder):
 
     def _emit(self, emitter: "Emitter", tag: int) -> None:
         args: list[int | float | str] = ["-file", self.file]
+        if self.precision is not None:
+            args += ["-precision", self.precision]
         if self.dT is not None:
             args += ["-dT", self.dT]
         if self.time_format == "dt":

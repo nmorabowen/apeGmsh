@@ -247,6 +247,7 @@ from .procedures._explicit import ExplicitRunResult, _ExplicitMixin
 from .procedures._frf import _FrfMixin
 from .procedures._modal import _ModalMixin
 from .stage._builder import _StageBuilder, _build_initial_stress_record
+from .stage._chain import algorithm_needs_test
 from .transform import Cartesian, Orientation
 
 if TYPE_CHECKING:
@@ -9687,7 +9688,8 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
                 "emit a staged deck and run it via the OpenSees binary "
                 "/ openseespy subprocess instead."
             )
-        self._check_analysis_chain_for_analyze()
+        self._check_analysis_chain_for_analyze(
+            strategy_attached=strategy is not None)
         self._check_explicit_solver_compat()
 
         # Local import — keeps openseespy out of import-time for users
@@ -10581,6 +10583,44 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
         bm.emit(emitter)
         self._artifacts.after_emit(self)
 
+    def wipe(self) -> None:
+        """Close the live OpenSees domain (R3-S5, maintainer ruling D6).
+
+        Calls OpenSees ``wipe`` on the in-process module. It removes the
+        model and destroys every recorder, which flushes and closes its
+        file: a text ``recorder Node`` / ``Element`` file then holds every
+        row the analysis recorded, and an ``.mpco`` file is complete, so
+        ``Results.from_mpco`` opens it in the same script, without a
+        subprocess.
+
+        It closes this bridge's read session (ADR 0115 D2): a later
+        ``Node.read`` / ``NodeSet.read`` / ``ops.elements...read`` raises,
+        naming ``ops.wipe()``. It also moves the domain epoch, so the
+        read session of any other bridge over the same process-global
+        domain raises too. The declarations stay: ``ops.analyze(...)`` or
+        ``ops.run()`` builds the model again from them.
+
+        A live session action only, never emitted to a deck (a deck
+        flushes its recorders when its process exits). It has no
+        ``VERBS`` row and no emitter Protocol method: it calls the live
+        module through ``LiveOpsEmitter.ops``, never ``command()``.
+        """
+        from .emitter.live import LiveOpsEmitter
+
+        # Close first, so a wipe that raises still leaves no session that
+        # answers from a domain in an unknown state.
+        self._read_state = DroppedSession(
+            "ops.wipe() closed the live domain (it removed the model and "
+            "flushed and closed every recorder); call ops.analyze(...) "
+            "again to read"
+        )
+        self._live_emitter = None
+        # Constructing the emitter moves the domain epoch before any call
+        # into OpenSees (ADR 0115 D2). ``wipe=False``: the wipe is the call
+        # below, made through ``LiveOpsEmitter.ops``; the emitter's stock
+        # equation-row guard refuses a *next* model, not a close.
+        LiveOpsEmitter(wipe=False).ops.wipe()
+
     def run_remote(
         self,
         job_dir: str,
@@ -11379,8 +11419,28 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
                 stacklevel=3,
             )
 
-    def _check_analysis_chain_for_analyze(self) -> None:
-        """Raise :class:`BridgeError` if the analysis chain is incomplete."""
+    def _check_analysis_chain_for_analyze(
+        self, *, strategy_attached: bool = False,
+    ) -> None:
+        """Raise :class:`BridgeError` if the analysis chain is incomplete.
+
+        The test may be omitted when the algorithm the domain ends up with
+        (the last one registered, as the emit order sets it) does not
+        iterate: its class's ``needs_test`` is False (``Linear``), the
+        rule a stage applies (R3-S5). A strategy ladder
+        (``strategy_attached``) keeps the test required, since its rungs
+        iterate.
+        """
+        algorithm = next(
+            (p for p in reversed(self._primitives)
+             if isinstance(p, SolutionAlgorithm)),
+            None,
+        )
+        test_optional = (
+            algorithm is not None
+            and not strategy_attached
+            and not algorithm_needs_test(algorithm)
+        )
         required: tuple[tuple[type[Primitive], str], ...] = (
             (ConstraintHandler,  "constraints"),
             (Numberer,           "numberer"),
@@ -11392,6 +11452,8 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
         )
         missing: list[str] = []
         for base, name in required:
+            if base is ConvergenceTest and test_optional:
+                continue
             if not any(isinstance(p, base) for p in self._primitives):
                 missing.append(name)
         if missing:
@@ -11399,7 +11461,8 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
                 "apeSees.analyze: analysis chain is incomplete; "
                 f"missing: {', '.join(missing)}. Register the missing "
                 "primitives via ops.<family>.<Type>(...) before calling "
-                "analyze()."
+                "analyze(). Only a non-iterating algorithm (Linear) "
+                "without a strategy ladder may omit the test."
             )
 
 
