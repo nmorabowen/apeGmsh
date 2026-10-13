@@ -8,6 +8,9 @@ or to several nodes is refused (`ValueError` at resolution, `AssemblyError` from
 `bridge()`), naming the count and `master_point`, and so is a plane through the
 master that holds no slave node. A given `master_point` keeps the old rule: the
 plane passes through the point and the master is the plane node nearest to it.
+That plane, too, is now refused (`ValueError` naming the point, the plane and the
+node count) when it collects no master or no slave, where it used to emit
+`rigidDiaphragm 3 0`.
 
 - **Fixes #1778, a silent wrong deck.** The old default point was the origin, so
   a floor above z = 0 declared without `master_point` collected no node: the

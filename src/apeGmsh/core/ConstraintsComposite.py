@@ -2500,7 +2500,8 @@ class ConstraintsComposite(_DeclarationsMixin):
             to several nodes is refused at resolution, and so is a
             plane that collects no slave node. Given: the plane passes
             through this point and the master is the plane node nearest
-            to it (use it when the master label holds several nodes).
+            to it (use it when the master label holds several nodes);
+            a plane that collects no master or no slave is refused.
         plane_normal : (nx, ny, nz), default (0, 0, 1)
             Unit normal to the diaphragm plane. ``(0, 0, 1)`` is a
             horizontal floor; ``(0, 1, 0)`` is a vertical wall, etc.

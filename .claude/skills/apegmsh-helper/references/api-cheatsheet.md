@@ -560,8 +560,11 @@ don't hand-write the deck.
 ```
 equal_dof(master_label, slave_label, *, master_entities=None, slave_entities=None, dofs=None)
 rigid_link(master_label, slave_label, *, link_type="beam"|"bar"|"rotBeam")
-rigid_diaphragm(master_label, slave_label, *, master_point=(0,0,0), plane_normal=(0,0,1),
+rigid_diaphragm(master_label, slave_label, *, master_point=None, plane_normal=(0,0,1),
                 constrained_dofs=None, plane_tolerance=1.0, name=None)
+#   master_point omitted: master_label must be ONE node; it is the master and the
+#   plane point (0 or several nodes -> ValueError). Given: plane through the point,
+#   master = nearest plane node. A plane with no master or no slave is refused.
 penalty(master_label, slave_label, *, stiffness=1e10, dofs=None)
 rigid_body(master_label, slave_label, *, dofs=None)
 tie(master_label, slave_label, *, ..., tolerance=1.0, stiffness="auto", enforce="penalty",
