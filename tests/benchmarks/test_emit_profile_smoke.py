@@ -121,6 +121,45 @@ def test_mem_cell_report_prints_on_cp1252_stdout(tmp_path: Path) -> None:
     )
 
 
+@pytest.mark.bench
+def test_phases_cell_reports_every_rank_on_cp1252_stdout(
+        tmp_path: Path) -> None:
+    """One tiny ``--phases`` cell (#1766): the per-rank phase table and
+    the element-phase attribution print on a cp1252 console, and the JSON
+    record carries one main block per rank with an element phase, plus
+    an attribution whose sites sum to the snapshot's growth."""
+    json_path = tmp_path / "phases_cell.json"
+    proc = subprocess.run(
+        [
+            sys.executable, str(_SCRIPT),
+            "--recipe", "box", "--sizes", "6", "--parts", "2",
+            "--stream", "--phases", "--tm-frames", "8",
+            "--json", str(json_path),
+        ],
+        capture_output=True, env=_cp1252_env(), timeout=600,
+    )
+    assert proc.returncode == 0, (
+        proc.stderr.decode(errors="replace")[-2000:]
+    )
+    out = proc.stdout.decode("cp1252")
+    for marker in ("per-rank phase peaks", "element-phase attribution",
+                   "phase that sets the main-block peak"):
+        assert marker in out, f"missing {marker!r} in report output"
+
+    (rec,) = json.loads(json_path.read_text(encoding="utf-8"))
+    main = [b for b in rec["blocks"] if b["kind"] == "main"]
+    assert sorted(b["rank"] for b in main) == [0, 1]
+    for b in main:
+        assert b["n_nodes"] > 0
+        assert b["phases"]["elements"] > 0, b
+    (attr,) = rec["attribution"]
+    assert attr["rank"] == 0 and attr["top"]
+    # The traceback groups partition the snapshot diff: their net sum is
+    # the traced growth at the snapshot, up to the snapshot's own
+    # bookkeeping (a few KiB).
+    assert abs(attr["net_b"] - attr["growth_b"]) < 64 * 1024, attr
+
+
 @pytest.mark.parametrize("mode", ["flat", "partitioned", "staged"])
 def test_arch_orientation_fan_out_is_planned_once(mode: str) -> None:
     """Profile the ``arch_with_orientation_fan_out`` golden fixture's emit.
