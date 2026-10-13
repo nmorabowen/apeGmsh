@@ -11,8 +11,15 @@ deck never asked for `-stats`. `run=False` still returns `None`, and
   increments the run completed, summed over every analyze loop of the deck
   (the flat `analyze_steps` drive and each stage). It is read from the deck's
   own `APEGMSH_PROGRESS` markers, which each loop prints on its last increment.
-  It is `None` when the count is not established: the deck was emitted with
-  `progress=False`, or its markers do not form whole loops.
+  The count is reliable for one process. It is `None`, never a multiple, when
+  it is not established:
+  - the deck was emitted with `progress=False`;
+  - its markers do not form whole loops;
+  - the finished loops differ from the deck's own loop sequence;
+  - the log holds more than one Tcl completion line.
+
+  Under an external `mpiexec` wrapper passed as `bin=`, nothing beyond these
+  checks is guaranteed.
 - **Changed (behaviour): an aborted Tcl deck now raises.** `OpenSees.exe` exits
   0 after a Tcl `error`, the deck's aborted-analyze guard included, so
   `ops.tcl(run=True)` used to return normally from a run that stopped part

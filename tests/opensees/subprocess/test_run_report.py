@@ -23,7 +23,7 @@ import numpy as np
 import pytest
 
 from apeGmsh.opensees._internal.build.errors import BridgeError
-from apeGmsh.opensees._run import RunReport
+from apeGmsh.opensees._run import RunReport, deck_progress_loops
 from apeGmsh.opensees._target import resolve_opensees_binary
 from apeGmsh.opensees.apesees import apeSees
 
@@ -158,6 +158,21 @@ def test_run_false_still_returns_none(
     ops = cantilever_bridge(cantilever)
     assert ops.py("deck.py", analyze_steps=2) is None
     assert ops.tcl("deck.tcl", analyze_steps=2) is None
+
+
+def test_the_deck_loop_scan_reads_both_emitters(
+    cantilever: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``deck_progress_loops`` finds the loop the real emitters write,
+    and none with ``progress=False``."""
+    monkeypatch.chdir(tmp_path)
+    ops = cantilever_bridge(cantilever)
+    ops.py("deck.py", analyze_steps=45)
+    ops.tcl("deck.tcl", analyze_steps=45)
+    assert deck_progress_loops("deck.py") == (45,)
+    assert deck_progress_loops("deck.tcl") == (45,)
+    ops.py("quiet.py", analyze_steps=45, progress=False)
+    assert deck_progress_loops("quiet.py") == ()
 
 
 def test_an_aborting_py_deck_raises(

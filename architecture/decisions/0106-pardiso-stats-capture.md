@@ -517,12 +517,25 @@ emitters' per-increment loop, and with `progress=True` (the default)
 it prints `APEGMSH_PROGRESS i=.. n=..` on a throttled subset of its
 increments and always on the last (`i == n`). `stream_run` already
 parses these for the live counter; it now also sums `n` over each loop
-whose `i == n` marker arrived. The count is `None`, never a guess,
-when it is not established: the deck carried no markers
-(`progress=False`), or the markers do not form whole loops (a loop
-left before `i == n`, a loop still open at the end, two processes
-printing into one stream). A deck with markers and no analyze loop
-reports `0`.
+whose `i == n` marker arrived. A marker counts only as a whole line,
+so a stage named like one is not a marker. A deck with markers and no
+analyze loop reports `0`.
+
+The count is reliable for one process running the deck, which is what
+`run=True` launches. It is `None`, and never a guess or a multiple, in
+these cases:
+
+- the deck carried no markers (`progress=False`);
+- a marker's `i` does not grow within its loop (it restarts or
+  repeats), or a loop is left before `i == n` or is still open at the
+  end;
+- the finished loops are not exactly the deck's own loop sequence,
+  read off the deck's marker statements (`deck_progress_loops`), as
+  when several processes each ran the whole deck;
+- the log holds more than one Tcl completion line.
+
+Beyond these checks nothing is guaranteed when `bin=` wraps an
+external launcher (`mpiexec`) whose processes print into one stream.
 
 **Failure still raises, and on Tcl it now always does.** py raises on a
 non-zero exit, as before. `OpenSees.exe` exits 0 after a Tcl `error`,
@@ -536,14 +549,16 @@ the `APEGMSH_RUN_COMPLETE` line. INV-6's warning stays on the success
 path, which is now "exit 0 and proven complete".
 
 **What does not change.** No verb, no Emitter Protocol method, no
-archive or H5 field: `RunReport` is a run-side return value, the same
+archive or H5 field, and no emitted deck byte: `RunReport` is a run-side return value, the same
 call as D1's "Rejected — mutate a build-side record". The R2-c
 `DeckRun` record is untouched, and `ops.results(path)` reads a finished
 run as before. Changing the return to `RunReport | None` stales
 `studio/_api_index.json` again; this slice rebuilds it.
 
 **Verification.** `tests/opensees/unit/test_run_report_stream.py`
-(the marker arithmetic, the `None` cases, the completion proof);
+(the marker arithmetic, the `None` cases including two processes
+interleaved or each running the deck, the anchored marker, the
+completion proof);
 `tests/opensees/subprocess/test_run_report.py` (a 2-increment deck on
 py and Tcl gives `increments == 2`, `returncode == 0`, an existing log,
 and an `ops.results` read with two rows at `PL^3/3EI` per step; 45

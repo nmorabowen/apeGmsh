@@ -64,6 +64,7 @@ if TYPE_CHECKING:  # type-only — no runtime edge onto the habitat
 
 __all__ = [
     "RunReport",
+    "deck_progress_loops",
     "stream_run",
     "resolve_log_path",
     "run_label",
@@ -85,8 +86,40 @@ class SolverStatsWarning(UserWarning):
 
 #: One machine-readable marker per emitted analyze increment sample
 #: (``puts "APEGMSH_PROGRESS i=.. n=.. t=.."`` — see the Tcl / Py
-#: emitters' ``analyze``). Parsed for the ``verbose`` live counter.
-_PROGRESS_RE = re.compile(r"APEGMSH_PROGRESS i=(\d+) n=(\d+) t=(\S+)")
+#: emitters' ``analyze``). Parsed for the ``verbose`` live counter and
+#: :attr:`RunReport.increments`. Matched against the WHOLE line: the
+#: emitters print the marker on a line of its own, and a marker-shaped
+#: text elsewhere on a line (a stage named ``APEGMSH_PROGRESS i=7 n=7``
+#: inside ``APEGMSH_STAGE open <name>``) is not a marker.
+_PROGRESS_RE = re.compile(r"APEGMSH_PROGRESS i=(\d+) n=(\d+) t=(\S+)\s*$")
+
+#: The statement that prints the marker, as the Tcl and Py emitters
+#: write it into the deck (``TclEmitter`` / ``PyEmitter``
+#: ``_emit_progress_marker``), one per analyze loop, ``n`` literal.
+#: Matched at the start of a stripped deck line, so a stage marker
+#: (``puts "APEGMSH_STAGE ...``) never matches whatever its name holds.
+_DECK_LOOP_RE = re.compile(
+    r'(?:puts "|print\(")APEGMSH_PROGRESS '
+    r"i=(?:\[expr \{\$_apesees_i \+ 1\}\]|%d) n=(\d+) t="
+)
+
+
+def deck_progress_loops(deck_path: str) -> tuple[int, ...]:
+    """The ``n`` of every progress-marked analyze loop in the deck, in
+    deck order — what one process running the deck to its end prints
+    an ``i == n`` marker for. Loops of ``n == 0`` print nothing and are
+    left out. One pass over the deck's lines; nothing is imported or
+    run."""
+    loops: list[int] = []
+    with open(deck_path, encoding="utf-8", errors="replace") as f:
+        for line in f:
+            if "APEGMSH_PROGRESS" not in line:
+                continue
+            m = _DECK_LOOP_RE.match(line.lstrip())
+            if m is not None and int(m.group(1)) > 0:
+                loops.append(int(m.group(1)))
+    return tuple(loops)
+
 
 @dataclass(frozen=True, slots=True)
 class RunReport:
@@ -107,11 +140,25 @@ class RunReport:
         The analyze increments completed, summed over every analyze
         loop of the deck. Read from the deck's own ``APEGMSH_PROGRESS``
         markers: each loop prints ``i=n`` on its last increment, so a
-        finished loop proves ``n``. ``None`` when the deck carried no
-        markers (``progress=False``) or the markers do not form whole
-        loops (a loop left before ``i=n``, more than one process
-        printing): the count is then not established, and is never
-        guessed. A deck with markers on and no analyze loop reports 0.
+        finished loop proves ``n``. A deck with markers on and no
+        analyze loop reports 0.
+
+        Reliable for one process running the deck (the bridge's own
+        ``run=True``). The count is ``None``, never guessed and never a
+        multiple, when it is not established:
+
+        - the deck carried no markers (``progress=False``);
+        - a marker's ``i`` does not grow within its loop (it restarts
+          or repeats, as when processes interleave), or a loop is left
+          before ``i=n`` or still open at the end;
+        - the finished loops are not exactly the deck's own loop
+          sequence (:func:`deck_progress_loops`), as when several
+          processes each ran the whole deck;
+        - the log holds more than one Tcl completion line.
+
+        Beyond these checks nothing is guaranteed when ``bin=`` wraps
+        an external launcher (``mpiexec``) whose processes print into
+        one stream.
     ``solver_stats``
         The ADR 0106 D1 :class:`RunSolverStats` when the deck asked a
         solver for ``-stats``, else ``None``.
@@ -134,15 +181,20 @@ class _IncrementCount:
     ``i`` that does not grow) while that loop is short of ``i == n``,
     or a loop still open at the end, breaks the count: the stream is
     not one clean sequence of whole loops, so :attr:`value` is
-    ``None``.
+    ``None``. So is a finished-loop sequence other than *expected*,
+    the deck's own (:func:`deck_progress_loops`): one process running
+    the deck finishes exactly those loops, in that order, and several
+    processes finish them more than once.
     """
 
-    __slots__ = ("total", "open", "broken")
+    __slots__ = ("total", "open", "broken", "done", "expected")
 
-    def __init__(self) -> None:
+    def __init__(self, expected: tuple[int, ...]) -> None:
         self.total = 0
         self.open: tuple[int, int] | None = None
         self.broken = False
+        self.done: list[int] = []
+        self.expected = expected
 
     def see(self, i: int, n: int) -> None:
         if not 1 <= i <= n:
@@ -152,6 +204,7 @@ class _IncrementCount:
             self.broken = True
         if i == n:
             self.total += n
+            self.done.append(n)
             self.open = None
         else:
             self.open = (i, n)
@@ -159,6 +212,8 @@ class _IncrementCount:
     @property
     def value(self) -> int | None:
         if self.broken or self.open is not None:
+            return None
+        if tuple(self.done) != self.expected:
             return None
         return self.total
 
@@ -219,8 +274,9 @@ def stream_run(
     env: dict[str, str] | None = None,
     deck_path: str | None = None,
     expect_solver_stats: bool = False,
-    count_increments: bool = False,
+    expected_loops: tuple[int, ...] | None = None,
     proves_completion: Callable[[str], bool] | None = None,
+    completion_line: str | None = None,
 ) -> RunReport:
     """Run ``argv``, tee stdout+stderr to ``log_path``, report to console.
 
@@ -230,9 +286,12 @@ def stream_run(
     otherwise the same ``RuntimeError`` is raised, saying the run
     stopped before its end.
 
-    Returns a :class:`RunReport`. *count_increments* says the deck
-    carries the ``APEGMSH_PROGRESS`` markers; without it
-    ``RunReport.increments`` is ``None``.
+    Returns a :class:`RunReport`. *expected_loops* is the deck's own
+    loop sequence (:func:`deck_progress_loops`) when the deck carries
+    the ``APEGMSH_PROGRESS`` markers; without it
+    ``RunReport.increments`` is ``None``. *completion_line* is the
+    line *proves_completion* looks for: seen more than once, more than
+    one process wrote the stream, and ``increments`` is ``None``.
 
     *deck_path* is recorded in the habitat progress sidecar so a
     consumer knows which deck the counter belongs to; omitting it costs
@@ -252,7 +311,8 @@ def stream_run(
     INV-7). The record is :attr:`RunReport.solver_stats`.
     """
     started = time.perf_counter()
-    counted = _IncrementCount()
+    counted = _IncrementCount(expected_loops or ())
+    n_complete = 0
     n_lines = 0
     n_warn = 0
     warn_at: list[int] = []
@@ -291,7 +351,7 @@ def stream_run(
             that hides a progress marker from the tail must not hide it
             from the parse.
             """
-            nonlocal n_lines, n_warn
+            nonlocal n_lines, n_warn, n_complete
             assert proc.stdout is not None
             for line in proc.stdout:
                 logf.write(line)
@@ -300,7 +360,11 @@ def stream_run(
                 raw = line.rstrip("\n")
                 yield raw
 
-                m = _PROGRESS_RE.search(raw)
+                if completion_line is not None and (
+                    raw.strip() == completion_line
+                ):
+                    n_complete += 1
+                m = _PROGRESS_RE.match(raw)
                 if m is not None:
                     i, n = int(m.group(1)), int(m.group(2))
                     counted.see(i, n)
@@ -374,7 +438,11 @@ def stream_run(
             returncode=rc,
             log=Path(os.path.abspath(log_path)),
             elapsed_s=elapsed,
-            increments=counted.value if count_increments else None,
+            increments=(
+                counted.value
+                if expected_loops is not None and n_complete <= 1
+                else None
+            ),
             solver_stats=stats,
         )
 

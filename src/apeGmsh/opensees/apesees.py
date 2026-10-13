@@ -223,7 +223,13 @@ from ._internal.types import (
     TimeSeries,
     UniaxialMaterial,
 )
-from ._run import RunReport, resolve_log_path, run_label, stream_run
+from ._run import (
+    RunReport,
+    deck_progress_loops,
+    resolve_log_path,
+    run_label,
+    stream_run,
+)
 from .emitter.base import Emitter, StrategySpec
 from .node import Node, _NodeAccessor, _iter_tags, _select_nodes
 from ._readback import (
@@ -234,6 +240,7 @@ from ._readback import (
     open_session,
 )
 from ._results_route import (
+    RUN_COMPLETE_MARKER,
     DeckRun,
     begin_deck_run,
     log_proves_completion,
@@ -10023,8 +10030,9 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
             header="OpenSees",
             deck_path=path,
             expect_solver_stats=_deck_requested_solver_stats(emitter),
-            count_increments=bool(progress),
+            expected_loops=deck_progress_loops(path) if progress else None,
             proves_completion=log_proves_completion,
+            completion_line=RUN_COMPLETE_MARKER,
         )
         if log_proves_completion(log_path):
             self._deck_run = deck_run.finish()
@@ -10534,7 +10542,7 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
             env=child_env,
             deck_path=path,
             expect_solver_stats=_deck_requested_solver_stats(emitter),
-            count_increments=bool(progress),
+            expected_loops=deck_progress_loops(path) if progress else None,
         )
         self._deck_run = deck_run.finish()
         return report
