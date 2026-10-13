@@ -40,7 +40,7 @@ COMPOSITES: dict[str, tuple[str, str]] = {
     "g.constraints":     ("core/ConstraintsComposite.py", "ConstraintsComposite"),
     "g.reinforce":       ("core/ReinforcementsComposite.py", "ReinforcementsComposite"),
     "g.embed":           ("core/EmbedmentsComposite.py", "EmbedmentsComposite"),
-    "g.rebar":           ("core/RebarComposite.py", "RebarComposite"),
+    "g.rebar":           ("rebar/_composite.py", "RebarComposite"),
     "g.loads":           ("core/LoadsComposite.py", "LoadsComposite"),
     "g.loads.point":     ("core/LoadsComposite.py", "_PointLoads"),
     "g.loads.surface":   ("core/LoadsComposite.py", "_SurfaceLoads"),

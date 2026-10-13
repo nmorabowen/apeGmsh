@@ -1,9 +1,9 @@
-"""apeGmsh reinforcement-cage authoring (ADR 0066).
+"""apeGmsh reinforcement-cage authoring (ADR 0067).
 
 Public L1 surface: the frozen spec objects (re-exported from
 :mod:`apeGmsh._kernel.defs.rebar`) and the detailing standards / bar
 catalogue. The L2 ``g.rebar`` composite lives in
-:mod:`apeGmsh.core.RebarComposite`.
+:mod:`apeGmsh.rebar._composite`.
 """
 
 from __future__ import annotations

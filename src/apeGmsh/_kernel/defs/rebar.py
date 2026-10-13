@@ -6,7 +6,7 @@ stirrups, hooks, a whole cage — at the geometry level, as **pure,
 frozen, serialisable data**. They carry no node tags, no OpenSees
 handles, and no live gmsh entities (Option-B layering, mirroring
 :class:`~apeGmsh._kernel.defs.constraints.ReinforceDef`). The L2
-``g.rebar`` composite (:class:`~apeGmsh.core.RebarComposite`) generates
+``g.rebar`` composite (:class:`~apeGmsh.rebar._composite.RebarComposite`) generates
 geometry from them and routes coupling; the L1 spec itself stays inert
 and round-trips through ``to_dict`` / ``from_dict``.
 
@@ -18,7 +18,7 @@ construction. This keeps the spec serialisable and standard-agnostic.
 See ADR 0066 (reinforcement-cage authoring) for the design rationale and
 the L1/L2/L3 split. The detailing standards + bar catalogue live in
 :mod:`apeGmsh.rebar.detailing`; geometry generation + coupling live in
-:mod:`apeGmsh.core.RebarComposite`.
+:mod:`apeGmsh.rebar._composite`.
 """
 
 from __future__ import annotations

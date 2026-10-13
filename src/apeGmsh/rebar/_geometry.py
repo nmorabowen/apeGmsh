@@ -1,9 +1,9 @@
 """
-Pure geometry helpers for rebar hook / bend construction (ADR 0066 §3, §5).
+Pure geometry helpers for rebar hook / bend construction (ADR 0067 §3, §5).
 
 No gmsh — just vector math, so the 3-D bend-plane resolution and the
 fillet-arc construction are unit-testable off-session. The composite
-(:mod:`apeGmsh.core.RebarComposite`) turns the returned primitives into
+(:mod:`apeGmsh.rebar._composite`) turns the returned primitives into
 gmsh points + lines + arcs, reusing point tags between consecutive
 primitives so a hook stays topologically welded WITHOUT make_conformal.
 """

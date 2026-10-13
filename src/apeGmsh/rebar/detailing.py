@@ -1,5 +1,5 @@
 """
-Reinforcement detailing standards + bar catalogue (ADR 0066 §4).
+Reinforcement detailing standards + bar catalogue (ADR 0067 §4).
 
 A :class:`DetailingStandard` resolves the *code-aware* numbers a cage
 needs — bar diameter/area from a designation, minimum bend diameters,
