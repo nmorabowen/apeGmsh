@@ -76,7 +76,7 @@ See also
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Literal, Mapping, Sequence
@@ -112,6 +112,97 @@ if TYPE_CHECKING:  # pragma: no cover - import for type checkers only
 
 
 __all__ = ["OpenSeesModel"]
+
+
+def _fixes_at_node_width(
+    fixes: "Sequence[FixRecord]",
+    nodes_ndf: "Mapping[int, int]",
+    store: str,
+) -> "tuple[FixRecord, ...]":
+    """Cut each envelope-wide ``fix`` row back to its node's ndf.
+
+    The writer pads every row to the ``ops.model`` envelope (a fixed-width
+    compound), so a 2-DOF node under ``ndf=3`` reads back ``(1, 1, 0)``
+    while the bridge emitted ``fix n 1 1``. ``nodes_ndf`` is the per-node
+    ndf the deck emitted (``/opensees/nodes_ndf``, every broker node). An
+    archive without one (empty map: pre-2.14.0, no neutral fallback)
+    replays every node at the envelope, so its rows already match. With a
+    map, a fixed node it lacks, a row narrower than the node, or a set flag
+    past the node's ndf is a corrupt archive and raises.
+    """
+    if not nodes_ndf:
+        return tuple(fixes)
+    from .emitter.h5_reader import MalformedH5Error
+
+    out: list[FixRecord] = []
+    for rec in fixes:
+        tag = int(rec.tag)
+        if tag not in nodes_ndf:
+            raise MalformedH5Error(
+                f"{store}: node {tag} is fixed but /opensees/nodes_ndf has "
+                "no ndf for it, so the row's width cannot be recovered."
+            )
+        width = int(nodes_ndf[tag])
+        if len(rec.dofs) < width or any(int(d) for d in rec.dofs[width:]):
+            raise MalformedH5Error(
+                f"{store}: node {tag} has ndf {width} but its fix row is "
+                f"{tuple(rec.dofs)!r}; only zero padding may follow the "
+                "node's own DOFs."
+            )
+        out.append(replace(rec, dofs=tuple(rec.dofs[:width])))
+    return tuple(out)
+
+
+def _equation_constraint_records(declarations: Any) -> "tuple[Any, ...]":
+    """The archive's ``apeSees.equation_constraint`` rows, in call order.
+
+    ``H5Emitter`` ledgers the ``equationConstraint`` verb, so the only
+    record of a row is its declaration's ``/opensees/decl_params`` entry
+    (K1-7, opensees 2.26.0): an ``EquationConstraintRecord`` with ``cnode``,
+    ``cdof``, ``ccoef`` and ``retained``. Each is re-validated by
+    ``make_equation_constraint_record``. A declaration whose entry is
+    missing or does not read as that record raises: replay never
+    drops the tie silently.
+    """
+    if declarations is None:
+        # No /opensees/decls: the archive cannot say whether it had rows,
+        # so the replay goes ahead and says so rather than refusing a file
+        # that is otherwise readable.
+        import warnings
+
+        from ._internal._stacklevel import _stacklevel_outside_package
+        from .emitter.h5 import H5LedgerWarning
+        warnings.warn(
+            "model.h5: the archive has no /opensees/decls (it predates "
+            "opensees 2.25.0, or no bridge emit wrote it), so replay cannot "
+            "verify apeSees.equation_constraint rows: a deck rebuilt from it "
+            "omits any the model had.",
+            H5LedgerWarning,
+            stacklevel=_stacklevel_outside_package(),
+        )
+        return ()
+    from ._internal.build.records import make_equation_constraint_record
+    from .emitter.h5_reader import MalformedH5Error
+
+    fields = {"cnode", "cdof", "ccoef", "retained"}
+    out = []
+    for i, decl in enumerate(declarations.decls):
+        if decl.family != "equation_constraint":
+            continue
+        rows = declarations.params.get(i, ())
+        if (len(rows) != 1 or rows[0].type != "EquationConstraintRecord"
+                or set(rows[0].params) != fields):
+            raise MalformedH5Error(
+                f"/opensees/decls: equation_constraint {decl.key!r} has no "
+                "readable EquationConstraintRecord row in "
+                "/opensees/decl_params (an archive below opensees 2.26.0 "
+                "stores none), so a replayed deck would drop the tie. "
+                f"Found {[(r.type, sorted(r.params)) for r in rows]!r}."
+            )
+        p = rows[0].params
+        out.append(make_equation_constraint_record(
+            p["cnode"], p["cdof"], p["ccoef"], p["retained"]))
+    return tuple(out)
 
 
 # Type alias for the read-side section discriminated union.
@@ -394,6 +485,17 @@ class OpenSeesModel:
                             nodes_ndf[int(_nid)] = int(_bnodes.ndf_for(int(_nid)))
                         except LookupError:
                             pass
+            # /opensees/bcs/fix stores every row at the
+            # envelope width; cut each back to its node's own ndf, as
+            # the bridge emitted it.
+            fixes = _fixes_at_node_width(
+                fixes, nodes_ndf, "/opensees/bcs/fix")
+            stages = tuple(
+                replace(st, fixes=_fixes_at_node_width(
+                    st.fixes, nodes_ndf,
+                    f"/opensees/stages/stage_{i:03d}/bcs/fix"))
+                for i, st in enumerate(stages)
+            )
 
         # ADR 0021 lineage chain.  Read the stamped ``/meta/lineage``
         # attrs and recompute them from the loaded zones; on mismatch,
@@ -1347,6 +1449,8 @@ class OpenSeesModel:
             analysis_attrs=dict(self._analysis_attrs),
             analyze_call=self._analyze_call,
             reinforce_name_to_tag=reinforce_name_to_tag,
+            equation_constraints=_equation_constraint_records(
+                self._declarations),
         )
 
         # ADR 0055 P2.3: a staged archive re-emits through the staged
