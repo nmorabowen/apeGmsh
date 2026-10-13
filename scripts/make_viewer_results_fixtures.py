@@ -422,7 +422,7 @@ def stamp_variants(out_dir: Path) -> None:
 
 
 def reinforced_fixture(out_dir: Path) -> None:
-    """The V4m reinforced model (#1846): ``reinforced.h5`` and its oracle.
+    """The V4m reinforced model (#1846): ``reinforced.h5``, its oracle and ``reinforced_unknown.h5``.
 
     A tet-meshed box with three embedded bars: ``L1`` tied with the bond law
     ``bond1`` (a LadrunoBondSlip no element uses), ``L2`` tied with
@@ -478,6 +478,22 @@ def reinforced_fixture(out_dir: Path) -> None:
     oracle = {"ties": len(ties), "unbonded": unbonded, "bond": {str(k): v for k, v in sorted(by_tag.items())}}
     (out_dir / f"{name}.oracle.json").write_text(json.dumps(oracle, indent=2) + chr(10), encoding="utf-8")
     print(f"wrote {path.name}: {len(ties)} ties, by bond tag {by_tag}, {unbonded} perfect-bond")
+    # reinforced_unknown.h5: the same file with the first bonded tie's tag
+    # stored as a float (arg_kinds 1), a tag the app must not read: its D7
+    # still shows "users unknown", never 0 or "used by nothing".
+    import shutil
+
+    import h5py
+    unknown = out_dir / f"{name}_unknown.h5"
+    shutil.copyfile(path, unknown)
+    with h5py.File(unknown, "r+") as f:
+        er = f["opensees/constraints/embeddedRebar"]
+        strs = [x.decode() if isinstance(x, bytes) else x for x in er["args_str"][()]]
+        k = strs.index("-bond") + 1
+        kinds = er["arg_kinds"][()]
+        kinds[k] = 1
+        er["arg_kinds"][...] = kinds
+    print(f"wrote {unknown.name}: arg {k} (the first -bond tag) re-kinded as a float")
 
 
 def main() -> None:

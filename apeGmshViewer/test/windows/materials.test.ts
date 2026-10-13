@@ -401,3 +401,16 @@ test("V4m: a file without the group is unchanged: no tie count, no unknown", () 
   assert.equal(mat.tiesUnknown, null);
   assert.doesNotMatch(rowsOf(render(state).root)[0]!.textContent, /embeddedRebar|users unknown/);
 });
+
+test("V4m: reinforced_unknown.h5 (one tie's -bond tag stored as a float) reads that tie as unknown, and every uniaxial row says so", async () => {
+  const m = await openModel(join(fixtures, "reinforced_unknown.h5"));
+  const er = m.opensees!.definitions.embeddedRebar!;
+  const bonded = Object.values(oracle.bond).reduce((a, b) => a + b, 0);
+  assert.equal(er.bond.reduce((a, b) => a + b.ties, 0), bonded - 1);
+  assert.deepEqual(er.unresolved, [{ why: "the value after -bond is not an integer tag", ties: 1 }]);
+  const s = load(m);
+  for (const p of [B1, B2]) {
+    assert.deepEqual(rowOf(s, p).tiesUnknown, [{ why: "the value after -bond is not an integer tag", ties: 1 }]);
+    assert.match(detailOf(s, p), /users unknown beyond these: referenced by embeddedRebar ties; 1 tie: the value after -bond is not an integer tag/);
+  }
+});
