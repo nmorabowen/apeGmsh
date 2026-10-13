@@ -3458,7 +3458,6 @@ class H5Emitter:
         it around the record's calls (opensees 2.32.0).
         """
         del tag, ele_tag, response
-        self._program.decl = self._decl_open
 
     def flip_element_stage(
         self, pid: int, ele_tags: tuple[int, ...],
@@ -3474,7 +3473,6 @@ class H5Emitter:
         del ele_tags
         blk = self._stage_block("flip_element_stage")
         blk.flip_calls.append((self._call_rank(), int(pid)))
-        self._program.decl = self._decl_open
 
     def update_parameter(
         self,
@@ -3496,7 +3494,6 @@ class H5Emitter:
         blk = self._stage_block("update_parameter")
         blk.update_calls.append(
             (self._call_rank(), int(pid), tuple(args), float(value)))
-        self._program.decl = self._decl_open
 
     def step_hook_ramp(
         self,
@@ -3532,7 +3529,6 @@ class H5Emitter:
                 f"H5Emitter.step_hook_ramp: initial stress {name!r} ramps "
                 f"twice in one scope, with tags {held[str(name)]} and {tags}."
             )
-        self._program.decl = self._decl_open
 
     def stage_open(self, name: str) -> None:
         """Open a per-stage capture bucket (ADR 0055 Phase 2)."""
@@ -3591,11 +3587,9 @@ class H5Emitter:
 
     def set_node_vel(self, node: int, dof: int, value: float) -> None:
         self._count_node_kinematics("set_node_vel", value)
-        self._program.decl = self._decl_open
 
     def set_node_accel(self, node: int, dof: int, value: float) -> None:
         self._count_node_kinematics("set_node_accel", value)
-        self._program.decl = self._decl_open
 
     def _count_node_kinematics(self, verb: str, value: float) -> None:
         """Count one ``s.zero_velocities`` call (schema 2.27.0, K1-8).
@@ -6392,6 +6386,16 @@ _DECL_TAG_ARG: "Mapping[str, tuple[str, int]]" = MappingProxyType({
 })
 
 
+#: The side-channel verbs whose call is the declaration open on it
+#: (opensees 2.32.0): the bridge opens each record's declaration around
+#: the calls that record drives (``stage_emit.DeclCursor``), so the open
+#: declaration is proved. Their bodies store nothing per call that a rows
+#: column could carry, so :func:`_noted` records it for them.
+_SIDE_CHANNEL_DECL_VERBS: frozenset[str] = frozenset({
+    "step_hook_ramp", "addToParameter", "flip_element_stage",
+    "update_parameter", "set_node_vel", "set_node_accel"})
+
+
 def _noted(
     name: str, fn: "Callable[..., Any]",
 ) -> "Callable[..., Any]":
@@ -6406,6 +6410,7 @@ def _noted(
     glob, _, stage_side = VERBS[name].store.partition("|")
     stage_store = stage_side or glob
     tagged = _DECL_TAG_ARG.get(name)
+    side_channel = name in _SIDE_CHANNEL_DECL_VERBS
 
     @functools.wraps(fn)
     def noted(self: "H5Emitter", *args: Any, **kwargs: Any) -> Any:
@@ -6433,6 +6438,8 @@ def _noted(
             kind, pos = tagged
             tag = args[pos] if len(args) > pos else kwargs["tag"]
             tape.decl = self._decl_of_tag(kind, int(tag))
+        elif side_channel:
+            tape.decl = self._decl_open
         if blk is None and self._stage_current is not None:
             # ``stage_open``: the call belongs to the stage it opened.
             stage, store = len(self._stage_blocks), stage_store
