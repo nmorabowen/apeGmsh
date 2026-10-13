@@ -43,7 +43,6 @@ SPECIMEN_TERMS = ("shear", "girder", "filler", "steel_connection", "steel-connec
 def _subprocess_env() -> dict:
     env = os.environ.copy()
     env["PYTHONPATH"] = str(SRC)
-    env["APEGMSH_QUIET"] = "1"
     env["LADRUNO_OPENSEES_QUIET"] = "1"
     return env
 

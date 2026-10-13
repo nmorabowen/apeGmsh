@@ -14,8 +14,7 @@ multiple projects by passing different ``root`` values.
 Cursor ``mcp.json``. The office venv's ``ladruno_opensees.pth`` prints a
 banner to **stdout** at interpreter startup — set
 ``LADRUNO_OPENSEES_QUIET=1`` *before* Python starts or JSON-RPC is
-corrupted. ``scripts/studio-mcp.ps1`` does that. ``APEGMSH_QUIET=1``
-keeps the apeGmsh banner off stderr. Optionally set ``APEGMSH_ROOT`` to
+corrupted. ``scripts/studio-mcp.ps1`` does that. Optionally set ``APEGMSH_ROOT`` to
 the model project (do not rely on process cwd)::
 
     {
@@ -27,8 +26,7 @@ the model project (do not rely on process cwd)::
             "-File", "scripts/studio-mcp.ps1"
           ],
           "env": {
-            "LADRUNO_OPENSEES_QUIET": "1",
-            "APEGMSH_QUIET": "1"
+            "LADRUNO_OPENSEES_QUIET": "1"
           }
         }
       }

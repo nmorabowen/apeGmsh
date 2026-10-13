@@ -108,7 +108,6 @@ def _check_index() -> int:
     Index freshness is gated after install via this same function and
     ``tests/studio/test_lookup.py``.
     """
-    os.environ.setdefault("APEGMSH_QUIET", "1")
     src = REPO / "src"
     if str(src) not in sys.path:
         sys.path.insert(0, str(src))
@@ -164,7 +163,6 @@ def main() -> int:
         print(f"removed stale {path.relative_to(REPO)}")
     print(f"\nDerived {len(plan)} file(s) into {DERIVED.relative_to(REPO)}.")
 
-    os.environ.setdefault("APEGMSH_QUIET", "1")
     src = REPO / "src"
     if str(src) not in sys.path:
         sys.path.insert(0, str(src))

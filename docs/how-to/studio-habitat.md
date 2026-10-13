@@ -144,9 +144,8 @@ One MCP process may serve multiple projects by passing different
 ### MCP (agent door)
 
 ```powershell
-# Quiet Ladruno/apeGmsh banners before Python starts (JSON-RPC).
+# Quiet the Ladruno banner before Python starts (JSON-RPC).
 $env:LADRUNO_OPENSEES_QUIET = "1"
-$env:APEGMSH_QUIET = "1"
 $env:APEGMSH_ROOT = "C:\path\to\model-project"   # optional default root
 
 python -m apeGmsh.studio.mcp

@@ -58,7 +58,6 @@ def _tag_in_a_fresh_process(seed: str) -> int:
     env = {
         **os.environ,
         "PYTHONHASHSEED": seed,
-        "APEGMSH_QUIET": "1",
         "PYTHONPATH": os.pathsep.join(filter(None, [str(SRC), os.environ.get("PYTHONPATH")])),
     }
     done = _run_child([sys.executable, "-c", PROBE], env)
