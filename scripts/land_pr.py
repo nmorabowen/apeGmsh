@@ -5,7 +5,15 @@
     python scripts/land_pr.py <number> --verify-only  # only the post-merge proof, for a merged PR
 
 The checks run in order and the first failure refuses, naming the check and
-the lesson. Then ``gh pr merge --squash --match-head-commit <checked head>``
+the lesson. Checks 7 and 8 are ADR 0121 D4 (invariant 8): a diff that sets an
+ADR's Status to Accepted is refused outright, and an edit to the freeze census
+baseline needs the ``human-gate`` label. The maintainer's web merge is the
+exception path for both, by design.
+
+Whatever copy is invoked, the rules that run are origin/main's: ``main``
+fetches origin/main and re-executes ``git show origin/main:scripts/land_pr.py``
+from a temp file (maintainer ruling 2 on #1686), so a PR that edits this file
+is judged by the rules it would replace. Then ``gh pr merge --squash --match-head-commit <checked head>``
 (never ``--auto``, never ``--delete-branch``), so a push between the checks
 and the merge is refused by GitHub; then ``compare/main...<squash sha>`` must
 read ``behind`` or ``identical``; then the branch tip must still be the
@@ -27,8 +35,11 @@ from __future__ import annotations
 import argparse
 import fnmatch
 import json
+import os
+import re
 import subprocess
 import sys
+import tempfile
 import time
 from collections.abc import Callable
 from typing import Any
@@ -39,7 +50,26 @@ Runner = Callable[[list[str]], str]
 #: reported is a refusal: zero checks visible means a conflict or a stalled
 #: Actions, not green (#630).
 REQUIRED_CHECKS = ("lock-tests", "emit-cost-gate", "static-gates", "suite", "live-stock")
-PR_FIELDS = "state,isDraft,baseRefName,headRefName,headRefOid,mergeable,statusCheckRollup"
+PR_FIELDS = (
+    "state,isDraft,baseRefName,headRefName,headRefOid,mergeable,statusCheckRollup,"
+    "labels,body,closingIssuesReferences"
+)
+#: The one PR files listing, read by checks 5, 7 and 8: one compact JSON row per
+#: file, [filename, status, previous_filename, changes, patch]. `previous_filename`
+#: makes a rename out of a frozen or baseline path visible (#1775).
+FILES_JQ = ".[] | [.filename, .status, .previous_filename, .changes, (.patch // null)] | @json"
+FileRow = list[Any]
+#: ADR 0121 D4 (b): the census baseline. `freeze_census.py` holds FROZEN and
+#: ADMITTED; `test_freeze_lock.py` holds FREEZE_POINT_DIGEST and the lock that
+#: compares them, so editing either one edits the baseline.
+BASELINE = ("tests/freeze_census.py", "tests/test_freeze_lock.py")
+HUMAN_GATE = "human-gate"
+ADR_FILE = re.compile(r"architecture/decisions/\d{4}-[^/]*\.md")
+#: `scripts/adr_index.py::parse_adr` reads the Status line from the first 30 lines.
+ADR_HEADER_LINES = 30
+#: A slice PR names its slice issue as `Slice: #<n>` (PROGRAM.md section 7).
+SLICE_REF = re.compile(r"^Slice:\s*#(\d+)", re.MULTILINE)
+_HUNK = re.compile(r"^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@")
 COMPARE_TRIES = 5
 COMPARE_WAIT_S = 3.0
 
@@ -49,11 +79,43 @@ class LandError(Exception):
 
 
 def run_gh(args: list[str]) -> str:
-    return subprocess.run(["gh", *args], check=True, stdout=subprocess.PIPE, text=True).stdout
+    # utf-8, not the locale codec: PR bodies and ADRs carry non-ASCII text.
+    return subprocess.run(["gh", *args], check=True, stdout=subprocess.PIPE, encoding="utf-8").stdout
 
 
 def run_git(args: list[str]) -> str:
-    return subprocess.run(["git", *args], check=True, stdout=subprocess.PIPE, text=True).stdout
+    return subprocess.run(["git", *args], check=True, stdout=subprocess.PIPE, encoding="utf-8").stdout
+
+
+def run_python(argv: list[str], env: dict[str, str]) -> int:
+    return subprocess.run([sys.executable, *argv], env=env).returncode
+
+
+#: Set to the path of main's copy when it runs (ruling 2 on #1686); see `_run_mains_copy`.
+MAIN_COPY_ENV = "APEGMSH_LAND_PR_MAIN_COPY"
+SELF = "scripts/land_pr.py"
+
+
+def _is_mains_copy() -> bool:
+    return os.environ.get(MAIN_COPY_ENV) == os.path.abspath(__file__)
+
+
+def _run_mains_copy(argv: list[str]) -> int:
+    """Run origin/main's land_pr.py, never the checkout's (maintainer ruling 2 on #1686).
+
+    The checkout is the PR head (check 3), so the PR's own copy of this file could
+    have dropped a check. Main's copy runs from a temp file with MAIN_COPY_ENV set
+    to that file's path: the copy sees itself and runs in-process, which ends the
+    re-exec; a stale MAIN_COPY_ENV in the shell names no other path, so it cannot
+    switch the hop off for the checkout's copy."""
+    run_git(["fetch", "origin", "main"])
+    source = run_git(["show", f"origin/main:{SELF}"])
+    with tempfile.TemporaryDirectory(prefix="land_pr_main_") as tmp:
+        path = os.path.abspath(os.path.join(tmp, "land_pr.py"))
+        with open(path, "w", encoding="utf-8", newline="") as out:
+            out.write(source)
+        print(f"land_pr: running origin/main's {SELF}, not the checkout's.", file=sys.stderr)
+        return run_python([path, *argv], {**os.environ, MAIN_COPY_ENV: path})
 
 
 def _green(check: dict[str, Any]) -> bool:
@@ -63,8 +125,138 @@ def _green(check: dict[str, Any]) -> bool:
     return check.get("status") == "COMPLETED" and check.get("conclusion") == "SUCCESS"
 
 
+def _accepted(line: str) -> bool:
+    """Whether a line is a Status line that `adr_index.parse_adr` reads as Accepted."""
+    if not line.startswith("**Status:**"):
+        return False
+    text = line[len("**Status:**") :].strip().lstrip("*").strip()
+    return re.match(r"accepted\b", text, re.IGNORECASE) is not None
+
+
+def _sets_accepted(patch: str) -> bool:
+    """Whether one ADR's unified-diff patch sets its Status to Accepted: an added
+    header Status line reads Accepted and no removed header Status line did."""
+    old = new = 0
+    removed = added = False
+    for line in patch.splitlines():
+        hunk = _HUNK.match(line)
+        if hunk:
+            old, new = int(hunk.group(1)), int(hunk.group(2))
+            continue
+        if line.startswith("-"):
+            removed |= old <= ADR_HEADER_LINES and _accepted(line[1:])
+            old += 1
+        elif line.startswith("+"):
+            added |= new <= ADR_HEADER_LINES and _accepted(line[1:])
+            new += 1
+        elif not line.startswith("\\"):  # "\ No newline at end of file" is not a line
+            old += 1
+            new += 1
+    return added and not removed
+
+
+def _check_freeze(number: int, pr: dict[str, Any], paths: list[str], frozen: list[str], gh: Runner) -> None:
+    """Check 5. A changed file inside an open `freeze:<pattern>` window refuses, unless
+    the PR holds that freeze: it carries the label itself, or names an issue that
+    carries it (as `Slice: #<n>` or a closing keyword)."""
+    held = {lab["name"] for lab in pr["labels"]}
+    refs = {ref["number"] for ref in pr["closingIssuesReferences"]}
+    refs |= {int(n) for n in SLICE_REF.findall(pr["body"] or "")}
+    issue_labels: dict[int, set[str]] = {}
+
+    def holder(label: str) -> str | None:
+        if label in held:
+            return f"#{number}"
+        for ref in sorted(refs):
+            if ref not in issue_labels:
+                view = json.loads(gh(["issue", "view", str(ref), "--json", "labels"]))
+                issue_labels[ref] = {lab["name"] for lab in view["labels"]}
+            if label in issue_labels[ref]:
+                return f"#{ref}"
+        return None
+
+    for path in paths:
+        for pattern in frozen:
+            if not fnmatch.fnmatchcase(path, pattern):
+                continue
+            by = holder(f"freeze:{pattern}")
+            if by is None:
+                raise LandError(
+                    f"check 5: {path} is inside the open freeze:{pattern} window "
+                    f"(the board, #1203, names its expiry). Only the PR that holds the "
+                    f"freeze lands under it: it carries the label, or names the issue "
+                    f"that does as 'Slice: #<n>' or 'Closes #<n>'."
+                )
+            print(f"check 5: {path} is inside freeze:{pattern}, held by {by}; allowed.")
+
+
+def _born(path: str, status: str, previous: str | None) -> bool:
+    """Whether this row brings an ADR number into being: an added or copied file, or
+    a rename from a non-ADR file or from another ADR number. Its whole header is
+    judged, since a patch against the old file would hide an inherited Accepted."""
+    if status in ("added", "copied"):
+        return True
+    if status != "renamed":
+        return False
+    if previous is None or not ADR_FILE.fullmatch(previous):
+        return True
+    return previous.rsplit("/", 1)[-1][:4] != path.rsplit("/", 1)[-1][:4]
+
+
+def _changed_files(number: int, gh: Runner) -> list[FileRow]:
+    """The PR's changed files. `pr view --json files` stops at 100 files, and `pr diff`
+    is refused (HTTP 406) past 20000 diff lines (#1775); the paginated files endpoint
+    has neither cap."""
+    listing = gh(["api", f"repos/{{owner}}/{{repo}}/pulls/{number}/files", "--paginate", "--jq", FILES_JQ])
+    return [json.loads(line) for line in listing.splitlines() if line.strip()]
+
+
+def _check_adr_and_baseline(number: int, pr: dict[str, Any], rows: list[FileRow], git: Runner) -> None:
+    """Checks 7 and 8 (ADR 0121 D4, invariant 8), read from the PR files listing."""
+    for path, status, previous, changes, patch in rows:
+        if not ADR_FILE.fullmatch(path) or status == "removed":
+            continue
+        if _born(path, status, previous):
+            # Local HEAD is the PR head (check 3), so the head's file is readable here.
+            header = git(["show", f"{pr['headRefOid']}:{path}"]).splitlines()[:ADR_HEADER_LINES]
+            if any(_accepted(line) for line in header):
+                how = "is a new ADR born with" if status != "renamed" else f"(renamed from {previous}) is a new ADR born with"
+                raise LandError(
+                    f"check 7: {path} {how} Status Accepted. Accepting an ADR is the "
+                    f"maintainer's act (ADR 0121 D4 (a)): an agent must not accept the ADR "
+                    f"that admits its own exception. Leave it Proposed; the maintainer "
+                    f"accepts it, through the GitHub web merge if need be."
+                )
+            continue
+        if patch is None:
+            if changes:
+                raise LandError(
+                    f"check 7: GitHub returned no patch for {path} ({changes} changed lines), "
+                    f"so whether it sets Status to Accepted cannot be read; refusing."
+                )
+            continue
+        if _sets_accepted(patch):
+            how = "sets"
+            raise LandError(
+                f"check 7: {path} {how} Status Accepted. Accepting an ADR is the "
+                f"maintainer's act (ADR 0121 D4 (a)): an agent must not accept the ADR "
+                f"that admits its own exception. Leave it Proposed; the maintainer "
+                f"accepts it, through the GitHub web merge if need be."
+            )
+    labels = {lab["name"] for lab in pr["labels"]}
+    for path, _status, previous, _changes, _patch in rows:
+        for touched in (path, previous):
+            if touched in BASELINE and HUMAN_GATE not in labels:
+                raise LandError(
+                    f"check 8: #{number} edits the freeze census baseline {touched} without "
+                    f"the {HUMAN_GATE!r} label (ADR 0121 D4 (b)). Never edit FROZEN or "
+                    f"FREEZE_POINT_DIGEST to make room; the maintainer labels the PR when "
+                    f"the edit is theirs to make."
+                )
+
+
 def check(number: int, gh: Runner, git: Runner) -> dict[str, Any]:
-    """Checks 1-6, in order. Returns the PR record, or raises LandError."""
+    """Checks 1-8, in order. Returns the PR record, or raises LandError."""
     pr = json.loads(gh(["pr", "view", str(number), "--json", PR_FIELDS]))
     head = pr["headRefOid"]
     if pr["baseRefName"] != "main":
@@ -91,17 +283,10 @@ def check(number: int, gh: Runner, git: Runner) -> dict[str, Any]:
         raise LandError("check 4: the working tree is not clean (git status --porcelain).")
     labels = json.loads(gh(["label", "list", "--limit", "200", "--json", "name"]))
     frozen = [lab["name"][len("freeze:") :] for lab in labels if lab["name"].startswith("freeze:")]
-    # `pr view --json files` stops at 100 files, and `pr diff` is refused (HTTP 406)
-    # past 20000 diff lines (#1775); the paginated files endpoint has neither cap. A rename lists both
-    # names, so moving a file OUT of a frozen path is caught too.
-    files_api = f"repos/{{owner}}/{{repo}}/pulls/{number}/files"
-    for path in gh(["api", files_api, "--paginate", "--jq", ".[] | .filename, (.previous_filename // empty)"]).splitlines():
-        for pattern in frozen:
-            if fnmatch.fnmatchcase(path, pattern):
-                raise LandError(
-                    f"check 5: {path} is inside the open freeze:{pattern} window "
-                    f"(the board, #1203, names its expiry)."
-                )
+    rows = _changed_files(number, gh)
+    # A rename lists both names, so moving a file OUT of a frozen path is caught too.
+    paths = [name for row in rows for name in (row[0], row[2]) if name]
+    _check_freeze(number, pr, paths, frozen, gh)
     if pr["mergeable"] != "MERGEABLE":
         why = "merge main locally and push" if pr["mergeable"] == "CONFLICTING" else "retry once GitHub has computed it"
         raise LandError(f"check 6: #{number} is {pr['mergeable']}, not MERGEABLE; {why}.")
@@ -121,6 +306,7 @@ def check(number: int, gh: Runner, git: Runner) -> dict[str, Any]:
                     f"check 6: required check {name!r} is {seen} on {head[:12]}, not SUCCESS "
                     f"(every run of a required check must be). Pending is a refusal, not a wait."
                 )
+    _check_adr_and_baseline(number, pr, rows, git)
     return pr
 
 
@@ -243,13 +429,15 @@ def land(
     pr = check(number, gh, git)
     head = pr["headRefOid"]
     if dry_run:
-        print(f"dry-run: #{number} passes checks 1-6 at {head[:12]}; not merging.")
+        print(f"dry-run: #{number} passes checks 1-8 at {head[:12]}; not merging.")
         return 0
     gh(["pr", "merge", str(number), "--squash", "--match-head-commit", head])  # never retried
     return prove(number, gh, git, sleep, head, pr["headRefName"])
 
 
 def main(argv: list[str] | None = None) -> int:
+    if not _is_mains_copy():
+        return _run_mains_copy(sys.argv[1:] if argv is None else argv)
     parser = argparse.ArgumentParser(description=(__doc__ or "").splitlines()[0])
     parser.add_argument("number", type=int, help="the PR number")
     parser.add_argument("--dry-run", action="store_true", help="run the checks, then stop before the merge")
