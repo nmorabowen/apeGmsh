@@ -638,11 +638,11 @@ timed in the first pass only (the deformed pass finds it done: 1 ms).
 | 3 | element stress xx, element_mean | 20 / 27 % | 65 | 274.2 | 3.40 / 5.9 | 351 (170 + 181) |
 | 3 | the same, deformed ×1 | 24 / 29 % | n/a | 192.1 | 4.90 / 8.2 | 357 (166 + 191) |
 | R | element stress xx, element_mean | 39 / 53 % | n/a | 241.2 | n/a / 6.9 | 358 |
-| R | the same, deformed ×1 | 39 / 53 % | n/a | 192.6 | n/a / 9.5 | 358 |
+| R | the same, deformed ×1 | 28 / 34 % | n/a | 192.6 | n/a / 9.5 | 356 |
 
 Row R is the reviewer's re-measure at the head under review, `ee8440b3`
 (#1860), on the same file (e_solid_100: 7 098 wedges x 6 Gauss points, 100
-steps), at 39 / 53 % CPU; the reviewer reported the scrub, the worst step,
+steps), at 39 / 53 % CPU (element pass) and 28 / 34 % (deformed pass); the reviewer reported the scrub, the worst step,
 the peak and the CPU load, not the other columns.
 
 Worst over every row (runs 1 to 3 and R): element scrub **241** steps/s
