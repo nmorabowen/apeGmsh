@@ -55,7 +55,8 @@ def _reinforced_ops(*, bond_by_name: bool) -> apeSees:
 
 
 def _reinforced_fixed_ops(*, bond_by_name: bool = False,
-                          rebar_cells: bool = False) -> apeSees:
+                          rebar_cells: bool = False,
+                          equation: bool = False) -> apeSees:
     """A reinforced model with fixes whose deck round-trips byte for byte
     (K2b, #1795): an embedded bar in a tet-meshed box, its base fixed.
 
@@ -66,10 +67,12 @@ def _reinforced_fixed_ops(*, bond_by_name: bool = False,
     (``emit_elements=True``): the tag plan numbers them after the ties, so
     the archived cells raise the highest element tag above the ties and a
     replay that re-derived the ties would tag them differently.
+    ``equation`` also ties two top nodes with an ``equation_constraint``,
+    which the bridge writes just before the reinforce ties.
     """
     from apeGmsh._kernel.defs.rebar import Cage
 
-    name = f"k2b_fixed_{int(bond_by_name)}{int(rebar_cells)}"
+    name = f"k2b_fixed_{int(bond_by_name)}{int(rebar_cells)}{int(equation)}"
     with apeGmsh(model_name=name, verbose=False) as g:
         g.model.geometry.add_box(0, 0, 0, 0.5, 0.5, 2.0, label="Box")
         g.physical.add_volume(g.model.select(dim=3).tags(), name="Concrete")
@@ -98,6 +101,11 @@ def _reinforced_fixed_ops(*, bond_by_name: bool = False,
     conc = ops.nDMaterial.ElasticIsotropic(E=30000.5, nu=0.2, rho=2.5e-6)
     ops.element.FourNodeTetrahedron(pg="Concrete", material=conc)
     ops.fix(pg="Base", dofs=(1, 1, 1))
+    if equation:
+        top = [int(n) for n, c in zip(fem.nodes.ids, fem.nodes.coords)
+               if float(c[2]) > 1.99]
+        ops.equation_constraint(
+            constrained=(top[0], 1), retained=[(top[1], 1, 0.75)])
     return ops
 
 

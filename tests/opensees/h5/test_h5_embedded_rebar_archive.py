@@ -72,15 +72,18 @@ def downgrade_to_pre_embedded_rebar(path: Path) -> None:
 def built(tmp_path_factory: pytest.TempPathFactory) -> Callable[..., tuple[str, Path]]:
     """``(bridge deck, archive)`` per ``(bond_by_name, rebar_cells)``, built
     once per module; tests copy the archive before changing it."""
-    cache: dict[tuple[bool, bool], tuple[str, Path]] = {}
+    cache: dict[tuple[bool, bool, bool], tuple[str, Path]] = {}
 
-    def get(*, bond: bool = False, cells: bool = False) -> tuple[str, Path]:
-        key = (bond, cells)
+    def get(*, bond: bool = False, cells: bool = False,
+            equation: bool = False) -> tuple[str, Path]:
+        key = (bond, cells, equation)
         if key not in cache:
-            d = tmp_path_factory.mktemp(f"k2b_{int(bond)}{int(cells)}")
+            d = tmp_path_factory.mktemp(
+                f"k2b_{int(bond)}{int(cells)}{int(equation)}")
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
-                ops = _reinforced_fixed_ops(bond_by_name=bond, rebar_cells=cells)
+                ops = _reinforced_fixed_ops(
+                    bond_by_name=bond, rebar_cells=cells, equation=equation)
                 ops.tcl(str(d / "bridge.tcl"), progress=False, flat=True)
                 ops.h5(str(d / "model.h5"))
             deck = (d / "bridge.tcl").read_text(encoding="utf-8")
@@ -223,6 +226,18 @@ def test_new_archive_replays_byte_for_byte(built, bond) -> None:
     last_fix = max(i for i, ln in enumerate(lines) if ln.startswith("fix "))
     first_tie = min(i for i, ln in enumerate(lines) if ln.startswith(_TIE))
     assert last_fix < first_tie
+
+
+def test_ties_replay_after_the_equation_constraints(built) -> None:
+    """The bridge writes the equationConstraint rows, then the ties; the
+    replay writes the ties after its 9b' equation rows, byte for byte."""
+    deck, archive = built(equation=True)
+    replayed = _replay(archive)
+    assert replayed == deck
+    lines = replayed.splitlines()
+    eq = [i for i, ln in enumerate(lines) if ln.startswith("equationConstraint ")]
+    ties = [i for i, ln in enumerate(lines) if ln.startswith(_TIE)]
+    assert eq and ties and max(eq) < min(ties)
 
 
 def test_rebar_cells_replay_keeps_the_planned_tie_tags(built) -> None:

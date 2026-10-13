@@ -191,8 +191,8 @@ def test_h5_archives_the_ties_without_warning():
     assert len(em._embedded_rebars) == 2
     assert "embedded_rebar" not in em.ledger_counts
     assert all("-perfect" in r.args for r in em._embedded_rebars)
-    # ... and NO deviation warning fires.
-    assert not [x for x in w if "reinforc" in str(x.message).lower()]
+    # ... and the H5 emitter warns about nothing.
+    assert [str(x.message) for x in w] == []
     # The ties are not element-store rows.
     assert not getattr(em, "_elements", [])
 

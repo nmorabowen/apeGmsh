@@ -173,6 +173,8 @@ CORPUS: tuple[Model, ...] = (
     # fixes; exact matches.
     *(_m("test_reinforce_deck_replay", "_reinforced_fixed_ops", bond_by_name=b)
       for b in _B),
+    # ... and after the equationConstraint rows (B5-g's 9b'), as the bridge.
+    _m("test_reinforce_deck_replay", "_reinforced_fixed_ops", equation=True),
 )
 
 
