@@ -151,6 +151,8 @@ def test_the_net_never_imports_openseespy_in_process(tmp_path: Path) -> None:
            "APEGMSH_K_PROBE_OUT": str(out),
            "PYTHONPATH": os.pathsep.join(
                [str(tmp_path), os.environ.get("PYTHONPATH", "")]).rstrip(os.pathsep)}
+    # A one-test inner run never selects the warrant rows, so the lane hook would refuse it (rc=4).
+    env.pop("APEGMSH_WARRANT_LANE", None)
     proc = subprocess.run(
         [sys.executable, "-m", "pytest", target, "-q", "-m", "live",
          "-p", "k_probe_plugin", "-p", "no:cacheprovider"],
