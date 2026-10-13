@@ -67,8 +67,9 @@ def test_an_aborted_tcl_deck_exits_0_and_the_read_refuses(
     cantilever: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A deck whose analyze fails stops at the deck's own Tcl ``error``,
-    and OpenSees.exe still exits 0: ``ops.tcl`` returns, and only the
-    missing completion line tells the read the run did not finish."""
+    and OpenSees.exe still exits 0: only the missing completion line
+    says the run did not finish. ``ops.tcl`` raises on it (R3-S6, ADR
+    0106 Amendment 1), and the read refuses."""
     from apeGmsh.opensees._internal.build.errors import BridgeError
     from apeGmsh.opensees.apesees import apeSees
 
@@ -90,7 +91,9 @@ def test_an_aborted_tcl_deck_exits_0_and_the_read_refuses(
     ops.algorithm.Linear()
     ops.integrator.LoadControl(dlam=1.0)
     ops.analysis.Static()
-    ops.tcl("deck.tcl", run=True, analyze_steps=2)   # rc 0: returns
+    with pytest.raises(RuntimeError, match=r"exited 0 but the deck did not "
+                                           r"run to its end"):
+        ops.tcl("deck.tcl", run=True, analyze_steps=2)   # rc 0, no marker
     log = (tmp_path / "deck.log").read_text(encoding="utf-8")
     assert "analyze FAILED" in log
     with pytest.raises(BridgeError, match=r"did not finish"):

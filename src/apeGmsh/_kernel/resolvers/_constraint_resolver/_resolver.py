@@ -411,8 +411,8 @@ class ConstraintResolver:
           plane that collects no slave node besides the master.
         * ``defn.master_point`` given: the plane passes through the
           point.  A one-node ``master_nodes`` is the master and must lie
-          in the plane; otherwise the plane node closest to the point
-          becomes master, a master-set node winning a tie (see
+          in the plane; otherwise the master-set plane node closest to
+          the point becomes master, never a slave-set node (see
           :meth:`_pick_diaphragm_master`).  A plane that collects fewer
           than two nodes (no master, or no slave), or no node of the
           master set, is refused.
@@ -479,10 +479,10 @@ class ConstraintResolver:
 
         * A one-node master set is the master, wherever the point is;
           it must lie in the plane.
-        * Otherwise the master is the plane node nearest the point.
-          Among nodes tied at that distance (a coincident joint), a
-          node of the master set wins over a slave-set node, then the
-          lowest tag.  The master set must hold a plane node.
+        * Otherwise the master is the master-set plane node nearest the
+          point, the lowest tag on a tie.  A slave-set node is never the
+          master, however near the point.  The master set must hold a
+          plane node.
         """
         where = (f"rigid_diaphragm({defn.master_label!r}, "
                  f"{defn.slave_label!r})")
@@ -510,13 +510,12 @@ class ConstraintResolver:
                 f"master {defn.master_label!r} lies in {plane}; the "
                 f"master would be a node of the slave set. Check the "
                 f"master label and the point's out-of-plane coordinate.")
-        coords = np.array([self._coords_of(t) for t in plane_nodes])
+        candidates = sorted(master_nodes & on_plane)
+        coords = np.array([self._coords_of(t) for t in candidates])
         dists = np.linalg.norm(coords - mp, axis=1)
-        span = float(np.ptp(coords, axis=0).max()) if len(coords) else 0.0
+        span = float(np.ptp(coords, axis=0).max())
         tie = float(dists.min()) + 1e-9 * max(span, 1.0)
-        tied = [t for t, dd in zip(plane_nodes, dists) if dd <= tie]
-        preferred = [t for t in tied if t in master_nodes]
-        return min(preferred or tied)
+        return min(t for t, dd in zip(candidates, dists) if dd <= tie)
 
     def _resolve_diaphragm_on_master(
         self,

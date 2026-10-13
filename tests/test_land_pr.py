@@ -124,7 +124,7 @@ def _row(path, status="modified", previous=None, patch="@@ -1 +1 @@\n-a\n+b"):
 
 
 def _recording(number, pr, squash, files=FILES_1218, *, compare="behind", tip="", labels=LABELS, local=None,
-               porcelain="", rows=None, issues=None, shows=None):
+               porcelain="", rows=None, issues=None, shows=None, cards=None):
     pr = {"labels": [], "body": "", "closingIssuesReferences": [], **pr}
     head = pr["headRefOid"]
     if rows is None:
@@ -137,6 +137,7 @@ def _recording(number, pr, squash, files=FILES_1218, *, compare="behind", tip=""
             f"issue view {n} --json labels": json.dumps({"labels": [{"name": lab} for lab in names]})
             for n, names in (issues or {}).items()
         },
+        **{f"issue view {n} --json body,comments": json.dumps(card) for n, card in (cards or {}).items()},
         f"pr merge {number} --squash --match-head-commit {head}": "",
         f"pr view {number} --json mergeCommit": json.dumps({"mergeCommit": {"oid": squash}}),
         f"api repos/{{owner}}/{{repo}}/compare/main...{squash} --jq .status": compare + "\n",
@@ -793,3 +794,207 @@ def test_files_jq_run_for_real_yields_the_fields_the_checks_read():
 
     assert land_pr._changed_files(9, gh) == FILES_ROWS
     assert seen == [land_pr.FILES_JQ]
+
+
+# --- Check 9 (lesson #1788, #1855): a program PR stays inside its card's Owned list ---------
+# #1812 (B, card #1801) was a whole-tree commit from a stale worktree: 52 files against 6
+# owned. Squash-merged, it would have reverted #1761, #1796 and #1803.
+OWNED_1812 = [
+    "src/apeGmsh/opensees/_internal/compose.py",
+    "src/apeGmsh/opensees/opensees_model.py",
+    "tests/opensees/golden/roundtrip_oracle_ledger.txt",
+    "tests/opensees/golden/test_roundtrip_oracle.py",
+    "tests/opensees/h5/test_h5_replay_eq_and_fix_ndf.py",
+    "changelog.d/k2a-roundtrip-oracle.md",
+]
+FOREIGN_1812 = [
+    "src/apeGmsh/viewers/session/_select_all.py",  # #1796
+    "src/apeGmsh/viewers/session/_realize.py",  # #1796
+    "tests/viewers/test_select_all_stage_activation.py",  # #1796
+    "internal_docs/program/prototypes/legacy.py",  # #1803 deleted it; the stale tree re-adds it
+    "internal_docs/program/prototypes/clones.py",
+    "internal_docs/program/prototypes/contract_cov.py",
+    *(f"apeGmshViewer/src/contour/part{i:02d}.ts" for i in range(40)),  # #1761
+]
+CARD_1812 = "### Goal\nK2a.\n\n### Owned files\n" + "".join(f"- `{p}`\n" for p in OWNED_1812) + "\n### Verification\n- `pytest`\n"
+PROGRAM_PR = {**PR_1218, "labels": [{"name": "program"}, {"name": "semantic"}], "body": "Slice: #1801\nClass: semantic\n"}
+
+
+def _scope(files=None, *, card=CARD_1812, comments=(), pr=PROGRAM_PR, rows=None):
+    files = OWNED_1812 if files is None else files
+    cards = {1801: {"body": card, "comments": [{"body": c} for c in comments]}}
+    return _recording(1218, pr, SQUASH_1218, files, rows=rows, cards=cards)
+
+
+def test_1812_stale_tree_is_refused_and_every_foreign_file_named():
+    """Revert-proof: with `check_owned` removed from `check`, this PR merges."""
+    assert len(OWNED_1812) == 6 and len(OWNED_1812 + FOREIGN_1812) == 52
+    gh, git = _scope(OWNED_1812 + FOREIGN_1812)
+    with pytest.raises(land_pr.LandError, match=r"check 9: #1218 changes 46 file\(s\) outside slice card #1801") as exc:
+        _run(1218, gh, git)
+    assert all(f"\n  {path}\n" in str(exc.value) for path in FOREIGN_1812)
+    assert not any(f"\n  {path}\n" in str(exc.value) for path in OWNED_1812)
+    assert not _merged(gh)
+
+
+@pytest.mark.parametrize("files, card, comments", [
+    pytest.param(OWNED_1812[:3], CARD_1812, (), id="within-owned"),
+    pytest.param(["src/apeGmsh/opensees/emitter/verbs.py"],
+                 "### Owned files\n- `src/apeGmsh/opensees/emitter/verbs.py::VERBS` (the embedded_rebar row)\n", (),
+                 id="path-symbol"),
+    pytest.param(["tests/viewers/golden_stills/a.png", "tests/fixtures/schema_corpus/x/opensees_2.29.h5"],
+                 "### Owned files\n- `tests/viewers/golden_stills/`\n- `tests/fixtures/schema_corpus/**`\n", (),
+                 id="directory-and-glob"),
+    pytest.param(["internal_docs/program/board_notes.md"], CARD_1812,
+                 ("**Card amendment (T):** also re-date a row in `internal_docs/program/board_notes.md`.",),
+                 id="bold-amendment"),
+    pytest.param(["internal_docs/program/board_notes.md"], CARD_1812,
+                 ("Card amendment (orchestrator): Owned files add `internal_docs/program/board_notes.md`.",),
+                 id="plain-amendment-1807"),
+    pytest.param(["changelog.d/any-slug.md"], CARD_1812, (), id="changelog-fragment"),
+    pytest.param(["internal_docs/program/prototypes/legacy.py", "internal_docs/program/prototypes/README.md"],
+                 "### Owned files\n- `internal_docs/program/prototypes/contract_cov.py`, `legacy.py`, `clones.py`: delete.\n"
+                 "- `internal_docs/program/prototypes/README.md`\n", (), id="sibling-list-1802"),
+    pytest.param(["src/x.py", "docs/y.md"], "### Owned files\n- `src/x.py`\n\n### Allowed\n- `docs/y.md`\n", (),
+                 id="allowed-section"),
+    pytest.param(["tests/test_fork_token_ratchet.py"],
+                 "**Maintainer ruling:** YES. Owned: `tests/test_fork_token_ratchet.py` (that one value).", (),
+                 id="owned-label-1851"),
+])
+def test_files_inside_the_card_pass(files, card, comments, capsys):
+    gh, git = _scope(files, card=card, comments=comments)
+    assert _run(1218, gh, git, dry_run=True) == 0
+    assert "check 9: #1218's" in capsys.readouterr().out
+
+
+def test_rename_with_both_names_owned_passes():
+    gh, git = _scope([], rows=[_row(OWNED_1812[1], "renamed", previous=OWNED_1812[0])])
+    assert _run(1218, gh, git, dry_run=True) == 0
+
+
+@pytest.mark.parametrize("new, old", [
+    ("src/apeGmsh/opensees/unowned.py", OWNED_1812[0]),  # renamed INTO an unowned path
+    (OWNED_1812[0], "src/apeGmsh/opensees/unowned.py"),  # renamed out of an unowned path
+])
+def test_rename_touching_an_unowned_path_is_refused(new, old):
+    gh, git = _scope([], rows=[_row(new, "renamed", previous=old)])
+    with pytest.raises(land_pr.LandError, match=r"check 9: .*1 file\(s\) outside(.|\n)*\n  src/apeGmsh/opensees/unowned\.py"):
+        _run(1218, gh, git)
+
+
+@pytest.mark.parametrize("files, card, pr, message", [
+    pytest.param(OWNED_1812, CARD_1812, {**PROGRAM_PR, "body": "Class: semantic\n"},
+                 r"check 9: .*no 'Slice: #<n>' line", id="no-slice-line"),
+    pytest.param(OWNED_1812, "### Goal\nFix `src/x.py`.\n", PROGRAM_PR,
+                 r"check 9: slice card #1801 has no '### Owned files'", id="no-owned-section"),
+    pytest.param(OWNED_1812, "### Owned files\nDerived after Phase 1 and recorded on this issue.\n", PROGRAM_PR,
+                 r"check 9: slice card #1801's Owned section names no backticked path", id="empty-owned-1801"),
+    pytest.param(["src/apeGmsh/rebar/_geometry.py"], "### Owned files\n- `src/apeGmsh/rebar/__init__.py`\n\n"
+                 "### Verification\n- `src/apeGmsh/rebar/_geometry.py` stays green\n", PROGRAM_PR,
+                 r"check 9: (.|\n)*_geometry\.py", id="path-outside-the-section"),
+    pytest.param(["src/apeGmsh/core/x.py"], "### Owned files\n- `*`\n- `**/*.py`\n- `src/apeGmsh/rebar/`\n", PROGRAM_PR,
+                 r"check 9: (.|\n)*src/apeGmsh/core/x\.py", id="bare-globs-are-dropped"),
+    pytest.param(["internal_docs/x.md"], CARD_1812, PROGRAM_PR, r"check 9: (.|\n)*internal_docs/x\.md",
+                 id="not-a-changelog-fragment"),
+])
+def test_scope_refusals(files, card, pr, message):
+    gh, git = _scope(files, card=card, pr=pr)
+    with pytest.raises(land_pr.LandError, match=message):
+        _run(1218, gh, git)
+    assert not _merged(gh)
+
+
+def test_comment_that_is_not_an_amendment_adds_nothing():
+    gh, git = _scope(["src/extra.py"], comments=("Locks granted: `src/extra.py`.",))
+    with pytest.raises(land_pr.LandError, match=r"check 9: (.|\n)*src/extra\.py"):
+        _run(1218, gh, git)
+
+
+def test_scope_ok_overrides_with_a_notice(capsys):
+    pr = {**PROGRAM_PR, "labels": [*PROGRAM_PR["labels"], {"name": "scope-ok"}]}
+    gh, git = _scope(OWNED_1812 + FOREIGN_1812, pr=pr)
+    assert _run(1218, gh, git) == 0
+    assert "check 9: OVERRIDDEN by the 'scope-ok' label" in capsys.readouterr().out
+
+
+def test_non_program_pr_is_not_checked_and_says_so(capsys):
+    gh, git = _scope(OWNED_1812 + FOREIGN_1812, pr=PR_1218)
+    assert _run(1218, gh, git, dry_run=True) == 0
+    assert "check 9: #1218 is not labelled 'program'" in capsys.readouterr().out
+    assert not any(call.startswith("issue view") for call in gh.calls)
+
+
+def test_owned_only_runs_check_9_alone_on_a_merged_pr(monkeypatch, capsys):
+    gh = Replay({
+        "pr view 1812 --json labels,body": json.dumps({"labels": PROGRAM_PR["labels"], "body": PROGRAM_PR["body"]}),
+        _files_call(1812): "".join(_row(f) + "\n" for f in OWNED_1812 + FOREIGN_1812),
+        "issue view 1801 --json body,comments": json.dumps({"body": CARD_1812, "comments": []}),
+    })
+    monkeypatch.setattr(land_pr, "run_gh", gh)
+    monkeypatch.setattr(land_pr, "run_git", Replay({}))
+    assert land_pr.main(["1812", "--owned-only"]) == 1
+    assert "check 9: #1812 changes 46 file(s)" in capsys.readouterr().err
+    assert not _merged(gh)
+
+
+def test_owned_only_with_dry_run_is_refused(capsys):
+    with pytest.raises(SystemExit) as exc:
+        land_pr.main(["1218", "--owned-only", "--dry-run"])
+    assert exc.value.code == 2
+    assert "mutually exclusive" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("line, paths", [
+    ("- `.github/workflows/tests.yml`: `lock-tests`.", [".github/workflows/tests.yml"]),  # 1807
+    ("- `changelog.d/<slug>.md`", []),  # a placeholder
+    ("- `skills/apegmsh/references/rebar.md` (then `sync_skill.py`)",  # prose, not a list: no sibling
+     ["skills/apegmsh/references/rebar.md", "sync_skill.py"]),
+    ("- `tests/opensees/golden/cells/**` + `MANIFEST.json`",
+     ["tests/opensees/golden/cells/**", "tests/opensees/golden/cells/MANIFEST.json"]),
+    ("- `./AGENTS.md` and `scripts/land_pr.py::BASELINE`", ["AGENTS.md", "scripts/land_pr.py"]),
+])
+def test_line_paths(line, paths):
+    assert land_pr._line_paths(line) == paths
+
+
+@pytest.mark.parametrize("card", [
+    # review of #1858, finding 1: a negated "not owned:" in a Stop line is not a label
+    "### Owned files\n- `scripts/a.py`\n\n### Stop conditions\n- A file not owned: `src/apeGmsh/opensees/apesees.py`\n",
+    "### Goal\nThe unowned: `src/apeGmsh/opensees/apesees.py` stays.\n\n### Owned files\n- `scripts/a.py`\n",
+    # finding 2: a bold pseudo-heading ends the Owned section
+    "### Owned files\n- `scripts/a.py`\n\n**Do not read:** `src/apeGmsh/opensees/apesees.py`\n",
+    "### Owned files\n- `scripts/a.py`\n**Hub lock:**\n- `src/apeGmsh/opensees/apesees.py`\n",
+    # the template's HTML guidance is not card text
+    "### Owned files\n<!-- e.g. `src/apeGmsh/opensees/apesees.py` -->\n- `scripts/a.py`\n",
+])
+def test_paths_outside_a_real_owned_list_are_not_owned(card):
+    assert land_pr._card_paths(card) == ["scripts/a.py"]
+
+
+@pytest.mark.parametrize("line", [
+    "- `scripts/a.py` (never touch `src/x.py`)",
+    "- `src/apeGmsh/rebar/`, except `src/apeGmsh/rebar/detailing.py`",
+    "- Do not edit `src/x.py`",
+    "- `scripts/a.py`; `src/x.py` is not owned",
+])
+def test_negated_owned_line_fails_closed(line):
+    gh, git = _scope(["scripts/a.py"], card=f"### Owned files\n{line}\n")
+    with pytest.raises(land_pr.LandError, match=r"check 9: an Owned line negates.*ambiguous") as exc:
+        _run(1218, gh, git)
+    assert line.strip() in str(exc.value)
+    assert not _merged(gh)
+
+
+def test_negated_amendment_line_adds_no_path(capsys):
+    amendment = "**Card amendment (T):** also edit `src/a.py`.\nDo NOT touch `src/b.py`.\n"
+    gh, git = _scope(["src/a.py"], comments=(amendment,))
+    assert _run(1218, gh, git, dry_run=True) == 0
+    assert "skipped a negated card-amendment line" in capsys.readouterr().out
+    gh, git = _scope(["src/a.py", "src/b.py"], comments=(amendment,))
+    with pytest.raises(land_pr.LandError, match=r"check 9: #1218 changes 1 file\(s\)(.|\n)*\n  src/b\.py"):
+        _run(1218, gh, git)
+
+
+def test_owned_label_mid_line_after_a_sentence_still_counts_1851():
+    card = "**Maintainer ruling (2026-10-13): YES.** Lower it. Owned: `tests/x.py` (that one value)."
+    assert land_pr._card_paths(card) == ["tests/x.py"]

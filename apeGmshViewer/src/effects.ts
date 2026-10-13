@@ -15,13 +15,13 @@ import { GEOMETRY_TARGET, NEUTRAL_TARGET, OPENSEES_TARGET, PROVENANCE_TARGET, ZO
 import type { BlobStore } from "./state/blobs.ts";
 import { loadGeometry } from "./state/geometry.ts";
 import { loadModel } from "./state/load.ts";
-import { columnOf, finiteRange } from "./state/contour.ts";
+import { columnOf, finiteRange, finiteRangeOf, gaussCellValues, gaussFields, joinElements } from "./state/contour.ts";
 import { missingDrawnNodes, spatialNdm, vertexDisplacements, type VertexDisplacement } from "./state/deform.ts";
-import { contourView, deformView, sourceFor } from "./state/selectors.ts";
+import { contourView, deformView, elementJoinKey, sourceFor } from "./state/selectors.ts";
 import type { Store } from "./state/store.ts";
 import { focusOf, type Focus } from "./renderer/selection.ts";
 import { elementMaskOf, visibleMaps } from "./renderer/visible.ts";
-import type { ArtifactKind, BlobRef, ContourScan, Lineage, ResultsInfo, StageElements, State, ZoneStatus } from "./state/types.ts";
+import type { ArtifactKind, BlobRef, ContourScan, ElementJoinVerdict, Lineage, ResultsInfo, StageElements, State, ZoneStatus } from "./state/types.ts";
 
 const TARGET = { neutral: NEUTRAL_TARGET, opensees: OPENSEES_TARGET, geometry: GEOMETRY_TARGET, provenance: PROVENANCE_TARGET } as const;
 
@@ -60,11 +60,21 @@ export interface Bridge {
     | { ok: false; error: string }
   >;
   /** V4b: read a results.h5's index in main (src/main/results.ts); V4c1 adds each stage's nodal `_ids`. */
-  openResults?(
-    path: string,
-  ): Promise<{ ok: true; meta: ResultsInfo; nodeIds?: Record<string, Float64Array>; warnings: string[]; sizeBytes: number; readMs: number } | { ok: false; error: string }>;
-  /** V4c1: the history range of a contour field (main/results.ts `ResultsHost.scan`); the reply echoes `scanId`. */
-  scanResults?(req: { path: string; stage: string; components: string[]; magnitude: boolean; scanId: number }): Promise<
+  openResults?(path: string): Promise<
+    | {
+        ok: true;
+        meta: ResultsInfo;
+        nodeIds?: Record<string, Float64Array>;
+        /** V4c2a: each gauss group's `_element_index` by stage and group id, a verified file only */
+        elementIds?: Record<string, Record<string, Float64Array>>;
+        warnings: string[];
+        sizeBytes: number;
+        readMs: number;
+      }
+    | { ok: false; error: string }
+  >;
+  /** V4c1: the history range of a contour field (main/results.ts `ResultsHost.scan`); the reply echoes `scanId`. V4c2a: `source: "element"`. */
+  scanResults?(req: { path: string; stage: string; components: string[]; magnitude: boolean; scanId: number; source?: "element" }): Promise<
     | { ok: true; scanId: number; min: number | null; max: number | null; steps: number; ms: number }
     | { ok: false; scanId: number; error: string; cancelled?: true; changed?: true }
   >;
@@ -75,9 +85,10 @@ export interface Bridge {
   measureMemory?(): Promise<{ main: number; renderer: number }>;
   /** V4c1: the progress of the running scans; returns the unsubscribe. */
   onScanProgress?(cb: (p: { scanId: number; done: number; total: number }) => void): (() => void) | void;
-  /** V4b: one step of the open results file; the reply echoes `seq`. */
-  readResultsStep?(req: { path: string; stage: string; step: number; seq: number }): Promise<
-    { ok: true; seq: number; stage: string; step: number; nodal: Record<string, Float64Array> } | { ok: false; seq: number; error: string; changed?: true }
+  /** V4b: one step of the open results file; the reply echoes `seq`. V4c2a: `element` reads one Gauss component too (`gauss`, by group). */
+  readResultsStep?(req: { path: string; stage: string; step: number; seq: number; element?: string }): Promise<
+    | { ok: true; seq: number; stage: string; step: number; nodal: Record<string, Float64Array>; gauss?: Record<string, Float64Array> }
+    | { ok: false; seq: number; error: string; changed?: true }
   >;
   /** V2f: read a /geometry sibling (null: the file has no such zone). */
   openGeometry?(path: string): Promise<{ ok: true; geometry: GeometryZone | null; sizeBytes: number; readMs: number } | { ok: false; error: string }>;
@@ -130,6 +141,8 @@ export function blobRefsOf(s: State): BlobRef[] {
   // V4c1: the node tag of every drawn vertex, and each results stage's nodal `_ids`.
   if (s.mesh) out.push(s.mesh.vertexNodes.line, s.mesh.vertexNodes.tri, s.mesh.vertexNodes.edge);
   for (const st of s.results?.stages ?? []) if (st.nodeIds) out.push(st.nodeIds);
+  // V4c2a: each gauss group's element ids (a verified file only).
+  for (const st of s.results?.stages ?? []) for (const g of st.gauss) if (g.elementIds) out.push(g.elementIds);
   return out;
 }
 
@@ -182,6 +195,9 @@ export interface StepData {
   stage: number;
   step: number;
   nodal: Record<string, Float64Array>;
+  /** V4c2a: the element component fetched with the step, or null; and its values by gauss group, (E * G,) element-major */
+  element: string | null;
+  gauss: Record<string, Float64Array>;
 }
 
 export class Effects {
@@ -250,6 +266,8 @@ export class Effects {
       this.store.subscribe((s) => this.syncStep(s)),
       // V4c1: the contour's step range and history scan follow what is shown.
       this.store.subscribe((s) => this.syncContour(s)),
+      // V4c2a: the picked element field's rows joined to the mesh.
+      this.store.subscribe((s) => this.syncJoin(s)),
       // V4d: the displacement of the step shown, and the count of drawn nodes without one.
       this.store.subscribe((s) => this.syncDeform(s)),
     );
@@ -321,17 +339,30 @@ export class Effects {
    */
   private syncContour(s: State): void {
     const v = contourView(s);
-    if (v.state !== "ready") {
+    if (v.state !== "ready" && v.state !== "element") {
       if (this.scanRun) this.stopScan();
       return;
     }
     const at = s.phase.at;
     const data = this.step;
     if (at?.kind === "results" && data && data.stage === at.stage && data.step === at.step && s.resultStep?.status === "ready") {
-      if (!v.stepMeasured && !(this.rangeFor && this.rangeFor.key === v.keys.step && this.rangeFor.data === data)) {
+      // V4c2a: an element field is measured on the step fetched with its component (a fetch without it is replaced).
+      const fetched = v.state === "ready" || data.element === v.component.key;
+      if (fetched && !v.stepMeasured && !(this.rangeFor && this.rangeFor.key === v.keys.step && this.rangeFor.data === data)) {
         this.rangeFor = { key: v.keys.step, data };
-        const rows = v.component.datasets.map((d) => data.nodal[d]);
-        const r = rows.every((x): x is Float64Array => x instanceof Float64Array) ? finiteRange(rows, v.component.magnitude) : null;
+        let r: { min: number; max: number } | null;
+        if (v.state === "element") {
+          r = finiteRangeOf(
+            v.groups.map((g) => {
+              const vals = data.gauss[g.id];
+              if (!(vals instanceof Float64Array)) throw new Error(`element contour: the step data has no ${v.component.key} for group ${g.id}`);
+              return gaussCellValues(vals, g.nElements, g.nGauss);
+            }),
+          );
+        } else {
+          const rows = v.component.datasets.map((d) => data.nodal[d]);
+          r = rows.every((x): x is Float64Array => x instanceof Float64Array) ? finiteRange(rows, v.component.magnitude) : null;
+        }
         const key = v.keys.step;
         queueMicrotask(() => this.store.dispatch({ type: "contourStepRange", key, min: r?.min ?? null, max: r?.max ?? null }));
       }
@@ -349,10 +380,40 @@ export class Effects {
       );
       return;
     }
-    this.startScan(s, want, v.component.datasets, v.component.magnitude);
+    this.startScan(s, want, v.component.datasets, v.component.magnitude, v.state === "element");
   }
 
-  private startScan(s: State, key: string, components: string[], magnitude: boolean): void {
+  /** The join last checked (its key); a re-read, another field or mesh checks again. */
+  private joinedFor: string | null = null;
+
+  /**
+   * V4c2a: join the picked element field's rows to the model's cells, by FEM
+   * id (state/contour.ts `joinElements`), and report the verdict. The rows
+   * exist only for a verified file (main sends them for no other), so an
+   * unverified file is never joined.
+   */
+  private syncJoin(s: State): void {
+    const key = elementJoinKey(s);
+    if (key === null || s.contour.join?.key === key || this.joinedFor === key) return;
+    const at = s.phase.at as { kind: "results"; stage: number };
+    const st = s.results!.stages[at.stage]!;
+    const f = gaussFields(st.gauss).find((x) => x.name === s.contour.field);
+    if (!f) return;
+    const groups: { id: string; eids: Float64Array }[] = [];
+    for (const gid of f.groups) {
+      const ref = st.gauss.find((g) => g.id === gid)?.elementIds;
+      if (!ref) return;
+      const ids = this.blobs.get(ref);
+      if (!(ids instanceof Float64Array)) throw new TypeError(`element contour: ${ref.id} is not f64`);
+      groups.push({ id: gid, eids: ids });
+    }
+    this.joinedFor = key;
+    const j = joinElements(s.decls, groups);
+    const verdict: ElementJoinVerdict = j.ok ? { key, ok: true, rows: j.rows } : { key, ok: false, code: j.code, reason: j.reason };
+    queueMicrotask(() => this.store.dispatch({ type: "contourElementJoin", verdict }));
+  }
+
+  private startScan(s: State, key: string, components: string[], magnitude: boolean, element = false): void {
     const info = s.results!;
     const at = s.phase.at as { kind: "results"; stage: number };
     const st = info.stages[at.stage]!;
@@ -370,7 +431,7 @@ export class Effects {
         return;
       }
       void this.bridge
-        .scanResults({ path: info.path, stage: st.id, components, magnitude, scanId: id })
+        .scanResults({ path: info.path, stage: st.id, components, magnitude, scanId: id, ...(element ? { source: "element" as const } : {}) })
         .catch((err: unknown) => ({ ok: false as const, scanId: id, error: err instanceof Error ? err.message : String(err) }))
         .then((res) => {
           // A cancelled or replaced scan never lands.
@@ -474,9 +535,15 @@ export class Effects {
       }
       for (const w of res.warnings) console.warn(w);
       // V4c1: each stage's nodal `_ids` into the BlobStore; the store holds the ref.
+      // V4c2a: each gauss group's element ids too (main sends them for a verified file only).
       const stages = res.meta.stages.map((st) => {
         const ids = res.nodeIds?.[st.id];
-        return ids ? { ...st, nodeIds: this.blobs.put(`results/${st.id}/nodeIds`, ids) } : st;
+        const eids = res.elementIds?.[st.id];
+        const gauss = st.gauss.map((g) => {
+          const e = eids?.[g.id];
+          return e ? { ...g, elementIds: this.blobs.put(`results/${st.id}/gauss/${g.id}/elementIds`, e) } : g;
+        });
+        return ids ? { ...st, gauss, nodeIds: this.blobs.put(`results/${st.id}/nodeIds`, ids) } : { ...st, gauss };
       });
       this.store.dispatch({ type: "resultsLoaded", info: { ...res.meta, stages }, sizeBytes: res.sizeBytes, readMs: res.readMs, warnings: res.warnings });
       this.blobs.retain(blobRefsOf(this.store.get()));
@@ -505,16 +572,20 @@ export class Effects {
     }
     const st = info.stages[at.stage];
     if (!st) return;
-    const key = `${info.path}|${st.id}|${at.step}`;
+    // V4c2a: an element contour on screen fetches its one Gauss component with the step (only once its
+    // rows joined the mesh of a verified file: `contourView` is `element` for no other).
+    const v = contourView(s);
+    const element = v.state === "element" ? v.component.key : null;
+    const key = `${info.path}|${st.id}|${at.step}|${element ?? ""}`;
     if (key === this.stepKey) return;
     this.stepKey = key;
     const seq = ++this.stepSeq;
     this.step = null;
     // Not from inside this listener: the other listeners have not seen `s` yet.
-    queueMicrotask(() => void this.fetchStep(info.path, at.stage, st.id, at.step, seq));
+    queueMicrotask(() => void this.fetchStep(info.path, at.stage, st.id, at.step, seq, element));
   }
 
-  private async fetchStep(path: string, stage: number, stageId: string, step: number, seq: number): Promise<void> {
+  private async fetchStep(path: string, stage: number, stageId: string, step: number, seq: number, element: string | null = null): Promise<void> {
     if (seq !== this.stepSeq) return;
     this.store.dispatch({ type: "resultStep", status: { stage, step, status: "loading", error: null } });
     if (typeof this.bridge.readResultsStep !== "function") {
@@ -522,7 +593,7 @@ export class Effects {
       return;
     }
     const res = await this.bridge
-      .readResultsStep({ path, stage: stageId, step, seq })
+      .readResultsStep({ path, stage: stageId, step, seq, ...(element !== null ? { element } : {}) })
       .catch((err: unknown) => ({ ok: false as const, seq, error: err instanceof Error ? err.message : String(err) }));
     // Latest wins: a slow reply for an older request never paints over a newer step.
     if (seq !== this.stepSeq || res.seq !== seq) return;
@@ -532,7 +603,7 @@ export class Effects {
       if ("changed" in res && res.changed) this.store.dispatch({ type: "fileChanged", path });
       return;
     }
-    this.step = { stage, step, nodal: res.nodal };
+    this.step = { stage, step, nodal: res.nodal, element, gauss: res.gauss ?? {} };
     this.store.dispatch({ type: "resultStep", status: { stage, step, status: "ready", error: null } });
   }
 

@@ -28,7 +28,8 @@ from typing import cast
 import pytest
 
 from apeGmsh.opensees import apeSees
-from apeGmsh.opensees._run import SolverStatsWarning, stream_run
+from apeGmsh.opensees._results_route import RUN_COMPLETE_MARKER
+from apeGmsh.opensees._run import RunReport, SolverStatsWarning, stream_run
 from apeGmsh.opensees._solver_stats import RunSolverStats, parse_solver_stats
 from apeGmsh.opensees._target import TIMS_FORK_BATCH_MIN_BUILD
 
@@ -136,11 +137,13 @@ def _assert_interleaved(rec: RunSolverStats) -> None:
 
 def test_streamed_record_matches_the_canned_stages(tmp_path: Path) -> None:
     log = str(tmp_path / "run.log")
-    rec = stream_run(
+    rep = stream_run(
         [sys.executable, _child(tmp_path, _INTERLEAVED)],
         log_path=log, verbose=False, label="run -> deck.py",
         expect_solver_stats=True,
     )
+    assert isinstance(rep, RunReport)
+    rec = rep.solver_stats
     assert isinstance(rec, RunSolverStats)
     _assert_interleaved(rec)
 
@@ -158,11 +161,11 @@ def test_without_stats_returns_none_and_never_parses(
 
     monkeypatch.setattr("apeGmsh.opensees._run.parse_solver_stats", _spy)
     log = str(tmp_path / "run.log")
-    rec = stream_run(
+    rep = stream_run(
         [sys.executable, _child(tmp_path, _INTERLEAVED)],
         log_path=log, verbose=False, label="run -> deck.py",
     )
-    assert rec is None
+    assert rep.solver_stats is None
     assert calls == []
 
 
@@ -196,7 +199,7 @@ def test_missing_block_warns_once_naming_the_constant(tmp_path: Path) -> None:
             [sys.executable, _child(tmp_path, _NO_BLOCK)],
             log_path=log, verbose=False, label="run -> deck.py",
             expect_solver_stats=True,
-        )
+        ).solver_stats
     assert isinstance(rec, RunSolverStats)
     assert rec.factorisations == 0
 
@@ -243,9 +246,11 @@ def _fake_binary(tmp_path: Path, text: str) -> str:
     ``apeSees.tcl(run=True)`` invokes ``[binary, deck]``, so the fake has
     to be directly executable: a ``.cmd`` shim on Windows, a ``sh``
     script elsewhere. It ignores the deck it is handed and prints the
-    canned log.
+    canned log, then the run driver's completion line (it stands for a
+    binary that ran the deck to its end; R3-S6 fails a Tcl run without it).
     """
-    script = _child(tmp_path, text, name="fake_opensees_impl.py")
+    script = _child(tmp_path, text + "\n" + RUN_COMPLETE_MARKER,
+                    name="fake_opensees_impl.py")
     if os.name == "nt":
         launcher = tmp_path / "fake_opensees.cmd"
         launcher.write_text(
@@ -280,11 +285,13 @@ def test_tcl_run_returns_the_record(tmp_path: Path) -> None:
     ops.integrator.LoadControl(dlam=1.0)
     ops.analysis.Static()
 
-    rec = ops.tcl(
+    rep = ops.tcl(
         str(tmp_path / "model.tcl"),
         run=True,
         bin=_fake_binary(tmp_path, _INTERLEAVED),
     )
+    assert isinstance(rep, RunReport)
+    rec = rep.solver_stats
     assert isinstance(rec, RunSolverStats)
     _assert_interleaved(rec)
 
@@ -307,8 +314,10 @@ def test_tcl_without_stats_returns_none(tmp_path: Path) -> None:
     ops.integrator.LoadControl(dlam=1.0)
     ops.analysis.Static()
 
-    assert ops.tcl(
+    rep = ops.tcl(
         str(tmp_path / "model.tcl"),
         run=True,
         bin=_fake_binary(tmp_path, _INTERLEAVED),
-    ) is None
+    )
+    assert isinstance(rep, RunReport)
+    assert rep.solver_stats is None

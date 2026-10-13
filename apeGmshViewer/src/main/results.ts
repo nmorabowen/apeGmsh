@@ -17,6 +17,7 @@
 
 import { statSync } from "node:fs";
 import { openResults, type ResultsFile, type ResultsH5, type StageInfo } from "../reader/results.ts";
+import { gaussCellValues } from "../state/contour.ts";
 
 /** One stage as the renderer's store keeps it (state/types.ts `ResultsStage`). */
 export interface ResultsStageMeta {
@@ -27,9 +28,26 @@ export interface ResultsStageMeta {
   nodal: string[];
   /** V4c1: nodal components refused one by one (value columns that disagree with `_ids`) */
   refusedNodal: { component: string; reason: string }[];
-  gauss: { id: string; components: string[] }[];
+  /**
+   * V4c2a: each gauss group's components, its components refused one by one
+   * (a partial write, or a group with no Gauss point), its size, and whether
+   * it carries shell local axes.
+   */
+  gauss: GaussGroupMeta[];
   unread: string[];
 }
+
+export interface GaussGroupMeta {
+  id: string;
+  components: string[];
+  refused: { component: string; reason: string }[];
+  nElements: number;
+  nGauss: number;
+  localAxes: boolean;
+}
+
+/** Whether a file's `_element_index` rows are FEM element ids: only the root stamp says so (#1768). */
+export type ElementIndexVerdict = { verified: true } | { verified: false; reason: string };
 
 export interface ResultsMeta {
   path: string;
@@ -39,11 +57,26 @@ export interface ResultsMeta {
   partial: string | null;
   stages: ResultsStageMeta[];
   unavailableZones: string[];
+  /** V4c2a: the element-id verdict; element contours draw only for a verified file */
+  elementIndex: ElementIndexVerdict;
 }
 
 export type ResultsOpenAnswer =
-  /** `nodeIds`: each stage's nodal `_ids` by stage id (V4c1), outside `meta` so the store never holds an array */
-  | { ok: true; meta: ResultsMeta; nodeIds: Record<string, Float64Array>; warnings: string[]; sizeBytes: number; readMs: number }
+  /**
+   * `nodeIds`: each stage's nodal `_ids` by stage id (V4c1), outside `meta` so
+   * the store never holds an array. `elementIds` (V4c2a): each gauss group's
+   * `_element_index` by stage and group id, sent only for a verified file; an
+   * unverified file's rows never leave main, so nothing can join them.
+   */
+  | {
+      ok: true;
+      meta: ResultsMeta;
+      nodeIds: Record<string, Float64Array>;
+      elementIds: Record<string, Record<string, Float64Array>>;
+      warnings: string[];
+      sizeBytes: number;
+      readMs: number;
+    }
   | { ok: false; error: string };
 
 /** A step request: the stage by id (and index, echoed back), the step, and the renderer's request number. */
@@ -52,10 +85,13 @@ export interface StepRequest {
   stage: string;
   step: number;
   seq: number;
+  /** V4c2a: one element (Gauss) component to read too, from every group that has it; verified files only */
+  element?: string;
 }
 
 export type StepAnswer =
-  | { ok: true; seq: number; stage: string; step: number; nodal: Record<string, Float64Array> }
+  /** `gauss`: the requested element component by group id, (E * G,) element-major; {} with no `element` */
+  | { ok: true; seq: number; stage: string; step: number; nodal: Record<string, Float64Array>; gauss: Record<string, Float64Array> }
   /** `changed`: the file on disk is not the one indexed; re-open it (`open`) before reading */
   | { ok: false; seq: number; error: string; changed?: true };
 
@@ -70,6 +106,13 @@ export interface ScanRequest {
   components: string[];
   magnitude: boolean;
   scanId: number;
+  /**
+   * V4c2a: `element` scans one Gauss component (`components` has one name):
+   * the per-element value (a one-point group's value, else the mean of the
+   * element's Gauss points; state/contour.ts `gaussCellValues`) over every
+   * group that has it. Verified files only. Absent: a nodal scan.
+   */
+  source?: "element";
 }
 
 export type ScanAnswer =
@@ -110,9 +153,17 @@ export function metaOf(rf: ResultsFile): ResultsMeta {
       time: Array.from(s.time),
       nodal: s.nodes ? [...s.nodes.components] : [],
       refusedNodal: s.nodes ? s.nodes.refused.map((r) => ({ ...r })) : [],
-      gauss: s.gauss.map((g) => ({ id: g.id, components: [...g.components] })),
+      gauss: s.gauss.map((g) => ({
+        id: g.id,
+        components: [...g.components],
+        refused: g.refused.map((r) => ({ ...r })),
+        nElements: g.nElements,
+        nGauss: g.nGauss,
+        localAxes: g.localAxes,
+      })),
       unread: [...s.unread],
     })),
+    elementIndex: { ...rf.elementIndexVerdict() },
   };
 }
 
@@ -156,7 +207,20 @@ export class ResultsHost {
       this.armIdle();
       const nodeIds: Record<string, Float64Array> = {};
       for (const st of rf.index.stages) if (st.nodes) nodeIds[st.id] = st.nodes.ids;
-      return { ok: true, meta: metaOf(rf), nodeIds, warnings: [...rf.index.warnings], sizeBytes: Number(sig.split(":")[0]), readMs: performance.now() - t };
+      // V4c2a (#1711/#1752 gate): element rows leave main only for a verified file.
+      const elementIds: Record<string, Record<string, Float64Array>> = {};
+      if (rf.elementIndexVerdict().verified) {
+        for (const st of rf.index.stages) {
+          const byGroup: Record<string, Float64Array> = {};
+          for (const g of st.gauss) {
+            const e = rf.elementIds(st.id, g.id);
+            if (e.mapping !== "fem_eid") throw new Error(`${g.path}: the file is verified but its rows read as ${e.mapping}`);
+            byGroup[g.id] = e.ids;
+          }
+          elementIds[st.id] = byGroup;
+        }
+      }
+      return { ok: true, meta: metaOf(rf), nodeIds, elementIds, warnings: [...rf.index.warnings], sizeBytes: Number(sig.split(":")[0]), readMs: performance.now() - t };
     } catch (err) {
       this.close();
       return { ok: false, error: message(err) };
@@ -210,7 +274,15 @@ export class ResultsHost {
       }
       const nodal: Record<string, Float64Array> = {};
       comps.forEach((c, i) => (nodal[c] = values[i]!));
-      return { ok: true, seq: req.seq, stage: s.id, step: req.step, nodal };
+      const gauss: Record<string, Float64Array> = {};
+      if (req.element !== undefined) {
+        const v = rf.elementIndexVerdict();
+        // Fail closed: an unverified file's element values are never served (the renderer refuses them first).
+        if (!v.verified) throw new Error(`element results of ${req.path} are refused: ${v.reason}`);
+        for (const g of s.gauss) if (g.components.includes(req.element)) gauss[g.id] = rf.readGaussStep(s.id, g.id, req.element, req.step);
+        if (!Object.keys(gauss).length) throw new Error(`stage ${s.id} has no gauss group with component ${JSON.stringify(req.element)}`);
+      }
+      return { ok: true, seq: req.seq, stage: s.id, step: req.step, nodal, gauss };
     } catch (err) {
       return { ok: false, seq: req.seq, error: message(err) };
     }
@@ -243,6 +315,7 @@ export class ResultsHost {
       let rf = this.handle(req.path);
       if (!rf) return { ok: false, scanId: id, changed: true, error: `${req.path} changed on disk since it was indexed` };
       const st = rf.stage(req.stage);
+      if (req.source === "element") return await this.scanElement(req, rf, st, progress, opts, t);
       const n = st.nodes?.ids.length ?? 0;
       if (!st.nodes) throw new Error(`stage ${st.id} has no nodal results`);
       if (req.components.length === 0) throw new Error("a scan needs at least one component");
@@ -294,6 +367,60 @@ export class ResultsHost {
       this.running.delete(id);
       this.cancelled.delete(id);
     }
+  }
+
+  /**
+   * The element history range (V4c2a): one Gauss component of every group
+   * that has it, reduced per element (gaussCellValues: NaN when any of the
+   * element's points is not finite), in chunks of steps. Runs inside `scan`.
+   */
+  private async scanElement(
+    req: ScanRequest,
+    first: ResultsFile,
+    st: StageInfo,
+    progress: (p: ScanProgress) => void,
+    opts: { chunkSteps?: number; paceMs?: number; progressMs?: number },
+    t: number,
+  ): Promise<ScanAnswer> {
+    const id = req.scanId;
+    const v = first.elementIndexVerdict();
+    if (!v.verified) throw new Error(`element results of ${req.path} are refused: ${v.reason}`);
+    if (req.components.length !== 1 || req.magnitude) throw new Error("an element scan reads one component, never a magnitude");
+    const comp = req.components[0]!;
+    const groups = st.gauss.filter((g) => g.components.includes(comp));
+    if (!groups.length) throw new Error(`stage ${st.id} has no gauss group with component ${JSON.stringify(comp)}`);
+    const T = st.nSteps;
+    const per = groups.reduce((a, g) => a + g.nElements * g.nGauss, 0);
+    const chunk = opts.chunkSteps ?? Math.max(1, Math.floor(4e6 / (8 * Math.max(1, per))));
+    let lo = Infinity;
+    let hi = -Infinity;
+    let lastProgress = -Infinity;
+    for (let k0 = 0; k0 < T; k0 += chunk) {
+      if (this.cancelled.has(id)) return { ok: false, scanId: id, cancelled: true, error: "cancelled" };
+      const rf = this.handle(req.path);
+      if (!rf) return { ok: false, scanId: id, changed: true, error: `${req.path} changed on disk during the scan` };
+      this.armIdle();
+      const k1 = Math.min(T, k0 + chunk);
+      for (const g of groups) {
+        const rows = rf.readGaussRows(st.id, g.id, comp, k0, k1);
+        const vals = gaussCellValues(rows, (k1 - k0) * g.nElements, g.nGauss);
+        for (let i = 0; i < vals.length; i++) {
+          const x = vals[i]!;
+          if (!Number.isFinite(x)) continue;
+          if (x < lo) lo = x;
+          if (x > hi) hi = x;
+        }
+      }
+      const now = performance.now();
+      if (k1 < T && now - lastProgress >= (opts.progressMs ?? 100)) {
+        lastProgress = now;
+        progress({ scanId: id, done: k1, total: T });
+      }
+      await new Promise((r) => (opts.paceMs ? setTimeout(r, opts.paceMs) : setImmediate(r)));
+    }
+    if (this.cancelled.has(id)) return { ok: false, scanId: id, cancelled: true, error: "cancelled" };
+    const finite = lo <= hi;
+    return { ok: true, scanId: id, min: finite ? lo : null, max: finite ? hi : null, steps: T, ms: performance.now() - t };
   }
 
   /** Close the handle now (the index is kept: the next read re-opens and checks it). */

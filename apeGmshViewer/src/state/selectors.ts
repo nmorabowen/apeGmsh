@@ -9,11 +9,26 @@ import { PROVENANCE_ORIGIN_FROM } from "../reader/provenance.ts";
 import { roleColouring } from "./roles.ts";
 import { activationNotice, activationOf, type Activation } from "./activation.ts";
 import { pairingNotice, pairResults, type ResultsPairing } from "./results.ts";
-import { climOf, componentName, componentOf, contourKeysOf, fieldsOf, type Clim, type FieldComponent, type NodalField } from "./contour.ts";
+import {
+  climOf,
+  componentName,
+  componentOf,
+  contourKeysOf,
+  elementComponentOf,
+  gaussFields,
+  elementTopology,
+  fieldsOf,
+  topologyLabel,
+  type Clim,
+  type ElementComponent,
+  type ElementField,
+  type FieldComponent,
+  type NodalField,
+} from "./contour.ts";
 import type { BlobRef, ContourCmap } from "./types.ts";
 import { displacementAxes } from "./deform.ts";
 
-export type { Clim, FieldComponent, NodalField } from "./contour.ts";
+export type { Clim, ElementComponent, ElementField, FieldComponent, NodalField } from "./contour.ts";
 export { GHOST_OPACITY, scaleLabel } from "./deform.ts";
 export { CMAP_NAMES, CMAPS, MAGNITUDE, NO_DATA_RGB, RANGE_MODES, sampleCmap } from "./contour.ts";
 
@@ -32,6 +47,8 @@ import type {
   LegendEntry,
   Origin,
   Pick,
+  ResultsInfo,
+  ResultsStage,
   SequenceZone,
   StageDef,
   State,
@@ -242,6 +259,10 @@ export function noticesOf(s: State): string[] {
   const at = s.phase.at;
   const st = at?.kind === "results" ? s.results?.stages[at.stage] : undefined;
   for (const r of st?.refusedNodal ?? []) out.push(`Nodal component ${r.component} not read: ${r.reason}.`);
+  // V4c2a: element components refused one by one on the stage shown, and why a picked element field is not drawn.
+  for (const g of st?.gauss ?? []) for (const r of g.refused) out.push(`Element component ${r.component} of group ${g.id} not read: ${r.reason}.`);
+  const ev = contourView(s);
+  if (ev.state === "refused") out.push(`Element contour refused: ${ev.reason}.`);
   if (s.contour.notice) out.push(s.contour.notice);
   // V4d: drawn nodes the deformed shape leaves undeformed, or why it is not drawn.
   const d = deformNotice(s);
@@ -251,10 +272,49 @@ export function noticesOf(s: State): string[] {
 
 // -- V4c1: the nodal contour ----------------------------------------------------
 
+/** Why an element contour is refused (V4c2a): each is drawn as no data, and the banner says why. */
+export type ElementRefusal = "unverified" | "components" | "unknown-id" | "duplicate-id";
+
+/** One gauss group an element contour reads: its id, size, and its element ids (blob). */
+export interface ElementGroupDraw {
+  id: string;
+  nElements: number;
+  nGauss: number;
+  eids: BlobRef;
+}
+
 export type ContourView =
   | { state: "off" }
   /** colouring by contour, and nothing can be coloured: the sentence says why (the mesh is drawn as no data) */
   | { state: "unavailable"; reason: string }
+  /**
+   * V4c2a: an element field that must not be drawn: an unverified file (its
+   * rows are not proved to be FEM ids), groups that disagree on the field's
+   * components, or rows that do not join the mesh. Drawn as no data, never
+   * "with a warning"; the banner says why.
+   */
+  | { state: "refused"; code: ElementRefusal; reason: string }
+  /** V4c2a: an element topology whose drawing is not built yet (the extrapolations to nodes, V4c2b) */
+  | { state: "not-yet"; topology: "gauss_cell_averaged" | "gauss_node" | "gauss_node_discrete"; reason: string }
+  /** V4c2a: an element field, flat per cell */
+  | {
+      state: "element";
+      field: string;
+      component: ElementComponent;
+      topology: "gauss_cell" | "element_mean";
+      /** what the legend states for the topology (the averaging, in words) */
+      topologyLabel: string;
+      nGauss: number[];
+      groups: ElementGroupDraw[];
+      stageName: string;
+      keys: { step: string; scan: string };
+      /** selectors `elementJoinKey`: the join the colours go through */
+      joinKey: string;
+      clim: Clim;
+      cmap: ContourCmap;
+      stepMeasured: boolean;
+      reads: number;
+    }
   | {
       state: "ready";
       field: string;
@@ -271,7 +331,78 @@ export type ContourView =
       reads: number;
     };
 
-/** What the contour colours, or why it cannot (V4c1). */
+/** A results file's element-id verdict; a results info without one is unverified (fail closed). */
+export function elementVerdictOf(info: ResultsInfo): { verified: true } | { verified: false; reason: string } {
+  return info.elementIndex ?? { verified: false, reason: "this results info carries no element-index verdict" };
+}
+
+/**
+ * The key of an element field's join to the mesh (V4c2a): the results read
+ * (a re-read is joined again), the file, the stage, the field, the mesh and
+ * the groups' element-id blobs. Null when no verified element field is picked.
+ */
+export function elementJoinKey(s: State): string | null {
+  const at = s.phase.at;
+  const c = s.contour;
+  if (c.source !== "element" || c.field === null || at?.kind !== "results" || !s.results || !s.mesh || !elementVerdictOf(s.results).verified) return null;
+  const st = s.results.stages[at.stage];
+  const f = st ? gaussFields(st.gauss).find((x) => x.name === c.field) : undefined;
+  if (!st || !f || f.refused !== null) return null;
+  const ids = f.groups.map((gid) => st.gauss.find((g) => g.id === gid)?.elementIds?.id ?? "?");
+  return `read ${c.reads}|${s.results.path}|${st.id}|elem:${f.name}|mesh ${s.mesh.triElement.id}|${ids.join(",")}`;
+}
+
+/** What an element field colours (V4c2a), or why it cannot; `contourView` calls it once the stage is known. */
+function elementView(s: State, st: ResultsStage, label: string): ContourView {
+  const c = s.contour;
+  if (c.field === null || c.component === null) return { state: "unavailable", reason: "pick a field" };
+  const hit = elementComponentOf(st, c.field, c.component);
+  if (!hit) return { state: "unavailable", reason: `stage ${label} has no element field ${c.field} ${componentName(c.component)}` };
+  const v = elementVerdictOf(s.results!);
+  if (!v.verified) {
+    return {
+      state: "refused",
+      code: "unverified",
+      reason: `${baseName(s.results!.path)} does not prove which elements its rows are, so its element results are not drawn (${v.reason})`,
+    };
+  }
+  if (hit.field.refused !== null) return { state: "refused", code: "components", reason: `element field ${c.field}: ${hit.field.refused}` };
+  const topology = elementTopology(c.gauss, hit.field.nGauss);
+  if (topology === "gauss_cell_averaged" || topology === "gauss_node" || topology === "gauss_node_discrete") {
+    return { state: "not-yet", topology, reason: `${topology} (values carried to the nodes) is not yet available: it arrives with V4c2b` };
+  }
+  if (!s.mesh) return { state: "unavailable", reason: "no mesh is loaded" };
+  const groups: ElementGroupDraw[] = [];
+  for (const gid of hit.field.groups) {
+    const g = st.gauss.find((x) => x.id === gid)!;
+    if (!g.elementIds) return { state: "unavailable", reason: `the element ids of group ${gid} are not loaded` };
+    groups.push({ id: g.id, nElements: g.nElements, nGauss: g.nGauss, eids: g.elementIds });
+  }
+  const joinKey = elementJoinKey(s)!;
+  const j = c.join;
+  if (!j || j.key !== joinKey) return { state: "unavailable", reason: "the element rows are being joined to the mesh" };
+  if (!j.ok) return { state: "refused", code: j.code, reason: `element field ${c.field}: ${j.reason}` };
+  const keys = contourKeysOf(s)!;
+  const measured = c.stepRange !== null && c.stepRange.key === keys.step;
+  return {
+    state: "element",
+    field: c.field,
+    component: hit.component,
+    topology,
+    topologyLabel: topologyLabel(topology, hit.field.nGauss),
+    nGauss: hit.field.nGauss,
+    groups,
+    stageName: label,
+    keys,
+    joinKey,
+    clim: climOf(c, measured ? c.stepRange : null, c.scan, keys.scan),
+    cmap: c.cmap,
+    stepMeasured: measured,
+    reads: c.reads,
+  };
+}
+
+/** What the contour colours, or why it cannot (V4c1; V4c2a adds element fields). */
 export function contourView(s: State): ContourView {
   if (s.visibility.colourBy !== "contour") return { state: "off" };
   const p = resultsPairing(s);
@@ -281,6 +412,7 @@ export function contourView(s: State): ContourView {
   const st = s.results.stages[at.stage];
   if (!st) return { state: "unavailable", reason: `results stage ${at.stage} is not in the file` };
   const label = st.name || st.id;
+  if (s.contour.source === "element") return elementView(s, st, label);
   if (fieldsOf(st).length === 0) return { state: "unavailable", reason: `stage ${label} records no nodal results` };
   const c = s.contour;
   if (c.field === null || c.component === null) return { state: "unavailable", reason: "pick a field" };
@@ -305,11 +437,20 @@ export function contourView(s: State): ContourView {
   };
 }
 
-/** The field picker's rows: the nodal fields of the results stage shown, and the refused components. */
-export function contourFieldsOf(s: State): { fields: NodalField[]; refused: { component: string; reason: string }[] } | null {
+/**
+ * The field picker's rows: the nodal fields of the results stage shown, and
+ * the refused components; V4c2a: its element fields (a refused one says why),
+ * and whether the file's element rows are verified.
+ */
+export function contourFieldsOf(s: State): {
+  fields: NodalField[];
+  refused: { component: string; reason: string }[];
+  elements: ElementField[];
+  elementsVerified: boolean;
+} | null {
   const at = s.phase.at;
   const st = at?.kind === "results" ? s.results?.stages[at.stage] : undefined;
-  return st ? { fields: fieldsOf(st), refused: st.refusedNodal } : null;
+  return st ? { fields: fieldsOf(st), refused: st.refusedNodal, elements: gaussFields(st.gauss), elementsVerified: elementVerdictOf(s.results!).verified } : null;
 }
 
 // -- V4d: the deformed shape ----------------------------------------------------

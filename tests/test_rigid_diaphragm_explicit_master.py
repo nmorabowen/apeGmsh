@@ -1,5 +1,5 @@
-"""B5 (#1817, fixes #1804): ``rigid_diaphragm`` with an explicit
-``master_point`` keeps the declared master.
+"""B5 (#1817, fixes #1804; #1838, fixes #1829): ``rigid_diaphragm`` with
+an explicit ``master_point`` keeps the declared master.
 
 Oracles, each naming the right answer independently of the code:
 
@@ -13,9 +13,14 @@ Oracles, each naming the right answer independently of the code:
   a lateral X load on a floor corner, the floor's rigid-body ux (the
   displacement at the plan centre, where the master sits) is zero; with
   the master's ux free the same load moves it.
-* **Tie-break.**  A multi-node master label whose node is coincident with
-  a slave node at the point's nearest distance keeps the master-label
-  node, whatever the tags.
+* **Multi-node master label (#1804 ties; #1829).**  The master is the
+  master-label plane node nearest the point.  A slave-label node is never
+  promoted, whether it is coincident with a master node or strictly
+  nearer the point than every master node.
+* **#1829, live.**  The frame with floor 2's master label widened to
+  {``floor_2_master``, ``J22_L2``} and the point next to slave joint
+  ``J00_L2``: the master stays ``floor_2_master``, and a fix on its ux
+  holds the floor.
 * **Refusals.**  A one-node master off the plane through the point, and a
   multi-node master label with no node in that plane, raise naming the
   node and the plane.
@@ -27,6 +32,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from apeGmsh import apeGmsh
 from apeGmsh._kernel.defs.constraints import RigidDiaphragmDef
 from apeGmsh._kernel.resolvers._constraint_resolver import ConstraintResolver
 
@@ -104,6 +110,95 @@ def test_1804_a_fix_on_the_declared_master_constrains_the_floor(fem):
 
 
 # ---------------------------------------------------------------------------
+# #1829 — a multi-node master label with a strictly nearer slave
+# ---------------------------------------------------------------------------
+
+def _frame_wide_master():
+    """frame_modal with floor 2's master label widened to two nodes,
+    ``floor_2_master`` (plan centre) and corner joint ``J22_L2``, and the
+    floor-2 point placed next to corner joint ``J00_L2``, a slave.  The
+    ``floor_k_master`` groups that ``_bridge`` fixes and masses keep one
+    node each."""
+    bay, n = 6.0, 2
+    with apeGmsh(model_name="b5j_wide_master") as g:
+        joints: dict[int, list[str]] = {}
+        for k in range(3):
+            joints[k] = []
+            for i in range(n + 1):
+                for j in range(n + 1):
+                    name = f"J{i}{j}_L{k}"
+                    g.model.geometry.add_point(i * bay, j * bay, k * STOREY,
+                                               label=name)
+                    joints[k].append(name)
+        for k in (1, 2):
+            g.model.geometry.add_point(bay, bay, k * STOREY,
+                                       label=f"floor_{k}_master")
+        cols, beams = [], []
+        for k in (1, 2):
+            for i in range(n + 1):
+                for j in range(n + 1):
+                    cols.append(f"C{i}{j}_{k}")
+                    g.model.geometry.add_line(f"J{i}{j}_L{k - 1}",
+                                              f"J{i}{j}_L{k}", label=cols[-1])
+            for i in range(n):
+                for j in range(n + 1):
+                    beams.append(f"BX{i}{j}_{k}")
+                    g.model.geometry.add_line(f"J{i}{j}_L{k}",
+                                              f"J{i + 1}{j}_L{k}", label=beams[-1])
+            for i in range(n + 1):
+                for j in range(n):
+                    beams.append(f"BY{i}{j}_{k}")
+                    g.model.geometry.add_line(f"J{i}{j}_L{k}",
+                                              f"J{i}{j + 1}_L{k}", label=beams[-1])
+        g.physical.add_curve(cols, name="columns")
+        g.physical.add_curve(beams, name="beams")
+        g.physical.add_point(joints[0], name="column_bases")
+        for k in (1, 2):
+            g.physical.add_point(joints[k], name=f"floor_{k}_joints")
+            g.physical.add_point([f"floor_{k}_master"], name=f"floor_{k}_master")
+        g.physical.add_point(["floor_2_master", "J22_L2"], name="floor_2_master_set")
+        g.constraints.rigid_diaphragm(
+            "floor_1_master", "floor_1_joints", master_point=(bay, bay, STOREY),
+            plane_normal=(0, 0, 1), plane_tolerance=0.05)
+        g.constraints.rigid_diaphragm(
+            "floor_2_master_set", "floor_2_joints",
+            master_point=(0.1, 0.1, 2 * STOREY),
+            plane_normal=(0, 0, 1), plane_tolerance=0.05)
+        g.mesh.structured.set_transfinite_curve("columns", n_nodes=2)
+        g.mesh.structured.set_transfinite_curve("beams", n_nodes=2)
+        g.mesh.generation.generate(dim=1)
+        return g.mesh.queries.get_fem_data(dim=1)
+
+
+@pytest.fixture(scope="module")
+def wide():
+    return _frame_wide_master()
+
+
+def test_1829_floor_2_master_stays_in_the_master_label(wide):
+    (_, master, slaves) = _diaphragms(wide)[1]
+    (declared,) = _ids(wide, pg="floor_2_master")
+    (corner,) = _ids(wide, label="J00_L2")
+    # main (0492b8ac): the master was J00_L2, a slave-label joint 0.14 m
+    # from the point, and floor_2_master was one of its slaves.
+    assert master == declared
+    assert corner in slaves
+    assert sorted(slaves) == [t for t in _ids(wide, pg="floor_2_joints")]
+
+
+@pytest.mark.live
+def test_1829_a_fix_on_the_declared_master_constrains_the_floor(wide):
+    pytest.importorskip("openseespy.opensees")
+    free_master, _ = _floor_ux(wide, master_fix=(0, 0, 1, 1, 1, 0))
+    assert free_master > 1e-5
+    held_master, held_joint = _floor_ux(wide, master_fix=(1, 0, 1, 1, 1, 0))
+    # main: floor_2_master was a slave, Transformation dropped the fix on
+    # its constrained ux, and the floor slid as if it were free.
+    assert abs(held_master) < 1e-12
+    assert abs(held_joint) < 1e-12
+
+
+# ---------------------------------------------------------------------------
 # Resolver unit oracles
 # ---------------------------------------------------------------------------
 
@@ -131,18 +226,18 @@ def test_tie_prefers_the_master_label_node():
     assert sorted(rec.slave_nodes) == [1, 2, 3, 8]
 
 
-def test_tie_preference_does_not_depend_on_tag_order():
-    # Same geometry with the slave joint holding the higher tag.
-    coords = {9: TIE[1], 2: TIE[2], 3: TIE[3], 5: TIE[7], 8: TIE[8]}
-    rec = _resolver(coords).resolve_rigid_diaphragm(
-        _defn((2.0, 2.0, STOREY)), {9, 2, 3, 5, 8}, master_nodes={5, 8})
-    assert rec.master_node == 5
-
-
-def test_multi_node_master_keeps_the_nearest_plane_node_without_a_tie():
+@pytest.mark.parametrize("point, slave", [
+    ((0.1, 0.1, STOREY), 2),     # slave 2 at 0.14; master 7 at 2.69
+    ((4.0, 0.5, STOREY), 3),     # slave 3 at 0.5; master 7 at 2.5
+])
+def test_1829_a_strictly_nearer_slave_is_never_the_master(point, slave):
     rec = _resolver(TIE).resolve_rigid_diaphragm(
-        _defn((3.9, 3.9, STOREY)), {1, 2, 3, 7, 8}, master_nodes={7, 8})
-    assert rec.master_node == 8
+        _defn(point), {1, 2, 3, 7, 8}, master_nodes={7, 8})
+    # main (0492b8ac): the slave-label node, strictly nearest the point,
+    # became master and demoted the declared master set.
+    assert rec.master_node == 7
+    assert slave in rec.slave_nodes
+    assert sorted(rec.slave_nodes) == [1, 2, 3, 8]
 
 
 def test_one_node_master_wins_over_a_nearer_slave():

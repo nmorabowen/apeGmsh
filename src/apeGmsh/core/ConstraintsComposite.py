@@ -2501,9 +2501,9 @@ class ConstraintsComposite(_DeclarationsMixin):
             plane that collects no slave node. Given: the plane passes
             through this point. A master label of one node stays the
             master, and is refused if it lies off that plane. A master
-            label of several nodes takes the plane node nearest the
-            point, preferring a master-label node over a coincident
-            slave node; a plane that collects no master-label node, no
+            label of several nodes takes its own plane node nearest the
+            point; a slave node is never the master, however near the
+            point. A plane that collects no master-label node, no
             master or no slave is refused.
         plane_normal : (nx, ny, nz), default (0, 0, 1)
             Unit normal to the diaphragm plane. ``(0, 0, 1)`` is a

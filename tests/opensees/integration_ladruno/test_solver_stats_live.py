@@ -57,6 +57,7 @@ from typing import cast
 import pytest
 
 from apeGmsh.opensees import apeSees
+from apeGmsh.opensees._run import RunReport
 from apeGmsh.opensees._solver_stats import RunSolverStats
 
 from tests.opensees.fixtures.fem_stub import (
@@ -185,10 +186,14 @@ def test_first_factorisation_matches_fork_reference(tmp_path: Path) -> None:
     ops.integrator.LoadControl(dlam=1.0)
     ops.analysis.Static()
 
-    rec = ops.tcl(
+    rep = ops.tcl(
         str(tmp_path / "brick54_newton.tcl"),
         run=True, bin=_resolve_fork_exe(), analyze_steps=1,
     )
+    # ADR 0106 Amendment 1: the record is the report's solver_stats.
+    assert isinstance(rep, RunReport)
+    assert rep.increments == 1
+    rec = rep.solver_stats
     assert isinstance(rec, RunSolverStats)
     assert rec.stages == ()  # flat deck: everything lands in run_level
 
@@ -229,10 +234,14 @@ def test_factorisations_counts_exactly_one_per_linear_step(
     ops.integrator.LoadControl(dlam=1.0 / n_steps)
     ops.analysis.Static()
 
-    rec = ops.tcl(
+    rep = ops.tcl(
         str(tmp_path / "brick54_linear.tcl"),
         run=True, bin=_resolve_fork_exe(), analyze_steps=n_steps,
     )
+    assert isinstance(rep, RunReport)
+    # One factorisation per increment, and the report counts both.
+    assert rep.increments == n_steps
+    rec = rep.solver_stats
     assert isinstance(rec, RunSolverStats)
     assert rec.factorisations == n_steps
     assert rec.run_level.factorisations == n_steps
@@ -281,10 +290,13 @@ def test_two_stage_split_sums_to_the_total(tmp_path: Path) -> None:
         )
         s.run(n_increments=2)
 
-    rec = ops.tcl(
+    rep = ops.tcl(
         str(tmp_path / "brick54_staged.tcl"),
         run=True, bin=_resolve_fork_exe(),
     )
+    assert isinstance(rep, RunReport)
+    assert rep.increments == 3  # 1 gravity + 2 push, summed over stages
+    rec = rep.solver_stats
     assert isinstance(rec, RunSolverStats)
 
     by_name = {stage.name: stage for stage in rec.stages}
@@ -302,7 +314,7 @@ def test_two_stage_split_sums_to_the_total(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# 4. INV-1 at the live level: no request, no block, ``None`` back
+# 4. INV-1 at the live level: no request, no block, no record
 # ---------------------------------------------------------------------------
 
 
@@ -323,8 +335,9 @@ def test_without_stats_returns_none_and_log_has_no_block(
     ops.analysis.Static()
 
     deck = str(tmp_path / "brick54_nostats.tcl")
-    rec = ops.tcl(deck, run=True, bin=_resolve_fork_exe(), analyze_steps=1)
-    assert rec is None
+    rep = ops.tcl(deck, run=True, bin=_resolve_fork_exe(), analyze_steps=1)
+    assert isinstance(rep, RunReport)
+    assert rep.solver_stats is None
 
     log_text = _log_path(deck).read_text(encoding="utf-8", errors="replace")
     assert "PARDISO stats:" not in log_text

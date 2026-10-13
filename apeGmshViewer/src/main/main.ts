@@ -157,7 +157,14 @@ ipcMain.handle("results:open", (_e, path: unknown) => {
 });
 ipcMain.handle("results:readStep", (_e, req: unknown) => {
   const r = req as StepRequest | null;
-  if (!r || typeof r.path !== "string" || typeof r.stage !== "string" || typeof r.step !== "number" || typeof r.seq !== "number") {
+  if (
+    !r ||
+    typeof r.path !== "string" ||
+    typeof r.stage !== "string" ||
+    typeof r.step !== "number" ||
+    typeof r.seq !== "number" ||
+    (r.element !== undefined && typeof r.element !== "string")
+  ) {
     return { ok: false, seq: -1, error: `results:readStep: malformed request ${JSON.stringify(req)}` };
   }
   return resultsHost.readStep(r);
@@ -169,7 +176,15 @@ ipcMain.handle("results:close", () => resultsHost.close());
 // window paints slowly; renderer/app.ts checks the scan was still running).
 ipcMain.handle("results:scan", (e, req: unknown) => {
   const r = req as ScanRequest | null;
-  if (!r || typeof r.path !== "string" || typeof r.stage !== "string" || !Array.isArray(r.components) || typeof r.magnitude !== "boolean" || typeof r.scanId !== "number") {
+  if (
+    !r ||
+    typeof r.path !== "string" ||
+    typeof r.stage !== "string" ||
+    !Array.isArray(r.components) ||
+    typeof r.magnitude !== "boolean" ||
+    typeof r.scanId !== "number" ||
+    (r.source !== undefined && r.source !== "element")
+  ) {
     return { ok: false, scanId: -1, error: `results:scan: malformed request ${JSON.stringify(req)}` };
   }
   const sender = e.sender;
@@ -229,6 +244,11 @@ ipcMain.handle("measure:done", (_e, result: unknown) => {
   // V4d: the same scrub with the deformed shape on.
   const deform = (result as { deform?: ContourMeasure | null } | null)?.deform;
   if (deform) printContourRow(deform);
+  // V4c2a: the scrub with an element contour on, then deformed too.
+  for (const key of ["elements", "elementsDeform"] as const) {
+    const row = (result as Partial<Record<typeof key, ContourMeasure | null>> | null)?.[key];
+    if (row) printContourRow(row);
+  }
   app.quit();
 });
 

@@ -9,6 +9,15 @@
 // store's `refs`, the inspector's own data), and the declarations whose
 // decl_params name it. The window lists; the inspector shows one chain (D7).
 //
+// A uniaxial material can also be named by g.reinforce LadrunoEmbeddedRebar
+// ties (`-bond <tag>`, /opensees/constraints/embeddedRebar, opensees 2.29;
+// V4m #1846). Ties are not elements and have no declaration row, so they are
+// counted from `definitions.embeddedRebar` by tag, as "N embeddedRebar ties".
+// When any tie's bond material cannot be read (no tag, a non-integer one,
+// `-bond` twice, or a tag no uniaxial material of the file carries), a
+// uniaxial row says "users unknown: referenced by embeddedRebar ties", never
+// 0 and never "used by nothing".
+//
 // Parameters come from decl_params only: a file without it says so, and the
 // positional argv is never re-read here as names. Names are handles, tags
 // evidence (D2c); an unnamed declaration shows its `#k` key.
@@ -67,8 +76,10 @@ export interface MaterialRow {
   owners: { type: string; fields: [string, Val][] }[];
   /** why there are no parameters by field name, or null */
   paramsNote: string | null;
-  /** from the definition chain: elements and objects whose refs point here */
-  usedBy: { elements: number; objects: Ref[] };
+  /** from the definition chain: elements and objects whose refs point here; `ties`, the embeddedRebar ties whose `-bond` tag is this material's */
+  usedBy: { elements: number; objects: Ref[]; ties: number };
+  /** a uniaxial material's tie users cannot all be known: why (one entry per reason, with its tie count, null when unknown); null when they can */
+  tiesUnknown: { why: string; ties: number | null }[] | null;
   /** from decl_params: declarations whose parameters reference this one */
   referencedBy: { ref: Ref; type: string; elements: number }[];
 }
@@ -168,6 +179,40 @@ function paramUsersOf(defs: Definitions): Map<string, DeclRecord[]> {
   return m;
 }
 
+interface TieUsers {
+  /** uniaxial material path -> ties whose bond tag is its tag */
+  byPath: Map<DeclPath, number>;
+  /** the ties no uniaxial material can be named for, by reason; [] when there are none */
+  unknown: { why: string; ties: number | null }[];
+}
+const tieUsers = new WeakMap<object, WeakMap<object, TieUsers>>();
+
+/**
+ * The embeddedRebar ties' bond tags matched to the uniaxial materials of this
+ * file by tag (the tag is what the tie row carries). A tag that matches no
+ * uniaxial material, or more than one, is unknown, as is every tie the
+ * reader could not read.
+ */
+function tieUsersOf(s: State, defs: Definitions | null): TieUsers | null {
+  const er = defs?.embeddedRebar;
+  if (!defs || !er) return null;
+  const inner = tieUsers.get(defs) ?? tieUsers.set(defs, new WeakMap()).get(defs)!;
+  let t = inner.get(s.decls);
+  if (t) return t;
+  const byTag = new Map<number, DeclPath[]>();
+  for (const d of Object.values(s.decls)) {
+    if (d.kind === "uniaxialMaterial" && d.tag !== null) (byTag.get(d.tag) ?? byTag.set(d.tag, []).get(d.tag)!).push(d.path);
+  }
+  t = { byPath: new Map(), unknown: er.unresolved.map((u) => ({ why: u.why, ties: u.ties })) };
+  for (const b of er.bond) {
+    const hit = byTag.get(b.tag) ?? [];
+    if (hit.length === 1) t.byPath.set(hit[0]!, (t.byPath.get(hit[0]!) ?? 0) + b.ties);
+    else t.unknown.push({ why: hit.length ? `bond tag ${b.tag} names ${hit.length} uniaxial materials` : `bond tag ${b.tag} is no uniaxial material of this file`, ties: b.ties });
+  }
+  inner.set(s.decls, t);
+  return t;
+}
+
 /** How many elements a declaration owns (its `element` tag runs). */
 function elementsOwned(defs: Definitions, rec: DeclRecord): number {
   return (defs.decls?.tags ?? []).filter((t) => t.decl === rec.row && t.kind === "element").reduce((n, t) => n + t.count, 0);
@@ -190,6 +235,11 @@ function rowOf(c: Ctx, defs: Definitions | null, d: Decl): MaterialRow {
     const u = c.s.decls[p]!;
     return { key: p, label: `${u.kind} ${keyHandle(p) || u.name}`, target: p, why: null };
   });
+  const tu = d.kind === "uniaxialMaterial" ? tieUsersOf(c.s, defs) : null;
+  let tiesUnknown: MaterialRow["tiesUnknown"] = tu && tu.unknown.length ? tu.unknown : null;
+  if (tu && d.tag === null && defs!.embeddedRebar!.bond.length) {
+    tiesUnknown = [...(tiesUnknown ?? []), { why: "this material's tag is not in the file, so no tie's bond tag can be matched to it", ties: null }];
+  }
   const referencedBy =
     defs && rec
       ? (paramUsersOf(defs).get(rec.key) ?? []).map((u) => ({ ref: refOf(c, u.key), type: u.params[0]?.type ?? u.family, elements: elementsOwned(defs, u) }))
@@ -204,7 +254,8 @@ function rowOf(c: Ctx, defs: Definitions | null, d: Decl): MaterialRow {
     h5: d.h5,
     owners,
     paramsNote,
-    usedBy: { elements: chain?.elements ?? 0, objects },
+    usedBy: { elements: chain?.elements ?? 0, objects, ties: tu?.byPath.get(d.path) ?? 0 },
+    tiesUnknown,
     referencedBy,
   };
 }
@@ -310,8 +361,12 @@ function valEl(v: Val, act: (e: Event) => void): HTMLElement {
 
 function usedByEl(r: MaterialRow, act: (e: Event) => void): HTMLElement {
   const e = el("div", "window-row-detail");
-  const n = r.usedBy.elements, objs = r.usedBy.objects;
-  if (n === 0 && objs.length === 0) {
+  const n = r.usedBy.elements, objs = r.usedBy.objects, ties = r.usedBy.ties;
+  const unknown = r.tiesUnknown;
+  if (n === 0 && objs.length === 0 && ties === 0 && unknown) {
+    // A tie whose bond material is unread may name this one: not "nothing".
+    e.append(muted("users unknown: referenced by embeddedRebar ties"));
+  } else if (n === 0 && objs.length === 0 && ties === 0) {
     // The two sources disagree when decl_params names a user the chain does
     // not follow (an element type the chain cannot decode): say so, never a
     // bare "nothing".
@@ -326,15 +381,23 @@ function usedByEl(r: MaterialRow, act: (e: Event) => void): HTMLElement {
     e.append(muted("used by "));
     const parts: (string | HTMLElement)[] = [];
     if (n) parts.push(`${n.toLocaleString()} element${n === 1 ? "" : "s"}`);
+    if (ties) parts.push(`${ties.toLocaleString()} embeddedRebar tie${ties === 1 ? "" : "s"}`);
     for (const o of objs) parts.push(refEl(o, act));
     parts.forEach((p, i) => {
       if (i) e.append(muted(" · "));
       e.append(p);
     });
   }
+  if (unknown) {
+    const d = el("div");
+    const head = n === 0 && objs.length === 0 && ties === 0 ? "" : "users unknown beyond these: referenced by embeddedRebar ties; ";
+    const list = unknown.map((u) => `${u.ties === null ? "unknown number of" : u.ties.toLocaleString()} tie${u.ties === 1 ? "" : "s"}: ${u.why}`);
+    d.append(muted(`${head}${list.join(" · ")}`));
+    e.append(d);
+  }
   if (r.referencedBy.length) {
     const d = el("div");
-    d.append(muted(n === 0 && objs.length === 0 ? "decl_params names it from " : "named in decl_params by "));
+    d.append(muted(n === 0 && objs.length === 0 && ties === 0 ? "decl_params names it from " : "named in decl_params by "));
     r.referencedBy.forEach((u, i) => {
       if (i) d.append(muted(" · "));
       d.append(refEl(u.ref, act), muted(` ${u.type}` + (u.elements ? ` (${u.elements.toLocaleString()} element${u.elements === 1 ? "" : "s"})` : "")));

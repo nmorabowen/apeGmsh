@@ -23,11 +23,27 @@
 - partial writes:
 
 ### Owned files
-<!-- The only files the worker may edit. Derive this list, never write it: paste the output of the verification grep run on origin/main untruncated, and check each cited path with `git ls-tree origin/main <path>` or `nav.py where <symbol>`. -->
+<!-- The only files the worker may edit. Derive this list, never write it: paste the output of the verification grep run on origin/main untruncated, and check each cited path with `git ls-tree origin/main <path>` or `nav.py where <symbol>`.
+     `land_pr.py` check 9 enforces it (lesson #1788): a PR labelled `program` must say `Slice: #<n>`, and every file it changes, both names of a rename included, must be named in backticks here, under Append-only or under Allowed. The rules:
+     - `path::symbol` counts as `path`.
+     - A trailing `/` means a directory. A `*` or `**` glob needs a literal top directory (`tests/x/**`, not `**/*.py`).
+     - A bare name listed right after a path is its sibling: "`a/b/x.py`, `y.py`" owns `a/b/y.py`.
+     - Placeholders such as `<slug>` and non-paths such as `lock-tests` are ignored.
+     - Only `changelog.d/*.md` is implicit. Goldens, snapshots, `_api_index.json` and the skill mirror must be listed.
+     - A section ends at the next `#` heading or bold-label line (`**Hub lock:**`). An `Owned:` label counts only where it opens a line or a sentence; "not owned:" is never a label.
+     - An Owned line with a path and a negation (`never`, `not`, `don't`, `do not`, `except`) is refused as ambiguous: list only what the PR may change, and put exclusions under another heading.
+     - A card with no Owned section, or one that names no path, is refused. -->
 - `path::symbol`
 
 ### Append-only
 <!-- For example, the CHANGELOG section or fragment. -->
+
+### Allowed
+<!-- Optional: files the PR may change but does not own, such as regenerated goldens or the skill mirror. -->
+
+<!-- Amendments: to add files after the card is filed, post an issue comment whose first words are `**Card amendment` and name each path in backticks; check 9 adds them. An amendment line with a negation (`never`, `not`, `don't`, `do not`, `except`) adds no path; check 9 says it skipped it. Any other comment, a maintainer ruling included, adds nothing. Limitation: the amendment's author is not checked, because every account here is the same user today.
+     Override: the maintainer or coordinator applies the `scope-ok` label to the PR, and check 9 passes with an OVERRIDDEN notice, the way `human-gate` admits a baseline edit at check 8. -->
+
 
 ### Read-only context
 <!-- Name each item by path::symbol. -->

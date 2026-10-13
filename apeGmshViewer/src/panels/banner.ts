@@ -4,6 +4,8 @@
 // why a results stage draws every element (stage activation `ambiguous` or
 // `absent`); selectors.noticesOf words them. V4d adds the deformed shape:
 // how many drawn nodes have no displacement (`partial`), or why it is refused.
+// V4c2a adds the element contour's refusal (an unverified file, disagreeing
+// groups, rows that do not join the mesh) and element components refused alone.
 
 import { BANNER_BELOW_SCRUBBER_PX, noticesOf, refusalsOf, scrubberRow, warningsOf } from "../state/selectors.ts";
 import type { State, Store } from "../state/store.ts";
@@ -23,7 +25,14 @@ export function mountBanner(store: Store): () => void {
       // V4d: the deformed shape's partial or refused line follows its state, the hidden set and the model's ndm.
       s.deform === prev.deform &&
       s.visibility === prev.visibility &&
-      s.ndm === prev.ndm
+      s.ndm === prev.ndm &&
+      // V4c2a: an element contour's refusal follows the pick, its draw mode and the join verdict.
+      s.contour.source === prev.contour.source &&
+      s.contour.field === prev.contour.field &&
+      s.contour.component === prev.contour.component &&
+      s.contour.gauss === prev.contour.gauss &&
+      s.contour.join === prev.contour.join &&
+      s.contour.notice === prev.contour.notice
     ) return;
     const refusals = refusalsOf(s);
     const notices = noticesOf(s);
