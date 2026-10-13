@@ -385,8 +385,10 @@ class RigidDiaphragmDef(ConstraintDef):
         ``None`` (the default): the master label must resolve to
         exactly one node, which is both the master and the point the
         diaphragm plane passes through; any other count is refused at
-        resolution.  A point: the plane passes through it, and the
-        master is the plane node nearest to it.
+        resolution.  A point: the plane passes through it.  A master
+        label of one node is the master, and must lie in the plane;
+        with several, the master is the plane node nearest the point,
+        a master-label node winning a tie with a coincident slave node.
     plane_normal : (nx, ny, nz)
         Normal to the diaphragm plane.  (0,0,1) = horizontal floor.
     constrained_dofs : list[int]
