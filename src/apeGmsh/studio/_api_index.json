@@ -3674,7 +3674,7 @@
     },
     "ops.recorder.Element": {
       "doc": "Construct + register a ``recorder Element``.",
-      "signature": "Element(*, file: 'str', response: 'tuple[str, ...]', elements: 'tuple[int, ...] | None' = None, pg: 'str | None' = None, label: 'str | Sequence[str] | None' = None, dT: 'float | None' = None, time_format: 'str' = 'step', name: 'str | None' = None) -> 'Element'",
+      "signature": "Element(*, file: 'str', response: 'tuple[str, ...]', elements: 'tuple[int, ...] | None' = None, pg: 'str | None' = None, label: 'str | Sequence[str] | None' = None, dT: 'float | None' = None, time_format: 'str' = 'step', precision: 'int | None' = None, name: 'str | None' = None) -> 'Element'",
       "skill": "references/opensees-bridge.md",
       "symbol": "ops.recorder.Element"
     },
@@ -3698,7 +3698,7 @@
     },
     "ops.recorder.Node": {
       "doc": "Construct + register a ``recorder Node``.",
-      "signature": "Node(*, file: 'str', response: 'str', nodes: 'tuple[int, ...] | None' = None, pg: 'str | None' = None, label: 'str | Sequence[str] | None' = None, dofs: 'tuple[int, ...]', dT: 'float | None' = None, time_format: 'str' = 'step', name: 'str | None' = None) -> 'Node'",
+      "signature": "Node(*, file: 'str', response: 'str', nodes: 'tuple[int, ...] | None' = None, pg: 'str | None' = None, label: 'str | Sequence[str] | None' = None, dofs: 'tuple[int, ...]', dT: 'float | None' = None, time_format: 'str' = 'step', precision: 'int | None' = None, name: 'str | None' = None) -> 'Node'",
       "skill": "references/opensees-bridge.md",
       "symbol": "ops.recorder.Node"
     },
@@ -4187,6 +4187,12 @@
       "signature": "ViscousDamper(*, K: 'float', C: 'float', alpha: 'float', l_gap: 'float | None' = None, name: 'str | None' = None) -> 'ViscousDamper'",
       "skill": "references/opensees-bridge.md",
       "symbol": "ops.uniaxialMaterial.ViscousDamper"
+    },
+    "ops.wipe": {
+      "doc": "Close the live OpenSees domain (R3-S5, maintainer ruling D6).",
+      "signature": "wipe() -> 'None'",
+      "skill": "references/opensees-bridge.md",
+      "symbol": "ops.wipe"
     }
   },
   "schema": 1
