@@ -1461,6 +1461,21 @@ exists; hashed.
     arg_kinds    i1 (A,)          0 int, 1 float, 2 str
 ```
 
+**Bond material tag (no column).** The group has no bond-material column.
+`embedded_rebar_args` builds each row's arguments in this order:
+`rebar_node`, the host (`-host ele` or `nHost h1..hN`), the weights
+(`-xi ...` or `-shape ...`), `-dir dx dy [dz]`, then the axial law,
+either `-perfect kAxial` or `-bond matTag [-bondScale bs]`, then the
+optional `-kt`, `-ktAlpha`, `-corot`, `-enforce` and `-bipenalty` tokens.
+The bond material tag therefore sits inside `args`, as the element
+immediately after the literal token `-bond` (stored as an `arg_kinds` 0
+int). A perfect-bond tie has no `-bond` token and so no bond tag. A
+reader scans the row's `args_str` for `-bond` and takes exactly the one
+argument after it, never a later `-bondScale` value. An explicit
+`bond_tag` column is deferred to the next `/opensees` bump that is
+already happening; under the V4t drift guard, that bump also moves the
+viewer `OPENSEES_TARGET`. No schema bump is made for this note.
+
 The argument encoding is `/opensees/commands`'s, so a replayed line is
 byte-identical. A deck replay of a 2.29 archive writes the stored rows
 after the fixes, masses, global commands and regions (the bridge's

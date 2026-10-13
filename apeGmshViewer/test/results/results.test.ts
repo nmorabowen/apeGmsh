@@ -492,12 +492,40 @@ test("an element category the spike does not read is listed in unread, not dropp
   }
 });
 
-test("a gauss component whose shape is not (T, E, G) is refused", () => {
+test("a gauss component whose step axis is not the time vector refuses the file", () => {
   refuses(
-    oneStageWithElements((e) => gaussGroup(e.create_group("gauss_points"), "group_0", 3, 2, { stress_xx: [2, 3, 1] })),
+    oneStageWithElements((e) => gaussGroup(e.create_group("gauss_points"), "group_0", 3, 2, { stress_xx: [3, 3, 2] })),
     "layout",
-    /stress_xx has shape \(2, 3, 1\); expected \(2, 3, 2\)/,
+    /stress_xx has shape \(3, 3, 2\); expected \(2, 3, 2\)/,
   );
+});
+
+test("V4c2a partial write: a gauss component whose element or Gauss axis disagrees with the index is refused alone; the file opens", () => {
+  for (const shape of [[2, 3, 1], [2, 2, 2]]) {
+    const r = openResults(H5, oneStageWithElements((e) => gaussGroup(e.create_group("gauss_points"), "group_0", 3, 2, { stress_xx: [2, 3, 2], stress_yy: shape })));
+    try {
+      const g = r.stage(STAGE).gauss[0]!;
+      assert.deepEqual(g.components, ["stress_xx"]);
+      assert.equal(g.refused.length, 1);
+      assert.equal(g.refused[0]!.component, "stress_yy");
+      assert.match(g.refused[0]!.reason, new RegExp(`has shape \\(${shape.join(", ")}\\) and the group indexes 3 elements x 2 Gauss points \\(a partial write\\)`));
+      assert.throws(() => r.readGaussStep(STAGE, "group_0", "stress_yy", 0), /has no component "stress_yy"/);
+    } finally {
+      r.close();
+    }
+  }
+});
+
+test("V4c2a: a gauss group with no Gauss point (G == 0) is refused, every component of it", () => {
+  const r = openResults(H5, oneStageWithElements((e) => gaussGroup(e.create_group("gauss_points"), "group_0", 3, 0, { stress_xx: [2, 3, 0] })));
+  try {
+    const g = r.stage(STAGE).gauss[0]!;
+    assert.deepEqual(g.components, []);
+    assert.deepEqual(g.refused.map((x) => x.component), ["stress_xx"]);
+    assert.match(g.refused[0]!.reason, /_natural_coords has 0 rows: the group group_0 has no Gauss point/);
+  } finally {
+    r.close();
+  }
 });
 
 test("an unknown _ index dataset in a gauss group is refused", () => {

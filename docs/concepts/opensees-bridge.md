@@ -248,9 +248,12 @@ this is a style choice, but past a few million elements it becomes essential.
 ## Recorders, and reading back
 
 Output declarations live on the same surface. `ops.recorder.<Type>(...)`
-declares classic OpenSees recorders that emit with the deck; for in-process
-runs, a capture spec names what to record — by physical group, of course —
-and writes results next to the model:
+declares classic OpenSees recorders that emit with the deck. The `Node` and
+`Element` recorders take `precision=N`, the significant digits written per
+value (OpenSees writes 6 unless told otherwise); left out, no flag is emitted
+and the deck is unchanged, and anything but a positive `int` raises. For
+in-process runs, a capture spec names what to record — by physical group, of
+course — and writes results next to the model:
 
 ```python
 spec = DomainCaptureSpec(opensees=ops)
@@ -261,6 +264,16 @@ with ops.domain_capture(spec, path="run.h5") as cap:
     cap.step(t=1.0)
     cap.end_stage()
 ```
+
+A live run keeps its recorder files open until something closes them. When the
+same script goes on to read those files, or to open an `.mpco` with
+`Results.from_mpco`, call `ops.wipe()` first. It closes the live domain, which
+flushes and closes every recorder, so a text recorder file holds every row and
+an `.mpco` file is complete. It also closes the bridge's read session: a later
+`Node.read` or `NodeSet.read` raises and names `ops.wipe()`. The declarations
+stay, so `ops.analyze(...)` or `ops.run()` builds the model again. `wipe` acts
+only on the live session and is never written into an emitted deck, which
+flushes its recorders when its process exits.
 
 You saw this run end-to-end in [the first tutorial](../tutorials/first-model.md):
 the same `"Tip"` name that placed the load fetches the deflection back out of

@@ -87,7 +87,7 @@ import pytest
 
 from apeGmsh.opensees import OpenSeesModel, apeSees
 from apeGmsh.opensees.emitter.h5_reader import (
-    DeclarationTable, DeclRef, DeclStruct,
+    BridgeOnlyArchiveError, DeclarationTable, DeclRef, DeclStruct,
 )
 from tests.opensees.golden import builder
 
@@ -231,7 +231,11 @@ def _waivers() -> dict[str, Waiver]:
 _NUMBER = re.compile(
     r"(?<![\w.])[-+]?(?:\d+\.\d*|\.\d+|\d+)(?:[eE][-+]?\d+)?(?![\w.])")
 #: Classes S rows assert: the replay error a bridge-only archive raises.
-_S_ERRORS = {"KeyError:nodes": (KeyError, "object 'nodes' doesn't exist")}
+_S_ERRORS = {
+    "BridgeOnlyArchiveError:no-neutral-zone": (
+        BridgeOnlyArchiveError,
+        "the archive carries no FEM (no neutral zone: no 'nodes' group"),
+}
 
 
 def _canon(text: str, out_dir: Path) -> str:
@@ -467,6 +471,12 @@ _LEDGER_REL = "tests/opensees/golden/roundtrip_oracle_ledger.txt"
 _DOWNGRADES = frozenset({("C", "A"), ("C", "B")})
 #: Escalations: the oracle learned to see a bug its old rule missed (K2c).
 _ESCALATIONS = frozenset({("A", "C"), ("B", "C")})
+#: The one same-class re-pin allowed (#1797): an S row moves from h5py's raw,
+#: unnamed ``KeyError`` to the named refusal ``from_h5`` now raises up front.
+#: The S rows' model and class stay; only the pinned error is renamed.
+_S_RENAMES = frozenset({
+    ("KeyError:nodes", "BridgeOnlyArchiveError:no-neutral-zone"),
+})
 
 
 def _cited_issues(reason: str) -> frozenset[str]:
@@ -483,7 +493,9 @@ def _ledger_transition_errors(
     re-pinned from class C to A or B (the oracle's derived class is the
     evidence), or escalate from A or B to C, citing the issue that tracks
     the bug. Anything else is a replay regression: an added row, or a re-pin
-    that keeps its class.
+    that keeps its class. One exception (:data:`_S_RENAMES`, #1797): an S row
+    may re-pin at S from the raw ``KeyError:nodes`` to the named
+    ``BridgeOnlyArchiveError``.
     """
     errors: list[str] = []
     for model, w in head.items():
@@ -495,6 +507,8 @@ def _ledger_transition_errors(
         if (w.klass, w.pin) == (b.klass, b.pin):
             continue
         if (b.klass, w.klass) in _DOWNGRADES:
+            continue
+        if (b.klass, w.klass) == ("S", "S") and (b.pin, w.pin) in _S_RENAMES:
             continue
         if (b.klass, w.klass) in _ESCALATIONS:
             if not _cited_issues(w.reason):
@@ -599,8 +613,32 @@ _W = Waiver  # short alias for the carve-out cases below
     (_W("m", "B", "1" * 16, "r"), _W("m", "B", "2" * 16, "r"), False),
     (_W("m", "B", "1" * 16, "r"), _W("m", "A", "2" * 16, "r"), False),
     (_W("m", "S", "KeyError:nodes", "r"), _W("m", "B", "2" * 16, "r"), False),
+    # #1797: the one same-class re-pin, raw KeyError -> the named refusal.
+    (_W("m", "S", "KeyError:nodes", "#1797"),
+     _W("m", "S", "BridgeOnlyArchiveError:no-neutral-zone", "#1797"), True),
+    # ... and no other S-to-S re-pin: not back, not to another text or type.
+    (_W("m", "S", "BridgeOnlyArchiveError:no-neutral-zone", "#1797"),
+     _W("m", "S", "KeyError:nodes", "#1797"), False),
+    (_W("m", "S", "KeyError:nodes", "#1797"),
+     _W("m", "S", "BridgeOnlyArchiveError:other", "#1797"), False),
+    (_W("m", "S", "KeyError:nodes", "#1797"),
+     _W("m", "S", "MalformedH5Error:no-neutral-zone", "#1797"), False),
+    (_W("m", "S", "BridgeOnlyArchiveError:no-neutral-zone", "#1797"),
+     _W("m", "S", "BridgeOnlyArchiveError:other", "#1797"), False),
+    # The exception is S-only: a same-class re-pin of A, B or C still fails,
+    # even with the S rename's own pins.
+    (_W("m", "A", "1" * 16, "r"), _W("m", "A", "2" * 16, "r"), False),
+    (_W("m", "A", "KeyError:nodes", "r"),
+     _W("m", "A", "BridgeOnlyArchiveError:no-neutral-zone", "r"), False),
+    (_W("m", "B", "KeyError:nodes", "r"),
+     _W("m", "B", "BridgeOnlyArchiveError:no-neutral-zone", "r"), False),
+    (_W("m", "C", "KeyError:nodes", "#1814"),
+     _W("m", "C", "BridgeOnlyArchiveError:no-neutral-zone", "#1814"), False),
 ], ids=["C-to-B", "C-to-A", "reason-only", "B-to-C", "A-to-C",
-        "B-to-C-uncited", "C-to-C", "B-to-B", "B-to-A", "S-to-B"])
+        "B-to-C-uncited", "C-to-C", "B-to-B", "B-to-A", "S-to-B",
+        "S-rename-1797", "S-rename-reversed", "S-other-text", "S-other-type",
+        "S-named-to-other", "A-to-A", "A-rename-pins", "B-rename-pins",
+        "C-rename-pins"])
 def test_the_ledger_allows_downgrades_and_cited_escalations(
     base: Waiver, head: Waiver, ok: bool,
 ) -> None:

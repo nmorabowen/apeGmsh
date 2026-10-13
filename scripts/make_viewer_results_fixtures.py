@@ -496,6 +496,151 @@ def reinforced_fixture(out_dir: Path) -> None:
     print(f"wrote {unknown.name}: arg {k} (the first -bond tag) re-kinded as a float")
 
 
+ELEMENT_STEPS = 3
+PLANE_STRESS = ["stress_xx", "stress_yy", "stress_xy"]
+HEX_GP = np.array([[a, b, c] for c in (-1, 1) for b in (-1, 1) for a in (-1, 1)]) / np.sqrt(3)  # 2 x 2 x 2
+
+
+def element_value(eids: np.ndarray, n_gp: int, c: int, k: int) -> np.ndarray:
+    """The V4c2a closed form, one step of component ``c`` at every (element, Gauss point): (E, G).
+
+        v[k, e, g] = eid_e + 0.1 * g + 0.25 * (c + 1) * (k + 1)
+
+    With one Gauss point (G == 1) the cell's value is ``eid + 0.25 (c + 1)(k + 1)``;
+    the mean of G points adds ``0.05 (G - 1)``.
+    """
+    return eids[:, None].astype(np.float64) + 0.1 * np.arange(n_gp)[None, :] + 0.25 * (c + 1) * (k + 1)
+
+
+def element_fixtures(out_dir: Path) -> None:
+    """The V4c2a element-contour pairs (#1833), every results file written by ``NativeWriter``.
+
+    * ``elem_mixed.h5`` / ``.results.h5`` (stamped ``element_index_space="fem"``):
+      a 2-D model (``ops.model(ndm=2)``), a 2 x 1 panel of 4 x 2 ``FourNodeQuad``
+      (``Quads``) beside a 1 x 1 panel of 8 ``Tri31`` (``Tris``). One static stage,
+      ``load``, of ``ELEMENT_STEPS`` steps: ``displacement_x/y`` (``deform_values``)
+      and ``stress_xx/yy/xy`` in two one-point groups, ``quads_G1`` and ``tris_G1``
+      (one field across two element types). The first quad (lowest id) is left
+      out of ``quads_G1``: "no data".
+    * ``elem_mixed_unstamped.h5`` / ``.results.h5``: the same model file and the
+      same results written again without the stamp (unverified).
+    * ``elem_badid.h5`` / ``.results.h5`` (stamped): the same, with an
+      ``_element_index`` row of id 999999, which the mesh does not have.
+    * ``elem_solid.h5`` / ``.results.h5`` (stamped): a 3 x 2 x 2 box of 12 hexahedra
+      (FEM-only ``model.h5``, paired by ``fem_hash``), ``displacement_x/y/z``, and
+      ``stress_xx``, ``stress_yy`` at 8 Gauss points (``hex_G8``).
+    * ``elem_staged.results.h5`` (stamped) for the committed ``contour_staged.h5``
+      (``model_h5_src``): the three staged tet stages with ``stress_xx`` at one Gauss
+      point of every tet, ``v = eid + 0.25 (k + 1) + stage``.
+
+    Values are ``element_value`` (the closed form the tests restate).
+    """
+    import shutil
+
+    from apeGmsh.mesh.FEMData import FEMData
+    from apeGmsh.opensees import apeSees
+
+    name = "elem_mixed"
+    with apeGmsh(model_name=name, verbose=False, save_to=SESSION_DIR / f"{name}.h5") as g:
+        p0 = gmsh.model.geo.addPoint(0, 0, 0)
+        e0 = gmsh.model.geo.extrude([(0, p0)], 2, 0, 0, numElements=[4])
+        quads = gmsh.model.geo.extrude([e0[1]], 0, 1, 0, numElements=[2], recombine=True)
+        e1 = gmsh.model.geo.extrude([e0[0]], 1, 0, 0, numElements=[2])
+        tris = gmsh.model.geo.extrude([e1[1]], 0, 1, 0, numElements=[2])
+        gmsh.model.geo.removeAllDuplicates()
+        gmsh.model.geo.synchronize()
+        g.model.sync()
+        g.physical.add(2, [quads[1][1]], name="Quads")
+        g.physical.add(2, [tris[1][1]], name="Tris")
+        g.mesh.generation.generate(2)
+        fem = g.mesh.queries.get_fem_data(dim=2)
+    ops = apeSees(fem)
+    ops.model(ndm=2, ndf=2)
+    plate = ops.nDMaterial.ElasticIsotropic(E=30e9, nu=0.2, rho=2400.0, name="plate")
+    ops.element.FourNodeQuad(pg="Quads", thickness=0.2, material=plate)
+    ops.element.Tri31(pg="Tris", thickness=0.2, material=plate)
+    model_path = out_dir / f"{name}.h5"
+    ops.h5(str(model_path))
+    by_npe = {grp.connectivity.shape[1]: np.sort(np.asarray(grp.ids, dtype=np.int64)) for grp in fem.elements}
+    quad_ids, tri_ids = by_npe[4], by_npe[3]
+    node_ids = np.asarray(fem.nodes.ids, dtype=np.int64)
+    xyz = np.asarray(fem.nodes.coords, dtype=np.float64).reshape(-1, 3)
+    one_gp = np.array([[0.0, 0.0]])
+    tri_gp = np.array([[1 / 3, 1 / 3]])
+
+    def mixed(res: Path, *, stamp: bool, extra_tri: list[int]) -> None:
+        with NativeWriter(res) as w:
+            w.open(fem=fem, source_type="domain_capture", analysis_label="V4c2a synthetic (#1833)", model_h5_src=model_path)
+            if stamp:
+                # The element rows are fem.elements ids by construction.
+                w.stamp_element_index_space("fem")
+            k = np.arange(ELEMENT_STEPS, dtype=np.float64)
+            sid = w.begin_stage(name="load", kind="static", time=(k + 1) / ELEMENT_STEPS)
+            steps = [deform_values(xyz, kk) for kk in range(ELEMENT_STEPS)]
+            w.write_nodes(sid, "partition_0", node_ids=node_ids,
+                          components={c: np.stack([st[c] for st in steps]) for c in steps[0]})
+            for gid, eids, gp in (("quads_G1", quad_ids[1:], one_gp), ("tris_G1", np.concatenate([tri_ids, np.asarray(extra_tri, dtype=np.int64)]), tri_gp)):
+                w.write_gauss_group(
+                    sid, "partition_0", gid, class_tag=0, int_rule=0, element_index=eids, natural_coords=gp,
+                    components={c: np.stack([element_value(eids, 1, ci, kk) for kk in range(ELEMENT_STEPS)]) for ci, c in enumerate(PLANE_STRESS)},
+                )
+            w.end_stage()
+
+    mixed(out_dir / "elem_mixed.results.h5", stamp=True, extra_tri=[])
+    shutil.copyfile(model_path, out_dir / "elem_mixed_unstamped.h5")
+    mixed(out_dir / "elem_mixed_unstamped.results.h5", stamp=False, extra_tri=[])
+    shutil.copyfile(model_path, out_dir / "elem_badid.h5")
+    mixed(out_dir / "elem_badid.results.h5", stamp=True, extra_tri=[999999])
+    print(f"wrote elem_mixed (+ unstamped, badid): {len(quad_ids)} quads, {len(tri_ids)} tris, {node_ids.size} nodes")
+
+    name = "elem_solid"
+    with apeGmsh(model_name=name, verbose=False, save_to=SESSION_DIR / f"{name}.h5") as g:
+        p = gmsh.model.geo.addPoint(0, 0, 0)
+        line = gmsh.model.geo.extrude([(0, p)], 3, 0, 0, numElements=[3])
+        surf = gmsh.model.geo.extrude([line[1]], 0, 2, 0, numElements=[2], recombine=True)
+        vol = gmsh.model.geo.extrude([surf[1]], 0, 0, 2, numElements=[2], recombine=True)
+        gmsh.model.geo.synchronize()
+        g.model.sync()
+        g.physical.add(3, [vol[1][1]], name="Block")
+        g.mesh.generation.generate(3)
+        sfem = g.mesh.queries.get_fem_data(dim=3)
+    solid_model = out_dir / f"{name}.h5"
+    sfem.to_h5(str(solid_model), model_name=name)
+    hex_ids = np.sort(np.asarray(sfem.elements.ids, dtype=np.int64))
+    snode = np.asarray(sfem.nodes.ids, dtype=np.int64)
+    sxyz = np.asarray(sfem.nodes.coords, dtype=np.float64).reshape(-1, 3)
+    with NativeWriter(out_dir / f"{name}.results.h5") as w:
+        w.open(fem=sfem, source_type="domain_capture", analysis_label="V4c2a synthetic solid (#1833)")
+        w.stamp_element_index_space("fem")
+        k = np.arange(ELEMENT_STEPS, dtype=np.float64)
+        sid = w.begin_stage(name="load", kind="static", time=(k + 1) / ELEMENT_STEPS)
+        steps = [contour_values(sxyz, 0, kk, ELEMENT_STEPS) for kk in range(ELEMENT_STEPS)]
+        w.write_nodes(sid, "partition_0", node_ids=snode,
+                      components={c: np.stack([st[c] for st in steps]) for c in steps[0]})
+        w.write_gauss_group(
+            sid, "partition_0", "hex_G8", class_tag=0, int_rule=0, element_index=hex_ids, natural_coords=HEX_GP,
+            components={c: np.stack([element_value(hex_ids, 8, ci, kk) for kk in range(ELEMENT_STEPS)]) for ci, c in enumerate(["stress_xx", "stress_yy"])},
+        )
+        w.end_stage()
+    print(f"wrote elem_solid: {hex_ids.size} hexahedra, {snode.size} nodes, 8 Gauss points")
+
+    staged_model_path = out_dir / "contour_staged.h5"
+    tfem = FEMData.from_h5(str(staged_model_path))
+    tet_ids = np.sort(np.asarray(tfem.elements.ids, dtype=np.int64))
+    with NativeWriter(out_dir / "elem_staged.results.h5") as w:
+        w.open(fem=tfem, source_type="domain_capture", analysis_label="V4c2a synthetic staged (#1833)", model_h5_src=staged_model_path)
+        w.stamp_element_index_space("fem")
+        for si, (sname, n) in enumerate(STAGED_STEPS.items()):
+            k = np.arange(n, dtype=np.float64)
+            sid = w.begin_stage(name=sname, kind="static", time=(k + 1) / n)
+            w.write_gauss_group(
+                sid, "partition_0", "tets_G1", class_tag=0, int_rule=0, element_index=tet_ids, natural_coords=TET_GP,
+                components={"stress_xx": np.stack([element_value(tet_ids, 1, 0, kk) + si for kk in range(n)])},
+            )
+            w.end_stage()
+    print(f"wrote elem_staged.results.h5: {tet_ids.size} tets over {len(STAGED_STEPS)} stages")
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--measure", type=Path, help="write the measured files a, b, c into this directory")
@@ -506,9 +651,21 @@ def main() -> None:
     ap.add_argument("--deform", action="store_true", help="write the V4d 2-D pair (deform_2d.h5 + .results.h5)")
     ap.add_argument("--stamped", action="store_true", help="write results_stamped.h5, the small file with element_index_space='fem' (V4g)")
     ap.add_argument("--reinforced", action="store_true", help="write reinforced.h5 + oracle, a 2.31 model with embeddedRebar ties (V4m)")
+    ap.add_argument("--elements", action="store_true", help="write the V4c2a element-contour pairs (elem_*.h5 + .results.h5)")
+    ap.add_argument("--elements-measure", type=Path, help="write the V4c2a measured solid (stamped, G = 6) into this directory")
     args = ap.parse_args()
     if args.reinforced:
         reinforced_fixture(HERE)
+        return
+    if args.elements:
+        element_fixtures(HERE)
+        return
+    if args.elements_measure is not None:
+        out = args.elements_measure
+        out.mkdir(parents=True, exist_ok=True)
+        fem = wedge_mesh(13, 21, "v4c2a_solid")
+        write(out / "e_solid_100.results.h5", fem, 100, ["stress_xx", "stress_yy"], WEDGE_GP, 0, stamp=True)
+        fem.to_h5(str(out / "e_solid_100.h5"), model_name="v4c2a_solid")
         return
     if args.deform:
         deform_fixtures(HERE)

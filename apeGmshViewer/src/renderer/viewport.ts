@@ -18,7 +18,7 @@ import { LineSegmentsGeometry } from "three/addons/lines/LineSegmentsGeometry.js
 import type { BlobStore } from "../state/blobs.ts";
 import type { DisplacementData } from "../effects.ts";
 import { contourView, geometryPairing } from "../state/selectors.ts";
-import { contourColours, contourKey, noDataColours, type StepValues } from "./contour.ts";
+import { contourColours, contourShownKey, elementColours, noDataColours, type StepValues } from "./contour.ts";
 import { basePositions, drawnPositions, edgesShown, frameFocus, gatherInto, ghostObjects, missingMarkerObjects, positionsFor, selectionOutline, writePositions, type FullPositions } from "./deform.ts";
 import type { State, Store } from "../state/store.ts";
 import { roleColouring } from "../state/roles.ts";
@@ -242,9 +242,12 @@ export class Viewport {
   private contourFor(s: State, info: MeshInfo, drawn: Drawn): { line: Float32Array; tri: Float32Array; key: string } | null {
     const v = contourView(s);
     if (v.state === "off") throw new Error("viewport: contour colours while not colouring by contour");
-    if (v.state === "unavailable") {
+    // V4c2a: a refused element field (an unverified file, disagreeing groups, rows that do not join) and a topology
+    // not built yet are drawn as no data, never coloured "with a warning".
+    if (v.state === "unavailable" || v.state === "refused" || v.state === "not-yet") {
       return { line: noDataColours(drawn.lineMap, 2), tri: noDataColours(drawn.triMap, 3), key: `no-data:${v.reason}` };
     }
+    if (v.state === "element") return elementColours(s, v, info, this.blobs, this.stepSource(), drawn.lineMap, drawn.triMap);
     return contourColours(s, v, info, this.blobs, this.stepSource(), drawn.lineMap, drawn.triMap);
   }
 
@@ -254,7 +257,7 @@ export class Viewport {
     if (!info || !this.drawn || s.visibility.colourBy !== "contour") return;
     // Most state changes (a hover, a panel) leave what the contour shows alone: compare keys before computing colours.
     const v = contourView(s);
-    if ((v.state === "ready" ? contourKey(v) : v.state === "unavailable" ? `no-data:${v.reason}` : null) === this.contourApplied) return;
+    if (contourShownKey(v) === this.contourApplied) return;
     const c = this.contourFor(s, info, this.drawn);
     if (!c || c.key === this.contourApplied) return;
     if (this.faces) {

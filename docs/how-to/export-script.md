@@ -74,6 +74,16 @@ load patterns, and any MP constraints (`equalDOF`, `rigidLink`,
 - **`run=True` subprocesses the deck for you.** `ops.tcl("m.tcl", run=True)`
   shells out to an `opensees` binary (override with `bin=`); `ops.py(..., run=True)`
   runs the script under Python. Without `run=`, the call only writes the file.
+  A run that finishes returns a frozen `RunReport`; one that does not raises
+  `RuntimeError` carrying the log tail and path. That includes a Tcl `error`
+  (the deck's aborted-analyze guard), because `OpenSees.exe` exits 0 after one.
+  The report has `returncode`, `log` (the absolute path of the tee'd log,
+  `<deck>.log` unless `log=` says otherwise), `elapsed_s`, `increments` and
+  `solver_stats`. `increments` counts the analyze increments the deck's progress
+  markers prove complete, and is `None` when `progress=False` or when the
+  markers do not add up to the deck's own loops (several processes under an
+  `mpiexec` wrapper, say). `solver_stats` is set only when a solver was asked
+  for `-stats`.
 - **Loads are opt-in.** `g.loads.*` do **not** auto-emit (ADR 0051): bring a
   session load case into the deck with `p.from_model(case)` inside a pattern,
   or author one directly with `pat.load(...)`. The deck is authoritative — a

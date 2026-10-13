@@ -599,3 +599,61 @@ Worst over runs 4 to 6 and R (the code under review), and over every run:
   3.3 ms → 3.6 to 4.3 ms): the per-vertex displacement, the positions of
   2 860 triangles, their normals and the outline edges, and the legend's
   "step loading" line.
+
+### Element contour scrub (V4c2a, #1833)
+
+The contour scrub above with an **element** field on: the first drawable
+element field of a verified file (`stress` · `xx`), `element_mean` (the
+mean of each element's 6 Gauss points, flat per cell; the runs printed it
+under its first name, `gauss_cell_averaged`, renamed before review because
+that is Qt's name for another presentation), over the
+whole-history range. Each step reads the nodal components and the one Gauss
+component in main (one hyperslab per group), sends both over IPC, reduces
+the Gauss block per element, joins it to the drawn cells by FEM id (the join
+is cached per results read), measures the step range, colours every drawn
+primitive and finishes a draw (`gl.finish()`). The second row runs it again
+with the deformed shape on at true scale. `npm run measure` prints both rows
+after the nodal ones when the results file is verified and has an element
+field.
+
+The file is the (a) mesh again, written **stamped** (`element_index_space =
+"fem"`) by the real NativeWriter, 100 steps, `displacement_x/y/z` and
+`stress_xx`, `stress_yy` at 6 Gauss points of 7 098 wedges (76 MB):
+
+```powershell
+$env:PYTHONPATH = "src"
+& C:\Users\nmb\venv\opensees_venv\Scripts\python.exe scripts/make_viewer_results_fixtures.py --elements-measure apeGmshViewer/out/elements
+cd apeGmshViewer; npm run measure -- out/elements/e_solid_100.h5
+```
+
+Same machine as the V4c1 and V4d rows, at `b8f69556`. The history scan is
+timed in the first pass only (the deformed pass finds it done: 1 ms).
+
+| run | field | CPU before / during | history scan (ms) | scrub (steps/s) | step median / max (ms) | peak MB main+renderer |
+|---|---|---|---|---|---|---|
+| 1 | element stress xx, element_mean | 31 / 34 % | 66 | 253.2 | 3.70 / 6.3 | 360 (164 + 196) |
+| 1 | the same, deformed ×1 | 27 / 26 % | n/a | 201.1 | 4.70 / 7.8 | 360 (157 + 204) |
+| 2 | element stress xx, element_mean | 20 / 23 % | 66 | 275.6 | 3.40 / 6.5 | 350 (166 + 185) |
+| 2 | the same, deformed ×1 | 19 / 33 % | n/a | 184.5 | 4.90 / 9.5 | 355 (158 + 197) |
+| 3 | element stress xx, element_mean | 20 / 27 % | 65 | 274.2 | 3.40 / 5.9 | 351 (170 + 181) |
+| 3 | the same, deformed ×1 | 24 / 29 % | n/a | 192.1 | 4.90 / 8.2 | 357 (166 + 191) |
+| R | element stress xx, element_mean | 39 / 53 % | n/a | 241.2 | n/a / 6.9 | 358 |
+| R | the same, deformed ×1 | 28 / 34 % | n/a | 192.6 | n/a / 9.5 | 356 |
+
+Row R is the reviewer's re-measure at the head under review, `ee8440b3`
+(#1860), on the same file (e_solid_100: 7 098 wedges x 6 Gauss points, 100
+steps), at 39 / 53 % CPU (element pass) and 28 / 34 % (deformed pass); the reviewer reported the scrub, the worst step,
+the peak and the CPU load, not the other columns.
+
+Worst over every row (runs 1 to 3 and R): element scrub **241** steps/s
+(R; worst step 6.9 ms, R), deformed element scrub **185** steps/s (run 2;
+worst step 9.5 ms, run 2 and R), peak **360 MB** (run 1), at 23 to 53 % CPU
+during the scrub. The nodal rows of the same
+runs read 339 (nodal) and 230 (nodal, deformed) steps/s.
+
+- **The D5 revisit trigger does not fire**: the worst element scrub, 185
+  steps/s deformed, is six times the 30 steps/s floor, and the peak, 360 MB,
+  under a fifth of 2 GB.
+- An element field costs about 1 ms a step over the nodal contour on this
+  file (median 2.8 → 3.4 to 3.7 ms): the Gauss block (7 098 × 6 values) over
+  IPC, its per-element mean, and the per-cell colours.

@@ -223,7 +223,13 @@ from ._internal.types import (
     TimeSeries,
     UniaxialMaterial,
 )
-from ._run import resolve_log_path, run_label, stream_run
+from ._run import (
+    RunReport,
+    deck_progress_loops,
+    resolve_log_path,
+    run_label,
+    stream_run,
+)
 from .emitter.base import Emitter, StrategySpec
 from .node import Node, _NodeAccessor, _iter_tags, _select_nodes
 from ._readback import (
@@ -234,6 +240,7 @@ from ._readback import (
     open_session,
 )
 from ._results_route import (
+    RUN_COMPLETE_MARKER,
     DeckRun,
     begin_deck_run,
     log_proves_completion,
@@ -267,7 +274,6 @@ if TYPE_CHECKING:
     from .emitter.h5 import H5Emitter
     from .emitter.tcl import PartitionSpan
     from ._target import OpenSeesCapabilities, OpenSeesTarget
-    from ._solver_stats import RunSolverStats
     from .pattern.pattern import Plain
     from apeGmsh.results.capture._domain import DomainCapture
     from apeGmsh.results.capture.spec import DomainCaptureSpec
@@ -9849,7 +9855,7 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
         verbose: bool = False,
         log: str | None = None,
         progress: bool = True,
-    ) -> "RunSolverStats | None":
+    ) -> "RunReport | None":
         """Emit a Tcl deck to ``path``; optionally subprocess OpenSees.
 
         When ``run=True`` the OpenSees subprocess output is **always**
@@ -9858,17 +9864,23 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
         ``verbose``: ``False`` (default) prints begin / op / end only;
         ``True`` adds a live step counter (parsed from the
         ``APEGMSH_PROGRESS`` markers ``progress=True`` injects into the
-        analyze loop) plus streamed warning lines. A non-zero exit
-        raises ``RuntimeError`` carrying the log tail + path, never the
-        whole buffer. ``verbose`` / ``log`` / ``progress`` are inert
-        when ``run=False``.
+        analyze loop) plus streamed warning lines. A failed run raises
+        ``RuntimeError`` carrying the log tail + path, never the whole
+        buffer: a non-zero exit, or an exit of 0 whose log lacks the
+        run driver's completion line (``OpenSees.exe`` exits 0 after a
+        Tcl ``error``, the deck's aborted-analyze guard included).
+        ``verbose`` / ``log`` / ``progress`` are inert when
+        ``run=False``.
 
-        Returns a :class:`~apeGmsh.opensees._solver_stats.RunSolverStats`
-        (ADR 0106 D1) when the deck declared ``Pardiso(stats=True)``
-        anywhere and the run finished — the per-stage capacity record
-        parsed out of the solver's own ``PARDISO stats:`` blocks.
-        ``None`` otherwise, which includes every deck that did not ask
-        for statistics and every ``run=False`` call.
+        ``run=True`` returns a frozen
+        :class:`~apeGmsh.opensees._run.RunReport` (ADR 0106 Amendment 1):
+        ``returncode``, ``log``, ``elapsed_s``, ``increments`` (the
+        analyze increments the deck's ``progress`` markers prove
+        completed; ``None`` with ``progress=False``) and
+        ``solver_stats`` — the ADR 0106 D1
+        :class:`~apeGmsh.opensees._solver_stats.RunSolverStats` when the
+        deck declared ``Pardiso(stats=True)`` anywhere, else ``None``.
+        ``run=False`` returns ``None``.
 
         When ``analyze_steps`` is supplied, an ``analyze`` line is
         appended to the deck after every other primitive — wrapped in
@@ -10010,7 +10022,7 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
         # sources the deck unchanged and prints a marker only when the
         # deck ran to its end (ADR 0115 D3).
         log_path = resolve_log_path(log, path)
-        stats = stream_run(
+        report = stream_run(
             [binary, write_tcl_driver(path)],
             log_path=log_path,
             verbose=verbose,
@@ -10018,10 +10030,13 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
             header="OpenSees",
             deck_path=path,
             expect_solver_stats=_deck_requested_solver_stats(emitter),
+            expected_loops=deck_progress_loops(path) if progress else None,
+            proves_completion=log_proves_completion,
+            completion_line=RUN_COMPLETE_MARKER,
         )
         if log_proves_completion(log_path):
             self._deck_run = deck_run.finish()
-        return stats
+        return report
 
     def modal_deck(
         self,
@@ -10459,7 +10474,7 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
         verbose: bool = False,
         log: str | None = None,
         progress: bool = True,
-    ) -> "RunSolverStats | None":
+    ) -> "RunReport | None":
         """Emit an openseespy Python deck to ``path``; optionally run it.
 
         ``run=True`` streams the openseespy subprocess exactly like
@@ -10467,8 +10482,10 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
         override, else ``<path>.log``), console opt-in via ``verbose``,
         a live step counter from the ``progress`` markers, and a
         tail-only ``RuntimeError`` on a non-zero exit. ``verbose`` /
-        ``log`` / ``progress`` are inert when ``run=False``. The
-        ``RunSolverStats | None`` return is :meth:`tcl`'s (ADR 0106 D1).
+        ``log`` / ``progress`` are inert when ``run=False``. The return
+        is :meth:`tcl`'s: a frozen
+        :class:`~apeGmsh.opensees._run.RunReport` for ``run=True``
+        (ADR 0106 Amendment 1), ``None`` for ``run=False``.
 
         ``analyze_steps`` / ``analyze_dt`` semantics mirror :meth:`tcl`
         (Phase SSI-1).
@@ -10516,7 +10533,7 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
         # pipe rather than block-buffering until exit (the tee + live
         # counter depend on it).
         child_env = {**os.environ, "PYTHONUNBUFFERED": "1"}
-        stats = stream_run(
+        report = stream_run(
             [python_bin, path],
             log_path=resolve_log_path(log, path),
             verbose=verbose,
@@ -10525,9 +10542,10 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
             env=child_env,
             deck_path=path,
             expect_solver_stats=_deck_requested_solver_stats(emitter),
+            expected_loops=deck_progress_loops(path) if progress else None,
         )
         self._deck_run = deck_run.finish()
-        return stats
+        return report
 
     def results(self, path: str) -> "Results":
         """The history of this bridge's last deck run, as a ``Results``

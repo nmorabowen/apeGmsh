@@ -393,6 +393,10 @@ class OpenSeesModel:
             Schema major mismatch.
         apeGmsh.opensees.emitter.h5_reader.MalformedH5Error
             ``/meta`` is missing or unparseable.
+        apeGmsh.opensees.emitter.h5_reader.BridgeOnlyArchiveError
+            The archive has ``/meta`` but no neutral zone (no ``nodes``
+            group), so there is no mesh to replay (#1797).  Raised
+            before anything else is read.
         """
         # Lazy FEMData import — ADR 0019 INV-4 (no module-level edge
         # from ``apeGmsh.opensees`` to ``apeGmsh.mesh``).
@@ -407,6 +411,7 @@ class OpenSeesModel:
         # caller can pass the composed file directly without knowing the
         # neutral zone lives under /model/.  Explicit fem_root is kept.
         fem_root = _resolve_fem_root_for_read(spath, fem_root)
+        _refuse_bridge_only(spath, fem_root)
         fem = FEMData.from_h5(spath, root=fem_root)
 
         # Locate the bridge meta — it lives at ``{fem_root}/meta`` so
@@ -2130,6 +2135,44 @@ def _resolve_neutral_group(f: Any, fem_root: str) -> Any:
     if key not in f:
         return None
     return f[key]
+
+
+def _refuse_bridge_only(path: str, fem_root: str) -> None:
+    """Raise ``BridgeOnlyArchiveError`` when ``fem_root`` has no neutral zone.
+
+    A bridge-only archive (a stamped ``/meta`` and the ``/opensees``
+    bridge zone, but no ``nodes``, e.g. one written from a ``FEMStub``)
+    cannot be replayed (#1797).  Checked up front so the caller sees a
+    named refusal instead of h5py's raw ``KeyError`` from deep inside the
+    neutral-zone read.  Any other file without a neutral zone (a missing
+    root group or ``/meta``, a results-only file whose ``/meta`` is an
+    unstamped lineage stub, a root with no ``opensees`` group) is left to
+    the reader's own errors, unchanged.
+    """
+    import h5py
+
+    from .emitter.h5_reader import BridgeOnlyArchiveError
+
+    key = fem_root.strip("/")
+    with h5py.File(path, "r") as f:
+        if key and key not in f:
+            return
+        group = f[key] if key else f
+        if "nodes" in group or "opensees" not in group:
+            return
+        if "meta" not in group or not str(
+            group["meta"].attrs.get("schema_version", "")
+        ):
+            return
+        prefix = f"/{key}/" if key else "/"
+        present = ", ".join(prefix + name for name in sorted(group.keys()))
+        raise BridgeOnlyArchiveError(
+            f"{path}: the archive carries no FEM (no neutral zone: no "
+            f"'nodes' group under {prefix}), so it cannot be replayed. "
+            f"Zones present: {present}. It is a bridge-only archive, e.g. "
+            "one written from a FEMStub; write it from an apeSees built on "
+            "a real FEMData."
+        )
 
 
 def _resolve_fem_root_for_read(path: str, fem_root: str) -> str:

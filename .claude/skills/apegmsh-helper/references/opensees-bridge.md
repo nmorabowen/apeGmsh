@@ -1041,6 +1041,7 @@ S6b, not wired yet.
 ops.tcl("out/model.tcl", run=False)   # classic OpenSees deck (run=True subprocesses)
 ops.py("out/model.py", run=False)     # openseespy script
 ops.h5("out/model.h5")                # native: /opensees + neutral zone
+ops.wipe()                            # close the live domain; flushes every recorder file
 ops.run(wipe=True)                    # in-process openseespy (LiveOpsEmitter)
 ops.analyze(steps=10, dt=0.01)        # drive the analysis chain (NON-staged only)
 ops.eigen(...)                        # NON-staged only
@@ -1053,6 +1054,15 @@ ops.eigen(...)                        # NON-staged only
 calls `build()` internally. Post-emit inspection is broker-side
 (`fem.inspect.summary()`, `fem.inspect.node_table()`) or via
 `apeGmsh.opensees.emitter.h5_reader.open("model.h5")`.
+
+**`run=True` returns a `RunReport`.** `ops.py(path, run=True)` and `ops.tcl(path, run=True)`
+return a frozen `RunReport` (`returncode`, `log`, `elapsed_s`, `increments`, `solver_stats`);
+`run=False` returns `None`. A failed run raises `RuntimeError`, and so does an aborted Tcl
+deck: `OpenSees.exe` exits 0 after a Tcl `error`, so the deck's completion line is the proof.
+`increments` is `None` when it cannot be established (`progress=False`, interleaved ranks).
+`ops.wipe()` closes the live domain and flushes every recorder file, so a recorder file or an
+`.mpco` is complete in the same script; it also closes the bridge's read session. Node and
+Element recorders take `precision=<positive int>`, the significant digits written per value.
 
 **Per-rank Tcl decks — `ops.tcl(path, per_rank=True)` (ADR 0061).** For a
 **partitioned** model, write the driver deck at `path` plus one guard-free
