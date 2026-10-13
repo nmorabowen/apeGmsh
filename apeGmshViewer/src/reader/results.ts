@@ -162,6 +162,13 @@ export interface ResultsIndex {
    * rule reads it to name the 2.31.0 `model_hash` change (V4h, #1856).
    */
   openseesVersion: string | null;
+  /**
+   * The embedded `/opensees/decls@program_decl` marker (V4h): "absent" when
+   * `/opensees` has no `decls` group or no marker (h5-schema.md: a file below
+   * 2.31.0 reads as "absent"); a non-string marker as its JSON; null when the
+   * file embeds no `/opensees`.
+   */
+  programDecl: string | null;
   stages: StageInfo[];
   warnings: string[];
   /**
@@ -230,11 +237,21 @@ export class ResultsFile {
       elementIndexSpace: typeof eis === "string" ? eis : null,
       unavailableZones: embedded.unavailable,
       openseesVersion: embedded.openseesVersion,
+      programDecl: this.readProgramDecl(f),
       stages: ids.map((id) => this.readStage(this.group(stagesGroup, id), id)),
       warnings,
       lineage,
       partial: partialOf(version, lineage),
     };
+  }
+
+  /** The embedded `/opensees/decls@program_decl` (see `ResultsIndex.programDecl`). */
+  private readProgramDecl(f: RFile): string | null {
+    if (!f.keys().includes("opensees")) return null;
+    const ops = this.group(f, "opensees");
+    if (!ops.keys().includes("decls")) return "absent";
+    const marker = this.group(ops, "decls").attrs["program_decl"]?.value;
+    return marker === undefined ? "absent" : typeof marker === "string" ? marker : JSON.stringify(marker);
   }
 
   /** `/meta/lineage@{fem,model,results}_hash`; a stamp that is not a string is refused, never read as absent. */

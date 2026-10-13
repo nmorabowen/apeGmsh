@@ -548,7 +548,10 @@ export function deformNotice(s: State): string | null {
 export function resultsPairing(s: State): ResultsPairing {
   const m = s.artifacts.model;
   const ops = m?.zones["opensees"];
-  return pairResults(m?.status === "ready" ? { lineage: s.lineage, openseesVersion: ops?.status === "ready" ? ops.version : null } : null, s.results);
+  const zone = ops?.status === "ready";
+  // No decls group in a ready opensees zone reads as "absent" (h5-schema.md): the joins are not recorded.
+  const programDecl = zone ? (s.definitions?.decls ? (s.definitions.decls.programDecl ?? "absent") : "absent") : null;
+  return pairResults(m?.status === "ready" ? { lineage: s.lineage, openseesVersion: zone ? ops.version : null, programDecl } : null, s.results);
 }
 
 /**

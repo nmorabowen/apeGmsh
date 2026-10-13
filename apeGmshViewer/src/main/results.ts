@@ -59,6 +59,8 @@ export interface ResultsMeta {
   unavailableZones: string[];
   /** V4h: the embedded opensees zone's version stamp; null when the file embeds no /opensees */
   openseesVersion: string | null;
+  /** V4h: the embedded /opensees/decls@program_decl marker ("absent" when missing); null with no /opensees */
+  programDecl: string | null;
   /** V4c2a: the element-id verdict; element contours draw only for a verified file */
   elementIndex: ElementIndexVerdict;
 }
@@ -149,6 +151,7 @@ export function metaOf(rf: ResultsFile): ResultsMeta {
     partial: i.partial,
     unavailableZones: [...i.unavailableZones],
     openseesVersion: i.openseesVersion,
+    programDecl: i.programDecl,
     stages: i.stages.map((s) => ({
       id: s.id,
       name: s.name,

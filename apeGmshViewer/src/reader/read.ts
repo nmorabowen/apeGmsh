@@ -112,7 +112,9 @@ export const NEUTRAL_TARGET = { major: 2, minor: 35 } as const;
  * program's `decl` column now holds the `/opensees/decls` row that made each
  * call (`-1` where unproved), and `/opensees/decls@program_decl`
  * ("complete" | "absent") says whether those joins are recorded. This app
- * reads neither: it does not read `/opensees/program` at all, and reads only
+ * reads the marker only for the results pairing (V4h, #1856: it says whether
+ * the model_hash includes declaration ids), never for a join. It does not read
+ * `/opensees/program` at all, and reads only
  * the datasets of `/opensees/decls`, so `decl` can never appear as an
  * OpenSees parameter in any window, and no join is made from it. The joins the
  * windows make are unchanged and do not depend on the marker: recorders join
@@ -571,7 +573,10 @@ class Reader {
     if (hasParams) {
       for (const p of this.readDeclParams(this.group(g, "decl_params"), keys, n)) records[p.decl]!.params.push(p.params);
     }
-    return { hasParams, records, tags, rows };
+    // V4h (#1856): the completeness marker, read for the results pairing only.
+    const marker = d.attrs["program_decl"]?.value;
+    const programDecl = marker === undefined ? "absent" : typeof marker === "string" ? marker : JSON.stringify(marker);
+    return { hasParams, records, tags, rows, programDecl };
   }
 
   /** The record count of the store at `path` under `ops`, as Python's `declarations()` counts it. */

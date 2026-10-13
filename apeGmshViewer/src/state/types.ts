@@ -297,6 +297,12 @@ export interface ResultsInfo {
    */
   openseesVersion: string | null;
   /**
+   * V4h: the embedded `/opensees/decls@program_decl` marker ("absent" when the
+   * zone has no decls group or no marker); null with no /opensees. It, not the
+   * version stamp, says whether the results' model_hash includes declaration ids.
+   */
+  programDecl: string | null;
+  /**
    * V4c2a: the element-id verdict; element contours draw only for a verified
    * file (#1711/#1752). Absent (a results info built without it) reads as
    * unverified: selectors `elementVerdictOf`, never as verified.
