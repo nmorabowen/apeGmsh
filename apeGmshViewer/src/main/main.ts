@@ -226,6 +226,9 @@ ipcMain.handle("measure:done", (_e, result: unknown) => {
   // V4c1: the contour scrub (a model with a results sibling) prints its own ledger row.
   const contour = (result as { contour?: ContourMeasure | null } | null)?.contour;
   if (contour) printContourRow(contour);
+  // V4d: the same scrub with the deformed shape on.
+  const deform = (result as { deform?: ContourMeasure | null } | null)?.deform;
+  if (deform) printContourRow(deform);
   app.quit();
 });
 

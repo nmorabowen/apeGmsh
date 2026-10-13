@@ -13,7 +13,7 @@ import { mountPhase } from "../panels/phase.ts";
 import { mountSources } from "../panels/sources.ts";
 import { mountWindows } from "../panels/windows/frame.ts";
 import { BlobStore } from "../state/blobs.ts";
-import { chainOf, contourFieldsOf, contourView } from "../state/selectors.ts";
+import { chainOf, contourFieldsOf, contourView, deformOf, deformView } from "../state/selectors.ts";
 import { Store } from "../state/store.ts";
 import { WINDOW_KINDS, type DeclPath } from "../state/types.ts";
 import { applyTheme } from "../theme/tokens.ts";
@@ -302,16 +302,89 @@ async function captureContours(settle: (ms?: number) => Promise<unknown>, width:
   }
 }
 
-/** Resolves once the contour shows the step the state names (checked after every store change; the viewport listens first). */
+/** V4d: the drawn positions are the deformed shape of the step the state shows, at its scale (renderer/deform.ts keys); or the shape cannot be drawn. */
+function deformShown(): boolean {
+  const v = deformView(store.get());
+  if (v.state === "off" || v.state === "unavailable" || v.state === "refused") return true;
+  if (v.state === "loading") return false;
+  return viewport.deformApplied === `${effects.currentDisplacement()?.key}|scale ${v.scale}` && effects.currentDisplacement()?.key === v.keys.disp;
+}
+
+/** Resolves once the contour (and, V4d, the deformed shape) shows the step the state names (checked after every store change; the viewport listens first). */
 function contourShowsNow(): Promise<void> {
+  const shown = () => contourShown() && deformShown();
   return new Promise((resolve) => {
-    if (contourShown()) return resolve();
+    if (shown()) return resolve();
     const off = store.subscribe(() => {
-      if (!contourShown()) return;
+      if (!shown()) return;
       off();
       resolve();
     });
   });
+}
+
+/**
+ * The V4d deformed-shape stills (D7), by a fixed rule so no flag is needed:
+ * on the results stage with the most steps (the last of a tie) that has a
+ * usable displacement, at its last step, coloured by group: deformed at true
+ * scale with the reference ghost, then at scale 10, then coloured by
+ * contour; then two staged views (the first two results stages at their
+ * last step, or the first and the last step of a single stage), and the
+ * scale-10 still again at 1280 px. A `partial` stage shows its banner and
+ * markers in every still. `<out>.deform-<n>-<what>.png`.
+ */
+async function captureDeform(settle: (ms?: number) => Promise<unknown>, width: number, height: number) {
+  const s0 = store.get();
+  if (!s0.results || !s0.phase.axis.some((k) => k.kind === "results")) return;
+  const stages = s0.results.stages;
+  const usable = (i: number) => {
+    store.dispatch({ type: "setPhase", at: { kind: "results", stage: i, step: 0 } });
+    return deformOf(store.get()).ok;
+  };
+  let best = -1;
+  stages.forEach((st, i) => {
+    if (usable(i) && (best < 0 || st.time.length >= stages[best]!.time.length)) best = i;
+  });
+  if (best < 0) return;
+  if (typeof bridge.captureResize === "function") await bridge.captureResize(width, height);
+  store.dispatch({ type: "setColourBy", by: "group" });
+  store.dispatch({ type: "clearSelection" });
+  const show = (stage: number, step: number) => {
+    store.dispatch({ type: "setPhase", at: { kind: "results", stage, step: 0 } });
+    if (step > 0) store.dispatch({ type: "setResultStep", step });
+  };
+  const still = async (name: string) => {
+    if (!(await until(() => deformShown() && (store.get().visibility.colourBy !== "contour" || contourShown())))) throw new Error(`capture ${name}: the deformed shape did not show the step on screen (${deformView(store.get()).state})`);
+    await settle(100);
+    viewport.renderNow();
+    await painted();
+    await painted();
+    await bridge.captureStill(name);
+  };
+  const last = (i: number) => stages[i]!.time.length - 1;
+  show(best, last(best));
+  store.dispatch({ type: "setDeform", on: true });
+  store.dispatch({ type: "setReferenceGhost", on: true });
+  store.dispatch({ type: "setDeformScale", scale: 1 });
+  await still("deform-1-scale1-ghost");
+  store.dispatch({ type: "setDeformScale", scale: 10 });
+  await still("deform-2-scale10-ghost");
+  store.dispatch({ type: "setColourBy", by: "contour" });
+  await still("deform-3-scale10-contour");
+  store.dispatch({ type: "setColourBy", by: "group" });
+  const safe = (n: string) => n.replace(/[^A-Za-z0-9_.-]+/g, "_") || "unnamed";
+  const views: [number, number][] = stages.length >= 2 ? [[0, last(0)], [1, last(1)]] : [[0, 0], [0, last(0)]];
+  for (const [i, k] of views) {
+    show(i, k);
+    await still(`deform-4-stage${i}-${safe(stages[i]!.name)}-step${k + 1}`);
+  }
+  if (typeof bridge.captureResize === "function") {
+    await bridge.captureResize(1280, height);
+    show(best, last(best));
+    await settle();
+    await still("deform-5-scale10-ghost.1280");
+  }
+  store.dispatch({ type: "setDeform", on: false });
 }
 
 /**
@@ -323,8 +396,10 @@ function contourShowsNow(): Promise<void> {
  * The history scan's time comes first; the machine's CPU load is sampled
  * before (1 s idle) and during the scrub, and the working sets every 100 ms.
  */
-async function measureContour(path: string) {
+async function measureContour(path: string, deform = false) {
   store.dispatch({ type: "clearSelection" });
+  // V4d: the same scrub with the deformed shape on (true scale): each step also waits for the displaced positions.
+  store.dispatch({ type: "setDeform", on: deform });
   if (!(await effects.openResults(path))) throw new Error(`measure: results ${path} did not open: ${store.get().artifacts.results?.error}`);
   const s = store.get();
   if (!s.phase.axis.some((k) => k.kind === "results")) throw new Error(`measure: ${path} does not pair with the model, so there is nothing to scrub`);
@@ -353,7 +428,9 @@ async function measureContour(path: string) {
     const scanMs = performance.now() - t0;
     await contourShowsNow();
     const v = contourView(store.get());
-    const field = v.state === "ready" ? `${v.field} ${v.component.label}` : "?";
+    const d = deformView(store.get());
+    if (deform && d.state !== "ready" && d.state !== "partial") throw new Error(`measure: the deformed shape is ${d.state}`);
+    const field = (v.state === "ready" ? `${v.field} ${v.component.label}` : "?") + (deform ? ", deformed ×1" : "");
     const T = stages[best]!.time.length;
     const gl = viewport.renderer.getContext();
     const stepMs: number[] = [];
@@ -402,7 +479,10 @@ async function main() {
   if (cfg.mode === "measure") {
     const result = await measure(cfg.t0, cfg);
     // V4c1: with a results sibling, the contour scrub row too (main prints it).
-    await bridge.measureDone({ ...result, contour: cfg.results ? await measureContour(cfg.results) : null });
+    const contour = cfg.results ? await measureContour(cfg.results) : null;
+    // V4d: and the contour scrub again with the deformed shape on.
+    const deformed = cfg.results ? await measureContour(cfg.results, true) : null;
+    await bridge.measureDone({ ...result, contour, deform: deformed });
     return;
   }
   // capture: select the scripted target and let main grab the page; when the
@@ -482,6 +562,8 @@ async function main() {
     await captureResults(cfg.results, settle);
     // V4c1 (D7): the contour stills, at the capture window's own width, then 1280 px.
     await captureContours(settle, width, height);
+    // V4d (D7): the deformed-shape stills, at the capture window's own width, then 1280 px.
+    await captureDeform(settle, width, height);
   }
   await bridge.captureDone();
 }
