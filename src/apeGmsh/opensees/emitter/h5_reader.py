@@ -79,11 +79,23 @@ __all__ = [
     "MalformedH5Error",
     "PartitionEmittedRecord",
     "ProgramAbsentError",
+    "ProgramDeclAbsentError",
     "ProgramRun",
     "SchemaVersionError",
     "emit_index_of",
     "open",
+    "records_program_decl",
 ]
+
+#: ``/opensees/decls@program_decl`` (A7): ``/opensees/program``'s ``decl``
+#: column records every call's proved declaration. A 2.31+ emit writes it.
+PROGRAM_DECL_COMPLETE = "complete"
+#: The column was never recorded: every file below 2.31.0 (which has no
+#: marker and reads as this), and a ``to_h5`` rewrite of one, which is
+#: stamped 2.31 but echoes the source's all ``-1`` column.
+PROGRAM_DECL_ABSENT = "absent"
+PROGRAM_DECL_MARKERS: frozenset[str] = frozenset(
+    {PROGRAM_DECL_COMPLETE, PROGRAM_DECL_ABSENT})
 
 
 @dataclass(frozen=True, slots=True)
@@ -139,9 +151,12 @@ class ProgramRun:
     wrote to ``store`` in that stage, in emit order; a partition-
     replicated call repeats its first capture's row. ``decl`` is the
     ``/opensees/decls`` row of the declaration that made the calls, when
-    the emit proved it (A7, opensees 2.31.0), else ``-1``; every file
-    below 2.31.0 holds ``-1`` throughout (:data:`PROGRAM_DECL_FROM`), so
-    there ``-1`` means "not recorded", not "no declaration".
+    the emit proved it (A7, opensees 2.31.0), else ``-1``. Only an archive
+    whose joins are recorded (:func:`records_program_decl`) gives ``-1``
+    the meaning "no declaration"; elsewhere (every file below 2.31.0, and
+    a ``to_h5`` rewrite of one) it means "not recorded".
+    :meth:`H5Model.program_declarations` is the join that knows the
+    difference.
     """
 
     first: int
@@ -287,7 +302,11 @@ class DeclarationTable:
     in call order, so a ``region`` name declared by several calls or a
     repeated ``initial_stress`` name lists every call; every other key
     has exactly one. Empty for a file below 2.26.0 or one no bridge emit
-    wrote.
+    wrote. ``program_decl`` is the group's ``@program_decl`` marker:
+    ``"complete"`` when ``/opensees/program``'s ``decl`` column records
+    every call's proved declaration (a 2.31+ emit), ``"absent"`` when it
+    was never recorded (every file below 2.31.0, and a ``to_h5`` rewrite
+    of one); see :func:`records_program_decl`.
     """
 
     decls: tuple[DeclarationRO, ...]
@@ -297,6 +316,7 @@ class DeclarationTable:
     # dataclass default (a mappingproxy is one); 3.12 accepts it.
     params: Mapping[int, tuple[DeclParamsRO, ...]] = field(
         default_factory=lambda: MappingProxyType({}))
+    program_decl: str = PROGRAM_DECL_ABSENT
 
     def params_for(self, key: str) -> tuple[DeclParamsRO, ...]:
         """The parameter entries of the declaration keyed ``key``, one
@@ -489,6 +509,17 @@ class ProgramAbsentError(RuntimeError):
     A file written below opensees 2.23.0 has none, and neither does one
     rewritten from such a file (``OpenSeesModel.to_h5`` does not invent an
     order the source never recorded).
+    """
+
+
+class ProgramDeclAbsentError(LookupError):
+    """The archive does not record its program's declaration joins.
+
+    Raised by a decl-join query (:meth:`H5Model.program_declarations`) on a
+    file whose ``/opensees/decls@program_decl`` is ``"absent"`` (every file
+    below opensees 2.31.0, and a ``to_h5`` rewrite of one) or that has no
+    ``/opensees/decls``: its ``decl`` column says nothing about a call, so
+    it is never presented as "undeclared". The rest of the file reads.
     """
 
 
@@ -1780,9 +1811,15 @@ class H5Model:
             _read_decl_params(ops["decl_params"], keys)
             if "decl_params" in ops else {}
         )
+        marker = str(_decode_bytes(
+            g.attrs.get("program_decl", PROGRAM_DECL_ABSENT)))
+        if marker not in PROGRAM_DECL_MARKERS:
+            raise MalformedH5Error(
+                f"/opensees/decls@program_decl is {marker!r}; expected one "
+                f"of {sorted(PROGRAM_DECL_MARKERS)}.")
         return DeclarationTable(
             decls=decls, tags=tags, rows=MappingProxyType(rows),
-            params=MappingProxyType(params))
+            params=MappingProxyType(params), program_decl=marker)
 
     def program(self) -> tuple[ProgramRun, ...]:
         """Return ``/opensees/program`` as :class:`ProgramRun` values.
@@ -1834,6 +1871,32 @@ class H5Model:
                 f"@emit_count is {emit_count}."
             )
         return tuple(runs)
+
+    def program_declarations(
+        self,
+    ) -> "tuple[tuple[ProgramRun, DeclarationRO | None], ...]":
+        """Each ``/opensees/program`` run with the declaration that made
+        its calls, ``None`` for a ``-1`` run (no declaration proved at
+        emit; ``h5-schema.md`` lists the cases), A7, opensees 2.31.0.
+
+        Fails closed: an archive that does not record the joins
+        (:func:`records_program_decl` is False) raises
+        :class:`ProgramDeclAbsentError` rather than present its ``-1``
+        column as "undeclared". :meth:`program` still reads it.
+        """
+        table = self.declarations()
+        if not records_program_decl(table):
+            raise ProgramDeclAbsentError(
+                "/opensees/program: the declaration joins are not recorded "
+                "in this archive (/opensees/decls@program_decl is not "
+                f"{PROGRAM_DECL_COMPLETE!r}: a file below opensees 2.31.0, "
+                "or a to_h5 rewrite of one); its decl column says nothing "
+                "about a call. Re-emit the model through apeSees.h5 to "
+                "record them.")
+        assert table is not None
+        return tuple(
+            (run, None if run.decl == -1 else table.decls[run.decl])
+            for run in self.program())
 
     def emit_index(self, method: str, row: int, *, stage: int = -1) -> int:
         """The 1-based emit index of ``row`` of ``method``'s store in
@@ -2894,14 +2957,19 @@ def archives_embedded_rebar(version: "SchemaVersion") -> bool:
 #: ``-1`` throughout, so a ``-1`` there says nothing about the call; and
 #: the column is hashed, so a tool comparing a model's ``model_hash``
 #: across this boundary sees the archive's one-time change, not corruption.
+#: The version alone does not prove the joins are recorded: a ``to_h5``
+#: rewrite of an older file is stamped at or above it. Ask
+#: :func:`records_program_decl`, which reads the marker.
 PROGRAM_DECL_FROM: tuple[int, int, int] = (2, 31, 0)
 
 
-def records_program_decl(version: "SchemaVersion") -> bool:
-    """True iff an archive at opensees-zone ``version`` records the
-    declaration of its program runs (``>= PROGRAM_DECL_FROM``)."""
-    return (
-        (version.major, version.minor, version.patch) >= PROGRAM_DECL_FROM)
+def records_program_decl(table: "DeclarationTable | None") -> bool:
+    """True iff the archive whose :meth:`H5Model.declarations` is
+    ``table`` records the declaration of each program call: its
+    ``/opensees/decls@program_decl`` is ``"complete"``. False with no
+    ``decls`` group, for every file below 2.31.0 (no marker), and for a
+    ``to_h5`` rewrite of one (marker ``"absent"``)."""
+    return table is not None and table.program_decl == PROGRAM_DECL_COMPLETE
 
 
 def _initial_stress_param_tags(

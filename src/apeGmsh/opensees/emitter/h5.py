@@ -1892,6 +1892,10 @@ class H5Emitter:
         # The source's ``rows`` columns, echoed by :meth:`restore_declarations`
         # in place of the live ones (a rewrite opens no declaration).
         self._decl_rows_restored: "dict[str, list[int]] | None" = None
+        # A7: the source's ``/opensees/decls@program_decl`` on a rewrite
+        # (``restore_declarations``); ``None`` writes ``"complete"``, this
+        # emitter's own tape having recorded every call's declaration.
+        self._program_decl_restored: "str | None" = None
         # The rows columns of the stores filled through side channels, not
         # Protocol calls (``initial_stress``, ``activate_absorbing``), handed
         # in by :meth:`set_declaration_rows`.
@@ -3944,6 +3948,17 @@ class H5Emitter:
         str_dt = h5py.string_dtype(encoding="utf-8")
         decls = self._declarations
         g = self._ops_group(f).create_group("decls")
+        # A7: whether /opensees/program's decl column records each call's
+        # declaration. On the hash-excluded group, not on /opensees (whose
+        # attributes fold into model_hash), so a rewrite keeps the hash.
+        from .h5_reader import PROGRAM_DECL_COMPLETE, PROGRAM_DECL_MARKERS
+        marker = (PROGRAM_DECL_COMPLETE if self._program_decl_restored is None
+                  else self._program_decl_restored)
+        if marker not in PROGRAM_DECL_MARKERS:
+            raise RuntimeError(
+                f"H5Emitter._write_decls: program_decl marker {marker!r} is "
+                f"not one of {sorted(PROGRAM_DECL_MARKERS)}.")
+        g.attrs["program_decl"] = marker
         g.create_dataset("key", data=[d.key for d in decls], dtype=str_dt)
         g.create_dataset(
             "family", data=[d.family for d in decls], dtype=str_dt)
@@ -5218,6 +5233,9 @@ class H5Emitter:
             str(store): [int(v) for v in column]
             for store, column in table.rows.items()
         }
+        # A7: the rewrite echoes the source's program, so it echoes the
+        # source's word on whether that program's decl joins are recorded.
+        self._program_decl_restored = str(table.program_decl)
         if table.params:
             self._decl_params_restored = [
                 (int(decl), p.type, p.params_json,

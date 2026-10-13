@@ -302,3 +302,95 @@ def test_rewrite_keeps_the_decl_column(tmp_path: Path, model: str) -> None:
         src, out = a.program(), b.program()
     assert any(r.decl != -1 for r in src)
     assert [r.decl for r in out] == [r.decl for r in src]
+
+
+# ---------------------------------------------------------------------------
+# The completeness marker (/opensees/decls@program_decl)
+# ---------------------------------------------------------------------------
+
+CORPUS = Path(__file__).resolve().parents[2] / "fixtures" / "schema_corpus"
+
+
+def _hash(path: Path) -> tuple[str, str]:
+    """``(stored, recomputed)`` ``model_hash``."""
+    from apeGmsh.opensees._internal.lineage import compute_model_hash
+
+    with h5py.File(str(path), "r") as f:
+        lin = f["meta"]["lineage"].attrs
+        return (str(lin["model_hash"]),
+                compute_model_hash(str(lin["fem_hash"]), f["opensees"]))
+
+
+def _marker(path: Path) -> str | None:
+    with h5py.File(str(path), "r") as f:
+        value = f["opensees"]["decls"].attrs.get("program_decl")
+    if value is None:
+        return None
+    return value.decode() if isinstance(value, bytes) else str(value)
+
+
+def test_a_legacy_rewrite_is_marked_absent_and_keeps_its_hash(
+    tmp_path: Path,
+) -> None:
+    """The prior-minor corpus file (no marker: its decl column was never
+    recorded) rewritten through ``to_h5`` is stamped current, marked
+    ``"absent"``, refuses the join query, still reads, and keeps its
+    ``model_hash`` (the marker sits on the hash-excluded ``decls``)."""
+    from tests.fixtures.schema import OPENSEES_CURRENT, OPENSEES_PRIOR_MINOR
+
+    legacy = tmp_path / "legacy.h5"
+    minor = OPENSEES_PRIOR_MINOR.rsplit(".", 1)[0]
+    shutil.copy(CORPUS / f"opensees_{minor}.h5", legacy)
+    assert _marker(legacy) is None
+    with h5_reader.open(str(legacy)) as m:
+        assert not h5_reader.records_program_decl(m.declarations())
+    out, again = tmp_path / "rw.h5", tmp_path / "rw2.h5"
+    OpenSeesModel.from_h5(str(legacy)).to_h5(str(out))
+    OpenSeesModel.from_h5(str(out)).to_h5(str(again))
+    with h5py.File(str(out), "r") as f:
+        stamp = f["meta"].attrs["opensees_schema_version"]
+    assert (stamp.decode() if isinstance(stamp, bytes) else str(stamp)) == (
+        OPENSEES_CURRENT)
+    for path in (out, again):
+        assert _marker(path) == "absent"
+        with h5_reader.open(str(path)) as m:
+            assert not h5_reader.records_program_decl(m.declarations())
+            assert {r.decl for r in m.program()} == {-1}
+            with pytest.raises(h5_reader.ProgramDeclAbsentError,
+                               match="not recorded"):
+                m.program_declarations()
+        stored, recomputed = _hash(path)
+        assert stored == recomputed == _hash(legacy)[0]
+
+
+def test_a_current_rewrite_is_marked_complete_and_keeps_its_hash(
+    tmp_path: Path,
+) -> None:
+    """A current emit is marked ``"complete"``; its rewrite echoes the
+    marker and the column, and keeps ``model_hash``."""
+    from tests.opensees.h5.test_h5_commands_program import (
+        _staged as _staged_real,
+    )
+
+    src, out = tmp_path / "src.h5", tmp_path / "rw.h5"
+    _staged_real(partitioned=False, rayleigh=True, profile=True).h5(str(src))
+    OpenSeesModel.from_h5(str(src)).to_h5(str(out))
+    for path in (src, out):
+        assert _marker(path) == "complete"
+        with h5_reader.open(str(path)) as m:
+            assert h5_reader.records_program_decl(m.declarations())
+            joins = m.program_declarations()
+        assert any(d is not None for _r, d in joins)
+        assert all((d is None) == (r.decl == -1) for r, d in joins)
+    assert _hash(out) == _hash(src)
+    assert _hash(src)[0] == _hash(src)[1]
+
+
+def test_reader_refuses_an_unknown_marker(tmp_path: Path) -> None:
+    p = tmp_path / "m.h5"
+    _flat_frame(named=False).h5(str(p))
+    with h5py.File(str(p), "a") as f:
+        f["opensees"]["decls"].attrs["program_decl"] = "partial"
+    with h5_reader.open(str(p)) as m, pytest.raises(
+            MalformedH5Error, match="program_decl"):
+        m.declarations()
