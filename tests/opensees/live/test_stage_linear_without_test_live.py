@@ -21,7 +21,7 @@ from apeGmsh import apeGmsh
 from apeGmsh.opensees.apesees import apeSees
 
 BAY, STOREY = 6.0, 3.0
-E, A, I = 2.0e8, 0.04, 2.0e-4      # kPa, m2, m4
+E, A, INERTIA = 2.0e8, 0.04, 2.0e-4     # kPa, m2, m4
 MASS = 20.0                         # t per storey joint
 F_LATERAL = 10.0                    # kN per storey
 
@@ -55,7 +55,7 @@ def _deck(fem: Any, path: Path, *, with_test: bool) -> None:
     ops.model(ndm=2, ndf=3)
     transf = ops.geomTransf.Linear()
     for pg in ("columns", "beams"):
-        ops.element.elasticBeamColumn(pg=pg, transf=transf, A=A, E=E, Iz=I)
+        ops.element.elasticBeamColumn(pg=pg, transf=transf, A=A, E=E, Iz=INERTIA)
     ops.fix(pg="bases", dofs=(1, 1, 1))
     for k in (1, 2):
         ops.mass(pg=f"floor_{k}", values=(MASS, MASS, 0.0))
@@ -117,6 +117,6 @@ def test_linear_stage_without_test_matches_with_test(tmp_path: Path) -> None:
     # (storey stiffness 2 * 12 E I / h^3, lumped mass 2 m per floor) has
     # T1 = 2 pi / sqrt(k / M * (3 - sqrt 5) / 2).  Flexible beams soften
     # the frame, so the frame's T1 is longer, but within a factor of 2.
-    k = 2 * 12 * E * I / STOREY**3
+    k = 2 * 12 * E * INERTIA / STOREY**3
     t_shear = 2 * math.pi / math.sqrt(k / (2 * MASS) * (3 - math.sqrt(5)) / 2)
     assert t_shear < t_test[0] < 2.0 * t_shear
