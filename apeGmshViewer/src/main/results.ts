@@ -18,6 +18,7 @@
 import { statSync } from "node:fs";
 import { openResults, type ResultsFile, type ResultsH5, type StageInfo } from "../reader/results.ts";
 import { gaussCellValues } from "../state/contour.ts";
+import { applyPlan, planRange, type ExtrapPlan } from "../state/extrapolation.ts";
 
 /** One stage as the renderer's store keeps it (state/types.ts `ResultsStage`). */
 export interface ResultsStageMeta {
@@ -44,6 +45,8 @@ export interface GaussGroupMeta {
   nElements: number;
   nGauss: number;
   localAxes: boolean;
+  /** V4c2b: `_natural_coords` (G rows), null when not floating point (reader/results.ts) */
+  naturalCoords: number[][] | null;
 }
 
 /** Whether a file's `_element_index` rows are FEM element ids: only the root stamp says so (#1768). */
@@ -117,6 +120,12 @@ export interface ScanRequest {
    * group that has it. Verified files only. Absent: a nodal scan.
    */
   source?: "element";
+  /**
+   * V4c2b: with `source: "element"`, a node-located topology's plan
+   * (state/extrapolation.ts): every step is carried through it and the range
+   * is of the values drawn (the nodes', or every element corner's).
+   */
+  plan?: ExtrapPlan;
 }
 
 export type ScanAnswer =
@@ -166,6 +175,7 @@ export function metaOf(rf: ResultsFile): ResultsMeta {
         nElements: g.nElements,
         nGauss: g.nGauss,
         localAxes: g.localAxes,
+        naturalCoords: g.naturalCoords ? g.naturalCoords.map((r) => [...r]) : null,
       })),
       unread: [...s.unread],
     })),
@@ -395,6 +405,12 @@ export class ResultsHost {
     const comp = req.components[0]!;
     const groups = st.gauss.filter((g) => g.components.includes(comp));
     if (!groups.length) throw new Error(`stage ${st.id} has no gauss group with component ${JSON.stringify(comp)}`);
+    const plan = req.plan;
+    if (plan) {
+      // The plan names the field's groups, in its order and sizes; anything else is refused, never re-mapped.
+      const same = plan.groups.length === groups.length && plan.groups.every((pg, i) => pg.id === groups[i]!.id && pg.nElements === groups[i]!.nElements && pg.nGauss === groups[i]!.nGauss);
+      if (!same) throw new Error(`the extrapolation plan's groups (${plan.groups.map((g) => g.id).join(", ")}) are not stage ${st.id}'s groups with ${comp}`);
+    }
     const T = st.nSteps;
     const per = groups.reduce((a, g) => a + g.nElements * g.nGauss, 0);
     const chunk = opts.chunkSteps ?? Math.max(1, Math.floor(4e6 / (8 * Math.max(1, per))));
@@ -407,14 +423,23 @@ export class ResultsHost {
       if (!rf) return { ok: false, scanId: id, changed: true, error: `${req.path} changed on disk during the scan` };
       this.armIdle();
       const k1 = Math.min(T, k0 + chunk);
-      for (const g of groups) {
-        const rows = rf.readGaussRows(st.id, g.id, comp, k0, k1);
-        const vals = gaussCellValues(rows, (k1 - k0) * g.nElements, g.nGauss);
-        for (let i = 0; i < vals.length; i++) {
-          const x = vals[i]!;
-          if (!Number.isFinite(x)) continue;
-          if (x < lo) lo = x;
-          if (x > hi) hi = x;
+      if (plan) {
+        const rows = groups.map((g) => rf.readGaussRows(st.id, g.id, comp, k0, k1));
+        for (let k = 0; k < k1 - k0; k++) {
+          const r = planRange(applyPlan(plan, rows.map((x, i) => x.subarray(k * groups[i]!.nElements * groups[i]!.nGauss, (k + 1) * groups[i]!.nElements * groups[i]!.nGauss))));
+          if (r && r.min < lo) lo = r.min;
+          if (r && r.max > hi) hi = r.max;
+        }
+      } else {
+        for (const g of groups) {
+          const rows = rf.readGaussRows(st.id, g.id, comp, k0, k1);
+          const vals = gaussCellValues(rows, (k1 - k0) * g.nElements, g.nGauss);
+          for (let i = 0; i < vals.length; i++) {
+            const x = vals[i]!;
+            if (!Number.isFinite(x)) continue;
+            if (x < lo) lo = x;
+            if (x > hi) hi = x;
+          }
         }
       }
       const now = performance.now();

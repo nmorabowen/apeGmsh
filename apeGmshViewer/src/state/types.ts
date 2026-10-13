@@ -274,6 +274,8 @@ export interface GaussGroup {
   localAxes: boolean;
   /** the group's `_element_index` (f64) in the BlobStore: present only for a verified file, put there by the effects */
   elementIds?: BlobRef;
+  /** V4c2b: `_natural_coords`, one parent-space row per Gauss point; null when the file's dataset is not floating point */
+  naturalCoords: number[][] | null;
 }
 
 /** Whether a results file's `_element_index` rows are FEM element ids: only its root stamp says so (#1768). */
@@ -355,12 +357,25 @@ export type ContourSource = "nodal" | "element";
  * How an element (Gauss) field is drawn (V4c2a). `cell` is flat per cell: the
  * element's one Gauss value (Qt `gauss_cell`), or, with several points, the
  * element mean of its Gauss values (`element_mean`, an app presentation with
- * no Qt equivalent). The node-located Qt topologies are V4c2b, their states
- * defined and shown as "not yet available": `cell_averaged` (Qt
+ * no Qt equivalent). V4c2b draws the node-located modes: `cell_averaged` (Qt
  * `gauss_cell_averaged`: one-point cell values averaged to the nodes across
- * elements), `node` (`gauss_node`) and `node_discrete` (`gauss_node_discrete`).
+ * elements; each element's mean on a field with several points), `node`
+ * (`gauss_node`: extrapolated to the nodes and averaged) and `node_discrete`
+ * (`gauss_node_discrete`: extrapolated per element, no averaging).
  */
 export type GaussMode = "cell" | "cell_averaged" | "node" | "node_discrete";
+
+/**
+ * Why a joined element field cannot be carried to the nodes (V4c2b,
+ * state/extrapolation.ts `extrapolationVerdict`), null where it can.
+ * `corners` blocks every node-located topology (an element type with no
+ * corner shape functions, a short row); `matrix` blocks the extrapolating
+ * ones on groups with several Gauss points (unusable `_natural_coords`).
+ */
+export interface ExtrapolationVerdict {
+  corners: string | null;
+  matrix: string | null;
+}
 
 /**
  * The join of an element field's rows to the mesh (V4c2a), as the effects
@@ -369,7 +384,7 @@ export type GaussMode = "cell" | "cell_averaged" | "node" | "node_discrete";
  * selectors `elementJoinKey`.
  */
 export type ElementJoinVerdict =
-  | { key: string; ok: true; rows: number }
+  | { key: string; ok: true; rows: number; extrapolation: ExtrapolationVerdict }
   | { key: string; ok: false; code: "unknown-id" | "duplicate-id"; reason: string };
 
 /** The contour colouring (V4c1, #1756): what is picked, and the ranges the effects measured. */
@@ -453,6 +468,8 @@ export interface Pick {
 /** One `/elements/{alias}` block of the neutral zone, its connectivity as a blob. */
 export interface BlockInfo {
   alias: string;
+  /** V4c2b: the block's gmsh element-type code (`/elements/{alias}@code`): the Gauss-to-node extrapolation's shape functions */
+  code: number;
   npe: number;
   /** row-major (count, npe) node tags */
   connectivity: BlobRef;

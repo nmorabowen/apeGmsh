@@ -4,8 +4,8 @@ Unit layer: declaration validation, the emitted row, and the handler rules
 it shares with an ``enforce="equation"`` tie (ADR 0068 INV-4): with no
 declared handler the bridge auto-emits ``Lagrange`` (``Transformation``
 would drop the row silently), a declared ``Transformation`` / ``Auto``
-raises, a partitioned emit refuses, and ``ops.h5`` warns that the row is
-not archived.
+raises, a partitioned emit refuses, and ``ops.h5`` archives the row
+without a warning.
 """
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ import pytest
 
 from apeGmsh.opensees import apeSees
 from apeGmsh.opensees._internal.build.errors import BridgeError
-from apeGmsh.opensees.emitter.h5 import H5FeatureDeferredWarning
+from apeGmsh.opensees.emitter.h5 import H5FeatureDeferredWarning, H5LedgerWarning
 from apeGmsh.opensees.emitter.recording import RecordingEmitter
 
 from tests.opensees.fixtures.fem_stub import (
@@ -132,12 +132,16 @@ def test_partitioned_emit_refuses_the_rows() -> None:
         )
 
 
-def test_h5_warns_the_rows_are_not_archived(tmp_path: Path) -> None:
+def test_h5_archives_the_rows_without_a_warning(tmp_path: Path) -> None:
+    """The row is an ``EquationConstraintRecord`` in ``/opensees/decl_params``
+    that replay re-emits (#1801), so ``h5`` says nothing is dropped (#1805)."""
     pytest.importorskip("h5py")
     ops = _bridge()
     ops.equation_constraint(constrained=(4, 1), retained=[(2, 1, -1.0)])
     _chain(ops, "Lagrange")
-    with pytest.warns(H5FeatureDeferredWarning, match="NOT archived"):
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", H5FeatureDeferredWarning)
+        warnings.simplefilter("error", H5LedgerWarning)
         ops.h5(str(tmp_path / "m.h5"))
 
 
