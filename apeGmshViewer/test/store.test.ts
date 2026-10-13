@@ -153,6 +153,10 @@ const EVERY: Record<EventType, Event> = {
   setContourCmap: { type: "setContourCmap", cmap: "viridis" },
   contourStepRange: { type: "contourStepRange", key: "x", min: 0, max: 1 },
   contourScan: { type: "contourScan", scan: { key: "x", status: "running", done: 1, total: 2, min: null, max: null, error: null } },
+  setDeform: { type: "setDeform", on: true },
+  setDeformScale: { type: "setDeformScale", scale: 10 },
+  setReferenceGhost: { type: "setReferenceGhost", on: true },
+  deformMeasured: { type: "deformMeasured", key: "x", drawn: 3, missing: 1 },
 };
 
 test("reducer purity: every event leaves a frozen state untouched and returns plain data", () => {
@@ -170,8 +174,8 @@ test("reducer purity: every event leaves a frozen state untouched and returns pl
   }
   assert.equal(
     Object.keys(EVERY).length,
-    34,
-    "decision 17's 20 events plus fileClosed, requestSource, sourceResult, setLoaded (V2f), frameSelection, setColourBy, selectStage (V4f), resultsLoaded and resultStep (V4b), and the five contour events (V4c1)",
+    38,
+    "decision 17's 20 events plus fileClosed, requestSource, sourceResult, setLoaded (V2f), frameSelection, setColourBy, selectStage (V4f), resultsLoaded and resultStep (V4b), the five contour events (V4c1), and the four deformed-shape events (V4d)",
   );
 });
 

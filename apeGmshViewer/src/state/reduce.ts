@@ -5,8 +5,14 @@
 // code does not know raises at run time.
 
 import { CMAP_NAMES, componentName, componentOf, contourKeysOf, defaultPick } from "./contour.ts";
-import { geometryPairing, resultsPairing, stageCount, stageIdentity } from "./selectors.ts";
-import { WINDOW_KINDS, type ArtifactInfo, type ArtifactKind, type ContourState, type DeclPath, type Event, type PhaseKey, type State } from "./types.ts";
+import { deformOf, geometryPairing, resultsPairing, stageCount, stageIdentity } from "./selectors.ts";
+import { WINDOW_KINDS, type ArtifactInfo, type ArtifactKind, type ContourState, type DeclPath, type DeformState, type Event, type PhaseKey, type SpatialNdm, type State } from "./types.ts";
+
+/** The deformed shape before the user turns it on: true scale, no ghost (V4d; the Qt defaults). */
+export const initialDeform: DeformState = { on: false, scale: 1, ghost: false, measured: null };
+
+/** No model, no dimension. */
+const NO_NDM: SpatialNdm = { ndm: null, reason: "no model is loaded" };
 
 /** A record with no prototype: a key named `constructor` or `__proto__` is just a key. */
 export const emptyRecord = <T>(): Record<string, T> => Object.create(null) as Record<string, T>;
@@ -40,6 +46,8 @@ export const initialState: State = {
   results: null,
   resultStep: null,
   contour: initialContour,
+  ndm: NO_NDM,
+  deform: initialDeform,
 };
 
 const NO_SELECTION: State["selection"] = { decls: [], picks: [] };
@@ -174,6 +182,7 @@ export function reduce(s: State, e: Event): State {
         sequence,
         lineage,
         stageElements,
+        ndm: e.load.ndm ?? { ndm: null, reason: "the model's /meta/ndm was not read" },
         stage: keep ? s.stage : null,
         selection: NO_SELECTION,
         hover: null,
@@ -208,6 +217,8 @@ export function reduce(s: State, e: Event): State {
         geometry: s.geometry,
         results: s.results,
         source: { ...initialState.source, seq: s.source.seq },
+        // V4d: the user's deformed-shape settings stand; the count was for the old model.
+        deform: { ...s.deform, measured: null },
       });
     }
     case "fileClosed": {
@@ -222,6 +233,8 @@ export function reduce(s: State, e: Event): State {
         geometry: s.geometry,
         results: s.results,
         source: { ...initialState.source, seq: s.source.seq },
+        // V4d: the user's deformed-shape settings stand; the count was for the old model.
+        deform: { ...s.deform, measured: null },
       });
     }
     case "fileChanged": {
@@ -353,6 +366,26 @@ export function reduce(s: State, e: Event): State {
     case "contourScan":
       if (contourKeysOf(s)?.scan !== e.scan.key) return s;
       return { ...s, contour: { ...s.contour, scan: e.scan } };
+    case "setDeform":
+      if (typeof e.on !== "boolean") throw new RangeError(`setDeform: ${JSON.stringify(e.on)}`);
+      return s.deform.on === e.on ? s : { ...s, deform: { ...s.deform, on: e.on } };
+    case "setDeformScale":
+      if (typeof e.scale !== "number" || !Number.isFinite(e.scale) || e.scale <= 0) {
+        throw new RangeError(`setDeformScale: the scale must be a finite number above 0; got ${JSON.stringify(e.scale)}`);
+      }
+      return s.deform.scale === e.scale ? s : { ...s, deform: { ...s.deform, scale: e.scale } };
+    case "setReferenceGhost":
+      if (typeof e.on !== "boolean") throw new RangeError(`setReferenceGhost: ${JSON.stringify(e.on)}`);
+      return s.deform.ghost === e.on ? s : { ...s, deform: { ...s.deform, ghost: e.on } };
+    case "deformMeasured": {
+      // A count for anything but what is shown now (another step, a re-read, another hidden set) is stale.
+      const d = deformOf(s);
+      if (!d.ok || d.draw.keys.count !== e.key) return s;
+      if (!Number.isInteger(e.drawn) || !Number.isInteger(e.missing) || e.missing < 0 || e.missing > e.drawn) {
+        throw new RangeError(`deformMeasured: ${e.missing} missing of ${e.drawn} drawn nodes`);
+      }
+      return { ...s, deform: { ...s.deform, measured: { key: e.key, drawn: e.drawn, missing: e.missing } } };
+    }
     case "resultStep": {
       // A status for a step that is no longer shown is dropped (the effects
       // also drop replies that are not their latest request).

@@ -15,10 +15,12 @@ import { GEOMETRY_TARGET, NEUTRAL_TARGET, OPENSEES_TARGET, PROVENANCE_TARGET, ZO
 import type { BlobStore } from "./state/blobs.ts";
 import { loadGeometry } from "./state/geometry.ts";
 import { loadModel } from "./state/load.ts";
-import { finiteRange } from "./state/contour.ts";
-import { contourView, sourceFor } from "./state/selectors.ts";
+import { columnOf, finiteRange } from "./state/contour.ts";
+import { missingDrawnNodes, spatialNdm, vertexDisplacements, type VertexDisplacement } from "./state/deform.ts";
+import { contourView, deformView, sourceFor } from "./state/selectors.ts";
 import type { Store } from "./state/store.ts";
 import { focusOf, type Focus } from "./renderer/selection.ts";
+import { elementMaskOf, visibleMaps } from "./renderer/visible.ts";
 import type { ArtifactKind, BlobRef, ContourScan, Lineage, ResultsInfo, StageElements, State, ZoneStatus } from "./state/types.ts";
 
 const TARGET = { neutral: NEUTRAL_TARGET, opensees: OPENSEES_TARGET, geometry: GEOMETRY_TARGET, provenance: PROVENANCE_TARGET } as const;
@@ -162,6 +164,17 @@ export function modelExtras(res: {
   return { lineage: l?.ok ? l.lineage : null, stageElements, warnings };
 }
 
+/**
+ * V4d: the displacement of every drawn-or-not vertex at the step shown,
+ * through the vertex node ids (state/deform.ts), and the key it is for
+ * (selectors `deformView(...).keys.disp`). Kept here, outside the store.
+ */
+export interface DisplacementData {
+  key: string;
+  line: VertexDisplacement;
+  tri: VertexDisplacement;
+}
+
 /** The current results step's data: kept here, outside the store, and only the latest one (D5). */
 export interface StepData {
   stage: number;
@@ -235,6 +248,8 @@ export class Effects {
       this.store.subscribe((s) => this.syncStep(s)),
       // V4c1: the contour's step range and history scan follow what is shown.
       this.store.subscribe((s) => this.syncContour(s)),
+      // V4d: the displacement of the step shown, and the count of drawn nodes without one.
+      this.store.subscribe((s) => this.syncDeform(s)),
     );
     if (typeof this.bridge.onScanProgress === "function") {
       const off = this.bridge.onScanProgress((p) => {
@@ -369,6 +384,61 @@ export class Effects {
           if ("changed" in res && res.changed) this.store.dispatch({ type: "fileChanged", path: info.path });
         });
     });
+  }
+
+  // -- V4d: the deformed shape --------------------------------------------------
+
+  /** The displacement last computed, and the count key last counted (each recomputed only when its key changes). */
+  private disp: DisplacementData | null = null;
+  private countedFor: string | null = null;
+
+  /** The displacement of the step shown (null before it is computed); the viewport checks its key against the state's. */
+  currentDisplacement(): DisplacementData | null {
+    return this.disp;
+  }
+
+  /**
+   * Once the step shown is here: its displacement at every vertex (when the
+   * displacement key changed: another step, file read, mesh or axes), and the
+   * count of drawn nodes without one (when the count key changed: also the
+   * hidden set). The keys carry the results-read count, so a re-read of the
+   * same path is computed again, never reused.
+   */
+  private syncDeform(s: State): void {
+    const v = deformView(s);
+    if (v.state !== "loading" && v.state !== "ready" && v.state !== "partial") return;
+    const at = s.phase.at;
+    const data = this.step;
+    if (at?.kind !== "results" || !data || data.stage !== at.stage || data.step !== at.step || s.resultStep?.status !== "ready") return;
+    const mesh = s.mesh!;
+    if (this.disp?.key !== v.keys.disp) {
+      const [dx, dy, dz] = v.datasets;
+      const row = (name: string): Float64Array => {
+        const r = data.nodal[name];
+        if (!(r instanceof Float64Array)) throw new Error(`deformed shape: the step data has no ${name}`);
+        return r;
+      };
+      const rows = [row(dx), row(dy), dz === null ? null : row(dz)] as const;
+      const ids = this.blobs.get(v.nodeIds);
+      if (!(ids instanceof Float64Array)) throw new TypeError(`deformed shape: ${v.nodeIds.id} is not f64`);
+      const column = columnOf(ids);
+      const lineNodes = this.blobs.get(mesh.vertexNodes.line) as Float64Array;
+      const triNodes = this.blobs.get(mesh.vertexNodes.tri) as Float64Array;
+      this.disp = { key: v.keys.disp, line: vertexDisplacements(lineNodes, column, rows), tri: vertexDisplacements(triNodes, column, rows) };
+    }
+    if (s.deform.measured?.key === v.keys.count || this.countedFor === v.keys.count) return;
+    this.countedFor = v.keys.count;
+    const { lineMap, triMap } = visibleMaps(mesh.legend, s.visibility.hidden, this.blobs.i32(mesh.lineGroup), this.blobs.i32(mesh.triGroup), elementMaskOf(s, mesh, this.blobs));
+    const n = missingDrawnNodes(
+      this.blobs.get(mesh.vertexNodes.line) as Float64Array,
+      this.blobs.get(mesh.vertexNodes.tri) as Float64Array,
+      this.disp.line.missing,
+      this.disp.tri.missing,
+      lineMap,
+      triMap,
+    );
+    const key = v.keys.count;
+    queueMicrotask(() => this.store.dispatch({ type: "deformMeasured", key, drawn: n.drawn, missing: n.missing }));
   }
 
   /** Read a results file's index into the store; the latest open wins. */
@@ -507,7 +577,10 @@ export class Effects {
         if (!mr.ok) fail("model", mPath, mr.error);
         else {
           const prov = mr.provenance;
-          model = loadModel(mr.model, this.blobs, prov?.ok ? prov.zone : null, prov && !prov.ok ? provenanceStatus(prov) : null, modelExtras(mr));
+          model = {
+            ...loadModel(mr.model, this.blobs, prov?.ok ? prov.zone : null, prov && !prov.ok ? provenanceStatus(prov) : null, modelExtras(mr)),
+            ndm: spatialNdm(mr.model.meta, mr.model.neutralVersion),
+          };
         }
       }
       if (gPath && gr && gt === this.geometryToken) {
@@ -592,7 +665,11 @@ export class Effects {
         return false;
       }
       const prov = res.provenance;
-      const load = loadModel(res.model, this.blobs, prov?.ok ? prov.zone : null, prov && !prov.ok ? provenanceStatus(prov) : null, modelExtras(res));
+      // V4d: the model's spatial dimension rides with the load (state/deform.ts `spatialNdm`).
+      const load = {
+        ...loadModel(res.model, this.blobs, prov?.ok ? prov.zone : null, prov && !prov.ok ? provenanceStatus(prov) : null, modelExtras(res)),
+        ndm: spatialNdm(res.model.meta, res.model.neutralVersion),
+      };
       for (const w of load.info.warnings) console.warn(w);
       // One line per read, so a double load shows in the Electron log.
       console.info(`apeGmshViewer: loaded ${path} (read ${Math.round(load.info.readMs)} ms)`);
