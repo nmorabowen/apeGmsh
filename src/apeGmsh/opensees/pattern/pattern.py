@@ -274,6 +274,14 @@ class Plain(Pattern):
         load across the group's nodes at build time) or ``node`` (an
         explicit OpenSees node tag or :class:`Node` instance returned
         by ``ops.nodes.get(...)``) must be supplied.
+
+        There is no ``label=``. To load the one node a geometry label
+        names, select it with ``ops.nodes.one``, which raises unless the
+        label picks exactly one node::
+
+            with ops.pattern.Plain(series=ops.timeSeries.Linear()) as p:
+                p.load(node=ops.nodes.one(label="tip"),
+                       forces=(0.0, -5e3, 0.0))
         """
         if (pg is None) == (node is None):
             raise ValueError(
