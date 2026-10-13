@@ -410,7 +410,9 @@ class ConstraintResolver:
           passes through it.  Any other count is refused, and so is a
           plane that collects no slave node besides the master.
         * ``defn.master_point`` given: the plane passes through the
-          point, and the plane node closest to it becomes master.
+          point, and the plane node closest to it becomes master.  A
+          plane that collects fewer than two nodes (no master, or no
+          slave) is refused.
         """
         normal = np.asarray(defn.plane_normal, dtype=float)
         normal = normal / np.linalg.norm(normal)
@@ -428,12 +430,19 @@ class ConstraintResolver:
             if dist_to_plane <= defn.plane_tolerance:
                 plane_nodes.append(tag)
 
-        if not plane_nodes:
-            return NodeGroupRecord(
-                kind=ConstraintKind.RIGID_DIAPHRAGM,
-                name=defn.name,
-                dofs=list(defn.constrained_dofs),
-            )
+        if len(plane_nodes) < 2:
+            # No master, or a master with nothing to drive: the record
+            # would emit ``rigidDiaphragm 3 0`` or a slaveless line.
+            raise ValueError(
+                f"rigid_diaphragm({defn.master_label!r}, "
+                f"{defn.slave_label!r}): the plane through master_point="
+                f"{tuple(float(v) for v in mp)} with normal "
+                f"{tuple(float(v) for v in normal)} (plane_tolerance="
+                f"{defn.plane_tolerance}) collects {len(plane_nodes)} "
+                f"node(s) of the master and slave sets; a diaphragm needs "
+                f"a master and at least one slave in the plane. Check the "
+                f"point's out-of-plane coordinate, or omit master_point to "
+                f"take the plane from a one-node master.")
 
         # Find master: closest to master_point
         master_tag, _ = self._closest_node(mp)

@@ -273,6 +273,40 @@ def test_given_point_keeps_the_nearest_plane_node_rule():
     assert sorted(rec.slave_nodes) == [1, 3]
 
 
+def test_given_point_whose_plane_is_empty_is_refused():
+    # Plane z = 0 through the point: no node of {1, 2, 3} lies there.
+    # main: a record (3, 0, []) and the deck line "rigidDiaphragm 3 0".
+    with pytest.raises(ValueError, match=r"master_point=\(0\.0, 0\.0, 0\.0\)"
+                                         r".*collects 0 node"):
+        _resolver().resolve_rigid_diaphragm(
+            _defn(master_point=(0.0, 0.0, 0.0)), {1, 2, 3}, master_nodes={1})
+
+
+def test_given_point_whose_plane_holds_only_the_master_is_refused():
+    # Plane z = 6 holds node 4 alone: a master with nothing to drive.
+    # main: a record (3, 4, []) and the deck line "rigidDiaphragm 3 4".
+    with pytest.raises(ValueError, match="collects 1 node"):
+        _resolver().resolve_rigid_diaphragm(
+            _defn(master_point=(0.0, 0.0, 6.0)), {2, 3, 4}, master_nodes={4})
+
+
+def test_frame_floor_with_a_wrong_given_point_is_refused():
+    """#1778 with the point given at z = 0 for an upper floor: the frame
+    declaration now refuses instead of emitting ``rigidDiaphragm 3 0``."""
+    with apeGmsh(model_name="r3s4_wrong_point") as g:
+        g.model.geometry.add_point(0.0, 0.0, 3.0, label="m")
+        g.model.geometry.add_point(1.0, 0.0, 3.0, label="s")
+        g.model.geometry.add_line("m", "s", label="beam")
+        g.physical.add_point(["m"], name="master")
+        g.physical.add_point(["s"], name="slave")
+        g.constraints.rigid_diaphragm("master", "slave",
+                                      master_point=(0.0, 0.0, 0.0),
+                                      plane_tolerance=0.05)
+        g.mesh.generation.generate(dim=1)
+        with pytest.raises(ValueError, match="collects 0 node"):
+            g.mesh.queries.get_fem_data(dim=1)
+
+
 def test_chain_phase_route_applies_the_one_node_rule():
     from apeGmsh._kernel.resolvers._chain_phase_router import route_def_to_fem
 
