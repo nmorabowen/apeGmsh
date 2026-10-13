@@ -21,7 +21,7 @@
 //   position: coincident nodes (interfaces, ties) keep their own values.
 
 import { hexToRgb, OFFICE, type RGB } from "../theme/tokens.ts";
-import type { ContourCmap, ContourRange, ContourScan, ContourState, ResultsStage, State } from "./types.ts";
+import type { ContourCmap, ContourRange, ContourScan, ContourSource, ContourState, DeclPath, Decl, GaussGroup, GaussMode, ResultsStage, State } from "./types.ts";
 
 // -- fields -------------------------------------------------------------------
 
@@ -115,11 +115,23 @@ export function componentOf(stage: ResultsStage, field: string, component: strin
   return f && c ? { field: f, component: c } : null;
 }
 
-/** The default pick on a stage: the first field, its first component (the magnitude when offered). */
-export function defaultPick(stage: ResultsStage | undefined): { field: string; component: string } | null {
+/**
+ * The default pick on a stage: the first nodal field, its first component (the
+ * magnitude when offered); V4c2a: on a stage with no nodal field, the first
+ * element field that is not refused.
+ */
+export function defaultPick(stage: ResultsStage | undefined): { field: string; component: string; source: ContourSource } | null {
   const f = stage ? fieldsOf(stage)[0] : undefined;
   const c = f?.components[0];
-  return f && c ? { field: f.name, component: c.key } : null;
+  if (f && c) return { field: f.name, component: c.key, source: "nodal" };
+  const e = stage ? gaussFields(stage.gauss).find((x) => x.refused === null) : undefined;
+  const ec = e?.components[0];
+  return e && ec ? { field: e.name, component: ec.key, source: "element" } : null;
+}
+
+/** Whether a stage has the pick (`componentOf` for nodal, `elementComponentOf` for element). */
+export function hasPick(stage: ResultsStage, source: ContourSource, field: string, component: string): boolean {
+  return source === "element" ? elementComponentOf(stage, field, component) !== null : componentOf(stage, field, component) !== null;
 }
 
 // -- keys ---------------------------------------------------------------------
@@ -130,13 +142,17 @@ export function contourKeys(path: string, stageId: string, step: number, field: 
   return { scan, step: `${scan}|${step}` };
 }
 
-/** The keys of what the state shows: a results step and a contour pick; null otherwise. */
+/**
+ * The keys of what the state shows: a results step and a contour pick; null
+ * otherwise. An element field's keys name it `elem:<field>` (V4c2a), so a
+ * nodal and an element field of one name never share a range or a scan.
+ */
 export function contourKeysOf(s: State): { step: string; scan: string } | null {
   const at = s.phase.at;
   const c = s.contour;
   if (at?.kind !== "results" || !s.results || c.field === null || c.component === null) return null;
   const st = s.results.stages[at.stage];
-  return st ? contourKeys(s.results.path, st.id, at.step, c.field, c.component) : null;
+  return st ? contourKeys(s.results.path, st.id, at.step, c.source === "element" ? `elem:${c.field}` : c.field, c.component) : null;
 }
 
 /** A component key as a sentence names it: `magnitude`, or the dataset name. */
@@ -354,4 +370,232 @@ export function primitiveColours(
     }
   }
   return { rgb, noData };
+}
+
+// -- V4c2a: element (Gauss) fields --------------------------------------------------
+
+/** The axis and Voigt suffixes of the canonical vocabulary (h5-schema.md "Component names and units"). */
+const ELEMENT_SUFFIXES = new Set(["x", "y", "z", "xx", "yy", "zz", "xy", "yz", "xz"]);
+
+export interface ElementComponent extends FieldComponent {
+  /** the name says its axes are local (`_local_` before the axis, h5-schema.md's component naming rule) */
+  local: boolean;
+}
+
+export interface ElementField {
+  name: string;
+  components: ElementComponent[];
+  /** the gauss groups that carry the field (each colours its own cells) */
+  groups: string[];
+  /** the distinct Gauss-point counts of those groups, ascending */
+  nGauss: number[];
+  /**
+   * Why the field cannot be drawn: its groups disagree on its component set
+   * across element types, or a group refused a component (a partial write, a
+   * group with no Gauss point). A component a group lacks is never taken
+   * from the others. Null when it can.
+   */
+  refused: string | null;
+}
+
+/** `<field>_<suffix>` with a vocabulary suffix, `<field>_` (an unnamed component), or a scalar of its own. */
+function splitName(n: string): { field: string; suffix: string | null } {
+  const m = /^(.+)_([^_]*)$/.exec(n);
+  if (m && ELEMENT_SUFFIXES.has(m[2]!)) return { field: m[1]!, suffix: m[2]! };
+  if (m && m[2] === "") return { field: m[1]!, suffix: "" };
+  return { field: n, suffix: null };
+}
+
+/**
+ * The element fields of a stage's gauss groups, in first-seen order, with
+ * component names taken from the file (`[k]` for an unnamed one). One field
+ * across several groups (quads and triangles) is one field when every group
+ * that carries it has the same component set, none refused; otherwise it is
+ * listed with `refused` and never drawn.
+ */
+export function gaussFields(groups: readonly GaussGroup[]): ElementField[] {
+  const order: string[] = [];
+  const byField = new Map<string, { names: string[]; groups: string[] }>();
+  for (const g of groups) {
+    for (const n of [...g.components, ...g.refused.map((r) => r.component)]) {
+      const { field } = splitName(n);
+      let f = byField.get(field);
+      if (!f) {
+        f = { names: [], groups: [] };
+        byField.set(field, f);
+        order.push(field);
+      }
+      if (!f.names.includes(n)) f.names.push(n);
+      if (!f.groups.includes(g.id)) f.groups.push(g.id);
+    }
+  }
+  return order.map((name) => {
+    const f = byField.get(name)!;
+    const problems: string[] = [];
+    for (const gid of f.groups) {
+      const g = groups.find((x) => x.id === gid)!;
+      for (const n of f.names) {
+        if (g.components.includes(n)) continue;
+        const r = g.refused.find((x) => x.component === n);
+        problems.push(r ? `group ${gid} refused ${n} (${r.reason})` : `group ${gid} has no ${n}`);
+      }
+    }
+    let k = 0;
+    const components: ElementComponent[] = f.names.map((n) => {
+      const { suffix } = splitName(n);
+      const local = /(^|_)local(_|$)/.test(name);
+      const base = suffix === null ? n : suffix === "" ? `[${k}]` : suffix;
+      k++;
+      return { key: n, label: local ? `${base} (local)` : base, datasets: [n], magnitude: false, local };
+    });
+    const nGauss = [...new Set(f.groups.map((gid) => groups.find((x) => x.id === gid)!.nGauss))].sort((a, b) => a - b);
+    const refused = problems.length ? `its groups disagree on its components: ${problems.join("; ")}` : null;
+    return { name, components, groups: f.groups, nGauss, refused };
+  });
+}
+
+/** The element field and component of a stage that a pick names, or null when the stage does not have it. */
+export function elementComponentOf(stage: ResultsStage, field: string, component: string): { field: ElementField; component: ElementComponent } | null {
+  const f = gaussFields(stage.gauss).find((x) => x.name === field);
+  const c = f?.components.find((x) => x.key === component);
+  return f && c ? { field: f, component: c } : null;
+}
+
+/** The Qt `ContourDiagram` topology an element field is drawn with (`_contour.py`), from the mode and its Gauss-point counts. */
+export type ElementTopology = "gauss_cell" | "gauss_cell_averaged" | "gauss_node" | "gauss_node_discrete";
+
+export function elementTopology(mode: GaussMode, nGauss: readonly number[]): ElementTopology {
+  switch (mode) {
+    case "cell":
+      return nGauss.every((g) => g === 1) ? "gauss_cell" : "gauss_cell_averaged";
+    case "node":
+      return "gauss_node";
+    case "node_discrete":
+      return "gauss_node_discrete";
+    default: {
+      const unknown: never = mode;
+      throw new Error(`unknown gauss mode ${JSON.stringify(unknown)}`);
+    }
+  }
+}
+
+/** What the legend states for a flat-per-cell topology. */
+export function topologyLabel(t: "gauss_cell" | "gauss_cell_averaged", nGauss: readonly number[]): string {
+  return t === "gauss_cell"
+    ? "gauss_cell: each element's one Gauss-point value, flat per cell"
+    : `gauss_cell_averaged: the mean of each element's Gauss-point values (G = ${nGauss.join(", ")}), flat per cell`;
+}
+
+/**
+ * One value per element from a gauss block, (E * G,) element-major: the
+ * element's one value (G == 1), else the mean of its G values. An element
+ * with any non-finite Gauss value is NaN ("no data"): a mean of the points
+ * that survive would be a guessed value.
+ */
+export function gaussCellValues(values: Float64Array, E: number, G: number): Float64Array {
+  if (!Number.isInteger(G) || G < 1) throw new RangeError(`gaussCellValues: ${G} Gauss points per element`);
+  if (values.length !== E * G) throw new RangeError(`gaussCellValues: ${values.length} values for ${E} elements x ${G} Gauss points`);
+  const out = new Float64Array(E);
+  for (let e = 0; e < E; e++) {
+    let sum = 0;
+    let ok = true;
+    for (let g = 0; g < G; g++) {
+      const v = values[e * G + g]!;
+      if (!Number.isFinite(v)) {
+        ok = false;
+        break;
+      }
+      sum += v;
+    }
+    out[e] = ok ? sum / G : NaN;
+  }
+  return out;
+}
+
+/** The finite min and max over several value arrays; null when none is finite. */
+export function finiteRangeOf(arrays: readonly Float64Array[]): { min: number; max: number } | null {
+  let lo = Infinity;
+  let hi = -Infinity;
+  for (const a of arrays) {
+    for (let i = 0; i < a.length; i++) {
+      const v = a[i]!;
+      if (!Number.isFinite(v)) continue;
+      if (v < lo) lo = v;
+      if (v > hi) hi = v;
+    }
+  }
+  return lo <= hi ? { min: lo, max: hi } : null;
+}
+
+/** The decl path of a model cell (state/decls.ts `cellPath`, restated: this module imports no loader). */
+const cellDecl = (femId: number): DeclPath => `mesh/element/${femId}`;
+
+/** The FEM id of every drawn element (`MeshInfo.elements`); NaN for an OpenSees-only row, which has no cell and no element row. */
+export function meshFemIds(elements: readonly DeclPath[], decls: Readonly<Record<DeclPath, Decl>>): Float64Array {
+  const out = new Float64Array(elements.length);
+  elements.forEach((p, i) => {
+    const id = decls[p]?.element?.femId;
+    out[i] = typeof id === "number" ? id : NaN;
+  });
+  return out;
+}
+
+export type ElementJoin =
+  | { ok: true; rows: number; at: Map<number, { group: number; row: number }> }
+  | { ok: false; code: "unknown-id" | "duplicate-id"; reason: string };
+
+/**
+ * The join of element rows to the model's cells, by FEM id only (never by
+ * position or row order): row `e` of group `g` is the cell whose FEM id is
+ * `eids[e]`. An id the model has no cell for, or an id listed twice (in one
+ * group or two), refuses the join.
+ */
+export function joinElements(decls: Readonly<Record<DeclPath, Decl>>, groups: readonly { id: string; eids: Float64Array }[]): ElementJoin {
+  const at = new Map<number, { group: number; row: number }>();
+  const unknown: number[] = [];
+  let nUnknown = 0;
+  let rows = 0;
+  for (let gi = 0; gi < groups.length; gi++) {
+    const g = groups[gi]!;
+    for (let e = 0; e < g.eids.length; e++) {
+      const id = g.eids[e]!;
+      rows++;
+      if (decls[cellDecl(id)]?.element?.femId !== id) {
+        nUnknown++;
+        if (unknown.length < 5) unknown.push(id);
+        continue;
+      }
+      const prev = at.get(id);
+      if (prev) {
+        return { ok: false, code: "duplicate-id", reason: `element ${id} has two rows (group ${groups[prev.group]!.id} row ${prev.row}, group ${g.id} row ${e}): its value would be a guess` };
+      }
+      at.set(id, { group: gi, row: e });
+    }
+  }
+  if (nUnknown) {
+    const more = nUnknown > unknown.length ? ", ..." : "";
+    return {
+      ok: false,
+      code: "unknown-id",
+      reason: `_element_index names ${nUnknown} element id${nUnknown === 1 ? "" : "s"} the model has no cell for (${unknown.join(", ")}${more}): the rows cannot be joined to the mesh`,
+    };
+  }
+  return { ok: true, rows, at };
+}
+
+/** The value of every drawn element (`MeshInfo.elements` order): its own row's value, or NaN ("no data") when no group has it. */
+export function elementCellValues(meshFem: Float64Array, at: ReadonlyMap<number, { group: number; row: number }>, perGroup: readonly Float64Array[]): Float64Array {
+  const out = new Float64Array(meshFem.length);
+  for (let i = 0; i < meshFem.length; i++) {
+    const hit = Number.isNaN(meshFem[i]!) ? undefined : at.get(meshFem[i]!);
+    out[i] = hit ? perGroup[hit.group]![hit.row]! : NaN;
+  }
+  return out;
+}
+
+/** Per-vertex values of the primitives (`primElement`: the element of each primitive), every vertex its element's value: flat per cell. */
+export function cellVertexValues(elementValues: Float64Array, primElement: Int32Array, perPrim: number): Float64Array {
+  const out = new Float64Array(primElement.length * perPrim);
+  for (let p = 0; p < primElement.length; p++) out.fill(elementValues[primElement[p]!]!, p * perPrim, (p + 1) * perPrim);
+  return out;
 }

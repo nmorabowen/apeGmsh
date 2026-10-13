@@ -114,6 +114,14 @@ export interface GaussGroupInfo {
   nElements: number;
   nGauss: number;
   components: string[];
+  /**
+   * V4c2a: components refused one by one (a partial write: value shape that
+   * disagrees with `_element_index` or `_natural_coords`), and every component
+   * of a group with no Gauss point (`G == 0`). Never listed in `components`.
+   */
+  refused: { component: string; reason: string }[];
+  /** the group carries `_local_axes_quaternion` (shells) */
+  localAxes: boolean;
 }
 
 export interface StageInfo {
@@ -272,6 +280,27 @@ export class ResultsFile {
     });
   }
 
+  /** Whether `_element_index` holds FEM element ids (the root stamp alone, #1768), and why not. */
+  elementIndexVerdict(): { verified: true } | { verified: false; reason: string } {
+    return this.elementSpace;
+  }
+
+  /**
+   * Steps `k0` to `k1` (exclusive) of one Gauss-group component, by one
+   * hyperslab: ((k1 - k0) * E * G,), step-major then element-major (V4c2a:
+   * the element history scan reads a stage in chunks of steps).
+   */
+  readGaussRows(stageId: string, groupId: string, component: string, k0: number, k1: number): Float64Array {
+    const s = this.stage(stageId);
+    const g = s.gauss.find((x) => x.id === groupId);
+    if (!g) throw new ResultsError("argument", `stage ${stageId} has no gauss group ${JSON.stringify(groupId)}`);
+    if (!Number.isInteger(k0) || !Number.isInteger(k1) || k0 < 0 || k1 > s.nSteps || k0 >= k1) {
+      throw new ResultsError("argument", `steps ${k0}..${k1} are not a range inside stage ${s.id} (0..${s.nSteps})`);
+    }
+    const ds = this.component(g.path, g.components, component);
+    return toFloat64(ds.slice([[k0, k1], [], []]), ds.path);
+  }
+
   /** One Gauss-group component at `step`: (E * G,), element-major. */
   readGaussStep(stageId: string, groupId: string, component: string, step: number): Float64Array {
     const s = this.stage(stageId);
@@ -381,17 +410,36 @@ export class ResultsFile {
     if (E < 0) throw new ResultsError("layout", `${eidx.path} is not 1-D`);
     if (G < 0) throw new ResultsError("layout", `${nc.path} is not 2-D`);
     const components: string[] = [];
+    const refused: { component: string; reason: string }[] = [];
+    let localAxes = false;
     for (const k of g.keys()) {
       if (k.startsWith("_")) {
         if (!GAUSS_INDEX.has(k)) throw new ResultsError("layout", `${g.path}/${k}: not a gauss index dataset this reader knows`);
+        if (k === "_local_axes_quaternion") localAxes = true;
         continue;
       }
       const ds = this.dataset(g, k);
+      // V4c2a seam "empty": a group with no Gauss point has no value to show.
+      if (G === 0) {
+        refused.push({ component: k, reason: `${nc.path} has 0 rows: the group ${id} has no Gauss point` });
+        continue;
+      }
+      // V4c2a seam "partial writes" (as V4c1 does for nodal data): a step axis
+      // that matches `time` with element or Gauss axes that disagree with the
+      // index datasets refuses this component, not the file.
+      const shape = ds.shape ?? [];
+      if (shape.length === 3 && shape[0] === T && (shape[1] !== E || shape[2] !== G)) {
+        refused.push({
+          component: k,
+          reason: `${ds.path} has shape (${shape.join(", ")}) and the group indexes ${E} elements x ${G} Gauss points (a partial write)`,
+        });
+        continue;
+      }
       expectShape(ds, [T, E, G]);
       expectFloat(ds);
       components.push(k);
     }
-    return { id, path: g.path, classTag: intAttr(g, "class_tag"), intRule: intAttr(g, "int_rule"), nElements: E, nGauss: G, components };
+    return { id, path: g.path, classTag: intAttr(g, "class_tag"), intRule: intAttr(g, "int_rule"), nElements: E, nGauss: G, components, refused, localAxes };
   }
 
   // -- helpers ---------------------------------------------------------------

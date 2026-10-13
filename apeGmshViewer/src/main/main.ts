@@ -157,7 +157,14 @@ ipcMain.handle("results:open", (_e, path: unknown) => {
 });
 ipcMain.handle("results:readStep", (_e, req: unknown) => {
   const r = req as StepRequest | null;
-  if (!r || typeof r.path !== "string" || typeof r.stage !== "string" || typeof r.step !== "number" || typeof r.seq !== "number") {
+  if (
+    !r ||
+    typeof r.path !== "string" ||
+    typeof r.stage !== "string" ||
+    typeof r.step !== "number" ||
+    typeof r.seq !== "number" ||
+    (r.element !== undefined && typeof r.element !== "string")
+  ) {
     return { ok: false, seq: -1, error: `results:readStep: malformed request ${JSON.stringify(req)}` };
   }
   return resultsHost.readStep(r);
@@ -169,7 +176,15 @@ ipcMain.handle("results:close", () => resultsHost.close());
 // window paints slowly; renderer/app.ts checks the scan was still running).
 ipcMain.handle("results:scan", (e, req: unknown) => {
   const r = req as ScanRequest | null;
-  if (!r || typeof r.path !== "string" || typeof r.stage !== "string" || !Array.isArray(r.components) || typeof r.magnitude !== "boolean" || typeof r.scanId !== "number") {
+  if (
+    !r ||
+    typeof r.path !== "string" ||
+    typeof r.stage !== "string" ||
+    !Array.isArray(r.components) ||
+    typeof r.magnitude !== "boolean" ||
+    typeof r.scanId !== "number" ||
+    (r.source !== undefined && r.source !== "element")
+  ) {
     return { ok: false, scanId: -1, error: `results:scan: malformed request ${JSON.stringify(req)}` };
   }
   const sender = e.sender;

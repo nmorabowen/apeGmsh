@@ -4,8 +4,8 @@
 // fails to compile when an event is added without a case, and an event the
 // code does not know raises at run time.
 
-import { CMAP_NAMES, componentName, componentOf, contourKeysOf, defaultPick } from "./contour.ts";
-import { deformOf, geometryPairing, resultsPairing, stageCount, stageIdentity } from "./selectors.ts";
+import { CMAP_NAMES, componentName, contourKeysOf, defaultPick, hasPick } from "./contour.ts";
+import { deformOf, elementJoinKey, geometryPairing, resultsPairing, stageCount, stageIdentity } from "./selectors.ts";
 import { WINDOW_KINDS, type ArtifactInfo, type ArtifactKind, type ContourState, type DeclPath, type DeformState, type Event, type PhaseKey, type SpatialNdm, type State } from "./types.ts";
 
 /** The deformed shape before the user turns it on: true scale, no ghost (V4d; the Qt defaults). */
@@ -18,7 +18,20 @@ const NO_NDM: SpatialNdm = { ndm: null, reason: "no model is loaded" };
 export const emptyRecord = <T>(): Record<string, T> => Object.create(null) as Record<string, T>;
 
 /** The contour before anything is picked: whole-history range, jet (V4c1). */
-export const initialContour: ContourState = { field: null, component: null, range: "history", fixed: null, cmap: "jet", stepRange: null, scan: null, notice: null, reads: 0 };
+export const initialContour: ContourState = {
+  source: "nodal",
+  gauss: "cell",
+  join: null,
+  field: null,
+  component: null,
+  range: "history",
+  fixed: null,
+  cmap: "jet",
+  stepRange: null,
+  scan: null,
+  notice: null,
+  reads: 0,
+};
 
 export const initialState: State = {
   artifacts: { geometry: null, model: null, results: null },
@@ -323,13 +336,14 @@ export function reduce(s: State, e: Event): State {
         artifacts: { ...s.artifacts, results: info },
         results: e.info,
         phase: keep ? s.phase : { ...s.phase, at: null },
-        contour: { ...s.contour, stepRange: null, scan: null, reads: s.contour.reads + 1 },
+        // V4c2a: the element join is checked again on the re-read's rows.
+        contour: { ...s.contour, stepRange: null, scan: null, join: null, reads: s.contour.reads + 1 },
       });
       const c = next.contour;
       if (c.field === null || c.component === null) return next;
       const field = c.field, component = c.component;
       const stage = shownStage(next);
-      const has = stage ? componentOf(stage, field, component) !== null : e.info.stages.some((st) => componentOf(st, field, component) !== null);
+      const has = stage ? hasPick(stage, c.source, field, component) : e.info.stages.some((st) => hasPick(st, c.source, field, component));
       if (has) return next;
       const notice =
         `The re-read ${e.info.path.split(/[\\/]/).pop()} has no ${field} ${componentName(component)}` +
@@ -337,14 +351,24 @@ export function reduce(s: State, e: Event): State {
       return { ...next, contour: { ...c, field: null, component: null, notice } };
     }
     case "setContourField": {
+      const source = e.source ?? "nodal";
+      if (source !== "nodal" && source !== "element") throw new RangeError(`setContourField: source ${JSON.stringify(source)}`);
       const stage = shownStage(s);
-      const ok = stage
-        ? componentOf(stage, e.field, e.component) !== null
-        : (s.results?.stages ?? []).some((st) => componentOf(st, e.field, e.component) !== null);
-      if (!ok) throw new RangeError(`setContourField: ${e.field} / ${e.component} is not a nodal field component of ${stage ? `stage ${stage.id}` : "the results"}`);
-      if (s.contour.field === e.field && s.contour.component === e.component && s.contour.notice === null) return s;
-      return { ...s, contour: { ...s.contour, field: e.field, component: e.component, notice: null } };
+      const ok = stage ? hasPick(stage, source, e.field, e.component) : (s.results?.stages ?? []).some((st) => hasPick(st, source, e.field, e.component));
+      if (!ok) throw new RangeError(`setContourField: ${e.field} / ${e.component} is not a ${source} field component of ${stage ? `stage ${stage.id}` : "the results"}`);
+      const c = s.contour;
+      if (c.source === source && c.field === e.field && c.component === e.component && c.notice === null) return s;
+      // Another field is joined to the mesh again (its groups can differ).
+      const join = c.source === source && c.field === e.field ? c.join : null;
+      return { ...s, contour: { ...c, source, field: e.field, component: e.component, join, notice: null } };
     }
+    case "setContourGauss":
+      if (e.mode !== "cell" && e.mode !== "node" && e.mode !== "node_discrete") throw new RangeError(`setContourGauss: ${JSON.stringify(e.mode)}`);
+      return s.contour.gauss === e.mode ? s : { ...s, contour: { ...s.contour, gauss: e.mode } };
+    case "contourElementJoin":
+      // Only for the field, file read and mesh shown: a late verdict for another is dropped.
+      if (elementJoinKey(s) !== e.verdict.key) return s;
+      return { ...s, contour: { ...s.contour, join: e.verdict } };
     case "setContourRange": {
       if (e.range !== "history" && e.range !== "step" && e.range !== "fixed") throw new RangeError(`setContourRange: ${JSON.stringify(e.range)}`);
       let fixed = s.contour.fixed;
