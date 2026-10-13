@@ -63,6 +63,11 @@ The results hold one stage per program stage, by name, plus ``mode_1`` (a
 values are synthetic, ``displacement_x[k, j] = id_j + 0.001 * k`` with the
 stage's ``time[k] = (k + 1) / T``; no solve runs.
 
+``--extrapolation`` (V4c2b, #1875; committed) writes the ``extrap_*`` pairs
+and ``extrap.oracle.json``, Python's Gauss-to-node extrapolation on them, the
+oracle the app's ``gauss_node`` / ``gauss_node_discrete`` /
+``cell_averaged`` contours are tested against (``extrapolation_fixtures``).
+
 ``--contour`` (V4c1, #1756; committed) writes the contour pairs: the same
 staged model as ``fixtures/contour_staged.h5`` with ``displacement_x/y/z``
 closed forms of the node coordinates (``contour_fixtures``), and
@@ -641,6 +646,171 @@ def element_fixtures(out_dir: Path) -> None:
     print(f"wrote elem_staged.results.h5: {tet_ids.size} tets over {len(STAGED_STEPS)} stages")
 
 
+QUAD_GP = np.array([[a, b] for b in (-1, 1) for a in (-1, 1)]) / np.sqrt(3)  # 2 x 2
+
+
+def extrap_field(xyz: np.ndarray, c: int, k: int) -> np.ndarray:
+    """The V4c2b field at physical points ``xyz`` (n, 3): not linear, so extrapolation is not trivial.
+
+        f = (c + 1) (k + 1) (1 + x^2 - 0.5 x y + 0.3 y^2 + y z - 0.2 z^3)
+    """
+    x, y, z = xyz[:, 0], xyz[:, 1], xyz[:, 2]
+    return (c + 1) * (k + 1) * (1 + x * x - 0.5 * x * y + 0.3 * y * y + y * z - 0.2 * z ** 3)
+
+
+def extrapolation_fixtures(out_dir: Path) -> None:
+    """The V4c2b Gauss-to-node extrapolation pairs (#1875) and Python's answer on them.
+
+    Each pair is a FEM-only ``model.h5`` and a stamped ``results.h5`` written by
+    ``NativeWriter``, one static stage ``load`` of ``ELEMENT_STEPS`` steps, whose
+    Gauss values are ``extrap_field`` at each Gauss point's physical position:
+
+    * ``extrap_plane``: a 2 x 1 panel of 4 x 2 quads, 4 Gauss points each
+      (``quads_G4``), beside a 1 x 1 panel of 8 triangles, one point each
+      (``tris_G1``); ``stress_xx/yy/xy``. The first quad is left out: no data.
+    * ``extrap_solid``: a 3 x 2 x 2 box of 12 hexahedra, 8 points (``hex_G8``).
+    * ``extrap_tet``: a 2 x 2 x 2 structured tetrahedral box, one point per tet (``tets_G1``).
+
+    ``extrap.oracle.json`` holds, per pair, component and step, apeGmsh's own
+    ``extrapolate_gauss_slab_to_nodes`` (``gauss_node``),
+    ``extrapolate_gauss_slab_per_element`` (``gauss_node_discrete``), and the
+    averaged path on each element's mean as one point (``cell_averaged``). The
+    slab is read back from the written file, and the Qt fast path
+    (``GaussToNodeAccumulator``) is checked equal to ``gauss_node`` here.
+    """
+    import json
+
+    from apeGmsh.fem._shape_functions import get_shape_functions
+    from apeGmsh.mesh.FEMData import FEMData
+    from apeGmsh.results._gauss_extrapolation import (
+        GaussToNodeAccumulator,
+        extrapolate_gauss_slab_per_element,
+        extrapolate_gauss_slab_to_nodes,
+    )
+    from apeGmsh.results._slabs import GaussSlab
+
+    def gp_xyz(fem, eids: np.ndarray, gp: np.ndarray) -> np.ndarray:
+        """Physical (E, G, 3) positions of the Gauss points, through the corner shape functions."""
+        nid = np.asarray(fem.nodes.ids, dtype=np.int64)
+        xyz = np.asarray(fem.nodes.coords, dtype=np.float64).reshape(-1, 3)
+        at = {int(n): i for i, n in enumerate(nid)}
+        out = np.zeros((eids.size, gp.shape[0], 3))
+        for grp in fem.elements:
+            N_fn, _, _, nc = get_shape_functions(int(grp.element_type.code))
+            N = N_fn(gp)  # (G, nc)
+            row = {int(e): r for r, e in enumerate(np.asarray(grp.ids, dtype=np.int64))}
+            conn = np.asarray(grp.connectivity, dtype=np.int64)
+            for i, e in enumerate(eids):
+                r = row.get(int(e))
+                if r is not None:
+                    out[i] = N @ xyz[[at[int(n)] for n in conn[r, :nc]]]
+        return out
+
+    def write_pair(name: str, fem, groups: list[tuple[str, np.ndarray, np.ndarray]], comps: list[str]) -> dict:
+        model = out_dir / f"{name}.h5"
+        fem.to_h5(str(model), model_name=name)
+        res = out_dir / f"{name}.results.h5"
+        with NativeWriter(res) as w:
+            w.open(fem=fem, source_type="domain_capture", analysis_label="V4c2b synthetic (#1875)")
+            w.stamp_element_index_space("fem")
+            k = np.arange(ELEMENT_STEPS, dtype=np.float64)
+            sid = w.begin_stage(name="load", kind="static", time=(k + 1) / ELEMENT_STEPS)
+            for gid, eids, gp in groups:
+                pts = gp_xyz(fem, eids, gp).reshape(-1, 3)
+                w.write_gauss_group(
+                    sid, "partition_0", gid, class_tag=0, int_rule=0, element_index=eids, natural_coords=gp,
+                    components={c: np.stack([extrap_field(pts, ci, kk).reshape(eids.size, gp.shape[0]) for kk in range(ELEMENT_STEPS)]) for ci, c in enumerate(comps)},
+                )
+            w.end_stage()
+        # Python's answer, on the slab read back from the file (every group of the stage, element-major).
+        import h5py
+        fem_back = FEMData.from_h5(str(model))
+        oracle: dict = {}
+        with h5py.File(res, "r") as f:
+            gg = f[f"stages/{list(f['stages'])[0]}/partitions/partition_0/elements/gauss_points"]
+            for c in comps:
+                vals, eidx, nat = [], [], []
+                for gid in gg:
+                    g = gg[gid]
+                    E, G = g["_element_index"].shape[0], g["_natural_coords"].shape[0]
+                    vals.append(np.asarray(g[c][...], dtype=np.float64).reshape(ELEMENT_STEPS, E * G))
+                    eidx.append(np.repeat(np.asarray(g["_element_index"][...], dtype=np.int64), G))
+                    nat.append(np.tile(np.asarray(g["_natural_coords"][...], dtype=np.float64), (E, 1)))
+                slab = GaussSlab(component=c, values=np.concatenate(vals, axis=1), element_index=np.concatenate(eidx),
+                                 natural_coords=np.concatenate(nat), local_axes_quaternion=None, time=np.arange(ELEMENT_STEPS, dtype=np.float64))
+                nids, nodal = extrapolate_gauss_slab_to_nodes(slab, fem_back)
+                per = extrapolate_gauss_slab_per_element(slab, fem_back)
+                acc = GaussToNodeAccumulator(slab.element_index, slab.natural_coords, fem_back)
+                for kk in range(ELEMENT_STEPS):
+                    assert np.array_equal(acc.node_ids, nids)
+                    assert np.allclose(acc.accumulate(slab.values[kk]), nodal[kk], rtol=1e-12, atol=0), f"{name} {c}: the Qt accumulator disagrees"
+                # cell_averaged: each element's mean as its one point, through the same averaged path.
+                ue, inv = np.unique(slab.element_index, return_inverse=True)
+                means = np.stack([np.bincount(inv, weights=slab.values[kk]) / np.bincount(inv) for kk in range(ELEMENT_STEPS)])
+                one = GaussSlab(component=c, values=means, element_index=ue, natural_coords=np.zeros((ue.size, 3)),
+                                local_axes_quaternion=None, time=slab.time)
+                cids, cnodal = extrapolate_gauss_slab_to_nodes(one, fem_back)
+                oracle[c] = {
+                    "gauss_node": {"node_ids": nids.tolist(), "values": nodal.tolist()},
+                    "gauss_node_discrete": {
+                        "element_ids": per.element_ids.tolist(),
+                        "corner_node_ids": [x.tolist() for x in per.corner_node_ids],
+                        "values": [x.tolist() for x in per.values],
+                    },
+                    "cell_averaged": {"node_ids": cids.tolist(), "values": cnodal.tolist()},
+                }
+        print(f"wrote {name}: {len(fem.elements.ids)} elements, groups {[g[0] for g in groups]}")
+        return oracle
+
+    oracle: dict = {}
+
+    name = "extrap_plane"
+    with apeGmsh(model_name=name, verbose=False, save_to=SESSION_DIR / f"{name}.h5") as g:
+        p0 = gmsh.model.geo.addPoint(0, 0, 0)
+        e0 = gmsh.model.geo.extrude([(0, p0)], 2, 0, 0, numElements=[4])
+        quads = gmsh.model.geo.extrude([e0[1]], 0, 1, 0, numElements=[2], recombine=True)
+        e1 = gmsh.model.geo.extrude([e0[0]], 1, 0, 0, numElements=[2])
+        tris = gmsh.model.geo.extrude([e1[1]], 0, 1, 0, numElements=[2])
+        gmsh.model.geo.removeAllDuplicates()
+        gmsh.model.geo.synchronize()
+        g.model.sync()
+        g.physical.add(2, [quads[1][1]], name="Quads")
+        g.physical.add(2, [tris[1][1]], name="Tris")
+        g.mesh.generation.generate(2)
+        fem = g.mesh.queries.get_fem_data(dim=2)
+    by_npe = {grp.connectivity.shape[1]: np.sort(np.asarray(grp.ids, dtype=np.int64)) for grp in fem.elements}
+    oracle[name] = write_pair(name, fem, [("quads_G4", by_npe[4][1:], QUAD_GP), ("tris_G1", by_npe[3], np.array([[1 / 3, 1 / 3]]))], PLANE_STRESS)
+
+    name = "extrap_solid"
+    with apeGmsh(model_name=name, verbose=False, save_to=SESSION_DIR / f"{name}.h5") as g:
+        p = gmsh.model.geo.addPoint(0, 0, 0)
+        line = gmsh.model.geo.extrude([(0, p)], 3, 0, 0, numElements=[3])
+        surf = gmsh.model.geo.extrude([line[1]], 0, 2, 0, numElements=[2], recombine=True)
+        vol = gmsh.model.geo.extrude([surf[1]], 0, 0, 2, numElements=[2], recombine=True)
+        gmsh.model.geo.synchronize()
+        g.model.sync()
+        g.physical.add(3, [vol[1][1]], name="Block")
+        g.mesh.generation.generate(3)
+        fem = g.mesh.queries.get_fem_data(dim=3)
+    oracle[name] = write_pair(name, fem, [("hex_G8", np.sort(np.asarray(fem.elements.ids, dtype=np.int64)), HEX_GP)], ["stress_xx", "stress_yy"])
+
+    name = "extrap_tet"
+    with apeGmsh(model_name=name, verbose=False, save_to=SESSION_DIR / f"{name}.h5") as g:
+        p = gmsh.model.geo.addPoint(0, 0, 0)
+        line = gmsh.model.geo.extrude([(0, p)], 1, 0, 0, numElements=[2])
+        surf = gmsh.model.geo.extrude([line[1]], 0, 1, 0, numElements=[2])
+        vol = gmsh.model.geo.extrude([surf[1]], 0, 0, 1, numElements=[2])
+        gmsh.model.geo.synchronize()
+        g.model.sync()
+        g.physical.add(3, [vol[1][1]], name="Box")
+        g.mesh.generation.generate(3)
+        fem = g.mesh.queries.get_fem_data(dim=3)
+    oracle[name] = write_pair(name, fem, [("tets_G1", np.sort(np.asarray(fem.elements.ids, dtype=np.int64)), TET_GP)], ["stress_xx"])
+
+    (out_dir / "extrap.oracle.json").write_text(json.dumps(oracle, separators=(",", ":")), encoding="utf8")
+    print("wrote extrap.oracle.json")
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--measure", type=Path, help="write the measured files a, b, c into this directory")
@@ -653,7 +823,11 @@ def main() -> None:
     ap.add_argument("--reinforced", action="store_true", help="write reinforced.h5 + oracle, a 2.31 model with embeddedRebar ties (V4m)")
     ap.add_argument("--elements", action="store_true", help="write the V4c2a element-contour pairs (elem_*.h5 + .results.h5)")
     ap.add_argument("--elements-measure", type=Path, help="write the V4c2a measured solid (stamped, G = 6) into this directory")
+    ap.add_argument("--extrapolation", action="store_true", help="write the V4c2b extrapolation pairs (extrap_*.h5 + .results.h5) and Python's oracle")
     args = ap.parse_args()
+    if args.extrapolation:
+        extrapolation_fixtures(HERE)
+        return
     if args.reinforced:
         reinforced_fixture(HERE)
         return

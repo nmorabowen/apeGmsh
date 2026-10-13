@@ -125,6 +125,12 @@ export interface GaussGroupInfo {
   refused: { component: string; reason: string }[];
   /** the group carries `_local_axes_quaternion` (shells) */
   localAxes: boolean;
+  /**
+   * V4c2b: `_natural_coords`, one row (its parent-space coordinates) per
+   * Gauss point; null when the dataset is not floating point (no
+   * extrapolation is then offered: it reads "unsupported", never a guess).
+   */
+  naturalCoords: number[][] | null;
 }
 
 export interface StageInfo {
@@ -466,7 +472,14 @@ export class ResultsFile {
       expectFloat(ds);
       components.push(k);
     }
-    return { id, path: g.path, classTag: intAttr(g, "class_tag"), intRule: intAttr(g, "int_rule"), nElements: E, nGauss: G, components, refused, localAxes };
+    // V4c2b: the natural coordinates themselves (G x D, small), for the Gauss-to-node extrapolation.
+    let naturalCoords: number[][] | null = null;
+    if (nc.metadata.type === H5T_FLOAT) {
+      const D = nc.shape![1]!;
+      const flat = toFloat64(nc.value, nc.path);
+      naturalCoords = Array.from({ length: G }, (_, r) => Array.from(flat.subarray(r * D, (r + 1) * D)));
+    }
+    return { id, path: g.path, classTag: intAttr(g, "class_tag"), intRule: intAttr(g, "int_rule"), nElements: E, nGauss: G, components, refused, localAxes, naturalCoords };
   }
 
   // -- helpers ---------------------------------------------------------------
