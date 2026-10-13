@@ -177,37 +177,29 @@ def test_no_ties_is_noop():
     assert not any(c[0] == "embedded_rebar" for c in em.calls)
 
 
-def test_h5_defers_deck_zone_without_warning():
-    """The H5 backend does not write a dedicated tie record into the
-    OpenSees DECK zone (``/opensees/...``) — that follow-on (ADR 0067
-    P5.1 "A4 full") is deferred — and, since ADR 0067 P5.1 (#706) the
-    NEUTRAL zone persists every tie in the same archive, it does so
-    SILENTLY (no deviation warning; the round-trip is complete via the
-    neutral zone + forward re-emit)."""
+def test_h5_archives_the_ties_without_warning():
+    """The H5 backend stores each tie in the OpenSees DECK zone
+    (``/opensees/constraints/embeddedRebar``, opensees 2.29.0, K2b): its
+    planned tag and its arguments, with no deviation warning."""
     em = H5Emitter(schema_version="x", model_name="m")
     fem = _Fem([_perfect_tie(), _perfect_tie()])
     tags = emit_tags(fem)
     with warnings.catch_warnings(record=True) as w:
         warnings.simplefilter("always")
         emit_reinforce_ties(em, fem, tags, name_to_tag={})
-    # Both deck-ties no-op'd (counted for observability) ...
-    assert em._skipped_reinforce_ties == 2
-    # ... but NO deviation warning fires (the retired
-    # H5ReinforceDeviationWarning — ties persist via the neutral zone).
-    assert not [
-        x for x in w
-        if "reinforc" in str(x.message).lower()
-        and ("not persisted" in str(x.message).lower()
-             or "deferred" in str(x.message).lower()
-             or "missing" in str(x.message).lower())
-    ]
-    # The deck element store carries no reinforce record (deferred).
+    # Both ties stored, none counted on the ledger ...
+    assert len(em._embedded_rebars) == 2
+    assert "embedded_rebar" not in em.ledger_counts
+    assert all("-perfect" in r.args for r in em._embedded_rebars)
+    # ... and NO deviation warning fires.
+    assert not [x for x in w if "reinforc" in str(x.message).lower()]
+    # The ties are not element-store rows.
     assert not getattr(em, "_elements", [])
 
 
 def test_h5_consumes_pending_mp_name():
-    """The H5 no-op consumes a latched mp comment so it cannot leak onto
-    the next real MP record (INV-2)."""
+    """The H5 tie row consumes a latched mp comment (its ``name``) so it
+    cannot leak onto the next real MP record (INV-2)."""
     em = H5Emitter(schema_version="x", model_name="m")
     fem = _Fem([_perfect_tie(name="r1")])
     tags = emit_tags(fem)
@@ -215,3 +207,4 @@ def test_h5_consumes_pending_mp_name():
         warnings.simplefilter("ignore")
         emit_reinforce_ties(em, fem, tags, name_to_tag={})
     assert em._pending_mp_name == ""
+    assert [r.name for r in em._embedded_rebars] == ["r1"]

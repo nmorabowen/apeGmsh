@@ -1,10 +1,10 @@
 """Pins for the tag-law ledger's replay waivers (K1-3, #1361).
 
 ``compose.py`` still mints tags on replay; ``tag_law_ledger.txt`` waives
-each site by name. The reinforce ties mint until K2 archives them; the
-initial-stress and staged parameters mint for an archive below opensees
-2.27.0 only (K1-8, #1465: a 2.27 archive stores them, and its replay reads
-them). These tests pin what the re-minting produces: the replayed deck
+each site by name. The reinforce ties mint for an archive below opensees
+2.29.0 only (K2b, #1795: a 2.29 archive stores them); the initial-stress
+and staged parameters mint for an archive below opensees 2.27.0 only (K1-8,
+#1465: a 2.27 archive stores them, and its replay reads them). These tests pin what the re-minting produces: the replayed deck
 carries exactly the tags the forward emit minted, in the same order. If
 anything changes a replayed tag, the pin fails before a reader keyed on that
 tag can disagree with it.
@@ -26,10 +26,11 @@ _PARAM = re.compile(
 _ELEMENT = re.compile(r"^\s*element\s+(\S+)\s+(\d+)", re.M)
 
 
-def _forward_and_replayed(ops_factory, tmp_path: Path, *, pre_2_27: bool = False) -> tuple[str, str]:  # type: ignore[no-untyped-def]
+def _forward_and_replayed(ops_factory, tmp_path: Path, *, pre_2_27: bool = False, pre_2_29: bool = False) -> tuple[str, str]:  # type: ignore[no-untyped-def]
     """The bridge's own Tcl deck and the deck replayed from its archive
     (``pre_2_27``: from that archive as a pre-2.27 writer left it, so the
-    replay re-mints its parameter tags)."""
+    replay re-mints its parameter tags; ``pre_2_29``: as a pre-2.29 writer
+    left it, so the replay re-derives its reinforce ties)."""
     fwd = tmp_path / "forward.tcl"
     ops: apeSees = ops_factory()
     ops.tcl(str(fwd), progress=False)
@@ -56,6 +57,12 @@ def _forward_and_replayed(ops_factory, tmp_path: Path, *, pre_2_27: bool = False
         )
 
         downgrade_to_pre_param_tags(archive)
+    if pre_2_29:
+        from tests.opensees.h5.test_h5_embedded_rebar_archive import (
+            downgrade_to_pre_embedded_rebar,
+        )
+
+        downgrade_to_pre_embedded_rebar(archive)
     replayed = OpenSeesModel.from_h5(str(archive)).build("tcl")
     assert isinstance(replayed, str)
     return fwd.read_text(encoding="utf-8"), replayed
@@ -65,14 +72,16 @@ def _param_rows(deck: str) -> list[tuple[str, int]]:
     return [(m.group(1), int(m.group(2))) for m in _PARAM.finditer(deck)]
 
 
-def test_reinforce_tie_replay_reuses_the_forward_tie_tags(tmp_path: Path) -> None:
-    """Step 8b: the replay seeds the element counter past the replayed
-    elements and re-mints the tie tags; they equal the forward tags, which
-    run contiguously above every host element."""
+def test_pre_2_29_reinforce_tie_replay_reuses_the_forward_tie_tags(
+    tmp_path: Path,
+) -> None:
+    """A pre-2.29 archive: the replay seeds the element counter past the
+    replayed elements and re-mints the tie tags; they equal the forward
+    tags, which run contiguously above every host element."""
     from tests.opensees.h5.test_reinforce_deck_replay import _reinforced_ops
 
     fwd, replayed = _forward_and_replayed(
-        lambda: _reinforced_ops(bond_by_name=False), tmp_path)
+        lambda: _reinforced_ops(bond_by_name=False), tmp_path, pre_2_29=True)
     ties_fwd = [
         int(t) for k, t in _ELEMENT.findall(fwd) if k == "LadrunoEmbeddedRebar"]
     ties_rep = [
