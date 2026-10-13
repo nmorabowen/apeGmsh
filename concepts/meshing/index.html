@@ -3877,6 +3877,16 @@ is why <code>recipe.structured</code> exposes a <code>recombine=</code> switch.<
 </span><span id="__span-7-2"><a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>    <span class="s2">"WebEdges"</span><span class="p">,</span> <span class="n">dim</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span> <span class="n">n_nodes</span><span class="o">=</span><span class="mi">40</span><span class="p">,</span> <span class="n">mesh_type</span><span class="o">=</span><span class="s2">"Progression"</span><span class="p">,</span> <span class="n">coef</span><span class="o">=</span><span class="mf">1.1</span><span class="p">,</span>
 </span><span id="__span-7-3"><a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="p">)</span>
 </span></code></pre></div>
+<p>For trusses and frames the structured case is one element per member.
+<code>g.mesh.structured.one_element_per_curve()</code> marks every free curve with two
+nodes, so each member meshes as a single 1-D element between its end points;
+pass labels, physical-group or part names to restrict it to those curves. A
+curve is free when it bounds no surface, is embedded in none, and
+no constraint, embed, reinforce or displacement declaration references it. A
+named curve is refused when it bounds or is embedded in a surface, or is tied
+into a surface or volume host; one referenced only by a support or a diaphragm
+is accepted. With no names, the call skips every non-free curve and emits <code>CurvesSkippedWarning</code> for the ones a declaration references,
+so a beam under a diaphragm is not left at the global size unnoticed.</p>
 <p>Structured and unstructured regions compose in one model — Gmsh uses the
 transfinite path where you marked it and the general algorithm everywhere
 else. The one hard incompatibility is the interface rule from the recipes

@@ -3723,7 +3723,17 @@ load patterns, and any MP constraints (<code>equalDOF</code>, <code>rigidLink</c
   internally (an implicit <code>ops.build()</code>), so order between them doesn't matter.</li>
 <li><strong><code>run=True</code> subprocesses the deck for you.</strong> <code>ops.tcl("m.tcl", run=True)</code>
   shells out to an <code>opensees</code> binary (override with <code>bin=</code>); <code>ops.py(..., run=True)</code>
-  runs the script under Python. Without <code>run=</code>, the call only writes the file.</li>
+  runs the script under Python. Without <code>run=</code>, the call only writes the file.
+  A run that finishes returns a frozen <code>RunReport</code>; one that does not raises
+  <code>RuntimeError</code> carrying the log tail and path. That includes a Tcl <code>error</code>
+  (the deck's aborted-analyze guard), because <code>OpenSees.exe</code> exits 0 after one.
+  The report has <code>returncode</code>, <code>log</code> (the absolute path of the tee'd log,
+  <code>&lt;deck&gt;.log</code> unless <code>log=</code> says otherwise), <code>elapsed_s</code>, <code>increments</code> and
+  <code>solver_stats</code>. <code>increments</code> counts the analyze increments the deck's progress
+  markers prove complete, and is <code>None</code> when <code>progress=False</code> or when the
+  markers do not add up to the deck's own loops (several processes under an
+  <code>mpiexec</code> wrapper, say). <code>solver_stats</code> is set only when a solver was asked
+  for <code>-stats</code>.</li>
 <li><strong>Loads are opt-in.</strong> <code>g.loads.*</code> do <strong>not</strong> auto-emit (ADR 0051): bring a
   session load case into the deck with <code>p.from_model(case)</code> inside a pattern,
   or author one directly with <code>pat.load(...)</code>. The deck is authoritative — a
