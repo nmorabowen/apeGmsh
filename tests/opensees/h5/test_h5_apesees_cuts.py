@@ -77,8 +77,10 @@ def test_apesees_h5_bumps_schema_version_to_2_5_0(tmp_path: Path) -> None:
     out = tmp_path / "model.h5"
     ops.h5(str(out))
 
+    # On a real FEMData, ``/meta/schema_version`` stamps the neutral zone;
+    # the bridge zone's version is the per-zone key (ADR 0023).
     with h5py.File(out, "r") as f:
-        assert f["meta"].attrs["schema_version"] == OPENSEES_CURRENT
+        assert f["meta"].attrs["opensees_schema_version"] == OPENSEES_CURRENT
 
 
 # --------------------------------------------------------------------- #
@@ -184,6 +186,6 @@ def test_apesees_h5_with_cuts_passes_reference_reader(
     ops.h5(str(out), cuts=[cut])
 
     with h5_reader.open(str(out)) as model:
-        assert model.schema_version == OPENSEES_CURRENT
+        assert model.meta()["opensees_schema_version"] == OPENSEES_CURRENT
         violations = model.validate()
         assert violations == [], violations
