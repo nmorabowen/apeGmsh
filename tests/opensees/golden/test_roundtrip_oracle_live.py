@@ -4,8 +4,7 @@ The static declare-before-use check in ``test_roundtrip_oracle.py`` sees
 only the references the archive's ``decl_params`` name. It cannot see node
 and element tags (connectivity, ``fix``, ``region -node/-ele``, loads,
 recorders) or anything inside a ``proc`` body. This module is the second
-net: for every ledger row that is class B, or class C for a
-fatal reorder (#1814), it writes the bridge's openseespy deck
+net: for every ledger row that is class B, it writes the bridge's openseespy deck
 (``ops.py``) and the replayed one (``from_h5(h5()).build("py")``), and
 runs each in its own subprocess.
 
@@ -14,8 +13,9 @@ marker appended as its last line: an OpenSees error can still exit 0, so
 the marker is what proves the deck reached its end.
 
 - A B row: the bridge deck runs, and so does the replay.
-- A #1814 C row: the bridge deck runs, and the replay does not. The pin
-  goes when #1814 is fixed and the row leaves class C.
+- The fatal reorder (#1814): ``_broad_frame``'s replay deck runs, and the
+  same deck with ``Parallel 3`` moved above ``Steel01 1`` (the reorder #1814
+  fixed, now synthetic) does not, so a C-class reorder really aborts.
 
 A row whose bridge deck does not run on this backend must be one the
 archive's solve stamp marks ``requires=("fork",)``; stock openseespy cannot
@@ -40,7 +40,12 @@ from pathlib import Path
 import pytest
 
 from apeGmsh.opensees import OpenSeesModel
-from tests.opensees.golden.test_roundtrip_oracle import CORPUS, Model, _waivers
+from tests.opensees.golden.test_roundtrip_oracle import (
+    CORPUS,
+    Model,
+    _move,
+    _waivers,
+)
 
 pytestmark = pytest.mark.live
 
@@ -54,7 +59,8 @@ def _rows(klass: str, cites: str = "") -> list[Model]:
 
 
 _B_ROWS = _rows("B")
-_FATAL_ROWS = _rows("C", cites="#1814")
+#: The model the synthetic fatal reorder (#1814) is cut from.
+_FATAL_CASES = [m for m in CORPUS if m.id == "test_h5_decl_params::_broad_frame"]
 
 
 def _decks(model: Model, tmp: Path) -> tuple[Path, Path, tuple[str, ...]]:
@@ -111,7 +117,7 @@ def _bridge_runs(model: Model, bridge: Path, requires: tuple[str, ...]) -> bool:
 
 
 def test_the_net_runs_some_stock_row() -> None:
-    assert _B_ROWS and _FATAL_ROWS, "the live net would run nothing"
+    assert _B_ROWS and _FATAL_CASES, "the live net would run nothing"
 
 
 _PROBE_PLUGIN = """import json, os, sys
@@ -182,14 +188,20 @@ def test_a_class_b_replay_runs_where_the_bridge_deck_runs(
         f"reorder the static check missed; make the row C with its bug:\n{log}")
 
 
-@pytest.mark.parametrize("model", _FATAL_ROWS, ids=[m.id for m in _FATAL_ROWS])
-def test_a_fatal_reorder_row_replay_does_not_run(
+@pytest.mark.parametrize("model", _FATAL_CASES, ids=[m.id for m in _FATAL_CASES])
+def test_a_fatal_reorder_replay_does_not_run(
         model: Model, tmp_path: Path) -> None:
     bridge, replay, requires = _decks(model, tmp_path)
     assert "fork" not in requires, f"{model.id}: pin a stock-runnable row here"
     ran, log = _run(bridge)
     assert ran, f"{model.id}: the bridge deck does not run:\n{log}"
+    fatal = tmp_path / "fatal.py"
+    fatal.write_text(_move(
+        replay.read_text(encoding="utf-8"), "ops.uniaxialMaterial('Parallel', 3,",
+        above="ops.uniaxialMaterial('Steel01', 1,"), encoding="utf-8")
     ran, log = _run(replay)
+    assert ran, f"{model.id}: the replay deck does not run (#1814):\n{log}"
+    ran, log = _run(fatal)
     assert not ran, (
-        f"{model.id}'s replay deck now runs: #1814 may be fixed; re-derive "
-        "its ledger row")
+        f"{model.id}: the deck with Parallel 3 above Steel01 1 still runs; "
+        "the live net no longer proves a fatal reorder aborts")
