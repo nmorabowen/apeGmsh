@@ -207,6 +207,25 @@ class NativeReader:
             return None
         return str(self._h5.attrs[_native.ATTR_ELEMENT_INDEX_SPACE])
 
+    def _element_index_space_is_vlen_utf8(self) -> bool:
+        """True when the stamp is a scalar variable-length UTF-8 string.
+
+        That is the only on-disk form the contract allows. A fixed-length
+        string (which other HDF5 readers may strip of NUL padding and
+        compare equal to ``"fem"``), a bytes or ASCII string, an array or
+        any other dtype is not the stamp.
+        """
+        import h5py
+
+        attr = self._h5.attrs.get_id(_native.ATTR_ELEMENT_INDEX_SPACE)
+        info = h5py.check_string_dtype(attr.dtype)
+        return (
+            info is not None
+            and info.encoding == "utf-8"
+            and info.length is None
+            and attr.shape == ()
+        )
+
     @property
     def element_index_verified(self) -> bool:
         """True only when the file stamps ``element_index_space = "fem"``.
@@ -216,9 +235,13 @@ class NativeReader:
         ``ELEMENT_INDEX_SPACES`` read as unverified. That is not a
         refusal: the file still reads. Neither the version number nor
         ``source_type`` ever makes a file verified: the rule is the same
-        for every writer, ``domain_capture`` included.
+        for every writer, ``domain_capture`` included. The stamp must be
+        a scalar variable-length UTF-8 string; any other dtype reads as
+        unverified, whatever its text.
         """
-        return self.element_index_space == _native.ELEMENT_INDEX_SPACE_FEM
+        if self.element_index_space != _native.ELEMENT_INDEX_SPACE_FEM:
+            return False
+        return self._element_index_space_is_vlen_utf8()
 
     def _require_zone(self, zone: str) -> None:
         reason = self._unavailable.get(zone)
