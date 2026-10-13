@@ -70,7 +70,9 @@ a viewer, a script) imports **main's** apeGmsh unless it runs with `PYTHONPATH=<
 
 ## How work lands
 
-- **Land with `python scripts/land_pr.py <N>`** (`--dry-run` runs the checks and stops). It is
+- **Land with main's copy of the script**: `git fetch origin main`, then
+  `git show origin/main:scripts/land_pr.py > <tmp>/land_pr.py && python <tmp>/land_pr.py <N>`
+  (`--dry-run` runs the checks and stops). A PR that deletes the script's self-hop would otherwise run its own copy. It is
   this checklist as code: it refuses on the first failed check, squash-merges (never `--auto`,
   never `--delete-branch`), then proves the squash commit reached `main`. Its checks, in order:
   - **The base is `main`**, `--base main` on every PR, sequenced ones included: hand-stacking with
