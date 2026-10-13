@@ -10,10 +10,11 @@ Comparing a schema version against a literal anywhere else in ``tests/``
 fails ``scripts/check_quirks.py`` (rule ``schema-literal``): it went stale
 and turned main red at 2.12.0, 2.13.0 and 2.16.0.
 """
-OPENSEES_CURRENT     = "2.28.0"  # ADR 0115 amendment R2-f #1735 (decl_params label provenance)
-OPENSEES_PRIOR_MINOR = "2.27.0"  # K1-8 #1465 (per-record param_tags; s.update_parameter + s.zero_velocities archive)
+OPENSEES_CURRENT     = "2.29.0"  # K2b #1795 (/opensees/constraints/embeddedRebar: g.reinforce ties archived)
+OPENSEES_PRIOR_MINOR = "2.28.0"  # ADR 0115 amendment R2-f #1735 (decl_params label provenance)
 OPENSEES_SOLVE_STAMP_FROM = "2.24.0"  # the minor that added the /opensees solve stamp (K1-5 #1462); fixed history
 OPENSEES_PARAM_TAGS_FROM = "2.27.0"  # the minor whose archives store every parameter tag (K1-8 #1465); fixed history
+OPENSEES_EMBEDDED_REBAR_FROM = "2.29.0"  # the minor whose archives store every reinforce tie (K2b #1795); fixed history
 OPENSEES_FLOOR       = "2.12.0"  # ADR 0113 D3 evidence gate (#1329): no 2.11-era file opens (neutral 2.7 stamps)
 NEUTRAL_CURRENT      = "2.35.0"  # #1338: additive `source` column on /loads/nodal (the definition kind)
 NEUTRAL_PRIOR_MINOR  = "2.34.0"  # #1291: /meta/ndm is the ops.model spatial dimension (0 = undeclared)

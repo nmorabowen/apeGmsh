@@ -74,6 +74,7 @@ __all__ = [
     "DeclStruct",
     "DeclarationRO",
     "DeclarationTable",
+    "EmbeddedRebarRecordRO",
     "H5Model",
     "MalformedH5Error",
     "PartitionEmittedRecord",
@@ -149,6 +150,22 @@ class ProgramRun:
     row: int
     stage: int
     decl: int
+
+
+@dataclass(frozen=True, slots=True)
+class EmbeddedRebarRecordRO:
+    """One ``/opensees/constraints/embeddedRebar`` row (K2b, schema 2.29.0).
+
+    A ``g.reinforce`` ``LadrunoEmbeddedRebar`` tie as the build wrote it:
+    ``ele_tag`` its planned element tag, ``args`` the positional arguments
+    after the tag (each keeping its Python type), ``name`` the
+    ``mp_constraint_comment`` label (``""`` when none). A replay writes
+    ``element LadrunoEmbeddedRebar ele_tag *args`` from these alone.
+    """
+
+    ele_tag: int
+    args: tuple[int | float | str, ...]
+    name: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -1946,6 +1963,53 @@ class H5Model:
             ))
         return tuple(out)
 
+    def embedded_rebars(self) -> tuple[EmbeddedRebarRecordRO, ...]:
+        """Return every ``/opensees/constraints/embeddedRebar`` row, in
+        write order (K2b, schema 2.29.0).
+
+        Empty when the file has none: a model without a reinforce tie, or
+        a file below :data:`EMBEDDED_REBAR_FROM`, whose replay re-derives
+        its ties from the neutral zone instead.
+        """
+        if "opensees" not in self._f:
+            return ()
+        ops = self._f["opensees"]
+        if "constraints" not in ops or "embeddedRebar" not in ops["constraints"]:
+            return ()
+        where = "/opensees/constraints/embeddedRebar"
+        g = ops["constraints"]["embeddedRebar"]
+        tags = [int(v) for v in g["ele_tag"][()]]
+        names = [str(_decode_bytes(v)) for v in g["name"][()]]
+        offsets = [int(v) for v in g["arg_offsets"][()]]
+        nums = g["args"][()]
+        strs = [str(_decode_bytes(v)) for v in g["args_str"][()]]
+        kinds = [int(v) for v in g["arg_kinds"][()]]
+        n = len(tags)
+        if not (len(names) == n and len(offsets) == n + 1
+                and offsets[0] == 0 and offsets[-1] == len(kinds)
+                == len(nums) == len(strs)
+                and all(a <= b for a, b in zip(offsets, offsets[1:]))):
+            raise MalformedH5Error(f"{where} columns disagree in length.")
+        out: list[EmbeddedRebarRecordRO] = []
+        for i in range(n):
+            args: list[int | float | str] = []
+            for j in range(offsets[i], offsets[i + 1]):
+                kind = kinds[j]
+                if kind == 0:
+                    args.append(int(nums[j]))
+                elif kind == 1:
+                    args.append(float(nums[j]))
+                elif kind == 2:
+                    args.append(strs[j])
+                else:
+                    raise MalformedH5Error(
+                        f"{where} arg_kinds[{j}] = {kind}; expected 0 (int), "
+                        "1 (float) or 2 (str)."
+                    )
+            out.append(EmbeddedRebarRecordRO(
+                ele_tag=tags[i], args=tuple(args), name=names[i]))
+        return tuple(out)
+
     def recorders(self) -> list[RecorderRecord]:
         """Return every ``/opensees/recorders/{name}`` group.
 
@@ -2799,6 +2863,21 @@ def archives_param_tags(version: "SchemaVersion") -> bool:
     """True iff an archive at opensees-zone ``version`` stores its
     parameter tags (``>= PARAM_TAGS_FROM``)."""
     return (version.major, version.minor, version.patch) >= PARAM_TAGS_FROM
+
+
+#: First opensees-zone version whose archive stores every reinforce tie the
+#: build wrote (K2b): ``/opensees/constraints/embeddedRebar``. A replay of an
+#: archive at or above it writes those rows and mints no tie tag; one below
+#: it re-derives the ties from the neutral zone (``compose.py``, the
+#: pre-2.29 tag-law waiver).
+EMBEDDED_REBAR_FROM: tuple[int, int, int] = (2, 29, 0)
+
+
+def archives_embedded_rebar(version: "SchemaVersion") -> bool:
+    """True iff an archive at opensees-zone ``version`` stores its reinforce
+    ties (``>= EMBEDDED_REBAR_FROM``)."""
+    return (
+        (version.major, version.minor, version.patch) >= EMBEDDED_REBAR_FROM)
 
 
 def _initial_stress_param_tags(
