@@ -14,9 +14,9 @@ lets seven of the pane-host acceptance criteria run in the default
 offscreen lane with injected backends instead of paying the xvfb lane
 for the whole suite — and it disposes of the orphaned-context risk
 (caution 1) by construction rather than managing it. The seam is
-additive and opt-in: ``results_viewer.py``'s construction path is
-untouched, which is what ``central_interactor=True`` (the default)
-means.
+additive and opt-in: the construction path of the (since deleted)
+``results_viewer.py`` was untouched, which is what
+``central_interactor=True`` (the default) means.
 
 The toolbar's camera presets / fit / screenshot act on the **active
 pane**, through the shell's plotter provider — one active object, one

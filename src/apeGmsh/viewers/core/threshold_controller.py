@@ -218,7 +218,7 @@ def compute_hidden_mask(
 def _dense_row_map(ids: "np.ndarray", rows: "np.ndarray") -> "np.ndarray":
     """Dense ``fem id -> scene row`` lookup; ``-1`` = not in the scene.
 
-    The same device ``results_viewer._read_deform_field`` builds for the
+    The same device the deleted ``results_viewer._read_deform_field`` built for the
     substrate (``_deform_id_to_idx``): FEM ids are neither contiguous
     nor sorted in general, so a dense table turns the per-step scatter
     into one fancy-index instead of a dict walk.
@@ -235,7 +235,7 @@ class SceneValueReader:
     """``read_values`` over a bound ``Results`` + one ``FEMSceneData``.
 
     The risky half of the feature, and the reason it is a class here
-    rather than a closure in ``results_viewer._show_impl``: **a slab's
+    rather than a closure in the deleted ``results_viewer._show_impl``: **a slab's
     row order is not the scene's row order**, and getting that wrong
     paints a plausible-looking picture of the wrong cells rather than
     raising. Two rules, both mechanical:
@@ -251,7 +251,7 @@ class SceneValueReader:
       per-integration-point values and those rows
       (:class:`GaussValues`) so the all-values reduction can run once
       the range is known. Same mechanism as
-      ``results_viewer._read_deform_field`` and
+      the deleted ``results_viewer._read_deform_field`` and
       ``ContourDiagram._scatter_into_cell_scalar``, not a parallel one.
 
     Reads go through the director's :class:`VisualDataStore` slabs

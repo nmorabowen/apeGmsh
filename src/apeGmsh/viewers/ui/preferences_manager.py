@@ -59,7 +59,7 @@ class Preferences:
     # Width of the results substrate's static feature-edge outline.
     # 2.5 px is the factory setting the Display panel's "Reset to
     # defaults" restores; drops to 2.0 px while a field diagram is
-    # active (CONTOUR_ACTIVE_OUTLINE_PX, results_viewer.py).
+    # active (CONTOUR_ACTIVE_OUTLINE_PX, in the deleted results_viewer.py).
     outline_width: float = 2.5
 
     # ── Rendering ───────────────────────────────────────────────────
