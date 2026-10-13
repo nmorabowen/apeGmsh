@@ -30,7 +30,6 @@ after merging any skill PR. (It was a junction into this working tree until
 from __future__ import annotations
 
 import argparse
-import os
 import sys
 from pathlib import Path
 
