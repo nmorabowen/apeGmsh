@@ -295,13 +295,13 @@ export type ContourView =
    */
   | { state: "refused"; code: ElementRefusal; reason: string }
   /** V4c2a: an element topology whose drawing is not built yet (the extrapolations to nodes, V4c2b) */
-  | { state: "not-yet"; topology: "gauss_node" | "gauss_node_discrete"; reason: string }
+  | { state: "not-yet"; topology: "gauss_cell_averaged" | "gauss_node" | "gauss_node_discrete"; reason: string }
   /** V4c2a: an element field, flat per cell */
   | {
       state: "element";
       field: string;
       component: ElementComponent;
-      topology: "gauss_cell" | "gauss_cell_averaged";
+      topology: "gauss_cell" | "element_mean";
       /** what the legend states for the topology (the averaging, in words) */
       topologyLabel: string;
       nGauss: number[];
@@ -368,8 +368,8 @@ function elementView(s: State, st: ResultsStage, label: string): ContourView {
   }
   if (hit.field.refused !== null) return { state: "refused", code: "components", reason: `element field ${c.field}: ${hit.field.refused}` };
   const topology = elementTopology(c.gauss, hit.field.nGauss);
-  if (topology === "gauss_node" || topology === "gauss_node_discrete") {
-    return { state: "not-yet", topology, reason: `${topology} (extrapolation to the nodes) is not yet available: it arrives with V4c2b` };
+  if (topology === "gauss_cell_averaged" || topology === "gauss_node" || topology === "gauss_node_discrete") {
+    return { state: "not-yet", topology, reason: `${topology} (values carried to the nodes) is not yet available: it arrives with V4c2b` };
   }
   if (!s.mesh) return { state: "unavailable", reason: "no mesh is loaded" };
   const groups: ElementGroupDraw[] = [];

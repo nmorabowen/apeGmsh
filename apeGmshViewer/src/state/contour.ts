@@ -461,13 +461,24 @@ export function elementComponentOf(stage: ResultsStage, field: string, component
   return f && c ? { field: f, component: c } : null;
 }
 
-/** The Qt `ContourDiagram` topology an element field is drawn with (`_contour.py`), from the mode and its Gauss-point counts. */
-export type ElementTopology = "gauss_cell" | "gauss_cell_averaged" | "gauss_node" | "gauss_node_discrete";
+/**
+ * The topology an element field is drawn with, from the mode and its
+ * Gauss-point counts. `gauss_cell`, `gauss_cell_averaged`, `gauss_node` and
+ * `gauss_node_discrete` are the Qt `ContourDiagram` names (`_contour.py`);
+ * `element_mean` (the flat mean of an element's several Gauss points) is an
+ * app presentation with no Qt equivalent, so it carries no Qt name.
+ */
+export type ElementTopology = "gauss_cell" | "element_mean" | "gauss_cell_averaged" | "gauss_node" | "gauss_node_discrete";
+
+/** The topologies drawn now (flat per cell); the others are V4c2b. */
+export type FlatTopology = "gauss_cell" | "element_mean";
 
 export function elementTopology(mode: GaussMode, nGauss: readonly number[]): ElementTopology {
   switch (mode) {
     case "cell":
-      return nGauss.every((g) => g === 1) ? "gauss_cell" : "gauss_cell_averaged";
+      return nGauss.every((g) => g === 1) ? "gauss_cell" : "element_mean";
+    case "cell_averaged":
+      return "gauss_cell_averaged";
     case "node":
       return "gauss_node";
     case "node_discrete":
@@ -480,10 +491,10 @@ export function elementTopology(mode: GaussMode, nGauss: readonly number[]): Ele
 }
 
 /** What the legend states for a flat-per-cell topology. */
-export function topologyLabel(t: "gauss_cell" | "gauss_cell_averaged", nGauss: readonly number[]): string {
+export function topologyLabel(t: FlatTopology, nGauss: readonly number[]): string {
   return t === "gauss_cell"
     ? "gauss_cell: each element's one Gauss-point value, flat per cell"
-    : `gauss_cell_averaged: the mean of each element's Gauss-point values (G = ${nGauss.join(", ")}), flat per cell`;
+    : `element mean of ${nGauss.join(" or ")} Gauss points, flat per cell`;
 }
 
 /**

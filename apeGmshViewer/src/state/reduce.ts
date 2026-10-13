@@ -363,7 +363,7 @@ export function reduce(s: State, e: Event): State {
       return { ...s, contour: { ...c, source, field: e.field, component: e.component, join, notice: null } };
     }
     case "setContourGauss":
-      if (e.mode !== "cell" && e.mode !== "node" && e.mode !== "node_discrete") throw new RangeError(`setContourGauss: ${JSON.stringify(e.mode)}`);
+      if (e.mode !== "cell" && e.mode !== "cell_averaged" && e.mode !== "node" && e.mode !== "node_discrete") throw new RangeError(`setContourGauss: ${JSON.stringify(e.mode)}`);
       return s.contour.gauss === e.mode ? s : { ...s, contour: { ...s.contour, gauss: e.mode } };
     case "contourElementJoin":
       // Only for the field, file read and mesh shown: a late verdict for another is dropped.

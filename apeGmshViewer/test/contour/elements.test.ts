@@ -13,7 +13,7 @@
 //   M1 drawing an unverified file      -> "unverified: refused ..."
 //   M2 joining rows by position        -> "gauss_cell: per-cell colours ..."
 //   M3 an unknown id mapped silently   -> "an _element_index id the mesh does not have ..."
-//   M4 an average that drops a point   -> "gauss_cell_averaged: ..." and the gaussCellValues unit test
+//   M4 an average that drops a point   -> "element_mean: ..." and the gaussCellValues unit test
 
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
@@ -123,14 +123,15 @@ test("gauss_cell: per-cell colours equal the closed form on a quad plus triangle
   h.effects.dispose();
 });
 
-test("gauss_cell_averaged: per-cell colours equal each element's mean of its 8 Gauss values on a solid; the history range is the closed form's", async () => {
+test("element_mean: per-cell colours equal each element's mean of its 8 Gauss values on a solid; the history range is the closed form's", async () => {
   const h = await opened(SOLID, SOLID_RESULTS);
   const cells = await cellsOf(SOLID);
   assert.equal(cells.size, 12);
   const k = 2;
   const v = await pickElement(h, "stress", "stress_yy", 0, k);
-  assert.equal(v.topology, "gauss_cell_averaged");
-  assert.equal(v.topologyLabel, "gauss_cell_averaged: the mean of each element's Gauss-point values (G = 8), flat per cell");
+  assert.equal(v.topology, "element_mean");
+  assert.equal(v.topologyLabel, "element mean of 8 Gauss points, flat per cell");
+  assert.ok(!/gauss_cell_averaged/.test(v.topologyLabel), "the per-element mean never carries Qt's gauss_cell_averaged name");
   const r = checkTriangles(h, v, (id) => cellValue(id, 8, 1, k));
   assert.ok(r.coloured > 0 && r.noData === 0);
   // The history scan reads the element field only, reduced per element.
@@ -223,10 +224,10 @@ test("a re-read refreshes what is drawn: the colour key and the join carry the r
   h.effects.dispose();
 });
 
-test("gauss_node and gauss_node_discrete are defined states shown as not yet available (V4c2b)", async () => {
+test("Qt's gauss_cell_averaged, gauss_node and gauss_node_discrete are defined states shown as not yet available (V4c2b)", async () => {
   const h = await opened(SOLID, SOLID_RESULTS);
   await pickElement(h, "stress", "stress_xx", 0, 0);
-  for (const [mode, topology] of [["node", "gauss_node"], ["node_discrete", "gauss_node_discrete"]] as const) {
+  for (const [mode, topology] of [["cell_averaged", "gauss_cell_averaged"], ["node", "gauss_node"], ["node_discrete", "gauss_node_discrete"]] as const) {
     h.store.dispatch({ type: "setContourGauss", mode });
     const v = contourView(h.store.get());
     assert.ok(v.state === "not-yet" && v.topology === topology, mode);

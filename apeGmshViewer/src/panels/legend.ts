@@ -69,7 +69,8 @@ export function contourLines(
 
 /** The element-field draw modes (V4c2a): flat per cell now; the extrapolations to nodes arrive with V4c2b. */
 const GAUSS_MODES: readonly { mode: GaussMode; label: string; title: string }[] = [
-  { mode: "cell", label: "per cell", title: "flat per cell: gauss_cell (one Gauss point) or gauss_cell_averaged (the mean of the element's Gauss points)" },
+  { mode: "cell", label: "per cell", title: "flat per cell: gauss_cell (one Gauss point), or the element mean of its Gauss points (an app presentation, no Qt equivalent)" },
+  { mode: "cell_averaged", label: "cell, averaged at nodes", title: "gauss_cell_averaged: one-point cell values averaged to the nodes across elements (not yet available, V4c2b)" },
   { mode: "node", label: "at nodes", title: "gauss_node: extrapolated to the nodes and averaged across elements (not yet available, V4c2b)" },
   { mode: "node_discrete", label: "at nodes, per element", title: "gauss_node_discrete: extrapolated per element, no averaging (not yet available, V4c2b)" },
 ];

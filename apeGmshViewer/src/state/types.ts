@@ -341,12 +341,14 @@ export type ContourSource = "nodal" | "element";
 
 /**
  * How an element (Gauss) field is drawn (V4c2a). `cell` is flat per cell: the
- * element's one Gauss value (`gauss_cell`) or the mean of its Gauss values
- * (`gauss_cell_averaged`). The extrapolations to nodes (`node`:
- * Qt `gauss_node`, `node_discrete`: `gauss_node_discrete`) are V4c2b: their
- * state is defined and shows "not yet available".
+ * element's one Gauss value (Qt `gauss_cell`), or, with several points, the
+ * element mean of its Gauss values (`element_mean`, an app presentation with
+ * no Qt equivalent). The node-located Qt topologies are V4c2b, their states
+ * defined and shown as "not yet available": `cell_averaged` (Qt
+ * `gauss_cell_averaged`: one-point cell values averaged to the nodes across
+ * elements), `node` (`gauss_node`) and `node_discrete` (`gauss_node_discrete`).
  */
-export type GaussMode = "cell" | "node" | "node_discrete";
+export type GaussMode = "cell" | "cell_averaged" | "node" | "node_discrete";
 
 /**
  * The join of an element field's rows to the mesh (V4c2a), as the effects
