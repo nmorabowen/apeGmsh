@@ -16,14 +16,16 @@ import { LineMaterial } from "three/addons/lines/LineMaterial.js";
 import { LineSegments2 } from "three/addons/lines/LineSegments2.js";
 import { LineSegmentsGeometry } from "three/addons/lines/LineSegmentsGeometry.js";
 import type { BlobStore } from "../state/blobs.ts";
+import type { DisplacementData } from "../effects.ts";
 import { contourView, geometryPairing } from "../state/selectors.ts";
 import { contourColours, contourKey, noDataColours, type StepValues } from "./contour.ts";
+import { basePositions, drawnPositions, edgesShown, frameFocus, gatherInto, ghostObjects, missingMarkerObjects, positionsFor, selectionOutline, writePositions, type FullPositions } from "./deform.ts";
 import type { State, Store } from "../state/store.ts";
 import { roleColouring } from "../state/roles.ts";
 import type { DeclPath, GeometryInfo, LegendEntry, MeshInfo, Pick } from "../state/types.ts";
 import { DARK, toHexNumber } from "../theme/tokens.ts";
 import { headingOf, Navigator, nearestHit, type Heading } from "./navigation.ts";
-import { fitDistance, type Focus, highlightObjects, SELECTION_COLOUR, SelectionHalo } from "./selection.ts";
+import { fitDistance, type Focus, hitElement, SELECTION_COLOUR, SelectionHalo } from "./selection.ts";
 import { edgeMask, elementMaskOf, sameDrawn, visibleMaps, type Drawn } from "./visible.ts";
 
 /** The right rail's width plus its margins (style.css #rail: the inspector above the sources). */
@@ -67,6 +69,8 @@ export class Viewport {
   private lines: LineSegments2 | null = null;
   private faces: THREE.Mesh | null = null;
   private edges: THREE.LineSegments | null = null;
+  /** V4d: the original index of every drawn outline edge (what writePositions gathers the moved edges through). */
+  private edgeMap: Int32Array | null = null;
   private lineMaterials: LineMaterial[] = [];
   private index: MeshIndex | null = null;
   private drawn: Drawn | null = null;
@@ -81,6 +85,17 @@ export class Viewport {
   private stepSource: () => StepValues | null = () => null;
   /** V4c1: what the contour colours show now: the step, range and colormap key, or `no-data`; null when not colouring by contour. */
   contourApplied: string | null = null;
+  /** V4d: the displacement the effects computed for the step shown (effects.currentDisplacement). */
+  private dispSource: () => DisplacementData | null = () => null;
+  /** V4d: every primitive's positions as drawn now (undeformed, or deformed at the step and scale its key names). */
+  private full: FullPositions | null = null;
+  /** V4d: the reference ghost (the undeformed mesh, faint) and the markers of drawn nodes with no displacement. */
+  private readonly ghost = new THREE.Group();
+  private readonly markers = new THREE.Group();
+  /** V4d: what the drawn positions show now: `base`, or the displacement key and scale; null with no mesh. */
+  get deformApplied(): string | null {
+    return this.full?.key ?? null;
+  }
 
   constructor(host: HTMLElement, store: Store, blobs: BlobStore) {
     this.host = host;
@@ -100,6 +115,8 @@ export class Viewport {
     key.position.set(0.5, 0.8, 1);
     this.camera.add(key);
     this.scene.add(this.content, this.highlight, this.geometryLayer);
+    // V4d: the ghost and the missing-displacement markers (shown with the mesh, never on the geometry phase).
+    this.scene.add(this.ghost, this.markers);
 
     this.raycaster.params.Line2 = { threshold: 7 };
     this.halo = new SelectionHalo(this.renderer);
@@ -145,6 +162,8 @@ export class Viewport {
     this.clear(this.content);
     this.clear(this.highlight);
     this.clear(this.geometryLayer);
+    this.clear(this.ghost);
+    this.clear(this.markers);
     this.renderer.dispose();
     this.renderer.domElement.remove();
   }
@@ -161,6 +180,52 @@ export class Viewport {
     else if (s.visibility !== prev.visibility || s.phase !== prev.phase) this.applyVisibility(s);
     if (s.selection !== prev.selection) this.setHighlight(s);
     if (s.visibility.colourBy === "contour") this.recolour(s);
+    this.redeform(s);
+  }
+
+  /** V4d: where the deformed shape's displacement comes from (app.ts wires the effects). */
+  setDisplacementSource(source: () => DisplacementData | null): void {
+    this.dispSource = source;
+    this.redeform(this.store.get());
+  }
+
+  /** The ghost shows behind a deformed mesh, when the user asked for it. */
+  private ghostWanted(s: State): boolean {
+    return s.deform.ghost && this.full !== null && this.full.key !== "base";
+  }
+
+  /**
+   * Move the drawn vertices when what the deformed shape shows changed (a
+   * step, a scale, a re-read, the toggle): every primitive's positions are
+   * recomputed once, then written in place into the drawn faces and lines
+   * (no rebuild), with the markers, the ghost and the selection outline.
+   */
+  private redeform(s: State): void {
+    const info = s.mesh;
+    if (!info || !this.drawn) return;
+    const next = positionsFor(s, info, this.blobs, this.dispSource(), this.full);
+    let changed = false;
+    if (next !== null && next !== this.full) {
+      this.full = next;
+      writePositions(this.faces, this.lines, next, this.drawn, this.edges && this.edgeMap ? { object: this.edges, map: this.edgeMap } : null);
+      this.setMarkers(info);
+      if (this.edges) this.edges.visible = edgesShown(s.visibility.edges, next);
+      // The selection outline follows the moved vertices (no pulse: the selection did not change).
+      if (s.selection.decls.length) this.setHighlight(s, false);
+      changed = true;
+    }
+    const ghost = this.ghostWanted(s) && s.phase.at?.kind !== "geometry";
+    if (ghost !== this.ghost.visible) {
+      this.ghost.visible = ghost;
+      changed = true;
+    }
+    if (changed) this.requestRender();
+  }
+
+  /** The markers of drawn nodes with no displacement at the step shown (none when undeformed). */
+  private setMarkers(info: MeshInfo): void {
+    this.clear(this.markers);
+    if (this.full && this.drawn) for (const o of missingMarkerObjects(this.full, info, this.blobs, this.drawn)) this.markers.add(o);
   }
 
   /** V4c1: where the contour's step data comes from (app.ts wires the effects). */
@@ -221,6 +286,8 @@ export class Viewport {
     this.geometryLayer.visible = show;
     this.content.visible = !onGeometry;
     this.highlight.visible = !onGeometry;
+    this.markers.visible = !onGeometry;
+    this.ghost.visible = !onGeometry && this.ghostWanted(s);
     // A geometry opened alone is framed when it first shows.
     if (show && !wasShown && !s.mesh && this.geometryInfo) this.frameGeometry(this.geometryInfo);
     if (!prev || s.geometry !== prev.geometry || s.phase !== prev.phase || s.artifacts !== prev.artifacts) this.requestRender();
@@ -362,8 +429,12 @@ export class Viewport {
     this.lines = null;
     this.faces = null;
     this.edges = null;
+    this.edgeMap = null;
     this.drawn = null;
     this.index = null;
+    this.full = null;
+    this.clear(this.ghost);
+    this.clear(this.markers);
     if (!info) return this.requestRender();
     this.indexOf(info);
     this.rebuild(this.store.get(), info);
@@ -377,6 +448,7 @@ export class Viewport {
     this.lines = null;
     this.faces = null;
     this.edges = null;
+    this.edgeMap = null;
     const drawn = this.visible(s, info);
     this.drawn = drawn;
     // V4c1: a contour colours per vertex from the step on screen; until its
@@ -385,8 +457,13 @@ export class Viewport {
     const cc = contour ? (this.contourFor(s, info, drawn) ?? { line: noDataColours(drawn.lineMap, 2), tri: noDataColours(drawn.triMap, 3), key: "no-data:loading" }) : null;
     this.contourApplied = cc?.key ?? null;
     const source = contour ? { legend: [], line: new Int32Array(0), tri: new Int32Array(0), edge: toHexNumber(DARK.edge) } : this.colourSource(s, info);
+    // V4d: the positions drawn are the deformed ones when the deformed shape
+    // shows (copied out: writePositions later moves them in place, so they
+    // never alias a mesh blob), and the ghost is the undeformed mesh.
+    const full = positionsFor(s, info, this.blobs, this.dispSource(), this.full) ?? this.full ?? basePositions(info, this.blobs);
+    this.full = full;
 
-    const tri = Viewport.gather(this.blobs.f32(info.triPositions), drawn.triMap, 9);
+    const tri = gatherInto(full.tri, drawn.triMap, 9);
     if (tri.length) {
       const g = new THREE.BufferGeometry();
       g.setAttribute("position", new THREE.BufferAttribute(tri, 3));
@@ -408,7 +485,10 @@ export class Viewport {
       const edgeMap = drawn.edgeMask
         ? Int32Array.from(drawn.edgeMask.reduce<number[]>((acc, v, i) => (v ? (acc.push(i), acc) : acc), []))
         : Int32Array.from({ length: ep.length / 6 }, (_, i) => i);
-      const edge = Viewport.gather(ep, edgeMap, 6);
+      // The drawn edges are a copy of the drawn (possibly deformed) positions,
+      // moved in place with the faces (V4d); the ghost reads the blobs itself.
+      this.edgeMap = edgeMap;
+      const edge = gatherInto(full.edge, edgeMap, 6);
       if (edge.length) {
         const eg = new THREE.BufferGeometry();
         eg.setAttribute("position", new THREE.BufferAttribute(edge, 3));
@@ -417,11 +497,16 @@ export class Viewport {
         this.content.add(this.edges);
       }
     }
-    const line = Viewport.gather(this.blobs.f32(info.linePositions), drawn.lineMap, 6);
+    const line = gatherInto(full.line, drawn.lineMap, 6);
     if (line.length) {
       this.lines = this.makeLines(line, cc ? cc.line : this.colours(source.legend, source.line, drawn.lineMap, 2), 3);
       this.content.add(this.lines);
     }
+    // V4d: the ghost of what is drawn, and the markers of its nodes with no displacement.
+    this.clear(this.ghost);
+    for (const o of ghostObjects(info, this.blobs, drawn, this.edgeMap)) this.ghost.add(o);
+    this.ghost.visible = this.ghostWanted(s) && s.phase.at?.kind !== "geometry";
+    this.setMarkers(info);
     this.applyVisibility(s, false);
     this.applyDim(s.selection.decls.length > 0);
     this.requestRender();
@@ -440,7 +525,7 @@ export class Viewport {
         return;
       }
     }
-    if (this.edges) this.edges.visible = s.visibility.edges;
+    if (this.edges) this.edges.visible = edgesShown(s.visibility.edges, this.full);
     if (this.faces) {
       const m = this.faces.material as THREE.MeshStandardMaterial;
       // Line elements inside solids (embedded rebar) would be hidden: see through the solids.
@@ -523,11 +608,20 @@ export class Viewport {
 
   /** The frame effect's target: frame `focus` (the selection's bounds), or the whole model, keeping the heading. */
   frameTo(focus: Focus | null): void {
-    const info = this.store.get().mesh;
-    if (info) this.frame(info, this.nav.heading, focus);
+    const s = this.store.get();
+    const info = s.mesh;
+    if (!info) return;
+    // V4d: frame what is drawn: the selection where it is drawn, or the whole (deformed) model (renderer/deform.ts `frameFocus`).
+    const idx = this.indexOf(info);
+    const selected = s.selection.decls.flatMap((d) => {
+      const e = idx.byPath.get(d);
+      const p = e === undefined ? undefined : idx.prims.get(e);
+      return p ? [p] : [];
+    });
+    this.frame(info, this.nav.heading, frameFocus(this.full, info, this.blobs, this.drawn, selected, focus));
   }
 
-  private setHighlight(s: State): void {
+  private setHighlight(s: State, pulse = true): void {
     this.clear(this.highlight);
     this.lineMaterials = this.lineMaterials.filter((m) => this.lines?.material === m);
     const info = s.mesh;
@@ -543,9 +637,9 @@ export class Viewport {
       const p = e === undefined ? undefined : idx.prims.get(e);
       return p ? [p] : [];
     });
-    const lp = this.blobs.f32(info.linePositions), tp = this.blobs.f32(info.triPositions);
-    for (const o of highlightObjects(lp, tp, prims, (pos, width) => this.makeLines(pos, null, width, SELECTION_COLOUR))) this.highlight.add(o);
-    this.halo.pulse();
+    // V4d: the outline follows the drawn (possibly deformed) positions.
+    for (const o of selectionOutline(this.full, info, this.blobs, prims, (pos, width) => this.makeLines(pos, null, width, SELECTION_COLOUR))) this.highlight.add(o);
+    if (pulse) this.halo.pulse();
     this.requestRender();
   }
 
@@ -556,30 +650,12 @@ export class Viewport {
     if (!info || !drawn) return null;
     const lineElement = this.blobs.i32(info.lineElement), triElement = this.blobs.i32(info.triElement);
     this.aim(clientX, clientY);
-    const pick = (e: number, p: THREE.Vector3): Pick => {
-      const decl = info.elements[e];
-      if (decl === undefined) throw new Error(`viewport: element index ${e} is not in the mesh`);
-      return this.pickOf(decl, [p.x, p.y, p.z]);
-    };
-    if (this.lines) {
-      const hits = this.raycaster
-        .intersectObject(this.lines, false)
-        .filter((h) => h.faceIndex !== undefined && h.faceIndex !== null);
-      if (hits.length) {
-        // An OpenSees-only element (no cell) drawn on the same nodes as a cell
-        // would be unreachable behind it; among coincident hits, prefer it.
-        const near = hits[0]!.distance + 1e-6 * info.radius;
-        const coincident = hits.filter((h) => h.distance <= near);
-        const ops = coincident.find((h) => info.elements[lineElement[drawn.lineMap[h.faceIndex!]!]!]!.startsWith("opensees/element/"));
-        const h = ops ?? coincident[0]!;
-        return pick(lineElement[drawn.lineMap[h.faceIndex!]!]!, h.point);
-      }
-    }
-    if (this.faces) {
-      const hit = this.raycaster.intersectObject(this.faces, false)[0];
-      if (hit && hit.faceIndex !== undefined && hit.faceIndex !== null) return pick(triElement[drawn.triMap[hit.faceIndex]!]!, hit.point);
-    }
-    return null;
+    // The objects hold the drawn positions (deformed when the deformed shape shows, V4d).
+    const hit = hitElement(this.raycaster, this.lines, this.faces, drawn, info.elements, lineElement, triElement, info.radius);
+    if (!hit) return null;
+    const decl = info.elements[hit.element];
+    if (decl === undefined) throw new Error(`viewport: element index ${hit.element} is not in the mesh`);
+    return this.pickOf(decl, [hit.point.x, hit.point.y, hit.point.z]);
   }
 
   /**
@@ -606,11 +682,12 @@ export class Viewport {
     const prims = e === undefined ? undefined : idx.prims.get(e);
     if (!prims) return null;
     const p = new THREE.Vector3();
+    const pos = drawnPositions(this.full, info, this.blobs);
     if (prims.lines.length) {
-      const a = this.blobs.f32(info.linePositions), li = prims.lines[0]!;
+      const a = pos.line, li = prims.lines[0]!;
       p.set((a[6 * li]! + a[6 * li + 3]!) / 2, (a[6 * li + 1]! + a[6 * li + 4]!) / 2, (a[6 * li + 2]! + a[6 * li + 5]!) / 2);
     } else if (prims.tris.length) {
-      const a = this.blobs.f32(info.triPositions), ti = prims.tris[0]!;
+      const a = pos.tri, ti = prims.tris[0]!;
       p.set(
         (a[9 * ti]! + a[9 * ti + 3]! + a[9 * ti + 6]!) / 3,
         (a[9 * ti + 1]! + a[9 * ti + 4]! + a[9 * ti + 7]!) / 3,

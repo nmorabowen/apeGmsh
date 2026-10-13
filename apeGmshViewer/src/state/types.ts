@@ -200,9 +200,10 @@ export interface MeshInfo {
   /**
    * V4c1: the node tag at every drawn vertex (f64: 2 per segment, 3 per
    * triangle), as mesh/build.ts read it from the connectivity; a contour
-   * colours through it.
+   * colours through it. V4d adds `edge` (2 per outline edge), which the
+   * deformed shape moves the outline edges through.
    */
-  vertexNodes: { line: BlobRef; tri: BlobRef };
+  vertexNodes: { line: BlobRef; tri: BlobRef; edge: BlobRef };
 }
 
 /** The render derivation of the geometry artifact (the `/geometry` sibling, V2a spec). */
@@ -330,6 +331,26 @@ export interface ContourState {
   reads: number;
 }
 
+/**
+ * The model's spatial dimension, as the deformed shape needs it (V4d): `/meta/ndm`
+ * read from neutral 2.34.0 on, where it is the `ops.model(ndm=)` dimension
+ * (h5-schema.md, the `/meta` table). Null, with the reason, when the file
+ * declares none (`0`: a broker-only file) or stamps the mesh dimension (an
+ * older file): then nothing is taken to be 2-D.
+ */
+export type SpatialNdm = { ndm: 2 | 3; source: string } | { ndm: null; reason: string };
+
+/** The deformed shape (V4d, #1765): the user's toggle, scale and reference ghost, and the effects' count of drawn nodes with no displacement. */
+export interface DeformState {
+  on: boolean;
+  /** positions are `x + scale * u`; 1 is true scale (the Qt `deform_scale` default) */
+  scale: number;
+  /** the undeformed mesh drawn faint behind the deformed one (Qt `add_reference_ghost`) */
+  ghost: boolean;
+  /** the drawn nodes and those with no displacement at the step shown; `key` is selectors `deformView(...).keys.count` */
+  measured: { key: string; drawn: number; missing: number } | null;
+}
+
 /** What the user clicked: the declaration, the hit point, and the cell's node tags as the viewport read them from the connectivity blob. */
 export interface Pick {
   decl: DeclPath;
@@ -435,6 +456,10 @@ export interface State {
   resultStep: ResultStepStatus | null;
   /** V4c1: the nodal contour (shown when `visibility.colourBy` is `contour`) */
   contour: ContourState;
+  /** V4d: the model's spatial dimension (`/meta/ndm`), or why it is not known */
+  ndm: SpatialNdm;
+  /** V4d: the deformed shape */
+  deform: DeformState;
 }
 
 /** The payload of `fileLoaded` for the model artifact: what the loader derived from the file. */
@@ -453,6 +478,8 @@ export interface ModelLoad {
   sequence: SequenceZone;
   lineage: Lineage | null;
   stageElements: StageElements;
+  /** V4d: the model's spatial dimension; absent means not read (nothing is taken to be 2-D) */
+  ndm?: SpatialNdm;
 }
 
 /** The payload of `fileLoaded` for the geometry artifact. */
@@ -513,6 +540,14 @@ export type Event =
   /** V4c1 (effects): the finite range of the step shown, for the key it was measured on */
   | { type: "contourStepRange"; key: string; min: number | null; max: number | null }
   /** V4c1 (effects): the history scan started, progressed, finished or failed */
-  | { type: "contourScan"; scan: ContourScan };
+  | { type: "contourScan"; scan: ContourScan }
+  /** V4d: draw the mesh deformed by the nodal displacement of the results step shown, or not */
+  | { type: "setDeform"; on: boolean }
+  /** V4d: the deformation scale (finite, above 0; 1 is true scale) */
+  | { type: "setDeformScale"; scale: number }
+  /** V4d: the undeformed reference ghost behind the deformed mesh */
+  | { type: "setReferenceGhost"; on: boolean }
+  /** V4d (effects): how many drawn nodes the step shown leaves with no displacement, for the key it was counted on */
+  | { type: "deformMeasured"; key: string; drawn: number; missing: number };
 
 export type EventType = Event["type"];

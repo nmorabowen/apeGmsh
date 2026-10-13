@@ -11,8 +11,10 @@ import { activationNotice, activationOf, type Activation } from "./activation.ts
 import { pairingNotice, pairResults, type ResultsPairing } from "./results.ts";
 import { climOf, componentName, componentOf, contourKeysOf, fieldsOf, type Clim, type FieldComponent, type NodalField } from "./contour.ts";
 import type { BlobRef, ContourCmap } from "./types.ts";
+import { displacementAxes } from "./deform.ts";
 
 export type { Clim, FieldComponent, NodalField } from "./contour.ts";
+export { GHOST_OPACITY, scaleLabel } from "./deform.ts";
 export { CMAP_NAMES, CMAPS, MAGNITUDE, NO_DATA_RGB, RANGE_MODES, sampleCmap } from "./contour.ts";
 
 export type { Activation } from "./activation.ts";
@@ -241,6 +243,9 @@ export function noticesOf(s: State): string[] {
   const st = at?.kind === "results" ? s.results?.stages[at.stage] : undefined;
   for (const r of st?.refusedNodal ?? []) out.push(`Nodal component ${r.component} not read: ${r.reason}.`);
   if (s.contour.notice) out.push(s.contour.notice);
+  // V4d: drawn nodes the deformed shape leaves undeformed, or why it is not drawn.
+  const d = deformNotice(s);
+  if (d) out.push(d);
   return out;
 }
 
@@ -305,6 +310,95 @@ export function contourFieldsOf(s: State): { fields: NodalField[]; refused: { co
   const at = s.phase.at;
   const st = at?.kind === "results" ? s.results?.stages[at.stage] : undefined;
   return st ? { fields: fieldsOf(st), refused: st.refusedNodal } : null;
+}
+
+// -- V4d: the deformed shape ----------------------------------------------------
+
+/** What the deformed shape draws, besides its state: the datasets, the scale, the ghost, and the keys of the step shown. */
+export interface DeformDraw {
+  /** the x, y and z displacement datasets; z null in a 2-D model */
+  datasets: readonly [string, string, string | null];
+  /** a sentence about the axes (the 2-D case), or null */
+  note: string | null;
+  scale: number;
+  ghost: boolean;
+  stageName: string;
+  /** the stage's `_ids` blob */
+  nodeIds: BlobRef;
+  /**
+   * `disp` names the displacement of the step shown: the results read
+   * (V4c1's count: a re-read at the same path may hold other values), the
+   * file, the stage, the step, the mesh and the datasets. `count` adds what
+   * is drawn (the hidden set), which the missing-node count depends on.
+   */
+  keys: { disp: string; count: string };
+}
+
+export type DeformView =
+  | { state: "off" }
+  /** on, and there is nothing to deform by (no results step, no displacement): the mesh is drawn undeformed */
+  | { state: "unavailable"; reason: string }
+  /** on, and the displacement cannot be used (a refused axis, unnamed components, no z in a model not declared 2-D) */
+  | { state: "refused"; reason: string }
+  /** the drawn nodes are not counted yet for the step shown */
+  | ({ state: "loading" } & DeformDraw)
+  /** every drawn node has a displacement */
+  | ({ state: "ready"; drawn: number } & DeformDraw)
+  /** `missing` drawn nodes have none: drawn undeformed and marked, and the banner says how many */
+  | ({ state: "partial"; drawn: number; missing: number } & DeformDraw);
+
+/**
+ * Whether the stage shown can be deformed: the displacement to use, or why
+ * not (`unavailable` / `refused`). The legend disables the toggle with the
+ * reason; `deformView` adds the user's toggle and the effects' count.
+ */
+export function deformOf(s: State): { ok: true; draw: DeformDraw } | { ok: false; state: "unavailable" | "refused"; reason: string } {
+  const p = resultsPairing(s);
+  if (!s.results || p.state !== "paired") return { ok: false, state: "unavailable", reason: "no results file pairs with this model, so there is no displacement" };
+  const at = s.phase.at;
+  if (at?.kind !== "results") return { ok: false, state: "unavailable", reason: "the deformed shape shows a results step: choose results in the phase bar" };
+  const st = s.results.stages[at.stage];
+  if (!st) return { ok: false, state: "unavailable", reason: `results stage ${at.stage} is not in the file` };
+  if (!s.mesh) return { ok: false, state: "unavailable", reason: "no mesh is loaded" };
+  const axes = displacementAxes(st, s.ndm);
+  if (!axes.ok) return { ok: false, state: axes.kind === "absent" ? "unavailable" : "refused", reason: axes.reason };
+  if (!st.nodeIds) return { ok: false, state: "unavailable", reason: `the node ids of stage ${st.name || st.id} are not loaded` };
+  const disp = `read ${s.contour.reads}|${s.results.path}|${st.id}|${at.step}|mesh ${s.mesh.vertexNodes.tri.id}|${axes.datasets.join(",")}`;
+  return {
+    ok: true,
+    draw: {
+      datasets: axes.datasets,
+      note: axes.note,
+      scale: s.deform.scale,
+      ghost: s.deform.ghost,
+      stageName: st.name || st.id,
+      nodeIds: st.nodeIds,
+      keys: { disp, count: `${disp}|hidden ${s.visibility.hidden.join(",")}` },
+    },
+  };
+}
+
+/** What the deformed shape draws, or why it does not (V4d). */
+export function deformView(s: State): DeformView {
+  if (!s.deform.on) return { state: "off" };
+  const d = deformOf(s);
+  if (!d.ok) return { state: d.state, reason: d.reason };
+  const m = s.deform.measured;
+  if (!m || m.key !== d.draw.keys.count) return { state: "loading", ...d.draw };
+  return m.missing > 0 ? { state: "partial", drawn: m.drawn, missing: m.missing, ...d.draw } : { state: "ready", drawn: m.drawn, ...d.draw };
+}
+
+/** The banner's line for a deformed shape that leaves drawn nodes undeformed, or that cannot be drawn; null otherwise. */
+export function deformNotice(s: State): string | null {
+  const v = deformView(s);
+  if (v.state === "partial") {
+    return (
+      `Deformed shape: ${v.missing.toLocaleString()} of ${v.drawn.toLocaleString()} drawn nodes have no displacement at this step ` +
+      "(not recorded, or NaN): they are drawn undeformed and marked, never moved by a displacement of 0."
+    );
+  }
+  if (v.state === "refused") return `Deformed shape not drawn: ${v.reason}.`;
+  return null;
 }
 
 // -- V4b: results pairing, the time axis and stage activation ---------------------

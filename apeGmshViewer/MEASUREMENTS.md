@@ -548,3 +548,54 @@ for runs 1 to 3). The scrub follows the machine's load more than the code:
   values), takes 0.5 to 0.6 s, reading about 4 MB per chunk. The peak, 296 to
   398 MB, is above V4a's 234 to 240 MB: this window also holds the model,
   its mesh and its panels, which V4a's blank measuring page did not.
+
+### Deformed contour scrub (V4d, #1765)
+
+The contour scrub above, run again in the same window with the deformed
+shape on at true scale: each step also waits for the displacement of every
+vertex (through the vertex node ids), the new positions of the drawn faces,
+segments and (runs 4 to 6) outline edges written in place, their normals and
+bounds, and a finished draw (`gl.finish()`). `npm run measure` prints this
+row after the contour row; the commands are the ones above. The files'
+synthetic displacement is huge (`id + 0.001 k`), which costs nothing extra.
+The history-scan column is not re-timed in the deformed pass (it reads 1 ms
+there), so it is left out. Runs 1 to 3 are at `8f440c5d`, with the outline
+edges hidden on the deformed mesh; runs 4 to 6 at `5b51405f`, where the edges
+follow their nodes (the code under review, the ones to quote). Same machine,
+with the contour-only row of the same run beside each:
+
+| run | file | steps | CPU before / during | scrub (steps/s), contour → **deformed** | step median / max (ms), deformed | peak MB main+renderer, deformed |
+|---|---|---|---|---|---|---|
+| 1 | (a) | 100 | 41 / 40 % | 325.1 → **235.8** | 3.80 / 17.7 | 315 (154 + 161) |
+| 1 | (c) | 5 000 | 41 / 40 % | 350.5 → **260.8** | 3.60 / 9.8 | 454 (235 + 218) |
+| 2 | (a) | 100 | 33 / 42 % | 286.5 → **240.8** | 3.90 / 7.3 | 321 (154 + 167) |
+| 2 | (c) | 5 000 | 42 / 48 % | 368.7 → **247.1** | 3.70 / 10.0 | 400 (169 + 231) |
+| 3 | (a) | 100 | 47 / 46 % | 325.2 → **224.4** | 4.20 / 8.4 | 321 (152 + 169) |
+| 3 | (c) | 5 000 | 40 / 52 % | 360.9 → **257.2** | 3.60 / 11.4 | 385 (160 + 225) |
+| 4 | (a) | 100 | 33 / 33 % | 340.3 → **240.9** | 3.90 / 6.8 | 317 (159 + 159) |
+| 4 | (c) | 5 000 | 30 / 40 % | 401.4 → **245.8** | 3.80 / 10.8 | 443 (230 + 213) |
+| 5 | (a) | 100 | 37 / 47 % | 344.0 → **221.8** | 4.30 / 8.0 | 319 (157 + 162) |
+| 5 | (c) | 5 000 | 34 / 39 % | 403.2 → **247.3** | 3.80 / 10.8 | 393 (157 + 236) |
+| 6 | (a) | 100 | 34 / 44 % | 342.6 → **222.6** | 4.30 / 7.7 | 310 (152 + 158) |
+| 6 | (c) | 5 000 | 37 / 45 % | 393.8 → **238.2** | 3.90 / 11.5 | 409 (196 + 213) |
+| R | (a) | 100 | n/a / 47 % | n/a → **209.3** | n/a / 9.0 | 326 |
+
+Row R is the reviewer's re-measure of (a) at `fca86de6` (#1820 round 1), at
+47 % CPU; the reviewer reported the scrub, the worst step and the peak, not
+the other columns. It is the worst (a) value, and the one quoted.
+
+Worst over runs 4 to 6 and R (the code under review), and over every run:
+
+| file | deformed scrub (steps/s): runs 4 to 6 and R, **worst** (every run) | step max (ms), worst | peak MB, worst | CPU during |
+|---|---|---|---|---|
+| (a) | 209 to 241, **209** (209) | 9.0 (17.7) | 326 (326) | 33 to 47 % |
+| (c) | 238 to 247, **238** (238) | 11.5 (11.5) | 443 (454) | 39 to 45 % |
+
+- **The D5 revisit trigger does not fire**: the worst deformed scrub, 209
+  steps/s (the reviewer's run), is seven times the 30 steps/s floor, and
+  the worst peak, 454 MB, under a quarter of 2 GB. The machine was at 33 to
+  52 % CPU (V4c1's reviewer run fell to a third of the author's at 91 %).
+- The deformed shape costs about 1 ms a step on these files (median 2.5 to
+  3.3 ms → 3.6 to 4.3 ms): the per-vertex displacement, the positions of
+  2 860 triangles, their normals and the outline edges, and the legend's
+  "step loading" line.

@@ -270,7 +270,12 @@ export function meshInfoOf(model: ModelFile, mesh: MeshBuffers, blobs: BlobStore
     lineGroup: blobs.put("model/mesh/lineGroup", lines.group),
     triGroup: blobs.put("model/mesh/triGroup", tris.group),
     // V4c1: the node tag of every drawn vertex (mesh/build.ts), what a contour colours through.
-    vertexNodes: { line: blobs.put("model/mesh/lineNodes", mesh.lineNodes), tri: blobs.put("model/mesh/triNodes", mesh.triNodes) },
+    vertexNodes: {
+      line: blobs.put("model/mesh/lineNodes", mesh.lineNodes),
+      tri: blobs.put("model/mesh/triNodes", mesh.triNodes),
+      // V4d: the node tag of every outline-edge vertex, what the deformed shape moves the edges through.
+      edge: blobs.put("model/mesh/edgeNodes", mesh.edgeNodes),
+    },
     elements,
     legend,
     adjacency,
