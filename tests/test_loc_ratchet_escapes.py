@@ -7,19 +7,21 @@ file under land_pr check 8) and reuses its LOC definition.
 
 1. **A new sibling package.**  Code moved out of ``viewers/`` into a new
    ``src/apeGmsh/<name>/`` lowers the ``viewers`` count, and nothing counts
-   the new package.  Every top-level package must therefore be a ratchet
-   surface (a ``BASELINE`` key naming a directory) or be listed in
-   ``PACKAGES_BASELINE``, the set present on main when this guard landed.
+   the new package.  Every top-level package must therefore be a directory
+   the ratchet counts (a ``_DIRS`` entry of the ratchet; a ``BASELINE`` key
+   such as ``section_gui`` or ``from_recorders`` is a surface name, not a
+   counted directory) or be listed in ``PACKAGES_BASELINE``, the set present
+   on main when this guard landed.
    A package is a direct child directory of ``src/apeGmsh/`` holding at least
    one ``.py`` file at any depth (so namespace packages count too).
 
 2. **Thinning ``Results.from_recorders`` into a helper.**  The ratchet counts
    only the method's own span, so moving its body into ``_helper`` in the same
-   module shrinks the count.  ``closure_loc`` counts the method plus every
-   same-module function, class and ``Results`` method it reaches transitively.
-   "Reaches" means any reference, not only a call: a bare name of a
-   module-level function or class, or ``self.``/``cls.``/``Results.<method>``
-   (``type(self).<method>`` too).  Spans run from ``lineno`` to
+   module shrinks the count.  ``closure_loc`` counts the method plus the
+   same-module defs it names, followed transitively through exactly these
+   reference forms (any reference, not only a call): a bare name of a
+   module-level function or class, and ``self.``/``cls.``/``Results.`` or
+   ``type(self).``/``type(cls).<method>`` on a ``Results`` method.  Spans run from ``lineno`` to
    ``end_lineno`` (decorators excluded, as in the ratchet), and a line shared
    by two spans counts once.  The sum may not exceed
    ``FROM_RECORDERS_CLOSURE_BASELINE``.
@@ -28,6 +30,21 @@ Both pins are baselines.  Adding a package to ``PACKAGES_BASELINE`` or raising
 ``FROM_RECORDERS_CLOSURE_BASELINE`` is a maintainer gate (PROGRAM section 4,
 ``human-gate`` label), never a fix for a red test.  Removing a stale package
 name or lowering the number only tightens the guard.
+
+Known limits (not followed or not counted; review of #1884):
+
+- a local alias of the class (``k = cls; k._x()``; ``from_native`` already
+  binds ``cls`` to a local this way), ``getattr(cls, "_x")`` and other
+  dynamic lookups, and module-level lambda or dispatch tables;
+- code moved out of ``Results.py`` into another module (for example
+  ``results/writers/_cache.py``): the closure is same-module only;
+- a new top-level ``.py`` module under ``src/apeGmsh/`` (route 1 checks
+  packages only);
+- a new sibling file inside ``sections/`` or ``core/``: the ``section_gui``
+  and ``rebar`` surfaces are file lists there, so code moved into a new file
+  beside them escapes;
+- this file is not yet in land_pr's ``BASELINE`` tuple (follow-up G4), so
+  editing its pins does not by itself trip the human gate.
 """
 from __future__ import annotations
 
@@ -36,7 +53,7 @@ from pathlib import Path
 
 import pytest
 
-from tests.test_loc_ratchet import SRC, BASELINE, from_recorders_loc, loc
+from tests.test_loc_ratchet import _DIRS, SRC, from_recorders_loc, loc
 
 _RESULTS = "results/Results.py"
 _GATE = ("A new or re-added pin is a maintainer gate (PROGRAM.md section 4, "
@@ -62,14 +79,15 @@ def top_level_packages(root: Path = SRC) -> set[str]:
             if d.is_dir() and d.name != "__pycache__" and any(d.rglob("*.py"))}
 
 
-def ratchet_packages(root: Path = SRC) -> set[str]:
-    """``BASELINE`` keys that name a top-level directory (the counted surfaces)."""
-    return {name for name in BASELINE if (root / name).is_dir()}
+#: Top-level directories the ratchet counts as a whole (its ``_DIRS``).  A
+#: ``BASELINE`` key alone is not enough: ``section_gui`` and ``from_recorders``
+#: name file-level surfaces, so a package with that name would go uncounted.
+RATCHET_PACKAGES: frozenset[str] = frozenset(d for dirs in _DIRS.values() for d in dirs)
 
 
 def package_findings(root: Path = SRC) -> list[str]:
     found = top_level_packages(root)
-    covered = ratchet_packages(root)
+    covered = RATCHET_PACKAGES
     msgs = [f"src/apeGmsh/{name}/ is a new top-level package that no LOC ratchet "
             "counts: code moved here from a frozen surface would escape it. Put the "
             "code in an existing package, or ask the maintainer to add "
@@ -91,7 +109,7 @@ def test_no_unpinned_top_level_package() -> None:
 
 
 def test_new_package_fails_and_names_the_gate(tmp_path: Path) -> None:
-    for name in sorted(PACKAGES_BASELINE | ratchet_packages()):
+    for name in sorted(PACKAGES_BASELINE | RATCHET_PACKAGES):
         (tmp_path / name).mkdir()
         (tmp_path / name / "__init__.py").write_text("", encoding="utf-8")
     (tmp_path / "__pycache__").mkdir()
@@ -101,6 +119,17 @@ def test_new_package_fails_and_names_the_gate(tmp_path: Path) -> None:
     (tmp_path / "_tmp_escape" / "sub" / "m.py").write_text("x = 1\n", encoding="utf-8")
     (msg,) = package_findings(tmp_path)
     assert "_tmp_escape" in msg and "maintainer gate" in msg and "human-gate" in msg
+
+
+@pytest.mark.parametrize("name", ["section_gui", "from_recorders"])
+def test_file_level_surface_name_is_not_a_covered_package(tmp_path: Path, name: str) -> None:
+    """A BASELINE key that names files, not a directory, does not admit a package."""
+    assert name not in RATCHET_PACKAGES and name not in PACKAGES_BASELINE
+    for pkg in sorted(PACKAGES_BASELINE | RATCHET_PACKAGES | {name}):
+        (tmp_path / pkg).mkdir()
+        (tmp_path / pkg / "__init__.py").write_text("", encoding="utf-8")
+    (msg,) = package_findings(tmp_path)
+    assert f"src/apeGmsh/{name}/ is a new top-level package" in msg
 
 
 # -- route 2: from_recorders thinned into a same-module helper -----------------
@@ -166,8 +195,11 @@ def test_from_recorders_closure_does_not_grow() -> None:
     assert current <= FROM_RECORDERS_CLOSURE_BASELINE, (
         f"Results.from_recorders plus its same-module closure ({names}) is {current} "
         f"LOC > baseline {FROM_RECORDERS_CLOSURE_BASELINE}. The surface is frozen; "
-        "moving its body into a helper in Results.py does not shrink it. "
-        f"Do not raise the baseline. {_GATE}")
+        "moving its body into a helper in Results.py does not shrink it. The "
+        "closure also counts from_native, a shared live callee: if the growth is "
+        "legitimate work there (not code moved out of from_recorders), ask the "
+        "maintainer to rule on the baseline (PROGRAM.md section 4, `human-gate` "
+        "label) rather than raising it in your PR.")
 
 
 _THIN = '''\
