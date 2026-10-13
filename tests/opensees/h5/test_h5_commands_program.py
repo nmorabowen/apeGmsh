@@ -374,8 +374,23 @@ def test_global_eigen_inside_a_stage_raises() -> None:
 
 
 def _ledgered_frame() -> apeSees:
-    ops = _frame(rayleigh=False, modal=False)
-    ops.equation_constraint(constrained=(2, 1), retained=[(1, 1, -1.0)])
+    """The frame plus an ``enforce="equation"`` tie: its
+    ``equationConstraint`` row is a ledger call deck replay skips. (A
+    bridge-level ``apeSees.equation_constraint`` row is archived and
+    replayed, so it is not ledgered: #1805.)"""
+    from apeGmsh._kernel.records._constraints import InterpolationRecord
+    from apeGmsh._kernel.records._kinds import ConstraintKind
+
+    fem = build_simple_frame_fem().with_constraint(InterpolationRecord(
+        kind=ConstraintKind.TIE, name="eq", slave_node=2, master_nodes=[1],
+        weights=np.array([1.0]), dofs=[1], enforce="equation"))
+    ops = apeSees(cast("object", fem))
+    ops.model(ndm=3, ndf=6)
+    transf = ops.geomTransf.Linear(vecxz=(1.0, 0.0, 0.0))
+    ops.element.elasticBeamColumn(
+        pg="Cols", transf=transf,
+        A=0.0125, E=2900.25, Iz=1.5e-4, Iy=2.5e-4, G=1100.75, J=3.5e-4,
+    )
     return ops
 
 
@@ -390,8 +405,8 @@ def test_no_ledger_no_warning(tmp_path: Path) -> None:
 
 
 def test_one_dropped_row_is_one_warning(tmp_path: Path) -> None:
-    """``equationConstraint`` raises its own deferred warning; the ledger
-    warning skips it, so the row warns once across every category."""
+    """The equation tie's dropped row warns once across every category:
+    one ledger warning, no deferred warning."""
     ops = _ledgered_frame()
     with warnings.catch_warnings(record=True) as rec:
         warnings.simplefilter("always")
@@ -400,8 +415,9 @@ def test_one_dropped_row_is_one_warning(tmp_path: Path) -> None:
         w for w in rec
         if issubclass(w.category, (H5LedgerWarning, H5FeatureDeferredWarning))
     ]
-    assert [w.category for w in about_archive] == [H5FeatureDeferredWarning], [
+    assert [w.category for w in about_archive] == [H5LedgerWarning], [
         (w.category.__name__, str(w.message)[:80]) for w in rec]
+    assert "equationConstraint x1" in str(about_archive[0].message)
     others = [w for w in rec if w not in about_archive]
     assert all(issubclass(w.category, OpenSeesAutoEmitWarning)
                for w in others), [(w.category.__name__, str(w.message)[:80])
@@ -411,9 +427,9 @@ def test_one_dropped_row_is_one_warning(tmp_path: Path) -> None:
 def test_automatic_write_warns_once_about_the_dropped_row(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The automatic write silences ``H5FeatureDeferredWarning``, so the
-    ledger warning must carry ``equationConstraint`` there: one warning,
-    not zero."""
+    """The automatic write silences ``H5FeatureDeferredWarning``; the
+    ledger warning still carries the tie's ``equationConstraint`` there:
+    one warning, not zero."""
     art = tmp_path / "artifacts"
     art.mkdir()
     monkeypatch.setenv("APEGMSH_ARTIFACT_DIR", str(art))
