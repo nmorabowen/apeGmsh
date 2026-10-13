@@ -732,14 +732,19 @@ ops.pattern('Plain', 2, 2)
   `test` line); nothing carries over.
 - **Domain state and recorders kept:** `wipeAnalysis` leaves the domain alone;
   recorders are emitted once, before the first stage, never again.
-- **dt has no effect under Static; a differing dt warns.** OpenSees ignores
-  `analyze`'s `dt` under `Static`; `LoadControl.dlam` alone sets the step
-  (`_internal/stage_window.py::stage_increment_times`). A `Static` +
-  `LoadControl` stage whose `s.run(dt=)` differs from `dlam` raises
-  `InertStaticDtWarning` (from `apeGmsh.opensees`) at stage close, naming the
-  stage, `dt` and `dlam`; an omitted `dt` or `dt == dlam` is silent. `dt` is
-  the step only under `Transient`.
-<!-- verified: tests/opensees/test_stage_boundary_docs_claims.py, tests/opensees/unit/test_stage_chain.py -->
+- **dt has no effect under Static; a given dt warns.** OpenSees ignores
+  `analyze`'s `dt` under `Static`; the integrator alone sets the step
+  (`LoadControl.dlam`: `_internal/stage_window.py::stage_increment_times`).
+  A `Static` + `LoadControl` / `LadrunoLoadControl` stage whose `s.run(dt=)`
+  differs from `dlam` raises `InertStaticDtWarning` (from `apeGmsh.opensees`)
+  at stage close, naming the stage, `dt` and `dlam`; `dt == dlam` is silent.
+  Every other static integrator (`DisplacementControl`, `ArcLength`,
+  `LadrunoArcLength`, `LadrunoIndirectControl`, `LadrunoDynamicRelaxation`)
+  has no `dlam`, so any `dt` warns. The rule reads each integrator's
+  `static_step_field` ClassVar; an integrator that does not declare it warns
+  on any `dt`. An omitted `dt` is silent, and `dt` is the step only under
+  `Transient`.
+<!-- verified: tests/opensees/test_stage_boundary_docs_claims.py, tests/opensees/unit/test_stage_chain.py, tests/opensees/unit/test_inert_static_dt_all_static.py -->
 
 ### Stage verbs — PUSH vs PULL vs CLAIM
 
