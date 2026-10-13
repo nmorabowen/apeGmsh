@@ -20,10 +20,16 @@ the marker is what proves the deck reached its end.
 A row whose bridge deck does not run on this backend must be one the
 archive's solve stamp marks ``requires=("fork",)``; stock openseespy cannot
 build it, so there the test asserts only that refusal, and the static check
-is its only net. Any other bridge deck that does not run fails.
+is its only net, and the test then skips by name so ``-rs`` shows it.
+Any other bridge deck that does not run fails.
+
+openseespy is never imported into the pytest process: the decks run in
+subprocesses, so the gate is ``importlib.util.find_spec`` (#1836).
 """
 from __future__ import annotations
 
+import importlib.util
+import os
 import subprocess
 import sys
 import warnings
@@ -81,9 +87,16 @@ def _run(deck: Path) -> tuple[bool, str]:
                  f"stderr:\n{proc.stderr[-1500:]}")
 
 
+def _openseespy_or_skip() -> None:
+    """Skip unless openseespy is installed, without importing it here."""
+    if importlib.util.find_spec("openseespy") is None:
+        pytest.skip("openseespy is not installed (module 'openseespy' not "
+                    "found); the live net runs its decks with it")
+
+
 @pytest.fixture(autouse=True)
 def _openseespy() -> None:
-    pytest.importorskip("openseespy.opensees")
+    _openseespy_or_skip()
 
 
 def _bridge_runs(model: Model, bridge: Path, requires: tuple[str, ...]) -> bool:
@@ -99,12 +112,40 @@ def test_the_net_runs_some_stock_row() -> None:
     assert _B_ROWS and _FATAL_ROWS, "the live net would run nothing"
 
 
+def test_the_net_never_imports_openseespy_in_process() -> None:
+    """Collecting this module and passing its gate leave openseespy out
+    of ``sys.modules``. A fresh interpreter, because this process may
+    already hold it from another live test."""
+    root = Path(__file__).resolve().parents[3]
+    code = (
+        "import sys
+"
+        f"sys.path[:0] = [{str(root)!r}, {str(root / 'src')!r}]
+"
+        "import tests.opensees.golden.test_roundtrip_oracle_live as m
+"
+        "m._openseespy_or_skip()
+"
+        "print(sorted(k for k in sys.modules if k.split('.')[0] in "
+        "('openseespy', 'opensees')))
+"
+    )
+    proc = subprocess.run(
+        [sys.executable, "-c", code], capture_output=True, text=True,
+        timeout=300, cwd=str(root),
+        env={**os.environ, "LADRUNO_OPENSEES_QUIET": "1"},
+    )
+    assert proc.returncode == 0, proc.stderr[-1500:]
+    assert proc.stdout.strip().splitlines()[-1] == "[]", proc.stdout[-1500:]
+
+
 @pytest.mark.parametrize("model", _B_ROWS, ids=[m.id for m in _B_ROWS])
 def test_a_class_b_replay_runs_where_the_bridge_deck_runs(
         model: Model, tmp_path: Path) -> None:
     bridge, replay, requires = _decks(model, tmp_path)
     if not _bridge_runs(model, bridge, requires):
-        return  # a fork-only deck on a stock backend: asserted refused above
+        pytest.skip(f"{model.id}: fork-only (solve stamp requires=('fork',)); "
+                    "bridge refusal asserted")
     ran, log = _run(replay)
     assert ran, (
         f"{model.id} is class B but its replay deck does not run: a fatal "
