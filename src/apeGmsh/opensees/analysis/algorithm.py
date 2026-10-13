@@ -45,7 +45,7 @@ openseespy and Tcl paths.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, ClassVar, Literal
 
 from .._internal.types import Primitive, SolutionAlgorithm
 
@@ -160,6 +160,9 @@ class Linear(SolutionAlgorithm):
     non-default ``tangent``.
     """
 
+    #: One solve per step, no iteration: a stage may omit its test.
+    needs_test: ClassVar[bool] = False
+
     tangent: NewtonTangent = "tangent"
     factor_once: bool = False
 
@@ -197,6 +200,9 @@ class Newton(SolutionAlgorithm):
     tangent (OpenSees defaults ``0.1`` / ``0.9`` when omitted); supply both
     or neither.
     """
+
+    #: Iterates to convergence: a stage must give it a test.
+    needs_test: ClassVar[bool] = True
 
     tangent: NewtonRaphsonTangent = "tangent"
     hall_i_factor: float | None = None
@@ -240,6 +246,9 @@ class ModifiedNewton(SolutionAlgorithm):
     ``tangent`` — supplying both would silently drop one, so the dataclass
     rejects that combination.
     """
+
+    #: Iterates to convergence: a stage must give it a test.
+    needs_test: ClassVar[bool] = True
 
     tangent: ModifiedNewtonTangent = "tangent"
     factor_once: bool = False
@@ -285,6 +294,9 @@ class NewtonLineSearch(SolutionAlgorithm):
     ``line_search`` (required) picks the 1-D search algorithm. The
     other keys are optional and emit only when set.
     """
+
+    #: Iterates to convergence: a stage must give it a test.
+    needs_test: ClassVar[bool] = True
 
     line_search: LineSearchType
     tol: float | None = None
@@ -333,6 +345,9 @@ class KrylovNewton(SolutionAlgorithm):
     ``max_dim`` caps the size of the Krylov subspace.
     """
 
+    #: Iterates to convergence: a stage must give it a test.
+    needs_test: ClassVar[bool] = True
+
     iterate: Literal["current", "initial", "noTangent"] | None = None
     increment: Literal["current", "initial", "noTangent"] | None = None
     max_dim: int | None = None
@@ -369,6 +384,9 @@ class BFGS(SolutionAlgorithm):
     ``count`` caps the number of stored rank-2 updates per step.
     """
 
+    #: Iterates to convergence: a stage must give it a test.
+    needs_test: ClassVar[bool] = True
+
     count: int | None = None
 
     def __post_init__(self) -> None:
@@ -398,6 +416,9 @@ class Broyden(SolutionAlgorithm):
 
     ``count`` caps the number of stored rank-1 updates per step.
     """
+
+    #: Iterates to convergence: a stage must give it a test.
+    needs_test: ClassVar[bool] = True
 
     count: int | None = None
 

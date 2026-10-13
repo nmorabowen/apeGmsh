@@ -6,8 +6,12 @@ asserted here against the line order of an emitted two-stage ``py`` deck.
 """
 from __future__ import annotations
 
+import warnings
 from pathlib import Path
 
+import pytest
+
+from apeGmsh.opensees import InertStaticDtWarning
 from apeGmsh.opensees.apesees import apeSees
 
 from tests.opensees.unit.test_stages import _make_single_quad_fem
@@ -17,7 +21,7 @@ _CHAIN = ("constraints", "numberer", "system", "test", "algorithm",
 
 
 def _deck(tmp_path: Path, *, set_time: float | None = None,
-          dt2: float = 0.9) -> list[str]:
+          dt2: float = 0.9, dt1: float = 0.1) -> list[str]:
     ops = apeSees(_make_single_quad_fem(), default_orientation=None)
     ops.model(ndm=2, ndf=2)
     mat = ops.nDMaterial.ElasticIsotropic(E=1e6, nu=0.3, rho=0.0)
@@ -37,7 +41,7 @@ def _deck(tmp_path: Path, *, set_time: float | None = None,
                        numberer=ops.numberer.Plain(),
                        system=ops.system.BandGeneral(),
                        analysis=ops.analysis.Static())
-            s.run(n_increments=4, dt=dt2 if name == "s2" else 0.1)
+            s.run(n_increments=4, dt=dt2 if name == "s2" else dt1)
     path = tmp_path / "deck.py"
     ops.py(str(path))
     return path.read_text().splitlines()
@@ -91,8 +95,18 @@ def test_domain_and_recorders_kept(tmp_path: Path) -> None:
 
 
 def test_static_ignores_dt_dlam_sets_step(tmp_path: Path) -> None:
-    a = _deck(tmp_path, dt2=0.9)
-    b = _deck(tmp_path, dt2=0.05)
+    """dt has no effect under Static; a differing dt warns (R3 D1, #1785)."""
+    with pytest.warns(InertStaticDtWarning) as rec:
+        a = _deck(tmp_path, dt2=0.9)
+    # s1 (dt=0.1) and s2 (dt=0.9) both differ from dlam=0.25.
+    assert len(rec) == 2
+    assert all(
+        str(w.message).startswith(
+            "dt has no effect under Static; dlam sets the step")
+        for w in rec
+    )
+    with pytest.warns(InertStaticDtWarning):
+        b = _deck(tmp_path, dt2=0.05)
     s2a = a[_idx(a, "# === Stage: s2"):]
     s2b = b[_idx(b, "# === Stage: s2"):]
     # dt reaches only the analyze call ...
@@ -104,3 +118,10 @@ def test_static_ignores_dt_dlam_sets_step(tmp_path: Path) -> None:
     a_rest = [x.replace("0.9", "D") for x in s2a]
     b_rest = [x.replace("0.05", "D") for x in s2b]
     assert a_rest == b_rest
+
+
+def test_static_dt_equal_to_dlam_is_silent(tmp_path: Path) -> None:
+    """The silent half of the claim: dt == dlam does not warn."""
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", InertStaticDtWarning)
+        _deck(tmp_path, dt2=0.25, dt1=0.25)

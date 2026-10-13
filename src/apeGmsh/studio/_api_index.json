@@ -2712,6 +2712,12 @@
       "skill": "references/opensees-bridge.md",
       "symbol": "ops.analysis.VariableTransient"
     },
+    "ops.analysis.chain": {
+      "doc": "A stage analysis chain shared by several stages.",
+      "signature": "chain(*, test: 'ConvergenceTest | None' = None, algorithm: 'SolutionAlgorithm', constraints: 'ConstraintHandler', numberer: 'Numberer', system: 'LinearSystem', analysis: 'Analysis') -> 'StageChain'",
+      "skill": "references/opensees-bridge.md",
+      "symbol": "ops.analysis.chain"
+    },
     "ops.analyze": {
       "doc": "Build + emit + run the analysis chain via the live emitter.",
       "signature": "analyze(*, steps: 'int', dt: 'float | None' = None, strategy: \"'Ladder | None'\" = None, profile: 'str | None' = None, profile_run: 'str | None' = None, profile_deep: 'bool' = False, profile_memory: 'bool' = False, profile_per_step: 'bool' = False) -> 'int'",

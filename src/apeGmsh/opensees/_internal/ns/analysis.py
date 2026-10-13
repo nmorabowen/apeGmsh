@@ -98,6 +98,15 @@ from ...analysis.test import (
     NormUnbalance,
     RelativeNormDispIncr,
 )
+from ...stage._chain import StageChain
+from ..types import (
+    Analysis,
+    ConstraintHandler,
+    ConvergenceTest,
+    LinearSystem,
+    Numberer,
+    SolutionAlgorithm,
+)
 from ._base import _BridgeNamespace
 
 
@@ -1141,3 +1150,41 @@ class _AnalysisNS(_BridgeNamespace):
     def VariableTransient(self) -> VariableTransient:
         """``analysis VariableTransient`` — adaptive-step transient."""
         return self._bridge._register(VariableTransient())
+
+    def chain(
+        self,
+        *,
+        test: ConvergenceTest | None = None,
+        algorithm: SolutionAlgorithm,
+        constraints: ConstraintHandler,
+        numberer: Numberer,
+        system: LinearSystem,
+        analysis: Analysis,
+    ) -> StageChain:
+        """A stage analysis chain shared by several stages.
+
+        Bundles every chain slot but the integrator, so each stage
+        states only what differs::
+
+            solver = ops.analysis.chain(
+                test=ops.test.NormDispIncr(tol=1e-8, max_iter=50),
+                algorithm=ops.algorithm.Newton(),
+                constraints=ops.constraints.Plain(),
+                numberer=ops.numberer.RCM(),
+                system=ops.system.UmfPack(),
+                analysis=ops.analysis.Static(),
+            )
+            with ops.stage(name="gravity") as s:
+                s.analysis(solver, integrator=ops.integrator.LoadControl(dlam=0.1))
+                s.run(n_increments=10)
+
+        The chain is a frozen value object, not a primitive: it
+        registers and emits nothing itself.  Each stage emits the
+        chain's primitives, so the deck is byte-identical to the
+        keyword form.  ``test`` may be omitted only for a
+        non-iterating algorithm (``ops.algorithm.Linear``).
+        """
+        return StageChain(
+            test=test, algorithm=algorithm, constraints=constraints,
+            numberer=numberer, system=system, analysis=analysis,
+        )
