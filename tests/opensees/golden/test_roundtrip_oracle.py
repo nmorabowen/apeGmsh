@@ -319,7 +319,23 @@ def _definition_sites(deck: str) -> dict[tuple[str, int], int]:
     """``(kind, tag) -> index of the first top-level line declaring it``.
 
     Only unindented lines count: an indented line is inside a block (a
-    ``Fiber`` section's patches, a pattern body, a ``proc``)."""
+    ``Fiber`` section's patches, a pattern body, a ``proc``).
+
+    A redeclared ``(kind, tag)`` keeps its *first* line, and that is exact
+    for declare-before-use: a use has a declaration above it iff its
+    nearest preceding one exists; that exists iff the first declaration is
+    above the use; and the first line a tag is used on is above every
+    later use. So comparing first declaration with first use gives the
+    nearest-preceding verdict for every line. What the check does not
+    model is a ``wipe``/``remove`` between two declarations, which would
+    unbind the earlier one. That is safe today: the bridge's decks wipe
+    once, in the header, and its ``remove`` lines name only elements, sp
+    constraints, parameters and recorders, none of which a ``decl_params``
+    reference names. ``test_a_redeclared_tag_binds_by_first_declaration``
+    pins the redeclaration behaviour, and a real corpus row,
+    ``_staged_bridge[staged_pg=Rock]``, re-declares ``damping``,
+    ``timeSeries``, ``beamIntegration`` and ``geomTransf`` tag 1 after a
+    ``model BasicBuilder -ndf 3`` switch."""
     sites: dict[tuple[str, int], int] = {}
     for i, line in enumerate(deck.splitlines()):
         tok = line.split()
@@ -792,6 +808,35 @@ def test_a_fatal_reorder_is_class_c_and_a_benign_one_stays_b(
         ln for ln in bridge.splitlines() if not ln.startswith("damping "))
     assert _order_violations(dropped, table) == [
         "line 6 (element 2) uses damping 1, declared never"]
+
+
+def test_a_redeclared_tag_binds_by_first_declaration(tmp_path: Path) -> None:
+    """A synthetic redeclaration (#1836): a second ``damping 1`` below the
+    element changes nothing, because the first is above it; a second
+    ``element 2`` above the declarations fails at that first line."""
+    bridge, archive = _emit(_DAMPED, tmp_path)
+    table = OpenSeesModel.from_h5(str(archive)).declarations
+    assert table is not None
+    lines = bridge.splitlines()
+    (damping,) = [ln for ln in lines if ln.startswith("damping ")]
+    (element,) = [ln for ln in lines if ln.startswith("element ")]
+
+    late = "\n".join([*lines, damping])
+    assert _definition_sites(late)[("damping", 1)] == lines.index(damping)
+    assert _order_violations(late, table) == []
+
+    # The element's second line is legal; the first, above both of its
+    # references, is reported. Line numbers are 1-based in the shifted deck.
+    at = lines.index(damping)
+    transf = next(i for i, ln in enumerate(lines) if ln.startswith("geomTransf "))
+    assert at < transf
+    early = "\n".join([*lines[:at], element, *lines[at:]])
+    assert _definition_sites(early)[("element", 2)] == at
+    assert _order_violations(early, table) == [
+        f"line {at + 1} (element 2) uses damping 1, declared on line {at + 2}",
+        f"line {at + 1} (element 2) uses geomTransf 1, declared on line "
+        f"{transf + 2}",
+    ]
 
 
 def test_an_unknown_allocator_kind_raises(tmp_path: Path) -> None:
