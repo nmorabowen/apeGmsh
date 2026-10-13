@@ -100,3 +100,37 @@ def test_chunk_must_be_positive(chunk: int) -> None:
         emit_owned_nodes_with_inferred_ndf(
             _Rec(), {}, [1, 2], lookup, np.zeros((2, 3)), 3, chunk=chunk,
         )
+
+
+class _SpyLookup:
+    """Wraps a lookup and records the size of every ``get_many`` call."""
+
+    def __init__(self, inner: Any) -> None:
+        self._inner = inner
+        self.sizes: list[int] = []
+
+    def get_many(self, keys: Any):
+        self.sizes.append(int(np.asarray(keys).reshape(-1).shape[0]))
+        return self._inner.get_many(keys)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._inner, name)
+
+
+@pytest.mark.parametrize("chunk", [1, 3, 7])
+def test_chunking_actually_slices(chunk: int) -> None:
+    """Output equality cannot tell a chunked walk from one big batch, so
+    pin the batch sizes: no lookup call exceeds ``chunk``, and a rank
+    larger than ``chunk`` takes more than one call (#1758, #1873)."""
+    n = 50
+    ids = np.arange(1, n + 1).astype(object)
+    coords = np.arange(n * 3, dtype=float).reshape(n, 3)
+    spy = _SpyLookup(node_index_lookup(ids))
+    got = _Rec()
+    emit_owned_nodes_with_inferred_ndf(
+        got, {}, np.asarray(ids, dtype=object), spy, coords, 3, chunk=chunk,
+    )
+    assert len(got.calls) == n
+    assert max(spy.sizes) <= chunk
+    assert len(spy.sizes) == -(-n // chunk)
+    assert sum(spy.sizes) == n
