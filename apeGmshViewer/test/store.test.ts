@@ -142,7 +142,7 @@ const EVERY: Record<EventType, Event> = {
   selectStage: { type: "selectStage", index: null },
   resultsLoaded: {
     type: "resultsLoaded",
-    info: { path: "x.results.h5", version: "1.1.0", sourceType: "domain_capture", lineage: null, partial: null, stages: [], unavailableZones: [] },
+    info: { path: "x.results.h5", version: "1.1.0", sourceType: "domain_capture", lineage: null, partial: null, stages: [], unavailableZones: [], openseesVersion: null },
     sizeBytes: 0,
     readMs: 0,
     warnings: [],

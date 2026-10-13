@@ -156,6 +156,12 @@ export interface ResultsIndex {
   elementIndexSpace: string | null;
   /** Embedded zones below their floor (ADR 0113 D9): `/stages` reads, these do not. */
   unavailableZones: string[];
+  /**
+   * The embedded opensees zone's version stamp as `checkEmbeddedZones` reads
+   * it (unhashed), or null when the file embeds no `/opensees`. The pairing
+   * rule reads it to name the 2.31.0 `model_hash` change (V4h, #1856).
+   */
+  openseesVersion: string | null;
   stages: StageInfo[];
   warnings: string[];
   /**
@@ -208,7 +214,7 @@ export class ResultsFile {
     const warnings: string[] = [];
     const version = checkResultsVersion(f.attrs, warnings);
     const modelMeta = f.keys().includes("model") && this.group(f, "model").keys().includes("meta") ? this.group(this.group(f, "model"), "meta") : null;
-    const unavailableZones = checkEmbeddedZones(f, modelMeta, warnings);
+    const embedded = checkEmbeddedZones(f, modelMeta, warnings);
     const st = f.attrs["source_type"]?.value;
     const sourceType = typeof st === "string" ? st : null;
     const eisAttr = f.attrs[ELEMENT_INDEX_SPACE];
@@ -222,7 +228,8 @@ export class ResultsFile {
       version,
       sourceType,
       elementIndexSpace: typeof eis === "string" ? eis : null,
-      unavailableZones,
+      unavailableZones: embedded.unavailable,
+      openseesVersion: embedded.openseesVersion,
       stages: ids.map((id) => this.readStage(this.group(stagesGroup, id), id)),
       warnings,
       lineage,
@@ -552,14 +559,16 @@ export function parseSchemaVersion(raw: unknown, key: string): { major: number; 
  * `/opensees` is. A newer major than this app reads refuses the whole file; a
  * zone below its floor leaves `/stages` readable and is reported in
  * `unavailable` with a warning; a newer minor opens with a warning (the app's
- * rule for its other zones, read.ts `checkZoneVersion`).
+ * rule for its other zones, read.ts `checkZoneVersion`). Returns the
+ * unavailable zones and the opensees zone's stamp (null with no `/opensees`).
  */
 export function checkEmbeddedZones(
   root: { attrs: Record<string, { value: unknown }>; keys(): string[] },
   modelMeta: { attrs: Record<string, { value: unknown }> } | null,
   warnings: string[],
-): string[] {
+): { unavailable: string[]; openseesVersion: string | null } {
   const unavailable: string[] = [];
+  let openseesVersion: string | null = null;
   const zones: { zone: "neutral" | "opensees"; raw: unknown; key: string; target: { major: number; minor: number }; floor: number }[] = [];
   if (modelMeta) {
     const own = modelMeta.attrs["neutral_schema_version"]?.value;
@@ -585,6 +594,7 @@ export function checkEmbeddedZones(
     if (z.raw === undefined) throw new ResultsError("version", `the embedded ${z.zone} zone has no version stamp`);
     const v = parseSchemaVersion(z.raw, z.key);
     const raw = String(z.raw);
+    if (z.zone === "opensees") openseesVersion = raw;
     if (v.major > z.target.major) {
       throw new ResultsError("version", `${z.key} ${raw}: the embedded ${z.zone} zone is a newer major than this app reads (${z.target.major}.x)`);
     }
@@ -595,7 +605,7 @@ export function checkEmbeddedZones(
       warnings.push(`${z.key} ${raw} is newer than this app (${z.target.major}.${z.target.minor}.x): the file opens, and what that apeGmsh added is not shown`);
     }
   }
-  return unavailable;
+  return { unavailable, openseesVersion };
 }
 
 /**

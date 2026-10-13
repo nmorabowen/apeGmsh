@@ -24,10 +24,52 @@ export type ResultsPairing =
 const short = (h: string): string => h.slice(0, 8);
 
 /**
- * Whether `results` pairs with the loaded model. `model` is null when no
- * model is loaded (none open, still reading, or failed).
+ * The first opensees minor whose hashed `/opensees/program` `decl` column
+ * holds each call's declaration (A7, #1839), so every archive the bridge
+ * writes changes its `model_hash` once here. Named after Python's
+ * `h5_reader.PROGRAM_DECL_FROM`; architecture/h5-schema.md, the opensees
+ * zone's `2.31.0` history entry, says a tool comparing hashes across it can
+ * read `/meta@opensees_schema_version` on both sides to tell the one-time
+ * change from a different model. The one place the viewer names it (V4h, #1856).
  */
-export function pairResults(model: { lineage: Lineage | null } | null, results: ResultsInfo | null): ResultsPairing {
+export const PROGRAM_DECL_FROM = { major: 2, minor: 31 } as const;
+const BOUNDARY = `${PROGRAM_DECL_FROM.major}.${PROGRAM_DECL_FROM.minor}.0`;
+
+/** Whether an opensees stamp is at or above the boundary; null when there is no stamp or it is not `X.Y[.Z]`. */
+function declEra(version: string | null): boolean | null {
+  if (version === null) return null;
+  const m = /^(\d+)\.(\d+)(?:\.\d+)?$/.exec(version.trim());
+  if (!m) return null;
+  const major = Number(m[1]);
+  const minor = Number(m[2]);
+  return major > PROGRAM_DECL_FROM.major || (major === PROGRAM_DECL_FROM.major && minor >= PROGRAM_DECL_FROM.minor);
+}
+
+/**
+ * The cause of a `model_hash` mismatch whose two sides straddle
+ * PROGRAM_DECL_FROM, or null (either stamp absent, or both on one side of
+ * it). It names the cause and keeps the refusal: the hashes still differ.
+ */
+function hashEraCause(modelVersion: string | null, resultsVersion: string | null): string | null {
+  const m = declEra(modelVersion);
+  const r = declEra(resultsVersion);
+  if (m === null || r === null || m === r) return null;
+  const remedy = m
+    ? "re-run the analysis against the re-saved model, or open the results with the model.h5 they were run on"
+    : "open the results with the model.h5 they were run on, or re-run the analysis against this model";
+  return (
+    `the opensees schema ${BOUNDARY} hash change (declaration ids entered the hash; ` +
+    `results opensees ${resultsVersion}, model opensees ${modelVersion}); ${remedy}`
+  );
+}
+
+/**
+ * Whether `results` pairs with the loaded model. `model` is null when no
+ * model is loaded (none open, still reading, or failed); its
+ * `openseesVersion` is `/meta@opensees_schema_version` of the model.h5 (null
+ * when the model has no opensees zone).
+ */
+export function pairResults(model: { lineage: Lineage | null; openseesVersion: string | null } | null, results: ResultsInfo | null): ResultsPairing {
   if (!results) return { state: "none" };
   if (!model) return { state: "noModel" };
   const r = results.lineage;
@@ -41,6 +83,8 @@ export function pairResults(model: { lineage: Lineage | null } | null, results: 
   if (r.modelHash !== null) {
     if (!m?.modelHash) return { state: "mismatch", reason: "the results name a model_hash, and the open model has none to compare (its /meta/lineage has no model_hash)" };
     if (m.modelHash === r.modelHash) return { state: "paired", by: "model_hash" };
+    const cause = hashEraCause(model.openseesVersion, results.openseesVersion);
+    if (cause) return { state: "mismatch", reason: `model_hash differs: ${cause} (results ${short(r.modelHash)}…, model ${short(m.modelHash)}…)` };
     return { state: "mismatch", reason: `model_hash differs: the results were written from another model (results ${short(r.modelHash)}…, model ${short(m.modelHash)}…)` };
   }
   if (r.femHash !== null) {

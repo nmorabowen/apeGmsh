@@ -291,6 +291,12 @@ export interface ResultsInfo {
   stages: ResultsStage[];
   unavailableZones: string[];
   /**
+   * V4h: the embedded opensees zone's version stamp (unhashed), null when the
+   * file embeds no /opensees. The pairing rule reads it to name the 2.31.0
+   * model_hash change (state/results.ts); null keeps the plain message.
+   */
+  openseesVersion: string | null;
+  /**
    * V4c2a: the element-id verdict; element contours draw only for a verified
    * file (#1711/#1752). Absent (a results info built without it) reads as
    * unverified: selectors `elementVerdictOf`, never as verified.

@@ -547,7 +547,8 @@ export function deformNotice(s: State): string | null {
 /** Whether the read results file pairs with the loaded model by content (state/results.ts). */
 export function resultsPairing(s: State): ResultsPairing {
   const m = s.artifacts.model;
-  return pairResults(m?.status === "ready" ? { lineage: s.lineage } : null, s.results);
+  const ops = m?.zones["opensees"];
+  return pairResults(m?.status === "ready" ? { lineage: s.lineage, openseesVersion: ops?.status === "ready" ? ops.version : null } : null, s.results);
 }
 
 /**
