@@ -111,3 +111,8 @@ trame (and `show_web`/`serve_web`) leave when V4 covers interactive results
 (KEEP ruling, #1199). This replaces D4's "with the legacy results viewer
 (chain X, X3)"; the retirement ledger
 (`internal_docs/program/retirement_ledger.toml`) dates the review.
+
+"Not built" is overtaken: X4-d (#1813) adds the quirk lint rules
+`vtk-import` (D3) and `render-tech-import` (D4) to `scripts/check_quirks.py`,
+with the allowlist `scripts/quirks_render_allowlist.txt`, so review no longer
+enforces D3 and D4 alone.
