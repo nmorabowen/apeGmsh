@@ -256,11 +256,28 @@ export interface ResultsStage {
   refusedNodal: { component: string; reason: string }[];
   /** V4c1: the stage's nodal `_ids` (f64), put in the BlobStore by the effects; absent before that, or with no nodal results */
   nodeIds?: BlobRef;
-  /** gauss groups and their components (listed, never read in V4b) */
-  gauss: { id: string; components: string[] }[];
+  /** gauss groups and their components (V4c2a: element contours read them) */
+  gauss: GaussGroup[];
   /** element categories the reader does not read */
   unread: string[];
 }
+
+/** One `gauss_points` group of a results stage (V4c2a): metadata, and its element ids as a blob ref. */
+export interface GaussGroup {
+  id: string;
+  components: string[];
+  /** components refused one by one (a partial write), or every component of a group with no Gauss point */
+  refused: { component: string; reason: string }[];
+  nElements: number;
+  nGauss: number;
+  /** the group carries `_local_axes_quaternion` (shells) */
+  localAxes: boolean;
+  /** the group's `_element_index` (f64) in the BlobStore: present only for a verified file, put there by the effects */
+  elementIds?: BlobRef;
+}
+
+/** Whether a results file's `_element_index` rows are FEM element ids: only its root stamp says so (#1768). */
+export type ElementIndexVerdict = { verified: true } | { verified: false; reason: string };
 
 /** The results artifact as read (V4b): what the store keeps of a results.h5. Step arrays stay in main. */
 export interface ResultsInfo {
@@ -273,6 +290,12 @@ export interface ResultsInfo {
   partial: string | null;
   stages: ResultsStage[];
   unavailableZones: string[];
+  /**
+   * V4c2a: the element-id verdict; element contours draw only for a verified
+   * file (#1711/#1752). Absent (a results info built without it) reads as
+   * unverified: selectors `elementVerdictOf`, never as verified.
+   */
+  elementIndex?: ElementIndexVerdict;
 }
 
 /**
@@ -313,8 +336,38 @@ export interface ContourScan {
   error: string | null;
 }
 
+/** What a contour colours by (V4c2a): a nodal field, or an element (Gauss) field. */
+export type ContourSource = "nodal" | "element";
+
+/**
+ * How an element (Gauss) field is drawn (V4c2a). `cell` is flat per cell: the
+ * element's one Gauss value (Qt `gauss_cell`), or, with several points, the
+ * element mean of its Gauss values (`element_mean`, an app presentation with
+ * no Qt equivalent). The node-located Qt topologies are V4c2b, their states
+ * defined and shown as "not yet available": `cell_averaged` (Qt
+ * `gauss_cell_averaged`: one-point cell values averaged to the nodes across
+ * elements), `node` (`gauss_node`) and `node_discrete` (`gauss_node_discrete`).
+ */
+export type GaussMode = "cell" | "cell_averaged" | "node" | "node_discrete";
+
+/**
+ * The join of an element field's rows to the mesh (V4c2a), as the effects
+ * found it: every `_element_index` id is a cell of the model, or the field is
+ * refused (an id the mesh does not have, or one listed twice). `key` is
+ * selectors `elementJoinKey`.
+ */
+export type ElementJoinVerdict =
+  | { key: string; ok: true; rows: number }
+  | { key: string; ok: false; code: "unknown-id" | "duplicate-id"; reason: string };
+
 /** The contour colouring (V4c1, #1756): what is picked, and the ranges the effects measured. */
 export interface ContourState {
+  /** V4c2a: a nodal field (V4c1) or an element field; `field` and `component` name one of that source */
+  source: ContourSource;
+  /** V4c2a: how an element field is drawn */
+  gauss: GaussMode;
+  /** V4c2a: the join of the picked element field to the mesh; null until the effects checked it */
+  join: ElementJoinVerdict | null;
   /** the field (`displacement`) and its component (a dataset name such as `displacement_x`, or `magnitude`); null until picked */
   field: string | null;
   component: string | null;
@@ -532,8 +585,16 @@ export type Event =
   | { type: "resultsLoaded"; info: ResultsInfo; sizeBytes: number; readMs: number; warnings: string[] }
   /** V4b: the effects started (`loading`) or finished fetching the current step; they drop a reply that is not the latest */
   | { type: "resultStep"; status: ResultStepStatus }
-  /** V4c1: pick the contour's field and component (a component of state/contour.ts `nodalFields` of the stage shown) */
-  | { type: "setContourField"; field: string; component: string }
+  /**
+   * V4c1: pick the contour's field and component (a component of state/contour.ts
+   * `nodalFields` of the stage shown); V4c2a: `source: "element"` picks an
+   * element field (`elementFields`). Absent `source` is nodal.
+   */
+  | { type: "setContourField"; field: string; component: string; source?: ContourSource }
+  /** V4c2a: how an element field is drawn */
+  | { type: "setContourGauss"; mode: GaussMode }
+  /** V4c2a (effects): the join of the picked element field's rows to the mesh */
+  | { type: "contourElementJoin"; verdict: ElementJoinVerdict }
   /** V4c1: the colour range mode; `fixed` takes the user's min and max */
   | { type: "setContourRange"; range: ContourRange; fixed?: { min: number; max: number } }
   | { type: "setContourCmap"; cmap: ContourCmap }

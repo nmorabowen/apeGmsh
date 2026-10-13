@@ -13,11 +13,12 @@ import { mountPhase } from "../panels/phase.ts";
 import { mountSources } from "../panels/sources.ts";
 import { mountWindows } from "../panels/windows/frame.ts";
 import { BlobStore } from "../state/blobs.ts";
-import { chainOf, contourFieldsOf, contourView, deformOf, deformView } from "../state/selectors.ts";
+import { gaussFields } from "../state/contour.ts";
+import { chainOf, contourFieldsOf, contourView, deformOf, deformView, elementVerdictOf } from "../state/selectors.ts";
 import { Store } from "../state/store.ts";
 import { WINDOW_KINDS, type DeclPath } from "../state/types.ts";
 import { applyTheme } from "../theme/tokens.ts";
-import { contourKey } from "./contour.ts";
+import { contourKey, contourShownKey, elementContourKey } from "./contour.ts";
 import { Viewport } from "./viewport.ts";
 
 const bridge = (window as unknown as { viewer: Bridge }).viewer;
@@ -243,10 +244,81 @@ async function until(ok: () => boolean, ms = 15000): Promise<boolean> {
   return ok();
 }
 
-/** The contour colours on screen are the step the state shows, at its range (renderer/contour.ts keys). */
+/** The contour colours on screen are the step the state shows, at its range (renderer/contour.ts keys); V4c2a: an element field's too. */
 function contourShown(): boolean {
   const v = contourView(store.get());
-  return v.state === "ready" && v.stepMeasured && viewport.contourApplied === contourKey(v);
+  if (v.state === "ready") return v.stepMeasured && viewport.contourApplied === contourKey(v);
+  if (v.state === "element") return v.stepMeasured && viewport.contourApplied === elementContourKey(v);
+  return false;
+}
+
+/** V4c2a: the mesh shows a refused or not-yet element contour as no data (its key names the reason). */
+function refusalShown(): boolean {
+  const v = contourView(store.get());
+  return (v.state === "refused" || v.state === "not-yet") && viewport.contourApplied === contourShownKey(v);
+}
+
+/**
+ * The V4c2a element-contour stills (D7), by a fixed rule so no flag is
+ * needed: on the results stage with the most steps (the last of a tie) that
+ * has an element field, its first element field's first component over the
+ * whole-history range at the last step: `elements-1-<topology>` (or
+ * `elements-1-refused-<code>` when the file is refused, with the banner);
+ * then, drawable and deformable, the deformed shape at scale 10 with the
+ * reference ghost (`elements-2-deformed-scale10`); then the first still again
+ * at 1280 px. `<out>.elements-<n>-<what>.png`.
+ */
+async function captureElements(settle: (ms?: number) => Promise<unknown>, width: number, height: number) {
+  const s0 = store.get();
+  if (!s0.results || !s0.phase.axis.some((k) => k.kind === "results")) return;
+  const stages = s0.results.stages;
+  let best = -1;
+  stages.forEach((st, i) => {
+    if (gaussFields(st.gauss).length && (best < 0 || st.time.length >= stages[best]!.time.length)) best = i;
+  });
+  if (best < 0) return;
+  if (typeof bridge.captureResize === "function") await bridge.captureResize(width, height);
+  store.dispatch({ type: "setDeform", on: false });
+  store.dispatch({ type: "clearSelection" });
+  store.dispatch({ type: "setPhase", at: { kind: "results", stage: best, step: 0 } });
+  const last = stages[best]!.time.length - 1;
+  if (last > 0) store.dispatch({ type: "setResultStep", step: last });
+  const f = gaussFields(stages[best]!.gauss)[0]!;
+  store.dispatch({ type: "setColourBy", by: "contour" });
+  store.dispatch({ type: "setContourRange", range: "history" });
+  store.dispatch({ type: "setContourField", field: f.name, component: f.components[0]!.key, source: "element" });
+  const ready = () => {
+    const v = contourView(store.get());
+    if (v.state === "element") return contourShown() && store.get().contour.scan?.status === "done" && deformShown();
+    return refusalShown();
+  };
+  const still = async (name: string) => {
+    if (!(await until(ready, 30000))) throw new Error(`capture ${name}: the element contour did not show (${contourView(store.get()).state})`);
+    await settle(100);
+    viewport.renderNow();
+    await painted();
+    await painted();
+    await bridge.captureStill(name);
+  };
+  await until(() => contourView(store.get()).state !== "unavailable", 15000);
+  const v = contourView(store.get());
+  const first = v.state === "element" ? `elements-1-${v.topology}` : v.state === "refused" ? `elements-1-refused-${v.code}` : `elements-1-${v.state}`;
+  await still(first);
+  if (v.state === "element" && deformOf(store.get()).ok) {
+    store.dispatch({ type: "setDeform", on: true });
+    store.dispatch({ type: "setReferenceGhost", on: true });
+    store.dispatch({ type: "setDeformScale", scale: 10 });
+    await still("elements-2-deformed-scale10");
+    store.dispatch({ type: "setDeform", on: false });
+  }
+  if (typeof bridge.captureResize === "function") {
+    await bridge.captureResize(1280, height);
+    await settle();
+    // Nothing is selected: frame the whole model in the narrower window.
+    store.dispatch({ type: "frameSelection" });
+    await settle();
+    await still(`${first}.1280`);
+  }
 }
 
 /**
@@ -396,7 +468,7 @@ async function captureDeform(settle: (ms?: number) => Promise<unknown>, width: n
  * The history scan's time comes first; the machine's CPU load is sampled
  * before (1 s idle) and during the scrub, and the working sets every 100 ms.
  */
-async function measureContour(path: string, deform = false) {
+async function measureContour(path: string, deform = false, element = false) {
   store.dispatch({ type: "clearSelection" });
   // V4d: the same scrub with the deformed shape on (true scale): each step also waits for the displaced positions.
   store.dispatch({ type: "setDeform", on: deform });
@@ -404,10 +476,15 @@ async function measureContour(path: string, deform = false) {
   const s = store.get();
   if (!s.phase.axis.some((k) => k.kind === "results")) throw new Error(`measure: ${path} does not pair with the model, so there is nothing to scrub`);
   const stages = s.results!.stages;
+  // V4c2a: the element scrub colours by the first drawable element field of a verified file (none: no row).
+  const elementField = (i: number) => gaussFields(stages[i]!.gauss).find((f) => f.refused === null);
+  if (element && !elementVerdictOf(s.results!).verified) return null;
   let best = -1;
   stages.forEach((st, i) => {
-    if (st.nodal.length && (best < 0 || st.time.length > stages[best]!.time.length)) best = i;
+    const has = element ? elementField(i) !== undefined : st.nodal.length > 0;
+    if (has && (best < 0 || st.time.length > stages[best]!.time.length)) best = i;
   });
+  if (best < 0 && element) return null;
   if (best < 0) throw new Error(`measure: ${path} has no stage with nodal results`);
   const cpu = bridge.measureCpu!;
   const memory = bridge.measureMemory!;
@@ -424,13 +501,21 @@ async function measureContour(path: string, deform = false) {
     const t0 = performance.now();
     store.dispatch({ type: "setPhase", at: { kind: "results", stage: best, step: 0 } });
     store.dispatch({ type: "setColourBy", by: "contour" });
-    if (!(await until(() => store.get().contour.scan?.status === "done", 600000))) throw new Error(`measure: the history scan did not finish: ${JSON.stringify(store.get().contour.scan)}`);
+    store.dispatch({ type: "setContourRange", range: "history" });
+    if (element) {
+      const f = elementField(best)!;
+      store.dispatch({ type: "setContourField", field: f.name, component: f.components[0]!.key, source: "element" });
+    }
+    const scanDone = () => store.get().contour.scan?.status === "done" && (!element || store.get().contour.scan!.key.includes("|elem:"));
+    if (!(await until(scanDone, 600000))) throw new Error(`measure: the history scan did not finish: ${JSON.stringify(store.get().contour.scan)}`);
     const scanMs = performance.now() - t0;
     await contourShowsNow();
     const v = contourView(store.get());
     const d = deformView(store.get());
     if (deform && d.state !== "ready" && d.state !== "partial") throw new Error(`measure: the deformed shape is ${d.state}`);
-    const field = (v.state === "ready" ? `${v.field} ${v.component.label}` : "?") + (deform ? ", deformed ×1" : "");
+    if (element && v.state !== "element") throw new Error(`measure: the element contour is ${v.state}`);
+    const what = v.state === "ready" ? `${v.field} ${v.component.label}` : v.state === "element" ? `element ${v.field} ${v.component.label}, ${v.topology}` : "?";
+    const field = what + (deform ? ", deformed ×1" : "");
     const T = stages[best]!.time.length;
     const gl = viewport.renderer.getContext();
     const stepMs: number[] = [];
@@ -482,7 +567,10 @@ async function main() {
     const contour = cfg.results ? await measureContour(cfg.results) : null;
     // V4d: and the contour scrub again with the deformed shape on.
     const deformed = cfg.results ? await measureContour(cfg.results, true) : null;
-    await bridge.measureDone({ ...result, contour, deform: deformed });
+    // V4c2a: the scrub with an element contour on (a verified file with an element field), then deformed too.
+    const elements = cfg.results ? await measureContour(cfg.results, false, true) : null;
+    const elementsDeformed = elements && cfg.results ? await measureContour(cfg.results, true, true) : null;
+    await bridge.measureDone({ ...result, contour, deform: deformed, elements, elementsDeform: elementsDeformed });
     return;
   }
   // capture: select the scripted target and let main grab the page; when the
@@ -564,6 +652,8 @@ async function main() {
     await captureContours(settle, width, height);
     // V4d (D7): the deformed-shape stills, at the capture window's own width, then 1280 px.
     await captureDeform(settle, width, height);
+    // V4c2a (D7): the element-contour stills, at the capture window's own width, then 1280 px.
+    await captureElements(settle, width, height);
   }
   await bridge.captureDone();
 }

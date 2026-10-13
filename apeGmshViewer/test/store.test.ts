@@ -157,6 +157,8 @@ const EVERY: Record<EventType, Event> = {
   setDeformScale: { type: "setDeformScale", scale: 10 },
   setReferenceGhost: { type: "setReferenceGhost", on: true },
   deformMeasured: { type: "deformMeasured", key: "x", drawn: 3, missing: 1 },
+  setContourGauss: { type: "setContourGauss", mode: "node" },
+  contourElementJoin: { type: "contourElementJoin", verdict: { key: "x", ok: true, rows: 1 } },
 };
 
 test("reducer purity: every event leaves a frozen state untouched and returns plain data", () => {
@@ -174,8 +176,8 @@ test("reducer purity: every event leaves a frozen state untouched and returns pl
   }
   assert.equal(
     Object.keys(EVERY).length,
-    38,
-    "decision 17's 20 events plus fileClosed, requestSource, sourceResult, setLoaded (V2f), frameSelection, setColourBy, selectStage (V4f), resultsLoaded and resultStep (V4b), the five contour events (V4c1), and the four deformed-shape events (V4d)",
+    40,
+    "decision 17's 20 events plus fileClosed, requestSource, sourceResult, setLoaded (V2f), frameSelection, setColourBy, selectStage (V4f), resultsLoaded and resultStep (V4b), the five contour events (V4c1), the four deformed-shape events (V4d), and setContourGauss and contourElementJoin (V4c2a)",
   );
 });
 
