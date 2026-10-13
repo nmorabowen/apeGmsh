@@ -1009,9 +1009,12 @@ class Results:
                     f"results-file stamp {stored_model!r} != "
                     f"OpenSeesModel.lineage.model_hash {model_hash!r}"
                 )
-                # A pair on opposite sides of the declaration-id hash
-                # change (PROGRAM_DECL_FROM) says so. Still a warning;
-                # an unreadable version on either side keeps the text.
+                # Name the declaration-id hash change when exactly one
+                # side's hash includes the ids, per the completeness
+                # marker: records_program_decl on the model,
+                # /opensees/decls@program_decl on the results file.
+                # Still a warning; a results file with no /opensees zone
+                # keeps the text.
                 cause = _model_hash_era_cause(
                     self._results_records_program_decl(),
                     records_program_decl(self._model.declarations),
