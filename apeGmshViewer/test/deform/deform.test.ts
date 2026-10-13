@@ -45,7 +45,7 @@ const DEFORM_2D_RESULTS = fileURLToPath(new URL("../../fixtures/deform_2d.result
 
 /** The generator's 2-D closed form (scripts/make_viewer_results_fixtures.py `deform_values`), restated. */
 const closed2d = (x: number, y: number, k: number): [number, number] => {
-  const s = 0.05 * (k + 1);
+  const s = 0.01 * (k + 1);
   return [s * y, s * (0.5 * x + 0.25 * y)];
 };
 
@@ -330,7 +330,7 @@ test("reload: a re-read of the same path deforms again (the key carries the resu
 
 test("pick: a click on the deformed mesh selects the element drawn there (faces and truss chords)", async () => {
   const h = await opened(DEFORM_2D, DEFORM_2D_RESULTS);
-  const { s, full } = await showDeformed(h, 0, 2, 4);
+  const { s, full } = await showDeformed(h, 0, 2, 30);
   const info = s.mesh!;
   const drawn = { lineMap: Int32Array.from({ length: info.lineElement.shape[0]! }, (_, i) => i), triMap: Int32Array.from({ length: info.triElement.shape[0]! }, (_, i) => i) };
   const base = basePositions(info, h.blobs);

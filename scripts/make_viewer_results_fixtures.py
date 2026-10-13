@@ -303,7 +303,7 @@ DEFORM_STEPS = 3
 
 def deform_values(xyz: np.ndarray, k: int) -> dict[str, np.ndarray]:
     """The V4d 2-D closed form: one step's displacement_x/y of nodes at ``xyz`` (N, 3); no z (ndm 2)."""
-    s = 0.05 * (k + 1)
+    s = 0.01 * (k + 1)
     x, y = xyz[:, 0], xyz[:, 1]
     return {"displacement_x": s * y, "displacement_y": s * (0.5 * x + 0.25 * y)}
 
@@ -319,7 +319,7 @@ def deform_fixtures(out_dir: Path) -> None:
     ``displacement_x`` and ``displacement_y`` (the shorthand clipped to
     ``ndm``, as h5-schema.md says a 2-D file has no ``displacement_z``)::
 
-        s = 0.05 * (k + 1)
+        s = 0.01 * (k + 1)
         displacement_x = s * y,  displacement_y = s * (0.5 * x + 0.25 * y)
     """
     from apeGmsh.opensees import apeSees
