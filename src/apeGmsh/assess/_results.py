@@ -56,9 +56,21 @@ def assess_results(
     lineage = results.lineage
     warnings = tuple(lineage.warnings)
     if warnings:
+        message = f"{len(warnings)} lineage warning(s)"
+        # #1854: name the 2.31.0 declaration-id hash change when one of
+        # the warnings says that is the cause. Still a warning.
+        from apeGmsh.results.Results import MODEL_HASH_ERA_CAUSE
+
+        if any(MODEL_HASH_ERA_CAUSE in w for w in warnings):
+            message += (
+                "; the model_hash mismatch spans the opensees schema "
+                f"{MODEL_HASH_ERA_CAUSE}, not corruption; re-run the analysis "
+                "against the re-saved model, or pair the results with the "
+                "model they were run on"
+            )
         findings.append(_finding(
             "RES.LINEAGE",
-            f"{len(warnings)} lineage warning(s)",
+            message,
             {"warnings": warnings[:EVIDENCE_CAP], "n": len(warnings)},
         ))
 
