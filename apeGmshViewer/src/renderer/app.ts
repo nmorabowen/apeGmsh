@@ -16,7 +16,7 @@ import { BlobStore } from "../state/blobs.ts";
 import { gaussFields } from "../state/contour.ts";
 import { chainOf, contourFieldsOf, contourView, deformOf, deformView, elementVerdictOf } from "../state/selectors.ts";
 import { Store } from "../state/store.ts";
-import { WINDOW_KINDS, type DeclPath } from "../state/types.ts";
+import { WINDOW_KINDS, type DeclPath, type GaussMode } from "../state/types.ts";
 import { applyTheme } from "../theme/tokens.ts";
 import { contourKey, contourShownKey, elementContourKey } from "./contour.ts";
 import { Viewport } from "./viewport.ts";
@@ -476,7 +476,7 @@ async function captureDeform(settle: (ms?: number) => Promise<unknown>, width: n
  * The history scan's time comes first; the machine's CPU load is sampled
  * before (1 s idle) and during the scrub, and the working sets every 100 ms.
  */
-async function measureContour(path: string, deform = false, element = false) {
+async function measureContour(path: string, deform = false, element = false, gauss: GaussMode = "cell") {
   store.dispatch({ type: "clearSelection" });
   // V4d: the same scrub with the deformed shape on (true scale): each step also waits for the displaced positions.
   store.dispatch({ type: "setDeform", on: deform });
@@ -514,6 +514,8 @@ async function measureContour(path: string, deform = false, element = false) {
       const f = elementField(best)!;
       store.dispatch({ type: "setContourField", field: f.name, component: f.components[0]!.key, source: "element" });
     }
+    // V4c2b: the element scrub in a node-located draw mode (`cell` leaves the V4c2a rows as they were).
+    store.dispatch({ type: "setContourGauss", mode: element ? gauss : "cell" });
     const scanDone = () => store.get().contour.scan?.status === "done" && (!element || store.get().contour.scan!.key.includes("|elem:"));
     if (!(await until(scanDone, 600000))) throw new Error(`measure: the history scan did not finish: ${JSON.stringify(store.get().contour.scan)}`);
     const scanMs = performance.now() - t0;
@@ -578,7 +580,11 @@ async function main() {
     // V4c2a: the scrub with an element contour on (a verified file with an element field), then deformed too.
     const elements = cfg.results ? await measureContour(cfg.results, false, true) : null;
     const elementsDeformed = elements && cfg.results ? await measureContour(cfg.results, true, true) : null;
-    await bridge.measureDone({ ...result, contour, deform: deformed, elements, elementsDeform: elementsDeformed });
+    // V4c2b: the element scrub carried to the nodes, one row per node-located mode.
+    const elementsAveraged = elements && cfg.results ? await measureContour(cfg.results, false, true, "cell_averaged") : null;
+    const elementsNode = elements && cfg.results ? await measureContour(cfg.results, false, true, "node") : null;
+    const elementsDiscrete = elements && cfg.results ? await measureContour(cfg.results, false, true, "node_discrete") : null;
+    await bridge.measureDone({ ...result, contour, deform: deformed, elements, elementsDeform: elementsDeformed, elementsAveraged, elementsNode, elementsDiscrete });
     return;
   }
   // capture: select the scripted target and let main grab the page; when the

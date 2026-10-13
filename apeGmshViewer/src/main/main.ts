@@ -248,7 +248,8 @@ ipcMain.handle("measure:done", (_e, result: unknown) => {
   const deform = (result as { deform?: ContourMeasure | null } | null)?.deform;
   if (deform) printContourRow(deform);
   // V4c2a: the scrub with an element contour on, then deformed too.
-  for (const key of ["elements", "elementsDeform"] as const) {
+  // V4c2b: and once per node-located draw mode.
+  for (const key of ["elements", "elementsDeform", "elementsAveraged", "elementsNode", "elementsDiscrete"] as const) {
     const row = (result as Partial<Record<typeof key, ContourMeasure | null>> | null)?.[key];
     if (row) printContourRow(row);
   }
