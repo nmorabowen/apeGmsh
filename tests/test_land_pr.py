@@ -62,8 +62,21 @@ class Replay:
         return self.responses[key]
 
 
+#: The Actions run every `_rollup` check belongs to (check 11 reads its job log), and when it started.
+RUN_ID = "38000000001"
+STARTED = "2026-10-13T10:00:00Z"
+
+
+JOB_IDS = {name: 9000 + i for i, name in enumerate((*land_pr.REQUIRED_CHECKS, "qt-window-tests", "build"))}
+
+
+def _job(name, run=RUN_ID):
+    return f"https://github.com/nmorabowen/apeGmsh/actions/runs/{run}/job/{JOB_IDS[name]}"
+
+
 def _rollup(names=land_pr.REQUIRED_CHECKS, **overrides):
-    runs = [{"__typename": "CheckRun", "name": n, "status": "COMPLETED", "conclusion": "SUCCESS"} for n in names]
+    runs = [{"__typename": "CheckRun", "name": n, "status": "COMPLETED", "conclusion": "SUCCESS",
+             "startedAt": STARTED, "detailsUrl": _job(n)} for n in names]
     return [dict(run, **overrides.get(run["name"], {})) for run in runs]
 
 
@@ -107,7 +120,10 @@ FILES_1218 = [
     "src/apeGmsh/studio/_index_build.py", "tests/studio/test_lookup.py",
 ]
 SQUASH_1218 = "21de232c633892deb7d5e38da3fbd3af207c7617"
-COMPARE = "api repos/{owner}/{repo}/compare/"
+COMPARE = "api repos/{owner}/{repo}/compare/main..."  # the post-merge proof, not check 11
+MAIN_CHECKS_CALL = f"api {land_pr.MAIN_CHECKS} --jq {land_pr.MAIN_CHECKS_JQ}"
+MAIN_TIP = "6f66fd2383255cc7d19daed275ce7665e0b2853a"
+FRESH_BASE = "f" * 40
 LABELS = [{"name": "program"}, {"name": "slice"}, {"name": "semantic"}]
 FREEZE_STUDIO = [*LABELS, {"name": "freeze:src/apeGmsh/studio/*"}]
 
@@ -123,8 +139,29 @@ def _row(path, status="modified", previous=None, patch="@@ -1 +1 @@\n-a\n+b"):
     return json.dumps([path, status, previous, changes, patch])
 
 
+def _main_checks(tip=MAIN_TIP, **overrides):
+    """`gh api MAIN_CHECKS --jq MAIN_CHECKS_JQ` on main's tip: every required check green by default."""
+    runs = [{"name": n, "status": "completed", "conclusion": "success", "head_sha": tip} for n in land_pr.REQUIRED_CHECKS]
+    runs = [dict(run, **overrides.get(run["name"], {})) for run in runs]
+    return {"total": len(runs), "runs": runs}
+
+
+def _checkout(head, base=FRESH_BASE):
+    """The job-log line actions/checkout prints for a pull_request run (check 11 reads it)."""
+    return f"2026-10-13T10:00:05.0000000Z HEAD is now at 54b621b Merge {head} into {base}\n"
+
+
+def _log_call(job_url):
+    return f"api --allow-escape-sequences repos/{{owner}}/{{repo}}/actions/jobs/{job_url.rsplit('/', 1)[1]}/logs"
+
+
+def _behind_call(base=FRESH_BASE):
+    return f"api repos/{{owner}}/{{repo}}/compare/{base}...main --jq {land_pr.BEHIND_JQ}"
+
+
 def _recording(number, pr, squash, files=FILES_1218, *, compare="behind", tip="", labels=LABELS, local=None,
-               porcelain="", rows=None, issues=None, shows=None, cards=None):
+               porcelain="", rows=None, issues=None, shows=None, cards=None, main=None, logs=None,
+               behind=(0, None)):
     pr = {"labels": [], "body": "", "closingIssuesReferences": [], **pr}
     head = pr["headRefOid"]
     if rows is None:
@@ -141,6 +178,13 @@ def _recording(number, pr, squash, files=FILES_1218, *, compare="behind", tip=""
         f"pr merge {number} --squash --match-head-commit {head}": "",
         f"pr view {number} --json mergeCommit": json.dumps({"mergeCommit": {"oid": squash}}),
         f"api repos/{{owner}}/{{repo}}/compare/main...{squash} --jq .status": compare + "\n",
+        MAIN_CHECKS_CALL: json.dumps(_main_checks() if main is None else main),
+        **{
+            _log_call(run["detailsUrl"]): _checkout(head)
+            for run in pr["statusCheckRollup"] if "/actions/runs/" in (run.get("detailsUrl") or "")
+        },
+        **(logs or {}),
+        _behind_call(): json.dumps(list(behind)),
     })
     git = Replay({
         "rev-parse HEAD": (local or head) + "\n",
@@ -215,8 +259,10 @@ def test_a_failed_run_before_a_green_rerun_refuses():
 
 
 def test_status_context_success_is_green():
+    """Check 6 reads a StatusContext's state. The PR touches no tests/, so check 11, which
+    needs an Actions job for every required check, does not apply."""
     rollup = [_context("lock-tests", "SUCCESS"), *_rollup(names=land_pr.REQUIRED_CHECKS[1:])]
-    gh, git = _recording(1218, {**PR_1218, "statusCheckRollup": rollup}, SQUASH_1218)
+    gh, git = _recording(1218, {**PR_1218, "statusCheckRollup": rollup}, SQUASH_1218, FILES_1097)
     assert _run(1218, gh, git) == 0
     assert _merged(gh)
 
@@ -1137,3 +1183,234 @@ def test_mispaired_backticks_do_not_hide_a_negation_1250():
             "backticks: the `doc-path` rule reads `x/y.md`.")
     with pytest.raises(land_pr.LandError, match=r"check 9: an Owned line negates"):
         land_pr._card_paths(f"### Owned files\n{line}\n")
+
+
+# --- Lesson #1877: checks 10 (red main) and 11 (stale base) ---------------------------------------
+# 3af31061 squash-merged #1698, whose required checks ran on 10-11 21:25Z on the merge ref
+# `Merge b2540a96 into e6bd0b6d`. X4-a (#1819, 10-12) added the retirement-ledger row for the
+# Linux xfail #1698 deletes, so the merge turned lock-tests red. #1858 (471432f3) and #1866
+# then landed while main's run on 3af31061 was still in progress, and main stayed red.
+# Recorded with `gh api` on 2026-10-13, trimmed to the fields the script reads.
+
+HEAD_1698 = "b2540a96713010baf320df83f13a60232c67cb7e"
+BASE_1698 = "e6bd0b6dc5eb378cf228dab65bef272fd9deecbd"
+RUN_1698 = "38176278368"
+JOBS_1698 = {  # statusCheckRollup detailsUrl job ids, run 38176278368
+    "lock-tests": 114579297270, "emit-cost-gate": 114579297255, "static-gates": 114579297339,
+    "suite": 114579297267, "live-stock": 114579297189,
+}
+PR_1698 = {
+    "state": "OPEN", "isDraft": False, "baseRefName": "main",
+    "headRefName": "prog/f3f-sanisand-flip-pin", "headRefOid": HEAD_1698, "mergeable": "MERGEABLE",
+    "labels": [{"name": "program"}, {"name": "chain:F"}, {"name": "semantic"}],
+    "body": "Slice: #1680\nAuthor-model: Opus 5.5\nClass: semantic\n",
+    "statusCheckRollup": [
+        {"__typename": "CheckRun", "name": name, "status": "COMPLETED", "conclusion": "SUCCESS",
+         "startedAt": "2026-10-11T21:25:27Z",
+         "detailsUrl": f"https://github.com/nmorabowen/apeGmsh/actions/runs/{RUN_1698}/job/{job}"}
+        for name, job in JOBS_1698.items()
+    ],
+}
+FILES_1698 = [
+    "architecture/fork-divergence-roster.md",
+    "changelog.d/f3f-sanisand-flip-pin.md",
+    "tests/opensees/integration_ladruno/test_ladruno_sanisand_live.py",
+]
+CARD_1680 = "### Owned files\n" + "".join(f"- `{p}`\n" for p in FILES_1698) + "\n### The effect test\n"
+#: Job 114579297270 (lock-tests), lines 105 and 124 of its log.
+LOG_1698 = (
+    "2026-10-11T21:25:32.2069551Z ##[group]Checking out the ref\n"
+    f"2026-10-11T21:25:32.6027970Z HEAD is now at 54b621b Merge {HEAD_1698} into {BASE_1698}\n"
+)
+#: compare/e6bd0b6d...6f66fd23 (main's tip just before 3af31061): ahead_by, the tip's date.
+BEHIND_1698 = (68, "2026-10-13T09:04:47Z")
+#: commits/471432f3/check-runs: main red after #1858 landed on top of 3af31061.
+MAIN_471432F3 = _main_checks(
+    "471432f3" + "0" * 32, **{"lock-tests": {"conclusion": "failure"}, "suite": {"conclusion": "failure"}},
+)
+#: commits/3af31061/check-runs while #1858 landed (16:15:56Z; the run started 16:13:54Z). The run has
+#: since completed red; the in-progress state is that recording with status/conclusion reset.
+MAIN_3AF31061_RUNNING = _main_checks(
+    "3af31061bd34d600f42f1a2d3eeaea20e14d6f9d",
+    **{n: {"status": "in_progress", "conclusion": None} for n in ("lock-tests", "suite")},
+)
+
+
+def _1698(**kw):
+    gh, git = _recording(1698, PR_1698, "unused", FILES_1698, cards={1680: {"body": CARD_1680, "comments": []}},
+                         logs={_log_call(f"x/{JOBS_1698['lock-tests']}"): LOG_1698}, **kw)
+    gh.responses[_behind_call(BASE_1698)] = json.dumps(list(BEHIND_1698))
+    return gh, git
+
+
+def test_1698_stale_base_is_refused_3af31061():
+    """Replay (b): #1698 as it stood before 3af31061. Revert-proof: without
+    `check_fresh_base` in `check`, this PR merges."""
+    gh, git = _1698()
+    with pytest.raises(land_pr.LandError, match=(
+        r"check 11: #1698 touches tests/opensees/integration_ladruno/test_ladruno_sanisand_live\.py but its "
+        r"required checks in run 38176278368 \(job 114579297270\) ran on base e6bd0b6dc5eb, 68 commit\(s\) "
+        r"and 36 h behind main.*fresh merge ref"
+    )):
+        _run(1698, gh, git)
+    assert not _merged(gh)
+    assert sum("/logs" in c for c in gh.calls) == 1, "one log per workflow run, not per job"
+
+
+@pytest.mark.parametrize("number, pr, files", [(1218, PR_1218, FILES_1218), (1097, PR_1097, FILES_1097)])
+def test_any_pr_is_refused_while_main_is_red_471432f3(number, pr, files):
+    """Replay (a): main's run at 471432f3 is red, so no PR lands, whatever it touches.
+    Revert-proof: without `check_main_green` in `check`, both merge."""
+    gh, git = _recording(number, pr, "unused", files, main=MAIN_471432F3)
+    with pytest.raises(land_pr.LandError, match=(
+        r"check 10: main is red: required check 'lock-tests' is failure on 471432f30000.*'fixes-red-main'"
+    )):
+        _run(number, gh, git)
+    assert not _merged(gh)
+
+
+def test_main_still_running_is_unverified_1858():
+    """#1858 landed while main's run on 3af31061 was in progress. Revert-proof: without
+    `check_main_green`, it merges."""
+    gh, git = _recording(1218, PR_1218, SQUASH_1218, main=MAIN_3AF31061_RUNNING)
+    with pytest.raises(land_pr.LandError, match=(
+        r"check 10: main unverified: required check 'lock-tests' is in_progress on 3af31061bd34"
+    )):
+        _run(1218, gh, git)
+    assert not _merged(gh)
+
+
+@pytest.mark.parametrize("main, message", [
+    pytest.param({"total": 6, "runs": _main_checks()["runs"]}, r"truncated", id="truncated-page"),
+    pytest.param(_main_checks(**{"live-stock": {"name": "other"}}), r"'live-stock' has not reported", id="missing"),
+    pytest.param({"total": 0, "runs": []}, r"'lock-tests' has not reported on main", id="nothing-reported"),
+    pytest.param(_main_checks(suite={"head_sha": "1" * 40}), r"mixed", id="two-tips"),
+    pytest.param({"runs": []}, r"could not be read \(KeyError", id="garbled"),
+])
+def test_main_state_that_cannot_be_verified_refuses(main, message):
+    """Fail closed: every shape that does not prove main green refuses. Revert-proof: without
+    `check_main_green`, each merges."""
+    gh, git = _recording(1218, PR_1218, SQUASH_1218, main=main)
+    with pytest.raises(land_pr.LandError, match=rf"check 10: main unverified: .*{message}"):
+        _run(1218, gh, git)
+    assert not _merged(gh)
+
+
+def test_main_read_failure_refuses():
+    """A failed `gh` call (network, auth, rate limit) is not green. Revert-proof: without
+    `check_main_green`, it merges."""
+    gh, git = _recording(1218, PR_1218, SQUASH_1218)
+    gh = Flaky(gh.responses, MAIN_CHECKS_CALL, 99)
+    with pytest.raises(land_pr.LandError, match=r"check 10: main unverified: .*CalledProcessError"):
+        _run(1218, gh, git)
+    assert gh.failed == 1, "one bounded read, no retry loop"
+    assert not _merged(gh)
+
+
+def test_fixes_red_main_label_admits_the_fix(capsys):
+    """The named override: the fix (or the revert) lands on a red main. Revert-proof:
+    without `check_main_green`, no OVERRIDDEN line is printed."""
+    pr = {**PR_1218, "labels": [{"name": land_pr.FIXES_RED_MAIN}]}
+    gh, git = _recording(1218, pr, SQUASH_1218, main=MAIN_471432F3)
+    assert _run(1218, gh, git) == 0
+    assert MAIN_CHECKS_CALL not in gh.calls
+    assert "check 10: OVERRIDDEN by the 'fixes-red-main' label" in capsys.readouterr().out
+
+
+def test_fixes_red_main_does_not_lift_check_11():
+    """The override is check 10's alone: a stale base still refuses. Revert-proof: without
+    `check_fresh_base`, it merges."""
+    pr = {**PR_1218, "labels": [{"name": land_pr.FIXES_RED_MAIN}]}
+    gh, git = _recording(1218, pr, SQUASH_1218, behind=(land_pr.STALE_COMMITS + 1, STARTED))
+    with pytest.raises(land_pr.LandError, match=r"check 11: "):
+        _run(1218, gh, git)
+
+
+def test_green_main_and_fresh_base_land(capsys):
+    """Revert-proof: without `check_main_green` or `check_fresh_base`, its line is not printed."""
+    gh, git = _recording(1218, PR_1218, SQUASH_1218)
+    assert _run(1218, gh, git) == 0
+    out = capsys.readouterr().out
+    assert f"check 10: main's required checks are green on {MAIN_TIP[:12]}." in out
+    assert f"check 11: run {RUN_ID} (job {JOB_IDS['lock-tests']}) ran on base ffffffffffff, 0 commit(s)" in out
+
+
+@pytest.mark.parametrize("behind, refused", [
+    pytest.param((land_pr.STALE_COMMITS, "2026-10-14T09:59:00Z"), False, id="N-commits-23h59"),
+    pytest.param((land_pr.STALE_COMMITS + 1, "2026-10-13T10:30:00Z"), True, id="N+1-commits"),
+    pytest.param((1, "2026-10-14T10:01:00Z"), True, id="1-commit-24h01"),
+    pytest.param((0, None), False, id="current"),
+])
+def test_stale_base_limits(behind, refused):
+    """N commits and 24 h, from the checks' start to main's tip. Revert-proof: without
+    `check_fresh_base`, the refused cases merge."""
+    gh, git = _recording(1218, PR_1218, SQUASH_1218, behind=behind)
+    if refused:
+        with pytest.raises(land_pr.LandError, match=r"check 11: .*limits: 10 commits, 24 h"):
+            _run(1218, gh, git)
+    else:
+        assert _run(1218, gh, git) == 0
+
+
+@pytest.mark.parametrize("path", ["internal_docs/program/retirement_ledger.toml", "tests/test_x.py"])
+def test_a_ledger_or_tests_edit_on_a_stale_base_refuses(path):
+    """The ledger is outside tests/ but is a BASELINE file. Revert-proof: without
+    `check_fresh_base`, both merge."""
+    pr = {**PR_1218, "labels": [{"name": land_pr.HUMAN_GATE}]}
+    gh, git = _d4([_row(path)], pr=pr, behind=BEHIND_1698)
+    with pytest.raises(land_pr.LandError, match=rf"check 11: #1218 touches {path} .*68 commit"):
+        _run(1218, gh, git)
+
+
+def test_a_pr_outside_tests_and_baseline_skips_check_11(capsys):
+    """No log is read for a src-only PR on a stale base. Revert-proof: without
+    `check_fresh_base`, the 'neither' line is not printed."""
+    gh, git = _recording(1097, PR_1097, SQUASH_1097, FILES_1097, behind=BEHIND_1698)
+    assert _run(1097, gh, git) == 0
+    assert not any("/logs" in c for c in gh.calls)
+    assert "check 11: #1097 touches neither tests/ nor a baseline file" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("log", [
+    pytest.param("2026-10-13T10:00:05Z HEAD is now at 54b621b Some other commit\n", id="no-checkout-line"),
+    pytest.param(_checkout("0" * 40), id="another-head"),
+    pytest.param("", id="empty-log"),
+])
+def test_an_unreadable_base_refuses(log):
+    """Fail closed: a log that does not name this head's merge ref is not a fresh base.
+    Revert-proof: without `check_fresh_base`, each merges."""
+    gh, git = _recording(1218, PR_1218, SQUASH_1218)
+    gh.responses[_log_call(_job("lock-tests"))] = log
+    with pytest.raises(land_pr.LandError, match=r"check 11: the base #1218's required checks ran on .*could not be read"):
+        _run(1218, gh, git)
+    assert not _merged(gh)
+
+
+def test_a_failed_log_read_refuses():
+    """Revert-proof: without `check_fresh_base`, it merges."""
+    gh, git = _recording(1218, PR_1218, SQUASH_1218)
+    gh = Flaky(gh.responses, "api --allow-escape-sequences", 99)
+    with pytest.raises(land_pr.LandError, match=r"check 11: .*could not be read \(CalledProcessError"):
+        _run(1218, gh, git)
+    assert not _merged(gh)
+
+
+def test_a_required_status_context_cannot_prove_its_base():
+    """A required check reported as a commit status names no Actions job. Revert-proof:
+    without `check_fresh_base`, it merges."""
+    rollup = [_context("lock-tests", "SUCCESS"), *_rollup(names=land_pr.REQUIRED_CHECKS[1:])]
+    gh, git = _recording(1218, {**PR_1218, "statusCheckRollup": rollup}, SQUASH_1218)
+    with pytest.raises(land_pr.LandError, match=r"check 11: required check 'lock-tests' names no Actions job"):
+        _run(1218, gh, git)
+
+
+def test_every_workflow_run_is_judged_the_stale_one_refuses():
+    """A second run of the required checks (after a reopen, say) does not hide a stale one,
+    as check 6 judges every run. Revert-proof: without `check_fresh_base`, it merges."""
+    stale_run = "37000000001"
+    rollup = [*_rollup(), *[dict(run, detailsUrl=_job(run["name"], stale_run)) for run in _rollup()]]
+    gh, git = _recording(1218, {**PR_1218, "statusCheckRollup": rollup}, SQUASH_1218)
+    gh.responses[_log_call(_job("lock-tests", stale_run))] = _checkout(PR_1218["headRefOid"], BASE_1698)
+    gh.responses[_behind_call(BASE_1698)] = json.dumps(list(BEHIND_1698))
+    with pytest.raises(land_pr.LandError, match=rf"check 11: .*run {stale_run} .*68 commit"):
+        _run(1218, gh, git)

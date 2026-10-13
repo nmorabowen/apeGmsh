@@ -15,6 +15,14 @@ label, applied by the maintainer or coordinator, overrides it, the way
 ``human-gate`` admits a baseline edit at check 8. ``--owned-only`` runs check 9
 alone on any PR, merged ones included.
 
+Checks 10 and 11 are lesson #1877 (3af31061 merged #1698 into a red ``main``).
+Check 10 refuses while ``main``'s own required checks are red, or cannot be read
+as completed and green; the ``fixes-red-main`` label, for the fix or the revert,
+overrides it. Check 11 refuses a PR that touches ``tests/`` or a BASELINE file
+when its required checks ran on a merge base more than STALE_COMMITS commits, or
+STALE_HOURS hours, behind ``main``. The base is read from the job log's
+``Merge <head> into <base>`` checkout line, the only place the API exposes it.
+
 Whatever copy is invoked, the rules that run are origin/main's: ``main``
 fetches origin/main and re-executes ``git show origin/main:scripts/land_pr.py``
 from a temp file (maintainer ruling 2 on #1686), so a PR that edits this file
@@ -47,6 +55,7 @@ import sys
 import tempfile
 import time
 from collections.abc import Callable
+from datetime import datetime, timedelta
 from typing import Any
 
 Runner = Callable[[list[str]], str]
@@ -123,6 +132,22 @@ _PATHLIKE = re.compile(r"[\w.\-/*?\[\]]+")
 _GLOB = re.compile(r"[*?\[]")
 COMPARE_TRIES = 5
 COMPARE_WAIT_S = 3.0
+#: Check 10 (lesson #1877): `main`'s required checks, in one bounded read (one page, no
+#: --paginate, no wait). The endpoint's default `filter=latest` lets a green rerun count.
+MAIN_CHECKS = "repos/{owner}/{repo}/commits/main/check-runs?per_page=100"
+MAIN_CHECKS_JQ = "{total: .total_count, runs: [.check_runs[] | {name, status, conclusion, head_sha}]}"
+FIXES_RED_MAIN = "fixes-red-main"
+#: Check 11 (lesson #1877): a PR that touches tests/ or a BASELINE file refuses when its
+#: required checks ran on a base more than STALE_COMMITS commits behind main, or when
+#: main's tip landed more than STALE_HOURS after those checks started. #1698 was 68
+#: commits and 43 h behind; a program day lands 40 PRs.
+STALE_COMMITS = 10
+STALE_HOURS = 24
+_ACTIONS_JOB = re.compile(r"/actions/runs/(\d+)/job/(\d+)")
+#: actions/checkout's line for a pull_request run: the merge ref is GitHub's test merge.
+_CHECKOUT = re.compile(r"HEAD is now at [0-9a-f]+ Merge ([0-9a-f]{40}) into ([0-9a-f]{40})")
+#: `compare/<base>...main`: commits on main the base lacks, and main's tip date (oldest first).
+BEHIND_JQ = "[.ahead_by, (.commits | last | .commit.committer.date)]"
 
 
 class LandError(Exception):
@@ -492,8 +517,110 @@ def check_owned(number: int, pr: dict[str, Any], rows: list[FileRow], gh: Runner
     print(f"check 9: #{number}'s {len(rows)} changed file(s) are inside slice card #{card}'s Owned list.")
 
 
+#: A failed or garbled read: refuse, never treat it as green (fail closed).
+_UNREADABLE = (subprocess.CalledProcessError, OSError, ValueError, KeyError, TypeError, IndexError, AttributeError)
+
+
+def check_main_green(pr: dict[str, Any], gh: Runner) -> None:
+    """Check 10 (lesson #1877). `main`'s own required checks are completed and green.
+    #1858 and #1866 landed while main's run on 3af31061 was still in progress and then
+    failed; a PR landing on a red main buries the break under more merges."""
+    if FIXES_RED_MAIN in {lab["name"] for lab in pr["labels"]}:
+        print(f"check 10: OVERRIDDEN by the {FIXES_RED_MAIN!r} label; main's state is not read.")
+        return
+    unverified = (
+        f"Wait for main's run, then retry; the fix or the revert of a red main lands under the "
+        f"{FIXES_RED_MAIN!r} label (lesson #1877)."
+    )
+    try:
+        data = json.loads(gh(["api", MAIN_CHECKS, "--jq", MAIN_CHECKS_JQ]))
+        total, runs = int(data["total"]), list(data["runs"])
+        tips = {str(run["head_sha"]) for run in runs}
+    except _UNREADABLE as exc:
+        raise LandError(f"check 10: main unverified: its required checks could not be read ({exc!r}). {unverified}") from exc
+    tip = next(iter(tips))[:12] if len(tips) == 1 else "main"
+    if total > len(runs) or len(tips) > 1:
+        raise LandError(f"check 10: main unverified: the check-runs read for {tip} is truncated or mixed. {unverified}")
+    for name in REQUIRED_CHECKS:
+        named = [run for run in runs if run["name"] == name]
+        if not named:
+            raise LandError(f"check 10: main unverified: required check {name!r} has not reported on {tip}. {unverified}")
+        for run in named:
+            if run["status"] != "completed":
+                raise LandError(
+                    f"check 10: main unverified: required check {name!r} is {run['status']} on {tip} "
+                    f"(#1858 and #1866 landed while main's run on 3af31061 was in progress). {unverified}"
+                )
+            if run["conclusion"] != "success":
+                raise LandError(
+                    f"check 10: main is red: required check {name!r} is {run['conclusion']} on {tip}. "
+                    f"Landing now buries the break under another merge (#1858, #1866). Only the fix or "
+                    f"the revert lands, under the {FIXES_RED_MAIN!r} label (lesson #1877)."
+                )
+    print(f"check 10: main's required checks are green on {tip}.")
+
+
+def _when(stamp: str) -> datetime:
+    return datetime.fromisoformat(stamp.replace("Z", "+00:00"))
+
+
+def check_fresh_base(number: int, pr: dict[str, Any], rows: list[FileRow], gh: Runner) -> None:
+    """Check 11 (lesson #1877). A PR that touches tests/ or a BASELINE file had its
+    required checks run on a base no more than STALE_COMMITS commits and STALE_HOURS
+    behind main. #1698's checks ran on 10-11; X4-a added the retirement-ledger row for
+    the xfail #1698 deleted on 10-12, so the merge 3af31061 turned lock-tests red."""
+    touched = sorted({n for row in rows for n in (row[0], row[2]) if n and (n.startswith("tests/") or n in BASELINE)})
+    if not touched:
+        print(f"check 11: #{number} touches neither tests/ nor a baseline file; the base age does not apply.")
+        return
+    head = pr["headRefOid"]
+    rerun = (
+        "Re-run them on a fresh merge ref: merge main into the branch (or push an empty commit) "
+        "and wait for the checks. The Re-run button reuses the old merge ref."
+    )
+    workflow_runs: dict[str, tuple[str, list[str]]] = {}  # run id -> (one job id, start times)
+    for run in pr["statusCheckRollup"]:
+        name = run.get("name") or run.get("context")
+        if name not in REQUIRED_CHECKS:
+            continue
+        job = _ACTIONS_JOB.search(run.get("detailsUrl") or "")
+        if job is None or not run.get("startedAt"):
+            raise LandError(
+                f"check 11: required check {name!r} names no Actions job and start time, so the base "
+                f"it ran on cannot be read; refusing. {rerun}"
+            )
+        workflow_runs.setdefault(job.group(1), (job.group(2), []))[1].append(run["startedAt"])
+    for run_id, (job_id, starts) in sorted(workflow_runs.items()):
+        where = f"run {run_id} (job {job_id})"
+        try:
+            log = gh(["api", "--allow-escape-sequences", f"repos/{{owner}}/{{repo}}/actions/jobs/{job_id}/logs"])
+            merge = _CHECKOUT.search(log)
+            if merge is None or merge.group(1) != head:
+                raise ValueError(f"no 'Merge {head[:12]} into <base>' checkout line")
+            base = merge.group(2)
+            behind_raw, tip_date = json.loads(
+                gh(["api", f"repos/{{owner}}/{{repo}}/compare/{base}...main", "--jq", BEHIND_JQ])
+            )
+            behind = int(behind_raw)
+            started = min(_when(stamp) for stamp in starts)
+            hours = (_when(tip_date) - started) / timedelta(hours=1) if behind else 0.0
+        except _UNREADABLE as exc:
+            raise LandError(
+                f"check 11: the base #{number}'s required checks ran on in {where} could not be "
+                f"read ({exc!r}); refusing. {rerun}"
+            ) from exc
+        if behind > STALE_COMMITS or hours > STALE_HOURS:
+            raise LandError(
+                f"check 11: #{number} touches {', '.join(touched[:3])}{' ...' if len(touched) > 3 else ''} "
+                f"but its required checks in {where} ran on base {base[:12]}, {behind} commit(s) and "
+                f"{hours:.0f} h behind main (limits: {STALE_COMMITS} commits, {STALE_HOURS} h). #1698 "
+                f"was green on a 2-day-old base and its merge 3af31061 turned main red (lesson #1877). {rerun}"
+            )
+        print(f"check 11: {where} ran on base {base[:12]}, {behind} commit(s) and {hours:.0f} h behind main.")
+
+
 def check(number: int, gh: Runner, git: Runner) -> dict[str, Any]:
-    """Checks 1-9, in order. Returns the PR record, or raises LandError."""
+    """Checks 1-11, in order. Returns the PR record, or raises LandError."""
     pr = json.loads(gh(["pr", "view", str(number), "--json", PR_FIELDS]))
     head = pr["headRefOid"]
     if pr["baseRefName"] != "main":
@@ -545,6 +672,8 @@ def check(number: int, gh: Runner, git: Runner) -> dict[str, Any]:
                 )
     _check_adr_and_baseline(number, pr, rows, git)
     check_owned(number, pr, rows, gh)
+    check_main_green(pr, gh)
+    check_fresh_base(number, pr, rows, gh)
     return pr
 
 
@@ -672,7 +801,7 @@ def land(
     pr = check(number, gh, git)
     head = pr["headRefOid"]
     if dry_run:
-        print(f"dry-run: #{number} passes checks 1-9 at {head[:12]}; not merging.")
+        print(f"dry-run: #{number} passes checks 1-11 at {head[:12]}; not merging.")
         return 0
     gh(["pr", "merge", str(number), "--squash", "--match-head-commit", head])  # never retried
     return prove(number, gh, git, sleep, head, pr["headRefName"])
