@@ -111,6 +111,12 @@ g.constraints.rigid_diaphragm(
 )
 ```
 
+`master_point` is optional. Left out, `"slab_master"` must resolve to exactly one
+node, which becomes the master, and the plane passes through it; zero or several
+nodes are refused. Given, the plane passes through the point, and a master label
+of several nodes contributes its node on that plane nearest the point (a slave
+node is never promoted to master).
+
 The diaphragm ties only the in-plane DOFs (`ux, uy, rz` here). A master that
 is a lone point at the centre of mass sits in no element, so its `uz, rx, ry`
 are stiffened by nothing and the stiffness matrix is singular there; fix them on
