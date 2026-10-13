@@ -14,6 +14,9 @@
 //   raises a ResultsError, never a guessed default;
 // - element categories the spike does not read (line_stations, nodal_forces,
 //   fibers, layers) are listed in `unread`, not skipped silently;
+// - V4c2a: a gauss component whose element or Gauss axis disagrees with the
+//   group's index datasets (a partial write), and every component of a group
+//   with no Gauss point, is refused alone (`GaussGroupInfo.refused`);
 // - `_element_index` is a FEM element id if and only if the root attribute
 //   `element_index_space` is the scalar variable-length UTF-8 string "fem", the
 //   encoding NativeWriter.stamp_element_index_space writes and the one

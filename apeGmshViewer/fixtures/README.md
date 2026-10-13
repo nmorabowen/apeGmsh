@@ -243,3 +243,39 @@ banners. The values are synthetic; no solve runs.
 $env:PYTHONPATH = "src"
 & C:\Users\nmb\venv\opensees_venv\Scripts\python.exe scripts/make_viewer_results_fixtures.py --deform
 ```
+
+## `elem_*` (V4c2a, #1833)
+
+The element-contour pairs, every results file written by the real
+`NativeWriter` (`element_fixtures` in the generator), with synthetic values
+(no solve runs) in one closed form of the element id, the Gauss point `g`,
+the component's position `c` and the step `k`:
+
+    v[k, e, g] = eid_e + 0.1 g + 0.25 (c + 1)(k + 1)
+
+- `elem_mixed.h5` / `.results.h5`, stamped `element_index_space = "fem"`: a
+  2-D model (`ops.model(ndm=2)`), 8 `FourNodeQuad` (`Quads`) beside 8 `Tri31`
+  (`Tris`), 21 nodes. One static stage, `load`, of 3 steps:
+  `displacement_x/y` (the `deform_2d` closed form) and `stress_xx/xy/yy` in two
+  one-point groups, `quads_G1` and `tris_G1`. The lowest quad id is left out
+  of `quads_G1` ("no data").
+- `elem_mixed_unstamped.*`: the same model file, and the same results written
+  again without the stamp (unverified: refused).
+- `elem_badid.*`: the same, stamped, with an extra `tris_G1` row of id 999999,
+  which the model has no cell for (refused).
+- `elem_solid.h5` / `.results.h5`, stamped: 12 hexahedra (3 x 2 x 2), a
+  FEM-only `model.h5` paired by `fem_hash`, `displacement_x/y/z` (the
+  `contour_values` form) and `stress_xx`, `stress_yy` at 8 Gauss points.
+- `elem_staged.results.h5`, stamped, for the committed `contour_staged.h5`
+  (written with `model_h5_src=`, so it pairs by `model_hash`): the three
+  staged stages with `stress_xx` at one Gauss point of every tet, plus the
+  stage index.
+
+The model files are written by this checkout's apeGmsh, a minor ahead of
+what this app reads, so `elem_mixed*` and `elem_badid` open with the
+`/opensees` banners.
+
+```powershell
+$env:PYTHONPATH = "src"
+& C:\Users\nmb\venv\opensees_venv\Scripts\python.exe scripts/make_viewer_results_fixtures.py --elements
+```
