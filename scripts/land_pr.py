@@ -3,12 +3,17 @@
     python scripts/land_pr.py <number>            # check, squash-merge, prove it landed
     python scripts/land_pr.py <number> --dry-run  # run the checks and stop before the merge
     python scripts/land_pr.py <number> --verify-only  # only the post-merge proof, for a merged PR
+    python scripts/land_pr.py <number> --owned-only   # only check 9 (Owned files), on any PR
 
 The checks run in order and the first failure refuses, naming the check and
 the lesson. Checks 7 and 8 are ADR 0121 D4 (invariant 8): a diff that sets an
 ADR's Status to Accepted is refused outright, and an edit to a baseline file
 (the freeze census, the retirement ledger) needs the ``human-gate`` label. The maintainer's web merge is the
-exception path for both, by design.
+exception path for both, by design. Check 9 (lesson #1788) refuses a ``program``
+PR whose changed files fall outside its slice card's Owned list; the ``scope-ok``
+label, applied by the maintainer or coordinator, overrides it, the way
+``human-gate`` admits a baseline edit at check 8. ``--owned-only`` runs check 9
+alone on any PR, merged ones included.
 
 Whatever copy is invoked, the rules that run are origin/main's: ``main``
 fetches origin/main and re-executes ``git show origin/main:scripts/land_pr.py``
@@ -77,6 +82,21 @@ ADR_HEADER_LINES = 30
 #: A slice PR names its slice issue as `Slice: #<n>` (PROGRAM.md section 7).
 SLICE_REF = re.compile(r"^Slice:\s*#(\d+)", re.MULTILINE)
 _HUNK = re.compile(r"^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@")
+#: Check 9 (lesson #1788): a PR with this label must stay inside its card's Owned list.
+PROGRAM = "program"
+SCOPE_OK = "scope-ok"
+#: Every PR adds a changelog fragment, so no card has to own one. Nothing else is implicit.
+IMPLICIT_ALLOWED = ("changelog.d/*.md",)
+#: The card sections whose backticked paths a slice PR may change (slice_card.md).
+_OWNED_HEADING = re.compile(r"^#{2,4}\s*(owned files?|append-only|allowed)\b", re.IGNORECASE)
+_HEADING = re.compile(r"^#{1,6}\s")
+#: A ruling-style card names its list after a label: "Owned: `tests/test_loc_ratchet.py` ..." (#1851).
+_OWNED_LABEL = re.compile(r"\bowned(?: files?)?:", re.IGNORECASE)
+_LIST_LINE = re.compile(r"\s*(?:[-*+]|\d+[.)])\s|\s")
+_AMENDMENT = re.compile(r"^\s*\**\s*card amendment", re.IGNORECASE)
+_TICKED = re.compile(r"`([^`\n]+)`")
+_PATHLIKE = re.compile(r"[\w.\-/*?\[\]]+")
+_GLOB = re.compile(r"[*?\[]")
 COMPARE_TRIES = 5
 COMPARE_WAIT_S = 3.0
 
@@ -262,8 +282,120 @@ def _check_adr_and_baseline(number: int, pr: dict[str, Any], rows: list[FileRow]
                 )
 
 
+def _line_paths(line: str) -> list[str]:
+    """The paths a card line names in backticks. `path::symbol` is `path`; a bare
+    file name listed right after a path ("`.../prototypes/contract_cov.py`, `legacy.py`,
+    `clones.py`", #1802) is that path's sibling. Tokens that are not path-like
+    (`lock-tests`, `show_web`, `<slug>` placeholders) and globs with no literal top
+    directory (`*`, `**/*.py`) are dropped: dropping narrows the list."""
+    out: list[str] = []
+    folder, end = "", 0
+    for match in _TICKED.finditer(line):
+        if line[end : match.start()].strip(" ,+&") not in ("", "and"):
+            folder = ""  # only a list ("`a/x.py`, `y.py`") makes siblings, not prose
+        end = match.end()
+        path = match.group(1).split("::", 1)[0].strip().removeprefix("./").lstrip("/")
+        if not _PATHLIKE.fullmatch(path) or ("/" not in path and "." not in path):
+            folder = ""
+            continue
+        if "/" in path:
+            folder = "" if path.endswith("/") else path.rsplit("/", 1)[0] + "/"
+        elif folder:
+            path = folder + path
+        if _GLOB.search(path.split("/", 1)[0]):
+            continue
+        out.append(path)
+    return out
+
+
+def _card_paths(body: str) -> list[str] | None:
+    """The backticked paths of a card's `### Owned files`, `### Append-only` and
+    `### Allowed` sections, or of an "Owned files:" label line and the list under it.
+    None when the card has no such section at all."""
+    paths: list[str] = []
+    found = in_section = in_label = False
+    for line in body.splitlines():
+        if _HEADING.match(line):
+            in_section, in_label = _OWNED_HEADING.match(line) is not None, False
+            found |= in_section
+            continue
+        if in_label and line.strip() and not _LIST_LINE.match(line):
+            in_label = False  # the label's list ends at its first line that is not a list item
+        label = None if in_section or in_label else _OWNED_LABEL.search(line)
+        if label:
+            in_label = found = True
+            line = line[label.end():]
+        if in_section or in_label:
+            paths.extend(_line_paths(line))
+    return paths if found else None
+
+
+def _owned(path: str, allowed: list[str]) -> bool:
+    for entry in allowed:
+        if entry.endswith("/"):
+            if path.startswith(entry):
+                return True
+        elif _GLOB.search(entry):
+            if fnmatch.fnmatchcase(path, entry):
+                return True
+        elif path == entry:
+            return True
+    return False
+
+
+def check_owned(number: int, pr: dict[str, Any], rows: list[FileRow], gh: Runner) -> None:
+    """Check 9 (lesson #1788). A `program` PR changes only files its slice card owns:
+    the card's Owned/Append-only/Allowed sections, plus `**Card amendment` comments,
+    plus IMPLICIT_ALLOWED. Both names of a rename are judged. #1812 changed 52 files
+    against 6 owned, from a stale tree, and would have reverted three merged PRs."""
+    labels = {lab["name"] for lab in pr["labels"]}
+    if PROGRAM not in labels:
+        print(f"check 9: #{number} is not labelled {PROGRAM!r}; the Owned-files check does not apply.")
+        return
+    if SCOPE_OK in labels:
+        print(f"check 9: OVERRIDDEN by the {SCOPE_OK!r} label; #{number}'s files are not checked against its card.")
+        return
+    slices = SLICE_REF.findall(pr["body"] or "")
+    if not slices:
+        raise LandError(
+            f"check 9: #{number} is labelled {PROGRAM!r} but its body has no 'Slice: #<n>' line, so "
+            f"its Owned list cannot be read (PROGRAM.md section 7). Add the line, or the maintainer "
+            f"applies {SCOPE_OK!r}."
+        )
+    card = int(slices[0])
+    issue = json.loads(gh(["issue", "view", str(card), "--json", "body,comments"]))
+    allowed = _card_paths(issue.get("body") or "")
+    if allowed is None:
+        raise LandError(
+            f"check 9: slice card #{card} has no '### Owned files' section (nor an 'Owned:' "
+            f"list), so #{number}'s scope cannot be checked; refusing. Amend the card, or the "
+            f"maintainer applies {SCOPE_OK!r}."
+        )
+    for comment in issue.get("comments") or []:
+        text = comment.get("body") or ""
+        if _AMENDMENT.match(text):
+            allowed += [p for line in text.splitlines() for p in _line_paths(line)]
+    if not allowed:
+        raise LandError(
+            f"check 9: slice card #{card}'s Owned section names no backticked path, nor does any "
+            f"'**Card amendment' comment, so #{number}'s scope cannot be checked; refusing. "
+            f"Record the list on the card, or the maintainer applies {SCOPE_OK!r}."
+        )
+    allowed += IMPLICIT_ALLOWED
+    outside = sorted({name for row in rows for name in (row[0], row[2]) if name and not _owned(name, allowed)})
+    if outside:
+        listing = "\n".join(f"  {name}" for name in outside)
+        raise LandError(
+            f"check 9: #{number} changes {len(outside)} file(s) outside slice card #{card}'s Owned "
+            f"list (lesson #1788: #1812 changed 52 files against 6 owned, from a stale tree):\n"
+            f"{listing}\nRebuild the branch with only the owned files, or amend the card with a "
+            f"'**Card amendment' comment naming them, or the maintainer applies {SCOPE_OK!r}."
+        )
+    print(f"check 9: #{number}'s {len(rows)} changed file(s) are inside slice card #{card}'s Owned list.")
+
+
 def check(number: int, gh: Runner, git: Runner) -> dict[str, Any]:
-    """Checks 1-8, in order. Returns the PR record, or raises LandError."""
+    """Checks 1-9, in order. Returns the PR record, or raises LandError."""
     pr = json.loads(gh(["pr", "view", str(number), "--json", PR_FIELDS]))
     head = pr["headRefOid"]
     if pr["baseRefName"] != "main":
@@ -314,6 +446,7 @@ def check(number: int, gh: Runner, git: Runner) -> dict[str, Any]:
                     f"(every run of a required check must be). Pending is a refusal, not a wait."
                 )
     _check_adr_and_baseline(number, pr, rows, git)
+    check_owned(number, pr, rows, gh)
     return pr
 
 
@@ -429,14 +562,19 @@ def land(
     *,
     dry_run: bool = False,
     verify_only: bool = False,
+    owned_only: bool = False,
     sleep: Callable[[float], None] = time.sleep,
 ) -> int:
     if verify_only:
         return prove(number, gh, git, sleep)
+    if owned_only:  # check 9 alone, on any PR state (the dry run on merged PRs, #1855)
+        pr = json.loads(gh(["pr", "view", str(number), "--json", "labels,body"]))
+        check_owned(number, pr, _changed_files(number, gh), gh)
+        return 0
     pr = check(number, gh, git)
     head = pr["headRefOid"]
     if dry_run:
-        print(f"dry-run: #{number} passes checks 1-8 at {head[:12]}; not merging.")
+        print(f"dry-run: #{number} passes checks 1-9 at {head[:12]}; not merging.")
         return 0
     gh(["pr", "merge", str(number), "--squash", "--match-head-commit", head])  # never retried
     return prove(number, gh, git, sleep, head, pr["headRefName"])
@@ -452,11 +590,18 @@ def main(argv: list[str] | None = None) -> int:
         "--verify-only", action="store_true",
         help="skip the checks and the merge; run only the post-merge proof for an already-merged PR",
     )
+    parser.add_argument(
+        "--owned-only", action="store_true",
+        help="run only check 9 (the PR's files against its slice card's Owned list), on any PR",
+    )
     args = parser.parse_args(argv)
-    if args.verify_only and args.dry_run:
-        parser.error("--verify-only and --dry-run are mutually exclusive")  # exit 2
+    if args.verify_only + args.dry_run + args.owned_only > 1:
+        parser.error("--verify-only, --dry-run and --owned-only are mutually exclusive")  # exit 2
     try:
-        return land(args.number, run_gh, run_git, dry_run=args.dry_run, verify_only=args.verify_only, sleep=time.sleep)
+        return land(
+            args.number, run_gh, run_git, dry_run=args.dry_run, verify_only=args.verify_only,
+            owned_only=args.owned_only, sleep=time.sleep,
+        )
     except UnverifiedError as exc:
         print(str(exc), file=sys.stderr)
         return 1
