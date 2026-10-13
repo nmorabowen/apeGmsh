@@ -31,7 +31,7 @@
      - Placeholders such as `<slug>` and non-paths such as `lock-tests` are ignored.
      - Only `changelog.d/*.md` is implicit. Goldens, snapshots, `_api_index.json` and the skill mirror must be listed.
      - A section ends at the next `#` heading or bold-label line (`**Hub lock:**`). An `Owned:` label counts only where it opens a line or a sentence; "not owned:" is never a label.
-     - An Owned line with a path and a negation (`never`, `not`, `don't`, `do not`, `except`) is refused as ambiguous: list only what the PR may change, and put exclusions under another heading.
+     - An Owned line with a path and a negation is refused as ambiguous: list only what the PR may change, and put exclusions under another heading. A negation is `never`, `not` (also `do _not_`), `cannot`, any n't contraction (`don't`, `won't`, straight or curly apostrophe), `except`, `exclude`/`excluding`, `avoid`, `leave … alone` or `no changes to`/`no edits to`, outside the backticked paths (`land_pr.py::_NEGATION`).
      - A card with no Owned section, or one that names no path, is refused. -->
 - `path::symbol`
 
@@ -41,7 +41,7 @@
 ### Allowed
 <!-- Optional: files the PR may change but does not own, such as regenerated goldens or the skill mirror. -->
 
-<!-- Amendments: to add files after the card is filed, post an issue comment whose first words are `**Card amendment` and name each path in backticks; check 9 adds them. An amendment line with a negation (`never`, `not`, `don't`, `do not`, `except`) adds no path; check 9 says it skipped it. Any other comment, a maintainer ruling included, adds nothing. Limitation: the amendment's author is not checked, because every account here is the same user today.
+<!-- Amendments: to add files after the card is filed, post an issue comment whose first words are `**Card amendment` and name each path in backticks; check 9 adds them. An amendment line with a negation (the list above) adds no path; check 9 says it skipped it. A negated lead-in ("Do not touch:" then a list; any negated line that is not a bullet, or that ends in `:`) also drops every line after it up to a blank line, a heading or a bold label; a negated bullet drops itself and its sub-items. So put each addition in its own positive line, after a blank line if a negation precedes it. Any other comment, a maintainer ruling included, adds nothing. Limitation: the amendment's author is not checked, because every account here is the same user today.
      Override: the maintainer or coordinator applies the `scope-ok` label to the PR, and check 9 passes with an OVERRIDDEN notice, the way `human-gate` admits a baseline edit at check 8. -->
 
 

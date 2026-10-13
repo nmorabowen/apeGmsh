@@ -998,3 +998,85 @@ def test_negated_amendment_line_adds_no_path(capsys):
 def test_owned_label_mid_line_after_a_sentence_still_counts_1851():
     card = "**Maintainer ruling (2026-10-13): YES.** Lower it. Owned: `tests/x.py` (that one value)."
     assert land_pr._card_paths(card) == ["tests/x.py"]
+
+
+# --- #1872 (follow-up to #1858): the amendment negation guard failed open ------------------
+def _refused_b(amendment):
+    """`src/b.py` is changed but must not be whitelisted; `src/a.py` stays owned."""
+    gh, git = _scope(["src/a.py", "src/b.py"], comments=(amendment,))
+    with pytest.raises(land_pr.LandError, match=r"check 9: #1218 changes 1 file\(s\)(.|\n)*\n  src/b\.py"):
+        _run(1218, gh, git)
+    assert not _merged(gh)
+
+
+def test_negation_opening_a_multi_line_list_excludes_the_list_1872(capsys):
+    """Revert-proof: with the lead-in's `excluding` state removed, `src/b.py` is owned."""
+    amendment = "**Card amendment:** add `src/a.py`.\nDo not touch:\n- `src/b.py`\n"
+    _refused_b(amendment)
+    assert "skipped a negated card-amendment line on #1801: '- `src/b.py`'" in capsys.readouterr().out
+    gh, git = _scope(["src/a.py"], comments=(amendment,))  # the positive line still adds its path
+    assert _run(1218, gh, git, dry_run=True) == 0
+
+
+@pytest.mark.parametrize("amendment", [
+    pytest.param("**Card amendment:** add `src/a.py`.\n- Do not touch these\n  - `src/b.py`\n", id="sub-items"),
+    pytest.param("**Card amendment:** add `src/a.py`.\n- Do not touch:\n- `src/b.py`\n", id="bullet-ending-in-colon"),
+])
+def test_a_negated_bullet_excludes_the_list_it_opens_1872(amendment):
+    """Revert-proof: without the bullet's sub-item rule (sub-items) or the trailing-colon
+    lead-in rule (bullet-ending-in-colon), `src/b.py` is owned."""
+    _refused_b(amendment)
+
+
+def test_a_negated_bullet_does_not_swallow_its_siblings_1872():
+    """Amendments are often prose bullets (#1663, #1722): one negated bullet must not drop
+    the paths its sibling bullets add. Fails if any negation excluded to the paragraph's end."""
+    amendment = "**Card amendment:**\n- add `src/a.py`\n- do not reformat anything\n- add `src/c.py`\n"
+    gh, git = _scope(["src/a.py", "src/c.py"], comments=(amendment,))
+    assert _run(1218, gh, git, dry_run=True) == 0
+
+
+@pytest.mark.parametrize("tail", [
+    pytest.param("\nAlso add `src/c.py`.", id="blank-line"),
+    pytest.param("### Also\n- `src/c.py`", id="heading"),
+    pytest.param("**Also add:** `src/c.py`", id="bold-label"),
+])
+def test_a_negated_list_ends_where_an_owned_section_does_1872(tail):
+    """The list a negation opens ends at a blank line, a heading or a bold label, as in
+    `_card_paths`; a positive line after it adds its path again (the card's stop condition)."""
+    amendment = "**Card amendment:** add `src/a.py`.\nDo not touch:\n- `src/b.py`\n" + tail
+    gh, git = _scope(["src/a.py", "src/c.py"], comments=(amendment,))
+    assert _run(1218, gh, git, dry_run=True) == 0
+
+
+@pytest.mark.parametrize("line", [
+    pytest.param("Don\u2019t touch `src/b.py`.", id="curly-apostrophe"),
+    pytest.param("Do _not_ touch `src/b.py`.", id="underscore-emphasis"),
+    pytest.param("It won't touch `src/b.py`.", id="won't"),
+    pytest.param("Leave `src/b.py` alone.", id="leave-alone"),
+    pytest.param("Avoid `src/b.py`.", id="avoid"),
+    pytest.param("No changes to `src/b.py`.", id="no-changes-to"),
+    pytest.param("It cannot touch `src/b.py`.", id="cannot"),
+    pytest.param("Excluding `src/b.py`.", id="excluding"),
+])
+def test_negation_vocabulary_adds_no_path_1872(line):
+    """Revert-proof, one form per case: drop the form from `_NEGATION` and `src/b.py` is owned."""
+    _refused_b(f"**Card amendment (T):** also edit `src/a.py`.\n{line}\n")
+
+
+@pytest.mark.parametrize("line", [
+    "- `scripts/a.py` (don\u2019t touch `src/x.py`)",
+    "- `scripts/a.py`; leave `src/x.py` alone",
+])
+def test_new_negation_vocabulary_refuses_an_owned_line_1872(line):
+    with pytest.raises(land_pr.LandError, match=r"check 9: an Owned line negates"):
+        land_pr._card_paths(f"### Owned files\n{line}\n")
+
+
+def test_a_negation_word_inside_a_backticked_path_is_not_a_negation_1872():
+    """Revert-proof: a letter boundary matches `not` in `not_found.py` (a word boundary did
+    not), so without masking path spans this Owned line refuses and the amendment adds nothing."""
+    card = "### Owned files\n- `src/x/not_found.py`, `test_never_twice.py`\n"
+    assert land_pr._card_paths(card) == ["src/x/not_found.py", "src/x/test_never_twice.py"]
+    gh, git = _scope(["tests/avoid-cannot.py"], comments=("**Card amendment:** add `tests/avoid-cannot.py`.",))
+    assert _run(1218, gh, git, dry_run=True) == 0

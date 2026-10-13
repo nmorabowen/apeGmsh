@@ -97,7 +97,13 @@ _OWNED_LABEL = re.compile(r"(?:^\s*(?:[-*+]\s+)?|[.!?]\**\s+)\**owned(?: files?)
 #: A bold pseudo-heading ("**Do not read:** ...") ends an Owned section as a `#` heading does.
 _BOLD_LABEL = re.compile(r"^\s*\*\*[^*\n]+?(?::\*\*|\*\*:)")
 #: An Owned line that negates ("`a.py` (never touch `b.py`)") cannot be read safely: refuse it.
-_NEGATION = re.compile(r"\b(?:never|not|don't|do not|except)\b", re.IGNORECASE)
+#: Letter boundaries, not `\b`, so "Do _not_ touch" negates (#1872); any n't contraction
+#: (straight or curly apostrophe) counts. Keep the list in slice_card.md in sync.
+_NEGATION = re.compile(
+    r"(?<![a-z])(?:never|not|cannot|[a-z]*n['\u2019]t|except|exclud(?:e|es|ing)|avoid(?:s|ing)?"
+    r"|leave(?![a-z]).*?(?<![a-z])alone|no\s+(?:changes?|edits?)\s+to)(?![a-z])",
+    re.IGNORECASE,
+)
 _HTML_COMMENT = re.compile(r"<!--.*?-->", re.DOTALL)
 _LIST_LINE = re.compile(r"\s*(?:[-*+]|\d+[.)])\s|\s")
 _AMENDMENT = re.compile(r"^\s*\**\s*card amendment", re.IGNORECASE)
@@ -315,6 +321,16 @@ def _line_paths(line: str) -> list[str]:
     return out
 
 
+def _negates(line: str) -> bool:
+    """Whether a card line carries a negation outside its backticked paths. A path span
+    is masked so `src/not_found.py` is not a "not"; a ticked non-path such as `never`
+    is kept, so it still negates (fail closed)."""
+    def mask(match: re.Match[str]) -> str:
+        token = match.group(1).split("::", 1)[0].strip()
+        return " " if _PATHLIKE.fullmatch(token) and ("/" in token or "." in token) else match.group(0)
+    return _NEGATION.search(_TICKED.sub(mask, line)) is not None
+
+
 def _card_paths(body: str) -> list[str] | None:
     """The backticked paths of a card's `### Owned files`, `### Append-only` and
     `### Allowed` sections, or of an "Owned:" label line and the list under it.
@@ -337,13 +353,41 @@ def _card_paths(body: str) -> list[str] | None:
             in_label = found = True
             line = line[label.end():]
         if (in_section or in_label) and "`" in line:
-            if _NEGATION.search(line):
+            if _negates(line):
                 raise LandError(
                     f"check 9: an Owned line negates, so which paths it owns is ambiguous; "
                     f"refusing. Reword it (a '**Card amendment' comment): {line.strip()!r}"
                 )
             paths.extend(_line_paths(line))
     return paths if found else None
+
+
+def _amendment_paths(text: str, card: int) -> list[str]:
+    """The paths a `**Card amendment` comment adds. A negated line adds none, nor does
+    the list it opens (#1872). A negated lead-in ("Do not touch:" then bullets: any
+    negated line that is not a bullet, or that ends in ":") excludes up to where an
+    Owned section ends in `_card_paths`: a blank line, a heading or a bold label. A
+    negated bullet excludes itself and its sub-items only, so one "do not" bullet does
+    not swallow the sibling bullets of a prose amendment."""
+    paths: list[str] = []
+    excluding, bullet = False, -1  # bullet: the negated bullet's indent, while inside it
+    for line in text.splitlines():
+        indent = len(line) - len(line.lstrip())
+        if not line.strip() or _HEADING.match(line) or _BOLD_LABEL.match(line):
+            excluding, bullet = False, -1
+        elif indent <= bullet:
+            bullet = -1
+        if _negates(line):
+            if _LIST_LINE.match(line) and not line.rstrip(" *").endswith(":"):
+                bullet = indent if bullet < 0 else bullet  # inside one already: keep the outer
+            else:
+                excluding = True
+        if excluding or bullet >= 0:
+            if "`" in line:
+                print(f"check 9: skipped a negated card-amendment line on #{card}: {line.strip()!r}")
+            continue
+        paths += _line_paths(line)
+    return paths
 
 
 def _owned(path: str, allowed: list[str]) -> bool:
@@ -389,13 +433,8 @@ def check_owned(number: int, pr: dict[str, Any], rows: list[FileRow], gh: Runner
         )
     for comment in issue.get("comments") or []:
         text = comment.get("body") or ""
-        if not _AMENDMENT.match(text):
-            continue
-        for line in text.splitlines():
-            if "`" in line and _NEGATION.search(line):  # "Do NOT touch `b.py`": no paths (fail closed)
-                print(f"check 9: skipped a negated card-amendment line on #{card}: {line.strip()!r}")
-                continue
-            allowed += _line_paths(line)
+        if _AMENDMENT.match(text):
+            allowed += _amendment_paths(text, card)
     if not allowed:
         raise LandError(
             f"check 9: slice card #{card}'s Owned section names no backticked path, nor does any "
