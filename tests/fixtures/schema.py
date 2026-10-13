@@ -10,8 +10,8 @@ Comparing a schema version against a literal anywhere else in ``tests/``
 fails ``scripts/check_quirks.py`` (rule ``schema-literal``): it went stale
 and turned main red at 2.12.0, 2.13.0 and 2.16.0.
 """
-OPENSEES_CURRENT     = "2.29.0"  # K2b #1795 (/opensees/constraints/embeddedRebar: g.reinforce ties archived)
-OPENSEES_PRIOR_MINOR = "2.28.0"  # ADR 0115 amendment R2-f #1735 (decl_params label provenance)
+OPENSEES_CURRENT     = "2.30.0"  # R3-S5 #1789 (decl_params recorder precision, maintainer ruling D7)
+OPENSEES_PRIOR_MINOR = "2.29.0"  # K2b #1795 (/opensees/constraints/embeddedRebar: g.reinforce ties archived)
 OPENSEES_SOLVE_STAMP_FROM = "2.24.0"  # the minor that added the /opensees solve stamp (K1-5 #1462); fixed history
 OPENSEES_PARAM_TAGS_FROM = "2.27.0"  # the minor whose archives store every parameter tag (K1-8 #1465); fixed history
 OPENSEES_EMBEDDED_REBAR_FROM = "2.29.0"  # the minor whose archives store every reinforce tie (K2b #1795); fixed history

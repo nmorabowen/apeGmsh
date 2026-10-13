@@ -785,10 +785,10 @@ def test_single_stamp_file_fallback_lineage_is_envelope(tmp_path: Any) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_opensees_reader_version_is_2_29_0() -> None:
-    """Schema 2.29.0 — ``/opensees/constraints/embeddedRebar`` archives the
-    ``g.reinforce`` ties (K2b, #1795)."""
-    assert reader_version(OPENSEES) == SchemaVersion(2, 29, 0)
+def test_opensees_reader_version_is_2_30_0() -> None:
+    """Schema 2.30.0 — the typed recorders' ``decl_params`` rows carry
+    ``precision`` (R3-S5, #1789, maintainer ruling D7)."""
+    assert reader_version(OPENSEES) == SchemaVersion(2, 30, 0)
 
 
 def test_constraints_group_present_when_emitted(tmp_path: Any) -> None:

@@ -593,7 +593,14 @@ class H5RefusedVerb(NotImplementedError):
 #:     Hashed: a reinforced archive hashes differently once at this
 #:     minor; a file without a tie is unchanged. A 2.29 reader opens 2.12
 #:     through 2.29; a 2.28.x reader REFUSES a 2.29.x file.
-SCHEMA_VERSION: str = "2.29.0"
+#:   * 2.30.0 — R3-S5 (#1789, maintainer ruling D7): additive — the
+#:     ``decl_params`` rows of the typed ``recorder.Node`` /
+#:     ``recorder.Element`` gain a ``precision`` field, the ``-precision N``
+#:     significant digits (``null`` when unset, and then the deck carries
+#:     no flag). No path or dtype changes; ``decl_params`` is
+#:     hash-excluded. A 2.30 reader opens 2.12 through 2.30; a 2.29.x
+#:     reader REFUSES a 2.30.x file.
+SCHEMA_VERSION: str = "2.30.0"
 
 #: Oldest opensees-zone minor the reader opens (ADR 0113 (#1303)). The
 #: zone's last non-additive minor is 2.11.0, the 0-based rank flip, but
