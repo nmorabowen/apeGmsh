@@ -37,6 +37,7 @@ D /opensees/decl_params/transf_ref/first dtype=<i8 shape=(21,) sha1=ef19d0550883
 D /opensees/decl_params/transf_ref/key dtype=str[utf-8,vlen] shape=(1,) sha1=1ba830d5f4d0b84e1c8c4232edaef938c309c349
 D /opensees/decl_params/type dtype=str[utf-8,vlen] shape=(21,) sha1=6e3cf528d56bb2e62664abdd3ae057139b715fa9
 G /opensees/decls
+A /opensees/decls@program_decl dtype=str[utf-8,vlen] shape=() sha1=dfe6570dac36c935ac6278e678f9b6c0af604d5a
 D /opensees/decls/family dtype=str[utf-8,vlen] shape=(21,) sha1=bec947bb7d867a61da792cfb11a41b9c8d9ed0b1
 D /opensees/decls/key dtype=str[utf-8,vlen] shape=(21,) sha1=1745d5b6a444abafbdb75a6a28f36268d0563ea5
 D /opensees/decls/name dtype=str[utf-8,vlen] shape=(21,) sha1=02e46bb2b2fa5af0a35d9d3e6876b5d18242a561
