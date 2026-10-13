@@ -1,7 +1,7 @@
 // Read a native results.h5, lazily, with h5wasm and nothing else (V4a, #1707).
 //
 // The layout is architecture/h5-schema.md, "`results.h5`: the native results
-// file" (V4s, #1706 / PR #1709), results zone 1.1.0, floor 1.0.0. This is the
+// file" (V4s, #1706 / PR #1709), results zone 1.2.0, floor 1.0.0. This is the
 // smallest read path that can be timed for the ADR 0112 D5 decision: it lists
 // stages, steps and time, reads one component at one step by hyperslab, one
 // Gauss-point component at one step, and one node's whole history. It builds
@@ -14,10 +14,13 @@
 //   raises a ResultsError, never a guessed default;
 // - element categories the spike does not read (line_stations, nodal_forces,
 //   fibers, layers) are listed in `unread`, not skipped silently;
-// - `_element_index` is a FEM element id only for a `domain_capture` file
-//   (an allow-list, #1711): any other or missing `source_type` gives the
-//   typed "unverified" mapping, whose rows carry another field name so a
-//   caller cannot join them to /model/elements by accident.
+// - `_element_index` is a FEM element id if and only if the root attribute
+//   `element_index_space` is the string "fem" (h5-schema.md
+//   §`element_index_space`, results 1.2.0; stamp-only, #1768). `source_type`
+//   and the version never verify a file: an absent stamp, a non-string one,
+//   or any other value gives the typed "unverified" mapping, whose rows carry
+//   another field name so a caller cannot join them to /model/elements by
+//   accident.
 //
 // One partition only: every writer in src/ writes `partition_0`; a file with
 // several is refused ("unsupported"), not merged (the doc's union rule is a
@@ -26,11 +29,16 @@
 import { NEUTRAL_TARGET, OPENSEES_TARGET, ZONE_FLOOR } from "./read.ts";
 
 /** The results zone this reader was written against, and its floor (ADR 0113). */
-export const RESULTS_TARGET = { major: 1, minor: 1 } as const;
+export const RESULTS_TARGET = { major: 1, minor: 2 } as const;
 export const RESULTS_FLOOR = { major: 1, minor: 0 } as const;
 
-/** The one `source_type` whose `_element_index` is verified to hold FEM ids (#1711). */
-const VERIFIED_ELEMENT_IDS = new Set(["domain_capture"]);
+/**
+ * The root attribute that verifies element row ids, and its one verifying value
+ * (h5-schema.md §`element_index_space`; Python `ELEMENT_INDEX_SPACES`). Any other
+ * value, a non-string, or no attribute at all reads as unverified (#1768).
+ */
+const ELEMENT_INDEX_SPACE = "element_index_space";
+const ELEMENT_INDEX_SPACE_FEM = "fem";
 
 const STAGE_KINDS = new Set(["static", "transient", "mode"]);
 const ELEMENT_CATEGORIES = new Set(["gauss_points", "line_stations", "nodal_forces", "fibers", "layers"]);
@@ -109,7 +117,7 @@ export interface StageInfo {
 }
 
 export type ElementIds =
-  | { mapping: "fem_eid"; sourceType: string; ids: Float64Array }
+  | { mapping: "fem_eid"; sourceType: string | null; ids: Float64Array }
   /** Rows of `_element_index` whose meaning is not verified: never a FEM id. */
   | { mapping: "unverified"; sourceType: string | null; reason: string; rawIndex: Float64Array };
 
@@ -117,6 +125,11 @@ export interface ResultsIndex {
   path: string;
   version: string;
   sourceType: string | null;
+  /**
+   * Root `@element_index_space` when it is a string, else null (absent or not a
+   * string). Only `"fem"` verifies element row ids (h5-schema.md §`element_index_space`).
+   */
+  elementIndexSpace: string | null;
   /** Embedded zones below their floor (ADR 0113 D9): `/stages` reads, these do not. */
   unavailableZones: string[];
   stages: StageInfo[];
@@ -162,6 +175,8 @@ export class ResultsFile {
   private readonly h5: ResultsH5;
   private readonly f: RFile;
   private readonly nodeColumn = new Map<string, Map<number, number>>();
+  /** Whether `_element_index` holds FEM ids, from the root stamp alone (#1768). */
+  private readonly elementSpace: { verified: true } | { verified: false; reason: string };
 
   constructor(h5: ResultsH5, f: RFile, path: string) {
     this.h5 = h5;
@@ -172,6 +187,8 @@ export class ResultsFile {
     const unavailableZones = checkEmbeddedZones(f, modelMeta, warnings);
     const st = f.attrs["source_type"]?.value;
     const sourceType = typeof st === "string" ? st : null;
+    const eis = f.attrs[ELEMENT_INDEX_SPACE]?.value;
+    this.elementSpace = elementSpaceVerdict(eis);
     const stagesGroup = this.group(f, "stages");
     const ids = sortStageIds(stagesGroup.keys());
     const lineage = this.readLineage(f);
@@ -179,6 +196,7 @@ export class ResultsFile {
       path,
       version,
       sourceType,
+      elementIndexSpace: typeof eis === "string" ? eis : null,
       unavailableZones,
       stages: ids.map((id) => this.readStage(this.group(stagesGroup, id), id)),
       warnings,
@@ -273,16 +291,9 @@ export class ResultsFile {
     if (!g) throw new ResultsError("argument", `stage ${stageId} has no gauss group ${JSON.stringify(groupId)}`);
     const rows = intsAsNumbers(this.dataset(this.group(this.f, g.path), "_element_index"));
     const st = this.index.sourceType;
-    if (st !== null && VERIFIED_ELEMENT_IDS.has(st)) return { mapping: "fem_eid", sourceType: st, ids: rows };
-    return {
-      mapping: "unverified",
-      sourceType: st,
-      reason:
-        st === null
-          ? "the file has no source_type: its _element_index is not verified to hold FEM element ids"
-          : `source_type ${JSON.stringify(st)}: _element_index is verified to hold FEM element ids only for domain_capture files (#1711)`,
-      rawIndex: rows,
-    };
+    const v = this.elementSpace;
+    if (v.verified) return { mapping: "fem_eid", sourceType: st, ids: rows };
+    return { mapping: "unverified", sourceType: st, reason: v.reason, rawIndex: rows };
   }
 
   // -- index ---------------------------------------------------------------
@@ -396,6 +407,21 @@ export class ResultsFile {
     if (!(d instanceof this.h5.Dataset)) throw new ResultsError("layout", `${path} is not a dataset`);
     return d as unknown as RDataset;
   }
+}
+
+/**
+ * The element-id verdict from the root `@element_index_space` alone (#1768):
+ * verified iff it is the string "fem". `source_type` and the version play no part.
+ */
+function elementSpaceVerdict(value: unknown): { verified: true } | { verified: false; reason: string } {
+  if (value === ELEMENT_INDEX_SPACE_FEM) return { verified: true };
+  const why =
+    value === undefined
+      ? `the file has no @${ELEMENT_INDEX_SPACE}`
+      : typeof value !== "string"
+        ? `@${ELEMENT_INDEX_SPACE} is not a string`
+        : `@${ELEMENT_INDEX_SPACE} = ${JSON.stringify(value)} is not "${ELEMENT_INDEX_SPACE_FEM}"`;
+  return { verified: false, reason: `${why}: _element_index is not verified to hold FEM element ids (only @${ELEMENT_INDEX_SPACE} = "${ELEMENT_INDEX_SPACE_FEM}" verifies it)` };
 }
 
 /**

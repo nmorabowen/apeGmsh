@@ -28,6 +28,12 @@ Files:
   triangle mesh, 2 x 2 cells x 1 layer (18 nodes, 8 wedges), 5 steps,
   ``displacement_x/y/z`` and one gauss group of 6 points with
   ``stress_xx``, ``stress_yy``.
+* ``stamped`` (committed, ``fixtures/results_stamped.h5``, ``--stamped``;
+  V4g, #1768): the ``small`` file written at the writer's current results
+  version with ``NativeWriter.stamp_element_index_space("fem")``, so its
+  element rows are verified FEM ids (h5-schema.md §``element_index_space``).
+  ``results_small.h5`` stays unstamped: a ``domain_capture`` file without
+  the stamp, which reads as unverified.
 * ``a`` (measured, not committed): the same mesh at 13 x 13 x 21
   (4 312 nodes, 7 098 wedges, the size of the ledger's largest maintainer
   model, 4 254 nodes / 7 104 elements), 100 steps, 3 nodal components and 6
@@ -118,13 +124,16 @@ def tet_blocks(size: float, name: str):
         return g.mesh.queries.get_fem_data(dim=3)
 
 
-def write(path: Path, fem, n_steps: int, stress: list[str], gp: np.ndarray, class_tag: int) -> None:
+def write(path: Path, fem, n_steps: int, stress: list[str], gp: np.ndarray, class_tag: int, *, stamp: bool = False) -> None:
     node_ids = np.asarray(fem.nodes.ids, dtype=np.int64)
     eids = np.asarray(fem.elements.ids, dtype=np.int64)
     k = np.arange(n_steps, dtype=np.float64)
     t0 = _time.perf_counter()
     with NativeWriter(path) as w:
         w.open(fem=fem, source_type="domain_capture", analysis_label="V4a synthetic (#1707)")
+        if stamp:
+            # The element rows are fem.elements.ids by construction (V4g, #1768).
+            w.stamp_element_index_space("fem")
         sid = w.begin_stage(name="history", kind="transient", time=0.01 * k)
         w.write_nodes(
             sid, "partition_0", node_ids=node_ids,
@@ -305,12 +314,16 @@ def main() -> None:
     ap.add_argument("--tet-size", type=float, default=0.0335)
     ap.add_argument("--staged", action="store_true", help="write the V4b staged pair (staged_activation.h5 + .results.h5)")
     ap.add_argument("--contour", action="store_true", help="write the V4c1 contour pairs (contour_staged.*, contour_nodata.*)")
+    ap.add_argument("--stamped", action="store_true", help="write results_stamped.h5, the small file with element_index_space='fem' (V4g)")
     args = ap.parse_args()
     if args.staged:
         staged_activation(HERE)
         return
     if args.contour:
         contour_fixtures(HERE)
+        return
+    if args.stamped:
+        write(HERE / "results_stamped.h5", wedge_mesh(2, 1, "results_stamped"), 5, ["stress_xx", "stress_yy"], WEDGE_GP, 0, stamp=True)
         return
     if args.measure is None:
         write(HERE / "results_small.h5", wedge_mesh(2, 1, "results_small"), 5, ["stress_xx", "stress_yy"], WEDGE_GP, 0)

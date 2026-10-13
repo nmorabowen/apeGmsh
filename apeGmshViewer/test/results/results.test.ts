@@ -7,7 +7,11 @@
 // Each refusal (an unopenable file, version below the floor, newer major,
 // missing dataset, non-float data, unknown layout, several partitions) is a
 // typed error, and
-// the element-id mapping is "fem_eid" for domain_capture only (#1711).
+// the element-id mapping is "fem_eid" if and only if the root attribute
+// element_index_space is "fem" (stamp-only, #1768; h5-schema.md
+// §element_index_space). fixtures/results_stamped.h5 is the same file written
+// at results 1.2.0 with NativeWriter.stamp_element_index_space("fem");
+// results_small.h5 is an unstamped domain_capture file.
 
 import assert from "node:assert/strict";
 import { copyFileSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
@@ -21,16 +25,17 @@ import { openResults, ResultsError, sortStageIds, type ResultsH5 } from "../../s
 await h5wasm.ready;
 const H5 = h5wasm as unknown as ResultsH5;
 const FIXTURE = fileURLToPath(new URL("../../fixtures/results_small.h5", import.meta.url));
+const STAMPED = fileURLToPath(new URL("../../fixtures/results_stamped.h5", import.meta.url));
 const NODAL = ["displacement_x", "displacement_y", "displacement_z"];
 const STAGE = "stage_0";
 const T = 5;
 
 const close = (a: number, b: number) => Math.abs(a - b) <= 1e-9 * Math.max(1, Math.abs(b));
 
-/** A scratch copy of the fixture, edited through h5wasm in read-write mode. */
-function edited(edit: (f: h5wasm.File) => void): string {
+/** A scratch copy of a fixture, edited through h5wasm in read-write mode. */
+function edited(edit: (f: h5wasm.File) => void, from: string = FIXTURE): string {
   const p = join(mkdtempSync(join(tmpdir(), "agv-results-")), "edited.results.h5");
-  copyFileSync(FIXTURE, p);
+  copyFileSync(from, p);
   const f = new h5wasm.File(p, "a");
   try {
     edit(f);
@@ -40,7 +45,7 @@ function edited(edit: (f: h5wasm.File) => void): string {
   return p;
 }
 
-function setRootAttr(f: h5wasm.File, key: string, value: string | null): void {
+function setRootAttr(f: h5wasm.File, key: string, value: string | number | null): void {
   if (Object.keys(f.attrs).includes(key)) f.delete_attribute(key);
   if (value !== null) f.create_attribute(key, value);
 }
@@ -95,9 +100,10 @@ test("a nodal step, a gauss step and a node history equal the generator's closed
         ids.forEach((id, j) => assert.ok(close(col[j]!, id + 0.001 * (c + 1) * k), `${NODAL[c]}[${k}, ${j}]`));
       });
     }
+    // The file is unstamped, so its rows are unverified; the closed form is in the raw rows.
     const map = r.elementIds(STAGE, "group_0");
-    assert.equal(map.mapping, "fem_eid");
-    const eids = map.mapping === "fem_eid" ? map.ids : new Float64Array();
+    assert.equal(map.mapping, "unverified");
+    const eids = map.mapping === "unverified" ? map.rawIndex : new Float64Array();
     assert.equal(eids.length, 8);
     for (const [c, comp] of ["stress_xx", "stress_yy"].entries()) {
       const v = r.readGaussStep(STAGE, "group_0", comp, 3);
@@ -115,15 +121,26 @@ test("a nodal step, a gauss step and a node history equal the generator's closed
   }
 });
 
-test("element ids of the fixture are the /model/elements ids (domain_capture)", () => {
-  const f = new h5wasm.File(FIXTURE, "r");
+test("a file the writer stamped element_index_space = \"fem\" has verified ids, the /model/elements ids", () => {
+  const f = new h5wasm.File(STAMPED, "r");
   const model = Array.from((f.get("model/elements/prism6/ids") as h5wasm.Dataset).value as BigInt64Array, Number).sort((a, b) => a - b);
   f.close();
-  const r = openResults(H5, FIXTURE);
-  const map = r.elementIds(STAGE, "group_0");
-  r.close();
-  assert.equal(map.mapping, "fem_eid");
-  if (map.mapping === "fem_eid") assert.deepEqual(Array.from(map.ids).sort((a, b) => a - b), model);
+  const r = openResults(H5, STAMPED);
+  try {
+    assert.equal(r.index.version, "1.2.0");
+    assert.equal(r.index.elementIndexSpace, "fem");
+    assert.deepEqual(r.index.warnings, [], "a 1.2.0 file opens with no version warning");
+    const map = r.elementIds(STAGE, "group_0");
+    assert.equal(map.mapping, "fem_eid");
+    assert.equal(map.sourceType, "domain_capture");
+    if (map.mapping === "fem_eid") assert.deepEqual(Array.from(map.ids).sort((a, b) => a - b), model);
+    // The same closed form as the unstamped file: the stamp changes the verdict, not the values.
+    const ids = map.mapping === "fem_eid" ? map.ids : new Float64Array();
+    const v = r.readGaussStep(STAGE, "group_0", "stress_yy", 2);
+    for (let e = 0; e < 8; e++) for (let g = 0; g < 6; g++) assert.ok(close(v[e * 6 + g]!, ids[e]! + 0.1 * g + 0.002 * 2));
+  } finally {
+    r.close();
+  }
 });
 
 test("reads outside the file are refused by name", () => {
@@ -138,31 +155,60 @@ test("reads outside the file are refused by name", () => {
   }
 });
 
-// -- #1711: the element mapping is an allow-list -------------------------------
+// -- #1768: the element mapping is stamp-only ------------------------------------
+
+/** Open `path`, read group_0's mapping, and check it is "unverified" with no `ids` to join on. */
+function assertUnverified(path: string, sourceType: string | null, reason: RegExp): void {
+  const r = openResults(H5, path);
+  try {
+    const map = r.elementIds(STAGE, "group_0");
+    assert.equal(map.mapping, "unverified");
+    assert.equal(map.sourceType, sourceType);
+    assert.ok(!("ids" in map), "an unverified mapping has no `ids` field to join on");
+    if (map.mapping === "unverified") {
+      assert.equal(map.rawIndex.length, 8);
+      assert.match(map.reason, reason);
+    }
+    // Nodal reads are unaffected.
+    assert.equal(r.readNodalStep(STAGE, ["displacement_x"], 0)[0]!.length, 18);
+  } finally {
+    r.close();
+  }
+}
+
+test("a domain_capture file without the stamp is unverified (no source_type is an exception)", () => {
+  assertUnverified(FIXTURE, "domain_capture", /has no @element_index_space/);
+  // The writer's own stamped file, with the stamp removed, is unverified too: the stamp is the whole verdict.
+  assertUnverified(edited((f) => setRootAttr(f, "element_index_space", null), STAMPED), "domain_capture", /has no @element_index_space/);
+});
 
 for (const [sourceType, label] of [
   ["tcl_recorders", "the recorder transcoder"],
   ["parallel_modal", "another writer the doc names"],
-  ["made_up_writer", "an unknown value"],
+  ["made_up_writer", "an unknown source_type"],
   [null, "no source_type at all"],
 ] as const) {
-  test(`element rows are "unverified", never FEM ids, for ${label}`, () => {
-    const p = edited((f) => setRootAttr(f, "source_type", sourceType));
-    const r = openResults(H5, p);
+  test(`element rows are "unverified" without the stamp for ${label}`, () => {
+    assertUnverified(edited((f) => setRootAttr(f, "source_type", sourceType)), sourceType, /has no @element_index_space/);
+  });
+  test(`the "fem" stamp verifies element rows for ${label}`, () => {
+    const r = openResults(H5, edited((f) => setRootAttr(f, "source_type", sourceType), STAMPED));
     try {
-      const map = r.elementIds(STAGE, "group_0");
-      assert.equal(map.mapping, "unverified");
-      assert.equal(map.sourceType, sourceType);
-      assert.ok(!("ids" in map), "an unverified mapping has no `ids` field to join on");
-      if (map.mapping === "unverified") {
-        assert.equal(map.rawIndex.length, 8);
-        assert.match(map.reason, sourceType === null ? /no source_type/ : /only for domain_capture/);
-      }
-      // Nodal reads are unaffected.
-      assert.equal(r.readNodalStep(STAGE, ["displacement_x"], 0)[0]!.length, 18);
+      assert.equal(r.elementIds(STAGE, "group_0").mapping, "fem_eid");
     } finally {
       r.close();
     }
+  });
+}
+
+for (const [value, label, reason] of [
+  ["ops", "an unknown value", /@element_index_space = "ops" is not "fem"/],
+  ["FEM", "another case of the value", /@element_index_space = "FEM" is not "fem"/],
+  ["", "an empty string", /@element_index_space = "" is not "fem"/],
+  [1, "a non-string attribute", /@element_index_space is not a string/],
+] as const) {
+  test(`element_index_space set to ${label} is unverified`, () => {
+    assertUnverified(edited((f) => setRootAttr(f, "element_index_space", value), STAMPED), "domain_capture", reason);
   });
 }
 
@@ -208,11 +254,14 @@ test("a newer results major is refused", () => {
   refuses(edited((f) => setRootAttr(f, "results_schema_version", "2.0.0")), "version", /2\.0\.0: a newer major/);
 });
 
-test("a newer results minor opens with one warning; the floor itself opens", () => {
-  const r = openResults(H5, edited((f) => setRootAttr(f, "results_schema_version", "1.4.0")));
+test("a newer results minor opens with one warning; the target and the floor open without", () => {
+  const r = openResults(H5, edited((f) => setRootAttr(f, "results_schema_version", "1.3.0")));
   assert.equal(r.index.warnings.length, 1);
-  assert.match(r.index.warnings[0]!, /1\.4\.0 is newer than this app \(1\.1\.x\)/);
+  assert.match(r.index.warnings[0]!, /1\.3\.0 is newer than this app \(1\.2\.x\)/);
   r.close();
+  const target = openResults(H5, edited((f) => setRootAttr(f, "results_schema_version", "1.2.0")));
+  assert.deepEqual(target.index.warnings, []);
+  target.close();
   const floor = openResults(H5, edited((f) => setRootAttr(f, "results_schema_version", "1.0.0")));
   assert.deepEqual(floor.index.warnings, []);
   floor.close();
