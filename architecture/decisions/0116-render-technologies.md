@@ -102,3 +102,12 @@ leaves with the legacy results viewer (chain X, X3).
   relation table and changes nothing in 0112.
 - **ADR 0094** (agent assess and viewer render): its stills stay under D3
   until apeGmshViewer replaces them.
+
+## Amendment 1 (2026-10-12) — when trame leaves
+
+**Status:** Proposed. The maintainer accepts it. Program link X4-a (#1806).
+
+trame (and `show_web`/`serve_web`) leave when V4 covers interactive results
+(KEEP ruling, #1199). This replaces D4's "with the legacy results viewer
+(chain X, X3)"; the retirement ledger
+(`internal_docs/program/retirement_ledger.toml`) dates the review.
