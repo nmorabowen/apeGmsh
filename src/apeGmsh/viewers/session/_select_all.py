@@ -82,7 +82,9 @@ def select_all(
             f"{kind!r} (ADR 0098 §8 — selection is nodes XOR Gauss)."
         )
     results = _require_results(session)
-    scoped = _membership(results, axis, names)
+    scoped = _membership(
+        results, axis, names, _activation_stage(session, view),
+    )
     if kind == "nodes":
         node_ids = [int(i) for i in scoped.node_ids]
         if not node_ids:
@@ -146,7 +148,9 @@ def counts(
     """
     try:
         results = _require_results(session)
-        scoped = _membership(results, axis, names)
+        scoped = _membership(
+            results, axis, names, _activation_stage(session, view),
+        )
     except Exception:
         return 0, 0
     try:
@@ -163,12 +167,24 @@ def counts(
 # =====================================================================
 
 
-def _membership(results: "Results", axis: str, names: "Sequence[str]"):
-    """The one cell set of a composition category (INV-MESH-1).
+def _membership(
+    results: "Results",
+    axis: str,
+    names: "Sequence[str]",
+    stage_id: "Optional[str]" = None,
+):
+    """The one cell set of a composition category (INV-MESH-1), as drawn.
 
-    The SAME resolver the view's scope uses — checking "Web" and
-    selecting all of "Web" must mean the same elements, or the two
-    knobs are describing different models.
+    The category resolves through the SAME resolver the view's scope
+    uses, then narrows through the SAME stage-activation filter realize
+    draws with (``_realize._stage_active_scope``, #1743): on a staged
+    model, selecting all of "Web" at a stage selects the "Web"
+    elements ACTIVE in that stage — never an element the pane is not
+    drawing. Fail-soft exactly where realize is (no staged program, or
+    an unmatched stage, selects the whole category; realize already
+    warned for the stage, so this stays silent), and fail-closed where
+    it is (a category with no element active in the stage raises).
+    ``stage_id=None`` means no stage is known and applies no filter.
     """
     from apeGmsh.results.session import Scope
 
@@ -180,10 +196,35 @@ def _membership(results: "Results", axis: str, names: "Sequence[str]"):
             "axis (construct with model= / model_h5= or call "
             "results.bind)."
         )
-    return resolve_scope(
-        Scope(axis=axis, names=tuple(names) or None),
-        ViewerData.from_fem(results.fem),
+    view_data = ViewerData.from_fem(results.fem)
+    scoped = resolve_scope(
+        Scope(axis=axis, names=tuple(names) or None), view_data,
     )
+    if stage_id is None:
+        return scoped
+    from ..scene.fem_scene import build_fem_scene
+    from ._realize import _stage_active_scope
+
+    return _stage_active_scope(
+        results, build_fem_scene(results.fem), view_data, scoped, stage_id,
+        warn=False,
+    )
+
+
+def _activation_stage(
+    session: "ResultsSession", view: "Optional[MeshView]",
+) -> "Optional[str]":
+    """The stage whose ACTIVE elements a select-all means.
+
+    The stage realize draws (:func:`_stage_of`); ``None`` only for a
+    code caller with no view on a Results that has no stages, which
+    has no activation to apply.
+    """
+    if view is None and session.time is None and not list(
+        _require_results(session).stages,
+    ):
+        return None
+    return _stage_of(session, view)
 
 
 def _require_results(session: "ResultsSession") -> "Results":
@@ -202,8 +243,10 @@ def _stage_of(
     """The stage whose integration points a Gauss select-all means.
 
     Resolved through realize's own §7 instant law when a view is in
-    hand, so the outline and the picture agree; the session's last
-    stage otherwise (no pane selected — a code caller).
+    hand, so the outline and the picture agree. With no mesh view (a
+    plot pane in focus, or a code caller) the linked session instant is
+    the stage every linked pane draws (#1743 review), so it wins; only
+    with no linked instant does the session's last stage apply.
     """
     results = _require_results(session)
     if view is not None:
@@ -211,6 +254,9 @@ def _stage_of(
 
         stage_id, _step = _resolve_instant(session, view, results)
         return stage_id
+    instant = session.time
+    if session.time_linked and instant is not None:
+        return instant.stage
     stages = list(results.stages)
     if not stages:
         raise RuntimeError("This Results has no stages to select from.")

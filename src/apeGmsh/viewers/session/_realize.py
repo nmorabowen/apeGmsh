@@ -900,7 +900,7 @@ def _resolve_instant(
 
 def _stage_active_scope(
     results: "Results", scene: "FEMSceneData", view_data: ViewerData,
-    scoped: ScopedSet, stage_id: str,
+    scoped: ScopedSet, stage_id: str, *, warn: bool = True,
 ) -> ScopedSet:
     """``scoped`` narrowed to the elements active in ``stage_id``.
 
@@ -911,6 +911,10 @@ def _stage_active_scope(
     stage that pairs with no program stage, leaves ``scoped`` as it is
     (every element drawn). A stage that activates NONE of the view's
     elements raises rather than drawing the full mesh.
+
+    ``warn=False`` silences the unmatched-stage hint for a caller that
+    shares this cell set without drawing it (outline select-all, #1743):
+    the pane realizing the same stage already said it.
     """
     from ..data._stage_activation import (
         build_from_model, pair_capture_to_program,
@@ -930,6 +934,8 @@ def _stage_active_scope(
     if hidden is None:
         # A staged model whose stage has no program counterpart: draw
         # everything, and say so (the old window's status-bar hint).
+        if not warn:
+            return scoped
         import warnings
 
         stage_name = next(
