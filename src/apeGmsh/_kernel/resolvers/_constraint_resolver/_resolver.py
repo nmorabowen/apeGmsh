@@ -396,15 +396,27 @@ class ConstraintResolver:
         self,
         defn: RigidDiaphragmDef,
         all_nodes: set[int],
+        *,
+        master_nodes: set[int],
     ) -> NodeGroupRecord:
         """
         Resolve a rigid diaphragm.
 
-        Collects all nodes within ``plane_tolerance`` of the diaphragm
-        plane, then the closest to ``master_point`` becomes master.
+        Collects the nodes of ``all_nodes`` (master ∪ slave) within
+        ``plane_tolerance`` of the diaphragm plane.
+
+        * ``defn.master_point is None`` (D3, #1778): ``master_nodes``
+          must hold exactly one node.  It is the master, and the plane
+          passes through it.  Any other count is refused, and so is a
+          plane that collects no slave node besides the master.
+        * ``defn.master_point`` given: the plane passes through the
+          point, and the plane node closest to it becomes master.
         """
         normal = np.asarray(defn.plane_normal, dtype=float)
         normal = normal / np.linalg.norm(normal)
+        if defn.master_point is None:
+            return self._resolve_diaphragm_on_master(
+                defn, all_nodes, master_nodes, normal)
         mp = np.asarray(defn.master_point, dtype=float)
         d = np.dot(normal, mp)
 
@@ -437,6 +449,52 @@ class ConstraintResolver:
             self._coords_of(t) - master_xyz for t in slave_tags
         ]) if slave_tags else None
 
+        return NodeGroupRecord(
+            kind=ConstraintKind.RIGID_DIAPHRAGM,
+            name=defn.name,
+            master_node=master_tag,
+            slave_nodes=slave_tags,
+            dofs=list(defn.constrained_dofs),
+            offsets=offsets,
+            plane_normal=normal,
+        )
+
+    def _resolve_diaphragm_on_master(
+        self,
+        defn: RigidDiaphragmDef,
+        all_nodes: set[int],
+        master_nodes: set[int],
+        normal: ndarray,
+    ) -> NodeGroupRecord:
+        """The ``master_point=None`` branch of :meth:`resolve_rigid_diaphragm`."""
+        where = (f"rigid_diaphragm({defn.master_label!r}, "
+                 f"{defn.slave_label!r})")
+        if len(master_nodes) != 1:
+            raise ValueError(
+                f"{where}: master_point is omitted, so the master "
+                f"{defn.master_label!r} must resolve to exactly one node, "
+                f"but it resolves to {len(master_nodes)}. Label the single "
+                f"master node, or pass master_point=(x, y, z) to pick the "
+                f"plane node nearest to it.")
+        master_tag = int(next(iter(master_nodes)))
+        master_xyz = self._coords_of(master_tag)
+        d = np.dot(normal, master_xyz)
+        slave_tags = sorted(
+            int(t) for t in all_nodes
+            if int(t) != master_tag
+            and abs(np.dot(normal, self._coords_of(t)) - d)
+            <= defn.plane_tolerance)
+        if not slave_tags:
+            raise ValueError(
+                f"{where}: no node of {defn.slave_label!r} lies within "
+                f"plane_tolerance={defn.plane_tolerance} of the plane "
+                f"through master node {master_tag} at "
+                f"{tuple(float(v) for v in master_xyz)} with normal "
+                f"{tuple(float(v) for v in normal)}; the diaphragm would "
+                f"constrain nothing.")
+        offsets = np.array([
+            self._coords_of(t) - master_xyz for t in slave_tags
+        ])
         return NodeGroupRecord(
             kind=ConstraintKind.RIGID_DIAPHRAGM,
             name=defn.name,

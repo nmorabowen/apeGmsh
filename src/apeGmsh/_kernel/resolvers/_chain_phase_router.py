@@ -428,7 +428,7 @@ def _route_rigid_diaphragm(fem: "FEMData", source, defn) -> "FEMData":
     s = {int(t) for t in source.nodes_for(defn.slave_label)}
     all_in = m | s
     resolver = _build_resolver(fem, ConstraintResolver)
-    record = resolver.resolve_rigid_diaphragm(defn, all_in)
+    record = resolver.resolve_rigid_diaphragm(defn, all_in, master_nodes=m)
     # The build-phase resolver returns an empty NodeGroupRecord (no
     # master_node, no slaves) when no nodes survive the plane filter
     # — preserve that behaviour by not appending an empty record (it
