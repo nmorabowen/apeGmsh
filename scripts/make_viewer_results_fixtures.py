@@ -63,6 +63,11 @@ The results hold one stage per program stage, by name, plus ``mode_1`` (a
 values are synthetic, ``displacement_x[k, j] = id_j + 0.001 * k`` with the
 stage's ``time[k] = (k + 1) / T``; no solve runs.
 
+``--extrapolation`` (V4c2b, #1875; committed) writes the ``extrap_*`` pairs
+and ``extrap.oracle.json``, Python's Gauss-to-node extrapolation on them, the
+oracle the app's ``gauss_node`` / ``gauss_node_discrete`` /
+``cell_averaged`` contours are tested against (``extrapolation_fixtures``).
+
 ``--contour`` (V4c1, #1756; committed) writes the contour pairs: the same
 staged model as ``fixtures/contour_staged.h5`` with ``displacement_x/y/z``
 closed forms of the node coordinates (``contour_fixtures``), and

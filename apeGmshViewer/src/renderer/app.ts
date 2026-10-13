@@ -13,7 +13,7 @@ import { mountPhase } from "../panels/phase.ts";
 import { mountSources } from "../panels/sources.ts";
 import { mountWindows } from "../panels/windows/frame.ts";
 import { BlobStore } from "../state/blobs.ts";
-import { gaussFields } from "../state/contour.ts";
+import { contourKeysOf, gaussFields } from "../state/contour.ts";
 import { chainOf, contourFieldsOf, contourView, deformOf, deformView, elementVerdictOf } from "../state/selectors.ts";
 import { Store } from "../state/store.ts";
 import { WINDOW_KINDS, type DeclPath, type GaussMode } from "../state/types.ts";
@@ -516,7 +516,9 @@ async function measureContour(path: string, deform = false, element = false, gau
     }
     // V4c2b: the element scrub in a node-located draw mode (`cell` leaves the V4c2a rows as they were).
     store.dispatch({ type: "setContourGauss", mode: element ? gauss : "cell" });
-    const scanDone = () => store.get().contour.scan?.status === "done" && (!element || store.get().contour.scan!.key.includes("|elem:"));
+    // V4c2b: a node-located mode waits for its own scan (its key names the mode), never an earlier mode's.
+    const scanDone = () =>
+      store.get().contour.scan?.status === "done" && (!element || store.get().contour.scan!.key.includes("|elem:")) && (gauss === "cell" || store.get().contour.scan!.key === contourKeysOf(store.get())?.scan);
     if (!(await until(scanDone, 600000))) throw new Error(`measure: the history scan did not finish: ${JSON.stringify(store.get().contour.scan)}`);
     const scanMs = performance.now() - t0;
     await contourShowsNow();
