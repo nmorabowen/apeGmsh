@@ -332,7 +332,10 @@ def _definition_sites(deck: str) -> dict[tuple[str, int], int]:
     once, in the header, and its ``remove`` lines name only elements, sp
     constraints, parameters and recorders, none of which a ``decl_params``
     reference names. ``test_a_redeclared_tag_binds_by_first_declaration``
-    pins the redeclaration behaviour."""
+    pins the redeclaration behaviour, and a real corpus row,
+    ``_staged_bridge[staged_pg=Rock]``, re-declares ``damping``,
+    ``timeSeries``, ``beamIntegration`` and ``geomTransf`` tag 1 after a
+    ``model BasicBuilder -ndf 3`` switch."""
     sites: dict[tuple[str, int], int] = {}
     for i, line in enumerate(deck.splitlines()):
         tok = line.split()
