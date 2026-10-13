@@ -344,7 +344,8 @@ class TestResolveRigidDiaphragm(unittest.TestCase):
             plane_tolerance=0.01,
         )
 
-        rec = r.resolve_rigid_diaphragm(defn, all_nodes={1, 2, 3, 4, 5})
+        rec = r.resolve_rigid_diaphragm(
+            defn, all_nodes={1, 2, 3, 4, 5}, master_nodes={1})
         self.assertIsInstance(rec, NodeGroupRecord)
         self.assertEqual(rec.master_node, 1)
         self.assertEqual(sorted(rec.slave_nodes), [2, 3, 4])
@@ -363,7 +364,7 @@ class TestResolveRigidDiaphragm(unittest.TestCase):
             plane_normal=(0, 0, 1),
             plane_tolerance=0.1,
         )
-        rec = r.resolve_rigid_diaphragm(defn, {1, 2})
+        rec = r.resolve_rigid_diaphragm(defn, {1, 2}, master_nodes={1, 2})
         self.assertEqual(rec.slave_nodes, [])
 
     def test_expand_to_pairs_produces_rigid_beam_pairs(self):

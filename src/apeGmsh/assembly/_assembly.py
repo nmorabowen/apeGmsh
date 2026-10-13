@@ -420,20 +420,21 @@ class Assembly:
         """Make the in-plane motion of two ports one rigid body. Returns ``self``.
 
         Every node of ``master`` and ``slave`` within ``plane_tolerance`` of
-        the plane through ``master_point`` with normal ``plane_normal``
-        follows the master (the plane node nearest ``master_point``) in
+        the diaphragm plane (normal ``plane_normal``) follows the master in
         that plane (``rigidDiaphragm``; the master needs ndf 6 in 3-D).
-        ``master_point`` defaults to the coordinates of ``master`` when it
-        is a reference node and is required otherwise.
+        With ``master_point`` omitted (the default, stored as ``null``),
+        ``master`` must resolve to exactly one node, a reference node or a
+        one-node port; that node is the master and the plane passes through
+        it. With ``master_point`` given, the plane passes through it and
+        the master is the plane node nearest to it.
 
         Raises :class:`AssemblyError` here for a bad port, name or option,
-        and from ``bridge()`` when no node lies in the plane (INV-7).
+        and from ``bridge()`` when the master is not one node (with
+        ``master_point`` omitted) or no node lies in the plane (INV-7).
         """
-        if master_point is None:
-            master_point = self._reference_point("rigid_diaphragm", master, slave)
         return self._couple_ports(
             "rigid_diaphragm", master, slave, name,
-            {"master_point": list(check_point(master_point, what="master_point")),
+            {"master_point": _point_or_none(master_point, "master_point"),
              "plane_normal": list(check_point(plane_normal, what="plane_normal")),
              "constrained_dofs": _list_or_none(constrained_dofs),
              "plane_tolerance": plane_tolerance})

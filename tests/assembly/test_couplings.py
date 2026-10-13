@@ -234,12 +234,17 @@ def test_rigid_diaphragm_gathers_each_wall_on_the_reference_node(files):
         np.testing.assert_allclose(r.plane_normal, (0.0, 1.0, 0.0))
 
 
-def test_rigid_diaphragm_needs_a_master_point_for_an_instance_master(files):
+def test_rigid_diaphragm_needs_a_master_point_for_a_multi_node_master(files):
+    """D3 (#1786): with master_point omitted the master port must be one
+    node. ``w1.Slab`` holds 9, so bridge() refuses naming the count."""
     from apeGmsh.assembly import AssemblyError
 
+    bad = _walls(files).rigid_diaphragm(
+        "w1.Slab", "w2.Slab", plane_normal=(0, 1, 0))
+    with pytest.raises(AssemblyError,
+                       match="exactly one node, but it resolves to 9"):
+        bad.bridge(ndm=3, ndf=6)
     asm = _walls(files)
-    with pytest.raises(AssemblyError, match="master_point= is required"):
-        asm.rigid_diaphragm("w1.Slab", "w2.Slab", plane_normal=(0, 1, 0))
     asm.rigid_diaphragm("w1.Slab", "w2.Slab", plane_normal=(0, 1, 0),
                         master_point=(0.0, 0.0, 0.0), constrained_dofs=(1, 3, 5))
     fem = asm.bridge(ndm=3, ndf=6).fem
@@ -620,7 +625,9 @@ def test_every_kind_round_trips_through_the_archive(files, tmp_path):
         ("rbe2", "kinematic_coupling"), ("", "distributing_coupling")]
     assert {t.name: t.n_records for t in zone.ties} == N_RECORDS
     rd = json.loads(next(t.params for t in zone.ties if t.name == "rd"))
-    assert rd == {"constrained_dofs": [1, 2], "master_point": list(REF),
+    # master_point omitted: archived as null, the master is the one-node
+    # port "ref" (D3, #1786).
+    assert rd == {"constrained_dofs": [1, 2], "master_point": None,
                   "plane_normal": [0.0, 0.0, 1.0], "plane_tolerance": 6.0}
 
     back = Assembly.from_h5(out)
