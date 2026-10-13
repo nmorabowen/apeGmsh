@@ -11,11 +11,15 @@ import {
   CMAPS,
   contourFieldsOf,
   contourView,
+  deformOf,
+  deformView,
+  GHOST_OPACITY,
   isHidden,
   legendOf,
   NO_DATA_RGB,
   RANGE_MODES,
   roleLegendOf,
+  scaleLabel,
   type ContourView,
 } from "../state/selectors.ts";
 import type { State, Store } from "../state/store.ts";
@@ -57,13 +61,15 @@ export function mountLegend(store: Store): () => void {
   const legend = byId("legend");
   let unlisten: (() => void)[] = [];
   let lastContour = "";
+  let lastDeform = "";
   const render = (s: State, prev: State | null) => {
     const contour = s.visibility.colourBy === "contour";
     if (prev && s.mesh === prev.mesh && s.visibility.hidden === prev.visibility.hidden && s.visibility.colourBy === prev.visibility.colourBy) {
-      if (!contour) return;
-      // In contour mode the legend follows the pick, the step and the ranges; it is rebuilt only when what it says changed.
-      if (contourSignature(s) === lastContour) return;
+      // In contour mode the legend follows the pick, the step and the ranges, and (V4d) the deformed shape's
+      // state in every mode; it is rebuilt only when what it says changed.
+      if (deformSignature(s) === lastDeform && (!contour || contourSignature(s) === lastContour)) return;
     }
+    lastDeform = deformSignature(s);
     for (const u of unlisten) u();
     unlisten = [];
     legend.hidden = s.mesh === null;
@@ -85,6 +91,7 @@ export function mountLegend(store: Store): () => void {
     if (contour) {
       lastContour = contourSignature(s);
       renderContour(s);
+      renderDeform(s);
       return;
     }
     let rows: LegendEntry[];
@@ -108,6 +115,56 @@ export function mountLegend(store: Store): () => void {
       }
       legend.append(row);
     }
+    renderDeform(s);
+  };
+
+  /**
+   * V4d: the deformed shape's controls and what it shows: the toggle (off
+   * with the reason when there is nothing to deform by), the scale (stated
+   * in words whenever it is not 1), the reference ghost, and the drawn nodes
+   * left undeformed. Shown once results are on the phase axis.
+   */
+  const renderDeform = (s: State) => {
+    if (!s.phase.axis.some((k) => k.kind === "results")) return;
+    const lines = deformLines(s);
+    const box = el("div", "deform");
+    box.append(el("div", "deform-title", "Deformed shape"));
+    const modes = el("div", "legend-mode deform-modes");
+    const on = el("button", "deform-toggle" + (s.deform.on ? " on" : ""), "deformed");
+    on.disabled = !lines.available && !s.deform.on;
+    if (lines.why) on.title = lines.why;
+    const ghost = el("button", "deform-ghost" + (s.deform.ghost ? " on" : ""), "reference ghost");
+    ghost.title = `the undeformed mesh behind the deformed one, at ${GHOST_OPACITY} opacity`;
+    ghost.disabled = !s.deform.on;
+    unlisten.push(
+      listen(on, "click", () => store.dispatch({ type: "setDeform", on: !store.get().deform.on })),
+      listen(ghost, "click", () => store.dispatch({ type: "setReferenceGhost", on: !store.get().deform.ghost })),
+    );
+    modes.append(on, ghost);
+    box.append(modes);
+    const row = el("div", "deform-scale-row");
+    const scale = el("input", "deform-scale");
+    scale.type = "number";
+    scale.step = "any";
+    scale.min = "0";
+    scale.value = String(s.deform.scale);
+    scale.title = "deformation scale: positions are x + scale · u (1 is true scale)";
+    unlisten.push(
+      listen(scale, "change", () => {
+        const v = Number(scale.value);
+        if (Number.isFinite(v) && v > 0) store.dispatch({ type: "setDeformScale", scale: v });
+        else scale.setCustomValidity("the scale must be a number above 0");
+      }),
+    );
+    row.append(el("span", undefined, "scale"), scale, el("span", "deform-scale-label" + (s.deform.scale !== 1 ? " scaled" : ""), lines.scale));
+    box.append(row);
+    for (const n of lines.notes) box.append(el("div", "legend-note" + (n.refused ? " refused-field" : ""), n.text));
+    if (lines.partial) {
+      const m = el("div", "legend-row deform-missing");
+      m.append(el("span", "deform-marker"), el("span", undefined, lines.partial));
+      box.append(m);
+    }
+    legend.append(box);
   };
 
   const renderContour = (s: State) => {
@@ -235,6 +292,44 @@ function noDataRow(): HTMLElement {
     "every face or line that touches one is drawn in this grey over its whole area, including its part next to recorded nodes";
   row.append(chip, text);
   return row;
+}
+
+/**
+ * What the deformed-shape section states (V4d), as plain data (tested in
+ * Node; the DOM above shows it): whether the toggle can turn on and why not,
+ * the scale in words, the notes, and the drawn nodes left undeformed.
+ */
+export function deformLines(s: State): {
+  available: boolean;
+  why: string | null;
+  scale: string;
+  notes: { text: string; refused: boolean }[];
+  partial: string | null;
+} {
+  const a = deformOf(s);
+  const v = deformView(s);
+  const notes: { text: string; refused: boolean }[] = [];
+  if (!a.ok) notes.push({ text: `${s.deform.on ? "Not drawn" : "Unavailable"}: ${a.reason}.`, refused: a.state === "refused" });
+  else if (a.draw.note) notes.push({ text: a.draw.note, refused: false });
+  if (v.state === "loading") notes.push({ text: `step ${s.phase.at?.kind === "results" ? s.phase.at.step + 1 : "?"} loading`, refused: false });
+  if (v.state === "loading" || v.state === "ready" || v.state === "partial") {
+    notes.push({ text: "Outline edges are not drawn on the deformed mesh (their nodes are not recorded); the ghost keeps them.", refused: false });
+  }
+  return {
+    available: a.ok,
+    why: a.ok ? null : a.reason,
+    scale: scaleLabel(s.deform.scale),
+    notes,
+    partial:
+      v.state === "partial"
+        ? `${v.missing.toLocaleString()} of ${v.drawn.toLocaleString()} drawn nodes have no displacement: drawn undeformed, marked`
+        : null,
+  };
+}
+
+/** What the deformed-shape section shows, as one string (the step's keys left out, so a scrub does not rebuild it). */
+function deformSignature(s: State): string {
+  return JSON.stringify([s.phase.axis.some((k) => k.kind === "results"), s.deform.on, s.deform.scale, s.deform.ghost, deformLines(s)]);
 }
 
 /** What the contour legend shows, as one string: it is rebuilt only when this changes. */
