@@ -150,3 +150,23 @@ def test_other_no_fem_files_keep_mains_error(
         OpenSeesModel.from_h5(str(path))
     assert type(info.value) is type(want)  # not BridgeOnlyArchiveError
     assert str(info.value) == str(want)
+
+
+def test_a_composed_file_with_the_bridge_zone_at_the_root_refuses(
+    tmp_path: Path,
+) -> None:
+    """A composed results file keeps ``/opensees`` at the file root beside
+    ``/model`` (ADR 0020). Built from a bridge-only archive, its ``/model``
+    has a stamped ``meta`` and no ``nodes``; ``fem_root="/model"`` used to
+    leak h5py's raw ``KeyError 'nodes'`` because the guard looked for the
+    bridge zone under ``fem_root`` only (#1880)."""
+    path = _composed_without_nodes(tmp_path)
+    with h5py.File(path, "r") as f:
+        assert "opensees" in f and "opensees" not in f["model"]
+        assert "nodes" not in f["model"]
+    with pytest.raises(BridgeOnlyArchiveError) as info:
+        OpenSeesModel.from_h5(str(path), fem_root="/model")
+    msg = str(info.value)
+    assert "no 'nodes' group under /model/" in msg
+    assert "Zones present: /model/meta." in msg
+    assert "doesn't exist" not in msg  # not h5py's raw text

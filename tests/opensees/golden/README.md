@@ -93,6 +93,18 @@ zone. The `tcl` and `py` cells of one mode share a model, so their dumps are
 identical; the dump sits beside each cell so that each cell is
 self-contained.
 
+## Bridge-only by design
+
+The corpus stays on `FEMStub`, so its archives carry no neutral zone and
+`OpenSeesModel.from_h5` refuses them with `BridgeOnlyArchiveError`. That is
+deliberate (T ruling on #1797): the goldens pin what the bridge emits, and
+giving every fixture a real `FEMData` would regenerate all 86 cells for no
+gain in what they check. The R1b round-trip oracle
+(`test_roundtrip_oracle.py`) therefore replays the real-`FEMData` builders
+in `tests/opensees/h5`, not these cells. The one oracle row that reaches a
+corpus model (`test_h5_decl_params::_broad_partitioned`, through
+`build_model`) stays a class-S row for that reason.
+
 ## Determinism: normalised and masked fields
 
 - **Line endings.** Goldens are written with LF. `.gitattributes` marks them

@@ -94,7 +94,7 @@ from tests.opensees.golden import builder
 _LEDGER = Path(__file__).with_name("roundtrip_oracle_ledger.txt")
 
 #: ``N_WAIVED_ORACLE`` when the ledger opened (K2a, #1794). It may only go down.
-_CEILING = 35
+_CEILING = 33
 #: The K2 deadline: the ledger is empty by then, or KC4 applies.
 DEADLINE = "2026-12-11"
 _CLASSES = frozenset({"A", "B", "C", "S"})
@@ -163,9 +163,8 @@ CORPUS: tuple[Model, ...] = (
     *(_m("test_h5_solve_stamp", "_frame_bridge", analysis=a) for a in _B),
     _m("test_h5_stages_reader", "_real_two_stage_bridge"),
     _m("test_h5_stages_reader", "_real_kitchen_sink_bridge"),
+    # The stages_writer bridges are these two (#1880): listed once.
     _m("test_h5_stages_replay", "_no_param_two_stage_bridge"),
-    _m("test_h5_stages_writer", "_build_two_stage_bridge"),
-    _m("test_h5_stages_writer", "_build_kitchen_sink_bridge"),
     _m("test_opensees_model_build_targets", "_author_simple_frame_apesees"),
     *(_m("test_reinforce_deck_replay", "_reinforced_ops", bond_by_name=b)
       for b in _B),
