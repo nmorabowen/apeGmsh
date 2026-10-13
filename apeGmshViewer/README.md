@@ -68,8 +68,25 @@ Then:
   step -1/+1. Steps are read one at a time in the main process, when shown;
   the file is closed after half a second without a read (so a writer can
   replace it), and a file that changed is re-read before any step is shown;
-  the newest request wins. The viewport draws the undeformed mesh (the
-  deformed shape comes later).
+  the newest request wins. The viewport draws the undeformed mesh unless
+  the deformed shape is on.
+- **Deformed shape.** On a results stage, **deformed** in the legend moves
+  every drawn node to `x + scale · u`, with `u` the file's nodal
+  `displacement_x`, `_y` and `_z` at the step shown (rotations are not
+  used). The scale defaults to **1** (true scale); any other scale is
+  stated in the legend. **reference ghost** draws the undeformed mesh behind
+  it at 0.3 opacity. Beams and trusses stay straight chords between their
+  displaced end nodes. It composes with contours (the deformed mesh is
+  coloured), stage activation and the time scrubber, and a click picks what
+  is drawn where you click. A drawn node with no displacement (not in
+  `_ids`, or NaN) is drawn undeformed and marked with a grey square, and
+  the banner says how many there are: it is never moved by a displacement
+  of 0. The deformed shape is refused, with the reason, when an axis was
+  refused as a partial write, when the components name no axis (`[k]`),
+  or when `displacement_z` is missing from a model that is not declared
+  2-D (`/meta/ndm` 2, neutral 2.34.0 on): it is never drawn from the
+  surviving axes. The outline edges are not drawn on the deformed mesh
+  (they carry no node ids); the ghost keeps them.
 - **Nodal contours.** On a results stage, **contour** in the legend colours
   the mesh by a nodal field at the step shown: pick the field and its
   component (`x`, `y`, `z` as the file names them, the **magnitude** for a
@@ -114,8 +131,8 @@ through Node's type stripping; nothing is compiled for the tests).
 | `npm run typecheck` | `tsc` over `src/` and `test/` |
 | `npm test` | reader, chain resolution, mesh and navigation tests, on the fixture and on synthetic files |
 | `npm start -- <model.h5>` | open the app on a file; without a file, drop one on the window |
-| `npm run measure -- <model.h5> [--uncapped]` | print one [MEASUREMENTS.md](MEASUREMENTS.md) row; `--uncapped` lifts the vsync cap and prints the throughput row; with a `<stem>.results.h5` beside the model, also the contour scrub row (V4c1) |
-| `npm run capture -- <model.h5> <out.png> [--pick=<OpenSees type>]` | write a still from a hidden window, with a beam selected (or an element of the `--pick` type); a second still `<out>.chain-end.png` when the chain is taller than the window; `<out>.framed.png`, `<out>.groups.png` and `<out>.role.png`; one `<out>.window-<kind>.png` per model-definition window; and, when the model has a `<stem>.results.h5` beside it, one `<out>.results-<i>-<stage>.png` per results stage at its last step, then the contour stills `<out>.contour-<n>-<what>.png` (the scan running, its first and last step, one component, and 1280 px) |
+| `npm run measure -- <model.h5> [--uncapped]` | print one [MEASUREMENTS.md](MEASUREMENTS.md) row; `--uncapped` lifts the vsync cap and prints the throughput row; with a `<stem>.results.h5` beside the model, also the contour scrub row (V4c1) and the same scrub with the deformed shape on (V4d) |
+| `npm run capture -- <model.h5> <out.png> [--pick=<OpenSees type>]` | write a still from a hidden window, with a beam selected (or an element of the `--pick` type); a second still `<out>.chain-end.png` when the chain is taller than the window; `<out>.framed.png`, `<out>.groups.png` and `<out>.role.png`; one `<out>.window-<kind>.png` per model-definition window; and, when the model has a `<stem>.results.h5` beside it, one `<out>.results-<i>-<stage>.png` per results stage at its last step, then the contour stills `<out>.contour-<n>-<what>.png` (the scan running, its first and last step, one component, and 1280 px), then the deformed-shape stills `<out>.deform-<n>-<what>.png` (scale 1 and 10 with the ghost, with a contour, two staged views, and 1280 px) |
 | `npm run dist` | build the Windows installer into `out/installer/` (see [Install](#install-windows)) |
 
 ## Layout

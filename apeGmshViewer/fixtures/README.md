@@ -195,3 +195,31 @@ are synthetic; no solve runs.
 $env:PYTHONPATH = "src"
 & C:\Users\nmb\venv\opensees_venv\Scripts\python.exe scripts/make_viewer_results_fixtures.py --contour
 ```
+
+The deformed-shape oracles (V4d, #1765, `test/deform/deform.test.ts`) use
+these two pairs as well: `contour_staged` for `x + s u` in 3-D, and
+`contour_nodata` for the `partial` state (the `Top` box's own nodes have no
+displacement once `Top` is active).
+
+## `deform_2d.*`
+
+The V4d 2-D pair (#1765). `deform_2d.h5` is composed by the bridge with
+`ops.model(ndm=2, ndf=2)`, so its `/meta/ndm` is 2 (neutral 2.34.0 on, where
+`/meta/ndm` is the declared dimension): a 2 x 1 rectangle of 4 x 2
+`FourNodeQuad` (`Panel`) at z = 0, a tie of 4 `Truss` segments (`Tie`) along
+y = 1.5, and the rectangle's boundary lines, which gmsh meshes and the
+extraction keeps (20 nodes, 30 cells). `deform_2d.results.h5` holds one static
+stage, `load`, of 3 steps with `displacement_x` and `displacement_y` only (the
+shorthand is clipped to `ndm`, so a 2-D file has no `displacement_z`):
+
+    s = 0.01 (k + 1)
+    displacement_x = s y,   displacement_y = s (0.5 x + 0.25 y)
+
+The file is written by this checkout's apeGmsh, whose `/opensees` and results
+zones are a minor ahead of what this app reads, so it opens with those two
+banners. The values are synthetic; no solve runs.
+
+```powershell
+$env:PYTHONPATH = "src"
+& C:\Users\nmb\venv\opensees_venv\Scripts\python.exe scripts/make_viewer_results_fixtures.py --deform
+```
