@@ -439,7 +439,7 @@ def reinforced_fixture(out_dir: Path) -> None:
     from apeGmsh.opensees.emitter import h5_reader
 
     name = "reinforced"
-    with apeGmsh(model_name=name, verbose=False) as g:
+    with apeGmsh(model_name=name, verbose=False, save_to=SESSION_DIR / f"{name}.h5") as g:
         g.model.geometry.add_box(0, 0, 0, 0.5, 0.5, 2.0, label="Box")
         g.physical.add_volume(g.model.select(dim=3).tags(), name="Concrete")
         g.physical.add_surface(
