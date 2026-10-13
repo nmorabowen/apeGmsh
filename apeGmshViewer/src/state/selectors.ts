@@ -547,7 +547,11 @@ export function deformNotice(s: State): string | null {
 /** Whether the read results file pairs with the loaded model by content (state/results.ts). */
 export function resultsPairing(s: State): ResultsPairing {
   const m = s.artifacts.model;
-  return pairResults(m?.status === "ready" ? { lineage: s.lineage } : null, s.results);
+  const ops = m?.zones["opensees"];
+  const zone = ops?.status === "ready";
+  // No decls group in a ready opensees zone reads as "absent" (h5-schema.md): the joins are not recorded.
+  const programDecl = zone ? (s.definitions?.decls ? (s.definitions.decls.programDecl ?? "absent") : "absent") : null;
+  return pairResults(m?.status === "ready" ? { lineage: s.lineage, openseesVersion: zone ? ops.version : null, programDecl } : null, s.results);
 }
 
 /**

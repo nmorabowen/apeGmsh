@@ -509,5 +509,34 @@
       "deck": "cells/arch_with_orientation_fan_out/per_rank/recording.golden",
       "h5dump": "cells/arch_with_orientation_fan_out/per_rank/recording.h5dump"
     }
+  },
+  "rebar": {
+    "fixture": "rebar_column_cage",
+    "placements": [
+      "conformal",
+      "embedded"
+    ],
+    "outputs": [
+      "tcl",
+      "py"
+    ],
+    "cells": {
+      "rebar_column_cage/conformal/tcl": {
+        "status": "golden",
+        "deck": "rebar_cells/rebar_column_cage/conformal/tcl.golden"
+      },
+      "rebar_column_cage/conformal/py": {
+        "status": "golden",
+        "deck": "rebar_cells/rebar_column_cage/conformal/py.golden"
+      },
+      "rebar_column_cage/embedded/tcl": {
+        "status": "golden",
+        "deck": "rebar_cells/rebar_column_cage/embedded/tcl.golden"
+      },
+      "rebar_column_cage/embedded/py": {
+        "status": "golden",
+        "deck": "rebar_cells/rebar_column_cage/embedded/py.golden"
+      }
+    }
   }
 }

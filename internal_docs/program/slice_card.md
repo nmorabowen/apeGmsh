@@ -31,7 +31,7 @@
      - Placeholders such as `<slug>` and non-paths such as `lock-tests` are ignored.
      - Only `changelog.d/*.md` is implicit. Goldens, snapshots, `_api_index.json` and the skill mirror must be listed.
      - A section ends at the next `#` heading or bold-label line (`**Hub lock:**`). An `Owned:` label counts only where it opens a line or a sentence; "not owned:" is never a label.
-     - An Owned line with a path and a negation (`never`, `not`, `don't`, `do not`, `except`) is refused as ambiguous: list only what the PR may change, and put exclusions under another heading.
+     - An Owned line with a path and a negation is refused as ambiguous: list only what the PR may change, and put exclusions under another heading. A negation is `never`, `not` (also `do _not_`), `cannot`, any n't contraction (`don't`, `won't`, straight or curly apostrophe), `neither`, `except`, `exclude`/`excluding`, `avoid`, `untouched`, `forbidden`, `out of scope`, `removed from`, `leave … alone`, `no changes to`/`no edits to`, or `No` right before a backticked span (`land_pr.py::_NEGATION`). Words inside backticks do not count, unless the span is only a negation phrase (`` `never` ``, `` `do not` ``), or the line has a ``double`` run or an odd number of backticks; then they do.
      - A card with no Owned section, or one that names no path, is refused. -->
 - `path::symbol`
 
@@ -41,7 +41,7 @@
 ### Allowed
 <!-- Optional: files the PR may change but does not own, such as regenerated goldens or the skill mirror. -->
 
-<!-- Amendments: to add files after the card is filed, post an issue comment whose first words are `**Card amendment` and name each path in backticks; check 9 adds them. An amendment line with a negation (`never`, `not`, `don't`, `do not`, `except`) adds no path; check 9 says it skipped it. Any other comment, a maintainer ruling included, adds nothing. Limitation: the amendment's author is not checked, because every account here is the same user today.
+<!-- Amendments: to add files after the card is filed, post an issue comment whose first words are `**Card amendment` and name each path in backticks; check 9 adds them. An amendment line with a negation (the list above) adds no path; check 9 says it skipped it. A negation also drops the lines it governs, up to a heading or a bold label at most: a negated line ending in `:`, or a negated bullet naming no path ("- Do not touch the following"), drops the list after it, across blank lines, until a non-list line that follows a blank line; any other negated non-bullet line drops the rest of its paragraph; a negated bullet naming a path drops itself, its sub-items and its unmarked continuation lines, up to the next sibling bullet. So put each addition in its own positive line, in a new paragraph if a negation precedes it. Any other comment, a maintainer ruling included, adds nothing. Limitation: the amendment's author is not checked, because every account here is the same user today.
      Override: the maintainer or coordinator applies the `scope-ok` label to the PR, and check 9 passes with an OVERRIDDEN notice, the way `human-gate` admits a baseline edit at check 8. -->
 
 
