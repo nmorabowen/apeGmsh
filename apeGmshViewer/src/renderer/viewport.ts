@@ -208,7 +208,8 @@ export class Viewport {
       writePositions(this.faces, this.lines, next, this.drawn);
       this.setMarkers(info);
       if (this.edges) this.edges.visible = s.visibility.edges && next.key === "base";
-      if (s.selection.decls.length) this.setHighlight(s);
+      // The selection outline follows the moved vertices (no pulse: the selection did not change).
+      if (s.selection.decls.length) this.setHighlight(s, false);
       changed = true;
     }
     const ghost = this.ghostWanted(s) && s.phase.at?.kind !== "geometry";
@@ -620,7 +621,7 @@ export class Viewport {
     this.frame(info, this.nav.heading, focus);
   }
 
-  private setHighlight(s: State): void {
+  private setHighlight(s: State, pulse = true): void {
     this.clear(this.highlight);
     this.lineMaterials = this.lineMaterials.filter((m) => this.lines?.material === m);
     const info = s.mesh;
@@ -640,7 +641,7 @@ export class Viewport {
     const pos = this.full ?? basePositions(info, this.blobs);
     const lp = pos.line, tp = pos.tri;
     for (const o of highlightObjects(lp, tp, prims, (pos, width) => this.makeLines(pos, null, width, SELECTION_COLOUR))) this.highlight.add(o);
-    this.halo.pulse();
+    if (pulse) this.halo.pulse();
     this.requestRender();
   }
 
