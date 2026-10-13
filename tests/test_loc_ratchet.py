@@ -33,7 +33,7 @@ BASELINE: dict[str, int] = {
     "ground_motions": 979,
     "from_recorders": 1237,
     "section_gui": 1784,
-    "rebar": 2015,
+    "rebar": 1924,
 }
 
 _DIRS = {
