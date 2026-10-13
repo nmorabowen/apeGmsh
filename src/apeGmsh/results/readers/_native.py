@@ -214,8 +214,9 @@ class NativeReader:
         Absent (any 1.0.0 or 1.1.0 file, or a 1.2.0 file whose writer
         could not prove it) and any value outside
         ``ELEMENT_INDEX_SPACES`` read as unverified. That is not a
-        refusal: the file still reads. The version number alone never
-        makes a file verified.
+        refusal: the file still reads. Neither the version number nor
+        ``source_type`` ever makes a file verified: the rule is the same
+        for every writer, ``domain_capture`` included.
         """
         return self.element_index_space == _native.ELEMENT_INDEX_SPACE_FEM
 

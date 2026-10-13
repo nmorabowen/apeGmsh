@@ -24,7 +24,7 @@ import pytest
 from apeGmsh.opensees._response_catalog import IntRule, flatten, lookup
 from apeGmsh.results.capture._domain import (
     DomainCapture,
-    _maybe_build_capture_tag_map,
+    _capture_pairing,
 )
 from apeGmsh.results.capture.spec import (
     ResolvedDomainCaptureRecord,
@@ -81,8 +81,8 @@ class TestComposedDomainCapture:
         ops_tags = sorted(ops_to_fem)  # the live-domain tags
 
         # The translator is built from the composed model's element_meta.
-        tag_map = _maybe_build_capture_tag_map(model_h5)
-        assert tag_map is not None, (
+        pairing = _capture_pairing(model_h5)
+        assert pairing, (
             "composed model should yield a tag translator (compose gate)"
         )
 
@@ -105,7 +105,7 @@ class TestComposedDomainCapture:
 
         out = tmp_path / "composed_capture.h5"
         # tag_map injected (the bridge / from_h5 paths build it the same way).
-        with DomainCapture(spec, out, fem, ops=ops, tag_map=tag_map) as cap:
+        with DomainCapture(spec, out, fem, ops=ops, tag_map=pairing) as cap:
             cap.begin_stage("static", kind="static")
             cap.step(t=1.0)
             cap.end_stage()
@@ -115,6 +115,11 @@ class TestComposedDomainCapture:
         assert set(ops.queried_eids) <= set(ops_tags)
         assert FEM_EID_A not in ops.queried_eids
         assert FEM_EID_B not in ops.queried_eids
+
+        # A complete pairing translated every id, so the file is stamped.
+        from apeGmsh.results.readers._native import NativeReader
+        with NativeReader(out) as r:
+            assert r.element_index_space == "fem"
 
         from apeGmsh.results import Results
 

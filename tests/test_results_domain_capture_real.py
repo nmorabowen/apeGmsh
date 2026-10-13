@@ -18,6 +18,7 @@ import numpy as np
 import pytest
 
 from tests.conftest import _open_model_from_h5
+from tests.fixtures.capture_tags import identity_tags
 
 openseespy = pytest.importorskip(
     "openseespy.opensees", reason="openseespy required",
@@ -107,7 +108,8 @@ def test_single_tet_static_capture(tmp_path: Path) -> None:
     )
 
     capture_path = tmp_path / "tet.h5"
-    with DomainCapture(spec, capture_path, fem) as cap:
+    with DomainCapture(spec, capture_path, fem,
+                       tag_map=identity_tags(spec)) as cap:
         cap.begin_stage("static_load", kind="static")
         ok = ops.analyze(1)
         assert ok == 0, f"analyze() returned {ok}"
@@ -197,7 +199,8 @@ def test_single_tet_gauss_capture(tmp_path: Path) -> None:
     )
 
     capture_path = tmp_path / "tet_gauss.h5"
-    with DomainCapture(spec, capture_path, fem) as cap:
+    with DomainCapture(spec, capture_path, fem,
+                       tag_map=identity_tags(spec)) as cap:
         cap.begin_stage("static_load", kind="static")
         ok = ops.analyze(1)
         assert ok == 0

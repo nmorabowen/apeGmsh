@@ -33,6 +33,7 @@ from apeGmsh.results.capture.spec import (
 )
 
 from tests.conftest import _open_model_from_h5
+from tests.fixtures.capture_tags import identity_tags
 
 
 # =====================================================================
@@ -218,7 +219,7 @@ class TestForceBeamColumn3dCapture:
         )
 
         path = tmp_path / "cap.h5"
-        with DomainCapture(spec, path, fem, ops=ops) as cap:
+        with DomainCapture(spec, path, fem, ops=ops, tag_map=identity_tags(spec)) as cap:
             cap.begin_stage("static", kind="static")
             for t in (0.0, 1.0):
                 # Per-step section.force values: 6 comps × 3 IPs each.
@@ -282,7 +283,7 @@ class TestForceBeamColumn3dCapture:
             )
 
         path = tmp_path / "cap.h5"
-        with DomainCapture(spec, path, fem, ops=ops) as cap:
+        with DomainCapture(spec, path, fem, ops=ops, tag_map=identity_tags(spec)) as cap:
             cap.begin_stage("g", kind="static")
             cap.step(t=0.0)
             cap.end_stage()
@@ -320,7 +321,7 @@ class TestForceBeamColumn3dCapture:
         ops.ele_response[(eid, "section.2.force")] = np.zeros(5)
 
         path = tmp_path / "cap.h5"
-        with DomainCapture(spec, path, fem, ops=ops) as cap:
+        with DomainCapture(spec, path, fem, ops=ops, tag_map=identity_tags(spec)) as cap:
             cap.begin_stage("g", kind="static")
             with pytest.raises(ValueError, match="returned 5 values"):
                 cap.step(t=0.0)
@@ -366,7 +367,7 @@ class TestMultiBucketCapture:
             snapshot_id=fem.snapshot_id,
         )
         path = tmp_path / "cap.h5"
-        with DomainCapture(spec, path, fem, ops=ops) as cap:
+        with DomainCapture(spec, path, fem, ops=ops, tag_map=identity_tags(spec)) as cap:
             cap.begin_stage("g", kind="static")
             cap.step(t=0.0)
             cap.end_stage()
@@ -408,7 +409,7 @@ class TestSkipBehaviours:
         )
 
         path = tmp_path / "cap.h5"
-        with DomainCapture(spec, path, fem, ops=ops) as cap:
+        with DomainCapture(spec, path, fem, ops=ops, tag_map=identity_tags(spec)) as cap:
             cap.begin_stage("g", kind="static")
             cap.step(t=0.0)
             cap.end_stage()
@@ -441,7 +442,7 @@ class TestSkipBehaviours:
         )
 
         path = tmp_path / "cap.h5"
-        with DomainCapture(spec, path, fem, ops=ops) as cap:
+        with DomainCapture(spec, path, fem, ops=ops, tag_map=identity_tags(spec)) as cap:
             cap.begin_stage("g", kind="static")
             cap.step(t=0.0)
             cap.end_stage()
@@ -495,7 +496,7 @@ class TestMixedCategories:
         )
 
         path = tmp_path / "mixed.h5"
-        with DomainCapture(spec, path, fem, ops=ops) as cap:
+        with DomainCapture(spec, path, fem, ops=ops, tag_map=identity_tags(spec)) as cap:
             cap.begin_stage("g", kind="static")
             cap.step(t=0.0)
             cap.end_stage()
@@ -559,7 +560,7 @@ class TestElasticBeamSynthesis:
         )
 
         path = tmp_path / "elastic.h5"
-        with DomainCapture(spec, path, fem, ops=ops) as cap:
+        with DomainCapture(spec, path, fem, ops=ops, tag_map=identity_tags(spec)) as cap:
             cap.begin_stage("g", kind="static")
             cap.step(t=0.0)
             cap.end_stage()
@@ -614,7 +615,7 @@ class TestElasticBeamSynthesis:
         )
 
         path = tmp_path / "elastic2d.h5"
-        with DomainCapture(spec, path, fem, ops=ops) as cap:
+        with DomainCapture(spec, path, fem, ops=ops, tag_map=identity_tags(spec)) as cap:
             cap.begin_stage("g", kind="static")
             cap.step(t=0.0)
             cap.end_stage()
@@ -655,7 +656,7 @@ class TestElasticBeamSynthesis:
 
         path = tmp_path / "skip.h5"
         with pytest.warns(UserWarning, match="DomainCapture dropped"):
-            with DomainCapture(spec, path, fem, ops=ops) as cap:
+            with DomainCapture(spec, path, fem, ops=ops, tag_map=identity_tags(spec)) as cap:
                 cap.begin_stage("g", kind="static")
                 cap.step(t=0.0)
                 cap.end_stage()
@@ -692,7 +693,7 @@ class TestElasticBeamSynthesis:
         path = tmp_path / "clean.h5"
         with warnings.catch_warnings():
             warnings.simplefilter("error", UserWarning)
-            with DomainCapture(spec, path, fem, ops=ops) as cap:
+            with DomainCapture(spec, path, fem, ops=ops, tag_map=identity_tags(spec)) as cap:
                 cap.begin_stage("g", kind="static")
                 cap.step(t=0.0)
                 cap.end_stage()

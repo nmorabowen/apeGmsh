@@ -35,6 +35,7 @@ ops = openseespy
 from apeGmsh.opensees._response_catalog import IntRule, lookup
 
 from tests.conftest import _open_model_from_h5
+from tests.fixtures.capture_tags import identity_tags  # noqa: E402
 
 
 # =====================================================================
@@ -262,7 +263,7 @@ def test_shell_capture_for_class(
     )
 
     capture_path = tmp_path / "cap.h5"
-    with DomainCapture(spec, capture_path, fem) as cap:
+    with DomainCapture(spec, capture_path, fem, tag_map=identity_tags(spec)) as cap:
         cap.begin_stage("static_load", kind="static")
         cap.step(t=ops.getTime())
         cap.end_stage()
@@ -382,7 +383,7 @@ def test_layered_shell_uses_same_catalog_entry(tmp_path: Path) -> None:
         ),),
     )
     capture_path = tmp_path / "cap.h5"
-    with DomainCapture(spec, capture_path, fem) as cap:
+    with DomainCapture(spec, capture_path, fem, tag_map=identity_tags(spec)) as cap:
         cap.begin_stage("g", kind="static")
         cap.step(t=ops.getTime())
         cap.end_stage()

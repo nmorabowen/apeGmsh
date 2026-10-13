@@ -135,6 +135,8 @@ def make_demo_results(
     results_path = out_dir / "demo_results.h5"
     with NativeWriter(results_path) as w:
         w.open(fem=fem, model_h5_src=model_path)
+        # Nodal rows only: no element row can carry a non-FEM id.
+        w.stamp_element_index_space("fem")
         sid = w.begin_stage(
             name="pushover", kind="static", time=amp.astype(np.float64),
         )
