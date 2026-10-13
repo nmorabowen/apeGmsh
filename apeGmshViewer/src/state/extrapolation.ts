@@ -76,7 +76,9 @@ const EPS = 2.220446049250313e-16;
 /**
  * The Moore-Penrose pseudo-inverse of `a` (m x n, row-major), n x m, by a
  * one-sided Jacobi SVD (Hestenes). Singular values below
- * `max(m, n) * eps * sigma_max` count as zero, numpy 2's `pinv` default.
+ * `1e-15 * sigma_max` count as zero: numpy's `pinv` default as Python calls
+ * it (`np.linalg.pinv(A)`, no `rtol`: `rcond = 1e-15`; checked on numpy
+ * 2.3.5, the opensees_venv's). `max(m, n) * eps` applies only to `rtol=None`.
  */
 export function pinv(a: readonly (readonly number[])[]): number[][] {
   const m = a.length;
@@ -111,7 +113,7 @@ export function pinv(a: readonly (readonly number[])[]): number[][] {
     if (!rotated) break;
   }
   const sigma = Array.from({ length: n }, (_, j) => Math.sqrt(u.reduce((acc, r) => acc + r[j]! * r[j]!, 0)));
-  const cut = Math.max(m, n) * EPS * Math.max(0, ...sigma);
+  const cut = 1e-15 * Math.max(0, ...sigma);
   // pinv = V diag(1/sigma^2) U~^T, with U~ = U sigma (the unnormalised columns).
   const out = Array.from({ length: n }, () => new Array<number>(m).fill(0));
   for (let j = 0; j < n; j++) {
@@ -130,17 +132,36 @@ export function pinv(a: readonly (readonly number[])[]): number[][] {
 /**
  * Python `_build_extrapolation_matrix`: M = pinv(N(nat[:, :pdim])), (nc x G)
  * row-major, for an element of gmsh `code` with Gauss points at `natural`;
- * null when unsupported (no shape functions, or too few coordinates).
+ * null when unsupported (no shape functions, too few coordinates, a
+ * non-finite coordinate, or a result that is not finite or all zero: Python's
+ * `np.linalg.pinv` raises there, and a zero matrix would draw a silent 0).
  */
 export function extrapolationMatrix(code: number, natural: readonly (readonly number[])[]): Float64Array | null {
   const sh = shapeOf(code);
   if (!sh || natural.some((r) => r.length < sh.pdim)) return null;
-  const a = natural.map((r) => sh.N(r.slice(0, sh.pdim)));
-  const m = pinv(a);
+  const used = natural.map((r) => r.slice(0, sh.pdim));
+  if (used.some((r) => r.some((x) => !Number.isFinite(x)))) return null;
+  const m = pinv(used.map((r) => sh.N(r)));
   const G = natural.length;
   const out = new Float64Array(sh.nc * G);
-  for (let c = 0; c < sh.nc; c++) for (let g = 0; g < G; g++) out[c * G + g] = m[c]![g]!;
-  return out;
+  let any = false;
+  for (let c = 0; c < sh.nc; c++) {
+    for (let g = 0; g < G; g++) {
+      const x = m[c]![g]!;
+      if (!Number.isFinite(x)) return null;
+      if (x !== 0) any = true;
+      out[c * G + g] = x;
+    }
+  }
+  return any ? out : null;
+}
+
+/** Why `extrapolationMatrix` refuses a group's natural coordinates for `code` (the verdict's words). */
+function matrixRefusal(code: number, natural: readonly (readonly number[])[]): string {
+  const pdim = shapeOf(code)!.pdim;
+  if (natural.some((r) => r.length < pdim)) return `its _natural_coords have ${natural[0]?.length ?? 0} columns, fewer than gmsh type ${code}'s ${pdim}`;
+  if (natural.some((r) => r.slice(0, pdim).some((x) => !Number.isFinite(x)))) return "its _natural_coords hold a non-finite value";
+  return `its _natural_coords give no finite extrapolation matrix for gmsh type ${code}`;
 }
 
 // -- the topologies ---------------------------------------------------------------------
@@ -200,7 +221,7 @@ export function extrapolationVerdict(groups: readonly PlanGroupInput[], cellOf: 
       else {
         for (const code of codes) {
           if (!extrapolationMatrix(code, g.naturalCoords)) {
-            matrix.push(`group ${g.id}: its _natural_coords have ${g.naturalCoords[0]?.length ?? 0} columns, fewer than gmsh type ${code}'s ${shapeOf(code)!.pdim}`);
+            matrix.push(`group ${g.id}: ${matrixRefusal(code, g.naturalCoords)}`);
           }
         }
       }

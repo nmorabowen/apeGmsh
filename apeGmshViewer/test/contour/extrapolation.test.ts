@@ -298,6 +298,47 @@ test("an element type with no shape functions reads unsupported (never Python's 
   h.effects.dispose();
 });
 
+test("review F1: one non-finite _natural_coords value in a verified quad group reads unsupported in node_discrete and gauss_node, never a silent 0, and never widens the range", async () => {
+  // Pure: a NaN coordinate (or an all-zero / non-finite result) gives no matrix.
+  const g = 1 / Math.sqrt(3);
+  const quad = [[-g, -g], [g, -g], [g, g], [-g, g]];
+  assert.ok(extrapolationMatrix(3, quad));
+  assert.equal(extrapolationMatrix(3, [[NaN, -g], ...quad.slice(1)]), null);
+  assert.equal(extrapolationMatrix(3, [[Infinity, -g], ...quad.slice(1)]), null);
+
+  // Through the app (the reviewer's repro): extrap_plane's quads_G4 with _natural_coords[0][0] = NaN.
+  const h = await opened(fx("extrap_plane.h5"), fx("extrap_plane.results.h5"));
+  const grp = h.store.get().results!.stages[0]!.gauss.find((x) => x.id === "quads_G4")!;
+  grp.naturalCoords![0]![0] = NaN;
+  for (const mode of ["node_discrete", "node"] as const) {
+    h.store.dispatch({ type: "setPhase", at: { kind: "results", stage: 0, step: 0 } });
+    h.store.dispatch({ type: "setResultStep", step: 2 });
+    h.store.dispatch({ type: "setColourBy", by: "contour" });
+    h.store.dispatch({ type: "setContourRange", range: "step" });
+    h.store.dispatch({ type: "setContourField", field: "stress", component: "stress_xx", source: "element" });
+    h.store.dispatch({ type: "setContourGauss", mode });
+    await until(() => contourView(h.store.get()).state === "refused", `${mode} refused`);
+    const v = contourView(h.store.get());
+    assert.ok(v.state === "refused" && v.code === "unsupported", mode);
+    assert.match(v.reason, /group quads_G4: its _natural_coords hold a non-finite value/);
+    // No range is measured for this mode's step (a 0 corner would have widened it).
+    await new Promise((r) => setTimeout(r, 50));
+    const sr = h.store.get().contour.stepRange;
+    assert.ok(sr === null || !sr.key.includes(`@${mode}|`), `${mode}: no step range measured (${JSON.stringify(sr)})`);
+  }
+  // The one-point modes need no matrix: cell_averaged still draws, from finite values only.
+  h.store.dispatch({ type: "setContourGauss", mode: "cell_averaged" });
+  await until(() => contourView(h.store.get()).state === "element", "cell_averaged draws");
+  h.effects.dispose();
+});
+
+test("review F2: pinv cuts singular values at numpy's default as Python calls it (rcond 1e-15 x sigma_max)", () => {
+  // numpy 2.3.5: np.linalg.pinv([[1, 0], [0, 9.5e-16]]) == [[1, 0], [0, 0]].
+  assert.deepEqual(pinv([[1, 0], [0, 9.5e-16]]), [[1, 0], [0, 0]]);
+  // Just above the cutoff it is kept.
+  assert.ok(Math.abs(pinv([[1, 0], [0, 2e-15]])[1]![1]! - 5e14) < 1);
+});
+
 test("pinv: the hex8 2x2x2 matrix inverts the shape functions (A M = I), and a rank-deficient matrix gets numpy's minimum-norm answer", () => {
   const g = 1 / Math.sqrt(3);
   const nat = [-1, 1].flatMap((c) => [-1, 1].flatMap((b) => [-1, 1].map((a) => [a * g, b * g, c * g])));
