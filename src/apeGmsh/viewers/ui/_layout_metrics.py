@@ -1,8 +1,8 @@
 """Layout metrics — single source of truth for ResultsViewer dock geometry.
 
 Centralises the dimensions previously scattered as inline literals across
-``_results_window.py``, ``_plot_pane.py``, ``_details_panel.py``,
-and the since-deleted ``_outline_tree.py``, ``_time_scrubber.py`` and
+``_results_window.py`` and the since-deleted ``_plot_pane.py``,
+``_details_panel.py``, ``_outline_tree.py``, ``_time_scrubber.py`` and
 ``_diagram_settings_tab.py``.
 
 Tiered structure so future PREFERENCES promotion is straightforward:

@@ -33,7 +33,7 @@ selection in the results viewer, that layer is added on top.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import pyvista as pv
