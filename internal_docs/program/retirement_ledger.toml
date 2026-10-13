@@ -168,6 +168,14 @@ basis = "policy"
 source = "card #1806 seed row; expiry = 90 days, proposed by X4-a"
 
 [[row]]
+id = "facade-core-rebar-composite"
+kind = "facade"
+paths = ["src/apeGmsh/core/RebarComposite.py"]
+expires = 2027-01-11
+basis = "ruling"
+source = "maintainer ruling on #1809 (2026-10-13): g.rebar moved to rebar/_composite.py (X4-e); expiry = landing + 90 days, dated from PR open 2026-10-13 (re-date to the merge day + 90 if it lands later)"
+
+[[row]]
 id = "deprecated-constraints-mortar"
 kind = "facade"
 symbols = ["src/apeGmsh/core/ConstraintsComposite.py::ConstraintsComposite.mortar"]
