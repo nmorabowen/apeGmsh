@@ -171,6 +171,16 @@ g.mesh.structured.set_transfinite_by_physical(
 )
 ```
 
+For trusses and frames the structured case is one element per member.
+`g.mesh.structured.one_element_per_curve()` marks every free curve with two
+nodes, so each member meshes as a single 1-D element between its end points;
+pass labels, physical-group or part names to restrict it to those curves. A
+curve is free when it bounds no surface, is embedded in none, and
+no constraint, embed, reinforce or displacement declaration references it. The
+call refuses a curve you name that is not free, and with no names it skips the
+others and emits `CurvesSkippedWarning` for the ones a declaration references,
+so a beam under a diaphragm is not left at the global size unnoticed.
+
 Structured and unstructured regions compose in one model — Gmsh uses the
 transfinite path where you marked it and the general algorithm everywhere
 else. The one hard incompatibility is the interface rule from the recipes
