@@ -466,3 +466,13 @@ def test_tie_declared_after_the_call_is_not_seen():
         g.constraints.embedded("beam", "bar")
         g.mesh.generation.generate(dim=3)
         assert _curve_elements(g, "bar") == 1
+
+
+def test_curves_skipped_warning_public_export():
+    """#1784: the warning class is importable from ``apeGmsh.mesh``."""
+    from apeGmsh.mesh import CurvesSkippedWarning
+    from apeGmsh.mesh._mesh_structured import (
+        CurvesSkippedWarning as _Defined,
+    )
+    assert CurvesSkippedWarning is _Defined
+    assert issubclass(CurvesSkippedWarning, UserWarning)
