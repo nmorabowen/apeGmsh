@@ -1120,6 +1120,12 @@ def _emit_node_with_inferred_ndf(
         emitter.node(int(tag), *cs, ndf=int(ndf_val))
 
 
+#: Ids per slice in :func:`emit_owned_nodes_with_inferred_ndf`. The
+#: per-slice peak is about 390 traced bytes per id, so about 6 MiB at
+#: this size; a slice costs a handful of NumPy calls, which is
+#: negligible next to 16k ``emitter.node`` calls.
+_OWNED_NODE_CHUNK = 1 << 14
+
 
 def emit_owned_nodes_with_inferred_ndf(
     emitter: "Emitter",
@@ -1129,6 +1135,8 @@ def emit_owned_nodes_with_inferred_ndf(
     coords: "np.ndarray",
     envelope_ndf: int,
     exclude: "Sequence[Container[int]]" = (),
+    *,
+    chunk: int = _OWNED_NODE_CHUNK,
 ) -> None:
     """Emit one rank's owned ``node`` lines in ascending id order.
 
@@ -1146,21 +1154,32 @@ def emit_owned_nodes_with_inferred_ndf(
     in any set of ``exclude`` is skipped (stage-bound nodes, and nodes a
     hoisted block already declared). Duplicate ids emit once per
     occurrence, as ``sorted`` kept them.
+
+    The sorted ids are walked in slices of ``chunk`` (ADR 0100): the
+    lookup, the gather and the Python lists exist for one slice at a
+    time, so the batch holds about 8 bytes per node for the sorted ids
+    plus a fixed per-slice cost, not Python objects for the whole rank.
+    Slices of one sorted array, taken in order, give the same sequence.
     """
+    if chunk < 1:
+        raise ValueError(f"chunk must be a positive int, got {chunk!r}")
     ids = np.sort(np.asarray(node_ids, dtype=np.int64).reshape(-1))
-    rows, found = node_idx_lookup.get_many(ids)
-    ids_l = ids[found].tolist()
-    xyz_l = np.asarray(coords[rows[found]], dtype=np.float64)[:, :3].tolist()
     env = int(envelope_ndf)
     node = emitter.node
-    for nid, (x, y, z) in zip(ids_l, xyz_l):
-        if exclude and any(nid in s for s in exclude):
-            continue
-        ndf_val = inferred.get(nid, env)
-        if ndf_val == env:
-            node(nid, x, y, z)
-        else:
-            node(nid, x, y, z, ndf=int(ndf_val))
+    for lo in range(0, ids.shape[0], chunk):
+        part = ids[lo:lo + chunk]
+        rows, found = node_idx_lookup.get_many(part)
+        ids_l = part[found].tolist()
+        xyz_l = np.asarray(
+            coords[rows[found]], dtype=np.float64)[:, :3].tolist()
+        for nid, (x, y, z) in zip(ids_l, xyz_l):
+            if exclude and any(nid in s for s in exclude):
+                continue
+            ndf_val = inferred.get(nid, env)
+            if ndf_val == env:
+                node(nid, x, y, z)
+            else:
+                node(nid, x, y, z, ndf=int(ndf_val))
 
 def _load_dof_layout(ndf: int, ndm: int) -> tuple[int, ...]:
     """Spatial-component index placed at each DOF, for an ``(ndm, ndf)`` model.
