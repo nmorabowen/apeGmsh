@@ -426,7 +426,10 @@ def test_a_tcl_deck_that_stopped_before_its_end_refuses(
     typed_tip(ops)
     fake_run(monkeypatch, write_rows("run/tip.out", [1.0, UY]),
              complete=False)
-    ops.tcl("run/deck.tcl", run=True)          # rc 0: no raise
+    # The fake replaces stream_run, whose completion check raises on a
+    # real run (tests/opensees/subprocess/test_run_report.py); the
+    # bridge's own check still leaves the run unfinished.
+    ops.tcl("run/deck.tcl", run=True)
     refuses(ops, "run/deck.tcl", run_dir,
             rf"did not finish.*no {RUN_COMPLETE_MARKER} line")
 

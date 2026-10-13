@@ -4,7 +4,9 @@ Pure, stdlib-only parser for ADR 0106 D1. No wiring lives here — this
 module knows nothing about subprocesses, decks, or emitters; S2 adds the
 ``APEGMSH_STAGE`` marker that gives it stage boundaries and S3 wires it
 into :func:`apeGmsh.opensees._run.stream_run` and the ``apeSees``
-bridge.
+bridge. ``ops.py`` / ``ops.tcl(path, run=True)`` hand the record back
+as ``RunReport.solver_stats`` (ADR 0106 Amendment 1); it is ``None``
+when the deck never asked for ``-stats``.
 
 After fork PR #821, ``ops.system.Pardiso(stats=True)`` answers on
 stderr after **every** numeric factorisation with a five-line block,
