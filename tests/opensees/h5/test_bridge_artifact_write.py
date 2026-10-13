@@ -863,7 +863,7 @@ def test_a_declaration_after_the_bridge_wrote_still_warns_stale(
 
 
 # ---------------------------------------------------------------------------
-# Deferred archive features: the explicit save's warning, not the hook's
+# An archived equationConstraint: neither save warns (#1805)
 # ---------------------------------------------------------------------------
 
 
@@ -889,14 +889,23 @@ def test_automatic_write_is_silent_about_deferred_features(
     assert "opensees" in _zones(artifact_dir / "eq.h5")
 
 
-def test_explicit_h5_still_warns_about_deferred_features(artifact_dir, tmp_path):
-    from apeGmsh.opensees.emitter.h5 import H5FeatureDeferredWarning
+def test_explicit_h5_is_silent_about_an_archived_equation_constraint(
+    artifact_dir, tmp_path,
+):
+    """An ``apeSees.equation_constraint`` row is archived (its
+    ``EquationConstraintRecord`` ``/opensees/decl_params`` row, replayed
+    since #1801), so the explicit save warns about nothing (#1805)."""
+    from apeGmsh.opensees.emitter.h5 import (
+        H5FeatureDeferredWarning,
+        H5LedgerWarning,
+    )
 
     ops = _eq_bridge(_box_fem("eq_explicit"))
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", OpenSeesAutoEmitWarning)
-        with pytest.warns(H5FeatureDeferredWarning, match="equation_constraint"):
-            ops.h5(str(tmp_path / "explicit.h5"))
+        warnings.simplefilter("error", H5FeatureDeferredWarning)
+        warnings.simplefilter("error", H5LedgerWarning)
+        ops.h5(str(tmp_path / "explicit.h5"))
 
 
 # ---------------------------------------------------------------------------

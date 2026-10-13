@@ -657,3 +657,55 @@ runs read 339 (nodal) and 230 (nodal, deformed) steps/s.
 - An element field costs about 1 ms a step over the nodal contour on this
   file (median 2.8 → 3.4 to 3.7 ms): the Gauss block (7 098 × 6 values) over
   IPC, its per-element mean, and the per-cell colours.
+
+### Element contour scrub carried to the nodes (V4c2b, #1875)
+
+The element scrub above, in each node-located draw mode: `cell_averaged`
+(on this 6-point file, `element_mean_averaged`: each element's mean averaged
+at the nodes), `gauss_node` (the 6 Gauss points extrapolated to the 6 wedge
+corners by the pseudo-inverse of the linear wedge shape functions, averaged
+at the nodes) and `gauss_node_discrete` (the same, not averaged). Each step
+also carries the Gauss block through the field's plan (built once per join
+and mode), measures the step range on the values drawn, and colours every
+drawn vertex from its own element's corner. The history scan carries every
+step through the same plan in main. `npm run measure` prints the three rows
+after the V4c2a element rows.
+
+Same file and command as the V4c2a rows (e_solid_100: 7 098 wedges x 6 Gauss
+points, 100 steps), same machine, at `04d1bfa4` plus the measure fix below.
+
+| run | field | CPU before / during | history scan (ms) | scrub (steps/s) | step median / max (ms) | peak MB main+renderer |
+|---|---|---|---|---|---|---|
+| 1 | element stress xx, element_mean_averaged | 47 / 52 % | (9, see below) | 185.8 | 4.90 / 18.8 | 354 (154 + 200) |
+| 1 | element stress xx, gauss_node | 51 / 37 % | (9) | 180.6 | 5.00 / 15.1 | 377 (181 + 196) |
+| 1 | element stress xx, gauss_node_discrete | 32 / 39 % | (7) | 192.7 | 4.70 / 12.6 | 375 (171 + 204) |
+| 2 | element stress xx, element_mean_averaged | 24 / 21 % | 69 | 250.2 | 3.70 / 9.3 | 368 (161 + 207) |
+| 2 | element stress xx, gauss_node | 22 / 32 % | 110 | 212.5 | 4.40 / 11.1 | 352 (157 + 195) |
+| 2 | element stress xx, gauss_node_discrete | 18 / 35 % | 90 | 211.6 | 4.20 / 17.3 | 361 (169 + 192) |
+| 3 | element stress xx, element_mean_averaged | 36 / 38 % | 114 | 214.3 | 4.60 / 11.4 | 358 (165 + 193) |
+| 3 | element stress xx, gauss_node | 27 / 25 % | 111 | 234.2 | 4.00 / 9.5 | 374 (165 + 210) |
+| 3 | element stress xx, gauss_node_discrete | 23 / 38 % | 88 | 215.0 | 4.40 / 10.5 | 357 (158 + 199) |
+| 4 | element stress xx, element_mean_averaged | 30 / 45 % | 91 | 201.7 | 4.70 / 11.0 | 363 (167 + 196) |
+| 4 | element stress xx, gauss_node | 43 / 36 % | 136 | 197.9 | 4.80 / 10.3 | 372 (168 + 204) |
+| 4 | element stress xx, gauss_node_discrete | 29 / 39 % | 109 | 199.2 | 4.80 / 10.1 | 354 (167 + 187) |
+
+Run 1's history-scan column is not a measurement: its wait accepted the
+scan of the mode measured before (the keys differ only in the mode), so it
+timed nothing. The measure now waits for the scan whose key is the one on
+screen (`renderer/app.ts` `measureContour`), and runs 2 to 4 time the real
+scan (88 to 136 ms, against 65 to 67 ms for the element mean). Run 1's
+scrub columns are unaffected (the scrub starts after the wait).
+
+Worst over every row: node-located scrub **180.6** steps/s (run 1,
+`gauss_node`), worst step **18.8 ms** (run 1, `element_mean_averaged`), peak
+**377 MB** (run 1), at 21 to 52 % CPU during the scrub. The V4c2a rows of
+the same runs read 232 to 282 (element_mean) and 170 to 190 (deformed)
+steps/s.
+
+- **The D5 revisit trigger does not fire**: the worst node-located scrub,
+  181 steps/s, is six times the 30 steps/s floor, and the peak, 377 MB, under
+  a fifth of 2 GB.
+- Carrying the field to the nodes costs about 0.5 to 1 ms a step over the
+  element mean on this file (median 3.3 to 4.3 → 3.7 to 5.0 ms): one
+  (6 x 6) matrix product per element, the nodal average, and per-vertex
+  colours instead of per-cell ones.

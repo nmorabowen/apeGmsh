@@ -137,9 +137,12 @@ are unaffected and run on any build.
   [Stock engine defects](#stock-engine-defects). The same holds for
   **`ops.equation_constraint(...)`**, a hand-written row
   (`constrained=(node, dof)`, `retained=[(node, dof, coef), ...]`): `Lagrange`
-  / `LadrunoProjection` auto-emitted, `Transformation` refused, serial only,
-  and not archived by `ops.h5(...)`. What *is* fork-only is the explicit
-  path: under an explicit integrator the bridge picks `LadrunoProjection`.
+  / `LadrunoProjection` auto-emitted, `Transformation` refused, serial only.
+  `ops.h5(...)` archives each row, and `OpenSeesModel.from_h5(...)` replays
+  it. An `enforce="equation"` interface tie is different: deck replay does
+  not re-emit it, and `ops.h5(...)` says so with an `H5LedgerWarning`. What
+  *is* fork-only is the explicit path: under an explicit integrator the
+  bridge picks `LadrunoProjection`.
 - **Contact.** `g.constraints.contact(...)` → `contactSurface` / `contact`, and
   `g.constraints.contact_plane(...)` → `contactPlane` (rigid analytical plane).
   Both lanes work in 2D as well as 3D, and both are **serial only** — parallel

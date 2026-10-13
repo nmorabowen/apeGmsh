@@ -193,6 +193,7 @@ function elementDecl(path: DeclPath, h5: string, name: string, facts: ElementFac
 export function blocksOf(model: ModelFile, blobs: BlobStore): BlockInfo[] {
   return model.blocks.map((b) => ({
     alias: b.alias,
+    code: b.code,
     npe: b.npe,
     connectivity: blobs.put(`model/elements/${b.alias}/connectivity`, b.connectivity, [b.ids.length, b.npe]),
   }));

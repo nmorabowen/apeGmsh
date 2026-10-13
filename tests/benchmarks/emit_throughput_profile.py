@@ -1080,8 +1080,16 @@ def emit_instrumented(
 # event that CLOSES it, so the element phase includes the argument
 # evaluation of its first call (the per-rank LazyRankBuckets.get
 # materialisation runs there).
+#
+# The window that ``partition_close`` closes is named by what it holds.
+# After the MP-constraint pass (``mp_exit``) it is steps 7c-8 of the
+# main block: contacts, initial stress and the per-rank patterns, so
+# it is ``contact_stress_pattern``.  In any other block (a hoisted gated
+# block after its elements, a stage block with no wrapped boundary) it
+# is only the remainder of that block, ``block_tail``.  The former
+# single label "close" billed both to a phase that sounded empty.
 PHASE_ORDER = ("hoisted_nodes", "nodes", "elements", "fix_mass_regions",
-               "constraints", "close")
+               "constraints", "contact_stress_pattern", "block_tail")
 _PHASE_OF_EVENT = {
     "nodes_exit": "nodes",
     "elem_enter": "elements",
@@ -1089,7 +1097,6 @@ _PHASE_OF_EVENT = {
     "attr_snap": "elements",
     "mp_enter": "fix_mass_regions",
     "mp_exit": "constraints",
-    "close": "close",
 }
 
 
@@ -1120,17 +1127,25 @@ class PhaseTracker:
         return cur, peak
 
     def _attr_wanted(self) -> bool:
+        """Attribute only the attributed rank's MAIN block: the one whose
+        owned-node loop ran (``n_nodes`` set).  A hoisted gated block
+        (ADR 0099 S5) opens the same rank first and has no node count,
+        so its element phase has no B/node to be reported against."""
         b = self.cur
         return (b is not None and b["rank"] == self.attr_rank
+                and b["n_nodes"] is not None
                 and not self.stage_mode and not b["attr_done"])
 
     def open(self, rank: int) -> None:
         idx = len(self.blocks)
         floor_snap = None
-        if rank == self.attr_rank and not self.stage_mode and not any(
-                b["rank"] == rank for b in self.blocks):
-            # The attribution baseline: dumped, never held, so the
-            # snapshot object stays out of the block's traced-current.
+        if rank == self.attr_rank and not self.stage_mode:
+            # The attribution baseline, taken in EVERY block of the
+            # attributed rank: a rank with a hoisted gated block opens
+            # twice, and a baseline from its first block only left the
+            # main block's capture with none (#1896).  Dumped, never
+            # held, so the snapshot object stays out of the block's
+            # traced-current.
             snap = tracemalloc.take_snapshot()
             floor_snap = os.path.join(self.snap_dir, f"open_r{rank}.tm")
             snap.dump(floor_snap)
@@ -1150,6 +1165,9 @@ class PhaseTracker:
         _, peak = self._read()
         if ev == "elem_enter" and b["prev"] == "open":
             label = "hoisted_nodes"  # a block with no owned-node loop
+        elif ev == "close":
+            label = ("contact_stress_pattern" if b["prev"] == "mp_exit"
+                     else "block_tail")
         else:
             label = _PHASE_OF_EVENT[ev]
         g = peak - b["floor"]
@@ -1171,6 +1189,11 @@ class PhaseTracker:
         every per-call structure (the materialised rows, the owner list,
         the ``owned`` list, the emitter's per-element state) is live."""
         b = self.cur
+        if b is None or b["floor_snap"] is None:
+            raise RuntimeError(
+                "element-phase attribution without a partition_open "
+                "baseline for this block; refusing to diff against "
+                "another block's floor")
         self.event("attr_snap")
         cur = tracemalloc.get_traced_memory()[0]
         snap = tracemalloc.take_snapshot()
@@ -1179,7 +1202,8 @@ class PhaseTracker:
         snap.dump(p)
         del snap
         tracemalloc.reset_peak()  # swallow the snapshot's own spike
-        self.attr.append({"rank": b["rank"], "rows": n_rows,
+        self.attr.append({"rank": b["rank"], "block": b["idx"],
+                          "rows": n_rows,
                           "growth": cur - b["floor"], "snap": p,
                           "floor_snap": b["floor_snap"]})
 
@@ -1452,12 +1476,12 @@ def report_phases(args, sz: int, hx: int, result: dict) -> dict:
 
     attr_out = []
     for a in result["attr"]:
-        blk = next((b for b in blocks if b["rank"] == a["rank"]
-                    and b["kind"] == "main"), None)
-        nn = (blk or {}).get("n_nodes") or 0
-        elem_peak = (blk or {}).get("phases", {}).get("elements")
-        if a["floor_snap"] is None:
-            continue
+        # The block the capture was taken in, never "the rank's main
+        # block" looked up by rank: the peak and node count must be the
+        # ones the snapshot's floor belongs to (#1896).
+        (blk,) = [b for b in blocks if b["idx"] == a["block"]]
+        nn = blk["n_nodes"] or 0
+        elem_peak = blk["phases"].get("elements")
         pre = tracemalloc.Snapshot.load(a["floor_snap"])
         cur = tracemalloc.Snapshot.load(a["snap"])
         groups: "dict[tuple[str, str], list[int]]" = {}
@@ -1508,6 +1532,10 @@ def report_phases(args, sz: int, hx: int, result: dict) -> dict:
                          "n_nodes": nn, "growth_b": a["growth"],
                          "elem_peak_b": elem_peak, "net_b": net,
                          "top": top, "by_category_b": by_cat})
+    if not attr_out:
+        print(f"\n-- element-phase attribution: NONE captured for rank "
+              f"{args.attr_rank} (no main block of that rank emitted a "
+              f"LazyRankBuckets element bucket) --")
 
     return {
         "mode": "phases", "size": sz, "hexes": hx, "parts": args.parts,
@@ -2003,7 +2031,8 @@ def main():
     ap.add_argument("--phases", action="store_true",
                     help="#1766: per-rank, per-phase traced peaks of the "
                          "partitioned emit (hoisted nodes, owned nodes, "
-                         "elements, fix/mass/regions, constraints, close) "
+                         "elements, fix/mass/regions, constraints, "
+                         "contact/stress/pattern, block tail) "
                          "plus a traceback-grouped attribution of one "
                          "rank's element phase. Exact counter peaks, no "
                          "sampling; exclusive with --mem and --rss-only.")

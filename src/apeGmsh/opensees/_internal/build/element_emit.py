@@ -2,7 +2,8 @@
 from __future__ import annotations
 from typing import TYPE_CHECKING
 
-from typing import Any, Iterable, Literal, Mapping, cast
+from itertools import compress
+from typing import Any, Iterable, Iterator, Literal, Mapping, cast
 
 import numpy as np
 
@@ -318,6 +319,80 @@ class LazyRankBuckets:
         return self._plan.select_rows(idx)
 
 
+#: Rows per owner-probe block in :func:`_owned_mask`.  ``translate_ranks``
+#: allocates ~5 ``int64`` temporaries per query row, so probing a whole
+#: rank bucket at once peaks at ~40 B/row; a fixed block bounds that.
+_OWNER_PROBE_BLOCK = 16_384
+
+
+def _owned_mask(
+    pre_allocated: "ElementPlanRows | list[tuple[int, tuple[int, ...], int]]",
+    element_owner: "SortedIntToInt | Mapping[int, int]",
+    partition_rank: int,
+) -> "np.ndarray":
+    """``bool[N]``: row ``i`` is owned by ``partition_rank``.
+
+    Same answer as ``_plan_owner_ranks(...) == partition_rank``.  A
+    columnar plan with a columnar owner map is probed in fixed blocks,
+    so the owner probe's temporaries stay O(block) rather than O(rows);
+    any other pairing takes :func:`_plan_owner_ranks` whole.
+    """
+    translate = getattr(element_owner, "translate_ranks", None)
+    eids = getattr(pre_allocated, "eids", None)
+    if translate is None or eids is None:
+        return cast(
+            "np.ndarray",
+            _plan_owner_ranks(pre_allocated, element_owner) == partition_rank,
+        )
+    n =int(eids.shape[0])
+    mask = np.empty(n, dtype=bool)
+    for s in range(0, n, _OWNER_PROBE_BLOCK):
+        e = min(s + _OWNER_PROBE_BLOCK, n)
+        np.equal(translate(eids[s:e], -1), partition_rank, out=mask[s:e])
+    return mask
+
+
+class _OwnedRows:
+    """Lazy, re-iterable view of one rank's owned rows of an element plan.
+
+    Holding no per-row Python objects is the point: a list of the owned
+    rows would keep every row's node-tag tuple alive for the whole spec
+    (ADR 0100).  ``mask`` is ``None`` when
+    the whole plan is owned (a rank bucket), else a ``bool[N]`` row
+    mask.  Each iteration walks the plan afresh, yielding one transient
+    row at a time.
+
+    Iterating the view yields ``(eid, node_tags)`` pairs — the shape
+    :func:`sweep_asdconcrete_element_size` reads, with ``len`` as its
+    count.  :meth:`triples` yields the full ``(eid, node_tags, ele_tag)``
+    rows for the emit loop.
+    """
+
+    __slots__ = ("_plan", "_mask", "_n")
+
+    def __init__(
+        self,
+        plan: "ElementPlanRows | list[tuple[int, tuple[int, ...], int]]",
+        mask: "np.ndarray | None",
+        n: int,
+    ) -> None:
+        self._plan = plan
+        self._mask = mask
+        self._n = n
+
+    def __len__(self) -> int:
+        return self._n
+
+    def triples(self) -> "Iterator[tuple[int, tuple[int, ...], int]]":
+        if self._mask is None:
+            return iter(self._plan)
+        return compress(self._plan, self._mask)
+
+    def __iter__(self) -> "Iterator[tuple[int, tuple[int, ...]]]":
+        for eid, node_tags, _ in self.triples():
+            yield eid, node_tags
+
+
 def emit_element_spec_partitioned(
     spec: Element,
     emitter: "Emitter",
@@ -346,34 +421,45 @@ def emit_element_spec_partitioned(
         return
 
     # One vectorised owner probe for the whole plan, shared by the ADR
-    # 0044 sweep and the emit loop below (see :func:`_plan_owner_ranks`).
-    # Both used to probe ``element_owner`` per element, which is a scalar
-    # np.searchsorted apiece on the columnar map.
-    owner_ranks = _plan_owner_ranks(pre_allocated, element_owner).tolist()
+    # 0044 sweep and the emit loop below (see :func:`_plan_owner_ranks`),
+    # reduced at once to a 1 B/row ownership mask.  -1 is the unowned
+    # sentinel, so it can never equal a real rank.  No per-row Python
+    # list (owner ranks or row tuples) is held: rows stream from
+    # ``pre_allocated`` to the emitter, so only the row being emitted is
+    # alive.
+    owned_mask = _owned_mask(pre_allocated, element_owner, partition_rank)
+    n_owned = int(np.count_nonzero(owned_mask))
+    if n_owned == 0:
+        return
+    # A rank bucket (``LazyRankBuckets.get``) is owned whole, so it skips
+    # the mask walk; a node-pair plan or a stray row keeps the filter.
+    owned_rows = _OwnedRows(
+        pre_allocated, None if n_owned == len(pre_allocated) else owned_mask,
+        n_owned,
+    )
 
     # ADR 0044: sweep only this rank's owned elements (avoids cross-rank
-    # duplicate warnings — each rank reports its own over-ceiling elements).
-    owned = [
-        (eid, node_tags)
-        for (eid, node_tags, _), owner in zip(pre_allocated, owner_ranks)
-        if owner == partition_rank
-    ]
-    if owned:
-        sweep_asdconcrete_element_size(spec, owned, fem)
+    # duplicate warnings — each rank reports its own over-ceiling
+    # elements).  The view re-iterates lazily, and only an ASDConcrete
+    # spec iterates it at all.  It runs before any element is written.
+    # The cast is duck typing: the sweep reads only ``len`` and
+    # ``(eid, node_tags)`` iteration, both of which the view provides.
+    sweep_asdconcrete_element_size(
+        spec, cast("list[tuple[int, tuple[int, ...]]]", owned_rows), fem)
 
     transf_spec = _element_transf(spec)
 
     bracketed = (
-        bool(owned) and ndm is not None and envelope_ndf is not None
+        ndm is not None and envelope_ndf is not None
         and open_builder_ndf_bracket(
             emitter, spec, ndm=ndm, envelope_ndf=envelope_ndf)
     )
 
-    for (eid, node_tags, ele_tag), owner in zip(pre_allocated, owner_ranks):
-        # -1 is the unowned sentinel, so it can never equal a real rank
-        # (the old scalar form spelled this `owner is None or ...`).
-        if owner != partition_rank:
-            continue
+    # Partial writes: a raise from ``spec._emit`` (or the resolver) leaves
+    # this spec's earlier rows written and the bracket open, and
+    # propagates.  The checks that must precede the first write (owner
+    # probe, ADR 0044 sweep) run above, over the whole owned set.
+    for eid, node_tags, ele_tag in owned_rows.triples():
         set_element_nodes(emitter, node_tags)
         set_current_fem_element_id(emitter, eid)
 

@@ -4,8 +4,7 @@ The static declare-before-use check in ``test_roundtrip_oracle.py`` sees
 only the references the archive's ``decl_params`` name. It cannot see node
 and element tags (connectivity, ``fix``, ``region -node/-ele``, loads,
 recorders) or anything inside a ``proc`` body. This module is the second
-net: for every ledger row that is class B, or class C for a
-fatal reorder (#1814), it writes the bridge's openseespy deck
+net: for every ledger row that is class B, it writes the bridge's openseespy deck
 (``ops.py``) and the replayed one (``from_h5(h5()).build("py")``), and
 runs each in its own subprocess.
 
@@ -14,16 +13,25 @@ marker appended as its last line: an OpenSees error can still exit 0, so
 the marker is what proves the deck reached its end.
 
 - A B row: the bridge deck runs, and so does the replay.
-- A #1814 C row: the bridge deck runs, and the replay does not. The pin
-  goes when #1814 is fixed and the row leaves class C.
+- The fatal reorder (#1814): ``_broad_frame``'s replay deck runs, and the
+  same deck with ``Parallel 3`` moved above ``Steel01 1`` (the reorder #1814
+  fixed, now synthetic) does not, so a C-class reorder really aborts.
 
 A row whose bridge deck does not run on this backend must be one the
 archive's solve stamp marks ``requires=("fork",)``; stock openseespy cannot
-build it, so there the test asserts only that refusal, and the static check
-is its only net. Any other bridge deck that does not run fails.
+build it, so there the test asserts only that the bridge deck did not run,
+the static check is its only net, and the test skips by name so ``-rs``
+shows it.
+Any other bridge deck that does not run fails.
+
+openseespy is never imported into the pytest process: the decks run in
+subprocesses, so the gate is ``importlib.util.find_spec`` (#1836).
 """
 from __future__ import annotations
 
+import importlib.util
+import json
+import os
 import subprocess
 import sys
 import warnings
@@ -32,7 +40,12 @@ from pathlib import Path
 import pytest
 
 from apeGmsh.opensees import OpenSeesModel
-from tests.opensees.golden.test_roundtrip_oracle import CORPUS, Model, _waivers
+from tests.opensees.golden.test_roundtrip_oracle import (
+    CORPUS,
+    Model,
+    _move,
+    _waivers,
+)
 
 pytestmark = pytest.mark.live
 
@@ -46,7 +59,8 @@ def _rows(klass: str, cites: str = "") -> list[Model]:
 
 
 _B_ROWS = _rows("B")
-_FATAL_ROWS = _rows("C", cites="#1814")
+#: The model the synthetic fatal reorder (#1814) is cut from.
+_FATAL_CASES = [m for m in CORPUS if m.id == "test_h5_decl_params::_broad_frame"]
 
 
 def _decks(model: Model, tmp: Path) -> tuple[Path, Path, tuple[str, ...]]:
@@ -81,9 +95,16 @@ def _run(deck: Path) -> tuple[bool, str]:
                  f"stderr:\n{proc.stderr[-1500:]}")
 
 
+def _openseespy_or_skip() -> None:
+    """Skip unless openseespy is installed, without importing it here."""
+    if importlib.util.find_spec("openseespy") is None:
+        pytest.skip("openseespy is not installed (module 'openseespy' not "
+                    "found); the live net runs its decks with it")
+
+
 @pytest.fixture(autouse=True)
 def _openseespy() -> None:
-    pytest.importorskip("openseespy.opensees")
+    _openseespy_or_skip()
 
 
 def _bridge_runs(model: Model, bridge: Path, requires: tuple[str, ...]) -> bool:
@@ -96,7 +117,62 @@ def _bridge_runs(model: Model, bridge: Path, requires: tuple[str, ...]) -> bool:
 
 
 def test_the_net_runs_some_stock_row() -> None:
-    assert _B_ROWS and _FATAL_ROWS, "the live net would run nothing"
+    assert _B_ROWS and _FATAL_CASES, "the live net would run nothing"
+
+
+_PROBE_PLUGIN = """import json, os, sys
+
+_OUTCOMES = {}
+
+
+def pytest_runtest_logreport(report):
+    if report.when == "setup" or report.outcome != "passed":
+        _OUTCOMES[report.when] = [report.outcome, str(report.longrepr or "")]
+
+
+def pytest_runtest_teardown(item):
+    _OUTCOMES["fixtures"] = sorted(item.fixturenames)
+
+
+def pytest_sessionfinish(session):
+    mods = sorted(k for k in sys.modules
+                  if k.split(".")[0] in ("openseespy", "opensees"))
+    with open(os.environ["APEGMSH_K_PROBE_OUT"], "w") as f:
+        json.dump({"modules": mods, "outcomes": _OUTCOMES}, f)
+"""
+
+
+def test_the_net_never_imports_openseespy_in_process(tmp_path: Path) -> None:
+    """Running a test of this module, autouse gate included, leaves
+    openseespy out of ``sys.modules`` (#1836). A fresh ``pytest`` process,
+    because this one may already hold openseespy from another live test; a
+    probe plugin reports the modules at session end. Where openseespy is
+    absent the gate skips, and ``sys.modules`` must still be clean."""
+    root = Path(__file__).resolve().parents[3]
+    (tmp_path / "k_probe_plugin.py").write_text(_PROBE_PLUGIN, encoding="utf-8")
+    out = tmp_path / "probe.json"
+    target = (f"{Path(__file__).resolve().relative_to(root).as_posix()}"
+              "::test_the_net_runs_some_stock_row")
+    env = {**os.environ, "LADRUNO_OPENSEES_QUIET": "1",
+           "APEGMSH_K_PROBE_OUT": str(out),
+           "PYTHONPATH": os.pathsep.join(
+               [str(tmp_path), os.environ.get("PYTHONPATH", "")]).rstrip(os.pathsep)}
+    # A one-test inner run never selects the warrant rows, so the lane hook would refuse it (rc=4).
+    env.pop("APEGMSH_WARRANT_LANE", None)
+    proc = subprocess.run(
+        [sys.executable, "-m", "pytest", target, "-q", "-m", "live",
+         "-p", "k_probe_plugin", "-p", "no:cacheprovider"],
+        capture_output=True, text=True, timeout=300, cwd=str(root), env=env,
+    )
+    log = f"rc={proc.returncode}\n{proc.stdout[-1500:]}\n{proc.stderr[-1500:]}"
+    assert proc.returncode == 0, log
+    probe = json.loads(out.read_text(encoding="utf-8"))
+    outcomes = probe["outcomes"]
+    assert "_openseespy" in outcomes["fixtures"], log
+    setup, why = outcomes["setup"]
+    assert setup == "passed" or (
+        setup == "skipped" and "openseespy is not installed" in why), log
+    assert probe["modules"] == [], log
 
 
 @pytest.mark.parametrize("model", _B_ROWS, ids=[m.id for m in _B_ROWS])
@@ -104,21 +180,28 @@ def test_a_class_b_replay_runs_where_the_bridge_deck_runs(
         model: Model, tmp_path: Path) -> None:
     bridge, replay, requires = _decks(model, tmp_path)
     if not _bridge_runs(model, bridge, requires):
-        return  # a fork-only deck on a stock backend: asserted refused above
+        pytest.skip(f"{model.id}: fork-only (solve stamp requires={requires!r}); "
+                    "asserted only that the bridge deck did not run here")
     ran, log = _run(replay)
     assert ran, (
         f"{model.id} is class B but its replay deck does not run: a fatal "
         f"reorder the static check missed; make the row C with its bug:\n{log}")
 
 
-@pytest.mark.parametrize("model", _FATAL_ROWS, ids=[m.id for m in _FATAL_ROWS])
-def test_a_fatal_reorder_row_replay_does_not_run(
+@pytest.mark.parametrize("model", _FATAL_CASES, ids=[m.id for m in _FATAL_CASES])
+def test_a_fatal_reorder_replay_does_not_run(
         model: Model, tmp_path: Path) -> None:
     bridge, replay, requires = _decks(model, tmp_path)
     assert "fork" not in requires, f"{model.id}: pin a stock-runnable row here"
     ran, log = _run(bridge)
     assert ran, f"{model.id}: the bridge deck does not run:\n{log}"
+    fatal = tmp_path / "fatal.py"
+    fatal.write_text(_move(
+        replay.read_text(encoding="utf-8"), "ops.uniaxialMaterial('Parallel', 3,",
+        above="ops.uniaxialMaterial('Steel01', 1,"), encoding="utf-8")
     ran, log = _run(replay)
+    assert ran, f"{model.id}: the replay deck does not run (#1814):\n{log}"
+    ran, log = _run(fatal)
     assert not ran, (
-        f"{model.id}'s replay deck now runs: #1814 may be fixed; re-derive "
-        "its ledger row")
+        f"{model.id}: the deck with Parallel 3 above Steel01 1 still runs; "
+        "the live net no longer proves a fatal reorder aborts")
