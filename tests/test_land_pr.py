@@ -738,3 +738,51 @@ def test_rename_out_of_a_frozen_file_is_refused():
     with pytest.raises(land_pr.LandError, match=r"check 5: src/apeGmsh/studio/old\.py.*freeze:"):
         _run(1218, gh, git)
     assert not _merged(gh)
+
+
+# One `gh api repos/{owner}/{repo}/pulls/N/files` page as GitHub returns it: the rename carries
+# `previous_filename`, the binary file has no `patch`, and unread fields ride along.
+FILES_PAGE = [
+    {"sha": "a1", "filename": "src/apeGmsh/opensees/moved.py", "status": "renamed", "additions": 1,
+     "deletions": 1, "changes": 2, "previous_filename": "src/apeGmsh/studio/old.py",
+     "patch": "@@ -1 +1 @@\n-a\n+b"},
+    {"sha": "b2", "filename": "docs/img/shot.png", "status": "added", "additions": 0, "deletions": 0,
+     "changes": 0},
+    {"sha": "c3", "filename": "README.md", "status": "modified", "additions": 1, "deletions": 0,
+     "changes": 1, "patch": "@@ -1 +1,2 @@\n a\n+b"},
+]
+FILES_ROWS = [
+    ["src/apeGmsh/opensees/moved.py", "renamed", "src/apeGmsh/studio/old.py", 2, "@@ -1 +1 @@\n-a\n+b"],
+    ["docs/img/shot.png", "added", None, 0, None],
+    ["README.md", "modified", None, 1, "@@ -1 +1,2 @@\n a\n+b"],
+]
+
+
+def _jq_filter(expression, page):
+    """Apply a real jq expression to a JSON page: the `jq` binary, else the `jq` module."""
+    import shutil
+    import subprocess
+
+    binary = shutil.which("jq")
+    if binary:
+        return subprocess.run([binary, "-r", expression], input=json.dumps(page), capture_output=True,
+                              text=True, check=True).stdout
+    try:
+        import jq
+    except ImportError:
+        pytest.skip("neither the jq binary nor the jq module is available")
+    return "".join(f"{row}\n" for row in jq.compile(expression).input_value(page).all())
+
+
+def test_files_jq_run_for_real_yields_the_fields_the_checks_read():
+    """`gh api --jq` is jq. The replays key on `land_pr.FILES_JQ` itself, so a broken
+    expression (say `.previous_filename` turned into `null`) passed them (#1715)."""
+    seen = []
+
+    def gh(args):
+        assert args[:3] == ["api", "repos/{owner}/{repo}/pulls/9/files", "--paginate"]
+        seen.append(args[args.index("--jq") + 1])
+        return _jq_filter(seen[-1], FILES_PAGE)
+
+    assert land_pr._changed_files(9, gh) == FILES_ROWS
+    assert seen == [land_pr.FILES_JQ]
