@@ -57,8 +57,8 @@ def assess_results(
     warnings = tuple(lineage.warnings)
     if warnings:
         message = f"{len(warnings)} lineage warning(s)"
-        # #1854: name the 2.31.0 declaration-id hash change when one of
-        # the warnings says that is the cause. Still a warning.
+        # Name the declaration-id hash change when one of the warnings
+        # says that is the cause. Still a warning.
         from apeGmsh.results.Results import MODEL_HASH_ERA_CAUSE
 
         if any(MODEL_HASH_ERA_CAUSE in w for w in warnings):

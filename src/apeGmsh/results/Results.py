@@ -128,7 +128,7 @@ _MODEL_H5_REQUIRED_MESSAGE = (
 #: The phrase a ``model hash mismatch`` lineage warning carries when the
 #: results file and the model straddle the opensees schema minor whose
 #: ``/opensees/program.decl`` entered ``model_hash``
-#: (``h5_reader.PROGRAM_DECL_FROM``, #1854). ``assess`` keys its
+#: (``h5_reader.PROGRAM_DECL_FROM``). ``assess`` keys its
 #: ``RES.LINEAGE`` message on it.
 MODEL_HASH_ERA_CAUSE = "hash change (declaration ids entered model_hash)"
 
@@ -141,7 +141,7 @@ def _model_hash_era_cause(
     Returns the cause text when the results file's and the model's
     opensees-zone versions lie on opposite sides of
     ``PROGRAM_DECL_FROM``, where the archive's ``model_hash`` changed
-    once (A7 #1839). ``None`` when both sit on one side, or when either
+    once. ``None`` when both sit on one side, or when either
     version is unknown: the cause is then never guessed.
     """
     from ..opensees.emitter.h5_reader import PROGRAM_DECL_FROM
@@ -1013,8 +1013,8 @@ class Results:
                     f"results-file stamp {stored_model!r} != "
                     f"OpenSeesModel.lineage.model_hash {model_hash!r}"
                 )
-                # #1854: a pair on opposite sides of the 2.31.0
-                # declaration-id hash change says so. Still a warning;
+                # A pair on opposite sides of the declaration-id hash
+                # change (PROGRAM_DECL_FROM) says so. Still a warning;
                 # an unreadable version on either side keeps the text.
                 cause = _model_hash_era_cause(
                     self._results_opensees_version(),
