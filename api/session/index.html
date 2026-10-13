@@ -21546,9 +21546,9 @@ master_point : (x, y, z), optional
     plane that collects no slave node. Given: the plane passes
     through this point. A master label of one node stays the
     master, and is refused if it lies off that plane. A master
-    label of several nodes takes the plane node nearest the
-    point, preferring a master-label node over a coincident
-    slave node; a plane that collects no master-label node, no
+    label of several nodes takes its own plane node nearest the
+    point; a slave node is never the master, however near the
+    point. A plane that collects no master-label node, no
     master or no slave is refused.
 plane_normal : (nx, ny, nz), default (0, 0, 1)
     Unit normal to the diaphragm plane. <code>(0, 0, 1)</code> is a
@@ -21753,9 +21753,9 @@ ops.fix(pg="slab_master", dofs=(0, 0, 1, 1, 1, 0))  # uz, rx, ry
 </span><span id="__span-0-2501"><a id="__codelineno-0-2501" name="__codelineno-0-2501"></a><span class="sd">        plane that collects no slave node. Given: the plane passes</span>
 </span><span id="__span-0-2502"><a id="__codelineno-0-2502" name="__codelineno-0-2502"></a><span class="sd">        through this point. A master label of one node stays the</span>
 </span><span id="__span-0-2503"><a id="__codelineno-0-2503" name="__codelineno-0-2503"></a><span class="sd">        master, and is refused if it lies off that plane. A master</span>
-</span><span id="__span-0-2504"><a id="__codelineno-0-2504" name="__codelineno-0-2504"></a><span class="sd">        label of several nodes takes the plane node nearest the</span>
-</span><span id="__span-0-2505"><a id="__codelineno-0-2505" name="__codelineno-0-2505"></a><span class="sd">        point, preferring a master-label node over a coincident</span>
-</span><span id="__span-0-2506"><a id="__codelineno-0-2506" name="__codelineno-0-2506"></a><span class="sd">        slave node; a plane that collects no master-label node, no</span>
+</span><span id="__span-0-2504"><a id="__codelineno-0-2504" name="__codelineno-0-2504"></a><span class="sd">        label of several nodes takes its own plane node nearest the</span>
+</span><span id="__span-0-2505"><a id="__codelineno-0-2505" name="__codelineno-0-2505"></a><span class="sd">        point; a slave node is never the master, however near the</span>
+</span><span id="__span-0-2506"><a id="__codelineno-0-2506" name="__codelineno-0-2506"></a><span class="sd">        point. A plane that collects no master-label node, no</span>
 </span><span id="__span-0-2507"><a id="__codelineno-0-2507" name="__codelineno-0-2507"></a><span class="sd">        master or no slave is refused.</span>
 </span><span id="__span-0-2508"><a id="__codelineno-0-2508" name="__codelineno-0-2508"></a><span class="sd">    plane_normal : (nx, ny, nz), default (0, 0, 1)</span>
 </span><span id="__span-0-2509"><a id="__codelineno-0-2509" name="__codelineno-0-2509"></a><span class="sd">        Unit normal to the diaphragm plane. ``(0, 0, 1)`` is a</span>
