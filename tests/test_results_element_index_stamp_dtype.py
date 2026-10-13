@@ -103,11 +103,13 @@ def test_vlen_utf8_fem_is_verified(tmp_path: Path) -> None:
     (b"fem", h5py.string_dtype("ascii", 3)),      # fixed-length ASCII
     (b"fem\x00\x00", h5py.string_dtype("ascii", 5)),  # NUL-padded
     (np.bytes_(b"fem"), None),                    # numpy bytes -> fixed |S3
-    ("fem", h5py.string_dtype("ascii")),          # vlen, but ASCII
+    (b"fem", h5py.string_dtype("ascii")),         # vlen BYTES: verified on main
+    ("fem", h5py.string_dtype("ascii")),          # vlen ASCII from a str
     (["fem"], h5py.string_dtype("utf-8")),        # vlen UTF-8, but an array
     (1, np.int64),                                # not a string
+    (1.0, np.float64),                            # not a string
 ], ids=["fixed_utf8", "fixed_ascii", "nul_padded", "numpy_bytes",
-        "vlen_ascii", "array", "int"])
+        "vlen_bytes", "vlen_ascii", "array", "int", "float"])
 def test_other_forms_read_unverified(
     tmp_path: Path, value: Any, dtype: Any,
 ) -> None:

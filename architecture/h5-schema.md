@@ -1849,7 +1849,12 @@ the raw value as `NativeReader.element_index_space`. Both are Python
 properties, not HDF5 attributes: no file holds an attribute named
 `element_index_verified`.
 
-**Its on-disk form (#1811).** The attribute is a **scalar,
+**The rule (#1811): a file is verified if and only if `element_index_space`
+is a variable-length UTF-8 string exactly equal to `"fem"`; a
+variable-length bytes (ASCII) `"fem"`, a fixed-length string or bytes
+`"fem"`, and any non-string value are not verified.**
+
+**Its on-disk form.** The attribute is a **scalar,
 variable-length, UTF-8 string**: an HDF5 string datatype of variable size
 with character set `H5T_CSET_UTF8` (h5py `string_dtype("utf-8")`, what
 h5py writes for a Python `str`), in a scalar dataspace, holding exactly
