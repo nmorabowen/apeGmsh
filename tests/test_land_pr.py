@@ -645,6 +645,17 @@ def test_baseline_edit_without_human_gate_is_refused(path):
     assert not _merged(gh)
 
 
+def test_loc_ratchet_escapes_pins_are_human_gated():
+    """G4 on #1884 (#1886): the escape guards' pins are baseline. Revert-proof: with the
+    BASELINE entry removed this fails at the membership assert."""
+    path = "tests/test_loc_ratchet_escapes.py"
+    assert path in land_pr.BASELINE
+    gh, git = _d4([_row(path)])
+    with pytest.raises(land_pr.LandError, match=r"check 8: .*test_loc_ratchet_escapes\.py.*'human-gate'"):
+        _run(1218, gh, git)
+    assert not _merged(gh)
+
+
 def test_baseline_renamed_away_is_refused():
     gh, git = _d4([_row("tests/freeze_census_v2.py", "renamed", previous="tests/freeze_census.py")])
     with pytest.raises(land_pr.LandError, match=r"check 8: .*tests/freeze_census\.py"):
