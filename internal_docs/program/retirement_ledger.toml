@@ -208,9 +208,9 @@ texts = [
     'tests/opensees/contract/test_tag_plan_oracle.py::reason=f"{family}: tags still minted at emit time"',
     'tests/opensees/contract/test_tag_plan_oracle.py::reason="families still pending: "',
 ]
-expires = 2026-12-04
+expires = 2026-12-11
 basis = "ruling"
-source = "PROGRAM.md section 8 KC4: 60 days from the xfails' addition on 2026-10-05"
+source = "maintainer ruling on #1819 (2026-10-12, recorded on #1199): the oracle keeps 2026-12-11"
 
 [[row]]
 id = "xfail-partitioned-parallel-plain"

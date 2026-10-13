@@ -105,7 +105,7 @@ leaves with the legacy results viewer (chain X, X3).
 
 ## Amendment 1 (2026-10-12) — when trame leaves
 
-**Status:** Proposed. The maintainer accepts it. Program link X4-a (#1806).
+**Status:** Accepted (2026-10-12, maintainer; ruling recorded on #1199). Program link X4-a (#1806).
 
 trame (and `show_web`/`serve_web`) leave when V4 covers interactive results
 (KEEP ruling, #1199). This replaces D4's "with the legacy results viewer
