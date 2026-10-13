@@ -83,7 +83,7 @@ a viewer, a script) imports **main's** apeGmsh unless it runs with `PYTHONPATH=<
   - **Local `HEAD` equals `headRefOid`, and the tree is clean**; wait until they match before
     merging a branch you just pushed (#555 → #556).
   - **No changed file is inside an open `freeze:<file>` label** (a split window, announced on
-    the board with its expiry).
+    the board with its expiry). **A `program` PR changes only its slice card's Owned files** (check 9; `Slice: #<n>` in the body, conventions in [slice_card.md](internal_docs/program/slice_card.md); #1812 changed 52 files against 6 owned); `scope-ok` overrides it, `--owned-only` runs it alone.
   - **Not conflicting, and the five required checks** (`lock-tests`, `emit-cost-gate`,
     `static-gates`, `suite`, `live-stock`) **are green on the head SHA.** `main` takes squash
     merges only and does not require an up-to-date branch. "Zero checks visible" means conflicting
