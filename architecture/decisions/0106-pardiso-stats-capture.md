@@ -487,7 +487,7 @@ per-stage split matching a two-stage deck. Auto-skipped without
 
 ## Amendment 1 (2026-10-13) — `run=True` returns a `RunReport`; the record is its `solver_stats`
 
-**Status:** Proposed (2026-10-13). Awaits the maintainer's acceptance.
+**Status:** Accepted (2026-10-13).
 Ruling D2 on #1372; program link R3-S6 (#1790).
 
 D1 had `apeSees.tcl()` / `apeSees.py()` hand back `RunSolverStats | None`.
