@@ -1844,9 +1844,33 @@ The on-disk contract is this one root attribute, `element_index_space`:
 its value set is exactly `"fem"`, and absence means unverified. No other
 attribute carries the verdict. apeGmsh's Python reader derives a
 convenience property from it, `NativeReader.element_index_verified`
-(true only when the attribute is `"fem"`), and exposes the raw value as
-`NativeReader.element_index_space`. Both are Python properties, not HDF5
-attributes: no file holds an attribute named `element_index_verified`.
+(true only when the attribute is `"fem"` in the form below), and exposes
+the raw value as `NativeReader.element_index_space`. Both are Python
+properties, not HDF5 attributes: no file holds an attribute named
+`element_index_verified`.
+
+**The rule (#1811): a file is verified if and only if `element_index_space`
+is a variable-length UTF-8 string exactly equal to `"fem"`; a
+variable-length bytes (ASCII) `"fem"`, a fixed-length string or bytes
+`"fem"`, and any non-string value are not verified.**
+
+**Its on-disk form.** The attribute is a **scalar,
+variable-length, UTF-8 string**: an HDF5 string datatype of variable size
+with character set `H5T_CSET_UTF8` (h5py `string_dtype("utf-8")`, what
+h5py writes for a Python `str`), in a scalar dataspace, holding exactly
+the three characters `fem`. Every writer emits that form. Any other form
+reads as unverified, even when its text is `fem`:
+
+- a fixed-length string, NUL- or space-padded or not. Some HDF5 readers
+  strip the padding and would compare it equal to `"fem"`; that is not
+  the stamp;
+- an ASCII-charset string, fixed or variable length;
+- an opaque or bytes value;
+- an array of one or more strings;
+- any non-string dtype.
+
+A reader in another language must check the datatype (string,
+variable-length, UTF-8, scalar) before it compares the text.
 
 `Results.from_recorders` caches transcoded files under a key that includes
 a digest of `model=` (its `lineage.fem_hash`, its `lineage.model_hash` and
