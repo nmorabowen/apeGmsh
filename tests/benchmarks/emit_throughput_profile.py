@@ -1928,10 +1928,13 @@ def main():
     ap.add_argument("--mem-top", type=int, default=15,
                     help="--mem: unattributed growth sites to list at the "
                          "anchor hook")
-    ap.add_argument("--tm-frames", type=int, default=12,
-                    help="--mem: tracemalloc nframe. 1 cannot attribute "
+    ap.add_argument("--tm-frames", type=int, default=None,
+                    help="tracemalloc nframe. --mem: 1 cannot attribute "
                          "R3/R6/R7 (their bytes allocate below the owning "
-                         "site); default 12.")
+                         "site); default 12. --phases: default 3, the "
+                         "fewest that still names the retaining caller "
+                         "(measured: emit cost grows ~3x per extra frame "
+                         "pair; 12 frames took 44 min at n=100).")
     ap.add_argument("--tm-poll-ms", type=float, default=1.0,
                     help="--mem: sampler-thread tick for the peak_tracked "
                          "tracker (default 1 ms - measured to convert "
@@ -2005,6 +2008,8 @@ def main():
                     help="--phases: attribution sites to list (default 12)")
     args = ap.parse_args()
 
+    if args.tm_frames is None:
+        args.tm_frames = 3 if args.phases else 12
     if args.phases and (args.mem or args.rss_only):
         ap.error("--phases is exclusive with --mem / --rss-only: their "
                  "peak tracker resets the traced peak from a thread, which "

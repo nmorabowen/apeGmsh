@@ -133,7 +133,7 @@ def test_phases_cell_reports_every_rank_on_cp1252_stdout(
         [
             sys.executable, str(_SCRIPT),
             "--recipe", "box", "--sizes", "6", "--parts", "2",
-            "--stream", "--phases", "--tm-frames", "8",
+            "--stream", "--phases",
             "--json", str(json_path),
         ],
         capture_output=True, env=_cp1252_env(), timeout=600,
