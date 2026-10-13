@@ -555,6 +555,13 @@ def test_status_reading_agrees_with_adr_index_on_every_adr():
         assert land_pr._accepted(status) == (adr_index.parse_adr(path)[1] == "Accepted"), path.name
 
 
+def test_baseline_names_existing_files_including_the_retirement_ledger():
+    """A misspelt BASELINE path would never match a PR file, so check 8 would never fire."""
+    root = SCRIPT.parents[1]
+    assert "internal_docs/program/retirement_ledger.toml" in land_pr.BASELINE  # X4-a, #1806
+    assert [p for p in land_pr.BASELINE if not (root / p).is_file()] == []
+
+
 @pytest.mark.parametrize("path", land_pr.BASELINE)
 def test_baseline_edit_without_human_gate_is_refused(path):
     gh, git = _d4([_row(path)])

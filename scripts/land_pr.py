@@ -6,8 +6,8 @@
 
 The checks run in order and the first failure refuses, naming the check and
 the lesson. Checks 7 and 8 are ADR 0121 D4 (invariant 8): a diff that sets an
-ADR's Status to Accepted is refused outright, and an edit to the freeze census
-baseline needs the ``human-gate`` label. The maintainer's web merge is the
+ADR's Status to Accepted is refused outright, and an edit to a baseline file
+(the freeze census, the retirement ledger) needs the ``human-gate`` label. The maintainer's web merge is the
 exception path for both, by design.
 
 Whatever copy is invoked, the rules that run are origin/main's: ``main``
@@ -61,8 +61,13 @@ FILES_JQ = ".[] | [.filename, .status, .previous_filename, .changes, (.patch // 
 FileRow = list[Any]
 #: ADR 0121 D4 (b): the census baseline. `freeze_census.py` holds FROZEN and
 #: ADMITTED; `test_freeze_lock.py` holds FREEZE_POINT_DIGEST and the lock that
-#: compares them, so editing either one edits the baseline.
-BASELINE = ("tests/freeze_census.py", "tests/test_freeze_lock.py")
+#: compares them, so editing either one edits the baseline. X4-a (#1806) adds
+#: the retirement ledger: adding, re-dating or removing a row is a maintainer gate.
+BASELINE = (
+    "tests/freeze_census.py",
+    "tests/test_freeze_lock.py",
+    "internal_docs/program/retirement_ledger.toml",
+)
 HUMAN_GATE = "human-gate"
 ADR_FILE = re.compile(r"architecture/decisions/\d{4}-[^/]*\.md")
 #: `scripts/adr_index.py::parse_adr` reads the Status line from the first 30 lines.
@@ -248,7 +253,7 @@ def _check_adr_and_baseline(number: int, pr: dict[str, Any], rows: list[FileRow]
         for touched in (path, previous):
             if touched in BASELINE and HUMAN_GATE not in labels:
                 raise LandError(
-                    f"check 8: #{number} edits the freeze census baseline {touched} without "
+                    f"check 8: #{number} edits the baseline file {touched} without "
                     f"the {HUMAN_GATE!r} label (ADR 0121 D4 (b)). Never edit FROZEN or "
                     f"FREEZE_POINT_DIGEST to make room; the maintainer labels the PR when "
                     f"the edit is theirs to make."
