@@ -1153,8 +1153,10 @@ def _replay_into(
     # rewrite path (no ``fem``) echoes them the same way. An archive below
     # 2.29.0 stores none, so the replay re-derives its ties from the
     # neutral-zone ``fem`` behind the version check below.
-    fem_ties = (
-        fem.elements.reinforce_ties if fem is not None else ())
+    from .build.constraints_plan import reinforce_tie_records
+
+    # The bridge's own reading of the stream (``emit_reinforce_ties``).
+    fem_ties = reinforce_tie_records(fem) if fem is not None else []
     if embedded_rebars:
         if fem is not None and len(fem_ties) != len(embedded_rebars):
             raise ValueError(

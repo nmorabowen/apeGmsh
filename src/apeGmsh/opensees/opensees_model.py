@@ -1738,11 +1738,12 @@ class OpenSeesModel:
         replay derives nothing. The capture replays the model once into a
         recorder that keeps only the tie calls and their labels.
         """
+        from ._internal.build.constraints_plan import reinforce_tie_records
         from .emitter.h5_reader import (
             EmbeddedRebarRecordRO, archives_embedded_rebar,
         )
 
-        if (self._embedded_rebars or not self._fem.elements.reinforce_ties
+        if (self._embedded_rebars or not reinforce_tie_records(self._fem)
                 or self._opensees_version is None
                 or archives_embedded_rebar(self._opensees_version)):
             return tuple(self._embedded_rebars)
