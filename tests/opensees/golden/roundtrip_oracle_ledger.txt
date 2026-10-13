@@ -18,8 +18,10 @@
 # N_WAIVED_ORACLE with it. Never add a row or raise N_WAIVED_ORACLE.
 # Transitions: a fix that leaves only order or float text re-pins its row C -> A/B
 # and drops its C citation; a row may always escalate A/B -> C when the oracle
-# learns to see more, citing its issue (#NNNN). Every C row cites one. No other
-# re-pin is allowed; the test compares every row with the ledger at the merge base
+# learns to see more, citing its issue (#NNNN). Every C row cites one. An S row
+# whose model moves to a real FEMData re-pins S -> A/B (maintainer ruling on
+# #1797), and its reason cites its derived evidence as "derived <A|B> (#1885):
+# <what the diff is>". No other re-pin is allowed; the test compares every row with the ledger at the merge base
 # with origin/main.
 #
 # Deadline: 2026-12-11. The ledger is empty by then, or KC4 applies (K2 spec, #1201).
@@ -28,20 +30,20 @@
 # It is built on FEMStub, so its archives are bridge-only and not replayable;
 # tracked in #1797.
 N_WAIVED_ORACLE = 35
-test_h5_apesees_cuts::_build_minimal_ops S BridgeOnlyArchiveError:no-neutral-zone  # #1797: FEMStub model, bridge-only archive
+test_h5_apesees_cuts::_build_minimal_ops B 0b630b19c653c7e0  # derived B (#1885): declaration order: geomTransf and beamIntegration move; Steel02 and -GJ integral floats re-emitted as integers
 test_h5_builder_scope_replay::build_mixed_ndf_bridge B 81b21ebd6ecc9ea2  # declaration order: section, geomTransf, beamIntegration and damping move
 test_h5_builder_scope_replay::_staged_bridge[staged_pg=Rock] B 068f56013233fa51  # declaration order: section, geomTransf, beamIntegration and damping move
 test_h5_builder_scope_replay::_staged_bridge[staged_pg=Liner] B 81b21ebd6ecc9ea2  # declaration order: section, geomTransf, beamIntegration and damping move
 test_h5_damping::_build_with_element_damp B 701687019daf6c2a  # declaration order: damping Uniform moves
-test_h5_decls::_staged[named=False] S BridgeOnlyArchiveError:no-neutral-zone  # #1797: FEMStub model, bridge-only archive
-test_h5_decls::_staged[named=True] S BridgeOnlyArchiveError:no-neutral-zone  # #1797: FEMStub model, bridge-only archive
+test_h5_decls::_staged[named=False] A 0c126bac02a40165  # derived A (#1885): integral floats re-emitted as integers (nDMaterial, quad thickness)
+test_h5_decls::_staged[named=True] A 0c126bac02a40165  # derived A (#1885): integral floats re-emitted as integers (nDMaterial, quad thickness)
 test_h5_decls::_flat_frame[named=False] A 4dfab89360dacaea  # integral floats re-emitted as integers
 test_h5_decls::_flat_frame[named=True] A 4dfab89360dacaea  # integral floats re-emitted as integers
-test_h5_decls::_param_stage_model S BridgeOnlyArchiveError:no-neutral-zone  # #1797: FEMStub model, bridge-only archive
+test_h5_decls::_param_stage_model A d8388eca39c6ac2f  # derived A (#1885): integral floats re-emitted as integers (nDMaterial, quad thickness)
 test_h5_names_sidecar::_build[named=False] B 645176bf20b787b7  # declaration order: geomTransf and beamIntegration move
 test_h5_names_sidecar::_build[named=True] B 645176bf20b787b7  # declaration order: geomTransf and beamIntegration move
 test_h5_decl_params::_params_frame C b085c0d92a629ca9  # #1814: replay declares uniaxialMaterial Parallel 3 above its Steel01 1 (fatal reorder); materials, section and geomTransf move
-test_h5_decl_params::_broad_staged S BridgeOnlyArchiveError:no-neutral-zone  # #1797: FEMStub model, bridge-only archive
+test_h5_decl_params::_broad_staged B d829fde55f7ca7d4  # derived B (#1885): declaration order: rayleigh, eigen and modalDamping move; integral floats re-emitted as integers
 test_h5_decl_params::_broad_frame C c0449e914db42da1  # #1814: Parallel 3/4 declared before Steel01 1 and Viscous 2 (openseespy refuses); the rest is order and float text
 test_h5_decl_params::_broad_partitioned S BridgeOnlyArchiveError:no-neutral-zone  # #1797: FEMStub model, bridge-only archive
 test_h5_initial_stress::_build_frame[with_initial_stress=False] B 0fd281e8f3f3b7fe  # declaration order: geomTransf moves

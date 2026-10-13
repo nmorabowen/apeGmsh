@@ -14,7 +14,6 @@ v4 changes the *file shape*, not the data.  (2.3.0 = Phase 9 commit 6
 from __future__ import annotations
 
 from pathlib import Path
-from typing import cast
 
 import h5py
 
@@ -25,7 +24,7 @@ from apeGmsh.opensees.emitter import h5_reader
 from apeGmsh.opensees.section.fiber import FiberPoint
 
 from tests.fixtures.schema import OPENSEES_CURRENT
-from tests.opensees.fixtures.fem_stub import make_two_node_beam
+from tests.opensees.h5._opensees_model_fixtures import build_two_node_beam_fem
 
 
 # --------------------------------------------------------------------- #
@@ -36,15 +35,18 @@ def _build_minimal_ops() -> apeSees:
 
     Identical shape to the existing end-to-end smoke test so the
     fixture stays small and the new ``cuts=`` / ``sweeps=`` wiring
-    is what's actually under test.
+    is what's actually under test. On a real :class:`FEMData`, so the
+    archive replays through the R1b oracle (#1885).
     """
-    fem = make_two_node_beam()
-    ops = apeSees(cast("object", fem))
+    ops = apeSees(build_two_node_beam_fem())
     ops.model(ndm=3, ndf=6)
 
     steel = ops.uniaxialMaterial.Steel02(fy=420e6, E=200e9, b=0.01)
+    # GJ: a 3-D fiber section needs its torsion, or stock OpenSees
+    # refuses the deck (the R1b live net runs it, #1885).
     sec = ops.section.Fiber(
         fibers=(FiberPoint(material=steel, y=0.0, z=0.0, area=0.01),),
+        GJ=1.0e6,
     )
     transf = ops.geomTransf.Linear(vecxz=(1.0, 0.0, 0.0))
     integ = ops.beamIntegration.Lobatto(section=sec, n_ip=5)
