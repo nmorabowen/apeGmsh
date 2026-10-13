@@ -33,6 +33,7 @@ import { openModel } from "../reader/node.ts";
 import { openResults, type ResultsFile, type ResultsH5 } from "../reader/results.ts";
 import { fileFromArgv, pairSet } from "./pairing.ts";
 import { ResultsHost, type ScanRequest, type StepRequest } from "./results.ts";
+import { checkPlan } from "../state/extrapolation.ts";
 import { OpenSession } from "./session.ts";
 import { goToSource } from "./source.ts";
 import { SetWatcher } from "./watch.ts";
@@ -183,7 +184,9 @@ ipcMain.handle("results:scan", (e, req: unknown) => {
     !Array.isArray(r.components) ||
     typeof r.magnitude !== "boolean" ||
     typeof r.scanId !== "number" ||
-    (r.source !== undefined && r.source !== "element")
+    (r.source !== undefined && r.source !== "element") ||
+    // V4c2b: a plan only with an element scan, and only one that checks (state/extrapolation.ts `checkPlan`).
+    (r.plan !== undefined && (r.source !== "element" || !checkPlan(r.plan)))
   ) {
     return { ok: false, scanId: -1, error: `results:scan: malformed request ${JSON.stringify(req)}` };
   }

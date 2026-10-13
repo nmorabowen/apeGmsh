@@ -21,6 +21,7 @@
 //   position: coincident nodes (interfaces, ties) keep their own values.
 
 import { hexToRgb, OFFICE, type RGB } from "../theme/tokens.ts";
+import type { NodeTopology } from "./extrapolation.ts";
 import type { ContourCmap, ContourRange, ContourScan, ContourSource, ContourState, DeclPath, Decl, GaussGroup, GaussMode, ResultsStage, State } from "./types.ts";
 
 // -- fields -------------------------------------------------------------------
@@ -152,7 +153,9 @@ export function contourKeysOf(s: State): { step: string; scan: string } | null {
   const c = s.contour;
   if (at?.kind !== "results" || !s.results || c.field === null || c.component === null) return null;
   const st = s.results.stages[at.stage];
-  return st ? contourKeys(s.results.path, st.id, at.step, c.source === "element" ? `elem:${c.field}` : c.field, c.component) : null;
+  // V4c2b: a node-located mode names itself too (its range is not the flat cells' range).
+  const field = c.source !== "element" ? c.field : c.gauss === "cell" ? `elem:${c.field}` : `elem:${c.field}@${c.gauss}`;
+  return st ? contourKeys(s.results.path, st.id, at.step, field, c.component) : null;
 }
 
 /** A component key as a sentence names it: `magnitude`, or the dataset name. */
@@ -465,20 +468,23 @@ export function elementComponentOf(stage: ResultsStage, field: string, component
  * The topology an element field is drawn with, from the mode and its
  * Gauss-point counts. `gauss_cell`, `gauss_cell_averaged`, `gauss_node` and
  * `gauss_node_discrete` are the Qt `ContourDiagram` names (`_contour.py`);
- * `element_mean` (the flat mean of an element's several Gauss points) is an
- * app presentation with no Qt equivalent, so it carries no Qt name.
+ * `element_mean` (the flat mean of an element's several Gauss points) and
+ * `element_mean_averaged` (those means averaged at the nodes) are app
+ * presentations with no Qt equivalent, so they carry no Qt name.
  */
-export type ElementTopology = "gauss_cell" | "element_mean" | "gauss_cell_averaged" | "gauss_node" | "gauss_node_discrete";
+export type ElementTopology = FlatTopology | NodeTopology;
 
-/** The topologies drawn now (flat per cell); the others are V4c2b. */
+/** The flat-per-cell topologies (V4c2a); the node-located ones are state/extrapolation.ts (V4c2b). */
 export type FlatTopology = "gauss_cell" | "element_mean";
+
+export const isNodeTopology = (t: ElementTopology): t is NodeTopology => t !== "gauss_cell" && t !== "element_mean";
 
 export function elementTopology(mode: GaussMode, nGauss: readonly number[]): ElementTopology {
   switch (mode) {
     case "cell":
       return nGauss.every((g) => g === 1) ? "gauss_cell" : "element_mean";
     case "cell_averaged":
-      return "gauss_cell_averaged";
+      return nGauss.every((g) => g === 1) ? "gauss_cell_averaged" : "element_mean_averaged";
     case "node":
       return "gauss_node";
     case "node_discrete":
@@ -490,11 +496,26 @@ export function elementTopology(mode: GaussMode, nGauss: readonly number[]): Ele
   }
 }
 
-/** What the legend states for a flat-per-cell topology. */
-export function topologyLabel(t: FlatTopology, nGauss: readonly number[]): string {
-  return t === "gauss_cell"
-    ? "gauss_cell: each element's one Gauss-point value, flat per cell"
-    : `element mean of ${nGauss.join(" or ")} Gauss points, flat per cell`;
+/** What the legend states for a topology (the averaging, in words). */
+export function topologyLabel(t: ElementTopology, nGauss: readonly number[]): string {
+  switch (t) {
+    case "gauss_cell":
+      return "gauss_cell: each element's one Gauss-point value, flat per cell";
+    case "element_mean":
+      return `element mean of ${nGauss.join(" or ")} Gauss points, flat per cell`;
+    case "gauss_cell_averaged":
+      return "gauss_cell_averaged: each element's one Gauss-point value, averaged at the nodes across elements";
+    case "element_mean_averaged":
+      return `element mean of ${nGauss.join(" or ")} Gauss points, averaged at the nodes across elements`;
+    case "gauss_node":
+      return `gauss_node: ${nGauss.join(" or ")} Gauss points extrapolated to the corners (least squares), averaged at the nodes across elements`;
+    case "gauss_node_discrete":
+      return `gauss_node_discrete: ${nGauss.join(" or ")} Gauss points extrapolated to each element's corners, not averaged (jumps between elements show)`;
+    default: {
+      const unknown: never = t;
+      throw new Error(`unknown element topology ${JSON.stringify(unknown)}`);
+    }
+  }
 }
 
 /**

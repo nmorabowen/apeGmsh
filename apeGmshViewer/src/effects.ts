@@ -15,7 +15,8 @@ import { GEOMETRY_TARGET, NEUTRAL_TARGET, OPENSEES_TARGET, PROVENANCE_TARGET, ZO
 import type { BlobStore } from "./state/blobs.ts";
 import { loadGeometry } from "./state/geometry.ts";
 import { loadModel } from "./state/load.ts";
-import { columnOf, finiteRange, finiteRangeOf, gaussCellValues, gaussFields, joinElements } from "./state/contour.ts";
+import { columnOf, finiteRange, finiteRangeOf, gaussCellValues, gaussFields, isNodeTopology, joinElements } from "./state/contour.ts";
+import { applyPlan, cellLookup, extrapolationVerdict, planFor, planRange, type ExtrapPlan } from "./state/extrapolation.ts";
 import { missingDrawnNodes, spatialNdm, vertexDisplacements, type VertexDisplacement } from "./state/deform.ts";
 import { contourView, deformView, elementJoinKey, sourceFor } from "./state/selectors.ts";
 import type { Store } from "./state/store.ts";
@@ -74,7 +75,7 @@ export interface Bridge {
     | { ok: false; error: string }
   >;
   /** V4c1: the history range of a contour field (main/results.ts `ResultsHost.scan`); the reply echoes `scanId`. V4c2a: `source: "element"`. */
-  scanResults?(req: { path: string; stage: string; components: string[]; magnitude: boolean; scanId: number; source?: "element" }): Promise<
+  scanResults?(req: { path: string; stage: string; components: string[]; magnitude: boolean; scanId: number; source?: "element"; plan?: ExtrapPlan }): Promise<
     | { ok: true; scanId: number; min: number | null; max: number | null; steps: number; ms: number }
     | { ok: false; scanId: number; error: string; cancelled?: true; changed?: true }
   >;
@@ -351,7 +352,20 @@ export class Effects {
       if (fetched && !v.stepMeasured && !(this.rangeFor && this.rangeFor.key === v.keys.step && this.rangeFor.data === data)) {
         this.rangeFor = { key: v.keys.step, data };
         let r: { min: number; max: number } | null;
-        if (v.state === "element") {
+        if (v.state === "element" && isNodeTopology(v.topology)) {
+          // V4c2b: a node-located topology is measured on the values it draws (extrapolation overshoots the Gauss points).
+          const plan = planFor({ ...v, topology: v.topology }, s, this.blobs);
+          r = planRange(
+            applyPlan(
+              plan,
+              v.groups.map((g) => {
+                const vals = data.gauss[g.id];
+                if (!(vals instanceof Float64Array)) throw new Error(`element contour: the step data has no ${v.component.key} for group ${g.id}`);
+                return vals;
+              }),
+            ),
+          );
+        } else if (v.state === "element") {
           r = finiteRangeOf(
             v.groups.map((g) => {
               const vals = data.gauss[g.id];
@@ -380,7 +394,9 @@ export class Effects {
       );
       return;
     }
-    this.startScan(s, want, v.component.datasets, v.component.magnitude, v.state === "element");
+    // V4c2b: a node-located topology's history scan carries the plan, so main measures the values drawn.
+    const plan = v.state === "element" && isNodeTopology(v.topology) ? planFor({ ...v, topology: v.topology }, s, this.blobs) : undefined;
+    this.startScan(s, want, v.component.datasets, v.component.magnitude, v.state === "element", plan);
   }
 
   /** The join last checked (its key); a re-read, another field or mesh checks again. */
@@ -399,21 +415,25 @@ export class Effects {
     const st = s.results!.stages[at.stage]!;
     const f = gaussFields(st.gauss).find((x) => x.name === s.contour.field);
     if (!f) return;
-    const groups: { id: string; eids: Float64Array }[] = [];
+    const groups: { id: string; eids: Float64Array; nElements: number; nGauss: number; naturalCoords: number[][] | null }[] = [];
     for (const gid of f.groups) {
-      const ref = st.gauss.find((g) => g.id === gid)?.elementIds;
-      if (!ref) return;
+      const g = st.gauss.find((x) => x.id === gid);
+      const ref = g?.elementIds;
+      if (!g || !ref) return;
       const ids = this.blobs.get(ref);
       if (!(ids instanceof Float64Array)) throw new TypeError(`element contour: ${ref.id} is not f64`);
-      groups.push({ id: gid, eids: ids });
+      groups.push({ id: gid, eids: ids, nElements: g.nElements, nGauss: g.nGauss, naturalCoords: g.naturalCoords });
     }
     this.joinedFor = key;
     const j = joinElements(s.decls, groups);
-    const verdict: ElementJoinVerdict = j.ok ? { key, ok: true, rows: j.rows } : { key, ok: false, code: j.code, reason: j.reason };
+    // V4c2b: whether the joined rows can be carried to the nodes (their element types and natural coordinates).
+    const verdict: ElementJoinVerdict = j.ok
+      ? { key, ok: true, rows: j.rows, extrapolation: extrapolationVerdict(groups, cellLookup(s.decls, s.blocks, this.blobs)) }
+      : { key, ok: false, code: j.code, reason: j.reason };
     queueMicrotask(() => this.store.dispatch({ type: "contourElementJoin", verdict }));
   }
 
-  private startScan(s: State, key: string, components: string[], magnitude: boolean, element = false): void {
+  private startScan(s: State, key: string, components: string[], magnitude: boolean, element = false, plan?: ExtrapPlan): void {
     const info = s.results!;
     const at = s.phase.at as { kind: "results"; stage: number };
     const st = info.stages[at.stage]!;
@@ -431,7 +451,7 @@ export class Effects {
         return;
       }
       void this.bridge
-        .scanResults({ path: info.path, stage: st.id, components, magnitude, scanId: id, ...(element ? { source: "element" as const } : {}) })
+        .scanResults({ path: info.path, stage: st.id, components, magnitude, scanId: id, ...(element ? { source: "element" as const } : {}), ...(plan ? { plan } : {}) })
         .catch((err: unknown) => ({ ok: false as const, scanId: id, error: err instanceof Error ? err.message : String(err) }))
         .then((res) => {
           // A cancelled or replaced scan never lands.

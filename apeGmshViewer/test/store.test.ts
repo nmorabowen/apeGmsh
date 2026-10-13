@@ -158,7 +158,7 @@ const EVERY: Record<EventType, Event> = {
   setReferenceGhost: { type: "setReferenceGhost", on: true },
   deformMeasured: { type: "deformMeasured", key: "x", drawn: 3, missing: 1 },
   setContourGauss: { type: "setContourGauss", mode: "node" },
-  contourElementJoin: { type: "contourElementJoin", verdict: { key: "x", ok: true, rows: 1 } },
+  contourElementJoin: { type: "contourElementJoin", verdict: { key: "x", ok: true, rows: 1, extrapolation: { corners: null, matrix: null } } },
 };
 
 test("reducer purity: every event leaves a frozen state untouched and returns plain data", () => {
