@@ -1106,11 +1106,38 @@ A run breaks where `decl` changes. The reader refuses a `decl` outside
 `/opensees/decls`) with `MalformedH5Error`, and the writer refuses to
 write one. A rewrite echoes the source's column, an older source's `-1`
 values included. Below 2.31.0 the column is `-1` throughout and says
-nothing about the call (`PROGRAM_DECL_FROM` in `h5_reader.py`). The
-rewrite of such a file is stamped 2.31.0 but keeps that column, since the
-rewrite cannot prove a call's declaration it did not emit: a 2.31 file
-whose program is all `-1` beside a non-empty `/opensees/decls` is such a
-rewrite, and its `-1` still means "not recorded".
+nothing about the call. The rewrite of such a file is stamped 2.31.0 but
+keeps that column, since the rewrite cannot prove a call's declaration it
+did not emit. The version therefore does not tell a reader whether the
+joins are recorded; the completeness marker does:
+
+```
+/opensees/decls
+  @program_decl   vlen str   "complete": /opensees/program's decl column
+                             records every call's proved declaration (a
+                             2.31+ apeSees emit); "absent": it was never
+                             recorded (a to_h5 rewrite of a file below
+                             2.31.0). A file below 2.31.0 has no marker
+                             and reads as "absent".
+```
+
+The marker sits on `/opensees/decls`, not on `/opensees`. The
+attributes of `/opensees` fold into `model_hash` (`canonical_bytes`
+hashes the root group's attributes), so an attribute there would move a
+rewritten legacy file's hash. `decls` is hash-excluded, and it is the
+table the joins point into: with no `decls` group there is nothing to
+join to. A rewrite echoes the source's marker with its program, so a
+legacy rewrite stays `"absent"` and keeps its hash, and a rewrite of a
+2.31 emit stays `"complete"`. A marker outside those two values raises
+`MalformedH5Error`.
+
+Only decl-join queries fail closed. `H5Model.program_declarations()`
+pairs each run with its `DeclarationRO` (or `None` for `-1`) and raises
+`ProgramDeclAbsentError` ("joins not recorded") when
+`records_program_decl(H5Model.declarations())` is false, that is when the
+marker is `"absent"` or there is no `decls` group. It never presents an
+unrecorded `-1` as "undeclared". `H5Model.program()`, `emit_index` and
+every other accessor read the file as before.
 
 `decl` is hashed, so every archive the bridge writes changes its
 `model_hash` once at 2.31.0. Declaration ids are first-seen row indices,
@@ -2750,7 +2777,10 @@ detail lives in the `SCHEMA_VERSION` docstring in
   changes. No path or dtype changes. The column is hashed, so every
   archive the bridge writes hashes differently once at this minor; an
   untouched older file keeps (and recomputes to) its stored hash, and a
-  rewrite echoes its source's column. The reader refuses a `decl` outside
+  rewrite echoes its source's column. A hash-excluded
+  `/opensees/decls@program_decl` marker (`"complete"` | `"absent"`) says
+  whether the joins are recorded, so a legacy rewrite, stamped 2.31, still
+  reads as "not recorded". The reader refuses a `decl` outside
   `{-1} ∪ [0, n_decls)`. Additive minor (a 2.30.x reader refuses a 2.31.x
   file, INV-4).
 
