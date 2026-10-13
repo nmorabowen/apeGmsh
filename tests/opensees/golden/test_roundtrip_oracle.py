@@ -467,8 +467,9 @@ def _check(model: Model, waiver: Waiver | None, out_dir: Path) -> None:
 _REPO = Path(__file__).resolve().parents[3]
 _LEDGER_REL = "tests/opensees/golden/roundtrip_oracle_ledger.txt"
 #: Class changes that need no evidence beyond the derived class: a semantic
-#: row downgraded once its fix leaves only order or float text.
-_DOWNGRADES = frozenset({("C", "A"), ("C", "B")})
+#: row downgraded once its fix leaves only order or float text, and an
+#: order row once its fix leaves only float text (B to A, #1814).
+_DOWNGRADES = frozenset({("C", "A"), ("C", "B"), ("B", "A")})
 #: Escalations: the oracle learned to see a bug its old rule missed (K2c).
 _ESCALATIONS = frozenset({("A", "C"), ("B", "C")})
 #: The one same-class re-pin allowed (#1797): an S row moves from h5py's raw,
@@ -490,8 +491,8 @@ def _ledger_transition_errors(
     """Each change from ``base`` to ``head`` the ledger rules forbid.
 
     A row may stay as it is (its reason text may change), be deleted, be
-    re-pinned from class C to A or B (the oracle's derived class is the
-    evidence), or escalate from A or B to C, citing the issue that tracks
+    re-pinned from class C to A or B, or B to A (the oracle's derived class
+    is the evidence), or escalate from A or B to C, citing the issue that tracks
     the bug. Anything else is a replay regression: an added row, or a re-pin
     that keeps its class. One exception (:data:`_S_RENAMES`, #1797): an S row
     may re-pin at S from the raw ``KeyError:nodes`` to the named
@@ -518,8 +519,8 @@ def _ledger_transition_errors(
             continue
         errors.append(
             f"{model}: re-pinned {b.klass} {b.pin} -> {w.klass} {w.pin}; "
-            "a replay regression: a re-pin may only downgrade C to A or B, "
-            "or escalate A or B to C")
+            "a replay regression: a re-pin may only downgrade (C to A or B, "
+            "B to A), or escalate A or B to C")
     return errors
 
 
@@ -611,7 +612,7 @@ _W = Waiver  # short alias for the carve-out cases below
     (_W("m", "C", "1" * 16, "#1798 item 1"), _W("m", "C", "2" * 16, "#1814"),
      False),
     (_W("m", "B", "1" * 16, "r"), _W("m", "B", "2" * 16, "r"), False),
-    (_W("m", "B", "1" * 16, "r"), _W("m", "A", "2" * 16, "r"), False),
+    (_W("m", "B", "1" * 16, "r"), _W("m", "A", "2" * 16, "r"), True),
     (_W("m", "S", "KeyError:nodes", "r"), _W("m", "B", "2" * 16, "r"), False),
     # #1797: the one same-class re-pin, raw KeyError -> the named refusal.
     (_W("m", "S", "KeyError:nodes", "#1797"),
@@ -649,16 +650,14 @@ def test_the_ledger_allows_downgrades_and_cited_escalations(
 _HELD = next(m for m in CORPUS if m.id == "test_h5_decl_params::_broad_frame")
 
 
-def test_broad_frame_derives_c_with_no_override(tmp_path: Path) -> None:
-    """#1814: the derivation alone yields C for ``_broad_frame``. Its line
-    multisets match, so only the declare-before-use check makes it C."""
+def test_broad_frame_derives_b_with_no_override(tmp_path: Path) -> None:
+    """#1814 fixed: replay declares ``_broad_frame``'s materials in the
+    bridge's order, so the order check passes and the derivation alone
+    yields B (it was C while ``Parallel 3`` preceded ``Steel01 1``)."""
     bridge, archive = _emit(_HELD, tmp_path)
     replay = _replay(archive)
-    bad = _deck_order_violations(replay, archive)
-    assert ("line 5 (uniaxialMaterial 3) uses uniaxialMaterial 1, "
-            "declared on line 7") in bad
+    assert _deck_order_violations(replay, archive) == []
     assert _classify(bridge, replay, order_ok=True) == "B"
-    assert _classify(bridge, replay, order_ok=not bad) == "C"
     (tmp_path / "check").mkdir()
     _check(_HELD, _waivers()[_HELD.id], tmp_path / "check")
 
@@ -803,27 +802,30 @@ def test_an_unknown_allocator_kind_raises(tmp_path: Path) -> None:
         _order_violations(_bridge, odd)
 
 
-_FATAL_REORDERS = [m for m in CORPUS
-                   if (w := _waivers().get(m.id)) is not None
-                   and w.klass == "C" and "#1814" in w.reason]
-
-
-def test_some_row_is_a_fatal_reorder() -> None:
-    assert _FATAL_REORDERS, "no C row cites #1814: retire this proof with it"
-
-
-@pytest.mark.parametrize("model", _FATAL_REORDERS,
-                         ids=[m.id for m in _FATAL_REORDERS])
 def test_without_the_order_check_a_fatal_reorder_fails_its_pin(
-        model: Model, tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch) -> None:
-    """Revert proof: with declare-before-use disabled, each #1814 row reads
-    as class B again, and its committed C row fails."""
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Revert proof: a replay with ``Parallel 3`` moved above ``Steel01 1``
+    (the #1814 reorder, now synthetic since replay no longer makes it)
+    is C under its pin; with declare-before-use disabled it reads as B
+    again, and the C row fails."""
+    real_replay = _replay
+
+    def fatal_replay(archive: Path) -> str:
+        return _move(real_replay(archive), "uniaxialMaterial Parallel 3 ",
+                     above="uniaxialMaterial Steel01 1 ")
+
+    monkeypatch.setattr(sys.modules[__name__], "_replay", fatal_replay)
+    (tmp_path / "pin").mkdir()
+    bridge, archive = _emit(_HELD, tmp_path / "pin")
+    fatal = fatal_replay(archive)
+    assert ("line 5 (uniaxialMaterial 3) uses uniaxialMaterial 1, "
+            "declared on line 6") in _deck_order_violations(fatal, archive)
+    row = Waiver(_HELD.id, "C", _pin(_diff(bridge, fatal)), "#1814: synthetic")
     (tmp_path / "on").mkdir()
     (tmp_path / "off").mkdir()
-    _check(model, _waivers()[model.id], tmp_path / "on")
+    _check(_HELD, row, tmp_path / "on")
     monkeypatch.setattr(
         sys.modules[__name__], "_deck_order_violations", lambda *a: [])
     with pytest.raises(AssertionError,
                        match="the ledger says class C, the diff is class B"):
-        _check(model, _waivers()[model.id], tmp_path / "off")
+        _check(_HELD, row, tmp_path / "off")
