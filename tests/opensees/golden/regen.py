@@ -22,7 +22,7 @@ _SRC = Path(__file__).resolve().parents[3] / "src"
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
-from tests.opensees.golden import builder  # noqa: E402
+from tests.opensees.golden import builder, rebar  # noqa: E402
 
 
 def _write_if_changed(
@@ -93,8 +93,20 @@ def regenerate(*, exact: bool = False) -> dict[str, str]:
                 ) + ")"
             report[builder.cell_id(f, m, o)] = status
 
-    if builder.CELLS_DIR.exists():
-        for stale in sorted(builder.CELLS_DIR.rglob("*")):
+        # The gmsh-built rebar family: decks only (README "Rebar cells").
+        for n, (p, o) in enumerate(rebar.all_cells()):
+            deck_path = rebar.golden_path(p, o)
+            owned.add(deck_path)
+            report[rebar.cell_id(p, o)] = _write_if_changed(
+                deck_path,
+                rebar.render_deck(p, o, scratch / f"r{n}"),
+                deck=True, exact=exact,
+            )
+
+    for cells_dir in (builder.CELLS_DIR, rebar.REBAR_CELLS_DIR):
+        if not cells_dir.exists():
+            continue
+        for stale in sorted(cells_dir.rglob("*")):
             if stale.is_file() and stale not in owned:
                 stale.unlink()
                 rel = stale.relative_to(builder.GOLDEN_DIR).as_posix()
@@ -115,7 +127,7 @@ def main(argv: list[str] | None = None) -> int:
         f"golden corpus: {n_changed} changed, "
         f"{len(report) - n_changed} unchanged "
         f"(of {len(report)} entries: MANIFEST.json + golden cells"
-        " + removed files)"
+        " + rebar cells + removed files)"
     )
     return 0
 

@@ -469,12 +469,16 @@ def manifest() -> dict[str, object]:
             }
         else:
             cells[cell_id(f, m, o)] = {"status": f"n/a: {reason}"}
+    # The gmsh-built rebar family sits beside the grid (see rebar.py).
+    from tests.opensees.golden import rebar
+
     return {
         "fixtures": list(FIXTURES),
         "modes": list(MODES),
         "outputs": list(OUTPUTS),
         "regen": REGEN_COMMAND,
         "cells": cells,
+        "rebar": rebar.manifest(),
     }
 
 

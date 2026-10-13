@@ -1,0 +1,155 @@
+"""Rebar cage cells: a gmsh-built cell family beside the FEMStub grid.
+
+The grid in :mod:`builder` is closed over the ``make_*`` factories of
+``fem_stub`` (``test_fixture_roster_is_every_make_factory``), and its five
+modes vary the analysis shape of a stub model.  A ``g.rebar`` cage needs a
+real gmsh session, and what it pins is the bar geometry and its coupling,
+not the analysis shape.  So it is its own family: one fixture
+(``rebar_column_cage``) x two placements x two outputs, compared through
+the grid's normalise and tolerance helpers.  ``README.md`` documents the
+model.
+
+Nothing here writes into the repository: each render builds in a
+caller-supplied scratch directory.  Only ``tests.opensees.golden.regen``
+writes goldens.
+"""
+from __future__ import annotations
+
+import os
+from collections.abc import Iterator
+from contextlib import contextmanager
+from pathlib import Path
+
+from apeGmsh import apeGmsh
+from apeGmsh.opensees import OpenSeesTarget, apeSees
+from apeGmsh.rebar import ACI318_seismic, BarCatalog, BarLayout, TieLayout
+
+from tests.opensees.golden import builder
+
+FIXTURE = "rebar_column_cage"
+PLACEMENTS: tuple[str, ...] = ("conformal", "embedded")
+OUTPUTS: tuple[str, ...] = ("tcl", "py")
+REBAR_CELLS_DIR = builder.GOLDEN_DIR / "rebar_cells"
+
+#: The cage material: ``emit_elements=True`` resolves each bar's
+#: ``CorotTruss`` material by this name at emit time.
+BAR_MATERIAL = "rebar"
+
+#: ADR 0112 D1's artifact directory variable (``tests/conftest.py`` sets it
+#: for the suite).
+_ARTIFACT_DIR_ENV = "APEGMSH_ARTIFACT_DIR"
+
+
+def cell_id(placement: str, output: str) -> str:
+    return f"{FIXTURE}/{placement}/{output}"
+
+
+def all_cells() -> list[tuple[str, str]]:
+    return [(p, o) for p in PLACEMENTS for o in OUTPUTS]
+
+
+def golden_path(placement: str, output: str) -> Path:
+    return REBAR_CELLS_DIR / FIXTURE / placement / f"{output}.golden"
+
+
+@contextmanager
+def _artifacts_in(path: Path) -> Iterator[None]:
+    """Route the automatic ``model.h5`` writes (ADR 0112 D1) into ``path``.
+
+    Both the session's ``end()`` and the bridge's first emit write
+    ``<model_name>.h5`` at ``$APEGMSH_ARTIFACT_DIR``, else beside the
+    ``__main__`` script, which under ``regen`` is this package.  The
+    variable is restored on exit, so the suite's own value survives.
+    """
+    previous = os.environ.get(_ARTIFACT_DIR_ENV)
+    os.environ[_ARTIFACT_DIR_ENV] = str(path)
+    try:
+        yield
+    finally:
+        if previous is None:
+            os.environ.pop(_ARTIFACT_DIR_ENV, None)
+        else:
+            os.environ[_ARTIFACT_DIR_ENV] = previous
+
+
+def build_model(placement: str) -> apeSees:
+    """Mesh the column, place the cage, and return the bridge model.
+
+    A 0.4 x 0.4 x 1.5 box, a 3x3 cage of #6 bars with #3 ties @ 0.25
+    under ``ACI318_seismic`` (the X4-e harness, #1848).  ``conformal``
+    embeds the bars into a tet host; ``embedded`` adds cross-ties and
+    couples through ``LadrunoEmbeddedRebar`` into a transfinite tet host.
+    Both auto-emit a ``CorotTruss`` per bar cell.
+    """
+    if placement not in PLACEMENTS:
+        raise KeyError(f"unknown rebar placement {placement!r}")
+    embedded = placement == "embedded"
+    with apeGmsh(model_name=f"rebar_{placement}") as g:
+        g.model.geometry.add_box(0, 0, 0, 0.4, 0.4, 1.5, label="Col")
+        g.physical.add_volume("Col", name="Col")
+        g.rebar.use_standard(ACI318_seismic(BarCatalog(unit_length=0.0254)))
+        cage = g.rebar.column(
+            section=("rect", 0.4, 0.4), height=1.5, cover=0.04,
+            longitudinal=BarLayout(
+                n_x=3, n_y=3, db="#6", material=BAR_MATERIAL,
+            ),
+            ties=TieLayout(db="#3", spacing=0.25, material=BAR_MATERIAL),
+            crossties=embedded,
+        )
+        if embedded:
+            g.rebar.place(
+                cage, into="Col", coupling="embedded", perfect=1.0e8,
+                emit_elements=True,
+            )
+            # The bars mesh on their own, so the host can be structured:
+            # its nodes are algebraic, not a Delaunay outcome.
+            g.mesh.structured.set_transfinite_box(
+                "Col", size=0.2, recombine=False,
+            )
+        else:
+            g.rebar.place(
+                cage, into="Col", coupling="conformal", emit_elements=True,
+            )
+        g.mesh.sizing.set_global_size(0.15)
+        g.mesh.generation.generate(dim=3)
+        fem = g.mesh.queries.get_fem_data(dim=3)
+    # Pinned target, as in the grid: the stamp reads ``backend stock``.
+    ops = apeSees(fem, opensees=OpenSeesTarget(mode="stock"))
+    ops.model(ndm=3, ndf=3)
+    ops.uniaxialMaterial.Steel02(
+        fy=420e6, E=200e9, b=0.01, name=BAR_MATERIAL,
+    )
+    return ops
+
+
+def render_deck(placement: str, output: str, scratch: Path) -> str:
+    """Emit one rebar cell's deck under ``scratch``; return its canonical text."""
+    if output not in OUTPUTS:
+        raise KeyError(f"unknown rebar output {output!r}")
+    deck_dir, artifacts = scratch / "deck", scratch / "artifacts"
+    deck_dir.mkdir(parents=True, exist_ok=False)
+    artifacts.mkdir(parents=True, exist_ok=False)
+    deck = str(deck_dir / f"model.{output}")
+    with _artifacts_in(artifacts):
+        ops = build_model(placement)
+        if output == "py":
+            ops.py(deck)
+        else:
+            ops.tcl(deck)
+    return builder._collect(deck_dir)
+
+
+def manifest() -> dict[str, object]:
+    return {
+        "fixture": FIXTURE,
+        "placements": list(PLACEMENTS),
+        "outputs": list(OUTPUTS),
+        "cells": {
+            cell_id(p, o): {
+                "status": "golden",
+                "deck": golden_path(p, o).relative_to(
+                    builder.GOLDEN_DIR).as_posix(),
+            }
+            for p, o in all_cells()
+        },
+    }

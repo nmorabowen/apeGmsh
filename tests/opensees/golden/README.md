@@ -75,6 +75,59 @@ cell:
   `ops.py` has no `flat=` switch, so these would repeat the partitioned
   py deck (4 cells).
 
+## Rebar cells
+
+The grid has no reinforcement, so `g.rebar` gets its own cell family in
+`rebar.py`: one fixture, `rebar_column_cage`, x two placements x two
+outputs (`tcl`, `py`), four cells in all. They are listed under `rebar` in
+`MANIFEST.json` and live in `rebar_cells/<fixture>/<placement>/<output>.golden`.
+
+**Why it is not a grid row.** The grid is closed over the `make_*` factories
+of `fem_stub.py` (`test_fixture_roster_is_every_make_factory`), and its five
+modes vary the analysis shape of a stub. A rebar cage needs a real gmsh
+session, and what it pins is the bar geometry and its coupling. A grid row
+would be 13 of 15 cells n/a, plus a factory that is not a stub. The family
+reuses the grid's normalise, mask and float-tolerance helpers, and regen
+writes it.
+
+**Model.** The X4-e harness (#1848):
+
+- a 0.4 x 0.4 x 1.5 box (`Col`), with a `g.rebar.column` cage under
+  `ACI318_seismic`: 3x3 #6 bars, #3 ties @ 0.25, cover 0.04;
+- material `rebar` (`Steel02`), global mesh size 0.15, `ndm 3 ndf 3`, and
+  the target pinned to stock, as in the grid.
+
+| Placement | Coupling | Host mesh | The Tcl deck holds |
+|---|---|---|---|
+| `conformal` | `coupling="conformal", emit_elements=True`; no cross-ties | Delaunay tets, with the bars embedded so the host shares their nodes | 262 `CorotTruss` |
+| `embedded` | `coupling="embedded", perfect=1e8, emit_elements=True`; with cross-ties | transfinite tets (`set_transfinite_box(size=0.2, recombine=False)`) | 366 `CorotTruss`, 400 `LadrunoEmbeddedRebar` |
+
+`test_rebar_golden_exercises_both_emit_paths` pins those counts, so a regen
+that silently dropped `emit_elements` or the ties cannot pass as a match.
+
+**Determinism.**
+
+- **The embedded host is structured.** Its nodes are algebraic, not a
+  Delaunay outcome. Many bar nodes sit on a face that two tets share.
+  `locate_point` keeps the first host, in centroid-distance order, that
+  holds the node. In this model the chosen host is at least ~1% nearer
+  than any other host that also holds the node, so a last-ulp change in the
+  distances cannot flip the choice.
+- **The conformal host is unstructured.** gmsh cannot embed curves in a
+  transfinite volume. This deck therefore pins gmsh's 3-D mesh, and a
+  `gmsh` pin bump in `.github/ci-constraints.txt` can change it. Regen it
+  then, and list the cell in the PR.
+
+**Decks only.** The issue asks for the decks. There is no `.h5dump`: a
+real `FEMData` archive carries a neutral zone whose `/provenance@base_dir`
+and session ids change from run to run, and the dump script does not mask
+them.
+
+**Artifacts.** Both the session's `end()` and the bridge's first emit write
+`<model_name>.h5` (ADR 0112 D1). Each render points `APEGMSH_ARTIFACT_DIR`
+at its own scratch directory and restores the variable afterwards, so regen
+never writes an `.h5` into this package.
+
 ## What a golden holds
 
 `cells/<fixture>/<mode>/<output>.golden` holds every file the emit call
