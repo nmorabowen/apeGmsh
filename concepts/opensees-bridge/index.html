@@ -3927,12 +3927,14 @@ opens. Each is read off the emitted <code>py</code> deck, in this order:</p>
   displacements reached and the recorders declared once at the top of the deck
   survive the boundary. <code>wipeAnalysis</code> does not touch the domain, and the
   recorders are not re-emitted.</li>
-<li><strong>dt has no effect under Static; a differing dt warns.</strong> A static
-  analysis ignores <code>analyze</code>'s <code>dt</code>: the <code>LoadControl</code> <code>dlam</code> alone sets the
-  step, so a stage with <code>dlam=0.25</code> and <code>n_increments=4</code> reaches <code>t0 + 1.0</code>.
+<li><strong>dt has no effect under Static; a given dt warns.</strong> A static
+  analysis ignores <code>analyze</code>'s <code>dt</code>: the integrator alone sets the step, so a
+  <code>LoadControl</code> stage with <code>dlam=0.25</code> and <code>n_increments=4</code> reaches <code>t0 + 1.0</code>.
   A <code>dt</code> that differs from <code>dlam</code> raises <code>InertStaticDtWarning</code> (from
   <code>apeGmsh.opensees</code>) when the stage closes; leave <code>dt</code> out, or set it equal
-  to <code>dlam</code>. <code>dt</code> is the step only under <code>Transient</code>.</li>
+  to <code>dlam</code>. Every other static integrator (<code>DisplacementControl</code>,
+  <code>ArcLength</code> and the fork's path-following ones) has no <code>dlam</code>, so any <code>dt</code>
+  given to it warns: leave it out. <code>dt</code> is the step only under <code>Transient</code>.</li>
 </ul>
 <h2 id="one-declaration-surface-four-outputs">One declaration surface, four outputs<a class="headerlink" href="#one-declaration-surface-four-outputs" title="Permanent link">&para;</a></h2>
 <p>Everything above — model, materials, elements, fixes, patterns, stages, and
