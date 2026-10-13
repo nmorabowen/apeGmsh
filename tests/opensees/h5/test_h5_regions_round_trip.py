@@ -169,6 +169,11 @@ def test_region_without_declaration_replays(tmp_path: Path) -> None:
     src = _archive(ops, tmp_path)
     with h5py.File(str(src), "a") as f:
         del f["opensees"]["decls"]
+        # Such an archive's program names no declaration either (A7).
+        program = f["opensees"]["program"]
+        rows = program[()]
+        rows["decl"] = -1
+        program[...] = rows
     with h5_reader.open(str(src)) as m:
         assert m.declarations() is None
 

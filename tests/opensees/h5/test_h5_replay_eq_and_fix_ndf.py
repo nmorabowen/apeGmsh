@@ -331,6 +331,11 @@ def test_an_archive_without_decls_warns_that_ties_are_unverified(
         for name in ("decls", "decl_params"):
             if name in f["opensees"]:
                 del f["opensees"][name]
+        # Such an archive's program names no declaration either (A7).
+        program = f["opensees"]["program"]
+        rows = program[()]
+        rows["decl"] = -1
+        program[...] = rows
     om = OpenSeesModel.from_h5(str(archive))
     assert om.declarations is None
     with pytest.warns(H5LedgerWarning, match="cannot verify apeSees.equation_constraint"):

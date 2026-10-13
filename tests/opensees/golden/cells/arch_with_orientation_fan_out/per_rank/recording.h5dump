@@ -5,8 +5,8 @@ A /meta@created_iso dtype=str[utf-8,vlen] shape=() sha1=masked
 A /meta@model_name dtype=str[utf-8,vlen] shape=() sha1=b9d13fa513214f3ee642cfb66b091bb007f26c4c
 A /meta@ndf dtype=<i8 shape=() sha1=0cf6c361d9199e18f10de459b59db53c79258106
 A /meta@ndm dtype=<i8 shape=() sha1=3e8c1c43b68367ba858df7b619c5b31131c2e887
-A /meta@opensees_schema_version dtype=str[utf-8,vlen] shape=() sha1=e6419062621949da8ccb608dd8f215f07b03ef2c
-A /meta@schema_version dtype=str[utf-8,vlen] shape=() sha1=e6419062621949da8ccb608dd8f215f07b03ef2c
+A /meta@opensees_schema_version dtype=str[utf-8,vlen] shape=() sha1=0277041d85d80d1024635efcf586b61c19063e57
+A /meta@schema_version dtype=str[utf-8,vlen] shape=() sha1=0277041d85d80d1024635efcf586b61c19063e57
 A /meta@sequence_schema_version dtype=str[utf-8,vlen] shape=() sha1=574830b7eb8184cf13569334fc0f251220597a69
 A /meta@snapshot_id dtype=str[utf-8,vlen] shape=() sha1=be5860ffd4409e5cc12add2802a5ecf9c16828e8
 G /meta/lineage
@@ -37,6 +37,7 @@ D /opensees/decl_params/transf_ref/first dtype=<i8 shape=(24,) sha1=e8175991b6ac
 D /opensees/decl_params/transf_ref/key dtype=str[utf-8,vlen] shape=(1,) sha1=1ba830d5f4d0b84e1c8c4232edaef938c309c349
 D /opensees/decl_params/type dtype=str[utf-8,vlen] shape=(24,) sha1=c455a3e8ae8a775b1b462ac30f31956f9b233d5a
 G /opensees/decls
+A /opensees/decls@program_decl dtype=str[utf-8,vlen] shape=() sha1=dfe6570dac36c935ac6278e678f9b6c0af604d5a
 D /opensees/decls/family dtype=str[utf-8,vlen] shape=(24,) sha1=b51c6ccc416adc1ef44a50d8285db8da349a389b
 D /opensees/decls/key dtype=str[utf-8,vlen] shape=(24,) sha1=7b3ea09319bf7b7417af9081a8010ac83f2cfd49
 D /opensees/decls/name dtype=str[utf-8,vlen] shape=(24,) sha1=cda1557e9bd3dad15c9b6362ebcea1e19e236e78
@@ -73,7 +74,7 @@ A /opensees/partitions/partition_01@rank dtype=<i8 shape=() sha1=e88bf9a567e8136
 D /opensees/partitions/partition_01/boundary_node_ids dtype=<i8 shape=(1,) sha1=88601622718837a4a45bb1dc50054471ea28a2ac
 D /opensees/partitions/partition_01/element_ids dtype=<i8 shape=(1,) sha1=e3eac1feb965dcd4994b16c5f52935db739ef2bd
 D /opensees/partitions/partition_01/node_ids dtype=<i8 shape=(2,) sha1=e72b1f04f213213b062d2e45c75c1e96098ec6e9
-D /opensees/program dtype={first:<i4,count:<i4,method:<i2,store:<i2,row:<i4,stage:<i4,decl:<i4} shape=(47,) sha1=c64a1b99e661bff6d3254b282f30f6a5f7cc72bb
+D /opensees/program dtype={first:<i4,count:<i4,method:<i2,store:<i2,row:<i4,stage:<i4,decl:<i4} shape=(50,) sha1=37ead96914920b7c51bf4d0e1570b1d1f65ffbff
 A /opensees/program@emit_count dtype=<i4 shape=() sha1=edabc5929dde6ae52eade9850aa5f0f56a2b5793
 A /opensees/program@methods dtype=str[utf-8,vlen] shape=(24,) sha1=226d340d50d026f4d73921f96a8654743f37a949
 A /opensees/program@stores dtype=str[utf-8,vlen] shape=(22,) sha1=1cd2b863e7518bc73c21ad5904a22ef92e4af158

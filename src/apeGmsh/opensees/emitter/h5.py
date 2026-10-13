@@ -73,6 +73,7 @@ the dependency into import time for users who never call ``ops.h5()``.
 """
 from __future__ import annotations
 
+import bisect
 import functools
 from collections import Counter
 from collections.abc import Callable, Mapping
@@ -600,7 +601,24 @@ class H5RefusedVerb(NotImplementedError):
 #:     no flag). No path or dtype changes; ``decl_params`` is
 #:     hash-excluded. A 2.30 reader opens 2.12 through 2.30; a 2.29.x
 #:     reader REFUSES a 2.30.x file.
-SCHEMA_VERSION: str = "2.30.0"
+#:   * 2.31.0 — A7: the ``/opensees/program`` ``decl`` column, ``-1`` on
+#:     every run below this minor, holds the ``/opensees/decls`` row of the declaration that
+#:     made each call when the emit proves it: a tagged call by its
+#:     ``(kind, tag)`` run, a tagless call (``fix``, ``mass``,
+#:     ``recorder``, the stage removals and flips, ``sp_hold``,
+#:     ``rayleigh`` and the ``/opensees/commands`` rows) by the
+#:     declaration open on it. Everything else stays an explicit ``-1``
+#:     (``h5-schema.md`` lists the cases). No path or dtype changes; runs
+#:     now also break where ``decl`` changes. The column is hashed, so
+#:     every archive the bridge writes hashes differently once at this
+#:     minor; a rewrite echoes its source's column (an older source's
+#:     ``-1`` values included), and the hash-excluded
+#:     ``/opensees/decls@program_decl`` marker (``"complete"`` from an
+#:     emit, ``"absent"`` echoed by a rewrite of an older file) says which
+#:     it is. A 2.31 reader opens 2.12 through 2.31 and
+#:     refuses a ``decl`` outside ``{-1} ∪ [0, n_decls)``; a 2.30.x reader
+#:     REFUSES a 2.31.x file.
+SCHEMA_VERSION: str = "2.31.0"
 
 #: Oldest opensees-zone minor the reader opens (ADR 0113 (#1303)). The
 #: zone's last non-additive minor is 2.11.0, the 0-based rank flip, but
@@ -1306,9 +1324,12 @@ def _ro_to_stage_block(ro: "Any") -> "_StageEmitBlock":
 
 #: ``row`` / ``store`` of a call that wrote nothing (a ``ledger`` verb).
 _NO_ROW = -1
-#: ``/opensees/program``'s ``decl`` column, which stays ``-1``: the column
-#: is hashed, and a declaration is a label (A7), so the declaration join
-#: lives in the hash-excluded ``/opensees/decls`` (K1-6, schema 2.25.0).
+#: A call's ``/opensees/program`` ``decl`` when its declaration is not
+#: proved at emit time (A7, schema 2.31.0): a call no declaration opens
+#: (a node, a part row, the analysis chain), a neutral-declared row, a
+#: tagged call whose ``(kind, tag)`` no ``/opensees/decls/tags`` run
+#: holds, a side-channel store's call, and a tagless call with no
+#: declaration open (a ghost replay). Never a guessed id.
 #: Also the "no declaration open" state of :meth:`H5Emitter.set_declaration`.
 _NO_DECL = -1
 
@@ -1647,13 +1668,16 @@ class _ProgramTape:
     record's ordinal among the records ``method`` wrote to ``store`` in
     that ``stage``, in emit order; a call that a partition bracket
     replicates repeats the row of its first capture, so the run points
-    at a row already written.
+    at a row already written. ``decl`` is the ``/opensees/decls`` row of
+    the declaration that made the call, proved at emit time, else
+    :data:`_NO_DECL` (A7, schema 2.31.0); a body sets :attr:`decl` for
+    the call in flight.
     """
 
     __slots__ = (
         "runs", "methods", "stores", "count", "depth", "pending",
         "override", "ordinal", "_method_ix", "_store_ix", "_first_rows",
-        "_last", "_last_method", "_last_store", "_last_stage",
+        "_last", "_last_method", "_last_store", "_last_stage", "decl",
     )
 
     def __init__(self) -> None:
@@ -1678,8 +1702,13 @@ class _ProgramTape:
         self._last_method = ""
         self._last_store = ""
         self._last_stage = _NO_ROW
+        # The declaration of the call in flight (A7): reset by the
+        # wrapper, set by a body that proves it.
+        self.decl = _NO_DECL
 
-    def note_plain(self, method: str, store: str, stage: int) -> None:
+    def note_plain(
+        self, method: str, store: str, stage: int, decl: int,
+    ) -> None:
         """Note a call that always appends a fresh row and is never
         replicated: the per-node / per-element hot path, inlined into
         ``node`` and ``element`` instead of the generic wrapper."""
@@ -1691,14 +1720,15 @@ class _ProgramTape:
         last = self._last
         if (last is not None and method == self._last_method
                 and store == self._last_store and stage == self._last_stage
-                and row == last[4] + last[1]):
+                and row == last[4] + last[1] and decl == last[6]):
             last[1] += 1
             return
-        self.pending, self.override = row, None
+        self.pending, self.override, self.decl = row, None, decl
         self.note_open(method, store, stage)
 
     def note_open(self, method: str, store: str, stage: int) -> None:
-        """Open a run for a call already counted, at ``self.pending``."""
+        """Open a run for a call already counted, at ``self.pending``,
+        declared by ``self.decl``."""
         m = self._method_ix.get(method)
         if m is None:
             m = self._method_ix[method] = len(self.methods)
@@ -1711,7 +1741,7 @@ class _ProgramTape:
         else:
             st = _NO_ROW
         row = self.pending if self.override is None else self.override
-        run = [self.count, 1, m, st, row, stage, _NO_DECL]
+        run = [self.count, 1, m, st, row, stage, self.decl]
         self.runs.append(run)
         self._last = run
         self._last_method, self._last_store = method, store
@@ -1739,6 +1769,7 @@ class _ProgramTape:
         last = self._last
         if (last is not None and method == self._last_method
                 and store == self._last_store and stage == self._last_stage
+                and self.decl == last[6]
                 and (row == last[4] + last[1] if row != _NO_ROW
                      else last[4] == _NO_ROW)):
             last[1] += 1
@@ -1850,6 +1881,12 @@ class H5Emitter:
         # (``_decl_dup_rows``). ``None``: no bridge declarations, no group.
         self._declarations: "tuple[Declaration, ...] | None" = None
         self._decl_tags: "tuple[DeclTagRun, ...]" = ()
+        # A7: ``_decl_tags`` by kind, sorted by ``first``, as parallel
+        # ``(firsts, ends, decls)`` lists, so a tagged call finds its
+        # declaration by bisection (:meth:`_decl_of_tag`); and the last
+        # element run hit, ``(first, end, decl)``, the hot path's cache.
+        self._decl_tag_index: "dict[str, tuple[list[int], list[int], list[int]]]" = {}
+        self._element_decl_run: "tuple[int, int, int]" = (0, 0, _NO_DECL)
         self._decl_open: int = _NO_DECL
         self._fix_decls: list[int] = []
         self._mass_decls: list[int] = []
@@ -1858,6 +1895,10 @@ class H5Emitter:
         # The source's ``rows`` columns, echoed by :meth:`restore_declarations`
         # in place of the live ones (a rewrite opens no declaration).
         self._decl_rows_restored: "dict[str, list[int]] | None" = None
+        # A7: the source's ``/opensees/decls@program_decl`` on a rewrite
+        # (``restore_declarations``); ``None`` writes ``"complete"``, this
+        # emitter's own tape having recorded every call's declaration.
+        self._program_decl_restored: "str | None" = None
         # The rows columns of the stores filled through side channels, not
         # Protocol calls (``initial_stress``, ``activate_absorbing``), handed
         # in by :meth:`set_declaration_rows`.
@@ -2099,8 +2140,10 @@ class H5Emitter:
             method=method, token=token, stage=stage, args=tuple(args),
             names=names if names is not None else ("",) * len(args),
         ))
-        # K1-6: the row's declaration (``/opensees/decls/rows/commands``).
+        # K1-6: the row's declaration (``/opensees/decls/rows/commands``),
+        # and the call's (A7).
         self._command_decls.append(self._decl_open)
+        self._program.decl = self._decl_open
 
     @property
     def ledger_counts(self) -> "Mapping[str, int]":
@@ -2214,12 +2257,14 @@ class H5Emitter:
                         blk.owned_node_ids.append(int(tag))
                 # else: foreign decl — partition-block mirror only.
         # ADR 0114 R2: the hot path notes inline, not through ``_noted``.
+        # A7: a node is neutral-declared (the FEM snapshot), never a
+        # bridge declaration's.
         tape = self._program
         if not tape.depth:
             tape.note_plain(
                 "node", _NODE_STORE,
                 _NO_ROW if self._stage_current is None
-                else len(self._stage_blocks))
+                else len(self._stage_blocks), _NO_DECL)
 
     def _partition_dup(
         self, key: "tuple[Any, ...]", *, own_row: bool = True,
@@ -2279,16 +2324,20 @@ class H5Emitter:
 
         Inside a partition bracket the row is remembered under its dedupe
         ``key``, so a replica that arrives with a declaration open can
-        give it one (:meth:`_decl_claim`).
+        give it one (:meth:`_decl_claim`). The open declaration is also
+        the call's ``/opensees/program`` ``decl`` (A7).
         """
         decls.append(self._decl_open)
+        self._program.decl = self._decl_open
         if self._partition_current is not None:
             self._decl_dup_rows[key] = (decls, len(decls) - 1)
 
     def _decl_claim(self, key: "tuple[Any, ...]") -> None:
         """A partition replica of ``key`` arrived: its declaration fills
         the first capture's row when that one was captured with none open
-        (a ghost replay before the owner's fix, ADR 0027 INV-2)."""
+        (a ghost replay before the owner's fix, ADR 0027 INV-2). The
+        replica's own call is the open declaration's (A7)."""
+        self._program.decl = self._decl_open
         if self._decl_open == _NO_DECL:
             return
         decls, row = self._decl_dup_rows[key]
@@ -2754,11 +2803,23 @@ class H5Emitter:
         # ADR 0114 R2: the hot path notes inline, not through ``_noted``.
         tape = self._program
         if not tape.depth:
+            # A7: the declaration whose ``element`` tag run holds ``tag``;
+            # a fan-out walks one run in order, so the last hit answers.
+            tag = int(tag)
+            first, end, decl = self._element_decl_run
+            if not first <= tag < end:
+                run = self._decl_run("element", tag)
+                if run is None:
+                    decl = _NO_DECL
+                else:
+                    self._element_decl_run = run
+                    decl = run[2]
             if self._stage_current is None:
-                tape.note_plain("element", _ELEMENT_STORE, _NO_ROW)
+                tape.note_plain("element", _ELEMENT_STORE, _NO_ROW, decl)
             else:
                 tape.note_plain(
-                    "element", _ELEMENT_STAGE_STORE, len(self._stage_blocks))
+                    "element", _ELEMENT_STAGE_STORE, len(self._stage_blocks),
+                    decl)
 
     # =====================================================================
     # Public — declarative orientation inject (ADR 0018 / ModelData)
@@ -3090,6 +3151,7 @@ class H5Emitter:
         # Recorders are emitted outside any partition bracket, so no
         # replica reaches here: the column takes the open declaration.
         decls.append(self._decl_open)
+        self._program.decl = self._decl_open  # A7
         sink.append(_RecorderRecord(
             kind=kind,
             args=tuple(args),
@@ -3152,6 +3214,7 @@ class H5Emitter:
                 float(beta_k_init), float(beta_k_comm),
             ))
             blk.rayleigh_decls.append(self._decl_open)  # K1-6
+            self._program.decl = self._decl_open  # A7
             return
         self._command("rayleigh", (alpha_m, beta_k, beta_k_init, beta_k_comm))
 
@@ -3529,6 +3592,7 @@ class H5Emitter:
         blk = self._stage_block("remove_element")
         # A removal fires on the element's one owner rank: no replica.
         blk.remove_element_decls.append(self._decl_open)
+        self._program.decl = self._decl_open  # A7
         blk.remove_elements.append(int(tag))
 
     def update_material_stage(self, mat_tag: int, stage: int) -> None:
@@ -3887,6 +3951,17 @@ class H5Emitter:
         str_dt = h5py.string_dtype(encoding="utf-8")
         decls = self._declarations
         g = self._ops_group(f).create_group("decls")
+        # A7: whether /opensees/program's decl column records each call's
+        # declaration. On the hash-excluded group, not on /opensees (whose
+        # attributes fold into model_hash), so a rewrite keeps the hash.
+        from .h5_reader import PROGRAM_DECL_COMPLETE, PROGRAM_DECL_MARKERS
+        marker = (PROGRAM_DECL_COMPLETE if self._program_decl_restored is None
+                  else self._program_decl_restored)
+        if marker not in PROGRAM_DECL_MARKERS:
+            raise RuntimeError(
+                f"H5Emitter._write_decls: program_decl marker {marker!r} is "
+                f"not one of {sorted(PROGRAM_DECL_MARKERS)}.")
+        g.attrs["program_decl"] = marker
         g.create_dataset("key", data=[d.key for d in decls], dtype=str_dt)
         g.create_dataset(
             "family", data=[d.family for d in decls], dtype=str_dt)
@@ -5067,6 +5142,33 @@ class H5Emitter:
                     )
         self._declarations = rows
         self._decl_tags = tuple(runs)
+        self._element_decl_run = (0, 0, _NO_DECL)
+        index: dict[str, tuple[list[int], list[int], list[int]]] = {}
+        for kind, first, count, decl in sorted(runs):
+            firsts, ends, decls_of = index.setdefault(kind, ([], [], []))
+            firsts.append(first)
+            ends.append(first + count)
+            decls_of.append(decl)
+        self._decl_tag_index = index
+
+    def _decl_run(self, kind: str, tag: int) -> "tuple[int, int, int] | None":
+        """The ``/opensees/decls/tags`` run that holds ``(kind, tag)``, as
+        ``(first, end, decl)``, or ``None`` when no run holds it (A7)."""
+        found = self._decl_tag_index.get(kind)
+        if found is None:
+            return None
+        firsts, ends, decls = found
+        i = bisect.bisect_right(firsts, tag) - 1
+        if i >= 0 and tag < ends[i]:
+            return firsts[i], ends[i], decls[i]
+        return None
+
+    def _decl_of_tag(self, kind: str, tag: int) -> int:
+        """The declaration that owns ``(kind, tag)``, or :data:`_NO_DECL`
+        when no run holds it (A7): a tagged call's ``/opensees/program``
+        ``decl``, proved by the bridge's join, never guessed."""
+        run = self._decl_run(kind, tag)
+        return _NO_DECL if run is None else run[2]
 
     def set_decl_params(
         self, items: "Sequence[tuple[int, object]]",
@@ -5134,6 +5236,9 @@ class H5Emitter:
             str(store): [int(v) for v in column]
             for store, column in table.rows.items()
         }
+        # A7: the rewrite echoes the source's program, so it echoes the
+        # source's word on whether that program's decl joins are recorded.
+        self._program_decl_restored = str(table.program_decl)
         if table.params:
             self._decl_params_restored = [
                 (int(decl), p.type, p.params_json,
@@ -5407,7 +5512,9 @@ class H5Emitter:
         ``first`` (1-based emit index), ``count``, ``method`` (into
         ``@methods``), ``store`` (into ``@stores``, ``-1`` when the call
         wrote nothing), ``row``, ``stage`` (``-1`` global) and ``decl``
-        (``-1`` until ``/opensees/decls``). ``@emit_count`` is the number
+        (the ``/opensees/decls`` row that made the calls, ``-1`` when none
+        is proved at emit time; A7, 2.31.0; outside ``{-1} ∪ [0, n_decls)``
+        it refuses). ``@emit_count`` is the number
         of calls; the runs tile ``[1, emit_count]``. Hashed.
         """
         if self._program_restored is not None:
@@ -5421,6 +5528,12 @@ class H5Emitter:
             count = tape.count
         if not count:
             return
+        n_decls = len(self._declarations) if self._declarations else 0
+        for r in rows:
+            if r[6] != _NO_DECL and not 0 <= r[6] < n_decls:
+                raise RuntimeError(
+                    f"H5Emitter._write_program: run {r!r} names declaration "
+                    f"{r[6]}; /opensees/decls holds {n_decls}.")
         import h5py
         import numpy as np
 
@@ -6217,6 +6330,29 @@ def _store_root(template: str, stage: int) -> str:
     return literal.rstrip("/")
 
 
+#: The tagged verbs (A7): each call's ``(kind, tag)`` is its record's
+#: ``/opensees/decls/tags`` join, ``kind`` the bridge's allocator kind and
+#: ``tag`` the positional argument at the index given. ``element`` notes
+#: inline (the hot path) with the same join. Every other verb's call is
+#: :data:`_NO_DECL` unless its body sets ``tape.decl`` from the
+#: declaration its row's ``/opensees/decls/rows`` column took (``fix``,
+#: ``mass``, ``recorder``, ``sp_hold``, ``remove_sp``, ``remove_element``,
+#: ``update_material_stage``, ``rayleigh`` and the ``/opensees/commands``
+#: rows).
+_DECL_TAG_ARG: "Mapping[str, tuple[str, int]]" = MappingProxyType({
+    "uniaxialMaterial": ("uniaxialMaterial", 1),
+    "nDMaterial": ("nDMaterial", 1),
+    "section": ("section", 1),
+    "section_open": ("section", 1),
+    "geomTransf": ("geomTransf", 1),
+    "beamIntegration": ("beamIntegration", 1),
+    "timeSeries": ("timeSeries", 1),
+    "pattern_open": ("pattern", 1),
+    "damping": ("damping", 1),
+    "region": ("region", 0),
+})
+
+
 def _noted(
     name: str, fn: "Callable[..., Any]",
 ) -> "Callable[..., Any]":
@@ -6230,6 +6366,7 @@ def _noted(
     """
     glob, _, stage_side = VERBS[name].store.partition("|")
     stage_store = stage_side or glob
+    tagged = _DECL_TAG_ARG.get(name)
 
     @functools.wraps(fn)
     def noted(self: "H5Emitter", *args: Any, **kwargs: Any) -> Any:
@@ -6244,11 +6381,19 @@ def _noted(
         key = (name, stage)
         tape.pending = tape.ordinal.get(key, 0) if store else _NO_ROW
         tape.override = None
+        # A7: no declaration unless the call proves one: a tagged verb by
+        # its ``(kind, tag)`` run, a tagless one by setting ``tape.decl``
+        # to the declaration its row's column took.
+        tape.decl = _NO_DECL
         tape.depth = 1
         try:
             out = fn(self, *args, **kwargs)
         finally:
             tape.depth = 0
+        if tagged is not None:
+            kind, pos = tagged
+            tag = args[pos] if len(args) > pos else kwargs["tag"]
+            tape.decl = self._decl_of_tag(kind, int(tag))
         if blk is None and self._stage_current is not None:
             # ``stage_open``: the call belongs to the stage it opened.
             stage, store = len(self._stage_blocks), stage_store

@@ -5,8 +5,8 @@ A /meta@created_iso dtype=str[utf-8,vlen] shape=() sha1=masked
 A /meta@model_name dtype=str[utf-8,vlen] shape=() sha1=b9d13fa513214f3ee642cfb66b091bb007f26c4c
 A /meta@ndf dtype=<i8 shape=() sha1=774502a842d52103dbae64c3407b1825f50f8587
 A /meta@ndm dtype=<i8 shape=() sha1=774502a842d52103dbae64c3407b1825f50f8587
-A /meta@opensees_schema_version dtype=str[utf-8,vlen] shape=() sha1=e6419062621949da8ccb608dd8f215f07b03ef2c
-A /meta@schema_version dtype=str[utf-8,vlen] shape=() sha1=e6419062621949da8ccb608dd8f215f07b03ef2c
+A /meta@opensees_schema_version dtype=str[utf-8,vlen] shape=() sha1=0277041d85d80d1024635efcf586b61c19063e57
+A /meta@schema_version dtype=str[utf-8,vlen] shape=() sha1=0277041d85d80d1024635efcf586b61c19063e57
 A /meta@sequence_schema_version dtype=str[utf-8,vlen] shape=() sha1=574830b7eb8184cf13569334fc0f251220597a69
 A /meta@snapshot_id dtype=str[utf-8,vlen] shape=() sha1=be5860ffd4409e5cc12add2802a5ecf9c16828e8
 G /meta/lineage
@@ -47,6 +47,7 @@ D /opensees/decl_params/transf_ref/first dtype=<i8 shape=(13,) sha1=13cdbd73137e
 D /opensees/decl_params/transf_ref/key dtype=str[utf-8,vlen] shape=(0,) sha1=65a2eebac8fa31401168b747728fdc731e239202
 D /opensees/decl_params/type dtype=str[utf-8,vlen] shape=(13,) sha1=26a050f8dc8006af9281f9f165a1ecd4f91253fb
 G /opensees/decls
+A /opensees/decls@program_decl dtype=str[utf-8,vlen] shape=() sha1=dfe6570dac36c935ac6278e678f9b6c0af604d5a
 D /opensees/decls/family dtype=str[utf-8,vlen] shape=(13,) sha1=dc7b87f5e31c645ed905b050f39530103b6ff62d
 D /opensees/decls/key dtype=str[utf-8,vlen] shape=(13,) sha1=541c9232c8c632d1e6ba41e057759d4b07ab1b41
 D /opensees/decls/name dtype=str[utf-8,vlen] shape=(13,) sha1=3d03ea077e952b1f7a9ad74b2bb9eda08f37cd21
@@ -95,7 +96,7 @@ A /opensees/patterns/Plain_1@series_ref dtype=str[utf-8,vlen] shape=() sha1=c4d3
 A /opensees/patterns/Plain_1@tag dtype=<i8 shape=() sha1=e88bf9a567e8136424d5b8d1198175906afa6ec6
 A /opensees/patterns/Plain_1@type dtype=str[utf-8,vlen] shape=() sha1=c75caead06e68b9635a793e87bfcd772310f1a18
 D /opensees/patterns/Plain_1/loads dtype={target_kind:str[utf-8,vlen],target:str[utf-8,vlen],forces:<f8[2]} shape=(8,) sha1=f3aeb0ced13bb9148521e07b549e2395a916d3b1
-D /opensees/program dtype={first:<i4,count:<i4,method:<i2,store:<i2,row:<i4,stage:<i4,decl:<i4} shape=(26,) sha1=e5d632e39e552c1e5efb9ffbc9ce24c556a12cb5
+D /opensees/program dtype={first:<i4,count:<i4,method:<i2,store:<i2,row:<i4,stage:<i4,decl:<i4} shape=(27,) sha1=1271ed21406ef7dee66ee1b507cb772fdc96fe49
 A /opensees/program@emit_count dtype=<i4 shape=() sha1=396655494df45873442e2a4bf619307f8dfe3ec7
 A /opensees/program@methods dtype=str[utf-8,vlen] shape=(18,) sha1=41a9911346b77c749d5ef760d306a3ee83e65924
 A /opensees/program@stores dtype=str[utf-8,vlen] shape=(16,) sha1=014e07fb694009ea44b603693140ec797f55b182

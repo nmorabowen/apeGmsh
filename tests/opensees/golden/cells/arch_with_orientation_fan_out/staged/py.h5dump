@@ -5,8 +5,8 @@ A /meta@created_iso dtype=str[utf-8,vlen] shape=() sha1=masked
 A /meta@model_name dtype=str[utf-8,vlen] shape=() sha1=b9d13fa513214f3ee642cfb66b091bb007f26c4c
 A /meta@ndf dtype=<i8 shape=() sha1=0cf6c361d9199e18f10de459b59db53c79258106
 A /meta@ndm dtype=<i8 shape=() sha1=3e8c1c43b68367ba858df7b619c5b31131c2e887
-A /meta@opensees_schema_version dtype=str[utf-8,vlen] shape=() sha1=e6419062621949da8ccb608dd8f215f07b03ef2c
-A /meta@schema_version dtype=str[utf-8,vlen] shape=() sha1=e6419062621949da8ccb608dd8f215f07b03ef2c
+A /meta@opensees_schema_version dtype=str[utf-8,vlen] shape=() sha1=0277041d85d80d1024635efcf586b61c19063e57
+A /meta@schema_version dtype=str[utf-8,vlen] shape=() sha1=0277041d85d80d1024635efcf586b61c19063e57
 A /meta@sequence_schema_version dtype=str[utf-8,vlen] shape=() sha1=574830b7eb8184cf13569334fc0f251220597a69
 A /meta@snapshot_id dtype=str[utf-8,vlen] shape=() sha1=be5860ffd4409e5cc12add2802a5ecf9c16828e8
 G /meta/lineage
@@ -37,6 +37,7 @@ D /opensees/decl_params/transf_ref/first dtype=<i8 shape=(21,) sha1=ef19d0550883
 D /opensees/decl_params/transf_ref/key dtype=str[utf-8,vlen] shape=(1,) sha1=1ba830d5f4d0b84e1c8c4232edaef938c309c349
 D /opensees/decl_params/type dtype=str[utf-8,vlen] shape=(21,) sha1=15ec506e03e19a4179bd2d03861c523540d1e1a1
 G /opensees/decls
+A /opensees/decls@program_decl dtype=str[utf-8,vlen] shape=() sha1=dfe6570dac36c935ac6278e678f9b6c0af604d5a
 D /opensees/decls/family dtype=str[utf-8,vlen] shape=(21,) sha1=bec947bb7d867a61da792cfb11a41b9c8d9ed0b1
 D /opensees/decls/key dtype=str[utf-8,vlen] shape=(21,) sha1=1745d5b6a444abafbdb75a6a28f36268d0563ea5
 D /opensees/decls/name dtype=str[utf-8,vlen] shape=(21,) sha1=02e46bb2b2fa5af0a35d9d3e6876b5d18242a561
@@ -56,7 +57,7 @@ D /opensees/element_meta/elasticBeamColumn/args dtype=<f8 shape=(3, 7) sha1=f628
 D /opensees/element_meta/elasticBeamColumn/fem_eids dtype=<i8 shape=(3,) sha1=25e7e09236251ddbebf0bdd65997bde2657c58e4
 D /opensees/element_meta/elasticBeamColumn/ids dtype=<i8 shape=(3,) sha1=e8696dbc2203bdd77e3297a7b55f8c46f4cc93df
 D /opensees/element_meta/elasticBeamColumn/partition_ids dtype=<i8 shape=(3,) sha1=d5bffc8d9165d2ab22a1648439e3f31f236269ea
-D /opensees/program dtype={first:<i4,count:<i4,method:<i2,store:<i2,row:<i4,stage:<i4,decl:<i4} shape=(34,) sha1=87df8050de8712ad85c3b5509e7f681919b3d41d
+D /opensees/program dtype={first:<i4,count:<i4,method:<i2,store:<i2,row:<i4,stage:<i4,decl:<i4} shape=(35,) sha1=b69a8105fd9474ac667064ec7ff029b3de6dc0d0
 A /opensees/program@emit_count dtype=<i4 shape=() sha1=d1b47d26979673e80ff92a956dc876c066390056
 A /opensees/program@methods dtype=str[utf-8,vlen] shape=(20,) sha1=86130719a22525195bca37d91caf6c6d06e9e8b7
 A /opensees/program@stores dtype=str[utf-8,vlen] shape=(19,) sha1=e692406a3549656690e0059c2983f91d41c7aef2
