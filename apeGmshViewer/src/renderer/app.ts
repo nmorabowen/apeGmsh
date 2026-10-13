@@ -265,8 +265,10 @@ function refusalShown(): boolean {
  * whole-history range at the last step: `elements-1-<topology>` (or
  * `elements-1-refused-<code>` when the file is refused, with the banner);
  * then, drawable and deformable, the deformed shape at scale 10 with the
- * reference ghost (`elements-2-deformed-scale10`); then the first still again
- * at 1280 px. `<out>.elements-<n>-<what>.png`.
+ * reference ghost (`elements-2-deformed-scale10`); V4c2b: then each
+ * node-located draw mode (`elements-3-cell_averaged`, `-node`,
+ * `-node_discrete`); then the first still again at 1280 px.
+ * `<out>.elements-<n>-<what>.png`.
  */
 async function captureElements(settle: (ms?: number) => Promise<unknown>, width: number, height: number) {
   const s0 = store.get();
@@ -311,6 +313,12 @@ async function captureElements(settle: (ms?: number) => Promise<unknown>, width:
     await still("elements-2-deformed-scale10");
     store.dispatch({ type: "setDeform", on: false });
   }
+  // V4c2b: the node-located draw modes, one still each (`elements-3-<mode>`), then back to `cell`.
+  for (const mode of ["cell_averaged", "node", "node_discrete"] as const) {
+    store.dispatch({ type: "setContourGauss", mode });
+    await still(`elements-3-${mode}`);
+  }
+  store.dispatch({ type: "setContourGauss", mode: "cell" });
   if (typeof bridge.captureResize === "function") {
     await bridge.captureResize(1280, height);
     await settle();
