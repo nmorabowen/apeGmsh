@@ -30,7 +30,6 @@ needs_git = pytest.mark.skipif(
 def _subprocess_env() -> dict:
     env = os.environ.copy()
     env["PYTHONPATH"] = str(SRC)
-    env["APEGMSH_QUIET"] = "1"
     env["LADRUNO_OPENSEES_QUIET"] = "1"
     env["GIT_AUTHOR_NAME"] = "studio-test"
     env["GIT_AUTHOR_EMAIL"] = "studio-test@example.invalid"

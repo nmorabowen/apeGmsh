@@ -2,7 +2,6 @@
 Two-storey RC frame: 2x2 bays (6m each), 3.2m storey height,
 elastic analysis with modal and lateral static load.
 """
-import os
 from pathlib import Path
 import numpy as np
 import csv
@@ -17,9 +16,6 @@ out_dir.mkdir(exist_ok=True)
 h5_path = out_dir / "frame_model.h5"
 csv_path = out_dir / "results.csv"
 log_path = out_dir / "log.txt"
-
-# Suppress gmsh output
-os.environ["APEGMSH_QUIET"] = "1"
 
 # Frame geometry parameters
 bay_length = 6.0  # meters

@@ -17,24 +17,67 @@ header records that.
 ``roundtrip_oracle_ledger.txt`` holds one row per differing model:
 
 - Class A: integral floats only (``1e6`` comes back as ``1000000``).
-- Class B: the same lines in another order.
-- Class C: a semantic difference (#1798).
+- Class B: the same lines in another order, once every number is
+  normalised (so float text may differ too), **and** the replayed deck
+  still declares every tag before a line uses it (K2c, #1816).
+- Class C: a semantic difference, cited to its open issue (#1832), or a
+  reorder that uses a tag before its declaration, which aborts the deck
+  (#1814).
 - Class S: the model is not replayable, and replay raises the named error
   (#1797).
 
-A/B/C rows pin the sha256 of the exact normalised diff, and the test also
-re-derives the class. A waived model that starts to match fails, and so does
-one that differs in a new way, which forces the ledger to shrink.
+A/B/C rows pin the sha256 of the exact normalised diff. The class is never
+taken on trust: the oracle derives it from the two decks and fails a row whose
+label differs, so a B row is the mechanical proof that its diff is order and
+float text only, in an order that still declares before it uses. There is no
+override: a label must equal the derived class. A waived model that starts to
+match fails, and so does one that differs in a new way, which forces the
+ledger to shrink.
+
+**Ledger transitions.** The ledger is compared row by row with the copy at
+the merge base with ``origin/main`` (:func:`_ledger_transition_errors`). A row
+may be deleted, or re-pinned to downgrade its class (C to A or B) when a fix
+leaves only order or float text; the derived class is the evidence. A row may
+always escalate (A or B to C) when the oracle learns to see more, and then
+cites the issue that tracks the bug. Every C row cites an issue as ``#NNNN``
+(openness is not checkable offline; the PR lists each one and its state).
+Anything else (an added row, a re-pin that keeps its class) fails as a
+replay regression.
+
+**Declare-before-use (K2c).** Multiset equality cannot see order, and a
+reorder can be fatal: a replay that writes ``uniaxialMaterial Parallel 3 1
+2`` above ``Steel01 1`` aborts in OpenSees (#1814). :func:`_order_violations`
+checks the order statically, from the bridge's own reference metadata, not
+from the Tcl grammar: the archive's ``/opensees/decls`` give each
+declaration's allocator tags, and its ``/opensees/decl_params`` give every
+declaration it references (a :class:`DeclRef` at any depth, so a
+``Parallel``'s components, a ``Fiber`` patch's material, an element's
+``transf`` / ``integration`` / ``damp``). The only grammar the check reads
+is where a declaring line carries its tag (:data:`_TAG_TOKEN`); an
+allocator kind missing from that table raises.
+
+What the static check **cannot** see, because no metadata names it: node
+and element tags used by element connectivity, ``fix``, ``mass``,
+``equationConstraint``, ``region -node/-ele``, loads, recorders and
+``addToParameter``, and every reference inside a ``proc`` body. Those need
+per-command grammar. ``test_roundtrip_oracle_live.py`` is the second net:
+it runs the bridge and replay decks of the B rows in a subprocess, and a B
+row's replay must run wherever its bridge deck runs.
+
 ``N_WAIVED_ORACLE`` may only go down, and must reach 0 by 2026-12-11 (K2,
 KC4).
 """
 from __future__ import annotations
 
 import collections
+import collections.abc
+import dataclasses
 import difflib
 import hashlib
 import importlib
 import re
+import subprocess
+import sys
 import warnings
 from dataclasses import dataclass
 from pathlib import Path
@@ -43,15 +86,20 @@ from typing import Any, Callable
 import pytest
 
 from apeGmsh.opensees import OpenSeesModel, apeSees
+from apeGmsh.opensees.emitter.h5_reader import (
+    DeclarationTable, DeclRef, DeclStruct,
+)
 from tests.opensees.golden import builder
 
 _LEDGER = Path(__file__).with_name("roundtrip_oracle_ledger.txt")
 
 #: ``N_WAIVED_ORACLE`` when the ledger opened (K2a, #1794). It may only go down.
-_CEILING = 36
+_CEILING = 35
 #: The K2 deadline: the ledger is empty by then, or KC4 applies.
 DEADLINE = "2026-12-11"
 _CLASSES = frozenset({"A", "B", "C", "S"})
+#: An issue citation: every C row, and every escalated row, carries one.
+_ISSUE = re.compile(r"#\d{4,}\b")
 
 
 # ---------------------------------------------------------------------------
@@ -121,6 +169,12 @@ CORPUS: tuple[Model, ...] = (
     _m("test_opensees_model_build_targets", "_author_simple_frame_apesees"),
     *(_m("test_reinforce_deck_replay", "_reinforced_ops", bond_by_name=b)
       for b in _B),
+    # K2b (#1795): reinforce ties replayed from the stored rows, after the
+    # fixes; exact matches.
+    *(_m("test_reinforce_deck_replay", "_reinforced_fixed_ops", bond_by_name=b)
+      for b in _B),
+    # ... and after the equationConstraint rows (B5-g's 9b'), as the bridge.
+    _m("test_reinforce_deck_replay", "_reinforced_fixed_ops", equation=True),
 )
 
 
@@ -236,15 +290,124 @@ def _pin(diff: str) -> str:
     return hashlib.sha256(body.encode("utf-8")).hexdigest()[:16]
 
 
-def _classify(bridge: str, replay: str) -> str:
-    """A, B or C for two decks that differ (re-derives the ledger's claim)."""
+# ---------------------------------------------------------------------------
+# Declare-before-use (K2c, #1816)
+# ---------------------------------------------------------------------------
+
+#: Where a declaring deck line carries its tag, by allocator kind (the
+#: ``kind`` of an ``/opensees/decls/tags`` run): ``<kind> <type> <tag>``
+#: is token 2, ``region <tag>`` token 1. ``None``: the kind is allocated
+#: but its deck line carries no tag (``system UmfPack``, ``recorder Node
+#: ...``), so no line declares or references it by tag. An allocator kind
+#: missing here raises: the check never guesses where a tag sits.
+_TAG_TOKEN: dict[str, int | None] = {
+    "uniaxialMaterial": 2, "nDMaterial": 2, "section": 2,
+    "geomTransf": 2, "beamIntegration": 2, "timeSeries": 2,
+    "pattern": 2, "damping": 2, "element": 2,
+    "region": 1,
+    "constraints": None, "numberer": None, "system": None, "test": None,
+    "algorithm": None, "integrator": None, "analysis": None,
+    "recorder": None,
+}
+
+
+def _definition_sites(deck: str) -> dict[tuple[str, int], int]:
+    """``(kind, tag) -> index of the first top-level line declaring it``.
+
+    Only unindented lines count: an indented line is inside a block (a
+    ``Fiber`` section's patches, a pattern body, a ``proc``)."""
+    sites: dict[tuple[str, int], int] = {}
+    for i, line in enumerate(deck.splitlines()):
+        tok = line.split()
+        if not tok or line[0].isspace():
+            continue
+        idx = _TAG_TOKEN.get(tok[0])
+        if idx is None or len(tok) <= idx or not re.fullmatch(r"\d+", tok[idx]):
+            continue
+        sites.setdefault((tok[0], int(tok[idx])), i)
+    return sites
+
+
+def _refs(value: Any) -> set[str]:
+    """Every declaration key a ``decl_params`` value references, at any
+    depth (a tuple of materials, a ``Fiber`` patch's material)."""
+    if isinstance(value, DeclRef):
+        return {value.key}
+    if isinstance(value, DeclStruct):
+        value = value.fields
+    if isinstance(value, collections.abc.Mapping):
+        value = tuple(value.values())
+    if isinstance(value, (tuple, list)):
+        return set().union(*(_refs(v) for v in value))
+    return set()
+
+
+def _order_violations(deck: str, table: DeclarationTable) -> list[str]:
+    """Each use of a tag on a line above the line that declares it.
+
+    For every declaration that references others (``decl_params``), each
+    deck line declaring one of its tags must come after the lines that
+    declare every tag of each referenced declaration. A referenced tag
+    the deck never declares is a violation too. A declaration with
+    references but no tagged deck line raises: the check cannot place its
+    use, and it says so rather than pass it.
+    """
+    sites = _definition_sites(deck)
+    tags: dict[int, list[tuple[str, int]]] = collections.defaultdict(list)
+    for kind, first, count, decl in table.tags:
+        if kind not in _TAG_TOKEN:
+            raise KeyError(
+                f"allocator kind {kind!r} has no _TAG_TOKEN entry: say "
+                "where its deck line carries the tag")
+        if _TAG_TOKEN[kind] is not None:
+            tags[decl].extend((kind, t) for t in range(first, first + count))
+    index = {d.key: i for i, d in enumerate(table.decls)}
+    out: list[str] = []
+    for i, decl in enumerate(table.decls):
+        refs = set().union(*(_refs(p.params) for p in table.params.get(i, ())))
+        if not refs:
+            continue
+        if not tags[i]:
+            raise AssertionError(
+                f"{decl.key} references {sorted(refs)} but declares no "
+                "tagged deck line: the order check cannot place its use")
+        for kind, tag in tags[i]:
+            if (kind, tag) not in sites:
+                raise AssertionError(
+                    f"{decl.key}: no top-level deck line declares {kind} "
+                    f"{tag}; _TAG_TOKEN and the deck disagree")
+            use = sites[(kind, tag)]
+            for ref in sorted(refs):
+                for rkind, rtag in tags[index[ref]]:
+                    at = sites.get((rkind, rtag))
+                    if at is None or at > use:
+                        where = ("never" if at is None
+                                 else f"on line {at + 1}")
+                        out.append(
+                            f"line {use + 1} ({kind} {tag}) uses {rkind} "
+                            f"{rtag}, declared {where}")
+    return out
+
+
+def _deck_order_violations(deck: str, archive: Path) -> list[str]:
+    table = OpenSeesModel.from_h5(str(archive)).declarations
+    assert table is not None, f"{archive} carries no /opensees/decls"
+    return _order_violations(deck, table)
+
+
+def _classify(bridge: str, replay: str, order_ok: bool = True) -> str:
+    """A, B or C for two decks that differ (re-derives the ledger's claim).
+
+    ``order_ok`` is the replay's declare-before-use verdict: a reorder
+    that uses a tag before declaring it is C, never B (K2c, #1816).
+    """
     def norm(t: str) -> list[str]:
         return [_NUMBER.sub(lambda m: repr(float(m.group())), ln)
                 for ln in t.splitlines()]
     nb, nr = norm(bridge), norm(replay)
     if nb == nr:
         return "A"
-    if collections.Counter(nb) == collections.Counter(nr):
+    if collections.Counter(nb) == collections.Counter(nr) and order_ok:
         return "B"
     return "C"
 
@@ -257,12 +420,21 @@ def _check(model: Model, waiver: Waiver | None, out_dir: Path) -> None:
         with pytest.raises(exc_type, match=re.escape(text)):
             OpenSeesModel.from_h5(str(archive))
         return
-    bridge, replay = _emit_and_replay(model, out_dir)
+    bridge, archive = _emit(model, out_dir)
+    replay = _replay(archive)
+    # The bridge deck runs, so it must pass the order check: a bridge
+    # violation is a false positive of the check (or a bridge bug).
+    bridge_bad = _deck_order_violations(bridge, archive)
+    assert not bridge_bad, (
+        f"{model.id}: the bridge deck fails declare-before-use:\n"
+        + "\n".join(bridge_bad))
+    order_bad = _deck_order_violations(replay, archive)
+    klass = _classify(bridge, replay, not order_bad)
     diff = _diff(bridge, replay)
     if waiver is None:
         assert bridge == replay, (
             f"{model.id}: the replayed deck differs from the bridge deck "
-            f"(class {_classify(bridge, replay)}, pin {_pin(diff)}); this is "
+            f"(class {klass}, pin {_pin(diff)}); this is "
             f"a replay regression, not a new waiver:\n{diff}"
         )
         return
@@ -270,15 +442,92 @@ def _check(model: Model, waiver: Waiver | None, out_dir: Path) -> None:
         f"{model.id} now round-trips byte for byte: delete its ledger row "
         "and lower N_WAIVED_ORACLE"
     )
+    assert klass == waiver.klass, (
+        f"{model.id}: the ledger says class {waiver.klass}, the diff is "
+        f"class {klass}"
+        + (";\nthe replay uses tags before declaring them:\n"
+           + "\n".join(order_bad) if order_bad else "")
+        + f"\n{diff}"
+    )
     assert _pin(diff) == waiver.pin, (
         f"{model.id} differs in a new way (pin {_pin(diff)}, ledger "
-        f"{waiver.pin}); a fix that changes the diff updates its row only "
-        f"when the row shrinks to nothing:\n{diff}"
+        f"{waiver.pin}); a fix that changes the diff deletes its row, or "
+        f"re-pins it only to downgrade its class (C to A or B):\n{diff}"
     )
-    assert _classify(bridge, replay) == waiver.klass, (
-        f"{model.id}: the ledger says class {waiver.klass}, the diff is "
-        f"class {_classify(bridge, replay)}"
-    )
+
+
+# ---------------------------------------------------------------------------
+# The carve-out, enforced against the ledger at the merge base
+# ---------------------------------------------------------------------------
+
+_REPO = Path(__file__).resolve().parents[3]
+_LEDGER_REL = "tests/opensees/golden/roundtrip_oracle_ledger.txt"
+#: Class changes that need no evidence beyond the derived class: a semantic
+#: row downgraded once its fix leaves only order or float text.
+_DOWNGRADES = frozenset({("C", "A"), ("C", "B")})
+#: Escalations: the oracle learned to see a bug its old rule missed (K2c).
+_ESCALATIONS = frozenset({("A", "C"), ("B", "C")})
+
+
+def _cited_issues(reason: str) -> frozenset[str]:
+    """The ``#NNNN`` issue numbers a row's reason cites."""
+    return frozenset(_ISSUE.findall(reason))
+
+
+def _ledger_transition_errors(
+    base: dict[str, Waiver], head: dict[str, Waiver],
+) -> list[str]:
+    """Each change from ``base`` to ``head`` the ledger rules forbid.
+
+    A row may stay as it is (its reason text may change), be deleted, be
+    re-pinned from class C to A or B (the oracle's derived class is the
+    evidence), or escalate from A or B to C, citing the issue that tracks
+    the bug. Anything else is a replay regression: an added row, or a re-pin
+    that keeps its class.
+    """
+    errors: list[str] = []
+    for model, w in head.items():
+        b = base.get(model)
+        if b is None:
+            errors.append(f"{model}: added row (class {w.klass}); a replay "
+                          "regression, not a new waiver")
+            continue
+        if (w.klass, w.pin) == (b.klass, b.pin):
+            continue
+        if (b.klass, w.klass) in _DOWNGRADES:
+            continue
+        if (b.klass, w.klass) in _ESCALATIONS:
+            if not _cited_issues(w.reason):
+                errors.append(
+                    f"{model}: escalated {b.klass} -> C without citing the "
+                    "issue that tracks it (#NNNN)")
+            continue
+        errors.append(
+            f"{model}: re-pinned {b.klass} {b.pin} -> {w.klass} {w.pin}; "
+            "a replay regression: a re-pin may only downgrade C to A or B, "
+            "or escalate A or B to C")
+    return errors
+
+
+def _git(*args: str) -> str:
+    return subprocess.run(
+        ["git", "-C", str(_REPO), *args],
+        capture_output=True, text=True, check=True,
+    ).stdout
+
+
+def _base_ledger_text() -> str | None:
+    """The ledger at the merge base of ``HEAD`` and ``origin/main``.
+
+    ``None`` when the base predates the ledger. The suite lane checks out
+    the full history (``fetch-depth: 0``), so a missing ``git`` or
+    ``origin/main`` fails here rather than skipping the check.
+    """
+    base = _git("merge-base", "HEAD", "refs/remotes/origin/main").strip()
+    listed = _git("ls-tree", "--name-only", base, "--", _LEDGER_REL).strip()
+    if not listed:
+        return None
+    return _git("show", f"{base}:{_LEDGER_REL}")
 
 
 # ---------------------------------------------------------------------------
@@ -321,6 +570,85 @@ def test_ledger_only_shrinks() -> None:
     assert len({w.model for w in rows}) == len(rows), "duplicate ledger rows"
 
 
+def test_ledger_changes_only_by_the_carve_out() -> None:
+    """Against the merge base: rows are deleted, downgraded or escalated."""
+    text = _base_ledger_text()
+    if text is None:
+        return  # the ledger is new on this branch: nothing to compare to
+    base_n, base_rows, _bh = _read_ledger(text)
+    n, rows, _h = _read_ledger()
+    assert n <= base_n, f"N_WAIVED_ORACLE rose from {base_n} to {n}"
+    base = {w.model: w for w in base_rows}
+    head = {w.model: w for w in rows}
+    errors = _ledger_transition_errors(base, head)
+    assert not errors, "\n".join(errors)
+
+
+_W = Waiver  # short alias for the carve-out cases below
+
+
+@pytest.mark.parametrize(("base", "head", "ok"), [
+    (_W("m", "C", "1" * 16, "#1798 item 1"), _W("m", "B", "2" * 16, "r"), True),
+    (_W("m", "C", "1" * 16, "#1798 item 1"), _W("m", "A", "2" * 16, "r"), True),
+    (_W("m", "B", "1" * 16, "r"), _W("m", "B", "1" * 16, "new reason"), True),
+    (_W("m", "B", "1" * 16, "r"), _W("m", "C", "1" * 16, "#1814: x"), True),
+    (_W("m", "A", "1" * 16, "r"), _W("m", "C", "2" * 16, "#1814: x"), True),
+    (_W("m", "B", "1" * 16, "r"), _W("m", "C", "1" * 16, "order"), False),
+    (_W("m", "C", "1" * 16, "#1798 item 1"), _W("m", "C", "2" * 16, "#1814"),
+     False),
+    (_W("m", "B", "1" * 16, "r"), _W("m", "B", "2" * 16, "r"), False),
+    (_W("m", "B", "1" * 16, "r"), _W("m", "A", "2" * 16, "r"), False),
+    (_W("m", "S", "KeyError:nodes", "r"), _W("m", "B", "2" * 16, "r"), False),
+], ids=["C-to-B", "C-to-A", "reason-only", "B-to-C", "A-to-C",
+        "B-to-C-uncited", "C-to-C", "B-to-B", "B-to-A", "S-to-B"])
+def test_the_ledger_allows_downgrades_and_cited_escalations(
+    base: Waiver, head: Waiver, ok: bool,
+) -> None:
+    errors = _ledger_transition_errors({"m": base}, {"m": head})
+    assert (not errors) is ok, errors
+
+
+_HELD = next(m for m in CORPUS if m.id == "test_h5_decl_params::_broad_frame")
+
+
+def test_broad_frame_derives_c_with_no_override(tmp_path: Path) -> None:
+    """#1814: the derivation alone yields C for ``_broad_frame``. Its line
+    multisets match, so only the declare-before-use check makes it C."""
+    bridge, archive = _emit(_HELD, tmp_path)
+    replay = _replay(archive)
+    bad = _deck_order_violations(replay, archive)
+    assert ("line 5 (uniaxialMaterial 3) uses uniaxialMaterial 1, "
+            "declared on line 7") in bad
+    assert _classify(bridge, replay, order_ok=True) == "B"
+    assert _classify(bridge, replay, order_ok=not bad) == "C"
+    (tmp_path / "check").mkdir()
+    _check(_HELD, _waivers()[_HELD.id], tmp_path / "check")
+
+
+def test_a_label_must_equal_the_derived_class(tmp_path: Path) -> None:
+    """No override either way: a C label over a derived B fails (the
+    interim override #1812 had is gone), as a B label over a C does."""
+    w = _waivers()["test_h5_damping::_build_with_element_damp"]
+    assert w.klass == "B"
+    model = next(m for m in CORPUS if m.id == w.model)
+    raised = Waiver(w.model, "C", w.pin, "#1814: hand-held at C")
+    with pytest.raises(AssertionError,
+                       match="the ledger says class C, the diff is class B"):
+        _check(model, raised, tmp_path)
+
+
+def test_an_added_row_fails_the_carve_out() -> None:
+    errors = _ledger_transition_errors(
+        {}, {"m": _W("m", "B", "1" * 16, "r")})
+    assert len(errors) == 1 and "added row" in errors[0]
+    assert "replay regression" in errors[0]
+
+
+def test_a_deleted_row_passes_the_carve_out() -> None:
+    assert _ledger_transition_errors(
+        {"m": _W("m", "C", "1" * 16, "r")}, {}) == []
+
+
 def test_every_row_names_a_corpus_model() -> None:
     corpus = {m.id for m in CORPUS}
     orphans = [w.model for w in _read_ledger()[1] if w.model not in corpus]
@@ -330,7 +658,9 @@ def test_every_row_names_a_corpus_model() -> None:
 def test_rows_cite_their_issue() -> None:
     for w in _read_ledger()[1]:
         if w.klass == "C":
-            assert re.search(r"#1798 item [123]\b", w.reason), w
+            assert _cited_issues(w.reason), f"C row cites no #NNNN: {w}"
+            if "#1798" in w.reason:
+                assert re.search(r"#1798 item [123]\b", w.reason), w
         if w.klass == "S":
             assert "#1797" in w.reason and w.pin in _S_ERRORS, w
         if w.klass in "ABC":
@@ -350,6 +680,8 @@ _PASSING = next(m for m in CORPUS if m.id ==
                 "test_h5_commands_program::_frame[rayleigh=False,modal=False]")
 _WAIVED_A = next(m for m in CORPUS if m.id ==
                  "test_h5_decls::_flat_frame[named=False]")
+_SEMANTIC = next(m for m in CORPUS if m.id ==
+                 "test_h5_partitions_roundtrip::_build_bridge")
 
 
 def test_a_differing_model_with_no_row_fails(tmp_path: Path) -> None:
@@ -363,8 +695,97 @@ def test_a_stale_row_fails(tmp_path: Path) -> None:
         _check(_PASSING, bogus, tmp_path)
 
 
+def test_a_b_label_on_a_semantic_diff_fails(tmp_path: Path) -> None:
+    """The class is derived: a C diff labelled B fails, even with its pin."""
+    w = _waivers()[_SEMANTIC.id]
+    assert w.klass == "C"
+    fake = Waiver(w.model, "B", w.pin, w.reason)
+    with pytest.raises(AssertionError, match="the ledger says class B, the diff is class C"):
+        _check(_SEMANTIC, fake, tmp_path)
+
+
 def test_a_changed_diff_fails(tmp_path: Path) -> None:
     w = _waivers()[_WAIVED_A.id]
     moved = Waiver(w.model, w.klass, "f" * 16, w.reason)
     with pytest.raises(AssertionError, match="differs in a new way"):
         _check(_WAIVED_A, moved, tmp_path)
+
+
+# Declare-before-use revert proofs (K2c, #1816).
+
+_DAMPED = next(m for m in CORPUS if m.id ==
+               "test_h5_damping::_build_with_element_damp")
+
+
+def _move(deck: str, line: str, above: str) -> str:
+    """``deck`` with the line starting ``line`` moved just above the line
+    starting ``above``."""
+    lines = deck.splitlines()
+    (moved,) = [ln for ln in lines if ln.startswith(line)]
+    lines.remove(moved)
+    at = next(i for i, ln in enumerate(lines) if ln.startswith(above))
+    return "\n".join(lines[:at] + [moved] + lines[at:])
+
+
+def test_a_fatal_reorder_is_class_c_and_a_benign_one_stays_b(
+        tmp_path: Path) -> None:
+    """The element uses ``damping 1`` and ``geomTransf 1``: above them it
+    aborts the deck (C); swapping the two declarations is harmless (B)."""
+    bridge, archive = _emit(_DAMPED, tmp_path)
+    table = OpenSeesModel.from_h5(str(archive)).declarations
+    assert table is not None
+    assert _order_violations(bridge, table) == []
+
+    fatal = _move(bridge, "element ", above="damping ")
+    bad = _order_violations(fatal, table)
+    assert bad == [
+        "line 5 (element 2) uses damping 1, declared on line 6",
+        "line 5 (element 2) uses geomTransf 1, declared on line 7",
+    ]
+    assert _classify(bridge, fatal, not bad) == "C"
+
+    benign = _move(bridge, "geomTransf ", above="damping ")
+    assert benign != bridge
+    assert _order_violations(benign, table) == []
+    assert _classify(bridge, benign, True) == "B"
+
+    # A referenced tag the deck never declares is a violation too.
+    dropped = "\n".join(
+        ln for ln in bridge.splitlines() if not ln.startswith("damping "))
+    assert _order_violations(dropped, table) == [
+        "line 6 (element 2) uses damping 1, declared never"]
+
+
+def test_an_unknown_allocator_kind_raises(tmp_path: Path) -> None:
+    _bridge, archive = _emit(_DAMPED, tmp_path)
+    table = OpenSeesModel.from_h5(str(archive)).declarations
+    assert table is not None
+    odd = dataclasses.replace(table, tags=(*table.tags, ("frobnicator", 1, 1, 0)))
+    with pytest.raises(KeyError, match="frobnicator"):
+        _order_violations(_bridge, odd)
+
+
+_FATAL_REORDERS = [m for m in CORPUS
+                   if (w := _waivers().get(m.id)) is not None
+                   and w.klass == "C" and "#1814" in w.reason]
+
+
+def test_some_row_is_a_fatal_reorder() -> None:
+    assert _FATAL_REORDERS, "no C row cites #1814: retire this proof with it"
+
+
+@pytest.mark.parametrize("model", _FATAL_REORDERS,
+                         ids=[m.id for m in _FATAL_REORDERS])
+def test_without_the_order_check_a_fatal_reorder_fails_its_pin(
+        model: Model, tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch) -> None:
+    """Revert proof: with declare-before-use disabled, each #1814 row reads
+    as class B again, and its committed C row fails."""
+    (tmp_path / "on").mkdir()
+    (tmp_path / "off").mkdir()
+    _check(model, _waivers()[model.id], tmp_path / "on")
+    monkeypatch.setattr(
+        sys.modules[__name__], "_deck_order_violations", lambda *a: [])
+    with pytest.raises(AssertionError,
+                       match="the ledger says class C, the diff is class B"):
+        _check(model, _waivers()[model.id], tmp_path / "off")

@@ -141,7 +141,8 @@ def coupling_definition(
                 raise AssemblyError(f"plane_normal={normal!r} is zero.")
             return c.RigidDiaphragmDef(
                 master_label=master, slave_label=slave, name=name,
-                master_point=_point(p["master_point"], "master_point"),
+                master_point=(None if p["master_point"] is None
+                              else _point(p["master_point"], "master_point")),
                 plane_normal=normal,
                 constrained_dofs=_required_dofs(
                     p["constrained_dofs"], "constrained_dofs"),

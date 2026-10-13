@@ -88,6 +88,18 @@ with ops.pattern.Plain(series=ts) as p:
 and `p.load(...)` mix freely in the same pattern — import the session cases you
 want and add ad-hoc bridge loads alongside.
 
+`p.load` has no `label=`. To load the one node a geometry label names, a point
+labelled `tip` for example, select the node with `ops.nodes.one(label=...)` and
+pass it as `node=`:
+
+```python
+with ops.pattern.Plain(series=ts) as p:
+    p.load(node=ops.nodes.one(label="tip"), forces=(0.0, 0.0, -5e4))
+```
+
+`ops.nodes.one` raises when the label picks no node or several, so the force
+lands on exactly the node the label names, never on a group by accident.
+
 ## See also
 
 - Concept: [Loads guide](../concepts/loads-and-masses.md) — point, line, surface, body loads and the tributary/consistent reduction

@@ -311,10 +311,13 @@ def replay_reinforce_ties(
     """Write ``fem``'s reinforce ties, numbering them from ``tags``.
 
     The one standalone writer of the MP-element family, for the deck
-    replay alone (the ``reinforce-tie-replay`` waiver of the tag-law
-    ledger): a replayed deck stores no tie record, so the replay plans
-    the ties from its own allocator through :func:`plan_mp_elements`, the
-    loop the tag plan runs. Every other writer reads a :class:`TagPlan`.
+    replay of an archive below opensees 2.29.0 alone (the
+    ``pre-2-29-reinforce-tie-replay`` waiver of the tag-law ledger): such
+    an archive stores no tie record, so the replay plans the ties from its
+    own allocator through :func:`plan_mp_elements`, the loop the tag plan
+    runs. A 2.29.0 archive stores every tie, and its replay never calls
+    this (the version gate in ``compose._replay_into``). Every other
+    writer reads a :class:`TagPlan`.
     """
     ties = reinforce_tie_records(fem)
     if not ties:

@@ -579,7 +579,28 @@ class H5RefusedVerb(NotImplementedError):
 #:     re-resolves a label. No path or dtype changes; ``decl_params`` is
 #:     hash-excluded. A 2.28 reader opens 2.12 through 2.28; a 2.27.x
 #:     reader REFUSES a 2.28.x file.
-SCHEMA_VERSION: str = "2.28.0"
+#:   * 2.29.0 — K2b (ADR 0114 Q3): additive — new optional
+#:     ``/opensees/constraints/embeddedRebar`` group, one row per
+#:     ``g.reinforce`` ``LadrunoEmbeddedRebar`` tie the build wrote,
+#:     formerly a ``ledger`` verb: ``ele_tag`` (int64, the planned tie
+#:     tag), ``name`` (the ``mp_constraint_comment`` label, ``""`` when
+#:     none) and the ragged positional arguments as in
+#:     ``/opensees/commands`` (``arg_offsets``, ``args``, ``args_str``,
+#:     ``arg_kinds``). A replay of a 2.29 archive writes the stored rows
+#:     and mints no tie tag; one of an older archive keeps re-deriving
+#:     the ties from the neutral zone (``compose.py``, behind
+#:     :data:`~apeGmsh.opensees.emitter.h5_reader.EMBEDDED_REBAR_FROM`).
+#:     Hashed: a reinforced archive hashes differently once at this
+#:     minor; a file without a tie is unchanged. A 2.29 reader opens 2.12
+#:     through 2.29; a 2.28.x reader REFUSES a 2.29.x file.
+#:   * 2.30.0 — R3-S5 (maintainer ruling D7): additive — the
+#:     ``decl_params`` rows of the typed ``recorder.Node`` /
+#:     ``recorder.Element`` gain a ``precision`` field, the ``-precision N``
+#:     significant digits (``null`` when unset, and then the deck carries
+#:     no flag). No path or dtype changes; ``decl_params`` is
+#:     hash-excluded. A 2.30 reader opens 2.12 through 2.30; a 2.29.x
+#:     reader REFUSES a 2.30.x file.
+SCHEMA_VERSION: str = "2.30.0"
 
 #: Oldest opensees-zone minor the reader opens (ADR 0113 (#1303)). The
 #: zone's last non-additive minor is 2.11.0, the 0-based rank flip, but
@@ -1584,6 +1605,20 @@ class _CommandRecord:
     names: tuple[str, ...]
 
 
+@dataclass(frozen=True, slots=True)
+class _EmbeddedRebarRecord:
+    """One ``/opensees/constraints/embeddedRebar`` row (K2b, 2.29.0).
+
+    ``args`` are the tie's positional arguments after the tag, as
+    ``embedded_rebar_args`` built them, each keeping its Python type
+    (``int``, ``float`` or ``str``) so a replayed line is byte-identical.
+    """
+
+    ele_tag: int
+    args: tuple[int | float | str, ...]
+    name: str
+
+
 def _command_kind(method: str, value: object) -> int:
     """The ``arg_kinds`` code of one command argument; refuse the rest."""
     if isinstance(value, bool) or not isinstance(value, (int, float, str)):
@@ -1773,16 +1808,12 @@ class H5Emitter:
         # constraint emit (INV-2).
         self._pending_mp_name: str = ""
 
-        # g.reinforce (ADR 20 / R2b): LadrunoEmbeddedRebar ties are not
-        # written into the OpenSees DECK zone (``/opensees/...``) — the
-        # dedicated ``reinforceTie`` deck record + deck-replay is a
-        # documented follow-on (ADR 0067 P5.1 "A4 full"). The ties are
-        # NOT lost: the neutral zone persists them (#706) and travels in
-        # the same ``apeSees.h5`` archive. The emitter no-ops each deck
-        # tie and counts it (observability only — no warning, since the
-        # neutral round-trip is complete). See ``embedded_rebar``.
-        #
-        # ADR 0114 D1: every such drop goes through :meth:`_ledger`, which
+        # g.reinforce (ADR 20 / R2b): the LadrunoEmbeddedRebar ties the
+        # build wrote, archived from 2.29.0 (K2b) under
+        # ``/opensees/constraints/embeddedRebar``. See ``embedded_rebar``.
+        self._embedded_rebars: list[_EmbeddedRebarRecord] = []
+
+        # ADR 0114 D1: every drop of a ``ledger`` verb goes through :meth:`_ledger`, which
         # counts it here by verb. The ``ledger`` rows of ``VERBS`` are the
         # only verbs that may reach it (K2's xfail ledger; shrink-only).
         # The equation route (ADR 0068, Open item 4 RESOLVED) is one of
@@ -2080,12 +2111,8 @@ class H5Emitter:
         """
         return MappingProxyType(dict(self._ledger_counts))
 
-    # The four counters tests read, derived from the ledger so the two
+    # The three counters tests read, derived from the ledger so the two
     # cannot drift.
-    @property
-    def _skipped_reinforce_ties(self) -> int:
-        return self._ledger_counts["embedded_rebar"]
-
     @property
     def _skipped_embed_ties(self) -> int:
         return self._ledger_counts["embedded_node"]
@@ -2465,24 +2492,33 @@ class H5Emitter:
     def embedded_rebar(
         self, ele_tag: int, *args: int | float | str,
     ) -> None:
-        # g.reinforce (ADR 20 / R2b): the OpenSees *deck* zone
-        # (``/opensees/...``) does not (yet) carry a dedicated
-        # ``reinforceTie`` record — that follow-on (ADR 0067 P5.1 "A4
-        # full": ``/opensees/constraints/reinforceTie`` + h5_reader
-        # reconstruction + ``OpenSeesModel.build`` deck-replay) is a
-        # documented open item (see ``internal_docs/plan_rebar_p5.md``).
-        #
-        # This is NOT a silent data loss: as of ADR 0067 P5.1 (#706) the
-        # NEUTRAL zone persists every tie, and ``apeSees(fem).h5(path)``
-        # writes that neutral zone into the same archive — so a reinforced
-        # model.h5 round-trips its reinforcement via ``FEMData.from_h5`` →
-        # ``apeSees(fem).tcl()/py()/run()`` (the forward emit re-runs
-        # ``emit_reinforce_ties``). Hence no deviation warning here; just
-        # no-op the deck record and consume any latched mp comment so it
-        # can't leak onto the next real MP record.
-        del ele_tag, args
-        self._consume_pending_mp_name()
-        self._ledger("embedded_rebar")
+        # g.reinforce (ADR 20 / R2b): one ``/opensees/constraints/
+        # embeddedRebar`` row per tie (K2b, schema 2.29.0), its planned
+        # tag and the arguments ``embedded_rebar_args`` built, so a replay
+        # writes the tie from the archive and mints no tag. Global only:
+        # the bridge writes every tie before the stages, and the archive
+        # has no stage store for one. Every argument is checked here, so a
+        # refusal happens at emit, before any group is written.
+        if self._stage_current is not None:
+            raise RuntimeError(
+                "H5Emitter.embedded_rebar: a global-only verb (VERBS scope "
+                "'global') was emitted inside stage "
+                f"{self._stage_current.name!r}; the archive has no stage "
+                "store for a reinforce tie."
+            )
+        values = tuple(args)
+        for value in values:
+            _command_kind("embedded_rebar", value)
+        name = self._consume_pending_mp_name()
+        rec = _EmbeddedRebarRecord(
+            ele_tag=int(ele_tag), args=values, name=name)
+        # A partitioned emit writes each tie on the rank that owns it; a
+        # replica of the same line is captured once (P5.0a).
+        if self._partition_dup(
+            ("embedded_rebar", rec.ele_tag, rec.args, rec.name),
+        ):
+            return
+        self._embedded_rebars.append(rec)
 
     def embedded_node(
         self, ele_tag: int, *args: int | float | str,
@@ -5282,8 +5318,17 @@ class H5Emitter:
         methods: list[str] = []
         stores: list[str] = []
         rows: list[tuple[int, ...]] = []
+        # K2b: a source below 2.29.0 wrote its reinforce ties to no store
+        # (a ``ledger`` verb); the rewrite stores them, so their runs link
+        # to the store as a 2.29 writer's would, in call order.
+        rebar_store = VERBS["embedded_rebar"].store
+        rebar_row = 0
         for run in runs:
             method, store = str(run.method), str(run.store)
+            row = int(run.row)
+            if method == "embedded_rebar" and not store:
+                store, row = rebar_store, rebar_row
+                rebar_row += int(run.count)
             if method not in methods:
                 methods.append(method)
             if store and store not in stores:
@@ -5291,7 +5336,7 @@ class H5Emitter:
             rows.append((
                 int(run.first), int(run.count), methods.index(method),
                 stores.index(store) if store else _NO_ROW,
-                int(run.row), int(run.stage), int(run.decl),
+                row, int(run.stage), int(run.decl),
             ))
         self._program_restored = (
             tuple(rows), tuple(methods), tuple(stores),
@@ -5801,7 +5846,7 @@ class H5Emitter:
         has_any = (
             self._equal_dofs or self._rigid_links
             or self._rigid_diaphragms or self._embedded_nodes
-            or self._phantom_node_tags
+            or self._phantom_node_tags or self._embedded_rebars
         )
         if not has_any:
             return
@@ -5824,6 +5869,51 @@ class H5Emitter:
             self._write_constraints_rigid_diaphragm(constraints)
         if self._embedded_nodes:
             self._write_constraints_embedded_node(constraints)
+        if self._embedded_rebars:
+            self._write_constraints_embedded_rebar(constraints)
+
+    def _write_constraints_embedded_rebar(self, parent: Any) -> None:
+        """Persist ``/opensees/constraints/embeddedRebar`` (K2b, 2.29.0).
+
+        One row per tie: ``ele_tag`` (int64), ``name`` and the ragged
+        arguments ``arg_offsets`` (n + 1) over ``args`` (f8, NaN for a
+        string), ``args_str`` (``""`` for a number) and ``arg_kinds``
+        (0 int, 1 float, 2 str), the ``/opensees/commands`` encoding.
+        Written only when a tie exists, so other files keep their bytes.
+        """
+        import h5py
+        import numpy as np
+
+        str_dt = h5py.string_dtype(encoding="utf-8")
+        recs = self._embedded_rebars
+        offsets = [0]
+        nums: list[float] = []
+        strs: list[str] = []
+        kinds: list[int] = []
+        for rec in recs:
+            for value in rec.args:
+                kind = _command_kind("embedded_rebar", value)
+                kinds.append(kind)
+                if kind == _KIND_STR:
+                    nums.append(float("nan"))
+                    strs.append(str(value))
+                else:
+                    nums.append(float(value))
+                    strs.append("")
+            offsets.append(len(kinds))
+        g = parent.create_group("embeddedRebar")
+        g.create_dataset(
+            "ele_tag",
+            data=np.asarray([r.ele_tag for r in recs], dtype=np.int64))
+        g.create_dataset(
+            "name", data=np.array([r.name for r in recs], dtype=object),
+            dtype=str_dt)
+        g.create_dataset(
+            "arg_offsets", data=np.asarray(offsets, dtype=np.int32))
+        g.create_dataset("args", data=np.asarray(nums, dtype=np.float64))
+        g.create_dataset(
+            "args_str", data=np.array(strs, dtype=object), dtype=str_dt)
+        g.create_dataset("arg_kinds", data=np.asarray(kinds, dtype=np.int8))
 
     def _write_constraints_equal_dof(
         self, parent: Any,

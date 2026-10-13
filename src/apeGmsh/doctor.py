@@ -629,11 +629,10 @@ def _probe_env() -> dict[str, str]:
     """Environment for subprocess probes.
 
     Pins PYTHONPATH so the child imports the *same* apeGmsh tree as the
-    running doctor (matters in git worktrees), and silences the import
-    banners so stdout stays parseable.
+    running doctor (matters in git worktrees), and silences the Ladruno
+    fork's splash banner so stdout stays parseable.
     """
     env = dict(os.environ)
-    env["APEGMSH_QUIET"] = "1"
     env["LADRUNO_OPENSEES_QUIET"] = "1"
     _pkg = _import_apegmsh()
     if _pkg is not None:
@@ -780,7 +779,6 @@ def _check_shared_packages() -> list[DoctorFinding]:
     # JSON is the last thing on stdout.
     env = dict(os.environ)
     env["LADRUNO_OPENSEES_QUIET"] = "1"
-    env["APEGMSH_QUIET"] = "1"
 
     mine: dict[str, str | None] = {}
     for name in packages:

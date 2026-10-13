@@ -410,6 +410,12 @@ class _Structured:
         coarsen a refused curve anyway, say so explicitly with
         ``set_transfinite_curve(curve, n_nodes=2)``.
 
+        The by-name refusal applies to ties into a **surface or volume**
+        host.  A curve tied only to another curve (for example
+        ``g.constraints.embedded('bm', 'stiff')`` or a ``tie`` between
+        two curves) is accepted by name and coarsened; the no-argument
+        form warns with :class:`CurvesSkippedWarning` and skips it.
+
         **Order:** the definitions are read when the helper is called,
         so call it **after every tie is declared**.  A tie declared
         later does not undo the two-node constraint already set.

@@ -544,7 +544,6 @@ def test_quiet_env_keeps_mcp_stdout_clean() -> None:
 
     env = os.environ.copy()
     env["LADRUNO_OPENSEES_QUIET"] = "1"
-    env["APEGMSH_QUIET"] = "1"
     proc = subprocess.run(
         [sys.executable, "-c", "import apeGmsh.studio._mcp"],
         capture_output=True,

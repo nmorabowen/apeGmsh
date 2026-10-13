@@ -134,8 +134,32 @@ with ops.stage(name="push") as s:
     with s.pattern(series=ops.timeSeries.Linear()) as p:
         p.from_model("live")
     s.analysis(...)
-    s.run(n_increments=10, dt=0.1)
+    s.run(n_increments=10)
 ```
+
+Stages that share every chain slot but the integrator state them once with
+`ops.analysis.chain(...)` and pass that value to each stage. The chain is a
+plain value, not a primitive, so the deck is the same as with every slot
+spelled out:
+
+```python
+solver = ops.analysis.chain(
+    test=ops.test.NormDispIncr(tol=1e-8, max_iter=50),
+    algorithm=ops.algorithm.Newton(),
+    constraints=ops.constraints.Plain(),
+    numberer=ops.numberer.RCM(),
+    system=ops.system.UmfPack(),
+    analysis=ops.analysis.Static(),
+)
+with ops.stage(name="gravity") as s:
+    ...
+    s.analysis(solver, integrator=ops.integrator.LoadControl(dlam=0.1))
+    s.run(n_increments=10)
+```
+
+A chain plus a keyword for a slot it already holds is refused. The test may
+be left out only for `ops.algorithm.Linear()`, which solves once per step
+and never reads it; a strategy ladder (`s.run(strategy=)`) still needs one.
 
 Loads from a finished stage are frozen (`loadConst -time 0.0`) before the next
 begins, and the pseudo-time restarts at 0. A stage's series is read on that
@@ -175,17 +199,21 @@ ops.pattern('Plain', 2, 2)
   every increment raises `SeriesOutsideStageWindowWarning`.
 - **The analysis chain is wiped and re-emitted.** `wipeAnalysis` discards the
   test, algorithm, integrator, constraints handler, numberer, system and
-  analysis; every stage writes all seven again from its own `s.analysis(...)`.
+  analysis; every stage writes them all again from its own `s.analysis(...)`.
   Nothing carries over, so a stage that omits one is an error, not a default.
+  The one exception is the test of a `Linear` stage, which is not written.
 - **Domain state and recorders are kept.** Nodes, elements, fixes, the
   displacements reached and the recorders declared once at the top of the deck
   survive the boundary. `wipeAnalysis` does not touch the domain, and the
   recorders are not re-emitted.
-- **Under `Static`, `s.run(dt=)` has no effect.** The deck still writes
-  `ops.analyze(1, <dt>)`, but a static analysis ignores it: the
-  `LoadControl` `dlam` alone sets the step, so a stage with `dlam=0.25` and
-  `n_increments=4` reaches `t0 + 1.0` whatever `dt` says. `dt` is the step only
-  under `Transient`.
+- **dt has no effect under Static; a given dt warns.** A static
+  analysis ignores `analyze`'s `dt`: the integrator alone sets the step, so a
+  `LoadControl` stage with `dlam=0.25` and `n_increments=4` reaches `t0 + 1.0`.
+  A `dt` that differs from `dlam` raises `InertStaticDtWarning` (from
+  `apeGmsh.opensees`) when the stage closes; leave `dt` out, or set it equal
+  to `dlam`. Every other static integrator (`DisplacementControl`,
+  `ArcLength` and the fork's path-following ones) has no `dlam`, so any `dt`
+  given to it warns: leave it out. `dt` is the step only under `Transient`.
 
 ## One declaration surface, four outputs
 

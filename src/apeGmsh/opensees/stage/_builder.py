@@ -7,7 +7,9 @@ body changed.  The class is private, so there is no facade in
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Callable, Iterable, Sequence
+import math
+import warnings
+from typing import TYPE_CHECKING, Any, Callable, Iterable, Sequence
 
 from .._internal.build.errors import BridgeError
 from .._internal.build.records import (
@@ -29,7 +31,14 @@ from .._internal.build.records import (
 )
 from .._internal.ns import _StageDampingNS
 from .._internal.types import Primitive, Recorder, TimeSeries
+from ..analysis.analysis import Static
 from ..node import Node, _iter_tags, _select_nodes
+from ._chain import (
+    CHAIN_SLOTS,
+    InertStaticDtWarning,
+    StageChain,
+    algorithm_needs_test,
+)
 
 if TYPE_CHECKING:
     from apeGmsh._kernel.records._constraints import (
@@ -126,6 +135,20 @@ def _build_initial_stress_record(
 # ---------------------------------------------------------------------------
 # _StageBuilder — context manager backing ops.stage(name) (Phase SSI-2.A)
 # ---------------------------------------------------------------------------
+
+
+class _Omitted:
+    """Marks a ``s.analysis`` keyword the caller did not pass."""
+
+    __slots__ = ()
+
+    def __repr__(self) -> str:
+        return "<omitted>"
+
+
+#: Default of the ``s.analysis`` chain keywords: tells "not passed" apart
+#: from an explicit ``None`` (a chain plus any explicit slot is refused).
+_OMITTED: Any = _Omitted()
 
 
 class _StageBuilder:
@@ -294,6 +317,7 @@ class _StageBuilder:
                 f"Stage {self._name!r}: missing s.run(n_increments=, "
                 "dt=) — every stage must declare its analyze loop."
             )
+        self._check_chain_against_run()
         record = StageRecord(
             name=self._name,
             initial_stress_records=tuple(self._initial_stress_records),
@@ -333,6 +357,51 @@ class _StageBuilder:
             profile=self._profile,
         )
         self._bridge._stage_records.append(record)
+
+    def _check_chain_against_run(self) -> None:
+        """Stage-close checks that need both ``analysis`` and ``run``.
+
+        * A test omitted for ``Linear`` stays required when a strategy
+          ladder is attached: the ladder's rungs iterate.
+        * D1 (R3, #1785; extended R3-S1b, #1822): under ``Static``
+          OpenSees ignores ``analyze``'s ``dt``; the integrator sets the
+          step.  A given ``dt`` never acts, so it warns
+          (:class:`InertStaticDtWarning`), except when it equals the
+          integrator's declared step field (``static_step_field``,
+          ``"dlam"`` for ``LoadControl`` / ``LadrunoLoadControl``).  An
+          integrator without a step field, or without the declaration,
+          warns on any ``dt`` (fail loud).  Omitting ``dt`` is silent.
+          ``Transient`` keeps ``dt``.
+        """
+        if self._test is None and self._strategy is not None:
+            raise ValueError(
+                f"Stage {self._name!r}: a strategy ladder needs a "
+                "convergence test, because its rungs iterate; pass "
+                "test= to s.analysis (or drop s.run(strategy=))."
+            )
+        if self._dt is None or not isinstance(self._analysis, Static):
+            return
+        integ = self._integrator
+        kind = type(integ).__name__
+        field = getattr(type(integ), "static_step_field", None)
+        if field is None:
+            warnings.warn(
+                f"dt has no effect under Static; {kind} sets the step "
+                "and has no dlam for dt to match, so omit dt "
+                f"(stage {self._name!r}: dt={self._dt!r}).",
+                InertStaticDtWarning,
+                stacklevel=3,
+            )
+            return
+        step = float(getattr(integ, field))
+        if not math.isclose(self._dt, step, rel_tol=1e-12, abs_tol=0.0):
+            warnings.warn(
+                f"dt has no effect under Static; {field} sets the step "
+                f"(stage {self._name!r}: dt={self._dt!r}, "
+                f"{field}={getattr(integ, field)!r}).",
+                InertStaticDtWarning,
+                stacklevel=3,
+            )
 
     # -- Stage population -------------------------------------------------
 
@@ -1918,22 +1987,44 @@ class _StageBuilder:
 
     def analysis(
         self,
+        chain: "StageChain | None" = None,
+        /,
         *,
-        test: Primitive,
-        algorithm: Primitive,
         integrator: Primitive,
-        constraints: Primitive,
-        numberer: Primitive,
-        system: Primitive,
-        analysis: Primitive,
+        test: Primitive | None = _OMITTED,
+        algorithm: Primitive | None = _OMITTED,
+        constraints: Primitive | None = _OMITTED,
+        numberer: Primitive | None = _OMITTED,
+        system: Primitive | None = _OMITTED,
+        analysis: Primitive | None = _OMITTED,
     ) -> None:
         """Bind the analysis chain for this stage.
 
-        All seven arguments are required.  Each must be a primitive
-        already registered with the bridge (e.g. via
-        ``ops.test.NormDispIncr(...)``); the stage holds a reference
-        only, not a copy.  Multiple stages may share the same
-        primitive instance (e.g. the same ``constraints.Plain()``
+        Two forms.  The keyword form names every slot::
+
+            s.analysis(test=..., algorithm=..., integrator=...,
+                       constraints=..., numberer=..., system=...,
+                       analysis=...)
+
+        The chain form takes a shared :class:`StageChain` built by
+        ``ops.analysis.chain(...)`` plus this stage's integrator::
+
+            s.analysis(solver, integrator=ops.integrator.LoadControl(dlam=0.1))
+
+        Both bind the same primitives, so the emitted deck is the same.
+        A chain plus an explicit slot it already carries is refused:
+        the chain is the one place that slot is stated.
+
+        ``test`` may be omitted only when the algorithm does not iterate
+        (``ops.algorithm.Linear``, whose ``needs_test`` is False); the
+        stage then emits no ``test`` line.  A strategy ladder
+        (``s.run(strategy=)``) still needs one, because its rungs
+        iterate.
+
+        Each primitive must already be registered with the bridge
+        (e.g. via ``ops.test.NormDispIncr(...)``); the stage holds a
+        reference only, not a copy.  Multiple stages may share the
+        same primitive instance (e.g. the same ``constraints.Plain()``
         across all stages) — the bridge emits each primitive exactly
         once per stage in which it's referenced, so OpenSees gets a
         fresh ``constraints Plain`` line per stage as required.
@@ -1943,13 +2034,61 @@ class _StageBuilder:
                 f"Stage {self._name!r}.analysis: already called; "
                 "stages support one analysis chain each."
             )
-        self._test = test
-        self._algorithm = algorithm
+        given: dict[str, Primitive | None] = {
+            "test": test,
+            "algorithm": algorithm,
+            "constraints": constraints,
+            "numberer": numberer,
+            "system": system,
+            "analysis": analysis,
+        }
+        if chain is not None:
+            if not isinstance(chain, StageChain):
+                raise TypeError(
+                    f"Stage {self._name!r}.analysis: the positional "
+                    "argument must be a chain from ops.analysis.chain(...), "
+                    f"got {type(chain).__name__}."
+                )
+            doubled = [k for k, v in given.items() if v is not _OMITTED]
+            if doubled:
+                raise ValueError(
+                    f"Stage {self._name!r}.analysis: "
+                    f"{', '.join(doubled)} given both by the chain and "
+                    "as a keyword; state each slot once (drop the "
+                    "keyword, or build a second ops.analysis.chain)."
+                )
+            slots = {k: getattr(chain, k) for k in CHAIN_SLOTS}
+        else:
+            # The keyword form binds what it is given, as before; only an
+            # omitted slot is refused (the test may be omitted for a
+            # non-iterating algorithm, checked below).
+            missing = [
+                k for k, v in given.items()
+                if v is _OMITTED and k != "test"
+            ]
+            slots = {
+                k: (None if v is _OMITTED else v) for k, v in given.items()
+            }
+            if missing:
+                raise TypeError(
+                    f"Stage {self._name!r}.analysis: missing "
+                    f"{', '.join(missing)}; pass every chain slot as a "
+                    "keyword, or a shared ops.analysis.chain(...)."
+                )
+        if slots["test"] is None and algorithm_needs_test(slots["algorithm"]):
+            raise ValueError(
+                f"Stage {self._name!r}.analysis: test= is required with "
+                f"algorithm {type(slots['algorithm']).__name__}, which "
+                "iterates; only a non-iterating algorithm (Linear) may "
+                "omit it."
+            )
+        self._test = slots["test"]
+        self._algorithm = slots["algorithm"]
         self._integrator = integrator
-        self._constraints = constraints
-        self._numberer = numberer
-        self._system = system
-        self._analysis = analysis
+        self._constraints = slots["constraints"]
+        self._numberer = slots["numberer"]
+        self._system = slots["system"]
+        self._analysis = slots["analysis"]
         self._analysis_set = True
 
     def run(

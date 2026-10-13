@@ -4,7 +4,6 @@
 # set *before* Python starts.
 $ErrorActionPreference = "Stop"
 $env:LADRUNO_OPENSEES_QUIET = "1"
-$env:APEGMSH_QUIET = "1"
 
 # Library checkout that owns this script (for PYTHONPATH only).
 # INV-15: do not Set-Location here. Habitat files live under the *model*

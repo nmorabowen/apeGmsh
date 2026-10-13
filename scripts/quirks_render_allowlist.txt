@@ -1,0 +1,5 @@
+# Render-technology imports that predate the ADR 0116 D3/D4 lint (scripts/check_quirks.py,
+# rules vtk-import and render-tech-import). One `path::module` per line. This list only
+# shrinks: delete a line when its import goes; a line matching no import is a finding.
+# Adding a line needs a superseding ADR (ADR 0116 D4).
+src/apeGmsh/viewers/web_viewer.py::trame  # the trame backend of WebViewer; leaves with the legacy results viewer

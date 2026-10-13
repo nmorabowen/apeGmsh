@@ -1310,6 +1310,15 @@ re-resolves a label, so a label that no longer names those ids, or names
 nothing, changes nothing that runs. An archive written before 2.28.0 has
 no `label` key in these rows; it reads exactly as before.
 
+**`precision` (opensees 2.30.0; R3-S5 #1789, maintainer ruling D7).**
+The rows of the typed `recorder.Node` / `recorder.Element` carry a
+`precision` field: the significant digits per written value that
+`precision=N` asked for, which the deck carries as `-precision N` right
+after `-file`. A recorder declared without it stores **`precision: null`**
+and its deck line has no flag, byte-identical to an earlier writer's. An
+archive written before 2.30.0 has no `precision` key in these rows; it
+reads exactly as before.
+
 `H5Model.declarations()` returns the rows as `DeclarationTable.params`
 (`decls` row -> a tuple of `DeclParamsRO`, one per owner in call order:
 `type`, `params` with `DeclRef` / `DeclStruct` / `DeclOpaque` values,
@@ -1350,6 +1359,38 @@ whole mesh (the deck replay is flat) and writes them under the stored
 `pid`. `s.zero_velocities` replays over the archived node ids at their
 `/opensees/nodes_ndf` width. A rewrite (`OpenSeesModel.to_h5`) of a pre-2.27
 archive stores the tags that archive's replay mints.
+
+## `/opensees/constraints/embeddedRebar` (optional, opensees 2.29.0)
+
+One row per `g.reinforce` `LadrunoEmbeddedRebar` tie the build wrote
+(K2b, #1795; formerly a `ledger` verb). The row holds the tie's planned
+element tag and the positional arguments `embedded_rebar_args` built,
+the bond material already resolved to its tag. Written only when a tie
+exists; hashed.
+
+```
+/opensees/constraints/embeddedRebar/
+    ele_tag      i8 (N,)          the tie's element tag (the tag plan's)
+    name         vlen str (N,)    the mp_constraint_comment label, "" when none
+    arg_offsets  i4 (N+1,)        row i owns args[arg_offsets[i]:arg_offsets[i+1]]
+    args         f8 (A,)          numeric argument, NaN for a string
+    args_str     vlen str (A,)    string argument, "" for a number
+    arg_kinds    i1 (A,)          0 int, 1 float, 2 str
+```
+
+The argument encoding is `/opensees/commands`'s, so a replayed line is
+byte-identical. A deck replay of a 2.29 archive writes the stored rows
+after the fixes, masses, global commands and regions (the bridge's
+slot) and mints no tag (`OpenSeesModel` INV-5). A replay of an older
+archive re-derives the ties from the neutral `/reinforce_ties`, numbering
+them past the highest replayed element tag (the
+`pre-2-29-reinforce-tie-replay` tag-law waiver, behind
+`EMBEDDED_REBAR_FROM` in `h5_reader.py`). A 2.29 archive whose neutral
+zone carries ties that the store lacks, or a different count, refuses to
+replay. A rewrite (`OpenSeesModel.to_h5`) of a pre-2.29 archive stores
+the ties that archive's replay derives and links their `/opensees/program`
+runs to the store. The writer refuses a tie inside a stage bracket and an
+argument that is not an `int`, `float` or `str`, at emit.
 
 ## `/meta/session_id` and the geometry sibling
 
@@ -1844,9 +1885,33 @@ The on-disk contract is this one root attribute, `element_index_space`:
 its value set is exactly `"fem"`, and absence means unverified. No other
 attribute carries the verdict. apeGmsh's Python reader derives a
 convenience property from it, `NativeReader.element_index_verified`
-(true only when the attribute is `"fem"`), and exposes the raw value as
-`NativeReader.element_index_space`. Both are Python properties, not HDF5
-attributes: no file holds an attribute named `element_index_verified`.
+(true only when the attribute is `"fem"` in the form below), and exposes
+the raw value as `NativeReader.element_index_space`. Both are Python
+properties, not HDF5 attributes: no file holds an attribute named
+`element_index_verified`.
+
+**The rule (#1811): a file is verified if and only if `element_index_space`
+is a variable-length UTF-8 string exactly equal to `"fem"`; a
+variable-length bytes (ASCII) `"fem"`, a fixed-length string or bytes
+`"fem"`, and any non-string value are not verified.**
+
+**Its on-disk form.** The attribute is a **scalar,
+variable-length, UTF-8 string**: an HDF5 string datatype of variable size
+with character set `H5T_CSET_UTF8` (h5py `string_dtype("utf-8")`, what
+h5py writes for a Python `str`), in a scalar dataspace, holding exactly
+the three characters `fem`. Every writer emits that form. Any other form
+reads as unverified, even when its text is `fem`:
+
+- a fixed-length string, NUL- or space-padded or not. Some HDF5 readers
+  strip the padding and would compare it equal to `"fem"`; that is not
+  the stamp;
+- an ASCII-charset string, fixed or variable length;
+- an opaque or bytes value;
+- an array of one or more strings;
+- any non-string dtype.
+
+A reader in another language must check the datatype (string,
+variable-length, UTF-8, scalar) before it compares the text.
 
 `Results.from_recorders` caches transcoded files under a key that includes
 a digest of `model=` (its `lineage.fem_hash`, its `lineage.model_hash` and
@@ -2152,7 +2217,7 @@ call `validate_zone_version(...)` for each zone before reading it.
 | Zone | `/meta` key | Root paths | Writer constant (source of truth) | Current | Floor |
 |---|---|---|---|---|---|
 | neutral (broker) | `neutral_schema_version` | `/nodes`, `/elements`, `/physical_groups`, `/labels`, `/mesh_selections`, `/partitions`, `/parts`, `/constraints`, `/reinforce_ties`, `/embed_ties`, `/rebar_elements`, `/contacts`, `/contact_planes`, `/interfaces`, `/loads`, `/masses`, `/composed_from` | [`mesh/_femdata_h5_io.py`](../src/apeGmsh/mesh/_femdata_h5_io.py) `NEUTRAL_SCHEMA_VERSION` | **2.35.0** | **2.10.0** |
-| opensees (bridge) | `opensees_schema_version` | `/opensees/*` | [`opensees/emitter/h5.py`](../src/apeGmsh/opensees/emitter/h5.py) `SCHEMA_VERSION` | **2.28.0** | **2.12.0** |
+| opensees (bridge) | `opensees_schema_version` | `/opensees/*` | [`opensees/emitter/h5.py`](../src/apeGmsh/opensees/emitter/h5.py) `SCHEMA_VERSION` | **2.30.0** | **2.12.0** |
 | results | `results_schema_version` | `/stages/*` (composed `results.h5`, at file root; layout in [`results.h5`](#resultsh5-the-native-results-file)) | [`results/schema/_versions.py`](../src/apeGmsh/results/schema/_versions.py) `RESULTS_SCHEMA_VERSION` | **1.2.0** | **1.0.0** |
 | cuts (sub-zone of opensees) | — (no own key; rides the opensees zone) | `/opensees/cuts`, `/opensees/sweeps` | [`cuts/_h5_io.py`](../src/apeGmsh/cuts/_h5_io.py) `V4_SCHEMA_VERSION` | 2.5.0 | none of its own: it rides the opensees floor |
 | geometry (ADR 0112 D2) | `geometry_schema_version` | `/geometry` (sibling `<stem>.geometry.h5` only) | [`opensees/_internal/schema_version.py`](../src/apeGmsh/opensees/_internal/schema_version.py) `GEOMETRY_SCHEMA_VERSION` | **1.0.0** | **1.0.0** |
@@ -2602,6 +2667,25 @@ detail lives in the `SCHEMA_VERSION` docstring in
   replay never re-resolves a label. No path or dtype changes, and
   `decl_params` is hash-excluded. Additive minor (a 2.27.x reader refuses
   a 2.28.x file, INV-4).
+- `2.29.0` — K2b (#1795; ADR 0114 Q3, the K1-8 option-A precedent): additive
+  — new optional
+  [`/opensees/constraints/embeddedRebar`](#opensees-constraints-embeddedrebar-optional-opensees-2290),
+  every `g.reinforce` tie the build wrote (its tag and arguments); the
+  `embedded_rebar` verb leaves the ledger. A replay of a 2.29 archive
+  writes the stored ties and mints none; a replay of an older one keeps
+  re-deriving them from the neutral zone (the pre-2.29 tag-law waiver,
+  behind `EMBEDDED_REBAR_FROM` in `h5_reader.py`). The store folds into
+  `model_hash`, so a reinforced archive hashes differently once at this
+  minor; every other file hashes as before. Additive minor (a 2.28.x
+  reader refuses a 2.29.x file, INV-4).
+- `2.30.0` — R3-S5 (#1789; maintainer ruling D7 on #1372, the R2-f
+  precedent): additive — the
+  [`decl_params`](#opensees-decl_params-optional-opensees-2260) rows of
+  typed Node / Element recorder declarations gain a `precision` field
+  (`null` when unset; the deck then carries no `-precision`). No path or
+  dtype changes, and `decl_params` is hash-excluded, so every file hashes
+  as before. Additive minor (a 2.29.x reader refuses a 2.30.x file,
+  INV-4).
 
 This is the **current** opensees-zone version (`SCHEMA_VERSION` in
 [`opensees/emitter/h5.py`](../src/apeGmsh/opensees/emitter/h5.py)); check that constant

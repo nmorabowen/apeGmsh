@@ -139,6 +139,26 @@ The same script with `--measure <dir>` writes the large files that
 the script's docstring, not against values copied from the app. A re-run
 changes `@created_at` and the lineage hashes.
 
+The file has no `element_index_space` stamp, so its element rows read as
+`unverified` (h5-schema.md §`element_index_space`; stamp-only, #1768).
+
+## `results_stamped.h5`
+
+The same mesh, steps and closed forms as `results_small.h5`, written at the
+writer's current results version (1.2.0) with
+`NativeWriter.stamp_element_index_space("fem")`, so its element rows are
+verified FEM ids. `test/results/results.test.ts` uses it for the verified
+mapping and for the stamp cases (removed, unknown value, non-string). Write
+it with the same command plus `--stamped`.
+
+`--stamped` also writes `stamp_variants/`: copies of `results_stamped.h5`
+whose stamp h5py re-encodes (variable-length UTF-8 and ASCII str, ASCII
+bytes, fixed-length ASCII and UTF-8, NUL-padded or exact, a one-element
+array), and `stamp_variants.oracle.json`, Python's
+`NativeReader.element_index_verified` on each. The test checks the app's
+verdict against it: only a scalar variable-length UTF-8 string `"fem"`
+verifies (#1810 review, #1811).
+
 ## `staged_activation.h5`, `staged_activation.results.h5` and `staged_activation.oracle.json`
 
 The V4b staged pair (#1728). `staged_activation.h5` is a composed `model.h5`

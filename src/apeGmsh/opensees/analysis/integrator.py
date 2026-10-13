@@ -69,7 +69,7 @@ fork* build to *run*. Emission works on any build (it's just an
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, ClassVar, Literal
 
 from .._internal.types import Integrator, Primitive
 
@@ -191,6 +191,12 @@ class LoadControl(Integrator):
     increment adaptively when supplied.
     """
 
+    #: Under ``Static``, the field a stage's ``s.run(dt=)`` may equal
+    #: without :class:`~apeGmsh.opensees.InertStaticDtWarning`.  ``None``
+    #: means no step field exists, so any given ``dt``
+    #: warns; an integrator that does not declare it is treated as ``None``.
+    static_step_field: ClassVar[str | None] = "dlam"
+
     dlam: float
     num_iter: int | None = None
     min_lam: float | None = None
@@ -248,6 +254,8 @@ class DisplacementControl(Integrator):
     ``dU`` at ``node``'s ``dof``-th DOF. ``num_iter`` enables adaptive
     bracketing as in :class:`LoadControl`.
     """
+
+    static_step_field: ClassVar[str | None] = None
 
     node: int
     dof: int
@@ -312,6 +320,8 @@ class ArcLength(Integrator):
     Arc-length continuation. ``s`` is the arc-length increment per step;
     ``alpha`` weights the load contribution to the arc-length norm.
     """
+
+    static_step_field: ClassVar[str | None] = None
 
     s: float
     alpha: float
@@ -656,6 +666,8 @@ class LadrunoArcLength(Integrator):
     snap-back.**
     """
 
+    static_step_field: ClassVar[str | None] = None
+
     s: float
     alpha: float
     # Layer A — Ramm adaptive radius (-adapt Jd ellMin ellMax / -p exp)
@@ -817,6 +829,8 @@ class LadrunoDynamicRelaxation(Integrator):
     * ``verbose`` — per-step ``max|a|`` / residual / KE reporting.
     """
 
+    static_step_field: ClassVar[str | None] = None
+
     mass: MassMode | None = None
     mass_scale: float | None = None
     dt: float | None = None
@@ -938,6 +952,8 @@ class LadrunoIndirectControl(Integrator):
     desired iterations, optionally clamped to ``[dmin, dmax]``.
     """
 
+    static_step_field: ClassVar[str | None] = None
+
     incr: float
     controls: tuple[tuple[int, int, float], ...]
     num_iter: int | None = None
@@ -1040,6 +1056,8 @@ class LadrunoLoadControl(Integrator):
     on any build; the fork (``-tangentPredictor`` since 2026-09-04) is
     required only to *run*.
     """
+
+    static_step_field: ClassVar[str | None] = "dlam"
 
     dlam: float
     num_iter: int | None = None

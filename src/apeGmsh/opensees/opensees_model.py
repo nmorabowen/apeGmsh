@@ -53,10 +53,11 @@ build, and the archive keeps it (ADR 0114 D4, which supersedes ADR
 0019 INV-5), so the replayed deck carries the same tags as the build
 that wrote the archive, with no masking.  Since opensees 2.27.0 (K1-8)
 that includes every ``parameter`` tag (initial stress, absorbing flip,
-``s.update_parameter``).  Three waived replay paths still re-derive
-tags: the reinforce ties, which no archive carries yet, and the
-initial-stress and staged parameters of an archive below 2.27.0 only,
-behind a version check in ``compose.py``; each is waived on
+``s.update_parameter``), and since 2.29.0 (K2b) every reinforce tie.
+Three waived replay paths still re-derive tags, each for an older
+archive only, behind a version check in ``compose.py``: the reinforce
+ties of an archive below 2.29.0, and the initial-stress and staged
+parameters of one below 2.27.0; each is waived on
 ``tests/opensees/contract/tag_law_ledger.txt`` and pinned to the
 forward deck's tags by ``test_tag_law_replay_pins.py``.
 
@@ -76,7 +77,7 @@ See also
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Literal, Mapping, Sequence
@@ -112,6 +113,97 @@ if TYPE_CHECKING:  # pragma: no cover - import for type checkers only
 
 
 __all__ = ["OpenSeesModel"]
+
+
+def _fixes_at_node_width(
+    fixes: "Sequence[FixRecord]",
+    nodes_ndf: "Mapping[int, int]",
+    store: str,
+) -> "tuple[FixRecord, ...]":
+    """Cut each envelope-wide ``fix`` row back to its node's ndf.
+
+    The writer pads every row to the ``ops.model`` envelope (a fixed-width
+    compound), so a 2-DOF node under ``ndf=3`` reads back ``(1, 1, 0)``
+    while the bridge emitted ``fix n 1 1``. ``nodes_ndf`` is the per-node
+    ndf the deck emitted (``/opensees/nodes_ndf``, every broker node). An
+    archive without one (empty map: pre-2.14.0, no neutral fallback)
+    replays every node at the envelope, so its rows already match. With a
+    map, a fixed node it lacks, a row narrower than the node, or a set flag
+    past the node's ndf is a corrupt archive and raises.
+    """
+    if not nodes_ndf:
+        return tuple(fixes)
+    from .emitter.h5_reader import MalformedH5Error
+
+    out: list[FixRecord] = []
+    for rec in fixes:
+        tag = int(rec.tag)
+        if tag not in nodes_ndf:
+            raise MalformedH5Error(
+                f"{store}: node {tag} is fixed but /opensees/nodes_ndf has "
+                "no ndf for it, so the row's width cannot be recovered."
+            )
+        width = int(nodes_ndf[tag])
+        if len(rec.dofs) < width or any(int(d) for d in rec.dofs[width:]):
+            raise MalformedH5Error(
+                f"{store}: node {tag} has ndf {width} but its fix row is "
+                f"{tuple(rec.dofs)!r}; only zero padding may follow the "
+                "node's own DOFs."
+            )
+        out.append(replace(rec, dofs=tuple(rec.dofs[:width])))
+    return tuple(out)
+
+
+def _equation_constraint_records(declarations: Any) -> "tuple[Any, ...]":
+    """The archive's ``apeSees.equation_constraint`` rows, in call order.
+
+    ``H5Emitter`` ledgers the ``equationConstraint`` verb, so the only
+    record of a row is its declaration's ``/opensees/decl_params`` entry
+    (K1-7, opensees 2.26.0): an ``EquationConstraintRecord`` with ``cnode``,
+    ``cdof``, ``ccoef`` and ``retained``. Each is re-validated by
+    ``make_equation_constraint_record``. A declaration whose entry is
+    missing or does not read as that record raises: replay never
+    drops the tie silently.
+    """
+    if declarations is None:
+        # No /opensees/decls: the archive cannot say whether it had rows,
+        # so the replay goes ahead and says so rather than refusing a file
+        # that is otherwise readable.
+        import warnings
+
+        from ._internal._stacklevel import _stacklevel_outside_package
+        from .emitter.h5 import H5LedgerWarning
+        warnings.warn(
+            "model.h5: the archive has no /opensees/decls (it predates "
+            "opensees 2.25.0, or no bridge emit wrote it), so replay cannot "
+            "verify apeSees.equation_constraint rows: a deck rebuilt from it "
+            "omits any the model had.",
+            H5LedgerWarning,
+            stacklevel=_stacklevel_outside_package(),
+        )
+        return ()
+    from ._internal.build.records import make_equation_constraint_record
+    from .emitter.h5_reader import MalformedH5Error
+
+    fields = {"cnode", "cdof", "ccoef", "retained"}
+    out = []
+    for i, decl in enumerate(declarations.decls):
+        if decl.family != "equation_constraint":
+            continue
+        rows = declarations.params.get(i, ())
+        if (len(rows) != 1 or rows[0].type != "EquationConstraintRecord"
+                or set(rows[0].params) != fields):
+            raise MalformedH5Error(
+                f"/opensees/decls: equation_constraint {decl.key!r} has no "
+                "readable EquationConstraintRecord row in "
+                "/opensees/decl_params (an archive below opensees 2.26.0 "
+                "stores none), so a replayed deck would drop the tie. "
+                f"Found {[(r.type, sorted(r.params)) for r in rows]!r}."
+            )
+        p = rows[0].params
+        out.append(make_equation_constraint_record(
+            p["cnode"], p["cdof"], p["ccoef"], p["retained"]))
+    return tuple(out)
 
 
 # Type alias for the read-side section discriminated union.
@@ -239,6 +331,11 @@ class OpenSeesModel:
     #: reader's ``DeclarationTable``, or ``None`` for a file without it
     #: (below 2.25.0, or written by no bridge emit).
     _declarations: "Any | None" = None
+    #: ``/opensees/constraints/embeddedRebar`` (K2b, opensees 2.29.0) as
+    #: the reader's ``EmbeddedRebarRecordRO`` rows: every reinforce tie the
+    #: build wrote. Empty for a model without a tie and for an archive
+    #: below 2.29.0, whose replay re-derives its ties from the neutral zone.
+    _embedded_rebars: "tuple[Any, ...]" = field(default_factory=tuple)
 
     # ------------------------------------------------------------------
     # Construction
@@ -369,6 +466,7 @@ class OpenSeesModel:
             recorders = tuple(model.recorders())
             program = model.program()
             commands = model.commands()
+            embedded_rebars = model.embedded_rebars()
             solve_stamp = model.solve_stamp()
             declarations = model.declarations()
 
@@ -394,6 +492,17 @@ class OpenSeesModel:
                             nodes_ndf[int(_nid)] = int(_bnodes.ndf_for(int(_nid)))
                         except LookupError:
                             pass
+            # /opensees/bcs/fix stores every row at the
+            # envelope width; cut each back to its node's own ndf, as
+            # the bridge emitted it.
+            fixes = _fixes_at_node_width(
+                fixes, nodes_ndf, "/opensees/bcs/fix")
+            stages = tuple(
+                replace(st, fixes=_fixes_at_node_width(
+                    st.fixes, nodes_ndf,
+                    f"/opensees/stages/stage_{i:03d}/bcs/fix"))
+                for i, st in enumerate(stages)
+            )
 
         # ADR 0021 lineage chain.  Read the stamped ``/meta/lineage``
         # attrs and recompute them from the loaded zones; on mismatch,
@@ -438,6 +547,7 @@ class OpenSeesModel:
             _commands=commands,
             _solve_stamp=solve_stamp,
             _declarations=declarations,
+            _embedded_rebars=embedded_rebars,
         )
 
     @classmethod
@@ -545,6 +655,8 @@ class OpenSeesModel:
             _dampings=tuple(emitter._dampings),
             _regions=tuple(emitter._regions),
             _initial_stress=tuple(emitter._initial_stress_records),
+            # K2b: the ties the buffers stored (a 2.29.0 archive's rows).
+            _embedded_rebars=tuple(emitter._embedded_rebars),
             # K1-8: the buffers are this writer's own, so they hold the
             # tags a 2.27.0 archive stores.
             _initial_stress_param_tags=tuple(
@@ -1347,6 +1459,9 @@ class OpenSeesModel:
             analysis_attrs=dict(self._analysis_attrs),
             analyze_call=self._analyze_call,
             reinforce_name_to_tag=reinforce_name_to_tag,
+            equation_constraints=_equation_constraint_records(
+                self._declarations),
+            embedded_rebars=self._embedded_rebars,
         )
 
         # ADR 0055 P2.3: a staged archive re-emits through the staged
@@ -1421,6 +1536,7 @@ class OpenSeesModel:
         self,
         emitter: "H5Emitter",
         initial_stress_param_tags: "Sequence[tuple[int, int, int]] | None" = None,
+        embedded_rebars: "Sequence[Any] | None" = None,
     ) -> None:
         """H5-only population: skip ``model``+``node`` emit so the
         compose path keeps producing byte-equivalent output.
@@ -1477,6 +1593,11 @@ class OpenSeesModel:
             recorders=self._recorders,
             analysis_attrs=dict(self._analysis_attrs),
             analyze_call=self._analyze_call,
+            # K2b: the reinforce ties the rewrite stores (2.29.0): the
+            # source's own rows, or for a pre-2.29 source the ties its
+            # deck replay re-derives (:meth:`_echo_embedded_rebars`).
+            embedded_rebars=(self._embedded_rebars if embedded_rebars is None
+                             else tuple(embedded_rebars)),
             # ADR 0099: no deck here — ``H5Emitter.model`` only stores
             # ndm/ndf, so a builder-ndf bracket is never persisted as a
             # line and the INV-1 hoist would buy this path nothing.
@@ -1606,6 +1727,65 @@ class OpenSeesModel:
             ))
         return ramp_tags(self._initial_stress, -1), tuple(out)
 
+    def _echo_embedded_rebars(self) -> "tuple[Any, ...]":
+        """The reinforce ties a rewrite stores (K2b, opensees 2.29.0).
+
+        A 2.29.0 file stores every tie, so a source at or above
+        ``EMBEDDED_REBAR_FROM`` echoes its own rows. A source below it
+        stores none; its deck replay re-derives the ties from the neutral
+        zone (the pre-2.29 tag-law waiver), and the rewrite stores what
+        that replay writes, so it replays to the same deck and its own
+        replay derives nothing. The capture replays the model once into a
+        recorder that keeps only the tie calls and their labels.
+        """
+        from ._internal.build.constraints_plan import reinforce_tie_records
+        from .emitter.h5_reader import (
+            EmbeddedRebarRecordRO, archives_embedded_rebar,
+        )
+
+        if (self._embedded_rebars or not reinforce_tie_records(self._fem)
+                or self._opensees_version is None
+                or archives_embedded_rebar(self._opensees_version)):
+            return tuple(self._embedded_rebars)
+
+        import warnings
+
+        from ._internal.compose import ReplaySkippedStreamWarning
+        from .emitter.recording import RecordingEmitter
+
+        # A label belongs to the MP call right after it, so the other MP
+        # verbs are kept too: one of them consumes a label a tie must not.
+        keep = frozenset({
+            "mp_constraint_comment", "embedded_rebar", "equalDOF",
+            "equalDOF_mixed", "rigidLink", "rigidDiaphragm", "embeddedNode",
+            "embedded_node", "equationConstraint", "contact", "contact_plane",
+        })
+
+        class _TieCalls(list):  # type: ignore[type-arg]
+            def append(self, call: Any) -> None:
+                if call[0] in keep:
+                    super().append(call)
+
+        capture = RecordingEmitter()
+        capture.calls = _TieCalls()
+        with warnings.catch_warnings():
+            # The capture is no deck; the build that makes one warns.
+            warnings.simplefilter("ignore", ReplaySkippedStreamWarning)
+            self._populate_emitter(capture)
+        out: "list[Any]" = []
+        label = ""
+        for name, args, _kwargs in capture.calls:
+            if name == "mp_constraint_comment":
+                label = str(args[0])
+                continue
+            if name != "embedded_rebar":
+                label = ""
+                continue
+            out.append(EmbeddedRebarRecordRO(
+                ele_tag=int(args[0]), args=tuple(args[1:]), name=label))
+            label = ""
+        return tuple(out)
+
     def _compose_h5(self, emitter: "H5Emitter", path: str) -> None:
         """Compose the H5 file at ``path`` using the shared composer.
 
@@ -1629,7 +1809,8 @@ class OpenSeesModel:
         # its replay re-mints, captured once.
         global_tags, stages = self._echo_param_tags()
         self._populate_emitter_h5(
-            emitter_fresh, initial_stress_param_tags=global_tags)
+            emitter_fresh, initial_stress_param_tags=global_tags,
+            embedded_rebars=self._echo_embedded_rebars())
         # ADR 0055 Phase 2: echo the staged records back into capture
         # buckets so ``_write_stages`` re-emits the stages zone — the
         # from_h5 → to_h5 round trip is hash-stable by store-and-echo.

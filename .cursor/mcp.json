@@ -10,8 +10,7 @@
         "scripts/studio-mcp.ps1"
       ],
       "env": {
-        "LADRUNO_OPENSEES_QUIET": "1",
-        "APEGMSH_QUIET": "1"
+        "LADRUNO_OPENSEES_QUIET": "1"
       }
     }
   }

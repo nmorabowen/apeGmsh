@@ -1,0 +1,7 @@
+### ADDED — `ops.wipe()`, recorder `precision=` (`/opensees` 2.30.0), and an unstaged `Linear` without a test (R3-S5, #1789)
+
+`ops.wipe()` closes the live OpenSees domain: it removes the model and destroys every recorder, which flushes and closes its file. A text recorder file then holds every row, and an `.mpco` the run wrote opens with `Results.from_mpco` in the same script; before the wipe the recorder still holds it open. The bridge's read session closes too, so a later `.read` raises and names `ops.wipe()`, and the domain epoch moves, so another bridge's session over the same domain raises as well. The declarations stay, so `ops.analyze(...)` builds the model again. `wipe` is a live session action only: no deck ever carries it, and it adds no verb.
+
+`ops.recorder.Node(..., precision=N)` and `ops.recorder.Element(..., precision=N)` emit `-precision N` (the significant digits per written value; OpenSees writes 6 by default). Without it the deck is unchanged. `N` must be a positive `int`. The recorders' `/opensees/decl_params` rows gain a `precision` field (`null` when unset), an additive `/opensees` minor bump to 2.30.0 that the maintainer accepted as ruling D7. `decl_params` is hash-excluded, so `model_hash` does not change. A 2.29.x reader refuses a 2.30.x file.
+
+An unstaged model whose algorithm does not iterate (`ops.algorithm.Linear()`) no longer needs an `ops.test.*` before `analyze` or an explicit run. This is the rule a stage already applies. A strategy ladder still requires the test, because its rungs iterate.

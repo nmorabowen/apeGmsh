@@ -1,0 +1,229 @@
+# The retirement ledger (program link X4-a, #1806).
+#
+# Panel rule: every retirement ends in deletion, with a dated CI expiry.
+# One [[row]] per retiring thing. tests/test_retirement_ledger.py (lock-tests)
+# fails when:
+#   * a row's date has passed while any of its targets still exists;
+#   * any target of a row no longer exists (delete the row with the thing);
+#   * a row is malformed or undated.
+#
+# Every row is dated (#1199 X4 ruling 1), in one of two ways:
+#   expires   = YYYY-MM-DD                  the thing is deleted by then; or
+#   trigger   = "<event>" + review_by = YYYY-MM-DD
+#                                           the thing goes when the event
+#                                           happens; the maintainer re-dates
+#                                           the row by review_by if it has not.
+# Dates are bare TOML dates (no quotes). Re-dating or adding a row edits a
+# land_pr.py BASELINE file, so the PR needs the human-gate label.
+#
+# Targets (at least one per row; paths are repo-relative, forward slashes):
+#   paths   = ["file", "dir/"]              the file or directory exists
+#   symbols = ["file.py::Name.attr"]        the AST defines it (def, class,
+#                                           assignment, annotated field)
+#   texts   = ["file::literal substring"]   the file contains the substring
+#
+# basis = "ruling" when the date comes from a maintainer ruling or the
+# charter, "policy" when it is a proposed default the maintainer has not ruled
+# on (X4-a anchors those to 2026-10-12). source names where it comes from.
+
+# --- V4 KEEP: leaves when apeGmshViewer hosts interactive results ---------
+
+[[row]]
+id = "v4-diagrams-director"
+kind = "keep"
+paths = ["src/apeGmsh/viewers/diagrams/_director.py", "src/apeGmsh/viewers/diagrams/"]
+trigger = "V4: apeGmshViewer hosts interactive results"
+review_by = 2027-01-10
+basis = "policy"
+source = "#1199 X3 KEEP ruling; review_by = 90 days (card #1806 default)"
+
+[[row]]
+id = "v4-web-viewer-trame"
+kind = "keep"
+paths = ["src/apeGmsh/viewers/web_viewer.py", "src/apeGmsh/viewers/backends/trame.py"]
+symbols = [
+    "src/apeGmsh/viewers/web_viewer.py::show_web",
+    "src/apeGmsh/viewers/web_viewer.py::serve_web",
+    "src/apeGmsh/results/Results.py::Results.show_web",
+    "src/apeGmsh/results/Results.py::Results.serve_web",
+]
+texts = ['pyproject.toml::"trame>=3.0", "trame-vtk>=2.6", "trame-vuetify>=2.6", "trame-pyvista"']
+trigger = "V4: apeGmshViewer hosts interactive results (ADR 0116 Amendment 1)"
+review_by = 2027-01-10
+basis = "policy"
+source = "#1199 X3 KEEP ruling + X4 ruling 6; review_by = 90 days (card #1806 default)"
+
+[[row]]
+id = "v4-animation"
+kind = "keep"
+paths = ["src/apeGmsh/viewers/animation.py"]
+trigger = "V4: apeGmshViewer hosts interactive results"
+review_by = 2027-01-10
+basis = "policy"
+source = "#1199 X3 KEEP ruling (4 scripts/render_showcase/*.py import it); review_by = 90 days (card #1806 default)"
+
+[[row]]
+id = "v4-diagrams-session"
+kind = "keep"
+paths = ["src/apeGmsh/viewers/diagrams/_session.py"]
+trigger = "V4: apeGmshViewer hosts interactive results"
+review_by = 2027-01-10
+basis = "policy"
+source = "#1199 X3 KEEP ruling (orphaned, kept); review_by = 90 days (card #1806 default)"
+
+[[row]]
+id = "v4-diagrams-style-presets"
+kind = "keep"
+paths = ["src/apeGmsh/viewers/diagrams/_style_presets.py"]
+trigger = "V4: apeGmshViewer hosts interactive results"
+review_by = 2027-01-10
+basis = "policy"
+source = "#1199 X3 KEEP ruling (orphaned, kept); review_by = 90 days (card #1806 default)"
+
+[[row]]
+id = "v4-show-web-hatch-test"
+kind = "keep"
+paths = ["tests/viewers/test_diagram_hatch_survival.py"]
+trigger = "V4: the show_web hatch (ADR 0098 Amendment 2) goes with show_web"
+review_by = 2027-01-10
+basis = "policy"
+source = "#1199 X3 KEEP ruling; review_by = 90 days (card #1806 default)"
+
+[[row]]
+id = "v4-snapshot-legacy-gate"
+kind = "gate"
+paths = ["tests/results/session/test_snapshot_legacy_gate.py"]
+trigger = "V4: the v13 viewer-session writer (viewers/diagrams/_session.py) is deleted"
+review_by = 2027-01-10
+basis = "policy"
+source = "card #1806 seed row; trigger and review_by proposed by X4-a"
+
+# --- V5 / known gaps -------------------------------------------------------
+
+[[row]]
+id = "v5-gmsh-linear-duplicate"
+kind = "gap"
+symbols = [
+    "src/apeGmsh/viewers/scene/fem_scene.py::GMSH_LINEAR",
+    "src/apeGmsh/viewers/scene/mesh_scene.py::GMSH_LINEAR",
+]
+trigger = "V5: the Qt viewers are deleted (ADR 0112 P4)"
+review_by = 2027-01-10
+basis = "policy"
+source = "X1/X3 handoffs on #1199 (known duplicate, Qt viewers frozen); review_by proposed by X4-a"
+
+[[row]]
+id = "modeldata-gaps-g1-g5"
+kind = "gap"
+symbols = ["src/apeGmsh/opensees/model_data.py::ModelData"]
+paths = ["internal_docs/program/x1_modeldata_inventory.md"]
+trigger = "K19 decision on ModelData (PROGRAM.md section 10); gaps G1-G5 close with the class"
+review_by = 2027-01-10
+basis = "policy"
+source = "x1_modeldata_inventory.md G1-G5; review_by proposed by X4-a"
+
+# --- Inventory -------------------------------------------------------------
+
+[[row]]
+id = "grandfathered-fork-members"
+kind = "inventory"
+symbols = ["tests/opensees/warrant_rows.py::GRANDFATHERED_FORK_MEMBERS"]
+trigger = "each member leaves or gains a warrant row (ADR 0121 D4); the set reaches empty"
+review_by = 2027-01-10
+basis = "policy"
+source = "#1199 X4 ruling 1 (must be dated); review_by proposed by X4-a"
+
+# --- Studio spin-out -------------------------------------------------------
+
+[[row]]
+id = "studio-spin-out"
+kind = "spin-out"
+paths = ["src/apeGmsh/studio/"]
+expires = 2026-12-12
+basis = "ruling"
+source = "#1199 X4 ruling 5: X4-a landed 2026-10-13 (6e14c894), so landing date + 60 days = 2026-12-12 (coordinator amendment on #1807)"
+
+# --- Prototypes folder -----------------------------------------------------
+
+[[row]]
+id = "program-prototypes"
+kind = "prototypes"
+paths = ["internal_docs/program/prototypes/"]
+expires = 2026-11-30
+basis = "ruling"
+source = "PROGRAM.md section 11"
+
+# --- Facades and deprecated aliases ----------------------------------------
+
+[[row]]
+id = "facade-core-defs-shims"
+kind = "facade"
+paths = [
+    "src/apeGmsh/core/constraints/defs.py",
+    "src/apeGmsh/core/loads/defs.py",
+    "src/apeGmsh/core/masses/defs.py",
+]
+expires = 2027-01-10
+basis = "policy"
+source = "card #1806 seed row; expiry = 90 days, proposed by X4-a"
+
+[[row]]
+id = "deprecated-constraints-mortar"
+kind = "facade"
+symbols = ["src/apeGmsh/core/ConstraintsComposite.py::ConstraintsComposite.mortar"]
+expires = 2027-01-10
+basis = "policy"
+source = "card #1806 seed row; expiry = 90 days, proposed by X4-a"
+
+[[row]]
+id = "deprecated-by-physical-aliases"
+kind = "facade"
+symbols = [
+    "src/apeGmsh/mesh/_mesh_generation.py::_Generation.set_algorithm_by_physical",
+    "src/apeGmsh/mesh/_mesh_structured.py::_Structured.set_transfinite_by_physical",
+    "src/apeGmsh/mesh/_mesh_structured.py::_Structured.set_recombine_by_physical",
+    "src/apeGmsh/mesh/_mesh_structured.py::_Structured.set_smoothing_by_physical",
+]
+expires = 2027-01-10
+basis = "policy"
+source = "card #1806 seed row; expiry = 90 days, proposed by X4-a"
+
+# --- Shadow paths (PROGRAM.md section 8: 30 days without a flip) -----------
+
+[[row]]
+id = "shadow-tagmode-split"
+kind = "shadow"
+symbols = ["src/apeGmsh/opensees/_internal/tag_plan.py::TagMode.split"]
+texts = ['src/apeGmsh/opensees/_internal/build/builder_scope.py::_HOISTING_PATHS = frozenset({"flat", "partitioned", "split"})']
+expires = 2026-11-05
+basis = "ruling"
+source = "PROGRAM.md section 8 (30 days); always false since #1505 merged 2026-10-06"
+
+# --- xfail ledger (KC4: shrink-only, zero within 60 days) ------------------
+
+[[row]]
+id = "xfail-tag-plan-oracle"
+kind = "xfail"
+texts = [
+    'tests/opensees/contract/test_tag_plan_oracle.py::reason=f"{family}: tags still minted at emit time"',
+    'tests/opensees/contract/test_tag_plan_oracle.py::reason="families still pending: "',
+]
+expires = 2026-12-11
+basis = "ruling"
+source = "maintainer ruling on #1819 (2026-10-12, recorded on #1199): the oracle keeps 2026-12-11"
+
+[[row]]
+id = "xfail-partitioned-parallel-plain"
+kind = "xfail"
+texts = ['tests/opensees/integration/test_emit_partitioned_auto_numberer_and_system.py::"ADR 0027 INV-5 amendment 2026-05-26: numberer ParallelPlain "']
+expires = 2026-12-11
+basis = "policy"
+source = "PROGRAM.md section 8 KC4 (60 days); clock start 2026-10-12 proposed by X4-a; this xfail is strict=False"
+
+[[row]]
+id = "xfail-ladruno-sanisand-linux"
+kind = "xfail"
+texts = ['tests/opensees/integration_ladruno/test_ladruno_sanisand_live.py::reason="Linux fork build differs ~4e-10 from ManzariDafalias; F3 roster #1523"']
+expires = 2026-12-11
+basis = "policy"
+source = "PROGRAM.md section 8 KC4 (60 days); clock start 2026-10-12 proposed by X4-a; depends on F3 roster #1523"

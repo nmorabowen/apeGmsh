@@ -5,25 +5,33 @@
 # tests/opensees/h5. Each row is one model that does not round-trip:
 #   <model id> <class> <pin>  # <reason>
 # Class A: integral floats only (1e6 comes back as 1000000). Class B: the same lines
-# in another order. Class C: a semantic difference, cited to its #1798 item.
+# in another order, once numbers are normalised, and the replay still declares every
+# tag before a line uses it (K2c, #1816). Class C: a semantic difference, cited to the
+# open issue that tracks it as #NNNN (#1832; #1814 for a reorder that uses a tag
+# before declaring it). The oracle derives the class and fails a wrong label; there
+# is no override.
 # For A, B and C, <pin> is the sha256[:16] of the exact normalised unified diff.
 # Class S: the model is built on FEMStub and archives no neutral zone, so it is not
 # replayable (#1797); <pin> names the error replay must raise.
 # Every row is an assertion: a model that starts to match fails, and so does one
 # that differs in a new way. Delete the row in the PR that fixes it, and lower
 # N_WAIVED_ORACLE with it. Never add a row or raise N_WAIVED_ORACLE.
+# Transitions: a fix that leaves only order or float text re-pins its row C -> A/B
+# and drops its C citation; a row may always escalate A/B -> C when the oracle
+# learns to see more, citing its issue (#NNNN). Every C row cites one. No other
+# re-pin is allowed; the test compares every row with the ledger at the merge base
+# with origin/main.
 #
 # Deadline: 2026-12-11. The ledger is empty by then, or KC4 applies (K2 spec, #1201).
 #
 # Not in this oracle: the golden emit corpus (tests/opensees/golden/cells, 86 cells).
 # It is built on FEMStub, so its archives are bridge-only and not replayable;
 # tracked in #1797.
-N_WAIVED_ORACLE = 36
-test_h5_commands_program::_ledgered_frame C af7b7c94e25fe997  # #1798 item 1: equationConstraint dropped (the known, warned ledger drop)
+N_WAIVED_ORACLE = 35
 test_h5_apesees_cuts::_build_minimal_ops S KeyError:nodes  # #1797: FEMStub model, bridge-only archive
-test_h5_builder_scope_replay::build_mixed_ndf_bridge C 71f78016a5eb8a91  # #1798 item 2: fix DOF count changes on mixed ndf
-test_h5_builder_scope_replay::_staged_bridge[staged_pg=Rock] C 2993ae7cfdb77ac5  # #1798 item 2: fix DOF count changes on mixed ndf
-test_h5_builder_scope_replay::_staged_bridge[staged_pg=Liner] C de8b4a3942465fc9  # #1798 item 2: fix DOF count changes on mixed ndf
+test_h5_builder_scope_replay::build_mixed_ndf_bridge B 81b21ebd6ecc9ea2  # declaration order: section, geomTransf, beamIntegration and damping move
+test_h5_builder_scope_replay::_staged_bridge[staged_pg=Rock] B 068f56013233fa51  # declaration order: section, geomTransf, beamIntegration and damping move
+test_h5_builder_scope_replay::_staged_bridge[staged_pg=Liner] B 81b21ebd6ecc9ea2  # declaration order: section, geomTransf, beamIntegration and damping move
 test_h5_damping::_build_with_element_damp B 701687019daf6c2a  # declaration order: damping Uniform moves
 test_h5_decls::_staged[named=False] S KeyError:nodes  # #1797: FEMStub model, bridge-only archive
 test_h5_decls::_staged[named=True] S KeyError:nodes  # #1797: FEMStub model, bridge-only archive
@@ -32,9 +40,9 @@ test_h5_decls::_flat_frame[named=True] A 4dfab89360dacaea  # integral floats re-
 test_h5_decls::_param_stage_model S KeyError:nodes  # #1797: FEMStub model, bridge-only archive
 test_h5_names_sidecar::_build[named=False] B 645176bf20b787b7  # declaration order: geomTransf and beamIntegration move
 test_h5_names_sidecar::_build[named=True] B 645176bf20b787b7  # declaration order: geomTransf and beamIntegration move
-test_h5_decl_params::_params_frame B b085c0d92a629ca9  # declaration order: materials, section and geomTransf move
+test_h5_decl_params::_params_frame C b085c0d92a629ca9  # #1814: replay declares uniaxialMaterial Parallel 3 above its Steel01 1 (fatal reorder); materials, section and geomTransf move
 test_h5_decl_params::_broad_staged S KeyError:nodes  # #1797: FEMStub model, bridge-only archive
-test_h5_decl_params::_broad_frame C a42fdb5f610430f3  # #1798 item 1: equationConstraint dropped, constraints Lagrange moves
+test_h5_decl_params::_broad_frame C c0449e914db42da1  # #1814: Parallel 3/4 declared before Steel01 1 and Viscous 2 (openseespy refuses); the rest is order and float text
 test_h5_decl_params::_broad_partitioned S KeyError:nodes  # #1797: FEMStub model, bridge-only archive
 test_h5_initial_stress::_build_frame[with_initial_stress=False] B 0fd281e8f3f3b7fe  # declaration order: geomTransf moves
 test_h5_initial_stress::_build_frame[with_initial_stress=True] B 0fd281e8f3f3b7fe  # declaration order: geomTransf moves
@@ -44,7 +52,7 @@ test_h5_param_tags::_zero_some_bridge A 1be02386e4b2917a  # integral floats re-e
 test_h5_param_tags::_absorb_and_stress_bridge A 1be02386e4b2917a  # integral floats re-emitted as integers
 test_h5_partitioned_staged_capture::_partitioned_bridge A a689fc8f9e94a573  # integral floats re-emitted as integers
 test_h5_partitioned_staged_capture::_flat_bridge A a689fc8f9e94a573  # integral floats re-emitted as integers
-test_h5_partitions_roundtrip::_build_bridge C 50de0f28e9c2375d  # #1798 item 3: replay adds the ParallelPlain/Mumps fallback lines
+test_h5_partitions_roundtrip::_build_bridge C 50de0f28e9c2375d  # #1832: replay adds the ParallelPlain/Mumps fallback lines (replay reproduces the non-flat deck; the oracle compares flat=True)
 test_h5_rc_layered_shell_roundtrip::_bridge B fccf07e59c502e0a  # declaration order: PlateRebar materials move
 test_h5_solve_stamp::_frame_bridge[analysis=True] B 19034b94cb3ddbbd  # declaration order: system and analysis move in the chain
 test_h5_stages_reader::_real_two_stage_bridge A a689fc8f9e94a573  # integral floats re-emitted as integers
