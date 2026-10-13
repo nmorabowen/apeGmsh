@@ -593,7 +593,7 @@ class H5RefusedVerb(NotImplementedError):
 #:     Hashed: a reinforced archive hashes differently once at this
 #:     minor; a file without a tie is unchanged. A 2.29 reader opens 2.12
 #:     through 2.29; a 2.28.x reader REFUSES a 2.29.x file.
-#:   * 2.30.0 — R3-S5 (#1789, maintainer ruling D7): additive — the
+#:   * 2.30.0 — R3-S5 (maintainer ruling D7): additive — the
 #:     ``decl_params`` rows of the typed ``recorder.Node`` /
 #:     ``recorder.Element`` gain a ``precision`` field, the ``-precision N``
 #:     significant digits (``null`` when unset, and then the deck carries
