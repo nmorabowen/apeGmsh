@@ -13,10 +13,11 @@ import { mountPhase } from "../panels/phase.ts";
 import { mountSources } from "../panels/sources.ts";
 import { mountWindows } from "../panels/windows/frame.ts";
 import { BlobStore } from "../state/blobs.ts";
-import { chainOf } from "../state/selectors.ts";
+import { chainOf, contourFieldsOf, contourView } from "../state/selectors.ts";
 import { Store } from "../state/store.ts";
 import { WINDOW_KINDS, type DeclPath } from "../state/types.ts";
 import { applyTheme } from "../theme/tokens.ts";
+import { contourKey } from "./contour.ts";
 import { Viewport } from "./viewport.ts";
 
 const bridge = (window as unknown as { viewer: Bridge }).viewer;
@@ -27,6 +28,8 @@ const blobs = new BlobStore();
 const effects = new Effects(store, blobs, bridge);
 const viewport = new Viewport(document.getElementById("viewport")!, store, blobs);
 effects.setFrameTarget(viewport);
+// V4c1: the contour colours from the step the effects fetched (never kept in the store).
+viewport.setStepSource(() => effects.currentStep());
 const panels = [mountHeader(store), mountBanner(store), mountLegend(store), mountInspector(store), mountEmpty(store), mountPhase(store), mountSources(store), mountWindows(store)];
 window.addEventListener("beforeunload", () => {
   for (const d of panels) d();
@@ -229,6 +232,158 @@ async function captureResults(path: string, settle: (ms?: number) => Promise<unk
   }
 }
 
+/** Poll the store (every 20 ms, at most `ms`) until `ok` holds; false on timeout. */
+async function until(ok: () => boolean, ms = 15000): Promise<boolean> {
+  for (let t = 0; t < ms; t += 20) {
+    if (ok()) return true;
+    await new Promise((r) => setTimeout(r, 20));
+  }
+  return ok();
+}
+
+/** The contour colours on screen are the step the state shows, at its range (renderer/contour.ts keys). */
+function contourShown(): boolean {
+  const v = contourView(store.get());
+  return v.state === "ready" && v.stepMeasured && viewport.contourApplied === contourKey(v);
+}
+
+/**
+ * The V4c1 contour stills (D7), by a fixed rule so no flag is needed: on the
+ * results stage with the most steps (the last of a tie), coloured by its
+ * first nodal field's first component (the magnitude when offered), the
+ * legend while the history scan runs (main paces a capture's scan, one step
+ * per 2 s), then after it at the first and the last step, then the first
+ * axis component at the last step, and that last still again at 1280 px.
+ * `<out>.contour-<n>-<what>.png`.
+ */
+async function captureContours(settle: (ms?: number) => Promise<unknown>, width: number, height: number) {
+  const s0 = store.get();
+  if (!s0.results || !s0.phase.axis.some((k) => k.kind === "results")) return;
+  const stages = s0.results.stages;
+  let best = -1;
+  stages.forEach((st, i) => {
+    if (st.nodal.length && (best < 0 || st.time.length >= stages[best]!.time.length)) best = i;
+  });
+  if (best < 0) return;
+  if (typeof bridge.captureResize === "function") await bridge.captureResize(width, height);
+  const still = async (name: string) => {
+    if (!(await until(contourShown))) throw new Error(`capture ${name}: the contour did not show the step on screen`);
+    await settle(100);
+    viewport.renderNow();
+    await painted();
+    await painted();
+    await bridge.captureStill(name);
+  };
+  store.dispatch({ type: "setPhase", at: { kind: "results", stage: best, step: 0 } });
+  store.dispatch({ type: "setColourBy", by: "contour" });
+  const scan = () => store.get().contour.scan;
+  if (!(await until(() => scan()?.status === "running" && scan()!.done > 0))) throw new Error(`capture: the history scan did not report progress (${JSON.stringify(scan())})`);
+  await still("contour-1-scan-running");
+  // The still must show a scan in progress: one that finished first would show "whole history" under this name.
+  if (scan()?.status !== "running") throw new Error(`capture: the history scan finished before its still was taken (${JSON.stringify(scan())})`);
+  if (!(await until(() => scan()?.status === "done", 30000))) throw new Error(`capture: the history scan did not finish (${JSON.stringify(scan())})`);
+  await still("contour-2-history-first-step");
+  const last = stages[best]!.time.length - 1;
+  store.dispatch({ type: "setResultStep", step: last });
+  await still("contour-3-history-last-step");
+  const v = contourView(store.get());
+  const axis = v.state === "ready" ? contourFieldsOf(store.get())?.fields.find((f) => f.name === v.field)?.components.find((c) => !c.magnitude) : undefined;
+  if (axis && v.state === "ready") {
+    store.dispatch({ type: "setContourField", field: v.field, component: axis.key });
+    await until(() => scan()?.status === "done" && scan()!.key.endsWith(`|${axis.key}`), 30000);
+    await still(`contour-4-component-${axis.label}`);
+  }
+  if (typeof bridge.captureResize === "function") {
+    await bridge.captureResize(1280, height);
+    await settle();
+    await still("contour-5-last-step.1280");
+  }
+}
+
+/** Resolves once the contour shows the step the state names (checked after every store change; the viewport listens first). */
+function contourShowsNow(): Promise<void> {
+  return new Promise((resolve) => {
+    if (contourShown()) return resolve();
+    const off = store.subscribe(() => {
+      if (!contourShown()) return;
+      off();
+      resolve();
+    });
+  });
+}
+
+/**
+ * The V4c1 contour scrub (MEASUREMENTS.md, the contour rows): on the results
+ * stage with the most steps, coloured by its first field's first component
+ * (the magnitude when offered) over the whole-history range, every step in
+ * turn, end to end: `setResultStep`, the step read in main, the IPC, the
+ * step range, the vertex colours, the upload and a draw with `gl.finish()`.
+ * The history scan's time comes first; the machine's CPU load is sampled
+ * before (1 s idle) and during the scrub, and the working sets every 100 ms.
+ */
+async function measureContour(path: string) {
+  store.dispatch({ type: "clearSelection" });
+  if (!(await effects.openResults(path))) throw new Error(`measure: results ${path} did not open: ${store.get().artifacts.results?.error}`);
+  const s = store.get();
+  if (!s.phase.axis.some((k) => k.kind === "results")) throw new Error(`measure: ${path} does not pair with the model, so there is nothing to scrub`);
+  const stages = s.results!.stages;
+  let best = -1;
+  stages.forEach((st, i) => {
+    if (st.nodal.length && (best < 0 || st.time.length > stages[best]!.time.length)) best = i;
+  });
+  if (best < 0) throw new Error(`measure: ${path} has no stage with nodal results`);
+  const cpu = bridge.measureCpu!;
+  const memory = bridge.measureMemory!;
+  await cpu();
+  await new Promise((r) => setTimeout(r, 1000));
+  const cpuBefore = await cpu();
+  const peak = { main: 0, renderer: 0 };
+  const sample = async () => {
+    const m = await memory();
+    if (m.main + m.renderer > peak.main + peak.renderer) Object.assign(peak, m);
+  };
+  const sampler = setInterval(() => void sample(), 100);
+  try {
+    const t0 = performance.now();
+    store.dispatch({ type: "setPhase", at: { kind: "results", stage: best, step: 0 } });
+    store.dispatch({ type: "setColourBy", by: "contour" });
+    if (!(await until(() => store.get().contour.scan?.status === "done", 600000))) throw new Error(`measure: the history scan did not finish: ${JSON.stringify(store.get().contour.scan)}`);
+    const scanMs = performance.now() - t0;
+    await contourShowsNow();
+    const v = contourView(store.get());
+    const field = v.state === "ready" ? `${v.field} ${v.component.label}` : "?";
+    const T = stages[best]!.time.length;
+    const gl = viewport.renderer.getContext();
+    const stepMs: number[] = [];
+    await cpu();
+    const start = performance.now();
+    for (let k = 1; k < T; k++) {
+      const t = performance.now();
+      store.dispatch({ type: "setResultStep", step: k });
+      await contourShowsNow();
+      viewport.renderNow();
+      gl.finish();
+      stepMs.push(performance.now() - t);
+    }
+    const total = performance.now() - start;
+    const cpuDuring = await cpu();
+    await sample();
+    const sorted = [...stepMs].sort((a, b) => a - b);
+    return {
+      file: path,
+      field: `${field} (stage ${stages[best]!.name || stages[best]!.id})`,
+      steps: T,
+      scanMs,
+      scrubStepsPerSec: ((T - 1) * 1000) / total,
+      stepMs: { median: sorted[Math.floor((sorted.length - 1) / 2)] ?? NaN, max: sorted[sorted.length - 1] ?? NaN },
+      peakMB: peak,
+      cpu: { before: cpuBefore, during: cpuDuring },
+    };
+  } finally {
+    clearInterval(sampler);
+  }
+}
+
 async function main() {
   const cfg = await bridge.config();
   if (cfg.mode === "view") {
@@ -243,7 +398,9 @@ async function main() {
     return;
   }
   if (cfg.mode === "measure") {
-    await bridge.measureDone(await measure(cfg.t0, cfg));
+    const result = await measure(cfg.t0, cfg);
+    // V4c1: with a results sibling, the contour scrub row too (main prints it).
+    await bridge.measureDone({ ...result, contour: cfg.results ? await measureContour(cfg.results) : null });
     return;
   }
   // capture: select the scripted target and let main grab the page; when the
@@ -318,7 +475,12 @@ async function main() {
   // stage activation (inactive elements hidden), and the banner when the
   // activation is `ambiguous` or `absent`, or the results do not pair. The
   // rule is fixed, so no flag is needed.
-  if (cfg.results) await captureResults(cfg.results, settle);
+  if (cfg.results) {
+    const width = window.innerWidth, height = window.innerHeight;
+    await captureResults(cfg.results, settle);
+    // V4c1 (D7): the contour stills, at the capture window's own width, then 1280 px.
+    await captureContours(settle, width, height);
+  }
   await bridge.captureDone();
 }
 

@@ -4,11 +4,15 @@
 // fails to compile when an event is added without a case, and an event the
 // code does not know raises at run time.
 
+import { CMAP_NAMES, componentName, componentOf, contourKeysOf, defaultPick } from "./contour.ts";
 import { geometryPairing, resultsPairing, stageCount, stageIdentity } from "./selectors.ts";
-import { WINDOW_KINDS, type ArtifactInfo, type ArtifactKind, type DeclPath, type Event, type PhaseKey, type State } from "./types.ts";
+import { WINDOW_KINDS, type ArtifactInfo, type ArtifactKind, type ContourState, type DeclPath, type Event, type PhaseKey, type State } from "./types.ts";
 
 /** A record with no prototype: a key named `constructor` or `__proto__` is just a key. */
 export const emptyRecord = <T>(): Record<string, T> => Object.create(null) as Record<string, T>;
+
+/** The contour before anything is picked: whole-history range, jet (V4c1). */
+export const initialContour: ContourState = { field: null, component: null, range: "history", fixed: null, cmap: "jet", stepRange: null, scan: null, notice: null, reads: 0 };
 
 export const initialState: State = {
   artifacts: { geometry: null, model: null, results: null },
@@ -35,6 +39,7 @@ export const initialState: State = {
   stageElements: { status: "none" },
   results: null,
   resultStep: null,
+  contour: initialContour,
 };
 
 const NO_SELECTION: State["selection"] = { decls: [], picks: [] };
@@ -109,7 +114,21 @@ function withPhase(s: State): State {
     else if (at.step >= n) at = { ...at, step: n - 1 };
   }
   const resultStep = at?.kind === "results" && s.resultStep && s.resultStep.stage === at.stage && s.resultStep.step === at.step ? s.resultStep : null;
-  return { ...s, phase: { axis, at }, resultStep };
+  return withContourPick({ ...s, phase: { axis, at }, resultStep });
+}
+
+/** The stage a contour pick is checked against: the results stage shown. */
+const shownStage = (s: State) => (s.phase.at?.kind === "results" ? s.results?.stages[s.phase.at.stage] : undefined);
+
+/**
+ * Colouring by contour with nothing picked, on a results stage: its first
+ * field and component (V4c1). Not after a re-read cleared the pick: the
+ * notice stands, and the user picks again (`setContourField` clears it).
+ */
+function withContourPick(s: State): State {
+  if (s.visibility.colourBy !== "contour" || s.contour.field !== null || s.contour.notice !== null) return s;
+  const pick = defaultPick(shownStage(s));
+  return pick ? { ...s, contour: { ...s.contour, ...pick } } : s;
 }
 
 export function reduce(s: State, e: Event): State {
@@ -252,8 +271,8 @@ export function reduce(s: State, e: Event): State {
       if (!Number.isFinite(e.value)) throw new RangeError(`setOpacity: ${e.value} is not a number`);
       return { ...s, visibility: { ...s.visibility, opacity: Math.min(1, Math.max(0, e.value)) } };
     case "setColourBy":
-      if (e.by !== "group" && e.by !== "role") throw new RangeError(`setColourBy: ${JSON.stringify(e.by)}`);
-      return s.visibility.colourBy === e.by ? s : { ...s, visibility: { ...s.visibility, colourBy: e.by } };
+      if (e.by !== "group" && e.by !== "role" && e.by !== "contour") throw new RangeError(`setColourBy: ${JSON.stringify(e.by)}`);
+      return s.visibility.colourBy === e.by ? s : withContourPick({ ...s, visibility: { ...s.visibility, colourBy: e.by } });
     case "setPhase":
       if (!s.phase.axis.some((k) => samePhase(k, e.at))) throw new Error(`setPhase: ${JSON.stringify(e.at)} is not on the phase axis`);
       if (e.at.kind === "results") checkStep(s, e.at.stage, e.at.step, "setPhase");
@@ -284,13 +303,56 @@ export function reduce(s: State, e: Event): State {
       const old = at?.kind === "results" ? s.results?.stages[at.stage] : undefined;
       const now = at?.kind === "results" ? e.info.stages[at.stage] : undefined;
       const keep = !old || (now !== undefined && now.id === old.id && now.name === old.name);
-      return withPhase({
+      // V4c1: a re-read invalidates the measured ranges (the same path, other
+      // data); a pick the re-read stage no longer has is cleared, with a notice.
+      const next = withPhase({
         ...s,
         artifacts: { ...s.artifacts, results: info },
         results: e.info,
         phase: keep ? s.phase : { ...s.phase, at: null },
+        contour: { ...s.contour, stepRange: null, scan: null, reads: s.contour.reads + 1 },
       });
+      const c = next.contour;
+      if (c.field === null || c.component === null) return next;
+      const field = c.field, component = c.component;
+      const stage = shownStage(next);
+      const has = stage ? componentOf(stage, field, component) !== null : e.info.stages.some((st) => componentOf(st, field, component) !== null);
+      if (has) return next;
+      const notice =
+        `The re-read ${e.info.path.split(/[\\/]/).pop()} has no ${field} ${componentName(component)}` +
+        `${stage ? ` in stage ${stage.name || stage.id}` : ""}: the contour pick was cleared.`;
+      return { ...next, contour: { ...c, field: null, component: null, notice } };
     }
+    case "setContourField": {
+      const stage = shownStage(s);
+      const ok = stage
+        ? componentOf(stage, e.field, e.component) !== null
+        : (s.results?.stages ?? []).some((st) => componentOf(st, e.field, e.component) !== null);
+      if (!ok) throw new RangeError(`setContourField: ${e.field} / ${e.component} is not a nodal field component of ${stage ? `stage ${stage.id}` : "the results"}`);
+      if (s.contour.field === e.field && s.contour.component === e.component && s.contour.notice === null) return s;
+      return { ...s, contour: { ...s.contour, field: e.field, component: e.component, notice: null } };
+    }
+    case "setContourRange": {
+      if (e.range !== "history" && e.range !== "step" && e.range !== "fixed") throw new RangeError(`setContourRange: ${JSON.stringify(e.range)}`);
+      let fixed = s.contour.fixed;
+      if (e.range === "fixed") {
+        fixed = e.fixed ?? s.contour.fixed;
+        if (!fixed || !Number.isFinite(fixed.min) || !Number.isFinite(fixed.max) || !(fixed.min < fixed.max)) {
+          throw new RangeError(`setContourRange: a fixed range needs a finite min below a finite max; got ${JSON.stringify(fixed)}`);
+        }
+      }
+      return { ...s, contour: { ...s.contour, range: e.range, fixed } };
+    }
+    case "setContourCmap":
+      if (!CMAP_NAMES.includes(e.cmap)) throw new RangeError(`setContourCmap: ${JSON.stringify(e.cmap)}`);
+      return s.contour.cmap === e.cmap ? s : { ...s, contour: { ...s.contour, cmap: e.cmap } };
+    case "contourStepRange":
+      // Only the step and component on screen: a late answer for another is dropped.
+      if (contourKeysOf(s)?.step !== e.key) return s;
+      return { ...s, contour: { ...s.contour, stepRange: { key: e.key, min: e.min, max: e.max } } };
+    case "contourScan":
+      if (contourKeysOf(s)?.scan !== e.scan.key) return s;
+      return { ...s, contour: { ...s.contour, scan: e.scan } };
     case "resultStep": {
       // A status for a step that is no longer shown is dropped (the effects
       // also drop replies that are not their latest request).

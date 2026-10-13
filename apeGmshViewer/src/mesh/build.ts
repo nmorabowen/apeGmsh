@@ -46,9 +46,13 @@ export interface LegendEntry {
 export interface MeshBuffers {
   /** 6 floats per segment (two xyz endpoints). */
   linePositions: Float32Array;
+  /** V4c1: the node tag of each segment endpoint (2 per segment), from the connectivity the position was read from. */
+  lineNodes: Float64Array;
   lineRefs: ElementRef[];
   /** 9 floats per triangle. */
   triPositions: Float32Array;
+  /** V4c1: the node tag of each triangle vertex (3 per triangle). */
+  triNodes: Float64Array;
   triRefs: ElementRef[];
   /** 6 floats per outline edge of the drawn faces. */
   edgePositions: Float32Array;
@@ -105,9 +109,13 @@ export function buildMesh(model: ModelFile): MeshBuffers {
     }
     return i;
   };
+  // V4c1: the node tag of every drawn vertex, beside its position, from the
+  // same node index the position is read from (never matched by position).
+  const ln: number[] = [], tn: number[] = [];
   const push3 = (arr: number[], i: number) => arr.push(xyz[3 * i]!, xyz[3 * i + 1]!, xyz[3 * i + 2]!);
   const pushSeg = (a: number, b: number, ref: ElementRef) => {
     push3(lp, a); push3(lp, b);
+    ln.push(model.nodeIds[a]!, model.nodeIds[b]!);
     lr.push(ref);
   };
   const polygons: number[][] = [];
@@ -115,6 +123,7 @@ export function buildMesh(model: ModelFile): MeshBuffers {
     polygons.push(ids);
     for (let k = 1; k + 1 < ids.length; k++) {
       push3(tp, ids[0]!); push3(tp, ids[k]!); push3(tp, ids[k + 1]!);
+      tn.push(model.nodeIds[ids[0]!]!, model.nodeIds[ids[k]!]!, model.nodeIds[ids[k + 1]!]!);
       tr.push(ref);
     }
   };
@@ -219,8 +228,10 @@ export function buildMesh(model: ModelFile): MeshBuffers {
 
   return {
     linePositions: new Float32Array(lp),
+    lineNodes: new Float64Array(ln),
     lineRefs: lr,
     triPositions: new Float32Array(tp),
+    triNodes: new Float64Array(tn),
     triRefs: tr,
     edgePositions: new Float32Array(ep),
     legend,

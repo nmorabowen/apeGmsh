@@ -77,6 +77,12 @@ export interface NodalInfo {
   /** Node ids, column order of every component (`_ids`, int64 in the file). */
   ids: Float64Array;
   components: string[];
+  /**
+   * Components whose value columns disagree with `_ids` (a partial write, V4c1
+   * #1756): refused one by one, with the reason, and never listed in
+   * `components`. A step axis that disagrees with `time` still refuses the file.
+   */
+  refused: { component: string; reason: string }[];
 }
 
 export interface GaussGroupInfo {
@@ -217,6 +223,23 @@ export class ResultsFile {
     });
   }
 
+  /**
+   * Steps `k0` to `k1` (exclusive) of each entry of `components`, by one
+   * hyperslab each: ((k1 - k0) * N,), step-major (V4c1: the history-range scan
+   * reads a stage in chunks of steps, never the whole (T, N) at once).
+   */
+  readNodalRows(stageId: string, components: readonly string[], k0: number, k1: number): Float64Array[] {
+    const s = this.stage(stageId);
+    const nodes = this.requireNodes(s);
+    if (!Number.isInteger(k0) || !Number.isInteger(k1) || k0 < 0 || k1 > s.nSteps || k0 >= k1) {
+      throw new ResultsError("argument", `steps ${k0}..${k1} are not a range inside stage ${s.id} (0..${s.nSteps})`);
+    }
+    return components.map((c) => {
+      const ds = this.component(nodes.path, nodes.components, c);
+      return toFloat64(ds.slice([[k0, k1], []]), ds.path);
+    });
+  }
+
   /** One Gauss-group component at `step`: (E * G,), element-major. */
   readGaussStep(stageId: string, groupId: string, component: string, step: number): Float64Array {
     const s = this.stage(stageId);
@@ -306,15 +329,23 @@ export class ResultsFile {
   private readNodes(g: RGroup, T: number): NodalInfo {
     const ids = intsAsNumbers(this.dataset(g, "_ids"));
     const components: string[] = [];
+    const refused: { component: string; reason: string }[] = [];
     for (const k of g.keys()) {
       if (k === "_ids") continue;
       if (k.startsWith("_")) throw new ResultsError("layout", `${g.path}/${k}: not a nodal index dataset this reader knows`);
       const ds = this.dataset(g, k);
+      // V4c1 seam "partial writes": a step axis that matches `time` with value
+      // columns that do not match `_ids` refuses this component, not the file.
+      const shape = ds.shape ?? [];
+      if (shape.length === 2 && shape[0] === T && shape[1] !== ids.length) {
+        refused.push({ component: k, reason: `${ds.path} has ${shape[1]} value columns and _ids has ${ids.length} node ids (a partial write)` });
+        continue;
+      }
       expectShape(ds, [T, ids.length]);
       expectFloat(ds);
       components.push(k);
     }
-    return { path: g.path, ids, components };
+    return { path: g.path, ids, components, refused };
   }
 
   private readGauss(g: RGroup, id: string, T: number): GaussGroupInfo {

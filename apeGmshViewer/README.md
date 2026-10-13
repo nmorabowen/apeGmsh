@@ -68,8 +68,25 @@ Then:
   step -1/+1. Steps are read one at a time in the main process, when shown;
   the file is closed after half a second without a read (so a writer can
   replace it), and a file that changed is re-read before any step is shown;
-  the newest request wins. The viewport draws the undeformed mesh (contours
-  and the deformed shape come later).
+  the newest request wins. The viewport draws the undeformed mesh (the
+  deformed shape comes later).
+- **Nodal contours.** On a results stage, **contour** in the legend colours
+  the mesh by a nodal field at the step shown: pick the field and its
+  component (`x`, `y`, `z` as the file names them, the **magnitude** for a
+  translational vector such as displacement, velocity, acceleration or
+  reaction force, `[k]` for an unnamed component). The colour range is the
+  field's **whole history** on that stage by default: main reads every step
+  in the background, and until it is done the range is the step's own, with
+  "range: this step (history scan n%)" in the legend. **this step** and
+  **fixed** (your min and max) are the other modes, and the legend always
+  says which is in use. The colormap is **jet**, or viridis or coolwarm. A
+  node the field does not record (not in its `_ids`, or NaN) is **no data**,
+  in the grey the legend names: every face or line that touches it is drawn
+  in it, never as zero and never blended from its neighbours. The file
+  stores no units, so the legend shows none. A component whose value columns
+  disagree with `_ids` (a partial write) is not read, and the banner says so;
+  a re-read that no longer has the picked component clears the pick, with a
+  notice.
 - **Stage activation.** On a results stage of a staged model, the elements
   that stage does not have are hidden: those a later stage activates
   (`s.activate`) and those it or an earlier stage removed
@@ -97,8 +114,8 @@ through Node's type stripping; nothing is compiled for the tests).
 | `npm run typecheck` | `tsc` over `src/` and `test/` |
 | `npm test` | reader, chain resolution, mesh and navigation tests, on the fixture and on synthetic files |
 | `npm start -- <model.h5>` | open the app on a file; without a file, drop one on the window |
-| `npm run measure -- <model.h5> [--uncapped]` | print one [MEASUREMENTS.md](MEASUREMENTS.md) row; `--uncapped` lifts the vsync cap and prints the throughput row |
-| `npm run capture -- <model.h5> <out.png> [--pick=<OpenSees type>]` | write a still from a hidden window, with a beam selected (or an element of the `--pick` type); a second still `<out>.chain-end.png` when the chain is taller than the window; `<out>.framed.png`, `<out>.groups.png` and `<out>.role.png`; one `<out>.window-<kind>.png` per model-definition window; and, when the model has a `<stem>.results.h5` beside it, one `<out>.results-<i>-<stage>.png` per results stage at its last step |
+| `npm run measure -- <model.h5> [--uncapped]` | print one [MEASUREMENTS.md](MEASUREMENTS.md) row; `--uncapped` lifts the vsync cap and prints the throughput row; with a `<stem>.results.h5` beside the model, also the contour scrub row (V4c1) |
+| `npm run capture -- <model.h5> <out.png> [--pick=<OpenSees type>]` | write a still from a hidden window, with a beam selected (or an element of the `--pick` type); a second still `<out>.chain-end.png` when the chain is taller than the window; `<out>.framed.png`, `<out>.groups.png` and `<out>.role.png`; one `<out>.window-<kind>.png` per model-definition window; and, when the model has a `<stem>.results.h5` beside it, one `<out>.results-<i>-<stage>.png` per results stage at its last step, then the contour stills `<out>.contour-<n>-<what>.png` (the scan running, its first and last step, one component, and 1280 px) |
 | `npm run dist` | build the Windows installer into `out/installer/` (see [Install](#install-windows)) |
 
 ## Layout

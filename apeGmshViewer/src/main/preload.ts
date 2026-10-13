@@ -14,6 +14,9 @@
 //   openResults(path)       read a results.h5's index (./results.ts, V4b)
 //   readResultsStep(req)    one step of the open results file; the reply
 //                          echoes `req.seq` so the renderer keeps the latest
+//   scanResults(req)        the history range of a contour field (V4c1);
+//                          cancelResultsScan(id) stops it, and
+//                          onScanProgress(cb) hears its progress
 // onOpen and onFileChanged return a function that removes the listener.
 // Until the page subscribes to a channel, main reloads the page instead of
 // sending on it, so the P0 page (which reads the model from config) follows.
@@ -80,4 +83,17 @@ contextBridge.exposeInMainWorld("viewer", {
   // V4b (#1728): a results file's metadata, then one step at a time (./results.ts).
   openResults: (path: string) => ipcRenderer.invoke("results:open", path),
   readResultsStep: (req: { path: string; stage: string; step: number; seq: number }) => ipcRenderer.invoke("results:readStep", req),
+  // V4c1 (#1756): the history-range scan of a contour field, its cancel, and its progress.
+  scanResults: (req: { path: string; stage: string; components: string[]; magnitude: boolean; scanId: number }) => ipcRenderer.invoke("results:scan", req),
+  cancelResultsScan: (scanId: number) => ipcRenderer.invoke("results:scanCancel", scanId),
+  onScanProgress: (cb: (p: { scanId: number; done: number; total: number }) => void) => {
+    const handler = (_e: IpcRendererEvent, p: { scanId: number; done: number; total: number }) => cb(p);
+    ipcRenderer.on("results:scanProgress", handler);
+    return () => {
+      ipcRenderer.removeListener("results:scanProgress", handler);
+    };
+  },
+  // V4c1 measure mode: the CPU load since the last call, and the working sets now.
+  measureCpu: () => ipcRenderer.invoke("measure:cpu"),
+  measureMemory: () => ipcRenderer.invoke("measure:memory"),
 });

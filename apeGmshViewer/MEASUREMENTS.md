@@ -480,3 +480,71 @@ V4b builds on it. Reopen ADR 0112 D5, with the row that shows it, when a
 - peaks above **2 GB** of memory, main plus renderer, while it is open.
 
 Add that file's row to "Rows" above first, with its machine.
+
+### Contour scrub (V4c1, #1756)
+
+The end-to-end scrub with a nodal contour on, in the app's own window: the
+model (`<stem>.h5`, written by `scripts/make_viewer_results_fixtures.py
+--measure` from the same FEMData, so it pairs by `fem_hash`) with its
+results beside it, coloured by `displacement` magnitude over the
+whole-history range. Each step is `setResultStep`, the read in main, the IPC,
+the step range, the vertex colours of the 2 860 drawn triangles, the upload
+and a draw ended by `gl.finish()`; the scrub visits every step once. The
+history scan (every step of the three components, read in chunks in main)
+runs first and is timed apart. The CPU column is the whole machine's load
+(`os.cpus()` ticks): over 1 s idle before the run, and over the scrub.
+Same machine as "Results sizes (V4)" above. Runs 1 to 3 are at `fd13d8dd`
+(vertex nodes matched by position); runs 4 to 6 at `db36d1eb` (vertex nodes
+from `mesh/build.ts`, the code under review), which are the ones to quote.
+
+```powershell
+$env:PYTHONPATH = "src"
+& C:\Users\nmb\venv\opensees_venv\Scripts\python.exe scripts/make_viewer_results_fixtures.py --measure apeGmshViewer/out/results --only a --only c
+cd apeGmshViewer
+npm run measure -- out/results/a_maintainer_100.h5     # prints the contour row after the P0 row
+npm run measure -- out/results/c_maintainer_5000.h5
+```
+
+| run | file | steps | CPU before / during | history scan (ms) | scrub (steps/s) | step median / max (ms) | peak MB main+renderer |
+|---|---|---|---|---|---|---|---|
+| 1 | (a) | 100 | 32 / 42 % | 39 | 320.1 | 2.90 / 5.7 | 296 (148 + 148) |
+| 1 | (c) | 5 000 | 32 / 43 % | 490 | 383.0 | 2.40 / 7.1 | 382 (170 + 213) |
+| 2 | (a) | 100 | 46 / 49 % | 52 | 325.8 | 2.80 / 6.0 | 297 (146 + 151) |
+| 2 | (c) | 5 000 | 40 / 44 % | 486 | 380.8 | 2.40 / 7.2 | 371 (158 + 214) |
+| 3 | (a) | 100 | 48 / 60 % | 49 | 272.6 | 3.50 / 5.8 | 298 (151 + 148) |
+| 3 | (c) | 5 000 | 40 / 46 % | 486 | 361.4 | 2.50 / 8.4 | 380 (169 + 211) |
+| 4 | (a) | 100 | 59 / 67 % | 52 | 246.0 | 3.80 / 8.3 | 306 (150 + 156) |
+| 4 | (c) | 5 000 | 62 / 68 % | 600 | 270.6 | 3.50 / 11.3 | 380 (166 + 215) |
+| 5 | (a) | 100 | 54 / 59 % | 53 | 266.6 | 3.60 / 6.2 | 305 (148 + 156) |
+| 5 | (c) | 5 000 | 69 / 66 % | 494 | 272.7 | 3.30 / 11.7 | 398 (163 + 235) |
+| 6 | (a) | 100 | 59 / 71 % | 57 | 256.8 | 3.80 / 6.6 | 302 (148 + 154) |
+| 6 | (c) | 5 000 | 61 / 63 % | 488 | 306.6 | 3.10 / 10.3 | 392 (170 + 222) |
+| R | (a) | 100 | n/a / 91 % | n/a | 103 | n/a / 188 | 310 |
+
+Row R is the reviewer's re-measure of (a) at `07e6fd03` (#1761 round 1), at 91 % CPU; the
+reviewer reported the scrub, the worst step and the peak, not the other columns.
+
+Ranges and the conservative (worst) value of each, which is the one to quote.
+The worst (a) values are the reviewer's run R at 91 % CPU; the worst (c) values
+are from runs 4 to 6, under a busier machine (54 to 71 % CPU against 42 to 60 %
+for runs 1 to 3). The scrub follows the machine's load more than the code:
+
+| file | scrub (steps/s): range over runs 1 to 6, **worst** | step max (ms), worst | history scan (ms), worst | peak MB, worst | CPU during |
+|---|---|---|---|---|---|
+| (a) | 103 to 326, **103** | 188 | 57 | 310 | 42 to 91 % |
+| (c) | 271 to 383, **271** | 11.7 | 600 | 398 | 43 to 68 % |
+
+- **The D5 revisit trigger does not fire**: the worst scrub, 103 steps/s
+  at 91 % CPU, is three times the 30 steps/s floor (one step took 188 ms
+  there, so a loaded machine shows single stalls), and the worst peak, 398 MB, is a fifth
+  of 2 GB. These are synthetic files, not a solve (the trigger names a real
+  file).
+- With contours on, the worst scrub is below V4a's worst for the same files
+  ((a) 103 against 584, (c) 271 against 475 steps/s): the step range, the
+  per-vertex colours and a finished draw (`gl.finish()`, which V4a's
+  raw-WebGL apply did not wait for) are now inside each step. Both are
+  measured on a loaded machine, and the ranges say how much that moves them.
+- The history scan of (c), 5 000 steps of three components (517 MB of
+  values), takes 0.5 to 0.6 s, reading about 4 MB per chunk. The peak, 296 to
+  398 MB, is above V4a's 234 to 240 MB: this window also holds the model,
+  its mesh and its panels, which V4a's blank measuring page did not.
