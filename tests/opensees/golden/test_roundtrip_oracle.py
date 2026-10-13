@@ -192,7 +192,8 @@ def _canon(text: str, out_dir: Path) -> str:
     )
 
 
-def _emit_and_replay(model: Model, out_dir: Path) -> tuple[str, str]:
+def _emit(model: Model, out_dir: Path) -> tuple[str, Path]:
+    """The bridge deck (canonical text) and the archive of the same model."""
     with warnings.catch_warnings():
         # Advisory emit warnings are their own tests' subject, not this one's.
         warnings.simplefilter("ignore")
@@ -201,10 +202,20 @@ def _emit_and_replay(model: Model, out_dir: Path) -> tuple[str, str]:
         ops.tcl(str(deck), progress=False, flat=True)
         archive = out_dir / "model.h5"
         ops.h5(str(archive))
+    return _canon(deck.read_bytes().decode("utf-8"), out_dir), archive
+
+
+def _replay(archive: Path) -> str:
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
         replay = OpenSeesModel.from_h5(str(archive)).build("tcl")
     assert isinstance(replay, str)
-    bridge = deck.read_bytes().decode("utf-8")
-    return _canon(bridge, out_dir), _canon(replay, out_dir)
+    return _canon(replay, archive.parent)
+
+
+def _emit_and_replay(model: Model, out_dir: Path) -> tuple[str, str]:
+    bridge, archive = _emit(model, out_dir)
+    return bridge, _replay(archive)
 
 
 def _diff(bridge: str, replay: str) -> str:
@@ -214,8 +225,15 @@ def _diff(bridge: str, replay: str) -> str:
     ))
 
 
+#: A hunk header. Its line numbers move with anything above the hunk (a
+#: gmsh release that meshes one more node shifts every later line), so the
+#: pin hashes the hunk structure and the changed lines, never the offsets.
+_HUNK = re.compile(r"^@@ -\d+(?:,\d+)? \+\d+(?:,\d+)? @@", re.MULTILINE)
+
+
 def _pin(diff: str) -> str:
-    return hashlib.sha256(diff.encode("utf-8")).hexdigest()[:16]
+    body = _HUNK.sub("@@", diff)
+    return hashlib.sha256(body.encode("utf-8")).hexdigest()[:16]
 
 
 def _classify(bridge: str, replay: str) -> str:
@@ -235,8 +253,9 @@ def _check(model: Model, waiver: Waiver | None, out_dir: Path) -> None:
     """The oracle for one model; raises AssertionError on any violation."""
     if waiver is not None and waiver.klass == "S":
         exc_type, text = _S_ERRORS[waiver.pin]
+        _bridge, archive = _emit(model, out_dir)  # the bridge must emit
         with pytest.raises(exc_type, match=re.escape(text)):
-            _emit_and_replay(model, out_dir)
+            OpenSeesModel.from_h5(str(archive))
         return
     bridge, replay = _emit_and_replay(model, out_dir)
     diff = _diff(bridge, replay)
@@ -272,6 +291,19 @@ def test_replay_matches_the_bridge_deck(model: Model, tmp_path: Path) -> None:
     _check(model, _waivers().get(model.id), tmp_path)
 
 
+def test_pin_ignores_hunk_offsets() -> None:
+    """The same diff body at another line offset has the same pin (#1799)."""
+    want = "\n".join(
+        ["head"] * 3
+        + ["nDMaterial ElasticIsotropic 1 25000000000.0 0.2 2400.0", "tail"])
+    got = want.replace("25000000000.0 0.2 2400.0", "25000000000 0.2 2400")
+    shifted = "\n".join(["mesh"] * 40) + "\n"
+    near, far = _diff(want, got), _diff(shifted + want, shifted + got)
+    assert near != far  # the hunk headers differ ...
+    assert _pin(near) == _pin(far)  # ... and the pin does not
+    assert _pin(near) != _pin(_diff(want, want.replace("head", "hd", 1)))
+
+
 def test_corpus_ids_are_unique() -> None:
     ids = [m.id for m in CORPUS]
     assert len(ids) == len(set(ids))
@@ -281,6 +313,11 @@ def test_ledger_only_shrinks() -> None:
     n, rows, _h = _read_ledger()
     assert n == len(rows), f"N_WAIVED_ORACLE = {n} but {len(rows)} rows"
     assert n <= _CEILING, "N_WAIVED_ORACLE may only go down"
+    # Shrink-only: the PR that deletes a row lowers _CEILING with it, so the
+    # committed ceiling never leaves room to add a row back.
+    assert _CEILING == n, (
+        f"_CEILING = {_CEILING} but N_WAIVED_ORACLE = {n}: lower _CEILING "
+        "to match in the same PR")
     assert len({w.model for w in rows}) == len(rows), "duplicate ledger rows"
 
 
