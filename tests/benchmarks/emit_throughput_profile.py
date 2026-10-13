@@ -1072,6 +1072,446 @@ def emit_instrumented(
     }
 
 
+# ----------------------------------------------------------------------------
+# per-rank, per-phase residency (#1766 / S3-a, ADR 0100)
+# ----------------------------------------------------------------------------
+# Phase order inside one rank block of BuiltModel._emit_partitioned.  A
+# window between two boundary events is charged to the phase named by the
+# event that CLOSES it, so the element phase includes the argument
+# evaluation of its first call (the per-rank LazyRankBuckets.get
+# materialisation runs there).
+PHASE_ORDER = ("hoisted_nodes", "nodes", "elements", "fix_mass_regions",
+               "constraints", "close")
+_PHASE_OF_EVENT = {
+    "nodes_exit": "nodes",
+    "elem_enter": "elements",
+    "elem_exit": "elements",
+    "attr_snap": "elements",
+    "mp_enter": "fix_mass_regions",
+    "mp_exit": "constraints",
+    "close": "close",
+}
+
+
+class PhaseTracker:
+    """Per-rank, per-phase traced-peak bookkeeping (``--phases``).
+
+    Every boundary reads ``tracemalloc.get_traced_memory()`` and resets
+    the peak, so a phase's number is the TRUE counter peak inside its
+    windows (no sampling, nothing can be missed), stored as growth above
+    the rank block's floor (traced-current at ``partition_open``).  B/node
+    divides by the rank's owned-node count.  Nothing here takes a
+    snapshot except the attribution captures, which reset the peak
+    afterwards so their own spike is never billed to a phase.
+    """
+
+    def __init__(self, attr_rank: int, snap_dir: str):
+        self.blocks: "list[dict]" = []
+        self.cur: "dict | None" = None
+        self.stage_mode = False
+        self.attr_rank = attr_rank
+        self.snap_dir = snap_dir
+        self.attr: "list[dict]" = []
+
+    @staticmethod
+    def _read() -> "tuple[int, int]":
+        cur, peak = tracemalloc.get_traced_memory()
+        tracemalloc.reset_peak()
+        return cur, peak
+
+    def _attr_wanted(self) -> bool:
+        b = self.cur
+        return (b is not None and b["rank"] == self.attr_rank
+                and not self.stage_mode and not b["attr_done"])
+
+    def open(self, rank: int) -> None:
+        idx = len(self.blocks)
+        floor_snap = None
+        if rank == self.attr_rank and not self.stage_mode and not any(
+                b["rank"] == rank for b in self.blocks):
+            # The attribution baseline: dumped, never held, so the
+            # snapshot object stays out of the block's traced-current.
+            snap = tracemalloc.take_snapshot()
+            floor_snap = os.path.join(self.snap_dir, f"open_r{rank}.tm")
+            snap.dump(floor_snap)
+            del snap
+        cur, _ = self._read()
+        self.cur = {
+            "idx": idx, "rank": int(rank), "floor": cur, "n_nodes": None,
+            "kind": "stage" if self.stage_mode else None,
+            "phases": {}, "prev": "open", "floor_snap": floor_snap,
+            "attr_done": False,
+        }
+
+    def event(self, ev: str) -> None:
+        b = self.cur
+        if b is None:
+            return  # outside any rank block (global emission)
+        _, peak = self._read()
+        if ev == "elem_enter" and b["prev"] == "open":
+            label = "hoisted_nodes"  # a block with no owned-node loop
+        else:
+            label = _PHASE_OF_EVENT[ev]
+        g = peak - b["floor"]
+        b["phases"][label] = max(b["phases"].get(label, g), g)
+        b["prev"] = ev
+
+    def close(self) -> None:
+        b = self.cur
+        if b is None:
+            return
+        self.event("close")
+        if b["kind"] is None:
+            b["kind"] = "main" if b["n_nodes"] is not None else "hoisted"
+        self.blocks.append(b)
+        self.cur = None
+
+    def attr_capture(self, n_rows: int) -> None:
+        """Snapshot at the LAST element of the attributed rank's call:
+        every per-call structure (the materialised rows, the owner list,
+        the ``owned`` list, the emitter's per-element state) is live."""
+        b = self.cur
+        self.event("attr_snap")
+        cur = tracemalloc.get_traced_memory()[0]
+        snap = tracemalloc.take_snapshot()
+        p = os.path.join(self.snap_dir,
+                         f"elem_r{b['rank']}_{len(self.attr)}.tm")
+        snap.dump(p)
+        del snap
+        tracemalloc.reset_peak()  # swallow the snapshot's own spike
+        self.attr.append({"rank": b["rank"], "rows": n_rows,
+                          "growth": cur - b["floor"], "snap": p,
+                          "floor_snap": b["floor_snap"]})
+
+
+def emit_phased(ops, ph: dict, deck_path: str, *, stream: bool,
+                per_rank: bool, tm_frames: int, snap_dir: str,
+                attr_rank: int) -> dict:
+    """Emit with per-rank phase boundaries (``--phases``).
+
+    Boundaries come from wrapping, never from ``src/`` edits: the
+    emitter instance's ``partition_open`` / ``partition_close``; the
+    ``apesees`` module globals ``emit_owned_nodes_with_inferred_ndf``,
+    ``emit_element_spec_partitioned`` and
+    ``emit_mp_constraints_partitioned`` (looked up at call time, so the
+    patch is seen); ``BuiltModel._emit_stages_partitioned`` (blocks after
+    it are staged); and ``element_emit.set_current_fem_element_id`` to
+    find the last element of the attributed rank's element call.  Every
+    patch is restored in ``finally``.  tracemalloc starts just before
+    ``build()``: the floor is untraced, and only emit growth is measured.
+    """
+    import apeGmsh.opensees._internal.build.element_emit as _el
+    import apeGmsh.opensees._internal.build.pg_expand as _pg
+    import apeGmsh.opensees.apesees as _ap
+
+    trk = PhaseTracker(attr_rank, snap_dir)
+    emitter = TclEmitter()
+    if stream:
+        emitter.stream_to(deck_path, per_rank=per_rank)
+
+    orig = {
+        "nodes": _ap.emit_owned_nodes_with_inferred_ndf,
+        "elem": _ap.emit_element_spec_partitioned,
+        "mp": _ap.emit_mp_constraints_partitioned,
+        "stages": _ap.BuiltModel._emit_stages_partitioned,
+        "fem_eid": _el.set_current_fem_element_id,
+    }
+    orig_po, orig_pc = emitter.partition_open, emitter.partition_close
+    # [elements left, rows] for the attributed call; None when idle.
+    countdown: "list[int] | None" = None
+
+    def _po(rank):
+        r = orig_po(rank)
+        trk.open(rank)
+        return r
+
+    def _pc():
+        trk.close()
+        return orig_pc()
+
+    def _nodes(emitter_, inferred, node_ids, *a, **k):
+        if trk.cur is not None:
+            trk.cur["n_nodes"] = len(node_ids)
+        r = orig["nodes"](emitter_, inferred, node_ids, *a, **k)
+        trk.event("nodes_exit")
+        return r
+
+    def _elem(*a, **k):
+        trk.event("elem_enter")
+        nonlocal countdown
+        rows = k.get("pre_allocated")
+        if (trk._attr_wanted() and isinstance(rows, _pg.ElementPlanRows)
+                and len(rows)):
+            # A LazyRankBuckets bucket: every row is owned by this rank.
+            countdown = [len(rows), len(rows)]
+        try:
+            return orig["elem"](*a, **k)
+        finally:
+            countdown = None
+            trk.event("elem_exit")
+
+    def _fem_eid(emitter_, fem_eid):
+        if countdown is not None:
+            countdown[0] -= 1
+            if countdown[0] == 0:
+                trk.attr_capture(countdown[1])
+                trk.cur["attr_done"] = True
+        return orig["fem_eid"](emitter_, fem_eid)
+
+    def _mp(*a, **k):
+        trk.event("mp_enter")
+        try:
+            return orig["mp"](*a, **k)
+        finally:
+            trk.event("mp_exit")
+
+    def _stages(bm_self, *a, **k):
+        trk.stage_mode = True
+        return orig["stages"](bm_self, *a, **k)
+
+    gc.collect()
+    tracemalloc.start(tm_frames)
+    _ap.emit_owned_nodes_with_inferred_ndf = _nodes
+    _ap.emit_element_spec_partitioned = _elem
+    _ap.emit_mp_constraints_partitioned = _mp
+    _ap.BuiltModel._emit_stages_partitioned = _stages
+    _el.set_current_fem_element_id = _fem_eid
+    emitter.partition_open = _po
+    emitter.partition_close = _pc
+    try:
+        t = time.perf_counter()
+        bm = ops.build()
+        ph["build"] += time.perf_counter() - t
+        t = time.perf_counter()
+        bm.emit(emitter)
+        ph["emit"] += time.perf_counter() - t
+        t = time.perf_counter()
+        if stream:
+            emitter.stream_finish()
+        else:
+            with open(deck_path, "w", encoding="utf-8") as f:
+                emitter.write_to(f)
+        ph["write"] += time.perf_counter() - t
+    finally:
+        tracemalloc.stop()
+        _ap.emit_owned_nodes_with_inferred_ndf = orig["nodes"]
+        _ap.emit_element_spec_partitioned = orig["elem"]
+        _ap.emit_mp_constraints_partitioned = orig["mp"]
+        _ap.BuiltModel._emit_stages_partitioned = orig["stages"]
+        _el.set_current_fem_element_id = orig["fem_eid"]
+        for name in ("partition_open", "partition_close"):
+            try:
+                delattr(emitter, name)
+            except AttributeError:
+                pass
+    return {"blocks": trk.blocks, "attr": trk.attr}
+
+
+_PKG_DIR = None
+
+
+def _pkg_dir() -> str:
+    global _PKG_DIR
+    if _PKG_DIR is None:
+        import apeGmsh
+        _PKG_DIR = _norm(os.path.dirname(apeGmsh.__file__))
+    return _PKG_DIR
+
+
+@functools.lru_cache(maxsize=256)
+def _symbols_of(path: str) -> "tuple[tuple[int, int, str], ...]":
+    """(lo, hi, qualname) for every def in ``path`` (AST, never import)."""
+    import ast
+    try:
+        with open(path, encoding="utf-8") as f:
+            tree = ast.parse(f.read())
+    except (OSError, SyntaxError, ValueError):
+        return ()
+    out: "list[tuple[int, int, str]]" = []
+
+    def walk(node, prefix):
+        for ch in ast.iter_child_nodes(node):
+            if isinstance(ch, (ast.FunctionDef, ast.AsyncFunctionDef,
+                               ast.ClassDef)):
+                q = f"{prefix}{ch.name}"
+                if not isinstance(ch, ast.ClassDef):
+                    out.append((ch.lineno, ch.end_lineno or ch.lineno, q))
+                walk(ch, q + ".")
+            else:
+                walk(ch, prefix)
+    walk(tree, "")
+    return tuple(out)
+
+
+def _symbol_at(path: str, lineno: int) -> str:
+    """Innermost enclosing def of ``path:lineno``; ``<module>`` if none."""
+    best = None
+    for lo, hi, q in _symbols_of(path):
+        if lo <= lineno <= hi and (best is None or lo >= best[0]):
+            best = (lo, q)
+    return best[1] if best else "<module>"
+
+
+def _site(fr) -> str:
+    """``apeGmsh/<path>.py::<qualname>`` (real case, for the report)."""
+    import apeGmsh
+    base = os.path.dirname(os.path.dirname(
+        os.path.abspath(apeGmsh.__file__)))
+    rel = os.path.relpath(os.path.abspath(fr.filename), base)
+    return f"{rel.replace(os.sep, '/')}::{_symbol_at(fr.filename, fr.lineno)}"
+
+
+# Coarse buckets named by #1766.  Keyed on the allocating apeGmsh symbol;
+# anything unlisted prints as "other" -- never silently folded in.
+_ATTR_CATEGORY = (
+    ("ElementPlanRows.select_rows", "row materialisation"),
+    ("LazyRankBuckets", "LazyRankBuckets"),
+    ("ElementPlanRows.__iter__", "per-element Python objects"),
+    ("ElementPlanRows._row", "per-element Python objects"),
+    ("emit_element_spec_partitioned", "per-element Python objects"),
+    ("_plan_owner_ranks", "per-element Python objects"),
+    ("tag_resolution", "tag maps / emitter state"),
+    ("emitter/", "tag maps / emitter state"),
+)
+
+
+def _category(alloc: str) -> str:
+    for needle, cat in _ATTR_CATEGORY:
+        if needle in alloc:
+            return cat
+    return "other"
+
+
+def _attr_key(tb) -> "tuple[str, str]":
+    """(allocating apeGmsh site, its apeGmsh caller symbol:line).
+
+    The allocating site is the innermost frame inside the apeGmsh
+    package (numpy / builtins below it fold into it); the caller is the
+    next apeGmsh frame out, with its line, so plan tuples RETAINED by a
+    list comprehension separate from the loop's transient ones.  A
+    traceback with no apeGmsh frame keys on its innermost frame.
+    """
+    pkg = _pkg_dir()
+    frames = list(tb)  # oldest -> most recent
+    mine = [fr for fr in frames
+            if _norm_frame(fr.filename).startswith(pkg)]
+    if not mine:
+        fr = frames[-1]
+        return (f"{_short_path(fr.filename)}:{fr.lineno}", "-")
+    alloc = mine[-1]
+    alloc_sym = _symbol_at(alloc.filename, alloc.lineno)
+    caller = "-"
+    for fr in reversed(mine[:-1]):
+        # Skip frames of the SAME symbol (a genexpr inside it shares the
+        # enclosing def's name), so the caller is the retaining site.
+        sym = _symbol_at(fr.filename, fr.lineno)
+        if sym != alloc_sym:
+            caller = f"{sym}:{fr.lineno}"
+            break
+    return (f"{_site(alloc)}:{alloc.lineno}", caller)
+
+
+def report_phases(args, sz: int, hx: int, result: dict) -> dict:
+    """Print the per-rank phase table and the element-phase attribution;
+    return the JSON record."""
+    blocks = result["blocks"]
+    mib = 1024.0 * 1024.0
+    print(f"\n-- per-rank phase peaks (traced growth above the rank block's "
+          f"floor; size={sz}, hexes={hx:,}) --")
+    cols = [p for p in PHASE_ORDER
+            if any(p in b["phases"] for b in blocks)]
+    print(f"  {'blk':>3} {'rank':>4} {'kind':>7} {'nodes':>9}  "
+          + "  ".join(f"{c:>22}" for c in cols) + f"  {'block peak':>22}")
+    for b in blocks:
+        nn = b["n_nodes"]
+
+        def cell(v, nn=nn):
+            if v is None:
+                return f"{'-':>22}"
+            bpn = f"{v / nn:>6.0f} B/n" if nn else f"{'':>8}"
+            return f"{v / mib:>9.1f} MiB {bpn}"
+        peak = max(b["phases"].values()) if b["phases"] else None
+        nn_s = str(nn) if nn is not None else "-"
+        print(f"  {b['idx']:>3} {b['rank']:>4} {b['kind']:>7} {nn_s:>9}  "
+              + "  ".join(cell(b["phases"].get(c)) for c in cols)
+              + f"  {cell(peak)}")
+    main_blocks = [b for b in blocks if b["kind"] == "main" and b["phases"]]
+    if main_blocks:
+        sets: "dict[str, int]" = {}
+        for b in main_blocks:
+            top_phase = max(b["phases"], key=b["phases"].get)
+            sets[top_phase] = sets.get(top_phase, 0) + 1
+        print("  phase that sets the main-block peak: " + ", ".join(
+            f"{k} ({v}/{len(main_blocks)} ranks)" for k, v in sets.items()))
+
+    attr_out = []
+    for a in result["attr"]:
+        blk = next((b for b in blocks if b["rank"] == a["rank"]
+                    and b["kind"] == "main"), None)
+        nn = (blk or {}).get("n_nodes") or 0
+        elem_peak = (blk or {}).get("phases", {}).get("elements")
+        if a["floor_snap"] is None:
+            continue
+        pre = tracemalloc.Snapshot.load(a["floor_snap"])
+        cur = tracemalloc.Snapshot.load(a["snap"])
+        groups: "dict[tuple[str, str], list[int]]" = {}
+        for d in cur.compare_to(pre, "traceback"):
+            g = groups.setdefault(_attr_key(d.traceback), [0, 0])
+            g[0] += d.size_diff
+            g[1] += d.count_diff
+        del pre, cur
+        rows = sorted(groups.items(), key=lambda kv: kv[1][0], reverse=True)
+        net = sum(v[0] for v in groups.values())
+
+        def bpn(x, nn=nn):
+            return x / nn if nn else 0.0
+        print(f"\n-- element-phase attribution, rank {a['rank']} "
+              f"({a['rows']:,} element rows, {nn:,} nodes): snapshot at "
+              f"the call's last element vs partition_open --")
+        print(f"  growth at snapshot: {a['growth'] / mib:.1f} MiB "
+              f"({bpn(a['growth']):.0f} B/node); element-phase peak: "
+              f"{(elem_peak or 0) / mib:.1f} MiB "
+              f"({bpn(elem_peak or 0):.0f} B/node); net of all sites: "
+              f"{net / mib:.1f} MiB")
+        print(f"  {'MiB':>8} {'B/node':>7} {'B/row':>6} {'count':>9}  "
+              f"{'category':<26} allocating site  <- apeGmsh caller")
+        top = []
+        for (alloc, caller), (sb, cnt) in rows[:args.phase_top]:
+            if sb <= 0:
+                break
+            cat = _category(alloc)
+            print(f"  {sb / mib:>8.2f} {bpn(sb):>7.1f} "
+                  f"{sb / a['rows']:>6.1f} {cnt:>9,}  {cat:<26} "
+                  f"{alloc}  <- {caller}")
+            top.append({"alloc": alloc, "caller": caller, "bytes": sb,
+                        "count": cnt, "category": cat})
+        by_cat: "dict[str, int]" = {}
+        for (alloc, _c), (sb, _n) in groups.items():
+            if sb > 0:
+                c = _category(alloc)
+                by_cat[c] = by_cat.get(c, 0) + sb
+        print("  by category (positive sites): " + "; ".join(
+            f"{c} {bpn(v):.0f} B/node"
+            for c, v in sorted(by_cat.items(), key=lambda kv: -kv[1])))
+        if elem_peak:
+            s3 = sum(t["bytes"] for t in top[:3])
+            print(f"  top-3 sum / element-phase peak: {s3 / elem_peak:.3f}"
+                  f"  (top-{len(top)} sum / peak: "
+                  f"{sum(t['bytes'] for t in top) / elem_peak:.3f})")
+        attr_out.append({"rank": a["rank"], "rows": a["rows"],
+                         "n_nodes": nn, "growth_b": a["growth"],
+                         "elem_peak_b": elem_peak, "net_b": net,
+                         "top": top, "by_category_b": by_cat})
+
+    return {
+        "mode": "phases", "size": sz, "hexes": hx, "parts": args.parts,
+        "recipe": args.recipe, "staged": args.staged, "stream": args.stream,
+        "blocks": [{k: b[k] for k in ("idx", "rank", "kind", "n_nodes",
+                                      "floor", "phases")} for b in blocks],
+        "attribution": attr_out,
+    }
+
+
 def _mb(x) -> str:
     return "      -" if x is None else f"{x / 1e6:>9.1f}"
 
@@ -1551,8 +1991,24 @@ def main():
                          "the RSS slope for G0b(slope). Without it the "
                          "slope G0b is declared not computable rather than "
                          "derived from tracemalloc-inflated RSS.")
+    ap.add_argument("--phases", action="store_true",
+                    help="#1766: per-rank, per-phase traced peaks of the "
+                         "partitioned emit (hoisted nodes, owned nodes, "
+                         "elements, fix/mass/regions, constraints, close) "
+                         "plus a traceback-grouped attribution of one "
+                         "rank's element phase. Exact counter peaks, no "
+                         "sampling; exclusive with --mem and --rss-only.")
+    ap.add_argument("--attr-rank", type=int, default=0,
+                    help="--phases: the runtime rank whose element phase "
+                         "is attributed (default 0)")
+    ap.add_argument("--phase-top", type=int, default=12,
+                    help="--phases: attribution sites to list (default 12)")
     args = ap.parse_args()
 
+    if args.phases and (args.mem or args.rss_only):
+        ap.error("--phases is exclusive with --mem / --rss-only: their "
+                 "peak tracker resets the traced peak from a thread, which "
+                 "would erase the per-phase counter peaks.")
     if args.mem and args.rss_only:
         ap.error("--mem and --rss-only are mutually exclusive: --rss-only "
                  "exists precisely to measure RSS without tracemalloc's "
@@ -1618,7 +2074,14 @@ def main():
                     sz, z_layers, args.parts, want_masses, ph)
             ops = make_ops(fem, soil_pgs, res, args.staged, args.mass)
 
-            if instrumented:
+            if args.phases:
+                os.makedirs(snap_dir, exist_ok=True)
+                result = emit_phased(
+                    ops, ph, deck, stream=args.stream,
+                    per_rank=args.per_rank, tm_frames=args.tm_frames,
+                    snap_dir=snap_dir, attr_rank=args.attr_rank,
+                )
+            elif instrumented:
                 result = emit_instrumented(
                     ops, ph, deck, stream=args.stream,
                     per_rank=args.per_rank, parts=args.parts,
@@ -1645,7 +2108,10 @@ def main():
                   f"{ph['get_fem']:>7.2f} {ph['build']:>7.2f} {ph['emit']:>7.2f} "
                   f"{ph['write']:>7.2f} {rate:>10.0f}")
 
-            if instrumented:
+            if args.phases:
+                rec = report_phases(args, sz, hx, result)
+                records.append(rec)
+            elif instrumented:
                 rec = report_instrumented(
                     args, sz, hx, nn, result, sampler, rep)
                 records.append(rec)
@@ -1672,7 +2138,7 @@ def main():
             # print the residue so a future retention regression is
             # visible in the output rather than silent.
             del ops, fem, res, soil_pgs
-            if instrumented:
+            if instrumented or args.phases:
                 del result
             gc.collect()
             if tm_started:
