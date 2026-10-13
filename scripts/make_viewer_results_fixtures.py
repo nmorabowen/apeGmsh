@@ -28,6 +28,14 @@ Files:
   triangle mesh, 2 x 2 cells x 1 layer (18 nodes, 8 wedges), 5 steps,
   ``displacement_x/y/z`` and one gauss group of 6 points with
   ``stress_xx``, ``stress_yy``.
+* ``stamped`` (committed, ``fixtures/results_stamped.h5``, ``--stamped``;
+  V4g, #1768): the ``small`` file written at the writer's current results
+  version with ``NativeWriter.stamp_element_index_space("fem")``, so its
+  element rows are verified FEM ids (h5-schema.md §``element_index_space``).
+  ``results_small.h5`` stays unstamped: a ``domain_capture`` file without
+  the stamp, which reads as unverified. ``--stamped`` also writes
+  ``fixtures/stamp_variants/`` (``stamp_variants``): the stamp in other
+  HDF5 encodings, with Python's verdict on each in an oracle JSON.
 * ``a`` (measured, not committed): the same mesh at 13 x 13 x 21
   (4 312 nodes, 7 098 wedges, the size of the ledger's largest maintainer
   model, 4 254 nodes / 7 104 elements), 100 steps, 3 nodal components and 6
@@ -118,13 +126,16 @@ def tet_blocks(size: float, name: str):
         return g.mesh.queries.get_fem_data(dim=3)
 
 
-def write(path: Path, fem, n_steps: int, stress: list[str], gp: np.ndarray, class_tag: int) -> None:
+def write(path: Path, fem, n_steps: int, stress: list[str], gp: np.ndarray, class_tag: int, *, stamp: bool = False) -> None:
     node_ids = np.asarray(fem.nodes.ids, dtype=np.int64)
     eids = np.asarray(fem.elements.ids, dtype=np.int64)
     k = np.arange(n_steps, dtype=np.float64)
     t0 = _time.perf_counter()
     with NativeWriter(path) as w:
         w.open(fem=fem, source_type="domain_capture", analysis_label="V4a synthetic (#1707)")
+        if stamp:
+            # The element rows are fem.elements.ids by construction (V4g, #1768).
+            w.stamp_element_index_space("fem")
         sid = w.begin_stage(name="history", kind="transient", time=0.01 * k)
         w.write_nodes(
             sid, "partition_0", node_ids=node_ids,
@@ -298,6 +309,55 @@ def contour_fixtures(out_dir: Path) -> None:
         print(f"wrote {res_path.name}: {ids.size} of {node_ids.size} nodes")
 
 
+def stamp_variants(out_dir: Path) -> None:
+    """V4g review (#1810): ``results_stamped.h5`` with the stamp re-encoded, and Python's verdict on each.
+
+    Each file is a copy of ``results_stamped.h5`` whose root
+    ``element_index_space`` is rewritten with h5py in one HDF5 encoding.
+    ``stamp_variants.oracle.json`` records what ``NativeReader`` makes of
+    each (``element_index_verified`` and the ``element_index_space`` string),
+    so the app's verdict is checked against Python's, not against itself.
+    Only a scalar variable-length UTF-8 string ``"fem"`` is what
+    ``NativeWriter.stamp_element_index_space`` writes, and the only form
+    that verifies (h5-schema.md §``element_index_space``, #1811).
+    """
+    import json
+    import shutil
+
+    import h5py
+
+    from apeGmsh.results.readers._native import NativeReader
+
+    key = "element_index_space"
+    cases = {
+        "vlen_str": lambda a: a.create(key, "fem", dtype=h5py.string_dtype("utf-8")),
+        "vlen_bytes": lambda a: a.create(key, b"fem", dtype=h5py.string_dtype("ascii")),
+        "vlen_ascii_str": lambda a: a.create(key, "fem", dtype=h5py.string_dtype("ascii")),
+        "np_bytes_S3": lambda a: a.__setitem__(key, np.bytes_(b"fem")),
+        "fixed_S3": lambda a: a.create(key, b"fem", dtype="S3"),
+        "fixed_utf8_3": lambda a: a.create(key, "fem".encode(), dtype=h5py.string_dtype("utf-8", length=3)),
+        "fixed_utf8_8_nullpad": lambda a: a.create(key, "fem".encode(), dtype=h5py.string_dtype("utf-8", length=8)),
+        "fixed_S8_nullpad":lambda a: a.create(key, np.bytes_(b"fem"), dtype="S8"),
+        "vlen_array": lambda a: a.create(key, np.array(["fem"], dtype=object), dtype=h5py.string_dtype("utf-8")),
+    }
+    src = out_dir / "results_stamped.h5"
+    vdir = out_dir / "stamp_variants"
+    vdir.mkdir(exist_ok=True)
+    oracle = {}
+    for name, encode in cases.items():
+        p = vdir / f"{name}.results.h5"
+        shutil.copyfile(src, p)
+        with h5py.File(p, "a") as f:
+            del f.attrs[key]
+            encode(f.attrs)
+        with NativeReader(str(p)) as r:
+            oracle[name] = {"verified": bool(r.element_index_verified), "element_index_space": r.element_index_space}
+    (vdir / "stamp_variants.oracle.json").write_text(
+        json.dumps({"source": "apeGmsh.results.readers._native.NativeReader.element_index_verified", "cases": oracle}, indent=1) + "\n"
+    )
+    print("wrote stamp_variants: " + ", ".join(f"{k}={v['verified']}" for k, v in oracle.items()))
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--measure", type=Path, help="write the measured files a, b, c into this directory")
@@ -305,12 +365,17 @@ def main() -> None:
     ap.add_argument("--tet-size", type=float, default=0.0335)
     ap.add_argument("--staged", action="store_true", help="write the V4b staged pair (staged_activation.h5 + .results.h5)")
     ap.add_argument("--contour", action="store_true", help="write the V4c1 contour pairs (contour_staged.*, contour_nodata.*)")
+    ap.add_argument("--stamped", action="store_true", help="write results_stamped.h5, the small file with element_index_space='fem' (V4g)")
     args = ap.parse_args()
     if args.staged:
         staged_activation(HERE)
         return
     if args.contour:
         contour_fixtures(HERE)
+        return
+    if args.stamped:
+        write(HERE / "results_stamped.h5", wedge_mesh(2, 1, "results_stamped"), 5, ["stress_xx", "stress_yy"], WEDGE_GP, 0, stamp=True)
+        stamp_variants(HERE)
         return
     if args.measure is None:
         write(HERE / "results_small.h5", wedge_mesh(2, 1, "results_small"), 5, ["stress_xx", "stress_yy"], WEDGE_GP, 0)
