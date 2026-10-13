@@ -8,9 +8,6 @@ emit.
 """
 from __future__ import annotations
 
-import os
-import tempfile
-
 import pytest
 
 from apeGmsh import apeGmsh
@@ -27,17 +24,17 @@ def _conformal_bar(g, *, element="truss"):
                        name="L1")
 
 
-def _emit_tcl(fem):
+def _emit_tcl(fem, tmp_path):
     ops = apeSees(fem)
     ops.model(ndm=3, ndf=3)
     ops.uniaxialMaterial.Steel02(fy=420e6, E=200e9, b=0.01, name="rebar")
-    path = os.path.join(tempfile.gettempdir(), "apegmsh_rebar_emit.tcl")
+    path = str(tmp_path / "apegmsh_rebar_emit.tcl")
     ops.tcl(path)
     with open(path) as fh:
         return fh.read()
 
 
-def test_emit_elements_off_is_default_no_structural_element():
+def test_emit_elements_off_is_default_no_structural_element(tmp_path):
     """Default ``emit_elements=False`` → no rebar_elements record, and the
     deck carries no auto-emitted CorotTruss (today's behavior)."""
     with apeGmsh(model_name="rebar_emit_off") as g:
@@ -48,11 +45,11 @@ def test_emit_elements_off_is_default_no_structural_element():
         g.mesh.generation.generate(dim=3)
         fem = g.mesh.queries.get_fem_data(dim=3)
         assert not fem.elements.rebar_elements
-        txt = _emit_tcl(fem)
+        txt = _emit_tcl(fem, tmp_path)
         assert "CorotTruss" not in txt
 
 
-def test_emit_elements_truss_emits_corottruss_per_cell():
+def test_emit_elements_truss_emits_corottruss_per_cell(tmp_path):
     """``emit_elements=True`` on a truss bar → one rebar_elements record and
     one ``CorotTruss`` per bar line cell, referencing the bar material."""
     with apeGmsh(model_name="rebar_emit_truss") as g:
@@ -76,13 +73,13 @@ def test_emit_elements_truss_emits_corottruss_per_cell():
         n_cells = len(rec.connectivity)
         assert n_cells >= 1
         # one CorotTruss per line cell of the bar
-        txt = _emit_tcl(fem)
+        txt = _emit_tcl(fem, tmp_path)
         ct = [ln for ln in txt.splitlines()
               if ln.strip().startswith("element CorotTruss")]
         assert len(ct) == n_cells
 
 
-def test_emit_elements_unregistered_material_fails_loud():
+def test_emit_elements_unregistered_material_fails_loud(tmp_path):
     """A bar whose material name isn't registered on the bridge fails loud
     at emit (no dangling tag)."""
     with apeGmsh(model_name="rebar_emit_badmat") as g:
@@ -95,12 +92,12 @@ def test_emit_elements_unregistered_material_fails_loud():
         ops = apeSees(fem)
         ops.model(ndm=3, ndf=3)
         # NB: no material named "rebar" declared.
-        path = os.path.join(tempfile.gettempdir(), "apegmsh_rebar_badmat.tcl")
+        path = str(tmp_path / "apegmsh_rebar_badmat.tcl")
         with pytest.raises(ValueError, match="rebar"):
             ops.tcl(path)
 
 
-def test_emit_elements_beam_not_yet_wired():
+def test_emit_elements_beam_not_yet_wired(tmp_path):
     """A straight ``element='beam'`` bar with emit_elements=True raises at
     emit (beam auto-emit is B1b)."""
     with apeGmsh(model_name="rebar_emit_beam") as g:
@@ -113,6 +110,6 @@ def test_emit_elements_beam_not_yet_wired():
         ops = apeSees(fem)
         ops.model(ndm=3, ndf=3)
         ops.uniaxialMaterial.Steel02(fy=420e6, E=200e9, b=0.01, name="rebar")
-        path = os.path.join(tempfile.gettempdir(), "apegmsh_rebar_beam.tcl")
+        path = str(tmp_path / "apegmsh_rebar_beam.tcl")
         with pytest.raises(NotImplementedError, match="beam"):
             ops.tcl(path)
