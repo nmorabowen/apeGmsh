@@ -108,11 +108,24 @@ export const NEUTRAL_TARGET = { major: 2, minor: 35 } as const;
  * means "not given; the deck carries no `-precision`, OpenSees' default",
  * so it is listed among the unset fields, truthfully. No new read.
  *
+ * opensees 2.31.0 (A7 #1839, h5-schema.md "`/opensees/program`"): the
+ * program's `decl` column now holds the `/opensees/decls` row that made each
+ * call (`-1` where unproved), and `/opensees/decls@program_decl`
+ * ("complete" | "absent") says whether those joins are recorded. This app
+ * reads neither: it does not read `/opensees/program` at all, and reads only
+ * the datasets of `/opensees/decls`, so `decl` can never appear as an
+ * OpenSees parameter in any window, and no join is made from it. The joins the
+ * windows make are unchanged and do not depend on the marker: recorders join
+ * through `/opensees/decls/rows` (recorded by the writer, not guessed); the
+ * analysis window's chain ↔ declaration join is by count and type order, and
+ * a refused or ambiguous join says the archive records no link (#1646). Using `program.decl` for that join when the
+ * marker is "complete" is a follow-up, not this target bump.
+ *
  * tests/test_app_target_drift.py fails when any `*_TARGET` here (or
  * `RESULTS_TARGET` in results.ts) differs from its Python writer's version:
  * bump it only after reading that zone's history entry in h5-schema.md.
  */
-export const OPENSEES_TARGET = { major: 2, minor: 30 } as const;
+export const OPENSEES_TARGET = { major: 2, minor: 31 } as const;
 /** The ADR 0112 zones (V2a specs): read by geometry.ts and provenance.ts. */
 export const GEOMETRY_TARGET = { major: 1, minor: 0 } as const;
 export const PROVENANCE_TARGET = { major: 1, minor: 1 } as const;
