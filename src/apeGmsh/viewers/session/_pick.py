@@ -4,10 +4,10 @@ ADR 0098 §8 (S4-1). Results selection is **nodes or Gauss points**,
 never elements, never faces, never BRep: an element is a membership
 query ("all Gauss of this hex"), not a hit. This module is therefore
 the slim rewrite of ``core/results_pick.py`` rather than an extension
-of it — that controller carries a third mode, a dim-pick gate, a
-geometry resolver and a GP-candidate callback, all of which exist for
-the old window's element vocabulary. The old file stays untouched
-until S6a.
+of it — that controller carried a third mode, a dim-pick gate, a
+geometry resolver and a GP-candidate callback, all of which existed for
+the old window's element vocabulary. The old file was deleted at X3-e
+(#1769).
 
 It owns **no VTK**. The ``vtkCellPicker`` ray-cast, the
 press/move/release gesture machine, the rubber-band overlay and the

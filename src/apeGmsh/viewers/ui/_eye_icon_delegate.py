@@ -58,8 +58,7 @@ _ICON_GLYPH_SIZE = 16
 def _build_delegate_class():
     """Lazy-construct ``EyeIconDelegate`` — avoids pulling qtpy at
     module import time, mirrors the pattern used by
-    :mod:`apeGmsh.viewers.core._active_objects` and
-    :mod:`._diagram_settings_tab`.
+    :mod:`apeGmsh.viewers.core._active_objects`.
     """
     QtCore, QtGui, QtWidgets = _qt()
 

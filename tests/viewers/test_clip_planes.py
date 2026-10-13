@@ -277,68 +277,10 @@ def test_removed_layers_leave_the_registry(cut_backend):
 
 
 # =====================================================================
-# C-PICK — a hit the cut has hidden is a miss (probe P3)
+# C-PICK — the predicate that turns a clipped-away hit into a miss
+# (probe P3). The click-pick tests on the session path live in
+# ``test_pane_selection.py`` (the ``test_clip_*`` pick tests).
 # =====================================================================
-
-class _FakePickBackend:
-    """Captures the callbacks ``install_results_pick`` registers."""
-
-    def __init__(self) -> None:
-        self.on_pick = None
-
-    def install(self, *, on_pick, on_box) -> None:
-        self.on_pick = on_pick
-
-    def project_points(self, points):
-        return np.zeros((len(points), 2))
-
-    def uninstall(self) -> None:
-        pass
-
-
-class _PickScene:
-    pick_engine = None
-    cell_dim = np.array([], dtype=np.int8)
-    cell_to_element_id = np.array([7], dtype=np.int64)
-    element_id_to_cell = {7: 0}
-    node_ids = np.array([1], dtype=np.int64)
-
-
-def _pick_once(controller, world):
-    """Drive one click at ``world``; return the PickResult or ``None``."""
-    from apeGmsh.viewers.core.results_pick import install_results_pick
-    from apeGmsh.viewers.scene_ir import PickHit
-
-    backend = _FakePickBackend()
-    seen: list = []
-    install_results_pick(
-        None, seen.append, scene=_PickScene(),
-        pick_backend=backend, clip_planes=controller,
-    )
-    backend.on_pick(PickHit(world=world, cell_id=0, prop_id=1), None)
-    return seen[0] if seen else None
-
-
-def test_a_click_on_a_clipped_away_cell_is_a_miss():
-    """``vtkCellPicker`` is blind to mapper clip planes — the
-    controller is what stops a phantom pick on empty-looking space."""
-    controller = ClipPlaneSetController(None)
-    controller.add((1.0, 0.0, 0.0), offset=0.0)
-
-    assert _pick_once(controller, (-0.5, 0.0, 0.0)) is None
-    kept = _pick_once(controller, (0.5, 0.0, 0.0))
-    assert kept is not None and kept.kind == "node"
-
-
-def test_the_same_click_resolves_with_cuts_off():
-    """Turning the master toggle off restores the ordinary pick."""
-    controller = ClipPlaneSetController(None)
-    controller.add((1.0, 0.0, 0.0), offset=0.0)
-    controller.set_apply_cuts(False)
-
-    result = _pick_once(controller, (-0.5, 0.0, 0.0))
-    assert result is not None and result.kind == "node"
-
 
 def test_a_point_on_the_cut_face_is_not_rejected():
     """Exactly on the plane is kept — the cut face is visible geometry."""

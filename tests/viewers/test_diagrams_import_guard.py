@@ -13,10 +13,13 @@ The third, ``viewers/results_viewer.py`` (the retired window), was
 deleted at X3-d (#1734) with its three side panels and the private
 modules only it reached, and their entries were pruned here.
 
+X3-e (#1769) deleted the public-named modules once reached only through
+that window (``core.opacity_controller``, ``overlays.local_axes_overlay``,
+``overlays.probe_overlay``). ``viewers/animation.py`` stays, by ruling,
+until the ``ResultsDirector`` itself is deleted at V4.
+
 **Be honest about what this guard proves.** It is **not** "the surface
-is small": the public-named modules once reached only through the
-deleted window (the last block, plus ``core.opacity_controller``) stay
-until X3-e removes them. It is a **ratchet**: a new importer must be
+is small". It is a **ratchet**: a new importer must be
 argued for, and an entry that stops importing must be pruned. Same two-way discipline as
 ``test_skill_docs_drift``'s signature registry — a registry that can
 only grow rots.
@@ -55,12 +58,9 @@ _ALLOWED: frozenset[str] = frozenset({
     "apeGmsh.viewers.core.overlay_visibility",
     "apeGmsh.viewers.core.element_visibility",  # transitive (director)
     "apeGmsh.viewers.core._clip_planes",        # transitive (registry)
-    "apeGmsh.viewers.core.opacity_controller",  # transitive, fragile
-    # -- public-named modules once reachable only through the deleted
-    #    ResultsViewer; their removal is X3-e, which prunes this block --
+    # -- the low-level per-step-hook animation API (bring-your-own
+    #    plotter + director), kept until the director is deleted at V4 --
     "apeGmsh.viewers.animation",
-    "apeGmsh.viewers.overlays.local_axes_overlay",
-    "apeGmsh.viewers.overlays.probe_overlay",
 })
 
 #: NOT allowlisted on purpose — ``apeGmsh.results.session.*`` is

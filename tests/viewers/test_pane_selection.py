@@ -1254,7 +1254,7 @@ def test_clip_a_click_on_a_hidden_node_selects_nothing(host, qapp):
 
     Checked BEFORE any target resolution — the point is behind a plane
     regardless of what it would have resolved to (the rule
-    ``results_pick.py`` already applies in the old window).
+    the old window's ``results_pick.py`` applied, deleted at X3-e).
     """
     session, widget = host
     view = session.panes[0]
