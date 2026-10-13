@@ -391,11 +391,11 @@ def test_transient_keeps_its_dt_silently(plate_fem: Any) -> None:
     assert "ops.analyze(1, 0.01)" in _deck(ops, "py")
 
 
-def test_static_under_displacement_control_is_not_d1(plate_fem: Any) -> None:
-    """D1 reads ``dlam``; an integrator without one is left alone."""
+def test_static_under_displacement_control_warns(plate_fem: Any) -> None:
+    """R3-S1b (#1822): an integrator without ``dlam`` warns on any ``dt``."""
     ops = plate(plate_fem)
     node = int(plate_fem.nodes.ids[-1])
-    with _silent():
+    with pytest.warns(InertStaticDtWarning, match="DisplacementControl"):
         with ops.stage(name="push") as s:
             with s.pattern(series=ops.timeSeries.Linear()) as p:
                 p.load(node=node, forces=(1.0, 0.0))
