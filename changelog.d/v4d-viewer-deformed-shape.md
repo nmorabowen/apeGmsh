@@ -16,5 +16,5 @@ displacement axis was refused as a partial write, when the components name
 no axis, or when `displacement_z` is missing from a model that is not
 declared 2-D (`/meta/ndm` 2): it is never drawn from the surviving axes.
 `apeGmshViewer/MEASUREMENTS.md` has the deformed contour scrub rows (worst
-222 steps/s at 33 to 52 % CPU, peak 454 MB on the V4a files), and
+209 steps/s, the reviewer's run at 47 % CPU, peak 454 MB on the V4a files), and
 `scripts/make_viewer_results_fixtures.py --deform` writes a 2-D fixture.

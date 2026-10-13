@@ -578,19 +578,23 @@ with the contour-only row of the same run beside each:
 | 5 | (c) | 5 000 | 34 / 39 % | 403.2 → **247.3** | 3.80 / 10.8 | 393 (157 + 236) |
 | 6 | (a) | 100 | 34 / 44 % | 342.6 → **222.6** | 4.30 / 7.7 | 310 (152 + 158) |
 | 6 | (c) | 5 000 | 37 / 45 % | 393.8 → **238.2** | 3.90 / 11.5 | 409 (196 + 213) |
+| R | (a) | 100 | n/a / 47 % | n/a → **209.3** | n/a / 9.0 | 326 |
 
-Worst over runs 4 to 6 (the code under review), and over all six:
+Row R is the reviewer's re-measure of (a) at `fca86de6` (#1820 round 1), at
+47 % CPU; the reviewer reported the scrub, the worst step and the peak, not
+the other columns. It is the worst (a) value, and the one quoted.
 
-| file | deformed scrub (steps/s): runs 4 to 6, **worst** (all six) | step max (ms), worst | peak MB, worst | CPU during |
+Worst over runs 4 to 6 and R (the code under review), and over every run:
+
+| file | deformed scrub (steps/s): runs 4 to 6 and R, **worst** (every run) | step max (ms), worst | peak MB, worst | CPU during |
 |---|---|---|---|---|
-| (a) | 222 to 241, **222** (222) | 8.0 (17.7) | 319 (321) | 33 to 47 % |
+| (a) | 209 to 241, **209** (209) | 9.0 (17.7) | 326 (326) | 33 to 47 % |
 | (c) | 238 to 247, **238** (238) | 11.5 (11.5) | 443 (454) | 39 to 45 % |
 
-- **The D5 revisit trigger does not fire**: the worst deformed scrub, 222
-  steps/s, is seven times the 30 steps/s floor, and the worst peak, 454 MB,
-  under a quarter of 2 GB. The machine was at 33 to 52 % CPU; the reviewer
-  re-runs it under their own load (V4c1's reviewer run fell to a third of
-  the author's at 91 %).
+- **The D5 revisit trigger does not fire**: the worst deformed scrub, 209
+  steps/s (the reviewer's run), is seven times the 30 steps/s floor, and
+  the worst peak, 454 MB, under a quarter of 2 GB. The machine was at 33 to
+  52 % CPU (V4c1's reviewer run fell to a third of the author's at 91 %).
 - The deformed shape costs about 1 ms a step on these files (median 2.5 to
   3.3 ms → 3.6 to 4.3 ms): the per-vertex displacement, the positions of
   2 860 triangles, their normals and the outline edges, and the legend's

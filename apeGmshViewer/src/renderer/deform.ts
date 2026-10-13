@@ -17,6 +17,7 @@ import { deformedPositions, GHOST_OPACITY, missingMarkers } from "../state/defor
 import { deformView } from "../state/selectors.ts";
 import type { MeshInfo, State } from "../state/types.ts";
 import { DARK, OFFICE, toHexNumber } from "../theme/tokens.ts";
+import { highlightObjects, selectionBounds, type Focus, type Prims } from "./selection.ts";
 
 /** Every primitive's positions (6 floats per segment, 9 per triangle, 6 per outline edge; original order), and what they show. */
 export interface FullPositions {
@@ -64,6 +65,53 @@ export function deformFull(base: FullPositions, disp: DisplacementData, scale: n
     key,
     disp,
   };
+}
+
+/**
+ * The positions everything drawn over the mesh reads: the selection outline,
+ * `F` framing and the screen point of a declaration. They are the drawn ones,
+ * deformed while the deformed shape shows, so the outline and the frame sit
+ * where the mesh is drawn.
+ */
+export function drawnPositions(full: FullPositions | null, info: MeshInfo, blobs: BlobStore): FullPositions {
+  return full ?? basePositions(info, blobs);
+}
+
+/** The selection outline (thick lines and fill, selection.ts `highlightObjects`) over the drawn positions. */
+export function selectionOutline(
+  full: FullPositions | null,
+  info: MeshInfo,
+  blobs: BlobStore,
+  prims: readonly Prims[],
+  makeLines: (positions: Float32Array, widthPx: number) => THREE.Object3D,
+): THREE.Object3D[] {
+  const pos = drawnPositions(full, info, blobs);
+  return highlightObjects(pos.line, pos.tri, prims, makeLines);
+}
+
+/**
+ * What `F` frames. With a selection: the bounds of its primitives where they
+ * are drawn (the effects' `focus`, measured on the undeformed blobs, is the
+ * fallback when nothing of it is drawn). With nothing selected: the whole
+ * model, which is `null` (the mesh's own bounds) when undeformed, and the
+ * bounds of the drawn deformed primitives while the deformed shape shows, so
+ * a large scale never frames the shape out of view.
+ */
+export function frameFocus(
+  full: FullPositions | null,
+  info: MeshInfo,
+  blobs: BlobStore,
+  drawn: { lineMap: Int32Array; triMap: Int32Array } | null,
+  selected: readonly Prims[] | null,
+  fallback: Focus | null,
+): Focus | null {
+  const pos = drawnPositions(full, info, blobs);
+  const min = 1e-3 * info.radius;
+  if (selected && selected.length) {
+    return selectionBounds(pos.line, pos.tri, selected.flatMap((p) => p.lines), selected.flatMap((p) => p.tris), min) ?? fallback;
+  }
+  if (pos.key === "base" || !drawn) return null;
+  return selectionBounds(pos.line, pos.tri, Array.from(drawn.lineMap), Array.from(drawn.triMap), min);
 }
 
 /** Whether the outline edges are drawn: the user's toggle alone (on a deformed mesh they follow their nodes, like the faces). */
@@ -151,7 +199,10 @@ export function missingMarkerObjects(full: FullPositions, info: MeshInfo, blobs:
  * one neutral colour at the Qt ghost opacity, behind the deformed mesh
  * (no depth write, drawn first).
  */
-export function ghostObjects(base: FullPositions, drawn: { lineMap: Int32Array; triMap: Int32Array }, edges: Float32Array | null): THREE.Object3D[] {
+export function ghostObjects(info: MeshInfo, blobs: BlobStore, drawn: { lineMap: Int32Array; triMap: Int32Array }, edgeMap: Int32Array | null): THREE.Object3D[] {
+  // Always the mesh blobs: the ghost is the undeformed mesh, whatever is drawn.
+  const base = basePositions(info, blobs);
+  const edges = edgeMap ? gatherInto(base.edge, edgeMap, 6) : null;
   const out: THREE.Object3D[] = [];
   if (edges?.length) {
     // The undeformed outline edges, as the Qt ghost keeps its wireframe.

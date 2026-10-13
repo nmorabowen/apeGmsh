@@ -19,13 +19,13 @@ import type { BlobStore } from "../state/blobs.ts";
 import type { DisplacementData } from "../effects.ts";
 import { contourView, geometryPairing } from "../state/selectors.ts";
 import { contourColours, contourKey, noDataColours, type StepValues } from "./contour.ts";
-import { basePositions, edgesShown, gatherInto, ghostObjects, missingMarkerObjects, positionsFor, writePositions, type FullPositions } from "./deform.ts";
+import { basePositions, drawnPositions, edgesShown, frameFocus, gatherInto, ghostObjects, missingMarkerObjects, positionsFor, selectionOutline, writePositions, type FullPositions } from "./deform.ts";
 import type { State, Store } from "../state/store.ts";
 import { roleColouring } from "../state/roles.ts";
 import type { DeclPath, GeometryInfo, LegendEntry, MeshInfo, Pick } from "../state/types.ts";
 import { DARK, toHexNumber } from "../theme/tokens.ts";
 import { headingOf, Navigator, nearestHit, type Heading } from "./navigation.ts";
-import { fitDistance, type Focus, highlightObjects, hitElement, SELECTION_COLOUR, selectionBounds, SelectionHalo } from "./selection.ts";
+import { fitDistance, type Focus, hitElement, SELECTION_COLOUR, SelectionHalo } from "./selection.ts";
 import { edgeMask, elementMaskOf, sameDrawn, visibleMaps, type Drawn } from "./visible.ts";
 
 /** The right rail's width plus its margins (style.css #rail: the inspector above the sources). */
@@ -464,7 +464,6 @@ export class Viewport {
     this.full = full;
 
     const tri = gatherInto(full.tri, drawn.triMap, 9);
-    let ghostEdges: Float32Array | null = null;
     if (tri.length) {
       const g = new THREE.BufferGeometry();
       g.setAttribute("position", new THREE.BufferAttribute(tri, 3));
@@ -486,9 +485,8 @@ export class Viewport {
       const edgeMap = drawn.edgeMask
         ? Int32Array.from(drawn.edgeMask.reduce<number[]>((acc, v, i) => (v ? (acc.push(i), acc) : acc), []))
         : Int32Array.from({ length: ep.length / 6 }, (_, i) => i);
-      // The ghost keeps the undeformed edges; the drawn ones are a copy of the drawn
-      // (possibly deformed) positions, moved in place with the faces (V4d).
-      ghostEdges = Viewport.gather(ep, edgeMap, 6);
+      // The drawn edges are a copy of the drawn (possibly deformed) positions,
+      // moved in place with the faces (V4d); the ghost reads the blobs itself.
       this.edgeMap = edgeMap;
       const edge = gatherInto(full.edge, edgeMap, 6);
       if (edge.length) {
@@ -506,7 +504,7 @@ export class Viewport {
     }
     // V4d: the ghost of what is drawn, and the markers of its nodes with no displacement.
     this.clear(this.ghost);
-    for (const o of ghostObjects(basePositions(info, this.blobs), drawn, ghostEdges)) this.ghost.add(o);
+    for (const o of ghostObjects(info, this.blobs, drawn, this.edgeMap)) this.ghost.add(o);
     this.ghost.visible = this.ghostWanted(s) && s.phase.at?.kind !== "geometry";
     this.setMarkers(info);
     this.applyVisibility(s, false);
@@ -613,18 +611,14 @@ export class Viewport {
     const s = this.store.get();
     const info = s.mesh;
     if (!info) return;
-    // V4d: a selection on a deformed mesh is framed where it is drawn (the effects measure the undeformed blobs).
-    if (focus && this.full && this.full.key !== "base") {
-      const idx = this.indexOf(info);
-      const lines: number[] = [], tris: number[] = [];
-      for (const d of s.selection.decls) {
-        const e = idx.byPath.get(d);
-        const p = e === undefined ? undefined : idx.prims.get(e);
-        if (p) lines.push(...p.lines), tris.push(...p.tris);
-      }
-      focus = selectionBounds(this.full.line, this.full.tri, lines, tris, 1e-3 * info.radius) ?? focus;
-    }
-    this.frame(info, this.nav.heading, focus);
+    // V4d: frame what is drawn: the selection where it is drawn, or the whole (deformed) model (renderer/deform.ts `frameFocus`).
+    const idx = this.indexOf(info);
+    const selected = s.selection.decls.flatMap((d) => {
+      const e = idx.byPath.get(d);
+      const p = e === undefined ? undefined : idx.prims.get(e);
+      return p ? [p] : [];
+    });
+    this.frame(info, this.nav.heading, frameFocus(this.full, info, this.blobs, this.drawn, selected, focus));
   }
 
   private setHighlight(s: State, pulse = true): void {
@@ -644,9 +638,7 @@ export class Viewport {
       return p ? [p] : [];
     });
     // V4d: the outline follows the drawn (possibly deformed) positions.
-    const pos = this.full ?? basePositions(info, this.blobs);
-    const lp = pos.line, tp = pos.tri;
-    for (const o of highlightObjects(lp, tp, prims, (pos, width) => this.makeLines(pos, null, width, SELECTION_COLOUR))) this.highlight.add(o);
+    for (const o of selectionOutline(this.full, info, this.blobs, prims, (pos, width) => this.makeLines(pos, null, width, SELECTION_COLOUR))) this.highlight.add(o);
     if (pulse) this.halo.pulse();
     this.requestRender();
   }
@@ -690,7 +682,7 @@ export class Viewport {
     const prims = e === undefined ? undefined : idx.prims.get(e);
     if (!prims) return null;
     const p = new THREE.Vector3();
-    const pos = this.full ?? basePositions(info, this.blobs);
+    const pos = drawnPositions(this.full, info, this.blobs);
     if (prims.lines.length) {
       const a = pos.line, li = prims.lines[0]!;
       p.set((a[6 * li]! + a[6 * li + 3]!) / 2, (a[6 * li + 1]! + a[6 * li + 4]!) / 2, (a[6 * li + 2]! + a[6 * li + 5]!) / 2);
