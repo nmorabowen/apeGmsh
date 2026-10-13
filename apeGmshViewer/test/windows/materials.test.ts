@@ -414,3 +414,38 @@ test("V4m: reinforced_unknown.h5 (one tie's -bond tag stored as a float) reads t
     assert.match(detailOf(s, p), /users unknown beyond these: referenced by embeddedRebar ties; 1 tie: the value after -bond is not an integer tag/);
   }
 });
+
+/** reinforced.h5 loaded, with one uniaxial declaration's tag replaced (a new decls object: the window's indexes are keyed by it) */
+const withTag = (path: string, tag: number | null): State => {
+  const s = load(reinforced);
+  return { ...s, decls: { ...s.decls, [path]: { ...s.decls[path]!, tag } } };
+};
+
+test("V4m: a bond tag that two uniaxial materials carry is 'users unknown' and gives the ties to neither", () => {
+  const t1 = rowOf(load(reinforced), B1).tag!, t2 = rowOf(load(reinforced), B2).tag!;
+  const s = withTag(B2, t1);
+  const n = oracle.bond[String(t1)]!;
+  for (const p of [B1, B2]) {
+    const r = rowOf(s, p);
+    assert.equal(r.usedBy.ties, 0, p);
+    // (bond2's own tag is now no uniaxial material's, so its ties are unknown too)
+    assert.deepEqual(r.tiesUnknown, [
+      { why: `bond tag ${t1} names 2 uniaxial materials`, ties: n },
+      { why: `bond tag ${t2} is no uniaxial material of this file`, ties: oracle.bond[String(t2)] },
+    ], p);
+  }
+  assert.match(detailOf(s, B1), /^users unknown: referenced by embeddedRebar ties/);
+});
+
+test("V4m: a uniaxial material with no tag, in a file with bonded ties, is 'users unknown', not 'used by nothing'", () => {
+  const s = withTag(B1, null);
+  const r = rowOf(s, B1);
+  assert.equal(r.usedBy.ties, 0);
+  const t1 = rowOf(load(reinforced), B1).tag!;
+  assert.deepEqual(r.tiesUnknown, [
+    { why: `bond tag ${t1} is no uniaxial material of this file`, ties: oracle.bond[String(t1)] },
+    { why: "this material's tag is not in the file, so no tie's bond tag can be matched to it", ties: null },
+  ]);
+  assert.match(detailOf(s, B1), /^users unknown: referenced by embeddedRebar ties/);
+  assert.doesNotMatch(detailOf(s, B1), /used by nothing/);
+});
