@@ -77,8 +77,22 @@ export const NEUTRAL_TARGET = { major: 2, minor: 35 } as const;
  *   records, so a 2.27 file that has them opens with no warning. `/sequence`
  *   does not record either verb (archive gap #1646), which the stage diagram
  *   already says on every file (`NOT_RECORDED`).
+ *
+ * opensees 2.28.0 (ADR 0115 amendment R2-f, h5-schema.md "`label`: provenance
+ * only (opensees 2.28.0)"): the `decl_params` rows of fix, mass and typed
+ * Node / Element recorder declarations gain a `label` field, the names a
+ * `label=` declaration was given (`null` for `pg=` or explicit ids). No path
+ * or dtype changes. The app needs no new read: `decl_params` rows are read
+ * field by field, so `label` is one more parameter (the Recorders window lists
+ * it beside the others, or among the unset fields when null), exactly as a
+ * 2.27 app already showed it under the banner. The ids stay authoritative and
+ * nothing the app draws or selects resolves a label.
+ *
+ * tests/test_app_target_drift.py fails when any `*_TARGET` here (or
+ * `RESULTS_TARGET` in results.ts) differs from its Python writer's version:
+ * bump it only after reading that zone's history entry in h5-schema.md.
  */
-export const OPENSEES_TARGET = { major: 2, minor: 27 } as const;
+export const OPENSEES_TARGET = { major: 2, minor: 28 } as const;
 /** The ADR 0112 zones (V2a specs): read by geometry.ts and provenance.ts. */
 export const GEOMETRY_TARGET = { major: 1, minor: 0 } as const;
 export const PROVENANCE_TARGET = { major: 1, minor: 1 } as const;
