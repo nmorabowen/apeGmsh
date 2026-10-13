@@ -286,6 +286,9 @@ g.mesh.field.set_background(f_t)
 
 ```
 set_transfinite_curve(tag, n_nodes, *, mesh_type="Progression", coef=1.0)   # tag: int, label/PG name, or a list
+one_element_per_curve(*labels)           # each named curve -> exactly 1 element (2 nodes); chains
+#   no labels = every FREE curve; skips curves a definition references and warns CurvesSkippedWarning
+#   (apeGmsh.mesh). A named curve bounding/embedded in a surface, or tied into a host, raises ValueError.
 set_transfinite_surface(tag, *, arrangement="Left", corners=None)
 set_transfinite_volume(tag, *, corners=None)
 set_transfinite_automatic(dimtags=None, corner_angle=2.35, recombine=False)
@@ -928,6 +931,12 @@ Flat emit / run verbs (each builds internally):
 ops.build() -> BuiltModel
 ops.tcl(path, *, run=False, bin=None, analyze_steps=None, analyze_dt=None, per_rank=False, stream=False)
 ops.py(path,  *, run=False, analyze_steps=None, analyze_dt=None)
+# run=True returns a frozen RunReport (returncode, log, elapsed_s, increments, solver_stats); a
+# failed run raises RuntimeError, incl. a Tcl `error` that exits 0 (run=False returns None).
+ops.wipe()                                                # close the live domain: flushes recorder files, ends read session
+# recorder.Node / recorder.Element take precision=<positive int> (significant digits per value).
+ops.analysis.chain(test=, algorithm=, constraints=, numberer=, system=, analysis=)   # shared by stages: s.analysis(chain, integrator=...)
+# Static ignores s.run(dt=): dlam sets the step, a differing dt warns InertStaticDtWarning (apeGmsh.opensees); omit dt.
 ops.h5(path,  *, model_name=None, cuts=(), sweeps=())     # writes BOTH neutral + /opensees zones
 ops.run(*, wipe=True)                                     # in-process LiveOpsEmitter; no analyze
 ops.analyze(*, steps, dt=None) -> int

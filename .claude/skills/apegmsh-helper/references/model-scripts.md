@@ -36,7 +36,9 @@ These rules cover user model scripts, not library code.
    `ops.analyze` with `.read`: `ops.nodes.one(label=...).read("displacement_y")` for one node,
    `ops.elements.get(pg=...).read("axial_force")` for a truss family. Read a history from
    recorder files with `np.loadtxt`, under a comment that says what one row holds. Name a beam
-   `geomTransf` after its member family, and say which way its `vecxz` points and why.
+   `geomTransf` after its member family, and say which way its `vecxz` points and why. When
+   a step has no bridge verb, import raw openseespy as `ops_raw` and mark each use
+   `# raw-ops: <why>`.
 9. **Check, assert, report.** Write the hand check as a few named steps, with a comment giving
    the formula or source. Assert that the run succeeded, and that each check agrees within a
    named tolerance whose comment says why it has that size. Report only numbers the run
@@ -59,12 +61,9 @@ your task:
 
 | Script | Shows |
 |---|---|
-| `pratt_truss.py` | 2-D truss: one element per member (`set_transfinite_curve(list_of_groups, n_nodes=2)`), member families as groups, bar forces and midspan deflection read back live with `.read`, method-of-sections check |
+| `pratt_truss.py` | 2-D truss: one element per member (`g.mesh.structured.one_element_per_curve(*labels)`), member families as groups, bar forces and midspan deflection read back live with `.read`, method-of-sections check |
 | `frame_modal.py` | 3-D frame: `geomTransf` per member family with its `vecxz` reason, rigid floor diaphragms with a fixed master, eigen, then a lateral load and a Rayleigh check |
 | `staged_footing.py` | 2-D staged soil: `g.constraints.bc` + `ops.fix_from_model()`, a self-weight case and a pressure case, two `ops.stage` blocks, deck run, equilibrium and Flamant checks |
-
-Lines marked `API gap` name a workaround that will go away when the gap is closed. Do not
-copy the workaround into a script where the gap does not apply.
 
 ### 2-D Pratt truss: linear static
 
@@ -156,8 +155,8 @@ with apeGmsh(model_name="pratt_truss", verbose=False) as g:
         g.loads.point.force("loaded_joints", force=(0.0, -JOINT_LOAD, 0.0))
 
     # --- 4. Mesh
-    # API gap: no one-element-per-member switch; two nodes per curve gives one element.
-    g.mesh.structured.set_transfinite_curve(list(MEMBERS), n_nodes=2)
+    # One element per member: each bar has only its two end joints as nodes.
+    g.mesh.structured.one_element_per_curve(*MEMBERS)
     g.mesh.generation.generate(dim=1)
     fem = g.mesh.queries.get_fem_data(dim=1)
 
@@ -365,19 +364,17 @@ with apeGmsh(model_name="rc_frame_2storey") as g:
         g.physical.add_point(joints_at_level[k], name=f"floor_{k}_joints")
         g.physical.add_point([f"floor_{k}_master"], name=f"floor_{k}_master")
         # Rigid slab: every floor joint follows the master in ux, uy and rz. The master
-        # group holds one node, so that node is the master even where joint J11 coincides
-        # with it; master_point only sets the slab plane and could be omitted here.
+        # group holds one node, so that node is the master and the slab plane passes
+        # through it (master_point is omitted).
         g.constraints.rigid_diaphragm(
             f"floor_{k}_master", f"floor_{k}_joints",
-            master_point=(PLAN_CENTRE, PLAN_CENTRE, k * STOREY),
             plane_normal=(0, 0, 1),
             plane_tolerance=PLANE_TOL,
         )
 
     # --- 4. Mesh
     # Two nodes per member line: elastic prismatic members with nodal loads need no interior nodes.
-    g.mesh.structured.set_transfinite_curve("columns", n_nodes=2)
-    g.mesh.structured.set_transfinite_curve("beams", n_nodes=2)
+    g.mesh.structured.one_element_per_curve("columns", "beams")
     g.mesh.generation.generate(dim=1)
     fem = g.mesh.queries.get_fem_data(dim=1)
 
@@ -413,8 +410,6 @@ for k in FLOORS:
 ops.constraints.Transformation()
 ops.numberer.RCM()
 ops.system.BandGeneral()
-# Linear does not iterate, so the tolerance is inert; the bridge still requires a test (API gap).
-ops.test.NormDispIncr(tol=1e-10, max_iter=1)
 ops.algorithm.Linear()                 # linear elastic model: one solve is exact
 ops.integrator.LoadControl(dlam=1.0)
 ops.analysis.Static()
@@ -623,8 +618,7 @@ ops.recorder.Node(file=str(reaction_file), response="reaction", pg="base", dofs=
 
 # --- 6. Analysis: one Newton chain shared by both stages
 # Newton follows the plastic tangent; RCM + UmfPack give a sparse direct solve.
-# API gap: no stage-level shared chain, so the chain is a dict passed to each stage.
-solver = dict(
+solver = ops.analysis.chain(
     test=ops.test.NormDispIncr(tol=TOL_DISP, max_iter=MAX_ITER),
     algorithm=ops.algorithm.Newton(),
     constraints=ops.constraints.Plain(),
@@ -641,15 +635,15 @@ step_footing = 1.0 / N_STEPS_FOOTING       # load-factor increment, stage 2
 with ops.stage(name="geostatic") as s:
     with s.pattern(series=ops.timeSeries.Linear()) as p:
         p.from_model("self_weight")
-    s.analysis(integrator=ops.integrator.LoadControl(dlam=step_geostatic), **solver)
-    s.run(n_increments=N_STEPS_GEOSTATIC, dt=step_geostatic)   # API gap: the step is stated twice
+    s.analysis(solver, integrator=ops.integrator.LoadControl(dlam=step_geostatic))
+    s.run(n_increments=N_STEPS_GEOSTATIC)   # dlam sets the step; Static ignores dt
 
 # --- 8. Stage 2, footing: pressure ramped to FOOTING_PRESSURE, self-weight held
 with ops.stage(name="footing") as s:
     with s.pattern(series=ops.timeSeries.Linear()) as p:
         p.from_model("footing_pressure")
-    s.analysis(integrator=ops.integrator.LoadControl(dlam=step_footing), **solver)
-    s.run(n_increments=N_STEPS_FOOTING, dt=step_footing)   # API gap: the step is stated twice
+    s.analysis(solver, integrator=ops.integrator.LoadControl(dlam=step_footing))
+    s.run(n_increments=N_STEPS_FOOTING)   # dlam sets the step; Static ignores dt
 
 # A staged model runs only as a deck. A failed increment aborts the deck and
 # ops.py raises; the log goes beside the outputs, with no console step counter.
