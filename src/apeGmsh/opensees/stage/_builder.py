@@ -8,6 +8,7 @@ body changed.  The class is private, so there is no facade in
 from __future__ import annotations
 
 import math
+import warnings
 from typing import TYPE_CHECKING, Any, Callable, Iterable, Sequence
 
 from .._internal.build.errors import BridgeError
@@ -33,7 +34,12 @@ from .._internal.types import Primitive, Recorder, TimeSeries
 from ..analysis.analysis import Static
 from ..analysis.integrator import LadrunoLoadControl, LoadControl
 from ..node import Node, _iter_tags, _select_nodes
-from ._chain import CHAIN_SLOTS, StageChain, algorithm_needs_test
+from ._chain import (
+    CHAIN_SLOTS,
+    InertStaticDtWarning,
+    StageChain,
+    algorithm_needs_test,
+)
 
 if TYPE_CHECKING:
     from apeGmsh._kernel.records._constraints import (
@@ -360,9 +366,9 @@ class _StageBuilder:
           ladder is attached: the ladder's rungs iterate.
         * D1 (R3, #1785): under ``Static`` + ``LoadControl`` the step is
           ``dlam``; OpenSees ignores ``analyze``'s ``dt``.  A ``dt`` that
-          differs from ``dlam`` never acted, so it is refused rather
-          than left in the script to mislead.  Omitting ``dt`` or giving
-          ``dt == dlam`` is accepted.  ``Transient`` keeps ``dt``.
+          differs from ``dlam`` never acted, so it warns
+          (:class:`InertStaticDtWarning`).  Omitting ``dt`` or giving
+          ``dt == dlam`` is silent.  ``Transient`` keeps ``dt``.
         """
         if self._test is None and self._strategy is not None:
             raise ValueError(
@@ -379,12 +385,12 @@ class _StageBuilder:
                 self._dt, float(integ.dlam), rel_tol=1e-12, abs_tol=0.0,
             )
         ):
-            raise ValueError(
-                f"Stage {self._name!r}: s.run(dt={self._dt!r}) differs "
-                f"from LoadControl dlam={integ.dlam!r}. dt has no effect "
-                "under Static: OpenSees ignores it and each increment "
-                "advances the load factor by dlam. Omit dt (or set it "
-                "equal to dlam), and state the step as dlam."
+            warnings.warn(
+                "dt has no effect under Static; dlam sets the step "
+                f"(stage {self._name!r}: dt={self._dt!r}, "
+                f"dlam={integ.dlam!r}).",
+                InertStaticDtWarning,
+                stacklevel=3,
             )
 
     # -- Stage population -------------------------------------------------

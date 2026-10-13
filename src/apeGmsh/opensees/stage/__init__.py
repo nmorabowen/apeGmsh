@@ -4,6 +4,6 @@
 returns; it is public so a script can annotate it.
 """
 
-from ._chain import StageChain
+from ._chain import InertStaticDtWarning, StageChain
 
-__all__ = ["StageChain"]
+__all__ = ["InertStaticDtWarning", "StageChain"]

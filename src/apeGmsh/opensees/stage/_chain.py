@@ -23,7 +23,18 @@ from .._internal.types import (
     SolutionAlgorithm,
 )
 
-__all__ = ["StageChain", "algorithm_needs_test"]
+__all__ = ["InertStaticDtWarning", "StageChain", "algorithm_needs_test"]
+
+
+class InertStaticDtWarning(UserWarning):
+    """A ``Static`` stage's ``s.run(dt=)`` differs from its ``LoadControl``
+    ``dlam`` (R3 ruling D1, #1785).
+
+    OpenSees ignores ``analyze``'s ``dt`` under ``Static``; each increment
+    advances the load factor by ``dlam``.  A differing ``dt`` never acted,
+    so the stage warns when it closes.  Omit ``dt`` or set it equal to
+    ``dlam`` to silence it.
+    """
 
 
 def algorithm_needs_test(algorithm: object) -> bool:

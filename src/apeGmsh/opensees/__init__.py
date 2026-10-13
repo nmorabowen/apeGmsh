@@ -32,6 +32,7 @@ from ._internal.stage_window import (
     SeriesEndsMidStageWarning,
     SeriesOutsideStageWindowWarning,
 )
+from .stage._chain import InertStaticDtWarning
 from .model_data import ModelData
 from .node import Node, NodeSet
 from .opensees_model import OpenSeesModel
@@ -53,5 +54,6 @@ __all__ = [
     "UnconsumedModelDefinitionWarning",
     "SeriesOutsideStageWindowWarning",
     "SeriesEndsMidStageWarning",
+    "InertStaticDtWarning",
     "DetachedDiaphragmMasterWarning",
 ]

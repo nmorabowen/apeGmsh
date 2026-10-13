@@ -6,9 +6,11 @@ Oracles:
 * **Byte identity.** The staged strip footing of the skill's
   ``model-scripts.md`` emits the same py and tcl deck whether its stages
   take the chain as a dict splat or as ``ops.analysis.chain``.
-* **D1.** Under ``Static`` + ``LoadControl`` a ``dt`` that differs from
-  ``dlam`` is refused at stage close and the message names ``dlam``; an
-  equal or omitted ``dt`` is accepted; ``Transient`` keeps its ``dt``.
+* **D1 (warn-iff).** Under ``Static`` + ``LoadControl`` a ``dt`` that
+  differs from ``dlam`` raises :class:`InertStaticDtWarning` at stage
+  close, naming the stage, ``dt`` and ``dlam``; an equal or omitted ``dt``
+  and a ``Transient`` stage are silent (asserted with the warning turned
+  into an error).  Run with ``-W error::apeGmsh.opensees.InertStaticDtWarning``.
 * **Linear without a test.** The stage emits no ``test`` line, the H5
   archive replays to the same deck, and a strategy ladder still needs a
   test.  The live half (same periods and drifts) is in
@@ -16,13 +18,15 @@ Oracles:
 """
 from __future__ import annotations
 
+import warnings
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 import pytest
 
 from apeGmsh import apeGmsh
-from apeGmsh.opensees import OpenSeesModel
+from apeGmsh.opensees import InertStaticDtWarning, OpenSeesModel
 from apeGmsh.opensees.analysis.algorithm import (
     BFGS,
     Broyden,
@@ -299,8 +303,16 @@ def test_keyword_form_still_refuses_an_omitted_slot(plate_fem: Any) -> None:
 
 
 # ---------------------------------------------------------------------------
-# D1: under Static, a dt that differs from dlam is refused
+# D1: under Static, a dt that differs from dlam warns (InertStaticDtWarning)
 # ---------------------------------------------------------------------------
+
+
+@contextmanager
+def _silent() -> Iterator[None]:
+    """The warning is an error inside: a silent case that warns fails."""
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", InertStaticDtWarning)
+        yield
 
 
 def _static_stage(ops: apeSees, *, dlam: float, **run: Any) -> None:
@@ -314,21 +326,22 @@ def _static_stage(ops: apeSees, *, dlam: float, **run: Any) -> None:
         s.run(n_increments=4, **run)
 
 
-def test_static_dt_differing_from_dlam_is_refused(plate_fem: Any) -> None:
+def test_static_dt_differing_from_dlam_warns(plate_fem: Any) -> None:
     ops = plate(plate_fem)
-    with pytest.raises(ValueError) as info:
+    with pytest.warns(InertStaticDtWarning) as record:
         _static_stage(ops, dlam=0.25, dt=1.0)
-    msg = str(info.value)
-    assert "dlam=0.25" in msg and "dt=1.0" in msg
-    assert "dt has no effect under Static" in msg
-    assert ops._stage_records == []
+    assert len(record) == 1
+    msg = str(record[0].message)
+    assert msg.startswith("dt has no effect under Static; dlam sets the step")
+    assert "'push'" in msg and "dt=1.0" in msg and "dlam=0.25" in msg
+    # A warning, not a refusal: the stage is recorded, dt unchanged.
+    assert ops._stage_records[0].dt == 1.0
+    assert issubclass(InertStaticDtWarning, UserWarning)
 
 
-def test_static_dt_differing_from_ladruno_dlam_is_refused(
-    plate_fem: Any,
-) -> None:
+def test_static_dt_differing_from_ladruno_dlam_warns(plate_fem: Any) -> None:
     ops = plate(plate_fem)
-    with pytest.raises(ValueError, match="dlam=0.5"):
+    with pytest.warns(InertStaticDtWarning, match="dlam=0.5"):
         with ops.stage(name="push") as s:
             s.analysis(
                 ops.analysis.chain(**_slots(ops)),
@@ -337,34 +350,43 @@ def test_static_dt_differing_from_ladruno_dlam_is_refused(
             s.run(n_increments=2, dt=0.1)
 
 
-def test_static_dt_equal_to_dlam_is_accepted(plate_fem: Any) -> None:
+def test_static_dt_equal_to_dlam_is_silent(plate_fem: Any) -> None:
     ops = plate(plate_fem)
-    _static_stage(ops, dlam=0.25, dt=0.25)
+    with _silent():
+        _static_stage(ops, dlam=0.25, dt=0.25)
     assert ops._stage_records[0].dt == 0.25
 
 
-def test_static_dt_equal_to_dlam_up_to_roundoff_is_accepted(
+def test_static_dt_equal_to_dlam_up_to_roundoff_is_silent(
     plate_fem: Any,
 ) -> None:
     ops = plate(plate_fem)
-    _static_stage(ops, dlam=1.0 / 3.0, dt=1.0 - 2.0 / 3.0)
+    with _silent():
+        _static_stage(ops, dlam=1.0 / 3.0, dt=1.0 - 2.0 / 3.0)
     assert ops._stage_records[0].dt is not None
 
 
-def test_static_dt_omitted_is_accepted(plate_fem: Any) -> None:
+def test_static_dt_omitted_is_silent(plate_fem: Any) -> None:
     ops = plate(plate_fem)
-    _static_stage(ops, dlam=0.25)
+    with _silent():
+        _static_stage(ops, dlam=0.25)
     assert ops._stage_records[0].dt is None
 
 
-def test_transient_keeps_its_dt(plate_fem: Any) -> None:
+def test_transient_keeps_its_dt_silently(plate_fem: Any) -> None:
     ops = plate(plate_fem)
-    with ops.stage(name="shake") as s:
-        s.analysis(
-            ops.analysis.chain(**_slots(ops, analysis=ops.analysis.Transient())),
-            integrator=ops.integrator.Newmark(gamma=0.5, beta=0.25),
-        )
-        s.run(n_increments=4, dt=0.01)
+    with _silent():
+        with ops.stage(name="shake") as s:
+            s.analysis(
+                ops.analysis.chain(
+                    **_slots(ops, analysis=ops.analysis.Transient()),
+                ),
+                # A LoadControl here, its dlam unequal to dt, isolates the
+                # analysis guard: under Transient dt is the step, so the
+                # mismatch is not D1's business.
+                integrator=ops.integrator.LoadControl(dlam=0.25),
+            )
+            s.run(n_increments=4, dt=0.01)
     assert ops._stage_records[0].dt == 0.01
     assert "ops.analyze(1, 0.01)" in _deck(ops, "py")
 
@@ -373,16 +395,17 @@ def test_static_under_displacement_control_is_not_d1(plate_fem: Any) -> None:
     """D1 reads ``dlam``; an integrator without one is left alone."""
     ops = plate(plate_fem)
     node = int(plate_fem.nodes.ids[-1])
-    with ops.stage(name="push") as s:
-        with s.pattern(series=ops.timeSeries.Linear()) as p:
-            p.load(node=node, forces=(1.0, 0.0))
-        s.analysis(
-            ops.analysis.chain(**_slots(ops)),
-            integrator=ops.integrator.DisplacementControl(
-                node=node, dof=1, dU=0.001,
-            ),
-        )
-        s.run(n_increments=2, dt=1.0)
+    with _silent():
+        with ops.stage(name="push") as s:
+            with s.pattern(series=ops.timeSeries.Linear()) as p:
+                p.load(node=node, forces=(1.0, 0.0))
+            s.analysis(
+                ops.analysis.chain(**_slots(ops)),
+                integrator=ops.integrator.DisplacementControl(
+                    node=node, dof=1, dU=0.001,
+                ),
+            )
+            s.run(n_increments=2, dt=1.0)
     assert ops._stage_records[0].dt == 1.0
 
 
