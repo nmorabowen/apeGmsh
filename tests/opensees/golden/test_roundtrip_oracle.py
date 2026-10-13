@@ -818,19 +818,21 @@ def test_a_redeclared_tag_binds_by_first_declaration(tmp_path: Path) -> None:
     (damping,) = [ln for ln in lines if ln.startswith("damping ")]
     (element,) = [ln for ln in lines if ln.startswith("element ")]
 
-    late = "
-".join([*lines, damping])
+    late = "\n".join([*lines, damping])
     assert _definition_sites(late)[("damping", 1)] == lines.index(damping)
     assert _order_violations(late, table) == []
 
+    # The element's second line is legal; the first, above both of its
+    # references, is reported. Line numbers are 1-based in the shifted deck.
     at = lines.index(damping)
-    early = "
-".join([*lines[:at], element, *lines[at:]])
+    transf = next(i for i, ln in enumerate(lines) if ln.startswith("geomTransf "))
+    assert at < transf
+    early = "\n".join([*lines[:at], element, *lines[at:]])
     assert _definition_sites(early)[("element", 2)] == at
     assert _order_violations(early, table) == [
         f"line {at + 1} (element 2) uses damping 1, declared on line {at + 2}",
         f"line {at + 1} (element 2) uses geomTransf 1, declared on line "
-        f"{lines.index(next(ln for ln in lines if ln.startswith('geomTransf '))) + 2}",
+        f"{transf + 2}",
     ]
 
 

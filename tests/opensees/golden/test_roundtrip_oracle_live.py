@@ -117,19 +117,14 @@ def test_the_net_never_imports_openseespy_in_process() -> None:
     of ``sys.modules``. A fresh interpreter, because this process may
     already hold it from another live test."""
     root = Path(__file__).resolve().parents[3]
-    code = (
-        "import sys
-"
-        f"sys.path[:0] = [{str(root)!r}, {str(root / 'src')!r}]
-"
-        "import tests.opensees.golden.test_roundtrip_oracle_live as m
-"
-        "m._openseespy_or_skip()
-"
-        "print(sorted(k for k in sys.modules if k.split('.')[0] in "
-        "('openseespy', 'opensees')))
-"
-    )
+    code = "\n".join([
+        "import sys",
+        f"sys.path[:0] = [{str(root)!r}, {str(root / 'src')!r}]",
+        "import tests.opensees.golden.test_roundtrip_oracle_live as m",
+        "m._openseespy_or_skip()",
+        "print(sorted(k for k in sys.modules",
+        "             if k.split('.')[0] in ('openseespy', 'opensees')))",
+    ])
     proc = subprocess.run(
         [sys.executable, "-c", code], capture_output=True, text=True,
         timeout=300, cwd=str(root),
