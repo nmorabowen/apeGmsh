@@ -374,10 +374,16 @@ def test_global_eigen_inside_a_stage_raises() -> None:
 
 
 def _ledgered_frame() -> apeSees:
+    ops = _frame(rayleigh=False, modal=False)
+    ops.equation_constraint(constrained=(2, 1), retained=[(1, 1, -1.0)])
+    return ops
+
+
+def _tie_ledgered_frame() -> apeSees:
     """The frame plus an ``enforce="equation"`` tie: its
-    ``equationConstraint`` row is a ledger call deck replay skips. (A
-    bridge-level ``apeSees.equation_constraint`` row is archived and
-    replayed, so it is not ledgered: #1805.)"""
+    ``equationConstraint`` row is a ledger call deck replay skips. (The
+    bridge-level row of :func:`_ledgered_frame` is archived and replayed,
+    so it is not ledgered.)"""
     from apeGmsh._kernel.records._constraints import InterpolationRecord
     from apeGmsh._kernel.records._kinds import ConstraintKind
 
@@ -407,7 +413,7 @@ def test_no_ledger_no_warning(tmp_path: Path) -> None:
 def test_one_dropped_row_is_one_warning(tmp_path: Path) -> None:
     """The equation tie's dropped row warns once across every category:
     one ledger warning, no deferred warning."""
-    ops = _ledgered_frame()
+    ops = _tie_ledgered_frame()
     with warnings.catch_warnings(record=True) as rec:
         warnings.simplefilter("always")
         ops.h5(str(tmp_path / "m.h5"))
@@ -433,7 +439,7 @@ def test_automatic_write_warns_once_about_the_dropped_row(
     art = tmp_path / "artifacts"
     art.mkdir()
     monkeypatch.setenv("APEGMSH_ARTIFACT_DIR", str(art))
-    ops = _ledgered_frame()
+    ops = _tie_ledgered_frame()
     with warnings.catch_warnings(record=True) as rec:
         warnings.simplefilter("always")
         ops.tcl(str(tmp_path / "a.tcl"))
