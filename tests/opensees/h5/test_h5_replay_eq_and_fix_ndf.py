@@ -41,7 +41,7 @@ import numpy as np
 import pytest
 
 from apeGmsh.opensees import OpenSeesModel, apeSees
-from apeGmsh.opensees.emitter.h5 import H5LedgerWarning
+from apeGmsh.opensees.emitter.h5 import H5FeatureDeferredWarning, H5LedgerWarning
 from apeGmsh.opensees.emitter.h5_reader import MalformedH5Error
 
 from tests.opensees.h5._opensees_model_fixtures import build_simple_frame_fem
@@ -205,6 +205,57 @@ def test_replayed_tie_holds_in_opensees(tmp_path: Path) -> None:
     expected = _P / (2.0 * _K)
     assert ux == pytest.approx(expected, rel=1e-6)
     assert uy == pytest.approx(expected, rel=1e-6)
+
+
+# ---------------------------------------------------------------------------
+# The write side tells the truth about it (#1805)
+# ---------------------------------------------------------------------------
+
+
+def _about_the_archive(ops: apeSees, path: Path) -> list[warnings.WarningMessage]:
+    with warnings.catch_warnings(record=True) as rec:
+        warnings.simplefilter("always")
+        ops.h5(str(path))
+    return [w for w in rec if issubclass(
+        w.category, (H5FeatureDeferredWarning, H5LedgerWarning))]
+
+
+def test_h5_does_not_warn_about_an_archived_equation_constraint(
+    tmp_path: Path,
+) -> None:
+    """The row is archived and replayed (the tests above), so ``h5`` warns
+    neither that it is deferred nor that it is ledgered. Run this file
+    under ``-W error::`` for each category to pin it as a contract."""
+    ops = _two_ties()
+    archive = tmp_path / "model.h5"
+    assert _about_the_archive(ops, archive) == []
+    replay = OpenSeesModel.from_h5(str(archive)).build("tcl")
+    assert isinstance(replay, str)
+    assert len(_lines(replay, "equationConstraint")) == 2
+
+
+def test_an_equation_tie_beside_an_archived_row_is_the_only_ledgered_one(
+    tmp_path: Path,
+) -> None:
+    """An ``enforce="equation"`` tie emits ``equationConstraint`` too, and
+    deck replay skips it, so it stays ledgered: the warning counts it and
+    not the archived bridge row beside it."""
+    from apeGmsh._kernel.records._constraints import InterpolationRecord
+    from apeGmsh._kernel.records._kinds import ConstraintKind
+
+    fem = build_simple_frame_fem().with_constraint(InterpolationRecord(
+        kind=ConstraintKind.TIE, name="eq", slave_node=2, master_nodes=[1],
+        weights=np.array([1.0]), dofs=[3], enforce="equation"))
+    ops = apeSees(cast("Any", fem))
+    ops.model(ndm=3, ndf=6)
+    transf = ops.geomTransf.Linear(vecxz=(1.0, 0.0, 0.0))
+    sec = ops.section.Elastic(E=_E, A=0.01, Iz=_I, Iy=_I, G=80e9, J=1e-4)
+    integ = ops.beamIntegration.Lobatto(section=sec, n_ip=3)
+    ops.element.forceBeamColumn(pg="Cols", transf=transf, integration=integ)
+    ops.equation_constraint(constrained=(2, 1), retained=[(2, 2, -1.0)])
+    (only,) = _about_the_archive(ops, tmp_path / "model.h5")
+    assert only.category is H5LedgerWarning
+    assert "equationConstraint x1" in str(only.message)
 
 
 # ---------------------------------------------------------------------------
