@@ -1278,15 +1278,17 @@ def declare_session(g: Any, scd: ScdModel, plan: ConditionsPlan, mesh: MeshMap) 
     route is ``g.constraints.rigid_diaphragm(master_pg, slave_pg, ...)``, which
     the resolver (``resolve_rigid_diaphragm``) turns into one record by geometry
     -- it keeps the nodes of ``master_pg | slave_pg`` within ``plane_tolerance``
-    of the plane through ``master_point`` and takes as master the node nearest
-    ``master_point``. Each :class:`~.translate_types.DiaphragmGroup` is carried so
+    of the plane through ``master_point``. ``master_point`` only sets that plane:
+    a one-node master label is always the master (refused if it is off the
+    plane), while a multi-node master label falls back to the nearest in-plane
+    node, a master-set node winning ties (``_pick_diaphragm_master``). Each :class:`~.translate_types.DiaphragmGroup` is carried so
     that this geometry reproduces STKO's pairs exactly:
 
     * its master and its slaves are owned by two carrier entities (the mesh
       module), so ``master_pg | slave_pg`` is exactly ``{master, *slaves}``;
-    * ``master_point`` is the master's own coordinates, so the nearest node of
-      that set is the master (a slave at the same coordinates is refused by
-      :func:`check_supported`);
+    * the master group is one node and ``master_point`` is its own coordinates,
+      so that node is the declared master (a slave at the same coordinates is
+      refused by :func:`check_supported`);
     * ``plane_tolerance`` is larger than the farthest slave's distance from the
       master's plane, so no slave is dropped (OpenSees' ``rigidDiaphragm`` keeps
       an off-plane slave too, with a warning: ``RigidDiaphragm.cpp``).
