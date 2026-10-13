@@ -3864,8 +3864,28 @@ analysis chain, and its own run:</p>
 </span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>    <span class="k">with</span> <span class="n">s</span><span class="o">.</span><span class="n">pattern</span><span class="p">(</span><span class="n">series</span><span class="o">=</span><span class="n">ops</span><span class="o">.</span><span class="n">timeSeries</span><span class="o">.</span><span class="n">Linear</span><span class="p">())</span> <span class="k">as</span> <span class="n">p</span><span class="p">:</span>
 </span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>        <span class="n">p</span><span class="o">.</span><span class="n">from_model</span><span class="p">(</span><span class="s2">"live"</span><span class="p">)</span>
 </span><span id="__span-4-4"><a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a>    <span class="n">s</span><span class="o">.</span><span class="n">analysis</span><span class="p">(</span><span class="o">...</span><span class="p">)</span>
-</span><span id="__span-4-5"><a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a>    <span class="n">s</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">n_increments</span><span class="o">=</span><span class="mi">10</span><span class="p">,</span> <span class="n">dt</span><span class="o">=</span><span class="mf">0.1</span><span class="p">)</span>
+</span><span id="__span-4-5"><a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a>    <span class="n">s</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">n_increments</span><span class="o">=</span><span class="mi">10</span><span class="p">)</span>
 </span></code></pre></div>
+<p>Stages that share every chain slot but the integrator state them once with
+<code>ops.analysis.chain(...)</code> and pass that value to each stage. The chain is a
+plain value, not a primitive, so the deck is the same as with every slot
+spelled out:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="n">solver</span> <span class="o">=</span> <span class="n">ops</span><span class="o">.</span><span class="n">analysis</span><span class="o">.</span><span class="n">chain</span><span class="p">(</span>
+</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>    <span class="n">test</span><span class="o">=</span><span class="n">ops</span><span class="o">.</span><span class="n">test</span><span class="o">.</span><span class="n">NormDispIncr</span><span class="p">(</span><span class="n">tol</span><span class="o">=</span><span class="mf">1e-8</span><span class="p">,</span> <span class="n">max_iter</span><span class="o">=</span><span class="mi">50</span><span class="p">),</span>
+</span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>    <span class="n">algorithm</span><span class="o">=</span><span class="n">ops</span><span class="o">.</span><span class="n">algorithm</span><span class="o">.</span><span class="n">Newton</span><span class="p">(),</span>
+</span><span id="__span-5-4"><a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a>    <span class="n">constraints</span><span class="o">=</span><span class="n">ops</span><span class="o">.</span><span class="n">constraints</span><span class="o">.</span><span class="n">Plain</span><span class="p">(),</span>
+</span><span id="__span-5-5"><a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a>    <span class="n">numberer</span><span class="o">=</span><span class="n">ops</span><span class="o">.</span><span class="n">numberer</span><span class="o">.</span><span class="n">RCM</span><span class="p">(),</span>
+</span><span id="__span-5-6"><a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a>    <span class="n">system</span><span class="o">=</span><span class="n">ops</span><span class="o">.</span><span class="n">system</span><span class="o">.</span><span class="n">UmfPack</span><span class="p">(),</span>
+</span><span id="__span-5-7"><a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a>    <span class="n">analysis</span><span class="o">=</span><span class="n">ops</span><span class="o">.</span><span class="n">analysis</span><span class="o">.</span><span class="n">Static</span><span class="p">(),</span>
+</span><span id="__span-5-8"><a id="__codelineno-5-8" name="__codelineno-5-8" href="#__codelineno-5-8"></a><span class="p">)</span>
+</span><span id="__span-5-9"><a id="__codelineno-5-9" name="__codelineno-5-9" href="#__codelineno-5-9"></a><span class="k">with</span> <span class="n">ops</span><span class="o">.</span><span class="n">stage</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="s2">"gravity"</span><span class="p">)</span> <span class="k">as</span> <span class="n">s</span><span class="p">:</span>
+</span><span id="__span-5-10"><a id="__codelineno-5-10" name="__codelineno-5-10" href="#__codelineno-5-10"></a>    <span class="o">...</span>
+</span><span id="__span-5-11"><a id="__codelineno-5-11" name="__codelineno-5-11" href="#__codelineno-5-11"></a>    <span class="n">s</span><span class="o">.</span><span class="n">analysis</span><span class="p">(</span><span class="n">solver</span><span class="p">,</span> <span class="n">integrator</span><span class="o">=</span><span class="n">ops</span><span class="o">.</span><span class="n">integrator</span><span class="o">.</span><span class="n">LoadControl</span><span class="p">(</span><span class="n">dlam</span><span class="o">=</span><span class="mf">0.1</span><span class="p">))</span>
+</span><span id="__span-5-12"><a id="__codelineno-5-12" name="__codelineno-5-12" href="#__codelineno-5-12"></a>    <span class="n">s</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">n_increments</span><span class="o">=</span><span class="mi">10</span><span class="p">)</span>
+</span></code></pre></div>
+<p>A chain plus a keyword for a slot it already holds is refused. The test may
+be left out only for <code>ops.algorithm.Linear()</code>, which solves once per step
+and never reads it; a strategy ladder (<code>s.run(strategy=)</code>) still needs one.</p>
 <p>Loads from a finished stage are frozen (<code>loadConst -time 0.0</code>) before the next
 begins, and the pseudo-time restarts at 0. A stage's series is read on that
 clock, so a load history that continues from an earlier stage needs
@@ -3881,15 +3901,15 @@ idiom at full length.</p>
 <h3 id="what-a-stage-boundary-does">What a stage boundary does<a class="headerlink" href="#what-a-stage-boundary-does" title="Permanent link">&para;</a></h3>
 <p>When a stage closes, the emitted deck does five things before the next stage
 opens. Each is read off the emitted <code>py</code> deck, in this order:</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>ops.loadConst('-time', 0.0)    # end of stage 1
-</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>ops.wipeAnalysis()
-</span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a># === Stage: s2 ===
-</span><span id="__span-5-4"><a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a>ops.setTime(1.0)               # only if s2 called s.set_time(1.0)
-</span><span id="__span-5-5"><a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a>ops.domainChange()
-</span><span id="__span-5-6"><a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a>ops.constraints('Plain')       # the whole analysis chain, again
-</span><span id="__span-5-7"><a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a>...
-</span><span id="__span-5-8"><a id="__codelineno-5-8" name="__codelineno-5-8" href="#__codelineno-5-8"></a>ops.analysis('Static')
-</span><span id="__span-5-9"><a id="__codelineno-5-9" name="__codelineno-5-9" href="#__codelineno-5-9"></a>ops.pattern('Plain', 2, 2)
+<div class="language-text highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>ops.loadConst('-time', 0.0)    # end of stage 1
+</span><span id="__span-6-2"><a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>ops.wipeAnalysis()
+</span><span id="__span-6-3"><a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a># === Stage: s2 ===
+</span><span id="__span-6-4"><a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a>ops.setTime(1.0)               # only if s2 called s.set_time(1.0)
+</span><span id="__span-6-5"><a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a>ops.domainChange()
+</span><span id="__span-6-6"><a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a>ops.constraints('Plain')       # the whole analysis chain, again
+</span><span id="__span-6-7"><a id="__codelineno-6-7" name="__codelineno-6-7" href="#__codelineno-6-7"></a>...
+</span><span id="__span-6-8"><a id="__codelineno-6-8" name="__codelineno-6-8" href="#__codelineno-6-8"></a>ops.analysis('Static')
+</span><span id="__span-6-9"><a id="__codelineno-6-9" name="__codelineno-6-9" href="#__codelineno-6-9"></a>ops.pattern('Plain', 2, 2)
 </span></code></pre></div>
 <ul>
 <li><strong>Loads are held constant.</strong> <code>loadConst</code> freezes every pattern applied so
@@ -3900,28 +3920,30 @@ opens. Each is read off the emitted <code>py</code> deck, in this order:</p>
   every increment raises <code>SeriesOutsideStageWindowWarning</code>.</li>
 <li><strong>The analysis chain is wiped and re-emitted.</strong> <code>wipeAnalysis</code> discards the
   test, algorithm, integrator, constraints handler, numberer, system and
-  analysis; every stage writes all seven again from its own <code>s.analysis(...)</code>.
-  Nothing carries over, so a stage that omits one is an error, not a default.</li>
+  analysis; every stage writes them all again from its own <code>s.analysis(...)</code>.
+  Nothing carries over, so a stage that omits one is an error, not a default.
+  The one exception is the test of a <code>Linear</code> stage, which is not written.</li>
 <li><strong>Domain state and recorders are kept.</strong> Nodes, elements, fixes, the
   displacements reached and the recorders declared once at the top of the deck
   survive the boundary. <code>wipeAnalysis</code> does not touch the domain, and the
   recorders are not re-emitted.</li>
-<li><strong>Under <code>Static</code>, <code>s.run(dt=)</code> has no effect.</strong> The deck still writes
-  <code>ops.analyze(1, &lt;dt&gt;)</code>, but a static analysis ignores it: the
-  <code>LoadControl</code> <code>dlam</code> alone sets the step, so a stage with <code>dlam=0.25</code> and
-  <code>n_increments=4</code> reaches <code>t0 + 1.0</code> whatever <code>dt</code> says. <code>dt</code> is the step only
-  under <code>Transient</code>.</li>
+<li><strong>dt has no effect under Static; a differing dt warns.</strong> A static
+  analysis ignores <code>analyze</code>'s <code>dt</code>: the <code>LoadControl</code> <code>dlam</code> alone sets the
+  step, so a stage with <code>dlam=0.25</code> and <code>n_increments=4</code> reaches <code>t0 + 1.0</code>.
+  A <code>dt</code> that differs from <code>dlam</code> raises <code>InertStaticDtWarning</code> (from
+  <code>apeGmsh.opensees</code>) when the stage closes; leave <code>dt</code> out, or set it equal
+  to <code>dlam</code>. <code>dt</code> is the step only under <code>Transient</code>.</li>
 </ul>
 <h2 id="one-declaration-surface-four-outputs">One declaration surface, four outputs<a class="headerlink" href="#one-declaration-surface-four-outputs" title="Permanent link">&para;</a></h2>
 <p>Everything above — model, materials, elements, fixes, patterns, stages, and
 the analysis chain itself (<code>ops.constraints</code>, <code>ops.numberer</code>, <code>ops.system</code>,
 <code>ops.test</code>, <code>ops.algorithm</code>, <code>ops.integrator</code>, <code>ops.analysis</code>) — is pure
 declaration. Nothing touches OpenSees until you pick an output:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="n">ops</span><span class="o">.</span><span class="n">tcl</span><span class="p">(</span><span class="s2">"model.tcl"</span><span class="p">)</span>            <span class="c1"># complete OpenSees Tcl deck</span>
-</span><span id="__span-6-2"><a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="n">ops</span><span class="o">.</span><span class="n">py</span><span class="p">(</span><span class="s2">"model.py"</span><span class="p">)</span>              <span class="c1"># equivalent openseespy script</span>
-</span><span id="__span-6-3"><a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="n">ops</span><span class="o">.</span><span class="n">h5</span><span class="p">(</span><span class="s2">"model.h5"</span><span class="p">)</span>              <span class="c1"># native HDF5: solver zone + neutral zone</span>
-</span><span id="__span-6-4"><a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="n">ops</span><span class="o">.</span><span class="n">run</span><span class="p">()</span>                       <span class="c1"># in-process openseespy, right now</span>
-</span><span id="__span-6-5"><a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a><span class="n">ops</span><span class="o">.</span><span class="n">analyze</span><span class="p">(</span><span class="n">steps</span><span class="o">=</span><span class="mi">10</span><span class="p">,</span> <span class="n">dt</span><span class="o">=</span><span class="mf">0.01</span><span class="p">)</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="n">ops</span><span class="o">.</span><span class="n">tcl</span><span class="p">(</span><span class="s2">"model.tcl"</span><span class="p">)</span>            <span class="c1"># complete OpenSees Tcl deck</span>
+</span><span id="__span-7-2"><a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="n">ops</span><span class="o">.</span><span class="n">py</span><span class="p">(</span><span class="s2">"model.py"</span><span class="p">)</span>              <span class="c1"># equivalent openseespy script</span>
+</span><span id="__span-7-3"><a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="n">ops</span><span class="o">.</span><span class="n">h5</span><span class="p">(</span><span class="s2">"model.h5"</span><span class="p">)</span>              <span class="c1"># native HDF5: solver zone + neutral zone</span>
+</span><span id="__span-7-4"><a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a><span class="n">ops</span><span class="o">.</span><span class="n">run</span><span class="p">()</span>                       <span class="c1"># in-process openseespy, right now</span>
+</span><span id="__span-7-5"><a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a><span class="n">ops</span><span class="o">.</span><span class="n">analyze</span><span class="p">(</span><span class="n">steps</span><span class="o">=</span><span class="mi">10</span><span class="p">,</span> <span class="n">dt</span><span class="o">=</span><span class="mf">0.01</span><span class="p">)</span>
 </span></code></pre></div>
 <p>Each call builds the same resolved model internally and hands it to a
 different emitter; they are separate statements, not a chain, and you can call
@@ -3941,13 +3963,13 @@ this is a style choice, but past a few million elements it becomes essential.</p
 declares classic OpenSees recorders that emit with the deck; for in-process
 runs, a capture spec names what to record — by physical group, of course —
 and writes results next to the model:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="n">spec</span> <span class="o">=</span> <span class="n">DomainCaptureSpec</span><span class="p">(</span><span class="n">opensees</span><span class="o">=</span><span class="n">ops</span><span class="p">)</span>
-</span><span id="__span-7-2"><a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="n">spec</span><span class="o">.</span><span class="n">nodes</span><span class="p">(</span><span class="n">pg</span><span class="o">=</span><span class="s2">"Tip"</span><span class="p">,</span> <span class="n">components</span><span class="o">=</span><span class="p">[</span><span class="s2">"displacement"</span><span class="p">])</span>
-</span><span id="__span-7-3"><a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="k">with</span> <span class="n">ops</span><span class="o">.</span><span class="n">domain_capture</span><span class="p">(</span><span class="n">spec</span><span class="p">,</span> <span class="n">path</span><span class="o">=</span><span class="s2">"run.h5"</span><span class="p">)</span> <span class="k">as</span> <span class="n">cap</span><span class="p">:</span>
-</span><span id="__span-7-4"><a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a>    <span class="n">cap</span><span class="o">.</span><span class="n">begin_stage</span><span class="p">(</span><span class="s2">"tip_load"</span><span class="p">,</span> <span class="n">kind</span><span class="o">=</span><span class="s2">"static"</span><span class="p">)</span>
-</span><span id="__span-7-5"><a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a>    <span class="n">ops</span><span class="o">.</span><span class="n">analyze</span><span class="p">(</span><span class="n">steps</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
-</span><span id="__span-7-6"><a id="__codelineno-7-6" name="__codelineno-7-6" href="#__codelineno-7-6"></a>    <span class="n">cap</span><span class="o">.</span><span class="n">step</span><span class="p">(</span><span class="n">t</span><span class="o">=</span><span class="mf">1.0</span><span class="p">)</span>
-</span><span id="__span-7-7"><a id="__codelineno-7-7" name="__codelineno-7-7" href="#__codelineno-7-7"></a>    <span class="n">cap</span><span class="o">.</span><span class="n">end_stage</span><span class="p">()</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="n">spec</span> <span class="o">=</span> <span class="n">DomainCaptureSpec</span><span class="p">(</span><span class="n">opensees</span><span class="o">=</span><span class="n">ops</span><span class="p">)</span>
+</span><span id="__span-8-2"><a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="n">spec</span><span class="o">.</span><span class="n">nodes</span><span class="p">(</span><span class="n">pg</span><span class="o">=</span><span class="s2">"Tip"</span><span class="p">,</span> <span class="n">components</span><span class="o">=</span><span class="p">[</span><span class="s2">"displacement"</span><span class="p">])</span>
+</span><span id="__span-8-3"><a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a><span class="k">with</span> <span class="n">ops</span><span class="o">.</span><span class="n">domain_capture</span><span class="p">(</span><span class="n">spec</span><span class="p">,</span> <span class="n">path</span><span class="o">=</span><span class="s2">"run.h5"</span><span class="p">)</span> <span class="k">as</span> <span class="n">cap</span><span class="p">:</span>
+</span><span id="__span-8-4"><a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a>    <span class="n">cap</span><span class="o">.</span><span class="n">begin_stage</span><span class="p">(</span><span class="s2">"tip_load"</span><span class="p">,</span> <span class="n">kind</span><span class="o">=</span><span class="s2">"static"</span><span class="p">)</span>
+</span><span id="__span-8-5"><a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a>    <span class="n">ops</span><span class="o">.</span><span class="n">analyze</span><span class="p">(</span><span class="n">steps</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
+</span><span id="__span-8-6"><a id="__codelineno-8-6" name="__codelineno-8-6" href="#__codelineno-8-6"></a>    <span class="n">cap</span><span class="o">.</span><span class="n">step</span><span class="p">(</span><span class="n">t</span><span class="o">=</span><span class="mf">1.0</span><span class="p">)</span>
+</span><span id="__span-8-7"><a id="__codelineno-8-7" name="__codelineno-8-7" href="#__codelineno-8-7"></a>    <span class="n">cap</span><span class="o">.</span><span class="n">end_stage</span><span class="p">()</span>
 </span></code></pre></div>
 <p>You saw this run end-to-end in <a href="../../tutorials/first-model/">the first tutorial</a>:
 the same <code>"Tip"</code> name that placed the load fetches the deflection back out of
