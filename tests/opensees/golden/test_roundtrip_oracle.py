@@ -37,7 +37,10 @@ ledger to shrink.
 **Ledger transitions.** The ledger is compared row by row with the copy at
 the merge base with ``origin/main`` (:func:`_ledger_transition_errors`). A row
 may be deleted, or re-pinned to downgrade its class (C to A or B) when a fix
-leaves only order or float text; the derived class is the evidence. A row may
+leaves only order or float text; the derived class is the evidence. A B row
+may likewise re-pin to A when a fix leaves only float text (#1814): an A diff
+is a strict subset of a B diff, and the class is still re-derived for every
+row, so the A label is proven the same way. A row may
 always escalate (A or B to C) when the oracle learns to see more, and then
 cites the issue that tracks the bug. Every C row cites an issue as ``#NNNN``
 (openness is not checkable offline; the PR lists each one and its state).
@@ -456,7 +459,7 @@ def _check(model: Model, waiver: Waiver | None, out_dir: Path) -> None:
     assert _pin(diff) == waiver.pin, (
         f"{model.id} differs in a new way (pin {_pin(diff)}, ledger "
         f"{waiver.pin}); a fix that changes the diff deletes its row, or "
-        f"re-pins it only to downgrade its class (C to A or B):\n{diff}"
+        f"re-pins it only to downgrade its class (C to A or B, B to A):\n{diff}"
     )
 
 
