@@ -99,7 +99,7 @@ writes it.
 
 | Placement | Coupling | Host mesh | The Tcl deck holds |
 |---|---|---|---|
-| `conformal` | `coupling="conformal", emit_elements=True`; no cross-ties | Delaunay tets, with the bars embedded so the host shares their nodes | 262 `CorotTruss` |
+| `conformal` | `coupling="conformal", emit_elements=True`; no cross-ties | Delaunay tets, with the bars embedded so the host shares their nodes | 262 `CorotTruss` (the golden keeps the 270 bar nodes only) |
 | `embedded` | `coupling="embedded", perfect=1e8, emit_elements=True`; with cross-ties | transfinite tets (`set_transfinite_box(size=0.2, recombine=False)`) | 366 `CorotTruss`, 400 `LadrunoEmbeddedRebar` |
 
 `test_rebar_golden_exercises_both_emit_paths` pins those counts, so a regen
@@ -114,9 +114,16 @@ that silently dropped `emit_elements` or the ties cannot pass as a match.
   than any other host that also holds the node, so a last-ulp change in the
   distances cannot flip the choice.
 - **The conformal host is unstructured.** gmsh cannot embed curves in a
-  transfinite volume. This deck therefore pins gmsh's 3-D mesh, and a
-  `gmsh` pin bump in `.github/ci-constraints.txt` can change it. Regen it
-  then, and list the cell in the PR.
+  transfinite volume, so its host-interior nodes are a Delaunay outcome.
+  They differ between hosts: gmsh 4.15.0 on Windows against 4.15.2 on
+  Linux CI agreed on nodes 1 to 434 and diverged after. The deck declares
+  no host element, so nothing in it references those nodes. The conformal
+  goldens therefore keep only the `node` lines of nodes on a bar physical
+  group (ids 9 to 330), plus every other line. This is
+  `rebar._bar_nodes_only`. It fails closed: an element line that is not a
+  `CorotTruss` on bar nodes raises, so the filter can never hide a node an
+  element uses. The shared-node property of a conformal placement lives in
+  the host mesh, so it is outside this oracle.
 
 **Decks only.** The issue asks for the decks. There is no `.h5dump`: a
 real `FEMData` archive carries a neutral zone whose `/provenance@base_dir`
