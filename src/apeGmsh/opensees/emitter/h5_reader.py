@@ -558,6 +558,17 @@ class MalformedH5Error(ValueError):
     dataset is missing one of its declared fields)."""
 
 
+class BridgeOnlyArchiveError(MalformedH5Error):
+    """Raised by :meth:`OpenSeesModel.from_h5` on a bridge-only archive.
+
+    The file carries a ``/meta`` group but no neutral zone (no ``nodes``
+    group), for example an archive written from a ``FEMStub``-built
+    ``apeSees``.  Replay needs the mesh, so such a file cannot be
+    rehydrated (#1797).  Not a :class:`KeyError`: the raw h5py
+    ``KeyError`` it replaces was never a documented contract.
+    """
+
+
 def open(path: str, *, meta_path: str = "meta") -> H5Model:
     """Open ``path`` and version-check it.
 
