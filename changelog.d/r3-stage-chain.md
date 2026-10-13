@@ -13,8 +13,10 @@ algorithm declares `needs_test` (False only for `Linear`). The test stays
 required for every iterating algorithm and for a stage with
 `s.run(strategy=)`.
 
-**Changed (behaviour):** a `Static` stage driven by `LoadControl` (or
+**Added:** `InertStaticDtWarning` (a `UserWarning`, exported from
+`apeGmsh.opensees`). A `Static` stage driven by `LoadControl` (or
 `LadrunoLoadControl`) whose `s.run(dt=)` differs from the integrator's `dlam`
-now raises `ValueError` when the stage closes (maintainer ruling D1). OpenSees
-ignores `dt` under `Static`, so such a `dt` never acted. Omit `dt`, or set it
-equal to `dlam`. `Transient` stages keep `dt`.
+warns when the stage closes (maintainer ruling D1): "dt has no effect under
+Static; dlam sets the step", with the stage name, `dt` and `dlam`. OpenSees
+ignores `dt` under `Static`, so such a `dt` never acted. It is silent when
+`dt` is omitted or equals `dlam`, and under `Transient`. No deck changes.

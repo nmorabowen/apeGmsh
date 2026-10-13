@@ -732,11 +732,12 @@ ops.pattern('Plain', 2, 2)
   `test` line); nothing carries over.
 - **Domain state and recorders kept:** `wipeAnalysis` leaves the domain alone;
   recorders are emitted once, before the first stage, never again.
-- **Under Static the step is `dlam`; leave `dt` out.** OpenSees ignores
+- **dt has no effect under Static; a differing dt warns.** OpenSees ignores
   `analyze`'s `dt` under `Static`; `LoadControl.dlam` alone sets the step
   (`_internal/stage_window.py::stage_increment_times`). A `Static` +
   `LoadControl` stage whose `s.run(dt=)` differs from `dlam` raises
-  `ValueError` at stage close, naming `dlam`; `dt == dlam` is accepted. `dt` is
+  `InertStaticDtWarning` (from `apeGmsh.opensees`) at stage close, naming the
+  stage, `dt` and `dlam`; an omitted `dt` or `dt == dlam` is silent. `dt` is
   the step only under `Transient`.
 <!-- verified: tests/opensees/test_stage_boundary_docs_claims.py, tests/opensees/unit/test_stage_chain.py -->
 
