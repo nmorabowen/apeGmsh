@@ -29,7 +29,7 @@ import { LineSegments2 } from "three/addons/lines/LineSegments2.js";
 import { LineSegmentsGeometry } from "three/addons/lines/LineSegmentsGeometry.js";
 import { deformLines } from "../../src/panels/legend.ts";
 import { openModel } from "../../src/reader/node.ts";
-import { basePositions, gatherInto, positionsFor, writePositions } from "../../src/renderer/deform.ts";
+import { basePositions, deformFull, edgesShown, gatherInto, positionsFor, writePositions } from "../../src/renderer/deform.ts";
 import { hitElement } from "../../src/renderer/selection.ts";
 import type { ModelFile } from "../../src/model/types.ts";
 import { BlobStore } from "../../src/state/blobs.ts";
@@ -154,7 +154,8 @@ test("oracle (3-D): every deformed vertex is x + s u of its node, at two steps a
       const { s, v, full } = await showDeformed(h, st, k, scale);
       assert.equal(v.state, "ready");
       assert.equal(full.key, `${h.effects.currentDisplacement()!.key}|scale ${scale}`);
-      for (const [pos, vn] of [[full.tri, s.mesh!.vertexNodes.tri], [full.line, s.mesh!.vertexNodes.line]] as const) {
+      for (const [pos, vn] of [[full.tri, s.mesh!.vertexNodes.tri], [full.line, s.mesh!.vertexNodes.line], [full.edge, s.mesh!.vertexNodes.edge]] as const) {
+        if (vn !== s.mesh!.vertexNodes.line) assert.ok(h.blobs.get(vn).length > 0, "the faces and the outline edges have vertices (this model has no lines)");
         const nodes = h.blobs.get(vn) as Float64Array;
         nodes.forEach((id, i) => {
           const [x, y, z] = coords.get(id)!;
@@ -231,6 +232,52 @@ test("coincident nodes deform independently: each vertex moves by its own node's
     });
   }
   for (const [a, b] of [[2, 5], [3, 8], [13, 14]] as const) assert.notDeepEqual(u(a), u(b));
+});
+
+test("outline edges follow their own nodes (coincident nodes included), are drawn on the deformed mesh, and move in place", () => {
+  // Two quads side by side whose shared edge is a decoupled interface: 2 sits on 5, 3 on 8.
+  const XYZ: Record<number, [number, number, number]> = {
+    1: [0, 0, 0], 2: [1, 0, 0], 3: [1, 1, 0], 4: [0, 1, 0], 5: [1, 0, 0], 6: [2, 0, 0], 7: [2, 1, 0], 8: [1, 1, 0],
+  };
+  const ids = Object.keys(XYZ).map(Number);
+  const model: ModelFile = {
+    path: "edges.h5", sizeBytes: 0, neutralVersion: "2.35.0", meta: {},
+    nodeIds: new Float64Array(ids), nodeCoords: new Float64Array(ids.flatMap((i) => XYZ[i]!)),
+    blocks: [{ alias: "quad4", code: 3, dim: 2, npe: 4, ids: new Float64Array([1, 2]), connectivity: new Float64Array([1, 2, 3, 4, 5, 6, 7, 8]) }],
+    physicalGroups: [], labels: [], opensees: null, sequence: { status: "absent" }, warnings: [], readMs: 0,
+  };
+  const blobs = new BlobStore();
+  const mesh = loadModel(model, blobs).mesh;
+  const edgeNodes = blobs.get(mesh.vertexNodes.edge) as Float64Array;
+  // The perimeter of each quad, in connectivity order, each edge once: both sides of the interface are kept.
+  assert.deepEqual(Array.from(edgeNodes), [1, 2, 2, 3, 3, 4, 4, 1, 5, 6, 6, 7, 7, 8, 8, 5]);
+  const base = basePositions(mesh, blobs);
+  edgeNodes.forEach((id, i) => assert.deepEqual(Array.from(base.edge.subarray(3 * i, 3 * i + 3)), XYZ[id]!.map(Math.fround), `edge vertex ${i} sits on node ${id}`));
+  // Each node its own displacement; coincident pairs differ.
+  const u = (id: number): [number, number, number] => [0.1 * id, -0.05 * id, 0.02 * id];
+  const col = columnOf(Float64Array.from(ids));
+  const rows = [0, 1, 2].map((a) => Float64Array.from(ids, (id) => u(id)[a]!)) as [Float64Array, Float64Array, Float64Array];
+  const disp = {
+    key: "k",
+    line: vertexDisplacements(blobs.get(mesh.vertexNodes.line) as Float64Array, col, rows),
+    tri: vertexDisplacements(blobs.get(mesh.vertexNodes.tri) as Float64Array, col, rows),
+    edge: vertexDisplacements(edgeNodes, col, rows),
+  };
+  const scale = 3;
+  const full = deformFull(base, disp, scale, "k|scale 3");
+  edgeNodes.forEach((id, i) => {
+    for (let a = 0; a < 3; a++) assert.equal(full.edge[3 * i + a], Math.fround(Math.fround(XYZ[id]![a]!) + scale * u(id)[a]!), `edge vertex ${i} (node ${id}) axis ${a}`);
+  });
+  // The interface edge 2-3 and its twin 5-8 sit together undeformed and apart deformed.
+  assert.notDeepEqual(Array.from(full.edge.subarray(3, 6)), Array.from(full.edge.subarray(45, 48)));
+  // Shown on the deformed mesh when the user's toggle is on; hidden only by the toggle.
+  assert.equal(edgesShown(true, full), true);
+  assert.equal(edgesShown(false, full), false);
+  // writePositions moves the drawn edges in place, through the drawn-edge map.
+  const map = Int32Array.from([0, 2, 7]);
+  const object = new THREE.LineSegments(new THREE.BufferGeometry().setAttribute("position", new THREE.BufferAttribute(gatherInto(base.edge, map, 6), 3)));
+  writePositions(null, null, full, { lineMap: new Int32Array(0), triMap: new Int32Array(0) }, { object, map });
+  assert.deepEqual(Array.from(object.geometry.getAttribute("position").array as Float32Array), Array.from(gatherInto(full.edge, map, 6)));
 });
 
 /** The drawn tri vertices of nodes with z > 3 (the Top box's own nodes, which contour_nodata's results do not record). */

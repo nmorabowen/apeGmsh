@@ -314,9 +314,6 @@ export function deformLines(s: State): {
   if (!a.ok) notes.push({ text: `${s.deform.on ? "Not drawn" : "Unavailable"}: ${a.reason}.`, refused: a.state === "refused" });
   else if (a.draw.note) notes.push({ text: a.draw.note, refused: false });
   if (v.state === "loading") notes.push({ text: `step ${s.phase.at?.kind === "results" ? s.phase.at.step + 1 : "?"} loading`, refused: false });
-  if (v.state === "loading" || v.state === "ready" || v.state === "partial") {
-    notes.push({ text: "Outline edges are not drawn on the deformed mesh (their nodes are not recorded); the ghost keeps them.", refused: false });
-  }
   return {
     available: a.ok,
     why: a.ok ? null : a.reason,

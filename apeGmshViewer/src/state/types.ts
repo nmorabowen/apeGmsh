@@ -200,9 +200,10 @@ export interface MeshInfo {
   /**
    * V4c1: the node tag at every drawn vertex (f64: 2 per segment, 3 per
    * triangle), as mesh/build.ts read it from the connectivity; a contour
-   * colours through it.
+   * colours through it. V4d adds `edge` (2 per outline edge), which the
+   * deformed shape moves the outline edges through.
    */
-  vertexNodes: { line: BlobRef; tri: BlobRef };
+  vertexNodes: { line: BlobRef; tri: BlobRef; edge: BlobRef };
 }
 
 /** The render derivation of the geometry artifact (the `/geometry` sibling, V2a spec). */

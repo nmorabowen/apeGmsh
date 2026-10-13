@@ -18,10 +18,12 @@ import { deformView } from "../state/selectors.ts";
 import type { MeshInfo, State } from "../state/types.ts";
 import { DARK, OFFICE, toHexNumber } from "../theme/tokens.ts";
 
-/** Every primitive's positions (6 floats per segment, 9 per triangle, original order), and what they show. */
+/** Every primitive's positions (6 floats per segment, 9 per triangle, 6 per outline edge; original order), and what they show. */
 export interface FullPositions {
   line: Float32Array;
   tri: Float32Array;
+  /** the outline edges, moved through their own node ids (MeshInfo.vertexNodes.edge), like the faces */
+  edge: Float32Array;
   /** `base` for the undeformed mesh, else `<displacement key>|scale <s>` */
   key: string;
   /** the displacement drawn (its `missing` flags mark nodes drawn undeformed); null for the base */
@@ -30,7 +32,7 @@ export interface FullPositions {
 
 /** The undeformed positions, from the mesh blobs (never written to). */
 export function basePositions(info: MeshInfo, blobs: BlobStore): FullPositions {
-  return { line: blobs.f32(info.linePositions), tri: blobs.f32(info.triPositions), key: "base", disp: null };
+  return { line: blobs.f32(info.linePositions), tri: blobs.f32(info.triPositions), edge: blobs.f32(info.edgePositions), key: "base", disp: null };
 }
 
 /**
@@ -45,9 +47,27 @@ export function positionsFor(s: State, info: MeshInfo, blobs: BlobStore, disp: D
   if (!disp || disp.key !== v.keys.disp) return current;
   const key = `${disp.key}|scale ${v.scale}`;
   if (current?.key === key) return current;
-  const base = basePositions(info, blobs);
-  return { line: deformedPositions(base.line, disp.line.d, v.scale), tri: deformedPositions(base.tri, disp.tri.d, v.scale), key, disp };
+  return deformFull(basePositions(info, blobs), disp, v.scale, key);
 }
+
+/**
+ * The deformed positions of every segment, triangle and outline edge: each
+ * vertex moved by the displacement of its own node (the effects computed it
+ * per vertex through the vertex node ids), never by a node found at its
+ * position, so coincident nodes move apart.
+ */
+export function deformFull(base: FullPositions, disp: DisplacementData, scale: number, key: string): FullPositions {
+  return {
+    line: deformedPositions(base.line, disp.line.d, scale),
+    tri: deformedPositions(base.tri, disp.tri.d, scale),
+    edge: deformedPositions(base.edge, disp.edge.d, scale),
+    key,
+    disp,
+  };
+}
+
+/** Whether the outline edges are drawn: the user's toggle alone (on a deformed mesh they follow their nodes, like the faces). */
+export const edgesShown = (edgesOn: boolean, full: FullPositions | null): boolean => edgesOn && full !== null;
 
 /** The drawn primitives' coordinates (`map`: original indices) copied out of `src`, `stride` floats each, into `dst` (a new array when absent). */
 export function gatherInto(src: Float32Array, map: Int32Array, stride: number, dst: Float32Array = new Float32Array(map.length * stride)): Float32Array {
@@ -68,9 +88,17 @@ export function gatherInto(src: Float32Array, map: Int32Array, stride: number, d
 export function writePositions(
   faces: THREE.Mesh | null,
   lines: LineSegments2 | null,
-  full: Pick<FullPositions, "line" | "tri">,
+  full: Pick<FullPositions, "line" | "tri" | "edge">,
   drawn: { lineMap: Int32Array; triMap: Int32Array },
+  edges: { object: THREE.LineSegments; map: Int32Array } | null = null,
 ): void {
+  if (edges) {
+    // The outline edges, 6 floats each, through the same original-index map the viewport drew them with.
+    const a = edges.object.geometry.getAttribute("position") as THREE.BufferAttribute;
+    gatherInto(full.edge, edges.map, 6, a.array as Float32Array);
+    a.needsUpdate = true;
+    edges.object.geometry.computeBoundingSphere();
+  }
   if (faces) {
     const a = faces.geometry.getAttribute("position") as THREE.BufferAttribute;
     gatherInto(full.tri, drawn.triMap, 9, a.array as Float32Array);

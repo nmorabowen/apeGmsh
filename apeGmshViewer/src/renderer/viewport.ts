@@ -19,7 +19,7 @@ import type { BlobStore } from "../state/blobs.ts";
 import type { DisplacementData } from "../effects.ts";
 import { contourView, geometryPairing } from "../state/selectors.ts";
 import { contourColours, contourKey, noDataColours, type StepValues } from "./contour.ts";
-import { basePositions, gatherInto, ghostObjects, missingMarkerObjects, positionsFor, writePositions, type FullPositions } from "./deform.ts";
+import { basePositions, edgesShown, gatherInto, ghostObjects, missingMarkerObjects, positionsFor, writePositions, type FullPositions } from "./deform.ts";
 import type { State, Store } from "../state/store.ts";
 import { roleColouring } from "../state/roles.ts";
 import type { DeclPath, GeometryInfo, LegendEntry, MeshInfo, Pick } from "../state/types.ts";
@@ -69,6 +69,8 @@ export class Viewport {
   private lines: LineSegments2 | null = null;
   private faces: THREE.Mesh | null = null;
   private edges: THREE.LineSegments | null = null;
+  /** V4d: the original index of every drawn outline edge (what writePositions gathers the moved edges through). */
+  private edgeMap: Int32Array | null = null;
   private lineMaterials: LineMaterial[] = [];
   private index: MeshIndex | null = null;
   private drawn: Drawn | null = null;
@@ -205,9 +207,9 @@ export class Viewport {
     let changed = false;
     if (next !== null && next !== this.full) {
       this.full = next;
-      writePositions(this.faces, this.lines, next, this.drawn);
+      writePositions(this.faces, this.lines, next, this.drawn, this.edges && this.edgeMap ? { object: this.edges, map: this.edgeMap } : null);
       this.setMarkers(info);
-      if (this.edges) this.edges.visible = s.visibility.edges && next.key === "base";
+      if (this.edges) this.edges.visible = edgesShown(s.visibility.edges, next);
       // The selection outline follows the moved vertices (no pulse: the selection did not change).
       if (s.selection.decls.length) this.setHighlight(s, false);
       changed = true;
@@ -427,6 +429,7 @@ export class Viewport {
     this.lines = null;
     this.faces = null;
     this.edges = null;
+    this.edgeMap = null;
     this.drawn = null;
     this.index = null;
     this.full = null;
@@ -445,6 +448,7 @@ export class Viewport {
     this.lines = null;
     this.faces = null;
     this.edges = null;
+    this.edgeMap = null;
     const drawn = this.visible(s, info);
     this.drawn = drawn;
     // V4c1: a contour colours per vertex from the step on screen; until its
@@ -482,8 +486,11 @@ export class Viewport {
       const edgeMap = drawn.edgeMask
         ? Int32Array.from(drawn.edgeMask.reduce<number[]>((acc, v, i) => (v ? (acc.push(i), acc) : acc), []))
         : Int32Array.from({ length: ep.length / 6 }, (_, i) => i);
-      const edge = Viewport.gather(ep, edgeMap, 6);
-      ghostEdges = edge;
+      // The ghost keeps the undeformed edges; the drawn ones are a copy of the drawn
+      // (possibly deformed) positions, moved in place with the faces (V4d).
+      ghostEdges = Viewport.gather(ep, edgeMap, 6);
+      this.edgeMap = edgeMap;
+      const edge = gatherInto(full.edge, edgeMap, 6);
       if (edge.length) {
         const eg = new THREE.BufferGeometry();
         eg.setAttribute("position", new THREE.BufferAttribute(edge, 3));
@@ -520,8 +527,7 @@ export class Viewport {
         return;
       }
     }
-    // V4d: the outline edges carry no node ids (mesh/build.ts), so they cannot follow a deformation: shown only undeformed (the legend says so).
-    if (this.edges) this.edges.visible = s.visibility.edges && this.full?.key === "base";
+    if (this.edges) this.edges.visible = edgesShown(s.visibility.edges, this.full);
     if (this.faces) {
       const m = this.faces.material as THREE.MeshStandardMaterial;
       // Line elements inside solids (embedded rebar) would be hidden: see through the solids.

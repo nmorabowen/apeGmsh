@@ -128,7 +128,7 @@ export function blobRefsOf(s: State): BlobRef[] {
   for (const b of s.blocks) out.push(b.connectivity);
   if (s.geometry) out.push(s.geometry.curvePositions, s.geometry.surfacePositions, s.geometry.pointPositions);
   // V4c1: the node tag of every drawn vertex, and each results stage's nodal `_ids`.
-  if (s.mesh) out.push(s.mesh.vertexNodes.line, s.mesh.vertexNodes.tri);
+  if (s.mesh) out.push(s.mesh.vertexNodes.line, s.mesh.vertexNodes.tri, s.mesh.vertexNodes.edge);
   for (const st of s.results?.stages ?? []) if (st.nodeIds) out.push(st.nodeIds);
   return out;
 }
@@ -173,6 +173,8 @@ export interface DisplacementData {
   key: string;
   line: VertexDisplacement;
   tri: VertexDisplacement;
+  /** the outline edges (2 vertices each), through their own node ids */
+  edge: VertexDisplacement;
 }
 
 /** The current results step's data: kept here, outside the store, and only the latest one (D5). */
@@ -424,7 +426,13 @@ export class Effects {
       const column = columnOf(ids);
       const lineNodes = this.blobs.get(mesh.vertexNodes.line) as Float64Array;
       const triNodes = this.blobs.get(mesh.vertexNodes.tri) as Float64Array;
-      this.disp = { key: v.keys.disp, line: vertexDisplacements(lineNodes, column, rows), tri: vertexDisplacements(triNodes, column, rows) };
+      const edgeNodes = this.blobs.get(mesh.vertexNodes.edge) as Float64Array;
+      this.disp = {
+        key: v.keys.disp,
+        line: vertexDisplacements(lineNodes, column, rows),
+        tri: vertexDisplacements(triNodes, column, rows),
+        edge: vertexDisplacements(edgeNodes, column, rows),
+      };
     }
     if (s.deform.measured?.key === v.keys.count || this.countedFor === v.keys.count) return;
     this.countedFor = v.keys.count;

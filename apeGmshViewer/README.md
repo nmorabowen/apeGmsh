@@ -85,8 +85,8 @@ Then:
   refused as a partial write, when the components name no axis (`[k]`),
   or when `displacement_z` is missing from a model that is not declared
   2-D (`/meta/ndm` 2, neutral 2.34.0 on): it is never drawn from the
-  surviving axes. The outline edges are not drawn on the deformed mesh
-  (they carry no node ids); the ghost keeps them.
+  surviving axes. The outline edges follow their own nodes, like the
+  faces; the ghost keeps the undeformed ones.
 - **Nodal contours.** On a results stage, **contour** in the legend colours
   the mesh by a nodal field at the step shown: pick the field and its
   component (`x`, `y`, `z` as the file names them, the **magnitude** for a

@@ -56,6 +56,8 @@ export interface MeshBuffers {
   triRefs: ElementRef[];
   /** 6 floats per outline edge of the drawn faces. */
   edgePositions: Float32Array;
+  /** V4d: the node tag of each outline-edge vertex (2 per edge), from the polygon it outlines. */
+  edgeNodes: Float64Array;
   legend: LegendEntry[];
   center: [number, number, number];
   radius: number;
@@ -196,7 +198,7 @@ export function buildMesh(model: ModelFile): MeshBuffers {
   // Outline: the perimeter edges of every drawn polygon, each edge once
   // (so a split quad shows no diagonal).
   const seenEdge = new Set<number>();
-  const ep: number[] = [];
+  const ep: number[] = [], en: number[] = [];
   const nNodes = model.nodeIds.length;
   for (const poly of polygons) {
     for (let k = 0; k < poly.length; k++) {
@@ -205,6 +207,7 @@ export function buildMesh(model: ModelFile): MeshBuffers {
       if (seenEdge.has(key)) continue;
       seenEdge.add(key);
       push3(ep, a); push3(ep, b);
+      en.push(model.nodeIds[a]!, model.nodeIds[b]!);
     }
   }
 
@@ -234,6 +237,7 @@ export function buildMesh(model: ModelFile): MeshBuffers {
     triNodes: new Float64Array(tn),
     triRefs: tr,
     edgePositions: new Float32Array(ep),
+    edgeNodes: new Float64Array(en),
     legend,
     center,
     radius,
