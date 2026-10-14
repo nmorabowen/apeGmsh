@@ -71,6 +71,9 @@ _SHA_RE = re.compile(r"[0-9a-fA-F]{40}")
 #: The one ``ladrunoSchema`` version this module reads.
 LADRUNO_SCHEMA_VERSION = 0
 
+#: The fork-only command that returns the schema as one JSON string.
+LADRUNO_SCHEMA_COMMAND = "ladrunoSchema"
+
 _SCHEMA_KEYS: frozenset[str] = frozenset(
     {"build", "commands", "engine", "options", "schema_version"}
 )
@@ -264,7 +267,7 @@ def _schema_from_obj(obj: Any, build: str | None) -> LadrunoSchema | None:
 
 def _ladruno_schema(ops: Any, build: str | None) -> LadrunoSchema | None:
     """``ops.ladrunoSchema()`` parsed, or ``None`` (unknown); never raises."""
-    fn = getattr(ops, "ladrunoSchema", None)  # apegmsh-lint: getattr-undefined-ok fork-only OpenSees command that self-describes the build
+    fn = getattr(ops, LADRUNO_SCHEMA_COMMAND, None)
     if not callable(fn):
         return None
     try:
