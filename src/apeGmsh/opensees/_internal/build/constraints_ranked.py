@@ -411,6 +411,16 @@ def emit_stage_mp_constraints_partitioned(
             stiffness_resolver=stiffness_resolver,
         )
 
+    # equationConstraint (ADR 0068 Open item 2), as the global pass writes
+    # it: on every rank that owns the slave or a master, after the ghost
+    # declarations above. The plan declares this tie's ghosts, so a rank
+    # that skipped the rows would run with the tie missing and say nothing.
+    if plan.equation_records:
+        _emit_surface_couplings_for_rank(
+            emitter, plan.equation_records, tag_plan,
+            fem_eid_to_ops_tag=fem_eid_to_ops_tag,
+        )
+
 
 def emit_mp_constraints_partitioned(
     emitter: "Emitter",
