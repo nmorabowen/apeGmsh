@@ -285,10 +285,18 @@ def test_out_material_gp_index_trilinear_field(resp: str,
     files = _record_gps(ops, resp, tmp_path)
     ops.timeSeries("Linear", 1)
     ops.pattern("Plain", 1, 1)
-    for i, (x, y, z) in enumerate(_CUBE, 1):   # every dof prescribed
+    for i, (x, y, z) in enumerate(_CUBE, 1):   # every cube dof prescribed
         ops.sp(i, 1, A_FIELD * x * (1.0 + y + 2.0 * z))
         ops.sp(i, 2, 0.0)
         ops.sp(i, 3, 0.0)
+    # A detached spring keeps 3 free dofs: with none, stock 3.8.0 kills the
+    # process (exit 255 on live-stock) where the fork solves an empty system.
+    ops.node(9, 3.0, 0.0, 0.0)
+    ops.node(10, 3.0, 0.0, 0.0)
+    ops.fix(10, 1, 1, 1)
+    ops.uniaxialMaterial("Elastic", 99, 1.0)
+    ops.element("zeroLength", 2, 9, 10, "-mat", 99, 99, 99,
+                "-dir", 1, 2, 3)
     live = _static(ops, 1, resp)[0]
     ops.wipe()
     for gp, f in enumerate(files, 1):
