@@ -44,7 +44,7 @@ def _probe_spec(ops: apeSees, **nodes_kwargs) -> DomainCaptureSpec:
 
 def test_staged_nonpartitioned_forwards_bridge(tmp_path: Path) -> None:
     """Non-partitioned staged builds forward the bridge (gate lifted)."""
-    ops = _build_two_stage_bridge()
+    ops = _build_two_stage_bridge(_make_two_quad_fem_stub())
     ops._fem.snapshot_id = "stub"  # spec resolve reads fem.snapshot_id
     cap = ops.domain_capture(
         _probe_spec(ops, ids=[1]), path=str(tmp_path / "run.h5"),
@@ -152,7 +152,7 @@ def test_staged_partitioned_forwards_bridge(tmp_path: Path) -> None:
     sidecar write at __enter__ succeeds and the Composed run file
     carries the bridge zone.  The old ``bridge=None`` degrade is
     retired."""
-    ops = _build_two_stage_bridge()
+    ops = _build_two_stage_bridge(_make_two_quad_fem_stub())
     ops._fem.snapshot_id = "stub"
     ops._fem.set_partitions([
         (0, [1, 2, 3, 4], [1]),

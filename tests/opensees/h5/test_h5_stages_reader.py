@@ -16,8 +16,8 @@ This module pins the read contract:
 5. ``ModelData.from_h5`` warns on a staged archive (the laundering
    side door — a re-save would strip the staged program).
 
-Fixtures here use a REAL two-quad :class:`FEMData` (not the writer
-tests' ``FEMStub``) because ``OpenSeesModel.from_h5`` reloads the
+Fixtures here use a REAL two-quad :class:`FEMData` (the writer
+tests' bridges, shared since #1880) because ``OpenSeesModel.from_h5`` reloads the
 neutral zone via ``FEMData.from_h5``, which rejects stub-only files.
 """
 from __future__ import annotations
@@ -25,22 +25,16 @@ from __future__ import annotations
 from pathlib import Path
 
 import h5py
-import numpy as np
 import pytest
 
-from apeGmsh.mesh._element_types import ElementGroup, make_type_info
-from apeGmsh.mesh._group_set import LabelSet, PhysicalGroupSet
-from apeGmsh.mesh.FEMData import (
-    ElementComposite,
-    FEMData,
-    MeshInfo,
-    NodeComposite,
-)
 from apeGmsh.opensees import OpenSeesModel
 from apeGmsh.opensees.apesees import apeSees
 
+from tests.opensees.h5._opensees_model_fixtures import build_two_quad_fem
 from tests.opensees.h5.test_h5_stages_writer import (
-    _chain,
+    _build_kitchen_sink_bridge,
+    _build_two_stage_bridge,
+    _chain,  # noqa: F401 -- re-exported: sibling tests import it from here
     build_material_stage_bridge,
     _collect_zone,
     _model_hash_of,
@@ -48,141 +42,13 @@ from tests.opensees.h5.test_h5_stages_writer import (
 
 
 # ---------------------------------------------------------------------------
-# Real-FEMData two-quad fixture (mirrors the writer tests' stub geometry)
+# The writer tests' bridges: built on a real two-quad FEMData (#1880)
 # ---------------------------------------------------------------------------
 
-
-def build_two_quad_fem() -> FEMData:
-    """Two stacked quads: ``Rock`` (nodes 1-4) + ``Fill`` (nodes 3-6),
-    with ``Base`` (1, 2) and ``FillTop`` (5, 6) node sets."""
-    node_ids = np.array([1, 2, 3, 4, 5, 6], dtype=np.int64)
-    node_coords = np.array(
-        [
-            [0.0, 0.0, 0.0],
-            [1.0, 0.0, 0.0],
-            [1.0, 1.0, 0.0],
-            [0.0, 1.0, 0.0],
-            [1.0, 2.0, 0.0],
-            [0.0, 2.0, 0.0],
-        ],
-        dtype=np.float64,
-    )
-    quad_info = make_type_info(
-        code=3, gmsh_name="Quadrangle 4", dim=2, order=1, npe=4, count=2,
-    )
-    quad_group = ElementGroup(
-        element_type=quad_info,
-        ids=np.array([1, 2], dtype=np.int64),
-        connectivity=np.array(
-            [[1, 2, 3, 4], [4, 3, 5, 6]], dtype=np.int64,
-        ),
-    )
-
-    def _sel(ids: "list[int]") -> np.ndarray:
-        return np.array(ids, dtype=np.int64)
-
-    def _coords(ids: "list[int]") -> np.ndarray:
-        return node_coords[[i - 1 for i in ids]]
-
-    pg = {
-        (2, 201): {
-            "name": "Rock",
-            "node_ids": _sel([1, 2, 3, 4]),
-            "node_coords": _coords([1, 2, 3, 4]),
-            "element_ids": _sel([1]),
-        },
-        (2, 202): {
-            "name": "Fill",
-            "node_ids": _sel([3, 4, 5, 6]),
-            "node_coords": _coords([3, 4, 5, 6]),
-            "element_ids": _sel([2]),
-        },
-        (0, 203): {
-            "name": "Base",
-            "node_ids": _sel([1, 2]),
-            "node_coords": _coords([1, 2]),
-            "element_ids": np.array([], dtype=np.int64),
-        },
-        (0, 204): {
-            "name": "FillTop",
-            "node_ids": _sel([5, 6]),
-            "node_coords": _coords([5, 6]),
-            "element_ids": np.array([], dtype=np.int64),
-        },
-    }
-    nodes = NodeComposite(
-        node_ids=node_ids, node_coords=node_coords,
-        physical=PhysicalGroupSet(pg), labels=LabelSet({}),
-    )
-    elements = ElementComposite(
-        groups={3: quad_group},
-        physical=PhysicalGroupSet(pg), labels=LabelSet({}),
-    )
-    info = MeshInfo(
-        n_nodes=6, n_elems=2, bandwidth=3, types=[quad_info],
-    )
-    # Named like a session snapshot: a bridge built on it writes its
-    # model.h5 to the test's artifact directory instead of warning that
-    # no session named it (#1307).
-    return FEMData(nodes=nodes, elements=elements, info=info,
-                   model_name="two_quad")
-
-
-def _real_two_stage_bridge() -> apeSees:
-    """The writer tests' 2-stage program over a real FEMData."""
-    ops = apeSees(build_two_quad_fem(), default_orientation=None)
-    ops.model(ndm=2, ndf=2)
-    mat = ops.nDMaterial.ElasticIsotropic(E=1e6, nu=0.3, rho=0.0)
-    ops.element.FourNodeQuad(pg="Rock", thickness=1.0, material=mat)
-    ops.element.FourNodeQuad(pg="Fill", thickness=1.0, material=mat)
-    ops.fix(pg="Base", dofs=(1, 1))
-
-    with ops.stage(name="construction") as s:
-        s.activate(pgs=["Fill"])
-        s.fix(pg="FillTop", dofs=(1, 1))
-        s.analysis(**_chain(ops))
-        s.run(n_increments=5)
-    with ops.stage(name="loading") as s:
-        s.set_time(2.5)
-        ts = ops.timeSeries.Linear()
-        with s.pattern(series=ts) as p:
-            p.load(pg="Fill", forces=(10.0, 0.0))
-        s.initial_stress(
-            name="insitu", pg="Rock",
-            sigma_xx=-1.0e3, sigma_yy=-1.0e3, sigma_zz=-2.0e3,
-            ramp_steps=4,
-        )
-        s.analysis(**_chain(ops))
-        s.run(n_increments=3, dt=0.01)
-    return ops
-
-
-def _real_kitchen_sink_bridge() -> apeSees:
-    """The writer tests' kitchen-sink stage over a real FEMData."""
-    ops = apeSees(build_two_quad_fem(), default_orientation=None)
-    ops.model(ndm=2, ndf=2)
-    mat = ops.nDMaterial.ElasticIsotropic(E=1e6, nu=0.3, rho=0.0)
-    ops.element.FourNodeQuad(pg="Rock", thickness=1.0, material=mat)
-    ops.element.FourNodeQuad(pg="Fill", thickness=1.0, material=mat)
-    ops.fix(pg="Base", dofs=(1, 1))
-
-    with ops.stage(name="mutate") as s:
-        s.activate(pgs=["Fill"])
-        s.support(pg="FillTop", dofs=(1, 0))
-        s.mass(pg="FillTop", values=(2.0, 2.0))
-        s.remove_sp(pg="Base", dofs=(1,))
-        s.remove_element(elements=[1])
-        s.damping.rayleigh(alpha_m=0.05)
-        s.damping.rayleigh(alpha_m=0.1, on="Fill")
-        s.recorder(ops.recorder.Node(
-            file="r.out", response="disp", nodes=(5,), dofs=(1, 2),
-        ))
-        s.set_creep(True)
-        s.reset()
-        s.activate_absorbing(pg="Fill")
-        s.analysis(**_chain(ops))
-        s.run(n_increments=2, dt=0.5)
-    return ops
+#: The reader and the writer tests drive the same two programs; one
+#: builder each, so the R1b oracle replays each model once (#1797).
+_real_two_stage_bridge = _build_two_stage_bridge
+_real_kitchen_sink_bridge = _build_kitchen_sink_bridge
 
 
 # ---------------------------------------------------------------------------
