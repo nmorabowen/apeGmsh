@@ -654,20 +654,18 @@ def _refuse_copies(
     A replicable record is flagged by its own plan (``replicated_records``).
     An ``enforce="equation"`` tie is written on every rank that holds its
     slave or a master (``equation_records``), so it is copied when two
-    plans or more carry the same record (#1724 item 1).
+    plans or more carry the same record (#1724 item 1). The equation tie
+    is checked first: its only remedy, a serial run, also clears a copied
+    replicable record, while ``Transformation`` cannot enforce the tie.
     """
     plans = list(plans)
-    copied = next((p.replicated_records for p in plans
-                   if p.replicated_records), ())
-    if not copied:
-        writers: dict[int, int] = {}
-        for p in plans:
-            for eq in p.equation_records:
-                writers[id(eq)] = writers.get(id(eq), 0) + 1
-        eq = next((eq for p in plans for eq in p.equation_records
-                   if writers[id(eq)] > 1), None)
-        if eq is None:
-            return
+    writers: dict[int, int] = {}
+    for p in plans:
+        for eq in p.equation_records:
+            writers[id(eq)] = writers.get(id(eq), 0) + 1
+    eq = next((eq for p in plans for eq in p.equation_records
+               if writers[id(eq)] > 1), None)
+    if eq is not None:
         name = getattr(eq, "name", None) or "<unnamed>"
         slave = getattr(eq, "slave_node", "?")
         raise BridgeError(
@@ -679,6 +677,10 @@ def _refuse_copies(
             "(#1625). Nothing was written. Run serially "
             "(ops.tcl(path, flat=True))."
         )
+    copied = next((p.replicated_records for p in plans
+                   if p.replicated_records), ())
+    if not copied:
+        return
     rec = copied[0]
     kind = getattr(rec, "kind", type(rec).__name__)
     name = getattr(rec, "name", None) or "<unnamed>"

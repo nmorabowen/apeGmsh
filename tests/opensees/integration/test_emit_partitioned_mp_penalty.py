@@ -461,6 +461,22 @@ def test_an_equation_tie_spanning_ranks_is_refused(tmp_path, name):
     assert [f.name for f in tmp_path.iterdir()] == ["model.tcl"]
 
 
+def test_a_spanning_equation_tie_beside_a_diaphragm_names_the_serial_remedy(
+        tmp_path):
+    """Both copied: the equation tie is reported, because ``Transformation``
+    (the diaphragm's other remedy) cannot enforce it (ADR 0068 INV-4)."""
+    fem, grounds, master = diaphragm_plate(2)
+    a, b = _cross_rank_pair(fem)
+    fem = with_diaphragm(fem, master).with_constraint(InterpolationRecord(
+        kind=ConstraintKind.TIE, name="eq", slave_node=b, master_nodes=[a],
+        weights=np.array([1.0]), dofs=[3], enforce="equation"))
+    ops = declare_model(fem, grounds, master)
+    chain(ops, "Lagrange", 2)
+    with pytest.raises(BridgeError, match="equationConstraint tie 'eq'") as err:
+        emit(ops, tmp_path / "model.tcl")
+    assert "Transformation" not in str(err.value)
+
+
 @pytest.mark.parametrize("name", ["Penalty", "Lagrange", "none"])
 def test_an_equation_tie_held_by_one_rank_is_not_refused(tmp_path, name):
     """Both nodes on one partition: one rank writes the tie, so no handler
