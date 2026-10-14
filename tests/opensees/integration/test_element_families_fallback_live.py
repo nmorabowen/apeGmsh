@@ -10,7 +10,8 @@ checked against the live domain:
 * truss axial force, recorded as a Gauss record, against
   ``eleResponse(tag, "axialForce")`` and ``P`` for the determinate bar;
 * mixed-ndf shell-on-solid nodes against ``nodeDisp`` (3-dof tet nodes,
-  6-dof MITC4 nodes).
+  6-dof MITC4 nodes). The tet nodes reading rotation 0.0 is a silent wrong
+  answer, pinned as a strict xfail citing #1971.
 
 The tolerance is the format's, not the oracle's: a ``.out`` file holds six
 significant digits, so values compare at ``rtol=1e-5``. The fork-only
@@ -191,7 +192,9 @@ def _shell_on_solid_fem(g: Any) -> Any:
     return g.mesh.queries.get_fem_data()
 
 
-def test_shell_on_solid_nodes_read_back_from_out(g: Any, tmp_path: Path) -> None:
+def _shell_on_solid_run(
+    g: Any, tmp_path: Path,
+) -> tuple[Results, list[int], list[int], dict[int, np.ndarray]]:
     fem = _shell_on_solid_fem(g)
     solid = sorted({int(n) for n in fem.nodes.select(pg="Footing").ids})
     shell = sorted({int(n) for n in fem.nodes.select(pg="Wall").ids})
@@ -239,6 +242,11 @@ def test_shell_on_solid_nodes_read_back_from_out(g: Any, tmp_path: Path) -> None
 
     r = Results.from_recorders(spec, out, fem=fem, stage_id="lat",
                                model=model, cache_root=tmp_path / "cache")
+    return r, solid, shell, live
+
+
+def test_shell_on_solid_nodes_read_back_from_out(g: Any, tmp_path: Path) -> None:
+    r, solid, shell, live = _shell_on_solid_run(g, tmp_path)
     for k, comp in enumerate(DISP + ROT):
         owners = solid + shell if k < 3 else shell
         slab = r.nodes.get(component=comp, ids=owners)
@@ -250,4 +258,27 @@ def test_shell_on_solid_nodes_read_back_from_out(g: Any, tmp_path: Path) -> None
         np.testing.assert_allclose(
             [got[n] for n in owners], want, rtol=RTOL_OUT, atol=1e-15,
             err_msg=f"{comp} on .out",
+        )
+
+
+@pytest.mark.xfail(
+    strict=True, raises=AssertionError,
+    reason="#1971: 3-dof nodes read rotation 0.0, not absent/NaN",
+)
+def test_solid_node_rotations_are_absent_from_out(
+    g: Any, tmp_path: Path,
+) -> None:
+    """A tet node has no rotation DOF: absent from the slab, or NaN.
+
+    One ``.out`` node record over both families pads the tet nodes'
+    missing DOFs with zeros, which read back as a real rotation of 0.0.
+    """
+    r, solid, _shell, _live = _shell_on_solid_run(g, tmp_path)
+    for comp in ROT:
+        slab = r.nodes.get(component=comp)
+        vals = np.asarray(slab.values)[-1]
+        on_solid = [v for i, v in zip(slab.node_ids, vals) if int(i) in solid]
+        assert not np.isfinite(on_solid).any(), (
+            f"{comp}: {int(np.isfinite(on_solid).sum())} 3-dof nodes read a "
+            "finite rotation"
         )

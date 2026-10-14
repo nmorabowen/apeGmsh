@@ -4,35 +4,38 @@ Gap G7 of the DomainCapture parity table (#1767, #1945). Four families were
 proven only through ``DomainCapture``; each is solved here through the bridge
 (``apeSees(fem)``, so element ids go through the fem -> ops translation),
 recorded by the fork's own recorder and read back by the public factory, and
-every value is checked against the live domain at ``rtol=1e-10``:
+checked against the live domain at ``rtol=1e-10``.
 
-======================== ============================== =====================
-Family                   Oracle                         Read back as
-======================== ============================== =====================
-Truss axial force        ``eleResponse(t, "axialForce")``  ``.ladruno``: line
-                         and ``P`` (determinate bar)    station (see below)
-LadrunoBrick20 stress    ``eleResponse(t, "stresses")``  Gauss, 27 GP / elem
-                         per GP, and its GP coordinates
-LadrunoLST stress        ``eleResponse(t, "stresses")``  Gauss, 3 GP / elem
-Shell-on-solid nodes     ``nodeDisp`` (3-dof solid,     nodes
-                         6-dof shell)
-======================== ============================== =====================
+Every family x route cell is pinned by one of three kinds of test, so a
+reader change flips something:
 
-What a route cannot carry is not tested here; it is named in the PR and on
-#1767 (build 79e0623670, 2026-10-14):
+* a passing value test;
+* ``xfail(strict=True)`` citing a chain-B issue, asserting the right value,
+  where the route reads back a silent wrong answer (an empty slab, a phantom
+  zero): #1969 (``.ladruno`` reader), #1970 (MPCO reader), #1971 (3-dof nodes
+  reading rotation 0.0);
+* ``pytest.raises`` where the route refuses the family loudly (a gap: the
+  MPCO truss bucket).
 
-* the ``.ladruno`` reader files the truss ``axialForce`` record as a *line
-  station*, never as a Gauss record (``elements.gauss`` comes back empty);
-* MPCO: the truss bucket raises (``META GAUSS_IDS=[-1] is not sequential``),
-  and LadrunoBrick20 / LadrunoLST stress buckets come back empty with no
-  warning (the fork writes integration rule 0 in the bucket key, so the
-  catalog lookup misses);
-* ``.ladruno`` LadrunoLST under the ``stresses`` token comes back empty; the
-  ``stress`` token (used below) reads.
+=================== =============================== ========================
+Family              ``.ladruno``                    MPCO
+=================== =============================== ========================
+Truss axial force   line station: pass;             raises (gap)
+                    Gauss record: xfail #1969
+LadrunoBrick20      pass (values + GP coords)       xfail #1970
+LadrunoLST          ``stress``: values pass, GP     xfail #1970
+                    coords xfail #1969;
+                    ``stresses``: xfail #1969
+Shell-on-solid      pass; 3-dof rotation: #1971     pass; 3-dof rotation:
+                                                    #1971
+=================== =============================== ========================
+
+An element-only MPCO file reads with zero steps (#1970), so every MPCO
+recorder here records nodal displacement too, except the test pinning that.
 
 Gated by the ``ladruno_fork`` marker, so the nightly ``live-fork`` lane runs it
-against the pinned build. Fork-only element classes cannot run on stock, and
-the stock fallback of the truss and shell-on-solid cases is
+against the pinned build. The stock fallback (``.out``) of the truss and
+shell-on-solid cases is
 ``tests/opensees/integration/test_element_families_fallback_live.py``.
 """
 from __future__ import annotations
@@ -61,6 +64,15 @@ STRESS_3D = ("stress_xx", "stress_yy", "stress_zz",
 STRESS_2D = ("stress_xx", "stress_yy", "stress_xy")
 DISP = ("displacement_x", "displacement_y", "displacement_z")
 ROT = ("rotation_x", "rotation_y", "rotation_z")
+#: LadrunoLST's own 3-point interior rule, in the element's GP order
+#: (LadrunoLST.cpp, the SixNodeTri anchors). The element answers no
+#: ``integrationPoints`` response, so the fork source is the oracle.
+LST_GP = np.array([[2 / 3, 1 / 6], [1 / 6, 2 / 3], [1 / 6, 1 / 6]])
+
+B_LADRUNO = "#1969: the .ladruno reader returns an empty Gauss slab"
+B_LADRUNO_XI = "#1969: .ladruno LST Gauss slab has no natural coords (3, 0)"
+B_MPCO = "#1970: the MPCO reader returns an empty slab"
+B_ROT = "#1971: 3-dof nodes read rotation 0.0, not absent/NaN"
 
 
 # ---------------------------------------------------------------------------
@@ -85,14 +97,15 @@ def _nodes_on_plane(fem: Any, axis: int, value: float) -> list[int]:
     return [int(n) for n, p in zip(ids, xyz) if abs(float(p[axis]) - value) < 1e-9]
 
 
-def _record(ops: apeSees, kind: str, path: str, **channels: Any) -> None:
+def _record(ops: apeSees, kind: str, path: str, *, nodal: bool = True,
+            **channels: Any) -> None:
     """Declare the fork's ``ladruno`` or the ``mpco`` recorder.
 
-    The nodal channel is always on: the MPCO reader takes a stage's time
-    vector from the node results, so an element-only MPCO file reads with
-    zero steps.
+    The nodal channel is on by default: the MPCO reader takes a stage's
+    time vector from the node results (#1970).
     """
-    channels.setdefault("nodal_responses", ("displacement",))
+    if nodal:
+        channels.setdefault("nodal_responses", ("displacement",))
     getattr(ops.recorder, kind)(file=path, **channels)
 
 
@@ -103,8 +116,8 @@ def _open(kind: str, path: str, fem: Any, model_h5: str) -> Results:
     return factory(path, fem=fem, model_h5=model_h5)
 
 
-def _run(ops: apeSees, tmp_path: Path, steps: int = 1) -> tuple[Any, str]:
-    """Persist the model, build it into the live fork domain, solve."""
+def _run(ops: apeSees, tmp_path: Path) -> tuple[Any, str]:
+    """Persist the model and build it into the live fork domain."""
     model_h5 = str(tmp_path / "model.h5")
     ops.h5(model_h5)
     emitter = LiveOpsEmitter(wipe=True)
@@ -112,17 +125,8 @@ def _run(ops: apeSees, tmp_path: Path, steps: int = 1) -> tuple[Any, str]:
     return emitter, model_h5
 
 
-def _gauss_per_element(
-    slab: Any, eid: int,
-) -> tuple[np.ndarray, np.ndarray]:
-    """``(values at the last step, natural coords)`` of one element's GPs."""
-    cols = np.flatnonzero(np.asarray(slab.element_index) == eid)
-    return (np.asarray(slab.values)[-1, cols],
-            np.asarray(slab.natural_coords)[cols])
-
-
 # ---------------------------------------------------------------------------
-# Truss: axial force (.ladruno only; MPCO is a gap, see the module docstring)
+# Truss: axial force
 # ---------------------------------------------------------------------------
 
 
@@ -141,10 +145,10 @@ def _truss_fem(g: Any) -> Any:
     return g.mesh.queries.get_fem_data(dim=1)
 
 
-@pytest.mark.parametrize("cls", ["Truss", "CorotTruss"])
-def test_truss_axial_force_reads_back_from_ladruno(
-    g: Any, tmp_path: Path, cls: str,
-) -> None:
+def _truss_run(
+    g: Any, tmp_path: Path, cls: str, kind: str,
+) -> tuple[Results, int, list[float]]:
+    """Pull the bar to ``P`` in two steps; return results, fem_eid, live N."""
     fem = _truss_fem(g)
     (bar_eid,) = [int(e) for e in fem.elements.physical.element_ids("Bar")]
 
@@ -156,8 +160,8 @@ def test_truss_axial_force_reads_back_from_ladruno(
     ops.fix(pg="B", dofs=(0, 1, 1))
     with ops.pattern.Plain(series=ops.timeSeries.Linear()) as p:
         p.load(pg="B", forces=(P, 0.0, 0.0))
-    path = str(tmp_path / "truss.ladruno")
-    _record(ops, "Ladruno", path, elem_responses=("axialForce",))
+    path = str(tmp_path / ("truss.ladruno" if kind == "Ladruno" else "truss.mpco"))
+    _record(ops, kind, path, elem_responses=("axialForce",))
     ops.constraints.Plain()
     ops.numberer.Plain()
     ops.system.BandGeneral()
@@ -175,128 +179,199 @@ def test_truss_axial_force_reads_back_from_ladruno(
         live.append(float(emitter.ops.eleResponse(tag, "axialForce")[0]))
     emitter.ops.remove("recorders")
     np.testing.assert_allclose(live, [P / 2, P], rtol=RTOL)
+    return _open(kind, path, fem, model_h5), bar_eid, live
 
-    r = _open("Ladruno", path, fem, model_h5)
+
+@pytest.mark.parametrize("cls", ["Truss", "CorotTruss"])
+def test_truss_axial_force_reads_back_from_ladruno(
+    g: Any, tmp_path: Path, cls: str,
+) -> None:
+    """``.ladruno`` carries the truss force as a line station."""
+    r, bar_eid, live = _truss_run(g, tmp_path, cls, "Ladruno")
     slab = r.elements.line_stations.get(component="axial_force")
     assert [int(e) for e in slab.element_index] == [bar_eid]
     np.testing.assert_allclose(np.asarray(slab.values)[:, 0], live, rtol=RTOL)
 
 
+@pytest.mark.xfail(strict=True, raises=AssertionError, reason=B_LADRUNO)
+@pytest.mark.parametrize("cls", ["Truss", "CorotTruss"])
+def test_truss_axial_force_gauss_record_from_ladruno(
+    g: Any, tmp_path: Path, cls: str,
+) -> None:
+    """The Gauss record DomainCapture and ``.out`` give: empty here."""
+    r, bar_eid, live = _truss_run(g, tmp_path, cls, "Ladruno")
+    slab = r.elements.gauss.get(component="axial_force")
+    assert [int(e) for e in slab.element_index] == [bar_eid]
+    np.testing.assert_allclose(np.asarray(slab.values)[:, 0], live, rtol=RTOL)
+
+
+@pytest.mark.parametrize("cls", ["Truss", "CorotTruss"])
+def test_truss_axial_force_from_mpco_raises(
+    g: Any, tmp_path: Path, cls: str,
+) -> None:
+    """Gap: MPCO cannot carry the truss force; the read refuses loudly."""
+    r, _bar_eid, _live = _truss_run(g, tmp_path, cls, "MPCO")
+    with pytest.raises(ValueError, match="GAUSS_IDS"):
+        r.elements.gauss.get(component="axial_force")
+    # Nor does it surface as a line station.
+    assert np.asarray(
+        r.elements.line_stations.get(component="axial_force").values
+    ).size == 0
+
+
 # ---------------------------------------------------------------------------
-# LadrunoBrick20 and LadrunoLST: Gauss stress (.ladruno; MPCO is a gap)
+# LadrunoBrick20 and LadrunoLST: Gauss stress
 # ---------------------------------------------------------------------------
+
+
+def _solid_run(
+    family: str, kind: str, token: str, tmp_path: Path, *, nodal: bool = True,
+) -> dict[str, Any]:
+    """Solve one fork-solid model, record ``token`` on ``kind``, read back."""
+    with apeGmsh(model_name=f"g7_{family}", verbose=False) as g:
+        if family == "h20":
+            box = g.model.geometry.add_box(0, 0, 0, 1, 1, 2)
+            g.model.sync()
+            g.mesh.structured.set_transfinite_box(box, n=3)
+            g.mesh.generation.generate(3)
+            g.mesh.generation.set_order(2, bubble=False)
+            g.physical.add(3, [box], name="Body")
+            fem = g.mesh.queries.get_fem_data(dim=3)
+        else:
+            rect = g.model.geometry.add_rectangle(0, 0, 0, 4, 1)
+            g.model.sync()
+            g.mesh.sizing.set_global_size(0.5)
+            g.mesh.generation.generate(2)
+            g.mesh.generation.set_order(2, bubble=False)
+            g.physical.add(2, [rect], name="Plate")
+            fem = g.mesh.queries.get_fem_data(dim=2)
+
+    ops = apeSees(fem)
+    mat_args = dict(E=2.0e8, nu=0.25)
+    if family == "h20":
+        assert list(fem.elements)[0].element_type.npe == 20
+        ops.model(ndm=3, ndf=3)
+        mat = ops.nDMaterial.ElasticIsotropic(**mat_args)
+        ops.element.LadrunoBrick20(pg="Body", material=mat, formulation="std")
+        ops.fix(nodes=_nodes_on_plane(fem, 2, 0.0), dofs=(1, 1, 1))
+        with ops.pattern.Plain(series=ops.timeSeries.Linear()) as p:
+            # A lateral share too, so every stress component is non-trivial.
+            for k, nid in enumerate(_nodes_on_plane(fem, 2, 2.0)):
+                p.load(node=nid, forces=(1.0e2 * (k % 3), 50.0, -1.0e3))
+        n_gp, n_comp = 27, 6
+    else:
+        assert list(fem.elements)[0].element_type.npe == 6
+        ops.model(ndm=2, ndf=2)
+        mat = ops.nDMaterial.ElasticIsotropic(**mat_args)
+        ops.element.LadrunoLST(pg="Plate", material=mat, thickness=0.1,
+                               plane_type="PlaneStress", geom="linear")
+        ops.fix(nodes=_nodes_on_plane(fem, 0, 0.0), dofs=(1, 1))
+        with ops.pattern.Plain(series=ops.timeSeries.Linear()) as p:
+            for nid in _nodes_on_plane(fem, 0, 4.0):
+                p.load(node=nid, forces=(30.0, -1.0e2))
+        n_gp, n_comp = 3, 3
+    ext = "ladruno" if kind == "Ladruno" else "mpco"
+    path = str(tmp_path / f"{family}.{ext}")
+    _record(ops, kind, path, nodal=nodal, elem_responses=(token,))
+    ops.constraints.Plain()
+    ops.numberer.RCM()
+    ops.system.BandGeneral()
+    ops.test.NormDispIncr(tol=1e-9, max_iter=10)
+    ops.algorithm.Linear()
+    ops.integrator.LoadControl(dlam=1.0)
+    ops.analysis.Static()
+
+    emitter, model_h5 = _run(ops, tmp_path)
+    assert emitter.analyze(steps=1) == 0
+    fem_to_ops = _fem_to_ops(model_h5)
+    eids = [int(e) for grp in fem.elements for e in grp.ids]
+    assert any(fem_to_ops[e] != e for e in eids)
+    live = emitter.ops
+    truth = {e: np.asarray(live.eleResponse(fem_to_ops[e], "stresses"),
+                           dtype=float).reshape(n_gp, n_comp) for e in eids}
+    if family == "h20":
+        gp_xi = {e: np.asarray(live.eleResponse(fem_to_ops[e],
+                                                "integrationPoints"),
+                               dtype=float).reshape(27, 3) for e in eids}
+    else:
+        gp_xi = {e: LST_GP for e in eids}
+    live.remove("recorders")
+    return dict(r=_open(kind, path, fem, model_h5), eids=eids, truth=truth,
+                gp_xi=gp_xi, fem_to_ops=fem_to_ops,
+                comps=STRESS_3D if family == "h20" else STRESS_2D)
+
+
+def _assert_gauss_stress(run: dict[str, Any], *, values: bool = True,
+                         coords: bool = True) -> None:
+    """Every GP value and/or GP coordinate of every element, at ``RTOL``."""
+    r, eids, truth = run["r"], run["eids"], run["truth"]
+    for k, comp in enumerate(run["comps"]):
+        slab = r.elements.gauss.get(component=comp)
+        index = np.asarray(slab.element_index)
+        assert sorted(set(int(e) for e in index)) == sorted(eids), comp
+        for eid in eids:
+            cols = np.flatnonzero(index == eid)
+            want = truth[eid]
+            if values:
+                np.testing.assert_allclose(
+                    np.asarray(slab.values)[-1, cols], want[:, k],
+                    rtol=RTOL, atol=RTOL * np.abs(want).max(),
+                    err_msg=f"{comp} of element {eid} "
+                            f"(tag {run['fem_to_ops'][eid]})",
+                )
+            if coords:
+                # GP order, not just count: the read coordinates are the
+                # element's own integration points.
+                xi = np.asarray(slab.natural_coords)[cols]
+                gp = run["gp_xi"][eid]
+                np.testing.assert_allclose(
+                    xi[:, :gp.shape[1]], gp, atol=1e-12,
+                    err_msg=f"GP coords of {eid}",
+                )
 
 
 def test_ladruno_brick20_gauss_stress_reads_back_from_ladruno(
     tmp_path: Path,
 ) -> None:
-    with apeGmsh(model_name="g7_h20", verbose=False) as g:
-        box = g.model.geometry.add_box(0, 0, 0, 1, 1, 2)
-        g.model.sync()
-        g.mesh.structured.set_transfinite_box(box, n=3)
-        g.mesh.generation.generate(3)
-        g.mesh.generation.set_order(2, bubble=False)
-        g.physical.add(3, [box], name="Body")
-        fem = g.mesh.queries.get_fem_data(dim=3)
-    assert list(fem.elements)[0].element_type.npe == 20
-
-    ops = apeSees(fem)
-    ops.model(ndm=3, ndf=3)
-    mat = ops.nDMaterial.ElasticIsotropic(E=2.0e8, nu=0.25)
-    ops.element.LadrunoBrick20(pg="Body", material=mat, formulation="std")
-    ops.fix(nodes=_nodes_on_plane(fem, 2, 0.0), dofs=(1, 1, 1))
-    with ops.pattern.Plain(series=ops.timeSeries.Linear()) as p:
-        # A lateral share as well, so every stress component is non-trivial.
-        for k, nid in enumerate(_nodes_on_plane(fem, 2, 2.0)):
-            p.load(node=nid, forces=(1.0e2 * (k % 3), 50.0, -1.0e3))
-    path = str(tmp_path / "h20.ladruno")
-    _record(ops, "Ladruno", path, elem_responses=("stress",))
-    ops.constraints.Plain()
-    ops.numberer.RCM()
-    ops.system.BandGeneral()
-    ops.test.NormDispIncr(tol=1e-9, max_iter=10)
-    ops.algorithm.Linear()
-    ops.integrator.LoadControl(dlam=1.0)
-    ops.analysis.Static()
-
-    emitter, model_h5 = _run(ops, tmp_path)
-    assert emitter.analyze(steps=1) == 0
-    fem_to_ops = _fem_to_ops(model_h5)
-    eids = [int(e) for grp in fem.elements for e in grp.ids]
-    assert any(fem_to_ops[e] != e for e in eids)
-    truth = {e: np.asarray(emitter.ops.eleResponse(fem_to_ops[e], "stresses"),
-                           dtype=float).reshape(27, 6) for e in eids}
-    gp_xi = {e: np.asarray(emitter.ops.eleResponse(fem_to_ops[e],
-                                                   "integrationPoints"),
-                           dtype=float).reshape(27, 3) for e in eids}
-    emitter.ops.remove("recorders")
-
-    r = _open("Ladruno", path, fem, model_h5)
-    for k, comp in enumerate(STRESS_3D):
-        slab = r.elements.gauss.get(component=comp)
-        assert sorted(set(int(e) for e in slab.element_index)) == sorted(eids)
-        for eid in eids:
-            vals, xi = _gauss_per_element(slab, eid)
-            col = truth[eid][:, k]
-            np.testing.assert_allclose(
-                vals, col, rtol=RTOL, atol=RTOL * np.abs(truth[eid]).max(),
-                err_msg=f"{comp} of element {eid} (tag {fem_to_ops[eid]})",
-            )
-            # GP order, not just count: the read coordinates are the
-            # element's own integration points.
-            np.testing.assert_allclose(xi, gp_xi[eid], atol=1e-12)
+    _assert_gauss_stress(_solid_run("h20", "Ladruno", "stress", tmp_path))
 
 
-def test_ladruno_lst_gauss_stress_reads_back_from_ladruno(tmp_path: Path) -> None:
-    with apeGmsh(model_name="g7_lst", verbose=False) as g:
-        rect = g.model.geometry.add_rectangle(0, 0, 0, 4, 1)
-        g.model.sync()
-        g.mesh.sizing.set_global_size(0.5)
-        g.mesh.generation.generate(2)
-        g.mesh.generation.set_order(2, bubble=False)
-        g.physical.add(2, [rect], name="Plate")
-        fem = g.mesh.queries.get_fem_data(dim=2)
-    assert list(fem.elements)[0].element_type.npe == 6
+def test_ladruno_lst_gauss_stress_reads_back_from_ladruno(
+    tmp_path: Path,
+) -> None:
+    _assert_gauss_stress(_solid_run("lst", "Ladruno", "stress", tmp_path),
+                         coords=False)
 
-    ops = apeSees(fem)
-    ops.model(ndm=2, ndf=2)
-    mat = ops.nDMaterial.ElasticIsotropic(E=2.0e8, nu=0.25)
-    ops.element.LadrunoLST(pg="Plate", material=mat, thickness=0.1,
-                           plane_type="PlaneStress", geom="linear")
-    ops.fix(nodes=_nodes_on_plane(fem, 0, 0.0), dofs=(1, 1))
-    with ops.pattern.Plain(series=ops.timeSeries.Linear()) as p:
-        for nid in _nodes_on_plane(fem, 0, 4.0):
-            p.load(node=nid, forces=(30.0, -1.0e2))
-    path = str(tmp_path / "lst.ladruno")
-    _record(ops, "Ladruno", path, elem_responses=("stress",))
-    ops.constraints.Plain()
-    ops.numberer.RCM()
-    ops.system.BandGeneral()
-    ops.test.NormDispIncr(tol=1e-9, max_iter=10)
-    ops.algorithm.Linear()
-    ops.integrator.LoadControl(dlam=1.0)
-    ops.analysis.Static()
 
-    emitter, model_h5 = _run(ops, tmp_path)
-    assert emitter.analyze(steps=1) == 0
-    fem_to_ops = _fem_to_ops(model_h5)
-    eids = [int(e) for grp in fem.elements for e in grp.ids]
-    assert any(fem_to_ops[e] != e for e in eids)
-    truth = {e: np.asarray(emitter.ops.eleResponse(fem_to_ops[e], "stresses"),
-                           dtype=float).reshape(3, 3) for e in eids}
-    emitter.ops.remove("recorders")
+@pytest.mark.xfail(strict=True, raises=AssertionError, reason=B_LADRUNO_XI)
+def test_ladruno_lst_gauss_coords_read_back_from_ladruno(
+    tmp_path: Path,
+) -> None:
+    """The values read, but each GP comes back with no natural coords."""
+    _assert_gauss_stress(_solid_run("lst", "Ladruno", "stress", tmp_path),
+                         values=False)
 
-    r = _open("Ladruno", path, fem, model_h5)
-    for k, comp in enumerate(STRESS_2D):
-        slab = r.elements.gauss.get(component=comp)
-        assert sorted(set(int(e) for e in slab.element_index)) == sorted(eids)
-        for eid in eids:
-            vals, _xi = _gauss_per_element(slab, eid)
-            np.testing.assert_allclose(
-                vals, truth[eid][:, k],
-                rtol=RTOL, atol=RTOL * np.abs(truth[eid]).max(),
-                err_msg=f"{comp} of element {eid} (tag {fem_to_ops[eid]})",
-            )
+
+@pytest.mark.xfail(strict=True, raises=AssertionError, reason=B_LADRUNO)
+def test_ladruno_lst_stresses_token_reads_back_from_ladruno(
+    tmp_path: Path,
+) -> None:
+    _assert_gauss_stress(_solid_run("lst", "Ladruno", "stresses", tmp_path))
+
+
+@pytest.mark.xfail(strict=True, raises=AssertionError, reason=B_MPCO)
+@pytest.mark.parametrize("token", ["stress", "stresses"])
+@pytest.mark.parametrize("family", ["h20", "lst"])
+def test_fork_solid_gauss_stress_reads_back_from_mpco(
+    tmp_path: Path, family: str, token: str,
+) -> None:
+    _assert_gauss_stress(_solid_run(family, "MPCO", token, tmp_path))
+
+
+@pytest.mark.xfail(strict=True, raises=AssertionError, reason=B_MPCO)
+def test_element_only_mpco_file_has_its_steps(tmp_path: Path) -> None:
+    run = _solid_run("h20", "MPCO", "stress", tmp_path, nodal=False)
+    assert [s.n_steps for s in run["r"].stages] == [1]
 
 
 # ---------------------------------------------------------------------------
@@ -334,7 +409,14 @@ def _shell_on_solid_fem(g: Any) -> Any:
     return g.mesh.queries.get_fem_data()
 
 
-def _shell_on_solid_bridge(fem: Any) -> apeSees:
+def _shell_on_solid_run(
+    g: Any, tmp_path: Path, kind: str,
+) -> tuple[Results, list[int], list[int], dict[int, np.ndarray]]:
+    fem = _shell_on_solid_fem(g)
+    solid = sorted({int(n) for n in fem.nodes.select(pg="Footing").ids})
+    shell = sorted({int(n) for n in fem.nodes.select(pg="Wall").ids})
+    assert solid and shell and not set(solid) & set(shell)
+
     ops = apeSees(fem)
     ops.model(ndm=3, ndf=6)
     ops.element.FourNodeTetrahedron(
@@ -351,10 +433,9 @@ def _shell_on_solid_bridge(fem: Any) -> apeSees:
             pat.load(node=int(n), forces=(10.0, 50.0, -5.0, 1.0, 0.0, 0.0))
         for n in fem.nodes.select(pg="FootTop").ids:
             pat.load(node=int(n), forces=(1e5, -2e5, -3e5))
-    return ops
-
-
-def _static_shell_chain(ops: apeSees) -> None:
+    ext = "ladruno" if kind == "Ladruno" else "mpco"
+    path = str(tmp_path / f"sos.{ext}")
+    _record(ops, kind, path, nodal_responses=("displacement", "rotation"))
     ops.constraints.Plain()
     ops.numberer.RCM()
     ops.system.UmfPack()
@@ -362,21 +443,6 @@ def _static_shell_chain(ops: apeSees) -> None:
     ops.algorithm.Newton()
     ops.integrator.LoadControl(dlam=1.0)
     ops.analysis.Static()
-
-
-@pytest.mark.parametrize("kind, ext", [("Ladruno", "ladruno"), ("MPCO", "mpco")])
-def test_shell_on_solid_nodes_read_back(
-    g: Any, tmp_path: Path, kind: str, ext: str,
-) -> None:
-    fem = _shell_on_solid_fem(g)
-    solid = sorted({int(n) for n in fem.nodes.select(pg="Footing").ids})
-    shell = sorted({int(n) for n in fem.nodes.select(pg="Wall").ids})
-    assert solid and shell and not set(solid) & set(shell)
-
-    ops = _shell_on_solid_bridge(fem)
-    path = str(tmp_path / f"sos.{ext}")
-    _record(ops, kind, path, nodal_responses=("displacement", "rotation"))
-    _static_shell_chain(ops)
 
     emitter, model_h5 = _run(ops, tmp_path)
     assert emitter.analyze(steps=1) == 0
@@ -386,8 +452,14 @@ def test_shell_on_solid_nodes_read_back(
     assert {live[n].size for n in solid} == {3}
     assert {live[n].size for n in shell} == {6}
     emitter.ops.remove("recorders")
+    return _open(kind, path, fem, model_h5), solid, shell, live
 
-    r = _open(kind, path, fem, model_h5)
+
+@pytest.mark.parametrize("kind", ["Ladruno", "MPCO"])
+def test_shell_on_solid_nodes_read_back(
+    g: Any, tmp_path: Path, kind: str,
+) -> None:
+    r, solid, shell, live = _shell_on_solid_run(g, tmp_path, kind)
     for k, comp in enumerate(DISP + ROT):
         owners = solid + shell if k < 3 else shell
         slab = r.nodes.get(component=comp, ids=owners)
@@ -400,4 +472,21 @@ def test_shell_on_solid_nodes_read_back(
         np.testing.assert_allclose(
             [got[n] for n in owners], want, rtol=RTOL, atol=RTOL * scale,
             err_msg=f"{comp} on {kind}",
+        )
+
+
+@pytest.mark.xfail(strict=True, raises=AssertionError, reason=B_ROT)
+@pytest.mark.parametrize("kind", ["Ladruno", "MPCO"])
+def test_solid_node_rotations_are_absent(
+    g: Any, tmp_path: Path, kind: str,
+) -> None:
+    """A tet node has no rotation DOF: absent from the slab, or NaN."""
+    r, solid, _shell, _live = _shell_on_solid_run(g, tmp_path, kind)
+    for comp in ROT:
+        slab = r.nodes.get(component=comp)
+        vals = np.asarray(slab.values)[-1]
+        on_solid = [v for i, v in zip(slab.node_ids, vals) if int(i) in solid]
+        assert not np.isfinite(on_solid).any(), (
+            f"{comp}: {int(np.isfinite(on_solid).sum())} 3-dof nodes read a "
+            "finite rotation"
         )
