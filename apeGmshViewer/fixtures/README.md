@@ -310,3 +310,26 @@ read back from the written file. The generator also checks the Qt fast path,
 $env:PYTHONPATH = "src"
 & C:\Users\nmb\venv\opensees_venv\Scripts\python.exe scripts/make_viewer_results_fixtures.py --extrapolation
 ```
+
+## `slice.oracle.json` (V4e3, #1904)
+
+PyVista's slice of three small solids, the oracle of the app's cut-face caps
+(`test/clip/slice.test.ts`; `slice_oracle` in the generator). The meshes are
+built in numpy in gmsh corner order: a 3 x 2 x 2 box of hexahedra, a 2 x 2 x 2
+box of 48 tetrahedra (Kuhn split, interior nodes moved off the grid), and a
+2 x 2 x 2 box of 16 wedges. Each carries a nonlinear nodal field `f` (no data,
+NaN, at two tet nodes), a linear nodal field `L` and a cell field `g`. Each
+mesh is cut by an oblique plane alone, trimmed by one other plane, and (another
+plane) trimmed by two, all through `PyVistaBackend.slice_layer`, the Qt
+backend's own cut-face pass. Per case, `vtk` is the 1e-9 oracle: the grid also
+carries one vertex cell, which keeps `vtkCutter` off its float-precision fast
+path, and a trim clips the slice as an `UnstructuredGrid` (exact) instead of
+the `PolyData` clip `slice_layer` uses. `vtk_fast` is `slice_layer` verbatim on
+the bare grid, what the Qt cap drew (cut points up to 3e-8 off the exact
+intersections; checked to 1e-7). The generator's docstring has the
+measurements. It needs pyvista, not gmsh.
+
+```powershell
+$env:PYTHONPATH = "src"
+& C:\Users\nmb\venv\opensees_venv\Scripts\python.exe scripts/make_viewer_results_fixtures.py --slice-oracle
+```

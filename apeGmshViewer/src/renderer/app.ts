@@ -473,6 +473,9 @@ async function captureDeform(settle: (ms?: number) => Promise<unknown>, width: n
   store.dispatch({ type: "setDeform", on: false });
 }
 
+/** V4e3: the deformation scale of the capped scrub (see `measureContour`). */
+const CAPPED_SCALE = 1e-6;
+
 /**
  * The V4c1 contour scrub (MEASUREMENTS.md, the contour rows): on the results
  * stage with the most steps, coloured by its first field's first component
@@ -534,7 +537,10 @@ async function measureContour(path: string, deform = false, element = false, gau
     if (element && v.state !== "element") throw new Error(`measure: the element contour is ${v.state}`);
     const what = v.state === "ready" ? `${v.field} ${v.component.label}` : v.state === "element" ? `element ${v.field} ${v.component.label}, ${v.topology}` : "?";
     // V4e3: the cut-face caps on (the `caps` row) or off (the `clip` row, comparable with the V4e1 and V4e2 rows).
+    // The measured files' displacement is synthetic (the node id plus a ramp: thousands of model lengths), so at
+    // true scale the deformed solid leaves every plane and no cap is cut; the capped row deforms it at ×1e-6.
     store.dispatch({ type: "setCutFace", on: capped });
+    if (capped) store.dispatch({ type: "setDeformScale", scale: CAPPED_SCALE });
     // V4e1: six section planes cutting through the scrub (each 20 % inside the reference box along ±X, ±Y, ±Z).
     if (planes) addSixPlanes();
     if (planes && viewport.clipCount !== 6) throw new Error(`measure: ${viewport.clipCount} section planes cut, not 6`);
@@ -543,7 +549,7 @@ async function measureContour(path: string, deform = false, element = false, gau
     // V4e3: and, capped, a cap on each of the six planes, sliced again at every step (the deformed solid, the step's field).
     if (capped && !(await until(() => viewport.capsSettled() && viewport.capCount === 6))) throw new Error(`measure: ${viewport.capCount} caps drawn, not 6`);
     const slices0 = viewport.caps.slices;
-    const field = what + (deform ? ", deformed ×1" : "") + (planes ? ", 6 section planes + gizmos" : "") + (capped ? " + 6 caps" : "");
+    const field = what + (deform ? `, deformed ×${capped ? CAPPED_SCALE : 1}` : "") + (planes ? ", 6 section planes + gizmos" : "") + (capped ? " + 6 caps" : "");
     const T = stages[best]!.time.length;
     const gl = viewport.renderer.getContext();
     const stepMs: number[] = [];
@@ -580,6 +586,7 @@ async function measureContour(path: string, deform = false, element = false, gau
     clearInterval(sampler);
     if (planes) removePlanes();
     store.dispatch({ type: "setCutFace", on: true });
+    store.dispatch({ type: "setDeformScale", scale: 1 });
   }
 }
 

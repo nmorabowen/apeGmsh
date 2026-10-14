@@ -68,6 +68,11 @@ and ``extrap.oracle.json``, Python's Gauss-to-node extrapolation on them, the
 oracle the app's ``gauss_node`` / ``gauss_node_discrete`` /
 ``cell_averaged`` contours are tested against (``extrapolation_fixtures``).
 
+``--slice-oracle`` (V4e3, #1904; committed) writes ``slice.oracle.json``:
+PyVista's slice of small tet, hex and wedge solids through the Qt backend's
+``PyVistaBackend.slice_layer``, alone and trimmed by other planes, the oracle
+of the app's cut-face caps (``slice_oracle``). It needs pyvista, not gmsh.
+
 ``--contour`` (V4c1, #1756; committed) writes the contour pairs: the same
 staged model as ``fixtures/contour_staged.h5`` with ``displacement_x/y/z``
 closed forms of the node coordinates (``contour_fixtures``), and

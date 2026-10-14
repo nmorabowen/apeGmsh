@@ -126,15 +126,18 @@ export function sliceSolids(solids: Solids, xyz: Float64Array, values: Float64Ar
     const o = solids.start[c]!;
     const nc = solids.start[c + 1]! - o;
     if (nc !== SOLID_CORNERS[shape]) throw new RangeError(`sliceSolids: cell ${c} is a ${shape} with ${nc} corners`);
+    // The signed distances first, with no allocation: most cells are not cut.
     let above = 0;
     for (let k = 0; k < nc; k++) {
       const s = solids.slot[o + k]!;
-      const p: Pt = [xyz[3 * s]!, xyz[3 * s + 1]!, xyz[3 * s + 2]!, values ? values[o + k]! : 0];
-      pts[k] = p;
-      d[k] = dist(cut, p);
+      d[k] = cut.normal[0] * xyz[3 * s]! + cut.normal[1] * xyz[3 * s + 1]! + cut.normal[2] * xyz[3 * s + 2]! + cut.constant;
       if (d[k]! > 0) above++;
     }
     if (above === 0 || above === nc) continue;
+    for (let k = 0; k < nc; k++) {
+      const s = solids.slot[o + k]!;
+      pts[k] = [xyz[3 * s]!, xyz[3 * s + 1]!, xyz[3 * s + 2]!, values ? values[o + k]! : 0];
+    }
     // The cut points, each once: a corner on the plane is met by several edges.
     const poly: Pt[] = [];
     const seen: number[] = [];

@@ -19,6 +19,10 @@
 // shows a frame with the new normal and the old offset. The footer's "Show
 // plane gizmos" and each plane's eye decide which planes get one
 // (`gizmoPlanes`).
+//
+// V4e3 (#1904, ADR 0083 S3): the footer's "Contour on cut face" toggle,
+// `setCutFace` (on by default): renderer/caps.ts fills each cut through a
+// solid with a cap.
 
 import type { ClipPlane, ClipState, Event } from "./types.ts";
 
