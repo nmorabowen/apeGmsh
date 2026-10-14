@@ -1214,6 +1214,71 @@ def test_a_backticked_negation_in_an_owned_line_refuses_g1():
         land_pr._card_paths("### Owned files\n- `src/a.py` (`never` `src/b.py`)\n")
 
 
+# --- #1891: residual forms of a backticked negation phrase (review of #1883) -----------------
+@pytest.mark.parametrize("line", [
+    pytest.param("`never ever` `src/b.py`", id="never-ever"),
+    pytest.param("`never, ever` `src/b.py`", id="never-comma-ever"),
+    pytest.param("`not ever` `src/b.py`", id="not-ever"),
+    pytest.param("`absolutely not` `src/b.py`", id="absolutely-not"),
+    pytest.param("`can not` `src/b.py`", id="can-not"),
+    pytest.param("`not under any circumstances` `src/b.py`", id="under-any-circumstances"),
+    pytest.param("It can not touch `src/b.py`.", id="bare-can-not"),
+    pytest.param("- `do not edit b.py` `src/b.py`", id="span-names-a-dotted-path"),
+    pytest.param("- `never touch src/b.py`, see `src/b.py`", id="span-names-a-slashed-path"),
+    pytest.param("`do not touch b` `src/b.py`", id="extensionless-object"),
+])
+def test_a_residual_backticked_negation_adds_no_path_1891(line):
+    """Revert-proof, one rule per case: without `ever`/`absolutely`/`can`/`under any
+    circumstances` in `_FILLER`, without dropping path words from a multi-word span, or
+    without the editing-verb object rule, the span is masked and `src/b.py` is owned.
+    `bare-can-not` already negated on main (through `not`); it pins that."""
+    _refused_b(f"**Card amendment (T):** also edit `src/a.py`.\n{line}\n")
+
+
+@pytest.mark.parametrize("line", [
+    "- `src/a.py` (`never ever` `src/b.py`)",
+    "- `src/a.py`; `do not edit src/b.py` `src/b.py`",
+])
+def test_a_residual_backticked_negation_in_an_owned_line_refuses_1891(line):
+    with pytest.raises(land_pr.LandError, match=r"check 9: an Owned line negates"):
+        land_pr._card_paths(f"### Owned files\n{line}\n")
+
+
+def test_a_single_token_path_span_stays_data_1891():
+    """A one-token span naming a path is a code reference, even when its symbol reads as a
+    negation: `test_not_assembly`, and (decided in #1891) `src/b.py::never`. #1875's Owned
+    line quotes `not-yet`, which stays masked. Pins the decision: a path-bearing span
+    negates only when it has another word that is a negation phrase."""
+    card = ("### Owned files\n- `src/x.py::test_not_assembly`, `src/b.py::never`\n"
+            "- `apeGmshViewer/src/state/selectors.ts` (the `not-yet` branch only), "
+            "`apeGmshViewer/src/state/types.ts` (only if a topology type changes)\n")
+    assert land_pr._card_paths(card) == ["src/x.py", "src/b.py", "apeGmshViewer/src/state/selectors.ts",
+                                         "apeGmshViewer/src/state/types.ts"]
+
+
+@pytest.mark.parametrize("span", ["...", ", :", "do touch", "must edit these files", "b.py c.py", "src/a.py src/b.py",
+                                  "see src/x.py::test_not_assembly", "the not-yet state", "cannot join:"])
+def test_a_span_without_a_negation_phrase_does_not_negate_1891(span):
+    """Seams: a span of only punctuation, filler or paths has no negation, and a negation
+    followed by a word that is neither filler nor after an editing verb stays code."""
+    assert not land_pr._quoted_negation(span)
+
+
+@pytest.mark.parametrize("bom", ["pr", "card", "amendment"])
+def test_a_bom_and_crlf_body_is_read_1891(bom):
+    """#1887's body began with a UTF-8 BOM, so `Slice: #1857` missed the line-start match and
+    check 9 refused. Every body here ends lines in CRLF; one carries the BOM. Revert-proof:
+    without `_text`, the PR case finds no Slice line, the card case no Owned section, and the
+    amendment case does not add `src/c.py`."""
+    def mark(text, where):
+        return ("﻿" if bom == where else "") + text.replace("\n", "\r\n")
+    pr = {**PROGRAM_PR, "body": mark("Slice: #1801\nClass: semantic\n", "pr")}
+    card = mark("### Owned files\n- `src/a.py`\n", "card")
+    amendment = mark("**Card amendment (T):** add `src/c.py`.\n", "amendment")
+    gh, git = _scope(["src/a.py", "src/c.py"], card=card, comments=(amendment,), pr=pr)
+    assert _run(1218, gh, git, dry_run=True) == 0
+
+
 def test_mispaired_backticks_do_not_hide_a_negation_1250():
     """A ``double`` run pairs the following ticks wrongly, so masking would swallow the
     prose "Never" (#1250's Owned line). Revert-proof: masking regardless of the pairing
