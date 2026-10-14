@@ -269,11 +269,10 @@ class ContactSlaveOverlapWarning(UserWarning):
     ``warnings.filterwarnings("ignore", category=ContactSlaveOverlapWarning)``
     once the split is deliberate.
 
-    Masters "touch" when they share a mesh node. Sector masters meshed
-    separately (coincident at the seam but not fragmented) share none, so
-    they are not de-duplicated here and the fork adds the seam tractions
-    at run time, with its own warning; fragment the skin into its sectors
-    (one conformal body) or give each contact disjoint ``slave_entities``.
+    Masters "touch" when they share a mesh node, or when a node of one
+    coincides in space with a node of the other: sector masters meshed
+    separately (coincident at the seam but not fragmented) are
+    de-duplicated and warned exactly like fragmented ones (#1964).
     """
 
 
@@ -499,21 +498,91 @@ def _refuse_tie_on_non_flat_master(
         f"sector's surfaces and a radial outward= for each.")
 
 
+#: Two master nodes coincide when they lie within this fraction of the
+#: two masters' joint bounding-box diagonal: the same relative 1e-6 floor
+#: as :data:`_FLUSH_CENTROID_FLOOR`, unit-free, and far below any mesh
+#: size, while the seam nodes of sectors meshed from one OCC geometry
+#: agree to round-off.
+_SEAM_COINCIDENCE_REL = 1.0e-6
+
+
+def _masters_coincide(a: set[int], b: set[int], node_tags,
+                      node_coords) -> bool:
+    """True when some node of master *a* coincides in space with some node
+    of master *b* (within :data:`_SEAM_COINCIDENCE_REL` of their joint
+    bounding-box diagonal): sector surfaces meshed separately, not
+    fragmented, so their seam carries two node ids at one point.
+
+    Coordinates are quantised to a grid of that spacing and each node of
+    *b* is looked up in its own and the 26 neighbouring cells of *a*, so
+    a pair straddling a cell boundary is still found. Raises when a master
+    node has no coordinate (an incomplete node table cannot vouch that the
+    masters are apart)."""
+    tags = np.asarray(node_tags, dtype=np.int64).ravel()
+    xyz = np.asarray(node_coords, dtype=float).reshape(len(tags), -1)
+    order = np.argsort(tags, kind="stable")
+    sorted_tags = tags[order]
+
+    def coords(nodes: set[int]) -> np.ndarray:
+        want = np.fromiter(nodes, dtype=np.int64, count=len(nodes))
+        pos = np.searchsorted(sorted_tags, want)
+        pos = np.minimum(pos, max(len(sorted_tags) - 1, 0))
+        if len(sorted_tags) == 0 or not np.all(sorted_tags[pos] == want):
+            raise ValueError(
+                "contact: a master node has no coordinate in the node "
+                "table, so coincident sector masters cannot be detected.")
+        return xyz[order[pos]]
+
+    pa, pb = coords(a), coords(b)
+    both = np.vstack([pa, pb])
+    lo = both.min(axis=0)
+    diag = float(np.linalg.norm(both.max(axis=0) - lo))
+    if diag == 0.0:
+        return True
+    h = _SEAM_COINCIDENCE_REL * diag
+    # Cell indices fit 21 bits per axis (the span is at most 1/h cells);
+    # +1 keeps the -1 neighbour offset non-negative before packing.
+    qa = np.rint((pa - lo) / h).astype(np.int64) + 1
+    qb = np.rint((pb - lo) / h).astype(np.int64) + 1
+    if qa.shape[1] < 3:
+        pad = 3 - qa.shape[1]
+        qa = np.pad(qa, ((0, 0), (0, pad)))
+        qb = np.pad(qb, ((0, 0), (0, pad)))
+
+    def pack(q: np.ndarray) -> np.ndarray:
+        return (q[:, 0] << 42) | (q[:, 1] << 21) | q[:, 2]
+
+    keys_a = np.unique(pack(qa))
+    for dx in (-1, 0, 1):
+        for dy in (-1, 0, 1):
+            for dz in (-1, 0, 1):
+                shifted = pack(qb + np.array([dx, dy, dz], dtype=np.int64))
+                if np.isin(shifted, keys_a).any():
+                    return True
+    return False
+
+
 def _claim_slave_nodes(
         defn, slave_nodes: list[int], master_nodes: set[int],
         claimed: dict[str, list[tuple[str, set[int], set[int]]]],
+        node_tags, node_coords,
 ) -> list[int]:
     """Drop the slave nodes an earlier contact on the same slave label
     with a TOUCHING master already holds; the first declaration wins.
 
-    Two masters touch when their node sets intersect: the sector surfaces
-    of one body share their seam nodes, and that seam is where one slave
-    node lands in two contacts and the fork adds its tractions. Contacts
-    whose masters share no node (two piles against one soil label) are
-    separate bodies and keep their full slave sets, as they always did.
-    ``claimed`` maps a slave label to ``[(contact, master nodes, slave
-    nodes)]`` and is local to one :meth:`resolve_contacts` call, so a
-    rebuild resolves the same split in declaration order. Warns
+    Two masters touch when their node sets intersect (the sector surfaces
+    of one fragmented body share their seam nodes) or when a node of one
+    coincides in space with a node of the other (sectors meshed separately
+    and not fragmented: one seam point, two node ids; see
+    :func:`_masters_coincide`). That seam is where one slave node lands in
+    two contacts and the fork adds its tractions. Contacts whose masters
+    neither share nor coincide at a node (two piles against one soil
+    label) are separate bodies and keep their full slave sets, as they
+    always did. ``claimed`` maps a slave label to ``[(contact, master
+    nodes, slave nodes)]`` and is local to one :meth:`resolve_contacts`
+    call, so a rebuild resolves the same split in declaration order.
+    ``node_tags`` / ``node_coords`` are the model's node table, read only
+    when an earlier contact shares the label. Warns
     :class:`ContactSlaveOverlapWarning` when nodes move; raises when
     nothing is left (an empty contact would be a silent no-op in the deck).
     """
@@ -522,7 +591,8 @@ def _claim_slave_nodes(
     earlier = claimed.setdefault(label, [])
     held: dict[int, str] = {}
     for owner, m_nodes, s_nodes in earlier:
-        if m_nodes & master_nodes:
+        if (m_nodes & master_nodes) or _masters_coincide(
+                m_nodes, master_nodes, node_tags, node_coords):
             for t in s_nodes:
                 held.setdefault(t, owner)
     kept: list[int] = []
@@ -1063,12 +1133,11 @@ class ConstraintsComposite(_DeclarationsMixin):
             Restrict each side to specific Gmsh entities. Several NTS
             contacts may split one slave label by sector this way: when
             their masters touch (share a mesh node, as the sector
-            surfaces of one fragmented body do), a slave node claimed by
-            an earlier contact is dropped from a later one at resolve
+            surfaces of one fragmented body do, or carry coincident nodes
+            at an unfragmented seam), a slave node claimed by an earlier
+            contact is dropped from a later one at resolve
             (:class:`ContactSlaveOverlapWarning`), so the fork never adds
-            two tractions on one node. Masters that merely coincide
-            without sharing nodes are not de-duplicated; fragment the
-            body or pass disjoint ``slave_entities``.
+            two tractions on one node.
         name : str, optional
             Friendly name (round-trips into the emitted deck comment).
 
@@ -1203,7 +1272,7 @@ class ConstraintsComposite(_DeclarationsMixin):
                     defn, self._collect_node_set(s_ents, defn.slave_label),
                     {int(t) for t in
                      np.asarray(master_faces, dtype=np.int64).ravel()},
-                    claimed)
+                    claimed, node_tags, node_coords)
                 slave_faces, slave_nps = None, 0
             elif model_dim == 2:
                 # 2D mortar — the slave is `-slave-segments 2`, the SAME

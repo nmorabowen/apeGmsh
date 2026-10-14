@@ -491,3 +491,95 @@ def test_fully_claimed_slave_set_refuses_naming_both(tmp_path):
             g.mesh.queries.get_fem_data(dim=3)
         assert not g.constraints.contact_records
         g.constraints.contact_defs.clear()
+
+
+# --------------------------------------------------------------------------
+# #1964 (#1638 item 2) — coincident but unfragmented sector masters touch too
+# --------------------------------------------------------------------------
+
+@pytest.mark.parametrize("fragment_pile", [False, True],
+                         ids=["unfragmented", "fragmented"])
+def test_coincident_sector_masters_claim_each_seam_node_once(
+        tmp_path, fragment_pile):
+    """Two half-cylinder pile sectors, each the master of an NTS contact on
+    the slave label ``hole`` with per-half ``slave_entities``. Unfragmented,
+    the sector skins share no node id at their seams, only coincident
+    points; before #1964 the 12 seam slave nodes stayed in both contacts
+    and nothing warned. Both cases now claim each seam node once and warn
+    once (run with ``-W error::UserWarning``: the warning is caught here)."""
+    with apeGmsh(model_name="b_1964", verbose=False,
+                 save_to=tmp_path / "m.h5") as g:
+        p1 = g.model.geometry.add_cylinder(0, 0, 0, 0, 0, H, R, angle=math.pi)
+        gmsh.model.occ.rotate([(3, p1)], 0, 0, 0, 0, 0, 1, math.pi / 2)
+        p2 = g.model.geometry.add_cylinder(0, 0, 0, 0, 0, H, R, angle=math.pi)
+        gmsh.model.occ.rotate([(3, p2)], 0, 0, 0, 0, 0, 1, -math.pi / 2)
+        g.model.sync()
+        piles = [p1, p2]
+        if fragment_pile:
+            out, _ = gmsh.model.occ.fragment([(3, p1)], [(3, p2)])
+            gmsh.model.occ.synchronize()
+            piles = [t for d, t in out if d == 3]
+        a = g.model.geometry.add_box(-2, -2, 0, 2, 4, H)
+        b = g.model.geometry.add_box(0, -2, 0, 2, 4, H)
+        a = g.model.boolean.cut(a, g.model.geometry.add_cylinder(0, 0, 0, 0, 0, H, R))[0]
+        b = g.model.boolean.cut(b, g.model.geometry.add_cylinder(0, 0, 0, 0, 0, H, R))[0]
+        vols = g.model.boolean.fragment([a], [b])
+        g.model.sync()
+        holes = [h for v in vols for h in _curved_faces(v)]
+        left = [h for h in holes if gmsh.model.occ.getCenterOfMass(2, h)[0] < 0]
+        right = [h for h in holes if h not in left]
+        skins = [s for p in piles for s in _curved_faces(p)]
+        sl = [s for s in skins if gmsh.model.occ.getCenterOfMass(2, s)[0] < 0]
+        sr = [s for s in skins if s not in sl]
+        assert left and right and sl and sr
+        g.mesh.sizing.set_global_size(0.4)
+        g.mesh.generation.generate(3)
+        g.physical.add(3, piles + list(vols), name="solid")
+        g.physical.add(2, skins, name="skin")
+        g.physical.add(2, holes, name="hole")
+        skin_ids = [set(), set()]
+        for k, ents in enumerate((sl, sr)):
+            for s in ents:
+                nt, _, _ = gmsh.model.mesh.getNodes(2, s, includeBoundary=True)
+                skin_ids[k] |= {int(t) for t in nt}
+        # The premise: unfragmented sectors share no master node id.
+        assert bool(skin_ids[0] & skin_ids[1]) is fragment_pile
+        label_nodes: set[int] = set()
+        for h in holes:
+            nt, _, _ = gmsh.model.mesh.getNodes(2, h, includeBoundary=True)
+            label_nodes |= {int(t) for t in nt}
+        for nm, ms, ss in (("left", sl, left), ("right", sr, right)):
+            g.constraints.contact("skin", "hole", formulation="nts",
+                                  kn=1e6, kt=1e6, mu=0.3,
+                                  master_entities=[(2, s) for s in ms],
+                                  slave_entities=[(2, h) for h in ss],
+                                  name=nm)
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            g.mesh.queries.get_fem_data(dim=3)
+        overlap = [w for w in caught
+                   if issubclass(w.category, ContactSlaveOverlapWarning)]
+        assert len(overlap) == 1
+        assert re.search(r"'right' shares slave label 'hole' and a touching "
+                         r"master with earlier contact\(s\) 'left'",
+                         str(overlap[0].message))
+        first, second = g.constraints.contact_records
+        a_set, b_set = set(first.slave_nodes), set(second.slave_nodes)
+        assert a_set & b_set == set()
+        assert a_set | b_set == label_nodes
+        g.constraints.contact_defs.clear()   # keep the exit autosave quiet
+
+
+def test_masters_coincide_on_synthetic_points():
+    """The coincidence oracle: a pair half a cell apart across a cell
+    boundary is found, a pair one mesh size apart is not."""
+    from apeGmsh.core.ConstraintsComposite import _masters_coincide
+    tags = [1, 2, 3, 4]
+    h = 1e-6 * math.sqrt(3.0)          # the grid spacing for this cloud
+    xyz = [[0.0, 0.0, 0.0], [1.0, 1.0, 1.0],
+           [0.5 * h + 1e-3 * h, 0.0, 0.0],  # straddles the 0.5h boundary
+           [0.4, 0.0, 0.0]]
+    assert _masters_coincide({1, 2}, {3}, tags, xyz)
+    assert not _masters_coincide({1, 2}, {4}, tags, xyz)
+    with pytest.raises(ValueError, match="no coordinate"):
+        _masters_coincide({1, 2}, {9}, tags, xyz)
