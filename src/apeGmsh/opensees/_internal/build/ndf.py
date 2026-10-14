@@ -296,10 +296,10 @@ def infer_node_ndf(
     # from the inferred map and remains ops.ndf-eligible; routed only to
     # avoid an expand_pg_to_elements(None) whole-mesh fan-out.
     #
-    # #1922 (ADR 0100 lever 1): keep each fan-out's connectivity as
-    # ``int64[N, k]`` blocks, never as per-element tuples.  The tuples,
-    # plus the fromiter flatten over them, set the process emit peak
-    # (about 460 B per global node).  ``first_tag`` holds the node the
+    # ADR 0100: keep each fan-out's connectivity as ``int64[N, k]``
+    # blocks, never as per-element tuples.  Per-element tuples, plus a
+    # flatten over them, would cost about 460 B per global node at the
+    # emit peak.  ``first_tag`` holds the node the
     # unregistered-class refusal quotes: the first node of the class's
     # first non-empty fan-out.
     class_blocks: dict[str, list[np.ndarray]] = {}
