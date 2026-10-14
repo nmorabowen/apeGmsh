@@ -1344,6 +1344,117 @@ def test_mispaired_backticks_do_not_hide_a_negation_1250():
         land_pr._card_paths(f"### Owned files\n{line}\n")
 
 
+# --- #1939: an extensionless Owned name counts when it is a real file -------------------------------
+# Card #1929 (F4-a) owned only `FORK_PIN`. Check 9 dropped every name with neither `/` nor `.`, so it
+# refused #1930 as naming no path and T applied scope-ok. Recorded from `gh issue view 1929` and
+# `gh pr view 1930` on 2026-10-14, trimmed to the fields the script reads.
+CARD_1929 = (
+    "**Link:** F4\n\n### Goal\nBump `FORK_PIN` to `ladruno-v20261014`. All four keys move together: tag, "
+    "sha, repo, asset (`ladruno-opensees-linux-ladruno-v20261014.tar.gz`, verified on the release).\n\n"
+    "### Owned files\n- `FORK_PIN`\n\n### Read-only context\n- `.github/workflows/live-fork.yml`\n"
+    "- `tests/opensees/integration_ladruno/conftest.py`\n\n### Done when\n`FORK_PIN` on `main` names "
+    "`ladruno-v20261014`.\n"
+)
+FILES_1930 = ["FORK_PIN", "changelog.d/f4a-fork-pin-20261014.md"]
+#: #1930 as it stood, less the `scope-ok` label T applied, so check 9 reads the card.
+PR_1930 = {"labels": [{"name": "program"}], "body": "Slice: #1929\nAuthor-model: claude-opus-5-5\n"}
+LS_TREE = "ls-tree -r -z --name-only origin/main"
+#: `git ls-tree -r -z --name-only origin/main`, trimmed. FORK_PIN and LICENSE are main's only
+#: extensionless files (2026-10-14).
+TREE = "\0".join(["FORK_PIN", "LICENSE", "README.md", "scripts/land_pr.py", "tests/test_land_pr.py"]) + "\0"
+
+
+def _tree_real(listing=TREE, rows=()):
+    git = Replay({LS_TREE: listing})
+    return land_pr._real_files(list(rows), git), git
+
+
+def test_card_1929_owns_fork_pin_without_an_override_1939(monkeypatch, capsys):
+    """Revert-proof: main's parse drops `FORK_PIN`, so this refuses "names no backticked path"."""
+    gh = Replay({
+        "pr view 1930 --json labels,body": json.dumps(PR_1930),
+        _files_call(1930): "".join(_row(f) + "\n" for f in FILES_1930),
+        "issue view 1929 --json body,comments": json.dumps({"body": CARD_1929, "comments": []}),
+    })
+    monkeypatch.setattr(land_pr, "run_gh", gh)
+    monkeypatch.setattr(land_pr, "run_git", Replay({LS_TREE: TREE}))
+    assert land_pr.main(["1930", "--owned-only"]) == 0
+    assert "check 9: #1930's 2 changed file(s) are inside slice card #1929's Owned list." in capsys.readouterr().out
+
+
+def test_an_extensionless_name_on_main_is_owned_and_main_is_read_once_1939():
+    real, git = _tree_real()
+    card = "### Owned files\n- `FORK_PIN`\n- `LICENSE`\n- `scripts/land_pr.py`\n"
+    assert land_pr._card_paths(card, real) == ["FORK_PIN", "LICENSE", "scripts/land_pr.py"]
+    assert git.calls == [LS_TREE]
+
+
+def test_a_new_root_file_the_pr_adds_is_owned_without_reading_main_1939():
+    real, git = _tree_real(rows=[json.loads(_row("Makefile", "added"))])
+    assert land_pr._card_paths("### Owned files\n- `Makefile`\n", real) == ["Makefile"]
+    assert git.calls == []
+
+
+@pytest.mark.parametrize("line", [
+    pytest.param("- `scripts/a.py` (runs in the `suite` lane; `foo`, `and`, `-`)", id="prose-words"),
+    pytest.param("- `scripts/a.py` (`license`, `License`, `fork_pin`)", id="case"),
+    pytest.param("- `scripts/a.py`, `FORK*`", id="extensionless-glob"),
+    pytest.param("- `scripts/a.py`, `FORK_PIN`", id="sibling-is-scripts/FORK_PIN"),
+])
+def test_a_prose_token_still_owns_nothing_1939(line):
+    """A word that is no real file stays dropped; the case of a name counts. A bare name after a
+    path in a list is that path's sibling (#1802), so `scripts/FORK_PIN`, which is not a file."""
+    real, _git = _tree_real()
+    assert land_pr._card_paths(f"### Owned files\n{line}\n", real) == ["scripts/a.py"]
+
+
+def test_a_real_file_name_used_in_prose_is_owned_1939():
+    """The seam the card names: a backticked word that equals a real root file owns that file,
+    wherever it sits in an Owned line. Prose belongs outside the Owned section."""
+    real, _git = _tree_real()
+    assert land_pr._card_paths("### Owned files\n- `scripts/a.py` (see `LICENSE`)\n", real) == ["scripts/a.py", "LICENSE"]
+
+
+@pytest.mark.parametrize("listing", [
+    pytest.param(None, id="git-error"),
+    pytest.param("", id="empty-listing"),
+])
+def test_an_unreadable_tree_refuses_never_admits_1939(listing):
+    def git(args):
+        if listing is None:
+            raise land_pr.subprocess.CalledProcessError(128, ["git", *args])
+        return listing
+
+    real = land_pr._real_files([], git)
+    with pytest.raises(land_pr.LandError, match=r"check 9: .*'FORK_PIN'"):
+        land_pr._card_paths("### Owned files\n- `FORK_PIN`\n", real)
+
+
+def test_an_unreadable_tree_refuses_check_9_end_to_end_1939():
+    gh, recorded = _scope(["FORK_PIN"], card="### Owned files\n- `LICENSE`\n")
+
+    def git(args):
+        if args[0] == "ls-tree":
+            raise land_pr.subprocess.CalledProcessError(128, ["git", *args])  # e.g. no origin/main ref
+        return recorded(args)
+
+    with pytest.raises(land_pr.LandError, match=r"check 9: could not list origin/main's files"):
+        _run(1218, gh, git)
+    assert not _merged(gh)
+
+
+def test_extensionless_names_do_not_weaken_a_negation_1939():
+    """An Owned line that negates still refuses. In an amendment, "- Do not touch `FORK_PIN`" keeps
+    excluding the list after it, as it did when `FORK_PIN` was no path. Revert-proof: reading that
+    bullet with `real` turns it into a one-item exclusion and admits `src/b.py`."""
+    real, _git = _tree_real()
+    with pytest.raises(land_pr.LandError, match=r"check 9: an Owned line negates"):
+        land_pr._card_paths("### Owned files\n- `scripts/a.py` (never touch `FORK_PIN`)\n", real)
+    amendment = "**Card amendment (T):** also edit `src/a.py`.\n\n- Do not touch `FORK_PIN`\n- `src/b.py`\n"
+    assert land_pr._amendment_paths(amendment, 1939, real) == ["src/a.py"]
+    assert land_pr._amendment_paths("**Card amendment (T):** also edit `FORK_PIN`.\n", 1939, real) == ["FORK_PIN"]
+
+
 # --- Lesson #1877: checks 10 (red main) and 11 (stale base) ---------------------------------------
 # 3af31061 squash-merged #1698, whose required checks ran on 10-11 21:25Z on the merge ref
 # `Merge b2540a96 into e6bd0b6d`. X4-a (#1819, 10-12) added the retirement-ledger row for the
