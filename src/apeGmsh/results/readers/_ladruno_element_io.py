@@ -657,7 +657,8 @@ def _gp_param_for(
 # (NoIntegrationRule) for these buckets, so it cannot serve as the
 # catalog's ``int_rule`` key — the BLOCK WIDTH picks the layout instead.
 #
-# #1969 widened this seam in three places, each a silent empty answer:
+# Three more places on this seam would otherwise answer with an empty
+# Gauss slab:
 #
 # * The ON_ELEMENTS token is the keyword the deck asked for, so the same
 #   response lands under ``stress`` or ``stresses``. The catalog keys only
@@ -665,12 +666,12 @@ def _gp_param_for(
 #   (``stresses`` → ``stress``, ``axialForce`` → ``axial_force``) before
 #   the lookup.
 # * A Truss ``axialForce`` bucket names its one column (``N``) but writes
-#   it as an ELEMENT-level block, so it reached only the line stations.
-#   The catalog says this record is a one-Gauss-point ``axial_force``; a
-#   named element-level block is expanded the same way when, and only
-#   when, its own labels canonicalise to the catalog layout exactly.
+#   it as an ELEMENT-level block, which the Gauss level skips. The catalog
+#   says this record is a one-Gauss-point ``axial_force``; a named
+#   element-level block is expanded the same way when, and only when, its
+#   own labels canonicalise to the catalog layout exactly.
 # * These elements answer no ``integrationPoints`` response, so the file
-#   has no ``QUADRATURE/GP_PARAM`` and every GP came back with no natural
+#   has no ``QUADRATURE/GP_PARAM`` and the GPs would have no natural
 #   coordinates (``(n, 0)``). A catalog-resolved bucket carries the
 #   catalog's ``natural_coords``; the file's own GP_PARAM still wins.
 
@@ -1037,7 +1038,7 @@ def read_gauss_slab(
             data = read_hyperslab(bucket["DATA"], t_idx, rows, hit_cols)
             # The file's own GP coordinates win. An element answering no
             # ``integrationPoints`` leaves none, and then a catalog-read
-            # bucket places its points by the catalog's rule (#1969).
+            # bucket places its points by the catalog's rule.
             gp_param = _gp_param_for(model_elements, key)
             if gp_param is None and fit is not None:
                 gp_param = fit.natural_coords
