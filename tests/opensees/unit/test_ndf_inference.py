@@ -223,3 +223,161 @@ def test_adaptive_guard_ignores_non_adaptive_elements():
     validate_adaptive_element_endpoints(
         fem, elements, ndm=3, inferred={20: 6}, envelope_ndf=3,
     )
+
+
+# ───────────── columnar fan-out path (#1922, ADR 0100 lever 1) ──────────────
+# infer_node_ndf reads node ids from the PGElementFanout conn arrays, never
+# from per-element tuples. A homogeneous PG yields an int64[N, k] conn; a PG
+# whose groups differ in node count yields an object array of per-row arrays
+# (the mixed-arity route). Both must give the reference core's map.
+
+def _reference_map(pg_groups, specs, ndm):
+    """The map _infer_ndf_from_incidence gives for the same incidence."""
+    node_to_classes: dict = {}
+    for spec in specs:
+        for group in pg_groups[spec.pg]:
+            for _eid, conn in group:
+                for n in conn:
+                    node_to_classes.setdefault(n, []).append(
+                        type(spec).__name__)
+    return _infer_ndf_from_incidence(node_to_classes, ndm)
+
+
+def test_columnar_mixed_arity_class_matches_reference_core():
+    pg_groups = {
+        # one class, two node counts in one PG -> object-dtype conn
+        "Frame": [[(1, (1, 2)), (2, (2, 3))], [(3, (3, 4, 5))],
+                  [(4, (5, 6))]],
+        "Solid": [[(5, (10, 11, 12, 13, 14, 15, 16, 17))]],
+        "Truss": [[(6, (6, 7))]],          # 6 adapts to the beam; 7 is 3
+        "Spring": [[(7, (17, 30))]],       # adaptive: 30 stays absent
+    }
+    specs = [
+        _spec("elasticBeamColumn", "Frame"), _spec("stdBrick", "Solid"),
+        _spec("truss", "Truss"), _spec("ZeroLength", "Spring"),
+    ]
+    out = infer_node_ndf(_StubFem(pg_groups), specs, ndm=3)
+    assert out == _reference_map(pg_groups, specs, 3)
+    assert out == {
+        1: 6, 2: 6, 3: 6, 4: 6, 5: 6, 6: 6, 7: 3,
+        10: 3, 11: 3, 12: 3, 13: 3, 14: 3, 15: 3, 16: 3, 17: 3,
+    }
+
+
+def _up2d(pg: str = "Soil"):
+    from apeGmsh.opensees.element.solid import LadrunoUP
+    from apeGmsh.opensees.material.nd import ElasticIsotropic
+
+    return LadrunoUP(
+        pg=pg, material=ElasticIsotropic(E=30e6, nu=0.3, rho=2.0),
+        Kf=2.2e6, poro=0.4, rhoF=1.0, perm=(1e-8, 1e-8),
+    )
+
+
+def test_columnar_strict_per_slot_class_pins_map():
+    """ADR 0074 through the 2-D conn path: tri6 vertex slots take
+    ndm+1 = 3, mid-edge slots ndm = 2, mapped column by column."""
+    fem = _StubFem({"Soil": [[(1, (1, 2, 4, 5, 7, 9)),
+                              (2, (2, 3, 4, 6, 8, 7))]]})
+    out = infer_node_ndf(fem, [_up2d()], ndm=2)
+    assert out == {1: 3, 2: 3, 3: 3, 4: 3, 5: 2, 6: 2, 7: 2, 8: 2, 9: 2}
+
+
+def test_columnar_strict_mixed_arity_class_pins_map():
+    """One strict class with T3 (scalar floor 3) and tri6 (per-slot) rows
+    in one PG: the object-dtype conn must still split by node count."""
+    fem = _StubFem({"Soil": [
+        [(1, (2, 3, 4))],                        # T3 first: scalar 3
+        [(2, (1, 2, 4, 5, 7, 9))],               # tri6: per slot
+        [(3, (3, 10, 11))],                      # T3 again
+    ]})
+    out = infer_node_ndf(fem, [_up2d()], ndm=2)
+    assert out == {
+        1: 3, 2: 3, 3: 3, 4: 3, 10: 3, 11: 3, 5: 2, 7: 2, 9: 2,
+    }
+
+
+def test_columnar_strict_midedge_shared_by_t3_vertex_fails():
+    """A T3 vertex (exactly 3) on a tri6 mid-edge node (exactly 2) in the
+    same mixed-arity class is refused with the strict-slot message."""
+    fem = _StubFem({"Soil": [
+        [(1, (1, 2, 4, 5, 7, 9))],
+        [(2, (5, 20, 21))],                      # T3 grabs mid-edge 5
+    ]})
+    with pytest.raises(BridgeError, match=r"mesh node 5: .* only accepts ndf"):
+        infer_node_ndf(fem, [_up2d()], ndm=2)
+
+
+def test_columnar_unregistered_class_quotes_first_node():
+    """The refusal quotes the class's first fan-out row's first node, from
+    the first non-empty spec, as the per-tuple walk did."""
+    fem = _StubFem({
+        "Empty": [],
+        "A": [[(1, (42, 43))], [(2, (7, 8, 9))]],
+        "B": [[(3, (5, 6))]],
+    })
+    specs = [_spec("NoSuchElement", "Empty"), _spec("NoSuchElement", "A"),
+             _spec("NoSuchElement", "B")]
+    with pytest.raises(BridgeError, match=r"^node 42: element class "
+                       r"'NoSuchElement' is not in the capability registry"):
+        infer_node_ndf(fem, specs, ndm=3)
+
+
+def test_columnar_path_never_iterates_fanout_rows(monkeypatch):
+    """The fan-out's per-row iterator (which boxes one tuple per element,
+    the ~460 B/gn emit peak of #1920) is never used, on the homogeneous,
+    mixed-arity and strict per-slot routes alike."""
+    from apeGmsh.opensees._internal.build.pg_expand import PGElementFanout
+
+    def _boom(self):
+        raise AssertionError("infer_node_ndf iterated PGElementFanout rows")
+
+    monkeypatch.setattr(PGElementFanout, "__iter__", _boom)
+    monkeypatch.setattr(PGElementFanout, "__getitem__", _boom)
+    fem = _StubFem({
+        "Solid": [[(1, (1, 2, 3, 4, 5, 6, 7, 8))]],
+        "Frame": [[(2, (20, 21))], [(3, (21, 22, 23))]],
+        "Soil": [[(4, (31, 32, 34, 35, 37, 39))], [(5, (32, 33, 34))]],
+    })
+    specs = [_spec("stdBrick", "Solid"),
+             _spec("elasticBeamColumn", "Frame"), _up2d()]
+    out = infer_node_ndf(fem, specs[:2], ndm=3)
+    assert out[1] == 3 and out[23] == 6
+    out2 = infer_node_ndf(fem, specs[2:], ndm=2)
+    assert out2[31] == 3 and out2[35] == 2
+
+
+def test_columnar_class_spanning_several_specs_keeps_every_spec():
+    """One class declared on several PGs: every spec's nodes reach the
+    map, not only the last spec's."""
+    fem = _StubFem({
+        "SolidA": [[(1, (1, 2, 3, 4, 5, 6, 7, 8))]],
+        "SolidB": [[(2, (11, 12, 13, 14, 15, 16, 17, 18))]],
+        "FrameA": [[(3, (21, 22))]],
+        "FrameB": [[(4, (31, 32))]],
+    })
+    specs = [_spec("stdBrick", "SolidA"), _spec("elasticBeamColumn", "FrameA"),
+             _spec("stdBrick", "SolidB"), _spec("elasticBeamColumn", "FrameB")]
+    out = infer_node_ndf(fem, specs, ndm=3)
+    expected = {n: 3 for n in (*range(1, 9), *range(11, 19))}
+    expected.update({21: 6, 22: 6, 31: 6, 32: 6})
+    assert out == expected
+
+
+def test_columnar_node_pair_spec_contributes_its_endpoints():
+    """A pg=None node-pair spec of a non-adaptive class takes the columnar
+    path (a 1-row fan-out) and its two endpoints get the class floor."""
+    pair = type("elasticBeamColumn", (), {"pg": None, "nodes": (50, 51)})()
+    fem = _StubFem({"Solid": [[(1, (1, 2, 3, 4, 5, 6, 7, 8))]]})
+    out = infer_node_ndf(fem, [_spec("stdBrick", "Solid"), pair], ndm=3)
+    expected = {n: 3 for n in range(1, 9)}
+    expected.update({50: 6, 51: 6})
+    assert out == expected
+
+
+def test_columnar_empty_class_is_skipped():
+    """A class whose specs fan out to no rows is never probed, so even an
+    unregistered one does not raise."""
+    fem = _StubFem({"Empty": [], "Solid": [[(1, (1, 2, 3, 4, 5, 6, 7, 8))]]})
+    specs = [_spec("NoSuchElement", "Empty"), _spec("stdBrick", "Solid")]
+    assert infer_node_ndf(fem, specs, ndm=3) == {n: 3 for n in range(1, 9)}
