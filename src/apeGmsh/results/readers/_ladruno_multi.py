@@ -213,7 +213,7 @@ class LadrunoMultiPartitionReader:
         refused. The name exposed to callers is the first non-empty
         part's (see :meth:`stages`).
 
-        Mode stages (#1946) are paired by id, not by position: a part
+        Mode stages are paired by id, not by position: a part
         whose process held no node writes no modal group, so it lists the
         host stages only. Every part that does list modes must list the
         same ones with the same eigenvalues.
@@ -318,7 +318,7 @@ class LadrunoMultiPartitionReader:
     def stages(self) -> list[StageInfo]:
         # Step counts come from a part that holds the stage's results:
         # partition 0 may be an EMPTY_PARTITION with no TIME axis.
-        # Mode stages (#1946) come from a part that recorded them; an
+        # Mode stages come from a part that recorded them; an
         # EMPTY_PARTITION part lists its host stages only.
         listing = next(
             (r for r in self._readers

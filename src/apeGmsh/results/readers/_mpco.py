@@ -85,7 +85,7 @@ class MPCOReader:
         self._stage_cache: Optional[list[StageInfo]] = None
         # MPCO: each apeGmsh stage_id maps to one MPCO group name
         self._stage_to_mpco: dict[str, str] = {}
-        # #1946: mode stage id -> (host MODEL_STAGE group, its ModeEntry).
+        # Mode stage id -> (host MODEL_STAGE group, its ModeEntry).
         # Mode stages are not MODEL_STAGE groups, so they never enter
         # ``_stage_to_mpco``; reads branch on this map first.
         self._mode_refs: dict[str, tuple[str, _mnodal.ModeEntry]] = {}
@@ -174,7 +174,7 @@ class MPCOReader:
                 f"attach_stage_names: {len(names)} names for "
                 f"{len(hosts)} MODEL_STAGE groups in {self._path.name}."
             )
-        # Mode stages (#1946) keep their own names: they are not program
+        # Mode stages keep their own names: they are not program
         # stages, and the pairing is positional over the hosts only.
         new_name = {s.id: str(n) for s, n in zip(hosts, names)}
         self._stage_cache = [
@@ -215,9 +215,9 @@ class MPCOReader:
                 )
             )
         self._host_ids = [h.id for h in hosts]
-        # #1946: each recorded mode is its own kind="mode" stage, listed
-        # right after the MODEL_STAGE that holds it (the layout
-        # ``DomainCapture.capture_modes`` writes).
+        # Each recorded mode is its own kind="mode" stage, listed
+        # right after the MODEL_STAGE that holds it (the layout of a
+        # native results file).
         modes_after: dict[int, list[StageInfo]] = {}
         for h, sid, mname, entry in _mnodal.mode_stage_layout(
             self._host_ids, names, host_sets,
@@ -257,7 +257,7 @@ class MPCOReader:
         for result_name in on_nodes:
             if _mtr.is_modal_result_name(result_name):
                 # Modal groups record one STEP per eigen solution, not on
-                # the stage cadence; they are read as mode stages (#1946).
+                # the stage cadence; they are read as mode stages.
                 continue
             data_grp = _child(on_nodes[result_name], "DATA")
             if data_grp is None:
@@ -658,7 +658,7 @@ class MPCOReader:
         self, stage_id: str, component: str,
         node_ids: Optional[ndarray], time: ndarray, t_idx: ndarray,
     ) -> NodeSlab:
-        """One mode's shape as a single-station node slab (#1946)."""
+        """One mode's shape as a single-station node slab."""
         host, entry = self._mode_refs[stage_id]
         on_nodes = _child(self._h5[host], "RESULTS/ON_NODES")
         got = (

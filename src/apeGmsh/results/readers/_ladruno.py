@@ -88,7 +88,7 @@ def _stage_sort_key(name: str) -> "tuple[int, str]":
 # that asks for ``modesOfVibration`` to ``KIND=eigen`` (it overwrites the
 # ``-kind`` option, default ``static``), so a gravity stage recorded beside
 # modes says ``eigen`` too. The stage keeps its steps as a ``static`` stage
-# and each recorded mode becomes its own ``kind="mode"`` stage (#1946).
+# and each recorded mode becomes its own ``kind="mode"`` stage.
 _KIND_MAP = {"static": "static", "transient": "transient", "eigen": "static"}
 
 
@@ -151,7 +151,7 @@ class LadrunoReader:
         self._validate_identity()
         self._stage_cache: Optional[list[StageInfo]] = None
         self._stage_to_grp: dict[str, str] = {}
-        # #1946: mode stage id -> (host MODEL_STAGE group, its ModeEntry).
+        # Mode stage id -> (host MODEL_STAGE group, its ModeEntry).
         # Mode stages are not MODEL_STAGE groups, so they stay out of
         # ``_stage_to_grp`` (which lists the host stages, ``stage_<i>``).
         self._mode_refs: dict[str, tuple[str, _mnodal.ModeEntry]] = {}
@@ -253,9 +253,9 @@ class LadrunoReader:
                     on_nodes, source=f"{self._path.name} {name}",
                 )
             )
-        # #1946: each recorded mode is its own kind="mode" stage, listed
-        # right after the MODEL_STAGE that holds it (the layout
-        # ``DomainCapture.capture_modes`` writes).
+        # Each recorded mode is its own kind="mode" stage, listed
+        # right after the MODEL_STAGE that holds it (the layout of a
+        # native results file).
         modes_after: dict[int, list[StageInfo]] = {}
         for h, sid, mname, entry in _mnodal.mode_stage_layout(
             [s.id for s in hosts], names, host_sets,
@@ -276,7 +276,7 @@ class LadrunoReader:
         return list(out)
 
     def _refuse_on_mode(self, stage_id: str, what: str) -> None:
-        """Fail loud on a non-nodal read of a mode stage (#1946)."""
+        """Fail loud on a non-nodal read of a mode stage."""
         if self._stage_cache is None:
             self.stages()
         if stage_id in self._mode_refs:

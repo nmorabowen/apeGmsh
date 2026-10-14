@@ -286,7 +286,7 @@ def _bind_stage_names(
     program = [str(s.name) for s in model.stages()]
     if not program:
         return
-    # Mode stages (#1946) are read out of a MODEL_STAGE's modal groups;
+    # Mode stages are read out of a MODEL_STAGE's modal groups;
     # they are not program stages and never take a program name.
     capture = [s for s in reader.stages() if s.kind != "mode"]
     if len(capture) > len(program):

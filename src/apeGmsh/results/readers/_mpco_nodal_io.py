@@ -277,7 +277,7 @@ def read_nodal_bucket_slab(
 
 
 # =====================================================================
-# Modes of vibration — ``ON_NODES/MODES_OF_VIBRATION(U|R)`` (#1946)
+# Modes of vibration — ``ON_NODES/MODES_OF_VIBRATION(U|R)``
 # =====================================================================
 #
 # Both the MPCO recorder and the fork's Ladruno recorder write the same
@@ -300,7 +300,7 @@ class ModeEntry:
 
     step_key: str          # "STEP_<s>" under the modal group's DATA
     mode_key: str          # "MODE_<k>" (k 0-based)
-    mode_index: int        # 1-based, the ``capture_modes`` convention
+    mode_index: int        # 1-based, as in a native results file
     eigenvalue: float      # LAMBDA = omega^2
     frequency_hz: float
     period_s: float
@@ -330,8 +330,7 @@ def eigen_scalars(
 ) -> "tuple[float, float]":
     """``(frequency_hz, period_s)`` from an eigenvalue.
 
-    The ``DomainCapture.capture_modes`` / ``ParallelModalResult.to_native``
-    rule: a non-positive eigenvalue (a rigid-body mechanism or an
+    The ``ParallelModalResult.to_native`` rule: a non-positive eigenvalue (a rigid-body mechanism or an
     unconverged eigensolve) warns and reads as 0 Hz / 0 s rather than
     passing as a valid mode.
     """
@@ -473,7 +472,7 @@ def mode_stage_layout(
 
     Ids are ``<host_id>_mode_<k>``, or ``<host_id>_step_<s>_mode_<k>``
     when the host holds more than one modal set. Names are ``mode_<k>``
-    (the ``capture_modes`` names) when the whole file holds one modal
+    (the names a native results file uses) when the whole file holds one modal
     set, else ``<host name>/STEP_<s>/mode_<k>`` so every name is unique.
     """
     n_sets = sum(len(sets) for sets in host_sets)

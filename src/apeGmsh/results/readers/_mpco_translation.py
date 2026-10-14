@@ -83,8 +83,8 @@ _NODAL_RESULT_NAME_MAP: dict[str, _Mapping] = {
 # :data:`_NODAL_RESULT_NAME_MAP`: a mode shape is not a displacement history,
 # and a host stage that also records ``DISPLACEMENT`` must never resolve
 # ``displacement_x`` to an eigenvector column. The readers expose each mode
-# as its own ``kind="mode"`` stage instead (#1946), the layout
-# ``DomainCapture.capture_modes`` writes.
+# as its own ``kind="mode"`` stage instead, the layout a native results
+# file holds (``ParallelModalResult.to_native``).
 _MODAL_RESULT_NAME_MAP: dict[str, str] = {
     "MODES_OF_VIBRATION(U)": "displacement",
     "MODES_OF_VIBRATION(R)": "rotation",
