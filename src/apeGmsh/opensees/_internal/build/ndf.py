@@ -218,6 +218,37 @@ def _infer_ndf_from_incidence(
     return result
 
 
+def _conn_width_blocks(conn: np.ndarray) -> "list[np.ndarray]":
+    """Split a fan-out ``conn`` into rectangular ``int64[N, k]`` blocks.
+
+    A homogeneous fan-out (``int64[N, k]``) comes back as is, with no
+    copy.  A mixed-npe fan-out (an object array of per-row int64 arrays,
+    see :class:`~.pg_expand.PGElementFanout`) is stacked into one block
+    per width, so a mixed-arity class still splits by node count.  Row
+    order across widths is not kept; callers only take node sets.
+    """
+    if conn.ndim == 2:
+        return [conn]
+    by_width: dict[int, list[np.ndarray]] = {}
+    for row in conn:
+        by_width.setdefault(len(row), []).append(row)
+    return [
+        np.asarray(np.stack(rows), dtype=np.int64)
+        for rows in by_width.values()
+    ]
+
+
+def _unique_node_ids(arrays: "Sequence[np.ndarray]") -> np.ndarray:
+    """Sorted unique ``int64`` node ids over ``arrays``.
+
+    Each block is uniqued before the union, so the transient is one
+    block's flattened copy rather than the whole class's.
+    """
+    return np.unique(np.concatenate([
+        np.unique(np.asarray(a, dtype=np.int64)) for a in arrays
+    ]))
+
+
 def infer_node_ndf(
     fem: "FEMData", elements: "Iterable[Element]", ndm: int,
 ) -> "dict[int, int]":
@@ -259,26 +290,38 @@ def infer_node_ndf(
     )
 
     # ADR 0049: a node-pair spec (pg=None) contributes its two endpoints
-    # via expand_spec_to_elements.  Inert for correctness on the adaptive
-    # zeroLength family (skipped below, mirroring the reference core), so
-    # a decoupled ground stays absent from the inferred map and remains
-    # ops.ndf-eligible; routed only to avoid an expand_pg_to_elements(None)
-    # whole-mesh fan-out.
-    class_chunks: dict[str, list[tuple[int, ...]]] = {}
+    # via expand_spec_to_elements (a 1-row PGElementFanout).  Inert for
+    # correctness on the adaptive zeroLength family (skipped below,
+    # mirroring the reference core), so a decoupled ground stays absent
+    # from the inferred map and remains ops.ndf-eligible; routed only to
+    # avoid an expand_pg_to_elements(None) whole-mesh fan-out.
+    #
+    # #1922 (ADR 0100 lever 1): keep each fan-out's connectivity as
+    # ``int64[N, k]`` blocks, never as per-element tuples.  The tuples,
+    # plus the fromiter flatten over them, set the process emit peak
+    # (about 460 B per global node).  ``first_tag`` holds the node the
+    # unregistered-class refusal quotes: the first node of the class's
+    # first non-empty fan-out.
+    class_blocks: dict[str, list[np.ndarray]] = {}
+    first_tag: dict[str, int] = {}
     for spec in elements:
-        chunks = class_chunks.setdefault(type(spec).__name__, [])
-        for _eid, node_tags in expand_spec_to_elements(fem, spec):
-            chunks.append(node_tags)
+        cls_name = type(spec).__name__
+        blocks = class_blocks.setdefault(cls_name, [])
+        fanout = expand_spec_to_elements(fem, spec)
+        if not len(fanout):
+            continue
+        first_tag.setdefault(cls_name, int(fanout.conn[0][0]))
+        blocks.extend(_conn_width_blocks(fanout.conn))
 
     # One registry probe + one unique-node pass per class.
     structural: list[tuple[str, "frozenset[int]", int, np.ndarray]] = []
-    for cls, chunks in class_chunks.items():
-        if not chunks:
+    for cls, blocks in class_blocks.items():
+        if not blocks:
             continue
         ndf_ok = element_class_ndf_ok(cls)
         fl = element_required_floor(cls, ndm)
         if ndf_ok is None or fl is None:
-            tag = int(chunks[0][0])
+            tag = first_tag[cls]
             raise BridgeError(
                 f"node {tag}: element class {cls!r} is not in the "
                 f"capability registry, so its per-node ndf cannot be "
@@ -290,30 +333,29 @@ def infer_node_ndf(
         # here; adaptive-only nodes stay absent from the result.
         if ndf_ok == _ADAPTIVE_NDF_OK:
             continue
-        # ADR 0074: split a strict per-slot class's chunks into
-        # slot-floor groups; shapes without a slot map take the scalar
-        # floor.  Strict classes validate against {floor} exactly.
+        # ADR 0074: split a strict per-slot class's blocks into
+        # slot-floor groups, column by column; widths without a slot map
+        # take the scalar floor.  Strict classes validate against
+        # {floor} exactly.
         strict = element_ndf_strict(cls)
-        scalar_conns: list[tuple[int, ...]] = []
-        slot_ids: dict[int, list[int]] = {}
+        scalar_blocks: list[np.ndarray] = []
+        slot_cols: dict[int, list[np.ndarray]] = {}
         if strict:
-            for conn in chunks:
-                slot_floors = element_ndf_slot_floors(cls, len(conn))
+            for block in blocks:
+                slot_floors = element_ndf_slot_floors(cls, block.shape[1])
                 if slot_floors is None:
-                    scalar_conns.append(conn)
+                    scalar_blocks.append(block)
                     continue
-                for n, f in zip(conn, slot_floors):
-                    slot_ids.setdefault(int(f), []).append(int(n))
+                for j, f in enumerate(slot_floors):
+                    slot_cols.setdefault(int(f), []).append(block[:, j])
         else:
-            scalar_conns = chunks
-        if scalar_conns:
-            ids = np.unique(np.fromiter(
-                (n for conn in scalar_conns for n in conn), dtype=np.int64,
-            ))
+            scalar_blocks = blocks
+        if scalar_blocks:
+            ids = _unique_node_ids(scalar_blocks)
             ok_set = frozenset({int(fl)}) if strict else ndf_ok
             structural.append((cls, ok_set, int(fl), ids))
-        for f, id_list in sorted(slot_ids.items()):
-            ids = np.unique(np.asarray(id_list, dtype=np.int64))
+        for f, cols in sorted(slot_cols.items()):
+            ids = _unique_node_ids(cols)
             structural.append((cls, frozenset({int(f)}), int(f), ids))
 
     if not structural:
