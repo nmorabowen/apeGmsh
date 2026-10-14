@@ -124,10 +124,17 @@ def quirk_row(quirks, rule: str, waivers: int, owner: str, review: str) -> list[
 def build(root: Path, existing: str, use_git: bool) -> str:
     quirks = _load_quirks()
     lines = existing.splitlines()
-    header = next(i for i, ln in enumerate(lines) if ln.startswith("| Gate "))
+    header = next((i for i, ln in enumerate(lines) if ln.startswith("| Gate ")), None)
+    if header is None:
+        raise ValueError("gates.md has no table header line starting with '| Gate '; restore it")
     sep = header + 1
     table_end = next((i for i in range(sep + 1, len(lines)) if not lines[i].startswith("|")), len(lines))
-    body = lines[sep + 1 : table_end]
+    body = []
+    seen: set[str] = set()
+    for ln in lines[sep + 1 : table_end]:  # a duplicated row keeps its first occurrence
+        if _cells(ln)[0] not in seen:
+            seen.add(_cells(ln)[0])
+            body.append(ln)
     old = {_cells(ln)[0]: _cells(ln) for ln in body}
     nxt = re.search(r"Next review:\s*(\d{4}-\d{2}-\d{2})", existing)
     default_review = nxt.group(1) if nxt else "?"
@@ -196,11 +203,20 @@ def main(argv: list[str] | None = None) -> int:
     path = ROOT / GATES
     existing = path.read_text(encoding="utf-8")
     if not args.check:
-        path.write_text(build(ROOT, existing, use_git=True), encoding="utf-8", newline="\n")
+        try:
+            text = build(ROOT, existing, use_git=True)
+        except ValueError as err:
+            print(f"error: {err}")
+            return 1
+        path.write_text(text, encoding="utf-8", newline="\n")
         print(f"wrote {GATES}")
         return 0
     have = _compare_form(existing)
-    want = _compare_form(build(ROOT, existing, use_git=False))
+    try:
+        want = _compare_form(build(ROOT, existing, use_git=False))
+    except ValueError as err:
+        print(f"error: {err}")
+        return 1
     have_keys, want_keys = [r[0] for r in have], [r[0] for r in want]
     dups = [k for k in dict.fromkeys(have_keys) if have_keys.count(k) > 1]
     if have == want and not dups:

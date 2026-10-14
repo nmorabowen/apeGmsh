@@ -115,3 +115,28 @@ def test_ratchet_row_for_deleted_file_fails_check(tmp_path, monkeypatch, capsys)
     lines.insert(i, stale)
     assert _check_text(tmp_path, monkeypatch, lines) == 1
     assert "stale row: ratchet `scripts/quirks_deleted_long_ago.txt`" in capsys.readouterr().out
+
+
+def test_regenerate_repairs_duplicated_lock_row(tmp_path, monkeypatch, capsys):
+    lines = _lines()
+    i = next(n for n, ln in enumerate(lines) if ln.startswith("| lock `"))
+    lines.insert(i, lines[i])
+    fake = tmp_path / "gates.md"
+    fake.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    monkeypatch.setattr(gates_registry, "GATES", fake)
+    monkeypatch.setattr(gates_registry, "ROOT", ROOT)
+    assert gates_registry.main([]) == 0
+    assert gates_registry.main(["--check"]) == 0, capsys.readouterr().out
+    assert fake.read_text(encoding="utf-8").count(lines[i]) == 1
+
+
+def test_renamed_header_cell_is_a_clear_error(tmp_path, monkeypatch, capsys):
+    lines = _lines()
+    i = next(n for n, ln in enumerate(lines) if ln.startswith("| Gate "))
+    lines[i] = lines[i].replace("| Gate ", "| Check ", 1)
+    fake = tmp_path / "gates.md"
+    fake.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    monkeypatch.setattr(gates_registry, "GATES", fake)
+    for argv in (["--check"], []):
+        assert gates_registry.main(argv) == 1
+        assert "table header" in capsys.readouterr().out
