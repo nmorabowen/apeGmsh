@@ -12,6 +12,13 @@
 // The Qt controller this mirrors is src/apeGmsh/viewers/core/_clip_planes.py
 // (read-only context; nothing of it is imported). One deliberate difference:
 // a zero normal is refused here, where Qt falls back to +X.
+//
+// V4e2 (#1903, ADR 0083 S2): the gizmo's own events. Its translate drag is
+// `setClipOffset`, one per move; its rotate is `setClipPose`, one event that
+// sets the normal and the offset together (Qt `set_pose`), so a rotate never
+// shows a frame with the new normal and the old offset. The footer's "Show
+// plane gizmos" and each plane's eye decide which planes get one
+// (`gizmoPlanes`).
 
 import type { ClipPlane, ClipState, Event } from "./types.ts";
 
@@ -20,10 +27,10 @@ export type Vec3 = readonly [number, number, number];
 /** The most planes that may cut at once: the WebGL/OpenGL guaranteed minimum of user clip distances (ADR 0083 C-LIMIT). */
 export const MAX_ACTIVE_PLANES = 6;
 
-export const initialClip: ClipState = { planes: [], applyCuts: true, seq: 0, notice: null };
+export const initialClip: ClipState = { planes: [], applyCuts: true, showGizmos: true, seq: 0, notice: null };
 
 /** The clip events, the reducer's own slice of the event union. */
-export type ClipEvent = Extract<Event, { type: "addClipPlane" | "removeClipPlane" | "setClipActive" | "setClipFlipped" | "setClipOffset" | "setClipNormal" | "setApplyCuts" }>;
+export type ClipEvent = Extract<Event, { type: "addClipPlane" | "removeClipPlane" | "setClipActive" | "setClipFlipped" | "setClipOffset" | "setClipNormal" | "setApplyCuts" | "setClipPose" | "setShowGizmos" | "setClipGizmo" }>;
 
 export const LIMIT_NOTICE = `${MAX_ACTIVE_PLANES} section planes are cutting already, the most the renderer guarantees: deactivate one first.`;
 
@@ -39,6 +46,11 @@ export function unitNormal(v: readonly number[]): Vec3 | null {
 const dot = (a: readonly number[], b: readonly number[]): number => a[0]! * b[0]! + a[1]! * b[1]! + a[2]! * b[2]!;
 
 export const activeCount = (c: ClipState): number => c.planes.filter((p) => p.active).length;
+
+/** The planes whose gizmo is drawn: each with its eye open while "Show plane gizmos" is on, active or not. */
+export function gizmoPlanes(c: ClipState): ClipPlane[] {
+  return c.showGizmos ? c.planes.filter((p) => p.gizmo) : [];
+}
 
 /** The orientation chip a normal lights: an axis when it is exactly +X, +Y or +Z, else custom. */
 export function orientationOf(normal: Vec3): "x" | "y" | "z" | "custom" {
@@ -139,7 +151,7 @@ export function reduceClip(c: ClipState, e: ClipEvent, center: Vec3): ClipState 
       if (!n) return refuse(c, `A section plane needs a direction: ${JSON.stringify(e.normal)} has none.`);
       const active = activeCount(c) < MAX_ACTIVE_PLANES;
       const seq = c.seq + 1;
-      const plane: ClipPlane = { id: `plane-${seq}`, normal: n, offset: dot(n, center), flipped: false, active };
+      const plane: ClipPlane = { id: `plane-${seq}`, normal: n, offset: dot(n, center), flipped: false, active, gizmo: true };
       // Created inactive past the limit: the plane exists, ready to swap in for one of the six (the Qt behaviour).
       const next = accept(c, [...c.planes, plane], { seq });
       return active ? next : { ...next, notice: LIMIT_NOTICE };
@@ -176,6 +188,26 @@ export function reduceClip(c: ClipState, e: ClipEvent, center: Vec3): ClipState 
     case "setApplyCuts":
       if (typeof e.on !== "boolean") throw new RangeError(`setApplyCuts: ${JSON.stringify(e.on)}`);
       return c.applyCuts === e.on ? c : { ...c, applyCuts: e.on, notice: null };
+    case "setClipPose": {
+      const p = planeOf(c, e.id, "setClipPose");
+      const raw = e.normal;
+      const n = unitNormal(raw);
+      if (!n) return refuse(c, `A section plane needs a direction: ${JSON.stringify(raw)} has none.`);
+      if (typeof e.offset !== "number" || !Number.isFinite(e.offset)) return refuse(c, `A section plane offset must be a finite number; ${String(e.offset)} is not.`);
+      // `normal · p = offset` scaled to the unit normal: the same plane, whatever length the normal came in.
+      const offset = e.offset / Math.hypot(raw[0]!, raw[1]!, raw[2]!);
+      if (!Number.isFinite(offset)) return refuse(c, `A section plane offset must be a finite number; ${String(offset)} is not.`);
+      const same = p.normal.every((x, k) => x === n[k]) && p.offset === offset;
+      return same && c.notice === null ? c : replace(c, e.id, { normal: n, offset });
+    }
+    case "setShowGizmos":
+      if (typeof e.on !== "boolean") throw new RangeError(`setShowGizmos: ${JSON.stringify(e.on)}`);
+      return c.showGizmos === e.on ? c : { ...c, showGizmos: e.on, notice: null };
+    case "setClipGizmo": {
+      if (typeof e.visible !== "boolean") throw new RangeError(`setClipGizmo: ${JSON.stringify(e.visible)}`);
+      const p = planeOf(c, e.id, "setClipGizmo");
+      return p.gizmo === e.visible ? c : replace(c, e.id, { gizmo: e.visible });
+    }
     default: {
       const unknown: never = e;
       throw new Error(`reduceClip: unknown event ${JSON.stringify(unknown)}`);

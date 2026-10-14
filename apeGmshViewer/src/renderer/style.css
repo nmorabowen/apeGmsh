@@ -281,11 +281,11 @@ code { font-family: var(--mono); }
 .plane-label { display: flex; align-items: center; gap: 4px; min-width: 76px; font-weight: 600; cursor: pointer; }
 .plane-chips { flex: 1; margin: 0; }
 .plane-chips button { padding: 2px 4px; }
-.plane-flip, .plane-delete {
+.plane-flip, .plane-eye, .plane-delete {
   padding: 2px 8px; border-radius: 5px; cursor: pointer;
   font: 600 12px var(--font); color: var(--text); background: var(--hover); border: 1px solid var(--line);
 }
-.plane-flip.on { color: var(--accent-ink); background: var(--accent); border-color: var(--accent); }
+.plane-flip.on, .plane-eye.on { color: var(--accent-ink); background: var(--accent); border-color: var(--accent); }
 .plane-normal, .plane-offset { display: flex; align-items: center; gap: 6px; margin-top: 5px; }
 .plane-slider { flex: 1; min-width: 0; accent-color: var(--accent); }
 .plane-number {

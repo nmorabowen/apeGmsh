@@ -4,7 +4,8 @@
 // (X / Y / Z / Custom, Custom showing the three normal fields), flip and
 // delete; an offset slider over the reference mesh's extent along the normal
 // beside an unclamped numeric field; and the footer's "Apply cuts" toggle
-// with the slice-2 and slice-3 placeholders, disabled. It dispatches events
+// with "Show plane gizmos" (live since V4e2, #1903, with each row's gizmo
+// eye) and the slice-3 placeholder, disabled. It dispatches events
 // and reads selectors; what it needs of the viewport (the slider's box, the
 // view direction) app.ts hands it as functions.
 
@@ -27,6 +28,8 @@ export interface PlaneRow {
   label: string;
   active: boolean;
   flipped: boolean;
+  /** V4e2: the row's gizmo eye is open */
+  gizmo: boolean;
   orientation: "x" | "y" | "z" | "custom";
   normal: Vec3;
   /** the offset itself (the numeric field; never clamped) */
@@ -50,6 +53,7 @@ export function planeRows(planes: readonly ClipPlane[], box: Box | null): PlaneR
       label: `Plane ${p.id.replace(/^plane-/, "")}`,
       active: p.active,
       flipped: p.flipped,
+      gizmo: p.gizmo,
       orientation: orientationOf(p.normal),
       normal: p.normal,
       offset: p.offset,
@@ -79,8 +83,9 @@ export function mountPlanes(store: Store, host: PlanesHost): () => void {
     JSON.stringify([
       s.mesh === null,
       s.clip.applyCuts,
+      s.clip.showGizmos,
       s.clip.notice,
-      s.clip.planes.map((p) => [p.id, p.active, p.flipped, p.normal, expanded.has(p.id)]),
+      s.clip.planes.map((p) => [p.id, p.active, p.flipped, p.gizmo, p.normal, expanded.has(p.id)]),
       box,
     ]);
 
@@ -133,9 +138,9 @@ export function mountPlanes(store: Store, host: PlanesHost): () => void {
     const cuts = el("button", s.clip.applyCuts ? "on" : "", "Apply cuts");
     cuts.title = "cut with every active plane, or show the whole model and keep the planes";
     on(cuts, "click", () => store.dispatch({ type: "setApplyCuts", on: !store.get().clip.applyCuts }));
-    const gizmos = el("button", undefined, "Show plane gizmos");
-    gizmos.disabled = true;
-    gizmos.title = "not yet available: the plane gizmos arrive with V4e2";
+    const gizmos = el("button", s.clip.showGizmos ? "on" : "", "Show plane gizmos");
+    gizmos.title = "draw each plane's gizmo (its eye open): drag the quad to move the plane along its normal, the arrow tip to turn it";
+    on(gizmos, "click", () => store.dispatch({ type: "setShowGizmos", on: !store.get().clip.showGizmos }));
     const face = el("button", undefined, "Contour on cut face");
     face.disabled = true;
     face.title = "not yet available: cut-face caps arrive with V4e3; a solid is cut hollow until then";
@@ -174,13 +179,16 @@ export function mountPlanes(store: Store, host: PlanesHost): () => void {
     const flip = el("button", "plane-flip" + (r.flipped ? " on" : ""), "flip");
     flip.title = "keep the other side";
     on(flip, "click", () => store.dispatch({ type: "setClipFlipped", id, flipped: !r.flipped }));
+    const eye = el("button", "plane-eye" + (r.gizmo ? " on" : ""), "gizmo");
+    eye.title = r.gizmo ? "hide this plane's gizmo" : "show this plane's gizmo";
+    on(eye, "click", () => store.dispatch({ type: "setClipGizmo", id, visible: !r.gizmo }));
     const del = el("button", "plane-delete", "×");
     del.title = "delete the plane";
     on(del, "click", () => {
       expanded.delete(id);
       store.dispatch({ type: "removeClipPlane", id });
     });
-    head.append(label, chips, flip, del);
+    head.append(label, chips, flip, eye, del);
     box.append(head);
 
     if (custom) {

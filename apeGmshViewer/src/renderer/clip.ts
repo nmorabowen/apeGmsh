@@ -56,19 +56,25 @@ export class SectionClip {
   /**
    * Put the planes on every material under `root`, every frame: what was
    * created since the last frame is cut from its first one. Returns the
-   * number of materials it newly stamped.
+   * number of materials it newly stamped. V4e2: a subtree whose root carries
+   * `userData.clipExempt` (the plane gizmos, renderer/gizmo.ts) is skipped
+   * whole, so no plane ever cuts it.
    */
   beforeRender(root: THREE.Object3D): number {
     let stamped = 0;
-    root.traverse((o) => {
+    const visit = (o: THREE.Object3D) => {
+      if (o.userData["clipExempt"] === true) return;
       const m = (o as THREE.Mesh).material as THREE.Material | THREE.Material[] | undefined;
-      if (!m) return;
-      for (const x of Array.isArray(m) ? m : [m]) {
-        if (x.clippingPlanes === this.planes) continue;
-        x.clippingPlanes = this.planes;
-        stamped++;
+      if (m) {
+        for (const x of Array.isArray(m) ? m : [m]) {
+          if (x.clippingPlanes === this.planes) continue;
+          x.clippingPlanes = this.planes;
+          stamped++;
+        }
       }
-    });
+      for (const c of o.children) visit(c);
+    };
+    visit(root);
     return stamped;
   }
 
