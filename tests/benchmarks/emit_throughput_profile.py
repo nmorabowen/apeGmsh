@@ -1217,29 +1217,36 @@ class PreBlockTracker:
     #1905 re-measure found the process emit peak there, not in a rank
     block.
 
-    A daemon thread ticks every ``poll_s``.  Each tick banks the traced
-    peak counter into the current sub-window (``build`` or
-    ``preamble``) and dumps a snapshot whenever traced-current exceeds
-    the last snapshot by ``grow``.  The last dump is therefore the one
-    nearest the peak, and the report states how near: snapshot bytes
-    over the banked true peak.  The snapshot's own transient (the
-    trace-table copy) is swallowed by a ``reset_peak`` after the
-    re-read current is banked, the same discipline as
-    ``TracedPeakTracker``.
+    The traced peak counter is never reset behind the main thread's
+    back, so the banked window peak is EXACT.  A first draft sampled
+    from a daemon thread like ``TracedPeakTracker``; its snapshot dump
+    releases the GIL, the main thread kept allocating, and the
+    ``reset_peak`` that swallowed the snapshot's own spike erased the
+    real peak with it (measured at box n=45: 398 B/gn banked at 4
+    parts, 524 at 16, same model).  So the snapshots are taken ON the
+    main thread instead, from a ``sys.setprofile`` hook that runs at
+    every Python ``return`` (a function's temporaries are all still
+    live there): when traced-current exceeds the last snapshot by
+    ``grow``, the hook banks the counter, dumps a snapshot, and resets
+    the peak.  The main thread is frozen inside the hook, so the reset
+    swallows only the snapshot's own spike.
 
-    ``finish`` runs on the main thread at the first ``partition_open``:
-    it banks the last counter reading, stops the thread and dumps the
-    open snapshot.  Everything traced at that point is resident (held
-    into the rank blocks); peak-snapshot growth above it is transient.
-    The thread stops before the first rank block opens, so it never
-    resets the peak counter that ``PhaseTracker`` reads.
+    The last dump is the one nearest the peak; the report states how
+    near (snapshot bytes over the banked peak), because a peak inside
+    one C call, or within ``grow`` of the last dump, has no snapshot.
+
+    ``finish`` runs at the first ``partition_open``: it banks the
+    counter, removes the hook, and dumps the open snapshot.  Everything
+    traced then is resident (held into the rank blocks); what the peak
+    snapshot holds above it is transient.  The hook is gone before the
+    first rank block opens, so it never touches ``PhaseTracker``'s
+    counter.
     """
 
     SUBWINDOWS = ("build", "preamble")
 
-    def __init__(self, snap_dir: str, poll_s: float, grow: float):
+    def __init__(self, snap_dir: str, grow: float):
         self.snap_dir = snap_dir
-        self.poll_s = poll_s
         self.grow = grow
         self.sub = "build"
         self.peak_by_sub = dict.fromkeys(self.SUBWINDOWS, 0)
@@ -1250,88 +1257,80 @@ class PreBlockTracker:
         self.open_snap: "str | None" = None
         self.open_cur: "int | None" = None
         self.done = False
-        self._lock = threading.Lock()
-        self._stop = threading.Event()
-        self._thread: "threading.Thread | None" = None
+        self._hooked = False
+        self._prev_profile = None
 
     def start(self) -> None:
-        self._thread = threading.Thread(
-            target=self._loop, name="preblock-tracker", daemon=True)
-        self._thread.start()
+        """Install the return hook on the calling (main) thread."""
+        self._prev_profile = sys.getprofile()
+        sys.setprofile(self._on_event)
+        self._hooked = True
 
-    def _loop(self) -> None:
-        while not self._stop.wait(self.poll_s):
-            self.tick()
+    def _unhook(self) -> None:
+        if self._hooked:
+            sys.setprofile(self._prev_profile)
+            self._hooked = False
+
+    def _on_event(self, frame, event, arg) -> None:
+        if event == "return":
+            self.check()
 
     def _bank(self, v: int) -> None:
         if v > self.peak_by_sub[self.sub]:
             self.peak_by_sub[self.sub] = v
 
-    def tick(self) -> None:
-        if not self._lock.acquire(blocking=False):
-            return  # the main thread is marking or finishing
-        try:
-            if self.done or not tracemalloc.is_tracing():
-                return
-            cur, peak = tracemalloc.get_traced_memory()
-            self._bank(peak)
-            if cur > self.best_cur * self.grow:
-                p = os.path.join(self.snap_dir, "pre_peak.tm")
-                snap = tracemalloc.take_snapshot()
-                snap.dump(p)
-                del snap
-                # The peak reading now holds the snapshot's own spike:
-                # bank the re-read CURRENT (main-thread growth during
-                # the dump), then reset.
-                self._bank(tracemalloc.get_traced_memory()[0])
-                tracemalloc.reset_peak()
-                self.best_cur = cur
-                self.peak_snap = p
-                self.peak_snap_sub = self.sub
-                self.snaps += 1
-        finally:
-            self._lock.release()
+    def check(self) -> None:
+        """Snapshot if traced-current grew by ``grow`` since the last
+        one.  Main thread only: nothing allocates while it runs."""
+        if self.done:
+            return
+        cur = tracemalloc.get_traced_memory()[0]
+        if cur <= self.best_cur * self.grow:
+            return
+        self._bank(tracemalloc.get_traced_memory()[1])
+        p = os.path.join(self.snap_dir, "pre_peak.tm")
+        snap = tracemalloc.take_snapshot()
+        snap.dump(p)
+        del snap
+        tracemalloc.reset_peak()  # only the snapshot's own spike
+        self.best_cur = cur
+        self.peak_snap = p
+        self.peak_snap_sub = self.sub
+        self.snaps += 1
 
     def mark(self, sub: str) -> None:
-        """Close the current sub-window and open ``sub`` (main thread)."""
-        with self._lock:
-            if self.done:
-                return
-            self._bank(tracemalloc.get_traced_memory()[1])
-            tracemalloc.reset_peak()
-            self.sub = sub
+        """Close the current sub-window and open ``sub``."""
+        if self.done:
+            return
+        self._bank(tracemalloc.get_traced_memory()[1])
+        tracemalloc.reset_peak()
+        self.sub = sub
 
     def finish(self) -> None:
-        """First ``partition_open``: bank, stop, dump the open snapshot."""
-        with self._lock:
-            if self.done:
-                return
-            cur, peak = tracemalloc.get_traced_memory()
-            self._bank(peak)
-            self.done = True
-            self._stop.set()
-            p = os.path.join(self.snap_dir, "pre_open.tm")
-            snap = tracemalloc.take_snapshot()
-            snap.dump(p)
-            del snap
-            tracemalloc.reset_peak()
-            self.open_snap, self.open_cur = p, cur
-            if self.peak_snap is None or cur >= self.best_cur:
-                # No tick ever caught more than the floor: the open
-                # snapshot IS the one nearest the peak.
-                self.peak_snap, self.best_cur = p, cur
-                self.peak_snap_sub = self.sub
-        if self._thread is not None:
-            self._thread.join()
+        """First ``partition_open``: bank, unhook, dump the open snapshot."""
+        if self.done:
+            return
+        self._unhook()
+        cur, peak = tracemalloc.get_traced_memory()
+        self._bank(peak)
+        self.done = True
+        p = os.path.join(self.snap_dir, "pre_open.tm")
+        snap = tracemalloc.take_snapshot()
+        snap.dump(p)
+        del snap
+        tracemalloc.reset_peak()
+        self.open_snap, self.open_cur = p, cur
+        if self.peak_snap is None or cur >= self.best_cur:
+            # No return ever caught more than the floor: the open
+            # snapshot IS the one nearest the peak.
+            self.peak_snap, self.best_cur = p, cur
+            self.peak_snap_sub = self.sub
 
     def stop(self) -> None:
-        """Stop the thread without an open snapshot (the emit raised, or
-        no rank block ever opened)."""
-        with self._lock:
-            self.done = True
-            self._stop.set()
-        if self._thread is not None:
-            self._thread.join()
+        """Unhook without an open snapshot (the emit raised, or no rank
+        block ever opened)."""
+        self._unhook()
+        self.done = True
 
     def result(self) -> dict:
         return {
@@ -1340,14 +1339,13 @@ class PreBlockTracker:
             "peak_snap_sub": self.peak_snap_sub,
             "peak_snap_cur": self.best_cur, "snaps": self.snaps,
             "open_snap": self.open_snap, "open_cur": self.open_cur,
-            "poll_s": self.poll_s, "grow": self.grow,
+            "grow": self.grow,
         }
 
 
 def emit_phased(ops, ph: dict, deck_path: str, *, stream: bool,
                 per_rank: bool, tm_frames: int, snap_dir: str,
-                attr_rank: int, pre_poll_s: float = 0.001,
-                pre_grow: float = 1.05) -> dict:
+                attr_rank: int, pre_grow: float = 1.05) -> dict:
     """Emit with per-rank phase boundaries (``--phases``).
 
     Boundaries come from wrapping, never from ``src/`` edits: the
@@ -1366,7 +1364,7 @@ def emit_phased(ops, ph: dict, deck_path: str, *, stream: bool,
     import apeGmsh.opensees.apesees as _ap
 
     trk = PhaseTracker(attr_rank, snap_dir)
-    pre = PreBlockTracker(snap_dir, pre_poll_s, pre_grow)
+    pre = PreBlockTracker(snap_dir, pre_grow)
     emitter = TclEmitter()
     if stream:
         emitter.stream_to(deck_path, per_rank=per_rank)
@@ -1464,7 +1462,7 @@ def emit_phased(ops, ph: dict, deck_path: str, *, stream: bool,
                 emitter.write_to(f)
         ph["write"] += time.perf_counter() - t
     finally:
-        pre.stop()  # before tracemalloc.stop: a tick must not race it
+        pre.stop()  # unhook even when the emit raised
         tracemalloc.stop()
         _ap.emit_owned_nodes_with_inferred_ndf = orig["nodes"]
         _ap.emit_element_spec_partitioned = orig["elem"]
@@ -1646,9 +1644,8 @@ def report_pre_block(args, pre: dict, n_global: int) -> dict:
         + f"  -> window peak {bpn(peak):.0f} B/gn")
     print(f"  peak snapshot: {snap_b / mib:.1f} MiB ({bpn(snap_b):.0f} B/gn)"
           f" taken in {pre['peak_snap_sub']} = {cov:.3f} of the window "
-          f"peak ({pre['snaps']} snapshots, poll "
-          f"{pre['poll_s'] * 1e3:.0f} ms, re-snapshot on "
-          f"x{pre['grow']:.2f} growth)")
+          f"peak ({pre['snaps']} snapshots at Python returns, "
+          f"re-snapshot on x{pre['grow']:.2f} growth)")
     print(f"  peak snapshot = transient {bpn(tr_b):.0f} B/gn (freed before "
           f"the first open) + held {bpn(held_b):.0f} B/gn; resident at "
           f"first open {bpn(res_b):.0f} B/gn = held + "
@@ -2228,8 +2225,7 @@ def main():
                          "ones where 5 ms discarded every repeat, at "
                          "small extra emit overhead). Thread-side, so it "
                          "sees excursions that rise and fall between two "
-                         "emitted lines. --phases: the same tick for the "
-                         "pre-block tracker (build + global preamble).")
+                         "emitted lines.")
     ap.add_argument("--g0a-error-bound", type=float,
                     default=G0A_ERROR_BOUND,
                     help="--mem: max |G0a(sampled) - G0a(conservative)| "
@@ -2293,8 +2289,10 @@ def main():
                          "#1920: also the pre-block window (build + "
                          "global preamble, before the first rank block): "
                          "its peak, and its transient and resident sites "
-                         "in B per global node (thread-sampled snapshot "
-                         "nearest the peak; the coverage prints).")
+                         "in B per global node (an exact counter peak; "
+                         "the snapshot nearest it is taken at a Python "
+                         "return on the main thread, and its coverage "
+                         "of the peak prints).")
     ap.add_argument("--attr-rank", type=int, default=0,
                     help="--phases: the runtime rank whose element phase "
                          "is attributed (default 0)")
@@ -2379,7 +2377,6 @@ def main():
                     ops, ph, deck, stream=args.stream,
                     per_rank=args.per_rank, tm_frames=args.tm_frames,
                     snap_dir=snap_dir, attr_rank=args.attr_rank,
-                    pre_poll_s=args.tm_poll_ms / 1000.0,
                     pre_grow=args.peak_snap_grow,
                 )
             elif instrumented:

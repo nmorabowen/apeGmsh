@@ -290,11 +290,15 @@ def test_phase_tracker_refuses_a_capture_without_a_floor(
 _MIB = 1024 * 1024
 
 
+def _a_python_return() -> None:
+    """A bare Python call: its ``return`` event fires the pre-block hook."""
+
+
 def test_pre_block_tracker_splits_transient_held_and_late(
         tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    """Drive ``PreBlockTracker`` by hand (no thread) through a known
-    pre-block history (#1920), then check ``report_pre_block`` against
-    it in bytes:
+    """Drive ``PreBlockTracker``'s return hook through a known pre-block
+    history (#1920), then check ``report_pre_block`` against it in
+    bytes:
 
     * 1 MiB allocated before the peak snapshot and held to the open:
       HELD (resident at open AND in the peak snapshot);
@@ -317,27 +321,32 @@ def test_pre_block_tracker_splits_transient_held_and_late(
     started = not tracemalloc.is_tracing()
     if started:
         tracemalloc.start(3)
+    prev_profile = sys.getprofile()
     try:
-        pre = prof.PreBlockTracker(str(tmp_path), poll_s=1.0, grow=1.05)
+        pre = prof.PreBlockTracker(str(tmp_path), grow=1.05)
         base = tracemalloc.get_traced_memory()[0]
+        pre.start()
         held = bytearray(1 * _MIB)
         transient = bytearray(4 * _MIB)
-        pre.tick()  # the peak snapshot: held + transient
+        _a_python_return()  # the hook's peak snapshot: held + transient
         del transient
-        spike = bytearray(8 * _MIB)
+        spike = bytearray(8 * _MIB)  # C allocations: no return between
         del spike
         pre.mark("preamble")
         late = bytearray(2 * _MIB)
         pre.finish()
+        unhooked = sys.getprofile() is prev_profile
         n_gn = 1024
         args = SimpleNamespace(phase_top=5)
         rec = prof.report_pre_block(args, pre.result(), n_gn)
         del held, late
     finally:
+        sys.setprofile(prev_profile)
         if started:
             tracemalloc.stop()
 
-    assert rec["captured"] and rec["snaps"] == 1
+    assert unhooked, "finish() must restore the previous profile hook"
+    assert rec["captured"] and rec["snaps"] >= 1
     assert rec["peak_snap_sub"] == "build"
     assert abs(rec["transient_b"] - 4 * _MIB) < tol, rec
     assert abs(rec["held_b"] - (1 * _MIB + base)) < tol, rec
@@ -369,7 +378,7 @@ def test_pre_block_report_says_when_nothing_was_captured(
 
     from tests.benchmarks import emit_throughput_profile as prof
 
-    pre = prof.PreBlockTracker(".", poll_s=1.0, grow=1.05)
+    pre = prof.PreBlockTracker(".", grow=1.05)
     rec = prof.report_pre_block(SimpleNamespace(phase_top=5),
                                 pre.result(), 10)
     assert rec == {"captured": False}
