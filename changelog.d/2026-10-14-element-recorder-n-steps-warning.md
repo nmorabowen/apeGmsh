@@ -6,5 +6,5 @@ records said so; an `elements`, `gauss` or `line_stations` record silently
 recorded every step. All four categories now raise the same `UserWarning`,
 once per record, on `to_tcl_commands()`, `to_python_commands()` and the live
 `begin_stage`. The message names `dt=` for a time cadence on `.out`, and
-MPCO's or Ladruno's `-T nsteps` for a step cadence. The emitted recorder
+the MPCO or fork recorder's `-T nsteps` for a step cadence. The emitted recorder
 commands are unchanged.

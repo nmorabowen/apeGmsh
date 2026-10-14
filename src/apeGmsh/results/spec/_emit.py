@@ -451,7 +451,7 @@ def _warn_n_steps_unsupported(rec: ResolvedRecorderRecord) -> None:
             f"Record {rec.name!r}: ``n_steps={rec.n_steps}`` has no "
             f"equivalent on a classic recorder, which has no step-count "
             f"option. Emitting an every-step recorder. Use ``dt=`` for a "
-            f"time cadence on ``.out``, or MPCO's or Ladruno's "
+            f"time cadence on ``.out``, or the MPCO or fork recorder's "
             f"``-T nsteps`` for a step cadence.",
             UserWarning,
             stacklevel=5,
