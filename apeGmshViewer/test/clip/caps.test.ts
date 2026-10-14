@@ -235,6 +235,20 @@ test("no data: a cut point next to a node with no data is no data on the cap, ne
   }
 });
 
+test("no data: a contour that cannot colour (off the results phases) leaves the cap no data, as the surfaces are, never 0", async () => {
+  const h = await opened();
+  h.store.dispatch({ type: "setColourBy", by: "contour" });
+  plane(h, [0, 0, -1], -2.2);
+  const v = contourView(h.store.get());
+  assert.equal(v.state, "unavailable");
+  const caps = capsNow(h);
+  const cap = caps.drawn[0]!;
+  assert.ok(cap.slice.values!.every((x) => Number.isNaN(x)), "every cut point is no data");
+  const grey = NO_DATA_RGB.map(toLinear);
+  const rgb = cap.mesh.geometry.getAttribute("color").array as Float32Array;
+  assert.ok(Array.from(rgb).every((x, i) => Math.abs(x - grey[i % 3]!) < 1e-6), "the no-data colour");
+});
+
 // ---- F-SETTLED -------------------------------------------------------------------------
 
 /** The viewport's input wiring and settle path (`wireInput`, `settleCaps`) on a receiver over the harness store. */
