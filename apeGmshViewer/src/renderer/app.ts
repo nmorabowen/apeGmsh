@@ -39,7 +39,7 @@ viewport.setStepSource(() => effects.currentStep());
 viewport.setDisplacementSource(() => effects.currentDisplacement());
 const panels = [mountHeader(store), mountBanner(store), mountLegend(store), mountInspector(store), mountEmpty(store), mountPhase(store), mountSources(store), mountWindows(store)];
 // V4e1: the section planes panel; its slider box and the view direction come from the viewport.
-panels.push(mountPlanes(store, { box: () => viewport.sliderBox(), viewNormal: () => viewport.viewNormal() }));
+panels.push(mountPlanes(store, { box: () => viewport.sliderBox(), viewNormal: () => viewport.viewNormal(), sliding: (on) => viewport.setSliding(on) }));
 window.addEventListener("beforeunload", () => {
   for (const d of panels) d();
   effects.dispose();

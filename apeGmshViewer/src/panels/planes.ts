@@ -5,11 +5,13 @@
 // delete; an offset slider over the reference mesh's extent along the normal
 // beside an unclamped numeric field; and the footer's "Apply cuts" toggle
 // with "Show plane gizmos" (live since V4e2, #1903, with each row's gizmo
-// eye) and the slice-3 placeholder, disabled. It dispatches events
-// and reads selectors; what it needs of the viewport (the slider's box, the
-// view direction) app.ts hands it as functions.
+// eye) and "Contour on cut face" (live since V4e3, #1904: a cap on each
+// cutting plane through a solid; a mesh with no volumetric cell says it gets
+// none). It dispatches events and reads selectors; what it needs of the
+// viewport (the slider's box, the view direction, a held slider) app.ts
+// hands it as functions.
 
-import { activeCount, MAX_ACTIVE_PLANES, offsetRange, orientationOf, type Box, type Vec3 } from "../state/selectors.ts";
+import { activeCount, cutFaceNote, MAX_ACTIVE_PLANES, offsetRange, orientationOf, type Box, type Vec3 } from "../state/selectors.ts";
 import type { State, Store } from "../state/store.ts";
 import type { ClipPlane } from "../state/types.ts";
 import { byId, el, listen } from "../ui/dom.ts";
@@ -20,6 +22,8 @@ export interface PlanesHost {
   box: () => Box | null;
   /** the direction the camera looks along, the "View" plane's normal */
   viewNormal: () => readonly [number, number, number];
+  /** V4e3: an offset slider is held (true) or released (false): the caps are sliced on release */
+  sliding: (on: boolean) => void;
 }
 
 /** One plane's row, as plain data (tested in Node; the DOM below shows it). */
@@ -84,6 +88,7 @@ export function mountPlanes(store: Store, host: PlanesHost): () => void {
       s.mesh === null,
       s.clip.applyCuts,
       s.clip.showGizmos,
+      s.clip.cutFace,
       s.clip.notice,
       s.clip.planes.map((p) => [p.id, p.active, p.flipped, p.gizmo, p.normal, expanded.has(p.id)]),
       box,
@@ -141,11 +146,14 @@ export function mountPlanes(store: Store, host: PlanesHost): () => void {
     const gizmos = el("button", s.clip.showGizmos ? "on" : "", "Show plane gizmos");
     gizmos.title = "draw each plane's gizmo (its eye open): drag the quad to move the plane along its normal, the arrow tip to turn it";
     on(gizmos, "click", () => store.dispatch({ type: "setShowGizmos", on: !store.get().clip.showGizmos }));
-    const face = el("button", undefined, "Contour on cut face");
-    face.disabled = true;
-    face.title = "not yet available: cut-face caps arrive with V4e3; a solid is cut hollow until then";
+    // V4e3: live. A cap on each cutting plane through a solid, carrying the contour (a flat fill without one).
+    const face = el("button", s.clip.cutFace ? "on" : "", "Contour on cut face");
+    face.title = "fill the cut of a solid with a cap carrying the contour on screen (a flat fill without one); off: the cut is hollow";
+    on(face, "click", () => store.dispatch({ type: "setCutFace", on: !store.get().clip.cutFace }));
     foot.append(cuts, gizmos, face);
     panel.append(foot);
+    const note = cutFaceNote(s);
+    if (note && s.clip.cutFace) panel.append(el("div", "legend-note planes-capnote", note));
   };
 
   const row = (r: PlaneRow): HTMLElement => {
@@ -215,6 +223,12 @@ export function mountPlanes(store: Store, host: PlanesHost): () => void {
       sl.value = String(r.slider.value);
       sl.title = "the offset across the undeformed model";
       on(sl, "input", () => store.dispatch({ type: "setClipOffset", id, offset: Number(sl.value) }));
+      // V4e3: a held slider is a drag: the caps wait for its release, never one slice per tick.
+      on(sl, "pointerdown", () => host.sliding(true));
+      on(sl, "pointerup", () => host.sliding(false));
+      on(sl, "pointercancel", () => host.sliding(false));
+      // A range input commits ("change") on release, wherever the pointer went.
+      on(sl, "change", () => host.sliding(false));
       off.append(sl);
       slider = sl;
     }
@@ -228,7 +242,7 @@ export function mountPlanes(store: Store, host: PlanesHost): () => void {
     return box;
   };
 
-  const on = (target: HTMLElement, type: "click" | "input" | "change", fn: () => void) => unlisten.push(listen(target, type, fn));
+  const on = (target: HTMLElement, type: "click" | "input" | "change" | "pointerdown" | "pointerup" | "pointercancel", fn: () => void) => unlisten.push(listen(target, type, fn));
 
   render(store.get());
   const off = store.subscribe((s) => render(s));
