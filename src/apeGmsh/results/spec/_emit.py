@@ -437,6 +437,27 @@ def to_ops_args(rec: LogicalRecorder) -> tuple:
 # Per-category emission
 # =====================================================================
 
+def _warn_n_steps_unsupported(rec: ResolvedRecorderRecord) -> None:
+    """Warn once per record that ``n_steps=`` without ``dt=`` cannot be honoured.
+
+    A classic ``.out`` / ``.xml`` recorder has no step-count option, so
+    the record is emitted as an every-step recorder. Both per-category
+    emitters call this, so every category warns the same way (#1947).
+    ``stacklevel=5`` points past this helper, the emitter generator and
+    :func:`emit_logical`, as the nodes warning did before.
+    """
+    if rec.n_steps is not None and rec.dt is None:
+        warnings.warn(
+            f"Record {rec.name!r}: ``n_steps={rec.n_steps}`` has no "
+            f"equivalent on a classic recorder, which has no step-count "
+            f"option. Emitting an every-step recorder. Use ``dt=`` for a "
+            f"time cadence on ``.out``, or MPCO's or Ladruno's "
+            f"``-T nsteps`` for a step cadence.",
+            UserWarning,
+            stacklevel=5,
+        )
+
+
 def _emit_nodes(
     rec: ResolvedRecorderRecord,
     output_dir: str,
@@ -447,15 +468,7 @@ def _emit_nodes(
     if rec.node_ids is None or rec.node_ids.size == 0:
         return
 
-    if rec.n_steps is not None and rec.dt is None:
-        warnings.warn(
-            f"Record {rec.name!r}: ``n_steps={rec.n_steps}`` is not "
-            f"directly supported by the OpenSees Tcl/Py recorder. "
-            f"Emitting as every-step. Use ``dt=`` for time-based "
-            f"cadence, or use domain capture (Phase 7) for "
-            f"step-based cadence.",
-            stacklevel=4,
-        )
+    _warn_n_steps_unsupported(rec)
 
     by_type: dict[str, list[int]] = {}    # ops_type → sorted DOF list
     for canonical in rec.components:
@@ -542,6 +555,7 @@ def _emit_element_simple(
         if response_str is None:
             return
 
+    _warn_n_steps_unsupported(rec)
     response_tokens = tuple(response_str.split())
     target_ids = tuple(int(e) for e in rec.element_ids)
     file_path = _build_file_path(
