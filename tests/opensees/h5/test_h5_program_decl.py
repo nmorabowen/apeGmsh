@@ -1,4 +1,5 @@
-"""``/opensees/program``'s ``decl`` column (A7, #1839, opensees 2.31.0).
+"""``/opensees/program``'s ``decl`` column (A7, #1839, opensees 2.31.0;
+the side-channel verbs, #1853, opensees 2.32.0).
 
 Every emitted call carries the ``/opensees/decls`` row of the declaration
 that made it when the emit proves it, and an explicit ``-1`` otherwise.
@@ -10,8 +11,12 @@ Oracles, each naming the right answer:
   known ``(verb, args)``. A tagged call's expected decl is the
   ``/opensees/decls/tags`` run (read back from the file) that holds its
   ``(kind, tag)``; a tagless call's is the ``/opensees/decls/rows`` entry
-  of the row its run points at; every other call's is ``-1``. Driven
-  over flat, staged and partitioned models, and per stage.
+  of the row its run points at; a side-channel call's (#1853) is the
+  ``/opensees/decls/rows`` entry of the archived record it drove, found by
+  its parameter tag (a ramp, ``addToParameter``, a flip, an update) or
+  its node (the first ``zero_velocities`` record that names it); every
+  other call's is ``-1``. Driven over flat, staged and partitioned
+  models, and per stage.
 * **Never a guessed id.** A call no declaration proves (an undeclared tag,
   the analysis chain, a ``/opensees/commands`` row or a ``fix`` with none
   open)
@@ -24,7 +29,7 @@ from __future__ import annotations
 import functools
 import shutil
 from pathlib import Path
-from typing import Any, Callable, Iterator
+from typing import Any, Callable, Iterator, TypeAlias
 
 import h5py
 import pytest
@@ -54,6 +59,16 @@ TAGGED: dict[str, tuple[str, int]] = {
     "element": ("element", 1),
 }
 
+#: One spied call: ``(verb, args, kwargs)``.
+Call: TypeAlias = tuple[str, tuple[Any, ...], dict[str, Any]]
+
+#: The side-channel verbs (#1853, opensees 2.32.0): each call is the
+#: declaration of the archived record that drove it, which the test finds
+#: from that record's own stored data (:func:`_side_want`).
+SIDE: frozenset[str] = frozenset({
+    "step_hook_ramp", "addToParameter", "flip_element_stage",
+    "update_parameter", "set_node_vel", "set_node_accel"})
+
 #: Tagless verbs whose row's ``/opensees/decls/rows`` entry is the
 #: declaration open on the call: ``store template -> rows leaf``.
 ROWS_LEAF: dict[str, str] = {
@@ -72,10 +87,10 @@ ROWS_LEAF: dict[str, str] = {
 
 
 @pytest.fixture
-def spy(monkeypatch: pytest.MonkeyPatch) -> Iterator[list[tuple[str, tuple[Any, ...]]]]:
-    """Every Protocol call the archive counts, as ``(verb, args)`` in emit
-    order: a top-level call (the tape's depth is 0) that returned."""
-    calls: list[tuple[str, tuple[Any, ...]]] = []
+def spy(monkeypatch: pytest.MonkeyPatch) -> Iterator[list[Call]]:
+    """Every Protocol call the archive counts, as ``(verb, args, kwargs)``
+    in emit order: a top-level call (the tape's depth is 0) that returned."""
+    calls: list[Call] = []
 
     def wrap(verb: str, fn: Callable[..., Any]) -> Callable[..., Any]:
         @functools.wraps(fn)
@@ -83,7 +98,7 @@ def spy(monkeypatch: pytest.MonkeyPatch) -> Iterator[list[tuple[str, tuple[Any, 
             top = not self._program.depth
             out = fn(self, *args, **kwargs)
             if top:
-                calls.append((verb, args))
+                calls.append((verb, args, dict(kwargs)))
             return out
         return spied
 
@@ -101,8 +116,57 @@ def _run_of(table: h5_reader.DeclarationTable, kind: str, tag: int) -> int:
     return -1
 
 
+def _side_want(
+    ops: h5py.Group, table: h5_reader.DeclarationTable,
+    verb: str, args: tuple[Any, ...], kwargs: dict[str, Any], stage: int,
+) -> int:
+    """The decl a side-channel call must carry, from the archive alone:
+    the ``/opensees/decls/rows`` entry of the one record in the call's
+    scope whose stored data names the call, ``-1`` if none does. A ramp
+    names its three ``param_tags``, an ``addToParameter`` one of them, a
+    flip or an update the ``pid`` of a stored ``(rank, pid)`` row; a node
+    zeroing is the first ``zero_velocities`` record whose ``nodes`` holds
+    the node (no ``nodes``: the whole domain)."""
+    scope = "" if stage < 0 else f"stages/stage_{stage:03d}/"
+    if verb in ("step_hook_ramp", "addToParameter"):
+        group, leaf = "initial_stress", "stress"
+        if verb == "step_hook_ramp":
+            tags = tuple(int(t) for t, _v in kwargs["targets"])
+
+            def names(rec: Any) -> bool:
+                return tuple(int(t) for t in rec.attrs["param_tags"]) == tags
+        else:
+            def names(rec: Any) -> bool:
+                return int(args[0]) in {
+                    int(t) for t in rec.attrs["param_tags"]}
+    elif verb in ("flip_element_stage", "update_parameter"):
+        group, leaf = (("activate_absorbing", "absorb")
+                       if verb == "flip_element_stage"
+                       else ("update_parameter", "update"))
+
+        def names(rec: Any) -> bool:
+            return int(args[0]) in {
+                int(pid) for _rank, pid in rec["param_tags"][()]}
+    else:
+        group, leaf = "zero_velocities", "zero"
+
+        def names(rec: Any) -> bool:
+            return "nodes" not in rec or int(args[0]) in {
+                int(n) for n in rec["nodes"][()]}
+    store = ops.get(scope + group)
+    if store is None:
+        return -1
+    hits = [i for i in range(len(store))
+            if names(store[f"{leaf}_{i:03d}"])]
+    if not hits:
+        return -1
+    if verb != "set_node_vel" and verb != "set_node_accel":
+        assert len(hits) == 1, (verb, args, hits)
+    return int(table.rows[scope + group][hits[0]])
+
+
 def _expected(
-    path: Path, calls: list[tuple[str, tuple[Any, ...]]],
+    path: Path, calls: list[Call],
 ) -> tuple[list[int], list[int], list[tuple[str, int]]]:
     """``(got, want, (method, stage))`` per emit index, ``want`` read from
     the file's own declaration table."""
@@ -122,6 +186,10 @@ def _expected(
             holds[int(name.rsplit("_", 1)[1])] = sorted(
                 f"stages/{name}/patterns/{p}/sp_holds" for p in pats
                 if "sp_holds" in pats[p])
+        side = [
+            _side_want(ops, table, *calls[run.first - 1 + i], run.stage)
+            if run.method in SIDE else None
+            for run in runs for i in range(run.count)]
     assert sum(r.count for r in runs) == len(calls)
     got: list[int] = []
     want: list[int] = []
@@ -129,11 +197,15 @@ def _expected(
     for run in runs:
         leaf = ROWS_LEAF.get(run.store)
         for i in range(run.count):
-            verb, args = calls[run.first - 1 + i]
+            verb, args, _kwargs = calls[run.first - 1 + i]
             assert verb == run.method, (run, verb)
             got.append(run.decl)
             where.append((run.method, run.stage))
-            if verb in TAGGED:
+            if verb in SIDE:
+                ix = side[len(want)]
+                assert ix is not None
+                want.append(ix)
+            elif verb in TAGGED:
                 kind, pos = TAGGED[verb]
                 want.append(_run_of(table, kind, int(args[pos])))
             elif leaf is not None and run.row >= 0:
@@ -164,7 +236,7 @@ def _models() -> Iterator[tuple[str, apeSees]]:
 
 
 def test_every_call_joins_the_declaration_table(
-    tmp_path: Path, spy: list[tuple[str, tuple[Any, ...]]],
+    tmp_path: Path, spy: list[Call],
 ) -> None:
     """Over every model: each emit index's decl is the one the file's own
     declaration table gives it, ``-1`` where it gives none."""
@@ -180,7 +252,7 @@ def test_every_call_joins_the_declaration_table(
 
 
 def test_each_stage_joins_its_declarations(
-    tmp_path: Path, spy: list[tuple[str, tuple[Any, ...]]],
+    tmp_path: Path, spy: list[Call],
 ) -> None:
     """A staged model: every stage's declared calls (its element, fix,
     mass and recorder) join to the stage's own declarations."""
@@ -332,14 +404,19 @@ def _marker(path: Path) -> str | None:
 def test_a_legacy_rewrite_is_marked_absent_and_keeps_its_hash(
     tmp_path: Path,
 ) -> None:
-    """The prior-minor corpus file (no marker: its decl column was never
-    recorded) rewritten through ``to_h5`` is stamped current, marked
-    ``"absent"``, refuses the join query, still reads, and keeps its
-    ``model_hash`` (the marker sits on the hash-excluded ``decls``)."""
-    from tests.fixtures.schema import OPENSEES_CURRENT, OPENSEES_PRIOR_MINOR
+    """The corpus file of the minor before the marker (no marker: its decl
+    column was never recorded) rewritten through ``to_h5`` is stamped
+    current, marked ``"absent"``, refuses the join query, still reads, and
+    keeps its ``model_hash`` (the marker sits on the hash-excluded
+    ``decls``)."""
+    from tests.fixtures.schema import (
+        OPENSEES_CURRENT,
+        OPENSEES_PROGRAM_DECL_FROM,
+    )
 
     legacy = tmp_path / "legacy.h5"
-    minor = OPENSEES_PRIOR_MINOR.rsplit(".", 1)[0]
+    major, below, _patch = OPENSEES_PROGRAM_DECL_FROM.split(".")
+    minor = f"{major}.{int(below) - 1}"
     shutil.copy(CORPUS / f"opensees_{minor}.h5", legacy)
     assert _marker(legacy) is None
     with h5_reader.open(str(legacy)) as m:

@@ -785,10 +785,10 @@ def test_single_stamp_file_fallback_lineage_is_envelope(tmp_path: Any) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_opensees_reader_version_is_2_31_0() -> None:
-    """Schema 2.31.0 — ``/opensees/program``'s ``decl`` column records
-    each call's proved declaration (A7, #1839)."""
-    assert reader_version(OPENSEES) == SchemaVersion(2, 31, 0)
+def test_opensees_reader_version_is_2_32_0() -> None:
+    """Schema 2.32.0 — the six side-channel verbs' ``/opensees/program``
+    ``decl`` is proved at emit (#1853)."""
+    assert reader_version(OPENSEES) == SchemaVersion(2, 32, 0)
 
 
 def test_constraints_group_present_when_emitted(tmp_path: Any) -> None:

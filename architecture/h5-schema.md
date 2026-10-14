@@ -1077,6 +1077,7 @@ program alone. The writer records it at emit time and never guesses:
 |---|---|
 | a tagged verb (`uniaxialMaterial`, `nDMaterial`, `section`, `section_open`, `geomTransf`, `beamIntegration`, `timeSeries`, `pattern_open`, `damping`, `region`, `element`) | the `/opensees/decls/tags` run that holds its `(kind, tag)`; a fan-out element its spec's |
 | a tagless verb whose row has a `/opensees/decls/rows` entry filled at the call (`fix`, `mass`, `recorder`, `sp_hold`, `remove_sp`, `remove_element`, `update_material_stage`, a stage `rayleigh`, and the `/opensees/commands` rows: global `rayleigh`, `eigen`, `modal_damping`, `profiler`, `command`) | the declaration the bridge opened on it (`set_declaration`) |
+| a side-channel store's call (`step_hook_ramp`, `addToParameter`, `flip_element_stage`, `update_parameter`, `set_node_vel`, `set_node_accel`), from 2.32.0 (#1853) | the declaration of the record that drove it (an initial stress, an absorbing flip, an `s.update_parameter`, an `s.zero_velocities`), which the bridge opens around that record's calls; `-1` below 2.32.0 |
 
 Everything else is an explicit **`-1`**:
 
@@ -1090,16 +1091,15 @@ Everything else is an explicit **`-1`**:
   partition brackets and runtime fallbacks), whose primitives are
   declarations in `/opensees/decls/tags` but whose calls carry no tag to
   join on;
-- **not proved at emit time**: the side-channel stores' calls
-  (`addToParameter`, `step_hook_ramp`, `flip_element_stage`,
-  `update_parameter`, `set_node_vel`, `set_node_accel`), whose records'
-  declarations the bridge hands in after the emit
-  (`set_declaration_rows`) and whose calls are not one per record; a
-  tagged call whose `(kind, tag)` no run holds (an element a side pass
-  mints with no declaration); and a tagless call with no declaration open,
-  such as a ghost replay (ADR 0027 INV-2), whose row the
-  `/opensees/decls/rows` column claims afterwards;
+- **not proved at emit time**: a tagged call whose `(kind, tag)` no run
+  holds (an element a side pass mints with no declaration); and a tagless
+  call with no declaration open, such as a ghost replay (ADR 0027 INV-2),
+  whose row the `/opensees/decls/rows` column claims afterwards;
 - the `ledger` verbs, which write no row.
+
+A node that two `s.zero_velocities` records of one stage name is zeroed
+once, so its `set_node_vel` / `set_node_accel` calls are the first
+record's (the rule `BuiltModel._claim_ghost_fixes` uses for ghost fixes).
 
 A run breaks where `decl` changes. The reader refuses a `decl` outside
 `{-1} ∪ [0, n_decls)` (`n_decls = 0` when the file has no
@@ -1145,9 +1145,18 @@ so a name (a label) still leaves the hash alone; declaration *order*
 now enters it. A file written before 2.31.0 keeps its stored hash, and a
 recompute over it gives the same value (its column is still `-1`); only
 a re-emit through `apeSees` writes the new column. A tool that compares a
-model's `model_hash` with a results file's across that boundary can read
-`/meta@opensees_schema_version` on both sides to tell the one-time change
-from a different model.
+model's `model_hash` with a results file's across that boundary reads the
+`/opensees/decls@program_decl` marker on both sides, not
+`/meta@opensees_schema_version`: a `to_h5` rewrite of an older file is
+stamped current but keeps its old hash, so only the marker tells the era
+(`records_program_decl`; `Results` names the cause this way, #1861).
+
+At 2.32.0 (#1853) the side-channel calls gain their declarations, so an
+archive that carries any of them (an initial stress, an absorbing flip,
+`s.update_parameter`, `s.zero_velocities`) changes its `model_hash` once
+more; any other archive is unchanged. The marker means the same thing at
+both minors ("every provable join recorded"), so it does not tell a 2.31
+emit from a 2.32 one: such a pair shows as a plain `model_hash` mismatch.
 
 ## `/opensees/commands` (optional, opensees 2.23.0)
 
@@ -2315,7 +2324,7 @@ call `validate_zone_version(...)` for each zone before reading it.
 | Zone | `/meta` key | Root paths | Writer constant (source of truth) | Current | Floor |
 |---|---|---|---|---|---|
 | neutral (broker) | `neutral_schema_version` | `/nodes`, `/elements`, `/physical_groups`, `/labels`, `/mesh_selections`, `/partitions`, `/parts`, `/constraints`, `/reinforce_ties`, `/embed_ties`, `/rebar_elements`, `/contacts`, `/contact_planes`, `/interfaces`, `/loads`, `/masses`, `/composed_from` | [`mesh/_femdata_h5_io.py`](../src/apeGmsh/mesh/_femdata_h5_io.py) `NEUTRAL_SCHEMA_VERSION` | **2.35.0** | **2.10.0** |
-| opensees (bridge) | `opensees_schema_version` | `/opensees/*` | [`opensees/emitter/h5.py`](../src/apeGmsh/opensees/emitter/h5.py) `SCHEMA_VERSION` | **2.31.0** | **2.12.0** |
+| opensees (bridge) | `opensees_schema_version` | `/opensees/*` | [`opensees/emitter/h5.py`](../src/apeGmsh/opensees/emitter/h5.py) `SCHEMA_VERSION` | **2.32.0** | **2.12.0** |
 | results | `results_schema_version` | `/stages/*` (composed `results.h5`, at file root; layout in [`results.h5`](#resultsh5-the-native-results-file)) | [`results/schema/_versions.py`](../src/apeGmsh/results/schema/_versions.py) `RESULTS_SCHEMA_VERSION` | **1.2.0** | **1.0.0** |
 | cuts (sub-zone of opensees) | — (no own key; rides the opensees zone) | `/opensees/cuts`, `/opensees/sweeps` | [`cuts/_h5_io.py`](../src/apeGmsh/cuts/_h5_io.py) `V4_SCHEMA_VERSION` | 2.5.0 | none of its own: it rides the opensees floor |
 | geometry (ADR 0112 D2) | `geometry_schema_version` | `/geometry` (sibling `<stem>.geometry.h5` only) | [`opensees/_internal/schema_version.py`](../src/apeGmsh/opensees/_internal/schema_version.py) `GEOMETRY_SCHEMA_VERSION` | **1.0.0** | **1.0.0** |
@@ -2798,6 +2807,16 @@ detail lives in the `SCHEMA_VERSION` docstring in
   reads as "not recorded". The reader refuses a `decl` outside
   `{-1} ∪ [0, n_decls)`. Additive minor (a 2.30.x reader refuses a 2.31.x
   file, INV-4).
+- `2.32.0` — #1853 (chain K; the maintainer's ruling of 2026-10-13): the
+  six side-channel verbs (`step_hook_ramp`, `addToParameter`,
+  `flip_element_stage`, `update_parameter`, `set_node_vel`,
+  `set_node_accel`) carry the `/opensees/program` `decl` of the record
+  that drove them, opened around each record's calls at emit; `-1` below
+  this minor. No path or dtype changes, and the `program_decl` marker
+  keeps its meaning. The column is hashed, so an archive with any of
+  these calls hashes differently once at this minor; any other archive is
+  unchanged. Additive minor (a 2.31.x reader refuses a 2.32.x file,
+  INV-4).
 
 This is the **current** opensees-zone version (`SCHEMA_VERSION` in
 [`opensees/emitter/h5.py`](../src/apeGmsh/opensees/emitter/h5.py)); check that constant
