@@ -277,6 +277,227 @@ def read_nodal_bucket_slab(
 
 
 # =====================================================================
+# Modes of vibration — ``ON_NODES/MODES_OF_VIBRATION(U|R)``
+# =====================================================================
+#
+# Both the MPCO recorder and the fork's Ladruno recorder write the same
+# modal layout (measured on fork build 79e0623670):
+#
+#   <stage>/RESULTS/ON_NODES/MODES_OF_VIBRATION(U)/
+#       ID                        (nNodes, 1)
+#       DATA/STEP_<s>/            group, attrs STEP, TIME
+#           MODE_<k>              (nNodes, nComp), k 0-based, attrs
+#                                 MODE, LAMBDA, OMEGA, FREQUENCY, PERIOD
+#
+# ``MODES_OF_VIBRATION(R)`` holds the rotational columns in the same shape.
+# ``STEP_<s>`` is the commit step at which the recorder saw a new eigen
+# solution, so one stage may hold more than one modal set.
+
+
+@dataclass(frozen=True)
+class ModeEntry:
+    """One recorded mode: where it lives and its eigen data."""
+
+    step_key: str          # "STEP_<s>" under the modal group's DATA
+    mode_key: str          # "MODE_<k>" (k 0-based)
+    mode_index: int        # 1-based, as in a native results file
+    eigenvalue: float      # LAMBDA = omega^2
+    frequency_hz: float
+    period_s: float
+
+
+def _modal_groups(on_nodes: "h5py.Group") -> "list[str]":
+    from ._mpco_translation import is_modal_result_name
+    return [n for n in on_nodes if is_modal_result_name(n)]
+
+
+def _keyed(group: "h5py.Group", prefix: str) -> "list[str]":
+    keys = [k for k in group if k.startswith(prefix)]
+    return sorted(keys, key=lambda k: int(k[len(prefix):]))
+
+
+def _components_of(group: "h5py.Group") -> "list[str]":
+    if "COMPONENTS" not in group.attrs:
+        return []
+    raw = _attr_scalar(group.attrs["COMPONENTS"])
+    if isinstance(raw, bytes):
+        raw = raw.decode("utf-8", errors="replace")
+    return [tok.strip() for tok in str(raw).split(",") if tok.strip()]
+
+
+#: Marker in the warning :func:`eigen_scalars` raises; the multi-partition
+#: readers key on it to warn once per mode for the whole part set.
+NON_POSITIVE_EIGENVALUE = "non-positive eigenvalue"
+
+
+def eigen_scalars(
+    lam: float, mode_index: int, source: str,
+) -> "tuple[float, float]":
+    """``(frequency_hz, period_s)`` from an eigenvalue.
+
+    The ``ParallelModalResult.to_native`` rule: a non-positive eigenvalue (a rigid-body mechanism or an
+    unconverged eigensolve) warns and reads as 0 Hz / 0 s rather than
+    passing as a valid mode.
+    """
+    import math
+    import warnings
+
+    if lam > 0:
+        omega = math.sqrt(lam)
+        return omega / (2.0 * math.pi), 2.0 * math.pi / omega
+    warnings.warn(
+        f"{source}: mode {mode_index} has a {NON_POSITIVE_EIGENVALUE} "
+        f"({lam:.6g}); this indicates a spurious/unstable mode (rigid-body "
+        "mechanism or unconverged eigensolve). Reading frequency=0 / "
+        "period=0 for it.",
+        UserWarning,
+        stacklevel=3,
+    )
+    return 0.0, 0.0
+
+
+def _mode_sets_of(
+    data: "h5py.Group", group_name: str, source: str,
+) -> "list[tuple[str, list[tuple[str, float]]]]":
+    sets: "list[tuple[str, list[tuple[str, float]]]]" = []
+    for step_key in _keyed(data, "STEP_"):
+        modes: "list[tuple[str, float]]" = []
+        for mode_key in _keyed(data[step_key], "MODE_"):
+            attrs = data[step_key][mode_key].attrs
+            if "LAMBDA" not in attrs:
+                raise ValueError(
+                    f"{source}: ON_NODES/{group_name}/DATA/{step_key}/"
+                    f"{mode_key} has no LAMBDA attribute; the eigenvalue "
+                    "of this mode is not recorded."
+                )
+            modes.append((mode_key, float(_attr_scalar(attrs["LAMBDA"]))))
+        if modes:
+            sets.append((step_key, modes))
+    return sets
+
+
+def discover_modes(
+    on_nodes: "h5py.Group", *, source: str,
+) -> "list[tuple[str, list[ModeEntry]]]":
+    """Every modal set under ``on_nodes``, as ``[(step_key, [ModeEntry])]``.
+
+    Sets are ordered by step, modes by index. The translational group is
+    the reference when present; the rotational group, when both exist,
+    must list the same steps, modes and eigenvalues, or the file is
+    refused. A ``MODE_<k>`` without a ``LAMBDA`` attribute is refused too:
+    a mode stage never invents its eigenvalue.
+    """
+    names = sorted(_modal_groups(on_nodes), key=lambda n: (not n.endswith("(U)"), n))
+    if not names:
+        return []
+    per_group = []
+    for name in names:
+        if "DATA" not in on_nodes[name]:
+            raise ValueError(
+                f"{source}: ON_NODES/{name} has no DATA group; the modal "
+                "record is incomplete."
+            )
+        per_group.append(_mode_sets_of(on_nodes[name]["DATA"], name, source))
+    for name, other in zip(names[1:], per_group[1:]):
+        if other != per_group[0]:
+            raise ValueError(
+                f"{source}: ON_NODES/{name} lists different modes or "
+                f"eigenvalues than ON_NODES/{names[0]}; the modal record is "
+                "inconsistent."
+            )
+    out: "list[tuple[str, list[ModeEntry]]]" = []
+    for step_key, modes in per_group[0]:
+        entries = []
+        for mode_key, lam in modes:
+            index = int(mode_key[len("MODE_"):]) + 1
+            f_hz, t_s = eigen_scalars(lam, index, source)
+            entries.append(ModeEntry(
+                step_key=step_key, mode_key=mode_key, mode_index=index,
+                eigenvalue=lam, frequency_hz=f_hz, period_s=t_s,
+            ))
+        out.append((step_key, entries))
+    return out
+
+
+def modal_components(on_nodes: "h5py.Group") -> "list[str]":
+    """Canonical mode-shape components the modal groups carry."""
+    from ._mpco_translation import canonical_modal_component
+
+    out: "set[str]" = set()
+    for name in _modal_groups(on_nodes):
+        for label in _components_of(on_nodes[name]):
+            canon = canonical_modal_component(name, label)
+            if canon is not None:
+                out.add(canon)
+    return sorted(out)
+
+
+def read_mode_shape(
+    on_nodes: "h5py.Group",
+    entry: ModeEntry,
+    component: str,
+    *,
+    node_ids: "ndarray | None" = None,
+) -> "tuple[ndarray, ndarray] | None":
+    """``(values[nSel], node_ids[nSel])`` of one mode's ``component``.
+
+    ``None`` when no modal group carries ``component`` for this mode.
+    """
+    from ._mpco_translation import canonical_modal_component
+
+    for name in _modal_groups(on_nodes):
+        grp = on_nodes[name]
+        cols = [
+            i for i, lab in enumerate(_components_of(grp))
+            if canonical_modal_component(name, lab) == component
+        ]
+        if not cols:
+            continue
+        data = grp["DATA"]
+        if entry.step_key not in data or entry.mode_key not in data[entry.step_key]:
+            return None
+        ids = np.asarray(grp["ID"][...], dtype=np.int64).flatten()
+        rows = np.arange(ids.size)
+        if node_ids is not None:
+            rows = np.flatnonzero(
+                np.isin(ids, np.asarray(node_ids, dtype=np.int64)),
+            )
+        block = data[entry.step_key][entry.mode_key]
+        col = np.asarray(block[:, cols[0]], dtype=np.float64)
+        return col[rows], ids[rows]
+    return None
+
+
+def mode_stage_layout(
+    host_ids: "list[str]",
+    host_names: "list[str]",
+    host_sets: "list[list[tuple[str, list[ModeEntry]]]]",
+) -> "list[tuple[int, str, str, ModeEntry]]":
+    """``(host_ordinal, stage_id, name, entry)`` for every recorded mode.
+
+    Ids are ``<host_id>_mode_<k>``, or ``<host_id>_step_<s>_mode_<k>``
+    when the host holds more than one modal set. Names are ``mode_<k>``
+    (the names a native results file uses) when the whole file holds one modal
+    set, else ``<host name>/STEP_<s>/mode_<k>`` so every name is unique.
+    """
+    n_sets = sum(len(sets) for sets in host_sets)
+    out: "list[tuple[int, str, str, ModeEntry]]" = []
+    for h, (hid, hname, sets) in enumerate(zip(host_ids, host_names, host_sets)):
+        for step_key, entries in sets:
+            for e in entries:
+                if len(sets) == 1:
+                    sid = f"{hid}_mode_{e.mode_index}"
+                else:
+                    sid = f"{hid}_{step_key.lower()}_mode_{e.mode_index}"
+                name = (
+                    f"mode_{e.mode_index}" if n_sets == 1
+                    else f"{hname}/{step_key}/mode_{e.mode_index}"
+                )
+                out.append((h, sid, name, e))
+    return out
+
+
+# =====================================================================
 # Internal helpers
 # =====================================================================
 

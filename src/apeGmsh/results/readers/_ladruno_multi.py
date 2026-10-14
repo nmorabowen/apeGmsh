@@ -45,6 +45,7 @@ from ._mpco_multi import (
     _merge_node_slabs,
     _merge_partition_fems,
     _node_reduction,
+    _validate_warning_once_per_mode,
 )
 from ._protocol import ResultLevel, StageInfo, TimeSlice
 
@@ -119,7 +120,9 @@ class LadrunoMultiPartitionReader:
             LadrunoReader(p) for p in self._paths
         ]
         try:
-            self._validate_consistency()
+            _validate_warning_once_per_mode(
+                self._validate_consistency, self._paths,
+            )
         except Exception:
             for r in self._readers:
                 r.close()
@@ -187,7 +190,7 @@ class LadrunoMultiPartitionReader:
         # Step counts and time vectors are compared only across the parts
         # that hold results for the stage: an EMPTY_PARTITION stage (fork
         # WP-165) may carry no TIME axis at all.
-        for stage in self._readers[0].stages():
+        for stage in self.stages():
             live = self._live(stage.id)
             ref_i, ref = live[0]
             t0 = ref.time_vector(stage.id)
@@ -212,8 +215,28 @@ class LadrunoMultiPartitionReader:
         order with a :class:`StageOrderMatchWarning`. Different counts are
         refused. The name exposed to callers is the first non-empty
         part's (see :meth:`stages`).
+
+        Mode stages are paired by id, not by position: a part
+        whose process held no node writes no modal group, so it lists the
+        host stages only. Every part that does list modes must list the
+        same ones with the same eigenvalues.
         """
-        per = [r.stages() for r in self._readers]
+        per = [[s for s in r.stages() if s.kind != "mode"] for r in self._readers]
+        modal = [
+            (p.name, [
+                (s.id, s.name, s.mode_index, s.eigenvalue)
+                for s in r.stages() if s.kind == "mode"
+            ])
+            for p, r in zip(self._paths, self._readers)
+        ]
+        with_modes = [(n, m) for n, m in modal if m]
+        for n, m in with_modes[1:]:
+            if m != with_modes[0][1]:
+                raise ValueError(
+                    "Partitioned .ladruno files record different modes "
+                    f"({with_modes[0][0]}: {with_modes[0][1]}; {n}: {m}); "
+                    "they are not from one eigen solution."
+                )
         names = [[s.name for s in st] for st in per]
 
         def listing() -> str:
@@ -260,7 +283,15 @@ class LadrunoMultiPartitionReader:
         part is empty, all of them are returned, so reads still answer
         with the empty slab a single empty file gives.
         """
-        pairs = list(enumerate(self._readers))
+        pairs = [
+            (i, r) for i, r in enumerate(self._readers)
+            if any(s.id == stage_id for s in r.stages())
+        ]
+        if not pairs:
+            raise KeyError(
+                f"Unknown stage_id {stage_id!r}; available: "
+                f"{[s.id for s in self.stages()]}."
+            )
         live = [(i, r) for i, r in pairs if not r.is_empty_partition(stage_id)]
         return live or pairs
 
@@ -290,10 +321,20 @@ class LadrunoMultiPartitionReader:
     def stages(self) -> list[StageInfo]:
         # Step counts come from a part that holds the stage's results:
         # partition 0 may be an EMPTY_PARTITION with no TIME axis.
+        # Mode stages come from a part that recorded them; an
+        # EMPTY_PARTITION part lists its host stages only.
+        listing = next(
+            (r for r in self._readers
+             if any(s.kind == "mode" for s in r.stages())),
+            self._readers[0],
+        )
         out: list[StageInfo] = []
-        for s in self._readers[0].stages():
+        for s in listing.stages():
+            if s.kind == "mode":
+                out.append(s)
+                continue
             ref = self._live_readers(s.id)[0]
-            out.append(s if ref is self._readers[0] else next(
+            out.append(s if ref is listing else next(
                 rs for rs in ref.stages() if rs.id == s.id
             ))
         return out

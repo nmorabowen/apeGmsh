@@ -411,6 +411,16 @@ def emit_stage_mp_constraints_partitioned(
             stiffness_resolver=stiffness_resolver,
         )
 
+    # equationConstraint (ADR 0068 Open item 2), as the global pass writes
+    # it: on every rank that owns the slave or a master, after the ghost
+    # declarations above. The plan declares this tie's ghosts, so a rank
+    # that skipped the rows would run with the tie missing and say nothing.
+    if plan.equation_records:
+        _emit_surface_couplings_for_rank(
+            emitter, plan.equation_records, tag_plan,
+            fem_eid_to_ops_tag=fem_eid_to_ops_tag,
+        )
+
 
 def emit_mp_constraints_partitioned(
     emitter: "Emitter",
@@ -565,7 +575,13 @@ def refuse_multiplied_mp_constraints(
     Writing each record on one rank instead is exact for a static solve
     but not for ``eigen``: a rank that holds no ``PenaltyMP_FE`` disagrees
     with the others in ``ArpackSOE``'s diagonal-mass flag, and the spectrum
-    collapses to 1.0. So the emit refuses.
+    collapses to 1.0. So the emit refuses. An ``enforce="equation"`` tie
+    is written as an ``equationConstraint`` on every rank that holds its
+    slave or a master (ADR 0068 Open item 2). Under a declared ``Penalty``
+    each copy adds its own penalty term, so a tie spanning ranks is
+    refused the same way (#1724 item 1). ``Lagrange``,
+    ``LadrunoProjection`` and the auto handler keep ADR 0068's
+    replication; ``Transformation`` cannot enforce the tie (INV-4).
 
     The handler checked is the one each analysis runs under:
 
@@ -585,7 +601,9 @@ def refuse_multiplied_mp_constraints(
 
     ``Transformation`` and ``Plain`` (which ignores MP constraints) keep
     the replication. Any other handler raises :class:`BridgeError` when a
-    record it runs under is written on two ranks or more.
+    replicable record it runs under is written on two ranks or more. An
+    equation tie written on two ranks or more raises only under
+    ``Penalty``; the other handlers keep ADR 0068's replication.
     """
     from ...analysis.constraint_handler import Plain, Transformation
     from ...apesees import _is_explicit_integrator
@@ -645,7 +663,38 @@ def refuse_multiplied_mp_constraints(
 def _refuse_copies(
     names: "Sequence[str]", plans: "Iterable[_RankConstraintPlan]",
 ) -> None:
-    """Raise when a plan in ``plans`` writes a record another rank writes."""
+    """Raise when a plan in ``plans`` writes a record another rank writes.
+
+    A replicable record is flagged by its own plan (``replicated_records``).
+    An ``enforce="equation"`` tie is written on every rank that holds its
+    slave or a master (``equation_records``), so it is copied when two
+    plans or more carry the same record. Only ``Penalty`` is refused for
+    that (#1724 item 1): each copy adds its own penalty term. ADR 0068
+    Open item 2 keeps the replication under the EQ-capable handlers. The
+    equation tie is checked first, because ``Transformation``, the
+    replicable record's remedy, cannot enforce it (ADR 0068 INV-4).
+    """
+    plans = list(plans)
+    if "Penalty" in names:
+        writers: dict[int, int] = {}
+        for p in plans:
+            for eq in p.equation_records:
+                writers[id(eq)] = writers.get(id(eq), 0) + 1
+        eq = next((eq for p in plans for eq in p.equation_records
+                   if writers[id(eq)] > 1), None)
+        if eq is not None:
+            name = getattr(eq, "name", None) or "<unnamed>"
+            slave = getattr(eq, "slave_node", "?")
+            raise BridgeError(
+                f"A partitioned emit would write the equationConstraint tie "
+                f"{name!r} (slave node {slave}) on {writers[id(eq)]} ranks "
+                f"under the constraint handler {', '.join(names)}. Each "
+                "rank's copy adds its own penalty term, so the partitioned "
+                "model would silently answer stiffer than the serial one "
+                "(#1625). Nothing was written. Run serially "
+                "(ops.tcl(path, flat=True)). Whether Lagrange is exact for "
+                "a replicated equation tie awaits live verification (#1724)."
+            )
     copied = next((p.replicated_records for p in plans
                    if p.replicated_records), ())
     if not copied:
