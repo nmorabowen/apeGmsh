@@ -177,6 +177,17 @@ export function subsetOf(t: SolidTable, mask: Uint8Array | null): { solids: Soli
   return { solids, fem: Float64Array.from(fem), cornerNodes: Float64Array.from(corner), cornerCell: cornerCellOf(solids) };
 }
 
+let subsetMemo: { key: readonly unknown[]; value: ReturnType<typeof subsetOf> } | null = null;
+
+/** The drawn cells of `t` (`shownCells`, `subsetOf`), once per table, hidden set and activation: a scrub reuses them every step. */
+function shownSubset(s: State, t: SolidTable): ReturnType<typeof subsetOf> {
+  const key = [t, s.visibility.hidden, activationNow(s)?.activation ?? null];
+  if (subsetMemo && subsetMemo.key.every((k, i) => k === key[i])) return subsetMemo.value;
+  const value = subsetOf(t, shownCells(s, t));
+  subsetMemo = { key, value };
+  return value;
+}
+
 /** What the caps show: a slice key (what is cut, where, and which values) and a colour key (how values become colours); null when no cap is wanted. */
 export function capKeys(s: State): { cuts: string; slice: string; colour: string } | null {
   const cuts = cutsOf(s.clip);
@@ -229,13 +240,18 @@ function row(step: StepValues, name: string, what: string): Float64Array {
 export function capInputs(s: State, blobs: BlobStore, step: StepValues | null): CapInputs {
   const t = solidTable(s, blobs);
   if ("none" in t) return t;
-  const sub = subsetOf(t, shownCells(s, t));
+  // Wait, before any work, while the step shown is not all here: its data, its measured range, its element component.
+  const d = deformView(s);
+  const deformed = d.state === "loading" || d.state === "ready" || d.state === "partial";
+  const v = contourView(s);
+  if ((deformed || v.state === "ready" || v.state === "element") && !stepIsShown(s, step)) return { wait: true };
+  if ((v.state === "ready" || v.state === "element") && !v.stepMeasured) return { wait: true };
+  if (v.state === "element" && (step!.element !== v.component.key || !step!.gauss)) return { wait: true };
+  const sub = shownSubset(s, t);
   if (!sub.solids.shape.length) return { none: "every volumetric cell is hidden" };
   // Positions: the node table, deformed as the surfaces are (a node with no displacement stays put, as it is drawn).
   let xyz = t.xyz;
-  const d = deformView(s);
-  if (d.state === "loading" || d.state === "ready" || d.state === "partial") {
-    if (!stepIsShown(s, step)) return { wait: true };
+  if (deformed && stepIsShown(s, step)) {
     const [dx, dy, dz] = d.datasets;
     const rows = [row(step, dx, "deformed shape"), row(step, dy, "deformed shape"), dz === null ? null : row(step, dz, "deformed shape")] as const;
     const ids = blobs.get(d.nodeIds);
@@ -244,21 +260,20 @@ export function capInputs(s: State, blobs: BlobStore, step: StepValues | null): 
     xyz = new Float64Array(t.xyz.length);
     for (let i = 0; i < xyz.length; i++) xyz[i] = t.xyz[i]! + d.scale * u[i]!;
   }
-  const v = contourView(s);
   let values: Float64Array | null;
   switch (v.state) {
     case "off":
       values = null;
       break;
     case "ready": {
-      if (!stepIsShown(s, step) || !v.stepMeasured) return { wait: true };
+      if (!stepIsShown(s, step)) throw new Error("caps: a contour value pass without its step");
       const ids = blobs.get(v.nodeIds);
       if (!(ids instanceof Float64Array)) throw new TypeError(`contour: ${v.nodeIds.id} is not f64`);
       values = vertexValues(sub.cornerNodes, columnOf(ids), v.component.datasets.map((n) => row(step, n, "contour")), v.component.magnitude);
       break;
     }
     case "element": {
-      if (!stepIsShown(s, step) || !v.stepMeasured || step.element !== v.component.key || !step.gauss) return { wait: true };
+      if (!stepIsShown(s, step)) throw new Error("caps: a contour value pass without its step");
       const gauss = v.groups.map((g) => {
         const x = step.gauss![g.id];
         if (!(x instanceof Float64Array)) throw new Error(`element contour: the step data has no ${v.component.key} for group ${g.id}`);
@@ -315,7 +330,8 @@ export class CapLayer {
   note: string | null = null;
   private caps: Cap[] = [];
   private keys: { cuts: string; slice: string; colour: string } | null = null;
-  private dim = 1;
+  /** One material for every cap (a re-slice makes geometry only); its colour dims them with the model. */
+  private readonly material = new THREE.MeshStandardMaterial({ vertexColors: true, side: THREE.DoubleSide, roughness: 0.75, metalness: 0 });
 
   constructor() {
     this.root.name = "section caps";
@@ -396,10 +412,11 @@ export class CapLayer {
       const g = new THREE.BufferGeometry();
       g.setAttribute("position", new THREE.BufferAttribute(Float32Array.from(slice.positions), 3));
       g.setAttribute("color", new THREE.BufferAttribute(new Float32Array(slice.positions.length), 3));
-      g.computeVertexNormals();
-      const m = new THREE.MeshStandardMaterial({ vertexColors: true, side: THREE.DoubleSide, roughness: 0.75, metalness: 0 });
-      m.color.setScalar(this.dim);
-      const mesh = new THREE.Mesh(g, m);
+      // Flat: every vertex has the plane's normal (lit the same from either side: the material is double-sided).
+      const normal = new Float32Array(slice.positions.length);
+      for (let k = 0; k < normal.length; k += 3) normal.set(cut.normal, k);
+      g.setAttribute("normal", new THREE.BufferAttribute(normal, 3));
+      const mesh = new THREE.Mesh(g, this.material);
       mesh.name = "section cap";
       // CAP_STEP of its own extent into the discarded half: never coplanar with its plane's gizmo quad or a face on it.
       const step = CAP_STEP * sliceExtent(slice);
@@ -416,8 +433,7 @@ export class CapLayer {
 
   /** Dim the caps with the unselected model (viewport `applyDim`). */
   setDim(k: number): void {
-    this.dim = k;
-    for (const c of this.caps) (c.mesh.material as THREE.MeshStandardMaterial).color.setScalar(k);
+    this.material.color.setScalar(k);
   }
 
   private paint(c: Cap, view: ContourView): void {
@@ -429,7 +445,6 @@ export class CapLayer {
   private clear(): void {
     for (const c of this.caps) {
       c.mesh.geometry.dispose();
-      (c.mesh.material as THREE.Material).dispose();
       this.root.remove(c.mesh);
     }
     this.caps = [];
@@ -438,6 +453,7 @@ export class CapLayer {
 
   dispose(): void {
     this.clear();
+    this.material.dispose();
   }
 }
 

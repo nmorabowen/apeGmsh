@@ -296,3 +296,4 @@ code { font-family: var(--mono); }
 .plane-number.outside { border-color: var(--interp); }
 .planes-notice { color: var(--error); font-size: 13px; margin: 0 0 6px; }
 .planes-foot { margin: 8px 0 0; padding-top: 8px; border-top: 1px solid var(--line); flex-wrap: wrap; }
+.planes-capnote { margin: 6px 0 0; }
