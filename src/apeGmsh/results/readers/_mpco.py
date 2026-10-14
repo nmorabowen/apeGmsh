@@ -85,6 +85,11 @@ class MPCOReader:
         self._stage_cache: Optional[list[StageInfo]] = None
         # MPCO: each apeGmsh stage_id maps to one MPCO group name
         self._stage_to_mpco: dict[str, str] = {}
+        # #1946: mode stage id -> (host MODEL_STAGE group, its ModeEntry).
+        # Mode stages are not MODEL_STAGE groups, so they never enter
+        # ``_stage_to_mpco``; reads branch on this map first.
+        self._mode_refs: dict[str, tuple[str, _mnodal.ModeEntry]] = {}
+        self._host_ids: list[str] = []
         self._fem_cache: "Optional[FEMData] | _Sentinel" = _SENTINEL
         # ADR 0043 slice 1.3 — MPCO buckets are keyed by the OpenSees ops
         # tag; the results API speaks fem_eid. Over a composed model the
@@ -163,21 +168,26 @@ class MPCOReader:
         name moves to :attr:`StageInfo.aliases`.
         """
         current = self.stages()
-        if len(names) != len(current):
+        hosts = [s for s in current if s.kind != "mode"]
+        if len(names) != len(hosts):
             raise ValueError(
                 f"attach_stage_names: {len(names)} names for "
-                f"{len(current)} MODEL_STAGE groups in {self._path.name}."
+                f"{len(hosts)} MODEL_STAGE groups in {self._path.name}."
             )
+        # Mode stages (#1946) keep their own names: they are not program
+        # stages, and the pairing is positional over the hosts only.
+        new_name = {s.id: str(n) for s, n in zip(hosts, names)}
         self._stage_cache = [
-            replace(s, name=str(n), aliases=(s.name, *s.aliases))
-            for s, n in zip(current, names)
+            replace(s, name=new_name[s.id], aliases=(s.name, *s.aliases))
+            if s.id in new_name else s
+            for s in current
         ]
 
     def stages(self) -> list[StageInfo]:
         if self._stage_cache is not None:
             return list(self._stage_cache)
 
-        out: list[StageInfo] = []
+        hosts: list[StageInfo] = []
         # Map MPCO group names to apeGmsh stage_ids in stamp order —
         # sort by the numeric stamp inside ``MODEL_STAGE[<k>]``
         # (lexicographic sorting would put MODEL_STAGE[10] before
@@ -186,17 +196,44 @@ class MPCOReader:
             (k for k in self._h5.keys() if k.startswith(_STAGE_PREFIX)),
             key=_stage_sort_key,
         )
+        host_sets = []
         for name in names:
             grp = self._h5[name]
             time = self._build_time_vector_for_mpco_stage(grp)
-            stage_id = f"stage_{len(out)}"
+            stage_id = f"stage_{len(hosts)}"
             self._stage_to_mpco[stage_id] = name
-            out.append(StageInfo(
+            hosts.append(StageInfo(
                 id=stage_id,
                 name=name,
                 kind="transient",       # MPCO stages aren't tagged; assume transient
                 n_steps=int(time.size),
             ))
+            on_nodes = _child(grp, "RESULTS/ON_NODES")
+            host_sets.append(
+                [] if on_nodes is None else _mnodal.discover_modes(
+                    on_nodes, source=f"{self._path.name} {name}",
+                )
+            )
+        self._host_ids = [h.id for h in hosts]
+        # #1946: each recorded mode is its own kind="mode" stage, listed
+        # right after the MODEL_STAGE that holds it (the layout
+        # ``DomainCapture.capture_modes`` writes).
+        modes_after: dict[int, list[StageInfo]] = {}
+        for h, sid, mname, entry in _mnodal.mode_stage_layout(
+            self._host_ids, names, host_sets,
+        ):
+            self._mode_refs[sid] = (names[h], entry)
+            modes_after.setdefault(h, []).append(StageInfo(
+                id=sid, name=mname, kind="mode", n_steps=1,
+                eigenvalue=entry.eigenvalue,
+                frequency_hz=entry.frequency_hz,
+                period_s=entry.period_s,
+                mode_index=entry.mode_index,
+            ))
+        out: list[StageInfo] = []
+        for h, host in enumerate(hosts):
+            out.append(host)
+            out.extend(modes_after.get(h, []))
         self._stage_cache = out
         return list(out)
 
@@ -218,6 +255,10 @@ class MPCOReader:
         ref_time: Optional[ndarray] = None
         ref_name = ""
         for result_name in on_nodes:
+            if _mtr.is_modal_result_name(result_name):
+                # Modal groups record one STEP per eigen solution, not on
+                # the stage cadence; they are read as mode stages (#1946).
+                continue
             data_grp = _child(on_nodes[result_name], "DATA")
             if data_grp is None:
                 continue
@@ -246,6 +287,8 @@ class MPCOReader:
 
     def time_vector(self, stage_id: str) -> ndarray:
         self._ensure_stages()
+        if stage_id in self._mode_refs:
+            return np.array([0.0], dtype=np.float64)
         mpco_name = self._stage_to_mpco[stage_id]
         return self._build_time_vector_for_mpco_stage(self._h5[mpco_name])
 
@@ -271,9 +314,9 @@ class MPCOReader:
         or no ``MODEL`` group (nothing to compare then).
         """
         self._ensure_stages()
-        if not self._stage_cache:
+        if not self._host_ids:
             return 3
-        mpco_name = self._stage_to_mpco[self._stage_cache[-1].id]
+        mpco_name = self._stage_to_mpco[self._host_ids[-1]]
         coords = _child(self._h5[mpco_name], "MODEL/NODES/COORDINATES")
         if coords is None or coords.ndim != 2 or coords.shape[1] not in (2, 3):
             return 3
@@ -283,11 +326,11 @@ class MPCOReader:
         if not isinstance(self._fem_cache, _Sentinel):
             return self._fem_cache
         self._ensure_stages()
-        if not self._stage_cache:
+        if not self._host_ids:
             self._fem_cache = None
             return None
         # Use the LAST stage's MODEL — most up-to-date geometry.
-        mpco_name = self._stage_to_mpco[self._stage_cache[-1].id]
+        mpco_name = self._stage_to_mpco[self._host_ids[-1]]
         model_grp = _child(self._h5[mpco_name], "MODEL")
         if model_grp is None:
             self._fem_cache = None
@@ -314,6 +357,13 @@ class MPCOReader:
         self, stage_id: str, level: ResultLevel,
     ) -> list[str]:
         self._ensure_stages()
+        if stage_id in self._mode_refs:
+            if level.value != "nodes":
+                return []
+            on_nodes = _child(
+                self._h5[self._mode_refs[stage_id][0]], "RESULTS/ON_NODES",
+            )
+            return [] if on_nodes is None else _mnodal.modal_components(on_nodes)
         mpco_name = self._stage_to_mpco.get(stage_id)
         if mpco_name is None:
             return []
@@ -517,6 +567,10 @@ class MPCOReader:
         file does not record the component.
         """
         self._ensure_stages()
+        if stage_id in self._mode_refs:
+            # A mode shape is the same at every copy of a node.
+            comps = self.available_components(stage_id, ResultLevel.NODES)
+            return _mtr.PARTITION_REDUCTION_NONE if component in comps else None
         mpco_name = self._stage_to_mpco.get(stage_id)
         if mpco_name is None:
             return None
@@ -540,6 +594,10 @@ class MPCOReader:
         time = self.time_vector(stage_id)
         t_idx = resolve_time_slice(time_slice, time)
 
+        if stage_id in self._mode_refs:
+            return self._read_mode_nodes(
+                stage_id, component, node_ids, time, t_idx,
+            )
         mpco_name = self._stage_to_mpco[stage_id]
         on_nodes = _child(self._h5[mpco_name], "RESULTS/ON_NODES")
         if on_nodes is None:
@@ -594,6 +652,28 @@ class MPCOReader:
         return NodeSlab(
             component=component, values=values,
             node_ids=sel_ids, time=time[t_idx],
+        )
+
+    def _read_mode_nodes(
+        self, stage_id: str, component: str,
+        node_ids: Optional[ndarray], time: ndarray, t_idx: ndarray,
+    ) -> NodeSlab:
+        """One mode's shape as a single-station node slab (#1946)."""
+        host, entry = self._mode_refs[stage_id]
+        on_nodes = _child(self._h5[host], "RESULTS/ON_NODES")
+        got = (
+            None if on_nodes is None
+            else _mnodal.read_mode_shape(
+                on_nodes, entry, component, node_ids=node_ids,
+            )
+        )
+        if got is None:
+            return _empty_node_slab(component, time, t_idx)
+        values, ids = got
+        return NodeSlab(
+            component=component,
+            values=np.repeat(values[None, :], t_idx.size, axis=0),
+            node_ids=ids, time=time[t_idx],
         )
 
     # ------------------------------------------------------------------
