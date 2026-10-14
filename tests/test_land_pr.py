@@ -1302,6 +1302,29 @@ def test_an_invisible_mark_does_not_hide_the_end_of_an_owned_section_1891(mark, 
     _b_not_owned(f"### Owned files\n- `src/a.py`\n{mark}{end}")
 
 
+@pytest.mark.parametrize("line", [
+    pytest.param("- `src/c.py`; Do​not touch `src/b.py`", id="zwsp-glued-not"),
+    pytest.param("`do​not` `src/b.py`", id="zwsp-in-a-ticked-phrase"),
+    pytest.param("- `src/c.py` x﻿never `src/b.py`", id="bom-glued-never"),
+])
+def test_a_mid_line_invisible_mark_does_not_hide_an_owned_negation_1891(line):
+    """Delta review of #1917: deleting a mid-line mark glued "Do" and "not" into "Donot",
+    which `_NEGATION` cannot see, so the line owned `b.py`. Fails on 91c91fe9; main refuses."""
+    gh, git = _scope(["src/c.py", "src/b.py"], card=f"### Owned files\n{line}\n")
+    with pytest.raises(land_pr.LandError, match=r"check 9: an Owned line negates"):
+        _run(1218, gh, git)
+    assert not _merged(gh)
+
+
+@pytest.mark.parametrize("line", [
+    pytest.param("Do​not touch `src/b.py`.", id="zwsp-glued-not"),
+    pytest.param("- all​except `src/b.py`", id="zwsp-glued-except"),
+])
+def test_a_mid_line_invisible_mark_does_not_hide_an_amendment_negation_1891(line):
+    """Delta review of #1917, as above for a card amendment. Fails on 91c91fe9."""
+    _refused_b(f"**Card amendment (T):** also edit `src/a.py`.\n{line}\n")
+
+
 def test_a_bom_prefixed_body_still_holds_a_freeze_1891():
     """Review of #1917, finding 2: check 5 reads `Slice:` too. Revert-proof: without `_text`
     in `_check_freeze`, the BOM hides the line and the freeze refuses."""

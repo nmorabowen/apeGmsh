@@ -97,7 +97,9 @@ SLICE_REF = re.compile(r"^Slice:\s*#(\d+)", re.MULTILINE)
 #: A body written from a Windows tool can begin with a UTF-8 BOM and end lines in CRLF
 #: (#1887: "<BOM>Slice: #1857" missed the line-start match, so check 9 refused). An
 #: invisible BOM or zero-width space before a `#` heading or a bold label would hide it and
-#: keep an Owned section open, so both go wherever they sit (review of #1917).
+#: keep an Owned section open, so a line-start run is deleted. Elsewhere a mark becomes a
+#: space: deleting it would glue "Do<ZWSP>not" into "Donot" and hide the negation (review of #1917).
+_LEADING_INVISIBLE = re.compile(r"^[\ufeff\u200b]+", re.MULTILINE)
 _INVISIBLE = re.compile(r"[\ufeff\u200b]")
 #: CRLF and a lone CR each end a line: deleting a lone CR would join two lines (review of #1917).
 _CR = re.compile(r"\r\n?")
@@ -264,9 +266,10 @@ def _sets_accepted(patch: str) -> bool:
 
 
 def _text(body: str | None) -> str:
-    """A PR, card or comment body with every BOM and zero-width space removed and its line
-    ends normalised to LF (#1891)."""
-    return _CR.sub("\n", _INVISIBLE.sub("", body or ""))
+    """A PR, card or comment body with its line ends normalised to LF, BOMs and zero-width
+    spaces deleted at a line start and turned into a space elsewhere (#1891)."""
+    text = _LEADING_INVISIBLE.sub("", _CR.sub("\n", body or ""))
+    return _INVISIBLE.sub(" ", text)
 
 
 def _check_freeze(number: int, pr: dict[str, Any], paths: list[str], frozen: list[str], gh: Runner) -> None:
