@@ -236,7 +236,7 @@ The kill criteria are measured weekly by the triage (#1202). The fallback in eve
 | KPI | Baseline |
 |---|---|
 | Strict fix-prefixed share | 22% |
-| Index-touch share | 80–85% |
+| Index-touch share | 80–85% (hand-edited index files only, with the generated skill mirror and indexes excluded: 13% on 2026-10-14) |
 | Lost-work cases | 12 |
 | Red `main` | 2 in 3 weeks |
 | Files over 2,000 lines | 15 |
@@ -247,12 +247,12 @@ The kill criteria are measured weekly by the triage (#1202). The fallback in eve
 | `src/` Python lines | 301.7k |
 | Line count of each hub file | `apesees.py` 14,181 |
 
-The structure KPIs are a KPI, never a hard gate; contracts are constrained, internals stay fluid.
+The structure KPIs are a KPI, never a hard gate, except the lazy-import ratchet below; contracts are constrained, internals stay fluid.
 
 **Structural targets (maintainer, 2026-10-14).** The 2026-10-14 measurement (#1202) found files over 2,000 lines at 16, lazy cross-package imports at 72.2% and rising, and red `main` at 4 episodes in 16 days. The program therefore adds a short structural phase with these targets:
 - `emitter/h5.py` and `element/solid.py` are split below 2,000 lines, as pure moves, one hub at a time, under `verify_move`;
 - a shrink-only ratchet holds the lazy cross-package import share;
-- the weekly triage reviews red `main` until it is back at baseline.
+- red `main` gets its own review at the 10-18 triage.
 
 ## 9. Next-link chip prompt
 
