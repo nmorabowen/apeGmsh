@@ -19,6 +19,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import * as THREE from "three";
+import { planeRows } from "../../src/panels/planes.ts";
 import { SectionClip } from "../../src/renderer/clip.ts";
 import { axisParam, gizmoGeometry, GizmoInteractor, PlaneGizmos, rayHit, tipPoint, type GizmoGeometry } from "../../src/renderer/gizmo.ts";
 import type { Navigator } from "../../src/renderer/navigation.ts";
@@ -458,6 +459,7 @@ test("panel state: the footer toggle and the eyes decide which planes get a gizm
   assert.deepEqual(gizmoPlanes(s.clip).map((p: ClipPlane) => p.id), ["plane-1", "plane-2"]);
   s = reduce(s, { type: "setClipGizmo", id: "plane-1", visible: false });
   assert.deepEqual(gizmoPlanes(s.clip).map((p) => p.id), ["plane-2"]);
+  assert.deepEqual(planeRows(s.clip.planes, BOX).map((r) => r.gizmo), [false, true], "the rows' eyes");
   s = reduce(s, { type: "setClipActive", id: "plane-2", active: false });
   assert.deepEqual(gizmoPlanes(s.clip).map((p) => p.id), ["plane-2"], "an inactive plane keeps its gizmo (move it, then cut)");
   s = reduce(s, { type: "setShowGizmos", on: false });
@@ -500,6 +502,8 @@ test("G-PICK: a click through the quad picks the model under it; no scene raycas
   // A scene-wide raycast (what any future pick over the scene would do): the gizmo is never hit.
   const scene = new THREE.Scene();
   scene.add(r.gizmos.root, faces);
+  // What a render does first: the gizmo objects at their placed transforms.
+  scene.updateMatrixWorld(true);
   const rc = new THREE.Raycaster();
   rc.set(r.camera.position.clone(), new THREE.Vector3(...target).sub(r.camera.position).normalize());
   assert.deepEqual(rc.intersectObject(r.gizmos.root, true), [], "no gizmo object answers a raycast");

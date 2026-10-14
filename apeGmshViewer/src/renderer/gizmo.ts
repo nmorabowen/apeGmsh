@@ -220,7 +220,8 @@ export class PlaneGizmos {
   private readonly coneGeo = new THREE.ConeGeometry(1, 1, 16).translate(0, 0.5, 0);
   private readonly quadMat = new THREE.MeshBasicMaterial({ color: toHexNumber(DARK_MAIN[3]!), transparent: true, opacity: QUAD_OPACITY, side: THREE.DoubleSide, depthWrite: false });
   private readonly outlineMat = new THREE.LineBasicMaterial({ color: toHexNumber(DARK_MAIN[3]!), transparent: true, opacity: 0.8 });
-  private readonly arrowMat = new THREE.MeshBasicMaterial({ color: toHexNumber(DARK.accent) });
+  // The arrow is drawn over the model (no depth test): its tip is the rotate handle, and a handle the model hides is one nobody finds.
+  private readonly arrowMat = new THREE.MeshBasicMaterial({ color: toHexNumber(DARK.accent), depthTest: false, depthWrite: false });
 
   constructor() {
     this.root.name = "plane-gizmos";
@@ -278,6 +279,7 @@ export class PlaneGizmos {
     }
     // Drawn after the model, so the translucent quad blends over it.
     quad.renderOrder = outline.renderOrder = 1;
+    shaft.renderOrder = cone.renderOrder = 2;
     this.root.add(quad, outline, arrow);
     const d = { quad, outline, arrow, cone, shaft };
     this.drawn.set(id, d);

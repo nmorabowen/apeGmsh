@@ -21,6 +21,8 @@ import { Store } from "../state/store.ts";
 import { WINDOW_KINDS, type DeclPath, type GaussMode } from "../state/types.ts";
 import { applyTheme } from "../theme/tokens.ts";
 import { contourKey, contourShownKey, elementContourKey } from "./contour.ts";
+import { tipPoint } from "./gizmo.ts";
+import { zoomToward } from "./navigation.ts";
 import { Viewport } from "./viewport.ts";
 
 const bridge = (window as unknown as { viewer: Bridge }).viewer;
@@ -534,7 +536,9 @@ async function measureContour(path: string, deform = false, element = false, gau
     // V4e1: six section planes cutting through the scrub (each 20 % inside the reference box along ±X, ±Y, ±Z).
     if (planes) addSixPlanes();
     if (planes && viewport.clipCount !== 6) throw new Error(`measure: ${viewport.clipCount} section planes cut, not 6`);
-    const field = what + (deform ? ", deformed ×1" : "") + (planes ? ", 6 section planes" : "");
+    // V4e2: and their six gizmos drawn (shown by default), so the scrub renders them every step.
+    if (planes && viewport.gizmoCount !== 6) throw new Error(`measure: ${viewport.gizmoCount} plane gizmos drawn, not 6`);
+    const field = what + (deform ? ", deformed ×1" : "") + (planes ? ", 6 section planes + gizmos" : "");
     const T = stages[best]!.time.length;
     const gl = viewport.renderer.getContext();
     const stepMs: number[] = [];
@@ -753,6 +757,141 @@ function clipMissTarget(): { decl: DeclPath; x: number; y: number } | null {
   return best && { decl: best.decl, x: best.x, y: best.y };
 }
 
+/** The client point of a world point. */
+function screenOf(p: readonly number[]): { x: number; y: number } {
+  const v = new THREE.Vector3(p[0], p[1], p[2]).project(viewport.camera);
+  const rect = viewport.renderer.domElement.getBoundingClientRect();
+  return { x: rect.left + ((v.x + 1) / 2) * rect.width, y: rect.top + ((1 - v.y) / 2) * rect.height };
+}
+
+/** A real pointer event at a client point, sent where the browser would send it (the topmost element there). */
+function pointerAt(type: string, at: { x: number; y: number }, target: Element = document.elementFromPoint(at.x, at.y) ?? viewport.renderer.domElement): Element {
+  target.dispatchEvent(new PointerEvent(type, { clientX: at.x, clientY: at.y, button: 0, buttons: type === "pointerup" ? 0 : 1, pointerId: 1, bubbles: true, cancelable: true }));
+  return target;
+}
+
+/** A ring and a label on the page at a client point (capture only). */
+function marker(at: { x: number; y: number }, text: string): () => void {
+  const ring = document.createElement("div");
+  ring.style.cssText =
+    `position: fixed; left: ${at.x - 9}px; top: ${at.y - 9}px; width: 18px; height: 18px; border-radius: 50%;` +
+    "border: 3px solid var(--accent); pointer-events: none; z-index: 10;";
+  const label = document.createElement("div");
+  label.style.cssText = `position: fixed; left: ${at.x + 16}px; top: ${at.y - 10}px; padding: 2px 6px; border-radius: 5px; font: 600 12px var(--font); color: var(--text); background: var(--panel); border: 1px solid var(--line); pointer-events: none; z-index: 10;`;
+  label.textContent = text;
+  document.body.append(ring, label);
+  return () => {
+    ring.remove();
+    label.remove();
+  };
+}
+
+/**
+ * The V4e2 plane-gizmo stills (D7), by a fixed rule, on the undeformed model
+ * coloured by group: one Z plane at 55 % with its gizmo; three planes (Z, X at
+ * 40 %, Y at 60 %), three gizmos; the Z gizmo mid-drag (a real press on the
+ * quad centre, moved a quarter of the arrow up the normal, still held); the Z
+ * plane rotated by its tip (a real press, moved to tilt the normal about 30
+ * degrees toward the camera, released); and the legend over a gizmo: the camera
+ * zoomed in until the Z quad lies under the legend, a real press on the legend
+ * there, which the gizmo does not take. Every gesture goes through the canvas's
+ * own listeners. `<out>.gizmo-<n>-<what>.png`.
+ */
+async function captureGizmo(settle: (ms?: number) => Promise<unknown>, width: number, height: number) {
+  if (!store.get().mesh) return;
+  if (typeof bridge.captureResize === "function") await bridge.captureResize(width, height);
+  removePlanes();
+  store.dispatch({ type: "setApplyCuts", on: true });
+  store.dispatch({ type: "setShowGizmos", on: true });
+  store.dispatch({ type: "setDeform", on: false });
+  store.dispatch({ type: "setColourBy", by: "group" });
+  store.dispatch({ type: "clearSelection" });
+  store.dispatch({ type: "frameSelection" });
+  const still = async (name: string) => {
+    await settle(150);
+    viewport.renderNow();
+    await painted();
+    await painted();
+    await bridge.captureStill(name);
+  };
+  const plane = (id: string) => store.get().clip.planes.find((p) => p.id === id)!;
+  const geom = (id: string) => viewport.gizmos.geometries().get(id)!;
+  // Functions, not the getters themselves: each read is after a gesture or an event the type checker cannot see.
+  const count = (): number => viewport.gizmoCount;
+  const mode = (): string | null => viewport.gizmoInput.mode;
+  const z = addAt([0, 0, 1], 0.55);
+  if (count() !== 1) throw new Error(`capture: ${count()} gizmos for one plane`);
+  await still("gizmo-1-one-plane");
+  const x = addAt([1, 0, 0], 0.4);
+  const y = addAt([0, 1, 0], 0.6);
+  if (count() !== 3) throw new Error(`capture: ${count()} gizmos for three planes`);
+  await still("gizmo-2-three-planes");
+  store.dispatch({ type: "removeClipPlane", id: x });
+  store.dispatch({ type: "removeClipPlane", id: y });
+
+  // Mid-drag: a press on the quad centre, a move up the normal, the button still held.
+  const g = geom(z);
+  const off0 = plane(z).offset;
+  const at0 = screenOf(g.centre);
+  pointerAt("pointerdown", at0, viewport.renderer.domElement);
+  if (mode() !== "translate") throw new Error(`capture: the press on the Z quad is ${mode()}, not a translate`);
+  const up = [g.centre[0] + 0.25 * g.arrowLen * g.normal[0], g.centre[1] + 0.25 * g.arrowLen * g.normal[1], g.centre[2] + 0.25 * g.arrowLen * g.normal[2]];
+  for (const t of [0.25, 0.5, 0.75, 1]) {
+    const p = g.centre.map((c, k) => c + t * (up[k]! - c));
+    pointerAt("pointermove", screenOf(p), viewport.renderer.domElement);
+  }
+  const moved = plane(z).offset - off0;
+  if (!(Math.abs(moved - 0.25 * g.arrowLen) < 1e-3 * g.arrowLen)) throw new Error(`capture: the drag moved the plane ${moved}, not ${0.25 * g.arrowLen}`);
+  const done = marker(screenOf(up), "mid-drag: the Z plane moves with the cursor along its normal");
+  await still("gizmo-3-mid-drag");
+  done();
+  pointerAt("pointerup", screenOf(up), viewport.renderer.domElement);
+
+  // Rotated: a press on the tip, moved to tilt the normal toward the camera, released.
+  const r = geom(z);
+  pointerAt("pointerdown", screenOf(tipPoint(r)), viewport.renderer.domElement);
+  if (mode() !== "rotate") throw new Error(`capture: the press on the Z tip is ${mode()}, not a rotate`);
+  const back = new THREE.Vector3(0, 0, 1).applyQuaternion(viewport.camera.quaternion); // toward the camera
+  const n0 = new THREE.Vector3(...r.direction);
+  const tilt = back.clone().sub(n0.clone().multiplyScalar(back.dot(n0))).normalize();
+  const want = n0.clone().multiplyScalar(Math.cos(Math.PI / 6)).addScaledVector(tilt, Math.sin(Math.PI / 6));
+  for (const t of [0.33, 0.66, 1]) {
+    const d = n0.clone().lerp(want, t).normalize();
+    pointerAt("pointermove", screenOf([r.centre[0] + r.arrowLen * d.x, r.centre[1] + r.arrowLen * d.y, r.centre[2] + r.arrowLen * d.z]), viewport.renderer.domElement);
+  }
+  pointerAt("pointerup", screenOf(tipPoint(geom(z))), viewport.renderer.domElement);
+  const p = plane(z);
+  const onPlane = p.normal[0] * r.centre[0] + p.normal[1] * r.centre[1] + p.normal[2] * r.centre[2] - p.offset;
+  if (Math.abs(onPlane) > 1e-6 * (store.get().mesh!.radius || 1)) throw new Error(`capture: the rotated plane is ${onPlane} off its quad centre`);
+  await still("gizmo-4-rotated");
+
+  // The legend over a gizmo: zoom in until the (re-straightened) Z quad lies under the legend, then press there.
+  store.dispatch({ type: "setClipPose", id: z, normal: [0, 0, 1], offset: r.centre[2] });
+  const legend = document.getElementById("legend")!;
+  const box = legend.getBoundingClientRect();
+  const at = { x: box.left + box.width / 2, y: box.top + box.height / 2 };
+  const ray = new THREE.Raycaster();
+  const gizmoUnder = () => {
+    const rect = viewport.renderer.domElement.getBoundingClientRect();
+    ray.setFromCamera(new THREE.Vector2(((at.x - rect.left) / rect.width) * 2 - 1, -((at.y - rect.top) / rect.height) * 2 + 1), viewport.camera);
+    return viewport.gizmos.hit({ origin: ray.ray.origin.toArray(), direction: ray.ray.direction.toArray() });
+  };
+  for (let k = 0; k < 12 && !gizmoUnder(); k++) {
+    zoomToward(viewport.camera, new THREE.Vector3(...geom(z).centre), 0.75);
+    viewport.nav.updated();
+  }
+  if (!gizmoUnder()) throw new Error("capture: no zoom put the Z gizmo under the legend");
+  const target = pointerAt("pointerdown", at);
+  pointerAt("pointerup", at, target);
+  if (!legend.contains(target)) throw new Error(`capture: the press under the legend reached ${target.nodeName}#${target.id}, not the legend`);
+  if (viewport.gizmoInput.dragging) throw new Error("capture: the gizmo took a press on the legend");
+  const off = marker(at, "a press here is the legend's: the gizmo under it does not move");
+  await still("gizmo-5-legend-over-gizmo");
+  off();
+  removePlanes();
+  store.dispatch({ type: "frameSelection" });
+}
+
 async function main() {
   const cfg = await bridge.config();
   if (cfg.mode === "view") {
@@ -867,6 +1006,8 @@ async function main() {
     await captureElements(settle, width, height);
     // V4e1 (D7): the section-plane stills, at the capture window's own width, then 1280 px.
     await captureClip(settle, width, height);
+    // V4e2 (D7): the plane-gizmo stills, at the capture window's own width.
+    await captureGizmo(settle, width, height);
   }
   await bridge.captureDone();
 }
