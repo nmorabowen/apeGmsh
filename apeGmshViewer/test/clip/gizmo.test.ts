@@ -32,6 +32,7 @@ import type { ClipPlane, Event, MeshInfo, State } from "../../src/state/types.ts
 const proto = Viewport.prototype as unknown as {
   renderNow(this: unknown): void;
   wireInput(this: unknown): { gizmo: GizmoInteractor; nav: Navigator };
+  syncGizmos(this: unknown, s: State, prev: State | null): void;
   aim: unknown;
   selectAt: unknown;
   pickAt: unknown;
@@ -50,6 +51,10 @@ function storeOf(s0: State) {
   return {
     log,
     get: () => s,
+    /** Replace the state outright (a phase change the clip reducer does not own). */
+    set: (next: State) => {
+      s = next;
+    },
     dispatch: (e: Event) => {
       log.push(e);
       if (CLIP_EVENTS.has(e.type)) s = reduce(s, e);
@@ -115,6 +120,8 @@ interface Rig {
   geom: (id?: string) => GizmoGeometry;
   at: (p: readonly number[]) => [number, number];
   send: (type: string, x: number, y: number, extra?: { button?: number; shiftKey?: boolean }) => globalThis.Event;
+  /** Put the state on the geometry phase (or back), through the viewport's own syncGizmos. */
+  phase: (kind: "geometry" | "results" | null) => void;
   receiver: Record<string, unknown>;
 }
 
@@ -146,16 +153,18 @@ function rig(s0: State, camPos: readonly number[], box: Box = BOX, chrome: ((x: 
     },
     pointAt: () => null,
     requestRender: () => {},
+    // The box syncGizmos reads (the viewport's is the reference mesh's, renderer/clip.ts sliderBox).
+    sliderBox: () => box,
   };
   const { gizmo, nav } = proto.wireInput.call(receiver);
-  const sync = () => gizmos.sync(gizmoPlanes(store.get().clip), box);
-  // The viewport re-syncs its gizmos on every state change (syncGizmos).
+  // Every state change goes through the viewport's own syncGizmos, as its store subscription (onState) does.
   const raw = store.dispatch;
   store.dispatch = (e: Event) => {
+    const prev = store.get();
     raw(e);
-    sync();
+    proto.syncGizmos.call(receiver, store.get(), prev);
   };
-  sync();
+  proto.syncGizmos.call(receiver, store.get(), null);
   return {
     store, canvas, camera, gizmos, gizmo, nav, picks, receiver,
     geom: (id = "plane-1") => gizmos.geometries().get(id)!,
@@ -164,6 +173,11 @@ function rig(s0: State, camPos: readonly number[], box: Box = BOX, chrome: ((x: 
       const e = pointer(type, x, y, extra);
       canvas.dispatchEvent(e);
       return e;
+    },
+    phase: (kind) => {
+      const prev = store.get();
+      store.set({ ...prev, phase: { ...prev.phase, at: kind === null ? null : ({ kind } as State["phase"]["at"]) } });
+      proto.syncGizmos.call(receiver, store.get(), prev);
     },
   };
 }
@@ -465,6 +479,54 @@ test("panel state: the footer toggle and the eyes decide which planes get a gizm
   s = reduce(s, { type: "setShowGizmos", on: false });
   assert.deepEqual(gizmoPlanes(s.clip), []);
   assert.throws(() => reduce(s, { type: "setClipGizmo", id: "plane-9", visible: true }), /no section plane/);
+});
+
+test("syncGizmos: a hidden gizmo takes no press and moves no plane (geometry phase, eye closed, footer off), and comes back", () => {
+  const r = rig(stateWith(BOX, { normal: [0, 0, 1] }), [1, -5, 4]);
+  const g = r.geom();
+  const [x, y] = r.at(g.centre);
+  const offset0 = r.store.get().clip.planes[0]!.offset;
+  const tryDrag = () => {
+    r.send("pointerdown", x, y);
+    const taken = r.gizmo.dragging;
+    r.send("pointermove", ...r.at(add(g.centre, g.normal, 0.3)));
+    r.send("pointerup", ...r.at(add(g.centre, g.normal, 0.3)));
+    return taken;
+  };
+  r.phase("geometry");
+  assert.equal(r.gizmos.root.visible, false, "the geometry phase hides the gizmos");
+  assert.equal(tryDrag(), false, "geometry phase: the hidden gizmo takes no press");
+  assert.equal(r.store.get().clip.planes[0]!.offset, offset0, "and no plane moved");
+  r.phase(null);
+  assert.equal(r.gizmos.root.visible, true);
+  r.store.dispatch({ type: "setClipGizmo", id: "plane-1", visible: false });
+  assert.equal(r.gizmos.count, 0, "the eye closed: syncGizmos drops the gizmo");
+  assert.equal(tryDrag(), false, "eye closed: no press taken");
+  r.store.dispatch({ type: "setClipGizmo", id: "plane-1", visible: true });
+  r.store.dispatch({ type: "setShowGizmos", on: false });
+  assert.equal(r.gizmos.count, 0, "footer off: no gizmo");
+  assert.equal(tryDrag(), false, "footer off: no press taken");
+  assert.equal(r.store.get().clip.planes[0]!.offset, offset0, "no plane moved through any hidden gizmo");
+  r.store.dispatch({ type: "setShowGizmos", on: true });
+  r.store.dispatch({ type: "addClipPlane", normal: [1, 0, 0] });
+  assert.equal(r.gizmos.count, 2, "a plane added after load gets its gizmo");
+  assert.equal(tryDrag(), true, "shown again: the press is the gizmo's");
+  near(r.store.get().clip.planes[0]!.offset, offset0 + 0.3, 1e-6, "and the drag moved the plane");
+  r.store.dispatch({ type: "setClipOffset", id: "plane-1", offset: 1.5 });
+  near(r.geom().centre[2], 1.5, 1e-12, "the gizmo follows an offset typed in the panel");
+});
+
+test("G-EVENTS: pointercancel mid-drag ends the drag; the next hover move moves no plane", () => {
+  const r = rig(stateWith(BOX, { normal: [0, 0, 1] }), [1, -5, 4]);
+  const g = r.geom();
+  r.send("pointerdown", ...r.at(g.centre));
+  r.send("pointermove", ...r.at(add(g.centre, g.normal, 0.2)));
+  assert.equal(r.store.log.length, 1);
+  r.send("pointercancel", 0, 0);
+  assert.equal(r.gizmo.dragging, false, "cancel ends the drag");
+  r.send("pointermove", ...r.at(add(g.centre, g.normal, 0.5)));
+  assert.equal(r.store.log.length, 1, "the hover move after the cancel sends nothing");
+  near(r.store.get().clip.planes[0]!.offset, 1.2, 1e-6, "the plane stays where the last drag move put it");
 });
 
 // ---- G-PICK --------------------------------------------------------------------------
