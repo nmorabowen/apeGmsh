@@ -24,10 +24,65 @@ export type ResultsPairing =
 const short = (h: string): string => h.slice(0, 8);
 
 /**
- * Whether `results` pairs with the loaded model. `model` is null when no
- * model is loaded (none open, still reading, or failed).
+ * The first opensees minor whose hashed `/opensees/program` `decl` column
+ * holds each call's declaration (A7, #1839), so every archive the bridge
+ * writes changes its `model_hash` once here. Named after Python's
+ * `h5_reader.PROGRAM_DECL_FROM`; architecture/h5-schema.md, the opensees
+ * zone's `2.31.0` history entry. The one place the viewer names it (V4h, #1856).
+ * It names the change in the message; it does not decide a side's era: a
+ * `to_h5` rewrite of an older file is stamped 2.31 but keeps its old hash, so
+ * the era is the completeness marker (`recordsProgramDecl`), as in Python #1861.
  */
-export function pairResults(model: { lineage: Lineage | null } | null, results: ResultsInfo | null): ResultsPairing {
+export const PROGRAM_DECL_FROM = { major: 2, minor: 31 } as const;
+const BOUNDARY = `${PROGRAM_DECL_FROM.major}.${PROGRAM_DECL_FROM.minor}.0`;
+
+/**
+ * Whether a side's `model_hash` includes declaration ids, from its
+ * `/opensees/decls@program_decl` marker (Python `h5_reader.records_program_decl`):
+ * "complete" yes, "absent" no (the readers report a missing marker, or no
+ * decls group, as "absent"); null with no opensees zone (null) or another
+ * marker value: the era is unknown and no cause is named.
+ */
+function recordsProgramDecl(marker: string | null): boolean | null {
+  if (marker === "complete") return true;
+  if (marker === "absent") return false;
+  return null;
+}
+
+/**
+ * The cause of a `model_hash` mismatch where exactly one side's hash includes
+ * declaration ids, or null (either side unknown, or both alike). It names the
+ * cause and keeps the refusal: the hashes still differ.
+ */
+function hashEraCause(
+  model: { openseesVersion: string | null; programDecl: string | null },
+  results: { openseesVersion: string | null; programDecl: string | null },
+): string | null {
+  const m = recordsProgramDecl(model.programDecl);
+  const r = recordsProgramDecl(results.programDecl);
+  if (m === null || r === null || m === r) return null;
+  const modelVersion = model.openseesVersion;
+  const resultsVersion = results.openseesVersion;
+  const remedy = m
+    ? "re-run the analysis against the re-saved model, or open the results with the model.h5 they were run on"
+    : "open the results with the model.h5 they were run on, or re-run the analysis against this model";
+  return (
+    `the opensees schema ${BOUNDARY} hash change (declaration ids entered the hash; ` +
+    `results opensees ${resultsVersion}, model opensees ${modelVersion}); ${remedy}`
+  );
+}
+
+/**
+ * Whether `results` pairs with the loaded model. `model` is null when no
+ * model is loaded (none open, still reading, or failed); its
+ * `openseesVersion` is `/meta@opensees_schema_version` of the model.h5 and
+ * `programDecl` its `/opensees/decls@program_decl` marker ("absent" when
+ * missing); both null when the model has no opensees zone.
+ */
+export function pairResults(
+  model: { lineage: Lineage | null; openseesVersion: string | null; programDecl: string | null } | null,
+  results: ResultsInfo | null,
+): ResultsPairing {
   if (!results) return { state: "none" };
   if (!model) return { state: "noModel" };
   const r = results.lineage;
@@ -41,6 +96,8 @@ export function pairResults(model: { lineage: Lineage | null } | null, results: 
   if (r.modelHash !== null) {
     if (!m?.modelHash) return { state: "mismatch", reason: "the results name a model_hash, and the open model has none to compare (its /meta/lineage has no model_hash)" };
     if (m.modelHash === r.modelHash) return { state: "paired", by: "model_hash" };
+    const cause = hashEraCause(model, results);
+    if (cause) return { state: "mismatch", reason: `model_hash differs: ${cause} (results ${short(r.modelHash)}…, model ${short(m.modelHash)}…)` };
     return { state: "mismatch", reason: `model_hash differs: the results were written from another model (results ${short(r.modelHash)}…, model ${short(m.modelHash)}…)` };
   }
   if (r.femHash !== null) {

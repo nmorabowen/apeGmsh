@@ -17,6 +17,7 @@ from apeGmsh.opensees import apeSees
 from apeGmsh.opensees._internal.build.records import ActivateAbsorbingRecord
 from apeGmsh.opensees._internal.build.errors import BridgeError
 from apeGmsh.opensees._internal.build.stage_emit import (
+    NO_DECL_CURSOR,
     absorbing_ele_tags,
     emit_activate_absorbing,
     parameter_flip_sites,
@@ -40,7 +41,8 @@ def _emit(records, *, eid_to_tag, element_owner=None, partition_rank=None):
         parameter_flip_sites(
             "flip_element_stage", records, resolved, partition_rank),
         partitioned=partition_rank is not None)
-    emit_activate_absorbing(records, e, plan, partition_rank=partition_rank)
+    emit_activate_absorbing(records, e, plan, partition_rank=partition_rank,
+                            cursor=NO_DECL_CURSOR)
     return [c for c in e.calls if c[0] == "flip_element_stage"]
 
 

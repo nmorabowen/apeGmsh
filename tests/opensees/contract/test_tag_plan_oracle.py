@@ -1771,9 +1771,9 @@ def test_a_stray_parameter_mint_raises(
         orig = getattr(apesees_mod, attr)
 
         def minting_writer(records: Any, emitter: Any, tag_plan: TagPlan,
-                           partition_rank: Any = None) -> Any:
+                           partition_rank: Any = None, **kw: Any) -> Any:
             tag_plan.allocator.allocate("parameter")
-            return orig(records, emitter, tag_plan, partition_rank)
+            return orig(records, emitter, tag_plan, partition_rank, **kw)
 
         monkeypatch.setattr(apesees_mod, attr, minting_writer)
     with pytest.raises(TagLawError, match="froze this allocator") as err:
@@ -1897,6 +1897,7 @@ def test_parameter_writers_read_the_plan() -> None:
     flips and updates over the elements the plan resolved; another
     model's plan holds none of these records."""
     from apeGmsh.opensees._internal.build.stage_emit import (
+        NO_DECL_CURSOR,
         emit_activate_absorbing,
         emit_initial_stress_global,
         emit_update_parameters,
@@ -1915,17 +1916,20 @@ def test_parameter_writers_read_the_plan() -> None:
         def run(tag_plan: TagPlan) -> list[Row]:
             em = _ramp_tapped(RecordingEmitter)()
             em.tap = []
-            emit_initial_stress_global(bm.initial_stress_records, em, tag_plan)
+            emit_initial_stress_global(bm.initial_stress_records, em, tag_plan,
+                                       cursor=NO_DECL_CURSOR)
             for stage in bm.stage_records:
                 emit_initial_stress_global(
-                    stage.initial_stress_records, em, tag_plan)
+                    stage.initial_stress_records, em, tag_plan,
+                    cursor=NO_DECL_CURSOR)
                 for emit, records in (
                     (emit_activate_absorbing,
                      stage.activate_absorbing_records),
                     (emit_update_parameters, stage.update_parameter_records),
                 ):
                     for rank in ranks or [None]:
-                        emit(records, em, tag_plan, partition_rank=rank)
+                        emit(records, em, tag_plan, partition_rank=rank,
+                             cursor=NO_DECL_CURSOR)
             return list(em.tap)
 
         assert run(plan) == list(plan.parameters.stream()), name

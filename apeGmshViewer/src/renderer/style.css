@@ -259,3 +259,40 @@ code { font-family: var(--mono); }
 .window-row-title { font-weight: 600; }
 .window-row-decl { font: 11px var(--mono); color: var(--muted); }
 .window-row-detail { font-size: 13px; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+
+/* V4e1: the section planes panel (ADR 0083 Part 4), at the top of the rail,
+   above the inspector; it scrolls past 45 % of the rail. */
+#planes {
+  flex: 0 0 auto; min-height: 0; max-height: 45%; margin-bottom: auto;
+  overflow: auto; padding: 10px 12px; border-radius: 10px;
+  background: var(--panel); border: 1px solid var(--line);
+}
+#planes h3 {
+  display: flex; align-items: center; gap: 8px;
+  margin: 0 0 6px; font-size: 12px; font-weight: 600;
+  letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted);
+}
+.planes-count { margin-left: auto; letter-spacing: 0; text-transform: none; font-variant-numeric: tabular-nums; }
+.planes-label { align-self: center; font-size: 12px; color: var(--muted); margin-right: 2px; }
+.planes-add button { flex: 0 1 auto; }
+.plane-row { padding: 6px 0; border-top: 1px solid var(--line); }
+.plane-row.inactive .plane-chips, .plane-row.inactive .plane-offset, .plane-row.inactive .plane-normal { opacity: 0.45; }
+.plane-head { display: flex; align-items: center; gap: 6px; }
+.plane-label { display: flex; align-items: center; gap: 4px; min-width: 76px; font-weight: 600; cursor: pointer; }
+.plane-chips { flex: 1; margin: 0; }
+.plane-chips button { padding: 2px 4px; }
+.plane-flip, .plane-eye, .plane-delete {
+  padding: 2px 8px; border-radius: 5px; cursor: pointer;
+  font: 600 12px var(--font); color: var(--text); background: var(--hover); border: 1px solid var(--line);
+}
+.plane-flip.on, .plane-eye.on { color: var(--accent-ink); background: var(--accent); border-color: var(--accent); }
+.plane-normal, .plane-offset { display: flex; align-items: center; gap: 6px; margin-top: 5px; }
+.plane-slider { flex: 1; min-width: 0; accent-color: var(--accent); }
+.plane-number {
+  width: 84px; font: 12px var(--mono); color: var(--text); background: var(--hover);
+  border: 1px solid var(--line); border-radius: 5px; padding: 1px 4px;
+}
+.plane-normal .plane-number { width: 64px; }
+.plane-number.outside { border-color: var(--interp); }
+.planes-notice { color: var(--error); font-size: 13px; margin: 0 0 6px; }
+.planes-foot { margin: 8px 0 0; padding-top: 8px; border-top: 1px solid var(--line); flex-wrap: wrap; }

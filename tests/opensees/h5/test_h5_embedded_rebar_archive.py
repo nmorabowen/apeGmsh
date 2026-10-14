@@ -11,10 +11,13 @@ The oracle is the bridge's own deck. ``_reinforced_fixed_ops`` round-trips
 byte for byte with and without a bond material. With ``rebar_cells`` the
 bar's ``CorotTruss`` cells are numbered after the ties, so only the stored
 tags reproduce the bridge's tie lines: the neutral-zone fallback numbers
-the ties past the cells instead.
+the ties past the cells instead. The replay writes those cells where the
+bridge does, after the ties (#1828), so that deck round-trips byte for
+byte too.
 """
 from __future__ import annotations
 
+import dataclasses
 import shutil
 import warnings
 from pathlib import Path
@@ -26,6 +29,7 @@ import pytest
 
 from apeGmsh.opensees import OpenSeesModel
 from apeGmsh.opensees._internal.build import constraints as constraints_mod
+from apeGmsh.opensees._internal.build import constraints_plan
 from apeGmsh.opensees.emitter import h5_reader
 from apeGmsh.opensees.emitter.h5 import H5Emitter
 from tests.fixtures.schema import OPENSEES_CURRENT, OPENSEES_EMBEDDED_REBAR_FROM
@@ -248,15 +252,55 @@ def test_rebar_cells_replay_keeps_the_planned_tie_tags(built) -> None:
     ties, cells = _lines(deck, _TIE), _lines(deck, _CELL)
     assert cells and max(_tags(ties)) < min(_tags(cells))
     assert _lines(replayed, _TIE) == ties
-    # Every other line matches in order. The cells are the one difference:
-    # the replay writes them with the other elements, the bridge after the
-    # ties (a replay ordering of minted elements, outside K2b).
-    assert sorted(_lines(replayed, _CELL)) == sorted(cells)
+    # The cells replay in the bridge's slot, after the ties (#1828).
+    assert replayed == deck
+    lines = replayed.splitlines()
+    tie_at = [i for i, ln in enumerate(lines) if ln.startswith(_TIE)]
+    cell_at = [i for i, ln in enumerate(lines) if ln.startswith(_CELL)]
+    assert max(tie_at) < min(cell_at)
 
-    def rest(text: str) -> list[str]:
-        return [ln for ln in text.splitlines() if not ln.startswith(_CELL)]
 
-    assert rest(replayed) == rest(deck)
+def test_rebar_cells_the_archive_lacks_refuse(
+    built, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A neutral zone naming a bar cell the element store does not hold
+    refuses, rather than replaying the cells it can match (#1828)."""
+    _deck, archive = built(cells=True)
+    real = constraints_plan.rebar_element_records
+
+    def one_cell_more(fem: Any) -> list[Any]:
+        recs = real(fem)
+        extra = ((10**9, 10**9 + 1),)
+        return [*recs[:-1], dataclasses.replace(
+            recs[-1], connectivity=(*recs[-1].connectivity, *extra))]
+
+    monkeypatch.setattr(
+        constraints_plan, "rebar_element_records", one_cell_more)
+    with pytest.raises(ValueError, match="rebar cell.*two zones disagree"):
+        OpenSeesModel.from_h5(str(archive)).build("tcl")
+
+
+def test_rebar_cells_the_neutral_zone_lacks_refuse(
+    built, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An element store holding a minted bar cell the neutral zone does not
+    name refuses too, rather than leaving the surplus cell at step 8."""
+    deck, archive = built(cells=True)
+    n = len(_lines(deck, _CELL))
+    real = constraints_plan.rebar_element_records
+
+    def one_cell_less(fem: Any) -> list[Any]:
+        recs = real(fem)
+        return [*recs[:-1], dataclasses.replace(
+            recs[-1], connectivity=tuple(recs[-1].connectivity)[:-1])]
+
+    monkeypatch.setattr(
+        constraints_plan, "rebar_element_records", one_cell_less)
+    with pytest.raises(ValueError, match=(
+        rf"carries {n - 1} rebar cell\(s\) but the archive's element store "
+        rf"holds {n} minted CorotTruss row\(s\), {n - 1} of them"
+    )):
+        OpenSeesModel.from_h5(str(archive)).build("tcl")
 
 
 def test_new_archive_never_takes_the_fallback(

@@ -455,3 +455,16 @@ readers (`compose_inspect`, `compose_list`, `compose_tree`) stay. The 165
 v1-call-site tests were migrated (127), deleted as covered (26) or deleted as
 obsolete under a cited ruling (12), and the tests that landed after the re-run
 were migrated too.
+
+
+## Amendment — the reinforce-tie replay row (K2, October 2026)
+
+D7 said the `reinforce-tie-replay` ledger row goes when K2 archives the
+`embedded_rebar` tags. K2b ([#1795](https://github.com/nmorabowen/apeGmsh/issues/1795))
+archives them from opensees 2.29.0, and re-scopes the row to
+`pre-2-29-reinforce-tie-replay` instead of deleting it, following the K1-8
+option-A precedent: archives below 2.29.0 still replay through the
+neutral-zone fallback. The row retires with the major bump that raises the
+opensees floor past 2.28. [#1828](https://github.com/nmorabowen/apeGmsh/issues/1828)
+then makes the deck replay write the `g.rebar.place(emit_elements=True)` cells
+after the ties, where the bridge writes them.

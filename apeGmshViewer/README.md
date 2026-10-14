@@ -119,6 +119,34 @@ Then:
   window opens Stages, Analysis, Patterns & series, Recorders, and Materials &
   sections. Each lists what the file declares, with the HDF5 path of every
   row; a material or section row selects it in the inspector.
+- **Section planes.** The **Section planes** panel at the top of the right
+  rail cuts the model with up to six planes (ADR 0083, slice 1). **Add
+  plane** makes one normal to X, Y, Z or the current view, through the
+  model's centre. A plane keeps the side its normal points to; **flip** keeps
+  the other, and the box beside its name turns it on or off. Activating a
+  seventh is refused with a notice; more than six can exist, inactive. The
+  chips set the normal to X, Y or Z, and **Custom** shows three fields, a
+  normal normalised on entry (a zero one is refused). The slider spans the
+  undeformed model along the normal; the number beside it is the offset
+  itself, never clamped, for a deformed shape that leaves that range.
+  **Apply cuts** turns every cut off without losing the planes. Planes are
+  world-space: they cut whatever is drawn (faces, edges, lines, the contour,
+  the deformed shape, the ghost, the markers, the selection), so the deformed
+  shape moves through them while scrubbing; the legend and the panels are
+  never cut. A solid is cut **hollow**: no cap closes the cut face yet
+  (V4e3). Each plane has a **gizmo** (V4e2, ADR 0083 slice 2): a translucent
+  quad over the model's cross-section and an arrow pointing at the kept side.
+  Drag the quad (or the arrow's shaft) with the left button to move the plane
+  along its normal; drag the arrow's tip to turn it, about the quad's centre.
+  A left click on a gizmo still picks the model under it, the gizmo is never
+  cut, and a legend or panel over a gizmo takes the press. Shift, the middle
+  and the right button are navigation's, over a gizmo too. **Show plane
+  gizmos** in the footer hides them all; each row's **gizmo** button hides its
+  own. A click on cut-away
+  geometry is a miss: the face the click hits first counts, so a click
+  through the hole onto geometry behind it also misses (ADR 0083 open
+  question 3). `F` frames the whole shape, cut or not. Planes last for the
+  window session (the app has no session store yet); they survive re-reads.
 
 ## Commands
 
@@ -131,8 +159,8 @@ through Node's type stripping; nothing is compiled for the tests).
 | `npm run typecheck` | `tsc` over `src/` and `test/` |
 | `npm test` | reader, chain resolution, mesh and navigation tests, on the fixture and on synthetic files |
 | `npm start -- <model.h5>` | open the app on a file; without a file, drop one on the window |
-| `npm run measure -- <model.h5> [--uncapped]` | print one [MEASUREMENTS.md](MEASUREMENTS.md) row; `--uncapped` lifts the vsync cap and prints the throughput row; with a `<stem>.results.h5` beside the model, also the contour scrub row (V4c1) and the same scrub with the deformed shape on (V4d) |
-| `npm run capture -- <model.h5> <out.png> [--pick=<OpenSees type>]` | write a still from a hidden window, with a beam selected (or an element of the `--pick` type); a second still `<out>.chain-end.png` when the chain is taller than the window; `<out>.framed.png`, `<out>.groups.png` and `<out>.role.png`; one `<out>.window-<kind>.png` per model-definition window; and, when the model has a `<stem>.results.h5` beside it, one `<out>.results-<i>-<stage>.png` per results stage at its last step, then the contour stills `<out>.contour-<n>-<what>.png` (the scan running, its first and last step, one component, and 1280 px), then the deformed-shape stills `<out>.deform-<n>-<what>.png` (scale 1 and 10 with the ghost, with a contour, two staged views, and 1280 px) |
+| `npm run measure -- <model.h5> [--uncapped]` | print one [MEASUREMENTS.md](MEASUREMENTS.md) row; `--uncapped` lifts the vsync cap and prints the throughput row; with a `<stem>.results.h5` beside the model, also the contour scrub row (V4c1) and the same scrub with the deformed shape on (V4d); the deformed scrub with six section planes cutting and their gizmos drawn (V4e1, V4e2) goes to the result JSON as `clip` (no row is printed for it) |
+| `npm run capture -- <model.h5> <out.png> [--pick=<OpenSees type>]` | write a still from a hidden window, with a beam selected (or an element of the `--pick` type); a second still `<out>.chain-end.png` when the chain is taller than the window; `<out>.framed.png`, `<out>.groups.png` and `<out>.role.png`; one `<out>.window-<kind>.png` per model-definition window; and, when the model has a `<stem>.results.h5` beside it, one `<out>.results-<i>-<stage>.png` per results stage at its last step, then the contour stills `<out>.contour-<n>-<what>.png` (the scan running, its first and last step, one component, and 1280 px), then the deformed-shape stills `<out>.deform-<n>-<what>.png` (scale 1 and 10 with the ghost, with a contour, two staged views, and 1280 px), then the element-contour stills, then the section-plane stills `<out>.clip-<n>-<what>.png` (before, one plane cutting a solid hollow, a corner cut, flip, an offset, Custom, six planes, a 7th refused, a click that misses cut-away geometry and the same click with the cuts off, the deformed contoured model cut at two steps, and 1280 px), then the plane-gizmo stills `<out>.gizmo-<n>-<what>.png` (one plane, three planes, mid-drag, rotated, and a legend over a gizmo taking the press) |
 | `npm run dist` | build the Windows installer into `out/installer/` (see [Install](#install-windows)) |
 
 ## Layout

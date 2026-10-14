@@ -153,8 +153,11 @@ class H5LedgerWarning(UserWarning):
 
     A ``ledger`` row of ``VERBS`` (ADR 0114, Q3) is a verb ``H5Emitter``
     counts and drops: ``/opensees`` carries no record of the call, so a
-    deck replayed from the file omits it (the contact, rebar, embed and
-    ``equationConstraint`` rows; some persist in the neutral zone instead).
+    deck replayed from the file omits it (the contact and embed rows and an
+    ``enforce="equation"`` tie's ``equationConstraint`` rows; some persist in
+    the neutral zone instead). A bridge-level ``apeSees.equation_constraint``
+    row is not counted: its ``EquationConstraintRecord`` is a
+    ``/opensees/decl_params`` row that replay re-emits.
     The bridge raises it at most once per ``apeSees`` instance for each
     distinct set of ledgered verbs. It is not an ``H5FeatureDeferredWarning``,
     so the automatic ``model.h5`` write does not silence it."""
@@ -166,9 +169,11 @@ class H5FeatureDeferredWarning(UserWarning):
     so the feature is lost on round-trip. Emit to Tcl / openseespy (or run live)
     for the complete model.
 
-    ``apeSees.h5`` raises it for ``apeSees.equation_constraint`` rows, which
-    are bridge-level and have no neutral-zone record. No emitter raises it
-    otherwise: g.reinforce ties, g.constraints.contact,
+    ``apeSees.h5`` does not raise it for ``apeSees.equation_constraint``
+    rows: each is archived as an ``EquationConstraintRecord`` row of
+    ``/opensees/decl_params`` and replayed. The ``model.h5``
+    rewrite raises it for program stores it does not write. g.reinforce ties,
+    g.constraints.contact,
     g.embed ties, and the ``enforce="equation"`` tie all persist via the
     neutral zone (schema 2.15.0 / 2.21.0 / 2.22.0 / 2.14.0). The class (and its
     back-compat alias) is retained for any future deferred feature. The
@@ -618,7 +623,22 @@ class H5RefusedVerb(NotImplementedError):
 #:     it is. A 2.31 reader opens 2.12 through 2.31 and
 #:     refuses a ``decl`` outside ``{-1} ∪ [0, n_decls)``; a 2.30.x reader
 #:     REFUSES a 2.31.x file.
-SCHEMA_VERSION: str = "2.31.0"
+#:   * 2.32.0 — K (side-channel decls): the six side-channel verbs
+#:     (``step_hook_ramp``, ``addToParameter``, ``flip_element_stage``,
+#:     ``update_parameter``, ``set_node_vel``, ``set_node_accel``) carry
+#:     the ``/opensees/program`` ``decl`` of the record that drove them,
+#:     which the bridge opens around each record's calls; ``-1`` before
+#:     this minor. A ``set_node_vel`` / ``set_node_accel`` call on a node
+#:     two ``s.zero_velocities`` records name is the first record's (the
+#:     deck zeroes it once). No path or dtype changes, and the
+#:     ``/opensees/decls@program_decl`` marker keeps its meaning
+#:     (``"complete"``: every provable join recorded). The column is
+#:     hashed, so an archive with any of these calls (an initial stress,
+#:     an absorbing flip, ``s.update_parameter``, ``s.zero_velocities``)
+#:     hashes differently once at this minor; any other archive is
+#:     unchanged. A 2.32 reader opens 2.12 through 2.32; a 2.31.x reader
+#:     REFUSES a 2.32.x file.
+SCHEMA_VERSION: str = "2.32.0"
 
 #: Oldest opensees-zone minor the reader opens (ADR 0113 (#1303)). The
 #: zone's last non-additive minor is 2.11.0, the 0-based rank flip, but
@@ -1328,8 +1348,8 @@ _NO_ROW = -1
 #: proved at emit time (A7, schema 2.31.0): a call no declaration opens
 #: (a node, a part row, the analysis chain), a neutral-declared row, a
 #: tagged call whose ``(kind, tag)`` no ``/opensees/decls/tags`` run
-#: holds, a side-channel store's call, and a tagless call with no
-#: declaration open (a ghost replay). Never a guessed id.
+#: holds, and a tagless call with no declaration open (a ghost replay,
+#: or a side-channel store's call before 2.32.0). Never a guessed id.
 #: Also the "no declaration open" state of :meth:`H5Emitter.set_declaration`.
 _NO_DECL = -1
 
@@ -2521,12 +2541,16 @@ class H5Emitter:
         self, cnode: int, cdof: int, ccoef: float,
         retained: "Sequence[tuple[int, int, float]]",
     ) -> None:
-        # ADR 0068 (Open item 4, RESOLVED): the OpenSees *deck* zone
-        # (``/opensees/...``) carries no dedicated equationConstraint record
-        # (a deck-replay follow-on, shared with reinforce / contact / embed
-        # ties). This is NOT data loss: the equation tie is a resolved
-        # ``InterpolationRecord``, and the NEUTRAL zone already persists its
-        # ``enforce`` route AND the projection ``weights`` (schema 2.14.0).
+        # Counted, not stored: the deck zone has no equationConstraint store.
+        # A bridge-level ``apeSees.equation_constraint`` row is archived
+        # anyway, as its ``EquationConstraintRecord`` ``/opensees/decl_params``
+        # row, which replay re-emits; ``apeSees._write_h5`` takes
+        # those rows off this count before warning. The rest come
+        # from an ``enforce="equation"`` tie (ADR 0068, Open item 4,
+        # RESOLVED), which deck replay skips. It is NOT data loss: the tie
+        # is a resolved ``InterpolationRecord``, and the NEUTRAL zone
+        # already persists its ``enforce`` route AND the projection
+        # ``weights`` (schema 2.14.0).
         # ``apeSees(fem).h5(path)`` writes that neutral zone into the same
         # archive — so an equation-tied model.h5 round-trips its interface via
         # ``FEMData.from_h5`` → ``apeSees(fem).tcl()/py()/run()`` (the forward
@@ -3428,7 +3452,11 @@ class H5Emitter:
     def addToParameter(
         self, tag: int, ele_tag: int, response: str,
     ) -> None:
-        """No-op — resolved form; persists declaratively (ADR 0055)."""
+        """No-op — resolved form; persists declaratively (ADR 0055).
+
+        The call is its initial stress's declaration's: the bridge opens
+        it around the record's calls (opensees 2.32.0).
+        """
         del tag, ele_tag, response
 
     def flip_element_stage(
@@ -3439,7 +3467,8 @@ class H5Emitter:
         The record itself persists declaratively via the per-stage
         ``activate_absorbing`` sub-table (ADR 0055 Phase 2);
         :meth:`set_stage_records` gives each record the ``(rank, pid)``
-        rows of its calls.
+        rows of its calls. The call is its record's declaration's, which
+        the bridge opens around it (opensees 2.32.0).
         """
         del ele_tags
         blk = self._stage_block("flip_element_stage")
@@ -3457,7 +3486,9 @@ class H5Emitter:
         The record persists declaratively under the stage's
         ``update_parameter`` sub-table (:meth:`set_stage_records` attaches
         it and gives it the ``(rank, pid)`` rows of its calls, after
-        checking each call's ``args`` and ``value`` against it).
+        checking each call's ``args`` and ``value`` against it). The call
+        is the record's declaration's, which the bridge opens around it
+        (opensees 2.32.0).
         """
         del ele_tags
         blk = self._stage_block("update_parameter")
@@ -3478,7 +3509,9 @@ class H5Emitter:
         ``set_initial_stress_records`` / the per-stage ``initial_stress``
         sub-table (ADR 0055); its ``param_tags`` are these, by name. A
         second ramp of one name in one scope with other tags refuses: the
-        archive could not tell which record they belong to.
+        archive could not tell which record they belong to. The call is
+        the record's declaration's, which the bridge opens around it
+        (opensees 2.32.0).
         """
         del n_steps_to_full, phase
         if len(targets) != 3:
@@ -6353,6 +6386,16 @@ _DECL_TAG_ARG: "Mapping[str, tuple[str, int]]" = MappingProxyType({
 })
 
 
+#: The side-channel verbs whose call is the declaration open on it
+#: (opensees 2.32.0): the bridge opens each record's declaration around
+#: the calls that record drives (``stage_emit.DeclCursor``), so the open
+#: declaration is proved. Their bodies store nothing per call that a rows
+#: column could carry, so :func:`_noted` records it for them.
+_SIDE_CHANNEL_DECL_VERBS: frozenset[str] = frozenset({
+    "step_hook_ramp", "addToParameter", "flip_element_stage",
+    "update_parameter", "set_node_vel", "set_node_accel"})
+
+
 def _noted(
     name: str, fn: "Callable[..., Any]",
 ) -> "Callable[..., Any]":
@@ -6367,6 +6410,7 @@ def _noted(
     glob, _, stage_side = VERBS[name].store.partition("|")
     stage_store = stage_side or glob
     tagged = _DECL_TAG_ARG.get(name)
+    side_channel = name in _SIDE_CHANNEL_DECL_VERBS
 
     @functools.wraps(fn)
     def noted(self: "H5Emitter", *args: Any, **kwargs: Any) -> Any:
@@ -6394,6 +6438,8 @@ def _noted(
             kind, pos = tagged
             tag = args[pos] if len(args) > pos else kwargs["tag"]
             tape.decl = self._decl_of_tag(kind, int(tag))
+        elif side_channel:
+            tape.decl = self._decl_open
         if blk is None and self._stage_current is not None:
             # ``stage_open``: the call belongs to the stage it opened.
             stage, store = len(self._stage_blocks), stage_store

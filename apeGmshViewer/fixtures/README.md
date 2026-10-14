@@ -279,3 +279,34 @@ what this app reads, so `elem_mixed*` and `elem_badid` open with the
 $env:PYTHONPATH = "src"
 & C:\Users\nmb\venv\opensees_venv\Scripts\python.exe scripts/make_viewer_results_fixtures.py --elements
 ```
+
+## `extrap_*` and `extrap.oracle.json` (V4c2b, #1875)
+
+The Gauss-to-node extrapolation pairs (`extrapolation_fixtures` in the
+generator), each a FEM-only `model.h5` and a stamped `results.h5` written by
+the real `NativeWriter`, one static stage `load` of 3 steps. The Gauss values
+are a non-linear field at each Gauss point's physical position (so the
+extrapolation is not trivial):
+
+    f = (c + 1)(k + 1)(1 + x^2 - 0.5 x y + 0.3 y^2 + y z - 0.2 z^3)
+
+- `extrap_plane.*`: 8 quads at 4 Gauss points (`quads_G4`, 2 x 2) beside 8
+  triangles at one point (`tris_G1`), `stress_xx/yy/xy`; the lowest quad id is
+  left out of `quads_G4` ("no data").
+- `extrap_solid.*`: 12 hexahedra at 8 Gauss points (`hex_G8`, 2 x 2 x 2),
+  `stress_xx`, `stress_yy`.
+- `extrap_tet.*`: 48 tetrahedra (a 2 x 2 x 2 structured box) at one point
+  (`tets_G1`), `stress_xx`.
+
+`extrap.oracle.json` is Python's answer, the oracle the app is tested against
+(`test/contour/extrapolation.test.ts`): per pair, component and step,
+apeGmsh's `extrapolate_gauss_slab_to_nodes` (`gauss_node`),
+`extrapolate_gauss_slab_per_element` (`gauss_node_discrete`), and the averaged
+path on each element's mean as its one point (`cell_averaged`), on the slab
+read back from the written file. The generator also checks the Qt fast path,
+`GaussToNodeAccumulator`, equal to `gauss_node` on every step.
+
+```powershell
+$env:PYTHONPATH = "src"
+& C:\Users\nmb\venv\opensees_venv\Scripts\python.exe scripts/make_viewer_results_fixtures.py --extrapolation
+```

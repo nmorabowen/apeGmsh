@@ -15,6 +15,15 @@ label, applied by the maintainer or coordinator, overrides it, the way
 ``human-gate`` admits a baseline edit at check 8. ``--owned-only`` runs check 9
 alone on any PR, merged ones included.
 
+Checks 10 and 11 are lesson #1877 (3af31061 merged #1698 into a red ``main``).
+Check 10 refuses while ``main``'s latest completed Tests run is red, when main's
+head H has no run, and, while H's run is in progress, unless the PR's checks ran
+on a base that contains H; a read that fails refuses. The ``fixes-red-main``
+label, for the fix or the revert, overrides it. Check 11 refuses a PR that touches ``tests/`` or a BASELINE file
+when its required checks ran on a merge base more than STALE_COMMITS commits, or
+STALE_HOURS hours, behind ``main``. The base is read from the job log's
+``Merge <head> into <base>`` checkout line, the only place the API exposes it.
+
 Whatever copy is invoked, the rules that run are origin/main's: ``main``
 fetches origin/main and re-executes ``git show origin/main:scripts/land_pr.py``
 from a temp file (maintainer ruling 2 on #1686), so a PR that edits this file
@@ -47,6 +56,7 @@ import sys
 import tempfile
 import time
 from collections.abc import Callable
+from datetime import datetime, timedelta
 from typing import Any
 
 Runner = Callable[[list[str]], str]
@@ -69,11 +79,14 @@ FileRow = list[Any]
 #: compares them, so editing either one edits the baseline. X4-a (#1806) adds
 #: the retirement ledger: adding, re-dating or removing a row is a maintainer gate.
 #: `test_loc_ratchet.py` holds the X4-b shrink-only LOC baselines (#1807).
+#: `test_loc_ratchet_escapes.py` holds the escape guards' pins (PACKAGES_BASELINE,
+#: FROM_RECORDERS_CLOSURE_BASELINE), gated like the ratchet's own (maintainer G4 on #1884, #1886).
 BASELINE = (
     "tests/freeze_census.py",
     "tests/test_freeze_lock.py",
     "internal_docs/program/retirement_ledger.toml",
     "tests/test_loc_ratchet.py",
+    "tests/test_loc_ratchet_escapes.py",
 )
 HUMAN_GATE = "human-gate"
 ADR_FILE = re.compile(r"architecture/decisions/\d{4}-[^/]*\.md")
@@ -97,15 +110,65 @@ _OWNED_LABEL = re.compile(r"(?:^\s*(?:[-*+]\s+)?|[.!?]\**\s+)\**owned(?: files?)
 #: A bold pseudo-heading ("**Do not read:** ...") ends an Owned section as a `#` heading does.
 _BOLD_LABEL = re.compile(r"^\s*\*\*[^*\n]+?(?::\*\*|\*\*:)")
 #: An Owned line that negates ("`a.py` (never touch `b.py`)") cannot be read safely: refuse it.
-_NEGATION = re.compile(r"\b(?:never|not|don't|do not|except)\b", re.IGNORECASE)
+#: Letter boundaries, not `\b`, so "Do _not_ touch" negates (#1872); any n't contraction
+#: (straight or curly apostrophe) counts. Keep the list in slice_card.md in sync.
+_NEGATION = re.compile(
+    r"(?<![a-z])(?:never|not|cannot|[a-z]*n['\u2019]t|neither|except|exclud(?:e|es|ing)|avoid(?:s|ing)?"
+    r"|untouched|forbidden|out\s+of\s+scope|removed\s+from|leave(?![a-z]).*?(?<![a-z])alone"
+    r"|no\s+(?:changes?|edits?)\s+to|no\s*(?=`))(?![a-z])",
+    re.IGNORECASE,
+)
 _HTML_COMMENT = re.compile(r"<!--.*?-->", re.DOTALL)
 _LIST_LINE = re.compile(r"\s*(?:[-*+]|\d+[.)])\s|\s")
+_BULLET = re.compile(r"\s*(?:[-*+]|\d+[.)])\s")
+#: Words that may sit around a negation in a backticked span that is only a negation
+#: phrase (`_quoted_negation`): "`do not` touch", "`must never edit`".
+_FILLER = frozenset(
+    "do does did must should shall will may please touch edit edits change changes modify add use it this that"
+    " these those them file files".split()
+)
+_DOT_EXT = re.compile(r"\.\w")
+#: How far a negation in a card amendment reaches (`_amendment_paths`); wider is larger.
+_FREE, _ITEM, _PARA, _LIST = range(4)
 _AMENDMENT = re.compile(r"^\s*\**\s*card amendment", re.IGNORECASE)
 _TICKED = re.compile(r"`([^`\n]+)`")
 _PATHLIKE = re.compile(r"[\w.\-/*?\[\]]+")
 _GLOB = re.compile(r"[*?\[]")
 COMPARE_TRIES = 5
 COMPARE_WAIT_S = 3.0
+#: Check 10 (lesson #1877, T's ruling on #1877): main's recent commits (head H first) and
+#: its recent Tests push runs, in bounded reads (one page each, no --paginate, no wait).
+#: Only tests.yml's push runs count: deps-canary's scheduled `suite` on the same commit does not.
+MAIN_PAGE = 30
+MAIN_COMMITS = f"repos/{{owner}}/{{repo}}/commits?sha=main&per_page={MAIN_PAGE}"
+MAIN_COMMITS_JQ = "[.[].sha]"
+MAIN_RUNS = f"repos/{{owner}}/{{repo}}/actions/workflows/tests.yml/runs?branch=main&event=push&per_page={MAIN_PAGE}"
+MAIN_RUNS_JQ = "[.workflow_runs[] | {id, head_sha, status, conclusion}]"
+#: The jobs of one main Tests run (the latest attempt); only REQUIRED_CHECKS among them judge main.
+MAIN_JOBS = "repos/{{owner}}/{{repo}}/actions/runs/{run}/jobs?per_page=100"
+MAIN_JOBS_JQ = "{total: .total_count, jobs: [.jobs[] | {name, status, conclusion}]}"
+#: A required job that ended so is red; any other non-success (cancelled, skipped) asks for a re-run.
+RED_CONCLUSIONS = ("failure", "timed_out")
+FIXES_RED_MAIN = "fixes-red-main"
+UNVERIFIED = (
+    "Merge main and re-run, or wait for main's run; the fix or the revert of a red main lands "
+    f"under the {FIXES_RED_MAIN!r} label (lesson #1877)."
+)
+RERUN = (
+    "Re-run them on a fresh merge ref: merge main into the branch (or push an empty commit) "
+    "and wait for the checks. The Re-run button reuses the old merge ref."
+)
+#: Check 11 (lesson #1877): a PR that touches tests/ or a BASELINE file refuses when its
+#: required checks ran on a base more than STALE_COMMITS commits behind main, or when
+#: main's tip landed more than STALE_HOURS after those checks started. #1698 was 68
+#: commits and 43 h behind; a program day lands 40 PRs.
+STALE_COMMITS = 10
+STALE_HOURS = 24
+_ACTIONS_JOB = re.compile(r"/actions/runs/(\d+)/job/(\d+)")
+#: actions/checkout's line for a pull_request run: the merge ref is GitHub's test merge.
+_CHECKOUT = re.compile(r"HEAD is now at [0-9a-f]+ Merge ([0-9a-f]{40}) into ([0-9a-f]{40})")
+#: `compare/<base>...main`: commits on main the base lacks, and main's tip date (oldest first).
+BEHIND_JQ = "[.ahead_by, (.commits | last | .commit.committer.date)]"
 
 
 class LandError(Exception):
@@ -315,6 +378,29 @@ def _line_paths(line: str) -> list[str]:
     return out
 
 
+def _quoted_negation(token: str) -> bool:
+    """A backticked span that is only a negation phrase (`never`, `do not`, `don't
+    touch`): no path character, and nothing but filler words around the negation.
+    `cannot join:` and `not-yet` carry other words, so they are code, not negations."""
+    if "/" in token or _DOT_EXT.search(token):
+        return False
+    rest = _NEGATION.sub(" ", token)
+    return rest != token and all(word in _FILLER for word in re.findall(r"[a-z]+", rest.lower()))
+
+
+def _negates(line: str) -> bool:
+    """Whether a card line's prose negates. Each backticked span is emptied to "``"
+    first: a path (`src/not_found.py`) or a quoted code string (#1857's "the two
+    `cannot join:` templates") is data, not a negation, while "No `b.py`" still negates.
+    A span that is only a negation phrase (`do not`, `never`) stays, so it negates
+    (review of #1883, G1). Only single backticks in pairs are masked: a ``double`` run
+    or an odd count pairs the ticks wrongly and would hide prose (#1250), so such a
+    line is read whole."""
+    if line.count("`") % 2 == 0 and "``" not in line:
+        line = _TICKED.sub(lambda m: m.group(0) if _quoted_negation(m.group(1)) else "``", line)
+    return _NEGATION.search(line) is not None
+
+
 def _card_paths(body: str) -> list[str] | None:
     """The backticked paths of a card's `### Owned files`, `### Append-only` and
     `### Allowed` sections, or of an "Owned:" label line and the list under it.
@@ -337,13 +423,55 @@ def _card_paths(body: str) -> list[str] | None:
             in_label = found = True
             line = line[label.end():]
         if (in_section or in_label) and "`" in line:
-            if _NEGATION.search(line):
+            if _negates(line):
                 raise LandError(
                     f"check 9: an Owned line negates, so which paths it owns is ambiguous; "
                     f"refusing. Reword it (a '**Card amendment' comment): {line.strip()!r}"
                 )
             paths.extend(_line_paths(line))
     return paths if found else None
+
+
+def _amendment_paths(text: str, card: int) -> list[str]:
+    """The paths a `**Card amendment` comment adds. A negated line adds none, nor do
+    the lines it governs (#1872). Every exclusion ends at a heading or a bold label;
+    the widest one in force wins, and a narrower negation inside it never shortens it.
+
+    - LIST: a negated line ending in ":", or a negated bullet that names no path ("Do
+      not touch the following"), opens a list. It runs across blank lines and ends at
+      the first non-list line that follows a blank line.
+    - PARA: any other negated line that is not a bullet excludes to the paragraph's
+      end (a blank line).
+    - ITEM: a negated bullet that names a path excludes itself, its sub-items and its
+      unmarked continuation lines, up to a sibling or shallower bullet or a blank line,
+      so one "do not" bullet does not drop the siblings of a prose amendment."""
+    paths: list[str] = []
+    mode, depth, after_blank = _FREE, -1, False
+    for line in text.splitlines():
+        indent = len(line) - len(line.lstrip())
+        if _HEADING.match(line) or _BOLD_LABEL.match(line):
+            mode = _FREE
+        elif not line.strip():
+            mode = _LIST if mode == _LIST else _FREE
+        elif mode == _LIST and after_blank and not _LIST_LINE.match(line):
+            mode = _FREE  # the list ended at the blank line; this is new prose
+        elif mode == _ITEM and _BULLET.match(line) and indent <= depth:
+            mode = _FREE  # a sibling or shallower bullet ends the negated item
+        after_blank = not line.strip()
+        if _negates(line):
+            bullet = _BULLET.match(line) is not None
+            if line.rstrip(" *").endswith(":") or (bullet and not _line_paths(line)):
+                new = _LIST
+            else:
+                new = _ITEM if bullet else _PARA
+            if new > mode:
+                mode, depth = new, indent
+        if mode != _FREE:
+            if "`" in line:
+                print(f"check 9: skipped a negated card-amendment line on #{card}: {line.strip()!r}")
+            continue
+        paths += _line_paths(line)
+    return paths
 
 
 def _owned(path: str, allowed: list[str]) -> bool:
@@ -389,13 +517,8 @@ def check_owned(number: int, pr: dict[str, Any], rows: list[FileRow], gh: Runner
         )
     for comment in issue.get("comments") or []:
         text = comment.get("body") or ""
-        if not _AMENDMENT.match(text):
-            continue
-        for line in text.splitlines():
-            if "`" in line and _NEGATION.search(line):  # "Do NOT touch `b.py`": no paths (fail closed)
-                print(f"check 9: skipped a negated card-amendment line on #{card}: {line.strip()!r}")
-                continue
-            allowed += _line_paths(line)
+        if _AMENDMENT.match(text):
+            allowed += _amendment_paths(text, card)
     if not allowed:
         raise LandError(
             f"check 9: slice card #{card}'s Owned section names no backticked path, nor does any "
@@ -415,8 +538,163 @@ def check_owned(number: int, pr: dict[str, Any], rows: list[FileRow], gh: Runner
     print(f"check 9: #{number}'s {len(rows)} changed file(s) are inside slice card #{card}'s Owned list.")
 
 
+#: A failed or garbled read: refuse, never treat it as green (fail closed).
+_UNREADABLE = (subprocess.CalledProcessError, OSError, ValueError, KeyError, TypeError, IndexError, AttributeError)
+#: (where, base sha, earliest start) for each Actions run of a PR's required checks.
+Base = tuple[str, str, datetime]
+Bases = Callable[[int], list[Base]]
+
+
+def _when(stamp: str) -> datetime:
+    return datetime.fromisoformat(stamp.replace("Z", "+00:00"))
+
+
+def _check_bases(number: int, pr: dict[str, Any], gh: Runner, check_no: int) -> list[Base]:
+    """The merge-ref base each Actions run of the PR's required checks checked out, read
+    from the job log's `Merge <head> into <base>` line (the only place the API exposes
+    it). Every run is returned, as check 6 judges every run. Fails closed."""
+    head = pr["headRefOid"]
+    # Run id -> (one job id, start times). Every job of a run checks out the same merge
+    # ref, so one log per run is read: lock-tests's, the shortest, when it is there.
+    workflow_runs: dict[str, tuple[str, list[str]]] = {}
+    required = [run for run in pr["statusCheckRollup"] if (run.get("name") or run.get("context")) in REQUIRED_CHECKS]
+    for run in sorted(required, key=lambda run: REQUIRED_CHECKS.index(run.get("name") or run.get("context"))):
+        name = run.get("name") or run.get("context")
+        job = _ACTIONS_JOB.search(run.get("detailsUrl") or "")
+        if job is None or not run.get("startedAt"):
+            raise LandError(
+                f"check {check_no}: required check {name!r} names no Actions job and start time, so the "
+                f"base it ran on cannot be read; refusing. {RERUN}"
+            )
+        workflow_runs.setdefault(job.group(1), (job.group(2), []))[1].append(run["startedAt"])
+    bases: list[Base] = []
+    for run_id, (job_id, starts) in sorted(workflow_runs.items()):
+        where = f"run {run_id} (job {job_id})"
+        try:
+            log = gh(["api", "--allow-escape-sequences", f"repos/{{owner}}/{{repo}}/actions/jobs/{job_id}/logs"])
+            merge = _CHECKOUT.search(log)
+            if merge is None or merge.group(1) != head:
+                raise ValueError(f"no 'Merge {head[:12]} into <base>' checkout line")
+            bases.append((where, merge.group(2), min(_when(stamp) for stamp in starts)))
+        except _UNREADABLE as exc:
+            raise LandError(
+                f"check {check_no}: the base #{number}'s required checks ran on in {where} could not be "
+                f"read ({exc!r}); refusing. {RERUN}"
+            ) from exc
+    return bases
+
+
+def check_main_green(number: int, pr: dict[str, Any], gh: Runner, bases: Bases) -> None:
+    """Check 10 (lesson #1877; T's ruling on #1877). main's latest completed Tests run is
+    green, and a run still in progress on main's head H admits only a PR whose required
+    checks ran on a base that contains H. #1858 and #1866 landed while 3af31061's run was
+    in progress, on bases without it, and the latest completed run (6f66fd23) was green."""
+    if FIXES_RED_MAIN in {lab["name"] for lab in pr["labels"]}:
+        print(f"check 10: OVERRIDDEN by the {FIXES_RED_MAIN!r} label; main's state is not read.")
+        return
+    try:
+        order = json.loads(gh(["api", MAIN_COMMITS, "--jq", MAIN_COMMITS_JQ]))
+        if not order or not all(re.fullmatch(r"[0-9a-f]{40}", str(sha)) for sha in order):
+            raise ValueError(f"main's commits read {order!r}")
+        by_sha: dict[str, list[dict[str, Any]]] = {}
+        for run in json.loads(gh(["api", MAIN_RUNS, "--jq", MAIN_RUNS_JQ])):
+            by_sha.setdefault(str(run["head_sha"]), []).append(run)
+        tip = order[0]
+        # The latest completed run by main's commit order, not by completion time: the newest
+        # commit whose five required jobs have all completed. Only those five judge main, so a
+        # red or slow qt-window-tests / app-tests neither blocks nor leaves main unverified.
+        latest: str | None = None
+        jobs: list[tuple[int, str, str | None]] = []
+        for sha in order:
+            found: list[tuple[int, str, str, str | None]] = []
+            for run in by_sha.get(sha, []):
+                listing = json.loads(gh(["api", MAIN_JOBS.format(run=int(run["id"])), "--jq", MAIN_JOBS_JQ]))
+                if int(listing["total"]) > len(listing["jobs"]):
+                    raise ValueError(f"run {run['id']}'s jobs page is truncated")
+                found += [(run["id"], job["name"], job["status"], job["conclusion"])
+                          for job in listing["jobs"] if job["name"] in REQUIRED_CHECKS]
+            if {job[1] for job in found} >= set(REQUIRED_CHECKS) and all(job[2] == "completed" for job in found):
+                latest, jobs = sha, [(run_id, name, conclusion) for run_id, name, _status, conclusion in found]
+                break
+    except _UNREADABLE as exc:
+        raise LandError(f"check 10: main unverified: its Tests runs could not be read ({exc!r}). {UNVERIFIED}") from exc
+    if latest is None:
+        raise LandError(
+            f"check 10: main unverified at {tip[:12]}: none of main's last {len(order)} commits has a "
+            f"completed Tests run. {UNVERIFIED}"
+        )
+    for run_id, name, conclusion in jobs:
+        if conclusion in RED_CONCLUSIONS:
+            raise LandError(
+                f"check 10: main is red: required job {name!r} of its latest completed Tests run ({run_id}, on "
+                f"{latest[:12]}) is {conclusion}. Landing now buries the break under another merge (#1858, "
+                f"#1866). Only the fix or the revert lands, under the {FIXES_RED_MAIN!r} label (lesson #1877)."
+            )
+    for run_id, name, conclusion in jobs:
+        if conclusion != "success":  # cancelled, skipped, ...: no verdict either way, so no landing
+            raise LandError(
+                f"check 10: main unverified at {latest[:12]}: required job {name!r} of its Tests run ({run_id}) "
+                f"is {conclusion}, which proves nothing. Re-run main's Tests on {latest[:12]} "
+                f"(gh run rerun {run_id}), then land."
+            )
+    if tip not in by_sha:
+        raise LandError(f"check 10: main unverified at {tip[:12]}: no Tests run on main's head. {UNVERIFIED}")
+    if latest == tip:
+        print(f"check 10: main's Tests run on its head {tip[:12]} is green.")
+        return
+    checked = bases(10)
+    if not checked:  # check 6 makes this unreachable; never let an empty list read as "contains H"
+        raise LandError(f"check 10: main unverified at {tip[:12]}: no base for #{number}'s checks. {UNVERIFIED}")
+    for where, base, _started in checked:
+        try:
+            status = gh(["api", f"repos/{{owner}}/{{repo}}/compare/{tip}...{base}", "--jq", ".status"]).strip()
+        except _UNREADABLE as exc:
+            raise LandError(f"check 10: main unverified at {tip[:12]}: compare with {base[:12]} failed ({exc!r}). {UNVERIFIED}") from exc
+        if status not in ("ahead", "identical"):
+            raise LandError(
+                f"check 10: main unverified at {tip[:12]}: its Tests run is in progress and #{number}"
+                f"'s required checks in {where} ran on base {base[:12]}, which does not contain it "
+                f"(compare: {status}). {UNVERIFIED}"
+            )
+    print(
+        f"check 10: main's Tests run on {tip[:12]} is in progress; the latest completed one "
+        f"({latest[:12]}) is green, and the PR's checks ran on a base that contains {tip[:12]}."
+    )
+
+
+def check_fresh_base(number: int, rows: list[FileRow], gh: Runner, bases: Bases) -> None:
+    """Check 11 (lesson #1877). A PR that touches tests/ or a BASELINE file had its
+    required checks run on a base no more than STALE_COMMITS commits and STALE_HOURS
+    behind main. #1698's checks ran on 10-11; X4-a added the retirement-ledger row for
+    the xfail #1698 deleted on 10-12, so the merge 3af31061 turned lock-tests red."""
+    touched = sorted({n for row in rows for n in (row[0], row[2]) if n and (n.startswith("tests/") or n in BASELINE)})
+    if not touched:
+        print(f"check 11: #{number} touches neither tests/ nor a baseline file; the base age does not apply.")
+        return
+    for where, base, started in bases(11):
+        try:
+            behind_raw, tip_date = json.loads(
+                gh(["api", f"repos/{{owner}}/{{repo}}/compare/{base}...main", "--jq", BEHIND_JQ])
+            )
+            behind = int(behind_raw)
+            hours = (_when(tip_date) - started) / timedelta(hours=1) if behind else 0.0
+        except _UNREADABLE as exc:
+            raise LandError(
+                f"check 11: the base #{number}'s required checks ran on in {where} could not be "
+                f"read ({exc!r}); refusing. {RERUN}"
+            ) from exc
+        if behind > STALE_COMMITS or hours > STALE_HOURS:
+            raise LandError(
+                f"check 11: #{number} touches {', '.join(touched[:3])}{' ...' if len(touched) > 3 else ''} "
+                f"but its required checks in {where} ran on base {base[:12]}, {behind} commit(s) and "
+                f"{hours:.0f} h behind main (limits: {STALE_COMMITS} commits, {STALE_HOURS} h). #1698 "
+                f"was green on a 2-day-old base and its merge 3af31061 turned main red (lesson #1877). {RERUN}"
+            )
+        print(f"check 11: {where} ran on base {base[:12]}, {behind} commit(s) and {hours:.0f} h behind main.")
+
+
 def check(number: int, gh: Runner, git: Runner) -> dict[str, Any]:
-    """Checks 1-9, in order. Returns the PR record, or raises LandError."""
+    """Checks 1-11, in order. Returns the PR record, or raises LandError."""
     pr = json.loads(gh(["pr", "view", str(number), "--json", PR_FIELDS]))
     head = pr["headRefOid"]
     if pr["baseRefName"] != "main":
@@ -468,6 +746,15 @@ def check(number: int, gh: Runner, git: Runner) -> dict[str, Any]:
                 )
     _check_adr_and_baseline(number, pr, rows, git)
     check_owned(number, pr, rows, gh)
+    found: list[list[Base]] = []
+
+    def bases(check_no: int) -> list[Base]:  # read once, by whichever check needs them first
+        if not found:
+            found.append(_check_bases(number, pr, gh, check_no))
+        return found[0]
+
+    check_main_green(number, pr, gh, bases)
+    check_fresh_base(number, rows, gh, bases)
     return pr
 
 
@@ -595,7 +882,7 @@ def land(
     pr = check(number, gh, git)
     head = pr["headRefOid"]
     if dry_run:
-        print(f"dry-run: #{number} passes checks 1-9 at {head[:12]}; not merging.")
+        print(f"dry-run: #{number} passes checks 1-11 at {head[:12]}; not merging.")
         return 0
     gh(["pr", "merge", str(number), "--squash", "--match-head-commit", head])  # never retried
     return prove(number, gh, git, sleep, head, pr["headRefName"])
