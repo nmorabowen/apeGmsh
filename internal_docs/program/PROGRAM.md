@@ -236,7 +236,7 @@ The kill criteria are measured weekly by the triage (#1202). The fallback in eve
 | KPI | Baseline |
 |---|---|
 | Strict fix-prefixed share | 22% |
-| Index-touch share | 80–85% (hand-edited index files only, with the generated skill mirror and indexes excluded: 13% on 2026-10-14) |
+| Index-touch share | 80–85% (all index files). From 2026-10-14 the KPI counts hand-edited index files only, with the generated skill mirror and indexes excluded: 13% on 2026-10-14 |
 | Lost-work cases | 12 |
 | Red `main` | 2 in 3 weeks |
 | Files over 2,000 lines | 15 |
