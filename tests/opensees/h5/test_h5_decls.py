@@ -32,6 +32,7 @@ import h5py
 import numpy as np
 import pytest
 
+from apeGmsh.mesh.FEMData import FEMData
 from apeGmsh.opensees import OpenSeesModel, apeSees
 from apeGmsh.opensees._internal.lineage import (
     MODEL_HASH_EXCLUDED_CHILDREN,
@@ -40,14 +41,9 @@ from apeGmsh.opensees._internal.lineage import (
 from apeGmsh.opensees.emitter import h5_reader
 from apeGmsh.opensees.emitter.h5 import H5Emitter
 from apeGmsh.opensees._internal.types import Element
-from tests.opensees.fixtures.fem_stub import (
-    FEMStub,
-    _ElementGroupView,
-    _ElementsStub,
-    _NodesStub,
-)
 from tests.opensees.golden.builder import build_model
 from tests.opensees.h5._opensees_model_fixtures import build_simple_frame_fem
+from tests.opensees.h5.test_h5_stages_reader import build_two_quad_fem
 
 
 # ---------------------------------------------------------------------------
@@ -55,29 +51,10 @@ from tests.opensees.h5._opensees_model_fixtures import build_simple_frame_fem
 # ---------------------------------------------------------------------------
 
 
-def _two_quad_stub() -> FEMStub:
-    """Two quads: "Rock" global, "Fill" activated in a stage."""
-    return FEMStub(
-        nodes=_NodesStub(
-            ids=[1, 2, 3, 4, 5, 6],
-            coords=[
-                (0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (1.0, 1.0, 0.0),
-                (0.0, 1.0, 0.0), (1.0, 2.0, 0.0), (0.0, 2.0, 0.0),
-            ],
-            node_pgs={
-                "Rock": [1, 2, 3, 4], "Fill": [3, 4, 5, 6],
-                "Base": [1, 2], "FillTop": [5, 6],
-            },
-        ),
-        elements=_ElementsStub(
-            elem_pgs={
-                "Rock": _ElementGroupView(
-                    ids=(1,), connectivity=((1, 2, 3, 4),)),
-                "Fill": _ElementGroupView(
-                    ids=(2,), connectivity=((4, 3, 5, 6),)),
-            },
-        ),
-    )
+def _two_quad_fem() -> FEMData:
+    """Two quads: "Rock" global, "Fill" activated in a stage. A real
+    :class:`FEMData`, so every model here replays (#1885)."""
+    return build_two_quad_fem()
 
 
 def _chain(ops: apeSees) -> dict[str, object]:
@@ -98,7 +75,7 @@ def _staged(*, named: bool) -> apeSees:
     def nm(name: str) -> str | None:
         return name if named else None
 
-    ops = apeSees(_two_quad_stub(), default_orientation=None)
+    ops = apeSees(_two_quad_fem(), default_orientation=None)
     ops.model(ndm=2, ndf=2)
     mat = ops.nDMaterial.ElasticIsotropic(E=1e6, nu=0.3, rho=0.0)
     ops.element.FourNodeQuad(pg="Rock", thickness=1.0, material=mat)
@@ -336,7 +313,7 @@ def test_decls_group_is_hash_excluded(tmp_path: Path) -> None:
 
 
 def test_fix_names_are_unique_across_flat_and_staged() -> None:
-    ops = apeSees(_two_quad_stub(), default_orientation=None)
+    ops = apeSees(_two_quad_fem(), default_orientation=None)
     ops.model(ndm=2, ndf=2)
     ops.fix(pg="Base", dofs=(1, 1), name="pin")
     with pytest.raises(ValueError, match="opensees/fix/pin"):
@@ -429,7 +406,7 @@ def test_object_registered_inside_a_recorded_call_gets_its_own_key() -> None:
     the bridge no provenance path: each such unnamed object is keyed
     ``@k`` in its family, flagged ``synth``, never sharing a stranger's
     key and never colliding with the ``#k`` counter."""
-    ops = apeSees(_two_quad_stub(), default_orientation=None)
+    ops = apeSees(_two_quad_fem(), default_orientation=None)
     ops.model(ndm=2, ndf=2)
     first = ops.nDMaterial.ElasticIsotropic(E=1.0, nu=0.3, rho=0.0)
     a, b = object(), object()
@@ -594,7 +571,7 @@ def test_rayleigh_and_modal_damping_rows_carry_their_keys(
     """The commands rows (global rayleigh, eigen + modal_damping), the
     region of a region-scoped rayleigh and a stage rayleigh row each
     join to the ``ops.damping`` / ``s.damping`` call that declared it."""
-    ops = apeSees(_two_quad_stub(), default_orientation=None)
+    ops = apeSees(_two_quad_fem(), default_orientation=None)
     ops.model(ndm=2, ndf=2)
     mat = ops.nDMaterial.ElasticIsotropic(E=1e6, nu=0.3, rho=0.0)
     ops.element.FourNodeQuad(pg="Rock", thickness=1.0, material=mat)
@@ -639,7 +616,7 @@ def test_every_registry_verb_is_classified() -> None:
 def _param_stage_model() -> apeSees:
     """A stage with two ``s.update_parameter`` and two ``s.zero_velocities``
     records (opensees 2.27.0, K1-8): side-channel stores with rows columns."""
-    ops = apeSees(_two_quad_stub(), default_orientation=None)
+    ops = apeSees(_two_quad_fem(), default_orientation=None)
     ops.model(ndm=2, ndf=2)
     mat = ops.nDMaterial.ElasticIsotropic(E=1e6, nu=0.3, rho=0.0)
     ops.element.FourNodeQuad(pg="Rock", thickness=1.0, material=mat)
@@ -681,7 +658,7 @@ def _all_verb_models() -> list[apeSees]:
         build_material_stage_bridge,
     )
 
-    flat = apeSees(_two_quad_stub(), default_orientation=None)
+    flat = apeSees(_two_quad_fem(), default_orientation=None)
     flat.model(ndm=2, ndf=2)
     mat = flat.nDMaterial.ElasticIsotropic(E=1e6, nu=0.3, rho=0.0)
     flat.element.FourNodeQuad(pg="Rock", thickness=1.0, material=mat)
@@ -695,7 +672,7 @@ def _all_verb_models() -> list[apeSees]:
     flat.damping.rayleigh(alpha_m=0.02, on="Rock")      # a region
     flat.damping.modal(0.05, modes=2)                   # eigen + modal rows
 
-    prof = apeSees(_two_quad_stub(), default_orientation=None)
+    prof = apeSees(_two_quad_fem(), default_orientation=None)
     prof.model(ndm=2, ndf=2)
     pmat = prof.nDMaterial.ElasticIsotropic(E=1e6, nu=0.3, rho=0.0)
     prof.element.FourNodeQuad(pg="Rock", thickness=1.0, material=pmat)

@@ -42,7 +42,9 @@ may likewise re-pin to A when a fix leaves only float text (#1814): an A diff
 is a strict subset of a B diff, and the class is still re-derived for every
 row, so the A label is proven the same way. A row may
 always escalate (A or B to C) when the oracle learns to see more, and then
-cites the issue that tracks the bug. Every C row cites an issue as ``#NNNN``
+cites the issue that tracks the bug. An S row whose model moves to a real
+``FEMData`` re-pins to its derived class A or B, and its reason cites that
+evidence as ``derived <class> (#1885): ...`` (maintainer ruling on #1797). Every C row cites an issue as ``#NNNN``
 (openness is not checkable offline; the PR lists each one and its state).
 Anything else (an added row, a re-pin that keeps its class) fails as a
 replay regression.
@@ -499,6 +501,16 @@ _ESCALATIONS = frozenset({("A", "C"), ("B", "C")})
 _S_RENAMES = frozenset({
     ("KeyError:nodes", "BridgeOnlyArchiveError:no-neutral-zone"),
 })
+#: S rows released by a real FEMData (#1885; maintainer ruling on #1797): a
+#: model that moves off ``FEMStub`` replays, and its row re-pins S to the
+#: class the oracle derives, A or B (never C: a semantic diff is a bug with
+#: its own issue, not a release). Like C to A/B, the derived class is the
+#: evidence, and :func:`_check` fails a label it does not derive. The row
+#: also cites it: its reason opens ``derived <class> (#1885):`` and says
+#: what the diff is (:data:`_DERIVED`).
+_S_RELEASES = frozenset({("S", "A"), ("S", "B")})
+#: The citation an S-released row carries; its class must be the row's.
+_DERIVED = re.compile(r"^derived (?P<klass>[AB]) \(#1885\): \S")
 
 
 def _cited_issues(reason: str) -> frozenset[str]:
@@ -517,7 +529,9 @@ def _ledger_transition_errors(
     the bug. Anything else is a replay regression: an added row, or a re-pin
     that keeps its class. One exception (:data:`_S_RENAMES`, #1797): an S row
     may re-pin at S from the raw ``KeyError:nodes`` to the named
-    ``BridgeOnlyArchiveError``.
+    ``BridgeOnlyArchiveError``. And an S row whose model moved to a real
+    ``FEMData`` may re-pin to A or B when its reason cites that derived
+    class (:data:`_S_RELEASES`, #1885).
     """
     errors: list[str] = []
     for model, w in head.items():
@@ -531,6 +545,14 @@ def _ledger_transition_errors(
         if (b.klass, w.klass) in _DOWNGRADES:
             continue
         if (b.klass, w.klass) == ("S", "S") and (b.pin, w.pin) in _S_RENAMES:
+            continue
+        if (b.klass, w.klass) in _S_RELEASES:
+            cited = _DERIVED.match(w.reason)
+            if cited is None or cited["klass"] != w.klass:
+                errors.append(
+                    f"{model}: released S -> {w.klass} without citing its "
+                    f"derived evidence (a reason opening 'derived {w.klass} "
+                    "(#1885): <what the diff is>')")
             continue
         if (b.klass, w.klass) in _ESCALATIONS:
             if not _cited_issues(w.reason):
@@ -621,6 +643,7 @@ def test_ledger_changes_only_by_the_carve_out() -> None:
 
 
 _W = Waiver  # short alias for the carve-out cases below
+_NZ = "BridgeOnlyArchiveError:no-neutral-zone"
 
 
 @pytest.mark.parametrize(("base", "head", "ok"), [
@@ -656,11 +679,34 @@ _W = Waiver  # short alias for the carve-out cases below
      _W("m", "B", "BridgeOnlyArchiveError:no-neutral-zone", "r"), False),
     (_W("m", "C", "KeyError:nodes", "#1814"),
      _W("m", "C", "BridgeOnlyArchiveError:no-neutral-zone", "#1814"), False),
+    # #1885: an S row released by a real FEMData re-pins to its derived
+    # class A or B, citing it ...
+    (_W("m", "S", _NZ, "#1797"),
+     _W("m", "A", "2" * 16, "derived A (#1885): integral floats"), True),
+    (_W("m", "S", _NZ, "#1797"),
+     _W("m", "B", "2" * 16, "derived B (#1885): geomTransf moves"), True),
+    # ... and is refused when the citation is absent, names another class,
+    # another issue, or says nothing about the diff; never to C.
+    (_W("m", "S", _NZ, "#1797"), _W("m", "A", "2" * 16, "#1885"), False),
+    (_W("m", "S", _NZ, "#1797"),
+     _W("m", "B", "2" * 16, "derived A (#1885): integral floats"), False),
+    (_W("m", "S", _NZ, "#1797"),
+     _W("m", "A", "2" * 16, "derived A (#1797): integral floats"), False),
+    (_W("m", "S", _NZ, "#1797"), _W("m", "A", "2" * 16, "derived A (#1885):"),
+     False),
+    (_W("m", "S", _NZ, "#1797"),
+     _W("m", "C", "2" * 16, "derived C (#1885): #1814 reorder"), False),
+    # The citation releases S rows only: it does not license a same-class
+    # re-pin (B -> A is already a plain downgrade, #1909).
+    (_W("m", "B", "1" * 16, "r"),
+     _W("m", "B", "2" * 16, "derived B (#1885): geomTransf moves"), False),
 ], ids=["C-to-B", "C-to-A", "reason-only", "B-to-C", "A-to-C",
         "B-to-C-uncited", "C-to-C", "B-to-B", "B-to-A", "S-to-B",
         "S-rename-1797", "S-rename-reversed", "S-other-text", "S-other-type",
         "S-named-to-other", "A-to-A", "A-rename-pins", "B-rename-pins",
-        "C-rename-pins"])
+        "C-rename-pins", "S-released-A", "S-released-B", "S-to-A-uncited",
+        "S-to-B-cites-A", "S-to-A-other-issue", "S-to-A-no-diff-text",
+        "S-to-C-cited", "B-to-B-cited"])
 def test_the_ledger_allows_downgrades_and_cited_escalations(
     base: Waiver, head: Waiver, ok: bool,
 ) -> None:

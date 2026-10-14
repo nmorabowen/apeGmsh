@@ -40,6 +40,7 @@ __all__ = [
     "build_two_quad_fem",
     "build_simple_frame_h5",
     "build_frame_with_orientation_fan_out_h5",
+    "build_two_node_beam_fem",
 ]
 
 
@@ -274,3 +275,51 @@ def build_frame_with_orientation_fan_out_h5(
     out = tmp_path / "fan_out_frame.h5"
     ops.h5(str(out))
     return out, fem
+
+
+def build_two_node_beam_fem() -> FEMData:
+    """``FEMStub``'s ``make_two_node_beam`` as a real :class:`FEMData`.
+
+    One vertical line element (``"Cols"``) from node 1 at the origin to
+    node 2 at (0, 0, 1), with the node sets ``"Base"`` (node 1) and
+    ``"Top"`` (node 2). Its archive carries a neutral zone, so
+    :meth:`OpenSeesModel.from_h5` replays it (#1885).
+    """
+    node_ids = np.array([1, 2], dtype=np.int64)
+    node_coords = np.array([[0.0, 0.0, 0.0], [0.0, 0.0, 1.0]], dtype=np.float64)
+    line_info = make_type_info(
+        code=1, gmsh_name="Line 2", dim=1, order=1, npe=2, count=1,
+    )
+    line_group = ElementGroup(
+        element_type=line_info,
+        ids=np.array([1], dtype=np.int64),
+        connectivity=np.array([[1, 2]], dtype=np.int64),
+    )
+    no_elements = np.array([], dtype=np.int64)
+    pg = {
+        (1, 100): {
+            "name": "Cols", "node_ids": node_ids,
+            "node_coords": node_coords,
+            "element_ids": np.array([1], dtype=np.int64),
+        },
+        (0, 101): {
+            "name": "Base", "node_ids": node_ids[:1],
+            "node_coords": node_coords[:1], "element_ids": no_elements,
+        },
+        (0, 102): {
+            "name": "Top", "node_ids": node_ids[1:],
+            "node_coords": node_coords[1:], "element_ids": no_elements,
+        },
+    }
+    nodes = NodeComposite(
+        node_ids=node_ids, node_coords=node_coords,
+        physical=PhysicalGroupSet(pg), labels=LabelSet({}),
+    )
+    elements = ElementComposite(
+        groups={1: line_group},
+        physical=PhysicalGroupSet(pg), labels=LabelSet({}),
+    )
+    info = MeshInfo(n_nodes=2, n_elems=1, bandwidth=1, types=[line_info])
+    # Named like a session snapshot (#1307), as build_simple_frame_fem.
+    return FEMData(nodes=nodes, elements=elements, info=info,
+                   model_name="two_node_beam")
