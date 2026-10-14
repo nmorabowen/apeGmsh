@@ -94,6 +94,15 @@ ADR_FILE = re.compile(r"architecture/decisions/\d{4}-[^/]*\.md")
 ADR_HEADER_LINES = 30
 #: A slice PR names its slice issue as `Slice: #<n>` (PROGRAM.md section 7).
 SLICE_REF = re.compile(r"^Slice:\s*#(\d+)", re.MULTILINE)
+#: A body written from a Windows tool can begin with a UTF-8 BOM and end lines in CRLF
+#: (#1887: "<BOM>Slice: #1857" missed the line-start match, so check 9 refused). An
+#: invisible BOM or zero-width space before a `#` heading or a bold label would hide it and
+#: keep an Owned section open, so a line-start run is deleted. Elsewhere a mark becomes a
+#: space: deleting it would glue "Do<ZWSP>not" into "Donot" and hide the negation (review of #1917).
+_LEADING_INVISIBLE = re.compile(r"^[\ufeff\u200b]+", re.MULTILINE)
+_INVISIBLE = re.compile(r"[\ufeff\u200b]")
+#: CRLF and a lone CR each end a line: deleting a lone CR would join two lines (review of #1917).
+_CR = re.compile(r"\r\n?")
 _HUNK = re.compile(r"^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@")
 #: Check 9 (lesson #1788): a PR with this label must stay inside its card's Owned list.
 PROGRAM = "program"
@@ -122,11 +131,15 @@ _HTML_COMMENT = re.compile(r"<!--.*?-->", re.DOTALL)
 _LIST_LINE = re.compile(r"\s*(?:[-*+]|\d+[.)])\s|\s")
 _BULLET = re.compile(r"\s*(?:[-*+]|\d+[.)])\s")
 #: Words that may sit around a negation in a backticked span that is only a negation
-#: phrase (`_quoted_negation`): "`do not` touch", "`must never edit`".
+#: phrase (`_quoted_negation`): "`do not` touch", "`must never edit`", "`never, ever`",
+#: "`absolutely not`", "`can not`", "`not under any circumstances`" (#1891).
 _FILLER = frozenset(
-    "do does did must should shall will may please touch edit edits change changes modify add use it this that"
-    " these those them file files".split()
+    "do does did must should shall will may can please touch edit edits change changes modify add use it this"
+    " that these those them file files ever absolutely under any circumstances".split()
 )
+#: Editing verbs: in a quoted negation phrase, whatever follows one is its object, so
+#: "`do not touch b`" negates whatever `b` is (#1891), while "`cannot join:`" (#1857) does not.
+_VERBS = frozenset({"touch", "edit", "edits", "change", "changes", "modify", "add", "use"})
 _DOT_EXT = re.compile(r"\.\w")
 #: How far a negation in a card amendment reaches (`_amendment_paths`); wider is larger.
 _FREE, _ITEM, _PARA, _LIST = range(4)
@@ -252,13 +265,20 @@ def _sets_accepted(patch: str) -> bool:
     return added and not removed
 
 
+def _text(body: str | None) -> str:
+    """A PR, card or comment body with its line ends normalised to LF, BOMs and zero-width
+    spaces deleted at a line start and turned into a space elsewhere (#1891)."""
+    text = _LEADING_INVISIBLE.sub("", _CR.sub("\n", body or ""))
+    return _INVISIBLE.sub(" ", text)
+
+
 def _check_freeze(number: int, pr: dict[str, Any], paths: list[str], frozen: list[str], gh: Runner) -> None:
     """Check 5. A changed file inside an open `freeze:<pattern>` window refuses, unless
     the PR holds that freeze: it carries the label itself, or names an issue that
     carries it (as `Slice: #<n>` or a closing keyword)."""
     held = {lab["name"] for lab in pr["labels"]}
     refs = {ref["number"] for ref in pr["closingIssuesReferences"]}
-    refs |= {int(n) for n in SLICE_REF.findall(pr["body"] or "")}
+    refs |= {int(n) for n in SLICE_REF.findall(_text(pr["body"]))}
     issue_labels: dict[int, set[str]] = {}
 
     def holder(label: str) -> str | None:
@@ -380,12 +400,29 @@ def _line_paths(line: str) -> list[str]:
 
 def _quoted_negation(token: str) -> bool:
     """A backticked span that is only a negation phrase (`never`, `do not`, `don't
-    touch`): no path character, and nothing but filler words around the negation.
-    `cannot join:` and `not-yet` carry other words, so they are code, not negations."""
-    if "/" in token or _DOT_EXT.search(token):
+    touch`, `never ever`, `do not edit b.py`). A single-token span naming a path
+    (`src/x.py::test_not_assembly`, `src/b.py::never`) is data, never a negation. In a
+    multi-word span each path-like word is dropped first, so `never touch src/b.py`
+    negates (#1891). What is left must hold a negation with only filler words before
+    it, and only filler after it up to an editing verb, whose object may be any word
+    (`do not touch b`). `cannot join:` and `not-yet` carry other words, so they are
+    code, not negations; a span of only punctuation, paths or filler has no negation."""
+    words = token.split()
+    if len(words) > 1:
+        token = " ".join(w for w in words if "/" not in w and not _DOT_EXT.search(w))
+    elif "/" in token or _DOT_EXT.search(token):
         return False
-    rest = _NEGATION.sub(" ", token)
-    return rest != token and all(word in _FILLER for word in re.findall(r"[a-z]+", rest.lower()))
+    match = _NEGATION.search(token)
+    if match is None:
+        return False
+    if any(w not in _FILLER for w in re.findall(r"[a-z]+", token[: match.start()].lower())):
+        return False
+    for word in re.findall(r"[a-z]+", _NEGATION.sub(" ", token[match.end() :]).lower()):
+        if word in _VERBS:
+            return True  # the rest is the verb's object
+        if word not in _FILLER:
+            return False
+    return True
 
 
 def _negates(line: str) -> bool:
@@ -499,7 +536,7 @@ def check_owned(number: int, pr: dict[str, Any], rows: list[FileRow], gh: Runner
     if SCOPE_OK in labels:
         print(f"check 9: OVERRIDDEN by the {SCOPE_OK!r} label; #{number}'s files are not checked against its card.")
         return
-    slices = SLICE_REF.findall(pr["body"] or "")
+    slices = SLICE_REF.findall(_text(pr["body"]))
     if not slices:
         raise LandError(
             f"check 9: #{number} is labelled {PROGRAM!r} but its body has no 'Slice: #<n>' line, so "
@@ -508,7 +545,7 @@ def check_owned(number: int, pr: dict[str, Any], rows: list[FileRow], gh: Runner
         )
     card = int(slices[0])
     issue = json.loads(gh(["issue", "view", str(card), "--json", "body,comments"]))
-    allowed = _card_paths(issue.get("body") or "")
+    allowed = _card_paths(_text(issue.get("body")))
     if allowed is None:
         raise LandError(
             f"check 9: slice card #{card} has no '### Owned files' section (nor an 'Owned:' "
@@ -516,7 +553,7 @@ def check_owned(number: int, pr: dict[str, Any], rows: list[FileRow], gh: Runner
             f"maintainer applies {SCOPE_OK!r}."
         )
     for comment in issue.get("comments") or []:
-        text = comment.get("body") or ""
+        text = _text(comment.get("body"))
         if _AMENDMENT.match(text):
             allowed += _amendment_paths(text, card)
     if not allowed:
