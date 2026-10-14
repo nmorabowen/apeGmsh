@@ -63,6 +63,16 @@ The results hold one stage per program stage, by name, plus ``mode_1`` (a
 values are synthetic, ``displacement_x[k, j] = id_j + 0.001 * k`` with the
 stage's ``time[k] = (k + 1) / T``; no solve runs.
 
+``--extrapolation`` (V4c2b, #1875; committed) writes the ``extrap_*`` pairs
+and ``extrap.oracle.json``, Python's Gauss-to-node extrapolation on them, the
+oracle the app's ``gauss_node`` / ``gauss_node_discrete`` /
+``cell_averaged`` contours are tested against (``extrapolation_fixtures``).
+
+``--slice-oracle`` (V4e3, #1904; committed) writes ``slice.oracle.json``:
+PyVista's slice of small tet, hex and wedge solids through the Qt backend's
+``PyVistaBackend.slice_layer``, alone and trimmed by other planes, the oracle
+of the app's cut-face caps (``slice_oracle``). It needs pyvista, not gmsh.
+
 ``--contour`` (V4c1, #1756; committed) writes the contour pairs: the same
 staged model as ``fixtures/contour_staged.h5`` with ``displacement_x/y/z``
 closed forms of the node coordinates (``contour_fixtures``), and
@@ -421,6 +431,81 @@ def stamp_variants(out_dir: Path) -> None:
     print("wrote stamp_variants: " + ", ".join(f"{k}={v['verified']}" for k, v in oracle.items()))
 
 
+def reinforced_fixture(out_dir: Path) -> None:
+    """The V4m reinforced model (#1846): ``reinforced.h5``, its oracle and ``reinforced_unknown.h5``.
+
+    A tet-meshed box with three embedded bars: ``L1`` tied with the bond law
+    ``bond1`` (a LadrunoBondSlip no element uses), ``L2`` tied with
+    ``bond2`` and its own ``CorotTruss`` cells on the same material, so the
+    material has element and tie users, and ``L3`` tied by perfect bond (no
+    material). ``reinforced.oracle.json`` is Python's count of ties per bond
+    material, from apeGmsh's own reader (``h5_reader.embedded_rebars``), not
+    from the app's parse. No results: the window reads the model only.
+    """
+    import json
+
+    from apeGmsh._kernel.defs.rebar import Cage
+    from apeGmsh.opensees import apeSees
+    from apeGmsh.opensees.emitter import h5_reader
+
+    name = "reinforced"
+    with apeGmsh(model_name=name, verbose=False, save_to=SESSION_DIR / f"{name}.h5") as g:
+        g.model.geometry.add_box(0, 0, 0, 0.5, 0.5, 2.0, label="Box")
+        g.physical.add_volume(g.model.select(dim=3).tags(), name="Concrete")
+        g.physical.add_surface(
+            g.model.select(dim=2).in_box((-0.01, -0.01, -0.01), (0.51, 0.51, 0.01)).tags(), name="Base")
+        bars = [g.rebar.bar([(x, 0.15, 0.1), (x, 0.15, 1.9)], db=0.0254, material=mat, name=n)
+                for x, mat, n in ((0.1, "steel", "L1"), (0.25, "bond2", "L2"), (0.4, "steel", "L3"))]
+        g.rebar.place(Cage(bars=(bars[0],)), into="Concrete", coupling="embedded", name="cage1", bond="bond1")
+        g.rebar.place(Cage(bars=(bars[1],)), into="Concrete", coupling="embedded", name="cage2", bond="bond2",
+                      emit_elements=True)
+        g.rebar.place(Cage(bars=(bars[2],)), into="Concrete", coupling="embedded", name="cage3", perfect=1.5e8)
+        g.mesh.sizing.set_global_size(0.4)
+        g.mesh.generation.generate(dim=3)
+        fem = g.mesh.queries.get_fem_data(dim=None)
+
+    ops = apeSees(fem)
+    ops.model(ndm=3, ndf=3)
+    ops.uniaxialMaterial.LadrunoBondSlip(tau_max=10.5, s1=0.001, s2=0.003, s3=0.01, tau_f=2.5, alpha=0.4, name="bond1")
+    ops.uniaxialMaterial.LadrunoBondSlip(tau_max=8.5, s1=0.001, s2=0.003, s3=0.01, tau_f=2.0, alpha=0.4, name="bond2")
+    conc = ops.nDMaterial.ElasticIsotropic(E=30000.5, nu=0.2, rho=2.5e-6, name="concrete")
+    ops.element.FourNodeTetrahedron(pg="Concrete", material=conc)
+    ops.fix(pg="Base", dofs=(1, 1, 1))
+    path = out_dir / f"{name}.h5"
+    ops.h5(str(path))
+
+    by_tag: dict[int, int] = {}
+    unbonded = 0
+    with h5_reader.open(str(path)) as m:
+        ties = m.embedded_rebars()
+    for t in ties:
+        if "-bond" in t.args:
+            tag = t.args[t.args.index("-bond") + 1]
+            assert isinstance(tag, int), t
+            by_tag[tag] = by_tag.get(tag, 0) + 1
+        else:
+            unbonded += 1
+    oracle = {"ties": len(ties), "unbonded": unbonded, "bond": {str(k): v for k, v in sorted(by_tag.items())}}
+    (out_dir / f"{name}.oracle.json").write_text(json.dumps(oracle, indent=2) + chr(10), encoding="utf-8")
+    print(f"wrote {path.name}: {len(ties)} ties, by bond tag {by_tag}, {unbonded} perfect-bond")
+    # reinforced_unknown.h5: the same file with the first bonded tie's tag
+    # stored as a float (arg_kinds 1), a tag the app must not read: its D7
+    # still shows "users unknown", never 0 or "used by nothing".
+    import shutil
+
+    import h5py
+    unknown = out_dir / f"{name}_unknown.h5"
+    shutil.copyfile(path, unknown)
+    with h5py.File(unknown, "r+") as f:
+        er = f["opensees/constraints/embeddedRebar"]
+        strs = [x.decode() if isinstance(x, bytes) else x for x in er["args_str"][()]]
+        k = strs.index("-bond") + 1
+        kinds = er["arg_kinds"][()]
+        kinds[k] = 1
+        er["arg_kinds"][...] = kinds
+    print(f"wrote {unknown.name}: arg {k} (the first -bond tag) re-kinded as a float")
+
+
 ELEMENT_STEPS = 3
 PLANE_STRESS = ["stress_xx", "stress_yy", "stress_xy"]
 HEX_GP = np.array([[a, b, c] for c in (-1, 1) for b in (-1, 1) for a in (-1, 1)]) / np.sqrt(3)  # 2 x 2 x 2
@@ -566,6 +651,322 @@ def element_fixtures(out_dir: Path) -> None:
     print(f"wrote elem_staged.results.h5: {tet_ids.size} tets over {len(STAGED_STEPS)} stages")
 
 
+QUAD_GP = np.array([[a, b] for b in (-1, 1) for a in (-1, 1)]) / np.sqrt(3)  # 2 x 2
+
+
+def extrap_field(xyz: np.ndarray, c: int, k: int) -> np.ndarray:
+    """The V4c2b field at physical points ``xyz`` (n, 3): not linear, so extrapolation is not trivial.
+
+        f = (c + 1) (k + 1) (1 + x^2 - 0.5 x y + 0.3 y^2 + y z - 0.2 z^3)
+    """
+    x, y, z = xyz[:, 0], xyz[:, 1], xyz[:, 2]
+    return (c + 1) * (k + 1) * (1 + x * x - 0.5 * x * y + 0.3 * y * y + y * z - 0.2 * z ** 3)
+
+
+def extrapolation_fixtures(out_dir: Path) -> None:
+    """The V4c2b Gauss-to-node extrapolation pairs (#1875) and Python's answer on them.
+
+    Each pair is a FEM-only ``model.h5`` and a stamped ``results.h5`` written by
+    ``NativeWriter``, one static stage ``load`` of ``ELEMENT_STEPS`` steps, whose
+    Gauss values are ``extrap_field`` at each Gauss point's physical position:
+
+    * ``extrap_plane``: a 2 x 1 panel of 4 x 2 quads, 4 Gauss points each
+      (``quads_G4``), beside a 1 x 1 panel of 8 triangles, one point each
+      (``tris_G1``); ``stress_xx/yy/xy``. The first quad is left out: no data.
+    * ``extrap_solid``: a 3 x 2 x 2 box of 12 hexahedra, 8 points (``hex_G8``).
+    * ``extrap_tet``: a 2 x 2 x 2 structured tetrahedral box, one point per tet (``tets_G1``).
+
+    ``extrap.oracle.json`` holds, per pair, component and step, apeGmsh's own
+    ``extrapolate_gauss_slab_to_nodes`` (``gauss_node``),
+    ``extrapolate_gauss_slab_per_element`` (``gauss_node_discrete``), and the
+    averaged path on each element's mean as one point (``cell_averaged``). The
+    slab is read back from the written file, and the Qt fast path
+    (``GaussToNodeAccumulator``) is checked equal to ``gauss_node`` here.
+    """
+    import json
+
+    from apeGmsh.fem._shape_functions import get_shape_functions
+    from apeGmsh.mesh.FEMData import FEMData
+    from apeGmsh.results._gauss_extrapolation import (
+        GaussToNodeAccumulator,
+        extrapolate_gauss_slab_per_element,
+        extrapolate_gauss_slab_to_nodes,
+    )
+    from apeGmsh.results._slabs import GaussSlab
+
+    def gp_xyz(fem, eids: np.ndarray, gp: np.ndarray) -> np.ndarray:
+        """Physical (E, G, 3) positions of the Gauss points, through the corner shape functions."""
+        nid = np.asarray(fem.nodes.ids, dtype=np.int64)
+        xyz = np.asarray(fem.nodes.coords, dtype=np.float64).reshape(-1, 3)
+        at = {int(n): i for i, n in enumerate(nid)}
+        out = np.zeros((eids.size, gp.shape[0], 3))
+        for grp in fem.elements:
+            N_fn, _, _, nc = get_shape_functions(int(grp.element_type.code))
+            N = N_fn(gp)  # (G, nc)
+            row = {int(e): r for r, e in enumerate(np.asarray(grp.ids, dtype=np.int64))}
+            conn = np.asarray(grp.connectivity, dtype=np.int64)
+            for i, e in enumerate(eids):
+                r = row.get(int(e))
+                if r is not None:
+                    out[i] = N @ xyz[[at[int(n)] for n in conn[r, :nc]]]
+        return out
+
+    def write_pair(name: str, fem, groups: list[tuple[str, np.ndarray, np.ndarray]], comps: list[str]) -> dict:
+        model = out_dir / f"{name}.h5"
+        fem.to_h5(str(model), model_name=name)
+        res = out_dir / f"{name}.results.h5"
+        with NativeWriter(res) as w:
+            w.open(fem=fem, source_type="domain_capture", analysis_label="V4c2b synthetic (#1875)")
+            w.stamp_element_index_space("fem")
+            k = np.arange(ELEMENT_STEPS, dtype=np.float64)
+            sid = w.begin_stage(name="load", kind="static", time=(k + 1) / ELEMENT_STEPS)
+            for gid, eids, gp in groups:
+                pts = gp_xyz(fem, eids, gp).reshape(-1, 3)
+                w.write_gauss_group(
+                    sid, "partition_0", gid, class_tag=0, int_rule=0, element_index=eids, natural_coords=gp,
+                    components={c: np.stack([extrap_field(pts, ci, kk).reshape(eids.size, gp.shape[0]) for kk in range(ELEMENT_STEPS)]) for ci, c in enumerate(comps)},
+                )
+            w.end_stage()
+        # Python's answer, on the slab read back from the file (every group of the stage, element-major).
+        import h5py
+        fem_back = FEMData.from_h5(str(model))
+        oracle: dict = {}
+        with h5py.File(res, "r") as f:
+            gg = f[f"stages/{list(f['stages'])[0]}/partitions/partition_0/elements/gauss_points"]
+            for c in comps:
+                vals, eidx, nat = [], [], []
+                for gid in gg:
+                    g = gg[gid]
+                    E, G = g["_element_index"].shape[0], g["_natural_coords"].shape[0]
+                    vals.append(np.asarray(g[c][...], dtype=np.float64).reshape(ELEMENT_STEPS, E * G))
+                    eidx.append(np.repeat(np.asarray(g["_element_index"][...], dtype=np.int64), G))
+                    nat.append(np.tile(np.asarray(g["_natural_coords"][...], dtype=np.float64), (E, 1)))
+                slab = GaussSlab(component=c, values=np.concatenate(vals, axis=1), element_index=np.concatenate(eidx),
+                                 natural_coords=np.concatenate(nat), local_axes_quaternion=None, time=np.arange(ELEMENT_STEPS, dtype=np.float64))
+                nids, nodal = extrapolate_gauss_slab_to_nodes(slab, fem_back)
+                per = extrapolate_gauss_slab_per_element(slab, fem_back)
+                acc = GaussToNodeAccumulator(slab.element_index, slab.natural_coords, fem_back)
+                for kk in range(ELEMENT_STEPS):
+                    assert np.array_equal(acc.node_ids, nids)
+                    assert np.allclose(acc.accumulate(slab.values[kk]), nodal[kk], rtol=1e-12, atol=0), f"{name} {c}: the Qt accumulator disagrees"
+                # cell_averaged: each element's mean as its one point, through the same averaged path.
+                ue, inv = np.unique(slab.element_index, return_inverse=True)
+                means = np.stack([np.bincount(inv, weights=slab.values[kk]) / np.bincount(inv) for kk in range(ELEMENT_STEPS)])
+                one = GaussSlab(component=c, values=means, element_index=ue, natural_coords=np.zeros((ue.size, 3)),
+                                local_axes_quaternion=None, time=slab.time)
+                cids, cnodal = extrapolate_gauss_slab_to_nodes(one, fem_back)
+                oracle[c] = {
+                    "gauss_node": {"node_ids": nids.tolist(), "values": nodal.tolist()},
+                    "gauss_node_discrete": {
+                        "element_ids": per.element_ids.tolist(),
+                        "corner_node_ids": [x.tolist() for x in per.corner_node_ids],
+                        "values": [x.tolist() for x in per.values],
+                    },
+                    "cell_averaged": {"node_ids": cids.tolist(), "values": cnodal.tolist()},
+                }
+        print(f"wrote {name}: {len(fem.elements.ids)} elements, groups {[g[0] for g in groups]}")
+        return oracle
+
+    oracle: dict = {}
+
+    name = "extrap_plane"
+    with apeGmsh(model_name=name, verbose=False, save_to=SESSION_DIR / f"{name}.h5") as g:
+        p0 = gmsh.model.geo.addPoint(0, 0, 0)
+        e0 = gmsh.model.geo.extrude([(0, p0)], 2, 0, 0, numElements=[4])
+        quads = gmsh.model.geo.extrude([e0[1]], 0, 1, 0, numElements=[2], recombine=True)
+        e1 = gmsh.model.geo.extrude([e0[0]], 1, 0, 0, numElements=[2])
+        tris = gmsh.model.geo.extrude([e1[1]], 0, 1, 0, numElements=[2])
+        gmsh.model.geo.removeAllDuplicates()
+        gmsh.model.geo.synchronize()
+        g.model.sync()
+        g.physical.add(2, [quads[1][1]], name="Quads")
+        g.physical.add(2, [tris[1][1]], name="Tris")
+        g.mesh.generation.generate(2)
+        fem = g.mesh.queries.get_fem_data(dim=2)
+    by_npe = {grp.connectivity.shape[1]: np.sort(np.asarray(grp.ids, dtype=np.int64)) for grp in fem.elements}
+    oracle[name] = write_pair(name, fem, [("quads_G4", by_npe[4][1:], QUAD_GP), ("tris_G1", by_npe[3], np.array([[1 / 3, 1 / 3]]))], PLANE_STRESS)
+
+    name = "extrap_solid"
+    with apeGmsh(model_name=name, verbose=False, save_to=SESSION_DIR / f"{name}.h5") as g:
+        p = gmsh.model.geo.addPoint(0, 0, 0)
+        line = gmsh.model.geo.extrude([(0, p)], 3, 0, 0, numElements=[3])
+        surf = gmsh.model.geo.extrude([line[1]], 0, 2, 0, numElements=[2], recombine=True)
+        vol = gmsh.model.geo.extrude([surf[1]], 0, 0, 2, numElements=[2], recombine=True)
+        gmsh.model.geo.synchronize()
+        g.model.sync()
+        g.physical.add(3, [vol[1][1]], name="Block")
+        g.mesh.generation.generate(3)
+        fem = g.mesh.queries.get_fem_data(dim=3)
+    oracle[name] = write_pair(name, fem, [("hex_G8", np.sort(np.asarray(fem.elements.ids, dtype=np.int64)), HEX_GP)], ["stress_xx", "stress_yy"])
+
+    name = "extrap_tet"
+    with apeGmsh(model_name=name, verbose=False, save_to=SESSION_DIR / f"{name}.h5") as g:
+        p = gmsh.model.geo.addPoint(0, 0, 0)
+        line = gmsh.model.geo.extrude([(0, p)], 1, 0, 0, numElements=[2])
+        surf = gmsh.model.geo.extrude([line[1]], 0, 1, 0, numElements=[2])
+        vol = gmsh.model.geo.extrude([surf[1]], 0, 0, 1, numElements=[2])
+        gmsh.model.geo.synchronize()
+        g.model.sync()
+        g.physical.add(3, [vol[1][1]], name="Box")
+        g.mesh.generation.generate(3)
+        fem = g.mesh.queries.get_fem_data(dim=3)
+    oracle[name] = write_pair(name, fem, [("tets_G1", np.sort(np.asarray(fem.elements.ids, dtype=np.int64)), TET_GP)], ["stress_xx"])
+
+    (out_dir / "extrap.oracle.json").write_text(json.dumps(oracle, separators=(",", ":")), encoding="utf8")
+    print("wrote extrap.oracle.json")
+
+
+def _slice_meshes() -> dict:
+    """The V4e3 oracle meshes (#1904): small tet, hex and wedge solids, built in numpy (gmsh corner order)."""
+    rng = np.random.default_rng(1904)
+
+    def grid(nx: int, ny: int, nz: int, h: tuple[float, float, float]) -> tuple[np.ndarray, callable]:
+        pts = np.array([[i * h[0], j * h[1], k * h[2]] for k in range(nz + 1) for j in range(ny + 1) for i in range(nx + 1)], dtype=float)
+        idx = lambda i, j, k: (k * (ny + 1) + j) * (nx + 1) + i  # noqa: E731
+        return pts, idx
+
+    def corners(idx, i, j, k):
+        return [idx(i, j, k), idx(i + 1, j, k), idx(i + 1, j + 1, k), idx(i, j + 1, k),
+                idx(i, j, k + 1), idx(i + 1, j, k + 1), idx(i + 1, j + 1, k + 1), idx(i, j + 1, k + 1)]
+
+    hex_pts, hidx = grid(3, 2, 2, (1.0, 1.5, 0.75))
+    hexes = [corners(hidx, i, j, k) for k in range(2) for j in range(2) for i in range(3)]
+    tet_pts, tidx = grid(2, 2, 2, (1.0, 1.0, 1.0))
+    # Interior nodes moved off the grid (tet faces stay planar), so no cut is axis-trivial.
+    for p in range(len(tet_pts)):
+        if all(0 < tet_pts[p, a] < 2 for a in range(3)):
+            tet_pts[p] += rng.uniform(-0.2, 0.2, 3)
+    kuhn = [[0, 1, 2, 6], [0, 2, 3, 6], [0, 3, 7, 6], [0, 7, 4, 6], [0, 4, 5, 6], [0, 5, 1, 6]]
+    tets = [[c[q] for q in t] for k in range(2) for j in range(2) for i in range(2) for c in [corners(tidx, i, j, k)] for t in kuhn]
+    w_pts, widx = grid(2, 2, 2, (1.0, 1.0, 0.8))
+    wedges = []
+    for k in range(2):
+        for j in range(2):
+            for i in range(2):
+                c = corners(widx, i, j, k)
+                wedges.append([c[0], c[1], c[2], c[4], c[5], c[6]])
+                wedges.append([c[0], c[2], c[3], c[4], c[6], c[7]])
+    return {"tet": (tet_pts, tets), "hex": (hex_pts, hexes), "prism": (w_pts, wedges)}
+
+
+def _slice_fields(pts: np.ndarray, n_cells: int, shape: str) -> dict:
+    """The oracle's fields: ``f`` nonlinear nodal (NaN at two tet nodes: no data), ``L`` linear nodal, ``g`` per cell."""
+    x, y, z = pts[:, 0], pts[:, 1], pts[:, 2]
+    f = np.sin(1.3 * x) + y * y * z - 0.5 * x * z + 0.1 * np.arange(len(pts))
+    if shape == "tet":
+        f[[13, 14]] = np.nan
+    return {"f": f, "L": 2.0 * x - y + 3.0 * z + 1.0, "g": 10.0 + np.arange(n_cells, dtype=float)}
+
+
+def _json_floats(a: np.ndarray) -> list:
+    return [None if np.isnan(v) else float(v) for v in np.asarray(a, dtype=float).ravel()]
+
+
+def slice_oracle(out_dir: Path) -> None:
+    """V4e3 (#1904): PyVista's slice of tet, hex and wedge solids, the oracle of the app's cut face.
+
+    The slice is the Qt backend's own, ``PyVistaBackend.slice_layer`` (the
+    ADR 0083 S3 cut-face pass), on an ``UnstructuredGrid`` carrying the
+    fields of ``_slice_fields``. The scene IR stores points as float32
+    (``PointSet``), so the same filter chain is also run here in float64
+    and checked to round to exactly the backend's points, with identical
+    values; the oracle records the float64 points and area. Each case
+    records the plane in the app's form (``n·p + constant >= 0`` is kept)
+    and the other planes that trim it. ``test/clip/slice.test.ts`` compares
+    the app's ``sliceSolids``.
+
+    Two runs per case. ``vtk``: the grid also carries one vertex cell, so
+    ``vtkCutter`` takes its generic path, exact to round-off (measured: cut
+    points 9e-16 from the exact edge intersections): the 1e-9 oracle. A
+    trimmed case's ``vtk`` clips that same slice as an ``UnstructuredGrid``
+    (``vtkTableBasedClipDataSet``, exact), because ``slice_layer`` clips a
+    ``PolyData`` and pyvista sends that to ``vtkClipPolyData``, whose clip
+    scalars are float (points up to 2e-9 off the trim plane, measured);
+    ``backend`` says which cases are ``slice_layer``'s output verbatim.
+    ``vtk_fast``: ``slice_layer`` verbatim on the bare grid, every cell linear
+    3-D, where ``vtkCutter`` delegates to ``vtk3DLinearGridPlaneCutter``,
+    whose cut points sit up to 3e-8 off the exact intersections (measured,
+    VTK 9.5.2): what the Qt cap drew, checked to 1e-7.
+    """
+    import json
+    import types
+
+    import pyvista as pv
+
+    from apeGmsh.viewers.backends.pyvista_qt import PyVistaBackend
+    from apeGmsh.viewers.scene_ir import ClipPlaneSpec
+
+    vtk_type = {"tet": pv.CellType.TETRA, "hex": pv.CellType.HEXAHEDRON, "prism": pv.CellType.WEDGE}
+    meshes, cases = {}, []
+    for shape, (pts, cells) in _slice_meshes().items():
+        cells_np = np.asarray(cells, dtype=np.int64)
+        fields = _slice_fields(pts, len(cells_np), shape)
+        fast = pv.UnstructuredGrid({vtk_type[shape]: cells_np}, pts)
+        # The same cells and one vertex cell (at point 0), last: vtkCutter's generic path.
+        npc = cells_np.shape[1]
+        conn = np.concatenate([np.hstack([np.full((len(cells_np), 1), npc), cells_np]).ravel(), [1, 0]])
+        grid = pv.UnstructuredGrid(conn, np.array([vtk_type[shape]] * len(cells_np) + [pv.CellType.VERTEX], dtype=np.uint8), pts)
+        for gg, extra in ((fast, []), (grid, [np.nan])):
+            gg.point_data["f"] = fields["f"]
+            gg.point_data["L"] = fields["L"]
+            gg.cell_data["g"] = np.concatenate([fields["g"], extra])
+        meshes[shape] = {"points": _json_floats(pts), "cells": [int(v) for v in cells_np.ravel()], **{k: _json_floats(v) for k, v in fields.items()}}
+        mid = (pts.min(axis=0) + pts.max(axis=0)) / 2
+        unit = lambda v: np.asarray(v, dtype=float) / np.linalg.norm(v)  # noqa: E731
+        n1, n2, n3 = unit([0.31, 0.47, 0.83]), unit([0.9, -0.2, 0.15]), unit([-0.1, 0.95, -0.3])
+        o1, o2, o3 = mid + [0.013, -0.021, 0.017], mid + [0.11, 0.05, -0.07], mid + [-0.04, 0.09, 0.03]
+        for name, (n, o), trims in [
+            ("oblique", (n1, o1), []),
+            ("trimmed", (n1, o1), [(n2, o2)]),
+            ("trimmed2", (n2, o2), [(n1, o1), (n3, o3)]),
+        ]:
+            spec = ClipPlaneSpec(origin=tuple(o), normal=tuple(n))
+            trim_specs = [ClipPlaneSpec(origin=tuple(to), normal=tuple(tn)) for tn, to in trims]
+            plane = lambda nn, oo: {"normal": [float(v) for v in nn], "constant": float(-np.dot(nn, oo))}  # noqa: E731
+            case = {"mesh": shape, "case": name, "plane": plane(n, o), "trims": [plane(tn, to) for tn, to in trims]}
+            for key, gg, exact in (("vtk", grid, True), ("vtk_fast", fast, False)):
+                layer = PyVistaBackend.slice_layer(None, types.SimpleNamespace(dataset=gg), spec, layer_id=f"{shape}-{name}", trim=trim_specs)
+                if layer is None:
+                    raise SystemExit(f"slice oracle: {shape} {name} cut nothing")
+                # The same chain as slice_layer, in float64. Its trim clips a PolyData, which
+                # pyvista hands to vtkClipPolyData (float clip scalars: points up to 2e-9 off the
+                # trim plane, measured); the exact run clips the same slice as an
+                # UnstructuredGrid instead (vtkTableBasedClipDataSet, exact to round-off).
+                cut = gg.slice(normal=spec.normal, origin=spec.origin, generate_triangles=True)
+                for t in trim_specs:
+                    cut = (cut.cast_to_unstructured_grid() if exact else cut).clip(normal=t.normal, origin=t.origin, invert=False)
+                full = cut.extract_surface().triangulate().cast_to_unstructured_grid()
+                p = np.asarray(full.points, dtype=np.float64)
+                tris = np.asarray(full.cells_dict[int(pv.CellType.TRIANGLE)], dtype=np.int64)
+                if len(tris) != full.n_cells:
+                    raise SystemExit(f"slice oracle: {shape} {name}: {full.n_cells} cells, {len(tris)} triangles")
+                e1, e2 = p[tris[:, 1]] - p[tris[:, 0]], p[tris[:, 2]] - p[tris[:, 0]]
+                area = float(0.5 * np.linalg.norm(np.cross(e1, e2), axis=1).sum())
+                got = {fl.name: fl for fl in layer.fields}
+                if exact and trim_specs:
+                    # Not the backend's own trim: the same cut, trimmed exactly; its area agrees with the backend's to its float clip.
+                    lp = np.asarray(layer.points.coords, dtype=np.float64)
+                    lt = np.asarray(layer.cells.blocks["triangle"], dtype=np.int64)
+                    la = float(0.5 * np.linalg.norm(np.cross(lp[lt[:, 1]] - lp[lt[:, 0]], lp[lt[:, 2]] - lp[lt[:, 0]]), axis=1).sum())
+                    if abs(la - area) > 1e-6 * area:
+                        raise SystemExit(f"slice oracle: {shape} {name}: the exact trim's area {area} is not the backend's {la}")
+                else:
+                    if not np.array_equal(p.astype(np.float32), layer.points.coords) or not np.array_equal(tris, layer.cells.blocks["triangle"]):
+                        raise SystemExit(f"slice oracle: {shape} {name}: the float64 chain is not the backend's slice")
+                    for k in ("f", "L"):
+                        if got[k].location != "point" or not np.array_equal(np.asarray(full.point_data[k]), got[k].values, equal_nan=True):
+                            raise SystemExit(f"slice oracle: {shape} {name}: {k} differs from the backend's")
+                    if got["g"].location != "cell" or not np.array_equal(np.asarray(full.cell_data["g"]), got["g"].values):
+                        raise SystemExit(f"slice oracle: {shape} {name}: g differs from the backend's")
+                case[key] = {"points": _json_floats(p), "tris": [int(v) for v in tris.ravel()], "f": _json_floats(full.point_data["f"]),
+                             "L": _json_floats(full.point_data["L"]), "g": _json_floats(full.cell_data["g"]), "area": area,
+                             "backend": not (exact and trim_specs)}
+            cases.append(case)
+    oracle = {"generator": "scripts/make_viewer_results_fixtures.py --slice-oracle", "slice": "PyVistaBackend.slice_layer", "meshes": meshes, "cases": cases}
+    (out_dir / "slice.oracle.json").write_text(json.dumps(oracle, separators=(",", ":")), encoding="utf8")
+    print(f"wrote slice.oracle.json: {len(cases)} cases")
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--measure", type=Path, help="write the measured files a, b, c into this directory")
@@ -575,9 +976,21 @@ def main() -> None:
     ap.add_argument("--contour", action="store_true", help="write the V4c1 contour pairs (contour_staged.*, contour_nodata.*)")
     ap.add_argument("--deform", action="store_true", help="write the V4d 2-D pair (deform_2d.h5 + .results.h5)")
     ap.add_argument("--stamped", action="store_true", help="write results_stamped.h5, the small file with element_index_space='fem' (V4g)")
+    ap.add_argument("--reinforced", action="store_true", help="write reinforced.h5 + oracle, a 2.31 model with embeddedRebar ties (V4m)")
     ap.add_argument("--elements", action="store_true", help="write the V4c2a element-contour pairs (elem_*.h5 + .results.h5)")
     ap.add_argument("--elements-measure", type=Path, help="write the V4c2a measured solid (stamped, G = 6) into this directory")
+    ap.add_argument("--extrapolation", action="store_true", help="write the V4c2b extrapolation pairs (extrap_*.h5 + .results.h5) and Python's oracle")
+    ap.add_argument("--slice-oracle", action="store_true", help="write slice.oracle.json, PyVista's slice of tet/hex/wedge solids (V4e3)")
     args = ap.parse_args()
+    if args.slice_oracle:
+        slice_oracle(HERE)
+        return
+    if args.extrapolation:
+        extrapolation_fixtures(HERE)
+        return
+    if args.reinforced:
+        reinforced_fixture(HERE)
+        return
     if args.elements:
         element_fixtures(HERE)
         return

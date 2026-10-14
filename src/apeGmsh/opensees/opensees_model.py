@@ -206,6 +206,68 @@ def _equation_constraint_records(declarations: Any) -> "tuple[Any, ...]":
     return tuple(out)
 
 
+def _materials_in_emit_order(
+    recs: "Sequence[MaterialRecord]",
+    method: str,
+    program: "Sequence[Any]",
+    declarations: Any,
+) -> "tuple[MaterialRecord, ...]":
+    """``recs`` in the order the bridge emitted them (#1814).
+
+    The store keys each record by ``{type}_{tag}`` and HDF5 iterates the
+    group by name, so the read order puts ``Parallel_3`` before
+    ``Steel01_1``. A deck needs every wrapper after the materials it
+    references, which the bridge's ``topological_order`` guarantees and
+    ``/opensees/program`` records. Each ``method`` call there names its
+    declaration (opensees 2.31.0, A7), and ``/opensees/decls/tags`` names
+    that declaration's tag, so a record's emit index is the first call of
+    its declaration (a partition replica repeats the ``(stage, row)`` of
+    its first capture and is skipped).
+
+    A record no call joins to (a material a side pass mints with no
+    declaration, ``decl = -1``) follows the joined ones, in tag order:
+    no declared material can reference it, since it did not exist when
+    the declaration was made.
+
+    An archive that records no joins (below 2.31.0, or a rewrite of one)
+    falls back to tag order. The bridge mints a material's tag when it
+    is registered, and a wrapper is registered after its members unless
+    the user ``register``-ed the wrapper first (P11); that one case has
+    no order to recover on such a file.
+    """
+    from .emitter.h5_reader import records_program_decl
+
+    if not records_program_decl(declarations):
+        return tuple(sorted(recs, key=lambda r: int(r.tag)))
+    tags_of: dict[int, list[int]] = {}
+    for kind, first, count, decl in declarations.tags:
+        if kind == method:
+            tags_of.setdefault(int(decl), []).extend(
+                range(int(first), int(first) + int(count)))
+    emit_of_tag: dict[int, int] = {}
+    calls_of_decl: dict[int, int] = {}
+    seen_rows: set[tuple[int, int]] = set()
+    for run in program:
+        if run.method != method or run.decl < 0:
+            continue
+        for i in range(run.count):
+            key = (int(run.stage), int(run.row) + i)
+            if key in seen_rows:
+                continue
+            seen_rows.add(key)
+            k = calls_of_decl.get(run.decl, 0)
+            calls_of_decl[run.decl] = k + 1
+            tags = tags_of.get(int(run.decl), [])
+            if k < len(tags):
+                emit_of_tag.setdefault(tags[k], int(run.first) + i)
+
+    def _key(rec: MaterialRecord) -> tuple[int, int]:
+        emit = emit_of_tag.get(int(rec.tag))
+        return (0, emit) if emit is not None else (1, int(rec.tag))
+
+    return tuple(sorted(recs, key=_key))
+
+
 # Type alias for the read-side section discriminated union.
 SectionRecord = SectionSimpleRecord | SectionComplexRecord
 
@@ -411,7 +473,7 @@ class OpenSeesModel:
         # caller can pass the composed file directly without knowing the
         # neutral zone lives under /model/.  Explicit fem_root is kept.
         fem_root = _resolve_fem_root_for_read(spath, fem_root)
-        _refuse_bridge_only(spath, fem_root)
+        _refuse_bridge_only(spath, fem_root, opensees_root)
         fem = FEMData.from_h5(spath, root=fem_root)
 
         # Locate the bridge meta — it lives at ``{fem_root}/meta`` so
@@ -1373,6 +1435,28 @@ class OpenSeesModel:
     # Private — emit helpers
     # ==================================================================
 
+    def _deck_materials(
+        self,
+    ) -> "tuple[tuple[MaterialRecord, ...], tuple[MaterialRecord, ...]]":
+        """The uniaxial and nD records in the bridge's emit order (#1814).
+
+        A model read from a file reorders its store-order records
+        (:func:`_materials_in_emit_order`); one made from the emitter's
+        buffers (:meth:`from_compose_buffers`, no ``_opensees_version``)
+        already holds them in call order. Only the deck targets need it:
+        the ``h5`` rewrite keys each record by name.
+        """
+        uniaxial = self._materials_by_family.get("uniaxial", ())
+        nd = self._materials_by_family.get("nd", ())
+        if self._opensees_version is None:
+            return tuple(uniaxial), tuple(nd)
+        return (
+            _materials_in_emit_order(
+                uniaxial, "uniaxialMaterial", self._program, self._declarations),
+            _materials_in_emit_order(
+                nd, "nDMaterial", self._program, self._declarations),
+        )
+
     def _populate_emitter(self, emitter: Any) -> None:
         """Walk the record graph and drive ``emitter`` through the
         schema-relevant Protocol methods.
@@ -1389,8 +1473,7 @@ class OpenSeesModel:
         """
         from ._internal.compose import _replay_into, _replay_staged_into
 
-        uniaxial = self._materials_by_family.get("uniaxial", ())
-        nd = self._materials_by_family.get("nd", ())
+        uniaxial, nd = self._deck_materials()
         simple_sections = tuple(
             s for s in self._sections if isinstance(s, SectionSimpleRecord)
         )
@@ -2137,28 +2220,38 @@ def _resolve_neutral_group(f: Any, fem_root: str) -> Any:
     return f[key]
 
 
-def _refuse_bridge_only(path: str, fem_root: str) -> None:
+def _refuse_bridge_only(path: str, fem_root: str, opensees_root: str) -> None:
     """Raise ``BridgeOnlyArchiveError`` when ``fem_root`` has no neutral zone.
 
-    A bridge-only archive (a stamped ``/meta`` and the ``/opensees``
-    bridge zone, but no ``nodes``, e.g. one written from a ``FEMStub``)
-    cannot be replayed (#1797).  Checked up front so the caller sees a
-    named refusal instead of h5py's raw ``KeyError`` from deep inside the
-    neutral-zone read.  Any other file without a neutral zone (a missing
-    root group or ``/meta``, a results-only file whose ``/meta`` is an
-    unstamped lineage stub, a root with no ``opensees`` group) is left to
-    the reader's own errors, unchanged.
+    A bridge-only archive (a stamped ``meta`` under ``fem_root`` and the
+    bridge zone at ``opensees_root``, but no ``nodes``, e.g. one written
+    from a ``FEMStub``) cannot be replayed (#1797).  Checked up front so
+    the caller sees a named refusal instead of h5py's raw ``KeyError``
+    from deep inside the neutral-zone read.
+
+    The bridge zone counts under ``fem_root`` (a standalone archive, or
+    one nested whole under a group) or at ``opensees_root`` from the file
+    root, where the typed reader reads it: a composed results file keeps
+    ``/opensees`` at the root beside ``/model``, so ``fem_root="/model"``
+    with no ``/model/nodes`` is refused too (#1880).  Any other file
+    without a neutral zone (a missing ``fem_root`` group or ``meta``, a
+    results-only file whose ``/meta`` is an unstamped lineage stub, a
+    file with no bridge zone) is left to the reader's own errors,
+    unchanged.
     """
     import h5py
 
     from .emitter.h5_reader import BridgeOnlyArchiveError
 
     key = fem_root.strip("/")
+    bridge = opensees_root.strip("/")
     with h5py.File(path, "r") as f:
         if key and key not in f:
             return
         group = f[key] if key else f
-        if "nodes" in group or "opensees" not in group:
+        if "nodes" in group:
+            return
+        if "opensees" not in group and not (bridge and bridge in f):
             return
         if "meta" not in group or not str(
             group["meta"].attrs.get("schema_version", "")

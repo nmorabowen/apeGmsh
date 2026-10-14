@@ -142,7 +142,7 @@ const EVERY: Record<EventType, Event> = {
   selectStage: { type: "selectStage", index: null },
   resultsLoaded: {
     type: "resultsLoaded",
-    info: { path: "x.results.h5", version: "1.1.0", sourceType: "domain_capture", lineage: null, partial: null, stages: [], unavailableZones: [] },
+    info: { path: "x.results.h5", version: "1.1.0", sourceType: "domain_capture", lineage: null, partial: null, stages: [], unavailableZones: [], openseesVersion: null, programDecl: null },
     sizeBytes: 0,
     readMs: 0,
     warnings: [],
@@ -154,11 +154,22 @@ const EVERY: Record<EventType, Event> = {
   contourStepRange: { type: "contourStepRange", key: "x", min: 0, max: 1 },
   contourScan: { type: "contourScan", scan: { key: "x", status: "running", done: 1, total: 2, min: null, max: null, error: null } },
   setDeform: { type: "setDeform", on: true },
+  addClipPlane: { type: "addClipPlane", normal: [0, 0, 1] },
+  removeClipPlane: { type: "removeClipPlane", id: "plane-1" },
+  setClipActive: { type: "setClipActive", id: "plane-1", active: false },
+  setClipFlipped: { type: "setClipFlipped", id: "plane-1", flipped: true },
+  setClipOffset: { type: "setClipOffset", id: "plane-1", offset: 2 },
+  setClipNormal: { type: "setClipNormal", id: "plane-1", normal: [1, 1, 0] },
+  setApplyCuts: { type: "setApplyCuts", on: false },
+  setClipPose: { type: "setClipPose", id: "plane-1", normal: [0, 1, 0], offset: 1 },
+  setShowGizmos: { type: "setShowGizmos", on: false },
+  setClipGizmo: { type: "setClipGizmo", id: "plane-1", visible: false },
+  setCutFace: { type: "setCutFace", on: false },
   setDeformScale: { type: "setDeformScale", scale: 10 },
   setReferenceGhost: { type: "setReferenceGhost", on: true },
   deformMeasured: { type: "deformMeasured", key: "x", drawn: 3, missing: 1 },
   setContourGauss: { type: "setContourGauss", mode: "node" },
-  contourElementJoin: { type: "contourElementJoin", verdict: { key: "x", ok: true, rows: 1 } },
+  contourElementJoin: { type: "contourElementJoin", verdict: { key: "x", ok: true, rows: 1, extrapolation: { corners: null, matrix: null } } },
 };
 
 test("reducer purity: every event leaves a frozen state untouched and returns plain data", () => {
@@ -176,8 +187,8 @@ test("reducer purity: every event leaves a frozen state untouched and returns pl
   }
   assert.equal(
     Object.keys(EVERY).length,
-    40,
-    "decision 17's 20 events plus fileClosed, requestSource, sourceResult, setLoaded (V2f), frameSelection, setColourBy, selectStage (V4f), resultsLoaded and resultStep (V4b), the five contour events (V4c1), the four deformed-shape events (V4d), and setContourGauss and contourElementJoin (V4c2a)",
+    51,
+    "decision 17's 20 events plus fileClosed, requestSource, sourceResult, setLoaded (V2f), frameSelection, setColourBy, selectStage (V4f), resultsLoaded and resultStep (V4b), the five contour events (V4c1), the four deformed-shape events (V4d), setContourGauss and contourElementJoin (V4c2a), the seven section-plane events (V4e1), the three gizmo events (V4e2: setClipPose, setShowGizmos, setClipGizmo), and setCutFace (V4e3)",
   );
 });
 

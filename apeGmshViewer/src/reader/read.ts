@@ -18,6 +18,7 @@ import type {
   DeclValue,
   Definitions,
   DefObject,
+  EmbeddedRebarTies,
   SequenceZone,
   StageDef,
   ElementBlock,
@@ -93,13 +94,15 @@ export const NEUTRAL_TARGET = { major: 2, minor: 35 } as const;
  * opensees 2.29.0 (K2b #1795, h5-schema.md "`/opensees/constraints/
  * embeddedRebar` (optional, opensees 2.29.0)"): a new optional group holding
  * every `g.reinforce` LadrunoEmbeddedRebar tie the build wrote (its tag and
- * positional arguments). Replay data, which this app does not read: the ties
- * are not elements (`element_meta` does not list them, so the chain and the
- * element tables never meet one), they get no `/opensees/decls` row, and the
- * reader reads only the `/opensees` children it knows, so the group opens
- * with no warning. What the app does not say yet: a bond material that only
- * the ties use shows no users in the materials window, as it did before
- * 2.29 when the ties were not archived at all.
+ * positional arguments). The ties are not elements (`element_meta` does not
+ * list them, so the chain and the element tables never meet one) and get no
+ * `/opensees/decls` row. Since V4m (#1846) the reader reads the group for one
+ * fact, the bond material each tie names (`tieBonds`, below; the other
+ * columns are replay data it does not read), and the materials window counts
+ * those ties as users. The gap this comment used to name is closed: a bond
+ * material only the ties use no longer reads "used by nothing", and a tie
+ * whose bond tag cannot be read makes the window say "users unknown", never
+ * 0. A file without the group (before 2.29, or with no tie) reads as before.
  *
  * opensees 2.30.0 (R3-S5 #1789, h5-schema.md "`precision` (opensees
  * 2.30.0)"): typed Node / Element recorder `decl_params` rows gain
@@ -112,7 +115,9 @@ export const NEUTRAL_TARGET = { major: 2, minor: 35 } as const;
  * program's `decl` column now holds the `/opensees/decls` row that made each
  * call (`-1` where unproved), and `/opensees/decls@program_decl`
  * ("complete" | "absent") says whether those joins are recorded. This app
- * reads neither: it does not read `/opensees/program` at all, and reads only
+ * reads the marker only for the results pairing (V4h, #1856: it says whether
+ * the model_hash includes declaration ids), never for a join. It does not read
+ * `/opensees/program` at all, and reads only
  * the datasets of `/opensees/decls`, so `decl` can never appear as an
  * OpenSees parameter in any window, and no join is made from it. The joins the
  * windows make are unchanged and do not depend on the marker: recorders join
@@ -121,11 +126,20 @@ export const NEUTRAL_TARGET = { major: 2, minor: 35 } as const;
  * a refused or ambiguous join says the archive records no link (#1646). Using `program.decl` for that join when the
  * marker is "complete" is a follow-up, not this target bump.
  *
+ * opensees 2.32.0 (#1853, h5-schema.md "`decl`: each call's declaration"):
+ * the six side-channel verbs (`step_hook_ramp`, `addToParameter`,
+ * `flip_element_stage`, `update_parameter`, `set_node_vel`, `set_node_accel`)
+ * now carry their record's `decl` instead of `-1`. No path, dtype or marker
+ * change, and this app does not read `/opensees/program`, so nothing here
+ * reads differently. The column is hashed: a 2.32 re-emit of a model with any
+ * of those calls has a new model_hash, which the results pairing shows as a
+ * plain mismatch (both sides' markers say "complete").
+ *
  * tests/test_app_target_drift.py fails when any `*_TARGET` here (or
  * `RESULTS_TARGET` in results.ts) differs from its Python writer's version:
  * bump it only after reading that zone's history entry in h5-schema.md.
  */
-export const OPENSEES_TARGET = { major: 2, minor: 31 } as const;
+export const OPENSEES_TARGET = { major: 2, minor: 32 } as const;
 /** The ADR 0112 zones (V2a specs): read by geometry.ts and provenance.ts. */
 export const GEOMETRY_TARGET = { major: 1, minor: 0 } as const;
 export const PROVENANCE_TARGET = { major: 1, minor: 1 } as const;
@@ -191,6 +205,7 @@ export const emptyDefinitions = (): Definitions => ({
   recorders: [],
   bcs: { fix: null, mass: null },
   stages: [],
+  embeddedRebar: null,
 });
 
 export function readModel(
@@ -420,7 +435,29 @@ class Reader {
       recorders: members("recorders", false),
       bcs: has(g, "bcs") ? this.readBcs(this.group(g, "bcs")) : { fix: null, mass: null },
       stages: has(g, "stages") ? this.readStages(this.group(g, "stages")) : [],
+      embeddedRebar: this.readEmbeddedRebar(g),
     };
+  }
+
+  /**
+   * `/opensees/constraints/embeddedRebar` (opensees 2.29.0; V4m #1846): the
+   * four columns that carry a tie's arguments, reduced by `tieBonds` to the
+   * bond material each tie names. `ele_tag` and `name` are replay data and
+   * are not read. A missing column is an unknown, not an error: the file
+   * opened before V4m, and the window says "users unknown" instead.
+   */
+  private readEmbeddedRebar(g: H5Group): EmbeddedRebarTies | null {
+    if (!has(g, "constraints")) return null;
+    const c = this.group(g, "constraints");
+    if (!has(c, "embeddedRebar")) return null;
+    const er = this.group(c, "embeddedRebar");
+    const opt = <T>(name: string, read: (ds: H5Dataset) => T): T | null => (has(er, name) ? read(this.dataset(er, name)) : null);
+    return tieBonds(er.path, {
+      arg_offsets: opt("arg_offsets", numbers),
+      args: opt("args", numbers),
+      args_str: opt("args_str", strings),
+      arg_kinds: opt("arg_kinds", numbers),
+    });
   }
 
   /** A series, pattern or recorder group: `type` (and `tag`, unless a recorder), params, attrs, datasets. */
@@ -571,7 +608,10 @@ class Reader {
     if (hasParams) {
       for (const p of this.readDeclParams(this.group(g, "decl_params"), keys, n)) records[p.decl]!.params.push(p.params);
     }
-    return { hasParams, records, tags, rows };
+    // V4h (#1856): the completeness marker, read for the results pairing only.
+    const marker = d.attrs["program_decl"]?.value;
+    const programDecl = marker === undefined ? "absent" : typeof marker === "string" ? marker : JSON.stringify(marker);
+    return { hasParams, records, tags, rows, programDecl };
   }
 
   /** The record count of the store at `path` under `ops`, as Python's `declarations()` counts it. */
@@ -848,6 +888,80 @@ function checkDeclValue(v: unknown, keys: Set<string>, where: string): void {
   }
   if (only("$opaque")) return;
   throw new SchemaError(`${where} carries the unknown tag(s) ${JSON.stringify(tags)}; the reader knows $decl, $struct and $opaque`);
+}
+
+/** The four argument columns of `/opensees/constraints/embeddedRebar`; null for one the group lacks. */
+export interface TieColumns {
+  arg_offsets: ArrayLike<number> | null;
+  args: ArrayLike<number> | null;
+  args_str: readonly string[] | null;
+  arg_kinds: ArrayLike<number> | null;
+}
+
+/**
+ * The bond material each LadrunoEmbeddedRebar tie names (V4m, #1846). The
+ * interpreted tier, like chain/signatures.ts: h5-schema.md names no bond
+ * column, so the tag is read from the tie's arguments by the command grammar
+ * of `src/apeGmsh/opensees/element/embedded_rebar.py` (the single source of
+ * the emit grammar), which mirrors the fork's `OPS_LadrunoEmbeddedRebar.cpp`:
+ *
+ *     ... ( -bond matTag [-bondScale bs] | -perfect kAxial ) ...
+ *
+ * Row i owns `args[arg_offsets[i]:arg_offsets[i+1]]`, encoded as
+ * `/opensees/commands` is (`arg_kinds` 0 int, 1 float, 2 str; a string in
+ * `args_str`). The tag is the integer right after the one `-bond` string
+ * token of the row; it is matched to a uniaxialMaterial by tag in the
+ * window. A row with no `-bond` names no material. A row whose `-bond` has no
+ * value, a non-integer value, or that carries `-bond` twice is unresolved, as
+ * is every row when a column is missing or the columns disagree in length:
+ * the window then says "users unknown", never 0.
+ */
+export function tieBonds(path: string, c: TieColumns): EmbeddedRebarTies {
+  const off = c.arg_offsets;
+  const count = off && off.length >= 1 ? off.length - 1 : null;
+  const whole = (why: string): EmbeddedRebarTies => ({ path, count, bond: [], unbonded: 0, unresolved: [{ why, ties: count }] });
+  const missing = (["arg_offsets", "args", "args_str", "arg_kinds"] as const).filter((k) => c[k] === null);
+  if (missing.length) return whole(`${path} has no ${missing.join(", ")}`);
+  const args = c.args!, str = c.args_str!, kinds = c.arg_kinds!;
+  if (count === null) return whole(`${path}/arg_offsets is empty`);
+  const a = args.length;
+  if (str.length !== a || kinds.length !== a) {
+    return whole(`${path}: args (${a}), args_str (${str.length}) and arg_kinds (${kinds.length}) differ in length`);
+  }
+  for (let i = 0; i <= count; i++) {
+    const o = off![i]!;
+    if (!Number.isInteger(o) || o < 0 || o > a || (i === 0 && o !== 0) || (i > 0 && o < off![i - 1]!) || (i === count && o !== a)) {
+      return whole(`${path}/arg_offsets does not run from 0 to ${a} without decreasing`);
+    }
+  }
+  const tags = new Map<number, number>();
+  const why = new Map<string, number>();
+  let unbonded = 0;
+  for (let i = 0; i < count; i++) {
+    const lo = off![i]!, hi = off![i + 1]!;
+    const at: number[] = [];
+    for (let k = lo; k < hi; k++) if (kinds[k] === 2 && str[k] === "-bond") at.push(k);
+    let reason: string | null = null;
+    if (at.length === 0) {
+      unbonded++;
+      continue;
+    }
+    if (at.length > 1) reason = "-bond appears more than once in the tie's arguments";
+    else {
+      const k = at[0]! + 1;
+      if (k >= hi) reason = "-bond has no tag after it";
+      else if (kinds[k] !== 0 || !Number.isInteger(args[k])) reason = "the value after -bond is not an integer tag";
+      else tags.set(args[k]!, (tags.get(args[k]!) ?? 0) + 1);
+    }
+    if (reason) why.set(reason, (why.get(reason) ?? 0) + 1);
+  }
+  return {
+    path,
+    count,
+    bond: [...tags].sort((x, y) => x[0] - y[0]).map(([tag, ties]) => ({ tag, ties })),
+    unbonded,
+    unresolved: [...why].map(([w, ties]) => ({ why: w, ties })),
+  };
 }
 
 function joinPath(parent: string, name: string): string {

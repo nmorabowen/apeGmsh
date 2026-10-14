@@ -151,6 +151,14 @@ export interface DeclTable {
    * `stages/stage_000/bcs/fix`, ...).
    */
   rows: Record<string, number[]>;
+  /**
+   * `/opensees/decls@program_decl` (opensees 2.31.0): "complete" when the
+   * program's hashed `decl` column records each call's declaration, "absent"
+   * when it does not; a file below 2.31.0 has no marker and reads as
+   * "absent" (h5-schema.md). Another value is kept verbatim (a non-string as
+   * its JSON) and names no era. Read only for the results pairing (V4h).
+   */
+  programDecl?: string;
 }
 
 /**
@@ -211,6 +219,27 @@ export interface Definitions {
   bcs: BcsDef;
   /** `/opensees/stages/stage_NNN` in ordinal order; [] for an unstaged file */
   stages: StageDef[];
+  /** `/opensees/constraints/embeddedRebar` (opensees 2.29.0), read for the bond material each tie names; null when the file has no such group */
+  embeddedRebar: EmbeddedRebarTies | null;
+}
+
+/**
+ * The `g.reinforce` LadrunoEmbeddedRebar ties of `/opensees/constraints/
+ * embeddedRebar` (V4m, #1846), reduced to the bond material each names. A tie
+ * is not an element and has no declaration row, so this is the only place the
+ * materials window learns of it. The bond tag is read from the tie's `args`
+ * (the interpreted tier; reader/read.ts `tieBonds` says how).
+ */
+export interface EmbeddedRebarTies {
+  path: string;
+  /** the tie rows in the group; null when `arg_offsets` cannot say */
+  count: number | null;
+  /** ties that name exactly one integer bond tag (`-bond <tag>`): the tag and how many ties name it, ascending by tag */
+  bond: { tag: number; ties: number }[];
+  /** ties with no `-bond` token (the `-perfect` axial law): they name no material */
+  unbonded: number;
+  /** ties whose bond material cannot be read, by reason; `ties` is null when the count itself is unknown. [] when every tie was read */
+  unresolved: { why: string; ties: number | null }[];
 }
 
 /**

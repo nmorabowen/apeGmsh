@@ -657,3 +657,175 @@ runs read 339 (nodal) and 230 (nodal, deformed) steps/s.
 - An element field costs about 1 ms a step over the nodal contour on this
   file (median 2.8 → 3.4 to 3.7 ms): the Gauss block (7 098 × 6 values) over
   IPC, its per-element mean, and the per-cell colours.
+
+### Element contour scrub carried to the nodes (V4c2b, #1875)
+
+The element scrub above, in each node-located draw mode: `cell_averaged`
+(on this 6-point file, `element_mean_averaged`: each element's mean averaged
+at the nodes), `gauss_node` (the 6 Gauss points extrapolated to the 6 wedge
+corners by the pseudo-inverse of the linear wedge shape functions, averaged
+at the nodes) and `gauss_node_discrete` (the same, not averaged). Each step
+also carries the Gauss block through the field's plan (built once per join
+and mode), measures the step range on the values drawn, and colours every
+drawn vertex from its own element's corner. The history scan carries every
+step through the same plan in main. `npm run measure` prints the three rows
+after the V4c2a element rows.
+
+Same file and command as the V4c2a rows (e_solid_100: 7 098 wedges x 6 Gauss
+points, 100 steps), same machine, at `04d1bfa4` plus the measure fix below.
+
+| run | field | CPU before / during | history scan (ms) | scrub (steps/s) | step median / max (ms) | peak MB main+renderer |
+|---|---|---|---|---|---|---|
+| 1 | element stress xx, element_mean_averaged | 47 / 52 % | (9, see below) | 185.8 | 4.90 / 18.8 | 354 (154 + 200) |
+| 1 | element stress xx, gauss_node | 51 / 37 % | (9) | 180.6 | 5.00 / 15.1 | 377 (181 + 196) |
+| 1 | element stress xx, gauss_node_discrete | 32 / 39 % | (7) | 192.7 | 4.70 / 12.6 | 375 (171 + 204) |
+| 2 | element stress xx, element_mean_averaged | 24 / 21 % | 69 | 250.2 | 3.70 / 9.3 | 368 (161 + 207) |
+| 2 | element stress xx, gauss_node | 22 / 32 % | 110 | 212.5 | 4.40 / 11.1 | 352 (157 + 195) |
+| 2 | element stress xx, gauss_node_discrete | 18 / 35 % | 90 | 211.6 | 4.20 / 17.3 | 361 (169 + 192) |
+| 3 | element stress xx, element_mean_averaged | 36 / 38 % | 114 | 214.3 | 4.60 / 11.4 | 358 (165 + 193) |
+| 3 | element stress xx, gauss_node | 27 / 25 % | 111 | 234.2 | 4.00 / 9.5 | 374 (165 + 210) |
+| 3 | element stress xx, gauss_node_discrete | 23 / 38 % | 88 | 215.0 | 4.40 / 10.5 | 357 (158 + 199) |
+| 4 | element stress xx, element_mean_averaged | 30 / 45 % | 91 | 201.7 | 4.70 / 11.0 | 363 (167 + 196) |
+| 4 | element stress xx, gauss_node | 43 / 36 % | 136 | 197.9 | 4.80 / 10.3 | 372 (168 + 204) |
+| 4 | element stress xx, gauss_node_discrete | 29 / 39 % | 109 | 199.2 | 4.80 / 10.1 | 354 (167 + 187) |
+
+Run 1's history-scan column is not a measurement: its wait accepted the
+scan of the mode measured before (the keys differ only in the mode), so it
+timed nothing. The measure now waits for the scan whose key is the one on
+screen (`renderer/app.ts` `measureContour`), and runs 2 to 4 time the real
+scan (88 to 136 ms, against 65 to 67 ms for the element mean). Run 1's
+scrub columns are unaffected (the scrub starts after the wait).
+
+Worst over every row: node-located scrub **180.6** steps/s (run 1,
+`gauss_node`), worst step **18.8 ms** (run 1, `element_mean_averaged`), peak
+**377 MB** (run 1), at 21 to 52 % CPU during the scrub. The V4c2a rows of
+the same runs read 232 to 282 (element_mean) and 170 to 190 (deformed)
+steps/s.
+
+- **The D5 revisit trigger does not fire**: the worst node-located scrub,
+  181 steps/s, is six times the 30 steps/s floor, and the peak, 377 MB, under
+  a fifth of 2 GB.
+- Carrying the field to the nodes costs about 0.5 to 1 ms a step over the
+  element mean on this file (median 3.3 to 4.3 → 3.7 to 5.0 ms): one
+  (6 x 6) matrix product per element, the nodal average, and per-vertex
+  colours instead of per-cell ones.
+
+### Section planes in the deformed scrub (V4e1, #1834)
+
+The deformed contour scrub above, run once more in the same window with
+**six section planes cutting** (ADR 0083 C-LIMIT's maximum): one per face of
+the reference box, each 20 % of its extent inside it (normals ±X, ±Y, ±Z),
+so every plane cuts. Every drawn material carries the six planes, so each
+fragment is tested against all six; the planes are put on the materials
+before every render (a scene traversal), and the step is otherwise the
+deformed step above. `npm run measure` runs it last, after the element
+rows; main prints no row for it, so it is read from the result JSON
+(`clip`) the run writes under the temp directory. The history scan is
+already done (1 ms), so it is left out.
+
+The file is (a), `a_maintainer_100` (4 312 nodes, 2 860 drawn triangles,
+100 steps), written by `scripts/make_viewer_results_fixtures.py --measure
+apeGmshViewer/out/results --only a`, at `5235c5e8`. **Another machine** than
+the rows above: Windows 11 IoT Enterprise LTSC 2024, NVIDIA GeForce RTX 3070
+through ANGLE on Direct3D 11, the same 1600 x 1000 window. The two other
+scrubs of the same run are beside it:
+
+| run | CPU before / during (planes) | scrub (steps/s): contour, deformed, **deformed + 6 planes** | step median / max (ms), 6 planes | peak MB main+renderer, 6 planes |
+|---|---|---|---|---|
+| 1 | 16 / 34 % | 266.6, 142.6, **191.2** | 4.80 / 17.4 | 309 (147 + 162) |
+| 2 | 18 / 18 % | 272.1, 192.4, **136.2** | 4.80 / 32.8 | 319 (150 + 169) |
+| 3 | 18 / 23 % | 268.9, 188.5, **176.1** | 4.50 / 20.4 | 310 (147 + 163) |
+
+Worst over the three runs: **136** steps/s with six planes (run 2; worst
+step 32.8 ms), against 143 steps/s for the deformed scrub without planes
+(run 1), peak 319 MB, at 18 to 34 % CPU.
+
+- **The D5 revisit trigger does not fire**: the worst scrub with six planes
+  cutting, 136 steps/s, is four times the 30 steps/s floor, and the peak,
+  319 MB, under a sixth of 2 GB.
+- The planes cost nothing measurable here: the median step is 4.5 to 4.8 ms
+  with them and 4.6 to 4.8 ms without, and the scrub's spread between runs
+  (143 to 192 steps/s without planes) is larger than any difference. The
+  worst single steps (17 to 43 ms, with and without planes) are isolated
+  outliers; the medians do not move.
+
+### Section planes and their gizmos in the deformed scrub (V4e2, #1903)
+
+The V4e1 scrub above, run again with the six planes' **gizmos drawn** (shown
+by default; `measureContour` now also refuses to run unless six gizmos are
+drawn). Each gizmo is a translucent quad, its outline, and an arrow drawn
+over the model: four objects per plane, placed by their transforms (a scrub
+step moves no gizmo, because the planes and the reference box do not change).
+The clip stamping skips the gizmo subtree. The row is read from the result
+JSON (`clip`), as before.
+
+The file is (a), `a_maintainer_100` (4 312 nodes, 2 860 drawn triangles, 100
+steps), regenerated by `scripts/make_viewer_results_fixtures.py --measure
+apeGmshViewer/out/results --only a`, at `218de6bf`. The machine is the V4e1
+one: Windows 11 IoT Enterprise LTSC 2024, NVIDIA GeForce RTX 3070 through
+ANGLE on Direct3D 11, canvas 1584 x 961. The two other scrubs of the same
+run are beside it:
+
+| run | CPU before / during (planes) | scrub (steps/s): contour, deformed, **deformed + 6 planes + 6 gizmos** | step median / max (ms), planes + gizmos | peak MB main+renderer, planes + gizmos |
+|---|---|---|---|---|
+| 1 | 29 / 39 % | 316.3, 226.8, **186.9** | 4.90 / 16.7 | 330 (148 + 181) |
+| 2 | 25 / 30 % | 331.1, 225.1, **207.2** | 4.60 / 10.2 | 335 (150 + 185) |
+| 3 | 28 / 37 % | 327.3, 223.5, **196.7** | 4.60 / 22.4 | 334 (146 + 188) |
+
+Worst over the three runs: **187** steps/s with six planes and six gizmos
+(run 1), against 224 steps/s for the deformed scrub without planes (run 3),
+peak 335 MB, at 30 to 39 % CPU.
+
+- **The D5 revisit trigger does not fire**: 187 steps/s is six times the
+  30 steps/s floor, and the peak, 335 MB, is under a sixth of 2 GB.
+- The planes with their gizmos cost about 0.5 ms a step at the median (4.6 to
+  4.9 ms, against about 4.1 ms for the deformed scrub alone in these runs).
+  That is the V4e1 cost (4.5 to 4.8 ms) within the spread between runs, so the
+  gizmos add nothing measurable.
+
+### Six capped section planes in the deformed scrub (V4e3, #1904)
+
+The V4e2 scrub above, run once more with the six planes **capped** ("Contour
+on cut face" on): at every step each plane's cap is sliced again from the
+7 098 wedges (deformed, carrying the step's contour) and trimmed by the five
+other planes, then recoloured and uploaded. The `clip` row of the same run
+turns the caps off, so it stays comparable with the V4e1 and V4e2 rows. The
+measured file's displacement is synthetic (the node id plus a ramp, thousands
+of model lengths), so at true scale the deformed solid leaves every plane and
+nothing is cut; the capped scrub deforms it at **×1e-6**, where the six planes
+cut it. `measureContour` refuses to run unless six caps show, every step's
+caps show that step (`capsSettled`), and the scrub made exactly 6 slices per
+step (594 over 99 steps: one per plane per step, none per intermediate state
+change). The row is read from the result JSON (`caps`); main prints no row
+for it.
+
+The file is (a), `a_maintainer_100` (4 312 nodes, 7 098 wedges, 100 steps),
+regenerated by `scripts/make_viewer_results_fixtures.py --measure
+apeGmshViewer/out/results --only a`, at `4eb42888` (runs 1 and 2) and
+`50d108ac` (run 3: the same `src/`, merged with V4e2's review head). The
+machine is the V4e1 and V4e2 one: Windows 11 IoT Enterprise LTSC 2024, NVIDIA
+GeForce RTX 3070 through ANGLE on Direct3D 11, canvas 1584 x 961. Each cap
+pass draws 2 100 cap triangles.
+
+| run | CPU before / during (caps) | scrub (steps/s): contour, deformed, deformed + 6 planes, **deformed ×1e-6 + 6 capped planes** | step median / max (ms), capped | peak MB main+renderer, capped |
+|---|---|---|---|---|
+| 1 | 52 / 48 % | 326.9, 208.6, 204.3, **88.6** | 10.6 / 18.2 | 457 (154 + 303) |
+| 2 | 31 / 35 % | 343.6, 239.2, 202.9, **99.1** | 9.6 / 16.6 | 452 (156 + 296) |
+| 3 | 27 / 34 % | 298.6, 223.8, 197.3, **92.3** | 10.0 / 17.2 | 398 (154 + 243) |
+
+Worst over the three runs: **88.6** steps/s with six capped planes (run 1;
+worst step 18.2 ms), peak 457 MB.
+
+- **The D5 revisit trigger does not fire**: 88.6 steps/s is three times the
+  30 steps/s floor, and the peak, 457 MB, under a quarter of 2 GB.
+- The caps cost about 5 to 6 ms a step at the median (9.6 to 10.6 ms, against
+  4.5 to 4.7 ms for the same scrub uncapped). In Node, on this file, the cap
+  pass is 1.3 ms of inputs (the drawn cells, the node table deformed, the
+  corner values) and 2.5 ms for the six slices; the rest is the cap meshes'
+  colours and upload. A first version, which allocated a point per corner of
+  every cell (cut or not), a material per cap per step, and computed the
+  displacement again while the step's range was still on its way, ran the
+  capped scrub at 52 to 63 steps/s; those three are gone.
+- The renderer's peak grows by 60 to 140 MB over the uncapped scrub: each
+  step makes six new cap geometries (the previous ones disposed), and the
+  garbage they leave is collected late.

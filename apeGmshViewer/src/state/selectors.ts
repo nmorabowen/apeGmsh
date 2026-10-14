@@ -18,13 +18,16 @@ import {
   gaussFields,
   elementTopology,
   fieldsOf,
+  isNodeTopology,
   topologyLabel,
   type Clim,
   type ElementComponent,
   type ElementField,
+  type ElementTopology,
   type FieldComponent,
   type NodalField,
 } from "./contour.ts";
+import { usesMatrix } from "./extrapolation.ts";
 import type { BlobRef, ContourCmap } from "./types.ts";
 import { displacementAxes } from "./deform.ts";
 
@@ -272,8 +275,12 @@ export function noticesOf(s: State): string[] {
 
 // -- V4c1: the nodal contour ----------------------------------------------------
 
-/** Why an element contour is refused (V4c2a): each is drawn as no data, and the banner says why. */
-export type ElementRefusal = "unverified" | "components" | "unknown-id" | "duplicate-id";
+/**
+ * Why an element contour is refused (V4c2a): each is drawn as no data, and
+ * the banner says why. V4c2b: `unsupported`, a node-located topology the
+ * field's element types or natural coordinates cannot be carried through.
+ */
+export type ElementRefusal = "unverified" | "components" | "unknown-id" | "duplicate-id" | "unsupported";
 
 /** One gauss group an element contour reads: its id, size, and its element ids (blob). */
 export interface ElementGroupDraw {
@@ -281,6 +288,8 @@ export interface ElementGroupDraw {
   nElements: number;
   nGauss: number;
   eids: BlobRef;
+  /** V4c2b: the group's `_natural_coords` (null: not floating point) */
+  naturalCoords: number[][] | null;
 }
 
 export type ContourView =
@@ -294,14 +303,18 @@ export type ContourView =
    * "with a warning"; the banner says why.
    */
   | { state: "refused"; code: ElementRefusal; reason: string }
-  /** V4c2a: an element topology whose drawing is not built yet (the extrapolations to nodes, V4c2b) */
+  /**
+   * V4c2a: an element topology whose drawing was not built yet. V4c2b draws
+   * every topology, so no view is in this state any more; the variant stays
+   * because renderer/viewport.ts (outside this slice) still narrows on it.
+   */
   | { state: "not-yet"; topology: "gauss_cell_averaged" | "gauss_node" | "gauss_node_discrete"; reason: string }
-  /** V4c2a: an element field, flat per cell */
+  /** V4c2a: an element field, flat per cell; V4c2b: or carried to the nodes */
   | {
       state: "element";
       field: string;
       component: ElementComponent;
-      topology: "gauss_cell" | "element_mean";
+      topology: ElementTopology;
       /** what the legend states for the topology (the averaging, in words) */
       topologyLabel: string;
       nGauss: number[];
@@ -368,20 +381,22 @@ function elementView(s: State, st: ResultsStage, label: string): ContourView {
   }
   if (hit.field.refused !== null) return { state: "refused", code: "components", reason: `element field ${c.field}: ${hit.field.refused}` };
   const topology = elementTopology(c.gauss, hit.field.nGauss);
-  if (topology === "gauss_cell_averaged" || topology === "gauss_node" || topology === "gauss_node_discrete") {
-    return { state: "not-yet", topology, reason: `${topology} (values carried to the nodes) is not yet available: it arrives with V4c2b` };
-  }
   if (!s.mesh) return { state: "unavailable", reason: "no mesh is loaded" };
   const groups: ElementGroupDraw[] = [];
   for (const gid of hit.field.groups) {
     const g = st.gauss.find((x) => x.id === gid)!;
     if (!g.elementIds) return { state: "unavailable", reason: `the element ids of group ${gid} are not loaded` };
-    groups.push({ id: g.id, nElements: g.nElements, nGauss: g.nGauss, eids: g.elementIds });
+    groups.push({ id: g.id, nElements: g.nElements, nGauss: g.nGauss, eids: g.elementIds, naturalCoords: g.naturalCoords });
   }
   const joinKey = elementJoinKey(s)!;
   const j = c.join;
   if (!j || j.key !== joinKey) return { state: "unavailable", reason: "the element rows are being joined to the mesh" };
   if (!j.ok) return { state: "refused", code: j.code, reason: `element field ${c.field}: ${j.reason}` };
+  // V4c2b: a node-located topology the field's types or natural coordinates cannot carry reads "unsupported", never a guess.
+  if (isNodeTopology(topology)) {
+    const why = j.extrapolation.corners ?? (usesMatrix(topology) ? j.extrapolation.matrix : null);
+    if (why !== null) return { state: "refused", code: "unsupported", reason: `element field ${c.field}: ${topology} is unsupported: ${why}` };
+  }
   const keys = contourKeysOf(s)!;
   const measured = c.stepRange !== null && c.stepRange.key === keys.step;
   return {
@@ -547,7 +562,11 @@ export function deformNotice(s: State): string | null {
 /** Whether the read results file pairs with the loaded model by content (state/results.ts). */
 export function resultsPairing(s: State): ResultsPairing {
   const m = s.artifacts.model;
-  return pairResults(m?.status === "ready" ? { lineage: s.lineage } : null, s.results);
+  const ops = m?.zones["opensees"];
+  const zone = ops?.status === "ready";
+  // No decls group in a ready opensees zone reads as "absent" (h5-schema.md): the joins are not recorded.
+  const programDecl = zone ? (s.definitions?.decls ? (s.definitions.decls.programDecl ?? "absent") : "absent") : null;
+  return pairResults(m?.status === "ready" ? { lineage: s.lineage, openseesVersion: zone ? ops.version : null, programDecl } : null, s.results);
 }
 
 /**
@@ -940,4 +959,17 @@ export function windowContentOf(s: State, kind: WindowKind): WindowContent {
       throw new Error(`windowContentOf: unknown window ${JSON.stringify(unknown)}`);
     }
   }
+}
+
+// -- V4e1: section planes (ADR 0083 Part 1) --------------------------------------
+
+export { activeCount, gizmoPlanes, MAX_ACTIVE_PLANES, offsetRange, orientationOf } from "./clip.ts";
+export type { Box, Vec3 } from "./clip.ts";
+
+/** V4e3: why a mesh gets no cut-face cap: it has no volumetric cell. */
+export const NO_SOLID_CELLS = "No cap: this mesh has no volumetric cells (shells, beams or 2-D), so a cut has no inside to fill.";
+
+/** V4e3: what the planes panel says under "Contour on cut face": why no cap can be drawn, or null when one can (or no mesh is loaded). */
+export function cutFaceNote(s: State): string | null {
+  return s.mesh && s.mesh.counts.solidCells === 0 ? NO_SOLID_CELLS : null;
 }

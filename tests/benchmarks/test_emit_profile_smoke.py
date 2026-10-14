@@ -121,6 +121,341 @@ def test_mem_cell_report_prints_on_cp1252_stdout(tmp_path: Path) -> None:
     )
 
 
+@pytest.mark.bench
+def test_phases_cell_reports_every_rank_on_cp1252_stdout(
+        tmp_path: Path) -> None:
+    """One small ``--phases`` cell (#1766): the per-rank phase table and
+    the element-phase attribution print on a cp1252 console, and the JSON
+    record carries one main block per rank with an element phase, plus
+    an attribution whose sites sum to the snapshot's growth.
+
+    The cell is n=30 (~4 s of emit), not n=6, because of the phantom
+    guard below (#1896): at n=6 a block's fixed overhead is ~100 B/node
+    in EVERY phase, so fix_mass_regions reads 0.36x elements with the
+    fix in place and 0.49x without it -- no margin.  At n=30 the fixed
+    overhead is gone (1 B/node) and the two cases sit far apart.
+    """
+    json_path = tmp_path / "phases_cell.json"
+    proc = subprocess.run(
+        [
+            sys.executable, str(_SCRIPT),
+            "--recipe", "box", "--sizes", "30", "--parts", "2",
+            "--stream", "--phases",
+            "--json", str(json_path),
+        ],
+        capture_output=True, env=_cp1252_env(), timeout=600,
+    )
+    assert proc.returncode == 0, (
+        proc.stderr.decode(errors="replace")[-2000:]
+    )
+    out = proc.stdout.decode("cp1252")
+    for marker in ("per-rank phase peaks", "element-phase attribution",
+                   "phase that sets the main-block peak",
+                   "pre-block attribution (build() + global preamble",
+                   "TRANSIENT sites", "RESIDENT sites"):
+        assert marker in out, f"missing {marker!r} in report output"
+
+    (rec,) = json.loads(json_path.read_text(encoding="utf-8"))
+    # The pre-block window (#1920): captured, its two splits close, and
+    # the snapshot sits near the banked counter peak (0.923 measured at
+    # n=30 with the main-thread return hook; the shortfall is a peak
+    # inside one C call, which no return event can snapshot).
+    pb = rec["pre_block"]
+    assert pb["captured"] and pb["n_global_nodes"] == 30 ** 3, pb
+    assert pb["held_b"] + pb["transient_b"] == pb["peak_snap_b"], pb
+    assert pb["held_b"] + pb["late_b"] == pb["resident_b"], pb
+    assert 0 < pb["resident_b"] <= pb["window_peak_b"], pb
+    assert 0.8 < pb["coverage"] <= 1.01, pb
+    assert pb["top_transient"] and pb["top_resident"], pb
+    main = [b for b in rec["blocks"] if b["kind"] == "main"]
+    assert sorted(b["rank"] for b in main) == [0, 1]
+    for b in main:
+        assert b["n_nodes"] > 0
+        assert b["phases"]["elements"] > 0, b
+        # The phantom guard (#1896).  The --phases wrapper around the
+        # element call must drop its own reference to the materialised
+        # rank bucket (``k.clear()``) before ``elem_exit``; production
+        # frees it when the call returns.  Kept alive, the bucket is
+        # billed to the NEXT phase.  Measured at this cell (box n=30,
+        # 2 ranks, after #1901): with the fix fix_mass_regions is
+        # 1 B/node against elements 107-108 B/node (0.01x); with
+        # ``k.clear()`` removed it is 70 B/node (0.65x).  A 0.25x bound
+        # leaves a wide margin on both sides.
+        fmr = b["phases"]["fix_mass_regions"]
+        assert fmr < 0.25 * b["phases"]["elements"], (
+            f"rank {b['rank']}: fix_mass_regions {fmr} B is not much "
+            f"smaller than elements {b['phases']['elements']} B -- the "
+            "element bucket is being billed to the next phase", b)
+        assert "contact_stress_pattern" in b["phases"], b
+        assert "close" not in b["phases"], b
+    (attr,) = rec["attribution"]
+    assert attr["n_nodes"] == next(
+        b["n_nodes"] for b in main if b["rank"] == 0)
+    assert attr["rank"] == 0 and attr["top"]
+    # The traceback groups partition the snapshot diff: their net sum is
+    # the traced growth at the snapshot, up to the snapshot's own
+    # bookkeeping (a few KiB).
+    assert abs(attr["net_b"] - attr["growth_b"]) < 64 * 1024, attr
+
+
+def test_phase_tracker_attributes_the_main_block_after_a_hoisted_one(
+        tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """A rank with a hoisted gated block (ADR 0099 S5) opens twice: the
+    hoisted block first, then its main block (#1896).  The attribution
+    must come from the main block, against the main block's own floor
+    snapshot, and be reported with the main block's node count and
+    element peak.  Before the fix the floor snapshot was taken in the
+    rank's first block only, so the main block's capture had none and
+    the report dropped it without a word.  ``build_box`` has no gated
+    elements, so only a direct drive of the tracker reaches this path.
+    """
+    import tracemalloc
+    from types import SimpleNamespace
+
+    from tests.benchmarks import emit_throughput_profile as prof
+
+    started = not tracemalloc.is_tracing()
+    if started:
+        tracemalloc.start(3)
+    try:
+        trk = prof.PhaseTracker(attr_rank=0, snap_dir=str(tmp_path))
+        # Hoisted gated block: no owned-node loop, elements only.
+        trk.open(0)
+        trk.event("elem_enter")
+        assert not trk._attr_wanted()  # no node count: never attributed
+        trk.event("elem_exit")
+        trk.close()
+        # Main block of the same rank.
+        trk.open(0)
+        trk.cur["n_nodes"] = 4
+        trk.event("nodes_exit")
+        trk.event("elem_enter")
+        assert trk._attr_wanted()
+        held = [bytearray(64 * 1024)]  # the "element phase" growth
+        trk.attr_capture(n_rows=3)
+        trk.cur["attr_done"] = True
+        trk.event("elem_exit")
+        del held
+        trk.event("mp_enter")
+        trk.event("mp_exit")
+        trk.close()
+        result = {"blocks": trk.blocks, "attr": trk.attr}
+
+        hoisted, main = trk.blocks
+        assert (hoisted["kind"], main["kind"]) == ("hoisted", "main")
+        assert set(hoisted["phases"]) == {"hoisted_nodes", "elements",
+                                          "block_tail"}
+        assert set(main["phases"]) == {"nodes", "elements",
+                                       "fix_mass_regions", "constraints",
+                                       "contact_stress_pattern"}
+        (a,) = trk.attr
+        assert a["block"] == main["idx"]
+        assert a["floor_snap"] is not None
+        assert a["floor_snap"] == main["floor_snap"]
+        assert a["growth"] >= 64 * 1024
+
+        args = SimpleNamespace(phase_top=5, attr_rank=0, parts=1,
+                               recipe="box", staged=False, stream=False)
+        rec = prof.report_phases(args, 1, 1, result)
+    finally:
+        if started:
+            tracemalloc.stop()
+    (ra,) = rec["attribution"]
+    assert ra["n_nodes"] == 4
+    assert ra["elem_peak_b"] == main["phases"]["elements"]
+    assert "NONE captured" not in capsys.readouterr().out
+
+
+def test_phase_tracker_refuses_a_capture_without_a_floor(
+        tmp_path: Path) -> None:
+    """An attribution capture in a block with no floor snapshot (a rank
+    other than the attributed one) raises instead of diffing against
+    some other block's floor."""
+    import tracemalloc
+
+    from tests.benchmarks import emit_throughput_profile as prof
+
+    started = not tracemalloc.is_tracing()
+    if started:
+        tracemalloc.start(1)
+    try:
+        trk = prof.PhaseTracker(attr_rank=0, snap_dir=str(tmp_path))
+        trk.open(1)
+        with pytest.raises(RuntimeError, match="baseline"):
+            trk.attr_capture(n_rows=1)
+    finally:
+        if started:
+            tracemalloc.stop()
+
+
+def test_report_phases_says_none_captured_without_attribution(
+        capsys: pytest.CaptureFixture[str]) -> None:
+    """No captured phases: the attribution section prints its
+    "NONE captured" line instead of staying silent (#1896 review)."""
+    from types import SimpleNamespace
+
+    from tests.benchmarks import emit_throughput_profile as prof
+
+    args = SimpleNamespace(phase_top=5, attr_rank=0, parts=1,
+                           recipe="box", staged=False, stream=False)
+    rec = prof.report_phases(args, 1, 1, {"blocks": [], "attr": []})
+    assert rec["attribution"] == []
+    assert "NONE captured for rank 0" in capsys.readouterr().out
+
+
+_MIB = 1024 * 1024
+
+
+def _a_python_return() -> None:
+    """A bare Python call: its ``return`` event fires the pre-block hook."""
+
+
+def test_pre_block_tracker_splits_transient_held_and_late(
+        tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """Drive ``PreBlockTracker``'s return hook through a known pre-block
+    history (#1920), then check ``report_pre_block`` against it in
+    bytes:
+
+    * 1 MiB allocated before the peak snapshot and held to the open:
+      HELD (resident at open AND in the peak snapshot);
+    * 4 MiB in the peak snapshot, freed before the open: TRANSIENT;
+    * an 8 MiB rise-and-fall AFTER the snapshot, inside ``build``:
+      no snapshot sees it, but ``mark`` must bank it, so the window
+      peak carries it and the coverage drops below 1 -- the report
+      must not pass the snapshot off as the peak;
+    * 2 MiB allocated in the preamble and held: LATE (resident, not in
+      the peak snapshot).
+
+    Each buffer is allocated on its own line, so each is its own site.
+    """
+    import tracemalloc
+    from types import SimpleNamespace
+
+    from tests.benchmarks import emit_throughput_profile as prof
+
+    tol = 256 * 1024
+    started = not tracemalloc.is_tracing()
+    if started:
+        tracemalloc.start(3)
+    prev_profile = sys.getprofile()
+    try:
+        pre = prof.PreBlockTracker(str(tmp_path), grow=1.05)
+        base = tracemalloc.get_traced_memory()[0]
+        pre.start()
+        held = bytearray(1 * _MIB)
+        transient = bytearray(4 * _MIB)
+        _a_python_return()  # the hook's peak snapshot: held + transient
+        del transient
+        spike = bytearray(8 * _MIB)  # C allocations: no return between
+        del spike
+        pre.mark("preamble")
+        late = bytearray(2 * _MIB)
+        pre.finish()
+        unhooked = sys.getprofile() is prev_profile
+        n_gn = 1024
+        args = SimpleNamespace(phase_top=5)
+        rec = prof.report_pre_block(args, pre.result(), n_gn)
+        del held, late
+    finally:
+        sys.setprofile(prev_profile)
+        if started:
+            tracemalloc.stop()
+
+    assert unhooked, "finish() must restore the previous profile hook"
+    assert rec["captured"] and rec["snaps"] >= 1
+    assert rec["peak_snap_sub"] == "build"
+    assert abs(rec["transient_b"] - 4 * _MIB) < tol, rec
+    assert abs(rec["held_b"] - (1 * _MIB + base)) < tol, rec
+    assert abs(rec["late_b"] - 2 * _MIB) < tol, rec
+    assert rec["held_b"] + rec["transient_b"] == rec["peak_snap_b"]
+    assert rec["held_b"] + rec["late_b"] == rec["resident_b"]
+    # mark() banked the unsnapshotted 8 MiB spike into ``build``.
+    assert rec["peak_by_sub_b"]["build"] >= base + 9 * _MIB, rec
+    assert rec["window_peak_b"] == rec["peak_by_sub_b"]["build"]
+    # mark() reset the counter: the preamble peak is held + late only,
+    # never the build-time spike carried over.
+    assert abs(rec["peak_by_sub_b"]["preamble"] - (base + 3 * _MIB)) < tol, (
+        rec)
+    assert rec["coverage"] < 0.6, rec
+    top = rec["top_transient"][0]
+    assert abs(top["bytes"] - 4 * _MIB) < tol, top
+    assert top["b_per_gnode"] == top["bytes"] / n_gn
+    assert top["at_open_b"] == 0, top
+    late_site, held_site = rec["top_resident"][:2]
+    assert abs(late_site["bytes"] - 2 * _MIB) < tol, late_site
+    assert late_site["at_peak_b"] == 0, late_site
+    assert abs(held_site["bytes"] - 1 * _MIB) < tol, held_site
+    assert held_site["at_peak_b"] == held_site["bytes"], held_site
+    assert "pre-block attribution (build() + global preamble" in (
+        capsys.readouterr().out)
+
+
+def test_pre_block_check_banks_the_peak_and_swallows_its_own_snapshot(
+        tmp_path: Path) -> None:
+    """``check`` must bank the counter BEFORE its snapshot, then reset
+    the peak AFTER it (#1921 review):
+
+    * a 4 MiB rise-and-fall with no Python return in between, then a
+      2 MiB rise to snapshot level: the hook's snapshot sees 2 MiB, so
+      only the bank in ``check`` keeps the 4 MiB in the window peak
+      (its reset would erase it otherwise);
+    * 400k small objects are held from before ``start``, so each
+      snapshot's ``dump`` (the pickler, measured ~12 MiB per 200k
+      traces) spikes the counter by ~24 MiB.  Without the reset in
+      ``check`` that spike stays in the counter and ``finish`` banks
+      it as a model peak; with it the window peak stays near 4 MiB.
+    """
+    import tracemalloc
+
+    from tests.benchmarks import emit_throughput_profile as prof
+
+    tol = 1 * _MIB
+    started = not tracemalloc.is_tracing()
+    if started:
+        tracemalloc.start(1)
+    prev_profile = sys.getprofile()
+    try:
+        many = [object() for _ in range(400_000)]
+        pre = prof.PreBlockTracker(str(tmp_path), grow=1.05)
+        base = tracemalloc.get_traced_memory()[0]
+        pre.start()
+        spike = bytearray(4 * _MIB)  # C allocations: no return between
+        del spike
+        rise = bytearray(2 * _MIB)
+        _a_python_return()  # check(): bank 4 MiB, snapshot, reset
+        snaps = pre.snaps
+        del rise
+        pre.finish()
+        res = pre.result()
+        del many
+    finally:
+        sys.setprofile(prev_profile)
+        if started:
+            tracemalloc.stop()
+
+    assert snaps >= 1, "the return hook never snapshotted"
+    build = res["peak_by_sub"]["build"]
+    assert build >= base + 4 * _MIB, (build - base) / _MIB
+    assert build < base + 4 * _MIB + tol, (
+        "window peak carries the snapshot's own spike",
+        (build - base) / _MIB)
+
+
+def test_pre_block_report_says_when_nothing_was_captured(
+        capsys: pytest.CaptureFixture[str]) -> None:
+    """No ``partition_open`` reached: the report says NOT CAPTURED
+    instead of printing an empty table."""
+    from types import SimpleNamespace
+
+    from tests.benchmarks import emit_throughput_profile as prof
+
+    pre = prof.PreBlockTracker(".", grow=1.05)
+    rec = prof.report_pre_block(SimpleNamespace(phase_top=5),
+                                pre.result(), 10)
+    assert rec == {"captured": False}
+    assert "NOT CAPTURED" in capsys.readouterr().out
+
+
 @pytest.mark.parametrize("mode", ["flat", "partitioned", "staged"])
 def test_arch_orientation_fan_out_is_planned_once(mode: str) -> None:
     """Profile the ``arch_with_orientation_fan_out`` golden fixture's emit.

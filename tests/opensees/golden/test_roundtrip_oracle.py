@@ -37,7 +37,10 @@ ledger to shrink.
 **Ledger transitions.** The ledger is compared row by row with the copy at
 the merge base with ``origin/main`` (:func:`_ledger_transition_errors`). A row
 may be deleted, or re-pinned to downgrade its class (C to A or B) when a fix
-leaves only order or float text; the derived class is the evidence. A row may
+leaves only order or float text; the derived class is the evidence. A B row
+may likewise re-pin to A when a fix leaves only float text (#1814): an A diff
+is a strict subset of a B diff, and the class is still re-derived for every
+row, so the A label is proven the same way. A row may
 always escalate (A or B to C) when the oracle learns to see more, and then
 cites the issue that tracks the bug. An S row whose model moves to a real
 ``FEMData`` re-pins to its derived class A or B, and its reason cites that
@@ -96,7 +99,7 @@ from tests.opensees.golden import builder
 _LEDGER = Path(__file__).with_name("roundtrip_oracle_ledger.txt")
 
 #: ``N_WAIVED_ORACLE`` when the ledger opened (K2a, #1794). It may only go down.
-_CEILING = 35
+_CEILING = 33
 #: The K2 deadline: the ledger is empty by then, or KC4 applies.
 DEADLINE = "2026-12-11"
 _CLASSES = frozenset({"A", "B", "C", "S"})
@@ -165,9 +168,8 @@ CORPUS: tuple[Model, ...] = (
     *(_m("test_h5_solve_stamp", "_frame_bridge", analysis=a) for a in _B),
     _m("test_h5_stages_reader", "_real_two_stage_bridge"),
     _m("test_h5_stages_reader", "_real_kitchen_sink_bridge"),
+    # The stages_writer bridges are these two (#1880): listed once.
     _m("test_h5_stages_replay", "_no_param_two_stage_bridge"),
-    _m("test_h5_stages_writer", "_build_two_stage_bridge"),
-    _m("test_h5_stages_writer", "_build_kitchen_sink_bridge"),
     _m("test_opensees_model_build_targets", "_author_simple_frame_apesees"),
     *(_m("test_reinforce_deck_replay", "_reinforced_ops", bond_by_name=b)
       for b in _B),
@@ -177,6 +179,9 @@ CORPUS: tuple[Model, ...] = (
       for b in _B),
     # ... and after the equationConstraint rows (B5-g's 9b'), as the bridge.
     _m("test_reinforce_deck_replay", "_reinforced_fixed_ops", equation=True),
+    # ... and with the bar's CorotTruss cells, which replay after the ties,
+    # in the bridge's slot (#1828).
+    _m("test_reinforce_deck_replay", "_reinforced_fixed_ops", rebar_cells=True),
 )
 
 
@@ -321,7 +326,23 @@ def _definition_sites(deck: str) -> dict[tuple[str, int], int]:
     """``(kind, tag) -> index of the first top-level line declaring it``.
 
     Only unindented lines count: an indented line is inside a block (a
-    ``Fiber`` section's patches, a pattern body, a ``proc``)."""
+    ``Fiber`` section's patches, a pattern body, a ``proc``).
+
+    A redeclared ``(kind, tag)`` keeps its *first* line, and that is exact
+    for declare-before-use: a use has a declaration above it iff its
+    nearest preceding one exists; that exists iff the first declaration is
+    above the use; and the first line a tag is used on is above every
+    later use. So comparing first declaration with first use gives the
+    nearest-preceding verdict for every line. What the check does not
+    model is a ``wipe``/``remove`` between two declarations, which would
+    unbind the earlier one. That is safe today: the bridge's decks wipe
+    once, in the header, and its ``remove`` lines name only elements, sp
+    constraints, parameters and recorders, none of which a ``decl_params``
+    reference names. ``test_a_redeclared_tag_binds_by_first_declaration``
+    pins the redeclaration behaviour, and a real corpus row,
+    ``_staged_bridge[staged_pg=Rock]``, re-declares ``damping``,
+    ``timeSeries``, ``beamIntegration`` and ``geomTransf`` tag 1 after a
+    ``model BasicBuilder -ndf 3`` switch."""
     sites: dict[tuple[str, int], int] = {}
     for i, line in enumerate(deck.splitlines()):
         tok = line.split()
@@ -458,7 +479,7 @@ def _check(model: Model, waiver: Waiver | None, out_dir: Path) -> None:
     assert _pin(diff) == waiver.pin, (
         f"{model.id} differs in a new way (pin {_pin(diff)}, ledger "
         f"{waiver.pin}); a fix that changes the diff deletes its row, or "
-        f"re-pins it only to downgrade its class (C to A or B):\n{diff}"
+        f"re-pins it only to downgrade its class (C to A or B, B to A):\n{diff}"
     )
 
 
@@ -469,8 +490,9 @@ def _check(model: Model, waiver: Waiver | None, out_dir: Path) -> None:
 _REPO = Path(__file__).resolve().parents[3]
 _LEDGER_REL = "tests/opensees/golden/roundtrip_oracle_ledger.txt"
 #: Class changes that need no evidence beyond the derived class: a semantic
-#: row downgraded once its fix leaves only order or float text.
-_DOWNGRADES = frozenset({("C", "A"), ("C", "B")})
+#: row downgraded once its fix leaves only order or float text, and an
+#: order row once its fix leaves only float text (B to A, #1814).
+_DOWNGRADES = frozenset({("C", "A"), ("C", "B"), ("B", "A")})
 #: Escalations: the oracle learned to see a bug its old rule missed (K2c).
 _ESCALATIONS = frozenset({("A", "C"), ("B", "C")})
 #: The one same-class re-pin allowed (#1797): an S row moves from h5py's raw,
@@ -502,8 +524,8 @@ def _ledger_transition_errors(
     """Each change from ``base`` to ``head`` the ledger rules forbid.
 
     A row may stay as it is (its reason text may change), be deleted, be
-    re-pinned from class C to A or B (the oracle's derived class is the
-    evidence), or escalate from A or B to C, citing the issue that tracks
+    re-pinned from class C to A or B, or B to A (the oracle's derived class
+    is the evidence), or escalate from A or B to C, citing the issue that tracks
     the bug. Anything else is a replay regression: an added row, or a re-pin
     that keeps its class. One exception (:data:`_S_RENAMES`, #1797): an S row
     may re-pin at S from the raw ``KeyError:nodes`` to the named
@@ -540,8 +562,8 @@ def _ledger_transition_errors(
             continue
         errors.append(
             f"{model}: re-pinned {b.klass} {b.pin} -> {w.klass} {w.pin}; "
-            "a replay regression: a re-pin may only downgrade C to A or B, "
-            "or escalate A or B to C")
+            "a replay regression: a re-pin may only downgrade (C to A or B, "
+            "B to A), or escalate A or B to C")
     return errors
 
 
@@ -634,7 +656,7 @@ _NZ = "BridgeOnlyArchiveError:no-neutral-zone"
     (_W("m", "C", "1" * 16, "#1798 item 1"), _W("m", "C", "2" * 16, "#1814"),
      False),
     (_W("m", "B", "1" * 16, "r"), _W("m", "B", "2" * 16, "r"), False),
-    (_W("m", "B", "1" * 16, "r"), _W("m", "A", "2" * 16, "r"), False),
+    (_W("m", "B", "1" * 16, "r"), _W("m", "A", "2" * 16, "r"), True),
     (_W("m", "S", "KeyError:nodes", "r"), _W("m", "B", "2" * 16, "r"), False),
     # #1797: the one same-class re-pin, raw KeyError -> the named refusal.
     (_W("m", "S", "KeyError:nodes", "#1797"),
@@ -674,16 +696,17 @@ _NZ = "BridgeOnlyArchiveError:no-neutral-zone"
      False),
     (_W("m", "S", _NZ, "#1797"),
      _W("m", "C", "2" * 16, "derived C (#1885): #1814 reorder"), False),
-    # The citation releases S rows only: it does not license a B-to-A re-pin.
+    # The citation releases S rows only: it does not license a same-class
+    # re-pin (B -> A is already a plain downgrade, #1909).
     (_W("m", "B", "1" * 16, "r"),
-     _W("m", "A", "2" * 16, "derived A (#1885): integral floats"), False),
+     _W("m", "B", "2" * 16, "derived B (#1885): geomTransf moves"), False),
 ], ids=["C-to-B", "C-to-A", "reason-only", "B-to-C", "A-to-C",
         "B-to-C-uncited", "C-to-C", "B-to-B", "B-to-A", "S-to-B",
         "S-rename-1797", "S-rename-reversed", "S-other-text", "S-other-type",
         "S-named-to-other", "A-to-A", "A-rename-pins", "B-rename-pins",
         "C-rename-pins", "S-released-A", "S-released-B", "S-to-A-uncited",
         "S-to-B-cites-A", "S-to-A-other-issue", "S-to-A-no-diff-text",
-        "S-to-C-cited", "B-to-A-cited"])
+        "S-to-C-cited", "B-to-B-cited"])
 def test_the_ledger_allows_downgrades_and_cited_escalations(
     base: Waiver, head: Waiver, ok: bool,
 ) -> None:
@@ -694,16 +717,14 @@ def test_the_ledger_allows_downgrades_and_cited_escalations(
 _HELD = next(m for m in CORPUS if m.id == "test_h5_decl_params::_broad_frame")
 
 
-def test_broad_frame_derives_c_with_no_override(tmp_path: Path) -> None:
-    """#1814: the derivation alone yields C for ``_broad_frame``. Its line
-    multisets match, so only the declare-before-use check makes it C."""
+def test_broad_frame_derives_b_with_no_override(tmp_path: Path) -> None:
+    """#1814 fixed: replay declares ``_broad_frame``'s materials in the
+    bridge's order, so the order check passes and the derivation alone
+    yields B (it was C while ``Parallel 3`` preceded ``Steel01 1``)."""
     bridge, archive = _emit(_HELD, tmp_path)
     replay = _replay(archive)
-    bad = _deck_order_violations(replay, archive)
-    assert ("line 5 (uniaxialMaterial 3) uses uniaxialMaterial 1, "
-            "declared on line 7") in bad
+    assert _deck_order_violations(replay, archive) == []
     assert _classify(bridge, replay, order_ok=True) == "B"
-    assert _classify(bridge, replay, order_ok=not bad) == "C"
     (tmp_path / "check").mkdir()
     _check(_HELD, _waivers()[_HELD.id], tmp_path / "check")
 
@@ -839,6 +860,35 @@ def test_a_fatal_reorder_is_class_c_and_a_benign_one_stays_b(
         "line 6 (element 2) uses damping 1, declared never"]
 
 
+def test_a_redeclared_tag_binds_by_first_declaration(tmp_path: Path) -> None:
+    """A synthetic redeclaration (#1836): a second ``damping 1`` below the
+    element changes nothing, because the first is above it; a second
+    ``element 2`` above the declarations fails at that first line."""
+    bridge, archive = _emit(_DAMPED, tmp_path)
+    table = OpenSeesModel.from_h5(str(archive)).declarations
+    assert table is not None
+    lines = bridge.splitlines()
+    (damping,) = [ln for ln in lines if ln.startswith("damping ")]
+    (element,) = [ln for ln in lines if ln.startswith("element ")]
+
+    late = "\n".join([*lines, damping])
+    assert _definition_sites(late)[("damping", 1)] == lines.index(damping)
+    assert _order_violations(late, table) == []
+
+    # The element's second line is legal; the first, above both of its
+    # references, is reported. Line numbers are 1-based in the shifted deck.
+    at = lines.index(damping)
+    transf = next(i for i, ln in enumerate(lines) if ln.startswith("geomTransf "))
+    assert at < transf
+    early = "\n".join([*lines[:at], element, *lines[at:]])
+    assert _definition_sites(early)[("element", 2)] == at
+    assert _order_violations(early, table) == [
+        f"line {at + 1} (element 2) uses damping 1, declared on line {at + 2}",
+        f"line {at + 1} (element 2) uses geomTransf 1, declared on line "
+        f"{transf + 2}",
+    ]
+
+
 def test_an_unknown_allocator_kind_raises(tmp_path: Path) -> None:
     _bridge, archive = _emit(_DAMPED, tmp_path)
     table = OpenSeesModel.from_h5(str(archive)).declarations
@@ -848,27 +898,30 @@ def test_an_unknown_allocator_kind_raises(tmp_path: Path) -> None:
         _order_violations(_bridge, odd)
 
 
-_FATAL_REORDERS = [m for m in CORPUS
-                   if (w := _waivers().get(m.id)) is not None
-                   and w.klass == "C" and "#1814" in w.reason]
-
-
-def test_some_row_is_a_fatal_reorder() -> None:
-    assert _FATAL_REORDERS, "no C row cites #1814: retire this proof with it"
-
-
-@pytest.mark.parametrize("model", _FATAL_REORDERS,
-                         ids=[m.id for m in _FATAL_REORDERS])
 def test_without_the_order_check_a_fatal_reorder_fails_its_pin(
-        model: Model, tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch) -> None:
-    """Revert proof: with declare-before-use disabled, each #1814 row reads
-    as class B again, and its committed C row fails."""
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Revert proof: a replay with ``Parallel 3`` moved above ``Steel01 1``
+    (the #1814 reorder, now synthetic since replay no longer makes it)
+    is C under its pin; with declare-before-use disabled it reads as B
+    again, and the C row fails."""
+    real_replay = _replay
+
+    def fatal_replay(archive: Path) -> str:
+        return _move(real_replay(archive), "uniaxialMaterial Parallel 3 ",
+                     above="uniaxialMaterial Steel01 1 ")
+
+    monkeypatch.setattr(sys.modules[__name__], "_replay", fatal_replay)
+    (tmp_path / "pin").mkdir()
+    bridge, archive = _emit(_HELD, tmp_path / "pin")
+    fatal = fatal_replay(archive)
+    assert ("line 5 (uniaxialMaterial 3) uses uniaxialMaterial 1, "
+            "declared on line 6") in _deck_order_violations(fatal, archive)
+    row = Waiver(_HELD.id, "C", _pin(_diff(bridge, fatal)), "#1814: synthetic")
     (tmp_path / "on").mkdir()
     (tmp_path / "off").mkdir()
-    _check(model, _waivers()[model.id], tmp_path / "on")
+    _check(_HELD, row, tmp_path / "on")
     monkeypatch.setattr(
         sys.modules[__name__], "_deck_order_violations", lambda *a: [])
     with pytest.raises(AssertionError,
                        match="the ledger says class C, the diff is class B"):
-        _check(model, _waivers()[model.id], tmp_path / "off")
+        _check(_HELD, row, tmp_path / "off")

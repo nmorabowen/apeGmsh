@@ -204,6 +204,13 @@ export interface MeshInfo {
    * deformed shape moves the outline edges through.
    */
   vertexNodes: { line: BlobRef; tri: BlobRef; edge: BlobRef };
+  /**
+   * V4e3: every node of the model, interior ones too (the cut face of a solid
+   * meets nodes no drawn face has): `ids` (f64) and `xyz` (f64, 3 per node),
+   * in `/nodes` order. Put by the effects' model read; absent when the mesh
+   * was built without it, and then the cut face says so instead of a cap.
+   */
+  nodes?: { ids: BlobRef; xyz: BlobRef };
 }
 
 /** The render derivation of the geometry artifact (the `/geometry` sibling, V2a spec). */
@@ -274,6 +281,8 @@ export interface GaussGroup {
   localAxes: boolean;
   /** the group's `_element_index` (f64) in the BlobStore: present only for a verified file, put there by the effects */
   elementIds?: BlobRef;
+  /** V4c2b: `_natural_coords`, one parent-space row per Gauss point; null when the file's dataset is not floating point */
+  naturalCoords: number[][] | null;
 }
 
 /** Whether a results file's `_element_index` rows are FEM element ids: only its root stamp says so (#1768). */
@@ -290,6 +299,18 @@ export interface ResultsInfo {
   partial: string | null;
   stages: ResultsStage[];
   unavailableZones: string[];
+  /**
+   * V4h: the embedded opensees zone's version stamp (unhashed), null when the
+   * file embeds no /opensees. The pairing rule reads it to name the 2.31.0
+   * model_hash change (state/results.ts); null keeps the plain message.
+   */
+  openseesVersion: string | null;
+  /**
+   * V4h: the embedded `/opensees/decls@program_decl` marker ("absent" when the
+   * zone has no decls group or no marker); null with no /opensees. It, not the
+   * version stamp, says whether the results' model_hash includes declaration ids.
+   */
+  programDecl: string | null;
   /**
    * V4c2a: the element-id verdict; element contours draw only for a verified
    * file (#1711/#1752). Absent (a results info built without it) reads as
@@ -343,12 +364,25 @@ export type ContourSource = "nodal" | "element";
  * How an element (Gauss) field is drawn (V4c2a). `cell` is flat per cell: the
  * element's one Gauss value (Qt `gauss_cell`), or, with several points, the
  * element mean of its Gauss values (`element_mean`, an app presentation with
- * no Qt equivalent). The node-located Qt topologies are V4c2b, their states
- * defined and shown as "not yet available": `cell_averaged` (Qt
+ * no Qt equivalent). V4c2b draws the node-located modes: `cell_averaged` (Qt
  * `gauss_cell_averaged`: one-point cell values averaged to the nodes across
- * elements), `node` (`gauss_node`) and `node_discrete` (`gauss_node_discrete`).
+ * elements; each element's mean on a field with several points), `node`
+ * (`gauss_node`: extrapolated to the nodes and averaged) and `node_discrete`
+ * (`gauss_node_discrete`: extrapolated per element, no averaging).
  */
 export type GaussMode = "cell" | "cell_averaged" | "node" | "node_discrete";
+
+/**
+ * Why a joined element field cannot be carried to the nodes (V4c2b,
+ * state/extrapolation.ts `extrapolationVerdict`), null where it can.
+ * `corners` blocks every node-located topology (an element type with no
+ * corner shape functions, a short row); `matrix` blocks the extrapolating
+ * ones on groups with several Gauss points (unusable `_natural_coords`).
+ */
+export interface ExtrapolationVerdict {
+  corners: string | null;
+  matrix: string | null;
+}
 
 /**
  * The join of an element field's rows to the mesh (V4c2a), as the effects
@@ -357,7 +391,7 @@ export type GaussMode = "cell" | "cell_averaged" | "node" | "node_discrete";
  * selectors `elementJoinKey`.
  */
 export type ElementJoinVerdict =
-  | { key: string; ok: true; rows: number }
+  | { key: string; ok: true; rows: number; extrapolation: ExtrapolationVerdict }
   | { key: string; ok: false; code: "unknown-id" | "duplicate-id"; reason: string };
 
 /** The contour colouring (V4c1, #1756): what is picked, and the ranges the effects measured. */
@@ -404,6 +438,44 @@ export interface DeformState {
   measured: { key: string; drawn: number; missing: number } | null;
 }
 
+/**
+ * V4e1 (#1834, ADR 0083 Part 1): one section plane. World-space: it cuts
+ * whatever is drawn, so the deformed shape moves through it while scrubbing.
+ * The half-space `normal` points into survives; `flipped` keeps the other.
+ */
+export interface ClipPlane {
+  /** `plane-<n>`, unique for the window session */
+  id: string;
+  /** unit, world-space */
+  normal: readonly [number, number, number];
+  /** signed distance from the origin to the plane along `normal`; never clamped */
+  offset: number;
+  flipped: boolean;
+  /** cutting; at most MAX_ACTIVE_PLANES (state/clip.ts) are */
+  active: boolean;
+  /** V4e2: its gizmo is drawn while "Show plane gizmos" is on (the panel row's eye) */
+  gizmo: boolean;
+}
+
+/** V4e1: the section planes and the global "Apply cuts" toggle (window session only: the app has no session store yet). */
+export interface ClipState {
+  planes: readonly ClipPlane[];
+  applyCuts: boolean;
+  /** V4e2: the footer's "Show plane gizmos" toggle (each plane's eye still applies) */
+  showGizmos: boolean;
+  /**
+   * V4e3: the footer's "Contour on cut face" toggle: each cutting plane fills
+   * the solid it cuts with a cap carrying the contour (a flat fill without
+   * one). On by default: without it a plane through a solid opens onto an
+   * empty box (ADR 0083: S3 is required for solid models).
+   */
+  cutFace: boolean;
+  /** the last plane number handed out (ids are never reused) */
+  seq: number;
+  /** why the last clip event was refused (the 7th active plane, a zero normal, a NaN offset); cleared by the next accepted one */
+  notice: string | null;
+}
+
 /** What the user clicked: the declaration, the hit point, and the cell's node tags as the viewport read them from the connectivity blob. */
 export interface Pick {
   decl: DeclPath;
@@ -414,6 +486,8 @@ export interface Pick {
 /** One `/elements/{alias}` block of the neutral zone, its connectivity as a blob. */
 export interface BlockInfo {
   alias: string;
+  /** V4c2b: the block's gmsh element-type code (`/elements/{alias}@code`): the Gauss-to-node extrapolation's shape functions */
+  code: number;
   npe: number;
   /** row-major (count, npe) node tags */
   connectivity: BlobRef;
@@ -513,6 +587,8 @@ export interface State {
   ndm: SpatialNdm;
   /** V4d: the deformed shape */
   deform: DeformState;
+  /** V4e1: the section planes */
+  clip: ClipState;
 }
 
 /** The payload of `fileLoaded` for the model artifact: what the loader derived from the file. */
@@ -609,6 +685,30 @@ export type Event =
   /** V4d: the undeformed reference ghost behind the deformed mesh */
   | { type: "setReferenceGhost"; on: boolean }
   /** V4d (effects): how many drawn nodes the step shown leaves with no displacement, for the key it was counted on */
-  | { type: "deformMeasured"; key: string; drawn: number; missing: number };
+  | { type: "deformMeasured"; key: string; drawn: number; missing: number }
+  /** V4e1: add a section plane through the reference mesh centre (created inactive, with a notice, when six already cut) */
+  | { type: "addClipPlane"; normal: readonly number[] }
+  | { type: "removeClipPlane"; id: string }
+  /** V4e1: activating a 7th plane is refused with a notice (C-LIMIT) */
+  | { type: "setClipActive"; id: string; active: boolean }
+  | { type: "setClipFlipped"; id: string; flipped: boolean }
+  /** V4e1: unclamped; a non-finite offset is refused with a notice */
+  | { type: "setClipOffset"; id: string; offset: number }
+  /** V4e1: normalised on entry; a zero or non-finite normal is refused with a notice */
+  | { type: "setClipNormal"; id: string; normal: readonly number[] }
+  /** V4e1: the global "Apply cuts" toggle */
+  | { type: "setApplyCuts"; on: boolean }
+  /**
+   * V4e2: the gizmo's rotate, one event per move: the plane `normal · p = offset`
+   * (scaled together to a unit normal). A zero or non-finite normal, or a
+   * non-finite offset, is refused with a notice and the pose is kept.
+   */
+  | { type: "setClipPose"; id: string; normal: readonly number[]; offset: number }
+  /** V4e2: the footer's "Show plane gizmos" toggle */
+  | { type: "setShowGizmos"; on: boolean }
+  /** V4e2: one plane's gizmo eye */
+  | { type: "setClipGizmo"; id: string; visible: boolean }
+  /** V4e3: the footer's "Contour on cut face" toggle (a cap on every cutting plane through a solid) */
+  | { type: "setCutFace"; on: boolean };
 
 export type EventType = Event["type"];

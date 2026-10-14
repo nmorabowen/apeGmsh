@@ -244,14 +244,15 @@ test("a re-read refreshes what is drawn: the colour key and the join carry the r
   h.effects.dispose();
 });
 
-test("Qt's gauss_cell_averaged, gauss_node and gauss_node_discrete are defined states shown as not yet available (V4c2b)", async () => {
+test("V4c2b: no draw mode reads 'not yet available' any more; each node-located mode draws on this solid with its own topology", async () => {
   const h = await opened(SOLID, SOLID_RESULTS);
   await pickElement(h, "stress", "stress_xx", 0, 0);
-  for (const [mode, topology] of [["cell_averaged", "gauss_cell_averaged"], ["node", "gauss_node"], ["node_discrete", "gauss_node_discrete"]] as const) {
+  for (const [mode, topology] of [["cell_averaged", "element_mean_averaged"], ["node", "gauss_node"], ["node_discrete", "gauss_node_discrete"]] as const) {
     h.store.dispatch({ type: "setContourGauss", mode });
+    await until(() => contourView(h.store.get()).state === "element", mode);
     const v = contourView(h.store.get());
-    assert.ok(v.state === "not-yet" && v.topology === topology, mode);
-    assert.match(v.reason, /is not yet available: it arrives with V4c2b$/);
+    assert.ok(v.state === "element" && v.topology === topology, mode);
+    assert.ok(!/not yet available/.test(v.topologyLabel));
   }
   h.effects.dispose();
 });
@@ -286,7 +287,7 @@ test("gaussCellValues: the mean of every Gauss point; any non-finite point makes
 });
 
 test("gaussFields: component names from the file, [k] for unnamed ones, local axes from the name; mixed Gauss counts average", () => {
-  const g = (id: string, components: string[], nGauss = 1): GaussGroup => ({ id, components, refused: [], nElements: 1, nGauss, localAxes: false });
+  const g = (id: string, components: string[], nGauss = 1): GaussGroup => ({ id, components, refused: [], nElements: 1, nGauss, localAxes: false, naturalCoords: null });
   const f = gaussFields([g("a", ["stress_xx", "stress_yy", "footfall_ap", "membrane_force_local_xx", "weird_"], 4), g("b", ["stress_xx", "stress_yy"], 1)]);
   assert.deepEqual(
     f.map((x) => [x.name, x.components.map((c) => c.label), x.nGauss, x.refused === null]),

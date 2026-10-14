@@ -7,7 +7,8 @@
 // interpolates the colours inside each primitive.
 
 import type { BlobStore } from "../state/blobs.ts";
-import { cellVertexValues, columnOf, elementCellValues, gaussCellValues, joinElements, meshFemIds, NO_DATA_RGB, primitiveColours, vertexValues } from "../state/contour.ts";
+import { cellVertexValues, columnOf, elementCellValues, gaussCellValues, isNodeTopology, joinElements, meshFemIds, NO_DATA_RGB, primitiveColours, vertexValues } from "../state/contour.ts";
+import { applyPlan, cornerVertexValues, planFor, vertexCorners, type NodeTopology } from "../state/extrapolation.ts";
 import type { ContourView } from "../state/selectors.ts";
 import type { MeshInfo, State } from "../state/types.ts";
 
@@ -105,6 +106,24 @@ export function contourShownKey(v: ContourView): string | null {
 }
 
 let joinMemo:{ key: string; at: Map<number, { group: number; row: number }> } | null = null;
+
+/**
+ * The join of the element field on screen to the model's cells, by FEM id
+ * (built once per join key). The state says it is ok (the effects checked it
+ * for this key); a refused one here is a bug, never a guessed join. V4e3: the
+ * cut face colours through the same join.
+ */
+export function elementJoinAt(s: State, view: Extract<ContourView, { state: "element" }>, blobs: BlobStore): ReadonlyMap<number, { group: number; row: number }> {
+  if (!joinMemo || joinMemo.key !== view.joinKey) {
+    const j = joinElements(
+      s.decls,
+      view.groups.map((g) => ({ id: g.id, eids: blobs.get(g.eids) as Float64Array })),
+    );
+    if (!j.ok) throw new Error(`element contour: the join ${view.joinKey} is refused (${j.reason}) while the state shows it`);
+    joinMemo = { key: view.joinKey, at: j.at };
+  }
+  return joinMemo.at;
+}
 let femMemo: { elements: readonly string[]; decls: unknown; ids: Float64Array } | null = null;
 
 /**
@@ -126,24 +145,63 @@ export function elementColours(
   const at = s.phase.at;
   if (at?.kind !== "results" || !step || step.stage !== at.stage || step.step !== at.step || !view.stepMeasured) return null;
   if (step.element !== view.component.key || !step.gauss) return null;
-  if (!joinMemo || joinMemo.key !== view.joinKey) {
-    const j = joinElements(
-      s.decls,
-      view.groups.map((g) => ({ id: g.id, eids: blobs.get(g.eids) as Float64Array })),
-    );
-    // The state says this join is ok (the effects checked it for this key); anything else is a bug, never a guessed join.
-    if (!j.ok) throw new Error(`element contour: the join ${view.joinKey} is refused (${j.reason}) while the state shows it`);
-    joinMemo = { key: view.joinKey, at: j.at };
-  }
+  const join = elementJoinAt(s, view, blobs);
   if (!femMemo || femMemo.elements !== mesh.elements || femMemo.decls !== s.decls) femMemo = { elements: mesh.elements, decls: s.decls, ids: meshFemIds(mesh.elements, s.decls) };
+  if (isNodeTopology(view.topology)) return nodeColours(s, { ...view, topology: view.topology }, mesh, blobs, step.gauss, lineMap, triMap);
   const perGroup = view.groups.map((g) => {
     const v = step.gauss![g.id];
     if (!(v instanceof Float64Array)) throw new Error(`element contour: the step data has no ${view.component.key} for group ${g.id}`);
     return gaussCellValues(v, g.nElements, g.nGauss);
   });
-  const values = elementCellValues(femMemo.ids, joinMemo.at, perGroup);
+  const values = elementCellValues(femMemo.ids, join, perGroup);
   const clim = { min: view.clim.min, max: view.clim.max };
   const line = primitiveColours(cellVertexValues(values, blobs.i32(mesh.lineElement), 2), lineMap, 2, clim, view.cmap).rgb;
   const tri = primitiveColours(cellVertexValues(values, blobs.i32(mesh.triElement), 3), triMap, 3, clim, view.cmap).rgb;
+  return { line: linearise(line), tri: linearise(tri), key: elementContourKey(view) };
+}
+
+// -- V4c2b: element fields carried to the nodes -------------------------------------
+
+let cornerMemo: { key: string; femIds: Float64Array; line: Int32Array; tri: Int32Array } | null = null;
+
+/**
+ * The linear vertex colours for a node-located topology (V4c2b): the step's
+ * Gauss values carried through the field's plan (state/extrapolation.ts),
+ * each vertex coloured by its own element's corner at its node (discrete) or
+ * by that node's average (averaged); a vertex of an element with no data is
+ * no data, whatever its neighbours hold.
+ */
+function nodeColours(
+  s: State,
+  view: Extract<ContourView, { state: "element" }> & { topology: NodeTopology },
+  mesh: MeshInfo,
+  blobs: BlobStore,
+  gauss: Record<string, Float64Array>,
+  lineMap: Int32Array,
+  triMap: Int32Array,
+): { line: Float32Array; tri: Float32Array; key: string } {
+  const plan = planFor(view, s, blobs);
+  const key = `${view.joinKey}|${view.topology}|${mesh.triElement.id}`;
+  if (!cornerMemo || cornerMemo.key !== key || cornerMemo.femIds !== femMemo!.ids) {
+    const fem = femMemo!.ids;
+    const vn = mesh.vertexNodes;
+    cornerMemo = {
+      key,
+      femIds: fem,
+      line: vertexCorners(plan, joinMemo!.at, fem, blobs.i32(mesh.lineElement), blobs.get(vn.line) as Float64Array, 2),
+      tri: vertexCorners(plan, joinMemo!.at, fem, blobs.i32(mesh.triElement), blobs.get(vn.tri) as Float64Array, 3),
+    };
+  }
+  const r = applyPlan(
+    plan,
+    view.groups.map((g) => {
+      const v = gauss[g.id];
+      if (!(v instanceof Float64Array)) throw new Error(`element contour: the step data has no ${view.component.key} for group ${g.id}`);
+      return v;
+    }),
+  );
+  const clim = { min: view.clim.min, max: view.clim.max };
+  const line = primitiveColours(cornerVertexValues(plan, r, cornerMemo.line), lineMap, 2, clim, view.cmap).rgb;
+  const tri = primitiveColours(cornerVertexValues(plan, r, cornerMemo.tri), triMap, 3, clim, view.cmap).rgb;
   return { line: linearise(line), tri: linearise(tri), key: elementContourKey(view) };
 }

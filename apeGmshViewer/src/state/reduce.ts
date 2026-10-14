@@ -4,6 +4,7 @@
 // fails to compile when an event is added without a case, and an event the
 // code does not know raises at run time.
 
+import { initialClip, reduceClip } from "./clip.ts";
 import { CMAP_NAMES, componentName, contourKeysOf, defaultPick, hasPick } from "./contour.ts";
 import { deformOf, elementJoinKey, geometryPairing, resultsPairing, stageCount, stageIdentity } from "./selectors.ts";
 import { WINDOW_KINDS, type ArtifactInfo, type ArtifactKind, type ContourState, type DeclPath, type DeformState, type Event, type PhaseKey, type SpatialNdm, type State } from "./types.ts";
@@ -61,6 +62,7 @@ export const initialState: State = {
   contour: initialContour,
   ndm: NO_NDM,
   deform: initialDeform,
+  clip: initialClip,
 };
 
 const NO_SELECTION: State["selection"] = { decls: [], picks: [] };
@@ -232,6 +234,8 @@ export function reduce(s: State, e: Event): State {
         source: { ...initialState.source, seq: s.source.seq },
         // V4d: the user's deformed-shape settings stand; the count was for the old model.
         deform: { ...s.deform, measured: null },
+        // V4e1: the section planes stand too (the slider re-derives its range from the next mesh).
+        clip: s.clip,
       });
     }
     case "fileClosed": {
@@ -248,6 +252,8 @@ export function reduce(s: State, e: Event): State {
         source: { ...initialState.source, seq: s.source.seq },
         // V4d: the user's deformed-shape settings stand; the count was for the old model.
         deform: { ...s.deform, measured: null },
+        // V4e1: the section planes stand too (the slider re-derives its range from the next mesh).
+        clip: s.clip,
       });
     }
     case "fileChanged": {
@@ -450,6 +456,21 @@ export function reduce(s: State, e: Event): State {
         throw new RangeError(`selectStage: ${JSON.stringify(e.index)} is not a /sequence/stages row (the loaded model has ${n})`);
       }
       return s.stage === e.index ? s : { ...s, stage: e.index };
+    }
+    case "addClipPlane":
+    case "removeClipPlane":
+    case "setClipActive":
+    case "setClipFlipped":
+    case "setClipOffset":
+    case "setClipNormal":
+    case "setApplyCuts":
+    case "setClipPose":
+    case "setShowGizmos":
+    case "setClipGizmo":
+    case "setCutFace": {
+      // V4e1: planes are world-space; a new one passes through the reference (undeformed) mesh centre.
+      const clip = reduceClip(s.clip, e, s.mesh?.center ?? [0, 0, 0]);
+      return clip === s.clip ? s : { ...s, clip };
     }
     default: {
       const unknown: never = e;

@@ -1,0 +1,3 @@
+### ADDED — LOC ratchet escape guards (program X-f3, #1845)
+
+`tests/test_loc_ratchet_escapes.py` closes two ways around the shrink-only LOC ratchet. A new top-level package under `src/apeGmsh/` fails unless it is a ratchet surface or is listed in `PACKAGES_BASELINE`, so code moved out of a frozen package cannot land somewhere uncounted. `Results.from_recorders` is also counted together with every same-module function, class and `Results` method it reaches, pinned at `FROM_RECORDERS_CLOSURE_BASELINE`, so thinning it into a helper in `Results.py` no longer shrinks the count. Adding to either pin is a maintainer gate.

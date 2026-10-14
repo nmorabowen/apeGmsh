@@ -10,15 +10,19 @@ import { mountHeader } from "../panels/header.ts";
 import { mountInspector } from "../panels/inspector.ts";
 import { mountLegend } from "../panels/legend.ts";
 import { mountPhase } from "../panels/phase.ts";
+import { mountPlanes } from "../panels/planes.ts";
 import { mountSources } from "../panels/sources.ts";
 import { mountWindows } from "../panels/windows/frame.ts";
 import { BlobStore } from "../state/blobs.ts";
-import { gaussFields } from "../state/contour.ts";
+import { offsetRange } from "../state/clip.ts";
+import { contourKeysOf, gaussFields } from "../state/contour.ts";
 import { chainOf, contourFieldsOf, contourView, deformOf, deformView, elementVerdictOf } from "../state/selectors.ts";
 import { Store } from "../state/store.ts";
-import { WINDOW_KINDS, type DeclPath } from "../state/types.ts";
+import { WINDOW_KINDS, type DeclPath, type GaussMode } from "../state/types.ts";
 import { applyTheme } from "../theme/tokens.ts";
 import { contourKey, contourShownKey, elementContourKey } from "./contour.ts";
+import { tipPoint } from "./gizmo.ts";
+import { zoomToward } from "./navigation.ts";
 import { Viewport } from "./viewport.ts";
 
 const bridge = (window as unknown as { viewer: Bridge }).viewer;
@@ -34,6 +38,8 @@ viewport.setStepSource(() => effects.currentStep());
 // V4d: the deformed shape moves the drawn vertices by the displacement the effects computed for the step shown.
 viewport.setDisplacementSource(() => effects.currentDisplacement());
 const panels = [mountHeader(store), mountBanner(store), mountLegend(store), mountInspector(store), mountEmpty(store), mountPhase(store), mountSources(store), mountWindows(store)];
+// V4e1: the section planes panel; its slider box and the view direction come from the viewport.
+panels.push(mountPlanes(store, { box: () => viewport.sliderBox(), viewNormal: () => viewport.viewNormal(), sliding: (on) => viewport.setSliding(on) }));
 window.addEventListener("beforeunload", () => {
   for (const d of panels) d();
   effects.dispose();
@@ -265,8 +271,10 @@ function refusalShown(): boolean {
  * whole-history range at the last step: `elements-1-<topology>` (or
  * `elements-1-refused-<code>` when the file is refused, with the banner);
  * then, drawable and deformable, the deformed shape at scale 10 with the
- * reference ghost (`elements-2-deformed-scale10`); then the first still again
- * at 1280 px. `<out>.elements-<n>-<what>.png`.
+ * reference ghost (`elements-2-deformed-scale10`); V4c2b: then each
+ * node-located draw mode (`elements-3-cell_averaged`, `-node`,
+ * `-node_discrete`); then the first still again at 1280 px.
+ * `<out>.elements-<n>-<what>.png`.
  */
 async function captureElements(settle: (ms?: number) => Promise<unknown>, width: number, height: number) {
   const s0 = store.get();
@@ -311,6 +319,12 @@ async function captureElements(settle: (ms?: number) => Promise<unknown>, width:
     await still("elements-2-deformed-scale10");
     store.dispatch({ type: "setDeform", on: false });
   }
+  // V4c2b: the node-located draw modes, one still each (`elements-3-<mode>`), then back to `cell`.
+  for (const mode of ["cell_averaged", "node", "node_discrete"] as const) {
+    store.dispatch({ type: "setContourGauss", mode });
+    await still(`elements-3-${mode}`);
+  }
+  store.dispatch({ type: "setContourGauss", mode: "cell" });
   if (typeof bridge.captureResize === "function") {
     await bridge.captureResize(1280, height);
     await settle();
@@ -459,6 +473,9 @@ async function captureDeform(settle: (ms?: number) => Promise<unknown>, width: n
   store.dispatch({ type: "setDeform", on: false });
 }
 
+/** V4e3: the deformation scale of the capped scrub (see `measureContour`). */
+const CAPPED_SCALE = 1e-6;
+
 /**
  * The V4c1 contour scrub (MEASUREMENTS.md, the contour rows): on the results
  * stage with the most steps, coloured by its first field's first component
@@ -468,7 +485,7 @@ async function captureDeform(settle: (ms?: number) => Promise<unknown>, width: n
  * The history scan's time comes first; the machine's CPU load is sampled
  * before (1 s idle) and during the scrub, and the working sets every 100 ms.
  */
-async function measureContour(path: string, deform = false, element = false) {
+async function measureContour(path: string, deform = false, element = false, gauss: GaussMode = "cell", planes = false, capped = false) {
   store.dispatch({ type: "clearSelection" });
   // V4d: the same scrub with the deformed shape on (true scale): each step also waits for the displaced positions.
   store.dispatch({ type: "setDeform", on: deform });
@@ -497,6 +514,9 @@ async function measureContour(path: string, deform = false, element = false) {
     if (m.main + m.renderer > peak.main + peak.renderer) Object.assign(peak, m);
   };
   const sampler = setInterval(() => void sample(), 100);
+  // V4e3: the caps toggle and the deformation scale as they were, put back after the scrub.
+  const cutFaceBefore = store.get().clip.cutFace;
+  const scaleBefore = store.get().deform.scale;
   try {
     const t0 = performance.now();
     store.dispatch({ type: "setPhase", at: { kind: "results", stage: best, step: 0 } });
@@ -506,7 +526,11 @@ async function measureContour(path: string, deform = false, element = false) {
       const f = elementField(best)!;
       store.dispatch({ type: "setContourField", field: f.name, component: f.components[0]!.key, source: "element" });
     }
-    const scanDone = () => store.get().contour.scan?.status === "done" && (!element || store.get().contour.scan!.key.includes("|elem:"));
+    // V4c2b: the element scrub in a node-located draw mode (`cell` leaves the V4c2a rows as they were).
+    store.dispatch({ type: "setContourGauss", mode: element ? gauss : "cell" });
+    // V4c2b: a node-located mode waits for its own scan (its key names the mode), never an earlier mode's.
+    const scanDone = () =>
+      store.get().contour.scan?.status === "done" && (!element || store.get().contour.scan!.key.includes("|elem:")) && (gauss === "cell" || store.get().contour.scan!.key === contourKeysOf(store.get())?.scan);
     if (!(await until(scanDone, 600000))) throw new Error(`measure: the history scan did not finish: ${JSON.stringify(store.get().contour.scan)}`);
     const scanMs = performance.now() - t0;
     await contourShowsNow();
@@ -515,7 +539,20 @@ async function measureContour(path: string, deform = false, element = false) {
     if (deform && d.state !== "ready" && d.state !== "partial") throw new Error(`measure: the deformed shape is ${d.state}`);
     if (element && v.state !== "element") throw new Error(`measure: the element contour is ${v.state}`);
     const what = v.state === "ready" ? `${v.field} ${v.component.label}` : v.state === "element" ? `element ${v.field} ${v.component.label}, ${v.topology}` : "?";
-    const field = what + (deform ? ", deformed ×1" : "");
+    // V4e3: the cut-face caps on (the `caps` row) or off (the `clip` row, comparable with the V4e1 and V4e2 rows).
+    // The measured files' displacement is synthetic (the node id plus a ramp: thousands of model lengths), so at
+    // true scale the deformed solid leaves every plane and no cap is cut; the capped row deforms it at ×1e-6.
+    store.dispatch({ type: "setCutFace", on: capped });
+    if (capped) store.dispatch({ type: "setDeformScale", scale: CAPPED_SCALE });
+    // V4e1: six section planes cutting through the scrub (each 20 % inside the reference box along ±X, ±Y, ±Z).
+    if (planes) addSixPlanes();
+    if (planes && viewport.clipCount !== 6) throw new Error(`measure: ${viewport.clipCount} section planes cut, not 6`);
+    // V4e2: and their six gizmos drawn (shown by default), so the scrub renders them every step.
+    if (planes && viewport.gizmoCount !== 6) throw new Error(`measure: ${viewport.gizmoCount} plane gizmos drawn, not 6`);
+    // V4e3: and, capped, a cap on each of the six planes, sliced again at every step (the deformed solid, the step's field).
+    if (capped && !(await until(() => viewport.capsSettled() && viewport.capCount === 6))) throw new Error(`measure: ${viewport.capCount} caps drawn, not 6`);
+    const slices0 = viewport.caps.slices;
+    const field = what + (deform ? `, deformed ×${capped ? CAPPED_SCALE : 1}` : "") + (planes ? ", 6 section planes + gizmos" : "") + (capped ? " + 6 caps" : "");
     const T = stages[best]!.time.length;
     const gl = viewport.renderer.getContext();
     const stepMs: number[] = [];
@@ -525,6 +562,7 @@ async function measureContour(path: string, deform = false, element = false) {
       const t = performance.now();
       store.dispatch({ type: "setResultStep", step: k });
       await contourShowsNow();
+      if (capped && !viewport.capsSettled()) throw new Error(`measure: the caps do not show step ${k} with its contour`);
       viewport.renderNow();
       gl.finish();
       stepMs.push(performance.now() - t);
@@ -533,10 +571,14 @@ async function measureContour(path: string, deform = false, element = false) {
     const cpuDuring = await cpu();
     await sample();
     const sorted = [...stepMs].sort((a, b) => a - b);
+    // V4e3: one slice per plane per step, never more (F-SETTLED at scale).
+    const slices = viewport.caps.slices - slices0;
+    if (capped && (slices !== 6 * (T - 1) || viewport.capCount !== 6)) throw new Error(`measure: ${slices} slices over ${T - 1} steps (want ${6 * (T - 1)}), ${viewport.capCount} caps`);
     return {
       file: path,
       field: `${field} (stage ${stages[best]!.name || stages[best]!.id})`,
       steps: T,
+      ...(capped ? { capSlices: slices, capTriangles: viewport.caps.drawn.reduce((a, c) => a + c.slice.cell.length, 0) } : {}),
       scanMs,
       scrubStepsPerSec: ((T - 1) * 1000) / total,
       stepMs: { median: sorted[Math.floor((sorted.length - 1) / 2)] ?? NaN, max: sorted[sorted.length - 1] ?? NaN },
@@ -545,7 +587,408 @@ async function measureContour(path: string, deform = false, element = false) {
     };
   } finally {
     clearInterval(sampler);
+    if (planes) removePlanes();
+    store.dispatch({ type: "setCutFace", on: cutFaceBefore });
+    store.dispatch({ type: "setDeformScale", scale: scaleBefore });
   }
+}
+
+/** V4e1: six active section planes, one per face of the reference box, each 20 % of its extent inside it. */
+function addSixPlanes() {
+  const box = viewport.sliderBox();
+  if (!box) throw new Error("section planes: no mesh");
+  const normals: [number, number, number][] = [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]];
+  for (const n of normals) {
+    store.dispatch({ type: "addClipPlane", normal: n });
+    const p = store.get().clip.planes.at(-1)!;
+    const r = offsetRange(p.normal, box);
+    store.dispatch({ type: "setClipOffset", id: p.id, offset: r.min + 0.2 * (r.max - r.min) });
+  }
+}
+
+function removePlanes() {
+  for (const p of store.get().clip.planes) store.dispatch({ type: "removeClipPlane", id: p.id });
+}
+
+/** The id of the plane added last. */
+const lastPlane = (): string => store.get().clip.planes.at(-1)!.id;
+
+/** Put plane `id` at fraction `t` of the reference box along its normal (0: the low end). */
+function placeAt(id: string, t: number) {
+  const box = viewport.sliderBox()!;
+  const p = store.get().clip.planes.find((q) => q.id === id)!;
+  const r = offsetRange(p.normal, box);
+  store.dispatch({ type: "setClipOffset", id, offset: r.min + t * (r.max - r.min) });
+}
+
+/** Add a plane of normal `n` at fraction `t` of the reference box along it; its id. */
+function addAt(n: readonly number[], t: number): string {
+  store.dispatch({ type: "addClipPlane", normal: n });
+  const id = lastPlane();
+  placeAt(id, t);
+  return id;
+}
+
+/**
+ * The V4e1 section-plane stills (D7), by a fixed rule so no flag is needed:
+ * on the results stage with the most steps (the last of a tie) whose
+ * deformed shape can be drawn, at its last step, coloured by group,
+ * undeformed: the model before any plane; one Z plane, flipped to keep the
+ * lower 40 %, so the solid shows hollow from above (no caps until V4e3); an
+ * X plane at 30 % added (a corner cut); the Z plane flipped back; its offset moved to
+ * 75 %; the panel with the X plane's Custom normal fields open on (1, 1, 0);
+ * six planes, each 10 % inside a face of the box; a 7th refused with its
+ * notice. Then a click that misses cut-away geometry: a plane along the view
+ * cuts away the nearer half, and a scripted click on an element of that half
+ * is a miss (the ring marks where it clicked); the same click with "Apply
+ * cuts" off selects it. Then the deformed (scale 10, ghost on), contoured
+ * model cut by a Y plane (the half nearer the camera gone) and an X plane at
+ * 45 %, at the first and the last step of the scrub (the shear carries more
+ * of it through the X plane), and that last still at 1280 px. Plane offsets
+ * avoid the mesh's own face planes, where a cut coincides with a face.
+ * `<out>.clip-<n>-<what>.png`.
+ */
+async function captureClip(settle: (ms?: number) => Promise<unknown>, width: number, height: number) {
+  const s0 = store.get();
+  if (!s0.results || !s0.mesh || !s0.phase.axis.some((k) => k.kind === "results")) return;
+  const stages = s0.results.stages;
+  const usable = (i: number) => {
+    store.dispatch({ type: "setPhase", at: { kind: "results", stage: i, step: 0 } });
+    return deformOf(store.get()).ok;
+  };
+  let best = -1;
+  stages.forEach((st, i) => {
+    if (usable(i) && (best < 0 || st.time.length >= stages[best]!.time.length)) best = i;
+  });
+  if (best < 0) return;
+  if (typeof bridge.captureResize === "function") await bridge.captureResize(width, height);
+  const last = stages[best]!.time.length - 1;
+  removePlanes();
+  store.dispatch({ type: "setApplyCuts", on: true });
+  // V4e3: these are the V4e1 stills, caps off (the hollow cut they show is what the caps fill: captureCaps).
+  store.dispatch({ type: "setCutFace", on: false });
+  store.dispatch({ type: "setDeform", on: false });
+  store.dispatch({ type: "setColourBy", by: "group" });
+  store.dispatch({ type: "clearSelection" });
+  store.dispatch({ type: "setPhase", at: { kind: "results", stage: best, step: 0 } });
+  if (last > 0) store.dispatch({ type: "setResultStep", step: last });
+  store.dispatch({ type: "frameSelection" });
+  const still = async (name: string) => {
+    if (!(await until(() => deformShown() && (store.get().visibility.colourBy !== "contour" || contourShown())))) throw new Error(`capture ${name}: the step did not show`);
+    await settle(150);
+    viewport.renderNow();
+    await painted();
+    await painted();
+    await bridge.captureStill(name);
+  };
+  await still("clip-1-before");
+  const z = addAt([0, 0, 1], 0.4);
+  store.dispatch({ type: "setClipFlipped", id: z, flipped: true });
+  await still("clip-2-z-plane-hollow");
+  const x = addAt([1, 0, 0], 0.3);
+  await still("clip-3-corner-two-planes");
+  store.dispatch({ type: "setClipFlipped", id: z, flipped: false });
+  await still("clip-4-z-flipped-back");
+  placeAt(z, 0.75);
+  await still("clip-5-z-offset-75");
+  store.dispatch({ type: "setClipNormal", id: x, normal: [1, 1, 0] });
+  await still("clip-6-panel-custom-normal");
+  removePlanes();
+  for (const n of [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]] as const) addAt(n, 0.1);
+  await still("clip-7-six-planes");
+  store.dispatch({ type: "addClipPlane", normal: [1, 0, 1] });
+  if (store.get().clip.notice === null) throw new Error("capture: a 7th plane was not refused");
+  await still("clip-8-seventh-refused");
+
+  // The pick that misses cut-away geometry.
+  removePlanes();
+  store.dispatch({ type: "addClipPlane", normal: [...viewport.viewNormal()] });
+  const target = clipMissTarget();
+  if (!target) throw new Error("capture: no element of the cut-away half answers a click with the cuts off");
+  const marker = document.createElement("div");
+  marker.style.cssText =
+    `position: fixed; left: ${target.x - 9}px; top: ${target.y - 9}px; width: 18px; height: 18px; border-radius: 50%;` +
+    "border: 3px solid var(--accent); pointer-events: none; z-index: 10;";
+  const label = document.createElement("div");
+  label.style.cssText = `position: fixed; left: ${target.x + 16}px; top: ${target.y - 10}px; padding: 2px 6px; border-radius: 5px; font: 600 12px var(--font); color: var(--text); background: var(--panel); border: 1px solid var(--line); pointer-events: none; z-index: 10;`;
+  document.body.append(marker, label);
+  const click = () => {
+    const pick = viewport.pickAt(target.x, target.y);
+    store.dispatch(pick ? { type: "select", pick } : { type: "clearSelection" });
+    return pick;
+  };
+  const miss = click();
+  if (miss) throw new Error(`capture: the click on cut-away geometry picked ${miss.decl}`);
+  label.textContent = "click: miss (the face hit first is cut away; no pick-through)";
+  await still("clip-9-pick-miss-cut-away");
+  store.dispatch({ type: "setApplyCuts", on: false });
+  const hit = click();
+  if (hit?.decl !== target.decl) throw new Error(`capture: with the cuts off the click picked ${hit?.decl ?? "nothing"}, not ${target.decl}`);
+  label.textContent = "the same click, Apply cuts off: picked";
+  await settle(900);
+  await still("clip-10-pick-cuts-off");
+  marker.remove();
+  label.remove();
+  store.dispatch({ type: "clearSelection" });
+  store.dispatch({ type: "setApplyCuts", on: true });
+  removePlanes();
+
+  // The deformed, contoured (and stage-activated) model cut while scrubbing.
+  store.dispatch({ type: "setPhase", at: { kind: "results", stage: best, step: 0 } });
+  store.dispatch({ type: "setDeform", on: true });
+  store.dispatch({ type: "setReferenceGhost", on: true });
+  store.dispatch({ type: "setDeformScale", scale: 10 });
+  store.dispatch({ type: "setColourBy", by: "contour" });
+  addAt([0, 1, 0], 0.5);
+  addAt([1, 0, 0], 0.45);
+  await still("clip-11-deformed-contour-step1");
+  if (last > 0) store.dispatch({ type: "setResultStep", step: last });
+  await still(`clip-12-deformed-contour-step${last + 1}`);
+  if (typeof bridge.captureResize === "function") {
+    await bridge.captureResize(1280, height);
+    await settle();
+    store.dispatch({ type: "frameSelection" });
+    await still(`clip-13-deformed-contour-step${last + 1}.1280`);
+  }
+  removePlanes();
+  store.dispatch({ type: "setDeform", on: false });
+  store.dispatch({ type: "setColourBy", by: "group" });
+  store.dispatch({ type: "setCutFace", on: true });
+}
+
+/**
+ * The V4e3 cut-face stills (D7), by a fixed rule. On a model with volumetric
+ * cells, on the results stage with the most steps whose deformed shape can be
+ * drawn: one Z plane keeping the lower 40 % (the cut V4e1's clip-2 showed
+ * hollow), its cap a flat fill (coloured by group); the same cap carrying the
+ * contour; an X plane at 30 % added, the two caps trimming each other; the
+ * deformed (scale 10) contoured model at the last step, cut by a Y plane at 50
+ * % and an X plane at 45 % (V4e1's clip-12, now filled); and "Contour on cut
+ * face" off, the same cut hollow again. On a model with no volumetric cell
+ * (a shell, a frame): one Z plane at 50 % and the planes panel saying the
+ * mesh gets no cap. Each still waits until the caps show what the state asks
+ * for and checks their count. `<out>.caps-<n>-<what>.png`.
+ */
+async function captureCaps(settle: (ms?: number) => Promise<unknown>, width: number, height: number) {
+  const s0 = store.get();
+  if (!s0.mesh) return;
+  if (typeof bridge.captureResize === "function") await bridge.captureResize(width, height);
+  removePlanes();
+  store.dispatch({ type: "setApplyCuts", on: true });
+  store.dispatch({ type: "setCutFace", on: true });
+  store.dispatch({ type: "setShowGizmos", on: true });
+  store.dispatch({ type: "setDeform", on: false });
+  store.dispatch({ type: "setColourBy", by: "group" });
+  store.dispatch({ type: "clearSelection" });
+  const still = async (name: string, caps: number) => {
+    const ok = () => deformShown() && (store.get().visibility.colourBy !== "contour" || contourShown()) && viewport.capsSettled() && viewport.capCount === caps;
+    if (!(await until(ok))) throw new Error(`capture ${name}: ${viewport.capCount} caps (want ${caps}), settled ${viewport.capsSettled()}`);
+    await settle(150);
+    viewport.renderNow();
+    await painted();
+    await painted();
+    await bridge.captureStill(name);
+  };
+  if (s0.mesh.counts.solidCells === 0) {
+    store.dispatch({ type: "frameSelection" });
+    addAt([0, 0, 1], 0.5);
+    const note = document.querySelector("#planes .planes-capnote");
+    if (!note?.textContent) throw new Error("capture: the planes panel does not say this mesh gets no cap");
+    await still("caps-0-no-volumetric-cells", 0);
+    removePlanes();
+    return;
+  }
+  const stages = s0.results?.stages ?? [];
+  let best = -1;
+  stages.forEach((st, i) => {
+    store.dispatch({ type: "setPhase", at: { kind: "results", stage: i, step: 0 } });
+    if (deformOf(store.get()).ok && (best < 0 || st.time.length >= stages[best]!.time.length)) best = i;
+  });
+  if (best < 0) return;
+  const last = stages[best]!.time.length - 1;
+  store.dispatch({ type: "setPhase", at: { kind: "results", stage: best, step: 0 } });
+  if (last > 0) store.dispatch({ type: "setResultStep", step: last });
+  store.dispatch({ type: "frameSelection" });
+  const z = addAt([0, 0, 1], 0.4);
+  store.dispatch({ type: "setClipFlipped", id: z, flipped: true });
+  await still("caps-1-flat-fill", 1);
+  store.dispatch({ type: "setColourBy", by: "contour" });
+  await still("caps-2-contour", 1);
+  addAt([1, 0, 0], 0.3);
+  await still("caps-3-two-planes-trimmed", 2);
+  removePlanes();
+  store.dispatch({ type: "setDeform", on: true });
+  store.dispatch({ type: "setReferenceGhost", on: true });
+  store.dispatch({ type: "setDeformScale", scale: 10 });
+  addAt([0, 1, 0], 0.5);
+  addAt([1, 0, 0], 0.45);
+  await still(`caps-4-deformed-contour-step${last + 1}`, 2);
+  store.dispatch({ type: "setCutFace", on: false });
+  await still("caps-5-cut-face-off", 0);
+  store.dispatch({ type: "setCutFace", on: true });
+  removePlanes();
+  store.dispatch({ type: "setDeform", on: false });
+  store.dispatch({ type: "setColourBy", by: "group" });
+}
+
+/**
+ * The click target of the miss still: of the drawn elements whose own screen
+ * point picks them with the cuts off and is cut away with them on, the one
+ * nearest the middle of the model on screen.
+ */
+function clipMissTarget(): { decl: DeclPath; x: number; y: number } | null {
+  const s = store.get();
+  const c = new THREE.Vector3(...s.mesh!.center).project(viewport.camera);
+  const rect = viewport.renderer.domElement.getBoundingClientRect();
+  const cx = rect.left + ((c.x + 1) / 2) * rect.width, cy = rect.top + ((1 - c.y) / 2) * rect.height;
+  let best: { decl: DeclPath; x: number; y: number; d: number } | null = null;
+  for (const decl of s.mesh!.elements) {
+    const pt = viewport.screenPointOf(decl);
+    if (!pt) continue;
+    const d = Math.hypot(pt.x - cx, pt.y - cy);
+    if (best && d >= best.d) continue;
+    store.dispatch({ type: "setApplyCuts", on: false });
+    const off = viewport.pickAt(pt.x, pt.y);
+    store.dispatch({ type: "setApplyCuts", on: true });
+    if (off?.decl !== decl) continue;
+    if (viewport.pickAt(pt.x, pt.y) === null) best = { decl, ...pt, d };
+  }
+  return best && { decl: best.decl, x: best.x, y: best.y };
+}
+
+/** The client point of a world point. */
+function screenOf(p: readonly number[]): { x: number; y: number } {
+  const v = new THREE.Vector3(p[0], p[1], p[2]).project(viewport.camera);
+  const rect = viewport.renderer.domElement.getBoundingClientRect();
+  return { x: rect.left + ((v.x + 1) / 2) * rect.width, y: rect.top + ((1 - v.y) / 2) * rect.height };
+}
+
+/** A real pointer event at a client point, sent where the browser would send it (the topmost element there). */
+function pointerAt(type: string, at: { x: number; y: number }, target: Element = document.elementFromPoint(at.x, at.y) ?? viewport.renderer.domElement): Element {
+  target.dispatchEvent(new PointerEvent(type, { clientX: at.x, clientY: at.y, button: 0, buttons: type === "pointerup" ? 0 : 1, pointerId: 1, bubbles: true, cancelable: true }));
+  return target;
+}
+
+/** A ring and a label on the page at a client point (capture only). */
+function marker(at: { x: number; y: number }, text: string): () => void {
+  const ring = document.createElement("div");
+  ring.style.cssText =
+    `position: fixed; left: ${at.x - 9}px; top: ${at.y - 9}px; width: 18px; height: 18px; border-radius: 50%;` +
+    "border: 3px solid var(--accent); pointer-events: none; z-index: 10;";
+  const label = document.createElement("div");
+  label.style.cssText = `position: fixed; left: ${at.x + 16}px; top: ${at.y - 10}px; padding: 2px 6px; border-radius: 5px; font: 600 12px var(--font); color: var(--text); background: var(--panel); border: 1px solid var(--line); pointer-events: none; z-index: 10;`;
+  label.textContent = text;
+  document.body.append(ring, label);
+  return () => {
+    ring.remove();
+    label.remove();
+  };
+}
+
+/**
+ * The V4e2 plane-gizmo stills (D7), by a fixed rule, on the undeformed model
+ * coloured by group: one Z plane at 55 % with its gizmo; three planes (Z, X at
+ * 40 %, Y at 60 %), three gizmos; the Z gizmo mid-drag (a real press on the
+ * quad centre, moved a quarter of the arrow up the normal, still held); the Z
+ * plane rotated by its tip (a real press, moved to tilt the normal about 30
+ * degrees toward the camera, released); and the legend over a gizmo: the camera
+ * zoomed in until the Z quad lies under the legend, a real press on the legend
+ * there, which the gizmo does not take. Every gesture goes through the canvas's
+ * own listeners. `<out>.gizmo-<n>-<what>.png`.
+ */
+async function captureGizmo(settle: (ms?: number) => Promise<unknown>, width: number, height: number) {
+  if (!store.get().mesh) return;
+  if (typeof bridge.captureResize === "function") await bridge.captureResize(width, height);
+  removePlanes();
+  store.dispatch({ type: "setApplyCuts", on: true });
+  store.dispatch({ type: "setShowGizmos", on: true });
+  store.dispatch({ type: "setDeform", on: false });
+  store.dispatch({ type: "setColourBy", by: "group" });
+  store.dispatch({ type: "clearSelection" });
+  store.dispatch({ type: "frameSelection" });
+  const still = async (name: string) => {
+    await settle(150);
+    viewport.renderNow();
+    await painted();
+    await painted();
+    await bridge.captureStill(name);
+  };
+  const plane = (id: string) => store.get().clip.planes.find((p) => p.id === id)!;
+  const geom = (id: string) => viewport.gizmos.geometries().get(id)!;
+  // Functions, not the getters themselves: each read is after a gesture or an event the type checker cannot see.
+  const count = (): number => viewport.gizmoCount;
+  const mode = (): string | null => viewport.gizmoInput.mode;
+  const z = addAt([0, 0, 1], 0.55);
+  if (count() !== 1) throw new Error(`capture: ${count()} gizmos for one plane`);
+  await still("gizmo-1-one-plane");
+  const x = addAt([1, 0, 0], 0.4);
+  const y = addAt([0, 1, 0], 0.6);
+  if (count() !== 3) throw new Error(`capture: ${count()} gizmos for three planes`);
+  await still("gizmo-2-three-planes");
+  store.dispatch({ type: "removeClipPlane", id: x });
+  store.dispatch({ type: "removeClipPlane", id: y });
+
+  // Mid-drag: a press on the quad centre, a move up the normal, the button still held.
+  const g = geom(z);
+  const off0 = plane(z).offset;
+  const at0 = screenOf(g.centre);
+  pointerAt("pointerdown", at0, viewport.renderer.domElement);
+  if (mode() !== "translate") throw new Error(`capture: the press on the Z quad is ${mode()}, not a translate`);
+  const up = [g.centre[0] + 0.25 * g.arrowLen * g.normal[0], g.centre[1] + 0.25 * g.arrowLen * g.normal[1], g.centre[2] + 0.25 * g.arrowLen * g.normal[2]];
+  for (const t of [0.25, 0.5, 0.75, 1]) {
+    const p = g.centre.map((c, k) => c + t * (up[k]! - c));
+    pointerAt("pointermove", screenOf(p), viewport.renderer.domElement);
+  }
+  const moved = plane(z).offset - off0;
+  if (!(Math.abs(moved - 0.25 * g.arrowLen) < 1e-3 * g.arrowLen)) throw new Error(`capture: the drag moved the plane ${moved}, not ${0.25 * g.arrowLen}`);
+  const done = marker(screenOf(up), "mid-drag: the Z plane moves with the cursor along its normal");
+  await still("gizmo-3-mid-drag");
+  done();
+  pointerAt("pointerup", screenOf(up), viewport.renderer.domElement);
+
+  // Rotated: a press on the tip, moved to tilt the normal toward the camera, released.
+  const r = geom(z);
+  pointerAt("pointerdown", screenOf(tipPoint(r)), viewport.renderer.domElement);
+  if (mode() !== "rotate") throw new Error(`capture: the press on the Z tip is ${mode()}, not a rotate`);
+  const back = new THREE.Vector3(0, 0, 1).applyQuaternion(viewport.camera.quaternion); // toward the camera
+  const n0 = new THREE.Vector3(...r.direction);
+  const tilt = back.clone().sub(n0.clone().multiplyScalar(back.dot(n0))).normalize();
+  const want = n0.clone().multiplyScalar(Math.cos(Math.PI / 6)).addScaledVector(tilt, Math.sin(Math.PI / 6));
+  for (const t of [0.33, 0.66, 1]) {
+    const d = n0.clone().lerp(want, t).normalize();
+    pointerAt("pointermove", screenOf([r.centre[0] + r.arrowLen * d.x, r.centre[1] + r.arrowLen * d.y, r.centre[2] + r.arrowLen * d.z]), viewport.renderer.domElement);
+  }
+  pointerAt("pointerup", screenOf(tipPoint(geom(z))), viewport.renderer.domElement);
+  const p = plane(z);
+  const onPlane = p.normal[0] * r.centre[0] + p.normal[1] * r.centre[1] + p.normal[2] * r.centre[2] - p.offset;
+  if (Math.abs(onPlane) > 1e-6 * (store.get().mesh!.radius || 1)) throw new Error(`capture: the rotated plane is ${onPlane} off its quad centre`);
+  await still("gizmo-4-rotated");
+
+  // The legend over a gizmo: zoom in until the (re-straightened) Z quad lies under the legend, then press there.
+  store.dispatch({ type: "setClipPose", id: z, normal: [0, 0, 1], offset: r.centre[2] });
+  const legend = document.getElementById("legend")!;
+  const box = legend.getBoundingClientRect();
+  const at = { x: box.left + box.width / 2, y: box.top + box.height / 2 };
+  const ray = new THREE.Raycaster();
+  const gizmoUnder = () => {
+    const rect = viewport.renderer.domElement.getBoundingClientRect();
+    ray.setFromCamera(new THREE.Vector2(((at.x - rect.left) / rect.width) * 2 - 1, -((at.y - rect.top) / rect.height) * 2 + 1), viewport.camera);
+    return viewport.gizmos.hit({ origin: ray.ray.origin.toArray(), direction: ray.ray.direction.toArray() });
+  };
+  for (let k = 0; k < 12 && !gizmoUnder(); k++) {
+    zoomToward(viewport.camera, new THREE.Vector3(...geom(z).centre), 0.75);
+    viewport.nav.updated();
+  }
+  if (!gizmoUnder()) throw new Error("capture: no zoom put the Z gizmo under the legend");
+  const target = pointerAt("pointerdown", at);
+  pointerAt("pointerup", at, target);
+  if (!legend.contains(target)) throw new Error(`capture: the press under the legend reached ${target.nodeName}#${target.id}, not the legend`);
+  if (viewport.gizmoInput.dragging) throw new Error("capture: the gizmo took a press on the legend");
+  const off = marker(at, "a press here is the legend's: the gizmo under it does not move");
+  await still("gizmo-5-legend-over-gizmo");
+  off();
+  removePlanes();
+  store.dispatch({ type: "frameSelection" });
 }
 
 async function main() {
@@ -570,7 +1013,15 @@ async function main() {
     // V4c2a: the scrub with an element contour on (a verified file with an element field), then deformed too.
     const elements = cfg.results ? await measureContour(cfg.results, false, true) : null;
     const elementsDeformed = elements && cfg.results ? await measureContour(cfg.results, true, true) : null;
-    await bridge.measureDone({ ...result, contour, deform: deformed, elements, elementsDeform: elementsDeformed });
+    // V4c2b: the element scrub carried to the nodes, one row per node-located mode.
+    const elementsAveraged = elements && cfg.results ? await measureContour(cfg.results, false, true, "cell_averaged") : null;
+    const elementsNode = elements && cfg.results ? await measureContour(cfg.results, false, true, "node") : null;
+    const elementsDiscrete = elements && cfg.results ? await measureContour(cfg.results, false, true, "node_discrete") : null;
+    // V4e1: the nodal scrub, deformed, with six section planes cutting (in the JSON as `clip`; main prints no row for it).
+    const clip = cfg.results ? await measureContour(cfg.results, true, false, "cell", true) : null;
+    // V4e3: the same scrub with the six planes capped (in the JSON as `caps`; main prints no row for it). A model with no solid cell has no row.
+    const caps = cfg.results && store.get().mesh!.counts.solidCells > 0 ? await measureContour(cfg.results, true, false, "cell", true, true) : null;
+    await bridge.measureDone({ ...result, contour, deform: deformed, elements, elementsDeform: elementsDeformed, elementsAveraged, elementsNode, elementsDiscrete, clip, caps });
     return;
   }
   // capture: select the scripted target and let main grab the page; when the
@@ -654,6 +1105,13 @@ async function main() {
     await captureDeform(settle, width, height);
     // V4c2a (D7): the element-contour stills, at the capture window's own width, then 1280 px.
     await captureElements(settle, width, height);
+    // V4e3 (D7): the cut-face stills (or, on a mesh with no volumetric cell, the one saying it gets no cap).
+    // Before the V4e1 stills: their pick-miss still finds no target on a flat shell model and ends the capture there.
+    await captureCaps(settle, width, height);
+    // V4e1 (D7): the section-plane stills, at the capture window's own width, then 1280 px.
+    await captureClip(settle, width, height);
+    // V4e2 (D7): the plane-gizmo stills, at the capture window's own width.
+    await captureGizmo(settle, width, height);
   }
   await bridge.captureDone();
 }

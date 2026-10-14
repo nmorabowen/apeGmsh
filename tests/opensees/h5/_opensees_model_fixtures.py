@@ -37,6 +37,7 @@ from apeGmsh.mesh.FEMData import (
 
 __all__ = [
     "build_simple_frame_fem",
+    "build_two_quad_fem",
     "build_simple_frame_h5",
     "build_frame_with_orientation_fan_out_h5",
     "build_two_node_beam_fem",
@@ -85,6 +86,82 @@ def build_simple_frame_fem(*, ndm: int = 3) -> FEMData:
     # model.h5 to the test's artifact directory instead of warning.
     return FEMData(nodes=nodes, elements=elements, info=info,
                    model_name="simple_frame")
+
+
+def build_two_quad_fem() -> FEMData:
+    """Two stacked quads: ``Rock`` (nodes 1-4) + ``Fill`` (nodes 3-6),
+    with ``Base`` (1, 2) and ``FillTop`` (5, 6) node sets."""
+    node_ids = np.array([1, 2, 3, 4, 5, 6], dtype=np.int64)
+    node_coords = np.array(
+        [
+            [0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [1.0, 1.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [1.0, 2.0, 0.0],
+            [0.0, 2.0, 0.0],
+        ],
+        dtype=np.float64,
+    )
+    quad_info = make_type_info(
+        code=3, gmsh_name="Quadrangle 4", dim=2, order=1, npe=4, count=2,
+    )
+    quad_group = ElementGroup(
+        element_type=quad_info,
+        ids=np.array([1, 2], dtype=np.int64),
+        connectivity=np.array(
+            [[1, 2, 3, 4], [4, 3, 5, 6]], dtype=np.int64,
+        ),
+    )
+
+    def _sel(ids: "list[int]") -> np.ndarray:
+        return np.array(ids, dtype=np.int64)
+
+    def _coords(ids: "list[int]") -> np.ndarray:
+        return node_coords[[i - 1 for i in ids]]
+
+    pg = {
+        (2, 201): {
+            "name": "Rock",
+            "node_ids": _sel([1, 2, 3, 4]),
+            "node_coords": _coords([1, 2, 3, 4]),
+            "element_ids": _sel([1]),
+        },
+        (2, 202): {
+            "name": "Fill",
+            "node_ids": _sel([3, 4, 5, 6]),
+            "node_coords": _coords([3, 4, 5, 6]),
+            "element_ids": _sel([2]),
+        },
+        (0, 203): {
+            "name": "Base",
+            "node_ids": _sel([1, 2]),
+            "node_coords": _coords([1, 2]),
+            "element_ids": np.array([], dtype=np.int64),
+        },
+        (0, 204): {
+            "name": "FillTop",
+            "node_ids": _sel([5, 6]),
+            "node_coords": _coords([5, 6]),
+            "element_ids": np.array([], dtype=np.int64),
+        },
+    }
+    nodes = NodeComposite(
+        node_ids=node_ids, node_coords=node_coords,
+        physical=PhysicalGroupSet(pg), labels=LabelSet({}),
+    )
+    elements = ElementComposite(
+        groups={3: quad_group},
+        physical=PhysicalGroupSet(pg), labels=LabelSet({}),
+    )
+    info = MeshInfo(
+        n_nodes=6, n_elems=2, bandwidth=3, types=[quad_info],
+    )
+    # Named like a session snapshot: a bridge built on it writes its
+    # model.h5 to the test's artifact directory instead of warning that
+    # no session named it (#1307).
+    return FEMData(nodes=nodes, elements=elements, info=info,
+                   model_name="two_quad")
 
 
 def build_simple_frame_h5(tmp_path: Path) -> "tuple[Path, FEMData]":

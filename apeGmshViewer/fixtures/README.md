@@ -279,3 +279,57 @@ what this app reads, so `elem_mixed*` and `elem_badid` open with the
 $env:PYTHONPATH = "src"
 & C:\Users\nmb\venv\opensees_venv\Scripts\python.exe scripts/make_viewer_results_fixtures.py --elements
 ```
+
+## `extrap_*` and `extrap.oracle.json` (V4c2b, #1875)
+
+The Gauss-to-node extrapolation pairs (`extrapolation_fixtures` in the
+generator), each a FEM-only `model.h5` and a stamped `results.h5` written by
+the real `NativeWriter`, one static stage `load` of 3 steps. The Gauss values
+are a non-linear field at each Gauss point's physical position (so the
+extrapolation is not trivial):
+
+    f = (c + 1)(k + 1)(1 + x^2 - 0.5 x y + 0.3 y^2 + y z - 0.2 z^3)
+
+- `extrap_plane.*`: 8 quads at 4 Gauss points (`quads_G4`, 2 x 2) beside 8
+  triangles at one point (`tris_G1`), `stress_xx/yy/xy`; the lowest quad id is
+  left out of `quads_G4` ("no data").
+- `extrap_solid.*`: 12 hexahedra at 8 Gauss points (`hex_G8`, 2 x 2 x 2),
+  `stress_xx`, `stress_yy`.
+- `extrap_tet.*`: 48 tetrahedra (a 2 x 2 x 2 structured box) at one point
+  (`tets_G1`), `stress_xx`.
+
+`extrap.oracle.json` is Python's answer, the oracle the app is tested against
+(`test/contour/extrapolation.test.ts`): per pair, component and step,
+apeGmsh's `extrapolate_gauss_slab_to_nodes` (`gauss_node`),
+`extrapolate_gauss_slab_per_element` (`gauss_node_discrete`), and the averaged
+path on each element's mean as its one point (`cell_averaged`), on the slab
+read back from the written file. The generator also checks the Qt fast path,
+`GaussToNodeAccumulator`, equal to `gauss_node` on every step.
+
+```powershell
+$env:PYTHONPATH = "src"
+& C:\Users\nmb\venv\opensees_venv\Scripts\python.exe scripts/make_viewer_results_fixtures.py --extrapolation
+```
+
+## `slice.oracle.json` (V4e3, #1904)
+
+PyVista's slice of three small solids, the oracle of the app's cut-face caps
+(`test/clip/slice.test.ts`; `slice_oracle` in the generator). The meshes are
+built in numpy in gmsh corner order: a 3 x 2 x 2 box of hexahedra, a 2 x 2 x 2
+box of 48 tetrahedra (Kuhn split, interior nodes moved off the grid), and a
+2 x 2 x 2 box of 16 wedges. Each carries a nonlinear nodal field `f` (no data,
+NaN, at two tet nodes), a linear nodal field `L` and a cell field `g`. Each
+mesh is cut by an oblique plane alone, trimmed by one other plane, and (another
+plane) trimmed by two, all through `PyVistaBackend.slice_layer`, the Qt
+backend's own cut-face pass. Per case, `vtk` is the 1e-9 oracle: the grid also
+carries one vertex cell, which keeps `vtkCutter` off its float-precision fast
+path, and a trim clips the slice as an `UnstructuredGrid` (exact) instead of
+the `PolyData` clip `slice_layer` uses. `vtk_fast` is `slice_layer` verbatim on
+the bare grid, what the Qt cap drew (cut points up to 3e-8 off the exact
+intersections; checked to 1e-7). The generator's docstring has the
+measurements. It needs pyvista, not gmsh.
+
+```powershell
+$env:PYTHONPATH = "src"
+& C:\Users\nmb\venv\opensees_venv\Scripts\python.exe scripts/make_viewer_results_fixtures.py --slice-oracle
+```
