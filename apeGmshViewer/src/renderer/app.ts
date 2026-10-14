@@ -1102,12 +1102,13 @@ async function main() {
     await captureDeform(settle, width, height);
     // V4c2a (D7): the element-contour stills, at the capture window's own width, then 1280 px.
     await captureElements(settle, width, height);
+    // V4e3 (D7): the cut-face stills (or, on a mesh with no volumetric cell, the one saying it gets no cap).
+    // Before the V4e1 stills: their pick-miss still finds no target on a flat shell model and ends the capture there.
+    await captureCaps(settle, width, height);
     // V4e1 (D7): the section-plane stills, at the capture window's own width, then 1280 px.
     await captureClip(settle, width, height);
     // V4e2 (D7): the plane-gizmo stills, at the capture window's own width.
     await captureGizmo(settle, width, height);
-    // V4e3 (D7): the cut-face stills (or, on a mesh with no volumetric cell, the one saying it gets no cap).
-    await captureCaps(settle, width, height);
   }
   await bridge.captureDone();
 }
