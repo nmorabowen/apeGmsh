@@ -446,7 +446,8 @@ def _equation_lines(text: str, a: int, b: int) -> int:
 def test_an_equation_tie_spanning_ranks_is_refused_under_penalty(tmp_path):
     """Each rank holding the slave or the master writes the tie, so a
     declared ``Penalty`` adds one penalty term per copy (#1625). Refused
-    before anything is written, naming the tie and the remedies."""
+    before anything is written, naming the tie and the only verified
+    remedy, a serial run (#1719 ruling); Lagrange is not offered."""
     ops, _a, b = _equation_tie_ops("Penalty", cross=True)
     deck = tmp_path / "model.tcl"
     deck.write_text("SENTINEL\n", encoding="utf-8")
@@ -455,7 +456,8 @@ def test_an_equation_tie_spanning_ranks_is_refused_under_penalty(tmp_path):
     msg = str(err.value)
     assert "#1625" in msg and "'eq'" in msg and f"(slave node {b})" in msg
     assert "on 2 ranks" in msg and "Penalty" in msg
-    assert "flat=True" in msg and "ops.constraints.Lagrange()" in msg
+    assert "flat=True" in msg and "#1724" in msg
+    assert "ops.constraints." not in msg
     assert deck.read_text(encoding="utf-8") == "SENTINEL\n"
     assert [f.name for f in tmp_path.iterdir()] == ["model.tcl"]
 
@@ -463,9 +465,9 @@ def test_an_equation_tie_spanning_ranks_is_refused_under_penalty(tmp_path):
 @pytest.mark.parametrize("name", ["Lagrange", "none"])
 def test_an_equation_tie_spanning_ranks_keeps_adr_0068_replication(
         tmp_path, name):
-    """Under a declared ``Lagrange`` (the refusal's second remedy) or the
-    auto-emitted one, ADR 0068 Open item 2 replicates the tie on both
-    ranks, as before this slice."""
+    """Under a declared ``Lagrange`` or the auto-emitted one, ADR 0068
+    Open item 2 replicates the tie on both ranks, as before this slice
+    (unverified live; #1724)."""
     ops, a, b = _equation_tie_ops(name, cross=True)
     text = emit(ops, tmp_path / "model.tcl")
     assert _equation_lines(text, a, b) == 2
@@ -505,3 +507,44 @@ def test_the_serial_remedy_writes_the_spanning_equation_tie_once(tmp_path, name)
     text = emit(ops, tmp_path / "model.tcl", flat=True)
     assert "getPID" not in text
     assert _equation_lines(text, a, b) == 1
+
+
+def _staged_equation_tie_ops(stage_handlers: "tuple[str, str]"):
+    """Two stages over a global (unclaimed) equation tie spanning ranks."""
+    fem, grounds, master = diaphragm_plate(2)
+    a, b = _cross_rank_pair(fem)
+    fem = fem.with_constraint(InterpolationRecord(
+        kind=ConstraintKind.TIE, name="eq", slave_node=b, master_nodes=[a],
+        weights=np.array([1.0]), dofs=[3], enforce="equation"))
+    ops = declare_model(fem, grounds, master)
+    for i, name in enumerate(stage_handlers, start=1):
+        with ops.stage(name=f"s{i}") as s:
+            s.analysis(
+                test=ops.test.NormDispIncr(tol=1e-8, max_iter=10),
+                algorithm=ops.algorithm.Linear(),
+                integrator=ops.integrator.LoadControl(dlam=1.0),
+                constraints=handler(ops, name),
+                numberer=ops.numberer.ParallelPlain(),
+                system=ops.system.Mumps(),
+                analysis=ops.analysis.Static(),
+            )
+            s.run(n_increments=1)
+    return ops, a, b
+
+
+def test_a_global_equation_tie_under_a_later_penalty_stage_is_refused(tmp_path):
+    """The global tie stays in the domain for every stage, so a later
+    stage that declares ``Penalty`` multiplies its copies: refused."""
+    ops, _a, _b = _staged_equation_tie_ops(("Lagrange", "Penalty"))
+    deck = tmp_path / "model.tcl"
+    with pytest.raises(BridgeError, match="equationConstraint tie 'eq'") as err:
+        emit(ops, deck)
+    assert "#1625" in str(err.value) and "Penalty" in str(err.value)
+    assert not deck.exists()
+
+
+def test_a_global_equation_tie_under_lagrange_stages_is_replicated(tmp_path):
+    """Both stages Lagrange: ADR 0068's replication, as before this slice."""
+    ops, a, b = _staged_equation_tie_ops(("Lagrange", "Lagrange"))
+    text = emit(ops, tmp_path / "model.tcl")
+    assert _equation_lines(text, a, b) == 2

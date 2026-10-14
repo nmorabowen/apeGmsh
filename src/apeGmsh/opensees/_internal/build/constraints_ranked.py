@@ -591,7 +591,9 @@ def refuse_multiplied_mp_constraints(
 
     ``Transformation`` and ``Plain`` (which ignores MP constraints) keep
     the replication. Any other handler raises :class:`BridgeError` when a
-    record it runs under is written on two ranks or more.
+    replicable record it runs under is written on two ranks or more. An
+    equation tie written on two ranks or more raises only under
+    ``Penalty``; the other handlers keep ADR 0068's replication.
     """
     from ...analysis.constraint_handler import Plain, Transformation
     from ...apesees import _is_explicit_integrator
@@ -680,10 +682,8 @@ def _refuse_copies(
                 "rank's copy adds its own penalty term, so the partitioned "
                 "model would silently answer stiffer than the serial one "
                 "(#1625). Nothing was written. Run serially "
-                "(ops.tcl(path, flat=True)), or declare "
-                "ops.constraints.Lagrange(), under which the partitioned "
-                "emit replicates equation ties across ranks (ADR 0068 Open "
-                "item 2)."
+                "(ops.tcl(path, flat=True)). Whether Lagrange is exact for "
+                "a replicated equation tie awaits live verification (#1724)."
             )
     copied = next((p.replicated_records for p in plans
                    if p.replicated_records), ())
