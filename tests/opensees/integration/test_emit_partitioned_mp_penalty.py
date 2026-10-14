@@ -403,3 +403,148 @@ def diaphragm_lines_by_rank_any(text: str) -> "dict[int, int]":
             if s.startswith("rigidDiaphragm"):
                 out[rank] = out.get(rank, 0) + 1
     return out
+
+
+# ---------------------------------------------------------------------------
+# An equation tie spanning ranks (#1724 item 1)
+# ---------------------------------------------------------------------------
+
+
+def _cross_rank_pair(fem) -> "tuple[int, int]":
+    """Two plate nodes, each held by one partition only, a different one."""
+    held: dict[int, set[int]] = {}
+    for idx, p in enumerate(fem.partitions):
+        for n in np.asarray(p.node_ids):
+            held.setdefault(int(n), set()).add(idx)
+    nodes = [plate_node(fem, x, y) for (x, y) in GRID]
+    for a in nodes:
+        for b in nodes:
+            if len(held[a]) == 1 and len(held[b]) == 1 and held[a] != held[b]:
+                return a, b
+    raise AssertionError("no pair of nodes on two different partitions")
+
+
+def _equation_tie_ops(name: str, *, cross: bool, serial_chain: bool = False):
+    """The 2-partition plate without the diaphragm, plus an
+    ``enforce="equation"`` tie between nodes on two ranks (``cross``) or
+    on one -> ``(ops, master_node, slave_node)``."""
+    fem, grounds, master = diaphragm_plate(2)
+    a, b = _cross_rank_pair(fem) if cross else _one_rank_pair(fem)
+    fem = fem.with_constraint(InterpolationRecord(
+        kind=ConstraintKind.TIE, name="eq", slave_node=b, master_nodes=[a],
+        weights=np.array([1.0]), dofs=[3], enforce="equation"))
+    ops = declare_model(fem, grounds, master)
+    chain(ops, name, 1 if serial_chain else 2)
+    return ops, a, b
+
+
+def _equation_lines(text: str, a: int, b: int) -> int:
+    return sum(1 for ln in text.splitlines()
+               if ln.strip() == f"equationConstraint {b} 3 1.0 {a} 3 -1.0")
+
+
+def test_an_equation_tie_spanning_ranks_is_refused_under_penalty(tmp_path):
+    """Each rank holding the slave or the master writes the tie, so a
+    declared ``Penalty`` adds one penalty term per copy (#1625). Refused
+    before anything is written, naming the tie and the only verified
+    remedy, a serial run (#1719 ruling); Lagrange is not offered."""
+    ops, _a, b = _equation_tie_ops("Penalty", cross=True)
+    deck = tmp_path / "model.tcl"
+    deck.write_text("SENTINEL\n", encoding="utf-8")
+    with pytest.raises(BridgeError) as err:
+        emit(ops, deck)
+    msg = str(err.value)
+    assert "#1625" in msg and "'eq'" in msg and f"(slave node {b})" in msg
+    assert "on 2 ranks" in msg and "Penalty" in msg
+    assert "flat=True" in msg and "#1724" in msg
+    assert "ops.constraints." not in msg
+    assert deck.read_text(encoding="utf-8") == "SENTINEL\n"
+    assert [f.name for f in tmp_path.iterdir()] == ["model.tcl"]
+
+
+@pytest.mark.parametrize("name", ["Lagrange", "none"])
+def test_an_equation_tie_spanning_ranks_keeps_adr_0068_replication(
+        tmp_path, name):
+    """Under a declared ``Lagrange`` or the auto-emitted one, ADR 0068
+    Open item 2 replicates the tie on both ranks, as before this slice
+    (unverified live; #1724)."""
+    ops, a, b = _equation_tie_ops(name, cross=True)
+    text = emit(ops, tmp_path / "model.tcl")
+    assert _equation_lines(text, a, b) == 2
+
+
+def test_a_spanning_equation_tie_beside_a_diaphragm_names_the_equation_tie(
+        tmp_path):
+    """Both copied under Penalty: the equation tie is reported, because
+    ``Transformation`` (the diaphragm's remedy) cannot enforce it
+    (ADR 0068 INV-4)."""
+    fem, grounds, master = diaphragm_plate(2)
+    a, b = _cross_rank_pair(fem)
+    fem = with_diaphragm(fem, master).with_constraint(InterpolationRecord(
+        kind=ConstraintKind.TIE, name="eq", slave_node=b, master_nodes=[a],
+        weights=np.array([1.0]), dofs=[3], enforce="equation"))
+    ops = declare_model(fem, grounds, master)
+    chain(ops, "Penalty", 2)
+    with pytest.raises(BridgeError, match="equationConstraint tie 'eq'") as err:
+        emit(ops, tmp_path / "model.tcl")
+    assert "Transformation" not in str(err.value)
+
+
+@pytest.mark.parametrize("name", ["Penalty", "Lagrange", "none"])
+def test_an_equation_tie_held_by_one_rank_is_not_refused(tmp_path, name):
+    """Both nodes on one partition: one rank writes the tie, so no handler
+    multiplies it and the deck holds exactly one copy."""
+    ops, a, b = _equation_tie_ops(name, cross=False)
+    text = emit(ops, tmp_path / "model.tcl")
+    assert _equation_lines(text, a, b) == 1
+
+
+@pytest.mark.parametrize("name", ["Penalty", "Lagrange", "none"])
+def test_the_serial_remedy_writes_the_spanning_equation_tie_once(tmp_path, name):
+    """``flat=True``, the refusal's serial remedy, writes the deck with one
+    copy of the tie."""
+    ops, a, b = _equation_tie_ops(name, cross=True, serial_chain=True)
+    text = emit(ops, tmp_path / "model.tcl", flat=True)
+    assert "getPID" not in text
+    assert _equation_lines(text, a, b) == 1
+
+
+def _staged_equation_tie_ops(stage_handlers: "tuple[str, str]"):
+    """Two stages over a global (unclaimed) equation tie spanning ranks."""
+    fem, grounds, master = diaphragm_plate(2)
+    a, b = _cross_rank_pair(fem)
+    fem = fem.with_constraint(InterpolationRecord(
+        kind=ConstraintKind.TIE, name="eq", slave_node=b, master_nodes=[a],
+        weights=np.array([1.0]), dofs=[3], enforce="equation"))
+    ops = declare_model(fem, grounds, master)
+    for i, name in enumerate(stage_handlers, start=1):
+        with ops.stage(name=f"s{i}") as s:
+            s.analysis(
+                test=ops.test.NormDispIncr(tol=1e-8, max_iter=10),
+                algorithm=ops.algorithm.Linear(),
+                integrator=ops.integrator.LoadControl(dlam=1.0),
+                constraints=handler(ops, name),
+                numberer=ops.numberer.ParallelPlain(),
+                system=ops.system.Mumps(),
+                analysis=ops.analysis.Static(),
+            )
+            s.run(n_increments=1)
+    return ops, a, b
+
+
+def test_a_global_equation_tie_under_a_later_penalty_stage_is_refused(tmp_path):
+    """The global tie stays in the domain for every stage, so a later
+    stage that declares ``Penalty`` multiplies its copies: refused."""
+    ops, _a, _b = _staged_equation_tie_ops(("Lagrange", "Penalty"))
+    deck = tmp_path / "model.tcl"
+    with pytest.raises(BridgeError, match="equationConstraint tie 'eq'") as err:
+        emit(ops, deck)
+    assert "#1625" in str(err.value) and "Penalty" in str(err.value)
+    assert not deck.exists()
+
+
+def test_a_global_equation_tie_under_lagrange_stages_is_replicated(tmp_path):
+    """Both stages Lagrange: ADR 0068's replication, as before this slice."""
+    ops, a, b = _staged_equation_tie_ops(("Lagrange", "Lagrange"))
+    text = emit(ops, tmp_path / "model.tcl")
+    assert _equation_lines(text, a, b) == 2
