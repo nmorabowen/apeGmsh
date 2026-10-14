@@ -16,6 +16,12 @@ Oracles:
   ``/opensees/decls/rows`` entry. Driven over flat, staged and
   partitioned models with every verb, and a stage whose zeroings
   overlap; every side-channel call must be proved.
+* **Two records, one scope, every rank** (#1912). Two initial stresses
+  in the global scope, or in one stage, each over bars of both ranks:
+  each rank's block writes both records' ``addToParameter`` calls, and
+  each call joins its own record, so a decl carried over from the
+  scope's first record fails under ``partitioned`` and
+  ``staged_partitioned``, not only in the flat case.
 * **First record wins.** A node two ``s.zero_velocities`` records name
   is zeroed once, as the first one's; the per-record split concatenates
   to the flat node list, so the deck is unchanged.
@@ -107,6 +113,55 @@ def _partitioned_staged() -> apeSees:
     return ops
 
 
+def _two_rank_bridge(*, staged_stresses: bool) -> apeSees:
+    """Two ranks (blocks 0-1 on rank 0, 2-3 on rank 1): two initial
+    stresses in one scope, each over bars of both ranks (``a``: 10, 30;
+    ``b``: 11, 41), so each rank writes both records' ``addToParameter``
+    calls inside its partition block, one record after the other. The
+    scope is the global one, or (``staged_stresses``) the stage's. The
+    stage also flips two bars (one per rank) and zeroes two node sets."""
+    ops = apeSees(cast(Any, _fem(2, contact=False)))
+    ops.model(ndm=3, ndf=3)
+    mat = ops.uniaxialMaterial.ElasticMaterial(E=1.0e6)
+    ops.uniaxialMaterial.ElasticMaterial(E=2.0e5, name="steel")  # rebar
+    ops.element.Truss(pg="Bars", A=0.01, material=mat)
+    stresses = (("a", (10, 30), -1.0), ("b", (11, 41), -7.0))
+    if not staged_stresses:
+        for name, eids, sig in stresses:
+            ops.initial_stress(name=name, elements=list(eids), sigma_xx=sig,
+                               sigma_yy=sig, sigma_zz=sig, ramp_steps=2)
+    with ops.stage(name="s1") as s:
+        if staged_stresses:
+            for name, eids, sig in stresses:
+                s.initial_stress(name=name, elements=list(eids),
+                                 sigma_xx=sig, sigma_yy=sig, sigma_zz=sig,
+                                 ramp_steps=2)
+        s.activate_absorbing(elements=[12, 32])
+        s.zero_velocities(nodes=[101, 301])
+        s.zero_velocities(nodes=[102, 401])
+        s.analysis(
+            test=ops.test.NormDispIncr(tol=1e-4, max_iter=10),
+            algorithm=ops.algorithm.Newton(),
+            integrator=ops.integrator.LoadControl(dlam=1.0),
+            constraints=ops.constraints.Transformation(),
+            numberer=ops.numberer.ParallelPlain(),
+            system=ops.system.Mumps(),
+            analysis=ops.analysis.Static(),
+        )
+        s.run(n_increments=1)
+    return ops
+
+
+def _partitioned() -> apeSees:
+    """:func:`_two_rank_bridge` with both initial stresses global."""
+    return _two_rank_bridge(staged_stresses=False)
+
+
+def _staged_partitioned() -> apeSees:
+    """:func:`_two_rank_bridge` with both initial stresses in the stage."""
+    return _two_rank_bridge(staged_stresses=True)
+
+
 MODELS: dict[str, Callable[[], apeSees]] = {
     "param_stage": _param_stage_model,
     "update_then_stress": _update_then_stress_bridge,
@@ -115,6 +170,8 @@ MODELS: dict[str, Callable[[], apeSees]] = {
     "zero_some": _zero_some_bridge,
     "zero_overlap": _overlap_bridge,
     "partitioned_staged": _partitioned_staged,
+    "partitioned": _partitioned,
+    "staged_partitioned": _staged_partitioned,
 }
 
 
@@ -158,6 +215,41 @@ def test_every_side_channel_verb_is_exercised(
     partitioned = {v for v, names in seen.items()
                    if "partitioned_staged" in names}
     assert partitioned == SIDE
+
+
+@pytest.mark.parametrize("name", ["partitioned", "staged_partitioned"])
+def test_two_records_of_one_scope_join_their_own_on_every_rank(
+    tmp_path: Path, spy: list[Call], monkeypatch: pytest.MonkeyPatch,
+    name: str,
+) -> None:
+    """Per-rank misattribution (#1912): each rank's block writes both
+    initial stresses' ``addToParameter`` calls, record after record, and
+    every call joins its own record (two distinct decls on each rank),
+    with the flip and both zeroings proved in the same emit."""
+    opens: list[tuple[int, int]] = []  # (rank, spy length at the open)
+    real = H5Emitter.partition_open
+
+    def partition_open(self: H5Emitter, rank: int) -> None:
+        opens.append((int(rank), len(spy)))
+        real(self, rank)
+
+    monkeypatch.setattr(H5Emitter, "partition_open", partition_open)
+    joins = list(_side_joins(tmp_path, spy, name))
+    assert {r for r, _at in opens} == {0, 1}
+    ranks: dict[int, set[int]] = {}
+    side = iter(joins)
+    for i, (verb, _args, _kw) in enumerate(spy):
+        if verb not in SIDE:
+            continue
+        v, _stage, got, want = next(side)
+        assert (v, got) == (verb, want)
+        if verb == "addToParameter":
+            rank = [r for r, at in opens if at <= i][-1]  # the open block
+            ranks.setdefault(rank, set()).add(want)
+    assert set(ranks) == {0, 1}
+    assert ranks[0] == ranks[1] and len(ranks[0]) == 2, ranks
+    verbs = {v for v, _s, _g, _w in joins}
+    assert {"flip_element_stage", "set_node_vel"} <= verbs
 
 
 def test_a_node_two_zeroings_name_is_the_first_ones(
