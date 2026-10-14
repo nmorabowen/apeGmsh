@@ -1364,9 +1364,9 @@ LS_TREE = "ls-tree -r -z --name-only origin/main"
 TREE = "\0".join(["FORK_PIN", "LICENSE", "README.md", "scripts/land_pr.py", "tests/test_land_pr.py"]) + "\0"
 
 
-def _tree_real(listing=TREE, rows=()):
+def _tree_real(listing=TREE):
     git = Replay({LS_TREE: listing})
-    return land_pr._real_files(list(rows), git), git
+    return land_pr._real_files(git), git
 
 
 def test_card_1929_owns_fork_pin_without_an_override_1939(monkeypatch, capsys):
@@ -1382,37 +1382,54 @@ def test_card_1929_owns_fork_pin_without_an_override_1939(monkeypatch, capsys):
     assert "check 9: #1930's 2 changed file(s) are inside slice card #1929's Owned list." in capsys.readouterr().out
 
 
-def test_an_extensionless_name_on_main_is_owned_and_main_is_read_once_1939():
+def test_a_leading_extensionless_name_on_main_is_owned_and_main_is_read_once_1939():
+    """T's ruling on #1944: the name opens its list item (trailing prose is fine) and is on main."""
     real, git = _tree_real()
-    card = "### Owned files\n- `FORK_PIN`\n- `LICENSE`\n- `scripts/land_pr.py`\n"
+    card = "### Owned files\n- `FORK_PIN` (all four keys)\n* `LICENSE`\n1. `scripts/land_pr.py`\n"
     assert land_pr._card_paths(card, real) == ["FORK_PIN", "LICENSE", "scripts/land_pr.py"]
     assert git.calls == [LS_TREE]
 
 
-def test_a_new_root_file_the_pr_adds_is_owned_without_reading_main_1939():
-    real, git = _tree_real(rows=[json.loads(_row("Makefile", "added"))])
-    assert land_pr._card_paths("### Owned files\n- `Makefile`\n", real) == ["Makefile"]
-    assert git.calls == []
+def test_a_prose_word_the_pr_adds_as_a_root_file_is_refused_1944_f1():
+    """Review of #1944, F1: with a changed-files route, a PR that adds a root file `suite` made the
+    prose word in this Owned line own it. Only origin/main counts now; main refuses this too."""
+    gh, git = _scope(["scripts/a.py", "suite"], card="### Owned files\n- `scripts/a.py` (runs in the `suite` lane)\n")
+    git.responses[LS_TREE] = TREE
+    with pytest.raises(land_pr.LandError, match=r"check 9: #1218 changes 1 file\(s\)(.|\n)*\n  suite\n"):
+        _run(1218, gh, git)
+    assert not _merged(gh)
 
 
-@pytest.mark.parametrize("line", [
-    pytest.param("- `scripts/a.py` (runs in the `suite` lane; `foo`, `and`, `-`)", id="prose-words"),
-    pytest.param("- `scripts/a.py` (`license`, `License`, `fork_pin`)", id="case"),
-    pytest.param("- `scripts/a.py`, `FORK*`", id="extensionless-glob"),
-    pytest.param("- `scripts/a.py`, `FORK_PIN`", id="sibling-is-scripts/FORK_PIN"),
+def test_a_leading_name_not_on_main_is_refused_even_when_the_pr_adds_it_1939():
+    """A card that creates an extensionless file (a new `Makefile`) needs `scope-ok` (T's ruling)."""
+    gh, git = _scope(["Makefile"], card="### Owned files\n- `Makefile`\n- `scripts/a.py`\n")
+    git.responses[LS_TREE] = TREE
+    with pytest.raises(land_pr.LandError, match=r"check 9: #1218 changes 1 file\(s\)(.|\n)*\n  Makefile\n"):
+        _run(1218, gh, git)
+    assert not _merged(gh)
+
+
+@pytest.mark.parametrize("line, paths", [
+    pytest.param("- `scripts/a.py` (runs in the `suite` lane; `foo`, `and`, `-`)", ["scripts/a.py"], id="prose-words"),
+    pytest.param("- `scripts/a.py` (see `LICENSE`)", ["scripts/a.py"], id="real-file-in-prose"),
+    pytest.param("- new `FORK_PIN`", [], id="mid-line-1497"),
+    pytest.param("- `scripts/a.py`, `FORK_PIN`", ["scripts/a.py"], id="after-a-path"),
+    pytest.param("Owned: `FORK_PIN`", [], id="label-not-a-list-item"),
+    pytest.param("- `license`", [], id="case"),
+    pytest.param("- `-`", [], id="lone-dash"),
 ])
-def test_a_prose_token_still_owns_nothing_1939(line):
-    """A word that is no real file stays dropped; the case of a name counts. A bare name after a
-    path in a list is that path's sibling (#1802), so `scripts/FORK_PIN`, which is not a file."""
+def test_an_extensionless_name_that_does_not_open_a_list_item_owns_nothing_1939(line, paths):
+    """Only the leading span of a list item may be an extensionless name; the case counts."""
     real, _git = _tree_real()
-    assert land_pr._card_paths(f"### Owned files\n{line}\n", real) == ["scripts/a.py"]
+    assert land_pr._card_paths(f"### Owned files\n{line}\n", real) == paths
 
 
-def test_a_real_file_name_used_in_prose_is_owned_1939():
-    """The seam the card names: a backticked word that equals a real root file owns that file,
-    wherever it sits in an Owned line. Prose belongs outside the Owned section."""
-    real, _git = _tree_real()
-    assert land_pr._card_paths("### Owned files\n- `scripts/a.py` (see `LICENSE`)\n", real) == ["scripts/a.py", "LICENSE"]
+def test_a_lone_extensionless_glob_is_not_admitted_1944_f2():
+    """Review of #1944, F2: `FORK*` must not reach `_owned`, where it would glob-match `FORK_PIN`.
+    Revert-proof: without the `_GLOB` guard, a tree holding a file literally named `FORK*` admits it."""
+    real, git = _tree_real("\0".join(["FORK*", "FORK_PIN", "README.md"]) + "\0")
+    assert land_pr._card_paths("### Owned files\n- `FORK*`\n", real) == []
+    assert git.calls == []
 
 
 @pytest.mark.parametrize("listing", [
@@ -1425,7 +1442,7 @@ def test_an_unreadable_tree_refuses_never_admits_1939(listing):
             raise land_pr.subprocess.CalledProcessError(128, ["git", *args])
         return listing
 
-    real = land_pr._real_files([], git)
+    real = land_pr._real_files(git)
     with pytest.raises(land_pr.LandError, match=r"check 9: .*'FORK_PIN'"):
         land_pr._card_paths("### Owned files\n- `FORK_PIN`\n", real)
 
@@ -1444,15 +1461,15 @@ def test_an_unreadable_tree_refuses_check_9_end_to_end_1939():
 
 
 def test_extensionless_names_do_not_weaken_a_negation_1939():
-    """An Owned line that negates still refuses. In an amendment, "- Do not touch `FORK_PIN`" keeps
+    """An Owned line that negates still refuses. In an amendment, "- `FORK_PIN`: do not touch" keeps
     excluding the list after it, as it did when `FORK_PIN` was no path. Revert-proof: reading that
     bullet with `real` turns it into a one-item exclusion and admits `src/b.py`."""
     real, _git = _tree_real()
     with pytest.raises(land_pr.LandError, match=r"check 9: an Owned line negates"):
-        land_pr._card_paths("### Owned files\n- `scripts/a.py` (never touch `FORK_PIN`)\n", real)
-    amendment = "**Card amendment (T):** also edit `src/a.py`.\n\n- Do not touch `FORK_PIN`\n- `src/b.py`\n"
+        land_pr._card_paths("### Owned files\n- `FORK_PIN` (never touch `scripts/a.py`)\n", real)
+    amendment = "**Card amendment (T):** also edit `src/a.py`.\n\n- `FORK_PIN`: do not touch\n- `src/b.py`\n"
     assert land_pr._amendment_paths(amendment, 1939, real) == ["src/a.py"]
-    assert land_pr._amendment_paths("**Card amendment (T):** also edit `FORK_PIN`.\n", 1939, real) == ["FORK_PIN"]
+    assert land_pr._amendment_paths("**Card amendment (T):** add\n- `FORK_PIN`\n", 1939, real) == ["FORK_PIN"]
 
 
 # --- Lesson #1877: checks 10 (red main) and 11 (stale base) ---------------------------------------
