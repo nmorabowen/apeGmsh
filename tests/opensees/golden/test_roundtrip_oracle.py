@@ -178,6 +178,9 @@ CORPUS: tuple[Model, ...] = (
       for b in _B),
     # ... and after the equationConstraint rows (B5-g's 9b'), as the bridge.
     _m("test_reinforce_deck_replay", "_reinforced_fixed_ops", equation=True),
+    # ... and with the bar's CorotTruss cells, which replay after the ties,
+    # in the bridge's slot (#1828).
+    _m("test_reinforce_deck_replay", "_reinforced_fixed_ops", rebar_cells=True),
 )
 
 
