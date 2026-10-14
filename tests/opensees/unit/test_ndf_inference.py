@@ -323,6 +323,30 @@ def test_columnar_unregistered_class_quotes_first_node():
         infer_node_ndf(fem, specs, ndm=3)
 
 
+def test_columnar_path_never_iterates_fanout_rows(monkeypatch):
+    """The fan-out's per-row iterator (which boxes one tuple per element,
+    the ~460 B/gn emit peak of #1920) is never used, on the homogeneous,
+    mixed-arity and strict per-slot routes alike."""
+    from apeGmsh.opensees._internal.build.pg_expand import PGElementFanout
+
+    def _boom(self):
+        raise AssertionError("infer_node_ndf iterated PGElementFanout rows")
+
+    monkeypatch.setattr(PGElementFanout, "__iter__", _boom)
+    monkeypatch.setattr(PGElementFanout, "__getitem__", _boom)
+    fem = _StubFem({
+        "Solid": [[(1, (1, 2, 3, 4, 5, 6, 7, 8))]],
+        "Frame": [[(2, (20, 21))], [(3, (21, 22, 23))]],
+        "Soil": [[(4, (31, 32, 34, 35, 37, 39))], [(5, (32, 33, 34))]],
+    })
+    specs = [_spec("stdBrick", "Solid"),
+             _spec("elasticBeamColumn", "Frame"), _up2d()]
+    out = infer_node_ndf(fem, specs[:2], ndm=3)
+    assert out[1] == 3 and out[23] == 6
+    out2 = infer_node_ndf(fem, specs[2:], ndm=2)
+    assert out2[31] == 3 and out2[35] == 2
+
+
 def test_columnar_empty_class_is_skipped():
     """A class whose specs fan out to no rows is never probed, so even an
     unregistered one does not raise."""
