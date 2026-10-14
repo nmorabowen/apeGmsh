@@ -16,6 +16,7 @@ stale) build. The oracle for each is the slice card's (#1498):
 """
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 from types import ModuleType
@@ -23,7 +24,13 @@ from typing import Any
 
 import pytest
 
-from apeGmsh.opensees._target import BackendInfo, backend_info_of
+from apeGmsh.opensees._target import (
+    BackendInfo,
+    LadrunoOption,
+    LadrunoSchema,
+    _schema_from_obj,
+    backend_info_of,
+)
 from apeGmsh.opensees.emitter import live
 
 _SHA = "a240b9183c0ffee0123456789abcdef012345678"
@@ -307,3 +314,212 @@ def test_parallel_modal_to_native_does_not_stamp_the_in_process_build(
     with h5py.File(out, "r") as f:
         assert "opensees_backend" not in f.attrs
         assert "opensees_build" not in f.attrs
+
+
+# --------------------------------------------------------------------------
+# ladrunoSchema v0 (fork PR #972; slice #1931): the five #972 contract rules
+# --------------------------------------------------------------------------
+def _schema_obj(**over: Any) -> dict[str, Any]:
+    """A v0 schema as the fork emits it (keys sorted), with overrides."""
+    obj: dict[str, Any] = {
+        "build": _SHA,
+        "commands": ["LadrunoTie", "ladrunoBuild", "ladrunoSchema"],
+        "engine": "dl",
+        "options": {
+            "LadrunoRCConcrete": {
+                "-Cd": {"nargs": "list", "since": "PR-155"},
+                "-implexControl": {"nargs": 2, "since": "PR-263"},
+            },
+            "LadrunoRCFiniteStrain": {
+                "-implexControl": {"nargs": 2, "since": "PR-263"},
+            },
+        },
+        "schema_version": 0,
+    }
+    obj.update(over)
+    return obj
+
+
+def _with_schema(
+    raw: Any = None, *, build: Any = _SHA, raises: bool = False, **over: Any,
+) -> ModuleType:
+    """A fork fake whose ``ladrunoSchema()`` returns ``raw`` (or a v0 JSON)."""
+    mod = _fake(build=build)
+    if raises:
+        def _boom() -> str:
+            raise RuntimeError("See stderr output")
+        mod.ladrunoSchema = _boom  # type: ignore[attr-defined]
+    else:
+        text = raw if raw is not None else json.dumps(
+            _schema_obj(**over), sort_keys=True, separators=(",", ":"),
+        )
+        mod.ladrunoSchema = lambda: text  # type: ignore[attr-defined]
+    return mod
+
+
+def test_v0_schema_parses_into_a_hashable_value() -> None:
+    info = backend_info_of(_with_schema())
+    s = info.schema
+    assert s is not None
+    assert (s.schema_version, s.build, s.engine) == (0, _SHA, "dl")
+    assert s.commands == frozenset(
+        {"LadrunoTie", "ladrunoBuild", "ladrunoSchema"}
+    )
+    assert s.option("LadrunoRCConcrete", "-Cd") == LadrunoOption("list", "PR-155")
+    assert s.option("LadrunoRCConcrete", "-implexControl") == LadrunoOption(
+        2, "PR-263"
+    )
+    # kind/build still come from ladrunoBuild alone
+    assert (info.kind, info.build) == ("fork", _SHA)
+    # no bare dict field: the value hashes, and equal probes compare equal
+    again = backend_info_of(_with_schema())
+    assert info == again and hash(info) == hash(again)
+    assert {info, again} == {info}
+
+
+def test_existing_construction_sites_default_schema_none() -> None:
+    info = BackendInfo(kind="fork", build=_SHA, version="3.7.1", source="x")
+    assert info.schema is None
+    assert BackendInfo("stock", None, None, "y").schema is None
+
+
+# Rule 1: schema_version first; anything doubtful reads as unknown.
+@pytest.mark.parametrize("version", [1, -1, "0", 0.0, None, False, True])
+def test_other_schema_version_is_unknown(version: Any) -> None:
+    info = backend_info_of(_with_schema(schema_version=version))
+    assert info.schema is None
+    assert (info.kind, info.build) == ("fork", _SHA)
+
+
+def test_v1_with_a_v0_shape_is_not_read_as_v0() -> None:
+    # A v1 may change the meaning of any other key: even a v0-shaped body
+    # is not trusted under another version.
+    assert _schema_from_obj(_schema_obj(schema_version=1), _SHA) is None
+    assert _schema_from_obj(_schema_obj(), _SHA) is not None
+
+
+@pytest.mark.parametrize("raw", [
+    "{not json", "", "[]", '"a string"', "null", "0",
+    json.dumps({"schema_version": 0}),
+])
+def test_malformed_schema_text_is_unknown(raw: str) -> None:
+    info = backend_info_of(_with_schema(raw))
+    assert info.schema is None
+    assert (info.kind, info.build) == ("fork", _SHA)
+
+
+@pytest.mark.parametrize("raw", [7, b"{}", ["x"], {"schema_version": 0}])
+def test_non_string_schema_is_unknown(raw: Any) -> None:
+    mod = _fake(build=_SHA)
+    mod.ladrunoSchema = lambda: raw  # type: ignore[attr-defined]
+    assert backend_info_of(mod).schema is None
+
+
+def test_raising_schema_is_unknown_not_an_exception() -> None:
+    info = backend_info_of(_with_schema(raises=True))
+    assert info.schema is None
+    assert (info.kind, info.build) == ("fork", _SHA)
+
+
+@pytest.mark.parametrize("over", [
+    {"engine": ""}, {"engine": 3},
+    {"commands": "LadrunoTie"}, {"commands": ["LadrunoTie", 3]},
+    {"commands": ["LadrunoTie", "LadrunoTie"]},
+    {"options": []},
+    {"options": {"LadrunoRCConcrete": []}},
+    {"options": {"LadrunoRCConcrete": {"-x": {"nargs": 1}}}},
+    {"options": {"LadrunoRCConcrete": {"-x": {"nargs": 1, "since": 5}}}},
+    {"options": {"LadrunoRCConcrete": {"-x": {"nargs": True, "since": "P"}}}},
+    {"options": {"LadrunoRCConcrete": {"-x": {"nargs": 1.5, "since": "P"}}}},
+    {"options": {"LadrunoRCConcrete": {
+        "-x": {"nargs": 1, "since": "P", "extra": 0}}}},
+    {"extra": 1},
+])
+def test_wrong_shape_is_unknown(over: dict[str, Any]) -> None:
+    assert backend_info_of(_with_schema(**over)).schema is None
+
+
+def test_missing_key_is_unknown() -> None:
+    obj = _schema_obj()
+    del obj["engine"]
+    assert backend_info_of(_with_schema(json.dumps(obj))).schema is None
+
+
+# The schema's build must agree with ladrunoBuild() of the same module.
+def test_build_mismatch_is_unknown() -> None:
+    text = json.dumps(_schema_obj(build="b" * 40))
+    info = backend_info_of(_with_schema(text))
+    assert info.schema is None
+    assert (info.kind, info.build) == ("fork", _SHA)
+
+
+# Rule 5: no schema leaves kind/build exactly as before.
+def test_build_without_schema_is_unknown_with_kind_and_build_unchanged() -> None:
+    info = backend_info_of(_fake(build=_SHA, critical=True))
+    assert info == BackendInfo(
+        kind="fork", build=_SHA, version="3.7.1", source="opensees",
+    )
+    assert info.schema is None
+    assert info.supports_option("LadrunoRCConcrete", "-Cd") is None
+    assert info.has_command("LadrunoTie") is None
+
+
+@pytest.mark.parametrize("build", [None, "unknown"])
+def test_schema_never_makes_a_build_fork(build: Any) -> None:
+    # Without a usable ladrunoBuild() the schema cannot be checked: unknown.
+    info = backend_info_of(_with_schema(build=build))
+    assert (info.kind, info.build, info.schema) == ("stock", None, None)
+
+
+# Rule 2: a token is supported iff present in options[owner]; unknown is None.
+def test_token_queries_answer_true_false_or_unknown() -> None:
+    known = backend_info_of(_with_schema())
+    assert known.supports_option("LadrunoRCConcrete", "-implexControl") is True
+    assert known.supports_option("LadrunoRCConcrete", "-noSuchToken") is False
+    assert known.supports_option("NoSuchOwner", "-implexControl") is False
+    # a token listed under another owner does not leak across owners
+    assert known.supports_option("LadrunoRCFiniteStrain", "-Cd") is False
+    unknown = backend_info_of(_with_schema(schema_version=1))
+    assert unknown.supports_option("LadrunoRCConcrete", "-implexControl") is None
+    assert unknown.has_command("LadrunoTie") is None
+
+
+# Rule 3: since is opaque, never compared or sorted.
+class _NoOrderStr(str):
+    def _refuse(self, other: object) -> bool:
+        raise AssertionError("since was compared")
+
+    __lt__ = __le__ = __gt__ = __ge__ = _refuse  # type: ignore[assignment]
+
+
+def test_since_is_never_ordered() -> None:
+    obj = _schema_obj(options={"LadrunoRCConcrete": {
+        "-b": {"nargs": 1, "since": _NoOrderStr("PR-99")},
+        "-a": {"nargs": 1, "since": _NoOrderStr("PR-100")},
+    }})
+    s = _schema_from_obj(obj, _SHA)
+    assert s is not None
+    assert s.option("LadrunoRCConcrete", "-a") == LadrunoOption(1, "PR-100")
+    assert s.option("LadrunoRCConcrete", "-b") == LadrunoOption(1, "PR-99")
+    with pytest.raises(TypeError):
+        LadrunoOption(1, "PR-1") < LadrunoOption(1, "PR-2")  # type: ignore[operator]
+    with pytest.raises(TypeError):
+        s < s  # type: ignore[operator]
+
+
+@pytest.mark.parametrize("since", ["", "PR-263", "v9.9.9", "zzz"])
+def test_since_is_kept_verbatim(since: str) -> None:
+    obj = _schema_obj(options={"O": {"-t": {"nargs": 0, "since": since}}})
+    s = _schema_from_obj(obj, _SHA)
+    assert s is not None and s.option("O", "-t") == LadrunoOption(0, since)
+
+
+# Rule 4: commands are per-engine; a query speaks only for that engine.
+def test_command_queries_speak_only_for_the_engine_that_answered() -> None:
+    info = backend_info_of(_with_schema())
+    assert isinstance(info.schema, LadrunoSchema)
+    assert info.has_command("LadrunoTie") is True
+    assert info.has_command("LadrunoStaggeredAnalyze") is False
+    assert info.has_command("LadrunoTie", engine="dl") is True
+    # the classic Tcl binary a subprocess runs is another engine: unknown
+    assert info.has_command("LadrunoTie", engine="classic") is None
