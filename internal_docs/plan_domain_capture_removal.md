@@ -81,7 +81,7 @@ found. They passed here only with `APEGMSH_OPENSEES_TCL` set to
 |---|---|---|---|---|
 | Nodal (C1) | `tests/test_results_recorder_tag_parity.py::test_node_displacement_rows_are_the_labelled_nodes` (live domain) | `tests/test_results_mpco_emit_real.py::test_openseespy_full_cycle`; `::test_tcl_subprocess_full_cycle` (Tcl). Both assert only that the apex's `displacement_z` is negative: a sign, not a value | n/a | **Proven on `.out`**; MPCO partial (G16) |
 | Element nodal forces (C2) | `tests/test_results_recorder_tag_parity.py::test_elements_global_force_rows_are_the_labelled_elements` (live domain); `tests/test_results_recorder_transcoder_nodal_forces_real.py::test_elastic_beam_3d_global_and_local_three_way_agreement` (Tcl) | `tests/test_results_mpco_nodal_real.py::test_elastic_beam_3d_global_and_local_force` (Tcl): the global and local force values match the closed form, then the test **fails** at line 158, where the element-id filter on its stub model returns `[]` | n/a | **Proven on `.out`**; MPCO values pass, the test does not (G9) |
-| Gauss, continuum (C3) | `tests/test_results_recorder_tag_parity.py::test_gauss_stress_rows_are_the_labelled_elements` (live domain); `tests/test_results_recorder_transcoder_gauss_real.py::test_tet_stress_full_cycle_through_transcoder` (Tcl) | `tests/test_results_mpco_element_real.py::test_tet_stress_full_cycle` (Tcl) | n/a | **Proven for a tet**; other families unproven (G7) |
+| Gauss, continuum (C3) | `tests/test_results_recorder_tag_parity.py::test_gauss_stress_rows_are_the_labelled_elements` (live domain); `tests/test_results_recorder_transcoder_gauss_real.py::test_tet_stress_full_cycle_through_transcoder` (Tcl) | `tests/test_results_mpco_element_real.py::test_tet_stress_full_cycle` (Tcl) checks the slab shape, the element index and the Gauss coordinate, but for values only `stress_zz < 0` and `abs(stress_zz) > 1e3` (:168-172): a sign and a magnitude floor | n/a | **Proven on `.out` for a tet**; MPCO partial (G16); other families unproven (G7) |
 | Plane-strain `stress_zz` (C3) | `tests/opensees/integration_ladruno/test_stress_zz_plane_strain_live.py::test_out_recorder_round_trips_the_promoted_response` (fork-only) | n/a | n/a | **Proven on the fork only** |
 | Per-material, `damage` / Tri31 strain (C4) | none: spec emit skips Tri31 strain and has no `damage` token | reader reads `material.damage` when the user hand-writes the token; spec `emit_mpco` maps no `damage` | `from_ladruno`: `tests/opensees/integration_ladruno/test_concrete_damage_capture_live.py::test_ladruno_brick_tension_damage_capture_and_ladruno_read` (fork-only) | **Gap** on stock (G5) |
 | Line stations, `section force` (C5) | the recorded file only: `tests/test_results_recorder_tag_parity.py::test_line_station_section_force_file_holds_the_labelled_elements`; transcode on a minimal FEM: `tests/test_results_recorder_transcoder_line_stations_real.py::test_force_beam_3d_lobatto5_aggregated_three_way_agreement` (Tcl); on a real FEMData the transcode crashes (#1741, open) | `tests/test_results_mpco_line_real.py::test_force_beam_3d_aggregated_section`, `::test_force_beam_3d_bare_section` (Tcl) | n/a | **Proven on MPCO**; `.out` blocked by #1741 (G3) |
@@ -205,8 +205,9 @@ to use DomainCapture for what their own route cannot do:
   emitters write for a deferred category ("Use domain capture (Phase 7)");
 - `spec/_emit.py:450-457`: on `.out` a nodes record with `n_steps=` and no
   `dt=` warns, is emitted as every-step, and says to "use domain capture
-  (Phase 7) for step-based cadence". DomainCapture itself refuses `n_steps=`
-  (`capture/spec.py`, the cadence check), so the advice is wrong even today;
+  (Phase 7) for step-based cadence". On DomainCapture the `n_steps=` keyword is
+  refused (`capture/spec.py:983-998`); cadence there comes from the loop that
+  calls `step(t)`;
 - the `spec/_resolved.py:290` docstring.
 
 `test_recorder_declaration_emit.py` asserts the text. Fibres and layers can point
@@ -263,7 +264,9 @@ caller's `t`. `from_recorders` reads one stage per call (`stage_id=`), so a
 three-stage run is three `Results`. `from_mpco` keeps all stages in one file but
 labels each `transient`, so `static` is lost. Cadence differs too. `.out`
 honours `dt=` but not `n_steps=`: a nodes record with `n_steps=` warns and
-records every step (`spec/_emit.py:450-457`). MPCO honours a cadence only as
+records every step (`spec/_emit.py:450-457`). Only `_emit_nodes` warns. An
+element record (`elements`, `gauss`, `line_stations`) with `n_steps=` and no
+`dt=` records every step without a warning. MPCO honours a cadence only as
 one `-T` for the whole file, the smallest `dt` across records, or failing that
 the smallest `nsteps` (`_aggregate_cadence`, `spec/_emit.py:921-932`), so
 per-record cadence is lost. Neither can sample arbitrary instants. *Question:*
@@ -325,12 +328,15 @@ plan, or re-home it, for example on the Ladruno recorder?
 recommends `ops.domain_capture` for a tight FD loop, to skip the file round trip
 (C11). *Question:* is a recorder round trip per evaluation acceptable there?
 
-**G16: MPCO nodal values are checked only by sign.** Both MPCO nodal proofs
-(`test_results_mpco_emit_real.py::test_openseespy_full_cycle` and
+**G16: MPCO nodal and Gauss values are checked only by sign.** Both MPCO nodal
+proofs (`test_results_mpco_emit_real.py::test_openseespy_full_cycle` and
 `::test_tcl_subprocess_full_cycle`) assert only that the apex's
-`displacement_z` is negative. Nodal parity is proven on `.out`, by the
-live-domain test, but not on MPCO. *Question:* does MPCO need a nodal value
-test against the live domain before docs move to it?
+`displacement_z` is negative. The MPCO Gauss proof
+(`test_results_mpco_element_real.py::test_tet_stress_full_cycle`, :168-172)
+asserts only `stress_zz < 0` and `abs(stress_zz) > 1e3`. Nodal and tet Gauss
+parity are proven on `.out`, by the live-domain tests, but not on MPCO.
+*Question:* does MPCO need nodal and Gauss value tests against the live domain
+before docs move to it?
 
 **G17: MPCO elastic-beam line stations have no value oracle.**
 `test_results_mpco_local_force.py::test_results_read_line_stations_returns_two_station_slab`
@@ -373,9 +379,9 @@ These are not gaps, because a replacement exists. Step 3 breaks without them:
   ADR 0043. `git grep -Iil "capture_modes"` adds `readers/_protocol.py`. That is
   15, run on `2dfe0390`.
 - Each test cited in §3 ran green with the venv Python, except the MPCO
-  nodal-forces test below. Green is not the same as proven: §3 marks two green
-  tests partial (G16, G17), because they check only a sign, a shape or
-  self-consistency. The (Tcl) rows needed `APEGMSH_OPENSEES_TCL` set; without
+  nodal-forces test below. Green is not the same as proven: §3 marks four green
+  tests partial (G16, G17), because they check only a sign, a magnitude floor,
+  a shape or self-consistency. The (Tcl) rows needed `APEGMSH_OPENSEES_TCL` set; without
   it they skip.
 - `test_results_mpco_nodal_real.py::test_elastic_beam_3d_global_and_local_force`
   passes its force-value assertions and then fails at the id filter on its stub
