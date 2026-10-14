@@ -565,7 +565,11 @@ def refuse_multiplied_mp_constraints(
     Writing each record on one rank instead is exact for a static solve
     but not for ``eigen``: a rank that holds no ``PenaltyMP_FE`` disagrees
     with the others in ``ArpackSOE``'s diagonal-mass flag, and the spectrum
-    collapses to 1.0. So the emit refuses.
+    collapses to 1.0. So the emit refuses. An ``enforce="equation"`` tie
+    is written as an ``equationConstraint`` on every rank that holds its
+    slave or a master, so a tie spanning ranks is refused the same way
+    (#1724 item 1); its only remedy is a serial run, since
+    ``Transformation`` is not an equation-tie handler.
 
     The handler checked is the one each analysis runs under:
 
@@ -645,11 +649,36 @@ def refuse_multiplied_mp_constraints(
 def _refuse_copies(
     names: "Sequence[str]", plans: "Iterable[_RankConstraintPlan]",
 ) -> None:
-    """Raise when a plan in ``plans`` writes a record another rank writes."""
+    """Raise when a plan in ``plans`` writes a record another rank writes.
+
+    A replicable record is flagged by its own plan (``replicated_records``).
+    An ``enforce="equation"`` tie is written on every rank that holds its
+    slave or a master (``equation_records``), so it is copied when two
+    plans or more carry the same record (#1724 item 1).
+    """
+    plans = list(plans)
     copied = next((p.replicated_records for p in plans
                    if p.replicated_records), ())
     if not copied:
-        return
+        writers: dict[int, int] = {}
+        for p in plans:
+            for eq in p.equation_records:
+                writers[id(eq)] = writers.get(id(eq), 0) + 1
+        eq = next((eq for p in plans for eq in p.equation_records
+                   if writers[id(eq)] > 1), None)
+        if eq is None:
+            return
+        name = getattr(eq, "name", None) or "<unnamed>"
+        slave = getattr(eq, "slave_node", "?")
+        raise BridgeError(
+            f"A partitioned emit would write the equationConstraint tie "
+            f"{name!r} (slave node {slave}) on {writers[id(eq)]} ranks under "
+            f"the constraint handler {', '.join(names)}. Each rank's copy "
+            "assembles its own penalty or multiplier, so the partitioned "
+            "model would silently answer stiffer than the serial one "
+            "(#1625). Nothing was written. Run serially "
+            "(ops.tcl(path, flat=True))."
+        )
     rec = copied[0]
     kind = getattr(rec, "kind", type(rec).__name__)
     name = getattr(rec, "name", None) or "<unnamed>"

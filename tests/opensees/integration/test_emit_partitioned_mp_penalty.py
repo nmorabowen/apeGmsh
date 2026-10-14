@@ -403,3 +403,78 @@ def diaphragm_lines_by_rank_any(text: str) -> "dict[int, int]":
             if s.startswith("rigidDiaphragm"):
                 out[rank] = out.get(rank, 0) + 1
     return out
+
+
+# ---------------------------------------------------------------------------
+# An equation tie spanning ranks (#1724 item 1)
+# ---------------------------------------------------------------------------
+
+
+def _cross_rank_pair(fem) -> "tuple[int, int]":
+    """Two plate nodes, each held by one partition only, a different one."""
+    held: dict[int, set[int]] = {}
+    for idx, p in enumerate(fem.partitions):
+        for n in np.asarray(p.node_ids):
+            held.setdefault(int(n), set()).add(idx)
+    nodes = [plate_node(fem, x, y) for (x, y) in GRID]
+    for a in nodes:
+        for b in nodes:
+            if len(held[a]) == 1 and len(held[b]) == 1 and held[a] != held[b]:
+                return a, b
+    raise AssertionError("no pair of nodes on two different partitions")
+
+
+def _equation_tie_ops(name: str, *, cross: bool, serial_chain: bool = False):
+    """The 2-partition plate without the diaphragm, plus an
+    ``enforce="equation"`` tie between nodes on two ranks (``cross``) or
+    on one -> ``(ops, master_node, slave_node)``."""
+    fem, grounds, master = diaphragm_plate(2)
+    a, b = _cross_rank_pair(fem) if cross else _one_rank_pair(fem)
+    fem = fem.with_constraint(InterpolationRecord(
+        kind=ConstraintKind.TIE, name="eq", slave_node=b, master_nodes=[a],
+        weights=np.array([1.0]), dofs=[3], enforce="equation"))
+    ops = declare_model(fem, grounds, master)
+    chain(ops, name, 1 if serial_chain else 2)
+    return ops, a, b
+
+
+def _equation_lines(text: str, a: int, b: int) -> int:
+    return sum(1 for ln in text.splitlines()
+               if ln.strip() == f"equationConstraint {b} 3 1.0 {a} 3 -1.0")
+
+
+@pytest.mark.parametrize("name", ["Penalty", "Lagrange", "none"])
+def test_an_equation_tie_spanning_ranks_is_refused(tmp_path, name):
+    """Each rank holding the slave or the master writes the tie, so a
+    multiplying handler (declared, or the auto-emitted Lagrange) assembles
+    it twice. Refused before anything is written, naming the tie."""
+    ops, _a, b = _equation_tie_ops(name, cross=True)
+    deck = tmp_path / "model.tcl"
+    deck.write_text("SENTINEL\n", encoding="utf-8")
+    with pytest.raises(BridgeError) as err:
+        emit(ops, deck)
+    msg = str(err.value)
+    assert "#1625" in msg and "'eq'" in msg and f"(slave node {b})" in msg
+    assert "on 2 ranks" in msg and "flat=True" in msg
+    assert ("Lagrange" if name == "none" else name) in msg
+    assert deck.read_text(encoding="utf-8") == "SENTINEL\n"
+    assert [f.name for f in tmp_path.iterdir()] == ["model.tcl"]
+
+
+@pytest.mark.parametrize("name", ["Penalty", "Lagrange", "none"])
+def test_an_equation_tie_held_by_one_rank_is_not_refused(tmp_path, name):
+    """Both nodes on one partition: one rank writes the tie, so no handler
+    multiplies it and the deck holds exactly one copy."""
+    ops, a, b = _equation_tie_ops(name, cross=False)
+    text = emit(ops, tmp_path / "model.tcl")
+    assert _equation_lines(text, a, b) == 1
+
+
+@pytest.mark.parametrize("name", ["Penalty", "Lagrange", "none"])
+def test_the_serial_remedy_writes_the_spanning_equation_tie_once(tmp_path, name):
+    """``flat=True``, the refusal's only remedy, writes the deck with one
+    copy of the tie."""
+    ops, a, b = _equation_tie_ops(name, cross=True, serial_chain=True)
+    text = emit(ops, tmp_path / "model.tcl", flat=True)
+    assert "getPID" not in text
+    assert _equation_lines(text, a, b) == 1
