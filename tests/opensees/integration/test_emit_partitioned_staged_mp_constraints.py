@@ -782,3 +782,93 @@ def test_ghost_replays_the_owners_exact_fixity_vector(
     rank1 = _stage_rank_lines(_emit(ops, tmp_path))[(1, 1)]
     expected = "fix 1 " + " ".join(str(d) for d in dofs)
     assert expected in rank1, f"expected {expected!r} in {rank1}"
+
+
+# ===========================================================================
+# Defect 3 — a stage-claimed equation tie wrote no equationConstraint
+# (#1979, found by the review of #1977)
+# ===========================================================================
+
+
+def _frame_with_cross_rank_equation_tie() -> FEMStub:
+    """``make_two_column_frame_partitioned`` plus an ``enforce="equation"``
+    tie of slave node 4 (rank 1) to masters 1 and 2 (rank 0): the tie
+    spans both ranks, so ADR 0068 Open item 2 writes it on each."""
+    fem = make_two_column_frame_partitioned()
+    fem.add_surface_constraints([
+        InterpolationRecord(
+            kind=ConstraintKind.TIE,
+            slave_node=4, master_nodes=[1, 2],
+            weights=np.array([0.5, 0.5]), dofs=[1, 2, 3],
+            enforce="equation", name="x_eq",
+        ),
+    ])
+    return fem
+
+
+def _equation_tie_stages(handler: str, *, claim: bool) -> apeSees:
+    """Two stages under ``handler``; stage 2 claims the tie when ``claim``,
+    otherwise the tie stays global (the ADR 0068 Open item 2 oracle)."""
+    ops = _frame_ops(_frame_with_cross_rank_equation_tie())
+    ops.fix(pg="Base", dofs=(1, 1, 1, 1, 1, 1))
+    for i in (1, 2):
+        with ops.stage(name=f"s{i}") as s:
+            if claim and i == 2:
+                s.tie(name="x_eq")
+            chain = _mp_chain(ops)
+            chain["constraints"] = (
+                ops.constraints.Penalty(alpha_sp=1e12, alpha_mp=1e12)
+                if handler == "Penalty" else ops.constraints.Lagrange())
+            s.analysis(**chain)
+            s.run(n_increments=1)
+    return ops
+
+
+def _equation_rows(lines: "list[str]") -> "list[str]":
+    return [ln for ln in lines if ln.startswith("equationConstraint ")]
+
+
+def test_stage_claimed_equation_tie_matches_the_global_tie(tmp_path) -> None:
+    """The claimed tie writes the rows the same tie writes when declared
+    globally, on the same ranks: three per-DOF rows on rank 0 (masters)
+    and on rank 1 (slave). Before #1979 the stage fan-out never wrote
+    ``plan.equation_records``, so the claimed deck held **zero** rows and
+    the analysis ran without the tie, while the ghosts it needed were
+    still declared."""
+    oracle = _stage_rank_lines(
+        _emit(_equation_tie_stages("Lagrange", claim=False), tmp_path, "g.tcl"))
+    claimed = _stage_rank_lines(
+        _emit(_equation_tie_stages("Lagrange", claim=True), tmp_path, "s.tcl"))
+
+    for rank in (0, 1):
+        want = _equation_rows(oracle[(-1, rank)])
+        assert len(want) == 3, f"oracle rank {rank}: {oracle[(-1, rank)]}"
+        assert _equation_rows(claimed.get((1, rank), [])) == want, (
+            f"stage 2 rank {rank} lost the stage-claimed equation tie: "
+            f"{claimed.get((1, rank))}"
+        )
+        # A claimed tie is written by its stage only.
+        assert _equation_rows(claimed.get((-1, rank), [])) == []
+        assert _equation_rows(claimed.get((0, rank), [])) == []
+    assert "equationConstraint 4 1 1.0 1 1 -0.5 2 1 -0.5" in want
+
+    # INV-2: each rank declares the nodes it does not own before the rows.
+    for rank, foreign in ((0, ("node 4 ",)), (1, ("node 1 ", "node 2 "))):
+        block = claimed[(1, rank)]
+        first_row = block.index(_equation_rows(block)[0])
+        for prefix in foreign:
+            decl = next(i for i, ln in enumerate(block) if ln.startswith(prefix))
+            assert decl < first_row, f"rank {rank}: {prefix!r} after rows: {block}"
+
+
+def test_stage_claimed_equation_tie_spanning_ranks_is_refused_under_penalty(
+    tmp_path,
+) -> None:
+    """The claiming stage declares ``Penalty``: each rank's copy adds its
+    own penalty term, so #1963's refusal covers the stage route too and
+    nothing is written."""
+    deck = tmp_path / "deck.tcl"
+    with pytest.raises(BridgeError, match="equationConstraint tie 'x_eq'") as err:
+        _emit(_equation_tie_stages("Penalty", claim=True), tmp_path)
+    assert "on 2 ranks" in str(err.value) and "Penalty" in str(err.value)
+    assert not deck.exists()
