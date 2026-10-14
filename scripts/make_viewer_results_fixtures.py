@@ -68,6 +68,11 @@ and ``extrap.oracle.json``, Python's Gauss-to-node extrapolation on them, the
 oracle the app's ``gauss_node`` / ``gauss_node_discrete`` /
 ``cell_averaged`` contours are tested against (``extrapolation_fixtures``).
 
+``--slice-oracle`` (V4e3, #1904; committed) writes ``slice.oracle.json``:
+PyVista's slice of small tet, hex and wedge solids through the Qt backend's
+``PyVistaBackend.slice_layer``, alone and trimmed by other planes, the oracle
+of the app's cut-face caps (``slice_oracle``). It needs pyvista, not gmsh.
+
 ``--contour`` (V4c1, #1756; committed) writes the contour pairs: the same
 staged model as ``fixtures/contour_staged.h5`` with ``displacement_x/y/z``
 closed forms of the node coordinates (``contour_fixtures``), and
@@ -811,6 +816,157 @@ def extrapolation_fixtures(out_dir: Path) -> None:
     print("wrote extrap.oracle.json")
 
 
+def _slice_meshes() -> dict:
+    """The V4e3 oracle meshes (#1904): small tet, hex and wedge solids, built in numpy (gmsh corner order)."""
+    rng = np.random.default_rng(1904)
+
+    def grid(nx: int, ny: int, nz: int, h: tuple[float, float, float]) -> tuple[np.ndarray, callable]:
+        pts = np.array([[i * h[0], j * h[1], k * h[2]] for k in range(nz + 1) for j in range(ny + 1) for i in range(nx + 1)], dtype=float)
+        idx = lambda i, j, k: (k * (ny + 1) + j) * (nx + 1) + i  # noqa: E731
+        return pts, idx
+
+    def corners(idx, i, j, k):
+        return [idx(i, j, k), idx(i + 1, j, k), idx(i + 1, j + 1, k), idx(i, j + 1, k),
+                idx(i, j, k + 1), idx(i + 1, j, k + 1), idx(i + 1, j + 1, k + 1), idx(i, j + 1, k + 1)]
+
+    hex_pts, hidx = grid(3, 2, 2, (1.0, 1.5, 0.75))
+    hexes = [corners(hidx, i, j, k) for k in range(2) for j in range(2) for i in range(3)]
+    tet_pts, tidx = grid(2, 2, 2, (1.0, 1.0, 1.0))
+    # Interior nodes moved off the grid (tet faces stay planar), so no cut is axis-trivial.
+    for p in range(len(tet_pts)):
+        if all(0 < tet_pts[p, a] < 2 for a in range(3)):
+            tet_pts[p] += rng.uniform(-0.2, 0.2, 3)
+    kuhn = [[0, 1, 2, 6], [0, 2, 3, 6], [0, 3, 7, 6], [0, 7, 4, 6], [0, 4, 5, 6], [0, 5, 1, 6]]
+    tets = [[c[q] for q in t] for k in range(2) for j in range(2) for i in range(2) for c in [corners(tidx, i, j, k)] for t in kuhn]
+    w_pts, widx = grid(2, 2, 2, (1.0, 1.0, 0.8))
+    wedges = []
+    for k in range(2):
+        for j in range(2):
+            for i in range(2):
+                c = corners(widx, i, j, k)
+                wedges.append([c[0], c[1], c[2], c[4], c[5], c[6]])
+                wedges.append([c[0], c[2], c[3], c[4], c[6], c[7]])
+    return {"tet": (tet_pts, tets), "hex": (hex_pts, hexes), "prism": (w_pts, wedges)}
+
+
+def _slice_fields(pts: np.ndarray, n_cells: int, shape: str) -> dict:
+    """The oracle's fields: ``f`` nonlinear nodal (NaN at two tet nodes: no data), ``L`` linear nodal, ``g`` per cell."""
+    x, y, z = pts[:, 0], pts[:, 1], pts[:, 2]
+    f = np.sin(1.3 * x) + y * y * z - 0.5 * x * z + 0.1 * np.arange(len(pts))
+    if shape == "tet":
+        f[[13, 14]] = np.nan
+    return {"f": f, "L": 2.0 * x - y + 3.0 * z + 1.0, "g": 10.0 + np.arange(n_cells, dtype=float)}
+
+
+def _json_floats(a: np.ndarray) -> list:
+    return [None if np.isnan(v) else float(v) for v in np.asarray(a, dtype=float).ravel()]
+
+
+def slice_oracle(out_dir: Path) -> None:
+    """V4e3 (#1904): PyVista's slice of tet, hex and wedge solids, the oracle of the app's cut face.
+
+    The slice is the Qt backend's own, ``PyVistaBackend.slice_layer`` (the
+    ADR 0083 S3 cut-face pass), on an ``UnstructuredGrid`` carrying the
+    fields of ``_slice_fields``. The scene IR stores points as float32
+    (``PointSet``), so the same filter chain is also run here in float64
+    and checked to round to exactly the backend's points, with identical
+    values; the oracle records the float64 points and area. Each case
+    records the plane in the app's form (``n·p + constant >= 0`` is kept)
+    and the other planes that trim it. ``test/clip/slice.test.ts`` compares
+    the app's ``sliceSolids``.
+
+    Two runs per case. ``vtk``: the grid also carries one vertex cell, so
+    ``vtkCutter`` takes its generic path, exact to round-off (measured: cut
+    points 9e-16 from the exact edge intersections): the 1e-9 oracle. A
+    trimmed case's ``vtk`` clips that same slice as an ``UnstructuredGrid``
+    (``vtkTableBasedClipDataSet``, exact), because ``slice_layer`` clips a
+    ``PolyData`` and pyvista sends that to ``vtkClipPolyData``, whose clip
+    scalars are float (points up to 2e-9 off the trim plane, measured);
+    ``backend`` says which cases are ``slice_layer``'s output verbatim.
+    ``vtk_fast``: ``slice_layer`` verbatim on the bare grid, every cell linear
+    3-D, where ``vtkCutter`` delegates to ``vtk3DLinearGridPlaneCutter``,
+    whose cut points sit up to 3e-8 off the exact intersections (measured,
+    VTK 9.5.2): what the Qt cap drew, checked to 1e-7.
+    """
+    import json
+    import types
+
+    import pyvista as pv
+
+    from apeGmsh.viewers.backends.pyvista_qt import PyVistaBackend
+    from apeGmsh.viewers.scene_ir import ClipPlaneSpec
+
+    vtk_type = {"tet": pv.CellType.TETRA, "hex": pv.CellType.HEXAHEDRON, "prism": pv.CellType.WEDGE}
+    meshes, cases = {}, []
+    for shape, (pts, cells) in _slice_meshes().items():
+        cells_np = np.asarray(cells, dtype=np.int64)
+        fields = _slice_fields(pts, len(cells_np), shape)
+        fast = pv.UnstructuredGrid({vtk_type[shape]: cells_np}, pts)
+        # The same cells and one vertex cell (at point 0), last: vtkCutter's generic path.
+        npc = cells_np.shape[1]
+        conn = np.concatenate([np.hstack([np.full((len(cells_np), 1), npc), cells_np]).ravel(), [1, 0]])
+        grid = pv.UnstructuredGrid(conn, np.array([vtk_type[shape]] * len(cells_np) + [pv.CellType.VERTEX], dtype=np.uint8), pts)
+        for gg, extra in ((fast, []), (grid, [np.nan])):
+            gg.point_data["f"] = fields["f"]
+            gg.point_data["L"] = fields["L"]
+            gg.cell_data["g"] = np.concatenate([fields["g"], extra])
+        meshes[shape] = {"points": _json_floats(pts), "cells": [int(v) for v in cells_np.ravel()], **{k: _json_floats(v) for k, v in fields.items()}}
+        mid = (pts.min(axis=0) + pts.max(axis=0)) / 2
+        unit = lambda v: np.asarray(v, dtype=float) / np.linalg.norm(v)  # noqa: E731
+        n1, n2, n3 = unit([0.31, 0.47, 0.83]), unit([0.9, -0.2, 0.15]), unit([-0.1, 0.95, -0.3])
+        o1, o2, o3 = mid + [0.013, -0.021, 0.017], mid + [0.11, 0.05, -0.07], mid + [-0.04, 0.09, 0.03]
+        for name, (n, o), trims in [
+            ("oblique", (n1, o1), []),
+            ("trimmed", (n1, o1), [(n2, o2)]),
+            ("trimmed2", (n2, o2), [(n1, o1), (n3, o3)]),
+        ]:
+            spec = ClipPlaneSpec(origin=tuple(o), normal=tuple(n))
+            trim_specs = [ClipPlaneSpec(origin=tuple(to), normal=tuple(tn)) for tn, to in trims]
+            plane = lambda nn, oo: {"normal": [float(v) for v in nn], "constant": float(-np.dot(nn, oo))}  # noqa: E731
+            case = {"mesh": shape, "case": name, "plane": plane(n, o), "trims": [plane(tn, to) for tn, to in trims]}
+            for key, gg, exact in (("vtk", grid, True), ("vtk_fast", fast, False)):
+                layer = PyVistaBackend.slice_layer(None, types.SimpleNamespace(dataset=gg), spec, layer_id=f"{shape}-{name}", trim=trim_specs)
+                if layer is None:
+                    raise SystemExit(f"slice oracle: {shape} {name} cut nothing")
+                # The same chain as slice_layer, in float64. Its trim clips a PolyData, which
+                # pyvista hands to vtkClipPolyData (float clip scalars: points up to 2e-9 off the
+                # trim plane, measured); the exact run clips the same slice as an
+                # UnstructuredGrid instead (vtkTableBasedClipDataSet, exact to round-off).
+                cut = gg.slice(normal=spec.normal, origin=spec.origin, generate_triangles=True)
+                for t in trim_specs:
+                    cut = (cut.cast_to_unstructured_grid() if exact else cut).clip(normal=t.normal, origin=t.origin, invert=False)
+                full = cut.extract_surface().triangulate().cast_to_unstructured_grid()
+                p = np.asarray(full.points, dtype=np.float64)
+                tris = np.asarray(full.cells_dict[int(pv.CellType.TRIANGLE)], dtype=np.int64)
+                if len(tris) != full.n_cells:
+                    raise SystemExit(f"slice oracle: {shape} {name}: {full.n_cells} cells, {len(tris)} triangles")
+                e1, e2 = p[tris[:, 1]] - p[tris[:, 0]], p[tris[:, 2]] - p[tris[:, 0]]
+                area = float(0.5 * np.linalg.norm(np.cross(e1, e2), axis=1).sum())
+                got = {fl.name: fl for fl in layer.fields}
+                if exact and trim_specs:
+                    # Not the backend's own trim: the same cut, trimmed exactly; its area agrees with the backend's to its float clip.
+                    lp = np.asarray(layer.points.coords, dtype=np.float64)
+                    lt = np.asarray(layer.cells.blocks["triangle"], dtype=np.int64)
+                    la = float(0.5 * np.linalg.norm(np.cross(lp[lt[:, 1]] - lp[lt[:, 0]], lp[lt[:, 2]] - lp[lt[:, 0]]), axis=1).sum())
+                    if abs(la - area) > 1e-6 * area:
+                        raise SystemExit(f"slice oracle: {shape} {name}: the exact trim's area {area} is not the backend's {la}")
+                else:
+                    if not np.array_equal(p.astype(np.float32), layer.points.coords) or not np.array_equal(tris, layer.cells.blocks["triangle"]):
+                        raise SystemExit(f"slice oracle: {shape} {name}: the float64 chain is not the backend's slice")
+                    for k in ("f", "L"):
+                        if got[k].location != "point" or not np.array_equal(np.asarray(full.point_data[k]), got[k].values, equal_nan=True):
+                            raise SystemExit(f"slice oracle: {shape} {name}: {k} differs from the backend's")
+                    if got["g"].location != "cell" or not np.array_equal(np.asarray(full.cell_data["g"]), got["g"].values):
+                        raise SystemExit(f"slice oracle: {shape} {name}: g differs from the backend's")
+                case[key] = {"points": _json_floats(p), "tris": [int(v) for v in tris.ravel()], "f": _json_floats(full.point_data["f"]),
+                             "L": _json_floats(full.point_data["L"]), "g": _json_floats(full.cell_data["g"]), "area": area,
+                             "backend": not (exact and trim_specs)}
+            cases.append(case)
+    oracle = {"generator": "scripts/make_viewer_results_fixtures.py --slice-oracle", "slice": "PyVistaBackend.slice_layer", "meshes": meshes, "cases": cases}
+    (out_dir / "slice.oracle.json").write_text(json.dumps(oracle, separators=(",", ":")), encoding="utf8")
+    print(f"wrote slice.oracle.json: {len(cases)} cases")
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--measure", type=Path, help="write the measured files a, b, c into this directory")
@@ -824,7 +980,11 @@ def main() -> None:
     ap.add_argument("--elements", action="store_true", help="write the V4c2a element-contour pairs (elem_*.h5 + .results.h5)")
     ap.add_argument("--elements-measure", type=Path, help="write the V4c2a measured solid (stamped, G = 6) into this directory")
     ap.add_argument("--extrapolation", action="store_true", help="write the V4c2b extrapolation pairs (extrap_*.h5 + .results.h5) and Python's oracle")
+    ap.add_argument("--slice-oracle", action="store_true", help="write slice.oracle.json, PyVista's slice of tet/hex/wedge solids (V4e3)")
     args = ap.parse_args()
+    if args.slice_oracle:
+        slice_oracle(HERE)
+        return
     if args.extrapolation:
         extrapolation_fixtures(HERE)
         return

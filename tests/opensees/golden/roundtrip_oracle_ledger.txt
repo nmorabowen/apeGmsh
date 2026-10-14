@@ -25,9 +25,9 @@
 # Deadline: 2026-12-11. The ledger is empty by then, or KC4 applies (K2 spec, #1201).
 #
 # Not in this oracle: the golden emit corpus (tests/opensees/golden/cells, 86 cells).
-# It is built on FEMStub, so its archives are bridge-only and not replayable;
-# tracked in #1797.
-N_WAIVED_ORACLE = 35
+# It is built on FEMStub, so its archives are bridge-only and not replayable,
+# by design (#1797; golden/README.md, "Bridge-only by design").
+N_WAIVED_ORACLE = 33
 test_h5_apesees_cuts::_build_minimal_ops S BridgeOnlyArchiveError:no-neutral-zone  # #1797: FEMStub model, bridge-only archive
 test_h5_builder_scope_replay::build_mixed_ndf_bridge B 81b21ebd6ecc9ea2  # declaration order: section, geomTransf, beamIntegration and damping move
 test_h5_builder_scope_replay::_staged_bridge[staged_pg=Rock] B 068f56013233fa51  # declaration order: section, geomTransf, beamIntegration and damping move
@@ -43,7 +43,7 @@ test_h5_names_sidecar::_build[named=True] B 645176bf20b787b7  # declaration orde
 test_h5_decl_params::_params_frame B b57726281559dbee  # declaration order: section and geomTransf move
 test_h5_decl_params::_broad_staged S BridgeOnlyArchiveError:no-neutral-zone  # #1797: FEMStub model, bridge-only archive
 test_h5_decl_params::_broad_frame B c9cbbc78f2ad982a  # declaration order: section, geomTransf and constraints move
-test_h5_decl_params::_broad_partitioned S BridgeOnlyArchiveError:no-neutral-zone  # #1797: FEMStub model, bridge-only archive
+test_h5_decl_params::_broad_partitioned S BridgeOnlyArchiveError:no-neutral-zone  # #1797: golden-corpus model (build_model), bridge-only by design
 test_h5_initial_stress::_build_frame[with_initial_stress=False] B 0fd281e8f3f3b7fe  # declaration order: geomTransf moves
 test_h5_initial_stress::_build_frame[with_initial_stress=True] B 0fd281e8f3f3b7fe  # declaration order: geomTransf moves
 test_h5_param_tags::_update_then_stress_bridge A 0c126bac02a40165  # integral floats re-emitted as integers
@@ -58,8 +58,6 @@ test_h5_solve_stamp::_frame_bridge[analysis=True] B 19034b94cb3ddbbd  # declarat
 test_h5_stages_reader::_real_two_stage_bridge A a689fc8f9e94a573  # integral floats re-emitted as integers
 test_h5_stages_reader::_real_kitchen_sink_bridge A 1cbec0cd483137d6  # integral floats re-emitted as integers
 test_h5_stages_replay::_no_param_two_stage_bridge A a689fc8f9e94a573  # integral floats re-emitted as integers
-test_h5_stages_writer::_build_two_stage_bridge S BridgeOnlyArchiveError:no-neutral-zone  # #1797: FEMStub model, bridge-only archive
-test_h5_stages_writer::_build_kitchen_sink_bridge S BridgeOnlyArchiveError:no-neutral-zone  # #1797: FEMStub model, bridge-only archive
 test_opensees_model_build_targets::_author_simple_frame_apesees B 0fd281e8f3f3b7fe  # declaration order: geomTransf moves
 test_reinforce_deck_replay::_reinforced_ops[bond_by_name=False] A 5672fc62f5b67cf2  # integral floats re-emitted as integers
 test_reinforce_deck_replay::_reinforced_ops[bond_by_name=True] B 8f75a86026d63099  # declaration order: LadrunoBondSlip moves

@@ -17,9 +17,11 @@ import { LineSegments2 } from "three/addons/lines/LineSegments2.js";
 import { LineSegmentsGeometry } from "three/addons/lines/LineSegmentsGeometry.js";
 import type { BlobStore } from "../state/blobs.ts";
 import type { DisplacementData } from "../effects.ts";
-import { contourView, geometryPairing } from "../state/selectors.ts";
+import { contourView, geometryPairing, gizmoPlanes } from "../state/selectors.ts";
 import { contourColours, contourShownKey, elementColours, noDataColours, type StepValues } from "./contour.ts";
+import { CapLayer, releaseAware } from "./caps.ts";
 import { SectionClip, sliderBox } from "./clip.ts";
+import { GizmoInteractor, PlaneGizmos } from "./gizmo.ts";
 import { basePositions, drawnPositions, edgesShown, frameFocus, gatherInto, ghostObjects, missingMarkerObjects, positionsFor, selectionOutline, writePositions, type FullPositions } from "./deform.ts";
 import type { State, Store } from "../state/store.ts";
 import { roleColouring } from "../state/roles.ts";
@@ -96,6 +98,13 @@ export class Viewport {
   private readonly markers = new THREE.Group();
   /** V4e1: the section planes, on every drawn material before every render (renderer/clip.ts). */
   private readonly clip = new SectionClip();
+  /** V4e2: the plane gizmos (clip-exempt, unpickable) and their pointer gestures, ahead of the navigator. */
+  readonly gizmos = new PlaneGizmos();
+  readonly gizmoInput: GizmoInteractor;
+  /** V4e3: the cut-face caps (clip-exempt, unpickable), sliced on release and on a step change (renderer/caps.ts). */
+  readonly caps = new CapLayer();
+  /** V4e3: a panel offset slider is held: the caps wait for its release, as for a gizmo drag. */
+  private sliding = false;
   /** V4d: what the drawn positions show now: `base`, or the displacement key and scale; null with no mesh. */
   get deformApplied(): string | null {
     return this.full?.key ?? null;
@@ -123,10 +132,52 @@ export class Viewport {
     this.scene.add(this.content, this.highlight, this.geometryLayer);
     // V4d: the ghost and the missing-displacement markers (shown with the mesh, never on the geometry phase).
     this.scene.add(this.ghost, this.markers);
+    // V4e2: the gizmos (renderer/gizmo.ts): skipped by the clip stamping, never a raycast target.
+    this.scene.add(this.gizmos.root);
+    // V4e3: the caps, likewise skipped by the clip stamping (each is trimmed by the other planes itself).
+    this.scene.add(this.caps.root);
 
     this.raycaster.params.Line2 = { threshold: 7 };
     this.halo = new SelectionHalo(this.renderer);
-    this.nav = new Navigator({
+    const input = this.wireInput();
+    this.gizmoInput = input.gizmo;
+    this.nav = input.nav;
+    this.observer = new ResizeObserver(() => this.resize());
+    this.observer.observe(host);
+    this.resize();
+    this.unsubscribe = store.subscribe((s, prev) => this.onState(s, prev));
+    this.onState(store.get(), null);
+  }
+
+  /**
+   * V4e2: the canvas's pointer listeners, the gizmo's first: listeners on one
+   * target run in the order they were added, so a press the gizmo claims
+   * (`stopImmediatePropagation`) never reaches the navigator, and a miss
+   * reaches it untouched. A click on a gizmo goes to the same pick as a click
+   * anywhere else (`selectAt`).
+   */
+  private wireInput(): { gizmo: GizmoInteractor; nav: Navigator } {
+    const element = this.renderer.domElement;
+    const gizmo = new GizmoInteractor({
+      // V4e3: a release ends the drag in the gizmo's own handler, and moves no plane; the caps are sliced right after it.
+      element: releaseAware(element, () => this.settleCaps()),
+      rayAt: (x, y) => {
+        this.aim(x, y);
+        const r = this.raycaster.ray;
+        return { origin: r.origin.toArray(), direction: r.direction.toArray() };
+      },
+      hit: (ray) => (this.gizmos.root.visible ? this.gizmos.hit(ray) : null),
+      geometry: (id) => this.gizmos.geometries().get(id),
+      plane: (id) => this.store.get().clip.planes.find((p) => p.id === id),
+      dispatch: (e) => this.store.dispatch(e),
+      // HTML chrome over the canvas (the legend, a panel) wins the press.
+      chromeAt: (x, y) => {
+        const top = typeof document === "undefined" ? element : document.elementFromPoint(x, y);
+        return top !== null && top !== element;
+      },
+      select: (x, y) => this.selectAt(x, y),
+    });
+    const nav = new Navigator({
       camera: this.camera,
       element: this.renderer.domElement,
       keys: window,
@@ -139,24 +190,23 @@ export class Viewport {
         this.aim(x, y);
         return this.raycaster.ray.clone();
       },
-      select: (x, y) => {
-        const pick = this.pickAt(x, y);
-        this.store.dispatch(pick ? { type: "select", pick } : { type: "clearSelection" });
-      },
+      select: (x, y) => this.selectAt(x, y),
       fit: () => {
         const s = this.store.get();
         // On the geometry phase (or with no mesh), F fits the geometry; else the frame effect
         // frames the selection, or the whole model (the frameSelection store event).
-        if (this.geometryInfo && (s.phase.at?.kind === "geometry" || !s.mesh)) this.frameGeometry(this.geometryInfo, this.nav.heading);
+        if (this.geometryInfo && (s.phase.at?.kind === "geometry" || !s.mesh)) this.frameGeometry(this.geometryInfo, nav.heading);
         else this.store.dispatch({ type: "frameSelection" });
       },
       changed: () => this.requestRender(),
     });
-    this.observer = new ResizeObserver(() => this.resize());
-    this.observer.observe(host);
-    this.resize();
-    this.unsubscribe = store.subscribe((s, prev) => this.onState(s, prev));
-    this.onState(store.get(), null);
+    return { gizmo, nav };
+  }
+
+  /** A click at a client point: select what it picks, or clear the selection. */
+  private selectAt(x: number, y: number): void {
+    const pick = this.pickAt(x, y);
+    this.store.dispatch(pick ? { type: "select", pick } : { type: "clearSelection" });
   }
 
   /** Release the listeners, the observer, the subscription and the GPU objects. */
@@ -164,6 +214,9 @@ export class Viewport {
     this.unsubscribe();
     this.observer.disconnect();
     this.nav.dispose();
+    this.gizmoInput.dispose();
+    this.gizmos.dispose();
+    this.caps.dispose();
     this.halo.dispose();
     this.clear(this.content);
     this.clear(this.highlight);
@@ -179,6 +232,8 @@ export class Viewport {
     if (!prev || s.clip !== prev.clip) {
       if (this.clip.sync(s.clip)) this.requestRender();
     }
+    this.syncGizmos(s, prev);
+    this.settleCaps(s);
     this.onGeometry(s, prev);
     if (!prev || s.mesh !== prev.mesh) {
       this.setMesh(s.mesh);
@@ -191,6 +246,35 @@ export class Viewport {
     if (s.selection !== prev.selection) this.setHighlight(s);
     if (s.visibility.colourBy === "contour") this.recolour(s);
     this.redeform(s);
+  }
+
+  /**
+   * V4e2: the gizmos follow the planes, the eyes and the footer toggle, over
+   * the reference (undeformed) box the slider maps; hidden with no mesh and on
+   * the geometry phase.
+   */
+  private syncGizmos(s: State, prev: State | null): void {
+    const show = s.mesh !== null && s.phase.at?.kind !== "geometry";
+    let changed = show !== this.gizmos.root.visible;
+    this.gizmos.root.visible = show;
+    if (!prev || s.clip !== prev.clip || s.mesh !== prev.mesh) changed = this.gizmos.sync(gizmoPlanes(s.clip), this.sliderBox()) || changed;
+    if (changed) this.requestRender();
+  }
+
+  /**
+   * V4e3: the caps follow the state, hidden while a plane is dragged (a gizmo
+   * or a panel slider) and sliced again once it is released: on every state
+   * change, after a gizmo release (`releaseAware`) and a slider release.
+   */
+  private settleCaps(s: State = this.store.get()): void {
+    if (this.caps.sync(s, this.blobs, this.stepSource(), this.gizmoInput.dragging || this.sliding)) this.requestRender();
+  }
+
+  /** V4e3: a panel offset slider is held (true) or released (app.ts wires the planes panel). */
+  setSliding(on: boolean): void {
+    if (this.sliding === on) return;
+    this.sliding = on;
+    this.settleCaps();
   }
 
   /** V4d: where the deformed shape's displacement comes from (app.ts wires the effects). */
@@ -242,6 +326,7 @@ export class Viewport {
   setStepSource(source: () => StepValues | null): void {
     this.stepSource = source;
     this.recolour(this.store.get());
+    this.settleCaps();
   }
 
   /**
@@ -558,6 +643,7 @@ export class Viewport {
     if (this.faces) (this.faces.material as THREE.MeshStandardMaterial).color.setScalar(k);
     if (this.lines) (this.lines.material as LineMaterial).color.setScalar(k);
     if (this.edges) (this.edges.material as THREE.LineBasicMaterial).opacity = on ? 0.2 : 0.45;
+    this.caps.setDim(k);
   }
 
   /**
@@ -741,6 +827,21 @@ export class Viewport {
   viewNormal(): [number, number, number] {
     const d = this.camera.getWorldDirection(new THREE.Vector3());
     return [d.x, d.y, d.z];
+  }
+
+  /** V4e3: how many cut-face caps are drawn (and shown). */
+  get capCount(): number {
+    return this.caps.count;
+  }
+
+  /** V4e3: the caps show what the state asks for now (measure and capture wait on it). */
+  capsSettled(): boolean {
+    return this.caps.settledFor(this.store.get());
+  }
+
+  /** V4e2: how many plane gizmos are drawn (and shown). */
+  get gizmoCount(): number {
+    return this.gizmos.root.visible ? this.gizmos.count : 0;
   }
 
   /** V4e1: how many section planes cut now. */

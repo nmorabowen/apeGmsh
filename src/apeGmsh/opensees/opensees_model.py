@@ -473,7 +473,7 @@ class OpenSeesModel:
         # caller can pass the composed file directly without knowing the
         # neutral zone lives under /model/.  Explicit fem_root is kept.
         fem_root = _resolve_fem_root_for_read(spath, fem_root)
-        _refuse_bridge_only(spath, fem_root)
+        _refuse_bridge_only(spath, fem_root, opensees_root)
         fem = FEMData.from_h5(spath, root=fem_root)
 
         # Locate the bridge meta — it lives at ``{fem_root}/meta`` so
@@ -2220,28 +2220,38 @@ def _resolve_neutral_group(f: Any, fem_root: str) -> Any:
     return f[key]
 
 
-def _refuse_bridge_only(path: str, fem_root: str) -> None:
+def _refuse_bridge_only(path: str, fem_root: str, opensees_root: str) -> None:
     """Raise ``BridgeOnlyArchiveError`` when ``fem_root`` has no neutral zone.
 
-    A bridge-only archive (a stamped ``/meta`` and the ``/opensees``
-    bridge zone, but no ``nodes``, e.g. one written from a ``FEMStub``)
-    cannot be replayed (#1797).  Checked up front so the caller sees a
-    named refusal instead of h5py's raw ``KeyError`` from deep inside the
-    neutral-zone read.  Any other file without a neutral zone (a missing
-    root group or ``/meta``, a results-only file whose ``/meta`` is an
-    unstamped lineage stub, a root with no ``opensees`` group) is left to
-    the reader's own errors, unchanged.
+    A bridge-only archive (a stamped ``meta`` under ``fem_root`` and the
+    bridge zone at ``opensees_root``, but no ``nodes``, e.g. one written
+    from a ``FEMStub``) cannot be replayed (#1797).  Checked up front so
+    the caller sees a named refusal instead of h5py's raw ``KeyError``
+    from deep inside the neutral-zone read.
+
+    The bridge zone counts under ``fem_root`` (a standalone archive, or
+    one nested whole under a group) or at ``opensees_root`` from the file
+    root, where the typed reader reads it: a composed results file keeps
+    ``/opensees`` at the root beside ``/model``, so ``fem_root="/model"``
+    with no ``/model/nodes`` is refused too (#1880).  Any other file
+    without a neutral zone (a missing ``fem_root`` group or ``meta``, a
+    results-only file whose ``/meta`` is an unstamped lineage stub, a
+    file with no bridge zone) is left to the reader's own errors,
+    unchanged.
     """
     import h5py
 
     from .emitter.h5_reader import BridgeOnlyArchiveError
 
     key = fem_root.strip("/")
+    bridge = opensees_root.strip("/")
     with h5py.File(path, "r") as f:
         if key and key not in f:
             return
         group = f[key] if key else f
-        if "nodes" in group or "opensees" not in group:
+        if "nodes" in group:
+            return
+        if "opensees" not in group and not (bridge and bridge in f):
             return
         if "meta" not in group or not str(
             group["meta"].attrs.get("schema_version", "")

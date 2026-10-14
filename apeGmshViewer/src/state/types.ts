@@ -204,6 +204,13 @@ export interface MeshInfo {
    * deformed shape moves the outline edges through.
    */
   vertexNodes: { line: BlobRef; tri: BlobRef; edge: BlobRef };
+  /**
+   * V4e3: every node of the model, interior ones too (the cut face of a solid
+   * meets nodes no drawn face has): `ids` (f64) and `xyz` (f64, 3 per node),
+   * in `/nodes` order. Put by the effects' model read; absent when the mesh
+   * was built without it, and then the cut face says so instead of a cap.
+   */
+  nodes?: { ids: BlobRef; xyz: BlobRef };
 }
 
 /** The render derivation of the geometry artifact (the `/geometry` sibling, V2a spec). */
@@ -446,12 +453,23 @@ export interface ClipPlane {
   flipped: boolean;
   /** cutting; at most MAX_ACTIVE_PLANES (state/clip.ts) are */
   active: boolean;
+  /** V4e2: its gizmo is drawn while "Show plane gizmos" is on (the panel row's eye) */
+  gizmo: boolean;
 }
 
 /** V4e1: the section planes and the global "Apply cuts" toggle (window session only: the app has no session store yet). */
 export interface ClipState {
   planes: readonly ClipPlane[];
   applyCuts: boolean;
+  /** V4e2: the footer's "Show plane gizmos" toggle (each plane's eye still applies) */
+  showGizmos: boolean;
+  /**
+   * V4e3: the footer's "Contour on cut face" toggle: each cutting plane fills
+   * the solid it cuts with a cap carrying the contour (a flat fill without
+   * one). On by default: without it a plane through a solid opens onto an
+   * empty box (ADR 0083: S3 is required for solid models).
+   */
+  cutFace: boolean;
   /** the last plane number handed out (ids are never reused) */
   seq: number;
   /** why the last clip event was refused (the 7th active plane, a zero normal, a NaN offset); cleared by the next accepted one */
@@ -679,6 +697,18 @@ export type Event =
   /** V4e1: normalised on entry; a zero or non-finite normal is refused with a notice */
   | { type: "setClipNormal"; id: string; normal: readonly number[] }
   /** V4e1: the global "Apply cuts" toggle */
-  | { type: "setApplyCuts"; on: boolean };
+  | { type: "setApplyCuts"; on: boolean }
+  /**
+   * V4e2: the gizmo's rotate, one event per move: the plane `normal · p = offset`
+   * (scaled together to a unit normal). A zero or non-finite normal, or a
+   * non-finite offset, is refused with a notice and the pose is kept.
+   */
+  | { type: "setClipPose"; id: string; normal: readonly number[]; offset: number }
+  /** V4e2: the footer's "Show plane gizmos" toggle */
+  | { type: "setShowGizmos"; on: boolean }
+  /** V4e2: one plane's gizmo eye */
+  | { type: "setClipGizmo"; id: string; visible: boolean }
+  /** V4e3: the footer's "Contour on cut face" toggle (a cap on every cutting plane through a solid) */
+  | { type: "setCutFace"; on: boolean };
 
 export type EventType = Event["type"];

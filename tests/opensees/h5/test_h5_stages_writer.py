@@ -29,6 +29,7 @@ import numpy as np
 
 from apeGmsh.opensees.apesees import apeSees
 
+from tests.opensees.h5._opensees_model_fixtures import build_two_quad_fem
 from tests.opensees.fixtures.fem_stub import (
     FEMStub,
     _ElementGroupView,
@@ -86,11 +87,17 @@ def _chain(ops: apeSees) -> dict[str, object]:
     }
 
 
-def _build_two_stage_bridge() -> apeSees:
+def _build_two_stage_bridge(fem: Any = None) -> apeSees:
     """Global "Rock" quad + global fix; stage 1 activates "Fill" with a
     stage fix; stage 2 sets time, loads through a stage pattern, and
-    ramps a per-stage initial stress."""
-    fem = _make_two_quad_fem_stub()
+    ramps a per-stage initial stress.
+
+    On a real two-quad :class:`FEMData` by default, so the archive
+    carries a neutral zone and replays (#1880). ``fem`` passes another
+    mesh: the domain-capture tests pass the stub, whose snapshot id and
+    partitions they set by hand."""
+    if fem is None:
+        fem = build_two_quad_fem()
     ops = apeSees(fem, default_orientation=None)
     ops.model(ndm=2, ndf=2)
     mat = ops.nDMaterial.ElasticIsotropic(E=1e6, nu=0.3, rho=0.0)
@@ -277,7 +284,9 @@ def test_stages_zone_deterministic_across_writes(tmp_path: Path) -> None:
 
 
 def _build_kitchen_sink_bridge() -> apeSees:
-    fem = _make_two_quad_fem_stub()
+    """Every stage mutation verb in one stage, on a real two-quad
+    :class:`FEMData` so the archive replays (#1880)."""
+    fem = build_two_quad_fem()
     ops = apeSees(fem, default_orientation=None)
     ops.model(ndm=2, ndf=2)
     mat = ops.nDMaterial.ElasticIsotropic(E=1e6, nu=0.3, rho=0.0)
@@ -493,7 +502,7 @@ def test_stages_fold_into_model_hash(tmp_path: Path) -> None:
     _build_two_stage_bridge().h5(str(two))
 
     # Same model, first stage only.
-    fem = _make_two_quad_fem_stub()
+    fem = build_two_quad_fem()
     ops = apeSees(fem, default_orientation=None)
     ops.model(ndm=2, ndf=2)
     mat = ops.nDMaterial.ElasticIsotropic(E=1e6, nu=0.3, rho=0.0)

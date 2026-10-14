@@ -33,9 +33,19 @@ computed by :func:`backend_info_of` from a single signal: the fork-only
 (:func:`apeGmsh.opensees.emitter.live.get_backend_info`) owns it; the
 backend name, the build stamp and :attr:`OpenSeesCapabilities.has_fork`
 all derive from it, so they cannot disagree.
+
+A fork build that also answers ``ladrunoSchema()`` (fork PR #972, schema
+v0) describes its own surface: the commands this engine registers and the
+option tokens each fail-closed parser accepts.  :func:`backend_info_of`
+parses it into :class:`LadrunoSchema` on :attr:`BackendInfo.schema`.  Any
+doubt about it (an absent command, a raise, malformed JSON, another
+``schema_version``, a wrong shape, a ``build`` that disagrees with
+``ladrunoBuild()``) reads as *unknown capabilities*, ``schema is None``,
+and never changes ``kind`` or ``build``.
 """
 from __future__ import annotations
 
+import json
 import os
 import re
 import shutil
@@ -58,6 +68,72 @@ _TARGET_MODES: frozenset[str] = frozenset({"auto", "fork", "stock"})
 _SHA_RE = re.compile(r"[0-9a-fA-F]{40}")
 
 
+#: The one ``ladrunoSchema`` version this module reads.
+LADRUNO_SCHEMA_VERSION = 0
+
+_SCHEMA_KEYS: frozenset[str] = frozenset(
+    {"build", "commands", "engine", "options", "schema_version"}
+)
+_OPTION_KEYS: frozenset[str] = frozenset({"nargs", "since"})
+
+
+@dataclass(frozen=True)
+class LadrunoOption:
+    """One option token a fork parser accepts, as ``ladrunoSchema`` v0 says."""
+
+    nargs: int | str
+    """How many values follow the token: an ``int``, or a word such as ``"list"``."""
+    since: str
+    """The fork change that added the token (e.g. ``"PR-263"``).
+
+    Informational and opaque: it names a change, not a position in an
+    order, so it is never compared or sorted.
+    """
+
+
+@dataclass(frozen=True)
+class LadrunoSchema:
+    """The fork's self-description, parsed from ``ladrunoSchema()`` v0.
+
+    Hashable (no ``dict`` field), so :class:`BackendInfo` stays hashable.
+    Built only by :func:`backend_info_of`, and only from a schema that
+    passed every check; a doubtful one is ``None`` on the info instead.
+    """
+
+    schema_version: int
+    """Always :data:`LADRUNO_SCHEMA_VERSION`; any other version is not parsed."""
+    build: str
+    """The 40-char sha, equal to ``ladrunoBuild()`` of the same module."""
+    engine: str
+    """Which engine answered (``"dl"`` in-process, ``"classic"`` Tcl).
+
+    ``commands`` lists what *this* engine registers; the classic and the DL
+    link register different sets.
+    """
+    commands: frozenset[str]
+    """The Ladruno commands this engine registers."""
+    options: tuple[tuple[str, tuple[tuple[str, LadrunoOption], ...]], ...]
+    """``((owner, ((token, LadrunoOption), ...)), ...)``, sorted by name."""
+
+    def option(self, owner: str, token: str) -> LadrunoOption | None:
+        """The spec for ``token`` on ``owner``, or ``None`` if it is not listed."""
+        for name, tokens in self.options:
+            if name == owner:
+                for tok, spec in tokens:
+                    if tok == token:
+                        return spec
+                return None
+        return None
+
+    def supports_option(self, owner: str, token: str) -> bool:
+        """``True`` iff ``token`` is listed under ``owner``."""
+        return self.option(owner, token) is not None
+
+    def has_command(self, name: str) -> bool:
+        """``True`` iff this engine (:attr:`engine`) registers ``name``."""
+        return name in self.commands
+
+
 @dataclass(frozen=True)
 class BackendInfo:
     """What the imported OpenSees binary is: the resolver's one verdict.
@@ -74,6 +150,11 @@ class BackendInfo:
     Built by :func:`backend_info_of`; the live resolver caches the one for
     the module it bound
     (:func:`apeGmsh.opensees.emitter.live.get_backend_info`).
+
+    :attr:`schema` adds what the build can do, when the build says so
+    (``ladrunoSchema`` v0).  The queries :meth:`supports_option` and
+    :meth:`has_command` answer ``True`` / ``False`` from a known schema and
+    ``None`` (unknown) without one: an unknown answer is never ``False``.
     """
 
     kind: BackendKind
@@ -88,6 +169,27 @@ class BackendInfo:
     Beside a fork install, a ``.pth`` may alias ``openseespy.opensees`` to
     the fork module; this names the file that was really bound.
     """
+    schema: LadrunoSchema | None = None
+    """The parsed ``ladrunoSchema`` v0, or ``None`` for unknown capabilities."""
+
+    def supports_option(self, owner: str, token: str) -> bool | None:
+        """Does ``owner``'s parser accept ``token``?  ``None`` if unknown."""
+        if self.schema is None:
+            return None
+        return self.schema.supports_option(owner, token)
+
+    def has_command(self, name: str, *, engine: str | None = None) -> bool | None:
+        """Does the engine that answered register ``name``?  ``None`` if unknown.
+
+        The schema speaks for the engine of the module it came from (the
+        in-process one).  Asking about another ``engine``, such as the
+        classic Tcl binary a subprocess runs, answers ``None``.
+        """
+        if self.schema is None:
+            return None
+        if engine is not None and engine != self.schema.engine:
+            return None
+        return self.schema.has_command(name)
 
 
 def _build_stamp(ops: Any) -> str | None:
@@ -105,11 +207,96 @@ def _build_stamp(ops: Any) -> str | None:
     return stamp if _SHA_RE.fullmatch(stamp) else None
 
 
+def _is_int(value: Any) -> bool:
+    """A JSON integer: ``int`` but not ``bool`` (``True == 1`` in Python)."""
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
+def _unique_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    """A JSON object as a dict, raising on a duplicate key at any level.
+
+    ``json.loads`` keeps the last of duplicate keys, so a doubled
+    ``schema_version`` or owner/token would otherwise parse silently.
+    """
+    obj = dict(pairs)
+    if len(obj) != len(pairs):
+        raise ValueError("duplicate key in ladrunoSchema JSON")
+    return obj
+
+
+def _schema_from_obj(obj: Any, build: str | None) -> LadrunoSchema | None:
+    """A decoded v0 schema as :class:`LadrunoSchema`, or ``None`` if in doubt.
+
+    ``schema_version`` is checked first, before any other key is read.
+    """
+    if not isinstance(obj, dict):
+        return None
+    version = obj.get("schema_version")
+    if not _is_int(version) or version != LADRUNO_SCHEMA_VERSION:
+        return None
+    if set(obj) != _SCHEMA_KEYS:
+        return None
+    raw_build, engine = obj["build"], obj["engine"]
+    commands, options = obj["commands"], obj["options"]
+    if build is None or not isinstance(raw_build, str) or raw_build.strip() != build:
+        return None
+    if not isinstance(engine, str) or not engine:
+        return None
+    if not isinstance(commands, list) or not all(
+        isinstance(c, str) and c for c in commands
+    ):
+        return None
+    if len(set(commands)) != len(commands) or not isinstance(options, dict):
+        return None
+    owners: list[tuple[str, tuple[tuple[str, LadrunoOption], ...]]] = []
+    for owner, table in options.items():
+        if not owner or not isinstance(table, dict):
+            return None
+        tokens: list[tuple[str, LadrunoOption]] = []
+        for token, spec in table.items():
+            if not token or not isinstance(spec, dict) or set(spec) != _OPTION_KEYS:
+                return None
+            nargs, since = spec["nargs"], spec["since"]
+            if not (_is_int(nargs) or isinstance(nargs, str)):
+                return None
+            if not isinstance(since, str):
+                return None
+            tokens.append((token, LadrunoOption(nargs=nargs, since=since)))
+        tokens.sort(key=lambda kv: kv[0])
+        owners.append((owner, tuple(tokens)))
+    owners.sort(key=lambda kv: kv[0])
+    return LadrunoSchema(
+        schema_version=version,
+        build=build,
+        engine=engine,
+        commands=frozenset(commands),
+        options=tuple(owners),
+    )
+
+
+def _ladruno_schema(ops: Any, build: str | None) -> LadrunoSchema | None:
+    """``ops.ladrunoSchema()`` parsed, or ``None`` (unknown); never raises."""
+    fn = getattr(ops, "ladrunoSchema", None)  # apegmsh-lint: getattr-undefined-ok fork-only OpenSees command that self-describes the build
+    if not callable(fn):
+        return None
+    try:
+        raw = fn()
+        if not isinstance(raw, str):
+            return None
+        return _schema_from_obj(
+            json.loads(raw, object_pairs_hook=_unique_keys), build,
+        )
+    except Exception:
+        return None
+
+
 def backend_info_of(ops: Any) -> BackendInfo:
     """Classify the OpenSees module ``ops`` (see :class:`BackendInfo`).
 
     Pure: reads the module and never imports one.  The live resolver calls
-    it on the module it bound; tests call it on fakes.
+    it on the module it bound; tests call it on fakes.  ``kind`` and
+    ``build`` come from ``ladrunoBuild()`` alone; the schema is read
+    beside them and never changes them.
     """
     build = _build_stamp(ops)
     version: str | None
@@ -124,6 +311,7 @@ def backend_info_of(ops: Any) -> BackendInfo:
         build=build,
         version=version,
         source=str(source) if source else type(ops).__name__,
+        schema=_ladruno_schema(ops, build),
     )
 
 
