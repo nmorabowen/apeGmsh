@@ -482,7 +482,7 @@ async function captureDeform(settle: (ms?: number) => Promise<unknown>, width: n
  * The history scan's time comes first; the machine's CPU load is sampled
  * before (1 s idle) and during the scrub, and the working sets every 100 ms.
  */
-async function measureContour(path: string, deform = false, element = false, gauss: GaussMode = "cell", planes = false) {
+async function measureContour(path: string, deform = false, element = false, gauss: GaussMode = "cell", planes = false, capped = false) {
   store.dispatch({ type: "clearSelection" });
   // V4d: the same scrub with the deformed shape on (true scale): each step also waits for the displaced positions.
   store.dispatch({ type: "setDeform", on: deform });
@@ -533,12 +533,17 @@ async function measureContour(path: string, deform = false, element = false, gau
     if (deform && d.state !== "ready" && d.state !== "partial") throw new Error(`measure: the deformed shape is ${d.state}`);
     if (element && v.state !== "element") throw new Error(`measure: the element contour is ${v.state}`);
     const what = v.state === "ready" ? `${v.field} ${v.component.label}` : v.state === "element" ? `element ${v.field} ${v.component.label}, ${v.topology}` : "?";
+    // V4e3: the cut-face caps on (the `caps` row) or off (the `clip` row, comparable with the V4e1 and V4e2 rows).
+    store.dispatch({ type: "setCutFace", on: capped });
     // V4e1: six section planes cutting through the scrub (each 20 % inside the reference box along ±X, ±Y, ±Z).
     if (planes) addSixPlanes();
     if (planes && viewport.clipCount !== 6) throw new Error(`measure: ${viewport.clipCount} section planes cut, not 6`);
     // V4e2: and their six gizmos drawn (shown by default), so the scrub renders them every step.
     if (planes && viewport.gizmoCount !== 6) throw new Error(`measure: ${viewport.gizmoCount} plane gizmos drawn, not 6`);
-    const field = what + (deform ? ", deformed ×1" : "") + (planes ? ", 6 section planes + gizmos" : "");
+    // V4e3: and, capped, a cap on each of the six planes, sliced again at every step (the deformed solid, the step's field).
+    if (capped && !(await until(() => viewport.capsSettled() && viewport.capCount === 6))) throw new Error(`measure: ${viewport.capCount} caps drawn, not 6`);
+    const slices0 = viewport.caps.slices;
+    const field = what + (deform ? ", deformed ×1" : "") + (planes ? ", 6 section planes + gizmos" : "") + (capped ? " + 6 caps" : "");
     const T = stages[best]!.time.length;
     const gl = viewport.renderer.getContext();
     const stepMs: number[] = [];
@@ -548,6 +553,7 @@ async function measureContour(path: string, deform = false, element = false, gau
       const t = performance.now();
       store.dispatch({ type: "setResultStep", step: k });
       await contourShowsNow();
+      if (capped && !viewport.capsSettled()) throw new Error(`measure: the caps do not show step ${k} with its contour`);
       viewport.renderNow();
       gl.finish();
       stepMs.push(performance.now() - t);
@@ -556,10 +562,14 @@ async function measureContour(path: string, deform = false, element = false, gau
     const cpuDuring = await cpu();
     await sample();
     const sorted = [...stepMs].sort((a, b) => a - b);
+    // V4e3: one slice per plane per step, never more (F-SETTLED at scale).
+    const slices = viewport.caps.slices - slices0;
+    if (capped && (slices !== 6 * (T - 1) || viewport.capCount !== 6)) throw new Error(`measure: ${slices} slices over ${T - 1} steps (want ${6 * (T - 1)}), ${viewport.capCount} caps`);
     return {
       file: path,
       field: `${field} (stage ${stages[best]!.name || stages[best]!.id})`,
       steps: T,
+      ...(capped ? { capSlices: slices, capTriangles: viewport.caps.drawn.reduce((a, c) => a + c.slice.cell.length, 0) } : {}),
       scanMs,
       scrubStepsPerSec: ((T - 1) * 1000) / total,
       stepMs: { median: sorted[Math.floor((sorted.length - 1) / 2)] ?? NaN, max: sorted[sorted.length - 1] ?? NaN },
@@ -569,6 +579,7 @@ async function measureContour(path: string, deform = false, element = false, gau
   } finally {
     clearInterval(sampler);
     if (planes) removePlanes();
+    store.dispatch({ type: "setCutFace", on: true });
   }
 }
 
@@ -644,6 +655,8 @@ async function captureClip(settle: (ms?: number) => Promise<unknown>, width: num
   const last = stages[best]!.time.length - 1;
   removePlanes();
   store.dispatch({ type: "setApplyCuts", on: true });
+  // V4e3: these are the V4e1 stills, caps off (the hollow cut they show is what the caps fill: captureCaps).
+  store.dispatch({ type: "setCutFace", on: false });
   store.dispatch({ type: "setDeform", on: false });
   store.dispatch({ type: "setColourBy", by: "group" });
   store.dispatch({ type: "clearSelection" });
@@ -727,6 +740,82 @@ async function captureClip(settle: (ms?: number) => Promise<unknown>, width: num
     store.dispatch({ type: "frameSelection" });
     await still(`clip-13-deformed-contour-step${last + 1}.1280`);
   }
+  removePlanes();
+  store.dispatch({ type: "setDeform", on: false });
+  store.dispatch({ type: "setColourBy", by: "group" });
+  store.dispatch({ type: "setCutFace", on: true });
+}
+
+/**
+ * The V4e3 cut-face stills (D7), by a fixed rule. On a model with volumetric
+ * cells, on the results stage with the most steps whose deformed shape can be
+ * drawn: one Z plane keeping the lower 40 % (the cut V4e1's clip-2 showed
+ * hollow), its cap a flat fill (coloured by group); the same cap carrying the
+ * contour; an X plane at 30 % added, the two caps trimming each other; the
+ * deformed (scale 10) contoured model at the last step, cut by a Y plane at 50
+ * % and an X plane at 45 % (V4e1's clip-12, now filled); and "Contour on cut
+ * face" off, the same cut hollow again. On a model with no volumetric cell
+ * (a shell, a frame): one Z plane at 50 % and the planes panel saying the
+ * mesh gets no cap. Each still waits until the caps show what the state asks
+ * for and checks their count. `<out>.caps-<n>-<what>.png`.
+ */
+async function captureCaps(settle: (ms?: number) => Promise<unknown>, width: number, height: number) {
+  const s0 = store.get();
+  if (!s0.mesh) return;
+  if (typeof bridge.captureResize === "function") await bridge.captureResize(width, height);
+  removePlanes();
+  store.dispatch({ type: "setApplyCuts", on: true });
+  store.dispatch({ type: "setCutFace", on: true });
+  store.dispatch({ type: "setShowGizmos", on: true });
+  store.dispatch({ type: "setDeform", on: false });
+  store.dispatch({ type: "setColourBy", by: "group" });
+  store.dispatch({ type: "clearSelection" });
+  const still = async (name: string, caps: number) => {
+    const ok = () => deformShown() && (store.get().visibility.colourBy !== "contour" || contourShown()) && viewport.capsSettled() && viewport.capCount === caps;
+    if (!(await until(ok))) throw new Error(`capture ${name}: ${viewport.capCount} caps (want ${caps}), settled ${viewport.capsSettled()}`);
+    await settle(150);
+    viewport.renderNow();
+    await painted();
+    await painted();
+    await bridge.captureStill(name);
+  };
+  if (s0.mesh.counts.solidCells === 0) {
+    store.dispatch({ type: "frameSelection" });
+    addAt([0, 0, 1], 0.5);
+    const note = document.querySelector("#planes .planes-capnote");
+    if (!note?.textContent) throw new Error("capture: the planes panel does not say this mesh gets no cap");
+    await still("caps-0-no-volumetric-cells", 0);
+    removePlanes();
+    return;
+  }
+  const stages = s0.results?.stages ?? [];
+  let best = -1;
+  stages.forEach((st, i) => {
+    store.dispatch({ type: "setPhase", at: { kind: "results", stage: i, step: 0 } });
+    if (deformOf(store.get()).ok && (best < 0 || st.time.length >= stages[best]!.time.length)) best = i;
+  });
+  if (best < 0) return;
+  const last = stages[best]!.time.length - 1;
+  store.dispatch({ type: "setPhase", at: { kind: "results", stage: best, step: 0 } });
+  if (last > 0) store.dispatch({ type: "setResultStep", step: last });
+  store.dispatch({ type: "frameSelection" });
+  const z = addAt([0, 0, 1], 0.4);
+  store.dispatch({ type: "setClipFlipped", id: z, flipped: true });
+  await still("caps-1-flat-fill", 1);
+  store.dispatch({ type: "setColourBy", by: "contour" });
+  await still("caps-2-contour", 1);
+  addAt([1, 0, 0], 0.3);
+  await still("caps-3-two-planes-trimmed", 2);
+  removePlanes();
+  store.dispatch({ type: "setDeform", on: true });
+  store.dispatch({ type: "setReferenceGhost", on: true });
+  store.dispatch({ type: "setDeformScale", scale: 10 });
+  addAt([0, 1, 0], 0.5);
+  addAt([1, 0, 0], 0.45);
+  await still(`caps-4-deformed-contour-step${last + 1}`, 2);
+  store.dispatch({ type: "setCutFace", on: false });
+  await still("caps-5-cut-face-off", 0);
+  store.dispatch({ type: "setCutFace", on: true });
   removePlanes();
   store.dispatch({ type: "setDeform", on: false });
   store.dispatch({ type: "setColourBy", by: "group" });
@@ -920,7 +1009,9 @@ async function main() {
     const elementsDiscrete = elements && cfg.results ? await measureContour(cfg.results, false, true, "node_discrete") : null;
     // V4e1: the nodal scrub, deformed, with six section planes cutting (in the JSON as `clip`; main prints no row for it).
     const clip = cfg.results ? await measureContour(cfg.results, true, false, "cell", true) : null;
-    await bridge.measureDone({ ...result, contour, deform: deformed, elements, elementsDeform: elementsDeformed, elementsAveraged, elementsNode, elementsDiscrete, clip });
+    // V4e3: the same scrub with the six planes capped (in the JSON as `caps`; main prints no row for it). A model with no solid cell has no row.
+    const caps = cfg.results && store.get().mesh!.counts.solidCells > 0 ? await measureContour(cfg.results, true, false, "cell", true, true) : null;
+    await bridge.measureDone({ ...result, contour, deform: deformed, elements, elementsDeform: elementsDeformed, elementsAveraged, elementsNode, elementsDiscrete, clip, caps });
     return;
   }
   // capture: select the scripted target and let main grab the page; when the
@@ -1008,6 +1099,8 @@ async function main() {
     await captureClip(settle, width, height);
     // V4e2 (D7): the plane-gizmo stills, at the capture window's own width.
     await captureGizmo(settle, width, height);
+    // V4e3 (D7): the cut-face stills (or, on a mesh with no volumetric cell, the one saying it gets no cap).
+    await captureCaps(settle, width, height);
   }
   await bridge.captureDone();
 }

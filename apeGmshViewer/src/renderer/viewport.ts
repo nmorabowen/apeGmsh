@@ -834,6 +834,11 @@ export class Viewport {
     return this.caps.count;
   }
 
+  /** V4e3: the caps show what the state asks for now (measure and capture wait on it). */
+  capsSettled(): boolean {
+    return this.caps.settledFor(this.store.get());
+  }
+
   /** V4e2: how many plane gizmos are drawn (and shown). */
   get gizmoCount(): number {
     return this.gizmos.root.visible ? this.gizmos.count : 0;

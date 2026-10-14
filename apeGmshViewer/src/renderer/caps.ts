@@ -329,6 +329,13 @@ export class CapLayer {
     return this.root.visible ? this.caps.length : 0;
   }
 
+  /** The caps show what `s` asks for: none when it wants none, else its slice and colour keys (not waiting on a step, not held by a drag). */
+  settledFor(s: State): boolean {
+    const k = capKeys(s);
+    if (!k) return this.caps.length === 0 && !this.root.visible;
+    return this.keys?.slice === k.slice && this.keys.colour === k.colour;
+  }
+
   /** The caps as drawn (tests, capture). */
   get drawn(): readonly { cut: Cut; slice: Slice; mesh: THREE.Mesh }[] {
     return this.caps;
