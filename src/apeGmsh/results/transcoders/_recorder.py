@@ -14,7 +14,8 @@ Scope
   for catalogued element classes. Class identity is sniffed from the
   file's column count via the response catalog; v1 requires
   homogeneous-class records (one element class per record).
-- ``line_stations`` records (Phase 11b) — beam section forces.
+- ``line_stations`` records (Phase 11b) — beam section forces; an
+  elastic beam's two stations are synthesised from ``localForce`` (#1741).
 - ``elements`` records (Phase 11b) — per-element-node forces.
 - ``fibers`` / ``layers`` — **MPCO-only in Phase 11c.** The ``.out``
   format is impractical for fiber-section results (a 5-IP × 100-fiber
@@ -55,6 +56,7 @@ from ...opensees._response_catalog import (
     lookup_nodal_force,
     normalise_integration_points,
     resolve_layout_from_gp_x,
+    synthesize_line_station_layout_for_elastic_beam,
     unflatten,
     unflatten_nodal,
 )
@@ -65,6 +67,7 @@ from ..spec._emit import (
     element_tag_map,
     emit_logical,
     line_station_gpx_path,
+    line_stations_from_local_force,
 )
 from ..writers._native import NativeWriter
 from . import _txt
@@ -489,11 +492,16 @@ class RecorderTranscoder:
                 f"ResolvedRecorderRecord.element_class_name."
             )
         class_name = rec.element_class_name
+        if line_stations_from_local_force(rec):
+            return self._parse_local_force_line_station_record(rec)
         if not is_custom_rule_catalogued(class_name, "section_force"):
             raise ValueError(
-                f"Class {class_name!r} is not in CUSTOM_RULE_CATALOG; "
-                f"add an entry in apeGmsh.opensees._response_catalog if "
-                f"this beam-column class should be supported."
+                f"Class {class_name!r} has no line-stations layout: it is "
+                f"not in CUSTOM_RULE_CATALOG (section force) and has no "
+                f"localForce synthesis (an elastic beam in "
+                f"NODAL_FORCE_CATALOG). Add an entry in "
+                f"apeGmsh.opensees._response_catalog if this beam-column "
+                f"class should be supported."
             )
 
         logicals = list(emit_logical(
@@ -613,6 +621,58 @@ class RecorderTranscoder:
             record_name=rec.name,
             time=time,
             groups=payloads,
+        )
+
+    def _parse_local_force_line_station_record(
+        self, rec: "ResolvedRecorderRecord",
+    ) -> "_LineStationRecordPayload":
+        """Synthesise an elastic beam's two-station slab from ``localForce``.
+
+        An elastic beam has no integration points, so its line-stations
+        record is emitted as one ``localForce`` recorder (#1741). Its row
+        per element is the joint-on-element end vector ``[end i, end j]``
+        in the local frame. The stations sit at xi = -1, +1, and station
+        2 is negated into the internal section-force sign convention:
+        the same synthesis DomainCapture's line-station capturer and the
+        MPCO local-force reader apply, so the three routes agree.
+        """
+        class_name = rec.element_class_name
+        assert class_name is not None      # line_stations_from_local_force
+        layout = synthesize_line_station_layout_for_elastic_beam(class_name)
+        if layout is None:     # the predicate says the catalog has it
+            raise ValueError(
+                f"Line-stations record {rec.name!r}: class {class_name!r} "
+                f"has no localForce line-stations synthesis layout."
+            )
+        logicals = list(emit_logical(
+            rec, output_dir=str(self._output_dir),
+            file_format=self._file_format, stage_id=self._stage_id,
+        ))
+        if len(logicals) != 1 or logicals[0].response_tokens != (
+            "localForce",
+        ):
+            raise ValueError(
+                f"Line-stations record {rec.name!r} (elastic beam "
+                f"{class_name!r}) expected one localForce logical "
+                f"recorder, got "
+                f"{[lr.response_tokens for lr in logicals]}."
+            )
+        lr = logicals[0]
+        n_per = layout.n_components_per_gp
+        time, flat = _txt.parse_element_file(lr.file_path, lr, 2 * n_per)
+        flat = flat.copy()
+        flat[:, :, n_per:] *= -1.0          # station 2: internal convention
+        gp_x = np.array([-1.0, 1.0], dtype=np.float64)
+        return _LineStationRecordPayload(
+            record_name=rec.name,
+            time=time,
+            groups=[_LineStationGroupPayload(
+                class_name=class_name,
+                element_ids=np.asarray(rec.element_ids, dtype=np.int64),
+                gp_x=gp_x,
+                layout=layout,
+                flat=flat,
+            )],
         )
 
     def _write_line_station_records(
@@ -907,9 +967,11 @@ def _resolve_element_lengths(fem, element_ids) -> ndarray:
 
     Tries a duck-typed test-fixture API first
     (``fem.element_end_coords(eid) -> (c1, c2)``), then falls back to
-    the real :class:`apeGmsh.mesh.FEMData.FEMData` path
-    (``fem.elements.select(tag=eid).result().resolve()`` +
-    ``fem.nodes.select(...).coords``).
+    the real :class:`apeGmsh.mesh.FEMData.FEMData` path: the elements
+    are selected by **element id** (``fem.elements.select(ids=...)``;
+    ``tag=`` would select a physical-group tag, #1741) and their end
+    nodes' coordinates read through ``fem.nodes.index``. An element id
+    the FEMData does not hold raises: a length is never guessed.
 
     The duck-typed shortcut keeps test fixtures simple — they don't
     need a fully-built ElementComposite when the only thing the
@@ -927,21 +989,29 @@ def _resolve_element_lengths(fem, element_ids) -> ndarray:
             ))
         return out
 
+    # One selection by element id; ``resolve()`` returns the rows sorted
+    # by id and silently drops an id it does not hold, so map back
+    # explicitly and refuse a missing one.
+    ids, conn = fem.elements.select(
+        ids=[int(e) for e in eids],
+    ).result().resolve()
+    row_of = {int(e): r for r, e in enumerate(np.asarray(ids).tolist())}
+    missing = [int(e) for e in eids if int(e) not in row_of]
+    if missing:
+        raise ValueError(
+            f"Line-stations transcode: element id(s) "
+            f"{missing[:10]}{' ...' if len(missing) > 10 else ''} are not "
+            f"in the bound FEMData, so their lengths (needed to normalise "
+            f"the integrationPoints positions) cannot be resolved. Pass "
+            f"the FEMData the spec was resolved against."
+        )
+    coords = np.asarray(fem.nodes.coords, dtype=np.float64)
     for i, eid in enumerate(eids):
-        # selection-unification v2 P3-R / §6.3 §2 #9 (P-GROUPRESULT;
-        # oracle README ratifies).
-        ids, conn = fem.elements.select(tag=int(eid)).result().resolve()
-        if conn.size == 0:
-            raise ValueError(
-                f"Element {eid} has no connectivity in the bound FEMData."
-            )
-        # ``conn`` is (n_elements_resolved, n_nodes_per_element). For a
-        # tag lookup we expect 1 row; take its first and last node.
-        node_a = int(conn.flat[0])
-        node_b = int(conn.flat[-1])
-        # selection-unification v2 P3-R / §6.3 §2 #10/#11 (P-COORD).
-        c1 = np.asarray(fem.nodes.select(node_a).coords, dtype=np.float64)
-        c2 = np.asarray(fem.nodes.select(node_b).coords, dtype=np.float64)
+        # ``conn`` is (n_elements, n_nodes_per_element); the ends are the
+        # first and last node of the element's row.
+        nodes = conn[row_of[int(eid)]]
+        c1 = coords[fem.nodes.index(int(nodes[0]))]
+        c2 = coords[fem.nodes.index(int(nodes[-1]))]
         out[i] = float(np.linalg.norm(c2 - c1))
     return out
 

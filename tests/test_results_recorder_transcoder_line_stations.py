@@ -150,6 +150,37 @@ class TestResolveElementLengths:
         np.testing.assert_allclose(L, [13.0])
 
 
+class TestResolveElementLengthsRealFem:
+    """#1741: on a real FEMData the lengths are looked up by element id.
+
+    The portal frame's column ids (5-7, 11-13) are not physical-group
+    tags (1, 2), so a ``tag=`` lookup raised ``KeyError: 'No group with
+    tag 5'``. Each column element is ``H / 3`` long, each girder element
+    ``L / 3`` (three elements per curve).
+    """
+
+    def test_lengths_by_element_id(self) -> None:
+        from tests.test_results_recorder_tag_parity import H, L, _portal_fem
+
+        fem = _portal_fem()
+        cols = [int(e) for e in fem.elements.select(pg="Cols").ids]
+        beam = [int(e) for e in fem.elements.select(pg="Beam").ids]
+        assert min(cols) > 2          # ids that are no PG tag
+        ids = cols[::-1] + beam       # unsorted: rows follow the request
+        got = _resolve_element_lengths(fem, ids)
+        np.testing.assert_allclose(
+            got, [H / 3] * len(cols) + [L / 3] * len(beam), rtol=1e-12,
+        )
+
+    def test_unknown_element_id_raises(self) -> None:
+        from tests.test_results_recorder_tag_parity import _portal_fem
+
+        fem = _portal_fem()
+        known = int(fem.elements.select(pg="Cols").ids[0])
+        with pytest.raises(ValueError, match=r"\[99999\]"):
+            _resolve_element_lengths(fem, [known, 99999])
+
+
 # =====================================================================
 # End-to-end: build .out + _gpx.out → transcode → read back
 # =====================================================================
@@ -456,6 +487,122 @@ class TestMultiBucketSplit:
             ax.values[0],
             [1100, 1200, 1300, 1400, 1500, 2100, 2200, 2300, 2400, 2500],
         )
+
+
+# =====================================================================
+# Elastic beams: localForce emit + two-station synthesis (#1741)
+# =====================================================================
+
+def _ls_record(name: str, class_name: str | None, comps=("axial_force",),
+               eids=(1,)) -> ResolvedRecorderRecord:
+    return ResolvedRecorderRecord(
+        category="line_stations", name=name, components=comps,
+        dt=None, n_steps=None,
+        element_ids=np.asarray(eids, dtype=np.int64),
+        element_class_name=class_name,
+    )
+
+
+class TestElasticBeamEmit:
+    """An elastic beam answers no ``section force``: its record emits one
+    ``localForce`` recorder; every other record keeps the section pair."""
+
+    @pytest.mark.parametrize("cls", [
+        "ElasticBeam2d", "ElasticBeam3d", "ModElasticBeam2d",
+        "ElasticTimoshenkoBeam2d", "ElasticTimoshenkoBeam3d",
+    ])
+    def test_elastic_class_emits_one_local_force(self, cls: str) -> None:
+        from apeGmsh.results.spec._emit import emit_logical
+
+        (lr,) = emit_logical(_ls_record("g", cls, eids=(4, 9)),
+                             output_dir="o", stage_id="s")
+        assert lr.response_tokens == ("localForce",)
+        assert lr.target_ids == (4, 9)
+        assert lr.file_path == "o/s__g_line_stations_local_force.out"
+
+    @pytest.mark.parametrize("cls", ["ForceBeamColumn2d", None])
+    def test_other_records_keep_the_section_pair(self, cls) -> None:
+        from apeGmsh.results.spec._emit import emit_logical
+
+        tokens = [lr.response_tokens
+                  for lr in emit_logical(_ls_record("c", cls))]
+        assert tokens == [("section", "force"), ("integrationPoints",)]
+
+
+class TestElasticBeamTranscode:
+    """Hand-written ``localForce`` file → transcode → read back.
+
+    Row per element is ``[end i, end j]``; station 1 keeps end i, station
+    2 is end j negated (the internal sign convention of DomainCapture's
+    capturer and the MPCO local-force reader).
+    """
+
+    @pytest.mark.parametrize("cls, comps", [
+        ("ElasticBeam2d", ("axial_force", "shear_y", "bending_moment_z")),
+        ("ElasticBeam3d", ("axial_force", "shear_y", "shear_z", "torsion",
+                           "bending_moment_y", "bending_moment_z")),
+    ])
+    def test_two_station_round_trip(self, tmp_path: Path, cls, comps) -> None:
+        fem = _BeamFem(
+            node_ids=np.array([1, 2, 3]),
+            coords=np.array([[0.0, 0.0, 0.0], [4.0, 0.0, 0.0],
+                             [4.0, 3.0, 0.0]]),
+            connectivity={7: (1, 2), 3: (2, 3)},
+        )
+        eids = (7, 3)
+        n = len(comps)
+        T = 2
+        # value = t*1000 + e*100 + end*10 + k   (end 0 = i, 1 = j)
+        flat = np.empty((T, len(eids), 2 * n))
+        for t in range(T):
+            for e in range(len(eids)):
+                for end in range(2):
+                    for k in range(n):
+                        flat[t, e, end * n + k] = (
+                            t * 1000.0 + (e + 1) * 100.0 + end * 10.0 + k
+                        )
+        _write_section_out(tmp_path / "g_line_stations_local_force.out",
+                           times=np.array([1.0, 2.0]), flat=flat)
+        spec = _make_spec(_ls_record("g", cls, comps=comps, eids=eids),
+                          snapshot_id=fem.snapshot_id)
+        target = tmp_path / "out.h5"
+        RecorderTranscoder(spec, output_dir=tmp_path, target_path=target,
+                           fem=fem, stage_name="s",
+                           stage_kind="static").run()
+
+        with Results.from_native(target,
+                                 model=_open_model_from_h5(target)) as r:
+            s = r.stage(r.stages[0].id)
+            for k, comp in enumerate(comps):
+                slab = s.elements.line_stations.get(component=comp)
+                assert slab.element_index.tolist() == [7, 7, 3, 3]
+                np.testing.assert_array_equal(
+                    slab.station_natural_coord, [-1.0, 1.0, -1.0, 1.0],
+                )
+                for t in range(T):
+                    expected = [
+                        v
+                        for e in range(len(eids))
+                        for v in (flat[t, e, k], -flat[t, e, n + k])
+                    ]
+                    np.testing.assert_array_equal(slab.values[t], expected)
+
+    def test_wrong_column_count_raises(self, tmp_path: Path) -> None:
+        fem = _BeamFem(
+            node_ids=np.array([1, 2]),
+            coords=np.array([[0.0, 0.0, 0.0], [3.0, 0.0, 0.0]]),
+            connectivity={1: (1, 2)},
+        )
+        # A 3-D row (12 values) under a 2-D class (6 expected).
+        _write_section_out(tmp_path / "g_line_stations_local_force.out",
+                           times=np.array([1.0]),
+                           flat=np.zeros((1, 1, 12)))
+        spec = _make_spec(_ls_record("g", "ElasticBeam2d"),
+                          snapshot_id=fem.snapshot_id)
+        with pytest.raises(ValueError, match="expected 7 columns"):
+            RecorderTranscoder(spec, output_dir=tmp_path,
+                               target_path=tmp_path / "out.h5", fem=fem,
+                               stage_name="s", stage_kind="static").run()
 
 
 # =====================================================================

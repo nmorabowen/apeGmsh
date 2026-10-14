@@ -12,11 +12,10 @@ nodes). Before the fix (origin/main) the ``-ele`` list carried the FEM
 ids verbatim, so OpenSees recorded other elements: the portal beam's rows
 held column forces (Fy 57034 / 102966 against -2965.7), with no warning.
 
-Covered emit sites: ``elements`` (globalForce), ``gauss`` (stresses) and
-``nodes`` through ``Results.from_recorders``; ``line_stations``
-(section force) on the recorded file itself, because transcoding a
-line-stations record on a real FEMData fails before any row is read
-(``_resolve_element_lengths``, filed separately).
+Covered emit sites, all through ``Results.from_recorders``: ``elements``
+(globalForce), ``gauss`` (stresses), ``nodes``, and ``line_stations``
+(section force for the force-beam columns, localForce for the elastic
+girder; #1741).
 """
 from __future__ import annotations
 
@@ -271,43 +270,83 @@ def test_gauss_stress_rows_are_the_labelled_elements(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# line_stations: section force, on the recorded file
+# line_stations: section force, and the elastic-beam localForce synthesis
 # ---------------------------------------------------------------------------
 
 
-def test_line_station_section_force_file_holds_the_labelled_elements(
-    tmp_path: Path,
-) -> None:
-    from apeGmsh.results.spec._emit import emit_logical
+def test_line_station_rows_are_the_labelled_elements(tmp_path: Path) -> None:
+    """#1741: ``Results.from_recorders`` on the real FEMData reads both
+    line-station routes, each row the live response of its labelled element.
+
+    The force-beam columns record ``section force`` (one row per IP). The
+    elastic-beam girder answers no ``section force``, so its record emits
+    ``localForce`` and the transcoder synthesises two stations: end i as
+    recorded, end j negated (the internal section-force convention that
+    DomainCapture and the MPCO reader use). Before the fix the transcode
+    raised ``KeyError: 'No group with tag 5'``: the element-length resolver
+    selected the element id as a physical-group tag.
+    """
+    from apeGmsh.results import Results
 
     fem = _portal_fem()
     ops = _portal_bridge(fem)
     fem_to_ops = _solve_and_map(ops)
     cols = [int(e) for e in ops.elements.get(pg="Cols").ids]
+    beam = [int(e) for e in ops.elements.get(pg="Beam").ids]
     assert any(fem_to_ops[e] != e for e in cols)
+    assert any(fem_to_ops[e] != e for e in beam)
     model = _model(ops, tmp_path)
-    rec = _record("line_stations", "cols", ("axial_force", "bending_moment_z"),
-                  element_ids=np.asarray(cols),
-                  element_class_name="ForceBeamColumn2d")
-    spec = _spec(fem, rec)
+    comps = ("axial_force", "shear_y", "bending_moment_z")
+    spec = _spec(
+        fem,
+        _record("line_stations", "cols", comps, element_ids=np.asarray(cols),
+                element_class_name="ForceBeamColumn2d"),
+        _record("line_stations", "beam", comps, element_ids=np.asarray(beam),
+                element_class_name="ElasticBeam2d"),
+    )
     osp = _record_step(spec, tmp_path / "out", model)
-
-    section_file = emit_logical(rec, output_dir=str(tmp_path / "out"),
-                                stage_id="s")[0].file_path
-    row = np.loadtxt(section_file, ndmin=2)[-1, 1:]   # drop the time column
     n_ip = 4
-    assert row.size == len(cols) * n_ip * 2
-    for i, eid in enumerate(cols):
-        tag = fem_to_ops[eid]
-        expected = np.concatenate([
-            np.asarray(osp.eleResponse(tag, "section", ip, "force"))
+    col_truth = {      # (n_ip, 2): the elastic section's P, Mz
+        e: np.stack([
+            np.asarray(osp.eleResponse(fem_to_ops[e], "section", ip, "force"))
             for ip in range(1, n_ip + 1)
         ])
-        np.testing.assert_allclose(
-            row[i * n_ip * 2:(i + 1) * n_ip * 2], expected,
-            **_TOL,
-            err_msg=f"section force of element {eid} (ops tag {tag})",
-        )
+        for e in cols
+    }
+    beam_truth = {}    # (2, 3): end i as recorded, end j negated
+    for e in beam:
+        lf = np.asarray(osp.eleResponse(fem_to_ops[e], "localForce"))
+        beam_truth[e] = np.stack([lf[0:3], -lf[3:6]])
+
+    res = Results.from_recorders(spec, tmp_path / "out", fem=fem,
+                                 stage_id="s", model=model,
+                                 cache_root=tmp_path / "cache")
+    ls = res.elements.line_stations
+    for comp, k in (("axial_force", 0), ("bending_moment_z", 1)):
+        slab = ls.get(component=comp, ids=cols)
+        index = [int(i) for i in np.asarray(slab.element_index)]
+        assert sorted(set(index)) == sorted(cols)
+        vals = np.asarray(slab.values)[-1]
+        for eid in cols:
+            rows = [i for i, x in enumerate(index) if x == eid]
+            assert len(rows) == n_ip
+            np.testing.assert_allclose(
+                vals[rows], col_truth[eid][:, k], **_TOL,
+                err_msg=f"{comp} of column {eid} (ops tag {fem_to_ops[eid]})",
+            )
+    for k, comp in enumerate(comps):
+        slab = ls.get(component=comp, ids=beam)
+        index = [int(i) for i in np.asarray(slab.element_index)]
+        xi = np.asarray(slab.station_natural_coord)
+        assert sorted(set(index)) == sorted(beam)
+        vals = np.asarray(slab.values)[-1]
+        for eid in beam:
+            rows = [i for i, x in enumerate(index) if x == eid]
+            np.testing.assert_array_equal(xi[rows], [-1.0, 1.0])
+            np.testing.assert_allclose(
+                vals[rows], beam_truth[eid][:, k], **_TOL,
+                err_msg=f"{comp} of girder {eid} (ops tag {fem_to_ops[eid]})",
+            )
 
 
 # ---------------------------------------------------------------------------
