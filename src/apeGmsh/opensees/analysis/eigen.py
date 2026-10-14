@@ -180,6 +180,11 @@ class EigenResult:
             Mutating the bridge between ``eigen`` and ``to_native``
             without a re-emit is unsupported.
         """
+        return self._write_native(path)
+
+    def _write_native(self, path: "str | os.PathLike[str] | None") -> Path:
+        """:meth:`to_native`'s body, called straight from each public
+        method so a mode warning's ``stacklevel=4`` names their caller."""
         import tempfile
 
         from ...results.writers._native import NativeWriter
@@ -257,7 +262,7 @@ class EigenResult:
             try:
                 _write_mode_stages(
                     writer, self.eigenvalues, node_ids, field,
-                    n_trans=n_trans, rotations=rotations,
+                    n_trans=n_trans, rotations=rotations, stacklevel=4,
                 )
             finally:
                 writer.close()
@@ -277,7 +282,7 @@ class EigenResult:
         from ...results.Results import Results as _Results
         from ..opensees_model import OpenSeesModel
 
-        p = self.to_native()
+        p = self._write_native(None)
         src = p if model_h5 is None else Path(os.fspath(model_h5))
         return _Results.from_native(
             p,

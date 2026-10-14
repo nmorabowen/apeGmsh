@@ -435,6 +435,7 @@ def _write_mode_stages(
     fields: Callable[[int], np.ndarray],
     n_trans: int,
     rotations: bool,
+    stacklevel: int = 3,
 ) -> None:
     """Write one ``kind="mode"`` stage per eigenvalue into an open
     :class:`~apeGmsh.results.writers._native.NativeWriter`.
@@ -451,8 +452,9 @@ def _write_mode_stages(
     ``n_trans`` / ``rotations`` rule.
 
     A non-positive eigenvalue warns once for that mode and writes
-    ``frequency_hz = period_s = 0``; ``stacklevel`` points at the
-    caller of the public ``to_native``.
+    ``frequency_hz = period_s = 0``; ``stacklevel`` counts from this
+    function to the caller of the public method (3 when that method
+    calls it directly).
     """
     import math
     import warnings
@@ -470,7 +472,7 @@ def _write_mode_stages(
                 "unconverged eigensolve). Writing frequency=0 / "
                 "period=0 for it.",
                 UserWarning,
-                stacklevel=3,
+                stacklevel=stacklevel,
             )
             omega = 0.0
         freq_hz = omega / (2.0 * math.pi)

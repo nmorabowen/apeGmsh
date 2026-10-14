@@ -287,6 +287,31 @@ def test_mixed_ndf_never_raises_and_zero_fills(
         assert got[cols[up]] == vecs[(up, 1)][d]
 
 
+def test_a_vector_shorter_than_ndm_zero_fills_translations(
+    fem3: Any, bind: Any, tmp_path: Path,
+) -> None:
+    """ndm 3, one node answering a 2-entry vector: displacement_z is 0.0
+    there and the other entries are the vector's."""
+    ids = _node_ids(fem3)
+    lengths = {int(n): 6 for n in ids}
+    short = int(ids[1])
+    lengths[short] = 2
+    vecs = _vectors(ids, 1, lengths)
+    bind(_FakeOps([25.0], vecs))
+    r = _frame(fem3).eigen(1)
+
+    out = r.to_native(tmp_path / "modes.h5")
+
+    with h5py.File(out, "r") as f:
+        (stage,) = list(f["stages"])
+    col = [int(n) for n in ids].index(short)
+    assert _component(out, stage, "displacement_x")[0][col] == vecs[(short, 1)][0]
+    assert _component(out, stage, "displacement_y")[0][col] == vecs[(short, 1)][1]
+    assert _component(out, stage, "displacement_z")[0][col] == 0.0
+    for comp in ("rotation_x", "rotation_y", "rotation_z"):
+        assert _component(out, stage, comp)[0][col] == 0.0
+
+
 # ---------------------------------------------------------------------------
 # Invariant 4: parity with DomainCapture.capture_modes
 # ---------------------------------------------------------------------------
@@ -348,11 +373,12 @@ def test_stages_match_capture_modes_dataset_by_dataset(
 # Warn-as-contract (invariant 2)
 # ---------------------------------------------------------------------------
 
+@pytest.mark.parametrize("lam", [-2.5, 0.0])
 def test_nonpositive_eigenvalue_warns_once_naming_the_mode(
-    fem3: Any, bind: Any, tmp_path: Path,
+    fem3: Any, bind: Any, tmp_path: Path, lam: float,
 ) -> None:
     ids = _node_ids(fem3)
-    bind(_FakeOps([4.0, -2.5, 9.0],
+    bind(_FakeOps([4.0, lam, 9.0],
                   _vectors(ids, 3, {int(n): 6 for n in ids})))
     r = _frame(fem3).eigen(3)
 
@@ -363,10 +389,29 @@ def test_nonpositive_eigenvalue_warns_once_naming_the_mode(
     user = [w for w in caught if issubclass(w.category, UserWarning)]
     assert len(user) == 1
     assert "Mode 2" in str(user[0].message)
+    assert Path(user[0].filename) == Path(__file__)   # points at the caller
     rows = _stage_rows(out)
-    assert float(rows[1]["eigenvalue"]) == -2.5
+    assert float(rows[1]["eigenvalue"]) == lam
     assert float(rows[1]["frequency_hz"]) == 0.0
     assert float(rows[1]["period_s"]) == 0.0
+
+
+def test_nonpositive_warning_from_results_points_at_the_caller(
+    fem3: Any, bind: Any,
+) -> None:
+    ids = _node_ids(fem3)
+    bind(_FakeOps([-1.0], _vectors(ids, 1, {int(n): 6 for n in ids})))
+    r = _frame(fem3).eigen(1)
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        with r.results() as res:
+            assert len(res.modes) == 1
+
+    user = [w for w in caught
+            if issubclass(w.category, UserWarning) and "Mode 1" in str(w.message)]
+    assert len(user) == 1
+    assert Path(user[0].filename) == Path(__file__)
 
 
 # ---------------------------------------------------------------------------
