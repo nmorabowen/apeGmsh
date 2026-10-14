@@ -1,0 +1,3 @@
+### ADDED — `BackendInfo.schema` reads the fork's `ladrunoSchema` v0 (#1931)
+
+`backend_info_of` now parses the fork's `ladrunoSchema()` JSON (fork PR #972) into a hashable `LadrunoSchema` on the new `BackendInfo.schema` field, which defaults to `None`. `info.supports_option(owner, token)` and `info.has_command(name)` answer `True` or `False` from a known schema, and `None` (unknown capabilities) without one. A build without the command, a schema version other than 0, a raise, malformed JSON, a wrong shape, or a `build` that disagrees with `ladrunoBuild()` all read as unknown. `kind` and `build` still come from `ladrunoBuild()` alone. `since` is kept as an opaque string, and command answers speak only for the engine that answered.

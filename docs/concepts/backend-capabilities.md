@@ -62,6 +62,17 @@ opspy = get_ops()     # the module, and so the domain, the bridge drives
 Beside a fork build, `import openseespy.opensees` binds a second module
 with its own, empty domain, and every query answers from that one.
 
+A fork build recent enough to answer `ladrunoSchema()` (fork PR #972)
+also says what it can do: the commands its engine registers and the option
+tokens each fail-closed parser accepts. `get_backend_info()` reads it, so
+`info.supports_option("LadrunoRCConcrete", "-implexControl")` answers
+`True` or `False`. An older build, a schema version other than 0, or a
+schema that disagrees with `ladrunoBuild()` reads as *unknown
+capabilities*, and the same query answers `None`. An unknown answer is
+never `False`, and it never changes whether the build counts as the fork.
+Command answers speak only for the in-process engine, not for a Tcl
+binary that a subprocess runs.
+
 !!! warning "The fork is a source build"
 
     The Ladruno fork lives at
