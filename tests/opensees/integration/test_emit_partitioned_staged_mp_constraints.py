@@ -815,11 +815,17 @@ def _equation_tie_stages(handler: str, *, claim: bool) -> apeSees:
         with ops.stage(name=f"s{i}") as s:
             if claim and i == 2:
                 s.tie(name="x_eq")
-            chain = _mp_chain(ops)
-            chain["constraints"] = (
-                ops.constraints.Penalty(alpha_sp=1e12, alpha_mp=1e12)
-                if handler == "Penalty" else ops.constraints.Lagrange())
-            s.analysis(**chain)
+            s.analysis(
+                test=ops.test.NormDispIncr(tol=1e-4, max_iter=10),
+                algorithm=ops.algorithm.Newton(),
+                integrator=ops.integrator.LoadControl(dlam=1.0),
+                constraints=(
+                    ops.constraints.Penalty(alpha_sp=1e12, alpha_mp=1e12)
+                    if handler == "Penalty" else ops.constraints.Lagrange()),
+                numberer=ops.numberer.ParallelPlain(),
+                system=ops.system.Mumps(),
+                analysis=ops.analysis.Static(),
+            )
             s.run(n_increments=1)
     return ops
 

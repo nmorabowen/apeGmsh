@@ -413,8 +413,8 @@ def emit_stage_mp_constraints_partitioned(
 
     # equationConstraint (ADR 0068 Open item 2), as the global pass writes
     # it: on every rank that owns the slave or a master, after the ghost
-    # declarations above. Omitting it dropped a stage-claimed equation
-    # tie from every rank while its ghosts were still declared (#1979).
+    # declarations above. The plan declares this tie's ghosts, so a rank
+    # that skipped the rows would run with the tie missing and say nothing.
     if plan.equation_records:
         _emit_surface_couplings_for_rank(
             emitter, plan.equation_records, tag_plan,
