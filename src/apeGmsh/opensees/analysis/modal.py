@@ -26,7 +26,7 @@ drivers (fork ADR 44, ``LadrunoModalResponse``).
 """
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -428,6 +428,82 @@ class RandomResponseResult:
     peak: float | None = None
 
 
+def _write_mode_stages(
+    writer: Any,
+    eigenvalues: Sequence[float] | np.ndarray,
+    node_ids: np.ndarray,
+    fields: Callable[[int], np.ndarray],
+    n_trans: int,
+    rotations: bool,
+) -> None:
+    """Write one ``kind="mode"`` stage per eigenvalue into an open
+    :class:`~apeGmsh.results.writers._native.NativeWriter`.
+
+    The layout ``DomainCapture.capture_modes`` writes, shared by
+    :meth:`ParallelModalResult.to_native` and
+    :meth:`~apeGmsh.opensees.analysis.eigen.EigenResult.to_native`
+    (brief #1961 §3.2): stage ``mode_<k>`` at ``time = [0.0]`` with the
+    ``eigenvalue`` / ``frequency_hz`` / ``period_s`` / ``mode_index``
+    attrs, ``displacement_*`` from columns ``0 .. n_trans-1`` of
+    ``fields(k)`` and, iff ``rotations``, ``rotation_*`` from columns
+    3-5. ``fields(k)`` is the ``(n_nodes, ncols)`` shape of mode ``k``
+    (1-indexed), rows in ``node_ids`` order. Each caller passes its own
+    ``n_trans`` / ``rotations`` rule.
+
+    A non-positive eigenvalue warns once for that mode and writes
+    ``frequency_hz = period_s = 0``; ``stacklevel`` points at the
+    caller of the public ``to_native``.
+    """
+    import math
+    import warnings
+
+    axes = ("x", "y", "z")
+    for mode_idx, lam in enumerate(eigenvalues, start=1):
+        lam_f = float(lam)
+        if lam_f > 0:
+            omega = math.sqrt(lam_f)
+        else:
+            warnings.warn(
+                f"Mode {mode_idx} has a non-positive eigenvalue "
+                f"({lam_f:.6g}); this indicates a spurious/"
+                "unstable mode (rigid-body mechanism or "
+                "unconverged eigensolve). Writing frequency=0 / "
+                "period=0 for it.",
+                UserWarning,
+                stacklevel=3,
+            )
+            omega = 0.0
+        freq_hz = omega / (2.0 * math.pi)
+        period_s = (2.0 * math.pi / omega) if omega > 0 else 0.0
+
+        sid = writer.begin_stage(
+            name=f"mode_{mode_idx}",
+            kind="mode",
+            time=np.array([0.0]),
+            eigenvalue=lam_f,
+            frequency_hz=float(freq_hz),
+            period_s=float(period_s),
+            mode_index=mode_idx,
+        )
+        field = fields(mode_idx)
+        components: dict[str, np.ndarray] = {}
+        for axis_idx in range(n_trans):
+            components[f"displacement_{axes[axis_idx]}"] = (
+                field[:, axis_idx][None, :]
+            )
+        if rotations:
+            for axis_idx in range(3):
+                components[f"rotation_{axes[axis_idx]}"] = (
+                    field[:, 3 + axis_idx][None, :]
+                )
+        writer.write_nodes(
+            sid, "partition_0",
+            node_ids=node_ids,
+            components=components,
+        )
+        writer.end_stage()
+
+
 def _read_mode_row(mode_file: Any, n_nodes: int, ndf: int) -> np.ndarray:
     """Read one ``mode_shape_*.out`` recorder row into ``(n_nodes, ndf)``.
 
@@ -798,16 +874,13 @@ class ParallelModalResult:
         period_s = 0`` (the ``capture_modes`` convention). Requires the
         P3 shape harvest — a run dir without the sidecar fails loud.
         """
-        import math
-        import warnings
-
         from ...results.writers._native import NativeWriter
 
         if self._shapes is None or self._shape_nodes is None:
             raise FileNotFoundError(_NO_SHAPES_MSG)
-        ndf = int(self._shapes.shape[2])
+        shapes = self._shapes
+        ndf = int(shapes.shape[2])
         ndm = int(self._shape_ndm if self._shape_ndm is not None else 3)
-        axes = ("x", "y", "z")
 
         writer = NativeWriter(path)
         # No ``opensees_backend`` / ``opensees_build`` (F2-b): the modes
@@ -821,50 +894,14 @@ class ParallelModalResult:
             source_path="<modal_deck harvest>",
         )
         try:
-            for mode_idx, lam in enumerate(self.eigenvalues, start=1):
-                lam_f = float(lam)
-                if lam_f > 0:
-                    omega = math.sqrt(lam_f)
-                else:
-                    warnings.warn(
-                        f"Mode {mode_idx} has a non-positive eigenvalue "
-                        f"({lam_f:.6g}); this indicates a spurious/"
-                        "unstable mode (rigid-body mechanism or "
-                        "unconverged eigensolve). Writing frequency=0 / "
-                        "period=0 for it.",
-                        UserWarning,
-                        stacklevel=2,
-                    )
-                    omega = 0.0
-                freq_hz = omega / (2.0 * math.pi)
-                period_s = (2.0 * math.pi / omega) if omega > 0 else 0.0
-
-                sid = writer.begin_stage(
-                    name=f"mode_{mode_idx}",
-                    kind="mode",
-                    time=np.array([0.0]),
-                    eigenvalue=lam_f,
-                    frequency_hz=float(freq_hz),
-                    period_s=float(period_s),
-                    mode_index=mode_idx,
-                )
-                field = self._shapes[mode_idx - 1]
-                components: dict[str, np.ndarray] = {}
-                for axis_idx in range(min(3, ndm, ndf)):
-                    components[f"displacement_{axes[axis_idx]}"] = (
-                        field[:, axis_idx][None, :]
-                    )
-                if ndf >= 6:
-                    for axis_idx in range(3):
-                        components[f"rotation_{axes[axis_idx]}"] = (
-                            field[:, 3 + axis_idx][None, :]
-                        )
-                writer.write_nodes(
-                    sid, "partition_0",
-                    node_ids=self._shape_nodes,
-                    components=components,
-                )
-                writer.end_stage()
+            _write_mode_stages(
+                writer,
+                self.eigenvalues,
+                self._shape_nodes,
+                lambda k: shapes[k - 1],
+                n_trans=min(3, ndm, ndf),
+                rotations=ndf >= 6,
+            )
         finally:
             writer.close()
 
