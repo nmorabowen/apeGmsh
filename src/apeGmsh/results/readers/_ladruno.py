@@ -151,9 +151,10 @@ class LadrunoReader:
         self._validate_identity()
         self._stage_cache: Optional[list[StageInfo]] = None
         self._stage_to_grp: dict[str, str] = {}
-        # #1946: mode stage id -> its ModeEntry. A mode stage id also maps
-        # to its host group in ``_stage_to_grp`` (model, partition flag).
-        self._mode_refs: dict[str, _mnodal.ModeEntry] = {}
+        # #1946: mode stage id -> (host MODEL_STAGE group, its ModeEntry).
+        # Mode stages are not MODEL_STAGE groups, so they stay out of
+        # ``_stage_to_grp`` (which lists the host stages, ``stage_<i>``).
+        self._mode_refs: dict[str, tuple[str, _mnodal.ModeEntry]] = {}
         self._fem_cache: "Optional[FEMData] | _Sentinel" = _SENTINEL
         self._tag_map: "Optional[ElementTagTranslator]" = None
 
@@ -259,8 +260,7 @@ class LadrunoReader:
         for h, sid, mname, entry in _mnodal.mode_stage_layout(
             [s.id for s in hosts], names, host_sets,
         ):
-            self._stage_to_grp[sid] = names[h]
-            self._mode_refs[sid] = entry
+            self._mode_refs[sid] = (names[h], entry)
             modes_after.setdefault(h, []).append(StageInfo(
                 id=sid, name=mname, kind="mode", n_steps=1,
                 eigenvalue=entry.eigenvalue,
@@ -289,10 +289,14 @@ class LadrunoReader:
     def _resolve_stage_group(self, stage_id: str) -> "h5py.Group":
         if self._stage_cache is None:
             self.stages()
+        if stage_id in self._mode_refs:
+            # A mode stage reads its host's group (model, partition flag,
+            # modal groups); its own reads branch on ``_mode_refs``.
+            return self._h5[self._mode_refs[stage_id][0]]
         if stage_id not in self._stage_to_grp:
             raise KeyError(
                 f"Unknown stage_id {stage_id!r}; available: "
-                f"{sorted(self._stage_to_grp)}."
+                f"{sorted([*self._stage_to_grp, *self._mode_refs])}."
             )
         return self._h5[self._stage_to_grp[stage_id]]
 
@@ -549,7 +553,7 @@ class LadrunoReader:
             return _empty_node_slab(component, time, t_idx)
         if stage_id in self._mode_refs:
             got = _mnodal.read_mode_shape(
-                on_nodes, self._mode_refs[stage_id], component,
+                on_nodes, self._mode_refs[stage_id][1], component,
                 node_ids=node_ids,
             )
             if got is None:
