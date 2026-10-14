@@ -158,10 +158,10 @@ test("each stage's chain in the card's order, every member by its parameters' fi
       else if (p.role === "analysis") {
         // Static vs Transient: the candidates differ and there are no analysis_args, so the order cannot be checked.
         assert.deepEqual([p.decl, p.params], [null, []]);
-        assert.equal(p.note, `cannot join (#1646): ${c.h5} has no analysis_args to check the order join against`);
+        assert.equal(p.note, `cannot join (link not recorded for analysis calls, by design: h5-schema.md /opensees/program): ${c.h5} has no analysis_args to check the order join against`);
       } else {
         assert.equal(p.decl, null, `${c.title} ${p.role}: no single link`);
-        assert.equal(p.note, `declaration ambiguous (#1646): 2 identical ${CHAIN.find((x) => x.role === p.role)!.family} declarations (#1, #2); the archive does not say which one this chain uses`);
+        assert.equal(p.note, `declaration ambiguous (link not recorded for analysis calls, by design: h5-schema.md /opensees/program): 2 identical ${CHAIN.find((x) => x.role === p.role)!.family} declarations (#1, #2); the archive does not say which one this chain uses`);
       }
     }
   }
@@ -174,12 +174,12 @@ test("identical candidates whose *_args disagree are refused; differing candidat
   const off = { ...s1!, analysis: { ...s1!.analysis!, attrs: { ...s1!.analysis!.attrs, test_args: [1e-3, 10, 0, 2] } } };
   const t = analysisOf(withChainDecls({ ...defs, definitions: { ...d, stages: [s0!, off] } })).chains[1]!.parts[5]!;
   assert.deepEqual([t.decl, t.params], [null, []]);
-  assert.match(t.note!, /^cannot join \(#1646\): the order join gives opensees\/test\/#2/);
+  assert.match(t.note!, /^cannot join \(link not recorded for analysis calls, by design: h5-schema\.md \/opensees\/program\): the order join gives opensees\/test\/#2/);
   // The two Newton declarations differ (tangent vs initial) and the chains carry no algorithm_args: unverifiable.
   const chains = CHAIN_PARAMS.map((c, k) => c.map((x) => (x[0] === "algorithm" ? (["algorithm", "Newton", { tangent: k ? "initial" : "tangent" }] as (typeof x)) : x)));
   const alg = analysisOf(withChainDecls(defs, chains)).chains.map((c) => c.parts[4]!);
   assert.deepEqual(alg.map((p) => [p.decl, p.params]), [[null, []], [null, []]]);
-  assert.equal(alg[0]!.note, "cannot join (#1646): /opensees/stages/stage_000/analysis has no algorithm_args to check the order join against");
+  assert.equal(alg[0]!.note, "cannot join (link not recorded for analysis calls, by design: h5-schema.md /opensees/program): /opensees/stages/stage_000/analysis has no algorithm_args to check the order join against");
 });
 
 test("the *_args check compares string slots too: a string field that disagrees refuses the join", () => {
@@ -189,7 +189,7 @@ test("the *_args check compares string slots too: a string field that disagrees 
   const one = withChainDecls({ ...defs, definitions: { ...d, stages: [st] } }, [CHAIN_PARAMS[0]!]);
   const alg = analysisOf(one).chains[0]!.parts[4]!;
   assert.deepEqual([alg.decl, alg.params], [null, []]);
-  assert.equal(alg.note, "cannot join (#1646): the order join gives opensees/algorithm/#1 (tangent), but /opensees/stages/stage_000/analysis has algorithm_args strings [secant]");
+  assert.equal(alg.note, "cannot join (link not recorded for analysis calls, by design: h5-schema.md /opensees/program): the order join gives opensees/algorithm/#1 (tangent), but /opensees/stages/stage_000/analysis has algorithm_args strings [secant]");
   // The same string agrees: joined.
   const ok = { ...s0, analysis: { ...s0.analysis!, attrs: { ...s0.analysis!.attrs, algorithm_args: ["tangent"] } } };
   const good = analysisOf(withChainDecls({ ...defs, definitions: { ...d, stages: [ok] } }, [CHAIN_PARAMS[0]!])).chains[0]!.parts[4]!;
@@ -206,8 +206,8 @@ test("F1 repro: a declaration order that is not the stage order is refused again
   const s = withChainDecls({ ...defs, definitions: { ...d, stages: [s0!, push] } }, chains);
   const parts = analysisOf(s).chains.map((c) => c.parts[3]!);
   assert.deepEqual(parts.map((p) => [p.token, p.decl, p.params]), [["LoadControl", null, []], ["LoadControl", null, []]]);
-  assert.equal(parts[0]!.note, "cannot join (#1646): the order join gives opensees/integrator/#1 (0.5), but /opensees/stages/stage_000/analysis has integrator_args [0.1]");
-  assert.equal(parts[1]!.note, "cannot join (#1646): the order join gives opensees/integrator/#2 (0.1), but /opensees/stages/stage_001/analysis has integrator_args [0.5]");
+  assert.equal(parts[0]!.note, "cannot join (link not recorded for analysis calls, by design: h5-schema.md /opensees/program): the order join gives opensees/integrator/#1 (0.5), but /opensees/stages/stage_000/analysis has integrator_args [0.1]");
+  assert.equal(parts[1]!.note, "cannot join (link not recorded for analysis calls, by design: h5-schema.md /opensees/program): the order join gives opensees/integrator/#2 (0.1), but /opensees/stages/stage_001/analysis has integrator_args [0.5]");
   // No dlam is shown for gravity anywhere in the window.
   assert.doesNotMatch(render(s).root.all((e) => e.dataset["role"] === "integrator")[0]!.textContent, /dlam/);
 });
@@ -218,7 +218,7 @@ test("a joined declaration with no decl_params row is refused, with no link", ()
   const s: State = { ...base, definitions: { ...base.definitions!, decls: { ...base.definitions!.decls!, records: recs } } };
   const t = analysisOf(s).chains[0]!.parts.find((p) => p.role === "test")!;
   assert.deepEqual([t.decl, t.params], [null, []]);
-  assert.equal(t.note, "cannot join (#1646): opensees/test/#1 has no /opensees/decl_params row to check the order join against");
+  assert.equal(t.note, "cannot join (link not recorded for analysis calls, by design: h5-schema.md /opensees/program): opensees/test/#1 has no /opensees/decl_params row to check the order join against");
 });
 
 test("one declaration for one chain needs no order: joined even without *_args", () => {
@@ -228,7 +228,7 @@ test("one declaration for one chain needs no order: joined even without *_args",
   assert.ok(parts.every((p) => p.note === null && p.decl?.label === "#1"), JSON.stringify(parts.map((p) => p.note)));
   // ... but *_args, when present, are still checked.
   const off = withChainDecls({ ...defs, definitions: { ...d, stages: [d.stages[0]!] } }, [CHAIN_PARAMS[0]!.map((x) => (x[0] === "integrator" ? (["integrator", "LoadControl", { dlam: 9 }] as (typeof x)) : x))]);
-  assert.match(analysisOf(off).chains[0]!.parts[3]!.note!, /^cannot join \(#1646\): the order join gives opensees\/integrator\/#1 \(9\)/);
+  assert.match(analysisOf(off).chains[0]!.parts[3]!.note!, /^cannot join \(link not recorded for analysis calls, by design: h5-schema\.md \/opensees\/program\): the order join gives opensees\/integrator\/#1 \(9\)/);
 });
 
 test("the parameters never come from the positional *_args", () => {
@@ -272,7 +272,7 @@ test("the join is refused, loudly, when the counts differ or a declaration's typ
   const none = analysisOf(defs).chains[0]!.parts[3]!;
   assert.equal(none.token, "LoadControl");
   assert.equal(none.decl, null);
-  assert.equal(none.note, "cannot join: /opensees/decls has 0 integrator declarations for 2 chains that set it (the archive records no chain↔declaration link, #1646)");
+  assert.equal(none.note, "cannot join: /opensees/decls has 0 integrator declarations for 2 chains that set it (the chain↔declaration link is not recorded for analysis calls, by design: h5-schema.md /opensees/program)");
   // One chain's worth of declarations for two chains.
   const short = analysisOf(withChainDecls(defs, [CHAIN_PARAMS[0]!])).chains[1]!.parts[5]!;
   assert.match(short.note!, /has 1 test declaration for 2 chains/);
@@ -280,9 +280,9 @@ test("the join is refused, loudly, when the counts differ or a declaration's typ
   const swapped = CHAIN_PARAMS.map((c, k) => c.map((x) => (k === 1 && x[0] === "integrator" ? (["integrator", "LoadControl", { dlam: 1 }] as (typeof x)) : x)));
   const bad = analysisOf(withChainDecls(defs, swapped)).chains.map((c) => c.parts[3]!);
   assert.deepEqual(bad.map((p) => [p.decl, p.params]), [[null, []], [null, []]], "a refused join lists no parameter for any chain");
-  assert.equal(bad[1]!.note, "cannot join: opensees/integrator/#2 is a LoadControl, the chain names Newmark (the archive records no chain↔declaration link, #1646)");
+  assert.equal(bad[1]!.note, "cannot join: opensees/integrator/#2 is a LoadControl, the chain names Newmark (the chain↔declaration link is not recorded for analysis calls, by design: h5-schema.md /opensees/program)");
   // The other families still join.
-  assert.match(analysisOf(withChainDecls(defs, swapped)).chains[1]!.parts[5]!.note!, /^declaration ambiguous \(#1646\)/);
+  assert.match(analysisOf(withChainDecls(defs, swapped)).chains[1]!.parts[5]!.note!, /^declaration ambiguous \(link not recorded for analysis calls, by design: h5-schema\.md \/opensees\/program\)/);
 });
 
 test("a 2.22 file (no /opensees/decls) shows its tokens and says the parameters are not in the file", () => {

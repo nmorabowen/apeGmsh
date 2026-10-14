@@ -109,6 +109,12 @@ export function highlightObjects(
  * writes the positions and the bounds the raycaster tests). Among coincident
  * line hits an OpenSees-only element (no cell) wins, since it would be
  * unreachable behind a cell drawn on the same nodes. Null on a miss.
+ *
+ * V4e1 (ADR 0083 C-PICK): `clipped` says whether a world point is cut away
+ * by a section plane. Each object's nearest hit counts only where the cut
+ * kept it: a cut-away line hit leaves the faces to answer, and a cut-away
+ * face hit is a miss. Hits behind a cut-away one are never walked to (no
+ * pick-through the hole, ADR 0083 open question 3).
  */
 export function hitElement(
   raycaster: THREE.Raycaster,
@@ -119,10 +125,11 @@ export function hitElement(
   lineElement: Int32Array,
   triElement: Int32Array,
   radius: number,
+  clipped: (p: THREE.Vector3) => boolean = () => false,
 ): { element: number; point: THREE.Vector3 } | null {
   if (lines) {
     const hits = raycaster.intersectObject(lines, false).filter((h) => h.faceIndex !== undefined && h.faceIndex !== null);
-    if (hits.length) {
+    if (hits.length && !clipped(hits[0]!.point)) {
       const near = hits[0]!.distance + 1e-6 * radius;
       const coincident = hits.filter((h) => h.distance <= near);
       const ops = coincident.find((h) => elements[lineElement[drawn.lineMap[h.faceIndex!]!]!]!.startsWith("opensees/element/"));
@@ -132,7 +139,7 @@ export function hitElement(
   }
   if (faces) {
     const hit = raycaster.intersectObject(faces, false)[0];
-    if (hit && hit.faceIndex !== undefined && hit.faceIndex !== null) return { element: triElement[drawn.triMap[hit.faceIndex]!]!, point: hit.point };
+    if (hit && hit.faceIndex !== undefined && hit.faceIndex !== null && !clipped(hit.point)) return { element: triElement[drawn.triMap[hit.faceIndex]!]!, point: hit.point };
   }
   return null;
 }

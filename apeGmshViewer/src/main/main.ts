@@ -33,6 +33,7 @@ import { openModel } from "../reader/node.ts";
 import { openResults, type ResultsFile, type ResultsH5 } from "../reader/results.ts";
 import { fileFromArgv, pairSet } from "./pairing.ts";
 import { ResultsHost, type ScanRequest, type StepRequest } from "./results.ts";
+import { checkPlan } from "../state/extrapolation.ts";
 import { OpenSession } from "./session.ts";
 import { goToSource } from "./source.ts";
 import { SetWatcher } from "./watch.ts";
@@ -183,7 +184,9 @@ ipcMain.handle("results:scan", (e, req: unknown) => {
     !Array.isArray(r.components) ||
     typeof r.magnitude !== "boolean" ||
     typeof r.scanId !== "number" ||
-    (r.source !== undefined && r.source !== "element")
+    (r.source !== undefined && r.source !== "element") ||
+    // V4c2b: a plan only with an element scan, and only one that checks (state/extrapolation.ts `checkPlan`).
+    (r.plan !== undefined && (r.source !== "element" || !checkPlan(r.plan)))
   ) {
     return { ok: false, scanId: -1, error: `results:scan: malformed request ${JSON.stringify(req)}` };
   }
@@ -245,7 +248,8 @@ ipcMain.handle("measure:done", (_e, result: unknown) => {
   const deform = (result as { deform?: ContourMeasure | null } | null)?.deform;
   if (deform) printContourRow(deform);
   // V4c2a: the scrub with an element contour on, then deformed too.
-  for (const key of ["elements", "elementsDeform"] as const) {
+  // V4c2b: and once per node-located draw mode.
+  for (const key of ["elements", "elementsDeform", "elementsAveraged", "elementsNode", "elementsDiscrete"] as const) {
     const row = (result as Partial<Record<typeof key, ContourMeasure | null>> | null)?.[key];
     if (row) printContourRow(row);
   }
