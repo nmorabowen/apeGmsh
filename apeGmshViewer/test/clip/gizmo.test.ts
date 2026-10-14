@@ -140,6 +140,8 @@ function rig(s0: State, camPos: readonly number[], box: Box = BOX, chrome: ((x: 
     geometryInfo: null,
     aim: proto.aim,
     selectAt: proto.selectAt,
+    // V4e3: a release re-settles the caps (test/clip/caps.test.ts drives the real one).
+    settleCaps: () => {},
     pickAt: (x: number, y: number) => {
       picks.push([x, y]);
       return null;

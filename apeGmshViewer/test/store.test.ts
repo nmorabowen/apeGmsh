@@ -164,6 +164,7 @@ const EVERY: Record<EventType, Event> = {
   setClipPose: { type: "setClipPose", id: "plane-1", normal: [0, 1, 0], offset: 1 },
   setShowGizmos: { type: "setShowGizmos", on: false },
   setClipGizmo: { type: "setClipGizmo", id: "plane-1", visible: false },
+  setCutFace: { type: "setCutFace", on: false },
   setDeformScale: { type: "setDeformScale", scale: 10 },
   setReferenceGhost: { type: "setReferenceGhost", on: true },
   deformMeasured: { type: "deformMeasured", key: "x", drawn: 3, missing: 1 },
@@ -186,8 +187,8 @@ test("reducer purity: every event leaves a frozen state untouched and returns pl
   }
   assert.equal(
     Object.keys(EVERY).length,
-    50,
-    "decision 17's 20 events plus fileClosed, requestSource, sourceResult, setLoaded (V2f), frameSelection, setColourBy, selectStage (V4f), resultsLoaded and resultStep (V4b), the five contour events (V4c1), the four deformed-shape events (V4d), setContourGauss and contourElementJoin (V4c2a), the seven section-plane events (V4e1), and the three gizmo events (V4e2: setClipPose, setShowGizmos, setClipGizmo)",
+    51,
+    "decision 17's 20 events plus fileClosed, requestSource, sourceResult, setLoaded (V2f), frameSelection, setColourBy, selectStage (V4f), resultsLoaded and resultStep (V4b), the five contour events (V4c1), the four deformed-shape events (V4d), setContourGauss and contourElementJoin (V4c2a), the seven section-plane events (V4e1), the three gizmo events (V4e2: setClipPose, setShowGizmos, setClipGizmo), and setCutFace (V4e3)",
   );
 });
 

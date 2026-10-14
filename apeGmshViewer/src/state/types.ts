@@ -204,6 +204,13 @@ export interface MeshInfo {
    * deformed shape moves the outline edges through.
    */
   vertexNodes: { line: BlobRef; tri: BlobRef; edge: BlobRef };
+  /**
+   * V4e3: every node of the model, interior ones too (the cut face of a solid
+   * meets nodes no drawn face has): `ids` (f64) and `xyz` (f64, 3 per node),
+   * in `/nodes` order. Put by the effects' model read; absent when the mesh
+   * was built without it, and then the cut face says so instead of a cap.
+   */
+  nodes?: { ids: BlobRef; xyz: BlobRef };
 }
 
 /** The render derivation of the geometry artifact (the `/geometry` sibling, V2a spec). */
@@ -456,6 +463,13 @@ export interface ClipState {
   applyCuts: boolean;
   /** V4e2: the footer's "Show plane gizmos" toggle (each plane's eye still applies) */
   showGizmos: boolean;
+  /**
+   * V4e3: the footer's "Contour on cut face" toggle: each cutting plane fills
+   * the solid it cuts with a cap carrying the contour (a flat fill without
+   * one). On by default: without it a plane through a solid opens onto an
+   * empty box (ADR 0083: S3 is required for solid models).
+   */
+  cutFace: boolean;
   /** the last plane number handed out (ids are never reused) */
   seq: number;
   /** why the last clip event was refused (the 7th active plane, a zero normal, a NaN offset); cleared by the next accepted one */
@@ -693,6 +707,8 @@ export type Event =
   /** V4e2: the footer's "Show plane gizmos" toggle */
   | { type: "setShowGizmos"; on: boolean }
   /** V4e2: one plane's gizmo eye */
-  | { type: "setClipGizmo"; id: string; visible: boolean };
+  | { type: "setClipGizmo"; id: string; visible: boolean }
+  /** V4e3: the footer's "Contour on cut face" toggle (a cap on every cutting plane through a solid) */
+  | { type: "setCutFace"; on: boolean };
 
 export type EventType = Event["type"];
