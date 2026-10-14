@@ -126,7 +126,9 @@ const rule = (sel: string): string => {
 };
 
 test("AC1/AC2: the inspector and Sources share one rail, stacked, and the rail leaves the viewport >= 640 px of 1280", () => {
-  assert.match(html, /<div id="rail">\s*<aside id="inspector" hidden><\/aside>\s*<aside id="sources" hidden><\/aside>\s*<\/div>/);
+  // V4e1: the section planes panel sits at the top of the same rail, stacked by it too.
+  assert.match(html, /<div id="rail">\s*<aside id="planes" hidden><\/aside>\s*<aside id="inspector" hidden><\/aside>\s*<aside id="sources" hidden><\/aside>\s*<\/div>/);
+  assert.doesNotMatch(rule("#planes"), /position:/);
   const railCss = rule("#rail");
   assert.match(railCss, /position: fixed/);
   assert.match(railCss, /flex-direction: column/);

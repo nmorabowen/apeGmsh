@@ -10,9 +10,11 @@ import { mountHeader } from "../panels/header.ts";
 import { mountInspector } from "../panels/inspector.ts";
 import { mountLegend } from "../panels/legend.ts";
 import { mountPhase } from "../panels/phase.ts";
+import { mountPlanes } from "../panels/planes.ts";
 import { mountSources } from "../panels/sources.ts";
 import { mountWindows } from "../panels/windows/frame.ts";
 import { BlobStore } from "../state/blobs.ts";
+import { offsetRange } from "../state/clip.ts";
 import { contourKeysOf, gaussFields } from "../state/contour.ts";
 import { chainOf, contourFieldsOf, contourView, deformOf, deformView, elementVerdictOf } from "../state/selectors.ts";
 import { Store } from "../state/store.ts";
@@ -34,6 +36,8 @@ viewport.setStepSource(() => effects.currentStep());
 // V4d: the deformed shape moves the drawn vertices by the displacement the effects computed for the step shown.
 viewport.setDisplacementSource(() => effects.currentDisplacement());
 const panels = [mountHeader(store), mountBanner(store), mountLegend(store), mountInspector(store), mountEmpty(store), mountPhase(store), mountSources(store), mountWindows(store)];
+// V4e1: the section planes panel; its slider box and the view direction come from the viewport.
+panels.push(mountPlanes(store, { box: () => viewport.sliderBox(), viewNormal: () => viewport.viewNormal() }));
 window.addEventListener("beforeunload", () => {
   for (const d of panels) d();
   effects.dispose();
@@ -476,7 +480,7 @@ async function captureDeform(settle: (ms?: number) => Promise<unknown>, width: n
  * The history scan's time comes first; the machine's CPU load is sampled
  * before (1 s idle) and during the scrub, and the working sets every 100 ms.
  */
-async function measureContour(path: string, deform = false, element = false, gauss: GaussMode = "cell") {
+async function measureContour(path: string, deform = false, element = false, gauss: GaussMode = "cell", planes = false) {
   store.dispatch({ type: "clearSelection" });
   // V4d: the same scrub with the deformed shape on (true scale): each step also waits for the displaced positions.
   store.dispatch({ type: "setDeform", on: deform });
@@ -527,7 +531,10 @@ async function measureContour(path: string, deform = false, element = false, gau
     if (deform && d.state !== "ready" && d.state !== "partial") throw new Error(`measure: the deformed shape is ${d.state}`);
     if (element && v.state !== "element") throw new Error(`measure: the element contour is ${v.state}`);
     const what = v.state === "ready" ? `${v.field} ${v.component.label}` : v.state === "element" ? `element ${v.field} ${v.component.label}, ${v.topology}` : "?";
-    const field = what + (deform ? ", deformed ×1" : "");
+    // V4e1: six section planes cutting through the scrub (each 20 % inside the reference box along ±X, ±Y, ±Z).
+    if (planes) addSixPlanes();
+    if (planes && viewport.clipCount !== 6) throw new Error(`measure: ${viewport.clipCount} section planes cut, not 6`);
+    const field = what + (deform ? ", deformed ×1" : "") + (planes ? ", 6 section planes" : "");
     const T = stages[best]!.time.length;
     const gl = viewport.renderer.getContext();
     const stepMs: number[] = [];
@@ -557,7 +564,193 @@ async function measureContour(path: string, deform = false, element = false, gau
     };
   } finally {
     clearInterval(sampler);
+    if (planes) removePlanes();
   }
+}
+
+/** V4e1: six active section planes, one per face of the reference box, each 20 % of its extent inside it. */
+function addSixPlanes() {
+  const box = viewport.sliderBox();
+  if (!box) throw new Error("section planes: no mesh");
+  const normals: [number, number, number][] = [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]];
+  for (const n of normals) {
+    store.dispatch({ type: "addClipPlane", normal: n });
+    const p = store.get().clip.planes.at(-1)!;
+    const r = offsetRange(p.normal, box);
+    store.dispatch({ type: "setClipOffset", id: p.id, offset: r.min + 0.2 * (r.max - r.min) });
+  }
+}
+
+function removePlanes() {
+  for (const p of store.get().clip.planes) store.dispatch({ type: "removeClipPlane", id: p.id });
+}
+
+/** The id of the plane added last. */
+const lastPlane = (): string => store.get().clip.planes.at(-1)!.id;
+
+/** Put plane `id` at fraction `t` of the reference box along its normal (0: the low end). */
+function placeAt(id: string, t: number) {
+  const box = viewport.sliderBox()!;
+  const p = store.get().clip.planes.find((q) => q.id === id)!;
+  const r = offsetRange(p.normal, box);
+  store.dispatch({ type: "setClipOffset", id, offset: r.min + t * (r.max - r.min) });
+}
+
+/** Add a plane of normal `n` at fraction `t` of the reference box along it; its id. */
+function addAt(n: readonly number[], t: number): string {
+  store.dispatch({ type: "addClipPlane", normal: n });
+  const id = lastPlane();
+  placeAt(id, t);
+  return id;
+}
+
+/**
+ * The V4e1 section-plane stills (D7), by a fixed rule so no flag is needed:
+ * on the results stage with the most steps (the last of a tie) whose
+ * deformed shape can be drawn, at its last step, coloured by group,
+ * undeformed: the model before any plane; one Z plane, flipped to keep the
+ * lower 40 %, so the solid shows hollow from above (no caps until V4e3); an
+ * X plane at 30 % added (a corner cut); the Z plane flipped back; its offset moved to
+ * 75 %; the panel with the X plane's Custom normal fields open on (1, 1, 0);
+ * six planes, each 10 % inside a face of the box; a 7th refused with its
+ * notice. Then a click that misses cut-away geometry: a plane along the view
+ * cuts away the nearer half, and a scripted click on an element of that half
+ * is a miss (the ring marks where it clicked); the same click with "Apply
+ * cuts" off selects it. Then the deformed (scale 10, ghost on), contoured
+ * model cut by a Y plane (the half nearer the camera gone) and an X plane at
+ * 45 %, at the first and the last step of the scrub (the shear carries more
+ * of it through the X plane), and that last still at 1280 px. Plane offsets
+ * avoid the mesh's own face planes, where a cut coincides with a face.
+ * `<out>.clip-<n>-<what>.png`.
+ */
+async function captureClip(settle: (ms?: number) => Promise<unknown>, width: number, height: number) {
+  const s0 = store.get();
+  if (!s0.results || !s0.mesh || !s0.phase.axis.some((k) => k.kind === "results")) return;
+  const stages = s0.results.stages;
+  const usable = (i: number) => {
+    store.dispatch({ type: "setPhase", at: { kind: "results", stage: i, step: 0 } });
+    return deformOf(store.get()).ok;
+  };
+  let best = -1;
+  stages.forEach((st, i) => {
+    if (usable(i) && (best < 0 || st.time.length >= stages[best]!.time.length)) best = i;
+  });
+  if (best < 0) return;
+  if (typeof bridge.captureResize === "function") await bridge.captureResize(width, height);
+  const last = stages[best]!.time.length - 1;
+  removePlanes();
+  store.dispatch({ type: "setApplyCuts", on: true });
+  store.dispatch({ type: "setDeform", on: false });
+  store.dispatch({ type: "setColourBy", by: "group" });
+  store.dispatch({ type: "clearSelection" });
+  store.dispatch({ type: "setPhase", at: { kind: "results", stage: best, step: 0 } });
+  if (last > 0) store.dispatch({ type: "setResultStep", step: last });
+  store.dispatch({ type: "frameSelection" });
+  const still = async (name: string) => {
+    if (!(await until(() => deformShown() && (store.get().visibility.colourBy !== "contour" || contourShown())))) throw new Error(`capture ${name}: the step did not show`);
+    await settle(150);
+    viewport.renderNow();
+    await painted();
+    await painted();
+    await bridge.captureStill(name);
+  };
+  await still("clip-1-before");
+  const z = addAt([0, 0, 1], 0.4);
+  store.dispatch({ type: "setClipFlipped", id: z, flipped: true });
+  await still("clip-2-z-plane-hollow");
+  const x = addAt([1, 0, 0], 0.3);
+  await still("clip-3-corner-two-planes");
+  store.dispatch({ type: "setClipFlipped", id: z, flipped: false });
+  await still("clip-4-z-flipped-back");
+  placeAt(z, 0.75);
+  await still("clip-5-z-offset-75");
+  store.dispatch({ type: "setClipNormal", id: x, normal: [1, 1, 0] });
+  await still("clip-6-panel-custom-normal");
+  removePlanes();
+  for (const n of [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]] as const) addAt(n, 0.1);
+  await still("clip-7-six-planes");
+  store.dispatch({ type: "addClipPlane", normal: [1, 0, 1] });
+  if (store.get().clip.notice === null) throw new Error("capture: a 7th plane was not refused");
+  await still("clip-8-seventh-refused");
+
+  // The pick that misses cut-away geometry.
+  removePlanes();
+  store.dispatch({ type: "addClipPlane", normal: [...viewport.viewNormal()] });
+  const target = clipMissTarget();
+  if (!target) throw new Error("capture: no element of the cut-away half answers a click with the cuts off");
+  const marker = document.createElement("div");
+  marker.style.cssText =
+    `position: fixed; left: ${target.x - 9}px; top: ${target.y - 9}px; width: 18px; height: 18px; border-radius: 50%;` +
+    "border: 3px solid var(--accent); pointer-events: none; z-index: 10;";
+  const label = document.createElement("div");
+  label.style.cssText = `position: fixed; left: ${target.x + 16}px; top: ${target.y - 10}px; padding: 2px 6px; border-radius: 5px; font: 600 12px var(--font); color: var(--text); background: var(--panel); border: 1px solid var(--line); pointer-events: none; z-index: 10;`;
+  document.body.append(marker, label);
+  const click = () => {
+    const pick = viewport.pickAt(target.x, target.y);
+    store.dispatch(pick ? { type: "select", pick } : { type: "clearSelection" });
+    return pick;
+  };
+  const miss = click();
+  if (miss) throw new Error(`capture: the click on cut-away geometry picked ${miss.decl}`);
+  label.textContent = "click: miss (the face hit first is cut away; no pick-through)";
+  await still("clip-9-pick-miss-cut-away");
+  store.dispatch({ type: "setApplyCuts", on: false });
+  const hit = click();
+  if (hit?.decl !== target.decl) throw new Error(`capture: with the cuts off the click picked ${hit?.decl ?? "nothing"}, not ${target.decl}`);
+  label.textContent = "the same click, Apply cuts off: picked";
+  await settle(900);
+  await still("clip-10-pick-cuts-off");
+  marker.remove();
+  label.remove();
+  store.dispatch({ type: "clearSelection" });
+  store.dispatch({ type: "setApplyCuts", on: true });
+  removePlanes();
+
+  // The deformed, contoured (and stage-activated) model cut while scrubbing.
+  store.dispatch({ type: "setPhase", at: { kind: "results", stage: best, step: 0 } });
+  store.dispatch({ type: "setDeform", on: true });
+  store.dispatch({ type: "setReferenceGhost", on: true });
+  store.dispatch({ type: "setDeformScale", scale: 10 });
+  store.dispatch({ type: "setColourBy", by: "contour" });
+  addAt([0, 1, 0], 0.5);
+  addAt([1, 0, 0], 0.45);
+  await still("clip-11-deformed-contour-step1");
+  if (last > 0) store.dispatch({ type: "setResultStep", step: last });
+  await still(`clip-12-deformed-contour-step${last + 1}`);
+  if (typeof bridge.captureResize === "function") {
+    await bridge.captureResize(1280, height);
+    await settle();
+    store.dispatch({ type: "frameSelection" });
+    await still(`clip-13-deformed-contour-step${last + 1}.1280`);
+  }
+  removePlanes();
+  store.dispatch({ type: "setDeform", on: false });
+  store.dispatch({ type: "setColourBy", by: "group" });
+}
+
+/**
+ * The click target of the miss still: of the drawn elements whose own screen
+ * point picks them with the cuts off and is cut away with them on, the one
+ * nearest the middle of the model on screen.
+ */
+function clipMissTarget(): { decl: DeclPath; x: number; y: number } | null {
+  const s = store.get();
+  const c = new THREE.Vector3(...s.mesh!.center).project(viewport.camera);
+  const rect = viewport.renderer.domElement.getBoundingClientRect();
+  const cx = rect.left + ((c.x + 1) / 2) * rect.width, cy = rect.top + ((1 - c.y) / 2) * rect.height;
+  let best: { decl: DeclPath; x: number; y: number; d: number } | null = null;
+  for (const decl of s.mesh!.elements) {
+    const pt = viewport.screenPointOf(decl);
+    if (!pt) continue;
+    const d = Math.hypot(pt.x - cx, pt.y - cy);
+    if (best && d >= best.d) continue;
+    store.dispatch({ type: "setApplyCuts", on: false });
+    const off = viewport.pickAt(pt.x, pt.y);
+    store.dispatch({ type: "setApplyCuts", on: true });
+    if (off?.decl !== decl) continue;
+    if (viewport.pickAt(pt.x, pt.y) === null) best = { decl, ...pt, d };
+  }
+  return best && { decl: best.decl, x: best.x, y: best.y };
 }
 
 async function main() {
@@ -586,7 +779,9 @@ async function main() {
     const elementsAveraged = elements && cfg.results ? await measureContour(cfg.results, false, true, "cell_averaged") : null;
     const elementsNode = elements && cfg.results ? await measureContour(cfg.results, false, true, "node") : null;
     const elementsDiscrete = elements && cfg.results ? await measureContour(cfg.results, false, true, "node_discrete") : null;
-    await bridge.measureDone({ ...result, contour, deform: deformed, elements, elementsDeform: elementsDeformed, elementsAveraged, elementsNode, elementsDiscrete });
+    // V4e1: the nodal scrub, deformed, with six section planes cutting (in the JSON as `clip`; main prints no row for it).
+    const clip = cfg.results ? await measureContour(cfg.results, true, false, "cell", true) : null;
+    await bridge.measureDone({ ...result, contour, deform: deformed, elements, elementsDeform: elementsDeformed, elementsAveraged, elementsNode, elementsDiscrete, clip });
     return;
   }
   // capture: select the scripted target and let main grab the page; when the
@@ -670,6 +865,8 @@ async function main() {
     await captureDeform(settle, width, height);
     // V4c2a (D7): the element-contour stills, at the capture window's own width, then 1280 px.
     await captureElements(settle, width, height);
+    // V4e1 (D7): the section-plane stills, at the capture window's own width, then 1280 px.
+    await captureClip(settle, width, height);
   }
   await bridge.captureDone();
 }

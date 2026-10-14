@@ -709,3 +709,42 @@ steps/s.
   element mean on this file (median 3.3 to 4.3 → 3.7 to 5.0 ms): one
   (6 x 6) matrix product per element, the nodal average, and per-vertex
   colours instead of per-cell ones.
+
+### Section planes in the deformed scrub (V4e1, #1834)
+
+The deformed contour scrub above, run once more in the same window with
+**six section planes cutting** (ADR 0083 C-LIMIT's maximum): one per face of
+the reference box, each 20 % of its extent inside it (normals ±X, ±Y, ±Z),
+so every plane cuts. Every drawn material carries the six planes, so each
+fragment is tested against all six; the planes are put on the materials
+before every render (a scene traversal), and the step is otherwise the
+deformed step above. `npm run measure` runs it last, after the element
+rows; main prints no row for it, so it is read from the result JSON
+(`clip`) the run writes under the temp directory. The history scan is
+already done (1 ms), so it is left out.
+
+The file is (a), `a_maintainer_100` (4 312 nodes, 2 860 drawn triangles,
+100 steps), written by `scripts/make_viewer_results_fixtures.py --measure
+apeGmshViewer/out/results --only a`, at `5235c5e8`. **Another machine** than
+the rows above: Windows 11 IoT Enterprise LTSC 2024, NVIDIA GeForce RTX 3070
+through ANGLE on Direct3D 11, the same 1600 x 1000 window. The two other
+scrubs of the same run are beside it:
+
+| run | CPU before / during (planes) | scrub (steps/s): contour, deformed, **deformed + 6 planes** | step median / max (ms), 6 planes | peak MB main+renderer, 6 planes |
+|---|---|---|---|---|
+| 1 | 16 / 34 % | 266.6, 142.6, **191.2** | 4.80 / 17.4 | 309 (147 + 162) |
+| 2 | 18 / 18 % | 272.1, 192.4, **136.2** | 4.80 / 32.8 | 319 (150 + 169) |
+| 3 | 18 / 23 % | 268.9, 188.5, **176.1** | 4.50 / 20.4 | 310 (147 + 163) |
+
+Worst over the three runs: **136** steps/s with six planes (run 2; worst
+step 32.8 ms), against 143 steps/s for the deformed scrub without planes
+(run 1), peak 319 MB, at 18 to 34 % CPU.
+
+- **The D5 revisit trigger does not fire**: the worst scrub with six planes
+  cutting, 136 steps/s, is four times the 30 steps/s floor, and the peak,
+  319 MB, under a sixth of 2 GB.
+- The planes cost nothing measurable here: the median step is 4.5 to 4.8 ms
+  with them and 4.6 to 4.8 ms without, and the scrub's spread between runs
+  (143 to 192 steps/s without planes) is larger than any difference. The
+  worst single steps (17 to 43 ms, with and without planes) are isolated
+  outliers; the medians do not move.
