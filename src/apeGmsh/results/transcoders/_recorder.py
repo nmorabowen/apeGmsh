@@ -15,7 +15,7 @@ Scope
   file's column count via the response catalog; v1 requires
   homogeneous-class records (one element class per record).
 - ``line_stations`` records (Phase 11b) — beam section forces; an
-  elastic beam's two stations are synthesised from ``localForce`` (#1741).
+  elastic beam's two stations are synthesised from ``localForce``.
 - ``elements`` records (Phase 11b) — per-element-node forces.
 - ``fibers`` / ``layers`` — **MPCO-only in Phase 11c.** The ``.out``
   format is impractical for fiber-section results (a 5-IP × 100-fiber
@@ -629,7 +629,7 @@ class RecorderTranscoder:
         """Synthesise an elastic beam's two-station slab from ``localForce``.
 
         An elastic beam has no integration points, so its line-stations
-        record is emitted as one ``localForce`` recorder (#1741). Its row
+        record is emitted as one ``localForce`` recorder. Its row
         per element is the joint-on-element end vector ``[end i, end j]``
         in the local frame. The stations sit at xi = -1, +1, and station
         2 is negated into the internal section-force sign convention:
@@ -969,7 +969,7 @@ def _resolve_element_lengths(fem, element_ids) -> ndarray:
     (``fem.element_end_coords(eid) -> (c1, c2)``), then falls back to
     the real :class:`apeGmsh.mesh.FEMData.FEMData` path: the elements
     are selected by **element id** (``fem.elements.select(ids=...)``;
-    ``tag=`` would select a physical-group tag, #1741) and their end
+    ``tag=`` would select a physical-group tag) and their end
     nodes' coordinates read through ``fem.nodes.index``. An element id
     the FEMData does not hold raises: a length is never guessed.
 

@@ -225,7 +225,7 @@ _LINE_STATIONS_LOCAL_FORCE_SUFFIX = "line_stations_local_force"
 
 
 def line_stations_from_local_force(rec: ResolvedRecorderRecord) -> bool:
-    """True when a line-stations record is read from ``localForce`` (#1741).
+    """True when a line-stations record is read from ``localForce``.
 
     That is the elastic-beam family (``ElasticBeam{2d,3d}``,
     ``ModElasticBeam2d``, ``ElasticTimoshenkoBeam{2d,3d}``): classes with
@@ -581,7 +581,7 @@ def _emit_element_simple(
 
     An elastic-beam line-stations record
     (:func:`line_stations_from_local_force`) emits one ``localForce``
-    recorder instead of that pair (#1741).
+    recorder instead of that pair.
     """
     if rec.element_ids is None or rec.element_ids.size == 0:
         return
@@ -615,7 +615,7 @@ def _emit_element_simple(
         # ``section force`` nor ``integrationPoints`` (a recorder writes
         # only the time column). Its stations come from the ``localForce``
         # end vector instead, which the transcoder turns into a
-        # two-station slab at xi = -1, +1 (#1741), as DomainCapture and
+        # two-station slab at xi = -1, +1, as DomainCapture and
         # the MPCO local-force reader do.
         _warn_n_steps_unsupported(rec)
         yield LogicalRecorder(
