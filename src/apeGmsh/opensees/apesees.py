@@ -1733,16 +1733,23 @@ class BuiltModel:
         inferred_ndf = infer_node_ndf(self.fem, elements, self.ndm)
         # ADR 0049 — merge the ``ops.ndf`` overlay (the stated ndf of
         # element-less decoupled nodes) over the inferred map BEFORE the G1
-        # gate and the node-emit fan-out.  ``effective_ndf`` is a FRESH dict;
-        # ``inferred_ndf`` is never mutated in place (guards the shared
-        # mutable default ``inferred_ndf={}`` on the stage-emit helpers).
-        # ``resolve_ndf_overlay`` fails loud on a mesh / element-touched /
-        # unresolved target, so the overlay only ever sizes a node inference
-        # could not reach (no two-headed model).
+        # gate and the node-emit fan-out.  ``resolve_ndf_overlay`` fails loud
+        # on a mesh / element-touched / unresolved target, so the overlay
+        # only ever sizes a node inference could not reach (no two-headed
+        # model).  A non-empty overlay merges into a FRESH dict.  With an
+        # empty overlay (the common case) the inferred map IS the effective
+        # map, with no copy: a second per-node dict would be held through
+        # the whole emit.
+        # That is safe because ``infer_node_ndf`` builds a fresh, uncached
+        # dict per call and no consumer mutates the map (which also keeps
+        # the shared mutable default ``inferred_ndf={}`` on the stage-emit
+        # helpers unmutated).
         _overlay = resolve_ndf_overlay(
             self.fem, self.ndf_records, inferred_ndf, self.ndm,
         )
-        effective_ndf = {**inferred_ndf, **_overlay}
+        effective_ndf = (
+            {**inferred_ndf, **_overlay} if _overlay else inferred_ndf
+        )
         # G1 — fail loud if a zeroLength-family element's two ends would emit
         # different ndf (an element-less ground falling to the envelope while
         # its structural partner infers / states a different value).  Reads

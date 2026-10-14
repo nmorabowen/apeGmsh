@@ -495,3 +495,75 @@ def test_loads_and_masses_fit_per_node_ndf_not_envelope(tmp_path: Path) -> None:
         # ops.load(tag, c1, c2, c3) -> 1 tag + 3 comps = 4 args
         n_args = ln.count(",") + 1
         assert n_args == 4, f"expected 3 components (per-node ndf=3): {ln!r}"
+
+
+# =====================================================================
+# ADR 0100 lever 2 (#1926) — one ndf dict when the overlay is empty
+# =====================================================================
+
+def _spy_effective_ndf(monkeypatch):
+    """Record every map ``infer_node_ndf`` returns (with a snapshot of its
+    content) and the map ``BuiltModel.emit`` hands to G1 and ``_emit_flat``."""
+    from apeGmsh.opensees import apesees as _apesees
+
+    seen: dict[str, list] = {"inferred": [], "g1": [], "flat": []}
+    real_infer = _apesees.infer_node_ndf
+    real_g1 = _apesees.validate_adaptive_element_endpoints
+    real_flat = _apesees.BuiltModel._emit_flat
+
+    def infer(*a, **k):
+        out = real_infer(*a, **k)
+        seen["inferred"].append((out, dict(out)))
+        return out
+
+    def g1(fem, elements, ndm, effective_ndf, *a, **k):
+        seen["g1"].append(effective_ndf)
+        return real_g1(fem, elements, ndm, effective_ndf, *a, **k)
+
+    def flat(self, *a, **k):
+        seen["flat"].append(k["inferred_ndf"])
+        return real_flat(self, *a, **k)
+
+    monkeypatch.setattr(_apesees, "infer_node_ndf", infer)
+    monkeypatch.setattr(_apesees, "validate_adaptive_element_endpoints", g1)
+    monkeypatch.setattr(_apesees.BuiltModel, "_emit_flat", flat)
+    return seen
+
+
+def test_empty_overlay_reuses_inferred_map_without_copy(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    g, fem, _h = _box_with_decoupled()
+    try:
+        ops = _solid_ops(fem)                 # no ops.ndf -> empty overlay
+        seen = _spy_effective_ndf(monkeypatch)
+        ops.tcl(str(tmp_path / "m.tcl"))
+    finally:
+        g.end()
+    inferred, before = seen["inferred"][0]
+    assert inferred, "the tet body must infer a non-empty ndf map"
+    # One dict: the emit hands the inferred map itself, not a copy ...
+    assert seen["g1"] and seen["g1"][0] is inferred
+    assert seen["flat"] and seen["flat"][0] is inferred
+    # ... and no consumer mutated it on the way through the emit.
+    assert inferred == before
+
+
+def test_nonempty_overlay_merges_into_a_fresh_map(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    g, fem, h = _box_with_decoupled()
+    try:
+        ops = _solid_ops(fem)
+        ops.ndf(h, ndf=6)                     # non-empty overlay
+        seen = _spy_effective_ndf(monkeypatch)
+        ops.tcl(str(tmp_path / "m.tcl"))
+    finally:
+        g.end()
+    inferred, before = seen["inferred"][0]
+    eff = seen["flat"][0]
+    assert seen["g1"][0] is eff
+    assert eff is not inferred                # a fresh merged dict
+    assert eff == {**before, int(h.tag): 6}
+    assert inferred == before                 # the inferred map is untouched
+    assert int(h.tag) not in inferred
