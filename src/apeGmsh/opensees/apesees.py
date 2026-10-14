@@ -1738,7 +1738,8 @@ class BuiltModel:
         # only ever sizes a node inference could not reach (no two-headed
         # model).  A non-empty overlay merges into a FRESH dict.  With an
         # empty overlay (the common case) the inferred map IS the effective
-        # map, with no copy (ADR 0100 lever 2, #1926: ~40 B per global node).
+        # map, with no copy: a second per-node dict would be held through
+        # the whole emit.
         # That is safe because ``infer_node_ndf`` builds a fresh, uncached
         # dict per call and no consumer mutates the map (which also keeps
         # the shared mutable default ``inferred_ndf={}`` on the stage-emit
