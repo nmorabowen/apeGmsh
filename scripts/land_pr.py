@@ -60,6 +60,8 @@ from datetime import datetime, timedelta
 from typing import Any
 
 Runner = Callable[[list[str]], str]
+#: `_real_files`: whether a name is a file on origin/main.
+Real = Callable[[str], bool]
 
 #: The checks `main` requires (AGENTS.md "How work lands"). One that has not
 #: reported is a refusal: zero checks visible means a conflict or a stalled
@@ -130,6 +132,9 @@ _NEGATION = re.compile(
 _HTML_COMMENT = re.compile(r"<!--.*?-->", re.DOTALL)
 _LIST_LINE = re.compile(r"\s*(?:[-*+]|\d+[.)])\s|\s")
 _BULLET = re.compile(r"\s*(?:[-*+]|\d+[.)])\s")
+#: A list item that opens with a backticked span ("- `FORK_PIN` (four keys)"): only that
+#: leading span may be an extensionless file name (T's ruling on #1944, review F1).
+_LEADING_SPAN = re.compile(r"\s*(?:[-*+]|\d+[.)])\s+`")
 #: Words that may sit around a negation in a backticked span that is only a negation
 #: phrase (`_quoted_negation`): "`do not` touch", "`must never edit`", "`never, ever`",
 #: "`absolutely not`", "`can not`", "`not under any circumstances`" (#1891).
@@ -372,21 +377,34 @@ def _check_adr_and_baseline(number: int, pr: dict[str, Any], rows: list[FileRow]
                 )
 
 
-def _line_paths(line: str) -> list[str]:
+def _line_paths(line: str, real: Real | None = None) -> list[str]:
     """The paths a card line names in backticks. `path::symbol` is `path`; a bare
     file name listed right after a path ("`.../prototypes/contract_cov.py`, `legacy.py`,
     `clones.py`", #1802) is that path's sibling. Tokens that are not path-like
     (`lock-tests`, `show_web`, `<slug>` placeholders) and globs with no literal top
-    directory (`*`, `**/*.py`) are dropped: dropping narrows the list."""
+    directory (`*`, `**/*.py`) are dropped: dropping narrows the list.
+
+    A token with neither `/` nor `.` (`FORK_PIN`, `LICENSE`, but also `foo`, `and`) is
+    kept only when it opens a list item ("- `FORK_PIN` ...") and `real` says it is a file
+    on origin/main (#1939, T's ruling on #1944). Such a token anywhere else in the line,
+    in parenthetical prose or mid-line, is dropped, as is every one when there is no `real`."""
     out: list[str] = []
     folder, end = "", 0
+    lead = _LEADING_SPAN.match(line)
     for match in _TICKED.finditer(line):
+        leading = lead is not None and match.start() == lead.end() - 1
         if line[end : match.start()].strip(" ,+&") not in ("", "and"):
             folder = ""  # only a list ("`a/x.py`, `y.py`") makes siblings, not prose
         end = match.end()
         path = match.group(1).split("::", 1)[0].strip().removeprefix("./").lstrip("/")
-        if not _PATHLIKE.fullmatch(path) or ("/" not in path and "." not in path):
+        if not _PATHLIKE.fullmatch(path):
             folder = ""
+            continue
+        if "/" not in path and "." not in path:
+            if real is None or not leading or _GLOB.search(path) or not real(path):
+                folder = ""
+                continue
+            out.append(path)
             continue
         if "/" in path:
             folder = "" if path.endswith("/") else path.rsplit("/", 1)[0] + "/"
@@ -438,12 +456,13 @@ def _negates(line: str) -> bool:
     return _NEGATION.search(line) is not None
 
 
-def _card_paths(body: str) -> list[str] | None:
+def _card_paths(body: str, real: Real | None = None) -> list[str] | None:
     """The backticked paths of a card's `### Owned files`, `### Append-only` and
     `### Allowed` sections, or of an "Owned:" label line and the list under it.
     None when the card has no such section at all. A section ends at any `#` heading
     or bold-label line; an Owned line with a backtick and a negation refuses (fail
-    closed). HTML comments (the template's guidance) are not card text."""
+    closed). HTML comments (the template's guidance) are not card text. `real` admits
+    extensionless file names (`_line_paths`)."""
     paths: list[str] = []
     found = in_section = in_label = False
     for line in _HTML_COMMENT.sub("", body).splitlines():
@@ -465,11 +484,11 @@ def _card_paths(body: str) -> list[str] | None:
                     f"check 9: an Owned line negates, so which paths it owns is ambiguous; "
                     f"refusing. Reword it (a '**Card amendment' comment): {line.strip()!r}"
                 )
-            paths.extend(_line_paths(line))
+            paths.extend(_line_paths(line, real))
     return paths if found else None
 
 
-def _amendment_paths(text: str, card: int) -> list[str]:
+def _amendment_paths(text: str, card: int, real: Real | None = None) -> list[str]:
     """The paths a `**Card amendment` comment adds. A negated line adds none, nor do
     the lines it governs (#1872). Every exclusion ends at a heading or a bold label;
     the widest one in force wins, and a narrower negation inside it never shortens it.
@@ -497,6 +516,8 @@ def _amendment_paths(text: str, card: int) -> list[str]:
         after_blank = not line.strip()
         if _negates(line):
             bullet = _BULLET.match(line) is not None
+            # Without `real`: "- Do not touch `FORK_PIN`" still names no path, so it keeps
+            # excluding the list after it; admitting a file name never narrows an exclusion.
             if line.rstrip(" *").endswith(":") or (bullet and not _line_paths(line)):
                 new = _LIST
             else:
@@ -507,8 +528,37 @@ def _amendment_paths(text: str, card: int) -> list[str]:
             if "`" in line:
                 print(f"check 9: skipped a negated card-amendment line on #{card}: {line.strip()!r}")
             continue
-        paths += _line_paths(line)
+        paths += _line_paths(line, real)
     return paths
+
+
+def _real_files(git: Runner) -> Real:
+    """Whether a path is a file on origin/main: a blob in `git ls-tree -r origin/main`,
+    read once and only when a card needs it. A file the PR itself adds does not count, so
+    a PR cannot make a prose word (`suite`) owned by adding a root file of that name; a
+    card that creates an extensionless file needs `scope-ok` (T's ruling on #1944, review
+    F1). A failed or empty read refuses (fail closed): it never admits a name (#1939)."""
+    tree: list[frozenset[str]] = []
+
+    def real(path: str) -> bool:
+        if not tree:
+            try:
+                listing = git(["ls-tree", "-r", "-z", "--name-only", "origin/main"])
+            except _UNREADABLE as exc:
+                raise LandError(
+                    f"check 9: could not list origin/main's files to read the card's extensionless "
+                    f"Owned name {path!r} ({exc}); refusing."
+                ) from exc
+            files = frozenset(name for name in listing.split("\0") if name)
+            if not files:
+                raise LandError(
+                    f"check 9: `git ls-tree origin/main` listed no files, so the card's extensionless "
+                    f"Owned name {path!r} cannot be read; refusing."
+                )
+            tree.append(files)
+        return path in tree[0]
+
+    return real
 
 
 def _owned(path: str, allowed: list[str]) -> bool:
@@ -524,11 +574,13 @@ def _owned(path: str, allowed: list[str]) -> bool:
     return False
 
 
-def check_owned(number: int, pr: dict[str, Any], rows: list[FileRow], gh: Runner) -> None:
+def check_owned(number: int, pr: dict[str, Any], rows: list[FileRow], gh: Runner, git: Runner) -> None:
     """Check 9 (lesson #1788). A `program` PR changes only files its slice card owns:
     the card's Owned/Append-only/Allowed sections, plus `**Card amendment` comments,
     plus IMPLICIT_ALLOWED. Both names of a rename are judged. #1812 changed 52 files
-    against 6 owned, from a stale tree, and would have reverted three merged PRs."""
+    against 6 owned, from a stale tree, and would have reverted three merged PRs.
+    An extensionless name (`FORK_PIN`) counts only when it opens a list item and is a
+    file on origin/main (#1939)."""
     labels = {lab["name"] for lab in pr["labels"]}
     if PROGRAM not in labels:
         print(f"check 9: #{number} is not labelled {PROGRAM!r}; the Owned-files check does not apply.")
@@ -545,7 +597,8 @@ def check_owned(number: int, pr: dict[str, Any], rows: list[FileRow], gh: Runner
         )
     card = int(slices[0])
     issue = json.loads(gh(["issue", "view", str(card), "--json", "body,comments"]))
-    allowed = _card_paths(_text(issue.get("body")))
+    real = _real_files(git)
+    allowed = _card_paths(_text(issue.get("body")), real)
     if allowed is None:
         raise LandError(
             f"check 9: slice card #{card} has no '### Owned files' section (nor an 'Owned:' "
@@ -555,7 +608,7 @@ def check_owned(number: int, pr: dict[str, Any], rows: list[FileRow], gh: Runner
     for comment in issue.get("comments") or []:
         text = _text(comment.get("body"))
         if _AMENDMENT.match(text):
-            allowed += _amendment_paths(text, card)
+            allowed += _amendment_paths(text, card, real)
     if not allowed:
         raise LandError(
             f"check 9: slice card #{card}'s Owned section names no backticked path, nor does any "
@@ -782,7 +835,7 @@ def check(number: int, gh: Runner, git: Runner) -> dict[str, Any]:
                     f"(every run of a required check must be). Pending is a refusal, not a wait."
                 )
     _check_adr_and_baseline(number, pr, rows, git)
-    check_owned(number, pr, rows, gh)
+    check_owned(number, pr, rows, gh, git)
     found: list[list[Base]] = []
 
     def bases(check_no: int) -> list[Base]:  # read once, by whichever check needs them first
@@ -914,7 +967,7 @@ def land(
         return prove(number, gh, git, sleep)
     if owned_only:  # check 9 alone, on any PR state (the dry run on merged PRs, #1855)
         pr = json.loads(gh(["pr", "view", str(number), "--json", "labels,body"]))
-        check_owned(number, pr, _changed_files(number, gh), gh)
+        check_owned(number, pr, _changed_files(number, gh), gh, git)
         return 0
     pr = check(number, gh, git)
     head = pr["headRefOid"]
