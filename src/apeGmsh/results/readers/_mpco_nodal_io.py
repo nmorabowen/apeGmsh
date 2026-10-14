@@ -325,6 +325,11 @@ def _components_of(group: "h5py.Group") -> "list[str]":
     return [tok.strip() for tok in str(raw).split(",") if tok.strip()]
 
 
+#: Marker in the warning :func:`eigen_scalars` raises; the multi-partition
+#: readers key on it to warn once per mode for the whole part set.
+NON_POSITIVE_EIGENVALUE = "non-positive eigenvalue"
+
+
 def eigen_scalars(
     lam: float, mode_index: int, source: str,
 ) -> "tuple[float, float]":
@@ -341,7 +346,7 @@ def eigen_scalars(
         omega = math.sqrt(lam)
         return omega / (2.0 * math.pi), 2.0 * math.pi / omega
     warnings.warn(
-        f"{source}: mode {mode_index} has a non-positive eigenvalue "
+        f"{source}: mode {mode_index} has a {NON_POSITIVE_EIGENVALUE} "
         f"({lam:.6g}); this indicates a spurious/unstable mode (rigid-body "
         "mechanism or unconverged eigensolve). Reading frequency=0 / "
         "period=0 for it.",

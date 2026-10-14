@@ -343,6 +343,46 @@ def test_non_positive_eigenvalue_warns_and_reads_zero(tmp_path: Path) -> None:
     assert (modes[0].frequency_hz, modes[0].period_s) == (0.0, 0.0)
 
 
+def _two_parts(tmp_path: Path, ladruno: bool, **kw) -> "list[Path]":
+    ext = "ladruno" if ladruno else "mpco"
+    writer = _write_ladruno if ladruno else _write_mpco
+    paths = [writer(tmp_path / f"r.part-{i}.{ext}", **kw) for i in range(2)]
+    if ladruno:
+        for i, p in enumerate(paths):
+            with h5py.File(p, "a") as f:
+                f["INFO"].attrs["PARTITIONED"] = 1
+                f["INFO"].attrs["PARTITION_ID"] = i
+                f["INFO"].attrs["NUM_PARTITIONS"] = 2
+    return paths
+
+
+@pytest.mark.parametrize("ladruno", [False, True])
+def test_part_set_warns_once_per_non_positive_mode(
+    tmp_path: Path, ladruno: bool,
+) -> None:
+    """Every part sees the same eigen solution: the merged result warns
+    once per non-positive mode, not once per part file."""
+    from apeGmsh.results.readers._ladruno_multi import LadrunoMultiPartitionReader
+    from apeGmsh.results.readers._mpco_multi import MPCOMultiPartitionReader
+
+    cls = LadrunoMultiPartitionReader if ladruno else MPCOMultiPartitionReader
+    paths = _two_parts(tmp_path, ladruno, lambdas=(-1e-6, -2e-6))
+    with pytest.warns(UserWarning, match="non-positive eigenvalue") as rec:
+        reader = cls(paths)
+    with reader:
+        modes = [s for s in reader.stages() if s.kind == "mode"]
+    hits = [w for w in rec if "non-positive eigenvalue" in str(w.message)]
+    assert len(hits) == 2                                  # one per mode
+    assert {"mode 1 " in str(w.message) for w in hits} == {True, False}
+    assert [(m.frequency_hz, m.period_s) for m in modes] == [(0.0, 0.0)] * 2
+
+    # Under -W error the first (and only) warning for mode 1 raises.
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", UserWarning)
+        with pytest.raises(UserWarning, match="mode 1 has a non-positive"):
+            cls(paths)
+
+
 def test_two_eigen_solutions_get_unique_names(tmp_path: Path) -> None:
     path = tmp_path / "m.mpco"
     with h5py.File(path, "w") as f:

@@ -45,6 +45,7 @@ from ._mpco_multi import (
     _merge_node_slabs,
     _merge_partition_fems,
     _node_reduction,
+    _validate_warning_once_per_mode,
 )
 from ._protocol import ResultLevel, StageInfo, TimeSlice
 
@@ -119,7 +120,9 @@ class LadrunoMultiPartitionReader:
             LadrunoReader(p) for p in self._paths
         ]
         try:
-            self._validate_consistency()
+            _validate_warning_once_per_mode(
+                self._validate_consistency, self._paths,
+            )
         except Exception:
             for r in self._readers:
                 r.close()

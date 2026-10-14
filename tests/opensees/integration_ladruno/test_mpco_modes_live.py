@@ -68,7 +68,8 @@ def model():
     ops.geomTransf("Linear", 1)
     ops.element("elasticBeamColumn", 1, 1, 2, 0.01, 200e9, 1e-4, 1)
 model()
-ops.eigen(1)
+if sys.argv[2] == "eigen":
+    ops.eigen(1)
 model()
 ops.recorder("mpco", sys.argv[1], "-N", "modesOfVibration")
 ops.timeSeries("Linear", 1); ops.pattern("Plain", 1, 1)
@@ -82,21 +83,49 @@ print("survived")
 """
 
 
+#: ``exit(-1)`` as the parent sees it: 4294967295 on Windows, 255 on
+#: POSIX; 127 was observed when the run went through a POSIX shell.
+_EXIT_MINUS_ONE = {-1, 127, 255, 4294967295}
+_STALE_EIGEN_MESSAGE = "Eigenvalues were never set"
+
+
+class StaleEigenExit(Exception):
+    """The known fork crash, and nothing else, reached the test."""
+
+
+def _run_repro(tmp_path: Path, mode: str) -> "subprocess.CompletedProcess[str]":
+    script = tmp_path / "repro.py"
+    script.write_text(_STALE_EIGEN_REPRO, encoding="utf-8")
+    return subprocess.run(
+        [sys.executable, str(script), str(tmp_path / "r.mpco"), mode],
+        cwd=tmp_path, env=_fresh_env(), capture_output=True, text=True,
+        check=False,
+    )
+
+
+def test_mpco_modes_recorder_runs_without_a_prior_eigen(tmp_path: Path) -> None:
+    """Control: the same deck without the first ``eigen`` survives, so
+    the pin below is about the eigen-then-wipe sequence only."""
+    proc = _run_repro(tmp_path, "control")
+    assert proc.returncode == 0, (proc.returncode, proc.stderr[-500:])
+    assert "survived" in proc.stdout
+
+
 @pytest.mark.xfail(
     strict=True,
+    raises=StaleEigenExit,
     reason="fork MPCO recorder gates modes on the interpreter's stale "
     "numEigen after eigen + wipe and calls Domain::getEigenvalues, which "
     "exit(-1)s the process; the Ladruno recorder guards this "
     "(getNumEigenvalues). Pinned on build 79e0623670; reported on #1198.",
 )
 def test_mpco_modes_recorder_survives_eigen_then_wipe(tmp_path: Path) -> None:
-    script = tmp_path / "repro.py"
-    script.write_text(_STALE_EIGEN_REPRO, encoding="utf-8")
-    proc = subprocess.run(
-        [sys.executable, str(script), str(tmp_path / "r.mpco")],
-        cwd=tmp_path, env=_fresh_env(), capture_output=True, text=True,
-        check=False,
-    )
+    proc = _run_repro(tmp_path, "eigen")
+    output = proc.stdout + proc.stderr
+    if proc.returncode in _EXIT_MINUS_ONE and _STALE_EIGEN_MESSAGE in output:
+        raise StaleEigenExit(proc.returncode)
+    # Any other failure is a real failure, not the pinned crash: only
+    # StaleEigenExit counts as the expected failure.
     assert proc.returncode == 0 and "survived" in proc.stdout, (
         proc.returncode, proc.stdout[-500:], proc.stderr[-500:])
 

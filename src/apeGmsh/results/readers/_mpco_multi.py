@@ -35,6 +35,7 @@ internal.
 from __future__ import annotations
 
 import re
+import warnings
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional, Sequence
 
@@ -127,7 +128,9 @@ class MPCOMultiPartitionReader:
             MPCOReader(p) for p in self._paths
         ]
         try:
-            self._validate_consistency()
+            _validate_warning_once_per_mode(
+                self._validate_consistency, self._paths,
+            )
         except Exception:
             for r in self._readers:
                 r.close()
@@ -408,6 +411,32 @@ class MPCOMultiPartitionReader:
 # =====================================================================
 # Stitching helpers — node merge, element concat
 # =====================================================================
+
+def _validate_warning_once_per_mode(validate, paths) -> None:
+    """Run ``validate()``, which reads every part's stages, and re-emit
+    the warnings it raised.
+
+    Each part file sees the same eigen solution, so a non-positive
+    eigenvalue would warn once per part. It is re-emitted once per mode
+    (the first part's message); every other warning passes through as is.
+    """
+    from ._mpco_nodal_io import NON_POSITIVE_EIGENVALUE
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        validate()
+    seen: set[str] = set()
+    for w in caught:
+        text = str(w.message)
+        if NON_POSITIVE_EIGENVALUE in text:
+            key = text
+            for p in paths:
+                key = key.replace(Path(p).name, "<part>")
+            if key in seen:
+                continue
+            seen.add(key)
+        warnings.warn(w.message, stacklevel=3)
+
 
 def _first_nonempty_time(slabs) -> ndarray:
     for s in slabs:
