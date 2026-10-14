@@ -1147,7 +1147,7 @@ class PhaseTracker:
             # held, so the snapshot object stays out of the block's
             # traced-current.
             snap = tracemalloc.take_snapshot()
-            floor_snap = os.path.join(self.snap_dir, f"open_r{rank}.tm")
+            floor_snap = os.path.join(self.snap_dir, f"open_r{rank}_b{idx}.tm")
             snap.dump(floor_snap)
             del snap
         cur, _ = self._read()
