@@ -220,7 +220,7 @@ The kill criteria are measured weekly by the triage (#1202). The fallback in eve
 | A phase runs past 2× its estimate | Cancel the next phase. |
 | A shadow registry or path reaches 30 days without a flip | Delete it. S3's families list is exempt: it is gate configuration. |
 | The fork lane is not green within 30 days of the pin | Make an explicit C-or-D decision. |
-| The index-touch share is not below 20% 30 days after fragments ship | Fragments have failed. |
+| The index-touch share is not below 20% 30 days after fragments ship. It counts hand-edited index files only: the generated skill mirror and generated indexes are excluded (maintainer, 2026-10-14) | Fragments have failed. |
 | The median ready-to-merge time, or the wait in the hub-lock queue, doubles against its first measurement for 2 consecutive weeks | T reviews the gates that cost the time (`gates.md`) and narrows or retires them. |
 
 **K3-only criteria (KC1–KC6):**
@@ -236,7 +236,7 @@ The kill criteria are measured weekly by the triage (#1202). The fallback in eve
 | KPI | Baseline |
 |---|---|
 | Strict fix-prefixed share | 22% |
-| Index-touch share | 80–85% |
+| Index-touch share | 80–85% (all index files). From 2026-10-14 the KPI counts hand-edited index files only, with the generated skill mirror and indexes excluded: 13% on 2026-10-14 |
 | Lost-work cases | 12 |
 | Red `main` | 2 in 3 weeks |
 | Files over 2,000 lines | 15 |
@@ -247,7 +247,12 @@ The kill criteria are measured weekly by the triage (#1202). The fallback in eve
 | `src/` Python lines | 301.7k |
 | Line count of each hub file | `apesees.py` 14,181 |
 
-The structure KPIs are a KPI, never a hard gate; contracts are constrained, internals stay fluid.
+The structure KPIs are a KPI, never a hard gate, except the lazy-import ratchet below; contracts are constrained, internals stay fluid.
+
+**Structural targets (maintainer, 2026-10-14).** The 2026-10-14 measurement (#1202) found files over 2,000 lines at 16, lazy cross-package imports at 72.2% and rising, and red `main` at 4 episodes in 16 days. The program therefore adds a short structural phase with these targets:
+- `emitter/h5.py` and `element/solid.py` are split below 2,000 lines, as pure moves, one hub at a time, under `verify_move`;
+- a shrink-only ratchet holds the lazy cross-package import share;
+- red `main` gets its own review at the 10-18 triage.
 
 ## 9. Next-link chip prompt
 
@@ -282,6 +287,6 @@ Ledger: chain issue #<n>; board #1203; charter internal_docs/program/PROGRAM.md.
 
 ## 11. Program end and expiries
 
-The program closes when chains A, B, C, N, X, S1–S3 and K0–K2 are done and the KPIs are on target. F3 and later, K3 and K4 then continue as normal gated work.
+The program closes when chains A, B, C, N, X, S1–S3 and K0–K2 are done, the KPIs are on target, and the structural targets in §8 are met. F3 and later, K3 and K4 then continue as normal gated work.
 
 `internal_docs/program/prototypes/` **expires on 2026-11-30**. Delete each prototype when the link that productionizes it lands; X4's retirement ledger tracks this.
