@@ -158,7 +158,7 @@ Record first, then stop, when any of these holds:
 
 One session coordinates the whole program: it holds no slice, arbitrates the
 locks, relays the maintainer, and runs the weekly triage. These rules come from
-the 2026-10-07 → 10 batch (#1202).
+the 2026-10-07 → 13 batches (#1202).
 
 **Boot.** Read the last coordinator handoff on #1202 and the latest comment on
 board #1203. They hold the lock holders, the queue, the open gates and the
@@ -177,6 +177,27 @@ lock handover and handoff.
 - Prefer routes that avoid the hub. A slice that finds one skips the queue.
 - On landing, the holder removes its labels and gives them to **no one**; the
   coordinator hands the lock over and says so on the next holder's issue.
+- Two requests for one lock: the first live, small slice takes it, and the other
+  plans read-only meanwhile (#1805 before #1853, 2026-10-13).
+
+**WIP slots.** The 8-PR cap is program-wide: every worker checks
+`gh pr list --label program --state open` before `gh pr create`, not its own
+session's count (the program reached 9 of 8 once; X handoff on #1202). At 8, work stays pushed on its
+branch. The coordinator may reserve the next free slot for a lock holder, so
+an idle lock doesn't wait behind unlocked work (#1901).
+
+**Slice cards and `land_pr`.** Check 9 reads the Owned list in the card
+**body**: it refuses a body with no Owned section (an `### Owned files`
+heading or an `Owned:` line) before it reads any amendment comment. A
+legacy card is fixed in its body, derived from its scope and lock, never from
+the PR's diff (a diff-derived list whitelists itself). PR bodies carry
+`Slice: #<n>`. Check 10 refuses while `main` is red, or while `main`'s run on
+its head H is in progress unless the PR's checks ran on a base containing H.
+Check 11 refuses a tests/ or BASELINE PR whose required checks ran on a base
+more than 10 commits, or 24 h, behind `main`. Re-run the checks on a fresh merge
+ref (merge `main`, or push an empty commit); the Re-run button reuses the old
+ref. So a landing right after another waits for `main`'s run on the new head,
+or merges `main` first.
 
 **Stalls.** Notifications get lost: app restarts, dead
 reviewers, the 600 s watchdog. Never end a turn waiting for CI or a review. At
@@ -188,7 +209,7 @@ checks in the background.
 **Red `main`.**
 1. Confirm it from `gh run list --branch main` first.
 2. Freeze landings program-wide; the fix PR and the revert are the only
-   exceptions.
+   exceptions. Check 10 enforces this freeze.
 3. Fix forward under a deadline, with a revert PR ready as a draft.
 4. Prove a flaky fix with 2–3 consecutive green reruns.
 5. Lift the freeze by a condition every session can check itself: "`main`'s
@@ -197,6 +218,13 @@ checks in the background.
    as a labelled TEMP stopgap.
 7. Check the environment as well as the code: #1571 was a PySide6 release, not
    the PR that looked guilty.
+8. A PR that is green on a stale base can redden `main` (#1698 vs a ledger row
+   added later, 2026-10-13). Label the fix or the revert `fixes-red-main`;
+   check 10 refuses anything else while `main` is red. A fix that also edits a
+   BASELINE file needs `human-gate` too: ask at once, since it blocks every
+   session.
+9. Watch `main`'s run on the fix sha in a background loop, and broadcast the
+   lift to every session yourself.
 
 **Approvals across merges.** A verdict binds to a SHA. An approval carries over
 only when the new delta is a merge of `main` that touches no PR file: compare
@@ -205,8 +233,13 @@ hand-resolved conflict needs a delta review.
 
 **Maintainer questions.**
 - Ask one question at a time, explaining what it means for their modelling,
-  with a recommendation first. Record every ruling on the issue it governs
-  before relaying it.
+  with a recommendation first and what is won or lost either way. Record every
+  ruling on the issue it governs before relaying it. Read an ambiguous reply
+  ("approved") literally against the options as framed, and say how you read it.
+- D7 screenshots: open the stills yourself before relaying (#1900's
+  apparently uncut ghost was a ×10 deformation offset; a probe settled it),
+  send a subset with `SendUserFile`, and record the approval on the PR, bound
+  to those stills.
 - Deletions (for example AS5) start with a parity table of v1 versus v2. Every
   v1 feature must map to a v2 equivalent; any gap stops the deletion and goes
   to the maintainer.

@@ -275,6 +275,21 @@ def test_phase_tracker_refuses_a_capture_without_a_floor(
             tracemalloc.stop()
 
 
+def test_report_phases_says_none_captured_without_attribution(
+        capsys: pytest.CaptureFixture[str]) -> None:
+    """No captured phases: the attribution section prints its
+    "NONE captured" line instead of staying silent (#1896 review)."""
+    from types import SimpleNamespace
+
+    from tests.benchmarks import emit_throughput_profile as prof
+
+    args = SimpleNamespace(phase_top=5, attr_rank=0, parts=1,
+                           recipe="box", staged=False, stream=False)
+    rec = prof.report_phases(args, 1, 1, {"blocks": [], "attr": []})
+    assert rec["attribution"] == []
+    assert "NONE captured for rank 0" in capsys.readouterr().out
+
+
 @pytest.mark.parametrize("mode", ["flat", "partitioned", "staged"])
 def test_arch_orientation_fan_out_is_planned_once(mode: str) -> None:
     """Profile the ``arch_with_orientation_fan_out`` golden fixture's emit.

@@ -10,7 +10,7 @@
 //
 // The store has no stage selection, so every stage's chain is listed, in
 // stage order. The join of a chain to its declarations: the archive's
-// `stage_NNN/analysis` carries no declaration link (#1646), so the k-th
+// `stage_NNN/analysis` carries no declaration link (not recorded for analysis calls, by design: h5-schema.md `/opensees/program`, `decl = -1`), so the k-th
 // declaration of a chain family (`integrator`, `test`, ...) is the k-th chain
 // that sets that token, in file order. That order is a guess, never shown as
 // fact: the family's counts must agree and every type must be the token the
@@ -18,11 +18,11 @@
 // against the chain's own positional `*_args`, used only as a check (the
 // parameters shown still come from decl_params). A member that disagrees, or
 // that cannot be checked (no decl_params row; no `*_args` while the family has
-// more than one declaration), says "cannot join (#1646)" and has no link and
+// more than one declaration), says "cannot join (link not recorded by design)" and has no link and
 // no parameters. A family with one declaration and one chain needs no order.
 // When every declaration of the family has the same type and identical
 // decl_params, the parameters are the same whichever one the chain used: they
-// are shown, marked "declaration ambiguous (#1646)", with no single link
+// are shown, marked "declaration ambiguous (link not recorded by design)", with no single link
 // (the `*_args`, when present, must still agree).
 //
 // `analysisOf` is the pure read of the state; `view` builds the DOM. A click
@@ -114,13 +114,13 @@ function joinChains(defs: Definitions, chains: readonly AnalysisDef[]): Map<stri
     const recs = records.filter((r) => r.family === family);
     const setting = chains.map((c, i) => ({ i, token: c.attrs[attr] })).filter((x) => typeof x.token === "string");
     if (recs.length !== setting.length) {
-      out.set(family, `cannot join: /opensees/decls has ${recs.length} ${family} declaration${recs.length === 1 ? "" : "s"} for ${setting.length} chain${setting.length === 1 ? "" : "s"} that set it (the archive records no chain↔declaration link, #1646)`);
+      out.set(family, `cannot join: /opensees/decls has ${recs.length} ${family} declaration${recs.length === 1 ? "" : "s"} for ${setting.length} chain${setting.length === 1 ? "" : "s"} that set it (the chain↔declaration link is not recorded for analysis calls, by design: h5-schema.md /opensees/program)`);
       continue;
     }
     // A record with no decl_params row has no type to check here; verifyMember refuses it.
     const bad = setting.findIndex((x, k) => recs[k]!.params[0] !== undefined && recs[k]!.params[0]!.type !== x.token);
     if (bad >= 0) {
-      out.set(family, `cannot join: ${recs[bad]!.key} is a ${recs[bad]!.params[0]!.type}, the chain names ${String(setting[bad]!.token)} (the archive records no chain↔declaration link, #1646)`);
+      out.set(family, `cannot join: ${recs[bad]!.key} is a ${recs[bad]!.params[0]!.type}, the chain names ${String(setting[bad]!.token)} (the chain↔declaration link is not recorded for analysis calls, by design: h5-schema.md /opensees/program)`);
       continue;
     }
     const per: (DeclRecord | null)[] = chains.map(() => null);
@@ -133,8 +133,8 @@ function joinChains(defs: Definitions, chains: readonly AnalysisDef[]): Map<stri
 /** The finite numbers of a list, in order (a positional `*_args` attribute, or a declaration's field values). */
 const numbers = (xs: readonly unknown[]): number[] => xs.filter((x): x is number => typeof x === "number" && Number.isFinite(x));
 const sameNumber = (a: number, b: number): boolean => a === b || Math.abs(a - b) <= 1e-12 * Math.max(Math.abs(a), Math.abs(b));
-const JOIN_GAP = "cannot join (#1646)";
-const AMBIGUOUS = "declaration ambiguous (#1646)";
+const JOIN_GAP = "cannot join (link not recorded for analysis calls, by design: h5-schema.md /opensees/program)";
+const AMBIGUOUS = "declaration ambiguous (link not recorded for analysis calls, by design: h5-schema.md /opensees/program)";
 
 /** The family's declarations all have one type and identical decl_params (and there is more than one). */
 export function identicalCandidates(cands: readonly DeclRecord[]): boolean {

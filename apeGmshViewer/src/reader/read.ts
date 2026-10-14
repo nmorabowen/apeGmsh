@@ -126,11 +126,20 @@ export const NEUTRAL_TARGET = { major: 2, minor: 35 } as const;
  * a refused or ambiguous join says the archive records no link (#1646). Using `program.decl` for that join when the
  * marker is "complete" is a follow-up, not this target bump.
  *
+ * opensees 2.32.0 (#1853, h5-schema.md "`decl`: each call's declaration"):
+ * the six side-channel verbs (`step_hook_ramp`, `addToParameter`,
+ * `flip_element_stage`, `update_parameter`, `set_node_vel`, `set_node_accel`)
+ * now carry their record's `decl` instead of `-1`. No path, dtype or marker
+ * change, and this app does not read `/opensees/program`, so nothing here
+ * reads differently. The column is hashed: a 2.32 re-emit of a model with any
+ * of those calls has a new model_hash, which the results pairing shows as a
+ * plain mismatch (both sides' markers say "complete").
+ *
  * tests/test_app_target_drift.py fails when any `*_TARGET` here (or
  * `RESULTS_TARGET` in results.ts) differs from its Python writer's version:
  * bump it only after reading that zone's history entry in h5-schema.md.
  */
-export const OPENSEES_TARGET = { major: 2, minor: 31 } as const;
+export const OPENSEES_TARGET = { major: 2, minor: 32 } as const;
 /** The ADR 0112 zones (V2a specs): read by geometry.ts and provenance.ts. */
 export const GEOMETRY_TARGET = { major: 1, minor: 0 } as const;
 export const PROVENANCE_TARGET = { major: 1, minor: 1 } as const;

@@ -13,7 +13,7 @@ is stamped current but keeps the old hash (marker ``"absent"``).
 It stays a warning (ADR 0021 INV-2). A same-era mismatch, or one whose
 results file carries no ``/opensees`` zone, keeps the old text exactly.
 
-The legacy archive is the prior-minor schema corpus file; a "different
+The legacy archive is the corpus file of the minor before the marker; a "different
 model" is a results file whose stored ``model_hash`` is rewritten.
 """
 from __future__ import annotations
@@ -31,7 +31,7 @@ from apeGmsh.results import Results
 from apeGmsh.results.Results import MODEL_HASH_ERA_CAUSE
 from apeGmsh.results.writers import NativeWriter
 
-from tests.fixtures.schema import OPENSEES_PRIOR_MINOR, OPENSEES_PROGRAM_DECL_FROM
+from tests.fixtures.schema import OPENSEES_PROGRAM_DECL_FROM
 from tests.opensees.h5._opensees_model_fixtures import build_simple_frame_h5
 
 CORPUS = Path(__file__).resolve().parents[1] / "fixtures" / "schema_corpus"
@@ -47,8 +47,10 @@ def _fresh(tmp_path: Path) -> Path:
 
 
 def _legacy(tmp_path: Path) -> Path:
-    """The prior-minor corpus archive (no marker: old hash)."""
-    minor = OPENSEES_PRIOR_MINOR.rsplit(".", 1)[0]
+    """The corpus archive of the minor before the marker (no marker: old
+    hash)."""
+    major, below, _patch = OPENSEES_PROGRAM_DECL_FROM.split(".")
+    minor = f"{major}.{int(below) - 1}"
     path = tmp_path / "legacy.h5"
     shutil.copy(CORPUS / f"opensees_{minor}.h5", path)
     return path

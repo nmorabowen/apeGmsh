@@ -92,8 +92,8 @@ from ._internal.build.stage_emit import (
     emit_initial_stress_addtoparameter,
     emit_initial_stress_global,
     emit_update_parameters,
-    emit_zero_velocities,
-    zero_velocity_target_nodes,
+    emit_zero_velocities_by_record,
+    zero_velocity_targets_by_record,
     emit_ghost_sp_ops,
 )
 from ._internal.build.constraints import (
@@ -489,8 +489,10 @@ class _ArchiveDeclCursor(_DeclCursor):
         except KeyError:
             raise BridgeError(
                 f"BuiltModel.emit: a {type(owner).__name__} reached the "
-                "archive with no declaration; every fix, mass and recorder "
-                "is declared through apeSees (ADR 0114 R5)."
+                "archive with no declaration; every fix, mass, recorder "
+                "and stage side-channel record (initial stress, absorbing "
+                "flip, parameter update, velocity zeroing) is declared "
+                "through apeSees (ADR 0114 R5)."
             ) from None
         self._side.set_declaration(decl)
 
@@ -2394,14 +2396,17 @@ class BuiltModel:
         # the case where some records weren't staged — they emit here
         # globally before any stage starts.
         if self.initial_stress_records:
+            ist_cursor = self._decl_cursor(emitter)
             name_to_param_tags = emit_initial_stress_global(
                 self.initial_stress_records, emitter, tag_plan,
+                cursor=ist_cursor,
             )
             emit_initial_stress_addtoparameter(
                 self.initial_stress_records,
                 emitter, self.fem,
                 name_to_param_tags=name_to_param_tags,
                 fem_eid_to_ops_tag=fem_eid_to_ops_tag,
+                cursor=ist_cursor,
             )
 
         # 8. Patterns + recorders.  Phase SSI-2.D PR-C: recorders
@@ -2809,22 +2814,25 @@ class BuiltModel:
             )
 
             # 6. Initial stress.
+            side_cursor = self._decl_cursor(emitter)
             if stage.initial_stress_records:
                 name_to_param_tags = emit_initial_stress_global(
                     stage.initial_stress_records, emitter, tag_plan,
+                    cursor=side_cursor,
                 )
                 emit_initial_stress_addtoparameter(
                     stage.initial_stress_records,
                     emitter, self.fem,
                     name_to_param_tags=name_to_param_tags,
                     fem_eid_to_ops_tag=fem_eid_to_ops_tag,
+                    cursor=side_cursor,
                 )
 
             # 6b. Absorbing-boundary stage flip (ADR 0054 AB-3).
             if stage.activate_absorbing_records:
                 emit_activate_absorbing(
                     stage.activate_absorbing_records,
-                    emitter, tag_plan,
+                    emitter, tag_plan, cursor=side_cursor,
                 )
 
             # 6c. ``s.update_parameter`` — the general form of the same
@@ -2834,7 +2842,7 @@ class BuiltModel:
             if stage.update_parameter_records:
                 emit_update_parameters(
                     stage.update_parameter_records,
-                    emitter, tag_plan,
+                    emitter, tag_plan, cursor=side_cursor,
                 )
 
             # 7. Analysis chain.
@@ -2892,13 +2900,14 @@ class BuiltModel:
             # Domain to the last ``setTime``, which would restore the
             # very velocities this is removing.
             if stage.zero_velocity_records:
-                emit_zero_velocities(
-                    zero_velocity_target_nodes(
+                emit_zero_velocities_by_record(
+                    zero_velocity_targets_by_record(
                         stage.zero_velocity_records, self.fem.nodes.ids,
                     ),
                     emitter,
                     effective_ndf=inferred_ndf,
                     envelope_ndf=self.ndf,
+                    cursor=side_cursor,
                 )
 
             # 9. Analyze loop (auto-wraps with hook dispatcher calls).
@@ -3537,9 +3546,11 @@ class BuiltModel:
         # but parameter / proc / lappend state is rank-local in MP, so
         # each rank ends up with the same local setup.
         init_stress_param_tags: dict[str, tuple[int, int, int]] = {}
+        ist_cursor = self._decl_cursor(emitter)
         if self.initial_stress_records:
             init_stress_param_tags = emit_initial_stress_global(
                 self.initial_stress_records, emitter, tag_plan,
+                cursor=ist_cursor,
             )
 
         # Stable per-rank node tags — sort within each rank by node id
@@ -3852,6 +3863,7 @@ class BuiltModel:
                         fem_eid_to_ops_tag=fem_eid_to_ops_tag,
                         element_owner=element_owner,
                         partition_rank=rank,
+                        cursor=ist_cursor,
                     )
 
                 # 8. Patterns (loads + sps) per-rank.  ADR 0051 (BL-3):
@@ -4593,9 +4605,11 @@ class BuiltModel:
             )
 
             # 4. Initial-stress globals + per-rank ``addToParameter``.
+            side_cursor = self._decl_cursor(emitter)
             if stage.initial_stress_records:
                 name_to_param_tags = emit_initial_stress_global(
                     stage.initial_stress_records, emitter, tag_plan,
+                    cursor=side_cursor,
                 )
                 for idx, _part in enumerate(partitions):
                     rank = runtime_rank_from_partition_record(_part, idx)
@@ -4608,6 +4622,7 @@ class BuiltModel:
                             fem_eid_to_ops_tag=fem_eid_to_ops_tag,
                             element_owner=element_owner,
                             partition_rank=rank,
+                            cursor=side_cursor,
                         )
                     finally:
                         emitter.partition_close()
@@ -4621,6 +4636,7 @@ class BuiltModel:
                         emit_activate_absorbing(
                             stage.activate_absorbing_records,
                             emitter, tag_plan, partition_rank=rank,
+                            cursor=side_cursor,
                         )
                     finally:
                         emitter.partition_close()
@@ -4636,6 +4652,7 @@ class BuiltModel:
                         emit_update_parameters(
                             stage.update_parameter_records,
                             emitter, tag_plan, partition_rank=rank,
+                            cursor=side_cursor,
                         )
                     finally:
                         emitter.partition_close()
@@ -4722,23 +4739,25 @@ class BuiltModel:
             # zeroed on both (idempotent).  Emitted after ``reset``
             # and immediately before ``analyze``, same as the flat path.
             if stage.zero_velocity_records:
-                zero_vel_nodes = zero_velocity_target_nodes(
+                zero_vel_targets = zero_velocity_targets_by_record(
                     stage.zero_velocity_records, self.fem.nodes.ids,
                 )
                 for idx, part in enumerate(partitions):
                     rank = runtime_rank_from_partition_record(part, idx)
                     rank_owned = rank_owned_nodes[rank]
                     rank_zero_vel = [
-                        nid for nid in zero_vel_nodes if nid in rank_owned
+                        (zrec, [nid for nid in nodes if nid in rank_owned])
+                        for zrec, nodes in zero_vel_targets
                     ]
-                    if not rank_zero_vel:
+                    if not any(nodes for _zrec, nodes in rank_zero_vel):
                         continue
                     emitter.partition_open(rank)
                     try:
-                        emit_zero_velocities(
+                        emit_zero_velocities_by_record(
                             rank_zero_vel, emitter,
                             effective_ndf=inferred_ndf,
                             envelope_ndf=self.ndf,
+                            cursor=side_cursor,
                         )
                     finally:
                         emitter.partition_close()

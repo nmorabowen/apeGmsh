@@ -186,15 +186,16 @@ test("ADR 0113 floors: the app's table (neutral 2.10, opensees 2.12, geometry 1.
   assert.deepEqual(ZONE_FLOOR, { neutral: 10, opensees: 12, geometry: 0, provenance: 0, sequence: 0 });
 });
 
-test("opensees 2.31.0 is the target: a 2.31 file with a 2.29 embeddedRebar store opens with no banner", () => {
+test("opensees 2.32.0 is the target: a 2.32 file with a 2.29 embeddedRebar store opens with no banner", () => {
   // h5-schema.md: 2.28 adds decl_params `label`, 2.29 the optional
   // /opensees/constraints/embeddedRebar group (replay data the app does not
   // read), 2.30 decl_params `precision`, 2.31 /opensees/program's `decl`
-  // column and the /opensees/decls@program_decl marker (neither read here).
+  // column and the /opensees/decls@program_decl marker (neither read here),
+  // 2.32 that column's side-channel verbs (still not read here).
   // A file at the target opens silently; tests/test_app_target_drift.py
   // holds the target equal to the Python writer's SCHEMA_VERSION.
-  assert.deepEqual(OPENSEES_TARGET, { major: 2, minor: 31 });
-  const path = writeFile("o-231.h5", v(NEUTRAL_TARGET, NEUTRAL_TARGET.minor), true, "2.31.0");
+  assert.deepEqual(OPENSEES_TARGET, { major: 2, minor: 32 });
+  const path = writeFile("o-232.h5", v(NEUTRAL_TARGET, NEUTRAL_TARGET.minor), true, "2.32.0");
   const f = new h5wasm.File(path, "a");
   const er = (f.get("opensees") as h5wasm.Group).create_group("constraints").create_group("embeddedRebar");
   er.create_dataset({ name: "ele_tag", data: new BigInt64Array([10n]) });
@@ -202,7 +203,7 @@ test("opensees 2.31.0 is the target: a 2.31 file with a 2.29 embeddedRebar store
   er.create_dataset({ name: "args", data: new Float64Array([1]) });
   f.close();
   const m = read(path);
-  assert.equal(m.opensees?.version, "2.31.0");
+  assert.equal(m.opensees?.version, "2.32.0");
   assert.deepEqual(m.warnings, []);
   // V4m: a group missing the string and kind columns opens; its ties are unknown, not 0
   assert.deepEqual(m.opensees?.definitions.embeddedRebar, {
