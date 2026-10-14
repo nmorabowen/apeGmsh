@@ -568,6 +568,44 @@ for (const name of ["extrap_solid", "extrap_tet"] as const) {
   });
 }
 
+for (const source of ["nodal", "element"] as const) {
+  test(`F-LUT (${source}): a fixed range set with no step change recolours the caps to it, without slicing again`, async () => {
+    const h = source === "nodal" ? await opened() : await opened(fx("extrap_solid.h5"), fx("extrap_solid.results.h5"));
+    if (source === "nodal") {
+      h.store.dispatch({ type: "setPhase", at: { kind: "results", stage: 2, step: 1 } });
+      h.store.dispatch({ type: "setColourBy", by: "contour" });
+      h.store.dispatch({ type: "setContourField", field: "displacement", component: "displacement_x" });
+      h.store.dispatch({ type: "setContourRange", range: "step" });
+      plane(h, [0, 0, -1], -2.2);
+      await stepShown(h);
+    } else {
+      h.store.dispatch({ type: "addClipPlane", normal: [0.31, 0.47, 0.83] });
+      await pickElement(h, "stress_xx", "cell", 1);
+    }
+    const caps = capsNow(h);
+    assert.equal(caps.count, 1);
+    const slices = caps.slices;
+    const cap = caps.drawn[0]!;
+    const vals = cap.slice.values!.filter((x) => Number.isFinite(x));
+    const lo = Math.min(...vals), hi = Math.max(...vals);
+    // A fixed range narrower than the cap's values, so the colours must change.
+    const fixed = { min: lo + 0.25 * (hi - lo || 1), max: lo + 0.75 * (hi - lo || 1) };
+    h.store.dispatch({ type: "setContourRange", range: "fixed", fixed });
+    const v = contourView(h.store.get());
+    assert.ok((v.state === "ready" || v.state === "element") && v.clim.min === fixed.min && v.clim.max === fixed.max, "the surfaces' clim is the fixed range");
+    capsNow(h, caps);
+    assert.equal(caps.slices, slices, "no slice for a range change");
+    assert.equal(caps.drawn[0], cap, "the same cap, recoloured");
+    const rgb = cap.mesh.geometry.getAttribute("color").array as Float32Array;
+    for (let i = 0; i < cap.slice.values!.length; i++) {
+      const x = cap.slice.values![i]!;
+      if (!Number.isFinite(x)) continue;
+      const want = sampleCmap(v.cmap, rampT(x, fixed.min, fixed.max)).map(toLinear);
+      for (let k = 0; k < 3; k++) assert.ok(Math.abs(rgb[3 * i + k]! - want[k]!) < 1e-6, `vertex ${i}: the colour of ${x} in the fixed range`);
+    }
+  });
+}
+
 test("releaseAware: the release listeners run first, then `after`; removing one removes its wrapper", () => {
   const t = new EventTarget();
   const log: string[] = [];

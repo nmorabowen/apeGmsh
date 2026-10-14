@@ -514,6 +514,9 @@ async function measureContour(path: string, deform = false, element = false, gau
     if (m.main + m.renderer > peak.main + peak.renderer) Object.assign(peak, m);
   };
   const sampler = setInterval(() => void sample(), 100);
+  // V4e3: the caps toggle and the deformation scale as they were, put back after the scrub.
+  const cutFaceBefore = store.get().clip.cutFace;
+  const scaleBefore = store.get().deform.scale;
   try {
     const t0 = performance.now();
     store.dispatch({ type: "setPhase", at: { kind: "results", stage: best, step: 0 } });
@@ -585,8 +588,8 @@ async function measureContour(path: string, deform = false, element = false, gau
   } finally {
     clearInterval(sampler);
     if (planes) removePlanes();
-    store.dispatch({ type: "setCutFace", on: true });
-    store.dispatch({ type: "setDeformScale", scale: 1 });
+    store.dispatch({ type: "setCutFace", on: cutFaceBefore });
+    store.dispatch({ type: "setDeformScale", scale: scaleBefore });
   }
 }
 
