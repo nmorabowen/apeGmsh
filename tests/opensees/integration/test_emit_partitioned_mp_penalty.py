@@ -443,35 +443,46 @@ def _equation_lines(text: str, a: int, b: int) -> int:
                if ln.strip() == f"equationConstraint {b} 3 1.0 {a} 3 -1.0")
 
 
-@pytest.mark.parametrize("name", ["Penalty", "Lagrange", "none"])
-def test_an_equation_tie_spanning_ranks_is_refused(tmp_path, name):
+def test_an_equation_tie_spanning_ranks_is_refused_under_penalty(tmp_path):
     """Each rank holding the slave or the master writes the tie, so a
-    multiplying handler (declared, or the auto-emitted Lagrange) assembles
-    it twice. Refused before anything is written, naming the tie."""
-    ops, _a, b = _equation_tie_ops(name, cross=True)
+    declared ``Penalty`` adds one penalty term per copy (#1625). Refused
+    before anything is written, naming the tie and the remedies."""
+    ops, _a, b = _equation_tie_ops("Penalty", cross=True)
     deck = tmp_path / "model.tcl"
     deck.write_text("SENTINEL\n", encoding="utf-8")
     with pytest.raises(BridgeError) as err:
         emit(ops, deck)
     msg = str(err.value)
     assert "#1625" in msg and "'eq'" in msg and f"(slave node {b})" in msg
-    assert "on 2 ranks" in msg and "flat=True" in msg
-    assert ("Lagrange" if name == "none" else name) in msg
+    assert "on 2 ranks" in msg and "Penalty" in msg
+    assert "flat=True" in msg and "ops.constraints.Lagrange()" in msg
     assert deck.read_text(encoding="utf-8") == "SENTINEL\n"
     assert [f.name for f in tmp_path.iterdir()] == ["model.tcl"]
 
 
-def test_a_spanning_equation_tie_beside_a_diaphragm_names_the_serial_remedy(
+@pytest.mark.parametrize("name", ["Lagrange", "none"])
+def test_an_equation_tie_spanning_ranks_keeps_adr_0068_replication(
+        tmp_path, name):
+    """Under a declared ``Lagrange`` (the refusal's second remedy) or the
+    auto-emitted one, ADR 0068 Open item 2 replicates the tie on both
+    ranks, as before this slice."""
+    ops, a, b = _equation_tie_ops(name, cross=True)
+    text = emit(ops, tmp_path / "model.tcl")
+    assert _equation_lines(text, a, b) == 2
+
+
+def test_a_spanning_equation_tie_beside_a_diaphragm_names_the_equation_tie(
         tmp_path):
-    """Both copied: the equation tie is reported, because ``Transformation``
-    (the diaphragm's other remedy) cannot enforce it (ADR 0068 INV-4)."""
+    """Both copied under Penalty: the equation tie is reported, because
+    ``Transformation`` (the diaphragm's remedy) cannot enforce it
+    (ADR 0068 INV-4)."""
     fem, grounds, master = diaphragm_plate(2)
     a, b = _cross_rank_pair(fem)
     fem = with_diaphragm(fem, master).with_constraint(InterpolationRecord(
         kind=ConstraintKind.TIE, name="eq", slave_node=b, master_nodes=[a],
         weights=np.array([1.0]), dofs=[3], enforce="equation"))
     ops = declare_model(fem, grounds, master)
-    chain(ops, "Lagrange", 2)
+    chain(ops, "Penalty", 2)
     with pytest.raises(BridgeError, match="equationConstraint tie 'eq'") as err:
         emit(ops, tmp_path / "model.tcl")
     assert "Transformation" not in str(err.value)
@@ -488,7 +499,7 @@ def test_an_equation_tie_held_by_one_rank_is_not_refused(tmp_path, name):
 
 @pytest.mark.parametrize("name", ["Penalty", "Lagrange", "none"])
 def test_the_serial_remedy_writes_the_spanning_equation_tie_once(tmp_path, name):
-    """``flat=True``, the refusal's only remedy, writes the deck with one
+    """``flat=True``, the refusal's serial remedy, writes the deck with one
     copy of the tie."""
     ops, a, b = _equation_tie_ops(name, cross=True, serial_chain=True)
     text = emit(ops, tmp_path / "model.tcl", flat=True)

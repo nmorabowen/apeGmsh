@@ -1,10 +1,10 @@
-### FIXED — a partitioned equation tie spanning ranks is refused under a multiplying handler (#1963, #1724 item 1)
+### FIXED — a partitioned equation tie spanning ranks is refused under Penalty (#1963, #1724 item 1)
 
-An `enforce="equation"` tie whose slave and master live on two ranks was
-written as one `equationConstraint` per rank. Under `Penalty`, `Lagrange` or
-the auto-emitted `Lagrange`, each copy assembled its own penalty or
-multiplier, the #1625 mechanism, and the emit succeeded silently. The #1625
-refusal now covers equation ties: such a partitioned emit raises
-`BridgeError` before writing, naming the tie and the serial remedy
-(`ops.tcl(path, flat=True)`). A tie whose nodes share one rank still emits
-once.
+An `enforce="equation"` tie whose slave and master live on two ranks is
+written as one `equationConstraint` per rank (ADR 0068 Open item 2). Under a
+declared `Penalty` handler each copy added its own penalty term, the #1625
+mechanism, and the emit succeeded silently. Such a partitioned emit now raises
+`BridgeError` before writing. The error names the tie and two remedies: a
+serial run (`ops.tcl(path, flat=True)`) or `ops.constraints.Lagrange()`.
+`Lagrange`, `LadrunoProjection` and the auto handler keep ADR 0068's
+replication, and a tie whose nodes share one rank still emits once.

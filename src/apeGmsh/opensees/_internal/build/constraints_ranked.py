@@ -567,9 +567,11 @@ def refuse_multiplied_mp_constraints(
     with the others in ``ArpackSOE``'s diagonal-mass flag, and the spectrum
     collapses to 1.0. So the emit refuses. An ``enforce="equation"`` tie
     is written as an ``equationConstraint`` on every rank that holds its
-    slave or a master, so a tie spanning ranks is refused the same way
-    (#1724 item 1); its only remedy is a serial run, since
-    ``Transformation`` is not an equation-tie handler.
+    slave or a master (ADR 0068 Open item 2). Under a declared ``Penalty``
+    each copy adds its own penalty term, so a tie spanning ranks is
+    refused the same way (#1724 item 1). ``Lagrange``,
+    ``LadrunoProjection`` and the auto handler keep ADR 0068's
+    replication; ``Transformation`` cannot enforce the tie (INV-4).
 
     The handler checked is the one each analysis runs under:
 
@@ -654,29 +656,35 @@ def _refuse_copies(
     A replicable record is flagged by its own plan (``replicated_records``).
     An ``enforce="equation"`` tie is written on every rank that holds its
     slave or a master (``equation_records``), so it is copied when two
-    plans or more carry the same record (#1724 item 1). The equation tie
-    is checked first: its only remedy, a serial run, also clears a copied
-    replicable record, while ``Transformation`` cannot enforce the tie.
+    plans or more carry the same record. Only ``Penalty`` is refused for
+    that (#1724 item 1): each copy adds its own penalty term. ADR 0068
+    Open item 2 keeps the replication under the EQ-capable handlers. The
+    equation tie is checked first, because ``Transformation``, the
+    replicable record's remedy, cannot enforce it (ADR 0068 INV-4).
     """
     plans = list(plans)
-    writers: dict[int, int] = {}
-    for p in plans:
-        for eq in p.equation_records:
-            writers[id(eq)] = writers.get(id(eq), 0) + 1
-    eq = next((eq for p in plans for eq in p.equation_records
-               if writers[id(eq)] > 1), None)
-    if eq is not None:
-        name = getattr(eq, "name", None) or "<unnamed>"
-        slave = getattr(eq, "slave_node", "?")
-        raise BridgeError(
-            f"A partitioned emit would write the equationConstraint tie "
-            f"{name!r} (slave node {slave}) on {writers[id(eq)]} ranks under "
-            f"the constraint handler {', '.join(names)}. Each rank's copy "
-            "assembles its own penalty or multiplier, so the partitioned "
-            "model would silently answer stiffer than the serial one "
-            "(#1625). Nothing was written. Run serially "
-            "(ops.tcl(path, flat=True))."
-        )
+    if "Penalty" in names:
+        writers: dict[int, int] = {}
+        for p in plans:
+            for eq in p.equation_records:
+                writers[id(eq)] = writers.get(id(eq), 0) + 1
+        eq = next((eq for p in plans for eq in p.equation_records
+                   if writers[id(eq)] > 1), None)
+        if eq is not None:
+            name = getattr(eq, "name", None) or "<unnamed>"
+            slave = getattr(eq, "slave_node", "?")
+            raise BridgeError(
+                f"A partitioned emit would write the equationConstraint tie "
+                f"{name!r} (slave node {slave}) on {writers[id(eq)]} ranks "
+                f"under the constraint handler {', '.join(names)}. Each "
+                "rank's copy adds its own penalty term, so the partitioned "
+                "model would silently answer stiffer than the serial one "
+                "(#1625). Nothing was written. Run serially "
+                "(ops.tcl(path, flat=True)), or declare "
+                "ops.constraints.Lagrange(), under which the partitioned "
+                "emit replicates equation ties across ranks (ADR 0068 Open "
+                "item 2)."
+            )
     copied = next((p.replicated_records for p in plans
                    if p.replicated_records), ())
     if not copied:
