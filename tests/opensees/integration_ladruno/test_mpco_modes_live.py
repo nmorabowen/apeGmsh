@@ -47,6 +47,60 @@ def cantilever() -> Any:
     return build_cantilever_fem()
 
 
+def _fresh_env() -> "dict[str, str]":
+    src = str(Path(apeGmsh.__file__).resolve().parents[1])
+    env = dict(os.environ, LADRUNO_OPENSEES_QUIET="1")
+    env["PYTHONPATH"] = os.pathsep.join(
+        [src, *filter(None, [os.environ.get("PYTHONPATH")])],
+    )
+    return env
+
+
+_STALE_EIGEN_REPRO = """
+import sys
+from apeGmsh.opensees.emitter.live import get_ops
+ops = get_ops()
+def model():
+    ops.wipe()
+    ops.model("basic", "-ndm", 2, "-ndf", 3)
+    ops.node(1, 0.0, 0.0); ops.node(2, 0.0, 1.0)
+    ops.fix(1, 1, 1, 1); ops.mass(2, 1.0, 1.0, 0.0)
+    ops.geomTransf("Linear", 1)
+    ops.element("elasticBeamColumn", 1, 1, 2, 0.01, 200e9, 1e-4, 1)
+model()
+ops.eigen(1)
+model()
+ops.recorder("mpco", sys.argv[1], "-N", "modesOfVibration")
+ops.timeSeries("Linear", 1); ops.pattern("Plain", 1, 1)
+ops.load(2, 1.0, 0.0, 0.0)
+ops.constraints("Plain"); ops.numberer("Plain"); ops.system("BandGeneral")
+ops.test("NormDispIncr", 1e-9, 10); ops.algorithm("Linear")
+ops.integrator("LoadControl", 1.0); ops.analysis("Static")
+ops.analyze(1)
+ops.remove("recorders")
+print("survived")
+"""
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="fork MPCO recorder gates modes on the interpreter's stale "
+    "numEigen after eigen + wipe and calls Domain::getEigenvalues, which "
+    "exit(-1)s the process; the Ladruno recorder guards this "
+    "(getNumEigenvalues). Pinned on build 79e0623670; reported on #1198.",
+)
+def test_mpco_modes_recorder_survives_eigen_then_wipe(tmp_path: Path) -> None:
+    script = tmp_path / "repro.py"
+    script.write_text(_STALE_EIGEN_REPRO, encoding="utf-8")
+    proc = subprocess.run(
+        [sys.executable, str(script), str(tmp_path / "r.mpco")],
+        cwd=tmp_path, env=_fresh_env(), capture_output=True, text=True,
+        check=False,
+    )
+    assert proc.returncode == 0 and "survived" in proc.stdout, (
+        proc.returncode, proc.stdout[-500:], proc.stderr[-500:])
+
+
 def test_mpco_modes_match_live_eigen(cantilever: Any, tmp_path: Path) -> None:
     mpco, model_h5 = tmp_path / "modes.mpco", tmp_path / "model.h5"
     ops = modal_bridge(cantilever)
@@ -107,13 +161,8 @@ def test_static_stage_keeps_its_program_name_beside_the_modes(
         f"open({str(out)!r}, 'w').write(json.dumps(LAMBDAS))\n"
     )
     deck.write_text(text, encoding="utf-8")
-    src = str(Path(apeGmsh.__file__).resolve().parents[1])
-    env = dict(os.environ, LADRUNO_OPENSEES_QUIET="1")
-    env["PYTHONPATH"] = os.pathsep.join(
-        [src, *filter(None, [os.environ.get("PYTHONPATH")])],
-    )
     proc = subprocess.run(
-        [sys.executable, str(deck)], cwd=tmp_path, env=env,
+        [sys.executable, str(deck)], cwd=tmp_path, env=_fresh_env(),
         capture_output=True, text=True, check=False,
     )
     assert proc.returncode == 0, proc.stdout[-2000:] + proc.stderr[-2000:]

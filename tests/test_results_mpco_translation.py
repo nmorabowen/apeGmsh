@@ -19,12 +19,10 @@ from apeGmsh.results.readers._ladruno import LadrunoReader
 from apeGmsh.results.readers._mpco import MPCOReader
 from apeGmsh.results.readers._mpco_translation import (
     all_known_mpco_result_names,
-    canonical_modal_component,
     canonical_node_component,
     canonical_to_mpco_lookup,
     component_axis,
     has_canonical_mapping,
-    is_modal_result_name,
 )
 from apeGmsh.results.readers._protocol import ResultLevel
 from apeGmsh.results.schema._versions import LADRUNO_SUPPORTED_FORMAT_VERSIONS
@@ -230,7 +228,33 @@ def _write_ladruno(path: Path, **kw) -> Path:
     return path
 
 
+def test_regression_ladruno_kind_eigen_is_not_a_mode(tmp_path: Path) -> None:
+    """Finding 1: the recorder writes KIND=eigen on EVERY stage once modes
+    are requested, so a gravity stage was listed as a mode with empty
+    eigen fields (a silent wrong answer). It is a static stage."""
+    with LadrunoReader(_write_ladruno(tmp_path / "m.ladruno")) as r:
+        host = r.stages()[0]
+    assert host.name == "MODEL_STAGE[1]"
+    assert host.kind == "static"
+    assert host.eigenvalue is None
+
+
+def test_regression_mpco_modes_beside_steps_do_not_raise(tmp_path: Path) -> None:
+    """Finding 2: the modal group's one STEP was counted against the
+    stage's three DISPLACEMENT steps and raised a step-count mismatch."""
+    with MPCOReader(_write_mpco(tmp_path / "m.mpco")) as r:
+        host = r.stages()[0]
+        disp = r.read_nodes(host.id, "displacement_x")
+    assert host.n_steps == len(_TIMES)
+    np.testing.assert_array_equal(disp.time, _TIMES)
+
+
 def test_modal_component_translation() -> None:
+    from apeGmsh.results.readers._mpco_translation import (
+        canonical_modal_component,
+        is_modal_result_name,
+    )
+
     assert canonical_modal_component("MODES_OF_VIBRATION(U)", "Ux") == "displacement_x"
     assert canonical_modal_component("MODES_OF_VIBRATION(U)", "Uz") == "displacement_z"
     assert canonical_modal_component("MODES_OF_VIBRATION(R)", "Rz") == "rotation_z"
