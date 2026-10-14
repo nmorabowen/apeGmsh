@@ -571,15 +571,27 @@ def test_coincident_sector_masters_claim_each_seam_node_once(
 
 
 def test_masters_coincide_on_synthetic_points():
-    """The coincidence oracle: a pair half a cell apart across a cell
-    boundary is found, a pair one mesh size apart is not."""
-    from apeGmsh.core.ConstraintsComposite import _masters_coincide
-    tags = [1, 2, 3, 4]
-    h = 1e-6 * math.sqrt(3.0)          # the grid spacing for this cloud
-    xyz = [[0.0, 0.0, 0.0], [1.0, 1.0, 1.0],
-           [0.5 * h + 1e-3 * h, 0.0, 0.0],  # straddles the 0.5h boundary
-           [0.4, 0.0, 0.0]]
-    assert _masters_coincide({1, 2}, {3}, tags, xyz)
-    assert not _masters_coincide({1, 2}, {4}, tags, xyz)
+    """The coincidence oracle is an exact distance test at
+    ``tol = 1e-6 x joint bbox diagonal``: a pair 0.85 tol apart across a
+    grid-cell boundary is found, a pair 1.5 tol apart (neighbouring cells,
+    beyond tol) is not, a pair one mesh size apart is not, and a master
+    node missing from the node table raises."""
+    from apeGmsh.core.ConstraintsComposite import (
+        _masters_coincide,
+        _NodeCoords,
+    )
+    tol = 1e-6 * math.sqrt(3.0)        # joint bbox is the unit cube
+    corner = [[0.0, 0.0, 0.0], [1.0, 1.0, 1.0]]
+    # Cells are rint(x / tol): 0.4 -> 0, 1.25 -> 1, 0.6 -> 1, 2.1 -> 2.
+    a = np.array(corner + [[0.4 * tol, 0.0, 0.0]])
+    assert _masters_coincide(a, np.array([[1.25 * tol, 0.0, 0.0]]))
+    a = np.array(corner + [[0.6 * tol, 0.0, 0.0]])
+    assert not _masters_coincide(a, np.array([[2.1 * tol, 0.0, 0.0]]))
+    assert not _masters_coincide(a, np.array([[0.4, 0.0, 0.0]]))
+    # Disjoint padded bounding boxes: separate bodies, no binning needed.
+    assert not _masters_coincide(np.array(corner),
+                                 np.array([[3.0, 3.0, 3.0], [4.0, 4.0, 4.0]]))
+    table = _NodeCoords([1, 2, 3], corner + [[0.5, 0.5, 0.5]])
+    assert table.of({3}).tolist() == [[0.5, 0.5, 0.5]]
     with pytest.raises(ValueError, match="no coordinate"):
-        _masters_coincide({1, 2}, {9}, tags, xyz)
+        table.of({9})
