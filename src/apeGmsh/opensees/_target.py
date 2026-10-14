@@ -71,9 +71,6 @@ _SHA_RE = re.compile(r"[0-9a-fA-F]{40}")
 #: The one ``ladrunoSchema`` version this module reads.
 LADRUNO_SCHEMA_VERSION = 0
 
-#: The fork-only command that returns the schema as one JSON string.
-LADRUNO_SCHEMA_COMMAND = "ladrunoSchema"
-
 _SCHEMA_KEYS: frozenset[str] = frozenset(
     {"build", "commands", "engine", "options", "schema_version"}
 )
@@ -215,6 +212,18 @@ def _is_int(value: Any) -> bool:
     return isinstance(value, int) and not isinstance(value, bool)
 
 
+def _unique_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    """A JSON object as a dict, raising on a duplicate key at any level.
+
+    ``json.loads`` keeps the last of duplicate keys, so a doubled
+    ``schema_version`` or owner/token would otherwise parse silently.
+    """
+    obj = dict(pairs)
+    if len(obj) != len(pairs):
+        raise ValueError("duplicate key in ladrunoSchema JSON")
+    return obj
+
+
 def _schema_from_obj(obj: Any, build: str | None) -> LadrunoSchema | None:
     """A decoded v0 schema as :class:`LadrunoSchema`, or ``None`` if in doubt.
 
@@ -267,14 +276,16 @@ def _schema_from_obj(obj: Any, build: str | None) -> LadrunoSchema | None:
 
 def _ladruno_schema(ops: Any, build: str | None) -> LadrunoSchema | None:
     """``ops.ladrunoSchema()`` parsed, or ``None`` (unknown); never raises."""
-    fn = getattr(ops, LADRUNO_SCHEMA_COMMAND, None)
+    fn = getattr(ops, "ladrunoSchema", None)  # apegmsh-lint: getattr-undefined-ok fork-only OpenSees command that self-describes the build
     if not callable(fn):
         return None
     try:
         raw = fn()
         if not isinstance(raw, str):
             return None
-        return _schema_from_obj(json.loads(raw), build)
+        return _schema_from_obj(
+            json.loads(raw, object_pairs_hook=_unique_keys), build,
+        )
     except Exception:
         return None
 

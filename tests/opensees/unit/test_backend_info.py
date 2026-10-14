@@ -439,6 +439,44 @@ def test_wrong_shape_is_unknown(over: dict[str, Any]) -> None:
     assert backend_info_of(_with_schema(**over)).schema is None
 
 
+_V0_BODY = (
+    f'"build":"{_SHA}","commands":["LadrunoTie"],"engine":"dl",'
+    '"options":OPTS'
+)
+
+
+@pytest.mark.parametrize("text", [
+    # a doubled schema_version: json.loads alone keeps the last one (v0)
+    '{"schema_version":1,' + _V0_BODY.replace(
+        "OPTS", '{"O":{"-t":{"nargs":1,"since":"P"}}}') + ',"schema_version":0}',
+    # a doubled owner
+    '{' + _V0_BODY.replace("OPTS", '{"O":{"-t":{"nargs":1,"since":"P"}},'
+                           '"O":{"-u":{"nargs":1,"since":"P"}}}')
+    + ',"schema_version":0}',
+    # a doubled token
+    '{' + _V0_BODY.replace("OPTS", '{"O":{"-t":{"nargs":1,"since":"P"},'
+                           '"-t":{"nargs":2,"since":"P"}}}')
+    + ',"schema_version":0}',
+    # a doubled field inside one token spec
+    '{' + _V0_BODY.replace("OPTS", '{"O":{"-t":{"nargs":1,"nargs":2,'
+                           '"since":"P"}}}')
+    + ',"schema_version":0}',
+])
+def test_duplicate_keys_at_any_level_are_unknown(text: str) -> None:
+    # Without the duplicate the same body parses, so the refusal is the
+    # duplicate's alone.
+    assert json.loads(text)["schema_version"] == 0
+    info = backend_info_of(_with_schema(text))
+    assert info.schema is None
+    assert (info.kind, info.build) == ("fork", _SHA)
+
+
+def test_the_duplicate_free_body_parses() -> None:
+    text = '{' + _V0_BODY.replace(
+        "OPTS", '{"O":{"-t":{"nargs":1,"since":"P"}}}') + ',"schema_version":0}'
+    assert backend_info_of(_with_schema(text)).supports_option("O", "-t") is True
+
+
 def test_missing_key_is_unknown() -> None:
     obj = _schema_obj()
     del obj["engine"]
