@@ -111,15 +111,15 @@ from apeGmsh.opensees.time_series.time_series import Path
 # campaign's forward-looking sizes.
 EXTRAP_TARGETS = (51_000_000, 71_300_000, 100_000_000, 139_000_000)
 
-# Gate bound: |G0a(sampled) - G0a(conservative)| <= this â€” an ERROR
+# Gate bound: |G0a(sampled) - G0a(conservative)| <= this — an ERROR
 # BOUND on the quantity we actually report, replacing two failed proxy
 # rules on the shortfall byte count.  History, kept because each step
 # was measured: a literal !=0 rule was unreachable by construction (the
-# sampler's own bookkeeping leaves a recurring ~308 B self-footprint â€”
+# sampler's own bookkeeping leaves a recurring ~308 B self-footprint —
 # notable for being SIZE-INVARIANT across sizes and parts, while
 # genuine misses scale with the model) and discarded 9/9 cells; a
 # 4096 B byte threshold worked on the first dataset but its "bimodal,
-# 100x gap" justification was refuted â€” the genuine-miss population is
+# 100x gap" justification was refuted — the genuine-miss population is
 # a CONTINUUM, so any byte cut is arbitrary.  Bounding the G0a error
 # itself is not: a cell passes when the unsampled excursion cannot move
 # the reported number by more than this, whatever its byte size.
@@ -247,10 +247,10 @@ def n_hexes(fem, soil_pgs) -> int:
 
 
 # ----------------------------------------------------------------------------
-# ADR 0100 R-term table â€” spans located by ANCHOR TEXT, never by hardcoded
+# ADR 0100 R-term table — spans located by ANCHOR TEXT, never by hardcoded
 # line number.  apesees.py is a hot file edited by concurrent sessions;
 # a rotted hardcoded span reads as "unattributed", which corrupts G0a.
-# A missing anchor raises and ABORTS â€” never silently skips a term.
+# A missing anchor raises and ABORTS — never silently skips a term.
 # ----------------------------------------------------------------------------
 def _locate(path: str, anchor: str, *, occurrence: int = 1,
             before: int = 1, after: int = 6) -> "tuple[str, int, int]":
@@ -280,25 +280,25 @@ def _norm(p: str) -> str:
 #
 # CACHE claims FIRST: the broker fan-out memo (_PG_FANOUT_CACHE arrays,
 # concatenated in build._fanout_arrays_from_group_result) is the ADR's
-# separate "2nd connectivity copy", NOT an R-term â€” its allocation frames
+# separate "2nd connectivity copy", NOT an R-term — its allocation frames
 # pass through R7's span (the expand_spec_to_elements call at ~build:423),
 # so without this pseudo-term R7 silently charges ~72 B/hex of cache to
 # the numerator and, at the anchor (where the real class_chunks tuples
-# are long dead), R7 collapses to ~pure cache â€” inverting the D4-vs-D5
+# are long dead), R7 collapses to ~pure cache — inverting the D4-vs-D5
 # priority a reader would take from the report.
 #
 # CAVEAT (measured, do not "fix"): once CACHE claims first, the R6/R7
-# split is entirely a TERM_ORDER artefact â€” R7's remaining frames sit
+# split is entirely a TERM_ORDER artefact — R7's remaining frames sit
 # inside R6's call-site span, so R6 and R7 individually carry no
 # independent information; only their SUM is order-invariant.
 TERM_ORDER = ("CACHE", "R7", "R6", "R8", "R1", "R3", "R2", "R4")
 # The G0a numerator is EXACTLY the authorised set.  The original
 # decision rule was written over R1-R4, R6, R7; the G0 campaign then
 # measured R8 at ~20 % of growth, and ADR 0100 Amendment 1
-# (2026-08-25) added it to the R-table and the numerator EXPLICITLY â€”
+# (2026-08-25) added it to the R-table and the numerator EXPLICITLY —
 # the widening went through the amendment, with the numbers in view,
 # exactly as the rule below demanded.  CACHE and the process floor
-# (R5) stay attributed-and-reported but NEVER counted â€” silently
+# (R5) stay attributed-and-reported but NEVER counted — silently
 # widening the numerator raises the gate number, which is precisely
 # the failure mode this instrument exists to prevent.
 NUMERATOR_TERMS = ("R7", "R6", "R8", "R1", "R3", "R2", "R4")
@@ -327,7 +327,7 @@ def _term_table() -> "list[tuple[str, list[tuple[str, int, int]]]]":
 
     specs: "list[tuple[str, str, str, int, int, int]]" = [
         # (term, path, anchor, occurrence, before, after)
-        # CACHE â€” the broker fan-out memo's persistent arrays: the
+        # CACHE — the broker fan-out memo's persistent arrays: the
         # np.concatenate outputs (uniform-npe path) and the object-dtype
         # container (mixed-npe path) in _fanout_arrays_from_group_result
         # (~1876 / 1879 / 1886).  Claims before R7 (see TERM_ORDER).
@@ -336,13 +336,13 @@ def _term_table() -> "list[tuple[str, list[tuple[str, int, int]]]]":
          1, 0, 0),
         ("CACHE", bd_pg, "conn_obj = np.empty((len(rows),), dtype=object)",
          1, 0, 2),
-        # R7 â€” class_chunks dict + the chunks.append(node_tags) loop
+        # R7 — class_chunks dict + the chunks.append(node_tags) loop
         # (build/ ~420-424).  The node_tags tuples allocate inside the
         # expand_spec_to_elements generator, but the caller frame at the
         # for-loop line is in this span, so nframe>=2 catches them.
         ("R7", bd_ndf, "class_chunks: dict[str, list[tuple[int, ...]]] = {}",
          1, 0, 4),
-        # R6 â€” the inferred per-node-ndf dict.  Three faces: the emit-side
+        # R6 — the inferred per-node-ndf dict.  Three faces: the emit-side
         # call site (~1251), the co-resident effective_ndf merge (~1263),
         # and the return-dict comprehension inside build.infer_node_ndf
         # (~504-507).
@@ -350,35 +350,35 @@ def _term_table() -> "list[tuple[str, list[tuple[str, int, int]]]]":
         ("R6", ap, "effective_ndf = {**inferred_ndf", 1, 0, 0),
         ("R6", bd_ndf, "for t, f in zip(all_ids.tolist(), floors.tolist())",
          1, 2, 1),
-        # R8 â€” the {ops_tag: fem_eid} reverse tag map.  Pre-P3 this was
+        # R8 — the {ops_tag: fem_eid} reverse tag map.  Pre-P3 this was
         # a per-stage dict comprehension (~3674, measured 103-228 B/elem
-        # across G0 cells, ~189 avg over gate-ok entries â‰ˆ ~5-12 GB at
+        # across G0 cells, ~189 avg over gate-ok entries ≈ ~5-12 GB at
         # the 51.0 M-element incident); ADR 0100 P3 columnarised it
         # (FemToOpsTagMap.inverse -> SortedIntToInt, built once before
         # the stage loop).  The span anchors the build site; the array
         # allocations inside inverse() carry this caller frame.
         ("R8", ap, "ops_tag_to_fem_eid = fem_eid_to_ops_tag.inverse()",
          1, 0, 0),
-        # R1 â€” node_idx_lookup, post-P3 columnar
+        # R1 — node_idx_lookup, post-P3 columnar
         # (build.node_index_lookup -> SortedIntToInt).  Exactly two
         # sites remain in apesees.py (re-verified after X1-b, #1505,
         # removed the ADR 0043 ``split=`` mode and its ``node_idx = ...``
         # sibling): occurrence 1 = the staged emit (~2476), occurrence 2
         # = the partitioned base (~3205).  The staged partitioned
-        # co-resident twin is GONE â€” P3 passes the base lookup into
+        # co-resident twin is GONE — P3 passes the base lookup into
         # _emit_stages_partitioned instead of rebuilding it.
         ("R1", ap, "node_idx_lookup = node_index_lookup(", 2, 0, 0),
         ("R1", ap, "node_idx_lookup = node_index_lookup(", 1, 0, 0),
-        # R3 â€” plan_by_rank; post-P3 the resident form is
+        # R3 — plan_by_rank; post-P3 the resident form is
         # LazyRankBuckets (one argsort permutation per spec, 8 B/row)
-        # and the per-rank select_rows copies are TRANSIENT â€” whatever
+        # and the per-rank select_rows copies are TRANSIENT — whatever
         # the anchor still sees under select_rows is the one live
         # rank's materialisation, honestly charged to R3.
         ("R3", ap, "plan_by_rank = {", 1, 0, 3),
         ("R3", bd_el, "owners = _plan_owner_ranks(pre_allocated, element_owner)",
          1, 0, 10),
         ("R3", bd_pg, "def select_rows(", 1, 0, 20),
-        # R2 â€” per-rank owned / primary node sets, post-P3 columnar
+        # R2 — per-rank owned / primary node sets, post-P3 columnar
         # (SortedIntSet, 8 B/node).  Spans cover the decl + fill lines;
         # allocations inside from_ids / bucket_primary_nodes_by_rank
         # carry these caller frames.
@@ -386,7 +386,7 @@ def _term_table() -> "list[tuple[str, list[tuple[str, int, int]]]]":
          1, 0, 3),
         ("R2", ap, "rank_primary_nodes: dict[int, SortedIntSet] = (",
          1, 0, 2),
-        # R4 â€” model_mass_by_rank dict + fill loop (~3127-3132); only
+        # R4 — model_mass_by_rank dict + fill loop (~3127-3132); only
         # populated under --mass from_model.
         ("R4", ap, 'model_mass_by_rank: "dict[int, list[Any]]" = {}',
          1, 0, 5),
@@ -403,7 +403,7 @@ def _term_table() -> "list[tuple[str, list[tuple[str, int, int]]]]":
         by_term[term].append((np_, lo, hi))
         all_spans.append((np_, lo, hi, term))
 
-    # No two term spans may overlap â€” an overlap double-counts bytes and
+    # No two term spans may overlap — an overlap double-counts bytes and
     # G0a inflates silently.
     all_spans.sort()
     for (f1, lo1, hi1, t1), (f2, lo2, hi2, t2) in zip(all_spans,
@@ -425,7 +425,7 @@ def _norm_frame(p: str) -> str:
 
     normcase alone is not enough: a runtime sys.path entry that is
     absolute but unnormalised yields co_filenames that never match spans
-    built from module __file__ â€” measured as per-term all-zeros and a
+    built from module __file__ — measured as per-term all-zeros and a
     G0a of 0.000 printed as the gate.  Memoised: one normpath per
     distinct filename, not per frame."""
     return _norm(p)
@@ -448,7 +448,7 @@ def _attribute_snapshot(snap, terms) -> "dict[str, int]":
     """Per-term byte totals from an absolute traceback-grouped snapshot.
 
     The R-term spans all lie in emit-only code paths, so floor (pre-build)
-    allocations can never match a term â€” absolute statistics are safe here;
+    allocations can never match a term — absolute statistics are safe here;
     only the *unattributed site list* needs the pre_build diff.
     """
     per_term = dict.fromkeys(TERM_ORDER, 0)
@@ -478,7 +478,7 @@ def _top_unattributed(pre_path: str, anchor_path: str, terms,
     rows.sort(key=lambda d: d.size_diff, reverse=True)
     out = []
     for d in rows[:n]:
-        frames = list(d.traceback)  # oldest â†’ most recent
+        frames = list(d.traceback)  # oldest → most recent
         tail = frames[-3:]
         loc = " <- ".join(
             f"{_short_path(fr.filename)}:{fr.lineno}" for fr in reversed(tail)
@@ -491,12 +491,12 @@ def _top_unattributed(pre_path: str, anchor_path: str, terms,
 
 # ----------------------------------------------------------------------------
 # Cross-platform sampled RSS (replaces the old Windows-only, process-
-# lifetime ``_rss_peak_mb`` â€” whose peak was dominated by the meshing
+# lifetime ``_rss_peak_mb`` — whose peak was dominated by the meshing
 # phase and silently 0.0 on Linux).
 # ----------------------------------------------------------------------------
 def _make_rss_reader():
-    """Return a zero-arg callable â†’ current RSS in bytes, or None where
-    unsupported.  stdlib only â€” must run on rigs without psutil."""
+    """Return a zero-arg callable → current RSS in bytes, or None where
+    unsupported.  stdlib only — must run on rigs without psutil."""
     if sys.platform.startswith("linux"):
         def _read_linux() -> "int | None":
             with open("/proc/self/status", encoding="ascii",
@@ -532,7 +532,7 @@ def _make_rss_reader():
                 ]
 
             # GetCurrentProcess() through ctypes truncates the -1
-            # pseudo-handle to 32 bits (ERROR_INVALID_HANDLE on x64) â€”
+            # pseudo-handle to 32 bits (ERROR_INVALID_HANDLE on x64) —
             # build the pseudo-handle directly.
             handle = ctypes.c_void_p(-1)
             # Win8+: psapi functions live in kernel32 as K32*; older
@@ -549,7 +549,7 @@ def _make_rss_reader():
                 pmc = _PMC()
                 pmc.cb = ctypes.sizeof(_PMC)
                 if fn(handle, ctypes.byref(pmc), pmc.cb):
-                    # WorkingSetSize â€” the CURRENT resident set.  The old
+                    # WorkingSetSize — the CURRENT resident set.  The old
                     # helper read PeakWorkingSetSize, a process-lifetime
                     # statistic the meshing phase dominates.
                     return int(pmc.WorkingSetSize)
@@ -565,7 +565,7 @@ def _make_rss_reader():
 
 
 def _linux_vm_hwm() -> "int | None":
-    """VmHWM (process-lifetime RSS peak, kBâ†’bytes) â€” Linux cross-check."""
+    """VmHWM (process-lifetime RSS peak, kB→bytes) — Linux cross-check."""
     if not sys.platform.startswith("linux"):
         return None
     try:
@@ -586,7 +586,7 @@ class TracedPeakTracker:
     so it sees states the main thread never announces: an excursion that
     rises and falls between two emitted lines (a dict comprehension over
     all nodes emits nothing) was structurally invisible to the
-    append-anchored poll this replaces â€” the thread tick does not depend
+    append-anchored poll this replaces — the thread tick does not depend
     on the main thread reaching any particular statement.
     ``get_traced_memory()`` / ``take_snapshot()`` hold the GIL, so a
     thread-side snapshot is a consistent view.
@@ -595,7 +595,7 @@ class TracedPeakTracker:
     BEFORE the ``reset_peak`` that swallows the tracker's own snapshot
     transient (a tens-of-MB trace-table copy).  The report's
     ``G0a(conservative)`` divides by this banked TRUE peak, charging any
-    unsampled remainder to unattributed â€” it can never flatter the
+    unsampled remainder to unattributed — it can never flatter the
     hypothesis.
 
     ``tick`` never raises into the measurement, skips itself while a
@@ -641,8 +641,8 @@ class TracedPeakTracker:
                 # Re-bank IMMEDIATELY before the reset: snap.dump's file
                 # write releases the GIL, so main-thread growth during it
                 # would otherwise be erased by the reset (inflating G0a).
-                # The peak READING here is unusable â€” it includes the
-                # tracker's own snapshot transient â€” so bank the re-read
+                # The peak READING here is unusable — it includes the
+                # tracker's own snapshot transient — so bank the re-read
                 # CURRENT instead (the snapshot is freed by now): real
                 # main-thread residency shows in cur3, instrument bytes
                 # do not.  A main-thread rise-AND-fall inside the dump
@@ -672,7 +672,7 @@ class TracedPeakTracker:
 class RssSampler:
     """Daemon thread polling process RSS; ``mark(label)`` timestamps phase
     boundaries with a synchronous sample.  Sampling never raises into the
-    measurement.  ``available`` False â‡’ this platform cannot be read; the
+    measurement.  ``available`` False ⇒ this platform cannot be read; the
     tool then prints "RSS: unavailable", never 0.0.
 
     In --mem mode a :class:`TracedPeakTracker` can be attached; the loop
@@ -727,7 +727,7 @@ class RssSampler:
                 next_rss = now + self.interval_s
 
     def start(self):
-        # The thread runs even when RSS is unreadable on this platform â€”
+        # The thread runs even when RSS is unreadable on this platform —
         # in --mem mode it still ticks the TracedPeakTracker; ``_sample``
         # guards RSS availability itself.
         self._sample("start")
@@ -764,7 +764,7 @@ class RssSampler:
         return max(window) if window else None
 
     def write_trace(self, path: str):
-        """CSV trajectory â€” the desktop analogue of the cluster memlog
+        """CSV trajectory — the desktop analogue of the cluster memlog
         that produced the ADR 0100 incident record."""
         with open(path, "w", encoding="utf-8") as f:
             f.write("t_s,rss_bytes,mark\n")
@@ -773,18 +773,18 @@ class RssSampler:
 
 
 # ----------------------------------------------------------------------------
-# plain (untraced) emit â€” the fast path, unchanged semantics
+# plain (untraced) emit — the fast path, unchanged semantics
 # ----------------------------------------------------------------------------
 def emit_phases(ops, no_gc: bool, ph: dict, deck_path: str,
                 stream: bool = False, per_rank: bool = False):
     """Replicate ops.tcl() decomposed into build / emit / write, each timed.
 
     ``stream=True`` replicates ``ops.tcl(path, stream=True)`` instead
-    (ADR 0065 Tier 2 / plan_emit_memory_columnar.md A1â€“A3): the emit
+    (ADR 0065 Tier 2 / plan_emit_memory_columnar.md A1–A3): the emit
     phase writes through the live sink and the write phase is the
-    ``stream_finish`` promotion â€” the line buffer never exists.
+    ``stream_finish`` promotion — the line buffer never exists.
 
-    ``deck_path`` must live inside a caller-owned temp DIRECTORY â€” the
+    ``deck_path`` must live inside a caller-owned temp DIRECTORY — the
     per-rank streaming path writes a sibling ``ranks/`` directory the old
     per-file cleanup leaked; the caller's ``shutil.rmtree`` owns both.
     """
@@ -828,9 +828,9 @@ def emit_instrumented(
     "po_ranks": k, "snap_paths": {label: path}}.
 
     Hooks (in fired order): pre_build, post_build, ndf_chunks_peak,
-    partition_open#first, partition_open#mid, post_emit, post_write â€”
+    partition_open#first, partition_open#mid, post_emit, post_write —
     plus, in --mem mode, a synthetic ``peak_tracked`` hook (see below).
-    ndf_chunks_peak fires DURING emit â€” infer_node_ndf lives inside
+    ndf_chunks_peak fires DURING emit — infer_node_ndf lives inside
     BuiltModel.emit(), not apeSees.build() (measured: build() is +0.0 MB).
 
     Every hook records (traced_current, traced_peak, rss); in --mem mode it
@@ -844,7 +844,7 @@ def emit_instrumented(
     (``reset_peak`` runs after each capture, after the snapshot work, so
     the instrument's own snapshot spike never surfaces in the next hook).
 
-    ``peak_tracked`` â€” the named hooks alone CANNOT see the true resident
+    ``peak_tracked`` — the named hooks alone CANNOT see the true resident
     peak: measured on staged partitioned runs, the global traced peak
     lives in windows no named hook samples (inside the per-rank loop, and
     the staged pass between #mid and post_emit), so a named-hook anchor
@@ -856,7 +856,7 @@ def emit_instrumented(
     entry joins ``hooks`` at its chronological position and competes for
     the anchor like any named hook.  Any excursion the tracker still
     misses is banked from the peak COUNTER and charged to unattributed by
-    the report's ``G0a(conservative)`` â€” the gate number can therefore
+    the report's ``G0a(conservative)`` — the gate number can therefore
     never be flattered by under-sampling.
     """
     hooks: "list[dict]" = []
@@ -878,7 +878,7 @@ def emit_instrumented(
             # bank a phantom peak (measured: a 69 MB "peak" whose
             # per-term split was all zeros and whose top site was
             # tracemalloc.py itself).  Holding the tracker's lock makes
-            # ticks skip â€” and bank nothing â€” until the reset below has
+            # ticks skip — and bank nothing — until the reset below has
             # swallowed the spike.  No real emit signal is lost: the
             # main thread is in here, not emitting.
             lk = tracker._lock if tracker is not None else None
@@ -912,10 +912,10 @@ def emit_instrumented(
     # (build/ ~407), so patching the source module is picked up; patching
     # build's module globals would NOT be.  The first element_class_ndf_ok
     # call inside infer_node_ndf happens right after class_chunks is
-    # complete â€” R7 at its peak.  NOTE (measured, contra the naive plan):
+    # complete — R7 at its peak.  NOTE (measured, contra the naive plan):
     # validate_node_ndf_element_compat runs EARLIER in emit() and also
     # calls element_class_ndf_ok via a function-local import, so a bare
-    # fire-on-first-call patch fires too early â€” the wrapper therefore
+    # fire-on-first-call patch fires too early — the wrapper therefore
     # gates on the immediate caller being infer_node_ndf.
     import apeGmsh.opensees._element_capabilities as _ecap
     orig_ndf_ok = _ecap.element_class_ndf_ok
@@ -933,10 +933,10 @@ def emit_instrumented(
     # apesees ~3527); ``stage_open#first`` fires on the emitter's first
     # stage_open (apesees ~3561, AFTER the twin).  Measured: R1 doubles
     # at stage_open#first deterministically on every staged partitioned
-    # repeat at every size â€” the ADR's R1x2 co-residency prediction,
+    # repeat at every size — the ADR's R1x2 co-residency prediction,
     # CONFIRMED at a named hook.  AND: that twin-live state is NOT the
-    # peak instant â€” the anchor is the tracked peak, which lands
-    # elsewhere â€” so these hooks are diagnostics, and the shortfall
+    # peak instant — the anchor is the tracked peak, which lands
+    # elsewhere — so these hooks are diagnostics, and the shortfall
     # verdict in the report is the load-bearing rule.  (Both halves of
     # that statement matter; never quote one without the other.)
     import apeGmsh.opensees.apesees as _apesees_mod
@@ -973,7 +973,7 @@ def emit_instrumented(
             peak_snap_path, peak_snap_grow, sampler, hooks)
 
     # -- hooks 4: wrap the emitter INSTANCE's partition_open.  #mid fires
-    # on the âŒŠparts/2âŒ‹-th DISTINCT rank â€” the staged path re-opens
+    # on the ⌊parts/2⌋-th DISTINCT rank — the staged path re-opens
     # partitions, so distinct ranks are counted, and the total call count
     # is recorded too.
     orig_po = emitter.partition_open
@@ -1022,7 +1022,7 @@ def emit_instrumented(
         ph["write"] += time.perf_counter() - t
         capture("post_write")
     finally:
-        # Restore EVERY patch â€” a leaked monkeypatch poisons the next
+        # Restore EVERY patch — a leaked monkeypatch poisons the next
         # size in the same process.
         _ecap.element_class_ndf_ok = orig_ndf_ok
         _BM._emit_stages_partitioned = orig_stages
@@ -1596,7 +1596,7 @@ def report_instrumented(args, sz: int, hx: int, nn: int, result: dict,
         pre_cur = pre["traced_cur"]
         anchor = max(hooks, key=lambda h: h["traced_cur"])
         # A per-term of zero for every term at every hook is never a
-        # real measurement (path-normalisation drift or span rot) â€”
+        # real measurement (path-normalisation drift or span rot) —
         # refusing to print a G0a beats printing 0.000 as the gate.
         if all(not h["term_sum"] for h in hooks):
             raise RuntimeError(
@@ -1607,7 +1607,7 @@ def report_instrumented(args, sz: int, hx: int, nn: int, result: dict,
             )
         # Named-hook peaks cover only the intervals since their previous
         # reset; the poll banks its counter readings (pre-reset) in
-        # peak_counter_max â€” the true global peak is the max of both.
+        # peak_counter_max — the true global peak is the max of both.
         # pre_build's own traced_peak is EXCLUDED: it covers the
         # mesh/model-build window (pre-emit transients, measured 2.6 MB)
         # and G0a is about emit growth.
@@ -1628,7 +1628,7 @@ def report_instrumented(args, sz: int, hx: int, nn: int, result: dict,
             print(f"  {h['label']:<22} {_mb(h['traced_cur'])} "
                   f"{growth / 1e6:>+9.1f} {_mb(h['traced_peak']):>11} "
                   f"{_mb(h['rss'])} {g0a_h:>7}{mark}")
-        # Full per-term row at EVERY hook â€” the anchor-only view once
+        # Full per-term row at EVERY hook — the anchor-only view once
         # inverted the R7 story (real chunk tuples live at
         # ndf_chunks_peak; by the anchor only the cache remains).
         print(f"  {'per-term (MB)':<22} "
@@ -1642,10 +1642,10 @@ def report_instrumented(args, sz: int, hx: int, nn: int, result: dict,
         traced_growth = anchor["traced_cur"] - pre_cur
         per_term_anchor = anchor["per_term"]
         term_sum = anchor["term_sum"]
-        # G0a(sampled): against the best state a snapshot actually saw â€”
+        # G0a(sampled): against the best state a snapshot actually saw —
         # this is the form ADR 0100's literal wording ("a snapshot taken
         # at the peak") describes.  G0a(conservative): against the TRUE
-        # counter peak â€” the entire unsampled excursion is charged to
+        # counter peak — the entire unsampled excursion is charged to
         # unattributed.  Conservative is chosen DELIBERATELY as the gate
         # (the ADR amendment will say so): it is the only form that
         # cannot flatter the hypothesis.  An unqualified "G0a" must
@@ -1658,7 +1658,7 @@ def report_instrumented(args, sz: int, hx: int, nn: int, result: dict,
         g0a = g0a_cons
         shortfall = global_peak - anchor["traced_cur"]
         # Unattributed = growth minus EVERYTHING claimed (numerator terms
-        # AND the non-numerator CACHE) â€” cache bytes are attributed, just
+        # AND the non-numerator CACHE) — cache bytes are attributed, just
         # never counted toward G0a.
         unattributed = cons_growth - sum(per_term_anchor.values())
 
@@ -1666,7 +1666,7 @@ def report_instrumented(args, sz: int, hx: int, nn: int, result: dict,
               f"(traced-cur {anchor['traced_cur'] / 1e6:,.1f} MB; "
               f"global traced peak {global_peak / 1e6:,.1f} MB)")
 
-        # Tracked peak vs the best NAMED hook â€” the named hooks alone
+        # Tracked peak vs the best NAMED hook — the named hooks alone
         # cannot see a peak that lives between them (measured: the
         # staged pass between partition_open#mid and post_emit).
         named = [h for h in hooks if h["label"] != "peak_tracked"]
@@ -1685,7 +1685,7 @@ def report_instrumented(args, sz: int, hx: int, nn: int, result: dict,
                       f"by {gap:.0f}% - the resident peak lives BETWEEN "
                       f"the named hooks (staged pass); G0a above is "
                       f"computed there, not at a named hook.")
-            # (under-sampling is no longer a footnote here â€” a >5%
+            # (under-sampling is no longer a footnote here — a >5%
             # shortfall REFUSES the gate below.)
         else:
             print("  (no peak_tracked snapshot fired - emit too small for "
@@ -1707,17 +1707,17 @@ def report_instrumented(args, sz: int, hx: int, nn: int, result: dict,
               f"{pre_cur / 1e6:,.1f} MB")
         cons_share = (unattributed / cons_growth * 100.0
                       if cons_growth > 0 else float("nan"))
-        # GATE VALIDITY â€” the load-bearing rule (ADR 0100 D0): the
+        # GATE VALIDITY — the load-bearing rule (ADR 0100 D0): the
         # sampler trigger is allocation-driven, so a cell that misses
-        # the peak misses it IDENTICALLY on every run â€” a stable wrong
-        # number that looks converged (measured: reproducible to Â±0.001
+        # the peak misses it IDENTICALLY on every run — a stable wrong
+        # number that looks converged (measured: reproducible to ±0.001
         # across repeats while sitting 0.031 from the <0.40
-        # abandon-the-program threshold).  Repeats are no defence â€” a
+        # abandon-the-program threshold).  Repeats are no defence — a
         # missed peak repeats identically.  The gate is an ERROR BOUND
         # on the reported quantity (see G0A_ERROR_BOUND): a cell passes
         # when the unsampled excursion cannot move G0a by more than the
         # bound.  IMPORTANT FRAMING: this certifies snapshot-vs-counter
-        # agreement INSIDE THIS PROCESS only â€” the counter itself can
+        # agreement INSIDE THIS PROCESS only — the counter itself can
         # under-read when a reset-window erasure swallows an excursion
         # (measured: a sweep counter 1.24 MB below two standalone runs
         # of the same cell, silently deciding survival in the flattering
@@ -1727,7 +1727,7 @@ def report_instrumented(args, sz: int, hx: int, nn: int, result: dict,
         g0a_err = abs(g0a_sampled - g0a_cons)
         gate_ok = g0a_err <= bound
         gate_status = "ok" if gate_ok else "discarded_error_bound"
-        # BOTH branches print a line prefixed "  gate verdict: " â€” a
+        # BOTH branches print a line prefixed "  gate verdict: " — a
         # discard is a MEASUREMENT OUTCOME, not a missing verdict, and
         # the cp1252 smoke test greps this prefix to prove the print
         # path ran.  Printing it only on the pass branch made "the
@@ -1763,13 +1763,13 @@ def report_instrumented(args, sz: int, hx: int, nn: int, result: dict,
                   "double-count; "
                   "the first-match order / span windows need revisiting. "
                   "The number above is printed UNCLAMPED. ***")
-        # G0b per-cell â€” AUDITED: the old form divided end-to-end RSS
+        # G0b per-cell — AUDITED: the old form divided end-to-end RSS
         # growth by the ANCHOR traced growth (mismatched instants; it
         # printed a non-physical 0.68).  Both ends now sit at
-        # pre_buildâ†’post_write.  Still demoted: at bench scale the ratio
+        # pre_build→post_write.  Still demoted: at bench scale the ratio
         # is dominated by size-independent RSS offsets (interpreter,
         # numpy, allocator arenas), not by the ADR's x~1.9 amplification
-        # SLOPE â€” the slope-based G0b printed after the size sweep is
+        # SLOPE — the slope-based G0b printed after the size sweep is
         # the number the ADR's "G0b ~= 2" branch rule means.
         traced_growth_end = (
             by_label["post_write"]["traced_cur"] - pre_cur
@@ -1789,7 +1789,7 @@ def report_instrumented(args, sz: int, hx: int, nn: int, result: dict,
               "- instrument and main-thread bytes share one counter, so "
               "such a transient is absent from BOTH G0a forms.")
 
-        # Top unattributed growth sites (anchor vs pre_build) â€” the most
+        # Top unattributed growth sites (anchor vs pre_build) — the most
         # valuable output of the whole tool if attribution comes out low.
         try:
             sites = _top_unattributed(
@@ -1830,7 +1830,7 @@ def report_instrumented(args, sz: int, hx: int, nn: int, result: dict,
         print(f"  VmHWM cross-check (process-lifetime peak): "
               f"{hwm / 1e6:,.1f} MB")
 
-    # Extrapolations â€” both traced-implied and RSS-implied at each target.
+    # Extrapolations — both traced-implied and RSS-implied at each target.
     b_hex_traced = ((global_peak - pre["traced_cur"]) / hx
                     if mem and hx else None)
     b_hex_rss = (rss_peak_growth / hx
@@ -1869,11 +1869,11 @@ def report_instrumented(args, sz: int, hx: int, nn: int, result: dict,
         "rss_peak_growth_b": rss_peak_growth,
         "b_per_hex_traced": b_hex_traced,
         "b_per_hex_rss": b_hex_rss,
-        # "g0a" is the GATE number = g0a_conservative (Î£ R-terms over the
+        # "g0a" is the GATE number = g0a_conservative (Σ R-terms over the
         # true counter peak), or null when the cell was DISCARDED
         # (gate_status == "discarded_error_bound": the tracker did not
         # sample the peak; a discarded cell has no G0a).  The
-        # g0a_sampled / g0a_conservative fields remain as diagnostics â€”
+        # g0a_sampled / g0a_conservative fields remain as diagnostics —
         # their names are unambiguous; only "g0a" is ever a gate number.
         "g0a": g0a,
         "g0a_sampled": g0a_sampled,
@@ -1916,7 +1916,7 @@ def _fit_slope(points) -> "tuple[float, float]":
     """Least-squares ``y = a*x + b`` over (x, y); returns (a, R^2).
 
     The intercept b absorbs the size-independent offsets that make the
-    per-cell G0b ratio meaningless at bench scale â€” the slope ratio is
+    per-cell G0b ratio meaningless at bench scale — the slope ratio is
     the amplification factor the ADR's "G0b ~= 2" branch rule means."""
     import numpy as np
     xs = np.asarray([p[0] for p in points], dtype=float)
@@ -2102,7 +2102,7 @@ def main():
             if args.mem:
                 # Started BEFORE the model build so pre_build's
                 # traced-current carries the floor (session + FEMData,
-                # i.e. R5) â€” G0a measures growth ABOVE that floor.
+                # i.e. R5) — G0a measures growth ABOVE that floor.
                 tracemalloc.start(args.tm_frames)
                 tm_started = True
 
@@ -2162,7 +2162,7 @@ def main():
             # --profile runs INSIDE the largest size's iteration (the old
             # tool kept ``last = (ops, sz)`` alive across sizes, pinning
             # the previous FEMData + fan-out cache through the next size's
-            # measurement â€” the cross-size retention this rebuild drops).
+            # measurement — the cross-size retention this rebuild drops).
             if args.profile and sz == largest and rep == repeats - 1:
                 if tm_started:
                     tracemalloc.stop()
@@ -2208,7 +2208,7 @@ def main():
             shutil.rmtree(tmpdir, ignore_errors=True)
 
       # -- per-size summary over repeats.  NOTE: median-of-repeats
-      # defends against ORDINARY noise only â€” the allocation-driven
+      # defends against ORDINARY noise only — the allocation-driven
       # trigger locks onto the same instant every run, so a missed peak
       # is missed identically; the shortfall gate-refusal is the
       # defence against that, not repeats.
@@ -2228,11 +2228,11 @@ def main():
             print("  G0a(conservative): NO gate-ok repeat - this size did "
                   "not measure a gate number.")
         # Cross-repeat counter-peak check: a counter peak is a MAXIMUM,
-        # so the highest reading is the better bound on truth â€” a lower
+        # so the highest reading is the better bound on truth — a lower
         # one means a reset-window erasure under-read it, biasing that
         # repeat's G0a UP (measured deciding survival in the flattering
         # direction across standalone-vs-sweep runs of one cell).
-        # Compared as peak GROWTH (peak âˆ’ that repeat's own floor):
+        # Compared as peak GROWTH (peak − that repeat's own floor):
         # absolute peaks are incomparable across repeats because the
         # first repeat in a process traces the whole session import into
         # its floor (measured: a 34 MB phantom "disagreement" from
@@ -2282,7 +2282,7 @@ def main():
         if any(v > 0 for v in r1_twin):
             # Post-ADR-0100-P3 the staged pass RECEIVES the base lookup
             # (no co-resident twin), so stage_open#first should read
-            # ~= partition_open#mid â€” a ~2x reading here is a twin
+            # ~= partition_open#mid — a ~2x reading here is a twin
             # REGRESSION, not the confirmed pre-P3 behaviour.  (Pre-P3
             # history, kept for the record: the x2 was confirmed
             # deterministically at every repeat and size, and R1 was
@@ -2302,7 +2302,7 @@ def main():
 
     # -- shortfall-zero census: how many cells actually measured the
     # peak.  The campaign's gate needs >=3 sizes x >=2 np of SURVIVING
-    # cells â€” if the surviving band is thinner than that, the driver
+    # cells — if the surviving band is thinner than that, the driver
     # decides whether to spend the plan's one permitted library-side
     # exception (a mid-emit snapshot hook); this tool only reports.
     if args.mem and records:
@@ -2323,9 +2323,9 @@ def main():
 
     # -- G0b(slope): slope of RSS-peak growth vs hexes over slope of
     # traced-peak growth vs hexes.  The RSS side must come from a paired
-    # --rss-only run (--pair-rss-json) â€” this process's own RSS is
+    # --rss-only run (--pair-rss-json) — this process's own RSS is
     # tracemalloc-inflated, and the per-cell ratio is offset-dominated
-    # (measured 0.68â€“87 across cells: noise).  Without the pair the tool
+    # (measured 0.68–87 across cells: noise).  Without the pair the tool
     # says "not computable" rather than printing an indefensible number.
     g0b_slope = None
     g0b_r2_rss = None
@@ -2347,7 +2347,7 @@ def main():
                 with open(args.pair_rss_json, encoding="utf-8") as f:
                     pair = json.load(f)
                 # FOOTGUN GUARD (measured): pairing a --mem run's JSON
-                # with itself printed G0b(slope) = 2.19 â€” sitting
+                # with itself printed G0b(slope) = 2.19 — sitting
                 # exactly on the ADR's ~1.9 expectation, silently wrong.
                 # --mem records carry traced_peak_b; only --rss-only
                 # records (traced_peak_b null) are valid RSS-arm input.
