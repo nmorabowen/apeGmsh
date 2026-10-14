@@ -53,7 +53,7 @@ class _ModalMixin(_ProcedureHost):
         live_emitter: "LiveOpsEmitter",
     ) -> "EigenResult":
         """Wrap a just-finished solve in an ``EigenResult`` with the handles
-        :meth:`EigenResult.to_native` needs (brief #1961 §3.1): this
+        :meth:`EigenResult.to_native` needs: this
         bridge, its ``ndm`` / envelope ``ndf`` and the domain epoch read
         right after the solve, before anything else can rebuild it."""
         import numpy as np

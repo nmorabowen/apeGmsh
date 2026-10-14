@@ -441,8 +441,8 @@ def _write_mode_stages(
 
     The layout ``DomainCapture.capture_modes`` writes, shared by
     :meth:`ParallelModalResult.to_native` and
-    :meth:`~apeGmsh.opensees.analysis.eigen.EigenResult.to_native`
-    (brief #1961 §3.2): stage ``mode_<k>`` at ``time = [0.0]`` with the
+    :meth:`~apeGmsh.opensees.analysis.eigen.EigenResult.to_native`:
+    stage ``mode_<k>`` at ``time = [0.0]`` with the
     ``eigenvalue`` / ``frequency_hz`` / ``period_s`` / ``mode_index``
     attrs, ``displacement_*`` from columns ``0 .. n_trans-1`` of
     ``fields(k)`` and, iff ``rotations``, ``rotation_*`` from columns

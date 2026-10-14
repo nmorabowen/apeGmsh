@@ -10,7 +10,7 @@ to-end and wraps the returned eigenvalues in this dataclass.
 The dataclass carries the eigenvalue array plus a back-reference to the
 live emitter so :meth:`mode_shape` can query ``ops.nodeEigenvector``
 without re-running the eigen solve. :meth:`to_native` persists the modes
-as ``kind="mode"`` stages of a native results file (brief #1961, the
+as ``kind="mode"`` stages of a native results file (the
 modes route on pip ``openseespy``), and :meth:`results` opens that file.
 No modal-mass / participation calculations live here.
 """
@@ -61,8 +61,8 @@ class EigenResult:
     # prefixed; not part of the user-facing surface.
     _live: "LiveOpsEmitter"
 
-    # Filled by ``apeSees.eigen`` / ``apeSees.eigen_feast`` (brief #1961
-    # §3.1) for :meth:`to_native`: the bridge that solved (its ``fem``
+    # Filled by ``apeSees.eigen`` / ``apeSees.eigen_feast``
+    # for :meth:`to_native`: the bridge that solved (its ``fem``
     # and ``h5`` describe the file), its ``ndm`` / envelope ``ndf``, and
     # ``live.domain_epoch()`` read right after the solve. ``None`` only
     # for a result built by hand, which ``to_native`` refuses.
