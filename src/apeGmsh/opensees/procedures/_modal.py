@@ -49,16 +49,16 @@ class _ModalMixin(_ProcedureHost):
 
     def _eigen_result(
         self,
-        cls: "type[EigenResult]",
         values: Sequence[float],
         live_emitter: "LiveOpsEmitter",
     ) -> "EigenResult":
-        """Wrap a just-finished solve in ``cls`` with the handles
+        """Wrap a just-finished solve in an ``EigenResult`` with the handles
         :meth:`EigenResult.to_native` needs (brief #1961 §3.1): this
         bridge, its ``ndm`` / envelope ``ndf`` and the domain epoch read
         right after the solve, before anything else can rebuild it."""
         import numpy as np
 
+        from ..analysis.eigen import EigenResult
         from ..emitter.live import domain_epoch
 
         epoch = domain_epoch()
@@ -66,7 +66,7 @@ class _ModalMixin(_ProcedureHost):
             raise RuntimeError(
                 "apeSees.eigen: ops.model(ndm=, ndf=) was not called."
             )
-        return cls(
+        return EigenResult(
             eigenvalues=np.asarray(values, dtype=np.float64),
             _live=live_emitter,
             _bridge=cast("apeSees", self),
@@ -146,7 +146,6 @@ class _ModalMixin(_ProcedureHost):
 
         # Local imports — keep openseespy + numpy out of bridge import
         # time for Tcl/Py/H5-only users.
-        from ..analysis.eigen import EigenResult
         from ..emitter.live import LiveOpsEmitter
 
         bm = self.build()
@@ -156,7 +155,7 @@ class _ModalMixin(_ProcedureHost):
         bm.emit(live_emitter)
         self._artifacts.after_emit(self)
         values = live_emitter.eigen(num_modes, solver=solver)
-        return self._eigen_result(EigenResult, values, live_emitter)
+        return self._eigen_result(values, live_emitter)
 
     def modal_properties(
         self,
@@ -671,7 +670,6 @@ class _ModalMixin(_ProcedureHost):
                 "the in-process openseespy is not the fork."
             )
 
-        from ..analysis.eigen import EigenResult
         from ..emitter.live import LiveOpsEmitter
 
         bm = self.build()
@@ -683,7 +681,7 @@ class _ModalMixin(_ProcedureHost):
         values = live_emitter.eigen_feast(
             float(f_min), float(f_max), certify=certify,
         )
-        return self._eigen_result(EigenResult, values, live_emitter)
+        return self._eigen_result(values, live_emitter)
 
     def complex_eigen(
         self,

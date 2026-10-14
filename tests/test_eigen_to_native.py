@@ -154,9 +154,9 @@ def _node_ids(fem: Any) -> np.ndarray:
     return np.asarray(fem.nodes.ids, dtype=np.int64)
 
 
-def _modes(path: Path) -> list[Any]:
-    r = Results.from_native(path, model=OpenSeesModel.from_h5(path))
-    return sorted(r.modes, key=lambda m: m.mode_index)
+def _mode_indices(path: Path) -> list[int]:
+    with Results.from_native(path, model=OpenSeesModel.from_h5(path)) as r:
+        return sorted(m.mode_index for m in r.modes)
 
 
 def _stage_rows(path: Path) -> list[dict[str, Any]]:
@@ -481,12 +481,11 @@ def test_default_path_is_a_temp_file_that_opens_alone(
     p = _frame(fem3).eigen(2).to_native()
 
     assert Path(tempfile.gettempdir()).resolve() in p.resolve().parents
-    modes = _modes(p)
-    assert [m.mode_index for m in modes] == [1, 2]
+    assert _mode_indices(p) == [1, 2]
 
 
 def test_results_opens_the_modes(fem3: Any, bind: Any) -> None:
     bind(_fake_for(fem3, 2))
-    r = _frame(fem3).eigen(2).results()
-    modes = sorted(r.modes, key=lambda m: m.mode_index)
-    assert [m.eigenvalue for m in modes] == [1.0, 4.0]
+    with _frame(fem3).eigen(2).results() as r:
+        modes = sorted(r.modes, key=lambda m: m.mode_index)
+        assert [m.eigenvalue for m in modes] == [1.0, 4.0]
