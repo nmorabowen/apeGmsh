@@ -347,3 +347,78 @@ def test_empty_element_ids_emits_nothing() -> None:
         element_ids=np.array([], dtype=np.int64),
     ))
     assert spec.to_tcl_commands() == []
+
+
+# =====================================================================
+# n_steps= without dt= warns for every category (#1947)
+# =====================================================================
+#
+# A classic recorder has no step-count option, so ``n_steps=5`` with
+# no ``dt=`` is emitted every step. Before #1947 only the nodes emitter
+# said so; an element record silently recorded every step.
+
+_CADENCE_COMPONENTS = {
+    "nodes": ("displacement_x",),
+    "elements": ("nodal_resisting_force_x",),
+    "gauss": ("stress_xx",),
+    "line_stations": ("axial_force",),
+}
+
+
+def _cadence_record(
+    category: str, *, dt: float | None, n_steps: int | None,
+) -> ResolvedRecorderRecord:
+    ids = np.array([1, 2])
+    return ResolvedRecorderRecord(
+        category=category, name=f"cad_{category}",
+        components=_CADENCE_COMPONENTS[category],
+        dt=dt, n_steps=n_steps,
+        node_ids=ids if category == "nodes" else None,
+        element_ids=None if category == "nodes" else ids,
+    )
+
+
+def _cadence_emit(route: str, rec: ResolvedRecorderRecord) -> list[str]:
+    spec = _make_spec(rec)
+    model = identity_model([1, 2], spec.fem_snapshot_id)
+    if route == "tcl":
+        return spec.to_tcl_commands(model=model)
+    return spec.to_python_commands(model=model)
+
+
+@pytest.mark.parametrize("route", ["tcl", "python"])
+@pytest.mark.parametrize("category", list(_CADENCE_COMPONENTS))
+def test_n_steps_without_dt_warns_once_per_record(
+    category: str, route: str,
+) -> None:
+    rec = _cadence_record(category, dt=None, n_steps=5)
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        lines = _cadence_emit(route, rec)
+    user = [w for w in caught if issubclass(w.category, UserWarning)]
+    assert len(user) == 1, [str(w.message) for w in caught]
+    msg = str(user[0].message)
+    assert repr(rec.name) in msg
+    assert "n_steps=5" in msg
+    assert "dt=" in msg and "-T nsteps" in msg
+    assert "Phase 7" not in msg
+    # The fix adds a warning and changes no output: the emitted lines
+    # equal those of the same record without n_steps=.
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        plain = _cadence_emit(
+            route, _cadence_record(category, dt=None, n_steps=None),
+        )
+    assert lines == plain
+    assert lines and all("-dT" not in ln for ln in lines)
+
+
+@pytest.mark.parametrize("route", ["tcl", "python"])
+@pytest.mark.parametrize("category", list(_CADENCE_COMPONENTS))
+def test_n_steps_with_dt_emits_dT_silently(category: str, route: str) -> None:
+    rec = _cadence_record(category, dt=0.01, n_steps=5)
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        lines = _cadence_emit(route, rec)
+    flag = "-dT 0.01" if route == "tcl" else "'-dT', 0.01"
+    assert lines and all(flag in ln for ln in lines)

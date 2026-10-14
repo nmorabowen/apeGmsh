@@ -659,3 +659,93 @@ def test_an_explicit_ops_beats_the_resolver(
         live.end_stage()
     assert len(mine.recorder_calls) == 1
     assert bound.recorder_calls == [] and stray.recorder_calls == []
+
+
+# =====================================================================
+# n_steps= without dt= warns at begin_stage for every category (#1947)
+# =====================================================================
+
+_CADENCE_COMPONENTS = {
+    "nodes": ("displacement_x",),
+    "elements": ("nodal_resisting_force_x",),
+    "gauss": ("stress_xx",),
+    "line_stations": ("axial_force",),
+}
+
+
+def _cadence_spec(
+    category: str, *, dt: float | None, n_steps: int | None,
+) -> ResolvedRecorderSpec:
+    ids = np.array([1, 2])
+    return _make_spec(ResolvedRecorderRecord(
+        category=category, name=f"cad_{category}",
+        components=_CADENCE_COMPONENTS[category],
+        dt=dt, n_steps=n_steps,
+        node_ids=ids if category == "nodes" else None,
+        element_ids=None if category == "nodes" else ids,
+    ))
+
+
+def _cadence_begin_stage(
+    out_dir: Path, spec: ResolvedRecorderSpec,
+) -> tuple[list, list[tuple]]:
+    """Run one begin_stage; return (warnings it raised, recorder calls)."""
+    fake = FakeOps()
+    model = identity_model([1, 2], spec.fem_snapshot_id)
+    live = spec.emit_recorders(str(out_dir), ops=fake, model=model)
+    with warnings.catch_warnings():
+        # __enter__ pre-translates every record through emit_logical,
+        # so it warns too; these tests pin the begin_stage route.
+        warnings.simplefilter("ignore")
+        live.__enter__()
+    try:
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            live.begin_stage("s")
+        live.end_stage()
+    finally:
+        live.__exit__(None, None, None)
+    return caught, fake.recorder_calls
+
+
+def _strip_dir(calls: list[tuple], out_dir: Path) -> list[tuple]:
+    root = str(out_dir)
+    return [
+        tuple(a.replace(root, "<out>") if isinstance(a, str) else a
+              for a in c)
+        for c in calls
+    ]
+
+
+@pytest.mark.parametrize("category", list(_CADENCE_COMPONENTS))
+def test_begin_stage_n_steps_without_dt_warns_once(
+    tmp_path: Path, category: str,
+) -> None:
+    a, b = tmp_path / "a", tmp_path / "b"
+    caught, calls = _cadence_begin_stage(
+        a, _cadence_spec(category, dt=None, n_steps=5),
+    )
+    user = [w for w in caught if issubclass(w.category, UserWarning)]
+    assert len(user) == 1, [str(w.message) for w in caught]
+    msg = str(user[0].message)
+    assert f"'cad_{category}'" in msg and "n_steps=5" in msg
+    # Same recorder calls as the record without n_steps= (the output
+    # directory aside).
+    _, plain = _cadence_begin_stage(
+        b, _cadence_spec(category, dt=None, n_steps=None),
+    )
+    assert calls and _strip_dir(calls, a) == _strip_dir(plain, b)
+    assert all("-dT" not in c for c in calls)
+
+
+@pytest.mark.parametrize("category", list(_CADENCE_COMPONENTS))
+def test_begin_stage_n_steps_with_dt_emits_dT_silently(
+    tmp_path: Path, category: str,
+) -> None:
+    caught, calls = _cadence_begin_stage(
+        tmp_path, _cadence_spec(category, dt=0.01, n_steps=5),
+    )
+    assert [w for w in caught if issubclass(w.category, UserWarning)] == []
+    assert calls
+    for c in calls:
+        assert c[c.index("-dT") + 1] == 0.01
