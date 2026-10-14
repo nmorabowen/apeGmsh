@@ -157,8 +157,9 @@ def test_phases_cell_reports_every_rank_on_cp1252_stdout(
 
     (rec,) = json.loads(json_path.read_text(encoding="utf-8"))
     # The pre-block window (#1920): captured, its two splits close, and
-    # the snapshot sits near the banked counter peak (1.000 measured at
-    # this cell with a 1 ms tick).
+    # the snapshot sits near the banked counter peak (0.923 measured at
+    # n=30 with the main-thread return hook; the shortfall is a peak
+    # inside one C call, which no return event can snapshot).
     pb = rec["pre_block"]
     assert pb["captured"] and pb["n_global_nodes"] == 30 ** 3, pb
     assert pb["held_b"] + pb["transient_b"] == pb["peak_snap_b"], pb
@@ -356,6 +357,10 @@ def test_pre_block_tracker_splits_transient_held_and_late(
     # mark() banked the unsnapshotted 8 MiB spike into ``build``.
     assert rec["peak_by_sub_b"]["build"] >= base + 9 * _MIB, rec
     assert rec["window_peak_b"] == rec["peak_by_sub_b"]["build"]
+    # mark() reset the counter: the preamble peak is held + late only,
+    # never the build-time spike carried over.
+    assert abs(rec["peak_by_sub_b"]["preamble"] - (base + 3 * _MIB)) < tol, (
+        rec)
     assert rec["coverage"] < 0.6, rec
     top = rec["top_transient"][0]
     assert abs(top["bytes"] - 4 * _MIB) < tol, top
@@ -368,6 +373,57 @@ def test_pre_block_tracker_splits_transient_held_and_late(
     assert held_site["at_peak_b"] == held_site["bytes"], held_site
     assert "pre-block attribution (build() + global preamble" in (
         capsys.readouterr().out)
+
+
+def test_pre_block_check_banks_the_peak_and_swallows_its_own_snapshot(
+        tmp_path: Path) -> None:
+    """``check`` must bank the counter BEFORE its snapshot, then reset
+    the peak AFTER it (#1921 review):
+
+    * a 4 MiB rise-and-fall with no Python return in between, then a
+      2 MiB rise to snapshot level: the hook's snapshot sees 2 MiB, so
+      only the bank in ``check`` keeps the 4 MiB in the window peak
+      (its reset would erase it otherwise);
+    * 400k small objects are held from before ``start``, so each
+      snapshot's ``dump`` (the pickler, measured ~12 MiB per 200k
+      traces) spikes the counter by ~24 MiB.  Without the reset in
+      ``check`` that spike stays in the counter and ``finish`` banks
+      it as a model peak; with it the window peak stays near 4 MiB.
+    """
+    import tracemalloc
+
+    from tests.benchmarks import emit_throughput_profile as prof
+
+    tol = 1 * _MIB
+    started = not tracemalloc.is_tracing()
+    if started:
+        tracemalloc.start(1)
+    prev_profile = sys.getprofile()
+    try:
+        many = [object() for _ in range(400_000)]
+        pre = prof.PreBlockTracker(str(tmp_path), grow=1.05)
+        base = tracemalloc.get_traced_memory()[0]
+        pre.start()
+        spike = bytearray(4 * _MIB)  # C allocations: no return between
+        del spike
+        rise = bytearray(2 * _MIB)
+        _a_python_return()  # check(): bank 4 MiB, snapshot, reset
+        snaps = pre.snaps
+        del rise
+        pre.finish()
+        res = pre.result()
+        del many
+    finally:
+        sys.setprofile(prev_profile)
+        if started:
+            tracemalloc.stop()
+
+    assert snaps >= 1, "the return hook never snapshotted"
+    build = res["peak_by_sub"]["build"]
+    assert build >= base + 4 * _MIB, (build - base) / _MIB
+    assert build < base + 4 * _MIB + tol, (
+        "window peak carries the snapshot's own spike",
+        (build - base) / _MIB)
 
 
 def test_pre_block_report_says_when_nothing_was_captured(
