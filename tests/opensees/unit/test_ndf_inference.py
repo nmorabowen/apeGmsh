@@ -347,6 +347,34 @@ def test_columnar_path_never_iterates_fanout_rows(monkeypatch):
     assert out2[31] == 3 and out2[35] == 2
 
 
+def test_columnar_class_spanning_several_specs_keeps_every_spec():
+    """One class declared on several PGs: every spec's nodes reach the
+    map, not only the last spec's."""
+    fem = _StubFem({
+        "SolidA": [[(1, (1, 2, 3, 4, 5, 6, 7, 8))]],
+        "SolidB": [[(2, (11, 12, 13, 14, 15, 16, 17, 18))]],
+        "FrameA": [[(3, (21, 22))]],
+        "FrameB": [[(4, (31, 32))]],
+    })
+    specs = [_spec("stdBrick", "SolidA"), _spec("elasticBeamColumn", "FrameA"),
+             _spec("stdBrick", "SolidB"), _spec("elasticBeamColumn", "FrameB")]
+    out = infer_node_ndf(fem, specs, ndm=3)
+    expected = {n: 3 for n in (*range(1, 9), *range(11, 19))}
+    expected.update({21: 6, 22: 6, 31: 6, 32: 6})
+    assert out == expected
+
+
+def test_columnar_node_pair_spec_contributes_its_endpoints():
+    """A pg=None node-pair spec of a non-adaptive class takes the columnar
+    path (a 1-row fan-out) and its two endpoints get the class floor."""
+    pair = type("elasticBeamColumn", (), {"pg": None, "nodes": (50, 51)})()
+    fem = _StubFem({"Solid": [[(1, (1, 2, 3, 4, 5, 6, 7, 8))]]})
+    out = infer_node_ndf(fem, [_spec("stdBrick", "Solid"), pair], ndm=3)
+    expected = {n: 3 for n in range(1, 9)}
+    expected.update({50: 6, 51: 6})
+    assert out == expected
+
+
 def test_columnar_empty_class_is_skipped():
     """A class whose specs fan out to no rows is never probed, so even an
     unregistered one does not raise."""
