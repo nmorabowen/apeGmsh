@@ -965,3 +965,11 @@ export function windowContentOf(s: State, kind: WindowKind): WindowContent {
 
 export { activeCount, gizmoPlanes, MAX_ACTIVE_PLANES, offsetRange, orientationOf } from "./clip.ts";
 export type { Box, Vec3 } from "./clip.ts";
+
+/** V4e3: why a mesh gets no cut-face cap: it has no volumetric cell. */
+export const NO_SOLID_CELLS = "No cap: this mesh has no volumetric cells (shells, beams or 2-D), so a cut has no inside to fill.";
+
+/** V4e3: what the planes panel says under "Contour on cut face": why no cap can be drawn, or null when one can (or no mesh is loaded). */
+export function cutFaceNote(s: State): string | null {
+  return s.mesh && s.mesh.counts.solidCells === 0 ? NO_SOLID_CELLS : null;
+}

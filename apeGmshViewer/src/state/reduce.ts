@@ -466,7 +466,8 @@ export function reduce(s: State, e: Event): State {
     case "setApplyCuts":
     case "setClipPose":
     case "setShowGizmos":
-    case "setClipGizmo": {
+    case "setClipGizmo":
+    case "setCutFace": {
       // V4e1: planes are world-space; a new one passes through the reference (undeformed) mesh centre.
       const clip = reduceClip(s.clip, e, s.mesh?.center ?? [0, 0, 0]);
       return clip === s.clip ? s : { ...s, clip };

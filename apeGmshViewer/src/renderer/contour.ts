@@ -106,6 +106,24 @@ export function contourShownKey(v: ContourView): string | null {
 }
 
 let joinMemo:{ key: string; at: Map<number, { group: number; row: number }> } | null = null;
+
+/**
+ * The join of the element field on screen to the model's cells, by FEM id
+ * (built once per join key). The state says it is ok (the effects checked it
+ * for this key); a refused one here is a bug, never a guessed join. V4e3: the
+ * cut face colours through the same join.
+ */
+export function elementJoinAt(s: State, view: Extract<ContourView, { state: "element" }>, blobs: BlobStore): ReadonlyMap<number, { group: number; row: number }> {
+  if (!joinMemo || joinMemo.key !== view.joinKey) {
+    const j = joinElements(
+      s.decls,
+      view.groups.map((g) => ({ id: g.id, eids: blobs.get(g.eids) as Float64Array })),
+    );
+    if (!j.ok) throw new Error(`element contour: the join ${view.joinKey} is refused (${j.reason}) while the state shows it`);
+    joinMemo = { key: view.joinKey, at: j.at };
+  }
+  return joinMemo.at;
+}
 let femMemo: { elements: readonly string[]; decls: unknown; ids: Float64Array } | null = null;
 
 /**
@@ -127,15 +145,7 @@ export function elementColours(
   const at = s.phase.at;
   if (at?.kind !== "results" || !step || step.stage !== at.stage || step.step !== at.step || !view.stepMeasured) return null;
   if (step.element !== view.component.key || !step.gauss) return null;
-  if (!joinMemo || joinMemo.key !== view.joinKey) {
-    const j = joinElements(
-      s.decls,
-      view.groups.map((g) => ({ id: g.id, eids: blobs.get(g.eids) as Float64Array })),
-    );
-    // The state says this join is ok (the effects checked it for this key); anything else is a bug, never a guessed join.
-    if (!j.ok) throw new Error(`element contour: the join ${view.joinKey} is refused (${j.reason}) while the state shows it`);
-    joinMemo = { key: view.joinKey, at: j.at };
-  }
+  const join = elementJoinAt(s, view, blobs);
   if (!femMemo || femMemo.elements !== mesh.elements || femMemo.decls !== s.decls) femMemo = { elements: mesh.elements, decls: s.decls, ids: meshFemIds(mesh.elements, s.decls) };
   if (isNodeTopology(view.topology)) return nodeColours(s, { ...view, topology: view.topology }, mesh, blobs, step.gauss, lineMap, triMap);
   const perGroup = view.groups.map((g) => {
@@ -143,7 +153,7 @@ export function elementColours(
     if (!(v instanceof Float64Array)) throw new Error(`element contour: the step data has no ${view.component.key} for group ${g.id}`);
     return gaussCellValues(v, g.nElements, g.nGauss);
   });
-  const values = elementCellValues(femMemo.ids, joinMemo.at, perGroup);
+  const values = elementCellValues(femMemo.ids, join, perGroup);
   const clim = { min: view.clim.min, max: view.clim.max };
   const line = primitiveColours(cellVertexValues(values, blobs.i32(mesh.lineElement), 2), lineMap, 2, clim, view.cmap).rgb;
   const tri = primitiveColours(cellVertexValues(values, blobs.i32(mesh.triElement), 3), triMap, 3, clim, view.cmap).rgb;

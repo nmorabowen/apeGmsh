@@ -19,6 +19,7 @@ import type { BlobStore } from "../state/blobs.ts";
 import type { DisplacementData } from "../effects.ts";
 import { contourView, geometryPairing, gizmoPlanes } from "../state/selectors.ts";
 import { contourColours, contourShownKey, elementColours, noDataColours, type StepValues } from "./contour.ts";
+import { CapLayer, releaseAware } from "./caps.ts";
 import { SectionClip, sliderBox } from "./clip.ts";
 import { GizmoInteractor, PlaneGizmos } from "./gizmo.ts";
 import { basePositions, drawnPositions, edgesShown, frameFocus, gatherInto, ghostObjects, missingMarkerObjects, positionsFor, selectionOutline, writePositions, type FullPositions } from "./deform.ts";
@@ -100,6 +101,10 @@ export class Viewport {
   /** V4e2: the plane gizmos (clip-exempt, unpickable) and their pointer gestures, ahead of the navigator. */
   readonly gizmos = new PlaneGizmos();
   readonly gizmoInput: GizmoInteractor;
+  /** V4e3: the cut-face caps (clip-exempt, unpickable), sliced on release and on a step change (renderer/caps.ts). */
+  readonly caps = new CapLayer();
+  /** V4e3: a panel offset slider is held: the caps wait for its release, as for a gizmo drag. */
+  private sliding = false;
   /** V4d: what the drawn positions show now: `base`, or the displacement key and scale; null with no mesh. */
   get deformApplied(): string | null {
     return this.full?.key ?? null;
@@ -129,6 +134,8 @@ export class Viewport {
     this.scene.add(this.ghost, this.markers);
     // V4e2: the gizmos (renderer/gizmo.ts): skipped by the clip stamping, never a raycast target.
     this.scene.add(this.gizmos.root);
+    // V4e3: the caps, likewise skipped by the clip stamping (each is trimmed by the other planes itself).
+    this.scene.add(this.caps.root);
 
     this.raycaster.params.Line2 = { threshold: 7 };
     this.halo = new SelectionHalo(this.renderer);
@@ -152,7 +159,8 @@ export class Viewport {
   private wireInput(): { gizmo: GizmoInteractor; nav: Navigator } {
     const element = this.renderer.domElement;
     const gizmo = new GizmoInteractor({
-      element,
+      // V4e3: a release ends the drag in the gizmo's own handler, and moves no plane; the caps are sliced right after it.
+      element: releaseAware(element, () => this.settleCaps()),
       rayAt: (x, y) => {
         this.aim(x, y);
         const r = this.raycaster.ray;
@@ -208,6 +216,7 @@ export class Viewport {
     this.nav.dispose();
     this.gizmoInput.dispose();
     this.gizmos.dispose();
+    this.caps.dispose();
     this.halo.dispose();
     this.clear(this.content);
     this.clear(this.highlight);
@@ -224,6 +233,7 @@ export class Viewport {
       if (this.clip.sync(s.clip)) this.requestRender();
     }
     this.syncGizmos(s, prev);
+    this.settleCaps(s);
     this.onGeometry(s, prev);
     if (!prev || s.mesh !== prev.mesh) {
       this.setMesh(s.mesh);
@@ -249,6 +259,22 @@ export class Viewport {
     this.gizmos.root.visible = show;
     if (!prev || s.clip !== prev.clip || s.mesh !== prev.mesh) changed = this.gizmos.sync(gizmoPlanes(s.clip), this.sliderBox()) || changed;
     if (changed) this.requestRender();
+  }
+
+  /**
+   * V4e3: the caps follow the state, hidden while a plane is dragged (a gizmo
+   * or a panel slider) and sliced again once it is released: on every state
+   * change, after a gizmo release (`releaseAware`) and a slider release.
+   */
+  private settleCaps(s: State = this.store.get()): void {
+    if (this.caps.sync(s, this.blobs, this.stepSource(), this.gizmoInput.dragging || this.sliding)) this.requestRender();
+  }
+
+  /** V4e3: a panel offset slider is held (true) or released (app.ts wires the planes panel). */
+  setSliding(on: boolean): void {
+    if (this.sliding === on) return;
+    this.sliding = on;
+    this.settleCaps();
   }
 
   /** V4d: where the deformed shape's displacement comes from (app.ts wires the effects). */
@@ -300,6 +326,7 @@ export class Viewport {
   setStepSource(source: () => StepValues | null): void {
     this.stepSource = source;
     this.recolour(this.store.get());
+    this.settleCaps();
   }
 
   /**
@@ -616,6 +643,7 @@ export class Viewport {
     if (this.faces) (this.faces.material as THREE.MeshStandardMaterial).color.setScalar(k);
     if (this.lines) (this.lines.material as LineMaterial).color.setScalar(k);
     if (this.edges) (this.edges.material as THREE.LineBasicMaterial).opacity = on ? 0.2 : 0.45;
+    this.caps.setDim(k);
   }
 
   /**
@@ -799,6 +827,16 @@ export class Viewport {
   viewNormal(): [number, number, number] {
     const d = this.camera.getWorldDirection(new THREE.Vector3());
     return [d.x, d.y, d.z];
+  }
+
+  /** V4e3: how many cut-face caps are drawn (and shown). */
+  get capCount(): number {
+    return this.caps.count;
+  }
+
+  /** V4e3: the caps show what the state asks for now (measure and capture wait on it). */
+  capsSettled(): boolean {
+    return this.caps.settledFor(this.store.get());
   }
 
   /** V4e2: how many plane gizmos are drawn (and shown). */

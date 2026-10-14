@@ -133,8 +133,16 @@ Then:
   world-space: they cut whatever is drawn (faces, edges, lines, the contour,
   the deformed shape, the ghost, the markers, the selection), so the deformed
   shape moves through them while scrubbing; the legend and the panels are
-  never cut. A solid is cut **hollow**: no cap closes the cut face yet
-  (V4e3). Each plane has a **gizmo** (V4e2, ADR 0083 slice 2): a translucent
+  never cut. A cut through a solid is **capped** (V4e3, ADR 0083 slice 3):
+  each active plane fills the solid's cut face, sliced from the drawn
+  volumetric cells (tet, hex, wedge, pyramid), deformed as drawn, and
+  trimmed by the other planes. With a contour on, the cap carries it, with
+  the legend's colormap, range and no-data grey (a cell-located field per
+  cell); without one, it is a flat fill. The cap is sliced again when a
+  drag ends (a gizmo or the slider) and on a step change; mid-drag it is
+  hidden. **Contour on cut face** in the footer turns the caps off (the cut
+  is hollow again). A mesh with no volumetric cell (shells, beams, 2-D) gets
+  no cap, and the panel says so. Each plane has a **gizmo** (V4e2, ADR 0083 slice 2): a translucent
   quad over the model's cross-section and an arrow pointing at the kept side.
   Drag the quad (or the arrow's shaft) with the left button to move the plane
   along its normal; drag the arrow's tip to turn it, about the quad's centre.
@@ -159,8 +167,8 @@ through Node's type stripping; nothing is compiled for the tests).
 | `npm run typecheck` | `tsc` over `src/` and `test/` |
 | `npm test` | reader, chain resolution, mesh and navigation tests, on the fixture and on synthetic files |
 | `npm start -- <model.h5>` | open the app on a file; without a file, drop one on the window |
-| `npm run measure -- <model.h5> [--uncapped]` | print one [MEASUREMENTS.md](MEASUREMENTS.md) row; `--uncapped` lifts the vsync cap and prints the throughput row; with a `<stem>.results.h5` beside the model, also the contour scrub row (V4c1) and the same scrub with the deformed shape on (V4d); the deformed scrub with six section planes cutting and their gizmos drawn (V4e1, V4e2) goes to the result JSON as `clip` (no row is printed for it) |
-| `npm run capture -- <model.h5> <out.png> [--pick=<OpenSees type>]` | write a still from a hidden window, with a beam selected (or an element of the `--pick` type); a second still `<out>.chain-end.png` when the chain is taller than the window; `<out>.framed.png`, `<out>.groups.png` and `<out>.role.png`; one `<out>.window-<kind>.png` per model-definition window; and, when the model has a `<stem>.results.h5` beside it, one `<out>.results-<i>-<stage>.png` per results stage at its last step, then the contour stills `<out>.contour-<n>-<what>.png` (the scan running, its first and last step, one component, and 1280 px), then the deformed-shape stills `<out>.deform-<n>-<what>.png` (scale 1 and 10 with the ghost, with a contour, two staged views, and 1280 px), then the element-contour stills, then the section-plane stills `<out>.clip-<n>-<what>.png` (before, one plane cutting a solid hollow, a corner cut, flip, an offset, Custom, six planes, a 7th refused, a click that misses cut-away geometry and the same click with the cuts off, the deformed contoured model cut at two steps, and 1280 px), then the plane-gizmo stills `<out>.gizmo-<n>-<what>.png` (one plane, three planes, mid-drag, rotated, and a legend over a gizmo taking the press) |
+| `npm run measure -- <model.h5> [--uncapped]` | print one [MEASUREMENTS.md](MEASUREMENTS.md) row; `--uncapped` lifts the vsync cap and prints the throughput row; with a `<stem>.results.h5` beside the model, also the contour scrub row (V4c1) and the same scrub with the deformed shape on (V4d); the deformed scrub with six section planes cutting and their gizmos drawn (V4e1, V4e2) goes to the result JSON as `clip`, and the same scrub with the six planes capped (V4e3) as `caps` (no row is printed for either) |
+| `npm run capture -- <model.h5> <out.png> [--pick=<OpenSees type>]` | write a still from a hidden window, with a beam selected (or an element of the `--pick` type); a second still `<out>.chain-end.png` when the chain is taller than the window; `<out>.framed.png`, `<out>.groups.png` and `<out>.role.png`; one `<out>.window-<kind>.png` per model-definition window; and, when the model has a `<stem>.results.h5` beside it, one `<out>.results-<i>-<stage>.png` per results stage at its last step, then the contour stills `<out>.contour-<n>-<what>.png` (the scan running, its first and last step, one component, and 1280 px), then the deformed-shape stills `<out>.deform-<n>-<what>.png` (scale 1 and 10 with the ghost, with a contour, two staged views, and 1280 px), then the element-contour stills, then the section-plane stills `<out>.clip-<n>-<what>.png` (before, one plane cutting a solid hollow, a corner cut, flip, an offset, Custom, six planes, a 7th refused, a click that misses cut-away geometry and the same click with the cuts off, the deformed contoured model cut at two steps, and 1280 px), then the plane-gizmo stills `<out>.gizmo-<n>-<what>.png` (one plane, three planes, mid-drag, rotated, and a legend over a gizmo taking the press), and the cut-face stills `<out>.caps-<n>-<what>.png`, taken before the section-plane stills (a flat-fill cap, the cap carrying the contour, two planes trimming each other's caps, a deformed step, and the caps off; on a mesh with no volumetric cell, one still of the panel saying it gets no cap) |
 | `npm run dist` | build the Windows installer into `out/installer/` (see [Install](#install-windows)) |
 
 ## Layout

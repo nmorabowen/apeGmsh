@@ -144,7 +144,21 @@ export function blobRefsOf(s: State): BlobRef[] {
   for (const st of s.results?.stages ?? []) if (st.nodeIds) out.push(st.nodeIds);
   // V4c2a: each gauss group's element ids (a verified file only).
   for (const st of s.results?.stages ?? []) for (const g of st.gauss) if (g.elementIds) out.push(g.elementIds);
+  // V4e3: every node, interior ones too (the cut face's points).
+  if (s.mesh?.nodes) out.push(s.mesh.nodes.ids, s.mesh.nodes.xyz);
   return out;
+}
+
+/**
+ * V4e3: a model load with its node table in the mesh (`MeshInfo.nodes`): the
+ * cut face of a solid meets interior nodes no drawn face has, so the caps
+ * need every node's position, not the drawn vertices'.
+ */
+export function withNodes<L extends ReturnType<typeof loadModel>>(load: L, model: ModelFile, blobs: BlobStore): L {
+  const n = model.nodeIds.length;
+  if (model.nodeCoords.length !== 3 * n) throw new RangeError(`model: ${model.nodeCoords.length} coordinates for ${n} nodes`);
+  const nodes = { ids: blobs.put("model/nodes/ids", model.nodeIds), xyz: blobs.put("model/nodes/xyz", model.nodeCoords, [n, 3]) };
+  return { ...load, mesh: { ...load.mesh, nodes } };
 }
 
 
@@ -677,7 +691,7 @@ export class Effects {
         else {
           const prov = mr.provenance;
           model = {
-            ...loadModel(mr.model, this.blobs, prov?.ok ? prov.zone : null, prov && !prov.ok ? provenanceStatus(prov) : null, modelExtras(mr)),
+            ...withNodes(loadModel(mr.model, this.blobs, prov?.ok ? prov.zone : null, prov && !prov.ok ? provenanceStatus(prov) : null, modelExtras(mr)), mr.model, this.blobs),
             ndm: spatialNdm(mr.model.meta, mr.model.neutralVersion),
           };
         }
@@ -766,7 +780,7 @@ export class Effects {
       const prov = res.provenance;
       // V4d: the model's spatial dimension rides with the load (state/deform.ts `spatialNdm`).
       const load = {
-        ...loadModel(res.model, this.blobs, prov?.ok ? prov.zone : null, prov && !prov.ok ? provenanceStatus(prov) : null, modelExtras(res)),
+        ...withNodes(loadModel(res.model, this.blobs, prov?.ok ? prov.zone : null, prov && !prov.ok ? provenanceStatus(prov) : null, modelExtras(res)), res.model, this.blobs),
         ndm: spatialNdm(res.model.meta, res.model.neutralVersion),
       };
       for (const w of load.info.warnings) console.warn(w);

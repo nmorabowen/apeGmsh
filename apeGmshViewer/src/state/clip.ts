@@ -19,6 +19,10 @@
 // shows a frame with the new normal and the old offset. The footer's "Show
 // plane gizmos" and each plane's eye decide which planes get one
 // (`gizmoPlanes`).
+//
+// V4e3 (#1904, ADR 0083 S3): the footer's "Contour on cut face" toggle,
+// `setCutFace` (on by default): renderer/caps.ts fills each cut through a
+// solid with a cap.
 
 import type { ClipPlane, ClipState, Event } from "./types.ts";
 
@@ -27,10 +31,10 @@ export type Vec3 = readonly [number, number, number];
 /** The most planes that may cut at once: the WebGL/OpenGL guaranteed minimum of user clip distances (ADR 0083 C-LIMIT). */
 export const MAX_ACTIVE_PLANES = 6;
 
-export const initialClip: ClipState = { planes: [], applyCuts: true, showGizmos: true, seq: 0, notice: null };
+export const initialClip: ClipState = { planes: [], applyCuts: true, showGizmos: true, cutFace: true, seq: 0, notice: null };
 
 /** The clip events, the reducer's own slice of the event union. */
-export type ClipEvent = Extract<Event, { type: "addClipPlane" | "removeClipPlane" | "setClipActive" | "setClipFlipped" | "setClipOffset" | "setClipNormal" | "setApplyCuts" | "setClipPose" | "setShowGizmos" | "setClipGizmo" }>;
+export type ClipEvent = Extract<Event, { type: "addClipPlane" | "removeClipPlane" | "setClipActive" | "setClipFlipped" | "setClipOffset" | "setClipNormal" | "setApplyCuts" | "setClipPose" | "setShowGizmos" | "setClipGizmo" | "setCutFace" }>;
 
 export const LIMIT_NOTICE = `${MAX_ACTIVE_PLANES} section planes are cutting already, the most the renderer guarantees: deactivate one first.`;
 
@@ -203,6 +207,9 @@ export function reduceClip(c: ClipState, e: ClipEvent, center: Vec3): ClipState 
     case "setShowGizmos":
       if (typeof e.on !== "boolean") throw new RangeError(`setShowGizmos: ${JSON.stringify(e.on)}`);
       return c.showGizmos === e.on ? c : { ...c, showGizmos: e.on, notice: null };
+    case "setCutFace":
+      if (typeof e.on !== "boolean") throw new RangeError(`setCutFace: ${JSON.stringify(e.on)}`);
+      return c.cutFace === e.on ? c : { ...c, cutFace: e.on, notice: null };
     case "setClipGizmo": {
       if (typeof e.visible !== "boolean") throw new RangeError(`setClipGizmo: ${JSON.stringify(e.visible)}`);
       const p = planeOf(c, e.id, "setClipGizmo");
