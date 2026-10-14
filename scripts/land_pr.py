@@ -95,8 +95,12 @@ ADR_HEADER_LINES = 30
 #: A slice PR names its slice issue as `Slice: #<n>` (PROGRAM.md section 7).
 SLICE_REF = re.compile(r"^Slice:\s*#(\d+)", re.MULTILINE)
 #: A body written from a Windows tool can begin with a UTF-8 BOM and end lines in CRLF
-#: (#1887: "<BOM>Slice: #1857" missed the line-start match, so check 9 refused).
-_BOM_CR = re.compile(r"\A\ufeff|\r")
+#: (#1887: "<BOM>Slice: #1857" missed the line-start match, so check 9 refused). An
+#: invisible BOM or zero-width space before a `#` heading or a bold label would hide it and
+#: keep an Owned section open, so both go wherever they sit (review of #1917).
+_INVISIBLE = re.compile(r"[\ufeff\u200b]")
+#: CRLF and a lone CR each end a line: deleting a lone CR would join two lines (review of #1917).
+_CR = re.compile(r"\r\n?")
 _HUNK = re.compile(r"^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@")
 #: Check 9 (lesson #1788): a PR with this label must stay inside its card's Owned list.
 PROGRAM = "program"
@@ -260,8 +264,9 @@ def _sets_accepted(patch: str) -> bool:
 
 
 def _text(body: str | None) -> str:
-    """A PR, card or comment body with a leading BOM and every CR removed (#1891)."""
-    return _BOM_CR.sub("", body or "")
+    """A PR, card or comment body with every BOM and zero-width space removed and its line
+    ends normalised to LF (#1891)."""
+    return _CR.sub("\n", _INVISIBLE.sub("", body or ""))
 
 
 def _check_freeze(number: int, pr: dict[str, Any], paths: list[str], frozen: list[str], gh: Runner) -> None:

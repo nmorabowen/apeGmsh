@@ -1279,6 +1279,38 @@ def test_a_bom_and_crlf_body_is_read_1891(bom):
     assert _run(1218, gh, git, dry_run=True) == 0
 
 
+def _b_not_owned(card):
+    gh, git = _scope(["src/a.py", "src/b.py"], card=card)
+    with pytest.raises(land_pr.LandError, match=r"check 9: #1218 changes 1 file\(s\)(.|\n)*\n  src/b\.py"):
+        _run(1218, gh, git)
+    assert not _merged(gh)
+
+
+def test_a_lone_cr_still_ends_a_line_1891():
+    """Review of #1917, finding 1: deleting every CR joined `- a.py` and the bold label, so
+    the Owned section stayed open and owned `b.py`. Fails on 7501d29e; main refuses it."""
+    _b_not_owned("### Owned files\n- `src/a.py`\r**Read-only:** `src/b.py`\n")
+
+
+@pytest.mark.parametrize("mark", [pytest.param("﻿", id="bom"), pytest.param("​", id="zero-width-space")])
+@pytest.mark.parametrize("end", [pytest.param("### Read-only\n- `src/b.py`\n", id="heading"),
+                                 pytest.param("**Read-only:** `src/b.py`\n", id="bold-label")])
+def test_an_invisible_mark_does_not_hide_the_end_of_an_owned_section_1891(mark, end):
+    """Review of #1917, finding 3: a U+FEFF or U+200B before a heading or a bold label hid
+    it, so the Owned section ran on and owned `b.py`. Revert-proof: stripping only a
+    leading BOM owns `src/b.py`."""
+    _b_not_owned(f"### Owned files\n- `src/a.py`\n{mark}{end}")
+
+
+def test_a_bom_prefixed_body_still_holds_a_freeze_1891():
+    """Review of #1917, finding 2: check 5 reads `Slice:` too. Revert-proof: without `_text`
+    in `_check_freeze`, the BOM hides the line and the freeze refuses."""
+    pr = {**PR_1218, "body": "﻿" + BODY_1702.replace("\n", "\r\n")}
+    gh, git = _recording(1218, pr, SQUASH_1218, [BUILD], labels=FREEZE_BUILD,
+                         issues={1696: ["program", "slice", f"freeze:{BUILD}"]})
+    assert _run(1218, gh, git) == 0
+
+
 def test_mispaired_backticks_do_not_hide_a_negation_1250():
     """A ``double`` run pairs the following ticks wrongly, so masking would swallow the
     prose "Never" (#1250's Owned line). Revert-proof: masking regardless of the pairing
