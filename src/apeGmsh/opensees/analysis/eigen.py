@@ -241,7 +241,9 @@ class EigenResult:
             out_path = Path(os.fspath(path))
 
         with tempfile.TemporaryDirectory(prefix="apegmsh_modes_") as tmp:
-            sidecar = Path(tmp) / "model.h5"
+            # Named as DomainCapture names its sidecar, so /model/meta
+            # carries the same model_name ("<stem>.model").
+            sidecar = Path(tmp) / out_path.with_suffix(".model.h5").name
             bridge.h5(str(sidecar))
             writer = NativeWriter(out_path)
             writer.open(
