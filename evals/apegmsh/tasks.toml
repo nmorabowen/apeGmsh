@@ -1,0 +1,182 @@
+# apeGmsh skill evals: the six scripted tasks (SK1-S0, #2003).
+#
+# Each task is one prompt to `claude -p`, run from an empty scratch directory.
+# The agent writes `solution.py`; graders.py re-runs it alone in a fresh
+# directory, lints it, and checks the task's oracle. A pass needs all three.
+#
+#   oracle      the graders.ORACLES entry that grades the task
+#   lane        where the known-good grader test runs: `suite` (gmsh only) or
+#               `live` (an OpenSees solve; the live-stock CI lane)
+#   outputs     the files the oracle reads, written by the run beside the script
+#   result_keys the keys result.json must hold (empty for model.h5 tasks)
+#   known_good  a script the grader must pass (the skill's reference scripts at
+#               6308b303 plus a result.json step, or a hand-written mesh script)
+#   known_bad   scripts the grader must fail, at the stage named and for the reason
+#               given (`reason` is a substring of the failing check, the lint
+#               finding, or the run's output). `lane` as above. Frozen copies:
+#               never re-derive them from skills/, which other slices edit.
+#
+# The numbers in each prompt are restated in graders.py next to its oracle. A solve or
+# read-back task also needs run evidence: the grading probe (probe/sitecustomize.py)
+# must see an apeSees bridge built from a FEMData and OpenSees solve a model of that
+# size, and the read-back numbers must be the recorder files' numbers.
+
+[common]
+preamble = """
+Use the apeGmsh Python package (and its OpenSees bridge, apeSees, where the task needs an analysis).
+Write one self-contained Python model script named `solution.py` in the current directory.
+It must run with `{python} solution.py` from this directory, with no arguments, and write
+every output file beside itself. Run it with that command, and fix it until it runs, before you finish.
+
+Task:
+"""
+
+[[task]]
+id = "plate_with_hole"
+kind = "mesh"
+oracle = "plate_with_hole"
+lane = "suite"
+outputs = ["model.h5"]
+result_keys = []
+prompt = """
+Mesh a rectangular plate, 10 m long in x and 5 m high in y, lying in the z = 0 plane with a
+corner at the origin, with a circular hole of radius 1 m at its centre. Use 2-D elements of
+about 0.25 m. Name these physical groups exactly: `plate` (the plate surface), `left_edge`
+(the side at x = 0), `right_edge` (the side at x = 10 m) and `hole_edge` (the hole's circle).
+Save the meshed model to `model.h5` beside the script.
+"""
+known_good = "fixtures/known_good/plate_with_hole.py"
+known_bad = [
+    { script = "fixtures/known_bad/plate_without_hole.py", fails_at = "oracle", reason = "plate_area", lane = "suite" },
+    { script = "fixtures/known_bad/plate_with_hole_in_main.py", fails_at = "lint", reason = "S2", lane = "suite" },
+]
+
+[[task]]
+id = "footing_mesh"
+kind = "mesh"
+oracle = "footing_mesh"
+lane = "suite"
+outputs = ["model.h5"]
+result_keys = []
+prompt = """
+Mesh the soil block under a strip footing for a plane-strain analysis. The block is 20 m wide
+and 10 m deep, in the z = 0 plane, with x horizontal, y up, the ground surface at y = 0 and
+x = 0 at the block centre. A 2 m wide footing strip sits on the ground surface, centred at
+x = 0. Use 6-node (quadratic) triangles graded with a mesh size field: 0.25 m along the
+footing, kept within 1 m of the footing, coarsening to 1.0 m by 8 m away from it. Name these
+physical groups exactly: `soil` (the block surface), `base` (the bottom edge), `sides` (both
+vertical edges, one group), `footing` (the footing strip on the ground surface) and
+`footing_centre` (a single point at the footing centre, which must be a mesh node). Save the
+meshed model to `model.h5` beside the script.
+"""
+known_good = "fixtures/known_good/footing_mesh.py"
+known_bad = [
+    { script = "fixtures/known_bad/field_distance_edges.py", fails_at = "run", reason = "edges", lane = "suite" },
+    { script = "fixtures/known_bad/footing_uniform_mesh.py", fails_at = "oracle", reason = "coarse_at_base", lane = "suite" },
+]
+
+[[task]]
+id = "pratt_truss"
+kind = "solve"
+oracle = "pratt_truss"
+lane = "live"
+outputs = ["result.json"]
+result_keys = ["bottom_chord_max_axial_N", "end_post_axial_N", "midspan_uy_m"]
+prompt = """
+Analyse a 2-D Pratt truss bridge, linear static. Six panels of 4 m (span 24 m), depth 4 m.
+Bottom-chord joints B0..B6 from left to right at y = 0; top-chord joints T1..T5 above B1..B5
+at y = 4 m. Members: bottom chord B0-B1 .. B5-B6; top chord T1-T2 .. T4-T5; end posts B0-T1
+and T5-B6; verticals B1-T1 .. B5-T5; diagonals T1-B2, T2-B3, T4-B3, T5-B4. Every member is one
+pin-ended steel truss element, E = 200 GPa, with areas: chords and end posts 6000 mm2,
+verticals 3000 mm2, diagonals 4000 mm2. A pin at B0, a roller at B6 (free to slide
+horizontally). A 100 kN downward load at each of B1..B5. Write `result.json` beside the
+script holding, in N and m: `bottom_chord_max_axial_N` (the largest bottom-chord axial
+force, tension positive), `end_post_axial_N` (the end-post axial force, tension positive)
+and `midspan_uy_m` (the vertical displacement of B3, up positive).
+"""
+known_good = "fixtures/known_good/pratt_truss.py"
+known_bad = [
+    { script = "fixtures/known_bad/skeleton_without_base.py", fails_at = "run", reason = "physical group 'Base' not found", lane = "suite" },
+    { script = "fixtures/known_bad/pratt_truss_load_in_kN.py", fails_at = "oracle", reason = "bottom_chord_by_sections", lane = "live" },
+    { script = "fixtures/known_bad/pratt_truss_numpy_only.py", fails_at = "oracle", reason = "built_with_apesees", lane = "suite" },
+    { script = "fixtures/known_bad/pratt_truss_forged_probe.py", fails_at = "oracle", reason = "built_with_apesees", lane = "suite" },
+]
+
+[[task]]
+id = "frame_modal"
+kind = "solve"
+oracle = "frame_modal"
+lane = "live"
+outputs = ["result.json"]
+result_keys = ["periods_s", "floor_ux_m"]
+prompt = """
+Analyse a two-storey 3-D reinforced-concrete frame, z up. Plan: 2 x 2 bays of 6 m in x and y
+(column lines at 0, 6 and 12 m); two storeys of 3.2 m. Elastic beam-column members, one
+element per member, columns fixed at the base. Concrete: E = 25 GPa, Poisson's ratio 0.2.
+Columns 0.5 m square (torsion constant 0.141 b^4); beams 0.3 m wide by 0.6 m deep, spanning
+in x and in y at each floor (torsion constant 0.229 h b^3, h = 0.6 m, b = 0.3 m; strong axis
+vertical). Each floor is a rigid diaphragm in its own plane, with its master node at the plan
+centre (6 m, 6 m) carrying the floor mass: 8 kPa over the 12 m x 12 m floor, divided by
+g = 9.81 m/s2, in x and y, plus the rotational inertia about z of a uniform square slab.
+First run an eigen analysis for the first three periods. Then apply a lateral static load in
++x at the floor masters: a base shear of 10 % of the seismic weight (both floors), split as
+F_k = V h_k / sum(h) with h_k the floor height. Write `result.json` beside the script
+holding: `periods_s` (the first three periods, s, ascending in mode number) and `floor_ux_m`
+(the x displacement of floor 1 then floor 2 under the lateral load, m).
+"""
+known_good = "fixtures/known_good/frame_modal.py"
+known_bad = [
+    { script = "fixtures/known_bad/skeleton_without_base.py", fails_at = "run", reason = "physical group 'Base' not found", lane = "suite" },
+    { script = "fixtures/known_bad/frame_modal_double_mass.py", fails_at = "oracle", reason = "T1_vs_golden", lane = "live" },
+    { script = "fixtures/known_bad/frame_modal_result_only.py", fails_at = "oracle", reason = "opensees_solved_the_apegmsh_model", lane = "suite" },
+]
+
+[[task]]
+id = "staged_footing"
+kind = "readback"
+oracle = "staged_footing"
+lane = "live"
+outputs = ["result.json"]
+result_keys = ["base_reaction_geostatic_kN", "base_reaction_final_kN", "footing_settlement_m"]
+prompt = """
+Analyse a strip footing on clay in two stages, plane strain, and read the results back from
+the analysis output. Units kN, m, s (stresses in kPa). The block is 20 m wide and 10 m deep,
+x horizontal, y up, the ground at y = 0, x = 0 at the centre; a 2 m wide footing strip is
+centred on the ground surface, and a 1 m thick slice is modelled. The clay is von Mises
+(J2) perfectly plastic: E = 30 MPa, Poisson's ratio 0.3, unit weight 18 kN/m3
+(g = 9.81 m/s2), undrained shear strength 75 kPa (uniaxial yield sqrt(3) x 75 kPa). Use
+6-node triangles, 0.25 m along the footing, coarsening to 1.0 m by 8 m away. The base is
+fixed; the sides are on rollers (free vertically). Stage 1 ramps the self-weight on in 10
+increments. Stage 2 holds it and ramps a uniform footing pressure to 300 kPa in 30
+increments. Record the vertical displacement of the footing-centre node and the vertical
+base reactions with OpenSees recorders that write text files (one row per increment), and
+read them back from those files after the run. Write `result.json` beside the script
+holding, in kN and m: `base_reaction_geostatic_kN` (the total vertical base reaction at the
+end of stage 1, upward positive), `base_reaction_final_kN` (the same at the end of stage 2)
+and `footing_settlement_m` (the 30 stage-2 settlements of the footing centre, one per
+increment, measured from the end of stage 1, downward positive).
+"""
+known_good = "fixtures/known_good/staged_footing.py"
+known_bad = [
+    { script = "fixtures/known_bad/staged_footing_elastic.py", fails_at = "oracle", reason = "clay_yields", lane = "live" },
+]
+
+[[task]]
+id = "column_on_footing"
+kind = "assembly"
+oracle = "column_on_footing"
+lane = "suite"
+outputs = ["model.h5"]
+result_keys = []
+prompt = """
+Build a multi-part assembly, z up. One part is a column: 0.5 m square, 3 m tall, from z = 0
+to z = 3 m, centred on the z axis. The other part is a footing: 2 m square, 0.5 m thick, from
+z = -0.5 m to z = 0, centred on the z axis. Build each as its own apeGmsh Part, assemble both
+in one model so the column and the footing share the mesh nodes of their contact face
+(a conformal mesh), and mesh with tetrahedra of about 0.25 m. Name two volume physical groups
+exactly: `column` and `footing`. Save the meshed model to `model.h5` beside the script.
+"""
+known_good = "fixtures/known_good/column_on_footing.py"
+known_bad = [
+    { script = "fixtures/known_bad/column_footing_not_fragmented.py", fails_at = "oracle", reason = "contact_face_conformal", lane = "suite" },
+]
