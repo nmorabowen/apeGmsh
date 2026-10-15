@@ -1966,6 +1966,27 @@ class BuiltModel:
         emitter_can_partition = emitter.caps.supports_partitions
         tag_plan = self._tag_plan(emit_mode(
             self, split=False, supports_partitions=emitter_can_partition))
+        # #2001: a recorder that reads an upstream shell's sections after
+        # an ``algorithm Linear`` step records stale values on every route
+        # (.out, MPCO, .ladruno) with no error. Warn, naming Newton. Runs
+        # after the plan because it matches recorder targets against the
+        # planned element tags; archival emits never solve, so skip them.
+        if _has_analysis_chain and not _emitter_is_archival:
+            from ._internal.build.validators.shell_probe import (
+                warn_stale_shell_probe_under_linear,
+            )
+            warn_stale_shell_probe_under_linear(
+                self.fem, tag_plan.elements.specs,
+                [p for p in ordered if isinstance(p, Recorder)],
+                staged=_staged,
+                flat_algorithms=[
+                    p for p in ordered if isinstance(p, SolutionAlgorithm)],
+                stage_chain=[
+                    (st.name, st.algorithm,
+                     frozenset(id(r) for r in st.recorder_specs))
+                    for st in self.stage_records
+                ],
+            )
         if _emitter_is_archival:
             # ADR 0114 R5 (K1-6): the archive's declarations, joined on
             # the plan's ``(kind, tag)``, before any tagless loop opens one.
