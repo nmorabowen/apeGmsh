@@ -70,6 +70,7 @@ from ..spec._emit import (
     to_deck,
     to_ops_args,
 )
+from ..writers._cache import quiet_emit_logical
 
 if TYPE_CHECKING:
     from ..spec._resolved import ResolvedRecorderSpec
@@ -190,10 +191,10 @@ class LiveRecorders:
 
         # Translate (or refuse) every node and element recorder before
         # any recorder reaches the domain, so a refusal never leaves a
-        # stage half-issued.
+        # stage half-issued. Quiet: begin_stage emits and warns (#1980).
         for record in self._spec.records:
             if record.category in _SUPPORTED_CATEGORIES:
-                for logical in emit_logical(
+                for logical in quiet_emit_logical(
                     record, output_dir=self._output_dir,
                     file_format=self._file_format,
                 ):
