@@ -667,7 +667,10 @@ class DomainCapture:
                 pass    # captured separately via capture_modes()
             elif rec.category == "gauss":
                 self._gauss_capturers.append(
-                    _GaussCapturer(rec, tag_map=self._tag_map),
+                    _GaussCapturer(
+                        rec, tag_map=self._tag_map,
+                        algorithm=self._algorithm,
+                    ),
                 )
             elif rec.category == "line_stations":
                 self._line_station_capturers.append(
@@ -1392,9 +1395,13 @@ class _GaussCapturer:
 
     def __init__(
         self, record: "ResolvedDomainCaptureRecord", tag_map: Any = None,
+        *, algorithm: str | None,
     ) -> None:
         self._rec = _record_eids_to_ops(record, tag_map)
         self._tag_map = tag_map
+        # The domain's solution algorithm, or None when unknown; decides
+        # whether a ZERO_GAUSS_PROBE_CLASSES shell is trusted.
+        self._algorithm = algorithm
         self._times: list[float] = []
         tokens = _gauss_record_tokens(record)
         if tokens is None:

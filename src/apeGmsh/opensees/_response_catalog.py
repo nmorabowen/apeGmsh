@@ -2535,28 +2535,20 @@ def has_dead_gauss_probe(class_name: str, *, algorithm: str | None) -> bool:
     when the caller does not know it.
 
     True for a class in :data:`ZERO_GAUSS_PROBE_CLASSES` under
-    ``Linear`` (measured stale, see the set's note) and under an
-    unknown algorithm (fail closed). False for every other class, and
-    for a listed class under one of the bridge's iterating algorithms,
-    which re-form the residual and leave the sections at the converged
-    state. Any other algorithm name raises :class:`ValueError`, so a new
-    algorithm is classified here before a capture trusts it.
+    ``Linear`` (measured stale, see the set's note), under an unknown
+    algorithm (``None``) and under any name this predicate does not
+    classify (a newer or forked algorithm): those fail closed, and the
+    caller skips the element with a reason rather than crash the run.
+    False for every other class, and for a listed class under one of the
+    bridge's iterating algorithms, which re-form the residual and leave
+    the sections at the converged state.
     """
     if class_name not in ZERO_GAUSS_PROBE_CLASSES:
         return False
-    if algorithm is None or algorithm == "Linear":
-        return True
-    if algorithm in {
+    return algorithm not in {
         "Newton", "ModifiedNewton", "NewtonLineSearch", "KrylovNewton",
         "BFGS", "Broyden",
-    }:
-        return False
-    raise ValueError(
-        f"has_dead_gauss_probe: algorithm {algorithm!r} is not classified. "
-        f"{class_name} probes are stale after a step solved without "
-        "re-forming the residual (Linear) and correct after Newton; "
-        "classify this algorithm before trusting the probe."
-    )
+    }
 
 
 #: Catalog tokens that are MATERIAL responses with no element-level

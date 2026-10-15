@@ -506,12 +506,15 @@ def test_predicate_is_stale_only_under_linear_or_unknown(
         assert not has_dead_gauss_probe(shell_class, algorithm=name), name
 
 
-def test_predicate_ignores_unlisted_classes_and_refuses_unknown_names() -> None:
+def test_predicate_ignores_unlisted_classes_and_fails_closed_on_unknown_names(
+) -> None:
+    """An unclassified name (a typo, a forked algorithm) skips: it must
+    not crash the run, and it must not trust the probe."""
     from apeGmsh.opensees._response_catalog import has_dead_gauss_probe
     assert not has_dead_gauss_probe("ASDShellQ4", algorithm="Linear")
     assert not has_dead_gauss_probe("ASDShellQ4", algorithm=None)
-    with pytest.raises(ValueError, match="not classified"):
-        has_dead_gauss_probe("ShellMITC4", algorithm="linear")
+    assert has_dead_gauss_probe("ShellMITC4", algorithm="linear")
+    assert has_dead_gauss_probe("ShellMITC4", algorithm="LadrunoNewton")
 
 
 def test_iterating_set_is_every_bridge_algorithm_but_linear() -> None:
