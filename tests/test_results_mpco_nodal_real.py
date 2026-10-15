@@ -278,8 +278,14 @@ def _two_element_mpco(
     launcher = _resolve_tcl_launcher()
     if launcher is None:
         pytest.skip("No OpenSees Tcl launcher found.")
-    model_h5, pairs = _cantilever_model_h5(tmp_path, _L2, n_elem=2)
-    assert pairs[1] != 1 and pairs[2] != 2, pairs
+    # Setup failures raise RuntimeError, so the pins' xfail(raises=
+    # AssertionError) never absorbs a broken deck or archive.
+    try:
+        model_h5, pairs = _cantilever_model_h5(tmp_path, _L2, n_elem=2)
+    except AssertionError as exc:
+        raise RuntimeError(f"archive setup failed: {exc}") from exc
+    if pairs[1] == 1 or pairs[2] == 2:
+        raise RuntimeError(f"fem ids equal ops tags, nothing to translate: {pairs}")
     region = " ".join(str(pairs[f]) for f in recorded_fem)
     lines = [
         "wipe",
@@ -310,7 +316,11 @@ def _two_element_mpco(
         "wipe",
         'puts "DONE"',
     ]
-    return _run_deck(launcher, tmp_path, lines), model_h5, pairs
+    try:
+        mpco_path = _run_deck(launcher, tmp_path, lines)
+    except AssertionError as exc:
+        raise RuntimeError(f"deck failed: {exc}") from exc
+    return mpco_path, model_h5, pairs
 
 
 def _axial(slab: Any) -> "dict[int, float]":
@@ -339,7 +349,7 @@ def test_two_element_unfiltered_read_is_the_oracle(tmp_path: Path) -> None:
 
 
 @pytest.mark.xfail(
-    strict=True,
+    strict=True, raises=AssertionError,
     reason="#2066: a filter mixing a paired and an unpaired id is not "
     "translated, so the paired fem id is read as an ops tag",
 )
@@ -363,7 +373,7 @@ def test_mixed_id_filter_returns_the_paired_element(
 
 
 @pytest.mark.xfail(
-    strict=True,
+    strict=True, raises=AssertionError,
     reason="#2066: a fem id whose ops tag the file did not record "
     "returns an empty slab with no warning",
 )
@@ -379,17 +389,35 @@ def test_filter_on_an_unrecorded_element_is_not_silent(tmp_path: Path) -> None:
     with Results.from_mpco(mpco_path, model_h5=model_h5) as r:
         s = r.stage(r.stages[0].id)
         # The recorded element reads correctly, so the region took effect.
+        # A setup failure raises RuntimeError, which the xfail (raises=
+        # AssertionError) does not absorb.
         got = _axial(s.elements.get(component="nodal_resisting_force_x"))
-        assert sorted(got) == [2]
-        np.testing.assert_allclose(got[2], _N[2], rtol=1e-10)
+        if sorted(got) != [2] or not np.isclose(got[2], _N[2], rtol=1e-10):
+            raise RuntimeError(f"region setup failed: read {got}")
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")
             try:
                 s.elements.get(
                     component="nodal_resisting_force_x", ids=np.array([1]),
                 )
-            except (ValueError, LookupError):
+            except (ValueError, LookupError) as exc:
+                assert _names_element_1(str(exc)), (
+                    f"the refusal does not name element 1: {exc}"
+                )
                 return
-    assert any(issubclass(w.category, UserWarning) for w in caught), (
-        "an unrecorded fem id read back empty with no warning"
+    assert any(
+        issubclass(w.category, UserWarning) and _names_element_1(str(w.message))
+        for w in caught
+    ), (
+        "an unrecorded fem id read back empty with no warning naming it; "
+        f"warnings: {[str(w.message) for w in caught]}"
     )
+
+
+def _names_element_1(message: str) -> bool:
+    """True when ``message`` speaks of an element and names id 1, so an
+    unrelated warning or error cannot satisfy the pin above."""
+    import re
+
+    return ("element" in message.lower()
+            and re.search(r"(?<![\d.])1(?![\d.])", message) is not None)
