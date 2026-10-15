@@ -178,65 +178,22 @@ class RecorderTranscoder:
             # if needed; we don't fail the run for them.
             self.unsupported = list(unsupported)
 
-        # Aggregate: time vector (must match across records).
-        time_vec = np.array([], dtype=np.float64)
-        for nr in node_records:
-            if nr.time.size:
-                time_vec = nr.time
-                break
+        # Aggregate: the time vector comes from the first node or gauss
+        # record that has one, and every record must match it; only when
+        # neither kind has one does a line or nodal-force record supply it.
+        early = [*node_records, *gauss_records]
+        late = [*line_records, *nodal_records]
+        time_vec = next((r.time for r in early if r.time.size),
+                        np.array([], dtype=np.float64))
+        for r in (*early, *late):
+            if r.time.size and time_vec.size and r.time.shape != time_vec.shape:
+                raise ValueError(
+                    f"Recorder {r.record_name!r} has {r.time.size} time "
+                    f"steps, but other records have {time_vec.size}. "
+                    f"Recorder cadences must match within one stage."
+                )
         if time_vec.size == 0:
-            for gr in gauss_records:
-                if gr.time.size:
-                    time_vec = gr.time
-                    break
-
-        # Sanity: every record's time vector should match.
-        for nr in node_records:
-            if nr.time.size and time_vec.size:
-                if nr.time.shape != time_vec.shape:
-                    raise ValueError(
-                        f"Recorder {nr.record_name!r} has "
-                        f"{nr.time.size} time steps, but other records "
-                        f"have {time_vec.size}. Recorder cadences must "
-                        f"match within one stage."
-                    )
-        for gr in gauss_records:
-            if gr.time.size and time_vec.size:
-                if gr.time.shape != time_vec.shape:
-                    raise ValueError(
-                        f"Recorder {gr.record_name!r} has "
-                        f"{gr.time.size} time steps, but other records "
-                        f"have {time_vec.size}. Recorder cadences must "
-                        f"match within one stage."
-                    )
-        for lr in line_records:
-            if lr.time.size and time_vec.size:
-                if lr.time.shape != time_vec.shape:
-                    raise ValueError(
-                        f"Recorder {lr.record_name!r} has "
-                        f"{lr.time.size} time steps, but other records "
-                        f"have {time_vec.size}. Recorder cadences must "
-                        f"match within one stage."
-                    )
-        for nr in nodal_records:
-            if nr.time.size and time_vec.size:
-                if nr.time.shape != time_vec.shape:
-                    raise ValueError(
-                        f"Recorder {nr.record_name!r} has "
-                        f"{nr.time.size} time steps, but other records "
-                        f"have {time_vec.size}. Recorder cadences must "
-                        f"match within one stage."
-                    )
-        if time_vec.size == 0:
-            for lr in line_records:
-                if lr.time.size:
-                    time_vec = lr.time
-                    break
-        if time_vec.size == 0:
-            for nr in nodal_records:
-                if nr.time.size:
-                    time_vec = nr.time
-                    break
+            time_vec = next((r.time for r in late if r.time.size), time_vec)
 
         proven_fem_index = self._element_index_is_fem()
 
@@ -628,52 +585,26 @@ class RecorderTranscoder:
     ) -> "_LineStationRecordPayload":
         """Synthesise an elastic beam's two-station slab from ``localForce``.
 
-        An elastic beam has no integration points, so its line-stations
-        record is emitted as one ``localForce`` recorder. Its row
-        per element is the joint-on-element end vector ``[end i, end j]``
-        in the local frame. The stations sit at xi = -1, +1, and station
-        2 is negated into the internal section-force sign convention:
-        the same synthesis DomainCapture's line-station capturer and the
-        MPCO local-force reader apply, so the three routes agree.
+        The record emitted one ``localForce`` recorder: per element the
+        end vector ``[end i, end j]``. Stations sit at xi = -1, +1, end j
+        negated into the section-force sign convention, as DomainCapture
+        and the MPCO local-force reader do.
         """
-        class_name = rec.element_class_name
-        assert class_name is not None      # line_stations_from_local_force
-        layout = synthesize_line_station_layout_for_elastic_beam(class_name)
-        if layout is None:     # the predicate says the catalog has it
-            raise ValueError(
-                f"Line-stations record {rec.name!r}: class {class_name!r} "
-                f"has no localForce line-stations synthesis layout."
-            )
-        logicals = list(emit_logical(
-            rec, output_dir=str(self._output_dir),
-            file_format=self._file_format, stage_id=self._stage_id,
-        ))
-        if len(logicals) != 1 or logicals[0].response_tokens != (
-            "localForce",
-        ):
-            raise ValueError(
-                f"Line-stations record {rec.name!r} (elastic beam "
-                f"{class_name!r}) expected one localForce logical "
-                f"recorder, got "
-                f"{[lr.response_tokens for lr in logicals]}."
-            )
-        lr = logicals[0]
+        cls = rec.element_class_name
+        layout = synthesize_line_station_layout_for_elastic_beam(cls or "")
+        assert layout is not None    # line_stations_from_local_force(rec)
+        (lr,) = emit_logical(rec, output_dir=str(self._output_dir),
+                             file_format=self._file_format,
+                             stage_id=self._stage_id)
         n_per = layout.n_components_per_gp
         time, flat = _txt.parse_element_file(lr.file_path, lr, 2 * n_per)
-        flat = flat.copy()
-        flat[:, :, n_per:] *= -1.0          # station 2: internal convention
-        gp_x = np.array([-1.0, 1.0], dtype=np.float64)
-        return _LineStationRecordPayload(
-            record_name=rec.name,
-            time=time,
-            groups=[_LineStationGroupPayload(
-                class_name=class_name,
-                element_ids=np.asarray(rec.element_ids, dtype=np.int64),
-                gp_x=gp_x,
-                layout=layout,
-                flat=flat,
-            )],
-        )
+        flat[:, :, n_per:] *= -1.0
+        return _LineStationRecordPayload(rec.name, time, [
+            _LineStationGroupPayload(
+                str(cls), np.asarray(rec.element_ids, dtype=np.int64),
+                np.array([-1.0, 1.0]), layout, flat,
+            ),
+        ])
 
     def _write_line_station_records(
         self,
