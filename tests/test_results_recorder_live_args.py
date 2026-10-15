@@ -265,7 +265,8 @@ def test_mpco_ops_args_mixed_with_dt() -> None:
         dt=0.01, n_steps=None,
         element_ids=np.array([1]),
     )
-    args = mpco_ops_args([n_rec, e_rec])
+    with pytest.warns(UserWarning, match=r"takes one cadence.*-T dt 0\.01"):
+        args = mpco_ops_args([n_rec, e_rec])
 
     # Both -N and -E
     assert "-N" in args
