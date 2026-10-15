@@ -73,7 +73,7 @@ bodies that need it. This keeps the import-DAG polarity tested by
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Optional, Sequence
+from typing import TYPE_CHECKING, Any, Optional
 
 from numpy import ndarray
 
@@ -391,7 +391,6 @@ class Results:
         file_format: str = "out",
         stage_id: str | None = None,
         model: "Optional[OpenSeesModel]" = None,
-        stages: "Optional[Sequence[Any]]" = None,
     ) -> "Results":
         """Open the result of an OpenSees run driven by Tcl/Py recorders.
 
@@ -408,10 +407,10 @@ class Results:
         apeGmsh native HDF5, caches the result at
         ``cache_root``, and opens it through ``NativeReader``.
 
-        Caching: subsequent calls with unchanged input files return
-        the cached HDF5 directly (file mtime + size + spec
-        ``snapshot_id`` form the cache key). See
-        ``writers/_cache.py``.
+        Caching: unchanged input files, model, stage name and stage kind
+        reuse the cached HDF5 (``writers/_cache.py``). Recorders sample
+        every step or every ``dt=``: sampling at arbitrary caller
+        instants has no recorder equivalent.
 
         ``stage_id`` matches the per-stage filename prefix used by
         :meth:`ResolvedRecorderSpec.emit_recorders` together with
@@ -419,15 +418,6 @@ class Results:
         with ``<stage_id>__`` are read; ``stage_name`` defaults to
         ``stage_id`` if not overridden. ``None`` (default) keeps the
         legacy flat-naming used by Tcl/Py exports.
-
-        ``stages`` reads a multi-stage :meth:`ResolvedRecorderSpec.emit_recorders`
-        run into one file: pass ``live.stages`` (each entry's ``name``
-        and ``kind``), and every stage becomes its own Results stage.
-        It excludes ``stage_id`` / ``stage_name`` / ``stage_kind``.
-
-        Recorders sample at every step, or every ``dt=`` of analysis
-        time; sampling at arbitrary caller instants has no recorder
-        equivalent.
 
         Nodes, element forces, gauss points and line stations are
         transcoded; fiber and layer records are skipped (``.out`` cannot
@@ -453,27 +443,20 @@ class Results:
         # default, mirror stage_id so the resulting Results stage is
         # named meaningfully (otherwise everything ends up as
         # "analysis" regardless of which stage the user loaded).
-        if stages is not None and (stage_name, stage_kind, stage_id) != (
-                "analysis", "transient", None):
-            raise TypeError("Results.from_recorders: pass stages= or "
-                            "stage_name= / stage_kind= / stage_id=, not both.")
         if stage_id is not None and stage_name == "analysis":
             stage_name = stage_id
-        plan = ([(stage_name, stage_kind, stage_id)] if stages is None
-                else [(str(s.name), str(s.kind), str(s.name)) for s in stages])
 
         out_dir = Path(output_dir)
         cache_dir = _cache.resolve_cache_root(cache_root)
 
-        source_files = [f for _, _, prefix in plan for f in _cache.list_source_files(
-            spec, out_dir, file_format=file_format, stage_id=prefix,
-        )]
+        source_files = _cache.list_source_files(
+            spec, out_dir, file_format=file_format, stage_id=stage_id,
+        )
         key = _cache.compute_cache_key(
             source_files,
-            parser_version=PARSER_VERSION,
-            fem_snapshot_id=fem.snapshot_id,
+            parser_version=PARSER_VERSION, fem_snapshot_id=fem.snapshot_id,
             model_token=_cache.model_cache_token(model),
-            stages=plan,
+            stages=[(stage_name, stage_kind, stage_id)],
         )
         cached_h5, _ = _cache.cache_paths(cache_dir, key)
 
@@ -492,7 +475,6 @@ class Results:
                 file_format=file_format,
                 stage_id=stage_id,
                 model_h5_src=model_h5_src,
-                stages=None if stages is None else [(n, k) for n, k, _ in plan],
             )
             transcoder.run()
 

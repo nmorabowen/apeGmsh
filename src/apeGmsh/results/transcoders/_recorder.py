@@ -27,10 +27,9 @@ Scope
   surfaced in ``self.unsupported`` for inspection.
 - ``modal`` — emission deferred, so the transcoder skips too.
 
-Stages: by default one transcoder call produces one stage. ``stages=``
-(the ``(name, kind)`` of each stage a ``LiveRecorders`` run completed)
-writes one native stage per entry into the same file, each read from
-the files prefixed ``<name>__`` (#1948).
+Single-stage transcode: one transcoder call produces one stage. For
+multi-stage analyses the user emits multiple Tcl scripts (or uses
+domain capture).
 """
 from __future__ import annotations
 
@@ -74,8 +73,6 @@ from ..writers._native import NativeWriter
 from . import _txt
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
-
     from ...mesh.FEMData import FEMData
     from ..spec._resolved import (
         ResolvedRecorderRecord,
@@ -85,9 +82,6 @@ if TYPE_CHECKING:
 
 # Spec categories whose records become element rows in the file.
 _ELEMENT_ROW_CATEGORIES = frozenset({"gauss", "line_stations", "elements"})
-
-# Spec categories ``run()`` parses from ``.out`` files.
-_PARSED_CATEGORIES = frozenset({"nodes", *_ELEMENT_ROW_CATEGORIES})
 
 
 class RecorderTranscoder:
@@ -105,15 +99,15 @@ class RecorderTranscoder:
         file_format: str = "out",
         stage_id: str | None = None,
         model_h5_src: str | Path | None = None,
-        stages: "Sequence[tuple[str, str]] | None" = None,
     ) -> None:
         self._spec = spec
         self._output_dir = Path(output_dir)
         self._target_path = Path(target_path)
         self._fem = fem
+        self._stage_name = stage_name
+        self._stage_kind = stage_kind
         self._file_format = file_format
-        # Filename prefix of the stage being parsed (live-emit
-        # multi-stage runs); None means no prefix. run() sets it per stage.
+        # Filename prefix (live-emit multi-stage runs); None means no prefix.
         self._stage_id = stage_id
         # A sibling model.h5 whose /opensees/ zone is composed in (ADR 0020); None
         # writes /meta + /model only, and refuses elastic-beam line stations.
@@ -122,25 +116,6 @@ class RecorderTranscoder:
         )
         # Records the run() skipped — populated post-run for inspection.
         self.unsupported: list[str] = []
-        # One (name, kind, file prefix) per stage written (#1948).
-        # ``stages=`` is a multi-stage run (LiveRecorders.stages): each
-        # stage's files are prefixed ``<name>__``.
-        self._plan: list[tuple[str, str, str | None]]
-        if stages is None:
-            self._plan = [(stage_name, stage_kind, stage_id)]
-        else:
-            if (stage_name, stage_kind, stage_id) != (
-                    "analysis", "transient", None):
-                raise TypeError(
-                    "RecorderTranscoder: pass stages= or stage_name= / "
-                    "stage_kind= / stage_id=, not both.")
-            self._plan = [(str(n), str(k), str(n)) for n, k in stages]
-            if not self._plan:
-                raise ValueError("RecorderTranscoder: stages= is empty.")
-            names = [n for n, _, _ in self._plan]
-            if len(set(names)) != len(names):
-                raise ValueError(
-                    f"RecorderTranscoder: stage names repeat: {names}.")
 
     def run(self) -> Path:
         """Parse the emitted files and write the native HDF5 target.
@@ -151,9 +126,14 @@ class RecorderTranscoder:
         # enforced — it's on the user to pair the right spec with the
         # right FEMData.
 
-        # Which records the .out format cannot carry depends on the spec
-        # alone, so it is decided (and warned) once for every stage.
+        # Collect per-record parsed data first; only open the writer
+        # once we know the time vector + merged node IDs.
+        node_records: list[_NodeRecordPayload] = []
+        gauss_records: list[_GaussRecordPayload] = []
+        line_records: list[_LineStationRecordPayload] = []
+        nodal_records: list[_NodalForceRecordPayload] = []
         unsupported: list[str] = []
+
         mpco_only_skipped: list[str] = []
         for rec in self._spec.records:
             if rec.category in _DEFERRED_CATEGORIES:
@@ -161,7 +141,22 @@ class RecorderTranscoder:
                 unsupported.append(tag)
                 if rec.category in ("fibers", "layers"):
                     mpco_only_skipped.append(tag)
-            elif rec.category not in _PARSED_CATEGORIES:
+                continue
+            if rec.category == "nodes":
+                node_records.append(self._parse_node_record(rec))
+            elif rec.category == "gauss":
+                payload = self._parse_gauss_record(rec)
+                if payload is not None:
+                    gauss_records.append(payload)
+            elif rec.category == "line_stations":
+                payload = self._parse_line_station_record(rec)
+                if payload is not None:
+                    line_records.append(payload)
+            elif rec.category == "elements":
+                payload = self._parse_nodal_force_record(rec)
+                if payload is not None:
+                    nodal_records.append(payload)
+            else:
                 unsupported.append(f"{rec.category}:{rec.name}")
 
         if mpco_only_skipped:
@@ -180,61 +175,6 @@ class RecorderTranscoder:
             # if needed; we don't fail the run for them.
             self.unsupported = list(unsupported)
 
-        # Parse every stage before the writer opens, so a bad file in a
-        # later stage leaves no half-written target.
-        parsed = []
-        for name, kind, prefix in self._plan:
-            self._stage_id = prefix
-            parsed.append((name, kind, self._parse_stage()))
-
-        proven_fem_index = self._element_index_is_fem()
-
-        # Write
-        with NativeWriter(self._target_path) as w:
-            w.open(
-                fem=self._fem,
-                source_type="tcl_recorders",
-                source_path=str(self._output_dir),
-                model_h5_src=self._model_h5_src,
-            )
-            if proven_fem_index:
-                w.stamp_element_index_space(ELEMENT_INDEX_SPACE_FEM)
-            for name, kind, (time_vec, node_records, gauss_records,
-                             line_records, nodal_records) in parsed:
-                sid = w.begin_stage(name=name, kind=kind, time=time_vec)
-                self._write_merged_nodes(w, sid, node_records, time_vec)
-                self._write_gauss_records(w, sid, gauss_records)
-                self._write_line_station_records(w, sid, line_records)
-                self._write_nodal_force_records(w, sid, nodal_records)
-                w.end_stage()
-
-        return self._target_path
-
-    def _parse_stage(self) -> tuple:
-        """Parse one stage's files (prefix ``self._stage_id``).
-
-        Returns ``(time, node, gauss, line, nodal)`` payload lists.
-        """
-        node_records: list[_NodeRecordPayload] = []
-        gauss_records: list[_GaussRecordPayload] = []
-        line_records: list[_LineStationRecordPayload] = []
-        nodal_records: list[_NodalForceRecordPayload] = []
-        for rec in self._spec.records:
-            if rec.category == "nodes":
-                node_records.append(self._parse_node_record(rec))
-            elif rec.category == "gauss":
-                payload = self._parse_gauss_record(rec)
-                if payload is not None:
-                    gauss_records.append(payload)
-            elif rec.category == "line_stations":
-                payload = self._parse_line_station_record(rec)
-                if payload is not None:
-                    line_records.append(payload)
-            elif rec.category == "elements":
-                payload = self._parse_nodal_force_record(rec)
-                if payload is not None:
-                    nodal_records.append(payload)
-
         # Aggregate: the time vector comes from the first node or gauss
         # record that has one, and every record must match it; only when
         # neither kind has one does a line or nodal-force record supply it.
@@ -251,7 +191,31 @@ class RecorderTranscoder:
                 )
         if time_vec.size == 0:
             time_vec = next((r.time for r in late if r.time.size), time_vec)
-        return time_vec, node_records, gauss_records, line_records, nodal_records
+
+        proven_fem_index = self._element_index_is_fem()
+
+        # Write
+        with NativeWriter(self._target_path) as w:
+            w.open(
+                fem=self._fem,
+                source_type="tcl_recorders",
+                source_path=str(self._output_dir),
+                model_h5_src=self._model_h5_src,
+            )
+            if proven_fem_index:
+                w.stamp_element_index_space(ELEMENT_INDEX_SPACE_FEM)
+            sid = w.begin_stage(
+                name=self._stage_name,
+                kind=self._stage_kind,
+                time=time_vec,
+            )
+            self._write_merged_nodes(w, sid, node_records, time_vec)
+            self._write_gauss_records(w, sid, gauss_records)
+            self._write_line_station_records(w, sid, line_records)
+            self._write_nodal_force_records(w, sid, nodal_records)
+            w.end_stage()
+
+        return self._target_path
 
     # ------------------------------------------------------------------
     # Element index provenance (results 1.2.0)

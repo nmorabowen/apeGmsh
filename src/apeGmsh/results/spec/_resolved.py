@@ -324,6 +324,11 @@ class ResolvedRecorderSpec:
         record categories (including fibers / layers / modal) are
         supported by the MPCO recorder itself.
 
+        One recorder takes one ``-T`` cadence: the smallest record
+        ``dt=``, else the smallest ``n_steps=``, else every step.
+        Sampling at arbitrary caller instants has no recorder
+        equivalent.
+
         Requires an openseespy build with the MPCO recorder compiled
         in (typically STKO's bundled Python). ``__enter__`` raises
         :class:`RuntimeError` with a remediation pointer if the
