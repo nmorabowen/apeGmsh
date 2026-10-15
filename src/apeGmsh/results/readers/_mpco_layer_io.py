@@ -440,10 +440,11 @@ def _computed_quaternions(
         if row is None:
             _fail(f"no row in MODEL/ELEMENTS/{key}", [eid])
             continue
-        rows = [node_row.get(int(t)) for t in conn[row, 1:]]
-        if any(r is None for r in rows):
+        tags = [int(t) for t in conn[row, 1:]]
+        if any(t not in node_row for t in tags):
             _fail("a node missing from MODEL/NODES", [eid])
             continue
+        rows = [node_row[t] for t in tags]
         try:
             out[k, :] = shell_quaternion(coords[rows], elem_key.class_name)
         except ValueError as exc:
