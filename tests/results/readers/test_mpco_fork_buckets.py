@@ -393,6 +393,39 @@ def test_unnamed_damage_without_a_catalog_row_refuses(tmp_path: Path) -> None:
         assert np.asarray(empty.values).shape[1] == 0
 
 
+def test_unnamed_damage_of_another_width_refuses(tmp_path: Path) -> None:
+    """``C1,C2,C3`` on LadrunoBrick: the catalog's 2-wide row cannot name it.
+
+    Without the width guard, column 0 would read as ``damage_tension``.
+    """
+    fam = FAMILIES[2]
+    path = tmp_path / "three.mpco"
+    with _file(path, nodal=True) as f:
+        _gauss_bucket(f, "material.damage", fam.key, n_gp=8,
+                      labels="C1,C2,C3", ids=[7])
+    with MPCOReader(path) as r:
+        (stage,) = r.stages()
+        comps = r.available_components(stage.id, ResultLevel.GAUSS)
+        assert {"damage_0", "damage_1", "damage_2"} <= set(comps)
+        assert "damage_tension" not in comps
+        with pytest.raises(LookupError, match=rf"material\.damage/{fam.key}"
+                           .replace("[", r"\[").replace("]", r"\]")):
+            r.read_gauss(stage.id, "damage_tension")
+
+
+def test_bare_plastic_strain_on_a_tensor_bucket_refuses(tmp_path: Path) -> None:
+    fam = FAMILIES[2]
+    path = tmp_path / "pstrain.mpco"
+    with _file(path, nodal=True) as f:
+        _gauss_bucket(f, "material.plasticStrain", fam.key, n_gp=8,
+                      labels="C1,C2,C3,C4,C5,C6", ids=[7])
+    with MPCOReader(path) as r:
+        (stage,) = r.stages()
+        _check(r.read_gauss(stage.id, "plastic_strain_zz"), 2, [7], 8)
+        with pytest.raises(LookupError, match="plastic_strain_xx"):
+            r.read_gauss(stage.id, "plastic_strain")
+
+
 @pytest.mark.parametrize("labels", ["d+,d-", "C1,C2"])
 def test_bare_damage_on_a_two_column_bucket_refuses(
     tmp_path: Path, labels: str,
