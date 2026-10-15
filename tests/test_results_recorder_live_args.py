@@ -43,9 +43,19 @@ from apeGmsh.results.spec._emit import (
     emit_mpco_tcl,
     format_python,
     mpco_ops_args,
+    to_deck,
     to_ops_args,
 )
 from apeGmsh.results.spec._resolved import ResolvedRecorderRecord
+from tests.fixtures.recorder_models import node_model
+
+
+def _node_logicals(rec: ResolvedRecorderRecord, **kw):
+    """A node record's recorders as they reach OpenSees: DOFs mapped by
+    a model of 3-D frame nodes (``to_deck``; #2018)."""
+    model = node_model(rec.node_ids, "h")
+    return [to_deck(lr, None, model, where="t")
+            for lr in emit_logical(rec, **kw)]
 
 
 # =====================================================================
@@ -59,7 +69,7 @@ def test_to_ops_args_node_displacement_basic() -> None:
         dt=None, n_steps=None,
         node_ids=np.array([1, 2]),
     )
-    [logical] = emit_logical(rec)
+    [logical] = _node_logicals(rec)
     args = to_ops_args(logical)
 
     # Shape: ('Node', '-file', '<path>', '-time', '-node', 1, 2,
@@ -85,7 +95,7 @@ def test_to_ops_args_node_with_dt() -> None:
         dt=0.01, n_steps=None,
         node_ids=np.array([5]),
     )
-    [logical] = emit_logical(rec)
+    [logical] = _node_logicals(rec)
     args = to_ops_args(logical)
 
     # -dT must be present, value must be float
@@ -102,7 +112,7 @@ def test_to_ops_args_node_xml_format() -> None:
         dt=None, n_steps=None,
         node_ids=np.array([1]),
     )
-    [logical] = emit_logical(rec, file_format="xml")
+    [logical] = _node_logicals(rec, file_format="xml")
     args = to_ops_args(logical)
 
     assert "-xml" in args
@@ -118,7 +128,7 @@ def test_to_ops_args_node_with_output_dir() -> None:
         dt=None, n_steps=None,
         node_ids=np.array([1]),
     )
-    [logical] = emit_logical(rec, output_dir="out/")
+    [logical] = _node_logicals(rec, output_dir="out/")
     args = to_ops_args(logical)
 
     file_idx = args.index("-file")
@@ -189,7 +199,7 @@ def test_to_ops_args_round_trip_with_format_python() -> None:
         dt=0.005, n_steps=None,
         node_ids=np.array([10, 20, 30]),
     )
-    for logical in emit_logical(rec):
+    for logical in _node_logicals(rec):
         py_source = format_python(logical)
         args = to_ops_args(logical)
 

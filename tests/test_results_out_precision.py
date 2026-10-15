@@ -34,9 +34,11 @@ from apeGmsh.results.spec._emit import (
     emit_logical,
     format_python,
     format_tcl,
+    to_deck,
     to_ops_args,
 )
 from apeGmsh.results.spec._resolved import ResolvedRecorderRecord
+from tests.fixtures.recorder_models import identity_model
 from apeGmsh.results.transcoders._txt import parse_element_file, parse_node_file
 
 NODAL_FORCE = ("nodal_resisting_force_x", "nodal_resisting_force_y",
@@ -67,9 +69,14 @@ def _records() -> list[ResolvedRecorderRecord]:
 
 
 def _all_logicals(file_format: str = "out") -> list[LogicalRecorder]:
+    """Every record's recorders as they reach OpenSees: translated by a
+    model whose ids are their own tags and whose nodes are 3-D frame
+    nodes (``to_deck``; node DOFs need it, #2018)."""
+    model = identity_model(range(3, 8), "h", ndm=3, nodes_ndf={1: 6, 2: 6})
     out: list[LogicalRecorder] = []
     for rec in _records():
-        out.extend(emit_logical(rec, file_format=file_format))
+        out.extend(to_deck(lr, {e: e for e in range(3, 8)}, model, where="t")
+                   for lr in emit_logical(rec, file_format=file_format))
     return out
 
 
@@ -159,7 +166,9 @@ def _run_cantilever(tmp_path: Path, precision: int) -> dict[str, Any]:
     out = str(tmp_path) + "/"
     [node_lr] = emit_logical(node_rec, output_dir=out)
     [ele_lr] = emit_logical(ele_rec, output_dir=out)
-    node_lr = replace(node_lr, precision=precision)
+    node_lr = to_deck(
+        replace(node_lr, precision=precision), None,
+        identity_model((), "h", ndm=2, nodes_ndf={2: 3, 3: 3}), where="t")
     ele_lr = replace(ele_lr, precision=precision)
 
     ops.wipe()

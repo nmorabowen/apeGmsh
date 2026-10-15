@@ -24,6 +24,8 @@ from tests.test_results_live_recorders import FakeOps
 
 #: The portal frame's beam under sequential tags (FEM id -> ops tag).
 SEQ = {8: 3, 9: 4, 10: 5}
+#: The node record's nodes, as 3-D frame nodes (#2018: node DOFs need it).
+NODES_NDF = {1: 6, 2: 6}
 
 
 def _spec(*records: ResolvedRecorderRecord,
@@ -85,14 +87,17 @@ def test_live_route_issues_ops_tags(category: str, tmp_path: Path) -> None:
     fake = FakeOps()
     spec = _spec(_node_record(), _element_record(category))
     with spec.emit_recorders(str(tmp_path), ops=fake,
-                             model=TagMapModel(SEQ, "h")) as live:
+                             model=TagMapModel(SEQ, "h",
+                                               nodes_ndf=NODES_NDF)) as live:
         live.begin_stage("s")
         live.end_stage()
     ele_calls = [c for c in fake.recorder_calls if "-ele" in c]
     assert ele_calls
     assert all(_ele_ids(c) == [3, 4, 5] for c in ele_calls)
     node_calls = [c for c in fake.recorder_calls if "-node" in c]
-    assert node_calls                                 # nodes pass through
+    assert node_calls                       # node ids pass through untranslated
+    assert all(c[c.index("-node") + 1:c.index("-node") + 3] == (1, 2)
+               for c in node_calls)
 
 
 def test_read_side_layout_stays_in_fem_ids() -> None:
@@ -133,12 +138,23 @@ def test_an_id_the_model_lacks_is_refused(tmp_path: Path) -> None:
             pass
 
 
-def test_node_only_specs_need_no_model(tmp_path: Path) -> None:
+def test_node_only_specs_need_a_model(tmp_path: Path) -> None:
+    """#2018 reverses #1711's pass-through: a node's ``-dof`` list depends
+    on its ndf and the model's ndm, so every route refuses without one."""
     spec = _spec(_node_record())
-    assert spec.to_tcl_commands()
-    assert spec.to_python_commands()
+    with pytest.raises(ValueError, match=r"Pass model="):
+        spec.to_tcl_commands()
+    with pytest.raises(ValueError, match=r"Pass model="):
+        spec.to_python_commands()
     fake = FakeOps()
-    with spec.emit_recorders(str(tmp_path), ops=fake) as live:
+    with pytest.raises(ValueError, match=r"Pass model="):
+        with spec.emit_recorders(str(tmp_path), ops=fake):
+            pass
+    assert fake.recorder_calls == []
+    model = TagMapModel({}, "h", nodes_ndf=NODES_NDF)
+    assert spec.to_tcl_commands(model=model)
+    assert spec.to_python_commands(model=model)
+    with spec.emit_recorders(str(tmp_path), ops=fake, model=model) as live:
         live.begin_stage("s")
         live.end_stage()
     assert fake.recorder_calls

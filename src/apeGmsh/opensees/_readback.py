@@ -45,6 +45,7 @@ from ._internal.build.errors import BridgeError
 from ._internal.build.ndf import _load_dof_layout
 from ._internal.tag_resolution import MISSING_FEM_ELEMENT_ID
 
+from .element.absorbing import ASDAbsorbingBoundary2D, ASDAbsorbingBoundary3D
 from .element.beam_column import (
     ElasticTimoshenkoBeam,
     LadrunoDispBeamColumn,
@@ -136,7 +137,11 @@ class RotationRoles:
     #: Nodes any element touches.
     touched: frozenset[int]
     #: A u-p class anywhere in the model (:data:`_UP_FAMILIES`), or ``None``.
+    #: On the token route it may instead name an element token the
+    #: table does not know (:attr:`model_blocker_unknown`).
     model_blocker: "str | None"
+    #: ``model_blocker`` is an unknown element token, not a u-p class.
+    model_blocker_unknown: bool = False
 
     def refusal(self, tag: int) -> "str | None":
         """Why node ``tag``'s rotational DOF slots carry no rotation, or
@@ -158,6 +163,12 @@ class RotationRoles:
                 "no beam-column or shell (or zero-length) element touches it, so "
                 "no element establishes a rotation in that DOF slot"
             )
+        if self.model_blocker is not None and self.model_blocker_unknown:
+            return (
+                "no element touches it, and the model holds an element "
+                f"token this table does not know ({self.model_blocker}), so "
+                "what a constraint could tie that DOF slot to is unknown"
+            )
         if self.model_blocker is not None:
             return (
                 "no element touches it, and the model holds a "
@@ -173,12 +184,7 @@ def rotation_roles(
 ) -> RotationRoles:
     """The :class:`RotationRoles` of ``targets`` (every node when ``None``)
     under ``element_plan`` (each element spec with its rows)."""
-    want = (None if targets is None
-            else np.unique(np.asarray(list(targets), dtype=np.int64)))
-    rotational: set[int] = set()
-    touched: set[int] = set()
-    blocked: dict[int, str] = {}
-    model_blocker: "str | None" = None
+    rows: list[tuple["type | None", str, np.ndarray]] = []
     for spec, sub in element_plan:
         if len(sub) == 0:
             continue
@@ -188,22 +194,114 @@ def rotation_roles(
         else:
             flat = np.unique(np.fromiter(
                 (int(n) for row in conn for n in row), dtype=np.int64))
-        is_rot = isinstance(spec, _ROTATIONAL_FAMILIES)
-        is_trans = isinstance(spec, _TRANSLATIONAL_ONLY)
-        if isinstance(spec, _UP_FAMILIES) and model_blocker is None:
-            model_blocker = type(spec).__name__
+        rows.append((type(spec), type(spec).__name__, flat))
+    return _roles_from_rows(rows, targets)
+
+
+def _roles_from_rows(
+    rows: "Iterable[tuple[type | None, str, np.ndarray]]",
+    targets: "Iterable[int] | None",
+) -> RotationRoles:
+    """The one classification behind :func:`rotation_roles` and
+    :func:`rotation_roles_from_tokens`: each row is an element class (or
+    ``None`` for one this table cannot name), the name a refusal shows,
+    and the nodes the class's elements touch. ``None`` blocks, and counts
+    as a model blocker like a u-p class: what it carries is not known."""
+    want = (None if targets is None
+            else np.unique(np.asarray(list(targets), dtype=np.int64)))
+    rotational: set[int] = set()
+    touched: set[int] = set()
+    blocked: dict[int, str] = {}
+    model_blocker: "str | None" = None
+    unknown = False
+    for cls, name, flat in rows:
+        is_rot = cls is not None and issubclass(cls, _ROTATIONAL_FAMILIES)
+        is_trans = cls is not None and issubclass(cls, _TRANSLATIONAL_ONLY)
+        if model_blocker is None and (
+                cls is None or issubclass(cls, _UP_FAMILIES)):
+            model_blocker, unknown = name, cls is None
         hit = flat if want is None else np.intersect1d(flat, want)
         nodes = [int(n) for n in hit]
         touched.update(nodes)
         if is_rot:
             rotational.update(nodes)
         elif not is_trans:
-            name = type(spec).__name__
             for n in nodes:
                 blocked.setdefault(n, name)
     return RotationRoles(
         rotational=frozenset(rotational), blocked=blocked,
         touched=frozenset(touched), model_blocker=model_blocker,
+        model_blocker_unknown=unknown,
+    )
+
+
+#: OpenSees ``element`` token -> the bridge class that emits it, for every
+#: ``Element`` class with an ``_emit``, in the family tuples or not (an
+#: absorbing boundary blocks its own nodes, as on the declared path, but is
+#: no model blocker). Each class's ``_emit`` writes the token;
+#: ``tests/test_results_recorder_emit.py`` reads it back from the source
+#: and checks no ``Element`` subclass is missing. A rehydrated model keeps
+#: only the token (``ElementRecord.type_token``). A token not here is an
+#: unknown class: it blocks the rotational slots of the nodes it touches,
+#: and of element-less nodes.
+_CLASS_FOR_TOKEN: "dict[str, type]" = {
+    "elasticBeamColumn": elasticBeamColumn,
+    "forceBeamColumn": forceBeamColumn,
+    "dispBeamColumn": dispBeamColumn,
+    "ElasticTimoshenkoBeam": ElasticTimoshenkoBeam,
+    "LadrunoDispBeamColumn": LadrunoDispBeamColumn,
+    "LadrunoIMKBeam": LadrunoIMKBeam,
+    "ShellMITC4": ShellMITC4,
+    "ShellMITC3": ShellMITC3,
+    "ShellDKGQ": ShellDKGQ,
+    "ASDShellQ4": ASDShellQ4,
+    "ASDShellT3": ASDShellT3,
+    "zeroLength": ZeroLength,
+    "zeroLengthSection": ZeroLengthSection,
+    "CoupledZeroLength": CoupledZeroLength,
+    "twoNodeLink": TwoNodeLink,
+    "Truss": Truss,
+    "CorotTruss": CorotTruss,
+    "InertiaTruss": InertiaTruss,
+    "quad": FourNodeQuad,
+    "tri31": Tri31,
+    "tri6n": SixNodeTri,
+    "BezierTri6": BezierTri6,
+    "LadrunoQuad": LadrunoQuad,
+    "LadrunoCST": LadrunoCST,
+    "LadrunoLST": LadrunoLST,
+    "FourNodeTetrahedron": FourNodeTetrahedron,
+    "TenNodeTetrahedron": TenNodeTetrahedron,
+    "BezierTet10": BezierTet10,
+    "stdBrick": stdBrick,
+    "LadrunoBrick": LadrunoBrick,
+    "LadrunoBrick20": LadrunoBrick20,
+    "LadrunoUP": LadrunoUP,
+    "ASDAbsorbingBoundary2D": ASDAbsorbingBoundary2D,
+    "ASDAbsorbingBoundary3D": ASDAbsorbingBoundary3D,
+}
+
+
+def rotation_roles_from_tokens(
+    rows: "Iterable[tuple[str, Iterable[int]]]",
+    targets: "Iterable[int] | None" = None,
+) -> RotationRoles:
+    """:func:`rotation_roles` for a model that keeps only element tokens.
+
+    ``rows`` are ``(type_token, node tags)``, one per element, as a
+    rehydrated :class:`~apeGmsh.opensees.OpenSeesModel` holds them. Each
+    token maps to its class through :data:`_CLASS_FOR_TOKEN` and the same
+    family tables; an unknown token blocks the rotational slots of its
+    nodes and, like a u-p class, of element-less nodes.
+    """
+    by_token: dict[str, list[int]] = {}
+    for token, nodes in rows:
+        by_token.setdefault(str(token), []).extend(int(n) for n in nodes)
+    return _roles_from_rows(
+        ((_CLASS_FOR_TOKEN.get(tok), tok,
+          np.unique(np.asarray(nodes, dtype=np.int64)))
+         for tok, nodes in by_token.items()),
+        targets,
     )
 
 if TYPE_CHECKING:

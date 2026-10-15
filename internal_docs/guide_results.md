@@ -61,7 +61,7 @@ results = Results.from_mpco(
 
 ### `Results.from_recorders` — classic OpenSees recorders
 
-For `.out` / `.xml` files written by `ops.tcl(..., recorders=spec)`, `ops.py(..., recorders=spec)`, or `spec.emit_recorders(...)` (Strategy A₁/A₂/A₃). Here `ops` is the `apeSees(fem)` bridge.
+For `.out` / `.xml` files written by `ops.tcl(..., recorders=spec)`, `ops.py(..., recorders=spec)`, or `spec.emit_recorders(..., model=model)` (Strategy A₁/A₂/A₃). Every emit route needs the built `model=` for node and element records (#2018). Here `ops` is the `apeSees(fem)` bridge.
 
 ```python
 results = Results.from_recorders(spec, "out/", fem=fem, model=model)

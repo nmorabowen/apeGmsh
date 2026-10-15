@@ -151,8 +151,10 @@ changes to the readers.
 > - Per-record: category, components, resolved IDs, cadence, optional
 >   section metadata.
 > - Methods on the spec correspond to **execution strategies**:
->   `to_tcl_commands()`, `to_python_commands()`, `capture(...)`,
->   `emit_recorders(...)`, `emit_mpco(...)`.
+>   `to_tcl_commands(model=)`, `to_python_commands(model=)`,
+>   `capture(...)`, `emit_recorders(..., model=)`, `emit_mpco(...)`.
+>   The classic-recorder routes need the built model for every node or
+>   element record (#2018).
 
 ---
 
@@ -342,7 +344,14 @@ they share a small core that's worth knowing about.
 
 `emit_logical(record, output_dir, file_format, stage_id)` takes a
 resolved record and returns a list of `LogicalRecorder` dataclasses:
-*one classic-recorder command in structured form*. From there:
+*one classic-recorder command in structured form*. It keeps element
+ids as FEM ids and node DOFs as spatial slots (`rotation_z` is 6), which
+is what the transcoder and the cache read. `to_deck(logical, tag_map,
+model, where=...)` maps it to the command that reaches OpenSees: element
+tags, and each node slot at the DOF the nodes carry it
+(`_node_layout(ndf, ndm)`; a 2-D frame's `rotation_z` is DOF 3). It
+raises without `model=` for any node or element record (#2018), and
+the formatters refuse a node recorder it has not mapped. From there:
 
 - `format_tcl(logical)` → Tcl source line (used by A₁).
 - `format_python(logical)` → Python source line (used by A₂).

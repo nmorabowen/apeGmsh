@@ -66,11 +66,14 @@ the type level — numpy and dataclasses only.
 That frozenness is the seam: **anything that can walk a spec is a valid
 execution strategy**, and the strategies are just its consumers.
 
-- **Script emission** — `to_tcl_commands()` / `to_python_commands()`
-  translate each record into `recorder Node …` / `recorder Element …`
-  source inlined into an exported deck; the user runs OpenSees
-  elsewhere and the spec doubles as the manifest for parsing the output.
-- **Live recorders** — `spec.emit_recorders(out_dir)` pushes the same
+- **Script emission** — `to_tcl_commands(model=model)` /
+  `to_python_commands(model=model)` translate each record into
+  `recorder Node …` / `recorder Element …` source inlined into an
+  exported deck; the user runs OpenSees elsewhere and the spec doubles
+  as the manifest for parsing the output. The built model is required:
+  it maps element ids to OpenSees tags and each node's DOFs to its own
+  layout (a 2-D frame's `rotation_z` is DOF 3).
+- **Live recorders** — `spec.emit_recorders(out_dir, model=model)` pushes the same
   commands into the running openseespy domain via `ops.recorder(*args)`,
   with a per-stage filename prefix (`<stage>__…`) so multi-stage runs
   don't collide.
@@ -89,9 +92,13 @@ execution strategy**, and the strategies are just its consumers.
 
 Text and live emission cannot drift apart because they share one core.
 `emit_logical()` turns a resolved record into `LogicalRecorder`
-values — one classic recorder command in structured form — and
-`format_tcl` / `format_python` / `to_ops_args` are three renderings of
-the same object (with `mpco_ops_args` playing the same role for MPCO).
+values — one classic recorder command in structured form, with element
+ids as FEM ids and node DOFs as spatial slots, which is what the read
+side keys on. `to_deck()` maps that object to what reaches OpenSees,
+using the built model: element tags, and each slot at the DOF the nodes
+carry it. `format_tcl` / `format_python` / `to_ops_args` are three
+renderings of the mapped object (with `mpco_ops_args` playing the same
+role for MPCO).
 Cross-check tests assert the source-code form and the live-args form
 agree, so a change to recorder argument shape lands in one place.
 

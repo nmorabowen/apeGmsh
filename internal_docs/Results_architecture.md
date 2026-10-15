@@ -239,7 +239,8 @@ spec is also serialized as a sidecar HDF5 manifest so
 #### Strategy A₃ — Live recorders (in-process)
 
 ```python
-with spec.emit_recorders("out/") as live:
+model = OpenSeesModel.from_h5("model.h5")   # written by ops.h5(...)
+with spec.emit_recorders("out/", model=model) as live:
     live.begin_stage("gravity", kind="static")
     for _ in range(n_grav):
         ops.analyze(1, 1.0)
@@ -250,9 +251,15 @@ with spec.emit_recorders("out/") as live:
         ops.analyze(1, dt)
     live.end_stage()
 
-grav = Results.from_recorders(spec, "out/", fem=fem, stage_id="gravity")
-dyn  = Results.from_recorders(spec, "out/", fem=fem, stage_id="dynamic")
+grav = Results.from_recorders(spec, "out/", fem=fem, model=model,
+                              stage_id="gravity")
+dyn  = Results.from_recorders(spec, "out/", fem=fem, model=model,
+                              stage_id="dynamic")
 ```
+
+`model=` is required for every node or element record (#2018): it maps
+element ids to OpenSees tags, and each node's DOFs to its own layout (a
+2-D frame's `rotation_z` is DOF 3, not 6).
 
 Same recorder commands as A₁/A₂, but pushed into the live openseespy
 domain via `ops.recorder(*args)` — no script written, no subprocess.
@@ -263,7 +270,8 @@ emitter, the cache key, and the transcoder's path discovery).
 
 Single-source-of-truth note: the `LogicalRecorder` dataclass returned
 by `emit_logical()` is shared between A₁ (`format_tcl`), A₂
-(`format_python`), and A₃ (`to_ops_args`). The same MPCO
+(`format_python`), and A₃ (`to_ops_args`), each after `to_deck()` has
+mapped it through the built model. The same MPCO
 `mpco_ops_args` mirrors `emit_mpco_python` for C₁/C₂.
 
 Coverage: nodes, elements, gauss, line_stations. Fibers / layers

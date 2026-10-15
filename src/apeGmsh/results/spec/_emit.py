@@ -50,7 +50,9 @@ from ._resolved import ResolvedRecorderRecord
 
 # Translational axis suffix → DOF index (1-based, OpenSees convention)
 _AXIS_TO_TRANS_DOF = {"x": 1, "y": 2, "z": 3}
-# Rotational axis suffix → DOF index in 3D (ndf=6)
+# Rotational axis suffix → spatial slot as a DOF of the full 6-DOF
+# layout. A slot, not the deck DOF: :func:`to_deck` maps it per node
+# (a planar frame's rotation_z is DOF 3).
 _AXIS_TO_ROT_DOF = {"x": 4, "y": 5, "z": 6}
 
 # Canonical prefix → (ops_recorder_type, axis_kind)
@@ -317,9 +319,17 @@ class LogicalRecorder:
     value oracle near rtol 1e-5; the default 17 is the digit count that
     round-trips an IEEE double, so the file holds the value the domain
     held. Every formatter emits it (#1974).
+
+    ``dofs`` (node recorders) names spatial slots as DOFs of the full
+    ``(x, y, z, rx, ry, rz)`` layout: ``rotation_z`` is 6 whatever the
+    model, and the read side keys its columns by them. ``deck_dofs`` is
+    the ``-dof`` list the command records: each slot at the DOF the
+    nodes' own layout places it (``rotation_z`` is DOF 3 on a planar
+    frame node). Only :func:`to_deck` sets it, from the built model, and
+    the formatters refuse a node recorder without it (#2018).
     """
 
-    kind: str                          # "Node" | "Element"
+    kind: str                         # "Node" | "Element"
     file_path: str
     file_format: str                   # "out" | "xml"
     target_kind: str                   # "node" | "ele"
@@ -330,6 +340,7 @@ class LogicalRecorder:
     record_name: str = ""              # for traceability / comments
     comment: str = ""                  # appended as a trailing comment
     precision: int = 17                # significant digits (-precision)
+    deck_dofs: Optional[tuple[int, ...]] = None   # nodes: set by to_deck
 
     def __post_init__(self) -> None:
         p = self.precision
@@ -387,8 +398,10 @@ def emit_logical(
 # :func:`emit_logical` stays in FEM-id space: the transcoder and the cache
 # read it back to label rows and to find files. Only the command that
 # reaches OpenSees is translated, through :func:`to_ops_tags`. Node
-# records need no map: the bridge emits every node under its FEM id
-# (``opensees/_internal/compose.py``, node emit).
+# records need no id map: the bridge emits every node under its FEM id
+# (``opensees/_internal/compose.py``, node emit). Their DOFs do need the
+# model: ``emit_logical`` keys them by spatial slot, and :func:`to_deck`
+# maps each slot to the DOF the nodes carry it at.
 
 
 def element_tag_map(model: object, *, fem_snapshot_id: str) -> dict[int, int]:
@@ -462,8 +475,69 @@ def to_ops_tags(
     )
 
 
+#: The node response whose ``-dof`` is not a spatial slot. It is passed
+#: through as emitted; its DOF does not follow the node layout.
+_SLOTLESS_NODE_TOKENS = frozenset({"pressure"})
+
+
+def to_deck(
+    rec: LogicalRecorder,
+    tag_map: "dict[int, int] | None",
+    model: object,
+    *,
+    where: str,
+) -> LogicalRecorder:
+    """Return ``rec`` as the command that reaches OpenSees.
+
+    An element recorder's ids are translated FEM id → ops tag
+    (:func:`to_ops_tags`). A node recorder's slot ``dofs`` are mapped to
+    the DOFs each node's layout places them at (``deck_dofs``), from
+    ``model``'s ``ndm`` and per-node ndf: a 2-D ``rotation_z`` is DOF 3
+    (#2018). A rotational slot also needs the node's rotation role from
+    the model's elements: a u-p node's DOF ``ndm + 1`` is pore pressure,
+    and an unknown element class blocks it, so both refuse. A node
+    recorder with no ``model`` raises, since no slot's
+    DOF is known without it (a 2-D ``displacement_z`` would record the
+    rotation).
+    """
+    if rec.target_kind == "ele":
+        return to_ops_tags(rec, tag_map, where=where)
+    if rec.dofs is None:
+        raise ValueError(
+            f"{where}: node record {rec.record_name!r} has no DOFs.")
+    if model is None:
+        raise ValueError(
+            f"{where}: node record {rec.record_name!r} records DOFs whose "
+            f"index depends on each node's ndf and the model's ndm (a 2-D "
+            f"frame's rotation_z is DOF 3, a 3-D one's DOF 6). Pass model= "
+            f"(the built OpenSeesModel, e.g. OpenSeesModel.from_h5(<ops.h5"
+            f"(...) path>)) so the -dof list names the DOFs the nodes carry."
+        )
+    if set(rec.response_tokens) & _SLOTLESS_NODE_TOKENS:
+        return replace(rec, deck_dofs=rec.dofs)
+    from ...opensees._recorder_translate import model_node_deck_dofs
+
+    deck = model_node_deck_dofs(
+        rec.dofs, rec.target_ids, model,
+        where=f"{where}: node record {rec.record_name!r}",
+    )
+    return replace(rec, deck_dofs=deck)
+
+
+def _deck_dof_list(rec: LogicalRecorder) -> Optional[tuple[int, ...]]:
+    """The ``-dof`` list a formatter writes; refuse an unmapped node one."""
+    if rec.kind == "Node" and rec.deck_dofs is None:
+        raise ValueError(
+            f"Node recorder {rec.record_name!r}: its DOFs are slots, not "
+            f"the DOFs the nodes carry. Map them with to_deck(..., model=) "
+            f"first: pass model= (the built OpenSeesModel)."
+        )
+    return rec.deck_dofs if rec.kind == "Node" else rec.dofs
+
+
 def format_tcl(rec: LogicalRecorder) -> str:
     """Format a LogicalRecorder as one ``recorder ...`` Tcl command line."""
+    dofs = _deck_dof_list(rec)
     parts: list[str] = ["recorder", rec.kind]
     parts.extend(_file_flag_tcl(rec.file_path, rec.file_format))
     parts.append("-time")
@@ -471,9 +545,9 @@ def format_tcl(rec: LogicalRecorder) -> str:
         parts.append(f"-dT {rec.dt:.10g}")
     parts.append(f"-{rec.target_kind}")
     parts.extend(str(i) for i in rec.target_ids)
-    if rec.dofs is not None:
+    if dofs is not None:
         parts.append("-dof")
-        parts.extend(str(d) for d in rec.dofs)
+        parts.extend(str(d) for d in dofs)
     # After the target list, before the response: OpenSees reads options
     # in any order and the first unknown token starts the response.
     parts.append(f"-precision {rec.precision}")
@@ -486,6 +560,7 @@ def format_tcl(rec: LogicalRecorder) -> str:
 
 def format_python(rec: LogicalRecorder) -> str:
     """Format a LogicalRecorder as one ``ops.recorder(...)`` call."""
+    dofs = _deck_dof_list(rec)
     args: list[str] = [repr(rec.kind)]
     args.extend(_file_flag_py(rec.file_path, rec.file_format))
     args.append("'-time'")
@@ -493,9 +568,9 @@ def format_python(rec: LogicalRecorder) -> str:
         args.extend(["'-dT'", f"{rec.dt:.10g}"])
     args.append(f"'-{rec.target_kind}'")
     args.extend(str(i) for i in rec.target_ids)
-    if rec.dofs is not None:
+    if dofs is not None:
         args.append("'-dof'")
-        args.extend(str(d) for d in rec.dofs)
+        args.extend(str(d) for d in dofs)
     args.extend(["'-precision'", str(rec.precision)])
     args.extend(repr(t) for t in rec.response_tokens)
     line = f"ops.recorder({', '.join(args)})"
@@ -519,6 +594,7 @@ def to_ops_args(rec: LogicalRecorder) -> tuple:
     >>> import openseespy.opensees as ops
     >>> ops.recorder(*to_ops_args(logical))   # doctest: +SKIP
     """
+    dofs = _deck_dof_list(rec)
     args: list = [rec.kind]
     if rec.file_format == "xml":
         args.extend(["-xml", rec.file_path])
@@ -529,9 +605,9 @@ def to_ops_args(rec: LogicalRecorder) -> tuple:
         args.extend(["-dT", float(rec.dt)])
     args.append(f"-{rec.target_kind}")
     args.extend(int(i) for i in rec.target_ids)
-    if rec.dofs is not None:
+    if dofs is not None:
         args.append("-dof")
-        args.extend(int(d) for d in rec.dofs)
+        args.extend(int(d) for d in dofs)
     args.extend(["-precision", int(rec.precision)])
     args.extend(rec.response_tokens)
     return tuple(args)
@@ -833,8 +909,8 @@ def emit_spec_tcl(
     """Emit Tcl recorder commands for an iterable of resolved records.
 
     ``model`` (the built ``OpenSeesModel``) translates element ids to
-    OpenSees tags; an element record without it raises
-    (:func:`to_ops_tags`).
+    OpenSees tags and maps node DOFs to each node's layout; any node or
+    element record without it raises (:func:`to_deck`).
     """
     tag_map = (None if model is None else
                element_tag_map(model, fem_snapshot_id=fem_snapshot_id))
@@ -852,8 +928,9 @@ def emit_spec_tcl(
         ))
         # Empty sub means "no targets" (e.g. zero IDs) — silently skip.
         for lr in sub:
-            lines.append(format_tcl(to_ops_tags(
-                lr, tag_map, where="ResolvedRecorderSpec.to_tcl_commands",
+            lines.append(format_tcl(to_deck(
+                lr, tag_map, model,
+                where="ResolvedRecorderSpec.to_tcl_commands",
             )))
     return lines
 
@@ -868,7 +945,8 @@ def emit_spec_python(
 ) -> list[str]:
     """Emit ``ops.recorder(...)`` calls for an iterable of resolved records.
 
-    ``model`` translates element ids as in :func:`emit_spec_tcl`.
+    ``model`` translates element ids and node DOFs as in
+    :func:`emit_spec_tcl`.
     """
     tag_map = (None if model is None else
                element_tag_map(model, fem_snapshot_id=fem_snapshot_id))
@@ -885,8 +963,9 @@ def emit_spec_python(
             rec, output_dir=output_dir, file_format=file_format,
         ))
         for lr in sub:
-            lines.append(format_python(to_ops_tags(
-                lr, tag_map, where="ResolvedRecorderSpec.to_python_commands",
+            lines.append(format_python(to_deck(
+                lr, tag_map, model,
+                where="ResolvedRecorderSpec.to_python_commands",
             )))
     return lines
 
