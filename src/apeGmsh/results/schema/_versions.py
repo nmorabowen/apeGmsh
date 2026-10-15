@@ -46,6 +46,10 @@ Results 1.2.0 (#1746, additive minor, ADR 0113) — optional root attr
 when it can prove its element rows carry FEM element ids. Absent means
 unverified; 1.0.0 and 1.1.0 files keep reading. ``PARSER_VERSION`` bumps
 to ``"1.1"`` with it, so a cached pre-stamp transcode is re-made.
+
+``PARSER_VERSION`` ``"1.2"`` (#1971): the ``.out`` transcode writes NaN
+for a rotation a node's DOF layout lacks, where it kept the recorder's
+padded 0.0. The bump re-makes a cached transcode that holds the 0.0.
 """
 from __future__ import annotations
 
@@ -54,7 +58,7 @@ RESULTS_SCHEMA_VERSION = "1.2.0"
 #: Oldest results-zone version the reader opens (ADR 0113 (#1303)). It moves
 #: only with a major bump; ``schema_version.reader_floor`` reads it here.
 RESULTS_SCHEMA_FLOOR = "1.0.0"
-PARSER_VERSION = "1.1"
+PARSER_VERSION = "1.2"
 
 # Ladruno recorder on-disk format — the integer ``INFO/FORMAT_VERSION``
 # the ``.ladruno`` HDF5 writer stamps (currently 1). The reader is pinned

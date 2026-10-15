@@ -42,15 +42,12 @@ from numpy import ndarray
 
 from ..._vocabulary import MPCO_MATERIAL_SYMBOL_TO_CANONICAL_SUFFIX
 from ...opensees._response_catalog import (
-    RESPONSE_CATALOG,
     MPCOElementKey,
     ResponseLayout,
-    is_catalogued,
-    lookup,
     mpco_gauss_group_aliases,
     parse_mpco_element_key,
 )
-from ._mpco_element_io import _attr_scalar
+from ._mpco_element_io import _attr_scalar, catalog_layout
 
 if TYPE_CHECKING:
     import h5py
@@ -250,7 +247,9 @@ class _MaterialBucket:
     parent_token: str                    # "damage" / "equivalent_plastic_strain"
 
 
-def _stress_gp_layout_for(elem_key: MPCOElementKey) -> ResponseLayout | None:
+def _stress_gp_layout_for(
+    elem_key: MPCOElementKey, *, where: str,
+) -> ResponseLayout | None:
     """Look up the stress catalog entry for the same class + rule.
 
     Material-state buckets share GP layout (n_GP and natural_coords)
@@ -258,10 +257,11 @@ def _stress_gp_layout_for(elem_key: MPCOElementKey) -> ResponseLayout | None:
     entry for damage / eps_pl shape (META carries the per-component
     structure), but the per-class GP coordinates are still needed
     for the slab's natural_coords.
+
+    A rule-0 bracket (the fork's Ladruno-band classes) resolves to the
+    class's one catalogued rule, as on the stress path.
     """
-    if not is_catalogued(elem_key.class_name, elem_key.int_rule, "stress"):
-        return None
-    return lookup(elem_key.class_name, elem_key.int_rule, "stress")
+    return catalog_layout(elem_key, "stress", where=where)
 
 
 # =====================================================================
@@ -305,7 +305,9 @@ def discover_material_state_buckets(
                 continue
             if elem_key.custom_rule_idx != 0 or elem_key.header_idx != 0:
                 continue
-            gp_layout = _stress_gp_layout_for(elem_key)
+            gp_layout = _stress_gp_layout_for(
+                elem_key, where=f"{name}/{bracket_key}",
+            )
             if gp_layout is None:
                 continue
             out.append(_MaterialBucket(

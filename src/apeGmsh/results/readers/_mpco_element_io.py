@@ -26,6 +26,7 @@ the user can always extend the catalog and re-read the same file.
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING
 
@@ -34,7 +35,8 @@ from numpy import ndarray
 
 from ..._vocabulary import STRAIN_2D, STRESS_2D
 from ...opensees._response_catalog import (
-    CatalogLookupError,
+    RESPONSE_CATALOG,
+    IntRule,
     MPCOElementKey,
     ResponseLayout,
     gauss_routing_for_canonical,
@@ -89,6 +91,9 @@ class _Bucket:
     elem_key: MPCOElementKey
     layout: ResponseLayout
     mpco_group_name: str = ""
+    #: The bracket's rule was 0, so ``layout`` is the class's one
+    #: catalogued rule, chosen by class name rather than named by the file.
+    rule_from_class: bool = False
 
 
 # =====================================================================
@@ -128,6 +133,10 @@ def discover_gauss_buckets(
         return (None, [])
     mpco_group_name, catalog_token = mapping
     candidate_names = mpco_gauss_group_aliases(mpco_group_name)
+    # The ON_ELEMENTS group is named by the keyword the deck asked for,
+    # so ``-E stress`` lands under ``stress``, not ``stresses``.
+    if catalog_token not in candidate_names:
+        candidate_names = candidate_names + (catalog_token,)
 
     out: list[_Bucket] = []
     seen_keys: set[str] = set()
@@ -145,24 +154,61 @@ def discover_gauss_buckets(
                 continue
             if elem_key.custom_rule_idx != 0 or elem_key.header_idx != 0:
                 continue
-            if not is_catalogued(
-                elem_key.class_name, elem_key.int_rule, catalog_token,
-            ):
-                continue
-            layout = lookup(
-                elem_key.class_name, elem_key.int_rule, catalog_token,
+            found = catalog_layout(
+                elem_key, catalog_token, where=f"{name}/{bracket_key}",
             )
-            layout = _maybe_extend_plane_layout(layout, token_grp[bracket_key])
+            if found is None:
+                continue
+            layout = _maybe_extend_plane_layout(found, token_grp[bracket_key])
             out.append(_Bucket(
                 bracket_key=bracket_key,
                 elem_key=elem_key,
                 layout=layout,
                 mpco_group_name=name,
+                rule_from_class=(
+                    elem_key.int_rule == IntRule.NoIntegrationRule
+                ),
             ))
             seen_keys.add(bracket_key)
             if found_name is None:
                 found_name = name
     return (found_name or mpco_group_name, out)
+
+
+# The fork's MPCO recorder writes the bracket rule as 0
+# (NoIntegrationRule) for every Ladruno-band class tag — LadrunoBrick20 is
+# ``33018-LadrunoBrick20[0:0:0]`` — so the bracket cannot be the catalog's
+# ``int_rule`` key. No catalog row is keyed on rule 0, and every catalogued
+# (class, token) has at most one non-Custom rule, so a rule-0 bucket takes
+# the class's one row. Its width and GP blocks are still checked against
+# that row at read time, so a bucket that does not fit refuses loudly.
+
+def catalog_layout(
+    elem_key: MPCOElementKey, catalog_token: str, *, where: str,
+) -> ResponseLayout | None:
+    """The catalog row for one bucket, or ``None`` for an uncatalogued class.
+
+    Raises ``ValueError`` for a rule-0 bucket whose class the catalog
+    places at more than one Gauss rule under this token: which one the
+    file holds cannot be told from the bracket.
+    """
+    cls = elem_key.class_name
+    if is_catalogued(cls, elem_key.int_rule, catalog_token):
+        return lookup(cls, elem_key.int_rule, catalog_token)
+    if elem_key.int_rule != IntRule.NoIntegrationRule:
+        return None
+    rows = [
+        lay for (c, rule, tok), lay in RESPONSE_CATALOG.items()
+        if c == cls and tok == catalog_token and rule != IntRule.Custom
+    ]
+    if len(rows) > 1:
+        raise ValueError(
+            f"MPCO bucket {where!r} carries integration rule 0, and "
+            f"RESPONSE_CATALOG has {len(rows)} rules for class {cls!r} / "
+            f"token {catalog_token!r}. Refusing to guess which one the "
+            f"file holds."
+        )
+    return rows[0] if rows else None
 
 
 # =====================================================================
@@ -289,6 +335,50 @@ def validate_bucket_meta(
         )
 
 
+_GENERIC_COMP_RE = re.compile(r"^C\d+$")
+
+
+def is_unnamed_element_block(
+    bucket_grp: "h5py.Group", layout: ResponseLayout,
+) -> bool:
+    """Whether the bucket is one unnamed element-level block of the catalog's width.
+
+    An element that tags no Gauss points or component names (LadrunoLST)
+    is written as a single element-level block (``GAUSS_IDS == [-1]``)
+    labelled ``C1..Cn``. Its columns can only be named by the catalog, so
+    it is read by the catalog layout when, and only when, its width is
+    exactly the layout's. A block with its own names (Truss ``N``) or
+    another width is not one; :func:`validate_bucket_meta` then refuses it.
+    """
+    if "META" not in bucket_grp:
+        return False
+    meta = bucket_grp["META"]
+    if not all(k in meta for k in (
+        "MULTIPLICITY", "GAUSS_IDS", "NUM_COMPONENTS", "COMPONENTS",
+    )):
+        return False
+    num_columns_attr = bucket_grp.attrs.get("NUM_COLUMNS")
+    if num_columns_attr is None:
+        return False
+    width = layout.flat_size_per_element
+    if int(_attr_scalar(num_columns_attr)) != width:
+        return False
+    gauss_ids = np.asarray(meta["GAUSS_IDS"][...]).flatten()
+    multiplicity = np.asarray(meta["MULTIPLICITY"][...]).flatten()
+    num_components = np.asarray(meta["NUM_COMPONENTS"][...]).flatten()
+    if (gauss_ids.tolist() != [-1] or multiplicity.tolist() != [1]
+            or num_components.tolist() != [width]):
+        return False
+    raw = np.asarray(meta["COMPONENTS"][...]).flatten()
+    if raw.size != 1:
+        return False
+    text = raw[0].decode() if isinstance(raw[0], bytes) else str(raw[0])
+    names = text.rpartition(".")[2].split(",")
+    return len(names) == width and all(
+        _GENERIC_COMP_RE.match(n) for n in names
+    )
+
+
 # =====================================================================
 # Slab read — one bucket
 # =====================================================================
@@ -316,9 +406,26 @@ def read_bucket_slab(
     if canonical_component not in layout.component_layout:
         return None
 
-    validate_bucket_meta(
-        bucket_grp, layout, bracket_key=bucket.bracket_key,
-    )
+    if not is_unnamed_element_block(bucket_grp, layout):
+        try:
+            validate_bucket_meta(
+                bucket_grp, layout, bracket_key=bucket.bracket_key,
+            )
+        except ValueError as exc:
+            if not bucket.rule_from_class:
+                raise
+            raise ValueError(
+                f"{exc} The bracket carries integration rule 0, so this "
+                f"{layout.n_gauss_points}-GP layout is the only rule "
+                f"RESPONSE_CATALOG has for {bucket.elem_key.class_name!r}, "
+                f"resolved by class name, not one the file named. The "
+                f"elements were integrated with another rule (another "
+                f"formulation of the same class, such as one with a "
+                f"reduced rule), so MPCO cannot say where their Gauss "
+                f"points are. Record this element with the fork's native "
+                f"recorder, which stores each element's own Gauss points "
+                f"and reads it correctly."
+            ) from exc
 
     # Element IDs in row order.
     all_ids = np.asarray(bucket_grp["ID"][...]).flatten().astype(np.int64)
