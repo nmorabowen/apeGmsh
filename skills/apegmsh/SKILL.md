@@ -4,8 +4,8 @@ description: >
   apeGmsh is a Gmsh wrapper for structural FEM with first-class OpenSees
   integration. Use this skill any time the user is writing, reading,
   debugging, or reviewing code that imports apeGmsh (``from apeGmsh
-  import apeGmsh`` / ``Part`` / ``FEMData`` / ``Results``) or touches the
-  apeGmsh project at ``C:\Users\nmora\Github\apeGmsh``. Trigger for:
+  import apeGmsh`` / ``Part`` / ``FEMData`` / ``Results``) or works inside
+  the apeGmsh repository. Trigger for:
   building an ``apeGmsh`` session, composing geometry via
   ``g.model.geometry/boolean/transforms/io/queries`` (including
   ``as_void`` / ``add_polyline`` / ``add_void_sweep`` / ``apply_voids``),
@@ -34,8 +34,7 @@ description: >
 # apeGmsh — structural FEM wrapper around Gmsh
 <!-- skill-freshness: verified against apeGmsh main@5c92ca92 (2026-08-15) · signatures live in the references; src/ is not the authoring lookup (ADR 0096) -->
 
-apeGmsh is the user's in-house Gmsh wrapper. It lives at
-`C:\Users\nmora\Github\apeGmsh`, and the *core idea* is:
+apeGmsh is the user's in-house Gmsh wrapper, and the *core idea* is:
 
 > Describe a model **once** — geometry, labels, loads, masses, constraints,
 > per-node ndf — then hand a solver-agnostic **snapshot** (`FEMData`) to any
@@ -161,40 +160,55 @@ same is true of the side-lists that emit *elements* rather than MP equations:
 Every apeGmsh script follows the same skeleton. Learn this, and everything
 else is filling in blanks:
 
+<!-- reference-script: skeleton.py -->
 ```python
 # verified: tests/test_femdata_from_h5.py::test_session_save_then_from_h5
 #           tests/opensees/integration/test_runnable_deck.py::test_tcl_deck_contains_constraint_lines
 from apeGmsh import apeGmsh
-
-with apeGmsh(model_name="my_model", save_to="my_model.h5") as g:
-    # 1-5: GEOMETRY (occ) → PHYSICAL GROUPS (dim-unique names) → pre-mesh
-    #      LOADS/MASSES/CONSTRAINTS (reference labels/PGs) → MESH → SNAPSHOT.
-    #      (workflows.md §1 has the fully-commented version.)
-    g.model.geometry.add_box(0, 0, 0, 10, 5, 2, label="body")
-    g.physical.add_volume("body", name="Body")
-    with g.loads.case("dead"):
-        g.loads.gravity("Body", g=(0, 0, -9.81), density=2400)
-    g.masses.volume("Body", density=2400)
-    g.mesh.sizing.set_global_size(0.5)
-    g.mesh.generation.generate(dim=3)
-    fem = g.mesh.queries.get_fem_data(dim=3)   # the solver contract; autosaved to my_model.h5 on exit
-    print(fem.info)                            # "N nodes, M elements, bandwidth=..."
-
-# 6. OPENSEES (optional) — post-session bridge, typed primitives.
-#    Masses/fixities are re-declared explicitly; loads are OPT-IN — a
-#    g.loads.case reaches the deck only via p.from_model(case) inside a
-#    pattern (ADR 0051). MP constraints + per-node ndf emit AUTOMATICALLY.
 from apeGmsh.opensees import apeSees
 
+# DATA (SI: m, N, kg, s)
+LENGTH = 10.0  # m, cantilever span along x
+WIDTH = 5.0  # m
+DEPTH = 2.0  # m
+DENSITY = 2400.0  # kg/m^3
+GRAVITY = (0.0, 0.0, -9.81)  # m/s^2
+YOUNG = 30e9  # Pa
+POISSON = 0.2  # -
+MESH_SIZE = 0.5  # m
+X_AXIS = (1.0, 0.0, 0.0)  # normal of both end faces
+FACE_TOL = 1e-6  # m
+TIP_NODE_FORCE = (0.0, 0.0, -5e4)  # N, at every Tip node
+
+with apeGmsh(model_name="my_model", save_to="my_model.h5") as g:
+    # GEOMETRY (occ) → PHYSICAL GROUPS (dim-unique names) → pre-mesh
+    # LOADS/MASSES/CONSTRAINTS (on labels/PGs) → MESH → SNAPSHOT (workflows.md §1).
+    g.model.geometry.add_box(0.0, 0.0, 0.0, LENGTH, WIDTH, DEPTH, label="body")
+    g.physical.add_volume("body", name="Body")
+    g.model.select(None, dim=2).on_plane((0.0, 0.0, 0.0), X_AXIS, tol=FACE_TOL).to_physical("Base")
+    g.model.select(None, dim=2).on_plane((LENGTH, 0.0, 0.0), X_AXIS, tol=FACE_TOL).to_physical("Tip")
+    with g.loads.case("dead"):
+        g.loads.gravity("Body", g=GRAVITY, density=DENSITY)
+    g.masses.volume("Body", density=DENSITY)
+    g.mesh.sizing.set_global_size(MESH_SIZE)
+    g.mesh.generation.generate(dim=3)
+    fem = g.mesh.queries.get_fem_data(dim=3)   # the solver contract; autosaved on exit
+    print(fem.info)
+
+assert fem.nodes.select(pg="Base").ids and fem.nodes.select(pg="Tip").ids
+
+# OPENSEES (optional): post-session bridge. Loads are OPT-IN via p.from_model
+# (ADR 0051); masses and fixities are restated; MP constraints + ndf auto-emit.
 ops = apeSees(fem)
 ops.model(ndm=3, ndf=3)
-conc = ops.nDMaterial.ElasticIsotropic(E=30e9, nu=0.2, rho=2400)
+conc = ops.nDMaterial.ElasticIsotropic(E=YOUNG, nu=POISSON)   # no rho: g.masses carries it
 ops.element.FourNodeTetrahedron(pg="Body", material=conc)
 ops.fix(pg="Base", dofs=(1, 1, 1))
+ops.mass_from_model()
 with ops.pattern.Plain(series=ops.timeSeries.Linear()) as p:
-    p.from_model("dead")                    # import the session's "dead" case
-    p.load(pg="Tip", forces=(0.0, 0.0, -5e4))   # + an ad-hoc bridge load
-ops.py("model.py")     # or ops.tcl(...), ops.h5(...), ops.run()
+    p.from_model("dead")
+    p.load(pg="Tip", forces=TIP_NODE_FORCE)
+ops.py("model.py")     # or ops.tcl / ops.h5 / ops.run
 ```
 
 This is the **happy path**. For anything more involved (multi-part assembly,

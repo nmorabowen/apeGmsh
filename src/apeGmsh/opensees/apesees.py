@@ -1966,6 +1966,30 @@ class BuiltModel:
         emitter_can_partition = emitter.caps.supports_partitions
         tag_plan = self._tag_plan(emit_mode(
             self, split=False, supports_partitions=emitter_can_partition))
+        # A recorder that reads an upstream shell's sections after
+        # an ``algorithm Linear`` step records stale values on every route
+        # (.out, MPCO, .ladruno) with no error. Warn, naming Newton. Runs
+        # after the plan because it matches recorder targets against the
+        # planned element tags; archival emits never solve, so skip them.
+        if _has_analysis_chain and not _emitter_is_archival:
+            from ._internal.build.validators.shell_probe import (
+                warn_stale_shell_probe_under_linear,
+            )
+            warn_stale_shell_probe_under_linear(
+                self.fem, tag_plan.elements.specs,
+                [p for p in ordered if isinstance(p, Recorder)],
+                staged=_staged,
+                flat_algorithms=[
+                    p for p in ordered if isinstance(p, SolutionAlgorithm)],
+                stage_chain=[
+                    (st.name,
+                     (st.algorithm,
+                      *(st.strategy.rungs if st.strategy is not None
+                        else ())),
+                     frozenset(id(r) for r in st.recorder_specs))
+                    for st in self.stage_records
+                ],
+            )
         if _emitter_is_archival:
             # ADR 0114 R5 (K1-6): the archive's declarations, joined on
             # the plan's ``(kind, tag)``, before any tagless loop opens one.
@@ -8882,7 +8906,34 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
         # one remaining staged raise site (stage-claimed phantom
         # nodes, emitter gate-2) is handled by ``DomainCapture``'s
         # __enter__ degrade: it warns and proceeds sidecar-less.
-        return DomainCapture(resolved, path, self._fem, ops=ops, bridge=self)
+        #
+        # The declared algorithm decides whether the gauss
+        # capture can trust the upstream shells' probes (stale after a
+        # Linear step). Any declared Linear wins: flat, a stage's chain, or
+        # a rung of a stage's strategy ladder (a rescue rung solves the
+        # step too). No declared algorithm is unknown (None), which the
+        # capture treats as Linear. A flat ladder is an argument of
+        # ``analyze`` only, never declared here, so it cannot be counted.
+        declared = [
+            p for p in self._primitives if isinstance(p, SolutionAlgorithm)
+        ] + [
+            a for st in self._stage_records
+            for a in (
+                st.algorithm,
+                *(st.strategy.rungs if st.strategy is not None else ()),
+            )
+            if isinstance(a, SolutionAlgorithm)
+        ]
+        names = {type(a).__name__ for a in declared}
+        algorithm = (
+            "Linear" if "Linear" in names
+            else min(names) if names
+            else None
+        )
+        return DomainCapture(
+            resolved, path, self._fem, ops=ops, bridge=self,
+            algorithm=algorithm,
+        )
 
     def fix(
         self,
@@ -9714,6 +9765,32 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
         # the in-process openseespy session stays alive after analyze returns.
         self._live_emitter = live_emitter
         bm.emit(live_emitter)
+        # A Linear rung of the ladder solves steps too, and the emit above
+        # never saw the ladder: warn here for a recorder that reads an
+        # upstream shell's stale sections. A Linear base already warned.
+        if strategy is not None:
+            from .analysis.algorithm import Linear as _LinearAlgorithm
+            base_algo = next(
+                (p for p in reversed(self._primitives)
+                 if isinstance(p, SolutionAlgorithm)),
+                None,
+            )
+            if not isinstance(base_algo, _LinearAlgorithm):
+                from ._internal.build.validators.shell_probe import (
+                    warn_stale_shell_probe_under_linear,
+                )
+                warn_stale_shell_probe_under_linear(
+                    bm.fem,
+                    bm._tag_plan(emit_mode(
+                        bm, split=False,
+                        supports_partitions=(
+                            live_emitter.caps.supports_partitions),
+                    )).elements.specs,
+                    [p for p in bm.primitives if isinstance(p, Recorder)],
+                    staged=False,
+                    flat_algorithms=strategy.rungs,
+                    stage_chain=[],
+                )
         self._artifacts.after_emit(self)
         if profile is not None:
             start_flags: list[str] = []

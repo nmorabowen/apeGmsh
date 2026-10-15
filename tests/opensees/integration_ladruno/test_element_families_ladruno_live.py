@@ -52,7 +52,7 @@ import pytest
 
 from apeGmsh import apeGmsh
 from apeGmsh.opensees import apeSees
-from apeGmsh.opensees.emitter.live import LiveOpsEmitter
+from apeGmsh.opensees.emitter.live import LiveOpsEmitter, get_backend_build
 from apeGmsh.results import Results
 
 pytestmark = pytest.mark.ladruno_fork
@@ -370,21 +370,119 @@ def test_element_only_mpco_file_has_its_steps(tmp_path: Path) -> None:
     _assert_gauss_stress(run)       # the element reads have that step too
 
 
-@pytest.mark.parametrize("token, fz", [
-    ("material.equivalentPlasticStrain", -6.25e3),
-    ("material.damage", -7.2e3),
+@pytest.mark.parametrize("token", [
+    "material.equivalentPlasticStrain", "material.damage",
 ])
 def test_ladruno_brick_material_state_reads_back_from_mpco(
-    tmp_path: Path, token: str, fz: float,
+    tmp_path: Path, token: str,
 ) -> None:
     """The material-state path resolves the rule-0 bracket too (#1970).
 
-    LadrunoBrick + ASDConcrete3D under axial compression: every GP's
-    ``(+, -)`` pair against ``eleResponse(tag, "material", gp, key)``. Each
-    load is chosen so the two columns differ (at -7.2e3 per node some GPs
-    crack in tension, d+ ~ 1, while d- stays 0), so a swapped column fails.
+    LadrunoBrick + ASDConcrete3D shortened under displacement control:
+    every GP's ``(+, -)`` pair against ``eleResponse(tag, "material", gp,
+    key)``. The fixed base restrains the Poisson expansion, so four GPs
+    crack in tension (d+ ~ 1, d- = 0) while every GP gathers compressive
+    plastic strain: the two columns differ, so a swapped column fails.
+
+    Displacement control, not load control (#2032). At FORK_PIN this brick
+    + ASDConcrete3D under LoadControl diverges from the first, elastic
+    step (an ElasticIsotropic brick converges), a fork-side defect this
+    read-back test does not own; and even where LoadControl runs, the
+    tension crack drops the load, which it cannot follow at small steps.
     """
+    du, steps = -1.0e-4, 20          # the top shortens 2e-3 (strain 1e-3)
     with apeGmsh(model_name="g7_mat", verbose=False) as g:
+        box = g.model.geometry.add_box(0, 0, 0, 1, 1, 2)
+        g.model.sync()
+        g.mesh.structured.set_transfinite_box(box, n=2)
+        g.mesh.generation.generate(3)
+        g.physical.add(3, [box], name="Body")
+        fem = g.mesh.queries.get_fem_data(dim=3)
+    ops = apeSees(fem)
+    ops.model(ndm=3, ndf=3)
+    mat = ops.nDMaterial.ASDConcrete3D(E=30e6, v=0.2, fc=30e3, ft=3e3)
+    ops.element.LadrunoBrick(pg="Body", material=mat)
+    ops.fix(nodes=_nodes_on_plane(fem, 2, 0.0), dofs=(1, 1, 1))
+    top = _nodes_on_plane(fem, 2, 2.0)
+    with ops.pattern.Plain(series=ops.timeSeries.Linear()) as p:
+        for nid in top:
+            p.load(node=nid, forces=(0.0, 0.0, -1.0))
+    path = str(tmp_path / "mat.mpco")
+    _record(ops, "MPCO", path, elem_responses=(token,))
+    ops.constraints.Plain()
+    ops.numberer.RCM()
+    ops.system.BandGeneral()
+    ops.test.NormDispIncr(tol=1e-8, max_iter=50)
+    ops.algorithm.Newton()
+    ops.integrator.DisplacementControl(node=top[0], dof=3, dU=du)
+    ops.analysis.Static()
+
+    emitter, model_h5 = _run(ops, tmp_path)
+    for step in range(steps):
+        assert emitter.analyze(steps=1) == 0, f"step {step + 1}"
+    # The controlled DOF followed the path (the right node was driven).
+    np.testing.assert_allclose(
+        emitter.ops.nodeDisp(top[0], 3), steps * du, rtol=1e-9)
+    (eid,) = [int(e) for grp in fem.elements for e in grp.ids]
+    tag = _fem_to_ops(model_h5)[eid]
+    key = token.split(".", 1)[1]
+    truth = np.array([
+        np.asarray(emitter.ops.eleResponse(tag, "material", gp, key), float)
+        for gp in range(1, 9)
+    ])                                   # (8 GP, 2)
+    emitter.ops.remove("recorders")
+    # A non-zero oracle: four GPs cracked, and compressive plasticity.
+    if key == "damage":
+        assert truth[:, 0].max() > 0.5, truth
+    else:
+        assert truth[:, 0].max() > 0.0 and truth[:, 1].min() > 0.0, truth
+    assert not np.allclose(truth[:, 0], truth[:, 1])   # a swap would show
+    r = _open("MPCO", path, fem, model_h5)
+    parent = ("equivalent_plastic_strain" if "Plastic" in token else "damage")
+    for k, suffix in enumerate(("tension", "compression")):
+        slab = r.elements.gauss.get(component=f"{parent}_{suffix}")
+        assert [int(e) for e in slab.element_index] == [eid] * 8
+        np.testing.assert_allclose(
+            np.asarray(slab.values)[-1], truth[:, k], rtol=RTOL, atol=1e-14,
+        )
+
+
+#: Fork builds known to converge on the #2044 LoadControl case. Every other
+#: build, FORK_PIN included, runs it as a strict xfail: the build that fixes
+#: #2044 reaches CI as a FORK_PIN bump and then XPASSes, which fails the
+#: lane and says to drop the marker. Add a sha here only after a run on it.
+_LOAD_CONTROL_CONVERGES = frozenset({
+    "79e0623670c61c768357a01dff1477a4a0ef7e06",   # pre-regression local build
+})
+
+
+def _known_converging_build() -> bool:
+    """Is the imported engine on the allowlist? (``None`` is not.)"""
+    return get_backend_build() in _LOAD_CONTROL_CONVERGES
+
+
+def test_ladruno_brick_asdconcrete_converges_under_load_control(
+    request: pytest.FixtureRequest,
+) -> None:
+    """LadrunoBrick + ASDConcrete3D under LoadControl, the #1999 case (#2044).
+
+    -7.2e3 per top node in four 0.25 steps. Step 1 is elastic, yet at
+    FORK_PIN Newton diverges there (the second correction is ~1000x the
+    first; an ElasticIsotropic brick converges). Once the fork is fixed the
+    run converges and four GPs crack in tension (d+ ~ 1), which is asserted
+    so the passing case still carries a non-zero answer.
+
+    The strict xfail is applied in the body, not as a marker condition:
+    a condition runs at setup, before the ``ladruno_fork`` skip, and would
+    touch the backend on a lane that has none.
+    """
+    if not _known_converging_build():
+        request.applymarker(pytest.mark.xfail(
+            strict=True,
+            reason="#2044: LoadControl diverges at FORK_PIN in the elastic "
+                   "first step",
+        ))
+    with apeGmsh(model_name="g7_lc", verbose=False) as g:
         box = g.model.geometry.add_box(0, 0, 0, 1, 1, 2)
         g.model.sync()
         g.mesh.structured.set_transfinite_box(box, n=2)
@@ -398,9 +496,7 @@ def test_ladruno_brick_material_state_reads_back_from_mpco(
     ops.fix(nodes=_nodes_on_plane(fem, 2, 0.0), dofs=(1, 1, 1))
     with ops.pattern.Plain(series=ops.timeSeries.Linear()) as p:
         for nid in _nodes_on_plane(fem, 2, 2.0):
-            p.load(node=nid, forces=(0.0, 0.0, fz))
-    path = str(tmp_path / "mat.mpco")
-    _record(ops, "MPCO", path, elem_responses=(token,))
+            p.load(node=nid, forces=(0.0, 0.0, -7.2e3))
     ops.constraints.Plain()
     ops.numberer.RCM()
     ops.system.BandGeneral()
@@ -409,26 +505,14 @@ def test_ladruno_brick_material_state_reads_back_from_mpco(
     ops.integrator.LoadControl(dlam=0.25)
     ops.analysis.Static()
 
-    emitter, model_h5 = _run(ops, tmp_path)
-    for _ in range(4):
-        assert emitter.analyze(steps=1) == 0
-    (eid,) = [int(e) for grp in fem.elements for e in grp.ids]
-    tag = _fem_to_ops(model_h5)[eid]
-    key = token.split(".", 1)[1]
-    truth = np.array([
-        np.asarray(emitter.ops.eleResponse(tag, "material", gp, key), float)
-        for gp in range(1, 9)
-    ])                                   # (8 GP, 2)
-    emitter.ops.remove("recorders")
-    assert not np.allclose(truth[:, 0], truth[:, 1])   # a swap would show
-    r = _open("MPCO", path, fem, model_h5)
-    parent = ("equivalent_plastic_strain" if "Plastic" in token else "damage")
-    for k, suffix in enumerate(("tension", "compression")):
-        slab = r.elements.gauss.get(component=f"{parent}_{suffix}")
-        assert [int(e) for e in slab.element_index] == [eid] * 8
-        np.testing.assert_allclose(
-            np.asarray(slab.values)[-1], truth[:, k], rtol=RTOL, atol=1e-14,
-        )
+    emitter = LiveOpsEmitter(wipe=True)
+    ops.build().emit(emitter)
+    for step in range(4):
+        assert emitter.analyze(steps=1) == 0, f"step {step + 1}"
+    (tag,) = [int(t) for t in emitter.ops.getEleTags()]
+    d_plus = [float(emitter.ops.eleResponse(tag, "material", gp, "damage")[0])
+              for gp in range(1, 9)]
+    assert max(d_plus) > 0.5, d_plus
 
 
 # ---------------------------------------------------------------------------
