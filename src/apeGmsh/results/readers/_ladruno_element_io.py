@@ -1375,7 +1375,7 @@ def _station_xi(n_stations: int) -> ndarray:
 # ``globalForce`` / ``force``) and the slab carries the element's full raw
 # output vector ``(T, E, NUM_COLUMNS)`` in the file's ``COMP_NAMES`` column
 # order. The raw token reads stay exactly that. One neutral view sits on
-# top of them (#2071): ``nodal_resisting_{force,moment}_{x,y,z}`` decoded
+# top of them: ``nodal_resisting_{force,moment}_{x,y,z}`` decoded
 # from the ``globalForce`` token (see "Canonical nodal resisting forces"
 # below). The other neutral views live on the *other* levels —
 # ``line_stations`` (``axial_force``…) and ``gauss`` (``stress_xx``…).
@@ -1524,7 +1524,7 @@ def read_element_slab(
 
 
 # =====================================================================
-# Canonical nodal resisting forces (decoded from ``globalForce``, #2071)
+# Canonical nodal resisting forces (decoded from ``globalForce``)
 # =====================================================================
 #
 # A ``nodal_resisting_{force,moment}_{x,y,z}`` request reads the

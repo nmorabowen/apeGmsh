@@ -872,7 +872,7 @@ class LadrunoReader:
         )
         bucket_ids, index_to_fem = self._element_read_translation(element_ids)
         # A ``nodal_resisting_*`` name decodes ``globalForce`` per node,
-        # and refuses by name when the file is unable to answer (#2071).
+        # and refuses by name when the file is unable to answer.
         result = _eio.read_element_slab(
             on_e, component,
             t_idx=t_idx, element_ids=bucket_ids, ndm=self._spatial_dim(),
