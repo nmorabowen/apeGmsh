@@ -11,8 +11,8 @@ reader change flips something:
 
 * a passing value test;
 * ``xfail(strict=True)`` citing a chain-B issue, asserting the right value,
-  where the route reads back a silent wrong answer (an empty slab, a phantom
-  zero): #1970 (MPCO reader), #1971 (3-dof nodes reading rotation 0.0);
+  where the route reads back a silent wrong answer (a phantom zero): #1971
+  (3-dof nodes reading rotation 0.0);
 * ``pytest.raises`` where the route refuses the family loudly (a gap: the
   MPCO truss bucket).
 
@@ -21,16 +21,17 @@ Family              ``.ladruno``                    MPCO
 =================== =============================== ========================
 Truss axial force   line station: pass;             raises (gap)
                     Gauss record: pass
-LadrunoBrick20      pass (values + GP coords)       xfail #1970
-LadrunoLST          ``stress``: values + GP         xfail #1970
-                    coords pass;
+LadrunoBrick20      pass (values + GP coords)       pass (``stress``,
+                                                    ``stresses``)
+LadrunoLST          ``stress``: values + GP         pass (``stress``,
+                    coords pass;                    ``stresses``)
                     ``stresses``: pass
 Shell-on-solid      pass; 3-dof rotation: #1971     pass; 3-dof rotation:
                                                     #1971
 =================== =============================== ========================
 
-An element-only MPCO file reads with zero steps (#1970), so every MPCO
-recorder here records nodal displacement too, except the test pinning that.
+Every MPCO recorder here records nodal displacement too, except the test
+pinning that an element-only MPCO file still reads its steps (#1970).
 
 Gated by the ``ladruno_fork`` marker, so the nightly ``live-fork`` lane runs it
 against the pinned build. The stock fallback (``.out``) of the truss and
@@ -68,7 +69,6 @@ ROT = ("rotation_x", "rotation_y", "rotation_z")
 #: ``integrationPoints`` response, so the fork source is the oracle.
 LST_GP = np.array([[2 / 3, 1 / 6], [1 / 6, 2 / 3], [1 / 6, 1 / 6]])
 
-B_MPCO = "#1970: the MPCO reader returns an empty slab"
 B_ROT = "#1971: 3-dof nodes read rotation 0.0, not absent/NaN"
 
 
@@ -98,8 +98,8 @@ def _record(ops: apeSees, kind: str, path: str, *, nodal: bool = True,
             **channels: Any) -> None:
     """Declare the fork's ``ladruno`` or the ``mpco`` recorder.
 
-    The nodal channel is on by default: the MPCO reader takes a stage's
-    time vector from the node results (#1970).
+    The nodal channel is on by default; ``nodal=False`` leaves an
+    element-only file, whose steps come from its element buckets (#1970).
     """
     if nodal:
         channels.setdefault("nodal_responses", ("displacement",))
@@ -364,6 +364,7 @@ def test_fork_solid_gauss_stress_reads_back_from_mpco(
 def test_element_only_mpco_file_has_its_steps(tmp_path: Path) -> None:
     run = _solid_run("h20", "MPCO", "stress", tmp_path, nodal=False)
     assert [s.n_steps for s in run["r"].stages] == [1]
+    _assert_gauss_stress(run)       # the element reads have that step too
 
 
 # ---------------------------------------------------------------------------
