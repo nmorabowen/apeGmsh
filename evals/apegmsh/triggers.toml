@@ -1,0 +1,119 @@
+# apeGmsh skill evals: the trigger set (SK1-S0, #2003).
+#
+# Each prompt runs through `claude -p` in the skill arm, from an empty scratch
+# directory, and the record keeps WHICH skills fired (every Skill tool call),
+# not only whether `apegmsh` did. A should-trigger prompt passes when `apegmsh`
+# fires; a near-miss passes when it does not. `instead` names the skill that
+# owns a near-miss; it is a note for the reader, not graded.
+#
+#   expect   "apegmsh" (should trigger) or "other" (near miss)
+
+[[trigger]]
+id = "t01_plate_mesh"
+expect = "apegmsh"
+prompt = "Using apeGmsh, mesh a 2 m by 1 m plate with quads of 0.1 m and name the left edge as a physical group."
+
+[[trigger]]
+id = "t02_bridge_frame"
+expect = "apegmsh"
+prompt = "I have an apeGmsh model of a portal frame. How do I hand it to OpenSees with apeSees and fix the column bases?"
+
+[[trigger]]
+id = "t03_results_read"
+expect = "apegmsh"
+prompt = "After my apeSees analysis ran, how do I read the nodal displacements back with apeGmsh's Results?"
+
+[[trigger]]
+id = "t04_fem_broker"
+expect = "apegmsh"
+prompt = "How do I get the node ids and coordinates of a physical group from g.mesh.queries.get_fem_data in apeGmsh?"
+
+[[trigger]]
+id = "t05_parts_assembly"
+expect = "apegmsh"
+prompt = "Build two apeGmsh Parts, a beam and a slab, and fragment them into one conformal mesh."
+
+[[trigger]]
+id = "t06_loads_case"
+expect = "apegmsh"
+prompt = "In apeGmsh, how do I define a gravity load case on a volume and use it in an OpenSees load pattern?"
+
+[[trigger]]
+id = "t07_model_h5"
+expect = "apegmsh"
+prompt = "Save my apeGmsh mesh to model.h5 and load it again later without gmsh."
+
+[[trigger]]
+id = "t08_staged_soil"
+expect = "apegmsh"
+prompt = "Write an apeGmsh script for a staged plane-strain excavation: geostatic stage, then remove a soil block."
+
+[[trigger]]
+id = "t09_structural_mesh_from_gmsh"
+expect = "apegmsh"
+prompt = "I want an FEA mesh of a 3-D shear wall for OpenSees, built from gmsh geometry through the apeGmsh wrapper. Where do I start?"
+
+[[trigger]]
+id = "t10_rigid_diaphragm"
+expect = "apegmsh"
+prompt = "Add rigid floor diaphragms to my apeGmsh frame model and run a modal analysis through apeSees."
+
+[[trigger]]
+id = "n01_raw_gmsh_api"
+expect = "other"
+instead = "gmsh-structural"
+prompt = "Using the plain gmsh Python API (import gmsh, no wrapper), make a transfinite quad mesh of a rectangle."
+
+[[trigger]]
+id = "n02_gmsh_geo_file"
+expect = "other"
+instead = "gmsh-structural"
+prompt = "Write a gmsh .geo file for a plate with a hole and explain the Physical Surface lines."
+
+[[trigger]]
+id = "n03_opensees_tcl"
+expect = "other"
+instead = "opensees-expert"
+prompt = "Write an OpenSees Tcl script for a cantilever with a nonlinearBeamColumn and a Steel02 fibre section."
+
+[[trigger]]
+id = "n04_opensees_cpp"
+expect = "other"
+instead = "opensees-expert"
+prompt = "In the OpenSees C++ source, how does a uniaxial material's commitState get called by the domain?"
+
+[[trigger]]
+id = "n05_openseespy_raw"
+expect = "other"
+instead = "opensees-expert"
+prompt = "In openseespy, what does ops.system('UmfPack') do, and when should I prefer BandGeneral?"
+
+[[trigger]]
+id = "n06_maintainer_bridge"
+expect = "other"
+instead = "apegmsh-bridge-feature"
+prompt = "I am adding a new OpenSees element primitive to the apeGmsh bridge source code. Which files and registries in the repo must change?"
+
+[[trigger]]
+id = "n07_maintainer_adr"
+expect = "other"
+instead = "apegmsh-adr-docs"
+prompt = "Draft a new ADR for the apeGmsh repository and tell me how to pick its number and add the changelog fragment."
+
+[[trigger]]
+id = "n08_maintainer_viewer"
+expect = "other"
+instead = "apegmsh-viewer-results"
+prompt = "Fix a bug inside apeGmsh's results viewer code: the contour legend in the Qt window ignores the colormap setting."
+
+[[trigger]]
+id = "n09_aci_design"
+expect = "other"
+instead = "aci318-core"
+prompt = "Check the flexural strength of a 300 x 600 mm reinforced-concrete beam with 4 No. 8 bars to ACI 318."
+
+[[trigger]]
+id = "n10_plain_numpy_fem"
+expect = "other"
+instead = "none"
+prompt = "Write a 30-line numpy direct-stiffness solver for a 2-D truss, with no external FEM libraries."

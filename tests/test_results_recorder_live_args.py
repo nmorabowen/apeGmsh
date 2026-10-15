@@ -12,10 +12,29 @@ existing source-code formatters where they overlap.
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
+from apeGmsh._vocabulary import (
+    DERIVED_PLASTIC_STRAIN_SCALARS,
+    DERIVED_SCALARS,
+    MATERIAL_STATE,
+    PLASTIC_STRAIN,
+    STRAIN,
+    STRESS,
+    expand_shorthand,
+)
+from apeGmsh.opensees._response_catalog import (
+    RESPONSE_CATALOG,
+    gauss_keyword_for_canonical,
+    gauss_routing_for_canonical,
+    mpco_gauss_group_aliases,
+)
+from apeGmsh.results.readers._mpco_material_io import parent_token_for_canonical
 from apeGmsh.results.spec._emit import (
+    collect_mpco_tokens,
     emit_logical,
     emit_mpco_python,
+    emit_mpco_tcl,
     format_python,
     mpco_ops_args,
     to_ops_args,
@@ -282,3 +301,174 @@ def test_mpco_ops_args_modal_record_emits_modes_token() -> None:
     args = mpco_ops_args([rec])
     # Modal records contribute the modes-of-vibration tokens on -N.
     assert "modesOfVibration" in args
+
+
+# =====================================================================
+# mpco_ops_args — gauss records route like the MPCO read side (#1991)
+# =====================================================================
+#
+# Oracle: the MPCO reader finds a gauss-points canonical under the
+# ``ON_ELEMENTS/<keyword>`` group that ``gauss_routing_for_canonical``
+# names (``discover_gauss_buckets``), so the emit must write that group.
+# Before #1991 a shell record emitted ``-E section.force`` (the beam
+# bucket, reached through ``bending_moment``) and dropped
+# ``membrane_force_*`` and ``transverse_shear_*`` silently: the MPCO
+# gauss slab read empty.
+
+#: Every catalogued shell class with its stress-resultant and
+#: generalized-strain layouts, read from RESPONSE_CATALOG so a new shell
+#: class is covered without editing this file.
+_SHELL_LAYOUTS: dict[tuple[str, str], tuple[str, ...]] = {
+    (cls, tok): tuple(layout.component_layout)
+    for (cls, _rule, tok), layout in RESPONSE_CATALOG.items()
+    if tok in ("stress", "strain")
+    and tuple(layout.component_layout)[0] in ("membrane_force_xx",
+                                              "membrane_strain_xx")
+}
+_SHELL_CLASSES = sorted({cls for cls, _ in _SHELL_LAYOUTS})
+_MPCO_KEYWORD = {"stress": "stresses", "strain": "strains"}
+
+
+def _gauss(components, cls=None, name="sh") -> ResolvedRecorderRecord:
+    return ResolvedRecorderRecord(
+        category="gauss", name=name, components=tuple(components),
+        dt=None, n_steps=None, element_ids=np.array([1]),
+        element_class_name=cls,
+    )
+
+
+def test_shell_class_table_is_not_vacuous() -> None:
+    assert {"ASDShellQ4", "ASDShellT3", "ShellMITC4", "ShellDKGQ",
+            "ShellNLDKGQ", "ShellDKGT", "ShellNLDKGT"} <= set(_SHELL_CLASSES)
+    for cls in _SHELL_CLASSES:
+        assert (cls, "stress") in _SHELL_LAYOUTS
+        assert (cls, "strain") in _SHELL_LAYOUTS
+
+
+@pytest.mark.parametrize("cls", _SHELL_CLASSES)
+@pytest.mark.parametrize("tok", ["stress", "strain"])
+def test_mpco_shell_layout_emits_read_side_keyword(cls: str, tok: str) -> None:
+    comps = _SHELL_LAYOUTS[(cls, tok)]
+    args = mpco_ops_args([_gauss(comps, cls)])
+    assert args == ("mpco", "run.mpco", "-E", _MPCO_KEYWORD[tok])
+    # Cross-check against the reader's routing, component by component.
+    for c in comps:
+        routing = gauss_routing_for_canonical(c)
+        assert routing is not None and routing[0] == _MPCO_KEYWORD[tok], c
+
+
+@pytest.mark.parametrize("cls", _SHELL_CLASSES)
+def test_mpco_shell_resultant_shorthand_emits_stresses(cls: str) -> None:
+    comps = expand_shorthand("shell_resultant", ndm=3, ndf=6)
+    assert comps == _SHELL_LAYOUTS[(cls, "stress")]
+    rec = _gauss(comps, cls)
+    assert mpco_ops_args([rec]) == ("mpco", "run.mpco", "-E", "stresses")
+    assert emit_mpco_tcl([rec]) == "recorder mpco run.mpco -E stresses"
+    assert emit_mpco_python([rec]) == (
+        "ops.recorder('mpco', 'run.mpco', '-E', 'stresses')")
+
+
+def test_mpco_line_station_bending_moment_stays_section_force() -> None:
+    """The topology split: a beam ``bending_moment`` is ``section.force``."""
+    rec = ResolvedRecorderRecord(
+        category="line_stations", name="b",
+        components=("axial_force", "bending_moment_y", "bending_moment_z"),
+        dt=None, n_steps=None, element_ids=np.array([1]),
+    )
+    assert collect_mpco_tokens([rec]) == ([], ["section.force"])
+
+
+def test_mpco_gauss_derived_scalar_records_raw_tensor() -> None:
+    assert collect_mpco_tokens([_gauss(("von_mises_stress",))]) == (
+        [], ["stresses"])
+
+
+@pytest.mark.parametrize("emit", [mpco_ops_args, emit_mpco_tcl, emit_mpco_python])
+def test_mpco_unmapped_gauss_component_raises(emit) -> None:
+    rec = _gauss(("stress_xx", "unrouted_quantity_xx"), name="bad")
+    with pytest.raises(ValueError, match=r"'bad'.*'unrouted_quantity_xx'"):
+        emit([rec])
+
+
+# =====================================================================
+# Gauss material state, plastic strain and the Truss axial force
+# =====================================================================
+#
+# Oracle: the MPCO material-state reader recovers a canonical's parent
+# (``parent_token_for_canonical``) and walks the groups
+# ``mpco_gauss_group_aliases`` lists for the parent's keyword; derived
+# plastic scalars are computed from the ``plastic_strain_*`` tensor.
+# Before this, ``equivalent_plastic_strain*`` emitted ``-E strains`` (the
+# total-strain bucket: an empty read) and ``damage*`` / ``plastic_strain_*``
+# raised. The live read-back is in
+# tests/opensees/integration_ladruno/test_results_catalog_hdf5_live.py.
+
+#: The gauss vocabulary, composed as ``recorder._CATEGORY_CANONICALS``.
+_GAUSS_VOCABULARY = sorted(set(
+    STRESS + STRAIN + PLASTIC_STRAIN + DERIVED_SCALARS + MATERIAL_STATE))
+
+_MATERIAL_STATE_EXPECTED = {
+    "damage": "material.damage",
+    "damage_tension": "material.damage",
+    "damage_compression": "material.damage",
+    "equivalent_plastic_strain": "material.equivalentPlasticStrain",
+    "equivalent_plastic_strain_tension": "material.equivalentPlasticStrain",
+    "equivalent_plastic_strain_compression": "material.equivalentPlasticStrain",
+}
+
+
+def _read_side_groups(canonical: str) -> tuple[str, ...]:
+    """Every MPCO group the reader walks for ``canonical``."""
+    if canonical in DERIVED_PLASTIC_STRAIN_SCALARS:
+        parent: str | None = "plastic_strain"
+    else:
+        parent = parent_token_for_canonical(canonical)
+    keyword = gauss_keyword_for_canonical(parent or canonical)
+    assert keyword is not None, canonical
+    return mpco_gauss_group_aliases(keyword)
+
+
+@pytest.mark.parametrize("canonical", sorted(_MATERIAL_STATE_EXPECTED))
+@pytest.mark.parametrize("emit", [mpco_ops_args, emit_mpco_tcl, emit_mpco_python])
+def test_mpco_material_state_emits_material_group(emit, canonical: str) -> None:
+    token = _MATERIAL_STATE_EXPECTED[canonical]
+    assert token in _read_side_groups(canonical)
+    out = emit([_gauss((canonical,))])
+    if emit is mpco_ops_args:
+        assert out == ("mpco", "run.mpco", "-E", token)
+    elif emit is emit_mpco_tcl:
+        assert out == f"recorder mpco run.mpco -E {token}"
+    else:
+        assert out == f"ops.recorder('mpco', 'run.mpco', '-E', '{token}')"
+
+
+@pytest.mark.parametrize(
+    "canonical", list(PLASTIC_STRAIN) + list(DERIVED_PLASTIC_STRAIN_SCALARS))
+def test_mpco_plastic_strain_emits_material_plastic_strain(canonical: str) -> None:
+    """Includes ``equivalent_plastic_strain_current``: derived from the
+    tensor, not the material's accumulated PEEQ."""
+    assert "material.plasticStrain" in _read_side_groups(canonical)
+    assert collect_mpco_tokens([_gauss((canonical,))]) == (
+        [], ["material.plasticStrain"])
+
+
+@pytest.mark.parametrize("canonical", _GAUSS_VOCABULARY)
+def test_every_gauss_canonical_emits_a_group_the_reader_walks(
+    canonical: str,
+) -> None:
+    """The card's done-when: no gauss canonical leaves an MPCO emit silently."""
+    _node, tokens = collect_mpco_tokens([_gauss((canonical,))])
+    assert len(tokens) == 1, (canonical, tokens)
+    if tokens[0] in ("stresses", "strains"):
+        # Tensor components route by keyword; derived scalars record the
+        # tensor they are computed from.
+        return
+    assert tokens[0] in _read_side_groups(canonical), (canonical, tokens)
+
+
+@pytest.mark.parametrize("emit", [mpco_ops_args, emit_mpco_tcl, emit_mpco_python])
+def test_mpco_gauss_truss_axial_force_raises(emit) -> None:
+    """MPCO's ``axialForce`` bucket has no GAUSS_IDS; the reader refuses it."""
+    rec = _gauss(("axial_force",), cls="Truss", name="bar")
+    with pytest.raises(ValueError, match=r"'bar'.*'axial_force'.*GAUSS_IDS"):
+        emit([rec])

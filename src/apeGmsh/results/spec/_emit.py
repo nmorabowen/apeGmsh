@@ -1029,11 +1029,100 @@ def _canonical_to_mpco_element_token(canonical: str) -> str | None:
     return None
 
 
+#: Read-side keywords a gauss record takes verbatim on the MPCO emit.
+#: The MPCO reader finds every gauss-points ``stresses`` / ``strains``
+#: canonical under the ``ON_ELEMENTS/<keyword>`` group that
+#: :func:`~apeGmsh.opensees._response_catalog.gauss_keyword_for_canonical`
+#: names, so the emit asks the same function. The generic prefix table
+#: above is topology-blind: it sends a shell ``bending_moment_xx`` to the
+#: beam ``section.force`` bucket and has no entry for ``membrane_force_*``
+#: or ``transverse_shear_*``.
+_MPCO_GAUSS_READ_SIDE_KEYWORDS: frozenset[str] = frozenset({"stresses", "strains"})
+
+
+def _mpco_material_state_token(parent: str) -> str:
+    """The ``material.<group>`` token the MPCO reader walks for ``parent``.
+
+    ``parent`` is a material-state parent canonical (``damage``,
+    ``equivalent_plastic_strain``, ``plastic_strain``). The group is the
+    read side's keyword for it, and the token must be one of the group
+    names :func:`mpco_gauss_group_aliases` lists, or the reader would
+    never find what the emit wrote.
+    """
+    from apeGmsh.opensees._response_catalog import (
+        gauss_keyword_for_canonical,
+        mpco_gauss_group_aliases,
+    )
+    group = gauss_keyword_for_canonical(parent)
+    token = f"material.{group}"
+    if group is None or token not in mpco_gauss_group_aliases(group):
+        raise RuntimeError(
+            f"MPCO emit/read disagree on material state {parent!r}: the "
+            f"reader's gauss group is {group!r} and does not list {token!r}."
+        )
+    return token
+
+
+def _canonical_to_mpco_gauss_token(canonical: str, record_name: str) -> str:
+    """Map a gauss-points canonical to its MPCO ``-E`` token, or raise.
+
+    In order:
+
+    1. The plastic-strain tensor (``plastic_strain_*``) and the scalars
+       derived from it record ``material.plasticStrain``.
+    2. Material-state scalars (``damage*``,
+       ``equivalent_plastic_strain*``) record ``material.<group>``, the
+       group the MPCO material-state reader walks.
+    3. Continuum stress/strain and the shell resultants and generalized
+       strains take the read side's keyword (``stresses`` / ``strains``).
+    4. Derived stress/strain scalars keep the generic prefix table; they
+       record the raw tensor, so only ``stresses`` / ``strains`` count.
+
+    Anything else raises ``ValueError``: dropping it, or sending it to a
+    bucket the reader never reads, would write an MPCO file whose gauss
+    slab reads empty, with no warning. That includes the Truss
+    ``axial_force``: MPCO writes its ``axialForce`` bucket with no
+    ``GAUSS_IDS``, and the reader refuses it.
+    """
+    from apeGmsh._vocabulary import DERIVED_PLASTIC_STRAIN_SCALARS
+    from apeGmsh.opensees._response_catalog import gauss_keyword_for_canonical
+    from apeGmsh.results.readers._mpco_material_io import (
+        parent_token_for_canonical,
+    )
+    if canonical in DERIVED_PLASTIC_STRAIN_SCALARS:
+        return _mpco_material_state_token("plastic_strain")
+    parent = parent_token_for_canonical(canonical)
+    if parent is not None:
+        return _mpco_material_state_token(parent)
+    keyword = gauss_keyword_for_canonical(canonical)
+    if keyword in _MPCO_GAUSS_READ_SIDE_KEYWORDS:
+        return keyword
+    if keyword == "axialForce":
+        raise ValueError(
+            f"Record {record_name!r} (category=gauss): component "
+            f"{canonical!r} (the Truss axial force) cannot go through MPCO: "
+            f"MPCO writes its axialForce bucket with no GAUSS_IDS and the "
+            f"reader refuses it. Record it with spec.emit_recorders(...), "
+            f"the fork's native recorder, or ops.domain_capture(...)."
+        )
+    token = _canonical_to_mpco_element_token(canonical)
+    if token not in _MPCO_GAUSS_READ_SIDE_KEYWORDS:
+        raise ValueError(
+            f"Record {record_name!r} (category=gauss): component "
+            f"{canonical!r} has no MPCO -E token, so the MPCO file would "
+            f"not record it. Drop it from the record, or capture it with "
+            f"spec.emit_recorders(...) or ops.domain_capture(...)."
+        )
+    return token
+
+
 def collect_mpco_tokens(records) -> tuple[list[str], list[str]]:
     """Return ``(node_tokens, element_tokens)`` deduplicated, in stable order.
 
     Modal records contribute ``modesOfVibration`` /
-    ``modesOfVibrationRotational`` entries on the nodal side.
+    ``modesOfVibrationRotational`` entries on the nodal side. A gauss
+    component with no MPCO token raises ``ValueError``
+    (:func:`_canonical_to_mpco_gauss_token`).
     """
     node_tokens: list[str] = []
     elem_tokens: list[str] = []
@@ -1056,7 +1145,12 @@ def collect_mpco_tokens(records) -> tuple[list[str], list[str]]:
             for c in rec.components:
                 _add(node_tokens, seen_n, _canonical_to_mpco_node_token(c))
             continue
-        # element-level categories
+        if rec.category == "gauss":
+            for c in rec.components:
+                _add(elem_tokens, seen_e,
+                     _canonical_to_mpco_gauss_token(c, rec.name))
+            continue
+        # other element-level categories
         for c in rec.components:
             _add(elem_tokens, seen_e, _canonical_to_mpco_element_token(c))
 

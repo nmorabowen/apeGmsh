@@ -157,6 +157,7 @@ class LadrunoReader:
         self._mode_refs: dict[str, tuple[str, _mnodal.ModeEntry]] = {}
         self._fem_cache: "Optional[FEMData] | _Sentinel" = _SENTINEL
         self._tag_map: "Optional[ElementTagTranslator]" = None
+        self._rotation_mask = _mnodal.RotationMask(self._path.name)
 
     # -- identity / lifecycle ------------------------------------------
 
@@ -206,6 +207,18 @@ class LadrunoReader:
         AND sparsely-renumbered meshes), exactly like :class:`MPCOReader`.
         """
         self._tag_map = tag_map
+
+    def attach_nodes_ndf(
+        self, nodes_ndf: "dict[int, int] | None", ndm: int,
+    ) -> None:
+        """Store the model's per-node ndf: rotation reads (time series and
+        envelopes) then give NaN at a node whose DOF layout has no such
+        rotation (#1971). ``None`` is an archive older than nodes_ndf."""
+        if self._stage_cache is None:
+            self.stages()
+        self._rotation_mask.attach(nodes_ndf, ndm, _mnodal.model_node_ids(
+            [self._h5[name] for name in self._stage_to_grp.values()],
+        ))
 
     def _element_read_translation(
         self, element_ids: "Optional[ndarray]",
@@ -545,6 +558,21 @@ class LadrunoReader:
         node_ids: "Optional[ndarray]" = None,
         time_slice: TimeSlice = None,
     ) -> NodeSlab:
+        slab = self._read_nodes_as_recorded(
+            stage_id, component, node_ids=node_ids, time_slice=time_slice,
+        )
+        return self._rotation_mask.apply(slab, _child(
+            self._resolve_stage_group(stage_id), "MODEL/ELEMENTS",
+        ))
+
+    def _read_nodes_as_recorded(
+        self,
+        stage_id: str,
+        component: str,
+        *,
+        node_ids: "Optional[ndarray]" = None,
+        time_slice: TimeSlice = None,
+    ) -> NodeSlab:
         grp = self._resolve_stage_group(stage_id)
         time = self.time_vector(stage_id)
         t_idx = resolve_time_slice(time_slice, time)
@@ -720,6 +748,8 @@ class LadrunoReader:
         accumulates *instead of* a time series when ``-envelope`` is set.
         Raises :class:`ValueError` if the file has no node envelopes (it
         was recorded as a plain time series) or the component is absent.
+        A rotation a node does not have reads NaN, with ``arg_step``
+        ``-1``, as :meth:`read_nodes` masks it.
         """
         self._refuse_on_mode(stage_id, "node envelopes")
         grp = self._resolve_stage_group(stage_id)
@@ -745,8 +775,15 @@ class LadrunoReader:
         else:
             mask = np.ones(ids.size, dtype=bool)
 
+        absent = self._rotation_mask.absent(
+            component, ids[mask], _child(grp, "MODEL/ELEMENTS"),
+        )
+
         def _col(name: str, dtype) -> ndarray:
-            return np.asarray(res[name][...], dtype=dtype)[mask, col]
+            out = np.asarray(res[name][...], dtype=dtype)[mask, col]
+            if absent is not None:
+                out[absent] = np.nan if dtype is np.float64 else -1
+            return out
 
         return NodeEnvelope(
             node_ids=ids[mask],
@@ -959,3 +996,11 @@ class LadrunoReader:
         return _empty_spring_slab(
             component, time, resolve_time_slice(time_slice, time),
         )
+
+
+def attach_model_nodes_ndf(
+    reader: object, model_h5: "str | Path", ndm: int,
+) -> None:
+    """Attach ``model_h5``'s per-node ndf to a one-file reader (#1971);
+    see :func:`_mpco_nodal_io.attach_nodes_ndf`."""
+    _mnodal.attach_nodes_ndf(reader, LadrunoReader, model_h5, ndm)
