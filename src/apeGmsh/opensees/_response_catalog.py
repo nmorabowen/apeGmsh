@@ -2527,20 +2527,36 @@ ZERO_GAUSS_PROBE_CLASSES: frozenset[str] = frozenset({
 })
 
 
-def has_dead_gauss_probe(class_name: str) -> bool:
-    """Whether this class can hold stale section state at a probe.
+def has_dead_gauss_probe(class_name: str, *, algorithm: str | None) -> bool:
+    """Whether a probe of this class can read stale section state.
 
-    True for the upstream shells in :data:`ZERO_GAUSS_PROBE_CLASSES`.
-    Their probes are stale only after a step solved with ``algorithm
-    Linear``; under Newton they are correct (see the set's note). This
-    predicate takes only the class, so it cannot tell the two apart:
-    it answers True for every analysis, and DomainCapture skips the
-    element with a reason. That keeps the Linear case loud and also
-    discards valid data under Newton, until the caller can pass the
-    algorithm. The ``.out`` and MPCO routes do not consult it,
-    and under Linear they record these classes' stale values silently.
+    ``algorithm`` is the OpenSees name of the solution algorithm the
+    domain solves with (``"Linear"``, ``"Newton"``, ...), or ``None``
+    when the caller does not know it.
+
+    True for a class in :data:`ZERO_GAUSS_PROBE_CLASSES` under
+    ``Linear`` (measured stale, see the set's note) and under an
+    unknown algorithm (fail closed). False for every other class, and
+    for a listed class under one of the bridge's iterating algorithms,
+    which re-form the residual and leave the sections at the converged
+    state. Any other algorithm name raises :class:`ValueError`, so a new
+    algorithm is classified here before a capture trusts it.
     """
-    return class_name in ZERO_GAUSS_PROBE_CLASSES
+    if class_name not in ZERO_GAUSS_PROBE_CLASSES:
+        return False
+    if algorithm is None or algorithm == "Linear":
+        return True
+    if algorithm in {
+        "Newton", "ModifiedNewton", "NewtonLineSearch", "KrylovNewton",
+        "BFGS", "Broyden",
+    }:
+        return False
+    raise ValueError(
+        f"has_dead_gauss_probe: algorithm {algorithm!r} is not classified. "
+        f"{class_name} probes are stale after a step solved without "
+        "re-forming the residual (Linear) and correct after Newton; "
+        "classify this algorithm before trusting the probe."
+    )
 
 
 #: Catalog tokens that are MATERIAL responses with no element-level

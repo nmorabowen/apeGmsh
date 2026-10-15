@@ -8882,7 +8882,28 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
         # one remaining staged raise site (stage-claimed phantom
         # nodes, emitter gate-2) is handled by ``DomainCapture``'s
         # __enter__ degrade: it warns and proceeds sidecar-less.
-        return DomainCapture(resolved, path, self._fem, ops=ops, bridge=self)
+        #
+        # #2001: the declared algorithm decides whether the gauss
+        # capture can trust the upstream shells' probes (stale after a
+        # Linear step). Any declared Linear, flat or in a stage, wins; no
+        # declared algorithm is unknown (None), which the capture treats
+        # as Linear.
+        declared = [
+            p for p in self._primitives if isinstance(p, SolutionAlgorithm)
+        ] + [
+            st.algorithm for st in self._stage_records
+            if st.algorithm is not None
+        ]
+        names = {type(a).__name__ for a in declared}
+        algorithm = (
+            "Linear" if "Linear" in names
+            else min(names) if names
+            else None
+        )
+        return DomainCapture(
+            resolved, path, self._fem, ops=ops, bridge=self,
+            algorithm=algorithm,
+        )
 
     def fix(
         self,

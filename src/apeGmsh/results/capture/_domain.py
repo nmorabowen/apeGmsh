@@ -519,9 +519,17 @@ class DomainCapture:
         ops: Any = None,
         bridge: Any = None,
         tag_map: Any = None,
+        algorithm: str | None = None,
     ) -> None:
         self._spec = spec
         self._path = Path(path)
+        # The OpenSees name of the solution algorithm the domain solves
+        # with ("Linear", "Newton", ...), or None when unknown. The
+        # upstream shells in ZERO_GAUSS_PROBE_CLASSES read stale section
+        # state after a Linear step, so the gauss capture skips them
+        # under Linear and under an unknown algorithm, and records them
+        # otherwise (see has_dead_gauss_probe).
+        self._algorithm = algorithm
         # The model's fem_eid -> ops-tag pairing: an ElementTagTranslator
         # or a {fem_eid: ops_tag} mapping. Supplied here (``from_h5``, or
         # a caller that knows it), otherwise read from the bridge sidecar
@@ -1049,11 +1057,18 @@ class DomainCapture:
             "pressure use the node recorder (-dof ndm+1 disp) or the "
             ".ladruno recorder PRESSURE channel; for effective stress, "
             "record via MPCO or the .ladruno recorder.",
-            "  • 'returns zeros': the upstream shells (ShellMITC4, "
-            "ShellDKGQ, ShellNLDKGQ, ShellDKGT, ShellNLDKGT) have a dead "
-            "per-Gauss-point probe — correctly sized, all zeros. Build "
-            "these as ASDShellQ4 / ASDShellT3 for live capture, or record "
-            "them via MPCO, which probes sections directly and is correct.",
+            "  • 'stale section state': after a step solved with "
+            "algorithm Linear, the upstream shells (ShellMITC4, "
+            "ShellDKGQ, ShellNLDKGQ, ShellDKGT, ShellNLDKGT) answer every "
+            "probe from section state that never saw the converged "
+            "displacement: zero at step 1, then the previous step's "
+            "state (ShellMITC4 / ShellDKGQ / ShellDKGT) or zero "
+            "(ShellNLDKGQ / ShellNLDKGT). The .out and MPCO recorders "
+            "read the same stale values. Solve with Newton, which "
+            "converges in one iteration on a linear problem and leaves "
+            "the sections correct, and pass the algorithm to the capture "
+            "(ops.domain_capture does when the bridge declares it); an "
+            "unknown algorithm is treated as Linear.",
             "Skipped breakdown:",
         ]
         for reason, ids in by_reason.items():
@@ -1410,14 +1425,20 @@ class _GaussCapturer:
             if int_rule is None:
                 skipped.append((eid, f"class {class_name!r} not in catalog"))
                 continue
-            if has_dead_gauss_probe(class_name):
-                # Catalogued, correctly sized — and all zeros. Recording
-                # it would contour the pane one flat colour and read as
-                # a measurement. See ZERO_GAUSS_PROBE_CLASSES.
+            if has_dead_gauss_probe(class_name, algorithm=self._algorithm):
+                # Catalogued, correctly sized, and stale after a Linear
+                # step: zero at step 1, the previous step's state after.
+                # Recording it would contour a plausible wrong picture.
+                # See ZERO_GAUSS_PROBE_CLASSES.
+                algo = (
+                    "an unknown algorithm" if self._algorithm is None
+                    else f"algorithm {self._algorithm}"
+                )
                 skipped.append((
                     eid,
-                    f"class {class_name!r} returns zeros from "
-                    f"ops.eleResponse(eid, {self._ops_keyword!r})",
+                    f"class {class_name!r} reads stale section state from "
+                    f"ops.eleResponse(eid, {self._ops_keyword!r}) under "
+                    f"{algo}",
                 ))
                 continue
             if not is_catalogued(class_name, int_rule, self._catalog_token):

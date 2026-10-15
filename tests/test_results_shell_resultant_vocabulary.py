@@ -39,11 +39,23 @@ from apeGmsh._vocabulary import (
     is_canonical,
 )
 from apeGmsh.results.capture.spec import DomainCaptureSpec
+from tests.conftest import _open_model_from_h5
+from tests.fixtures.capture_tags import identity_tags
 
-ops = pytest.importorskip("openseespy.opensees")
 
-from tests.conftest import _open_model_from_h5  # noqa: E402
-from tests.fixtures.capture_tags import identity_tags  # noqa: E402
+class _LazyOps:
+    """openseespy, imported by the first ``live`` test that touches it.
+
+    A module-level ``importorskip`` skipped the pure vocabulary and
+    predicate tests too, wherever openseespy is absent (the ``suite``
+    lane). Only the ``live`` tests reach this, and they skip there.
+    """
+
+    def __getattr__(self, name: str):
+        return getattr(pytest.importorskip("openseespy.opensees"), name)
+
+
+ops = _LazyOps()
 
 
 # =====================================================================
@@ -189,11 +201,14 @@ def _build_model(shell_class: str, *, with_brick: bool) -> _MinimalFem:
     return _MinimalFem(np.array(node_ids, dtype=np.int64), coords)
 
 
-def _capture(spec: DomainCaptureSpec, fem: _MinimalFem, path: Path) -> None:
+def _capture(
+    spec: DomainCaptureSpec, fem: _MinimalFem, path: Path,
+    *, algorithm: str | None,
+) -> None:
     from apeGmsh.results.capture._domain import DomainCapture
 
     resolved = spec._resolve_with_explicit_ndm_ndf(fem, ndm=3, ndf=6)
-    with DomainCapture(resolved, path, fem,
+    with DomainCapture(resolved, path, fem, algorithm=algorithm,
                        tag_map=identity_tags(resolved)) as cap:
         cap.begin_stage("static_load", kind="static")
         cap.step(t=ops.getTime())
@@ -221,7 +236,7 @@ def test_declared_shell_record_captures_real_resultants(
     spec.gauss(components="shell_resultant", ids=[_SHELL_EID], name="shell")
 
     path = tmp_path / "cap.h5"
-    _capture(spec, fem, path)
+    _capture(spec, fem, path, algorithm="Linear")
 
     from apeGmsh.results import Results
     with Results.from_native(
@@ -267,8 +282,8 @@ def test_upstream_shell_is_skipped_rather_than_recorded_as_zeros(
     spec.gauss(components="shell_resultant", ids=[_SHELL_EID], name="shell")
 
     path = tmp_path / "cap.h5"
-    with pytest.warns(UserWarning, match="returns zeros"):
-        _capture(spec, fem, path)
+    with pytest.warns(UserWarning, match="stale section state"):
+        _capture(spec, fem, path, algorithm="Linear")
 
     from apeGmsh.results import Results
     with Results.from_native(
@@ -300,7 +315,7 @@ def test_scoped_components_separate_shell_from_solid(tmp_path: Path) -> None:
     spec.gauss(components="stress", ids=[_BRICK_EID], name="solid")
 
     path = tmp_path / "cap.h5"
-    _capture(spec, fem, path)
+    _capture(spec, fem, path, algorithm="Linear")
 
     from apeGmsh.results import Results
     from apeGmsh.viewers.session._realize import _components_in_scope
@@ -470,32 +485,126 @@ def test_listed_shell_is_stale_under_linear_on_every_route(
         )
 
 
-@pytest.mark.live
-@pytest.mark.xfail(
-    strict=True, raises=AssertionError,
-    reason="has_dead_gauss_probe takes only the class, so DomainCapture "
-           "skips these shells under Newton too. Slice #2001 rewrites "
-           "this test to pass the algorithm in.",
+# =====================================================================
+# #2001 — DomainCapture skips by algorithm, not by class alone
+# =====================================================================
+
+_ITERATING = (
+    "Newton", "ModifiedNewton", "NewtonLineSearch", "KrylovNewton",
+    "BFGS", "Broyden",
 )
-def test_domain_capture_keeps_listed_shell_under_newton(
+
+
+@pytest.mark.parametrize("shell_class", _MEASURED)
+def test_predicate_is_stale_only_under_linear_or_unknown(
+    shell_class: str,
+) -> None:
+    from apeGmsh.opensees._response_catalog import has_dead_gauss_probe
+    assert has_dead_gauss_probe(shell_class, algorithm="Linear")
+    assert has_dead_gauss_probe(shell_class, algorithm=None)
+    for name in _ITERATING:
+        assert not has_dead_gauss_probe(shell_class, algorithm=name), name
+
+
+def test_predicate_ignores_unlisted_classes_and_refuses_unknown_names() -> None:
+    from apeGmsh.opensees._response_catalog import has_dead_gauss_probe
+    assert not has_dead_gauss_probe("ASDShellQ4", algorithm="Linear")
+    assert not has_dead_gauss_probe("ASDShellQ4", algorithm=None)
+    with pytest.raises(ValueError, match="not classified"):
+        has_dead_gauss_probe("ShellMITC4", algorithm="linear")
+
+
+def test_iterating_set_is_every_bridge_algorithm_but_linear() -> None:
+    """A new bridge algorithm must be classified in the predicate."""
+    from apeGmsh.opensees.analysis import algorithm as algo_mod
+    from apeGmsh.opensees.analysis.algorithm import SolutionAlgorithm
+    bridge = {
+        name for name in algo_mod.__all__
+        if isinstance(getattr(algo_mod, name), type)
+        and issubclass(getattr(algo_mod, name), SolutionAlgorithm)
+        and getattr(algo_mod, name) is not SolutionAlgorithm
+    }
+    assert bridge == {"Linear", *_ITERATING}
+
+
+@pytest.mark.parametrize(
+    ("flat", "stages", "expected"),
+    [
+        ((), (), None),
+        (("Newton",), (), "Newton"),
+        (("Linear",), (), "Linear"),
+        (("Newton",), ("Linear",), "Linear"),
+        ((), ("KrylovNewton", "Newton"), "KrylovNewton"),
+    ],
+)
+def test_bridge_domain_capture_passes_the_declared_algorithm(
+    flat: tuple[str, ...], stages: tuple[str, ...], expected: str | None,
     tmp_path: Path,
 ) -> None:
-    """The right answer: under Newton DomainCapture records N11 = 2·P.
+    """``ops.domain_capture`` hands the capture the declared algorithm:
+    any Linear wins, nothing declared is unknown (None)."""
+    from apeGmsh.opensees import apesees
+    from apeGmsh.opensees.analysis import algorithm as algo_mod
 
-    Fails today because the skip is algorithm-blind. This capture has no
-    bridge and no algorithm, so a fail-closed fix (unknown algorithm
-    means skip) leaves it XFAIL; it does not flip by itself. Slice #2001
-    rewrites it to pass the algorithm in and drops the marker.
-    """
-    _build_uniaxial("ShellMITC4", "Newton", 1)
+    resolved = SimpleNamespace(ndm=3, ndf=6, records=())
+    spec = SimpleNamespace(
+        _resolve_with_explicit_ndm_ndf=lambda fem, ndm, ndf: resolved,
+    )
+    bridge = SimpleNamespace(
+        _ndm=3, _ndf=6, _fem=object(),
+        _primitives=[getattr(algo_mod, n)() for n in flat],
+        _stage_records=[
+            SimpleNamespace(algorithm=getattr(algo_mod, n)())
+            for n in stages
+        ] + [SimpleNamespace(algorithm=None)],
+    )
+    cap = apesees.apeSees.domain_capture(
+        bridge, spec, path=tmp_path / "cap.h5",  # type: ignore[arg-type]
+    )
+    assert cap._algorithm == expected
+
+
+def _capture_two_steps(
+    shell_class: str, solve_with: str, declared: str | None, path: Path,
+) -> None:
+    """Capture N11 at λ = 1 and λ = 2 from a domain solved ``solve_with``."""
+    from apeGmsh.results.capture._domain import DomainCapture
+
+    _build_uniaxial(shell_class, solve_with, 1)
     fem = _MinimalFem(np.arange(1, 5, dtype=np.int64), _SHELL_COORDS)
     spec = DomainCaptureSpec()
     spec.gauss(components="shell_resultant", ids=[_SHELL_EID], name="shell")
-
-    path = tmp_path / "cap.h5"
-    _capture(spec, fem, path)
+    resolved = spec._resolve_with_explicit_ndm_ndf(fem, ndm=3, ndf=6)
+    with DomainCapture(resolved, path, fem, algorithm=declared,
+                       tag_map=identity_tags(resolved)) as cap:
+        cap.begin_stage("tension", kind="static")
+        cap.step(t=ops.getTime())
+        assert ops.analyze(1) == 0
+        cap.step(t=ops.getTime())
+        cap.end_stage()
     ops.wipe()
 
+
+def _gauss_components(path: Path, fem: _MinimalFem) -> list[str]:
+    from apeGmsh.results import Results
+    with Results.from_native(
+        path, fem=fem, model=_open_model_from_h5(path),
+    ) as r:
+        return list(r._reader.available_components(
+            r.stages[0].id, _gauss_level(),
+        ))
+
+
+@pytest.mark.live
+@pytest.mark.parametrize("shell_class", _MEASURED)
+def test_domain_capture_keeps_listed_shell_under_newton(
+    shell_class: str, tmp_path: Path,
+) -> None:
+    """Under Newton DomainCapture records N11 = 2·P·λ at every step."""
+    path = tmp_path / "cap.h5"
+    _capture_two_steps(shell_class, "Newton", "Newton", path)
+
+    fem = _MinimalFem(np.arange(1, 5, dtype=np.int64), _SHELL_COORDS)
     from apeGmsh.results import Results
     with Results.from_native(
         path, fem=fem, model=_open_model_from_h5(path),
@@ -503,8 +612,39 @@ def test_domain_capture_keeps_listed_shell_under_newton(
         stage_id = r.stages[0].id
         assert "membrane_force_xx" in r._reader.available_components(
             stage_id, _gauss_level(),
-        ), "DomainCapture skipped a shell whose probe is correct"
-        slab = r.stage(stage_id).elements.gauss.get(
+        ), f"DomainCapture skipped {shell_class}, whose probe is correct"
+        values = r.stage(stage_id).elements.gauss.get(
             component="membrane_force_xx",
-        )
-        np.testing.assert_allclose(slab.values, _N11_FULL, rtol=1e-9)
+        ).values
+    expected = np.array([1.0, 2.0])[:, None] * _N11_FULL
+    np.testing.assert_allclose(
+        values, np.broadcast_to(expected, values.shape),
+        rtol=_RTOL[shell_class], atol=0.0,
+    )
+
+
+@pytest.mark.live
+@pytest.mark.parametrize("shell_class", _MEASURED)
+@pytest.mark.parametrize(
+    ("declared", "named"),
+    [("Linear", "algorithm Linear"), (None, "an unknown algorithm")],
+)
+def test_domain_capture_skips_listed_shell_under_linear_or_unknown(
+    shell_class: str, declared: str | None, named: str, tmp_path: Path,
+) -> None:
+    """Under Linear, or when the capture is not told, the shell is skipped
+    loudly. The unknown case solves with Newton: the skip is the capture
+    failing closed, not a measurement of this domain."""
+    path = tmp_path / "cap.h5"
+    solve_with = "Linear" if declared == "Linear" else "Newton"
+    with pytest.warns(UserWarning, match="stale section state") as rec:
+        _capture_two_steps(shell_class, solve_with, declared, path)
+    text = "\n".join(str(w.message) for w in rec)
+    assert f"class {shell_class!r}" in text and named in text
+    assert "Solve with Newton" in text
+    assert "MPCO, which probes sections directly and is correct" not in text
+
+    fem = _MinimalFem(np.arange(1, 5, dtype=np.int64), _SHELL_COORDS)
+    assert _gauss_components(path, fem) == [], (
+        "a skipped class must leave no slab behind"
+    )
