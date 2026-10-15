@@ -396,14 +396,21 @@ class TestEndToEnd:
     def test_bare_damage_on_two_component_returns_empty(
         self, two_component_damage,
     ) -> None:
-        # Asking for ``damage`` (bare) on a multi-component bucket
-        # should return an empty slab — the bucket's META exposes
-        # ``damage_tension`` / ``damage_compression``, not ``damage``.
+        # Asking for ``damage`` (bare) on a multi-component bucket is
+        # refused, naming the bucket: its META exposes ``damage_tension``
+        # / ``damage_compression``, and no column is "the" damage. It used
+        # to return an empty slab in silence (#2026); the name is kept so
+        # the node id the card owns stays stable.
         path, _, _ = two_component_damage
         r = Results.from_mpco(str(path), model_h5=_stub_model_h5_path())
-        slab = r.elements.gauss.get(component="damage", time=0)
-        assert slab.values.shape[1] == 0
-        r._reader.close()
+        try:
+            with pytest.raises(
+                _mmat.MaterialStateComponentRefused,
+                match=r"material\.damage/.*FourNodeTetrahedron",
+            ):
+                r.elements.gauss.get(component="damage", time=0)
+        finally:
+            r._reader.close()
 
     def test_eps_pl_two_component(
         self, equivalent_plastic_strain_2c,
