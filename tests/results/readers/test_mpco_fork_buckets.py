@@ -346,3 +346,103 @@ def test_element_only_file_with_two_cadences_refuses(tmp_path: Path) -> None:
                       labels=LABELS_3D, ids=[7, 9], n_steps=1)
     with MPCOReader(path) as r, pytest.raises(ValueError, match="step-count"):
         r.stages()
+
+
+# LadrunoConcrete3D answers ``damage`` with a bare
+# ``MaterialResponse(this, 5, Vector(2))`` and tags no ResponseType
+# (LadrunoConcrete3D.cpp ``setResponse``); ``getResponse`` case 5 fills
+# ``v(0) = omegaT; v(1) = omegaC``. MPCO then labels each GP block ``C1,C2``
+# (MPCORecorder.cpp ``workaroundForSizeInconsistency``), which the reader
+# used to name ``damage_0``/``damage_1``: ``damage_tension`` read empty (#2026).
+def test_unnamed_damage_bucket_reads_tension_first(tmp_path: Path) -> None:
+    fam = FAMILIES[2]
+    assert fam.cls == "LadrunoBrick"
+    ids = [7, 9]
+    path = tmp_path / "cdpm2.mpco"
+    with _file(path, nodal=True) as f:
+        _gauss_bucket(f, "material.damage", fam.key, n_gp=8, labels="C1,C2",
+                      ids=ids)
+    with MPCOReader(path) as r:
+        (stage,) = r.stages()
+        comps = r.available_components(stage.id, ResultLevel.GAUSS)
+        assert {"damage_tension", "damage_compression"} <= set(comps)
+        assert "damage_0" not in comps
+        for k, comp in enumerate(("damage_tension", "damage_compression")):
+            slab = r.read_gauss(stage.id, comp)
+            _check(slab, k, ids, 8)          # column k of each GP block
+            _check_coords(slab, fam, len(ids))
+
+
+def test_unnamed_damage_without_a_catalog_row_refuses(tmp_path: Path) -> None:
+    """LadrunoBrick20 has no catalog ``damage`` row: the order is unknown."""
+    key = "33018-LadrunoBrick20[0:0:0]"
+    path = tmp_path / "cdpm2_h20.mpco"
+    with _file(path, nodal=True) as f:
+        _gauss_bucket(f, "material.damage", key, n_gp=27, labels="C1,C2",
+                      ids=[7])
+    with MPCOReader(path) as r:
+        (stage,) = r.stages()
+        with pytest.raises(LookupError) as err:
+            r.read_gauss(stage.id, "damage_tension")
+        assert f"material.damage/{key}" in str(err.value)
+        # The positional names still read, and a filter that leaves the
+        # bucket out is not refused.
+        _check(r.read_gauss(stage.id, "damage_1"), 1, [7], 27)
+        empty = r.read_gauss(stage.id, "damage_tension",
+                             element_ids=np.array([99]))
+        assert np.asarray(empty.values).shape[1] == 0
+
+
+def test_unnamed_damage_of_another_width_refuses(tmp_path: Path) -> None:
+    """``C1,C2,C3`` on LadrunoBrick: the catalog's 2-wide row cannot name it.
+
+    Without the width guard, column 0 would read as ``damage_tension``.
+    """
+    fam = FAMILIES[2]
+    path = tmp_path / "three.mpco"
+    with _file(path, nodal=True) as f:
+        _gauss_bucket(f, "material.damage", fam.key, n_gp=8,
+                      labels="C1,C2,C3", ids=[7])
+    with MPCOReader(path) as r:
+        (stage,) = r.stages()
+        comps = r.available_components(stage.id, ResultLevel.GAUSS)
+        assert {"damage_0", "damage_1", "damage_2"} <= set(comps)
+        assert "damage_tension" not in comps
+        with pytest.raises(LookupError, match=rf"material\.damage/{fam.key}"
+                           .replace("[", r"\[").replace("]", r"\]")):
+            r.read_gauss(stage.id, "damage_tension")
+
+
+def test_bare_plastic_strain_on_a_tensor_bucket_refuses(tmp_path: Path) -> None:
+    fam = FAMILIES[2]
+    path = tmp_path / "pstrain.mpco"
+    with _file(path, nodal=True) as f:
+        _gauss_bucket(f, "material.plasticStrain", fam.key, n_gp=8,
+                      labels="C1,C2,C3,C4,C5,C6", ids=[7])
+    with MPCOReader(path) as r:
+        (stage,) = r.stages()
+        _check(r.read_gauss(stage.id, "plastic_strain_zz"), 2, [7], 8)
+        with pytest.raises(LookupError, match="plastic_strain_xx"):
+            r.read_gauss(stage.id, "plastic_strain")
+
+
+@pytest.mark.parametrize("labels", ["d+,d-", "C1,C2"])
+def test_bare_damage_on_a_two_column_bucket_refuses(
+    tmp_path: Path, labels: str,
+) -> None:
+    """ASDConcrete3D's ``d+,d-`` (and the unnamed pair) hold no scalar damage.
+
+    The bare ``damage`` read used to come back empty with no error.
+    """
+    fam = FAMILIES[2]
+    path = tmp_path / "bare.mpco"
+    with _file(path, nodal=True) as f:
+        _gauss_bucket(f, "material.damage", fam.key, n_gp=8, labels=labels,
+                      ids=[7])
+    with MPCOReader(path) as r:
+        (stage,) = r.stages()
+        with pytest.raises(LookupError) as err:
+            r.read_gauss(stage.id, "damage")
+    msg = str(err.value)
+    assert f"material.damage/{fam.key}" in msg
+    assert "damage_tension" in msg and "damage_compression" in msg
