@@ -52,7 +52,7 @@ from ._resolved import ResolvedRecorderRecord
 _AXIS_TO_TRANS_DOF = {"x": 1, "y": 2, "z": 3}
 # Rotational axis suffix → spatial slot as a DOF of the full 6-DOF
 # layout. A slot, not the deck DOF: :func:`to_deck` maps it per node
-# (a planar frame's rotation_z is DOF 3, #2018).
+# (a planar frame's rotation_z is DOF 3).
 _AXIS_TO_ROT_DOF = {"x": 4, "y": 5, "z": 6}
 
 # Canonical prefix → (ops_recorder_type, axis_kind)
@@ -401,7 +401,7 @@ def emit_logical(
 # records need no id map: the bridge emits every node under its FEM id
 # (``opensees/_internal/compose.py``, node emit). Their DOFs do need the
 # model: ``emit_logical`` keys them by spatial slot, and :func:`to_deck`
-# maps each slot to the DOF the nodes carry it at (#2018).
+# maps each slot to the DOF the nodes carry it at.
 
 
 def element_tag_map(model: object, *, fem_snapshot_id: str) -> dict[int, int]:
