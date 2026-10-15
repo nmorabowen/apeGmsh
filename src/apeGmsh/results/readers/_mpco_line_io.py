@@ -239,7 +239,7 @@ def discover_line_station_buckets(
             continue
         # Every header index is read: MPCO splits one class's elements
         # into ``:0``, ``:1``, ... when their sections answer with
-        # different component lists (#2053 review F1). A class outside
+        # different component lists. A class outside
         # the catalogue is read too: section components depend on the
         # section, not the element class, and an undecodable bucket
         # raises at read time (no GP_X, unknown names).
