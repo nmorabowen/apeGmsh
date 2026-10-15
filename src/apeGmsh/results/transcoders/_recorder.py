@@ -42,7 +42,6 @@ from numpy import ndarray
 
 from ...opensees._response_catalog import (
     RESPONSE_CATALOG,
-    CustomRuleLayout,
     IntRule,
     NodalForceLayout,
     ResponseLayout,
@@ -66,7 +65,6 @@ from ..spec._emit import (
     _DEFERRED_CATEGORIES,
     element_tag_map,
     emit_logical,
-    line_station_gpx_path,
     line_stations_from_local_force,
     refuse_non_elastic_local_force,
 )
