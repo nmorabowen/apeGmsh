@@ -11,8 +11,6 @@ MPCO is kinded from the archive's ``analysis`` record through
 ``from_mpco(..., model_h5=)``.  Both must list ``[static, transient]`` and
 match ``ops.nodeDisp`` at each stage's last step (rtol 1e-10).  Pip
 ``openseespy`` has no MPCO recorder, so the MPCO case is fork-only too.
-The ``.ladruno`` kind is a strict xfail until the fork stamps KIND per
-stage (#2034); its values are checked apart, so the xfail hides nothing.
 
 Gated by the ``ladruno_fork`` marker (root conftest auto-skips off-fork).
 """
@@ -120,22 +118,7 @@ def _open(run: "dict[str, Any]", fmt: str) -> Results:
     return Results.from_mpco(path, model_h5=str(run["model_h5"]))
 
 
-#: The fork's ``.ladruno`` KIND is one recorder-wide ``-kind`` option
-#: (default ``static``), stamped on every stage; the bridge passes none,
-#: so the transient stage reads ``static``.  The fork fix is #2034.
-_LADRUNO_KIND_PER_RECORDER = pytest.mark.xfail(
-    strict=True,
-    raises=AssertionError,
-    reason="#2034: the fork stamps .ladruno KIND per recorder (-kind, "
-    "default static), not per stage; the transient stage reads static. "
-    "Observed on build 79e0623670.",
-)
-
-
-@pytest.mark.parametrize("fmt", [
-    pytest.param("ladruno", marks=_LADRUNO_KIND_PER_RECORDER),
-    "mpco",
-])
+@pytest.mark.parametrize("fmt", ["ladruno", "mpco"])
 def test_static_then_transient_kinds(run: "dict[str, Any]", fmt: str) -> None:
     stages = [s for s in _open(run, fmt).stages if s.kind != "mode"]
     assert [s.kind for s in stages] == ["static", "transient"]
@@ -148,8 +131,7 @@ def test_mpco_stages_take_the_program_names(run: "dict[str, Any]") -> None:
 
 @pytest.mark.parametrize("fmt", ["ladruno", "mpco"])
 def test_last_step_values_match_node_disp(run: "dict[str, Any]", fmt: str) -> None:
-    """Kept apart from the kinds so the #2034 xfail cannot hide a value
-    mismatch: the stages pair with the snapshots in run order."""
+    """The stages pair with the snapshots in run order."""
     res = _open(run, fmt)
     stages = [s for s in res.stages if s.kind != "mode"]
     assert len(stages) == 2

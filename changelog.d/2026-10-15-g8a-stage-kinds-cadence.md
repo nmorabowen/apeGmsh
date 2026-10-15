@@ -21,6 +21,6 @@ say so.
 
 The fork-lane test `tests/opensees/integration_ladruno/test_ladruno_stage_kinds_live.py`
 runs a gravity stage, then a Newmark stage, and checks the kinds and the
-last-step displacements against `ops.nodeDisp` at `rtol=1e-10`. The `.ladruno`
-transient kind is a strict xfail on #2034, because the fork stamps one KIND
-per recorder, not per stage.
+last-step displacements against `ops.nodeDisp` at `rtol=1e-10`, on `.ladruno`
+and MPCO. The `.ladruno` kinds need FORK_PIN `ladruno-v20261015`, which stamps
+KIND per stage.
