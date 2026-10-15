@@ -461,11 +461,9 @@ def _known_converging_build() -> bool:
     return get_backend_build() in _LOAD_CONTROL_CONVERGES
 
 
-@pytest.mark.xfail(
-    "not _known_converging_build()", strict=True,
-    reason="#2044: LoadControl diverges at FORK_PIN in the elastic first step",
-)
-def test_ladruno_brick_asdconcrete_converges_under_load_control() -> None:
+def test_ladruno_brick_asdconcrete_converges_under_load_control(
+    request: pytest.FixtureRequest,
+) -> None:
     """LadrunoBrick + ASDConcrete3D under LoadControl, the #1999 case (#2044).
 
     -7.2e3 per top node in four 0.25 steps. Step 1 is elastic, yet at
@@ -473,7 +471,17 @@ def test_ladruno_brick_asdconcrete_converges_under_load_control() -> None:
     first; an ElasticIsotropic brick converges). Once the fork is fixed the
     run converges and four GPs crack in tension (d+ ~ 1), which is asserted
     so the passing case still carries a non-zero answer.
+
+    The strict xfail is applied in the body, not as a marker condition:
+    a condition runs at setup, before the ``ladruno_fork`` skip, and would
+    touch the backend on a lane that has none.
     """
+    if not _known_converging_build():
+        request.applymarker(pytest.mark.xfail(
+            strict=True,
+            reason="#2044: LoadControl diverges at FORK_PIN in the elastic "
+                   "first step",
+        ))
     with apeGmsh(model_name="g7_lc", verbose=False) as g:
         box = g.model.geometry.add_box(0, 0, 0, 1, 1, 2)
         g.model.sync()
