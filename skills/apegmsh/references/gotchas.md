@@ -92,12 +92,6 @@ with set algebra via `| & - ^`. The old single-shot `fem.*.get/.resolve`
 / `g.mesh_selection.add_nodes` accessors were **removed** — `.select()`
 is the only accessor (its no-arg / `pg=` seed covers the simple case too).
 
-### ❌ `results.elements.gauss.select(...)` — not shipped
-Results sub-composites (`gauss` / `fibers` / `layers` / `line_stations` /
-`springs`) have **no** `.select()`. Use their existing
-`.in_box / .nearest_to / .on_plane` helpers. (Mesh-selection name-seed,
-by contrast, **is** shipped: `g.mesh_selection.select(name="my_set")`.)
-
 ### ❌ Reaching for `g.opensees` / `g.opensees.ingest`
 Both are **gone**. The entry point is `from apeGmsh.opensees import apeSees`.
 `apeSees` does **not** auto-emit `g.loads` / `g.displacements` / `g.masses` —

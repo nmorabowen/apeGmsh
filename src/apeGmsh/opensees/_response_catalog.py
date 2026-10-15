@@ -2527,20 +2527,28 @@ ZERO_GAUSS_PROBE_CLASSES: frozenset[str] = frozenset({
 })
 
 
-def has_dead_gauss_probe(class_name: str) -> bool:
-    """Whether this class can hold stale section state at a probe.
+def has_dead_gauss_probe(class_name: str, *, algorithm: str | None) -> bool:
+    """Whether a probe of this class can read stale section state.
 
-    True for the upstream shells in :data:`ZERO_GAUSS_PROBE_CLASSES`.
-    Their probes are stale only after a step solved with ``algorithm
-    Linear``; under Newton they are correct (see the set's note). This
-    predicate takes only the class, so it cannot tell the two apart:
-    it answers True for every analysis, and DomainCapture skips the
-    element with a reason. That keeps the Linear case loud and also
-    discards valid data under Newton, until the caller can pass the
-    algorithm. The ``.out`` and MPCO routes do not consult it,
-    and under Linear they record these classes' stale values silently.
+    ``algorithm`` is the OpenSees name of the solution algorithm the
+    domain solves with (``"Linear"``, ``"Newton"``, ...), or ``None``
+    when the caller does not know it.
+
+    True for a class in :data:`ZERO_GAUSS_PROBE_CLASSES` under
+    ``Linear`` (measured stale, see the set's note), under an unknown
+    algorithm (``None``) and under any name this predicate does not
+    classify (a newer or forked algorithm): those fail closed, and the
+    caller skips the element with a reason rather than crash the run.
+    False for every other class, and for a listed class under one of the
+    bridge's iterating algorithms, which re-form the residual and leave
+    the sections at the converged state.
     """
-    return class_name in ZERO_GAUSS_PROBE_CLASSES
+    if class_name not in ZERO_GAUSS_PROBE_CLASSES:
+        return False
+    return algorithm not in {
+        "Newton", "ModifiedNewton", "NewtonLineSearch", "KrylovNewton",
+        "BFGS", "Broyden",
+    }
 
 
 #: Catalog tokens that are MATERIAL responses with no element-level
