@@ -1029,11 +1029,48 @@ def _canonical_to_mpco_element_token(canonical: str) -> str | None:
     return None
 
 
+#: Read-side keywords a gauss record takes verbatim on the MPCO emit.
+#: The MPCO reader finds every gauss-points ``stresses`` / ``strains``
+#: canonical under the ``ON_ELEMENTS/<keyword>`` group that
+#: :func:`~apeGmsh.opensees._response_catalog.gauss_keyword_for_canonical`
+#: names, so the emit asks the same function. The generic prefix table
+#: above is topology-blind: it sends a shell ``bending_moment_xx`` to the
+#: beam ``section.force`` bucket and has no entry for ``membrane_force_*``
+#: or ``transverse_shear_*`` (#1991).
+_MPCO_GAUSS_READ_SIDE_KEYWORDS: frozenset[str] = frozenset({"stresses", "strains"})
+
+
+def _canonical_to_mpco_gauss_token(canonical: str, record_name: str) -> str:
+    """Map a gauss-points canonical to its MPCO ``-E`` token, or raise.
+
+    Continuum stress/strain and the shell resultants and generalized
+    strains take the read side's keyword; derived scalars keep the
+    generic prefix table (they record the raw tensor). A component
+    neither routes raises ``ValueError``: dropping it would write an MPCO
+    file whose gauss slab reads empty, with no warning.
+    """
+    from apeGmsh.opensees._response_catalog import gauss_keyword_for_canonical
+    keyword = gauss_keyword_for_canonical(canonical)
+    if keyword in _MPCO_GAUSS_READ_SIDE_KEYWORDS:
+        return keyword
+    token = _canonical_to_mpco_element_token(canonical)
+    if token is None:
+        raise ValueError(
+            f"Record {record_name!r} (category=gauss): component "
+            f"{canonical!r} has no MPCO -E token, so the MPCO file would "
+            f"not record it. Drop it from the record, or capture it with "
+            f"spec.emit_recorders(...) or ops.domain_capture(...)."
+        )
+    return token
+
+
 def collect_mpco_tokens(records) -> tuple[list[str], list[str]]:
     """Return ``(node_tokens, element_tokens)`` deduplicated, in stable order.
 
     Modal records contribute ``modesOfVibration`` /
-    ``modesOfVibrationRotational`` entries on the nodal side.
+    ``modesOfVibrationRotational`` entries on the nodal side. A gauss
+    component with no MPCO token raises ``ValueError``
+    (:func:`_canonical_to_mpco_gauss_token`).
     """
     node_tokens: list[str] = []
     elem_tokens: list[str] = []
@@ -1056,7 +1093,12 @@ def collect_mpco_tokens(records) -> tuple[list[str], list[str]]:
             for c in rec.components:
                 _add(node_tokens, seen_n, _canonical_to_mpco_node_token(c))
             continue
-        # element-level categories
+        if rec.category == "gauss":
+            for c in rec.components:
+                _add(elem_tokens, seen_e,
+                     _canonical_to_mpco_gauss_token(c, rec.name))
+            continue
+        # other element-level categories
         for c in rec.components:
             _add(elem_tokens, seen_e, _canonical_to_mpco_element_token(c))
 

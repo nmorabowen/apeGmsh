@@ -12,10 +12,18 @@ existing source-code formatters where they overlap.
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
+from apeGmsh._vocabulary import expand_shorthand
+from apeGmsh.opensees._response_catalog import (
+    RESPONSE_CATALOG,
+    gauss_routing_for_canonical,
+)
 from apeGmsh.results.spec._emit import (
+    collect_mpco_tokens,
     emit_logical,
     emit_mpco_python,
+    emit_mpco_tcl,
     format_python,
     mpco_ops_args,
     to_ops_args,
@@ -282,3 +290,90 @@ def test_mpco_ops_args_modal_record_emits_modes_token() -> None:
     args = mpco_ops_args([rec])
     # Modal records contribute the modes-of-vibration tokens on -N.
     assert "modesOfVibration" in args
+
+
+# =====================================================================
+# mpco_ops_args — gauss records route like the MPCO read side (#1991)
+# =====================================================================
+#
+# Oracle: the MPCO reader finds a gauss-points canonical under the
+# ``ON_ELEMENTS/<keyword>`` group that ``gauss_routing_for_canonical``
+# names (``discover_gauss_buckets``), so the emit must write that group.
+# Before #1991 a shell record emitted ``-E section.force`` (the beam
+# bucket, reached through ``bending_moment``) and dropped
+# ``membrane_force_*`` and ``transverse_shear_*`` silently: the MPCO
+# gauss slab read empty.
+
+#: Every catalogued shell class with its stress-resultant and
+#: generalized-strain layouts, read from RESPONSE_CATALOG so a new shell
+#: class is covered without editing this file.
+_SHELL_LAYOUTS: dict[tuple[str, str], tuple[str, ...]] = {
+    (cls, tok): tuple(layout.component_layout)
+    for (cls, _rule, tok), layout in RESPONSE_CATALOG.items()
+    if tok in ("stress", "strain")
+    and tuple(layout.component_layout)[0] in ("membrane_force_xx",
+                                              "membrane_strain_xx")
+}
+_SHELL_CLASSES = sorted({cls for cls, _ in _SHELL_LAYOUTS})
+_MPCO_KEYWORD = {"stress": "stresses", "strain": "strains"}
+
+
+def _gauss(components, cls=None, name="sh") -> ResolvedRecorderRecord:
+    return ResolvedRecorderRecord(
+        category="gauss", name=name, components=tuple(components),
+        dt=None, n_steps=None, element_ids=np.array([1]),
+        element_class_name=cls,
+    )
+
+
+def test_shell_class_table_is_not_vacuous() -> None:
+    assert {"ASDShellQ4", "ASDShellT3", "ShellMITC4", "ShellDKGQ",
+            "ShellNLDKGQ", "ShellDKGT", "ShellNLDKGT"} <= set(_SHELL_CLASSES)
+    for cls in _SHELL_CLASSES:
+        assert (cls, "stress") in _SHELL_LAYOUTS
+        assert (cls, "strain") in _SHELL_LAYOUTS
+
+
+@pytest.mark.parametrize("cls", _SHELL_CLASSES)
+@pytest.mark.parametrize("tok", ["stress", "strain"])
+def test_mpco_shell_layout_emits_read_side_keyword(cls: str, tok: str) -> None:
+    comps = _SHELL_LAYOUTS[(cls, tok)]
+    args = mpco_ops_args([_gauss(comps, cls)])
+    assert args == ("mpco", "run.mpco", "-E", _MPCO_KEYWORD[tok])
+    # Cross-check against the reader's routing, component by component.
+    for c in comps:
+        routing = gauss_routing_for_canonical(c)
+        assert routing is not None and routing[0] == _MPCO_KEYWORD[tok], c
+
+
+@pytest.mark.parametrize("cls", _SHELL_CLASSES)
+def test_mpco_shell_resultant_shorthand_emits_stresses(cls: str) -> None:
+    comps = expand_shorthand("shell_resultant", ndm=3, ndf=6)
+    assert comps == _SHELL_LAYOUTS[(cls, "stress")]
+    rec = _gauss(comps, cls)
+    assert mpco_ops_args([rec]) == ("mpco", "run.mpco", "-E", "stresses")
+    assert emit_mpco_tcl([rec]) == "recorder mpco run.mpco -E stresses"
+    assert emit_mpco_python([rec]) == (
+        "ops.recorder('mpco', 'run.mpco', '-E', 'stresses')")
+
+
+def test_mpco_line_station_bending_moment_stays_section_force() -> None:
+    """The topology split: a beam ``bending_moment`` is ``section.force``."""
+    rec = ResolvedRecorderRecord(
+        category="line_stations", name="b",
+        components=("axial_force", "bending_moment_y", "bending_moment_z"),
+        dt=None, n_steps=None, element_ids=np.array([1]),
+    )
+    assert collect_mpco_tokens([rec]) == ([], ["section.force"])
+
+
+def test_mpco_gauss_derived_scalar_records_raw_tensor() -> None:
+    assert collect_mpco_tokens([_gauss(("von_mises_stress",))]) == (
+        [], ["stresses"])
+
+
+@pytest.mark.parametrize("emit", [mpco_ops_args, emit_mpco_tcl, emit_mpco_python])
+def test_mpco_unmapped_gauss_component_raises(emit) -> None:
+    rec = _gauss(("stress_xx", "unrouted_quantity_xx"), name="bad")
+    with pytest.raises(ValueError, match=r"'bad'.*'unrouted_quantity_xx'"):
+        emit([rec])
