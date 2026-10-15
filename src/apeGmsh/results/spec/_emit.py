@@ -228,6 +228,12 @@ class LogicalRecorder:
 
     The Tcl and Python formatters take this and write the right
     command syntax.
+
+    ``precision`` is the significant digits OpenSees writes per value
+    (``-precision N``). OpenSees defaults to 6, which caps a ``.out``
+    value oracle near rtol 1e-5; the default 17 is the digit count that
+    round-trips an IEEE double, so the file holds the value the domain
+    held. Every formatter emits it (#1974).
     """
 
     kind: str                          # "Node" | "Element"
@@ -240,6 +246,16 @@ class LogicalRecorder:
     dt: Optional[float] = None
     record_name: str = ""              # for traceability / comments
     comment: str = ""                  # appended as a trailing comment
+    precision: int = 17                # significant digits (-precision)
+
+    def __post_init__(self) -> None:
+        p = self.precision
+        if isinstance(p, bool) or not isinstance(p, int) or p <= 0:
+            raise ValueError(
+                f"LogicalRecorder {self.record_name!r}: precision must be "
+                f"a positive int (significant digits per written value), "
+                f"got {p!r}."
+            )
 
 
 # =====================================================================
@@ -375,6 +391,9 @@ def format_tcl(rec: LogicalRecorder) -> str:
     if rec.dofs is not None:
         parts.append("-dof")
         parts.extend(str(d) for d in rec.dofs)
+    # After the target list, before the response: OpenSees reads options
+    # in any order and the first unknown token starts the response.
+    parts.append(f"-precision {rec.precision}")
     parts.extend(rec.response_tokens)
     line = " ".join(parts)
     if rec.comment:
@@ -394,6 +413,7 @@ def format_python(rec: LogicalRecorder) -> str:
     if rec.dofs is not None:
         args.append("'-dof'")
         args.extend(str(d) for d in rec.dofs)
+    args.extend(["'-precision'", str(rec.precision)])
     args.extend(repr(t) for t in rec.response_tokens)
     line = f"ops.recorder({', '.join(args)})"
     if rec.comment:
@@ -429,6 +449,7 @@ def to_ops_args(rec: LogicalRecorder) -> tuple:
     if rec.dofs is not None:
         args.append("-dof")
         args.extend(int(d) for d in rec.dofs)
+    args.extend(["-precision", int(rec.precision)])
     args.extend(rec.response_tokens)
     return tuple(args)
 
@@ -436,6 +457,27 @@ def to_ops_args(rec: LogicalRecorder) -> tuple:
 # =====================================================================
 # Per-category emission
 # =====================================================================
+
+def _warn_n_steps_unsupported(rec: ResolvedRecorderRecord) -> None:
+    """Warn once per record that ``n_steps=`` without ``dt=`` cannot be honoured.
+
+    A classic ``.out`` / ``.xml`` recorder has no step-count option, so
+    the record is emitted as an every-step recorder. Both per-category
+    emitters call this, so every category warns the same way (#1947).
+    ``stacklevel=5`` points past this helper, the emitter generator and
+    :func:`emit_logical`, as the nodes warning did before.
+    """
+    if rec.n_steps is not None and rec.dt is None:
+        warnings.warn(
+            f"Record {rec.name!r}: ``n_steps={rec.n_steps}`` has no "
+            f"equivalent on a classic recorder, which has no step-count "
+            f"option. Emitting an every-step recorder. Use ``dt=`` for a "
+            f"time cadence on ``.out``, or the MPCO or fork recorder's "
+            f"``-T nsteps`` for a step cadence.",
+            UserWarning,
+            stacklevel=5,
+        )
+
 
 def _emit_nodes(
     rec: ResolvedRecorderRecord,
@@ -447,15 +489,7 @@ def _emit_nodes(
     if rec.node_ids is None or rec.node_ids.size == 0:
         return
 
-    if rec.n_steps is not None and rec.dt is None:
-        warnings.warn(
-            f"Record {rec.name!r}: ``n_steps={rec.n_steps}`` is not "
-            f"directly supported by the OpenSees Tcl/Py recorder. "
-            f"Emitting as every-step. Use ``dt=`` for time-based "
-            f"cadence, or use domain capture (Phase 7) for "
-            f"step-based cadence.",
-            stacklevel=4,
-        )
+    _warn_n_steps_unsupported(rec)
 
     by_type: dict[str, list[int]] = {}    # ops_type → sorted DOF list
     for canonical in rec.components:
@@ -542,6 +576,7 @@ def _emit_element_simple(
         if response_str is None:
             return
 
+    _warn_n_steps_unsupported(rec)
     response_tokens = tuple(response_str.split())
     target_ids = tuple(int(e) for e in rec.element_ids)
     file_path = _build_file_path(

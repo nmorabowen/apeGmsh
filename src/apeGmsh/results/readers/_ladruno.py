@@ -44,6 +44,7 @@ from .._slabs import (
 from .._time import resolve_time_slice
 from ..schema._versions import LADRUNO_SUPPORTED_FORMAT_VERSIONS
 from . import _ladruno_element_io as _eio
+from . import _mpco_nodal_io as _mnodal
 from ._ladruno_hyperslab import read_hyperslab
 from ._mpco import (
     _empty_element_slab,
@@ -55,6 +56,7 @@ from ._mpco import (
     _empty_spring_slab,
 )
 from ._mpco_translation import (
+    PARTITION_REDUCTION_NONE,
     PARTITION_REDUCTIONS,
     canonical_node_component,
     partition_reduction_from_name,
@@ -82,7 +84,12 @@ def _stage_sort_key(name: str) -> "tuple[int, str]":
 
 
 # Ladruno stage KIND → protocol StageInfo.kind ("transient"|"static"|"mode").
-_KIND_MAP = {"static": "static", "transient": "transient", "eigen": "mode"}
+# ``eigen`` is not a mode: the recorder promotes EVERY stage of a recorder
+# that asks for ``modesOfVibration`` to ``KIND=eigen`` (it overwrites the
+# ``-kind`` option, default ``static``), so a gravity stage recorded beside
+# modes says ``eigen`` too. The stage keeps its steps as a ``static`` stage
+# and each recorded mode becomes its own ``kind="mode"`` stage.
+_KIND_MAP = {"static": "static", "transient": "transient", "eigen": "static"}
 
 
 class NodeEnvelope(NamedTuple):
@@ -144,6 +151,10 @@ class LadrunoReader:
         self._validate_identity()
         self._stage_cache: Optional[list[StageInfo]] = None
         self._stage_to_grp: dict[str, str] = {}
+        # Mode stage id -> (host MODEL_STAGE group, its ModeEntry).
+        # Mode stages are not MODEL_STAGE groups, so they stay out of
+        # ``_stage_to_grp`` (which lists the host stages, ``stage_<i>``).
+        self._mode_refs: dict[str, tuple[str, _mnodal.ModeEntry]] = {}
         self._fem_cache: "Optional[FEMData] | _Sentinel" = _SENTINEL
         self._tag_map: "Optional[ElementTagTranslator]" = None
 
@@ -215,7 +226,7 @@ class LadrunoReader:
     def stages(self) -> list[StageInfo]:
         if self._stage_cache is not None:
             return list(self._stage_cache)
-        out: list[StageInfo] = []
+        hosts: list[StageInfo] = []
         # Sort by the numeric stamp inside ``MODEL_STAGE[<k>]`` —
         # lexicographic sorting would put MODEL_STAGE[10] before
         # MODEL_STAGE[2] once a run reaches ten stages.
@@ -223,6 +234,7 @@ class LadrunoReader:
             (k for k in self._h5.keys() if k.startswith(_STAGE_PREFIX)),
             key=_stage_sort_key,
         )
+        host_sets = []
         for i, name in enumerate(names):
             stage_id = f"stage_{i}"
             self._stage_to_grp[stage_id] = name
@@ -230,21 +242,61 @@ class LadrunoReader:
             kind_raw = _decode(grp.attrs["KIND"]) if "KIND" in grp.attrs else "static"
             kind = _KIND_MAP.get(kind_raw, "static")
             time = self._time_for_group(grp)
-            out.append(
+            hosts.append(
                 StageInfo(
                     id=stage_id, name=name, kind=kind, n_steps=int(time.size),
                 )
             )
+            on_nodes = _child(grp, "RESULTS/ON_NODES")
+            host_sets.append(
+                [] if on_nodes is None else _mnodal.discover_modes(
+                    on_nodes, source=f"{self._path.name} {name}",
+                )
+            )
+        # Each recorded mode is its own kind="mode" stage, listed
+        # right after the MODEL_STAGE that holds it (the layout of a
+        # native results file).
+        modes_after: dict[int, list[StageInfo]] = {}
+        for h, sid, mname, entry in _mnodal.mode_stage_layout(
+            [s.id for s in hosts], names, host_sets,
+        ):
+            self._mode_refs[sid] = (names[h], entry)
+            modes_after.setdefault(h, []).append(StageInfo(
+                id=sid, name=mname, kind="mode", n_steps=1,
+                eigenvalue=entry.eigenvalue,
+                frequency_hz=entry.frequency_hz,
+                period_s=entry.period_s,
+                mode_index=entry.mode_index,
+            ))
+        out: list[StageInfo] = []
+        for h, host in enumerate(hosts):
+            out.append(host)
+            out.extend(modes_after.get(h, []))
         self._stage_cache = out
         return list(out)
+
+    def _refuse_on_mode(self, stage_id: str, what: str) -> None:
+        """Fail loud on a non-nodal read of a mode stage."""
+        if self._stage_cache is None:
+            self.stages()
+        if stage_id in self._mode_refs:
+            raise ValueError(
+                f"{self._path}: stage {stage_id!r} is a mode stage; it holds "
+                f"the mode shape at nodes only, so {what} cannot be read "
+                "from it. Read the stage that recorded the analysis steps."
+            )
 
     def _resolve_stage_group(self, stage_id: str) -> "h5py.Group":
         if self._stage_cache is None:
             self.stages()
+        if stage_id in self._mode_refs:
+            # A mode stage reads its host's group (model, partition flag,
+            # modal groups); its own reads branch on ``_mode_refs``.
+            return self._h5[self._mode_refs[stage_id][0]]
         if stage_id not in self._stage_to_grp:
             raise KeyError(
                 f"Unknown stage_id {stage_id!r}; available: "
-                f"{sorted(self._stage_to_grp)}."
+                f"{sorted([*self._stage_to_grp, *self._mode_refs])}."
             )
         return self._h5[self._stage_to_grp[stage_id]]
 
@@ -280,7 +332,10 @@ class LadrunoReader:
         return None
 
     def time_vector(self, stage_id: str) -> ndarray:
-        return self._time_for_group(self._resolve_stage_group(stage_id))
+        grp = self._resolve_stage_group(stage_id)
+        if stage_id in self._mode_refs:
+            return np.array([0.0], dtype=np.float64)
+        return self._time_for_group(grp)
 
     def partitions(self, stage_id: str) -> list[str]:
         return ["partition_0"]
@@ -408,6 +463,11 @@ class LadrunoReader:
         self, stage_id: str, level: ResultLevel,
     ) -> list[str]:
         grp = self._resolve_stage_group(stage_id)
+        if stage_id in self._mode_refs:
+            on_nodes = _child(grp, "RESULTS/ON_NODES")
+            if level is not ResultLevel.NODES or on_nodes is None:
+                return []
+            return _mnodal.modal_components(on_nodes)
         if level is ResultLevel.NODES:
             on_nodes = _child(grp, "RESULTS/ON_NODES")
             if on_nodes is None:
@@ -457,6 +517,11 @@ class LadrunoReader:
         on_nodes = _child(self._resolve_stage_group(stage_id), "RESULTS/ON_NODES")
         if on_nodes is None:
             return None
+        if stage_id in self._mode_refs:
+            # A mode shape is the same at every copy of a node.
+            if component in _mnodal.modal_components(on_nodes):
+                return PARTITION_REDUCTION_NONE
+            return None
         loc = self._locate_node_component(on_nodes, component)
         if loc is None:
             return None
@@ -481,11 +546,24 @@ class LadrunoReader:
         time_slice: TimeSlice = None,
     ) -> NodeSlab:
         grp = self._resolve_stage_group(stage_id)
-        time = self._time_for_group(grp)
+        time = self.time_vector(stage_id)
         t_idx = resolve_time_slice(time_slice, time)
         on_nodes = _child(grp, "RESULTS/ON_NODES")
         if on_nodes is None:
             return _empty_node_slab(component, time, t_idx)
+        if stage_id in self._mode_refs:
+            got = _mnodal.read_mode_shape(
+                on_nodes, self._mode_refs[stage_id][1], component,
+                node_ids=node_ids,
+            )
+            if got is None:
+                return _empty_node_slab(component, time, t_idx)
+            shape, shape_ids = got
+            return NodeSlab(
+                component=component,
+                values=np.repeat(shape[None, :], t_idx.size, axis=0),
+                node_ids=shape_ids, time=time[t_idx],
+            )
         loc = self._locate_node_component(on_nodes, component)
         if loc is None:
             return _empty_node_slab(component, time, t_idx)
@@ -570,6 +648,7 @@ class LadrunoReader:
         ``RESULTS/ON_REGIONS/energyBalance``. Raises if the channel is
         absent (energy was not requested at record time).
         """
+        self._refuse_on_mode(stage_id, "the energy balance")
         grp = self._resolve_stage_group(stage_id)
         bucket = "ON_REGIONS" if region is not None else "ON_DOMAIN"
         eg = _child(grp, f"RESULTS/{bucket}/energyBalance")
@@ -608,7 +687,7 @@ class LadrunoReader:
         """
         grp = self._resolve_stage_group(stage_id)
         eg = _child(grp, "RESULTS/ON_REGIONS/energyBalance")
-        if eg is None:
+        if eg is None or stage_id in self._mode_refs:
             return []
         ids = np.asarray(eg["ID"][...], dtype=np.int64).flatten()
         return [int(t) for t in ids]
@@ -622,7 +701,7 @@ class LadrunoReader:
         path then carries the data instead)."""
         grp = self._resolve_stage_group(stage_id)
         env = _child(grp, "RESULTS/ENVELOPES/ON_NODES")
-        if env is None:
+        if env is None or stage_id in self._mode_refs:
             return []
         return self._node_components_of(env)
 
@@ -642,6 +721,7 @@ class LadrunoReader:
         Raises :class:`ValueError` if the file has no node envelopes (it
         was recorded as a plain time series) or the component is absent.
         """
+        self._refuse_on_mode(stage_id, "node envelopes")
         grp = self._resolve_stage_group(stage_id)
         env = _child(grp, "RESULTS/ENVELOPES/ON_NODES")
         if env is None:
@@ -717,6 +797,7 @@ class LadrunoReader:
         self, stage_id: str, component: str, *,
         element_ids: "Optional[ndarray]" = None, time_slice: TimeSlice = None,
     ) -> ElementSlab:
+        self._refuse_on_mode(stage_id, f"element component {component!r}")
         time = self.time_vector(stage_id)
         t_idx = resolve_time_slice(time_slice, time)
         on_e = self._require_element_results(
@@ -740,6 +821,7 @@ class LadrunoReader:
         self, stage_id: str, component: str, *,
         element_ids: "Optional[ndarray]" = None, time_slice: TimeSlice = None,
     ) -> LineStationSlab:
+        self._refuse_on_mode(stage_id, f"line-station component {component!r}")
         time = self.time_vector(stage_id)
         t_idx = resolve_time_slice(time_slice, time)
         grp = self._resolve_stage_group(stage_id)
@@ -793,6 +875,7 @@ class LadrunoReader:
         self, stage_id: str, component: str, *,
         element_ids: "Optional[ndarray]" = None, time_slice: TimeSlice = None,
     ) -> GaussSlab:
+        self._refuse_on_mode(stage_id, f"gauss component {component!r}")
         time = self.time_vector(stage_id)
         t_idx = resolve_time_slice(time_slice, time)
         grp = self._resolve_stage_group(stage_id)
@@ -821,6 +904,7 @@ class LadrunoReader:
         element_ids: "Optional[ndarray]" = None,
         gp_indices: "Optional[ndarray]" = None, time_slice: TimeSlice = None,
     ) -> FiberSlab:
+        self._refuse_on_mode(stage_id, f"fiber component {component!r}")
         time = self.time_vector(stage_id)
         t_idx = resolve_time_slice(time_slice, time)
         grp = self._resolve_stage_group(stage_id)
