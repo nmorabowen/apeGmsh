@@ -260,46 +260,6 @@ def _external_stub_fem():
     return build_simple_frame_fem()
 
 
-class TestReadTranslationConsistency:
-    """One read translates BOTH directions or NEITHER (the stub trap).
-
-    With pairing ``{fem 1 ↔ ops 2}`` (the session stub model's real
-    shape — the allocator gave its one element ops tag 2), a filter
-    ``[2]`` is no known fem_eid and passes through, selecting ops
-    element 2. Deciding the reverse map independently would then see
-    the returned index ``[2]`` fully covered and mis-relabel it to
-    ``[1]``. ``read_translation`` pins the per-read pairing.
-    """
-
-    def _make(self):
-        from apeGmsh.results.readers._tag_translation import (
-            ElementTagTranslator,
-        )
-        return ElementTagTranslator(fem_to_ops={1: 2}, ops_to_fem={2: 1})
-
-    def test_covered_filter_translates_both_ways(self) -> None:
-        t = self._make()
-        bucket_ids, back = t.read_translation(np.array([1]))
-        np.testing.assert_array_equal(bucket_ids, [2])
-        np.testing.assert_array_equal(back(np.array([2, 2])), [1, 1])
-
-    def test_uncovered_filter_translates_neither_way(self) -> None:
-        t = self._make()
-        bucket_ids, back = t.read_translation(np.array([2]))
-        np.testing.assert_array_equal(bucket_ids, [2])
-        # The index selected by the untranslated filter must come back
-        # untouched even though the reverse map covers it.
-        np.testing.assert_array_equal(back(np.array([2, 2])), [2, 2])
-
-    def test_unfiltered_read_is_all_or_nothing_on_the_index(self) -> None:
-        t = self._make()
-        bucket_ids, back = t.read_translation(None)
-        assert bucket_ids is None
-        # Fully covered → relabel; any unknown id → passthrough.
-        np.testing.assert_array_equal(back(np.array([2])), [1])
-        np.testing.assert_array_equal(back(np.array([1, 2])), [1, 2])
-
-
 def _warning_cls():
     # Imported lazily so the *join* tests above still collect (and fail
     # meaningfully) on a pre-fix checkout that lacks the warning class.

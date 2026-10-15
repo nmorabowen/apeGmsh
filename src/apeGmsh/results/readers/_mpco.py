@@ -192,14 +192,39 @@ class MPCOReader:
     # Tag translation (ADR 0043 slice 1.3)
     # ------------------------------------------------------------------
 
-    def attach_tag_map(
-        self, tag_map: "Optional[ElementTagTranslator]",
-    ) -> None:
-        """Attach the bound-model fem_eid↔ops-tag translator.
+    def attach_tag_map(self, tag_map: "ElementTagTranslator") -> None:
+        """Attach the bound-model fem_eid↔ops-tag translator and declare
+        to it the ops tags this file records (#2066).
 
         Called by :meth:`Results.from_mpco` once the model is loaded.
         """
+        tag_map.declare_recorded(self._recorded_element_tags())
         self._tag_map = tag_map
+
+    def _recorded_element_tags(self) -> ndarray:
+        """Ops tags of every element the file records, over all stages:
+        the ``MODEL/ELEMENTS`` listing (a recorder ``region`` writes only
+        its elements there) and each ``RESULTS/ON_ELEMENTS`` bucket ``ID``.
+        """
+        import h5py
+
+        self._ensure_stages()
+        parts = [np.empty(0, dtype=np.int64)]
+        for name in self._stage_to_mpco.values():
+            stage = self._h5[name]
+            elements = _child(stage, "MODEL/ELEMENTS")
+            for ds_name in elements if elements is not None else ():
+                ds = elements[ds_name]
+                if (isinstance(ds, h5py.Dataset) and ds.ndim == 2
+                        and ds.shape[0] and ds.shape[1]):
+                    parts.append(np.asarray(ds[:, 0], dtype=np.int64))
+            on_elements = _child(stage, "RESULTS/ON_ELEMENTS")
+            for token in on_elements.values() if on_elements is not None else ():
+                for bucket in token.values() if isinstance(token, h5py.Group) else ():
+                    if isinstance(bucket, h5py.Group) and "ID" in bucket:
+                        parts.append(np.asarray(
+                            bucket["ID"][...], dtype=np.int64).ravel())
+        return np.unique(np.concatenate(parts))
 
     def attach_nodes_ndf(
         self, nodes_ndf: "dict[int, int] | None", ndm: int,
@@ -221,9 +246,8 @@ class MPCOReader:
         """Per-read ``(bucket_filter, index_to_fem_fn)`` — consistent pair.
 
         Both directions of one read are decided together (see
-        :meth:`ElementTagTranslator.read_translation`); deciding them
-        independently mis-relabels the returned index when an
-        untranslated filter's ids collide with the model's ops tags.
+        :meth:`ElementTagTranslator.read_translation`): each filter id
+        translates on its own, and an id the files cannot return warns.
         The relabel is element-wise and order-preserving, so collocated
         per-element data (natural coords, local-axes quaternions) stays
         aligned.

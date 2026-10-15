@@ -15,9 +15,9 @@ tag from the archive's pairing. The filter is checked through the
 fem_eid <-> ops-tag translation in both directions, with a filter of
 paired ids only.
 
-The reader still gets two other filters wrong on a real archive (#2066):
-a filter that mixes paired and unpaired ids, and an id the file did not
-record. The strict xfails at the end of this file pin the right answers.
+Two more filters on a real archive are pinned at the end of this file
+(#2066): a filter that mixes paired and unpaired ids, and an id the file
+did not record.
 
 Skipped if the launcher is not available.
 """
@@ -250,17 +250,16 @@ def test_elastic_beam_3d_global_and_local_force(tmp_path: Path) -> None:
         assert slab_filtered.element_ids.tolist() == [fem_eid]
         np.testing.assert_array_equal(slab_filtered.values, slab_fx.values)
         # A filter that mixes paired and unpaired ids, or names an element
-        # the file did not record, is pinned below (#2066): the reader
-        # mislabels or drops rows there, so no passing test asserts it.
+        # the file did not record, is pinned below (#2066).
 
 
-# ── Element-id filters the reader gets wrong (#2066) ────────────────────
+# ── Element-id filters on a real archive (#2066) ────────────────────────
 #
 # A two-element cantilever along +x, fem elements 1 and 2, written through
 # the bridge, so the archive pairs (fem, ops) = (1, 2), (2, 3). Tip load
 # Fx2 at node 3 and Fx1 at node 2: fem 1 carries N1 = Fx1 + Fx2 = 1500 and
 # fem 2 carries N2 = Fx2 = 1000 (statics), at rtol 1e-10. Each test asserts
-# the right answer and is a strict xfail until chain B fixes the reader.
+# the right answer; before #2066 the reader mislabelled or dropped the rows.
 
 _L2 = 2.0
 _FX1, _FX2 = 500.0, 1000.0
@@ -278,8 +277,8 @@ def _two_element_mpco(
     launcher = _resolve_tcl_launcher()
     if launcher is None:
         pytest.skip("No OpenSees Tcl launcher found.")
-    # Setup failures raise RuntimeError, so the pins' xfail(raises=
-    # AssertionError) never absorbs a broken deck or archive.
+    # Setup failures raise RuntimeError, so a broken deck or archive is
+    # never mistaken for a wrong read.
     try:
         model_h5, pairs = _cantilever_model_h5(tmp_path, _L2, n_elem=2)
     except AssertionError as exc:
@@ -348,18 +347,13 @@ def test_two_element_unfiltered_read_is_the_oracle(tmp_path: Path) -> None:
         np.testing.assert_allclose(got[fem], n, rtol=1e-10)
 
 
-@pytest.mark.xfail(
-    strict=True, raises=AssertionError,
-    reason="#2066: a filter mixing a paired and an unpaired id is not "
-    "translated, so the paired fem id is read as an ops tag",
-)
 @pytest.mark.parametrize("fem", [1, 2])
 def test_mixed_id_filter_returns_the_paired_element(
     tmp_path: Path, fem: int,
 ) -> None:
     """``ids=[fem, 999]``: 999 is no element; ``fem`` must come back as
-    itself with its own axial force. Today ``[2, 999]`` returns fem 1's
-    row (ops tag 2) labelled 2, and ``[1, 999]`` returns nothing."""
+    itself with its own axial force. Before #2066 ``[2, 999]`` returned
+    fem 1's row (ops tag 2) labelled 2, and ``[1, 999]`` returned nothing."""
     from apeGmsh.results import Results
 
     mpco_path, model_h5, _ = _two_element_mpco(tmp_path)
@@ -372,11 +366,6 @@ def test_mixed_id_filter_returns_the_paired_element(
     np.testing.assert_allclose(got[fem], _N[fem], rtol=1e-10)
 
 
-@pytest.mark.xfail(
-    strict=True, raises=AssertionError,
-    reason="#2066: a fem id whose ops tag the file did not record "
-    "returns an empty slab with no warning",
-)
 def test_filter_on_an_unrecorded_element_is_not_silent(tmp_path: Path) -> None:
     """The recorder covers fem 2 only; ``ids=[1]`` names an element the
     archive describes but the file does not hold. The read must warn or
@@ -389,8 +378,7 @@ def test_filter_on_an_unrecorded_element_is_not_silent(tmp_path: Path) -> None:
     with Results.from_mpco(mpco_path, model_h5=model_h5) as r:
         s = r.stage(r.stages[0].id)
         # The recorded element reads correctly, so the region took effect.
-        # A setup failure raises RuntimeError, which the xfail (raises=
-        # AssertionError) does not absorb.
+        # A setup failure raises RuntimeError, not an assertion.
         got = _axial(s.elements.get(component="nodal_resisting_force_x"))
         if sorted(got) != [2] or not np.isclose(got[2], _N[2], rtol=1e-10):
             raise RuntimeError(f"region setup failed: read {got}")
