@@ -111,21 +111,19 @@ def test_mpco_modes_recorder_runs_without_a_prior_eigen(tmp_path: Path) -> None:
     assert "survived" in proc.stdout
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=StaleEigenExit,
-    reason="fork MPCO recorder gates modes on the interpreter's stale "
-    "numEigen after eigen + wipe and calls Domain::getEigenvalues, which "
-    "exit(-1)s the process; the Ladruno recorder guards this "
-    "(getNumEigenvalues). Pinned on build 79e0623670; reported on #1198.",
-)
 def test_mpco_modes_recorder_survives_eigen_then_wipe(tmp_path: Path) -> None:
+    """``eigen``, ``wipe``, then an MPCO modal recorder on a fresh model.
+
+    Builds before ``ladruno-v20261015`` gated the modal channel on the
+    interpreter's stale ``numEigen`` and called ``Domain::getEigenvalues``,
+    which ``exit(-1)``s the process (#1983, pinned on 79e0623670). The fork
+    fix (nmorabowen/OpenSees#985) gates on the domain's own eigen count, so
+    at FORK_PIN the run survives. The old crash still surfaces by name.
+    """
     proc = _run_repro(tmp_path, "eigen")
     output = proc.stdout + proc.stderr
     if proc.returncode in _EXIT_MINUS_ONE and _STALE_EIGEN_MESSAGE in output:
         raise StaleEigenExit(proc.returncode)
-    # Any other failure is a real failure, not the pinned crash: only
-    # StaleEigenExit counts as the expected failure.
     assert proc.returncode == 0 and "survived" in proc.stdout, (
         proc.returncode, proc.stdout[-500:], proc.stderr[-500:])
 

@@ -43,6 +43,9 @@ shell-on-solid cases is
 """
 from __future__ import annotations
 
+import json
+import subprocess
+import sys
 from pathlib import Path
 from typing import Any, Callable
 
@@ -52,8 +55,10 @@ import pytest
 
 from apeGmsh import apeGmsh
 from apeGmsh.opensees import apeSees
-from apeGmsh.opensees.emitter.live import LiveOpsEmitter, get_backend_build
+from apeGmsh.opensees.emitter.live import LiveOpsEmitter
 from apeGmsh.results import Results
+
+from tests.opensees.integration_ladruno.test_mpco_modes_live import _fresh_env
 
 pytestmark = pytest.mark.ladruno_fork
 
@@ -381,11 +386,10 @@ def test_ladruno_brick_material_state_reads_back_from_mpco(
     crack in tension (d+ ~ 1, d- = 0) while every GP gathers compressive
     plastic strain: the two columns differ, so a swapped column fails.
 
-    Displacement control, not load control (#2032). At FORK_PIN this brick
-    + ASDConcrete3D under LoadControl diverges from the first, elastic
-    step (an ElasticIsotropic brick converges), a fork-side defect this
-    read-back test does not own; and even where LoadControl runs, the
-    tension crack drops the load, which it cannot follow at small steps.
+    Displacement control, not load control (#2032): the tension crack
+    drops the load, which LoadControl cannot follow at small steps. (The
+    LoadControl divergence once blamed on the fork was test-order
+    contamination, #2044; see the LoadControl tests below.)
     """
     du, steps = -1.0e-4, 20          # the top shortens 2e-3 (strain 1e-3)
     with apeGmsh(model_name="g7_mat", verbose=False) as g:
@@ -444,41 +448,15 @@ def test_ladruno_brick_material_state_reads_back_from_mpco(
         )
 
 
-#: Fork builds known to converge on the #2044 LoadControl case. Every other
-#: build, FORK_PIN included, runs it as a strict xfail: the build that fixes
-#: #2044 reaches CI as a FORK_PIN bump and then XPASSes, which fails the
-#: lane and says to drop the marker. Add a sha here only after a run on it.
-_LOAD_CONTROL_CONVERGES = frozenset({
-    "79e0623670c61c768357a01dff1477a4a0ef7e06",   # pre-regression local build
-})
+def _concrete(E: float, fc: float, ft: float) -> Callable[[apeSees], Any]:
+    return lambda ops: ops.nDMaterial.ASDConcrete3D(E=E, v=0.2, fc=fc, ft=ft)
 
 
-def _known_converging_build() -> bool:
-    """Is the imported engine on the allowlist? (``None`` is not.)"""
-    return get_backend_build() in _LOAD_CONTROL_CONVERGES
-
-
-def test_ladruno_brick_asdconcrete_converges_under_load_control(
-    request: pytest.FixtureRequest,
-) -> None:
-    """LadrunoBrick + ASDConcrete3D under LoadControl, the #1999 case (#2044).
-
-    -7.2e3 per top node in four 0.25 steps. Step 1 is elastic, yet at
-    FORK_PIN Newton diverges there (the second correction is ~1000x the
-    first; an ElasticIsotropic brick converges). Once the fork is fixed the
-    run converges and four GPs crack in tension (d+ ~ 1), which is asserted
-    so the passing case still carries a non-zero answer.
-
-    The strict xfail is applied in the body, not as a marker condition:
-    a condition runs at setup, before the ``ladruno_fork`` skip, and would
-    touch the backend on a lane that has none.
-    """
-    if not _known_converging_build():
-        request.applymarker(pytest.mark.xfail(
-            strict=True,
-            reason="#2044: LoadControl diverges at FORK_PIN in the elastic "
-                   "first step",
-        ))
+def _load_control_brick(
+    material: Callable[[apeSees], Any],
+) -> tuple[apeSees, list[int]]:
+    """The #1999 deck: one LadrunoBrick on a fixed base, -7.2e3 per top node
+    in LoadControl steps of 0.25. Returns the bridge and the top nodes."""
     with apeGmsh(model_name="g7_lc", verbose=False) as g:
         box = g.model.geometry.add_box(0, 0, 0, 1, 1, 2)
         g.model.sync()
@@ -488,11 +466,11 @@ def test_ladruno_brick_asdconcrete_converges_under_load_control(
         fem = g.mesh.queries.get_fem_data(dim=3)
     ops = apeSees(fem)
     ops.model(ndm=3, ndf=3)
-    mat = ops.nDMaterial.ASDConcrete3D(E=30e6, v=0.2, fc=30e3, ft=3e3)
-    ops.element.LadrunoBrick(pg="Body", material=mat)
+    ops.element.LadrunoBrick(pg="Body", material=material(ops))
     ops.fix(nodes=_nodes_on_plane(fem, 2, 0.0), dofs=(1, 1, 1))
+    top = _nodes_on_plane(fem, 2, 2.0)
     with ops.pattern.Plain(series=ops.timeSeries.Linear()) as p:
-        for nid in _nodes_on_plane(fem, 2, 2.0):
+        for nid in top:
             p.load(node=nid, forces=(0.0, 0.0, -7.2e3))
     ops.constraints.Plain()
     ops.numberer.RCM()
@@ -501,15 +479,108 @@ def test_ladruno_brick_asdconcrete_converges_under_load_control(
     ops.algorithm.Newton()
     ops.integrator.LoadControl(dlam=0.25)
     ops.analysis.Static()
+    return ops, top
 
+
+def _fork_deck(ops: apeSees, path: Path) -> str:
+    """The bridge's openseespy deck, on the fork module instead of pip's.
+
+    The deck opens with ``ops.wipe()``, so decks concatenate into one
+    process as a sequence of models.
+    """
+    ops.py(str(path), progress=False)
+    text = path.read_text(encoding="utf-8")
+    stock_import = "import openseespy.opensees as ops"
+    assert stock_import in text
+    return text.replace(
+        stock_import,
+        "from apeGmsh.opensees.emitter.live import get_ops\nops = get_ops()",
+    )
+
+
+def _run_fresh(tmp_path: Path, script: str) -> Any:
+    """Run ``script`` in a fresh process and return the JSON it writes to
+    ``OUT`` (the name is defined for it)."""
+    out, run = tmp_path / "out.json", tmp_path / "run.py"
+    run.write_text(f"OUT = {str(out)!r}\n{script}", encoding="utf-8")
+    proc = subprocess.run(
+        [sys.executable, str(run)], cwd=tmp_path, env=_fresh_env(),
+        capture_output=True, text=True, check=False,
+    )
+    assert proc.returncode == 0, proc.stdout[-2000:] + proc.stderr[-2000:]
+    return json.loads(out.read_text(encoding="utf-8"))
+
+
+def test_ladruno_brick_asdconcrete_converges_under_load_control(
+    tmp_path: Path,
+) -> None:
+    """LadrunoBrick + ASDConcrete3D under LoadControl, the #1999 case.
+
+    The run converges in all four steps, and four GPs crack in tension
+    (d+ ~ 1), so the passing case carries a non-zero answer.
+
+    It runs in a fresh process (#2044). The divergence this test was once
+    pinned to was not a fork regression: ASDConcrete3D kept a process-wide
+    hardening law per material tag that ``wipe`` did not clear, so an earlier
+    model in the same pytest process that reused tag 1 handed this one its E.
+    A fresh process makes the case independent of test order. The cache
+    itself is covered by the next test.
+    """
+    ops, _top = _load_control_brick(_concrete(30e6, 30e3, 3e3))
+    result = _run_fresh(tmp_path, _fork_deck(ops, tmp_path / "lc.py") + (
+        "\nimport json\n"
+        "codes = [ops.analyze(1) for _ in range(4)]\n"
+        "(tag,) = ops.getEleTags()\n"
+        "d_plus = [float(ops.eleResponse(tag, 'material', gp, 'damage')[0])\n"
+        "          for gp in range(1, 9)]\n"
+        "open(OUT, 'w').write(json.dumps({'codes': codes, 'd_plus': d_plus}))\n"
+    ))
+    assert result["codes"] == [0, 0, 0, 0], result
+    assert max(result["d_plus"]) > 0.5, result
+
+
+def test_asdconcrete_hardening_law_does_not_survive_wipe(
+    tmp_path: Path,
+) -> None:
+    """A wiped ASDConcrete3D does not hand its law to the next model (#2044).
+
+    One fresh process runs two decks: an earlier model with ASDConcrete3D on
+    the same tag (1) at a tenth of the stiffness and strength, which takes
+    one step; then, after the second deck's ``wipe``, the #1999 brick. Its
+    first step is elastic, so its top displacements equal the same mesh with
+    ElasticIsotropic (E=30e6, v=0.2). Before nmorabowen/OpenSees#990
+    (``ladruno-v20261015``) the first law stored for a tag survived ``wipe``:
+    the brick ran on the earlier E and Newton diverged (the F-lane probe on
+    #2044, Linux and Windows alike).
+
+    The process is fresh because a broken build keeps the *first* law stored
+    in the process: in the shared pytest process an earlier test's identical
+    law would win, and this test would pass on a broken build.
+    """
+    ref, top = _load_control_brick(
+        lambda ops: ops.nDMaterial.ElasticIsotropic(E=30e6, nu=0.2))
     emitter = LiveOpsEmitter(wipe=True)
-    ops.build().emit(emitter)
-    for step in range(4):
-        assert emitter.analyze(steps=1) == 0, f"step {step + 1}"
-    (tag,) = [int(t) for t in emitter.ops.getEleTags()]
-    d_plus = [float(emitter.ops.eleResponse(tag, "material", gp, "damage")[0])
-              for gp in range(1, 9)]
-    assert max(d_plus) > 0.5, d_plus
+    ref.build().emit(emitter)
+    assert emitter.analyze(steps=1) == 0
+    elastic = np.array([emitter.ops.nodeDisp(n, 3) for n in top])
+    assert elastic.max() < -1e-4, elastic          # a non-zero oracle
+
+    soft, _ = _load_control_brick(_concrete(3e6, 3e3, 3e2))
+    brick, top2 = _load_control_brick(_concrete(30e6, 30e3, 3e3))
+    assert top2 == top
+    result = _run_fresh(tmp_path, (
+        _fork_deck(soft, tmp_path / "soft.py")
+        # The earlier model's own outcome is not under test; the step only
+        # has to reach setTrialStrain, where the law is stored.
+        + "\nops.analyze(1)\n"
+        + _fork_deck(brick, tmp_path / "brick.py")
+        + "\nimport json\n"
+        "code = ops.analyze(1)\n"
+        f"uz = [ops.nodeDisp(n, 3) for n in {top!r}]\n"
+        "open(OUT, 'w').write(json.dumps({'code': code, 'uz': uz}))\n"
+    ))
+    assert result["code"] == 0, result
+    np.testing.assert_allclose(result["uz"], elastic, rtol=1e-6)
 
 
 # ---------------------------------------------------------------------------
