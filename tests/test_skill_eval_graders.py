@@ -439,40 +439,128 @@ def test_the_default_scratch_root_is_fixed_and_outside_home(skill_eval) -> None:
     assert not root.resolve().is_relative_to(Path.home().resolve())
 
 
-def test_the_agent_and_the_grader_share_one_environment(graders, tmp_path: Path) -> None:
+def test_the_grader_environment(graders, tmp_path: Path) -> None:
     import os
 
     env = graders.child_env(sys.executable)
     assert env["PATH"].split(os.pathsep)[0] == os.path.dirname(os.path.abspath(sys.executable))
     assert env["PYTHONPATH"] == str(graders.SRC)
-    assert graders.PROBE_ENV not in env
-    probed = graders.child_env(sys.executable, tmp_path / "probe.jsonl")
-    assert probed["PYTHONPATH"].split(os.pathsep) == [str(graders.SRC), str(graders.PROBE_DIR)]
+    assert graders.PROBE_ENV not in env and graders.PROBE_KEY_ENV not in env
+    probed = graders.child_env(sys.executable, tmp_path / "probe.jsonl", b"k" * 32, src=tmp_path)
+    assert probed["PYTHONPATH"].split(os.pathsep) == [str(tmp_path), str(graders.PROBE_DIR)]
+    with pytest.raises(ValueError, match="key"):
+        graders.child_env(sys.executable, tmp_path / "probe.jsonl")
 
 
-def test_the_probe_logs_each_opensees_model_per_process(graders, tmp_path: Path) -> None:
-    """A stand-in ``opensees`` module, so the suite lane checks the probe without openseespy."""
+FAKE_OPENSEES = ("def model(*a): pass\ndef node(*a): pass\ndef element(*a): pass\n"
+                 "def eigen(*a): return [1.0]\ndef analyze(*a): return 0\ndef recorder(*a): pass\n")
+
+
+def _run_probed(graders, tmp_path: Path, body: str, key: bytes) -> Path:
+    """Run ``body`` under the probe with a stand-in ``opensees`` (no openseespy needed)."""
     import os
 
     fake = tmp_path / "fake"
-    fake.mkdir()
-    (fake / "opensees.py").write_text(
-        "def model(*a): pass\ndef node(*a): pass\ndef element(*a): pass\n"
-        "def eigen(*a): return [1.0]\ndef analyze(*a): return 0\ndef recorder(*a): pass\n",
-        encoding="utf-8")
+    fake.mkdir(exist_ok=True)
+    (fake / "opensees.py").write_text(FAKE_OPENSEES, encoding="utf-8")
     # First on sys.path inside the child: a .pth (the fork's installer) can put a real
     # ``opensees`` ahead of PYTHONPATH.
-    script = (f"import sys\nsys.path.insert(0, {str(fake)!r})\nimport opensees as ops\n"
-              "assert ops.__file__.endswith('opensees.py'), ops.__file__\n"
-              "ops.model('basic'); ops.node(1); ops.node(2); ops.element('truss', 1)\n"
-              "ops.recorder('Node', '-file', 'u.out'); ops.analyze(1)\n"
-              "ops.model('basic'); ops.node(1); ops.eigen(1)\n")
+    script = f"import sys\nsys.path.insert(0, {str(fake)!r})\n" + body
     log = tmp_path / "probe.jsonl"
-    env = graders.child_env(sys.executable, log)
+    env = graders.child_env(sys.executable, log, key)
     env["PYTHONPATH"] = os.pathsep.join([str(fake), env["PYTHONPATH"]])
     subprocess.run([sys.executable, "-c", script], cwd=tmp_path, env=env, check=True, timeout=120)
-    (record,) = graders.read_probe(log)
+    return log
+
+
+def test_the_probe_logs_each_opensees_model_per_process(graders, tmp_path: Path) -> None:
+    key = b"\x01" * 32
+    log = _run_probed(graders, tmp_path, (
+        "import opensees as ops\n"
+        "assert ops.__file__.endswith('opensees.py'), ops.__file__\n"
+        "ops.model('basic'); ops.node(1); ops.node(2); ops.element('truss', 1)\n"
+        "ops.recorder('Node', '-file', 'u.out'); ops.analyze(1)\n"
+        "ops.model('basic'); ops.node(1); ops.eigen(1)\n"), key)
+    (record,) = graders.read_probe(log, key)
     assert record["probe_errors"] == []
     assert [(m["node"], m["element"], m["eigen"], m["analyze"]) for m in record["models"]] == [
         (2, 1, 0, [0]), (1, 0, 1, [])]
     assert record["recorders"] == [["Node", "-file", "u.out"]]
+
+
+def test_the_script_cannot_see_the_probe_log_or_key(graders, tmp_path: Path) -> None:
+    key = b"\x02" * 32
+    log = _run_probed(graders, tmp_path, (
+        "import os, sitecustomize\n"
+        "assert 'APEGMSH_EVAL_PROBE_LOG' not in os.environ\n"
+        "assert 'APEGMSH_EVAL_PROBE_KEY' not in os.environ\n"
+        "public = [v for k, v in vars(sitecustomize).items() if not k.startswith('__')]\n"
+        "assert not any(isinstance(v, (bytes, dict)) for v in public), public\n"), key)
+    assert len(graders.read_probe(log, key)) == 1
+
+
+def test_a_child_python_process_is_probed_too(graders, tmp_path: Path) -> None:
+    """A deck run's interpreter is a child of the script: it gets the key, its code does not."""
+    key = b"\x03" * 32
+    child = (f"import sys; sys.path.insert(0, {str(tmp_path / 'fake')!r}); "
+             "import os; assert 'APEGMSH_EVAL_PROBE_KEY' not in os.environ; "
+             "import opensees as ops; ops.model('basic'); ops.node(1); ops.analyze(1)")
+    log = _run_probed(graders, tmp_path, (
+        "import subprocess\n"
+        f"subprocess.run([sys.executable, '-c', {child!r}], check=True)\n"), key)
+    records = graders.read_probe(log, key)
+    assert len(records) == 2 and all(r["probe_errors"] == [] for r in records)
+    assert [m["node"] for r in records for m in r["models"]] == [1]
+
+
+def test_a_forged_probe_record_fails_the_grade(graders, tmp_path: Path) -> None:
+    """Worst case: the script found the log and appended a record claiming a solve."""
+    key = b"\x04" * 32
+    log = _run_probed(graders, tmp_path, "import opensees\n", key)
+    forged = {"pid": 9, "cwd": ".", "recorders": [], "probe_errors": [],
+              "apesees": [{"fem_nodes": 12}],
+              "models": [{"opened_by_model": True, "node": 12, "element": 21, "eigen": 0, "analyze": [0]}]}
+    with open(log, "a", encoding="utf-8") as fh:
+        fh.write(json.dumps(forged) + "\n")                                       # unsigned
+        fh.write(json.dumps({"record": json.dumps(forged), "mac": "0" * 64}) + "\n")   # bad MAC
+    probe = graders.read_probe(log, key)
+    errors = [e for r in probe for e in r["probe_errors"]]
+    assert len(errors) == 2 and all("fails its MAC" in e for e in errors)
+    checks = {c.name: c.ok for c in graders.check_evidence(probe, min_nodes=12, min_elements=21)}
+    assert checks == {"probe_clean": False, "built_with_apesees": False,
+                      "opensees_solved_the_apegmsh_model": False}
+
+
+def test_the_agent_environment_names_no_repository_path(skill_eval, tmp_path: Path, monkeypatch) -> None:
+    import os
+
+    root = str(skill_eval.REPO)
+    monkeypatch.setenv("PWD", root)                                  # a shell started in the repo
+    monkeypatch.setenv("PATH", os.pathsep.join([str(skill_eval.REPO / "scripts"), os.environ["PATH"]]))
+    env = skill_eval.agent_env(sys.executable, tmp_path / "apegmsh-src", tmp_path / "config")
+    leaks = {k: v for k, v in env.items() if root.lower() in v.lower()
+             or skill_eval.REPO.as_posix().lower() in v.lower()}
+    assert leaks == {}
+    assert env["PYTHONPATH"] == str(tmp_path / "apegmsh-src")
+    assert env["CLAUDE_CONFIG_DIR"] == str(tmp_path / "config")
+    with pytest.raises(SystemExit, match="outside the repository"):
+        skill_eval.agent_env(sys.executable, skill_eval.REPO / "src", tmp_path / "config")
+
+
+def test_src_is_extracted_at_the_ref(skill_eval, tmp_path: Path) -> None:
+    tree = skill_eval.extract_src("HEAD", tmp_path / "src")
+    assert (tmp_path / "src" / "apeGmsh" / "__init__.py").is_file()
+    assert tree == subprocess.run(["git", "rev-parse", "HEAD:src"], cwd=ROOT, capture_output=True,
+                                  text=True, check=True).stdout.strip()
+
+
+def test_the_config_is_private_and_per_user(skill_eval, tmp_path: Path) -> None:
+    import os
+    import stat
+
+    config = skill_eval.default_config()
+    assert config.resolve().is_relative_to(Path.home().resolve())   # under the user's profile
+    target = tmp_path / "a" / "config"
+    skill_eval.make_private_dir(target)
+    if os.name != "nt":
+        assert stat.S_IMODE(target.stat().st_mode) == 0o700

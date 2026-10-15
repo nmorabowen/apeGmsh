@@ -17,17 +17,27 @@ What one run does:
   the first record, and skipped when it equals this hash).
 * Runs each prompt of ``triggers.toml`` ``--reps`` times in the skill arm and
   records which skills fired.
-* Each run is ``claude -p`` from its own empty directory under the scratch root,
-  with an isolated config (``CLAUDE_CONFIG_DIR=<scratch>/config``): only the
-  arm's skill, no user CLAUDE.md, no plugins. The scratch root defaults to a
-  fixed directory outside the home directory (``--dry-run`` prints it), so the
-  config and its login persist between invocations, and the runner refuses a
-  root with a ``CLAUDE.md``, ``CLAUDE.local.md`` or ``.claude/`` in it or above
-  it. Log the config in once (``--dry-run`` prints the command), or export
-  ``ANTHROPIC_API_KEY``.
-* The agent's environment is the grader's: this checkout's ``src`` on
-  ``PYTHONPATH`` and ``--python`` first on ``PATH``. ``src/`` is part of the
-  harness, so a dirty ``src/`` refuses the run like a dirty grader.
+* Each run is ``claude -p`` with an isolated config (``CLAUDE_CONFIG_DIR``): only
+  the arm's skill, no user CLAUDE.md, no plugins. The config holds the login and
+  settings, so it lives in a private per-user directory (``--config``; default
+  ``%LOCALAPPDATA%/apegmsh-skill-eval/config`` or
+  ``$XDG_STATE_HOME/apegmsh-skill-eval/config``, made 0700 on POSIX) and persists
+  between invocations. Log it in once::
+
+      CLAUDE_CONFIG_DIR=<config> claude          # bash; then /login, then exit
+      $env:CLAUDE_CONFIG_DIR="<config>"; claude  # PowerShell
+
+  (``--dry-run`` prints both with the real path), or export ``ANTHROPIC_API_KEY``.
+* Each run starts in its own empty directory under the work root (``--scratch``;
+  default a fixed directory outside the home directory). The CLI reads every
+  ``CLAUDE.md`` above its working directory, so the runner refuses a work root with
+  a ``CLAUDE.md``, ``CLAUDE.local.md`` or ``.claude/`` in it or above it.
+* The agent never sees this repository, which holds the answer key (the fixtures,
+  the graders, and the skill the no-skill arm must not read). apeGmsh's ``src`` is
+  extracted at the skill ref (``git archive``) into the work root; the agent and the
+  grader both import that copy (``PYTHONPATH``), with ``--python`` first on
+  ``PATH``, and every environment variable naming the repository is dropped from
+  the agent's environment.
 * The CLI's init event must list the loaded skills: the skill and previous arms
   must load exactly ``apegmsh``, the no-skill arm must not. Otherwise the run
   stops, since the arm is not what the record would claim. Account-provisioned
@@ -75,13 +85,13 @@ SKILL_PATH = "skills/apegmsh"
 SKILL_NAME = "apegmsh"
 ARMS = ("skill", "no_skill", "previous")
 # Files whose content decides a grade; a dirty copy would make the record's git SHA lie.
-HARNESS_PATHS = ("evals/apegmsh", "scripts/skill_eval.py", "skills/apegmsh/scripts", "src")
+# (apeGmsh itself comes from git at the skill ref, so a dirty src/ cannot reach a run.)
+HARNESS_PATHS = ("evals/apegmsh", "scripts/skill_eval.py", "skills/apegmsh/scripts")
 TASK_TOOLS = "Read,Write,Edit,Glob,Grep,Bash,Skill"
 TASK_MAX_TURNS = 60
 TRIGGER_MAX_TURNS = 3       # the skill fires on the first turn or not at all
 RUN_TIMEOUT = 1800          # s, one claude -p run
 
-sys.path.insert(0, str(REPO / "src"))
 sys.path.insert(0, str(EVAL_DIR))
 import graders  # noqa: E402  (needs the two paths above)
 
@@ -147,17 +157,74 @@ def dir_hash(path: Path) -> str:
 
 
 def default_scratch() -> Path:
-    """A fixed scratch root outside the home directory.
+    """A fixed work root outside the home directory.
 
-    Fixed, so the isolated config and its login persist between invocations.
     Outside home, because the CLI reads every ``CLAUDE.md`` above its working
-    directory, and the home directory holds the user's ``.claude/``.
+    directory, and the home directory holds the user's ``.claude/``. It holds only
+    work directories and the extracted ``src``; the config is private (see
+    :func:`default_config`).
     """
     base = Path(tempfile.gettempdir()).resolve()
     home = Path.home().resolve()
     if base.is_relative_to(home):
         base = Path(home.anchor)
     return base / "apegmsh-skill-eval"
+
+
+def default_config() -> Path:
+    """The isolated CLI config: a private per-user directory, since it holds the login."""
+    if os.name == "nt":
+        base = Path(os.environ.get("LOCALAPPDATA") or Path.home() / "AppData" / "Local")
+    else:
+        base = Path(os.environ.get("XDG_STATE_HOME") or Path.home() / ".local" / "state")
+    return base / "apegmsh-skill-eval" / "config"
+
+
+def make_private_dir(path: Path) -> None:
+    """Create ``path`` readable by its owner only (POSIX mode 0700; on Windows the
+    per-user profile's inherited ACL already is)."""
+    path.mkdir(parents=True, exist_ok=True)
+    if os.name != "nt":
+        os.chmod(path, 0o700)
+
+
+def extract_src(commit: str, dest: Path) -> str:
+    """Extract apeGmsh's ``src`` at ``commit`` into ``dest``; return its git tree id."""
+    tree = _git("rev-parse", "--verify", f"{commit}:src")
+    archive = subprocess.run(["git", "archive", "--format=tar", tree], cwd=REPO,
+                             capture_output=True, check=True).stdout
+    dest.mkdir(parents=True)
+    with tarfile.open(fileobj=io.BytesIO(archive)) as tar:
+        tar.extractall(dest, filter="data")
+    if not (dest / "apeGmsh" / "__init__.py").is_file():
+        raise SystemExit(f"{commit}:src holds no apeGmsh package")
+    return tree
+
+
+def _names_repo(value: str) -> bool:
+    repo = str(REPO)
+    if os.name == "nt":
+        return repo.lower() in value.lower() or REPO.as_posix().lower() in value.lower()
+    return repo in value
+
+
+def agent_env(python: str, src: Path, config: Path) -> dict[str, str]:
+    """The agent's environment: the grader's (``src`` and ``python``), minus the repo.
+
+    Every variable whose value names this repository is dropped (``PATH`` keeps its
+    other entries), so neither the answer key nor the repo's skill copy is advertised.
+    """
+    if _names_repo(os.path.abspath(python)) or _names_repo(str(src)):
+        raise SystemExit("the interpreter and the extracted src must live outside the repository")
+    env = {}
+    for name, value in graders.child_env(python, src=src).items():
+        if name.upper() == "PATH":
+            value = os.pathsep.join(e for e in value.split(os.pathsep) if not _names_repo(e))
+        elif _names_repo(value):
+            continue
+        env[name] = value
+    env["CLAUDE_CONFIG_DIR"] = str(config)
+    return env
 
 
 def instruction_files(root: Path) -> list[str]:
@@ -243,21 +310,17 @@ def check_arm_skills(arm: str, available: Any) -> list[str]:
     return names
 
 
-def grade_safely(task: str, script: Path, *, python: str, tasks: dict[str, Any]) -> dict[str, Any]:
+def grade_safely(task: str, script: Path, *, python: str, tasks: dict[str, Any],
+                 src: Path = graders.SRC) -> dict[str, Any]:
     """Grade one run; a grader exception is a failed run with its traceback, not a crash."""
     try:
-        return graders.grade(task, script, python=python, tasks=tasks).to_dict()
+        return graders.grade(task, script, python=python, tasks=tasks, src=src).to_dict()
     except Exception:  # noqa: BLE001 - recorded in full, and the plan goes on
         return {"task": task, "passed": False, "failed_at": "grader_error",
                 "error": traceback.format_exc()[-graders.OUTPUT_TAIL:]}
 
 
-def run_claude(cmd: list[str], prompt: str, *, cwd: Path, config: Path,
-               python: str) -> tuple[dict[str, Any], float]:
-    # The grader's environment (src on PYTHONPATH, python first on PATH), so the
-    # agent tests its script against the same apeGmsh and interpreter it is graded on.
-    env = graders.child_env(python)
-    env["CLAUDE_CONFIG_DIR"] = str(config)
+def run_claude(cmd: list[str], prompt: str, *, cwd: Path, env: dict[str, str]) -> tuple[dict[str, Any], float]:
     start = time.time()
     try:
         run = subprocess.run(cmd, input=prompt, cwd=cwd, env=env, capture_output=True, text=True,
@@ -323,7 +386,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--claude", default="claude", help="the claude CLI executable")
     parser.add_argument("--python", default=sys.executable, help="interpreter the agent and the grader use")
     parser.add_argument("--scratch", type=Path, default=None,
-                        help=f"scratch root holding the isolated config (default {default_scratch()})")
+                        help=f"work root, outside home (default {default_scratch()})")
+    parser.add_argument("--config", type=Path, default=None,
+                        help=f"private isolated CLI config, holding the login (default {default_config()})")
     parser.add_argument("--out", type=Path, default=None, help="record path (default runs/<date>-<ref>.jsonl)")
     parser.add_argument("--competitor", type=Path, action="append", default=[],
                         help="an extra skill directory installed in every arm (repeatable), e.g. a "
@@ -334,6 +399,7 @@ def main(argv: list[str] | None = None) -> int:
 
     tasks = graders.load_tasks()
     if args.grade:
+        sys.path.insert(0, str(graders.SRC))     # by hand: this checkout's apeGmsh
         result = graders.grade(args.grade[0], Path(args.grade[1]), python=args.python, tasks=tasks)
         print(json.dumps(result.to_dict(), indent=2))
         return 0 if result.passed else 1
@@ -374,11 +440,9 @@ def main(argv: list[str] | None = None) -> int:
     out = args.out or RUNS_DIR / f"{stamp}-{skill_commit[:8]}.jsonl"
     dirty = harness_dirty()
     scratch = (args.scratch or default_scratch()).resolve()
-    config = scratch / "config"
+    config = (args.config or default_config()).resolve()
     leaks = instruction_files(scratch)
-    if skill_commit != git_sha:
-        notes.append(f"the skill at {skill_commit[:12]} is measured against apeGmsh src at "
-                     f"{git_sha[:12]} (this checkout)")
+    src_tree = _git("rev-parse", "--verify", f"{skill_commit}:src")
 
     header = {
         "kind": "header",
@@ -399,8 +463,9 @@ def main(argv: list[str] | None = None) -> int:
         "python": args.python,
         "lint_pyflakes": _has_pyflakes(args.python),
         "competitors": competitors,
-        "apegmsh_src": f"src/ at {git_sha} (agent and grader)",
+        "apegmsh_src": f"src/ at {skill_commit} (tree {src_tree}), extracted; agent and grader",
         "scratch": str(scratch),
+        "config": str(config),
         "instruction_files_above_scratch": leaks,
         "notes": notes,
     }
@@ -414,8 +479,11 @@ def main(argv: list[str] | None = None) -> int:
     for note in notes:
         print(f"note           {note}")
     print(f"record         {out.relative_to(REPO) if out.is_relative_to(REPO) else out}")
-    print(f"scratch        {scratch}")
-    print(f"config         {config}   log in once: CLAUDE_CONFIG_DIR={config} {args.claude}, then /login")
+    print(f"apeGmsh src    {skill_commit[:12]}:src (tree {src_tree}), extracted under the work root")
+    print(f"work root      {scratch}")
+    print(f"config         {config}   (private; holds the login)")
+    print(f"log in once    bash:       CLAUDE_CONFIG_DIR=\"{config}\" {args.claude}   then /login")
+    print(f"               PowerShell: $env:CLAUDE_CONFIG_DIR=\"{config}\"; {args.claude}   then /login")
     print(f"CLAUDE.md etc. {leaks or 'none in or above the scratch root'}")
     print(f"planned runs   {len(plan)}")
     for item in plan:
@@ -439,7 +507,17 @@ def main(argv: list[str] | None = None) -> int:
     work_root = scratch / "work" / out.stem
     if work_root.exists():
         raise SystemExit(f"{work_root} exists from an earlier run; remove it or pass another --out")
-    config.mkdir(parents=True, exist_ok=True)
+    if _names_repo(str(scratch)):
+        raise SystemExit("the work root must lie outside the repository (it holds the answer key)")
+    make_private_dir(config)
+    make_private_dir(work_root)
+    src_copy = work_root / "apegmsh-src"
+    extract_src(skill_commit, src_copy)
+    # The grader's in-process reads (FEMData.from_h5) use the same copy.
+    sys.path.insert(0, str(src_copy))
+    import apeGmsh
+    if not Path(apeGmsh.__file__).resolve().is_relative_to(src_copy.resolve()):
+        raise SystemExit(f"apeGmsh imports from {apeGmsh.__file__}, not the extracted {src_copy}")
     trees = {"skill": skill_hash, "previous": prev_hash}
     trig_by_id = {t["id"]: t for t in triggers}
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -464,7 +542,8 @@ def main(argv: list[str] | None = None) -> int:
             else:
                 prompt = trig_by_id[name]["prompt"]
                 cmd = claude_command(claude_exe, model=args.model, max_turns=TRIGGER_MAX_TURNS)
-            stream, seconds = run_claude(cmd, prompt, cwd=workdir, config=config, python=args.python)
+            stream, seconds = run_claude(cmd, prompt, cwd=workdir,
+                                         env=agent_env(args.python, src_copy, config))
             if stream["usage"] is None and n == 1:
                 raise SystemExit("the first claude run produced no result event (not logged in?):\n"
                                  + stream.get("stderr_tail", ""))
@@ -472,7 +551,7 @@ def main(argv: list[str] | None = None) -> int:
             row = {**item, "skill_hash": trees.get(arm), "seconds": round(seconds, 1), **stream}
             if item["kind"] == "task":
                 row["grade"] = grade_safely(name, workdir / graders.SCRIPT_NAME, python=args.python,
-                                            tasks=tasks)
+                                            tasks=tasks, src=src_copy)
                 row["pass"] = row["grade"]["passed"]
             else:
                 fired = SKILL_NAME in stream["fired_skills"]

@@ -99,6 +99,7 @@ known_bad = [
     { script = "fixtures/known_bad/skeleton_without_base.py", fails_at = "run", reason = "physical group 'Base' not found", lane = "suite" },
     { script = "fixtures/known_bad/pratt_truss_load_in_kN.py", fails_at = "oracle", reason = "bottom_chord_by_sections", lane = "live" },
     { script = "fixtures/known_bad/pratt_truss_numpy_only.py", fails_at = "oracle", reason = "built_with_apesees", lane = "suite" },
+    { script = "fixtures/known_bad/pratt_truss_forged_probe.py", fails_at = "oracle", reason = "built_with_apesees", lane = "suite" },
 ]
 
 [[task]]

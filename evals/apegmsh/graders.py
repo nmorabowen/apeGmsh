@@ -23,9 +23,12 @@ the prompts; the numbers below restate the prompts' data.
 """
 from __future__ import annotations
 
+import hashlib
+import hmac
 import json
 import math
 import os
+import secrets
 import shutil
 import subprocess
 import sys
@@ -44,6 +47,7 @@ SRC = REPO / "src"
 LINT = REPO / "skills" / "apegmsh" / "scripts" / "lint_model_script.py"
 PROBE_DIR = EVAL_DIR / "probe"                 # sitecustomize.py: logs what each process ran
 PROBE_ENV = "APEGMSH_EVAL_PROBE_LOG"
+PROBE_KEY_ENV = "APEGMSH_EVAL_PROBE_KEY"       # per-grade HMAC key; the probe pops both
 TASKS_FILE = EVAL_DIR / "tasks.toml"
 
 SCRIPT_NAME = "solution.py"
@@ -154,20 +158,26 @@ def load_common(path: Path = TASKS_FILE) -> dict[str, Any]:
 
 # --------------------------------------------------------------------------- run, lint, grade
 
-def child_env(python: str, probe_log: Path | None = None) -> dict[str, str]:
+def child_env(python: str, probe_log: Path | None = None, key: bytes | None = None, *,
+              src: Path = SRC) -> dict[str, str]:
     """The environment a graded script (and the agent that writes it) runs in.
 
-    This checkout's ``src`` on ``PYTHONPATH`` and ``python`` first on ``PATH``. With
-    ``probe_log``, the probe directory joins ``PYTHONPATH`` so every Python process
-    of the run, a deck run's child included, logs what apeGmsh and OpenSees did.
+    ``src`` (this checkout's by default; the runner passes a copy extracted at the
+    skill ref) on ``PYTHONPATH`` and ``python`` first on ``PATH``. With ``probe_log``
+    and ``key``, the probe directory joins ``PYTHONPATH`` so every Python process of
+    the run, a deck run's child included, logs what apeGmsh and OpenSees did and signs
+    it with ``key``.
     """
     env = dict(os.environ)
-    env["PYTHONPATH"] = str(SRC)
+    env["PYTHONPATH"] = str(src)
+    env.pop(PROBE_ENV, None)
+    env.pop(PROBE_KEY_ENV, None)
     if probe_log is not None:
+        if key is None:
+            raise ValueError("a probe log needs a key to sign it")
         env["PYTHONPATH"] += os.pathsep + str(PROBE_DIR)
         env[PROBE_ENV] = str(probe_log)
-    else:
-        env.pop(PROBE_ENV, None)
+        env[PROBE_KEY_ENV] = key.hex()
     # A deck run (ops.py(..., run=True)) starts the first `python` on PATH; put the
     # grading interpreter first so the deck sees the same openseespy as the script.
     # Not resolved: a venv's bin/python is a symlink that points out of the venv.
@@ -197,8 +207,8 @@ def lint_script(script: Path, *, python: str = sys.executable) -> list[str]:
 
 def grade(task_id: str, script: Path, *, python: str = sys.executable,
           workdir: Path | None = None, timeout: float = RUN_TIMEOUT,
-          tasks: dict[str, dict[str, Any]] | None = None) -> Grade:
-    """Grade ``script`` against task ``task_id`` in a fresh directory."""
+          tasks: dict[str, dict[str, Any]] | None = None, src: Path = SRC) -> Grade:
+    """Grade ``script`` against task ``task_id`` in a fresh directory, importing ``src``."""
     tasks = tasks if tasks is not None else load_tasks()
     if task_id not in tasks:
         raise KeyError(f"unknown task {task_id!r}; known: {sorted(tasks)}")
@@ -213,6 +223,7 @@ def grade(task_id: str, script: Path, *, python: str = sys.executable,
     # The probe log lives outside the work directory, beside nothing the script writes.
     probe_dir = Path(tempfile.mkdtemp(prefix="skill_eval_probe_"))
     probe_log = probe_dir / "probe.jsonl"
+    key = secrets.token_bytes(32)
     try:
         if not own_dir:
             if work.exists() and any(work.iterdir()):
@@ -222,7 +233,7 @@ def grade(task_id: str, script: Path, *, python: str = sys.executable,
         shutil.copyfile(script, target)
         try:
             run = subprocess.run(
-                [python, SCRIPT_NAME], cwd=work, env=child_env(python, probe_log),
+                [python, SCRIPT_NAME], cwd=work, env=child_env(python, probe_log, key, src=src),
                 capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout,
             )
             returncode: int | None = run.returncode
@@ -232,7 +243,7 @@ def grade(task_id: str, script: Path, *, python: str = sys.executable,
         result = Grade(task_id, ran=returncode == 0, returncode=returncode, output_tail=tail)
         result.lint = lint_script(target, python=python)
         if result.ran:
-            result.checks = oracle(work, read_probe(probe_log))
+            result.checks = oracle(work, read_probe(probe_log, key))
         return result
     finally:
         shutil.rmtree(probe_dir, ignore_errors=True)
@@ -240,14 +251,31 @@ def grade(task_id: str, script: Path, *, python: str = sys.executable,
             shutil.rmtree(work, ignore_errors=True)
 
 
-def read_probe(path: Path) -> list[dict[str, Any]]:
-    """One record per Python process of the run (see ``probe/sitecustomize.py``)."""
+def read_probe(path: Path, key: bytes) -> list[dict[str, Any]]:
+    """One record per Python process of the run (see ``probe/sitecustomize.py``).
+
+    Each line must carry a valid HMAC under this grade's ``key``. A line that does not
+    (a record the script appended or edited) is not dropped: it becomes a record whose
+    ``probe_errors`` fail the grade's ``probe_clean`` check.
+    """
     if not path.is_file():
         return []
     records = []
-    for line in path.read_text(encoding="utf-8").splitlines():
-        if line.strip():
-            records.append(json.loads(line))
+    for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+        if not line.strip():
+            continue
+        try:
+            entry = json.loads(line)
+            payload, mac = entry["record"], entry["mac"]
+            expected = hmac.new(key, payload.encode("utf-8"), hashlib.sha256).hexdigest()
+            valid = isinstance(mac, str) and hmac.compare_digest(mac, expected)
+        except (ValueError, KeyError, TypeError, AttributeError):
+            valid = False
+        if not valid:
+            records.append({"probe_errors": [f"probe line {number} fails its MAC: forged or corrupted"],
+                            "models": [], "apesees": [], "recorders": []})
+            continue
+        records.append(json.loads(payload))
     return records
 
 
