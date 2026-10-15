@@ -14,7 +14,8 @@ checked against the live domain:
   recorder pads them with (#1971);
 * the 2-D twin, a frame beside a quad block (2-dof quad nodes, 3-dof frame
   nodes): the quad nodes read ``rotation_z`` NaN. The frame's own
-  ``rotation_z`` value is a strict xfail: this route records it at DOF 6.
+  ``rotation_z`` value is a strict xfail: this route records it at DOF 6
+  (#2018).
 
 The tolerance is the format's, not the oracle's: a ``.out`` file holds six
 significant digits, so values compare at ``rtol=1e-5``. The fork-only
@@ -386,7 +387,7 @@ def test_ndf2_node_rotation_is_nan_from_out(g: Any, tmp_path: Path) -> None:
     strict=True, raises=AssertionError,
     reason="emit_recorders records a 2-D rotation_z as `-dof 6` (spec/_emit.py "
            "_AXIS_TO_ROT_DOF is 3-D only), so a 3-dof frame node reads the "
-           "padded 0.0; follow-up of #1971",
+           "padded 0.0 (#2018)",
 )
 def test_frame_rotation_z_reads_back_from_out_2d(
     g: Any, tmp_path: Path,

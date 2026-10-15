@@ -60,7 +60,7 @@ from ...opensees._response_catalog import (
     unflatten,
     unflatten_nodal,
 )
-from ...opensees._recorder_translate import stress_zz_keyword
+from ...opensees._recorder_translate import mask_absent_rotations, stress_zz_keyword
 from ..schema._native import ELEMENT_INDEX_SPACE_FEM
 from ..spec._emit import (
     _DEFERRED_CATEGORIES,
@@ -273,35 +273,6 @@ class RecorderTranscoder:
     # Per-record parsing
     # ------------------------------------------------------------------
 
-    def _mask_absent_rotations(self, rec, node_ids, components) -> None:
-        """NaN each rotation a node's DOF layout (``ndf``, ``ndm``) lacks.
-
-        One ``recorder Node`` line over mixed ndf pads a node's missing DOFs
-        with 0.0 (a tet node beside a shell). No model: values are kept.
-        """
-        from ...opensees._internal.build.ndf import _load_dof_layout
-        from ...opensees._recorder_translate import node_component_spatial
-        from ...opensees.emitter import h5_reader
-        slots = {c: (node_component_spatial(c) or ("", -1))[1] for c in components}
-        if self._model_h5_src is None or max(slots.values(), default=-1) < 3:
-            return
-        with h5_reader.open(str(self._model_h5_src)) as m:
-            nodes_ndf = m.nodes_ndf()
-            ndm = h5_reader.read_spatial_ndm(
-                m.meta(), m.handle, coords=lambda: np.asarray(self._fem.nodes.coords))
-        if nodes_ndf is None:
-            return  # an archive older than /opensees/nodes_ndf
-        if missing := sorted({int(n) for n in node_ids} - nodes_ndf.keys()):
-            raise ValueError(
-                f"Recorder {rec.name!r}: nodes {missing[:10]} are not in "
-                f"{self._model_h5_src}'s /opensees/nodes_ndf, so their rotation "
-                "columns may be padding. Pass the model the deck ran.")
-        layout = [_load_dof_layout(nodes_ndf[int(n)], ndm) for n in node_ids]
-        for comp, slot in slots.items():
-            if slot >= 3:  # rx, ry, rz
-                absent = np.array([slot not in lay for lay in layout])
-                components[comp] = np.where(absent, np.nan, components[comp])
-
     def _parse_node_record(self, rec) -> "_NodeRecordPayload":
         """Parse all emitted files for one nodes record."""
         # Reuse the emitter to learn what files OpenSees produced and
@@ -350,7 +321,7 @@ class RecorderTranscoder:
                     continue
                 components[canonical] = per_dof[comp_dof]   # (T, N_record)
 
-        self._mask_absent_rotations(rec, node_ids, components)
+        mask_absent_rotations(components, node_ids, self._model_h5_src, self._fem)
         return _NodeRecordPayload(
             record_name=rec.name,
             node_ids=node_ids,
