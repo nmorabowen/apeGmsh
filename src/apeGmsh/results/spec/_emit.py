@@ -1123,7 +1123,19 @@ def collect_mpco_tokens(records) -> tuple[list[str], list[str]]:
     ``modesOfVibrationRotational`` entries on the nodal side. A gauss
     component with no MPCO token raises ``ValueError``
     (:func:`_canonical_to_mpco_gauss_token`).
+
+    A line-stations component takes the bucket the MPCO reader walks for
+    it (``gauss_keyword_for_canonical(c, topology="line_stations")``),
+    and only ``section.force`` is accepted: the reader decodes a bucket's
+    META component names through ``MPCO_SECTION_NAME_TO_CODE``, which
+    holds the section-force names only. A section deformation
+    (``axial_strain``, ``curvature_*``, ...) therefore raises
+    ``ValueError`` naming it; before #2025 it wrote no token, or
+    (``shear_strain_*``, through the ``shear`` prefix) ``section.force``,
+    and read back empty with no warning.
     """
+    from apeGmsh.opensees._response_catalog import gauss_keyword_for_canonical
+
     node_tokens: list[str] = []
     elem_tokens: list[str] = []
     seen_n: set[str] = set()
@@ -1149,6 +1161,26 @@ def collect_mpco_tokens(records) -> tuple[list[str], list[str]]:
             for c in rec.components:
                 _add(elem_tokens, seen_e,
                      _canonical_to_mpco_gauss_token(c, rec.name))
+            continue
+        if rec.category == "line_stations":
+            for c in rec.components:
+                keyword = gauss_keyword_for_canonical(c, topology="line_stations")
+                if keyword == "section.force":
+                    _add(elem_tokens, seen_e, keyword)
+                    continue
+                reason = (
+                    "the MPCO reader does not decode its section.deformation "
+                    "bucket (META names outside the section-force set)"
+                    if keyword == "section.deformation"
+                    else "it has no line-stations routing"
+                )
+                raise ValueError(
+                    f"Record {rec.name!r} (category=line_stations): component "
+                    f"{c!r} cannot go through MPCO: {reason}, so it would "
+                    f"read back empty or fail. Drop it from the record; "
+                    f"section deformations read back from the fork's native "
+                    f"recorder."
+                )
             continue
         # other element-level categories
         for c in rec.components:
