@@ -19,8 +19,6 @@ exact pair they did before.
 """
 from __future__ import annotations
 
-from pathlib import Path
-
 import numpy as np
 import pytest
 
@@ -151,7 +149,6 @@ def test_out_force_only_record_emits_unchanged(tmp_path) -> None:
         "recorder Element -file beam_line_stations_gpx.out -time -ele 1 2 "
         "-precision 17 integrationPoints  ;# beam line_stations gpx",
     ]
-    calls = []
     fake = _FakeOps()
     with _spec(rec).emit_recorders(str(tmp_path), ops=fake,
                                    model=_model()) as live:
