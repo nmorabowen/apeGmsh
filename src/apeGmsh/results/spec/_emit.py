@@ -1036,7 +1036,7 @@ def _canonical_to_mpco_element_token(canonical: str) -> str | None:
 #: names, so the emit asks the same function. The generic prefix table
 #: above is topology-blind: it sends a shell ``bending_moment_xx`` to the
 #: beam ``section.force`` bucket and has no entry for ``membrane_force_*``
-#: or ``transverse_shear_*`` (#1991).
+#: or ``transverse_shear_*``.
 _MPCO_GAUSS_READ_SIDE_KEYWORDS: frozenset[str] = frozenset({"stresses", "strains"})
 
 
