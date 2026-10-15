@@ -1274,14 +1274,24 @@ def _aggregate_cadence(records) -> tuple[str, float | int] | None:
     Strategy: if any record has ``dt=``, use the smallest dt (covers
     coarser cadences too). Else if any record has ``n_steps=``, use
     the smallest. Else None (every analysis step).
+
+    One recorder takes one ``-T``, so when the records ask for different
+    cadences (two ``dt``, a ``dt`` and an ``n_steps``, or a cadence and
+    every step) it warns once and names the cadence used (#1948). Modal
+    records have no cadence and are not compared.
     """
     dts = [r.dt for r in records if getattr(r, "dt", None) is not None]
-    if dts:
-        return ("dt", min(dts))
     nss = [r.n_steps for r in records if getattr(r, "n_steps", None) is not None]
-    if nss:
-        return ("nsteps", min(nss))
-    return None
+    cad = ("dt", min(dts)) if dts else ("nsteps", min(nss)) if nss else None
+    asked = {(r.dt, r.n_steps) for r in records if r.category != "modal"}
+    if len(asked) > 1:
+        used = ("every step" if cad is None else
+                f"-T dt {cad[1]:.10g}" if cad[0] == "dt" else f"-T nsteps {cad[1]}")
+        warnings.warn(
+            f"The MPCO recorder takes one cadence, but the records ask for "
+            f"{len(asked)} (dt, n_steps): {sorted(asked, key=repr)}. It "
+            f"records at {used}.", UserWarning, stacklevel=3)
+    return cad
 
 
 def emit_mpco_tcl(

@@ -325,9 +325,10 @@ class ResolvedRecorderSpec:
         supported by the MPCO recorder itself.
 
         One recorder takes one ``-T`` cadence: the smallest record
-        ``dt=``, else the smallest ``n_steps=``, else every step.
-        Sampling at arbitrary caller instants has no recorder
-        equivalent.
+        ``dt=``, else the smallest ``n_steps=``, else every step; when
+        the records ask for different cadences it warns once and names
+        the one used. Sampling at arbitrary caller instants has no
+        recorder equivalent.
 
         Requires an openseespy build with the MPCO recorder compiled
         in (typically STKO's bundled Python). ``__enter__`` raises

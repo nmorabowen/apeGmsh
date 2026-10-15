@@ -183,6 +183,65 @@ def test_emit_mpco_with_dt(tmp_path: Path) -> None:
 
 
 # =====================================================================
+# Cadence: one -T per recorder; different cadences warn once (#1948)
+# =====================================================================
+
+def _cadence_record(name: str, dt=None, n_steps=None, category="nodes"):
+    return ResolvedRecorderRecord(
+        category=category, name=name, components=("displacement_x",),
+        dt=dt, n_steps=n_steps, node_ids=np.array([1]),
+    )
+
+
+def _emit_and_catch(tmp_path: Path, *records) -> "tuple[tuple, list]":
+    fake = FakeOps()
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        with _make_spec(*records).emit_mpco(tmp_path / "c.mpco", ops=fake):
+            pass
+    hits = [w for w in caught if "takes one cadence" in str(w.message)]
+    return fake.recorder_calls[0], hits
+
+
+def test_two_dt_cadences_warn_once_and_name_the_one_used(tmp_path: Path) -> None:
+    args, hits = _emit_and_catch(tmp_path, _cadence_record("a", dt=0.05),
+                                 _cadence_record("b", dt=0.01))
+    assert args[args.index("-T"):] == ("-T", "dt", 0.01)
+    assert len(hits) == 1
+    assert "-T dt 0.01" in str(hits[0].message)
+
+
+@pytest.mark.parametrize("records, used", [
+    ((("a", 0.01, None), ("b", None, 5)), "-T dt 0.01"),
+    ((("a", None, 10), ("b", None, 5)), "-T nsteps 5"),
+    ((("a", 0.01, None), ("b", None, None)), "-T dt 0.01"),
+])
+def test_any_cadence_difference_warns(tmp_path: Path, records, used) -> None:
+    _, hits = _emit_and_catch(
+        tmp_path, *(_cadence_record(n, dt=d, n_steps=s) for n, d, s in records))
+    assert len(hits) == 1 and used in str(hits[0].message)
+
+
+@pytest.mark.parametrize("records", [
+    (("a", 0.01, None), ("b", 0.01, None)),
+    (("a", None, 5), ("b", None, 5)),
+    (("a", None, None), ("b", None, None)),
+])
+def test_one_cadence_is_silent(tmp_path: Path, records) -> None:
+    """Run with ``-W error::UserWarning``: a warning here raises."""
+    _, hits = _emit_and_catch(
+        tmp_path, *(_cadence_record(n, dt=d, n_steps=s) for n, d, s in records))
+    assert hits == []
+
+
+def test_a_modal_record_has_no_cadence_to_compare(tmp_path: Path) -> None:
+    modal = ResolvedRecorderRecord(category="modal", name="m",
+                                   components=(), dt=None, n_steps=None)
+    _, hits = _emit_and_catch(tmp_path, _cadence_record("a", dt=0.01), modal)
+    assert hits == []
+
+
+# =====================================================================
 # Build-gate
 # =====================================================================
 
