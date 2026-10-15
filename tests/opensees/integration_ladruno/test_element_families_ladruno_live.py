@@ -370,20 +370,25 @@ def test_element_only_mpco_file_has_its_steps(tmp_path: Path) -> None:
     _assert_gauss_stress(run)       # the element reads have that step too
 
 
-@pytest.mark.parametrize("token, fz", [
-    ("material.equivalentPlasticStrain", -6.25e3),
-    ("material.damage", -7.2e3),
+@pytest.mark.parametrize("token", [
+    "material.equivalentPlasticStrain", "material.damage",
 ])
 def test_ladruno_brick_material_state_reads_back_from_mpco(
-    tmp_path: Path, token: str, fz: float,
+    tmp_path: Path, token: str,
 ) -> None:
     """The material-state path resolves the rule-0 bracket too (#1970).
 
-    LadrunoBrick + ASDConcrete3D under axial compression: every GP's
-    ``(+, -)`` pair against ``eleResponse(tag, "material", gp, key)``. Each
-    load is chosen so the two columns differ (at -7.2e3 per node some GPs
-    crack in tension, d+ ~ 1, while d- stays 0), so a swapped column fails.
+    LadrunoBrick + ASDConcrete3D shortened under displacement control:
+    every GP's ``(+, -)`` pair against ``eleResponse(tag, "material", gp,
+    key)``. The fixed base restrains the Poisson expansion, so four GPs
+    crack in tension (d+ ~ 1, d- = 0) while every GP gathers compressive
+    plastic strain: the two columns differ, so a swapped column fails.
+
+    Displacement control, not load control: the tension crack drops the
+    load (a snap-back in the load factor), which LoadControl cannot follow;
+    at FORK_PIN LoadControl diverged (#2032).
     """
+    du, steps = -1.0e-4, 20          # the top shortens 2e-3 (strain 1e-3)
     with apeGmsh(model_name="g7_mat", verbose=False) as g:
         box = g.model.geometry.add_box(0, 0, 0, 1, 1, 2)
         g.model.sync()
@@ -396,9 +401,10 @@ def test_ladruno_brick_material_state_reads_back_from_mpco(
     mat = ops.nDMaterial.ASDConcrete3D(E=30e6, v=0.2, fc=30e3, ft=3e3)
     ops.element.LadrunoBrick(pg="Body", material=mat)
     ops.fix(nodes=_nodes_on_plane(fem, 2, 0.0), dofs=(1, 1, 1))
+    top = _nodes_on_plane(fem, 2, 2.0)
     with ops.pattern.Plain(series=ops.timeSeries.Linear()) as p:
-        for nid in _nodes_on_plane(fem, 2, 2.0):
-            p.load(node=nid, forces=(0.0, 0.0, fz))
+        for nid in top:
+            p.load(node=nid, forces=(0.0, 0.0, -1.0))
     path = str(tmp_path / "mat.mpco")
     _record(ops, "MPCO", path, elem_responses=(token,))
     ops.constraints.Plain()
@@ -406,12 +412,15 @@ def test_ladruno_brick_material_state_reads_back_from_mpco(
     ops.system.BandGeneral()
     ops.test.NormDispIncr(tol=1e-8, max_iter=50)
     ops.algorithm.Newton()
-    ops.integrator.LoadControl(dlam=0.25)
+    ops.integrator.DisplacementControl(node=top[0], dof=3, dU=du)
     ops.analysis.Static()
 
     emitter, model_h5 = _run(ops, tmp_path)
-    for _ in range(4):
-        assert emitter.analyze(steps=1) == 0
+    for step in range(steps):
+        assert emitter.analyze(steps=1) == 0, f"step {step + 1}"
+    # The controlled DOF followed the path (the right node was driven).
+    np.testing.assert_allclose(
+        emitter.ops.nodeDisp(top[0], 3), steps * du, rtol=1e-9)
     (eid,) = [int(e) for grp in fem.elements for e in grp.ids]
     tag = _fem_to_ops(model_h5)[eid]
     key = token.split(".", 1)[1]
@@ -420,6 +429,11 @@ def test_ladruno_brick_material_state_reads_back_from_mpco(
         for gp in range(1, 9)
     ])                                   # (8 GP, 2)
     emitter.ops.remove("recorders")
+    # A non-zero oracle: four GPs cracked, and compressive plasticity.
+    if key == "damage":
+        assert truth[:, 0].max() > 0.5, truth
+    else:
+        assert truth[:, 0].max() > 0.0 and truth[:, 1].min() > 0.0, truth
     assert not np.allclose(truth[:, 0], truth[:, 1])   # a swap would show
     r = _open("MPCO", path, fem, model_h5)
     parent = ("equivalent_plastic_strain" if "Plastic" in token else "damage")
