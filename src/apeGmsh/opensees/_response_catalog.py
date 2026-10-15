@@ -1943,12 +1943,10 @@ def is_nodal_force_catalogued(class_name: str, token: str) -> bool:
 #                       My → bending_moment_y, Mz → bending_moment_z
 #
 # OpenSees's ``localForce`` returns *joint-on-element* resisting
-# forces. For internal section-force convention (matching what
-# ``section.force`` reports for force-based beams so adjacent
-# elements line up at shared nodes), the consumer multiplies the
-# station-2 (ξ=+1) values by -1 — see ``_LineStationCapturer.step``
-# in :mod:`apeGmsh.results.capture._domain` and the read-side flip
-# in :func:`_mpco_local_force_io.read_local_force_bucket_slab`.
+# forces. Every route (DomainCapture, MPCO, ``.ladruno``, ``.out``)
+# maps them to the force-beam ``section force`` convention with
+# :func:`local_force_station_signs`, so adjacent force and elastic
+# beams agree at a shared node (#2009).
 
 _LINE_STATIONS_2D: tuple[str, ...] = (
     "axial_force", "shear_y", "bending_moment_z",
@@ -1992,6 +1990,48 @@ def synthesize_line_station_layout_for_elastic_beam(
         component_layout=comps,
         class_tag=nf.class_tag,
     )
+
+
+# Sign that turns a ``localForce`` end-i value into the force-beam
+# ``section force`` value at station 1 (xi = -1); station 2 (xi = +1)
+# takes the opposite sign of end j. Measured on a straight
+# force/elastic/force bar junction (fork 79e0623670, #1956/G17): a
+# section reports the resultants on its +x face, so N, Vz, T, My and
+# Mz flip at end i, and Vy alone keeps the end-i sign. The 2-D set is
+# the 3-D one restricted to (N, Vy, Mz).
+_LOCAL_FORCE_END_I_SIGN: dict[str, float] = {
+    "axial_force": -1.0,
+    "shear_y": 1.0,
+    "shear_z": -1.0,
+    "torsion": -1.0,
+    "bending_moment_y": -1.0,
+    "bending_moment_z": -1.0,
+}
+
+
+def local_force_station_signs(components: "tuple[str, ...] | list[str]") -> ndarray:
+    """Per-station signs mapping ``localForce`` ends to line stations.
+
+    Returns a ``(2, len(components))`` array: row 0 multiplies the
+    end-i values (station xi = -1), row 1 the end-j values (station
+    xi = +1). ``values * signs`` over an ``[end_i | end_j]`` layout
+    gives the force-beam ``section force`` convention, so N, V and M
+    are continuous across a force/elastic junction. The one sign
+    table for DomainCapture, MPCO, ``.ladruno`` and ``.out`` (#2009).
+
+    Raises ``ValueError`` for a component outside the six beam
+    resultants: an unknown one has no measured sign.
+    """
+    unknown = [c for c in components if c not in _LOCAL_FORCE_END_I_SIGN]
+    if unknown:
+        raise ValueError(
+            f"No localForce station sign for component(s) {unknown!r}; "
+            f"known: {sorted(_LOCAL_FORCE_END_I_SIGN)}."
+        )
+    end_i = np.array(
+        [_LOCAL_FORCE_END_I_SIGN[c] for c in components], dtype=np.float64,
+    )
+    return np.stack([end_i, -end_i])
 
 
 def is_line_station_synthesis_catalogued(class_name: str) -> bool:

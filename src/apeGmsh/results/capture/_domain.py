@@ -123,6 +123,7 @@ from ...opensees._response_catalog import (
     is_layer_catalogued,
     is_line_station_synthesis_catalogued,
     is_nodal_force_catalogued,
+    local_force_station_signs,
     lookup,
     lookup_custom_rule,
     lookup_fiber,
@@ -1749,10 +1750,10 @@ class _LineStationCapturer:
 
         Closed-form elastic beams have no integration points; we read
         the full end-node resisting-force vector once per step and
-        produce a 2-station slab at ξ ∈ {-1, +1}. Sign convention is
-        applied at capture time (see :meth:`step`) so the resulting
-        slab matches the section-force convention used by force-based
-        beams — adjacent elements line up at shared nodes.
+        produce a 2-station slab at ξ ∈ {-1, +1}. The force-beam
+        section-force signs are applied at capture time (see
+        :meth:`_step_local_force`), so adjacent elements line up at
+        shared nodes.
         """
         layout = synthesize_line_station_layout_for_elastic_beam(class_name)
         if layout is None:
@@ -1857,16 +1858,13 @@ class _LineStationCapturer:
 
         The OpenSees ``localForce`` response is the joint-on-element
         resisting-force vector laid out per node ``[end_i, end_j]``.
-        Internal section-force convention treats ξ=-1 (end i) as the
-        section just inside node i and ξ=+1 (end j) as the section
-        just inside node j; by Newton's third law the station-2
-        signs flip relative to the joint-on-element value. Mirrors
-        the read-side flip in ``_mpco_local_force_io`` so a slab
-        captured here is component-by-component identical to one
-        synthesised from MPCO's ``localForce`` bucket.
+        :func:`local_force_station_signs` maps it to the force-beam
+        ``section force`` convention, the one sign table the MPCO,
+        ``.ladruno`` and ``.out`` routes apply too (#2009).
         """
         n_per = grp.layout.n_components_per_gp
         flat_size = 2 * n_per
+        signs = local_force_station_signs(grp.layout.component_layout).ravel()
         buf: list[ndarray] = []
         for eid in grp.element_ids:
             vec = ops.eleResponse(eid, "localForce")
@@ -1877,10 +1875,7 @@ class _LineStationCapturer:
                     f"{arr.size} values; synthesis layout expects "
                     f"{flat_size} (2 nodes × {n_per})."
                 )
-            flat = np.empty(flat_size, dtype=np.float64)
-            flat[0:n_per] = arr[0:n_per]              # station 1 — keep
-            flat[n_per:flat_size] = -arr[n_per:flat_size]   # station 2 — flip
-            buf.append(flat)
+            buf.append(arr * signs)
         return np.stack(buf, axis=0)    # (E_g, 2 * n_per)
 
     def write_to(

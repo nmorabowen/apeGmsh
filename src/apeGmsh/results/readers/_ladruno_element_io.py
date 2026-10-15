@@ -37,6 +37,7 @@ from numpy import ndarray
 from ...opensees._response_catalog import (
     RESPONSE_CATALOG,
     catalog_token_for_keyword,
+    local_force_station_signs,
 )
 from ._ladruno_hyperslab import read_hyperslab
 
@@ -1293,9 +1294,10 @@ def _read_element_stations(
         bucket["DATA"], t_idx, rows,
         np.array([station_to_col[st] for st in stations]),
     )
-    # localForce end-force → internal-force sign continuity.
+    # localForce end forces → the force-beam ``section force`` signs,
+    # the one table every route applies (#2009).
     if token == "localForce" and n_st == 2:
-        out[:, :, 1] *= -1.0
+        out *= local_force_station_signs((component,))[:, 0]
     return (
         out.reshape(T, E * n_st),
         np.repeat(sel_ids, n_st),
