@@ -296,8 +296,10 @@ class ResolvedRecorderSpec:
         ``ops.h5(...)`` file). Records name elements by FEM id and
         OpenSees records by element tag; under
         ``element_tags="sequential"`` (the bridge default) the two differ,
-        so the model's pairing translates every ``-ele`` list. A spec
-        with an element-level record raises without it.
+        so the model's pairing translates every ``-ele`` list. Its ``ndm``
+        and per-node ndf map each node record's ``-dof`` list to the DOFs
+        the nodes carry (a 2-D frame's ``rotation_z`` is DOF 3). A spec
+        with a node or element record raises without it.
         """
         from ..live._recorders import LiveRecorders
         return LiveRecorders(
@@ -348,8 +350,9 @@ class ResolvedRecorderSpec:
             to text.
         model : OpenSeesModel, optional
             The built model whose ``(fem_eid, tag)`` pairing translates
-            element ids to OpenSees tags (see :meth:`emit_recorders`).
-            Required when the spec holds an element-level record.
+            element ids to OpenSees tags, and whose per-node ndf maps
+            node DOFs (see :meth:`emit_recorders`). Required when the
+            spec holds a node or element record.
         """
         from ._emit import emit_spec_tcl
         return emit_spec_tcl(
@@ -363,7 +366,8 @@ class ResolvedRecorderSpec:
     ) -> list[str]:
         """Emit ``ops.recorder(...)`` Python call lines.
 
-        ``model`` translates element ids as in :meth:`to_tcl_commands`.
+        ``model`` translates element ids and node DOFs as in
+        :meth:`to_tcl_commands`, and is required the same way.
         """
         from ._emit import emit_spec_python
         return emit_spec_python(

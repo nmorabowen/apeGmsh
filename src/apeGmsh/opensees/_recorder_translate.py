@@ -31,6 +31,7 @@ from ._element_capabilities import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
     from pathlib import Path
 
     from numpy import ndarray
@@ -227,6 +228,84 @@ def group_node_components_by_ops_token(
         token: tuple(dict.fromkeys(dofs)) for token, dofs in grouped.items()
     }
 
+
+
+def node_record_deck_dofs(
+    slot_dofs: tuple[int, ...],
+    node_ids: tuple[int, ...],
+    nodes_ndf: "Mapping[int, int]",
+    ndm: int,
+    *,
+    where: str,
+) -> tuple[int, ...]:
+    """The ``-dof`` list a ``recorder Node`` line over ``node_ids`` records.
+
+    ``slot_dofs`` name spatial slots as 1-based DOFs of the full
+    ``(x, y, z, rx, ry, rz)`` layout (``rotation_z`` is 6), which is how
+    the spec route's read side keys its columns. Each slot maps to the
+    DOF each node's own layout (``_node_layout(ndf, ndm)``) places it at:
+    a planar frame node (``ndm=2, ndf=3``) carries ``rotation_z`` at DOF 3.
+
+    The one ``-dof`` list serves every node, so the nodes that carry a
+    slot must agree on its DOF. A rotation some nodes lack is recorded
+    anyway: their padded column is masked on read
+    (:func:`mask_absent_rotations`). Raises :class:`ValueError` for a node
+    missing from ``nodes_ndf``, a slot no node carries, a translation some
+    nodes lack (nothing would mask its padding), or a slot the nodes place
+    at different DOFs.
+    """
+    from ._internal.build.recorders import _node_layout
+
+    missing = [n for n in node_ids if int(n) not in nodes_ndf]
+    if missing:
+        raise ValueError(
+            f"{where}: nodes {missing[:10]} have no ndf in model=.nodes_ndf, "
+            f"so the DOF each records cannot be named. Pass the "
+            f"OpenSeesModel the deck was built from (OpenSeesModel.from_h5 "
+            f"of the bridge's ops.h5(...) file)."
+        )
+    layouts = {int(n): _node_layout(int(nodes_ndf[int(n)]), int(ndm))
+               for n in node_ids}
+    names = ("x", "y", "z", "rx", "ry", "rz")
+    out: list[int] = []
+    for d in slot_dofs:
+        slot = int(d) - 1
+        if not 0 <= slot < 6:
+            raise ValueError(
+                f"{where}: slot DOF {d} is not one of 1..6 "
+                f"(x, y, z, rx, ry, rz)."
+            )
+        at = {n: lay.index(slot) + 1 for n, lay in layouts.items()
+              if slot in lay}
+        lacking = [n for n in layouts if n not in at]
+        if not at:
+            raise ValueError(
+                f"{where}: no recorded node carries {names[slot]!r} "
+                f"(ndm={ndm}; node {node_ids[0]} has ndf "
+                f"{nodes_ndf[int(node_ids[0])]}). Drop the component, or "
+                f"narrow the record to nodes that carry it."
+            )
+        if lacking and slot < 3:
+            raise ValueError(
+                f"{where}: nodes {lacking[:10]} carry no {names[slot]!r} "
+                f"DOF (ndm={ndm}), and a recorder pads it with 0.0. Record "
+                f"them in a separate record without that component."
+            )
+        dofs = set(at.values())
+        if len(dofs) > 1:
+            shown = {n: at[n] for n in list(at)[:6]}
+            raise ValueError(
+                f"{where}: the recorded nodes carry {names[slot]!r} at "
+                f"different DOFs ({shown}); one recorder line records one "
+                f"DOF list. Split the record by node ndf."
+            )
+        out.append(dofs.pop())
+    if out != sorted(set(out)):
+        raise ValueError(  # pragma: no cover - laid-out layouts are monotone
+            f"{where}: DOFs {out} for slots {slot_dofs} are out of order; "
+            f"the read side maps columns by slot order."
+        )
+    return tuple(out)
 
 
 def mask_absent_rotations(

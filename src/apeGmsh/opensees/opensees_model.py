@@ -890,6 +890,17 @@ class OpenSeesModel:
         return self._ndf
 
     @property
+    def nodes_ndf(self) -> Mapping[int, int]:
+        """Read-only ``{node: ndf}``: the per-node ndf the deck emitted.
+
+        Read from ``/opensees/nodes_ndf`` (ADR 0048), or recovered from
+        the neutral ``/nodes/ndf`` on an older archive. Empty when neither
+        is present (a model published straight from emitter buffers); no
+        envelope value is filled in for a missing node.
+        """
+        return MappingProxyType(self._nodes_ndf)
+
+    @property
     def snapshot_id(self) -> str:
         """Composite hash (``/meta/snapshot_id`` on the source archive).
 

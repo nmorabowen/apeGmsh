@@ -20,7 +20,8 @@ Each ``begin_stage(name, kind=...)`` issues a fresh set of recorders
 whose output filenames are prefixed with ``<name>__`` so the per-stage
 files don't collide. Read each stage with::
 
-    Results.from_recorders(spec, output_dir, fem=fem, stage_id=name)
+    Results.from_recorders(spec, output_dir, fem=fem, model=model,
+                           stage_id=name)
 
 Usage
 -----
@@ -39,7 +40,8 @@ Usage
         ),),
     )
 
-    with spec.emit_recorders("out/") as live:
+    model = OpenSeesModel.from_h5("model.h5")   # written by ops.h5(...)
+    with spec.emit_recorders("out/", model=model) as live:
         live.begin_stage("gravity", kind="static")
         for _ in range(n_grav):
             ops.analyze(1, 1.0)
@@ -50,8 +52,10 @@ Usage
             ops.analyze(1, dt)
         live.end_stage()
 
-    grav = Results.from_recorders(spec, "out/", fem=fem, stage_id="gravity")
-    dyn  = Results.from_recorders(spec, "out/", fem=fem, stage_id="dynamic")
+    grav = Results.from_recorders(spec, "out/", fem=fem, model=model,
+                                  stage_id="gravity")
+    dyn  = Results.from_recorders(spec, "out/", fem=fem, model=model,
+                                  stage_id="dynamic")
 """
 from __future__ import annotations
 
@@ -63,8 +67,8 @@ from typing import TYPE_CHECKING, Optional
 from ..spec._emit import (
     element_tag_map,
     emit_logical,
+    to_deck,
     to_ops_args,
-    to_ops_tags,
 )
 
 if TYPE_CHECKING:
@@ -118,15 +122,19 @@ class LiveRecorders:
         elements by FEM id; OpenSees records by element tag, and under
         ``element_tags="sequential"`` (the bridge default) the two differ.
         The model's ``(fem_eid, tag)`` pairing translates every ``-ele``
-        list. Required whenever the spec holds an element-level record.
+        list, and its ``ndm`` and per-node ndf map every node record's
+        ``-dof`` list to the DOFs the nodes carry (a 2-D frame's
+        ``rotation_z`` is DOF 3). Required whenever the spec holds a node
+        or element record.
 
     Raises
     ------
     RuntimeError
         On ``__enter__`` if the spec contains any modal records.
     ValueError
-        On ``__enter__`` if an element-level record is emitted without
-        ``model=``, or names a FEM id the model has no element for.
+        On ``__enter__`` if a node or element record is emitted without
+        ``model=``, names a FEM id the model has no element for, or
+        records a DOF its nodes do not carry.
     """
 
     def __init__(
@@ -142,6 +150,7 @@ class LiveRecorders:
         self._tag_map = None if model is None else element_tag_map(
             model, fem_snapshot_id=spec.fem_snapshot_id,
         )
+        self._model = model
         self._output_dir = str(output_dir) if output_dir else ""
         self._file_format = file_format
         self._ops = ops
@@ -179,8 +188,8 @@ class LiveRecorders:
                     f"cap.capture_modes(n)."
                 )
 
-        # Translate (or refuse) every element recorder before any
-        # recorder reaches the domain, so a refusal never leaves a
+        # Translate (or refuse) every node and element recorder before
+        # any recorder reaches the domain, so a refusal never leaves a
         # stage half-issued.
         for record in self._spec.records:
             if record.category in _SUPPORTED_CATEGORIES:
@@ -188,7 +197,8 @@ class LiveRecorders:
                     record, output_dir=self._output_dir,
                     file_format=self._file_format,
                 ):
-                    to_ops_tags(logical, self._tag_map, where=_WHERE)
+                    to_deck(logical, self._tag_map, self._model,
+                            where=_WHERE)
 
         if self._ops is None:
             from ...opensees.emitter.live import get_ops
@@ -232,9 +242,9 @@ class LiveRecorders:
                     file_format=self._file_format,
                     stage_id=name,
                 ):
-                    args = to_ops_args(
-                        to_ops_tags(logical, self._tag_map, where=_WHERE),
-                    )
+                    args = to_ops_args(to_deck(
+                        logical, self._tag_map, self._model, where=_WHERE,
+                    ))
                     tag = self._ops.recorder(*args)
                     if isinstance(tag, int):
                         self._current_tags.append(tag)
