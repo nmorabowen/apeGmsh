@@ -52,7 +52,7 @@ import pytest
 
 from apeGmsh import apeGmsh
 from apeGmsh.opensees import apeSees
-from apeGmsh.opensees.emitter.live import LiveOpsEmitter
+from apeGmsh.opensees.emitter.live import LiveOpsEmitter, get_backend_build
 from apeGmsh.results import Results
 
 pytestmark = pytest.mark.ladruno_fork
@@ -445,6 +445,69 @@ def test_ladruno_brick_material_state_reads_back_from_mpco(
         np.testing.assert_allclose(
             np.asarray(slab.values)[-1], truth[:, k], rtol=RTOL, atol=1e-14,
         )
+
+
+_FORK_PIN = Path(__file__).resolve().parents[3] / "FORK_PIN"
+
+
+def _at_fork_pin() -> bool:
+    """Is the imported engine the ``FORK_PIN`` build? (the #2044 xfail gate)
+
+    Older local fork builds converge, so a bare strict xfail would XPASS
+    there; the gate keeps the xfail to the build that has the defect.
+    """
+    shas = [line.split("=", 1)[1].strip()
+            for line in _FORK_PIN.read_text(encoding="utf-8").splitlines()
+            if line.startswith("sha=")]
+    if len(shas) != 1:
+        raise RuntimeError(f"expected one sha= line in {_FORK_PIN}")
+    return get_backend_build() == shas[0]
+
+
+@pytest.mark.xfail(
+    "_at_fork_pin()", strict=True,
+    reason="#2044: LoadControl diverges at FORK_PIN in the elastic first step",
+)
+def test_ladruno_brick_asdconcrete_converges_under_load_control() -> None:
+    """LadrunoBrick + ASDConcrete3D under LoadControl, the #1999 case (#2044).
+
+    -7.2e3 per top node in four 0.25 steps. Step 1 is elastic, yet at
+    FORK_PIN Newton diverges there (the second correction is ~1000x the
+    first; an ElasticIsotropic brick converges). Once the fork is fixed the
+    run converges and four GPs crack in tension (d+ ~ 1), which is asserted
+    so the passing case still carries a non-zero answer.
+    """
+    with apeGmsh(model_name="g7_lc", verbose=False) as g:
+        box = g.model.geometry.add_box(0, 0, 0, 1, 1, 2)
+        g.model.sync()
+        g.mesh.structured.set_transfinite_box(box, n=2)
+        g.mesh.generation.generate(3)
+        g.physical.add(3, [box], name="Body")
+        fem = g.mesh.queries.get_fem_data(dim=3)
+    ops = apeSees(fem)
+    ops.model(ndm=3, ndf=3)
+    mat = ops.nDMaterial.ASDConcrete3D(E=30e6, v=0.2, fc=30e3, ft=3e3)
+    ops.element.LadrunoBrick(pg="Body", material=mat)
+    ops.fix(nodes=_nodes_on_plane(fem, 2, 0.0), dofs=(1, 1, 1))
+    with ops.pattern.Plain(series=ops.timeSeries.Linear()) as p:
+        for nid in _nodes_on_plane(fem, 2, 2.0):
+            p.load(node=nid, forces=(0.0, 0.0, -7.2e3))
+    ops.constraints.Plain()
+    ops.numberer.RCM()
+    ops.system.BandGeneral()
+    ops.test.NormDispIncr(tol=1e-8, max_iter=50)
+    ops.algorithm.Newton()
+    ops.integrator.LoadControl(dlam=0.25)
+    ops.analysis.Static()
+
+    emitter = LiveOpsEmitter(wipe=True)
+    ops.build().emit(emitter)
+    for step in range(4):
+        assert emitter.analyze(steps=1) == 0, f"step {step + 1}"
+    (tag,) = [int(t) for t in emitter.ops.getEleTags()]
+    d_plus = [float(emitter.ops.eleResponse(tag, "material", gp, "damage")[0])
+              for gp in range(1, 9)]
+    assert max(d_plus) > 0.5, d_plus
 
 
 # ---------------------------------------------------------------------------
