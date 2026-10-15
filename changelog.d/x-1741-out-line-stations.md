@@ -10,7 +10,9 @@ line-stations record whose `element_class_name` is an elastic beam now emits one
 (`<name>_line_stations_local_force.out`), and the transcoder builds the two-station slab at
 xi = -1, +1 from it, with end j negated into the section-force sign convention. That is the same
 synthesis DomainCapture and the MPCO reader apply. Records without `element_class_name` keep the
-`section force` pair.
+`section force` pair. A record that names an elastic-beam class over elements that are not elastic
+beams (a force-beam column in the same record) is refused by FEM id when `model=` is given, instead
+of reading those elements as two end stations.
 
 The `.ladruno` reader takes each element's line stations from one source: `section.force` first, then
 `localForce`, then any other element-level bucket. A force beam that also records `localForce` or
