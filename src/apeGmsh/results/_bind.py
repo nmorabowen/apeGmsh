@@ -86,8 +86,8 @@ class ShadowedStageNameWarning(UserWarning):
 # differs at element-size scale, orders of magnitude above this.
 _COORD_RTOL = 1e-6
 
-#: A program stage's ``analysis`` record → its :attr:`StageInfo.kind`
-#: (#1948).  The keys are the tokens ``apeGmsh.opensees.analysis`` emits;
+#: A program stage's ``analysis`` record → its :attr:`StageInfo.kind`.
+#: The keys are the tokens ``apeGmsh.opensees.analysis`` emits;
 #: a stage's ``analyze_dt`` does not decide it (a ``Static`` stage may
 #: carry ``dt=dlam``, a ``Transient`` one may omit ``dt``).
 _ANALYSIS_KIND = {
