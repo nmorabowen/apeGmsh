@@ -2486,26 +2486,38 @@ PER_MATERIAL_STRAIN_CLASSES: frozenset[str] = frozenset({
 })
 
 
-# Shell classes whose element-level ``ops.eleResponse(eid, "stresses"
-# / "strains")`` returns a correctly SIZED vector of ZEROS after a
-# converged analysis: ``materialPointers[i]->getStressResultant()``
-# never sees the committed state. The elements themselves are fine —
-# displacements and the ``"forces"`` keyword are correct — only the
-# per-Gauss-point probe is dead. Measured on the Ladruno build
-# (2026-08-23) with a loaded 1-element plate: ShellMITC4 / ShellDKGQ /
-# ShellNLDKGQ all returned max|σ| = 0 where ASDShellQ4 returned
-# 2.0e4 for the identical model and the identical tip displacement.
-# ShellDKGT / ShellNLDKGT are included on the prior measurement
-# recorded in tests/test_results_catalog_shells_real.py, not re-run.
+# Shell classes whose sections hold STALE state after a step solved
+# with ``algorithm Linear``. They set their sections' trial strain only
+# in the residual/tangent pass (formResidAndTangent), and Linear never
+# re-forms the residual after its single solve, so the sections never
+# see the converged displacement. Every probe that reads the sections
+# then answers stale values: ``ops.eleResponse(eid, "stresses")``,
+# ``ops.eleResponse(eid, "section", gp, "forces")``, a ``.out`` Element
+# recorder and MPCO ``-E section.force`` all agree, so no route is
+# safe. Newton re-forms the residual after each update, which leaves
+# the sections at the converged state, and all four routes are then
+# correct. Other algorithms that re-form it should behave the same but
+# are not measured here.
 #
-# The catalog entries stay: MPCO does not use this path (it probes
-# sections directly) and reads these classes correctly. Only the
-# DomainCapture route must refuse them — a slab of zeros contours to
-# one flat colour, which reads as "the wall is unstressed" rather
-# than "nothing was measured".
-# ShellMITC9 is deliberately NOT here: it fails loudly (setResponse
-# declares Vector(72), getResponse stores Vector(84)) and the size
-# check already raises with a hint. This set is for the SILENT ones.
+# The measurement, on one ElasticMembranePlateSection element in
+# uniaxial membrane tension (closed form N11 = 2.0e4·λ); stock
+# openseespy and the Ladruno fork agree to the last digit:
+#
+# * Linear, step 1: exactly zero on every route (fork MPCO included).
+# * Linear, step k > 1: ShellMITC4 / ShellDKGQ / ShellDKGT report the
+#   state of step k-1 (N11 = 1.0e4 at λ = 1 in a two-step run), a
+#   plausible NON-zero wrong value; ShellNLDKGQ / ShellNLDKGT stay zero.
+# * Newton: N11 = 2.0e4·λ on every route, every step.
+#
+# ``tests/test_results_shell_resultant_vocabulary.py`` holds this
+# measurement as a ``live`` test, and pins this set to the classes it
+# measures.
+#
+# The catalog entries stay: under a residual-re-forming algorithm these
+# classes record correctly on every route. ShellMITC9 is deliberately
+# NOT here: it fails loudly (setResponse declares Vector(72),
+# getResponse stores Vector(84)) and the size check already raises
+# with a hint. This set is for the SILENT ones.
 ZERO_GAUSS_PROBE_CLASSES: frozenset[str] = frozenset({
     "ShellMITC4",
     "ShellDKGQ",
@@ -2516,12 +2528,17 @@ ZERO_GAUSS_PROBE_CLASSES: frozenset[str] = frozenset({
 
 
 def has_dead_gauss_probe(class_name: str) -> bool:
-    """Whether live ``eleResponse`` gauss capture is known-broken here.
+    """Whether this class can hold stale section state at a probe.
 
     True for the upstream shells in :data:`ZERO_GAUSS_PROBE_CLASSES`.
-    Callers on the DomainCapture route should skip the element with a
-    reason rather than record its zeros; the MPCO / file-recorder
-    routes are unaffected and should NOT consult this.
+    Their probes are stale only after a step solved with ``algorithm
+    Linear``; under Newton they are correct (see the set's note). This
+    predicate takes only the class, so it cannot tell the two apart:
+    it answers True for every analysis, and DomainCapture skips the
+    element with a reason. That keeps the Linear case loud and also
+    discards valid data under Newton, until the caller can pass the
+    algorithm. The ``.out`` and MPCO routes do not consult it,
+    and under Linear they record these classes' stale values silently.
     """
     return class_name in ZERO_GAUSS_PROBE_CLASSES
 

@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Optional, Sequence
+from typing import TYPE_CHECKING, Any, Iterable, Iterator, Optional, Sequence
 
 import numpy as np
 from numpy import ndarray
@@ -72,6 +72,69 @@ def _child(group: "h5py.Group", path: str):
             return None
         node = node[segment]
     return node
+
+
+def _node_step_groups(stage_grp: "h5py.Group") -> "Iterator[tuple[str, h5py.Group]]":
+    """``(name, DATA group)`` of each node result on the stage cadence."""
+    on_nodes = _child(stage_grp, "RESULTS/ON_NODES")
+    if on_nodes is None:
+        return
+    for result_name in on_nodes:
+        if _mtr.is_modal_result_name(result_name):
+            # Modal groups record one STEP per eigen solution, not on
+            # the stage cadence; they are read as mode stages.
+            continue
+        data_grp = _child(on_nodes[result_name], "DATA")
+        if data_grp is not None:
+            yield result_name, data_grp
+
+
+def _element_step_groups(stage_grp: "h5py.Group") -> "Iterator[tuple[str, h5py.Group]]":
+    """``(token/bucket, DATA group)`` of each element bucket in the stage."""
+    on_elements = _child(stage_grp, "RESULTS/ON_ELEMENTS")
+    if on_elements is None:
+        return
+    for token in on_elements:
+        for bucket_key in on_elements[token]:
+            data_grp = _child(on_elements[token][bucket_key], "DATA")
+            if data_grp is not None:
+                yield f"{token}/{bucket_key}", data_grp
+
+
+def _cadence_time(
+    groups: "Iterable[tuple[str, h5py.Group]]",
+) -> Optional[ndarray]:
+    """TIME of each step of the first group with steps, or ``None``.
+
+    Every other group must hold the same step count: STKO records all
+    results on one cadence, and a differing count means step-indexed
+    reads would misalign, so it raises.
+    """
+    ref_time: Optional[ndarray] = None
+    ref_name = ""
+    for name, data_grp in groups:
+        step_keys = sorted(
+            [k for k in data_grp.keys() if k.startswith("STEP_")],
+            key=lambda s: int(s.split("_", 1)[1]),
+        )
+        if not step_keys:
+            continue
+        if ref_time is None:
+            ref_time = np.array(
+                [float(_attr_scalar(data_grp[k].attrs.get("TIME", 0.0)))
+                 for k in step_keys],
+                dtype=np.float64,
+            )
+            ref_name = name
+        elif len(step_keys) != ref_time.size:
+            raise ValueError(
+                f"MPCO stage step-count mismatch: result "
+                f"{name!r} has {len(step_keys)} steps but "
+                f"{ref_name!r} has {ref_time.size}. STKO records all "
+                f"results on one cadence; this file is inconsistent "
+                f"and step-indexed reads would misalign."
+            )
+    return ref_time
 
 
 class MPCOReader:
@@ -248,42 +311,16 @@ class MPCOReader:
         groups are cross-checked and a mismatch raises — a differing step
         count means later reads would index this time vector against the
         wrong steps.
+
+        A recorder with only ``-E`` channels writes no node results; the
+        cadence is then read the same way from the element buckets
+        (``RESULTS/ON_ELEMENTS/<token>/<bucket>``), cross-checked among
+        themselves.
         """
-        on_nodes = _child(stage_grp, "RESULTS/ON_NODES")
-        if on_nodes is None:
-            return np.array([], dtype=np.float64)
-        ref_time: Optional[ndarray] = None
-        ref_name = ""
-        for result_name in on_nodes:
-            if _mtr.is_modal_result_name(result_name):
-                # Modal groups record one STEP per eigen solution, not on
-                # the stage cadence; they are read as mode stages.
-                continue
-            data_grp = _child(on_nodes[result_name], "DATA")
-            if data_grp is None:
-                continue
-            step_keys = sorted(
-                [k for k in data_grp.keys() if k.startswith("STEP_")],
-                key=lambda s: int(s.split("_", 1)[1]),
-            )
-            if not step_keys:
-                continue
-            if ref_time is None:
-                ref_time = np.array(
-                    [float(_attr_scalar(data_grp[k].attrs.get("TIME", 0.0)))
-                     for k in step_keys],
-                    dtype=np.float64,
-                )
-                ref_name = result_name
-            elif len(step_keys) != ref_time.size:
-                raise ValueError(
-                    f"MPCO stage step-count mismatch: result "
-                    f"{result_name!r} has {len(step_keys)} steps but "
-                    f"{ref_name!r} has {ref_time.size}. STKO records all "
-                    f"results on one cadence; this file is inconsistent "
-                    f"and step-indexed reads would misalign."
-                )
-        return ref_time if ref_time is not None else np.array([], dtype=np.float64)
+        time = _cadence_time(_node_step_groups(stage_grp))
+        if time is None:
+            time = _cadence_time(_element_step_groups(stage_grp))
+        return time if time is not None else np.array([], dtype=np.float64)
 
     def time_vector(self, stage_id: str) -> ndarray:
         self._ensure_stages()
