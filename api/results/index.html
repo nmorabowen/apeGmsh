@@ -7038,10 +7038,10 @@ from the same file.</p>
 the apeGmsh OpenSees bridge's Tcl/Py emit produced) into an
 apeGmsh native HDF5, caches the result at
 <code>cache_root</code>, and opens it through <code>NativeReader</code>.</p>
-<p>Caching: subsequent calls with unchanged input files return
-the cached HDF5 directly (file mtime + size + spec
-<code>snapshot_id</code> form the cache key). See
-<code>writers/_cache.py</code>.</p>
+<p>Caching: unchanged input files, model, stage name and stage kind
+reuse the cached HDF5 (<code>writers/_cache.py</code>). Recorders sample
+every step or every <code>dt=</code>: sampling at arbitrary caller
+instants has no recorder equivalent.</p>
 <p><code>stage_id</code> matches the per-stage filename prefix used by
 :meth:<code>ResolvedRecorderSpec.emit_recorders</code> together with
 <code>begin_stage(stage_id, ...)</code>. When set, only files prefixed
@@ -7188,10 +7188,10 @@ an emit that translated them to OpenSees tags
 </span><span id="__span-0-407"><a id="__codelineno-0-407" name="__codelineno-0-407"></a><span class="sd">    apeGmsh native HDF5, caches the result at</span>
 </span><span id="__span-0-408"><a id="__codelineno-0-408" name="__codelineno-0-408"></a><span class="sd">    ``cache_root``, and opens it through ``NativeReader``.</span>
 </span><span id="__span-0-409"><a id="__codelineno-0-409" name="__codelineno-0-409"></a>
-</span><span id="__span-0-410"><a id="__codelineno-0-410" name="__codelineno-0-410"></a><span class="sd">    Caching: subsequent calls with unchanged input files return</span>
-</span><span id="__span-0-411"><a id="__codelineno-0-411" name="__codelineno-0-411"></a><span class="sd">    the cached HDF5 directly (file mtime + size + spec</span>
-</span><span id="__span-0-412"><a id="__codelineno-0-412" name="__codelineno-0-412"></a><span class="sd">    ``snapshot_id`` form the cache key). See</span>
-</span><span id="__span-0-413"><a id="__codelineno-0-413" name="__codelineno-0-413"></a><span class="sd">    ``writers/_cache.py``.</span>
+</span><span id="__span-0-410"><a id="__codelineno-0-410" name="__codelineno-0-410"></a><span class="sd">    Caching: unchanged input files, model, stage name and stage kind</span>
+</span><span id="__span-0-411"><a id="__codelineno-0-411" name="__codelineno-0-411"></a><span class="sd">    reuse the cached HDF5 (``writers/_cache.py``). Recorders sample</span>
+</span><span id="__span-0-412"><a id="__codelineno-0-412" name="__codelineno-0-412"></a><span class="sd">    every step or every ``dt=``: sampling at arbitrary caller</span>
+</span><span id="__span-0-413"><a id="__codelineno-0-413" name="__codelineno-0-413"></a><span class="sd">    instants has no recorder equivalent.</span>
 </span><span id="__span-0-414"><a id="__codelineno-0-414" name="__codelineno-0-414"></a>
 </span><span id="__span-0-415"><a id="__codelineno-0-415" name="__codelineno-0-415"></a><span class="sd">    ``stage_id`` matches the per-stage filename prefix used by</span>
 </span><span id="__span-0-416"><a id="__codelineno-0-416" name="__codelineno-0-416"></a><span class="sd">    :meth:`ResolvedRecorderSpec.emit_recorders` together with</span>
@@ -7235,9 +7235,9 @@ an emit that translated them to OpenSees tags
 </span><span id="__span-0-454"><a id="__codelineno-0-454" name="__codelineno-0-454"></a>    <span class="p">)</span>
 </span><span id="__span-0-455"><a id="__codelineno-0-455" name="__codelineno-0-455"></a>    <span class="n">key</span> <span class="o">=</span> <span class="n">_cache</span><span class="o">.</span><span class="n">compute_cache_key</span><span class="p">(</span>
 </span><span id="__span-0-456"><a id="__codelineno-0-456" name="__codelineno-0-456"></a>        <span class="n">source_files</span><span class="p">,</span>
-</span><span id="__span-0-457"><a id="__codelineno-0-457" name="__codelineno-0-457"></a>        <span class="n">parser_version</span><span class="o">=</span><span class="n">PARSER_VERSION</span><span class="p">,</span>
-</span><span id="__span-0-458"><a id="__codelineno-0-458" name="__codelineno-0-458"></a>        <span class="n">fem_snapshot_id</span><span class="o">=</span><span class="n">fem</span><span class="o">.</span><span class="n">snapshot_id</span><span class="p">,</span>
-</span><span id="__span-0-459"><a id="__codelineno-0-459" name="__codelineno-0-459"></a>        <span class="n">model_token</span><span class="o">=</span><span class="n">_cache</span><span class="o">.</span><span class="n">model_cache_token</span><span class="p">(</span><span class="n">model</span><span class="p">),</span>
+</span><span id="__span-0-457"><a id="__codelineno-0-457" name="__codelineno-0-457"></a>        <span class="n">parser_version</span><span class="o">=</span><span class="n">PARSER_VERSION</span><span class="p">,</span> <span class="n">fem_snapshot_id</span><span class="o">=</span><span class="n">fem</span><span class="o">.</span><span class="n">snapshot_id</span><span class="p">,</span>
+</span><span id="__span-0-458"><a id="__codelineno-0-458" name="__codelineno-0-458"></a>        <span class="n">model_token</span><span class="o">=</span><span class="n">_cache</span><span class="o">.</span><span class="n">model_cache_token</span><span class="p">(</span><span class="n">model</span><span class="p">),</span>
+</span><span id="__span-0-459"><a id="__codelineno-0-459" name="__codelineno-0-459"></a>        <span class="n">stages</span><span class="o">=</span><span class="p">[(</span><span class="n">stage_name</span><span class="p">,</span> <span class="n">stage_kind</span><span class="p">,</span> <span class="n">stage_id</span><span class="p">)],</span>
 </span><span id="__span-0-460"><a id="__codelineno-0-460" name="__codelineno-0-460"></a>    <span class="p">)</span>
 </span><span id="__span-0-461"><a id="__codelineno-0-461" name="__codelineno-0-461"></a>    <span class="n">cached_h5</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="n">_cache</span><span class="o">.</span><span class="n">cache_paths</span><span class="p">(</span><span class="n">cache_dir</span><span class="p">,</span> <span class="n">key</span><span class="p">)</span>
 </span><span id="__span-0-462"><a id="__codelineno-0-462" name="__codelineno-0-462"></a>
