@@ -198,9 +198,12 @@ class MPCOReader:
         """
         self._tag_map = tag_map
 
-    def attach_nodes_ndf(self, nodes_ndf: "dict[int, int]", ndm: int) -> None:
+    def attach_nodes_ndf(
+        self, nodes_ndf: "dict[int, int] | None", ndm: int,
+    ) -> None:
         """Store the model's per-node ndf: rotation reads then give NaN at
-        a node whose DOF layout has no such rotation (#1971).
+        a node whose DOF layout has no such rotation (#1971). ``None`` is
+        an archive older than nodes_ndf.
 
         Called by :meth:`Results.from_mpco` once the model is loaded.
         """

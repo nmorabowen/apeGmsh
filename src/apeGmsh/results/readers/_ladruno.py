@@ -208,9 +208,12 @@ class LadrunoReader:
         """
         self._tag_map = tag_map
 
-    def attach_nodes_ndf(self, nodes_ndf: "dict[int, int]", ndm: int) -> None:
-        """Store the model's per-node ndf: rotation reads then give NaN at
-        a node whose DOF layout has no such rotation (#1971)."""
+    def attach_nodes_ndf(
+        self, nodes_ndf: "dict[int, int] | None", ndm: int,
+    ) -> None:
+        """Store the model's per-node ndf: rotation reads (time series and
+        envelopes) then give NaN at a node whose DOF layout has no such
+        rotation (#1971). ``None`` is an archive older than nodes_ndf."""
         if self._stage_cache is None:
             self.stages()
         self._rotation_mask.attach(nodes_ndf, ndm, _mnodal.model_node_ids(
@@ -745,6 +748,8 @@ class LadrunoReader:
         accumulates *instead of* a time series when ``-envelope`` is set.
         Raises :class:`ValueError` if the file has no node envelopes (it
         was recorded as a plain time series) or the component is absent.
+        A rotation a node does not have reads NaN, with ``arg_step``
+        ``-1``, as :meth:`read_nodes` masks it.
         """
         self._refuse_on_mode(stage_id, "node envelopes")
         grp = self._resolve_stage_group(stage_id)
@@ -770,8 +775,15 @@ class LadrunoReader:
         else:
             mask = np.ones(ids.size, dtype=bool)
 
+        absent = self._rotation_mask.absent(
+            component, ids[mask], _child(grp, "MODEL/ELEMENTS"),
+        )
+
         def _col(name: str, dtype) -> ndarray:
-            return np.asarray(res[name][...], dtype=dtype)[mask, col]
+            out = np.asarray(res[name][...], dtype=dtype)[mask, col]
+            if absent is not None:
+                out[absent] = np.nan if dtype is np.float64 else -1
+            return out
 
         return NodeEnvelope(
             node_ids=ids[mask],

@@ -1503,9 +1503,12 @@ def _nodal_value(t: int, node: int, col: int) -> float:
 def _mixed_file(
     path: Path, fmt: str, node_ids: "list[int]", ndm: int,
     classes: "list[tuple[int, str, int]]", *, mode: bool = False,
+    envelope: bool = False,
 ) -> Path:
     """A ``.ladruno`` or ``.mpco`` with ``DISPLACEMENT`` and ``ROTATION``
-    for every node (two steps), or one mode of ``MODES_OF_VIBRATION(U|R)``.
+    for every node (two steps), or one mode of ``MODES_OF_VIBRATION(U|R)``,
+    or (``.ladruno``, ``envelope=True``) their ``-envelope`` extremes:
+    ``MIN``/``MAX``/``ABSMAX`` are step 0/1/1's values, ``ARG_STEP`` is 1.
 
     ``U`` holds ``ndm`` translations, ``R`` the model's rotations (``Rx,Ry,
     Rz`` in 3-D, ``Rz`` in 2-D); column ``c`` of ``R`` holds
@@ -1553,7 +1556,18 @@ def _mixed_file(
                  for nd in node_ids]
                 for t in range(2)
             ])
-            if mode:
+            if envelope:
+                del on_nodes[name]
+                grp = stage.require_group("RESULTS/ENVELOPES/ON_NODES"
+                                          ).create_group(name)
+                grp.attrs["COMPONENTS"] = np.array([labels.encode()])
+                grp.create_dataset("ID", data=ids)
+                grp.create_dataset("MIN", data=block[0])
+                grp.create_dataset("MAX", data=block[1])
+                grp.create_dataset("ABSMAX", data=block[1])
+                grp.create_dataset("ARG_STEP",
+                                   data=np.ones(block[0].shape, dtype=np.int64))
+            elif mode:
                 ds = grp.create_dataset("DATA/STEP_0/MODE_0", data=block[0])
                 ds.attrs["LAMBDA"] = np.array([4.0])
             elif fmt == "ladruno":
@@ -1692,6 +1706,64 @@ def test_frame_only_file_reads_rotations_silently(
             assert len(_last(r, _stage(r, False), comp)) == 2
 
 
+@pytest.mark.parametrize("fmt", FORMATS)
+def test_up_element_without_ndf_warns(tmp_path: Path, fmt: str) -> None:
+    """A u-p element (no ``stress`` catalog row) still warns: its nodes'
+    fourth DOF is pressure, which the recorder writes as a rotation."""
+    path = _mixed_file(tmp_path / f"m.{fmt}", fmt, list(range(1, 9)), 3,
+                       [(33019, "LadrunoUP", 8)])
+    with _open_reader(fmt, path) as r:
+        with pytest.warns(AbsentDofWarning, match="u-p"):
+            r.read_nodes(_stage(r, False), "rotation_x")
+
+
+@pytest.mark.parametrize("fmt", FORMATS)
+def test_archive_older_than_nodes_ndf_says_so(tmp_path: Path, fmt: str) -> None:
+    """An archive without /opensees/nodes_ndf: the warning names that, not
+    a missing ``model_h5=``, which the caller did pass."""
+    path = _mixed_file(tmp_path / f"m.{fmt}", fmt, [1, 2], 3, [TET, SHELL])
+    with _open_reader(fmt, path) as r:
+        r.attach_nodes_ndf(None, 3)
+        with pytest.warns(AbsentDofWarning) as w:
+            r.read_nodes(_stage(r, False), "rotation_x")
+    msg = str(w[0].message)
+    assert "older than /opensees/nodes_ndf" in msg
+    assert "Pass model_h5=" not in msg
+
+
+# -- node envelopes (``.ladruno`` only: no other reader has them) ------------
+
+
+def test_envelope_rotation_beyond_ndf_is_nan(tmp_path: Path) -> None:
+    """``read_node_envelope`` masks as ``read_nodes`` does: NaN extremes and
+    ``arg_step == -1`` where the node has no such rotation."""
+    path = _mixed_file(tmp_path / "m.ladruno", "ladruno", [1, 2, 3], 3,
+                       [TET, SHELL], envelope=True)
+    with LadrunoReader(path) as r:
+        r.attach_nodes_ndf({1: 3, 2: 6, 3: 4}, 3)
+        stage = _stage(r, False)
+        for c, comp in enumerate(ROT_3D):
+            env = r.read_node_envelope(stage, comp)
+            assert env.node_ids.tolist() == [1, 2, 3]
+            for got, t in ((env.min, 0), (env.max, 1), (env.absmax, 1)):
+                assert got[1] == _nodal_value(t, 2, 3 + c), comp
+                assert np.isnan(got[[0, 2]]).all(), comp
+            assert env.arg_step.tolist() == [-1, 1, -1], comp
+        disp = r.read_node_envelope(stage, "displacement_x")
+        assert disp.max.tolist() == [_nodal_value(1, n, 0) for n in (1, 2, 3)]
+        assert disp.arg_step.tolist() == [1, 1, 1]
+
+
+def test_envelope_rotation_without_ndf_warns_once(tmp_path: Path) -> None:
+    path = _mixed_file(tmp_path / "m.ladruno", "ladruno", [1, 2], 3,
+                       [TET, SHELL], envelope=True)
+    with LadrunoReader(path) as r, pytest.warns(AbsentDofWarning) as w:
+        for comp in ROT_3D:
+            env = r.read_node_envelope(_stage(r, False), comp)
+            assert np.isfinite(env.max).all()
+    assert len([x for x in w if issubclass(x.category, AbsentDofWarning)]) == 1
+
+
 # -- the factories: ``model_h5=`` attaches /opensees/nodes_ndf ---------------
 
 
@@ -1745,6 +1817,21 @@ def test_factory_with_model_reads_nan_on_solid_nodes(
         assert np.isnan([got[n] for n in solid]).all(), comp
         assert [got[n] for n in shell] == [
             _nodal_value(1, n, 3 + c) for n in shell], comp
+
+
+def test_factory_node_envelope_with_model_reads_nan(g, tmp_path: Path) -> None:
+    """``Results.node_envelope`` goes through the same mask."""
+    from apeGmsh.results import Results
+
+    fem, solid, shell, model_h5 = _tet_beside_shell_archive(g, tmp_path)
+    path = _mixed_file(tmp_path / "m.ladruno", "ladruno", solid + shell, 3,
+                       [TET, SHELL], envelope=True)
+    df = Results.from_ladruno(path, fem=fem, model_h5=model_h5).node_envelope(
+        "rotation_y")
+    assert df.loc[solid, "absmax"].isna().all()
+    assert (df.loc[solid, "arg_step"] == -1).all()
+    assert df.loc[shell, "absmax"].tolist() == [
+        _nodal_value(1, n, 4) for n in shell]
 
 
 def test_factory_without_model_warns_once(g, tmp_path: Path) -> None:
