@@ -4,11 +4,14 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-from apeGmsh.studio._index_build import INDEX_PATH, index_drift
+import pytest
+
+from apeGmsh.studio._index_build import INDEX_PATH, index_drift, skill_for
 from apeGmsh.studio._lookup import (
     _MAX_LINES,
     format_ambiguous,
     format_miss,
+    load_index,
     lookup,
     match_symbols,
 )
@@ -131,6 +134,69 @@ def test_four_node_tet_skill_pointer() -> None:
     assert code == 0, text
     assert "ops.element.FourNodeTetrahedron" in text
     assert "references/opensees-bridge.md" in text
+
+
+def test_eigen_result_to_native_hit() -> None:
+    """SK1-S4 (#2008): a returned object's methods resolve by class name."""
+    text, code = lookup("EigenResult.to_native")
+    assert code == 0, text
+    assert text.startswith("EigenResult.to_native\n")
+    assert "to_native(" in text
+    assert "references/opensees-bridge.md" in text
+    assert "api-cheatsheet" not in text
+    assert text.count("\n") <= _MAX_LINES
+
+
+def test_eigen_result_results_hit() -> None:
+    text, code = lookup("EigenResult.results")
+    assert code == 0, text
+    assert text.startswith("EigenResult.results\n")
+    assert "results(" in text
+    assert "references/opensees-bridge.md" in text
+
+
+def test_bare_to_native_is_ambiguous_and_lists_eigen_result() -> None:
+    text, code = lookup("to_native")
+    assert code == 2, text
+    assert text.startswith("ambiguous:")
+    assert "EigenResult.to_native" in text
+    assert text.count("\n") <= _MAX_LINES
+
+
+def test_returned_types_are_returned_by_indexed_callables() -> None:
+    """The allow-list follows real return types, read off the index."""
+    entries = load_index()["entries"]
+    returns = {
+        "ops.eigen": "EigenResult",
+        "ops.eigen_feast": "EigenResult",
+        "ops.complex_eigen": "ComplexEigenResult",
+        "g.mesh.queries.get_fem_data": "FEMData",
+    }
+    for symbol, cls_name in returns.items():
+        sig = entries[symbol]["signature"]
+        assert sig.split(") -> ", 1)[1].strip("'\"") == cls_name, sig
+
+
+def test_returned_types_indexed_with_own_skill() -> None:
+    entries = load_index()["entries"]
+    for name in ("EigenResult", "ComplexEigenResult", "ParallelModalResult", "FEMData"):
+        own = [k for k in entries if k.startswith(f"{name}.")]
+        assert own, f"no index entry for returned type {name}"
+        for key in own:
+            assert entries[key]["skill"] != "references/api-cheatsheet.md", key
+            assert entries[key]["skill"] == skill_for(key), key
+
+
+def test_session_walk_fails_closed_on_unimportable_composite(monkeypatch) -> None:
+    """A composite that does not import raises; it is never silently dropped."""
+    from apeGmsh._core import apeGmsh as Session
+    from apeGmsh.studio._index_build import _walk_session
+
+    monkeypatch.setattr(
+        Session, "_COMPOSITES", (("bogus", ".no_such_module", "Nope", False),)
+    )
+    with pytest.raises(ModuleNotFoundError, match="no_such_module"):
+        _walk_session({})
 
 
 def test_add_box_full_symbol() -> None:

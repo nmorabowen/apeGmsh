@@ -11,6 +11,7 @@ Never dumps a module: the index is a symbol → signature map.
 from __future__ import annotations
 
 import ast
+import importlib
 import inspect
 import json
 import textwrap
@@ -22,6 +23,10 @@ INDEX_PATH = Path(__file__).resolve().parent / "_api_index.json"
 _MAX_DEPTH = 3
 
 _SKILL_BY_PREFIX: tuple[tuple[str, str], ...] = (
+    ("EigenResult.", "references/opensees-bridge.md"),
+    ("ComplexEigenResult.", "references/opensees-bridge.md"),
+    ("ParallelModalResult.", "references/opensees-bridge.md"),
+    ("FEMData.", "references/fem-broker.md"),
     ("ops.fault", "references/opensees-bridge.md"),
     ("ops.damping", "references/opensees-bridge.md"),
     ("ops.stage", "references/opensees-bridge.md"),
@@ -44,10 +49,6 @@ def skill_for(symbol: str) -> str:
         if symbol.startswith(prefix):
             return path
     return "references/api-cheatsheet.md"
-
-
-def index_path() -> Path:
-    return INDEX_PATH
 
 
 def build_index() -> dict[str, Any]:
@@ -117,9 +118,7 @@ def _walk_session(entries: dict[str, dict[str, str]]) -> None:
     for attr, mod, cls_name, _lazy in Session._COMPOSITES:
         if attr.startswith("_"):
             continue
-        cls = _load_class(mod, cls_name)
-        if cls is None:
-            continue
+        cls = getattr(importlib.import_module("apeGmsh" + mod), cls_name)
         _harvest_class(cls, f"g.{attr}", entries, depth=0)
 
 
@@ -140,6 +139,10 @@ def _walk_sidecars(entries: dict[str, dict[str, str]]) -> None:
     from apeGmsh.core.Part import Part
     from apeGmsh.hpc._cluster import Cluster
     from apeGmsh.hpc._job import Job
+    from apeGmsh.mesh.FEMData import FEMData
+    from apeGmsh.opensees.analysis.complex_eigen import ComplexEigenResult
+    from apeGmsh.opensees.analysis.eigen import EigenResult
+    from apeGmsh.opensees.analysis.modal import ParallelModalResult
     from apeGmsh.results.Results import Results
 
     for cls, prefix in (
@@ -154,6 +157,9 @@ def _walk_sidecars(entries: dict[str, dict[str, str]]) -> None:
     _harvest_class(
         EntitySelection, "g.model.select", entries, depth=0, skip_init_nested=True,
     )
+    # Returned objects (ops.eigen -> EigenResult): an allow-list, not an annotation walk.
+    for cls in (EigenResult, ComplexEigenResult, ParallelModalResult, FEMData):
+        _harvest_class(cls, cls.__name__, entries, depth=0, skip_init_nested=True)
 
 
 def _harvest_ctor(cls: type, symbol: str, entries: dict[str, dict[str, str]]) -> None:
@@ -169,17 +175,6 @@ def _harvest_ctor(cls: type, symbol: str, entries: dict[str, dict[str, str]]) ->
     ):
         entry["doc"] = first[:200]
     entries[symbol] = entry
-
-
-def _load_class(mod: str, cls_name: str) -> type | None:
-    import importlib
-
-    package = "apeGmsh" + mod  # mod is ".core.Model"
-    try:
-        module = importlib.import_module(package)
-    except Exception:
-        return None
-    return getattr(module, cls_name, None)
 
 
 def _harvest_class(
