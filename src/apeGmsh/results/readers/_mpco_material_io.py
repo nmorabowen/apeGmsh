@@ -473,7 +473,8 @@ def _refuse_undefined(
 ) -> None:
     """Raise when ``canonical`` asks this bucket for a meaning it cannot give.
 
-    A semantic name (``damage_tension``) against columns that kept indexed
+    The bare parent (``damage``) against a multi-column scalar-state bucket
+    (ASDConcrete3D's ``d+,d-``): no column is "the" damage. A semantic name (``damage_tension``) against columns that kept indexed
     names (``damage_0``, ``damage_1``): the material named nothing and the
     catalog declares no layout for the class, so which column is tension is
     unknown. An empty answer there is indistinguishable from "not recorded".
@@ -481,6 +482,14 @@ def _refuse_undefined(
     parent = bucket.parent_token
     suffix = canonical[len(parent) + 1:] if canonical != parent else ""
     names = layout.component_layout
+    if canonical == parent and len(names) > 1 and parent != "plastic_strain":
+        raise MaterialStateComponentRefused(
+            f"MPCO material-state bucket "
+            f"{bucket.mpco_group_name}/{bucket.bracket_key}: the bare "
+            f"{parent!r} is not defined for its {len(names)} columns "
+            f"{list(names)}, which hold no single scalar. Read one of "
+            f"those names."
+        )
     if (suffix in _SEMANTIC_SUFFIXES and len(names) > 1
             and names == tuple(f"{parent}_{i}" for i in range(len(names)))):
         raise MaterialStateComponentRefused(
