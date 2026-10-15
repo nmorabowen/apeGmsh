@@ -139,58 +139,48 @@ else is filling in blanks:
 from apeGmsh import apeGmsh
 from apeGmsh.opensees import apeSees
 
-# DATA: every engineering number named once, with its unit (SI: m, N, kg, s).
-LENGTH = 10.0                       # m, block length along x (the cantilever span)
-WIDTH = 5.0                         # m, along y
-DEPTH = 2.0                         # m, along z
-DENSITY = 2400.0                    # kg/m^3, concrete
-GRAVITY = (0.0, 0.0, -9.81)         # m/s^2
-YOUNG = 30e9                        # Pa
-POISSON = 0.2                       # -
-MESH_SIZE = 0.5                     # m, global target element size
-END_NORMAL = (1.0, 0.0, 0.0)        # both end faces are normal to x
-BASE_POINT = (0.0, 0.0, 0.0)        # a point on the fixed end face, x = 0
-TIP_POINT = (LENGTH, 0.0, 0.0)      # a point on the loaded end face, x = LENGTH
-FACE_TOL = 1e-6                     # m, on-plane tolerance; the faces lie exactly on their planes
-TIP_NODE_FORCE = (0.0, 0.0, -5e4)   # N, applied at EVERY Tip node (p.load fans it across the PG)
+# DATA (SI: m, N, kg, s)
+LENGTH = 10.0  # m, cantilever span along x
+WIDTH = 5.0  # m
+DEPTH = 2.0  # m
+DENSITY = 2400.0  # kg/m^3
+GRAVITY = (0.0, 0.0, -9.81)  # m/s^2
+YOUNG = 30e9  # Pa
+POISSON = 0.2  # -
+MESH_SIZE = 0.5  # m
+X_AXIS = (1.0, 0.0, 0.0)  # normal of both end faces
+FACE_TOL = 1e-6  # m
+TIP_NODE_FORCE = (0.0, 0.0, -5e4)  # N, at every Tip node
 
 with apeGmsh(model_name="my_model", save_to="my_model.h5") as g:
-    # 1-5: GEOMETRY (occ) → PHYSICAL GROUPS (dim-unique names) → pre-mesh
-    #      LOADS/MASSES/CONSTRAINTS (reference labels/PGs) → MESH → SNAPSHOT.
-    #      (workflows.md §1 has the fully-commented version.)
+    # GEOMETRY (occ) → PHYSICAL GROUPS (dim-unique names) → pre-mesh
+    # LOADS/MASSES/CONSTRAINTS (on labels/PGs) → MESH → SNAPSHOT (workflows.md §1).
     g.model.geometry.add_box(0.0, 0.0, 0.0, LENGTH, WIDTH, DEPTH, label="body")
     g.physical.add_volume("body", name="Body")
-    # Every PG the bridge names below (Base, Tip) must exist in the snapshot.
-    g.model.select(None, dim=2).on_plane(BASE_POINT, END_NORMAL, tol=FACE_TOL).to_physical("Base")
-    g.model.select(None, dim=2).on_plane(TIP_POINT, END_NORMAL, tol=FACE_TOL).to_physical("Tip")
+    g.model.select(None, dim=2).on_plane((0.0, 0.0, 0.0), X_AXIS, tol=FACE_TOL).to_physical("Base")
+    g.model.select(None, dim=2).on_plane((LENGTH, 0.0, 0.0), X_AXIS, tol=FACE_TOL).to_physical("Tip")
     with g.loads.case("dead"):
         g.loads.gravity("Body", g=GRAVITY, density=DENSITY)
     g.masses.volume("Body", density=DENSITY)
     g.mesh.sizing.set_global_size(MESH_SIZE)
     g.mesh.generation.generate(dim=3)
-    fem = g.mesh.queries.get_fem_data(dim=3)   # the solver contract; autosaved to my_model.h5 on exit
-    print(fem.info)                            # "N nodes, M elements, bandwidth=..."
+    fem = g.mesh.queries.get_fem_data(dim=3)   # the solver contract; autosaved on exit
+    print(fem.info)
 
-base_nodes = fem.nodes.select(pg="Base").ids
-tip_nodes = fem.nodes.select(pg="Tip").ids
-assert base_nodes and tip_nodes, "an end-face group resolved to no nodes"
+assert fem.nodes.select(pg="Base").ids and fem.nodes.select(pg="Tip").ids
 
-# 6. OPENSEES (optional) — post-session bridge, typed primitives.
-#    Masses/fixities are re-declared explicitly; loads are OPT-IN — a
-#    g.loads.case reaches the deck only via p.from_model(case) inside a
-#    pattern (ADR 0051). MP constraints + per-node ndf emit AUTOMATICALLY.
+# OPENSEES (optional): post-session bridge. Loads are OPT-IN via p.from_model
+# (ADR 0051); masses and fixities are restated; MP constraints + ndf auto-emit.
 ops = apeSees(fem)
 ops.model(ndm=3, ndf=3)
-# No rho= here: the mass comes from g.masses below, and a material rho would
-# make the tet add its own mass on top of it (twice the weight).
-conc = ops.nDMaterial.ElasticIsotropic(E=YOUNG, nu=POISSON)
+conc = ops.nDMaterial.ElasticIsotropic(E=YOUNG, nu=POISSON)   # no rho: g.masses carries it
 ops.element.FourNodeTetrahedron(pg="Body", material=conc)
 ops.fix(pg="Base", dofs=(1, 1, 1))
-ops.mass_from_model()                   # restate g.masses on the deck (else it warns and drops them)
+ops.mass_from_model()
 with ops.pattern.Plain(series=ops.timeSeries.Linear()) as p:
-    p.from_model("dead")                    # import the session's "dead" case
-    p.load(pg="Tip", forces=TIP_NODE_FORCE)   # + an ad-hoc bridge load
-ops.py("model.py")     # or ops.tcl(...), ops.h5(...), ops.run()
+    p.from_model("dead")
+    p.load(pg="Tip", forces=TIP_NODE_FORCE)
+ops.py("model.py")     # or ops.tcl / ops.h5 / ops.run
 ```
 
 This is the **happy path**. For anything more involved (multi-part assembly,
