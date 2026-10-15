@@ -35,12 +35,9 @@ _SKILL_BY_PREFIX: tuple[tuple[str, str], ...] = (
     ("g.compose", "references/compose.md"),
     ("g.mesh.queries.get_fem_data", "references/fem-broker.md"),
     ("g.sections", "references/section-properties.md"),
-    ("g.model.select", "references/api-cheatsheet.md"),
     ("Results", "references/results.md"),
     ("Part", "references/compose.md"),
     ("Assembly", "references/compose.md"),
-    ("Cluster", "references/api-cheatsheet.md"),
-    ("Job", "references/api-cheatsheet.md"),
 )
 
 
@@ -139,7 +136,7 @@ def _walk_sidecars(entries: dict[str, dict[str, str]]) -> None:
     from apeGmsh.core.Part import Part
     from apeGmsh.hpc._cluster import Cluster
     from apeGmsh.hpc._job import Job
-    from apeGmsh.mesh.FEMData import FEMData
+    from apeGmsh.mesh.FEMData import ElementComposite, FEMData, InspectComposite, NodeComposite
     from apeGmsh.opensees.analysis.complex_eigen import ComplexEigenResult
     from apeGmsh.opensees.analysis.eigen import EigenResult
     from apeGmsh.opensees.analysis.modal import ParallelModalResult
@@ -160,6 +157,8 @@ def _walk_sidecars(entries: dict[str, dict[str, str]]) -> None:
     # Returned objects (ops.eigen -> EigenResult): an allow-list, not an annotation walk.
     for cls in (EigenResult, ComplexEigenResult, ParallelModalResult, FEMData):
         _harvest_class(cls, cls.__name__, entries, depth=0, skip_init_nested=True)
+    for cls, attr in ((NodeComposite, "nodes"), (ElementComposite, "elements"), (InspectComposite, "inspect")):
+        _harvest_class(cls, f"FEMData.{attr}", entries, depth=0)  # nested on: .nodes.constraints.*
 
 
 def _harvest_ctor(cls: type, symbol: str, entries: dict[str, dict[str, str]]) -> None:

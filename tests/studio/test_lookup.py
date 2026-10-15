@@ -187,6 +187,50 @@ def test_returned_types_indexed_with_own_skill() -> None:
             assert entries[key]["skill"] == skill_for(key), key
 
 
+@pytest.mark.parametrize(
+    "symbol",
+    [
+        "FEMData.nodes.select",
+        "FEMData.elements.select",
+        "FEMData.inspect.summary",
+        "FEMData.nodes.constraints.equal_dofs",
+    ],
+)
+def test_femdata_sub_composites_hit_fem_broker(symbol: str) -> None:
+    """SK2-S4b (#2062): FEMData.nodes/.elements/.inspect are indexed, nested walk on."""
+    text, code = lookup(symbol)
+    assert code == 0, text
+    assert text.startswith(f"{symbol}\n")
+    assert "references/fem-broker.md" in text
+    assert "api-cheatsheet" not in text
+    assert text.count("\n") <= _MAX_LINES
+
+
+@pytest.mark.parametrize(
+    "query, symbol",
+    [
+        ("g.constraints.summary", "g.constraints.summary"),
+        ("g.loads.summary", "g.loads.summary"),
+        ("constraints.summary", "g.constraints.summary"),
+        ("loads.summary", "g.loads.summary"),
+    ],
+)
+def test_exact_symbol_wins_over_suffix_hits(query: str, symbol: str) -> None:
+    """#2063 review: FEMData.nodes.*.summary must not make the g. symbol ambiguous."""
+    text, code = lookup(query)
+    assert code == 0, text
+    assert text.startswith(f"{symbol}\n")
+
+
+@pytest.mark.parametrize("query", ["from_h5", "from_h5()", "g.from_h5"])
+def test_bare_name_stays_ambiguous_despite_exact_g_symbol(query: str) -> None:
+    """Exact-match precedence is for dotted queries only (#2063 review)."""
+    text, code = lookup(query)
+    assert code == 2, text
+    assert text.startswith("ambiguous:")
+    assert "FEMData.from_h5" in text
+
+
 def test_session_walk_fails_closed_on_unimportable_composite(monkeypatch) -> None:
     """A composite that does not import raises; it is never silently dropped."""
     from apeGmsh._core import apeGmsh as Session
