@@ -45,7 +45,7 @@ def _w(raw: bytes) -> int:
 
 def test_parse_layout_3d_beam():
     raw = b"0.N_1,Vy_1,Vz_1,T_1,My_1,Mz_1,N_2,Vy_2,Vz_2,T_2,My_2,Mz_2"
-    n_stations, layout = parse_local_force_layout(raw, data_width=_w(raw), bracket_key="x")
+    n_stations, layout = parse_local_force_layout(raw, data_width=_w(raw), spatial_dim=3, bracket_key="x")
     assert n_stations == 2
     assert layout == {
         "axial_force":      [0, 6],
@@ -64,7 +64,7 @@ def test_parse_layout_2d_beam():
     :func:`test_parse_layout_2d_spellings_of_every_family`.
     """
     raw = b"0.N_1,Vy_1,Mz_1,N_2,Vy_2,Mz_2"
-    n_stations, layout = parse_local_force_layout(raw, data_width=_w(raw), bracket_key="x")
+    n_stations, layout = parse_local_force_layout(raw, data_width=_w(raw), spatial_dim=3, bracket_key="x")
     assert n_stations == 2
     assert layout == {
         "axial_force":      [0, 3],
@@ -76,7 +76,7 @@ def test_parse_layout_2d_beam():
 def test_parse_layout_unknown_tokens_silently_skipped():
     """Foreign tokens (e.g. future MPCO additions) shouldn't break parsing."""
     raw = b"0.N_1,FooBar_1,N_2,FooBar_2"
-    n_stations, layout = parse_local_force_layout(raw, data_width=_w(raw), bracket_key="x")
+    n_stations, layout = parse_local_force_layout(raw, data_width=_w(raw), spatial_dim=3, bracket_key="x")
     assert n_stations == 2
     assert "axial_force" in layout
     assert layout["axial_force"] == [0, 2]
@@ -84,12 +84,12 @@ def test_parse_layout_unknown_tokens_silently_skipped():
 
 def test_parse_layout_empty_components_raises():
     with pytest.raises(ValueError, match="empty component list"):
-        parse_local_force_layout(b"0.", data_width=0, bracket_key="x")
+        parse_local_force_layout(b"0.", data_width=0, spatial_dim=3, bracket_key="x")
 
 
 def test_parse_layout_no_recognized_tokens_raises():
     with pytest.raises(ValueError, match="no recognized"):
-        parse_local_force_layout(b"0.Foo_1,Bar_2", data_width=2, bracket_key="x")
+        parse_local_force_layout(b"0.Foo_1,Bar_2", data_width=2, spatial_dim=3, bracket_key="x")
 
 
 def test_parse_layout_partial_station_raises():
@@ -99,7 +99,7 @@ def test_parse_layout_partial_station_raises():
     """
     raw = b"0.N_1,Mz_1,N_2"   # missing Mz_2
     with pytest.raises(ValueError, match="missing station indices"):
-        parse_local_force_layout(raw, data_width=_w(raw), bracket_key="x")
+        parse_local_force_layout(raw, data_width=_w(raw), spatial_dim=3, bracket_key="x")
 
 
 # =====================================================================
@@ -133,7 +133,7 @@ _SPELLINGS_2D = [
                          ids=[b for b, _ in _SPELLINGS_2D])
 def test_parse_layout_2d_spellings_of_every_family(bracket, raw):
     n_stations, layout = parse_local_force_layout(
-        raw, data_width=6, bracket_key=bracket,
+        raw, data_width=6, spatial_dim=2, bracket_key=bracket,
     )
     assert n_stations == 2
     assert layout == _LAYOUT_2D
@@ -143,7 +143,8 @@ def test_parse_layout_2d_warping_extras_are_ignored():
     """ElasticForceBeamColumnWarping2d adds ``Q``; N, V, M still read."""
     raw = b"0.N_1,V_1,M_1,Q_1,N_2,V_2,M_2,Q_2"
     _, layout = parse_local_force_layout(
-        raw, data_width=8, bracket_key="1-ElasticForceBeamColumnWarping2d[1:0:0]",
+        raw, data_width=8, spatial_dim=2,
+        bracket_key="1-ElasticForceBeamColumnWarping2d[1:0:0]",
     )
     assert layout == {
         "axial_force": [0, 4], "shear_y": [1, 5], "bending_moment_z": [2, 6],
@@ -154,7 +155,7 @@ def test_parse_layout_meta_data_width_mismatch_refuses():
     """ComponentElement3d's shape: six 2-D names over a 12-wide vector."""
     with pytest.raises(ValueError, match=r"names 6 columns .* are 12 wide"):
         parse_local_force_layout(
-            b"0.N_1,V_1,M_1,N_2,V_2,M_2", data_width=12,
+            b"0.N_1,V_1,M_1,N_2,V_2,M_2", data_width=12, spatial_dim=3,
             bracket_key="9-ComponentElement3d[0:0:0]",
         )
 
@@ -168,25 +169,46 @@ def test_parse_layout_2d_names_on_a_3d_class_refuse(bracket):
 
     The fork build writes ``ForceBeamColumnCBDI3d`` this way: META
     ``N_1,V_1,M_1,N_2,V_2,M_2``, six columns, rows zero-filled, while live
-    ``eleResponse`` returns 12 values. Only the class gate refuses it.
+    ``eleResponse`` returns 12 values. The width gate cannot see it; the
+    class gate refuses it even in a file that claims to be 2-D.
     """
     with pytest.raises(ValueError, match="3-D element class"):
         parse_local_force_layout(
-            b"0.N_1,V_1,M_1,N_2,V_2,M_2", data_width=6, bracket_key=bracket,
+            b"0.N_1,V_1,M_1,N_2,V_2,M_2", data_width=6, spatial_dim=2,
+            bracket_key=bracket,
+        )
+
+
+@pytest.mark.parametrize("spatial_dim", [3, None])
+def test_parse_layout_2d_names_need_a_2d_file(spatial_dim):
+    """A 2-D class name is not enough: ``/INFO/SPATIAL_DIM`` must be 2."""
+    with pytest.raises(ValueError, match="SPATIAL_DIM"):
+        parse_local_force_layout(
+            b"0.N_1,V_1,M_1,N_2,V_2,M_2", data_width=6,
+            spatial_dim=spatial_dim, bracket_key="3-ElasticBeam2d[1:0:0]",
+        )
+
+
+def test_parse_layout_2d_names_under_an_unparsed_key_refuse():
+    with pytest.raises(ValueError, match="does not read"):
+        parse_local_force_layout(
+            b"0.N_1,V_1,M_1,N_2,V_2,M_2", data_width=6, spatial_dim=2,
+            bracket_key="ElasticBeam2d",
         )
 
 
 def test_parse_layout_mixed_2d_3d_spelling_refuses():
     with pytest.raises(ValueError, match="ambiguous"):
         parse_local_force_layout(
-            b"0.N_1,V_1,Mz_1,N_2,V_2,Mz_2", data_width=6, bracket_key="x",
+            b"0.N_1,V_1,Mz_1,N_2,V_2,Mz_2", data_width=6, spatial_dim=2,
+            bracket_key="3-ElasticBeam2d[1:0:0]",
         )
 
 
 def test_parse_layout_duplicate_station_refuses():
     with pytest.raises(ValueError, match="twice"):
         parse_local_force_layout(
-            b"0.N_1,N1,N_2", data_width=3, bracket_key="x",
+            b"0.N_1,N1,N_2", data_width=3, spatial_dim=3, bracket_key="x",
         )
 
 
@@ -194,15 +216,19 @@ def test_parse_layout_no_station_tokens_is_its_own_error():
     """A truss's ``C1..C4`` is not a malformed beam bucket."""
     with pytest.raises(NoLineStationTokensError):
         parse_local_force_layout(
-            b"0.C1,C2,C3,C4", data_width=4, bracket_key="12-Truss[1:0:0]",
+            b"0.C1,C2,C3,C4", data_width=4, spatial_dim=2,
+            bracket_key="12-Truss[1:0:0]",
         )
 
 
 # ── synthetic ON_ELEMENTS groups ─────────────────────────────────────
 
-def _on_elements(tmp_path, buckets):
+def _on_elements(tmp_path, buckets, spatial_dim=2):
     """Write ``{bracket: (META bytes | None, [step arrays], ids)}``."""
     f = h5py.File(tmp_path / "lf.h5", "w")
+    if spatial_dim is not None:
+        f.create_dataset("INFO/SPATIAL_DIM",
+                         data=np.array([spatial_dim], dtype=np.int32))
     lf = f.create_group("ON_ELEMENTS/localForce")
     for bracket, (meta, steps, ids) in buckets.items():
         g = lf.create_group(bracket)
@@ -228,6 +254,7 @@ def test_read_2d_bucket_values(tmp_path, bracket, raw):
         on_el = f["ON_ELEMENTS"]
         assert available_components_in_local_force(on_el) == set(_LAYOUT_2D)
         [bucket] = discover_local_force_buckets(on_el)
+        assert bucket.refusal is None
         for comp, (ci, cj) in _LAYOUT_2D.items():
             values, eidx, xi = read_local_force_bucket_slab(
                 on_el[f"localForce/{bracket}"], bucket, comp,
@@ -242,36 +269,62 @@ def test_read_2d_bucket_values(tmp_path, bracket, raw):
             )
 
 
-def test_discovery_refuses_width_mismatch(tmp_path):
-    bracket = "9-ComponentElement3d[0:0:0]"
-    raw = b"0.N_1,V_1,M_1,N_2,V_2,M_2"
-    with _on_elements(tmp_path, {bracket: (raw, [np.zeros((1, 12))], [1])}) as f:
-        with pytest.raises(ValueError, match=r"ComponentElement3d.*6 columns.*12 wide"):
-            discover_local_force_buckets(f["ON_ELEMENTS"])
-        with pytest.raises(ValueError, match="12 wide"):
-            available_components_in_local_force(f["ON_ELEMENTS"])
+_BEAM_3D = "5-ElasticBeam3d[1:0:0]"
+_RAW_3D = b"0.N_1,Vy_1,Vz_1,T_1,My_1,Mz_1,N_2,Vy_2,Vz_2,T_2,My_2,Mz_2"
+_ROW_3D = np.arange(1.0, 13.0)
+
+#: refused bucket -> (META, step rows, spatial_dim, reason)
+_REFUSED = {
+    "width": ("9-ComponentElement3d[0:0:0]", b"0.N_1,V_1,M_1,N_2,V_2,M_2",
+              np.zeros((1, 12)), 3, r"6 columns.*12 wide"),
+    "class": ("78-ForceBeamColumnCBDI3d[0:0:0]", b"0.N_1,V_1,M_1,N_2,V_2,M_2",
+              np.zeros((1, 6)), 3, "SPATIAL_DIM"),
+    "station": ("3-MixedBeamColumn3d[1:0:0]",
+                b"0.N_ 1,Vy_1,Vz_1,T_1,My_1,Tz_1,N_2,Py_2,Pz_2,T_2,My_2,Mz_2",
+                np.zeros((1, 12)), 3, "missing station indices"),
+    "meta": ("7-ElasticBeam3d[1:0:0]", None, np.zeros((1, 12)), 3,
+             "no META/COMPONENTS"),
+}
 
 
-def test_discovery_surfaces_a_malformed_bucket(tmp_path):
-    """Before #2010 a parse failure dropped the bucket with no word.
+@pytest.mark.parametrize("case", sorted(_REFUSED))
+def test_a_refused_bucket_blocks_only_its_own_elements(tmp_path, case):
+    """#2020 review F1: one bad bucket must not hide the file's other beams.
 
-    The 3-D bearings and MixedBeamColumn3d spell ``N_ 1``/``Tz_1``/``Py_2``
-    upstream, so a canonical misses a station.
+    The ElasticBeam3d bucket (element 1) reads normally beside it, and is
+    the only one listed; a read naming the bad bucket's element 2, or
+    every element, raises the bucket's reason.
     """
-    raw = b"0.N_ 1,Vy_1,Vz_1,T_1,My_1,Tz_1,N_2,Py_2,Pz_2,T_2,My_2,Mz_2"
+    bracket, raw, rows, dim, reason = _REFUSED[case]
     with _on_elements(tmp_path, {
-        "3-MixedBeamColumn3d[1:0:0]": (raw, [np.zeros((1, 12))], [1]),
-    }) as f:
-        with pytest.raises(ValueError, match="missing station indices"):
-            discover_local_force_buckets(f["ON_ELEMENTS"])
+        _BEAM_3D: (_RAW_3D, [_ROW_3D[None, :]], [1]),
+        bracket: (raw, [rows], [2]),
+    }, spatial_dim=dim) as f:
+        on_el = f["ON_ELEMENTS"]
+        assert available_components_in_local_force(on_el) == {
+            "axial_force", "shear_y", "shear_z", "torsion",
+            "bending_moment_y", "bending_moment_z",
+        }
+        by_key = {b.bracket_key: b for b in discover_local_force_buckets(on_el)}
+        good, bad = by_key[_BEAM_3D], by_key[bracket]
+        assert good.refusal is None
+        assert bad.refusal is not None and bracket in bad.refusal
+        assert bad.layout == {}
+        t0 = np.array([0])
 
+        def read(bucket, key, ids):
+            return read_local_force_bucket_slab(
+                on_el[f"localForce/{key}"], bucket, "shear_y",
+                t_idx=t0, element_ids=ids,
+            )
 
-def test_discovery_refuses_a_bucket_without_meta(tmp_path):
-    with _on_elements(tmp_path, {
-        "3-ElasticBeam2d[1:0:0]": (None, [np.zeros((1, 6))], [1]),
-    }) as f:
-        with pytest.raises(ValueError, match="no META/COMPONENTS"):
-            discover_local_force_buckets(f["ON_ELEMENTS"])
+        values, eidx, _ = read(good, _BEAM_3D, np.array([1]))
+        np.testing.assert_array_equal(eidx, [1, 1])
+        np.testing.assert_allclose(values[0], [_ROW_3D[1], -_ROW_3D[7]])
+        assert read(bad, bracket, np.array([1])) is None
+        for ids in (np.array([2]), np.array([1, 2]), None):
+            with pytest.raises(ValueError, match=reason):
+                read(bad, bracket, ids)
 
 
 def test_discovery_passes_over_a_truss_force_vector(tmp_path):

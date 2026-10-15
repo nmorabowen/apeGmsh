@@ -201,3 +201,71 @@ def test_elastic_girder_matches_domain_capture(
             rtol=RTOL, atol=ATOL,
             err_msg=f"{comp} of {portal['family']} girder {eid}",
         )
+
+# ---------------------------------------------------------------------------
+# A refused bucket blocks only its own elements (#2020 review F1)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(scope="module")
+def mixed_3d(tmp_path_factory: pytest.TempPathFactory) -> dict[str, Any]:
+    """Two 3-D cantilevers: ElasticBeam3d (tag 1), ForceBeamColumnCBDI3d (2).
+
+    The CBDI3d tags its 12-value localForce with the six 2-D names, so
+    MPCO writes a 6-column, zero-filled bucket that the reader refuses.
+    """
+    from apeGmsh.opensees.emitter.live import get_ops
+
+    o = get_ops()
+    o.wipe()
+    o.model("basic", "-ndm", 3, "-ndf", 6)
+    for n, (x, y) in enumerate([(0, 0), (3, 0), (0, 2), (3, 2)], start=1):
+        o.node(n, float(x), float(y), 0.0)
+    o.fix(1, 1, 1, 1, 1, 1, 1)
+    o.fix(3, 1, 1, 1, 1, 1, 1)
+    o.geomTransf("Linear", 1, 0.0, 0.0, 1.0)
+    o.element("elasticBeamColumn", 1, 1, 2, 0.02, 2.0e11, 8.0e10,
+              1.0e-4, 3.0e-4, 3.0e-4, 1)
+    o.section("Elastic", 1, 2.0e11, 0.02, 3.0e-4, 3.0e-4, 8.0e10, 1.0e-4)
+    o.beamIntegration("Lobatto", 1, 1, 4)
+    o.element("forceBeamColumnCBDI", 2, 3, 4, 1, 1)
+    o.timeSeries("Linear", 1)
+    o.pattern("Plain", 1, 1)
+    o.load(2, 0.0, 1000.0, 0.0, 0.0, 0.0, 0.0)
+    o.load(4, 0.0, 1000.0, 0.0, 0.0, 0.0, 0.0)
+    path = str(tmp_path_factory.mktemp("mpco_mixed_3d") / "mixed.mpco")
+    o.recorder("mpco", path, "-N", "displacement", "-E", "localForce")
+    o.constraints("Plain")
+    o.numberer("RCM")
+    o.system("BandGeneral")
+    o.test("NormDispIncr", 1e-10, 10)
+    o.algorithm("Newton")
+    o.integrator("LoadControl", 1.0)
+    o.analysis("Static")
+    assert o.analyze(1) == 0
+    lf = np.asarray(o.eleResponse(1, "localForce"))
+    o.remove("recorders")
+    o.wipe()
+    return {"path": path, "beam_shear": [lf[1], -lf[7]]}
+
+
+def test_a_refused_bucket_blocks_only_its_own_elements(
+    mixed_3d: dict[str, Any],
+) -> None:
+    from apeGmsh.results.readers._mpco import MPCOReader
+    from apeGmsh.results.readers._protocol import ResultLevel
+
+    with MPCOReader(mixed_3d["path"]) as r:
+        sid = r.stages()[0].id
+        comps = r.available_components(sid, ResultLevel.LINE_STATIONS)
+        assert {"shear_y", "shear_z", "bending_moment_y"} <= set(comps)
+        slab = r.read_line_stations(sid, "shear_y", element_ids=np.array([1]))
+        np.testing.assert_array_equal(slab.element_index, [1, 1])
+        np.testing.assert_allclose(slab.values[0], mixed_3d["beam_shear"],
+                                   rtol=RTOL)
+        np.testing.assert_allclose(slab.values[0], [-1000.0, -1000.0],
+                                   rtol=1e-9)
+        for ids in (np.array([2]), None):
+            with pytest.raises(ValueError,
+                               match=r"ForceBeamColumnCBDI3d.*SPATIAL_DIM"):
+                r.read_line_stations(sid, "shear_y", element_ids=ids)
