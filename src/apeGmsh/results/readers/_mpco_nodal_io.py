@@ -2,14 +2,13 @@
 
 MPCO stores per-element-node force vectors for line elements (the
 closed-form ``ElasticBeam{2d,3d}``, ``ElasticTimoshenkoBeam{2d,3d}``,
-``ModElasticBeam2d`` and, since #2072, the frame beams
-``ForceBeamColumn``, ``DispBeamColumn`` and ``LadrunoDispBeamColumn``)
-under
+``ModElasticBeam2d``, and the frame beams ``ForceBeamColumn``,
+``DispBeamColumn`` and ``LadrunoDispBeamColumn``) under
 ``MODEL_STAGE[…]/RESULTS/ON_ELEMENTS/<frame>/<bucket_key>/`` where
 ``<frame>`` is ``globalForce`` or ``localForce`` and
 ``<bucket_key>`` is ``<classTag>-<ClassName>[<rule>:<cust>:<hdr>]``.
 Each bucket holds the standard ``META`` / ``ID`` / ``DATA/STEP_<k>``
-triplet, with these closed-form-specific conventions:
+triplet, with these conventions:
 
 - Single META block (no per-IP segmentation): ``MULTIPLICITY = [[1]]``,
   ``GAUSS_IDS = [[-1]]`` (sentinel for "no integration point"),
@@ -111,7 +110,7 @@ class _NodalBucket:
 
 class NodalForceBucketSkippedWarning(UserWarning):
     """An MPCO nodal-force bucket the reader is unable to decode: the
-    elements it holds read no rows (#2072)."""
+    elements it holds read no rows."""
 
 
 @dataclass(frozen=True)

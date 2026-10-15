@@ -1491,7 +1491,7 @@ CUSTOM_RULE_CATALOG: dict[tuple[str, str], CustomRuleLayout] = {
 # NODAL_FORCE_CATALOG — elastic beams and frame beams
 # =====================================================================
 #
-# Phase 11b; frame beams since #2072. Keyed on ``(class_name, token)`` where ``token`` is the
+# Keyed on ``(class_name, token)`` where ``token`` is the
 # OpenSees recorder token in apeGmsh-canonical form
 # (``"global_force"`` / ``"local_force"``). Component layouts use
 # the ``nodal_resisting_*`` canonical names from
@@ -1587,7 +1587,7 @@ _ELASTIC_BEAM_NODAL_CLASSES: frozenset[str] = frozenset(
     cname for cname, _tok in NODAL_FORCE_CATALOG
 )
 
-# Frame beams with sections (#2072). ``globalForce`` / ``localForce`` return
+# Frame beams with sections. ``globalForce`` / ``localForce`` return
 # the same 2 x ndf end-force vector as an elastic beam, in the same order.
 # The MPCO recorder writes it under a custom-rule bucket key
 # (``74-ForceBeamColumn3d[1000:1:0]``, measured on fork 79e0623670) with
