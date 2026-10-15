@@ -187,6 +187,25 @@ def test_returned_types_indexed_with_own_skill() -> None:
             assert entries[key]["skill"] == skill_for(key), key
 
 
+@pytest.mark.parametrize(
+    "symbol",
+    [
+        "FEMData.nodes.select",
+        "FEMData.elements.select",
+        "FEMData.inspect.summary",
+        "FEMData.nodes.constraints.equal_dofs",
+    ],
+)
+def test_femdata_sub_composites_hit_fem_broker(symbol: str) -> None:
+    """SK2-S4b (#2062): FEMData.nodes/.elements/.inspect are indexed, nested walk on."""
+    text, code = lookup(symbol)
+    assert code == 0, text
+    assert text.startswith(f"{symbol}\n")
+    assert "references/fem-broker.md" in text
+    assert "api-cheatsheet" not in text
+    assert text.count("\n") <= _MAX_LINES
+
+
 def test_session_walk_fails_closed_on_unimportable_composite(monkeypatch) -> None:
     """A composite that does not import raises; it is never silently dropped."""
     from apeGmsh._core import apeGmsh as Session
