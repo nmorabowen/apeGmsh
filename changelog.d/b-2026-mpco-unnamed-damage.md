@@ -8,5 +8,7 @@ no warning. Such a bucket now takes its names from the RESPONSE_CATALOG
 `getResponse` writes). A live LadrunoBrick read now matches
 `eleResponse(..., "material", gp, "damage")` column by column. A class with
 no catalog row keeps the indexed names, and a `damage_tension` read on it
-raises `MaterialStateComponentRefused`, naming the bucket. ASDConcrete3D's
-`d+,d-` path is unchanged.
+raises `MaterialStateComponentRefused`, naming the bucket. The bare
+`damage` on a two-column bucket (ASDConcrete3D's `d+,d-` included) also
+raises it, instead of returning an empty slab. ASDConcrete3D's
+`damage_tension` and `damage_compression` reads are unchanged.
