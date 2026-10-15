@@ -1,5 +1,4 @@
 # Gotchas — anti-patterns & easily-missed pitfalls
-<!-- skill-freshness: verified against apeGmsh main@970331aa (2026-09-12) · signatures: python -m apeGmsh.studio.lookup SYMBOL (ADR 0096); src/ is not the authoring lookup -->
 
 Read this when a build "should work" but doesn't, or before writing
 constraint / selection / Results code from memory. The other references
@@ -81,16 +80,17 @@ Physical groups are the only way to address mesh subsets by name across
 the pipeline. Local dicts don't survive `fragment_all()` (OCC renumbers).
 
 ### ❌ `fem.node_ids` (old API) → ✅ `fem.nodes.ids`
-The FEMData API was rebuilt as composites. Old flat attributes no longer
-exist — use `fem.nodes.*` and `fem.elements.*`.
+The FEMData API is built from composites: reach nodes through `fem.nodes.*`
+and elements through `fem.elements.*`. The flat `fem.node_ids` was removed.
 
 ### ❌ Hand-stitching spatial filters → ✅ the `.select()` chain
 Don't manually `np.isin` / intersect results, and don't assume the
 entity-family `g.model.select().in_box` matches a point-family box. Use
 the one canonical chain: `fem.nodes.select(pg=...).in_box(...).on_plane(...)`,
-with set algebra via `| & - ^`. The old single-shot `fem.*.get/.resolve`
-/ `g.mesh_selection.add_nodes` accessors were **removed** — `.select()`
-is the only accessor (its no-arg / `pg=` seed covers the simple case too).
+with set algebra via `| & - ^`. `.select()` is the only accessor (its
+no-arg / `pg=` seed covers the simple case too). It replaced the
+single-shot `fem.nodes.get`, `fem.elements.get` / `fem.elements.resolve`
+and `g.mesh_selection.add_nodes`.
 
 ### ❌ Reaching for `g.opensees` / `g.opensees.ingest`
 Both are **gone**. The entry point is `from apeGmsh.opensees import apeSees`.
@@ -123,7 +123,8 @@ offscreen stills) and labeled `results.plot.*`, then read those files.
 `viewer()` stays the human surface.
 
 ### ❌ `Results.viewer(model_h5=...)`
-The kwarg was removed — the viewer reads `results.model` directly. CLI:
+`Results.viewer` takes no `model_h5=`: the viewer reads `results.model`
+directly. CLI:
 `python -m apeGmsh.viewers run.h5` auto-resolves native Composed files;
 `--model-h5 PATH` is required ONLY for `.mpco` files (sibling pointer).
 

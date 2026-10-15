@@ -61,7 +61,7 @@ MIRROR_SKILL_MD = REPO / ".claude" / "skills" / "apegmsh-helper" / "SKILL.md"
 BASELINE_FILE = Path(__file__).with_name("skill_fences_baseline.txt")
 
 #: The number of lines in ``skill_fences_baseline.txt``. It only goes down.
-SKILL_FENCES_BASELINE = 97
+SKILL_FENCES_BASELINE = 78
 
 #: Skill files another chain's open issue owns, left out of the gate and the
 #: baseline so its edits cannot turn this test red. Name -> owning issue.

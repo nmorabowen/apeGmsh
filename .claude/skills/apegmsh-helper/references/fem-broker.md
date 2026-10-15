@@ -1,12 +1,12 @@
 # FEMData — the solver broker + native persistence
-<!-- skill-freshness: verified against apeGmsh main@1d542ff6 (2026-08-04) · signatures: python -m apeGmsh.studio.lookup SYMBOL (ADR 0096); src/ is not the authoring lookup -->
 
 `FEMData` is the **immutable, solver-agnostic snapshot** apeGmsh hands to
-any FEM backend. Once you have `fem = g.mesh.queries.get_fem_data(...)`
-you no longer need a live Gmsh session to query the mesh — the snapshot
-is self-sufficient, and it round-trips to a native `model.h5` (Part B).
+any FEM backend. Once you have `fem = g.mesh.queries.get_fem_data(...)`,
+every mesh query runs on the snapshot alone, without a live Gmsh session,
+and the snapshot round-trips to a native `model.h5` (Part B).
 
-All signatures below are read from `src/apeGmsh/mesh/`.
+For a signature, run `python -m apeGmsh.studio.lookup SYMBOL` (ADR 0096),
+for example `FEMData.from_gmsh`.
 
 ---
 
@@ -20,20 +20,20 @@ fem = g.mesh.queries.get_fem_data(dim=3)               # verified: tests/test_fe
 fem = g.mesh.queries.get_fem_data()                    # dim=None → every dim present
 fem = g.mesh.queries.get_fem_data(dim=3, remove_orphans=True)
 
-# Direct factory (equivalent), from src/apeGmsh/mesh/_mesh_queries.py:122
+# Direct factory (equivalent; get_fem_data calls it)
 from apeGmsh import FEMData
-fem = FEMData.from_gmsh(dim=3, session=g, ndf=6, remove_orphans=False)  # FEMData.py:1508
+fem = FEMData.from_gmsh(dim=3, session=g, ndf=6, remove_orphans=False)
 
 # From a standalone .msh file (no live session)
-fem = FEMData.from_msh("bridge.msh", dim=2)            # FEMData.py:1534
+fem = FEMData.from_msh("bridge.msh", dim=2)
 ```
 
-Exact signatures:
+Signatures:
 
-```python
+```text
 g.mesh.queries.get_fem_data(dim: int | None = None, *, remove_orphans: bool = False) -> FEMData
-FEMData.from_gmsh(dim=None, *, session=None, ndf: int = 6, remove_orphans: bool = False)
-FEMData.from_msh(path, dim: int | None = 2, *, remove_orphans: bool = False)
+FEMData.from_gmsh(dim: int | None = None, *, session=None, ndf: int = 6, remove_orphans: bool = False)
+FEMData.from_msh(path: str, dim: int | None = 2, *, remove_orphans: bool = False)
 ```
 
 `from_gmsh`/`get_fem_data` auto-resolves any pre-mesh declarations
@@ -68,7 +68,7 @@ fem.elements         → ElementComposite
 fem.info             → MeshInfo
 fem.inspect          → InspectComposite
 fem.partitions       → list[int]      (shortcut for fem.nodes.partitions)
-fem.snapshot_id      → str            32-char hex content hash (FEMData.py:1491)
+fem.snapshot_id      → str            32-char hex content hash
 ```
 
 `repr(fem)` prints the full `inspect.summary()`, so just printing the
@@ -99,8 +99,9 @@ some paths). Don't cast.
 
 ### Selection — `.select(...)`, label/PG/part, never raw tags
 
-`fem.nodes.select(...)` is the **single accessor** (the old `.get` /
-`.get_ids` / `.get_coords` were removed). It returns a `MeshSelection`
+`fem.nodes.select(...)` is the **single accessor** (it replaced
+`fem.nodes.get`, `fem.nodes.get_ids` and `fem.nodes.get_coords`, which are
+listed in `scripts/removed_symbols.json`). It returns a `MeshSelection`
 (point family — spatial verbs test node **coordinates**) that chains
 refinement verbs and terminates at `.ids` / `.coords` / `.result()`:
 
@@ -112,8 +113,11 @@ fem.nodes.select(pg="Body", partition=3)        # AND-intersected with a partiti
 
 base.ids        # list[int]
 base.coords     # ndarray(N, 3)
-for nid, xyz in base.result():                  # pair-iteration, clean for emission
-    ops.node(nid, *xyz)
+
+# Pair iteration, for a consumer other than apeSees (which emits nodes itself)
+import openseespy.opensees as ops_raw
+for nid, xyz in base.result():
+    ops_raw.node(nid, *xyz)
 
 # spatial narrowing (half-open [lo, hi); on_plane tol= REQUIRED) + set algebra
 corner = (fem.nodes.select(pg="Body")
@@ -123,8 +127,8 @@ all_bcs = fem.nodes.select(pg="Base") | fem.nodes.select(pg="Wall")
 ```
 
 Signature:
-`fem.nodes.select(target=None, *, pg=None, label=None, tag=None, partition=None, dim=None, ids=None)`
-(`FEMData.py:365`). `target=` resolution order is **label → physical
+`fem.nodes.select(target=None, *, pg=None, label=None, tag=None, partition=None, dim=None, ids=None)`.
+`target=` resolution order is **label → physical
 group → part label** (matches `LoadsComposite` auto-resolve, so the same
 name works everywhere); a name in none raises with the candidates
 printed. Prefer labels/PGs. A raw `(dim, tag)` target (nodes or
@@ -150,7 +154,7 @@ fem.nodes.sp            → SPSet              (single-point prescribed)
 Per-node DOF count is **inferred by the `apeSees` bridge** from each
 node's incident element classes (ADR 0048); an element-less decoupled
 node states it with `ops.ndf(handle, ndf=K)` (ADR 0049). There is **no**
-`g.node_ndf` session composite — it was removed. You do not set ndf on
+session composite for ndf (`g.node_ndf` was removed). You do not set ndf on
 the broker; the full story is in `opensees-bridge.md`. (`fem.nodes.ndf_for(nid)`
 exists and returns the stored value when ndf metadata is attached, but it
 is a read accessor, not the authoring path.)
@@ -177,8 +181,9 @@ fem.elements.type_table()   # DataFrame: code, name, gmsh_name, dim, order, npe,
 
 ### Selection — `.select(...)` (centroid family)
 
-`fem.elements.select(...)` is the single accessor (the old `.get` /
-`.resolve` were removed). Spatial verbs test element **centroids**.
+`fem.elements.select(...)` is the single accessor (it replaced
+`fem.elements.get` and `fem.elements.resolve`). Spatial verbs test element
+**centroids**.
 
 ```python
 body = fem.elements.select(pg="Body")               # → MeshSelection
@@ -196,8 +201,8 @@ ids, conn = gr.resolve(element_type="hex8")         # pick one from a mixed sele
 ```
 
 Signature:
-`fem.elements.select(target=None, *, pg=None, label=None, tag=None, dim=None, element_type=None, partition=None, ids=None)`
-(`FEMData.py:1064`). Terminals: `.ids` / `.coords` (centroids) /
+`fem.elements.select(target=None, *, pg=None, label=None, tag=None, dim=None, element_type=None, partition=None, ids=None)`.
+Terminals: `.ids` / `.coords` (centroids) /
 `.connectivity` (homogeneous only — `TypeError` on mixed) / `.result()`
 (→ `GroupResult`; call `.resolve()` on it, `element_type=` to pick from a
 mixed selection).
@@ -245,7 +250,8 @@ reads what Gmsh hands it). Note: bandwidth is for dense 1-based tags,
   snapshot instead.
 - `get_fem_data(dim=None)` returns **every** element present — `dim=2`
   surface elements (loads / tied-contact / rigid diaphragms) *and*
-  `dim=3` volume elements. Filter with `get(dim=3)` for the volume mesh.
+  `dim=3` volume elements. Filter with `fem.elements.select(dim=3)` for
+  the volume mesh.
 - `remove_orphans` here is a **mesh-node** filter — unrelated to the
   geometry method `g.model.geometry.remove_orphans()` (which sweeps
   dangling CAD entities). Don't conflate the two.
@@ -261,7 +267,7 @@ OpenSees needed to write or read it.
 ## Write: `FEMData.to_h5` / `g.save()` / `save_to=`
 
 ```python
-# Direct write (FEMData.py:1603)
+# Direct write
 fem.to_h5("plate.h5", model_name="plate", apegmsh_version="2.0.0", ndf=0)
 
 # Autosave on context-exit / g.end()  (verified: tests/test_session_save.py::test_autosave_writes_on_exit)
@@ -287,12 +293,12 @@ path is kept with a warning (set `model_name` per run in a sweep). A
 notebook's cells are not scripts: a notebook replaces its file on every
 run, so give each notebook its own `model_name`.
 
-Exact signatures:
+Signatures:
 
-```python
-FEMData.to_h5(self, path, *, model_name: str = "", apegmsh_version: str = "", ndf: int = 0) -> None
-apeGmsh.__init__(..., *, save_to: str | Path | None = None, overwrite: bool = True)   # _core.py:84
-apeGmsh.save(self, path: str | Path | None = None) -> Path                            # _core.py:251
+```text
+FEMData.to_h5(self, path: str, *, model_name: str = "", apegmsh_version: str = "", ndf: int = 0) -> None
+apeGmsh(*, model_name: str | None = None, verbose: bool = False, save_to: str | Path | None = None, overwrite: bool = True)
+apeGmsh.save(self, path: str | Path | None = None) -> Path
 ```
 
 Write semantics & traps:
@@ -320,8 +326,7 @@ fem = FEMData.from_h5("plate.h5")               # verified: tests/test_femdata_f
 fem = FEMData.from_h5("results.h5", root="/model")   # composed/results file: rich layout under /model/
 ```
 
-Signature: `FEMData.from_h5(cls, path, *, root: str = "/") -> FEMData`
-(FEMData.py:1547). Rebuilds nodes, elements (per type), PGs, labels,
+Signature: `FEMData.from_h5(path, *, root="/") -> FEMData`. Rebuilds nodes, elements (per type), PGs, labels,
 mesh selections, constraints, loads, masses, and per-node `ndf` —
 everything the writer round-trips.
 
@@ -364,10 +369,10 @@ Round-trip facts:
 
 Two **different** `from_h5` classmethods exist — don't confuse them:
 
-| Method | Returns | Source |
-|---|---|---|
-| `FEMData.from_h5(path, *, root="/")` | a `FEMData` snapshot | FEMData.py:1547 |
-| `apeGmsh.from_h5(path, *, model_name=None, verbose=False)` | a **chain-phase session** | _core.py:141 |
+| Method | Returns |
+|---|---|
+| `FEMData.from_h5(path, *, root="/")` | a `FEMData` snapshot |
+| `apeGmsh.from_h5(path, *, model_name=None, verbose=False)` | a **chain-phase session** |
 
 ```python
 from apeGmsh import apeGmsh
@@ -385,12 +390,13 @@ chain-phase contract.
 ## Schema constants — two independent zones (ADR 0023)
 
 The file carries **two per-zone version constants on different cadences**
-— do not collapse them into one number:
+— do not collapse them into one number. Read the values from the source
+(the import below); this page does not restate them:
 
-| Constant | Value | Source | Written by |
-|---|---|---|---|
-| `NEUTRAL_SCHEMA_VERSION` | **`"2.27.0"`** | `src/apeGmsh/mesh/_femdata_h5_io.py` | `to_h5` / `g.save()` |
-| bridge `SCHEMA_VERSION` | **`"2.19.0"`** | `src/apeGmsh/opensees/emitter/h5.py:414` | `apeSees(fem).h5()` opensees zone |
+| Constant | Module | Written by |
+|---|---|---|
+| `NEUTRAL_SCHEMA_VERSION` | `apeGmsh.mesh._femdata_h5_io` | `to_h5` / `g.save()` |
+| bridge `SCHEMA_VERSION` | `apeGmsh.opensees.emitter.h5` | `apeSees(fem).h5()` opensees zone |
 
 The neutral zone now also persists embedded-rebar ties (`/reinforce_ties`,
 `2.15.0`), auto-emitted rebar elements (`/rebar_elements`, `2.16.0`), fork

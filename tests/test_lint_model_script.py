@@ -74,7 +74,7 @@ def test_reference_scripts_were_extracted() -> None:
 
 @pytest.mark.parametrize("name", ["pratt_truss.py", "frame_modal.py", "staged_footing.py"])
 def test_reference_scripts_are_clean(name: str) -> None:
-    findings = lint.lint_text(REFERENCES[name], ("S1", "S3", "V5", "T1", "T2"))
+    findings = lint.lint_text(REFERENCES[name], ("S1", "S3", "V5", "T1", "T2", "R1"))
     assert findings == [], [(f.line, f.rule, f.message) for f in findings]
 
 
@@ -112,7 +112,10 @@ def test_v1() -> None:
 
 
 def test_v3() -> None:
-    assert rules_hit("n = fem.nodes.in_box(0, 0, 0, 1, 1, 1)\n", "V3") == [1]
+    # Maintainer ruling on #2006 (Q3, #1197): a box promoted to a group is the
+    # second choice after a label, so in_box is legal; hand matching is not.
+    assert rules_hit('g.model.select(None, dim=2).in_box(LO, HI).to_physical("Base")\n', "V3") == []
+    assert rules_hit("n = fem.nodes.select(pg='Body').in_box(LO, HI).ids\n", "V3") == []
     assert rules_hit("m = np.isclose(y, 0.0)\n", "V3") == [1]
     assert rules_hit("for p in fem.nodes.coords:\n    pass\n", "V3") == [1]
     assert rules_hit("for p in fem.nodes.select(pg='a').ids:\n    pass\n", "V3") == []
@@ -186,3 +189,86 @@ def test_cli_exit_codes_output_format_and_rule_selection(tmp_path: Path) -> None
 def test_skill_mirror_carries_the_lint() -> None:
     mirror = ROOT / ".claude" / "skills" / "apegmsh-helper" / "scripts" / "lint_model_script.py"
     assert mirror.read_bytes() == LINT.read_bytes()
+    registry = mirror.with_name("removed_symbols.json")      # R1 reads it beside the lint
+    assert registry.read_text(encoding="utf-8") == \
+        LINT.with_name("removed_symbols.json").read_text(encoding="utf-8")
+
+
+# ------------------------------------------------------------ R1: removed symbols
+
+def test_r1_flags_removed_symbols_through_aliases_and_imports() -> None:
+    script = """\
+from apeGmsh import apeGmsh, FEMData, Assembly
+from apeGmsh.assembly import Assembly as Asm
+from apeGmsh.interop.etabs_import import emit_mass
+from apeGmsh.results.session import PlotView
+with apeGmsh(model_name="m") as session:
+    session.opensees.ingest()
+    snap = session.mesh.queries.get_fem_data(dim=3)
+ids = snap.nodes.get_ids(pg="Base")
+FEMData.compose([])
+Asm("a").add("part.h5")
+plot = PlotView("p1", kind="path")
+"""
+    assert rules_hit(script, "R1") == [1, 3, 6, 8, 9, 10, 11]
+
+
+def test_r1_leaves_live_symbols_alone() -> None:
+    script = """\
+from apeGmsh import apeGmsh
+from apeGmsh.assembly import Assembly
+from apeGmsh.results.session import PlotView
+with apeGmsh(model_name="m") as g:
+    g.masses.volume("Body", density=DENSITY)
+    fem = g.mesh.queries.get_fem_data(dim=3)
+ids = fem.nodes.select(pg="Base").ids
+ops = Assembly("a").instance("b", "b.h5").bridge(ndm=3, ndf=3)
+plot = PlotView("p1", kind="xy")
+path = "out"
+opensees = ops.mass_from_model()
+"""
+    assert rules_hit(script, "R1") == []
+
+
+@pytest.mark.parametrize("entry", lint.load_registry(), ids=lambda e: e["symbol"])
+def test_r1_flags_every_registry_entry(entry: dict) -> None:
+    if entry["kind"] == "member":
+        script = f'x = {entry["call"]}("p", {entry["keyword"]}="{entry["symbol"]}")\n'
+    elif "from" in entry:
+        script = f"from {entry['from']} import {entry['symbol'].split('.')[0]}\nx = {entry['symbol']}\n"
+    elif "import" in entry:
+        script = f"import {entry['import']}\nx = {entry['symbol']}\n"
+    else:
+        script = f"x = {entry['symbol']}\n"
+    assert rules_hit(script, "R1"), script
+    for spelling in entry.get("also", []):
+        assert rules_hit(f"x = {spelling}\n", "R1"), spelling
+
+
+def test_r1_never_skips_without_the_registry(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(lint, "REGISTRY_FILE", tmp_path / "removed_symbols.json")
+    with pytest.raises(lint.RegistryError, match="R1 never skips"):
+        lint.lint_text("x = g.opensees\n", ("R1",))
+    lonely = tmp_path / "lint_model_script.py"           # the lint copied without its data
+    lonely.write_bytes(LINT.read_bytes())
+    script = tmp_path / "s.py"
+    script.write_text("x = 1\n", encoding="utf-8")
+    result = subprocess.run([sys.executable, str(lonely), "--rules", "R1", str(script)],
+                            capture_output=True, text=True)
+    assert result.returncode == 2 and "R1 never skips" in result.stderr, result
+    # Without R1 the rest of the lint still runs.
+    only_s1 = subprocess.run([sys.executable, str(lonely), "--rules", "S1", str(script)],
+                             capture_output=True, text=True)
+    assert only_s1.returncode == 0, only_s1
+
+
+def test_r1_refuses_a_malformed_registry(tmp_path: Path) -> None:
+    for body in ('{"symbols": []}', '{"symbols": [{"kind": "attribute", "symbol": "g.x"}]}',
+                 '{"symbols": [{"kind": "class", "symbol": "g.x", "use": "-", "why": "-"}]}',
+                 '{"symbols": [{"kind": "attribute", "symbol": "g x", "use": "-", "why": "-"}]}',
+                 "not json"):
+        bad = tmp_path / "bad.json"
+        bad.write_text(body, encoding="utf-8")
+        lint._REGISTRY.pop(bad, None)
+        with pytest.raises(lint.RegistryError):
+            lint.load_registry(bad)
