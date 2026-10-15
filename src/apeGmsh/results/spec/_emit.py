@@ -228,6 +228,12 @@ class LogicalRecorder:
 
     The Tcl and Python formatters take this and write the right
     command syntax.
+
+    ``precision`` is the significant digits OpenSees writes per value
+    (``-precision N``). OpenSees defaults to 6, which caps a ``.out``
+    value oracle near rtol 1e-5; the default 17 is the digit count that
+    round-trips an IEEE double, so the file holds the value the domain
+    held. Every formatter emits it (#1974).
     """
 
     kind: str                          # "Node" | "Element"
@@ -240,6 +246,16 @@ class LogicalRecorder:
     dt: Optional[float] = None
     record_name: str = ""              # for traceability / comments
     comment: str = ""                  # appended as a trailing comment
+    precision: int = 17                # significant digits (-precision)
+
+    def __post_init__(self) -> None:
+        p = self.precision
+        if isinstance(p, bool) or not isinstance(p, int) or p <= 0:
+            raise ValueError(
+                f"LogicalRecorder {self.record_name!r}: precision must be "
+                f"a positive int (significant digits per written value), "
+                f"got {p!r}."
+            )
 
 
 # =====================================================================
@@ -375,6 +391,9 @@ def format_tcl(rec: LogicalRecorder) -> str:
     if rec.dofs is not None:
         parts.append("-dof")
         parts.extend(str(d) for d in rec.dofs)
+    # After the target list, before the response: OpenSees reads options
+    # in any order and the first unknown token starts the response.
+    parts.append(f"-precision {rec.precision}")
     parts.extend(rec.response_tokens)
     line = " ".join(parts)
     if rec.comment:
@@ -394,6 +413,7 @@ def format_python(rec: LogicalRecorder) -> str:
     if rec.dofs is not None:
         args.append("'-dof'")
         args.extend(str(d) for d in rec.dofs)
+    args.extend(["'-precision'", str(rec.precision)])
     args.extend(repr(t) for t in rec.response_tokens)
     line = f"ops.recorder({', '.join(args)})"
     if rec.comment:
@@ -429,6 +449,7 @@ def to_ops_args(rec: LogicalRecorder) -> tuple:
     if rec.dofs is not None:
         args.append("-dof")
         args.extend(int(d) for d in rec.dofs)
+    args.extend(["-precision", int(rec.precision)])
     args.extend(rec.response_tokens)
     return tuple(args)
 
