@@ -7,8 +7,7 @@ the model builders and both oracles: the live ``eleResponse`` vector, and the
 ``D B(xi) u`` or section anchor. This file only changes the route:
 
 * ``MPCO-spec``: the spec's own emit, ``ResolvedRecorderSpec.emit_mpco``,
-  with a nodal record too, because an element-only MPCO file reads with zero
-  steps (#1970).
+  with a nodal record too.
 * ``MPCO`` and ``Ladruno``: ``recorder mpco|ladruno f -N displacement -E
   <token>``, the grammar the bridge's ``ops.recorder.mpco`` and
   ``ops.recorder.ladruno`` write.
@@ -25,19 +24,19 @@ Family            MPCO-spec    MPCO         Ladruno
 FourNodeQuad,     pass         pass         pass
 Tri31, SSPquad,
 solids
-SixNodeTri,       xfail #1970  xfail #1970  values pass; coords xfail #1998
+SixNodeTri,       pass         pass         values pass; coords xfail #1998
 EightNodeQuad     (rule 0)     (rule 0)     (rule 0: no natural coords)
 shells (8 cases)  xfail #1991  pass         xfail #1990
 trusses           G7           G7           G7
 ================= ============ ============ ===============================
 
 The fork writes SixNodeTri and EightNodeQuad under the bracket key
-``[0:0:0]``. On MPCO, integration rule 0 misses the catalog (#1970). On
-``.ladruno`` the values read, but the named-column bucket gets no natural
-coordinates: #1969's catalog fallback covers only generic ``C1..Cn`` buckets
-(#1998). Trusses are not
-repeated: ``test_element_families_ladruno_live.py`` (G7, #1949) already pins
-them on both routes.
+``[0:0:0]``. MPCO resolves rule 0 to the class's one catalogued rule
+(#1970). On ``.ladruno`` the values read, but the named-column bucket gets
+no natural coordinates: #1969's catalog fallback covers only generic
+``C1..Cn`` buckets (#1998). Trusses are not repeated:
+``test_element_families_ladruno_live.py`` (G7, #1949) already pins them on
+both routes.
 
 Gated by the ``ladruno_fork`` marker, so the nightly ``live-fork`` lane runs it
 against the pinned build.
@@ -70,7 +69,6 @@ ROUTES = ("MPCO-spec", "MPCO", "Ladruno")
 #: Written under integration rule 0 by the fork.
 RULE_ZERO = frozenset({"SixNodeTri", "EightNodeQuad"})
 
-B_RULE0_MPCO = "#1970: MPCO bucket under integration rule 0 reads an empty slab"
 B_SHELL_SPEC = ("#1991: emit_mpco records shell resultants as section.force; "
                 "the read is empty")
 B_SHELL_LADRUNO = "#1990: .ladruno shell resultants (p11..q2) read an empty slab"
@@ -82,8 +80,6 @@ FORK_CASES = [k for k, c in CASES.items() if c.anchor != "truss"]
 
 
 def _values_xfail(case: Case, route: str) -> "str | None":
-    if route.startswith("MPCO") and case.cpp_class in RULE_ZERO:
-        return B_RULE0_MPCO
     if case.comps == SHELL:
         return {"MPCO-spec": B_SHELL_SPEC, "Ladruno": B_SHELL_LADRUNO}.get(route)
     return None
@@ -128,7 +124,6 @@ def _run(case: Case, route: str, tmp_path: Path, stub_model_h5: Path):
                 element_ids=np.array([built.eid]),
                 element_class_name=case.cpp_class,
             ),
-            # The stage time vector comes from the node results (#1970).
             ResolvedRecorderRecord(
                 category="nodes", name="u", components=("displacement_x",),
                 dt=None, n_steps=None, node_ids=built.node_ids,
