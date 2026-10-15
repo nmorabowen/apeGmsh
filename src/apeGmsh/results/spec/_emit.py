@@ -708,7 +708,31 @@ def _emit_element_simple(
     An elastic-beam line-stations record
     (:func:`line_stations_from_local_force`) emits one ``localForce``
     recorder instead of that pair.
+
+    A section deformation (``axial_strain``, ``curvature_*``, ...) raises
+    ``ValueError`` naming it, as :func:`collect_mpco_tokens` does: both
+    recorders above write section forces, which the transcoder would read
+    back under the deformation's name (#2052).
     """
+    if rec.category == "line_stations":
+        from apeGmsh.opensees._response_catalog import (
+            gauss_keyword_for_canonical,
+        )
+        deformations = [
+            c for c in rec.components
+            if gauss_keyword_for_canonical(c, topology="line_stations")
+            == "section.deformation"
+        ]
+        if deformations:
+            raise ValueError(
+                f"Record {rec.name!r} (category=line_stations): component(s) "
+                f"{', '.join(map(repr, deformations))} cannot go through the "
+                f"{file_format!r} recorder route: it records section force "
+                f"(or localForce) only, so they would read back section "
+                f"forces under deformation names. Drop them from the "
+                f"record; section deformations read back from the fork's "
+                f"native recorder."
+            )
     if rec.element_ids is None or rec.element_ids.size == 0:
         return
 
