@@ -86,6 +86,16 @@ class ShadowedStageNameWarning(UserWarning):
 # differs at element-size scale, orders of magnitude above this.
 _COORD_RTOL = 1e-6
 
+#: A program stage's ``analysis`` record → its :attr:`StageInfo.kind`
+#: (#1948).  The keys are the tokens ``apeGmsh.opensees.analysis`` emits;
+#: a stage's ``analyze_dt`` does not decide it (a ``Static`` stage may
+#: carry ``dt=dlam``, a ``Transient`` one may omit ``dt``).
+_ANALYSIS_KIND = {
+    "Static": "static",
+    "Transient": "transient",
+    "VariableTransient": "transient",
+}
+
 
 def _coords_mismatch(
     capture_ids: np.ndarray, capture_xyz: np.ndarray,
@@ -266,7 +276,10 @@ def _bind_stage_names(
     *,
     model_path: "str | Path",
 ) -> None:
-    """Rename the capture's stages after the archive's program (#1324).
+    """Name and kind the capture's stages after the archive's program.
+
+    #1324 names, #1948 kinds: a stage's kind comes from its archived
+    ``analysis`` record (:func:`_stage_kind`), not from ``analyze_dt``.
 
     ``model.stages()`` lists the ``ops.stage(name=...)`` blocks in
     registration order; the bridge emits one ``domainChange`` per
@@ -346,7 +359,36 @@ def _bind_stage_names(
             ),
             stacklevel=3,
         )
-    reader.attach_stage_names(paired)
+    kinds = [
+        _stage_kind(s, model_path=model_path)
+        for s in model.stages()[:len(capture)]
+    ]
+    reader.attach_stage_names(paired, kinds)
+
+
+def _stage_kind(stage: "Any", *, model_path: "str | Path") -> str:
+    """The kind of one program stage, read from its ``analysis`` record.
+
+    Every bridge stage archives its analysis chain
+    (``/opensees/stages/stage_NNN/analysis@analysis``); a stage without
+    one, or with a token this module does not know, raises rather than
+    guess from ``analyze_dt`` or the time vector.
+    """
+    chain = stage.chain_attrs
+    if "analysis" not in chain:
+        raise ValueError(
+            f"model_h5={str(model_path)!r}: stage {stage.name!r} archives "
+            f"no analysis record, so its kind (static or transient) is "
+            f"unknown."
+        )
+    token = str(chain["analysis"])
+    if token not in _ANALYSIS_KIND:
+        raise ValueError(
+            f"model_h5={str(model_path)!r}: stage {stage.name!r} has "
+            f"analysis {token!r}, which has no stage kind; known: "
+            f"{sorted(_ANALYSIS_KIND)}."
+        )
+    return _ANALYSIS_KIND[token]
 
 
 def _resolve_fem(

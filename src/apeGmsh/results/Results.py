@@ -73,7 +73,7 @@ bodies that need it. This keeps the import-DAG polarity tested by
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any, Optional, Sequence
 
 from numpy import ndarray
 
@@ -391,6 +391,7 @@ class Results:
         file_format: str = "out",
         stage_id: str | None = None,
         model: "Optional[OpenSeesModel]" = None,
+        stages: "Optional[Sequence[Any]]" = None,
     ) -> "Results":
         """Open the result of an OpenSees run driven by Tcl/Py recorders.
 
@@ -419,6 +420,15 @@ class Results:
         ``stage_id`` if not overridden. ``None`` (default) keeps the
         legacy flat-naming used by Tcl/Py exports.
 
+        ``stages`` reads a multi-stage :meth:`ResolvedRecorderSpec.emit_recorders`
+        run into one file: pass ``live.stages`` (each entry's ``name``
+        and ``kind``), and every stage becomes its own Results stage.
+        It excludes ``stage_id`` / ``stage_name`` / ``stage_kind``.
+
+        Recorders sample at every step, or every ``dt=`` of analysis
+        time; sampling at arbitrary caller instants has no recorder
+        equivalent.
+
         Nodes, element forces, gauss points and line stations are
         transcoded; fiber and layer records are skipped (``.out`` cannot
         carry them; use MPCO) and modal records are not emitted. Rows
@@ -443,20 +453,27 @@ class Results:
         # default, mirror stage_id so the resulting Results stage is
         # named meaningfully (otherwise everything ends up as
         # "analysis" regardless of which stage the user loaded).
+        if stages is not None and (stage_name, stage_kind, stage_id) != (
+                "analysis", "transient", None):
+            raise TypeError("Results.from_recorders: pass stages= or "
+                            "stage_name= / stage_kind= / stage_id=, not both.")
         if stage_id is not None and stage_name == "analysis":
             stage_name = stage_id
+        plan = ([(stage_name, stage_kind, stage_id)] if stages is None
+                else [(str(s.name), str(s.kind), str(s.name)) for s in stages])
 
         out_dir = Path(output_dir)
         cache_dir = _cache.resolve_cache_root(cache_root)
 
-        source_files = _cache.list_source_files(
-            spec, out_dir, file_format=file_format, stage_id=stage_id,
-        )
+        source_files = [f for _, _, prefix in plan for f in _cache.list_source_files(
+            spec, out_dir, file_format=file_format, stage_id=prefix,
+        )]
         key = _cache.compute_cache_key(
             source_files,
             parser_version=PARSER_VERSION,
             fem_snapshot_id=fem.snapshot_id,
             model_token=_cache.model_cache_token(model),
+            stages=plan,
         )
         cached_h5, _ = _cache.cache_paths(cache_dir, key)
 
@@ -475,6 +492,7 @@ class Results:
                 file_format=file_format,
                 stage_id=stage_id,
                 model_h5_src=model_h5_src,
+                stages=None if stages is None else [(n, k) for n, k, _ in plan],
             )
             transcoder.run()
 

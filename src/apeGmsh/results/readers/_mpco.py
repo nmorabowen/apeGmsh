@@ -47,6 +47,9 @@ if TYPE_CHECKING:
 # Stage groups in MPCO are ``MODEL_STAGE[<stamp>]``
 _STAGE_PREFIX = "MODEL_STAGE["
 
+#: The kinds a program stage takes (:meth:`MPCOReader.attach_stage_names`).
+_PROGRAM_STAGE_KINDS = frozenset({"static", "transient"})
+
 
 def _stage_sort_key(name: str) -> "tuple[int, str]":
     """Numeric-stamp sort key for ``MODEL_STAGE[<k>]`` group names."""
@@ -233,31 +236,43 @@ class MPCOReader:
     # Stage discovery
     # ------------------------------------------------------------------
 
-    def attach_stage_names(self, names: "Sequence[str]") -> None:
-        """Rename the capture stages after the program's stages (#1324).
+    def attach_stage_names(
+        self, names: "Sequence[str]", kinds: "Sequence[str]",
+    ) -> None:
+        """Name and kind the capture stages after the program's stages.
 
-        An ``.mpco`` names its stages ``MODEL_STAGE[<k>]``; the user's
-        ``ops.stage(name=...)`` names live only in the sibling
-        ``model.h5``.  :meth:`Results.from_mpco` calls this with the
-        program names, in registration order, once it has checked that
-        the counts agree — the pairing is positional, so a count
-        mismatch is the caller's decision, not a guess made here.  Stage
-        ids are untouched (reads key on them); the ``MODEL_STAGE[<k>]``
-        name moves to :attr:`StageInfo.aliases`.
+        An ``.mpco`` names its stages ``MODEL_STAGE[<k>]`` and does not
+        say whether a stage was static or transient; the user's
+        ``ops.stage(name=...)`` names and each stage's ``analysis``
+        record live only in the sibling ``model.h5`` (#1324, #1948).
+        :meth:`Results.from_mpco` calls this with the program names and
+        kinds, in registration order, once it has checked that the
+        counts agree — the pairing is positional, so a count mismatch is
+        the caller's decision, not a guess made here.  Stage ids are
+        untouched (reads key on them); the ``MODEL_STAGE[<k>]`` name
+        moves to :attr:`StageInfo.aliases`.
         """
         current = self.stages()
         hosts = [s for s in current if s.kind != "mode"]
-        if len(names) != len(hosts):
+        if not len(names) == len(kinds) == len(hosts):
             raise ValueError(
-                f"attach_stage_names: {len(names)} names for "
-                f"{len(hosts)} MODEL_STAGE groups in {self._path.name}."
+                f"attach_stage_names: {len(names)} names and "
+                f"{len(kinds)} kinds for {len(hosts)} MODEL_STAGE groups "
+                f"in {self._path.name}."
             )
-        # Mode stages keep their own names: they are not program
-        # stages, and the pairing is positional over the hosts only.
-        new_name = {s.id: str(n) for s, n in zip(hosts, names)}
+        bad = sorted({str(k) for k in kinds} - _PROGRAM_STAGE_KINDS)
+        if bad:
+            raise ValueError(
+                f"attach_stage_names: stage kinds {bad} are not program "
+                f"stage kinds {sorted(_PROGRAM_STAGE_KINDS)}."
+            )
+        # Mode stages keep their own names and kind: they are not
+        # program stages, and the pairing is positional over the hosts.
+        new = {s.id: (str(n), str(k)) for s, n, k in zip(hosts, names, kinds)}
         self._stage_cache = [
-            replace(s, name=new_name[s.id], aliases=(s.name, *s.aliases))
-            if s.id in new_name else s
+            replace(s, name=new[s.id][0], kind=new[s.id][1],
+                    aliases=(s.name, *s.aliases))
+            if s.id in new else s
             for s in current
         ]
 
@@ -283,7 +298,9 @@ class MPCOReader:
             hosts.append(StageInfo(
                 id=stage_id,
                 name=name,
-                kind="transient",       # MPCO stages aren't tagged; assume transient
+                # An .mpco does not tag its stages: "transient" until
+                # from_mpco(model_h5=) kinds them (attach_stage_names).
+                kind="transient",
                 n_steps=int(time.size),
             ))
             on_nodes = _child(grp, "RESULTS/ON_NODES")

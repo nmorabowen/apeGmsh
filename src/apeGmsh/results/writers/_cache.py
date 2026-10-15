@@ -11,6 +11,7 @@ Cache key inputs:
 - Source files' ``(path, mtime, size)`` tuples
 - ``parser_version`` from ``schema/_versions.py``
 - ``fem_snapshot_id`` from the bound FEMData
+- the bound model's token, and each stage's name, kind and file prefix
 
 Cache root resolution (in priority order):
 1. Explicit ``cache_root=`` kwarg on ``from_recorders``.
@@ -50,6 +51,7 @@ def compute_cache_key(
     parser_version: str,
     fem_snapshot_id: str,
     model_token: str | None = None,
+    stages: "Iterable[tuple[str, str, str | None]]" = (),
 ) -> str:
     """Return a 16-char hex cache key from input fingerprints.
 
@@ -59,6 +61,11 @@ def compute_cache_key(
     ``"sequential"``) must not share a cached file: its ``/opensees``
     zone and its ``element_index_space`` stamp both come from the model.
     ``None`` (no model) keys apart from every model-bearing key.
+
+    ``stages`` is the ``(name, kind, file prefix)`` of every stage the
+    file holds, in order (#1948): the name and kind are written into the
+    file but are not in any source file, so two reads that label the
+    same files differently must not share a cached file.
     """
     h = hashlib.blake2b(digest_size=16)
     h.update(parser_version.encode("utf-8"))
@@ -69,6 +76,8 @@ def compute_cache_key(
         h.update(b"model:none|")
     else:
         h.update(b"model:" + model_token.encode("utf-8") + b"|")
+    for name, kind, prefix in stages:
+        h.update(f"stage:{name!r}:{kind!r}:{prefix!r}|".encode("utf-8"))
     for f in sorted(source_files, key=lambda p: str(p)):
         try:
             stat = f.stat()
