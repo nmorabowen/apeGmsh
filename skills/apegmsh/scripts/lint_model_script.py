@@ -413,9 +413,10 @@ class RegistryError(RuntimeError):
 
 
 _ENTRY_KEYS = {          # kind -> (required keys, optional keys)
-    "attribute": ({"kind", "symbol", "use", "why"}, {"from", "import", "also"}),
-    "member": ({"kind", "symbol", "member_of", "call", "keyword", "use", "why"}, set()),
+    "attribute": ({"kind", "status", "symbol", "use", "why"}, {"from", "import", "also"}),
+    "member": ({"kind", "status", "symbol", "member_of", "calls", "keyword", "use", "why"}, set()),
 }
+_STATUSES = ("removed", "planned")
 _DOTTED = re.compile(r"^[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*$")
 _REGISTRY: dict[Path, list[dict]] = {}
 
@@ -446,6 +447,14 @@ def load_registry(path: Path | None = None) -> list[dict]:
                                 f"and may have {sorted(optional)}; it has {sorted(keys)}")
         if "from" in entry and "import" in entry:
             raise RegistryError(f"{path}: entry {entry['symbol']!r} has both 'from' and 'import'")
+        if entry["status"] not in _STATUSES:
+            raise RegistryError(f"{path}: entry {entry['symbol']!r} has status {entry['status']!r}; "
+                                f"choose from {_STATUSES}")
+        calls = entry.get("calls", {"-": 0})
+        if not (isinstance(calls, dict) and calls and all(
+                isinstance(k, str) and isinstance(v, int) and v >= 0 for k, v in calls.items())):
+            raise RegistryError(f"{path}: entry {entry['symbol']!r} needs 'calls' as "
+                                "{call name: position of the keyword argument}")
         spellings = [entry["symbol"], *entry.get("also", [])]
         if kind == "attribute" and not all(isinstance(s, str) and _DOTTED.match(s) for s in spellings):
             raise RegistryError(f"{path}: entry {entry['symbol']!r} spells a name that is not dotted")
@@ -527,8 +536,11 @@ def rule_r1(src: Source) -> list[Finding]:
     members = [e for e in entries if e["kind"] == "member"]
 
     def flag(line: int, entry: dict) -> None:
-        out.append(Finding(line, "R1", f"`{entry['symbol']}` is a removed symbol "
-                                       f"({entry['why']}); use {entry['use']}"))
+        if entry["status"] == "planned":
+            what = f"is not available (planned, {entry['why']})"
+        else:
+            what = f"is a removed symbol ({entry['why']})"
+        out.append(Finding(line, "R1", f"`{entry['symbol']}` {what}; use {entry['use']}"))
 
     names = _Names(src.tree)
     for node in ast.walk(src.tree):
@@ -547,12 +559,14 @@ def rule_r1(src: Source) -> list[Finding]:
         elif isinstance(node, ast.Call):
             called = (names.qualify(node.func) or "").rsplit(".", 1)[-1]
             for entry in members:
-                if called != entry["call"]:
+                if called not in entry["calls"]:
                     continue
-                for kw in node.keywords:
-                    if (kw.arg == entry["keyword"] and isinstance(kw.value, ast.Constant)
-                            and kw.value.value == entry["symbol"]):
-                        flag(node.lineno, entry)
+                position = entry["calls"][called]
+                passed = [kw.value for kw in node.keywords if kw.arg == entry["keyword"]]
+                if len(node.args) > position:
+                    passed.append(node.args[position])
+                if any(isinstance(v, ast.Constant) and v.value == entry["symbol"] for v in passed):
+                    flag(node.lineno, entry)
     return out
 
 

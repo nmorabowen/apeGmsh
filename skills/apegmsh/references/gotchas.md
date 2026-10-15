@@ -93,7 +93,8 @@ single-shot `fem.nodes.get`, `fem.elements.get` / `fem.elements.resolve`
 and `g.mesh_selection.add_nodes`.
 
 ### ❌ Reaching for `g.opensees` / `g.opensees.ingest`
-Both are **gone**. The entry point is `from apeGmsh.opensees import apeSees`.
+`g.opensees` and `g.opensees.ingest` are **gone**. The entry point is
+`from apeGmsh.opensees import apeSees`.
 `apeSees` does **not** auto-emit `g.loads` / `g.displacements` / `g.masses` —
 loads and prescribed displacements are **opt-in** via `p.from_model(case)`
 inside a bridge pattern (ADR 0051); masses go through explicit `ops.mass(...)`
