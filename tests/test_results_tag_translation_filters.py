@@ -308,6 +308,109 @@ class TestReaders:
         assert got == {}
 
 
+# ── A lone unpaired id that equals an emitted ops tag (G18 shape) ──────
+#
+# The filter holds one id, no paired id beside it, and that id is the ops
+# tag of another element (on G18's solid+frame model, ``ids=[12]`` names
+# a never-emitted Base quad and returned strut fem 5's forces, ops tag
+# 12). Each case pairs every recorded ops tag ``t`` with fem ``t + 100``,
+# so ``[t]`` is no fem id; the untranslated reader proves ``t`` holds
+# rows, and the translated read must return none of them and warn.
+
+_RESULTS = Path(__file__).resolve().parent / "fixtures" / "results"
+_OFFSET = 100
+
+
+def _elements(reader, comp, ids):
+    return reader.read_elements(reader.stages()[0].id, comp, element_ids=ids)
+
+
+def _stations(reader, comp, ids):
+    return reader.read_line_stations(
+        reader.stages()[0].id, comp, element_ids=ids,
+    )
+
+
+def _gauss(reader, comp, ids):
+    return reader.read_gauss(reader.stages()[0].id, comp, element_ids=ids)
+
+
+def _slab_ids(slab) -> "list[int]":
+    ids = getattr(slab, "element_ids", None)
+    if ids is None:
+        ids = slab.element_index
+    return sorted({int(e) for e in np.asarray(ids)})
+
+
+_COLLISIONS = {
+    # name: (open the untranslated reader, read, component, ops tag)
+    "ladruno-nodal-forces": (
+        lambda tmp: _ladruno_reader("truss2d.ladruno"),
+        _elements, "basicForce", 2),
+    "ladruno-nodal-forces-partitions": (
+        lambda tmp: _ladruno_reader(*_LADRUNO_SETS["ladruno-partitions"]),
+        _elements, "basicForce", 2),
+    "ladruno-line-stations": (
+        lambda tmp: _ladruno_reader("truss2d.ladruno"),
+        _stations, "axial_force", 1),
+    "ladruno-gauss": (
+        lambda tmp: _ladruno_reader("quad2d.ladruno"),
+        _gauss, "stress_xx", 1),
+    "mpco-nodal-forces": (
+        lambda tmp: _mpco_reader([_RESULTS / "elasticFrame.mpco"]),
+        _elements, "nodal_resisting_force_local_x", 5),
+    "mpco-line-stations": (
+        lambda tmp: _mpco_reader([_RESULTS / "elasticFrame.mpco"]),
+        _stations, "axial_force", 5),
+    "mpco-gauss": (
+        lambda tmp: _mpco_reader(_mpco_files(tmp, [[1, 2]])),
+        _gauss, "stress_xx", 2),
+    "mpco-gauss-partitions": (
+        lambda tmp: _mpco_reader(_mpco_files(tmp, [[1], [2]])),
+        _gauss, "stress_xx", 2),
+}
+
+
+@pytest.mark.parametrize("name", sorted(_COLLISIONS))
+def test_a_lone_unpaired_id_equal_to_an_ops_tag_reads_nothing(
+    name: str, tmp_path: Path,
+) -> None:
+    open_reader, read, comp, ops = _COLLISIONS[name]
+    reader = open_reader(tmp_path)
+    try:
+        own = read(reader, comp, np.array([ops]))
+        assert _slab_ids(own) == [ops], "fixture: ops tag holds no rows"
+        # Pair every element the file holds: its embedded snapshot plus
+        # this component's rows (the synthetic MPCO lists no elements).
+        recorded = set(_slab_ids(read(reader, comp, None)))
+        embedded = reader.fem()
+        if embedded is not None:
+            for group in embedded.elements:
+                recorded.update(int(e) for e in np.asarray(group.ids))
+    finally:
+        reader.close()
+    pairing = {t + _OFFSET: t for t in recorded}
+    translator = ElementTagTranslator(
+        pairing, {o: f for f, o in pairing.items()},
+    )
+    reader = open_reader(tmp_path)
+    reader.attach_tag_map(translator)
+    try:
+        with pytest.warns(
+            WarnElementFilterUnread, match=rf"\[{ops}\] are no element",
+        ):
+            got = read(reader, comp, np.array([ops]))
+        assert _slab_ids(got) == []
+        # The element itself still reads under its own fem id.
+        mine = _silent(read, reader, comp, np.array([ops + _OFFSET]))
+        assert _slab_ids(mine) == [ops + _OFFSET]
+        np.testing.assert_array_equal(
+            np.asarray(mine.values), np.asarray(own.values),
+        )
+    finally:
+        reader.close()
+
+
 @pytest.mark.parametrize("fmt", ["ladruno", "mpco"])
 def test_an_element_the_file_did_not_record_warns(fmt: str, tmp_path) -> None:
     """One file that records ops tag 1 only (fem 2); fem 3 is in the
