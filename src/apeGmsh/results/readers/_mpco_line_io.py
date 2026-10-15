@@ -22,21 +22,18 @@ gauss-level buckets, with two crucial differences:
 
 This module mirrors :mod:`_mpco_element_io` for line-stations
 buckets. It walks ``ON_ELEMENTS/section.force/`` (or
-``section.deformation/``) for a requested canonical component, parses each bucket's META to recover section
-codes, fetches ``GP_X`` from the connectivity dataset, builds a
-concrete :class:`ResponseLayout` via :func:`resolve_layout_from_gp_x`,
-and emits per-element-station slab parts ready to stitch into a
-``LineStationSlab``.
+``section.deformation/``) for a requested canonical component, parses
+each bucket's META to recover section codes, fetches ``GP_X`` from the
+connectivity dataset, builds a concrete :class:`ResponseLayout` via
+:func:`resolve_layout_from_gp_x`, and emits per-element-station slab
+parts ready to stitch into a ``LineStationSlab``.
 
-v1 scope (skipped silently when encountered):
-
-- ``header_idx != 0`` — heterogeneous response shapes within one
-  bucket. STKO uses ``hdrIdx`` to disambiguate distinct META
-  layouts that would otherwise collide. v1 reads ``:0`` only.
-- Element classes not in :data:`CUSTOM_RULE_CATALOG`.
-- Sections with response codes outside
-  :data:`SECTION_RESPONSE_TO_CANONICAL` (warping, asymmetric
-  bending — codes 15+).
+Every header index is read (``:0``, ``:1``, ...: MPCO splits one
+class's elements by section component list), and so is a custom-rule
+class outside :data:`CUSTOM_RULE_CATALOG`. A bucket that cannot be
+decoded raises when read: no ``GP_X`` (the fork's rule-0 beams), or a
+section code outside :data:`SECTION_RESPONSE_TO_CANONICAL` (warping,
+asymmetric bending — codes 15+, tagged ``Unknown``).
 
 Not silent: a section-deformation canonical requested from a file with
 no ``section.deformation`` group raises ``LookupError`` naming the
@@ -233,15 +230,27 @@ def discover_line_station_buckets(
             elem_key = parse_mpco_element_key(bracket_key)
         except ValueError:
             continue
-        if not elem_key.is_custom_rule:
-            # Standard-rule bucket under section.force? Out of scope.
+        catalogued = is_custom_rule_catalogued(
+            elem_key.class_name, catalog_token)
+        if not elem_key.is_custom_rule and not catalogued:
+            # A non-beam answering "section" (a zero-length section,
+            # say): its rule has no stations, so it is not a
+            # line-station element.
             continue
-        if elem_key.header_idx != 0:
-            # Heterogeneous-section bucket — out of scope for v1.
-            continue
-        if not is_custom_rule_catalogued(elem_key.class_name, catalog_token):
-            continue
-        custom = lookup_custom_rule(elem_key.class_name, catalog_token)
+        # Every header index is read: MPCO splits one class's elements
+        # into ``:0``, ``:1``, ... when their sections answer with
+        # different component lists (#2053 review F1). A class outside
+        # the catalogue is read too: section components depend on the
+        # section, not the element class, and an undecodable bucket
+        # raises at read time (no GP_X, unknown names).
+        custom = (
+            lookup_custom_rule(elem_key.class_name, catalog_token)
+            if catalogued else
+            CustomRuleLayout(
+                class_tag=elem_key.class_tag,
+                coord_system="isoparametric_1d",
+            )
+        )
         out.append(_LineBucket(
             bracket_key=bracket_key,
             elem_key=elem_key,
@@ -291,8 +300,11 @@ def read_gp_x_from_connectivity(
     if gp_x_attr is None:
         raise ValueError(
             f"MPCO connectivity dataset {conn_key!r} is missing the "
-            f"GP_X attribute. Custom-rule beam-columns must carry "
-            f"per-element integration-point coordinates."
+            f"GP_X attribute, so the station positions of element class "
+            f"{elem_key.class_name!r} (integration rule "
+            f"{elem_key.int_rule}) are unknown and its line-station "
+            f"results cannot be read. Custom-rule beam-columns must "
+            f"carry per-element integration-point coordinates."
         )
     return np.asarray(gp_x_attr, dtype=np.float64).flatten()
 

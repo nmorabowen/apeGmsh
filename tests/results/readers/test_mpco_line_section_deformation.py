@@ -109,6 +109,7 @@ def _add_bucket(
     f: h5py.File, *, group: str, class_tag: int, class_name: str,
     names: tuple[str, ...], gp_x: np.ndarray, element_ids: list[int],
     n_steps: int, custom_idx: int = 1, connectivity: bool = True,
+    header_idx: int = 0,
 ) -> None:
     stage = f["MODEL_STAGE[1]"]
     n_ip, n_comp = gp_x.size, len(names)
@@ -119,7 +120,7 @@ def _add_bucket(
         conn.attrs["GP_X"] = gp_x
     grp = stage["RESULTS/ON_ELEMENTS"].require_group(group)
     b = grp.create_group(
-        f"{class_tag}-{class_name}[{IntRule.Custom}:{custom_idx}:0]")
+        f"{class_tag}-{class_name}[{IntRule.Custom}:{custom_idx}:{header_idx}]")
     b.attrs["NUM_COLUMNS"] = np.array([n_ip * n_comp], dtype=np.int32)
     meta = b.create_group("META")
     meta.create_dataset("MULTIPLICITY", data=np.ones((n_ip, 1), np.int32))
@@ -253,6 +254,124 @@ def test_force_and_deformation_buckets_read_their_own_group(
         _read(path, "curvature_z").values, _expected(3, 1, 1, 3))
     np.testing.assert_array_equal(
         _read(path, "torsional_strain").values, _expected(0, 1, 1, 3))
+
+
+# =====================================================================
+# Every bucket is read: header splits and uncatalogued classes (F1)
+# =====================================================================
+#
+# The fork (79e062367) splits one class's elements by section component
+# list: two 3-D force beams, one with a bare elastic section and one with
+# shear, wrote ``74-ForceBeamColumn3d[1000:1:0]`` (``eps,kappaZ,kappaY,
+# theta``) and ``[1000:1:1]`` (``eps,kappaZ,gammaY,kappaY,gammaZ,theta``),
+# both sharing connectivity ``[1000:1]``. A 2-D ``mixedBeamColumn`` wrote
+# ``30766-MixedBeamColumn2d[1000:1:0]`` with ``GP_X``; that class is not in
+# CUSTOM_RULE_CATALOG. Before the fix the reader dropped ``:1`` and the
+# mixed beam with no warning.
+
+MIXED_2D = (30766, "MixedBeamColumn2d")   # tag as the live file wrote it
+AGG_3D_LIVE_ORDER = ("eps", "kappaZ", "gammaY", "kappaY", "gammaZ", "theta")
+
+
+def _header_split_file(path: Path, group: str, names0, names1) -> None:
+    with _skeleton(path, n_steps=2) as f:
+        _add_bucket(f, group=group, class_tag=ELE_TAG_ForceBeamColumn3d,
+                    class_name="ForceBeamColumn3d", names=names0,
+                    gp_x=GP_X_3, element_ids=[1], n_steps=2)
+        # Header 1 shares the [1000:1] connectivity dataset.
+        _add_bucket(f, group=group, class_tag=ELE_TAG_ForceBeamColumn3d,
+                    class_name="ForceBeamColumn3d", names=names1,
+                    gp_x=GP_X_3, element_ids=[2], n_steps=2,
+                    header_idx=1, connectivity=False)
+
+
+def test_header_split_deformation_reads_both_headers(tmp_path: Path) -> None:
+    path = tmp_path / "split.mpco"
+    _header_split_file(path, "section.deformation",
+                       SECTION_KINDS["3d_fiber_torsion"], AGG_3D_LIVE_ORDER)
+    # axial_strain is column 0 in both headers: element 1 then element 2.
+    slab = _read(path, "axial_strain")
+    assert slab.element_index.tolist() == [1, 1, 1, 2, 2, 2]
+    np.testing.assert_array_equal(
+        slab.values, np.hstack([_expected(0, 2, 1, 3)] * 2))
+    # shear_strain_y exists only in header 1, at column 2.
+    slab = _read(path, "shear_strain_y")
+    assert slab.element_index.tolist() == [2, 2, 2]
+    np.testing.assert_array_equal(slab.values, _expected(2, 2, 1, 3))
+    # theta: column 3 in header 0, column 5 in header 1.
+    np.testing.assert_array_equal(
+        _read(path, "torsional_strain").values,
+        np.hstack([_expected(3, 2, 1, 3), _expected(5, 2, 1, 3)]))
+
+
+def test_header_split_force_reads_both_headers(tmp_path: Path) -> None:
+    path = tmp_path / "split_force.mpco"
+    _header_split_file(path, "section.force", ("P", "Mz", "My", "T"),
+                       ("P", "Mz", "Vy", "My", "Vz", "T"))
+    slab = _read(path, "axial_force")
+    assert slab.element_index.tolist() == [1, 1, 1, 2, 2, 2]
+    slab = _read(path, "shear_y")
+    assert slab.element_index.tolist() == [2, 2, 2]
+    np.testing.assert_array_equal(slab.values, _expected(2, 2, 1, 3))
+
+
+@pytest.mark.parametrize(("group", "names", "canonical", "k"), [
+    ("section.deformation", ("eps", "kappaZ"), "curvature_z", 1),
+    ("section.force", ("P", "Mz"), "bending_moment_z", 1),
+])
+def test_uncatalogued_custom_rule_class_reads(
+    tmp_path: Path, group: str, names, canonical: str, k: int,
+) -> None:
+    tag, cls = MIXED_2D
+    from apeGmsh.opensees._response_catalog import is_custom_rule_catalogued
+    assert not is_custom_rule_catalogued(cls, "section_deformation")
+    path = tmp_path / "mixed.mpco"
+    with _skeleton(path, n_steps=1) as f:
+        _add_bucket(f, group=group, class_tag=tag, class_name=cls,
+                    names=names, gp_x=GP_X_3, element_ids=[3], n_steps=1)
+    slab = _read(path, canonical)
+    assert slab.element_index.tolist() == [3, 3, 3]
+    np.testing.assert_array_equal(slab.values, _expected(k, 1, 1, 3))
+    np.testing.assert_array_equal(slab.station_natural_coord, GP_X_3)
+
+
+def test_rule_zero_beam_without_gp_x_raises_naming_class(
+    tmp_path: Path,
+) -> None:
+    """The fork's own disp beam writes ``[0:0:0]`` and no GP_X: loud."""
+    from apeGmsh.opensees._response_catalog import (
+        ELE_TAG_LadrunoDispBeamColumn2d,
+    )
+    path = tmp_path / "rule0.mpco"
+    with _skeleton(path, n_steps=1) as f:
+        _add_bucket(f, group="section.deformation",
+                    class_tag=ELE_TAG_LadrunoDispBeamColumn2d,
+                    class_name="LadrunoDispBeamColumn2d",
+                    names=("eps", "kappaZ"), gp_x=GP_X_3,
+                    element_ids=[1], n_steps=1, connectivity=False)
+        stage = f["MODEL_STAGE[1]"]
+        stage["MODEL/ELEMENTS"].create_dataset(
+            f"{ELE_TAG_LadrunoDispBeamColumn2d}-LadrunoDispBeamColumn2d[0:0]",
+            data=np.zeros((1, 3), dtype=np.int32))
+        grp = stage["RESULTS/ON_ELEMENTS/section.deformation"]
+        (key,) = list(grp)
+        grp.move(key, key.replace("[1000:1:0]", "[0:0:0]"))
+    with pytest.raises(ValueError, match=r"LadrunoDispBeamColumn2d.*GP_X|GP_X.*LadrunoDispBeamColumn2d"):
+        _read(path, "curvature_z")
+
+
+def test_non_beam_standard_rule_bucket_is_not_a_line_station(
+    tmp_path: Path,
+) -> None:
+    """An uncatalogued class on a standard rule (a zero-length section)."""
+    path = tmp_path / "zl.h5"
+    with h5py.File(path, "w") as f:
+        f.create_group("ON_ELEMENTS/section.deformation").create_group(
+            "19-ZeroLengthSection[1:0:0]")
+    with h5py.File(path, "r") as f:
+        _, buckets = _mline.discover_line_station_buckets(
+            f["ON_ELEMENTS"], canonical_component="curvature_z")
+    assert buckets == []
 
 
 # =====================================================================
@@ -448,3 +567,87 @@ def test_live_force_beam_section_deformation_matches_ele_response(
             np.testing.assert_allclose(
                 slab.values[t], want, rtol=1e-12, atol=1e-18, err_msg=name)
         assert np.all(np.abs(slab.values[-1]) > 0.0), name   # not vacuous
+
+
+def _live_split(tmp: Path, case: str) -> tuple[Path, dict[int, np.ndarray]]:
+    """F1 reproducers: two section kinds on one class; a mixed beam."""
+    from apeGmsh.opensees.emitter.live import get_ops
+    ops = get_ops()
+    ops.wipe()
+    if case == "3d_two_kinds":
+        ops.model("basic", "-ndm", 3, "-ndf", 6)
+        for i in range(3):
+            ops.node(i + 1, 3.0 * i, 0.0, 0.0)
+        ops.fix(1, 1, 1, 1, 1, 1, 1)
+        ops.section("Elastic", 1, 2e11, 0.02, 3e-4, 2e-4, 8e10, 1e-4)
+        ops.section("Elastic", 2, 2e11, 0.02, 3e-4, 2e-4, 8e10, 1e-4,
+                    0.8, 0.8)
+        ops.geomTransf("Linear", 1, 0.0, 0.0, 1.0)
+        ops.beamIntegration("Lobatto", 1, 1, 3)
+        ops.beamIntegration("Lobatto", 2, 2, 3)
+        ops.element("forceBeamColumn", 1, 1, 2, 1, 1)
+        ops.element("forceBeamColumn", 2, 2, 3, 1, 2)
+        load = (1e3, -3e3, 2e3, 3e2, -2e2, 4e2)
+    else:                                            # "2d_mixed"
+        ops.model("basic", "-ndm", 2, "-ndf", 3)
+        for i in range(3):
+            ops.node(i + 1, 3.0 * i, 0.0)
+        ops.fix(1, 1, 1, 1)
+        ops.section("Elastic", 1, 2e11, 0.02, 3e-4)
+        ops.geomTransf("Linear", 1)
+        ops.beamIntegration("Lobatto", 1, 1, 3)
+        ops.element("mixedBeamColumn", 1, 1, 2, 1, 1)
+        ops.element("mixedBeamColumn", 2, 2, 3, 1, 1)
+        load = (1e3, -3e3, 4e2)
+    ops.timeSeries("Linear", 1)
+    ops.pattern("Plain", 1, 1)
+    ops.load(3, *load)
+    mpco = tmp / f"{case}.mpco"
+    ops.recorder("mpco", str(mpco), "-N", "displacement",
+                 "-E", "section.force", "-E", "section.deformation")
+    ops.constraints("Plain")
+    ops.numberer("RCM")
+    ops.system("BandGeneral")
+    ops.test("NormDispIncr", 1e-12, 10)
+    ops.algorithm("Newton")
+    ops.integrator("LoadControl", 1.0)
+    ops.analysis("Static")
+    assert ops.analyze(1) == 0
+    live = {e: np.stack([
+        np.asarray(ops.eleResponse(e, "section", i, "deformation"))
+        for i in (1, 2, 3)]) for e in (1, 2)}
+    ops.remove("recorders")
+    ops.wipe()
+    return mpco, live
+
+
+@pytest.mark.ladruno_fork
+@pytest.mark.parametrize("case", ["3d_two_kinds", "2d_mixed"])
+def test_live_every_bucket_matches_ele_response(
+    tmp_path: Path, case: str,
+) -> None:
+    """F1: header ``:1`` and an uncatalogued class read, not dropped."""
+    mpco, live = _live_split(tmp_path, case)
+    names_of: dict[int, list[str]] = {}
+    with h5py.File(mpco, "r") as f:
+        grp = f["MODEL_STAGE[1]/RESULTS/ON_ELEMENTS/section.deformation"]
+        keys = sorted(grp)
+        for key in keys:
+            meta = grp[key]["META/COMPONENTS"][...][0].decode()
+            names = meta.split(";")[0].rsplit(".", 1)[1].split(",")
+            for e in grp[key]["ID"][...].ravel():
+                names_of[int(e)] = names
+    assert sorted(names_of) == [1, 2]
+    if case == "3d_two_kinds":
+        assert [k[-3:] for k in keys] == [":0]", ":1]"], keys
+    else:
+        assert keys[0].startswith("30766-MixedBeamColumn2d["), keys
+    for name in sorted({n for v in names_of.values() for n in v}):
+        slab = _read(mpco, DEFORMATION_CANONICAL[name])
+        holders = [e for e in (1, 2) if name in names_of[e]]
+        assert slab.element_index.tolist() == [
+            e for e in holders for _ in range(3)], name
+        want = np.concatenate(
+            [live[e][:, names_of[e].index(name)] for e in holders])
+        np.testing.assert_allclose(
+            slab.values[0], want, rtol=1e-12, atol=1e-18, err_msg=name)
