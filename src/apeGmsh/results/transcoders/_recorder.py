@@ -118,6 +118,9 @@ class RecorderTranscoder:
         self._model_h5_src = (
             None if model_h5_src is None else Path(model_h5_src)
         )
+        # Per-node ndf from the model, read on first use (#1971).
+        self._nodes_ndf_map: dict[int, int] | None = None
+        self._nodes_ndf_read = False
         # Records the run() skipped — populated post-run for inspection.
         self.unsupported: list[str] = []
 
@@ -273,6 +276,59 @@ class RecorderTranscoder:
     # Per-record parsing
     # ------------------------------------------------------------------
 
+    def _nodes_ndf(self) -> "dict[int, int] | None":
+        """Per-node ndf from the model's ``/opensees/nodes_ndf``, read once.
+
+        ``None`` without ``model_h5_src``, and for an archive that predates
+        the group (``H5Model.nodes_ndf`` returns ``None``): the transcode
+        then keeps the recorder's values as they are.
+        """
+        if self._model_h5_src is None:
+            return None
+        if not self._nodes_ndf_read:
+            from ...opensees.emitter import h5_reader
+            with h5_reader.open(str(self._model_h5_src)) as m:
+                self._nodes_ndf_map = m.nodes_ndf()
+            self._nodes_ndf_read = True
+        return self._nodes_ndf_map
+
+    def _mask_rotations_past_ndf(
+        self,
+        rec: "ResolvedRecorderRecord",
+        node_ids: ndarray,
+        components: dict[str, ndarray],
+    ) -> None:
+        """NaN each rotational column a node's ndf does not reach (#1971).
+
+        One ``recorder Node`` line over a mixed-ndf model writes every
+        requested DOF for every node, and pads the DOFs a node lacks with
+        0.0: a tet node (ndf 3) under ``-dof 4 5 6`` reads rotation 0.0.
+        A rotational component recorded at DOF ``d`` is padding, not a
+        value, at each node whose ndf is below ``d``.
+        """
+        nodes_ndf = self._nodes_ndf()
+        if nodes_ndf is None or not components:
+            return
+        missing = sorted(
+            {int(n) for n in node_ids} - nodes_ndf.keys())
+        if missing:
+            raise ValueError(
+                f"Recorder {rec.name!r}: nodes {missing[:10]} have no entry "
+                f"in {self._model_h5_src}'s /opensees/nodes_ndf, so whether "
+                "their rotation columns hold values or padding is unknown. "
+                "Pass the model the recorders were emitted from."
+            )
+        ndf = np.array([nodes_ndf[int(n)] for n in node_ids], dtype=np.int64)
+        for canonical, arr in components.items():
+            dof = _rotational_node_dof(canonical)
+            if dof is None:
+                continue
+            pad = ndf < dof
+            if pad.any():
+                arr = np.array(arr, dtype=np.float64, copy=True)
+                arr[:, pad] = np.nan
+                components[canonical] = arr
+
     def _parse_node_record(self, rec) -> "_NodeRecordPayload":
         """Parse all emitted files for one nodes record."""
         # Reuse the emitter to learn what files OpenSees produced and
@@ -321,6 +377,7 @@ class RecorderTranscoder:
                     continue
                 components[canonical] = per_dof[comp_dof]   # (T, N_record)
 
+        self._mask_rotations_past_ndf(rec, node_ids, components)
         return _NodeRecordPayload(
             record_name=rec.name,
             node_ids=node_ids,
@@ -1113,3 +1170,21 @@ def _canonical_to_node_ops(canonical: str) -> tuple[str, int] | None:
     if axis not in dof_table:
         return None
     return (ops_type, dof_table[axis])
+
+
+def _rotational_node_dof(canonical: str) -> int | None:
+    """The recorded DOF of a rotational node component, else ``None``.
+
+    Rotational means the emit module's ``"rot"`` axis kind (rotation,
+    angular velocity/acceleration, reaction moment, unbalance moment).
+    """
+    from ..spec._emit import _NODAL_PREFIX_TABLE
+
+    if "_" not in canonical:
+        return None
+    prefix = canonical.rsplit("_", 1)[0]
+    entry = _NODAL_PREFIX_TABLE.get(prefix)
+    if entry is None or entry[1] != "rot":
+        return None
+    pair = _canonical_to_node_ops(canonical)
+    return None if pair is None else pair[1]
