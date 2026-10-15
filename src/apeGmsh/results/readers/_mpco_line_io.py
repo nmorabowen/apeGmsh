@@ -2,6 +2,7 @@
 
 MPCO stores beam-column section forces under
 ``MODEL_STAGE[…]/RESULTS/ON_ELEMENTS/section.force/<bucket_key>/``
+and section deformations under ``…/section.deformation/<bucket_key>/``,
 where ``<bucket_key>`` is ``<classTag>-<ClassName>[<rule>:<cust>:<hdr>]``
 with ``<rule> == 1000`` (``CustomIntegrationRule``). Each bucket
 holds the same ``META`` / ``ID`` / ``DATA/STEP_<k>`` triplet as
@@ -12,15 +13,16 @@ gauss-level buckets, with two crucial differences:
    ``MODEL/ELEMENTS/<classTag>-<ClassName>[<rule>:<cust>]`` (no
    trailing header index), not on the results bucket itself.
 2. ``META/COMPONENTS`` carries per-IP section response component
-   names (``P``, ``Mz``, ``My``, ``T``, ``Vy``, ``Vz``) rather than
-   stress / strain tensor indices. Catalog entries declare only
+   names (``P``, ``Mz``, ``My``, ``T``, ``Vy``, ``Vz`` for forces;
+   ``eps``, ``kappaZ``, ``kappaY``, ``theta``, ``gammaY``, ``gammaZ``
+   for deformations) rather than stress / strain tensor indices. Catalog entries declare only
    the structural identity (class tag, parent domain); the
    concrete ``ResponseLayout`` is resolved per-bucket from
    ``GP_X`` plus the parsed section codes.
 
 This module mirrors :mod:`_mpco_element_io` for line-stations
-buckets. It walks ``ON_ELEMENTS/section.force/`` for a requested
-canonical component, parses each bucket's META to recover section
+buckets. It walks ``ON_ELEMENTS/section.force/`` (or
+``section.deformation/``) for a requested canonical component, parses each bucket's META to recover section
 codes, fetches ``GP_X`` from the connectivity dataset, builds a
 concrete :class:`ResponseLayout` via :func:`resolve_layout_from_gp_x`,
 and emits per-element-station slab parts ready to stitch into a
@@ -35,6 +37,11 @@ v1 scope (skipped silently when encountered):
 - Sections with response codes outside
   :data:`SECTION_RESPONSE_TO_CANONICAL` (warping, asymmetric
   bending — codes 15+).
+
+Not silent: a section-deformation canonical requested from a file with
+no ``section.deformation`` group raises ``LookupError`` naming the
+group (#2053); a section-force canonical may still come from
+``localForce``, so its missing group reads empty.
 """
 from __future__ import annotations
 
@@ -95,8 +102,20 @@ def canonical_to_line_station_token(
 # ``getType()`` Vector picks values from this set, in the section's
 # own order. Codes match
 # ``SRC/material/section/SectionForceDeformation.h:52–57``.
+#
+# The tokens are the ``ResponseType`` tags of
+# ``SectionForceDeformation::setResponse`` (fork 79e062367,
+# ``SRC/material/section/SectionForceDeformation.cpp`` L651–672 for
+# ``deformation``, L704–725 for ``force``). No section class on the
+# beam path overrides those tags, so every section kind shares them:
+# a 2-D fiber / elastic section ``[P, Mz]`` writes ``eps,kappaZ``; a
+# 3-D fiber section with torsion ``[P, Mz, My, T]`` writes
+# ``eps,kappaZ,kappaY,theta``; a shear-deformable section
+# (SectionAggregator with Vy/Vz, Timoshenko elastic sections) adds
+# ``gammaY`` / ``gammaZ``. The two vocabularies are disjoint, and a
+# bucket must use the one its ON_ELEMENTS group names.
 
-MPCO_SECTION_NAME_TO_CODE: dict[str, int] = {
+MPCO_SECTION_FORCE_NAME_TO_CODE: dict[str, int] = {
     "P": 2,        # SECTION_RESPONSE_P
     "Mz": 1,       # SECTION_RESPONSE_MZ
     "My": 4,       # SECTION_RESPONSE_MY
@@ -105,6 +124,33 @@ MPCO_SECTION_NAME_TO_CODE: dict[str, int] = {
     "Vz": 5,       # SECTION_RESPONSE_VZ
 }
 
+MPCO_SECTION_DEFORMATION_NAME_TO_CODE: dict[str, int] = {
+    "eps": 2,      # SECTION_RESPONSE_P  — axial strain
+    "kappaZ": 1,   # SECTION_RESPONSE_MZ — curvature about z
+    "kappaY": 4,   # SECTION_RESPONSE_MY — curvature about y
+    "theta": 6,    # SECTION_RESPONSE_T  — twist rate
+    "gammaY": 3,   # SECTION_RESPONSE_VY — shear strain y
+    "gammaZ": 5,   # SECTION_RESPONSE_VZ — shear strain z
+}
+
+#: Every section component name the reader decodes, either kind.
+MPCO_SECTION_NAME_TO_CODE: dict[str, int] = {
+    **MPCO_SECTION_FORCE_NAME_TO_CODE,
+    **MPCO_SECTION_DEFORMATION_NAME_TO_CODE,
+}
+
+#: ON_ELEMENTS group → (``resolve_layout_from_gp_x`` kind, its names).
+_SECTION_KIND_BY_GROUP: dict[str, tuple[str, dict[str, int]]] = {
+    "section.force": ("force", MPCO_SECTION_FORCE_NAME_TO_CODE),
+    "section.deformation": (
+        "deformation", MPCO_SECTION_DEFORMATION_NAME_TO_CODE),
+}
+
+#: Groups whose canonicals have no other source in an MPCO file.
+#: ``section.force`` is absent from this set: ``localForce`` supplies
+#: elastic beams' end stations when it is missing.
+_GROUPS_WITHOUT_FALLBACK: frozenset[str] = frozenset({"section.deformation"})
+
 
 # =====================================================================
 # Per-bucket descriptor — what the reader walks
@@ -112,10 +158,16 @@ MPCO_SECTION_NAME_TO_CODE: dict[str, int] = {
 
 @dataclass(frozen=True)
 class _LineBucket:
-    """One ``ON_ELEMENTS/section.force/<bracket_key>`` group + its catalog entry."""
+    """One ``ON_ELEMENTS/<section group>/<bracket_key>`` group + its catalog entry.
+
+    ``kind`` is ``"force"`` under ``section.force`` and
+    ``"deformation"`` under ``section.deformation``; it picks both the
+    META name vocabulary and the canonical names.
+    """
     bracket_key: str
     elem_key: MPCOElementKey
     custom: CustomRuleLayout
+    kind: str
 
 
 # =====================================================================
@@ -127,23 +179,51 @@ def discover_line_station_buckets(
     *,
     canonical_component: str,
 ) -> tuple[str | None, list[_LineBucket]]:
-    """Walk ``ON_ELEMENTS/section.force/`` and return catalogued buckets.
+    """Walk ``ON_ELEMENTS/<section group>/`` and return catalogued buckets.
 
     Returns
     -------
     (mpco_group_name, buckets)
         ``mpco_group_name`` is the ON_ELEMENTS child name we looked
-        under (always ``"section.force"`` in v1), or ``None`` if the
-        canonical component has no line-stations routing. ``buckets``
-        is the list whose ``(class_name, "section_force")`` is in
-        :data:`CUSTOM_RULE_CATALOG`, ``int_rule == Custom``, and
-        ``header_idx == 0``.
+        under (``"section.force"`` or ``"section.deformation"``), or
+        ``None`` if the canonical component has no line-stations
+        routing. ``buckets`` is the list whose ``(class_name,
+        catalog_token)`` is in :data:`CUSTOM_RULE_CATALOG`,
+        ``int_rule == Custom``, and ``header_idx == 0``.
+
+    Raises
+    ------
+    LookupError
+        The canonical routes to ``section.deformation`` and the file
+        has no such ON_ELEMENTS group: the run did not record
+        ``-E section.deformation``, and nothing else in an MPCO file
+        holds section deformations. MPCO creates the group for every
+        requested ``-E`` result even when no element of this partition
+        answers, so its absence means "not recorded", never "no
+        beams here". ``LookupError``, not ``ValueError``: callers that
+        skip undecodable buckets on ``ValueError`` must not swallow a
+        missing recording.
     """
     mapping = canonical_to_line_station_token(canonical_component)
     if mapping is None:
         return (None, [])
     mpco_group_name, catalog_token = mapping
+    if mpco_group_name not in _SECTION_KIND_BY_GROUP:
+        raise ValueError(
+            f"line-station component {canonical_component!r} routes to "
+            f"MPCO group {mpco_group_name!r}, which this reader cannot "
+            f"decode (known: {sorted(_SECTION_KIND_BY_GROUP)})."
+        )
+    kind = _SECTION_KIND_BY_GROUP[mpco_group_name][0]
     if mpco_group_name not in on_elements_grp:
+        if mpco_group_name in _GROUPS_WITHOUT_FALLBACK:
+            raise LookupError(
+                f"MPCO file has no ON_ELEMENTS/{mpco_group_name} bucket, "
+                f"so it cannot supply line-station component "
+                f"{canonical_component!r}. Record it with "
+                f"'-E {mpco_group_name}' (recorded groups: "
+                f"{sorted(on_elements_grp)})."
+            )
         return (mpco_group_name, [])
 
     token_grp = on_elements_grp[mpco_group_name]
@@ -166,6 +246,7 @@ def discover_line_station_buckets(
             bracket_key=bracket_key,
             elem_key=elem_key,
             custom=custom,
+            kind=kind,
         ))
     return (mpco_group_name, out)
 
@@ -220,6 +301,7 @@ def parse_section_codes_from_meta(
     bucket_grp: "h5py.Group",
     *,
     bracket_key: str,
+    kind: str = "force",
 ) -> tuple[int, ...]:
     """Parse META/COMPONENTS to extract per-IP section response codes.
 
@@ -230,12 +312,16 @@ def parse_section_codes_from_meta(
     where each ``;``-separated segment describes one IP, ``<pathInts>``
     are descriptor levels (3 ints for section.force on a beam, e.g.
     ``"0.1.2"``), and ``<comps>`` is a comma-separated list of MPCO
-    section component tokens (``"P,Mz,My,T,Vy,Vz"``).
+    section component tokens (``"P,Mz,My,T,Vy,Vz"`` under
+    ``kind="force"``, ``"eps,kappaZ,kappaY,theta,gammaY,gammaZ"``
+    under ``kind="deformation"``). A name from the other kind's
+    vocabulary raises: it means the bucket sits under the wrong group.
 
     v1 requires homogeneous sections — every IP segment must produce
     the same code tuple — so we return one tuple representing the
     whole bucket.
     """
+    names_to_code = _names_for_kind(kind)
     meta = bucket_grp["META"] if "META" in bucket_grp else None
     if meta is None or "COMPONENTS" not in meta:
         raise ValueError(
@@ -255,7 +341,10 @@ def parse_section_codes_from_meta(
         )
 
     parsed = [
-        _parse_one_segment(seg, bracket_key=bracket_key)
+        _parse_one_segment(
+            seg, bracket_key=bracket_key, kind=kind,
+            names_to_code=names_to_code,
+        )
         for seg in segments
     ]
     first = parsed[0]
@@ -269,7 +358,24 @@ def parse_section_codes_from_meta(
     return first
 
 
-def _parse_one_segment(segment: str, *, bracket_key: str) -> tuple[int, ...]:
+def _names_for_kind(kind: str) -> dict[str, int]:
+    for group_kind, names in _SECTION_KIND_BY_GROUP.values():
+        if group_kind == kind:
+            return names
+    raise ValueError(
+        f"section response kind must be one of "
+        f"{sorted(k for k, _ in _SECTION_KIND_BY_GROUP.values())}; "
+        f"got {kind!r}."
+    )
+
+
+def _parse_one_segment(
+    segment: str,
+    *,
+    bracket_key: str,
+    kind: str,
+    names_to_code: dict[str, int],
+) -> tuple[int, ...]:
     """Parse one ``<pathInts>.<compsCsv>`` segment into a code tuple.
 
     The component-CSV is the substring after the *last* dot. Path
@@ -289,14 +395,21 @@ def _parse_one_segment(segment: str, *, bracket_key: str) -> tuple[int, ...]:
             f"MPCO bucket {bracket_key!r}: META segment {segment!r} "
             f"has no component names after the dot."
         )
-    try:
-        return tuple(MPCO_SECTION_NAME_TO_CODE[n] for n in names)
-    except KeyError as e:
+    unknown = [n for n in names if n not in names_to_code]
+    if unknown:
+        if all(n in MPCO_SECTION_NAME_TO_CODE for n in unknown):
+            raise ValueError(
+                f"MPCO bucket {bracket_key!r}: section {kind} bucket "
+                f"carries component name(s) {unknown} of the other "
+                f"section response kind in META segment {segment!r}. "
+                f"Known {kind} names: {sorted(names_to_code)}."
+            )
         raise ValueError(
             f"MPCO bucket {bracket_key!r}: unknown section component "
-            f"name {e!s} in META segment {segment!r}. Known names: "
-            f"{sorted(MPCO_SECTION_NAME_TO_CODE)}."
-        ) from None
+            f"name(s) {unknown} in META segment {segment!r}. Known "
+            f"{kind} names: {sorted(names_to_code)}."
+        )
+    return tuple(names_to_code[n] for n in names)
 
 
 # =====================================================================
@@ -316,9 +429,11 @@ def resolve_bucket_layout(
     """
     gp_x = read_gp_x_from_connectivity(model_elements_grp, bucket.elem_key)
     section_codes = parse_section_codes_from_meta(
-        bucket_grp, bracket_key=bucket.bracket_key,
+        bucket_grp, bracket_key=bucket.bracket_key, kind=bucket.kind,
     )
-    layout = resolve_layout_from_gp_x(bucket.custom, gp_x, section_codes)
+    layout = resolve_layout_from_gp_x(
+        bucket.custom, gp_x, section_codes, kind=bucket.kind,
+    )
     return layout, gp_x
 
 
@@ -402,6 +517,8 @@ def read_line_bucket_slab(
 
 # Re-export for symmetry with _mpco_element_io.
 __all__ = [
+    "MPCO_SECTION_DEFORMATION_NAME_TO_CODE",
+    "MPCO_SECTION_FORCE_NAME_TO_CODE",
     "MPCO_SECTION_NAME_TO_CODE",
     "canonical_to_line_station_token",
     "discover_line_station_buckets",
