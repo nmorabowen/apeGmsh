@@ -6,12 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from apeGmsh.studio._index_build import (
-    _RETURNED_TYPES,
-    INDEX_PATH,
-    index_drift,
-    skill_for,
-)
+from apeGmsh.studio._index_build import INDEX_PATH, index_drift, skill_for
 from apeGmsh.studio._lookup import (
     _MAX_LINES,
     format_ambiguous,
@@ -184,7 +179,7 @@ def test_returned_types_are_returned_by_indexed_callables() -> None:
 
 def test_returned_types_indexed_with_own_skill() -> None:
     entries = load_index()["entries"]
-    for name, _module in _RETURNED_TYPES:
+    for name in ("EigenResult", "ComplexEigenResult", "ParallelModalResult", "FEMData"):
         own = [k for k in entries if k.startswith(f"{name}.")]
         assert own, f"no index entry for returned type {name}"
         for key in own:
@@ -192,17 +187,16 @@ def test_returned_types_indexed_with_own_skill() -> None:
             assert entries[key]["skill"] == skill_for(key), key
 
 
-def test_returned_types_fail_closed(monkeypatch) -> None:
-    import apeGmsh.studio._index_build as ib
+def test_session_walk_fails_closed_on_unimportable_composite(monkeypatch) -> None:
+    """A composite that does not import raises; it is never silently dropped."""
+    from apeGmsh._core import apeGmsh as Session
+    from apeGmsh.studio._index_build import _walk_session
 
     monkeypatch.setattr(
-        ib, "_RETURNED_TYPES", (("NoSuchClass", "apeGmsh.studio._index_build"),)
+        Session, "_COMPOSITES", (("bogus", ".no_such_module", "Nope", False),)
     )
-    with pytest.raises(RuntimeError, match="NoSuchClass"):
-        ib._walk_returned_types({})
-    monkeypatch.setattr(ib, "_RETURNED_TYPES", (("PurePath", "pathlib"),))
-    with pytest.raises(RuntimeError, match="_SKILL_BY_PREFIX"):
-        ib._walk_returned_types({})
+    with pytest.raises(ModuleNotFoundError, match="no_such_module"):
+        _walk_session({})
 
 
 def test_add_box_full_symbol() -> None:
