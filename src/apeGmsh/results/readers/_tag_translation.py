@@ -22,35 +22,40 @@ persists at ``/opensees/element_meta/{type}/`` (``ids`` = ops tag,
 allocator-assigned, not ``fem_eid + offset`` — so the per-element pairing
 is the only correct inverse.
 
-Defensive, all-or-nothing
--------------------------
-Translation only fires when the bound model describes **every** id in the
-array; otherwise the array passes through unchanged. Additionally, the
-two arrays of one read (the incoming filter and the returned index) are
-decided **together** via :meth:`ElementTagTranslator.read_translation` —
-never independently — because an untranslated filter's selected index can
-be (wrongly) fully covered by the reverse map. Rationale:
+The archive describes the files, or it does not
+-----------------------------------------------
+Each reader the translator is attached to declares the ops tags its
+file records (:meth:`ElementTagTranslator.declare_recorded`; a
+multi-partition set declares every partition before any read). The
+archive *describes* the files when every recorded ops tag is an element
+the archive emitted: one it pairs with a ``fem_eid``, or one it emitted
+without a mesh id (``fem_eid`` sentinel, e.g. interface ``zeroLength``
+pairs, addressed by their ops tag). The decision is per result set, not
+per read or per bucket.
 
-* Dense 1-based models map identically (``ops == fem``), so translation
-  is a behavioural no-op either way.
-* A bridge-emitted model's ``element_meta`` describes every emitted
-  element, so every recorded ops tag (and every queryable ``fem_eid``)
-  is present → full relabel.
-* Tests (and some callers) pair an MPCO file with an *unrelated* stub
-  ``model.h5`` purely to satisfy the required ``model_h5=``. Such a stub
-  describes none — or worse, a colliding subset — of the file's
-  elements. All-or-nothing means a mismatched model never partially
-  relabels (which would silently corrupt ``element_index``); it simply
-  does nothing, exactly as before the relabel landed.
+* **Described** (a bridge-emitted ``model.h5`` beside its own run):
+  every id translates on its own (#2066). A filter's paired ``fem_eid``
+  reads its own ops tag whatever else the filter holds; a sentinel
+  element is read by its ops tag; the returned index relabels id by id.
+  A requested id that is no element of the archive, or an element the
+  files did not record, is not read and
+  :class:`WarnElementFilterUnread` names it. A filter id is never read
+  as an ops tag in its place (that read another element's row).
+* **Not described** (an *unrelated* stub ``model.h5`` passed only to
+  satisfy ``model_h5=``, the pattern tests use): the archive is not
+  about these files, so both arrays of every read pass through
+  untouched, as before the relabel landed. :class:`Results` already
+  warns :class:`WarnElementTagPairingMissing` for that join when the
+  bound ``FEMData`` speaks ``fem_eid``.
 
-Strict fail-loud on a partially-known array (the genuine typo / drift
-case) is deferred — it cannot be told apart from a "deliberately
-unrelated stub model" without extra provenance. Tracked under ADR 0043
-§slice 1.3.
+A drifted archive (one from a slightly different run) is judged by the
+same rule: it describes the files or passes through. Telling drift from
+an unrelated stub needs provenance the archive does not carry (ADR 0043
+§slice 1.3).
 """
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any, Callable, Iterable, Optional
 
 import numpy as np
 from numpy import ndarray
@@ -66,7 +71,7 @@ class WarnElementTagPairingMissing(UserWarning):
     ``Results.from_ladruno`` without ``model_h5=``, or a ``model_h5``
     that records no ``element_meta``), or an attached pairing that does
     not cover the file's recorded element ids (an unrelated stub
-    ``model_h5=``), which the all-or-nothing contract leaves inert.
+    ``model_h5=``), whose reads then pass through untranslated.
     Element ids in filters (``pg=`` / ``ids=`` / …) and the returned
     ``element_index`` then cannot be translated between the file's ops
     tags and the snapshot's ``fem_eid``s; if the two id spaces differ
@@ -77,30 +82,66 @@ class WarnElementTagPairingMissing(UserWarning):
     """
 
 
-class ElementTagTranslator:
-    """Bidirectional, defensive-passthrough ``fem_eid`` ↔ ops-tag map."""
+class WarnElementFilterUnread(UserWarning):
+    """An element id filter names ids the read cannot return (#2066).
 
-    __slots__ = ("_fem_to_ops", "_ops_to_fem")
+    Raised (as a warning) by an MPCO or ``.ladruno`` element read whose
+    bound ``model.h5`` describes the result files, when the filter holds
+    an id that is no element of the archive, or an element of the
+    archive whose ops tag the files never recorded (a recorder
+    ``region`` that left it out). The read returns the other ids' rows;
+    the named ids get none, and no id is read as an ops tag in their
+    place.
+    """
+
+
+class ElementTagTranslator:
+    """Bidirectional ``fem_eid`` <-> ops-tag map for one result set.
+
+    ``to_ops`` / ``to_fem`` are all-or-nothing array maps (DomainCapture
+    uses them). Reader reads go through :meth:`read_translation`, which
+    needs the result files' recorded ops tags, declared with
+    :meth:`declare_recorded` (see the module docstring).
+    """
+
+    __slots__ = (
+        "_fem_to_ops", "_ops_to_fem", "_ops_only", "_recorded", "_described",
+    )
 
     def __init__(
         self,
         fem_to_ops: "dict[int, int]",
         ops_to_fem: "dict[int, int]",
+        ops_only: "Iterable[int]" = (),
     ) -> None:
         self._fem_to_ops = dict(fem_to_ops)
         self._ops_to_fem = dict(ops_to_fem)
+        # Ops tags the archive emitted without a mesh id (fem_eid
+        # sentinel): such an element is addressed by its ops tag.
+        self._ops_only = frozenset(int(t) for t in ops_only)
+        clash = self._ops_only & self._ops_to_fem.keys()
+        if clash:
+            raise ValueError(
+                f"ElementTagTranslator: ops tags {sorted(clash)[:10]} are "
+                "both paired with a fem_eid and listed without one."
+            )
+        # Sorted union of the ops tags every attached result file
+        # records; unset until a reader declares its file.
+        self._recorded: "Optional[ndarray]" = None
+        self._described: "Optional[bool]" = None  # cache of describes_files
 
     @classmethod
     def from_model(cls, model: Any) -> "ElementTagTranslator":
         """Build from a bound :class:`OpenSeesModel`'s element records.
 
         Each :class:`ElementRecord` carries ``tag`` (ops) and ``fem_eid``
-        (mesh). Sentinel ``fem_eid < 0``
-        (``MISSING_FEM_ELEMENT_ID``) rows are skipped. A model with no
-        element records yields an empty (identity) translator.
+        (mesh). A sentinel ``fem_eid < 0`` (``MISSING_FEM_ELEMENT_ID``)
+        row has no mesh id, so its ops tag joins ``ops_only``. A model
+        with no element records yields an empty translator.
         """
         fem_to_ops: dict[int, int] = {}
         ops_to_fem: dict[int, int] = {}
+        ops_only: set[int] = set()
         elements_attr = getattr(model, "elements", None)
         # ``OpenSeesModel.elements`` is a method returning the records;
         # tolerate either a callable or an already-materialised iterable.
@@ -109,11 +150,14 @@ class ElementTagTranslator:
             for rec in elements:
                 fem = getattr(rec, "fem_eid", None)
                 tag = getattr(rec, "tag", None)
-                if fem is None or tag is None or int(fem) < 0:
+                if tag is None:
+                    continue
+                if fem is None or int(fem) < 0:
+                    ops_only.add(int(tag))
                     continue
                 fem_to_ops[int(fem)] = int(tag)
                 ops_to_fem[int(tag)] = int(fem)
-        return cls(fem_to_ops, ops_to_fem)
+        return cls(fem_to_ops, ops_to_fem, ops_only - ops_to_fem.keys())
 
     @property
     def is_empty(self) -> bool:
@@ -147,36 +191,94 @@ class ElementTagTranslator:
         """Relabel an ops-tag ``element_index`` to ``fem_eid``s (all-or-nothing)."""
         return self._relabel(ops_ids, self._ops_to_fem)
 
+    def declare_recorded(self, ops_tags: "ndarray") -> None:
+        """Declare the ops tags one attached result file records.
+
+        Each reader calls this from ``attach_tag_map``. A
+        multi-partition set attaches every partition before any read,
+        so the union is the whole set's recorded elements.
+        """
+        arr = np.unique(np.asarray(ops_tags, dtype=np.int64))
+        self._recorded = (
+            arr if self._recorded is None
+            else np.union1d(self._recorded, arr)
+        )
+        self._described = None
+
+    def describes_files(self) -> bool:
+        """True when every recorded ops tag is an element of the archive
+        (paired, or emitted without a mesh id): see the module docstring.
+        """
+        recorded = self._require_recorded()
+        if self._described is None:
+            known = np.fromiter(
+                (*self._ops_to_fem, *self._ops_only), dtype=np.int64,
+            )
+            self._described = bool(np.isin(recorded, known).all())
+        return self._described
+
     def read_translation(
         self, fem_filter: "Optional[ndarray]",
-    ) -> "tuple[Optional[ndarray], Any]":
-        """Per-read consistent pair ``(bucket_filter, index_to_fem_fn)``.
+    ) -> "tuple[Optional[ndarray], Callable[[ndarray], ndarray]]":
+        """Per-read pair ``(bucket_filter, index_to_fem_fn)`` (#2066).
 
-        A single read must translate **both directions or neither** —
-        the two arrays cannot be judged independently. Counter-example
-        (the stub-model trap): with pairing ``{fem 1 ↔ ops 2}`` and a
-        filter ``[2]``, ``to_ops`` passes the unknown fem id 2 through,
-        the bucket then selects ops element 2, and an independent
-        ``to_fem`` on the returned index ``[2]`` — which IS fully
-        covered — would mis-relabel it to ``[1]``. So:
+        When the archive does not describe the attached files (an
+        unrelated stub ``model_h5=``), both arrays pass through
+        untouched. When it does, each id translates on its own:
 
-        * filter fully described by the model → translate it to ops
-          tags and relabel the returned index back (the returned index
-          is a subset of the translated filter, so the reverse map
-          always covers it);
-        * filter with any unknown id (unrelated stub model / ids
-          already in ops space) → pass the filter AND the returned
-          index through untouched;
-        * no filter → all-or-nothing :meth:`to_fem` on the full index
-          (a real bound model describes every recorded ops tag; an
-          unrelated stub with any non-colliding id passes through).
+        * a filter's paired ``fem_eid`` reads its own ops tag, whatever
+          else the filter holds; a sentinel element's ops tag reads
+          itself;
+        * a filter id that is no element of the archive, or an element
+          the files did not record, is left out of the bucket filter
+          and :class:`WarnElementFilterUnread` names it. It is never
+          read as an ops tag, which would return another element's row;
+        * the returned index relabels ops tag by ops tag.
         """
+        if not self.describes_files():
+            return fem_filter, _identity
         if fem_filter is None:
-            return None, self.to_fem
-        arr = np.asarray(fem_filter, dtype=np.int64)
-        if all(int(x) in self._fem_to_ops for x in arr):
-            return self._relabel(arr, self._fem_to_ops), self.to_fem
-        return arr, lambda index: index
+            return None, self._index_to_fem
+        recorded = self._require_recorded()
+        bucket: list[int] = []
+        unknown: list[int] = []
+        unrecorded: list[int] = []
+        for fem in np.asarray(fem_filter, dtype=np.int64).ravel():
+            f = int(fem)
+            if f in self._fem_to_ops:
+                ops = self._fem_to_ops[f]
+            elif f in self._ops_only:
+                ops = f
+            else:
+                unknown.append(f)
+                continue
+            if _holds(recorded, ops):
+                bucket.append(ops)
+            else:
+                unrecorded.append(f)
+        if unknown or unrecorded:
+            _warn_unread(unknown, unrecorded)
+        return np.array(bucket, dtype=np.int64), self._index_to_fem
+
+    def _index_to_fem(self, index: "ndarray") -> "ndarray":
+        """Relabel a returned ops-tag index id by id; a sentinel element
+        keeps its ops tag."""
+        arr = np.asarray(index, dtype=np.int64)
+        return np.array(
+            [self._ops_to_fem.get(int(t), int(t)) for t in arr.ravel()],
+            dtype=np.int64,
+        ).reshape(arr.shape)
+
+    def _require_recorded(self) -> "ndarray":
+        if self._recorded is None:
+            raise RuntimeError(
+                "ElementTagTranslator: no result file declared its "
+                "recorded element tags (declare_recorded), so a read "
+                "cannot tell whether the model archive describes the "
+                "files. Attach the translator through the reader's "
+                "attach_tag_map."
+            )
+        return self._recorded
 
     @staticmethod
     def _relabel(
@@ -193,3 +295,42 @@ class ElementTagTranslator:
         if not all(int(x) in mapping for x in arr):
             return arr
         return np.array([mapping[int(x)] for x in arr], dtype=np.int64)
+
+
+def _identity(index: "ndarray") -> "ndarray":
+    return index
+
+
+def _holds(sorted_ids: "ndarray", value: int) -> bool:
+    """True when the sorted, unique ``sorted_ids`` holds ``value``."""
+    k = int(np.searchsorted(sorted_ids, value))
+    return k < sorted_ids.size and int(sorted_ids[k]) == value
+
+
+def _warn_unread(unknown: "list[int]", unrecorded: "list[int]") -> None:
+    import warnings
+
+    parts = []
+    if unknown:
+        parts.append(
+            f"element ids {_head(unknown)} are no element of the model "
+            "archive (model_h5=): no ops tag pairs with them"
+        )
+    if unrecorded:
+        parts.append(
+            f"element ids {_head(unrecorded)} are elements of the model "
+            "archive that the result files did not record (a recorder "
+            "region left them out)"
+        )
+    warnings.warn(
+        "Element read: " + "; ".join(parts) + ". The result holds no "
+        "rows for them.",
+        WarnElementFilterUnread,
+        stacklevel=4,
+    )
+
+
+def _head(ids: "list[int]", n: int = 20) -> str:
+    shown = ", ".join(str(i) for i in ids[:n])
+    more = f", ... ({len(ids)} in all)" if len(ids) > n else ""
+    return f"[{shown}{more}]"
