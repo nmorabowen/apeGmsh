@@ -706,7 +706,8 @@ def test_an_unknown_element_token_blocks_element_less_nodes_too() -> None:
     ties an element-less node's rotation to."""
     spec = _node_spec(("rotation_z",), ids=(9,))
     model = _token_model(spec, 2, {9: 3}, (("MysteryElement", (1, 2)),))
-    with pytest.raises(ValueError, match=r"model holds a MysteryElement"):
+    with pytest.raises(ValueError, match=r"element token this table does "
+                                         r"not know \(MysteryElement\)"):
         spec.to_tcl_commands(model=model)
 
 
@@ -806,19 +807,82 @@ def test_a_plan_row_the_fem_lacks_still_refuses() -> None:
         spec.to_tcl_commands(model=model)
 
 
-def test_token_table_matches_each_family_class_emit() -> None:
-    """``_CLASS_FOR_TOKEN`` names every class the family tables hold, at
-    the token that class's ``_emit`` writes (read from its source)."""
+def _emitted_tokens(cls: type) -> list[str]:
     import inspect
     import re
 
+    return re.findall(r'emitter\.element\(\s*"([^"]+)"',
+                      inspect.getsource(cls._emit))
+
+
+def _bridge_element_classes() -> set[type]:
+    """Every ``Element`` subclass in ``apeGmsh.opensees.element`` that
+    defines its own ``_emit``: the classes a model's tokens come from."""
+    import importlib
+    import inspect
+    import pkgutil
+
+    import apeGmsh.opensees.element as pkg
+    from apeGmsh.opensees._internal.types import Element
+
+    out: set[type] = set()
+    for m in pkgutil.iter_modules(pkg.__path__):
+        mod = importlib.import_module(f"{pkg.__name__}.{m.name}")
+        for _name, cls in inspect.getmembers(mod, inspect.isclass):
+            if (issubclass(cls, Element) and cls is not Element
+                    and "_emit" in cls.__dict__ and _emitted_tokens(cls)):
+                out.add(cls)
+    return out
+
+
+def test_token_table_matches_each_class_emit() -> None:
+    """``_CLASS_FOR_TOKEN`` maps each class at the token its ``_emit``
+    writes (read from its source), and covers the family tables."""
     from apeGmsh.opensees import _readback as rb
 
     families = set(rb._ROTATIONAL_FAMILIES + rb._TRANSLATIONAL_ONLY
                    + rb._UP_FAMILIES)
-    assert set(rb._CLASS_FOR_TOKEN.values()) == families
-    assert len(rb._CLASS_FOR_TOKEN) == len(families)
+    assert families <= set(rb._CLASS_FOR_TOKEN.values())
+    assert len(set(rb._CLASS_FOR_TOKEN.values())) == len(rb._CLASS_FOR_TOKEN)
     for token, cls in rb._CLASS_FOR_TOKEN.items():
-        src = inspect.getsource(cls._emit)
-        emitted = re.findall(r'emitter\.element\(\s*"([^"]+)"', src)
-        assert emitted == [token], (cls.__name__, emitted)
+        assert _emitted_tokens(cls) == [token], cls.__name__
+
+
+def test_every_bridge_element_class_is_in_the_token_table() -> None:
+    """A bridge class missing here reads as an unknown token, which blocks
+    the whole model's element-less nodes (an absorbing-boundary model's
+    diaphragm master refused once)."""
+    from apeGmsh.opensees import _readback as rb
+
+    classes = _bridge_element_classes()
+    assert len(classes) >= len(rb._CLASS_FOR_TOKEN)   # the scan found them
+    missing = sorted(c.__name__ for c in classes
+                     if c not in set(rb._CLASS_FOR_TOKEN.values()))
+    assert missing == []
+
+
+def test_absorbing_boundary_is_no_model_blocker() -> None:
+    """Like the declared path: it blocks its own nodes, not an element-less
+    node elsewhere (the reviewer's stand-in)."""
+    from apeGmsh.opensees._readback import rotation_roles_from_tokens
+
+    roles = rotation_roles_from_tokens(
+        [("elasticBeamColumn", (1, 2)),
+         ("ASDAbsorbingBoundary3D", tuple(range(10, 18)))], [99, 10])
+    assert roles.refusal(99) is None
+    assert roles.refusal(10) is not None
+    assert "ASDAbsorbingBoundary3D touches it" in roles.refusal(10)
+
+
+def test_unknown_token_refusal_names_the_unknown_token_not_pore_pressure(
+) -> None:
+    from apeGmsh.opensees._readback import rotation_roles_from_tokens
+
+    why = rotation_roles_from_tokens(
+        [("MysteryElement", (1, 2))], [99]).refusal(99)
+    assert why is not None
+    assert "element token this table does not know (MysteryElement)" in why
+    assert "pore pressure" not in why
+    why = rotation_roles_from_tokens(
+        [("LadrunoUP", (1, 2))], [99]).refusal(99)
+    assert why is not None and "pore pressure" in why

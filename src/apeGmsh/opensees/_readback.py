@@ -45,6 +45,7 @@ from ._internal.build.errors import BridgeError
 from ._internal.build.ndf import _load_dof_layout
 from ._internal.tag_resolution import MISSING_FEM_ELEMENT_ID
 
+from .element.absorbing import ASDAbsorbingBoundary2D, ASDAbsorbingBoundary3D
 from .element.beam_column import (
     ElasticTimoshenkoBeam,
     LadrunoDispBeamColumn,
@@ -136,7 +137,11 @@ class RotationRoles:
     #: Nodes any element touches.
     touched: frozenset[int]
     #: A u-p class anywhere in the model (:data:`_UP_FAMILIES`), or ``None``.
+    #: On the token route it may instead name an element token the
+    #: table does not know (:attr:`model_blocker_unknown`).
     model_blocker: "str | None"
+    #: ``model_blocker`` is an unknown element token, not a u-p class.
+    model_blocker_unknown: bool = False
 
     def refusal(self, tag: int) -> "str | None":
         """Why node ``tag``'s rotational DOF slots carry no rotation, or
@@ -157,6 +162,12 @@ class RotationRoles:
             return (
                 "no beam-column or shell (or zero-length) element touches it, so "
                 "no element establishes a rotation in that DOF slot"
+            )
+        if self.model_blocker is not None and self.model_blocker_unknown:
+            return (
+                "no element touches it, and the model holds an element "
+                f"token this table does not know ({self.model_blocker}), so "
+                "what a constraint could tie that DOF slot to is unknown"
             )
         if self.model_blocker is not None:
             return (
@@ -202,12 +213,13 @@ def _roles_from_rows(
     touched: set[int] = set()
     blocked: dict[int, str] = {}
     model_blocker: "str | None" = None
+    unknown = False
     for cls, name, flat in rows:
         is_rot = cls is not None and issubclass(cls, _ROTATIONAL_FAMILIES)
         is_trans = cls is not None and issubclass(cls, _TRANSLATIONAL_ONLY)
         if model_blocker is None and (
                 cls is None or issubclass(cls, _UP_FAMILIES)):
-            model_blocker = name
+            model_blocker, unknown = name, cls is None
         hit = flat if want is None else np.intersect1d(flat, want)
         nodes = [int(n) for n in hit]
         touched.update(nodes)
@@ -219,14 +231,19 @@ def _roles_from_rows(
     return RotationRoles(
         rotational=frozenset(rotational), blocked=blocked,
         touched=frozenset(touched), model_blocker=model_blocker,
+        model_blocker_unknown=unknown,
     )
 
 
-#: OpenSees ``element`` token -> the class above that emits it, for every
-#: class the family tuples name (each class's ``_emit`` writes the token;
-#: ``tests/test_results_recorder_emit.py`` reads it back from the source). A rehydrated model keeps only the token
-#: (``ElementRecord.type_token``). A token not here is an unknown class:
-#: it blocks the rotational slots of the nodes it touches.
+#: OpenSees ``element`` token -> the bridge class that emits it, for every
+#: ``Element`` class with an ``_emit``, in the family tuples or not (an
+#: absorbing boundary blocks its own nodes, as on the declared path, but is
+#: no model blocker). Each class's ``_emit`` writes the token;
+#: ``tests/test_results_recorder_emit.py`` reads it back from the source
+#: and checks no ``Element`` subclass is missing. A rehydrated model keeps
+#: only the token (``ElementRecord.type_token``). A token not here is an
+#: unknown class: it blocks the rotational slots of the nodes it touches,
+#: and of element-less nodes.
 _CLASS_FOR_TOKEN: "dict[str, type]" = {
     "elasticBeamColumn": elasticBeamColumn,
     "forceBeamColumn": forceBeamColumn,
@@ -260,6 +277,8 @@ _CLASS_FOR_TOKEN: "dict[str, type]" = {
     "LadrunoBrick": LadrunoBrick,
     "LadrunoBrick20": LadrunoBrick20,
     "LadrunoUP": LadrunoUP,
+    "ASDAbsorbingBoundary2D": ASDAbsorbingBoundary2D,
+    "ASDAbsorbingBoundary3D": ASDAbsorbingBoundary3D,
 }
 
 
