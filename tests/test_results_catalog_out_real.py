@@ -27,9 +27,10 @@ read-back slab against two oracles:
   ``ElasticMembranePlateSection``, its constitutive law applied to the
   section deformation. Trusses: the applied load of the determinate bar.
 
-The upstream shells in ``ZERO_GAUSS_PROBE_CLASSES`` are included. Their
-``eleResponse`` reads zero only under ``algorithm Linear``, which never
-re-forms the residual, so the sections never see the converged strain. Under
+The upstream shells in ``ZERO_GAUSS_PROBE_CLASSES`` are included. Under
+``algorithm Linear``, which never re-forms the residual after the solve,
+their sections lag one step behind the converged strain: zero on the first
+step, stale after it. Under
 Newton (used here for every case) the element, the section probe and the
 recorder all agree; that finding is chain B issue #1992. ShellMITC9 is left
 out: its ``eleResponse(e, "stresses")`` corrupted the heap of this process on
@@ -327,8 +328,8 @@ CASES: dict[str, Case] = {c.id: c for c in (
 
 
 def solve(ops: Any) -> None:
-    """Newton, not Linear: Linear never pushes the converged strain to the
-    DKG / MITC4 shells' sections (#1992)."""
+    """Newton, not Linear: under Linear the DKG / MITC4 shells' sections
+    lag the converged strain by one step (#1992)."""
     ops.system("FullGeneral")
     ops.numberer("Plain")
     ops.constraints("Plain")

@@ -20,5 +20,7 @@ Routes that read back an empty slab or lose their natural coordinates are
 strict xfails citing #1970, #1990 (`.ladruno` shell resultants), #1998
 (`.ladruno` rule-0 natural coordinates) and
 #1991 (`emit_mpco` records shell resultants as `section.force`).
-#1992 records a further finding. The `ZERO_GAUSS_PROBE_CLASSES` shells read
-zero only under `algorithm Linear`; under Newton every route agrees.
+#1992 records a further finding. Under `algorithm Linear` the
+`ZERO_GAUSS_PROBE_CLASSES` shells are one step stale on every route, not dead:
+they read zero on the first step and lag the converged state after it. Under
+Newton every route agrees.
