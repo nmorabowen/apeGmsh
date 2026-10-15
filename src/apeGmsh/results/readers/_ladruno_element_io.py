@@ -34,7 +34,10 @@ from typing import TYPE_CHECKING, Optional
 import numpy as np
 from numpy import ndarray
 
-from ...opensees._response_catalog import RESPONSE_CATALOG
+from ...opensees._response_catalog import (
+    RESPONSE_CATALOG,
+    catalog_token_for_keyword,
+)
 from ._ladruno_hyperslab import read_hyperslab
 
 if TYPE_CHECKING:
@@ -522,6 +525,10 @@ class _Block:
     multiplicity: int = 1
     section_tag: int = -1
     fiber_id: int = -1
+    #: ``comp_names`` are RESPONSE_CATALOG canonicals, not file labels
+    #: (set only by :func:`_catalog_gauss_fit`). ``axial_force`` is no
+    #: label any label map knows, so these names are used as they are.
+    catalog_named: bool = False
 
     @property
     def width(self) -> int:
@@ -649,7 +656,24 @@ def _gp_param_for(
 # ON_ELEMENTS token. The bracket's rule field is ``0``
 # (NoIntegrationRule) for these buckets, so it cannot serve as the
 # catalog's ``int_rule`` key — the BLOCK WIDTH picks the layout instead.
-# Buckets whose COMP_NAMES are real names never reach this path.
+#
+# Three more places on this seam would otherwise answer with an empty
+# Gauss slab:
+#
+# * The ON_ELEMENTS token is the keyword the deck asked for, so the same
+#   response lands under ``stress`` or ``stresses``. The catalog keys only
+#   the first; the token is mapped through ``catalog_token_for_keyword``
+#   (``stresses`` → ``stress``, ``axialForce`` → ``axial_force``) before
+#   the lookup.
+# * A Truss ``axialForce`` bucket names its one column (``N``) but writes
+#   it as an ELEMENT-level block, which the Gauss level skips. The catalog
+#   says this record is a one-Gauss-point ``axial_force``; a named
+#   element-level block is expanded the same way when, and only when, its
+#   own labels canonicalise to the catalog layout exactly.
+# * These elements answer no ``integrationPoints`` response, so the file
+#   has no ``QUADRATURE/GP_PARAM`` and the GPs would have no natural
+#   coordinates (``(n, 0)``). A catalog-resolved bucket carries the
+#   catalog's ``natural_coords``; the file's own GP_PARAM still wins.
 
 _GENERIC_COMP_RE = re.compile(r"^C\d+$")
 
@@ -669,55 +693,131 @@ def _class_name(bucket_key: str) -> str:
     return _class_prefix(bucket_key).partition("-")[2]
 
 
+def _catalog_token(token: str) -> str:
+    """The ``RESPONSE_CATALOG`` token for an ON_ELEMENTS token.
+
+    An OpenSees keyword the catalog aliases (``stresses``, ``axialForce``)
+    maps to its catalog token; a token that already is one (``stress``,
+    ``strain``, ``damage``) is returned as is.
+    """
+    mapped = catalog_token_for_keyword(token)
+    return token if mapped is None else mapped
+
+
+def _label_canonical(name: str) -> Optional[str]:
+    """Canonical for a file column label: continuum first, then beam."""
+    c = continuum_canonical(name)
+    if c is not None:
+        return c
+    bc = beam_canonical(name)
+    return None if bc is None else bc[0]
+
+
+@dataclass(frozen=True)
+class _CatalogFit:
+    """An element-level bucket re-read as Gauss data from the catalog."""
+    blocks: list[_Block]        # one block per Gauss point, canonical names
+    natural_coords: ndarray     # (n_gp, d): the catalog layout's GP coords
+
+
+def _catalog_gauss_fit(
+    blocks: list[_Block], *, token: str, bucket_key: str,
+) -> Optional[_CatalogFit]:
+    """The catalog's Gauss reading of ``blocks``, or ``None`` to keep them.
+
+    Only a single element-level block is a candidate, and only for a
+    class the catalog knows under this token (``None`` otherwise: there
+    is nothing to name it with). Generic ``C1..Cn`` columns are matched
+    by width and raise :class:`GaussLayoutMismatch` when no single layout
+    fits. Named columns are matched by their canonical labels and are
+    kept as they are unless those labels ARE the catalog layout.
+    """
+    if len(blocks) != 1:
+        return None
+    b = blocks[0]
+    if b.gauss_id >= 0 or not b.comp_names:
+        return None
+    class_name = _class_name(bucket_key)
+    cat_token = _catalog_token(token)
+    layouts = [
+        lay for (cls, _rule, tok), lay in RESPONSE_CATALOG.items()
+        if cls == class_name and tok == cat_token
+    ]
+    if not layouts:
+        return None
+    if all(_GENERIC_COMP_RE.match(n) for n in b.comp_names):
+        fit = [
+            lay for lay in layouts
+            if lay.n_gauss_points * len(lay.component_layout) == b.width
+        ]
+        shapes = {(lay.n_gauss_points, lay.component_layout) for lay in fit}
+        if len(shapes) != 1:
+            offered = sorted({
+                (lay.n_gauss_points,
+                 lay.n_gauss_points * len(lay.component_layout))
+                for lay in layouts
+            })
+            raise GaussLayoutMismatch(
+                f"Bucket {token}/{bucket_key} has {b.width} unnamed "
+                f"(C1..Cn) columns, but RESPONSE_CATALOG offers "
+                f"{offered} (n_gauss_points, width) for class "
+                f"{class_name!r} / token {cat_token!r} — "
+                f"{'no' if not shapes else 'more than one'} layout "
+                f"fits. Refusing to guess which component each column is: "
+                f"a wrong component name is worse than a missing one. Fix "
+                f"the RESPONSE_CATALOG entry, or have the element tag its "
+                f"ResponseType names so the file names its own columns."
+            )
+    else:
+        labels = tuple(
+            _label_canonical(n) for n in b.comp_names
+        ) * b.multiplicity
+        fit = [
+            lay for lay in layouts
+            if lay.component_layout * lay.n_gauss_points == labels
+        ]
+        if not fit:
+            return None
+    coords = {
+        np.asarray(lay.natural_coords, dtype=np.float64).tobytes():
+            np.asarray(lay.natural_coords, dtype=np.float64)
+        for lay in fit
+    }
+    if len(coords) != 1:
+        raise GaussLayoutMismatch(
+            f"Bucket {token}/{bucket_key}: RESPONSE_CATALOG has layouts "
+            f"of class {class_name!r} / token {cat_token!r} that fit its "
+            f"{b.width} columns but place the Gauss points differently. "
+            f"Refusing to guess where each point is."
+        )
+    n_gp, names = fit[0].n_gauss_points, fit[0].component_layout
+    return _CatalogFit(
+        blocks=[
+            _Block(
+                level=1, gauss_id=gp, comp_names=names,
+                col_start=b.col_start + gp * len(names),
+                catalog_named=True,
+            )
+            for gp in range(n_gp)
+        ],
+        natural_coords=next(iter(coords.values())),
+    )
+
+
 def resolve_generic_gauss_blocks(
     blocks: list[_Block], *, token: str, bucket_key: str,
 ) -> list[_Block]:
-    """``blocks`` with any generic ``C1..Cn`` naming resolved.
+    """``blocks`` with a catalog-known element-level block resolved.
 
-    Returns ``blocks`` unchanged unless the bucket is the single
-    element-level generic block an untagged element response produces;
-    that one is expanded into one block per Gauss point carrying the
-    catalog's (already canonical) component names. A class the catalog
-    does not know for this token is left alone — there is nothing to
-    name it with. A class it DOES know but at no layout matching the
-    block's width raises :class:`GaussLayoutMismatch`.
+    Returns ``blocks`` itself (the same object) unless
+    :func:`_catalog_gauss_fit` re-reads the bucket as Gauss data; then it
+    returns one block per Gauss point carrying the catalog's (already
+    canonical) component names. A class the catalog knows for this token
+    whose generic ``C1..Cn`` width fits no layout raises
+    :class:`GaussLayoutMismatch`.
     """
-    if len(blocks) != 1:
-        return blocks
-    b = blocks[0]
-    if b.gauss_id >= 0 or not b.comp_names:
-        return blocks
-    if not all(_GENERIC_COMP_RE.match(n) for n in b.comp_names):
-        return blocks
-    class_name = _class_name(bucket_key)
-    layouts = {
-        (lay.n_gauss_points, lay.component_layout)
-        for (cls, _rule, tok), lay in RESPONSE_CATALOG.items()
-        if cls == class_name and tok == token
-    }
-    if not layouts:
-        return blocks
-    fit = {lay for lay in layouts if lay[0] * len(lay[1]) == b.width}
-    if len(fit) != 1:
-        raise GaussLayoutMismatch(
-            f"Bucket {token}/{bucket_key} has {b.width} unnamed "
-            f"(C1..Cn) columns, but RESPONSE_CATALOG offers "
-            f"{sorted((n, n * len(c)) for n, c in layouts)} "
-            f"(n_gauss_points, width) for class {class_name!r} / token "
-            f"{token!r} — {'no' if not fit else 'more than one'} layout "
-            f"fits. Refusing to guess which component each column is: a "
-            f"wrong component name is worse than a missing one. Fix the "
-            f"RESPONSE_CATALOG entry, or have the element tag its "
-            f"ResponseType names so the file names its own columns."
-        )
-    n_gp, names = fit.pop()
-    return [
-        _Block(
-            level=1, gauss_id=gp, comp_names=names,
-            col_start=b.col_start + gp * len(names),
-        )
-        for gp in range(n_gp)
-    ]
+    fit = _catalog_gauss_fit(blocks, token=token, bucket_key=bucket_key)
+    return blocks if fit is None else fit.blocks
 
 
 def _select_rows(
@@ -783,8 +883,11 @@ def _block_canonicals(token: str, b: _Block) -> list[Optional[str]]:
     resolved by COLUMN POSITION (its labels are material-private and
     collide across levels — ``p`` vs the section force ``P``). Everything
     else, including a material bucket whose column count does not match
-    the table, falls back to the label map.
+    the table, falls back to the label map. A catalog-resolved block
+    already carries canonicals.
     """
+    if b.catalog_named:
+        return list(b.comp_names)
     names = material_bucket_canonicals(token)
     if names is not None and len(names) == len(b.comp_names):
         return list(names)
@@ -904,14 +1007,12 @@ def read_gauss_slab(
                 blocks = parse_blocks(bucket)
             except (KeyError, ValueError):
                 continue
-            resolved = resolve_generic_gauss_blocks(
-                blocks, token=token, bucket_key=key,
-            )
-            # The resolver returns the SAME list object when it left the
-            # file's own names alone — that identity is the provenance
-            # flag the overlap tie-break needs.
-            from_file_names = resolved is blocks
-            blocks = resolved
+            fit = _catalog_gauss_fit(blocks, token=token, bucket_key=key)
+            # Whether the file's own blocks are read as they are is the
+            # provenance flag the overlap tie-break needs.
+            from_file_names = fit is None
+            if fit is not None:
+                blocks = fit.blocks
             gp_blocks = [b for b in blocks if b.gauss_id >= 0]
             if not gp_blocks:
                 continue
@@ -935,7 +1036,12 @@ def read_gauss_slab(
             hit_cols = np.array(sorted({col for _, _, col in hits}))
             col_pos = {int(c): i for i, c in enumerate(hit_cols)}
             data = read_hyperslab(bucket["DATA"], t_idx, rows, hit_cols)
+            # The file's own GP coordinates win. An element answering no
+            # ``integrationPoints`` leaves none, and then a catalog-read
+            # bucket places its points by the catalog's rule.
             gp_param = _gp_param_for(model_elements, key)
+            if gp_param is None and fit is not None:
+                gp_param = fit.natural_coords
 
             # One slab column per (element, matching GP). GP-major within
             # an element so natural_coords line up with element_index.

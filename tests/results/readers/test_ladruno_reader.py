@@ -701,6 +701,168 @@ def test_named_columns_untouched_by_the_resolver() -> None:
 
 
 # ---------------------------------------------------------------------------
+# #1969 — element-level records that used to read back as an empty Gauss slab
+# ---------------------------------------------------------------------------
+#
+# Three silent empties at the same seam, found by the DomainCapture parity
+# slice (#1962). The buckets are synthesised in the shape fork build
+# 79e062367 writes (dumped from its live runs), so these hold without the
+# fork; the live counterparts are the #1969 cases in
+# tests/opensees/integration_ladruno/test_element_families_ladruno_live.py.
+
+#: LadrunoLST's own 3-point interior rule in its GP order (LadrunoLST.cpp,
+#: the SixNodeTri anchors). Spelled out: the reader takes the layout from
+#: RESPONSE_CATALOG, so reading it from there would assert nothing.
+LST_GP = np.array([[2 / 3, 1 / 6], [1 / 6, 2 / 3], [1 / 6, 1 / 6]])
+LST_KEY = "33016-LadrunoLST[0:0:0]"
+
+
+def _lst_file(
+    tmp_path: Path, token: str, *, gp_param: "np.ndarray | None" = None,
+) -> "tuple[Path, np.ndarray]":
+    """The quad fixture with its Gauss buckets replaced by one LST bucket.
+
+    The bucket is what LadrunoLST's untagged ``stress`` response writes:
+    ONE element-level block of nine anonymous columns (``C1..C9``,
+    ``NUM_COMP 9 x MULTIPLICITY 1``), GP-major, element 7. The element
+    answers no ``integrationPoints``, so MODEL/ELEMENTS has no GP_PARAM
+    for it unless ``gp_param`` adds one. Returns ``(path, DATA)``.
+    """
+    import shutil
+
+    import h5py
+
+    dst = tmp_path / "lst.ladruno"
+    shutil.copy(QUAD, dst)
+    data = np.arange(2 * 1 * 9, dtype=np.float64).reshape(2, 1, 9) + 0.5
+    with h5py.File(dst, "r+") as f:
+        stage = next(k for k in f if k.startswith("MODEL_STAGE["))
+        on_e = f[stage]["RESULTS"]["ON_ELEMENTS"]
+        src = on_e["stress"][next(iter(on_e["stress"]))]
+        step, time = src["STEP"][...], src["TIME"][...]
+        del on_e["stress"], on_e["strain"]
+        grp = on_e.create_group(f"{token}/{LST_KEY}")
+        grp.create_dataset("DATA", data=data)
+        grp.create_dataset("ID", data=np.array([[7]], dtype=np.int64))
+        grp.create_dataset("STEP", data=step)
+        grp.create_dataset("TIME", data=time)
+        cm = grp.create_group("COLUMN_MAP")
+        cm.create_dataset("LEVELS", data=np.array([[0]], dtype=np.int64))
+        cm.create_dataset("GAUSS_ID", data=np.array([[-1]], dtype=np.int64))
+        cm.create_dataset("NUM_COMP", data=np.array([[9]], dtype=np.int64))
+        cm.create_dataset("MULTIPLICITY", data=np.array([[1]], dtype=np.int64))
+        cm.attrs["COMP_NAMES"] = ",".join(f"C{i + 1}" for i in range(9))
+        if gp_param is not None:
+            quad = f[stage]["MODEL"]["ELEMENTS"].create_group(
+                "33016-LadrunoLST[201:0]/QUADRATURE",
+            )
+            quad.create_dataset("GP_PARAM", data=gp_param)
+    return dst, data
+
+
+def test_lst_stresses_token_reads_the_catalog_layout(tmp_path: Path) -> None:
+    # The deck's keyword names the bucket, so `stresses` (not the catalog's
+    # `stress`) must still reach the catalog: it used to read (1, 0).
+    path, data = _lst_file(tmp_path, "stresses")
+    with LadrunoReader(path) as r:
+        assert {"stress_xx", "stress_yy", "stress_xy"} <= set(
+            r.available_components("stage_0", ResultLevel.GAUSS),
+        )
+        for k, comp in enumerate(("stress_xx", "stress_yy", "stress_xy")):
+            slab = r.read_gauss("stage_0", comp)
+            assert slab.element_index.tolist() == [7, 7, 7]
+            # GP-major columns: GP g, component k is DATA column 3g + k.
+            np.testing.assert_array_equal(
+                slab.values, data[:, 0, [k, 3 + k, 6 + k]],
+            )
+            np.testing.assert_allclose(slab.natural_coords, LST_GP, atol=1e-15)
+
+
+def test_lst_stress_token_places_its_gauss_points(tmp_path: Path) -> None:
+    # Values read under `stress` already; the GPs came back with no natural
+    # coordinates, shape (3, 0), because the file carries no GP_PARAM.
+    path, data = _lst_file(tmp_path, "stress")
+    with LadrunoReader(path) as r:
+        slab = r.read_gauss("stage_0", "stress_yy")
+    np.testing.assert_array_equal(slab.values, data[:, 0, [1, 4, 7]])
+    np.testing.assert_allclose(slab.natural_coords, LST_GP, atol=1e-15)
+
+
+def test_file_gp_param_wins_over_the_catalog_rule(tmp_path: Path) -> None:
+    # The file is self-describing: when it does carry GP_PARAM, that is
+    # where the points are, and the catalog's rule is only the fallback.
+    own = np.array([[0.1, 0.2], [0.3, 0.4], [0.5, 0.1]])
+    path, _ = _lst_file(tmp_path, "stresses", gp_param=own)
+    with LadrunoReader(path) as r:
+        slab = r.read_gauss("stage_0", "stress_xx")
+    np.testing.assert_array_equal(slab.natural_coords, own)
+
+
+def test_aliased_token_with_a_wrong_width_still_refuses() -> None:
+    from apeGmsh.results.readers._ladruno_element_io import (
+        GaussLayoutMismatch,
+        resolve_generic_gauss_blocks,
+    )
+
+    # The alias reaches the catalog, and with it the refusal: 8 anonymous
+    # columns fit no LadrunoLST layout.
+    with pytest.raises(GaussLayoutMismatch, match="Refusing to guess"):
+        resolve_generic_gauss_blocks(
+            _generic_block(8), token="stresses", bucket_key=LST_KEY,
+        )
+
+
+def _truss_axial_force_file(tmp_path: Path) -> Path:
+    """The truss fixture with its ``basicForce`` bucket renamed
+    ``axialForce`` — the token Truss writes for the deck's ``axialForce``
+    (same one ``N`` column, same element-level block)."""
+    import shutil
+
+    import h5py
+
+    dst = tmp_path / "truss_axial.ladruno"
+    shutil.copy(TRUSS, dst)
+    with h5py.File(dst, "r+") as f:
+        stage = next(k for k in f if k.startswith("MODEL_STAGE["))
+        on_e = f[stage]["RESULTS"]["ON_ELEMENTS"]
+        on_e.move("basicForce", "axialForce")
+    return dst
+
+
+def test_truss_axial_force_is_a_gauss_record(tmp_path: Path) -> None:
+    # DomainCapture and .out put the truss axialForce under Gauss; the
+    # .ladruno reader gave it only as a line station, and Gauss read empty.
+    with LadrunoReader(_truss_axial_force_file(tmp_path)) as r:
+        assert "axial_force" in r.available_components(
+            "stage_0", ResultLevel.GAUSS,
+        )
+        gauss = r.read_gauss("stage_0", "axial_force")
+        line = r.read_line_stations("stage_0", "axial_force")
+    assert gauss.values.shape == (4, 2)
+    assert gauss.element_index.tolist() == line.element_index.tolist()
+    np.testing.assert_array_equal(gauss.values, line.values)
+    # Tip load 10 -> axial force 10 in both members at the last step.
+    np.testing.assert_allclose(gauss.values[-1], [10.0, 10.0])
+    # One GP at the bar's midpoint (the file's own GP_PARAM).
+    np.testing.assert_array_equal(gauss.natural_coords, [[0.0], [0.0]])
+
+
+def test_named_element_block_disagreeing_with_the_catalog_is_left_alone(
+) -> None:
+    from apeGmsh.results.readers._ladruno_element_io import (
+        _Block,
+        resolve_generic_gauss_blocks,
+    )
+
+    # A named block is re-read as Gauss data only when its own labels ARE
+    # the catalog layout; `Vy` is not a Truss axial force.
+    blocks = [_Block(level=0, gauss_id=-1, comp_names=("Vy",), col_start=0)]
+    assert resolve_generic_gauss_blocks(
+        blocks, token="axialForce", bucket_key="12-Truss[1:0:0]",
+    ) is blocks
+
+
+# ---------------------------------------------------------------------------
 # Overlapping tokens — one (element, GP) slot covered twice
 # ---------------------------------------------------------------------------
 #
