@@ -11,8 +11,8 @@ reader change flips something:
 
 * a passing value test;
 * ``xfail(strict=True)`` citing a chain-B issue, asserting the right value,
-  where the route reads back a silent wrong answer (an empty slab, a phantom
-  zero): #1970 (MPCO reader), #1971 (3-dof nodes reading rotation 0.0);
+  where the route reads back a silent wrong answer (a phantom zero): #1971
+  (3-dof nodes reading rotation 0.0);
 * ``pytest.raises`` where the route refuses the family loudly (a gap: the
   MPCO truss bucket).
 
@@ -21,16 +21,20 @@ Family              ``.ladruno``                    MPCO
 =================== =============================== ========================
 Truss axial force   line station: pass;             raises (gap)
                     Gauss record: pass
-LadrunoBrick20      pass (values + GP coords)       xfail #1970
-LadrunoLST          ``stress``: values + GP         xfail #1970
-                    coords pass;
+LadrunoBrick20      pass (values + GP coords)       pass (``stress``,
+                                                    ``stresses``)
+LadrunoLST          ``stress``: values + GP         pass (``stress``,
+                    coords pass;                    ``stresses``)
                     ``stresses``: pass
+LadrunoBrick +      (not covered here)              pass (damage and
+ASDConcrete3D                                       equivalent plastic
+material state                                      strain)
 Shell-on-solid      pass; 3-dof rotation: #1971     pass; 3-dof rotation:
                                                     #1971
 =================== =============================== ========================
 
-An element-only MPCO file reads with zero steps (#1970), so every MPCO
-recorder here records nodal displacement too, except the test pinning that.
+Every MPCO recorder here records nodal displacement too, except the test
+pinning that an element-only MPCO file still reads its steps (#1970).
 
 Gated by the ``ladruno_fork`` marker, so the nightly ``live-fork`` lane runs it
 against the pinned build. The stock fallback (``.out``) of the truss and
@@ -68,7 +72,6 @@ ROT = ("rotation_x", "rotation_y", "rotation_z")
 #: ``integrationPoints`` response, so the fork source is the oracle.
 LST_GP = np.array([[2 / 3, 1 / 6], [1 / 6, 2 / 3], [1 / 6, 1 / 6]])
 
-B_MPCO = "#1970: the MPCO reader returns an empty slab"
 B_ROT = "#1971: 3-dof nodes read rotation 0.0, not absent/NaN"
 
 
@@ -98,8 +101,8 @@ def _record(ops: apeSees, kind: str, path: str, *, nodal: bool = True,
             **channels: Any) -> None:
     """Declare the fork's ``ladruno`` or the ``mpco`` recorder.
 
-    The nodal channel is on by default: the MPCO reader takes a stage's
-    time vector from the node results (#1970).
+    The nodal channel is on by default; ``nodal=False`` leaves an
+    element-only file, whose steps come from its element buckets (#1970).
     """
     if nodal:
         channels.setdefault("nodal_responses", ("displacement",))
@@ -353,7 +356,6 @@ def test_ladruno_lst_stresses_token_reads_back_from_ladruno(
     _assert_gauss_stress(_solid_run("lst", "Ladruno", "stresses", tmp_path))
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason=B_MPCO)
 @pytest.mark.parametrize("token", ["stress", "stresses"])
 @pytest.mark.parametrize("family", ["h20", "lst"])
 def test_fork_solid_gauss_stress_reads_back_from_mpco(
@@ -362,10 +364,71 @@ def test_fork_solid_gauss_stress_reads_back_from_mpco(
     _assert_gauss_stress(_solid_run(family, "MPCO", token, tmp_path))
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason=B_MPCO)
 def test_element_only_mpco_file_has_its_steps(tmp_path: Path) -> None:
     run = _solid_run("h20", "MPCO", "stress", tmp_path, nodal=False)
     assert [s.n_steps for s in run["r"].stages] == [1]
+    _assert_gauss_stress(run)       # the element reads have that step too
+
+
+@pytest.mark.parametrize("token, fz", [
+    ("material.equivalentPlasticStrain", -6.25e3),
+    ("material.damage", -7.2e3),
+])
+def test_ladruno_brick_material_state_reads_back_from_mpco(
+    tmp_path: Path, token: str, fz: float,
+) -> None:
+    """The material-state path resolves the rule-0 bracket too (#1970).
+
+    LadrunoBrick + ASDConcrete3D under axial compression: every GP's
+    ``(+, -)`` pair against ``eleResponse(tag, "material", gp, key)``. Each
+    load is chosen so the two columns differ (at -7.2e3 per node some GPs
+    crack in tension, d+ ~ 1, while d- stays 0), so a swapped column fails.
+    """
+    with apeGmsh(model_name="g7_mat", verbose=False) as g:
+        box = g.model.geometry.add_box(0, 0, 0, 1, 1, 2)
+        g.model.sync()
+        g.mesh.structured.set_transfinite_box(box, n=2)
+        g.mesh.generation.generate(3)
+        g.physical.add(3, [box], name="Body")
+        fem = g.mesh.queries.get_fem_data(dim=3)
+    ops = apeSees(fem)
+    ops.model(ndm=3, ndf=3)
+    mat = ops.nDMaterial.ASDConcrete3D(E=30e6, v=0.2, fc=30e3, ft=3e3)
+    ops.element.LadrunoBrick(pg="Body", material=mat)
+    ops.fix(nodes=_nodes_on_plane(fem, 2, 0.0), dofs=(1, 1, 1))
+    with ops.pattern.Plain(series=ops.timeSeries.Linear()) as p:
+        for nid in _nodes_on_plane(fem, 2, 2.0):
+            p.load(node=nid, forces=(0.0, 0.0, fz))
+    path = str(tmp_path / "mat.mpco")
+    _record(ops, "MPCO", path, elem_responses=(token,))
+    ops.constraints.Plain()
+    ops.numberer.RCM()
+    ops.system.BandGeneral()
+    ops.test.NormDispIncr(tol=1e-8, max_iter=50)
+    ops.algorithm.Newton()
+    ops.integrator.LoadControl(dlam=0.25)
+    ops.analysis.Static()
+
+    emitter, model_h5 = _run(ops, tmp_path)
+    for _ in range(4):
+        assert emitter.analyze(steps=1) == 0
+    (eid,) = [int(e) for grp in fem.elements for e in grp.ids]
+    tag = _fem_to_ops(model_h5)[eid]
+    key = token.split(".", 1)[1]
+    truth = np.array([
+        np.asarray(emitter.ops.eleResponse(tag, "material", gp, key), float)
+        for gp in range(1, 9)
+    ])                                   # (8 GP, 2)
+    emitter.ops.remove("recorders")
+    assert not np.allclose(truth[:, 0], truth[:, 1])   # a swap would show
+    r = _open("MPCO", path, fem, model_h5)
+    parent = ("equivalent_plastic_strain" if "Plastic" in token else "damage")
+    for k, suffix in enumerate(("tension", "compression")):
+        slab = r.elements.gauss.get(component=f"{parent}_{suffix}")
+        assert [int(e) for e in slab.element_index] == [eid] * 8
+        np.testing.assert_allclose(
+            np.asarray(slab.values)[-1], truth[:, k], rtol=RTOL, atol=1e-14,
+        )
 
 
 # ---------------------------------------------------------------------------
