@@ -12,8 +12,9 @@ The girder runs through every 2-D beam family that records ``localForce``
 to MPCO; the columns are force beams. With no ``section.force`` recorded,
 every element takes its two ``localForce`` stations. Each station is checked
 at ``rtol=1e-10`` against the live domain: ``eleResponse(tag,
-"localForce")``, end i as recorded and end j negated (the station
-convention on main; #2009 revisits N and M). For the elastic girders the
+"localForce")`` in the force-beam ``section force`` convention every route
+shares (#2009): N and M are ``[-end_i, +end_j]``, V is ``[end_i, -end_j]``,
+for elastic, force and disp beams alike. For the elastic girders the
 same stations are also checked against a DomainCapture of the same steps.
 """
 from __future__ import annotations
@@ -37,6 +38,9 @@ pytestmark = pytest.mark.ladruno_fork
 RTOL = 1e-10
 ATOL = 1e-9          # moments near a zero crossing
 COMPS = ("axial_force", "shear_y", "bending_moment_z")
+#: #2009: end-i sign of (N, V, M), written out (the oracle does not call the
+#: table it checks); station 2 takes the opposite sign of end j.
+SIGN = np.array([-1.0, 1.0, -1.0])
 
 
 def _sectioned(make: str) -> Callable[[apeSees, Any], Any]:
@@ -118,11 +122,11 @@ def _solve(tmp: Path, family: str) -> dict[str, Any]:
         for _ in range(2):
             assert emitter.analyze(steps=1) == 0
             cap.step(t=emitter.ops.getTime())
-            for e in live:         # (2, 3): end i, end j negated
+            for e in live:         # (2, 3): force-beam section convention
                 lf = np.asarray(
                     emitter.ops.eleResponse(fem_to_ops[e], "localForce"))
                 assert lf.shape == (6,), (family, e, lf)
-                live[e].append(np.stack([lf[0:3], -lf[3:6]]))
+                live[e].append(np.stack([SIGN * lf[0:3], -SIGN * lf[3:6]]))
         cap.end_stage()
     emitter.ops.remove("recorders")
 

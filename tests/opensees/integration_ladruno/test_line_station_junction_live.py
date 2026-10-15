@@ -10,6 +10,14 @@ recorder of ``localForce`` before the run, and each elastic station read
 back must equal the adjacent force beam's live ``section force`` at the
 shared node, at ``rtol=1e-10``, for every component in 2-D and 3-D and for
 each elastic class the bridge can build.
+
+MPCO and ``.ladruno`` also take a force or disp beam's line stations from
+``localForce`` when no ``section.force`` is recorded, and the one sign
+table applies to those too. So ``Mid`` is also each sectioned family that
+records ``localForce`` (:data:`SECTIONED`): its signed ``localForce``
+stations must meet the force beams at both junctions the same way. A disp
+beam's own ``section force`` reports no shear (Euler-Bernoulli kinematics),
+so the junction, not its own sections, is the oracle for every family.
 """
 from __future__ import annotations
 
@@ -32,6 +40,23 @@ pytestmark = pytest.mark.ladruno_fork
 KINDS = ("mpco", "ladruno")
 
 
+def _sectioned(make: str) -> Any:
+    def build(ops: Any, tr: Any, integ: Any) -> Any:
+        return getattr(ops.element, make)(pg="Mid", transf=tr,
+                                          integration=integ)
+    return build
+
+
+#: sectioned ``Mid`` class -> bridge builder on the force beams' section
+SECTIONED = {
+    f"{name}{d}d": _sectioned(make)
+    for name, make in (("ForceBeamColumn", "forceBeamColumn"),
+                       ("DispBeamColumn", "dispBeamColumn"),
+                       ("LadrunoDispBeamColumn", "LadrunoDispBeamColumn"))
+    for d in (2, 3)
+}
+
+
 def _solve(tmp: Path, cls: str) -> dict[str, Any]:
     fem = _bar_fem(f"junction_fork_{cls}")
     eid = ids(fem)
@@ -45,7 +70,7 @@ def _solve(tmp: Path, cls: str) -> dict[str, Any]:
         ops.recorder.Ladruno(file=paths["ladruno"],
                              elem_responses=("localForce",))
 
-    ops = build_junction(fem, cls, recorders)
+    ops = build_junction(fem, cls, recorders, SECTIONED.get(cls))
     model_h5 = str(tmp / "model.h5")
     ops.h5(model_h5)
     emitter = LiveOpsEmitter(wipe=True)
@@ -69,7 +94,7 @@ def _solve(tmp: Path, cls: str) -> dict[str, Any]:
     }
 
 
-@pytest.fixture(scope="module", params=sorted(ELASTIC))
+@pytest.fixture(scope="module", params=sorted(ELASTIC) + sorted(SECTIONED))
 def solved(request: pytest.FixtureRequest,
            tmp_path_factory: pytest.TempPathFactory) -> dict[str, Any]:
     sol = _solve(tmp_path_factory.mktemp(f"junction_fork_{request.param}"),
@@ -87,12 +112,23 @@ def test_force_beam_sections_are_statics(solved: dict[str, Any]) -> None:
         close(solved["truth"][:, :, k], want, f"{solved['cls']} {comp}")
 
 
+#: ``.ladruno`` spells a 2-D disp beam's ``localForce`` ``N1,V1,M1,..`` (no
+#: underscore), which its station reader does not parse: the element gets
+#: no stations at all. A read gap, not a sign; pinned so its fix shows.
+UNREAD = {("ladruno", "DispBeamColumn2d"), ("ladruno", "LadrunoDispBeamColumn2d")}
+
+
 @pytest.mark.parametrize("kind", KINDS)
 def test_elastic_stations_meet_the_force_beams(
-    solved: dict[str, Any], kind: str,
+    solved: dict[str, Any], kind: str, request: pytest.FixtureRequest,
 ) -> None:
     """Station 1 equals the left force beam at x = 1 and station 2 the
     right one at x = 2: every component is continuous at both junctions."""
+    if (kind, solved["cls"]) in UNREAD:
+        request.applymarker(pytest.mark.xfail(
+            strict=True, raises=AssertionError,
+            reason=".ladruno reads no 2-D disp-beam localForce station "
+                   "(N1,V1,M1 spelling)"))
     ndm = _ndm(solved["cls"])
     r = solved["results"][kind]
     for k, comp in enumerate(COMPS[ndm]):

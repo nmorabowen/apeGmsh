@@ -121,9 +121,12 @@ def fem_to_ops(model_h5: str) -> dict[int, int]:
 
 def build_junction(fem: Any, cls: str,
                    declare_recorders: Callable[[Any], None] | None = None,
+                   build_mid: Callable[[Any, Any, Any], Any] | None = None,
                    ) -> Any:
     """The bridge model of the bar; ``declare_recorders(ops)`` adds the
-    file recorders a fork route needs before the analysis chain."""
+    file recorders a fork route needs before the analysis chain.
+    ``build_mid(ops, transf, integration)`` replaces the elastic ``Mid``
+    beam with another family (a sectioned beam on the same section)."""
     from apeGmsh.opensees import apeSees
 
     ndm = _ndm(cls)
@@ -137,9 +140,12 @@ def build_junction(fem: Any, cls: str,
         tr = ops.geomTransf.Linear(vecxz=(0.0, 0.0, 1.0))
         sec = ops.section.Elastic(E=E_, A=A_, Iz=IZ, Iy=IY, G=G_, J=J_,
                                   alphaY=ALPHA, alphaZ=ALPHA)
-    # Elastic beam first: its sequential tag is taken before the force beams'.
-    ELASTIC[cls](ops, tr)
     integ = ops.beamIntegration.Lobatto(section=sec, n_ip=3)
+    # Mid first: its sequential tag is taken before the force beams'.
+    if build_mid is None:
+        ELASTIC[cls](ops, tr)
+    else:
+        build_mid(ops, tr, integ)
     for pg in ("Left", "Right"):
         ops.element.forceBeamColumn(pg=pg, transf=tr, integration=integ)
     ops.fix(label="a", dofs=(1,) * (3 if ndm == 2 else 6))
@@ -151,7 +157,9 @@ def build_junction(fem: Any, cls: str,
     ops.numberer.RCM()
     ops.system.BandGeneral()
     ops.test.NormDispIncr(tol=1e-12, max_iter=10)
-    ops.algorithm.Linear()
+    # Newton, not Linear: under Linear a disp beam's ``localForce`` reads 0
+    # (no state determination after the solve). One iteration converges.
+    ops.algorithm.Newton()
     ops.integrator.LoadControl(dlam=LAMS[0])
     ops.analysis.Static()
     return ops
