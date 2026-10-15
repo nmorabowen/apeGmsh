@@ -709,11 +709,9 @@ def _cadence_begin_stage(
     fake = FakeOps()
     model = _m(spec)
     live = spec.emit_recorders(str(out_dir), ops=fake, model=model)
-    with warnings.catch_warnings():
-        # __enter__ pre-translates every record through emit_logical,
-        # so it warns too; these tests pin the begin_stage route.
-        warnings.simplefilter("ignore")
-        live.__enter__()
+    # __enter__ pre-translates quietly (#1980), so under
+    # ``-W error::UserWarning`` a cadence warning here fails the test.
+    live.__enter__()
     try:
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")
