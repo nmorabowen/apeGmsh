@@ -31,11 +31,14 @@ The upstream shells in ``ZERO_GAUSS_PROBE_CLASSES`` are included. Their
 ``eleResponse`` reads zero only under ``algorithm Linear``, which never
 re-forms the residual, so the sections never see the converged strain. Under
 Newton (used here for every case) the element, the section probe and the
-recorder all agree. That finding is chain B issue #1990.
+recorder all agree; that finding is chain B issue #1992. ShellMITC9 is left
+out: its ``eleResponse(e, "stresses")`` corrupted the heap of this process on
+the fork build (0xc0000374, two runs in four), and a process-killing call
+does not belong in the shared pytest process (AGENTS.md).
 
 The models are raw ``ops`` decks, as in the tests they supersede, because
-the bridge has no primitive for SSPquad, EightNodeQuad, SSPbrick, ShellMITC9
-or the DKG shells. The emit side gets its ``(fem_eid, tag)`` pairing from
+the bridge has no primitive for SSPquad, EightNodeQuad, SSPbrick or the
+NL/triangular DKG shells. The emit side gets its ``(fem_eid, tag)`` pairing from
 ``tests.fixtures.recorder_models.identity_model``; the read side embeds the
 session stub ``model.h5``, as the superseded tests did.
 
@@ -64,7 +67,6 @@ RTOL_ANCHOR = 1e-8
 
 E, NU = 200e9, 0.3
 SHELL_H = 0.1
-B_ZERO_PROBE = "#1990"
 
 #: Element source order, spelled out (not read from RESPONSE_CATALOG).
 PLANE = ("stress_xx", "stress_yy", "stress_xy")
@@ -188,11 +190,6 @@ def _solid(tcl: str, coords: np.ndarray, fixed: list[int],
 
 _SHELL_SQUARE = np.hstack([_SQUARE, np.zeros((4, 1))])
 _SHELL_TRIANGLE = np.hstack([_TRIANGLE, np.zeros((3, 1))])
-_SHELL_Q9 = np.vstack([
-    _SHELL_SQUARE,
-    _mid(_SHELL_SQUARE, [(0, 1), (1, 2), (2, 3), (3, 0)]),
-    [[0.5, 0.5, 0.0]],
-])
 
 
 def _shell(tcl: str, coords: np.ndarray, fixed: list[int], top: list[int],
@@ -311,9 +308,6 @@ CASES: dict[str, Case] = {c.id: c for c in (
     Case("ShellNLDKGT", "ShellNLDKGT", IntRule.Triangle_GL_2C,
          _shell("ShellNLDKGT", _SHELL_TRIANGLE, [1, 2], [3]),
          SHELL, 4, "section", supersedes=_NEW),
-    Case("ShellMITC9", "ShellMITC9", IntRule.Quad_GL_3,
-         _shell("ShellMITC9", _SHELL_Q9, [1, 2, 5], [3, 4, 7]),
-         SHELL, 9, "section", plane_section=True, supersedes=_NEW),
     Case("Truss", "Truss", IntRule.Line_GL_1, _truss("Truss"),
          ("axial_force",), 1, "truss", token="axialForce",
          catalog_token="axial_force", supersedes=_TRUSSES),
@@ -334,7 +328,7 @@ CASES: dict[str, Case] = {c.id: c for c in (
 
 def solve(ops: Any) -> None:
     """Newton, not Linear: Linear never pushes the converged strain to the
-    DKG / MITC4 shells' sections (#1990)."""
+    DKG / MITC4 shells' sections (#1992)."""
     ops.system("FullGeneral")
     ops.numberer("Plain")
     ops.constraints("Plain")
@@ -454,13 +448,10 @@ def capture_truth(ops: Any, case: Case, built: Built) -> Truth:
                 err_msg=f"{case.cpp_class}: section order is not "
                         "(membrane, bending, shear)",
             )
-        # ShellMITC9 answers 84 values for a 72-wide response (12 trailing
-        # zeros, ShellMITC9.cpp getResponse); the 72 a recorder sizes from
-        # setResponse are the section's.
-        assert flat.size >= n, case.cpp_class
-        np.testing.assert_allclose(flat[:n], sec.ravel(), rtol=1e-12, atol=0,
+        # The element's own vector is the section's, GP by GP.
+        assert flat.size == n, case.cpp_class
+        np.testing.assert_allclose(flat, sec.ravel(), rtol=1e-12, atol=0,
                                    err_msg=case.cpp_class)
-        assert not np.any(flat[n:]), case.cpp_class
         # The section response is itself the per-GP anchor.
         return Truth(live=sec, anchor=_by_gp_only)
     assert flat.size == n, (
@@ -477,10 +468,10 @@ def capture_truth(ops: Any, case: Case, built: Built) -> Truth:
                  anchor=_strain_anchor(case.topology, built.coords, disp))
 
 
-def assert_slab_matches(case: Case, built: Built, truth: Truth,
+def assert_values_match(case: Case, built: Built, truth: Truth,
                         get: Callable[[str], Any], *, where: str) -> None:
-    """Every component, every GP, read back = live (and = anchor)."""
-    xi_all = None
+    """Every component at every GP, read back, equals the live vector."""
+    scale = np.abs(truth.live).max()
     for k, comp in enumerate(case.comps):
         slab = get(comp)
         values = np.asarray(slab.values)
@@ -489,26 +480,35 @@ def assert_slab_matches(case: Case, built: Built, truth: Truth,
             f"expected (1, {case.n_gp})"
         )
         assert [int(e) for e in slab.element_index] == [built.eid] * case.n_gp
-        want = truth.live[:, k]
-        scale = np.abs(truth.live).max()
         np.testing.assert_allclose(
-            values[0], want, rtol=RTOL, atol=RTOL * scale,
+            values[0], truth.live[:, k], rtol=RTOL, atol=RTOL * scale,
             err_msg=f"{case.cpp_class} {comp} on {where}",
         )
-        xi = np.asarray(slab.natural_coords, dtype=np.float64)
-        assert xi.shape[0] == case.n_gp, f"{case.cpp_class} {comp}: {xi.shape}"
-        if xi_all is None:
-            xi_all = xi
-        np.testing.assert_array_equal(xi, xi_all)
-    assert xi_all is not None
-    if case.anchor == "section":
-        assert xi_all.shape == (case.n_gp, 2), case.cpp_class
-        return
+
+
+def assert_coords_match(case: Case, built: Built, truth: Truth,
+                        get: Callable[[str], Any], *, where: str) -> None:
+    """The GP natural coordinates read back are where the element sampled.
+
+    Planes and solids: ``D B(xi) u`` at each read-back ``xi`` reproduces the
+    live stress of that GP. Trusses: the midpoint. Shells: count and width
+    only (no independent anchor for a shell's GP position).
+    """
+    coords = [np.asarray(get(c).natural_coords, dtype=np.float64)
+              for c in case.comps]
+    xi_all = coords[0]
+    for comp, xi in zip(case.comps, coords):
+        np.testing.assert_array_equal(xi, xi_all, err_msg=f"{comp} on {where}")
     if case.anchor == "truss":
         np.testing.assert_array_equal(xi_all, [[0.0]])
         return
-    ndm = built.coords.shape[1]
-    assert xi_all.shape == (case.n_gp, ndm), case.cpp_class
+    width = 2 if case.anchor == "section" else built.coords.shape[1]
+    assert xi_all.shape == (case.n_gp, width), (
+        f"{case.cpp_class} on {where}: natural coords {xi_all.shape}, "
+        f"expected ({case.n_gp}, {width})"
+    )
+    if case.anchor == "section":
+        return
     scale = np.abs(truth.live).max()
     for g in range(case.n_gp):
         np.testing.assert_allclose(
@@ -584,5 +584,8 @@ def test_catalog_layout_reads_back_from_out(
     case = CASES[key]
     assert_catalog_entry(case)
     built, truth, r = _run_out(case, tmp_path, stub_model_h5)
-    assert_slab_matches(case, built, truth,
-                        lambda c: r.elements.gauss.get(component=c), where=".out")
+    def get(c: str) -> Any:
+        return r.elements.gauss.get(component=c)
+
+    assert_values_match(case, built, truth, get, where=".out")
+    assert_coords_match(case, built, truth, get, where=".out")
