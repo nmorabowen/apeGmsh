@@ -174,7 +174,7 @@ def quiet_emit_logical(*args: Any, **kwargs: Any) -> "list[LogicalRecorder]":
     ``warnings.catch_warnings`` swaps the process-global filter list, so
     this is not thread-safe: a warning raised on another thread while the
     filter is in place is filtered by it too. No apeGmsh thread reaches
-    the callers above (#1980).
+    the callers above.
     """
     from ..spec._emit import emit_logical
     with warnings.catch_warnings():

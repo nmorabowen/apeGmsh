@@ -191,7 +191,7 @@ class LiveRecorders:
 
         # Translate (or refuse) every node and element recorder before
         # any recorder reaches the domain, so a refusal never leaves a
-        # stage half-issued. Quiet: begin_stage emits and warns (#1980).
+        # stage half-issued. Quiet here: begin_stage emits, and warns.
         for record in self._spec.records:
             if record.category in _SUPPORTED_CATEGORIES:
                 for logical in quiet_emit_logical(
