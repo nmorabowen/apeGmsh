@@ -232,9 +232,10 @@ class LiveRecorders:
                 f"with the stage/record filename separator."
             )
 
-        self._current_stage = StageRecord(name=name, kind=kind)
-        self._current_tags = []
-
+        # Translate every record, and raise every warning, before any
+        # recorder reaches the domain: a refusal (or a warning turned
+        # into an error) never leaves a stage half-issued.
+        planned: list[tuple] = []
         for record in self._spec.records:
             if record.category in _SUPPORTED_CATEGORIES:
                 for logical in emit_logical(
@@ -243,12 +244,9 @@ class LiveRecorders:
                     file_format=self._file_format,
                     stage_id=name,
                 ):
-                    args = to_ops_args(to_deck(
+                    planned.append(to_ops_args(to_deck(
                         logical, self._tag_map, self._model, where=_WHERE,
-                    ))
-                    tag = self._ops.recorder(*args)
-                    if isinstance(tag, int):
-                        self._current_tags.append(tag)
+                    )))
                 continue
 
             if record.category in _NON_RECORDER_CATEGORIES:
@@ -273,6 +271,13 @@ class LiveRecorders:
                 f"with unrecognised category={record.category!r}.",
                 stacklevel=2,
             )
+
+        self._current_stage = StageRecord(name=name, kind=kind)
+        self._current_tags = []
+        for args in planned:
+            tag = self._ops.recorder(*args)
+            if isinstance(tag, int):
+                self._current_tags.append(tag)
 
     def end_stage(self) -> None:
         """Remove the current stage's recorders and flush their files."""

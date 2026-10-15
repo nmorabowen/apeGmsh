@@ -210,3 +210,51 @@ def test_read_path_never_calls_emit_logical() -> None:
     (fn,) = [n for n in tree.body if isinstance(n, ast.FunctionDef)
              and n.name == "list_source_files"]
     assert _loud_calls(fn) == []
+
+
+# =====================================================================
+# A refusal at begin_stage leaves the stage unissued
+# =====================================================================
+
+def _ok_then_b_spec() -> ResolvedRecorderSpec:
+    return _make_spec(*(
+        ResolvedRecorderRecord(
+            category="nodes", name=name, components=("displacement_x",),
+            dt=None, n_steps=n_steps, node_ids=np.array([1, 2]),
+        )
+        for name, n_steps in (("ok", None), ("b", 5))
+    ))
+
+
+@pytest.mark.parametrize("refusal", ["cadence_warning_as_error", "to_deck_raises"])
+def test_begin_stage_refusal_issues_no_recorder(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, refusal: str,
+) -> None:
+    import apeGmsh.results.live._recorders as live_mod
+
+    spec = _ok_then_b_spec()
+    fake = FakeOps()
+    expected: type[Exception] = UserWarning
+    if refusal == "to_deck_raises":
+        real = live_mod.to_deck
+        expected = RuntimeError
+
+        def refuse_b_at_stage(logical, *a, **k):
+            if logical.record_name == "b" and "s1__" in logical.file_path:
+                raise RuntimeError("refused b")
+            return real(logical, *a, **k)
+
+        monkeypatch.setattr(live_mod, "to_deck", refuse_b_at_stage)
+    with warnings.catch_warnings():
+        if refusal == "cadence_warning_as_error":
+            warnings.simplefilter("error", UserWarning)
+        else:
+            warnings.simplefilter("ignore", UserWarning)
+        with pytest.raises(expected):
+            with spec.emit_recorders(
+                str(tmp_path), ops=fake, model=_m(spec),
+            ) as live:
+                live.begin_stage("s1")
+    assert fake.recorder_calls == []
+    assert [s.name for s in live.stages] == []
+    assert live.tags == ()
