@@ -36,14 +36,10 @@ The closed forms (load factor ``lam``):
 * simply supported at x <= L/2: ``N = H``, ``Vy = P/2``, ``Mz = P x / 2``
   (``P L / 4`` at the midspan node); mirrored for x >= L/2, ``Vy = -P/2``.
 
-Every route today takes station 1 as recorded and negates station 2 for
-every component (``s = +1``), which agrees only where ``s = +1``. The other
-components are pinned ``xfail(strict=True)`` on the defects that own them,
-asserting the right value, so the fix flips them to a strict XPASS:
+Every route applies :data:`SIGN` since #2009, and MPCO reads a 2-D
+``localForce`` bucket's ``V``/``M`` since #2010, so every station test is a
+plain pass. One pin stays ``xfail(strict=True)``, asserting the right value:
 
-* #2009: N and M (and, in 3-D, Vz and T) have the opposite sign to the
-  force-beam section convention on every route;
-* #2010: MPCO drops a 2-D ``localForce`` bucket's ``V``/``M``;
 * #2011: a ``basicForce``-only ``.ladruno`` file reads basic-system end
   moments as stations.
 """
@@ -291,28 +287,11 @@ def _station_values(r: Results, comp: str, eid: int) -> np.ndarray:
     return np.asarray(slab.values)[:, rows]
 
 
-def _known(kind: str, case: str, comp: str) -> list[str]:
-    why = []
-    if SIGN[case][comp] < 0:
-        why.append("#2009: elastic-beam station sign against the force-beam "
-                   "section convention")
-    if kind == "mpco" and case == "simply2d" and comp != "axial_force":
-        why.append("#2010: MPCO drops 2-D localForce V/M")
-    return why
-
-
 def _params() -> list[Any]:
-    out = []
-    for kind in KINDS:
-        for case, comps in COMPS.items():
-            for comp in comps:
-                why = _known(kind, case, comp)
-                marks = ([pytest.mark.xfail(strict=True, raises=AssertionError,
-                                            reason="; ".join(why))]
-                         if why else [])
-                out.append(pytest.param(kind, case, comp, marks=marks,
-                                        id=f"{kind}-{case}-{comp}"))
-    return out
+    return [pytest.param(kind, case, comp, id=f"{kind}-{case}-{comp}")
+            for kind in KINDS
+            for case, comps in COMPS.items()
+            for comp in comps]
 
 
 # ---------------------------------------------------------------------------
