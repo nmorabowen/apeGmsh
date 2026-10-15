@@ -419,12 +419,12 @@ def read_bucket_slab(
                 f"{layout.n_gauss_points}-GP layout is the only rule "
                 f"RESPONSE_CATALOG has for {bucket.elem_key.class_name!r}, "
                 f"resolved by class name, not one the file named. The "
-                f"elements were integrated with another rule (a different "
-                f"formulation, such as LadrunoBrick20 formulation='uri' "
-                f"with 8 GPs), so MPCO cannot say where their Gauss points "
-                f"are. Record them with the .ladruno recorder "
-                f"(ops.recorder.Ladruno), which stores each element's own "
-                f"Gauss points."
+                f"elements were integrated with another rule (another "
+                f"formulation of the same class, such as one with a "
+                f"reduced rule), so MPCO cannot say where their Gauss "
+                f"points are. Record this element with the fork's native "
+                f"recorder, which stores each element's own Gauss points "
+                f"and reads it correctly."
             ) from exc
 
     # Element IDs in row order.

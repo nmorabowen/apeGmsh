@@ -370,19 +370,19 @@ def test_element_only_mpco_file_has_its_steps(tmp_path: Path) -> None:
     _assert_gauss_stress(run)       # the element reads have that step too
 
 
-@pytest.mark.parametrize("token, suffixes, nonzero", [
-    ("material.equivalentPlasticStrain", ("tension", "compression"), True),
-    ("material.damage", ("tension", "compression"), False),
+@pytest.mark.parametrize("token, fz", [
+    ("material.equivalentPlasticStrain", -6.25e3),
+    ("material.damage", -7.2e3),
 ])
 def test_ladruno_brick_material_state_reads_back_from_mpco(
-    tmp_path: Path, token: str, suffixes: tuple[str, str], nonzero: bool,
+    tmp_path: Path, token: str, fz: float,
 ) -> None:
     """The material-state path resolves the rule-0 bracket too (#1970).
 
-    LadrunoBrick + ASDConcrete3D under compression: every GP's ``(+, -)``
-    pair against ``eleResponse(tag, "material", gp, key)``. The load is
-    below ``fc`` and the tensile side never cracks, so damage stays 0 and
-    only the plastic strain is non-trivial.
+    LadrunoBrick + ASDConcrete3D under axial compression: every GP's
+    ``(+, -)`` pair against ``eleResponse(tag, "material", gp, key)``. Each
+    load is chosen so the two columns differ (at -7.2e3 per node some GPs
+    crack in tension, d+ ~ 1, while d- stays 0), so a swapped column fails.
     """
     with apeGmsh(model_name="g7_mat", verbose=False) as g:
         box = g.model.geometry.add_box(0, 0, 0, 1, 1, 2)
@@ -398,7 +398,7 @@ def test_ladruno_brick_material_state_reads_back_from_mpco(
     ops.fix(nodes=_nodes_on_plane(fem, 2, 0.0), dofs=(1, 1, 1))
     with ops.pattern.Plain(series=ops.timeSeries.Linear()) as p:
         for nid in _nodes_on_plane(fem, 2, 2.0):
-            p.load(node=nid, forces=(0.0, 0.0, -6.25e3))
+            p.load(node=nid, forces=(0.0, 0.0, fz))
     path = str(tmp_path / "mat.mpco")
     _record(ops, "MPCO", path, elem_responses=(token,))
     ops.constraints.Plain()
@@ -420,10 +420,10 @@ def test_ladruno_brick_material_state_reads_back_from_mpco(
         for gp in range(1, 9)
     ])                                   # (8 GP, 2)
     emitter.ops.remove("recorders")
-    assert np.any(truth != 0.0) == nonzero
+    assert not np.allclose(truth[:, 0], truth[:, 1])   # a swap would show
     r = _open("MPCO", path, fem, model_h5)
     parent = ("equivalent_plastic_strain" if "Plastic" in token else "damage")
-    for k, suffix in enumerate(suffixes):
+    for k, suffix in enumerate(("tension", "compression")):
         slab = r.elements.gauss.get(component=f"{parent}_{suffix}")
         assert [int(e) for e in slab.element_index] == [eid] * 8
         np.testing.assert_allclose(

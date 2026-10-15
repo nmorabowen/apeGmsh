@@ -19,9 +19,9 @@ checked against ``eleResponse``:
 The group is the keyword the deck asked for, so each stress case is read under
 both ``stress`` and ``stresses``. Expected values are a closed form of (time,
 element, GP, component), laid out GP-slowest as the recorder packs them.
-Expected GP coordinates are written out from each rule. Where a live run gave
-the element's own ``integrationPoints``, the order is pinned. Otherwise
-(LadrunoBrick, LadrunoQuad, EightNodeQuad, which answer none) the set is pinned.
+Expected GP coordinates are written out from each rule, in the element's own
+order: the live ``integrationPoints`` where the element answers it, and
+otherwise the fork source cited at each family.
 """
 from __future__ import annotations
 
@@ -73,8 +73,7 @@ class Family:
     n_gp: int
     comps: tuple[str, ...]
     unnamed: bool                # one GAUSS_IDS=[-1] block of C1..Cn
-    gp: np.ndarray               # expected natural coords, (n_gp, d)
-    ordered: bool                # order pinned (live integrationPoints)
+    gp: np.ndarray               # expected natural coords, (n_gp, d), in order
 
     @property
     def key(self) -> str:
@@ -82,30 +81,36 @@ class Family:
 
 
 FAMILIES = [
+    # BezierTri6 and BezierTet10: the live ``integrationPoints`` order.
     Family("BezierTri6", 33000, 3, STRESS_2D, False,
-           np.array([[1 / 6, 1 / 6], [2 / 3, 1 / 6], [1 / 6, 2 / 3]]), True),
+           np.array([[1 / 6, 1 / 6], [2 / 3, 1 / 6], [1 / 6, 2 / 3]])),
     Family("BezierTet10", 33001, 4, STRESS_3D, False,
            np.array([[TA, TB, TB], [TB, TA, TB], [TB, TB, TA],
-                     [TB, TB, TB]]), True),
+                     [TB, TB, TB]])),
+    # LadrunoBrick.cpp:649-652: i, j, k over sg = {-1/sqrt3, +1/sqrt3},
+    # x slowest.
     Family("LadrunoBrick", 33002, 8, STRESS_3D, False,
            np.array([[x, y, z] for x in (-G2, G2) for y in (-G2, G2)
-                     for z in (-G2, G2)]), False),
+                     for z in (-G2, G2)])),
+    # LadrunoQuad.cpp:89-92: counter-clockwise from (-, -).
     Family("LadrunoQuad", 33007, 4, STRESS_2D, True,
-           np.array([[x, y] for x in (-G2, G2) for y in (-G2, G2)]), False),
+           np.array([[-G2, -G2], [G2, -G2], [G2, G2], [-G2, G2]])),
     Family("LadrunoCST", 33008, 1, STRESS_2D, True,
-           np.array([[1 / 3, 1 / 3]]), True),
+           np.array([[1 / 3, 1 / 3]])),
     # LadrunoLST answers no integrationPoints; its order is the fork
     # source's (LadrunoLST.cpp, the SixNodeTri anchors).
     Family("LadrunoLST", 33016, 3, STRESS_2D, True,
-           np.array([[2 / 3, 1 / 6], [1 / 6, 2 / 3], [1 / 6, 1 / 6]]), True),
-    Family("LadrunoBrick20", 33018, 27, STRESS_3D, False, _hex27(), True),
-    # SixNodeTri answers no integrationPoints either; its points are the
-    # same anchors (SixNodeTri.cpp), pinned as the order LadrunoLST shares.
+           np.array([[2 / 3, 1 / 6], [1 / 6, 2 / 3], [1 / 6, 1 / 6]])),
+    Family("LadrunoBrick20", 33018, 27, STRESS_3D, False, _hex27()),
+    # SixNodeTri answers no integrationPoints either: SixNodeTri.cpp:127-132.
     Family("SixNodeTri", 209, 3, STRESS_2D, False,
-           np.array([[2 / 3, 1 / 6], [1 / 6, 2 / 3], [1 / 6, 1 / 6]]), True),
+           np.array([[2 / 3, 1 / 6], [1 / 6, 2 / 3], [1 / 6, 1 / 6]])),
+    # EightNodeQuad.cpp:127-144: corners counter-clockwise, then the
+    # edge midpoints, then the centre.
     Family("EightNodeQuad", 208, 9, STRESS_2D, False,
-           np.array([[x, y] for x in (-G3, 0.0, G3)
-                     for y in (-G3, 0.0, G3)]), False),
+           np.array([[-G3, -G3], [G3, -G3], [G3, G3], [-G3, G3],
+                     [0.0, -G3], [G3, 0.0], [0.0, G3], [-G3, 0.0],
+                     [0.0, 0.0]])),
 ]
 
 
@@ -212,14 +217,7 @@ def _check_coords(slab, fam: Family, n_elem: int) -> None:
     assert xi.shape[0] == n_elem * fam.n_gp
     for e in range(n_elem):
         got = xi[e * fam.n_gp:(e + 1) * fam.n_gp, :d]
-        if fam.ordered:
-            np.testing.assert_allclose(got, fam.gp, atol=1e-12)
-        else:
-            np.testing.assert_allclose(
-                np.array(sorted(map(tuple, np.round(got, 12)))),
-                np.array(sorted(map(tuple, np.round(fam.gp, 12)))),
-                atol=1e-12,
-            )
+        np.testing.assert_allclose(got, fam.gp, atol=1e-12)
 
 
 @pytest.mark.parametrize("group", ["stress", "stresses"])
@@ -291,7 +289,9 @@ def test_rule0_gauss_tagged_width_refusal_names_the_remedy(tmp_path: Path) -> No
     """LadrunoBrick20 ``formulation="uri"``: 8 GP blocks against the 27-GP row.
 
     The live fork writes this as ``33018-LadrunoBrick20[0:0:0]`` with
-    ``NUM_COLUMNS == 48``. The ``.ladruno`` recorder reads the same run.
+    ``NUM_COLUMNS == 48``. The fork's native ``.ladruno`` recorder reads the
+    same run equal to ``eleResponse``, so the message points there. It names
+    the remedy without the fork's tokens (``tests/test_fork_token_ratchet.py``).
     """
     path = tmp_path / "uri.mpco"
     with _file(path, nodal=True) as f:
@@ -305,7 +305,7 @@ def test_rule0_gauss_tagged_width_refusal_names_the_remedy(tmp_path: Path) -> No
     assert "33018-LadrunoBrick20[0:0:0]" in msg
     assert "NUM_COLUMNS=48" in msg
     assert "integration rule 0" in msg and "27-GP layout" in msg
-    assert ".ladruno recorder" in msg
+    assert "fork's native recorder" in msg
 
 
 def test_rule0_with_two_catalog_rules_refuses(
