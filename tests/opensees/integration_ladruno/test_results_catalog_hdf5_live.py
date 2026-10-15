@@ -25,15 +25,17 @@ Family            MPCO-spec    MPCO         Ladruno
 FourNodeQuad,     pass         pass         pass
 Tri31, SSPquad,
 solids
-SixNodeTri,       xfail #1970  xfail #1970  values pass; coords xfail #1969
+SixNodeTri,       xfail #1970  xfail #1970  values pass; coords xfail #1998
 EightNodeQuad     (rule 0)     (rule 0)     (rule 0: no natural coords)
 shells (8 cases)  xfail #1991  pass         xfail #1990
 trusses           G7           G7           G7
 ================= ============ ============ ===============================
 
 The fork writes SixNodeTri and EightNodeQuad under the bracket key
-``[0:0:0]``. Integration rule 0 misses the catalog: #1970 on MPCO and the
-LST natural-coordinate case of #1969 on ``.ladruno``. Trusses are not
+``[0:0:0]``. On MPCO, integration rule 0 misses the catalog (#1970). On
+``.ladruno`` the values read, but the named-column bucket gets no natural
+coordinates: #1969's catalog fallback covers only generic ``C1..Cn`` buckets
+(#1998). Trusses are not
 repeated: ``test_element_families_ladruno_live.py`` (G7, #1949) already pins
 them on both routes.
 
@@ -69,10 +71,11 @@ ROUTES = ("MPCO-spec", "MPCO", "Ladruno")
 RULE_ZERO = frozenset({"SixNodeTri", "EightNodeQuad"})
 
 B_RULE0_MPCO = "#1970: MPCO bucket under integration rule 0 reads an empty slab"
-B_RULE0_LADRUNO = "#1969: .ladruno rule-0 Gauss slab has no natural coords"
 B_SHELL_SPEC = ("#1991: emit_mpco records shell resultants as section.force; "
                 "the read is empty")
 B_SHELL_LADRUNO = "#1990: .ladruno shell resultants (p11..q2) read an empty slab"
+B_RULE0_LADRUNO = ("#1998: .ladruno rule-0 named-column Gauss slab has no "
+                   "natural coords")
 
 #: Trusses are G7's (see the module docstring).
 FORK_CASES = [k for k, c in CASES.items() if c.anchor != "truss"]
