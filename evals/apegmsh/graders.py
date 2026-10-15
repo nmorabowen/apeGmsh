@@ -18,7 +18,13 @@ Each oracle names the right answer independently of apeGmsh:
 * ``staged_footing``: base-reaction equilibrium, the Flamant elastic slope, and
   the plastic share of the final settlement.
 
-Deck diffs are never used: deck text changes by design. ``tasks.toml`` holds
+Deck diffs are never used: deck text changes by design.
+
+Threat model: the eval measures honest agents. The graders and the probe stop honest
+shortcuts (numbers computed without apeGmsh or OpenSees, a hand-written result file,
+a record appended to the probe log); a script that deliberately reverse-engineers the
+harness (closure introspection, memory reads) is out of scope. ``skill_eval.py``
+marks a run ``contaminated`` when its transcript touches the repository. ``tasks.toml`` holds
 the prompts; the numbers below restate the prompts' data.
 """
 from __future__ import annotations

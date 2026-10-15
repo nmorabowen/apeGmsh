@@ -63,9 +63,11 @@ from __future__ import annotations
 import argparse
 import datetime as _dt
 import hashlib
+import getpass
 import io
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -180,12 +182,55 @@ def default_config() -> Path:
     return base / "apegmsh-skill-eval" / "config"
 
 
+SYSTEM_SID = "*S-1-5-18"      # NT AUTHORITY\SYSTEM, by SID so a localised name cannot miss
+
+
+def _windows_owner() -> str:
+    domain = os.environ.get("USERDOMAIN")
+    user = os.environ.get("USERNAME") or getpass.getuser()
+    return f"{domain}\\{user}" if domain else user
+
+
+def acl_principals(path: Path) -> list[tuple[str, bool]]:
+    """``(principal, inherited)`` for each ACE ``icacls`` lists on ``path``."""
+    run = subprocess.run(["icacls", str(path)], capture_output=True, text=True)
+    if run.returncode != 0:
+        raise SystemExit(f"icacls {path} failed: {run.stderr.strip() or run.stdout.strip()}")
+    aces = []
+    for number, line in enumerate(run.stdout.splitlines()):
+        line = line[len(str(path)):] if number == 0 else line
+        line = line.strip()
+        if not line or ":" not in line or line.lower().startswith("successfully"):
+            continue
+        principal, rights = line.rsplit(":", 1)
+        aces.append((principal.strip(), "(I)" in rights))
+    return aces
+
+
 def make_private_dir(path: Path) -> None:
-    """Create ``path`` readable by its owner only (POSIX mode 0700; on Windows the
-    per-user profile's inherited ACL already is)."""
+    """Create ``path`` readable by its owner only, and fail closed if it is not.
+
+    POSIX: mode 0700. Windows: ``icacls /inheritance:r`` then full control for the
+    owner and SYSTEM only, so a directory under ``C:\\`` does not keep the inherited
+    ``Authenticated Users:(M)``; the resulting ACL is read back and checked.
+    """
     path.mkdir(parents=True, exist_ok=True)
     if os.name != "nt":
         os.chmod(path, 0o700)
+        return
+    owner = _windows_owner()
+    run = subprocess.run(["icacls", str(path), "/inheritance:r",
+                          "/grant:r", f"{owner}:(OI)(CI)F", "/grant:r", f"{SYSTEM_SID}:(OI)(CI)F"],
+                         capture_output=True, text=True)
+    if run.returncode != 0:
+        raise SystemExit(f"could not lock {path} to its owner: {run.stderr.strip() or run.stdout.strip()}")
+    aces = acl_principals(path)
+    allowed = {owner.lower(), owner.split("\\")[-1].lower()}
+    strangers = [p for p, _ in aces if p.lower() not in allowed and not p.upper().endswith("\\SYSTEM")]
+    inherited = [p for p, inh in aces if inh]
+    if strangers or inherited or not aces:
+        raise SystemExit(f"{path} is not private after icacls: other principals {strangers}, "
+                         f"inherited {inherited}")
 
 
 def extract_src(commit: str, dest: Path) -> str:
@@ -208,23 +253,93 @@ def _names_repo(value: str) -> bool:
     return repo in value
 
 
-def agent_env(python: str, src: Path, config: Path) -> dict[str, str]:
-    """The agent's environment: the grader's (``src`` and ``python``), minus the repo.
+# What the CLI and the interpreter need from the caller's environment; nothing else
+# (OLDPWD, VIRTUAL_ENV, editor and shell state) reaches the agent.
+AGENT_ENV_ALLOW = (
+    "SYSTEMROOT", "SYSTEMDRIVE", "WINDIR", "COMSPEC", "PATHEXT", "TEMP", "TMP", "TMPDIR",
+    "USERPROFILE", "HOME", "HOMEDRIVE", "HOMEPATH", "USERNAME", "USER", "LOGNAME",
+    "APPDATA", "LOCALAPPDATA", "LANG", "LC_ALL", "TERM",
+    "CLAUDE_CODE_GIT_BASH_PATH", "ANTHROPIC_API_KEY",
+)
 
-    Every variable whose value names this repository is dropped (``PATH`` keeps its
-    other entries), so neither the answer key nor the repo's skill copy is advertised.
+
+def agent_env(python: str, src: Path, config: Path) -> dict[str, str]:
+    """The agent's environment, from an allow-list.
+
+    ``PATH`` with ``python`` first, ``PYTHONPATH`` set to the extracted ``src``,
+    ``CLAUDE_CONFIG_DIR``, the grader's two quieting variables, and the
+    :data:`AGENT_ENV_ALLOW` names the caller has set. A value naming this repository
+    is dropped (``PATH`` loses those entries only).
     """
     if _names_repo(os.path.abspath(python)) or _names_repo(str(src)):
         raise SystemExit("the interpreter and the extracted src must live outside the repository")
+    grader = graders.child_env(python, src=src)
+    upper = {k.upper(): v for k, v in os.environ.items()}
     env = {}
-    for name, value in graders.child_env(python, src=src).items():
-        if name.upper() == "PATH":
-            value = os.pathsep.join(e for e in value.split(os.pathsep) if not _names_repo(e))
-        elif _names_repo(value):
-            continue
-        env[name] = value
+    for name in AGENT_ENV_ALLOW:
+        if name in upper and not _names_repo(upper[name]):
+            env[name] = upper[name]
+    path = grader.get("PATH") or grader.get("Path") or ""
+    env["PATH"] = os.pathsep.join(e for e in path.split(os.pathsep) if e and not _names_repo(e))
+    env["PYTHONPATH"] = str(src)
+    env["MPLBACKEND"] = grader["MPLBACKEND"]
+    env["LADRUNO_OPENSEES_QUIET"] = grader["LADRUNO_OPENSEES_QUIET"]
     env["CLAUDE_CONFIG_DIR"] = str(config)
     return env
+
+
+def editable_root(python: str) -> Path | None:
+    """Where ``python``'s apeGmsh install points when it is an editable checkout."""
+    code = ("import importlib.metadata as m\n"
+            "try:\n    print(m.distribution('apeGmsh').read_text('direct_url.json') or '')\n"
+            "except m.PackageNotFoundError:\n    print('')\n")
+    run = subprocess.run([python, "-c", code], capture_output=True, text=True, timeout=120)
+    try:
+        info = json.loads(run.stdout.strip() or "{}")
+    except json.JSONDecodeError:
+        return None
+    url = info.get("url", "")
+    if not (info.get("dir_info") or {}).get("editable") or not url.startswith("file:"):
+        return None
+    from urllib.parse import unquote, urlparse
+    path = unquote(urlparse(url).path)
+    if os.name == "nt" and re.match(r"^/[A-Za-z]:", path):
+        path = path[1:]
+    return Path(path)
+
+
+def _path_forms(root: Path) -> list[str]:
+    """``root`` as a transcript may spell it: native, forward slashes, git-bash ``/c/...``."""
+    forward = str(root).replace("\\", "/").rstrip("/").lower()
+    forms = [forward]
+    drive = re.match(r"^([a-z]):(/.*)$", forward)
+    if drive:
+        forms.append(f"/{drive.group(1)}{drive.group(2)}")
+    return forms
+
+
+def _strings(value: Any) -> list[str]:
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, dict):
+        return [s for v in value.values() for s in _strings(v)]
+    if isinstance(value, list):
+        return [s for v in value for s in _strings(v)]
+    return []
+
+
+def contamination(tool_calls: list[dict[str, Any]], roots: list[Path]) -> list[str]:
+    """Each tool call (Read, Bash, Glob, Grep, ...) whose input names a path under a root."""
+    patterns = [re.compile(re.escape(form) + r"(?=$|[/\s'\"`;)])")
+                for root in roots for form in _path_forms(root)]
+    hits = []
+    for call in tool_calls:
+        for text in _strings(call.get("input")):
+            haystack = text.replace("\\", "/").lower()
+            if any(pattern.search(haystack) for pattern in patterns):
+                hits.append(f"{call.get('name')}: {text[:300]}")
+                break
+    return hits
 
 
 def instruction_files(root: Path) -> list[str]:
@@ -264,7 +379,7 @@ def parse_stream(lines: list[str]) -> dict[str, Any]:
     """Pull the model, the skills that fired, and the usage out of stream-json events."""
     out: dict[str, Any] = {"model": None, "fired_skills": [], "available_skills": None,
                            "usage": None, "cost_usd": None, "num_turns": None,
-                           "is_error": None, "final_text": None}
+                           "is_error": None, "final_text": None, "tool_calls": []}
     for line in lines:
         try:
             event = json.loads(line)
@@ -277,7 +392,10 @@ def parse_stream(lines: list[str]) -> dict[str, Any]:
                 out["available_skills"] = event["skills"]
         elif kind == "assistant":
             for item in (event.get("message") or {}).get("content") or []:
-                if item.get("type") == "tool_use" and item.get("name") == "Skill":
+                if item.get("type") != "tool_use":
+                    continue
+                out["tool_calls"].append({"name": item.get("name"), "input": item.get("input")})
+                if item.get("name") == "Skill":
                     out["fired_skills"].append((item.get("input") or {}).get("skill"))
         elif kind == "result":
             out["usage"] = event.get("usage")
@@ -443,6 +561,11 @@ def main(argv: list[str] | None = None) -> int:
     config = (args.config or default_config()).resolve()
     leaks = instruction_files(scratch)
     src_tree = _git("rev-parse", "--verify", f"{skill_commit}:src")
+    # A run that reads the repository or the editable checkout saw the answer key.
+    roots = [REPO]
+    checkout = editable_root(args.python)
+    if checkout is not None and checkout.resolve() != REPO:
+        roots.append(checkout)
 
     header = {
         "kind": "header",
@@ -467,6 +590,7 @@ def main(argv: list[str] | None = None) -> int:
         "scratch": str(scratch),
         "config": str(config),
         "instruction_files_above_scratch": leaks,
+        "contamination_roots": [str(r) for r in roots],
         "notes": notes,
     }
 
@@ -485,6 +609,7 @@ def main(argv: list[str] | None = None) -> int:
     print(f"log in once    bash:       CLAUDE_CONFIG_DIR=\"{config}\" {args.claude}   then /login")
     print(f"               PowerShell: $env:CLAUDE_CONFIG_DIR=\"{config}\"; {args.claude}   then /login")
     print(f"CLAUDE.md etc. {leaks or 'none in or above the scratch root'}")
+    print(f"contamination  a run touching {[str(r) for r in roots]} is recorded contaminated")
     print(f"planned runs   {len(plan)}")
     for item in plan:
         name = item.get("task") or item.get("trigger")
@@ -548,7 +673,9 @@ def main(argv: list[str] | None = None) -> int:
                 raise SystemExit("the first claude run produced no result event (not logged in?):\n"
                                  + stream.get("stderr_tail", ""))
             check_arm_skills(arm, stream["available_skills"])
-            row = {**item, "skill_hash": trees.get(arm), "seconds": round(seconds, 1), **stream}
+            tool_calls = stream.pop("tool_calls")
+            row = {**item, "skill_hash": trees.get(arm), "seconds": round(seconds, 1), **stream,
+                   "tool_call_count": len(tool_calls), "contaminated": contamination(tool_calls, roots)}
             if item["kind"] == "task":
                 row["grade"] = grade_safely(name, workdir / graders.SCRIPT_NAME, python=args.python,
                                             tasks=tasks, src=src_copy)
@@ -557,11 +684,14 @@ def main(argv: list[str] | None = None) -> int:
                 fired = SKILL_NAME in stream["fired_skills"]
                 row["expect"] = trig_by_id[name]["expect"]
                 row["pass"] = fired if row["expect"] == SKILL_NAME else not fired
+            if row["contaminated"]:
+                row["pass"] = False      # it saw the answer key: never a pass
             rows.append(row)
             record.write(json.dumps(row) + "\n")
             record.flush()
             print(f"[{n}/{len(plan)}] {item['kind']} {name} {arm} rep {item['rep']}: "
-                  f"{'PASS' if row['pass'] else 'fail'}  fired {stream['fired_skills']}")
+                  f"{'PASS' if row['pass'] else 'fail'}  fired {stream['fired_skills']}"
+                  f"{'  CONTAMINATED' if row['contaminated'] else ''}")
         summary = {"kind": "summary", "pass_counts": summarise(rows)}
         record.write(json.dumps(summary) + "\n")
     print(json.dumps(summary["pass_counts"], indent=2))

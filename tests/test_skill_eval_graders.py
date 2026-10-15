@@ -564,3 +564,70 @@ def test_the_config_is_private_and_per_user(skill_eval, tmp_path: Path) -> None:
     skill_eval.make_private_dir(target)
     if os.name != "nt":
         assert stat.S_IMODE(target.stat().st_mode) == 0o700
+
+
+def test_only_python_children_get_the_probe_key(graders, tmp_path: Path) -> None:
+    """A non-Python child, or Python with site off, sees neither the key nor the log path."""
+    key = b"\x05" * 32
+    shell = "['cmd', '/c', 'set']" if sys.platform == "win32" else "['env']"
+    log = _run_probed(graders, tmp_path, (
+        "import subprocess\n"
+        f"listing = subprocess.run({shell}, capture_output=True, text=True, check=True).stdout\n"
+        "assert 'APEGMSH_EVAL_PROBE' not in listing, listing\n"
+        "isolated = subprocess.run([sys.executable, '-I', '-c', "
+        "'import os; print(sorted(k for k in os.environ if k.startswith(\"APEGMSH_EVAL\")))'], "
+        "capture_output=True, text=True, check=True).stdout\n"
+        "assert isolated.strip() == '[]', isolated\n"), key)
+    assert len(graders.read_probe(log, key)) == 1          # only the script's own record
+
+
+def test_the_agent_environment_is_an_allow_list(skill_eval, tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("OLDPWD", str(tmp_path / "elsewhere"))
+    monkeypatch.setenv("VIRTUAL_ENV", str(tmp_path / "venv"))
+    monkeypatch.setenv("SOME_TOOL_TOKEN", "x")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test-not-real")
+    monkeypatch.setenv("TEMP", str(tmp_path))
+    env = skill_eval.agent_env(sys.executable, tmp_path / "apegmsh-src", tmp_path / "config")
+    assert not {"OLDPWD", "VIRTUAL_ENV", "SOME_TOOL_TOKEN"} & set(env)
+    assert env["ANTHROPIC_API_KEY"] == "sk-test-not-real" and env["TEMP"] == str(tmp_path)
+    expected = set(skill_eval.AGENT_ENV_ALLOW) | {"PATH", "PYTHONPATH", "MPLBACKEND",
+                                                  "LADRUNO_OPENSEES_QUIET", "CLAUDE_CONFIG_DIR"}
+    assert set(env) <= expected
+
+
+def test_a_run_that_touches_the_repository_is_contaminated(skill_eval, tmp_path: Path) -> None:
+    checkout = Path("C:/Users/someone/Github/apeGmsh") if sys.platform == "win32" else Path("/home/someone/apeGmsh")
+    roots = [skill_eval.REPO, checkout]
+    repo_file = skill_eval.REPO / "evals" / "apegmsh" / "graders.py"
+    gitbash = "/" + str(checkout).replace("\\", "/").replace(":", "", 1) if sys.platform == "win32" else str(checkout)
+    calls = [
+        {"name": "Read", "input": {"file_path": str(repo_file)}},
+        {"name": "Bash", "input": {"command": f"grep -rn distance {gitbash}/skills"}},
+        {"name": "Grep", "input": {"pattern": "edges", "path": str(checkout).lower()}},
+        {"name": "Read", "input": {"file_path": str(checkout) + "-fork/notes.md"}},   # a sibling
+        {"name": "Write", "input": {"file_path": str(tmp_path / "solution.py"), "content": "x = 1"}},
+        {"name": "Glob", "input": {"pattern": "*.py", "path": str(tmp_path)}},
+    ]
+    hits = skill_eval.contamination(calls, roots)
+    assert [h.split(":", 1)[0] for h in hits] == ["Read", "Bash", "Grep"], hits
+    assert skill_eval.contamination(calls[3:], roots) == []
+
+
+def test_the_transcript_keeps_every_tool_call(skill_eval) -> None:
+    events = [{"type": "assistant", "message": {"content": [
+        {"type": "tool_use", "name": "Read", "input": {"file_path": "a.py"}},
+        {"type": "text", "text": "hi"},
+        {"type": "tool_use", "name": "Bash", "input": {"command": "ls"}}]}}]
+    parsed = skill_eval.parse_stream([json.dumps(e) for e in events])
+    assert [c["name"] for c in parsed["tool_calls"]] == ["Read", "Bash"]
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows ACLs; POSIX is covered by the 0700 test")
+def test_the_windows_work_root_is_locked_to_its_owner(skill_eval, tmp_path: Path) -> None:
+    target = tmp_path / "work-root"
+    skill_eval.make_private_dir(target)
+    aces = skill_eval.acl_principals(target)
+    assert aces and not any(inherited for _, inherited in aces), aces
+    owner = skill_eval._windows_owner().lower()
+    others = [p for p, _ in aces if p.lower() != owner and not p.upper().endswith("\\SYSTEM")]
+    assert others == [], aces

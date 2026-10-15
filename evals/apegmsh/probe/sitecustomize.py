@@ -11,8 +11,9 @@ Python process of the graded run imports this module at startup. It wraps:
   ``recorder`` call's arguments are kept per process;
 * ``apeGmsh.opensees.apesees.apeSees.__init__``: how many bridges were built, and
   the node count of the FEMData each was built from;
-* ``subprocess.Popen``, to hand the log path and the key to child processes (a deck
-  run is one), since the parent no longer has them in its environment.
+* ``subprocess.Popen``, to hand the log path and the key to child Python processes
+  (a deck run is one), since the parent no longer has them in its environment. Any
+  other child gets an environment with both stripped.
 
 Tamper resistance. Before the graded script's own code runs, both variables are
 popped from ``os.environ``, and the key, the log path and the state live only in
@@ -20,9 +21,14 @@ closures inside ``_install``: ``import sitecustomize`` from the script finds no
 attribute holding them. At exit each process appends one line holding its
 record and an HMAC-SHA256 of it under the key; the grader drops nothing silently, and
 a line whose MAC fails fails the grade. A script that appends a record, or edits one,
-therefore fails. Code that walks interpreter internals for the key is out of scope.
-A child started with ``-I``, ``-E`` or ``-S`` is not handed the key (it would not run
-this module, so its own code could read it), and logs nothing.
+therefore fails. A child started with ``-I``, ``-E`` or ``-S`` is not handed the key
+(it would not run this module, so its own code could read it), and logs nothing.
+
+Threat model. The eval measures honest agents. The probe stops honest shortcuts:
+numbers computed without apeGmsh or OpenSees, a result file written by hand, a
+record appended to a log the script happened to find. It does not stop deliberate
+forgery by a script that reverse-engineers the harness (closure introspection,
+memory reads, re-deriving the key); that is out of scope, not an arms race to run.
 
 Without the variables this module does nothing beyond running any sitecustomize it
 shadows. A wrapping failure is logged as ``probe_errors``, which fails the grade.
@@ -138,12 +144,21 @@ def _install(log: str, key: bytes) -> None:
 
     popen_init = subprocess.Popen.__init__
 
+    def is_python(argv: list) -> bool:
+        """A Python interpreter that will run this module: python*/pythonw*, site on."""
+        if not argv or no_site_flags & {str(a) for a in argv[1:]}:
+            return False
+        exe = os.path.basename(os.fsdecode(argv[0])).lower()
+        return exe.startswith("python") or os.path.abspath(os.fsdecode(argv[0])) == sys.executable
+
     def popen(self, args, *rest, **kwargs):
-        argv = [args] if isinstance(args, (str, bytes, os.PathLike)) else list(args)
-        if not no_site_flags & {str(a) for a in argv}:
-            env = dict(os.environ if kwargs.get("env") is None else kwargs["env"])
+        argv = [] if isinstance(args, (str, bytes)) else list(args)
+        env = dict(os.environ if kwargs.get("env") is None else kwargs["env"])
+        env.pop(_LOG_ENV, None)
+        env.pop(_KEY_ENV, None)
+        if is_python(argv):
             env[_LOG_ENV], env[_KEY_ENV] = log, key.hex()
-            kwargs["env"] = env
+        kwargs["env"] = env
         popen_init(self, args, *rest, **kwargs)
 
     def write() -> None:
