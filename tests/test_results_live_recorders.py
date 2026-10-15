@@ -56,6 +56,17 @@ def _make_spec(*records: ResolvedRecorderRecord) -> ResolvedRecorderSpec:
     )
 
 
+def _m(spec: ResolvedRecorderSpec, *, ndm: int = 3, ndf: int = 6):
+    """A model for ``spec``: element ids are their own tags, and every
+    recorded node carries one ``(ndm, ndf)`` layout (3-D frame default)."""
+    nodes = {int(n) for r in spec.records if r.node_ids is not None
+             for n in r.node_ids}
+    elems = {int(e) for r in spec.records if r.element_ids is not None
+             for e in r.element_ids}
+    return identity_model(elems, spec.fem_snapshot_id, ndm=ndm,
+                          nodes_ndf={n: ndf for n in nodes})
+
+
 # =====================================================================
 # Single nodal record — happy path through one stage
 # =====================================================================
@@ -69,7 +80,7 @@ def test_emit_recorders_single_stage_nodal(tmp_path: Path) -> None:
     ))
     fake = FakeOps()
 
-    with spec.emit_recorders(str(tmp_path), ops=fake) as live:
+    with spec.emit_recorders(str(tmp_path), ops=fake, model=_m(spec)) as live:
         # __enter__ alone does NOT issue recorders anymore
         assert fake.recorder_calls == []
 
@@ -109,7 +120,7 @@ def test_emit_recorders_creates_output_dir(tmp_path: Path) -> None:
     ))
     fake = FakeOps()
     assert not target.exists()
-    with spec.emit_recorders(str(target), ops=fake) as live:
+    with spec.emit_recorders(str(target), ops=fake, model=_m(spec)) as live:
         live.begin_stage("s")
         live.end_stage()
     assert target.is_dir()
@@ -130,7 +141,7 @@ def test_emit_recorders_multiple_stages(tmp_path: Path) -> None:
     ))
     fake = FakeOps()
 
-    with spec.emit_recorders(str(tmp_path), ops=fake) as live:
+    with spec.emit_recorders(str(tmp_path), ops=fake, model=_m(spec)) as live:
         live.begin_stage("gravity", kind="static")
         assert len(fake.recorder_calls) == 1
         gravity_args = fake.recorder_calls[0]
@@ -166,7 +177,7 @@ def test_emit_recorders_one_record_two_ops_types(tmp_path: Path) -> None:
         node_ids=np.array([1]),
     ))
     fake = FakeOps()
-    with spec.emit_recorders(str(tmp_path), ops=fake) as live:
+    with spec.emit_recorders(str(tmp_path), ops=fake, model=_m(spec)) as live:
         live.begin_stage("s")
         assert len(fake.recorder_calls) == 2
         tokens = [args[-1] for args in fake.recorder_calls]
@@ -187,7 +198,7 @@ def test_begin_stage_twice_without_end_raises(tmp_path: Path) -> None:
         node_ids=np.array([1]),
     ))
     fake = FakeOps()
-    with spec.emit_recorders(str(tmp_path), ops=fake) as live:
+    with spec.emit_recorders(str(tmp_path), ops=fake, model=_m(spec)) as live:
         live.begin_stage("a")
         with pytest.raises(RuntimeError, match="still open"):
             live.begin_stage("b")
@@ -202,7 +213,7 @@ def test_end_stage_without_begin_raises(tmp_path: Path) -> None:
         node_ids=np.array([1]),
     ))
     fake = FakeOps()
-    with spec.emit_recorders(str(tmp_path), ops=fake) as live:
+    with spec.emit_recorders(str(tmp_path), ops=fake, model=_m(spec)) as live:
         with pytest.raises(RuntimeError, match="without a matching"):
             live.end_stage()
         # Still need at least one stage so we don't trip the
@@ -219,7 +230,7 @@ def test_begin_stage_outside_with_block_raises(tmp_path: Path) -> None:
         node_ids=np.array([1]),
     ))
     fake = FakeOps()
-    live = spec.emit_recorders(str(tmp_path), ops=fake)
+    live = spec.emit_recorders(str(tmp_path), ops=fake, model=_m(spec))
     with pytest.raises(RuntimeError, match="inside the ``with`` block"):
         live.begin_stage("s")
 
@@ -232,7 +243,7 @@ def test_empty_stage_name_raises(tmp_path: Path) -> None:
         node_ids=np.array([1]),
     ))
     fake = FakeOps()
-    with spec.emit_recorders(str(tmp_path), ops=fake) as live:
+    with spec.emit_recorders(str(tmp_path), ops=fake, model=_m(spec)) as live:
         with pytest.raises(ValueError, match="non-empty"):
             live.begin_stage("")
         live.begin_stage("s")
@@ -248,7 +259,7 @@ def test_stage_name_with_double_underscore_raises(tmp_path: Path) -> None:
         node_ids=np.array([1]),
     ))
     fake = FakeOps()
-    with spec.emit_recorders(str(tmp_path), ops=fake) as live:
+    with spec.emit_recorders(str(tmp_path), ops=fake, model=_m(spec)) as live:
         with pytest.raises(ValueError, match="separator"):
             live.begin_stage("bad__name")
         live.begin_stage("ok")
@@ -264,7 +275,7 @@ def test_exit_with_open_stage_auto_closes(tmp_path: Path) -> None:
         node_ids=np.array([1]),
     ))
     fake = FakeOps()
-    with spec.emit_recorders(str(tmp_path), ops=fake) as live:
+    with spec.emit_recorders(str(tmp_path), ops=fake, model=_m(spec)) as live:
         live.begin_stage("s")
         # ... user forgets end_stage() ...
     # __exit__ flushed it
@@ -282,7 +293,7 @@ def test_exit_without_any_stage_warns(tmp_path: Path) -> None:
     fake = FakeOps()
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
-        with spec.emit_recorders(str(tmp_path), ops=fake):
+        with spec.emit_recorders(str(tmp_path), ops=fake, model=_m(spec)):
             pass    # no begin_stage call
     assert any(
         "without any begin_stage" in str(w.message) for w in caught
@@ -310,7 +321,7 @@ def test_modal_record_raises_at_enter(tmp_path: Path) -> None:
     )
     fake = FakeOps()
     with pytest.raises(RuntimeError, match="modal"):
-        with spec.emit_recorders(str(tmp_path), ops=fake):
+        with spec.emit_recorders(str(tmp_path), ops=fake, model=_m(spec)):
             pass
 
     # Nothing should have been emitted before the raise.
@@ -445,7 +456,7 @@ def test_emit_recorders_mixed_categories(tmp_path: Path) -> None:
     fake = FakeOps()
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
-        with spec.emit_recorders(str(tmp_path), ops=fake, model=identity_model([10, 20, 30], spec.fem_snapshot_id)) as live:
+        with spec.emit_recorders(str(tmp_path), ops=fake, model=_m(spec)) as live:
             live.begin_stage("s")
             # 1 (nodes) + 1 (gauss) + 2 (line_stations pair) = 4
             assert len(fake.recorder_calls) == 4
@@ -477,7 +488,7 @@ def test_remove_failure_warns_does_not_raise(tmp_path: Path) -> None:
     fake = BrokenRemove()
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
-        with spec.emit_recorders(str(tmp_path), ops=fake) as live:
+        with spec.emit_recorders(str(tmp_path), ops=fake, model=_m(spec)) as live:
             live.begin_stage("s")
             live.end_stage()
     assert any("failed to remove recorder" in str(w.message) for w in caught)
@@ -491,7 +502,7 @@ def test_xml_format(tmp_path: Path) -> None:
         node_ids=np.array([1]),
     ))
     fake = FakeOps()
-    with spec.emit_recorders(str(tmp_path), file_format="xml", ops=fake) as live:
+    with spec.emit_recorders(str(tmp_path), file_format="xml", ops=fake, model=_m(spec)) as live:
         live.begin_stage("s")
         args = fake.recorder_calls[0]
         assert "-xml" in args
@@ -509,7 +520,7 @@ def test_empty_node_ids_emits_nothing(tmp_path: Path) -> None:
         node_ids=np.array([], dtype=np.int64),
     ))
     fake = FakeOps()
-    with spec.emit_recorders(str(tmp_path), ops=fake) as live:
+    with spec.emit_recorders(str(tmp_path), ops=fake, model=_m(spec)) as live:
         live.begin_stage("s")
         assert fake.recorder_calls == []
         live.end_stage()
@@ -523,7 +534,7 @@ def test_single_use(tmp_path: Path) -> None:
         node_ids=np.array([1]),
     ))
     fake = FakeOps()
-    live = spec.emit_recorders(str(tmp_path), ops=fake)
+    live = spec.emit_recorders(str(tmp_path), ops=fake, model=_m(spec))
     with live:
         live.begin_stage("s")
         live.end_stage()
@@ -550,7 +561,7 @@ def test_skips_fiber_record_with_warning(tmp_path: Path) -> None:
     fake = FakeOps()
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
-        with spec.emit_recorders(str(tmp_path), ops=fake) as live:
+        with spec.emit_recorders(str(tmp_path), ops=fake, model=_m(spec)) as live:
             live.begin_stage("s")
             assert len(fake.recorder_calls) == 1
             assert fake.recorder_calls[0][0] == "Node"
@@ -580,7 +591,7 @@ def test_emit_filename_matches_from_recorders_lookup(tmp_path: Path) -> None:
         node_ids=np.array([1]),
     ))
     fake = FakeOps()
-    with spec.emit_recorders(str(tmp_path), ops=fake) as live:
+    with spec.emit_recorders(str(tmp_path), ops=fake, model=_m(spec)) as live:
         live.begin_stage("gravity")
         emit_path = fake.recorder_calls[0][
             fake.recorder_calls[0].index("-file") + 1
@@ -617,7 +628,9 @@ def test_resolved_record_coerces_list_ids_to_ndarray(tmp_path: Path) -> None:
     assert isinstance(erec.element_ids, np.ndarray)
 
     fake = FakeOps()
-    with _make_spec(rec).emit_recorders(str(tmp_path), ops=fake) as live:
+    spec = _make_spec(rec)
+    with spec.emit_recorders(str(tmp_path), ops=fake,
+                             model=_m(spec)) as live:
         live.begin_stage("gravity", kind="static")
         live.end_stage()
     assert len(fake.recorder_calls) == 1
@@ -641,7 +654,8 @@ def test_defaults_to_the_module_the_bridge_drives(
 ) -> None:
     bound, stray = FakeOps(), FakeOps()
     split_backend(monkeypatch, bound, stray)
-    with _nodal_spec().emit_recorders(str(tmp_path)) as live:
+    spec = _nodal_spec()
+    with spec.emit_recorders(str(tmp_path), model=_m(spec)) as live:
         live.begin_stage("gravity")
         live.end_stage()
     assert len(bound.recorder_calls) == 1
@@ -654,7 +668,9 @@ def test_an_explicit_ops_beats_the_resolver(
 ) -> None:
     bound, stray, mine = FakeOps(), FakeOps(), FakeOps()
     split_backend(monkeypatch, bound, stray)
-    with _nodal_spec().emit_recorders(str(tmp_path), ops=mine) as live:
+    spec = _nodal_spec()
+    with spec.emit_recorders(str(tmp_path), ops=mine,
+                             model=_m(spec)) as live:
         live.begin_stage("gravity")
         live.end_stage()
     assert len(mine.recorder_calls) == 1
@@ -691,7 +707,7 @@ def _cadence_begin_stage(
 ) -> tuple[list, list[tuple]]:
     """Run one begin_stage; return (warnings it raised, recorder calls)."""
     fake = FakeOps()
-    model = identity_model([1, 2], spec.fem_snapshot_id)
+    model = _m(spec)
     live = spec.emit_recorders(str(out_dir), ops=fake, model=model)
     with warnings.catch_warnings():
         # __enter__ pre-translates every record through emit_logical,
@@ -749,3 +765,51 @@ def test_begin_stage_n_steps_with_dt_emits_dT_silently(
     assert calls
     for c in calls:
         assert c[c.index("-dT") + 1] == 0.01
+
+
+# =====================================================================
+# Node DOFs follow the node layout; model= is required (#2018)
+# =====================================================================
+
+def _dof_list(call: tuple) -> list[int]:
+    i = call.index("-dof") + 1
+    return list(call[i:call.index("-precision")])
+
+
+@pytest.mark.parametrize(("ndm", "ndf", "want"), [
+    (2, 3, [1, 2, 3]),          # planar frame: rotation_z is DOF 3
+    (3, 6, [1, 2, 6]),          # 3-D frame: unchanged
+])
+def test_live_route_records_rotation_z_at_the_node_dof(
+    tmp_path: Path, ndm: int, ndf: int, want: list[int],
+) -> None:
+    spec = _make_spec(ResolvedRecorderRecord(
+        category="nodes", name="f",
+        components=("displacement_x", "displacement_y", "rotation_z"),
+        dt=None, n_steps=None, node_ids=np.array([1, 2]),
+    ))
+    fake = FakeOps()
+    with spec.emit_recorders(str(tmp_path), ops=fake,
+                             model=_m(spec, ndm=ndm, ndf=ndf)) as live:
+        live.begin_stage("s")
+        live.end_stage()
+    [call] = fake.recorder_calls
+    assert _dof_list(call) == want
+
+
+@pytest.mark.parametrize("components", [
+    ("displacement_x",), ("displacement_x", "rotation_z"),
+])
+def test_live_route_refuses_node_records_without_model(
+    tmp_path: Path, components: tuple[str, ...],
+) -> None:
+    """Refused on ``__enter__``, before any recorder reaches the domain."""
+    spec = _make_spec(ResolvedRecorderRecord(
+        category="nodes", name="f", components=components,
+        dt=None, n_steps=None, node_ids=np.array([1, 2]),
+    ))
+    fake = FakeOps()
+    with pytest.raises(ValueError, match=r"Pass model="):
+        with spec.emit_recorders(str(tmp_path), ops=fake):
+            pass
+    assert fake.recorder_calls == []
