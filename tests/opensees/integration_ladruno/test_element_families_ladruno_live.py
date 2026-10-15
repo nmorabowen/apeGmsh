@@ -26,6 +26,9 @@ LadrunoBrick20      pass (values + GP coords)       pass (``stress``,
 LadrunoLST          ``stress``: values + GP         pass (``stress``,
                     coords pass;                    ``stresses``)
                     ``stresses``: pass
+LadrunoBrick +      (not covered here)              pass (damage and
+ASDConcrete3D                                       equivalent plastic
+material state                                      strain)
 Shell-on-solid      pass; 3-dof rotation: #1971     pass; 3-dof rotation:
                                                     #1971
 =================== =============================== ========================

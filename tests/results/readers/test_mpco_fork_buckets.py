@@ -1,23 +1,31 @@
 """MPCO reads of the fork's bucket shapes, without the fork (#1970).
 
-The fork's MPCO recorder writes three shapes the reader used to answer with
-an empty slab and no warning. Each file here is synthesised in the exact
-shape fork build 79e0623670 writes (dumped from the live-fork files of
-``tests/opensees/integration_ladruno/test_element_families_ladruno_live.py``):
+The fork's MPCO recorder writes the bracket's integration rule as 0
+(``[0:0:0]``) for its own classes and for the stock SixNodeTri and
+EightNodeQuad, and the reader used to answer each with an empty slab and no
+warning. Every file here is synthesised in the shape fork build 79e0623670
+writes. The shapes were dumped from live runs of each class, with each read
+checked against ``eleResponse``:
 
-* ``33018-LadrunoBrick20[0:0:0]``: the bracket's integration rule is 0, with
-  27 sequential GP blocks of 6 components, under ``stress`` or ``stresses``
-  (the group is the keyword the deck asked for);
-* ``33016-LadrunoLST[0:0:0]``: rule 0 and one element-level block
-  (``GAUSS_IDS == [-1]``) of nine unnamed columns ``C1..C9``;
-* an element-only file (``-E`` channels, no ``-N``): no ``ON_NODES`` at all,
-  and STEP keys numbered by the process's step counter, not from 0.
+* **Gauss-tagged blocks**: one META block per GP (``GAUSS_IDS`` 0..n-1).
+  BezierTri6, BezierTet10, LadrunoBrick, LadrunoBrick20, SixNodeTri,
+  EightNodeQuad, and the LadrunoBrick material-state buckets.
+* **One unnamed element-level block**: ``GAUSS_IDS == [-1]``, columns
+  ``C1..Cn``. LadrunoQuad (``C1..C12``), LadrunoCST (``C1..C3``), LadrunoLST
+  (``C1..C9``).
+* **An element-only file** (``-E`` channels, no ``-N``): no ``ON_NODES`` at
+  all, and STEP keys numbered by the process's step counter, not from 0.
 
-The expected values are a closed form of (time, element, GP, component), laid
-out GP-slowest as the recorder packs them, not decoded through the catalog.
+The group is the keyword the deck asked for, so each stress case is read under
+both ``stress`` and ``stresses``. Expected values are a closed form of (time,
+element, GP, component), laid out GP-slowest as the recorder packs them.
+Expected GP coordinates are written out from each rule. Where a live run gave
+the element's own ``integrationPoints``, the order is pinned. Otherwise
+(LadrunoBrick, LadrunoQuad, EightNodeQuad, which answer none) the set is pinned.
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 
 import h5py
@@ -35,10 +43,70 @@ from apeGmsh.results.readers._protocol import ResultLevel
 STRESS_3D = ("stress_xx", "stress_yy", "stress_zz",
              "stress_xy", "stress_yz", "stress_xz")
 STRESS_2D = ("stress_xx", "stress_yy", "stress_xy")
-#: LadrunoLST's interior rule in the element's GP order (LadrunoLST.cpp).
-LST_GP = np.array([[2 / 3, 1 / 6], [1 / 6, 2 / 3], [1 / 6, 1 / 6]])
-H20_KEY = "33018-LadrunoBrick20[0:0:0]"
-LST_KEY = "33016-LadrunoLST[0:0:0]"
+LABELS_3D = "sigma11,sigma22,sigma33,sigma12,sigma23,sigma13"
+LABELS_2D = "sigma11,sigma22,sigma12"
+
+G2 = 1 / np.sqrt(3.0)                  # 2-point Gauss-Legendre abscissa
+G3 = np.sqrt(0.6)                      # 3-point Gauss-Legendre abscissa
+TA = (5 + 3 * np.sqrt(5.0)) / 20       # 4-point tet rule (a, b, b)
+TB = (5 - np.sqrt(5.0)) / 20
+
+
+def _hex27() -> np.ndarray:
+    """LadrunoBrick20's 27 GPs in the element's own order (live
+    ``integrationPoints``): corners, edge midpoints, faces, centroid."""
+    a = G3
+    corner = [(-a, -a, -a), (a, -a, -a), (a, a, -a), (-a, a, -a),
+              (-a, -a, a), (a, -a, a), (a, a, a), (-a, a, a)]
+    edge = [(0, -a, -a), (a, 0, -a), (0, a, -a), (-a, 0, -a),
+            (0, -a, a), (a, 0, a), (0, a, a), (-a, 0, a),
+            (-a, -a, 0), (a, -a, 0), (a, a, 0), (-a, a, 0)]
+    face = [(a, 0, 0), (0, a, 0), (0, 0, a), (-a, 0, 0), (0, -a, 0),
+            (0, 0, -a)]
+    return np.array(corner + edge + face + [(0, 0, 0)], dtype=float)
+
+
+@dataclass(frozen=True)
+class Family:
+    cls: str
+    tag: int
+    n_gp: int
+    comps: tuple[str, ...]
+    unnamed: bool                # one GAUSS_IDS=[-1] block of C1..Cn
+    gp: np.ndarray               # expected natural coords, (n_gp, d)
+    ordered: bool                # order pinned (live integrationPoints)
+
+    @property
+    def key(self) -> str:
+        return f"{self.tag}-{self.cls}[0:0:0]"
+
+
+FAMILIES = [
+    Family("BezierTri6", 33000, 3, STRESS_2D, False,
+           np.array([[1 / 6, 1 / 6], [2 / 3, 1 / 6], [1 / 6, 2 / 3]]), True),
+    Family("BezierTet10", 33001, 4, STRESS_3D, False,
+           np.array([[TA, TB, TB], [TB, TA, TB], [TB, TB, TA],
+                     [TB, TB, TB]]), True),
+    Family("LadrunoBrick", 33002, 8, STRESS_3D, False,
+           np.array([[x, y, z] for x in (-G2, G2) for y in (-G2, G2)
+                     for z in (-G2, G2)]), False),
+    Family("LadrunoQuad", 33007, 4, STRESS_2D, True,
+           np.array([[x, y] for x in (-G2, G2) for y in (-G2, G2)]), False),
+    Family("LadrunoCST", 33008, 1, STRESS_2D, True,
+           np.array([[1 / 3, 1 / 3]]), True),
+    # LadrunoLST answers no integrationPoints; its order is the fork
+    # source's (LadrunoLST.cpp, the SixNodeTri anchors).
+    Family("LadrunoLST", 33016, 3, STRESS_2D, True,
+           np.array([[2 / 3, 1 / 6], [1 / 6, 2 / 3], [1 / 6, 1 / 6]]), True),
+    Family("LadrunoBrick20", 33018, 27, STRESS_3D, False, _hex27(), True),
+    # SixNodeTri answers no integrationPoints either; its points are the
+    # same anchors (SixNodeTri.cpp), pinned as the order LadrunoLST shares.
+    Family("SixNodeTri", 209, 3, STRESS_2D, False,
+           np.array([[2 / 3, 1 / 6], [1 / 6, 2 / 3], [1 / 6, 1 / 6]]), True),
+    Family("EightNodeQuad", 208, 9, STRESS_2D, False,
+           np.array([[x, y] for x in (-G3, 0.0, G3)
+                     for y in (-G3, 0.0, G3)]), False),
+]
 
 
 def _value(t: int, e: int, gp: int, comp: int) -> float:
@@ -91,19 +159,40 @@ def _bucket(
         ds.attrs["TIME"] = np.array([0.5 * (k + 1)])
 
 
-def _h20(f: h5py.File, group: str, *, step0: int = 0) -> None:
-    names = "sigma11,sigma22,sigma33,sigma12,sigma23,sigma13"
-    _bucket(f, group, H20_KEY, flat=_flat(2, 2, 27, 6), ids=[7, 9],
-            gauss_ids=list(range(27)), n_comp=[6] * 27,
-            components=";".join(f"0.1.4.{names}" for _ in range(27)),
+def _gauss_bucket(
+    f: h5py.File, group: str, key: str, *, n_gp: int, labels: str,
+    ids: list[int], n_steps: int = 2, step0: int = 0,
+) -> None:
+    """One META block per GP, as the fork tags GP-aware responses."""
+    n_comp = len(labels.split(","))
+    _bucket(f, group, key, flat=_flat(n_steps, len(ids), n_gp, n_comp),
+            ids=ids, gauss_ids=list(range(n_gp)), n_comp=[n_comp] * n_gp,
+            components=";".join(f"0.1.4.{labels}" for _ in range(n_gp)),
             step0=step0)
 
 
-def _lst(f: h5py.File, group: str, *, width: int = 9, named: bool = False) -> None:
+def _unnamed_bucket(
+    f: h5py.File, group: str, key: str, *, n_gp: int, n_comp: int,
+    ids: list[int], named: bool = False,
+) -> None:
+    """One element-level block, as the fork writes an untagged response.
+
+    The columns are the same GP-slowest packing; only META differs.
+    """
+    width = n_gp * n_comp
     labels = [f"s{i}" if named else f"C{i}" for i in range(1, width + 1)]
-    _bucket(f, group, LST_KEY, flat=_flat(2, 3, 1, width), ids=[4, 5, 6],
+    _bucket(f, group, key, flat=_flat(2, len(ids), n_gp, n_comp), ids=ids,
             gauss_ids=[-1], n_comp=[width],
             components="0." + ",".join(labels))
+
+
+def _write_family(f: h5py.File, fam: Family, group: str, ids: list[int]) -> None:
+    if fam.unnamed:
+        _unnamed_bucket(f, group, fam.key, n_gp=fam.n_gp,
+                        n_comp=len(fam.comps), ids=ids)
+    else:
+        _gauss_bucket(f, group, fam.key, n_gp=fam.n_gp, ids=ids,
+                      labels=LABELS_3D if fam.comps == STRESS_3D else LABELS_2D)
 
 
 def _check(slab, comp: int, ids: list[int], n_gp: int) -> None:
@@ -113,57 +202,74 @@ def _check(slab, comp: int, ids: list[int], n_gp: int) -> None:
     assert index.tolist() == [i for i in ids for _ in range(n_gp)]
     for e in range(len(ids)):
         for gp in range(n_gp):
-            col = e * n_gp + gp
             for t in range(2):
-                assert values[t, col] == _value(t, e, gp, comp), (t, e, gp)
+                assert values[t, e * n_gp + gp] == _value(t, e, gp, comp), (t, e, gp)
+
+
+def _check_coords(slab, fam: Family, n_elem: int) -> None:
+    xi = np.asarray(slab.natural_coords)
+    d = fam.gp.shape[1]
+    assert xi.shape[0] == n_elem * fam.n_gp
+    for e in range(n_elem):
+        got = xi[e * fam.n_gp:(e + 1) * fam.n_gp, :d]
+        if fam.ordered:
+            np.testing.assert_allclose(got, fam.gp, atol=1e-12)
+        else:
+            np.testing.assert_allclose(
+                np.array(sorted(map(tuple, np.round(got, 12)))),
+                np.array(sorted(map(tuple, np.round(fam.gp, 12)))),
+                atol=1e-12,
+            )
 
 
 @pytest.mark.parametrize("group", ["stress", "stresses"])
-def test_rule0_brick20_gauss_stress_reads(tmp_path: Path, group: str) -> None:
-    path = tmp_path / "h20.mpco"
+@pytest.mark.parametrize("fam", FAMILIES, ids=[f.cls for f in FAMILIES])
+def test_rule0_family_gauss_stress_reads(
+    tmp_path: Path, fam: Family, group: str,
+) -> None:
+    ids = [7, 9, 11]
+    path = tmp_path / "fam.mpco"
     with _file(path, nodal=True) as f:
-        _h20(f, group)
+        _write_family(f, fam, group, ids)
     with MPCOReader(path) as r:
         (stage,) = r.stages()
-        assert set(STRESS_3D) <= set(r.available_components(stage.id, ResultLevel.GAUSS))
-        for k, comp in enumerate(STRESS_3D):
-            slab = r.read_gauss(stage.id, comp)
-            _check(slab, k, [7, 9], 27)
-        xi = np.asarray(slab.natural_coords)
-        a = np.sqrt(0.6)
-        assert xi.shape == (54, 3)
-        assert np.all(np.isclose(np.abs(xi), a) | (xi == 0.0))
-        assert len({tuple(p) for p in np.round(xi[:27], 12)}) == 27
-
-
-@pytest.mark.parametrize("group", ["stress", "stresses"])
-def test_rule0_lst_unnamed_element_block_reads(tmp_path: Path, group: str) -> None:
-    path = tmp_path / "lst.mpco"
-    with _file(path, nodal=True) as f:
-        _lst(f, group)
-    with MPCOReader(path) as r:
-        (stage,) = r.stages()
-        for k, comp in enumerate(STRESS_2D):
-            slab = r.read_gauss(stage.id, comp)
-            index = np.asarray(slab.element_index)
-            values = np.asarray(slab.values)
-            assert index.tolist() == [4, 4, 4, 5, 5, 5, 6, 6, 6]
-            # The block is one element-level "GP" of nine columns: GP g's
-            # component k is column 3 * g + k of that block.
-            for e in range(3):
-                for gp in range(3):
-                    for t in range(2):
-                        assert values[t, 3 * e + gp] == _value(t, e, 0, 3 * gp + k)
-        np.testing.assert_allclose(
-            np.asarray(slab.natural_coords)[:3, :2], LST_GP, atol=1e-12,
+        assert set(fam.comps) <= set(
+            r.available_components(stage.id, ResultLevel.GAUSS)
         )
+        for k, comp in enumerate(fam.comps):
+            slab = r.read_gauss(stage.id, comp)
+            _check(slab, k, ids, fam.n_gp)
+            _check_coords(slab, fam, len(ids))
+
+
+@pytest.mark.parametrize("group, labels, parent", [
+    ("material.equivalentPlasticStrain", "PLE+,PLE-", "equivalent_plastic_strain"),
+    ("material.damage", "d+,d-", "damage"),
+])
+def test_rule0_material_state_reads(
+    tmp_path: Path, group: str, labels: str, parent: str,
+) -> None:
+    """LadrunoBrick + ASDConcrete3D: the material-state path, rule 0."""
+    fam = FAMILIES[2]
+    assert fam.cls == "LadrunoBrick"
+    ids = [7, 9]
+    path = tmp_path / "mat.mpco"
+    with _file(path, nodal=True) as f:
+        _gauss_bucket(f, group, fam.key, n_gp=8, labels=labels, ids=ids)
+    with MPCOReader(path) as r:
+        (stage,) = r.stages()
+        for k, suffix in enumerate(("tension", "compression")):
+            slab = r.read_gauss(stage.id, f"{parent}_{suffix}")
+            _check(slab, k, ids, 8)
+            _check_coords(slab, fam, len(ids))
 
 
 def test_named_element_block_still_refuses(tmp_path: Path) -> None:
     """Columns the element named itself are not renamed by the catalog."""
     path = tmp_path / "lst_named.mpco"
     with _file(path, nodal=True) as f:
-        _lst(f, "stresses", named=True)
+        _unnamed_bucket(f, "stresses", "33016-LadrunoLST[0:0:0]", n_gp=3,
+                        n_comp=3, ids=[4, 5], named=True)
     with MPCOReader(path) as r:
         (stage,) = r.stages()
         with pytest.raises(ValueError, match=r"33016-LadrunoLST\[0:0:0\]"):
@@ -173,11 +279,33 @@ def test_named_element_block_still_refuses(tmp_path: Path) -> None:
 def test_unnamed_block_of_another_width_refuses(tmp_path: Path) -> None:
     path = tmp_path / "lst_wide.mpco"
     with _file(path, nodal=True) as f:
-        _lst(f, "stresses", width=10)
+        _unnamed_bucket(f, "stresses", "33016-LadrunoLST[0:0:0]", n_gp=1,
+                        n_comp=10, ids=[4, 5])
     with MPCOReader(path) as r:
         (stage,) = r.stages()
         with pytest.raises(ValueError, match=r"33016-LadrunoLST\[0:0:0\]"):
             r.read_gauss(stage.id, "stress_xx")
+
+
+def test_rule0_gauss_tagged_width_refusal_names_the_remedy(tmp_path: Path) -> None:
+    """LadrunoBrick20 ``formulation="uri"``: 8 GP blocks against the 27-GP row.
+
+    The live fork writes this as ``33018-LadrunoBrick20[0:0:0]`` with
+    ``NUM_COLUMNS == 48``. The ``.ladruno`` recorder reads the same run.
+    """
+    path = tmp_path / "uri.mpco"
+    with _file(path, nodal=True) as f:
+        _gauss_bucket(f, "stresses", "33018-LadrunoBrick20[0:0:0]", n_gp=8,
+                      labels=LABELS_3D, ids=[7])
+    with MPCOReader(path) as r:
+        (stage,) = r.stages()
+        with pytest.raises(ValueError) as err:
+            r.read_gauss(stage.id, "stress_xx")
+    msg = str(err.value)
+    assert "33018-LadrunoBrick20[0:0:0]" in msg
+    assert "NUM_COLUMNS=48" in msg
+    assert "integration rule 0" in msg and "27-GP layout" in msg
+    assert ".ladruno recorder" in msg
 
 
 def test_rule0_with_two_catalog_rules_refuses(
@@ -190,7 +318,7 @@ def test_rule0_with_two_catalog_rules_refuses(
     )
     path = tmp_path / "h20.mpco"
     with _file(path, nodal=True) as f:
-        _h20(f, "stresses")
+        _write_family(f, FAMILIES[6], "stresses", [7])
     with MPCOReader(path) as r:
         (stage,) = r.stages()
         with pytest.raises(ValueError, match=r"integration rule 0"):
@@ -200,7 +328,8 @@ def test_rule0_with_two_catalog_rules_refuses(
 def test_element_only_file_has_its_steps(tmp_path: Path) -> None:
     path = tmp_path / "element_only.mpco"
     with _file(path, nodal=False) as f:
-        _h20(f, "stress", step0=8)
+        _gauss_bucket(f, "stress", "33018-LadrunoBrick20[0:0:0]", n_gp=27,
+                      labels=LABELS_3D, ids=[7, 9], step0=8)
     with MPCOReader(path) as r:
         (stage,) = r.stages()
         assert stage.n_steps == 2
@@ -211,9 +340,9 @@ def test_element_only_file_has_its_steps(tmp_path: Path) -> None:
 def test_element_only_file_with_two_cadences_refuses(tmp_path: Path) -> None:
     path = tmp_path / "element_only_bad.mpco"
     with _file(path, nodal=False) as f:
-        _h20(f, "stress")
-        _bucket(f, "strain", H20_KEY, flat=_flat(1, 2, 27, 6), ids=[7, 9],
-                gauss_ids=list(range(27)), n_comp=[6] * 27,
-                components="x")
+        _gauss_bucket(f, "stress", "33018-LadrunoBrick20[0:0:0]", n_gp=27,
+                      labels=LABELS_3D, ids=[7, 9])
+        _gauss_bucket(f, "strain", "33018-LadrunoBrick20[0:0:0]", n_gp=27,
+                      labels=LABELS_3D, ids=[7, 9], n_steps=1)
     with MPCOReader(path) as r, pytest.raises(ValueError, match="step-count"):
         r.stages()
