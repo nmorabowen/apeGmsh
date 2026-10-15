@@ -12,8 +12,7 @@ reader change flips something:
 * a passing value test;
 * ``xfail(strict=True)`` citing a chain-B issue, asserting the right value,
   where the route reads back a silent wrong answer (an empty slab, a phantom
-  zero): #1969 (``.ladruno`` reader), #1970 (MPCO reader), #1971 (3-dof nodes
-  reading rotation 0.0);
+  zero): #1970 (MPCO reader), #1971 (3-dof nodes reading rotation 0.0);
 * ``pytest.raises`` where the route refuses the family loudly (a gap: the
   MPCO truss bucket).
 
@@ -21,11 +20,11 @@ reader change flips something:
 Family              ``.ladruno``                    MPCO
 =================== =============================== ========================
 Truss axial force   line station: pass;             raises (gap)
-                    Gauss record: xfail #1969
+                    Gauss record: pass
 LadrunoBrick20      pass (values + GP coords)       xfail #1970
-LadrunoLST          ``stress``: values pass, GP     xfail #1970
-                    coords xfail #1969;
-                    ``stresses``: xfail #1969
+LadrunoLST          ``stress``: values + GP         xfail #1970
+                    coords pass;
+                    ``stresses``: pass
 Shell-on-solid      pass; 3-dof rotation: #1971     pass; 3-dof rotation:
                                                     #1971
 =================== =============================== ========================
@@ -69,8 +68,6 @@ ROT = ("rotation_x", "rotation_y", "rotation_z")
 #: ``integrationPoints`` response, so the fork source is the oracle.
 LST_GP = np.array([[2 / 3, 1 / 6], [1 / 6, 2 / 3], [1 / 6, 1 / 6]])
 
-B_LADRUNO = "#1969: the .ladruno reader returns an empty Gauss slab"
-B_LADRUNO_XI = "#1969: .ladruno LST Gauss slab has no natural coords (3, 0)"
 B_MPCO = "#1970: the MPCO reader returns an empty slab"
 B_ROT = "#1971: 3-dof nodes read rotation 0.0, not absent/NaN"
 
@@ -193,12 +190,11 @@ def test_truss_axial_force_reads_back_from_ladruno(
     np.testing.assert_allclose(np.asarray(slab.values)[:, 0], live, rtol=RTOL)
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason=B_LADRUNO)
 @pytest.mark.parametrize("cls", ["Truss", "CorotTruss"])
 def test_truss_axial_force_gauss_record_from_ladruno(
     g: Any, tmp_path: Path, cls: str,
 ) -> None:
-    """The Gauss record DomainCapture and ``.out`` give: empty here."""
+    """The Gauss record DomainCapture and ``.out`` give."""
     r, bar_eid, live = _truss_run(g, tmp_path, cls, "Ladruno")
     slab = r.elements.gauss.get(component="axial_force")
     assert [int(e) for e in slab.element_index] == [bar_eid]
@@ -343,16 +339,14 @@ def test_ladruno_lst_gauss_stress_reads_back_from_ladruno(
                          coords=False)
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason=B_LADRUNO_XI)
 def test_ladruno_lst_gauss_coords_read_back_from_ladruno(
     tmp_path: Path,
 ) -> None:
-    """The values read, but each GP comes back with no natural coords."""
+    """Each GP comes back at the element's own rule (no GP_PARAM in the file)."""
     _assert_gauss_stress(_solid_run("lst", "Ladruno", "stress", tmp_path),
                          values=False)
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason=B_LADRUNO)
 def test_ladruno_lst_stresses_token_reads_back_from_ladruno(
     tmp_path: Path,
 ) -> None:
