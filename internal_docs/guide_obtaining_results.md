@@ -134,8 +134,10 @@ script written, no subprocess**.
 ```python
 import openseespy.opensees as ops
 
-# model: the OpenSeesModel built from the same FEMData (needed for element
-# records: it maps their FEM ids to the OpenSees tags they were built with)
+# model: the OpenSeesModel built from the same FEMData, required for node
+# and element records: it maps element FEM ids to the OpenSees tags they
+# were built with, and each node's DOFs to its own layout (a 2-D frame's
+# rotation_z is DOF 3), #2018
 with spec.emit_recorders("out/", model=model) as live:
     # First stage
     live.begin_stage("gravity", kind="static")
