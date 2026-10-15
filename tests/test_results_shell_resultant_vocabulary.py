@@ -205,6 +205,7 @@ def _gauss_level():
     return ResultLevel.GAUSS
 
 
+@pytest.mark.live
 def test_declared_shell_record_captures_real_resultants(
     tmp_path: Path,
 ) -> None:
@@ -243,6 +244,7 @@ def test_declared_shell_record_captures_real_resultants(
     assert peak["bending_moment_xx"] > peak["membrane_force_xx"]
 
 
+@pytest.mark.live
 def test_upstream_shell_is_skipped_rather_than_recorded_as_zeros(
     tmp_path: Path,
 ) -> None:
@@ -282,6 +284,7 @@ def test_upstream_shell_is_skipped_rather_than_recorded_as_zeros(
 # G4 — the picker offers the resultants only where a shell is drawn
 # =====================================================================
 
+@pytest.mark.live
 def test_scoped_components_separate_shell_from_solid(tmp_path: Path) -> None:
     """The A6.6 picker law, on the two-family case it exists for.
 
@@ -420,6 +423,7 @@ def _all_routes(
     return routes
 
 
+@pytest.mark.live
 def test_catalog_set_is_the_measured_set() -> None:
     """The catalog note describes exactly the classes measured below."""
     from apeGmsh.opensees._response_catalog import ZERO_GAUSS_PROBE_CLASSES
@@ -469,18 +473,19 @@ def test_listed_shell_is_stale_under_linear_on_every_route(
 @pytest.mark.live
 @pytest.mark.xfail(
     strict=True, raises=AssertionError,
-    reason="#1992: has_dead_gauss_probe takes only the class, so "
-           "DomainCapture skips these shells under Newton too; it needs "
-           "the algorithm from its call site in results/capture/_domain.py",
+    reason="has_dead_gauss_probe takes only the class, so DomainCapture "
+           "skips these shells under Newton too. Slice #2001 rewrites "
+           "this test to pass the algorithm in.",
 )
 def test_domain_capture_keeps_listed_shell_under_newton(
     tmp_path: Path,
 ) -> None:
     """The right answer: under Newton DomainCapture records N11 = 2·P.
 
-    Fails today (the skip is algorithm-blind). When the call site passes
-    the algorithm and the skip narrows to Linear, this XPASSes and the
-    strict marker fails the run: remove the marker then.
+    Fails today because the skip is algorithm-blind. This capture has no
+    bridge and no algorithm, so a fail-closed fix (unknown algorithm
+    means skip) leaves it XFAIL; it does not flip by itself. Slice #2001
+    rewrites it to pass the algorithm in and drops the marker.
     """
     _build_uniaxial("ShellMITC4", "Newton", 1)
     fem = _MinimalFem(np.arange(1, 5, dtype=np.int64), _SHELL_COORDS)
