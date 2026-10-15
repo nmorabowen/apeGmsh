@@ -16,7 +16,8 @@ rotation-role table that `recorder.declare` and `.read` use, matched on
 the model's element tokens. A 2-D LadrunoUP vertex node's DOF 3 is pore
 pressure, so its `rotation_z` is refused instead of recording the
 pressure. An unknown element token also blocks the rotations at its
-nodes. Rotations that some nodes lack are still recorded, then read back
+nodes. Coupling, rigid-body and embedded-tie elements are not in the
+element plan, so they neither block nor refuse a record. Rotations that some nodes lack are still recorded, then read back
 as NaN (#1971).
 
 **BREAKING:** every node record now needs `model=`, the built

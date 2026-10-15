@@ -367,12 +367,21 @@ def _model_rotation_roles(
 ) -> "RotationRoles":
     """The rotation roles of ``node_ids`` under ``model``'s elements.
 
-    A rehydrated element record keeps no connectivity; its nodes come from
-    the model's FEMData by ``fem_eid``. A record whose nodes cannot be
-    placed raises when its class is not a known beam/shell/zero-length or
-    translational one (it could block a rotation unseen); a known one is
-    skipped, which only ever refuses more.
+    Only the element plan's rows count, as for :func:`rotation_roles` on
+    the declared path. The emitter marks those rows through its fan-out
+    side channels: a FEM id for a mesh-fanned element, a node list for a
+    node-pair one (ADR 0049; no node-pair element predates the 2.17.0
+    ``inline_connectivity`` that persists it). The side-list passes
+    (couplings, rigid bodies, embedded ties, interface springs) clear
+    both, so a record with neither (``fem_eid`` is
+    ``MISSING_FEM_ELEMENT_ID``, no connectivity) is not a plan element and
+    is skipped. A rehydrated plan row keeps no connectivity: its nodes come
+    from the model's FEMData by ``fem_eid``. A plan row whose FEM id that
+    FEMData lacks raises, unless its class is a known beam/shell/
+    zero-length or translational one, since skipping that only ever
+    refuses more.
     """
+    from ._internal.tag_resolution import MISSING_FEM_ELEMENT_ID
     from ._readback import (
         _CLASS_FOR_TOKEN,
         _ROTATIONAL_FAMILIES,
@@ -385,6 +394,8 @@ def _model_rotation_roles(
     rows: list[tuple[str, tuple[int, ...]]] = []
     for rec in records:
         nodes = tuple(int(n) for n in rec.connectivity)
+        if not nodes and int(rec.fem_eid) == MISSING_FEM_ELEMENT_ID:
+            continue                # a side-list element, not in the plan
         if not nodes and int(rec.fem_eid) >= 0:
             if conn_of is None:
                 conn_of = {}

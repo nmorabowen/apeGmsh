@@ -729,6 +729,83 @@ def test_a_translational_token_alone_establishes_no_rotation(
         spec.to_tcl_commands(model=model)
 
 
+def test_kinematic_coupling_leaves_3d_beam_rotations_at_dof_6(
+    tmp_path,
+) -> None:
+    """A coupling is a side-list element (no FEM id, no node list), not an
+    element-plan row, so it neither blocks nor raises: the 3-D beam nodes
+    record ``rotation_z`` at DOF 6, as on main."""
+    from apeGmsh import apeGmsh
+    from apeGmsh.opensees import OpenSeesModel, apeSees
+
+    path = tmp_path / "kc.h5"
+    with apeGmsh(model_name="b2018_kc", verbose=False) as g:
+        p0 = g.model.geometry.add_point(0, 0, 0)
+        p1 = g.model.geometry.add_point(2, 0, 0)
+        p2 = g.model.geometry.add_point(2, 1, 0)
+        g.physical.add(1, [g.model.geometry.add_line(p0, p1)], name="B")
+        g.physical.add(0, [p1], name="M")
+        g.physical.add(0, [p2], name="S")
+        g.constraints.kinematic_coupling("M", "S", master_point=(2, 0, 0),
+                                         name="kc")
+        g.mesh.sizing.set_global_size(0.5)
+        g.mesh.generation.generate(1)
+        fem = g.mesh.queries.get_fem_data()
+        beam = [int(n) for n in fem.nodes.select(pg="B").ids]
+        ops = apeSees(fem)
+        ops.model(ndm=3, ndf=6)
+        ops.element.elasticBeamColumn(
+            pg="B", transf=ops.geomTransf.Linear(vecxz=(0.0, 0.0, 1.0)),
+            A=1.0, E=1.0, G=1.0, J=1.0, Iy=1.0, Iz=1.0)
+        ops.h5(str(path))
+    model = OpenSeesModel.from_h5(str(path))
+    assert "LadrunoKinematicCoupling" in {r.type_token
+                                          for r in model.elements()}
+    spec = ResolvedRecorderSpec(
+        fem_snapshot_id=model.lineage.fem_hash,
+        records=(ResolvedRecorderRecord(
+            category="nodes", name="r", components=_ALL_SIX,
+            dt=None, n_steps=None, node_ids=np.array(beam)),),
+    )
+    [line] = spec.to_tcl_commands(model=model)
+    assert " -dof 1 2 3 4 5 6 -precision" in line
+
+
+@pytest.mark.parametrize("token", [
+    "LadrunoKinematicCoupling", "LadrunoDistributingCoupling",
+    "LadrunoRigidBody", "LadrunoEmbeddedNode", "LadrunoEmbeddedRebar",
+])
+def test_side_list_elements_do_not_touch_3d_rotations(token: str) -> None:
+    """Coupling, rigid-body and embedded-tie rows carry no FEM id and no
+    node list; a 3-D frame beside one keeps its rotations at DOFs 4-6."""
+    from apeGmsh.opensees._internal.typed_records import ElementRecord
+
+    spec = _node_spec(_ALL_SIX, ids=(1, 2))
+    model = _token_model(spec, 3, {1: 6, 2: 6},
+                         (("elasticBeamColumn", (1, 2)),))
+    model._records += (ElementRecord(type_token=token, tag=99, args=(),
+                                     connectivity=()),)
+    [line] = spec.to_tcl_commands(model=model)
+    assert " -dof 1 2 3 4 5 6 -precision" in line
+
+
+def test_a_plan_row_the_fem_lacks_still_refuses() -> None:
+    """A row with a FEM id is a plan element: if the model's FEMData has no
+    such element, an unknown class there cannot be judged, so it raises."""
+    from types import SimpleNamespace
+
+    from apeGmsh.opensees._internal.typed_records import ElementRecord
+
+    spec = _node_spec(("rotation_z",), ids=(1,))
+    model = _token_model(spec, 3, {1: 6}, ())
+    model._records = (ElementRecord(type_token="MysteryElement", tag=5,
+                                    args=(), connectivity=(), fem_eid=42),)
+    model.fem = SimpleNamespace(elements=())
+    with pytest.raises(ValueError, match=r"element tag 5 \(MysteryElement\) "
+                                         r"has no node list"):
+        spec.to_tcl_commands(model=model)
+
+
 def test_token_table_matches_each_family_class_emit() -> None:
     """``_CLASS_FOR_TOKEN`` names every class the family tables hold, at
     the token that class's ``_emit`` writes (read from its source)."""
