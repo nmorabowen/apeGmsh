@@ -524,6 +524,12 @@ def test_line_station_vocabularies_are_not_vacuous() -> None:
         "shear_strain_y", "shear_strain_z"}
 
 
+@pytest.mark.xfail(
+    strict=True,
+    reason="#2053 taught the MPCO reader the section.deformation names; "
+           "#2056 switches the emit to record section.deformation and "
+           "retires this tripwire",
+)
 def test_mpco_reader_still_cannot_decode_section_deformation() -> None:
     """Tripwire: when the reader learns these names, emit section.deformation."""
     assert _MPCO_SECTION_DEFORMATION_NAMES.isdisjoint(MPCO_SECTION_NAME_TO_CODE)
