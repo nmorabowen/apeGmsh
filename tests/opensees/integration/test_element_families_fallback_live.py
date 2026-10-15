@@ -13,9 +13,9 @@ checked against the live domain:
   6-dof MITC4 nodes). The tet nodes read rotation NaN, not the 0.0 the
   recorder pads them with (#1971);
 * the 2-D twin, a frame beside a quad block (2-dof quad nodes, 3-dof frame
-  nodes): the quad nodes read ``rotation_z`` NaN. The frame's own
-  ``rotation_z`` value is a strict xfail: this route records it at DOF 6
-  (#2018).
+  nodes): the quad nodes read ``rotation_z`` NaN, and the frame's own
+  ``rotation_z`` equals ``nodeDisp(n, 3)``: the route records it at the
+  node's DOF 3, not DOF 6 (#2018).
 
 The tolerance is the format's, not the oracle's: a ``.out`` file holds six
 significant digits, so values compare at ``rtol=1e-5``. The fork-only
@@ -383,18 +383,19 @@ def test_ndf2_node_rotation_is_nan_from_out(g: Any, tmp_path: Path) -> None:
     assert np.isfinite([got[n] for n in frame]).all()
 
 
-@pytest.mark.xfail(
-    strict=True, raises=AssertionError,
-    reason="emit_recorders records a 2-D rotation_z as `-dof 6` (spec/_emit.py "
-           "_AXIS_TO_ROT_DOF is 3-D only), so a 3-dof frame node reads the "
-           "padded 0.0 (#2018)",
-)
 def test_frame_rotation_z_reads_back_from_out_2d(
     g: Any, tmp_path: Path,
 ) -> None:
+    """A 3-dof frame node's ``rotation_z`` is ``nodeDisp(n, 3)`` (#2018).
+
+    The recorder takes it at DOF 3, the node's own rotational DOF; before
+    #2018 it was ``-dof 6``, which the node lacks, and read the padded 0.0.
+    The recorder writes 17 significant digits (#1974), so the oracle holds
+    at ``rtol=1e-10``.
+    """
     r, _quad, frame, live = _frame_beside_quad_run(g, tmp_path)
     got = _rotation_z(r)
     want = np.array([live[n][2] for n in frame])
     assert np.abs(want).max() > 0.0
     np.testing.assert_allclose([got[n] for n in frame], want,
-                               rtol=RTOL_OUT, atol=1e-15)
+                               rtol=1e-10, atol=1e-15)
