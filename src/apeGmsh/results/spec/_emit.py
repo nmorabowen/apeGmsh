@@ -1214,8 +1214,27 @@ def collect_mpco_tokens(records) -> tuple[list[str], list[str]]:
     ``ValueError`` naming it; before #2025 it wrote no token, or
     (``shear_strain_*``, through the ``shear`` prefix) ``section.force``,
     and read back empty with no warning.
+
+    A gauss record whose ``element_class_name`` is in
+    ``PER_MATERIAL_STRAIN_CLASSES`` (Tri31) records strain as
+    ``material.strain``: the class has no element-level ``strains``
+    branch, so ``-E strains`` writes no bucket for it. MPCO has no
+    per-token element filter (``-R`` scopes the whole recorder), so in a
+    mixed mesh ``material.strain`` also records the other classes that
+    answer it; the reader prefers their ``strains`` bucket when one exists.
     """
-    from apeGmsh.opensees._response_catalog import gauss_keyword_for_canonical
+    from apeGmsh.opensees._response_catalog import (
+        PER_MATERIAL_STRAIN_CLASSES,
+        gauss_keyword_for_canonical,
+        mpco_gauss_group_aliases,
+    )
+
+    per_material_strain = "material.strain"
+    if per_material_strain not in mpco_gauss_group_aliases("strains"):
+        raise RuntimeError(
+            f"MPCO emit/read disagree on per-material strain: the reader's "
+            f"'strains' group aliases do not list {per_material_strain!r}."
+        )
 
     node_tokens: list[str] = []
     elem_tokens: list[str] = []
@@ -1239,9 +1258,12 @@ def collect_mpco_tokens(records) -> tuple[list[str], list[str]]:
                 _add(node_tokens, seen_n, _canonical_to_mpco_node_token(c))
             continue
         if rec.category == "gauss":
+            per_material = rec.element_class_name in PER_MATERIAL_STRAIN_CLASSES
             for c in rec.components:
-                _add(elem_tokens, seen_e,
-                     _canonical_to_mpco_gauss_token(c, rec.name))
+                token = _canonical_to_mpco_gauss_token(c, rec.name)
+                if per_material and token == "strains":
+                    token = per_material_strain
+                _add(elem_tokens, seen_e, token)
             continue
         if rec.category == "line_stations":
             for c in rec.components:
