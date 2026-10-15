@@ -1860,7 +1860,7 @@ class _LineStationCapturer:
         resisting-force vector laid out per node ``[end_i, end_j]``.
         :func:`local_force_station_signs` maps it to the force-beam
         ``section force`` convention, the one sign table the MPCO,
-        ``.ladruno`` and ``.out`` routes apply too (#2009).
+        ``.ladruno`` and ``.out`` routes apply too.
         """
         n_per = grp.layout.n_components_per_gp
         flat_size = 2 * n_per

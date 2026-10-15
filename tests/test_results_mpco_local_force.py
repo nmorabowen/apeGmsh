@@ -514,9 +514,8 @@ def test_results_read_line_stations_returns_two_station_slab():
 
 
 def test_results_axial_force_constant_along_element():
-    """After the station-2 sign flip the slab is in internal-force
-    convention: axial force is constant along an element with no axial
-    distributed load â€” i.e., values at xi=-1 equal values at xi=+1.
+    """The slab is in the force-beam section-force convention: axial
+    force is constant along an element with no axial distributed load â€” i.e., values at xi=-1 equal values at xi=+1.
     """
     if not _FIXTURE.exists():
         pytest.skip(f"Missing fixture: {_FIXTURE}")

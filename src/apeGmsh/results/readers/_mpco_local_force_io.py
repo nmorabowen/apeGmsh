@@ -436,7 +436,7 @@ def read_local_force_bucket_slab(
 
     # Convert OpenSees ``localForce`` (end resisting forces on the
     # element from the joints) to the force-beam ``section force``
-    # convention, the one sign table every route applies (#2009), so
+    # convention, the one sign table every route applies, so
     # adjacent force and elastic beams line up at shared nodes.
     if n_stations == 2:
         out *= local_force_station_signs((canonical_component,))[:, 0]

@@ -1295,7 +1295,7 @@ def _read_element_stations(
         np.array([station_to_col[st] for st in stations]),
     )
     # localForce end forces → the force-beam ``section force`` signs,
-    # the one table every route applies (#2009).
+    # the one table every route applies.
     if token == "localForce" and n_st == 2:
         out *= local_force_station_signs((component,))[:, 0]
     return (
