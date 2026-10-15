@@ -25,11 +25,17 @@ fiber/line buckets, with these specifics:
    are reused for through-thickness location, but apeGmsh's
    ``LayerSlab`` exposes only thickness — y/z are not user-facing
    for layers).
-3. Per-element local-axes quaternions come from
-   ``MODEL/LOCAL_AXES/<connectivity_key>/QUATERNIONS``. They are
-   broadcast to per-row in the ``LayerSlab.local_axes_quaternion``
-   field for caller convenience (small arrays — layers buckets are
-   surface elements only).
+3. Per-element local-axes quaternions come from the writer's
+   ``MODEL/LOCAL_AXES`` group (flat ``ID`` + ``LOCAL_AXES`` datasets,
+   scalar-first ``(w, x, y, z)``) for an element that answers
+   ``localAxes``. A shell does not, so the writer stores no row for it;
+   its frame is then computed from the file's own connectivity and node
+   coordinates with :func:`apeGmsh.results._shell_geometry.shell_quaternion`
+   (the convention DomainCapture writes, and the writer's beam
+   convention). When neither is available the row is NaN and a
+   :class:`ShellFrameUnavailableWarning` names the elements; a frame is
+   never assumed (#1996). The quaternion is broadcast to per-row in the
+   ``LayerSlab.local_axes_quaternion`` field for caller convenience.
 
 v1 scope (skipped silently when encountered):
 
@@ -40,12 +46,14 @@ v1 scope (skipped silently when encountered):
 """
 from __future__ import annotations
 
+import warnings
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import numpy as np
 from numpy import ndarray
 
+from .._shell_geometry import shell_quaternion
 from ...opensees._response_catalog import (
     LayeredShellLayout,
     MPCOElementKey,
@@ -333,59 +341,164 @@ def build_layer_section_index_for_bucket(
 # LOCAL_AXES lookup → per-element quaternions
 # =====================================================================
 
-# Identity quaternion (w, x, y, z) — used as a fallback when LOCAL_AXES
-# is absent. The convention matches OpenSees / ASDEA's quaternion
-# layout: scalar-first.
-_IDENTITY_QUATERNION: ndarray = np.array(
-    [1.0, 0.0, 0.0, 0.0], dtype=np.float64,
-)
+class ShellFrameUnavailableWarning(UserWarning):
+    """A layered-shell row has no local frame: its quaternion reads NaN.
+
+    The file stores no frame for the element and its frame cannot be
+    computed from the file's connectivity and node coordinates (missing
+    rows, a class without a corner-node convention, or degenerate
+    geometry). The warning names the elements and the reason (#1996).
+    """
 
 
 def _connectivity_bracket_key(elem_key: MPCOElementKey) -> str:
-    """Reconstruct the MODEL/{ELEMENTS,LOCAL_AXES} bracket key (no ``:hdr``)."""
+    """Reconstruct the MODEL/ELEMENTS bracket key (no ``:hdr``)."""
     return (
         f"{elem_key.class_tag}-{elem_key.class_name}"
         f"[{elem_key.int_rule}:{elem_key.custom_rule_idx}]"
     )
 
 
+def _stored_quaternions(
+    local_axes_grp: "h5py.Group | None",
+) -> tuple[dict[int, int], ndarray]:
+    """``({element tag: row}, (n, 4) quaternions)`` the writer stored.
+
+    The writer (``MPCORecorder::writeModelLocalAxes``) stores one flat
+    ``ID`` + ``LOCAL_AXES`` pair per stage, one row per element that
+    answers ``localAxes``; an absent group means no element did. A group
+    in any other shape is not a frame this reader understands: it warns
+    and is ignored, so the frames are computed from coordinates instead.
+    """
+    if local_axes_grp is None:
+        return {}, np.zeros((0, 4), dtype=np.float64)
+    if "ID" not in local_axes_grp or "LOCAL_AXES" not in local_axes_grp:
+        warnings.warn(
+            f"MPCO {local_axes_grp.name}: expected the writer's ID and "
+            f"LOCAL_AXES datasets, found {sorted(local_axes_grp)}; the "
+            f"stored frames are ignored and shell frames are computed from "
+            f"node coordinates.",
+            ShellFrameUnavailableWarning, stacklevel=3,
+        )
+        return {}, np.zeros((0, 4), dtype=np.float64)
+    quats = np.asarray(local_axes_grp["LOCAL_AXES"][...], dtype=np.float64)
+    ids = np.asarray(local_axes_grp["ID"][...]).flatten().astype(np.int64)
+    if quats.size != 4 * ids.size:
+        warnings.warn(
+            f"MPCO {local_axes_grp.name}: {ids.size} IDs but LOCAL_AXES "
+            f"has shape {quats.shape}; the stored frames are ignored and "
+            f"shell frames are computed from node coordinates.",
+            ShellFrameUnavailableWarning, stacklevel=3,
+        )
+        return {}, np.zeros((0, 4), dtype=np.float64)
+    return {int(e): i for i, e in enumerate(ids)}, quats.reshape(-1, 4)
+
+
+def _computed_quaternions(
+    model_grp: "h5py.Group",
+    elem_key: MPCOElementKey,
+    element_ids: ndarray,
+) -> tuple[ndarray, dict[str, list[int]]]:
+    """Shell frames from the file's connectivity and node coordinates.
+
+    Returns ``((n, 4) quaternions, {reason: [element tags]})``; a row
+    whose frame cannot be computed is NaN and its tag is listed under
+    the reason.
+    """
+    n = element_ids.size
+    out = np.full((n, 4), np.nan, dtype=np.float64)
+    failed: dict[str, list[int]] = {}
+
+    def _fail(reason: str, eids: "ndarray | list[int]") -> None:
+        failed.setdefault(reason, []).extend(int(e) for e in eids)
+
+    key = _connectivity_bracket_key(elem_key)
+    elements = model_grp["ELEMENTS"] if "ELEMENTS" in model_grp else None
+    if elements is None or key not in elements:
+        _fail(f"no MODEL/ELEMENTS/{key} connectivity", element_ids)
+        return out, failed
+    nodes = model_grp["NODES"] if "NODES" in model_grp else None
+    if nodes is None or "ID" not in nodes or "COORDINATES" not in nodes:
+        _fail("no MODEL/NODES ID and COORDINATES", element_ids)
+        return out, failed
+    coords = np.asarray(nodes["COORDINATES"][...], dtype=np.float64)
+    if coords.ndim != 2 or coords.shape[1] != 3:
+        _fail(f"node coordinates of shape {coords.shape}, not (n, 3)",
+              element_ids)
+        return out, failed
+    node_row = {
+        int(t): i for i, t in
+        enumerate(np.asarray(nodes["ID"][...]).flatten().astype(np.int64))
+    }
+    conn = np.asarray(elements[key][...], dtype=np.int64)
+    if conn.ndim != 2 or conn.shape[1] < 2:
+        _fail(f"MODEL/ELEMENTS/{key} of shape {conn.shape}", element_ids)
+        return out, failed
+    conn_row = {int(e): i for i, e in enumerate(conn[:, 0])}
+    for k, eid in enumerate(element_ids):
+        row = conn_row.get(int(eid))
+        if row is None:
+            _fail(f"no row in MODEL/ELEMENTS/{key}", [eid])
+            continue
+        rows = [node_row.get(int(t)) for t in conn[row, 1:]]
+        if any(r is None for r in rows):
+            _fail("a node missing from MODEL/NODES", [eid])
+            continue
+        try:
+            out[k, :] = shell_quaternion(coords[rows], elem_key.class_name)
+        except ValueError as exc:
+            _fail(str(exc), [eid])
+    return out, failed
+
+
 def read_local_axes_quaternions(
     local_axes_grp: "h5py.Group | None",
     elem_key: MPCOElementKey,
     element_ids: ndarray,
+    *,
+    model_grp: "h5py.Group",
 ) -> ndarray:
-    """Look up per-element quaternions, falling back to identity.
+    """Per-element local-frame quaternions, scalar-first ``(w, x, y, z)``.
+
+    A frame the writer stored (``local_axes_grp``, the stage's
+    ``MODEL/LOCAL_AXES`` group, ``None`` when absent) wins. Every other
+    element's frame is computed from ``model_grp`` (the stage's
+    ``MODEL`` group) connectivity and node coordinates with C7's
+    :func:`~apeGmsh.results._shell_geometry.shell_quaternion`. A row
+    with neither is NaN, and one :class:`ShellFrameUnavailableWarning`
+    names its elements and why.
 
     Returns
     -------
     quaternions : (n, 4) float64
-        One quaternion per requested element, scalar-first
-        ``(w, x, y, z)``. Identity ``(1, 0, 0, 0)`` is returned for
-        any element without a recorded quaternion (or when
-        ``local_axes_grp`` is ``None`` — older MPCO writers).
     """
-    n = element_ids.size
-    out = np.tile(_IDENTITY_QUATERNION, (n, 1))
-    if local_axes_grp is None:
+    element_ids = np.asarray(element_ids, dtype=np.int64).reshape(-1)
+    stored_row, stored = _stored_quaternions(local_axes_grp)
+    is_stored = np.array(
+        [int(e) in stored_row for e in element_ids], dtype=bool,
+    )
+    out = np.empty((element_ids.size, 4), dtype=np.float64)
+    for k in np.flatnonzero(is_stored):
+        out[k, :] = stored[stored_row[int(element_ids[k])], :]
+    if is_stored.all():
         return out
-    key = _connectivity_bracket_key(elem_key)
-    if key not in local_axes_grp:
-        return out
-    grp = local_axes_grp[key]
-    if "QUATERNIONS" not in grp or "ID" not in grp:
-        return out
-    quat_arr = np.asarray(
-        grp["QUATERNIONS"][...], dtype=np.float64,
-    ).reshape(-1, 4)
-    qid_arr = np.asarray(grp["ID"][...]).flatten().astype(np.int64)
-    if quat_arr.shape[0] != qid_arr.size:
-        # Inconsistent dataset — fall back to identity.
-        return out
-    qid_to_row = {int(q): i for i, q in enumerate(qid_arr)}
-    for k, eid in enumerate(element_ids):
-        row = qid_to_row.get(int(eid))
-        if row is not None:
-            out[k, :] = quat_arr[row, :]
+    computed, failed = _computed_quaternions(
+        model_grp, elem_key, element_ids[~is_stored],
+    )
+    out[~is_stored, :] = computed
+    if failed:
+        detail = "; ".join(
+            f"{reason}: elements {sorted(set(eids))[:8]}"
+            + (" ..." if len(set(eids)) > 8 else "")
+            for reason, eids in failed.items()
+        )
+        warnings.warn(
+            f"MPCO {elem_key.class_name} layered-shell frames read NaN: "
+            f"the file stores no LOCAL_AXES row for them and the frame "
+            f"cannot be computed from the file's connectivity and node "
+            f"coordinates ({detail}).",
+            ShellFrameUnavailableWarning, stacklevel=2,
+        )
     return out
 
 
@@ -756,8 +869,11 @@ def read_layer_bucket_slab(
     values = np.ascontiguousarray(per_layer.reshape(T, sum_l))
 
     # Per-element-row quaternions, then broadcast across (sgp × lyr × sub).
+    # ``SECTION_ASSIGNMENTS`` sits in the stage's ``MODEL`` group, which
+    # holds the connectivity and coordinates a shell frame is computed from.
     quats = read_local_axes_quaternions(
         local_axes_grp, bucket.elem_key, sel_ids,
+        model_grp=section_assignments_grp.parent,
     )                                                     # (E_g, 4)
 
     # Index vectors built outer-fastest using nested np.tile/repeat:
@@ -807,6 +923,7 @@ def read_layer_bucket_slab(
 __all__ = [
     "LayerBucketLayout",
     "LayerSectionData",
+    "ShellFrameUnavailableWarning",
     "canonical_to_layer_token",
     "discover_layer_buckets",
     "find_layered_section_for_element",
