@@ -5,6 +5,7 @@ module + ``MPCOReader.read_layers`` end-to-end without OpenSees.
 """
 from __future__ import annotations
 
+import warnings
 from pathlib import Path
 
 import h5py
@@ -15,8 +16,9 @@ from apeGmsh.results import Results
 from apeGmsh.results.readers import _mpco_layer_io as _mlayer
 from apeGmsh.results.readers._protocol import ResultLevel
 from apeGmsh.opensees._response_catalog import (
-
     ELE_TAG_ASDShellQ4,
+    LAYER_CATALOG,
+    RESPONSE_CATALOG,
     IntRule,
 )
 
@@ -72,27 +74,31 @@ def _add_shell_connectivity(
     class_tag: int, class_name: str, surface_int_rule: int,
     custom_rule_idx: int,
     element_ids: np.ndarray,
+    nodes: np.ndarray | None = None,
 ) -> None:
+    """MPCO's flat ``(elemTag, n1..nK)`` rows; ``nodes`` is ``(E, K)``.
+
+    Without ``nodes`` the rows are zeros (no element 0 is ever read).
+    """
     conn_key = f"{class_tag}-{class_name}[{surface_int_rule}:{custom_rule_idx}]"
     conn_grp = stage_grp["MODEL/ELEMENTS"]
-    conn_grp.create_dataset(
-        conn_key,
-        data=np.zeros((element_ids.size, 5), dtype=np.int32),
-    )
+    if nodes is None:
+        data = np.zeros((element_ids.size, 5), dtype=np.int32)
+    else:
+        data = np.column_stack([element_ids, nodes]).astype(np.int32)
+    conn_grp.create_dataset(conn_key, data=data)
 
 
 def _add_local_axes(
     stage_grp: "h5py.Group", *,
-    class_tag: int, class_name: str, surface_int_rule: int,
-    custom_rule_idx: int,
     element_ids: np.ndarray,
     quaternions: np.ndarray,
 ) -> None:
+    """The writer's layout (``MPCORecorder::writeModelLocalAxes``): one
+    flat ``ID`` + ``LOCAL_AXES`` pair per stage, scalar-first rows."""
     la_grp = stage_grp["MODEL"].require_group("LOCAL_AXES")
-    key = f"{class_tag}-{class_name}[{surface_int_rule}:{custom_rule_idx}]"
-    g = la_grp.create_group(key)
-    g.create_dataset("ID", data=element_ids.reshape(-1, 1).astype(np.int32))
-    g.create_dataset("QUATERNIONS", data=quaternions.astype(np.float64))
+    la_grp.create_dataset("ID", data=element_ids.astype(np.int32))
+    la_grp.create_dataset("LOCAL_AXES", data=quaternions.astype(np.float64))
 
 
 def _add_layered_section(
@@ -208,11 +214,7 @@ def simple_layer_mpco(tmp_path: Path):
         [1.0, 0.0, 0.0, 0.0],   # element 20: identity
         [0.7071, 0.0, 0.7071, 0.0],  # element 21: 90° about y
     ], dtype=np.float64)
-    _add_local_axes(
-        stage, class_tag=ELE_TAG_ASDShellQ4, class_name="ASDShellQ4",
-        surface_int_rule=surface_rule, custom_rule_idx=0,
-        element_ids=element_ids, quaternions=quats,
-    )
+    _add_local_axes(stage, element_ids=element_ids, quaternions=quats)
 
     thickness = np.array([0.01, 0.02, 0.01], dtype=np.float64)  # 3 layers
     materials = np.array([7, 7, 7], dtype=np.int64)
@@ -308,50 +310,248 @@ class TestReadLocalAxesQuaternions:
                 stage["MODEL/LOCAL_AXES"],
                 bucket.elem_key,
                 np.array([20, 21]),
+                model_grp=stage["MODEL"],
             )
         np.testing.assert_array_almost_equal(quats, simple_layer_mpco["quats"])
 
-    def test_missing_local_axes_returns_identity(self, tmp_path: Path) -> None:
-        # File without LOCAL_AXES — fallback to identity.
-        path = tmp_path / "no_axes.mpco"
-        f, stage_name = _create_skeleton(
-            path,
-            node_ids=np.arange(1, 5, dtype=np.int64),
-            coords=np.zeros((4, 3)), n_steps=1, dt=0.1,
-        )
-        stage = f[stage_name]
-        _add_shell_connectivity(
-            stage, class_tag=ELE_TAG_ASDShellQ4, class_name="ASDShellQ4",
-            surface_int_rule=IntRule.Quad_GL_2, custom_rule_idx=0,
-            element_ids=np.array([20], dtype=np.int64),
-        )
-        _add_layered_section(
-            stage, section_tag=1, section_class="LayeredShellFiberSection",
-            element_sgp_pairs=[(20, sgp) for sgp in range(4)],
-            layer_thickness=np.array([0.01]),
-            layer_material=np.array([1], dtype=np.int64),
-        )
-        flat = np.zeros((1, 1, 4))
-        _add_layer_bucket(
-            stage, class_tag=ELE_TAG_ASDShellQ4, class_name="ASDShellQ4",
-            surface_int_rule=IntRule.Quad_GL_2, custom_rule_idx=0,
-            element_ids=np.array([20]), n_sgp=4, n_layers=1, flat_data=flat,
-        )
-        f.close()
 
-        with h5py.File(path, "r") as g:
-            stage = g["MODEL_STAGE[1]"]
-            on_elem = stage["RESULTS/ON_ELEMENTS"]
-            _, buckets = _mlayer.discover_layer_buckets(
-                on_elem, canonical_component="fiber_stress",
-            )
-            bucket = buckets[0]
-            quats = _mlayer.read_local_axes_quaternions(
-                None, bucket.elem_key, np.array([20]),
-            )
-        np.testing.assert_array_almost_equal(
-            quats, np.array([[1.0, 0.0, 0.0, 0.0]]),
+# =====================================================================
+# Shell frames the file does not store (#1996): computed from the file's
+# connectivity and coordinates, NaN + a warning when they cannot be
+# =====================================================================
+
+#: Every class the MPCO layer reader discovers; a class joining
+#: ``LAYER_CATALOG`` joins this matrix.
+LAYER_CLASSES = sorted({c for c, _tok in LAYER_CATALOG})
+
+_C30 = np.cos(np.radians(30.0))
+_S30 = np.sin(np.radians(30.0))
+#: ``(u, v)``: the unit first edge and the unit in-plane vector normal to
+#: it. The oracle local axes are written out by hand: ``x = u``,
+#: ``y = v``, ``z = u x v``.
+ORIENTATIONS: dict[str, tuple[tuple[float, ...], tuple[float, ...],
+                              tuple[float, ...]]] = {
+    "xy": ((1, 0, 0), (0, 1, 0), (0, 0, 1)),
+    "tilted_30_about_x": ((1, 0, 0), (0, _C30, _S30), (0, -_S30, _C30)),
+    "vertical_xz": ((1, 0, 0), (0, 0, 1), (0, -1, 0)),
+    "vertical_yz": ((0, 1, 0), (0, 0, 1), (1, 0, 0)),
+    "skew": ((2 / 3, 1 / 3, 2 / 3), (-2 / 3, 2 / 3, 1 / 3),
+             (-1 / 3, -2 / 3, 2 / 3)),
+}
+
+
+def _quat_to_matrix(q: np.ndarray) -> np.ndarray:
+    """Textbook unit quaternion ``(w, x, y, z)`` -> rotation matrix."""
+    w, x, y, z = q / np.linalg.norm(q)
+    return np.array([
+        [1 - 2 * (y * y + z * z), 2 * (x * y - w * z), 2 * (x * z + w * y)],
+        [2 * (x * y + w * z), 1 - 2 * (x * x + z * z), 2 * (y * z - w * x)],
+        [2 * (x * z - w * y), 2 * (y * z + w * x), 1 - 2 * (x * x + y * y)],
+    ])
+
+
+def _element_coords(class_name: str, u: np.ndarray, v: np.ndarray) -> np.ndarray:
+    """Corner nodes in connectivity order: a 2 x 1 quad, a 2 x 1 right
+    triangle, or a quad's 9 nodes, off the origin."""
+    o = np.array([3.0, -1.0, 2.0])
+    if LAYER_CATALOG[(class_name, "fiber_stress")].coord_system == "barycentric_tri":
+        return np.array([o, o + 2 * u, o + v])
+    corners = [o, o + 2 * u, o + 2 * u + v, o + v]
+    if class_name == "ShellMITC9":
+        mids = [(corners[i] + corners[(i + 1) % 4]) / 2 for i in range(4)]
+        return np.array(corners + mids + [o + u + v / 2])
+    return np.array(corners)
+
+
+def _frame_file(
+    path: Path, class_name: str, coords: np.ndarray, *,
+    element_ids: np.ndarray, stored: np.ndarray | None = None,
+    node_ids: np.ndarray | None = None,
+) -> str:
+    """A one-stage MPCO file whose elements all share ``coords``'s nodes,
+    with a one-layer bucket; ``stored`` adds the writer's LOCAL_AXES."""
+    layout = LAYER_CATALOG[(class_name, "fiber_stress")]
+    n_sgp = RESPONSE_CATALOG[
+        (class_name, layout.surface_int_rule, "stress")].n_gauss_points
+    if node_ids is None:
+        node_ids = np.arange(101, 101 + coords.shape[0], dtype=np.int64)
+    f, stage_name = _create_skeleton(
+        path, node_ids=node_ids, coords=coords, n_steps=1, dt=1.0,
+    )
+    stage = f[stage_name]
+    kw = dict(class_tag=layout.class_tag, class_name=class_name,
+              surface_int_rule=layout.surface_int_rule, custom_rule_idx=0)
+    _add_shell_connectivity(
+        stage, element_ids=element_ids,
+        nodes=np.tile(np.arange(101, 101 + coords.shape[0]),
+                      (element_ids.size, 1)), **kw,
+    )
+    if stored is not None:
+        _add_local_axes(stage, element_ids=element_ids[:len(stored)],
+                        quaternions=stored)
+    _add_layered_section(
+        stage, section_tag=1, section_class="LayeredShellFiberSection",
+        element_sgp_pairs=[(int(e), g) for e in element_ids
+                           for g in range(n_sgp)],
+        layer_thickness=np.array([0.01]),
+        layer_material=np.array([1], dtype=np.int64),
+    )
+    _add_layer_bucket(
+        stage, element_ids=element_ids, n_sgp=n_sgp, n_layers=1,
+        flat_data=np.zeros((1, element_ids.size, n_sgp)), **kw,
+    )
+    f.close()
+    return stage_name
+
+
+def _read_frames(path: Path, element_ids: np.ndarray) -> np.ndarray:
+    with h5py.File(path, "r") as f:
+        stage = f["MODEL_STAGE[1]"]
+        _, (bucket,) = _mlayer.discover_layer_buckets(
+            stage["RESULTS/ON_ELEMENTS"], canonical_component="fiber_stress",
         )
+        local_axes = stage["MODEL/LOCAL_AXES"] if "LOCAL_AXES" in stage["MODEL"] else None
+        return _mlayer.read_local_axes_quaternions(
+            local_axes, bucket.elem_key, element_ids,
+            model_grp=stage["MODEL"],
+        )
+
+
+class TestComputedShellFrame:
+    @pytest.mark.parametrize("orientation", sorted(ORIENTATIONS))
+    @pytest.mark.parametrize("class_name", LAYER_CLASSES)
+    def test_frame_is_the_closed_form_local_axes(
+        self, tmp_path: Path, class_name: str, orientation: str,
+    ) -> None:
+        u, v, z = (np.asarray(a, dtype=float) for a in ORIENTATIONS[orientation])
+        np.testing.assert_allclose(np.cross(u, v), z, atol=1e-15)
+        eids = np.array([7, 9], dtype=np.int64)
+        path = tmp_path / "frame.mpco"
+        _frame_file(path, class_name, _element_coords(class_name, u, v),
+                    element_ids=eids)
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            quats = _read_frames(path, eids)
+        assert quats.shape == (2, 4)
+        for q in quats:
+            # Rows of the rotation global -> local are the local axes.
+            np.testing.assert_allclose(
+                _quat_to_matrix(q), np.stack([u, v, z]), atol=1e-12,
+                err_msg=f"{class_name} {orientation}")
+
+    def test_tilted_frame_is_the_c7_closed_form(self, tmp_path: Path) -> None:
+        """``(cos 15, -sin 15, 0, 0)`` is what DomainCapture (C7) writes and
+        what the MPCO writer stores for a beam with the same axes."""
+        u, v, _z = (np.asarray(a, dtype=float)
+                    for a in ORIENTATIONS["tilted_30_about_x"])
+        path = tmp_path / "tilted.mpco"
+        _frame_file(path, "ASDShellQ4", _element_coords("ASDShellQ4", u, v),
+                    element_ids=np.array([5]))
+        q = _read_frames(path, np.array([5]))[0]
+        half = np.radians(15.0)
+        np.testing.assert_allclose(
+            q * np.sign(q[0]), [np.cos(half), -np.sin(half), 0, 0], atol=1e-14)
+
+    @pytest.mark.parametrize("class_name", LAYER_CLASSES)
+    def test_results_layer_slab_carries_the_tilted_frame(
+        self, tmp_path: Path, class_name: str,
+    ) -> None:
+        """End to end through ``Results.from_mpco``: no identity row."""
+        u, v, z = (np.asarray(a, dtype=float)
+                   for a in ORIENTATIONS["tilted_30_about_x"])
+        eids = np.array([11, 12], dtype=np.int64)
+        path = tmp_path / "e2e.mpco"
+        _frame_file(path, class_name, _element_coords(class_name, u, v),
+                    element_ids=eids)
+        results = Results.from_mpco(str(path), model_h5=_stub_model_h5_path())
+        try:
+            with warnings.catch_warnings():
+                warnings.simplefilter("error", _mlayer.ShellFrameUnavailableWarning)
+                slab = results.elements.layers.get(component="fiber_stress")
+        finally:
+            results._reader.close()
+        q = np.asarray(slab.local_axes_quaternion)
+        assert q.shape[0] == np.asarray(slab.values).shape[1] > 0
+        for row in q:
+            np.testing.assert_allclose(
+                _quat_to_matrix(row), np.stack([u, v, z]), atol=1e-12)
+
+    def test_stored_frame_wins_and_the_rest_are_computed(
+        self, tmp_path: Path,
+    ) -> None:
+        u, v, z = (np.asarray(a, dtype=float) for a in ORIENTATIONS["vertical_xz"])
+        eids = np.array([3, 4], dtype=np.int64)
+        stored = np.array([[0.0, 0.0, 0.0, 1.0]])     # element 3 only
+        path = tmp_path / "mixed.mpco"
+        _frame_file(path, "ShellMITC4", _element_coords("ShellMITC4", u, v),
+                    element_ids=eids, stored=stored)
+        quats = _read_frames(path, eids)
+        np.testing.assert_array_equal(quats[0], stored[0])
+        np.testing.assert_allclose(
+            _quat_to_matrix(quats[1]), np.stack([u, v, z]), atol=1e-12)
+
+
+class TestShellFrameUnavailable:
+    """Never a synthesised identity: NaN, and a warning naming the rows."""
+
+    def _assert_nan_and_warned(
+        self, path: Path, eids: np.ndarray, match: str,
+    ) -> np.ndarray:
+        with pytest.warns(_mlayer.ShellFrameUnavailableWarning, match=match):
+            quats = _read_frames(path, eids)
+        assert np.isnan(quats).all()
+        return quats
+
+    def test_node_missing_from_the_file(self, tmp_path: Path) -> None:
+        u, v, _z = (np.asarray(a, dtype=float) for a in ORIENTATIONS["xy"])
+        coords = _element_coords("ASDShellQ4", u, v)
+        path = tmp_path / "no_node.mpco"
+        # Node 104 (the fourth corner) is renumbered away.
+        _frame_file(path, "ASDShellQ4", coords, element_ids=np.array([20]),
+                    node_ids=np.array([101, 102, 103, 999]))
+        self._assert_nan_and_warned(
+            path, np.array([20]), r"node missing.*elements \[20\]")
+
+    def test_element_missing_from_the_connectivity(self, tmp_path: Path) -> None:
+        u, v, _z = (np.asarray(a, dtype=float) for a in ORIENTATIONS["xy"])
+        path = tmp_path / "no_row.mpco"
+        _frame_file(path, "ShellDKGT", _element_coords("ShellDKGT", u, v),
+                    element_ids=np.array([20]))
+        self._assert_nan_and_warned(
+            path, np.array([21]), r"no row in MODEL/ELEMENTS.*\[21\]")
+
+    def test_degenerate_geometry(self, tmp_path: Path) -> None:
+        coords = np.zeros((4, 3))
+        path = tmp_path / "degenerate.mpco"
+        _frame_file(path, "ASDShellQ4", coords, element_ids=np.array([20]))
+        self._assert_nan_and_warned(path, np.array([20]), "zero length")
+
+    def test_no_connectivity_dataset(self, simple_layer_mpco) -> None:
+        # No stored frames and no connectivity dataset for the class.
+        with h5py.File(simple_layer_mpco["path"], "a") as f:
+            del f["MODEL_STAGE[1]/MODEL/LOCAL_AXES"]
+            key = next(iter(f["MODEL_STAGE[1]/MODEL/ELEMENTS"]))
+            del f[f"MODEL_STAGE[1]/MODEL/ELEMENTS/{key}"]
+        self._assert_nan_and_warned(
+            simple_layer_mpco["path"], np.array([20, 21]),
+            r"no MODEL/ELEMENTS/.* connectivity.*\[20, 21\]")
+
+    def test_unrecognised_local_axes_layout_warns(self, tmp_path: Path) -> None:
+        """A LOCAL_AXES group not in the writer's flat layout is not read
+        as a frame; the shells' frames are computed instead."""
+        u, v, z = (np.asarray(a, dtype=float) for a in ORIENTATIONS["skew"])
+        path = tmp_path / "odd_layout.mpco"
+        stage_name = _frame_file(
+            path, "ASDShellT3", _element_coords("ASDShellT3", u, v),
+            element_ids=np.array([20]))
+        with h5py.File(path, "a") as f:
+            odd = f[stage_name]["MODEL"].create_group("LOCAL_AXES").create_group("X")
+            odd.create_dataset("QUATERNIONS", data=np.array([[1.0, 0, 0, 0]]))
+        with pytest.warns(_mlayer.ShellFrameUnavailableWarning,
+                          match="expected the writer's ID and LOCAL_AXES"):
+            quats = _read_frames(path, np.array([20]))
+        np.testing.assert_allclose(
+            _quat_to_matrix(quats[0]), np.stack([u, v, z]), atol=1e-12)
 
 
 # =====================================================================

@@ -30,8 +30,9 @@ Fibre values        pass                    pass
 Fibre geometry      pass                    pass
 Layer values,       xfail #1995 (empty      pass
 thickness           slab)
-Layer quaternion    xfail #1995; the file   xfail #1996 (identity, not
-                    stores no shell axes    the shell frame)
+Layer quaternion    xfail #1995; the file   pass (no stored shell frame:
+                    stores no shell axes    computed from the file's
+                                            coordinates, #1996)
 =================== ======================= ===============================
 
 Fields a format does not carry (reported on #1767, never synthesised here):
@@ -77,10 +78,6 @@ TILT_DEG = 30.0
 B_LAD_LAYERS = (
     "#1995: the .ladruno reader returns an empty slab for a layered shell "
     "(NUM_COMP 5 fibre blocks dropped)"
-)
-B_MPCO_QUAT = (
-    "#1996: the MPCO reader fills an identity quaternion when the file has "
-    "no shell LOCAL_AXES"
 )
 
 
@@ -425,12 +422,7 @@ def test_c7_quaternion_matches_the_mpco_writer_convention(tmp_path: Path) -> Non
         stored, shell_quaternion(_tilted_quad(), "ASDShellQ4"), atol=1e-14)
 
 
-@pytest.mark.parametrize("kind", [
-    pytest.param("Ladruno", marks=pytest.mark.xfail(
-        strict=True, raises=AssertionError, reason=B_LAD_LAYERS)),
-    pytest.param("MPCO", marks=pytest.mark.xfail(
-        strict=True, raises=AssertionError, reason=B_MPCO_QUAT)),
-])
+@pytest.mark.parametrize("kind", _layer_case("Ladruno", B_LAD_LAYERS))
 def test_layer_quaternion_is_the_shell_frame(
     g: Any, tmp_path: Path, kind: str,
 ) -> None:
