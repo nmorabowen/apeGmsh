@@ -11,8 +11,8 @@ reader change flips something:
 
 * a passing value test;
 * ``xfail(strict=True)`` citing a chain-B issue, asserting the right value,
-  where the route reads back a silent wrong answer (a phantom zero): #1971
-  (3-dof nodes reading rotation 0.0);
+  where the route reads back a silent wrong answer (none left: the #1971
+  3-dof rotation 0.0 now reads NaN with ``model_h5=``);
 * ``pytest.raises`` where the route refuses the family loudly (a gap: the
   MPCO truss bucket).
 
@@ -29,8 +29,8 @@ LadrunoLST          ``stress``: values + GP         pass (``stress``,
 LadrunoBrick +      (not covered here)              pass (damage and
 ASDConcrete3D                                       equivalent plastic
 material state                                      strain)
-Shell-on-solid      pass; 3-dof rotation: #1971     pass; 3-dof rotation:
-                                                    #1971
+Shell-on-solid      pass; 3-dof rotation NaN        pass; 3-dof rotation
+                    (#1971)                         NaN (#1971)
 =================== =============================== ========================
 
 Every MPCO recorder here records nodal displacement too, except the test
@@ -71,9 +71,6 @@ ROT = ("rotation_x", "rotation_y", "rotation_z")
 #: (LadrunoLST.cpp, the SixNodeTri anchors). The element answers no
 #: ``integrationPoints`` response, so the fork source is the oracle.
 LST_GP = np.array([[2 / 3, 1 / 6], [1 / 6, 2 / 3], [1 / 6, 1 / 6]])
-
-B_ROT = "#1971: 3-dof nodes read rotation 0.0, not absent/NaN"
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -532,12 +529,14 @@ def test_shell_on_solid_nodes_read_back(
         )
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason=B_ROT)
 @pytest.mark.parametrize("kind", ["Ladruno", "MPCO"])
 def test_solid_node_rotations_are_absent(
     g: Any, tmp_path: Path, kind: str,
 ) -> None:
-    """A tet node has no rotation DOF: absent from the slab, or NaN."""
+    """A tet node has no rotation DOF: NaN, never the recorder's 0.0.
+
+    The file records no per-node ndf; ``model_h5=`` supplies it (#1971).
+    """
     r, solid, _shell, _live = _shell_on_solid_run(g, tmp_path, kind)
     for comp in ROT:
         slab = r.nodes.get(component=comp)
