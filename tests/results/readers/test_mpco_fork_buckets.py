@@ -391,3 +391,25 @@ def test_unnamed_damage_without_a_catalog_row_refuses(tmp_path: Path) -> None:
         empty = r.read_gauss(stage.id, "damage_tension",
                              element_ids=np.array([99]))
         assert np.asarray(empty.values).shape[1] == 0
+
+
+@pytest.mark.parametrize("labels", ["d+,d-", "C1,C2"])
+def test_bare_damage_on_a_two_column_bucket_refuses(
+    tmp_path: Path, labels: str,
+) -> None:
+    """ASDConcrete3D's ``d+,d-`` (and the unnamed pair) hold no scalar damage.
+
+    The bare ``damage`` read used to come back empty with no error.
+    """
+    fam = FAMILIES[2]
+    path = tmp_path / "bare.mpco"
+    with _file(path, nodal=True) as f:
+        _gauss_bucket(f, "material.damage", fam.key, n_gp=8, labels=labels,
+                      ids=[7])
+    with MPCOReader(path) as r:
+        (stage,) = r.stages()
+        with pytest.raises(LookupError) as err:
+            r.read_gauss(stage.id, "damage")
+    msg = str(err.value)
+    assert f"material.damage/{fam.key}" in msg
+    assert "damage_tension" in msg and "damage_compression" in msg
