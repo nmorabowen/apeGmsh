@@ -413,3 +413,284 @@ def test_node_displacement_rows_are_the_labelled_nodes(tmp_path: Path) -> None:
         for col, nid in enumerate(got):
             assert vals[col] == pytest.approx(osp.nodeDisp(nid, k + 1),
                                               rel=1e-5, abs=1e-12), nid
+
+
+# ---------------------------------------------------------------------------
+# G18 (#1957): one solid + frame model, every element kind on one pairing
+# ---------------------------------------------------------------------------
+#
+# The model the card names: a gmsh solid whose Base and Top faces are
+# surface physical groups, plus two 3-D beam lines. The bridge emits the
+# hexes, the struts and the beams in that order with sequential tags, so no
+# family's FEM ids are its OpenSees tags, and the Base/Top quads carry FEM
+# ids that the bridge never emits but that equal emitted OpenSees tags. The
+# same builders and oracles serve the fork-lane twin,
+# ``tests/opensees/integration_ladruno/test_tag_translation_live.py``
+# (MPCO and ``.ladruno``).
+
+#: Element kind -> (physical group, components, emitted class).
+SF_KINDS: dict[str, tuple[str, tuple[str, ...], str]] = {
+    "nodal_forces": ("Strut", (
+        "nodal_resisting_force_x", "nodal_resisting_force_y",
+        "nodal_resisting_force_z", "nodal_resisting_moment_x",
+        "nodal_resisting_moment_y", "nodal_resisting_moment_z",
+    ), "ElasticBeam3d"),
+    "gauss": ("Solid", (
+        "stress_xx", "stress_yy", "stress_zz",
+        "stress_xy", "stress_yz", "stress_xz",
+    ), "Brick"),
+    # The elastic 3-D section answers ``section force`` as P, Mz, My, T.
+    "line_stations": ("Beam", (
+        "axial_force", "bending_moment_z", "bending_moment_y", "torsion",
+    ), "ForceBeamColumn3d"),
+}
+SF_N_IP = 3
+SF_N_GP = 8
+SF_RTOL = 1e-10
+
+
+def _solid_frame_fem() -> Any:
+    """A 2x2x2-hex unit cube with ``Base``/``Top`` surface groups, a
+    3-element ``Strut`` line and a 3-element ``Beam`` line beside it."""
+    with apeGmsh(model_name="g18_solid_frame", verbose=False) as g:
+        geo = g.model.geometry
+        box = geo.add_box(0.0, 0.0, 0.0, 1.0, 1.0, 1.0)
+        lines = {}
+        for name, x in (("strut", 3.0), ("beam", 5.0)):
+            pa = geo.add_point(x, 0.0, 0.0)
+            pb = geo.add_point(x, 0.0, 3.0)
+            lines[name] = geo.add_line(pa, pb)
+            g.labels.add(0, [pa], f"{name}_base")
+            g.labels.add(0, [pb], f"{name}_tip")
+        g.model.sync()
+        for ln in lines.values():
+            gmsh.model.mesh.setTransfiniteCurve(ln, 4)
+        g.mesh.structured.set_transfinite([(3, box)], n=3)
+        faces = [abs(t) for _d, t in
+                 gmsh.model.getBoundary([(3, box)], oriented=False)]
+        bb = {f: gmsh.model.getBoundingBox(2, f) for f in faces}
+        g.physical.add(3, [box], name="Solid")
+        g.physical.add(2, [f for f in faces if abs(bb[f][5]) < 1e-6],
+                       name="Base")
+        g.physical.add(2, [f for f in faces if abs(bb[f][2] - 1.0) < 1e-6],
+                       name="Top")
+        g.physical.add(1, [lines["strut"]], name="Strut")
+        g.physical.add(1, [lines["beam"]], name="Beam")
+        g.mesh.generation.generate(dim=3)
+        return g.mesh.queries.get_fem_data()
+
+
+def _solid_frame_bridge(fem: Any) -> apeSees:
+    """Hexes, then struts, then beams: each family's sequential tags
+    follow the previous one's, so none equals its FEM ids."""
+    ops = apeSees(fem, default_orientation=None)   # sequential tags
+    ops.model(ndm=3, ndf=6)
+    mat = ops.nDMaterial.ElasticIsotropic(E=30e9, nu=0.2)
+    ops.element.stdBrick(pg="Solid", material=mat)
+    tr = ops.geomTransf.Linear(vecxz=(1.0, 0.0, 0.0))
+    ops.element.elasticBeamColumn(pg="Strut", transf=tr, A=0.02, E=2.0e11,
+                                  Iz=3.0e-4, Iy=2.0e-4, G=8.0e10, J=1.0e-4)
+    sec = ops.section.Elastic(E=2.0e11, A=0.03, Iz=5.0e-4, Iy=4.0e-4,
+                              G=8.0e10, J=3.0e-4)
+    integ = ops.beamIntegration.Lobatto(section=sec, n_ip=SF_N_IP)
+    ops.element.forceBeamColumn(pg="Beam", transf=tr, integration=integ)
+    ops.fix(pg="Base", dofs=(1, 1, 1))
+    ops.fix(label=["strut_base", "beam_base"], dofs=(1, 1, 1, 1, 1, 1))
+    top = [int(n) for n in fem.nodes.select(pg="Top").ids]
+    with ops.pattern.Plain(series=ops.timeSeries.Linear()) as p:
+        for k, n in enumerate(top):
+            p.load(node=n, forces=(1e5 * (k % 4 + 1), -2e5 * (k % 3 + 1),
+                                   -3e5 * (k % 2 + 1)))
+        p.load(node=ops.nodes.one(label="strut_tip"),
+               forces=(1e3, -2e3, -3e3, 4e2, -5e2, 6e2))
+        p.load(node=ops.nodes.one(label="beam_tip"),
+               forces=(3e3, 2e3, -4e3, 5e2, 7e2, -8e2))
+    _static_chain(ops)
+    return ops
+
+
+def _sf_groups(fem: Any) -> dict[str, list[int]]:
+    """``{kind: FEM ids of its physical group}``."""
+    return {kind: [int(e) for e in fem.elements.select(pg=pg).ids]
+            for kind, (pg, _c, _k) in SF_KINDS.items()}
+
+
+def _sf_outside(fem: Any, fem_to_ops: dict[int, int]) -> dict[str, int]:
+    """Per kind, a FEM id outside the pairing (a Base/Top quad, never
+    emitted) that equals the OpenSees tag of one of that kind's elements:
+    the id a translation that passes ids through would read."""
+    unpaired = sorted(
+        int(e) for pg in ("Base", "Top")
+        for e in fem.elements.select(pg=pg).ids
+    )
+    assert not set(unpaired) & set(fem_to_ops)
+    out = {}
+    for kind, eids in _sf_groups(fem).items():
+        tags = {fem_to_ops[e] for e in eids}
+        hits = [e for e in unpaired if e in tags]
+        assert hits, (kind, unpaired, sorted(tags))   # not vacuous
+        out[kind] = hits[0]
+    return out
+
+
+def _sf_capture(osp: Any, fem_to_ops: dict[int, int],
+                groups: dict[str, list[int]]) -> dict[str, dict[int, Any]]:
+    """One step of the live domain's answer, per kind and FEM id, on the
+    OpenSees tag the bridge paired with that id."""
+    def resp(e: int, *args: Any) -> Any:
+        return np.asarray(osp.eleResponse(fem_to_ops[e], *args), dtype=float)
+
+    return {
+        # (12,): end-i then end-j forces and moments, global axes.
+        "nodal_forces": {e: resp(e, "globalForce")
+                         for e in groups["nodal_forces"]},
+        # (n_gp, 6), in SF_KINDS["gauss"] order.
+        "gauss": {e: resp(e, "stresses").reshape(SF_N_GP, 6)
+                  for e in groups["gauss"]},
+        # (n_ip, 4): P, Mz, My, T.
+        "line_stations": {
+            e: np.stack([resp(e, "section", ip, "force")
+                         for ip in range(1, SF_N_IP + 1)])
+            for e in groups["line_stations"]
+        },
+    }
+
+
+def _sf_truth(live: list[dict[str, dict[int, Any]]], kind: str,
+              k: int) -> dict[int, Any]:
+    """``{eid: (T, n)}``: component ``k`` of ``kind`` at every captured
+    step (n = element nodes, GPs or IPs)."""
+    def pick(a: Any) -> Any:
+        return a[[k, k + 6]] if kind == "nodal_forces" else a[:, k]
+
+    return {e: np.stack([pick(step[kind][e]) for step in live])
+            for e in live[0][kind]}
+
+
+def _sf_read(res: Any, kind: str, comp: str,
+             ids: Any = None) -> dict[int, Any]:
+    """``{eid: (T, n)}`` read back, keyed by the element id each row is
+    labelled with."""
+    if kind == "nodal_forces":
+        slab = res.elements.get(component=comp, ids=ids)
+        vals = np.asarray(slab.values)                    # (T, E, n_nodes)
+        return {int(e): vals[:, i]
+                for i, e in enumerate(np.asarray(slab.element_ids))}
+    reader = (res.elements.gauss if kind == "gauss"
+              else res.elements.line_stations)
+    slab = reader.get(component=comp, ids=ids)
+    index = np.asarray(slab.element_index)
+    vals = np.asarray(slab.values)                        # (T, rows)
+    return {e: vals[:, index == e]
+            for e in dict.fromkeys(int(x) for x in index)}
+
+
+def _sf_assert_ids_and_values(res: Any, kind: str, groups: dict,
+                              live: list, fem_to_ops: dict[int, int],
+                              route: str, read: Any = _sf_read) -> None:
+    """The slab's ids are the group's FEM ids, and every row equals the
+    live response of the OpenSees tag paired with its label."""
+    eids = groups[kind]
+    for k, comp in enumerate(SF_KINDS[kind][1]):
+        got = read(res, kind, comp, ids=eids)
+        assert sorted(got) == sorted(eids), f"{route} {kind} {comp} ids"
+        want = _sf_truth(live, kind, k)
+        for e in eids:
+            assert got[e].shape == want[e].shape, (route, kind, comp, e)
+            np.testing.assert_allclose(
+                got[e], want[e], rtol=SF_RTOL,
+                atol=SF_RTOL * max(float(np.abs(want[e]).max()), 1.0),
+                err_msg=(f"{route} {kind} {comp} of FEM element {e} "
+                         f"(ops tag {fem_to_ops[e]})"),
+            )
+
+
+def _sf_assert_filter_is_exact(res: Any, kind: str, groups: dict,
+                               read: Any = _sf_read) -> None:
+    """An ``ids=`` filter by FEM id returns exactly those elements, with
+    the rows the unfiltered read gives them."""
+    eids = groups[kind]
+    subset = [eids[-1], eids[0]]
+    comp = SF_KINDS[kind][1][0]
+    full = read(res, kind, comp)
+    got = read(res, kind, comp, ids=subset)
+    assert sorted(got) == sorted(subset)
+    for e in subset:
+        np.testing.assert_array_equal(got[e], full[e])
+
+
+class OutsidePairingReturnedRows(AssertionError):
+    """An ``ids=`` filter on a FEM id outside the pairing that equals an
+    emitted OpenSees tag returned rows (the #2066 pass-through). Its own
+    class, so a strict xfail on it cannot hide any other failure."""
+
+
+def _sf_assert_outside_returns_none(res: Any, kind: str,
+                                    outside: dict[str, int],
+                                    read: Any = _sf_read) -> None:
+    """A FEM id the pairing does not cover returns no rows: neither one
+    that equals nothing, nor one that equals an emitted OpenSees tag."""
+    comp = SF_KINDS[kind][1][0]
+    assert not read(res, kind, comp, ids=[10**6]), kind
+    eid = outside[kind]
+    got = read(res, kind, comp, ids=[eid])
+    if got:
+        raise OutsidePairingReturnedRows(
+            f"{kind}: FEM id {eid} is outside the pairing, yet the read "
+            f"returned rows labelled {sorted(got)}")
+
+
+@pytest.fixture(scope="module")
+def solid_frame_out(tmp_path_factory: pytest.TempPathFactory) -> dict:
+    """The solid + frame model on the ``.out`` route: every kind recorded
+    live for one step through ``spec.emit_recorders(..., model=)`` and
+    read back through ``Results.from_recorders(..., model=)``."""
+    pytest.importorskip("openseespy.opensees")
+    from apeGmsh.results import Results
+
+    tmp = tmp_path_factory.mktemp("g18_out")
+    fem = _solid_frame_fem()
+    ops = _solid_frame_bridge(fem)
+    fem_to_ops = _solve_and_map(ops)
+    groups = _sf_groups(fem)
+    model = _model(ops, tmp)
+    records = []
+    for kind, (pg, comps, cls) in SF_KINDS.items():
+        category = "elements" if kind == "nodal_forces" else kind
+        records.append(_record(category, pg.lower(), comps,
+                               element_ids=np.asarray(groups[kind]),
+                               element_class_name=cls))
+    spec = _spec(fem, *records)
+    osp = _record_step(spec, tmp / "out", model)
+    live = [_sf_capture(osp, fem_to_ops, groups)]
+    res = Results.from_recorders(spec, tmp / "out", fem=fem, stage_id="s",
+                                 model=model, cache_root=tmp / "cache")
+    return dict(res=res, groups=groups, live=live, fem_to_ops=fem_to_ops,
+                outside=_sf_outside(fem, fem_to_ops))
+
+
+@pytest.mark.parametrize("kind", list(SF_KINDS))
+def test_solid_frame_rows_are_the_paired_live_responses(
+    solid_frame_out: dict, kind: str,
+) -> None:
+    s = solid_frame_out
+    for e in s["groups"][kind]:
+        assert s["fem_to_ops"][e] != e                    # not vacuous
+    _sf_assert_ids_and_values(s["res"], kind, s["groups"], s["live"],
+                              s["fem_to_ops"], ".out")
+
+
+@pytest.mark.parametrize("kind", list(SF_KINDS))
+def test_solid_frame_fem_id_filter_is_exact(
+    solid_frame_out: dict, kind: str,
+) -> None:
+    _sf_assert_filter_is_exact(solid_frame_out["res"], kind,
+                               solid_frame_out["groups"])
+
+
+@pytest.mark.parametrize("kind", list(SF_KINDS))
+def test_solid_frame_id_outside_the_pairing_returns_none(
+    solid_frame_out: dict, kind: str,
+) -> None:
+    _sf_assert_outside_returns_none(solid_frame_out["res"], kind,
+                                    solid_frame_out["outside"])
