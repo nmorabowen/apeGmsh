@@ -351,6 +351,36 @@ def test_line_station_rows_are_the_labelled_elements(tmp_path: Path) -> None:
             )
 
 
+@pytest.mark.parametrize("cls", ["ElasticBeam2d", "ElasticTimoshenkoBeam2d",
+                                 "ModElasticBeam2d"])
+def test_line_station_elastic_class_over_a_force_beam_is_refused(
+    tmp_path: Path, cls: str,
+) -> None:
+    """One record over the columns and the girder that names an elastic-beam
+    class records ``localForce`` for all of them; the force-beam columns
+    would read two end stations instead of their section stations. With
+    ``model=`` the transcode refuses the columns by FEM id instead."""
+    from apeGmsh.results import Results
+
+    fem = _portal_fem()
+    ops = _portal_bridge(fem)
+    _solve_and_map(ops)
+    cols = [int(e) for e in ops.elements.get(pg="Cols").ids]
+    beam = [int(e) for e in ops.elements.get(pg="Beam").ids]
+    model = _model(ops, tmp_path)
+    spec = _spec(fem, _record(
+        "line_stations", "all", ("axial_force", "bending_moment_z"),
+        element_ids=np.asarray(beam + cols), element_class_name=cls,
+    ))
+    _record_step(spec, tmp_path / "out", model)
+    with pytest.raises(ValueError, match="not elastic beams") as exc:
+        Results.from_recorders(spec, tmp_path / "out", fem=fem,
+                               stage_id="s", model=model,
+                               cache_root=tmp_path / "cache")
+    assert str(cols[:10]) in str(exc.value)
+    assert "forceBeamColumn" in str(exc.value)
+
+
 # ---------------------------------------------------------------------------
 # nodes: identity by construction, guarded anyway
 # ---------------------------------------------------------------------------

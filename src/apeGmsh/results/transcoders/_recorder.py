@@ -68,6 +68,7 @@ from ..spec._emit import (
     emit_logical,
     line_station_gpx_path,
     line_stations_from_local_force,
+    refuse_non_elastic_local_force,
 )
 from ..writers._native import NativeWriter
 from . import _txt
@@ -453,13 +454,9 @@ class RecorderTranscoder:
             return self._parse_local_force_line_station_record(rec)
         if not is_custom_rule_catalogued(class_name, "section_force"):
             raise ValueError(
-                f"Class {class_name!r} has no line-stations layout: it is "
-                f"not in CUSTOM_RULE_CATALOG (section force) and has no "
-                f"localForce synthesis (an elastic beam in "
-                f"NODAL_FORCE_CATALOG). Add an entry in "
-                f"apeGmsh.opensees._response_catalog if this beam-column "
-                f"class should be supported."
-            )
+                f"Class {class_name!r} is in neither CUSTOM_RULE_CATALOG "
+                f"(section force) nor the localForce synthesis (an elastic "
+                f"beam in NODAL_FORCE_CATALOG); add a catalog entry.")
 
         logicals = list(emit_logical(
             rec, output_dir=str(self._output_dir),
@@ -583,13 +580,14 @@ class RecorderTranscoder:
     def _parse_local_force_line_station_record(
         self, rec: "ResolvedRecorderRecord",
     ) -> "_LineStationRecordPayload":
-        """Synthesise an elastic beam's two-station slab from ``localForce``.
-
-        The record emitted one ``localForce`` recorder: per element the
-        end vector ``[end i, end j]``. Stations sit at xi = -1, +1, end j
-        negated into the section-force sign convention, as DomainCapture
-        and the MPCO local-force reader do.
-        """
+        """Two stations (xi = -1, +1) from one ``localForce`` file: end i,
+        and end j negated, as DomainCapture and the MPCO reader do. With a
+        model, every element must be an elastic beam (no silent mixing)."""
+        if self._model_h5_src is not None:
+            from ...opensees import OpenSeesModel
+            refuse_non_elastic_local_force(
+                rec, OpenSeesModel.from_h5(self._model_h5_src),
+                fem_snapshot_id=self._spec.fem_snapshot_id)
         cls = rec.element_class_name
         layout = synthesize_line_station_layout_for_elastic_beam(cls or "")
         assert layout is not None    # line_stations_from_local_force(rec)

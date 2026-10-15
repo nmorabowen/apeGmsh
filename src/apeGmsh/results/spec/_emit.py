@@ -253,6 +253,54 @@ def line_stations_from_local_force(rec: ResolvedRecorderRecord) -> bool:
     )
 
 
+#: OpenSees ``element`` type tokens that build the elastic-beam classes:
+#: ``elasticBeamColumn`` gives ``ElasticBeam2d``/``3d`` by ndm,
+#: ``ElasticTimoshenkoBeam`` gives ``ElasticTimoshenkoBeam2d``/``3d``.
+ELASTIC_BEAM_TYPE_TOKENS = frozenset({
+    "elasticBeamColumn", "ElasticTimoshenkoBeam", "ModElasticBeam2d",
+})
+
+
+def refuse_non_elastic_local_force(
+    rec: ResolvedRecorderRecord, model: object, *, fem_snapshot_id: str,
+) -> None:
+    """Raise unless every element of a ``localForce`` record is an elastic beam.
+
+    ``element_class_name`` names one class for the whole record, so a record
+    over a force beam and an elastic girder that names the girder's class
+    would give the force beam two end stations instead of its section
+    stations. ``model`` (an ``OpenSeesModel`` built from the spec's FEMData)
+    records each element's type token; any element whose token does not build
+    an elastic beam, or that the model does not hold, is refused by FEM id.
+    """
+    fem_hash = model.lineage.fem_hash  # type: ignore[attr-defined]
+    if fem_hash != fem_snapshot_id:
+        raise ValueError(
+            f"Line-stations record {rec.name!r}: model= was not built from "
+            f"the spec's FEMData (lineage.fem_hash {fem_hash!r}, spec "
+            f"fem_snapshot_id {fem_snapshot_id!r}), so its element types "
+            f"cannot check the record's elastic-beam class."
+        )
+    types = {
+        int(r.fem_eid): r.type_token
+        for r in model.elements()  # type: ignore[attr-defined]
+        if int(r.fem_eid) >= 0
+    }
+    assert rec.element_ids is not None
+    bad = [int(e) for e in rec.element_ids
+           if types.get(int(e)) not in ELASTIC_BEAM_TYPE_TOKENS]
+    if bad:
+        found = sorted({str(types.get(e)) for e in bad})
+        raise ValueError(
+            f"Line-stations record {rec.name!r} names the elastic-beam class "
+            f"{rec.element_class_name!r}, so it records localForce end "
+            f"forces, but FEM element(s) {bad[:10]}"
+            f"{' ...' if len(bad) > 10 else ''} are {found} in model=, not "
+            f"elastic beams ({sorted(ELASTIC_BEAM_TYPE_TOKENS)}). Split the "
+            f"record into one per element class."
+        )
+
+
 # =====================================================================
 # Logical recorder spec — backend-agnostic intermediate
 # =====================================================================
