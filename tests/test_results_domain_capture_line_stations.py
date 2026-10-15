@@ -566,21 +566,23 @@ class TestElasticBeamSynthesis:
             cap.end_stage()
 
         # Slab at 2 stations × 1 element = 2 column rows per component.
-        # Station 1 keeps the localForce sign; station 2 flips.
+        # Force-beam ``section force`` convention (#2009, G17 junction
+        # data): station 1 = sign * end i, station 2 = -sign * end j,
+        # with sign -1 for N, Vz, T, My, Mz and +1 for Vy only.
         with Results.from_native(path, model=_open_model_from_h5(path)) as r:
             s = r.stage(r.stages[0].id)
-            for comp, dof_idx in [
-                ("axial_force",       0),  # Fx
-                ("shear_y",           1),  # Fy
-                ("shear_z",           2),  # Fz
-                ("torsion",           3),  # Mx
-                ("bending_moment_y",  4),  # My
-                ("bending_moment_z",  5),  # Mz
+            for comp, dof_idx, sign in [
+                ("axial_force",       0, -1.0),  # Fx
+                ("shear_y",           1, +1.0),  # Fy
+                ("shear_z",           2, -1.0),  # Fz
+                ("torsion",           3, -1.0),  # Mx
+                ("bending_moment_y",  4, -1.0),  # My
+                ("bending_moment_z",  5, -1.0),  # Mz
             ]:
                 slab = s.elements.line_stations.get(component=comp)
                 assert slab.values.shape == (1, 2)
-                expected_station_1 = local_force[dof_idx]
-                expected_station_2 = -local_force[6 + dof_idx]
+                expected_station_1 = sign * local_force[dof_idx]
+                expected_station_2 = -sign * local_force[6 + dof_idx]
                 np.testing.assert_allclose(
                     slab.values[0],
                     [expected_station_1, expected_station_2],
@@ -622,15 +624,17 @@ class TestElasticBeamSynthesis:
 
         with Results.from_native(path, model=_open_model_from_h5(path)) as r:
             s = r.stage(r.stages[0].id)
-            for comp, dof_idx in [
-                ("axial_force",       0),
-                ("shear_y",           1),
-                ("bending_moment_z",  2),
+            # Force-beam convention (#2009): N and M flip at end i, V not.
+            for comp, dof_idx, sign in [
+                ("axial_force",       0, -1.0),
+                ("shear_y",           1, +1.0),
+                ("bending_moment_z",  2, -1.0),
             ]:
                 slab = s.elements.line_stations.get(component=comp)
                 np.testing.assert_allclose(
                     slab.values[0],
-                    [local_force[dof_idx], -local_force[3 + dof_idx]],
+                    [sign * local_force[dof_idx],
+                     -sign * local_force[3 + dof_idx]],
                     err_msg=f"component {comp!r}",
                 )
 

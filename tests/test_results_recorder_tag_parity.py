@@ -280,9 +280,8 @@ def test_line_station_rows_are_the_labelled_elements(tmp_path: Path) -> None:
 
     The force-beam columns record ``section force`` (one row per IP). The
     elastic-beam girder answers no ``section force``, so its record emits
-    ``localForce`` and the transcoder synthesises two stations: end i as
-    recorded, end j negated (the internal section-force convention that
-    DomainCapture and the MPCO reader use). Before the fix the transcode
+    ``localForce`` and the transcoder synthesises two stations in the
+    force-beam section-force convention every route uses (#2009). Before the fix the transcode
     raised ``KeyError: 'No group with tag 5'``: the element-length resolver
     selected the element id as a physical-group tag.
     """
@@ -313,10 +312,13 @@ def test_line_station_rows_are_the_labelled_elements(tmp_path: Path) -> None:
         ])
         for e in cols
     }
-    beam_truth = {}    # (2, 3): end i as recorded, end j negated
+    # (2, 3): the force-beam section convention (#2009): N and M are
+    # [-end_i, +end_j], V is [end_i, -end_j].
+    sign = np.array([-1.0, 1.0, -1.0])
+    beam_truth = {}
     for e in beam:
         lf = np.asarray(osp.eleResponse(fem_to_ops[e], "localForce"))
-        beam_truth[e] = np.stack([lf[0:3], -lf[3:6]])
+        beam_truth[e] = np.stack([sign * lf[0:3], -sign * lf[3:6]])
 
     res = Results.from_recorders(spec, tmp_path / "out", fem=fem,
                                  stage_id="s", model=model,

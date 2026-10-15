@@ -569,10 +569,15 @@ def _elastic_beam_model(tmp_path: Path, ndm: int) -> tuple:
 class TestElasticBeamTranscode:
     """Hand-written ``localForce`` file → transcode → read back.
 
-    Row per element is ``[end i, end j]``; station 1 keeps end i, station
-    2 is end j negated (the internal sign convention of DomainCapture's
-    capturer and the MPCO local-force reader).
+    Row per element is ``[end i, end j]``; station 1 is ``sign * end i``
+    and station 2 is ``-sign * end j``, the force-beam ``section force``
+    convention every route applies (#2009, G17 junction data).
     """
+
+    #: end-i sign per component: N, Vz, T, My, Mz flip; Vy alone keeps.
+    _END_I_SIGN = {"axial_force": -1.0, "shear_y": 1.0, "shear_z": -1.0,
+                   "torsion": -1.0, "bending_moment_y": -1.0,
+                   "bending_moment_z": -1.0}
 
     @pytest.mark.parametrize("cls, comps", [
         ("ElasticBeam2d", ("axial_force", "shear_y", "bending_moment_z")),
@@ -607,6 +612,7 @@ class TestElasticBeamTranscode:
                                  model=_open_model_from_h5(target)) as r:
             s = r.stage(r.stages[0].id)
             for k, comp in enumerate(comps):
+                sign = self._END_I_SIGN[comp]
                 slab = s.elements.line_stations.get(component=comp)
                 assert slab.element_index.tolist() == [
                     eids[0], eids[0], eids[1], eids[1]]
@@ -617,7 +623,8 @@ class TestElasticBeamTranscode:
                     expected = [
                         v
                         for e in range(len(eids))
-                        for v in (flat[t, e, k], -flat[t, e, n + k])
+                        for v in (sign * flat[t, e, k],
+                                  -sign * flat[t, e, n + k])
                     ]
                     np.testing.assert_array_equal(slab.values[t], expected)
 
