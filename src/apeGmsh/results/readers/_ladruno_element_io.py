@@ -37,6 +37,7 @@ from numpy import ndarray
 from ...opensees._response_catalog import (
     RESPONSE_CATALOG,
     catalog_token_for_keyword,
+    local_force_station_signs,
 )
 from ._ladruno_hyperslab import read_hyperslab
 
@@ -1198,10 +1199,11 @@ def read_line_station_slab(
     Two bucket flavours feed the beam line diagram:
 
     * **element-level** (``localForce`` / ``basicForce``, ``LEVELS==0``) —
-      one block of named columns. The ``localForce`` end-force convention
-      flips the second station's sign so the diagram is a continuous
-      internal-force line (parity with MPCO's ``_mpco_local_force_io``);
-      single-station ``basicForce`` is left as-is. Stations are evenly
+      one block of named columns. ``localForce`` end forces are signed per
+      component by ``local_force_station_signs`` into the force-beam
+      ``section force`` convention, as on every other route, so the
+      diagram is continuous across element boundaries; single-station
+      ``basicForce`` is left as-is. Stations are evenly
       spaced over ``[-1, +1]``.
     * **section-level** (``section.force`` / ``section.deformation``,
       ``LEVELS==2``) — one block per integration station. The station's
@@ -1293,9 +1295,10 @@ def _read_element_stations(
         bucket["DATA"], t_idx, rows,
         np.array([station_to_col[st] for st in stations]),
     )
-    # localForce end-force → internal-force sign continuity.
+    # localForce end forces → the force-beam ``section force`` signs,
+    # the one table every route applies.
     if token == "localForce" and n_st == 2:
-        out[:, :, 1] *= -1.0
+        out *= local_force_station_signs((component,))[:, 0]
     return (
         out.reshape(T, E * n_st),
         np.repeat(sel_ids, n_st),

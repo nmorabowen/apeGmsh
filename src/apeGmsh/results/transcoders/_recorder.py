@@ -51,6 +51,7 @@ from ...opensees._response_catalog import (
     infer_section_codes,
     is_custom_rule_catalogued,
     is_nodal_force_catalogued,
+    local_force_station_signs,
     lookup_custom_rule,
     lookup_nodal_force,
     normalise_integration_points,
@@ -576,9 +577,8 @@ class RecorderTranscoder:
     def _parse_local_force_line_station_record(
         self, rec: "ResolvedRecorderRecord",
     ) -> "_LineStationRecordPayload":
-        """Two stations (xi = -1, +1) from one ``localForce`` file: end i,
-        and end j negated, as DomainCapture and the MPCO reader do. Every
-        element must be an elastic beam, so a model is required."""
+        """Stations xi = -1, +1 from one ``localForce`` file, signed as every route signs them
+        (local_force_station_signs). Every element must be an elastic beam: a model is required."""
         if self._model_h5_src is None:
             raise ValueError(
                 f"Line-stations record {rec.name!r} names elastic-beam class "
@@ -596,7 +596,7 @@ class RecorderTranscoder:
                              stage_id=self._stage_id)
         n_per = layout.n_components_per_gp
         time, flat = _txt.parse_element_file(lr.file_path, lr, 2 * n_per)
-        flat[:, :, n_per:] *= -1.0
+        flat *= local_force_station_signs(layout.component_layout).ravel()
         return _LineStationRecordPayload(rec.name, time, [
             _LineStationGroupPayload(
                 str(cls), np.asarray(rec.element_ids, dtype=np.int64),

@@ -233,6 +233,28 @@ def test_line_stations_beam_two_stations() -> None:
         np.testing.assert_allclose(slab.values[-1, 0], slab.values[-1, 1])
 
 
+#: #2009: end-i sign per component of the force-beam ``section force``
+#: convention; station 1 = sign * end i, station 2 = -sign * end j.
+_END_I_SIGN_3D = (
+    ("axial_force", 0, -1.0), ("shear_y", 1, 1.0), ("shear_z", 2, -1.0),
+    ("torsion", 3, -1.0), ("bending_moment_y", 4, -1.0),
+    ("bending_moment_z", 5, -1.0),
+)
+
+
+def test_line_stations_beam_force_beam_signs() -> None:
+    """Each of the six 3-D components carries the force-beam sign (#2009)."""
+    with LadrunoReader(BEAM) as r:
+        raw = r.read_elements("stage_0", "localForce").values[-1, 0]
+        assert np.count_nonzero(raw) >= 2    # the pin can tell a sign apart
+        for comp, k, sign in _END_I_SIGN_3D:
+            slab = r.read_line_stations("stage_0", comp)
+            np.testing.assert_allclose(
+                slab.values[-1], [sign * raw[k], -sign * raw[6 + k]],
+                rtol=1e-12, err_msg=comp,
+            )
+
+
 def test_line_stations_truss_basic_force() -> None:
     with LadrunoReader(TRUSS) as r:
         assert r.available_components(

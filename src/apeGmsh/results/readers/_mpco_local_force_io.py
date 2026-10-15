@@ -48,6 +48,8 @@ from typing import TYPE_CHECKING
 import numpy as np
 from numpy import ndarray
 
+from ...opensees._response_catalog import local_force_station_signs
+
 if TYPE_CHECKING:
     import h5py
 
@@ -433,14 +435,11 @@ def read_local_force_bucket_slab(
         out[i] = step_arr[np.ix_(sel_rows, cols_arr)]
 
     # Convert OpenSees ``localForce`` (end resisting forces on the
-    # element from the joints) to internal-section-force convention so
-    # the slab matches what ``section.force`` reports and adjacent
-    # elements line up at shared nodes. For ``n_stations == 2``: the
-    # raw value at station 2 is the force the joint exerts on the
-    # element at xi=+1, i.e. the negative of the internal force on
-    # the cross-section there. Multiply station 2 by -1.
+    # element from the joints) to the force-beam ``section force``
+    # convention, the one sign table every route applies, so
+    # adjacent force and elastic beams line up at shared nodes.
     if n_stations == 2:
-        out[:, :, 1] *= -1.0
+        out *= local_force_station_signs((canonical_component,))[:, 0]
 
     values = out.reshape(T, E * n_stations)
     element_index = np.repeat(sel_ids, n_stations).astype(np.int64)

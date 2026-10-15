@@ -12,16 +12,13 @@ Every station is checked against the live domain at ``rtol=1e-10``:
   ``eleResponse(tag, "section", ip, "force")`` values, and nothing else: the
   ``localForce`` and ``basicForce`` buckets the column also writes add no
   stations;
-* the girder's two stations at xi = -1, +1 are ``localForce`` end i as
-  recorded and end j negated (the internal sign convention of DomainCapture
-  and the MPCO reader), for all three components. The 2-D bucket spells
-  shear and moment ``V``/``M``; before #1741 both were dropped silently;
+* the girder's two stations at xi = -1, +1 are ``localForce`` in the
+  force-beam ``section force`` convention every route shares (#2009):
+  N and M are ``[-end_i, +end_j]``, V is ``[end_i, -end_j]``. The 2-D bucket
+  spells shear and moment ``V``/``M``; before #1741 both were dropped
+  silently;
 * with only ``basicForce`` recorded, no beam has shear or moment stations:
   the ``V``/``M`` alias stays off ``basicForce``'s basic-system end moments.
-
-The station-2 negation in the girder oracle is the convention every route
-shares today (DomainCapture, MPCO, ``.ladruno``, ``.out``); whether N and M
-should flip at end j is pending a cross-route ruling (PR #2002 review).
 """
 from __future__ import annotations
 
@@ -43,6 +40,8 @@ RTOL = 1e-10
 ATOL = 1e-9          # moments near a zero crossing
 N_IP = 4
 COMPS = ("axial_force", "shear_y", "bending_moment_z")
+#: #2009: end-i sign of (N, V, M); station 2 takes the opposite sign of end j.
+SIGN = np.array([-1.0, 1.0, -1.0])
 
 
 def _fem_to_ops(model_h5: str) -> dict[int, int]:
@@ -113,9 +112,9 @@ def _solve(tmp: Any, elem_responses: tuple[str, ...]) -> dict[str, Any]:
                 np.asarray(o.eleResponse(fem_to_ops[e], "section", ip, "force"))
                 for ip in range(1, N_IP + 1)
             ]))
-        for e in beam:     # (2, 3): end i, end j negated
+        for e in beam:     # (2, 3): force-beam section convention
             lf = np.asarray(o.eleResponse(fem_to_ops[e], "localForce"))
-            beam_live[e].append(np.stack([lf[0:3], -lf[3:6]]))
+            beam_live[e].append(np.stack([SIGN * lf[0:3], -SIGN * lf[3:6]]))
     emitter.ops.remove("recorders")
     return {
         "results": Results.from_ladruno(path, fem=fem, model_h5=model_h5),

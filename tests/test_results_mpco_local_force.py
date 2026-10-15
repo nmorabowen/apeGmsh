@@ -248,7 +248,9 @@ _GIRDER = [5788.86, -1482.87, -4049.05, -5788.86, 1482.87, 1577.60]
 @pytest.mark.parametrize("bracket, raw", _SPELLINGS_2D,
                          ids=[b for b, _ in _SPELLINGS_2D])
 def test_read_2d_bucket_values(tmp_path, bracket, raw):
-    """V and M read as end i as recorded, end j negated, like N."""
+    """Force-beam ``section force`` signs (#2009): N and M are
+    ``[-end_i, +end_j]``, V stays ``[end_i, -end_j]``."""
+    sign = {"axial_force": -1.0, "shear_y": 1.0, "bending_moment_z": -1.0}
     rows = np.array([_GIRDER, [2.0 * v for v in _GIRDER]])
     with _on_elements(tmp_path, {bracket: (raw, [rows], [8, 9])}) as f:
         on_el = f["ON_ELEMENTS"]
@@ -264,7 +266,8 @@ def test_read_2d_bucket_values(tmp_path, bracket, raw):
             np.testing.assert_array_equal(xi, [-1.0, 1.0, -1.0, 1.0])
             np.testing.assert_allclose(
                 values[0],
-                [rows[0, ci], -rows[0, cj], rows[1, ci], -rows[1, cj]],
+                [sign[comp] * rows[0, ci], -sign[comp] * rows[0, cj],
+                 sign[comp] * rows[1, ci], -sign[comp] * rows[1, cj]],
                 rtol=1e-12,
             )
 
@@ -446,10 +449,10 @@ def test_read_unknown_canonical_returns_none(fixture_h5):
 def test_read_value_matches_raw_h5(fixture_h5):
     """Verify we pull the right column from the right row.
 
-    Station 1 is the raw ``localForce`` value (force from joint on
-    element). Station 2 is **negated** so the slab represents internal
-    section forces in textbook convention (continuous across element
-    boundaries). See the docstring on ``read_local_force_bucket_slab``.
+    The slab is in the force-beam ``section force`` convention (#2009):
+    for a moment, station 1 is ``-end_i`` and station 2 is ``+end_j``.
+    ``bending_moment_y`` is read because the fixture's ``Mz`` is all
+    zero, which no sign can tell apart.
     """
     on_elements = fixture_h5["MODEL_STAGE[1]/RESULTS/ON_ELEMENTS"]
     bucket = discover_local_force_buckets(on_elements)[0]
@@ -460,13 +463,14 @@ def test_read_value_matches_raw_h5(fixture_h5):
     # For element 1 at step 0:
     # COMPONENTS = N_1,Vy_1,Vz_1,T_1,My_1,Mz_1,N_2,Vy_2,Vz_2,T_2,My_2,Mz_2
     #              0   1    2    3   4    5    6   7    8    9   10   11
-    # bending_moment_z: cols [5, 11]
-    expected_e1_s1 = raw_step0[0, 5]    # station 1: as-is
-    expected_e1_s2 = -raw_step0[0, 11]  # station 2: sign flipped
+    # bending_moment_y: cols [4, 10]
+    assert raw_step0[0, 4] != 0.0 and raw_step0[0, 10] != 0.0
+    expected_e1_s1 = -raw_step0[0, 4]   # station 1: -end_i
+    expected_e1_s2 = raw_step0[0, 10]   # station 2: +end_j
 
     t_idx = np.array([0], dtype=np.int64)
     values, element_index, _ = read_local_force_bucket_slab(
-        bucket_grp, bucket, "bending_moment_z",
+        bucket_grp, bucket, "bending_moment_y",
         t_idx=t_idx, element_ids=None,
     )
     # element_index repeats per station; columns for element 1 are 0 and 1.
@@ -510,9 +514,8 @@ def test_results_read_line_stations_returns_two_station_slab():
 
 
 def test_results_axial_force_constant_along_element():
-    """After the station-2 sign flip the slab is in internal-force
-    convention: axial force is constant along an element with no axial
-    distributed load â€” i.e., values at xi=-1 equal values at xi=+1.
+    """The slab is in the force-beam section-force convention: axial
+    force is constant along an element with no axial distributed load â€” i.e., values at xi=-1 equal values at xi=+1.
     """
     if not _FIXTURE.exists():
         pytest.skip(f"Missing fixture: {_FIXTURE}")
