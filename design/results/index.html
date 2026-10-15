@@ -3777,11 +3777,14 @@ the type level — numpy and dataclasses only.</p>
 <p>That frozenness is the seam: <strong>anything that can walk a spec is a valid
 execution strategy</strong>, and the strategies are just its consumers.</p>
 <ul>
-<li><strong>Script emission</strong> — <code>to_tcl_commands()</code> / <code>to_python_commands()</code>
-  translate each record into <code>recorder Node …</code> / <code>recorder Element …</code>
-  source inlined into an exported deck; the user runs OpenSees
-  elsewhere and the spec doubles as the manifest for parsing the output.</li>
-<li><strong>Live recorders</strong> — <code>spec.emit_recorders(out_dir)</code> pushes the same
+<li><strong>Script emission</strong> — <code>to_tcl_commands(model=model)</code> /
+  <code>to_python_commands(model=model)</code> translate each record into
+  <code>recorder Node …</code> / <code>recorder Element …</code> source inlined into an
+  exported deck; the user runs OpenSees elsewhere and the spec doubles
+  as the manifest for parsing the output. The built model is required:
+  it maps element ids to OpenSees tags and each node's DOFs to its own
+  layout (a 2-D frame's <code>rotation_z</code> is DOF 3).</li>
+<li><strong>Live recorders</strong> — <code>spec.emit_recorders(out_dir, model=model)</code> pushes the same
   commands into the running openseespy domain via <code>ops.recorder(*args)</code>,
   with a per-stage filename prefix (<code>&lt;stage&gt;__…</code>) so multi-stage runs
   don't collide.</li>
@@ -3800,9 +3803,13 @@ execution strategy</strong>, and the strategies are just its consumers.</p>
 </ul>
 <p>Text and live emission cannot drift apart because they share one core.
 <code>emit_logical()</code> turns a resolved record into <code>LogicalRecorder</code>
-values — one classic recorder command in structured form — and
-<code>format_tcl</code> / <code>format_python</code> / <code>to_ops_args</code> are three renderings of
-the same object (with <code>mpco_ops_args</code> playing the same role for MPCO).
+values — one classic recorder command in structured form, with element
+ids as FEM ids and node DOFs as spatial slots, which is what the read
+side keys on. <code>to_deck()</code> maps that object to what reaches OpenSees,
+using the built model: element tags, and each slot at the DOF the nodes
+carry it. <code>format_tcl</code> / <code>format_python</code> / <code>to_ops_args</code> are three
+renderings of the mapped object (with <code>mpco_ops_args</code> playing the same
+role for MPCO).
 Cross-check tests assert the source-code form and the live-args form
 agree, so a change to recorder argument shape lands in one place.</p>
 <h2 id="readers-and-the-slab-pipeline">Readers and the slab pipeline<a class="headerlink" href="#readers-and-the-slab-pipeline" title="Permanent link">&para;</a></h2>
