@@ -111,7 +111,7 @@ def install_skill_tree(tree: str, dest: Path) -> None:
 
 
 def harness_dirty() -> list[str]:
-    out = _git("status", "--porcelain", "--", *HARNESS_PATHS, f":(exclude){RUNS_DIR.relative_to(REPO)}")
+    out = _git("status", "--porcelain", "--", *HARNESS_PATHS, f":(exclude){RUNS_DIR.relative_to(REPO).as_posix()}")
     return [ln for ln in out.splitlines() if ln.strip()]
 
 
@@ -146,8 +146,13 @@ def claude_version(claude: str) -> str | None:
     return run.stdout.strip() or None
 
 
-def claude_command(claude: str, prompt: str, *, model: str | None, max_turns: int) -> list[str]:
-    cmd = [claude, "-p", prompt, "--output-format", "stream-json", "--verbose",
+def claude_command(claude: str, *, model: str | None, max_turns: int) -> list[str]:
+    """The ``claude -p`` command line; the prompt goes on stdin.
+
+    On stdin, not as an argument: an npm install on Windows is ``claude.cmd``, and
+    cmd.exe cuts a multi-line argument at its first newline.
+    """
+    cmd = [claude, "-p", "--output-format", "stream-json", "--verbose",
            "--max-turns", str(max_turns), "--allowedTools", TASK_TOOLS]
     if model:
         cmd += ["--model", model]
@@ -182,12 +187,12 @@ def parse_stream(lines: list[str]) -> dict[str, Any]:
     return out
 
 
-def run_claude(cmd: list[str], *, cwd: Path, config: Path) -> tuple[dict[str, Any], float]:
+def run_claude(cmd: list[str], prompt: str, *, cwd: Path, config: Path) -> tuple[dict[str, Any], float]:
     env = dict(os.environ)
     env["CLAUDE_CONFIG_DIR"] = str(config)
     start = time.time()
     try:
-        run = subprocess.run(cmd, cwd=cwd, env=env, capture_output=True, text=True,
+        run = subprocess.run(cmd, input=prompt, cwd=cwd, env=env, capture_output=True, text=True,
                              encoding="utf-8", errors="replace", timeout=RUN_TIMEOUT)
         stream = parse_stream(run.stdout.splitlines())
         stream["returncode"] = run.returncode
@@ -341,12 +346,14 @@ def main(argv: list[str] | None = None) -> int:
     if dirty and not args.allow_dirty:
         raise SystemExit("uncommitted harness changes (the record's git SHA would lie):\n  "
                          + "\n  ".join(dirty) + "\ncommit them, or pass --allow-dirty")
-    if version is None:
+    claude_exe = shutil.which(args.claude)
+    claude_exe = os.path.abspath(claude_exe) if claude_exe else None   # runs start in their own cwd
+    if version is None or claude_exe is None:
         raise SystemExit(f"claude CLI {args.claude!r} not found")
     if out.exists():
         raise SystemExit(f"{out} exists; pass --out to write a new record")
 
-    scratch = args.scratch or Path(tempfile.mkdtemp(prefix="apegmsh-skill-eval-"))
+    scratch = (args.scratch or Path(tempfile.mkdtemp(prefix="apegmsh-skill-eval-"))).resolve()
     config = scratch / "config"
     config.mkdir(parents=True, exist_ok=True)
     trees = {"skill": skill_hash, "previous": prev_hash}
@@ -369,11 +376,11 @@ def main(argv: list[str] | None = None) -> int:
             workdir.mkdir(parents=True)
             if item["kind"] == "task":
                 prompt = common["preamble"].format(python=args.python) + tasks[name]["prompt"]
-                cmd = claude_command(args.claude, prompt, model=args.model, max_turns=TASK_MAX_TURNS)
+                cmd = claude_command(claude_exe, model=args.model, max_turns=TASK_MAX_TURNS)
             else:
                 prompt = trig_by_id[name]["prompt"]
-                cmd = claude_command(args.claude, prompt, model=args.model, max_turns=TRIGGER_MAX_TURNS)
-            stream, seconds = run_claude(cmd, cwd=workdir, config=config)
+                cmd = claude_command(claude_exe, model=args.model, max_turns=TRIGGER_MAX_TURNS)
+            stream, seconds = run_claude(cmd, prompt, cwd=workdir, config=config)
             if stream["usage"] is None and n == 1:
                 raise SystemExit("the first claude run produced no result event (not logged in?):\n"
                                  + stream.get("stderr_tail", ""))
