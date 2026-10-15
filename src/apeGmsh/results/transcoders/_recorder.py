@@ -65,10 +65,10 @@ from ..schema._native import ELEMENT_INDEX_SPACE_FEM
 from ..spec._emit import (
     _DEFERRED_CATEGORIES,
     element_tag_map,
-    emit_logical,
     line_stations_from_local_force,
     refuse_non_elastic_local_force,
 )
+from ..writers._cache import quiet_emit_logical
 from ..writers._native import NativeWriter
 from . import _txt
 
@@ -270,7 +270,7 @@ class RecorderTranscoder:
         """Parse all emitted files for one nodes record."""
         # Reuse the emitter to learn what files OpenSees produced and
         # what each column in those files represents.
-        logicals = list(emit_logical(
+        logicals = list(quiet_emit_logical(
             rec,
             output_dir=str(self._output_dir),
             file_format=self._file_format,
@@ -336,7 +336,7 @@ class RecorderTranscoder:
         ``flat_size_per_element`` per token, so a homogeneous-class
         record's column count uniquely identifies the layout.
         """
-        logicals = list(emit_logical(
+        logicals = list(quiet_emit_logical(
             rec, output_dir=str(self._output_dir),
             file_format=self._file_format, stage_id=self._stage_id,
         ))
@@ -452,7 +452,7 @@ class RecorderTranscoder:
                 f"(section force) nor the localForce synthesis (an elastic "
                 f"beam in NODAL_FORCE_CATALOG); add a catalog entry.")
 
-        logicals = list(emit_logical(
+        logicals = list(quiet_emit_logical(
             rec, output_dir=str(self._output_dir),
             file_format=self._file_format, stage_id=self._stage_id,
         ))
@@ -588,9 +588,9 @@ class RecorderTranscoder:
         cls = rec.element_class_name
         layout = synthesize_line_station_layout_for_elastic_beam(cls or "")
         assert layout is not None    # line_stations_from_local_force(rec)
-        (lr,) = emit_logical(rec, output_dir=str(self._output_dir),
-                             file_format=self._file_format,
-                             stage_id=self._stage_id)
+        (lr,) = quiet_emit_logical(rec, output_dir=str(self._output_dir),
+                                   file_format=self._file_format,
+                                   stage_id=self._stage_id)
         n_per = layout.n_components_per_gp
         time, flat = _txt.parse_element_file(lr.file_path, lr, 2 * n_per)
         flat *= local_force_station_signs(layout.component_layout).ravel()
@@ -697,7 +697,7 @@ class RecorderTranscoder:
             )
         layout = lookup_nodal_force(class_name, catalog_token)
 
-        logicals = list(emit_logical(
+        logicals = list(quiet_emit_logical(
             rec, output_dir=str(self._output_dir),
             file_format=self._file_format, stage_id=self._stage_id,
         ))
