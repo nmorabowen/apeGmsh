@@ -52,7 +52,11 @@ from ...opensees._response_catalog import (
 )
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     import h5py
+
+    from .._slabs import NodeSlab
 
 
 # =====================================================================
@@ -495,6 +499,147 @@ def mode_stage_layout(
                 )
                 out.append((h, sid, name, e))
     return out
+
+
+# =====================================================================
+# Rotations a node does not have (#1971)
+# =====================================================================
+#
+# Neither ``.mpco`` nor ``.ladruno`` records a node's ndf. Over a mixed
+# model (a tet footing under a shell wall, a quad block beside a 2-D
+# frame) the recorder writes 0.0 into the rotation columns of a node
+# that has no rotational DOF, and a viewer draws that 0.0 as a field.
+# With the model's ``/opensees/nodes_ndf`` attached, the reader writes
+# NaN there, as DomainCapture and the ``.out`` route do. Without it the
+# reader warns once when the stage holds a continuum element. The fork
+# recording per-node ndf (#2015) is the permanent fix.
+
+
+class AbsentDofWarning(UserWarning):
+    """A rotation read without per-node ndf may hold 0.0 at nodes that
+    have no rotational DOF (#1971)."""
+
+
+def load_nodes_ndf(model_h5: "str | Path") -> "dict[int, int] | None":
+    """``{node: ndf}`` from ``model_h5``'s ``/opensees/nodes_ndf``.
+
+    ``None`` when the archive predates that group.
+    """
+    from ...opensees.emitter import h5_reader
+
+    with h5_reader.open(str(model_h5)) as m:
+        return m.nodes_ndf()
+
+
+def _continuum_classes() -> "frozenset[str]":
+    """Element classes whose ``stress`` response is a continuum tensor.
+
+    Their nodes carry translations only. Derived from RESPONSE_CATALOG,
+    so a class joins by getting a catalog row.
+    """
+    from ...opensees._response_catalog import RESPONSE_CATALOG
+
+    return frozenset(
+        cls for (cls, _rule, token), layout in RESPONSE_CATALOG.items()
+        if token == "stress" and layout.component_layout[0] == "stress_xx"
+    )
+
+
+def _has_continuum_class(model_elements: "h5py.Group | None") -> bool:
+    """True when ``MODEL/ELEMENTS`` holds a ``<tag>-<Class>[..]`` entry of
+    a continuum class."""
+    if model_elements is None:
+        return False
+    solids = _continuum_classes()
+    return any(
+        key.partition("-")[2].partition("[")[0] in solids
+        for key in model_elements
+    )
+
+
+class RotationMask:
+    """Per-reader NaN mask for rotation columns a node lacks.
+
+    :meth:`attach` takes the model's per-node ndf. :meth:`apply` then
+    writes NaN at every node whose DOF layout has no slot for the
+    component. Until :meth:`attach` runs, :meth:`apply` returns the
+    slab as read and warns once if the stage holds a continuum class.
+    """
+
+    def __init__(self, source: str) -> None:
+        self._source = source
+        self._nodes_ndf: "dict[int, int] | None" = None
+        self._ndm = 3
+        self._warned = False
+
+    def attach(self, nodes_ndf: "dict[int, int]", ndm: int) -> None:
+        self._nodes_ndf = {int(n): int(d) for n, d in nodes_ndf.items()}
+        self._ndm = int(ndm)
+
+    def apply(
+        self, slab: "NodeSlab", model_elements: "h5py.Group | None",
+    ) -> "NodeSlab":
+        from dataclasses import replace
+
+        from ...opensees._recorder_translate import node_component_spatial
+
+        spatial = node_component_spatial(slab.component)
+        if spatial is None or spatial[1] < 3:
+            return slab                 # not a rotational component
+        slot = spatial[1]
+        if self._nodes_ndf is None:
+            if not self._warned and _has_continuum_class(model_elements):
+                self._warned = True
+                import warnings
+                warnings.warn(
+                    f"{self._source}: {slab.component!r} is read without "
+                    "per-node ndf, and the file holds continuum elements, "
+                    "whose nodes have no rotational DOF. The recorder "
+                    "writes 0.0 there, so a zero may be an absent DOF. "
+                    "Pass model_h5= (an archive with /opensees/nodes_ndf) "
+                    "to read NaN at those nodes; a partitioned read does "
+                    "not attach it yet. The fork recording per-node ndf "
+                    "is the permanent fix (#2015).",
+                    AbsentDofWarning, stacklevel=4,
+                )
+            return slab
+        from ...opensees._internal.build.recorders import _node_layout
+
+        ids = np.asarray(slab.node_ids, dtype=np.int64)
+        missing = sorted({int(n) for n in ids} - self._nodes_ndf.keys())
+        if missing:
+            raise ValueError(
+                f"{self._source}: nodes {missing[:10]} are not in the "
+                "model's /opensees/nodes_ndf, so whether their "
+                f"{slab.component!r} column is a value or padding is "
+                "unknown. Pass the model_h5 of the run that wrote the file."
+            )
+        absent = np.array([
+            slot not in _node_layout(self._nodes_ndf[int(n)], self._ndm)
+            for n in ids
+        ], dtype=bool)
+        if not absent.any():
+            return slab
+        values = np.where(absent[None, :], np.nan, slab.values)
+        return replace(slab, values=values)
+
+
+def attach_nodes_ndf(
+    reader: object, single: type, model_h5: "str | Path", ndm: int,
+) -> None:
+    """Attach ``model_h5``'s per-node ndf to ``reader`` (#1971).
+
+    ``single`` is the one-file reader class, which carries a
+    :class:`RotationMask`. A partitioned reader is left as it is: its
+    part readers have no ndf, so they warn on a rotation read over
+    continuum elements (:class:`AbsentDofWarning`). So does any reader
+    when the archive has no ``/opensees/nodes_ndf``.
+    """
+    if not isinstance(reader, single):
+        return
+    nodes_ndf = load_nodes_ndf(model_h5)
+    if nodes_ndf is not None:
+        reader.attach_nodes_ndf(nodes_ndf, ndm)   # type: ignore[attr-defined]
 
 
 # =====================================================================

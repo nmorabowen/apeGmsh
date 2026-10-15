@@ -160,6 +160,7 @@ class MPCOReader:
         # from the bound model's element_meta; ``None`` = no translation
         # (direct constructions / pre-attach reads behave as before).
         self._tag_map: "Optional[ElementTagTranslator]" = None
+        self._rotation_mask = _mnodal.RotationMask(self._path.name)
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -196,6 +197,14 @@ class MPCOReader:
         Called by :meth:`Results.from_mpco` once the model is loaded.
         """
         self._tag_map = tag_map
+
+    def attach_nodes_ndf(self, nodes_ndf: "dict[int, int]", ndm: int) -> None:
+        """Store the model's per-node ndf: rotation reads then give NaN at
+        a node whose DOF layout has no such rotation (#1971).
+
+        Called by :meth:`Results.from_mpco` once the model is loaded.
+        """
+        self._rotation_mask.attach(nodes_ndf, ndm)
 
     def _element_read_translation(
         self, element_ids: "Optional[ndarray]",
@@ -620,6 +629,25 @@ class MPCOReader:
         return _mtr.partition_reduction_from_name(loc[0])
 
     def read_nodes(
+        self,
+        stage_id: str,
+        component: str,
+        *,
+        node_ids: Optional[ndarray] = None,
+        time_slice: TimeSlice = None,
+    ) -> NodeSlab:
+        slab = self._read_nodes_as_recorded(
+            stage_id, component, node_ids=node_ids, time_slice=time_slice,
+        )
+        host = (
+            self._mode_refs[stage_id][0] if stage_id in self._mode_refs
+            else self._stage_to_mpco[stage_id]
+        )
+        return self._rotation_mask.apply(
+            slab, _child(self._h5[host], "MODEL/ELEMENTS"),
+        )
+
+    def _read_nodes_as_recorded(
         self,
         stage_id: str,
         component: str,
@@ -1240,6 +1268,14 @@ class MPCOReader:
 # =====================================================================
 # Module helpers
 # =====================================================================
+
+def attach_model_nodes_ndf(
+    reader: object, model_h5: "str | Path", ndm: int,
+) -> None:
+    """Attach ``model_h5``'s per-node ndf to a one-file reader (#1971);
+    see :func:`_mpco_nodal_io.attach_nodes_ndf`."""
+    _mnodal.attach_nodes_ndf(reader, MPCOReader, model_h5, ndm)
+
 
 class _Sentinel:
     pass
