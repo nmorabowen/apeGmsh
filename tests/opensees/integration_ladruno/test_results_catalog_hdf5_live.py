@@ -27,7 +27,7 @@ Tri31, SSPquad,
 solids
 SixNodeTri,       xfail #1970  xfail #1970  values pass; coords xfail #1998
 EightNodeQuad     (rule 0)     (rule 0)     (rule 0: no natural coords)
-shells (8 cases)  xfail #1991  pass         xfail #1990
+shells (8 cases)  pass (#1991) pass         xfail #1990
 trusses           G7           G7           G7
 ================= ============ ============ ===============================
 
@@ -71,8 +71,6 @@ ROUTES = ("MPCO-spec", "MPCO", "Ladruno")
 RULE_ZERO = frozenset({"SixNodeTri", "EightNodeQuad"})
 
 B_RULE0_MPCO = "#1970: MPCO bucket under integration rule 0 reads an empty slab"
-B_SHELL_SPEC = ("#1991: emit_mpco records shell resultants as section.force; "
-                "the read is empty")
 B_SHELL_LADRUNO = "#1990: .ladruno shell resultants (p11..q2) read an empty slab"
 B_RULE0_LADRUNO = ("#1998: .ladruno rule-0 named-column Gauss slab has no "
                    "natural coords")
@@ -84,8 +82,8 @@ FORK_CASES = [k for k, c in CASES.items() if c.anchor != "truss"]
 def _values_xfail(case: Case, route: str) -> "str | None":
     if route.startswith("MPCO") and case.cpp_class in RULE_ZERO:
         return B_RULE0_MPCO
-    if case.comps == SHELL:
-        return {"MPCO-spec": B_SHELL_SPEC, "Ladruno": B_SHELL_LADRUNO}.get(route)
+    if case.comps == SHELL and route == "Ladruno":
+        return B_SHELL_LADRUNO
     return None
 
 
