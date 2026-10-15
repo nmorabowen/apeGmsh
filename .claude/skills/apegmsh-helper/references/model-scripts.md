@@ -21,8 +21,11 @@ These rules cover user model scripts, not library code.
    (material law, stages, supports, loads as given). Never use an elastic, unstaged,
    point-load or hand-rebuilt stand-in.
 4. **Labels, not tags.** Every object the procedure names gets an engineering label when it is
-   created. Find edges, supports and results by that label, never by a tag, an index, a Python
-   handle, coordinates or a tolerance box.
+   created. Find edges, supports and results by that label, never by a tag, an index or a Python
+   handle. When no label names the object (one face of a box, say), the second choice is a box
+   selection promoted to a group in one call:
+   `g.model.select(None, dim=2).in_box(lo, hi).to_physical("Base")`. Never match coordinates by
+   hand (`np.isclose` on coordinates, a loop over `fem.nodes.coords`).
 5. **One object, one name.** A physical group keeps the name of the label it groups and is made
    in one call, from a list if needed.
 6. **Named numbers.** Each engineering number sits in the data section, one per line, with its
@@ -49,7 +52,8 @@ These rules cover user model scripts, not library code.
 **Check agent-written scripts.** Run `python scripts/lint_model_script.py <script.py>` (the lint
 lives beside this skill; it needs only the standard library) on every model script an agent
 writes, and fix each finding before handing the script over. It covers rules 1 to 2 (S1, S2, S3),
-4 (V1, V3), 6 (V4, V5), 7 (T1), 8 (T2) and 9 (T4), and prints `path:line: RULE message`;
+4 (V1, V3), 6 (V4, V5), 7 (T1), 8 (T2) and 9 (T4), flags any symbol listed in
+`scripts/removed_symbols.json` with what to use instead (R1), and prints `path:line: RULE message`;
 `--rules S1,V5` narrows it. It is advisory, never a gate: fidelity (rule 3), role naming (rule 5),
 symbol choice, the quality of a hand check and whether a comment is true still need a reviewer.
 

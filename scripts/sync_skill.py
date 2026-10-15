@@ -1,7 +1,8 @@
 #!/usr/bin/env python
 """Derive the installed skill copies from the canonical apeGmsh skill.
 
-Single source of truth: ``skills/apegmsh/`` (SKILL.md + references/).
+Single source of truth: ``skills/apegmsh/`` (SKILL.md + references/ + the
+                        scripts/ ``*.py`` and ``*.json`` files).
 Derived copy:           ``.claude/skills/apegmsh-helper/`` (what the Claude Code
                         harness actually loads in this repo).
 
@@ -36,6 +37,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 CANONICAL = REPO / "skills" / "apegmsh"
 DERIVED = REPO / ".claude" / "skills" / "apegmsh-helper"
+SCRIPT_GLOBS = ("*.py", "*.json")       # skills/apegmsh/scripts/ files the mirror carries
 
 # Front-matter for the DERIVED copy. The harness loads this skill under the
 # name `apegmsh-helper`; the description is trigger-tuned (kept verbatim from the
@@ -95,8 +97,10 @@ def planned_files() -> dict[Path, str]:
             out[DERIVED / "references" / ref.name] = ref.read_text(encoding="utf-8")
     script_dir = CANONICAL / "scripts"
     if script_dir.is_dir():
-        for script in sorted(script_dir.glob("*.py")):
-            out[DERIVED / "scripts" / script.name] = script.read_text(encoding="utf-8")
+        # The lint and its data: R1 reads removed_symbols.json beside the lint.
+        for pattern in SCRIPT_GLOBS:
+            for script in sorted(script_dir.glob(pattern)):
+                out[DERIVED / "scripts" / script.name] = script.read_text(encoding="utf-8")
     return out
 
 
@@ -139,7 +143,10 @@ def main() -> int:
     plan = planned_files()
     # Also flag derived reference files that no longer exist in canonical.
     existing_refs = set((DERIVED / "references").glob("*.md")) if (DERIVED / "references").is_dir() else set()
-    existing_scripts = set((DERIVED / "scripts").glob("*.py")) if (DERIVED / "scripts").is_dir() else set()
+    existing_scripts = (
+        {p for pattern in SCRIPT_GLOBS for p in (DERIVED / "scripts").glob(pattern)}
+        if (DERIVED / "scripts").is_dir() else set()
+    )
     stale = (existing_refs | existing_scripts) - set(plan)
 
     if args.check:
