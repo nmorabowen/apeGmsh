@@ -91,6 +91,9 @@ class _Bucket:
     elem_key: MPCOElementKey
     layout: ResponseLayout
     mpco_group_name: str = ""
+    #: The bracket's rule was 0, so ``layout`` is the class's one
+    #: catalogued rule, chosen by class name rather than named by the file.
+    rule_from_class: bool = False
 
 
 # =====================================================================
@@ -151,7 +154,7 @@ def discover_gauss_buckets(
                 continue
             if elem_key.custom_rule_idx != 0 or elem_key.header_idx != 0:
                 continue
-            found = _catalog_layout(
+            found = catalog_layout(
                 elem_key, catalog_token, where=f"{name}/{bracket_key}",
             )
             if found is None:
@@ -162,6 +165,9 @@ def discover_gauss_buckets(
                 elem_key=elem_key,
                 layout=layout,
                 mpco_group_name=name,
+                rule_from_class=(
+                    elem_key.int_rule == IntRule.NoIntegrationRule
+                ),
             ))
             seen_keys.add(bracket_key)
             if found_name is None:
@@ -177,7 +183,7 @@ def discover_gauss_buckets(
 # the class's one row. Its width and GP blocks are still checked against
 # that row at read time, so a bucket that does not fit refuses loudly.
 
-def _catalog_layout(
+def catalog_layout(
     elem_key: MPCOElementKey, catalog_token: str, *, where: str,
 ) -> ResponseLayout | None:
     """The catalog row for one bucket, or ``None`` for an uncatalogued class.
@@ -401,9 +407,25 @@ def read_bucket_slab(
         return None
 
     if not is_unnamed_element_block(bucket_grp, layout):
-        validate_bucket_meta(
-            bucket_grp, layout, bracket_key=bucket.bracket_key,
-        )
+        try:
+            validate_bucket_meta(
+                bucket_grp, layout, bracket_key=bucket.bracket_key,
+            )
+        except ValueError as exc:
+            if not bucket.rule_from_class:
+                raise
+            raise ValueError(
+                f"{exc} The bracket carries integration rule 0, so this "
+                f"{layout.n_gauss_points}-GP layout is the only rule "
+                f"RESPONSE_CATALOG has for {bucket.elem_key.class_name!r}, "
+                f"resolved by class name, not one the file named. The "
+                f"elements were integrated with another rule (a different "
+                f"formulation, such as LadrunoBrick20 formulation='uri' "
+                f"with 8 GPs), so MPCO cannot say where their Gauss points "
+                f"are. Record them with the .ladruno recorder "
+                f"(ops.recorder.Ladruno), which stores each element's own "
+                f"Gauss points."
+            ) from exc
 
     # Element IDs in row order.
     all_ids = np.asarray(bucket_grp["ID"][...]).flatten().astype(np.int64)
