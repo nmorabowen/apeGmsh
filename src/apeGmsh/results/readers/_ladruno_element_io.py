@@ -1162,10 +1162,27 @@ def line_station_available(on_elements: "h5py.Group") -> set[str]:
                         if c is not None:
                             out.add(c)
                     else:
-                        bc = beam_canonical(name)
+                        bc = _station_canonical(name, token)
                         if bc is not None:
                             out.add(bc[0])
     return out
+
+
+#: A 2-D ``localForce`` bucket names its shear and moment ``V``/``M``
+#: (``N_1,V_1,M_1,N_2,V_2,M_2``); a 2-D beam has one of each, ``Vy``/``Mz``.
+#: Only for ``localForce``: ``basicForce``'s ``M_1``/``M_2`` are basic-system
+#: end moments, not section forces.
+_LOCAL_FORCE_2D_ALIAS = {"V": "Vy", "M": "Mz"}
+
+
+def _station_canonical(
+    name: str, token: str,
+) -> Optional[tuple[str, Optional[int]]]:
+    """:func:`beam_canonical`, with the 2-D ``localForce`` spellings."""
+    if token == "localForce":
+        base, sep, station = name.strip().partition("_")
+        name = _LOCAL_FORCE_2D_ALIAS.get(base, base) + sep + station
+    return beam_canonical(name)
 
 
 def read_line_station_slab(
@@ -1190,11 +1207,15 @@ def read_line_station_slab(
       ``LEVELS==2``) — one block per integration station. The station's
       natural coordinate is read from the element's ``QUADRATURE/GP_PARAM``
       keyed by ``GAUSS_ID`` (force-based beams), not synthesized.
-    """
-    values_parts: list[ndarray] = []
-    eidx_parts: list[ndarray] = []
-    station_parts: list[ndarray] = []
 
+    An element takes its stations from its first source only, in this
+    order: section-level, then ``localForce``, then any other element-level
+    bucket (a truss ``axialForce``). A force beam that also records
+    ``localForce`` or ``basicForce`` keeps its section stations, and an
+    elastic beam (no section response) gets its two ``localForce``
+    stations, as MPCO's reader does.
+    """
+    found: list[tuple[int, tuple[ndarray, ndarray, ndarray]]] = []
     for token in on_elements:
         token_grp = on_elements[token]
         for key in token_grp:
@@ -1204,21 +1225,35 @@ def read_line_station_slab(
             except (KeyError, ValueError):
                 continue
             if any(b.level == 2 for b in blocks):
+                rank = 0
                 res = _read_section_stations(
                     bucket, blocks, component, key, model_elements,
                     t_idx=t_idx, element_ids=element_ids,
                 )
             else:
+                rank = 1 if token == "localForce" else 2
                 res = _read_element_stations(
                     bucket, blocks, component, token,
                     t_idx=t_idx, element_ids=element_ids,
                 )
-            if res is None:
+            if res is not None:
+                found.append((rank, res))
+
+    values_parts: list[ndarray] = []
+    eidx_parts: list[ndarray] = []
+    station_parts: list[ndarray] = []
+    covered: set[int] = set()
+    for rank in (0, 1, 2):
+        served: set[int] = set()
+        for r, (v, ei, st) in found:
+            keep = ~np.isin(ei, list(covered))
+            if r != rank or not keep.any():
                 continue
-            v, ei, st = res
-            values_parts.append(v)
-            eidx_parts.append(ei)
-            station_parts.append(st)
+            values_parts.append(v[:, keep])
+            eidx_parts.append(ei[keep])
+            station_parts.append(st[keep])
+            served.update(int(e) for e in ei[keep])
+        covered |= served
 
     if not values_parts:
         return None
@@ -1238,7 +1273,7 @@ def _read_element_stations(
     station_to_col: dict[int, int] = {}
     for b in blocks:
         for off, name in enumerate(b.comp_names):
-            bc = beam_canonical(name)
+            bc = _station_canonical(name, token)
             if bc is None or bc[0] != component:
                 continue
             station = bc[1] if bc[1] is not None else 1

@@ -14,7 +14,8 @@ Scope
   for catalogued element classes. Class identity is sniffed from the
   file's column count via the response catalog; v1 requires
   homogeneous-class records (one element class per record).
-- ``line_stations`` records (Phase 11b) — beam section forces.
+- ``line_stations`` records (Phase 11b) — beam section forces; an
+  elastic beam's two stations are synthesised from ``localForce``.
 - ``elements`` records (Phase 11b) — per-element-node forces.
 - ``fibers`` / ``layers`` — **MPCO-only in Phase 11c.** The ``.out``
   format is impractical for fiber-section results (a 5-IP × 100-fiber
@@ -55,6 +56,7 @@ from ...opensees._response_catalog import (
     lookup_nodal_force,
     normalise_integration_points,
     resolve_layout_from_gp_x,
+    synthesize_line_station_layout_for_elastic_beam,
     unflatten,
     unflatten_nodal,
 )
@@ -65,6 +67,8 @@ from ..spec._emit import (
     element_tag_map,
     emit_logical,
     line_station_gpx_path,
+    line_stations_from_local_force,
+    refuse_non_elastic_local_force,
 )
 from ..writers._native import NativeWriter
 from . import _txt
@@ -175,65 +179,22 @@ class RecorderTranscoder:
             # if needed; we don't fail the run for them.
             self.unsupported = list(unsupported)
 
-        # Aggregate: time vector (must match across records).
-        time_vec = np.array([], dtype=np.float64)
-        for nr in node_records:
-            if nr.time.size:
-                time_vec = nr.time
-                break
+        # Aggregate: the time vector comes from the first node or gauss
+        # record that has one, and every record must match it; only when
+        # neither kind has one does a line or nodal-force record supply it.
+        early = [*node_records, *gauss_records]
+        late = [*line_records, *nodal_records]
+        time_vec = next((r.time for r in early if r.time.size),
+                        np.array([], dtype=np.float64))
+        for r in (*early, *late):
+            if r.time.size and time_vec.size and r.time.shape != time_vec.shape:
+                raise ValueError(
+                    f"Recorder {r.record_name!r} has {r.time.size} time "
+                    f"steps, but other records have {time_vec.size}. "
+                    f"Recorder cadences must match within one stage."
+                )
         if time_vec.size == 0:
-            for gr in gauss_records:
-                if gr.time.size:
-                    time_vec = gr.time
-                    break
-
-        # Sanity: every record's time vector should match.
-        for nr in node_records:
-            if nr.time.size and time_vec.size:
-                if nr.time.shape != time_vec.shape:
-                    raise ValueError(
-                        f"Recorder {nr.record_name!r} has "
-                        f"{nr.time.size} time steps, but other records "
-                        f"have {time_vec.size}. Recorder cadences must "
-                        f"match within one stage."
-                    )
-        for gr in gauss_records:
-            if gr.time.size and time_vec.size:
-                if gr.time.shape != time_vec.shape:
-                    raise ValueError(
-                        f"Recorder {gr.record_name!r} has "
-                        f"{gr.time.size} time steps, but other records "
-                        f"have {time_vec.size}. Recorder cadences must "
-                        f"match within one stage."
-                    )
-        for lr in line_records:
-            if lr.time.size and time_vec.size:
-                if lr.time.shape != time_vec.shape:
-                    raise ValueError(
-                        f"Recorder {lr.record_name!r} has "
-                        f"{lr.time.size} time steps, but other records "
-                        f"have {time_vec.size}. Recorder cadences must "
-                        f"match within one stage."
-                    )
-        for nr in nodal_records:
-            if nr.time.size and time_vec.size:
-                if nr.time.shape != time_vec.shape:
-                    raise ValueError(
-                        f"Recorder {nr.record_name!r} has "
-                        f"{nr.time.size} time steps, but other records "
-                        f"have {time_vec.size}. Recorder cadences must "
-                        f"match within one stage."
-                    )
-        if time_vec.size == 0:
-            for lr in line_records:
-                if lr.time.size:
-                    time_vec = lr.time
-                    break
-        if time_vec.size == 0:
-            for nr in nodal_records:
-                if nr.time.size:
-                    time_vec = nr.time
-                    break
+            time_vec = next((r.time for r in late if r.time.size), time_vec)
 
         proven_fem_index = self._element_index_is_fem()
 
@@ -489,12 +450,13 @@ class RecorderTranscoder:
                 f"ResolvedRecorderRecord.element_class_name."
             )
         class_name = rec.element_class_name
+        if line_stations_from_local_force(rec):
+            return self._parse_local_force_line_station_record(rec)
         if not is_custom_rule_catalogued(class_name, "section_force"):
             raise ValueError(
-                f"Class {class_name!r} is not in CUSTOM_RULE_CATALOG; "
-                f"add an entry in apeGmsh.opensees._response_catalog if "
-                f"this beam-column class should be supported."
-            )
+                f"Class {class_name!r} is in neither CUSTOM_RULE_CATALOG "
+                f"(section force) nor the localForce synthesis (an elastic "
+                f"beam in NODAL_FORCE_CATALOG); add a catalog entry.")
 
         logicals = list(emit_logical(
             rec, output_dir=str(self._output_dir),
@@ -614,6 +576,33 @@ class RecorderTranscoder:
             time=time,
             groups=payloads,
         )
+
+    def _parse_local_force_line_station_record(
+        self, rec: "ResolvedRecorderRecord",
+    ) -> "_LineStationRecordPayload":
+        """Two stations (xi = -1, +1) from one ``localForce`` file: end i,
+        and end j negated, as DomainCapture and the MPCO reader do. With a
+        model, every element must be an elastic beam (no silent mixing)."""
+        if self._model_h5_src is not None:
+            from ...opensees import OpenSeesModel
+            refuse_non_elastic_local_force(
+                rec, OpenSeesModel.from_h5(self._model_h5_src),
+                fem_snapshot_id=self._spec.fem_snapshot_id)
+        cls = rec.element_class_name
+        layout = synthesize_line_station_layout_for_elastic_beam(cls or "")
+        assert layout is not None    # line_stations_from_local_force(rec)
+        (lr,) = emit_logical(rec, output_dir=str(self._output_dir),
+                             file_format=self._file_format,
+                             stage_id=self._stage_id)
+        n_per = layout.n_components_per_gp
+        time, flat = _txt.parse_element_file(lr.file_path, lr, 2 * n_per)
+        flat[:, :, n_per:] *= -1.0
+        return _LineStationRecordPayload(rec.name, time, [
+            _LineStationGroupPayload(
+                str(cls), np.asarray(rec.element_ids, dtype=np.int64),
+                np.array([-1.0, 1.0]), layout, flat,
+            ),
+        ])
 
     def _write_line_station_records(
         self,
@@ -907,9 +896,11 @@ def _resolve_element_lengths(fem, element_ids) -> ndarray:
 
     Tries a duck-typed test-fixture API first
     (``fem.element_end_coords(eid) -> (c1, c2)``), then falls back to
-    the real :class:`apeGmsh.mesh.FEMData.FEMData` path
-    (``fem.elements.select(tag=eid).result().resolve()`` +
-    ``fem.nodes.select(...).coords``).
+    the real :class:`apeGmsh.mesh.FEMData.FEMData` path: the elements
+    are selected by **element id** (``fem.elements.select(ids=...)``;
+    ``tag=`` would select a physical-group tag) and their end
+    nodes' coordinates read through ``fem.nodes.index``. An element id
+    the FEMData does not hold raises: a length is never guessed.
 
     The duck-typed shortcut keeps test fixtures simple — they don't
     need a fully-built ElementComposite when the only thing the
@@ -927,21 +918,29 @@ def _resolve_element_lengths(fem, element_ids) -> ndarray:
             ))
         return out
 
+    # One selection by element id; ``resolve()`` returns the rows sorted
+    # by id and silently drops an id it does not hold, so map back
+    # explicitly and refuse a missing one.
+    ids, conn = fem.elements.select(
+        ids=[int(e) for e in eids],
+    ).result().resolve()
+    row_of = {int(e): r for r, e in enumerate(np.asarray(ids).tolist())}
+    missing = [int(e) for e in eids if int(e) not in row_of]
+    if missing:
+        raise ValueError(
+            f"Line-stations transcode: element id(s) "
+            f"{missing[:10]}{' ...' if len(missing) > 10 else ''} are not "
+            f"in the bound FEMData, so their lengths (needed to normalise "
+            f"the integrationPoints positions) cannot be resolved. Pass "
+            f"the FEMData the spec was resolved against."
+        )
+    coords = np.asarray(fem.nodes.coords, dtype=np.float64)
     for i, eid in enumerate(eids):
-        # selection-unification v2 P3-R / §6.3 §2 #9 (P-GROUPRESULT;
-        # oracle README ratifies).
-        ids, conn = fem.elements.select(tag=int(eid)).result().resolve()
-        if conn.size == 0:
-            raise ValueError(
-                f"Element {eid} has no connectivity in the bound FEMData."
-            )
-        # ``conn`` is (n_elements_resolved, n_nodes_per_element). For a
-        # tag lookup we expect 1 row; take its first and last node.
-        node_a = int(conn.flat[0])
-        node_b = int(conn.flat[-1])
-        # selection-unification v2 P3-R / §6.3 §2 #10/#11 (P-COORD).
-        c1 = np.asarray(fem.nodes.select(node_a).coords, dtype=np.float64)
-        c2 = np.asarray(fem.nodes.select(node_b).coords, dtype=np.float64)
+        # ``conn`` is (n_elements, n_nodes_per_element); the ends are the
+        # first and last node of the element's row.
+        nodes = conn[row_of[int(eid)]]
+        c1 = coords[fem.nodes.index(int(nodes[0]))]
+        c2 = coords[fem.nodes.index(int(nodes[-1]))]
         out[i] = float(np.linalg.norm(c2 - c1))
     return out
 

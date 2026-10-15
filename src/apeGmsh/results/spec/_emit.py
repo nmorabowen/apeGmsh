@@ -218,6 +218,89 @@ def _nodal_record_ops_keyword(rec: ResolvedRecorderRecord) -> Optional[str]:
     return next(iter(keywords))
 
 
+#: File-name suffix of an elastic-beam line-stations record's ``localForce``
+#: file (``<name>_line_stations_local_force.<ext>``). Distinct from the
+#: ``section force`` file's ``_line_stations`` so the two never alias.
+_LINE_STATIONS_LOCAL_FORCE_SUFFIX = "line_stations_local_force"
+
+
+def line_stations_from_local_force(rec: ResolvedRecorderRecord) -> bool:
+    """True when a line-stations record is read from ``localForce``.
+
+    That is the elastic-beam family (``ElasticBeam{2d,3d}``,
+    ``ModElasticBeam2d``, ``ElasticTimoshenkoBeam{2d,3d}``): classes with
+    no ``section force`` layout and a ``localForce`` line-stations
+    synthesis in the response catalog, the same two-way test
+    DomainCapture's line-station capturer makes. The emit and the ``.out``
+    transcoder both ask this one predicate, so they cannot disagree on
+    which file a record wrote.
+
+    The class comes from ``element_class_name``, which this route takes
+    from the caller and never infers. Unset, it is not an elastic beam
+    here: the record keeps its ``section force`` pair, and the transcoder
+    refuses the record for the missing class.
+    """
+    if rec.category != "line_stations" or rec.element_class_name is None:
+        return False
+    from apeGmsh.opensees._response_catalog import (
+        is_custom_rule_catalogued,
+        is_line_station_synthesis_catalogued,
+    )
+    cls = rec.element_class_name
+    return (
+        not is_custom_rule_catalogued(cls, "section_force")
+        and is_line_station_synthesis_catalogued(cls)
+    )
+
+
+#: OpenSees ``element`` type tokens that build the elastic-beam classes:
+#: ``elasticBeamColumn`` gives ``ElasticBeam2d``/``3d`` by ndm,
+#: ``ElasticTimoshenkoBeam`` gives ``ElasticTimoshenkoBeam2d``/``3d``.
+ELASTIC_BEAM_TYPE_TOKENS = frozenset({
+    "elasticBeamColumn", "ElasticTimoshenkoBeam", "ModElasticBeam2d",
+})
+
+
+def refuse_non_elastic_local_force(
+    rec: ResolvedRecorderRecord, model: object, *, fem_snapshot_id: str,
+) -> None:
+    """Raise unless every element of a ``localForce`` record is an elastic beam.
+
+    ``element_class_name`` names one class for the whole record, so a record
+    over a force beam and an elastic girder that names the girder's class
+    would give the force beam two end stations instead of its section
+    stations. ``model`` (an ``OpenSeesModel`` built from the spec's FEMData)
+    records each element's type token; any element whose token does not build
+    an elastic beam, or that the model does not hold, is refused by FEM id.
+    """
+    fem_hash = model.lineage.fem_hash  # type: ignore[attr-defined]
+    if fem_hash != fem_snapshot_id:
+        raise ValueError(
+            f"Line-stations record {rec.name!r}: model= was not built from "
+            f"the spec's FEMData (lineage.fem_hash {fem_hash!r}, spec "
+            f"fem_snapshot_id {fem_snapshot_id!r}), so its element types "
+            f"cannot check the record's elastic-beam class."
+        )
+    types = {
+        int(r.fem_eid): r.type_token
+        for r in model.elements()  # type: ignore[attr-defined]
+        if int(r.fem_eid) >= 0
+    }
+    assert rec.element_ids is not None
+    bad = [int(e) for e in rec.element_ids
+           if types.get(int(e)) not in ELASTIC_BEAM_TYPE_TOKENS]
+    if bad:
+        found = sorted({str(types.get(e)) for e in bad})
+        raise ValueError(
+            f"Line-stations record {rec.name!r} names the elastic-beam class "
+            f"{rec.element_class_name!r}, so it records localForce end "
+            f"forces, but FEM element(s) {bad[:10]}"
+            f"{' ...' if len(bad) > 10 else ''} are {found} in model=, not "
+            f"elastic beams ({sorted(ELASTIC_BEAM_TYPE_TOKENS)}). Split the "
+            f"record into one per element class."
+        )
+
+
 # =====================================================================
 # Logical recorder spec — backend-agnostic intermediate
 # =====================================================================
@@ -543,6 +626,10 @@ def _emit_element_simple(
     DomainCapture produce. See
     ``internal_docs/plan_phase_11b_line_stations.md`` and
     ``apeGmsh.results.transcoders._recorder`` for the consumer.
+
+    An elastic-beam line-stations record
+    (:func:`line_stations_from_local_force`) emits one ``localForce``
+    recorder instead of that pair.
     """
     if rec.element_ids is None or rec.element_ids.size == 0:
         return
@@ -571,6 +658,30 @@ def _emit_element_simple(
             response_str = _ELEMENT_CATEGORY_RESPONSE.get(rec.category)
             if response_str is None:
                 return
+    elif line_stations_from_local_force(rec):
+        # An elastic beam has no integration points: it answers neither
+        # ``section force`` nor ``integrationPoints`` (a recorder writes
+        # only the time column). Its stations come from the ``localForce``
+        # end vector instead, which the transcoder turns into a
+        # two-station slab at xi = -1, +1, as DomainCapture and
+        # the MPCO local-force reader do.
+        _warn_n_steps_unsupported(rec)
+        yield LogicalRecorder(
+            kind="Element",
+            file_path=_build_file_path(
+                output_dir, rec.name, _LINE_STATIONS_LOCAL_FORCE_SUFFIX,
+                file_format, stage_id=stage_id,
+            ),
+            file_format=file_format,
+            target_kind="ele",
+            target_ids=tuple(int(e) for e in rec.element_ids),
+            response_tokens=("localForce",),
+            dofs=None,
+            dt=rec.dt,
+            record_name=rec.name,
+            comment=f"{rec.name} line_stations localForce",
+        )
+        return
     else:
         response_str = _ELEMENT_CATEGORY_RESPONSE.get(rec.category)
         if response_str is None:
