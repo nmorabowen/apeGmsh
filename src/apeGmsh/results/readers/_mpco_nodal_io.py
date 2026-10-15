@@ -557,13 +557,22 @@ def _has_continuum_class(model_elements: "h5py.Group | None") -> bool:
     )
 
 
+def model_node_ids(stage_groups: "list[h5py.Group]") -> "set[int]":
+    """Every node id under the stages' ``MODEL/NODES/ID``."""
+    out: "set[int]" = set()
+    for grp in stage_groups:
+        if "MODEL" in grp and "NODES" in grp["MODEL"] and "ID" in grp["MODEL/NODES"]:
+            out.update(int(n) for n in np.asarray(grp["MODEL/NODES/ID"][...]).flat)
+    return out
+
+
 class RotationMask:
     """Per-reader NaN mask for rotation columns a node lacks.
 
     :meth:`attach` takes the model's per-node ndf. :meth:`apply` then
     writes NaN at every node whose DOF layout has no slot for the
-    component. Until :meth:`attach` runs, :meth:`apply` returns the
-    slab as read and warns once if the stage holds a continuum class.
+    component. Without an attached ndf, :meth:`apply` returns the slab
+    as read and warns once if the stage holds a continuum class.
     """
 
     def __init__(self, source: str) -> None:
@@ -571,8 +580,24 @@ class RotationMask:
         self._nodes_ndf: "dict[int, int] | None" = None
         self._ndm = 3
         self._warned = False
+        self._why_unattached = "per-node ndf is not attached"
 
-    def attach(self, nodes_ndf: "dict[int, int]", ndm: int) -> None:
+    def attach(
+        self, nodes_ndf: "dict[int, int]", ndm: int, file_nodes: "set[int]",
+    ) -> None:
+        """Use ``nodes_ndf`` if it describes every node in ``file_nodes``.
+
+        A model that misses some of the file's nodes is another model
+        (the bind warns ``ModelFemMismatchWarning`` for it), so its ndf
+        is not used; rotation reads then warn as without a model.
+        """
+        missing = sorted(file_nodes - {int(n) for n in nodes_ndf})
+        if missing:
+            self._why_unattached = (
+                f"model_h5's /opensees/nodes_ndf misses nodes "
+                f"{missing[:10]} of this file, so its ndf is not used"
+            )
+            return
         self._nodes_ndf = {int(n): int(d) for n, d in nodes_ndf.items()}
         self._ndm = int(ndm)
 
@@ -592,14 +617,14 @@ class RotationMask:
                 self._warned = True
                 import warnings
                 warnings.warn(
-                    f"{self._source}: {slab.component!r} is read without "
-                    "per-node ndf, and the file holds continuum elements, "
-                    "whose nodes have no rotational DOF. The recorder "
-                    "writes 0.0 there, so a zero may be an absent DOF. "
-                    "Pass model_h5= (an archive with /opensees/nodes_ndf) "
-                    "to read NaN at those nodes; a partitioned read does "
-                    "not attach it yet. The fork recording per-node ndf "
-                    "is the permanent fix (#2015).",
+                    f"{self._source}: {slab.component!r} is read while "
+                    f"{self._why_unattached}, and the file holds continuum "
+                    "elements, whose nodes have no rotational DOF. The "
+                    "recorder writes 0.0 there, so a zero may be an absent "
+                    "DOF. Pass model_h5= (the run's archive, with "
+                    "/opensees/nodes_ndf) to read NaN at those nodes; a "
+                    "partitioned read does not attach it yet. The fork "
+                    "recording per-node ndf is the permanent fix (#2015).",
                     AbsentDofWarning, stacklevel=4,
                 )
             return slab
@@ -609,10 +634,10 @@ class RotationMask:
         missing = sorted({int(n) for n in ids} - self._nodes_ndf.keys())
         if missing:
             raise ValueError(
-                f"{self._source}: nodes {missing[:10]} are not in the "
-                "model's /opensees/nodes_ndf, so whether their "
-                f"{slab.component!r} column is a value or padding is "
-                "unknown. Pass the model_h5 of the run that wrote the file."
+                f"{self._source}: {slab.component!r} has nodes "
+                f"{missing[:10]} that are neither in the file's MODEL/NODES "
+                "nor in the model's /opensees/nodes_ndf, so whether their "
+                "column is a value or padding is unknown."
             )
         absent = np.array([
             slot not in _node_layout(self._nodes_ndf[int(n)], self._ndm)

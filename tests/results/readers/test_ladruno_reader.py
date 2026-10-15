@@ -1625,8 +1625,30 @@ def test_rotation_beyond_ndf_is_nan_2d(
 
 
 @pytest.mark.parametrize("fmt", FORMATS)
-def test_node_missing_from_nodes_ndf_raises(tmp_path: Path, fmt: str) -> None:
+def test_model_missing_a_file_node_is_not_used(tmp_path: Path, fmt: str) -> None:
+    """A model whose nodes_ndf misses a node of the file is another model:
+    its ndf is not used, so no real rotation is NaN'd on its say-so, and
+    the read warns as a model-less one does, naming the missing node."""
     path = _mixed_file(tmp_path / f"m.{fmt}", fmt, [1, 2], 3, [TET, SHELL])
+    with _open_reader(fmt, path) as r:
+        r.attach_nodes_ndf({1: 3}, 3)
+        with pytest.warns(AbsentDofWarning, match=r"misses nodes \[2\]"):
+            got = _last(r, _stage(r, False), "rotation_x")
+        assert got == {1: _nodal_value(1, 1, 3), 2: _nodal_value(1, 2, 3)}
+
+
+@pytest.mark.parametrize("fmt", FORMATS)
+def test_result_node_outside_the_model_raises(tmp_path: Path, fmt: str) -> None:
+    """A result row for a node neither MODEL/NODES nor nodes_ndf lists:
+    whether its rotation is a value or padding is unknown, so it raises."""
+    import h5py
+
+    path = _mixed_file(tmp_path / f"m.{fmt}", fmt, [1, 2], 3, [TET, SHELL])
+    with h5py.File(path, "r+") as f:
+        nodes = f["MODEL_STAGE[1]/MODEL/NODES"]
+        del nodes["ID"], nodes["COORDINATES"]
+        nodes.create_dataset("ID", data=np.array([[1]], dtype=np.int32))
+        nodes.create_dataset("COORDINATES", data=np.zeros((1, 3)))
     with _open_reader(fmt, path) as r:
         r.attach_nodes_ndf({1: 3}, 3)
         with pytest.raises(ValueError, match=r"nodes \[2\]"):

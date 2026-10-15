@@ -204,7 +204,10 @@ class MPCOReader:
 
         Called by :meth:`Results.from_mpco` once the model is loaded.
         """
-        self._rotation_mask.attach(nodes_ndf, ndm)
+        self._ensure_stages()
+        self._rotation_mask.attach(nodes_ndf, ndm, _mnodal.model_node_ids(
+            [self._h5[name] for name in self._stage_to_mpco.values()],
+        ))
 
     def _element_read_translation(
         self, element_ids: "Optional[ndarray]",

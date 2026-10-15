@@ -211,7 +211,11 @@ class LadrunoReader:
     def attach_nodes_ndf(self, nodes_ndf: "dict[int, int]", ndm: int) -> None:
         """Store the model's per-node ndf: rotation reads then give NaN at
         a node whose DOF layout has no such rotation (#1971)."""
-        self._rotation_mask.attach(nodes_ndf, ndm)
+        if self._stage_cache is None:
+            self.stages()
+        self._rotation_mask.attach(nodes_ndf, ndm, _mnodal.model_node_ids(
+            [self._h5[name] for name in self._stage_to_grp.values()],
+        ))
 
     def _element_read_translation(
         self, element_ids: "Optional[ndarray]",
