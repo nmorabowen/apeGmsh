@@ -202,10 +202,6 @@ def test_fem_id_filter_is_exact(
                                solved["groups"], read=READ[route])
 
 
-@pytest.mark.xfail(strict=True, raises=OutsidePairingReturnedRows,
-                   reason="#2066: an ids= filter with an id outside the "
-                          "pairing passes through untranslated, so a FEM id "
-                          "equal to an emitted ops tag reads that element")
 @pytest.mark.parametrize("route, kind", _params())
 def test_id_outside_the_pairing_returns_none(
     solved: dict[str, Any], route: str, kind: str,
