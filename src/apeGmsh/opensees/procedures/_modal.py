@@ -5,7 +5,7 @@ state and no ``__init__``.
 """
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Sequence
+from typing import TYPE_CHECKING, Sequence, cast
 
 from .._internal.build.errors import BridgeError
 from .._internal.types import (
@@ -14,6 +14,8 @@ from .._internal.types import (
 from ..node import Node
 
 if TYPE_CHECKING:
+    from ..apesees import apeSees
+    from ..emitter.live import LiveOpsEmitter
     from ..analysis.complex_eigen import ComplexEigenResult
     from ..analysis.eigen import EigenResult
     from ..analysis.footfall_result import FootfallResult
@@ -43,6 +45,34 @@ class _ModalMixin(_ProcedureHost):
             f"{verb} wiped the live domain to solve the eigenproblem; "
             "read the modes from its EigenResult, or call "
             "ops.analyze(...) again to read"
+        )
+
+    def _eigen_result(
+        self,
+        values: Sequence[float],
+        live_emitter: "LiveOpsEmitter",
+    ) -> "EigenResult":
+        """Wrap a just-finished solve in an ``EigenResult`` with the handles
+        :meth:`EigenResult.to_native` needs: this
+        bridge, its ``ndm`` / envelope ``ndf`` and the domain epoch read
+        right after the solve, before anything else can rebuild it."""
+        import numpy as np
+
+        from ..analysis.eigen import EigenResult
+        from ..emitter.live import domain_epoch
+
+        epoch = domain_epoch()
+        if self._ndm is None or self._ndf is None:  # build() refused this
+            raise RuntimeError(
+                "apeSees.eigen: ops.model(ndm=, ndf=) was not called."
+            )
+        return EigenResult(
+            eigenvalues=np.asarray(values, dtype=np.float64),
+            _live=live_emitter,
+            _bridge=cast("apeSees", self),
+            _ndm=int(self._ndm),
+            _ndf=int(self._ndf),
+            _epoch=epoch,
         )
 
     def eigen(
@@ -116,9 +146,7 @@ class _ModalMixin(_ProcedureHost):
 
         # Local imports — keep openseespy + numpy out of bridge import
         # time for Tcl/Py/H5-only users.
-        from ..analysis.eigen import EigenResult
         from ..emitter.live import LiveOpsEmitter
-        import numpy as np
 
         bm = self.build()
         self._assert_fork_if_required()
@@ -127,10 +155,7 @@ class _ModalMixin(_ProcedureHost):
         bm.emit(live_emitter)
         self._artifacts.after_emit(self)
         values = live_emitter.eigen(num_modes, solver=solver)
-        return EigenResult(
-            eigenvalues=np.asarray(values, dtype=np.float64),
-            _live=live_emitter,
-        )
+        return self._eigen_result(values, live_emitter)
 
     def modal_properties(
         self,
@@ -645,9 +670,7 @@ class _ModalMixin(_ProcedureHost):
                 "the in-process openseespy is not the fork."
             )
 
-        from ..analysis.eigen import EigenResult
         from ..emitter.live import LiveOpsEmitter
-        import numpy as np
 
         bm = self.build()
         self._assert_fork_if_required()
@@ -658,10 +681,7 @@ class _ModalMixin(_ProcedureHost):
         values = live_emitter.eigen_feast(
             float(f_min), float(f_max), certify=certify,
         )
-        return EigenResult(
-            eigenvalues=np.asarray(values, dtype=np.float64),
-            _live=live_emitter,
-        )
+        return self._eigen_result(values, live_emitter)
 
     def complex_eigen(
         self,
