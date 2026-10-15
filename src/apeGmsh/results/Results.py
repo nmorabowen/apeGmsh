@@ -1113,38 +1113,23 @@ class Results:
         Consumed (duck-typed) by the viewer's
         ``resolve_orientation_source`` to decide which id space the
         scene must be built in. A merely *attached* translator is NOT
-        enough: translation is all-or-nothing per read, so a
-        deliberately-unrelated stub ``model_h5=`` (the sanctioned
-        test-suite pattern) attaches a pairing that never fires and
-        reads stay in the file's own ops-tag space. Reads relabel
-        exactly when the pairing covers every element id the file
-        records — probed against the reader's embedded snapshot, whose
-        element ids ARE the file's ops tags. A snapshot that records no
-        elements at all (some synthetic fixtures) leaves nothing for
-        the embedded-snapshot scene to join, so there attachment alone
-        decides. Cached: the answer is fixed at open time.
+        enough: a deliberately-unrelated stub ``model_h5=`` (the
+        sanctioned test-suite pattern) attaches a pairing that does not
+        describe the files, and reads stay in the file's own ops-tag
+        space. Reads relabel exactly when the translator says the
+        archive describes the files it was attached to
+        (:meth:`ElementTagTranslator.describes_files`, #2066): every
+        recorded ops tag is a paired element or one emitted without a
+        mesh id. The second kind keeps its ops tag, so judging by the
+        paired tags alone would call a file with an interface
+        ``zeroLength`` ops-keyed while its reads come back fem-keyed.
+        Cached: the answer is fixed at open time.
         """
         cached = getattr(self, "_fem_keyed_reads_cache", None)
         if cached is not None:
             return cached
-        result = False
-        reader = self._reader
-        tag_map = getattr(reader, "_tag_map", None)
-        if tag_map is not None:
-            try:
-                embedded = reader.fem()
-            except Exception:
-                embedded = None
-            if embedded is not None:
-                import numpy as np
-                ids = [
-                    np.asarray(group.ids, dtype=np.int64)
-                    for group in embedded.elements
-                ]
-                if ids:
-                    result = tag_map.covers_ops(np.concatenate(ids))
-                else:
-                    result = True
+        tag_map = getattr(self._reader, "_tag_map", None)
+        result = tag_map is not None and tag_map.describes_files()
         self._fem_keyed_reads_cache = result
         return result
 

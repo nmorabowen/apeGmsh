@@ -105,8 +105,8 @@ class ElementTagTranslator:
     """
 
     __slots__ = (
-        "_fem_to_ops", "_ops_to_fem", "_ops_only", "_recorded", "_described",
-        "_arrays",
+        "_fem_to_ops", "_ops_to_fem", "_ops_only", "_recorded_parts",
+        "_recorded", "_described", "_arrays",
     )
 
     def __init__(
@@ -126,8 +126,11 @@ class ElementTagTranslator:
                 f"ElementTagTranslator: ops tags {sorted(clash)[:10]} are "
                 "both paired with a fem_eid and listed without one."
             )
-        # Sorted union of the ops tags every attached result file
-        # records; unset until a reader declares its file.
+        # Ops tags each attached result file records, one array per file
+        # (``None`` until a reader declares one), and their sorted union,
+        # built once on the first read: a union per declaration would
+        # re-sort the whole set for every partition (quadratic).
+        self._recorded_parts: "Optional[list[ndarray]]" = None
         self._recorded: "Optional[ndarray]" = None
         self._described: "Optional[bool]" = None  # cache of describes_files
         # Sorted key/value arrays for the vectorised per-id maps, built
@@ -168,20 +171,10 @@ class ElementTagTranslator:
         """True when no pairing is known — every translation is a no-op."""
         return not self._fem_to_ops
 
-    def covers_ops(self, ops_ids: "ndarray") -> bool:
-        """True when the pairing describes **every** given ops tag — the
-        all-or-nothing condition under which an unfiltered read's
-        returned index fully relabels to ``fem_eid``s. An empty id array
-        or empty pairing is ``False`` (nothing would relabel)."""
-        arr = np.asarray(ops_ids, dtype=np.int64)
-        if arr.size == 0 or not self._ops_to_fem:
-            return False
-        return all(int(x) in self._ops_to_fem for x in arr)
-
     def covers_fem(self, fem_ids: "ndarray") -> bool:
         """True when the pairing describes **every** given ``fem_eid``, so
         :meth:`to_ops` translates them all. An empty id array or empty
-        pairing is ``False``, as in :meth:`covers_ops`."""
+        pairing is ``False``."""
         arr = np.asarray(fem_ids, dtype=np.int64)
         if arr.size == 0 or not self._fem_to_ops:
             return False
@@ -200,13 +193,15 @@ class ElementTagTranslator:
 
         Each reader calls this from ``attach_tag_map``. A
         multi-partition set attaches every partition before any read,
-        so the union is the whole set's recorded elements.
+        so the union is the whole set's recorded elements. The union is
+        taken once, on the first read.
         """
-        arr = np.unique(np.asarray(ops_tags, dtype=np.int64))
-        self._recorded = (
-            arr if self._recorded is None
-            else np.union1d(self._recorded, arr)
+        if self._recorded_parts is None:
+            self._recorded_parts = []
+        self._recorded_parts.append(
+            np.asarray(ops_tags, dtype=np.int64).ravel(),
         )
+        self._recorded = None
         self._described = None
 
     def describes_files(self) -> bool:
@@ -278,7 +273,9 @@ class ElementTagTranslator:
         return self._arrays
 
     def _require_recorded(self) -> "ndarray":
-        if self._recorded is None:
+        """The sorted union of every declared file's ops tags, built once
+        (one ``np.unique`` over all parts) and cached."""
+        if self._recorded_parts is None:
             raise RuntimeError(
                 "ElementTagTranslator: no result file declared its "
                 "recorded element tags (declare_recorded), so a read "
@@ -286,6 +283,8 @@ class ElementTagTranslator:
                 "files. Attach the translator through the reader's "
                 "attach_tag_map."
             )
+        if self._recorded is None:
+            self._recorded = np.unique(np.concatenate(self._recorded_parts))
         return self._recorded
 
     @staticmethod

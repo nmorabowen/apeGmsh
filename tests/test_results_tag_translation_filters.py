@@ -427,3 +427,67 @@ def test_an_element_the_file_did_not_record_warns(fmt: str, tmp_path) -> None:
         assert sorted(_rows(_silent(read, reader, np.array([2])))) == [2]
     finally:
         reader.close()
+
+
+# ── Partition sets open in linear time ─────────────────────────────────
+
+
+def test_declaring_many_partitions_is_linear() -> None:
+    """A union per declaration re-sorted the whole set for every
+    partition: 96 partitions of 80k tags took 116 s (np240: ~12 min).
+    Declaring is now an append, and the union is built once, on the
+    first read. 200 partitions of 10k tags: well under a second each
+    way here; the old code took tens of seconds."""
+    import time
+
+    n_parts, per_part = 200, 10_000
+    pairing = {t + 1: t for t in range(n_parts * per_part)}
+    t = ElementTagTranslator(pairing, {o: f for f, o in pairing.items()})
+    parts = [
+        np.arange(k * per_part, (k + 1) * per_part, dtype=np.int64)
+        for k in range(n_parts)
+    ]
+    start = time.perf_counter()
+    for part in parts:
+        t.declare_recorded(part)
+    declared = time.perf_counter() - start
+    assert declared < 2.0, f"declaring {n_parts} partitions took {declared:.1f} s"
+    start = time.perf_counter()
+    assert t.describes_files()
+    bucket, _ = _silent(t.read_translation, np.array([1, n_parts * per_part]))
+    first_read = time.perf_counter() - start
+    np.testing.assert_array_equal(bucket, [0, n_parts * per_part - 1])
+    assert first_read < 10.0, f"the first read took {first_read:.1f} s"
+
+
+# ── Results says reads are fem-keyed when they are ─────────────────────
+
+
+def test_a_mixed_paired_and_sentinel_bucket_reads_fem_keyed(tmp_path) -> None:
+    """One bucket records paired elements (ops 1, 2) and an element the
+    archive emitted without a mesh id (ops 7, an interface zeroLength).
+    The reads relabel the paired rows to fem ids, so
+    ``_element_reads_fem_keyed`` must say so: the viewer builds its
+    scene from the answer. Judged by the paired tags alone it said
+    False, and the viewer joined fem-keyed rows on ops tags."""
+    from apeGmsh.results import Results
+
+    reader = _mpco_reader(_mpco_files(tmp_path, [[1, 2, 7]]))
+    reader.attach_tag_map(ElementTagTranslator(
+        {11: 1, 12: 2}, {1: 11, 2: 12}, ops_only=(7,),
+    ))
+    r = Results(reader, model=SimpleNamespace())
+    try:
+        assert r._element_reads_fem_keyed() is True
+        gauss = r.stage(r.stages[0].id).elements.gauss
+        slab = _silent(lambda: gauss.get(component="stress_xx"))
+        got = _rows(slab)
+        assert sorted(got) == [7, 11, 12]
+        # value = ops_tag * 100 + step * 10 (component 0): each fem id
+        # carries its own ops tag's rows.
+        for label, ops in ((11, 1), (12, 2), (7, 7)):
+            np.testing.assert_array_equal(
+                got[label][:, 0], [ops * 100.0, ops * 100.0 + 10.0],
+            )
+    finally:
+        reader.close()
