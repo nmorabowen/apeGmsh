@@ -197,7 +197,7 @@ def test_static_stage_keeps_its_program_name_beside_the_modes(
 
     res = Results.from_mpco(str(mpco), model_h5=str(model_h5))
     names = [(s.name, s.kind) for s in res.stages]
-    assert names[0] == ("gravity", "transient")
+    assert names[0] == ("gravity", "static")
     assert names[1:] == [(f"mode_{k}", "mode") for k in range(1, N_MODES + 1)]
     assert [m.eigenvalue for m in res.modes] == pytest.approx(lambdas, rel=1e-10)
     # The static stage still reads its own steps (two increments and the

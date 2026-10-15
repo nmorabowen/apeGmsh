@@ -407,10 +407,10 @@ class Results:
         apeGmsh native HDF5, caches the result at
         ``cache_root``, and opens it through ``NativeReader``.
 
-        Caching: subsequent calls with unchanged input files return
-        the cached HDF5 directly (file mtime + size + spec
-        ``snapshot_id`` form the cache key). See
-        ``writers/_cache.py``.
+        Caching: unchanged input files, model, stage name and stage kind
+        reuse the cached HDF5 (``writers/_cache.py``). Recorders sample
+        every step or every ``dt=``: sampling at arbitrary caller
+        instants has no recorder equivalent.
 
         ``stage_id`` matches the per-stage filename prefix used by
         :meth:`ResolvedRecorderSpec.emit_recorders` together with
@@ -454,9 +454,9 @@ class Results:
         )
         key = _cache.compute_cache_key(
             source_files,
-            parser_version=PARSER_VERSION,
-            fem_snapshot_id=fem.snapshot_id,
+            parser_version=PARSER_VERSION, fem_snapshot_id=fem.snapshot_id,
             model_token=_cache.model_cache_token(model),
+            stages=[(stage_name, stage_kind, stage_id)],
         )
         cached_h5, _ = _cache.cache_paths(cache_dir, key)
 

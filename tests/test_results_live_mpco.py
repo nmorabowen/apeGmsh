@@ -183,6 +183,106 @@ def test_emit_mpco_with_dt(tmp_path: Path) -> None:
 
 
 # =====================================================================
+# Cadence: one -T per recorder; different cadences warn once (#1948)
+# =====================================================================
+
+def _cadence_record(name: str, dt=None, n_steps=None, category="nodes"):
+    return ResolvedRecorderRecord(
+        category=category, name=name, components=("displacement_x",),
+        dt=dt, n_steps=n_steps, node_ids=np.array([1]),
+    )
+
+
+def _emit_and_catch(tmp_path: Path, *records) -> "tuple[tuple, list]":
+    fake = FakeOps()
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        with _make_spec(*records).emit_mpco(tmp_path / "c.mpco", ops=fake):
+            pass
+    hits = [w for w in caught if "takes one cadence" in str(w.message)]
+    return fake.recorder_calls[0], hits
+
+
+def test_two_dt_cadences_warn_once_and_name_the_one_used(tmp_path: Path) -> None:
+    args, hits = _emit_and_catch(tmp_path, _cadence_record("a", dt=0.05),
+                                 _cadence_record("b", dt=0.01))
+    assert args[args.index("-T"):] == ("-T", "dt", 0.01)
+    assert len(hits) == 1
+    assert "-T dt 0.01" in str(hits[0].message)
+
+
+@pytest.mark.parametrize("records, used", [
+    ((("a", 0.01, None), ("b", None, 5)), "-T dt 0.01"),
+    ((("a", None, 10), ("b", None, 5)), "-T nsteps 5"),
+    ((("a", 0.01, None), ("b", None, None)), "-T dt 0.01"),
+])
+def test_any_cadence_difference_warns(tmp_path: Path, records, used) -> None:
+    _, hits = _emit_and_catch(
+        tmp_path, *(_cadence_record(n, dt=d, n_steps=s) for n, d, s in records))
+    assert len(hits) == 1 and used in str(hits[0].message)
+
+
+@pytest.mark.parametrize("records", [
+    (("a", 0.01, None), ("b", 0.01, None)),
+    (("a", None, 5), ("b", None, 5)),
+    (("a", None, None), ("b", None, None)),
+])
+def test_one_cadence_is_silent(tmp_path: Path, records) -> None:
+    """Run with ``-W error::UserWarning``: a warning here raises."""
+    _, hits = _emit_and_catch(
+        tmp_path, *(_cadence_record(n, dt=d, n_steps=s) for n, d, s in records))
+    assert hits == []
+
+
+def _modal(dt=None, n_steps=None) -> ResolvedRecorderRecord:
+    return ResolvedRecorderRecord(category="modal", name="m",
+                                  components=(), dt=dt, n_steps=n_steps)
+
+
+@pytest.mark.parametrize("nodes, modal, tail, used", [
+    # The modal record's cadence wins -T, so it must be compared.
+    ({"dt": 0.05}, {"dt": 0.01}, ("-T", "dt", 0.01), "-T dt 0.01"),
+    ({}, {"n_steps": 5}, ("-T", "nsteps", 5), "-T nsteps 5"),
+    # A modal record at every step beside a timed record is sampled too.
+    ({"dt": 0.01}, {}, ("-T", "dt", 0.01), "-T dt 0.01"),
+])
+def test_a_modal_record_cadence_is_compared(
+    tmp_path: Path, nodes, modal, tail, used,
+) -> None:
+    """The MPCO ``-T`` gate skips the whole ``record()`` call, modes
+    included, so a modal record's cadence is a cadence like any other."""
+    args, hits = _emit_and_catch(
+        tmp_path, _cadence_record("a", **nodes), _modal(**modal))
+    assert args[args.index("-T"):] == tail
+    assert len(hits) == 1 and used in str(hits[0].message)
+
+
+def test_a_modal_record_at_the_same_cadence_is_silent(tmp_path: Path) -> None:
+    _, hits = _emit_and_catch(
+        tmp_path, _cadence_record("a", dt=0.01), _modal(dt=0.01))
+    assert hits == []
+
+
+def test_the_warning_points_at_the_users_line(tmp_path: Path) -> None:
+    """Every emit route names the caller's line, not an apeGmsh frame."""
+    from apeGmsh.results.spec._emit import mpco_ops_args
+
+    spec = _make_spec(_cadence_record("a", dt=0.05),
+                      _cadence_record("b", dt=0.01))
+    calls = {
+        "emit_mpco": lambda: spec.emit_mpco(tmp_path / "c.mpco", ops=FakeOps()).__enter__(),
+        "tcl": lambda: spec.to_mpco_tcl_command(),
+        "python": lambda: spec.to_mpco_python_command(),
+        "ops_args": lambda: mpco_ops_args(spec.records),
+    }
+    for route, call in calls.items():
+        with pytest.warns(UserWarning, match="takes one cadence") as rec:
+            call()
+        assert [Path(w.filename) for w in rec] == [Path(__file__)], route
+        assert rec[0].lineno == call.__code__.co_firstlineno, route
+
+
+# =====================================================================
 # Build-gate
 # =====================================================================
 

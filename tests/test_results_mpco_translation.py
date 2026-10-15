@@ -404,7 +404,8 @@ def test_two_eigen_solutions_get_unique_names(tmp_path: Path) -> None:
 def test_mode_stages_take_no_program_stage_name(tmp_path: Path) -> None:
     """One static program stage and its eigen solution: the static stage
     keeps the program name, the modes keep ``mode_<k>`` (#1946)."""
-    model = SimpleNamespace(stages=lambda: [SimpleNamespace(name="gravity")])
+    model = SimpleNamespace(stages=lambda: [SimpleNamespace(
+        name="gravity", chain_attrs={"analysis": "Static"})])
     with MPCOReader(_write_mpco(tmp_path / "m.mpco")) as r:
         with warnings.catch_warnings():
             warnings.simplefilter("error", StageCountMismatchWarning)
@@ -412,7 +413,7 @@ def test_mode_stages_take_no_program_stage_name(tmp_path: Path) -> None:
         stages = r.stages()
     assert [s.name for s in stages] == ["gravity", "mode_1", "mode_2"]
     assert stages[0].aliases == ("MODEL_STAGE[1]",)
-    assert [s.kind for s in stages[1:]] == ["mode", "mode"]
+    assert [s.kind for s in stages] == ["static", "mode", "mode"]
 
 
 def test_ladruno_part_set_pairs_modes_beside_an_empty_part(tmp_path: Path) -> None:

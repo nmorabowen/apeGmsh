@@ -37,6 +37,8 @@ per emitted recorder (``disp``, ``vel`` etc.).
 """
 from __future__ import annotations
 
+import inspect
+import os
 import warnings
 from dataclasses import dataclass, replace
 from typing import Iterable, Optional
@@ -1274,14 +1276,33 @@ def _aggregate_cadence(records) -> tuple[str, float | int] | None:
     Strategy: if any record has ``dt=``, use the smallest dt (covers
     coarser cadences too). Else if any record has ``n_steps=``, use
     the smallest. Else None (every analysis step).
+
+    One recorder takes one ``-T``, so when the records ask for different
+    cadences (two ``dt``, a ``dt`` and an ``n_steps``, or a cadence and
+    every step) it warns once and names the cadence used. Modal records
+    are compared too: the recorder's ``-T`` gate decides whether a step
+    writes anything at all, modes included (``MPCORecorder::record``).
+    The warning points at the first frame outside ``apeGmsh.results``,
+    the user's call, whichever emit route reached here.
     """
-    dts = [r.dt for r in records if getattr(r, "dt", None) is not None]
-    if dts:
-        return ("dt", min(dts))
-    nss = [r.n_steps for r in records if getattr(r, "n_steps", None) is not None]
-    if nss:
-        return ("nsteps", min(nss))
-    return None
+    dts = [r.dt for r in records if r.dt is not None]
+    nss = [r.n_steps for r in records if r.n_steps is not None]
+    cad = ("dt", min(dts)) if dts else ("nsteps", min(nss)) if nss else None
+    asked = {(r.dt, r.n_steps) for r in records}
+    if len(asked) > 1:
+        used = ("every step" if cad is None else
+                f"-T dt {cad[1]:.10g}" if cad[0] == "dt" else f"-T nsteps {cad[1]}")
+        results_dir = os.path.normcase(os.path.dirname(os.path.dirname(
+            os.path.abspath(__file__))))
+        frame, level = inspect.currentframe(), 1
+        while frame is not None and os.path.normcase(os.path.abspath(
+                frame.f_code.co_filename)).startswith(results_dir + os.sep):
+            frame, level = frame.f_back, level + 1
+        warnings.warn(
+            f"The MPCO recorder takes one cadence, but the records ask for "
+            f"{len(asked)} (dt, n_steps): {sorted(asked, key=repr)}. It "
+            f"records at {used}.", UserWarning, stacklevel=level)
+    return cad
 
 
 def emit_mpco_tcl(
