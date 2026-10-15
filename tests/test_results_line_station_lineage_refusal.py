@@ -1,4 +1,4 @@
-"""The elastic-beam line-stations lineage refusal fires (#1956, G3 review).
+"""The elastic-beam line-stations refusals fire (#1956, G3 review).
 
 An elastic-beam line-stations record reads ``localForce`` end forces, so
 ``refuse_non_elastic_local_force`` (``results/spec/_emit.py``) checks every
@@ -12,6 +12,10 @@ every test.
 Each refusal case is paired with a control that differs only in the
 lineage, so the raise can come from nothing but the lineage check: every
 element is an ``elasticBeamColumn`` and the type check alone passes.
+
+Without a model there are no element types to check at all, so
+``RecorderTranscoder`` refuses every elastic-beam line-stations record by
+name and asks for ``model=`` (amendment 2 ruling: fail closed).
 """
 from __future__ import annotations
 
@@ -100,7 +104,7 @@ def built(tmp_path_factory: pytest.TempPathFactory) -> tuple[Any, Path]:
     return fem, path
 
 
-def _transcode(fem: Any, model_h5: Path, snapshot_id: str,
+def _transcode(fem: Any, model_h5: "Path | None", snapshot_id: str,
                tmp_path: Path) -> None:
     from apeGmsh.results.transcoders import RecorderTranscoder
 
@@ -133,4 +137,19 @@ def test_transcoder_refuses_a_model_from_another_femdata(
     fem, model_h5 = built
     with pytest.raises(ValueError, match=_LINEAGE):
         _transcode(fem, model_h5, "another-femdata", tmp_path)
+    assert not (tmp_path / "out.h5").exists()
+
+
+def test_transcoder_refuses_without_a_model(
+    built: tuple[Any, Path], tmp_path: Path,
+) -> None:
+    """The control's files and spec with no ``model_h5_src``: the record is
+    refused by name, and the message says to pass ``model=``. Before the
+    amendment, the check was skipped and the record read as two end
+    stations whatever its elements were."""
+    fem, _model_h5 = built
+    with pytest.raises(ValueError, match="pass model=") as exc:
+        _transcode(fem, None, fem.snapshot_id, tmp_path)
+    assert "'girder'" in str(exc.value)
+    assert "'ElasticBeam2d'" in str(exc.value)
     assert not (tmp_path / "out.h5").exists()
