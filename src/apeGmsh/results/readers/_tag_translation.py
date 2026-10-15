@@ -106,6 +106,7 @@ class ElementTagTranslator:
 
     __slots__ = (
         "_fem_to_ops", "_ops_to_fem", "_ops_only", "_recorded", "_described",
+        "_arrays",
     )
 
     def __init__(
@@ -129,6 +130,9 @@ class ElementTagTranslator:
         # records; unset until a reader declares its file.
         self._recorded: "Optional[ndarray]" = None
         self._described: "Optional[bool]" = None  # cache of describes_files
+        # Sorted key/value arrays for the vectorised per-id maps, built
+        # on the first read (DomainCapture never needs them).
+        self._arrays: "Optional[tuple[ndarray, ...]]" = None
 
     @classmethod
     def from_model(cls, model: Any) -> "ElementTagTranslator":
@@ -211,9 +215,8 @@ class ElementTagTranslator:
         """
         recorded = self._require_recorded()
         if self._described is None:
-            known = np.fromiter(
-                (*self._ops_to_fem, *self._ops_only), dtype=np.int64,
-            )
+            _, _, ops_keys, _, ops_only = self._sorted_arrays()
+            known = np.concatenate([ops_keys, ops_only])
             self._described = bool(np.isin(recorded, known).all())
         return self._described
 
@@ -239,35 +242,40 @@ class ElementTagTranslator:
             return fem_filter, _identity
         if fem_filter is None:
             return None, self._index_to_fem
-        recorded = self._require_recorded()
-        bucket: list[int] = []
-        unknown: list[int] = []
-        unrecorded: list[int] = []
-        for fem in np.asarray(fem_filter, dtype=np.int64).ravel():
-            f = int(fem)
-            if f in self._fem_to_ops:
-                ops = self._fem_to_ops[f]
-            elif f in self._ops_only:
-                ops = f
-            else:
-                unknown.append(f)
-                continue
-            if _holds(recorded, ops):
-                bucket.append(ops)
-            else:
-                unrecorded.append(f)
-        if unknown or unrecorded:
-            _warn_unread(unknown, unrecorded)
-        return np.array(bucket, dtype=np.int64), self._index_to_fem
+        fem_keys, fem_vals, _, _, ops_only = self._sorted_arrays()
+        ids = np.asarray(fem_filter, dtype=np.int64).ravel()
+        paired, ops = _lookup(fem_keys, fem_vals, ids)
+        known = paired | np.isin(ids, ops_only)
+        recorded = np.isin(ops, self._require_recorded())
+        unknown = ids[~known]
+        unrecorded = ids[known & ~recorded]
+        if unknown.size or unrecorded.size:
+            _warn_unread(unknown.tolist(), unrecorded.tolist())
+        return ops[known & recorded], self._index_to_fem
 
     def _index_to_fem(self, index: "ndarray") -> "ndarray":
         """Relabel a returned ops-tag index id by id; a sentinel element
         keeps its ops tag."""
+        _, _, ops_keys, ops_vals, _ = self._sorted_arrays()
         arr = np.asarray(index, dtype=np.int64)
-        return np.array(
-            [self._ops_to_fem.get(int(t), int(t)) for t in arr.ravel()],
-            dtype=np.int64,
-        ).reshape(arr.shape)
+        return _lookup(ops_keys, ops_vals, arr.ravel())[1].reshape(arr.shape)
+
+    def _sorted_arrays(self) -> "tuple[ndarray, ...]":
+        """``(fem keys, their ops, ops keys, their fem, ops_only)``, each
+        key array sorted, for :func:`_lookup`."""
+        if self._arrays is None:
+            def _pairs(mapping: "dict[int, int]") -> "tuple[ndarray, ndarray]":
+                keys = np.fromiter(mapping, dtype=np.int64, count=len(mapping))
+                vals = np.fromiter(
+                    mapping.values(), dtype=np.int64, count=len(mapping),
+                )
+                order = np.argsort(keys)
+                return keys[order], vals[order]
+            self._arrays = (
+                *_pairs(self._fem_to_ops), *_pairs(self._ops_to_fem),
+                np.array(sorted(self._ops_only), dtype=np.int64),
+            )
+        return self._arrays
 
     def _require_recorded(self) -> "ndarray":
         if self._recorded is None:
@@ -301,10 +309,16 @@ def _identity(index: "ndarray") -> "ndarray":
     return index
 
 
-def _holds(sorted_ids: "ndarray", value: int) -> bool:
-    """True when the sorted, unique ``sorted_ids`` holds ``value``."""
-    k = int(np.searchsorted(sorted_ids, value))
-    return k < sorted_ids.size and int(sorted_ids[k]) == value
+def _lookup(
+    keys: "ndarray", vals: "ndarray", ids: "ndarray",
+) -> "tuple[ndarray, ndarray]":
+    """``(hit, mapped)``: ``hit[i]`` when ``ids[i]`` is in the sorted
+    ``keys``; ``mapped[i]`` is its value there, else ``ids[i]`` itself."""
+    if keys.size == 0:
+        return np.zeros(ids.shape, dtype=bool), ids.copy()
+    pos = np.minimum(np.searchsorted(keys, ids), keys.size - 1)
+    hit = keys[pos] == ids
+    return hit, np.where(hit, vals[pos], ids)
 
 
 def _warn_unread(unknown: "list[int]", unrecorded: "list[int]") -> None:
