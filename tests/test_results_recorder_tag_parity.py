@@ -321,6 +321,8 @@ def test_line_station_rows_are_the_labelled_elements(tmp_path: Path) -> None:
     res = Results.from_recorders(spec, tmp_path / "out", fem=fem,
                                  stage_id="s", model=model,
                                  cache_root=tmp_path / "cache")
+    # The spec emits ``-precision 17``, so the file holds the domain value
+    # and the oracle tolerance is the card's 1e-10, not ``_TOL``.
     ls = res.elements.line_stations
     for comp, k in (("axial_force", 0), ("bending_moment_z", 1)):
         slab = ls.get(component=comp, ids=cols)
@@ -331,7 +333,7 @@ def test_line_station_rows_are_the_labelled_elements(tmp_path: Path) -> None:
             rows = [i for i, x in enumerate(index) if x == eid]
             assert len(rows) == n_ip
             np.testing.assert_allclose(
-                vals[rows], col_truth[eid][:, k], **_TOL,
+                vals[rows], col_truth[eid][:, k], rtol=1e-10, atol=1e-9,
                 err_msg=f"{comp} of column {eid} (ops tag {fem_to_ops[eid]})",
             )
     for k, comp in enumerate(comps):
@@ -344,7 +346,7 @@ def test_line_station_rows_are_the_labelled_elements(tmp_path: Path) -> None:
             rows = [i for i, x in enumerate(index) if x == eid]
             np.testing.assert_array_equal(xi[rows], [-1.0, 1.0])
             np.testing.assert_allclose(
-                vals[rows], beam_truth[eid][:, k], **_TOL,
+                vals[rows], beam_truth[eid][:, k], rtol=1e-10, atol=1e-9,
                 err_msg=f"{comp} of girder {eid} (ops tag {fem_to_ops[eid]})",
             )
 
