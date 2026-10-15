@@ -87,9 +87,9 @@ ops.py("model.py")     # or ops.tcl / ops.h5 / ops.run
 
 ## Rules, each with its reason
 
-1. **Open the session with `with apeGmsh(...) as g:`.** The session owns the
-   one Gmsh kernel, and the block closes it on an exception, so a failed run
-   cannot leave `RuntimeError: session is already open` behind.
+1. **Open the session with `with apeGmsh(...) as g:`.** Each session holds a
+   reference on the shared Gmsh process, and the block calls `g.end()` even
+   when the run fails, so that reference is released and Gmsh can finalize.
 2. **Name what you will refer to: a `label=` at creation, and physical groups
    with dimension-unique names.** OCC renumbers tags on every boolean, and the
    bridge's `pg=` selectors resolve by name, so a tag goes stale and a name

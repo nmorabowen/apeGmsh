@@ -7,9 +7,12 @@ that aren't obvious from the API surface.
 
 ## When things go wrong: the usual suspects
 
-1. **`RuntimeError: session is already open`**: `begin()` was called twice, or
-   a crashed notebook cell left Gmsh initialized. Fix: `gmsh.finalize()` or
-   restart the kernel. Prefer the `with apeGmsh(...) as g:` form.
+1. **`RuntimeError: <name> session is already open`**: `begin()` was called
+   again on a session object that is still open (`g.is_active` is `True`),
+   often from a re-run notebook cell. Fix: close that session with `g.end()`
+   (it releases the session's hold on Gmsh), or restart the kernel. Never
+   call raw `gmsh.finalize()`: it bypasses the session's reference count.
+   Prefer the `with apeGmsh(...) as g:` form, which calls `g.end()` for you.
 2. **A physical group resolves to the wrong dimension**: `g.physical.add(1, ...)`
    and `g.physical.add(2, ...)` are different groups. Keep PG names
    dimension-unique so the bridge's `pg=` selectors resolve unambiguously.
