@@ -5,61 +5,33 @@ OpenSees run writes a ``.ladruno`` via ``recorder ladruno``, then
 ``Results.from_ladruno`` reads it back and the element value channels are
 asserted against the live ``ops`` responses to machine precision.
 
-Requires the **Ladruno fork build** of openseespy (stock builds don't
-know the ``ladruno`` recorder). The module skips cleanly when the running
-build doesn't produce a ``.ladruno``. Run it with the worktree on
-``PYTHONPATH`` so the import resolves to this branch, not the editable
-main install::
+Fork lane (#1954, gap G9). The tests drive the module the bridge drives
+(``get_ops()``), and the ``ladruno_fork`` marker applies the gates in the
+root and this directory's ``conftest.py``: off the fork they skip, and on
+the nightly ``live-fork`` lane they run only against the pinned build. A
+fork build that writes no ``.ladruno`` therefore fails here; it is not a
+reason to skip. Locally::
 
-    PYTHONPATH=src C:/Users/nmora/venv/opensees_venv/Scripts/python.exe \
-        -m pytest tests/results/test_ladruno_live_roundtrip.py -m live
+    pytest tests/opensees/integration_ladruno/test_ladruno_live_roundtrip.py \
+        -m ladruno_fork -q -rs
 """
 from __future__ import annotations
 
 import numpy as np
 import pytest
 
-ops = pytest.importorskip("openseespy.opensees")
-pytestmark = pytest.mark.live
+from apeGmsh.opensees.emitter.live import get_ops
+
+pytestmark = pytest.mark.ladruno_fork
 
 
-def _ladruno_supported(tmp_path) -> bool:
-    """Probe whether this build's recorder writes a ``.ladruno``."""
-    path = str(tmp_path / "probe.ladruno")
-    try:
-        ops.wipe()
-        ops.model("basic", "-ndm", 2, "-ndf", 2)
-        ops.node(1, 0.0, 0.0)
-        ops.node(2, 1.0, 0.0)
-        ops.fix(1, 1, 1)
-        ops.fix(2, 0, 1)
-        ops.uniaxialMaterial("Elastic", 1, 1000.0)
-        ops.element("truss", 1, 1, 2, 1.0, 1)
-        ops.timeSeries("Linear", 1)
-        ops.pattern("Plain", 1, 1)
-        ops.load(2, 10.0, 0.0)
-        ops.recorder("ladruno", path, "-N", "displacement", "-E", "basicForce")
-        ops.system("BandSPD")
-        ops.numberer("RCM")
-        ops.constraints("Plain")
-        ops.integrator("LoadControl", 1.0)
-        ops.algorithm("Linear")
-        ops.analysis("Static")
-        ops.analyze(1)
-        ops.wipe()
-    except Exception:
-        return False
-    import os
-    return os.path.exists(path)
+@pytest.fixture
+def ops():
+    """The OpenSees module the bridge drives: the fork on this lane."""
+    return get_ops()
 
 
-@pytest.fixture(scope="module")
-def _require_fork(tmp_path_factory):
-    if not _ladruno_supported(tmp_path_factory.mktemp("probe")):
-        pytest.skip("running build has no Ladruno '.ladruno' recorder")
-
-
-def test_truss_roundtrip_nodes_and_line(_require_fork, tmp_path):
+def test_truss_roundtrip_nodes_and_line(ops, tmp_path):
     from apeGmsh.results import Results
 
     path = str(tmp_path / "truss.ladruno")
@@ -99,7 +71,7 @@ def test_truss_roundtrip_nodes_and_line(_require_fork, tmp_path):
     np.testing.assert_allclose(lslab.values[-1, e1[0]], live_axial, atol=1e-12)
 
 
-def test_node_envelope_roundtrip(_require_fork, tmp_path):
+def test_node_envelope_roundtrip(ops, tmp_path):
     from apeGmsh.results import Results
 
     path = str(tmp_path / "env.ladruno")
@@ -149,7 +121,7 @@ def test_node_envelope_roundtrip(_require_fork, tmp_path):
     assert int(row["arg_step"]) >= 0
 
 
-def test_quad_roundtrip_gauss_stress(_require_fork, tmp_path):
+def test_quad_roundtrip_gauss_stress(ops, tmp_path):
     from apeGmsh.results import Results
 
     path = str(tmp_path / "quad.ladruno")
@@ -185,7 +157,7 @@ def test_quad_roundtrip_gauss_stress(_require_fork, tmp_path):
     np.testing.assert_allclose(slab.values[-1], live[:, 0], atol=1e-10)
 
 
-def test_fiber_beam_roundtrip_section_and_fibers(_require_fork, tmp_path):
+def test_fiber_beam_roundtrip_section_and_fibers(ops, tmp_path):
     from apeGmsh.results import Results
 
     path = str(tmp_path / "fiberbeam.ladruno")
