@@ -594,7 +594,7 @@ class Results:
         _tag_map = ElementTagTranslator.from_model(bound_model)
         if not _tag_map.is_empty:
             reader.attach_tag_map(_tag_map)
-        # #1971 — the file holds no per-node ndf; the model's masks the
+        # The file holds no per-node ndf; the model's masks the
         # recorder's 0.0 rotations at nodes without rotational DOFs.
         from .readers._mpco import attach_model_nodes_ndf
         attach_model_nodes_ndf(reader, model_h5, bound_model.ndm)
@@ -686,8 +686,8 @@ class Results:
             _tag_map = ElementTagTranslator.from_model(bound_model)
             if not _tag_map.is_empty:
                 reader.attach_tag_map(_tag_map)
-            # #1971 — as in :meth:`from_mpco`: NaN, not the recorder's
-            # 0.0, for rotations a node does not have.
+            # As in :meth:`from_mpco`: NaN, not the recorder's 0.0, for
+            # rotations a node does not have.
             from .readers._ladruno import attach_model_nodes_ndf
             attach_model_nodes_ndf(reader, model_h5, bound_model.ndm)
             model_path: "Optional[Path]" = Path(model_h5)
