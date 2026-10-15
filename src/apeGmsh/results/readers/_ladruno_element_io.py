@@ -1199,10 +1199,11 @@ def read_line_station_slab(
     Two bucket flavours feed the beam line diagram:
 
     * **element-level** (``localForce`` / ``basicForce``, ``LEVELS==0``) —
-      one block of named columns. The ``localForce`` end-force convention
-      flips the second station's sign so the diagram is a continuous
-      internal-force line (parity with MPCO's ``_mpco_local_force_io``);
-      single-station ``basicForce`` is left as-is. Stations are evenly
+      one block of named columns. ``localForce`` end forces are signed per
+      component by ``local_force_station_signs`` into the force-beam
+      ``section force`` convention, as on every other route, so the
+      diagram is continuous across element boundaries; single-station
+      ``basicForce`` is left as-is. Stations are evenly
       spaced over ``[-1, +1]``.
     * **section-level** (``section.force`` / ``section.deformation``,
       ``LEVELS==2``) — one block per integration station. The station's

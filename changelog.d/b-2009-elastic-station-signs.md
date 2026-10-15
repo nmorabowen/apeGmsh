@@ -16,3 +16,9 @@ and `ElasticTimoshenkoBeam2d/3d`.
 
 Line-station values read from an elastic beam's `localForce` change sign for those five components;
 a script that compensated for the old sign must drop its correction.
+
+Native results H5 files written before this change keep the old station signs. That covers files
+captured by DomainCapture and files transcoded from `.out` recorders. No marker in the file tells an
+old one from a new one, so the reader cannot correct them. To get the new convention, re-capture
+those runs, or re-transcode them from their `.out` files. MPCO and `.ladruno` files are signed when
+they are read, so they need nothing.
