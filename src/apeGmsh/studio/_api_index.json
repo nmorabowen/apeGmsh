@@ -120,6 +120,126 @@
       "skill": "references/api-cheatsheet.md",
       "symbol": "Cluster.submit"
     },
+    "ComplexEigenResult.from_flat": {
+      "doc": "Parse the fork's flat 7-per-mode list.",
+      "signature": "from_flat(values: 'Sequence[float]') -> \"'ComplexEigenResult'\"",
+      "skill": "references/opensees-bridge.md",
+      "symbol": "ComplexEigenResult.from_flat"
+    },
+    "EigenResult.mode_shape": {
+      "doc": "Return the mode shape for ``node`` in ``mode`` (1-indexed).",
+      "signature": "mode_shape(node: \"'int | Node'\", mode: 'int') -> 'np.ndarray'",
+      "skill": "references/opensees-bridge.md",
+      "symbol": "EigenResult.mode_shape"
+    },
+    "EigenResult.results": {
+      "doc": "Write the modes with :meth:`to_native` (to a temp file) and",
+      "signature": "results(model_h5: \"'str | os.PathLike[str] | None'\" = None) -> \"'Results'\"",
+      "skill": "references/opensees-bridge.md",
+      "symbol": "EigenResult.results"
+    },
+    "EigenResult.to_native": {
+      "doc": "Write the modes as ``kind=\"mode\"`` stages of a native results",
+      "signature": "to_native(path: \"'str | os.PathLike[str] | None'\" = None) -> 'Path'",
+      "skill": "references/opensees-bridge.md",
+      "symbol": "EigenResult.to_native"
+    },
+    "FEMData.assess": {
+      "doc": "Compile a v1 :class:`~apeGmsh.assess.AssessmentReport` (ADR 0094).",
+      "signature": "assess(*, figures: 'bool' = False, out_dir: \"'str | Path | None'\" = None) -> \"'AssessmentReport'\"",
+      "skill": "references/fem-broker.md",
+      "symbol": "FEMData.assess"
+    },
+    "FEMData.compose_tree": {
+      "doc": "Derived nested-compose tree view of ``self.composed_from``.",
+      "signature": "compose_tree() -> \"'tuple'\"",
+      "skill": "references/fem-broker.md",
+      "symbol": "FEMData.compose_tree"
+    },
+    "FEMData.from_gmsh": {
+      "doc": "Extract FEMData from a live Gmsh session.",
+      "signature": "from_gmsh(dim: 'int | None' = None, *, session=None, ndf: 'int' = 6, remove_orphans: 'bool' = False)",
+      "skill": "references/fem-broker.md",
+      "symbol": "FEMData.from_gmsh"
+    },
+    "FEMData.from_h5": {
+      "doc": "Load a :class:`FEMData` snapshot from a root-layout ``model.h5``.",
+      "signature": "from_h5(path: 'str', *, root: 'str' = '/') -> \"'FEMData'\"",
+      "skill": "references/fem-broker.md",
+      "symbol": "FEMData.from_h5"
+    },
+    "FEMData.from_ladruno_model": {
+      "doc": "Synthesize a partial FEMData from a ``.ladruno`` ``MODEL/`` group.",
+      "signature": "from_ladruno_model(group) -> \"'FEMData'\"",
+      "skill": "references/fem-broker.md",
+      "symbol": "FEMData.from_ladruno_model"
+    },
+    "FEMData.from_mpco_model": {
+      "doc": "Synthesize a partial FEMData from an MPCO ``MODEL/`` group.",
+      "signature": "from_mpco_model(group) -> \"'FEMData'\"",
+      "skill": "references/fem-broker.md",
+      "symbol": "FEMData.from_mpco_model"
+    },
+    "FEMData.from_msh": {
+      "doc": "Load FEMData from an external ``.msh`` file.",
+      "signature": "from_msh(path: 'str', dim: 'int | None' = 2, *, remove_orphans: 'bool' = False)",
+      "skill": "references/fem-broker.md",
+      "symbol": "FEMData.from_msh"
+    },
+    "FEMData.from_native_h5": {
+      "doc": "Reconstruct a FEMData from its embedded ``/model/`` group.",
+      "signature": "from_native_h5(group) -> \"'FEMData'\"",
+      "skill": "references/fem-broker.md",
+      "symbol": "FEMData.from_native_h5"
+    },
+    "FEMData.render": {
+      "doc": "Write one undeformed mesh still (ADR 0094 S1).",
+      "signature": "render(path: \"'str | Path'\", *, camera: \"'str | None'\" = None, window_size: 'tuple[int, int]' = (1280, 720)) -> \"'Path | None'\"",
+      "skill": "references/fem-broker.md",
+      "symbol": "FEMData.render"
+    },
+    "FEMData.repartition": {
+      "doc": "Return a copy split into ``n_parts`` MPI ranks as one graph (ADR 0120 D2).",
+      "signature": "repartition(n_parts: 'int', *, weights=None) -> \"'FEMData'\"",
+      "skill": "references/fem-broker.md",
+      "symbol": "FEMData.repartition"
+    },
+    "FEMData.to_h5": {
+      "doc": "Write a fresh ``model.h5`` containing the neutral zone.",
+      "signature": "to_h5(path: 'str', *, model_name: 'str' = '', apegmsh_version: 'str' = '', ndf: 'int' = 0) -> 'None'",
+      "skill": "references/fem-broker.md",
+      "symbol": "FEMData.to_h5"
+    },
+    "FEMData.to_native_h5": {
+      "doc": "Embed this FEMData into an open HDF5 group (``/model/``).",
+      "signature": "to_native_h5(group) -> 'None'",
+      "skill": "references/fem-broker.md",
+      "symbol": "FEMData.to_native_h5"
+    },
+    "FEMData.viewer": {
+      "doc": "Open a non-interactive mesh viewer from this snapshot.",
+      "signature": "viewer(*, blocking: 'bool' = False) -> 'None'",
+      "skill": "references/fem-broker.md",
+      "symbol": "FEMData.viewer"
+    },
+    "FEMData.with_constraint": {
+      "doc": "Return a new :class:`FEMData` with ``record`` appended.",
+      "signature": "with_constraint(record) -> \"'FEMData'\"",
+      "skill": "references/fem-broker.md",
+      "symbol": "FEMData.with_constraint"
+    },
+    "FEMData.with_load": {
+      "doc": "Return a new :class:`FEMData` with ``record`` appended.",
+      "signature": "with_load(record) -> \"'FEMData'\"",
+      "skill": "references/fem-broker.md",
+      "symbol": "FEMData.with_load"
+    },
+    "FEMData.with_mass": {
+      "doc": "Return a new :class:`FEMData` with ``record`` appended to",
+      "signature": "with_mass(record) -> \"'FEMData'\"",
+      "skill": "references/fem-broker.md",
+      "symbol": "FEMData.with_mass"
+    },
     "Job": {
       "doc": "Handle to one submitted job. Construct via ``Cluster.submit`` or ``Job.load``.",
       "signature": "Job(cluster: 'Cluster', name: 'str', slurm_id: 'int', remote_dir: 'str', local_dir: 'Path', deck: 'str') -> None",
@@ -167,6 +287,36 @@
       "signature": "wait(*, poll: 'float' = 15.0, timeout: 'float | None' = None) -> 'JobStatus'",
       "skill": "references/api-cheatsheet.md",
       "symbol": "Job.wait"
+    },
+    "ParallelModalResult.from_job": {
+      "doc": "Harvest a completed ``modal_deck`` run dir.",
+      "signature": "from_job(job_dir: \"'str | Any'\", *, out: 'str' = 'eigenvalues.out', certified: 'bool | None' = None) -> \"'ParallelModalResult'\"",
+      "skill": "references/opensees-bridge.md",
+      "symbol": "ParallelModalResult.from_job"
+    },
+    "ParallelModalResult.mode_shape": {
+      "doc": "Return the harvested mode shape for ``node`` in ``mode``",
+      "signature": "mode_shape(node: \"'int | Node'\", mode: 'int') -> 'np.ndarray'",
+      "skill": "references/opensees-bridge.md",
+      "symbol": "ParallelModalResult.mode_shape"
+    },
+    "ParallelModalResult.mode_shape_field": {
+      "doc": "Full-field eigenvector for ``mode`` (1-indexed) — an",
+      "signature": "mode_shape_field(mode: 'int') -> 'np.ndarray'",
+      "skill": "references/opensees-bridge.md",
+      "symbol": "ParallelModalResult.mode_shape_field"
+    },
+    "ParallelModalResult.participation_factors": {
+      "doc": "Not available in a distributed run — modalProperties is MPI-blind.",
+      "signature": "participation_factors(component: 'str') -> 'np.ndarray'",
+      "skill": "references/opensees-bridge.md",
+      "symbol": "ParallelModalResult.participation_factors"
+    },
+    "ParallelModalResult.to_native": {
+      "doc": "Write the harvested modes as mode-kind stages in a native",
+      "signature": "to_native(path: \"'str | Any'\", fem: 'Any') -> 'None'",
+      "skill": "references/opensees-bridge.md",
+      "symbol": "ParallelModalResult.to_native"
     },
     "Part": {
       "doc": "An isolated geometry unit — no meshing, no solver state.",

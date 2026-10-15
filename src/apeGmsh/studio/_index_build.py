@@ -3,7 +3,8 @@
 Walks session composites, ``apeSees`` namespaces, and the sidecar
 classes the S2 session walk misses (``Part`` / ``Results`` /
 ``Cluster`` / ``Job`` / ``Assembly``) plus fluent
-``g.model.select`` (``in_box`` / ``to_label``). Nested Part
+``g.model.select`` (``in_box`` / ``to_label``), plus the returned
+objects in ``_RETURNED_TYPES`` (``EigenResult.to_native``). Nested Part
 composites are not walked — they would duplicate ``g.model.*`` and
 make ``add_box`` ambiguous. Does not grep ``src/`` at lookup time.
 Never dumps a module: the index is a symbol → signature map.
@@ -22,6 +23,10 @@ INDEX_PATH = Path(__file__).resolve().parent / "_api_index.json"
 _MAX_DEPTH = 3
 
 _SKILL_BY_PREFIX: tuple[tuple[str, str], ...] = (
+    ("EigenResult.", "references/opensees-bridge.md"),
+    ("ComplexEigenResult.", "references/opensees-bridge.md"),
+    ("ParallelModalResult.", "references/opensees-bridge.md"),
+    ("FEMData.", "references/fem-broker.md"),
     ("ops.fault", "references/opensees-bridge.md"),
     ("ops.damping", "references/opensees-bridge.md"),
     ("ops.stage", "references/opensees-bridge.md"),
@@ -36,6 +41,20 @@ _SKILL_BY_PREFIX: tuple[tuple[str, str], ...] = (
     ("Assembly", "references/compose.md"),
     ("Cluster", "references/api-cheatsheet.md"),
     ("Job", "references/api-cheatsheet.md"),
+)
+
+# Objects that indexed callables return (``ops.eigen -> EigenResult``,
+# ``get_fem_data -> FEMData``), indexed under their bare class name so
+# ``EigenResult.to_native`` resolves. An explicit allow-list, not a walk
+# of every return annotation: many annotations name classes imported
+# only under ``TYPE_CHECKING`` (``typing.get_type_hints`` raises
+# ``NameError`` on them), and the ones that resolve are mostly
+# primitives. Each name needs a ``<name>.`` row in ``_SKILL_BY_PREFIX``.
+_RETURNED_TYPES: tuple[tuple[str, str], ...] = (
+    ("EigenResult", "apeGmsh.opensees.analysis.eigen"),
+    ("ComplexEigenResult", "apeGmsh.opensees.analysis.complex_eigen"),
+    ("ParallelModalResult", "apeGmsh.opensees.analysis.modal"),
+    ("FEMData", "apeGmsh.mesh.FEMData"),
 )
 
 
@@ -56,6 +75,7 @@ def build_index() -> dict[str, Any]:
     _walk_session(entries)
     _walk_apesees(entries)
     _walk_sidecars(entries)
+    _walk_returned_types(entries)
     return {
         "schema": INDEX_SCHEMA,
         "entries": dict(sorted(entries.items())),
@@ -154,6 +174,29 @@ def _walk_sidecars(entries: dict[str, dict[str, str]]) -> None:
     _harvest_class(
         EntitySelection, "g.model.select", entries, depth=0, skip_init_nested=True,
     )
+
+
+def _walk_returned_types(entries: dict[str, dict[str, str]]) -> None:
+    """Index the methods of each ``_RETURNED_TYPES`` class (not its ctor).
+
+    Fails closed: a class that no longer imports, or a name without its
+    own skill row (it would fall through to the cheatsheet), raises.
+    """
+    import importlib
+
+    for name, module in _RETURNED_TYPES:
+        cls = getattr(importlib.import_module(module), name, None)
+        if not isinstance(cls, type):
+            raise RuntimeError(
+                f"_RETURNED_TYPES: {module}.{name} is not a class; "
+                "update the allow-list in apeGmsh.studio._index_build"
+            )
+        if not any(prefix == f"{name}." for prefix, _ in _SKILL_BY_PREFIX):
+            raise RuntimeError(
+                f"_RETURNED_TYPES: {name} has no '{name}.' row in "
+                "_SKILL_BY_PREFIX"
+            )
+        _harvest_class(cls, name, entries, depth=0, skip_init_nested=True)
 
 
 def _harvest_ctor(cls: type, symbol: str, entries: dict[str, dict[str, str]]) -> None:
