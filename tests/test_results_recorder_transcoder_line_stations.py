@@ -529,43 +529,6 @@ class TestElasticBeamEmit:
         assert tokens == [("section", "force"), ("integrationPoints",)]
 
 
-def _elastic_beam_model(tmp_path: Path, ndm: int) -> tuple:
-    """A two-element ``elasticBeamColumn`` line through the bridge.
-
-    Returns ``(fem, model_h5, eids)``. An elastic-beam line-stations
-    transcode refuses without a model (it could not check that every
-    element is an elastic beam), so these cases pass ``model_h5_src=``.
-    No openseespy: the bridge only writes ``model.h5``.
-    """
-    import gmsh
-
-    from apeGmsh import apeGmsh
-    from apeGmsh.opensees import apeSees
-
-    with apeGmsh(model_name=f"ls_elastic_{ndm}d", verbose=False) as g:
-        geo = g.model.geometry
-        c = geo.add_line(geo.add_point(0.0, 0.0, 0.0),
-                         geo.add_point(4.0, 0.0, 0.0))
-        gmsh.model.mesh.setTransfiniteCurve(c, 3)
-        g.physical.add(1, [c], name="Beam")
-        g.mesh.generation.generate(dim=1)
-        fem = g.mesh.queries.get_fem_data(dim=1)
-    ops = apeSees(fem, default_orientation=None)
-    if ndm == 2:
-        ops.model(ndm=2, ndf=3)
-        ops.element.elasticBeamColumn(
-            pg="Beam", transf=ops.geomTransf.Linear(), A=0.02, E=2.0e11,
-            Iz=3.0e-4)
-    else:
-        ops.model(ndm=3, ndf=6)
-        ops.element.elasticBeamColumn(
-            pg="Beam", transf=ops.geomTransf.Linear(vecxz=(0.0, 0.0, 1.0)),
-            A=0.02, E=2.0e11, Iz=3.0e-4, Iy=2.0e-4, G=8.0e10, J=1.0e-4)
-    model_h5 = tmp_path / "model.h5"
-    ops.h5(str(model_h5))
-    return fem, model_h5, [int(e) for e in fem.elements.select(pg="Beam").ids]
-
-
 class TestElasticBeamTranscode:
     """Hand-written ``localForce`` file → transcode → read back.
 
@@ -580,9 +543,13 @@ class TestElasticBeamTranscode:
                            "bending_moment_y", "bending_moment_z")),
     ])
     def test_two_station_round_trip(self, tmp_path: Path, cls, comps) -> None:
-        fem, model_h5, ids = _elastic_beam_model(
-            tmp_path, 3 if cls.endswith("3d") else 2)
-        eids = tuple(sorted(ids, reverse=True))    # not in id order
+        fem = _BeamFem(
+            node_ids=np.array([1, 2, 3]),
+            coords=np.array([[0.0, 0.0, 0.0], [4.0, 0.0, 0.0],
+                             [4.0, 3.0, 0.0]]),
+            connectivity={7: (1, 2), 3: (2, 3)},
+        )
+        eids = (7, 3)
         n = len(comps)
         T = 2
         # value = t*1000 + e*100 + end*10 + k   (end 0 = i, 1 = j)
@@ -600,16 +567,15 @@ class TestElasticBeamTranscode:
                           snapshot_id=fem.snapshot_id)
         target = tmp_path / "out.h5"
         RecorderTranscoder(spec, output_dir=tmp_path, target_path=target,
-                           fem=fem, stage_name="s", stage_kind="static",
-                           model_h5_src=model_h5).run()
+                           fem=fem, stage_name="s",
+                           stage_kind="static").run()
 
         with Results.from_native(target,
                                  model=_open_model_from_h5(target)) as r:
             s = r.stage(r.stages[0].id)
             for k, comp in enumerate(comps):
                 slab = s.elements.line_stations.get(component=comp)
-                assert slab.element_index.tolist() == [
-                    eids[0], eids[0], eids[1], eids[1]]
+                assert slab.element_index.tolist() == [7, 7, 3, 3]
                 np.testing.assert_array_equal(
                     slab.station_natural_coord, [-1.0, 1.0, -1.0, 1.0],
                 )
@@ -622,18 +588,21 @@ class TestElasticBeamTranscode:
                     np.testing.assert_array_equal(slab.values[t], expected)
 
     def test_wrong_column_count_raises(self, tmp_path: Path) -> None:
-        fem, model_h5, ids = _elastic_beam_model(tmp_path, 2)
+        fem = _BeamFem(
+            node_ids=np.array([1, 2]),
+            coords=np.array([[0.0, 0.0, 0.0], [3.0, 0.0, 0.0]]),
+            connectivity={1: (1, 2)},
+        )
         # A 3-D row (12 values) under a 2-D class (6 expected).
         _write_section_out(tmp_path / "g_line_stations_local_force.out",
                            times=np.array([1.0]),
                            flat=np.zeros((1, 1, 12)))
-        spec = _make_spec(_ls_record("g", "ElasticBeam2d", eids=ids[:1]),
+        spec = _make_spec(_ls_record("g", "ElasticBeam2d"),
                           snapshot_id=fem.snapshot_id)
         with pytest.raises(ValueError, match="expected 7 columns"):
             RecorderTranscoder(spec, output_dir=tmp_path,
                                target_path=tmp_path / "out.h5", fem=fem,
-                               stage_name="s", stage_kind="static",
-                               model_h5_src=model_h5).run()
+                               stage_name="s", stage_kind="static").run()
 
 
 # =====================================================================
