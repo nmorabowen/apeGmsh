@@ -30,7 +30,7 @@ def match_symbols(query: str, entries: dict[str, Any]) -> list[str]:
         s = symbol[2:] if symbol.startswith("g.") else symbol
         if s == q or symbol == query.strip() or s.endswith("." + q):
             hits.append(symbol)
-    return hits
+    return [s for s in hits if s in (q, "g." + q)] or hits
 
 
 def format_entry(entry: dict[str, str]) -> str:
