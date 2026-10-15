@@ -22,7 +22,7 @@ from ..errors import BridgeError
 if TYPE_CHECKING:
     from apeGmsh.mesh.FEMData import FEMData
 
-    from ...types import Primitive, Recorder
+    from ...types import Recorder
     from ..recorders import ElementPlan
 
 
@@ -60,7 +60,7 @@ def _reads_stale_state(class_name: str, token: str) -> bool:
     return True
 
 
-def _is_linear(algorithm: "Primitive | None") -> bool:
+def _is_linear(algorithm: object) -> bool:
     from ....analysis.algorithm import Linear
 
     return isinstance(algorithm, Linear)
@@ -167,12 +167,15 @@ def warn_stale_shell_probe_under_linear(
     recorders: "Iterable[Recorder]",
     *,
     staged: bool,
-    flat_algorithms: "Sequence[Primitive]",
-    stage_chain: "Sequence[tuple[str, Primitive | None, frozenset[int]]]",
+    flat_algorithms: "Sequence[object]",
+    stage_chain: "Sequence[tuple[str, Sequence[object], frozenset[int]]]",
 ) -> None:
     """Warn once per (recorder record, class) that reads stale shell state.
 
-    ``stage_chain`` is each stage in order as ``(name, algorithm,
+    ``flat_algorithms`` and each stage's algorithms list every algorithm
+    the domain can step with: the chain's own and every rung of its
+    strategy ladder (a rescue rung solves the step too).
+    ``stage_chain`` is each stage in order as ``(name, algorithms,
     claimed recorder ids)``. In a flat deck a recorder sees the flat
     algorithms; in a staged deck a recorder claimed by stage *k* sees
     stages *k* onward and an unclaimed one sees every stage. A recorder
@@ -181,8 +184,8 @@ def warn_stale_shell_probe_under_linear(
     """
     if staged:
         linear_stages = [
-            i for i, (_n, algo, _ids) in enumerate(stage_chain)
-            if _is_linear(algo)
+            i for i, (_n, algos, _ids) in enumerate(stage_chain)
+            if any(_is_linear(a) for a in algos)
         ]
         if not linear_stages:
             return

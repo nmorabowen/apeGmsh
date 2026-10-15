@@ -52,6 +52,10 @@ class _LazyOps:
     """
 
     def __getattr__(self, name: str):
+        # pytest probes module globals (``__test__``, ``_pytestfixture...``)
+        # at collection; an importorskip there would skip the whole module.
+        if name.startswith("_"):
+            raise AttributeError(name)
         return getattr(pytest.importorskip("openseespy.opensees"), name)
 
 
@@ -531,21 +535,24 @@ def test_iterating_set_is_every_bridge_algorithm_but_linear() -> None:
 
 
 @pytest.mark.parametrize(
-    ("flat", "stages", "expected"),
+    ("flat", "stages", "rungs", "expected"),
     [
-        ((), (), None),
-        (("Newton",), (), "Newton"),
-        (("Linear",), (), "Linear"),
-        (("Newton",), ("Linear",), "Linear"),
-        ((), ("KrylovNewton", "Newton"), "KrylovNewton"),
+        ((), (), (), None),
+        (("Newton",), (), (), "Newton"),
+        (("Linear",), (), (), "Linear"),
+        (("Newton",), ("Linear",), (), "Linear"),
+        ((), ("KrylovNewton", "Newton"), (), "KrylovNewton"),
+        ((), ("Newton",), ("Linear",), "Linear"),
+        ((), ("Newton",), ("BFGS",), "BFGS"),
     ],
 )
 def test_bridge_domain_capture_passes_the_declared_algorithm(
-    flat: tuple[str, ...], stages: tuple[str, ...], expected: str | None,
-    tmp_path: Path,
+    flat: tuple[str, ...], stages: tuple[str, ...], rungs: tuple[str, ...],
+    expected: str | None, tmp_path: Path,
 ) -> None:
     """``ops.domain_capture`` hands the capture the declared algorithm:
-    any Linear wins, nothing declared is unknown (None)."""
+    any Linear wins (a stage's ladder rung included), nothing declared is
+    unknown (None). ``rungs`` is a ladder on the last stage."""
     from apeGmsh.opensees import apesees
     from apeGmsh.opensees.analysis import algorithm as algo_mod
 
@@ -557,9 +564,14 @@ def test_bridge_domain_capture_passes_the_declared_algorithm(
         _ndm=3, _ndf=6, _fem=object(),
         _primitives=[getattr(algo_mod, n)() for n in flat],
         _stage_records=[
-            SimpleNamespace(algorithm=getattr(algo_mod, n)())
+            SimpleNamespace(algorithm=getattr(algo_mod, n)(), strategy=None)
             for n in stages
-        ] + [SimpleNamespace(algorithm=None)],
+        ] + [SimpleNamespace(
+            algorithm=None,
+            strategy=SimpleNamespace(
+                rungs=tuple(getattr(algo_mod, n)() for n in rungs),
+            ) if rungs else None,
+        )],
     )
     cap = apesees.apeSees.domain_capture(
         bridge, spec, path=tmp_path / "cap.h5",  # type: ignore[arg-type]
@@ -758,3 +770,31 @@ def test_bridge_newton_emit_is_silent_and_the_out_file_is_correct(
     got = np.loadtxt(out, ndmin=2)[:, 0]
     np.testing.assert_allclose(
         got, np.array([0.5, 1.0]) * _N11_FULL, rtol=1e-9)
+
+
+@pytest.mark.live
+@pytest.mark.parametrize(("rung", "warns"), [("Linear", 1), ("KrylovNewton", 0)])
+def test_bridge_flat_analyze_ladder_rung_counts(
+    rung: str, warns: int, tmp_path: Path,
+) -> None:
+    """A flat ``analyze(strategy=)`` ladder never reaches the emit; a
+    Linear rung of it must still warn, once, and an iterating one not."""
+    import warnings
+
+    from apeGmsh.opensees._internal.build.validators.shell_probe import (
+        StaleShellProbeWarning,
+    )
+
+    ops.wipe()
+    b = _bridge_uniaxial("ShellMITC4", "Newton", tmp_path / "wall.out")
+    from apeGmsh.opensees.analysis import algorithm as algo_mod
+    # A bare rung, as ladders take them: ``b.algorithm.X()`` would also
+    # register X as the flat chain's algorithm.
+    ladder = b.strategy.Ladder(rungs=[getattr(algo_mod, rung)()])
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        assert b.analyze(steps=1, strategy=ladder) == 0
+    hits = [w for w in caught
+            if issubclass(w.category, StaleShellProbeWarning)]
+    assert len(hits) == warns, [str(w.message) for w in hits]
+    ops.wipe()

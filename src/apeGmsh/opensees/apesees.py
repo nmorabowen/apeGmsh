@@ -1982,7 +1982,10 @@ class BuiltModel:
                 flat_algorithms=[
                     p for p in ordered if isinstance(p, SolutionAlgorithm)],
                 stage_chain=[
-                    (st.name, st.algorithm,
+                    (st.name,
+                     (st.algorithm,
+                      *(st.strategy.rungs if st.strategy is not None
+                        else ())),
                      frozenset(id(r) for r in st.recorder_specs))
                     for st in self.stage_records
                 ],
@@ -8906,14 +8909,20 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
         #
         # The declared algorithm decides whether the gauss
         # capture can trust the upstream shells' probes (stale after a
-        # Linear step). Any declared Linear, flat or in a stage, wins; no
-        # declared algorithm is unknown (None), which the capture treats
-        # as Linear.
+        # Linear step). Any declared Linear wins: flat, a stage's chain, or
+        # a rung of a stage's strategy ladder (a rescue rung solves the
+        # step too). No declared algorithm is unknown (None), which the
+        # capture treats as Linear. A flat ladder is an argument of
+        # ``analyze`` only, never declared here, so it cannot be counted.
         declared = [
             p for p in self._primitives if isinstance(p, SolutionAlgorithm)
         ] + [
-            st.algorithm for st in self._stage_records
-            if st.algorithm is not None
+            a for st in self._stage_records
+            for a in (
+                st.algorithm,
+                *(st.strategy.rungs if st.strategy is not None else ()),
+            )
+            if isinstance(a, SolutionAlgorithm)
         ]
         names = {type(a).__name__ for a in declared}
         algorithm = (
@@ -9756,6 +9765,32 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
         # the in-process openseespy session stays alive after analyze returns.
         self._live_emitter = live_emitter
         bm.emit(live_emitter)
+        # A Linear rung of the ladder solves steps too, and the emit above
+        # never saw the ladder: warn here for a recorder that reads an
+        # upstream shell's stale sections. A Linear base already warned.
+        if strategy is not None:
+            from .analysis.algorithm import Linear as _LinearAlgorithm
+            base_algo = next(
+                (p for p in reversed(self._primitives)
+                 if isinstance(p, SolutionAlgorithm)),
+                None,
+            )
+            if not isinstance(base_algo, _LinearAlgorithm):
+                from ._internal.build.validators.shell_probe import (
+                    warn_stale_shell_probe_under_linear,
+                )
+                warn_stale_shell_probe_under_linear(
+                    bm.fem,
+                    bm._tag_plan(emit_mode(
+                        bm, split=False,
+                        supports_partitions=(
+                            live_emitter.caps.supports_partitions),
+                    )).elements.specs,
+                    [p for p in bm.primitives if isinstance(p, Recorder)],
+                    staged=False,
+                    flat_algorithms=strategy.rungs,
+                    stage_chain=[],
+                )
         self._artifacts.after_emit(self)
         if profile is not None:
             start_flags: list[str] = []

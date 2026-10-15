@@ -28,6 +28,7 @@ from apeGmsh.opensees._internal.build.validators.shell_probe import (
     StaleShellProbeWarning,
     warn_stale_shell_probe_under_linear,
 )
+from apeGmsh.opensees.analysis import algorithm as algo_mod
 from apeGmsh.opensees.emitter.tcl import TclEmitter
 from apeGmsh.opensees.recorder import Element as ElementRecorder
 
@@ -184,7 +185,11 @@ def test_no_analysis_chain_is_silent() -> None:
     assert _emit(ops) == []
 
 
-def _staged(first: str, second: str, claim_in: int) -> apeSees:
+def _staged(
+    first: str, second: str, claim_in: int, *, rung: str | None = None,
+) -> apeSees:
+    """Two stages; with ``rung``, the second stage runs under a ladder
+    whose one rescue rung is ``ops.algorithm.<rung>()``."""
     ops = _bridge("ShellMITC4")
     rec = ops.recorder.Element(file="w.out", response=("stresses",), pg="Wall")
     for i, algo in enumerate((first, second)):
@@ -200,7 +205,11 @@ def _staged(first: str, second: str, claim_in: int) -> apeSees:
             )
             if i == claim_in:
                 s.recorder(rec)
-            s.run(n_increments=1)
+            ladder = (
+                ops.strategy.Ladder(rungs=[getattr(algo_mod, rung)()])
+                if rung is not None and i == 1 else None
+            )
+            s.run(n_increments=1, strategy=ladder)
     return ops
 
 
@@ -208,6 +217,17 @@ def test_staged_recorder_sees_a_later_linear_stage() -> None:
     got = _emit(_staged("Newton", "Linear", claim_in=0))
     assert len(got) == 1
     assert "stage(s) 's1'" in str(got[0].message)
+
+
+def test_staged_linear_ladder_rung_warns() -> None:
+    """A Linear rescue rung solves the steps it rescues: it counts."""
+    got = _emit(_staged("Newton", "Newton", claim_in=0, rung="Linear"))
+    assert len(got) == 1
+    assert "stage(s) 's1'" in str(got[0].message)
+
+
+def test_staged_iterating_ladder_rung_is_silent() -> None:
+    assert _emit(_staged("Newton", "Newton", claim_in=0, rung="KrylovNewton")) == []
 
 
 def test_staged_recorder_claimed_after_the_linear_stage_is_silent() -> None:
