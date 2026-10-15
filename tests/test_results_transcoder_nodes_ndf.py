@@ -184,14 +184,18 @@ def test_2dof_quad_nodes_read_nan_rotation_z(g: Any, tmp_path: Path) -> None:
     ndf = _nodes_ndf(model_h5)
     assert {ndf[n] for n in quad} == {2}
     assert {ndf[n] for n in frame} == {3}
-    # rotation_z is recorded at DOF 6 (the emit table's rotational axis),
-    # beyond every node's ndf in 2-D; the 2-dof quad nodes must read NaN.
+    # The reader's file convention labels rotation_z DOF 6 whatever the
+    # ndm (opensees._results_route._READER_LAYOUT), so the mask follows
+    # the node's own layout, not the label: a 2-D frame node (ndf 3)
+    # carries rz, a quad node (ndf 2) does not.
     r = _transcode(fem, tmp_path, quad + frame,
                    ("displacement_x", "displacement_y", "rotation_z"),
                    "disp", [1, 2, 6], model_h5)
     k = len(TIME) - 1
     rz = _last(r, "rotation_z")
     assert all(np.isnan(rz[n]) for n in quad)
+    assert all(rz[n] == pytest.approx(_value(k, n, 6), rel=1e-9)
+               for n in frame)
     ux = _last(r, "displacement_x")
     assert all(ux[n] == pytest.approx(_value(k, n, 1), rel=1e-9)
                for n in quad + frame)

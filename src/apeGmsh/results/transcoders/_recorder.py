@@ -118,9 +118,9 @@ class RecorderTranscoder:
         self._model_h5_src = (
             None if model_h5_src is None else Path(model_h5_src)
         )
-        # Per-node ndf from the model, read on first use (#1971).
-        self._nodes_ndf_map: dict[int, int] | None = None
-        self._nodes_ndf_read = False
+        # Per-node ndf and ndm from the model, read on first use.
+        self._node_dof_model_cache: tuple[dict[int, int], int] | None = None
+        self._node_dof_model_read = False
         # Records the run() skipped — populated post-run for inspection.
         self.unsupported: list[str] = []
 
@@ -276,41 +276,53 @@ class RecorderTranscoder:
     # Per-record parsing
     # ------------------------------------------------------------------
 
-    def _nodes_ndf(self) -> "dict[int, int] | None":
-        """Per-node ndf from the model's ``/opensees/nodes_ndf``, read once.
+    def _node_dof_model(self) -> "tuple[dict[int, int], int] | None":
+        """``(per-node ndf, ndm)`` from the model, read once.
 
-        ``None`` without ``model_h5_src``, and for an archive that predates
-        the group (``H5Model.nodes_ndf`` returns ``None``): the transcode
-        then keeps the recorder's values as they are.
+        The ndf map is ``/opensees/nodes_ndf``. ``None`` without
+        ``model_h5_src``, and for an archive that predates the group
+        (``H5Model.nodes_ndf`` returns ``None``): the transcode then keeps
+        the recorder's values as they are.
         """
         if self._model_h5_src is None:
             return None
-        if not self._nodes_ndf_read:
+        if not self._node_dof_model_read:
             from ...opensees.emitter import h5_reader
             with h5_reader.open(str(self._model_h5_src)) as m:
-                self._nodes_ndf_map = m.nodes_ndf()
-            self._nodes_ndf_read = True
-        return self._nodes_ndf_map
+                nodes_ndf = m.nodes_ndf()
+                if nodes_ndf is not None:
+                    ndm = h5_reader.read_spatial_ndm(
+                        m.meta(), m.handle,
+                        coords=lambda: np.asarray(self._fem.nodes.coords),
+                    )
+                    if ndm not in (1, 2, 3):
+                        raise ValueError(
+                            f"{self._model_h5_src}: /meta/ndm is {ndm}, so "
+                            "the node DOF layouts cannot be named."
+                        )
+                    self._node_dof_model_cache = (nodes_ndf, ndm)
+            self._node_dof_model_read = True
+        return self._node_dof_model_cache
 
-    def _mask_rotations_past_ndf(
+    def _mask_absent_rotations(
         self,
         rec: "ResolvedRecorderRecord",
         node_ids: ndarray,
         components: dict[str, ndarray],
     ) -> None:
-        """NaN each rotational column a node's ndf does not reach (#1971).
+        """NaN each rotational column at a node that has no such rotation.
 
         One ``recorder Node`` line over a mixed-ndf model writes every
-        requested DOF for every node, and pads the DOFs a node lacks with
-        0.0: a tet node (ndf 3) under ``-dof 4 5 6`` reads rotation 0.0.
-        A rotational component recorded at DOF ``d`` is padding, not a
-        value, at each node whose ndf is below ``d``.
+        requested DOF for every node and pads the DOFs a node lacks with
+        0.0: a tet node (ndf 3) beside a shell reads rotation 0.0. A node
+        has a rotation only where its DOF layout (``ndf`` and ``ndm``, the
+        bridge's own ``_load_dof_layout``) places that rotational slot.
         """
-        nodes_ndf = self._nodes_ndf()
-        if nodes_ndf is None or not components:
+        model = self._node_dof_model()
+        if model is None or not components:
             return
-        missing = sorted(
-            {int(n) for n in node_ids} - nodes_ndf.keys())
+        nodes_ndf, ndm = model
+        missing = sorted({int(n) for n in node_ids} - nodes_ndf.keys())
         if missing:
             raise ValueError(
                 f"Recorder {rec.name!r}: nodes {missing[:10]} have no entry "
@@ -318,15 +330,25 @@ class RecorderTranscoder:
                 "their rotation columns hold values or padding is unknown. "
                 "Pass the model the recorders were emitted from."
             )
-        ndf = np.array([nodes_ndf[int(n)] for n in node_ids], dtype=np.int64)
+        from ...opensees._internal.build.ndf import _load_dof_layout
+        from ...opensees._recorder_translate import node_component_spatial
+
+        layouts = {
+            ndf: frozenset(_load_dof_layout(ndf, ndm))
+            for ndf in {nodes_ndf[int(n)] for n in node_ids}
+        }
         for canonical, arr in components.items():
-            dof = _rotational_node_dof(canonical)
-            if dof is None:
-                continue
-            pad = ndf < dof
-            if pad.any():
+            spatial = node_component_spatial(canonical)
+            if spatial is None or spatial[1] < 3:
+                continue        # not a rotation (rx, ry, rz are slots 3-5)
+            slot = spatial[1]
+            absent = np.array(
+                [slot not in layouts[nodes_ndf[int(n)]] for n in node_ids],
+                dtype=bool,
+            )
+            if absent.any():
                 arr = np.array(arr, dtype=np.float64, copy=True)
-                arr[:, pad] = np.nan
+                arr[:, absent] = np.nan
                 components[canonical] = arr
 
     def _parse_node_record(self, rec) -> "_NodeRecordPayload":
@@ -377,7 +399,7 @@ class RecorderTranscoder:
                     continue
                 components[canonical] = per_dof[comp_dof]   # (T, N_record)
 
-        self._mask_rotations_past_ndf(rec, node_ids, components)
+        self._mask_absent_rotations(rec, node_ids, components)
         return _NodeRecordPayload(
             record_name=rec.name,
             node_ids=node_ids,
@@ -1170,21 +1192,3 @@ def _canonical_to_node_ops(canonical: str) -> tuple[str, int] | None:
     if axis not in dof_table:
         return None
     return (ops_type, dof_table[axis])
-
-
-def _rotational_node_dof(canonical: str) -> int | None:
-    """The recorded DOF of a rotational node component, else ``None``.
-
-    Rotational means the emit module's ``"rot"`` axis kind (rotation,
-    angular velocity/acceleration, reaction moment, unbalance moment).
-    """
-    from ..spec._emit import _NODAL_PREFIX_TABLE
-
-    if "_" not in canonical:
-        return None
-    prefix = canonical.rsplit("_", 1)[0]
-    entry = _NODAL_PREFIX_TABLE.get(prefix)
-    if entry is None or entry[1] != "rot":
-        return None
-    pair = _canonical_to_node_ops(canonical)
-    return None if pair is None else pair[1]

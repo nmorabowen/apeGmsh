@@ -14,7 +14,7 @@ checked against the live domain:
   recorder pads them with (#1971);
 * the 2-D twin, a frame beside a quad block (2-dof quad nodes, 3-dof frame
   nodes): the quad nodes read ``rotation_z`` NaN. The frame's own
-  ``rotation_z`` is a strict xfail: in 2-D it is recorded at DOF 6.
+  ``rotation_z`` value is a strict xfail: this route records it at DOF 6.
 
 The tolerance is the format's, not the oracle's: a ``.out`` file holds six
 significant digits, so values compare at ``rtol=1e-5``. The fork-only
@@ -373,24 +373,20 @@ def _rotation_z(r: Results) -> dict[int, float]:
 def test_ndf2_node_rotation_is_nan_from_out(g: Any, tmp_path: Path) -> None:
     """A 2-dof quad node has no rotation: NaN, never a padded 0.0 (#1971).
 
-    No node reads a fabricated rotation either: a 3-dof frame node is NaN
-    or its ``nodeDisp`` value. It is NaN today, because a 2-D
-    ``rotation_z`` is recorded at DOF 6 (the next test).
+    The 3-dof frame nodes do carry ``rotation_z`` and stay in the slab;
+    their values are the next test's.
     """
-    r, quad, frame, live = _frame_beside_quad_run(g, tmp_path)
+    r, quad, frame, _live = _frame_beside_quad_run(g, tmp_path)
     got = _rotation_z(r)
     assert not np.isfinite([got[n] for n in quad]).any()
-    for n in frame:
-        if np.isfinite(got[n]):
-            np.testing.assert_allclose(got[n], live[n][2], rtol=RTOL_OUT,
-                                       atol=1e-15, err_msg=f"frame node {n}")
+    assert np.isfinite([got[n] for n in frame]).all()
 
 
 @pytest.mark.xfail(
     strict=True, raises=AssertionError,
-    reason="2-D rotation_z is emitted as `-dof 6` (spec/_emit.py "
-           "_AXIS_TO_ROT_DOF is 3-D only), so a 3-dof node's rotation is "
-           "not recorded; follow-up of #1971",
+    reason="emit_recorders records a 2-D rotation_z as `-dof 6` (spec/_emit.py "
+           "_AXIS_TO_ROT_DOF is 3-D only), so a 3-dof frame node reads the "
+           "padded 0.0; follow-up of #1971",
 )
 def test_frame_rotation_z_reads_back_from_out_2d(
     g: Any, tmp_path: Path,
