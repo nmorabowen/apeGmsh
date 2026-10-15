@@ -470,9 +470,21 @@ def test_a_mixed_paired_and_sentinel_bucket_reads_fem_keyed(tmp_path) -> None:
     ``_element_reads_fem_keyed`` must say so: the viewer builds its
     scene from the answer. Judged by the paired tags alone it said
     False, and the viewer joined fem-keyed rows on ops tags."""
+    import h5py
+
+    from apeGmsh.opensees._response_catalog import IntRule, lookup
     from apeGmsh.results import Results
 
-    reader = _mpco_reader(_mpco_files(tmp_path, [[1, 2, 7]]))
+    paths = _mpco_files(tmp_path, [[1, 2, 7]])
+    # List the three elements under MODEL/ELEMENTS, as a real recorder
+    # does: the old check judged the file by this listing.
+    layout = lookup("FourNodeTetrahedron", IntRule.Tet_GL_1, "stress")
+    with h5py.File(paths[0], "r+") as f:
+        f["MODEL_STAGE[0]/MODEL"].create_group("ELEMENTS").create_dataset(
+            f"{layout.class_tag}-FourNodeTetrahedron[300:0]",
+            data=np.array([[t, 1, 2, 3, 4] for t in (1, 2, 7)], dtype=np.int32),
+        )
+    reader = _mpco_reader(paths)
     reader.attach_tag_map(ElementTagTranslator(
         {11: 1, 12: 2}, {1: 11, 2: 12}, ops_only=(7,),
     ))

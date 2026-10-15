@@ -26,9 +26,9 @@ The strut's base-end nodal forces also equal ``nodeReaction`` at its fixed
 node (C2).
 
 An id outside the pairing must return no rows. On both formats a Base/Top
-quad id that equals an emitted OpenSees tag reads that element's rows under
-the quad's id: the filter passes through untranslated (#2066). Those cases
-are strict xfails.
+quad id that equals an emitted OpenSees tag used to read that element's rows
+under the quad's id, because the filter passed through untranslated. Since
+#2066 the reader drops the id and warns.
 
 The mutation check reads the same files with the pairing removed from the
 model archive and shows the id and value assertions fail.
@@ -47,7 +47,6 @@ from apeGmsh.opensees.emitter.live import LiveOpsEmitter
 from apeGmsh.results import Results
 from tests.test_results_recorder_tag_parity import (
     SF_KINDS,
-    OutsidePairingReturnedRows,
     _drop_pairing,
     _rotate_pairing,
     _sf_assert_filter_is_exact,
