@@ -1103,7 +1103,7 @@ def _canonical_to_mpco_gauss_token(canonical: str, record_name: str) -> str:
             f"{canonical!r} (the Truss axial force) cannot go through MPCO: "
             f"MPCO writes its axialForce bucket with no GAUSS_IDS and the "
             f"reader refuses it. Record it with spec.emit_recorders(...), "
-            f"a .ladruno recorder, or ops.domain_capture(...)."
+            f"the fork's native recorder, or ops.domain_capture(...)."
         )
     token = _canonical_to_mpco_element_token(canonical)
     if token not in _MPCO_GAUSS_READ_SIDE_KEYWORDS:
