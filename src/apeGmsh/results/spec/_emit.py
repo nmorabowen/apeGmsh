@@ -1197,6 +1197,40 @@ def _canonical_to_mpco_gauss_token(canonical: str, record_name: str) -> str:
     return token
 
 
+def _warn_line_stations_class_unknown(rec) -> None:
+    """Warn that an MPCO line-stations record may read elastic beams empty.
+
+    ``rec`` names no element class, or one the catalog does not list as a
+    ``section force`` beam, so the emit cannot tell whether it covers
+    elastic beams, which answer ``localForce`` only. The warning points at
+    the first frame outside ``apeGmsh.results``, the user's call.
+    """
+    from apeGmsh.opensees._response_catalog import NODAL_FORCE_CATALOG
+    elastic = sorted(
+        cls for cls, token in NODAL_FORCE_CATALOG
+        if token == "local_force" and line_stations_from_local_force(
+            replace(rec, element_class_name=cls))
+    )
+    results_dir = os.path.normcase(os.path.dirname(os.path.dirname(
+        os.path.abspath(__file__))))
+    frame, level = inspect.currentframe(), 1
+    while frame is not None and os.path.normcase(os.path.abspath(
+            frame.f_code.co_filename)).startswith(results_dir + os.sep):
+        frame, level = frame.f_back, level + 1
+    named = ("names no element class" if rec.element_class_name is None
+             else f"names element class {rec.element_class_name!r}, which "
+                  f"the response catalog does not list as a section-force "
+                  f"beam")
+    warnings.warn(
+        f"MPCO line-stations record {rec.name!r} {named}, so the MPCO "
+        f"recorder records section.force only. Elastic beams ({elastic}) "
+        f"do not answer section.force and would read back empty. If the "
+        f"record covers one, pass its element_class_name: the emit then "
+        f"also records localForce.",
+        UserWarning, stacklevel=level,
+    )
+
+
 def collect_mpco_tokens(records) -> tuple[list[str], list[str]]:
     """Return ``(node_tokens, element_tokens)`` deduplicated, in stable order.
 
@@ -1215,6 +1249,20 @@ def collect_mpco_tokens(records) -> tuple[list[str], list[str]]:
     (``shear_strain_*``, through the ``shear`` prefix) ``section.force``,
     and read back empty with no warning.
 
+    A line-stations record whose ``element_class_name`` is an elastic
+    beam (:func:`line_stations_from_local_force`) also records
+    ``localForce``: elastic beams do not answer ``section.force``, and
+    the MPCO reader builds their two end stations from ``localForce``.
+    ``section.force`` stays, so a record that also covers force beams
+    reads both classes: MPCO writes each token for the elements that
+    answer it, and the reader takes ``section.force`` first and
+    ``localForce`` for the elements it lacks. A record that names no
+    class, or a class the catalog does not list as a ``section force``
+    beam, keeps ``section.force`` only and warns
+    (:func:`_warn_line_stations_class_unknown`): any elastic beam in it
+    would read empty. Before #2051 elastic beams read empty with no
+    warning.
+
     A gauss record whose ``element_class_name`` is in
     ``PER_MATERIAL_STRAIN_CLASSES`` (Tri31) records strain as
     ``material.strain``: the class has no element-level ``strains``
@@ -1226,6 +1274,7 @@ def collect_mpco_tokens(records) -> tuple[list[str], list[str]]:
     from apeGmsh.opensees._response_catalog import (
         PER_MATERIAL_STRAIN_CLASSES,
         gauss_keyword_for_canonical,
+        is_custom_rule_catalogued,
         mpco_gauss_group_aliases,
     )
 
@@ -1284,6 +1333,12 @@ def collect_mpco_tokens(records) -> tuple[list[str], list[str]]:
                     f"section deformations read back from the fork's native "
                     f"recorder."
                 )
+            cls = rec.element_class_name
+            if line_stations_from_local_force(rec):
+                _add(elem_tokens, seen_e, "localForce")
+            elif cls is None or not is_custom_rule_catalogued(
+                    cls, "section_force"):
+                _warn_line_stations_class_unknown(rec)
             continue
         # other element-level categories
         for c in rec.components:
