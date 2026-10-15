@@ -1,3 +1,6 @@
+# KNOWN-BAD: the 'Core workflow' skeleton of skills/apegmsh/SKILL.md at 6308b303
+# (lines 167-197), frozen. It fixes and loads groups 'Base' and 'Tip' it never creates,
+# so the bridge raises BridgeError. Never refresh this copy from skills/: it is the defect.
 from apeGmsh import apeGmsh
 
 with apeGmsh(model_name="my_model", save_to="my_model.h5") as g:
