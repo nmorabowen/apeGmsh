@@ -5,9 +5,9 @@ SKILL.md | description-size | description over 1,024 characters
 SKILL.md | skill-freshness | freshness stamp
 SKILL.md | skill-size | SKILL.md over 200 lines
 mirror:apegmsh-helper/SKILL.md | description-size | description over 1,024 characters
-references/api-cheatsheet.md | fence-parse | python fence does not parse: Invalid star expression; fence opens `# apeGmsh.hpc — remote SLURM submission (ADR 0060). Pairs wi`
-references/api-cheatsheet.md | fence-parse | python fence does not parse: expected argument value expression; fence opens `from apeGmsh import SectionProperties`
-references/api-cheatsheet.md | fence-parse | python fence does not parse: invalid character '×' (U+00D7); fence opens `ops = apeSees(fem, *, default_orientation=None, opensees=Non`
+references/api-cheatsheet.md | fence-parse | python fence does not parse; fence opens `# apeGmsh.hpc — remote SLURM submission (ADR 0060). Pairs wi`
+references/api-cheatsheet.md | fence-parse | python fence does not parse; fence opens `from apeGmsh import SectionProperties`
+references/api-cheatsheet.md | fence-parse | python fence does not parse; fence opens `ops = apeSees(fem, *, default_orientation=None, opensees=Non`
 references/api-cheatsheet.md | line-citation | EmbedmentsComposite.py:129
 references/api-cheatsheet.md | line-citation | src/apeGmsh/_core.py:40
 references/api-cheatsheet.md | line-citation | src/apeGmsh/core/ConstraintsComposite.py:2121
@@ -54,8 +54,8 @@ references/assess.md | skill-freshness | freshness stamp
 references/compose.md | line-citation | src/apeGmsh/viewers/ui/mesh_tabs.py:122
 references/compose.md | skill-freshness | freshness stamp
 references/fem-broker.md | fence-name | `apeSees` has no attribute `node`
-references/fem-broker.md | fence-parse | python fence does not parse: Invalid star expression; fence opens `FEMData.to_h5(self, path, *, model_name: str = "", apegmsh_v`
-references/fem-broker.md | fence-parse | python fence does not parse: invalid syntax; fence opens `g.mesh.queries.get_fem_data(dim: int | None = None, *, remov`
+references/fem-broker.md | fence-parse | python fence does not parse; fence opens `FEMData.to_h5(self, path, *, model_name: str = "", apegmsh_v`
+references/fem-broker.md | fence-parse | python fence does not parse; fence opens `g.mesh.queries.get_fem_data(dim: int | None = None, *, remov`
 references/fem-broker.md | line-citation | FEMData.py:1064
 references/fem-broker.md | line-citation | FEMData.py:1491
 references/fem-broker.md | line-citation | FEMData.py:1508
@@ -71,23 +71,23 @@ references/fem-broker.md | line-citation | src/apeGmsh/mesh/_mesh_queries.py:122
 references/fem-broker.md | line-citation | src/apeGmsh/opensees/emitter/h5.py:414
 references/fem-broker.md | skill-freshness | freshness stamp
 references/gotchas.md | skill-freshness | freshness stamp
-references/interop.md | fence-parse | python fence does not parse: invalid syntax; fence opens `import_structural_model(g, model: StructuralModel, *, self_m`
+references/interop.md | fence-parse | python fence does not parse; fence opens `import_structural_model(g, model: StructuralModel, *, self_m`
 references/interop.md | line-citation | etabs_import.py:297
 references/interop.md | line-citation | etabs_import.py:508
 references/interop.md | line-citation | interop/solve.py:46
 references/interop.md | line-citation | solve.py:30
 references/interop.md | line-citation | src/apeGmsh/interop/etabs_import.py:134
 references/interop.md | skill-freshness | freshness stamp
-references/rebar.md | fence-parse | python fence does not parse: Invalid star expression; fence opens `g.rebar.bar(points=None, *, db, material, role="longitudinal`
-references/rebar.md | fence-parse | python fence does not parse: Invalid star expression; fence opens `g.rebar.column(*, section, height, cover, longitudinal: BarL`
-references/rebar.md | fence-parse | python fence does not parse: invalid syntax; fence opens `g.rebar.place(cage: Cage, into: str, *, coupling="conformal"`
-references/rebar.md | fence-parse | python fence does not parse: invalid syntax; fence opens `g.rebar.use_standard(standard) -> None       # src/apeGmsh/r`
+references/rebar.md | fence-parse | python fence does not parse; fence opens `g.rebar.bar(points=None, *, db, material, role="longitudinal`
+references/rebar.md | fence-parse | python fence does not parse; fence opens `g.rebar.column(*, section, height, cover, longitudinal: BarL`
+references/rebar.md | fence-parse | python fence does not parse; fence opens `g.rebar.place(cage: Cage, into: str, *, coupling="conformal"`
+references/rebar.md | fence-parse | python fence does not parse; fence opens `g.rebar.use_standard(standard) -> None       # src/apeGmsh/r`
 references/rebar.md | line-citation | src/apeGmsh/_core.py:96
 references/rebar.md | line-citation | src/apeGmsh/rebar/_composite.py:89
 references/rebar.md | skill-freshness | freshness stamp
-references/results.md | fence-parse | python fence does not parse: Invalid star expression; fence opens `# Construct (model= / model_h5= REQUIRED — except from_ladru`
-references/results.md | fence-parse | python fence does not parse: expected ':'; fence opens `def show_web(self, *, stage=None, show=True, controls=True,`
-references/results.md | fence-parse | python fence does not parse: expected ':'; fence opens `def viewer(self, *, blocking=None, title=None,`
+references/results.md | fence-parse | python fence does not parse; fence opens `# Construct (model= / model_h5= REQUIRED — except from_ladru`
+references/results.md | fence-parse | python fence does not parse; fence opens `def show_web(self, *, stage=None, show=True, controls=True,`
+references/results.md | fence-parse | python fence does not parse; fence opens `def viewer(self, *, blocking=None, title=None,`
 references/results.md | line-citation | Results.py:1559
 references/results.md | line-citation | Results.py:1608
 references/results.md | line-citation | _composites.py:883

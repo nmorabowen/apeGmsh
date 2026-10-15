@@ -158,8 +158,13 @@ def fence_findings(text: str, rel: str) -> tuple[list[Finding], set[str]]:
             m = _PROBLEM.match(problem)
             msg = m["msg"] if m else problem.strip()
             if "does not parse" in msg:
+                # Keyed without the SyntaxError message: it differs between
+                # interpreters (3.11 "invalid syntax", 3.12 "expected argument
+                # value expression" for one fence), while which fences fail
+                # does not (checked on 3.10, 3.11 and 3.12).
                 first = next((s.strip() for s in body.splitlines() if s.strip()), "")
-                found.append(_finding(rel, "fence-parse", f"{msg}; fence opens `{first[:60].rstrip()}`"))
+                found.append(_finding(rel, "fence-parse",
+                                      f"python fence does not parse; fence opens `{first[:60].rstrip()}`"))
             elif "takes no keyword" in msg:
                 found.append(_finding(rel, "fence-keyword", msg))
             else:
@@ -362,8 +367,10 @@ def test_control_missing_attribute_and_unparsable_fence() -> None:
         "bad.md",
     )
     assert _finding("bad.md", "fence-name", "`apeSees` has no attribute `node`") in found
-    assert any(f.startswith("bad.md | fence-parse | ") and "fence opens `def add(" in f
-               for f in found), found
+    # The key holds no SyntaxError message, which varies across Pythons.
+    assert _finding("bad.md", "fence-parse",
+                    "python fence does not parse; fence opens `def add(self, x=..., *, y: float = …): ...`"
+                    ) in found, found
 
 
 def test_control_attributes_set_from_an_annotated_parameter_resolve() -> None:
