@@ -353,7 +353,6 @@ def test_ladruno_lst_stresses_token_reads_back_from_ladruno(
     _assert_gauss_stress(_solid_run("lst", "Ladruno", "stresses", tmp_path))
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason=B_MPCO)
 @pytest.mark.parametrize("token", ["stress", "stresses"])
 @pytest.mark.parametrize("family", ["h20", "lst"])
 def test_fork_solid_gauss_stress_reads_back_from_mpco(
@@ -362,7 +361,6 @@ def test_fork_solid_gauss_stress_reads_back_from_mpco(
     _assert_gauss_stress(_solid_run(family, "MPCO", token, tmp_path))
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason=B_MPCO)
 def test_element_only_mpco_file_has_its_steps(tmp_path: Path) -> None:
     run = _solid_run("h20", "MPCO", "stress", tmp_path, nodal=False)
     assert [s.n_steps for s in run["r"].stages] == [1]
