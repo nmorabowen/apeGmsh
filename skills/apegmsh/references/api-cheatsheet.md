@@ -276,8 +276,8 @@ set_size_sources(*, from_points=True, from_curvature=False, ...)
 ### `g.mesh.field` — (`FieldHelper`) — fluent size fields
 
 ```python
-f_d = g.mesh.field.distance(edges=[l1, l2, l3])
-f_t = g.mesh.field.threshold(input_field=f_d, size_min=0.1, size_max=2.0, dist_min=1.0, dist_max=10.0)
+f_d = g.mesh.field.distance(curves=["crack", "notch"])   # also surfaces= / points=; labels, PGs or tags
+f_t = g.mesh.field.threshold(distance_field=f_d, size_min=0.1, size_max=2.0, dist_min=1.0, dist_max=10.0)
 g.mesh.field.set_background(f_t)
 # Also: box(...) / math_eval("0.1 + 0.01 * F1") / boundary_layer(...) / minimum([f1, f2])
 ```

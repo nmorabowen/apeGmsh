@@ -22,13 +22,20 @@ through these tables.
 from __future__ import annotations
 
 import warnings
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 from ._element_capabilities import (
     SIGMA_ZZ_ELEMENT_CLASSES,
     SIGMA_ZZ_MATERIAL_CLASSES,
     STRESS_PLANE_STRAIN_RESPONSE,
 )
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+    from numpy import ndarray
+
+    from apeGmsh.mesh.FEMData import FEMData
 
 
 class StressZZNotRecordedWarning(UserWarning):
@@ -220,6 +227,58 @@ def group_node_components_by_ops_token(
         token: tuple(dict.fromkeys(dofs)) for token, dofs in grouped.items()
     }
 
+
+
+def mask_absent_rotations(
+    components: "dict[str, ndarray]",
+    node_ids: "ndarray",
+    model_h5: "Optional[str | Path]",
+    fem: "FEMData",
+) -> None:
+    """NaN, in place, each rotation column at a node whose DOF layout
+    (the emit's own ``_node_layout(ndf, ndm)``) has no such slot.
+
+    One ``recorder Node`` line over a mixed-ndf model writes every
+    requested DOF for every node and pads the DOFs a node lacks with
+    0.0: a tet node (ndf 3) beside a shell reads rotation 0.0 (#1971).
+    The mask keys on the node's layout, never on the file's DOF index
+    (``rotation_z`` is DOF 6 in the ``-dof`` list whatever the ndm). An
+    ndf without a known layout (4 or 5: a u-p node's pressure DOF) carries
+    translations only, never a rotation.
+
+    ``components`` maps a canonical name to a ``(T, N)`` array over
+    ``node_ids``. Values are kept as written when ``model_h5`` is
+    ``None`` or the archive predates ``/opensees/nodes_ndf``. Raises
+    :class:`ValueError` when a recorded node is missing from that
+    group, since its rotation columns may then be padding.
+    """
+    slots = {c: (node_component_spatial(c) or ("", -1))[1] for c in components}
+    if model_h5 is None or max(slots.values(), default=-1) < 3:
+        return                      # no model, or no rotation recorded
+    import numpy as np
+
+    from ._internal.build.recorders import _node_layout
+    from .emitter import h5_reader
+
+    with h5_reader.open(str(model_h5)) as m:
+        nodes_ndf = m.nodes_ndf()
+        if nodes_ndf is None:
+            return                  # an archive older than nodes_ndf
+        ndm = h5_reader.read_spatial_ndm(
+            m.meta(), m.handle, coords=lambda: np.asarray(fem.nodes.coords),
+        )
+    missing = sorted({int(n) for n in node_ids} - nodes_ndf.keys())
+    if missing:
+        raise ValueError(
+            f"nodes {missing[:10]} are not in {model_h5}'s "
+            "/opensees/nodes_ndf, so whether their rotation columns hold "
+            "values or padding is unknown. Pass the model the deck ran."
+        )
+    layouts = [_node_layout(nodes_ndf[int(n)], ndm) for n in node_ids]
+    for comp, slot in slots.items():
+        if slot >= 3:               # rx, ry, rz are spatial slots 3..5
+            absent = np.array([slot not in lay for lay in layouts], dtype=bool)
+            components[comp] = np.where(absent, np.nan, components[comp])
 
 # =====================================================================
 # Element-level keyword resolution (Phase 9 commit 3b)
