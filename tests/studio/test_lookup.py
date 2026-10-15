@@ -222,6 +222,15 @@ def test_exact_symbol_wins_over_suffix_hits(query: str, symbol: str) -> None:
     assert text.startswith(f"{symbol}\n")
 
 
+@pytest.mark.parametrize("query", ["from_h5", "from_h5()", "g.from_h5"])
+def test_bare_name_stays_ambiguous_despite_exact_g_symbol(query: str) -> None:
+    """Exact-match precedence is for dotted queries only (#2063 review)."""
+    text, code = lookup(query)
+    assert code == 2, text
+    assert text.startswith("ambiguous:")
+    assert "FEMData.from_h5" in text
+
+
 def test_session_walk_fails_closed_on_unimportable_composite(monkeypatch) -> None:
     """A composite that does not import raises; it is never silently dropped."""
     from apeGmsh._core import apeGmsh as Session
