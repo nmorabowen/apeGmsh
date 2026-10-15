@@ -447,25 +447,22 @@ def test_ladruno_brick_material_state_reads_back_from_mpco(
         )
 
 
-_FORK_PIN = Path(__file__).resolve().parents[3] / "FORK_PIN"
+#: Fork builds known to converge on the #2044 LoadControl case. Every other
+#: build, FORK_PIN included, runs it as a strict xfail: the build that fixes
+#: #2044 reaches CI as a FORK_PIN bump and then XPASSes, which fails the
+#: lane and says to drop the marker. Add a sha here only after a run on it.
+_LOAD_CONTROL_CONVERGES = frozenset({
+    "79e0623670c61c768357a01dff1477a4a0ef7e06",   # pre-regression local build
+})
 
 
-def _at_fork_pin() -> bool:
-    """Is the imported engine the ``FORK_PIN`` build? (the #2044 xfail gate)
-
-    Older local fork builds converge, so a bare strict xfail would XPASS
-    there; the gate keeps the xfail to the build that has the defect.
-    """
-    shas = [line.split("=", 1)[1].strip()
-            for line in _FORK_PIN.read_text(encoding="utf-8").splitlines()
-            if line.startswith("sha=")]
-    if len(shas) != 1:
-        raise RuntimeError(f"expected one sha= line in {_FORK_PIN}")
-    return get_backend_build() == shas[0]
+def _known_converging_build() -> bool:
+    """Is the imported engine on the allowlist? (``None`` is not.)"""
+    return get_backend_build() in _LOAD_CONTROL_CONVERGES
 
 
 @pytest.mark.xfail(
-    "_at_fork_pin()", strict=True,
+    "not _known_converging_build()", strict=True,
     reason="#2044: LoadControl diverges at FORK_PIN in the elastic first step",
 )
 def test_ladruno_brick_asdconcrete_converges_under_load_control() -> None:
