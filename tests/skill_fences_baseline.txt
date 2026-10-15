@@ -1,0 +1,91 @@
+# Known findings of tests/test_skill_fences.py, one per line: <file> | <rule> | <detail>.
+# Shrink-only: the line count is pinned to SKILL_FENCES_BASELINE. When you clear a
+# finding, delete its line and lower the pin. Never add a line (maintainer gate).
+SKILL.md | description-size | description over 1,024 characters
+SKILL.md | skill-freshness | freshness stamp
+SKILL.md | skill-size | SKILL.md over 200 lines
+mirror:apegmsh-helper/SKILL.md | description-size | description over 1,024 characters
+references/api-cheatsheet.md | fence-parse | python fence does not parse: Invalid star expression; fence opens `# apeGmsh.hpc — remote SLURM submission (ADR 0060). Pairs wi`
+references/api-cheatsheet.md | fence-parse | python fence does not parse: expected argument value expression; fence opens `from apeGmsh import SectionProperties`
+references/api-cheatsheet.md | fence-parse | python fence does not parse: invalid character '×' (U+00D7); fence opens `ops = apeSees(fem, *, default_orientation=None, opensees=Non`
+references/api-cheatsheet.md | line-citation | EmbedmentsComposite.py:129
+references/api-cheatsheet.md | line-citation | src/apeGmsh/_core.py:40
+references/api-cheatsheet.md | line-citation | src/apeGmsh/core/ConstraintsComposite.py:2121
+references/api-cheatsheet.md | line-citation | src/apeGmsh/core/ConstraintsComposite.py:610
+references/api-cheatsheet.md | line-citation | src/apeGmsh/core/ConstraintsComposite.py:624
+references/api-cheatsheet.md | line-citation | src/apeGmsh/core/Model.py:152
+references/api-cheatsheet.md | line-citation | src/apeGmsh/core/Model.py:78
+references/api-cheatsheet.md | line-citation | src/apeGmsh/core/_model_boolean.py:264
+references/api-cheatsheet.md | line-citation | src/apeGmsh/core/_model_geometry.py:1147
+references/api-cheatsheet.md | line-citation | src/apeGmsh/core/_model_geometry.py:2094
+references/api-cheatsheet.md | line-citation | src/apeGmsh/core/_model_geometry.py:2209
+references/api-cheatsheet.md | line-citation | src/apeGmsh/core/_model_io.py:801
+references/api-cheatsheet.md | line-citation | src/apeGmsh/core/_parts_registry.py:793
+references/api-cheatsheet.md | line-citation | src/apeGmsh/mesh/FEMData.py:1548
+references/api-cheatsheet.md | line-citation | src/apeGmsh/mesh/MeshSelectionSet.py:511
+references/api-cheatsheet.md | line-citation | src/apeGmsh/mesh/_mesh_editing.py:593
+references/api-cheatsheet.md | line-citation | src/apeGmsh/mesh/_mesh_queries.py:122
+references/api-cheatsheet.md | line-citation | src/apeGmsh/mesh/_mesh_recipe.py:79
+references/api-cheatsheet.md | line-citation | src/apeGmsh/mesh/_mesh_structured.py:501
+references/api-cheatsheet.md | line-citation | src/apeGmsh/opensees/apesees.py:4463
+references/api-cheatsheet.md | line-citation | src/apeGmsh/sections/_builder.py:250
+references/api-cheatsheet.md | skill-freshness | freshness stamp
+references/assess.md | skill-freshness | freshness stamp
+references/compose.md | line-citation | src/apeGmsh/viewers/ui/mesh_tabs.py:122
+references/compose.md | skill-freshness | freshness stamp
+references/fem-broker.md | fence-name | `apeSees` has no attribute `node`
+references/fem-broker.md | fence-parse | python fence does not parse: Invalid star expression; fence opens `FEMData.to_h5(self, path, *, model_name: str = "", apegmsh_v`
+references/fem-broker.md | fence-parse | python fence does not parse: invalid syntax; fence opens `g.mesh.queries.get_fem_data(dim: int | None = None, *, remov`
+references/fem-broker.md | line-citation | FEMData.py:1064
+references/fem-broker.md | line-citation | FEMData.py:1491
+references/fem-broker.md | line-citation | FEMData.py:1508
+references/fem-broker.md | line-citation | FEMData.py:1534
+references/fem-broker.md | line-citation | FEMData.py:1547
+references/fem-broker.md | line-citation | FEMData.py:1547
+references/fem-broker.md | line-citation | FEMData.py:1603
+references/fem-broker.md | line-citation | FEMData.py:365
+references/fem-broker.md | line-citation | _core.py:141
+references/fem-broker.md | line-citation | _core.py:251
+references/fem-broker.md | line-citation | _core.py:84
+references/fem-broker.md | line-citation | src/apeGmsh/mesh/_mesh_queries.py:122
+references/fem-broker.md | line-citation | src/apeGmsh/opensees/emitter/h5.py:414
+references/fem-broker.md | skill-freshness | freshness stamp
+references/gotchas.md | skill-freshness | freshness stamp
+references/interop.md | fence-parse | python fence does not parse: invalid syntax; fence opens `import_structural_model(g, model: StructuralModel, *, self_m`
+references/interop.md | line-citation | etabs_import.py:297
+references/interop.md | line-citation | etabs_import.py:508
+references/interop.md | line-citation | interop/solve.py:46
+references/interop.md | line-citation | solve.py:30
+references/interop.md | line-citation | src/apeGmsh/interop/etabs_import.py:134
+references/interop.md | skill-freshness | freshness stamp
+references/ladruno.md | fence-parse | python fence does not parse: invalid character '…' (U+2026); fence opens `ops.element.BezierTri6(pg=…, thickness=…, material=m, plane_`
+references/ladruno.md | fence-parse | python fence does not parse: invalid character '…' (U+2026); fence opens `ops.element.LadrunoBrick(pg=…, material=m,`
+references/ladruno.md | skill-freshness | freshness stamp
+references/opensees-bridge.md | fence-parse | python fence does not parse: positional argument follows keyword argument; fence opens `ops.model(ndm=3, ndf=3)                 # envelope; solid no`
+references/opensees-bridge.md | line-citation | apesees.py:3434
+references/opensees-bridge.md | line-citation | opensees/emitter/base.py:153
+references/opensees-bridge.md | line-citation | opensees/emitter/h5.py:414
+references/opensees-bridge.md | line-citation | src/apeGmsh/opensees/_internal/ns/fault.py:110
+references/opensees-bridge.md | line-citation | src/apeGmsh/opensees/apesees.py:6091
+references/opensees-bridge.md | line-citation | src/apeGmsh/opensees/pattern/pattern.py:338
+references/opensees-bridge.md | skill-freshness | freshness stamp
+references/rebar.md | fence-parse | python fence does not parse: Invalid star expression; fence opens `g.rebar.bar(points=None, *, db, material, role="longitudinal`
+references/rebar.md | fence-parse | python fence does not parse: Invalid star expression; fence opens `g.rebar.column(*, section, height, cover, longitudinal: BarL`
+references/rebar.md | fence-parse | python fence does not parse: invalid syntax; fence opens `g.rebar.place(cage: Cage, into: str, *, coupling="conformal"`
+references/rebar.md | fence-parse | python fence does not parse: invalid syntax; fence opens `g.rebar.use_standard(standard) -> None       # src/apeGmsh/r`
+references/rebar.md | line-citation | src/apeGmsh/_core.py:96
+references/rebar.md | line-citation | src/apeGmsh/rebar/_composite.py:89
+references/rebar.md | skill-freshness | freshness stamp
+references/results.md | fence-parse | python fence does not parse: Invalid star expression; fence opens `# Construct (model= / model_h5= REQUIRED — except from_ladru`
+references/results.md | fence-parse | python fence does not parse: expected ':'; fence opens `def show_web(self, *, stage=None, show=True, controls=True,`
+references/results.md | fence-parse | python fence does not parse: expected ':'; fence opens `def viewer(self, *, blocking=None, title=None,`
+references/results.md | line-citation | Results.py:1559
+references/results.md | line-citation | Results.py:1608
+references/results.md | line-citation | _composites.py:883
+references/results.md | line-citation | _plot.py:159
+references/results.md | line-citation | src/apeGmsh/opensees/_internal/lineage.py:105
+references/results.md | line-citation | src/apeGmsh/opensees/_internal/lineage.py:117
+references/results.md | line-citation | src/apeGmsh/results/Results.py:1544
+references/results.md | skill-freshness | freshness stamp
+references/section-properties.md | skill-freshness | freshness stamp
+references/workflows.md | skill-freshness | freshness stamp

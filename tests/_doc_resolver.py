@@ -269,6 +269,12 @@ class _Page:
             self._eval(target.value)
 
     # -- entry points
+    def seed(self, bindings: dict[str, _T]) -> None:
+        """Bind names the page uses without binding them (the skill's
+        ``g`` / ``fem`` / ``ops`` / ``results``). A later page binding wins."""
+        for name, t in bindings.items():
+            self._bind(name, t)
+
     def fence(self, body: str, first_line: int) -> None:
         self._line = first_line
         try:
