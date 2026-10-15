@@ -28,9 +28,9 @@ Kind                ``.ladruno``            MPCO
 =================== ======================= ===============================
 Fibre values        pass                    pass
 Fibre geometry      pass                    pass
-Layer values,       xfail #1992 (empty      pass
+Layer values,       xfail #1995 (empty      pass
 thickness           slab)
-Layer quaternion    xfail #1992; the file   xfail #1993 (identity, not
+Layer quaternion    xfail #1995; the file   xfail #1996 (identity, not
                     stores no shell axes    the shell frame)
 =================== ======================= ===============================
 
@@ -75,11 +75,11 @@ N_PLATE = 5
 TILT_DEG = 30.0
 
 B_LAD_LAYERS = (
-    "#1992: the .ladruno reader returns an empty slab for a layered shell "
+    "#1995: the .ladruno reader returns an empty slab for a layered shell "
     "(NUM_COMP 5 fibre blocks dropped)"
 )
 B_MPCO_QUAT = (
-    "#1993: the MPCO reader fills an identity quaternion when the file has "
+    "#1996: the MPCO reader fills an identity quaternion when the file has "
     "no shell LOCAL_AXES"
 )
 
