@@ -60,7 +60,7 @@ from ...opensees._response_catalog import (
     unflatten,
     unflatten_nodal,
 )
-from ...opensees._recorder_translate import stress_zz_keyword
+from ...opensees._recorder_translate import mask_absent_rotations, stress_zz_keyword
 from ..schema._native import ELEMENT_INDEX_SPACE_FEM
 from ..spec._emit import (
     _DEFERRED_CATEGORIES,
@@ -321,6 +321,7 @@ class RecorderTranscoder:
                     continue
                 components[canonical] = per_dof[comp_dof]   # (T, N_record)
 
+        mask_absent_rotations(components, node_ids, self._model_h5_src, self._fem)
         return _NodeRecordPayload(
             record_name=rec.name,
             node_ids=node_ids,
