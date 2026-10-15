@@ -22,15 +22,28 @@ from __future__ import annotations
 
 import hashlib
 import os
+import warnings
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Iterable
 
 if TYPE_CHECKING:
+    from ..spec._emit import LogicalRecorder
     from ..spec._resolved import ResolvedRecorderSpec
 
 
 _DEFAULT_CACHE_DIR_NAME = "results"
 _ENV_OVERRIDE = "APEGMSH_RESULTS_DIR"
+
+#: Mirrors the message of ``spec/_emit.py::_warn_n_steps_unsupported``
+#: (``n_steps=`` without ``dt=``: "... Emitting an every-step recorder.").
+#: ``warnings.filterwarnings`` matches it against the start of the
+#: message. ``tests/test_results_cadence_warning_routes.py`` fires the
+#: real warning and asserts this matches, so rewording the emitter fails
+#: a test instead of silently bringing the repeats back.
+_N_STEPS_CADENCE_WARNING_RE = (
+    r"Record .*: ``n_steps=\d+`` has no equivalent on a classic "
+    r"recorder.*Emitting an every-step recorder"
+)
 
 
 def resolve_cache_root(explicit: str | Path | None = None) -> Path:
@@ -135,14 +148,38 @@ def list_source_files(
     ``stage_id`` matches the prefix used by live recorder emission;
     pass it when listing files for a specific stage.
     """
-    from ..spec._emit import emit_logical, _DEFERRED_CATEGORIES
+    from ..spec._emit import _DEFERRED_CATEGORIES
     files: list[Path] = []
     for rec in spec.records:
         if rec.category in _DEFERRED_CATEGORIES:
             continue
-        for lr in emit_logical(
+        for lr in quiet_emit_logical(
             rec, output_dir=str(output_dir),
             file_format=file_format, stage_id=stage_id,
         ):
             files.append(Path(lr.file_path))
     return files
+
+
+def quiet_emit_logical(*args: Any, **kwargs: Any) -> "list[LogicalRecorder]":
+    """``emit_logical(*args, **kwargs)`` without the ``n_steps=`` cadence warning.
+
+    For callers that translate a record without emitting a recorder:
+    the read path (this module, ``transcoders/_recorder.py``) and the
+    pre-translation in ``LiveRecorders.__enter__``. The emitting routes
+    (``to_tcl_commands``, ``to_python_commands``, ``begin_stage``) call
+    ``emit_logical`` and warn once per record. Only that one
+    ``UserWarning`` is filtered; every other warning passes.
+
+    ``warnings.catch_warnings`` swaps the process-global filter list, so
+    this is not thread-safe: a warning raised on another thread while the
+    filter is in place is filtered by it too. No apeGmsh thread reaches
+    the callers above.
+    """
+    from ..spec._emit import emit_logical
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            "ignore", message=_N_STEPS_CADENCE_WARNING_RE,
+            category=UserWarning,
+        )
+        return list(emit_logical(*args, **kwargs))
