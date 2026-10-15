@@ -31,9 +31,21 @@ parent token. Known META symbols map to apeGmsh suffixes via
 symbols fall back to indexed suffixes (``damage_0``, ``damage_1``).
 A single-segment bucket maps to the bare parent canonical
 (``damage`` / ``equivalent_plastic_strain``).
+
+A material that tags no ``ResponseType`` gets MPCO's generic labels
+``C1..Cn`` (MPCORecorder.cpp ``workaroundForSizeInconsistency``), so its
+META carries no meaning. LadrunoConcrete3D's ``damage`` is one: a bare
+``MaterialResponse(this, 5, Vector(2))`` filled ``omegaT, omegaC`` by
+``getResponse`` case 5 (LadrunoConcrete3D.cpp ``setResponse`` /
+``getResponse``). Such a bucket is named by the RESPONSE_CATALOG row for
+its class under the parent token when the widths match, the same contract
+the live capture reads (``DAMAGE_TC``, tension first). Otherwise it keeps
+indexed names, and a request for a semantic name (``damage_tension``) is
+refused, naming the bucket, rather than answered with an empty slab.
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -79,6 +91,29 @@ _PLASTIC_STRAIN_VOIGT: dict[int, tuple[str, ...]] = {
 }
 
 
+# MPCO's labels for a response the material did not name: ``C1..Cn``,
+# restarted per Gauss-point block (MPCORecorder.cpp
+# ``workaroundForSizeInconsistency``).
+_GENERIC_SYMBOL_RE = re.compile(r"^C(\d+)$")
+
+# The semantic suffixes a META symbol can name (``tension`` /
+# ``compression``). A request carrying one can only be answered by a
+# bucket whose columns have that meaning.
+_SEMANTIC_SUFFIXES: frozenset[str] = frozenset(
+    MPCO_MATERIAL_SYMBOL_TO_CANONICAL_SUFFIX.values()
+)
+
+
+class MaterialStateComponentRefused(LookupError):
+    """A material-state read this bucket cannot answer.
+
+    Raised instead of returning an empty slab when the requested name has
+    no defined meaning for the bucket's columns. It is a ``LookupError``,
+    not a ``ValueError``: the reader skips a malformed bucket on
+    ``ValueError``, and a refusal must reach the caller.
+    """
+
+
 def parent_token_for_canonical(canonical: str) -> str | None:
     """Recover the parent material-state token from a canonical name.
 
@@ -116,28 +151,10 @@ def _normalise_symbol(symbol: str, *, fallback_index: int) -> str:
     )
 
 
-def parse_meta_components(
-    components_blob: bytes | str,
-    *,
-    parent_token: str,
-    bracket_key: str,
-) -> tuple[tuple[str, ...], int]:
-    """Parse ``META/COMPONENTS`` for a material-state bucket.
-
-    The blob is one ``;``-separated string per IP, each segment
-    structured as ``"<descriptor_path>.<comp1>,<comp2>,..."``. Every
-    IP must list the same components for the bucket to have a
-    well-defined per-GP shape (v1 invariant; heterogeneous IPs raise).
-
-    Returns
-    -------
-    (component_layout, n_components_per_gp)
-        ``component_layout`` is the apeGmsh canonical names in the
-        order they appear in the file (e.g.
-        ``("damage_tension", "damage_compression")`` for a ``d+,d-``
-        bucket on token=``damage``). For a single-component
-        bucket emitting just one symbol the bare parent canonical
-        is returned (``("damage",)``).
+def _meta_symbols(
+    components_blob: bytes | str, *, bracket_key: str,
+) -> tuple[str, ...]:
+    """The per-GP META symbols of a material-state bucket, homogeneous across IPs.
 
     Raises
     ------
@@ -197,6 +214,38 @@ def parse_meta_components(
                 f"homogeneous component layout per bucket."
             )
 
+    return first
+
+
+def parse_meta_components(
+    components_blob: bytes | str,
+    *,
+    parent_token: str,
+    bracket_key: str,
+) -> tuple[tuple[str, ...], int]:
+    """Parse ``META/COMPONENTS`` for a material-state bucket.
+
+    The blob is one ``;``-separated string per IP, each segment
+    structured as ``"<descriptor_path>.<comp1>,<comp2>,..."``. Every
+    IP must list the same components for the bucket to have a
+    well-defined per-GP shape (v1 invariant; heterogeneous IPs raise).
+
+    Returns
+    -------
+    (component_layout, n_components_per_gp)
+        ``component_layout`` is the apeGmsh canonical names in the
+        order they appear in the file (e.g.
+        ``("damage_tension", "damage_compression")`` for a ``d+,d-``
+        bucket on token=``damage``). For a single-component
+        bucket emitting just one symbol the bare parent canonical
+        is returned (``("damage",)``).
+
+    Raises
+    ------
+    ValueError
+        If META is empty, malformed, or heterogeneous across IPs.
+    """
+    first = _meta_symbols(components_blob, bracket_key=bracket_key)
     if parent_token == "plastic_strain":
         # Tensor token: components are POSITIONAL in the material's
         # Voigt order (META symbols are generic for material responses),
@@ -327,6 +376,39 @@ def discover_material_state_buckets(
 # Layout resolution + slab read
 # =====================================================================
 
+def _is_generic(symbols: tuple[str, ...]) -> bool:
+    """Whether META holds MPCO's unnamed labels ``C1..Cn``, in order."""
+    return all(
+        (m := _GENERIC_SYMBOL_RE.match(sym)) is not None
+        and int(m.group(1)) == i + 1
+        for i, sym in enumerate(symbols)
+    )
+
+
+def _catalog_names_for_generic(
+    bucket: _MaterialBucket, n_per_gp: int,
+) -> tuple[str, ...] | None:
+    """Name an unnamed bucket's per-GP columns from RESPONSE_CATALOG.
+
+    The catalog row for the bucket's class under its parent token
+    declares the per-GP order the live capture reads (``damage`` ->
+    ``DAMAGE_TC``, tension first). It names the columns only when its
+    GP count and per-GP width are the bucket's; otherwise ``None``, and
+    the bucket keeps its indexed names.
+    """
+    row = catalog_layout(
+        bucket.elem_key, bucket.parent_token,
+        where=f"{bucket.mpco_group_name}/{bucket.bracket_key}",
+    )
+    if row is None:
+        return None
+    if (row.n_components_per_gp != n_per_gp
+            or row.n_gauss_points
+            != bucket.catalog_gp_layout.n_gauss_points):
+        return None
+    return tuple(row.component_layout)
+
+
 def resolve_material_state_layout(
     bucket_grp: "h5py.Group",
     bucket: _MaterialBucket,
@@ -336,6 +418,8 @@ def resolve_material_state_layout(
     Validates META block structure (one block per GP, equal
     NUM_COMPONENTS) and cross-checks the bucket's
     ``NUM_COLUMNS`` attribute against ``n_GP × n_components_per_gp``.
+    Unnamed ``C1..Cn`` columns take the catalog's names for the class
+    when it declares a layout of that width (see the module docstring).
     """
     meta = bucket_grp["META"] if "META" in bucket_grp else None
     if meta is None or "COMPONENTS" not in meta:
@@ -367,6 +451,13 @@ def resolve_material_state_layout(
             f"{expected_columns}."
         )
 
+    if n_per_gp > 1 and _is_generic(
+        _meta_symbols(components_blob, bracket_key=bucket.bracket_key),
+    ):
+        named = _catalog_names_for_generic(bucket, n_per_gp)
+        if named is not None:
+            component_layout = named
+
     return ResponseLayout(
         n_gauss_points=n_gp,
         natural_coords=bucket.catalog_gp_layout.natural_coords,
@@ -375,6 +466,32 @@ def resolve_material_state_layout(
         component_layout=component_layout,
         class_tag=bucket.catalog_gp_layout.class_tag,
     )
+
+
+def _refuse_undefined(
+    bucket: _MaterialBucket, layout: ResponseLayout, canonical: str,
+) -> None:
+    """Raise when ``canonical`` asks this bucket for a meaning it cannot give.
+
+    A semantic name (``damage_tension``) against columns that kept indexed
+    names (``damage_0``, ``damage_1``): the material named nothing and the
+    catalog declares no layout for the class, so which column is tension is
+    unknown. An empty answer there is indistinguishable from "not recorded".
+    """
+    parent = bucket.parent_token
+    suffix = canonical[len(parent) + 1:] if canonical != parent else ""
+    names = layout.component_layout
+    if (suffix in _SEMANTIC_SUFFIXES and len(names) > 1
+            and names == tuple(f"{parent}_{i}" for i in range(len(names)))):
+        raise MaterialStateComponentRefused(
+            f"MPCO material-state bucket "
+            f"{bucket.mpco_group_name}/{bucket.bracket_key}: "
+            f"{canonical!r} is not defined for its columns. The material "
+            f"wrote unnamed labels, and RESPONSE_CATALOG declares no "
+            f"{parent!r} layout of width {len(names)} for class "
+            f"{bucket.elem_key.class_name!r}, so its columns read "
+            f"positionally as {list(names)}."
+        )
 
 
 def read_material_state_bucket_slab(
@@ -394,13 +511,14 @@ def read_material_state_bucket_slab(
         Returns ``None`` when the bucket has no recorded steps, when
         no elements survive filtering, or when the requested
         canonical is not present in this bucket's META layout.
+
+    Raises
+    ------
+    MaterialStateComponentRefused
+        When the requested name has no defined meaning for the selected
+        columns (:func:`_refuse_undefined`).
     """
     layout = resolve_material_state_layout(bucket_grp, bucket)
-    if canonical_component not in layout.component_layout:
-        return None
-    comp_idx = layout.component_layout.index(canonical_component)
-    n_gp = layout.n_gauss_points
-    n_per_gp = layout.n_components_per_gp
 
     all_ids = np.asarray(bucket_grp["ID"][...]).flatten().astype(np.int64)
     if element_ids is None:
@@ -413,6 +531,13 @@ def read_material_state_bucket_slab(
         sel_ids = all_ids[sel_rows]
         if sel_rows.size == 0:
             return None
+
+    if canonical_component not in layout.component_layout:
+        _refuse_undefined(bucket, layout, canonical_component)
+        return None
+    comp_idx = layout.component_layout.index(canonical_component)
+    n_gp = layout.n_gauss_points
+    n_per_gp = layout.n_components_per_gp
 
     data_grp = bucket_grp["DATA"]
     step_keys = sorted(
@@ -459,6 +584,7 @@ def material_state_canonicals_in_bucket(
 
 
 __all__ = [
+    "MaterialStateComponentRefused",
     "discover_material_state_buckets",
     "material_state_canonicals_in_bucket",
     "parent_token_for_canonical",

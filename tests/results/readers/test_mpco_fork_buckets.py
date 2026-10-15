@@ -346,3 +346,48 @@ def test_element_only_file_with_two_cadences_refuses(tmp_path: Path) -> None:
                       labels=LABELS_3D, ids=[7, 9], n_steps=1)
     with MPCOReader(path) as r, pytest.raises(ValueError, match="step-count"):
         r.stages()
+
+
+# LadrunoConcrete3D answers ``damage`` with a bare
+# ``MaterialResponse(this, 5, Vector(2))`` and tags no ResponseType
+# (LadrunoConcrete3D.cpp ``setResponse``); ``getResponse`` case 5 fills
+# ``v(0) = omegaT; v(1) = omegaC``. MPCO then labels each GP block ``C1,C2``
+# (MPCORecorder.cpp ``workaroundForSizeInconsistency``), which the reader
+# used to name ``damage_0``/``damage_1``: ``damage_tension`` read empty (#2026).
+def test_unnamed_damage_bucket_reads_tension_first(tmp_path: Path) -> None:
+    fam = FAMILIES[2]
+    assert fam.cls == "LadrunoBrick"
+    ids = [7, 9]
+    path = tmp_path / "cdpm2.mpco"
+    with _file(path, nodal=True) as f:
+        _gauss_bucket(f, "material.damage", fam.key, n_gp=8, labels="C1,C2",
+                      ids=ids)
+    with MPCOReader(path) as r:
+        (stage,) = r.stages()
+        comps = r.available_components(stage.id, ResultLevel.GAUSS)
+        assert {"damage_tension", "damage_compression"} <= set(comps)
+        assert "damage_0" not in comps
+        for k, comp in enumerate(("damage_tension", "damage_compression")):
+            slab = r.read_gauss(stage.id, comp)
+            _check(slab, k, ids, 8)          # column k of each GP block
+            _check_coords(slab, fam, len(ids))
+
+
+def test_unnamed_damage_without_a_catalog_row_refuses(tmp_path: Path) -> None:
+    """LadrunoBrick20 has no catalog ``damage`` row: the order is unknown."""
+    key = "33018-LadrunoBrick20[0:0:0]"
+    path = tmp_path / "cdpm2_h20.mpco"
+    with _file(path, nodal=True) as f:
+        _gauss_bucket(f, "material.damage", key, n_gp=27, labels="C1,C2",
+                      ids=[7])
+    with MPCOReader(path) as r:
+        (stage,) = r.stages()
+        with pytest.raises(LookupError) as err:
+            r.read_gauss(stage.id, "damage_tension")
+        assert f"material.damage/{key}" in str(err.value)
+        # The positional names still read, and a filter that leaves the
+        # bucket out is not refused.
+        _check(r.read_gauss(stage.id, "damage_1"), 1, [7], 27)
+        empty = r.read_gauss(stage.id, "damage_tension",
+                             element_ids=np.array([99]))
+        assert np.asarray(empty.values).shape[1] == 0
