@@ -48,6 +48,8 @@ from apeGmsh.results import Results
 from tests.test_results_recorder_tag_parity import (
     SF_KINDS,
     OutsidePairingReturnedRows,
+    _drop_pairing,
+    _rotate_pairing,
     _sf_assert_filter_is_exact,
     _sf_assert_ids_and_values,
     _sf_assert_outside_returns_none,
@@ -233,10 +235,7 @@ def test_oracle_rejects_a_read_without_the_pairing(
     """With ``element_meta`` deleted from a copy of the model archive, ids
     pass through untranslated: the read warns that it has no pairing, and
     the id assertion must fail."""
-    def drop(g: Any) -> None:
-        del g["element_meta"]
-
-    res = _mutated_read(solved, tmp_path, route, drop)
+    res = _mutated_read(solved, tmp_path, route, _drop_pairing)
     s = solved
     with pytest.warns(UserWarning, match="no fem_eid<->ops-tag pairing"), \
             pytest.raises(AssertionError, match=f"{route} {kind} .* ids"):
@@ -251,12 +250,7 @@ def test_oracle_rejects_a_permuted_pairing(
     """With each family's ``fem_eids`` rotated by one in a copy of the
     model archive, every id is still a group member, so the id assertion
     passes and the value assertion must fail."""
-    def rotate(g: Any) -> None:
-        for grp in g["element_meta"].values():
-            fem = grp["fem_eids"][...]
-            grp["fem_eids"][...] = np.roll(fem, 1)
-
-    res = _mutated_read(solved, tmp_path, route, rotate)
+    res = _mutated_read(solved, tmp_path, route, _rotate_pairing)
     s = solved
     with pytest.raises(AssertionError, match="of FEM element"):
         _sf_assert_ids_and_values(res, kind, s["groups"], s["live"],

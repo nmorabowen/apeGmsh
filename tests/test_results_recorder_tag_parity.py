@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Any
 
 import gmsh
+import h5py
 import numpy as np
 import pytest
 
@@ -640,20 +641,39 @@ def _sf_assert_outside_returns_none(res: Any, kind: str,
             f"returned rows labelled {sorted(got)}")
 
 
-@pytest.fixture(scope="module")
-def solid_frame_out(tmp_path_factory: pytest.TempPathFactory) -> dict:
+def _keep_pairing(opensees: Any) -> None:
+    """The model archive as the bridge wrote it."""
+
+
+def _drop_pairing(opensees: Any) -> None:
+    """Mutation: the archive carries no element pairing."""
+    del opensees["element_meta"]
+
+
+def _rotate_pairing(opensees: Any) -> None:
+    """Mutation: each family's ``fem_eids`` rotated by one, so every id is
+    still a member of its group but paired with a neighbour's tag."""
+    for grp in opensees["element_meta"].values():
+        grp["fem_eids"][...] = np.roll(grp["fem_eids"][...], 1)
+
+
+def _solid_frame_out_run(tmp: Path, mutate: Any) -> dict:
     """The solid + frame model on the ``.out`` route: every kind recorded
     live for one step through ``spec.emit_recorders(..., model=)`` and
-    read back through ``Results.from_recorders(..., model=)``."""
-    pytest.importorskip("openseespy.opensees")
+    read back through ``Results.from_recorders(..., model=)``, both given
+    the model archive after ``mutate``."""
+    from apeGmsh.opensees.opensees_model import OpenSeesModel
     from apeGmsh.results import Results
 
-    tmp = tmp_path_factory.mktemp("g18_out")
     fem = _solid_frame_fem()
     ops = _solid_frame_bridge(fem)
     fem_to_ops = _solve_and_map(ops)
     groups = _sf_groups(fem)
-    model = _model(ops, tmp)
+    path = tmp / "model.h5"
+    ops.h5(str(path))
+    with h5py.File(path, "r+") as f:
+        mutate(f["/opensees"])
+    model = OpenSeesModel.from_h5(str(path))
     records = []
     for kind, (pg, comps, cls) in SF_KINDS.items():
         category = "elements" if kind == "nodal_forces" else kind
@@ -667,6 +687,13 @@ def solid_frame_out(tmp_path_factory: pytest.TempPathFactory) -> dict:
                                  model=model, cache_root=tmp / "cache")
     return dict(res=res, groups=groups, live=live, fem_to_ops=fem_to_ops,
                 outside=_sf_outside(fem, fem_to_ops))
+
+
+@pytest.fixture(scope="module")
+def solid_frame_out(tmp_path_factory: pytest.TempPathFactory) -> dict:
+    pytest.importorskip("openseespy.opensees")
+    return _solid_frame_out_run(tmp_path_factory.mktemp("g18_out"),
+                                _keep_pairing)
 
 
 @pytest.mark.parametrize("kind", list(SF_KINDS))
@@ -694,3 +721,23 @@ def test_solid_frame_id_outside_the_pairing_returns_none(
 ) -> None:
     _sf_assert_outside_returns_none(solid_frame_out["res"], kind,
                                     solid_frame_out["outside"])
+
+
+def test_solid_frame_emit_refuses_a_model_without_the_pairing(
+    tmp_path: Path,
+) -> None:
+    """Mutation: with no pairing in the archive the ``.out`` route cannot
+    translate, and it refuses at emit instead of recording FEM ids as
+    OpenSees tags."""
+    with pytest.raises(ValueError, match="has no OpenSees element for"):
+        _solid_frame_out_run(tmp_path, _drop_pairing)
+
+
+def test_solid_frame_oracle_rejects_a_permuted_pairing(tmp_path: Path) -> None:
+    """Mutation: a rotated pairing records each FEM id's neighbour. Every
+    id is still in its group, so the value assertion must fail."""
+    s = _solid_frame_out_run(tmp_path, _rotate_pairing)
+    for kind in SF_KINDS:
+        with pytest.raises(AssertionError, match="of FEM element"):
+            _sf_assert_ids_and_values(s["res"], kind, s["groups"], s["live"],
+                                      s["fem_to_ops"], ".out")
