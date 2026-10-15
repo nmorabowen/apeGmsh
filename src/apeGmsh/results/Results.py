@@ -73,7 +73,7 @@ bodies that need it. This keeps the import-DAG polarity tested by
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Optional, Sequence
+from typing import TYPE_CHECKING, Any, Iterable, Optional
 
 from numpy import ndarray
 
@@ -386,12 +386,12 @@ class Results:
         *,
         fem: "FEMData",
         cache_root: str | Path | None = None,
-        stage_name: str = "analysis",
-        stage_kind: str = "transient",
+        stage_name: str | None = None,
+        stage_kind: str | None = None,
         file_format: str = "out",
         stage_id: str | None = None,
         model: "Optional[OpenSeesModel]" = None,
-        stages: "Optional[Sequence[Any]]" = None,
+        stages: "Optional[Iterable[Any]]" = None,
     ) -> "Results":
         """Open the result of an OpenSees run driven by Tcl/Py recorders.
 
@@ -414,7 +414,8 @@ class Results:
         :meth:`ResolvedRecorderSpec.emit_recorders` together with
         ``begin_stage(stage_id, ...)``. When set, only files prefixed
         with ``<stage_id>__`` are read; ``stage_name`` defaults to
-        ``stage_id`` if not overridden. ``None`` (default) keeps the
+        ``stage_id``, else ``"analysis"``, and ``stage_kind`` to
+        ``"transient"``. ``None`` (default) keeps the
         legacy flat-naming used by Tcl/Py exports. ``stages=live.stages``
         reads every stage of a :meth:`ResolvedRecorderSpec.emit_recorders`
         run into one file, one stage each with its name and kind; it
@@ -444,8 +445,9 @@ class Results:
         # default, mirror stage_id so the resulting Results stage is
         # named meaningfully (otherwise everything ends up as
         # "analysis" regardless of which stage the user loaded).
-        if stage_id is not None and stage_name == "analysis":
+        if stage_id is not None and stage_name is None:
             stage_name = stage_id
+        stages = None if stages is None else tuple(stages)   # read a generator once
         plan = RecorderTranscoder.stage_plan(stages, stage_name, stage_kind, stage_id)
 
         out_dir = Path(output_dir)

@@ -88,6 +88,8 @@ def test_the_cache_key_covers_every_stage_kind(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize("kw", [
     {"stage_id": "gravity"}, {"stage_name": "x"}, {"stage_kind": "static"},
+    # Explicit values equal to the single-stage defaults are refused too.
+    {"stage_name": "analysis"}, {"stage_kind": "transient"},
 ])
 def test_stages_excludes_the_single_stage_arguments(
     tmp_path: Path, kw: "dict[str, Any]",
@@ -97,12 +99,88 @@ def test_stages_excludes_the_single_stage_arguments(
         _read(tmp_path / "out", fem, tmp_path / "c", stages=_STAGES, **kw)
 
 
-def test_a_stage_kind_the_file_cannot_hold_is_refused(tmp_path: Path) -> None:
+@pytest.mark.parametrize("kind", ["dynamic", "mode"])
+def test_a_bad_stage_kind_is_refused_before_any_write(tmp_path: Path, kind: str) -> None:
+    """Regression: a bad kind left a partial cache file (the stages before
+    it), and the next call returned that file. Refused twice, nothing cached."""
     fem = _MockFem([1, 2])
     _write_two_stages(tmp_path / "out")
-    bad = (_STAGES[0], SimpleNamespace(name="shake", kind="dynamic"))
-    with pytest.raises(ValueError, match="kind must be one of"):
-        _read(tmp_path / "out", fem, tmp_path / "c", stages=bad)
+    bad = (_STAGES[0], SimpleNamespace(name="shake", kind=kind))
+    for _ in range(2):
+        with pytest.raises(ValueError, match="kinds must be 'static' or 'transient'"):
+            _read(tmp_path / "out", fem, tmp_path / "c", stages=bad)
+    assert not (tmp_path / "c").exists()   # refused before the cache dir is made
+
+
+def test_a_failed_write_leaves_no_cache_entry(tmp_path: Path) -> None:
+    """Regression: the single-stage path checks its kind only in the writer,
+    after the target is open; the failed file was returned by the next call.
+    The transcoder now writes a sibling and renames it on success."""
+    fem = _MockFem([1, 2])
+    _write_two_stages(tmp_path / "out")
+    for _ in range(2):
+        with pytest.raises(ValueError, match="kind must be one of"):
+            _read(tmp_path / "out", fem, tmp_path / "c",
+                  stage_id="gravity", stage_kind="dynamic")
+    assert [p for p in (tmp_path / "c").glob("*.h5")
+            if not p.name.endswith(".model.h5")] == []
+
+
+def _cached(cache: Path) -> "set[str]":
+    return {p.name for p in cache.glob("*.h5") if not p.name.endswith(".model.h5")}
+
+
+def test_a_rewritten_stage_file_is_read_again(tmp_path: Path) -> None:
+    """The key covers each stage's own files: rewriting only the second
+    stage's file gives a new cache entry with the new values."""
+    fem = _MockFem([1, 2])
+    out, cache = tmp_path / "out", tmp_path / "c"
+    _write_two_stages(out)
+    with _read(out, fem, cache, stages=_STAGES) as r:
+        last = r.stage("shake").nodes.get(component="displacement_x").values[-1]
+    np.testing.assert_allclose(last, [-12.0, -22.0])
+    first = _cached(cache)
+    _write_synthetic_node_out(
+        out / "shake__r_disp.out", time=[0.01, 0.02, 0.03, 0.04], node_ids=[1, 2],
+        dofs=[1], value_fn=lambda k, nid, dof: 900.0 + nid + k)
+    with _read(out, fem, cache, stages=_STAGES) as r:
+        shake = r.stage("shake").nodes.get(component="displacement_x")
+        grav = r.stage("gravity").nodes.get(component="displacement_x")
+    np.testing.assert_allclose(shake.values[-1], [904.0, 905.0])
+    np.testing.assert_allclose(grav.values[-1], [2.0, 3.0])
+    assert len(first) == 1 and len(_cached(cache)) == 2 and first < _cached(cache)
+
+
+def test_a_generator_of_stages_is_read_once(tmp_path: Path) -> None:
+    fem = _MockFem([1, 2])
+    _write_two_stages(tmp_path / "out")
+    with _read(tmp_path / "out", fem, tmp_path / "c",
+               stages=(s for s in _STAGES)) as r:
+        assert [s.name for s in r.stages] == ["gravity", "shake"]
+
+
+def test_fibers_warn_before_a_cadence_mismatch_raises(tmp_path: Path) -> None:
+    """The order on main: the fiber/layer skip warns, then the step-count
+    mismatch between two records raises."""
+    fem = _MockFem([1, 2])
+    out = tmp_path / "out"
+    out.mkdir()
+    spec = ResolvedRecorderSpec(fem_snapshot_id=fem.snapshot_id, records=(
+        ResolvedRecorderRecord(category="nodes", name="a", components=("displacement_x",),
+                               dt=None, n_steps=None, node_ids=np.array([1])),
+        ResolvedRecorderRecord(category="nodes", name="b", components=("displacement_x",),
+                               dt=None, n_steps=None, node_ids=np.array([2])),
+        ResolvedRecorderRecord(category="fibers", name="f", components=("fiber_stress",),
+                               dt=None, n_steps=None, element_ids=np.array([1])),
+    ))
+    for name, time in (("a", [0.1, 0.2]), ("b", [0.1, 0.2, 0.3])):
+        _write_synthetic_node_out(out / f"{name}_disp.out", time=time,
+                                  node_ids=[int(name == "b") + 1], dofs=[1],
+                                  value_fn=lambda k, nid, dof: 0.0)
+    with pytest.warns(UserWarning, match="cannot transcode fiber/layer"):
+        with pytest.raises(ValueError, match="cadences must match within one stage"):
+            RecorderTranscoder(spec, out, tmp_path / "t.h5", fem).run()
+    assert not (tmp_path / "t.h5").exists()
 
 
 @pytest.mark.parametrize("stages, match", [

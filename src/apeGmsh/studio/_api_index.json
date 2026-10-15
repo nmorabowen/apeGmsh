@@ -422,7 +422,7 @@
     },
     "Results.from_recorders": {
       "doc": "Open the result of an OpenSees run driven by Tcl/Py recorders.",
-      "signature": "from_recorders(spec, output_dir: 'str | Path', *, fem: \"'FEMData'\", cache_root: 'str | Path | None' = None, stage_name: 'str' = 'analysis', stage_kind: 'str' = 'transient', file_format: 'str' = 'out', stage_id: 'str | None' = None, model: \"'Optional[OpenSeesModel]'\" = None, stages: \"'Optional[Sequence[Any]]'\" = None) -> \"'Results'\"",
+      "signature": "from_recorders(spec, output_dir: 'str | Path', *, fem: \"'FEMData'\", cache_root: 'str | Path | None' = None, stage_name: 'str | None' = None, stage_kind: 'str | None' = None, file_format: 'str' = 'out', stage_id: 'str | None' = None, model: \"'Optional[OpenSeesModel]'\" = None, stages: \"'Optional[Iterable[Any]]'\" = None) -> \"'Results'\"",
       "skill": "references/results.md",
       "symbol": "Results.from_recorders"
     },
