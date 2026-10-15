@@ -651,3 +651,110 @@ def test_domain_capture_skips_listed_shell_under_linear_or_unknown(
     assert _gauss_components(path, fem) == [], (
         "a skipped class must leave no slab behind"
     )
+
+
+# =====================================================================
+# #2001 — the bridge emit warns iff the recorded values are stale
+# =====================================================================
+#
+# The same uniaxial square, built through the bridge and run live with a
+# bridge-emitted ``.out`` Element recorder. The bridge emits two of the
+# listed classes (ShellMITC4, ShellDKGQ). Under Linear the emit warns and
+# the file holds the stale values PR #2000 pinned; under Newton the emit
+# is silent (run this with ``-W error::UserWarning``) and the file holds
+# N11 = 2·P·λ. The warning on the MPCO and .ladruno routes is the same
+# emit-time check, covered per route in
+# ``tests/opensees/unit/test_stale_shell_probe_emit_warning.py``.
+
+def _bridge_uniaxial(shell_class: str, algorithm: str, out_file: Path):
+    from apeGmsh.opensees import apeSees
+    from tests.opensees.fixtures.fem_stub import (
+        FEMStub,
+        _ElementGroupView,
+        _ElementsStub,
+        _NodesStub,
+    )
+
+    fem = FEMStub(
+        nodes=_NodesStub(
+            ids=[1, 2, 3, 4],
+            coords=[tuple(float(v) for v in xyz) for xyz in _SHELL_COORDS],
+            node_pgs={"Pin": [1], "Roll": [4], "Edge": [2, 3]},
+        ),
+        elements=_ElementsStub(elem_pgs={
+            "Wall": _ElementGroupView(ids=(1,), connectivity=((1, 2, 3, 4),)),
+        }),
+    )
+    b = apeSees(fem)  # type: ignore[arg-type]
+    b.model(ndm=3, ndf=6)
+    sec = b.section.ElasticMembranePlateSection(E=2.0e10, nu=0.2, h=0.2)
+    getattr(b.element, shell_class)(pg="Wall", section=sec)
+    b.fix(pg="Pin", dofs=(1, 1, 1, 1, 1, 1))
+    b.fix(pg="Edge", dofs=(0, 0, 1, 1, 1, 1))
+    b.fix(pg="Roll", dofs=(1, 0, 1, 1, 1, 1))
+    with b.pattern.Plain(series=b.timeSeries.Linear()) as p:
+        p.load(pg="Edge", forces=(_P_NODE, 0.0, 0.0, 0.0, 0.0, 0.0))
+    b.recorder.Element(
+        file=out_file.as_posix(), response=("stresses",), pg="Wall",
+        precision=17,
+    )
+    b.constraints.Plain()
+    b.numberer.Plain()
+    b.system.FullGeneral()
+    b.test.NormDispIncr(tol=1e-10, max_iter=10)
+    getattr(b.algorithm, algorithm)()
+    b.integrator.LoadControl(dlam=0.5)
+    b.analysis.Static()
+    return b
+
+
+def _run_bridge(b, n_steps: int) -> None:
+    from apeGmsh.opensees.emitter.live import LiveOpsEmitter
+
+    emitter = LiveOpsEmitter(wipe=True)
+    b.build().emit(emitter)
+    for _ in range(n_steps):
+        assert emitter.analyze(steps=1) == 0
+    emitter.ops.wipe()                  # flushes and closes the recorder
+
+
+@pytest.mark.live
+@pytest.mark.parametrize("shell_class", ("ShellMITC4", "ShellDKGQ"))
+def test_bridge_linear_emit_warns_and_the_out_file_is_stale(
+    shell_class: str, tmp_path: Path,
+) -> None:
+    from apeGmsh.opensees._internal.build.validators.shell_probe import (
+        StaleShellProbeWarning,
+    )
+
+    ops.wipe()                          # binds the backend or skips
+    out = tmp_path / "wall.out"
+    b = _bridge_uniaxial(shell_class, "Linear", out)
+    with pytest.warns(StaleShellProbeWarning, match=shell_class) as rec:
+        _run_bridge(b, 2)
+    assert len([w for w in rec
+                if issubclass(w.category, StaleShellProbeWarning)]) == 1
+    got = np.loadtxt(out, ndmin=2)[:, 0]
+    np.testing.assert_allclose(got, [0.0, 0.5 * _N11_FULL], rtol=1e-9)
+
+
+@pytest.mark.live
+@pytest.mark.parametrize("shell_class", ("ShellMITC4", "ShellDKGQ"))
+def test_bridge_newton_emit_is_silent_and_the_out_file_is_correct(
+    shell_class: str, tmp_path: Path,
+) -> None:
+    import warnings
+
+    from apeGmsh.opensees._internal.build.validators.shell_probe import (
+        StaleShellProbeWarning,
+    )
+
+    ops.wipe()
+    out = tmp_path / "wall.out"
+    b = _bridge_uniaxial(shell_class, "Newton", out)
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", StaleShellProbeWarning)
+        _run_bridge(b, 2)
+    got = np.loadtxt(out, ndmin=2)[:, 0]
+    np.testing.assert_allclose(
+        got, np.array([0.5, 1.0]) * _N11_FULL, rtol=1e-9)
