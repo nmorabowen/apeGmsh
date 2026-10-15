@@ -157,7 +157,8 @@ def _returns(fn: object) -> _T | None:
 def _instance_attrs(cls: type) -> dict[str, _T | None]:
     """Attributes an instance gets outside the class body: class
     annotations, a session's ``_COMPOSITES`` table, ``self.<name> = ...``
-    in any method, and dataclass fields."""
+    in any method (typed when the value is a constructor call or an
+    annotated parameter of the enclosing def), and dataclass fields."""
     attrs: dict[str, _T | None] = {}
     for klass in reversed(cls.__mro__):
         if not _ours(klass):
@@ -183,6 +184,17 @@ def _instance_attrs(cls: type) -> dict[str, _T | None]:
                 tree = ast.parse(textwrap.dedent(inspect.getsource(klass)))
         except (OSError, TypeError, SyntaxError):
             continue
+        # The annotated parameters in scope at each node, innermost def
+        # winning (``ast.walk`` is breadth-first, so an inner def comes later),
+        # so that ``self.nodes = nodes`` takes ``nodes: NodeComposite``.
+        params: dict[int, dict[str, ast.expr]] = {}
+        for fn in ast.walk(tree):
+            if isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                a = fn.args
+                anns = {p.arg: p.annotation for p in a.posonlyargs + a.args + a.kwonlyargs
+                        if p.annotation is not None}
+                for sub in ast.walk(fn):
+                    params[id(sub)] = anns
         for node in ast.walk(tree):
             if isinstance(node, ast.Assign):
                 targets, value = node.targets, node.value
@@ -199,6 +211,10 @@ def _instance_attrs(cls: type) -> dict[str, _T | None]:
                             and isinstance(value.func, ast.Name)):
                         c = _class_named(value.func.id, ns)
                         t = _T("inst", c) if c is not None and _ours(c) else None
+                    elif (isinstance(value, ast.Name)
+                            and value.id in params.get(id(node), {})):
+                        ann = ast.unparse(params[id(node)][value.id])
+                        t = _annotation_type(ann, ns)
                     attrs.setdefault(tgt.attr, t)
     if dataclasses.is_dataclass(cls):
         ns = vars(sys.modules[cls.__module__])
@@ -244,6 +260,7 @@ class _Page:
         self.problems: list[str] = []
         self._line = 1
         self._fn: list[str] = []
+        self._seeds: dict[str, _T] = {}
 
     def _flag(self, node: object, msg: str) -> None:
         entry = f"  {self.where}:{self._line + getattr(node, 'lineno', 1) - 1}: {msg}"
@@ -271,9 +288,21 @@ class _Page:
     # -- entry points
     def seed(self, bindings: dict[str, _T]) -> None:
         """Bind names the page uses without binding them (the skill's
-        ``g`` / ``fem`` / ``ops`` / ``results``). A later page binding wins."""
+        ``g`` / ``fem`` / ``ops`` / ``results``). A later page binding to a
+        typed or foreign value wins; an untyped one, see ``_reseed``."""
+        self._seeds.update(bindings)
         for name, t in bindings.items():
             self._bind(name, t)
+
+    def _reseed(self, target: ast.expr, value: ast.expr | None, t: _T | None) -> _T | None:
+        """A seeded name assigned an untyped call keeps its seed: by the page's
+        convention ``fem = FEMData.from_msh(...)`` (unannotated) is still the
+        snapshot. Only a plain ``name = <call>`` re-seeds; a loop, unpacking
+        or ``with`` target never does."""
+        if (t is None and isinstance(target, ast.Name) and isinstance(value, ast.Call)
+                and target.id in self._seeds):
+            return self._seeds[target.id]
+        return t
 
     def fence(self, body: str, first_line: int) -> None:
         self._line = first_line
@@ -319,9 +348,10 @@ class _Page:
         elif isinstance(node, ast.Assign):
             t = self._eval(node.value)
             for target in node.targets:
-                self._assign(target, t)
+                self._assign(target, self._reseed(target, node.value, t))
         elif isinstance(node, ast.AnnAssign):
-            self._assign(node.target, self._eval(node.value))
+            t = self._eval(node.value)
+            self._assign(node.target, self._reseed(node.target, node.value, t))
         elif isinstance(node, (ast.With, ast.AsyncWith)):
             for item in node.items:
                 t = self._enter(self._eval(item.context_expr))

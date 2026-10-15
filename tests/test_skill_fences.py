@@ -44,14 +44,16 @@ are being removed: each gate must flag the defect it exists for.
 """
 from __future__ import annotations
 
+import ast
 import importlib
 import re
+import textwrap
 from collections import Counter
 from pathlib import Path
 
 import pytest
 
-from tests._doc_resolver import _T, _Page, _python_fences
+from tests._doc_resolver import _T, _Page
 
 REPO = Path(__file__).resolve().parent.parent
 SKILL = REPO / "skills" / "apegmsh"
@@ -59,7 +61,7 @@ MIRROR_SKILL_MD = REPO / ".claude" / "skills" / "apegmsh-helper" / "SKILL.md"
 BASELINE_FILE = Path(__file__).with_name("skill_fences_baseline.txt")
 
 #: The number of lines in ``skill_fences_baseline.txt``. It only goes down.
-SKILL_FENCES_BASELINE = 77
+SKILL_FENCES_BASELINE = 97
 
 #: Skill files another chain's open issue owns, left out of the gate and the
 #: baseline so its edits cannot turn this test red. Name -> owning issue.
@@ -85,7 +87,9 @@ DESCRIPTION_MAX = 1024
 SKILL_MD_MAX_LINES = 200
 
 _STAMP = re.compile(r"<!--\s*skill-freshness:")
-_CITATION = re.compile(r"[\w./]+\.py:\d+")
+# A `<file>.py:<line>` citation, or a bare `:<line>` continuing one earlier on
+# the same line (`_model_geometry.py:1147 (add_polyline), :3197 (add_void_sweep)`).
+_CITATION = re.compile(r"(?P<file>[\w./]+\.py):(?P<line>\d+)|(?<![\w./:]):(?P<cont>\d+)")
 _MACHINE_PATH = re.compile(r"[A-Za-z]:[\\/]Users[\\/]", re.IGNORECASE)
 _MD_LINK = re.compile(r"\]\(([^)\s]+)\)")
 _REF_PATH = re.compile(r"`(references/[\w-]+\.md)`")
@@ -109,11 +113,45 @@ def _seeded_page(rel: str) -> _Page:
 
 # ── Fences ──────────────────────────────────────────────────────────
 
+def _uses_a_seed(body: str) -> bool:
+    """``body`` parses and reads an attribute of ``g`` / ``fem`` / ``ops`` / ``results``."""
+    try:
+        tree = ast.parse(body)
+    except SyntaxError:
+        return False
+    return any(isinstance(n, ast.Attribute) and isinstance(n.value, ast.Name)
+               and n.value.id in _SEEDS for n in ast.walk(tree))
+
+
+def gated_fences(text: str) -> list[tuple[int, str]]:
+    """``(first_content_lineno, dedented_body)`` of every fence the gate
+    resolves, in page order: each ``python`` / ``py`` fence, and each untagged
+    fence that is Python by evidence (it parses and uses a seeded receiver), so
+    dropping the language tag cannot take a fence out of the gate."""
+    fences: list[tuple[int, str]] = []
+    lines = text.splitlines()
+    i = 0
+    while i < len(lines):
+        opener = lines[i].strip()
+        if not opener.startswith("```"):
+            i += 1
+            continue
+        j = i + 1
+        while j < len(lines) and not lines[j].strip().startswith("```"):
+            j += 1
+        body = textwrap.dedent("\n".join(lines[i + 1:j]))
+        info = opener[3:].strip()
+        if info in ("python", "py") or (info == "" and _uses_a_seed(body)):
+            fences.append((i + 2, body))
+        i = j + 1
+    return fences
+
+
 def fence_findings(text: str, rel: str) -> tuple[list[Finding], set[str]]:
     """The fence findings of one page, and the names its fences resolved."""
     page = _seeded_page(rel)
     found: list[Finding] = []
-    for line, body in _python_fences(text):
+    for line, body in gated_fences(text):
         before = len(page.problems)
         page.fence(body, line)
         for problem in page.problems[before:]:
@@ -163,11 +201,25 @@ def description_findings(text: str, rel: str) -> list[Finding]:
     return found
 
 
+def citations(text: str) -> list[str]:
+    """Every line citation, a continuation spelled with its line's last cited file."""
+    found: list[str] = []
+    for line in text.splitlines():
+        last = None
+        for m in _CITATION.finditer(line):
+            if m["file"]:
+                last = m["file"]
+                found.append(f"{last}:{m['line']}")
+            elif last is not None:
+                found.append(f"{last}:{m['cont']}")
+    return found
+
+
 def structure_findings(text: str, rel: str, base: Path) -> list[Finding]:
     """Stamps, line citations and dead links of one page; ``base`` is the
     directory its relative links resolve against."""
     found = [_finding(rel, "skill-freshness", "freshness stamp") for _ in _STAMP.finditer(text)]
-    found += [_finding(rel, "line-citation", m.group(0)) for m in _CITATION.finditer(text)]
+    found += [_finding(rel, "line-citation", c) for c in citations(text)]
     for m in _MD_LINK.finditer(text):
         target = m.group(1).split("#", 1)[0]
         if target and not re.match(r"^[a-z]+:", target) and not (base / target).exists():
@@ -198,7 +250,7 @@ def corpus() -> tuple[Counter[Finding], dict[str, set[str]]]:
         fences, names = fence_findings(text, rel)
         found.update(fences)
         found.update(structure_findings(text, rel, path.parent))
-        if _python_fences(text):
+        if gated_fences(text):
             checked[rel] = names
     mirror = MIRROR_SKILL_MD.read_text(encoding="utf-8")
     found.update(description_findings(mirror, "mirror:apegmsh-helper/SKILL.md"))
@@ -314,6 +366,58 @@ def test_control_missing_attribute_and_unparsable_fence() -> None:
                for f in found), found
 
 
+def test_control_attributes_set_from_an_annotated_parameter_resolve() -> None:
+    # `FEMData.__init__` does `self.nodes = nodes` with `nodes: NodeComposite`.
+    # Before the resolver typed that, every `fem.nodes.*` chain was skipped:
+    # these two edits to fem-broker.md:108 and :111 passed.
+    found, checked = fence_findings(_fence(
+        'fem.nodes.get_ids(pg="Base")\n'
+        'fem.nodes.select(pg="Body", partitionz=3)\n'
+        'fem.nodes.select(pg="Body", partition=3)'
+    ), "fem.md")
+    assert _finding("fem.md", "fence-name", "`NodeComposite` has no attribute `get_ids`") in found, found
+    assert _finding("fem.md", "fence-keyword",
+                    "`NodeComposite.select()` takes no keyword `partitionz=`") in found, found
+    assert len(found) == 2, found
+    assert {"FEMData.nodes", "NodeComposite.select"} <= checked, sorted(checked)
+
+
+def test_control_fem_broker_mutations_are_caught() -> None:
+    # The same two edits applied to the real page must be new findings.
+    text = (SKILL / "references" / "fem-broker.md").read_text(encoding="utf-8")
+    for old, new, expected in (
+        ('base = fem.nodes.select(pg="Base")', 'base = fem.nodes.get_ids(pg="Base")',
+         "`NodeComposite` has no attribute `get_ids`"),
+        ('fem.nodes.select(pg="Body", partition=3)', 'fem.nodes.select(pg="Body", partitionz=3)',
+         "`NodeComposite.select()` takes no keyword `partitionz=`"),
+    ):
+        assert text.count(old) == 1, f"fem-broker.md no longer holds `{old}`: update this control"
+        found, _ = fence_findings(text.replace(old, new), "references/fem-broker.md")
+        assert any(f.endswith(f" | {expected}") for f in found), found
+
+
+def test_control_a_seed_survives_only_a_plain_untyped_call() -> None:
+    # fem-broker.md rebinds `fem = FEMData.from_msh(...)`, whose return is not
+    # annotated: the seed holds. A loop target named `g` is not the session.
+    found, _ = fence_findings(_fence(
+        "fem = make_snapshot()\nfem.nodes.get_ids()\n"
+        "for g in groups:\n    g.not_a_session_attribute()"
+    ), "reseed.md")
+    assert found == [_finding("reseed.md", "fence-name", "`NodeComposite` has no attribute `get_ids`")], found
+
+
+def test_control_untagged_python_fences_are_gated() -> None:
+    text = (
+        "```\nfem.nodes.get_ids(pg='Base')\n```\n"      # Python by evidence: gated
+        "```\nmodel.h5\n  /meta\n```\n"                  # not Python: left alone
+        "```\nx = 1  # parses, but uses no seeded receiver\n```\n"
+        "```text\nops.node(1, 0.0, 0.0)\n```\n"          # explicitly text: left alone
+    )
+    assert [body for _, body in gated_fences(text)] == ["fem.nodes.get_ids(pg='Base')"]
+    found, _ = fence_findings(text, "bare.md")
+    assert found == [_finding("bare.md", "fence-name", "`NodeComposite` has no attribute `get_ids`")], found
+
+
 def test_control_a_page_binding_overrides_the_seed() -> None:
     # A page that binds `ops` to raw openseespy is not judged as the bridge.
     found, _ = fence_findings(_fence(
@@ -330,13 +434,19 @@ def test_control_line_citations_are_flagged() -> None:
         "| bridge `SCHEMA_VERSION` | **`\"2.19.0\"`** | `src/apeGmsh/opensees/emitter/h5.py:414` |\n"
         "- bridge `SCHEMA_VERSION` (`opensees/emitter/h5.py:414`) = **2.19.0**\n"
         "verified: tests/test_femdata_from_h5.py::test_session_save_then_from_h5\n"
+        # Continuations, as api-cheatsheet.md:119 and :744 ship them.
+        "`# src/apeGmsh/core/_model_geometry.py:1147 (add_polyline), :3197 (add_void_sweep)`\n"
+        "`# ConstraintsComposite.py:624 (contact), :989 (plane); EmbedmentsComposite.py:129 (embed)`\n"
+        "Run at 10:30, see note :5 and `{'a':1}`.\n"     # a bare :N with no citation before it
     )
     found = structure_findings(text, "cite.md", SKILL)
-    citations = sorted(f.split(" | ")[2] for f in found if " | line-citation | " in f)
-    assert citations == sorted([
+    cited = sorted(f.split(" | ")[2] for f in found if " | line-citation | " in f)
+    assert cited == sorted([
         "src/apeGmsh/mesh/FEMData.py:1508", "FEMData.py:1508",
         "src/apeGmsh/opensees/emitter/h5.py:414", "opensees/emitter/h5.py:414",
-    ]), citations
+        "src/apeGmsh/core/_model_geometry.py:1147", "src/apeGmsh/core/_model_geometry.py:3197",
+        "ConstraintsComposite.py:624", "ConstraintsComposite.py:989", "EmbedmentsComposite.py:129",
+    ]), cited
 
 
 def test_control_freshness_stamp_and_dead_links_are_flagged() -> None:
