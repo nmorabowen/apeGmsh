@@ -1488,10 +1488,10 @@ CUSTOM_RULE_CATALOG: dict[tuple[str, str], CustomRuleLayout] = {
 
 
 # =====================================================================
-# NODAL_FORCE_CATALOG — closed-form elastic beams
+# NODAL_FORCE_CATALOG — elastic beams and frame beams
 # =====================================================================
 #
-# Phase 11b. Keyed on ``(class_name, token)`` where ``token`` is the
+# Phase 11b; frame beams since #2072. Keyed on ``(class_name, token)`` where ``token`` is the
 # OpenSees recorder token in apeGmsh-canonical form
 # (``"global_force"`` / ``"local_force"``). Component layouts use
 # the ``nodal_resisting_*`` canonical names from
@@ -1577,6 +1577,37 @@ NODAL_FORCE_CATALOG: dict[tuple[str, str], NodalForceLayout] = {
     ("ElasticTimoshenkoBeam3d", "local_force"):
         _nodal_force_3d(ELE_TAG_ElasticTimoshenkoBeam3d, "local"),
 }
+
+#: The closed-form elastic beams above: the classes whose line stations are
+#: synthesised from ``localForce`` (they have no sections). Frame beams
+#: (below) share the nodal-force layout but read their stations from
+#: ``section force``, so the synthesis predicates consult this set, never
+#: the whole catalog.
+_ELASTIC_BEAM_NODAL_CLASSES: frozenset[str] = frozenset(
+    cname for cname, _tok in NODAL_FORCE_CATALOG
+)
+
+# Frame beams with sections (#2072). ``globalForce`` / ``localForce`` return
+# the same 2 x ndf end-force vector as an elastic beam, in the same order.
+# The MPCO recorder writes it under a custom-rule bucket key
+# (``74-ForceBeamColumn3d[1000:1:0]``, measured on fork 79e0623670) with
+# the same single-block META (GAUSS_IDS = [-1], 12 columns in 3-D).
+_FRAME_BEAM_NODAL_CLASSES: tuple[tuple[str, int, int], ...] = (
+    # (class_name, class_tag, ndm)
+    ("ForceBeamColumn2d",       ELE_TAG_ForceBeamColumn2d,       2),
+    ("ForceBeamColumn3d",       ELE_TAG_ForceBeamColumn3d,       3),
+    ("DispBeamColumn2d",        ELE_TAG_DispBeamColumn2d,        2),
+    ("DispBeamColumn3d",        ELE_TAG_DispBeamColumn3d,        3),
+    ("LadrunoDispBeamColumn2d", ELE_TAG_LadrunoDispBeamColumn2d, 2),
+    ("LadrunoDispBeamColumn3d", ELE_TAG_LadrunoDispBeamColumn3d, 3),
+)
+
+NODAL_FORCE_CATALOG.update({
+    (cname, f"{frame}_force"):
+        (_nodal_force_2d if ndm == 2 else _nodal_force_3d)(ctag, frame)
+    for cname, ctag, ndm in _FRAME_BEAM_NODAL_CLASSES
+    for frame in ("global", "local")
+})
 
 
 # =====================================================================
@@ -1972,9 +2003,9 @@ def synthesize_line_station_layout_for_elastic_beam(
     ``None`` rather than raising keeps the helper composable with the
     capturer's optional fallback path.
     """
-    nf = NODAL_FORCE_CATALOG.get((class_name, "local_force"))
-    if nf is None:
+    if class_name not in _ELASTIC_BEAM_NODAL_CLASSES:
         return None
+    nf = NODAL_FORCE_CATALOG[(class_name, "local_force")]
     n_per = nf.n_components_per_node
     if n_per == 3:
         comps = _LINE_STATIONS_2D
@@ -2035,8 +2066,12 @@ def local_force_station_signs(components: "tuple[str, ...] | list[str]") -> ndar
 
 
 def is_line_station_synthesis_catalogued(class_name: str) -> bool:
-    """True if the class has a localForce → line-stations synthesis path."""
-    return (class_name, "local_force") in NODAL_FORCE_CATALOG
+    """True if the class has a localForce → line-stations synthesis path.
+
+    Elastic beams only: a frame beam's ``localForce`` is catalogued for
+    nodal forces, but its stations come from ``section force``.
+    """
+    return class_name in _ELASTIC_BEAM_NODAL_CLASSES
 
 
 # ---------------------------------------------------------------------

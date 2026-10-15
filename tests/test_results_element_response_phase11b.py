@@ -296,6 +296,19 @@ EXPECTED_NODAL_FORCE_KEYS: tuple[tuple[str, str], ...] = (
     ("ElasticTimoshenkoBeam2d", "local_force"),
     ("ElasticTimoshenkoBeam3d", "global_force"),
     ("ElasticTimoshenkoBeam3d", "local_force"),
+    # Frame beams (#2072): same end-force layout, stations from sections.
+    ("ForceBeamColumn2d", "global_force"),
+    ("ForceBeamColumn2d", "local_force"),
+    ("ForceBeamColumn3d", "global_force"),
+    ("ForceBeamColumn3d", "local_force"),
+    ("DispBeamColumn2d", "global_force"),
+    ("DispBeamColumn2d", "local_force"),
+    ("DispBeamColumn3d", "global_force"),
+    ("DispBeamColumn3d", "local_force"),
+    ("LadrunoDispBeamColumn2d", "global_force"),
+    ("LadrunoDispBeamColumn2d", "local_force"),
+    ("LadrunoDispBeamColumn3d", "global_force"),
+    ("LadrunoDispBeamColumn3d", "local_force"),
 )
 
 
