@@ -152,9 +152,13 @@ def load_common(path: Path = TASKS_FILE) -> dict[str, Any]:
 
 # --------------------------------------------------------------------------- run, lint, grade
 
-def _child_env() -> dict[str, str]:
+def _child_env(python: str) -> dict[str, str]:
     env = dict(os.environ)
     env["PYTHONPATH"] = str(SRC)
+    # A deck run (ops.py(..., run=True)) starts the first `python` on PATH; put the
+    # grading interpreter first so the deck sees the same openseespy as the script.
+    # Not resolved: a venv's bin/python is a symlink that points out of the venv.
+    env["PATH"] = os.path.dirname(os.path.abspath(python)) + os.pathsep + env.get("PATH", "")
     env["MPLBACKEND"] = "Agg"                 # a stray plt.show() must not block the grade
     env["LADRUNO_OPENSEES_QUIET"] = "1"       # the fork build's banner is noise in the tail
     return env
@@ -198,7 +202,7 @@ def grade(task_id: str, script: Path, *, python: str = sys.executable,
         shutil.copyfile(script, target)
         try:
             run = subprocess.run(
-                [python, SCRIPT_NAME], cwd=work, env=_child_env(),
+                [python, SCRIPT_NAME], cwd=work, env=_child_env(python),
                 capture_output=True, text=True, timeout=timeout,
             )
             returncode: int | None = run.returncode
