@@ -12,11 +12,14 @@ Two halves, both gated here:
 * the vocabulary half — the eight resultants and their eight
   conjugate generalized strains are canonical, carry a shorthand, and
   belong to the ``gauss`` category;
-* the honesty half — the upstream shells (``ShellMITC4`` &c.) answer
+* the honesty half — after a step solved with ``algorithm Linear`` the
+  upstream shells (``ShellMITC4`` &c.) answer
   ``ops.eleResponse(eid, "stresses")`` with a correctly sized vector of
-  ZEROS, so making the vocabulary reachable would have made a flat
-  contour the default shell picture. Those classes are skipped with a
-  reason instead.
+  ZEROS (or, from the second step on, the previous step's state), so
+  making the vocabulary reachable would have made a flat contour the
+  default shell picture. DomainCapture skips those classes with a
+  reason instead. Under Newton the same probes are correct (#1992),
+  which the ``live`` cases at the end of this file measure.
 
 The live-ops cases carry the load: a unit test that only asks
 ``is_canonical`` would pass against a vocabulary wired to nothing.
@@ -202,6 +205,7 @@ def _gauss_level():
     return ResultLevel.GAUSS
 
 
+@pytest.mark.live
 def test_declared_shell_record_captures_real_resultants(
     tmp_path: Path,
 ) -> None:
@@ -240,16 +244,20 @@ def test_declared_shell_record_captures_real_resultants(
     assert peak["bending_moment_xx"] > peak["membrane_force_xx"]
 
 
+@pytest.mark.live
 def test_upstream_shell_is_skipped_rather_than_recorded_as_zeros(
     tmp_path: Path,
 ) -> None:
-    """``ShellMITC4`` records nothing, loudly, instead of zeros.
+    """Under ``algorithm Linear``, ``ShellMITC4`` records nothing, loudly.
 
-    Its ``materialPointers[i]->getStressResultant()`` never sees the
-    committed state: the element solves correctly (the assertion on
-    tip displacement below holds) and the probe still answers zeros.
-    Recording that would contour ``wall`` one flat colour and read as
-    "unstressed".
+    ``_build_model`` solves with ``algorithm Linear``, which never
+    re-forms the residual after its solve, so the sections never see
+    the converged displacement: the element solves correctly (the
+    assertion on tip displacement below holds) and the probe still
+    answers zeros. Recording that would contour ``wall`` one flat
+    colour and read as "unstressed". Under Newton the probe is correct
+    and this skip discards real data; see
+    ``test_domain_capture_keeps_listed_shell_under_newton``.
     """
     fem = _build_model("ShellMITC4", with_brick=False)
     assert abs(ops.nodeDisp(3, 3)) > 0.0, "the element itself must solve"
@@ -276,6 +284,7 @@ def test_upstream_shell_is_skipped_rather_than_recorded_as_zeros(
 # G4 — the picker offers the resultants only where a shell is drawn
 # =====================================================================
 
+@pytest.mark.live
 def test_scoped_components_separate_shell_from_solid(tmp_path: Path) -> None:
     """The A6.6 picker law, on the two-family case it exists for.
 
@@ -320,3 +329,182 @@ def test_scoped_components_separate_shell_from_solid(tmp_path: Path) -> None:
     assert "stress_zz" not in on_shell
     assert "stress_zz" in on_solid
     assert not (resultants & on_solid)
+
+
+# =====================================================================
+# #1992 — the stale probe is an algorithm-Linear effect, on every route
+# =====================================================================
+#
+# One ElasticMembranePlateSection element (two triangles for the T
+# classes) on the unit square, in uniaxial membrane tension with free
+# lateral contraction: a constant-strain state every one of these
+# elements reproduces exactly, so the closed form is N11 = 2·P·λ on a
+# unit edge, with no mesh error. Each step is read on three routes that
+# exist on stock openseespy: ``eleResponse "stresses"``,
+# ``eleResponse "section" 1 "forces"`` and a ``.out`` Element recorder.
+
+_P_NODE = 1.0e4                 # per loaded node; N11 = 2.0e4 at λ = 1
+_N11_FULL = 2.0 * _P_NODE
+
+# Linear reports step k-1's state at step k (zero at step 1).
+_LAGGING_UNDER_LINEAR = ("ShellMITC4", "ShellDKGQ", "ShellDKGT")
+# Linear reports zero at every step.
+_ZERO_UNDER_LINEAR = ("ShellNLDKGQ", "ShellNLDKGT")
+# The NL classes carry a geometric correction of O(strain) ~ 1e-6 at
+# λ = 1; the linear-kinematics classes match the closed form to roundoff.
+_RTOL = {
+    "ShellMITC4": 1e-9, "ShellDKGQ": 1e-9, "ShellDKGT": 1e-9,
+    "ShellNLDKGQ": 1e-5, "ShellNLDKGT": 1e-5,
+}
+_MEASURED = _LAGGING_UNDER_LINEAR + _ZERO_UNDER_LINEAR
+
+
+def _build_uniaxial(
+    shell_class: str, algorithm: str, n_steps: int,
+    out_file: Path | None = None,
+) -> dict[str, list[float]]:
+    """Solve the uniaxial-tension square; return N11 per step per probe.
+
+    The domain is left built (not wiped) so a caller can capture it; a
+    caller reading ``out_file`` must ``ops.wipe()`` first to flush it.
+    """
+    ops.wipe()
+    ops.model("basic", "-ndm", 3, "-ndf", 6)
+    for nid, xyz in enumerate(_SHELL_COORDS, start=1):
+        ops.node(nid, *(float(v) for v in xyz))
+    # In-plane statically determinate: node 1 pinned, node 4 on an
+    # x-roller; plate and drilling DOFs held (the exact solution has no
+    # bending and zero in-plane rotation).
+    ops.fix(1, 1, 1, 1, 1, 1, 1)
+    ops.fix(2, 0, 0, 1, 1, 1, 1)
+    ops.fix(3, 0, 0, 1, 1, 1, 1)
+    ops.fix(4, 1, 0, 1, 1, 1, 1)
+    ops.section("ElasticMembranePlateSection", 1, 2.0e10, 0.2, 0.2, 0.0)
+    if shell_class.endswith("T"):
+        ops.element(shell_class, _SHELL_EID, 1, 2, 3, 1)
+        ops.element(shell_class, _SHELL_EID + 1, 1, 3, 4, 1)
+    else:
+        ops.element(shell_class, _SHELL_EID, 1, 2, 3, 4, 1)
+    ops.timeSeries("Linear", 1)
+    ops.pattern("Plain", 1, 1)
+    for nid in (2, 3):
+        ops.load(nid, _P_NODE, 0.0, 0.0, 0.0, 0.0, 0.0)
+    if out_file is not None:
+        ops.recorder(
+            "Element", "-file", out_file.as_posix(), "-precision", 17,
+            "-ele", _SHELL_EID, "stresses",
+        )
+    ops.system("FullGeneral")
+    ops.numberer("Plain")
+    ops.constraints("Plain")
+    ops.test("NormDispIncr", 1e-10, 10)
+    ops.algorithm(algorithm)
+    ops.integrator("LoadControl", 1.0 / n_steps)
+    ops.analysis("Static")
+    probes: dict[str, list[float]] = {"stresses": [], "section_forces": []}
+    for _ in range(n_steps):
+        assert ops.analyze(1) == 0
+        assert ops.nodeDisp(2, 1) > 0.0, "the element itself must solve"
+        probes["stresses"].append(
+            float(ops.eleResponse(_SHELL_EID, "stresses")[0]))
+        probes["section_forces"].append(
+            float(ops.eleResponse(_SHELL_EID, "section", 1, "forces")[0]))
+    return probes
+
+
+def _all_routes(
+    shell_class: str, algorithm: str, n_steps: int, tmp_path: Path,
+) -> dict[str, np.ndarray]:
+    out_file = tmp_path / f"{shell_class}_{algorithm}.out"
+    probes = _build_uniaxial(shell_class, algorithm, n_steps, out_file)
+    ops.wipe()                          # flushes and closes the recorder
+    routes = {k: np.asarray(v) for k, v in probes.items()}
+    routes[".out"] = np.loadtxt(out_file, ndmin=2)[:, 0]
+    return routes
+
+
+@pytest.mark.live
+def test_catalog_set_is_the_measured_set() -> None:
+    """The catalog note describes exactly the classes measured below."""
+    from apeGmsh.opensees._response_catalog import ZERO_GAUSS_PROBE_CLASSES
+    assert ZERO_GAUSS_PROBE_CLASSES == frozenset(_MEASURED)
+
+
+@pytest.mark.live
+@pytest.mark.parametrize("shell_class", _MEASURED)
+def test_listed_shell_is_correct_under_newton(
+    shell_class: str, tmp_path: Path,
+) -> None:
+    """Newton re-forms the residual: every route reads N11 = 2·P·λ."""
+    routes = _all_routes(shell_class, "Newton", 2, tmp_path)
+    expected = np.array([0.5, 1.0]) * _N11_FULL
+    for route, got in routes.items():
+        np.testing.assert_allclose(
+            got, expected, rtol=_RTOL[shell_class], atol=0.0,
+            err_msg=f"{shell_class} under Newton, route {route}",
+        )
+
+
+@pytest.mark.live
+@pytest.mark.parametrize("shell_class", _MEASURED)
+def test_listed_shell_is_stale_under_linear_on_every_route(
+    shell_class: str, tmp_path: Path,
+) -> None:
+    """Linear never re-forms the residual: the sections hold old state.
+
+    Step 1 is exactly zero on every route. At step 2 the linear-
+    kinematics classes report step 1's state (a plausible, non-zero,
+    wrong value: half the load), and the NL classes still report zero.
+    The ``.out`` route agrees, so a recorder records this silently.
+    """
+    routes = _all_routes(shell_class, "Linear", 2, tmp_path)
+    if shell_class in _LAGGING_UNDER_LINEAR:
+        stale = np.array([0.0, 0.5 * _N11_FULL])
+    else:
+        stale = np.array([0.0, 0.0])
+    for route, got in routes.items():
+        assert got[0] == 0.0, f"{shell_class} Linear step 1, route {route}"
+        np.testing.assert_allclose(
+            got, stale, rtol=1e-9, atol=0.0,
+            err_msg=f"{shell_class} under Linear, route {route}",
+        )
+
+
+@pytest.mark.live
+@pytest.mark.xfail(
+    strict=True, raises=AssertionError,
+    reason="has_dead_gauss_probe takes only the class, so DomainCapture "
+           "skips these shells under Newton too. Slice #2001 rewrites "
+           "this test to pass the algorithm in.",
+)
+def test_domain_capture_keeps_listed_shell_under_newton(
+    tmp_path: Path,
+) -> None:
+    """The right answer: under Newton DomainCapture records N11 = 2·P.
+
+    Fails today because the skip is algorithm-blind. This capture has no
+    bridge and no algorithm, so a fail-closed fix (unknown algorithm
+    means skip) leaves it XFAIL; it does not flip by itself. Slice #2001
+    rewrites it to pass the algorithm in and drops the marker.
+    """
+    _build_uniaxial("ShellMITC4", "Newton", 1)
+    fem = _MinimalFem(np.arange(1, 5, dtype=np.int64), _SHELL_COORDS)
+    spec = DomainCaptureSpec()
+    spec.gauss(components="shell_resultant", ids=[_SHELL_EID], name="shell")
+
+    path = tmp_path / "cap.h5"
+    _capture(spec, fem, path)
+    ops.wipe()
+
+    from apeGmsh.results import Results
+    with Results.from_native(
+        path, fem=fem, model=_open_model_from_h5(path),
+    ) as r:
+        stage_id = r.stages[0].id
+        assert "membrane_force_xx" in r._reader.available_components(
+            stage_id, _gauss_level(),
+        ), "DomainCapture skipped a shell whose probe is correct"
+        slab = r.stage(stage_id).elements.gauss.get(
+            component="membrane_force_xx",
+        )
+        np.testing.assert_allclose(slab.values, _N11_FULL, rtol=1e-9)
