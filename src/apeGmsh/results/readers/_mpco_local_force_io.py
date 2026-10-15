@@ -12,10 +12,13 @@ Bucket shape:
 
 * ``META/COMPONENTS``  — single byte-string of the form
   ``"<hdr>.tok_1,tok_2,...,tok_N"`` where each token is
-  ``<base>_<station_idx>`` (1-based). For 3-D it's
+  ``<base>_<station_idx>`` (1-based; some classes drop the underscore,
+  ``N1``). For 3-D it's
   ``"0.N_1,Vy_1,Vz_1,T_1,My_1,Mz_1,N_2,..,Mz_2"`` (12 columns,
   2 stations × 6 components). For 2-D it's
-  ``"0.N_1,Vy_1,Mz_1,N_2,Vy_2,Mz_2"`` (6 columns, 2 stations × 3).
+  ``"0.N_1,V_1,M_1,N_2,V_2,M_2"`` (ElasticBeam2d, ForceBeamColumn2d,
+  ElasticTimoshenkoBeam2d) or ``"0.N1,V1,M1,N2,V2,M2"``
+  (DispBeamColumn2d and its fork variant): 6 columns, 2 stations × 3.
 * ``ID``                — ``(E, 1)`` element IDs.
 * ``DATA/STEP_<i>``     — ``(E, NUM_COMPONENTS)`` per-element flat
   values for one step.
@@ -32,6 +35,9 @@ The base→canonical translation::
     T  → torsion
     My → bending_moment_y
     Mz → bending_moment_z
+
+plus the 2-D spellings ``V → shear_y`` and ``M → bending_moment_z``,
+under the gates in :func:`parse_local_force_layout`.
 """
 from __future__ import annotations
 
@@ -59,7 +65,31 @@ _LOCAL_FORCE_BASE_TO_CANONICAL: dict[str, str] = {
     "Mz": "bending_moment_z",
 }
 
-_TOKEN_RE = re.compile(r"^(?P<base>[A-Za-z]+)_(?P<station>\d+)$")
+#: The 2-D spelling of a ``localForce`` bucket: one shear and one moment
+#: per end (``N_1,V_1,M_1,..``). A 2-D beam has only ``Vy``/``Mz``. Kept
+#: out of the base map so it applies under the gates of
+#: :func:`parse_local_force_layout` only.
+_LOCAL_FORCE_2D_BASE_TO_CANONICAL: dict[str, str] = {
+    "V": "shear_y",
+    "M": "bending_moment_z",
+}
+
+#: ``N_1`` and ``N1`` both occur (DispBeamColumn2d drops the underscore).
+_TOKEN_RE = re.compile(r"^(?P<base>[A-Za-z]+)_?(?P<station>\d+)$")
+
+#: MPCO bracket keys read ``<classTag>-<ClassName>[<rule>]``.
+_BRACKET_CLASS_RE = re.compile(r"^\d+-(?P<cls>[^\[]+)\[")
+
+
+class NoLineStationTokensError(ValueError):
+    """A ``localForce`` bucket names no station force or moment at all.
+
+    A truss's ``C1..C4`` (MPCO's names for an untagged response), a
+    corotational truss's bare ``N``, a wall's ``Fx_i``: these are element
+    force vectors, not beam line stations, so line-station discovery passes
+    over them. Every other parse failure is a malformed beam bucket and
+    raises.
+    """
 
 
 # =====================================================================
@@ -79,7 +109,7 @@ class _LocalForceBucket:
 # =====================================================================
 
 def parse_local_force_layout(
-    components_raw, *, bracket_key: str = "<unknown>",
+    components_raw, *, data_width: int, bracket_key: str = "<unknown>",
 ) -> tuple[int, dict[str, list[int]]]:
     """Parse ``META/COMPONENTS`` for a localForce bucket.
 
@@ -87,10 +117,22 @@ def parse_local_force_layout(
     where each value list has length ``n_stations`` — column indices
     into the per-step ``DATA/STEP_<i>`` row, ordered by station index.
 
-    Tokens whose base name isn't in
-    :data:`_LOCAL_FORCE_BASE_TO_CANONICAL` are silently ignored (so
-    a future MPCO writer can add unknown extras without breaking
-    discovery).
+    ``data_width`` is the column count of the bucket's ``DATA/STEP_<i>``
+    rows. META must name exactly that many columns, or the bucket is
+    refused: a layout that does not cover the data cannot be trusted.
+
+    The 2-D spelling ``V``/``M`` reads as ``shear_y``/``bending_moment_z``
+    only when META and DATA agree, the bucket spells no 3-D base
+    (``Vy``, ``Vz``, ``T``, ``My``, ``Mz``) beside it, and the bracket's
+    element class is not a ``...3d`` class. ComponentElement3d and
+    ForceBeamColumnCBDI3d tag their 12-component localForce with the six
+    2-D names; MPCO then writes six zero-filled columns, which the class
+    gate refuses rather than read as shears and moments.
+
+    Raises :class:`NoLineStationTokensError` when no token names a
+    station force or moment, and :class:`ValueError` for every other
+    malformed bucket. Other unknown tokens (``Q_1`` of a warping beam) are
+    ignored.
     """
     if hasattr(components_raw, "__len__") and not isinstance(
         components_raw, (bytes, str)
@@ -112,22 +154,58 @@ def parse_local_force_layout(
             f"localForce bucket {bracket_key!r}: empty component list."
         )
 
-    # base -> {station_index: column_index}
-    by_base: dict[str, dict[int, int]] = {}
+    if len(tokens) != data_width:
+        raise ValueError(
+            f"localForce bucket {bracket_key!r}: META/COMPONENTS names "
+            f"{len(tokens)} columns ({components_raw!r}) but its DATA rows "
+            f"are {data_width} wide; refusing to guess the layout."
+        )
+
+    parsed: list[tuple[int, str, int]] = []      # (col_idx, base, station)
     for col_idx, tok in enumerate(tokens):
         m = _TOKEN_RE.match(tok)
-        if m is None:
-            # Foreign token; skip.
-            continue
-        base = m.group("base")
-        station = int(m.group("station"))
-        canonical = _LOCAL_FORCE_BASE_TO_CANONICAL.get(base)
+        if m is not None:
+            parsed.append((col_idx, m.group("base"), int(m.group("station"))))
+    bases = {base for _c, base, _s in parsed}
+
+    base_map = dict(_LOCAL_FORCE_BASE_TO_CANONICAL)
+    spelled_2d = bases & set(_LOCAL_FORCE_2D_BASE_TO_CANONICAL)
+    if spelled_2d:
+        spelled_3d = bases & {"Vy", "Vz", "T", "My", "Mz"}
+        if spelled_3d:
+            raise ValueError(
+                f"localForce bucket {bracket_key!r}: COMPONENTS="
+                f"{components_raw!r} mixes the 2-D spelling "
+                f"{sorted(spelled_2d)} with the 3-D {sorted(spelled_3d)}; "
+                f"the shear and moment axes are ambiguous."
+            )
+        cls = _BRACKET_CLASS_RE.match(bracket_key)
+        if cls is not None and cls.group("cls").lower().endswith("3d"):
+            raise ValueError(
+                f"localForce bucket {bracket_key!r}: the 3-D element class "
+                f"{cls.group('cls')!r} records its localForce under the 2-D "
+                f"names {components_raw!r}; its shear and moment axes "
+                f"cannot be read from them."
+            )
+        base_map.update(_LOCAL_FORCE_2D_BASE_TO_CANONICAL)
+
+    # canonical -> {station_index: column_index}
+    by_base: dict[str, dict[int, int]] = {}
+    for col_idx, base, station in parsed:
+        canonical = base_map.get(base)
         if canonical is None:
-            continue
-        by_base.setdefault(canonical, {})[station] = col_idx
+            continue        # an extra this reader does not map (``Q_1``)
+        stations = by_base.setdefault(canonical, {})
+        if station in stations:
+            raise ValueError(
+                f"localForce bucket {bracket_key!r}: COMPONENTS="
+                f"{components_raw!r} names {canonical!r} at station "
+                f"{station} twice."
+            )
+        stations[station] = col_idx
 
     if not by_base:
-        raise ValueError(
+        raise NoLineStationTokensError(
             f"localForce bucket {bracket_key!r}: no recognized "
             f"force/moment tokens in COMPONENTS={components_raw!r}."
         )
@@ -162,9 +240,12 @@ def discover_local_force_buckets(
 ) -> list[_LocalForceBucket]:
     """Walk ``ON_ELEMENTS/localForce/`` and return parsed buckets.
 
-    Buckets whose META can't be parsed are silently skipped — they
-    won't show up in ``available_components()`` and reads against
-    them return empty.
+    A malformed bucket raises :class:`ValueError` naming it: no
+    ``META/COMPONENTS``, step rows of differing widths, or any refusal of
+    :func:`parse_local_force_layout`. Two kinds of bucket are passed over,
+    because they hold no line-station values: one with no recorded step,
+    and one whose tokens name no station force or moment
+    (:class:`NoLineStationTokensError`, a truss's force vector).
     """
     if "localForce" not in on_elements_grp:
         return []
@@ -172,15 +253,33 @@ def discover_local_force_buckets(
     out: list[_LocalForceBucket] = []
     for bracket_key in lf_grp:
         bucket_grp = lf_grp[bracket_key]
-        meta = bucket_grp["META"] if "META" in bucket_grp else None
-        if meta is None or "COMPONENTS" not in meta:
-            continue
+        if "META" not in bucket_grp or "COMPONENTS" not in bucket_grp["META"]:
+            raise ValueError(
+                f"localForce bucket {bracket_key!r} has no META/COMPONENTS; "
+                f"its columns cannot be named."
+            )
+        widths: set[int] = set()
+        if "DATA" in bucket_grp:
+            data_grp = bucket_grp["DATA"]
+            widths = {
+                int(data_grp[k].shape[1]) if len(data_grp[k].shape) == 2
+                else -1
+                for k in data_grp if k.startswith("STEP_")
+            }
+        if not widths:
+            continue        # no recorded step: nothing to read
+        if len(widths) != 1 or -1 in widths:
+            raise ValueError(
+                f"localForce bucket {bracket_key!r}: DATA/STEP_* rows are "
+                f"not one 2-D width (widths {sorted(widths)}, -1 = not 2-D)."
+            )
         try:
             n_stations, layout = parse_local_force_layout(
-                meta["COMPONENTS"][...], bracket_key=bracket_key,
+                bucket_grp["META"]["COMPONENTS"][...],
+                data_width=widths.pop(), bracket_key=bracket_key,
             )
-        except ValueError:
-            continue
+        except NoLineStationTokensError:
+            continue        # an element force vector, not line stations
         out.append(_LocalForceBucket(
             bracket_key=bracket_key,
             n_stations=n_stations,
@@ -297,6 +396,7 @@ def _station_natural_coords(n_stations: int) -> ndarray:
 
 __all__ = [
     "_LocalForceBucket",
+    "NoLineStationTokensError",
     "parse_local_force_layout",
     "discover_local_force_buckets",
     "available_components_in_local_force",
