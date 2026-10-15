@@ -46,6 +46,7 @@ from __future__ import annotations
 
 import ast
 import importlib
+import importlib.util
 import re
 import textwrap
 from collections import Counter
@@ -61,7 +62,7 @@ MIRROR_SKILL_MD = REPO / ".claude" / "skills" / "apegmsh-helper" / "SKILL.md"
 BASELINE_FILE = Path(__file__).with_name("skill_fences_baseline.txt")
 
 #: The number of lines in ``skill_fences_baseline.txt``. It only goes down.
-SKILL_FENCES_BASELINE = 78
+SKILL_FENCES_BASELINE = 74
 
 #: Skill files another chain's open issue owns, left out of the gate and the
 #: baseline so its edits cannot turn this test red. Name -> owning issue.
@@ -485,6 +486,59 @@ def test_control_description_size_and_machine_path() -> None:
     path = _skill_md(r"the apeGmsh repository (C:\Users\nmora\Github\apeGmsh)", 50)
     assert _finding("SKILL.md", "machine-path", "description names `C:\\Users\\`") in \
         structure_findings(path, "SKILL.md", SKILL)
+
+
+def _sync_skill():
+    spec = importlib.util.spec_from_file_location("sync_skill_for_fences", REPO / "scripts" / "sync_skill.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_both_descriptions_are_valid_yaml_and_fold_as_the_gate_reads_them() -> None:
+    # The mirror's plain-scalar description held `: ` (`Assembly: instance/...`),
+    # which PyYAML refuses ("mapping values are not allowed here"); the size
+    # gate's own folding read it fine, so it passed (SK1-S1 finding).
+    import yaml
+
+    sync = _sync_skill()
+    assert sync.DESCRIPTION_MAX == DESCRIPTION_MAX
+    for path in (SKILL / "SKILL.md", MIRROR_SKILL_MD):
+        text = path.read_text(encoding="utf-8")
+        front = re.match(r"---\n(.*?)\n---\n", text, re.DOTALL)
+        assert front is not None, f"{path} has no front matter"
+        loaded = yaml.safe_load(front.group(1))["description"].strip()
+        assert loaded == description(text), path
+        assert len(loaded) <= DESCRIPTION_MAX, (path, len(loaded))
+    assert description(MIRROR_SKILL_MD.read_text(encoding="utf-8")) == sync.DERIVED_DESCRIPTION
+
+
+def test_control_card_sizes_fail() -> None:
+    # The SK1-S3 card's controls: the canonical description at 1,814 characters,
+    # the derived one at 1,308 (both as they stood before S3), and a 201-line SKILL.md.
+    canonical = _skill_md("x" * 1814, 50)
+    assert _finding("SKILL.md", "description-size", "description over 1,024 characters") in \
+        structure_findings(canonical, "SKILL.md", SKILL)
+    mirror_rel = "mirror:apegmsh-helper/SKILL.md"
+    derived = f"---\nname: apegmsh-helper\ndescription: {'y' * 1308}\n---\nbody\n"
+    assert len(description(derived)) == 1308
+    assert description_findings(derived, mirror_rel) == [
+        _finding(mirror_rel, "description-size", "description over 1,024 characters")]
+    assert _finding("SKILL.md", "skill-size", "SKILL.md over 200 lines") in \
+        structure_findings(_skill_md("ok", 201), "SKILL.md", SKILL)
+
+
+def test_control_sync_skill_refuses_an_oversized_or_unfoldable_description() -> None:
+    sync = _sync_skill()
+    with pytest.raises(ValueError, match="over 1,024"):
+        sync.folded_description("z" * 1308)
+    with pytest.raises(ValueError, match="one line"):
+        sync.folded_description("two\nlines")
+    import yaml
+
+    text = "a: b # c " * 100                        # 900 characters of YAML-hostile text
+    block = sync.folded_description(text.strip())
+    assert yaml.safe_load(block)["description"].strip() == text.strip()
 
 
 def test_control_description_folds_a_plain_multiline_scalar() -> None:

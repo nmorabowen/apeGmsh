@@ -1,169 +1,43 @@
 ---
 name: apegmsh
 description: >
-  apeGmsh is a Gmsh wrapper for structural FEM with first-class OpenSees
-  integration. Use this skill any time the user is writing, reading,
-  debugging, or reviewing code that imports apeGmsh (``from apeGmsh
-  import apeGmsh`` / ``Part`` / ``FEMData`` / ``Results``) or works inside
-  the apeGmsh repository. Trigger for:
-  building an ``apeGmsh`` session, composing geometry via
-  ``g.model.geometry/boolean/transforms/io/queries`` (including
-  ``as_void`` / ``add_polyline`` / ``add_void_sweep`` / ``apply_voids``),
-  meshing via ``g.mesh.generation/sizing/field/structured/editing/queries/
-  partitioning``, labels, physical groups, FEMData broker
-  (``g.mesh.queries.get_fem_data``), multi-part assemblies (``Part`` +
-  ``g.parts``), loads / masses / constraints (``g.loads``, ``g.masses``,
-  ``g.constraints`` — labelled ``g.decouple_node`` as RBE2/RBE3 master),
-  per-node ndf (inferred + ``ops.ndf``), the ``apeSees(fem)``
-  OpenSees bridge with typed primitives, post-processing OpenSees output
-  via ``Results`` (``from_native`` / ``from_mpco`` / ``from_recorders``)
-  and the web/Qt viewers, native ``model.h5`` persistence
-  (``FEMData.to_h5`` / ``from_h5``, ``save_to=`` / ``g.save()``),
-  assembling saved models (``from apeGmsh.assembly import Assembly``:
-  ``instance`` / ``tie`` / ``node`` / ``rigid_link`` / ``couple`` /
-  ``bridge`` / ``partition_rank``), chain-phase reload
-  (``apeGmsh.from_h5``), and exporting models
-  to OpenSees Tcl or openseespy scripts. Covers apeGmsh's own abstractions
-  on top of Gmsh and OpenSees. Also use it when the user says "meshing",
-  "FEA mesh", "structural mesh", or "OpenSees from gmsh" in a context where
-  apeGmsh is the wrapper of choice — the user built apeGmsh specifically
-  to replace hand-rolled Gmsh + OpenSees glue and always prefers the
-  apeGmsh API over raw gmsh calls.
+  apeGmsh is a Gmsh wrapper for structural FEM: labelled geometry and meshes,
+  a FEMData snapshot saved to model.h5, a typed OpenSees bridge (apeSees), and
+  Results readers and viewers. Use it to write, run, debug or review a user
+  script that imports apeGmsh.
+  TRIGGER: from apeGmsh import apeGmsh / Part / FEMData / Results; g.model,
+  g.mesh, g.physical, labels and selections; loads, masses and constraints;
+  Part and Assembly multi-part models; get_fem_data and model.h5; apeSees(fem),
+  stages and the emitted Tcl or openseespy deck; reading OpenSees output with
+  Results.from_*; the apeGmsh Studio CLI or MCP; "structural mesh" or
+  "OpenSees from gmsh" when apeGmsh is the wrapper.
+  SKIP: changing apeGmsh itself (its source, tests, ADRs or docs; use the
+  AGENTS.md task guides); the raw gmsh API or .geo files (gmsh-structural);
+  OpenSees Tcl, openseespy or C++ work without apeGmsh (opensees-expert,
+  opensees-ladruno); design-code checks.
 ---
 
-# apeGmsh — structural FEM wrapper around Gmsh
-<!-- skill-freshness: verified against apeGmsh main@5c92ca92 (2026-08-15) · signatures live in the references; src/ is not the authoring lookup (ADR 0096) -->
+# apeGmsh: structural FEM on top of Gmsh
 
-apeGmsh is the user's in-house Gmsh wrapper, and the *core idea* is:
-
-> Describe a model **once** — geometry, labels, loads, masses, constraints,
-> per-node ndf — then hand a solver-agnostic **snapshot** (`FEMData`) to any
-> FEM solver. OpenSees gets a first-class bridge; anyone else reads the
-> snapshot. The same snapshot persists to `model.h5`, composes into larger
-> assemblies, and drives post-processing of OpenSees output.
-
-Whenever the user is working in this project or writing code against
-apeGmsh, prefer the apeGmsh API over raw `gmsh.*` calls. Raw `gmsh` calls
-still work (you're holding the same session), but the whole point of the
-wrapper is that you don't have to write them.
-
-## Lookup (ADR 0096)
-
-Pick **one** row, read that file (or that heading), then write code.
-Do not slurp this whole skill. Do not grep `src/apeGmsh/` to author a
-model script. Prefer labels / physical-group names over tags.
-
-`src/` read/grep is an **index miss**: allowed only when the reference
-has no hit **and** you are changing apeGmsh itself.
-
-| Task | Read only |
-|---|---|
-| First script / session skeleton | `references/workflows.md` |
-| Writing a model script (shape, naming, checks) | `references/model-scripts.md` (rules + the one nearest reference script) |
-| Public composite signature | MCP `lookup(symbol)` or `python -m apeGmsh.studio.lookup SYMBOL` |
-| Public API map (headings) | `references/api-cheatsheet.md` (matching heading) |
-| FEMData / `model.h5` | `references/fem-broker.md` |
-| `apeSees` / stages / emit | `references/opensees-bridge.md` |
-| After mesh or solve check | `references/assess.md` |
-| Results / plot / stills | `references/results.md` |
-| Assembly / compose readers / `from_h5` | `references/compose.md` |
-| Rebar cages | `references/rebar.md` |
-| ETABS / analytical import | `references/interop.md` |
-| Section properties / fiber section | `references/section-properties.md` |
-| Ladruno fork-only | `references/ladruno.md` |
-| Build failed / anti-pattern | `references/gotchas.md` |
-| Studio / MCP / picks | this file, **Studio** paragraph |
-| Promote a miss / skill lie | `python -m apeGmsh.studio.profile --promote` (MCP `kind=miss` only; writes nothing) |
-
-What each file contains (do not read them all):
-
-- `api-cheatsheet.md` — public `g.*` / `apeSees` map (matching heading; signatures via MCP `lookup` / lookup CLI)
-- `fem-broker.md` — `FEMData`, `model.h5`
-- `opensees-bridge.md` — `apeSees`, stages, emit, ndf, remote
-- `assess.md` — verdict + stills after mesh/solve (not Qt)
-- `results.md` — `Results.from_*`, plot, render, lineage
-- `compose.md` — Assembly, compose readers, `from_h5`
-- `rebar.md` — `g.rebar` cages
-- `interop.md` — ETABS / analytical import
-- `section-properties.md` — `SectionProperties`, fiber handoff
-- `workflows.md` — end-to-end patterns (not a forced pipeline)
-- `model-scripts.md` — Script English rules + reference scripts (truss, 3-D frame, staged footing)
-- `gotchas.md` — anti-patterns
-- `ladruno.md` — fork-only emit/read
-
-Published docs: <https://nmorabowen.github.io/apeGmsh/> (`docs/`, ADR 0079).
-`internal_docs/` is unpublished. Changelog Unreleased is the moving truth.
+**Humans:** start with the docs learning path
+(<https://nmorabowen.github.io/apeGmsh/tutorials/learning-path/>), then read
+`references/model-scripts.md`, whose reference scripts run in CI.
 
 ## Mental model
 
-Four concepts, in this order:
+1. A session `g` owns one Gmsh kernel; its composites (`g.model`, `g.mesh`, `g.physical`, `g.loads`, `g.masses`, `g.constraints`, ...) split by concern into sub-composites.
+2. You name geometry with labels and physical groups, and declare loads, masses and constraints on those names before meshing.
+3. `g.mesh.queries.get_fem_data(dim=...)` returns `FEMData`: an immutable, solver-neutral snapshot that saves to `model.h5` and needs no live Gmsh.
+4. `apeSees(fem)` is the OpenSees bridge, used after the session: typed primitives, with MP constraints and per-node ndf emitted for you; it writes a Tcl, Python or H5 deck, or runs one.
+5. `Results.from_*` reads the output back against the model for checks, stills and viewers.
 
-**1. A session (`g`) owns a single Gmsh kernel.** Open it with
-`g.begin()` / `g.end()` or a `with apeGmsh(...) as g:` block. Every
-composite — `g.model`, `g.mesh`, `g.loads`, `g.masses`, `g.constraints`,
-`g.embed`, `g.rebar`, `g.decouple_node`, etc. — is a thin namespace that talks
-to that shared kernel.
-At the top level the session *is* the assembly — `apeGmsh.Assembly` does
-**not** exist (a deliberate v1.0 guard). OpenSees is **not** a session
-composite (`g.opensees` was removed) — it is the separate post-session
-bridge `apeSees(fem)`.
+## The skeleton
 
-> To build one model out of several saved `model.h5` files, use
-> **Assembly v2** (ADR 0117), a sub-path import: `from apeGmsh.assembly
-> import Assembly` → `.instance(label, "part.h5", translate=, rotate=,
-> partition_rank=)` → `.tie(...)` / couplings → `.bridge(ndm, ndf)`, which
-> returns one ordinary `apeSees`. Every instance is namespaced
-> `{label}.{name}` (no host), its model content (mesh, groups, materials,
-> sections, element specs) travels, and supports, loads and the analysis
-> are declared on the bridge. See `references/compose.md` §"Assembly v2".
-> The v1 path (`g.compose`, `FEMData.compose`, `Assembly.add / couple /
-> materialize`) was removed without deprecation (ADR 0117 D7, AS5-c).
-> **Mixed element ORDER across parts (hex20 + hex8) needs one
-> session per part** — `set_order` is session-global, and
-> `Part` is geometry-only by contract (ADR 0085); order-mismatched
-> interfaces want `tie(method="mortar", enforce="equation")` (ADR 0086) —
-> see `references/compose.md` §"Independent meshes per part".
-
-**2. Composites split by concern.** `g.model` splits into
-`geometry / boolean / transforms / io / queries`. `g.mesh` splits into
-`generation / sizing / field / structured / editing / queries /
-partitioning`. The OpenSees bridge `apeSees(fem)` exposes typed namespaces
-(`uniaxialMaterial / nDMaterial / section / geomTransf / beamIntegration /
-element / timeSeries / pattern / recorder`) plus flat verbs (`model / fix /
-mass / build / stage / tcl / py / h5 / run`). Every method has a home — you
-rarely reach into `gmsh.*`.
-
-**3. `FEMData` is the solver contract.** When the mesh is ready, call
-`fem = g.mesh.queries.get_fem_data(dim=3)` (or `dim=2`, or `None` for all
-dims). The returned `FEMData` is an immutable snapshot with `fem.nodes`,
-`fem.elements`, `fem.info`, `fem.inspect`. It works without a live Gmsh
-session, round-trips through `model.h5` (`to_h5` / `from_h5`), composes into
-larger assemblies, and every solver bridge consumes it. **Turn coordinates
-into labels with the `.select()` chain** — `g.model.select(...)` pre-mesh,
-`fem.nodes.select(...)` / `fem.elements.select(...)` / `g.mesh_selection.select(...)`
-post-mesh; never raw tags (see `references/api-cheatsheet.md`).
-
-**4. MP constraints + per-node ndf emit automatically.** When the snapshot
-carries multi-point constraints (`fem.nodes.constraints`,
-`fem.elements.constraints`) the `apeSees(fem)` bridge auto-emits the matching
-`equalDOF` / `rigidLink` / `rigidDiaphragm` / `ASDEmbeddedNodeElement` deck
-lines (and an `ops.constraints.Transformation()` handler when present); per-node
-ndf is inferred from element classes and wired in too. **Do not hand-emit
-these** — it double-constrains the model. (Shipped v2.0.0, ADR 0022.) The
-same is true of the side-lists that emit *elements* rather than MP equations:
-`fem.elements.contacts` and `fem.elements.interfaces`
-(`g.constraints.interface()`, the unilateral + slip-capped coincident-pair
-`zeroLength` bed — ADR 0093).
-
-## Core workflow
-
-Every apeGmsh script follows the same skeleton. Learn this, and everything
-else is filling in blanks:
+Every script has this shape. It runs as written (CI executes it); copy it and
+change the data, the geometry and the names.
 
 <!-- reference-script: skeleton.py -->
 ```python
-# verified: tests/test_femdata_from_h5.py::test_session_save_then_from_h5
-#           tests/opensees/integration/test_runnable_deck.py::test_tcl_deck_contains_constraint_lines
 from apeGmsh import apeGmsh
 from apeGmsh.opensees import apeSees
 
@@ -211,224 +85,77 @@ with ops.pattern.Plain(series=ops.timeSeries.Linear()) as p:
 ops.py("model.py")     # or ops.tcl / ops.h5 / ops.run
 ```
 
-This is the **happy path**. For anything more involved (multi-part assembly,
-coupled shell + frame, pushover, staged SSI, reading results back), read the
-matching reference — don't improvise.
+## Rules, each with its reason
 
-**Studio (ADR 0095).** `python -m apeGmsh.studio script.py` replays
-up to `--phase` (default `model`: **stops before** `generate()`;
-`--phase mesh` stops before `apeSees` / `Results`). The session stays
-open. MeshViewer if the replay produced elements, otherwise
-ModelViewer. Picks write `.apegmsh/selection.json` under the resolved project root
-(`root=` / `--root` / `APEGMSH_ROOT` / `APEGMSH_STUDIO_ROOT` /
-nearest `.apegmsh/` / cwd — ADR 0095 INV-15). A successful
-stop writes `.apegmsh/names.json` — labels / PGs / counts / bboxes of
-what exists, not what was clicked — and appends `.apegmsh/runs.jsonl`
-(timestamp, hash, phase, counts). `python -m apeGmsh.studio --status`
-reads those files without replaying. The host window refreshes itself
-(ADR 0095 Amendment 4): a Refresh toolbar action / F5 replays the
-entry script, and a file watch replays it automatically when the
-saved file's mtime settles (`--no-watch` or the Watch toggle turn it
-off) — both honor the `busy.json` lock and append `runs.jsonl` with
-`trigger: "refresh"` / `"watch"`, so after editing the script the
-human's window follows the save; the agent does not need to reopen
-the host, and must not treat a `BUSY` `run_until` as an error while
-the host is replaying. Before a spatial edit, read the
-envelope, `names.json`, and `--status` — identity is
-`labels` / `physical_groups` / `phase`, not dimtags.
-An unnamed pick's first script edit is `.to_label()` / `.to_physical()`.
-After solve, still `assess()` + `render()`, not `viewer()`.
-When the agent must look, write visors under `.apegmsh/visors/`
-(`results.render` / labeled matplotlib) and read those PNGs — never
-capture the OS desktop or the human Qt window.
-`python -m apeGmsh.studio init --name <habitat> --model <model_id>`
-stamps a fresh APE Studio habitat from the packaged template (ADR 0095
-Amendment 6) — playbook, lifecycle scripts, checker, model lineage —
-and leaves it under local git: a repo on `main` with one initial
-commit; `--no-git` opts out, and a machine without git gets a WARN
-and a valid habitat (Amendment 8). Habitat git follows the
-**checkpoint contract** (`APE/instructions/checkpoints.md`): `main`
-holds checkpoints only, work happens on `work/<model>/<slug>`
-branches, a `--no-ff` merge + `checkpoint/<model>/<slug>` tag is
-acceptance, and each case's `run.json` carries `model_sha` /
-`git_dirty` via the habitat's own
-`scripts/_habitat.py::git_provenance()`. Results never enter git (the
-shipped `.gitignore`); lifecycle scripts print git state but never
-write it; forges are optional — a PR is only the review surface.
-Before building a covered shape from scratch, check
-`python -m apeGmsh.studio example list [--tag <domain>]` — the
-oracle-bearing example library (ADR 0095 Amendment 7): `show <name>`
-prints the manifest + README, `copy <name> [--dest DIR]` lands a
-runnable directory (script + `manifest.json` + `README.md` +
-`verify.py`) anywhere apeGmsh is installed, refusing to overwrite.
-Every example's metrics were produced by an actual run (INV-22) —
-discovery displaces src-grep, same as ADR 0096's lookup discipline
-but for recipes, not symbols. CLI only, not an MCP tool.
-Read-only MCP (ADR 0095 S4a–S4e / S5a / 0096 S3): `python -m apeGmsh.studio.mcp` (needs
-`pip install mcp`). Tools: `status`, `get_selection`, `lookup`, `run_until`,
-`assess`, `render`, `animate(kind=history|yield)`, `results_pin`,
-`emit_report(format=markdown|html|canvas)`, `highlight`,
-`promote_selection` — names first, no Qt, no `setup=`. Every tool
-accepts optional `root=` (INV-15). `status(mode=brief|full)` defaults
-to **brief** (root / last-run / labels / PGs / counts / pick + `text`);
-use `mode=full` only for debugging. **Root check → brief; entity
-hunting → `lookup` / `names.json`, not a full status dump.**
-`lookup(symbol)`
-is See-family inspect of the generated index (~20 lines); not CAD;
-does not grep `src/`. `kind=yield`
-is a von Mises contour of `von_mises_stress` on auto-scaled deform
-(0.12 of diagonal; not an iso-clip; π-plane later). `highlight`
-writes `.apegmsh/highlight.json` only (host file-poll + `select_batch`;
-does not write `selection.json`). `promote_selection` suggests
-`g.model.select(None, dim=).in_box(lo, hi).to_label()` /
-`.to_physical()` and does not write the `.py`. `emit_report`:
-markdown is the archive (`docs/`); html is a print skin there;
-canvas is a live Cursor projection (IDE `canvases/`, not
-git-portable) and still writes the markdown chapter.
-Run `assess` any time before `emit_report` — it writes
-`.apegmsh/assess.json` and the chapter's Assess section picks up that
-snapshot's verdict, findings, and skipped list automatically (`--pin`
-copies it, ADR 0095 Amendment 5); do not paste `assess` output into
-the chapter by hand.
-`kind=formation` is later. Do not invent MCP tools for
-`g.model.*` / `apeSees` primitives. Token-budget profiler is
-`python -m apeGmsh.studio.profile` (sidecar; not an MCP tool).
-Studio generation order (CAD then
-mesh, quotations on, parallel processes) is a **recommendation** for
-a given script, not a required path (ADR 0096 INV-14). Authored
-chapters go in `docs/`;
-visors stay under `.apegmsh/visors/`.
+1. **Open the session with `with apeGmsh(...) as g:`.** The session owns the
+   one Gmsh kernel, and the block closes it on an exception, so a failed run
+   cannot leave `RuntimeError: session is already open` behind.
+2. **Name what you will refer to: a `label=` at creation, and physical groups
+   with dimension-unique names.** OCC renumbers tags on every boolean, and the
+   bridge's `pg=` selectors resolve by name, so a tag goes stale and a name
+   shared by two dimensions is ambiguous. With no label to hand, promote a
+   selection in one call, as the skeleton does for `Base` and `Tip`.
+3. **Declare loads, masses and constraints on names before meshing, then take
+   the snapshot.** They resolve onto the mesh inside `get_fem_data`; the
+   snapshot is what every solver bridge reads, and it saves to `model.h5`.
+4. **Call the full sub-composite path** (`g.mesh.generation.generate`,
+   `g.model.geometry.add_box`). Parent composites carry no shortcut methods,
+   so a shortened path raises `AttributeError`.
+5. **On the bridge, restate supports, masses and loads**: `ops.fix(pg=...)`,
+   `ops.mass_from_model()`, and `p.from_model(case)` inside a pattern. The
+   bridge consumes model records on request only (ADR 0051), and emit warns
+   `UnconsumedModelDefinitionWarning` when a support or mass record never
+   reached the deck.
+6. **Leave MP constraints and per-node ndf to the bridge.** `apeSees(fem)`
+   emits the `equalDOF` / `rigidLink` / `rigidDiaphragm` / embedded-node lines
+   and each node's ndf from the snapshot, and the contact and interface
+   elements too; a hand-written copy constrains the model twice.
+7. **Check a mesh or a solve with `assess()`, and look at stills, not
+   windows.** `fem.assess()` and `results.assess(figures=True)` return a
+   verdict text and PNG paths you can read; act on `severity="error"`. Qt and
+   web viewers are for a human who asked to look, and an agent never captures
+   the human's screen.
+8. **Read output through a `Results.from_*` constructor that is given the
+   model.** The reader binds each record to the model's names, so a check can
+   ask for `pg="Tip"` instead of node numbers.
+9. **Keep the script flat and its numbers named**, with units in the data
+   block (`references/model-scripts.md` has the full rules). A reviewer reads
+   it as an engineering procedure, and the lint below checks most of it.
 
-**MCP wiring (ADR 0095 Amendment 12).** Each project stamps its own
-`apegmsh-studio-habitat` server in `.cursor/mcp.json` (and `.mcp.json`
-for Claude Code), binding **both** `APEGMSH_ROOT` and
-`APEGMSH_STUDIO_ROOT` to that project's Studio root. The user-level
-`~/.cursor/mcp.json` server is deliberately **unbound** — it carries no
-root env and no `cwd`, because a global root is stale the moment you
-switch projects. Set `LADRUNO_OPENSEES_QUIET=1` before Python starts
-(the office venv `.pth` banner goes to stdout and would break
-JSON-RPC)::
+## Before you return a script
 
-    {
-      "mcpServers": {
-        "apegmsh-studio-habitat": {
-          "command": "<venv>/Scripts/python.exe",
-          "args": ["-m", "apeGmsh.studio.mcp"],
-          "env": {
-            "LADRUNO_OPENSEES_QUIET": "1",
-            "APEGMSH_ROOT": "<studio root>",
-            "APEGMSH_STUDIO_ROOT": "<studio root>",
-            "APEGMSH_PYTHON": "<venv>/Scripts/python.exe",
-            "PYTHONPATH": "<apeGmsh>/src"
-          }
-        }
-      }
-    }
+- **Signatures:** run `python -m apeGmsh.studio.lookup SYMBOL` (or the MCP
+  `lookup` tool) for any call this skill does not show. The index behind it
+  is checked against the live code; prose and memory drift.
+- **Lint:** run `python scripts/lint_model_script.py <script.py>` (beside this
+  file; standard library only) and fix every finding. Rule R1 flags each
+  symbol listed in `scripts/removed_symbols.json` and names its replacement.
+- **Run it** and keep its asserts: exit code 0 with a hand check is the proof.
 
-For a Workbench project with a Studio overlay, `<studio root>` is the
-**overlay folder** (e.g. `Staged Model/`), not the Workbench root. Do
-not pin `cwd` to the library repo — it has its own `.apegmsh/` and the
-ancestor walk would bind there.
+Reading `src/apeGmsh/` to write a model script is an index miss: use
+`lookup` and the references. The source is for changing apeGmsh itself.
 
-**Agents: check `status.root` first.** If it is not the habitat you
-mean, pass `root=` on *every* Studio tool call for the rest of the
-session — do not assume the server is bound correctly.
+## Routing: one task, one file
 
-## When things go wrong: the usual suspects
+Pick one row and read only that file (or its matching heading).
 
-1. **`RuntimeError: session is already open`** — `begin()` called twice, or a
-   crashed notebook cell left Gmsh initialized. Fix: `gmsh.finalize()` or
-   restart the kernel. Prefer the `with` form.
-2. **Physical group resolves to wrong dimension** — `g.physical.add(1, ...)`
-   and `g.physical.add(2, ...)` are different groups. Keep PG names
-   dimension-unique so `apeSees(fem)` `pg=` selectors resolve unambiguously.
-3. **"No label, physical group, or part named X"** — resolution order is
-   `label → physical group → part label`; the name exists in none. Inspect
-   with `g.labels.get_all()`, `g.physical.summary()`, `g.parts.labels()`.
-4. **`fem.elements.connectivity` raises `TypeError`** — the mesh has multiple
-   element types. Iterate `for group in fem.elements:` or filter with
-   `fem.elements.select(element_type="tet4").connectivity` (or
-   `.result().resolve(element_type=...)` for a mixed selection).
-5. **Labels without physical groups** — labels on the main session don't
-   auto-promote to PGs (only `Part` sessions do). Call
-   `g.labels.promote_to_physical("name")` or add `g.physical.add(...)`.
-6. **`Results.from_native(...)` raises `TypeError`** — the constructor now
-   *requires* `model=` (`from_mpco` requires `model_h5=`). See
-   `references/results.md`.
-7. **Don't open Qt to check a solve — and don't capture the human's
-   screen.** After `get_fem_data` / `Results.from_*`,
-   `report = fem.assess()` / `results.assess(figures=True)`; print
-   `report.text`; `read_file` each PNG in `report.figures`; act on
-   `severity="error"`. Inspect is inventory, not the verdict. Extra
-   stills go under `.apegmsh/visors/` via `results.render` / labeled
-   `results.plot.*` — never OS-screenshot the desktop or the live
-   viewer. Qt / web viewers are for humans who asked to look.
-   `results.viewer()` default is `blocking=None` (auto: scripts block,
-   a Jupyter kernel spawns a subprocess; an in-memory Results there
-   raises `RuntimeError`: open it with a `from_*` constructor). An explicit `blocking=True` still kills a
-   Jupyter kernel. See `references/assess.md`.
+| Task | Read |
+|---|---|
+| Writing a model script: shape, rules, nearest reference script | `references/model-scripts.md` |
+| An end-to-end pattern beyond the skeleton | `references/workflows.md` |
+| A signature | `python -m apeGmsh.studio.lookup SYMBOL` |
+| Map of the public `g.*` / `apeSees` surface | `references/api-cheatsheet.md` |
+| `FEMData`, `model.h5`, schema numbers; `MalformedH5Error` | `references/fem-broker.md` |
+| `apeSees`, stages, emit, ndf; `BridgeError` | `references/opensees-bridge.md` |
+| Checking a mesh or a solve; finding codes | `references/assess.md` |
+| `Results`, plots, stills, viewers; `LineageError` | `references/results.md` |
+| Multi-part models, `Assembly`, `from_h5` | `references/compose.md` |
+| Rebar cages (`g.rebar`) | `references/rebar.md` |
+| ETABS or analytical-model import | `references/interop.md` |
+| Section properties, fiber sections; `SectionMeshError` | `references/section-properties.md` |
+| Ladruno fork primitives through `apeSees` | `references/ladruno.md` |
+| An error, a trap, an anti-pattern, version and layout facts | `references/gotchas.md` |
+| Studio CLI, MCP tools, habitats, the example library | `references/studio.md` |
 
-Which reference covers a given failure: `BridgeError` / staged / ndf →
-`opensees-bridge.md`; `MalformedH5Error` / `SchemaVersionError` →
-`fem-broker.md`; finding codes / after-solve check → `assess.md`;
-`LineageError` / viewer crash → `results.md`;
-`MeshRecipeError` / selection → `api-cheatsheet.md`; `GeometryValidationError`
-→ `gotchas.md`; `SectionMeshError` / `CompositeSectionError` /
-`SectionAnalysisError` → `section-properties.md`.
-
-## Version & layout facts you can rely on
-
-These are the anti-hallucination guardrails — the removed/renamed surfaces an
-agent most often gets wrong. Everything quantitative (schema integers, full
-signatures) lives in the references.
-
-- **Version is v2.0.0** (`pyproject.toml`). A stale editable install may report
-  `v1.6.0` as `apeGmsh.__version__` — trust the source, not the install.
-  Anything claiming "v1.0" is stale. v2.0.0 shipped the three-broker chain
-  `FEMData ⊂ OpenSeesModel ⊂ Results`, auto MP-constraint emission, and deleted
-  `BindError`.
-- **Work from the latest apeGmsh.** At session open, pull (or upgrade) the
-  checkout behind the install, then verify the import actually points at it —
-  `apeGmsh.__file__` + `apeGmsh.__version__` — before the first run. After a
-  pull the environment can still silently resolve a stale install (multi-entry
-  `PYTHONPATH`, a forgotten editable install elsewhere); a session debugged
-  against a stale library is wasted.
-- **Removed/renamed** (never recommend these): `g.mass` → `g.masses`;
-  `g.opensees` → the post-session `apeSees(fem)` bridge; `g.node_ndf` → ndf is
-  inferred from element classes + `ops.ndf` for element-less nodes (ADR
-  0048/0049, see `opensees-bridge.md`); flat v0.x forms (`g.add_point`,
-  `g.model.fuse`, `g.initialize`) → sub-composite forms; `apeGmshViewer` →
-  `results.viewer()` / `results.session()`. The legacy Qt `ResultsViewer`
-  is **deleted** (X3-d, #1734) — no import path reaches it; the post-solve
-  document is a `ResultsSession` (`results.viewer()` or
-  `python -m apeGmsh.viewers <results.h5>`).
-- **Removed (ADR 0116):** the plotly preview (`apeGmsh.preview`,
-  `g.model.preview`, `g.mesh.preview`), `GeomTransfViewer`,
-  `apeGmsh.sensitivity` and the import banner. Inline pictures are
-  `g.plot` (matplotlib) or `render(...)` stills.
-- **Sidecar modules** (separate imports, NOT session composites):
-  `from apeGmsh.hpc import Cluster, Job` (remote SLURM, pairs with
-  `ops.run_remote`), `from apeGmsh.studio import SelectionEnvelope`
-  (`python -m apeGmsh.studio script.py --phase model` — stops before
-  `generate()`; `.apegmsh/selection.json` + `names.json` + `runs.jsonl`;
-  `--status` inspects them, ADR 0095). Details in `api-cheatsheet.md`.
-- **Schema constants** live in `fem-broker.md` (neutral + bridge zones, ADR
-  0023) and the results session-snapshot version in `results.md` — they
-  drift, so read the number from there, not from memory.
-
-Before claiming a method or signature exists, call MCP `lookup(symbol)`
-or run `python -m apeGmsh.studio.lookup SYMBOL` (ADR 0096). If that
-misses, read `references/api-cheatsheet.md` (the matching heading).
-Do not `Read` `src/apeGmsh/studio/_api_index.json`.
-`src/apeGmsh/` is for maintaining the library, not for writing a
-model script.
-
-Promotion (ADR 0096 S5): a MCP `lookup` **miss** (`kind=miss`, not
-ambiguous) that repeats ≥3 times in the **model-cwd**
-`.apegmsh/mcp_calls.jsonl` is eligible for a reviewed index/router
-PR. `--promote` prints that list and writes nothing. A skill error
-(skill vs index) owes a PR after one confirmation. Working ImageMage
-steps stay comments in *that* `.py` and/or a Recommendation in
-`workflows.md` — never a required pipeline. Propose a PR; do not
-write `skills/apegmsh/` or run `sync_skill.py` in-session; do not
-edit `.claude/skills/apegmsh-helper/`.
+Published docs: <https://nmorabowen.github.io/apeGmsh/>. `CHANGELOG.md`'s
+Unreleased section is the moving truth between releases.

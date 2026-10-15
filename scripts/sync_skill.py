@@ -40,30 +40,58 @@ DERIVED = REPO / ".claude" / "skills" / "apegmsh-helper"
 SCRIPT_GLOBS = ("*.py", "*.json")       # skills/apegmsh/scripts/ files the mirror carries
 
 # Front-matter for the DERIVED copy. The harness loads this skill under the
-# name `apegmsh-helper`; the description is trigger-tuned (kept verbatim from the
-# installed copy, refreshed to name the v2.0 surfaces).
+# name `apegmsh-helper` inside this repository, where most sessions change
+# apeGmsh itself, so the description leads with what the skill is for and
+# routes maintainer work to the AGENTS.md task guides. It is written as a YAML
+# folded block (`>`), which holds any character, so a `: ` in the text cannot
+# break the front matter the way the old plain scalar did.
 DERIVED_NAME = "apegmsh-helper"
 DERIVED_DESCRIPTION = (
-    "Use whenever the user is working with apeGmsh — the structural-FEM wrapper "
-    "around Gmsh with OpenSees integration. Triggers on building FEM models from "
-    "CAD/STEP imports, Part-based assembly workflows, composite-based "
-    "geometry/mesh/constraint APIs (g.model, g.mesh, g.physical, g.constraints, "
-    "etc.), void/hole authoring (as_void, add_polyline, add_void_sweep/loft, "
-    "boolean.apply_voids — ADR 0097), labelled g.decouple_node as RBE2/RBE3 "
-    "master, the apeSees(fem) OpenSees bridge with typed primitives and automatic "
-    "MP-constraint emission, staged analysis (ops.stage), loads/masses/constraints "
-    "resolution into the FEMData broker, native model.h5 persistence "
-    "(FEMData.to_h5/from_h5, save_to=/g.save(), apeGmsh.from_h5), assembling saved "
-    "models with Assembly v2 (from apeGmsh.assembly import Assembly: "
-    "instance/tie/node/couplings/bridge/partition_rank, ADR 0117), "
-    "post-processing OpenSees output via Results "
-    "(from_native/from_mpco/from_recorders) with the interactive and web viewers "
-    "(results.viewer / results.show_web), and exporting models to OpenSees Tcl or "
-    "openseespy scripts. Covers apeGmsh's own abstractions on top of Gmsh and "
-    "OpenSees. For raw gmsh API questions see the gmsh-structural skill; for raw "
-    "OpenSees analysis commands see opensees-expert; for FEM theory first "
-    "principles see fem-mechanics-expert."
+    "How to use apeGmsh, the Gmsh wrapper for structural FEM: labelled geometry "
+    "and meshes, a FEMData snapshot saved to model.h5, a typed OpenSees bridge "
+    "(apeSees), and Results readers and viewers. Use it to write, run, debug or "
+    "review a user model script that imports apeGmsh. "
+    "TRIGGER: from apeGmsh import apeGmsh / Part / FEMData / Results; g.model, "
+    "g.mesh, g.physical, labels and selections; loads, masses and constraints; "
+    "Part and Assembly multi-part models; get_fem_data and model.h5; "
+    "apeSees(fem), stages and the emitted Tcl or openseespy deck; reading "
+    "OpenSees output with Results.from_*; the apeGmsh Studio CLI or MCP. "
+    "SKIP: changing apeGmsh itself (its source, tests, ADRs, docs or this skill; "
+    "use the AGENTS.md task guides: apegmsh-bridge-feature, "
+    "apegmsh-viewer-results, apegmsh-adr-docs); the raw gmsh API or .geo files "
+    "(gmsh-structural); OpenSees Tcl, openseespy or C++ work without apeGmsh "
+    "(opensees-expert, opensees-ladruno); design-code checks."
 )
+
+#: The size cap of a skill description, the same one tests/test_skill_fences.py
+#: enforces: a longer one is truncated or refused where the skill is uploaded.
+DESCRIPTION_MAX = 1024
+
+
+def folded_description(text: str, width: int = 78) -> str:
+    """``text`` as a YAML ``description: >`` block, wrapped at ``width``.
+
+    A folded block holds any character, and YAML folds its lines back with
+    one space, so the loaded description equals ``text``. Raises when
+    ``text`` is over ``DESCRIPTION_MAX`` characters or would not fold back
+    to itself (a newline or a run of spaces).
+    """
+    if len(text) > DESCRIPTION_MAX:
+        raise ValueError(
+            f"the description is {len(text):,} characters, over {DESCRIPTION_MAX:,}: shorten it"
+        )
+    if text != " ".join(text.split()):
+        raise ValueError("the description must be one line with single spaces")
+    lines: list[str] = []
+    line = ""
+    for word in text.split(" "):
+        if line and len(line) + 1 + len(word) > width - 2:
+            lines.append(line)
+            line = word
+        else:
+            line = f"{line} {word}" if line else word
+    lines.append(line)
+    return "description: >\n" + "".join(f"  {chunk}\n" for chunk in lines)
 
 
 def split_frontmatter(text: str) -> tuple[str, str]:
@@ -82,8 +110,8 @@ def derived_skill_md() -> str:
     fm = (
         "---\n"
         f"name: {DERIVED_NAME}\n"
-        f"description: {DERIVED_DESCRIPTION}\n"
-        "---"
+        + folded_description(DERIVED_DESCRIPTION)
+        + "---"
     )
     return fm + body
 

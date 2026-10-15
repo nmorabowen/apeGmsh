@@ -5,6 +5,74 @@ constraint / selection / Results code from memory. The other references
 cover the happy path; this file is the ❌→✅ list and the subtle traps
 that aren't obvious from the API surface.
 
+## When things go wrong: the usual suspects
+
+1. **`RuntimeError: session is already open`**: `begin()` was called twice, or
+   a crashed notebook cell left Gmsh initialized. Fix: `gmsh.finalize()` or
+   restart the kernel. Prefer the `with apeGmsh(...) as g:` form.
+2. **A physical group resolves to the wrong dimension**: `g.physical.add(1, ...)`
+   and `g.physical.add(2, ...)` are different groups. Keep PG names
+   dimension-unique so the bridge's `pg=` selectors resolve unambiguously.
+3. **"No label, physical group, or part named X"**: resolution order is
+   `label → physical group → part label`, and the name exists in none. Inspect
+   with `g.labels.get_all()`, `g.physical.summary()`, `g.parts.labels()`.
+4. **`fem.elements.connectivity` raises `TypeError`**: the mesh has several
+   element types. Iterate `for group in fem.elements:` or filter with
+   `fem.elements.select(element_type="tet4").connectivity` (or
+   `.result().resolve(element_type=...)` for a mixed selection).
+5. **Labels without physical groups**: labels on the main session do not
+   auto-promote to PGs (only `Part` sessions do). Call
+   `g.labels.promote_to_physical("name")` or add `g.physical.add(...)`.
+6. **`Results.from_native(...)` raises `TypeError`**: the constructor
+   requires `model=` (`from_mpco` requires `model_h5=`). See `results.md`.
+7. **Checking a solve in Qt, or capturing the human's screen.** After
+   `get_fem_data` / `Results.from_*`, call `report = fem.assess()` /
+   `results.assess(figures=True)`, print `report.text`, read each PNG in
+   `report.figures`, and act on `severity="error"`. Inspect is inventory, not
+   the verdict. Extra stills go under `.apegmsh/visors/` via `results.render`
+   or labelled `results.plot.*`. Qt and web viewers are for humans who asked
+   to look; `results.md` covers `results.viewer()` in a script and in
+   Jupyter. See `assess.md`.
+
+Which reference covers a given failure: `BridgeError` / staged / ndf →
+`opensees-bridge.md`; `MalformedH5Error` / `SchemaVersionError` →
+`fem-broker.md`; finding codes / after-solve check → `assess.md`;
+`LineageError` / viewer crash → `results.md`; `MeshRecipeError` / selection /
+`GeometryValidationError` → `api-cheatsheet.md`; `SectionMeshError` / `CompositeSectionError` / `SectionAnalysisError` →
+`section-properties.md`.
+
+## Version and layout facts
+
+The removed and renamed surfaces an agent most often gets wrong. Everything
+quantitative (schema integers, full signatures) lives in the other
+references.
+
+- **Removed and renamed symbols** are listed, each with its replacement, in
+  `scripts/removed_symbols.json`. Lint rule R1 (`scripts/lint_model_script.py`)
+  flags them in a script; never recommend one.
+- **Work from the apeGmsh you mean.** At session open, pull (or upgrade) the
+  checkout behind the install, then check that the import points at it
+  (`apeGmsh.__file__`, `apeGmsh.__version__`) before the first run. A
+  multi-entry `PYTHONPATH` or a forgotten editable install elsewhere can
+  silently resolve a stale copy; trust the source's `pyproject.toml` over a
+  stale install's version string.
+- **OpenSees is the post-session bridge**, `from apeGmsh.opensees import
+  apeSees`, not a session composite. At the top level the session is the
+  assembly; to build one model from several saved `model.h5` files use
+  Assembly v2, the sub-path import `from apeGmsh.assembly import Assembly`
+  (see `compose.md`).
+- **Pictures and viewers:** inline pictures are `g.plot` (matplotlib) or
+  `render(...)` stills. The post-solve document is a `ResultsSession`:
+  `results.viewer()`, `results.session()`, or
+  `python -m apeGmsh.viewers <results.h5>`.
+- **Sidecar modules** are separate imports, not session composites:
+  `from apeGmsh.hpc import Cluster, Job` (remote SLURM, pairs with
+  `ops.run_remote`) and `from apeGmsh.studio import SelectionEnvelope` (see
+  `studio.md`). Details in `api-cheatsheet.md`.
+- **Schema constants** live in `fem-broker.md` (neutral and bridge zones, ADR
+  0023) and the results session-snapshot version in `results.md`. They drift,
+  so read the number there, not from memory.
+
 ## Anti-patterns (❌ → ✅)
 
 ### ❌ `ops.constraints.LadrunoContact()` on a flat contact deck → ✅ let auto-emit do it

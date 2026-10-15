@@ -1,10 +1,6 @@
 # Known findings of tests/test_skill_fences.py, one per line: <file> | <rule> | <detail>.
 # Shrink-only: the line count is pinned to SKILL_FENCES_BASELINE. When you clear a
 # finding, delete its line and lower the pin. Never add a line (maintainer gate).
-SKILL.md | description-size | description over 1,024 characters
-SKILL.md | skill-freshness | freshness stamp
-SKILL.md | skill-size | SKILL.md over 200 lines
-mirror:apegmsh-helper/SKILL.md | description-size | description over 1,024 characters
 references/api-cheatsheet.md | fence-parse | python fence does not parse; fence opens `# apeGmsh.hpc — remote SLURM submission (ADR 0060). Pairs wi`
 references/api-cheatsheet.md | fence-parse | python fence does not parse; fence opens `from apeGmsh import SectionProperties`
 references/api-cheatsheet.md | fence-parse | python fence does not parse; fence opens `ops = apeSees(fem, *, default_orientation=None, opensees=Non`
