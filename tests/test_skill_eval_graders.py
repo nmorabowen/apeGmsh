@@ -156,9 +156,40 @@ FOOTING = {
 }
 
 
-def _oracle(graders, task: str, data: object, tmp_path: Path) -> list:
+MODEL_SIZE = {"pratt_truss": (12, 21, False), "frame_modal": (29, 42, True), "staged_footing": (2433, 1100, False)}
+GEOSTATIC_UY = -0.0004       # m, the footing centre's settlement at the end of stage 1 (any value)
+
+
+def _probe(task: str, work: Path, *, nodes: int | None = None) -> list[dict]:
+    """A probe log as a faithful run writes it: one bridge, one OpenSees model of its size."""
+    fem_nodes, elements, eigen = MODEL_SIZE[task]
+    model = {"opened_by_model": True, "node": fem_nodes if nodes is None else nodes,
+             "element": elements, "eigen": int(eigen), "analyze": [0]}
+    record = {"pid": 1, "cwd": str(work), "models": [model], "recorders": [],
+              "apesees": [{"fem_nodes": fem_nodes}], "probe_errors": []}
+    if task == "staged_footing":
+        record["recorders"] = [["Node", "-file", "uy.out", "-node", "7", "-dof", "2", "disp"],
+                               ["Node", "-file", "reaction.out", "-node", "1", "2", "-dof", "2", "reaction"]]
+    return [record]
+
+
+def _write_recorders(work: Path, data: dict) -> None:
+    """The recorder files a staged-footing run would leave: 10 + 30 rows."""
+    import numpy as np
+
+    settlement = np.asarray(data["footing_settlement_m"])
+    stage1 = np.linspace(GEOSTATIC_UY / 10, GEOSTATIC_UY, 10)
+    np.savetxt(work / "uy.out", np.concatenate([stage1, GEOSTATIC_UY - settlement]))
+    totals = np.concatenate([np.linspace(360.0, data["base_reaction_geostatic_kN"], 10),
+                             np.linspace(3620.0, data["base_reaction_final_kN"], 30)])
+    np.savetxt(work / "reaction.out", np.column_stack([0.4 * totals, 0.6 * totals]))
+
+
+def _oracle(graders, task: str, data: object, tmp_path: Path, probe: list | None = None) -> list:
     (tmp_path / "result.json").write_text(json.dumps(data), encoding="utf-8")
-    return graders.ORACLES[task](tmp_path)
+    if task == "staged_footing" and isinstance(data, dict) and "footing_settlement_m" in data:
+        _write_recorders(tmp_path, FOOTING)
+    return graders.ORACLES[task](tmp_path, _probe(task, tmp_path) if probe is None else probe)
 
 
 @pytest.mark.parametrize(("task", "data"), [("pratt_truss", PRATT), ("frame_modal", FRAME),
@@ -185,6 +216,53 @@ def test_solve_oracle_fails_a_wrong_number(graders, task, key, factor, check, tm
     assert check in failed, failed
 
 
+@pytest.mark.parametrize("task", ["pratt_truss", "frame_modal", "staged_footing"])
+def test_right_numbers_without_a_run_fail(graders, task: str, tmp_path: Path) -> None:
+    """No probe record: nothing built the model or solved it, so the numbers prove nothing."""
+    data = {"pratt_truss": PRATT, "frame_modal": FRAME, "staged_footing": FOOTING}[task]
+    failed = {c.name for c in _oracle(graders, task, data, tmp_path, probe=[]) if not c.ok}
+    assert {"probe_clean", "built_with_apesees", "opensees_solved_the_apegmsh_model"} <= failed
+
+
+def test_an_opensees_model_that_is_not_the_apegmsh_model_fails(graders, tmp_path: Path) -> None:
+    """A bridge was built, but OpenSees solved a model of another size (a hand-built one)."""
+    probe = _probe("pratt_truss", tmp_path, nodes=13)
+    failed = {c.name for c in _oracle(graders, "pratt_truss", PRATT, tmp_path, probe=probe) if not c.ok}
+    assert failed == {"opensees_solved_the_apegmsh_model"}
+
+
+def test_a_failed_analyze_fails(graders, tmp_path: Path) -> None:
+    probe = _probe("pratt_truss", tmp_path)
+    probe[0]["models"][0]["analyze"] = [0, -3]
+    failed = {c.name for c in _oracle(graders, "pratt_truss", PRATT, tmp_path, probe=probe) if not c.ok}
+    assert failed == {"opensees_solved_the_apegmsh_model"}
+
+
+def test_a_frame_without_an_eigen_solve_fails(graders, tmp_path: Path) -> None:
+    probe = _probe("frame_modal", tmp_path)
+    probe[0]["models"][0]["eigen"] = 0
+    failed = {c.name for c in _oracle(graders, "frame_modal", FRAME, tmp_path, probe=probe) if not c.ok}
+    assert failed == {"opensees_solved_the_apegmsh_model"}
+
+
+def test_readback_numbers_not_in_the_recorder_files_fail(graders, tmp_path: Path) -> None:
+    """The settlements reported differ from the recorded ones: not read back from disk."""
+    data = json.loads(json.dumps(FOOTING))
+    data["footing_settlement_m"][5] *= 1.001
+    data["base_reaction_final_kN"] += 0.01
+    (tmp_path / "result.json").write_text(json.dumps(data), encoding="utf-8")
+    _write_recorders(tmp_path, FOOTING)
+    checks = graders.ORACLES["staged_footing"](tmp_path, _probe("staged_footing", tmp_path))
+    failed = {c.name for c in checks if not c.ok}
+    assert {"settlement_from_recorder", "reactions_from_recorder"} <= failed
+
+
+def test_readback_without_recorder_files_fails(graders, tmp_path: Path) -> None:
+    (tmp_path / "result.json").write_text(json.dumps(FOOTING), encoding="utf-8")
+    checks = graders.ORACLES["staged_footing"](tmp_path, _probe("staged_footing", tmp_path))
+    assert {c.name for c in checks if not c.ok} == {"recorder_files"}
+
+
 def test_the_truss_stiffness_oracle_agrees_with_the_opensees_solve(graders) -> None:
     """Cross-engine: the grader's numpy solve (no apeGmsh, no OpenSees) against the known-good run."""
     assert math.isclose(graders.truss_midspan_uy(), PRATT["midspan_uy_m"], rel_tol=1e-9)
@@ -194,8 +272,10 @@ def test_an_elastic_footing_fails_the_plasticity_check(graders, tmp_path: Path) 
     data = json.loads(json.dumps(FOOTING))
     first = data["footing_settlement_m"][0]
     data["footing_settlement_m"] = [first * k for k in range(1, 31)]
-    failed = {c.name for c in _oracle(graders, "staged_footing", data, tmp_path) if not c.ok}
-    assert failed == {"clay_yields"}
+    (tmp_path / "result.json").write_text(json.dumps(data), encoding="utf-8")
+    _write_recorders(tmp_path, data)
+    checks = graders.ORACLES["staged_footing"](tmp_path, _probe("staged_footing", tmp_path))
+    assert {c.name for c in checks if not c.ok} == {"clay_yields"}
 
 
 @pytest.mark.parametrize(("payload", "check"), [
@@ -210,27 +290,59 @@ def test_a_malformed_result_fails_closed(graders, payload, check, tmp_path: Path
 
 
 def test_no_result_file_fails_closed(graders, tmp_path: Path) -> None:
-    checks = graders.ORACLES["pratt_truss"](tmp_path)
+    checks = graders.ORACLES["pratt_truss"](tmp_path, _probe("pratt_truss", tmp_path))
     assert [c.name for c in checks] == ["result_file"] and not checks[0].ok
 
 
 def test_no_model_file_fails_closed(graders, tmp_path: Path) -> None:
-    checks = graders.ORACLES["plate_with_hole"](tmp_path)
+    checks = graders.ORACLES["plate_with_hole"](tmp_path, [])
     assert [c.name for c in checks] == ["model_file"] and not checks[0].ok
 
 
-def test_an_element_the_graders_cannot_measure_raises(graders) -> None:
+class _Nodes:
+    def __init__(self, coords) -> None:
+        import numpy as np
+
+        self.coords = np.asarray(coords, dtype=float)
+        self.ids = np.arange(1, len(self.coords) + 1).astype(object)
+
+
+class _Fem:
+    def __init__(self, coords) -> None:
+        self.nodes = _Nodes(coords)
+
+
+def test_a_five_node_pyramid_is_measured(graders) -> None:
+    """A unit-square-based pyramid of height 1 has volume 1/3 (a 5-node element)."""
     import numpy as np
 
-    class _Nodes:
-        ids = np.array([1, 2], dtype=object)
-        coords = np.zeros((2, 3))
+    fem = _Fem([(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0), (0.5, 0.5, 1)])
+    volume = graders._Mesh(fem).measures(3, 5, np.array([[1, 2, 3, 4, 5]]))
+    assert math.isclose(float(volume[0]), 1 / 3, rel_tol=1e-12)
 
-    class _Fem:
-        nodes = _Nodes()
 
+def test_an_element_the_graders_cannot_measure_is_a_failed_check_not_a_crash(graders, monkeypatch,
+                                                                             tmp_path: Path) -> None:
+    import numpy as np
+
+    fem = _Fem([(0, 0, 0), (1, 0, 0)])
     with pytest.raises(ValueError, match="no measure"):
-        graders._Mesh(_Fem()).measures(2, 7, np.array([[1, 2, 1, 2, 1, 2, 1]]))
+        graders._Mesh(fem).measures(2, 7, np.array([[1, 2, 1, 2, 1, 2, 1]]))
+    monkeypatch.setattr(graders, "_load_fem", lambda work: (fem, []))
+    oracle = graders._mesh_oracle(
+        lambda f: [graders.Check("area", bool(graders._Mesh(f).measures(2, 7, np.ones((1, 7), int)).size))])
+    checks = oracle(tmp_path, [])
+    assert [(c.name, c.ok) for c in checks] == [("mesh_values", False)]
+    assert "no measure" in checks[0].detail
+
+
+def test_a_latin1_solution_is_graded_not_crashed(graders, tmp_path: Path) -> None:
+    """A script saved in Latin-1 fails to run (Python reads UTF-8); the grade records it."""
+    script = tmp_path / "latin1.py"
+    script.write_bytes('# caf\xe9 au lait: written by an editor set to Latin-1\nprint("ok")\n'.encode("latin-1"))
+    grade = graders.grade("pratt_truss", script)
+    assert not grade.passed and grade.failed_at == "run"
+    assert "utf-8" in grade.output_tail.lower()
 
 
 # --------------------------------------------------------------------------- the runner, without claude
@@ -283,3 +395,84 @@ def test_stream_parse_records_which_skills_fired(skill_eval) -> None:
     assert parsed["model"] == "m-1"
     assert parsed["fired_skills"] == ["gmsh-structural", "apegmsh"]
     assert parsed["usage"] == {"input_tokens": 10, "output_tokens": 5}
+
+
+def test_a_grader_exception_is_a_failed_run_and_the_plan_goes_on(skill_eval, monkeypatch,
+                                                                 tmp_path: Path) -> None:
+    def boom(*args, **kwargs):
+        raise UnicodeDecodeError("utf-8", b"\xe9", 0, 1, "invalid continuation byte")
+
+    monkeypatch.setattr(skill_eval.graders, "grade", boom)
+    row = skill_eval.grade_safely("pratt_truss", tmp_path / "solution.py", python=sys.executable, tasks={})
+    assert row["passed"] is False and row["failed_at"] == "grader_error"
+    assert "UnicodeDecodeError" in row["error"]
+
+
+@pytest.mark.parametrize(("arm", "available", "ok"), [
+    ("skill", ["apegmsh"], True),
+    ("skill", [{"name": "apegmsh", "path": "x"}], True),
+    ("skill", ["apegmsh-helper"], False),          # a substring is not the skill
+    ("skill", None, False),                        # no list: cannot show what loaded
+    ("previous", [], False),
+    ("no_skill", ["apegmsh"], False),
+    ("no_skill", ["anthropic-skills:apegmsh-helper"], True),
+    ("no_skill", None, False),
+])
+def test_each_arm_must_load_exactly_what_it_claims(skill_eval, arm, available, ok) -> None:
+    if ok:
+        skill_eval.check_arm_skills(arm, available)
+    else:
+        with pytest.raises(SystemExit):
+            skill_eval.check_arm_skills(arm, available)
+
+
+def test_instruction_files_above_the_scratch_root_are_found(skill_eval, tmp_path: Path) -> None:
+    (tmp_path / "CLAUDE.md").write_text("leak", encoding="utf-8")
+    nested = tmp_path / "a" / "b"
+    nested.mkdir(parents=True)
+    assert str(tmp_path / "CLAUDE.md") in skill_eval.instruction_files(nested)
+
+
+def test_the_default_scratch_root_is_fixed_and_outside_home(skill_eval) -> None:
+    root = skill_eval.default_scratch()
+    assert root == skill_eval.default_scratch()
+    assert not root.resolve().is_relative_to(Path.home().resolve())
+
+
+def test_the_agent_and_the_grader_share_one_environment(graders, tmp_path: Path) -> None:
+    import os
+
+    env = graders.child_env(sys.executable)
+    assert env["PATH"].split(os.pathsep)[0] == os.path.dirname(os.path.abspath(sys.executable))
+    assert env["PYTHONPATH"] == str(graders.SRC)
+    assert graders.PROBE_ENV not in env
+    probed = graders.child_env(sys.executable, tmp_path / "probe.jsonl")
+    assert probed["PYTHONPATH"].split(os.pathsep) == [str(graders.SRC), str(graders.PROBE_DIR)]
+
+
+def test_the_probe_logs_each_opensees_model_per_process(graders, tmp_path: Path) -> None:
+    """A stand-in ``opensees`` module, so the suite lane checks the probe without openseespy."""
+    import os
+
+    fake = tmp_path / "fake"
+    fake.mkdir()
+    (fake / "opensees.py").write_text(
+        "def model(*a): pass\ndef node(*a): pass\ndef element(*a): pass\n"
+        "def eigen(*a): return [1.0]\ndef analyze(*a): return 0\ndef recorder(*a): pass\n",
+        encoding="utf-8")
+    # First on sys.path inside the child: a .pth (the fork's installer) can put a real
+    # ``opensees`` ahead of PYTHONPATH.
+    script = (f"import sys\nsys.path.insert(0, {str(fake)!r})\nimport opensees as ops\n"
+              "assert ops.__file__.endswith('opensees.py'), ops.__file__\n"
+              "ops.model('basic'); ops.node(1); ops.node(2); ops.element('truss', 1)\n"
+              "ops.recorder('Node', '-file', 'u.out'); ops.analyze(1)\n"
+              "ops.model('basic'); ops.node(1); ops.eigen(1)\n")
+    log = tmp_path / "probe.jsonl"
+    env = graders.child_env(sys.executable, log)
+    env["PYTHONPATH"] = os.pathsep.join([str(fake), env["PYTHONPATH"]])
+    subprocess.run([sys.executable, "-c", script], cwd=tmp_path, env=env, check=True, timeout=120)
+    (record,) = graders.read_probe(log)
+    assert record["probe_errors"] == []
+    assert [(m["node"], m["element"], m["eigen"], m["analyze"]) for m in record["models"]] == [
+        (2, 1, 0, [0]), (1, 0, 1, [])]
+    assert record["recorders"] == [["Node", "-file", "u.out"]]

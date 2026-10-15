@@ -16,7 +16,10 @@
 #               finding, or the run's output). `lane` as above. Frozen copies:
 #               never re-derive them from skills/, which other slices edit.
 #
-# The numbers in each prompt are restated in graders.py next to its oracle.
+# The numbers in each prompt are restated in graders.py next to its oracle. A solve or
+# read-back task also needs run evidence: the grading probe (probe/sitecustomize.py)
+# must see an apeSees bridge built from a FEMData and OpenSees solve a model of that
+# size, and the read-back numbers must be the recorder files' numbers.
 
 [common]
 preamble = """
@@ -95,6 +98,7 @@ known_good = "fixtures/known_good/pratt_truss.py"
 known_bad = [
     { script = "fixtures/known_bad/skeleton_without_base.py", fails_at = "run", reason = "physical group 'Base' not found", lane = "suite" },
     { script = "fixtures/known_bad/pratt_truss_load_in_kN.py", fails_at = "oracle", reason = "bottom_chord_by_sections", lane = "live" },
+    { script = "fixtures/known_bad/pratt_truss_numpy_only.py", fails_at = "oracle", reason = "built_with_apesees", lane = "suite" },
 ]
 
 [[task]]
@@ -123,6 +127,7 @@ known_good = "fixtures/known_good/frame_modal.py"
 known_bad = [
     { script = "fixtures/known_bad/skeleton_without_base.py", fails_at = "run", reason = "physical group 'Base' not found", lane = "suite" },
     { script = "fixtures/known_bad/frame_modal_double_mass.py", fails_at = "oracle", reason = "T1_vs_golden", lane = "live" },
+    { script = "fixtures/known_bad/frame_modal_result_only.py", fails_at = "oracle", reason = "opensees_solved_the_apegmsh_model", lane = "suite" },
 ]
 
 [[task]]
@@ -143,7 +148,8 @@ centred on the ground surface, and a 1 m thick slice is modelled. The clay is vo
 fixed; the sides are on rollers (free vertically). Stage 1 ramps the self-weight on in 10
 increments. Stage 2 holds it and ramps a uniform footing pressure to 300 kPa in 30
 increments. Record the vertical displacement of the footing-centre node and the vertical
-base reactions, and read them back after the run. Write `result.json` beside the script
+base reactions with OpenSees recorders that write text files (one row per increment), and
+read them back from those files after the run. Write `result.json` beside the script
 holding, in kN and m: `base_reaction_geostatic_kN` (the total vertical base reaction at the
 end of stage 1, upward positive), `base_reaction_final_kN` (the same at the end of stage 2)
 and `footing_settlement_m` (the 30 stage-2 settlements of the footing centre, one per

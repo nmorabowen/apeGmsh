@@ -17,12 +17,21 @@ What one run does:
   the first record, and skipped when it equals this hash).
 * Runs each prompt of ``triggers.toml`` ``--reps`` times in the skill arm and
   records which skills fired.
-* Each run is ``claude -p`` from its own empty scratch directory with an
-  isolated config (``CLAUDE_CONFIG_DIR``): only the arm's skill, no user
-  CLAUDE.md, no plugins. Log that config in once before the first run
-  (``CLAUDE_CONFIG_DIR=<scratch>/config claude`` then ``/login``), or export
-  ``ANTHROPIC_API_KEY``. Account-provisioned skills can still appear; the
-  record names every skill that fired.
+* Each run is ``claude -p`` from its own empty directory under the scratch root,
+  with an isolated config (``CLAUDE_CONFIG_DIR=<scratch>/config``): only the
+  arm's skill, no user CLAUDE.md, no plugins. The scratch root defaults to a
+  fixed directory outside the home directory (``--dry-run`` prints it), so the
+  config and its login persist between invocations, and the runner refuses a
+  root with a ``CLAUDE.md``, ``CLAUDE.local.md`` or ``.claude/`` in it or above
+  it. Log the config in once (``--dry-run`` prints the command), or export
+  ``ANTHROPIC_API_KEY``.
+* The agent's environment is the grader's: this checkout's ``src`` on
+  ``PYTHONPATH`` and ``--python`` first on ``PATH``. ``src/`` is part of the
+  harness, so a dirty ``src/`` refuses the run like a dirty grader.
+* The CLI's init event must list the loaded skills: the skill and previous arms
+  must load exactly ``apegmsh``, the no-skill arm must not. Otherwise the run
+  stops, since the arm is not what the record would claim. Account-provisioned
+  skills can still appear; the record names every skill that fired.
 * Grades each ``solution.py`` with ``evals/apegmsh/graders.py`` (re-run alone,
   lint, oracle) and appends one JSON line per run to the record, so a crash
   keeps the runs already made.
@@ -54,6 +63,7 @@ import tarfile
 import tempfile
 import time
 import tomllib
+import traceback
 from pathlib import Path
 from typing import Any
 
@@ -65,7 +75,7 @@ SKILL_PATH = "skills/apegmsh"
 SKILL_NAME = "apegmsh"
 ARMS = ("skill", "no_skill", "previous")
 # Files whose content decides a grade; a dirty copy would make the record's git SHA lie.
-HARNESS_PATHS = ("evals/apegmsh", "scripts/skill_eval.py", "skills/apegmsh/scripts")
+HARNESS_PATHS = ("evals/apegmsh", "scripts/skill_eval.py", "skills/apegmsh/scripts", "src")
 TASK_TOOLS = "Read,Write,Edit,Glob,Grep,Bash,Skill"
 TASK_MAX_TURNS = 60
 TRIGGER_MAX_TURNS = 3       # the skill fires on the first turn or not at all
@@ -136,6 +146,30 @@ def dir_hash(path: Path) -> str:
     return digest.hexdigest()
 
 
+def default_scratch() -> Path:
+    """A fixed scratch root outside the home directory.
+
+    Fixed, so the isolated config and its login persist between invocations.
+    Outside home, because the CLI reads every ``CLAUDE.md`` above its working
+    directory, and the home directory holds the user's ``.claude/``.
+    """
+    base = Path(tempfile.gettempdir()).resolve()
+    home = Path.home().resolve()
+    if base.is_relative_to(home):
+        base = Path(home.anchor)
+    return base / "apegmsh-skill-eval"
+
+
+def instruction_files(root: Path) -> list[str]:
+    """Every CLAUDE.md, CLAUDE.local.md or .claude/ in ``root`` or above it."""
+    found = []
+    for folder in [root, *root.parents]:
+        for name in ("CLAUDE.md", "CLAUDE.local.md", ".claude"):
+            if (folder / name).exists():
+                found.append(str(folder / name))
+    return found
+
+
 # --------------------------------------------------------------------------- claude
 
 def claude_version(claude: str) -> str | None:
@@ -187,8 +221,42 @@ def parse_stream(lines: list[str]) -> dict[str, Any]:
     return out
 
 
-def run_claude(cmd: list[str], prompt: str, *, cwd: Path, config: Path) -> tuple[dict[str, Any], float]:
-    env = dict(os.environ)
+def skill_names(available: Any) -> list[str]:
+    """Skill names from the init event's ``skills`` list (names, or objects with a name)."""
+    names = []
+    for item in available:
+        names.append(item if isinstance(item, str) else (item or {}).get("name"))
+    return names
+
+
+def check_arm_skills(arm: str, available: Any) -> list[str]:
+    """Refuse a run whose loaded skills contradict its arm; return the loaded names."""
+    if not isinstance(available, list):
+        raise SystemExit("the CLI's init event lists no skills, so the run cannot show which "
+                         "skills it loaded; refusing to record it")
+    names = skill_names(available)
+    loaded = SKILL_NAME in names                     # exact name: apegmsh-helper is not apegmsh
+    if arm in ("skill", "previous") and not loaded:
+        raise SystemExit(f"the {arm} arm did not load {SKILL_NAME!r}; it loaded {names}")
+    if arm == "no_skill" and loaded:
+        raise SystemExit(f"the no_skill arm loaded {SKILL_NAME!r}; it loaded {names}")
+    return names
+
+
+def grade_safely(task: str, script: Path, *, python: str, tasks: dict[str, Any]) -> dict[str, Any]:
+    """Grade one run; a grader exception is a failed run with its traceback, not a crash."""
+    try:
+        return graders.grade(task, script, python=python, tasks=tasks).to_dict()
+    except Exception:  # noqa: BLE001 - recorded in full, and the plan goes on
+        return {"task": task, "passed": False, "failed_at": "grader_error",
+                "error": traceback.format_exc()[-graders.OUTPUT_TAIL:]}
+
+
+def run_claude(cmd: list[str], prompt: str, *, cwd: Path, config: Path,
+               python: str) -> tuple[dict[str, Any], float]:
+    # The grader's environment (src on PYTHONPATH, python first on PATH), so the
+    # agent tests its script against the same apeGmsh and interpreter it is graded on.
+    env = graders.child_env(python)
     env["CLAUDE_CONFIG_DIR"] = str(config)
     start = time.time()
     try:
@@ -254,7 +322,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--no-triggers", action="store_true", help="skip the trigger set")
     parser.add_argument("--claude", default="claude", help="the claude CLI executable")
     parser.add_argument("--python", default=sys.executable, help="interpreter the agent and the grader use")
-    parser.add_argument("--scratch", type=Path, default=None, help="scratch root (default: a new temp dir)")
+    parser.add_argument("--scratch", type=Path, default=None,
+                        help=f"scratch root holding the isolated config (default {default_scratch()})")
     parser.add_argument("--out", type=Path, default=None, help="record path (default runs/<date>-<ref>.jsonl)")
     parser.add_argument("--competitor", type=Path, action="append", default=[],
                         help="an extra skill directory installed in every arm (repeatable), e.g. a "
@@ -304,6 +373,12 @@ def main(argv: list[str] | None = None) -> int:
     stamp = _dt.date.today().isoformat()
     out = args.out or RUNS_DIR / f"{stamp}-{skill_commit[:8]}.jsonl"
     dirty = harness_dirty()
+    scratch = (args.scratch or default_scratch()).resolve()
+    config = scratch / "config"
+    leaks = instruction_files(scratch)
+    if skill_commit != git_sha:
+        notes.append(f"the skill at {skill_commit[:12]} is measured against apeGmsh src at "
+                     f"{git_sha[:12]} (this checkout)")
 
     header = {
         "kind": "header",
@@ -324,6 +399,9 @@ def main(argv: list[str] | None = None) -> int:
         "python": args.python,
         "lint_pyflakes": _has_pyflakes(args.python),
         "competitors": competitors,
+        "apegmsh_src": f"src/ at {git_sha} (agent and grader)",
+        "scratch": str(scratch),
+        "instruction_files_above_scratch": leaks,
         "notes": notes,
     }
 
@@ -336,6 +414,9 @@ def main(argv: list[str] | None = None) -> int:
     for note in notes:
         print(f"note           {note}")
     print(f"record         {out.relative_to(REPO) if out.is_relative_to(REPO) else out}")
+    print(f"scratch        {scratch}")
+    print(f"config         {config}   log in once: CLAUDE_CONFIG_DIR={config} {args.claude}, then /login")
+    print(f"CLAUDE.md etc. {leaks or 'none in or above the scratch root'}")
     print(f"planned runs   {len(plan)}")
     for item in plan:
         name = item.get("task") or item.get("trigger")
@@ -352,9 +433,12 @@ def main(argv: list[str] | None = None) -> int:
         raise SystemExit(f"claude CLI {args.claude!r} not found")
     if out.exists():
         raise SystemExit(f"{out} exists; pass --out to write a new record")
-
-    scratch = (args.scratch or Path(tempfile.mkdtemp(prefix="apegmsh-skill-eval-"))).resolve()
-    config = scratch / "config"
+    if leaks:
+        raise SystemExit("instruction files in or above the scratch root would reach every run:\n  "
+                         + "\n  ".join(leaks) + "\npass a --scratch outside them")
+    work_root = scratch / "work" / out.stem
+    if work_root.exists():
+        raise SystemExit(f"{work_root} exists from an earlier run; remove it or pass another --out")
     config.mkdir(parents=True, exist_ok=True)
     trees = {"skill": skill_hash, "previous": prev_hash}
     trig_by_id = {t["id"]: t for t in triggers}
@@ -372,7 +456,7 @@ def main(argv: list[str] | None = None) -> int:
             for comp in args.competitor:
                 shutil.copytree(comp, skills_dir / comp.name)
             name = item.get("task") or item.get("trigger")
-            workdir = scratch / "work" / item["kind"] / name / arm / f"rep{item['rep']}"
+            workdir = work_root / item["kind"] / name / arm / f"rep{item['rep']}"
             workdir.mkdir(parents=True)
             if item["kind"] == "task":
                 prompt = common["preamble"].format(python=args.python) + tasks[name]["prompt"]
@@ -380,18 +464,16 @@ def main(argv: list[str] | None = None) -> int:
             else:
                 prompt = trig_by_id[name]["prompt"]
                 cmd = claude_command(claude_exe, model=args.model, max_turns=TRIGGER_MAX_TURNS)
-            stream, seconds = run_claude(cmd, prompt, cwd=workdir, config=config)
+            stream, seconds = run_claude(cmd, prompt, cwd=workdir, config=config, python=args.python)
             if stream["usage"] is None and n == 1:
                 raise SystemExit("the first claude run produced no result event (not logged in?):\n"
                                  + stream.get("stderr_tail", ""))
-            available = stream["available_skills"]
-            if arm == "skill" and available is not None and SKILL_NAME not in json.dumps(available):
-                raise SystemExit(f"the skill arm's init event does not list {SKILL_NAME!r}: {available}")
+            check_arm_skills(arm, stream["available_skills"])
             row = {**item, "skill_hash": trees.get(arm), "seconds": round(seconds, 1), **stream}
             if item["kind"] == "task":
-                grade = graders.grade(name, workdir / graders.SCRIPT_NAME, python=args.python, tasks=tasks)
-                row["grade"] = grade.to_dict()
-                row["pass"] = grade.passed
+                row["grade"] = grade_safely(name, workdir / graders.SCRIPT_NAME, python=args.python,
+                                            tasks=tasks)
+                row["pass"] = row["grade"]["passed"]
             else:
                 fired = SKILL_NAME in stream["fired_skills"]
                 row["expect"] = trig_by_id[name]["expect"]

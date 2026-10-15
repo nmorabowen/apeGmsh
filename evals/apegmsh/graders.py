@@ -42,6 +42,8 @@ EVAL_DIR = Path(__file__).resolve().parent
 REPO = EVAL_DIR.parents[1]
 SRC = REPO / "src"
 LINT = REPO / "skills" / "apegmsh" / "scripts" / "lint_model_script.py"
+PROBE_DIR = EVAL_DIR / "probe"                 # sitecustomize.py: logs what each process ran
+PROBE_ENV = "APEGMSH_EVAL_PROBE_LOG"
 TASKS_FILE = EVAL_DIR / "tasks.toml"
 
 SCRIPT_NAME = "solution.py"
@@ -152,9 +154,20 @@ def load_common(path: Path = TASKS_FILE) -> dict[str, Any]:
 
 # --------------------------------------------------------------------------- run, lint, grade
 
-def _child_env(python: str) -> dict[str, str]:
+def child_env(python: str, probe_log: Path | None = None) -> dict[str, str]:
+    """The environment a graded script (and the agent that writes it) runs in.
+
+    This checkout's ``src`` on ``PYTHONPATH`` and ``python`` first on ``PATH``. With
+    ``probe_log``, the probe directory joins ``PYTHONPATH`` so every Python process
+    of the run, a deck run's child included, logs what apeGmsh and OpenSees did.
+    """
     env = dict(os.environ)
     env["PYTHONPATH"] = str(SRC)
+    if probe_log is not None:
+        env["PYTHONPATH"] += os.pathsep + str(PROBE_DIR)
+        env[PROBE_ENV] = str(probe_log)
+    else:
+        env.pop(PROBE_ENV, None)
     # A deck run (ops.py(..., run=True)) starts the first `python` on PATH; put the
     # grading interpreter first so the deck sees the same openseespy as the script.
     # Not resolved: a venv's bin/python is a symlink that points out of the venv.
@@ -165,16 +178,20 @@ def _child_env(python: str) -> dict[str, str]:
 
 
 def lint_script(script: Path, *, python: str = sys.executable) -> list[str]:
-    """Run the skill's lint; return its findings (``path:line: RULE message`` lines)."""
+    """Run the skill's lint; return its findings (``path:line: RULE message`` lines).
+
+    A lint that cannot read the script (it crashes, e.g. on a file that is not UTF-8)
+    is itself a finding, ``LINT-CRASH`` with the error's last line: the script is not
+    shown lint-clean, and the grade records why instead of raising.
+    """
     run = subprocess.run(
         [python, str(LINT), script.name], cwd=script.parent,
-        capture_output=True, text=True, timeout=120,
+        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120,
     )
     findings = [ln for ln in run.stdout.splitlines() if ln.strip()]
-    if run.returncode not in (0, 1):
-        raise RuntimeError(f"lint crashed (exit {run.returncode}):\n{run.stderr[-OUTPUT_TAIL:]}")
-    if run.returncode == 1 and not findings:
-        raise RuntimeError("lint exited 1 without printing a finding")
+    if run.returncode not in (0, 1) or (run.returncode == 1 and not findings):
+        last = (run.stderr.strip().splitlines() or ["no output"])[-1]
+        findings.append(f"{script.name}: LINT-CRASH exit {run.returncode}: {last}")
     return findings
 
 
@@ -193,6 +210,9 @@ def grade(task_id: str, script: Path, *, python: str = sys.executable,
 
     own_dir = workdir is None
     work = Path(tempfile.mkdtemp(prefix=f"skill_eval_{task_id}_")) if own_dir else Path(workdir)
+    # The probe log lives outside the work directory, beside nothing the script writes.
+    probe_dir = Path(tempfile.mkdtemp(prefix="skill_eval_probe_"))
+    probe_log = probe_dir / "probe.jsonl"
     try:
         if not own_dir:
             if work.exists() and any(work.iterdir()):
@@ -202,8 +222,8 @@ def grade(task_id: str, script: Path, *, python: str = sys.executable,
         shutil.copyfile(script, target)
         try:
             run = subprocess.run(
-                [python, SCRIPT_NAME], cwd=work, env=_child_env(python),
-                capture_output=True, text=True, timeout=timeout,
+                [python, SCRIPT_NAME], cwd=work, env=child_env(python, probe_log),
+                capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout,
             )
             returncode: int | None = run.returncode
             tail = (run.stdout + "\n" + run.stderr)[-OUTPUT_TAIL:]
@@ -212,11 +232,23 @@ def grade(task_id: str, script: Path, *, python: str = sys.executable,
         result = Grade(task_id, ran=returncode == 0, returncode=returncode, output_tail=tail)
         result.lint = lint_script(target, python=python)
         if result.ran:
-            result.checks = oracle(work)
+            result.checks = oracle(work, read_probe(probe_log))
         return result
     finally:
+        shutil.rmtree(probe_dir, ignore_errors=True)
         if own_dir:
             shutil.rmtree(work, ignore_errors=True)
+
+
+def read_probe(path: Path) -> list[dict[str, Any]]:
+    """One record per Python process of the run (see ``probe/sitecustomize.py``)."""
+    if not path.is_file():
+        return []
+    records = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if line.strip():
+            records.append(json.loads(line))
+    return records
 
 
 # --------------------------------------------------------------------------- helpers
@@ -280,10 +312,12 @@ _CORNERS = {
     (3, 4): ("tet", 4), (3, 10): ("tet", 4),
     (3, 8): ("hex", 8), (3, 20): ("hex", 8), (3, 27): ("hex", 8),
     (3, 6): ("prism", 6), (3, 15): ("prism", 6), (3, 18): ("prism", 6),
+    (3, 5): ("pyramid", 5), (3, 13): ("pyramid", 5), (3, 14): ("pyramid", 5),
 }
-# Hexahedron and prism split into tetrahedra (gmsh corner order).
+# Hexahedron, prism and pyramid split into tetrahedra (gmsh corner order).
 _HEX_TETS = ((0, 1, 3, 4), (1, 2, 3, 6), (1, 3, 4, 6), (3, 4, 6, 7), (1, 4, 5, 6))
 _PRISM_TETS = ((0, 1, 2, 3), (1, 2, 3, 4), (2, 3, 4, 5))
+_PYRAMID_TETS = ((0, 1, 2, 4), (0, 2, 3, 4))
 
 
 class _Mesh:
@@ -324,7 +358,8 @@ class _Mesh:
             a = np.cross(p[:, 1] - p[:, 0], p[:, 2] - p[:, 0])
             b = np.cross(p[:, 2] - p[:, 0], p[:, 3] - p[:, 0])
             return 0.5 * (np.linalg.norm(a, axis=1) + np.linalg.norm(b, axis=1))
-        splits = {"tet": ((0, 1, 2, 3),), "hex": _HEX_TETS, "prism": _PRISM_TETS}[family]
+        splits = {"tet": ((0, 1, 2, 3),), "hex": _HEX_TETS, "prism": _PRISM_TETS,
+                  "pyramid": _PYRAMID_TETS}[family]
         total = np.zeros(len(p))
         for i, j, k, m in splits:
             total += np.abs(np.einsum(
@@ -627,27 +662,138 @@ def check_staged_footing(data: dict[str, Any]) -> list[Check]:
     return checks
 
 
+# --------------------------------------------------------------------------- run evidence
+
+def check_evidence(probe: list[dict[str, Any]], *, min_nodes: int, min_elements: int,
+                   eigen: bool = False) -> list[Check]:
+    """apeGmsh built the model and OpenSees solved that model, in this run.
+
+    From the probe log: an ``apeSees`` bridge was built from a FEMData, and some
+    process (the script, or the deck run it started) gave OpenSees exactly that
+    many nodes, at least ``min_elements`` elements, and every ``analyze`` returned 0.
+    Numbers computed without apeGmsh or OpenSees fail here, whatever they are.
+    """
+    errors = [e for rec in probe for e in rec.get("probe_errors", [])]
+    checks = [Check("probe_clean", bool(probe) and not errors,
+                    f"{len(probe)} process record(s), errors {errors}")]
+    bridges = [b for rec in probe for b in rec.get("apesees", [])]
+    fem_nodes = {b["fem_nodes"] for b in bridges if b.get("fem_nodes") is not None}
+    checks.append(Check("built_with_apesees", bool(fem_nodes),
+                        f"{len(bridges)} apeSees bridge(s), FEMData node counts {sorted(fem_nodes)}"))
+    # One record per OpenSees model() call: the bridge may wipe and rebuild between
+    # an eigen solve and an analysis, so the solves are pooled over every model built
+    # from the apeGmsh FEMData.
+    seen, statuses, eigens = [], [], 0
+    for rec in probe:
+        for model in rec.get("models", []):
+            seen.append(f"pid {rec.get('pid')}: {model['node']} nodes, {model['element']} elements, "
+                        f"analyze {sorted(set(map(str, model['analyze'])))}, eigen {model['eigen']}")
+            if (model["opened_by_model"] and model["node"] in fem_nodes
+                    and model["node"] >= min_nodes and model["element"] >= min_elements):
+                statuses += model["analyze"]
+                eigens += model["eigen"]
+    solved = bool(statuses) and all(s == 0 for s in statuses) and (eigens > 0 or not eigen)
+    want = (f"models with the FEMData's node count (at least {min_nodes}) and at least "
+            f"{min_elements} elements, analyzed, every analyze 0{', an eigen solve' if eigen else ''}")
+    checks.append(Check("opensees_solved_the_apegmsh_model", solved,
+                        f"wanted {want}; saw {seen or 'no OpenSees model'}"))
+    return checks
+
+
+def _recorder_files(probe: list[dict[str, Any]]) -> list[Path]:
+    files = []
+    for rec in probe:
+        for args in rec.get("recorders", []):
+            for flag, value in zip(args, args[1:]):
+                if flag in ("-file", "-fileCSV"):
+                    files.append(Path(rec.get("cwd", ".")) / value)
+    return files
+
+
+def _load_table(path: Path) -> np.ndarray | None:
+    try:
+        table = np.loadtxt(path, delimiter="," if path.suffix == ".csv" else None, ndmin=2)
+    except (OSError, ValueError):
+        return None
+    return table if table.size else None
+
+
+GEOSTATIC_STEPS = 10         # stage-1 increments: the row the stage-2 settlement is measured from
+TOL_READBACK = 1e-6          # relative; the reported numbers are the recorded ones, re-printed
+
+
+def check_readback(probe: list[dict[str, Any]], data: dict[str, Any]) -> list[Check]:
+    """The reported history is the recorders' history, read back from their files.
+
+    Some recorded column ``u`` must give the settlements as ``u[9] - u[10:]`` (or its
+    negative), and some recorder's row sums (with or without a leading time column)
+    must give both base reactions.
+    """
+    files = _recorder_files(probe)
+    tables = {f: _load_table(f) for f in files}
+    tables = {f: t for f, t in tables.items() if t is not None}
+    checks = [Check("recorder_files", bool(tables),
+                    f"{len(files)} recorder file(s) declared, {len(tables)} readable")]
+    if not tables:
+        return checks
+    settlement = _numbers(data, "footing_settlement_m")
+    geostatic = _number(data, "base_reaction_geostatic_kN")
+    final = _number(data, "base_reaction_final_kN")
+    rows = GEOSTATIC_STEPS + len(settlement)
+    found_settlement = found_reaction = False
+    for table in tables.values():
+        if len(table) != rows:
+            continue
+        for column in table.T:
+            drop = column[GEOSTATIC_STEPS - 1] - column[GEOSTATIC_STEPS:]
+            for sign in (1.0, -1.0):
+                if np.allclose(sign * drop, settlement, rtol=TOL_READBACK, atol=1e-12):
+                    found_settlement = True
+        for start in (0, 1):
+            sums = np.abs(table[:, start:].sum(axis=1))
+            if (math.isclose(sums[GEOSTATIC_STEPS - 1], abs(geostatic), rel_tol=TOL_READBACK)
+                    and math.isclose(sums[-1], abs(final), rel_tol=TOL_READBACK)):
+                found_reaction = True
+    names = sorted(f.name for f in tables)
+    checks.append(Check("settlement_from_recorder", found_settlement,
+                        f"a column of {names} with {rows} rows reproduces footing_settlement_m"))
+    checks.append(Check("reactions_from_recorder", found_reaction,
+                        f"row sums of {names} reproduce both base reactions"))
+    return checks
+
+
 # --------------------------------------------------------------------------- registry
 
-def _json_oracle(check: Callable[[dict[str, Any]], list[Check]],
-                 keys: tuple[str, ...]) -> Callable[[Path], list[Check]]:
-    def oracle(work: Path) -> list[Check]:
+Oracle = Callable[[Path, list[dict[str, Any]]], list[Check]]
+
+
+def _json_oracle(check: Callable[[dict[str, Any]], list[Check]], keys: tuple[str, ...],
+                 evidence: dict[str, Any], readback: bool = False) -> Oracle:
+    def oracle(work: Path, probe: list[dict[str, Any]]) -> list[Check]:
         data, checks = _read_result(work, keys)
         if data is None:
             return checks
+        checks += check_evidence(probe, **evidence)
         try:
-            return checks + check(data)
+            checks += check(data)
+            if readback:
+                checks += check_readback(probe, data)
         except (TypeError, ValueError) as exc:
-            return checks + [Check("result_values", False, f"{type(exc).__name__}: {exc}")]
+            checks.append(Check("result_values", False, f"{type(exc).__name__}: {exc}"))
+        return checks
     return oracle
 
 
-def _mesh_oracle(check: Callable[[Any], list[Check]]) -> Callable[[Path], list[Check]]:
-    def oracle(work: Path) -> list[Check]:
+def _mesh_oracle(check: Callable[[Any], list[Check]]) -> Oracle:
+    def oracle(work: Path, probe: list[dict[str, Any]]) -> list[Check]:
         fem, checks = _load_fem(work)
         if fem is None:
             return checks
-        return checks + check(fem)
+        try:
+            return checks + check(fem)
+        except (KeyError, TypeError, ValueError) as exc:
+            # e.g. an element type no measure covers: a failed grade, named, not a crash
+            return checks + [Check("mesh_values", False, f"{type(exc).__name__}: {exc}")]
     return oracle
 
 
@@ -657,13 +803,18 @@ RESULT_KEYS = {
     "staged_footing": ("base_reaction_geostatic_kN", "base_reaction_final_kN", "footing_settlement_m"),
 }
 
-ORACLES: dict[str, Callable[[Path], list[Check]]] = {
+# Model sizes the task fixes: the truss has 12 joints and 21 bars; the frame 27 joints,
+# 2 floor masters and 42 members; the footing block, meshed at 0.25-1.0 m, far more.
+ORACLES: dict[str, Oracle] = {
     "plate_with_hole": _mesh_oracle(check_plate_with_hole),
     "footing_mesh": _mesh_oracle(check_footing_mesh),
     "column_on_footing": _mesh_oracle(check_column_on_footing),
-    "pratt_truss": _json_oracle(check_pratt_truss, RESULT_KEYS["pratt_truss"]),
-    "frame_modal": _json_oracle(check_frame_modal, RESULT_KEYS["frame_modal"]),
-    "staged_footing": _json_oracle(check_staged_footing, RESULT_KEYS["staged_footing"]),
+    "pratt_truss": _json_oracle(check_pratt_truss, RESULT_KEYS["pratt_truss"],
+                                {"min_nodes": 12, "min_elements": 21}),
+    "frame_modal": _json_oracle(check_frame_modal, RESULT_KEYS["frame_modal"],
+                                {"min_nodes": 29, "min_elements": 42, "eigen": True}),
+    "staged_footing": _json_oracle(check_staged_footing, RESULT_KEYS["staged_footing"],
+                                   {"min_nodes": 200, "min_elements": 200}, readback=True),
 }
 
 
