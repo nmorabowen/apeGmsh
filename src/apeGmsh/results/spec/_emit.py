@@ -493,7 +493,10 @@ def to_deck(
     (:func:`to_ops_tags`). A node recorder's slot ``dofs`` are mapped to
     the DOFs each node's layout places them at (``deck_dofs``), from
     ``model``'s ``ndm`` and per-node ndf: a 2-D ``rotation_z`` is DOF 3
-    (#2018). A node recorder with no ``model`` raises, since no slot's
+    (#2018). A rotational slot also needs the node's rotation role from
+    the model's elements: a u-p node's DOF ``ndm + 1`` is pore pressure,
+    and an unknown element class blocks it, so both refuse. A node
+    recorder with no ``model`` raises, since no slot's
     DOF is known without it (a 2-D ``displacement_z`` would record the
     rotation).
     """
@@ -512,19 +515,11 @@ def to_deck(
         )
     if set(rec.response_tokens) & _SLOTLESS_NODE_TOKENS:
         return replace(rec, deck_dofs=rec.dofs)
-    from ...opensees._recorder_translate import node_record_deck_dofs
+    from ...opensees._recorder_translate import model_node_deck_dofs
 
-    ndm = int(model.ndm)  # type: ignore[attr-defined]
-    if ndm < 1:
-        raise ValueError(
-            f"{where}: model= declares no ndm (ndm={ndm}), so node record "
-            f"{rec.record_name!r} cannot map its DOFs. Pass the model built "
-            f"through apeSees(fem) and ops.model(ndm=, ndf=)."
-        )
-    deck = node_record_deck_dofs(
-        rec.dofs, rec.target_ids,
-        model.nodes_ndf,  # type: ignore[attr-defined]
-        ndm, where=f"{where}: node record {rec.record_name!r}",
+    deck = model_node_deck_dofs(
+        rec.dofs, rec.target_ids, model,
+        where=f"{where}: node record {rec.record_name!r}",
     )
     return replace(rec, deck_dofs=deck)
 

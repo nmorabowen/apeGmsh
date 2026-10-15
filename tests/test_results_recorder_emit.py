@@ -622,3 +622,126 @@ def test_ops_ndf_raised_node_records_rotation_at_dof_3(tmp_path) -> None:
     assert f"-node {master} -dof 1 2 3 -precision" in line
     with pytest.raises(ValueError, match=r"no recorded node carries 'rz'"):
         spec_for(("rotation_z",), truss).to_tcl_commands(model=model)
+
+
+# ---------------------------------------------------------------------
+# A slot the layout calls a rotation is one only where an element
+# establishes it: the rotation roles the declared emit uses (#2018 F1)
+# ---------------------------------------------------------------------
+
+
+def test_2d_up_vertex_node_rotation_z_refuses(tmp_path) -> None:
+    """A 2-D LadrunoUP vertex node has ndf 3, and its DOF 3 is pore
+    pressure. ``rotation_z`` there would record the pressure as a
+    rotation, so it refuses with the bridge's rotation-role reason."""
+    from apeGmsh import apeGmsh
+    from apeGmsh.opensees import OpenSeesModel, apeSees
+
+    g = apeGmsh(model_name="b2018_up2d")
+    g.begin()
+    try:
+        g.model.geometry.add_rectangle(0.0, 0.0, 0.0, 1.0, 4.0, label="soil")
+        g.physical.add_surface("soil", name="Soil")
+        g.mesh.structured.set_recombine("soil", dim=2)
+        g.mesh.sizing.set_global_size(1.0)
+        g.mesh.generation.generate(2)
+        g.mesh.structured.recombine()
+        g.mesh.partitioning.renumber(base=1)
+        fem = g.mesh.queries.get_fem_data(dim=2)
+        ops = apeSees(fem)
+        ops.model(ndm=2, ndf=3)
+        ops.element.LadrunoUP(
+            pg="Soil",
+            material=ops.nDMaterial.ElasticIsotropic(E=1e4, nu=0.3, rho=2.0),
+            Kf=2.2e6, poro=0.4, rhoF=1.0, perm=(1e-4, 1e-4))
+        path = tmp_path / "up.h5"
+        ops.h5(str(path))
+        ids = [int(n) for n in fem.nodes.select(pg="Soil").ids]
+    finally:
+        g.end()
+    model = OpenSeesModel.from_h5(str(path))
+    assert {model.nodes_ndf[n] for n in ids} == {3}   # the layout says rz
+
+    def spec_for(components: tuple[str, ...]) -> ResolvedRecorderSpec:
+        return ResolvedRecorderSpec(
+            fem_snapshot_id=model.lineage.fem_hash,
+            records=(ResolvedRecorderRecord(
+                category="nodes", name="up", components=components,
+                dt=None, n_steps=None, node_ids=np.array(ids)),),
+        )
+
+    with pytest.raises(ValueError, match=r"'rz' has no established DOF at "
+                                         r"node \d+ \(a LadrunoUP touches it"):
+        spec_for(_FRAME_2D).to_tcl_commands(model=model)
+    # The translations stay recordable.
+    [line] = spec_for(_FRAME_2D[:2]).to_tcl_commands(model=model)
+    assert " -dof 1 2 -precision" in line
+
+
+def _token_model(spec: ResolvedRecorderSpec, ndm: int, nodes_ndf: dict,
+                 elements: "tuple[tuple[str, tuple[int, ...]], ...]"):
+    """A stand-in whose element records carry their connectivity."""
+    from apeGmsh.opensees._internal.typed_records import ElementRecord
+
+    model = identity_model([], spec.fem_snapshot_id, ndm=ndm,
+                           nodes_ndf=nodes_ndf)
+    model._records = tuple(
+        ElementRecord(type_token=tok, tag=i + 1, args=(), connectivity=conn)
+        for i, (tok, conn) in enumerate(elements))
+    return model
+
+
+def test_an_unknown_element_token_blocks_the_rotation_at_its_nodes() -> None:
+    spec = _node_spec(("rotation_z",), ids=(1, 2))
+    model = _token_model(spec, 2, {1: 3, 2: 3},
+                         (("MysteryElement", (1, 2)),))
+    with pytest.raises(ValueError,
+                       match=r"'rz' has no established DOF at node 1 "
+                             r"\(a MysteryElement touches it"):
+        spec.to_tcl_commands(model=model)
+
+
+def test_an_unknown_element_token_blocks_element_less_nodes_too() -> None:
+    """Like a u-p class, an unknown one could own the slot a constraint
+    ties an element-less node's rotation to."""
+    spec = _node_spec(("rotation_z",), ids=(9,))
+    model = _token_model(spec, 2, {9: 3}, (("MysteryElement", (1, 2)),))
+    with pytest.raises(ValueError, match=r"model holds a MysteryElement"):
+        spec.to_tcl_commands(model=model)
+
+
+@pytest.mark.parametrize("token", ["elasticBeamColumn", "zeroLength",
+                                   "twoNodeLink", "ShellMITC4"])
+def test_a_rotational_token_establishes_the_rotation(token: str) -> None:
+    spec = _node_spec(("rotation_z",), ids=(1, 2))
+    model = _token_model(spec, 2, {1: 3, 2: 3}, ((token, (1, 2)),))
+    [line] = spec.to_tcl_commands(model=model)
+    assert " -dof 3 -precision" in line
+
+
+@pytest.mark.parametrize("token", ["quad", "Truss", "tri31"])
+def test_a_translational_token_alone_establishes_no_rotation(
+    token: str,
+) -> None:
+    spec = _node_spec(("rotation_z",), ids=(1, 2))
+    model = _token_model(spec, 2, {1: 3, 2: 3}, ((token, (1, 2)),))
+    with pytest.raises(ValueError, match=r"no beam-column or shell"):
+        spec.to_tcl_commands(model=model)
+
+
+def test_token_table_matches_each_family_class_emit() -> None:
+    """``_CLASS_FOR_TOKEN`` names every class the family tables hold, at
+    the token that class's ``_emit`` writes (read from its source)."""
+    import inspect
+    import re
+
+    from apeGmsh.opensees import _readback as rb
+
+    families = set(rb._ROTATIONAL_FAMILIES + rb._TRANSLATIONAL_ONLY
+                   + rb._UP_FAMILIES)
+    assert set(rb._CLASS_FOR_TOKEN.values()) == families
+    assert len(rb._CLASS_FOR_TOKEN) == len(families)
+    for token, cls in rb._CLASS_FOR_TOKEN.items():
+        src = inspect.getsource(cls._emit)
+        emitted = re.findall(r'emitter\.element\(\s*"([^"]+)"', src)
+        assert emitted == [token], (cls.__name__, emitted)

@@ -10,8 +10,14 @@ DOFs 1–6. A component that no recorded node carries is refused instead of
 being recorded at another DOF. Examples are a 2-D `displacement_z`, which
 used to record the rotation, and a rotation on ndf-4/5 u-p or solid nodes.
 A translation that some recorded nodes lack is also refused, and so are
-nodes that place one component at different DOFs. Rotations that some
-nodes lack are still recorded, then read back as NaN (#1971).
+nodes that place one component at different DOFs. A rotational DOF also
+needs an element that establishes a rotation there. The check uses the
+rotation-role table that `recorder.declare` and `.read` use, matched on
+the model's element tokens. A 2-D LadrunoUP vertex node's DOF 3 is pore
+pressure, so its `rotation_z` is refused instead of recording the
+pressure. An unknown element token also blocks the rotations at its
+nodes. Rotations that some nodes lack are still recorded, then read back
+as NaN (#1971).
 
 **BREAKING:** every node record now needs `model=`, the built
 `OpenSeesModel` (for example `OpenSeesModel.from_h5` of the bridge's

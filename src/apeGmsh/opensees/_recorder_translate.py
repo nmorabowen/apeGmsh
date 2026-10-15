@@ -31,8 +31,10 @@ from ._element_capabilities import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Callable, Mapping
     from pathlib import Path
+
+    from ._readback import RotationRoles
 
     from numpy import ndarray
 
@@ -236,9 +238,16 @@ def node_record_deck_dofs(
     nodes_ndf: "Mapping[int, int]",
     ndm: int,
     *,
+    rotation_refusal: "Callable[[int], str | None]",
     where: str,
 ) -> tuple[int, ...]:
     """The ``-dof`` list a ``recorder Node`` line over ``node_ids`` records.
+
+    ``rotation_refusal(node)`` says why a node whose layout holds a
+    rotational slot carries no rotation there (``RotationRoles.refusal``:
+    a u-p node's DOF ``ndm + 1`` is pore pressure), or ``None``. It is
+    asked only for nodes whose layout holds a rotational slot the record
+    asks for, and any refusal raises.
 
     ``slot_dofs`` name spatial slots as 1-based DOFs of the full
     ``(x, y, z, rx, ry, rz)`` layout (``rotation_z`` is 6), which is how
@@ -291,6 +300,19 @@ def node_record_deck_dofs(
                 f"DOF (ndm={ndm}), and a recorder pads it with 0.0. Record "
                 f"them in a separate record without that component."
             )
+        if slot >= 3:
+            refused = [(n, why) for n in at
+                       if (why := rotation_refusal(n)) is not None]
+            if refused:
+                listed = "; ".join(
+                    f"node {n} ({why})" for n, why in refused[:3])
+                more = len(refused) - min(len(refused), 3)
+                raise ValueError(
+                    f"{where}: {names[slot]!r} has no established DOF at "
+                    f"{listed}" + (f"; and {more} more node(s)" if more else "")
+                    + ". Narrow the record to nodes whose elements carry a "
+                    "rotation, or drop the rotational component."
+                )
         dofs = set(at.values())
         if len(dofs) > 1:
             shown = {n: at[n] for n in list(at)[:6]}
@@ -306,6 +328,83 @@ def node_record_deck_dofs(
             f"the read side maps columns by slot order."
         )
     return tuple(out)
+
+
+def model_node_deck_dofs(
+    slot_dofs: tuple[int, ...],
+    node_ids: tuple[int, ...],
+    model: object,
+    *,
+    where: str,
+) -> tuple[int, ...]:
+    """:func:`node_record_deck_dofs` over a built ``OpenSeesModel``: its
+    ``ndm``, ``nodes_ndf`` and, for a rotational slot, the rotation roles
+    of its elements (:func:`~apeGmsh.opensees._readback.rotation_roles_from_tokens`),
+    the table the ``recorder.declare`` emit and ``.read`` use."""
+    ndm = int(model.ndm)  # type: ignore[attr-defined]
+    if ndm < 1:
+        raise ValueError(
+            f"{where}: model= declares no ndm (ndm={ndm}), so the node "
+            f"DOFs cannot be mapped. Pass the model built through "
+            f"apeSees(fem) and ops.model(ndm=, ndf=)."
+        )
+    roles: "list[RotationRoles]" = []
+
+    def refusal(node: int) -> "str | None":
+        if not roles:
+            roles.append(_model_rotation_roles(model, node_ids, where=where))
+        return roles[0].refusal(int(node))
+
+    return node_record_deck_dofs(
+        slot_dofs, node_ids,
+        model.nodes_ndf,  # type: ignore[attr-defined]
+        ndm, rotation_refusal=refusal, where=where,
+    )
+
+
+def _model_rotation_roles(
+    model: object, node_ids: tuple[int, ...], *, where: str,
+) -> "RotationRoles":
+    """The rotation roles of ``node_ids`` under ``model``'s elements.
+
+    A rehydrated element record keeps no connectivity; its nodes come from
+    the model's FEMData by ``fem_eid``. A record whose nodes cannot be
+    placed raises when its class is not a known beam/shell/zero-length or
+    translational one (it could block a rotation unseen); a known one is
+    skipped, which only ever refuses more.
+    """
+    from ._readback import (
+        _CLASS_FOR_TOKEN,
+        _ROTATIONAL_FAMILIES,
+        _TRANSLATIONAL_ONLY,
+        rotation_roles_from_tokens,
+    )
+
+    records = tuple(model.elements())  # type: ignore[attr-defined]
+    conn_of: "dict[int, tuple[int, ...]] | None" = None
+    rows: list[tuple[str, tuple[int, ...]]] = []
+    for rec in records:
+        nodes = tuple(int(n) for n in rec.connectivity)
+        if not nodes and int(rec.fem_eid) >= 0:
+            if conn_of is None:
+                conn_of = {}
+                for group in model.fem.elements:  # type: ignore[attr-defined]
+                    for eid, conn in group:
+                        conn_of[int(eid)] = tuple(int(n) for n in conn)
+            nodes = conn_of.get(int(rec.fem_eid), ())
+        if not nodes:
+            cls = _CLASS_FOR_TOKEN.get(rec.type_token)
+            if cls is not None and issubclass(
+                    cls, _ROTATIONAL_FAMILIES + _TRANSLATIONAL_ONLY):
+                continue
+            raise ValueError(
+                f"{where}: element tag {rec.tag} ({rec.type_token}) has no "
+                f"node list in model= (no connectivity, and FEM id "
+                f"{rec.fem_eid} is not in its FEMData), so whether it "
+                f"blocks a rotation at the recorded nodes is unknown."
+            )
+        rows.append((rec.type_token, nodes))
+    return rotation_roles_from_tokens(rows, node_ids)
 
 
 def mask_absent_rotations(
