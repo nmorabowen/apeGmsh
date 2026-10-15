@@ -12,8 +12,8 @@ an empty result and no warning in three cases:
   with more than one catalogued rule raises instead of guessing. The buckets
   this reaches are those of the catalogued Ladruno-band classes (BezierTri6,
   BezierTet10, LadrunoBrick, LadrunoQuad, LadrunoCST, LadrunoLST,
-  LadrunoBrick20) and of any other catalogued class MPCO writes at rule 0. No bucket that read before changes,
-  because no catalog row has rule 0.
+  LadrunoBrick20) and of any other catalogued class MPCO writes at rule 0.
+  No bucket that read before changes, because no catalog row has rule 0.
 - **The response sits under `stress`.** The ON_ELEMENTS group is named by the
   keyword the deck asked for, and only `stresses` / `material.stress` were
   searched. The catalog token (`stress`, `strain`) is now searched too.

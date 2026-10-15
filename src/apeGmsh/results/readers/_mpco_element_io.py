@@ -36,7 +36,6 @@ from numpy import ndarray
 from ..._vocabulary import STRAIN_2D, STRESS_2D
 from ...opensees._response_catalog import (
     RESPONSE_CATALOG,
-    CatalogLookupError,
     IntRule,
     MPCOElementKey,
     ResponseLayout,
@@ -132,7 +131,7 @@ def discover_gauss_buckets(
     mpco_group_name, catalog_token = mapping
     candidate_names = mpco_gauss_group_aliases(mpco_group_name)
     # The ON_ELEMENTS group is named by the keyword the deck asked for,
-    # so ``-E stress`` lands under ``stress``, not ``stresses`` (#1970).
+    # so ``-E stress`` lands under ``stress``, not ``stresses``.
     if catalog_token not in candidate_names:
         candidate_names = candidate_names + (catalog_token,)
 

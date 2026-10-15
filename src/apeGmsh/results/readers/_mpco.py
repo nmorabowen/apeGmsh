@@ -315,7 +315,7 @@ class MPCOReader:
         A recorder with only ``-E`` channels writes no node results; the
         cadence is then read the same way from the element buckets
         (``RESULTS/ON_ELEMENTS/<token>/<bucket>``), cross-checked among
-        themselves (#1970).
+        themselves.
         """
         time = _cadence_time(_node_step_groups(stage_grp))
         if time is None:
