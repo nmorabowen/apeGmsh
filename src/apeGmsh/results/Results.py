@@ -445,7 +445,7 @@ class Results:
         # default, mirror stage_id so the resulting Results stage is
         # named meaningfully (otherwise everything ends up as
         # "analysis" regardless of which stage the user loaded).
-        if stage_id is not None and stage_name is None:
+        if stage_id is not None and stage_name in (None, "analysis"):
             stage_name = stage_id
         stages = None if stages is None else tuple(stages)   # read a generator once
         plan = RecorderTranscoder.stage_plan(stages, stage_name, stage_kind, stage_id)

@@ -128,7 +128,8 @@ class RecorderTranscoder:
         kind is checked here, before anything is written.
         """
         if stages is None:
-            return [(stage_name or "analysis", stage_kind or "transient", stage_id)]
+            return [("analysis" if stage_name is None else stage_name,
+                     "transient" if stage_kind is None else stage_kind, stage_id)]
         if (stage_name, stage_kind, stage_id) != (None, None, None):
             raise TypeError("pass stages= or stage_name= / stage_kind= / stage_id=, not both.")
         plan = [(str(s.name), str(s.kind), str(s.name)) for s in stages]

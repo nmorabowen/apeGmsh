@@ -326,3 +326,35 @@ def test_live_gravity_then_newmark_reads_back_both_stages(tmp_path: Path) -> Non
 def _disp(osp: Any, nodes: np.ndarray) -> np.ndarray:
     return np.array([[osp.nodeDisp(int(n), 1), osp.nodeDisp(int(n), 2)]
                      for n in nodes])
+
+
+# =====================================================================
+# The single-stage arguments keep main's rules
+# =====================================================================
+
+def test_an_explicit_analysis_name_still_takes_the_stage_id(tmp_path: Path) -> None:
+    """``stage_id="gravity", stage_name="analysis"`` names the stage
+    ``gravity``, as the default name does, and shares its cache entry."""
+    fem = _MockFem([1, 2])
+    _write_two_stages(tmp_path / "out")
+    for kw in ({}, {"stage_name": "analysis"}):
+        with _read(tmp_path / "out", fem, tmp_path / "c", stage_id="gravity", **kw) as r:
+            assert [s.name for s in r.stages] == ["gravity"]
+    assert len(_cached(tmp_path / "c")) == 1
+
+
+def test_an_empty_stage_kind_is_refused(tmp_path: Path) -> None:
+    """An empty kind is not the default: the writer refuses it, as on main."""
+    fem = _MockFem([1, 2])
+    _write_two_stages(tmp_path / "out")
+    with pytest.raises(ValueError, match="kind must be one of"):
+        _read(tmp_path / "out", fem, tmp_path / "c", stage_id="gravity", stage_kind="")
+
+
+def test_an_empty_stage_name_is_kept(tmp_path: Path) -> None:
+    """An empty name is not the default either: it is written as given."""
+    fem = _MockFem([1, 2])
+    _write_two_stages(tmp_path / "out")
+    with _read(tmp_path / "out", fem, tmp_path / "c",
+               stage_id="gravity", stage_name="") as r:
+        assert [s.name for s in r.stages] == [""]
