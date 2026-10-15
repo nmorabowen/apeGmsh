@@ -156,6 +156,78 @@
       "skill": "references/fem-broker.md",
       "symbol": "FEMData.compose_tree"
     },
+    "FEMData.elements.constraints.by_kind": {
+      "doc": "Return all records matching a constraint/load kind.",
+      "signature": "by_kind(kind: 'str') -> 'list[_R]'",
+      "skill": "references/fem-broker.md",
+      "symbol": "FEMData.elements.constraints.by_kind"
+    },
+    "FEMData.elements.constraints.couplings": {
+      "doc": "Yield ``SurfaceCouplingRecord`` objects.",
+      "signature": "couplings() -> \"Iterator['SurfaceCouplingRecord']\"",
+      "skill": "references/fem-broker.md",
+      "symbol": "FEMData.elements.constraints.couplings"
+    },
+    "FEMData.elements.constraints.interpolations": {
+      "doc": "Yield ``InterpolationRecord`` objects.",
+      "signature": "interpolations() -> \"Iterator['InterpolationRecord']\"",
+      "skill": "references/fem-broker.md",
+      "symbol": "FEMData.elements.constraints.interpolations"
+    },
+    "FEMData.elements.constraints.summary": {
+      "doc": "DataFrame summarising surface constraints.",
+      "signature": "summary() -> \"'pd.DataFrame'\"",
+      "skill": "references/fem-broker.md",
+      "symbol": "FEMData.elements.constraints.summary"
+    },
+    "FEMData.elements.index": {
+      "doc": "Array index for an element ID.  O(1) after first call.",
+      "signature": "index(eid: 'int') -> 'int'",
+      "skill": "references/fem-broker.md",
+      "symbol": "FEMData.elements.index"
+    },
+    "FEMData.elements.loads.by_kind": {
+      "doc": "Return all records matching a constraint/load kind.",
+      "signature": "by_kind(kind: 'str') -> 'list[_R]'",
+      "skill": "references/fem-broker.md",
+      "symbol": "FEMData.elements.loads.by_kind"
+    },
+    "FEMData.elements.loads.by_pattern": {
+      "doc": "Return all records belonging to the named pattern.",
+      "signature": "by_pattern(name: 'str') -> \"list['ElementLoadRecord']\"",
+      "skill": "references/fem-broker.md",
+      "symbol": "FEMData.elements.loads.by_pattern"
+    },
+    "FEMData.elements.loads.patterns": {
+      "doc": "Return all unique pattern names in insertion order.",
+      "signature": "patterns() -> 'list[str]'",
+      "skill": "references/fem-broker.md",
+      "symbol": "FEMData.elements.loads.patterns"
+    },
+    "FEMData.elements.loads.summary": {
+      "doc": "DataFrame of (pattern, kind) -> count.",
+      "signature": "summary() -> \"'pd.DataFrame'\"",
+      "skill": "references/fem-broker.md",
+      "symbol": "FEMData.elements.loads.summary"
+    },
+    "FEMData.elements.module_label_by_id": {
+      "doc": "Flat ``element-id -> compose label`` map across all types.",
+      "signature": "module_label_by_id() -> \"'dict[int, str] | None'\"",
+      "skill": "references/fem-broker.md",
+      "symbol": "FEMData.elements.module_label_by_id"
+    },
+    "FEMData.elements.select": {
+      "doc": "Select a subset of elements from this FEM snapshot.",
+      "signature": "select(target=None, *, pg=None, label=None, tag=None, dim: 'int | None' = None, element_type: 'str | int | None' = None, partition: 'int | None' = None, ids=None)",
+      "skill": "references/fem-broker.md",
+      "symbol": "FEMData.elements.select"
+    },
+    "FEMData.elements.type_table": {
+      "doc": "DataFrame of element types in the mesh.",
+      "signature": "type_table() -> \"'pd.DataFrame'\"",
+      "skill": "references/fem-broker.md",
+      "symbol": "FEMData.elements.type_table"
+    },
     "FEMData.from_gmsh": {
       "doc": "Extract FEMData from a live Gmsh session.",
       "signature": "from_gmsh(dim: 'int | None' = None, *, session=None, ndf: 'int' = 6, remove_orphans: 'bool' = False)",
@@ -191,6 +263,240 @@
       "signature": "from_native_h5(group) -> \"'FEMData'\"",
       "skill": "references/fem-broker.md",
       "symbol": "FEMData.from_native_h5"
+    },
+    "FEMData.inspect.constraint_summary": {
+      "doc": "Human-readable breakdown of all constraints.",
+      "signature": "constraint_summary() -> 'str'",
+      "skill": "references/fem-broker.md",
+      "symbol": "FEMData.inspect.constraint_summary"
+    },
+    "FEMData.inspect.element_table": {
+      "doc": "DataFrame of all elements with a ``type`` column.",
+      "signature": "element_table() -> \"'pd.DataFrame'\"",
+      "skill": "references/fem-broker.md",
+      "symbol": "FEMData.inspect.element_table"
+    },
+    "FEMData.inspect.find_coincident_node_pairs": {
+      "doc": "Find distinct nodes that share an XYZ within tolerance.",
+      "signature": "find_coincident_node_pairs(*, tol: 'float' = 1e-06, pg: 'str | None' = None) -> 'dict[tuple[int, int], list[str]]'",
+      "skill": "references/fem-broker.md",
+      "symbol": "FEMData.inspect.find_coincident_node_pairs"
+    },
+    "FEMData.inspect.label_table": {
+      "doc": "",
+      "signature": "label_table() -> \"'pd.DataFrame'\"",
+      "skill": "references/fem-broker.md",
+      "symbol": "FEMData.inspect.label_table"
+    },
+    "FEMData.inspect.load_summary": {
+      "doc": "Human-readable breakdown of all loads.",
+      "signature": "load_summary() -> 'str'",
+      "skill": "references/fem-broker.md",
+      "symbol": "FEMData.inspect.load_summary"
+    },
+    "FEMData.inspect.mass_summary": {
+      "doc": "Human-readable breakdown of masses.",
+      "signature": "mass_summary() -> 'str'",
+      "skill": "references/fem-broker.md",
+      "symbol": "FEMData.inspect.mass_summary"
+    },
+    "FEMData.inspect.node_table": {
+      "doc": "DataFrame of all nodes.",
+      "signature": "node_table() -> \"'pd.DataFrame'\"",
+      "skill": "references/fem-broker.md",
+      "symbol": "FEMData.inspect.node_table"
+    },
+    "FEMData.inspect.physical_table": {
+      "doc": "",
+      "signature": "physical_table() -> \"'pd.DataFrame'\"",
+      "skill": "references/fem-broker.md",
+      "symbol": "FEMData.inspect.physical_table"
+    },
+    "FEMData.inspect.summary": {
+      "doc": "One-line mesh summary plus sub-composite counts.",
+      "signature": "summary() -> 'str'",
+      "skill": "references/fem-broker.md",
+      "symbol": "FEMData.inspect.summary"
+    },
+    "FEMData.nodes.constraints.by_kind": {
+      "doc": "Return all records matching a constraint/load kind.",
+      "signature": "by_kind(kind: 'str') -> 'list[_R]'",
+      "skill": "references/fem-broker.md",
+      "symbol": "FEMData.nodes.constraints.by_kind"
+    },
+    "FEMData.nodes.constraints.equal_dofs": {
+      "doc": "Yield equal_dof pairs — flat iteration.",
+      "signature": "equal_dofs() -> \"Iterator['NodePairRecord']\"",
+      "skill": "references/fem-broker.md",
+      "symbol": "FEMData.nodes.constraints.equal_dofs"
+    },
+    "FEMData.nodes.constraints.equal_dofs_mixed": {
+      "doc": "Yield ``equal_dof_mixed`` records — mixed-DOF ties.",
+      "signature": "equal_dofs_mixed() -> \"Iterator['NodePairRecord']\"",
+      "skill": "references/fem-broker.md",
+      "symbol": "FEMData.nodes.constraints.equal_dofs_mixed"
+    },
+    "FEMData.nodes.constraints.node_to_surfaces": {
+      "doc": "Yield only ``NodeToSurfaceRecord`` instances.",
+      "signature": "node_to_surfaces() -> \"Iterator['NodeToSurfaceRecord']\"",
+      "skill": "references/fem-broker.md",
+      "symbol": "FEMData.nodes.constraints.node_to_surfaces"
+    },
+    "FEMData.nodes.constraints.pairs": {
+      "doc": "Iterate over every constraint as a flat sequence of pairs.",
+      "signature": "pairs() -> \"Iterator['NodePairRecord']\"",
+      "skill": "references/fem-broker.md",
+      "symbol": "FEMData.nodes.constraints.pairs"
+    },
+    "FEMData.nodes.constraints.phantom_nodes": {
+      "doc": "Phantom nodes that solvers must create **before** emitting",
+      "signature": "phantom_nodes()",
+      "skill": "references/fem-broker.md",
+      "symbol": "FEMData.nodes.constraints.phantom_nodes"
+    },
+    "FEMData.nodes.constraints.rigid_body_elements": {
+      "doc": "Yield ``(master, [slaves], mass, omega)`` for ``as_element`` bodies.",
+      "signature": "rigid_body_elements() -> 'Iterator[tuple[int, list[int], float | None, tuple[float, float, float] | None]]'",
+      "skill": "references/fem-broker.md",
+      "symbol": "FEMData.nodes.constraints.rigid_body_elements"
+    },
+    "FEMData.nodes.constraints.rigid_diaphragms": {
+      "doc": "Yield ``(perp_dirn, master, slaves)`` for rigid_diaphragm records.",
+      "signature": "rigid_diaphragms() -> 'Iterator[tuple[int, int, list[int]]]'",
+      "skill": "references/fem-broker.md",
+      "symbol": "FEMData.nodes.constraints.rigid_diaphragms"
+    },
+    "FEMData.nodes.constraints.rigid_link_groups": {
+      "doc": "Yield ``(master, slaves)`` tuples for all rigid-link constraints.",
+      "signature": "rigid_link_groups() -> 'Iterator[tuple[int, list[int]]]'",
+      "skill": "references/fem-broker.md",
+      "symbol": "FEMData.nodes.constraints.rigid_link_groups"
+    },
+    "FEMData.nodes.constraints.stiff_beam_groups": {
+      "doc": "Yield ``(master, [slaves])`` tuples for stiff-beam-link records.",
+      "signature": "stiff_beam_groups() -> 'Iterator[tuple[int, list[int]]]'",
+      "skill": "references/fem-broker.md",
+      "symbol": "FEMData.nodes.constraints.stiff_beam_groups"
+    },
+    "FEMData.nodes.constraints.summary": {
+      "doc": "DataFrame summarising the constraint set.",
+      "signature": "summary() -> \"'pd.DataFrame'\"",
+      "skill": "references/fem-broker.md",
+      "symbol": "FEMData.nodes.constraints.summary"
+    },
+    "FEMData.nodes.index": {
+      "doc": "Array index for a node ID.  O(1) after first call.",
+      "signature": "index(nid: 'int') -> 'int'",
+      "skill": "references/fem-broker.md",
+      "symbol": "FEMData.nodes.index"
+    },
+    "FEMData.nodes.loads.by_kind": {
+      "doc": "Return all records matching a constraint/load kind.",
+      "signature": "by_kind(kind: 'str') -> 'list[_R]'",
+      "skill": "references/fem-broker.md",
+      "symbol": "FEMData.nodes.loads.by_kind"
+    },
+    "FEMData.nodes.loads.by_pattern": {
+      "doc": "Return all records belonging to the named pattern.",
+      "signature": "by_pattern(name: 'str') -> \"list['NodalLoadRecord']\"",
+      "skill": "references/fem-broker.md",
+      "symbol": "FEMData.nodes.loads.by_pattern"
+    },
+    "FEMData.nodes.loads.patterns": {
+      "doc": "Return all unique pattern names in insertion order.",
+      "signature": "patterns() -> 'list[str]'",
+      "skill": "references/fem-broker.md",
+      "symbol": "FEMData.nodes.loads.patterns"
+    },
+    "FEMData.nodes.loads.summary": {
+      "doc": "DataFrame of (pattern, kind) -> count.",
+      "signature": "summary() -> \"'pd.DataFrame'\"",
+      "skill": "references/fem-broker.md",
+      "symbol": "FEMData.nodes.loads.summary"
+    },
+    "FEMData.nodes.masses.by_kind": {
+      "doc": "MassRecord has no ``kind`` field — always empty (parity stub).",
+      "signature": "by_kind(kind: 'str') -> \"'list[MassRecord]'\"",
+      "skill": "references/fem-broker.md",
+      "symbol": "FEMData.nodes.masses.by_kind"
+    },
+    "FEMData.nodes.masses.by_node": {
+      "doc": "Return the MassRecord for a node, or ``None``.",
+      "signature": "by_node(node_id: 'int') -> \"'MassRecord | None'\"",
+      "skill": "references/fem-broker.md",
+      "symbol": "FEMData.nodes.masses.by_node"
+    },
+    "FEMData.nodes.masses.mass_array": {
+      "doc": "The ``float64[N, 6]`` mass column (read-only view).",
+      "signature": "mass_array() -> \"'np.ndarray'\"",
+      "skill": "references/fem-broker.md",
+      "symbol": "FEMData.nodes.masses.mass_array"
+    },
+    "FEMData.nodes.masses.node_ids": {
+      "doc": "The ``int64[N]`` node-id column (read-only view).",
+      "signature": "node_ids() -> \"'np.ndarray'\"",
+      "skill": "references/fem-broker.md",
+      "symbol": "FEMData.nodes.masses.node_ids"
+    },
+    "FEMData.nodes.masses.summary": {
+      "doc": "DataFrame with one row per node:",
+      "signature": "summary() -> \"'pd.DataFrame'\"",
+      "skill": "references/fem-broker.md",
+      "symbol": "FEMData.nodes.masses.summary"
+    },
+    "FEMData.nodes.masses.total_mass": {
+      "doc": "Sum of translational mass (mx) over all records.",
+      "signature": "total_mass() -> 'float'",
+      "skill": "references/fem-broker.md",
+      "symbol": "FEMData.nodes.masses.total_mass"
+    },
+    "FEMData.nodes.ndf_for": {
+      "doc": "Return the per-node ``ndf`` (DOF count) for *nid*, if stored.",
+      "signature": "ndf_for(nid: 'int') -> 'int'",
+      "skill": "references/fem-broker.md",
+      "symbol": "FEMData.nodes.ndf_for"
+    },
+    "FEMData.nodes.select": {
+      "doc": "Select a subset of nodes from this FEM snapshot.",
+      "signature": "select(target=None, *, pg=None, label=None, tag=None, partition: 'int | None' = None, dim: 'int | None' = None, ids=None)",
+      "skill": "references/fem-broker.md",
+      "symbol": "FEMData.nodes.select"
+    },
+    "FEMData.nodes.sp.by_kind": {
+      "doc": "Return all records matching a constraint/load kind.",
+      "signature": "by_kind(kind: 'str') -> 'list[_R]'",
+      "skill": "references/fem-broker.md",
+      "symbol": "FEMData.nodes.sp.by_kind"
+    },
+    "FEMData.nodes.sp.by_node": {
+      "doc": "All SP records for a given node.",
+      "signature": "by_node(node_id: 'int') -> \"list['SPRecord']\"",
+      "skill": "references/fem-broker.md",
+      "symbol": "FEMData.nodes.sp.by_node"
+    },
+    "FEMData.nodes.sp.by_pattern": {
+      "doc": "Return all records belonging to the named pattern.",
+      "signature": "by_pattern(name: 'str') -> \"list['SPRecord']\"",
+      "skill": "references/fem-broker.md",
+      "symbol": "FEMData.nodes.sp.by_pattern"
+    },
+    "FEMData.nodes.sp.homogeneous": {
+      "doc": "Return only homogeneous (fix) records.",
+      "signature": "homogeneous() -> \"list['SPRecord']\"",
+      "skill": "references/fem-broker.md",
+      "symbol": "FEMData.nodes.sp.homogeneous"
+    },
+    "FEMData.nodes.sp.patterns": {
+      "doc": "Return all unique pattern names in insertion order.",
+      "signature": "patterns() -> 'list[str]'",
+      "skill": "references/fem-broker.md",
+      "symbol": "FEMData.nodes.sp.patterns"
+    },
+    "FEMData.nodes.sp.prescribed": {
+      "doc": "Return only non-zero prescribed displacement records.",
+      "signature": "prescribed() -> \"list['SPRecord']\"",
+      "skill": "references/fem-broker.md",
+      "symbol": "FEMData.nodes.sp.prescribed"
     },
     "FEMData.render": {
       "doc": "Write one undeformed mesh still (ADR 0094 S1).",
@@ -422,7 +728,7 @@
     },
     "Results.from_recorders": {
       "doc": "Open the result of an OpenSees run driven by Tcl/Py recorders.",
-      "signature": "from_recorders(spec, output_dir: 'str | Path', *, fem: \"'FEMData'\", cache_root: 'str | Path | None' = None, stage_name: 'str' = 'analysis', stage_kind: 'str' = 'transient', file_format: 'str' = 'out', stage_id: 'str | None' = None, model: \"'Optional[OpenSeesModel]'\" = None) -> \"'Results'\"",
+      "signature": "from_recorders(spec, output_dir: 'str | Path', *, fem: \"'FEMData'\", cache_root: 'str | Path | None' = None, stage_name: 'str | None' = None, stage_kind: 'str | None' = None, file_format: 'str' = 'out', stage_id: 'str | None' = None, model: \"'Optional[OpenSeesModel]'\" = None, stages: \"'Optional[Iterable[Any]]'\" = None) -> \"'Results'\"",
       "skill": "references/results.md",
       "symbol": "Results.from_recorders"
     },

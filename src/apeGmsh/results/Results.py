@@ -73,7 +73,7 @@ bodies that need it. This keeps the import-DAG polarity tested by
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any, Iterable, Optional
 
 from numpy import ndarray
 
@@ -386,20 +386,18 @@ class Results:
         *,
         fem: "FEMData",
         cache_root: str | Path | None = None,
-        stage_name: str = "analysis",
-        stage_kind: str = "transient",
+        stage_name: str | None = None,
+        stage_kind: str | None = None,
         file_format: str = "out",
         stage_id: str | None = None,
         model: "Optional[OpenSeesModel]" = None,
+        stages: "Optional[Iterable[Any]]" = None,
     ) -> "Results":
         """Open the result of an OpenSees run driven by Tcl/Py recorders.
 
-        Phase 8 (ADR 0020 INV-1) — ``model=`` is required. Missing
-        supply raises :class:`TypeError`. The model's ``/opensees/``
-        zone is embedded into the transcoded native h5 (the
-        Composed-file pattern); downstream
-        :meth:`Results.from_native` then auto-resolves the broker
-        from the same file.
+        ``model=`` is required (else :class:`TypeError`); its ``/opensees/``
+        zone is embedded in the transcoded file, which
+        :meth:`Results.from_native` then opens.
 
         Parses the ``.out`` / ``.xml`` files emitted at
         ``output_dir`` (matching what ``spec.emit_recorders(...)`` or
@@ -416,8 +414,12 @@ class Results:
         :meth:`ResolvedRecorderSpec.emit_recorders` together with
         ``begin_stage(stage_id, ...)``. When set, only files prefixed
         with ``<stage_id>__`` are read; ``stage_name`` defaults to
-        ``stage_id`` if not overridden. ``None`` (default) keeps the
-        legacy flat-naming used by Tcl/Py exports.
+        ``stage_id``, else ``"analysis"``, and ``stage_kind`` to
+        ``"transient"``. ``None`` (default) keeps the
+        legacy flat-naming used by Tcl/Py exports. ``stages=live.stages``
+        reads every stage of a :meth:`ResolvedRecorderSpec.emit_recorders`
+        run into one file, one stage each with its name and kind; it
+        excludes ``stage_id`` / ``stage_name`` / ``stage_kind``.
 
         Nodes, element forces, gauss points and line stations are
         transcoded; fiber and layer records are skipped (``.out`` cannot
@@ -443,8 +445,10 @@ class Results:
         # default, mirror stage_id so the resulting Results stage is
         # named meaningfully (otherwise everything ends up as
         # "analysis" regardless of which stage the user loaded).
-        if stage_id is not None and stage_name == "analysis":
+        if stage_id is not None and stage_name in (None, "analysis"):
             stage_name = stage_id
+        stages = None if stages is None else tuple(stages)   # read a generator once
+        plan = RecorderTranscoder.stage_plan(stages, stage_name, stage_kind, stage_id)
 
         out_dir = Path(output_dir)
         cache_dir = _cache.resolve_cache_root(cache_root)
@@ -452,31 +456,26 @@ class Results:
         source_files = _cache.list_source_files(
             spec, out_dir, file_format=file_format, stage_id=stage_id,
         )
+        if stages is not None:
+            source_files = [f for *_, prefix in plan for f in _cache.list_source_files(
+                spec, out_dir, file_format=file_format, stage_id=prefix)]
         key = _cache.compute_cache_key(
             source_files,
             parser_version=PARSER_VERSION, fem_snapshot_id=fem.snapshot_id,
-            model_token=_cache.model_cache_token(model),
-            stages=[(stage_name, stage_kind, stage_id)],
+            model_token=_cache.model_cache_token(model), stages=plan,
         )
         cached_h5, _ = _cache.cache_paths(cache_dir, key)
 
         if not cached_h5.exists():
-            # Materialise the model's ``/opensees/`` zone alongside the
-            # transcoded results.  ``OpenSeesModel.to_h5`` (the public,
-            # schema-authority-respecting writer) shapes the source;
-            # NativeWriter copies the ``/opensees/`` group at open
-            # time (Composed-file pattern, ADR 0020 INV-3 preserved).
+            # The model's /opensees/ zone, written beside the target for
+            # NativeWriter to copy in at open time (ADR 0020).
             model_h5_src: Path = cached_h5.with_suffix(".model.h5")
             model.to_h5(model_h5_src)
-            transcoder = RecorderTranscoder(
-                spec, out_dir, cached_h5, fem,
-                stage_name=stage_name,
-                stage_kind=stage_kind,
-                file_format=file_format,
-                stage_id=stage_id,
-                model_h5_src=model_h5_src,
-            )
-            transcoder.run()
+            RecorderTranscoder(
+                spec, out_dir, cached_h5, fem, stage_name=stage_name,
+                stage_kind=stage_kind, file_format=file_format, stage_id=stage_id,
+                model_h5_src=model_h5_src, stages=stages,
+            ).run()
 
         return cls.from_native(cached_h5, fem=fem, model=model)
 
