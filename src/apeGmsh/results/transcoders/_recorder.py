@@ -42,7 +42,6 @@ from numpy import ndarray
 
 from ...opensees._response_catalog import (
     RESPONSE_CATALOG,
-    CustomRuleLayout,
     IntRule,
     NodalForceLayout,
     ResponseLayout,
@@ -60,13 +59,12 @@ from ...opensees._response_catalog import (
     unflatten,
     unflatten_nodal,
 )
-from ...opensees._recorder_translate import stress_zz_keyword
+from ...opensees._recorder_translate import mask_absent_rotations, stress_zz_keyword
 from ..schema._native import ELEMENT_INDEX_SPACE_FEM
 from ..spec._emit import (
     _DEFERRED_CATEGORIES,
     element_tag_map,
     emit_logical,
-    line_station_gpx_path,
     line_stations_from_local_force,
     refuse_non_elastic_local_force,
 )
@@ -110,11 +108,8 @@ class RecorderTranscoder:
         self._file_format = file_format
         # Filename prefix (live-emit multi-stage runs); None means no prefix.
         self._stage_id = stage_id
-        # Phase 4 (ADR 0020) — when supplied, the path of a sibling
-        # ``model.h5`` whose ``/opensees/`` zone is composed into the
-        # transcoded results file at NativeWriter.open() time. Default
-        # None keeps the legacy two-zone (``/meta`` + ``/model``)
-        # output shape pre-Phase-4 readers already understand.
+        # A sibling model.h5 whose /opensees/ zone is composed in (ADR 0020); None
+        # writes /meta + /model only, and refuses elastic-beam line stations.
         self._model_h5_src = (
             None if model_h5_src is None else Path(model_h5_src)
         )
@@ -321,6 +316,7 @@ class RecorderTranscoder:
                     continue
                 components[canonical] = per_dof[comp_dof]   # (T, N_record)
 
+        mask_absent_rotations(components, node_ids, self._model_h5_src, self._fem)
         return _NodeRecordPayload(
             record_name=rec.name,
             node_ids=node_ids,
@@ -581,13 +577,17 @@ class RecorderTranscoder:
         self, rec: "ResolvedRecorderRecord",
     ) -> "_LineStationRecordPayload":
         """Two stations (xi = -1, +1) from one ``localForce`` file: end i,
-        and end j negated, as DomainCapture and the MPCO reader do. With a
-        model, every element must be an elastic beam (no silent mixing)."""
-        if self._model_h5_src is not None:
-            from ...opensees import OpenSeesModel
-            refuse_non_elastic_local_force(
-                rec, OpenSeesModel.from_h5(self._model_h5_src),
-                fem_snapshot_id=self._spec.fem_snapshot_id)
+        and end j negated, as DomainCapture and the MPCO reader do. Every
+        element must be an elastic beam, so a model is required."""
+        if self._model_h5_src is None:
+            raise ValueError(
+                f"Line-stations record {rec.name!r} names elastic-beam class "
+                f"{rec.element_class_name!r}: pass model= (model_h5_src=) so every "
+                f"element is checked to be an elastic beam; without one it is refused.")
+        from ...opensees import OpenSeesModel
+        refuse_non_elastic_local_force(
+            rec, OpenSeesModel.from_h5(self._model_h5_src),
+            fem_snapshot_id=self._spec.fem_snapshot_id)
         cls = rec.element_class_name
         layout = synthesize_line_station_layout_for_elastic_beam(cls or "")
         assert layout is not None    # line_stations_from_local_force(rec)

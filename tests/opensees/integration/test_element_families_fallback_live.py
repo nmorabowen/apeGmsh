@@ -10,8 +10,12 @@ checked against the live domain:
 * truss axial force, recorded as a Gauss record, against
   ``eleResponse(tag, "axialForce")`` and ``P`` for the determinate bar;
 * mixed-ndf shell-on-solid nodes against ``nodeDisp`` (3-dof tet nodes,
-  6-dof MITC4 nodes). The tet nodes reading rotation 0.0 is a silent wrong
-  answer, pinned as a strict xfail citing #1971.
+  6-dof MITC4 nodes). The tet nodes read rotation NaN, not the 0.0 the
+  recorder pads them with (#1971);
+* the 2-D twin, a frame beside a quad block (2-dof quad nodes, 3-dof frame
+  nodes): the quad nodes read ``rotation_z`` NaN. The frame's own
+  ``rotation_z`` value is a strict xfail: this route records it at DOF 6
+  (#2018).
 
 The tolerance is the format's, not the oracle's: a ``.out`` file holds six
 significant digits, so values compare at ``rtol=1e-5``. The fork-only
@@ -261,17 +265,14 @@ def test_shell_on_solid_nodes_read_back_from_out(g: Any, tmp_path: Path) -> None
         )
 
 
-@pytest.mark.xfail(
-    strict=True, raises=AssertionError,
-    reason="#1971: 3-dof nodes read rotation 0.0, not absent/NaN",
-)
 def test_solid_node_rotations_are_absent_from_out(
     g: Any, tmp_path: Path,
 ) -> None:
-    """A tet node has no rotation DOF: absent from the slab, or NaN.
+    """A tet node has no rotation DOF: absent from the slab, or NaN (#1971).
 
     One ``.out`` node record over both families pads the tet nodes'
-    missing DOFs with zeros, which read back as a real rotation of 0.0.
+    missing DOFs with zeros; the transcoder reads the model's per-node
+    ndf and writes NaN there instead of a rotation of 0.0.
     """
     r, solid, _shell, _live = _shell_on_solid_run(g, tmp_path)
     for comp in ROT:
@@ -282,3 +283,118 @@ def test_solid_node_rotations_are_absent_from_out(
             f"{comp}: {int(np.isfinite(on_solid).sum())} 3-dof nodes read a "
             "finite rotation"
         )
+
+
+# ---------------------------------------------------------------------------
+# Mixed-ndf frame beside a quad block, 2-D: ndf=2 nodes and rotation_z
+# ---------------------------------------------------------------------------
+
+
+def _frame_beside_quad_fem(g: Any) -> Any:
+    """A quad block (2-dof nodes) and a detached column (3-dof nodes)."""
+    G = g.model.geometry
+    block = G.add_rectangle(0.0, 0.0, 0.0, 1.0, 1.0)
+    c0 = G.add_point(3.0, 0.0, 0.0)
+    c1 = G.add_point(3.0, 2.0, 0.0)
+    col = G.add_line(c0, c1)
+    g.model.sync()
+    g.physical.add(2, [block], name="Block")
+    g.physical.add(1, [col], name="Col")
+    g.physical.add(0, [c0], name="ColBase")
+    g.physical.add(0, [c1], name="ColTop")
+    sel = g.model.select
+    sel(dim=1).on_plane((0, 0, 0), (0, 1, 0), tol=1e-4).to_physical("BlockBase")
+    sel(dim=1).on_plane((0, 1.0, 0), (0, 1, 0), tol=1e-4).to_physical("BlockTop")
+    g.mesh.structured.set_recombine("Block", dim=2)
+    g.mesh.sizing.set_global_size(0.5)
+    g.mesh.generation.generate(2)
+    g.mesh.partitioning.renumber(base=1)
+    return g.mesh.queries.get_fem_data()
+
+
+def _frame_beside_quad_run(
+    g: Any, tmp_path: Path,
+) -> tuple[Results, list[int], list[int], dict[int, np.ndarray]]:
+    fem = _frame_beside_quad_fem(g)
+    quad = sorted({int(n) for n in fem.nodes.select(pg="Block").ids})
+    frame = sorted({int(n) for n in fem.nodes.select(pg="Col").ids})
+    assert quad and frame and not set(quad) & set(frame)
+
+    ops = apeSees(fem)
+    ops.model(ndm=2, ndf=3)
+    ops.element.FourNodeQuad(
+        pg="Block", thickness=1.0,
+        material=ops.nDMaterial.ElasticIsotropic(E=1e6, nu=0.3),
+    )
+    ops.element.elasticBeamColumn(
+        pg="Col", transf=ops.geomTransf.Linear(), A=0.01, E=200e9, Iz=1e-4,
+    )
+    ops.fix(pg="BlockBase", dofs=(1, 1))
+    ops.fix(pg="ColBase", dofs=(1, 1, 1))
+    with ops.pattern.Plain(series=ops.timeSeries.Linear()) as pat:
+        for n in fem.nodes.select(pg="BlockTop").ids:
+            pat.load(node=int(n), forces=(100.0, -50.0))
+        for n in fem.nodes.select(pg="ColTop").ids:
+            pat.load(node=int(n), forces=(1e3, 0.0, 2e2))
+    ops.constraints.Plain()
+    ops.numberer.RCM()
+    ops.system.UmfPack()
+    ops.test.NormDispIncr(tol=1e-8, max_iter=50)
+    ops.algorithm.Newton()
+    ops.integrator.LoadControl(dlam=1.0)
+    ops.analysis.Static()
+
+    emitter, _model_h5, model = _build(ops, tmp_path)
+    spec = ResolvedRecorderSpec(fem_snapshot_id=fem.snapshot_id, records=(
+        _record("nodes", "all", DISP[:2] + ("rotation_z",),
+                node_ids=np.array(quad + frame)),
+    ))
+    out = tmp_path / "out"
+    with spec.emit_recorders(str(out), ops=emitter.ops, model=model) as rec:
+        rec.begin_stage("lat", kind="static")
+        assert emitter.ops.analyze(1) == 0
+        rec.end_stage()
+    live = {n: np.asarray(emitter.ops.nodeDisp(n), dtype=float)
+            for n in quad + frame}
+    # The mixed-ndf premise: 2-dof quad nodes, 3-dof frame nodes.
+    assert {live[n].size for n in quad} == {2}
+    assert {live[n].size for n in frame} == {3}
+
+    r = Results.from_recorders(spec, out, fem=fem, stage_id="lat",
+                               model=model, cache_root=tmp_path / "cache")
+    return r, quad, frame, live
+
+
+def _rotation_z(r: Results) -> dict[int, float]:
+    slab = r.nodes.get(component="rotation_z")
+    return {int(i): float(v) for i, v in zip(slab.node_ids,
+                                             np.asarray(slab.values)[-1])}
+
+
+def test_ndf2_node_rotation_is_nan_from_out(g: Any, tmp_path: Path) -> None:
+    """A 2-dof quad node has no rotation: NaN, never a padded 0.0 (#1971).
+
+    The 3-dof frame nodes do carry ``rotation_z`` and stay in the slab;
+    their values are the next test's.
+    """
+    r, quad, frame, _live = _frame_beside_quad_run(g, tmp_path)
+    got = _rotation_z(r)
+    assert not np.isfinite([got[n] for n in quad]).any()
+    assert np.isfinite([got[n] for n in frame]).all()
+
+
+@pytest.mark.xfail(
+    strict=True, raises=AssertionError,
+    reason="emit_recorders records a 2-D rotation_z as `-dof 6` (spec/_emit.py "
+           "_AXIS_TO_ROT_DOF is 3-D only), so a 3-dof frame node reads the "
+           "padded 0.0 (#2018)",
+)
+def test_frame_rotation_z_reads_back_from_out_2d(
+    g: Any, tmp_path: Path,
+) -> None:
+    r, _quad, frame, live = _frame_beside_quad_run(g, tmp_path)
+    got = _rotation_z(r)
+    want = np.array([live[n][2] for n in frame])
+    assert np.abs(want).max() > 0.0
+    np.testing.assert_allclose([got[n] for n in frame], want,
+                               rtol=RTOL_OUT, atol=1e-15)

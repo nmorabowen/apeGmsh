@@ -39,11 +39,27 @@ from apeGmsh._vocabulary import (
     is_canonical,
 )
 from apeGmsh.results.capture.spec import DomainCaptureSpec
+from tests.conftest import _open_model_from_h5
+from tests.fixtures.capture_tags import identity_tags
 
-ops = pytest.importorskip("openseespy.opensees")
 
-from tests.conftest import _open_model_from_h5  # noqa: E402
-from tests.fixtures.capture_tags import identity_tags  # noqa: E402
+class _LazyOps:
+    """openseespy, imported by the first ``live`` test that touches it.
+
+    A module-level ``importorskip`` skipped the pure vocabulary and
+    predicate tests too, wherever openseespy is absent (the ``suite``
+    lane). Only the ``live`` tests reach this, and they skip there.
+    """
+
+    def __getattr__(self, name: str):
+        # pytest probes module globals (``__test__``, ``_pytestfixture...``)
+        # at collection; an importorskip there would skip the whole module.
+        if name.startswith("_"):
+            raise AttributeError(name)
+        return getattr(pytest.importorskip("openseespy.opensees"), name)
+
+
+ops = _LazyOps()
 
 
 # =====================================================================
@@ -189,11 +205,14 @@ def _build_model(shell_class: str, *, with_brick: bool) -> _MinimalFem:
     return _MinimalFem(np.array(node_ids, dtype=np.int64), coords)
 
 
-def _capture(spec: DomainCaptureSpec, fem: _MinimalFem, path: Path) -> None:
+def _capture(
+    spec: DomainCaptureSpec, fem: _MinimalFem, path: Path,
+    *, algorithm: str | None,
+) -> None:
     from apeGmsh.results.capture._domain import DomainCapture
 
     resolved = spec._resolve_with_explicit_ndm_ndf(fem, ndm=3, ndf=6)
-    with DomainCapture(resolved, path, fem,
+    with DomainCapture(resolved, path, fem, algorithm=algorithm,
                        tag_map=identity_tags(resolved)) as cap:
         cap.begin_stage("static_load", kind="static")
         cap.step(t=ops.getTime())
@@ -221,7 +240,7 @@ def test_declared_shell_record_captures_real_resultants(
     spec.gauss(components="shell_resultant", ids=[_SHELL_EID], name="shell")
 
     path = tmp_path / "cap.h5"
-    _capture(spec, fem, path)
+    _capture(spec, fem, path, algorithm="Linear")
 
     from apeGmsh.results import Results
     with Results.from_native(
@@ -267,8 +286,8 @@ def test_upstream_shell_is_skipped_rather_than_recorded_as_zeros(
     spec.gauss(components="shell_resultant", ids=[_SHELL_EID], name="shell")
 
     path = tmp_path / "cap.h5"
-    with pytest.warns(UserWarning, match="returns zeros"):
-        _capture(spec, fem, path)
+    with pytest.warns(UserWarning, match="stale section state"):
+        _capture(spec, fem, path, algorithm="Linear")
 
     from apeGmsh.results import Results
     with Results.from_native(
@@ -300,7 +319,7 @@ def test_scoped_components_separate_shell_from_solid(tmp_path: Path) -> None:
     spec.gauss(components="stress", ids=[_BRICK_EID], name="solid")
 
     path = tmp_path / "cap.h5"
-    _capture(spec, fem, path)
+    _capture(spec, fem, path, algorithm="Linear")
 
     from apeGmsh.results import Results
     from apeGmsh.viewers.session._realize import _components_in_scope
@@ -470,32 +489,137 @@ def test_listed_shell_is_stale_under_linear_on_every_route(
         )
 
 
-@pytest.mark.live
-@pytest.mark.xfail(
-    strict=True, raises=AssertionError,
-    reason="has_dead_gauss_probe takes only the class, so DomainCapture "
-           "skips these shells under Newton too. Slice #2001 rewrites "
-           "this test to pass the algorithm in.",
-)
-def test_domain_capture_keeps_listed_shell_under_newton(
-    tmp_path: Path,
-) -> None:
-    """The right answer: under Newton DomainCapture records N11 = 2·P.
+# =====================================================================
+# #2001 — DomainCapture skips by algorithm, not by class alone
+# =====================================================================
 
-    Fails today because the skip is algorithm-blind. This capture has no
-    bridge and no algorithm, so a fail-closed fix (unknown algorithm
-    means skip) leaves it XFAIL; it does not flip by itself. Slice #2001
-    rewrites it to pass the algorithm in and drops the marker.
-    """
-    _build_uniaxial("ShellMITC4", "Newton", 1)
+_ITERATING = (
+    "Newton", "ModifiedNewton", "NewtonLineSearch", "KrylovNewton",
+    "BFGS", "Broyden",
+)
+
+
+@pytest.mark.parametrize("shell_class", _MEASURED)
+def test_predicate_is_stale_only_under_linear_or_unknown(
+    shell_class: str,
+) -> None:
+    from apeGmsh.opensees._response_catalog import has_dead_gauss_probe
+    assert has_dead_gauss_probe(shell_class, algorithm="Linear")
+    assert has_dead_gauss_probe(shell_class, algorithm=None)
+    for name in _ITERATING:
+        assert not has_dead_gauss_probe(shell_class, algorithm=name), name
+
+
+def test_predicate_ignores_unlisted_classes_and_fails_closed_on_unknown_names(
+) -> None:
+    """An unclassified name (a typo, a forked algorithm) skips: it must
+    not crash the run, and it must not trust the probe."""
+    from apeGmsh.opensees._response_catalog import has_dead_gauss_probe
+    assert not has_dead_gauss_probe("ASDShellQ4", algorithm="Linear")
+    assert not has_dead_gauss_probe("ASDShellQ4", algorithm=None)
+    assert has_dead_gauss_probe("ShellMITC4", algorithm="linear")
+    assert has_dead_gauss_probe("ShellMITC4", algorithm="LadrunoNewton")
+
+
+def test_iterating_set_is_every_bridge_algorithm_but_linear() -> None:
+    """A new bridge algorithm must be classified in the predicate."""
+    from apeGmsh.opensees.analysis import algorithm as algo_mod
+    from apeGmsh.opensees.analysis.algorithm import SolutionAlgorithm
+    bridge = {
+        name for name in algo_mod.__all__
+        if isinstance(getattr(algo_mod, name), type)
+        and issubclass(getattr(algo_mod, name), SolutionAlgorithm)
+        and getattr(algo_mod, name) is not SolutionAlgorithm
+    }
+    assert bridge == {"Linear", *_ITERATING}
+
+
+@pytest.mark.parametrize(
+    ("flat", "stages", "rungs", "expected"),
+    [
+        ((), (), (), None),
+        (("Newton",), (), (), "Newton"),
+        (("Linear",), (), (), "Linear"),
+        (("Newton",), ("Linear",), (), "Linear"),
+        ((), ("KrylovNewton", "Newton"), (), "KrylovNewton"),
+        ((), ("Newton",), ("Linear",), "Linear"),
+        ((), ("Newton",), ("BFGS",), "BFGS"),
+    ],
+)
+def test_bridge_domain_capture_passes_the_declared_algorithm(
+    flat: tuple[str, ...], stages: tuple[str, ...], rungs: tuple[str, ...],
+    expected: str | None, tmp_path: Path,
+) -> None:
+    """``ops.domain_capture`` hands the capture the declared algorithm:
+    any Linear wins (a stage's ladder rung included), nothing declared is
+    unknown (None). ``rungs`` is a ladder on the last stage."""
+    from apeGmsh.opensees import apesees
+    from apeGmsh.opensees.analysis import algorithm as algo_mod
+
+    resolved = SimpleNamespace(ndm=3, ndf=6, records=())
+    spec = SimpleNamespace(
+        _resolve_with_explicit_ndm_ndf=lambda fem, ndm, ndf: resolved,
+    )
+    bridge = SimpleNamespace(
+        _ndm=3, _ndf=6, _fem=object(),
+        _primitives=[getattr(algo_mod, n)() for n in flat],
+        _stage_records=[
+            SimpleNamespace(algorithm=getattr(algo_mod, n)(), strategy=None)
+            for n in stages
+        ] + [SimpleNamespace(
+            algorithm=None,
+            strategy=SimpleNamespace(
+                rungs=tuple(getattr(algo_mod, n)() for n in rungs),
+            ) if rungs else None,
+        )],
+    )
+    cap = apesees.apeSees.domain_capture(
+        bridge, spec, path=tmp_path / "cap.h5",  # type: ignore[arg-type]
+    )
+    assert cap._algorithm == expected
+
+
+def _capture_two_steps(
+    shell_class: str, solve_with: str, declared: str | None, path: Path,
+) -> None:
+    """Capture N11 at λ = 1 and λ = 2 from a domain solved ``solve_with``."""
+    from apeGmsh.results.capture._domain import DomainCapture
+
+    _build_uniaxial(shell_class, solve_with, 1)
     fem = _MinimalFem(np.arange(1, 5, dtype=np.int64), _SHELL_COORDS)
     spec = DomainCaptureSpec()
     spec.gauss(components="shell_resultant", ids=[_SHELL_EID], name="shell")
-
-    path = tmp_path / "cap.h5"
-    _capture(spec, fem, path)
+    resolved = spec._resolve_with_explicit_ndm_ndf(fem, ndm=3, ndf=6)
+    with DomainCapture(resolved, path, fem, algorithm=declared,
+                       tag_map=identity_tags(resolved)) as cap:
+        cap.begin_stage("tension", kind="static")
+        cap.step(t=ops.getTime())
+        assert ops.analyze(1) == 0
+        cap.step(t=ops.getTime())
+        cap.end_stage()
     ops.wipe()
 
+
+def _gauss_components(path: Path, fem: _MinimalFem) -> list[str]:
+    from apeGmsh.results import Results
+    with Results.from_native(
+        path, fem=fem, model=_open_model_from_h5(path),
+    ) as r:
+        return list(r._reader.available_components(
+            r.stages[0].id, _gauss_level(),
+        ))
+
+
+@pytest.mark.live
+@pytest.mark.parametrize("shell_class", _MEASURED)
+def test_domain_capture_keeps_listed_shell_under_newton(
+    shell_class: str, tmp_path: Path,
+) -> None:
+    """Under Newton DomainCapture records N11 = 2·P·λ at every step."""
+    path = tmp_path / "cap.h5"
+    _capture_two_steps(shell_class, "Newton", "Newton", path)
+
+    fem = _MinimalFem(np.arange(1, 5, dtype=np.int64), _SHELL_COORDS)
     from apeGmsh.results import Results
     with Results.from_native(
         path, fem=fem, model=_open_model_from_h5(path),
@@ -503,8 +627,174 @@ def test_domain_capture_keeps_listed_shell_under_newton(
         stage_id = r.stages[0].id
         assert "membrane_force_xx" in r._reader.available_components(
             stage_id, _gauss_level(),
-        ), "DomainCapture skipped a shell whose probe is correct"
-        slab = r.stage(stage_id).elements.gauss.get(
+        ), f"DomainCapture skipped {shell_class}, whose probe is correct"
+        values = r.stage(stage_id).elements.gauss.get(
             component="membrane_force_xx",
-        )
-        np.testing.assert_allclose(slab.values, _N11_FULL, rtol=1e-9)
+        ).values
+    expected = np.array([1.0, 2.0])[:, None] * _N11_FULL
+    np.testing.assert_allclose(
+        values, np.broadcast_to(expected, values.shape),
+        rtol=_RTOL[shell_class], atol=0.0,
+    )
+
+
+@pytest.mark.live
+@pytest.mark.parametrize("shell_class", _MEASURED)
+@pytest.mark.parametrize(
+    ("declared", "named"),
+    [("Linear", "algorithm Linear"), (None, "an unknown algorithm")],
+)
+def test_domain_capture_skips_listed_shell_under_linear_or_unknown(
+    shell_class: str, declared: str | None, named: str, tmp_path: Path,
+) -> None:
+    """Under Linear, or when the capture is not told, the shell is skipped
+    loudly. The unknown case solves with Newton: the skip is the capture
+    failing closed, not a measurement of this domain."""
+    path = tmp_path / "cap.h5"
+    solve_with = "Linear" if declared == "Linear" else "Newton"
+    with pytest.warns(UserWarning, match="stale section state") as rec:
+        _capture_two_steps(shell_class, solve_with, declared, path)
+    text = "\n".join(str(w.message) for w in rec)
+    assert f"class {shell_class!r}" in text and named in text
+    assert "Solve with Newton" in text
+    assert "MPCO, which probes sections directly and is correct" not in text
+
+    fem = _MinimalFem(np.arange(1, 5, dtype=np.int64), _SHELL_COORDS)
+    assert _gauss_components(path, fem) == [], (
+        "a skipped class must leave no slab behind"
+    )
+
+
+# =====================================================================
+# #2001 — the bridge emit warns iff the recorded values are stale
+# =====================================================================
+#
+# The same uniaxial square, built through the bridge and run live with a
+# bridge-emitted ``.out`` Element recorder. The bridge emits two of the
+# listed classes (ShellMITC4, ShellDKGQ). Under Linear the emit warns and
+# the file holds the stale values PR #2000 pinned; under Newton the emit
+# is silent (run this with ``-W error::UserWarning``) and the file holds
+# N11 = 2·P·λ. The warning on the MPCO and .ladruno routes is the same
+# emit-time check, covered per route in
+# ``tests/opensees/unit/test_stale_shell_probe_emit_warning.py``.
+
+def _bridge_uniaxial(shell_class: str, algorithm: str, out_file: Path):
+    from apeGmsh.opensees import apeSees
+    from tests.opensees.fixtures.fem_stub import (
+        FEMStub,
+        _ElementGroupView,
+        _ElementsStub,
+        _NodesStub,
+    )
+
+    fem = FEMStub(
+        nodes=_NodesStub(
+            ids=[1, 2, 3, 4],
+            coords=[tuple(float(v) for v in xyz) for xyz in _SHELL_COORDS],
+            node_pgs={"Pin": [1], "Roll": [4], "Edge": [2, 3]},
+        ),
+        elements=_ElementsStub(elem_pgs={
+            "Wall": _ElementGroupView(ids=(1,), connectivity=((1, 2, 3, 4),)),
+        }),
+    )
+    b = apeSees(fem)  # type: ignore[arg-type]
+    b.model(ndm=3, ndf=6)
+    sec = b.section.ElasticMembranePlateSection(E=2.0e10, nu=0.2, h=0.2)
+    getattr(b.element, shell_class)(pg="Wall", section=sec)
+    b.fix(pg="Pin", dofs=(1, 1, 1, 1, 1, 1))
+    b.fix(pg="Edge", dofs=(0, 0, 1, 1, 1, 1))
+    b.fix(pg="Roll", dofs=(1, 0, 1, 1, 1, 1))
+    with b.pattern.Plain(series=b.timeSeries.Linear()) as p:
+        p.load(pg="Edge", forces=(_P_NODE, 0.0, 0.0, 0.0, 0.0, 0.0))
+    b.recorder.Element(
+        file=out_file.as_posix(), response=("stresses",), pg="Wall",
+        precision=17,
+    )
+    b.constraints.Plain()
+    b.numberer.Plain()
+    b.system.FullGeneral()
+    b.test.NormDispIncr(tol=1e-10, max_iter=10)
+    getattr(b.algorithm, algorithm)()
+    b.integrator.LoadControl(dlam=0.5)
+    b.analysis.Static()
+    return b
+
+
+def _run_bridge(b, n_steps: int) -> None:
+    from apeGmsh.opensees.emitter.live import LiveOpsEmitter
+
+    emitter = LiveOpsEmitter(wipe=True)
+    b.build().emit(emitter)
+    for _ in range(n_steps):
+        assert emitter.analyze(steps=1) == 0
+    emitter.ops.wipe()                  # flushes and closes the recorder
+
+
+@pytest.mark.live
+@pytest.mark.parametrize("shell_class", ("ShellMITC4", "ShellDKGQ"))
+def test_bridge_linear_emit_warns_and_the_out_file_is_stale(
+    shell_class: str, tmp_path: Path,
+) -> None:
+    from apeGmsh.opensees._internal.build.validators.shell_probe import (
+        StaleShellProbeWarning,
+    )
+
+    ops.wipe()                          # binds the backend or skips
+    out = tmp_path / "wall.out"
+    b = _bridge_uniaxial(shell_class, "Linear", out)
+    with pytest.warns(StaleShellProbeWarning, match=shell_class) as rec:
+        _run_bridge(b, 2)
+    assert len([w for w in rec
+                if issubclass(w.category, StaleShellProbeWarning)]) == 1
+    got = np.loadtxt(out, ndmin=2)[:, 0]
+    np.testing.assert_allclose(got, [0.0, 0.5 * _N11_FULL], rtol=1e-9)
+
+
+@pytest.mark.live
+@pytest.mark.parametrize("shell_class", ("ShellMITC4", "ShellDKGQ"))
+def test_bridge_newton_emit_is_silent_and_the_out_file_is_correct(
+    shell_class: str, tmp_path: Path,
+) -> None:
+    import warnings
+
+    from apeGmsh.opensees._internal.build.validators.shell_probe import (
+        StaleShellProbeWarning,
+    )
+
+    ops.wipe()
+    out = tmp_path / "wall.out"
+    b = _bridge_uniaxial(shell_class, "Newton", out)
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", StaleShellProbeWarning)
+        _run_bridge(b, 2)
+    got = np.loadtxt(out, ndmin=2)[:, 0]
+    np.testing.assert_allclose(
+        got, np.array([0.5, 1.0]) * _N11_FULL, rtol=1e-9)
+
+
+@pytest.mark.live
+@pytest.mark.parametrize(("rung", "warns"), [("Linear", 1), ("KrylovNewton", 0)])
+def test_bridge_flat_analyze_ladder_rung_counts(
+    rung: str, warns: int, tmp_path: Path,
+) -> None:
+    """A flat ``analyze(strategy=)`` ladder never reaches the emit; a
+    Linear rung of it must still warn, once, and an iterating one not."""
+    import warnings
+
+    from apeGmsh.opensees._internal.build.validators.shell_probe import (
+        StaleShellProbeWarning,
+    )
+
+    ops.wipe()
+    b = _bridge_uniaxial("ShellMITC4", "Newton", tmp_path / "wall.out")
+    from apeGmsh.opensees.analysis import algorithm as algo_mod
+    # A bare rung, as ladders take them: ``b.algorithm.X()`` would also
+    # register X as the flat chain's algorithm.
+    ladder = b.strategy.Ladder(rungs=[getattr(algo_mod, rung)()])
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        assert b.analyze(steps=1, strategy=ladder) == 0
+    hits = [w for w in caught
+            if issubclass(w.category, StaleShellProbeWarning)]
+    assert len(hits) == warns, [str(w.message) for w in hits]
+    ops.wipe()
