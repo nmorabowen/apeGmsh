@@ -75,6 +75,13 @@ MODELS: dict[str, dict[str, Any]] = {
     ),
 }
 
+#: ``stdBrick``'s GP order, from the fork's Brick.cpp (the ``i, j, k`` loop at
+#: L535-541 over ``sg = {-1/sqrt(3), +1/sqrt(3)}``): zeta fastest, GP index
+#: ``i*4 + j*2 + k``. Spelled out, not read from RESPONSE_CATALOG.
+_G = 1.0 / np.sqrt(3.0)
+BRICK_GP = np.array([[a, b, c] for a in (-_G, _G) for b in (-_G, _G)
+                     for c in (-_G, _G)])
+
 KINDS = ("mpco", "ladruno")
 
 
@@ -175,9 +182,8 @@ def _assert_gauss(r: Results, family: str, live: list[dict[str, Any]]) -> None:
         # The one-point rule sits at the centroid.
         np.testing.assert_allclose(xi, [[0.25, 0.25, 0.25]], atol=1e-12)
     else:
-        # The 2x2x2 Gauss-Legendre rule: every sign of +-1/sqrt(3).
-        np.testing.assert_allclose(np.abs(xi), 1.0 / np.sqrt(3.0), atol=1e-12)
-        assert len({tuple(np.sign(p)) for p in xi}) == 8
+        # GP order, not just the set: the value columns above follow it.
+        np.testing.assert_allclose(xi, BRICK_GP, atol=1e-12)
 
 
 # ---------------------------------------------------------------------------
