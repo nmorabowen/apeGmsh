@@ -17,6 +17,8 @@ import pytest
 from apeGmsh._vocabulary import (
     DERIVED_PLASTIC_STRAIN_SCALARS,
     DERIVED_SCALARS,
+    LINE_DIAGRAMS,
+    LINE_STATION_DEFORMATIONS,
     MATERIAL_STATE,
     PLASTIC_STRAIN,
     STRAIN,
@@ -28,6 +30,10 @@ from apeGmsh.opensees._response_catalog import (
     gauss_keyword_for_canonical,
     gauss_routing_for_canonical,
     mpco_gauss_group_aliases,
+)
+from apeGmsh.results.readers._mpco_line_io import (
+    MPCO_SECTION_NAME_TO_CODE,
+    canonical_to_line_station_token,
 )
 from apeGmsh.results.readers._mpco_material_io import parent_token_for_canonical
 from apeGmsh.results.spec._emit import (
@@ -482,3 +488,83 @@ def test_mpco_gauss_truss_axial_force_raises(emit) -> None:
     rec = _gauss(("axial_force",), cls="Truss", name="bar")
     with pytest.raises(ValueError, match=r"'bar'.*'axial_force'.*GAUSS_IDS"):
         emit([rec])
+
+
+# =====================================================================
+# Line stations: section forces record, section deformations refuse (#2025)
+# =====================================================================
+#
+# Oracle: the MPCO reader finds a line-stations canonical under the
+# bucket ``canonical_to_line_station_token`` names, and decodes a bucket
+# only when every META component name is in ``MPCO_SECTION_NAME_TO_CODE``
+# (the section-force names). A live fork run (PR #2025 body) wrote
+# ``section.deformation`` with META ``eps,kappaZ,kappaY,theta,gammaY,
+# gammaZ``: the read of ``curvature_z`` raised on ``eps``. Without that
+# bucket, every deformation read came back ``(1, 0)``. Before #2025 the
+# emit wrote no token for ``axial_strain`` / ``torsional_strain`` /
+# ``curvature_*`` and sent ``shear_strain_*`` to ``section.force``
+# (prefix ``shear``): an empty read, no warning.
+
+#: MPCO's META names for a section.deformation bucket (live, fork 79e062367).
+_MPCO_SECTION_DEFORMATION_NAMES = frozenset(
+    {"eps", "kappaZ", "kappaY", "theta", "gammaY", "gammaZ"})
+
+
+def _line(components, name="beam") -> ResolvedRecorderRecord:
+    return ResolvedRecorderRecord(
+        category="line_stations", name=name, components=tuple(components),
+        dt=None, n_steps=None, element_ids=np.array([1]),
+    )
+
+
+def test_line_station_vocabularies_are_not_vacuous() -> None:
+    assert len(LINE_DIAGRAMS) == 6
+    assert set(LINE_STATION_DEFORMATIONS) == {
+        "axial_strain", "torsional_strain", "curvature_y", "curvature_z",
+        "shear_strain_y", "shear_strain_z"}
+
+
+def test_mpco_reader_still_cannot_decode_section_deformation() -> None:
+    """Tripwire: when the reader learns these names, emit section.deformation."""
+    assert _MPCO_SECTION_DEFORMATION_NAMES.isdisjoint(MPCO_SECTION_NAME_TO_CODE)
+
+
+@pytest.mark.parametrize("canonical", LINE_DIAGRAMS)
+@pytest.mark.parametrize("emit", [mpco_ops_args, emit_mpco_tcl, emit_mpco_python])
+def test_mpco_line_station_force_emits_section_force(emit, canonical: str) -> None:
+    assert canonical_to_line_station_token(canonical) == (
+        "section.force", "section_force")
+    out = emit([_line((canonical,))])
+    if emit is mpco_ops_args:
+        assert out == ("mpco", "run.mpco", "-E", "section.force")
+    elif emit is emit_mpco_tcl:
+        assert out == "recorder mpco run.mpco -E section.force"
+    else:
+        assert out == "ops.recorder('mpco', 'run.mpco', '-E', 'section.force')"
+
+
+@pytest.mark.parametrize("canonical", LINE_STATION_DEFORMATIONS)
+@pytest.mark.parametrize("emit", [mpco_ops_args, emit_mpco_tcl, emit_mpco_python])
+def test_mpco_line_station_deformation_raises(emit, canonical: str) -> None:
+    # The reader routes it to section.deformation, a bucket it cannot decode.
+    assert canonical_to_line_station_token(canonical) == (
+        "section.deformation", "section_deformation")
+    with pytest.raises(
+        ValueError,
+        match=rf"'kappa_beam'.*line_stations.*'{canonical}'.*section\.deformation",
+    ):
+        emit([_line((canonical,), name="kappa_beam")])
+
+
+@pytest.mark.parametrize("emit", [mpco_ops_args, emit_mpco_tcl, emit_mpco_python])
+def test_mpco_line_station_mixed_record_raises_not_partial(emit) -> None:
+    """A force + deformation record refuses whole, never emits section.force alone."""
+    rec = _line(LINE_DIAGRAMS + LINE_STATION_DEFORMATIONS, name="mixed")
+    with pytest.raises(ValueError, match=r"'mixed'.*'axial_strain'"):
+        emit([rec])
+
+
+def test_mpco_line_station_unrouted_component_raises() -> None:
+    assert canonical_to_line_station_token("stress_xx") is None
+    with pytest.raises(ValueError, match=r"'beam'.*'stress_xx'.*no line-stations"):
+        collect_mpco_tokens([_line(("axial_force", "stress_xx"))])

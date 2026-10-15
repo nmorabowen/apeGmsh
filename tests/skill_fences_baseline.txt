@@ -53,24 +53,6 @@ references/api-cheatsheet.md | skill-freshness | freshness stamp
 references/assess.md | skill-freshness | freshness stamp
 references/compose.md | line-citation | src/apeGmsh/viewers/ui/mesh_tabs.py:122
 references/compose.md | skill-freshness | freshness stamp
-references/fem-broker.md | fence-name | `apeSees` has no attribute `node`
-references/fem-broker.md | fence-parse | python fence does not parse; fence opens `FEMData.to_h5(self, path, *, model_name: str = "", apegmsh_v`
-references/fem-broker.md | fence-parse | python fence does not parse; fence opens `g.mesh.queries.get_fem_data(dim: int | None = None, *, remov`
-references/fem-broker.md | line-citation | FEMData.py:1064
-references/fem-broker.md | line-citation | FEMData.py:1491
-references/fem-broker.md | line-citation | FEMData.py:1508
-references/fem-broker.md | line-citation | FEMData.py:1534
-references/fem-broker.md | line-citation | FEMData.py:1547
-references/fem-broker.md | line-citation | FEMData.py:1547
-references/fem-broker.md | line-citation | FEMData.py:1603
-references/fem-broker.md | line-citation | FEMData.py:365
-references/fem-broker.md | line-citation | _core.py:141
-references/fem-broker.md | line-citation | _core.py:251
-references/fem-broker.md | line-citation | _core.py:84
-references/fem-broker.md | line-citation | src/apeGmsh/mesh/_mesh_queries.py:122
-references/fem-broker.md | line-citation | src/apeGmsh/opensees/emitter/h5.py:414
-references/fem-broker.md | skill-freshness | freshness stamp
-references/gotchas.md | skill-freshness | freshness stamp
 references/interop.md | fence-parse | python fence does not parse; fence opens `import_structural_model(g, model: StructuralModel, *, self_m`
 references/interop.md | line-citation | etabs_import.py:297
 references/interop.md | line-citation | etabs_import.py:508
@@ -97,4 +79,3 @@ references/results.md | line-citation | src/apeGmsh/opensees/_internal/lineage.p
 references/results.md | line-citation | src/apeGmsh/results/Results.py:1544
 references/results.md | skill-freshness | freshness stamp
 references/section-properties.md | skill-freshness | freshness stamp
-references/workflows.md | skill-freshness | freshness stamp

@@ -74,7 +74,7 @@ def test_reference_scripts_were_extracted() -> None:
 
 @pytest.mark.parametrize("name", ["pratt_truss.py", "frame_modal.py", "staged_footing.py"])
 def test_reference_scripts_are_clean(name: str) -> None:
-    findings = lint.lint_text(REFERENCES[name], ("S1", "S3", "V5", "T1", "T2"))
+    findings = lint.lint_text(REFERENCES[name], ("S1", "S3", "V5", "T1", "T2", "R1"))
     assert findings == [], [(f.line, f.rule, f.message) for f in findings]
 
 
@@ -112,7 +112,10 @@ def test_v1() -> None:
 
 
 def test_v3() -> None:
-    assert rules_hit("n = fem.nodes.in_box(0, 0, 0, 1, 1, 1)\n", "V3") == [1]
+    # Maintainer ruling on #2006 (Q3, #1197): a box promoted to a group is the
+    # second choice after a label, so in_box is legal; hand matching is not.
+    assert rules_hit('g.model.select(None, dim=2).in_box(LO, HI).to_physical("Base")\n', "V3") == []
+    assert rules_hit("n = fem.nodes.select(pg='Body').in_box(LO, HI).ids\n", "V3") == []
     assert rules_hit("m = np.isclose(y, 0.0)\n", "V3") == [1]
     assert rules_hit("for p in fem.nodes.coords:\n    pass\n", "V3") == [1]
     assert rules_hit("for p in fem.nodes.select(pg='a').ids:\n    pass\n", "V3") == []
@@ -186,3 +189,145 @@ def test_cli_exit_codes_output_format_and_rule_selection(tmp_path: Path) -> None
 def test_skill_mirror_carries_the_lint() -> None:
     mirror = ROOT / ".claude" / "skills" / "apegmsh-helper" / "scripts" / "lint_model_script.py"
     assert mirror.read_bytes() == LINT.read_bytes()
+    registry = mirror.with_name("removed_symbols.json")      # R1 reads it beside the lint
+    assert registry.read_text(encoding="utf-8") == \
+        LINT.with_name("removed_symbols.json").read_text(encoding="utf-8")
+
+
+# ------------------------------------------------------------ R1: removed symbols
+
+def test_r1_flags_removed_symbols_through_aliases_and_imports() -> None:
+    script = """\
+from apeGmsh import apeGmsh, FEMData, Assembly
+from apeGmsh.assembly import Assembly as Asm
+from apeGmsh.interop.etabs_import import emit_mass
+from apeGmsh.results.session import PlotView
+with apeGmsh(model_name="m") as session:
+    session.opensees.ingest()
+    snap = session.mesh.queries.get_fem_data(dim=3)
+ids = snap.nodes.get_ids(pg="Base")
+FEMData.compose([])
+Asm("a").add("part.h5")
+plot = PlotView("p1", kind="path")
+doc = results.session()
+doc.add_plot(kind="path")
+doc.add_plot("path")
+doc.add_plot_from_selection("displacement_x", kind="path")
+results.session().add_plot_from_selection("displacement_x", "path")
+"""
+    assert rules_hit(script, "R1") == [1, 3, 6, 8, 9, 10, 11, 13, 14, 15, 16]
+
+
+def test_r1_says_planned_symbols_are_not_available() -> None:
+    script = "from apeGmsh.interop.etabs_import import emit_mass\nx = g.opensees\n"
+    planned, removed = (f.message for f in lint.lint_text(script, ("R1",)))
+    assert planned.startswith("`emit_mass` is not available (planned, ADR 0072); use "), planned
+    assert removed.startswith("`g.opensees` is a removed symbol ("), removed
+
+
+def test_r1_leaves_live_symbols_alone() -> None:
+    script = """\
+from apeGmsh import apeGmsh
+from apeGmsh.assembly import Assembly
+from apeGmsh.results.session import PlotView
+with apeGmsh(model_name="m") as g:
+    g.masses.volume("Body", density=DENSITY)
+    fem = g.mesh.queries.get_fem_data(dim=3)
+ids = fem.nodes.select(pg="Base").ids
+ops = Assembly("a").instance("b", "b.h5").bridge(ndm=3, ndf=3)
+plot = PlotView("p1", kind="xy")
+results.session().add_plot("history")
+results.session().add_plot_from_selection("path", kind="xy")
+path = "out"
+opensees = ops.mass_from_model()
+"""
+    assert rules_hit(script, "R1") == []
+
+
+@pytest.mark.parametrize("entry", lint.load_registry(), ids=lambda e: e["symbol"])
+def test_r1_flags_every_registry_entry(entry: dict) -> None:
+    forms = r1_forms(entry)
+    assert forms, entry
+    for script in forms:
+        hits = rules_hit(script, "R1")
+        lines = script.splitlines()
+        # The use is flagged, or the import that brings in a bare name.
+        assert hits and (len(lines) in hits or all(
+            lines[h - 1].startswith(("from ", "import ")) for h in hits)), (script, hits)
+
+
+#: How a script binds each skill receiver without using its conventional name.
+_ALIASED = {
+    "g": 'from apeGmsh import apeGmsh\nwith apeGmsh(model_name="m") as m:\n    x = m{rest}\n',
+    "fem": 'from apeGmsh import FEMData\nsnap = FEMData.from_h5("m.h5")\nx = snap{rest}\n',
+    "fem2": "snap = g.mesh.queries.get_fem_data(dim=3)\nx = snap{rest}\n",
+}
+
+
+def r1_forms(entry: dict) -> list[str]:
+    """Every public way a script reaches ``entry``; R1 must flag the last line of each."""
+    symbol = entry["symbol"]
+    if entry["kind"] == "member":
+        forms = []
+        for call, position in entry["calls"].items():
+            head = (f"from apeGmsh.results.session import {call}\n" if call[0].isupper()
+                    else "session = results.session()\n")
+            callee = call if call[0].isupper() else f"session.{call}"
+            before = '"q", ' * position
+            forms.append(f'{head}x = {callee}({before}{entry["keyword"]}="{symbol}")\n')
+            forms.append(f'{head}x = {callee}({before}"{symbol}")\n')
+        return forms
+    root, _, rest = symbol.partition(".")
+    tail = f".{rest}" if rest else ""
+    if "from" in entry:
+        head = f"from {entry['from']} import {root}\n"
+        forms = [f"{head}x = {symbol}\n", f"{head}{symbol}()\n"]
+        if not rest:
+            forms.append(head)                                   # the import itself
+        elif root[0].isupper():
+            forms.append(f'{head}x = {root}("a"){tail}\n')         # on an instance
+    elif "import" in entry:
+        forms = [f"import {entry['import']}\nx = {symbol}\n",
+                 f"from {entry['import']} import {rest}\n"]
+    else:
+        forms = [f"x = {symbol}\n", f"{symbol}()\n"]
+        for key in (root, f"{root}2"):
+            if key in _ALIASED:
+                forms.append(_ALIASED[key].format(rest=tail))
+    for spelling in entry.get("also", []):
+        forms.append(f"x = {spelling}\n")
+    return forms
+
+
+def test_r1_never_skips_without_the_registry(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(lint, "REGISTRY_FILE", tmp_path / "removed_symbols.json")
+    with pytest.raises(lint.RegistryError, match="R1 never skips"):
+        lint.lint_text("x = g.opensees\n", ("R1",))
+    lonely = tmp_path / "lint_model_script.py"           # the lint copied without its data
+    lonely.write_bytes(LINT.read_bytes())
+    script = tmp_path / "s.py"
+    script.write_text("x = 1\n", encoding="utf-8")
+    result = subprocess.run([sys.executable, str(lonely), "--rules", "R1", str(script)],
+                            capture_output=True, text=True)
+    assert result.returncode == 2 and "R1 never skips" in result.stderr, result
+    # Without R1 the rest of the lint still runs.
+    only_s1 = subprocess.run([sys.executable, str(lonely), "--rules", "S1", str(script)],
+                             capture_output=True, text=True)
+    assert only_s1.returncode == 0, only_s1
+
+
+def test_r1_refuses_a_malformed_registry(tmp_path: Path) -> None:
+    for body in ('{"symbols": []}', '{"symbols": [{"kind": "attribute", "symbol": "g.x"}]}',
+                 '{"symbols": [{"kind": "class", "symbol": "g.x", "use": "-", "why": "-"}]}',
+                 '{"symbols": [{"kind": "attribute", "status": "removed", "symbol": "g x", '
+                 '"use": "-", "why": "-"}]}',
+                 '{"symbols": [{"kind": "attribute", "status": "gone", "symbol": "g.x", '
+                 '"use": "-", "why": "-"}]}',
+                 '{"symbols": [{"kind": "member", "status": "removed", "symbol": "x", "member_of": "m:N", '
+                 '"keyword": "k", "calls": ["f"], "use": "-", "why": "-"}]}',
+                 "not json"):
+        bad = tmp_path / "bad.json"
+        bad.write_text(body, encoding="utf-8")
+        lint._REGISTRY.pop(bad, None)
+        with pytest.raises(lint.RegistryError):
+            lint.load_registry(bad)

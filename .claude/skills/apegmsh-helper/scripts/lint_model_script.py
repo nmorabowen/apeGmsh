@@ -8,8 +8,10 @@ Checks the machine-checkable rules of ``references/model-scripts.md``:
     S3  no absolute output paths (a drive letter or a leading ``/``)
     V1  labels, not tags: geometry results kept as handles, ``.tags[...]`` /
         ``.ids[...]``, integer tags passed to bridge calls
-    V3  find by name: ``in_box``, ``np.isclose`` on coordinates, iterating
-        ``fem.nodes.coords``
+    V3  find by name, not by hand-matched coordinates: ``np.isclose`` on
+        coordinates, iterating ``fem.nodes.coords``. A box selection promoted to
+        a group (``.select().in_box().to_physical()``) is the allowed second
+        choice after a label, so V3 does not flag ``in_box``
     V4  named numbers: inline float literals in call arguments, a data constant
         with no trailing comment, several assignments on one line
     V5  units by a named divisor: ``* 1000``, ``/ 1e3`` and the like
@@ -19,6 +21,8 @@ Checks the machine-checkable rules of ``references/model-scripts.md``:
         ``ops_raw.`` use marked ``# raw-ops: <why>``
     T4  assert success and the check: ``analyze`` result asserted, at least one
         ``assert``, no "Expected ... <number>" claims written before the run
+    R1  no removed symbol: a symbol listed in ``removed_symbols.json`` (beside
+        this script), used or imported; the message says what to use instead
 
 It is advisory: the skill runs it on agent output, and it is not a CI gate on user
 scripts. M1 (fidelity), V2 (role naming), V6 (symbol choice), T3 (hand-check
@@ -28,20 +32,24 @@ Usage:
     python lint_model_script.py [--rules S1,V5] FILE [FILE ...]
 
 Each finding prints ``path:line: <RULE> <message>``. Exit code 0 with no findings,
-1 with findings. Stdlib only (``ast`` and ``tokenize``); ``pyflakes`` is optional and
-is used for the S2 unused-name sub-check, which is skipped with a note when missing.
-Nothing is imported or run from the script under test.
+1 with findings, 2 on a usage error or a missing or malformed ``removed_symbols.json``
+(R1 never skips). Stdlib only (``ast``, ``json`` and ``tokenize``); ``pyflakes`` is
+optional and is used for the S2 unused-name sub-check, which is skipped with a note
+when missing. Nothing is imported or run from the script under test.
 """
 from __future__ import annotations
 
 import argparse
 import ast
 import io
+import json
 import re
 import sys
 import tokenize
+from pathlib import Path
 
-ALL_RULES = ("S1", "S2", "S3", "V1", "V3", "V4", "V5", "T1", "T2", "T4")
+ALL_RULES = ("S1", "S2", "S3", "V1", "V3", "V4", "V5", "T1", "T2", "T4", "R1")
+REGISTRY_FILE = Path(__file__).with_name("removed_symbols.json")
 
 MAX_LINE = 110                      # T1: longest allowed code line
 GEOMETRY_ADDERS = re.compile(r"^add_")
@@ -247,9 +255,7 @@ def rule_v3(src: Source) -> list[Finding]:
     out: list[Finding] = []
     for node in ast.walk(src.tree):
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
-            if node.func.attr == "in_box":
-                out.append(Finding(node.lineno, "V3", "in_box() selects by coordinates; find by name"))
-            elif node.func.attr == "isclose" and _root_name(node.func) in ("np", "numpy"):
+            if node.func.attr == "isclose" and _root_name(node.func) in ("np", "numpy"):
                 out.append(Finding(node.lineno, "V3", "np.isclose() on coordinates; find by name"))
         iters: list[ast.AST] = []
         if isinstance(node, (ast.For, ast.AsyncFor)):
@@ -402,9 +408,172 @@ def rule_t4(src: Source) -> list[Finding]:
     return out
 
 
+class RegistryError(RuntimeError):
+    """``removed_symbols.json`` is missing or malformed. R1 never skips."""
+
+
+_ENTRY_KEYS = {          # kind -> (required keys, optional keys)
+    "attribute": ({"kind", "status", "symbol", "use", "why"}, {"from", "import", "also"}),
+    "member": ({"kind", "status", "symbol", "member_of", "calls", "keyword", "use", "why"}, set()),
+}
+_STATUSES = ("removed", "planned")
+_DOTTED = re.compile(r"^[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*$")
+_REGISTRY: dict[Path, list[dict]] = {}
+
+
+def load_registry(path: Path | None = None) -> list[dict]:
+    """The validated entries of ``removed_symbols.json``; raises ``RegistryError``."""
+    path = REGISTRY_FILE if path is None else path
+    if path in _REGISTRY:
+        return _REGISTRY[path]
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError as exc:
+        raise RegistryError(f"R1 needs {path.name} beside lint_model_script.py; "
+                            f"{path} is missing. R1 never skips.") from exc
+    except json.JSONDecodeError as exc:
+        raise RegistryError(f"{path} is not valid JSON: {exc}") from exc
+    entries = data.get("symbols") if isinstance(data, dict) else None
+    if not isinstance(entries, list) or not entries:
+        raise RegistryError(f"{path} holds no 'symbols' list")
+    for entry in entries:
+        kind = entry.get("kind") if isinstance(entry, dict) else None
+        if kind not in _ENTRY_KEYS:
+            raise RegistryError(f"{path}: entry {entry!r} has unknown kind {kind!r}")
+        required, optional = _ENTRY_KEYS[kind]
+        keys = set(entry)
+        if required - keys or keys - required - optional:
+            raise RegistryError(f"{path}: entry {entry.get('symbol')!r} needs {sorted(required)} "
+                                f"and may have {sorted(optional)}; it has {sorted(keys)}")
+        if "from" in entry and "import" in entry:
+            raise RegistryError(f"{path}: entry {entry['symbol']!r} has both 'from' and 'import'")
+        if entry["status"] not in _STATUSES:
+            raise RegistryError(f"{path}: entry {entry['symbol']!r} has status {entry['status']!r}; "
+                                f"choose from {_STATUSES}")
+        calls = entry.get("calls", {"-": 0})
+        if not (isinstance(calls, dict) and calls and all(
+                isinstance(k, str) and isinstance(v, int) and v >= 0 for k, v in calls.items())):
+            raise RegistryError(f"{path}: entry {entry['symbol']!r} needs 'calls' as "
+                                "{call name: position of the keyword argument}")
+        spellings = [entry["symbol"], *entry.get("also", [])]
+        if kind == "attribute" and not all(isinstance(s, str) and _DOTTED.match(s) for s in spellings):
+            raise RegistryError(f"{path}: entry {entry['symbol']!r} spells a name that is not dotted")
+    _REGISTRY[path] = entries
+    return entries
+
+
+def lint_spellings(entry: dict) -> list[str]:
+    """An attribute entry's names, qualified the way R1 qualifies a script's names."""
+    spellings = [entry["symbol"], *entry.get("also", [])]
+    if "from" in entry:
+        spellings[0] = f"{entry['from']}.{entry['symbol']}"
+    return spellings
+
+
+#: A call on one of these qualified names yields that skill receiver.
+_RECEIVER_OF_CALL = {"apeGmsh.apeGmsh": "g", "apeGmsh.opensees.apeSees": "ops"}
+
+
+def _receiver(qualified: str) -> str:
+    """What a call on ``qualified`` yields, in the skill's vocabulary."""
+    if qualified in _RECEIVER_OF_CALL:
+        return _RECEIVER_OF_CALL[qualified]
+    if qualified.endswith(".get_fem_data") or qualified.startswith("apeGmsh.FEMData.from_"):
+        return "fem"
+    if qualified.startswith("apeGmsh.Results.from_"):
+        return "results"
+    return qualified
+
+
+class _Names:
+    """Qualified dotted names in a flat script. Imports are spelled out
+    (``from apeGmsh import FEMData`` gives ``apeGmsh.FEMData``); a name bound
+    to a session, a snapshot, a bridge or a reader takes the skill's ``g`` /
+    ``fem`` / ``ops`` / ``results``; an unbound name stands for itself."""
+
+    def __init__(self, tree: ast.AST) -> None:
+        self.alias: dict[str, str] = {}
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for a in node.names:
+                    top = a.name.split(".")[0]
+                    self.alias[a.asname or top] = a.name if a.asname else top
+            elif isinstance(node, ast.ImportFrom) and node.module and not node.level:
+                for a in node.names:
+                    self.alias[a.asname or a.name] = f"{node.module}.{a.name}"
+        for _ in range(2):          # a binding may use one that ast.walk reaches later
+            for node in ast.walk(tree):
+                if (isinstance(node, ast.Assign) and len(node.targets) == 1
+                        and isinstance(node.targets[0], ast.Name)):
+                    self._bind(node.targets[0].id, node.value)
+                elif isinstance(node, (ast.With, ast.AsyncWith)):
+                    for item in node.items:
+                        if isinstance(item.optional_vars, ast.Name):
+                            self._bind(item.optional_vars.id, item.context_expr)
+
+    def _bind(self, name: str, value: ast.AST) -> None:
+        if isinstance(value, ast.Call):
+            qualified = self.qualify(value)
+            if qualified is not None:
+                self.alias[name] = qualified
+
+    def qualify(self, node: ast.AST) -> str | None:
+        if isinstance(node, ast.Name):
+            return self.alias.get(node.id, node.id)
+        if isinstance(node, ast.Attribute):
+            base = self.qualify(node.value)
+            return None if base is None else f"{base}.{node.attr}"
+        if isinstance(node, ast.Call):
+            func = self.qualify(node.func)
+            return None if func is None else _receiver(func)
+        return None
+
+
+def rule_r1(src: Source) -> list[Finding]:
+    out: list[Finding] = []
+    entries = load_registry()
+    attributes = {s: e for e in entries if e["kind"] == "attribute" for s in lint_spellings(e)}
+    members = [e for e in entries if e["kind"] == "member"]
+
+    def flag(line: int, entry: dict) -> None:
+        if entry["status"] == "planned":
+            what = f"is not available (planned, {entry['why']})"
+        else:
+            what = f"is a removed symbol ({entry['why']})"
+        out.append(Finding(line, "R1", f"`{entry['symbol']}` {what}; use {entry['use']}"))
+
+    names = _Names(src.tree)
+    for node in ast.walk(src.tree):
+        if isinstance(node, ast.Attribute):
+            entry = attributes.get(names.qualify(node) or "")
+            if entry is not None:
+                flag(node.lineno, entry)
+        elif isinstance(node, ast.ImportFrom) and node.module and not node.level:
+            for a in node.names:
+                if f"{node.module}.{a.name}" in attributes:
+                    flag(node.lineno, attributes[f"{node.module}.{a.name}"])
+        elif isinstance(node, ast.Import):
+            for a in node.names:
+                if a.name in attributes:
+                    flag(node.lineno, attributes[a.name])
+        elif isinstance(node, ast.Call):
+            called = (names.qualify(node.func) or "").rsplit(".", 1)[-1]
+            for entry in members:
+                if called not in entry["calls"]:
+                    continue
+                position = entry["calls"][called]
+                passed = [kw.value for kw in node.keywords if kw.arg == entry["keyword"]]
+                if len(node.args) > position:
+                    passed.append(node.args[position])
+                if any(isinstance(v, ast.Constant) and v.value == entry["symbol"] for v in passed):
+                    flag(node.lineno, entry)
+    return out
+
+
 RULES = {
     "S1": rule_s1, "S2": rule_s2, "S3": rule_s3, "V1": rule_v1, "V3": rule_v3,
     "V4": rule_v4, "V5": rule_v5, "T1": rule_t1, "T2": rule_t2, "T4": rule_t4,
+    "R1": rule_r1,
 }
 
 
@@ -428,6 +597,12 @@ def main(argv: list[str] | None = None) -> int:
     unknown = [r for r in rules if r not in RULES]
     if unknown:
         parser.error(f"unknown rule(s): {', '.join(unknown)}; choose from {', '.join(ALL_RULES)}")
+    if "R1" in rules:
+        try:
+            load_registry()
+        except RegistryError as exc:
+            print(f"ERROR: {exc}", file=sys.stderr)
+            return 2
 
     total = 0
     for path in args.files:

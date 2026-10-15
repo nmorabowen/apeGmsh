@@ -1,5 +1,4 @@
 # apeGmsh workflows — end-to-end patterns
-<!-- skill-freshness: verified against apeGmsh main@5c92ca92 (2026-08-15) · signatures: python -m apeGmsh.studio.lookup SYMBOL (ADR 0096); src/ is not the authoring lookup -->
 
 Concrete recipes for the workflows that come up most often. Each one is a
 working skeleton — fill in the geometry and it runs against the **v2.0.0**
@@ -10,8 +9,8 @@ Before improvising one of these from scratch, check the packaged,
 oracle-bearing example library (ADR 0095 Amendment 7) — it travels
 with an installed apeGmsh, not just a repo checkout:
 `python -m apeGmsh.studio example list [--tag <domain>]`, then
-`show <name>` / `copy <name>`. See `studio-habitat.md`'s "Use the
-example library".
+`show <name>` / `copy <name>`. See the docs page
+`docs/how-to/studio-habitat.md`, "Use the example library".
 
 Deep references (read on demand): the broker/selection chain is in
 `fem-broker.md`; the typed OpenSees bridge (`apeSees`) is in
@@ -27,14 +26,15 @@ build geometry → PGs/labels → declare loads/masses/constraints (pre-mesh)
 
 Two top-level facts that the older skill got wrong and you must not repeat:
 
-- `g.masses` (not `g.mass`). `g.opensees` was **removed** — the OpenSees
-  entry point is the post-session bridge `apeSees(fem)` from
-  `apeGmsh.opensees`.
-- "The session **is** the assembly" at the *top level* — `apeGmsh.Assembly`
-  does not exist. Several saved models are assembled with the **sub-path**
-  import `from apeGmsh.assembly import Assembly`: v2 is `instance` / `tie`
-  / couplings / `bridge()` (ADR 0117); the v1 `add` / `couple` /
-  `materialize` form and `g.compose` were removed. See `compose.md` §"Assembly v2".
+- `g.masses` (not `g.mass`). The OpenSees entry point is the post-session
+  bridge `apeSees(fem)` from `apeGmsh.opensees`, not a session composite
+  (`g.opensees` was removed).
+- "The session **is** the assembly" at the *top level*: the top-level
+  `apeGmsh` package exports no `Assembly`. Several saved models are
+  assembled with the **sub-path** import `from apeGmsh.assembly import
+  Assembly`: v2 is `instance` / `tie` / couplings / `bridge()` (ADR 0117).
+  The v1 `Assembly.add` / `Assembly.materialize` form and `g.compose` were
+  removed. See `compose.md` §"Assembly v2".
 
 ---
 
@@ -80,11 +80,12 @@ with apeGmsh(model_name="block") as g:
 # + fixities are re-declared on the bridge; MP constraints auto-emit.
 ops = apeSees(fem)
 ops.model(ndm=3, ndf=3)
-conc = ops.nDMaterial.ElasticIsotropic(E=30e9, nu=0.2, rho=2400)
+conc = ops.nDMaterial.ElasticIsotropic(E=30e9, nu=0.2)   # no rho: g.masses carries the mass
 ops.element.FourNodeTetrahedron(
     pg="Body", material=conc, body_force=(0.0, 0.0, -9.81 * 2400),
 )
 ops.fix(pg="Base", dofs=(1, 1, 1))
+ops.mass_from_model()  # the g.masses records, counted once (sum = rho * V)
 ops.py("block.py")     # writes the openseespy deck to the cwd — no out/ dir needed
 # verified: tests/opensees/integration/test_runnable_deck.py::test_tcl_deck_contains_constraint_lines
 ```
@@ -133,12 +134,13 @@ with apeGmsh(model_name="bridge") as g:
 
 ops = apeSees(fem)
 ops.model(ndm=3, ndf=3)
-steel = ops.nDMaterial.ElasticIsotropic(E=200e9, nu=0.3, rho=7850)
-conc  = ops.nDMaterial.ElasticIsotropic(E=30e9,  nu=0.2, rho=2400)
+steel = ops.nDMaterial.ElasticIsotropic(E=200e9, nu=0.3)   # no rho: g.masses carries it
+conc  = ops.nDMaterial.ElasticIsotropic(E=30e9,  nu=0.2)
 ops.element.FourNodeTetrahedron(pg="Girder", material=steel,
                                 body_force=(0.0, 0.0, -9.81 * 7850))
 ops.element.FourNodeTetrahedron(pg="Deck", material=conc,
                                 body_force=(0.0, 0.0, -9.81 * 2400))
+ops.mass_from_model()  # both parts' g.masses records, counted once
 ops.py("out/bridge.py")
 ```
 
@@ -159,9 +161,9 @@ Key points:
 
 ## 3. Constraints — two-stage pipeline (emission now automatic)
 
-Coupling is declared pre-mesh and *resolved* at `get_fem_data`. As of
+Coupling is declared pre-mesh and *resolved* at `get_fem_data`. Since
 **ADR 0022** the resolved MP constraints **auto-emit** into the runnable
-deck — you no longer hand-write `ops.equalDOF`/`ops.rigidLink` loops.
+deck, so do not hand-write `ops.equalDOF`/`ops.rigidLink` loops.
 
 ### 3.1  Stage 1 — declare before meshing
 
@@ -245,9 +247,9 @@ ops.tcl("out/coupled.tcl")   # the deck contains equalDOF/rigidLink/... lines
 # verified: tests/opensees/unit/test_emitter_protocol.py::test_equalDOF_records_master_slave_dofs
 ```
 
-You no longer iterate `fem.nodes.constraints` / `fem.elements.constraints`
-by hand to drive a solver. Those accessors remain for **inspection** and
-for the viewer/`Results`, but the deck is complete on its own. The emitted
+The deck is complete on its own: do not iterate `fem.nodes.constraints` /
+`fem.elements.constraints` by hand to drive a solver. Those accessors serve
+**inspection**, the viewer and `Results`. The emitted
 deck `analyze`s end-to-end (`test_equalDOF_deck_analyzes`,
 `test_rigid_link_deck_analyzes`, `test_tied_contact_deck_analyzes`).
 
@@ -307,12 +309,13 @@ from apeGmsh.opensees import apeSees
 
 ops = apeSees(fem)
 ops.model(ndm=3, ndf=3)
-conc = ops.nDMaterial.ElasticIsotropic(E=30e9, nu=0.2, rho=2400)
+conc = ops.nDMaterial.ElasticIsotropic(E=30e9, nu=0.2)   # no rho: g.masses carries it
 
 # Gravity — body force on the elements (pattern 1 equivalent)
 ops.element.FourNodeTetrahedron(
     pg="Body", material=conc, body_force=(0.0, 0.0, -9.81 * 2400))
 ops.fix(pg="Base", dofs=(1, 1, 1))
+ops.mass_from_model()  # the g.masses records, counted once
 
 # Pushover — explicit pattern: unit lateral load at the control PG
 with ops.pattern.Plain(series=ops.timeSeries.Linear()) as p:
@@ -384,7 +387,7 @@ entry points (don't confuse them):
   is re-verified against the recomputed hash (`MalformedH5Error` on
   mismatch; wrong schema major → `SchemaVersionError`).
 - `apeGmsh.from_h5(path)` → rebuilds a **chain-phase session** (no gmsh
-  state). Only `compose()`/`compose_inspect()`/`compose_list()`/`save()`
+  state). Only queries, `compose_inspect()`/`compose_list()`/`save()`
   work; `g.model.*` / `g.mesh.*` will fail.
 
 ```python
@@ -402,7 +405,7 @@ fem = FEMData.from_h5("plate.h5")
 print(fem.info.summary())
 # verified: tests/test_femdata_from_h5.py::test_session_save_then_from_h5
 
-# Or rehydrate a chain-phase session (compose/save still work):
+# Or rehydrate a chain-phase session (queries and save still work):
 g2 = apeGmsh.from_h5("plate.h5")
 ```
 
@@ -588,7 +591,7 @@ ids = fem.mesh_selection.node_ids("top_nodes")          # ndarray of node ids
 
 Alternative (PG → set bridge): name a PG with the geometry selector, then
 import it — `g.model.select(None, dim=2).on_plane((0,0,10),(0,0,1),tol=1e-6).to_physical("top")`
-followed by `g.mesh_selection.from_physical(dim=2, "top", ms_name="top_nodes")`.
+followed by `g.mesh_selection.from_physical(2, "top", ms_name="top_nodes")`.
 
 ### Diagnosing disjoint topology (arc-line wires, IGES imports)
 
