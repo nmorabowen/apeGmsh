@@ -384,9 +384,11 @@ def test_ladruno_brick_material_state_reads_back_from_mpco(
     crack in tension (d+ ~ 1, d- = 0) while every GP gathers compressive
     plastic strain: the two columns differ, so a swapped column fails.
 
-    Displacement control, not load control: the tension crack drops the
-    load (a snap-back in the load factor), which LoadControl cannot follow;
-    at FORK_PIN LoadControl diverged (#2032).
+    Displacement control, not load control (#2032). At FORK_PIN this brick
+    + ASDConcrete3D under LoadControl diverges from the first, elastic
+    step (an ElasticIsotropic brick converges), a fork-side defect this
+    read-back test does not own; and even where LoadControl runs, the
+    tension crack drops the load, which it cannot follow at small steps.
     """
     du, steps = -1.0e-4, 20          # the top shortens 2e-3 (strain 1e-3)
     with apeGmsh(model_name="g7_mat", verbose=False) as g:
