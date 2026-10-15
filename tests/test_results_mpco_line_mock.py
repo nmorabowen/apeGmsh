@@ -605,45 +605,84 @@ class TestReadGpXFromConnectivity:
 # Bucket-discovery filter tests
 # =====================================================================
 
+def _single_bucket_mpco(
+    path: Path, *, class_tag: int, class_name: str, header_idx: int,
+) -> None:
+    """One 3-IP ``(P, Mz)`` section.force bucket, element 5, 1 step."""
+    f, stage_name = _create_skeleton(
+        path, node_ids=np.array([1, 2], dtype=np.int32),
+        coords=np.zeros((2, 3)), n_steps=1, dt=1.0,
+    )
+    try:
+        element_ids = np.array([5], dtype=np.int32)
+        flat, _ = _build_flat(
+            component_layout=("axial_force", "bending_moment_z"),
+            n_ip=3, element_ids=element_ids, n_steps=1,
+        )
+        _add_line_station_bucket(
+            f[stage_name], class_tag=class_tag, class_name=class_name,
+            custom_rule_idx=1, header_idx=header_idx,
+            element_ids=element_ids,
+            gp_x=np.array([-0.7745966, 0.0, +0.7745966]),
+            section_names=("P", "Mz"), flat_data=flat,
+        )
+    finally:
+        f.close()
+
+
 class TestDiscoverLineStationBuckets:
+    # #2053 review F1: these three pinned silent skips. Each now reads (or,
+    # undecodable, raises naming the class); a returning skip fails it.
+    # Synthetic values: ki*1000 + t*100 + e*10 + g, so bending_moment_z
+    # (ki=1) of the one element at t=0 is 1000, 1001, 1002.
+
     def test_skips_non_custom_rule(self, tmp_path: Path) -> None:
-        path = tmp_path / "h.h5"
-        with h5py.File(path, "w") as f:
-            on_elements = f.create_group("ON_ELEMENTS")
-            sf = on_elements.create_group("section.force")
-            # Standard-rule bucket — should be skipped (only Custom=1000
-            # buckets enter the line-stations path).
-            sf.create_group("74-ForceBeamColumn3d[1:0:0]")
-        with h5py.File(path, "r") as f:
-            _, buckets = _mline.discover_line_station_buckets(
-                f["ON_ELEMENTS"], canonical_component="axial_force",
-            )
-        assert buckets == []
+        """A catalogued beam on a standard rule has no GP_X: raise, named."""
+        path = tmp_path / "rule1.mpco"
+        _single_bucket_mpco(
+            path, class_tag=ELE_TAG_ForceBeamColumn3d,
+            class_name="ForceBeamColumn3d", header_idx=0,
+        )
+        with h5py.File(path, "r+") as f:
+            stage = f["MODEL_STAGE[1]"]
+            conn = stage["MODEL/ELEMENTS"]
+            conn.move("74-ForceBeamColumn3d[1000:1]",
+                      "74-ForceBeamColumn3d[1:0]")
+            del conn["74-ForceBeamColumn3d[1:0]"].attrs["GP_X"]
+            stage["RESULTS/ON_ELEMENTS/section.force"].move(
+                "74-ForceBeamColumn3d[1000:1:0]",
+                "74-ForceBeamColumn3d[1:0:0]")
+        with Results.from_mpco(path, model_h5=_stub_model_h5_path()) as r:
+            s = r.stage(r.stages[0].id)
+            with pytest.raises(
+                ValueError, match=r"GP_X.*'ForceBeamColumn3d'",
+            ):
+                s.elements.line_stations.get(component="axial_force")
 
     def test_skips_header_idx_nonzero(self, tmp_path: Path) -> None:
-        path = tmp_path / "h.h5"
-        with h5py.File(path, "w") as f:
-            on_elements = f.create_group("ON_ELEMENTS")
-            sf = on_elements.create_group("section.force")
-            # Heterogeneous-section bucket (hdr=1) — out of scope.
-            sf.create_group("74-ForceBeamColumn3d[1000:1:1]")
-        with h5py.File(path, "r") as f:
-            _, buckets = _mline.discover_line_station_buckets(
-                f["ON_ELEMENTS"], canonical_component="axial_force",
-            )
-        assert buckets == []
+        """A header-1 bucket (MPCO's split by section kind) is read."""
+        path = tmp_path / "hdr1.mpco"
+        _single_bucket_mpco(
+            path, class_tag=ELE_TAG_ForceBeamColumn3d,
+            class_name="ForceBeamColumn3d", header_idx=1,
+        )
+        with Results.from_mpco(path, model_h5=_stub_model_h5_path()) as r:
+            s = r.stage(r.stages[0].id)
+            slab = s.elements.line_stations.get(component="bending_moment_z")
+        assert slab.element_index.tolist() == [5, 5, 5]
+        np.testing.assert_array_equal(slab.values, [[1000.0, 1001.0, 1002.0]])
 
     def test_skips_uncatalogued_class(self, tmp_path: Path) -> None:
-        path = tmp_path / "h.h5"
-        with h5py.File(path, "w") as f:
-            on_elements = f.create_group("ON_ELEMENTS")
-            sf = on_elements.create_group("section.force")
-            sf.create_group("999-FancyNewBeam[1000:1:0]")
-        with h5py.File(path, "r") as f:
-            _, buckets = _mline.discover_line_station_buckets(
-                f["ON_ELEMENTS"], canonical_component="axial_force",
-            )
-        assert buckets == []
+        """A custom-rule class outside the catalogue is read."""
+        path = tmp_path / "fancy.mpco"
+        _single_bucket_mpco(
+            path, class_tag=999, class_name="FancyNewBeam", header_idx=0,
+        )
+        with Results.from_mpco(path, model_h5=_stub_model_h5_path()) as r:
+            s = r.stage(r.stages[0].id)
+            slab = s.elements.line_stations.get(component="bending_moment_z")
+        assert slab.element_index.tolist() == [5, 5, 5]
+        np.testing.assert_array_equal(slab.values, [[1000.0, 1001.0, 1002.0]])
 
     def test_returns_none_token_for_non_line_station_component(
         self, tmp_path: Path,
