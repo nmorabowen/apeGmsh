@@ -58,17 +58,6 @@ references/interop.md | line-citation | interop/solve.py:46
 references/interop.md | line-citation | solve.py:30
 references/interop.md | line-citation | src/apeGmsh/interop/etabs_import.py:134
 references/interop.md | skill-freshness | freshness stamp
-references/ladruno.md | fence-parse | python fence does not parse: invalid character '…' (U+2026); fence opens `ops.element.BezierTri6(pg=…, thickness=…, material=m, plane_`
-references/ladruno.md | fence-parse | python fence does not parse: invalid character '…' (U+2026); fence opens `ops.element.LadrunoBrick(pg=…, material=m,`
-references/ladruno.md | skill-freshness | freshness stamp
-references/opensees-bridge.md | fence-parse | python fence does not parse: positional argument follows keyword argument; fence opens `ops.model(ndm=3, ndf=3)                 # envelope; solid no`
-references/opensees-bridge.md | line-citation | apesees.py:3434
-references/opensees-bridge.md | line-citation | opensees/emitter/base.py:153
-references/opensees-bridge.md | line-citation | opensees/emitter/h5.py:414
-references/opensees-bridge.md | line-citation | src/apeGmsh/opensees/_internal/ns/fault.py:110
-references/opensees-bridge.md | line-citation | src/apeGmsh/opensees/apesees.py:6091
-references/opensees-bridge.md | line-citation | src/apeGmsh/opensees/pattern/pattern.py:338
-references/opensees-bridge.md | skill-freshness | freshness stamp
 references/rebar.md | fence-parse | python fence does not parse: Invalid star expression; fence opens `g.rebar.bar(points=None, *, db, material, role="longitudinal`
 references/rebar.md | fence-parse | python fence does not parse: Invalid star expression; fence opens `g.rebar.column(*, section, height, cover, longitudinal: BarL`
 references/rebar.md | fence-parse | python fence does not parse: invalid syntax; fence opens `g.rebar.place(cage: Cage, into: str, *, coupling="conformal"`

@@ -8,8 +8,9 @@ cheatsheet taught ``g.mesh.field.distance(edges=...)`` and
 while ``GaussResultsComposite`` inherits it. Nothing failed.
 
 This lane runs in the suite with no marker. It checks, for every markdown
-file of the canonical skill (the ``.claude/skills/apegmsh-helper/`` mirror
-is byte-checked by ``scripts/sync_skill.py --check``):
+file of the canonical skill except the ``DEFERRED`` ones another chain owns
+(the ``.claude/skills/apegmsh-helper/`` mirror is byte-checked by
+``scripts/sync_skill.py --check``):
 
 * **fence-name / fence-keyword**: each Python fence resolves through the
   shared static resolver (``tests/_doc_resolver.py``): no missing module,
@@ -58,7 +59,15 @@ MIRROR_SKILL_MD = REPO / ".claude" / "skills" / "apegmsh-helper" / "SKILL.md"
 BASELINE_FILE = Path(__file__).with_name("skill_fences_baseline.txt")
 
 #: The number of lines in ``skill_fences_baseline.txt``. It only goes down.
-SKILL_FENCES_BASELINE = 88
+SKILL_FENCES_BASELINE = 77
+
+#: Skill files another chain's open issue owns, left out of the gate and the
+#: baseline so its edits cannot turn this test red. Name -> owning issue.
+#: SK2 removes these entries when #1989 lands.
+DEFERRED: dict[str, str] = {
+    "opensees-bridge.md": "#1989",
+    "ladruno.md": "#1989",
+}
 
 #: The receivers a page uses without binding them, seeded per page.
 _SEEDS: dict[str, tuple[str, str]] = {
@@ -176,7 +185,7 @@ def structure_findings(text: str, rel: str, base: Path) -> list[Finding]:
 # ── The corpus ──────────────────────────────────────────────────────
 
 def _skill_files() -> list[Path]:
-    return sorted(SKILL.rglob("*.md"))
+    return sorted(p for p in SKILL.rglob("*.md") if p.name not in DEFERRED)
 
 
 @pytest.fixture(scope="module")
@@ -210,6 +219,16 @@ def ratchet_diff(found: Counter[Finding], baseline: Counter[Finding]) -> tuple[l
 def test_skill_corpus_is_found() -> None:
     names = {p.relative_to(SKILL).as_posix() for p in _skill_files()}
     assert "SKILL.md" in names and "references/model-scripts.md" in names, sorted(names)
+
+
+def test_deferred_files_exist_and_name_an_issue() -> None:
+    for name, issue in DEFERRED.items():
+        hits = list(SKILL.rglob(name))
+        assert len(hits) == 1, f"DEFERRED names `{name}`, which matches {hits}: drop or fix the entry"
+        assert re.fullmatch(r"#\d+", issue), f"DEFERRED[{name!r}] = {issue!r} names no issue"
+    assert not [line for line in _baseline() if line.split(" | ")[0].rsplit("/", 1)[-1] in DEFERRED], (
+        "a deferred file is out of the gate, so it has no baseline lines"
+    )
 
 
 def test_skill_findings_are_resolved_or_baselined(corpus) -> None:
