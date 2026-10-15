@@ -52,7 +52,11 @@ from ...opensees._response_catalog import (
 )
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     import h5py
+
+    from .._slabs import NodeSlab
 
 
 # =====================================================================
@@ -495,6 +499,205 @@ def mode_stage_layout(
                 )
                 out.append((h, sid, name, e))
     return out
+
+
+# =====================================================================
+# Rotations a node does not have
+# =====================================================================
+#
+# Neither ``.mpco`` nor ``.ladruno`` records a node's ndf. Over a mixed
+# model (a tet footing under a shell wall, a quad block beside a 2-D
+# frame) the recorder writes 0.0 into the rotation columns of a node
+# that has no rotational DOF, and a viewer draws that 0.0 as a field.
+# With the model's ``/opensees/nodes_ndf`` attached, the reader writes
+# NaN there, as DomainCapture does. Without it the reader warns once
+# when the stage holds a continuum element, until the fork records
+# per-node ndf in the file.
+
+
+class AbsentDofWarning(UserWarning):
+    """A rotation read without per-node ndf may hold 0.0 at nodes that
+    have no rotational DOF (#1971)."""
+
+
+def load_nodes_ndf(model_h5: "str | Path") -> "dict[int, int] | None":
+    """``{node: ndf}`` from ``model_h5``'s ``/opensees/nodes_ndf``.
+
+    ``None`` when the archive predates that group.
+    """
+    from ...opensees.emitter import h5_reader
+
+    with h5_reader.open(str(model_h5)) as m:
+        return m.nodes_ndf()
+
+
+def _continuum_classes() -> "frozenset[str]":
+    """C++ element classes whose nodes may lack rotational DOFs.
+
+    Two derived sources, so a class joins through either table: the
+    RESPONSE_CATALOG classes whose ``stress`` is a continuum tensor, and
+    the element registry's ``nd``-material entries (by ``cpp_class_name``,
+    else the key). The registry adds the u-p family, whose nodes carry a
+    pressure DOF in a slot the recorder writes as a rotation.
+    """
+    from ...opensees._element_capabilities import _ELEM_REGISTRY
+    from ...opensees._response_catalog import RESPONSE_CATALOG
+
+    catalog = {
+        cls for (cls, _rule, token), layout in RESPONSE_CATALOG.items()
+        if token == "stress" and layout.component_layout[0] == "stress_xx"
+    }
+    registry = {
+        spec.cpp_class_name or key for key, spec in _ELEM_REGISTRY.items()
+        if spec.mat_family == "nd"
+    }
+    return frozenset(catalog | registry)
+
+
+def _has_continuum_class(model_elements: "h5py.Group | None") -> bool:
+    """True when ``MODEL/ELEMENTS`` holds a ``<tag>-<Class>[..]`` entry of
+    a continuum class."""
+    if model_elements is None:
+        return False
+    solids = _continuum_classes()
+    return any(
+        key.partition("-")[2].partition("[")[0] in solids
+        for key in model_elements
+    )
+
+
+def model_node_ids(stage_groups: "list[h5py.Group]") -> "set[int]":
+    """Every node id under the stages' ``MODEL/NODES/ID``."""
+    out: "set[int]" = set()
+    for grp in stage_groups:
+        if "MODEL" in grp and "NODES" in grp["MODEL"] and "ID" in grp["MODEL/NODES"]:
+            out.update(int(n) for n in np.asarray(grp["MODEL/NODES/ID"][...]).flat)
+    return out
+
+
+_NO_MODEL = (
+    "no per-node ndf is attached. Pass model_h5= (the run's archive, with "
+    "/opensees/nodes_ndf) to read NaN at those nodes; a partitioned read "
+    "does not attach it yet"
+)
+
+
+class RotationMask:
+    """Per-reader NaN mask for rotation columns a node lacks.
+
+    :meth:`attach` takes the model's per-node ndf. :meth:`absent` then
+    names the nodes whose DOF layout has no slot for a component, and
+    :meth:`apply` writes NaN there. Without an attached ndf, nothing is
+    masked, and the first rotation read over a continuum class warns.
+    """
+
+    def __init__(self, source: str) -> None:
+        self._source = source
+        self._nodes_ndf: "dict[int, int] | None" = None
+        self._ndm = 3
+        self._warned = False
+        self._why_unattached = _NO_MODEL
+
+    def attach(
+        self, nodes_ndf: "dict[int, int] | None", ndm: int,
+        file_nodes: "set[int]",
+    ) -> None:
+        """Use ``nodes_ndf`` if it describes every node in ``file_nodes``.
+
+        ``None`` is an archive older than ``/opensees/nodes_ndf``. A model
+        that misses some of the file's nodes is another model (the bind
+        warns ``ModelFemMismatchWarning`` for it). Neither is used; the
+        warning then names which it was.
+        """
+        if nodes_ndf is None:
+            self._why_unattached = (
+                "model_h5 is an archive older than /opensees/nodes_ndf, so "
+                "it holds no per-node ndf. Re-save the model with this "
+                "apeGmsh to read NaN at those nodes"
+            )
+            return
+        missing = sorted(file_nodes - {int(n) for n in nodes_ndf})
+        if missing:
+            self._why_unattached = (
+                f"model_h5's /opensees/nodes_ndf misses nodes "
+                f"{missing[:10]} of this file, so it is another model's "
+                "and its ndf is not used. Pass the archive of the run "
+                "that wrote this file"
+            )
+            return
+        self._nodes_ndf = {int(n): int(d) for n, d in nodes_ndf.items()}
+        self._ndm = int(ndm)
+
+    def absent(
+        self, component: str, node_ids: "ndarray",
+        model_elements: "h5py.Group | None",
+    ) -> "ndarray | None":
+        """``(N,)`` bool: the nodes without ``component``'s DOF, or
+        ``None`` when nothing is masked (not a rotation, or no ndf)."""
+        from ...opensees._recorder_translate import node_component_spatial
+
+        spatial = node_component_spatial(component)
+        if spatial is None or spatial[1] < 3:
+            return None                 # not a rotational component
+        slot = spatial[1]
+        if self._nodes_ndf is None:
+            if not self._warned and _has_continuum_class(model_elements):
+                self._warned = True
+                import warnings
+                warnings.warn(
+                    f"{self._source}: {component!r} is read over continuum "
+                    "elements, whose nodes may have no rotational DOF; the "
+                    "recorder writes 0.0 there (or a pressure, at a u-p "
+                    "node), so a value may be an absent DOF. "
+                    f"{self._why_unattached}. The fork recording per-node "
+                    "ndf is the permanent fix (#2015).",
+                    AbsentDofWarning, stacklevel=5,
+                )
+            return None
+        from ...opensees._internal.build.recorders import _node_layout
+
+        ids = np.asarray(node_ids, dtype=np.int64)
+        missing = sorted({int(n) for n in ids} - self._nodes_ndf.keys())
+        if missing:
+            raise ValueError(
+                f"{self._source}: {component!r} has nodes "
+                f"{missing[:10]} that are neither in the file's MODEL/NODES "
+                "nor in the model's /opensees/nodes_ndf, so whether their "
+                "column is a value or padding is unknown."
+            )
+        return np.array([
+            slot not in _node_layout(self._nodes_ndf[int(n)], self._ndm)
+            for n in ids
+        ], dtype=bool)
+
+    def apply(
+        self, slab: "NodeSlab", model_elements: "h5py.Group | None",
+    ) -> "NodeSlab":
+        """``slab`` with NaN at the nodes :meth:`absent` names."""
+        from dataclasses import replace
+
+        absent = self.absent(slab.component, slab.node_ids, model_elements)
+        if absent is None or not absent.any():
+            return slab
+        values = np.where(absent[None, :], np.nan, slab.values)
+        return replace(slab, values=values)
+
+
+def attach_nodes_ndf(
+    reader: object, single: type, model_h5: "str | Path", ndm: int,
+) -> None:
+    """Attach ``model_h5``'s per-node ndf to ``reader`` (#1971).
+
+    ``single`` is the one-file reader class, which carries a
+    :class:`RotationMask`. A partitioned reader is left as it is: its
+    part readers have no ndf, so they warn on a rotation read over
+    continuum elements (:class:`AbsentDofWarning`).
+    """
+    if not isinstance(reader, single):
+        return
+    reader.attach_nodes_ndf(          # type: ignore[attr-defined]
+        load_nodes_ndf(model_h5), ndm,
+    )
 
 
 # =====================================================================

@@ -594,6 +594,10 @@ class Results:
         _tag_map = ElementTagTranslator.from_model(bound_model)
         if not _tag_map.is_empty:
             reader.attach_tag_map(_tag_map)
+        # The file holds no per-node ndf; the model's masks the
+        # recorder's 0.0 rotations at nodes without rotational DOFs.
+        from .readers._mpco import attach_model_nodes_ndf
+        attach_model_nodes_ndf(reader, model_h5, bound_model.ndm)
         return cls(
             reader, fem=bound_fem, path=anchor, model=bound_model,
             model_path=Path(model_h5),
@@ -627,6 +631,12 @@ class Results:
           the fem_eid↔ops-tag translator is attached (ADR 0043; required
           for composed models AND for any sparsely-renumbered mesh, e.g.
           a gmsh solid whose 2-D boundary elements consumed the low ids).
+
+        The file records no per-node ndf, so the recorder writes 0.0 for
+        a rotation a node does not have (a solid node beside a shell).
+        With ``model_h5=`` a one-file read gives NaN there, from the
+        model's ``/opensees/nodes_ndf``; without it a rotation read over
+        continuum elements warns ``AbsentDofWarning`` once (#1971).
 
         Keys on ``INFO/GENERATOR="Ladruno"`` + a supported
         ``FORMAT_VERSION`` (the reader rejects a ``.mpco`` / foreign file
@@ -676,6 +686,10 @@ class Results:
             _tag_map = ElementTagTranslator.from_model(bound_model)
             if not _tag_map.is_empty:
                 reader.attach_tag_map(_tag_map)
+            # As in :meth:`from_mpco`: NaN, not the recorder's 0.0, for
+            # rotations a node does not have.
+            from .readers._ladruno import attach_model_nodes_ndf
+            attach_model_nodes_ndf(reader, model_h5, bound_model.ndm)
             model_path: "Optional[Path]" = Path(model_h5)
         else:
             # Self-sufficient path — minimal broker from the file itself.

@@ -13,6 +13,8 @@ import numpy as np
 import pytest
 
 from apeGmsh.results.readers._ladruno import LadrunoReader
+from apeGmsh.results.readers._mpco import MPCOReader
+from apeGmsh.results.readers._mpco_nodal_io import AbsentDofWarning
 from apeGmsh.results.readers._ladruno_element_io import (
     ElementWidthMismatchWarning,
     GaussColumnDroppedWarning,
@@ -1472,4 +1474,377 @@ def test_uniform_width_buckets_do_not_warn(tmp_path: Path) -> None:
             )
         assert out is not None
         assert out[1].tolist() == [11, 12, 21, 22]
+
+
+# ---------------------------------------------------------------------------
+# #1971 — rotations a node does not have: NaN with a model, a warning without
+# ---------------------------------------------------------------------------
+#
+# Neither format records a node's ndf, so over a mixed model the recorder
+# pads a solid node's rotation columns with 0.0. Every synthetic file below
+# holds a non-zero closed-form value in EVERY column, padding included, so a
+# column the reader keeps reads its exact value and a masked one reads NaN.
+# MPCO sits beside .ladruno here because both readers share the mask.
+
+ROT_3D = ("rotation_x", "rotation_y", "rotation_z")
+#: ``(tag, class, nodes per element)``: continuum and structural classes.
+TET = (179, "FourNodeTetrahedron", 4)
+QUAD4 = (31, "FourNodeQuad", 4)
+SHELL = (53, "ShellMITC4", 4)
+BEAM2D = (3, "ElasticBeam2d", 2)
+BEAM3D = (5, "ElasticBeam3d", 2)
+FORMATS = ["ladruno", "mpco"]
+
+
+def _nodal_value(t: int, node: int, col: int) -> float:
+    return 1.0 + 10.0 * t + 0.5 * node + 0.01 * col
+
+
+def _mixed_file(
+    path: Path, fmt: str, node_ids: "list[int]", ndm: int,
+    classes: "list[tuple[int, str, int]]", *, mode: bool = False,
+    envelope: bool = False,
+) -> Path:
+    """A ``.ladruno`` or ``.mpco`` with ``DISPLACEMENT`` and ``ROTATION``
+    for every node (two steps), or one mode of ``MODES_OF_VIBRATION(U|R)``,
+    or (``.ladruno``, ``envelope=True``) their ``-envelope`` extremes:
+    ``MIN``/``MAX``/``ABSMAX`` are step 0/1/1's values, ``ARG_STEP`` is 1.
+
+    ``U`` holds ``ndm`` translations, ``R`` the model's rotations (``Rx,Ry,
+    Rz`` in 3-D, ``Rz`` in 2-D); column ``c`` of ``R`` holds
+    ``_nodal_value(t, node, 3 + c)``. ``MODEL/ELEMENTS`` lists one element
+    of each class over the leading nodes, as each format writes it.
+    """
+    import h5py
+
+    n = len(node_ids)
+    groups = {
+        "U": ("Ux,Uy,Uz" if ndm == 3 else "Ux,Uy"),
+        "R": ("Rx,Ry,Rz" if ndm == 3 else "Rz"),
+    }
+    ids = np.array(node_ids, dtype=np.int32).reshape(-1, 1)
+    with h5py.File(path, "w") as f:
+        if fmt == "ladruno":
+            info = f.create_group("INFO")
+            info.attrs["GENERATOR"] = np.array([b"Ladruno"])
+            info.attrs["FORMAT_VERSION"] = np.array([1], dtype=np.int32)
+            info.attrs["SPATIAL_DIM"] = np.array([ndm], dtype=np.int32)
+        stage = f.create_group("MODEL_STAGE[1]")
+        if fmt == "ladruno":
+            stage.attrs["KIND"] = np.array([b"eigen" if mode else b"static"])
+        nodes = stage.create_group("MODEL/NODES")
+        nodes.create_dataset("ID", data=ids)
+        nodes.create_dataset("COORDINATES", data=np.zeros((n, ndm)))
+        for k, (tag, cls, npe) in enumerate(classes):
+            conn = np.array([[100 + k, *node_ids[:npe]]], dtype=np.int32)
+            key = f"MODEL/ELEMENTS/{tag}-{cls}[0:0]"
+            if fmt == "ladruno":
+                stage.create_group(key).create_dataset("CONNECTIVITY", data=conn)
+            else:
+                stage.create_dataset(key, data=conn)
+        on_nodes = stage.create_group("RESULTS/ON_NODES")
+        for kind, labels in groups.items():
+            width = len(labels.split(","))
+            name = (f"MODES_OF_VIBRATION({kind})" if mode
+                    else {"U": "DISPLACEMENT", "R": "ROTATION"}[kind])
+            grp = on_nodes.create_group(name)
+            grp.attrs["COMPONENTS"] = np.array([labels.encode()])
+            grp.create_dataset("ID", data=ids)
+            off = 0 if kind == "U" else 3
+            block = np.array([
+                [[_nodal_value(t, nd, off + c) for c in range(width)]
+                 for nd in node_ids]
+                for t in range(2)
+            ])
+            if envelope:
+                del on_nodes[name]
+                grp = stage.require_group("RESULTS/ENVELOPES/ON_NODES"
+                                          ).create_group(name)
+                grp.attrs["COMPONENTS"] = np.array([labels.encode()])
+                grp.create_dataset("ID", data=ids)
+                grp.create_dataset("MIN", data=block[0])
+                grp.create_dataset("MAX", data=block[1])
+                grp.create_dataset("ABSMAX", data=block[1])
+                grp.create_dataset("ARG_STEP",
+                                   data=np.ones(block[0].shape, dtype=np.int64))
+            elif mode:
+                ds = grp.create_dataset("DATA/STEP_0/MODE_0", data=block[0])
+                ds.attrs["LAMBDA"] = np.array([4.0])
+            elif fmt == "ladruno":
+                grp.create_dataset("DATA", data=block)
+                grp.create_dataset("STEP", data=np.array([1, 2], dtype=np.int32))
+                grp.create_dataset("TIME", data=np.array([0.5, 1.0]))
+            else:
+                for t in range(2):
+                    ds = grp.create_dataset(f"DATA/STEP_{t}", data=block[t])
+                    ds.attrs["TIME"] = np.array([0.5 * (t + 1)])
+    return path
+
+
+def _open_reader(fmt: str, path: Path):
+    return LadrunoReader(path) if fmt == "ladruno" else MPCOReader(path)
+
+
+def _stage(reader, mode: bool) -> str:
+    return [s.id for s in reader.stages() if (s.kind == "mode") == mode][0]
+
+
+def _last(reader, stage: str, comp: str) -> "dict[int, float]":
+    slab = reader.read_nodes(stage, comp)
+    return {int(i): float(v) for i, v in zip(slab.node_ids, slab.values[-1])}
+
+
+@pytest.mark.parametrize("fmt", FORMATS)
+def test_rotation_beyond_ndf_is_nan_3d(tmp_path: Path, fmt: str) -> None:
+    """Node 1: tet (ndf 3); 2: shell (6); 3: 3-D u-p (4); 4: ndf 5.
+
+    Only the 6-dof node has rotations; the rest read NaN. A u-p node's
+    fourth DOF is pressure, so a rotation there is fabricated.
+    Translations stay exact everywhere.
+    """
+    ndf = {1: 3, 2: 6, 3: 4, 4: 5}
+    path = _mixed_file(tmp_path / f"m.{fmt}", fmt, [1, 2, 3, 4], 3, [TET, SHELL])
+    with _open_reader(fmt, path) as r:
+        r.attach_nodes_ndf(ndf, 3)
+        stage = _stage(r, False)
+        for c, comp in enumerate(ROT_3D):
+            got = _last(r, stage, comp)
+            assert got[2] == _nodal_value(1, 2, 3 + c), comp
+            assert np.isnan([got[1], got[3], got[4]]).all(), (comp, got)
+        for c, comp in enumerate(("displacement_x", "displacement_y",
+                                  "displacement_z")):
+            got = _last(r, stage, comp)
+            assert got == {nd: _nodal_value(1, nd, c) for nd in ndf}, comp
+
+
+@pytest.mark.parametrize("fmt", FORMATS)
+@pytest.mark.parametrize("mode", [False, True], ids=["steps", "mode"])
+def test_rotation_beyond_ndf_is_nan_2d(
+    tmp_path: Path, fmt: str, mode: bool,
+) -> None:
+    """2-D: quad node 1 (ndf 2) reads NaN ``rotation_z``; frame node 2
+    (ndf 3) keeps its real rotation, in a step stage and a mode stage.
+
+    The mask keys on the node's DOF layout: a ``dof > ndf`` rule on the
+    file's labels (``rotation_z`` is the sixth DOF) would drop node 2's
+    real rotation too.
+    """
+    path = _mixed_file(tmp_path / f"m.{fmt}", fmt, [1, 2], 2, [QUAD4, BEAM2D],
+                       mode=mode)
+    with _open_reader(fmt, path) as r:
+        r.attach_nodes_ndf({1: 2, 2: 3}, 2)
+        got = _last(r, _stage(r, mode), "rotation_z")
+        assert np.isnan(got[1])
+        assert got[2] == _nodal_value(0 if mode else 1, 2, 3)
+
+
+@pytest.mark.parametrize("fmt", FORMATS)
+def test_model_missing_a_file_node_is_not_used(tmp_path: Path, fmt: str) -> None:
+    """A model whose nodes_ndf misses a node of the file is another model:
+    its ndf is not used, so no real rotation is NaN'd on its say-so, and
+    the read warns as a model-less one does, naming the missing node."""
+    path = _mixed_file(tmp_path / f"m.{fmt}", fmt, [1, 2], 3, [TET, SHELL])
+    with _open_reader(fmt, path) as r:
+        r.attach_nodes_ndf({1: 3}, 3)
+        with pytest.warns(AbsentDofWarning, match=r"misses nodes \[2\]"):
+            got = _last(r, _stage(r, False), "rotation_x")
+        assert got == {1: _nodal_value(1, 1, 3), 2: _nodal_value(1, 2, 3)}
+
+
+@pytest.mark.parametrize("fmt", FORMATS)
+def test_result_node_outside_the_model_raises(tmp_path: Path, fmt: str) -> None:
+    """A result row for a node neither MODEL/NODES nor nodes_ndf lists:
+    whether its rotation is a value or padding is unknown, so it raises."""
+    import h5py
+
+    path = _mixed_file(tmp_path / f"m.{fmt}", fmt, [1, 2], 3, [TET, SHELL])
+    with h5py.File(path, "r+") as f:
+        nodes = f["MODEL_STAGE[1]/MODEL/NODES"]
+        del nodes["ID"], nodes["COORDINATES"]
+        nodes.create_dataset("ID", data=np.array([[1]], dtype=np.int32))
+        nodes.create_dataset("COORDINATES", data=np.zeros((1, 3)))
+    with _open_reader(fmt, path) as r:
+        r.attach_nodes_ndf({1: 3}, 3)
+        with pytest.raises(ValueError, match=r"nodes \[2\]"):
+            r.read_nodes(_stage(r, False), "rotation_x")
+
+
+@pytest.mark.parametrize("fmt", FORMATS)
+def test_rotation_without_ndf_over_solids_warns_once(
+    tmp_path: Path, fmt: str,
+) -> None:
+    import warnings
+
+    path = _mixed_file(tmp_path / f"m.{fmt}", fmt, [1, 2], 3, [TET, SHELL])
+    with _open_reader(fmt, path) as r, warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        stage = _stage(r, False)
+        r.read_nodes(stage, "displacement_x")
+        assert not w                       # translations never warn
+        for c, comp in enumerate(ROT_3D):
+            assert _last(r, stage, comp)[1] == _nodal_value(1, 1, 3 + c)
+    hits = [x for x in w if issubclass(x.category, AbsentDofWarning)]
+    assert len(hits) == 1, [str(x.message) for x in w]
+    assert "model_h5=" in str(hits[0].message)
+    assert "#2015" in str(hits[0].message)
+
+
+@pytest.mark.parametrize("fmt", FORMATS)
+@pytest.mark.parametrize("ndm,classes", [
+    (3, [BEAM3D, SHELL]), (2, [BEAM2D]),
+], ids=["frame-shell-3d", "frame-2d"])
+def test_frame_only_file_reads_rotations_silently(
+    tmp_path: Path, fmt: str, ndm: int, classes: list,
+) -> None:
+    """No continuum class: every node has rotations, so no warning."""
+    import warnings
+
+    path = _mixed_file(tmp_path / f"m.{fmt}", fmt, [1, 2], ndm, classes)
+    with _open_reader(fmt, path) as r, warnings.catch_warnings():
+        warnings.simplefilter("error", UserWarning)
+        for comp in (ROT_3D if ndm == 3 else ("rotation_z",)):
+            assert len(_last(r, _stage(r, False), comp)) == 2
+
+
+@pytest.mark.parametrize("fmt", FORMATS)
+def test_up_element_without_ndf_warns(tmp_path: Path, fmt: str) -> None:
+    """A u-p element (no ``stress`` catalog row) still warns: its nodes'
+    fourth DOF is pressure, which the recorder writes as a rotation."""
+    path = _mixed_file(tmp_path / f"m.{fmt}", fmt, list(range(1, 9)), 3,
+                       [(33019, "LadrunoUP", 8)])
+    with _open_reader(fmt, path) as r:
+        with pytest.warns(AbsentDofWarning, match="u-p"):
+            r.read_nodes(_stage(r, False), "rotation_x")
+
+
+@pytest.mark.parametrize("fmt", FORMATS)
+def test_archive_older_than_nodes_ndf_says_so(tmp_path: Path, fmt: str) -> None:
+    """An archive without /opensees/nodes_ndf: the warning names that, not
+    a missing ``model_h5=``, which the caller did pass."""
+    path = _mixed_file(tmp_path / f"m.{fmt}", fmt, [1, 2], 3, [TET, SHELL])
+    with _open_reader(fmt, path) as r:
+        r.attach_nodes_ndf(None, 3)
+        with pytest.warns(AbsentDofWarning) as w:
+            r.read_nodes(_stage(r, False), "rotation_x")
+    msg = str(w[0].message)
+    assert "older than /opensees/nodes_ndf" in msg
+    assert "Pass model_h5=" not in msg
+
+
+# -- node envelopes (``.ladruno`` only: no other reader has them) ------------
+
+
+def test_envelope_rotation_beyond_ndf_is_nan(tmp_path: Path) -> None:
+    """``read_node_envelope`` masks as ``read_nodes`` does: NaN extremes and
+    ``arg_step == -1`` where the node has no such rotation."""
+    path = _mixed_file(tmp_path / "m.ladruno", "ladruno", [1, 2, 3], 3,
+                       [TET, SHELL], envelope=True)
+    with LadrunoReader(path) as r:
+        r.attach_nodes_ndf({1: 3, 2: 6, 3: 4}, 3)
+        stage = _stage(r, False)
+        for c, comp in enumerate(ROT_3D):
+            env = r.read_node_envelope(stage, comp)
+            assert env.node_ids.tolist() == [1, 2, 3]
+            for got, t in ((env.min, 0), (env.max, 1), (env.absmax, 1)):
+                assert got[1] == _nodal_value(t, 2, 3 + c), comp
+                assert np.isnan(got[[0, 2]]).all(), comp
+            assert env.arg_step.tolist() == [-1, 1, -1], comp
+        disp = r.read_node_envelope(stage, "displacement_x")
+        assert disp.max.tolist() == [_nodal_value(1, n, 0) for n in (1, 2, 3)]
+        assert disp.arg_step.tolist() == [1, 1, 1]
+
+
+def test_envelope_rotation_without_ndf_warns_once(tmp_path: Path) -> None:
+    path = _mixed_file(tmp_path / "m.ladruno", "ladruno", [1, 2], 3,
+                       [TET, SHELL], envelope=True)
+    with LadrunoReader(path) as r, pytest.warns(AbsentDofWarning) as w:
+        for comp in ROT_3D:
+            env = r.read_node_envelope(_stage(r, False), comp)
+            assert np.isfinite(env.max).all()
+    assert len([x for x in w if issubclass(x.category, AbsentDofWarning)]) == 1
+
+
+# -- the factories: ``model_h5=`` attaches /opensees/nodes_ndf ---------------
+
+
+def _tet_beside_shell_archive(g, tmp_path: Path):
+    """A real bridge archive: a tet block (3-dof nodes) and a detached
+    MITC4 plate (6-dof nodes) under ``ops.model(ndm=3, ndf=6)``."""
+    from apeGmsh.opensees import apeSees
+
+    G = g.model.geometry
+    block = G.add_box(0, 0, -1.0, 1.0, 1.0, 1.0)
+    plate = G.add_rectangle(0.0, 0.0, 0.5, 1.0, 1.0)
+    g.model.sync()
+    g.physical.add(3, [block], name="Block")
+    g.physical.add(2, [plate], name="Plate")
+    g.mesh.structured.set_recombine("Plate", dim=2)
+    g.mesh.sizing.set_global_size(1.0)
+    g.mesh.generation.generate(3)
+    g.mesh.partitioning.renumber(base=1)
+    fem = g.mesh.queries.get_fem_data()
+    solid = sorted({int(n) for n in fem.nodes.select(pg="Block").ids})
+    shell = sorted({int(n) for n in fem.nodes.select(pg="Plate").ids})
+    assert solid and shell and not set(solid) & set(shell)
+    ops = apeSees(fem)
+    ops.model(ndm=3, ndf=6)
+    ops.element.FourNodeTetrahedron(
+        pg="Block", material=ops.nDMaterial.ElasticIsotropic(E=1e6, nu=0.2),
+    )
+    ops.element.ShellMITC4(
+        pg="Plate",
+        section=ops.section.ElasticMembranePlateSection(E=1e6, nu=0.0, h=0.1),
+    )
+    model_h5 = tmp_path / "model.h5"
+    ops.h5(str(model_h5))
+    return fem, solid, shell, model_h5
+
+
+@pytest.mark.parametrize("fmt", FORMATS)
+def test_factory_with_model_reads_nan_on_solid_nodes(
+    g, tmp_path: Path, fmt: str,
+) -> None:
+    from apeGmsh.results import Results
+
+    fem, solid, shell, model_h5 = _tet_beside_shell_archive(g, tmp_path)
+    path = _mixed_file(tmp_path / f"m.{fmt}", fmt, solid + shell, 3,
+                       [TET, SHELL])
+    factory = Results.from_ladruno if fmt == "ladruno" else Results.from_mpco
+    r = factory(path, fem=fem, model_h5=model_h5)
+    for c, comp in enumerate(ROT_3D):
+        slab = r.nodes.get(component=comp)
+        got = {int(i): float(v) for i, v in zip(slab.node_ids, slab.values[-1])}
+        assert np.isnan([got[n] for n in solid]).all(), comp
+        assert [got[n] for n in shell] == [
+            _nodal_value(1, n, 3 + c) for n in shell], comp
+
+
+def test_factory_node_envelope_with_model_reads_nan(g, tmp_path: Path) -> None:
+    """``Results.node_envelope`` goes through the same mask."""
+    from apeGmsh.results import Results
+
+    fem, solid, shell, model_h5 = _tet_beside_shell_archive(g, tmp_path)
+    path = _mixed_file(tmp_path / "m.ladruno", "ladruno", solid + shell, 3,
+                       [TET, SHELL], envelope=True)
+    df = Results.from_ladruno(path, fem=fem, model_h5=model_h5).node_envelope(
+        "rotation_y")
+    assert df.loc[solid, "absmax"].isna().all()
+    assert (df.loc[solid, "arg_step"] == -1).all()
+    assert df.loc[shell, "absmax"].tolist() == [
+        _nodal_value(1, n, 4) for n in shell]
+
+
+def test_factory_without_model_warns_once(g, tmp_path: Path) -> None:
+    """The self-sufficient ``.ladruno`` route has no per-node ndf: the
+    padded 0.0 stays, and the first rotation read says so."""
+    from apeGmsh.results import Results
+
+    fem, solid, shell, _model_h5 = _tet_beside_shell_archive(g, tmp_path)
+    path = _mixed_file(tmp_path / "m.ladruno", "ladruno", solid + shell, 3,
+                       [TET, SHELL])
+    r = Results.from_ladruno(path, fem=fem)
+    with pytest.warns(AbsentDofWarning) as w:
+        for comp in ROT_3D:
+            assert np.isfinite(r.nodes.get(component=comp).values).all()
+    assert len([x for x in w if issubclass(x.category, AbsentDofWarning)]) == 1
 
