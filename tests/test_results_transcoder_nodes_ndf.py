@@ -226,3 +226,53 @@ def test_a_node_missing_from_nodes_ndf_refuses(g: Any, tmp_path: Path) -> None:
     with pytest.raises(ValueError, match=rf"nodes \[{solid[0]}\]"):
         _transcode(fem, tmp_path, solid + shell, ("rotation_x",), "disp",
                    [4], cut)
+
+
+@pytest.mark.parametrize("ndf_solid", [4, 5])
+def test_ndf_without_a_layout_carries_no_rotation(
+    g: Any, tmp_path: Path, ndf_solid: int,
+) -> None:
+    """A 3-D node of ndf 4 or 5 (a u-p node: the pressure DOF follows the
+    translations) has no rotation slot. The mask uses the emit's guarded
+    ``_node_layout``; the bare ``_load_dof_layout`` falls back to
+    ``range(ndf)`` and would keep a fabricated ``rotation_x`` (and
+    ``rotation_y`` at ndf 5)."""
+    fem, model_h5, solid, shell = _shell_beside_solid(g, tmp_path)
+    up = tmp_path / f"up{ndf_solid}_model.h5"
+    shutil.copy(model_h5, up)
+    with h5py.File(up, "a") as f:
+        grp = f["opensees/nodes_ndf"]
+        tags, ndf = grp["tags"][...], grp["ndf"][...]
+        ndf[np.isin(tags, solid)] = ndf_solid
+        grp["ndf"][...] = ndf
+    assert {_nodes_ndf(up)[n] for n in solid} == {ndf_solid}
+    comps = tuple(f"{p}_{a}" for p in ("displacement", "rotation") for a in "xyz")
+    r = _transcode(fem, tmp_path, solid + shell, comps, "disp",
+                   [1, 2, 3, 4, 5, 6], up)
+    k = len(TIME) - 1
+    for d, comp in enumerate(comps, start=1):
+        got = _last(r, comp)
+        for n in shell:
+            assert got[n] == pytest.approx(_value(k, n, d), rel=1e-9), comp
+        for n in solid:
+            if d <= 3:
+                assert got[n] == pytest.approx(_value(k, n, d), rel=1e-9)
+            else:
+                assert np.isnan(got[n]), f"{comp} at ndf-{ndf_solid} node {n}"
+
+
+def test_an_archive_without_nodes_ndf_keeps_the_values(
+    g: Any, tmp_path: Path,
+) -> None:
+    """An archive older than ``/opensees/nodes_ndf``: the transcode is unchanged."""
+    fem, model_h5, solid, shell = _shell_beside_solid(g, tmp_path)
+    old = tmp_path / "old_model.h5"
+    shutil.copy(model_h5, old)
+    with h5py.File(old, "a") as f:
+        del f["opensees/nodes_ndf"]
+    r = _transcode(fem, tmp_path, solid + shell, ("rotation_x",), "disp",
+                   [4], old)
+    k = len(TIME) - 1
+    got = _last(r, "rotation_x")
+    assert all(got[n] == pytest.approx(_value(k, n, 4), rel=1e-9)
+               for n in solid + shell)

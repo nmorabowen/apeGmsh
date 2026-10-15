@@ -236,13 +236,15 @@ def mask_absent_rotations(
     fem: "FEMData",
 ) -> None:
     """NaN, in place, each rotation column at a node whose DOF layout
-    (``_load_dof_layout(ndf, ndm)`` from the model) has no such slot.
+    (the emit's own ``_node_layout(ndf, ndm)``) has no such slot.
 
     One ``recorder Node`` line over a mixed-ndf model writes every
     requested DOF for every node and pads the DOFs a node lacks with
     0.0: a tet node (ndf 3) beside a shell reads rotation 0.0 (#1971).
     The mask keys on the node's layout, never on the file's DOF index
-    (``rotation_z`` is DOF 6 in the ``-dof`` list whatever the ndm).
+    (``rotation_z`` is DOF 6 in the ``-dof`` list whatever the ndm). An
+    ndf without a known layout (4 or 5: a u-p node's pressure DOF) carries
+    translations only, never a rotation.
 
     ``components`` maps a canonical name to a ``(T, N)`` array over
     ``node_ids``. Values are kept as written when ``model_h5`` is
@@ -255,16 +257,16 @@ def mask_absent_rotations(
         return                      # no model, or no rotation recorded
     import numpy as np
 
-    from ._internal.build.ndf import _load_dof_layout
+    from ._internal.build.recorders import _node_layout
     from .emitter import h5_reader
 
     with h5_reader.open(str(model_h5)) as m:
         nodes_ndf = m.nodes_ndf()
+        if nodes_ndf is None:
+            return                  # an archive older than nodes_ndf
         ndm = h5_reader.read_spatial_ndm(
             m.meta(), m.handle, coords=lambda: np.asarray(fem.nodes.coords),
         )
-    if nodes_ndf is None:
-        return                      # an archive older than nodes_ndf
     missing = sorted({int(n) for n in node_ids} - nodes_ndf.keys())
     if missing:
         raise ValueError(
@@ -272,7 +274,7 @@ def mask_absent_rotations(
             "/opensees/nodes_ndf, so whether their rotation columns hold "
             "values or padding is unknown. Pass the model the deck ran."
         )
-    layouts = [_load_dof_layout(nodes_ndf[int(n)], ndm) for n in node_ids]
+    layouts = [_node_layout(nodes_ndf[int(n)], ndm) for n in node_ids]
     for comp, slot in slots.items():
         if slot >= 3:               # rx, ry, rz are spatial slots 3..5
             absent = np.array([slot not in lay for lay in layouts], dtype=bool)
