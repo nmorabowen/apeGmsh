@@ -1966,7 +1966,7 @@ class BuiltModel:
         emitter_can_partition = emitter.caps.supports_partitions
         tag_plan = self._tag_plan(emit_mode(
             self, split=False, supports_partitions=emitter_can_partition))
-        # #2001: a recorder that reads an upstream shell's sections after
+        # A recorder that reads an upstream shell's sections after
         # an ``algorithm Linear`` step records stale values on every route
         # (.out, MPCO, .ladruno) with no error. Warn, naming Newton. Runs
         # after the plan because it matches recorder targets against the
@@ -8904,7 +8904,7 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
         # nodes, emitter gate-2) is handled by ``DomainCapture``'s
         # __enter__ degrade: it warns and proceeds sidecar-less.
         #
-        # #2001: the declared algorithm decides whether the gauss
+        # The declared algorithm decides whether the gauss
         # capture can trust the upstream shells' probes (stale after a
         # Linear step). Any declared Linear, flat or in a stage, wins; no
         # declared algorithm is unknown (None), which the capture treats

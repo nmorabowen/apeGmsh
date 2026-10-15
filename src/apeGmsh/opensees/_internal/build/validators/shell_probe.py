@@ -6,8 +6,9 @@ set their sections' trial strain only when the residual is formed, and
 section state after a Linear step then answers stale values: zero at step
 1, then the previous step's state (ShellMITC4 / ShellDKGQ / ShellDKGT) or
 zero again (ShellNLDKGQ / ShellNLDKGT). ``eleResponse``, a ``.out``
-Element recorder and MPCO agree (#1992, PR #2000), so a recorder writes
-them without any error. This module makes the emit say so (#2001).
+Element recorder and MPCO agree (measured in
+``tests/test_results_shell_resultant_vocabulary.py``), so a recorder
+writes them without any error. This module makes the emit say so.
 """
 from __future__ import annotations
 
