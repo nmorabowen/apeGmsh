@@ -279,4 +279,19 @@ points.
 
 ## Erratum (2026-10-16)
 
-D5 says the MPCO to `.ladruno` converter copies "bucket for bucket" and that the two formats "share the bucket keys". That holds for the result buckets only: their names, their tokens (`<tag>-<Class>[r:c:h]`) and their payloads are copied verbatim. The structure around them is not. The converter rewrites the INFO datasets as attributes, turns each flat MODEL/ELEMENTS connectivity dataset into a group holding CONNECTIVITY plus the BASIS attributes, and a QUADRATURE subgroup where the rule is tabulated, restacks ON_NODES into chunked DATA, turns META into COLUMN_MAP plus COMP_NAMES, and adds a KIND to every stage. Slice 6 (#2120, PR #2121) implements it that way, from the scoping table summarised on #2079. This erratum changes no decision, and the D5 text above stands as written.
+D5 says the MPCO to `.ladruno` converter copies "bucket for bucket" and
+that the two formats "share the bucket keys". That holds for the result
+buckets only: their names, tokens and IDs, and their values, are copied
+verbatim. The structure around them is transformed to the fork layout.
+
+INFO datasets become attributes. Each flat connectivity dataset under
+MODEL/ELEMENTS becomes a group holding CONNECTIVITY, the BASIS attributes,
+and a QUADRATURE subgroup where the rule is tabulated. Per-step node and
+element results are restacked into DATA[T×n×c] plus STEP and TIME, with
+the token attributes moved onto each bucket. META becomes COLUMN_MAP plus
+COMP_NAMES. SECTION_ASSIGNMENTS gains @KIND, and every stage gets a KIND.
+Modal groups are copied as they are. LOCAL_AXES is dropped and listed in
+`unsupported`.
+
+Slice 6 (#2120, PR #2121) implements the converter this way. No decision
+changes, and the D5 text above stands as written.
