@@ -57,7 +57,7 @@ class MPCOBucketSkippedWarning(UserWarning):
 
     Its decoder refused the bucket (malformed ``META``, a ``NUM_COLUMNS``
     mismatch), so the elements it holds return no values. One warning per
-    read names every such bucket and the decoder's reason (#2047). The
+    read names every such bucket and the decoder's reason. The
     layer level names its unread buckets in
     :class:`~apeGmsh.results.readers._mpco_layer_io.LayerBucketUnreadWarning`.
     """
@@ -612,7 +612,7 @@ class MPCOReader:
         # component buckets keep the bare name; multi-component
         # buckets expose ``fiber_stress_<i>`` per index). A bucket the
         # read would refuse (the same resolve + NUM_COLUMNS check) is
-        # left out of the listing and named in one warning (#2047).
+        # left out of the listing and named in one warning.
         for parent in ("fiber_stress", "fiber_strain"):
             _, buckets, scan_unread = _mlayer.scan_layer_buckets(
                 on_elements, canonical_component=parent,
@@ -1273,7 +1273,7 @@ class MPCOReader:
             except ValueError as exc:
                 # A refused bucket (mixed layer counts, several sub-GPs
                 # per layer, malformed META) is named, with the
-                # buckets discovery left out, in one warning (#2047).
+                # buckets discovery left out, in one warning.
                 unread.append((
                     f"ON_ELEMENTS/{bucket.mpco_group_name}/{bucket.bracket_key}",
                     f"its read is refused ({exc})",
