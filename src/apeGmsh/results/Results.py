@@ -690,7 +690,7 @@ class Results:
         if model_h5 is not None:
             from ..opensees.opensees_model import OpenSeesModel
             bound_model = OpenSeesModel.from_h5(model_h5)
-            # #2101 — the program's stage names and kinds, as from_mpco.
+            # The program's stage names and kinds, as in from_mpco.
             _bind_stage_names(reader, bound_model, model_path=model_h5)
             # Attach the fem_eid↔ops-tag translator whenever the model
             # carries a real element_meta pairing — see the twin comment
