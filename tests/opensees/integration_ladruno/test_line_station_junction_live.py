@@ -112,10 +112,10 @@ def test_force_beam_sections_are_statics(solved: dict[str, Any]) -> None:
         close(solved["truth"][:, :, k], want, f"{solved['cls']} {comp}")
 
 
-#: ``.ladruno`` spells a 2-D disp beam's ``localForce`` ``N1,V1,M1,..`` (no
-#: underscore), which its station reader does not parse: the element gets
-#: no stations at all. A read gap, not a sign; pinned so its fix shows.
-UNREAD = {("ladruno", "DispBeamColumn2d"), ("ladruno", "LadrunoDispBeamColumn2d")}
+#: Cells whose reader takes no station from the bucket, held as strict
+#: xfails so a fix shows. Empty since #2013: ``.ladruno`` reads a 2-D disp
+#: beam's ``N1,V1,M1,..`` (no underscore) spelling behind the 2-D gate.
+UNREAD: set[tuple[str, str]] = set()
 
 
 @pytest.mark.parametrize("kind", KINDS)

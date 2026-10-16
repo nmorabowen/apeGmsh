@@ -1158,12 +1158,37 @@ def _dedupe_gauss_columns(
 # =====================================================================
 
 def line_station_available(on_elements: "h5py.Group") -> set[str]:
+    """Line-station canonicals the file's buckets can answer.
+
+    A ``localForce`` bucket that :func:`_local_force_2d_gate` refuses
+    lists nothing and warns once, naming its class: its columns name no
+    component reliably, and a read of its elements raises the same reason.
+    A ``localForce`` bucket whose ``COLUMN_MAP`` does not parse (its names
+    do not cover its DATA columns) lists nothing and warns, naming it.
+    """
     out: set[str] = set()
     for token in on_elements:
         for key in on_elements[token]:
+            bucket = on_elements[token][key]
             try:
-                blocks = parse_blocks(on_elements[token][key])
-            except (KeyError, ValueError):
+                blocks = parse_blocks(bucket)
+            except (KeyError, ValueError) as exc:
+                if token == "localForce":
+                    warnings.warn(
+                        f"localForce bucket {key!r} (element class "
+                        f"{_class_name(key) or '<unparsed>'!r}) is "
+                        f"unreadable: {exc!s} Its line stations are left "
+                        f"out.",
+                        UserWarning, stacklevel=2,
+                    )
+                continue
+            try:
+                alias_2d = _local_force_2d_gate(bucket, blocks, token)
+            except ValueError as exc:
+                warnings.warn(
+                    f"{exc} Its line stations are left out.",
+                    UserWarning, stacklevel=2,
+                )
                 continue
             for b in blocks:
                 for name in b.comp_names:
@@ -1172,7 +1197,7 @@ def line_station_available(on_elements: "h5py.Group") -> set[str]:
                         if c is not None:
                             out.add(c)
                     else:
-                        bc = _station_canonical(name, token)
+                        bc = _station_canonical(name, token, alias_2d)
                         if bc is not None:
                             out.add(bc[0])
     return out
@@ -1181,17 +1206,146 @@ def line_station_available(on_elements: "h5py.Group") -> set[str]:
 #: A 2-D ``localForce`` bucket names its shear and moment ``V``/``M``
 #: (``N_1,V_1,M_1,N_2,V_2,M_2``); a 2-D beam has one of each, ``Vy``/``Mz``.
 #: Only for ``localForce``: ``basicForce``'s ``M_1``/``M_2`` are basic-system
-#: end moments, not section forces.
+#: end moments, not section forces. It applies only to a bucket that
+#: :func:`_local_force_2d_gate` admits.
 _LOCAL_FORCE_2D_ALIAS = {"V": "Vy", "M": "Mz"}
+
+#: A ``localForce`` station token: ``N_1`` and ``N1`` both occur
+#: (DispBeamColumn2d and LadrunoDispBeamColumn2d drop the underscore).
+_LOCAL_FORCE_TOKEN_RE = re.compile(r"^(?P<base>[A-Za-z]+)_?(?P<station>\d+)$")
+
+#: The 3-D shear, torsion and moment bases a 2-D spelling must not mix with.
+_LOCAL_FORCE_3D_BASES = frozenset({"Vy", "Vz", "T", "My", "Mz"})
+
+
+def _file_spatial_dim(group: "h5py.Group") -> Optional[int]:
+    """The ``.ladruno`` file's spatial dimension, or ``None`` if unknown.
+
+    ``INFO/SPATIAL_DIM`` when the file carries it, else the one width of
+    1, 2 or 3 that every stage's ``MODEL/NODES/COORDINATES`` agrees on
+    (the reader's own rule, #2081).
+    """
+    f = group.file
+    if "INFO" in f and "SPATIAL_DIM" in f["INFO"].attrs:
+        raw = np.asarray(f["INFO"].attrs["SPATIAL_DIM"])
+        if raw.size:
+            return int(raw.flat[0])
+    widths: set[int] = set()
+    for name in f:
+        if not name.startswith("MODEL_STAGE["):
+            continue
+        stage = f[name]
+        if ("MODEL" in stage and "NODES" in stage["MODEL"]
+                and "COORDINATES" in stage["MODEL"]["NODES"]):
+            coords = stage["MODEL"]["NODES"]["COORDINATES"]
+            if len(coords.shape) == 2:
+                widths.add(int(coords.shape[1]))
+    if len(widths) == 1 and widths <= {1, 2, 3}:
+        return widths.pop()
+    return None
+
+
+def _local_force_2d_gate(
+    bucket: "h5py.Group", blocks: list[_Block], token: str,
+) -> bool:
+    """True when a ``localForce`` bucket's 2-D names read as ``Vy``/``Mz``.
+
+    False for a bucket that spells no 2-D ``V``/``M`` name (or another
+    token): its names read as they are. A bucket that does spell them is
+    admitted only when its ``DATA`` holds exactly the tagged columns, one
+    per name, it spells no 3-D base beside them, the file is 2-D, and its
+    class is no ``...3d`` class. Every other such bucket raises
+    :class:`ValueError` naming the bucket and its class, the gate #2010 put
+    on MPCO.
+
+    ComponentElement3d and ForceBeamColumnCBDI3d tag a 12-value
+    ``localForce`` with the six 2-D names. The fork's recorder keeps the
+    declared 6 columns and fills the row (NaN at the pin, zeros before
+    WP-163), so the bucket's width agrees with its names and only the
+    dimension and class gates can tell. A 12-wide bucket under 6 names is
+    refused by the width gate.
+    """
+    if token != "localForce":
+        return False
+    names = [n.strip() for b in blocks for n in b.comp_names]
+    bases = {
+        m.group("base") for m in map(_LOCAL_FORCE_TOKEN_RE.match, names)
+        if m is not None
+    }
+    spelled_2d = bases & set(_LOCAL_FORCE_2D_ALIAS)
+    if not spelled_2d:
+        return False
+    key = bucket.name.rsplit("/", 1)[-1]
+    cls = _class_name(key) or "<unparsed>"
+    where = f"localForce bucket {key!r} (element class {cls!r})"
+    width = int(np.asarray(bucket["DATA"].shape)[-1])
+    if any(b.multiplicity != 1 for b in blocks) or len(names) != width:
+        raise ValueError(
+            f"{where}: its DATA is {width} columns wide per element but it "
+            f"tags {len(names)} components {names}; the 2-D names cannot "
+            f"be matched to the columns."
+        )
+    spelled_3d = bases & _LOCAL_FORCE_3D_BASES
+    if spelled_3d:
+        raise ValueError(
+            f"{where}: mixes the 2-D names {sorted(spelled_2d)} with the "
+            f"3-D {sorted(spelled_3d)}; the shear and moment axes are "
+            f"ambiguous."
+        )
+    ndm = _file_spatial_dim(bucket)
+    if ndm != 2:
+        raise ValueError(
+            f"{where}: tags its columns with the 2-D names {names}, but the "
+            f"file's spatial dimension is {ndm!r}, not 2; the shear and "
+            f"moment axes cannot be read from them."
+        )
+    if not _class_name(key) or cls.lower().endswith("3d"):
+        raise ValueError(
+            f"{where}: the class records its localForce under the 2-D "
+            f"names {names}; a 3-D class (or an unparsed key) cannot be "
+            f"read as a 2-D beam."
+        )
+    return True
+
+
+def _section_served_ids(on_elements: "h5py.Group", component: str) -> ndarray:
+    """Element ids a section-level bucket serves ``component`` for.
+
+    The rank-0 source of :func:`read_line_station_slab`: a bucket with a
+    ``LEVELS==2`` block naming ``component`` gives every one of its
+    elements section stations, which win over ``localForce``.
+    """
+    parts: list[ndarray] = []
+    for token in on_elements:
+        for key in on_elements[token]:
+            bucket = on_elements[token][key]
+            try:
+                blocks = parse_blocks(bucket)
+            except (KeyError, ValueError):
+                continue
+            if any(b.level == 2 and section_canonical(n) == component
+                   for b in blocks for n in b.comp_names):
+                parts.append(np.asarray(
+                    bucket["ID"][...], dtype=np.int64).flatten())
+    if not parts:
+        return np.empty(0, dtype=np.int64)
+    return np.concatenate(parts)
 
 
 def _station_canonical(
-    name: str, token: str,
+    name: str, token: str, alias_2d: bool,
 ) -> Optional[tuple[str, Optional[int]]]:
-    """:func:`beam_canonical`, with the 2-D ``localForce`` spellings."""
-    if token == "localForce":
-        base, sep, station = name.strip().partition("_")
-        name = _LOCAL_FORCE_2D_ALIAS.get(base, base) + sep + station
+    """:func:`beam_canonical`, with the gated 2-D ``localForce`` spellings.
+
+    ``alias_2d`` is :func:`_local_force_2d_gate`'s verdict on the bucket:
+    when True, ``V``/``M`` read as ``Vy``/``Mz`` and ``N1`` as ``N_1``.
+    """
+    if token == "localForce" and alias_2d:
+        m = _LOCAL_FORCE_TOKEN_RE.match(name.strip())
+        if m is not None:
+            base = m.group("base")
+            name = (f"{_LOCAL_FORCE_2D_ALIAS.get(base, base)}_"
+                    f"{m.group('station')}")
     return beam_canonical(name)
 
 
@@ -1279,12 +1433,35 @@ def _read_element_stations(
     bucket: "h5py.Group", blocks: list[_Block], component: str, token: str,
     *, t_idx: ndarray, element_ids: "Optional[ndarray]",
 ) -> "Optional[tuple[ndarray, ndarray, ndarray]]":
-    """Element-level (``localForce``/``basicForce``) line stations."""
+    """Element-level (``localForce``/``basicForce``) line stations.
+
+    A ``localForce`` bucket that :func:`_local_force_2d_gate` refuses
+    raises its reason, whatever the component, when the read asks for one
+    of its elements (``element_ids=None`` asks for all) that no
+    section-level bucket serves with this component: its columns name
+    none reliably. An element with section stations keeps them, since the
+    section source ranks first (:func:`read_line_station_slab`), and
+    reads of other elements pass the bucket over.
+    """
+    try:
+        alias_2d = _local_force_2d_gate(bucket, blocks, token)
+    except ValueError as exc:
+        hit = _select_rows(bucket, element_ids)
+        if hit is not None:
+            served = _section_served_ids(bucket.parent.parent, component)
+            bare = hit[1][~np.isin(hit[1], served)]
+            if bare.size:
+                raise ValueError(
+                    f"{exc} (requested element(s) {bare[:10].tolist()} are "
+                    f"in this bucket, with no section stations for "
+                    f"{component!r})"
+                ) from exc
+        return None
     # station (1-based, None→1) → DATA column for this component.
     station_to_col: dict[int, int] = {}
     for b in blocks:
         for off, name in enumerate(b.comp_names):
-            bc = _station_canonical(name, token)
+            bc = _station_canonical(name, token, alias_2d)
             if bc is None or bc[0] != component:
                 continue
             station = bc[1] if bc[1] is not None else 1
