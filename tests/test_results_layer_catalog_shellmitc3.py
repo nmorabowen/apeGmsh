@@ -24,7 +24,7 @@ import numpy as np
 import pytest
 
 from apeGmsh.opensees import element as _bridge_elements
-from apeGmsh.opensees._element_capabilities import Unknown, element_capability
+from apeGmsh.opensees._element_capabilities import element_capability
 from apeGmsh.opensees._response_catalog import (
     ELE_TAG_ASDShellQ4,
     LAYER_CATALOG,
@@ -67,7 +67,10 @@ _MOCK_TAG = 999
 
 def test_shellmitc3_is_a_foreign_class_without_a_layer_row() -> None:
     assert not hasattr(_bridge_elements, "ShellMITC3")
-    assert element_capability("ShellMITC3") is Unknown
+    # The bridge refuses the class by name; the readers below still read a
+    # file that carries it, and warn.
+    with pytest.raises(ValueError, match="ASDShellT3"):
+        element_capability("ShellMITC3")
     assert ("ShellMITC3", "fiber_stress") not in LAYER_CATALOG
     assert ("ShellMITC3", "fiber_strain") not in LAYER_CATALOG
 

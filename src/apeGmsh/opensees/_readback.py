@@ -41,6 +41,7 @@ from typing import TYPE_CHECKING, Iterable, Iterator, Sequence, Union
 
 import numpy as np
 
+from ._element_capabilities import refuse_removed_element
 from ._internal.build.errors import BridgeError
 from ._internal.build.ndf import _load_dof_layout
 from ._internal.tag_resolution import MISSING_FEM_ELEMENT_ID
@@ -242,8 +243,29 @@ def _roles_from_rows(
 #: and checks no ``Element`` subclass is missing. A rehydrated model keeps
 #: only the token (``ElementRecord.type_token``). A token not here is an
 #: unknown class: it blocks the rotational slots of the nodes it touches,
-#: and of element-less nodes.
-_CLASS_FOR_TOKEN: "dict[str, type]" = {
+#: and of element-less nodes. A token of a removed class
+#: (:data:`~._element_capabilities.REMOVED_ELEMENT_CLASSES`) is refused by
+#: name on every lookup, never answered as unknown.
+class _TokenTable(dict):  # type: ignore[type-arg]
+    """``dict[str, type]`` whose lookups refuse a removed element class by
+    name, so every reader of the table (here and in
+    ``_recorder_translate``) does without a separate guard."""
+
+    def get(self, key: str, default: "type | None" = None) -> "type | None":  # type: ignore[override]
+        refuse_removed_element(key)
+        return super().get(key, default)
+
+    def __getitem__(self, key: str) -> type:
+        refuse_removed_element(key)
+        return super().__getitem__(key)  # type: ignore[no-any-return]
+
+    def __contains__(self, key: object) -> bool:
+        if isinstance(key, str):
+            refuse_removed_element(key)
+        return super().__contains__(key)
+
+
+_CLASS_FOR_TOKEN: "dict[str, type]" = _TokenTable({
     "elasticBeamColumn": elasticBeamColumn,
     "forceBeamColumn": forceBeamColumn,
     "dispBeamColumn": dispBeamColumn,
@@ -277,7 +299,7 @@ _CLASS_FOR_TOKEN: "dict[str, type]" = {
     "LadrunoUP": LadrunoUP,
     "ASDAbsorbingBoundary2D": ASDAbsorbingBoundary2D,
     "ASDAbsorbingBoundary3D": ASDAbsorbingBoundary3D,
-}
+})
 
 
 def rotation_roles_from_tokens(

@@ -20,7 +20,9 @@ The OpenSees commands per the manual:
 
 ``ShellMITC3`` was removed (#2092): no OpenSees build has the element, so
 every model that used it failed at emit. ``ASDShellT3`` is the 3-node shell
-to use; :data:`SHELLMITC3_REMOVED` is the message every spelling raises.
+to use. ``ops.element.ShellMITC3`` and a lookup of the class by name raise
+:data:`~apeGmsh.opensees._element_capabilities.REMOVED_ELEMENT_CLASSES`'s
+message, which names the replacements.
 
 Element fan-out contract
 ========================
@@ -41,9 +43,7 @@ Tests install both contexts manually with :func:`set_tag_resolver` +
 """
 from __future__ import annotations
 
-import sys
 from dataclasses import dataclass
-from opcode import opmap
 from typing import TYPE_CHECKING
 
 from .._internal.tag_resolution import (
@@ -55,44 +55,6 @@ from .._internal.types import Damping, Element, Primitive, Section
 
 if TYPE_CHECKING:
     from ..emitter.base import Emitter
-
-
-#: What every spelling of the removed ``ShellMITC3`` raises: the
-#: module ``__getattr__`` here and in :mod:`apeGmsh.opensees.element`, and
-#: ``ops.element``.
-SHELLMITC3_REMOVED = (
-    "ShellMITC3 was removed from the bridge (#2092): no OpenSees build has "
-    "the element (neither the Ladruno fork pin nor upstream), so a model "
-    "using it failed at emit. Use ops.element.ASDShellT3 for a 3-node shell. "
-    "ShellDKGT is the other working 3-node OpenSees shell; the bridge has no "
-    "typed primitive for it."
-)
-
-
-def shellmitc3_removed() -> Exception:
-    """The error a spelling of the removed ``ShellMITC3`` raises (#2092).
-
-    An attribute read gets an ``AttributeError``, so ``hasattr`` and
-    ``getattr(..., default)`` still answer "absent". ``from ... import
-    ShellMITC3`` is the exception: CPython swallows an ``AttributeError``
-    from a module ``__getattr__`` during ``IMPORT_FROM`` and raises a bare
-    "cannot import name", which would drop the replacement. So when the
-    caller of the module ``__getattr__`` is executing ``IMPORT_FROM``, the
-    error is an ``ImportError`` carrying the same message.
-    """
-    caller = sys._getframe(2)   # 0: here, 1: a ``__getattr__``, 2: its caller
-    if caller.f_code.co_code[caller.f_lasti] == opmap["IMPORT_FROM"]:
-        return ImportError(SHELLMITC3_REMOVED)
-    return AttributeError(SHELLMITC3_REMOVED)
-
-
-if not TYPE_CHECKING:
-    # Hidden from type checkers: a module ``__getattr__`` reads to mypy as
-    # "answers any name", which would type-check the removed spelling.
-    def __getattr__(name: str) -> object:
-        if name == "ShellMITC3":
-            raise shellmitc3_removed()
-        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 __all__ = [

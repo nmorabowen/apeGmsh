@@ -21,8 +21,8 @@ from ...element.beam_column import (
     elasticBeamColumn,
     forceBeamColumn,
 )
+from ..._element_capabilities import REMOVED_ELEMENT_CLASSES
 from ...element.shell import (
-    SHELLMITC3_REMOVED,
     ASDShellQ4,
     ASDShellT3,
     ShellDKGQ,
@@ -104,8 +104,8 @@ class _ElementNS(_BridgeNamespace):
     """``ops.element.<Type>(pg=..., ...)`` — Phase 2 element namespace."""
 
     if not TYPE_CHECKING:
-        # ``ops.element.ShellMITC3`` is a removed spelling: it raises
-        # the message that names the replacement. The hook only rewords an
+        # ``ops.element.<removed class>`` raises the message that names the
+        # replacement (REMOVED_ELEMENT_CLASSES). The hook only rewords an
         # AttributeError and answers no new name, so it is
         # ``__getattribute__`` rather than ``__getattr__``, and type checkers
         # never see it: a ``__getattr__`` reads as "answers any name" to
@@ -115,8 +115,9 @@ class _ElementNS(_BridgeNamespace):
             try:
                 return object.__getattribute__(self, name)
             except AttributeError:
-                if name == "ShellMITC3":
-                    raise AttributeError(SHELLMITC3_REMOVED) from None
+                message = REMOVED_ELEMENT_CLASSES.get(name)
+                if message is not None:
+                    raise AttributeError(message) from None
                 raise
 
     # -- Beam-column family (Phase 2α) ----------------------------------
