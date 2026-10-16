@@ -566,41 +566,48 @@ class Results:
                 reader = MPCOMultiPartitionReader(discovered)
             else:
                 reader = MPCOReader(discovered[0])
-        # Per INV-3, this is an in-memory rehydrate from the sibling
-        # file; we never copy the zone into a derived h5.
-        from ..opensees.opensees_model import OpenSeesModel
-        bound_model = OpenSeesModel.from_h5(model_h5)
-        # #1325 — the archive's neutral FEMData carries the physical
-        # groups the MPCO MODEL/ group lacks; #1324 — its /opensees/stages
-        # carry the names the MODEL_STAGE[<k>] groups lack.
-        bound_fem = _resolve_fem_via_model(
-            reader, fem, bound_model, model_path=model_h5,
-        )
-        _bind_stage_names(reader, bound_model, model_path=model_h5)
-        # ADR 0043 slice 1.3 — MPCO buckets key element results by the
-        # OpenSees ops tag; the results API speaks fem_eid. Whenever the
-        # bound model carries a real element_meta pairing, the reader must
-        # relabel ops↔fem through it. This is NOT compose-only: gmsh
-        # numbers lower-dimensional elements first, so almost any solid
-        # model with surface physical groups has fem_eid != ops_tag even
-        # uncomposed (the former compose-provenance gate silently
-        # scrambled / dropped element results for exactly that case —
-        # fixed 2026-08-04). A deliberately-unrelated stub ``model_h5=``
-        # (common in tests) stays safe through the translator's
-        # all-or-nothing `_relabel` contract: ids the model does not
-        # fully describe pass through untranslated.
-        from .readers._tag_translation import ElementTagTranslator
-        _tag_map = ElementTagTranslator.from_model(bound_model)
-        if not _tag_map.is_empty:
-            reader.attach_tag_map(_tag_map)
-        # The file holds no per-node ndf; the model's masks the
-        # recorder's 0.0 rotations at nodes without rotational DOFs.
-        from .readers._mpco import attach_model_nodes_ndf
-        attach_model_nodes_ndf(reader, model_h5, bound_model.ndm)
-        return cls(
-            reader, fem=bound_fem, path=anchor, model=bound_model,
-            model_path=Path(model_h5),
-        )._with_autoloaded_definitions()
+        # A step after the open that raises closes the reader
+        # first (the file is free again on Windows), then re-raises.
+        try:
+            # Per INV-3, this is an in-memory rehydrate from the sibling
+            # file; we never copy the zone into a derived h5.
+            from ..opensees.opensees_model import OpenSeesModel
+            bound_model = OpenSeesModel.from_h5(model_h5)
+            # The archive's neutral FEMData carries the physical groups
+            # the MPCO MODEL/ group lacks; its /opensees/stages carry the
+            # names the MODEL_STAGE[<k>] groups lack.
+            bound_fem = _resolve_fem_via_model(
+                reader, fem, bound_model, model_path=model_h5,
+            )
+            _bind_stage_names(reader, bound_model, model_path=model_h5)
+            # ADR 0043 slice 1.3 — MPCO buckets key element results by
+            # the OpenSees ops tag; the results API speaks fem_eid.
+            # Whenever the bound model carries a real element_meta
+            # pairing, the reader must relabel ops↔fem through it. This
+            # is NOT compose-only: gmsh numbers lower-dimensional elements
+            # first, so almost any solid model with surface physical
+            # groups has fem_eid != ops_tag even uncomposed (the former
+            # compose-provenance gate silently scrambled / dropped element
+            # results for exactly that case — fixed 2026-08-04). A
+            # deliberately-unrelated stub ``model_h5=`` (common in tests)
+            # stays safe through the translator's all-or-nothing
+            # `_relabel` contract: ids the model does not fully describe
+            # pass through untranslated.
+            from .readers._tag_translation import ElementTagTranslator
+            _tag_map = ElementTagTranslator.from_model(bound_model)
+            if not _tag_map.is_empty:
+                reader.attach_tag_map(_tag_map)
+            # The file holds no per-node ndf; the model's masks the
+            # recorder's 0.0 rotations at nodes without rotational DOFs.
+            from .readers._mpco import attach_model_nodes_ndf
+            attach_model_nodes_ndf(reader, model_h5, bound_model.ndm)
+            return cls(
+                reader, fem=bound_fem, path=anchor, model=bound_model,
+                model_path=Path(model_h5),
+            )._with_autoloaded_definitions()
+        except BaseException:
+            reader.close()
+            raise
 
     @classmethod
     def from_ladruno(
@@ -623,7 +630,8 @@ class Results:
         * omitted → the broker is built in-memory from the file's own
           ``MODEL`` group (geometry + inferred ``ndm``/``ndf``; bridge
           record zones empty). This is read-time interpretation, not a
-          transcode.
+          transcode. A file with no ``MODEL`` group raises
+          :class:`ValueError` naming the file; ``model_h5=`` opens it.
         * supplied → the richer broker is loaded via
           :meth:`OpenSeesModel.from_h5` (full bridge records + lineage),
           and — whenever the model records an element_meta pairing —
@@ -685,35 +693,49 @@ class Results:
                 if len(discovered) > 1
                 else LadrunoReader(discovered[0])
             )
-        bound_fem = _resolve_fem(reader, fem)
-        bound_model: "Optional[OpenSeesModel]"
-        if model_h5 is not None:
-            from ..opensees.opensees_model import OpenSeesModel
-            bound_model = OpenSeesModel.from_h5(model_h5)
-            # The program's stage names and kinds, as in from_mpco.
-            _bind_stage_names(reader, bound_model, model_path=model_h5)
-            # Attach the fem_eid↔ops-tag translator whenever the model
-            # carries a real element_meta pairing — see the twin comment
-            # in :meth:`from_mpco` (the pairing diverges for ANY sparsely
-            # renumbered mesh, not just composed models).
-            from .readers._tag_translation import ElementTagTranslator
-            _tag_map = ElementTagTranslator.from_model(bound_model)
-            if not _tag_map.is_empty:
-                reader.attach_tag_map(_tag_map)
-            # As in :meth:`from_mpco`: NaN, not the recorder's 0.0, for
-            # rotations a node does not have.
-            from .readers._ladruno import attach_model_nodes_ndf
-            attach_model_nodes_ndf(reader, model_h5, bound_model.ndm)
-            model_path: "Optional[Path]" = Path(model_h5)
-        else:
-            # Self-sufficient path — minimal broker from the file itself.
-            bound_model = resolve_bound_model(reader, None)
-            model_path = None
-        assert bound_model is not None
-        return cls(
-            reader, fem=bound_fem, path=anchor, model=bound_model,
-            model_path=model_path,
-        )._with_autoloaded_definitions()
+        # A step after the open that raises closes the reader
+        # first (the file is free again on Windows), then re-raises.
+        try:
+            bound_fem = _resolve_fem(reader, fem)
+            bound_model: "Optional[OpenSeesModel]"
+            if model_h5 is not None:
+                from ..opensees.opensees_model import OpenSeesModel
+                bound_model = OpenSeesModel.from_h5(model_h5)
+                # The program's stage names and kinds, as in from_mpco.
+                _bind_stage_names(reader, bound_model, model_path=model_h5)
+                # Attach the fem_eid↔ops-tag translator whenever the
+                # model carries a real element_meta pairing — see the
+                # twin comment in :meth:`from_mpco` (the pairing diverges
+                # for ANY sparsely renumbered mesh, not just composed
+                # models).
+                from .readers._tag_translation import ElementTagTranslator
+                _tag_map = ElementTagTranslator.from_model(bound_model)
+                if not _tag_map.is_empty:
+                    reader.attach_tag_map(_tag_map)
+                # As in :meth:`from_mpco`: NaN, not the recorder's 0.0,
+                # for rotations a node does not have.
+                from .readers._ladruno import attach_model_nodes_ndf
+                attach_model_nodes_ndf(reader, model_h5, bound_model.ndm)
+                model_path: "Optional[Path]" = Path(model_h5)
+            else:
+                # Self-sufficient path — minimal broker from the file.
+                bound_model = resolve_bound_model(reader, None)
+                model_path = None
+            if bound_model is None:
+                # The reader builds its broker from the MODEL
+                # group; a file without one needs model_h5=.
+                raise ValueError(
+                    f"{anchor}: this results file carries no MODEL group "
+                    f"(node geometry), so the OpenSees model cannot be "
+                    f"built from the file. Pass model_h5= to supply it."
+                )
+            return cls(
+                reader, fem=bound_fem, path=anchor, model=bound_model,
+                model_path=model_path,
+            )._with_autoloaded_definitions()
+        except BaseException:
+            reader.close()
+            raise
 
     @classmethod
     def from_fem(
