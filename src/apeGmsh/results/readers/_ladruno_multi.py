@@ -111,21 +111,25 @@ class LadrunoMultiPartitionReader:
     """Façade over N :class:`LadrunoReader` instances (structural protocol)."""
 
     def __init__(self, paths: Sequence[str | Path]) -> None:
+        # Bound first, so ``close()`` / ``__del__`` find a list on a
+        # facade whose construction failed (#2106).
+        self._readers: list[LadrunoReader] = []
         if not paths:
             raise ValueError(
                 "LadrunoMultiPartitionReader requires at least one path."
             )
         self._paths = [Path(p) for p in paths]
-        self._readers: list[LadrunoReader] = [
-            LadrunoReader(p) for p in self._paths
-        ]
+        # A part that fails to open, or a failed (or interrupted)
+        # consistency read, closes every part opened so far and re-raises
+        # the original error: the part files stay unlocked (#2106).
         try:
+            for p in self._paths:
+                self._readers.append(LadrunoReader(p))
             _validate_warning_once_per_mode(
                 self._validate_consistency, self._paths,
             )
-        except Exception:
-            for r in self._readers:
-                r.close()
+        except BaseException:
+            self.close()
             raise
         self._fem_cache: "Optional[FEMData] | _Sentinel" = _SENTINEL
 
