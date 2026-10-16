@@ -28,8 +28,9 @@ Key layout facts (verified against fork build ``605affeb``, FORMAT_VERSION 1):
 from __future__ import annotations
 
 import warnings
+from dataclasses import replace
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, NamedTuple, Optional
+from typing import TYPE_CHECKING, Any, NamedTuple, Optional, Sequence
 
 import numpy as np
 from numpy import ndarray
@@ -50,6 +51,7 @@ from . import _ladruno_element_io as _eio
 from . import _mpco_nodal_io as _mnodal
 from ._ladruno_hyperslab import read_hyperslab
 from ._mpco import (
+    _PROGRAM_STAGE_KINDS,
     _empty_element_slab,
     _empty_fiber_slab,
     _empty_gauss_slab,
@@ -282,6 +284,47 @@ class LadrunoReader:
         return self._tag_map.read_translation(element_ids)
 
     # -- stages / time -------------------------------------------------
+
+    def attach_stage_names(
+        self, names: "Sequence[str]", kinds: "Sequence[str]",
+    ) -> None:
+        """Name and kind the capture stages after the program's stages.
+
+        The sibling of :meth:`MPCOReader.attach_stage_names`, with the
+        same contract (#2100): the ``ops.stage(name=...)`` names and each
+        stage's ``analysis`` kind live in the sibling ``model.h5``, and
+        the caller pairs them positionally over the non-mode stages once
+        it has checked the counts.  A count mismatch or a kind outside
+        ``static``/``transient`` raises.  Stage ids are untouched; the
+        ``MODEL_STAGE[<k>]`` name moves to :attr:`StageInfo.aliases`.
+
+        The program kind replaces the kind read from the group's
+        ``KIND`` attribute.  That attribute is the recorder's ``-kind``
+        option (default ``static``), overwritten to ``eigen`` beside
+        modes, so it is not evidence of how the stage was analysed.
+        Mode stages keep their own names and kind.
+        """
+        current = self.stages()
+        hosts = [s for s in current if s.kind != "mode"]
+        if not len(names) == len(kinds) == len(hosts):
+            raise ValueError(
+                f"attach_stage_names: {len(names)} names and "
+                f"{len(kinds)} kinds for {len(hosts)} MODEL_STAGE groups "
+                f"in {self._path.name}."
+            )
+        bad = sorted({str(k) for k in kinds} - _PROGRAM_STAGE_KINDS)
+        if bad:
+            raise ValueError(
+                f"attach_stage_names: stage kinds {bad} are not program "
+                f"stage kinds {sorted(_PROGRAM_STAGE_KINDS)}."
+            )
+        new = {s.id: (str(n), str(k)) for s, n, k in zip(hosts, names, kinds)}
+        self._stage_cache = [
+            replace(s, name=new[s.id][0], kind=new[s.id][1],
+                    aliases=(s.name, *s.aliases))
+            if s.id in new else s
+            for s in current
+        ]
 
     def stages(self) -> list[StageInfo]:
         if self._stage_cache is not None:

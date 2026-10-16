@@ -136,6 +136,23 @@ class LadrunoMultiPartitionReader:
         for r in self._readers:
             r.attach_tag_map(tag_map)
 
+    def attach_stage_names(
+        self, names: "Sequence[str]", kinds: "Sequence[str]",
+    ) -> None:
+        """Forward the program's stage names and kinds to every child
+        reader (#2100), as :meth:`MPCOMultiPartitionReader.attach_stage_names`
+        does.
+
+        :meth:`stages` answers from the parts, and every child keeps its
+        own stage list, so each is renamed.  The construction-time
+        pairing already proved the parts list the same number of host
+        stages; parts that stamped one stage differently all take the
+        same program name, and each keeps its own ``MODEL_STAGE[<k>]``
+        as an alias.
+        """
+        for r in self._readers:
+            r.attach_stage_names(names, kinds)
+
     def _validate_part_set(self) -> None:
         """Refuse a part set mixed from different runs (fork WP-165).
 
