@@ -7,13 +7,14 @@ section moment is `+8600`. A beam that recorded `basicForce` and
 `globalForce` got four stations, two of them with the wrong sign.
 
 Each element now reads one source, the first it records in this order:
-`section.force`, then `localForce`, then the `basicForce` end moments (a
-truss's `axialForce` ranks with `basicForce`). `globalForce` and every other
-element-level token are never a source. When such a token is the only one
-that names a requested element's component, the read returns no stations
-for it and warns, naming the token, the bucket and the elements
-(`LineStationBucketSkippedWarning` on `.ladruno`, `MPCOBucketSkippedWarning`
-on MPCO).
+`section.force`, then `localForce`, then the `basicForce` end moments, then
+a truss's `axialForce`. `localForces` and `basicForces` read as their
+singular. `globalForce` and every other element-level token are never a
+source. When such a token is the only one that names a requested beam's
+component, the read returns no stations for it and warns, naming the
+token, the bucket and the elements (`LineStationBucketSkippedWarning` on
+`.ladruno`, `MPCOBucketSkippedWarning` on MPCO). Bearings, walls and other
+non-beam classes stay silent.
 
 MPCO follows the same rule. It now reads `basicForce` end moments
 (`Mz_1,Mz_2`, `My_1,My_2`) as stations under the `localForce` signs, as
