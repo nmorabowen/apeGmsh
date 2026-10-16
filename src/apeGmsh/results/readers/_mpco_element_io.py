@@ -15,10 +15,14 @@ validates each bucket against the response catalog, and returns
 per-component data as ``(T, E_g, n_GP)`` blocks ready to be packed
 into a ``GaussSlab``.
 
-v1 scope (skipped with a clear log message when encountered):
+Every header index is read (``:0``, ``:1``, ...): MPCO opens a new
+header when one class's elements write different META, and each header
+bucket is checked against its own ``NUM_COLUMNS`` and META by
+:func:`validate_bucket_meta` before it is read.
+
+v1 scope (skipped when encountered):
 
 - ``custom_rule_idx != 0`` (force-based beams with user IPs).
-- ``header_idx != 0`` (heterogeneous response shapes).
 - Element classes not yet in the catalog.
 
 Anything outside the v1 scope simply contributes nothing to the slab —
@@ -117,6 +121,8 @@ def discover_gauss_buckets(
     and accumulate buckets across every group that exists, skipping
     duplicates so the same bucket key is never returned twice.
     Buckets that don't shape-match the catalog are filtered per-bucket.
+    Every header index is returned; each header bucket's width comes
+    from its own ``NUM_COLUMNS`` and its META is validated at read.
 
     Returns
     -------
@@ -152,7 +158,7 @@ def discover_gauss_buckets(
                 elem_key = parse_mpco_element_key(bracket_key)
             except ValueError:
                 continue
-            if elem_key.custom_rule_idx != 0 or elem_key.header_idx != 0:
+            if elem_key.custom_rule_idx != 0:
                 continue
             found = catalog_layout(
                 elem_key, catalog_token, where=f"{name}/{bracket_key}",

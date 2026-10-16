@@ -46,8 +46,11 @@ v1 scope (a bucket outside it is left unread, and named in the read's
 
 Bucket discovery leaves out a bucket of a class with no ``LAYER_CATALOG``
 row (ShellMITC3: no OpenSees build has the element and the bridge dropped
-it, #2092, so no file records it), a ``header_idx != 0`` bucket, a bucket whose rule differs from the
-class's surface rule, and an unparseable key. A read names each one, by
+it, #2092, so no file records it), a bucket whose rule differs from the
+class's surface rule, and an unparseable key. Every header index is read
+(``:0``, ``:1``, ...): MPCO opens a new header when one class's elements
+carry layered sections of different layer counts, and each header bucket
+resolves its own layer count and META components. A read names each one, by
 class, in one :class:`LayerBucketUnreadWarning`, as the ``.ladruno``
 reader does (#2090). Beam fiber-section buckets (``FIBER_CATALOG``
 classes on a custom rule) in the shared ``section.fiber.<X>`` group
@@ -172,11 +175,6 @@ def _classify_layer_bucket(
             f"no beam fiber-section entry (FIBER_CATALOG)"
         ), elem_key, None
     layout = lookup_layer(cls, catalog_token)
-    if elem_key.header_idx != 0:
-        return (
-            f"class {cls!r} bucket has header index {elem_key.header_idx}; "
-            f"the layer reader reads header 0 only"
-        ), elem_key, None
     if elem_key.int_rule != layout.surface_int_rule:
         return (
             f"class {cls!r} bucket has integration rule {elem_key.int_rule}, "

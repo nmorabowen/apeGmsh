@@ -20,12 +20,16 @@ differences from line-stations:
    element / GP uses, then reads its ``FIBER_DATA`` and
    ``FIBER_MATERIALS`` arrays.
 
+Every header index is read (``:0``, ``:1``, ...): MPCO opens a new
+header when one class's elements carry fiber sections of different
+fiber counts, and each header bucket resolves its own fiber count from
+the sections its elements are assigned.
+
 v1 scope (skipped silently when encountered):
 
 - Heterogeneous fiber sections within one bucket (different fiber
   counts per IP or per element). v1 assumes all elements in the
   bucket share an identical-shape fiber section.
-- ``header_idx != 0``.
 - Sections without ``FIBER_DATA`` (non-fiber sections that somehow
   end up under ``section.fiber.stress`` — should never happen).
 """
@@ -102,9 +106,10 @@ def discover_fiber_buckets(
         ``mpco_group_name`` is the ON_ELEMENTS child name we looked
         under (``"section.fiber.stress"`` / ``"section.fiber.strain"``)
         or ``None`` if the canonical has no fibers-topology routing.
-        ``buckets`` keeps only entries with ``int_rule == Custom``,
-        ``header_idx == 0``, and a ``(class_name, token)`` in
-        :data:`apeGmsh.opensees._response_catalog.FIBER_CATALOG`.
+        ``buckets`` keeps the entries with ``int_rule == Custom`` and a
+        ``(class_name, token)`` in
+        :data:`apeGmsh.opensees._response_catalog.FIBER_CATALOG`, at
+        every header index.
     """
     mapping = canonical_to_fiber_token(canonical_component)
     if mapping is None:
@@ -122,8 +127,6 @@ def discover_fiber_buckets(
             continue
         if not elem_key.is_custom_rule:
             # Beam fiber-section buckets always use the custom rule.
-            continue
-        if elem_key.header_idx != 0:
             continue
         if not is_fiber_catalogued(elem_key.class_name, catalog_token):
             continue
