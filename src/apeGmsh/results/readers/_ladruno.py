@@ -717,7 +717,7 @@ class LadrunoReader:
         self, on_nodes: "h5py.Group", component: str,
     ) -> "Optional[tuple[str, int]]":
         # The group comes from the translation's precedence, never from
-        # HDF5 iteration order (#2122).
+        # HDF5 iteration order.
         return locate_node_component(
             (
                 (res_name, _decode(on_nodes[res_name].attrs["COMPONENTS"])

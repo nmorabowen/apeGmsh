@@ -76,7 +76,7 @@ _NODAL_RESULT_NAME_MAP: dict[str, _Mapping] = {
 # Several ON_NODES groups translate to one canonical prefix. A read takes
 # the first group of the prefix's tuple that the file records, never the
 # first in HDF5 iteration order: a file written without ``track_order``
-# iterates its groups by name (#2122). The static reaction leads because
+# iterates its groups by name. The static reaction leads because
 # it is what ``ops.reactions()`` / ``ops.nodeReaction`` report by default.
 # Every prefix with more than one group must be listed here, and list
 # exactly those groups; :func:`_check_precedence` enforces it at import.
@@ -95,8 +95,7 @@ _NODAL_PRECEDENCE: dict[str, tuple[str, ...]] = {
 # ON_NODES groups the readers recognise but translate to no canonical
 # name, with the canonical prefix each is mistaken for. A Rayleigh group
 # holds the Rayleigh damping force alone (OpenSees
-# ``calculateNodalReactions(2)``), not a reaction; before #2122 it read as
-# ``reaction_force``. A read of that prefix from a file that records only
+# ``calculateNodalReactions(2)``), not a reaction. A read of that prefix from a file that records only
 # these groups is refused by name. Real MPCO files use ``RAYLEIGH_*``;
 # the ``*_RAYLEIGH`` spelling is kept for older skill docs.
 _NODAL_NOT_CANONICAL: dict[str, str] = {
@@ -120,7 +119,7 @@ def _check_precedence() -> None:
             raise RuntimeError(
                 f"_NODAL_PRECEDENCE[{prefix!r}] is {order!r}, but the groups "
                 f"mapping to {prefix!r} are {sorted(names)}: list each "
-                f"exactly once (#2122)."
+                f"exactly once."
             )
     stray = set(_NODAL_PRECEDENCE).difference(by_prefix)
     overlap = set(_NODAL_NOT_CANONICAL).intersection(_NODAL_RESULT_NAME_MAP)

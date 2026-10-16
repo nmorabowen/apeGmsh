@@ -1582,7 +1582,7 @@ def _locate_canonical_in_mpco(
 
     Parses each ``ON_NODES`` group's COMPONENTS attribute and lets
     :func:`_mpco_translation.locate_node_component` pick the group by its
-    precedence, never by HDF5 iteration order (#2122).
+    precedence, never by HDF5 iteration order.
     """
     return _mtr.locate_node_component(
         (
