@@ -27,7 +27,7 @@ import h5py
 import numpy as np
 import pytest
 
-from apeGmsh.results.readers._ladruno import LadrunoReader
+from apeGmsh.results.readers._ladruno import LadrunoReader, SpatialDimUnknown
 from apeGmsh.results.readers._ladruno_element_io import NodalForceNotRecorded
 from apeGmsh.results.readers._ladruno_multi import LadrunoMultiPartitionReader
 from apeGmsh.results.readers._protocol import ResultLevel
@@ -37,7 +37,9 @@ STAGE = "MODEL_STAGE[1]"
 
 _FORCES = ("nodal_resisting_force_x", "nodal_resisting_force_y",
            "nodal_resisting_force_z")
-_Q = {c: i + 1 for i, c in enumerate(_FORCES)}
+_MOMENTS = ("nodal_resisting_moment_x", "nodal_resisting_moment_y",
+            "nodal_resisting_moment_z")
+_Q = {c: i + 1 for i, c in enumerate(_FORCES + _MOMENTS)}
 
 
 def _truth(e: int, n: int, q: str, t: int) -> float:
@@ -61,6 +63,11 @@ def _dof_node(n_nodes: int, ndf: int, ndm: int):
 _TRUSS_2D_NDF3 = ("12-Truss[1:0:0]", _node_dof(2, 3, 2), [1, 2])
 # A 3-D 8-node brick: P3_<node> is force z.
 _BRICK_3D = ("56-Brick[1:0:0]", _dof_node(8, 3, 3), [40])
+# A 3-D elastic beam in the axis-named spelling Px_1, ..., Mz_2: each
+# column names its quantity, so no decode of it consults ndm.
+_BEAM_3D_AXIS = ("5-ElasticBeam3d[1:0:0]",
+                 [(f"{'P' if '_force_' in c else 'M'}{c[-1]}_{n}", n, c)
+                  for n in (1, 2) for c in _FORCES + _MOMENTS], [7])
 
 
 def _write_bucket(on_e: "h5py.Group", key: str, layout, ids,
@@ -182,7 +189,7 @@ def test_unknown_dimension_refuses_the_nodal_reads(tmp_path: Path) -> None:
         assert not [c for c in listed if c.startswith("nodal_resisting_")]
         assert "globalForce" in listed and "basicForce" in listed
         for comp in _FORCES:
-            with pytest.raises(NodalForceNotRecorded,
+            with pytest.raises(SpatialDimUnknown,
                                match=r"truss2d\.ladruno.*SPATIAL_DIM"):
                 _read(r, comp)
 
@@ -217,9 +224,9 @@ def test_conflicting_coordinate_widths_refuse_the_model(tmp_path: Path) -> None:
         nodes.create_dataset(
             "COORDINATES", data=np.hstack([xy, np.zeros((len(xy), 1))]))
     with LadrunoReader(path) as r:
-        with pytest.raises(ValueError, match=r"truss2d\.ladruno.*SPATIAL_DIM"):
+        with pytest.raises(SpatialDimUnknown, match=r"truss2d\.ladruno.*SPATIAL_DIM"):
             r.opensees_model()
-        with pytest.raises(NodalForceNotRecorded, match="SPATIAL_DIM"):
+        with pytest.raises(SpatialDimUnknown, match="SPATIAL_DIM"):
             _read(r, "nodal_resisting_force_z")
 
 
@@ -259,5 +266,41 @@ def test_partitions_of_unknown_dimension_refuse(tmp_path: Path) -> None:
         with pytest.warns(UserWarning, match=r"truss2d\.part-\d\.ladruno"):
             listed = _elements(m)
         assert not [c for c in listed if c.startswith("nodal_resisting_")]
-        with pytest.raises(NodalForceNotRecorded, match="SPATIAL_DIM"):
+        with pytest.raises(SpatialDimUnknown, match="SPATIAL_DIM"):
             _read(m, "nodal_resisting_force_z")
+
+
+# ---------------------------------------------------------------------------
+# Review of #2087: axis-named columns, and a rank of unknown dimension
+# ---------------------------------------------------------------------------
+
+
+def test_unknown_dimension_reads_axis_named_beams(tmp_path: Path) -> None:
+    import warnings
+
+    path = _file(tmp_path, "truss2d.ladruno", [_BEAM_3D_AXIS],
+                 drop_model=True)
+    with LadrunoReader(path) as r, warnings.catch_warnings():
+        warnings.simplefilter("error")
+        listed = _elements(r)
+        for comp in _FORCES + _MOMENTS:
+            assert comp in listed
+            np.testing.assert_array_equal(
+                _read(r, comp).values, _expected([7], comp, 2),
+                err_msg=comp)
+
+
+def test_unknown_dimension_rank_fails_the_partition_read(
+        tmp_path: Path) -> None:
+    # Rank 0 infers 2-D from its MODEL; rank 1 has no MODEL. Rank 1's
+    # elements are never dropped in silence: the set refuses, naming it.
+    paths = [
+        _file(tmp_path, f"truss2d.part-{i}.ladruno",
+              [("12-Truss[1:0:0]", _TRUSS_2D_NDF3[1], [i + 1])],
+              drop_model=(i == 1))
+        for i in range(2)
+    ]
+    with LadrunoMultiPartitionReader(paths) as m:
+        with pytest.raises(SpatialDimUnknown,
+                           match=r"truss2d\.part-1\.ladruno.*SPATIAL_DIM"):
+            _read(m, "nodal_resisting_force_x")

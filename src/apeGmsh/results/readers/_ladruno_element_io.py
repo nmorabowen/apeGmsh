@@ -1696,6 +1696,29 @@ def _decode_nodal_bucket(
     return decode_nodal_force_columns(names, ndm=ndm)
 
 
+def indexed_nodal_force_buckets(on_elements: "h5py.Group") -> list[str]:
+    """The ``globalForce`` bucket keys spelled in indexed ``P<a>_<b>``
+    columns: the only spelling whose decode depends on ``ndm``.
+
+    An axis-named bucket (``Px_1``, ``Mz_1``) names its quantity in the
+    column, and a mixed or unparseable bucket is refused at any ``ndm``,
+    so neither is listed.
+    """
+    if NODAL_FORCE_TOKEN not in on_elements:
+        return []
+    token_grp = on_elements[NODAL_FORCE_TOKEN]
+    out: list[str] = []
+    for key in token_grp:
+        try:
+            blocks = parse_blocks(token_grp[key])
+        except (KeyError, ValueError):
+            continue
+        names = [n for b in blocks for n in b.comp_names]
+        if names and all(_INDEXED_NAME_RE.match(n) for n in names):
+            out.append(str(key))
+    return out
+
+
 def _nodal_force_available(
     on_elements: "h5py.Group", *, ndm: int,
 ) -> set[str]:
