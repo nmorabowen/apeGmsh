@@ -37,7 +37,8 @@ fiber/line buckets, with these specifics:
    never assumed (#1996). The quaternion is broadcast to per-row in the
    ``LayerSlab.local_axes_quaternion`` field for caller convenience.
 
-v1 scope (skipped silently when encountered):
+v1 scope (a bucket outside it is left unread, and named in the read's
+:class:`LayerBucketUnreadWarning`, #2047):
 
 - ``n_sub_gp != 1`` (multi-IP-per-layer integration extensions).
 - Heterogeneous layered sections within one bucket (different layer
@@ -46,10 +47,11 @@ v1 scope (skipped silently when encountered):
 Bucket discovery leaves out a bucket of a class with no ``LAYER_CATALOG``
 row (ShellMITC3: the pinned fork has no such element, so no file records
 it), a ``header_idx != 0`` bucket, a bucket whose rule differs from the
-class's surface rule, and an unparseable key. Each one warns
-:class:`LayerBucketUnreadWarning` by class, as the ``.ladruno`` reader
-does (#2090). Beam fiber-section buckets (``FIBER_CATALOG`` classes) in
-the shared ``section.fiber.<X>`` group belong to the fiber level.
+class's surface rule, and an unparseable key. A read names each one, by
+class, in one :class:`LayerBucketUnreadWarning`, as the ``.ladruno``
+reader does (#2090). Beam fiber-section buckets (``FIBER_CATALOG``
+classes on a custom rule) in the shared ``section.fiber.<X>`` group
+belong to the fiber level.
 """
 from __future__ import annotations
 
@@ -157,9 +159,16 @@ def _classify_layer_bucket(
     if elem_key.is_custom_rule and is_fiber_catalogued(cls, catalog_token):
         return None, elem_key, None
     if not is_layer_catalogued(cls, catalog_token):
+        if is_fiber_catalogued(cls, catalog_token):
+            return (
+                f"class {cls!r} is a beam fiber-section class "
+                f"(FIBER_CATALOG), which the fiber level reads on a custom "
+                f"integration rule, and this bucket has rule "
+                f"{elem_key.int_rule}"
+            ), elem_key, None
         return (
-            f"class {cls!r} has no layered-shell entry in the response "
-            f"catalog (LAYER_CATALOG)"
+            f"class {cls!r} has no layered-shell entry (LAYER_CATALOG) and "
+            f"no beam fiber-section entry (FIBER_CATALOG)"
         ), elem_key, None
     layout = lookup_layer(cls, catalog_token)
     if elem_key.header_idx != 0:
@@ -176,40 +185,43 @@ def _classify_layer_bucket(
     return None, elem_key, layout
 
 
-def discover_layer_buckets(
+def scan_layer_buckets(
     on_elements_grp: "h5py.Group",
     *,
     canonical_component: str,
-) -> tuple[str | None, list[_LayerBucket]]:
-    """Walk MPCO group(s) for the layers topology and return catalogued buckets.
+) -> tuple[str | None, list[_LayerBucket], list[tuple[str, str]]]:
+    """Sort every bucket of the layers-topology group(s) without warning.
 
     The MPCO recorder may write layered-shell results under either
     ``material.fiber.<X>`` (the keyword-swapped name from
     ``utils::shell::isShellElementTag``) or ``section.fiber.<X>``
     (when the swap doesn't fire — some shell class tags are excluded
     from the swap list, or the user explicitly wrote the unswapped
-    token in the recorder command). Discovery walks both group names
+    token in the recorder command). The scan walks both group names
     via :func:`mpco_layer_group_aliases` and accumulates buckets
     whose class is in ``LAYER_CATALOG``. Beam fiber-section buckets
     that share the ``section.fiber.<X>`` group (``FIBER_CATALOG``
-    classes) are left to the fiber level. Every other bucket left out
-    warns :class:`LayerBucketUnreadWarning` naming its class and why.
+    classes on a custom rule) belong to the fiber level and are left
+    out without a word.
 
     Returns
     -------
-    (mpco_group_name, buckets)
+    (mpco_group_name, buckets, unread)
         ``mpco_group_name`` is the alias we found the first matching
-        bucket under (or the primary keyword if none matched).
-        Returns ``(None, [])`` if the canonical has no layers-topology
-        routing at all.
+        bucket under (or the primary keyword if none matched), and
+        ``None`` if the canonical has no layers-topology routing at all.
+        ``unread`` holds ``("ON_ELEMENTS/<group>/<key>", reason)`` for
+        every other bucket left out; :func:`warn_unread_layer_buckets`
+        names them in one warning.
     """
     mapping = canonical_to_layer_token(canonical_component)
     if mapping is None:
-        return (None, [])
+        return (None, [], [])
     mpco_group_name, catalog_token = mapping
     candidate_names = mpco_layer_group_aliases(mpco_group_name)
 
     out: list[_LayerBucket] = []
+    unread: list[tuple[str, str]] = []
     seen_keys: set[str] = set()
     found_name: str | None = None
     for name in candidate_names:
@@ -223,12 +235,7 @@ def discover_layer_buckets(
                 bracket_key, catalog_token,
             )
             if reason is not None:
-                warnings.warn(
-                    f"MPCO ON_ELEMENTS/{name}/{bracket_key}: {reason}, so "
-                    f"its layer state is read at neither the fiber nor the "
-                    f"layer level.",
-                    LayerBucketUnreadWarning, stacklevel=2,
-                )
+                unread.append((f"ON_ELEMENTS/{name}/{bracket_key}", reason))
             if elem_key is None or layer_layout is None:
                 continue
             out.append(_LayerBucket(
@@ -240,7 +247,48 @@ def discover_layer_buckets(
             seen_keys.add(bracket_key)
             if found_name is None:
                 found_name = name
-    return (found_name or mpco_group_name, out)
+    return (found_name or mpco_group_name, out, unread)
+
+
+def warn_unread_layer_buckets(
+    unread: list[tuple[str, str]], *, stacklevel: int,
+) -> None:
+    """One :class:`LayerBucketUnreadWarning` naming every unread bucket.
+
+    ``unread`` holds ``(bucket path, reason)`` pairs; an empty list
+    warns nothing. Each path is named once, with its first reason.
+    """
+    named: dict[str, str] = {}
+    for path, reason in unread:
+        named.setdefault(path, reason)
+    if not named:
+        return
+    listing = "; ".join(f"MPCO {path}: {reason}" for path, reason in named.items())
+    warnings.warn(
+        f"{len(named)} MPCO layer bucket(s) left unread, so their layer "
+        f"state is read at neither the fiber nor the layer level: "
+        f"{listing}.",
+        LayerBucketUnreadWarning, stacklevel=stacklevel + 1,
+    )
+
+
+def discover_layer_buckets(
+    on_elements_grp: "h5py.Group",
+    *,
+    canonical_component: str,
+) -> tuple[str | None, list[_LayerBucket]]:
+    """The readable buckets of :func:`scan_layer_buckets`.
+
+    Every bucket the scan leaves unread is named in one
+    :class:`LayerBucketUnreadWarning`. A read that also skips buckets
+    at read time calls the scan itself, so it can name both kinds in
+    its one warning.
+    """
+    token, buckets, unread = scan_layer_buckets(
+        on_elements_grp, canonical_component=canonical_component,
+    )
+    warn_unread_layer_buckets(unread, stacklevel=2)
+    return (token, buckets)
 
 
 # =====================================================================
@@ -985,5 +1033,7 @@ __all__ = [
     "read_layer_bucket_slab",
     "read_local_axes_quaternions",
     "resolve_layer_bucket_layout",
+    "scan_layer_buckets",
     "validate_layer_bucket_meta",
+    "warn_unread_layer_buckets",
 ]

@@ -9,6 +9,7 @@ slabs) until their catalog entries land.
 """
 from __future__ import annotations
 
+import warnings
 from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Iterable, Iterator, Optional, Sequence
@@ -49,6 +50,35 @@ _STAGE_PREFIX = "MODEL_STAGE["
 
 #: The kinds a program stage takes (:meth:`MPCOReader.attach_stage_names`).
 _PROGRAM_STAGE_KINDS = frozenset({"static", "transient"})
+
+
+class MPCOBucketSkippedWarning(UserWarning):
+    """A material-state or spring bucket the MPCO reader leaves unread.
+
+    Its decoder refused the bucket (malformed ``META``, a ``NUM_COLUMNS``
+    mismatch), so the elements it holds return no values. One warning per
+    read names every such bucket and the decoder's reason (#2047). The
+    layer level names its unread buckets in
+    :class:`~apeGmsh.results.readers._mpco_layer_io.LayerBucketUnreadWarning`.
+    """
+
+
+def _warn_skipped_buckets(
+    skipped: "list[tuple[str, str]]", *, what: str,
+) -> None:
+    """One :class:`MPCOBucketSkippedWarning` naming every skipped bucket.
+
+    ``skipped`` holds ``(bucket path, reason)`` pairs; an empty list
+    warns nothing. ``stacklevel`` points at the reader method's caller.
+    """
+    if not skipped:
+        return
+    listing = "; ".join(f"{path}: {reason}" for path, reason in skipped)
+    warnings.warn(
+        f"MPCO {what} left {len(skipped)} bucket(s) "
+        f"unread, so their elements return no values: {listing}.",
+        MPCOBucketSkippedWarning, stacklevel=3,
+    )
 
 
 def _stage_sort_key(name: str) -> "tuple[int, str]":
@@ -513,6 +543,7 @@ class MPCOReader:
         # Material-state canonicals (META-driven, variable shape).
         # Probe each parent token; surface every per-segment canonical
         # the bucket's META declares.
+        skipped: list[tuple[str, str]] = []
         for parent in ("damage", "equivalent_plastic_strain", "plastic_strain"):
             _, mat_buckets = _mmat.discover_material_state_buckets(
                 on_elements, canonical_component=parent,
@@ -523,11 +554,15 @@ class MPCOReader:
                     canonicals = _mmat.material_state_canonicals_in_bucket(
                         bucket_grp, mb,
                     )
-                except ValueError:
-                    # Malformed META — skip this bucket for discovery
-                    # rather than crash the whole listing.
+                except ValueError as exc:
+                    # A refused bucket (malformed META) leaves the listing
+                    # and is named in the one warning below.
+                    skipped.append((bucket_grp.name, str(exc)))
                     continue
                 out.update(canonicals)
+        _warn_skipped_buckets(
+            skipped, what="gauss material-state component listing",
+        )
         return sorted(out)
 
     def _elements_available_components(
@@ -571,23 +606,35 @@ class MPCOReader:
         if on_elements is None or section_assignments is None:
             return []
         out: set[str] = set()
+        unread: list[tuple[str, str]] = []
         # For each parent token, walk every catalogued bucket and
         # surface its META-resolved per-cell canonicals (single-
         # component buckets keep the bare name; multi-component
-        # buckets expose ``fiber_stress_<i>`` per index).
+        # buckets expose ``fiber_stress_<i>`` per index). A bucket the
+        # read would refuse (the same resolve + NUM_COLUMNS check) is
+        # left out of the listing and named in one warning (#2047).
         for parent in ("fiber_stress", "fiber_strain"):
-            _, buckets = _mlayer.discover_layer_buckets(
+            _, buckets, scan_unread = _mlayer.scan_layer_buckets(
                 on_elements, canonical_component=parent,
             )
+            unread.extend(scan_unread)
             for b in buckets:
                 bucket_grp = on_elements[b.mpco_group_name][b.bracket_key]
                 try:
                     layout = _mlayer.resolve_layer_bucket_layout(
                         section_assignments, bucket_grp, b,
                     )
-                except ValueError:
+                    _mlayer.validate_layer_bucket_meta(
+                        bucket_grp, layout, bracket_key=b.bracket_key,
+                    )
+                except ValueError as exc:
+                    unread.append((
+                        f"ON_ELEMENTS/{b.mpco_group_name}/{b.bracket_key}",
+                        f"its layout is refused ({exc})",
+                    ))
                     continue
                 out.update(layout.component_layout)
+        _mlayer.warn_unread_layer_buckets(unread, stacklevel=3)
         return sorted(out)
 
     def _line_stations_available_components(
@@ -630,6 +677,7 @@ class MPCOReader:
         if on_elements is None:
             return []
         out: set[str] = set()
+        skipped: list[tuple[str, str]] = []
         for root in ("spring_force", "spring_deformation"):
             _, buckets = _mspring.discover_spring_buckets(
                 on_elements, canonical_component=root,
@@ -640,9 +688,11 @@ class MPCOReader:
                     canonicals = _mspring.spring_canonicals_in_bucket(
                         bucket_grp, b,
                     )
-                except ValueError:
+                except ValueError as exc:
+                    skipped.append((bucket_grp.name, str(exc)))
                     continue
                 out.update(canonicals)
+        _warn_skipped_buckets(skipped, what="springs component listing")
         return sorted(out)
 
     # ------------------------------------------------------------------
@@ -1044,6 +1094,7 @@ class MPCOReader:
         element_index_parts: list[ndarray] = []
         natural_coords_parts: list[ndarray] = []
 
+        skipped: list[tuple[str, str]] = []
         for bucket in buckets:
             bucket_grp = on_elements[bucket.mpco_group_name][bucket.bracket_key]
             try:
@@ -1051,8 +1102,11 @@ class MPCOReader:
                     bucket_grp, bucket, component,
                     t_idx=t_idx, element_ids=element_ids,
                 )
-            except ValueError:
-                # Malformed META — skip rather than crash the read.
+            except ValueError as exc:
+                # A refused bucket (malformed META) is named in the one
+                # warning below; MaterialStateComponentRefused is a
+                # LookupError and reaches the caller.
+                skipped.append((bucket_grp.name, str(exc)))
                 continue
             if result is None:
                 continue
@@ -1060,6 +1114,9 @@ class MPCOReader:
             values_parts.append(values)
             element_index_parts.append(element_index)
             natural_coords_parts.append(natural_coords)
+        _warn_skipped_buckets(
+            skipped, what=f"gauss material-state read of {component!r}",
+        )
 
         if not values_parts:
             return _empty_gauss_slab(component, time, t_idx)
@@ -1184,10 +1241,11 @@ class MPCOReader:
 
         element_ids, index_to_fem = self._element_read_translation(element_ids)
 
-        token, buckets = _mlayer.discover_layer_buckets(
+        token, buckets, unread = _mlayer.scan_layer_buckets(
             on_elements, canonical_component=component,
         )
         if not buckets:
+            _mlayer.warn_unread_layer_buckets(unread, stacklevel=2)
             return _empty_layer_slab(component, time, t_idx)
 
         values_parts: list[ndarray] = []
@@ -1212,8 +1270,14 @@ class MPCOReader:
                     gp_indices=gp_indices,
                     layer_indices=layer_indices,
                 )
-            except ValueError:
-                # Malformed META — skip rather than crash.
+            except ValueError as exc:
+                # A refused bucket (mixed layer counts, several sub-GPs
+                # per layer, malformed META) is named, with the
+                # buckets discovery left out, in one warning (#2047).
+                unread.append((
+                    f"ON_ELEMENTS/{bucket.mpco_group_name}/{bucket.bracket_key}",
+                    f"its read is refused ({exc})",
+                ))
                 continue
             if result is None:
                 continue
@@ -1226,6 +1290,7 @@ class MPCOReader:
             sub_gp_index_parts.append(subi)
             thickness_parts.append(thick)
             quaternion_parts.append(quat)
+        _mlayer.warn_unread_layer_buckets(unread, stacklevel=2)
 
         if not values_parts:
             return _empty_layer_slab(component, time, t_idx)
@@ -1274,6 +1339,7 @@ class MPCOReader:
         values_parts: list[ndarray] = []
         element_index_parts: list[ndarray] = []
 
+        skipped: list[tuple[str, str]] = []
         for bucket in buckets:
             bucket_grp = on_elements[bucket.mpco_group_name][bucket.bracket_key]
             try:
@@ -1282,13 +1348,15 @@ class MPCOReader:
                     t_idx=t_idx,
                     element_ids=element_ids,
                 )
-            except ValueError:
+            except ValueError as exc:
+                skipped.append((bucket_grp.name, str(exc)))
                 continue
             if result is None:
                 continue
             values, ei = result
             values_parts.append(values)
             element_index_parts.append(ei)
+        _warn_skipped_buckets(skipped, what=f"springs read of {component!r}")
 
         if not values_parts:
             return _empty_spring_slab(component, time, t_idx)
