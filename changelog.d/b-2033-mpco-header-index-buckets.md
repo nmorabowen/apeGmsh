@@ -12,3 +12,8 @@ Every header is now read, each resolved from its own META, `NUM_COLUMNS` and
 section assignments. A header-1 layer bucket, which warned
 `LayerBucketUnreadWarning` since #2091, is now read. A header-1 nodal-force
 bucket is still named in `NodalForceBucketSkippedWarning`.
+Gauss columns are now named by each bucket's own META labels (`sigma33` is
+`stress_zz` wherever it sits); MPCO's unnamed `C1..Cn` keep the catalog
+order, and a label that names none of the catalog's components refuses the
+read with a `ValueError` naming the bucket, where it used to be read under
+the catalog's names.
