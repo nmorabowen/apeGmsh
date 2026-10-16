@@ -504,6 +504,7 @@ class _Basis:
 
 _TOPOLOGY_BY_COORDS = {
     ("isoparametric", 1): ("line", "[-1,1]"),
+    ("isoparametric_1d", 1): ("line", "[-1,1]"),
     ("isoparametric", 2): ("quad", "[-1,1]"),
     ("isoparametric", 3): ("hex", "[-1,1]"),
     ("barycentric_tri", 2): ("tri", "bary"),
@@ -545,20 +546,22 @@ def _basis(gname: str, dset: Any, where: str) -> _Basis:
         return _Basis("line", "lagrange", "[-1,1]", gp_x.reshape(-1, 1))
     if key.int_rule == IntRule.NoIntegrationRule:
         return unknown
-    rows = {
-        (lay.coord_system, lay.natural_coords.shape,
-         lay.natural_coords.tobytes())
-        for (cls, rule, _tok), lay in RESPONSE_CATALOG.items()
-        if cls == key.class_name and rule == key.int_rule
-    }
+    # Every catalog row of this class and rule, over all tokens, must give
+    # the same parent coordinates; otherwise the group is not described.
+    rows: "dict[tuple[str, tuple[int, ...], bytes], np.ndarray]" = {}
+    for (cls, rule, _tok), lay in RESPONSE_CATALOG.items():
+        if cls == key.class_name and rule == key.int_rule:
+            coords = np.asarray(lay.natural_coords, dtype=np.float64)
+            rows[(lay.coord_system, coords.shape, coords.tobytes())] = coords
     if len(rows) != 1:
         return unknown
-    coord_system, shape, raw = next(iter(rows))
-    coords = np.frombuffer(raw, dtype=np.float64).reshape(shape).copy()
-    topo = _TOPOLOGY_BY_COORDS.get((coord_system, coords.shape[1]))
+    ((coord_system, shape, _), coords), = rows.items()
+    if len(shape) != 2:
+        return unknown
+    topo = _TOPOLOGY_BY_COORDS.get((coord_system, int(shape[1])))
     if topo is None:
         return unknown
-    return _Basis(topo[0], "lagrange", topo[1], coords)
+    return _Basis(topo[0], "lagrange", topo[1], coords.copy())
 
 
 # ---------------------------------------------------------------------------

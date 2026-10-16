@@ -430,6 +430,51 @@ def test_a_stage_with_only_modes_is_eigen(fx, tmp_path) -> None:
                              "MODES_OF_VIBRATION(U)/DATA/STEP_20"]
 
 
+def test_groups_take_their_quadrature_from_the_source_or_the_catalog(
+    fx, tmp_path,
+) -> None:
+    """A custom rule keeps its own ``GP_X``; a standard rule takes the
+    catalog's parent coordinates; neither is then declared lost."""
+    from apeGmsh.opensees._response_catalog import lookup
+
+    src = tmp_path / "groups.mpco"
+    shutil.copy(fx["frame_src"], src)
+    gp_x = np.array([-1.0, -0.6546536707, 0.0, 0.6546536707, 1.0])
+    with h5py.File(src, "r+") as f:
+        for stage in ("MODEL_STAGE[1]", "MODEL_STAGE[2]"):
+            els = f[f"{stage}/MODEL/ELEMENTS"]
+            quad = els.create_dataset(
+                "31-FourNodeQuad[201:0]",
+                data=np.array([[90, 1, 2, 3, 4]], dtype=np.int32))
+            quad.attrs["GEOMETRY"] = np.array([200], dtype=np.int32)
+            quad.attrs["INTEGRATION_RULE"] = np.array([201], dtype=np.int32)
+            beam = els.create_dataset(
+                "73-ForceBeamColumn3d[1000:1]",
+                data=np.array([[91, 1, 5]], dtype=np.int32))
+            beam.attrs["CUSTOM_INTEGRATION_RULE"] = np.array([1], dtype=np.int32)
+            beam.attrs["CUSTOM_INTEGRATION_RULE_DIMENSION"] = np.array(
+                [1], dtype=np.int32)
+            beam.attrs["GP_X"] = gp_x
+    (dst,) = _convert(src, tmp_path / "out.ladruno", fx["frame"])
+    with h5py.File(dst, "r") as d:
+        g = d["MODEL_STAGE[1]/MODEL/ELEMENTS"]
+        q, b = g["31-FourNodeQuad[201:0]"], g["73-ForceBeamColumn3d[1000:1]"]
+        np.testing.assert_array_equal(
+            q["QUADRATURE/GP_PARAM"][...],
+            lookup("FourNodeQuad", 201, "stress").natural_coords)
+        assert [q.attrs[k][0] for k in ("TOPOLOGY", "PARAM_DOMAIN", "FAMILY")]             == [b"quad", b"[-1,1]", b"lagrange"]
+        assert [int(q.attrs[k][0]) for k in ("NUM_GP", "NDIR", "NUM_CTRL")]             == [4, 2, 4]
+        np.testing.assert_array_equal(b["QUADRATURE/GP_PARAM"][...],
+                                      gp_x[:, None])
+        assert b.attrs["TOPOLOGY"][0] == b"line"
+        np.testing.assert_array_equal(b.attrs["GP_X"], gp_x)  # source attrs kept
+        e = g["5-ElasticBeam3d[1:0]"]
+        assert "QUADRATURE" not in e
+        assert [e.attrs[k][0] for k in ("TOPOLOGY", "FAMILY")] ==             [b"custom", b"custom"]
+    assert json.loads(_prov(dst)["unsupported"]) == [
+        "quadrature:5-ElasticBeam3d[1:0]"]
+
+
 def test_overwrite_replaces_the_target(fx, tmp_path) -> None:
     dst = tmp_path / "out.ladruno"
     dst.write_bytes(b"old")
