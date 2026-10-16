@@ -2,10 +2,9 @@
 Shell element primitives — typed wrappers over the OpenSees ``element
 Shell*`` family.
 
-Five element types live here:
+Four element types live here:
 
 * :class:`ShellMITC4` — 4-node MITC shell (membrane + bending).
-* :class:`ShellMITC3` — 3-node MITC shell.
 * :class:`ShellDKGQ` — 4-node Discrete Kirchhoff (Quadrilateral) shell.
 * :class:`ASDShellQ4` — 4-node ASD shell (Petracca/ASDEA Software).
 * :class:`ASDShellT3` — 3-node ASD shell.
@@ -13,12 +12,17 @@ Five element types live here:
 The OpenSees commands per the manual:
 
 * ``element ShellMITC4 tag i j k l secTag``
-* ``element ShellMITC3 tag i j k secTag``
 * ``element ShellDKGQ  tag i j k l secTag``
 * ``element ASDShellQ4 tag i j k l secTag [-corotational]``
   ``[-drillingNT alpha] [-localCS x1 x2 x3 y1 y2 y3]``
 * ``element ASDShellT3 tag i j k secTag [-corotational]``
   ``[-drillingDOF dof_id] [-localCS x1 x2 x3 y1 y2 y3]``
+
+``ShellMITC3`` was removed (#2092): no OpenSees build has the element, so
+every model that used it failed at emit. ``ASDShellT3`` is the 3-node shell
+to use. ``ops.element.ShellMITC3`` and a lookup of the class by name raise
+:data:`~apeGmsh.opensees._element_capabilities.REMOVED_ELEMENT_CLASSES`'s
+message, which names the replacements.
 
 Element fan-out contract
 ========================
@@ -54,7 +58,6 @@ if TYPE_CHECKING:
 
 
 __all__ = [
-    "ShellMITC3",
     "ShellMITC4",
     "ShellDKGQ",
     "ASDShellQ4",
@@ -140,39 +143,6 @@ class ShellMITC4(Element):
     def dependencies(self) -> tuple[Primitive, ...]:
         if self.damp is not None:
             return (self.section, self.damp)
-        return (self.section,)
-
-
-# ---------------------------------------------------------------------------
-# ShellMITC3 — 3-node MITC shell
-# ---------------------------------------------------------------------------
-
-@dataclass(frozen=True, kw_only=True, slots=True)
-class ShellMITC3(Element):
-    """``element ShellMITC3`` — 3-node MITC shell.
-
-    Parameters
-    ----------
-    pg
-        Physical group whose surface (triangular) cells receive this
-        element.
-    section
-        The plate / shell :class:`Section`.
-    """
-
-    pg: str
-    section: Section
-
-    def _emit(self, emitter: "Emitter", tag: int) -> None:
-        nodes = current_element_nodes(emitter)
-        if len(nodes) != 3:
-            raise ValueError(
-                f"ShellMITC3: expected 3 node tags, got {len(nodes)}."
-            )
-        sec_tag = resolve_tag(emitter, self.section)
-        emitter.element("ShellMITC3", tag, *nodes, sec_tag)
-
-    def dependencies(self) -> tuple[Primitive, ...]:
         return (self.section,)
 
 

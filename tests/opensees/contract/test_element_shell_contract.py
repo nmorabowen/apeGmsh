@@ -27,7 +27,6 @@ from apeGmsh.opensees.element.shell import (
     ASDShellQ4,
     ASDShellT3,
     ShellDKGQ,
-    ShellMITC3,
     ShellMITC4,
 )
 from apeGmsh.opensees.section.plate import ElasticMembranePlateSection
@@ -35,7 +34,6 @@ from apeGmsh.opensees.section.plate import ElasticMembranePlateSection
 
 ALL_SHELL_ELEMENTS: list[type[Element]] = [
     ShellMITC4,
-    ShellMITC3,
     ShellDKGQ,
     ASDShellQ4,
     ASDShellT3,

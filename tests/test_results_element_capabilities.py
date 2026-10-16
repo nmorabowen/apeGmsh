@@ -33,7 +33,7 @@ def test_continuum_has_gauss(name: str) -> None:
 # =====================================================================
 
 @pytest.mark.parametrize("name", [
-    "ShellMITC3", "ShellMITC4", "ShellDKGQ", "ASDShellQ4",
+    "ShellMITC4", "ShellDKGQ", "ASDShellQ4",
 ])
 def test_shells_have_gauss_and_layers(name: str) -> None:
     spec = _ELEM_REGISTRY[name]

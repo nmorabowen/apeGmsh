@@ -45,7 +45,6 @@ from .shell import (
     ASDShellQ4,
     ASDShellT3,
     ShellDKGQ,
-    ShellMITC3,
     ShellMITC4,
 )
 from .solid import (
@@ -95,7 +94,6 @@ __all__ = [
     # two_node_link
     "TwoNodeLink",
     # shell
-    "ShellMITC3",
     "ShellMITC4",
     "ShellDKGQ",
     "ASDShellQ4",

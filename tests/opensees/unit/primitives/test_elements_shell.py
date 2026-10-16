@@ -1,9 +1,8 @@
 """Unit tests for shell element primitives (Phase 2γ).
 
-Covers the five shell elements:
+Covers the four shell elements, and the removal of ``ShellMITC3`` (#2092):
 
 * :class:`ShellMITC4` — 4-node
-* :class:`ShellMITC3` — 3-node
 * :class:`ShellDKGQ`  — 4-node
 * :class:`ASDShellQ4` — 4-node, with optional flags
 * :class:`ASDShellT3` — 3-node, with optional flags
@@ -17,10 +16,17 @@ section tag via :func:`resolve_tag` and the per-element node tags via
 """
 from __future__ import annotations
 
-from typing import Callable
+import importlib
+import importlib.util
+import sys
+from pathlib import Path
+from typing import Callable, cast
+from unittest.mock import MagicMock
 
 import pytest
 
+from apeGmsh.opensees import apeSees
+from apeGmsh.opensees._element_capabilities import Unknown, element_capability
 from apeGmsh.opensees._internal.tag_resolution import (
     set_element_nodes,
     set_tag_resolver,
@@ -30,7 +36,6 @@ from apeGmsh.opensees.element.shell import (
     ASDShellQ4,
     ASDShellT3,
     ShellDKGQ,
-    ShellMITC3,
     ShellMITC4,
 )
 from apeGmsh.opensees.emitter.recording import RecordingEmitter
@@ -132,59 +137,120 @@ class TestShellMITC4Misc:
 
 
 # ===========================================================================
-# ShellMITC3
+# ShellMITC3: removed (#2092)
 # ===========================================================================
 
-class TestShellMITC3Construction:
-    def test_construct(self) -> None:
-        s = _section()
-        ele = ShellMITC3(pg="Roof", section=s)
-        assert ele.pg == "Roof"
-        assert ele.section is s
+_SHELL_MODULES = ("apeGmsh.opensees.element", "apeGmsh.opensees.element.shell")
 
 
-class TestShellMITC3Emit:
-    def test_emit_records_correct_call(self) -> None:
-        s = _section()
-        ele = ShellMITC3(pg="Roof", section=s)
-        e = _prepare_emitter(s, sec_tag=4, nodes=(21, 22, 23))
-        ele._emit(e, tag=9)
-        assert e.calls == [
-            (
-                "element",
-                ("ShellMITC3", 9, 21, 22, 23, 4),
-                {},
-            )
-        ]
-
-    def test_emit_without_element_nodes_raises(self) -> None:
-        s = _section()
-        ele = ShellMITC3(pg="Roof", section=s)
-        e = RecordingEmitter()
-        set_tag_resolver(e, _resolver_from({id(s): 4}))
-        with pytest.raises(RuntimeError, match="element-nodes context"):
-            ele._emit(e, tag=9)
-
-    @pytest.mark.parametrize("nodes", [(1, 2), (1, 2, 3, 4)])
-    def test_emit_wrong_node_count_raises(
-        self, nodes: tuple[int, ...]
-    ) -> None:
-        s = _section()
-        ele = ShellMITC3(pg="Roof", section=s)
-        e = _prepare_emitter(s, sec_tag=4, nodes=nodes)
-        with pytest.raises(ValueError, match="expected 3 node tags"):
-            ele._emit(e, tag=9)
+_REPO = Path(__file__).resolve().parents[4]
+_CHECK_QUIRKS = _REPO / "scripts" / "check_quirks.py"
 
 
-class TestShellMITC3Misc:
-    def test_dependencies_returns_section(self) -> None:
-        s = _section()
-        ele = ShellMITC3(pg="Roof", section=s)
-        assert ele.dependencies() == (s,)
+def _names_the_replacements(message: str) -> None:
+    assert "ShellMITC3 was removed" in message
+    assert "#2092" in message
+    assert "ASDShellT3" in message
+    assert "ShellDKGT" in message
 
-    def test_repr_includes_class_name(self) -> None:
-        ele = ShellMITC3(pg="Roof", section=_section())
-        assert "ShellMITC3" in repr(ele)
+
+class TestShellMITC3Removed:
+    """No OpenSees build has ``ShellMITC3`` (not the fork pin, not upstream),
+    so the bridge dropped it. Every spelling fails at once. The bridge
+    spelling ``ops.element.ShellMITC3``, the capability lookup and the
+    readback token table name the 3-node shells that work. The module
+    spellings (``from apeGmsh.opensees.element import ShellMITC3``) keep
+    Python's plain errors, because a module ``__getattr__`` would blind the
+    static resolvers to every typo there; the skill's removed-symbols
+    registry and lint rule R1 name the replacement for those."""
+
+    @pytest.mark.parametrize("module", _SHELL_MODULES)
+    def test_attribute_read_fails_plainly(self, module: str) -> None:
+        mod = importlib.import_module(module)
+        with pytest.raises(AttributeError, match="has no attribute 'ShellMITC3'"):
+            mod.ShellMITC3  # noqa: B018
+        assert not hasattr(mod, "ShellMITC3")
+        assert "ShellMITC3" not in mod.__all__
+        # No module ``__getattr__``: the static resolvers stay exact.
+        assert "__getattr__" not in vars(mod)
+
+    def test_from_import_of_the_package_fails(self) -> None:
+        with pytest.raises(ImportError, match="cannot import name 'ShellMITC3'"):
+            from apeGmsh.opensees.element import ShellMITC3  # noqa: F401
+
+    def test_from_import_of_the_module_fails(self) -> None:
+        with pytest.raises(ImportError, match="cannot import name 'ShellMITC3'"):
+            from apeGmsh.opensees.element.shell import ShellMITC3  # noqa: F401
+
+    def test_bridge_namespace_names_the_replacements(self) -> None:
+        ops = apeSees(cast("object", MagicMock(name="FEMData")))
+        with pytest.raises(AttributeError) as exc:
+            ops.element.ShellMITC3(pg="Roof", section=_section())
+        _names_the_replacements(str(exc.value))
+        assert not hasattr(ops.element, "ShellMITC3")
+        # Any other missing name keeps Python's own message.
+        with pytest.raises(AttributeError, match="has no attribute 'ShellMITC5'"):
+            ops.element.ShellMITC5  # noqa: B018
+        assert ops.element.ASDShellT3 is not None
+
+    def test_capability_lookup_names_the_replacements(self) -> None:
+        with pytest.raises(ValueError) as exc:
+            element_capability("ShellMITC3")
+        _names_the_replacements(str(exc.value))
+        # Every ``element_*`` helper routes through the same lookup.
+        from apeGmsh.opensees._element_capabilities import element_class_ndf_ok
+
+        with pytest.raises(ValueError) as exc:
+            element_class_ndf_ok("ShellMITC3")
+        _names_the_replacements(str(exc.value))
+        # A name never in the registry is still Unknown, not refused.
+        assert element_capability("NoSuchElement") is Unknown
+
+    def test_readback_token_names_the_replacements(self) -> None:
+        """A model.h5 keeps only the element token; one that names
+        ShellMITC3 refuses by name rather than reading as an unknown class."""
+        from apeGmsh.opensees._readback import (
+            _CLASS_FOR_TOKEN,
+            rotation_roles_from_tokens,
+        )
+
+        for lookup in (lambda: _CLASS_FOR_TOKEN.get("ShellMITC3"),
+                       lambda: _CLASS_FOR_TOKEN["ShellMITC3"],
+                       lambda: "ShellMITC3" in _CLASS_FOR_TOKEN,
+                       lambda: rotation_roles_from_tokens([("ShellMITC3", (1, 2, 3))])):
+            with pytest.raises(ValueError) as exc:
+                lookup()
+            _names_the_replacements(str(exc.value))
+        # Live tokens and unknown tokens behave as before.
+        assert _CLASS_FOR_TOKEN.get("ASDShellT3") is ASDShellT3
+        assert _CLASS_FOR_TOKEN.get("NoSuchToken") is None
+        roles = rotation_roles_from_tokens([("NoSuchToken", (1, 2, 3))])
+        assert roles.model_blocker == "NoSuchToken"
+
+    def test_stale_patch_target_still_sees_typos_in_the_shell_modules(self) -> None:
+        """``check_quirks``'s ``stale-patch-target`` resolves a patch string
+        statically; a module ``__getattr__`` would make every name resolve."""
+        spec = importlib.util.spec_from_file_location("_check_quirks_2092", _CHECK_QUIRKS)
+        assert spec is not None and spec.loader is not None
+        quirks = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = quirks   # dataclasses resolve their module by name
+        try:
+            spec.loader.exec_module(quirks)
+            for module in _SHELL_MODULES:
+                assert quirks._target_resolves(f"{module}.ASDShellT3", _REPO)
+                assert not quirks._target_resolves(f"{module}.NoSuchThing", _REPO)
+                assert not quirks._target_resolves(f"{module}.ShellMITC3", _REPO)
+            # The ``ops.element`` hook is a class ``__getattribute__``, not a
+            # module or class ``__getattr__``: its module stays exact, and the
+            # skill's fence resolver (which reads ``__getattr__``) too.
+            ns = "apeGmsh.opensees._internal.ns.element"
+            assert quirks._target_resolves(f"{ns}._ElementNS", _REPO)
+            assert not quirks._target_resolves(f"{ns}.NoSuchThing", _REPO)
+            from apeGmsh.opensees._internal.ns.element import _ElementNS
+
+            assert not any("__getattr__" in vars(k) for k in _ElementNS.__mro__)
+        finally:
+            sys.modules.pop(spec.name, None)
 
 
 # ===========================================================================

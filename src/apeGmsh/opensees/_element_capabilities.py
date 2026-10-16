@@ -565,14 +565,6 @@ _ELEM_REGISTRY: dict[str, _ElemSpec] = {
     # ── 3-D shell (section-based) ──────────────────────────────────────────
     # Shells use a section; with a layered section they expose
     # through-thickness layer responses (has_layers).
-    "ShellMITC3": _ElemSpec(
-        mat_family="section", needs_transf=False,
-        ndm_ok=frozenset({3}), ndf_ok=frozenset({6}),
-        gmsh_etypes=frozenset({2}),
-        node_reorder={2: (0, 1, 2)},
-        slots=("nodes", "secTag"),
-        has_gauss=True, has_layers=True,
-    ),
     "ShellMITC4": _ElemSpec(
         mat_family="section", needs_transf=False,
         ndm_ok=frozenset({3}), ndf_ok=frozenset({6}),
@@ -747,6 +739,30 @@ class _UnknownType(Enum):
 Unknown: Final = _UnknownType.Unknown
 
 
+#: Element classes the bridge removed, each with the error a spelling of it
+#: raises: ``ops.element.<Class>``, :func:`element_capability`, and the
+#: readback token table (``_readback._CLASS_FOR_TOKEN``). A removed class is
+#: refused by name, never answered as :data:`Unknown`, so a model.h5 or a
+#: script that still names it learns what to use instead.
+REMOVED_ELEMENT_CLASSES: Final[dict[str, str]] = {
+    "ShellMITC3": (
+        "ShellMITC3 was removed from the bridge (#2092): no OpenSees build "
+        "has the element (neither the Ladruno fork pin nor upstream), so a "
+        "model using it failed at emit. Use ops.element.ASDShellT3 for a "
+        "3-node shell. ShellDKGT is the other working 3-node OpenSees shell; "
+        "the bridge has no typed primitive for it."
+    ),
+}
+
+
+def refuse_removed_element(class_name: str) -> None:
+    """Raise ``ValueError`` naming the replacements when ``class_name`` is a
+    class in :data:`REMOVED_ELEMENT_CLASSES`; return otherwise."""
+    message = REMOVED_ELEMENT_CLASSES.get(class_name)
+    if message is not None:
+        raise ValueError(message)
+
+
 def element_capability(class_name: str) -> "_ElemSpec | _UnknownType":
     """The single registry lookup: an ``Element`` subclass's :class:`_ElemSpec`,
     or :data:`Unknown` when :data:`_ELEM_REGISTRY` has no entry for it after
@@ -760,8 +776,12 @@ def element_capability(class_name: str) -> "_ElemSpec | _UnknownType":
     unless the class sits on its reasoned exception list, so a new
     element cannot land without either a registry entry or a written
     reason.
+
+    A class in :data:`REMOVED_ELEMENT_CLASSES` raises ``ValueError``
+    naming its replacements.
     """
     token = _CLASS_TOKEN_ALIASES.get(class_name, class_name)
+    refuse_removed_element(token)
     spec = _ELEM_REGISTRY.get(token)
     return Unknown if spec is None else spec
 

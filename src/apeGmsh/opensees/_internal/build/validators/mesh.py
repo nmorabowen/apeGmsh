@@ -63,7 +63,7 @@ def check_quad_element_on_triangles(
         "g.mesh.recipe.structured(...), then generate(); "
         "g.mesh.structured.recombine() only acts on an already generated "
         "mesh. Otherwise declare a triangle element on this PG (e.g. "
-        "ShellMITC3 / ASDShellT3 for shells, Tri31 for plane solids)."
+        "ASDShellT3 for shells, Tri31 for plane solids)."
     )
 
 
