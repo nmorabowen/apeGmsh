@@ -16,7 +16,13 @@ site                                      warning
 ``read_springs``                          :class:`MPCOBucketSkippedWarning`
 ``_layers_available_components``          :class:`LayerBucketUnreadWarning`
 ``read_layers``                           :class:`LayerBucketUnreadWarning`
+``_line_stations_available_components``   :class:`MPCOBucketSkippedWarning`
 ========================================  ===============================
+
+Every warning names the file, since a partition set repeats the same
+bucket path in every part. A ``gp_indices`` / ``layer_indices`` beyond a
+bucket is a bad caller argument and raises ``ValueError``, as
+``read_fibers`` and the ``.ladruno`` reader do.
 
 The layer level keeps the class #2091 introduced, so one warning per read
 names both the buckets discovery leaves out and the ones the read refuses.
@@ -36,6 +42,7 @@ import pytest
 
 from apeGmsh.opensees._response_catalog import (
     ELE_TAG_ASDShellQ4,
+    ELE_TAG_ForceBeamColumn3d,
     ELE_TAG_FourNodeTetrahedron,
     IntRule,
     is_fiber_catalogued,
@@ -44,6 +51,7 @@ from apeGmsh.opensees._response_catalog import (
 from apeGmsh.results import Results
 from apeGmsh.results.readers import _mpco_layer_io as _mlayer
 from apeGmsh.results.readers._mpco import MPCOBucketSkippedWarning
+from apeGmsh.results.readers._mpco_multi import MPCOMultiPartitionReader
 from apeGmsh.results.readers._mpco_layer_io import LayerBucketUnreadWarning
 from apeGmsh.results.readers._protocol import ResultLevel
 from tests.conftest import _stub_model_h5_path
@@ -58,6 +66,7 @@ from tests.test_results_mpco_material_mock import (
     _add_tet_connectivity,
     _create_skeleton as _material_skeleton,
 )
+from tests.test_results_mpco_line_mock import _single_bucket_mpco
 from tests.test_results_mpco_spring_mock import _make_spring_mpco
 
 _TET_KEY = (
@@ -114,6 +123,7 @@ class TestGaussMaterialState:
         (msg,) = _only(rec, MPCOBucketSkippedWarning)
         assert f"material.damage/{_TET_KEY}" in msg
         assert "NUM_COLUMNS=5" in msg
+        assert " in damage.mpco " in msg
 
     def test_read_names_a_refused_bucket(self, tmp_path: Path) -> None:
         r = _open(_damage_file(tmp_path, num_columns=5))
@@ -127,6 +137,7 @@ class TestGaussMaterialState:
         assert "'damage_tension'" in msg
         assert f"material.damage/{_TET_KEY}" in msg
         assert "NUM_COLUMNS=5" in msg
+        assert " in damage.mpco " in msg
 
     def test_well_formed_bucket_reads_in_silence(self, tmp_path: Path) -> None:
         r = _open(_damage_file(tmp_path, num_columns=2))
@@ -172,6 +183,7 @@ class TestSprings:
         (msg,) = _only(rec, MPCOBucketSkippedWarning)
         assert "basicForce/19-ZeroLength[1:0:0]" in msg
         assert "NUM_COLUMNS=7" in msg
+        assert " in springs.mpco " in msg
 
     def test_read_names_a_refused_bucket(self, tmp_path: Path) -> None:
         r = _open(_spring_file(tmp_path, num_columns=7))
@@ -323,7 +335,7 @@ class TestLayers:
         )
         _, msgs = _layer_read(path)
         (msg,) = msgs
-        assert msg.startswith("2 MPCO layer bucket(s) left unread")
+        assert msg.startswith("2 MPCO layer bucket(s) in layers.mpco left unread")
         assert "999-WeirdShell" in msg
         assert "different layer counts" in msg
 
@@ -342,15 +354,42 @@ class TestLayers:
         assert "material.fiber.stress/999-WeirdShell" in msg
         assert "material.fiber.strain/999-WeirdShell" in msg
 
-    def test_layer_index_beyond_the_bucket_is_named(
+    @pytest.mark.parametrize("kw, text", [
+        ({"layer_indices": np.array([5])}, r"layer_indices \[5\] out of range \[0, 2\)"),
+        ({"gp_indices": np.array([4])}, r"gp_indices \[4\] out of range \[0, 4\)"),
+    ])
+    def test_index_beyond_the_bucket_raises(
+        self, tmp_path: Path, kw: dict, text: str,
+    ) -> None:
+        """A filter the bucket lacks is a bad caller argument: it raises,
+        naming the file and bucket, as ``read_fibers`` and ``.ladruno`` do."""
+        with pytest.raises(
+            ValueError,
+            match=rf"layers\.mpco ON_ELEMENTS/material\.fiber\.stress/"
+                  rf".*ASDShellQ4.*: {text}",
+        ):
+            _layer_read(_layer_file(tmp_path), **kw)
+
+    def test_index_filter_on_a_refused_bucket_names_it(
         self, tmp_path: Path,
     ) -> None:
+        """The index check needs the layout; a bucket whose layout is
+        refused is named, not raised on."""
         slab, msgs = _layer_read(
-            _layer_file(tmp_path), layer_indices=np.array([5]),
+            _layer_file(tmp_path, layer_counts=(2, 3)),
+            layer_indices=np.array([0]),
         )
         assert slab.values.shape[1] == 0
         (msg,) = msgs
-        assert "layer_indices [5] out of range [0, 2)" in msg
+        assert "different layer counts [2, 3]" in msg
+
+    def test_index_filter_within_range_reads(self, tmp_path: Path) -> None:
+        slab, msgs = _layer_read(
+            _layer_file(tmp_path), layer_indices=np.array([1]),
+            gp_indices=np.array([0, 3]),
+        )
+        assert msgs == []
+        assert slab.values.shape == (1, 4)
 
     def test_well_formed_bucket_reads_in_silence(self, tmp_path: Path) -> None:
         path = _layer_file(tmp_path)
@@ -390,3 +429,100 @@ class TestUnreadReasonWording:
 
     def test_beam_on_a_custom_rule_belongs_to_the_fiber_level(self) -> None:
         assert _classify("74-ForceBeamColumn3d[1000:0:0]") is None
+
+
+# =====================================================================
+# Line stations: _line_stations_available_components
+# =====================================================================
+
+class TestLineStations:
+    def test_listing_names_a_bucket_without_gp_x(self, tmp_path: Path) -> None:
+        """The read raises on a custom-rule bucket whose connectivity has
+        no ``GP_X``; the listing used to drop it in silence."""
+        path = tmp_path / "beam.mpco"
+        _single_bucket_mpco(
+            path, class_tag=ELE_TAG_ForceBeamColumn3d,
+            class_name="ForceBeamColumn3d", header_idx=0,
+        )
+        with h5py.File(path, "r+") as f:
+            del f["MODEL_STAGE[1]/MODEL/ELEMENTS/"
+                  "74-ForceBeamColumn3d[1000:1]"].attrs["GP_X"]
+        r = _open(path)
+        try:
+            with pytest.warns(MPCOBucketSkippedWarning) as rec:
+                comps = r._reader.available_components(
+                    r._reader.stages()[0].id, ResultLevel.LINE_STATIONS,
+                )
+        finally:
+            r._reader.close()
+        assert "axial_force" not in comps
+        (msg,) = _only(rec, MPCOBucketSkippedWarning)
+        assert "line-stations component listing in beam.mpco" in msg
+        assert "section.force/74-ForceBeamColumn3d[1000:1:0]" in msg
+        assert "GP_X" in msg
+
+    def test_well_formed_bucket_lists_in_silence(self, tmp_path: Path) -> None:
+        path = tmp_path / "beam.mpco"
+        _single_bucket_mpco(
+            path, class_tag=ELE_TAG_ForceBeamColumn3d,
+            class_name="ForceBeamColumn3d", header_idx=0,
+        )
+        r = _open(path)
+        try:
+            with warnings.catch_warnings():
+                warnings.simplefilter("error", MPCOBucketSkippedWarning)
+                comps = r._reader.available_components(
+                    r._reader.stages()[0].id, ResultLevel.LINE_STATIONS,
+                )
+        finally:
+            r._reader.close()
+        assert "axial_force" in comps
+
+
+# =====================================================================
+# A partition set: each part's warning names its own file
+# =====================================================================
+
+def _record(fn) -> "list[warnings.WarningMessage]":
+    with warnings.catch_warnings(record=True) as rec:
+        warnings.simplefilter("always")
+        fn()
+    return rec
+
+
+class TestPartitionSet:
+    def test_spring_warnings_name_each_part(self, tmp_path: Path) -> None:
+        parts = []
+        for k in range(2):
+            src = _spring_file(tmp_path, num_columns=7)
+            parts.append(src.rename(tmp_path / f"run.part-{k}.mpco"))
+        reader = MPCOMultiPartitionReader(parts)
+        try:
+            sid = reader.stages()[0].id
+            rec = _record(lambda: reader.read_springs(sid, "spring_force_1"))
+        finally:
+            reader.close()
+        msgs = _only(rec, MPCOBucketSkippedWarning)
+        assert len(msgs) == 2
+        assert " in run.part-0.mpco " in msgs[0]
+        assert " in run.part-1.mpco " in msgs[1]
+        for msg in msgs:
+            assert "basicForce/19-ZeroLength[1:0:0]" in msg
+
+    def test_layer_warnings_name_each_part(self, tmp_path: Path) -> None:
+        parts = []
+        for k in range(2):
+            src = _layer_file(tmp_path, layer_counts=(2, 3))
+            parts.append(src.rename(tmp_path / f"shell.part-{k}.mpco"))
+        reader = MPCOMultiPartitionReader(parts)
+        try:
+            sid = reader.stages()[0].id
+            rec = _record(lambda: reader.read_layers(sid, "fiber_stress"))
+        finally:
+            reader.close()
+        msgs = _only(rec, LayerBucketUnreadWarning)
+        assert len(msgs) == 2
+        assert " in shell.part-0.mpco " in msgs[0]
+        assert " in shell.part-1.mpco " in msgs[1]
+        for msg in msgs:
+            assert _SHELL_KEY in msg

@@ -53,32 +53,72 @@ _PROGRAM_STAGE_KINDS = frozenset({"static", "transient"})
 
 
 class MPCOBucketSkippedWarning(UserWarning):
-    """A material-state or spring bucket the MPCO reader leaves unread.
+    """A material-state, spring or line-station bucket the MPCO reader
+    leaves unread.
 
     Its decoder refused the bucket (malformed ``META``, a ``NUM_COLUMNS``
-    mismatch), so the elements it holds return no values. One warning per
-    read names every such bucket and the decoder's reason. The
-    layer level names its unread buckets in
+    mismatch, a missing ``GP_X``, a section code with no canonical), so
+    the elements it holds return no values. One warning per read names
+    the file, every such bucket and the decoder's reason. The layer level
+    names its unread buckets in
     :class:`~apeGmsh.results.readers._mpco_layer_io.LayerBucketUnreadWarning`.
     """
 
 
 def _warn_skipped_buckets(
-    skipped: "list[tuple[str, str]]", *, what: str,
+    skipped: "list[tuple[str, str]]", *, what: str, source: str,
 ) -> None:
     """One :class:`MPCOBucketSkippedWarning` naming every skipped bucket.
 
     ``skipped`` holds ``(bucket path, reason)`` pairs; an empty list
-    warns nothing. ``stacklevel`` points at the reader method's caller.
+    warns nothing. ``source`` is the file name: a partition set repeats
+    the same bucket path in every part. ``stacklevel`` points at the
+    reader method's caller.
     """
     if not skipped:
         return
     listing = "; ".join(f"{path}: {reason}" for path, reason in skipped)
     warnings.warn(
-        f"MPCO {what} left {len(skipped)} bucket(s) "
+        f"MPCO {what} in {source} left {len(skipped)} bucket(s) "
         f"unread, so their elements return no values: {listing}.",
         MPCOBucketSkippedWarning, stacklevel=3,
     )
+
+
+def _check_layer_indices(
+    bucket_grp: "h5py.Group",
+    layout: Any,
+    component: str,
+    *,
+    element_ids: Optional[ndarray],
+    gp_indices: Optional[ndarray],
+    layer_indices: Optional[ndarray],
+    where: str,
+) -> None:
+    """Raise ``ValueError`` on a ``gp_indices`` / ``layer_indices`` the
+    bucket does not have.
+
+    A bad caller argument is refused, not skipped. The check runs where
+    :func:`_mpco_layer_io.read_layer_bucket_slab` would apply the filter:
+    the bucket holds the component and a requested element.
+    """
+    if component not in layout.component_layout:
+        return
+    if element_ids is not None:
+        ids = np.asarray(bucket_grp["ID"][...]).ravel().astype(np.int64)
+        if not np.isin(ids, np.asarray(element_ids, dtype=np.int64)).any():
+            return
+    for name, sel, n in (
+        ("gp_indices", gp_indices, layout.n_surface_gp),
+        ("layer_indices", layer_indices, layout.n_layers),
+    ):
+        if sel is None:
+            continue
+        arr = np.asarray(sel, dtype=np.int64).ravel()
+        if arr.size and (int(arr.max()) >= n or int(arr.min()) < 0):
+            raise ValueError(
+                f"{where}: {name} {arr.tolist()} out of range [0, {n})."
+            )
 
 
 def _stage_sort_key(name: str) -> "tuple[int, str]":
@@ -562,6 +602,7 @@ class MPCOReader:
                 out.update(canonicals)
         _warn_skipped_buckets(
             skipped, what="gauss material-state component listing",
+            source=self._path.name,
         )
         return sorted(out)
 
@@ -634,7 +675,9 @@ class MPCOReader:
                     ))
                     continue
                 out.update(layout.component_layout)
-        _mlayer.warn_unread_layer_buckets(unread, stacklevel=3)
+        _mlayer.warn_unread_layer_buckets(
+            unread, source=self._path.name, stacklevel=3,
+        )
         return sorted(out)
 
     def _line_stations_available_components(
@@ -646,6 +689,7 @@ class MPCOReader:
         if on_elements is None or model_elements is None:
             return []
         out: set[str] = set()
+        skipped: list[tuple[str, str]] = []
 
         # ── section.force / Custom-rule path (force-based beams) ─────
         # Discover line-stations buckets via any line-station canonical
@@ -661,11 +705,20 @@ class MPCOReader:
                     layout, _ = _mline.resolve_bucket_layout(
                         model_elements, token_grp, bucket,
                     )
-                except (ValueError, KeyError):
-                    # Unsupported section codes / missing GP_X — silent skip
-                    # at availability discovery (still raises on .get()).
+                except (ValueError, KeyError) as exc:
+                    # A section code with no canonical (KeyError) or a
+                    # missing GP_X / malformed META (ValueError): the read
+                    # raises on it, and the listing names it.
+                    skipped.append((
+                        f"ON_ELEMENTS/section.force/{bucket.bracket_key}",
+                        f"{type(exc).__name__}: {exc}",
+                    ))
                     continue
                 out.update(layout.component_layout)
+        _warn_skipped_buckets(
+            skipped, what="line-stations component listing",
+            source=self._path.name,
+        )
 
         # ── localForce path (stiffness beams: ElasticBeam2d/3d) ──────
         out.update(_mlocal.available_components_in_local_force(on_elements))
@@ -692,7 +745,9 @@ class MPCOReader:
                     skipped.append((bucket_grp.name, str(exc)))
                     continue
                 out.update(canonicals)
-        _warn_skipped_buckets(skipped, what="springs component listing")
+        _warn_skipped_buckets(
+            skipped, what="springs component listing", source=self._path.name,
+        )
         return sorted(out)
 
     # ------------------------------------------------------------------
@@ -1116,6 +1171,7 @@ class MPCOReader:
             natural_coords_parts.append(natural_coords)
         _warn_skipped_buckets(
             skipped, what=f"gauss material-state read of {component!r}",
+            source=self._path.name,
         )
 
         if not values_parts:
@@ -1245,7 +1301,9 @@ class MPCOReader:
             on_elements, canonical_component=component,
         )
         if not buckets:
-            _mlayer.warn_unread_layer_buckets(unread, stacklevel=2)
+            _mlayer.warn_unread_layer_buckets(
+                unread, source=self._path.name, stacklevel=2,
+            )
             return _empty_layer_slab(component, time, t_idx)
 
         values_parts: list[ndarray] = []
@@ -1261,6 +1319,26 @@ class MPCOReader:
             # (swapped) or ``section.fiber.<X>`` (unswapped). Use
             # each bucket's own source group.
             bucket_grp = on_elements[bucket.mpco_group_name][bucket.bracket_key]
+            bucket_path = (
+                f"ON_ELEMENTS/{bucket.mpco_group_name}/{bucket.bracket_key}"
+            )
+            if gp_indices is not None or layer_indices is not None:
+                try:
+                    layout = _mlayer.resolve_layer_bucket_layout(
+                        section_assignments, bucket_grp, bucket,
+                    )
+                    _mlayer.validate_layer_bucket_meta(
+                        bucket_grp, layout, bracket_key=bucket.bracket_key,
+                    )
+                except ValueError as exc:
+                    unread.append((bucket_path, f"its read is refused ({exc})"))
+                    continue
+                _check_layer_indices(
+                    bucket_grp, layout, component,
+                    element_ids=element_ids, gp_indices=gp_indices,
+                    layer_indices=layer_indices,
+                    where=f"{self._path.name} {bucket_path}",
+                )
             try:
                 result = _mlayer.read_layer_bucket_slab(
                     bucket_grp, section_assignments, local_axes, bucket,
@@ -1273,11 +1351,9 @@ class MPCOReader:
             except ValueError as exc:
                 # A refused bucket (mixed layer counts, several sub-GPs
                 # per layer, malformed META) is named, with the
-                # buckets discovery left out, in one warning.
-                unread.append((
-                    f"ON_ELEMENTS/{bucket.mpco_group_name}/{bucket.bracket_key}",
-                    f"its read is refused ({exc})",
-                ))
+                # buckets discovery left out, in one warning. An index
+                # filter beyond the bucket raised above, before this try.
+                unread.append((bucket_path, f"its read is refused ({exc})"))
                 continue
             if result is None:
                 continue
@@ -1290,7 +1366,9 @@ class MPCOReader:
             sub_gp_index_parts.append(subi)
             thickness_parts.append(thick)
             quaternion_parts.append(quat)
-        _mlayer.warn_unread_layer_buckets(unread, stacklevel=2)
+        _mlayer.warn_unread_layer_buckets(
+            unread, source=self._path.name, stacklevel=2,
+        )
 
         if not values_parts:
             return _empty_layer_slab(component, time, t_idx)
@@ -1356,7 +1434,10 @@ class MPCOReader:
             values, ei = result
             values_parts.append(values)
             element_index_parts.append(ei)
-        _warn_skipped_buckets(skipped, what=f"springs read of {component!r}")
+        _warn_skipped_buckets(
+            skipped, what=f"springs read of {component!r}",
+            source=self._path.name,
+        )
 
         if not values_parts:
             return _empty_spring_slab(component, time, t_idx)

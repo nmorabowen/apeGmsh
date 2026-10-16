@@ -57,6 +57,7 @@ from __future__ import annotations
 
 import warnings
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -251,12 +252,14 @@ def scan_layer_buckets(
 
 
 def warn_unread_layer_buckets(
-    unread: list[tuple[str, str]], *, stacklevel: int,
+    unread: list[tuple[str, str]], *, source: str, stacklevel: int,
 ) -> None:
     """One :class:`LayerBucketUnreadWarning` naming every unread bucket.
 
     ``unread`` holds ``(bucket path, reason)`` pairs; an empty list
     warns nothing. Each path is named once, with its first reason.
+    ``source`` is the file name: a partition set repeats the same bucket
+    path in every part.
     """
     named: dict[str, str] = {}
     for path, reason in unread:
@@ -265,7 +268,7 @@ def warn_unread_layer_buckets(
         return
     listing = "; ".join(f"MPCO {path}: {reason}" for path, reason in named.items())
     warnings.warn(
-        f"{len(named)} MPCO layer bucket(s) left unread, so their layer "
+        f"{len(named)} MPCO layer bucket(s) in {source} left unread, so their layer "
         f"state is read at neither the fiber nor the layer level: "
         f"{listing}.",
         LayerBucketUnreadWarning, stacklevel=stacklevel + 1,
@@ -287,7 +290,9 @@ def discover_layer_buckets(
     token, buckets, unread = scan_layer_buckets(
         on_elements_grp, canonical_component=canonical_component,
     )
-    warn_unread_layer_buckets(unread, stacklevel=2)
+    warn_unread_layer_buckets(
+        unread, source=Path(on_elements_grp.file.filename).name, stacklevel=2,
+    )
     return (token, buckets)
 
 
