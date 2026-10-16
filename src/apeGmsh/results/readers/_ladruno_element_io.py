@@ -1197,7 +1197,7 @@ def line_station_available(on_elements: "h5py.Group") -> set[str]:
 #: (``N_1,V_1,M_1,N_2,V_2,M_2``); a 2-D beam has one of each, ``Vy``/``Mz``.
 #: Only for ``localForce``: ``basicForce``'s ``M_1``/``M_2`` are basic-system
 #: end moments, not section forces. It applies only to a bucket that
-#: :func:`_local_force_2d_gate` admits (#2013).
+#: :func:`_local_force_2d_gate` admits.
 _LOCAL_FORCE_2D_ALIAS = {"V": "Vy", "M": "Mz"}
 
 #: A ``localForce`` station token: ``N_1`` and ``N1`` both occur
