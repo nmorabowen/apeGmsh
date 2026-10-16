@@ -8,10 +8,13 @@ writes the attribute, so only foreign files lack it.
 
 Now the dimension comes from the attribute, else from the width of
 ``MODEL/NODES/COORDINATES`` (the writer sizes it by ``ndm``), else it is
-unknown: the ``nodal_resisting_*`` reads refuse naming the file, the
-element listing leaves them out with a warning, and ``opensees_model``
-refuses. Reads that do not use the dimension (the raw tokens) stay as
-they were.
+unknown. Then a ``nodal_resisting_*`` read over indexed ``P<a>_<b>``
+columns raises ``SpatialDimUnknown`` naming the file, the element listing
+leaves those names out with a warning, and ``opensees_model`` raises the
+same. ``SpatialDimUnknown`` is not a ``MissingElementResults``, so a
+partition set does not drop the rank that raises it. Axis-named beam
+columns (``Px_1``) name their quantity and read at any dimension, and the
+raw token reads stay as they were.
 
 The oracle is constructive: each synthetic column holds
 ``_truth(e, n, q, t)`` for its canonical quantity ``q``, and a column with

@@ -9,8 +9,14 @@ files from other writers.
 
 The reader now takes the dimension from `INFO/SPATIAL_DIM`, else from the
 width of `MODEL/NODES/COORDINATES` when every stage agrees on 1, 2 or 3.
-When neither gives it, the `nodal_resisting_*` element reads raise
-`NodalForceNotRecorded`, the element component listing leaves those names out
-with a `UserWarning`, and `opensees_model()` raises `ValueError`. Each message
-names the file. Raw token reads such as `globalForce` and `basicForce` are
-unchanged.
+When neither gives it:
+
+- a `nodal_resisting_*` read over indexed `P<a>_<b>` `globalForce` columns
+  raises `SpatialDimUnknown`, a `ValueError` that names the file;
+- the element component listing leaves those names out, with a `UserWarning`;
+- `opensees_model()` raises `SpatialDimUnknown`.
+
+Axis-named beam columns (`Px_1`, `Mz_1`) name their own quantity, so they
+read as before. In a partition set, a rank whose dimension is unknown fails
+the whole read and names that rank. Raw token reads such as `globalForce`
+and `basicForce` are unchanged.
