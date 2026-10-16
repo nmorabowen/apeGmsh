@@ -67,14 +67,25 @@ today.
 The fork creates `INFO/PROVENANCE` empty. After the recorder closes,
 apeGmsh writes attributes into it, and nothing else into the file. It may
 do so only once the fork doc PR (slice 1, chain F, merged by the
-maintainer) blesses consumer writes after close (ruling 2). The attributes
-are:
+maintainer) blesses consumer writes after close (ruling 2).
 
-- `model_hash` and `fem_hash`, copied from `<stem>.h5` `/meta/lineage`;
-- `stage_names`;
-- `element_index_space`;
-- `unsupported`, the lossy categories a converter or writer could not carry;
-- `writer`, the apeGmsh component that produced or stamped the file.
+The case of an attribute's name says who owns it. Lowercase attributes in
+`INFO/PROVENANCE` are consumer-owned, which means apeGmsh. UPPERCASE names
+stay reserved for the fork, for the optional, later `-provenance`. The
+fork's `MODEL_HASH` slot, which the fork never wrote, is withdrawn.
+`RESULTS_HASH` stays reserved for the fork.
+
+Every attribute is a scalar, variable-length UTF-8 string attribute. The
+attributes are:
+
+- `model_hash` and `fem_hash`, copied byte-equal from `<stem>.h5`
+  `/meta/lineage`;
+- `stage_names`, a JSON string;
+- `element_index_space`, which is `"fem"` or absent;
+- `unsupported`, a JSON string listing the lossy categories a converter or
+  writer could not carry;
+- `writer`, which names the apeGmsh component that produced or stamped the
+  file, and its version.
 
 There is no sidecar file, and the fork needs no code change for pairing.
 A fork option that writes `PROVENANCE` at record time (`-provenance`) is
