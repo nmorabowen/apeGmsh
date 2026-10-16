@@ -48,7 +48,11 @@ from typing import TYPE_CHECKING
 import numpy as np
 from numpy import ndarray
 
-from ...opensees._response_catalog import local_force_station_signs
+from ...opensees._response_catalog import (
+    CUSTOM_RULE_CATALOG,
+    NODAL_FORCE_CATALOG,
+    local_force_station_signs,
+)
 
 if TYPE_CHECKING:
     import h5py
@@ -106,11 +110,17 @@ class _LocalForceBucket:
     no stations and an empty layout. It lists no component, and a read
     that asks for any of its elements raises the reason
     (:func:`read_local_force_bucket_slab`); reads of other elements go on.
+
+    ``refused`` holds ``(canonical, reason)`` for single components a
+    ``basicForce`` bucket names but cannot map to stations
+    (:func:`discover_basic_force_buckets`); a ``localForce`` bucket leaves
+    it empty.
     """
     bracket_key: str
     n_stations: int
     layout: dict[str, list[int]]   # canonical -> column indices (length = n_stations)
     refusal: str | None = None
+    refused: tuple[tuple[str, str], ...] = ()
 
 
 # =====================================================================
@@ -261,9 +271,10 @@ def parse_local_force_layout(
 # =====================================================================
 
 def discover_local_force_buckets(
-    on_elements_grp: "h5py.Group",
+    on_elements_grp: "h5py.Group", token: str = "localForce",
 ) -> list[_LocalForceBucket]:
-    """Walk ``ON_ELEMENTS/localForce/`` and return its buckets.
+    """Walk ``ON_ELEMENTS/<token>/`` (``localForce``, or its plural
+    ``localForces``) and return its buckets.
 
     A malformed bucket comes back refused (``refusal`` holds the reason,
     naming the bucket): no ``META/COMPONENTS``, step rows of differing
@@ -276,9 +287,9 @@ def discover_local_force_buckets(
     station force or moment (:class:`NoLineStationTokensError`, a truss's
     force vector).
     """
-    if "localForce" not in on_elements_grp:
+    if token not in on_elements_grp:
         return []
-    lf_grp = on_elements_grp["localForce"]
+    lf_grp = on_elements_grp[token]
     spatial_dim = _spatial_dim(on_elements_grp)
     out: list[_LocalForceBucket] = []
     for bracket_key in lf_grp:
@@ -327,6 +338,144 @@ def discover_local_force_buckets(
     return out
 
 
+#: The line-station source tokens, by rank: ``section.force`` (and
+#: ``section.deformation``, its strain twin) is rank 0, ``localForce`` rank 1,
+#: ``basicForce`` rank 2. A plural spelling (``localForces``,
+#: ``basicForces``) is the same response and reads as its singular. Every
+#: other element-level token is never a station source: ``globalForce``
+#: (MPCO ``force``) holds global end forces, not local station values.
+LINE_STATION_SOURCE_TOKENS = frozenset({
+    "section.force", "section.deformation",
+    "localForce", "localForces", "basicForce", "basicForces",
+})
+
+#: The beam classes the response catalog knows: the elastic and frame
+#: beams of ``NODAL_FORCE_CATALOG`` and the line-station classes of
+#: ``CUSTOM_RULE_CATALOG``. A never-source bucket warns only for these:
+#: a bearing's or a wall's element forces are no beam's stations.
+LINE_STATION_BEAM_CLASSES: frozenset[str] = frozenset(
+    {cname for cname, _tok in NODAL_FORCE_CATALOG}
+    | {cname for cname, _kind in CUSTOM_RULE_CATALOG}
+)
+
+
+def bracket_class(bracket_key: str) -> str | None:
+    """``5-ElasticBeam3d[1:0:0]`` -> ``ElasticBeam3d``; ``None`` unparsed."""
+    m = _BRACKET_CLASS_RE.match(bracket_key)
+    return None if m is None else m.group("cls")
+
+#: ``basicForce``'s two-station components: the basic-system end moments
+#: ``Mz_1,Mz_2`` / ``My_1,My_2`` of a 3-D ``N,Mz_1,Mz_2,My_1,My_2,T``
+#: bucket. Every fork class that names them reports its ``localForce`` end
+#: moments as these same values, so they read under the
+#: ``localForce`` station signs: ``[-M_1, +M_2]``.
+_BASIC_FORCE_END_MOMENTS = frozenset({"bending_moment_y", "bending_moment_z"})
+
+
+def _components_csv(bucket_grp: "h5py.Group") -> list[str]:
+    """Every column name of a bucket's ``META/COMPONENTS``, block by block.
+
+    A block reads ``<header>.<a>,<b>,...``; blocks join with ``;``.
+    """
+    raw = bucket_grp["META"]["COMPONENTS"][...]
+    if hasattr(raw, "__len__") and not isinstance(raw, (bytes, str)):
+        raw = raw[0]
+    if isinstance(raw, bytes):
+        raw = raw.decode("ascii", "replace")
+    names: list[str] = []
+    for block in str(raw).split(";"):
+        csv = block[block.rfind(".") + 1:]
+        names.extend(t.strip() for t in csv.split(",") if t.strip())
+    return names
+
+
+def discover_basic_force_buckets(
+    on_elements_grp: "h5py.Group", token: str = "basicForce",
+) -> list[_LocalForceBucket]:
+    """``basicForce`` (or ``basicForces``) buckets that carry beam end
+    moments (rank 2).
+
+    A bucket's ``Mz_1,Mz_2`` / ``My_1,My_2`` read as two stations under the
+    ``localForce`` signs. Only the 3-D spellings count: a 2-D ``M_1,M_2`` is
+    a basic-system pair the ``V``/``M`` alias stays off (#1741), and a
+    spring's ``P1,P2`` names no beam force. A two-station component other
+    than an end moment has no known basic-to-section identity: the bucket
+    keeps it in ``refused`` with the reason, and reads it as no stations.
+    A bucket with no recorded step, no ``META/COMPONENTS``, or none of
+    these names is passed over.
+    """
+    if token not in on_elements_grp:
+        return []
+    bf_grp = on_elements_grp[token]
+    out: list[_LocalForceBucket] = []
+    for bracket_key in bf_grp:
+        bucket_grp = bf_grp[bracket_key]
+        if ("DATA" not in bucket_grp or "META" not in bucket_grp
+                or "COMPONENTS" not in bucket_grp["META"]
+                or not any(k.startswith("STEP_") for k in bucket_grp["DATA"])):
+            continue
+        by_comp: dict[str, dict[int, int]] = {}
+        for col_idx, tok in enumerate(_components_csv(bucket_grp)):
+            m = _TOKEN_RE.match(tok)
+            if m is None:
+                continue
+            canonical = _LOCAL_FORCE_BASE_TO_CANONICAL.get(m.group("base"))
+            if canonical is None:
+                continue
+            by_comp.setdefault(canonical, {})[int(m.group("station"))] = col_idx
+        layout: dict[str, list[int]] = {}
+        refused: list[tuple[str, str]] = []
+        for canonical, station_to_col in sorted(by_comp.items()):
+            stations = sorted(station_to_col)
+            if canonical in _BASIC_FORCE_END_MOMENTS and stations == [1, 2]:
+                layout[canonical] = [station_to_col[1], station_to_col[2]]
+            else:
+                refused.append((canonical, (
+                    f"{token} bucket {bracket_key!r} names {canonical!r} "
+                    f"at stations {stations}; only the end moments "
+                    f"{sorted(_BASIC_FORCE_END_MOMENTS)} at stations [1, 2] "
+                    f"map to the section convention."
+                )))
+        if layout or refused:
+            out.append(_LocalForceBucket(
+                bracket_key=bracket_key, n_stations=2, layout=layout,
+                refused=tuple(refused),
+            ))
+    return out
+
+
+def unranked_station_buckets(
+    on_elements_grp: "h5py.Group", canonical_component: str,
+) -> list[tuple[str, "h5py.Group"]]:
+    """``(token/bracket_key, bucket)`` of every beam-class bucket
+    (:data:`LINE_STATION_BEAM_CLASSES`) that names ``canonical_component``
+    as a beam station force under a token outside
+    :data:`LINE_STATION_SOURCE_TOKENS` (``globalForce``, MPCO's ``force``).
+
+    These are never read as line stations; the reader names them when they
+    would have been an element's only source.
+    """
+    out: list[tuple[str, "h5py.Group"]] = []
+    for token in on_elements_grp:
+        if token in LINE_STATION_SOURCE_TOKENS:
+            continue
+        token_grp = on_elements_grp[token]
+        for bracket_key in token_grp:
+            bucket_grp = token_grp[bracket_key]
+            if (bracket_class(bracket_key) not in LINE_STATION_BEAM_CLASSES
+                    or "META" not in bucket_grp
+                    or "COMPONENTS" not in bucket_grp["META"]
+                    or "ID" not in bucket_grp):
+                continue
+            for tok in _components_csv(bucket_grp):
+                m = _TOKEN_RE.match(tok)
+                if (m is not None and _LOCAL_FORCE_BASE_TO_CANONICAL.get(
+                        m.group("base")) == canonical_component):
+                    out.append((f"{token}/{bracket_key}", bucket_grp))
+                    break
+    return out
+
+
 def _spatial_dim(on_elements_grp: "h5py.Group") -> int | None:
     """The file's ``/INFO/SPATIAL_DIM``, or ``None`` when it is absent.
 
@@ -344,7 +493,9 @@ def available_components_in_local_force(
 ) -> set[str]:
     """Aggregate canonicals across the localForce buckets not refused."""
     out: set[str] = set()
-    for bucket in discover_local_force_buckets(on_elements_grp):
+    for bucket in (discover_local_force_buckets(on_elements_grp)
+                   + discover_local_force_buckets(
+                       on_elements_grp, token="localForces")):
         if bucket.refusal is None:
             out.update(bucket.layout.keys())
     return out
@@ -466,6 +617,11 @@ __all__ = [
     "NoLineStationTokensError",
     "parse_local_force_layout",
     "discover_local_force_buckets",
+    "discover_basic_force_buckets",
+    "unranked_station_buckets",
+    "LINE_STATION_SOURCE_TOKENS",
+    "LINE_STATION_BEAM_CLASSES",
+    "bracket_class",
     "available_components_in_local_force",
     "read_local_force_bucket_slab",
 ]
