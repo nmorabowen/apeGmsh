@@ -120,7 +120,7 @@ class MPCOMultiPartitionReader:
 
     def __init__(self, paths: list[str | Path]) -> None:
         # Bound first, so ``close()`` / ``__del__`` find a list on a
-        # facade whose construction failed (#2106).
+        # facade whose construction failed.
         self._readers: list[MPCOReader] = []
         if not paths:
             raise ValueError(
@@ -129,7 +129,7 @@ class MPCOMultiPartitionReader:
         self._paths = [Path(p) for p in paths]
         # A part that fails to open, or a failed (or interrupted)
         # consistency read, closes every part opened so far and re-raises
-        # the original error: the part files stay unlocked (#2106).
+        # the original error, so the part files stay unlocked.
         try:
             for p in self._paths:
                 self._readers.append(MPCOReader(p))
