@@ -62,13 +62,15 @@ _STAGE_PREFIX = "MODEL_STAGE["
 class ProvenanceStampRefused(RuntimeError):
     """:func:`stamp_provenance` refused, and wrote nothing to any part.
 
-    Raised before the first write when a part file is open or locked
-    (another process, a viewer, an ``h5py`` session, or a file that was
-    never closed cleanly), is not a ``.ladruno`` this reader supports,
-    lacks ``INFO/PROVENANCE``; when the model archive has no complete
-    ``/meta/lineage``; when the parts of a partitioned set disagree on
-    their MODEL; or when a different ``model_hash`` is already stamped
-    and ``overwrite`` is False.
+    Raised before the first write when HDF5 file locking is disabled
+    (``HDF5_USE_FILE_LOCKING=FALSE``), so an open file cannot be
+    detected; when a part file is open in this process or locked by
+    another (OpenSees, a viewer, an ``h5py`` session), is not a file this
+    reader supports, or lacks ``INFO/PROVENANCE``; when the partition set
+    is incomplete or mixed; when the model archive has no complete
+    ``/meta/lineage``; when the parts disagree on their MODEL; or, unless
+    ``overwrite`` is True, when a different ``model_hash`` is already
+    stamped or an owned attribute is not a string.
 
     §7b.1 rule 3 has a consumer that cannot open the file for writing
     *skip and warn*. That policy belongs to the caller: the resolver
@@ -122,8 +124,17 @@ def stamp_provenance(
     (``"[]"`` when none). ``writer`` defaults to ``"apeGmsh <version>"``.
 
     Re-stamping with identical values writes nothing. A part already
-    stamped with another ``model_hash`` refuses unless ``overwrite=True``;
-    a re-stamp removes an owned attribute the new stamp leaves out.
+    stamped with another ``model_hash``, or carrying an owned attribute
+    that is not a string, refuses unless ``overwrite=True``, which
+    replaces it; a re-stamp removes an owned attribute the new stamp
+    leaves out.
+
+    What it cannot see: the fork writes no close marker, so a file whose
+    recorder was killed before closing it is indistinguishable here from a
+    closed one once no process holds it. §7b.1 asks a consumer to run the
+    fork's ``ladruno_format.validate()`` first; that module is not shipped
+    with the fork build, so this function does not call it, and the
+    ``live-fork`` lane runs it on stamped files instead.
 
     Every check runs on every part before the first write; a refusal
     raises :class:`ProvenanceStampRefused` and leaves every file
@@ -136,6 +147,7 @@ def stamp_provenance(
     lossy = _string_list(unsupported, "unsupported") or []
     writer_text = _writer_text(writer)
 
+    _refuse_without_file_locking()
     parts = _discover_parts(Path(path))
     _refuse_if_open_here(parts)
     model_hash, fem_hash = _lineage_hashes(Path(model_h5))
@@ -162,6 +174,12 @@ def stamp_provenance(
             wanted["stage_names"] = _json(names)
         if _is_fem_index_space(facts.element_tags, pairing):
             wanted["element_index_space"] = "fem"
+        if facts.malformed and not overwrite:
+            raise ProvenanceStampRefused(
+                f"{part}: INFO/PROVENANCE holds owned attributes that are "
+                f"not strings: {facts.malformed}. Pass overwrite=True to "
+                "replace them."
+            )
         stamped = facts.owned.get("model_hash")
         if stamped is not None and stamped != model_hash and not overwrite:
             raise ProvenanceStampRefused(
@@ -169,7 +187,8 @@ def stamp_provenance(
                 f"model_hash={stamped!r}, not {model_hash!r} from "
                 f"{model_h5}. Pass overwrite=True to re-pair the file."
             )
-        if facts.owned != wanted or not facts.all_vlen_utf8:
+        if facts.owned != wanted or not facts.all_vlen_utf8 \
+                or facts.malformed:
             plans.append((part, wanted))
 
     if not plans:
@@ -231,6 +250,26 @@ def _discover_parts(path: Path) -> list[Path]:
     if missing:
         raise ProvenanceStampRefused(f"no such results file: {missing[0]}")
     return parts
+
+
+def _refuse_without_file_locking() -> None:
+    """Refuse when ``HDF5_USE_FILE_LOCKING`` turns HDF5 file locking off.
+
+    The open-file refusal rests on the lock: with it off, a second process
+    opens a file another one holds ``r+`` and writes under it.
+    ``results/monitor.py`` recommends this setting for live tailing, so a
+    stamp run in such an environment must not trust the lock.
+    """
+    import os
+
+    value = os.environ.get("HDF5_USE_FILE_LOCKING")
+    if value is not None and value.strip().upper() in ("FALSE", "0"):
+        raise ProvenanceStampRefused(
+            f"HDF5_USE_FILE_LOCKING={value!r} disables HDF5 file locking, so "
+            "a results file another process still holds open cannot be "
+            "detected and the stamp could write under it. Unset the "
+            "variable (or set it to TRUE) to stamp. Nothing was stamped."
+        )
 
 
 def _refuse_if_open_here(parts: list[Path]) -> None:
@@ -334,16 +373,19 @@ def _program_facts(
 
 
 class _PartFacts:
-    __slots__ = ("kinds", "element_tags", "owned", "all_vlen_utf8")
+    __slots__ = ("kinds", "element_tags", "owned", "all_vlen_utf8",
+                 "malformed")
 
     def __init__(
         self, kinds: "list[Optional[str]]", element_tags: "np.ndarray",
         owned: "dict[str, str]", all_vlen_utf8: bool,
+        malformed: "list[str]",
     ) -> None:
         self.kinds = kinds
         self.element_tags = element_tags
         self.owned = owned
         self.all_vlen_utf8 = all_vlen_utf8
+        self.malformed = malformed
 
 
 def _open_read(path: Path) -> "h5py.File":
@@ -382,6 +424,7 @@ def _read_part(path: Path) -> _PartFacts:
             raise ProvenanceStampRefused(
                 f"{path}: INFO/PROVENANCE is not a group.")
         owned: dict[str, str] = {}
+        malformed: list[str] = []
         all_vlen = True
         for name in PROVENANCE_ATTRS:
             if name not in prov.attrs:
@@ -389,8 +432,11 @@ def _read_part(path: Path) -> _PartFacts:
             dtype = prov.attrs.get_id(name).dtype
             info = h5py.check_string_dtype(dtype)
             shape = prov.attrs.get_id(name).shape
-            if info is None or info.length is not None \
-                    or info.encoding != "utf-8" or shape != ():
+            if info is None:
+                malformed.append(name)  # not a string: overwrite replaces it
+                continue
+            if info.length is not None or info.encoding != "utf-8" \
+                    or shape != ():
                 all_vlen = False
             owned[name] = _as_text(prov.attrs[name], f"{path}:{_PROVENANCE}@{name}")
         kinds: "list[Optional[str]]" = []
@@ -402,7 +448,8 @@ def _read_part(path: Path) -> _PartFacts:
                 if "KIND" in grp.attrs else None
             )
             tags.extend(_stage_element_tags(grp))
-    return _PartFacts(kinds, np.unique(np.concatenate(tags)), owned, all_vlen)
+    return _PartFacts(kinds, np.unique(np.concatenate(tags)), owned, all_vlen,
+                      malformed)
 
 
 def _stage_element_tags(stage: "h5py.Group") -> "list[np.ndarray]":
@@ -443,9 +490,31 @@ def _check_part_set(parts: list[Path]) -> None:
     # that open, so a refused part never leaves a half-built set reader.
     for part in parts:
         _with_reader(LadrunoReader, part, where=str(part))
+    _refuse_incomplete_set(parts)
     if len(parts) > 1:
         _with_reader(LadrunoMultiPartitionReader, parts, where=str(parts[0]))
         _check_shared_model(parts)
+
+
+def _refuse_incomplete_set(parts: list[Path]) -> None:
+    """Refuse when a part declares more partitions than were found.
+
+    §7b.1 reads a set stamped in part as unpaired, so a set with a missing
+    part file (or one part passed alone) is not stamped at all.
+    """
+    for part in parts:
+        with _open_read(part) as h5:
+            attrs = h5["INFO"].attrs
+            if "NUM_PARTITIONS" not in attrs:
+                continue
+            declared = int(np.asarray(attrs["NUM_PARTITIONS"]).ravel()[0])
+        if declared > len(parts):
+            raise ProvenanceStampRefused(
+                f"{part.name} declares NUM_PARTITIONS={declared}, but "
+                f"{len(parts)} part file(s) were found "
+                f"({[p.name for p in parts]}). Every part of a partitioned "
+                "run must be present to stamp the set."
+            )
 
 
 def _with_reader(cls: "Any", arg: "Any", *, where: str) -> None:
@@ -463,63 +532,104 @@ def _with_reader(cls: "Any", arg: "Any", *, where: str) -> None:
 
 
 def _check_shared_model(parts: list[Path]) -> None:
-    per_part: list[list[tuple[dict[int, np.ndarray], dict[str, dict[int, tuple[int, ...]]]]]] = []
+    """Shared nodes at one place, shared elements with one connectivity.
+
+    Vectorised per stage: the parts' ``NODES`` rows (and each element
+    bucket's ``CONNECTIVITY`` rows) are concatenated, sorted by id, and
+    every repeated id is compared with the first row of its run. Memory is
+    a small multiple of the arrays themselves.
+    """
+    n_stages = None
     for part in parts:
         with _open_read(part) as h5:
-            stages = []
-            for gname in _stage_groups(h5):
-                grp = h5[gname]
-                nodes: dict[int, np.ndarray] = {}
-                elements: dict[str, dict[int, tuple[int, ...]]] = {}
-                if "MODEL" in grp:
-                    model = grp["MODEL"]
-                    if "NODES" in model and "ID" in model["NODES"]:
-                        ids = np.asarray(model["NODES/ID"][...]).ravel()
-                        xyz = np.asarray(model["NODES/COORDINATES"][...],
-                                         dtype=np.float64)
-                        nodes = {int(n): xyz[i] for i, n in enumerate(ids)}
-                    if "ELEMENTS" in model:
-                        for bname, b in model["ELEMENTS"].items():
-                            if "CONNECTIVITY" not in b:
-                                continue
-                            table = np.asarray(b["CONNECTIVITY"][...])
-                            elements[bname] = {
-                                int(r[0]): tuple(int(v) for v in r[1:])
-                                for r in table.reshape(table.shape[0], -1)
-                            }
-                stages.append((nodes, elements))
-            per_part.append(stages)
-    for k in range(len(per_part[0])):
-        seen_nodes: dict[int, tuple[int, np.ndarray]] = {}
-        seen_elems: dict[tuple[str, int], tuple[int, tuple[int, ...]]] = {}
-        for p, stages in enumerate(per_part):
-            nodes, elements = stages[k]
-            for nid, xyz in nodes.items():
-                if nid in seen_nodes:
-                    q, other = seen_nodes[nid]
-                    scale = max(1.0, float(np.max(np.abs(other))))
-                    if other.shape != xyz.shape or not np.allclose(
-                            other, xyz, rtol=0.0, atol=1e-12 * scale):
-                        raise ProvenanceStampRefused(
-                            f"{parts[q].name} and {parts[p].name} disagree "
-                            f"on their MODEL: stage {k} places node {nid} at "
-                            f"{other.tolist()} and {xyz.tolist()}. The parts "
-                            "are not from one run."
-                        )
-                else:
-                    seen_nodes[nid] = (p, xyz)
-            for bname, rows in elements.items():
-                for eid, conn in rows.items():
-                    key = (bname, eid)
-                    if key in seen_elems and seen_elems[key][1] != conn:
-                        q = seen_elems[key][0]
-                        raise ProvenanceStampRefused(
-                            f"{parts[q].name} and {parts[p].name} disagree "
-                            f"on their MODEL: stage {k} element {eid} "
-                            f"({bname}) connects {seen_elems[key][1]} and "
-                            f"{conn}. The parts are not from one run."
-                        )
-                    seen_elems.setdefault(key, (p, conn))
+            count = len(_stage_groups(h5))
+        n_stages = count if n_stages is None else min(n_stages, count)
+    for k in range(n_stages or 0):
+        node_ids: list[np.ndarray] = []
+        node_xyz: list[np.ndarray] = []
+        node_part: list[np.ndarray] = []
+        buckets: dict[str, list[tuple[int, np.ndarray]]] = {}
+        for p, part in enumerate(parts):
+            with _open_read(part) as h5:
+                grp = h5[_stage_groups(h5)[k]]
+                if "MODEL" not in grp:
+                    continue
+                model = grp["MODEL"]
+                if "NODES" in model and "ID" in model["NODES"]:
+                    ids = np.asarray(model["NODES/ID"][...],
+                                     dtype=np.int64).ravel()
+                    xyz = np.asarray(model["NODES/COORDINATES"][...],
+                                     dtype=np.float64).reshape(ids.size, -1)
+                    node_ids.append(ids)
+                    node_xyz.append(xyz)
+                    node_part.append(np.full(ids.size, p, dtype=np.int32))
+                if "ELEMENTS" in model:
+                    for bname, b in model["ELEMENTS"].items():
+                        if "CONNECTIVITY" in b:
+                            table = np.asarray(b["CONNECTIVITY"][...],
+                                               dtype=np.int64)
+                            buckets.setdefault(bname, []).append(
+                                (p, table.reshape(table.shape[0], -1)))
+        if node_ids:
+            widths = {x.shape[1] for x in node_xyz}
+            if len(widths) > 1:
+                raise ProvenanceStampRefused(
+                    f"the parts disagree on their MODEL: stage {k} stores "
+                    f"node coordinates with {sorted(widths)} columns.")
+            _refuse_repeated_rows(
+                parts, k, np.concatenate(node_ids),
+                np.concatenate(node_xyz), np.concatenate(node_part),
+                what="node", exact=False,
+            )
+        for bname, tables in buckets.items():
+            widths = {t.shape[1] for _, t in tables}
+            if len(widths) > 1:
+                raise ProvenanceStampRefused(
+                    f"the parts disagree on their MODEL: stage {k} bucket "
+                    f"{bname} has CONNECTIVITY widths {sorted(widths)}.")
+            rows = np.concatenate([t for _, t in tables])
+            owner = np.concatenate(
+                [np.full(t.shape[0], p, dtype=np.int32) for p, t in tables])
+            _refuse_repeated_rows(
+                parts, k, rows[:, 0], rows[:, 1:], owner,
+                what=f"element ({bname})", exact=True,
+            )
+
+
+def _refuse_repeated_rows(
+    parts: list[Path], stage: int, ids: np.ndarray, rows: np.ndarray,
+    owner: np.ndarray, *, what: str, exact: bool,
+) -> None:
+    """Refuse when an id that appears more than once carries other values."""
+    if ids.size < 2:
+        return
+    order = np.argsort(ids, kind="stable")
+    ids_s = ids[order]
+    starts = np.ones(ids_s.size, dtype=bool)
+    starts[1:] = ids_s[1:] != ids_s[:-1]
+    if starts.all():
+        return  # no id repeats across parts
+    first = order[np.maximum.accumulate(
+        np.where(starts, np.arange(ids_s.size), 0))]
+    # Only the repeated rows are gathered: a set whose parts share a thin
+    # interface copies that interface, not the whole model.
+    dup = np.flatnonzero(~starts)
+    at, ref_at = order[dup], first[dup]
+    rows_d, ref = rows[at], rows[ref_at]
+    if exact:
+        bad = (rows_d != ref).any(axis=1)
+    else:
+        scale = np.maximum(1.0, np.abs(ref).max(axis=1))
+        bad = (np.abs(rows_d - ref) > 1e-12 * scale[:, None]).any(axis=1)
+    if bad.any():
+        i = int(np.flatnonzero(bad)[0])
+        x, y = int(owner[ref_at[i]]), int(owner[at[i]])
+        raise ProvenanceStampRefused(
+            f"{parts[x].name} and {parts[y].name} disagree on their MODEL: "
+            f"stage {stage} gives {what} {int(ids[at[i]])} the values "
+            f"{ref[i].tolist()} and {rows_d[i].tolist()}. The parts are not "
+            "from one run."
+        )
 
 
 # ---------------------------------------------------------------------------

@@ -25,13 +25,21 @@ identical values leaves the file byte-identical.
 `ProvenanceStampRefused` is raised before anything is written, in any of
 these cases:
 
+- `HDF5_USE_FILE_LOCKING` turns file locking off, so an open file cannot
+  be detected;
 - a part is open in this process or another, or is locked;
 - a part is not a `.ladruno` the reader supports;
 - a part lacks `INFO/PROVENANCE`;
+- a part declares more partitions than were found;
 - the archive has no `/meta/lineage`;
 - the parts disagree on their run or their MODEL;
-- a different `model_hash` is already stamped and `overwrite=True` was not
-  passed.
+- `overwrite=True` was not passed, and either a different `model_hash` is
+  already stamped or an owned attribute is not a string.
+
+The fork writes no close marker, so a recorder killed before closing its
+file goes undetected once no process holds the file. The fork's
+`ladruno_format.validate()` is not shipped with the build, so the stamp does
+not run it; the `live-fork` lane checks stamped files with it.
 
 The resolver (slice 5) catches this one class, warns, and skips the stamp,
 which is §7b.1's "skip and warn".

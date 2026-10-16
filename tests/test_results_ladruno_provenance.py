@@ -522,3 +522,49 @@ def _no_open_handles(tmp_path: Path) -> Iterator[None]:
         if os.path.normcase(os.path.realpath(os.fsdecode(fid.name))).startswith(mine)
     ]
     assert not held, held
+
+
+# ---------------------------------------------------------------------------
+# Review findings on #2111
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("value", ["FALSE", "false", "0", " False "])
+def test_refuses_when_file_locking_is_disabled(parts, model_dir, monkeypatch,
+                                               value) -> None:
+    """Without the lock, another process's open handle is invisible."""
+    monkeypatch.setenv("HDF5_USE_FILE_LOCKING", value)
+    _refuses(parts, model_dir / "one_static.h5", "disables HDF5 file locking")
+
+
+def test_file_locking_on_is_accepted(parts, model_dir, monkeypatch) -> None:
+    monkeypatch.setenv("HDF5_USE_FILE_LOCKING", "TRUE")
+    stamp_provenance(parts[0], model_dir / "one_static.h5")
+    assert all("model_hash" in _provenance(p) for p in parts)
+
+
+def test_refuses_an_incomplete_partition_set(parts, model_dir) -> None:
+    """``part-1`` is missing; ``part-0`` declares NUM_PARTITIONS=2."""
+    parts[1].unlink()
+    _refuses(parts[:1], model_dir / "one_static.h5", "NUM_PARTITIONS=2")
+
+
+def test_refuses_parts_whose_shared_element_differs(parts, model_dir) -> None:
+    """Part 1 also lists element 2 (part 0's), with other nodes."""
+    with h5py.File(parts[1], "r+") as f:
+        conn = f["MODEL_STAGE[1]/MODEL/ELEMENTS/12-Truss[1:0]/CONNECTIVITY"]
+        conn[...] = np.array([[2, 2, 3]], dtype=conn.dtype)
+    _refuses(parts, model_dir / "one_static.h5", r"element \(12-Truss\[1:0\]\) 2")
+
+
+def test_a_malformed_owned_attribute_needs_overwrite(parts, model_dir) -> None:
+    """An int ``writer`` refuses; ``overwrite=True`` replaces it with a string."""
+    with h5py.File(parts[0], "r+") as f:
+        f[PROV].attrs["writer"] = np.int64(7)
+    _refuses(parts, model_dir / "one_static.h5", r"not strings: \['writer'\]")
+    stamp_provenance(parts[0], model_dir / "one_static.h5",
+                     writer="apeGmsh fix", overwrite=True)
+    with h5py.File(parts[0], "r") as f:
+        aid = f[PROV].attrs.get_id("writer")
+        assert h5py.check_string_dtype(aid.dtype).length is None
+        assert f[PROV].attrs["writer"] == "apeGmsh fix"
