@@ -20,11 +20,17 @@ part, at slice 10,** when native `results.h5` is deleted:
 
 - ADR 0020's "Composed file" section, the native `results.h5` that carries
   the embedded `/opensees/` zone;
-- [ADR 0113](0113-compatibility-is-a-floor-per-zone.md) D1's results row
-  (floor 1.0.0), D7's app results floor ("results 1.0", with invariant
-  4's results entry), D9 (native results files whose embedded `/model` is
-  below its floor), invariant 5's `NativeReader` clause (a composed results
-  twin opens) and invariant 11 (the results floor through `NativeReader`).
+- [ADR 0113](0113-compatibility-is-a-floor-per-zone.md), where it governs
+  the native results zone: D1's results row (floor 1.0.0); D3's
+  `RESULTS_SCHEMA_FLOOR` constant, with invariant 2 for the results zone;
+  D7's app results floor ("results 1.0", with invariant 4's results
+  entry); D9 (native results files whose embedded `/model` or `/opensees`
+  is below its floor), with the erratum's restatement of it (E2) and E3's
+  reading of its example; invariant 1's results edge; invariant 3's results
+  Floor row in the registry; invariant 5's `NativeReader` clause (a
+  composed results twin opens); invariant 9's results-twin path
+  (`NativeWriter.write_model`); and invariant 11 (the results floor through
+  `NativeReader`).
 
 All three ADRs carry a dated amendment, added in the PR that accepts this
 one, as [ADR 0121](0121-charter-v2-b-with-amendments.md) D5 requires.
@@ -231,12 +237,12 @@ copy of the model zone, so it is neither the Composed-file pattern nor the
 derived copy INV-3 forbids (its amendment). The Composed-file section
 retires with native `results.h5` at slice 10.
 
-**ADR 0113.** Its guarantees for the native results zone (the D1 results
-row, D7's app results floor and invariant 4's results entry, D9, invariant
-5's `NativeReader` clause and invariant 11) hold unchanged until slice 10. Slice 10 retires the zone
+**ADR 0113.** Its clauses for the native results zone, listed in the
+header above, hold unchanged until slice 10. Slice 10 retires the zone
 together with its reader rather than raising its floor, and those clauses
 lapse with it (its amendment). The neutral, opensees, geometry and
-provenance floors, and every other clause of ADR 0113, are not touched.
+provenance zones keep their floors and the clauses that govern them, and
+ADR 0113's section-document amendment is not affected.
 
 ## Alternatives rejected
 

@@ -615,16 +615,27 @@ ADR 0122 makes the fork's `.ladruno` the canonical results format. Native
 0122's slice 10, the human-gated native deletion, whose changelog announces
 the cutoff. That slice retires the native results zone together with its
 reader; it does not raise the zone's floor. When it lands, these clauses
-lapse:
+lapse, each only where it concerns the native results zone or the native
+results file:
 
 - D1's results row (floor 1.0.0);
+- D3's `RESULTS_SCHEMA_FLOOR` constant, and invariant 2 for the results
+  zone;
 - D7's app results floor ("results 1.0"), and with it the results entry
   that invariant 4 compares;
 - D9, which opens the `/stages` of a native results file whose embedded
-  `/model` or `/opensees` is below its floor;
+  `/model` or `/opensees` is below its floor, together with the erratum's
+  restatement of D9 (E2, 2026-10-04) and E3's reading of D9's example;
+- invariant 1's results edge (the `X.0.0` lower edge as it applies to the
+  results zone);
+- invariant 3's results Floor row in the `architecture/h5-schema.md`
+  registry;
 - invariant 5's `NativeReader` clause, the composed results twin;
+- invariant 9's results-twin path (`NativeWriter.write_model` and
+  `NativeWriter.write_opensees_from`);
 - invariant 11, the results floor through `NativeReader`.
 
 Until slice 10 every one of them holds as written. The neutral, opensees,
-geometry and provenance floors, the section-document amendment and every
-other clause of this ADR are not affected.
+geometry and provenance zones keep their floors and every clause that
+governs them, and the section-document amendment of 2026-10-04 is not
+affected.
