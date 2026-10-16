@@ -330,7 +330,12 @@ def discover_material_state_buckets(
     read site can fetch the right dataset path.
 
     A bucket is included only if its (class, int_rule) is in the
-    stress catalog (gives us the GP coordinates).
+    stress catalog (gives us the GP coordinates). Every header index
+    is included (``:0``, ``:1``, ...): MPCO opens a new header when a
+    class's elements carry materials with different META (ASDConcrete3D
+    ``d+,d-`` beside LadrunoConcrete3D ``C1,C2`` on one brick class), and
+    each header bucket's layout is resolved from its own META by
+    :func:`resolve_material_state_layout`.
     """
     parent = parent_token_for_canonical(canonical_component)
     if parent is None:
@@ -352,7 +357,7 @@ def discover_material_state_buckets(
                 elem_key = parse_mpco_element_key(bracket_key)
             except ValueError:
                 continue
-            if elem_key.custom_rule_idx != 0 or elem_key.header_idx != 0:
+            if elem_key.custom_rule_idx != 0:
                 continue
             gp_layout = _stress_gp_layout_for(
                 elem_key, where=f"{name}/{bracket_key}",
