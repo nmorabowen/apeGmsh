@@ -19,15 +19,25 @@ Every station is checked against the live domain at ``rtol=1e-10``:
   silently;
 * with only ``basicForce`` recorded, no beam has shear or moment stations:
   the ``V``/``M`` alias stays off ``basicForce``'s basic-system end moments.
+
+A 3-D ``basicForce`` bucket is ``N,Mz_1,Mz_2,My_1,My_2,T`` (#2011). Its end
+moments read as stations in the same section convention as ``localForce``:
+every fork class that names them reports ``localForce`` end moments equal
+to them, so station 1 = ``-Mz_1`` and station 2 = ``+Mz_2`` (likewise
+``My``). A 3-D cantilever per beam family that records ``basicForce``
+(``elasticBeamColumn``, ``forceBeamColumn``) checks this against the live
+``localForce`` and against statics.
 """
 from __future__ import annotations
 
 from typing import Any
 
+import gmsh
 import h5py
 import numpy as np
 import pytest
 
+from apeGmsh import apeGmsh
 from apeGmsh.opensees import apeSees
 from apeGmsh.opensees.emitter.live import LiveOpsEmitter
 from apeGmsh.results import Results
@@ -183,3 +193,163 @@ def test_basic_force_moments_are_not_line_stations(
     assert comp not in ls.available_components()
     slab = ls.get(component=comp, ids=basic_only["beam"] + basic_only["cols"])
     assert np.asarray(slab.element_index).size == 0
+
+
+# ---------------------------------------------------------------------------
+# 3-D basicForce-only (#2011): one cantilever per beam family
+# ---------------------------------------------------------------------------
+
+#: Cantilever along +x, fixed at x = 0, tip load (Fx, Fy, Fz, Mx, My, Mz):
+#: the card's repro, on two elements so an interior end is checked too.
+L3 = 4.0
+TIP = (1.0e3, 2.0e3, 3.0e3, 4.0e2, 5.0e2, 6.0e2)
+#: localForce index of (end i, end j) per moment, and its #2009 end-i sign.
+MOMENT_LF = {"bending_moment_y": (4, 10, -1.0),
+             "bending_moment_z": (5, 11, -1.0)}
+#: basicForce index of (station 1, station 2) per moment.
+MOMENT_BF = {"bending_moment_y": (3, 4), "bending_moment_z": (1, 2)}
+
+
+def _closed_3d(comp: str, x: float) -> float:
+    """Statics on the free body ``x..L``, section convention."""
+    fx, fy, fz, mx, my, mz = TIP
+    return {
+        "axial_force": fx, "torsion": mx,
+        "bending_moment_y": my - fz * (L3 - x),
+        "bending_moment_z": mz + fy * (L3 - x),
+    }[comp]
+
+
+def _cantilever_fem(name: str) -> Any:
+    with apeGmsh(model_name=name, verbose=False) as g:
+        geo = g.model.geometry
+        pa = geo.add_point(0.0, 0.0, 0.0)
+        pm = geo.add_point(L3 / 2.0, 0.0, 0.0)
+        pb = geo.add_point(L3, 0.0, 0.0)
+        curves = [geo.add_line(pa, pm), geo.add_line(pm, pb)]
+        for c in curves:
+            gmsh.model.mesh.setTransfiniteCurve(c, 2)
+        g.physical.add(1, curves, name="Beam")
+        g.labels.add(0, [pa], "a")
+        g.labels.add(0, [pb], "b")
+        g.mesh.generation.generate(dim=1)
+        return g.mesh.queries.get_fem_data(dim=1)
+
+
+def _beam_3d(ops: apeSees, family: str, tr: Any) -> None:
+    props = dict(E=2.0e11, A=0.03, Iz=5.0e-4, Iy=4.0e-4, G=8.0e10, J=3.0e-4)
+    if family == "elasticBeamColumn":
+        ops.element.elasticBeamColumn(pg="Beam", transf=tr, **props)
+    else:
+        sec = ops.section.Elastic(**props)
+        integ = ops.beamIntegration.Lobatto(section=sec, n_ip=N_IP)
+        ops.element.forceBeamColumn(pg="Beam", transf=tr, integration=integ)
+
+
+@pytest.fixture(scope="module", params=["elasticBeamColumn", "forceBeamColumn"])
+def basic_only_3d(
+    request: pytest.FixtureRequest, tmp_path_factory: pytest.TempPathFactory,
+) -> dict[str, Any]:
+    family = request.param
+    tmp = tmp_path_factory.mktemp(f"ladruno_basic_force_3d_{family}")
+    fem = _cantilever_fem(f"basic3d_{family}")
+    ops = apeSees(fem, default_orientation=None)       # sequential tags
+    ops.model(ndm=3, ndf=6)
+    tr = ops.geomTransf.Linear(vecxz=(0.0, 0.0, 1.0))  # local y = Y, z = Z
+    _beam_3d(ops, family, tr)
+    ops.fix(label="a", dofs=(1, 1, 1, 1, 1, 1))
+    with ops.pattern.Plain(series=ops.timeSeries.Linear()) as p:
+        p.load(node=ops.nodes.one(label="b"), forces=TIP)
+    path = str(tmp / "cantilever.ladruno")
+    ops.recorder.Ladruno(file=path, elem_responses=("basicForce",))
+    ops.constraints.Plain()
+    ops.numberer.RCM()
+    ops.system.BandGeneral()
+    ops.test.NormDispIncr(tol=1e-12, max_iter=10)
+    ops.algorithm.Linear()
+    ops.integrator.LoadControl(dlam=0.5)
+    ops.analysis.Static()
+
+    model_h5 = str(tmp / "model.h5")
+    ops.h5(model_h5)
+    emitter = LiveOpsEmitter(wipe=True)
+    ops.build().emit(emitter)
+    fem_to_ops = _fem_to_ops(model_h5)
+    eids = [int(e) for e in fem.elements.select(pg="Beam").ids]
+    assert any(fem_to_ops[e] != e for e in eids)       # not vacuous
+    coords = {int(n): np.asarray(c, dtype=float)
+              for n, c in zip(fem.nodes.ids, fem.nodes.coords)}
+    ends = {int(e): (float(coords[int(c[0])][0]), float(coords[int(c[-1])][0]))
+            for grp in fem.elements
+            for e, c in zip(grp.ids, grp.connectivity)}
+
+    lf: dict[int, list[np.ndarray]] = {e: [] for e in eids}
+    bf: dict[int, list[np.ndarray]] = {e: [] for e in eids}
+    for _ in range(2):
+        assert emitter.analyze(steps=1) == 0
+        for e in eids:
+            o = emitter.ops
+            lf[e].append(np.asarray(o.eleResponse(fem_to_ops[e], "localForce")))
+            bf[e].append(np.asarray(o.eleResponse(fem_to_ops[e], "basicForce")))
+    emitter.ops.remove("recorders")
+    return {
+        "family": family,
+        "results": Results.from_ladruno(path, fem=fem, model_h5=model_h5),
+        "eids": eids, "ends": ends,
+        "lf": {e: np.stack(v) for e, v in lf.items()},     # (T, 12)
+        "bf": {e: np.stack(v) for e, v in bf.items()},     # (T, 6)
+    }
+
+
+@pytest.mark.parametrize("comp", ["bending_moment_y", "bending_moment_z"])
+def test_basic_force_3d_moments_read_in_section_convention(
+    basic_only_3d: dict[str, Any], comp: str,
+) -> None:
+    """A ``basicForce``-only file's 3-D end moments read as the stations
+    ``localForce`` gives the same element: ``[-M_1, +M_2]`` of the basic
+    moments, equal to statics, at ``rtol=1e-10``."""
+    sol = basic_only_3d
+    ls = sol["results"].elements.line_stations
+    assert comp in ls.available_components()
+    slab = ls.get(component=comp, ids=sol["eids"])
+    values = np.asarray(slab.values)
+    xi = np.asarray(slab.station_natural_coord)
+    i_lf, j_lf, s = MOMENT_LF[comp]
+    i_bf, j_bf = MOMENT_BF[comp]
+    for eid in sol["eids"]:
+        rows = _rows(slab, eid)
+        np.testing.assert_array_equal(xi[rows], [-1.0, 1.0])
+        got = values[:, rows]
+        lf, bf = sol["lf"][eid], sol["bf"][eid]
+        from_lf = np.stack([s * lf[:, i_lf], -s * lf[:, j_lf]], axis=1)
+        from_bf = np.stack([-bf[:, i_bf], bf[:, j_bf]], axis=1)
+        xa, xb = sol["ends"][eid]
+        closed = np.outer([0.5, 1.0], [_closed_3d(comp, xa),
+                                       _closed_3d(comp, xb)])
+        msg = f"{sol['family']} {comp} of element {eid}"
+        for want, what in ((from_lf, "localForce"), (from_bf, "basicForce"),
+                           (closed, "statics")):
+            np.testing.assert_allclose(got, want, rtol=RTOL, atol=ATOL,
+                                       err_msg=f"{msg} vs {what}")
+
+
+@pytest.mark.parametrize("comp, k", [("axial_force", 0), ("torsion", 5)])
+def test_basic_force_3d_axial_and_torsion_are_live_basic_force(
+    basic_only_3d: dict[str, Any], comp: str, k: int,
+) -> None:
+    """``N`` and ``T`` stay single stations at xi = 0, equal to the live
+    ``basicForce`` value and to statics."""
+    sol = basic_only_3d
+    slab = sol["results"].elements.line_stations.get(
+        component=comp, ids=sol["eids"])
+    values = np.asarray(slab.values)
+    xi = np.asarray(slab.station_natural_coord)
+    for eid in sol["eids"]:
+        rows = _rows(slab, eid)
+        assert len(rows) == 1 and xi[rows[0]] == 0.0, (eid, rows)
+        np.testing.assert_allclose(
+            values[:, rows[0]], sol["bf"][eid][:, k], rtol=RTOL, atol=ATOL,
+            err_msg=f"{sol['family']} {comp} of element {eid}")
+        np.testing.assert_allclose(
+            values[:, rows[0]], np.array([0.5, 1.0]) * _closed_3d(comp, 0.0),
+            rtol=RTOL, err_msg=f"{sol['family']} {comp} vs statics")
