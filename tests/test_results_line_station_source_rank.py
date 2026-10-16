@@ -448,3 +448,138 @@ def test_mpco_basic_force_non_moment_pair_is_refused_by_name(
         slab = _read(r, "bending_moment_y", [11, 12])
     for eid in (11, 12):
         _assert_statics(slab, "bending_moment_y", eid, np.array([-1.0, 1.0]))
+
+
+# =====================================================================
+# Live, on the fork: #2107's cantilever, each token combination, both
+# formats (CI ``live-fork`` at FORK_PIN)
+# =====================================================================
+
+#: case -> (beam family, recorded tokens, the source that must win or None,
+#: stations per element)
+LIVE_CASES: dict[str, tuple[str, tuple[str, ...], "str | None", int]] = {
+    "global_only": ("elasticBeamColumn", ("globalForce",), None, 0),
+    "basic_global": ("elasticBeamColumn", ("basicForce", "globalForce"),
+                     "basicForce", 2),
+    "local_basic_global": ("elasticBeamColumn",
+                           ("localForce", "basicForce", "globalForce"),
+                           "localForce", 2),
+    "section_all": ("forceBeamColumn",
+                    ("section.force", "localForce", "basicForce",
+                     "globalForce"), "section.force", 4),
+}
+LIVE_KINDS = {"ladruno": "Ladruno", "mpco": "MPCO"}
+
+
+@pytest.fixture(scope="module", params=sorted(LIVE_CASES))
+def live_cantilever(
+    request: pytest.FixtureRequest, tmp_path_factory: pytest.TempPathFactory,
+) -> dict[str, Any]:
+    """Solve #2107's two-element cantilever in two load steps, recording
+    the case's tokens with both recorders."""
+    from apeGmsh.opensees import apeSees
+    from apeGmsh.opensees.emitter.live import LiveOpsEmitter
+    from apeGmsh.results import Results
+    from tests.opensees.integration_ladruno.test_ladruno_line_stations_live import (  # noqa: E501
+        TIP,
+        _beam_3d,
+        _cantilever_fem,
+        _fem_to_ops,
+    )
+
+    case = request.param
+    family, tokens, _, _ = LIVE_CASES[case]
+    tmp = tmp_path_factory.mktemp(f"source_rank_{case}")
+    fem = _cantilever_fem(f"rank_{case}")
+    ops = apeSees(fem, default_orientation=None)       # sequential tags
+    ops.model(ndm=3, ndf=6)
+    tr = ops.geomTransf.Linear(vecxz=(0.0, 0.0, 1.0))  # local y = Y, z = Z
+    _beam_3d(ops, family, tr)
+    ops.fix(label="a", dofs=(1, 1, 1, 1, 1, 1))
+    with ops.pattern.Plain(series=ops.timeSeries.Linear()) as p:
+        p.load(node=ops.nodes.one(label="b"), forces=TIP)
+    paths = {fmt: str(tmp / f"cantilever.{fmt}") for fmt in LIVE_KINDS}
+    for fmt, kind in LIVE_KINDS.items():
+        # A node channel too: an element-only MPCO file reads 0 steps (#1970).
+        getattr(ops.recorder, kind)(file=paths[fmt],
+                                    nodal_responses=("displacement",),
+                                    elem_responses=tokens)
+    ops.constraints.Plain()
+    ops.numberer.RCM()
+    ops.system.BandGeneral()
+    ops.test.NormDispIncr(tol=1e-12, max_iter=10)
+    ops.algorithm.Linear()
+    ops.integrator.LoadControl(dlam=0.5)
+    ops.analysis.Static()
+
+    model_h5 = str(tmp / "model.h5")
+    ops.h5(model_h5)
+    emitter = LiveOpsEmitter(wipe=True)
+    ops.build().emit(emitter)
+    fem_to_ops = _fem_to_ops(model_h5)
+    eids = [int(e) for e in fem.elements.select(pg="Beam").ids]
+    assert any(fem_to_ops[e] != e for e in eids)       # not vacuous
+    coords = {int(n): np.asarray(c, dtype=float)
+              for n, c in zip(fem.nodes.ids, fem.nodes.coords)}
+    ends = {int(e): (float(coords[int(c[0])][0]), float(coords[int(c[-1])][0]))
+            for grp in fem.elements
+            for e, c in zip(grp.ids, grp.connectivity)}
+    for _ in range(2):
+        assert emitter.analyze(steps=1) == 0
+    emitter.ops.remove("recorders")
+    return {
+        "case": case, "eids": eids, "ends": ends,
+        "results": {
+            fmt: (Results.from_ladruno if fmt == "ladruno"
+                  else Results.from_mpco)(paths[fmt], fem=fem,
+                                          model_h5=model_h5)
+            for fmt in LIVE_KINDS
+        },
+    }
+
+
+@pytest.mark.ladruno_fork
+@pytest.mark.parametrize("comp", MOMENTS)
+@pytest.mark.parametrize("fmt", FORMATS)
+def test_live_cantilever_reads_one_ranked_source(
+    live_cantilever: dict[str, Any], fmt: str, comp: str,
+) -> None:
+    """Each element reads its highest-ranked recorded source, equal to
+    statics at ``rtol=1e-10`` (``[8600, 600]`` / ``[-11500, 500]`` over the
+    beam at the full load); a ``globalForce``-only file reads nothing and
+    names the bucket."""
+    sol = live_cantilever
+    _, _, winner, n_st = LIVE_CASES[sol["case"]]
+    ls = sol["results"][fmt].elements.line_stations
+    if winner is None:
+        assert comp not in ls.available_components()
+        with pytest.warns(SKIP_WARNING[fmt],
+                          match=r"globalForce.*never a line-station source"):
+            slab = ls.get(component=comp, ids=sol["eids"])
+        assert np.asarray(slab.element_index).size == 0
+        return
+    assert comp in ls.available_components()
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", SKIP_WARNING[fmt])
+        slab = ls.get(component=comp, ids=sol["eids"])
+    values = np.asarray(slab.values)
+    xi_all = np.asarray(slab.station_natural_coord)
+    index = np.asarray(slab.element_index)
+    for eid in sol["eids"]:
+        rows = [i for i, e in enumerate(index) if int(e) == eid]
+        assert len(rows) == n_st, (fmt, sol["case"], eid, index.tolist())
+        xa, xb = sol["ends"][eid]
+        x = xa + (xi_all[rows] + 1.0) / 2.0 * (xb - xa)
+        want = np.outer(LAMBDA, [_section(comp, v) for v in x])
+        np.testing.assert_allclose(
+            values[:, rows], want, rtol=RTOL, atol=1e-9,
+            err_msg=f"{fmt} {sol['case']} {comp} of element {eid}")
+    # The card's numbers: the fixed end and the tip at the full load.
+    x_all = np.array([
+        sol["ends"][int(e)][0]
+        + (xi + 1.0) / 2.0 * (sol["ends"][int(e)][1] - sol["ends"][int(e)][0])
+        for e, xi in zip(index, xi_all)
+    ])
+    root_to_tip = values[-1, np.argsort(x_all, kind="stable")]
+    np.testing.assert_allclose([root_to_tip[0], root_to_tip[-1]],
+                               CARD_ENDS[comp], rtol=RTOL)
