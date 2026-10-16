@@ -335,7 +335,7 @@ def discover_local_force_buckets(
 
 #: The line-station source tokens, by rank: ``section.force`` (and
 #: ``section.deformation``, its strain twin) is rank 0, ``localForce`` rank 1,
-#: ``basicForce`` rank 2 (#2109). Every other element-level token is never
+#: ``basicForce`` rank 2. Every other element-level token is never
 #: a station source: ``globalForce`` (MPCO ``force``) holds global end
 #: forces, not local station values.
 LINE_STATION_SOURCE_TOKENS = frozenset({
@@ -345,7 +345,7 @@ LINE_STATION_SOURCE_TOKENS = frozenset({
 #: ``basicForce``'s two-station components: the basic-system end moments
 #: ``Mz_1,Mz_2`` / ``My_1,My_2`` of a 3-D ``N,Mz_1,Mz_2,My_1,My_2,T``
 #: bucket. Every fork class that names them reports its ``localForce`` end
-#: moments as these same values (#2011, #2107), so they read under the
+#: moments as these same values, so they read under the
 #: ``localForce`` station signs: ``[-M_1, +M_2]``.
 _BASIC_FORCE_END_MOMENTS = frozenset({"bending_moment_y", "bending_moment_z"})
 

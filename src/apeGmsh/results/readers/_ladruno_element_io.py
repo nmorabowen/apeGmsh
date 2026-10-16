@@ -1163,7 +1163,7 @@ def _dedupe_gauss_columns(
 #: rank 1. ``basicForce`` is rank 2, and so is ``axialForce``, the token a
 #: Truss writes for the same basic force (``Truss::setResponse`` takes
 #: ``axialForce``, ``basicForce`` and ``basicForces`` as one response).
-#: Every other element-level token is never a source (#2109):
+#: Every other element-level token is never a source:
 #: ``globalForce`` holds global end forces, not local station values, and
 #: ``basicStiffness``, ``*DampingForces``, ``rayleighForces`` or the plural
 #: aliases carry no station signs. A read that finds the component only

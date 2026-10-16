@@ -723,7 +723,7 @@ class MPCOReader:
         # ── localForce path (stiffness beams: ElasticBeam2d/3d) ──────
         out.update(_mlocal.available_components_in_local_force(on_elements))
 
-        # ── basicForce end moments (rank 2, #2109). globalForce and every
+        # ── basicForce end moments (rank 2). globalForce and every
         # other token list nothing: they are never a station source. ──
         for bf in _mlocal.discover_basic_force_buckets(on_elements):
             out.update(bf.layout)
@@ -984,7 +984,7 @@ class MPCOReader:
             return _empty_line_station_slab(component, time, t_idx)
 
         # Read per-bucket slabs and stitch on the station axis. Each
-        # element takes one source, the first by rank (#2109):
+        # element takes one source, the first by rank:
         # ``section.force`` (DispBeamColumn3d writes it beside
         # ``localForce``, the IP-level detail beside an end-force
         # summary), then ``localForce`` (ElasticBeam2d/3d), then the
@@ -1020,7 +1020,7 @@ class MPCOReader:
                 section_force_eids.update(int(e) for e in element_index)
 
         # ── localForce (rank 1), then basicForce end moments (rank 2),
-        # each skipping every element a higher rank covers (#2109). ──
+        # each skipping every element a higher rank covers. ──
         covered = section_force_eids
         skipped: list[tuple[str, str]] = []
         for src_token, ranked in (
@@ -1033,7 +1033,7 @@ class MPCOReader:
                 if lf.refusal is not None:
                     # A refused layout names no component reliably. It
                     # blocks only requested elements no section source
-                    # covers (#2098 item 1, as #2095 on .ladruno).
+                    # covers, as on .ladruno.
                     if "ID" not in bucket_grp:
                         raise ValueError(lf.refusal)
                     ids = np.asarray(
@@ -1070,7 +1070,7 @@ class MPCOReader:
                 served.update(int(e) for e in element_index[keep_mask])
             covered = covered | served
 
-        # ── Never a source: globalForce and every other token (#2109).
+        # ── Never a source: globalForce and every other token.
         # Name the ones that were a requested element's only candidate.
         unranked: list[tuple[str, str]] = []
         for where, bucket_grp in _mlocal.unranked_station_buckets(
