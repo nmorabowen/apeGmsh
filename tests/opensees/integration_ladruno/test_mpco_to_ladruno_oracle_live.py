@@ -50,6 +50,7 @@ NODAL = ("displacement", "reactionForce", "modesOfVibration",
 ELEMENTS = ("force", "localForce", "basicForce", "section.force",
             "section.fiber.stress")
 _STAGE = "MODEL_STAGE["
+PROGRAM_KINDS = ["static"]  # the one program stage, gravity
 # Values from one run are the same doubles in both files; the tolerance is
 # the fork's own element parity check's (element_parity_check.py).
 _ATOL, _RTOL = 1e-12, 1e-9
@@ -243,24 +244,77 @@ def _attr(obj: Any, name: str) -> Any:
     return v.decode() if isinstance(v, bytes) else v
 
 
+#: INFO attributes left out of the comparison, each for a stated reason.
+INFO_EXCLUDED = {
+    # The converter writes minor 0 on purpose: an .mpco stage has no
+    # running-analysis KIND of its own (ruling 2 on #2120).
+    "FORMAT_MINOR_VERSION": "minor 0 by design",
+    # An .mpco carries no run identity.
+    "RUN_ID": "absent from MPCO", "RUN_ID_SCOPE": "absent from MPCO",
+    # The two recorders of one binary stamp different constants (MPCO the
+    # OPS_VERSION it was built with, Ladruno its own); the converter can
+    # only copy MPCO's.
+    "SOLVER_VERSION": "recorder-specific constant",
+}
+
+
+def _attrs(obj: Any) -> "dict[str, Any]":
+    return {k: _attr(obj, k) for k in obj.attrs}
+
+
+def _same(x: Any, y: Any) -> bool:
+    return np.array_equal(np.asarray(x), np.asarray(y))
+
+
 def compare(
-    fork: Path, converted: Path, lf: ModuleType,
-) -> "tuple[list[str], set[str]]":
-    """``(mismatches, lossy)`` between a fork ``.ladruno`` and a conversion.
+    fork: Path, converted: Path, lf: ModuleType, program_kinds: "list[str]",
+) -> "tuple[list[str], set[str], list[str]]":
+    """``(mismatches, lossy, kind_labels)`` between a fork file and a conversion.
 
     ``lossy`` names, in ``PROVENANCE@unsupported`` vocabulary, what the
     fork file holds and the converted file lacks (``local_axes``,
-    ``quadrature:<group>``); everything else must be equal.
+    ``quadrature:<group>``). ``kind_labels`` lists the stages whose
+    ``KIND`` differs only by the fork's precedence-1 label: a recorder that
+    asks for modes stamps ``eigen`` on the stage holding them (schema
+    section 2a), where the converter writes the program's kind, which must
+    then equal ``program_kinds``. INFO attributes compare except
+    :data:`INFO_EXCLUDED`; everything else must be equal.
     """
     problems: list[str] = []
     lossy: set[str] = set()
+    kind_labels: list[str] = []
     with lf.LadrunoReader(str(fork)) as ra, lf.LadrunoReader(str(converted)) as rb:
         fa, fb = ra.f, rb.f
+        ia, ib = _attrs(fa["INFO"]), _attrs(fb["INFO"])
+        for key in sorted((set(ia) | set(ib)) - set(INFO_EXCLUDED)):
+            if not _same(ia.get(key), ib.get(key)):
+                problems.append(f"INFO @{key}: fork {ia.get(key)!r}, "
+                                f"converted {ib.get(key)!r}")
         sa, sb = _stages(fa), _stages(fb)
         if len(sa) != len(sb):
-            return [f"stage count: fork {len(sa)}, converted {len(sb)}"], lossy
-        for ga, gb in zip(sa, sb):
+            return ([f"stage count: fork {len(sa)}, converted {len(sb)}"],
+                    lossy, kind_labels)
+        if len(program_kinds) != len(sb):
+            problems.append(f"{len(program_kinds)} program kinds for "
+                            f"{len(sb)} stages")
+        for k, (ga, gb) in enumerate(zip(sa, sb)):
             where = f"{ga}|{gb}"
+            aa, ab = _attrs(fa[ga]), _attrs(fb[gb])
+            for key in sorted((set(aa) | set(ab)) - {"KIND"}):
+                if not _same(aa.get(key), ab.get(key)):
+                    problems.append(f"{where} @{key}: fork {aa.get(key)!r}, "
+                                    f"converted {ab.get(key)!r}")
+            ka, kb = aa.get("KIND"), ab.get("KIND")
+            want = program_kinds[k] if k < len(program_kinds) else None
+            on_nodes = f"{ga}/RESULTS/ON_NODES"
+            modal = on_nodes in fa and any(_modal(n) for n in fa[on_nodes])
+            if ka == kb == want:
+                pass
+            elif ka == "eigen" and modal and kb == want:
+                kind_labels.append(ga)
+            else:
+                problems.append(f"{where} @KIND: fork {ka!r}, converted "
+                                f"{kb!r}, program {want!r}")
             ida, xa = ra.nodes(ga)
             idb, xb = rb.nodes(gb)
             problems += _arrays(ida, idb, f"{where} NODES/ID")
@@ -294,7 +348,7 @@ def compare(
                     problems += _arrays(sec_a[name].get(key), sec_b[name].get(key),
                                         f"{where} {name} {key}")
             problems += _results(fa, fb, ga, gb, lf, where)
-    return problems, lossy
+    return problems, lossy, kind_labels
 
 
 def _results(
@@ -389,8 +443,12 @@ def test_converted_file_passes_the_fork_validator(run, lf) -> None:
 
 
 def test_converted_file_equals_the_fork_file(run, lf) -> None:
-    problems, lossy = compare(run["fork"], run["converted"], lf)
+    problems, lossy, labels = compare(run["fork"], run["converted"], lf,
+                                      PROGRAM_KINDS)
     assert problems == []
+    # The only KIND difference allowed: the fork may label the stage of a
+    # modal recorder eigen; the converted stage carries the program's kind.
+    assert labels == ["MODEL_STAGE[1]"], labels
     with h5py.File(run["converted"], "r") as f:
         unsupported = json.loads(f["INFO/PROVENANCE"].attrs["unsupported"])
         assert f["INFO/PROVENANCE"].attrs["writer"].startswith(
@@ -422,7 +480,7 @@ def test_a_swapped_column_fails_the_comparator(run, lf) -> None:
         values[..., [i, j]] = values[..., [j, i]]
         data[...] = values
     assert lf.validate(str(path)) == []  # shapes only: validate() passes it
-    problems, _ = compare(run["fork"], path, lf)
+    problems, _, _ = compare(run["fork"], path, lf, PROGRAM_KINDS)
     assert any("element" in p for p in problems), problems
 
 
@@ -431,6 +489,23 @@ def test_a_dropped_bucket_fails_the_comparator(run, lf) -> None:
     with h5py.File(path, "r+") as f:
         del f[f"{_stages(f)[0]}/{_BUCKET}"]
     assert lf.validate(str(path)) == []  # shapes only: validate() passes it
-    problems, _ = compare(run["fork"], path, lf)
+    problems, _, _ = compare(run["fork"], path, lf, PROGRAM_KINDS)
     assert any("buckets" in p for p in problems), problems
     assert any("keys differ" in p for p in problems), problems
+
+
+def test_a_wrong_kind_fails_the_comparator(run, lf) -> None:
+    path = _mutant(run, "kind")
+    with h5py.File(path, "r+") as f:
+        f[_stages(f)[0]].attrs["KIND"] = np.array([b"transient"])
+    assert lf.validate(str(path)) == []  # a known word: validate() passes it
+    problems, _, _ = compare(run["fork"], path, lf, PROGRAM_KINDS)
+    assert any("@KIND" in p for p in problems), problems
+
+
+def test_a_wrong_stage_time_fails_the_comparator(run, lf) -> None:
+    path = _mutant(run, "time")
+    with h5py.File(path, "r+") as f:
+        f[_stages(f)[0]].attrs["TIME"] = np.array([99.0])
+    problems, _, _ = compare(run["fork"], path, lf, PROGRAM_KINDS)
+    assert any("@TIME" in p for p in problems), problems

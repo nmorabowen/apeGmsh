@@ -86,7 +86,6 @@ __all__ = ["MPCOConversionRefused", "convert_mpco"]
 
 _STAGE_PREFIX = "MODEL_STAGE["
 _PART_RE = re.compile(r"^(?P<stem>.+?)\.part-(?P<idx>\d+)\.ladruno$")
-_CHUNK_T = 1024
 _LOCAL_AXES = "local_axes"
 _SPRINGS = "springs"
 _QUADRATURE = "quadrature:"
@@ -146,13 +145,16 @@ def convert_mpco(
     The checks on the targets, the archive, the stages and the partition
     set run before anything is written. The parts are then written into
     ``<dst parent>/<dst stem>.partial/`` under their final names, stamped,
-    and moved into place. Any failure on the way, a malformed bucket found
-    while writing included, removes the staging directory and every part
-    already moved, so no target is left behind; the source is never
-    opened for writing. :class:`MPCOConversionRefused` is raised for a
-    refusal; another failure (the stamp, the disk) re-raises its own error
-    after the rollback. With ``overwrite=True`` a failure in the final
-    move can leave no file of the old set either.
+    and moved into place. With ``overwrite=True`` every old part is first
+    moved aside into the staging directory, and the backups are removed
+    only after every new part is in place. Any failure on the way, a
+    malformed bucket found while writing included, removes the new parts
+    already moved, puts every old part back under its name, and removes the
+    staging directory: either the whole new set is in place, or the old
+    set is as it was (no target, without ``overwrite``). The source is
+    never opened for writing. :class:`MPCOConversionRefused` is raised for
+    a refusal; another failure (the stamp, the disk) re-raises its own
+    error after the rollback.
     """
     plan = _plan(Path(src), Path(dst), model_h5, overwrite)
     if plan.staging.exists():  # left by an interrupted run; overwrite=True
@@ -164,6 +166,7 @@ def convert_mpco(
             f"cannot create the staging directory {plan.staging}: {e}"
         ) from e
     moved: list[Path] = []
+    backups: list[tuple[Path, Path]] = []
     try:
         staged = [plan.staging / t.name for t in plan.targets]
         for i, (source, out) in enumerate(zip(plan.sources, staged)):
@@ -180,24 +183,56 @@ def convert_mpco(
         )
         from ..._atomic_io import replace_with_retry
 
+        # Every old part moves aside first, so a failure can put the whole
+        # old set back; the backups go only once every new part is in place.
+        for target in plan.targets:
+            if target.exists():
+                if not overwrite:
+                    raise MPCOConversionRefused(
+                        f"{target} appeared while converting; nothing was "
+                        "written.")
+                backup = plan.staging / f"{target.name}.old"
+                replace_with_retry(target, backup)
+                backups.append((backup, target))
         for path, target in zip(staged, plan.targets):
-            if target.exists() and not overwrite:
-                raise MPCOConversionRefused(
-                    f"{target} appeared while converting; nothing was "
-                    "written."
-                )
             replace_with_retry(path, target)
             moved.append(target)
     except BaseException:
-        for target in moved:
-            try:
-                target.unlink()
-            except OSError:
-                pass
-        shutil.rmtree(plan.staging, ignore_errors=True)
+        _roll_back(plan.staging, moved, backups)
         raise
     shutil.rmtree(plan.staging, ignore_errors=True)
     return list(plan.targets)
+
+
+def _roll_back(
+    staging: Path, moved: list[Path], backups: "list[tuple[Path, Path]]",
+) -> None:
+    """Remove the new parts, put every old part back, drop the staging.
+
+    A backup that cannot be restored keeps the staging directory, and the
+    old file with it, and is named in a warning.
+    """
+    import warnings
+
+    from ..._atomic_io import replace_with_retry
+
+    for target in moved:
+        try:
+            target.unlink()
+        except OSError:
+            pass
+    stranded = []
+    for backup, target in backups:
+        try:
+            replace_with_retry(backup, target)
+        except OSError:
+            stranded.append(backup)
+    if stranded:
+        warnings.warn(
+            f"convert_mpco could not restore {[str(b) for b in stranded]}; "
+            f"the old files stay in {staging}.", RuntimeWarning, stacklevel=3)
+        return
+    shutil.rmtree(staging, ignore_errors=True)
 
 
 def _writer() -> str:
@@ -227,7 +262,7 @@ def _plan(
     targets = _targets(dst, len(sources), partitioned=_is_part_name(src))
     staging = targets[0].parent / f"{_set_stem(dst)}.partial"
     _refuse_existing(targets, staging, overwrite)
-    names, kinds, ranks = _program(model_path)
+    model, names, kinds, ranks = _program(model_path)
     if ranks and len(ranks) != len(sources):
         raise MPCOConversionRefused(
             f"{model_path} emits {len(ranks)} partitions (ranks "
@@ -250,7 +285,7 @@ def _plan(
     assert stage_kinds is not None
     # Last, the readers' own checks: modal records, and on a set the
     # stage signatures and time vectors of every part.
-    _open_with_reader(sources)
+    _open_with_reader(sources, model, model_path)
     return _Plan(sources, targets, staging, stage_kinds, unsupported)
 
 
@@ -328,8 +363,8 @@ def _refuse_existing(
         )
 
 
-def _program(model_h5: Path) -> "tuple[list[str], list[str], set[int]]":
-    """The program's stage names and kinds, and its partition ranks."""
+def _program(model_h5: Path) -> "tuple[Any, list[str], list[str], set[int]]":
+    """The model, its stage names and kinds, and its partition ranks."""
     from ...opensees.opensees_model import OpenSeesModel
     from .._bind import _stage_kind
 
@@ -346,28 +381,54 @@ def _program(model_h5: Path) -> "tuple[list[str], list[str], set[int]]":
     except ValueError as e:
         raise MPCOConversionRefused(str(e)) from e
     ranks = {int(p.rank) for p in model.partitions()}
-    return [str(s.name) for s in stages], kinds, ranks
+    return model, [str(s.name) for s in stages], kinds, ranks
 
 
-def _open_with_reader(sources: list[Path]) -> None:
-    """Refuse a source ``from_mpco`` would refuse (stages, modes, parts)."""
+def _open_with_reader(sources: list[Path], model: Any, model_h5: Path) -> None:
+    """Refuse a source ``from_mpco`` would refuse, or would bind elsewhere.
+
+    The readers' own checks run first (stages, modes, and on a set the
+    parts' stage signatures and time vectors). Then the archive must be the
+    capture's model: :func:`apeGmsh.results._bind._resolve_fem_via_model`,
+    the check behind ``from_mpco``'s ``ModelFemMismatchWarning``, is run
+    and its warning is a refusal here. A converted file is stamped with the
+    archive's hashes and kinds, so pairing it with another model is never a
+    warning.
+    """
+    import warnings
+
+    from .._bind import ModelFemMismatchWarning, _resolve_fem_via_model
     from ._mpco import MPCOReader
     from ._mpco_multi import MPCOMultiPartitionReader
 
     try:
-        if len(sources) == 1:
-            reader: Any = MPCOReader(sources[0])
-            try:
-                reader.stages()
-            finally:
-                reader.close()
-        else:
-            MPCOMultiPartitionReader(list(sources)).close()
+        reader: Any = (MPCOReader(sources[0]) if len(sources) == 1
+                       else MPCOMultiPartitionReader(list(sources)))
     except (OSError, ValueError, KeyError) as e:
         raise MPCOConversionRefused(
             f"{sources[0]} cannot be read as an MPCO capture "
             f"({type(e).__name__}: {e})."
         ) from e
+    try:
+        try:
+            reader.stages()
+        except (OSError, ValueError, KeyError) as e:
+            raise MPCOConversionRefused(
+                f"{sources[0]} cannot be read as an MPCO capture "
+                f"({type(e).__name__}: {e})."
+            ) from e
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always", ModelFemMismatchWarning)
+            _resolve_fem_via_model(reader, None, model, model_path=model_h5)
+    finally:
+        reader.close()
+    for w in caught:
+        if issubclass(w.category, ModelFemMismatchWarning):
+            raise MPCOConversionRefused(
+                f"{sources[0]} is not a run of {model_h5}: {w.message} "
+                "Nothing was written."
+            )
+        warnings.warn_explicit(w.message, w.category, w.filename, w.lineno)
 
 
 def _scan_part(
@@ -866,23 +927,46 @@ def _restack(
         raise MPCOConversionRefused(f"{where}: step data are {dtype}.")
     precisions.add("f64" if dtype == np.float64 else "f32")
     n_t = len(steps)
-    stacked = np.empty((n_t, n_rows, n_cols), dtype=dtype)
-    for t, (_, _, ds) in enumerate(steps):
-        stacked[t] = ds[...]
-    if n_rows and n_cols:
-        dst.create_dataset(
-            "DATA", data=stacked, maxshape=(None, n_rows, n_cols),
-            chunks=(_CHUNK_T, n_rows, n_cols), shuffle=True,
-            compression="gzip", compression_opts=4,
-        )
-        dst.create_dataset("STEP", data=np.asarray(ids, dtype=np.int32),
-                           maxshape=(None,), chunks=(_CHUNK_T,))
-        dst.create_dataset(
-            "TIME", data=np.asarray([s[1] for s in steps], dtype=np.float64),
-            maxshape=(None,), chunks=(_CHUNK_T,))
-    else:
-        dst.create_dataset("DATA", data=stacked)
-        dst.create_dataset("STEP", data=np.asarray(ids, dtype=np.int32))
-        dst.create_dataset(
-            "TIME", data=np.asarray([s[1] for s in steps], dtype=np.float64))
+    step_ids = np.asarray(ids, dtype=np.int32)
+    times = np.asarray([s[1] for s in steps], dtype=np.float64)
+    if not (n_rows and n_cols):
+        dst.create_dataset("DATA", data=np.empty((n_t, n_rows, n_cols), dtype))
+        dst.create_dataset("STEP", data=step_ids)
+        dst.create_dataset("TIME", data=times)
+        return
+    ct, chunk_ids = _chunk_plan(n_rows, n_cols, dtype.itemsize)
+    out = dst.create_dataset(
+        "DATA", shape=(n_t, n_rows, n_cols), dtype=dtype,
+        maxshape=(None, n_rows, n_cols), chunks=(ct, chunk_ids, n_cols),
+        shuffle=True, compression="gzip", compression_opts=4,
+    )
+    # One block of ``ct`` steps at a time: every chunk is complete in one
+    # write (no partial chunk re-deflated), and memory holds one block, not
+    # the whole history.
+    for t0 in range(0, n_t, ct):
+        block = steps[t0:t0 + ct]
+        buf = np.empty((len(block), n_rows, n_cols), dtype=dtype)
+        for k, (_, _, ds) in enumerate(block):
+            ds.read_direct(buf, dest_sel=np.s_[k])
+        out[t0:t0 + len(block)] = buf
+        del buf
+    dst.create_dataset("STEP", data=step_ids, maxshape=(None,), chunks=(ct,))
+    dst.create_dataset("TIME", data=times, maxshape=(None,), chunks=(ct,))
+
+
+def _chunk_plan(n_ids: int, n_comp: int, elem_bytes: int) -> "tuple[int, int]":
+    """``(steps, ids)`` per chunk: the recorder's WP-164 rule.
+
+    Chunks target about 1 MiB (``Ladruno_Hdf5.h::planTimeSeries`` at
+    ``FORK_PIN``). A slab of at most 1 MiB keeps every id in one chunk and
+    stacks up to 1024 steps; a larger slab tiles the id axis and stacks
+    at most 16 steps, so no chunk nears HDF5's 4 GiB limit.
+    """
+    target, row_budget = 1 << 20, 32 << 20
+    row_bytes = n_comp * elem_bytes
+    slab = n_ids * row_bytes
+    if slab <= target:
+        return max(1, min(1024, target // slab if slab else 1)), n_ids
+    ct = max(1, min(16, row_budget // slab))
+    return ct, max(1, min(n_ids, target // (ct * row_bytes)))
 

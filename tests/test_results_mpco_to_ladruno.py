@@ -525,6 +525,43 @@ def test_groups_keep_the_source_order(fx, tmp_path) -> None:
                 assert list(d[path]) == kept, path
 
 
+def test_a_large_node_result_streams_in_bounded_chunks(fx, tmp_path) -> None:
+    """180,000 x 3: one (1024, n, c) chunk would be 4.4 GB, which HDF5
+    refuses. Chunks follow the recorder's ~1 MiB rule, and the history is
+    streamed a block of steps at a time (at most 32 MiB), never stacked."""
+    import tracemalloc
+
+    n = 180_000
+    src = tmp_path / "big.mpco"
+    shutil.copy(fx["frame_src"], src)
+    with h5py.File(src, "r+") as f:
+        on = f["MODEL_STAGE[1]/RESULTS/ON_NODES"]
+        steps = on["DISPLACEMENT/DATA"]
+        g = on.create_group("BIG_FIELD")
+        g.attrs["COMPONENTS"] = np.array([b"a,b,c"])
+        g["ID"] = np.arange(1, n + 1, dtype=np.int32)[:, None]
+        for name, step in steps.items():
+            k = float(step.attrs["STEP"][0])
+            ds = g.create_dataset(f"DATA/{name}", data=np.full((n, 3), k))
+            ds.attrs["STEP"], ds.attrs["TIME"] = step.attrs["STEP"], step.attrs["TIME"]
+        n_t = len(steps)
+    tracemalloc.start()
+    try:
+        (dst,) = _convert(src, tmp_path / "out.ladruno", fx["frame"])
+        peak = tracemalloc.get_traced_memory()[1]
+    finally:
+        tracemalloc.stop()
+    full = n_t * n * 3 * 8
+    assert peak < (32 << 20) + (4 << 20) < full, (peak, full)
+    with h5py.File(dst, "r") as d:
+        out = d["MODEL_STAGE[1]/RESULTS/ON_NODES/BIG_FIELD"]
+        assert out["DATA"].shape == (n_t, n, 3)
+        assert np.prod(out["DATA"].chunks) * 8 <= 1 << 20
+        np.testing.assert_array_equal(
+            out["DATA"][:, 0, 0], out["STEP"][...].astype(float))
+        assert out.attrs["COMPONENTS"][0] == b"a,b,c"
+
+
 def test_overwrite_replaces_the_target(fx, tmp_path) -> None:
     dst = tmp_path / "out.ladruno"
     dst.write_bytes(b"old")
@@ -583,6 +620,18 @@ def test_refuses_without_model_h5(fx, tmp_path) -> None:
 def test_refuses_unpaired_stages(fx, tmp_path) -> None:
     _refuses(fx["frame_src"], tmp_path / "out.ladruno", "2 MODEL_STAGE",
              model_h5=fx["frame_1stage"])
+
+
+def test_refuses_the_archive_of_another_model(fx, tmp_path) -> None:
+    """The check behind from_mpco's ModelFemMismatchWarning, as a refusal:
+    zl_springs' nodes 1-4 exist in the frame archive, at other places."""
+    _refuses(fx["springs_src"], tmp_path / "out.ladruno", "is not a run of",
+             model_h5=fx["frame_1stage"])
+    from apeGmsh.results._bind import ModelFemMismatchWarning
+
+    with pytest.warns(ModelFemMismatchWarning):  # the same pair, from_mpco
+        Results.from_mpco(str(fx["springs_src"]),
+                          model_h5=str(fx["frame_1stage"])).close()
 
 
 def test_refuses_a_partition_set_with_a_gap(fx, tmp_path) -> None:
@@ -688,6 +737,34 @@ def test_a_failed_move_removes_every_part(fx, tmp_path, monkeypatch) -> None:
                      model_h5=fx["frame"])
     assert len(calls) == 2
     assert _left_behind(tmp_path) == []
+
+
+@pytest.mark.parametrize("fail_at", [2, 4], ids=["second-backup", "second-move"])
+def test_overwrite_never_leaves_the_old_set_with_a_gap(
+    fx, tmp_path, monkeypatch, fail_at,
+) -> None:
+    """Old parts move aside first; a failed backup or move restores them all."""
+    import apeGmsh._atomic_io as atomic
+
+    for i in (0, 1):
+        shutil.copy(fx["frame_src"], tmp_path / f"run.part-{i}.mpco")
+    src, dst = tmp_path / "run.part-0.mpco", tmp_path / "res.ladruno"
+    old = convert_mpco(src, dst, model_h5=fx["frame"])
+    before = {p: _sha(p) for p in old}
+    real, calls = atomic.replace_with_retry, []
+
+    def fails(a: Any, b: Any) -> None:
+        calls.append(b)
+        if len(calls) == fail_at:  # 1-2 back the old parts up, 3-4 move in
+            raise OSError("disk gone")
+        real(a, b)
+
+    monkeypatch.setattr(atomic, "replace_with_retry", fails)
+    with pytest.raises(OSError, match="disk gone"):
+        convert_mpco(src, dst, model_h5=fx["frame"], overwrite=True)
+    monkeypatch.undo()
+    assert {p: _sha(p) for p in old} == before
+    assert _left_behind(tmp_path) == sorted(p.name for p in old)
 
 
 # ---------------------------------------------------------------------------
