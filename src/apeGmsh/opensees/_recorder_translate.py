@@ -31,7 +31,7 @@ from ._element_capabilities import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Mapping
+    from collections.abc import Callable, Iterable, Mapping
     from pathlib import Path
 
     from ._readback import RotationRoles
@@ -418,6 +418,21 @@ def _model_rotation_roles(
     return rotation_roles_from_tokens(rows, node_ids)
 
 
+def model_h5_rotation_roles(
+    model_h5: "str | Path", node_ids: "Iterable[int]", *, where: str,
+) -> "RotationRoles":
+    """The rotation roles (:class:`~._readback.RotationRoles`) of
+    ``node_ids`` under the elements ``model_h5`` archives: the table the
+    ``recorder.declare`` emit and ``.read`` use (:func:`_model_rotation_roles`),
+    so a read mask and the deck agree on which slots hold a rotation."""
+    from .opensees_model import OpenSeesModel
+
+    return _model_rotation_roles(
+        OpenSeesModel.from_h5(model_h5),
+        tuple(int(n) for n in node_ids), where=where,
+    )
+
+
 def mask_absent_rotations(
     components: "dict[str, ndarray]",
     node_ids: "ndarray",
@@ -425,7 +440,8 @@ def mask_absent_rotations(
     fem: "FEMData",
 ) -> None:
     """NaN, in place, each rotation column at a node whose DOF layout
-    (the emit's own ``_node_layout(ndf, ndm)``) has no such slot.
+    (the emit's own ``_node_layout(ndf, ndm)``) has no such slot, or whose
+    elements say that slot holds no rotation.
 
     One ``recorder Node`` line over a mixed-ndf model writes every
     requested DOF for every node and pads the DOFs a node lacks with
@@ -434,6 +450,14 @@ def mask_absent_rotations(
     (``rotation_z`` is DOF 6 in the ``-dof`` list whatever the ndm). An
     ndf without a known layout (4 or 5: a u-p node's pressure DOF) carries
     translations only, never a rotation.
+
+    The layout alone cannot tell a 2-D frame node (ndf 3: ux, uy, rz)
+    from a 2-D ``LadrunoUP`` node (ndf 3: ux, uy, p): both lay their third
+    DOF in the ``rotation_z`` slot. So a slot the layout keeps is NaN too
+    where the model's DOF roles (:func:`model_h5_rotation_roles`) refuse
+    a rotation at the node: a u-p element touches it, no beam/shell
+    element does, or (an element-less node) the model holds a u-p class.
+    A pore pressure never reads as a rotation (#2029).
 
     ``components`` maps a canonical name to a ``(T, N)`` array over
     ``node_ids``. Values are kept as written when ``model_h5`` is
@@ -464,9 +488,15 @@ def mask_absent_rotations(
             "values or padding is unknown. Pass the model the deck ran."
         )
     layouts = [_node_layout(nodes_ndf[int(n)], ndm) for n in node_ids]
+    roles = model_h5_rotation_roles(
+        model_h5, node_ids, where=f"{model_h5}: the rotation mask",
+    )
+    refused = np.array(
+        [roles.refusal(int(n)) is not None for n in node_ids], dtype=bool)
     for comp, slot in slots.items():
         if slot >= 3:               # rx, ry, rz are spatial slots 3..5
-            absent = np.array([slot not in lay for lay in layouts], dtype=bool)
+            absent = refused | np.array(
+                [slot not in lay for lay in layouts], dtype=bool)
             components[comp] = np.where(absent, np.nan, components[comp])
 
 # =====================================================================

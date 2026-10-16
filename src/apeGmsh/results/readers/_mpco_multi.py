@@ -51,6 +51,7 @@ from .._slabs import (
     NodeSlab,
     SpringSlab,
 )
+from . import _mpco_nodal_io as _mnodal
 from ._mpco import MPCOReader
 from ._mpco_translation import (
     PARTITION_REDUCTION_NONE,
@@ -140,6 +141,8 @@ class MPCOMultiPartitionReader:
             self.close()
             raise
         self._fem_cache: "Optional[FEMData] | _Sentinel" = _SENTINEL
+        # One AbsentDofWarning per façade, not one per part (#2028).
+        self._absent_dof_warned = [False]
 
     def attach_tag_map(self, tag_map: "Any") -> None:
         """Forward the fem_eid↔ops-tag translator to every child reader.
@@ -153,6 +156,17 @@ class MPCOMultiPartitionReader:
         self._tag_map = tag_map
         for r in self._readers:
             r.attach_tag_map(tag_map)
+
+    def attach_nodes_ndf(
+        self, nodes_ndf: "dict[int, int] | None", ndm: int, *,
+        roles: "_mnodal.RolesSource",
+    ) -> None:
+        """Forward the model's per-node ndf and DOF roles to every part
+        (#2028), so a partitioned rotation read masks as a one-file one
+        does. Each part checks the ndf against its own ``MODEL/NODES``;
+        ``roles`` is one shared source, read once for every part."""
+        for r in self._readers:
+            r.attach_nodes_ndf(nodes_ndf, ndm, roles=roles)
 
     def spatial_dim(self) -> int:
         """Coordinate column count of the capture; partition 0 answers (#1393)."""
@@ -291,13 +305,14 @@ class MPCOMultiPartitionReader:
         node_ids: Optional[ndarray] = None,
         time_slice: TimeSlice = None,
     ) -> NodeSlab:
-        slabs = [
-            r.read_nodes(
-                stage_id, component,
-                node_ids=node_ids, time_slice=time_slice,
-            )
-            for r in self._readers
-        ]
+        with _mnodal.RotationMask.one_warning(self._absent_dof_warned):
+            slabs = [
+                r.read_nodes(
+                    stage_id, component,
+                    node_ids=node_ids, time_slice=time_slice,
+                )
+                for r in self._readers
+            ]
         return _merge_node_slabs(
             slabs, component,
             _node_reduction(self._readers, self._paths, stage_id, component),

@@ -33,6 +33,7 @@ from .._slabs import (
     NodeSlab,
     SpringSlab,
 )
+from . import _mpco_nodal_io as _mnodal
 from ._ladruno import LadrunoReader, warn_stage_kind_conflicts
 from ._ladruno_element_io import MissingElementResults
 from ._mpco_multi import (
@@ -132,6 +133,8 @@ class LadrunoMultiPartitionReader:
             self.close()
             raise
         self._fem_cache: "Optional[FEMData] | _Sentinel" = _SENTINEL
+        # One AbsentDofWarning per façade, not one per part (#2028).
+        self._absent_dof_warned = [False]
 
     def attach_tag_map(self, tag_map) -> None:
         # Mirror the map locally so introspection (``_tag_map``) sees the
@@ -139,6 +142,17 @@ class LadrunoMultiPartitionReader:
         self._tag_map = tag_map
         for r in self._readers:
             r.attach_tag_map(tag_map)
+
+    def attach_nodes_ndf(
+        self, nodes_ndf: "dict[int, int] | None", ndm: int, *,
+        roles: "_mnodal.RolesSource",
+    ) -> None:
+        """Forward the model's per-node ndf and DOF roles to every part
+        (#2028), so a partitioned rotation read masks as a one-file one
+        does. Each part checks the ndf against its own ``MODEL/NODES``;
+        ``roles`` is one shared source, read once for every part."""
+        for r in self._readers:
+            r.attach_nodes_ndf(nodes_ndf, ndm, roles=roles)
 
     def attach_stage_names(
         self, names: "Sequence[str]", kinds: "Sequence[str]",
@@ -411,9 +425,11 @@ class LadrunoMultiPartitionReader:
     ) -> NodeSlab:
         live = self._live(stage_id)
         readers = [r for _, r in live]
+        with _mnodal.RotationMask.one_warning(self._absent_dof_warned):
+            slabs = [r.read_nodes(stage_id, component, node_ids=node_ids,
+                                  time_slice=time_slice) for r in readers]
         return _merge_node_slabs(
-            [r.read_nodes(stage_id, component, node_ids=node_ids,
-                          time_slice=time_slice) for r in readers],
+            slabs,
             component,
             _node_reduction(
                 readers, [self._paths[i] for i, _ in live],

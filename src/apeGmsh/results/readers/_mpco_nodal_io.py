@@ -45,6 +45,8 @@ A bucket the reader is unable to decode is listed by
 from __future__ import annotations
 
 import warnings
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -62,11 +64,19 @@ from ...opensees._response_catalog import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Callable, Iterator
     from pathlib import Path
 
     import h5py
 
+    from typing import TypeAlias
+
+    from ...opensees._readback import RotationRoles
     from .._slabs import NodeSlab
+
+    #: What :meth:`RotationMask.attach` takes for the model's DOF roles:
+    #: called once, on the first read that needs them.
+    RolesSource: TypeAlias = "Callable[[], RotationRoles]"
 
 
 # =====================================================================
@@ -661,32 +671,57 @@ def model_node_ids(stage_groups: "list[h5py.Group]") -> "set[int]":
 
 _NO_MODEL = (
     "no per-node ndf is attached. Pass model_h5= (the run's archive, with "
-    "/opensees/nodes_ndf) to read NaN at those nodes; a partitioned read "
-    "does not attach it yet"
+    "/opensees/nodes_ndf) to read NaN at those nodes"
 )
 
 
 class RotationMask:
     """Per-reader NaN mask for rotation columns a node lacks.
 
-    :meth:`attach` takes the model's per-node ndf. :meth:`absent` then
-    names the nodes whose DOF layout has no slot for a component, and
-    :meth:`apply` writes NaN there. Without an attached ndf, nothing is
-    masked, and the first rotation read over a continuum class warns.
+    :meth:`attach` takes the model's per-node ndf and its DOF roles.
+    :meth:`absent` then names the nodes whose DOF layout has no slot for
+    a component, or whose elements say that slot holds no rotation (a
+    2-D ``LadrunoUP`` node lays its pore pressure where a 2-D frame node
+    lays ``rotation_z``, #2029); :meth:`apply` writes NaN there. Without
+    an attached ndf, nothing is masked, and the first rotation read over
+    a continuum class warns.
     """
+
+    #: The warn-once cell a partitioned reader shares across its parts
+    #: (:meth:`one_warning`); unset, each mask warns on its own.
+    _shared_warning: "ContextVar[list[bool] | None]" = ContextVar(
+        "rotation_mask_shared_warning", default=None)
 
     def __init__(self, source: str) -> None:
         self._source = source
         self._nodes_ndf: "dict[int, int] | None" = None
+        self._roles: "RolesSource | None" = None
         self._ndm = 3
         self._warned = False
         self._why_unattached = _NO_MODEL
 
+    @staticmethod
+    @contextmanager
+    def one_warning(cell: "list[bool]") -> "Iterator[None]":
+        """Within the block, every mask shares ``cell``: the first one to
+        warn sets ``cell[0]`` and the others stay silent, so a partitioned
+        read warns once, not once per part (#2028)."""
+        token = RotationMask._shared_warning.set(cell)
+        try:
+            yield
+        finally:
+            RotationMask._shared_warning.reset(token)
+
     def attach(
         self, nodes_ndf: "dict[int, int] | None", ndm: int,
-        file_nodes: "set[int]",
+        file_nodes: "set[int]", *, roles: "RolesSource",
     ) -> None:
         """Use ``nodes_ndf`` if it describes every node in ``file_nodes``.
+
+        ``roles`` gives the model's :class:`~apeGmsh.opensees._readback.RotationRoles`
+        over those nodes; it is called (once) by the first read whose
+        layout keeps a rotational slot, since only then can a slot be a
+        rotation or a pore pressure.
 
         ``None`` is an archive older than ``/opensees/nodes_ndf``. A model
         that misses some of the file's nodes is another model (the bind
@@ -711,6 +746,7 @@ class RotationMask:
             return
         self._nodes_ndf = {int(n): int(d) for n, d in nodes_ndf.items()}
         self._ndm = int(ndm)
+        self._roles = roles
 
     def absent(
         self, component: str, node_ids: "ndarray",
@@ -724,19 +760,8 @@ class RotationMask:
         if spatial is None or spatial[1] < 3:
             return None                 # not a rotational component
         slot = spatial[1]
-        if self._nodes_ndf is None:
-            if not self._warned and _has_continuum_class(model_elements):
-                self._warned = True
-                import warnings
-                warnings.warn(
-                    f"{self._source}: {component!r} is read over continuum "
-                    "elements, whose nodes may have no rotational DOF; the "
-                    "recorder writes 0.0 there (or a pressure, at a u-p "
-                    "node), so a value may be an absent DOF. "
-                    f"{self._why_unattached}. The fork recording per-node "
-                    "ndf is the permanent fix (#2015).",
-                    AbsentDofWarning, stacklevel=5,
-                )
+        if self._nodes_ndf is None or self._roles is None:
+            self._warn_unattached(component, model_elements)
             return None
         from ...opensees._internal.build.recorders import _node_layout
 
@@ -749,10 +774,40 @@ class RotationMask:
                 "nor in the model's /opensees/nodes_ndf, so whether their "
                 "column is a value or padding is unknown."
             )
-        return np.array([
+        absent = np.array([
             slot not in _node_layout(self._nodes_ndf[int(n)], self._ndm)
             for n in ids
         ], dtype=bool)
+        if not absent.all():
+            # The layout keeps the slot at these nodes; their elements say
+            # whether it holds a rotation (a frame) or not (a u-p pressure).
+            roles = self._roles()
+            absent |= np.array(
+                [roles.refusal(int(n)) is not None for n in ids], dtype=bool)
+        return absent
+
+    def _warn_unattached(
+        self, component: str, model_elements: "h5py.Group | None",
+    ) -> None:
+        """Warn once (per mask, or per :meth:`one_warning` block) that a
+        rotation read over continuum elements is unmasked."""
+        if self._warned or not _has_continuum_class(model_elements):
+            return
+        self._warned = True
+        shared = RotationMask._shared_warning.get()
+        if shared is not None:
+            if shared[0]:
+                return
+            shared[0] = True
+        warnings.warn(
+            f"{self._source}: {component!r} is read over continuum "
+            "elements, whose nodes may have no rotational DOF; the "
+            "recorder writes 0.0 there (or a pressure, at a u-p "
+            "node), so a value may be an absent DOF. "
+            f"{self._why_unattached}. The fork recording per-node "
+            "ndf is the permanent fix (#2015).",
+            AbsentDofWarning, stacklevel=6,
+        )
 
     def apply(
         self, slab: "NodeSlab", model_elements: "h5py.Group | None",
@@ -768,19 +823,37 @@ class RotationMask:
 
 
 def attach_nodes_ndf(
-    reader: object, single: type, model_h5: "str | Path", ndm: int,
+    reader: object, accepts: "tuple[type, ...]", model_h5: "str | Path",
+    ndm: int,
 ) -> None:
-    """Attach ``model_h5``'s per-node ndf to ``reader`` (#1971).
+    """Attach ``model_h5``'s per-node ndf and DOF roles to ``reader``
+    (#1971, #2029).
 
-    ``single`` is the one-file reader class, which carries a
-    :class:`RotationMask`. A partitioned reader is left as it is: its
-    part readers have no ndf, so they warn on a rotation read over
-    continuum elements (:class:`AbsentDofWarning`).
+    ``accepts`` are the reader classes that take them: the one-file
+    reader, which carries a :class:`RotationMask`, and the partitioned
+    façade, which forwards them to every part (#2028). Any other reader
+    raises :class:`TypeError`, so a reader never goes unmasked unnoticed.
+    The roles are read from ``model_h5`` once, on the first rotation read
+    whose layout keeps a rotational slot, and shared by every part.
     """
-    if not isinstance(reader, single):
-        return
+    if not isinstance(reader, accepts):
+        raise TypeError(
+            f"attach_nodes_ndf: {type(reader).__name__} is none of "
+            f"{[c.__name__ for c in accepts]}, which carry the rotation "
+            "mask; it has no per-node ndf to attach."
+        )
+    from functools import cache, partial
+    from pathlib import Path
+
+    from ...opensees._recorder_translate import model_h5_rotation_roles
+
+    nodes_ndf = load_nodes_ndf(model_h5)
+    roles = cache(partial(
+        model_h5_rotation_roles, model_h5, tuple(nodes_ndf or ()),
+        where=f"{Path(model_h5).name}: the rotation mask",
+    ))
     reader.attach_nodes_ndf(          # type: ignore[attr-defined]
-        load_nodes_ndf(model_h5), ndm,
+        nodes_ndf, ndm, roles=roles,
     )
 
 
