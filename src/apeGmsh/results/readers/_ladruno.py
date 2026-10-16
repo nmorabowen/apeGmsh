@@ -28,8 +28,9 @@ Key layout facts (verified against fork build ``605affeb``, FORMAT_VERSION 1):
 from __future__ import annotations
 
 import warnings
+from dataclasses import replace
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, NamedTuple, Optional
+from typing import TYPE_CHECKING, Any, NamedTuple, Optional, Sequence
 
 import numpy as np
 from numpy import ndarray
@@ -50,6 +51,7 @@ from . import _ladruno_element_io as _eio
 from . import _mpco_nodal_io as _mnodal
 from ._ladruno_hyperslab import read_hyperslab
 from ._mpco import (
+    _PROGRAM_STAGE_KINDS,
     _empty_element_slab,
     _empty_fiber_slab,
     _empty_gauss_slab,
@@ -110,6 +112,31 @@ def _stage_sort_key(name: str) -> "tuple[int, str]":
 # modes says ``eigen`` too. The stage keeps its steps as a ``static`` stage
 # and each recorded mode becomes its own ``kind="mode"`` stage.
 _KIND_MAP = {"static": "static", "transient": "transient", "eigen": "static"}
+
+
+class StageKindMismatchWarning(UserWarning):
+    """The program's stage kinds disagree with the ``.ladruno``'s ``KIND``s.
+
+    The fork stamps each ``MODEL_STAGE`` with the kind it ran, so a
+    disagreement means the program stages were paired onto the wrong
+    file stages (order or count).  Per #2079 Q7 the file keeps its own
+    ``MODEL_STAGE[<k>]`` names and kinds; select stages by those names
+    or by id.
+    """
+
+
+def warn_stage_kind_conflicts(conflicts: "Sequence[str]") -> None:
+    """Warn :class:`StageKindMismatchWarning` over every conflict."""
+    warnings.warn(
+        StageKindMismatchWarning(
+            "attach_stage_names: the program's stage kinds disagree with "
+            f"the kinds the file records ({'; '.join(conflicts)}). The "
+            "pairing is misaligned (stage order or count), so no stage is "
+            "renamed: the file keeps its MODEL_STAGE names and kinds "
+            "(#2079 Q7)."
+        ),
+        stacklevel=3,
+    )
 
 
 class NodeEnvelope(NamedTuple):
@@ -282,6 +309,84 @@ class LadrunoReader:
         return self._tag_map.read_translation(element_ids)
 
     # -- stages / time -------------------------------------------------
+
+    def stage_kind_conflicts(
+        self, names: "Sequence[str]", kinds: "Sequence[str]",
+    ) -> list[str]:
+        """The host stages whose recorded ``KIND`` disagrees with ``kinds``.
+
+        It refuses what :meth:`MPCOReader.attach_stage_names` refuses: a
+        count mismatch over the non-mode stages, or a kind outside
+        ``static``/``transient``.  Then it compares each host stage's raw
+        ``KIND`` attribute with the program kind paired onto it.  Only a
+        raw ``static`` or ``transient`` is evidence.  ``eigen`` is not: the
+        recorder writes it on every stage of a recorder that asks for
+        modes, transient ones included (see ``_KIND_MAP``).  A stage with
+        no ``KIND`` (older builds), with ``eigen``, or marked
+        ``EMPTY_PARTITION`` (it has no say, as in the part pairing) is not
+        compared.  Any other ``KIND`` counts as a conflict.
+        """
+        hosts = [s for s in self.stages() if s.kind != "mode"]
+        if not len(names) == len(kinds) == len(hosts):
+            raise ValueError(
+                f"attach_stage_names: {len(names)} names and "
+                f"{len(kinds)} kinds for {len(hosts)} MODEL_STAGE groups "
+                f"in {self._path.name}."
+            )
+        bad = sorted({str(k) for k in kinds} - _PROGRAM_STAGE_KINDS)
+        if bad:
+            raise ValueError(
+                f"attach_stage_names: stage kinds {bad} are not program "
+                f"stage kinds {sorted(_PROGRAM_STAGE_KINDS)}."
+            )
+        out = []
+        for s, n, k in zip(hosts, names, kinds):
+            attrs = self._h5[self._stage_to_grp[s.id]].attrs
+            if "KIND" not in attrs or self.is_empty_partition(s.id):
+                continue
+            raw = _decode(attrs["KIND"])
+            if raw != "eigen" and raw != str(k):
+                out.append(
+                    f"{self._path.name} {s.name} records KIND {raw!r} but "
+                    f"program stage {str(n)!r} is {str(k)!r}"
+                )
+        return out
+
+    def attach_stage_names(
+        self, names: "Sequence[str]", kinds: "Sequence[str]",
+    ) -> None:
+        """Name and kind the capture stages after the program's stages.
+
+        The sibling of :meth:`MPCOReader.attach_stage_names` (#2100): the
+        ``ops.stage(name=...)`` names and each stage's ``analysis`` kind
+        live in the sibling ``model.h5``, and the caller pairs them
+        positionally over the non-mode stages once it has checked the
+        counts.  A count mismatch or a kind outside ``static``/
+        ``transient`` raises.  Stage ids are untouched; the
+        ``MODEL_STAGE[<k>]`` name moves to :attr:`StageInfo.aliases`.
+        Mode stages keep their own names and kind.
+
+        Unlike an ``.mpco``, a ``.ladruno`` stage records its ``KIND``.
+        Where it disagrees with the program kind the pairing is
+        misaligned (wrong stage order or count), so per #2079 Q7 nothing
+        is renamed: the file keeps its names and kinds and
+        :class:`StageKindMismatchWarning` lists the conflicts.  The
+        program kind fills in only where a stage records no ``KIND``, or
+        ``eigen`` (no evidence of static or transient).
+        """
+        conflicts = self.stage_kind_conflicts(names, kinds)
+        if conflicts:
+            warn_stage_kind_conflicts(conflicts)
+            return
+        current = self.stages()
+        hosts = [s for s in current if s.kind != "mode"]
+        new = {s.id: (str(n), str(k)) for s, n, k in zip(hosts, names, kinds)}
+        self._stage_cache = [
+            replace(s, name=new[s.id][0], kind=new[s.id][1],
+                    aliases=(s.name, *s.aliases))
+            if s.id in new else s
+            for s in current
+        ]
 
     def stages(self) -> list[StageInfo]:
         if self._stage_cache is not None:
