@@ -129,8 +129,7 @@ def stamp_provenance(
     Returns the part paths, in partition order.
     """
     names_override = _string_list(stage_names, "stage_names")
-    lossy = _string_list(unsupported, "unsupported")
-    assert lossy is not None
+    lossy = _string_list(unsupported, "unsupported") or []
     writer_text = _writer_text(writer)
 
     parts = _discover_parts(Path(path))
@@ -241,13 +240,10 @@ def _refuse_if_open_here(parts: list[Path]) -> None:
 
     import h5py
 
-    held = {}
+    held: dict[str, int] = {}
     for fid in h5py.h5f.get_obj_ids(types=h5py.h5f.OBJ_FILE):
-        name = os.fsdecode(fid.name)
-        try:
-            held[os.path.normcase(os.path.realpath(name))] = fid.get_intent()
-        except OSError:
-            continue
+        name = os.path.normcase(os.path.realpath(os.fsdecode(fid.name)))
+        held[name] = fid.get_intent()
     for part in parts:
         key = os.path.normcase(os.path.realpath(part))
         if key in held:
@@ -482,10 +478,10 @@ def _check_shared_model(parts: list[Path]) -> None:
                         for bname, b in model["ELEMENTS"].items():
                             if "CONNECTIVITY" not in b:
                                 continue
-                            conn = np.asarray(b["CONNECTIVITY"][...])
+                            table = np.asarray(b["CONNECTIVITY"][...])
                             elements[bname] = {
                                 int(r[0]): tuple(int(v) for v in r[1:])
-                                for r in conn.reshape(conn.shape[0], -1)
+                                for r in table.reshape(table.shape[0], -1)
                             }
                 stages.append((nodes, elements))
             per_part.append(stages)
