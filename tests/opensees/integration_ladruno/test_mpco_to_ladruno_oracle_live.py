@@ -246,8 +246,10 @@ def _attr(obj: Any, name: str) -> Any:
 
 #: INFO attributes left out of the comparison, each for a stated reason.
 INFO_EXCLUDED = {
-    # The converter writes minor 0 on purpose: an .mpco stage has no
-    # running-analysis KIND of its own (ruling 2 on #2120).
+    # The converter writes minor 0 on purpose. Its KIND is per stage, but
+    # minor 1 also promises the schema section 2a stage boundaries, and a
+    # converted file keeps MPCO's stages, which split on a domain change
+    # only.
     "FORMAT_MINOR_VERSION": "minor 0 by design",
     # An .mpco carries no run identity.
     "RUN_ID": "absent from MPCO", "RUN_ID_SCOPE": "absent from MPCO",

@@ -16,7 +16,11 @@ What is copied verbatim, and what is transformed (fork schema v1 at
                                 ``PARTITIONED`` / ``PARTITION_ID`` /
                                 ``NUM_PARTITIONS`` and an empty
                                 ``PROVENANCE`` group. No
-                                ``FORMAT_MINOR_VERSION`` (minor 0).
+                                ``FORMAT_MINOR_VERSION``: minor 1 also
+                                promises the fork's section 2a stage
+                                boundaries (a static/transient flip opens a
+                                stage), and the stages here are MPCO's,
+                                which split on a domain change only.
 ``MODEL_STAGE[k]`` @STEP/TIME   copied, plus ``KIND`` from the program
 ``MODEL/NODES``                 copied
 ``MODEL/ELEMENTS/<key>``        a group: ``CONNECTIVITY``, the source
@@ -355,12 +359,23 @@ def _refuse_existing(
                 f"{len(targets)} parts being written; a reader would mix it "
                 "in. Remove it first. Nothing was written."
             )
-    if staging.exists() and not overwrite:
-        raise MPCOConversionRefused(
-            f"the staging directory {staging} exists (a conversion that "
-            "was interrupted, or one running now). Remove it, or pass "
-            "overwrite=True. Nothing was written."
-        )
+    if staging.exists():
+        held = sorted(p.name for p in staging.glob("*.old"))
+        if held:
+            # A rollback that could not restore them left the only copy of
+            # an earlier set here: never removed, overwrite or not.
+            raise MPCOConversionRefused(
+                f"the staging directory {staging} holds backups of an "
+                f"earlier set that were never restored ({held}). Move them "
+                "back to their names (drop the .old suffix), then remove the "
+                "directory. Nothing was written."
+            )
+        if not overwrite:
+            raise MPCOConversionRefused(
+                f"the staging directory {staging} exists (a conversion that "
+                "was interrupted, or one running now). Remove it, or pass "
+                "overwrite=True. Nothing was written."
+            )
 
 
 def _program(model_h5: Path) -> "tuple[Any, list[str], list[str], set[int]]":

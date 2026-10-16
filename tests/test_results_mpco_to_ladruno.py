@@ -698,6 +698,22 @@ def test_refuses_a_left_over_staging_directory(fx, tmp_path) -> None:
              model_h5=fx["frame"])
 
 
+def test_never_removes_a_staging_directory_that_holds_backups(fx, tmp_path) -> None:
+    """Backups a rollback could not restore are the only copy of the old
+    set: even ``overwrite=True`` refuses, names the directory, keeps them."""
+    staging = tmp_path / "out.partial"
+    staging.mkdir()
+    backup = staging / "out.ladruno.old"
+    backup.write_bytes(b"the only copy")
+    for overwrite in (False, True):
+        with pytest.raises(MPCOConversionRefused, match="out.partial") as e:
+            convert_mpco(fx["frame_src"], tmp_path / "out.ladruno",
+                         model_h5=fx["frame"], overwrite=overwrite)
+        assert "never restored" in str(e.value)
+        assert backup.read_bytes() == b"the only copy"
+    assert not (tmp_path / "out.ladruno").exists()
+
+
 # ---------------------------------------------------------------------------
 # Rollback after the staging exists
 # ---------------------------------------------------------------------------
