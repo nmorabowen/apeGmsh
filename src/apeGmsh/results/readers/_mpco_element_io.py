@@ -393,6 +393,8 @@ def _labels_for(canonical: str) -> frozenset[str]:
     a, b = m.group("a"), m.group("b")
     ij = {_XYZ[a] + _XYZ[b], _XYZ[b] + _XYZ[a]}
     ab = {a + b, b + a}
+    stems_digit: tuple[str, ...]
+    stems_axis: tuple[str, ...]
     if m.group("root") == "stress":
         stems_digit, stems_axis = ("sigma",), ("sigma_", "s", "stress_")
     else:
