@@ -40,9 +40,12 @@ from ..._vocabulary import PER_ELEMENT_NODAL_FORCES
 from ...opensees._response_catalog import (
     RESPONSE_CATALOG,
     catalog_token_for_keyword,
+    is_layer_catalogued,
     local_force_station_signs,
 )
+from .._shell_geometry import shell_quaternion
 from ._ladruno_hyperslab import read_hyperslab
+from ._mpco_layer_io import ShellFrameUnavailableWarning
 
 if TYPE_CHECKING:
     import h5py
@@ -1861,17 +1864,38 @@ def read_nodal_force_slab(
 # *geometry* (y, z, area, material) lives in
 # ``MODEL/SECTION_ASSIGNMENTS/SECTION_<tag>/{FIBER_DATA, FIBER_MATERIALS}``,
 # wired to (element, gauss) by that group's ``ASSIGNMENT[(elem_tag,
-# gauss_id)]``. A layered-shell section serialises the same way (layers ==
-# fibers), so this path covers both when the writer emits the bucket.
+# gauss_id)]``. A layered shell writes under the same tokens, but each of
+# its blocks carries several components per layer (``NUM_COMP`` 5 for a
+# ``PlateFiber`` layer): those buckets are layer state, read by
+# :func:`read_layer_slab` (see "Layer reads" below), and the fiber level
+# keeps only the scalar ``NUM_COMP == 1`` blocks.
+
+
+def _scalar_fiber_blocks(bucket: "h5py.Group") -> list[_Block]:
+    """The bucket's per-fiber scalar blocks (``NUM_COMP == 1``), or ``[]``
+    for a bucket whose ``COLUMN_MAP`` does not parse."""
+    try:
+        blocks = parse_blocks(bucket)
+    except (KeyError, ValueError):
+        return []
+    return [b for b in blocks if b.gauss_id >= 0 and len(b.comp_names) == 1]
 
 
 def fiber_available(on_elements: "h5py.Group") -> set[str]:
-    """``fiber_stress`` / ``fiber_strain`` present under ``ON_ELEMENTS``."""
-    return {
-        _FIBER_TOKEN_TO_CANONICAL[token]
-        for token in on_elements
-        if token in _FIBER_TOKEN_TO_CANONICAL
-    }
+    """``fiber_stress`` / ``fiber_strain`` that some bucket carries as
+    scalar per-fiber blocks. A token whose buckets are all layered-shell
+    state (several components per layer) is listed at the layer level
+    instead (:func:`layer_available`), since the fiber read returns none
+    of it (#1995)."""
+    out: set[str] = set()
+    for token in on_elements:
+        canonical = _FIBER_TOKEN_TO_CANONICAL.get(token)
+        if canonical is None or canonical in out:
+            continue
+        token_grp = on_elements[token]
+        if any(_scalar_fiber_blocks(token_grp[key]) for key in token_grp):
+            out.add(canonical)
+    return out
 
 
 def _build_fiber_assignment(
@@ -1956,6 +1980,10 @@ def read_fiber_slab(
                 b for b in blocks
                 if b.gauss_id >= 0 and len(b.comp_names) == 1
             ]
+            # Blocks of several components per fiber are layered-shell
+            # state, read at the layer level; a bucket that level is
+            # unable to read warns here, by name (#1995).
+            _layer_layout_or_warn(token, key, blocks)
             if not fiber_blocks:
                 continue
             sel = _select_rows(bucket, element_ids)
@@ -2036,4 +2064,359 @@ def read_fiber_slab(
         np.concatenate(z_parts),
         np.concatenate(area_parts),
         np.concatenate(mat_parts),
+    )
+
+
+# =====================================================================
+# Layer reads (layered-shell stress / strain)
+# =====================================================================
+#
+# A layered shell (``LayeredShellFiberSection`` on a shell) writes its
+# per-layer state under the fiber tokens (``section.fiber.<resp>``, or
+# ``material.fiber.<resp>`` when the request names it so), one
+# ``LEVELS == 4`` block per SURFACE Gauss point whose ``MULTIPLICITY`` is
+# the layer count and whose ``NUM_COMP`` is the layer material's component
+# count (5 for ``PlateFiber``: 11, 22, 12, 23, 13). Inside a block the
+# columns run layer-major, component-fast. The layer thickness and
+# material sit in ``MODEL/SECTION_ASSIGNMENTS`` as for a fiber section
+# (``FIBER_DATA`` column 2 is the thickness), assigned per ``(element,
+# surface GP)``. Verified against fork build 79e0623670 (local) and the
+# pinned build on the ``live-fork`` lane (#1995).
+#
+# The slab is the MPCO reader's ``LayerSlab`` (``_mpco_layer_io``):
+# ``fiber_stress_<c>`` / ``fiber_strain_<c>``, rows element-slow, surface
+# GP, then layer, sub-GP 0, the layer thickness per row, and the shell
+# frame per row. A ``.ladruno`` stores no shell ``LOCAL_AXES``, so the
+# frame is computed from the file's connectivity and node coordinates with
+# :func:`~apeGmsh.results._shell_geometry.shell_quaternion`, as the MPCO
+# reader does (#1996); a row with no frame reads NaN and warns by name.
+
+
+class LayerBucketUnreadWarning(UserWarning):
+    """A fiber-token bucket carries blocks of several components per fiber
+    in a layout the layer level does not read, so neither the fiber nor
+    the layer level returns them. The warning names the bucket and why
+    (#1995)."""
+
+
+class LayerSectionUnresolved(ValueError):
+    """A layered-shell row has no layer thickness: its ``(element, surface
+    GP)`` pair has no ``MODEL/SECTION_ASSIGNMENTS`` entry, or the assigned
+    section's layer count differs from the bucket's. Names the bucket and
+    the pairs (#1995)."""
+
+
+#: A layer component and its parent: ``fiber_stress_3`` → ``fiber_stress``, 3.
+_LAYER_COMPONENT_RE = re.compile(r"^(fiber_stress|fiber_strain)_(\d+)$")
+
+
+@dataclass(frozen=True)
+class _LayerLayout:
+    """A layered-shell bucket: one block per surface GP, sorted by GP."""
+    blocks: tuple[_Block, ...]
+    n_layers: int
+    n_comp: int
+
+    def column(self, sgp: int, layer: int, comp: int) -> int:
+        """DATA column of component ``comp`` of ``layer`` at surface GP
+        position ``sgp``: layer-major, component-fast inside the block."""
+        return self.blocks[sgp].col_start + layer * self.n_comp + comp
+
+
+def _layer_layout(
+    key: str, blocks: "list[_Block]",
+) -> "tuple[Optional[_LayerLayout], Optional[str]]":
+    """Classify a fiber-token bucket's blocks as layered-shell state.
+
+    ``(layout, None)`` for a layered-shell bucket; ``(None, None)`` for a
+    bucket with no block of several components per fiber (a scalar fiber
+    bucket, read at the fiber level); ``(None, reason)`` for one whose
+    multi-component blocks this reader does not decode.
+    """
+    multi = [b for b in blocks if b.gauss_id >= 0 and len(b.comp_names) > 1]
+    if not multi:
+        return None, None
+    if len(multi) != len(blocks):
+        return None, (
+            f"{len(blocks) - len(multi)} of its {len(blocks)} blocks are "
+            f"element-level or scalar beside the multi-component ones"
+        )
+    class_name = _class_name(key)
+    if not is_layer_catalogued(class_name, "fiber_stress"):
+        return None, (
+            f"class {class_name!r} has no layered-shell entry in the "
+            f"response catalog (LAYER_CATALOG)"
+        )
+    widths = {len(b.comp_names) for b in multi}
+    layers = {b.multiplicity for b in multi}
+    if len(widths) != 1 or len(layers) != 1:
+        return None, (
+            f"its blocks disagree on the components per layer "
+            f"{sorted(widths)} or the layer count {sorted(layers)}"
+        )
+    ordered = tuple(sorted(multi, key=lambda b: b.gauss_id))
+    gauss = [b.gauss_id for b in ordered]
+    if gauss != list(range(len(ordered))):
+        return None, (
+            f"its surface Gauss ids {gauss} are not 0..{len(gauss) - 1}"
+        )
+    return _LayerLayout(
+        blocks=ordered, n_layers=layers.pop(), n_comp=widths.pop(),
+    ), None
+
+
+def _layer_layout_or_warn(
+    token: str, key: str, blocks: "list[_Block]",
+) -> "Optional[_LayerLayout]":
+    """:func:`_layer_layout`, warning by name for a bucket it leaves unread."""
+    layout, reason = _layer_layout(key, blocks)
+    if reason is not None:
+        warnings.warn(
+            f".ladruno ON_ELEMENTS/{token}/{key}: {reason}, so its fiber "
+            f"blocks of several components are read at neither the fiber "
+            f"nor the layer level.",
+            LayerBucketUnreadWarning, stacklevel=3,
+        )
+    return layout
+
+
+def _layer_buckets(
+    on_elements: "h5py.Group", parent: str,
+) -> "list[tuple[str, str, h5py.Group, _LayerLayout]]":
+    """``(token, key, bucket, layout)`` per layered-shell bucket of
+    ``parent`` (``fiber_stress`` / ``fiber_strain``), over both spellings."""
+    out: list[tuple[str, str, h5py.Group, _LayerLayout]] = []
+    for token in _FIBER_CANONICAL_TO_TOKENS[parent]:
+        if token not in on_elements:
+            continue
+        token_grp = on_elements[token]
+        for key in token_grp:
+            bucket = token_grp[key]
+            try:
+                blocks = parse_blocks(bucket)
+            except (KeyError, ValueError):
+                continue
+            layout = _layer_layout_or_warn(token, key, blocks)
+            if layout is not None:
+                out.append((token, key, bucket, layout))
+    return out
+
+
+def layer_available(on_elements: "h5py.Group") -> set[str]:
+    """``fiber_stress_<c>`` / ``fiber_strain_<c>`` per layered-shell bucket,
+    one per component of the layer material (the MPCO reader's names)."""
+    out: set[str] = set()
+    for parent in ("fiber_stress", "fiber_strain"):
+        for _t, _k, _b, layout in _layer_buckets(on_elements, parent):
+            out.update(f"{parent}_{c}" for c in range(layout.n_comp))
+    return out
+
+
+def _index_filter(
+    indices: "Optional[ndarray]", n: int, what: str,
+) -> ndarray:
+    """``indices`` as int64, every one in ``[0, n)``; all of them for None."""
+    if indices is None:
+        return np.arange(n, dtype=np.int64)
+    sel = np.asarray(indices, dtype=np.int64).ravel()
+    if sel.size and (int(sel.max()) >= n or int(sel.min()) < 0):
+        raise ValueError(f"{what} {sel.tolist()} out of range [0, {n}).")
+    return sel
+
+
+def _model_child(
+    model: "Optional[h5py.Group]", name: str,
+) -> "Optional[h5py.Group]":
+    return model[name] if model is not None and name in model else None
+
+
+def _shell_frames(
+    model: "Optional[h5py.Group]", key: str, element_ids: ndarray,
+) -> ndarray:
+    """Per-element shell frame, scalar-first ``(w, x, y, z)``, ``(n, 4)``.
+
+    A frame the file stores (``MODEL/LOCAL_AXES/<classTag>-<Class>``)
+    wins; every other element's frame is computed from the file's
+    connectivity and node coordinates with :func:`shell_quaternion`, the
+    convention the MPCO reader and DomainCapture use. A row with neither
+    is NaN, and one :class:`ShellFrameUnavailableWarning` names its
+    elements and why.
+    """
+    import h5py
+
+    n = element_ids.size
+    out = np.full((n, 4), np.nan, dtype=np.float64)
+    prefix = _class_prefix(key)
+    class_name = _class_name(key)
+    failed: dict[str, list[int]] = {}
+
+    def _fail(reason: str, eids: "list[int]") -> None:
+        failed.setdefault(reason, []).extend(eids)
+
+    stored: dict[int, ndarray] = {}
+    axes = _model_child(model, "LOCAL_AXES")
+    if axes is not None and prefix in axes:
+        sub = axes[prefix]
+        if "ID" in sub and "FRAME" in sub:
+            ids = np.asarray(sub["ID"][...], dtype=np.int64).ravel()
+            frames = np.asarray(sub["FRAME"][...], dtype=np.float64)
+            if frames.size == 4 * ids.size:
+                stored = dict(zip(ids.tolist(), frames.reshape(-1, 4)))
+    todo: list[int] = []
+    for k in range(n):
+        q = stored.get(int(element_ids[k]))
+        if q is None:
+            todo.append(k)
+        else:
+            out[k, :] = q
+    if not todo:
+        return out
+
+    pending = [int(element_ids[k]) for k in todo]
+    coords = np.zeros((0, 3), dtype=np.float64)
+    node_row: dict[int, int] = {}
+    nodes = _model_child(model, "NODES")
+    if nodes is None or "ID" not in nodes or "COORDINATES" not in nodes:
+        _fail("no MODEL/NODES ID and COORDINATES", pending)
+        todo = []
+    else:
+        coords = np.asarray(nodes["COORDINATES"][...], dtype=np.float64)
+        if coords.ndim != 2 or coords.shape[1] != 3:
+            _fail(f"node coordinates of shape {coords.shape}, not (n, 3)",
+                  pending)
+            todo = []
+        node_row = {
+            int(t): i for i, t in enumerate(
+                np.asarray(nodes["ID"][...], dtype=np.int64).ravel())
+        }
+    conn_rows: dict[int, ndarray] = {}
+    elements = _model_child(model, "ELEMENTS")
+    for name in elements if elements is not None and todo else ():
+        grp = elements[name]
+        if (_class_prefix(name) != prefix or not isinstance(grp, h5py.Group)
+                or "CONNECTIVITY" not in grp):
+            continue
+        conn = np.asarray(grp["CONNECTIVITY"][...], dtype=np.int64)
+        if conn.ndim == 2 and conn.shape[1] >= 2:
+            conn_rows.update((int(r[0]), r[1:]) for r in conn)
+    for k in todo:
+        eid = int(element_ids[k])
+        tags = conn_rows.get(eid)
+        if tags is None:
+            _fail(f"no {prefix} row in MODEL/ELEMENTS", [eid])
+            continue
+        if any(int(t) not in node_row for t in tags):
+            _fail("a node missing from MODEL/NODES", [eid])
+            continue
+        try:
+            out[k, :] = shell_quaternion(
+                coords[[node_row[int(t)] for t in tags]], class_name,
+            )
+        except ValueError as exc:
+            _fail(str(exc), [eid])
+    if failed:
+        detail = "; ".join(
+            f"{reason}: elements {sorted(set(eids))[:8]}"
+            + (" ..." if len(set(eids)) > 8 else "")
+            for reason, eids in failed.items()
+        )
+        warnings.warn(
+            f".ladruno {class_name} layered-shell frames read NaN: the file "
+            f"stores no LOCAL_AXES row for them and the frame cannot be "
+            f"computed from the file's connectivity and node coordinates "
+            f"({detail}).",
+            ShellFrameUnavailableWarning, stacklevel=3,
+        )
+    return out
+
+
+def read_layer_slab(
+    on_elements: "h5py.Group",
+    model: "Optional[h5py.Group]",
+    component: str,
+    *,
+    t_idx: ndarray,
+    element_ids: "Optional[ndarray]",
+    gp_indices: "Optional[ndarray]",
+    layer_indices: "Optional[ndarray]",
+) -> "Optional[tuple[ndarray, ndarray, ndarray, ndarray, ndarray, ndarray, ndarray]]":
+    """Return ``(values[T, sumL], element_index, gp_index, layer_index,
+    sub_gp_index, thickness, local_axes_quaternion[sumL, 4])``.
+
+    The MPCO reader's layout (``_mpco_layer_io.read_layer_bucket_slab``):
+    one column per (element, surface GP, layer, sub-GP 0), element-slow,
+    sub-GP fastest. ``component`` is ``fiber_stress_<c>`` /
+    ``fiber_strain_<c>``; ``None`` when no layered-shell bucket carries it.
+    ``gp_indices`` / ``layer_indices`` outside the bucket's range raise
+    ``ValueError``, as on MPCO. A row whose layer thickness the file does
+    not give raises :class:`LayerSectionUnresolved`.
+    """
+    m = _LAYER_COMPONENT_RE.match(component)
+    if m is None:
+        return None
+    parent, comp = m.group(1), int(m.group(2))
+    buckets = [
+        b for b in _layer_buckets(on_elements, parent) if comp < b[3].n_comp
+    ]
+    if not buckets:
+        return None
+    assignment = _build_fiber_assignment(
+        _model_child(model, "SECTION_ASSIGNMENTS"),
+    )
+
+    parts: list[list[ndarray]] = [[] for _ in range(7)]
+    for token, key, bucket, layout in buckets:
+        sel = _select_rows(bucket, element_ids)
+        if sel is None:
+            continue
+        rows, sel_ids = sel
+        sgp = _index_filter(gp_indices, len(layout.blocks), "gp_indices")
+        lyr = _index_filter(layer_indices, layout.n_layers, "layer_indices")
+        if sgp.size == 0 or lyr.size == 0:
+            continue
+        cols = np.array(
+            [layout.column(int(g), int(k), comp) for g in sgp for k in lyr],
+            dtype=np.int64,
+        )
+        data = read_hyperslab(bucket["DATA"], t_idx, rows, cols)
+        n_e, per_e = sel_ids.size, sgp.size * lyr.size
+        gauss = np.array(
+            [layout.blocks[int(g)].gauss_id for g in sgp], dtype=np.int64,
+        )
+        thickness = np.empty(n_e * per_e, dtype=np.float64)
+        missing: list[tuple[int, int]] = []
+        for i, etag in enumerate(sel_ids):
+            for j, g in enumerate(gauss):
+                geom = assignment.get((int(etag), int(g)))
+                if geom is None or geom[2].size != layout.n_layers:
+                    missing.append((int(etag), int(g)))
+                    continue
+                start = (i * sgp.size + j) * lyr.size
+                thickness[start:start + lyr.size] = geom[2][lyr]
+        if missing:
+            raise LayerSectionUnresolved(
+                f".ladruno ON_ELEMENTS/{token}/{key}: {len(missing)} "
+                f"(element, surface GP) pairs have no "
+                f"MODEL/SECTION_ASSIGNMENTS section of {layout.n_layers} "
+                f"layers, so their layer thickness is unknown; first few: "
+                f"{missing[:5]}."
+            )
+        quats = _shell_frames(model, key, sel_ids)
+        parts[0].append(data.reshape(data.shape[0], n_e * per_e))
+        parts[1].append(np.repeat(sel_ids, per_e).astype(np.int64))
+        parts[2].append(np.tile(np.repeat(gauss, lyr.size), n_e))
+        parts[3].append(np.tile(lyr, n_e * sgp.size))
+        parts[4].append(np.zeros(n_e * per_e, dtype=np.int64))
+        parts[5].append(thickness)
+        parts[6].append(np.repeat(quats, per_e, axis=0))
+    if not parts[0]:
+        return None
+    return (
+        np.concatenate(parts[0], axis=1),
+        np.concatenate(parts[1]),
+        np.concatenate(parts[2]),
+        np.concatenate(parts[3]),
+        np.concatenate(parts[4]),
+        np.concatenate(parts[5]),
+        np.concatenate(parts[6], axis=0),
     )

@@ -340,7 +340,7 @@ def _layer_case(kind: str, defect: str) -> list[Any]:
     ]
 
 
-@pytest.mark.parametrize("kind", _layer_case("Ladruno", B_LAD_LAYERS))
+@pytest.mark.parametrize("kind", KINDS)
 def test_layer_stress_strain_and_thickness_equal_live(
     g: Any, tmp_path: Path, kind: str,
 ) -> None:
@@ -422,7 +422,7 @@ def test_c7_quaternion_matches_the_mpco_writer_convention(tmp_path: Path) -> Non
         stored, shell_quaternion(_tilted_quad(), "ASDShellQ4"), atol=1e-14)
 
 
-@pytest.mark.parametrize("kind", _layer_case("Ladruno", B_LAD_LAYERS))
+@pytest.mark.parametrize("kind", KINDS)
 def test_layer_quaternion_is_the_shell_frame(
     g: Any, tmp_path: Path, kind: str,
 ) -> None:
