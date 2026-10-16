@@ -365,3 +365,26 @@ def test_duplicate_names_without_conflict_warn(tmp_path: Path) -> None:
         assert raised == [DuplicateStageNameWarning]
         assert [n for _, n, _, _ in _hosts(r)] == ["load", "load"]
         assert r.stage("load")._stage_id == "stage_0"
+
+
+@pytest.mark.parametrize("parts", [1, 2])
+@pytest.mark.parametrize("fmt", ["ladruno", "mpco"])
+def test_zero_stage_capture_warns_the_count_once(
+    tmp_path: Path, fmt: str, parts: int,
+) -> None:
+    """A capture with no stages pairs nothing; the count warning is the
+    one account of the run (review F1: an empty pairing changes no stage,
+    which is not the reader declining it)."""
+    model_h5 = _model_h5(tmp_path / "model.h5",
+                         ("a", "static"), ("b", "transient"))
+    if parts == 1:
+        path = _capture(tmp_path / f"r.{fmt}", fmt, [])
+    else:
+        for i in range(parts):
+            _capture(tmp_path / f"r.part-{i}.{fmt}", fmt, [],
+                     part=(i, parts) if fmt == "ladruno" else None)
+        path = tmp_path / f"r.part-0.{fmt}"
+    r, raised = _open(path, model_h5, fmt)
+    with r:
+        assert raised == [StageCountMismatchWarning]
+        assert _hosts(r) == []

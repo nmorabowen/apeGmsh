@@ -332,9 +332,11 @@ def _bind_stage_names(
     ]
     before = _stage_naming(reader)
     reader.attach_stage_names(paired, kinds)
-    if _stage_naming(reader) == before:
+    if paired and _stage_naming(reader) == before:
         # The reader declined the pairing and has said why; the
         # warnings below would describe a rename that never happened.
+        # An empty pairing renames nothing by construction, and the
+        # count warning below is then the only account of the run.
         return
     if len(capture) < len(program):
         unrun = program[len(capture):]
