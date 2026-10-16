@@ -10,10 +10,11 @@ Reads cover: file identity + ``FORMAT_VERSION`` window, stage enumeration,
 time vectors, the self-describing FEM (``MODEL/`` →
 :meth:`FEMData.from_ladruno_model`), nodal reads (``RESULTS/ON_NODES`` —
 chunked ``DATA[T×nIds×nComp]``), element/gauss/line-station reads (L2b-2),
-section-level line stations + fiber stress/strain (L2b-3). Layer and spring
-reads return empty slabs by design — a ``.ladruno`` has no distinct layer or
-spring level (layered shells serialise as fiber sections; zeroLength state
-flows through the element/gauss reads).
+section-level line stations + fiber stress/strain (L2b-3), and layered-shell
+layer state (written under the fiber tokens with several components per
+layer, read into the MPCO reader's ``LayerSlab``, #1995). Spring reads
+return empty slabs by design — a ``.ladruno`` has no distinct spring level
+(zeroLength state flows through the element/gauss reads).
 
 Key layout facts (verified against fork build ``605affeb``, FORMAT_VERSION 1):
 
@@ -592,10 +593,11 @@ class LadrunoReader:
             return sorted(listed.difference(PER_ELEMENT_NODAL_FORCES))
         if level is ResultLevel.FIBERS:
             return sorted(_eio.fiber_available(on_elements))
-        # LAYERS / SPRINGS: a .ladruno has no distinct layer or spring
-        # level — layered shells serialise as fiber sections (read via
-        # read_fibers) and zeroLength material/force state is reachable
-        # through read_gauss / read_elements. See _ladruno_element_io.
+        if level is ResultLevel.LAYERS:
+            return sorted(_eio.layer_available(on_elements))
+        # SPRINGS: a .ladruno has no distinct spring level — zeroLength
+        # material/force state is reachable through read_gauss /
+        # read_elements. See _ladruno_element_io.
         return []
 
     def _locate_node_component(
@@ -1087,16 +1089,37 @@ class LadrunoReader:
         gp_indices: "Optional[ndarray]" = None,
         layer_indices: "Optional[ndarray]" = None, time_slice: TimeSlice = None,
     ) -> LayerSlab:
-        # A .ladruno has no distinct layer level: a layered-shell section
-        # serialises as a fiber section (KIND='fiber', layers == fibers),
-        # so layer state is read through read_fibers. As of recorder PR #200
-        # layered shells emit per-layer material stress under the
-        # ``material.fiber.<resp>`` verb (shells swap section→material); the
-        # Ladruno fiber token map now keys on both spellings, so read_fibers
-        # picks shells up. Always empty here.
+        """Layered-shell layer state, as the MPCO reader returns it.
+
+        A layered shell writes under the fiber tokens with several
+        components per layer (``fiber_stress_<c>`` / ``fiber_strain_<c>``);
+        the frame comes from the file's node coordinates, since a
+        ``.ladruno`` stores no shell ``LOCAL_AXES`` (#1995). A stage with
+        no ``RESULTS/ON_ELEMENTS`` reads an empty slab and lists no layer
+        component: the partitioned reader concatenates every rank's layer
+        read, and a rank may hold no element.
+        """
+        self._refuse_on_mode(stage_id, f"layer component {component!r}")
         time = self.time_vector(stage_id)
-        return _empty_layer_slab(
-            component, time, resolve_time_slice(time_slice, time),
+        t_idx = resolve_time_slice(time_slice, time)
+        grp = self._resolve_stage_group(stage_id)
+        on_e = _child(grp, "RESULTS/ON_ELEMENTS")
+        if on_e is None:
+            return _empty_layer_slab(component, time, t_idx)
+        bucket_ids, index_to_fem = self._element_read_translation(element_ids)
+        result = _eio.read_layer_slab(
+            on_e, _child(grp, "MODEL"), component,
+            t_idx=t_idx, element_ids=bucket_ids,
+            gp_indices=gp_indices, layer_indices=layer_indices,
+        )
+        if result is None:
+            return _empty_layer_slab(component, time, t_idx)
+        values, ei, gpi, lyri, subi, thick, quat = result
+        return LayerSlab(
+            component=component, values=values,
+            element_index=index_to_fem(ei), gp_index=gpi,
+            layer_index=lyri, sub_gp_index=subi, thickness=thick,
+            local_axes_quaternion=quat, time=time[t_idx],
         )
 
     def read_springs(

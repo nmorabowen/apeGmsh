@@ -12,12 +12,17 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from apeGmsh.opensees._response_catalog import LAYER_CATALOG, RESPONSE_CATALOG
+from apeGmsh.results._shell_geometry import shell_quaternion
 from apeGmsh.results.readers._ladruno import LadrunoReader
 from apeGmsh.results.readers._mpco import MPCOReader
+from apeGmsh.results.readers._mpco_layer_io import ShellFrameUnavailableWarning
 from apeGmsh.results.readers._mpco_nodal_io import AbsentDofWarning
 from apeGmsh.results.readers._ladruno_element_io import (
     ElementWidthMismatchWarning,
     GaussColumnDroppedWarning,
+    LayerBucketUnreadWarning,
+    LayerSectionUnresolved,
     read_element_slab,
 )
 from apeGmsh.results.readers._protocol import ResultLevel, ResultsReader
@@ -483,14 +488,266 @@ def test_fiber_stress_not_leaked_into_gauss() -> None:
         assert slab.values.shape[1] == 0
 
 
-def test_layers_and_springs_empty_by_design() -> None:
-    # A .ladruno has no distinct layer/spring level (layered shells are
-    # fiber sections; zeroLength state flows through element/gauss reads).
+def test_fiber_beam_has_no_layers_and_springs_are_empty_by_design() -> None:
+    # A fiber-section beam's scalar fiber blocks are fibers, never layers;
+    # a .ladruno has no distinct spring level (zeroLength state flows
+    # through element/gauss reads).
     with LadrunoReader(FIBERBEAM) as r:
         assert r.available_components("stage_0", ResultLevel.LAYERS) == []
         assert r.available_components("stage_0", ResultLevel.SPRINGS) == []
         assert r.read_layers("stage_0", "fiber_stress").values.shape[1] == 0
+        assert r.read_layers("stage_0", "fiber_stress_0").values.shape[1] == 0
         assert r.read_springs("stage_0", "spring_force_0").values.shape[1] == 0
+
+
+# -- layered shells: layer state into the MPCO LayerSlab (#1995) --------
+#
+# The fork writes a layered shell under the fiber tokens, one COLUMN_MAP
+# row per SURFACE Gauss point with NUM_COMP = the layer material's
+# components (5 for PlateFiber) and MULTIPLICITY = the layer count, columns
+# layer-major and component-fast (measured on fork build 79e0623670 and on
+# the pinned build by the live-fork lane). The file below is that layout,
+# built on the beam fixture's identity and time axis; every DATA value
+# encodes its own (element, surface GP, layer, component), so a read that
+# mis-orders or mis-slices names the cell it got wrong. The live
+# round-trip against eleResponse is
+# tests/opensees/integration_ladruno/test_fiber_layer_readback_live.py.
+
+LAYER_SHELLS = sorted({c for c, _token in LAYER_CATALOG})
+_TRI_SHELLS = {"ASDShellT3", "ShellDKGT", "ShellNLDKGT"}
+SHELL_TAGS = (7, 9)
+SHELL_THICKNESS = {7: (0.1, 0.2, 0.3), 9: (0.4, 0.5, 0.6)}
+N_LAYERS, N_COMP = 3, 5
+
+
+def _layer_value(etag: int, gp: int, layer: int, comp: int) -> float:
+    return etag * 10000.0 + gp * 100.0 + layer * 10.0 + comp + 1.0
+
+
+def _shell_corners(cls: str) -> np.ndarray:
+    """A unit cell in the xy plane turned 30 deg about x, plus a second
+    one shifted along x; corner order is the element's connectivity."""
+    c, s = np.cos(np.radians(30.0)), np.sin(np.radians(30.0))
+    if cls in _TRI_SHELLS:
+        cell = [[0, 0, 0], [1, 0, 0], [0, c, s]]
+    else:
+        cell = [[0, 0, 0], [1, 0, 0], [1, c, s], [0, c, s]]
+        if cls == "ShellMITC9":           # mid-side and centre nodes
+            cell += [[0.5, 0, 0], [1, c / 2, s / 2], [0.5, c, s],
+                     [0, c / 2, s / 2], [0.5, c / 2, s / 2]]
+    return np.asarray(cell, dtype=float)
+
+
+def _layered_shell_file(
+    tmp_path: Path, cls: str = "ASDShellQ4", *,
+    tokens: "tuple[str, ...]" = ("section.fiber.stress", "section.fiber.strain"),
+    class_name: "str | None" = None,
+    assign: bool = True,
+    connectivity: bool = True,
+) -> Path:
+    """The beam fixture plus a two-element layered shell of class ``cls``."""
+    import shutil
+
+    import h5py
+
+    layout = LAYER_CATALOG[(cls, "fiber_stress")]
+    rule = layout.surface_int_rule
+    n_gp = RESPONSE_CATALOG[(cls, rule, "stress")].n_gauss_points
+    name = class_name or cls
+    key = f"{layout.class_tag}-{name}[{rule}:0:0]"
+    corners = _shell_corners(cls)
+    dst = tmp_path / f"{cls}.ladruno"
+    shutil.copy(BEAM, dst)
+    with h5py.File(dst, "r+") as f:
+        stage = f[next(k for k in f if k.startswith("MODEL_STAGE["))]
+        model, on_e = stage["MODEL"], stage["RESULTS/ON_ELEMENTS"]
+        ids = np.asarray(model["NODES/ID"][...], dtype=np.int64)
+        xyz = np.asarray(model["NODES/COORDINATES"][...], dtype=float)
+        conn = []
+        for e, etag in enumerate(SHELL_TAGS):
+            tags = 100 * (e + 1) + np.arange(len(corners))
+            ids = np.concatenate([ids, tags])
+            xyz = np.concatenate([xyz, corners + [2.0 * e, 0.0, 0.0]])
+            conn.append([etag, *tags])
+        del model["NODES/ID"], model["NODES/COORDINATES"]
+        model["NODES"].create_dataset("ID", data=ids.astype(np.int32))
+        model["NODES"].create_dataset("COORDINATES", data=xyz)
+        if connectivity:
+            model.create_dataset(
+                f"ELEMENTS/{layout.class_tag}-{name}[{rule}:0]/CONNECTIVITY",
+                data=np.asarray(conn, dtype=np.int32),
+            )
+        if assign:
+            for etag in SHELL_TAGS:
+                sec = model.create_group(
+                    f"SECTION_ASSIGNMENTS/SECTION_{etag}[UnknownClassType]")
+                sec.create_dataset("ASSIGNMENT", data=np.asarray(
+                    [[etag, g] for g in range(n_gp)], dtype=np.int32))
+                sec.create_dataset("FIBER_DATA", data=np.asarray(
+                    [[0.0, 0.0, t] for t in SHELL_THICKNESS[etag]]))
+                sec.create_dataset("FIBER_MATERIALS", data=np.asarray(
+                    [1, 2, 1], dtype=np.int32))
+        time_src = on_e[next(iter(on_e))]
+        time_src = time_src[next(iter(time_src))]
+        n_t = int(time_src["TIME"].shape[0])
+        data = np.array([[[
+            _layer_value(etag, g, k, c) + 0.5 * t
+            for g in range(n_gp) for k in range(N_LAYERS) for c in range(N_COMP)
+        ] for etag in SHELL_TAGS] for t in range(n_t)])
+        for token in tokens:
+            grp = on_e.create_group(f"{token}/{key}")
+            grp.create_dataset("DATA", data=data)
+            grp.create_dataset("ID", data=np.asarray(
+                SHELL_TAGS, dtype=np.int32).reshape(-1, 1))
+            for ds in ("STEP", "TIME"):
+                grp.create_dataset(ds, data=np.asarray(time_src[ds][...]))
+            cm = grp.create_group("COLUMN_MAP")
+            for ds, val in (("LEVELS", 4), ("SECTION_TAG", -1),
+                            ("FIBER_ID", -1), ("NUM_COMP", N_COMP),
+                            ("MULTIPLICITY", N_LAYERS)):
+                cm.create_dataset(ds, data=np.full((n_gp, 1), val, np.int32))
+            cm.create_dataset("GAUSS_ID", data=np.arange(
+                n_gp, dtype=np.int32).reshape(-1, 1))
+            word = "Stress" if token.endswith("stress") else "Strain"
+            names = ",".join(
+                [f"Unknown{word}"] + [f"Unknown{word}({i})" for i in range(1, N_COMP)])
+            cm.attrs["COMP_NAMES"] = "\n".join([names] * n_gp)
+    return dst
+
+
+def _frame(cls: str, e: int) -> np.ndarray:
+    return shell_quaternion(_shell_corners(cls) + [2.0 * e, 0.0, 0.0], cls)
+
+
+@pytest.mark.parametrize("cls", LAYER_SHELLS)
+def test_layered_shell_reads_every_layer_component(
+    tmp_path: Path, cls: str,
+) -> None:
+    path = _layered_shell_file(tmp_path, cls)
+    n_gp = RESPONSE_CATALOG[(
+        cls, LAYER_CATALOG[(cls, "fiber_stress")].surface_int_rule, "stress",
+    )].n_gauss_points
+    with LadrunoReader(path) as r:
+        # The fiber level lists none of it; the layer level lists all of it.
+        assert r.available_components("stage_0", ResultLevel.FIBERS) == []
+        assert r.available_components("stage_0", ResultLevel.LAYERS) == sorted(
+            f"{p}_{c}" for p in ("fiber_strain", "fiber_stress")
+            for c in range(N_COMP))
+        for parent in ("fiber_stress", "fiber_strain"):
+            for comp in range(N_COMP):
+                slab = r.read_layers("stage_0", f"{parent}_{comp}")
+                rows = [(e, g, k) for e in SHELL_TAGS for g in range(n_gp)
+                        for k in range(N_LAYERS)]
+                assert list(zip(slab.element_index.tolist(),
+                                slab.gp_index.tolist(),
+                                slab.layer_index.tolist())) == rows
+                want = [_layer_value(e, g, k, comp) for e, g, k in rows]
+                np.testing.assert_array_equal(slab.values[0], want)
+                assert slab.values.shape == (1, len(rows))
+                assert not slab.sub_gp_index.any()
+                np.testing.assert_array_equal(
+                    slab.thickness,
+                    [SHELL_THICKNESS[e][k] for e, _g, k in rows])
+                np.testing.assert_allclose(
+                    slab.local_axes_quaternion,
+                    [_frame(cls, SHELL_TAGS.index(e)) for e, _g, _k in rows],
+                    rtol=0, atol=1e-14)
+        # The fiber read of the same token returns nothing and warns nothing.
+        assert r.read_fibers("stage_0", "fiber_stress").values.shape[1] == 0
+
+
+def test_layered_shell_quaternion_is_the_tilted_frame(tmp_path: Path) -> None:
+    """The frame oracle in closed form: a cell turned 30 deg about x reads
+    the rotation global -> local, a turn of -30 deg about x."""
+    half = np.radians(30.0) / 2
+    with LadrunoReader(_layered_shell_file(tmp_path)) as r:
+        q = r.read_layers("stage_0", "fiber_stress_0").local_axes_quaternion
+    assert q.shape == (2 * 4 * N_LAYERS, 4)
+    np.testing.assert_allclose(
+        q, np.tile([np.cos(half), -np.sin(half), 0.0, 0.0], (q.shape[0], 1)),
+        atol=1e-14)
+
+
+def test_layered_shell_filters(tmp_path: Path) -> None:
+    with LadrunoReader(_layered_shell_file(tmp_path)) as r:
+        slab = r.read_layers(
+            "stage_0", "fiber_strain_2", element_ids=np.array([9]),
+            gp_indices=np.array([3, 1]), layer_indices=np.array([2]),
+        )
+        assert slab.element_index.tolist() == [9, 9]
+        assert slab.gp_index.tolist() == [3, 1]
+        assert slab.layer_index.tolist() == [2, 2]
+        np.testing.assert_array_equal(slab.values[0], [
+            _layer_value(9, 3, 2, 2), _layer_value(9, 1, 2, 2)])
+        np.testing.assert_array_equal(slab.thickness, [0.6, 0.6])
+        with pytest.raises(ValueError, match="gp_indices"):
+            r.read_layers("stage_0", "fiber_stress_0", gp_indices=np.array([4]))
+        with pytest.raises(ValueError, match="layer_indices"):
+            r.read_layers(
+                "stage_0", "fiber_stress_0", layer_indices=np.array([3]))
+        # A component past the layer material's five reads empty, unlisted.
+        assert r.read_layers("stage_0", "fiber_stress_5").values.shape[1] == 0
+
+
+def test_layered_shell_material_spelling(tmp_path: Path) -> None:
+    path = _layered_shell_file(tmp_path, tokens=("material.fiber.stress",))
+    with LadrunoReader(path) as r:
+        assert r.available_components("stage_0", ResultLevel.LAYERS) == [
+            f"fiber_stress_{c}" for c in range(N_COMP)]
+        slab = r.read_layers("stage_0", "fiber_stress_4")
+        assert slab.values[0, 0] == _layer_value(7, 0, 0, 4)
+
+
+def test_layered_shell_of_an_uncatalogued_class_warns_by_name(
+    tmp_path: Path,
+) -> None:
+    path = _layered_shell_file(tmp_path, class_name="FooShell")
+    with LadrunoReader(path) as r:
+        with pytest.warns(LayerBucketUnreadWarning, match="FooShell"):
+            assert r.available_components("stage_0", ResultLevel.LAYERS) == []
+        with pytest.warns(LayerBucketUnreadWarning, match="LAYER_CATALOG"):
+            assert r.read_fibers(
+                "stage_0", "fiber_stress").values.shape[1] == 0
+        assert r.available_components("stage_0", ResultLevel.FIBERS) == []
+
+
+def test_layered_shell_without_its_section_refuses_by_name(
+    tmp_path: Path,
+) -> None:
+    with LadrunoReader(_layered_shell_file(tmp_path, assign=False)) as r:
+        assert "fiber_stress_0" in r.available_components(
+            "stage_0", ResultLevel.LAYERS)
+        with pytest.raises(LayerSectionUnresolved, match=r"ASDShellQ4\[201"):
+            r.read_layers("stage_0", "fiber_stress_0")
+
+
+def test_layered_shell_without_connectivity_reads_nan_frames_and_warns(
+    tmp_path: Path,
+) -> None:
+    with LadrunoReader(_layered_shell_file(tmp_path, connectivity=False)) as r:
+        with pytest.warns(ShellFrameUnavailableWarning, match=r"\[7, 9\]"):
+            slab = r.read_layers("stage_0", "fiber_stress_0")
+    assert np.isnan(slab.local_axes_quaternion).all()
+    assert slab.values.shape == (1, 2 * 4 * N_LAYERS)
+
+
+def test_layered_shell_stored_frame_wins(tmp_path: Path) -> None:
+    import h5py
+
+    path = _layered_shell_file(tmp_path)
+    stored = np.array([0.0, 0.0, 0.0, 1.0])
+    tag = LAYER_CATALOG[("ASDShellQ4", "fiber_stress")].class_tag
+    with h5py.File(path, "r+") as f:
+        stage = f[next(k for k in f if k.startswith("MODEL_STAGE["))]
+        grp = stage["MODEL/LOCAL_AXES"].create_group(f"{tag}-ASDShellQ4")
+        grp.create_dataset("ID", data=np.array([9], dtype=np.int32))
+        grp.create_dataset("FRAME", data=stored.reshape(1, 4))
+    with LadrunoReader(path) as r:
+        q = r.read_layers("stage_0", "fiber_stress_0").local_axes_quaternion
+    per_e = 4 * N_LAYERS
+    np.testing.assert_allclose(q[:per_e], np.tile(_frame("ASDShellQ4", 0),
+                                                  (per_e, 1)), atol=1e-14)
+    np.testing.assert_array_equal(q[per_e:], np.tile(stored, (per_e, 1)))
 
 
 # -- missing element results are LOUD ----------------------------------
