@@ -1,13 +1,14 @@
 """Nodal-forces element-level result decoding for MPCOReader (Phase 11b).
 
-MPCO stores per-element-node force vectors for closed-form line
-elements (``ElasticBeam{2d,3d}``, ``ElasticTimoshenkoBeam{2d,3d}``,
-``ModElasticBeam2d``) under
+MPCO stores per-element-node force vectors for line elements (the
+closed-form ``ElasticBeam{2d,3d}``, ``ElasticTimoshenkoBeam{2d,3d}``,
+``ModElasticBeam2d``, and the frame beams ``ForceBeamColumn``,
+``DispBeamColumn`` and ``LadrunoDispBeamColumn``) under
 ``MODEL_STAGE[…]/RESULTS/ON_ELEMENTS/<frame>/<bucket_key>/`` where
 ``<frame>`` is ``globalForce`` or ``localForce`` and
 ``<bucket_key>`` is ``<classTag>-<ClassName>[<rule>:<cust>:<hdr>]``.
 Each bucket holds the standard ``META`` / ``ID`` / ``DATA/STEP_<k>``
-triplet, with these closed-form-specific conventions:
+triplet, with these conventions:
 
 - Single META block (no per-IP segmentation): ``MULTIPLICITY = [[1]]``,
   ``GAUSS_IDS = [[-1]]`` (sentinel for "no integration point"),
@@ -27,14 +28,23 @@ For each requested canonical component (e.g.
 emits per-element-node slab parts ready to stitch into an
 ``ElementSlab(values=(T, E, n_nodes), ...)``.
 
-v1 scope (silent skip when encountered):
+A frame beam's bucket carries a custom-rule key
+(``74-ForceBeamColumn3d[1000:1:0]``): its integration rule names the
+sections, never the end-force layout, so any ``custom_rule_idx`` is read
+and META validation guards the layout.
 
-- ``custom_rule_idx != 0`` (no custom-rule closed-form beams).
-- ``header_idx != 0`` (heterogeneous response shapes).
-- Element classes not in :data:`NODAL_FORCE_CATALOG`.
+A bucket the reader is unable to decode is listed by
+:func:`scan_nodal_force_buckets` with its reason, and
+:func:`warn_skipped_nodal_buckets` names its class
+(:class:`NodalForceBucketSkippedWarning`):
+
+- a bucket key that does not parse;
+- ``header_idx != 0`` (a second response header for the class);
+- an element class absent from :data:`NODAL_FORCE_CATALOG`.
 """
 from __future__ import annotations
 
+import warnings
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -98,40 +108,70 @@ class _NodalBucket:
 # Bucket discovery
 # =====================================================================
 
-def discover_nodal_force_buckets(
+class NodalForceBucketSkippedWarning(UserWarning):
+    """An MPCO nodal-force bucket the reader is unable to decode: the
+    elements it holds read no rows."""
+
+
+@dataclass(frozen=True)
+class _SkippedNodalBucket:
+    """One ``ON_ELEMENTS/<frame>/<bracket_key>`` group the reader leaves unread."""
+    bracket_key: str
+    class_name: str        # the raw key when the key does not parse
+    reason: str
+
+
+def scan_nodal_force_buckets(
     on_elements_grp: "h5py.Group",
     *,
     canonical_component: str,
-) -> tuple[str | None, list[_NodalBucket]]:
-    """Walk ``ON_ELEMENTS/<globalForce|localForce>/`` for catalogued buckets.
+) -> tuple[str | None, list[_NodalBucket], list[_SkippedNodalBucket]]:
+    """Walk ``ON_ELEMENTS/<globalForce|localForce>/``, sorting every bucket.
 
     Returns
     -------
-    (mpco_group_name, buckets)
+    (mpco_group_name, buckets, skipped)
         ``mpco_group_name`` is the ON_ELEMENTS child name we looked
         under (``"globalForce"`` / ``"localForce"``), or ``None`` if
         the canonical component has no nodal-forces routing.
-        ``buckets`` is the list whose ``(class_name, catalog_token)``
-        is in :data:`NODAL_FORCE_CATALOG` and whose
-        ``custom_rule_idx`` / ``header_idx`` are both 0.
+        ``buckets`` holds the buckets whose ``(class_name,
+        catalog_token)`` is in :data:`NODAL_FORCE_CATALOG` and whose
+        ``header_idx`` is 0, at any ``custom_rule_idx``. ``skipped``
+        holds every other bucket with the reason it is left unread.
     """
     mapping = canonical_to_nodal_force_token(canonical_component)
     if mapping is None:
-        return (None, [])
+        return (None, [], [])
     mpco_group_name, catalog_token = mapping
     if mpco_group_name not in on_elements_grp:
-        return (mpco_group_name, [])
+        return (mpco_group_name, [], [])
 
     token_grp = on_elements_grp[mpco_group_name]
     out: list[_NodalBucket] = []
+    skipped: list[_SkippedNodalBucket] = []
     for bracket_key in token_grp:
         try:
             elem_key = parse_mpco_element_key(bracket_key)
         except ValueError:
+            skipped.append(_SkippedNodalBucket(
+                bracket_key, bracket_key,
+                "its bucket key does not parse as "
+                "'<tag>-<Class>[<rule>:<cust>:<hdr>]'",
+            ))
             continue
-        if elem_key.custom_rule_idx != 0 or elem_key.header_idx != 0:
+        if elem_key.header_idx != 0:
+            skipped.append(_SkippedNodalBucket(
+                bracket_key, elem_key.class_name,
+                f"it is response header {elem_key.header_idx} of the "
+                f"class, and only header 0 is decoded",
+            ))
             continue
         if not is_nodal_force_catalogued(elem_key.class_name, catalog_token):
+            skipped.append(_SkippedNodalBucket(
+                bracket_key, elem_key.class_name,
+                f"({elem_key.class_name!r}, {catalog_token!r}) is absent "
+                f"from NODAL_FORCE_CATALOG",
+            ))
             continue
         layout = lookup_nodal_force(elem_key.class_name, catalog_token)
         out.append(_NodalBucket(
@@ -139,7 +179,51 @@ def discover_nodal_force_buckets(
             elem_key=elem_key,
             layout=layout,
         ))
-    return (mpco_group_name, out)
+    return (mpco_group_name, out, skipped)
+
+
+def discover_nodal_force_buckets(
+    on_elements_grp: "h5py.Group",
+    *,
+    canonical_component: str,
+) -> tuple[str | None, list[_NodalBucket]]:
+    """The readable buckets of :func:`scan_nodal_force_buckets`.
+
+    For listings (``available_components``); a read uses the scan, so it
+    can warn about the buckets it leaves unread.
+    """
+    token, buckets, _skipped = scan_nodal_force_buckets(
+        on_elements_grp, canonical_component=canonical_component,
+    )
+    return (token, buckets)
+
+
+def warn_skipped_nodal_buckets(
+    token_grp: "h5py.Group",
+    skipped: list[_SkippedNodalBucket],
+    *,
+    component: str,
+    element_ids: ndarray | None,
+    source: str,
+) -> None:
+    """Warn once per unread bucket that holds a requested element.
+
+    ``element_ids`` are the requested OpenSees tags (``None`` requests
+    every element). A bucket whose ``ID`` holds none of them is
+    irrelevant to the read and stays quiet.
+    """
+    for s in skipped:
+        grp = token_grp[s.bracket_key]
+        if element_ids is not None and "ID" in grp:
+            ids = np.asarray(grp["ID"][...]).ravel().astype(np.int64)
+            if not np.isin(ids, np.asarray(element_ids, dtype=np.int64)).any():
+                continue
+        warnings.warn(
+            f"{source}: the MPCO bucket {token_grp.name}/{s.bracket_key} "
+            f"(element class {s.class_name!r}) is left unread because "
+            f"{s.reason}; its elements read no {component!r} rows.",
+            NodalForceBucketSkippedWarning, stacklevel=3,
+        )
 
 
 # =====================================================================

@@ -813,9 +813,15 @@ class MPCOReader:
 
         element_ids, index_to_fem = self._element_read_translation(element_ids)
 
-        token, buckets = _mnodal.discover_nodal_force_buckets(
+        token, buckets, skipped = _mnodal.scan_nodal_force_buckets(
             on_elements, canonical_component=component,
         )
+        if skipped:
+            assert token is not None    # a skip is a bucket under token
+            _mnodal.warn_skipped_nodal_buckets(
+                on_elements[token], skipped, component=component,
+                element_ids=element_ids, source=self._path.name,
+            )
         if not buckets:
             return _empty_element_slab(component, time, time_slice)
         token_grp = on_elements[token]
