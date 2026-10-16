@@ -25,14 +25,15 @@ identical values leaves the file byte-identical.
 `ProvenanceStampRefused` is raised before anything is written, in any of
 these cases:
 
-- `HDF5_USE_FILE_LOCKING` turns file locking off, so an open file cannot
-  be detected;
+- `HDF5_USE_FILE_LOCKING` is FALSE, 0 or BEST_EFFORT, so an open file
+  cannot be detected (BEST_EFFORT takes no lock on Lustre or NFS);
 - a part is open in this process or another, or is locked;
 - a part is not a `.ladruno` the reader supports;
 - a part lacks `INFO/PROVENANCE`;
 - a part declares more partitions than were found;
 - the archive has no `/meta/lineage`;
-- the parts disagree on their run or their MODEL;
+- the parts disagree on their run or their MODEL (a NaN coordinate on a
+  shared node counts as a disagreement);
 - `overwrite=True` was not passed, and either a different `model_hash` is
   already stamped or an owned attribute is not a string.
 

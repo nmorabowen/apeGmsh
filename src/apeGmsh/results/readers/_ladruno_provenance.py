@@ -259,13 +259,18 @@ def _refuse_without_file_locking() -> None:
     opens a file another one holds ``r+`` and writes under it.
     ``results/monitor.py`` recommends this setting for live tailing, so a
     stamp run in such an environment must not trust the lock.
+    ``BEST_EFFORT`` refuses too: on a filesystem without lock support
+    (Lustre, NFS) HDF5 then opens with no lock at all, and nothing here can
+    tell that case from a lock that was taken.
     """
     import os
 
     value = os.environ.get("HDF5_USE_FILE_LOCKING")
-    if value is not None and value.strip().upper() in ("FALSE", "0"):
+    if value is not None and value.strip().upper() in (
+            "FALSE", "0", "BEST_EFFORT"):
         raise ProvenanceStampRefused(
-            f"HDF5_USE_FILE_LOCKING={value!r} disables HDF5 file locking, so "
+            f"HDF5_USE_FILE_LOCKING={value!r} disables (or may skip) HDF5 "
+            "file locking, so "
             "a results file another process still holds open cannot be "
             "detected and the stamp could write under it. Unset the "
             "variable (or set it to TRUE) to stamp. Nothing was stamped."
@@ -620,7 +625,10 @@ def _refuse_repeated_rows(
         bad = (rows_d != ref).any(axis=1)
     else:
         scale = np.maximum(1.0, np.abs(ref).max(axis=1))
-        bad = (np.abs(rows_d - ref) > 1e-12 * scale[:, None]).any(axis=1)
+        # Written as "not within": a NaN on either side is never within,
+        # so a shared node with a NaN coordinate refuses.
+        within = np.abs(rows_d - ref) <= 1e-12 * scale[:, None]
+        bad = (~within).any(axis=1)
     if bad.any():
         i = int(np.flatnonzero(bad)[0])
         x, y = int(owner[ref_at[i]]), int(owner[at[i]])

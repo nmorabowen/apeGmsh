@@ -529,12 +529,13 @@ def _no_open_handles(tmp_path: Path) -> Iterator[None]:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("value", ["FALSE", "false", "0", " False "])
+@pytest.mark.parametrize("value", ["FALSE", "false", "0", " False ",
+                                   "BEST_EFFORT", "best_effort"])
 def test_refuses_when_file_locking_is_disabled(parts, model_dir, monkeypatch,
                                                value) -> None:
     """Without the lock, another process's open handle is invisible."""
     monkeypatch.setenv("HDF5_USE_FILE_LOCKING", value)
-    _refuses(parts, model_dir / "one_static.h5", "disables HDF5 file locking")
+    _refuses(parts, model_dir / "one_static.h5", "HDF5 file locking")
 
 
 def test_file_locking_on_is_accepted(parts, model_dir, monkeypatch) -> None:
@@ -568,3 +569,17 @@ def test_a_malformed_owned_attribute_needs_overwrite(parts, model_dir) -> None:
         aid = f[PROV].attrs.get_id("writer")
         assert h5py.check_string_dtype(aid.dtype).length is None
         assert f[PROV].attrs["writer"] == "apeGmsh fix"
+
+
+@pytest.mark.parametrize("both", [False, True])
+def test_refuses_a_nan_coordinate_on_a_shared_node(parts, model_dir, both) -> None:
+    """NaN is never equal: one side or both, the shared node refuses."""
+    targets = parts if both else parts[1:]
+    for p in targets:
+        with h5py.File(p, "r+") as f:
+            xyz = f["MODEL_STAGE[1]/MODEL/NODES/COORDINATES"]
+            ids = list(np.asarray(f["MODEL_STAGE[1]/MODEL/NODES/ID"][...]).ravel())
+            arr = xyz[...]
+            arr[ids.index(2), 1] = np.nan  # node 2 is the one both parts hold
+            xyz[...] = arr
+    _refuses(parts, model_dir / "one_static.h5", "disagree on their MODEL")
