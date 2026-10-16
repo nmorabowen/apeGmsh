@@ -504,12 +504,21 @@ def test_inputs_are_type_checked(parts, model_dir) -> None:
 
 
 @pytest.fixture(autouse=True)
-def _no_open_handles() -> Iterator[None]:
-    """Every test leaves no h5py handle open on its files."""
+def _no_open_handles(tmp_path: Path) -> Iterator[None]:
+    """Every test leaves no HDF5 handle open on its own files.
+
+    Only files under this test's ``tmp_path`` count: earlier tests in the
+    shared process may hold handles of their own.
+    """
     yield
     import gc
+    import os
 
     gc.collect()
-    open_ids = [o for o in gc.get_objects()
-                if isinstance(o, h5py.File) and o.id.valid]
-    assert not open_ids, [o.filename for o in open_ids]
+    mine = os.path.normcase(str(tmp_path.resolve()))
+    held = [
+        os.fsdecode(fid.name)
+        for fid in h5py.h5f.get_obj_ids(types=h5py.h5f.OBJ_FILE)
+        if os.path.normcase(os.path.realpath(os.fsdecode(fid.name))).startswith(mine)
+    ]
+    assert not held, held
