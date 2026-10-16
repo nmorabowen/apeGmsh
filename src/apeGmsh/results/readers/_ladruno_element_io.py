@@ -1230,7 +1230,7 @@ _LOCAL_FORCE_3D_BASES = frozenset({"Vy", "Vz", "T", "My", "Mz"})
 
 #: ``basicForce``'s two-station components: the basic-system end moments
 #: ``Mz_1,Mz_2`` and ``My_1,My_2`` of a 3-D ``N,Mz_1,Mz_2,My_1,My_2,T``
-#: bucket (#2011). Every fork class that names them (ElasticBeam3d,
+#: bucket. Every fork class that names them (ElasticBeam3d,
 #: ModElasticBeam3d, Pipe, ForceBeamColumn3d, ForceBeamColumn3dThermal,
 #: MixedBeamColumn3d, MixedBeamColumnAsym3d at fork c744d6e70) reports its
 #: ``localForce`` end moments as these same values, member loads included
