@@ -206,6 +206,11 @@ no `Review-verdict` after about 6 h, (c) lock holders with no PR activity. Read
 the PR, then nudge the session with the exact next command. Reviewers run long
 checks in the background.
 
+**Landing order.** A `main` Tests run takes about 50 minutes, and check 10 waits
+for it, so serial landings can starve a PR that has been ready longest (3a #2111
+lost three heads in a row, 2026-10-16). Give the oldest ready PR the next green
+head, and tell the other sessions to hold their landings until it lands.
+
 **Red `main`.**
 1. Confirm it from `gh run list --branch main` first.
 2. Freeze landings program-wide; the fix PR and the revert are the only
@@ -242,7 +247,17 @@ hand-resolved conflict needs a delta review.
   to those stills.
 - Deletions (for example AS5) start with a parity table of v1 versus v2. Every
   v1 feature must map to a v2 equivalent; any gap stops the deletion and goes
-  to the maintainer.
+  to the maintainer. List the consumers of the files the feature writes, not
+  only its callers: the DomainCapture table missed that the new viewer opens
+  only native `results.h5` (#1767, #2079).
+- Authorization does not travel between sessions. Another session's
+  auto-mode check refuses an approval it only heard from T (X could not flip
+  ADR 0122 on a relayed "accept"). Either the maintainer says it in that
+  session, or T acts in its own session on the maintainer's own words.
+- ADRs: `land_pr` check 7 refuses an agent landing an ADR whose status is
+  Accepted, including amendments to one. The maintainer merges those PRs
+  through the GitHub web page; put ADR edits in their own small PR so they hold
+  up nothing else.
 - Standing rules:
   - Qt viewers are in sunset: they get only changes that unblock CI or stop a
     user-facing crash.
@@ -264,4 +279,10 @@ hand-resolved conflict needs a delta review.
 - Probes need `PYTHONPATH=<worktree>/src`.
 - Treat the OpenSees fork checkout as optional and read-only.
 - Cross-session messages reach only sessions on the same machine.
+- The app pauses a session's cross-session messages after about 10 sends
+  without a maintainer message. Batch your messages, and when the pause hits,
+  ask the maintainer for any reply to release it.
+- A session cannot start a new session on a turn that another session's
+  message began; it can only propose one as a card. Starting a session in
+  another folder (the fork) needs the maintainer's own words in your session.
 - On Windows, a script can die with 0xC000070A or exit 127 (#1376): retry once.
