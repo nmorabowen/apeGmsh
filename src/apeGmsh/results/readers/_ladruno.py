@@ -317,12 +317,14 @@ class LadrunoReader:
 
         It refuses what :meth:`MPCOReader.attach_stage_names` refuses: a
         count mismatch over the non-mode stages, or a kind outside
-        ``static``/``transient``.  Then it compares each host stage's
-        ``KIND`` attribute (``eigen`` reads as ``static``: a stage that
-        ran an eigen solve beside its steps) with the program kind paired
-        onto it.  A stage with no ``KIND`` (older builds) or marked
-        ``EMPTY_PARTITION`` (it has no say, as in the part pairing) is
-        not compared.  An unrecognised ``KIND`` counts as a conflict.
+        ``static``/``transient``.  Then it compares each host stage's raw
+        ``KIND`` attribute with the program kind paired onto it.  Only a
+        raw ``static`` or ``transient`` is evidence.  ``eigen`` is not: the
+        recorder writes it on every stage of a recorder that asks for
+        modes, transient ones included (see ``_KIND_MAP``).  A stage with
+        no ``KIND`` (older builds), with ``eigen``, or marked
+        ``EMPTY_PARTITION`` (it has no say, as in the part pairing) is not
+        compared.  Any other ``KIND`` counts as a conflict.
         """
         hosts = [s for s in self.stages() if s.kind != "mode"]
         if not len(names) == len(kinds) == len(hosts):
@@ -343,7 +345,7 @@ class LadrunoReader:
             if "KIND" not in attrs or self.is_empty_partition(s.id):
                 continue
             raw = _decode(attrs["KIND"])
-            if _KIND_MAP.get(raw) != str(k):
+            if raw != "eigen" and raw != str(k):
                 out.append(
                     f"{self._path.name} {s.name} records KIND {raw!r} but "
                     f"program stage {str(n)!r} is {str(k)!r}"
@@ -369,7 +371,8 @@ class LadrunoReader:
         misaligned (wrong stage order or count), so per #2079 Q7 nothing
         is renamed: the file keeps its names and kinds and
         :class:`StageKindMismatchWarning` lists the conflicts.  The
-        program kind fills in only where a stage records no ``KIND``.
+        program kind fills in only where a stage records no ``KIND``, or
+        ``eigen`` (no evidence of static or transient).
         """
         conflicts = self.stage_kind_conflicts(names, kinds)
         if conflicts:

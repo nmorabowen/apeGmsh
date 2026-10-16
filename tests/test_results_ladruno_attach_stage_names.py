@@ -14,7 +14,9 @@ it disagrees with the program kind the pairing is misaligned, and per
 #2079 Q7 ("map program stage names from ``/opensees`` when the count and
 kinds match; otherwise keep the file's names and warn") nothing is
 renamed and :class:`StageKindMismatchWarning` lists the conflicts.  The
-program kind fills in only where a stage records no ``KIND``.
+raw ``KIND`` is compared: ``eigen`` is written on every stage of a
+recorder that asks for modes, so it is no evidence, like an absent
+``KIND``, and the program kind fills in for both.
 """
 from __future__ import annotations
 
@@ -166,16 +168,48 @@ def test_misordered_pairing_warns_and_keeps_the_file_names(
             (n, k, ()) for n, k in zip(_FILE_NAMES, _KINDS)]
 
 
-def test_mode_host_against_a_transient_program_stage_warns(
+def test_recorded_kind_is_not_overridden(tmp_path: Path) -> None:
+    """Inverts 4804fa31's override: a recorded static/transient stands."""
+    path = _write(tmp_path / "r.ladruno", "ladruno",
+                  kinds=["transient", "eigen", "static"])
+    with LadrunoReader(path) as lad:
+        with pytest.warns(StageKindMismatchWarning) as rec:
+            lad.attach_stage_names(_NAMES, _KINDS)
+        msg = str(rec[0].message)
+        assert "MODEL_STAGE[1] records KIND 'transient'" in msg
+        assert "MODEL_STAGE[3] records KIND 'static'" in msg
+        assert "MODEL_STAGE[2]" not in msg      # eigen is no evidence
+        assert [(s.name, s.kind) for s in lad.stages()] == list(
+            zip(_FILE_NAMES, ["transient", "static", "static"]))
+
+
+def test_eigen_is_no_evidence(tmp_path: Path) -> None:
+    """A transient stage recorded beside modes reads ``eigen``: no refusal."""
+    path = _write(tmp_path / "r.ladruno", "ladruno",
+                  kinds=["static", "eigen", "static"])
+    with LadrunoReader(path) as lad:
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", StageKindMismatchWarning)
+            lad.attach_stage_names(_NAMES, ["static", "transient", "static"])
+        assert [(s.name, s.kind) for s in lad.stages()] == [
+            ("gravity", "static"), ("push", "transient"), ("shake", "static")]
+
+
+def test_mode_host_paired_with_a_transient_program_stage_warns(
     tmp_path: Path,
 ) -> None:
-    """A stage that recorded modes (``KIND=eigen``) is not a transient one."""
-    path = _write(tmp_path / "r.ladruno", "ladruno", mode_in=0)
+    """A misaligned pairing puts the transient program stage on the stage
+    that holds the modes (recorded ``static``); the mode stage, found by
+    its modal group and not by KIND, is never paired."""
+    path = _write(tmp_path / "r.ladruno", "ladruno", mode_in=0,
+                  kinds=["static", "static", "transient"])
     with LadrunoReader(path) as lad:
         before = _view(lad)
+        assert [v[2] for v in before] == [
+            "static", "mode", "static", "transient"]
         with pytest.warns(StageKindMismatchWarning,
-                          match=r"MODEL_STAGE\[1\] records KIND 'eigen' but "
-                                r"program stage 'shake' is 'transient'"):
+                          match=r"MODEL_STAGE\[1\] records KIND 'static' "
+                                r"but program stage 'shake' is 'transient'"):
             lad.attach_stage_names(["shake", "push", "gravity"],
                                    ["transient", "static", "static"])
         assert _view(lad) == before
