@@ -29,8 +29,8 @@ part, at slice 10,** when native `results.h5` is deleted:
   reading of its example; invariant 1's results edge; invariant 3's results
   Floor row in the registry; invariant 5's `NativeReader` clause (a
   composed results twin opens); invariant 9's results-twin path
-  (`NativeWriter.write_model`); and invariant 11 (the results floor through
-  `NativeReader`).
+  (`NativeWriter.write_model` and `NativeWriter.write_opensees_from`); and
+  invariant 11 (the results floor through `NativeReader`).
 
 All three ADRs carry a dated amendment, added in the PR that accepts this
 one, as [ADR 0121](0121-charter-v2-b-with-amendments.md) D5 requires.
