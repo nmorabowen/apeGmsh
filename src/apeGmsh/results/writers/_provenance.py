@@ -134,6 +134,7 @@ def stamp_provenance(
     writer_text = _writer_text(writer)
 
     parts = _discover_parts(Path(path))
+    _refuse_if_open_here(parts)
     model_hash, fem_hash = _lineage_hashes(Path(model_h5))
     program_names, program_kinds, kind_error, pairing = _program_facts(
         Path(model_h5),
@@ -227,6 +228,35 @@ def _discover_parts(path: Path) -> list[Path]:
     if missing:
         raise ProvenanceStampRefused(f"no such .ladruno file: {missing[0]}")
     return parts
+
+
+def _refuse_if_open_here(parts: list[Path]) -> None:
+    """Refuse a part this process already holds open.
+
+    HDF5's file lock stops another process; inside this one, a second
+    ``h5py.File`` on an open file reuses the open handle, so a write would
+    land under a live ``r+`` session (or a reader's view) unnoticed.
+    """
+    import os
+
+    import h5py
+
+    held = {}
+    for fid in h5py.h5f.get_obj_ids(types=h5py.h5f.OBJ_FILE):
+        name = os.fsdecode(fid.name)
+        try:
+            held[os.path.normcase(os.path.realpath(name))] = fid.get_intent()
+        except OSError:
+            continue
+    for part in parts:
+        key = os.path.normcase(os.path.realpath(part))
+        if key in held:
+            mode = "writing" if held[key] & h5py.h5f.ACC_RDWR else "reading"
+            raise ProvenanceStampRefused(
+                f"{part} is open for {mode} in this process (an h5py "
+                "session or a Results reader); close it first. Nothing "
+                "was stamped."
+            )
 
 
 def _lineage_hashes(model_h5: Path) -> tuple[str, str]:
@@ -409,22 +439,27 @@ def _check_part_set(parts: list[Path]) -> None:
     from ..readers._ladruno import LadrunoReader
     from ..readers._ladruno_multi import LadrunoMultiPartitionReader
 
-    reader: "Any" = None
+    # Each file on its own first: the set reader is built only from files
+    # that open, so a refused part never leaves a half-built set reader.
+    for part in parts:
+        _with_reader(LadrunoReader, part, where=str(part))
+    if len(parts) > 1:
+        _with_reader(LadrunoMultiPartitionReader, parts, where=str(parts[0]))
+        _check_shared_model(parts)
+
+
+def _with_reader(cls: "Any", arg: "Any", *, where: str) -> None:
+    """Construct a reader (its checks run in ``__init__``), then close it."""
     try:
-        reader = (LadrunoMultiPartitionReader(parts) if len(parts) > 1
-                  else LadrunoReader(parts[0]))
+        reader = cls(arg)
     except OSError as e:
         raise ProvenanceStampRefused(
-            f"{parts[0]} (or a sibling part) cannot be opened ({e}); it is "
-            "still being written, is locked, or was never closed cleanly."
+            f"{where} cannot be opened ({e}); it is still being written, is "
+            "locked by another process, or was never closed cleanly."
         ) from e
     except ValueError as e:
         raise ProvenanceStampRefused(str(e)) from e
-    finally:
-        if reader is not None:
-            reader.close()
-    if len(parts) > 1:
-        _check_shared_model(parts)
+    reader.close()
 
 
 def _check_shared_model(parts: list[Path]) -> None:
