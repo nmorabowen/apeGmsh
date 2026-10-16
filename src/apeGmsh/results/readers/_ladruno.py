@@ -64,6 +64,7 @@ from ._mpco_translation import (
     PARTITION_REDUCTION_NONE,
     PARTITION_REDUCTIONS,
     canonical_node_component,
+    locate_node_component,
     partition_reduction_from_name,
 )
 from ._protocol import ResultLevel, StageInfo, TimeSlice
@@ -715,15 +716,17 @@ class LadrunoReader:
     def _locate_node_component(
         self, on_nodes: "h5py.Group", component: str,
     ) -> "Optional[tuple[str, int]]":
-        for res_name in on_nodes:
-            res = on_nodes[res_name]
-            if "COMPONENTS" not in res.attrs:
-                continue
-            labels = _decode(res.attrs["COMPONENTS"]).split(",")
-            for col, label in enumerate(labels):
-                if canonical_node_component(res_name, label.strip()) == component:
-                    return res_name, col
-        return None
+        # The group comes from the translation's precedence, never from
+        # HDF5 iteration order.
+        return locate_node_component(
+            (
+                (res_name, _decode(on_nodes[res_name].attrs["COMPONENTS"])
+                 .split(","))
+                for res_name in on_nodes
+                if "COMPONENTS" in on_nodes[res_name].attrs
+            ),
+            component,
+        )
 
     def node_partition_reduction(
         self, stage_id: str, component: str,

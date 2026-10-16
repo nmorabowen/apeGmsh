@@ -81,14 +81,15 @@ def test_component_axis_unicode() -> None:
     ("REACTION_FORCE", "RFx", "reaction_force_x"),
     ("REACTION_MOMENT", "RMz", "reaction_moment_z"),
     ("REACTION_FORCE_INCLUDING_INERTIA", "RFy", "reaction_force_y"),
-    ("RAYLEIGH_FORCE", "RFx", "reaction_force_x"),
-    ("RAYLEIGH_MOMENT", "RMz", "reaction_moment_z"),
+    # A Rayleigh group is the damping force alone, not a reaction (#2122).
+    ("RAYLEIGH_FORCE", "RFx", None),
+    ("RAYLEIGH_MOMENT", "RMz", None),
     ("UNBALANCED_FORCE", "Fx", "force_x"),
     ("UNBALANCED_MOMENT", "Mz", "moment_z"),
     ("PRESSURE", "p", "pore_pressure"),
 ])
 def test_canonical_node_component(
-    mpco_name: str, comp: str, expected: str,
+    mpco_name: str, comp: str, expected: "str | None",
 ) -> None:
     assert canonical_node_component(mpco_name, comp) == expected
 
@@ -132,7 +133,6 @@ def test_known_mpco_names_includes_all_real_world_groups() -> None:
         "REACTION_FORCE", "REACTION_MOMENT",
         "REACTION_FORCE_INCLUDING_INERTIA",
         "REACTION_MOMENT_INCLUDING_INERTIA",
-        "RAYLEIGH_FORCE", "RAYLEIGH_MOMENT",
         "UNBALANCED_FORCE", "UNBALANCED_MOMENT",
         "UNBALANCED_FORCE_INCLUDING_INERTIA",
         "UNBALANCED_MOMENT_INCLUDING_INERTIA",
@@ -141,6 +141,8 @@ def test_known_mpco_names_includes_all_real_world_groups() -> None:
     known = set(all_known_mpco_result_names())
     missing = [n for n in real_world if n not in known]
     assert not missing, f"Unmapped MPCO result names: {missing}"
+    # The Rayleigh groups are real too, and deliberately unmapped (#2122).
+    assert not known.intersection({"RAYLEIGH_FORCE", "RAYLEIGH_MOMENT"})
 
 
 def test_has_canonical_mapping() -> None:
