@@ -631,6 +631,19 @@ class Results:
           for composed models AND for any sparsely-renumbered mesh, e.g.
           a gmsh solid whose 2-D boundary elements consumed the low ids).
 
+        Stage names with ``model_h5=`` (ADR 0122 design point 9, #2101):
+        as in :meth:`from_mpco`, the ``ops.stage(name=...)`` names and
+        each stage's ``analysis`` kind from ``/opensees/stages`` replace
+        the file's ``MODEL_STAGE[<k>]`` names in order, and
+        ``MODEL_STAGE[<k>]`` stays resolvable as an alias. The count
+        rules and warnings are :meth:`from_mpco`'s. A ``.ladruno`` stage
+        also records the ``KIND`` it ran, so where that disagrees with
+        the program kind the pairing is misaligned: nothing is renamed
+        and ``StageKindMismatchWarning`` is the one warning (#2079 Q7).
+        A stage recorded ``KIND=eigen`` (every stage of a recorder that
+        asks for modes) or with no ``KIND`` is no evidence either way.
+        Without ``model_h5=`` the file's names stand.
+
         The file records no per-node ndf, so the recorder writes 0.0 for
         a rotation a node does not have (a solid node beside a shell).
         With ``model_h5=`` a one-file read gives NaN there, from the
@@ -677,6 +690,8 @@ class Results:
         if model_h5 is not None:
             from ..opensees.opensees_model import OpenSeesModel
             bound_model = OpenSeesModel.from_h5(model_h5)
+            # The program's stage names and kinds, as in from_mpco.
+            _bind_stage_names(reader, bound_model, model_path=model_h5)
             # Attach the fem_eid↔ops-tag translator whenever the model
             # carries a real element_meta pairing — see the twin comment
             # in :meth:`from_mpco` (the pairing diverges for ANY sparsely

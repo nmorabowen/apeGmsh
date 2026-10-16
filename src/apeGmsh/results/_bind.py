@@ -295,6 +295,16 @@ def _bind_stage_names(
     silent: there is nothing to map.  A program that names two stages
     alike warns :class:`DuplicateStageNameWarning`: ``stage(<name>)``
     then resolves to the first, and the ids stay unique.
+
+    The reader has the last word on the pairing (#2101).  A ``.ladruno``
+    stage records the ``KIND`` it ran, and where that disagrees with the
+    program kind the reader renames nothing and warns
+    ``StageKindMismatchWarning`` (#2079 Q7).  The partial-run,
+    duplicate and shadow warnings above describe a rename, so they are
+    emitted only once the reader has made it: a declined pairing gives
+    the reader's one warning and nothing else.  Whether a rename
+    happened is read back from ``reader.stages()``, so the single-file
+    and partitioned readers of both formats take the same path.
     """
     program = [str(s.name) for s in model.stages()]
     if not program:
@@ -315,6 +325,19 @@ def _bind_stage_names(
             stacklevel=3,
         )
         return
+    paired = program[:len(capture)]
+    kinds = [
+        _stage_kind(s, model_path=model_path)
+        for s in model.stages()[:len(capture)]
+    ]
+    before = _stage_naming(reader)
+    reader.attach_stage_names(paired, kinds)
+    if paired and _stage_naming(reader) == before:
+        # The reader declined the pairing and has said why; the
+        # warnings below would describe a rename that never happened.
+        # An empty pairing renames nothing by construction, and the
+        # count warning below is then the only account of the run.
+        return
     if len(capture) < len(program):
         unrun = program[len(capture):]
         warnings.warn(
@@ -327,7 +350,6 @@ def _bind_stage_names(
             ),
             stacklevel=3,
         )
-    paired = program[:len(capture)]
     repeated = sorted(n for n, k in Counter(paired).items() if k > 1)
     if repeated:
         warnings.warn(
@@ -359,11 +381,11 @@ def _bind_stage_names(
             ),
             stacklevel=3,
         )
-    kinds = [
-        _stage_kind(s, model_path=model_path)
-        for s in model.stages()[:len(capture)]
-    ]
-    reader.attach_stage_names(paired, kinds)
+
+
+def _stage_naming(reader: "Any") -> "list[tuple[str, str, str, tuple[str, ...]]]":
+    """Each stage's ``(id, name, kind, aliases)``: what a rename changes."""
+    return [(s.id, s.name, s.kind, tuple(s.aliases)) for s in reader.stages()]
 
 
 def _stage_kind(stage: "Any", *, model_path: "str | Path") -> str:
