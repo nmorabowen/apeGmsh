@@ -45,7 +45,10 @@ from ...opensees._response_catalog import (
 )
 from .._shell_geometry import shell_quaternion
 from ._ladruno_hyperslab import read_hyperslab
-from ._mpco_layer_io import ShellFrameUnavailableWarning
+from ._mpco_layer_io import (
+    LayerBucketUnreadWarning,
+    ShellFrameUnavailableWarning,
+)
 
 if TYPE_CHECKING:
     import h5py
@@ -2092,13 +2095,6 @@ def read_fiber_slab(
 # reader does; a row with no frame reads NaN and warns by name.
 
 
-class LayerBucketUnreadWarning(UserWarning):
-    """A fiber-token bucket carries blocks of several components per fiber
-    in a layout the layer level does not read, so neither the fiber nor
-    the layer level returns them. The warning names the bucket and why
-    (#1995)."""
-
-
 class LayerSectionUnresolved(ValueError):
     """A layered-shell row has no layer thickness: its ``(element, surface
     GP)`` pair has no ``MODEL/SECTION_ASSIGNMENTS`` entry, or the assigned
@@ -2240,7 +2236,10 @@ def _shell_frames(
     connectivity and node coordinates with :func:`shell_quaternion`, the
     convention the MPCO reader and DomainCapture use. A row with neither
     is NaN, and one :class:`ShellFrameUnavailableWarning` names its
-    elements and why.
+    elements and why. A stored group without the ``ID`` + ``FRAME`` pair,
+    or whose ``FRAME`` size is not four per ``ID``, is ignored with a
+    :class:`ShellFrameUnavailableWarning` naming it, as the MPCO reader's
+    ``_stored_quaternions`` does, and the frames are computed (#2090).
     """
     import h5py
 
@@ -2257,11 +2256,26 @@ def _shell_frames(
     axes = _model_child(model, "LOCAL_AXES")
     if axes is not None and prefix in axes:
         sub = axes[prefix]
-        if "ID" in sub and "FRAME" in sub:
+        if "ID" not in sub or "FRAME" not in sub:
+            warnings.warn(
+                f".ladruno {sub.name}: expected ID and FRAME datasets, found "
+                f"{sorted(sub)}; the stored frames are ignored and {class_name} "
+                f"shell frames are computed from node coordinates.",
+                ShellFrameUnavailableWarning, stacklevel=3,
+            )
+        else:
             ids = np.asarray(sub["ID"][...], dtype=np.int64).ravel()
             frames = np.asarray(sub["FRAME"][...], dtype=np.float64)
             if frames.size == 4 * ids.size:
                 stored = dict(zip(ids.tolist(), frames.reshape(-1, 4)))
+            else:
+                warnings.warn(
+                    f".ladruno {sub.name}: {ids.size} IDs but FRAME has shape "
+                    f"{frames.shape}; the stored frames are ignored and "
+                    f"{class_name} shell frames are computed from node "
+                    f"coordinates.",
+                    ShellFrameUnavailableWarning, stacklevel=3,
+                )
     todo: list[int] = []
     for k in range(n):
         q = stored.get(int(element_ids[k]))

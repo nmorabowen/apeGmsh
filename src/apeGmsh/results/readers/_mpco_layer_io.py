@@ -40,9 +40,16 @@ fiber/line buckets, with these specifics:
 v1 scope (skipped silently when encountered):
 
 - ``n_sub_gp != 1`` (multi-IP-per-layer integration extensions).
-- ``header_idx != 0``.
 - Heterogeneous layered sections within one bucket (different layer
   counts per element).
+
+Bucket discovery leaves out a bucket of a class with no ``LAYER_CATALOG``
+row (ShellMITC3: the pinned fork has no such element, so no file records
+it), a ``header_idx != 0`` bucket, a bucket whose rule differs from the
+class's surface rule, and an unparseable key. Each one warns
+:class:`LayerBucketUnreadWarning` by class, as the ``.ladruno`` reader
+does (#2090). Beam fiber-section buckets (``FIBER_CATALOG`` classes) in
+the shared ``section.fiber.<X>`` group belong to the fiber level.
 """
 from __future__ import annotations
 
@@ -58,6 +65,7 @@ from ...opensees._response_catalog import (
     LayeredShellLayout,
     MPCOElementKey,
     gauss_routing_for_canonical,
+    is_fiber_catalogued,
     is_layer_catalogued,
     lookup_layer,
     mpco_layer_group_aliases,
@@ -105,6 +113,14 @@ def canonical_to_layer_token(canonical: str) -> tuple[str, str] | None:
 # Per-bucket descriptor
 # =====================================================================
 
+class LayerBucketUnreadWarning(UserWarning):
+    """A layered-shell bucket the reader leaves unread, so neither the fiber
+    nor the layer level returns its values. The warning names the bucket,
+    its class and why: on ``.ladruno`` a fiber-token bucket whose blocks of
+    several components per fiber it does not decode (#1995); on MPCO a
+    layer-group bucket that bucket discovery leaves out (#2090)."""
+
+
 @dataclass(frozen=True)
 class _LayerBucket:
     """One ``ON_ELEMENTS/<token>/<bracket_key>`` layered-shell bucket.
@@ -124,6 +140,42 @@ class _LayerBucket:
 # Bucket discovery
 # =====================================================================
 
+def _classify_layer_bucket(
+    bracket_key: str, catalog_token: str,
+) -> "tuple[str | None, MPCOElementKey | None, LayeredShellLayout | None]":
+    """``(reason, elem_key, layout)`` for one layer-group bucket.
+
+    A readable bucket gives ``(None, key, layout)``; a beam fiber-section
+    bucket, which the fiber level reads, gives ``(None, key, None)``; a
+    bucket left out gives the reason it is, by class.
+    """
+    try:
+        elem_key = parse_mpco_element_key(bracket_key)
+    except ValueError as exc:
+        return f"its bracket key does not parse ({exc})", None, None
+    cls = elem_key.class_name
+    if elem_key.is_custom_rule and is_fiber_catalogued(cls, catalog_token):
+        return None, elem_key, None
+    if not is_layer_catalogued(cls, catalog_token):
+        return (
+            f"class {cls!r} has no layered-shell entry in the response "
+            f"catalog (LAYER_CATALOG)"
+        ), elem_key, None
+    layout = lookup_layer(cls, catalog_token)
+    if elem_key.header_idx != 0:
+        return (
+            f"class {cls!r} bucket has header index {elem_key.header_idx}; "
+            f"the layer reader reads header 0 only"
+        ), elem_key, None
+    if elem_key.int_rule != layout.surface_int_rule:
+        return (
+            f"class {cls!r} bucket has integration rule {elem_key.int_rule}, "
+            f"and LAYER_CATALOG gives the class surface rule "
+            f"{layout.surface_int_rule}"
+        ), elem_key, None
+    return None, elem_key, layout
+
+
 def discover_layer_buckets(
     on_elements_grp: "h5py.Group",
     *,
@@ -139,9 +191,9 @@ def discover_layer_buckets(
     token in the recorder command). Discovery walks both group names
     via :func:`mpco_layer_group_aliases` and accumulates buckets
     whose class is in ``LAYER_CATALOG``. Beam fiber-section buckets
-    that happen to share the ``section.fiber.<X>`` group are filtered
-    out by the catalog check (they're in ``FIBER_CATALOG``, not
-    ``LAYER_CATALOG``).
+    that share the ``section.fiber.<X>`` group (``FIBER_CATALOG``
+    classes) are left to the fiber level. Every other bucket left out
+    warns :class:`LayerBucketUnreadWarning` naming its class and why.
 
     Returns
     -------
@@ -167,16 +219,17 @@ def discover_layer_buckets(
         for bracket_key in token_grp:
             if bracket_key in seen_keys:
                 continue
-            try:
-                elem_key = parse_mpco_element_key(bracket_key)
-            except ValueError:
-                continue
-            if elem_key.header_idx != 0:
-                continue
-            if not is_layer_catalogued(elem_key.class_name, catalog_token):
-                continue
-            layer_layout = lookup_layer(elem_key.class_name, catalog_token)
-            if elem_key.int_rule != layer_layout.surface_int_rule:
+            reason, elem_key, layer_layout = _classify_layer_bucket(
+                bracket_key, catalog_token,
+            )
+            if reason is not None:
+                warnings.warn(
+                    f"MPCO ON_ELEMENTS/{name}/{bracket_key}: {reason}, so "
+                    f"its layer state is read at neither the fiber nor the "
+                    f"layer level.",
+                    LayerBucketUnreadWarning, stacklevel=2,
+                )
+            if elem_key is None or layer_layout is None:
                 continue
             out.append(_LayerBucket(
                 bracket_key=bracket_key,
@@ -923,6 +976,7 @@ def read_layer_bucket_slab(
 
 __all__ = [
     "LayerBucketLayout",
+    "LayerBucketUnreadWarning",
     "LayerSectionData",
     "ShellFrameUnavailableWarning",
     "canonical_to_layer_token",
