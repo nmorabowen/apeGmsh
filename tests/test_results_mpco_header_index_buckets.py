@@ -408,3 +408,102 @@ def test_nodal_force_header_1_is_named_beside_the_header_0_read(
     want = np.array([[[_value(0, t, e, 0, 0), _value(0, t, e, 0, 6)]
                       for e in (0, 1)] for t in range(N_STEPS)])
     np.testing.assert_array_equal(np.asarray(slab.values), want)
+
+
+# ---------------------------------------------------------------------------
+# Live, on the fork: ASDConcrete3D and LadrunoConcrete3D on one brick class
+# ---------------------------------------------------------------------------
+
+
+def _column(g, x0: float, name: str) -> None:
+    box = g.model.geometry.add_box(x0, 0, 0, 1, 1, 2)
+    g.model.sync()
+    g.mesh.structured.set_transfinite_box(box, n=2)
+    g.physical.add(3, [box], name=name)
+
+
+@pytest.mark.ladruno_fork
+@pytest.mark.live
+def test_live_mixed_concrete_damage_reads_both_headers(tmp_path: Path) -> None:
+    """Two LadrunoBrick columns, one ASDConcrete3D and one LadrunoConcrete3D,
+    each pulled to three times its cracking strain by an imposed top
+    displacement. MPCO writes their
+    ``material.damage`` under two headers of one class (``d+,d-`` and
+    ``C1,C2``); every Gauss point of both reads back equal to
+    ``eleResponse(tag, "material", gp, "damage")`` at rtol 1e-10."""
+    from apeGmsh import apeGmsh
+    from apeGmsh.opensees import apeSees
+    from apeGmsh.opensees.emitter.live import LiveOpsEmitter
+
+    with apeGmsh(model_name="hdr_mixed", verbose=False) as g:
+        _column(g, 0.0, "ASD")
+        _column(g, 3.0, "CDPM2")
+        g.mesh.generation.generate(3)
+        fem = g.mesh.queries.get_fem_data(dim=3)
+    ids = np.asarray(fem.nodes.ids)
+    xyz = np.asarray(fem.nodes.coords)
+    base = [int(n) for n, p in zip(ids, xyz) if abs(p[2]) < 1e-9]
+    top = [int(n) for n, p in zip(ids, xyz) if abs(p[2] - 2.0) < 1e-9]
+
+    ops = apeSees(fem)
+    ops.model(ndm=3, ndf=3)
+    asd = ops.nDMaterial.ASDConcrete3D(E=30e6, v=0.2, fc=30e3, ft=3e3)
+    cdpm2 = ops.nDMaterial.LadrunoConcrete3D(
+        E=30e6, nu=0.2, fc=30e3, ft=3e3, Gf=0.1, Gc=10.0,
+    )
+    ops.element.LadrunoBrick(pg="ASD", material=asd)
+    ops.element.LadrunoBrick(pg="CDPM2", material=cdpm2)
+    ops.fix(nodes=base, dofs=(1, 1, 1))
+    with ops.pattern.Plain(series=ops.timeSeries.Linear()) as p:
+        for nid in top:
+            p.sp(node=nid, dof=3, value=6.0e-4)
+    mpco = str(tmp_path / "mixed.mpco")
+    ops.recorder.MPCO(file=mpco, nodal_responses=("displacement",),
+                      elem_responses=("material.damage",))
+    ops.constraints.Transformation()
+    ops.numberer.RCM()
+    ops.system.UmfPack()     # LadrunoConcrete3D's tangent is unsymmetric
+    ops.test.NormDispIncr(tol=1e-8, max_iter=50)
+    ops.algorithm.Newton()
+    ops.integrator.LoadControl(dlam=0.05)
+    ops.analysis.Static()
+    model_h5 = str(tmp_path / "model.h5")
+    ops.h5(model_h5)
+    emitter = LiveOpsEmitter(wipe=True)
+    ops.build().emit(emitter)
+    for step in range(20):
+        assert emitter.analyze(steps=1) == 0, f"step {step + 1}"
+    live = emitter.ops
+
+    with h5py.File(model_h5, "r") as f:
+        meta = f["/opensees/element_meta"]
+        fem_to_ops = {int(e): int(t) for tok in meta for t, e in
+                      zip(meta[tok]["ids"][...], meta[tok]["fem_eids"][...])}
+    truth = {
+        eid: np.array([np.asarray(live.eleResponse(tag, "material", gp,
+                                                   "damage"), float)
+                       for gp in range(1, 9)])
+        for eid, tag in fem_to_ops.items()
+    }
+    live.remove("recorders")
+    assert len(truth) == 2
+    assert all(t.shape == (8, 2) for t in truth.values())
+    # Both columns cracked: each header carries a non-zero tension damage.
+    assert all(float(t[:, 0].max()) > 0.0 for t in truth.values()), truth
+
+    with h5py.File(mpco, "r") as f:
+        stage = next(k for k in f if k.startswith("MODEL_STAGE"))
+        keys = sorted(f[f"{stage}/RESULTS/ON_ELEMENTS/material.damage"])
+    assert keys == [f"{ELE_TAG_LadrunoBrick}-LadrunoBrick[0:0:0]",
+                    f"{ELE_TAG_LadrunoBrick}-LadrunoBrick[0:0:1]"], keys
+
+    with Results.from_mpco(mpco, fem=fem, model_h5=model_h5) as r:
+        for k, comp in enumerate(("damage_tension", "damage_compression")):
+            slab = r.elements.gauss.get(component=comp)
+            index = np.asarray(slab.element_index)
+            last = np.asarray(slab.values)[-1]
+            assert sorted(set(int(e) for e in index)) == sorted(truth)
+            for eid, t in truth.items():
+                np.testing.assert_allclose(
+                    last[index == eid], t[:, k], rtol=1e-10, atol=1e-14,
+                )
