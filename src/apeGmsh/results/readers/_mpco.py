@@ -1580,20 +1580,19 @@ def _locate_canonical_in_mpco(
 ) -> tuple[str, int] | None:
     """Find ``(mpco_result_name, column_index)`` for a canonical component.
 
-    Iterates the MPCO result groups under ``ON_NODES``, parsing each
-    group's COMPONENTS attribute and translating each column to its
-    canonical name. Returns the first match.
+    Parses each ``ON_NODES`` group's COMPONENTS attribute and lets
+    :func:`_mpco_translation.locate_node_component` pick the group by its
+    precedence, never by HDF5 iteration order (#2122).
     """
-    for mpco_result_name in on_nodes_grp:
-        grp = on_nodes_grp[mpco_result_name]
-        comps = _parse_components_attr(grp.attrs.get("COMPONENTS"))
-        for col_idx, comp_label in enumerate(comps):
-            canonical = _mtr.canonical_node_component(
-                mpco_result_name, comp_label,
-            )
-            if canonical == canonical_component:
-                return (mpco_result_name, col_idx)
-    return None
+    return _mtr.locate_node_component(
+        (
+            (name, _parse_components_attr(
+                on_nodes_grp[name].attrs.get("COMPONENTS"),
+            ))
+            for name in on_nodes_grp
+        ),
+        canonical_component,
+    )
 
 
 def _empty_node_slab(component: str, time: ndarray, t_idx) -> NodeSlab:
