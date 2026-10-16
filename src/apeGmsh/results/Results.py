@@ -725,7 +725,7 @@ class Results:
                 # The reader builds its broker from the MODEL
                 # group; a file without one needs model_h5=.
                 raise ValueError(
-                    f"{anchor}: this .ladruno file carries no MODEL group "
+                    f"{anchor}: this results file carries no MODEL group "
                     f"(node geometry), so the OpenSees model cannot be "
                     f"built from the file. Pass model_h5= to supply it."
                 )
