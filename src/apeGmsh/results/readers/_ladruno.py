@@ -26,12 +26,14 @@ Key layout facts (verified against fork build ``605affeb``, FORMAT_VERSION 1):
 """
 from __future__ import annotations
 
+import warnings
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, NamedTuple, Optional
 
 import numpy as np
 from numpy import ndarray
 
+from ..._vocabulary import PER_ELEMENT_NODAL_FORCES
 from .._slabs import (
     ElementSlab,
     FiberSlab,
@@ -73,6 +75,23 @@ if TYPE_CHECKING:
 
 
 _STAGE_PREFIX = "MODEL_STAGE["
+
+_DIM_UNKNOWN = (
+    "no INFO/SPATIAL_DIM, and no single MODEL/NODES/COORDINATES width "
+    "of 1, 2 or 3"
+)
+
+
+class SpatialDimUnknown(ValueError):
+    """A read that needs the spatial dimension, on a file that gives none.
+
+    Raised when the file has no ``INFO/SPATIAL_DIM`` and its
+    ``MODEL/NODES/COORDINATES`` widths name no one dimension, by
+    ``opensees_model`` and by a ``nodal_resisting_*`` read over indexed
+    ``P<a>_<b>`` ``globalForce`` columns (#2081). It is a ``ValueError``
+    and no ``MissingElementResults``, so a partition set reports it from
+    any rank instead of dropping that rank's elements.
+    """
 
 
 def _stage_sort_key(name: str) -> "tuple[int, str]":
@@ -463,6 +482,12 @@ class LadrunoReader:
 
         from ...opensees.opensees_model import OpenSeesModel
         ndm = self._spatial_dim()
+        if ndm is None:
+            raise SpatialDimUnknown(
+                f"{self._path.name}: the spatial dimension is unknown "
+                f"({_DIM_UNKNOWN}), so the model's ndm cannot be built. "
+                f"Pass model_h5= to supply the model."
+            )
         # A ``.ladruno`` does NOT record ndf — the DISPLACEMENT field is
         # always 3 translations regardless of rotational DOFs, so it can't
         # be inferred from result widths. The minimal broker uses ndm as a
@@ -491,11 +516,30 @@ class LadrunoReader:
             _sweeps=(),
         )
 
-    def _spatial_dim(self) -> int:
+    def _spatial_dim(self) -> Optional[int]:
+        """The file's spatial dimension, or ``None`` when it is unknown.
+
+        ``INFO/SPATIAL_DIM`` when the file carries it. Otherwise the width
+        of ``MODEL/NODES/COORDINATES``, which the writer sizes by the
+        spatial dimension, when every stage that has one agrees on a
+        width of 1, 2 or 3. Otherwise ``None``: a read that depends on
+        the dimension refuses or warns, naming the file (#2081).
+        """
         info = (self._h5["INFO"] if "INFO" in self._h5 else None)
         if info is not None and "SPATIAL_DIM" in info.attrs:
-            return _attr_int(info.attrs, "SPATIAL_DIM", default=3)
-        return 3
+            raw = np.asarray(info.attrs["SPATIAL_DIM"])
+            if raw.size:
+                return int(raw.flat[0])
+        widths: set[int] = set()
+        for name in self._h5:
+            if not name.startswith(_STAGE_PREFIX):
+                continue
+            coords = _child(self._h5[name], "MODEL/NODES/COORDINATES")
+            if coords is not None and len(coords.shape) == 2:
+                widths.add(int(coords.shape[1]))
+        if len(widths) == 1 and widths <= {1, 2, 3}:
+            return widths.pop()
+        return None
 
     # -- components / reads --------------------------------------------
 
@@ -522,9 +566,30 @@ class LadrunoReader:
         if level is ResultLevel.LINE_STATIONS:
             return sorted(_eio.line_station_available(on_elements))
         if level is ResultLevel.ELEMENTS:
-            return sorted(_eio.element_available(
-                on_elements, ndm=self._spatial_dim(),
-            ))
+            ndm = self._spatial_dim()
+            if ndm is not None:
+                return sorted(_eio.element_available(on_elements, ndm=ndm))
+            indexed = _eio.indexed_nodal_force_buckets(on_elements)
+            # Without indexed P<a>_<b> buckets no decode consults ndm
+            # (axis-named columns name their quantity), so 3 never
+            # reaches an answer here.
+            listed = _eio.element_available(on_elements, ndm=3)
+            if not indexed:
+                return sorted(listed)
+            # An indexed column is a translation only up to ndm. The read
+            # refuses these names, so the listing leaves them out.
+            nodal = listed.intersection(PER_ELEMENT_NODAL_FORCES)
+            warnings.warn(
+                f"{self._path.name}: the spatial dimension is unknown "
+                f"({_DIM_UNKNOWN}), so the element components leave out "
+                f"{sorted(nodal)}: the globalForce bucket(s) {indexed} "
+                f"name their columns by DOF index, which reads as a "
+                f"translation only up to that dimension. The raw "
+                f"globalForce token stays readable.",
+                UserWarning,
+                stacklevel=2,
+            )
+            return sorted(listed.difference(PER_ELEMENT_NODAL_FORCES))
         if level is ResultLevel.FIBERS:
             return sorted(_eio.fiber_available(on_elements))
         # LAYERS / SPRINGS: a .ladruno has no distinct layer or spring
@@ -871,11 +936,30 @@ class LadrunoReader:
             family="element", component=component, stage_id=stage_id,
         )
         bucket_ids, index_to_fem = self._element_read_translation(element_ids)
-        # A ``nodal_resisting_*`` name decodes ``globalForce`` per node,
-        # and refuses by name when the file is unable to answer.
+        # A ``nodal_resisting_*`` name decodes ``globalForce`` per node by
+        # the spatial dimension, and refuses by name when the file is
+        # unable to answer. A token read does not use the dimension.
+        ndm: Optional[int] = None
+        if component in PER_ELEMENT_NODAL_FORCES:
+            ndm = self._spatial_dim()
+            if ndm is None:
+                indexed = _eio.indexed_nodal_force_buckets(on_e)
+                if indexed:
+                    raise SpatialDimUnknown(
+                        f"{self._path.name}: element component "
+                        f"{component!r} decodes the globalForce bucket(s) "
+                        f"{indexed}, whose columns are named by DOF index "
+                        f"and read as a translation only up to the spatial "
+                        f"dimension. The file gives none ({_DIM_UNKNOWN}). "
+                        f"Read the globalForce token for the raw columns."
+                    )
+                # No bucket is indexed, so the decode answers the same at
+                # any ndm: axis-named columns name their quantity, and a
+                # mixed or unparseable bucket is refused either way.
+                ndm = 3
         result = _eio.read_element_slab(
             on_e, component,
-            t_idx=t_idx, element_ids=bucket_ids, ndm=self._spatial_dim(),
+            t_idx=t_idx, element_ids=bucket_ids, ndm=ndm,
         )
         if result is None:
             return _empty_element_slab(component, time, time_slice)
