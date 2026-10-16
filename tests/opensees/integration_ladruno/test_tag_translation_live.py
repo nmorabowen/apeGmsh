@@ -83,23 +83,9 @@ def _open(route: str, path: str, fem: Any, model_h5: str) -> Results:
     return reader(path, fem=fem, model_h5=model_h5)
 
 
-def _ladruno_read(res: Results, kind: str, comp: str,
-                  ids: Any = None) -> dict[int, Any]:
-    """``_sf_read`` for ``.ladruno``. Its element level is token-driven:
-    the component is the file's ``globalForce`` key and the slab holds the
-    raw ``(T, E, 12)`` output vector, end i then end j. Component ``k`` of
-    the nodal-forces kind is columns ``k`` and ``k + 6``."""
-    if kind != "nodal_forces":
-        return _sf_read(res, kind, comp, ids=ids)
-    k = SF_KINDS[kind][1].index(comp)
-    slab = res.elements.get(component="globalForce", ids=ids)
-    vals = np.asarray(slab.values)
-    assert vals.shape[1] == 0 or vals.shape[-1] == 12, vals.shape
-    return {int(e): vals[:, i, [k, k + 6]]
-            for i, e in enumerate(np.asarray(slab.element_ids))}
-
-
-READ = {"mpco": _sf_read, "ladruno": _ladruno_read}
+# Both formats answer the nodal-forces kind by its canonical
+# ``nodal_resisting_*`` names as ``(T, E, n_nodes)`` slabs (#2071).
+READ = {"mpco": _sf_read, "ladruno": _sf_read}
 
 
 @pytest.fixture(scope="module")

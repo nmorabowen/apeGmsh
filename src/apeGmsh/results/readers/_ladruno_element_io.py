@@ -22,7 +22,9 @@ apeGmsh's neutral vocabulary here:
 * continuum ``sigmaIJ`` / ``etaIJ`` → ``stress_ij`` / ``strain_ij`` (Gauss);
 * beam ``N``/``Vy``/``Vz``/``T``/``My``/``Mz`` (optional ``_<station>``)
   → ``axial_force`` / ``shear_y`` / … (line stations);
-* nodal ``P<dof>_<node>`` → ``nodal_resisting_force_{x,y,z}`` (elements).
+* nodal ``globalForce`` columns (``Px_1``…, ``P<dof>_<node>``,
+  ``P<node>_<dof>``) → ``nodal_resisting_{force,moment}_{x,y,z}``
+  (elements; see :func:`decode_nodal_force_columns`).
 """
 from __future__ import annotations
 
@@ -34,6 +36,7 @@ from typing import TYPE_CHECKING, Optional
 import numpy as np
 from numpy import ndarray
 
+from ..._vocabulary import PER_ELEMENT_NODAL_FORCES
 from ...opensees._response_catalog import (
     RESPONSE_CATALOG,
     catalog_token_for_keyword,
@@ -1371,9 +1374,11 @@ def _station_xi(n_stations: int) -> ndarray:
 # ``ON_ELEMENTS/<token>`` key (``basicForce`` / ``localForce`` /
 # ``globalForce`` / ``force``) and the slab carries the element's full raw
 # output vector ``(T, E, NUM_COLUMNS)`` in the file's ``COMP_NAMES`` column
-# order. This keeps the element level purely file-driven (no ``P<dof>``
-# grammar, no neutral remap); the neutral views live on the *other* levels
-# — ``line_stations`` (``axial_force``…) and ``gauss`` (``stress_xx``…).
+# order. The raw token reads stay exactly that. One neutral view sits on
+# top of them: ``nodal_resisting_{force,moment}_{x,y,z}`` decoded
+# from the ``globalForce`` token (see "Canonical nodal resisting forces"
+# below). The other neutral views live on the *other* levels —
+# ``line_stations`` (``axial_force``…) and ``gauss`` (``stress_xx``…).
 #
 # Three details pinned here (flag if the sibling branch chose otherwise):
 #   1. npe = raw ``NUM_COLUMNS`` (localForce→12, quad force→8, basicForce→1).
@@ -1383,13 +1388,17 @@ def _station_xi(n_stations: int) -> ndarray:
 #      ``COMP_NAMES`` (not carried on the slab).
 
 
-def element_available(on_elements: "h5py.Group") -> set[str]:
-    """ON_ELEMENTS token keys that are element-level (all blocks LEVELS==0).
+def element_available(
+    on_elements: "h5py.Group", *, ndm: int,
+) -> set[str]:
+    """ON_ELEMENTS token keys that are element-level (all blocks LEVELS==0),
+    plus the canonical nodal resisting forces the ``globalForce`` buckets
+    decode to (``ndm`` is the file's spatial dimension).
 
     Token-driven: the token *is* the component. Gauss-level tokens
     (stress/strain, LEVELS==4) are excluded — they belong to read_gauss.
     """
-    out: set[str] = set()
+    out: set[str] = set(_nodal_force_available(on_elements, ndm=ndm))
     for token in on_elements:
         token_grp = on_elements[token]
         saw_bucket = False
@@ -1433,6 +1442,7 @@ def read_element_slab(
     *,
     t_idx: ndarray,
     element_ids: "Optional[ndarray]",
+    ndm: "Optional[int]" = None,
 ) -> "Optional[tuple[ndarray, ndarray]]":
     """Return ``(values[T, E, ncol], element_ids)`` for ``ON_ELEMENTS/<token>``.
 
@@ -1444,7 +1454,21 @@ def read_element_slab(
     common case, always match). A skip is never silent: it raises
     :class:`ElementWidthMismatchWarning` naming both widths and the
     elements left out.
+
+    A ``nodal_resisting_*`` canonical name is the one exception to the
+    token rule: it reads the ``globalForce`` token as ``(T, E, n_nodes)``,
+    the MPCO reader's layout (see :func:`read_nodal_force_slab`). It needs
+    ``ndm``, the file's spatial dimension.
     """
+    if token in PER_ELEMENT_NODAL_FORCES:
+        if ndm is None:
+            raise TypeError(
+                f"read_element_slab({token!r}) decodes a canonical nodal "
+                f"resisting force and needs ndm= (the spatial dimension)."
+            )
+        return read_nodal_force_slab(
+            on_elements, token, ndm=ndm, t_idx=t_idx, element_ids=element_ids,
+        )
     if token not in on_elements:
         return None
     token_grp = on_elements[token]
@@ -1490,6 +1514,310 @@ def read_element_slab(
             f"them with element_ids= to get their columns.",
             ElementWidthMismatchWarning,
             stacklevel=2,
+        )
+    if not values_parts:
+        return None
+    return (
+        np.concatenate(values_parts, axis=1),
+        np.concatenate(eid_parts),
+    )
+
+
+# =====================================================================
+# Canonical nodal resisting forces (decoded from ``globalForce``)
+# =====================================================================
+#
+# A ``nodal_resisting_{force,moment}_{x,y,z}`` request reads the
+# ``globalForce`` token, the token MPCO reads for the same names, and
+# names each column from the bucket's ``COMP_NAMES``. OpenSees spells the
+# per-node columns of that response three ways:
+#
+# * axis-named ``Px_1, Py_1, Pz_1, Mx_1, My_1, Mz_1, Px_2, …`` (beams);
+# * ``P<dof>_<node>``: ``P1_1, P2_1, P1_2, P2_2, …`` (quads, bricks, tets);
+# * ``P<node>_<dof>``: ``P1_1, P1_2, P2_1, P2_2, …`` (trusses, zeroLength).
+#
+# The two indexed spellings share one grammar, so the column order decides
+# which index is the node. An element's resisting-force vector is
+# node-major: the node index runs 1, 1, …, 2, 2, … and the DOF index
+# restarts at 1 for each node. A name list that reads node-major both ways
+# (one node, or one DOF per node) is refused as ambiguous.
+#
+# An indexed DOF up to the spatial dimension is a translation. A higher
+# indexed DOF means a rotation on a truss in a frame model, a pore pressure
+# on a u-p element and an auxiliary field on a PML element; the names
+# carry no hint which, so those columns stay undecoded, and a moment
+# request that meets them warns.
+#
+# The slab is ``(T, E, n_nodes)`` in element-local node order, the layout
+# :class:`MPCOReader` returns for the same names, so the two formats agree.
+
+NODAL_FORCE_TOKEN = "globalForce"
+_NODAL_GLOBAL = frozenset(
+    c for c in PER_ELEMENT_NODAL_FORCES if "_local_" not in c
+)
+_AXIS_NAME_RE = re.compile(r"^([PM])([xyz])_(\d+)$")
+_INDEXED_NAME_RE = re.compile(r"^P(\d+)_(\d+)$")
+_AXES = ("x", "y", "z")
+
+
+class NodalForceNotRecorded(MissingElementResults):
+    """A canonical nodal resisting force the file is unable to answer.
+
+    Raised by :func:`read_nodal_force_slab` when no ``globalForce`` bucket
+    decodes to the requested name: the file does not record ``globalForce``,
+    its buckets carry no such component (``nodal_resisting_moment_z`` on a
+    truss), or the name is a local-frame one. The message names the tokens
+    the file records and the canonical names it does answer.
+
+    A subclass of :class:`MissingElementResults`, so a partitioned read
+    tolerates a part file whose rank owns none of the elements and raises
+    only when every part is unable to answer.
+    """
+
+
+class NodalForceColumnsUndecodedWarning(UserWarning):
+    """``globalForce`` buckets were left out of a canonical nodal-force read.
+
+    Raised by :func:`read_nodal_force_slab` for each bucket whose
+    ``COMP_NAMES`` could not be decoded (an unknown spelling, an ambiguous
+    order) or whose undecoded columns may hold the requested moment. The
+    elements of those buckets are absent from the result.
+    """
+
+
+def _reads_node_major(pairs: "list[tuple[int, int]]") -> bool:
+    """True when ``(dof, node)`` pairs run node 1..n, DOF 1..ndf each."""
+    ndf: "Optional[int]" = None
+    i = 0
+    node = 1
+    while i < len(pairs):
+        j = i
+        while j < len(pairs) and pairs[j][1] == node:
+            j += 1
+        dofs = [d for d, _ in pairs[i:j]]
+        if not dofs or dofs != list(range(1, len(dofs) + 1)):
+            return False
+        if ndf is None:
+            ndf = len(dofs)
+        elif len(dofs) != ndf:
+            return False
+        i = j
+        node += 1
+    return ndf is not None
+
+
+def decode_nodal_force_columns(
+    names: "tuple[str, ...] | list[str]", *, ndm: int,
+) -> "tuple[dict[str, ndarray], tuple[str, ...]]":
+    """Name each ``globalForce`` column as a canonical nodal resisting force.
+
+    Returns ``(columns, undecoded)``: ``columns`` maps each canonical name
+    to its column index at each element node (node 1 first), and
+    ``undecoded`` lists the indexed names above the spatial dimension
+    ``ndm``, which are left out. Raises :class:`ValueError` with the reason
+    when the names follow no nodal-force spelling, read node-major both
+    ways or neither way, or miss a component at some node.
+    """
+    names = list(names)
+    if not names:
+        raise ValueError("the bucket names no columns")
+    entries: list[tuple[Optional[str], int]] = []   # (canonical, node)
+    undecoded: list[str] = []
+    axis = [m for m in map(_AXIS_NAME_RE.match, names) if m is not None]
+    indexed = [m for m in map(_INDEXED_NAME_RE.match, names) if m is not None]
+    if len(axis) == len(names):
+        for m in axis:
+            kind = "force" if m.group(1) == "P" else "moment"
+            entries.append(
+                (f"nodal_resisting_{kind}_{m.group(2)}", int(m.group(3))),
+            )
+    elif len(indexed) == len(names):
+        ab = [(int(m.group(1)), int(m.group(2))) for m in indexed]
+        readings = [
+            pairs for pairs in (ab, [(b, a) for a, b in ab])
+            if _reads_node_major(pairs)
+        ]
+        if len(readings) != 1:
+            raise ValueError(
+                f"the indexed columns {names[:6]} read as node-major "
+                f"{'both' if readings else 'neither'} way(s), so which "
+                f"index is the node is unknown"
+            )
+        for name, (dof, node) in zip(names, readings[0]):
+            if dof <= min(ndm, 3):
+                entries.append(
+                    (f"nodal_resisting_force_{_AXES[dof - 1]}", node),
+                )
+            else:
+                entries.append((None, node))
+                undecoded.append(name)
+    else:
+        bad = [n for n in names
+               if not (_AXIS_NAME_RE.match(n) or _INDEXED_NAME_RE.match(n))]
+        raise ValueError(
+            f"the column(s) {bad[:4]} follow neither nodal-force spelling "
+            f"(axis-named 'Px_1' or indexed 'P1_1')" if bad else
+            f"the columns {names[:6]} mix the axis-named and indexed "
+            f"spellings"
+        )
+    n_nodes = max(node for _, node in entries)
+    per: dict[str, list[int]] = {}
+    for col, (canonical, node) in enumerate(entries):
+        if canonical is None:
+            continue
+        slots = per.setdefault(canonical, [-1] * n_nodes)
+        if node < 1 or slots[node - 1] != -1:
+            raise ValueError(
+                f"{canonical} appears twice at element node {node}",
+            )
+        slots[node - 1] = col
+    for canonical, slots in per.items():
+        if -1 in slots:
+            raise ValueError(
+                f"{canonical} is absent at element node "
+                f"{slots.index(-1) + 1}",
+            )
+    columns = {c: np.asarray(s, dtype=np.int64) for c, s in per.items()}
+    return columns, tuple(undecoded)
+
+
+def _decode_nodal_bucket(
+    bucket: "h5py.Group", *, ndm: int,
+) -> "tuple[dict[str, ndarray], tuple[str, ...]]":
+    """:func:`decode_nodal_force_columns` over one bucket's element-level
+    blocks; :class:`ValueError` when the bucket is not one."""
+    for child in ("COLUMN_MAP", "DATA", "ID"):
+        if child not in bucket:
+            raise ValueError(f"the bucket has no {child}")
+    blocks = parse_blocks(bucket)
+    if any(b.level != 0 or b.multiplicity != 1 for b in blocks):
+        raise ValueError("the bucket holds sub-element (Gauss) blocks")
+    names = [n for b in blocks for n in b.comp_names]
+    return decode_nodal_force_columns(names, ndm=ndm)
+
+
+def _nodal_force_available(
+    on_elements: "h5py.Group", *, ndm: int,
+) -> set[str]:
+    """Canonical nodal resisting forces some ``globalForce`` bucket decodes."""
+    out: set[str] = set()
+    if NODAL_FORCE_TOKEN not in on_elements:
+        return out
+    token_grp = on_elements[NODAL_FORCE_TOKEN]
+    for key in token_grp:
+        try:
+            columns, _ = _decode_nodal_bucket(token_grp[key], ndm=ndm)
+        except (KeyError, ValueError):
+            continue
+        out.update(columns)
+    return out
+
+
+def read_nodal_force_slab(
+    on_elements: "h5py.Group",
+    canonical: str,
+    *,
+    ndm: int,
+    t_idx: ndarray,
+    element_ids: "Optional[ndarray]",
+) -> "Optional[tuple[ndarray, ndarray]]":
+    """Return ``(values[T, E, n_nodes], element_ids)`` for ``canonical``.
+
+    ``canonical`` is a ``nodal_resisting_{force,moment}_{x,y,z}`` name,
+    decoded from the ``globalForce`` buckets by
+    :func:`decode_nodal_force_columns`. ``None`` when the id filter keeps
+    no row. Raises :class:`NodalForceNotRecorded` when no bucket decodes
+    to ``canonical``; warns :class:`NodalForceColumnsUndecodedWarning` for
+    each bucket left out, and :class:`ElementWidthMismatchWarning` when
+    buckets of a different node count are dropped (the first count wins).
+    """
+    recorded = sorted(str(k) for k in on_elements)
+    if canonical not in _NODAL_GLOBAL:
+        raise NodalForceNotRecorded(
+            f"Element component {canonical!r} is a local-frame nodal "
+            f"resisting force; this reader decodes only the global-frame "
+            f"names, from {NODAL_FORCE_TOKEN!r}. The file records the "
+            f"element responses {recorded}: read one of them by its token."
+        )
+    if NODAL_FORCE_TOKEN not in on_elements:
+        raise NodalForceNotRecorded(
+            f"Element component {canonical!r} is decoded from the element "
+            f"response {NODAL_FORCE_TOKEN!r}, which this file does not "
+            f"record. It records {recorded}: record {NODAL_FORCE_TOKEN!r}, "
+            f"or read one of the recorded responses by its token."
+        )
+    token_grp = on_elements[NODAL_FORCE_TOKEN]
+    answered = False
+    offered: set[str] = set()
+    skipped: list[tuple[str, str]] = []
+    values_parts: list[ndarray] = []
+    eid_parts: list[ndarray] = []
+    n_ref: "Optional[int]" = None
+    key_ref: "Optional[str]" = None
+    dropped: list[tuple[str, int, ndarray]] = []
+
+    for key in token_grp:
+        bucket = token_grp[key]
+        try:
+            columns, undecoded = _decode_nodal_bucket(bucket, ndm=ndm)
+        except (KeyError, ValueError) as exc:
+            skipped.append((key, str(exc)))
+            continue
+        offered.update(columns)
+        if canonical not in columns:
+            if undecoded and "_moment_" in canonical:
+                skipped.append((key, (
+                    f"its columns {list(undecoded)[:6]} sit above the "
+                    f"{ndm}-D translations, and an indexed column there "
+                    f"may be a rotation, a pore pressure or an auxiliary "
+                    f"field"
+                )))
+            continue
+        answered = True
+        sel = _select_rows(bucket, element_ids)
+        if sel is None:
+            continue
+        rows, sel_ids = sel
+        cols = columns[canonical]
+        if n_ref is None:
+            n_ref, key_ref = cols.size, key
+        elif cols.size != n_ref:
+            dropped.append((key, int(cols.size), sel_ids))
+            continue
+        values_parts.append(read_hyperslab(bucket["DATA"], t_idx, rows, cols))
+        eid_parts.append(sel_ids)
+
+    if skipped:
+        detail = "; ".join(f"{k!r}: {why}" for k, why in skipped)
+        warnings.warn(
+            f"Element component {canonical!r} left out {len(skipped)} "
+            f"{NODAL_FORCE_TOKEN!r} bucket(s) whose columns could not be "
+            f"named ({detail}). Their elements are absent from the result; "
+            f"read {NODAL_FORCE_TOKEN!r} by its token for their raw columns.",
+            NodalForceColumnsUndecodedWarning,
+            stacklevel=3,
+        )
+    if not answered:
+        raise NodalForceNotRecorded(
+            f"Element component {canonical!r}: no {NODAL_FORCE_TOKEN!r} "
+            f"bucket in this file decodes to it. Its buckets decode to "
+            f"{sorted(offered)}; the file records the element responses "
+            f"{recorded}."
+        )
+    if dropped:
+        lost = np.concatenate([ids for _, _, ids in dropped])
+        shown = ", ".join(str(int(i)) for i in lost[:8])
+        if lost.size > 8:
+            shown += f", ... (+{lost.size - 8} more)"
+        counts = ", ".join(f"{k!r} has {n}" for k, n, _ in dropped)
+        warnings.warn(
+            f"Element component {canonical!r} kept the {n_ref}-node bucket "
+            f"{key_ref!r} and DROPPED {len(dropped)} bucket(s) of a "
+            f"different node count ({counts}); {lost.size} element(s) are "
+            f"missing from the result: {shown}. Read them in a separate "
+            f"call scoped to them with element_ids=.",
+            ElementWidthMismatchWarning,
+            stacklevel=3,
         )
     if not values_parts:
         return None

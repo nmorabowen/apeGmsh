@@ -522,7 +522,9 @@ class LadrunoReader:
         if level is ResultLevel.LINE_STATIONS:
             return sorted(_eio.line_station_available(on_elements))
         if level is ResultLevel.ELEMENTS:
-            return sorted(_eio.element_available(on_elements))
+            return sorted(_eio.element_available(
+                on_elements, ndm=self._spatial_dim(),
+            ))
         if level is ResultLevel.FIBERS:
             return sorted(_eio.fiber_available(on_elements))
         # LAYERS / SPRINGS: a .ladruno has no distinct layer or spring
@@ -869,9 +871,11 @@ class LadrunoReader:
             family="element", component=component, stage_id=stage_id,
         )
         bucket_ids, index_to_fem = self._element_read_translation(element_ids)
+        # A ``nodal_resisting_*`` name decodes ``globalForce`` per node,
+        # and refuses by name when the file is unable to answer.
         result = _eio.read_element_slab(
             on_e, component,
-            t_idx=t_idx, element_ids=bucket_ids,
+            t_idx=t_idx, element_ids=bucket_ids, ndm=self._spatial_dim(),
         )
         if result is None:
             return _empty_element_slab(component, time, time_slice)
