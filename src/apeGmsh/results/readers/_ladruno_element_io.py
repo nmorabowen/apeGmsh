@@ -1163,6 +1163,8 @@ def line_station_available(on_elements: "h5py.Group") -> set[str]:
     A ``localForce`` bucket that :func:`_local_force_2d_gate` refuses
     lists nothing and warns once, naming its class: its columns name no
     component reliably, and a read of its elements raises the same reason.
+    A ``localForce`` bucket whose ``COLUMN_MAP`` does not parse (its names
+    do not cover its DATA columns) lists nothing and warns, naming it.
     """
     out: set[str] = set()
     for token in on_elements:
@@ -1170,7 +1172,15 @@ def line_station_available(on_elements: "h5py.Group") -> set[str]:
             bucket = on_elements[token][key]
             try:
                 blocks = parse_blocks(bucket)
-            except (KeyError, ValueError):
+            except (KeyError, ValueError) as exc:
+                if token == "localForce":
+                    warnings.warn(
+                        f"localForce bucket {key!r} (element class "
+                        f"{_class_name(key) or '<unparsed>'!r}) is "
+                        f"unreadable: {exc!s} Its line stations are left "
+                        f"out.",
+                        UserWarning, stacklevel=2,
+                    )
                 continue
             try:
                 alias_2d = _local_force_2d_gate(bucket, blocks, token)
@@ -1298,6 +1308,30 @@ def _local_force_2d_gate(
     return True
 
 
+def _section_served_ids(on_elements: "h5py.Group", component: str) -> ndarray:
+    """Element ids a section-level bucket serves ``component`` for.
+
+    The rank-0 source of :func:`read_line_station_slab`: a bucket with a
+    ``LEVELS==2`` block naming ``component`` gives every one of its
+    elements section stations, which win over ``localForce``.
+    """
+    parts: list[ndarray] = []
+    for token in on_elements:
+        for key in on_elements[token]:
+            bucket = on_elements[token][key]
+            try:
+                blocks = parse_blocks(bucket)
+            except (KeyError, ValueError):
+                continue
+            if any(b.level == 2 and section_canonical(n) == component
+                   for b in blocks for n in b.comp_names):
+                parts.append(np.asarray(
+                    bucket["ID"][...], dtype=np.int64).flatten())
+    if not parts:
+        return np.empty(0, dtype=np.int64)
+    return np.concatenate(parts)
+
+
 def _station_canonical(
     name: str, token: str, alias_2d: bool,
 ) -> Optional[tuple[str, Optional[int]]]:
@@ -1402,21 +1436,26 @@ def _read_element_stations(
     """Element-level (``localForce``/``basicForce``) line stations.
 
     A ``localForce`` bucket that :func:`_local_force_2d_gate` refuses
-    raises its reason when the read asks for one of its elements, or for
-    every element (``element_ids=None``), whatever the component: its
-    columns name none reliably. Reads of other elements pass it over.
+    raises its reason, whatever the component, when the read asks for one
+    of its elements (``element_ids=None`` asks for all) that no
+    section-level bucket serves with this component: its columns name
+    none reliably. An element with section stations keeps them, since the
+    section source ranks first (:func:`read_line_station_slab`), and
+    reads of other elements pass the bucket over.
     """
     try:
         alias_2d = _local_force_2d_gate(bucket, blocks, token)
     except ValueError as exc:
-        if element_ids is None:
-            raise
         hit = _select_rows(bucket, element_ids)
         if hit is not None:
-            raise ValueError(
-                f"{exc} (requested element(s) {hit[1][:10].tolist()} are "
-                f"in this bucket)"
-            ) from exc
+            served = _section_served_ids(bucket.parent.parent, component)
+            bare = hit[1][~np.isin(hit[1], served)]
+            if bare.size:
+                raise ValueError(
+                    f"{exc} (requested element(s) {bare[:10].tolist()} are "
+                    f"in this bucket, with no section stations for "
+                    f"{component!r})"
+                ) from exc
         return None
     # station (1-based, None→1) → DATA column for this component.
     station_to_col: dict[int, int] = {}
