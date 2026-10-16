@@ -141,7 +141,7 @@ class MPCOMultiPartitionReader:
             self.close()
             raise
         self._fem_cache: "Optional[FEMData] | _Sentinel" = _SENTINEL
-        # One AbsentDofWarning per façade, not one per part (#2028).
+        # One AbsentDofWarning per façade, not one per part.
         self._absent_dof_warned = [False]
 
     def attach_tag_map(self, tag_map: "Any") -> None:
