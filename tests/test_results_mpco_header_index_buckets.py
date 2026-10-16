@@ -506,7 +506,11 @@ def test_live_mixed_concrete_damage_reads_both_headers(tmp_path: Path) -> None:
     displacement. MPCO writes their
     ``material.damage`` under two headers of one class (``d+,d-`` and
     ``C1,C2``); every Gauss point of both reads back equal to
-    ``eleResponse(tag, "material", gp, "damage")`` at rtol 1e-10."""
+    ``eleResponse(tag, "material", gp, "damage")`` at rtol 1e-10. Their
+    ``material.stress`` splits the same way (ASDConcrete3D names
+    ``sigma11..sigma13``, LadrunoConcrete3D writes ``C1..C6``), and every
+    stress component of both reads back equal to ``eleResponse(tag,
+    "stresses")``."""
     from apeGmsh import apeGmsh
     from apeGmsh.opensees import apeSees
     from apeGmsh.opensees.emitter.live import LiveOpsEmitter
@@ -535,7 +539,7 @@ def test_live_mixed_concrete_damage_reads_both_headers(tmp_path: Path) -> None:
             p.sp(node=nid, dof=3, value=6.0e-4)
     mpco = str(tmp_path / "mixed.mpco")
     ops.recorder.MPCO(file=mpco, nodal_responses=("displacement",),
-                      elem_responses=("material.damage",))
+                      elem_responses=("material.damage", "material.stress"))
     ops.constraints.Transformation()
     ops.numberer.RCM()
     ops.system.UmfPack()     # LadrunoConcrete3D's tangent is unsymmetric
@@ -561,6 +565,10 @@ def test_live_mixed_concrete_damage_reads_both_headers(tmp_path: Path) -> None:
                        for gp in range(1, 9)])
         for eid, tag in fem_to_ops.items()
     }
+    stress_truth = {
+        eid: np.asarray(live.eleResponse(tag, "stresses"), float).reshape(8, 6)
+        for eid, tag in fem_to_ops.items()
+    }
     live.remove("recorders")
     assert len(truth) == 2
     assert all(t.shape == (8, 2) for t in truth.values())
@@ -569,9 +577,11 @@ def test_live_mixed_concrete_damage_reads_both_headers(tmp_path: Path) -> None:
 
     with h5py.File(mpco, "r") as f:
         stage = next(k for k in f if k.startswith("MODEL_STAGE"))
-        keys = sorted(f[f"{stage}/RESULTS/ON_ELEMENTS/material.damage"])
-    assert keys == [f"{ELE_TAG_LadrunoBrick}-LadrunoBrick[0:0:0]",
-                    f"{ELE_TAG_LadrunoBrick}-LadrunoBrick[0:0:1]"], keys
+        keys = {g: sorted(f[f"{stage}/RESULTS/ON_ELEMENTS/{g}"])
+                for g in ("material.damage", "material.stress")}
+    for got in keys.values():
+        assert got == [f"{ELE_TAG_LadrunoBrick}-LadrunoBrick[0:0:0]",
+                       f"{ELE_TAG_LadrunoBrick}-LadrunoBrick[0:0:1]"], keys
 
     with Results.from_mpco(mpco, fem=fem, model_h5=model_h5) as r:
         for k, comp in enumerate(("damage_tension", "damage_compression")):
@@ -582,4 +592,14 @@ def test_live_mixed_concrete_damage_reads_both_headers(tmp_path: Path) -> None:
             for eid, t in truth.items():
                 np.testing.assert_allclose(
                     last[index == eid], t[:, k], rtol=1e-10, atol=1e-14,
+                )
+        for k, comp in enumerate(("stress_xx", "stress_yy", "stress_zz",
+                                  "stress_xy", "stress_yz", "stress_xz")):
+            slab = r.elements.gauss.get(component=comp)
+            index = np.asarray(slab.element_index)
+            last = np.asarray(slab.values)[-1]
+            assert sorted(set(int(e) for e in index)) == sorted(stress_truth)
+            for eid, t in stress_truth.items():
+                np.testing.assert_allclose(
+                    last[index == eid], t[:, k], rtol=1e-10, atol=1e-6,
                 )
