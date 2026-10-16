@@ -1,6 +1,6 @@
 """Writers for the results module."""
 from ._native import NativeWriter
-from ._provenance import (
+from ..readers._ladruno_provenance import (
     ProvenanceStampRefused,
     StageNamesOmittedWarning,
     stamp_provenance,

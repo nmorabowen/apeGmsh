@@ -23,6 +23,10 @@ Attribute                   Value (scalar, variable-length UTF-8 string)
 Only lowercase names are written; UPPERCASE names in ``PROVENANCE`` are
 fork-reserved and are never touched. Nothing outside ``INFO/PROVENANCE``
 is written.
+
+It lives beside the ``.ladruno`` reader because it encodes the fork's
+format (the fork-token ratchet exempts ``readers/_ladruno*``);
+:mod:`apeGmsh.results.writers` re-exports the public names.
 """
 from __future__ import annotations
 
@@ -217,7 +221,7 @@ def _json(items: "list[str]") -> str:
 
 
 def _discover_parts(path: Path) -> list[Path]:
-    from ..readers._ladruno_multi import discover_partition_files
+    from ._ladruno_multi import discover_partition_files
 
     try:
         parts = discover_partition_files(path)
@@ -432,8 +436,8 @@ def _check_part_set(parts: list[Path]) -> None:
     at the same coordinates, and an element two parts both list must have
     the same connectivity.
     """
-    from ..readers._ladruno import LadrunoReader
-    from ..readers._ladruno_multi import LadrunoMultiPartitionReader
+    from ._ladruno import LadrunoReader
+    from ._ladruno_multi import LadrunoMultiPartitionReader
 
     # Each file on its own first: the set reader is built only from files
     # that open, so a refused part never leaves a half-built set reader.

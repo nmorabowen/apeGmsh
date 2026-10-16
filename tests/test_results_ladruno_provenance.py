@@ -53,7 +53,7 @@ from apeGmsh.results.writers import (
     StageNamesOmittedWarning,
     stamp_provenance,
 )
-from apeGmsh.results.writers._provenance import PROVENANCE_ATTRS
+from apeGmsh.results.readers._ladruno_provenance import PROVENANCE_ATTRS
 
 FIXTURES = Path(__file__).parent / "fixtures" / "ladruno"
 PROV = "INFO/PROVENANCE"
