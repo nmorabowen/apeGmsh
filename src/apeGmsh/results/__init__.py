@@ -42,12 +42,16 @@ from .readers import (
     TimeSlice,
 )
 from .Results import Results
+from .readers._ladruno_from_mpco import MPCOConversionRefused, convert_mpco
 from .demo import make_demo_results
 from .monitor import MonitorData, read_monitor, tail_monitor
 
 __all__ = [
     "Results",
     "make_demo_results",
+    # Explicit one-way MPCO -> .ladruno conversion (ADR 0122 D5)
+    "convert_mpco",
+    "MPCOConversionRefused",
     # Ladruno live-telemetry monitor sink (lightweight, not a Results)
     "read_monitor",
     "tail_monitor",
