@@ -137,3 +137,4 @@ An ADR over 40 KB has a decision summary of at most 60 lines in `summaries/` und
 | [0119](0119-ground-spring-bed.md) | Ground-spring bed: decoupled node sets on the session, a spring bed on the bridge | Proposed |
 | [0120](0120-multi-rank-composed-models.md) | Multi-rank composed models: routed element-less nodes, one-graph repartition, a hosted assembly | Proposed |
 | [0121](0121-charter-v2-b-with-amendments.md) | Charter v2: B with amendments, one engine policy, a mechanized freeze | Accepted |
+| [0122](0122-ladruno-canonical-results-format.md) | `.ladruno` is the canonical results format | Accepted |

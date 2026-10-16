@@ -603,3 +603,39 @@ the 0-based rank flip, below the neutral floor in every writer)". The
 rank flip remains the zone's last non-additive bump. ADR 0023's
 amendment of 2026-10-03 states 2.11.0 "at ratification", which was true
 when it was written and is superseded by this erratum.
+
+## Amendment — 2026-10-15 — The native results zone retires at ADR 0122's slice 10
+
+Append-only. This amendment takes effect with the acceptance of
+[ADR 0122](0122-ladruno-canonical-results-format.md), and lands in the PR
+that accepts it. D1–D10 and INV 1–12 stand as written until then.
+
+ADR 0122 makes the fork's `.ladruno` the canonical results format. Native
+`results.h5` gets no new writer, stays readable, and is deleted at ADR
+0122's slice 10, the human-gated native deletion, whose changelog announces
+the cutoff. That slice retires the native results zone together with its
+reader; it does not raise the zone's floor. When it lands, these clauses
+lapse, each only where it concerns the native results zone or the native
+results file:
+
+- D1's results row (floor 1.0.0);
+- D3's `RESULTS_SCHEMA_FLOOR` constant, and invariant 2 for the results
+  zone;
+- D7's app results floor ("results 1.0"), and with it the results entry
+  that invariant 4 compares;
+- D9, which opens the `/stages` of a native results file whose embedded
+  `/model` or `/opensees` is below its floor, together with the erratum's
+  restatement of D9 (E2, 2026-10-04) and E3's reading of D9's example;
+- invariant 1's results edge (the `X.0.0` lower edge as it applies to the
+  results zone);
+- invariant 3's results Floor row in the `architecture/h5-schema.md`
+  registry;
+- invariant 5's `NativeReader` clause, the composed results twin;
+- invariant 9's results-twin path (`NativeWriter.write_model` and
+  `NativeWriter.write_opensees_from`);
+- invariant 11, the results floor through `NativeReader`.
+
+Until slice 10 every one of them holds as written. The neutral, opensees,
+geometry and provenance zones keep their floors and every clause that
+governs them, and the section-document amendment of 2026-10-04 is not
+affected.
