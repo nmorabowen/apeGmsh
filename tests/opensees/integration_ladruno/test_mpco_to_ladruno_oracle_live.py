@@ -51,6 +51,8 @@ ELEMENTS = ("force", "localForce", "basicForce", "section.force",
             "section.fiber.stress")
 _STAGE = "MODEL_STAGE["
 PROGRAM_KINDS = ["static"]  # the one program stage, gravity
+#: The stage that holds the static steps and the modes.
+_MODAL_STAGE = frozenset({"MODEL_STAGE[1]"})
 # Values from one run are the same doubles in both files; the tolerance is
 # the fork's own element parity check's (element_parity_check.py).
 _ATOL, _RTOL = 1e-12, 1e-9
@@ -270,21 +272,21 @@ def _same(x: Any, y: Any) -> bool:
 
 def compare(
     fork: Path, converted: Path, lf: ModuleType, program_kinds: "list[str]",
-) -> "tuple[list[str], set[str], list[str]]":
-    """``(mismatches, lossy, kind_labels)`` between a fork file and a conversion.
+    *, kind_checked_elsewhere: "frozenset[str]" = frozenset(),
+) -> "tuple[list[str], set[str]]":
+    """``(mismatches, lossy)`` between a fork file and a conversion.
 
     ``lossy`` names, in ``PROVENANCE@unsupported`` vocabulary, what the
     fork file holds and the converted file lacks (``local_axes``,
-    ``quadrature:<group>``). ``kind_labels`` lists the stages whose
-    ``KIND`` differs only by the fork's precedence-1 label: a recorder that
-    asks for modes stamps ``eigen`` on the stage holding them (schema
-    section 2a), where the converter writes the program's kind, which must
-    then equal ``program_kinds``. INFO attributes compare except
-    :data:`INFO_EXCLUDED`; everything else must be equal.
+    ``quadrature:<group>``). Every stage's converted ``KIND`` must equal
+    the program's kind, and the fork's ``KIND`` must equal the converted
+    one, except on the fork stages named in ``kind_checked_elsewhere``,
+    whose fork-side equality a test of its own asserts (see
+    :func:`test_modal_stage_kind_equals_the_fork_kind`). INFO attributes
+    compare except :data:`INFO_EXCLUDED`; everything else must be equal.
     """
     problems: list[str] = []
     lossy: set[str] = set()
-    kind_labels: list[str] = []
     with lf.LadrunoReader(str(fork)) as ra, lf.LadrunoReader(str(converted)) as rb:
         fa, fb = ra.f, rb.f
         ia, ib = _attrs(fa["INFO"]), _attrs(fb["INFO"])
@@ -295,7 +297,7 @@ def compare(
         sa, sb = _stages(fa), _stages(fb)
         if len(sa) != len(sb):
             return ([f"stage count: fork {len(sa)}, converted {len(sb)}"],
-                    lossy, kind_labels)
+                    lossy)
         if len(program_kinds) != len(sb):
             problems.append(f"{len(program_kinds)} program kinds for "
                             f"{len(sb)} stages")
@@ -308,15 +310,12 @@ def compare(
                                     f"converted {ab.get(key)!r}")
             ka, kb = aa.get("KIND"), ab.get("KIND")
             want = program_kinds[k] if k < len(program_kinds) else None
-            on_nodes = f"{ga}/RESULTS/ON_NODES"
-            modal = on_nodes in fa and any(_modal(n) for n in fa[on_nodes])
-            if ka == kb == want:
-                pass
-            elif ka == "eigen" and modal and kb == want:
-                kind_labels.append(ga)
-            else:
+            if kb != want:
+                problems.append(f"{where} @KIND: converted {kb!r}, program "
+                                f"{want!r}")
+            if ga not in kind_checked_elsewhere and ka != kb:
                 problems.append(f"{where} @KIND: fork {ka!r}, converted "
-                                f"{kb!r}, program {want!r}")
+                                f"{kb!r}")
             ida, xa = ra.nodes(ga)
             idb, xb = rb.nodes(gb)
             problems += _arrays(ida, idb, f"{where} NODES/ID")
@@ -350,7 +349,7 @@ def compare(
                     problems += _arrays(sec_a[name].get(key), sec_b[name].get(key),
                                         f"{where} {name} {key}")
             problems += _results(fa, fb, ga, gb, lf, where)
-    return problems, lossy, kind_labels
+    return problems, lossy
 
 
 def _results(
@@ -445,12 +444,9 @@ def test_converted_file_passes_the_fork_validator(run, lf) -> None:
 
 
 def test_converted_file_equals_the_fork_file(run, lf) -> None:
-    problems, lossy, labels = compare(run["fork"], run["converted"], lf,
-                                      PROGRAM_KINDS)
+    problems, lossy = compare(run["fork"], run["converted"], lf,
+                              PROGRAM_KINDS, kind_checked_elsewhere=_MODAL_STAGE)
     assert problems == []
-    # The only KIND difference allowed: the fork may label the stage of a
-    # modal recorder eigen; the converted stage carries the program's kind.
-    assert labels == ["MODEL_STAGE[1]"], labels
     with h5py.File(run["converted"], "r") as f:
         unsupported = json.loads(f["INFO/PROVENANCE"].attrs["unsupported"])
         assert f["INFO/PROVENANCE"].attrs["writer"].startswith(
@@ -482,7 +478,8 @@ def test_a_swapped_column_fails_the_comparator(run, lf) -> None:
         values[..., [i, j]] = values[..., [j, i]]
         data[...] = values
     assert lf.validate(str(path)) == []  # shapes only: validate() passes it
-    problems, _, _ = compare(run["fork"], path, lf, PROGRAM_KINDS)
+    problems, _ = compare(run["fork"], path, lf, PROGRAM_KINDS,
+                          kind_checked_elsewhere=_MODAL_STAGE)
     assert any("element" in p for p in problems), problems
 
 
@@ -491,7 +488,8 @@ def test_a_dropped_bucket_fails_the_comparator(run, lf) -> None:
     with h5py.File(path, "r+") as f:
         del f[f"{_stages(f)[0]}/{_BUCKET}"]
     assert lf.validate(str(path)) == []  # shapes only: validate() passes it
-    problems, _, _ = compare(run["fork"], path, lf, PROGRAM_KINDS)
+    problems, _ = compare(run["fork"], path, lf, PROGRAM_KINDS,
+                          kind_checked_elsewhere=_MODAL_STAGE)
     assert any("buckets" in p for p in problems), problems
     assert any("keys differ" in p for p in problems), problems
 
@@ -501,7 +499,8 @@ def test_a_wrong_kind_fails_the_comparator(run, lf) -> None:
     with h5py.File(path, "r+") as f:
         f[_stages(f)[0]].attrs["KIND"] = np.array([b"transient"])
     assert lf.validate(str(path)) == []  # a known word: validate() passes it
-    problems, _, _ = compare(run["fork"], path, lf, PROGRAM_KINDS)
+    problems, _ = compare(run["fork"], path, lf, PROGRAM_KINDS,
+                          kind_checked_elsewhere=_MODAL_STAGE)
     assert any("@KIND" in p for p in problems), problems
 
 
@@ -509,5 +508,22 @@ def test_a_wrong_stage_time_fails_the_comparator(run, lf) -> None:
     path = _mutant(run, "time")
     with h5py.File(path, "r+") as f:
         f[_stages(f)[0]].attrs["TIME"] = np.array([99.0])
-    problems, _, _ = compare(run["fork"], path, lf, PROGRAM_KINDS)
+    problems, _ = compare(run["fork"], path, lf, PROGRAM_KINDS,
+                          kind_checked_elsewhere=_MODAL_STAGE)
     assert any("@TIME" in p for p in problems), problems
+
+
+@pytest.mark.xfail(
+    strict=True, raises=AssertionError,
+    reason="fork nmorabowen/OpenSees#2103: a modal channel stamps every "
+           "stage KIND=eigen",
+)
+def test_modal_stage_kind_equals_the_fork_kind(run) -> None:
+    """The gravity stage also holds the modes. The converter writes the
+    program's ``static``; the fork labels the stage ``eigen`` (#2103)."""
+    with h5py.File(run["fork"], "r") as a, h5py.File(run["converted"], "r") as b:
+        (stage,) = _MODAL_STAGE
+        ka, kb = _attr(a[stage], "KIND"), _attr(b[stage], "KIND")
+    assert ka == kb, (
+        f"{stage} (gravity + modes) KIND: fork {ka!r}, converted {kb!r} "
+        f"(program {PROGRAM_KINDS[0]!r})")
