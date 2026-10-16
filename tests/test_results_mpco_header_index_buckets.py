@@ -254,6 +254,82 @@ def test_gauss_stress_reads_plane_stress_and_plane_strain_headers(
         _expect_gauss(zz, parts=[(1, [3])], n_gp=4, col=3)
 
 
+def _two_quad_headers(path: Path, labels0: str, labels1: str) -> None:
+    rule = int(IntRule.Quad_GL_2)
+    with _file(path) as f:
+        for hdr, labels, ids in ((0, labels0, [1, 2]), (1, labels1, [3])):
+            _gauss_bucket(f, "material.stress",
+                          f"{ELE_TAG_FourNodeQuad}-FourNodeQuad[{rule}:0:{hdr}]",
+                          hdr=hdr, n_gp=4, labels=labels, ids=ids)
+
+
+def test_gauss_header_whose_labels_contradict_the_catalog_refuses(
+    tmp_path: Path,
+) -> None:
+    """The review of #2114: MPCO opens a same-width header only when the
+    labels differ, so ``foo,bar,baz`` at header 1 must never be read as
+    ``stress_xx, stress_yy, stress_xy``. The read refuses, naming it."""
+    path = tmp_path / "foo.mpco"
+    _two_quad_headers(path, "sigma11,sigma22,sigma12", "foo,bar,baz")
+    with _reader(path) as r:
+        (stage,) = r.stages()
+        with pytest.raises(ValueError,
+                           match=r"FourNodeQuad\[201:0:1\].*'foo'"):
+            r.read_gauss(stage.id, "stress_xx")
+
+
+def test_gauss_columns_read_by_their_meta_names(tmp_path: Path) -> None:
+    """A 4-column plane bucket labelled ``sigma11,sigma22,sigma33,sigma12``
+    (``sigma33`` third, not last): ``stress_zz`` is column 2 and
+    ``stress_xy`` column 3, by name, beside a header 0 in the fork's
+    ``stressPlaneStrain`` order (``sigma33`` last)."""
+    path = tmp_path / "zz_order.mpco"
+    _two_quad_headers(path, "sigma11,sigma22,sigma12,sigma33",
+                      "sigma11,sigma22,sigma33,sigma12")
+    with _reader(path) as r:
+        (stage,) = r.stages()
+        zz = r.read_gauss(stage.id, "stress_zz")
+        xy = r.read_gauss(stage.id, "stress_xy")
+    parts = [(0, [1, 2]), (1, [3])]
+    n = 4 * 2
+    np.testing.assert_array_equal(
+        np.asarray(zz.values)[:, :n],
+        np.array([[_value(0, t, e, gp, 3) for e in (0, 1) for gp in range(4)]
+                  for t in range(N_STEPS)]))
+    np.testing.assert_array_equal(
+        np.asarray(zz.values)[:, n:],
+        np.array([[_value(1, t, 0, gp, 2) for gp in range(4)]
+                  for t in range(N_STEPS)]))
+    np.testing.assert_array_equal(
+        np.asarray(xy.values)[:, n:],
+        np.array([[_value(1, t, 0, gp, 3) for gp in range(4)]
+                  for t in range(N_STEPS)]))
+    assert np.asarray(zz.element_index).tolist() == [
+        i for _, ids in parts for i in ids for _ in range(4)]
+
+
+def test_gauss_unnamed_header_reads_in_catalog_order(tmp_path: Path) -> None:
+    """LadrunoConcrete3D tags no names under ``material.stress``, so MPCO
+    writes ``C1..C6`` (dumped from fork build 79e0623670); beside an
+    ASDConcrete3D header 0 that names ``sigma11..sigma13`` it opens header
+    1, whose columns take RESPONSE_CATALOG's order."""
+    path = tmp_path / "unnamed_stress.mpco"
+    with _file(path) as f:
+        _gauss_bucket(f, "material.stress",
+                      f"{ELE_TAG_LadrunoBrick}-LadrunoBrick[0:0:0]", hdr=0,
+                      n_gp=8, labels="sigma11,sigma22,sigma33,sigma12,"
+                                     "sigma23,sigma13", ids=[7])
+        _gauss_bucket(f, "material.stress",
+                      f"{ELE_TAG_LadrunoBrick}-LadrunoBrick[0:0:1]", hdr=1,
+                      n_gp=8, labels="C1,C2,C3,C4,C5,C6", ids=[8])
+    with _reader(path) as r:
+        (stage,) = r.stages()
+        for col, comp in enumerate(("stress_xx", "stress_yy", "stress_zz",
+                                    "stress_xy", "stress_yz", "stress_xz")):
+            _expect_gauss(r.read_gauss(stage.id, comp),
+                          parts=[(0, [7]), (1, [8])], n_gp=8, col=col)
+
+
 # ---------------------------------------------------------------------------
 # Fibers
 # ---------------------------------------------------------------------------

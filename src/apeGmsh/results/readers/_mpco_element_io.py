@@ -344,6 +344,152 @@ def validate_bucket_meta(
 _GENERIC_COMP_RE = re.compile(r"^C\d+$")
 
 
+# =====================================================================
+# META column names → catalog canonicals
+# =====================================================================
+
+# The labels MPCO writes for a Gauss bucket's columns, by catalog canonical
+# (dumped from fork build 79e0623670 for FourNodeQuad, SSPquad, Brick,
+# BbarBrick, SSPbrick, LadrunoBrick, ShellMITC4, ASDShellQ4, ShellDKGQ,
+# ShellDKGT and ASDShellT3): continuum stress ``sigma11,sigma22,sigma33,
+# sigma12,sigma23,sigma13`` (plane: ``sigma11,sigma22,sigma12``, plus
+# ``sigma33`` last for ``stressPlaneStrain``); continuum strain ``eps11..``
+# (3-D) or ``eta11..`` (plane); shell resultants ``p11,p22,p12,m11,m22,m12,
+# q1,q2``; shell strains ``eps11,eps22,gamma12,theta11,theta22,theta33,
+# gamma13,gamma23``. A material that tags no names writes ``C1..Cn``
+# (LadrunoConcrete3D under ``material.stress``), and those columns take the
+# catalog's order. Lookup is case-insensitive.
+_XYZ = {"x": "1", "y": "2", "z": "3"}
+
+_SHELL_LABELS: dict[str, frozenset[str]] = {
+    "membrane_force_xx": frozenset({"p11"}),
+    "membrane_force_yy": frozenset({"p22"}),
+    "membrane_force_xy": frozenset({"p12", "p21"}),
+    "bending_moment_xx": frozenset({"m11"}),
+    "bending_moment_yy": frozenset({"m22"}),
+    "bending_moment_xy": frozenset({"m12", "m21"}),
+    "transverse_shear_xz": frozenset({"q1", "q13"}),
+    "transverse_shear_yz": frozenset({"q2", "q23"}),
+    "membrane_strain_xx": frozenset({"eps11"}),
+    "membrane_strain_yy": frozenset({"eps22"}),
+    "membrane_strain_xy": frozenset({"gamma12", "eps12"}),
+    "curvature_xx": frozenset({"theta11"}),
+    "curvature_yy": frozenset({"theta22"}),
+    "curvature_xy": frozenset({"theta33", "theta12"}),
+    "transverse_shear_strain_xz": frozenset({"gamma13"}),
+    "transverse_shear_strain_yz": frozenset({"gamma23"}),
+}
+
+_TENSOR_RE = re.compile(r"^(?P<root>stress|strain)_(?P<a>[xyz])(?P<b>[xyz])$")
+
+
+def _labels_for(canonical: str) -> frozenset[str]:
+    """Every META label (lower case) that names ``canonical``."""
+    if canonical in _SHELL_LABELS:
+        return _SHELL_LABELS[canonical]
+    m = _TENSOR_RE.match(canonical)
+    if m is None:
+        return frozenset({canonical.lower()})
+    a, b = m.group("a"), m.group("b")
+    ij = {_XYZ[a] + _XYZ[b], _XYZ[b] + _XYZ[a]}
+    ab = {a + b, b + a}
+    if m.group("root") == "stress":
+        stems_digit, stems_axis = ("sigma",), ("sigma_", "s", "stress_")
+    else:
+        stems_digit = ("eps", "eta", "epsilon") + (("gamma",) if a != b else ())
+        stems_axis = ("eps_", "epsilon_", "strain_") + (
+            ("gamma_",) if a != b else ())
+    return frozenset(
+        {s + d for s in stems_digit for d in ij}
+        | {s + x for s in stems_axis for x in ab}
+    )
+
+
+def _meta_column_labels(
+    bucket_grp: "h5py.Group", *, where: str,
+) -> list[tuple[str, ...]]:
+    """The column labels of each META block, in block order."""
+    meta = bucket_grp["META"]
+    if "COMPONENTS" not in meta:
+        raise ValueError(
+            f"MPCO bucket {where!r}: META carries no COMPONENTS, so the "
+            f"names of its columns are unknown. Refusing to read it by "
+            f"position."
+        )
+    raw = np.asarray(meta["COMPONENTS"][...]).flatten()
+    if raw.size != 1:
+        raise ValueError(
+            f"MPCO bucket {where!r}: META/COMPONENTS holds {raw.size} "
+            f"entries; expected 1."
+        )
+    text = raw[0].decode() if isinstance(raw[0], bytes) else str(raw[0])
+    return [
+        tuple(s.strip() for s in seg.rpartition(".")[2].split(",") if s.strip())
+        for seg in text.split(";") if seg
+    ]
+
+
+def resolve_gauss_component_names(
+    bucket_grp: "h5py.Group", layout: ResponseLayout, *, where: str,
+) -> ResponseLayout:
+    """``layout`` with its component names in the bucket's own META order.
+
+    Each column label must name exactly one of the catalog's components
+    (``sigma33`` → ``stress_zz`` wherever it sits). MPCO's unnamed
+    ``C1..Cn`` columns keep the catalog order, which RESPONSE_CATALOG
+    defines for them.
+
+    Raises
+    ------
+    ValueError
+        When a label names none (or several) of the catalog's components,
+        when two labels name the same one, when the blocks disagree, or
+        when META carries no column names: the bucket's columns would be
+        read under names its own META contradicts.
+    """
+    blocks = _meta_column_labels(bucket_grp, where=where)
+    expected = list(layout.component_layout)
+    if len(blocks) != layout.n_gauss_points or any(
+        b != blocks[0] for b in blocks[1:]
+    ):
+        raise ValueError(
+            f"MPCO bucket {where!r}: META names {len(blocks)} Gauss blocks "
+            f"with differing columns; the catalog layout {expected} needs "
+            f"{layout.n_gauss_points} blocks with one column list."
+        )
+    labels = blocks[0]
+    if len(labels) != layout.n_components_per_gp:
+        raise ValueError(
+            f"MPCO bucket {where!r}: META names {len(labels)} columns per "
+            f"Gauss point {list(labels)}; the catalog layout has "
+            f"{layout.n_components_per_gp} {expected}."
+        )
+    if all(_GENERIC_COMP_RE.match(lab) for lab in labels) and [
+        int(lab[1:]) for lab in labels
+    ] == list(range(1, len(labels) + 1)):
+        return layout
+    names: list[str] = []
+    for lab in labels:
+        hits = [c for c in expected if lab.lower() in _labels_for(c)]
+        if len(hits) != 1:
+            raise ValueError(
+                f"MPCO bucket {where!r}: META column {lab!r} (of "
+                f"{list(labels)}) names {len(hits)} of the catalog "
+                f"components {expected} for class tag {layout.class_tag}. "
+                f"Refusing to read its columns under names its META "
+                f"contradicts."
+            )
+        names.append(hits[0])
+    if len(set(names)) != len(names):
+        raise ValueError(
+            f"MPCO bucket {where!r}: META columns {list(labels)} name the "
+            f"catalog components {names}, one of them twice."
+        )
+    if tuple(names) == layout.component_layout:
+        return layout
+    return replace(layout, component_layout=tuple(names))
+
+
 def is_unnamed_element_block(
     bucket_grp: "h5py.Group", layout: ResponseLayout,
 ) -> bool:
@@ -432,6 +578,10 @@ def read_bucket_slab(
                 f"recorder, which stores each element's own Gauss points "
                 f"and reads it correctly."
             ) from exc
+        layout = resolve_gauss_component_names(
+            bucket_grp, layout,
+            where=f"{bucket.mpco_group_name}/{bucket.bracket_key}",
+        )
 
     # Element IDs in row order.
     all_ids = np.asarray(bucket_grp["ID"][...]).flatten().astype(np.int64)
