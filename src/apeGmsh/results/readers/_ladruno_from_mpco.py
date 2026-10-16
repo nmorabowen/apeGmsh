@@ -230,7 +230,6 @@ def _plan(
             f"({[p.name for p in sources]}). Every part of the run must be "
             "present."
         )
-    _open_with_reader(sources)
     stage_kinds: Optional[list[str]] = None
     unsupported: set[str] = set()
     for source in sources:
@@ -244,6 +243,9 @@ def _plan(
                 "from one run."
             )
     assert stage_kinds is not None
+    # Last, the readers' own checks: modal records, and on a set the
+    # stage signatures and time vectors of every part.
+    _open_with_reader(sources)
     return _Plan(sources, targets, staging, stage_kinds, unsupported)
 
 
@@ -372,7 +374,12 @@ def _scan_part(
     """Check one source part and return its stage kinds."""
     import h5py
 
-    with h5py.File(source, "r") as h5:
+    try:
+        h5 = h5py.File(source, "r")
+    except OSError as e:
+        raise MPCOConversionRefused(
+            f"{source} cannot be read as HDF5 ({e}).") from e
+    with h5:
         info = h5["INFO"] if "INFO" in h5 else None
         if info is None or not isinstance(info, h5py.Group):
             raise MPCOConversionRefused(f"{source} has no INFO group.")
@@ -574,17 +581,20 @@ def _convert_part(
 ) -> None:
     import h5py
 
-    with h5py.File(source, "r") as src, h5py.File(out, "w-") as dst:
+    with h5py.File(source, "r") as src, h5py.File(out, "w-", track_order=True) as dst:
+        # Groups keep their creation order, as the recorder writes them:
+        # a reader that takes the first ON_NODES group naming a component
+        # (REACTION_FORCE before RAYLEIGH_FORCE) must see the source order.
+        info = dst.create_group("INFO", track_order=True)
         precisions: set[str] = set()
-        stages = _stage_names(src)
-        for name, kind in zip(stages, kinds):
-            _write_stage(src[name], dst.create_group(name), kind, precisions,
-                         where=f"{source.name}:{name}")
+        for name, kind in zip(_stage_names(src), kinds):
+            _write_stage(src[name], dst.create_group(name, track_order=True),
+                         kind, precisions, where=f"{source.name}:{name}")
         if len(precisions) > 1:
             raise MPCOConversionRefused(
                 f"{source} stores result data in mixed precisions "
                 f"{sorted(precisions)}.")
-        _write_info(src["INFO"], dst.create_group("INFO"),
+        _write_info(src["INFO"], info,
                     precision=precisions.pop() if precisions else "f64",
                     part=part, n_parts=n_parts)
 
@@ -602,7 +612,7 @@ def _write_info(
     dst.attrs["PARTITIONED"] = _i(1 if n_parts > 1 else 0)
     dst.attrs["PARTITION_ID"] = _i(part)
     dst.attrs["NUM_PARTITIONS"] = _i(n_parts)
-    dst.create_group("PROVENANCE")
+    dst.create_group("PROVENANCE", track_order=True)
 
 
 def _write_stage(
@@ -613,15 +623,15 @@ def _write_stage(
         dst.attrs[name] = value
     dst.attrs["KIND"] = _s(kind)
     model = src["MODEL"]
-    out_model = dst.create_group("MODEL")
+    out_model = dst.create_group("MODEL", track_order=True)
     if "NODES" in model:
         src.file.copy(model["NODES"], out_model, "NODES")
-    elements = out_model.create_group("ELEMENTS")
+    elements = out_model.create_group("ELEMENTS", track_order=True)
     if "ELEMENTS" in model:
         for gname, dset in model["ELEMENTS"].items():
-            _write_element_group(gname, dset, elements.create_group(gname),
+            _write_element_group(gname, dset, elements.create_group(gname, track_order=True),
                                  where=f"{where}/MODEL/ELEMENTS/{gname}")
-    sections = out_model.create_group("SECTION_ASSIGNMENTS")
+    sections = out_model.create_group("SECTION_ASSIGNMENTS", track_order=True)
     if "SECTION_ASSIGNMENTS" in model:
         for sname, sgrp in model["SECTION_ASSIGNMENTS"].items():
             src.file.copy(sgrp, sections, sname)
@@ -630,14 +640,14 @@ def _write_stage(
     if "RESULTS" not in src:
         return
     results = src["RESULTS"]
-    out_results = dst.create_group("RESULTS")
+    out_results = dst.create_group("RESULTS", track_order=True)
     if "ON_NODES" in results:
-        on_nodes = out_results.create_group("ON_NODES")
+        on_nodes = out_results.create_group("ON_NODES", track_order=True)
         for rname, rgrp in results["ON_NODES"].items():
             _write_node_result(rgrp, on_nodes, rname, precisions,
                                where=f"{where}/ON_NODES/{rname}")
     if "ON_ELEMENTS" in results:
-        on_el = out_results.create_group("ON_ELEMENTS")
+        on_el = out_results.create_group("ON_ELEMENTS", track_order=True)
         for token, tgrp in results["ON_ELEMENTS"].items():
             _write_token(tgrp, on_el, token, precisions,
                          where=f"{where}/ON_ELEMENTS/{token}")
@@ -659,7 +669,7 @@ def _write_element_group(
     if basis.gp_param is not None:
         dst.attrs["NUM_GP"] = _i(basis.gp_param.shape[0])
         dst.attrs["NDIR"] = _i(basis.gp_param.shape[1])
-        quad = dst.create_group("QUADRATURE")
+        quad = dst.create_group("QUADRATURE", track_order=True)
         quad.create_dataset("GP_PARAM", data=basis.gp_param)
 
 
@@ -682,7 +692,7 @@ def _write_node_result(
         # formats, so the group is copied as it is.
         src.file.copy(src, parent, name)
         return
-    dst = parent.create_group(name)
+    dst = parent.create_group(name, track_order=True)
     for aname, value in src.attrs.items():
         dst.attrs[aname] = value
     src.file.copy(src["ID"], dst, "ID")
@@ -699,7 +709,7 @@ def _write_token(
         raise MPCOConversionRefused(f"{where} is not a result group.")
     if not len(src):
         return  # an empty token group: the fork writes none
-    dst = parent.create_group(token)
+    dst = parent.create_group(token, track_order=True)
     for bname, bucket in src.items():
         bwhere = f"{where}/{bname}"
         if not isinstance(bucket, h5py.Group):
@@ -708,7 +718,7 @@ def _write_token(
         for required in ("META", "ID"):
             if required not in bucket:
                 raise MPCOConversionRefused(f"{bwhere} has no {required}.")
-        out = dst.create_group(bname)
+        out = dst.create_group(bname, track_order=True)
         for aname, value in src.attrs.items():
             out.attrs[aname] = value
         for aname, value in bucket.attrs.items():
@@ -789,7 +799,7 @@ def _write_column_map(
         path, names = _split_block(block, int(ncomp[i]), where)
         levels[i] = path[-1]
         lines.append(",".join(names))
-    cmap = bucket.create_group("COLUMN_MAP")
+    cmap = bucket.create_group("COLUMN_MAP", track_order=True)
 
     def col(values: np.ndarray) -> np.ndarray:
         return np.asarray(values, dtype=np.int32).reshape(k, 1)
