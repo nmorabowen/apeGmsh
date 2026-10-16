@@ -162,14 +162,19 @@ def test_mpco_shellmitc3_warns_through_the_public_reader(
         results._reader.close()
 
 
-def test_mpco_header_index_above_zero_warns(tmp_path: Path) -> None:
+def test_mpco_header_index_above_zero_is_read(tmp_path: Path) -> None:
+    """A header-1 bucket (MPCO's split by layered-section META) is a
+    readable bucket, discovered in silence (#2093 item 2, #2033); the
+    values read is pinned in tests/test_results_mpco_header_index_buckets.py."""
     path = _mpco_with_bucket(
         tmp_path / "hdr.mpco", class_name="ASDShellQ4",
         class_tag=ELE_TAG_ASDShellQ4, rule=IntRule.Quad_GL_2, header=1,
     )
-    with pytest.warns(LayerBucketUnreadWarning,
-                      match=r"'ASDShellQ4' bucket has header index 1"):
-        assert _discover(path) == []
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", LayerBucketUnreadWarning)
+        (bucket,) = _discover(path)
+    assert bucket.elem_key.class_name == "ASDShellQ4"
+    assert bucket.elem_key.header_idx == 1
 
 
 def test_mpco_rule_other_than_the_surface_rule_warns(tmp_path: Path) -> None:
