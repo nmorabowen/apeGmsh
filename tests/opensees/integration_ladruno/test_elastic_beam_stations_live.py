@@ -37,11 +37,9 @@ The closed forms (load factor ``lam``):
   (``P L / 4`` at the midspan node); mirrored for x >= L/2, ``Vy = -P/2``.
 
 Every route applies :data:`SIGN` since #2009, and MPCO reads a 2-D
-``localForce`` bucket's ``V``/``M`` since #2010, so every station test is a
-plain pass. One pin stays ``xfail(strict=True)``, asserting the right value:
-
-* #2011: a ``basicForce``-only ``.ladruno`` file reads basic-system end
-  moments as stations.
+``localForce`` bucket's ``V``/``M`` since #2010, and a ``basicForce``-only
+``.ladruno`` file reads its end moments in the same convention since #2011,
+so every station test is a plain pass.
 """
 from __future__ import annotations
 
@@ -346,18 +344,14 @@ def test_stations_equal_local_force_and_closed_form(
                f"{kind} {case} {comp} of element {eid} vs closed form")
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError,
-                   reason="#2011: basicForce-only .ladruno reads basic-system "
-                          "end moments as stations (and #2009's sign)")
 @pytest.mark.parametrize("comp", ["bending_moment_y", "bending_moment_z"])
-def test_basic_force_only_moments_are_absent_or_section_convention(
+def test_basic_force_only_moments_are_section_convention(
     basic_only: dict[str, Any], comp: str,
 ) -> None:
-    """With only ``basicForce`` recorded, a moment station is either absent
-    (dropped with a named warning) or in the section convention."""
+    """With only ``basicForce`` recorded, the end moments read as stations
+    in the section convention (#2011): listed, and equal to statics."""
     ls = basic_only["results"]["ladruno"].elements.line_stations
-    if comp not in ls.available_components():
-        return
+    assert comp in ls.available_components()
     for eid in basic_only["eids"]:
         _close(_station_values(basic_only["results"]["ladruno"], comp, eid),
                _closed("cantilever3d", comp, eid, basic_only["ends"]),

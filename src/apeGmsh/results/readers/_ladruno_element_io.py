@@ -1165,11 +1165,14 @@ def line_station_available(on_elements: "h5py.Group") -> set[str]:
     component reliably, and a read of its elements raises the same reason.
     A ``localForce`` bucket whose ``COLUMN_MAP`` does not parse (its names
     do not cover its DATA columns) lists nothing and warns, naming it.
+    A ``basicForce`` component that :func:`_basic_force_refusal` refuses
+    is left out with a warning naming the bucket and the component.
     """
     out: set[str] = set()
     for token in on_elements:
         for key in on_elements[token]:
             bucket = on_elements[token][key]
+            element_stations: dict[str, list[int]] = {}
             try:
                 blocks = parse_blocks(bucket)
             except (KeyError, ValueError) as exc:
@@ -1199,7 +1202,15 @@ def line_station_available(on_elements: "h5py.Group") -> set[str]:
                     else:
                         bc = _station_canonical(name, token, alias_2d)
                         if bc is not None:
-                            out.add(bc[0])
+                            element_stations.setdefault(bc[0], []).append(
+                                bc[1] if bc[1] is not None else 1)
+            for comp, stations in element_stations.items():
+                if token == "basicForce":
+                    reason = _basic_force_refusal(key, comp, sorted(stations))
+                    if reason is not None:
+                        warnings.warn(reason, UserWarning, stacklevel=2)
+                        continue
+                out.add(comp)
     return out
 
 
@@ -1216,6 +1227,38 @@ _LOCAL_FORCE_TOKEN_RE = re.compile(r"^(?P<base>[A-Za-z]+)_?(?P<station>\d+)$")
 
 #: The 3-D shear, torsion and moment bases a 2-D spelling must not mix with.
 _LOCAL_FORCE_3D_BASES = frozenset({"Vy", "Vz", "T", "My", "Mz"})
+
+#: ``basicForce``'s two-station components: the basic-system end moments
+#: ``Mz_1,Mz_2`` and ``My_1,My_2`` of a 3-D ``N,Mz_1,Mz_2,My_1,My_2,T``
+#: bucket (#2011). Every fork class that names them (ElasticBeam3d,
+#: ModElasticBeam3d, Pipe, ForceBeamColumn3d, ForceBeamColumn3dThermal,
+#: MixedBeamColumn3d, MixedBeamColumnAsym3d at fork c744d6e70) reports its
+#: ``localForce`` end moments as these same values, member loads included
+#: (``Mz_i = q1``, ``Mz_j = q2``, ``My_i = q3``, ``My_j = q4``), so they take
+#: the ``localForce`` station signs unchanged: ``[-M_1, +M_2]``.
+_BASIC_FORCE_END_MOMENTS = frozenset({"bending_moment_y", "bending_moment_z"})
+
+
+def _basic_force_refusal(
+    key: str, component: str, stations: list[int],
+) -> Optional[str]:
+    """Why a ``basicForce`` component reads as no line station, or ``None``.
+
+    A single-station component (``N``, ``T``) and an end-moment pair at
+    stations ``[1, 2]`` read. Any other multi-station component is refused:
+    no basic-to-section identity is known for it.
+    """
+    if len(stations) == 1:
+        return None
+    if component in _BASIC_FORCE_END_MOMENTS and stations == [1, 2]:
+        return None
+    return (
+        f"basicForce bucket {key!r} (element class "
+        f"{_class_name(key) or '<unparsed>'!r}) names {component!r} at "
+        f"stations {stations}; only the end moments "
+        f"{sorted(_BASIC_FORCE_END_MOMENTS)} at stations [1, 2] map to the "
+        f"section convention. Its {component!r} line stations are left out."
+    )
 
 
 def _file_spatial_dim(group: "h5py.Group") -> Optional[int]:
@@ -1442,6 +1485,12 @@ def _read_element_stations(
     none reliably. An element with section stations keeps them, since the
     section source ranks first (:func:`read_line_station_slab`), and
     reads of other elements pass the bucket over.
+
+    A ``basicForce`` end-moment pair (``Mz_1,Mz_2`` / ``My_1,My_2``) takes
+    the ``localForce`` station signs, so it reads ``[-M_1, +M_2]``, the
+    stations ``localForce`` gives the same element (#2011). A component
+    :func:`_basic_force_refusal` refuses reads as no stations and warns,
+    naming the bucket and the component.
     """
     try:
         alias_2d = _local_force_2d_gate(bucket, blocks, token)
@@ -1474,6 +1523,12 @@ def _read_element_stations(
     rows, sel_ids = sel
     stations = sorted(station_to_col)
     n_st = len(stations)
+    if token == "basicForce":
+        key = bucket.name.rsplit("/", 1)[-1]
+        reason = _basic_force_refusal(key, component, stations)
+        if reason is not None:
+            warnings.warn(reason, UserWarning, stacklevel=2)
+            return None
     T = int(np.size(t_idx))
     E = sel_ids.size
     # (T, E, n_st), read as a hyperslab of the station columns only.
@@ -1482,8 +1537,9 @@ def _read_element_stations(
         np.array([station_to_col[st] for st in stations]),
     )
     # localForce end forces → the force-beam ``section force`` signs,
-    # the one table every route applies.
-    if token == "localForce" and n_st == 2:
+    # the one table every route applies. basicForce's end-moment pair is
+    # the localForce end moments (:data:`_BASIC_FORCE_END_MOMENTS`).
+    if token in ("localForce", "basicForce") and n_st == 2:
         out *= local_force_station_signs((component,))[:, 0]
     return (
         out.reshape(T, E * n_st),

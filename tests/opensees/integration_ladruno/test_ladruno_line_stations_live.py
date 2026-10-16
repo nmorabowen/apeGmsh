@@ -293,7 +293,7 @@ def basic_only_3d(
             bf[e].append(np.asarray(o.eleResponse(fem_to_ops[e], "basicForce")))
     emitter.ops.remove("recorders")
     return {
-        "family": family,
+        "family": family, "path": path, "fem": fem, "model_h5": model_h5,
         "results": Results.from_ladruno(path, fem=fem, model_h5=model_h5),
         "eids": eids, "ends": ends,
         "lf": {e: np.stack(v) for e, v in lf.items()},     # (T, 12)
@@ -353,3 +353,39 @@ def test_basic_force_3d_axial_and_torsion_are_live_basic_force(
         np.testing.assert_allclose(
             values[:, rows[0]], np.array([0.5, 1.0]) * _closed_3d(comp, 0.0),
             rtol=RTOL, err_msg=f"{sol['family']} {comp} vs statics")
+
+
+def test_basic_force_two_station_non_moment_is_refused_by_name(
+    basic_only_3d: dict[str, Any], tmp_path: Any,
+) -> None:
+    """A ``basicForce`` two-station component other than an end moment has
+    no basic-to-section identity: it lists and reads no stations, and both
+    warn naming the bucket and the component. The real file's ``Mz_1,Mz_2``
+    are relabelled ``Vy_1,Vy_2`` to make one."""
+    sol = basic_only_3d
+    path = str(tmp_path / "relabelled.ladruno")
+    with open(sol["path"], "rb") as src, open(path, "wb") as dst:
+        dst.write(src.read())
+    relabelled = 0
+    with h5py.File(path, "r+") as f:
+        def _relabel(name: str, obj: Any) -> None:
+            nonlocal relabelled
+            if name.endswith("COLUMN_MAP") and "/basicForce/" in name:
+                raw = obj.attrs["COMP_NAMES"]
+                text = raw.decode() if isinstance(raw, bytes) else str(raw)
+                obj.attrs["COMP_NAMES"] = (text.replace("Mz_1", "Vy_1")
+                                           .replace("Mz_2", "Vy_2"))
+                relabelled += 1
+        f.visititems(_relabel)
+    assert relabelled
+    match = r"basicForce bucket .*'shear_y' at stations \[1, 2\]"
+    with pytest.warns(UserWarning, match=match):
+        r = Results.from_ladruno(path, fem=sol["fem"],
+                                 model_h5=sol["model_h5"])
+        ls = r.elements.line_stations
+        available = ls.available_components()
+    assert "shear_y" not in available
+    assert "bending_moment_y" in available       # the untouched pair reads
+    with pytest.warns(UserWarning, match=match):
+        slab = ls.get(component="shear_y", ids=sol["eids"])
+    assert np.asarray(slab.element_index).size == 0
