@@ -276,3 +276,22 @@ points.
   [ADR 0112](0112-files-are-the-model-and-a-read-only-app.md),
   [ADR 0113](0113-compatibility-is-a-floor-per-zone.md),
   [ADR 0121](0121-charter-v2-b-with-amendments.md).
+
+## Erratum (2026-10-16)
+
+D5 says the MPCO to `.ladruno` converter copies "bucket for bucket" and
+that the two formats "share the bucket keys". That holds for the result
+buckets only: their names, tokens and IDs, and their values, are copied
+verbatim. The structure around them is transformed to the fork layout.
+
+INFO datasets become attributes. Each flat connectivity dataset under
+MODEL/ELEMENTS becomes a group holding CONNECTIVITY, the BASIS attributes,
+and a QUADRATURE subgroup where the rule is tabulated. Per-step node and
+element results are restacked into DATA[T×n×c] plus STEP and TIME, with
+the token attributes moved onto each bucket. META becomes COLUMN_MAP plus
+COMP_NAMES. SECTION_ASSIGNMENTS gains @KIND, and every stage gets a KIND.
+Modal groups are copied as they are. LOCAL_AXES is dropped and listed in
+`unsupported`.
+
+Slice 6 (#2120, PR #2121) implements the converter this way. No decision
+changes, and the D5 text above stands as written.
