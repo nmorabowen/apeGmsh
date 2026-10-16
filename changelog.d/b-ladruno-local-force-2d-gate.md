@@ -9,8 +9,11 @@
   the bucket's DATA holds exactly the tagged columns, no 3-D base appears
   beside them, the file is 2-D, and the class is no `...3d` class, the gate
   MPCO applies. Any other such bucket lists no line-station component and
-  warns, and a read of its elements raises a `ValueError` naming the bucket
-  and its class. Reads of other elements go on.
+  warns. A read of its elements raises a `ValueError` naming the bucket and
+  its class, for each element that has no `section.force` stations for that
+  component. Section stations still rank first, and reads of other elements
+  go on. A `localForce` bucket whose names do not cover its DATA columns now
+  warns by name when the line-station components are listed.
 - **The underscore-less spelling reads.** DispBeamColumn2d and
   LadrunoDispBeamColumn2d tag their `localForce` `N1,V1,M1,N2,V2,M2`. The
   reader skipped those names, so these elements had no line stations. Behind
