@@ -7,10 +7,14 @@ stage names and kinds onto a reader's non-mode stages and calls
 stage list, written once as ``.mpco`` and once as ``.ladruno``, must come
 out with the same ids, names, kinds and aliases, and the same refusals.
 
-One structural difference is pinned here: a ``.ladruno`` stage carries a
-``KIND`` attribute and an ``.mpco`` stage does not.  ``KIND`` is the
-recorder's ``-kind`` option (default ``static``, ``eigen`` beside modes),
-so the program kind replaces it, exactly as it replaces MPCO's default.
+One structural difference is pinned here: a ``.ladruno`` stage records
+its ``KIND`` and an ``.mpco`` stage does not.  On the pinned fork the
+``KIND`` is the kind the stage ran (fork #986), so it is evidence: where
+it disagrees with the program kind the pairing is misaligned, and per
+#2079 Q7 ("map program stage names from ``/opensees`` when the count and
+kinds match; otherwise keep the file's names and warn") nothing is
+renamed and :class:`StageKindMismatchWarning` lists the conflicts.  The
+program kind fills in only where a stage records no ``KIND``.
 """
 from __future__ import annotations
 
@@ -18,12 +22,17 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
+import warnings
+
 import h5py
 import numpy as np
 import pytest
 
 from apeGmsh.results._bind import _bind_stage_names
-from apeGmsh.results.readers._ladruno import LadrunoReader
+from apeGmsh.results.readers._ladruno import (
+    LadrunoReader,
+    StageKindMismatchWarning,
+)
 from apeGmsh.results.readers._ladruno_multi import (
     LadrunoMultiPartitionReader,
     StageOrderMatchWarning,
@@ -32,6 +41,8 @@ from apeGmsh.results.readers._mpco import MPCOReader
 from apeGmsh.results.readers._mpco_multi import MPCOMultiPartitionReader
 
 _IDS = np.array([1, 2], dtype=np.int32)
+_NAMES = ["gravity", "push", "shake"]
+_KINDS = ["static", "static", "transient"]
 
 
 def _write(
@@ -42,10 +53,13 @@ def _write(
 
     ``mode_in`` (an index into ``stamps``) adds one recorded mode to that
     stage, which every reader lists as its own ``kind="mode"`` stage.
-    ``kinds`` sets each ``.ladruno`` stage's ``KIND`` attribute; ``part``
-    is ``(partition_id, num_partitions)``.
+    ``kinds`` sets each ``.ladruno`` stage's ``KIND`` attribute (``None``
+    writes none); by default it is ``_KINDS``, with ``eigen`` on the stage
+    that holds the mode.  ``part`` is ``(partition_id, num_partitions)``.
     """
-    kinds = kinds or ["static"] * len(stamps)
+    if kinds is None:
+        kinds = ["eigen" if k == mode_in else _KINDS[k]
+                 for k in range(len(stamps))]
     with h5py.File(path, "w") as f:
         info = f.create_group("INFO")
         if fmt == "ladruno":
@@ -58,7 +72,7 @@ def _write(
                 info.attrs["NUM_PARTITIONS"] = part[1]
         for k, stamp in enumerate(stamps):
             stage = f.create_group(f"MODEL_STAGE[{stamp}]")
-            if fmt == "ladruno":
+            if fmt == "ladruno" and kinds[k] is not None:
                 stage.attrs["KIND"] = np.bytes_(kinds[k].encode())
             nodes = stage.create_group("MODEL/NODES")
             nodes.create_dataset("ID", data=_IDS.reshape(-1, 1))
@@ -101,15 +115,11 @@ def _program(*stages: "tuple[str, str]") -> Any:
     return SimpleNamespace(stages=lambda: list(records))
 
 
-_NAMES = ["gravity", "push", "shake"]
-_KINDS = ["static", "static", "transient"]
-
-
 # =====================================================================
 # Single file
 # =====================================================================
 
-@pytest.mark.parametrize("mode_in", [None, 0, 2])
+@pytest.mark.parametrize("mode_in", [None, 0, 1])
 def test_single_file_matches_mpco(tmp_path: Path, mode_in) -> None:
     """Same stages, same names, kinds and aliases; modes are untouched."""
     with MPCOReader(_write(tmp_path / "r.mpco", "mpco",
@@ -131,15 +141,66 @@ def test_single_file_matches_mpco(tmp_path: Path, mode_in) -> None:
     assert all(v[3] == () for v in modes)
 
 
-def test_program_kind_replaces_the_recorded_kind(tmp_path: Path) -> None:
-    """``KIND`` is the recorder option, not the analysis: the program wins."""
-    path = _write(tmp_path / "r.ladruno", "ladruno",
-                  kinds=["transient", "eigen", "static"])
+_FILE_NAMES = ["MODEL_STAGE[1]", "MODEL_STAGE[2]", "MODEL_STAGE[3]"]
+
+
+def test_agreeing_kinds_rename_silently(tmp_path: Path) -> None:
+    with LadrunoReader(_write(tmp_path / "r.ladruno", "ladruno")) as lad:
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", StageKindMismatchWarning)
+            lad.attach_stage_names(_NAMES, _KINDS)
+        assert [(s.name, s.kind) for s in lad.stages()] == list(
+            zip(_NAMES, _KINDS))
+
+
+def test_misordered_pairing_warns_and_keeps_the_file_names(
+    tmp_path: Path,
+) -> None:
+    """Program stages in the wrong order against the recorded KINDs."""
+    with LadrunoReader(_write(tmp_path / "r.ladruno", "ladruno")) as lad:
+        with pytest.warns(StageKindMismatchWarning,
+                          match=r"MODEL_STAGE\[1\] records KIND 'static' "
+                                r"but program stage 'shake' is 'transient'"):
+            lad.attach_stage_names(_NAMES[::-1], _KINDS[::-1])
+        assert [(s.name, s.kind, s.aliases) for s in lad.stages()] == [
+            (n, k, ()) for n, k in zip(_FILE_NAMES, _KINDS)]
+
+
+def test_mode_host_against_a_transient_program_stage_warns(
+    tmp_path: Path,
+) -> None:
+    """A stage that recorded modes (``KIND=eigen``) is not a transient one."""
+    path = _write(tmp_path / "r.ladruno", "ladruno", mode_in=0)
     with LadrunoReader(path) as lad:
-        assert [s.kind for s in lad.stages()] == [
-            "transient", "static", "static"]
-        lad.attach_stage_names(_NAMES, _KINDS)
-        assert [s.kind for s in lad.stages()] == _KINDS
+        before = _view(lad)
+        with pytest.warns(StageKindMismatchWarning,
+                          match=r"MODEL_STAGE\[1\] records KIND 'eigen' but "
+                                r"program stage 'shake' is 'transient'"):
+            lad.attach_stage_names(["shake", "push", "gravity"],
+                                   ["transient", "static", "static"])
+        assert _view(lad) == before
+
+
+def test_unrecognised_kind_is_a_conflict(tmp_path: Path) -> None:
+    path = _write(tmp_path / "r.ladruno", "ladruno",
+                  kinds=["static", "buckling", "transient"])
+    with LadrunoReader(path) as lad:
+        with pytest.warns(StageKindMismatchWarning, match="'buckling'"):
+            lad.attach_stage_names(_NAMES, _KINDS)
+        assert [s.name for s in lad.stages()] == _FILE_NAMES
+
+
+def test_program_kind_fills_a_stage_without_kind(tmp_path: Path) -> None:
+    """Older builds wrote no KIND: the program kind fills in, no warning."""
+    path = _write(tmp_path / "r.ladruno", "ladruno",
+                  kinds=[None, "static", None])
+    with LadrunoReader(path) as lad:
+        assert [s.kind for s in lad.stages()] == ["static"] * 3
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", StageKindMismatchWarning)
+            lad.attach_stage_names(_NAMES, _KINDS)
+        assert [(s.name, s.kind) for s in lad.stages()] == list(
+            zip(_NAMES, _KINDS))
 
 
 def test_stage_ids_survive_and_reads_still_key_on_them(tmp_path: Path) -> None:
@@ -231,3 +292,18 @@ def test_parts_stamped_differently_take_one_name(tmp_path: Path) -> None:
             zip(_NAMES, _KINDS))
         assert [s.aliases for s in lad._readers[1].stages()] == [
             ("MODEL_STAGE[1]",), ("MODEL_STAGE[4]",), ("MODEL_STAGE[5]",)]
+
+
+def test_one_part_in_conflict_renames_no_part(tmp_path: Path) -> None:
+    """The KIND verdict is taken once, over every part."""
+    paths = _parts(tmp_path, "ladruno")
+    with h5py.File(paths[1], "r+") as f:   # part 1 is the only witness
+        f["MODEL_STAGE[3]"].attrs["KIND"] = np.bytes_(b"static")
+    with h5py.File(paths[0], "r+") as f:   # part 0 records no KIND there
+        del f["MODEL_STAGE[3]"].attrs["KIND"]
+    with LadrunoMultiPartitionReader(paths) as lad:
+        with pytest.warns(StageKindMismatchWarning) as rec:
+            lad.attach_stage_names(_NAMES, _KINDS)
+        assert len(rec) == 1 and "r.part-1.ladruno" in str(rec[0].message)
+        for child in lad._readers:
+            assert [s.name for s in child.stages()] == _FILE_NAMES

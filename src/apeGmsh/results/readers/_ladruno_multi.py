@@ -33,7 +33,7 @@ from .._slabs import (
     NodeSlab,
     SpringSlab,
 )
-from ._ladruno import LadrunoReader
+from ._ladruno import LadrunoReader, warn_stage_kind_conflicts
 from ._ladruno_element_io import MissingElementResults
 from ._mpco_multi import (
     _concat_element_slabs,
@@ -143,13 +143,20 @@ class LadrunoMultiPartitionReader:
         reader (#2100), as :meth:`MPCOMultiPartitionReader.attach_stage_names`
         does.
 
-        :meth:`stages` answers from the parts, and every child keeps its
-        own stage list, so each is renamed.  The construction-time
-        pairing already proved the parts list the same number of host
-        stages; parts that stamped one stage differently all take the
-        same program name, and each keeps its own ``MODEL_STAGE[<k>]``
-        as an alias.
+        The ``KIND`` check (:meth:`LadrunoReader.stage_kind_conflicts`)
+        is decided once over every part, so the parts never disagree on
+        whether they were renamed: one conflict anywhere warns
+        :class:`StageKindMismatchWarning` and renames no part (#2079 Q7).
+        Parts that stamped one stage differently all take the same
+        program name, and each keeps its own ``MODEL_STAGE[<k>]`` alias.
         """
+        conflicts = [
+            c for r in self._readers
+            for c in r.stage_kind_conflicts(names, kinds)
+        ]
+        if conflicts:
+            warn_stage_kind_conflicts(conflicts)
+            return
         for r in self._readers:
             r.attach_stage_names(names, kinds)
 
