@@ -16,10 +16,18 @@ does not reopen them.
 **Amends** [ADR 0112](0112-files-are-the-model-and-a-read-only-app.md) D1
 (the results artifact) and clarifies
 [ADR 0020](0020-results-carries-opensees-model.md) INV-3. **Supersedes in
-part, at slice 10:** ADR 0020's "Composed file" section, because the native
-`results.h5` that carries the embedded `/opensees/` zone is deleted then.
-Both ADRs carry a dated amendment, added in the PR that accepts this one, as
-[ADR 0121](0121-charter-v2-b-with-amendments.md) D5 requires.
+part, at slice 10,** when native `results.h5` is deleted:
+
+- ADR 0020's "Composed file" section, the native `results.h5` that carries
+  the embedded `/opensees/` zone;
+- [ADR 0113](0113-compatibility-is-a-floor-per-zone.md) D1's results row
+  (floor 1.0.0), D7's app results floor ("results 1.0", with invariant
+  4's results entry), D9 (native results files whose embedded `/model` is
+  below its floor), invariant 5's `NativeReader` clause (a composed results
+  twin opens) and invariant 11 (the results floor through `NativeReader`).
+
+All three ADRs carry a dated amendment, added in the PR that accepts this
+one, as [ADR 0121](0121-charter-v2-b-with-amendments.md) D5 requires.
 
 **Program slice:** #2085 (link X, slice 0 of the `.ladruno`-canonical chain,
 tracking card #2079; chain issue #1199).
@@ -67,13 +75,16 @@ today.
 The fork creates `INFO/PROVENANCE` empty. After the recorder closes,
 apeGmsh writes attributes into it, and nothing else into the file. It may
 do so only once the fork doc PR (slice 1, chain F, merged by the
-maintainer) blesses consumer writes after close (ruling 2).
+maintainer) blesses consumer writes after close (ruling 2). The contract
+below is the one recorded on #2085 (comment 6205346123), aligned with that
+fork doc PR.
 
 The case of an attribute's name says who owns it. Lowercase attributes in
 `INFO/PROVENANCE` are consumer-owned, which means apeGmsh. UPPERCASE names
-stay reserved for the fork, for the optional, later `-provenance`. The
-fork's `MODEL_HASH` slot, which the fork never wrote, is withdrawn.
-`RESULTS_HASH` stays reserved for the fork.
+stay reserved for the fork, for the optional, later `-provenance`. The fork
+owns the layout, so it is the slice-1 fork doc PR that sets this case rule
+and withdraws the fork's `MODEL_HASH` slot. `RESULTS_HASH` stays reserved
+for the fork.
 
 Every attribute is a scalar, variable-length UTF-8 string attribute. The
 attributes are:
@@ -157,8 +168,8 @@ so converting first would regress them.
 | 2 | B | #2071 (merged as #2080) and #1995, the layered-shell read | — |
 | 3 | X | `stamp_provenance()`, and stage-name binding in `from_ladruno` | `lock:Results.py`; slice 1 merged |
 | 4 | V | Viewer `reader/ladruno.ts` behind a `GENERATOR` + `FORMAT_VERSION` gate: nodes, modes, pairing, one file, a node oracle that runs the real `pairResults`. This restores a viewer route for fork runs | — |
-| 5 | X | The #1950 resolver: the fork records `.ladruno` and stamps it at `results()`; stock records MPCO and converts | `lock:spec/_emit.py` |
-| 6 | X | The MPCO → `.ladruno` converter and its conformance oracle (D8) | — |
+| 5 | X | The #1950 resolver: the fork records `.ladruno` and stamps it at `results()`; stock records MPCO and converts | `lock:spec/_emit.py`; slice 2 (#1995), slice 6 |
+| 6 | X | The MPCO → `.ladruno` converter and its conformance oracle (D8) | slice 2 |
 | 7 | X | DomainCapture deletion (#1767), after the parity row | human gate; slices 2–6 |
 | 8 | V | Viewer Gauss points via `COLUMN_MAP`, `part-N` sets, and a measurement row for the deflate and chunking cost | — |
 | 9 | X | The Python `.ladruno` writer: eigen and parallel-modal first, then footfall and the demo | — |
@@ -207,9 +218,9 @@ The briefs differed on four points, and T's picks stand as ratified:
 `.ladruno`; stock records MPCO or `.out` and reaches `.ladruno` through a
 converter that refuses an existing target and names what it lost. The
 oracle runs on `live-fork`, which stays non-required. No slice adds to a
-registry ADR 0121 D4 freezes; a slice that finds it must stops for an
-Accepted ADR first. The amendments to ADRs 0112 and 0020 land in the PR
-that accepts this ADR, as D5 there requires.
+registry ADR 0121 D4 freezes; a slice that would have to grow one stops
+until an Accepted ADR allows it. The amendments to ADRs 0112, 0020 and
+0113 land in the PR that accepts this ADR, as D5 there requires.
 
 **ADR 0112.** D1's results artifact becomes `<stem>.ladruno` (its
 amendment). D2 holds: the viewer reads `.ladruno` against the fork's format
@@ -220,10 +231,12 @@ copy of the model zone, so it is neither the Composed-file pattern nor the
 derived copy INV-3 forbids (its amendment). The Composed-file section
 retires with native `results.h5` at slice 10.
 
-**ADR 0113.** Its floor table has a results row for the native results
-zone. That row lasts as long as the native reader: slice 10 retires the
-zone together with its reader rather than raising its floor, and this ADR
-changes nothing in ADR 0113 before then.
+**ADR 0113.** Its guarantees for the native results zone (the D1 results
+row, D7's app results floor and invariant 4's results entry, D9, invariant
+5's `NativeReader` clause and invariant 11) hold unchanged until slice 10. Slice 10 retires the zone
+together with its reader rather than raising its floor, and those clauses
+lapse with it (its amendment). The neutral, opensees, geometry and
+provenance floors, and every other clause of ADR 0113, are not touched.
 
 ## Alternatives rejected
 
@@ -247,7 +260,8 @@ points.
 
 - #2079, the tracking card: the reconciled design (comment 6205108402), the
   ratification (6205128487) and the five rulings (6205160429, 6205168893,
-  6205177638, 6205183430, 6205193494). This slice: #2085. Chain issue
+  6205177638, 6205183430, 6205193494). This slice: #2085, whose comment
+  6205346123 records the `INFO/PROVENANCE` contract of D3. Chain issue
   #1199.
 - The briefs: T's notes, `ladruno_canonical/brief_opus.md` and
   `ladruno_canonical/brief_fable.md`.
