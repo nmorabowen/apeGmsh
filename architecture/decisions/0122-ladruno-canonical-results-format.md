@@ -1,6 +1,6 @@
 # ADR 0122 — `.ladruno` is the canonical results format
 
-**Status:** Proposed (2026-10-15)
+**Status:** Accepted (2026-10-15; accepted by the maintainer on #2086)
 
 **Owner:** nmora
 

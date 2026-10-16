@@ -1,4 +1,4 @@
-### DOCS — ADR 0122 (proposed): `.ladruno` is the canonical results format, with ADR 0112 D1 and ADR 0020 amendments (X, #2085)
+### DOCS — ADR 0122 (accepted): `.ladruno` is the canonical results format, with ADR 0112 D1 and ADR 0020 amendments (X, #2085)
 
 ADR 0122 records the design the maintainer ratified on #2079. apeGmshViewer
 and `Results.from_ladruno` read the fork's `.ladruno` directly. Native
