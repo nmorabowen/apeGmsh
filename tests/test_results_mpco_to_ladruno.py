@@ -475,6 +475,56 @@ def test_groups_take_their_quadrature_from_the_source_or_the_catalog(
         "quadrature:5-ElasticBeam3d[1:0]"]
 
 
+def test_meta_becomes_the_column_map(fx, tmp_path) -> None:
+    """``META`` -> ``COLUMN_MAP`` the way the fork recorder derives it from
+    the same header: ``LEVELS`` is the deepest path code of a block,
+    ``SECTION_TAG`` / ``FIBER_ID`` are -1, ``COMP_NAMES`` one line per block."""
+    src = tmp_path / "meta.mpco"
+    shutil.copy(fx["frame_src"], src)
+    blocks = "0.1.4.s11,s22;0.1.2.3.4.sigma11"
+    with h5py.File(src, "r+") as f:
+        steps = f["MODEL_STAGE[1]/RESULTS/ON_NODES/DISPLACEMENT/DATA"]
+        tok = f["MODEL_STAGE[1]/RESULTS/ON_ELEMENTS"].create_group("odd")
+        tok.attrs["DISPLAY_NAME"] = np.array([b"odd"])
+        b = tok.create_group("31-FourNodeQuad[201:0:0]")
+        b.attrs["NUM_COLUMNS"] = np.array([5], dtype=np.int32)
+        meta = b.create_group("META")
+        meta["MULTIPLICITY"] = np.array([[1], [3]], dtype=np.int32)
+        meta["GAUSS_IDS"] = np.array([[0], [1]], dtype=np.int32)
+        meta["NUM_COMPONENTS"] = np.array([[2], [1]], dtype=np.int32)
+        meta["COMPONENTS"] = np.array([blocks.encode()])
+        b["ID"] = np.array([[90]], dtype=np.int32)
+        n_steps = len(steps)
+        for name, step in steps.items():
+            ds = b.create_dataset(f"DATA/{name}", data=np.full((1, 5), 7.0))
+            ds.attrs["STEP"], ds.attrs["TIME"] = step.attrs["STEP"], step.attrs["TIME"]
+    (dst,) = _convert(src, tmp_path / "out.ladruno", fx["frame"])
+    with h5py.File(dst, "r") as d:
+        out = d["MODEL_STAGE[1]/RESULTS/ON_ELEMENTS/odd/31-FourNodeQuad[201:0:0]"]
+        cmap = out["COLUMN_MAP"]
+        got = {k: cmap[k][...].ravel().tolist() for k in cmap}
+        assert got == {"LEVELS": [4, 4], "GAUSS_ID": [0, 1],
+                       "SECTION_TAG": [-1, -1], "FIBER_ID": [-1, -1],
+                       "NUM_COMP": [2, 1], "MULTIPLICITY": [1, 3]}
+        assert all(cmap[k].shape == (2, 1) for k in cmap)
+        assert cmap.attrs["COMP_NAMES"][0] == b"s11,s22\nsigma11"
+        assert out.attrs["DISPLAY_NAME"][0] == b"odd"
+        assert int(out.attrs["NUM_COLUMNS"][0]) == 5
+        assert out["DATA"].shape == (n_steps, 1, 5)
+
+
+def test_groups_keep_the_source_order(fx, tmp_path) -> None:
+    """A reader takes the first ``ON_NODES`` group naming a component
+    (``REACTION_FORCE`` before ``RAYLEIGH_FORCE``): the order is information."""
+    (dst,) = _convert(fx["frame_src"], tmp_path / "out.ladruno", fx["frame"])
+    with h5py.File(dst, "r") as d, h5py.File(fx["frame_src"], "r") as s:
+        for stage in ("MODEL_STAGE[1]", "MODEL_STAGE[2]"):
+            for path in (f"{stage}/RESULTS/ON_NODES",
+                         f"{stage}/RESULTS/ON_ELEMENTS"):
+                kept = [n for n in s[path] if len(s[path][n])]
+                assert list(d[path]) == kept, path
+
+
 def test_overwrite_replaces_the_target(fx, tmp_path) -> None:
     dst = tmp_path / "out.ladruno"
     dst.write_bytes(b"old")

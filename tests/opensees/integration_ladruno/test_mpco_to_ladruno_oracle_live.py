@@ -53,6 +53,11 @@ _STAGE = "MODEL_STAGE["
 # Values from one run are the same doubles in both files; the tolerance is
 # the fork's own element parity check's (element_parity_check.py).
 _ATOL, _RTOL = 1e-12, 1e-9
+# The attributes both recorders write on a result (MPCO's own set; the fork
+# may add PARTITION_REDUCTION, which an .mpco never carries).
+_NODE_ATTRS = ("COMPONENTS", "DATA_TYPE", "DESCRIPTION", "DIMENSION",
+               "DISPLAY_NAME", "TYPE")
+_BUCKET_ATTRS = ("DATA_TYPE", "DISPLAY_NAME", "NUM_COLUMNS", "TYPE")
 
 
 def _portal_fem() -> Any:
@@ -316,6 +321,25 @@ def _results(
             problems.append(f"{where} {label}: the fork file normalizes to "
                             "nothing; the oracle would compare no data")
         problems += _close(va, vb, f"{where} {label}")
+    # Self-description: result attributes, and each bucket's COLUMN_MAP.
+    for name in (n for n in names_a if n in names_b):
+        for key in _NODE_ATTRS:
+            if _attr(fa[f"{na}/{name}"], key) != _attr(fb[f"{nb}/{name}"], key):
+                problems.append(f"{where} ON_NODES/{name} @{key}")
+    for token, bucket in (k for k in buckets_a if k in set(buckets_b)):
+        pa, pb = f"{ea}/{token}/{bucket}", f"{eb}/{token}/{bucket}"
+        for key in _BUCKET_ATTRS:
+            if _attr(fa[pa], key) != _attr(fb[pb], key):
+                problems.append(f"{where} {token}/{bucket} @{key}")
+        ca, cb = fa[f"{pa}/COLUMN_MAP"], fb[f"{pb}/COLUMN_MAP"]
+        if sorted(ca) != sorted(cb):
+            problems.append(f"{where} {token}/{bucket} COLUMN_MAP children")
+            continue
+        for key in ca:
+            problems += _arrays(ca[key], cb[key],
+                                f"{where} {token}/{bucket} COLUMN_MAP/{key}")
+        if _attr(ca, "COMP_NAMES") != _attr(cb, "COMP_NAMES"):
+            problems.append(f"{where} {token}/{bucket} @COMP_NAMES")
     # STEP / TIME axes of every step series.
     for base_a, base_b, items in (
             (na, nb, [(n,) for n in names_a if not _modal(n)]),
