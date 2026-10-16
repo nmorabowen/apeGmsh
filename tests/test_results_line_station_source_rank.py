@@ -58,6 +58,9 @@ LAMBDA = np.array([0.5, 1.0])          # two load steps
 SPAN = {11: (0.0, 2.0), 12: (2.0, 4.0), 13: (0.0, 2.0), 14: (2.0, 4.0),
         21: (0.0, 2.0), 22: (2.0, 4.0)}
 MOMENTS = ("bending_moment_z", "bending_moment_y")
+#: The card's statics at the fixed end and the tip, full load.
+CARD_ENDS = {"bending_moment_z": (8600.0, 600.0),
+             "bending_moment_y": (-11500.0, 500.0)}
 
 #: The format's warning for a bucket it leaves out of a line-station read.
 SKIP_WARNING: dict[str, type[Warning]] = {
@@ -73,11 +76,6 @@ def _section(comp: str, x: float) -> float:
         "bending_moment_z": MZ + FY * (L - x),
         "bending_moment_y": MY - FZ * (L - x),
     }[comp]
-
-
-def test_the_oracle_is_the_card_statics() -> None:
-    assert [_section("bending_moment_z", x) for x in (0.0, L)] == [8600, 600]
-    assert [_section("bending_moment_y", x) for x in (0.0, L)] == [-11500, 500]
 
 
 # ---------------------------------------------------------------------
@@ -341,8 +339,8 @@ def test_basic_force_beside_global_force_is_the_one_source(
     for eid in (11, 12):
         _assert_statics(slab, comp, eid, np.array([-1.0, 1.0]))
     full = slab.values[-1]
-    assert full[0] == pytest.approx(_section(comp, 0.0), rel=RTOL)
-    assert full[-1] == pytest.approx(_section(comp, L), rel=RTOL)
+    np.testing.assert_allclose([full[0], full[-1]], CARD_ENDS[comp],
+                               rtol=RTOL)
 
 
 @pytest.mark.parametrize("comp", MOMENTS)
