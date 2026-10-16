@@ -288,3 +288,24 @@ and Opus @ medium from V2.
 - Agent stills after P4. The owner expects headless capture from the
   Electron app to work; V1 tries it on the spike, and ADR 0094's
   renderer is not deleted until it does.
+
+## Amendment (2026-10-15): the results artifact is `<stem>.ladruno`
+
+This amendment takes effect with the acceptance of
+[ADR 0122](0122-ladruno-canonical-results-format.md), and lands in the PR
+that accepts it. The decision above is unchanged; this section only says
+what D1's results row now means.
+
+The results artifact that pairs with `<stem>.h5` becomes `<stem>.ladruno`,
+the fork's recorder format. It pairs through a stamp that apeGmsh writes
+into the file's `INFO/PROVENANCE` group after the recorder closes:
+`model_hash` and `fem_hash`, copied from `<stem>.h5` `/meta/lineage`, plus
+`stage_names`, `element_index_space`, `unsupported` and `writer`. There is
+no sidecar. A stock `.mpco` stays beside its converted `.ladruno`, is never
+modified, and still opens through `Results.from_mpco`.
+
+The native `<stem>.results.h5` pairing stays readable until ADR 0122's
+slice 10 deletes native results; no new native file is written in the
+meantime. D2 holds: the app reads `.ladruno` against the fork's format
+documents and its `GENERATOR` and `FORMAT_VERSION` gate, and imports
+nothing from apeGmsh.

@@ -238,3 +238,27 @@ removed.
   approach replaces procedural-bind.
 - User memory `project_mpco_no_vecxz` — the MPCO seam this ADR closes
   via `from_mpco(model_h5=)`.
+
+## Amendment (2026-10-15): a PROVENANCE stamp is not a derived copy
+
+This amendment takes effect with the acceptance of
+[ADR 0122](0122-ladruno-canonical-results-format.md), and lands in the PR
+that accepts it. The decision above is unchanged.
+
+Under ADR 0122, apeGmsh writes six attributes into a `.ladruno` file's
+`INFO/PROVENANCE` group after the recorder closes. The stamp names the
+model by its `model_hash` and `fem_hash`; it does not copy the model zone.
+No `/opensees/` or `/model` group goes into the `.ladruno`, so the stamp is
+neither the Composed-file pattern nor the derived copy that INV-3 rules
+out.
+
+INV-3 holds, and ADR 0122 relies on it. No reader converts on open, and
+nothing writes a derived copy at load time. `Results.from_mpco` stays a
+reader. MPCO reaches `.ladruno` only through an explicit converter that
+writes a new file beside the `.mpco` and never modifies it; when a
+resolver-driven stock run converts at its end, that is a write after the
+analysis, not a step of loading.
+
+The Composed-file section above describes native `results.h5`, which ADR
+0122 freezes. It stays readable until ADR 0122's slice 10 deletes native
+results, and that deletion supersedes the section.
