@@ -195,16 +195,23 @@ class LadrunoReader:
 
         self._path = Path(path)
         self._h5: "h5py.File" = h5py.File(self._path, "r")
-        self._validate_identity()
-        self._stage_cache: Optional[list[StageInfo]] = None
-        self._stage_to_grp: dict[str, str] = {}
-        # Mode stage id -> (host MODEL_STAGE group, its ModeEntry).
-        # Mode stages are not MODEL_STAGE groups, so they stay out of
-        # ``_stage_to_grp`` (which lists the host stages, ``stage_<i>``).
-        self._mode_refs: dict[str, tuple[str, _mnodal.ModeEntry]] = {}
-        self._fem_cache: "Optional[FEMData] | _Sentinel" = _SENTINEL
-        self._tag_map: "Optional[ElementTagTranslator]" = None
-        self._rotation_mask = _mnodal.RotationMask(self._path.name)
+        # A file that fails the identity check (or any setup after the
+        # open, or an interrupt) is closed before the original error
+        # propagates, so it stays unlocked while the traceback lives.
+        try:
+            self._validate_identity()
+            self._stage_cache: Optional[list[StageInfo]] = None
+            self._stage_to_grp: dict[str, str] = {}
+            # Mode stage id -> (host MODEL_STAGE group, its ModeEntry).
+            # Mode stages are not MODEL_STAGE groups, so they stay out of
+            # ``_stage_to_grp`` (which lists the host stages, ``stage_<i>``).
+            self._mode_refs: dict[str, tuple[str, _mnodal.ModeEntry]] = {}
+            self._fem_cache: "Optional[FEMData] | _Sentinel" = _SENTINEL
+            self._tag_map: "Optional[ElementTagTranslator]" = None
+            self._rotation_mask = _mnodal.RotationMask(self._path.name)
+        except BaseException:
+            self.close()
+            raise
 
     # -- identity / lifecycle ------------------------------------------
 
