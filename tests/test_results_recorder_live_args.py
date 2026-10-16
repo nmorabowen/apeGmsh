@@ -492,6 +492,71 @@ def test_mpco_gauss_truss_axial_force_raises(emit) -> None:
 
 
 # =====================================================================
+# Per-material strain (Tri31) and damage on the MPCO emit (#1952, G5)
+# =====================================================================
+#
+# Oracle: Tri31 has no element-level ``strains`` branch, so ``-E strains``
+# writes no bucket for it; MPCO's ``material.strain`` does (live, fork
+# 79e062367: ``33-Tri31[100:0:0]``, 1 GP x 3 ``eta11,eta22,eta12``), and the
+# reader walks ``material.strain`` for every ``strains`` canonical. Every
+# other class and token is unchanged. The live value oracle is
+# tests/opensees/integration_ladruno/test_mpco_per_material_live.py.
+
+#: The classes whose strain goes per material, spelled out (not read from
+#: PER_MATERIAL_STRAIN_CLASSES, the table under test).
+_PER_MATERIAL_STRAIN = ("Tri31",)
+
+
+def _plain_token(canonical: str) -> str:
+    (token,) = collect_mpco_tokens([_gauss((canonical,))])[1]
+    return token
+
+
+@pytest.mark.parametrize("canonical", _GAUSS_VOCABULARY)
+@pytest.mark.parametrize("cls", _PER_MATERIAL_STRAIN + ("FourNodeQuad", None))
+def test_mpco_per_material_strain_class_records_material_strain(
+    canonical: str, cls,
+) -> None:
+    plain = _plain_token(canonical)
+    want = ("material.strain"
+            if cls in _PER_MATERIAL_STRAIN and plain == "strains" else plain)
+    assert collect_mpco_tokens([_gauss((canonical,), cls)]) == ([], [want])
+
+
+def test_mpco_per_material_strain_is_not_vacuous() -> None:
+    strain = [c for c in _GAUSS_VOCABULARY if _plain_token(c) == "strains"]
+    assert {"strain_xx", "strain_yy", "strain_xy", "von_mises_strain"} <= set(
+        strain)
+    assert "material.strain" in mpco_gauss_group_aliases("strains")
+
+
+@pytest.mark.parametrize("emit", [mpco_ops_args, emit_mpco_tcl, emit_mpco_python])
+def test_mpco_args_name_material_damage_and_material_strain(emit) -> None:
+    """The card's done-when: one emit carries both per-material tokens."""
+    recs = [
+        _gauss(("damage_tension", "damage_compression"), "Brick", name="d"),
+        _gauss(("strain_xx", "strain_yy", "strain_xy"), "Tri31", name="t"),
+        _gauss(("strain_xx",), "FourNodeQuad", name="q"),
+    ]
+    toks = ("material.damage", "material.strain", "strains")
+    out = emit(recs)
+    if emit is mpco_ops_args:
+        assert out == ("mpco", "run.mpco", "-E", *toks)
+    elif emit is emit_mpco_tcl:
+        assert out == "recorder mpco run.mpco -E " + " ".join(toks)
+    else:
+        assert out == "ops.recorder('mpco', 'run.mpco', '-E', {})".format(
+            ", ".join(repr(t) for t in toks))
+
+
+def test_mpco_tri31_stress_keeps_element_level_stresses() -> None:
+    """Tri31 answers element-level ``stresses``; only strain moves."""
+    assert collect_mpco_tokens(
+        [_gauss(("stress_xx", "stress_yy", "stress_xy"), "Tri31")]
+    ) == ([], ["stresses"])
+
+
+# =====================================================================
 # Line stations: section forces record, section deformations refuse (#2025)
 # =====================================================================
 #
