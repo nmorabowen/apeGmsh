@@ -85,6 +85,23 @@ def _assert_released(path: Path) -> None:
     path.unlink()
 
 
+def _raised_while_opening(exc: BaseException) -> list[object]:
+    """The ``path`` argument of every frame ``exc`` passed through.
+
+    The caller's own frame is skipped: reading ``f_locals`` on a running
+    frame snapshots its locals into a dict that outlives ``del``, which
+    would keep the facade alive past the test's ``gc.collect()``.
+    """
+    caller = sys._getframe(1)
+    out = []
+    tb = exc.__traceback__
+    while tb is not None:
+        if tb.tb_frame is not caller:
+            out.append(tb.tb_frame.f_locals.get("path"))
+        tb = tb.tb_next
+    return out
+
+
 @pytest.fixture
 def unraisable(monkeypatch: pytest.MonkeyPatch) -> list[BaseException]:
     """Collect every exception that reaches ``sys.unraisablehook``."""
@@ -109,7 +126,7 @@ def test_corrupt_middle_part_surfaces_and_releases_part_0(
     # part, with nothing chained on top of it by the cleanup.
     assert info.type is OSError
     assert info.value.__context__ is None
-    assert parts[1] in [e.locals.get("path") for e in info.traceback]
+    assert parts[1] in _raised_while_opening(info.value)
     # Part 0 is closed while the error (and its traceback) is still held.
     _assert_released(parts[0])
 
