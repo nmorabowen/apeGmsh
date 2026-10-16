@@ -723,6 +723,11 @@ class MPCOReader:
         # ── localForce path (stiffness beams: ElasticBeam2d/3d) ──────
         out.update(_mlocal.available_components_in_local_force(on_elements))
 
+        # ── basicForce end moments (rank 2, #2109). globalForce and every
+        # other token list nothing: they are never a station source. ──
+        for bf in _mlocal.discover_basic_force_buckets(on_elements):
+            out.update(bf.layout)
+
         return sorted(out)
 
     def _springs_available_components(self, mpco_name: str) -> list[str]:
@@ -978,13 +983,14 @@ class MPCOReader:
         if on_elements is None or model_elements is None:
             return _empty_line_station_slab(component, time, t_idx)
 
-        # Read per-bucket slabs and stitch on the station axis. The
-        # ``section.force`` path takes precedence: when both buckets
-        # exist for the same element (DispBeamColumn3d writes both —
-        # ``section.force`` is the IP-level detail, ``localForce`` is
-        # just an end-force summary), only the section.force stations
-        # are kept. ``localForce`` then fills in elements that have no
-        # section.force coverage (ElasticBeam2d/3d).
+        # Read per-bucket slabs and stitch on the station axis. Each
+        # element takes one source, the first by rank (#2109):
+        # ``section.force`` (DispBeamColumn3d writes it beside
+        # ``localForce``, the IP-level detail beside an end-force
+        # summary), then ``localForce`` (ElasticBeam2d/3d), then the
+        # ``basicForce`` end moments. ``globalForce`` and every other
+        # token are never a source; a requested element they alone name
+        # is warned about by bucket.
 
         element_ids, index_to_fem = self._element_read_translation(element_ids)
 
@@ -1013,13 +1019,41 @@ class MPCOReader:
                 station_coord_parts.append(station_coord)
                 section_force_eids.update(int(e) for e in element_index)
 
-        # ── localForce path (stiffness beams), skipping any element
-        # already covered by section.force. ─────────────────────────
-        local_buckets = _mlocal.discover_local_force_buckets(on_elements)
-        if local_buckets:
-            lf_grp = on_elements["localForce"]
-            for lf in local_buckets:
-                bucket_grp = lf_grp[lf.bracket_key]
+        # ── localForce (rank 1), then basicForce end moments (rank 2),
+        # each skipping every element a higher rank covers (#2109). ──
+        covered = section_force_eids
+        skipped: list[tuple[str, str]] = []
+        for src_token, ranked in (
+            ("localForce", _mlocal.discover_local_force_buckets(on_elements)),
+            ("basicForce", _mlocal.discover_basic_force_buckets(on_elements)),
+        ):
+            served: set[int] = set()
+            for lf in ranked:
+                bucket_grp = on_elements[src_token][lf.bracket_key]
+                if lf.refusal is not None:
+                    # A refused layout names no component reliably. It
+                    # blocks only requested elements no section source
+                    # covers (#2098 item 1, as #2095 on .ladruno).
+                    if "ID" not in bucket_grp:
+                        raise ValueError(lf.refusal)
+                    ids = np.asarray(
+                        bucket_grp["ID"][...]).flatten().astype(np.int64)
+                    if element_ids is not None:
+                        ids = ids[np.isin(ids, np.asarray(
+                            element_ids, dtype=np.int64))]
+                    bare = ids[~np.isin(ids, list(covered))]
+                    if bare.size:
+                        raise ValueError(
+                            f"{lf.refusal} (requested element(s) "
+                            f"{bare[:10].tolist()} are in this bucket, with "
+                            f"no section stations for {component!r})"
+                        )
+                    continue
+                for comp, reason in lf.refused:
+                    if comp == component:
+                        skipped.append(
+                            (f"ON_ELEMENTS/{src_token}/{lf.bracket_key}",
+                             reason))
                 result = _mlocal.read_local_force_bucket_slab(
                     bucket_grp, lf, component,
                     t_idx=t_idx, element_ids=element_ids,
@@ -1027,20 +1061,37 @@ class MPCOReader:
                 if result is None:
                     continue
                 values, element_index, station_coord = result
-                if section_force_eids:
-                    keep_mask = np.array(
-                        [int(e) not in section_force_eids
-                         for e in element_index],
-                        dtype=bool,
-                    )
-                    if not keep_mask.any():
-                        continue
-                    values = values[:, keep_mask]
-                    element_index = element_index[keep_mask]
-                    station_coord = station_coord[keep_mask]
-                values_parts.append(values)
-                element_index_parts.append(element_index)
-                station_coord_parts.append(station_coord)
+                keep_mask = ~np.isin(element_index, list(covered))
+                if not keep_mask.any():
+                    continue
+                values_parts.append(values[:, keep_mask])
+                element_index_parts.append(element_index[keep_mask])
+                station_coord_parts.append(station_coord[keep_mask])
+                served.update(int(e) for e in element_index[keep_mask])
+            covered = covered | served
+
+        # ── Never a source: globalForce and every other token (#2109).
+        # Name the ones that were a requested element's only candidate.
+        unranked: list[tuple[str, str]] = []
+        for where, bucket_grp in _mlocal.unranked_station_buckets(
+            on_elements, component,
+        ):
+            ids = np.asarray(bucket_grp["ID"][...]).flatten().astype(np.int64)
+            if element_ids is not None:
+                ids = ids[np.isin(ids, np.asarray(element_ids, dtype=np.int64))]
+            bare = np.unique(ids[~np.isin(ids, list(covered))])
+            if bare.size:
+                unranked.append((f"ON_ELEMENTS/{where}", (
+                    f"names {component!r} for element(s) "
+                    f"{bare[:10].tolist()}, but {where.split('/', 1)[0]!r} "
+                    f"is never a line-station source (section.force, then "
+                    f"localForce, then basicForce are; globalForce end "
+                    f"forces are global, not station values)"
+                )))
+        _warn_skipped_buckets(
+            skipped + unranked, what="line-stations read",
+            source=self._path.name,
+        )
 
         if not values_parts:
             return _empty_line_station_slab(component, time, t_idx)
