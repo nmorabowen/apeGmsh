@@ -344,7 +344,11 @@ def test_rayleigh_groups_translate_to_no_canonical() -> None:
         assert not mtr.has_canonical_mapping(name)
 
 
-def test_reverse_lookup_follows_precedence() -> None:
+def test_reverse_lookup_follows_precedence(monkeypatch) -> None:
+    """The answer comes from the precedence, not the table's key order."""
+    monkeypatch.setattr(mtr, "_NODAL_RESULT_NAME_MAP", dict(
+        reversed(list(mtr._NODAL_RESULT_NAME_MAP.items())),
+    ))
     assert mtr.canonical_to_mpco_lookup("reaction_force_x") == (
         "REACTION_FORCE", "x",
     )
