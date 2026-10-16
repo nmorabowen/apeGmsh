@@ -104,7 +104,7 @@ class _ElementNS(_BridgeNamespace):
     """``ops.element.<Type>(pg=..., ...)`` — Phase 2 element namespace."""
 
     if not TYPE_CHECKING:
-        # ``ops.element.ShellMITC3`` was removed (#2092): its spelling raises
+        # ``ops.element.ShellMITC3`` is a removed spelling: it raises
         # the message that names the replacement. The hook only rewords an
         # AttributeError and answers no new name, so it is
         # ``__getattribute__`` rather than ``__getattr__``, and type checkers

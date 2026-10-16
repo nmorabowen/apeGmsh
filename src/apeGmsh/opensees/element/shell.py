@@ -57,7 +57,7 @@ if TYPE_CHECKING:
     from ..emitter.base import Emitter
 
 
-#: What every spelling of the removed ``ShellMITC3`` raises (#2092): the
+#: What every spelling of the removed ``ShellMITC3`` raises: the
 #: module ``__getattr__`` here and in :mod:`apeGmsh.opensees.element`, and
 #: ``ops.element``.
 SHELLMITC3_REMOVED = (

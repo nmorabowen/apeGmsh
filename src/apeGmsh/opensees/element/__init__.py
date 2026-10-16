@@ -126,7 +126,7 @@ if not TYPE_CHECKING:
     # Hidden from type checkers: a module ``__getattr__`` reads to mypy as
     # "answers any name", which would type-check the removed spelling.
     def __getattr__(name: str) -> object:
-        # ``ShellMITC3`` was removed (#2092); its spelling names the replacement.
+        # ``ShellMITC3`` is a removed spelling; its error names the replacement.
         if name == "ShellMITC3":
             raise shellmitc3_removed()
         raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
