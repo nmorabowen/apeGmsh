@@ -38,12 +38,11 @@ Layer quaternion    pass: no stored shell   pass: no stored shell frame,
                     (#1995)
 =================== ======================= ===============================
 
-ShellMITC3 is the one layered bridge shell with no ``LAYER_CATALOG`` row: the
-pinned fork has no ShellMITC3 element (its element table answers ``element
-type ShellMITC3 is unknown``), so no file of either format holds its layers.
-Its cases pin that refusal on both routes (``REFUSED_BY_PIN``); both readers
-warn by class on such a bucket (``tests/test_results_layer_catalog_shellmitc3.py``,
-#2090). A pin that adds the element fails those cases: add the row then.
+Every layered bridge shell has a ``LAYER_CATALOG`` row. ShellMITC3, the one
+that had none, left the bridge (#2092): no build has the element (the pinned
+fork's element table answers ``element type ShellMITC3 is unknown``). Both
+readers still warn by class on such a bucket in another writer's file
+(``tests/test_results_layer_catalog_shellmitc3.py``, #2090).
 
 Fields a format does not carry (reported on #1767, never synthesised here):
 ``LayerSlab`` has no layer-material field on either format, although both
@@ -300,10 +299,7 @@ LAYER_CLASSES = {
     for cls in sorted({c for c, _token in LAYER_CATALOG})
     if hasattr(_bridge_elements, cls)
 }
-#: Layered bridge shells the pinned fork has no element for, so neither
-#: format can record their layers (#2090).
-REFUSED_BY_PIN = ("ShellMITC3",)
-_TRIANGLES = {"ASDShellT3", "ShellMITC3"}
+_TRIANGLES = {"ASDShellT3"}
 
 
 def test_layer_classes_are_the_bridge_shells() -> None:
@@ -311,8 +307,8 @@ def test_layer_classes_are_the_bridge_shells() -> None:
     assert LAYER_CLASSES == {
         "ASDShellQ4": 4, "ASDShellT3": 3, "ShellDKGQ": 4, "ShellMITC4": 4,
     }
-    assert all(hasattr(_bridge_elements, c) for c in REFUSED_BY_PIN)
-    assert not set(REFUSED_BY_PIN) & set(LAYER_CLASSES)
+    # ShellMITC3, the layered shell no build had, left the bridge (#2092).
+    assert not hasattr(_bridge_elements, "ShellMITC3")
 
 
 def _layer_run(
@@ -436,34 +432,6 @@ def test_every_bridge_layered_shell_reads_back_live(
     r, live, frames = _layer_run(g, tmp_path, kind, cls)
     _assert_layers_equal_live(r, live, f"{cls} on {kind}")
     _assert_quaternions_are_the_frames(r, live, frames, f"{cls} on {kind}")
-
-
-@pytest.mark.parametrize("kind", KINDS)
-@pytest.mark.parametrize("cls", REFUSED_BY_PIN)
-def test_layered_shell_the_pin_lacks_is_refused_live(
-    g: Any, tmp_path: Path, kind: str, cls: str,
-    capfd: pytest.CaptureFixture[str],
-) -> None:
-    """The bridge emits the class, and the pinned build refuses it by name
-    before any element exists, so neither format records its layers. When a
-    pin adds the element this fails: add its ``LAYER_CATALOG`` row and move
-    it to ``LAYER_CLASSES``."""
-    from apeGmsh.opensees.emitter.live import get_ops
-
-    fem = _shell_fem(g, quads=cls not in _TRIANGLES)
-    ops = apeSees(fem)
-    ops.model(ndm=3, ndf=6)
-    conc = ops.nDMaterial.ElasticIsotropic(E=30e9, nu=0.2)
-    sec = ops.section.LayeredShell(layers=tuple(
-        ShellLayer(material=conc, thickness=t) for t in THICKNESS))
-    getattr(ops.element, cls)(pg="Slab", section=sec)
-    ops.fix(pg="Fixed", dofs=(1, 1, 1, 1, 1, 1))
-    capfd.readouterr()
-    with pytest.raises(get_ops().OpenSeesError):
-        _solve(ops, kind, tmp_path, "refused")
-    assert f"element type {cls} is unknown" in capfd.readouterr().err
-    assert not list(get_ops().getEleTags())
-    get_ops().wipe()
 
 
 def _tilted_quad() -> np.ndarray:

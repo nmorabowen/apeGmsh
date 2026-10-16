@@ -26,7 +26,7 @@ from apeGmsh.opensees._internal.build.errors import BridgeError
 from apeGmsh.opensees._internal.build.validators.mesh import (
     check_quad_element_on_triangles,
 )
-from apeGmsh.opensees.element.shell import ShellMITC3, ShellMITC4
+from apeGmsh.opensees.element.shell import ASDShellT3, ShellMITC4
 from apeGmsh.opensees.element.solid import Tri31
 
 
@@ -94,7 +94,8 @@ def test_issue_repro_quad_shell_on_triangles_names_pg_and_fix(g, tmp_path):
     assert "ShellMITC4(pg='Slab')" in msg
     assert "3-node triangles" in msg
     assert "set_recombine('Slab')" in msg
-    assert "ShellMITC3" in msg
+    assert "ASDShellT3" in msg
+    assert "ShellMITC3" not in msg        # removed from the bridge (#2092)
 
 
 def test_set_recombine_gives_quads_and_emits(g, tmp_path):
@@ -110,8 +111,8 @@ def test_set_recombine_gives_quads_and_emits(g, tmp_path):
 def test_triangle_shell_on_triangles_still_emits(g, tmp_path):
     _slab(g)
     fem = g.mesh.queries.get_fem_data(dim=2)
-    _shell_deck(fem, "ShellMITC3", tmp_path)
-    assert "ShellMITC3" in (tmp_path / "slab.tcl").read_text()
+    _shell_deck(fem, "ASDShellT3", tmp_path)
+    assert "ASDShellT3" in (tmp_path / "slab.tcl").read_text()
 
 
 # ---------------------------------------------------------------------------
@@ -133,7 +134,7 @@ def test_check_passes_quads_and_ignores_non_quad_classes():
     check_quad_element_on_triangles(
         ShellMITC4(pg="Slab", section=_sec()), [(1, (1, 2, 3, 4))])
     check_quad_element_on_triangles(
-        ShellMITC3(pg="Slab", section=_sec()), [(1, (1, 2, 3))])
+        ASDShellT3(pg="Slab", section=_sec()), [(1, (1, 2, 3))])
     from apeGmsh.opensees.material.nd import ElasticIsotropic
     check_quad_element_on_triangles(
         Tri31(pg="Slab", material=ElasticIsotropic(E=1.0, nu=0.2),

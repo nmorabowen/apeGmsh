@@ -85,6 +85,10 @@
     {"kind": "member", "status": "removed", "symbol": "path", "member_of": "apeGmsh.results.session:PLOT_KINDS",
      "keyword": "kind", "calls": {"add_plot": 0, "add_plot_from_selection": 1, "PlotView": 1},
      "use": "kind=\"history\" or kind=\"xy\"",
-     "why": "ADR 0098 A7.7: a path plot was never realizable"}
+     "why": "ADR 0098 A7.7: a path plot was never realizable"},
+    {"kind": "attribute", "status": "removed", "symbol": "element.ShellMITC3", "from": "apeGmsh.opensees",
+     "also": ["ops.element.ShellMITC3"],
+     "use": "ops.element.ASDShellT3 (ShellDKGT is the other working 3-node OpenSees shell; the bridge has no typed primitive for it)",
+     "why": "no OpenSees build has the element (#2092)"}
   ]
 }

@@ -3498,12 +3498,6 @@
       "skill": "references/opensees-bridge.md",
       "symbol": "ops.element.ShellDKGQ"
     },
-    "ops.element.ShellMITC3": {
-      "doc": "",
-      "signature": "ShellMITC3(*, pg: 'str', section: '_ShellSection | str') -> 'ShellMITC3'",
-      "skill": "references/opensees-bridge.md",
-      "symbol": "ops.element.ShellMITC3"
-    },
     "ops.element.ShellMITC4": {
       "doc": "",
       "signature": "ShellMITC4(*, pg: 'str', section: '_ShellSection | str', damp: 'Damping | None' = None) -> 'ShellMITC4'",

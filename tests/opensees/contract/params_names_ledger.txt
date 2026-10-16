@@ -15,7 +15,7 @@
 # may only go down (name the argv, or add a roster sample, and delete
 # the line); N_NOSTORE pins the nostore lines exactly.
 N_LEDGER = 56
-N_NOSTORE = 107
+N_NOSTORE = 106
 unnamed damping.URD
 unnamed damping.URDbeta
 unnamed nDMaterial.DruckerPrager
@@ -110,7 +110,6 @@ nostore element.LadrunoLST
 nostore element.LadrunoQuad
 nostore element.LadrunoUP
 nostore element.ShellDKGQ
-nostore element.ShellMITC3
 nostore element.ShellMITC4
 nostore element.SixNodeTri
 nostore element.TenNodeTetrahedron

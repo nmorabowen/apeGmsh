@@ -1,9 +1,8 @@
 """Unit tests for shell element primitives (Phase 2γ).
 
-Covers the five shell elements:
+Covers the four shell elements, and the removal of ``ShellMITC3`` (#2092):
 
 * :class:`ShellMITC4` — 4-node
-* :class:`ShellMITC3` — 3-node
 * :class:`ShellDKGQ`  — 4-node
 * :class:`ASDShellQ4` — 4-node, with optional flags
 * :class:`ASDShellT3` — 3-node, with optional flags
@@ -17,10 +16,14 @@ section tag via :func:`resolve_tag` and the per-element node tags via
 """
 from __future__ import annotations
 
-from typing import Callable
+import importlib
+from typing import Callable, cast
+from unittest.mock import MagicMock
 
 import pytest
 
+from apeGmsh.opensees import apeSees
+from apeGmsh.opensees._element_capabilities import Unknown, element_capability
 from apeGmsh.opensees._internal.tag_resolution import (
     set_element_nodes,
     set_tag_resolver,
@@ -30,7 +33,6 @@ from apeGmsh.opensees.element.shell import (
     ASDShellQ4,
     ASDShellT3,
     ShellDKGQ,
-    ShellMITC3,
     ShellMITC4,
 )
 from apeGmsh.opensees.emitter.recording import RecordingEmitter
@@ -132,59 +134,67 @@ class TestShellMITC4Misc:
 
 
 # ===========================================================================
-# ShellMITC3
+# ShellMITC3: removed (#2092)
 # ===========================================================================
 
-class TestShellMITC3Construction:
-    def test_construct(self) -> None:
-        s = _section()
-        ele = ShellMITC3(pg="Roof", section=s)
-        assert ele.pg == "Roof"
-        assert ele.section is s
+_SHELL_MODULES = ("apeGmsh.opensees.element", "apeGmsh.opensees.element.shell")
 
 
-class TestShellMITC3Emit:
-    def test_emit_records_correct_call(self) -> None:
-        s = _section()
-        ele = ShellMITC3(pg="Roof", section=s)
-        e = _prepare_emitter(s, sec_tag=4, nodes=(21, 22, 23))
-        ele._emit(e, tag=9)
-        assert e.calls == [
-            (
-                "element",
-                ("ShellMITC3", 9, 21, 22, 23, 4),
-                {},
-            )
-        ]
-
-    def test_emit_without_element_nodes_raises(self) -> None:
-        s = _section()
-        ele = ShellMITC3(pg="Roof", section=s)
-        e = RecordingEmitter()
-        set_tag_resolver(e, _resolver_from({id(s): 4}))
-        with pytest.raises(RuntimeError, match="element-nodes context"):
-            ele._emit(e, tag=9)
-
-    @pytest.mark.parametrize("nodes", [(1, 2), (1, 2, 3, 4)])
-    def test_emit_wrong_node_count_raises(
-        self, nodes: tuple[int, ...]
-    ) -> None:
-        s = _section()
-        ele = ShellMITC3(pg="Roof", section=s)
-        e = _prepare_emitter(s, sec_tag=4, nodes=nodes)
-        with pytest.raises(ValueError, match="expected 3 node tags"):
-            ele._emit(e, tag=9)
+def _names_the_replacements(message: str) -> None:
+    assert "ShellMITC3 was removed" in message
+    assert "#2092" in message
+    assert "ASDShellT3" in message
+    assert "ShellDKGT" in message
 
 
-class TestShellMITC3Misc:
-    def test_dependencies_returns_section(self) -> None:
-        s = _section()
-        ele = ShellMITC3(pg="Roof", section=s)
-        assert ele.dependencies() == (s,)
+class TestShellMITC3Removed:
+    """No OpenSees build has ``ShellMITC3`` (not the fork pin, not upstream),
+    so the bridge dropped it. Every spelling fails at once and names the
+    3-node shells that work."""
 
-    def test_repr_includes_class_name(self) -> None:
-        ele = ShellMITC3(pg="Roof", section=_section())
-        assert "ShellMITC3" in repr(ele)
+    @pytest.mark.parametrize("module", _SHELL_MODULES)
+    def test_attribute_read_names_the_replacements(self, module: str) -> None:
+        mod = importlib.import_module(module)
+        with pytest.raises(AttributeError) as exc:
+            mod.ShellMITC3  # noqa: B018
+        _names_the_replacements(str(exc.value))
+        # Still an AttributeError, so probing answers "absent".
+        assert not hasattr(mod, "ShellMITC3")
+        assert getattr(mod, "ShellMITC3", None) is None
+        assert "ShellMITC3" not in mod.__all__
+
+    def test_from_import_of_the_package_names_the_replacements(self) -> None:
+        with pytest.raises(ImportError) as exc:
+            from apeGmsh.opensees.element import ShellMITC3  # noqa: F401
+        _names_the_replacements(str(exc.value))
+
+    def test_from_import_of_the_module_names_the_replacements(self) -> None:
+        with pytest.raises(ImportError) as exc:
+            from apeGmsh.opensees.element.shell import ShellMITC3  # noqa: F401
+        _names_the_replacements(str(exc.value))
+
+    def test_bridge_namespace_names_the_replacements(self) -> None:
+        ops = apeSees(cast("object", MagicMock(name="FEMData")))
+        with pytest.raises(AttributeError) as exc:
+            ops.element.ShellMITC3(pg="Roof", section=_section())
+        _names_the_replacements(str(exc.value))
+        assert not hasattr(ops.element, "ShellMITC3")
+        # Any other missing name keeps Python's own message.
+        with pytest.raises(AttributeError, match="has no attribute 'ShellMITC5'"):
+            ops.element.ShellMITC5  # noqa: B018
+        assert ops.element.ASDShellT3 is not None
+
+    @pytest.mark.parametrize("module", _SHELL_MODULES)
+    def test_other_missing_names_keep_the_plain_message(self, module: str) -> None:
+        mod = importlib.import_module(module)
+        with pytest.raises(AttributeError, match="has no attribute 'ShellMITC5'"):
+            mod.ShellMITC5  # noqa: B018
+
+    def test_readback_and_capability_tables_hold_no_entry(self) -> None:
+        from apeGmsh.opensees._readback import _CLASS_FOR_TOKEN
+
+        assert "ShellMITC3" not in _CLASS_FOR_TOKEN
+        assert element_capability("ShellMITC3") is Unknown
 
 
 # ===========================================================================

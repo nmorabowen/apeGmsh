@@ -151,15 +151,14 @@ from tests.opensees.fixtures.fem_stub import (
 
 
 def test_element_class_ndf_ok_classifies_all_shell_families():
-    """All five shells resolve to ndf={6}, solids/quads to {3}/{2}, and
+    """All four shells resolve to ndf={6}, solids/quads to {3}/{2}, and
     multi-ndf beams to a superset — so the guard's disjoint-family test
     is correct for every shell-vs-solid pair, including ASDShellT3 (which
     has no _ELEM_REGISTRY entry and is covered via _EXTRA_CLASS_NDF_OK).
     """
     from apeGmsh.opensees._element_capabilities import element_class_ndf_ok
 
-    for shell in ("ShellMITC3", "ShellMITC4", "ShellDKGQ",
-                  "ASDShellQ4", "ASDShellT3"):
+    for shell in ("ShellMITC4", "ShellDKGQ", "ASDShellQ4", "ASDShellT3"):
         assert element_class_ndf_ok(shell) == frozenset({6}), shell
     for solid in ("FourNodeTetrahedron", "stdBrick", "TenNodeTetrahedron"):
         assert element_class_ndf_ok(solid) == frozenset({3}), solid

@@ -1,14 +1,12 @@
 """Layered ShellMITC3 and stored shell frames: MPCO and ``.ladruno`` agree (#2090).
 
-ShellMITC3 is a bridge shell that can carry a layered section, and the only
-one with no ``LAYER_CATALOG`` row. The pinned fork (FORK_PIN c744d6e70) has
-no ShellMITC3 element: its element table answers ``element type ShellMITC3
-is unknown``, which the fork lane pins in
-``tests/opensees/integration_ladruno/test_fiber_layer_readback_live.py``.
-No recorder writes its layers, so a row would assert a surface rule no file
-confirms. Both readers therefore warn :class:`LayerBucketUnreadWarning` by
-class for a layered bucket they leave out, where MPCO used to drop it with
-no word (``.ladruno`` warns since #1995).
+ShellMITC3 is a layered-shell class no build has: the pinned fork (FORK_PIN
+c744d6e70) answers ``element type ShellMITC3 is unknown``, and upstream has
+no such element either, so the bridge dropped it (#2092). A file from another
+writer could still name it, so it stays here as a foreign class: it has no
+``LAYER_CATALOG`` row, and both readers warn
+:class:`LayerBucketUnreadWarning` by class for a layered bucket they leave
+out, where MPCO used to drop it with no word (``.ladruno`` warns since #1995).
 
 A stored ``.ladruno`` shell frame whose ``FRAME`` size disagrees with its
 ``ID`` used to be dropped silently and recomputed from coordinates; it now
@@ -26,7 +24,7 @@ import numpy as np
 import pytest
 
 from apeGmsh.opensees import element as _bridge_elements
-from apeGmsh.opensees._element_capabilities import element_capability
+from apeGmsh.opensees._element_capabilities import Unknown, element_capability
 from apeGmsh.opensees._response_catalog import (
     ELE_TAG_ASDShellQ4,
     LAYER_CATALOG,
@@ -57,19 +55,19 @@ from tests.test_results_mpco_layer_mock import (
     _create_skeleton,
 )
 
-#: A class tag for a mock ShellMITC3 bucket: the pinned fork has no
-#: ShellMITC3, so no real tag exists (the readers key on the class name).
+#: A class tag for a mock ShellMITC3 bucket: no build has ShellMITC3,
+#: so no real tag exists (the readers key on the class name).
 _MOCK_TAG = 999
 
 
 # ---------------------------------------------------------------------------
-# The roster: ShellMITC3 is a layered bridge shell without a catalog row
+# The roster: ShellMITC3 is a foreign class, outside the bridge (#2092)
 # ---------------------------------------------------------------------------
 
 
-def test_shellmitc3_is_a_layered_bridge_shell_without_a_layer_row() -> None:
-    assert hasattr(_bridge_elements, "ShellMITC3")
-    assert element_capability("ShellMITC3").supports("layers")
+def test_shellmitc3_is_a_foreign_class_without_a_layer_row() -> None:
+    assert not hasattr(_bridge_elements, "ShellMITC3")
+    assert element_capability("ShellMITC3") is Unknown
     assert ("ShellMITC3", "fiber_stress") not in LAYER_CATALOG
     assert ("ShellMITC3", "fiber_strain") not in LAYER_CATALOG
 
