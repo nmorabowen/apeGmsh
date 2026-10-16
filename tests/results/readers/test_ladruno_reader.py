@@ -662,6 +662,7 @@ def test_layered_shell_quaternion_is_the_tilted_frame(tmp_path: Path) -> None:
     half = np.radians(30.0) / 2
     with LadrunoReader(_layered_shell_file(tmp_path)) as r:
         q = r.read_layers("stage_0", "fiber_stress_0").local_axes_quaternion
+    assert q.shape == (2 * 4 * N_LAYERS, 4)
     np.testing.assert_allclose(
         q, np.tile([np.cos(half), -np.sin(half), 0.0, 0.0], (q.shape[0], 1)),
         atol=1e-14)
