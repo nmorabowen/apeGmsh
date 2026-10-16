@@ -1982,7 +1982,7 @@ def read_fiber_slab(
             ]
             # Blocks of several components per fiber are layered-shell
             # state, read at the layer level; a bucket that level is
-            # unable to read warns here, by name (#1995).
+            # unable to read warns here, by name.
             _layer_layout_or_warn(token, key, blocks)
             if not fiber_blocks:
                 continue
@@ -2080,8 +2080,8 @@ def read_fiber_slab(
 # columns run layer-major, component-fast. The layer thickness and
 # material sit in ``MODEL/SECTION_ASSIGNMENTS`` as for a fiber section
 # (``FIBER_DATA`` column 2 is the thickness), assigned per ``(element,
-# surface GP)``. Verified against fork build 79e0623670 (local) and the
-# pinned build on the ``live-fork`` lane (#1995).
+# surface GP)``. The fork-lane test ``test_fiber_layer_readback_live.py``
+# holds this layout against ``eleResponse``.
 #
 # The slab is the MPCO reader's ``LayerSlab`` (``_mpco_layer_io``):
 # ``fiber_stress_<c>`` / ``fiber_strain_<c>``, rows element-slow, surface
@@ -2089,7 +2089,7 @@ def read_fiber_slab(
 # frame per row. A ``.ladruno`` stores no shell ``LOCAL_AXES``, so the
 # frame is computed from the file's connectivity and node coordinates with
 # :func:`~apeGmsh.results._shell_geometry.shell_quaternion`, as the MPCO
-# reader does (#1996); a row with no frame reads NaN and warns by name.
+# reader does; a row with no frame reads NaN and warns by name.
 
 
 class LayerBucketUnreadWarning(UserWarning):
@@ -2290,9 +2290,8 @@ def _shell_frames(
                 np.asarray(nodes["ID"][...], dtype=np.int64).ravel())
         }
     conn_rows: dict[int, ndarray] = {}
-    elements = _model_child(model, "ELEMENTS")
-    for name in elements if elements is not None and todo else ():
-        grp = elements[name]
+    elements = _model_child(model, "ELEMENTS") if todo else None
+    for name, grp in elements.items() if elements is not None else ():
         if (_class_prefix(name) != prefix or not isinstance(grp, h5py.Group)
                 or "CONNECTIVITY" not in grp):
             continue
