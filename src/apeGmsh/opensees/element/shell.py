@@ -69,7 +69,6 @@ SHELLMITC3_REMOVED = (
 )
 
 
-
 def shellmitc3_removed() -> Exception:
     """The error a spelling of the removed ``ShellMITC3`` raises (#2092).
 
@@ -83,7 +82,7 @@ def shellmitc3_removed() -> Exception:
     """
     caller = sys._getframe(2)   # 0: here, 1: a ``__getattr__``, 2: its caller
     if caller.f_code.co_code[caller.f_lasti] == opmap["IMPORT_FROM"]:
-        return ImportError(SHELLMITC3_REMOVED, name="ShellMITC3")
+        return ImportError(SHELLMITC3_REMOVED)
     return AttributeError(SHELLMITC3_REMOVED)
 
 
