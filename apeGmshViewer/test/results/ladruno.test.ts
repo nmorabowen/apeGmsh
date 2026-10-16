@@ -226,6 +226,66 @@ test("a second nodal result on another time axis is refused alone; the first sti
   });
 });
 
+/** The truss plus a second ON_NODES result VELOCITY on the stage's time axis, built by `fill`. */
+function withVelocity(fill: (g: h5wasm.Group) => void): string {
+  return edited(TRUSS, (f) => {
+    const g = f.create_group("MODEL_STAGE[1]/RESULTS/ON_NODES/VELOCITY");
+    g.create_attribute("COMPONENTS", "Vx,Vy");
+    g.create_dataset({ name: "TIME", data: new Float64Array([0.25, 0.5, 0.75, 1.0]) });
+    g.create_dataset({ name: "STEP", data: new Int32Array([0, 1, 2, 3]) });
+    fill(g);
+  });
+}
+
+/** The one refusal of VELOCITY, with DISPLACEMENT still read. */
+function velocityRefused(p: string): string {
+  return withFile(p, (r) => {
+    const n = r.index.stages[0]!.nodes!;
+    assert.deepEqual(n.components, ["DISPLACEMENT/Ux", "DISPLACEMENT/Uy"]);
+    assert.equal(n.refused.length, 1, JSON.stringify(n.refused));
+    assert.equal(n.refused[0]!.component, "VELOCITY");
+    return n.refused[0]!.reason;
+  });
+}
+
+test("a second result is refused alone when it records another node set, or node rows that disagree with its ID", () => {
+  // same count, other ids
+  const otherSet = withVelocity((g) => {
+    g.create_dataset({ name: "ID", data: new Int32Array([1, 2, 4]), shape: [3, 1] });
+    g.create_dataset({ name: "DATA", data: new Float64Array(4 * 3 * 2), shape: [4, 3, 2] });
+  });
+  assert.match(velocityRefused(otherSet), /VELOCITY\/ID is not the node set of .*DISPLACEMENT\/ID \(3 and 3 nodes\)/);
+  // 2 ids, 3 node rows
+  const rows = withVelocity((g) => {
+    g.create_dataset({ name: "ID", data: new Int32Array([1, 2]), shape: [2, 1] });
+    g.create_dataset({ name: "DATA", data: new Float64Array(4 * 3 * 2), shape: [4, 3, 2] });
+  });
+  assert.match(velocityRefused(rows), /VELOCITY\/DATA has 3 node rows and .*VELOCITY\/ID 2 node ids \(a partial write\)/);
+  // the same file with matching rows reads both results: the refusals above are the seams, not the fixture
+  const fine = withVelocity((g) => {
+    g.create_dataset({ name: "ID", data: new Int32Array([1, 2, 3]), shape: [3, 1] });
+    g.create_dataset({ name: "DATA", data: new Float64Array(4 * 3 * 2), shape: [4, 3, 2] });
+  });
+  withFile(fine, (r) => assert.deepEqual(r.index.stages[0]!.nodes!.components, ["DISPLACEMENT/Ux", "DISPLACEMENT/Uy", "VELOCITY/Vx", "VELOCITY/Vy"]));
+});
+
+test("a per-step DATA group (the superseded schema §7.0 layout) refuses that result by name", () => {
+  const p = withVelocity((g) => {
+    g.create_dataset({ name: "ID", data: new Int32Array([1, 2, 3]), shape: [3, 1] });
+    g.create_group("DATA").create_dataset({ name: "STEP_0", data: new Float64Array(3 * 2), shape: [3, 2] });
+  });
+  assert.match(velocityRefused(p), /VELOCITY\/DATA is a group of per-step datasets/);
+});
+
+test("a COMPONENTS label repeated refuses that result by name", () => {
+  withFile(edited(TRUSS, (f) => setAttr(f.get(DISP) as h5wasm.Group, "COMPONENTS", "Ux,Ux")), (r) => {
+    const n = r.index.stages[0]!.nodes!;
+    assert.deepEqual(n.components, []);
+    assert.equal(n.refused[0]!.component, "DISPLACEMENT");
+    assert.match(n.refused[0]!.reason, /COMPONENTS = "Ux,Ux" repeats a label/);
+  });
+});
+
 test("stages sort by their integer id; one with no ON_NODES has no nodal block", () => {
   const p = edited(TRUSS, (f) => {
     const ten = f.create_group("MODEL_STAGE[10]");
@@ -307,8 +367,21 @@ test("a mode shape reads as one step: Ux3 / Ux2 = 2 - lambda / k, unit mass-norm
   });
 });
 
+const MODAL = "/MODEL_STAGE[1]/RESULTS/ON_NODES";
+
+test("a modal group whose MODE shape disagrees with its COMPONENTS is refused in each mode stage; the other group reads", () => {
+  withFile(edited(MODES, (f) => setAttr(f.get(`${MODAL}/MODES_OF_VIBRATION(R)`) as h5wasm.Group, "COMPONENTS", "Rz,Rx")), (r) => {
+    for (const id of ["stage_0_mode_1", "stage_0_mode_2"]) {
+      const n = r.stage(id).nodes!;
+      assert.deepEqual(n.components, ["MODES_OF_VIBRATION(U)/Ux", "MODES_OF_VIBRATION(U)/Uy"]);
+      assert.equal(n.refused.length, 1);
+      assert.equal(n.refused[0]!.component, "MODES_OF_VIBRATION(R)");
+      assert.match(n.refused[0]!.reason, /MODE_\d has shape \(3, 1\); ID has 3 nodes and COMPONENTS names 2 \(a partial write\)/);
+    }
+  });
+});
+
 test("an inconsistent modal record refuses the file: a mode without LAMBDA, or (R) disagreeing with (U)", () => {
-  const MODAL = "/MODEL_STAGE[1]/RESULTS/ON_NODES";
   refuses(
     edited(MODES, (f) => (f.get(`${MODAL}/MODES_OF_VIBRATION(U)/DATA/STEP_0/MODE_0`) as h5wasm.Dataset).delete_attribute("LAMBDA")),
     "layout",
@@ -374,7 +447,8 @@ test("a stamp in the wrong encodings is reported as such, never coerced, and giv
     assert.match(reason("stage_names"), /not a JSON array of strings/);
     assert.match(reason("unsupported"), /not a string/);
     assert.deepEqual(p.attrs.element_index_space, { state: "present", value: "fem" });
-    assert.deepEqual(p.attrs.writer, { state: "absent" });
+    // vlen UTF-8 at shape (1,): the shape is what is wrong, and the reason says so
+    assert.match(reason("writer"), /string array of shape \(1\), not a scalar/);
     assert.equal(p.stageNames, null);
     assert.equal(r.index.lineage, null);
     assert.match(r.index.lineageReason!, /fixed-length string.*; .*ASCII-charset/);
@@ -387,6 +461,13 @@ test("a value outside §7b.1, an unknown attribute, and a missing group are repo
     setAttr(g, "element_index_space", "ops");
     setAttr(g, "fem_hash", null);
     setAttr(g, "MODEL_HASH", "x");
+  });
+  withFile(edited(STAMPED, (f) => setAttr(f.get("INFO/PROVENANCE") as h5wasm.Group, "model_hash", "")), (r) => {
+    const prov = r.index.provenance;
+    assert.equal(prov.state, "present");
+    if (prov.state !== "present") return;
+    assert.deepEqual(prov.attrs.model_hash, { state: "malformed", reason: "@model_hash is an empty string" });
+    assert.equal(r.index.lineage, null);
   });
   withFile(p, (r) => {
     const prov = r.index.provenance;

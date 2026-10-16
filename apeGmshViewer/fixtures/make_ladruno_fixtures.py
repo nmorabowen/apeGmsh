@@ -22,8 +22,9 @@ this file:
 * ``ladruno_truss2d.badstamp.ladruno``: the same file with a stamp whose
   values are not all the §7b.1 encoding (``BAD_STAMP`` below): a fixed-length
   ``model_hash``, a variable-length ASCII ``fem_hash``, a ``stage_names`` that
-  is not a JSON array of strings, an integer ``unsupported``, and no
-  ``writer``. The reader reports each one, and pairs nothing.
+  is not a JSON array of strings, an integer ``unsupported``, and a
+  ``writer`` that is variable-length UTF-8 but a shape-(1,) array, not a
+  scalar. The reader reports each one, and pairs nothing.
 * ``ladruno_modes.ladruno`` (``--modes``): a fork run. Two trusses (EA = 1000,
   L = 1) along x, node 1 fixed, y and the rotation fixed everywhere, a mass
   of 1 in x at nodes 2 and 3; ``eigen -fullGenLapack 2`` then ``record``, with
@@ -33,7 +34,12 @@ this file:
   (the golden ratio for mode 1). The fork promotes the stage to
   ``KIND=eigen``; it holds one recorded step of ``DISPLACEMENT`` and the two
   modes under ``MODES_OF_VIBRATION(U)`` and ``(R)`` (the rotation column is
-  fixed, so it is all zeros). Committed from fork build ``79e0623670``.
+  fixed, so it is all zeros). Committed from fork build ``79e0623670``, the
+  build the opensees venv imported on 2026-10-16. It predates the repository's
+  ``FORK_PIN`` (``c744d6e70``) and writes no ``INFO/FORMAT_MINOR_VERSION``, so
+  the file is FORMAT_MINOR_VERSION 0 (schema §2a: its ``KIND`` is the
+  recorder-wide label, here the eigen promotion). Regenerate it on a pin
+  build to get minor 1; the closed forms do not change.
 
 No apeGmsh import: the app never runs apeGmsh (ADR 0112 D4), and these files
 are what the fork writes, not what apeGmsh would make of them.
@@ -92,7 +98,8 @@ def badstamp() -> None:
         prov.attrs.create("stage_names", data='{"push": 1}', dtype=VLEN_UTF8)
         prov.attrs.create("unsupported", data=np.int32(0))
         prov.attrs.create("element_index_space", data="fem", dtype=VLEN_UTF8)
-        # no writer
+        # The right encoding at the wrong shape: a (1,) array, not a scalar.
+        prov.attrs.create("writer", data=[STAMP["writer"]], dtype=VLEN_UTF8)
 
 
 _MODES_RUN = r"""

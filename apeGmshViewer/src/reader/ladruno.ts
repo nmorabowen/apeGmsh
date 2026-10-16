@@ -645,10 +645,13 @@ function provenanceFact(attr: LAttr | undefined, name: string): ProvenanceFact {
   if (attr === undefined) return { state: "absent" };
   const m = attr.metadata;
   const scalar = Array.isArray(m.shape) && m.shape.length === 0;
-  if (m.type !== H5T_STRING || typeof attr.value !== "string") return { state: "malformed", reason: `@${name} is not a string (HDF5 class ${m.type})` };
+  // The HDF5 class first, then the shape: h5wasm returns a shape-(1,) string as an array, so the
+  // value's JS type is checked last, once a scalar string is all it can be.
+  if (m.type !== H5T_STRING) return { state: "malformed", reason: `@${name} is not a string (HDF5 class ${m.type})` };
   if (!scalar) return { state: "malformed", reason: `@${name} is a string array of shape (${(m.shape ?? []).join(", ")}), not a scalar` };
   if (m.vlen !== true) return { state: "malformed", reason: `@${name} is a fixed-length string, not the variable-length UTF-8 string §7b.1 specifies` };
   if (m.cset !== H5T_CSET_UTF8) return { state: "malformed", reason: `@${name} is an ASCII-charset string, not the variable-length UTF-8 string §7b.1 specifies` };
+  if (typeof attr.value !== "string") return { state: "malformed", reason: `@${name} read as ${Object.prototype.toString.call(attr.value)}, not a string` };
   return { state: "present", value: attr.value };
 }
 

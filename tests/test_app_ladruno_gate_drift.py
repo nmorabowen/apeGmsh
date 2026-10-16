@@ -89,9 +89,22 @@ def test_app_versions_equal_python_versions(ladruno_ts: str) -> None:
     assert findings == [], "\n".join(findings)
 
 
-def test_app_generator_is_the_fork_generator(ladruno_ts: str) -> None:
-    # The literal LadrunoReader._validate_identity compares INFO/GENERATOR with.
-    assert parse_generator(ladruno_ts) == "Ladruno"
+LADRUNO_PY = (
+    Path(__file__).resolve().parents[1]
+    / "src" / "apeGmsh" / "results" / "readers" / "_ladruno.py"
+)
+_PY_GENERATOR = re.compile(r'^\s*if gen != "(?P<name>[^"]*)":', re.MULTILINE)
+
+
+def test_app_generator_is_pythons_generator(ladruno_ts: str) -> None:
+    """The literal ``LadrunoReader._validate_identity`` compares
+    ``INFO/GENERATOR`` with, read from its source as text."""
+    hits = _PY_GENERATOR.findall(LADRUNO_PY.read_text(encoding="utf-8"))
+    assert len(hits) == 1, (
+        f"{LADRUNO_PY}: expected one `if gen != \"...\":` in _validate_identity, "
+        f"found {hits}; the drift test must follow the check"
+    )
+    assert parse_generator(ladruno_ts) == hits[0]
 
 
 def test_comparison_catches_a_widened_set() -> None:

@@ -350,11 +350,16 @@ Fork-written `.ladruno` files for `src/reader/ladruno.ts`, made by
   scalar, variable-length UTF-8 string.
 - `ladruno_truss2d.badstamp.ladruno` is the same file stamped in the wrong
   encodings: a fixed-length `model_hash`, an ASCII `fem_hash`, a `stage_names`
-  that is not a JSON array, an integer `unsupported`, and no `writer`.
-- `ladruno_modes.ladruno` comes from a fork run (build `79e0623670`): a
-  two-DOF truss chain recorded with `modesOfVibration` and
-  `modesOfVibrationRotational` after `eigen`. Its eigenvalues are
-  `1000 (3 -/+ sqrt 5) / 2`, and its stage is `KIND=eigen`.
+  that is not a JSON array, an integer `unsupported`, and a `writer` that is
+  variable-length UTF-8 but a shape-(1,) array rather than a scalar.
+- `ladruno_modes.ladruno` comes from a fork run: a two-DOF truss chain
+  recorded with `modesOfVibration` and `modesOfVibrationRotational` after
+  `eigen`. Its eigenvalues are `1000 (3 -/+ sqrt 5) / 2`, and its stage is
+  `KIND=eigen`. It was made on fork build `79e062367`, the build the opensees
+  venv imports. That build predates the repository's `FORK_PIN`
+  (`c744d6e70`) and writes no `INFO/FORMAT_MINOR_VERSION`, so the file is
+  FORMAT_MINOR_VERSION 0. Regenerating it on a pin build would give minor 1,
+  and the closed forms would not change.
 
 The test, `test/results/ladruno.test.ts`, edits scratch copies through h5wasm
 for every refusal: another `GENERATOR`, `FORMAT_VERSION = 2`, a part-file name,
