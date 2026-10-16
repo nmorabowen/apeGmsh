@@ -225,7 +225,7 @@ def _discover_parts(path: Path) -> list[Path]:
         raise ProvenanceStampRefused(f"{path}: {e}") from e
     missing = [p for p in parts if not p.is_file()]
     if missing:
-        raise ProvenanceStampRefused(f"no such .ladruno file: {missing[0]}")
+        raise ProvenanceStampRefused(f"no such results file: {missing[0]}")
     return parts
 
 
@@ -370,7 +370,7 @@ def _read_part(path: Path) -> _PartFacts:
         if "INFO" not in h5 or "PROVENANCE" not in h5["INFO"]:
             raise ProvenanceStampRefused(
                 f"{path} has no INFO/PROVENANCE group. The fork's recorder "
-                "creates it empty at open (ladruno_schema_v1 §7b); a file "
+                "creates it empty at open (fork schema v1 §7b); a file "
                 "without it predates that, so there is nowhere to stamp."
             )
         prov = h5[_PROVENANCE]
