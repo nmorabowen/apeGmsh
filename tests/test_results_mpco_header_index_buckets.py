@@ -263,19 +263,56 @@ def _two_quad_headers(path: Path, labels0: str, labels1: str) -> None:
                           hdr=hdr, n_gp=4, labels=labels, ids=ids)
 
 
-def test_gauss_header_whose_labels_contradict_the_catalog_refuses(
+def test_gauss_header_whose_labels_contradict_the_catalog_is_skipped(
     tmp_path: Path,
 ) -> None:
     """The review of #2114: MPCO opens a same-width header only when the
     labels differ, so ``foo,bar,baz`` at header 1 must never be read as
-    ``stress_xx, stress_yy, stress_xy``. The read refuses, naming it."""
+    ``stress_xx, stress_yy, stress_xy``. That bucket is left unread and
+    named in MPCOBucketSkippedWarning with its labels; header 0 still
+    reads."""
     path = tmp_path / "foo.mpco"
     _two_quad_headers(path, "sigma11,sigma22,sigma12", "foo,bar,baz")
     with _reader(path) as r:
         (stage,) = r.stages()
-        with pytest.raises(ValueError,
-                           match=r"FourNodeQuad\[201:0:1\].*'foo'"):
-            r.read_gauss(stage.id, "stress_xx")
+        with pytest.warns(MPCOBucketSkippedWarning,
+                          match=r"FourNodeQuad\[201:0:1\].*'foo'"):
+            slab = r.read_gauss(stage.id, "stress_xx")
+    _expect_gauss(slab, parts=[(0, [1, 2])], n_gp=4, col=0)
+
+
+@pytest.mark.parametrize("cls, tag, rule, n_gp, group, labels, comps", [
+    # ShellMITC9.cpp:466-473 tags the membrane shear ``p1212``.
+    ("ShellMITC9", 54, 202, 9, "stresses",
+     "p11,p22,p1212,m11,m22,m12,q1,q2",
+     ("membrane_force_xx", "membrane_force_yy", "membrane_force_xy",
+      "bending_moment_xx", "bending_moment_yy", "bending_moment_xy",
+      "transverse_shear_xz", "transverse_shear_yz")),
+    # VonPapaDamage.cpp:1248 tags its strain ``e11,e22,e12``.
+    ("FourNodeQuad", ELE_TAG_FourNodeQuad, 201, 4, "material.strain",
+     "e11,e22,e12", ("strain_xx", "strain_yy", "strain_xy")),
+    # NDMaterial's untagged width: ``UnknownStress``, in catalog order.
+    ("FourNodeQuad", ELE_TAG_FourNodeQuad, 201, 4, "material.stress",
+     "UnknownStress,UnknownStress,UnknownStress",
+     ("stress_xx", "stress_yy", "stress_xy")),
+])
+def test_gauss_fork_label_spellings_read(
+    tmp_path: Path, cls: str, tag: int, rule: int, n_gp: int, group: str,
+    labels: str, comps: tuple[str, ...],
+) -> None:
+    """Header-0 label spellings the fork writes for catalogued classes and
+    materials read, by name, under MPCOBucketSkippedWarning as an error."""
+    path = tmp_path / "spelling.mpco"
+    with _file(path) as f:
+        _gauss_bucket(f, group, f"{tag}-{cls}[{rule}:0:0]", hdr=0,
+                      n_gp=n_gp, labels=labels, ids=[5, 6])
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", MPCOBucketSkippedWarning)
+        with _reader(path) as r:
+            (stage,) = r.stages()
+            for col, comp in enumerate(comps):
+                _expect_gauss(r.read_gauss(stage.id, comp),
+                              parts=[(0, [5, 6])], n_gp=n_gp, col=col)
 
 
 def test_gauss_columns_read_by_their_meta_names(tmp_path: Path) -> None:

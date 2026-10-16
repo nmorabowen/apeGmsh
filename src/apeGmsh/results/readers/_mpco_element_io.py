@@ -31,7 +31,9 @@ the user can always extend the catalog and re-read the same file.
 from __future__ import annotations
 
 import re
+import warnings
 from dataclasses import dataclass, replace
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -348,36 +350,50 @@ _GENERIC_COMP_RE = re.compile(r"^C\d+$")
 # META column names → catalog canonicals
 # =====================================================================
 
-# The labels MPCO writes for a Gauss bucket's columns, by catalog canonical
-# (dumped from fork build 79e0623670 for FourNodeQuad, SSPquad, Brick,
-# BbarBrick, SSPbrick, LadrunoBrick, ShellMITC4, ASDShellQ4, ShellDKGQ,
-# ShellDKGT and ASDShellT3): continuum stress ``sigma11,sigma22,sigma33,
-# sigma12,sigma23,sigma13`` (plane: ``sigma11,sigma22,sigma12``, plus
-# ``sigma33`` last for ``stressPlaneStrain``); continuum strain ``eps11..``
-# (3-D) or ``eta11..`` (plane); shell resultants ``p11,p22,p12,m11,m22,m12,
-# q1,q2``; shell strains ``eps11,eps22,gamma12,theta11,theta22,theta33,
-# gamma13,gamma23``. A material that tags no names writes ``C1..Cn``
-# (LadrunoConcrete3D under ``material.stress``), and those columns take the
-# catalog's order. Lookup is case-insensitive.
+# The labels MPCO writes for a Gauss bucket's columns are the
+# ``ResponseType`` tags of the element's or the material's ``setResponse``.
+# Swept from the fork source (c744d6e70, ``SRC/element`` and
+# ``SRC/material/nD|section``) for every catalogued class and the ND
+# materials and shell sections they forward to, and dumped live from build
+# 79e0623670:
+#
+# * continuum stress: ``sigma11..sigma13`` (any index order, e.g. BrickUP's
+#   ``sigma13,sigma23``), ``sigma_xx..sigma_zx`` (BezierTet10, BezierTri6),
+#   ``sig11`` (FSAM); plane ``sigma11,sigma22,sigma12`` plus ``sigma33``
+#   for ``stressPlaneStrain``;
+# * continuum strain: ``eps11..`` (3-D), ``eta11..`` (plane, NDMaterial),
+#   ``e11,e22,e12`` (VonPapaDamage), ``e1212``, ``eps_xx``/``gamma_xy``
+#   (BezierTet10, BezierTri6);
+# * shell resultants: ``p11,p22,p12,m11,m22,m12,q1,q2``, with ``p1212`` for
+#   the membrane shear on ShellMITC9 / ShellDKGT / the thermal shells; the
+#   section spelling ``Fxx,Fyy,Fxy,Mxx,Myy,Mxy,Vxz,Vyz``;
+# * shell strains: ``eps11,eps22,gamma12,theta11,theta22,theta33,gamma13,
+#   gamma23``; the section spelling ``epsXX,epsYY,epsXY,kappaXX,kappaYY,
+#   kappaXY,gammaXZ,gammaYZ``.
+#
+# A response that names nothing gets MPCO's ``C1..Cn`` (LadrunoConcrete3D
+# under ``material.stress``) or NDMaterial's ``UnknownStress`` /
+# ``UnknownStrain`` (a material of another width), and those columns take
+# the catalog's order. Lookup is case-insensitive.
 _XYZ = {"x": "1", "y": "2", "z": "3"}
 
 _SHELL_LABELS: dict[str, frozenset[str]] = {
-    "membrane_force_xx": frozenset({"p11"}),
-    "membrane_force_yy": frozenset({"p22"}),
-    "membrane_force_xy": frozenset({"p12", "p21"}),
-    "bending_moment_xx": frozenset({"m11"}),
-    "bending_moment_yy": frozenset({"m22"}),
-    "bending_moment_xy": frozenset({"m12", "m21"}),
-    "transverse_shear_xz": frozenset({"q1", "q13"}),
-    "transverse_shear_yz": frozenset({"q2", "q23"}),
-    "membrane_strain_xx": frozenset({"eps11"}),
-    "membrane_strain_yy": frozenset({"eps22"}),
-    "membrane_strain_xy": frozenset({"gamma12", "eps12"}),
-    "curvature_xx": frozenset({"theta11"}),
-    "curvature_yy": frozenset({"theta22"}),
-    "curvature_xy": frozenset({"theta33", "theta12"}),
-    "transverse_shear_strain_xz": frozenset({"gamma13"}),
-    "transverse_shear_strain_yz": frozenset({"gamma23"}),
+    "membrane_force_xx": frozenset({"p11", "fxx"}),
+    "membrane_force_yy": frozenset({"p22", "fyy"}),
+    "membrane_force_xy": frozenset({"p12", "p21", "p1212", "fxy"}),
+    "bending_moment_xx": frozenset({"m11", "mxx"}),
+    "bending_moment_yy": frozenset({"m22", "myy"}),
+    "bending_moment_xy": frozenset({"m12", "m21", "mxy"}),
+    "transverse_shear_xz": frozenset({"q1", "q13", "vxz"}),
+    "transverse_shear_yz": frozenset({"q2", "q23", "vyz"}),
+    "membrane_strain_xx": frozenset({"eps11", "epsxx"}),
+    "membrane_strain_yy": frozenset({"eps22", "epsyy"}),
+    "membrane_strain_xy": frozenset({"gamma12", "eps12", "epsxy"}),
+    "curvature_xx": frozenset({"theta11", "kappaxx"}),
+    "curvature_yy": frozenset({"theta22", "kappayy"}),
+    "curvature_xy": frozenset({"theta33", "theta12", "kappaxy"}),
+    "transverse_shear_strain_xz": frozenset({"gamma13", "gammaxz"}),
+    "transverse_shear_strain_yz": frozenset({"gamma23", "gammayz"}),
 }
 
 _TENSOR_RE = re.compile(r"^(?P<root>stress|strain)_(?P<a>[xyz])(?P<b>[xyz])$")
@@ -396,15 +412,23 @@ def _labels_for(canonical: str) -> frozenset[str]:
     stems_digit: tuple[str, ...]
     stems_axis: tuple[str, ...]
     if m.group("root") == "stress":
-        stems_digit, stems_axis = ("sigma",), ("sigma_", "s", "stress_")
+        stems_digit, stems_axis = ("sigma", "sig"), ("sigma_", "s", "stress_")
     else:
-        stems_digit = ("eps", "eta", "epsilon") + (("gamma",) if a != b else ())
+        stems_digit = ("eps", "eta", "epsilon", "e") + (
+            ("gamma",) if a != b else ())
         stems_axis = ("eps_", "epsilon_", "strain_") + (
             ("gamma_",) if a != b else ())
     return frozenset(
         {s + d for s in stems_digit for d in ij}
+        | {s + d + d for s in stems_digit for d in ij}    # e1212, p1212
         | {s + x for s in stems_axis for x in ab}
     )
+
+
+#: Labels that name nothing: MPCO's ``C<n>`` and NDMaterial's
+#: ``UnknownStress`` / ``UnknownStrain`` (MPCO may suffix repeats ``(n)``).
+_UNNAMED_LABEL_RE = re.compile(
+    r"^(?:C\d+|Unknown(?:Stress|Strain)?(?:\(\d+\))?)$")
 
 
 def _meta_column_labels(
@@ -466,9 +490,7 @@ def resolve_gauss_component_names(
             f"Gauss point {list(labels)}; the catalog layout has "
             f"{layout.n_components_per_gp} {expected}."
         )
-    if all(_GENERIC_COMP_RE.match(lab) for lab in labels) and [
-        int(lab[1:]) for lab in labels
-    ] == list(range(1, len(labels) + 1)):
+    if all(_UNNAMED_LABEL_RE.match(lab) for lab in labels):
         return layout
     names: list[str] = []
     for lab in labels:
@@ -490,6 +512,23 @@ def resolve_gauss_component_names(
     if tuple(names) == layout.component_layout:
         return layout
     return replace(layout, component_layout=tuple(names))
+
+
+def _warn_unnamed_columns(
+    bucket_grp: "h5py.Group", canonical_component: str, exc: ValueError,
+) -> None:
+    """Name a bucket whose META labels refuse the catalog's names.
+
+    The bucket is left unread and the read goes on with the others: one
+    bucket a reader cannot name never fails a read for every class.
+    """
+    from ._mpco import MPCOBucketSkippedWarning
+    warnings.warn(
+        f"MPCO gauss read of {canonical_component!r} in "
+        f"{Path(bucket_grp.file.filename).name} left 1 bucket(s) unread, so "
+        f"their elements return no values: {bucket_grp.name}: {exc}",
+        MPCOBucketSkippedWarning, stacklevel=4,
+    )
 
 
 def is_unnamed_element_block(
@@ -554,7 +593,10 @@ def read_bucket_slab(
         ``element_index``: ``(E_g_sel * n_GP,)`` element tag per column.
         ``natural_coords``: ``(E_g_sel * n_GP, dim)`` parent-domain coords.
         Returns ``None`` if no elements survive filtering or the
-        component is not in this bucket's layout.
+        component is not in this bucket's layout, and when the bucket's
+        META labels refuse the catalog's names
+        (:func:`resolve_gauss_component_names`); that bucket is named in
+        an ``MPCOBucketSkippedWarning`` and the other buckets still read.
     """
     layout = bucket.layout
     if canonical_component not in layout.component_layout:
@@ -580,10 +622,14 @@ def read_bucket_slab(
                 f"recorder, which stores each element's own Gauss points "
                 f"and reads it correctly."
             ) from exc
-        layout = resolve_gauss_component_names(
-            bucket_grp, layout,
-            where=f"{bucket.mpco_group_name}/{bucket.bracket_key}",
-        )
+        try:
+            layout = resolve_gauss_component_names(
+                bucket_grp, layout,
+                where=f"{bucket.mpco_group_name}/{bucket.bracket_key}",
+            )
+        except ValueError as exc:
+            _warn_unnamed_columns(bucket_grp, canonical_component, exc)
+            return None
 
     # Element IDs in row order.
     all_ids = np.asarray(bucket_grp["ID"][...]).flatten().astype(np.int64)

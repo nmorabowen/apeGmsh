@@ -14,6 +14,6 @@ section assignments. A header-1 layer bucket, which warned
 bucket is still named in `NodalForceBucketSkippedWarning`.
 Gauss columns are now named by each bucket's own META labels (`sigma33` is
 `stress_zz` wherever it sits); MPCO's unnamed `C1..Cn` keep the catalog
-order, and a label that names none of the catalog's components refuses the
-read with a `ValueError` naming the bucket, where it used to be read under
-the catalog's names.
+order. A bucket whose labels name none of the catalog's components, where
+it used to be read under the catalog's names, is left unread and named with
+its labels in `MPCOBucketSkippedWarning`; the other buckets still read.
