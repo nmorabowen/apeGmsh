@@ -573,10 +573,9 @@ class Results:
             # file; we never copy the zone into a derived h5.
             from ..opensees.opensees_model import OpenSeesModel
             bound_model = OpenSeesModel.from_h5(model_h5)
-            # #1325 — the archive's neutral FEMData carries the physical
-            # groups the MPCO MODEL/ group lacks; #1324 — its
-            # /opensees/stages carry the names the MODEL_STAGE[<k>]
-            # groups lack.
+            # The archive's neutral FEMData carries the physical groups
+            # the MPCO MODEL/ group lacks; its /opensees/stages carry the
+            # names the MODEL_STAGE[<k>] groups lack.
             bound_fem = _resolve_fem_via_model(
                 reader, fem, bound_model, model_path=model_h5,
             )
