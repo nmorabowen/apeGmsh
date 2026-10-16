@@ -14,12 +14,14 @@ checked against the live domain at ``rtol=1e-10``:
   definitions for ``(y, z, area, material)``.
 * **Layers.** Two ``ASDShellQ4`` with a four-layer ``LayeredShell`` (two
   materials, four thicknesses), in a plane tilted 30 deg about ``x`` so the
-  local frame is not the identity. Oracle: ``eleResponse(e, "material", gp,
-  "fiber", k, "stress"|"strain")`` per layer, the ``ShellLayer`` thicknesses,
-  and the quaternion C7 writes (``results/_shell_geometry.py``). That oracle
-  is itself checked twice: against the closed form ``(cos 15, -sin 15, 0, 0)``
-  (the rotation global -> local, rows = local axes), and against the
-  quaternion the fork's MPCO writer stores for a beam with the same frame.
+  local frame is not the identity, and the same strip for every other
+  layered-shell class the bridge emits (``LAYER_CLASSES``). Oracle:
+  ``eleResponse(e, "material", gp, "fiber", k, "stress"|"strain")`` per
+  layer, the ``ShellLayer`` thicknesses, and the quaternion C7 writes
+  (``results/_shell_geometry.py``). That oracle is itself checked twice:
+  against the closed form ``(cos 15, -sin 15, 0, 0)`` (the rotation global ->
+  local, rows = local axes), and against the quaternion the fork's MPCO
+  writer stores for a beam with the same frame.
 
 Every kind x route cell is pinned, so a reader change flips something:
 
@@ -28,17 +30,18 @@ Kind                ``.ladruno``            MPCO
 =================== ======================= ===============================
 Fibre values        pass                    pass
 Fibre geometry      pass                    pass
-Layer values,       xfail #1995 (empty      pass
-thickness           slab)
-Layer quaternion    xfail #1995; the file   pass (no stored shell frame:
-                    stores no shell axes    computed from the file's
-                                            coordinates, #1996)
+Layer values,       pass (#1995)            pass
+thickness
+Layer quaternion    pass: no stored shell   pass: no stored shell frame,
+                    frame, computed from    computed from the file's
+                    the file's coordinates  coordinates (#1996)
+                    (#1995)
 =================== ======================= ===============================
 
 Fields a format does not carry (reported on #1767, never synthesised here):
 ``LayerSlab`` has no layer-material field on either format, although both
-files store ``FIBER_MATERIALS``; a ``.ladruno`` stores no local axes for a
-shell, so it has no quaternion to read.
+files store ``FIBER_MATERIALS``; neither file stores local axes for a
+shell, so both readers compute the frame from node coordinates.
 
 Pip ``openseespy`` 3.8.0 ships no MPCO recorder and no ``.ladruno`` recorder,
 and ``.out`` carries neither kind, so on a pip install fibres and layers have
@@ -57,6 +60,8 @@ import numpy as np
 import pytest
 
 from apeGmsh.opensees import apeSees
+from apeGmsh.opensees import element as _bridge_elements
+from apeGmsh.opensees._response_catalog import LAYER_CATALOG, RESPONSE_CATALOG
 from apeGmsh.opensees.emitter.live import LiveOpsEmitter
 from apeGmsh.opensees.section.fiber import FiberPoint
 from apeGmsh.opensees.section.plate import ShellLayer
@@ -74,11 +79,6 @@ LOBATTO_3 = (-1.0, 0.0, 1.0)
 N_PLATE = 5
 #: The shell plane is the xy plane turned this far about x.
 TILT_DEG = 30.0
-
-B_LAD_LAYERS = (
-    "#1995: the .ladruno reader returns an empty slab for a layered shell "
-    "(NUM_COMP 5 fibre blocks dropped)"
-)
 
 
 # ---------------------------------------------------------------------------
@@ -258,8 +258,9 @@ def test_fiber_geometry_equals_the_section_definition(
 # ---------------------------------------------------------------------------
 
 
-def _shell_fem(g: Any) -> Any:
-    """A 2 x 1 strip, meshed as two quads, in the xy plane turned about x."""
+def _shell_fem(g: Any, quads: bool = True) -> Any:
+    """A 2 x 1 strip, meshed as two quads (or four triangles), in the xy
+    plane turned about x."""
     c = math.cos(math.radians(TILT_DEG))
     s = math.sin(math.radians(TILT_DEG))
     G = g.model.geometry
@@ -274,15 +275,37 @@ def _shell_fem(g: Any) -> Any:
     for ln, n in zip(lines, (3, 2, 3, 2)):
         st.set_transfinite_curve(ln, n)
     st.set_transfinite_surface(surf)
-    st.set_recombine(surf)
+    if quads:
+        st.set_recombine(surf)
     g.mesh.generation.generate(2)
     return g.mesh.queries.get_fem_data(dim=2)
 
 
 THICKNESS = (0.08, 0.004, 0.05, 0.006)
 
+#: The layered-shell classes the bridge emits (``apeSees.element``) that the
+#: response catalog gives a layer layout (``LAYER_CATALOG``), with the
+#: surface Gauss point count of their rule.
+LAYER_CLASSES = {
+    cls: RESPONSE_CATALOG[(
+        cls, LAYER_CATALOG[(cls, "fiber_stress")].surface_int_rule, "stress",
+    )].n_gauss_points
+    for cls in sorted({c for c, _token in LAYER_CATALOG})
+    if hasattr(_bridge_elements, cls)
+}
+_TRIANGLES = {"ASDShellT3"}
 
-def _layer_run(g: Any, tmp_path: Path, kind: str) -> tuple[
+
+def test_layer_classes_are_the_bridge_shells() -> None:
+    """The roster this file covers, so a new bridge shell shows up here."""
+    assert LAYER_CLASSES == {
+        "ASDShellQ4": 4, "ASDShellT3": 3, "ShellDKGQ": 4, "ShellMITC4": 4,
+    }
+
+
+def _layer_run(
+    g: Any, tmp_path: Path, kind: str, cls: str = "ASDShellQ4",
+) -> tuple[
     Results, dict[tuple[int, int, int], np.ndarray], dict[int, np.ndarray],
 ]:
     """Solve the shell strip; return results, live layer state, frames.
@@ -291,7 +314,7 @@ def _layer_run(g: Any, tmp_path: Path, kind: str) -> tuple[
     ``(stress, strain)``; frames is ``{fem_eid: quaternion}`` from the
     live node coordinates through C7's ``shell_quaternion``.
     """
-    fem = _shell_fem(g)
+    fem = _shell_fem(g, quads=cls not in _TRIANGLES)
     ops = apeSees(fem)
     ops.model(ndm=3, ndf=6)
     conc = ops.nDMaterial.ElasticIsotropic(E=30e9, nu=0.2)
@@ -300,7 +323,7 @@ def _layer_run(g: Any, tmp_path: Path, kind: str) -> tuple[
         ShellLayer(material=m, thickness=t)
         for m, t in zip((conc, steel, conc, steel), THICKNESS)
     ))
-    ops.element.ASDShellQ4(pg="Slab", section=sec)
+    getattr(ops.element, cls)(pg="Slab", section=sec)
     ops.fix(pg="Fixed", dofs=(1, 1, 1, 1, 1, 1))
     with ops.pattern.Plain(series=ops.timeSeries.Linear()) as p:
         p.load(pg="Free", forces=(1e4, 2e3, 5e3, 0.0, 0.0, 0.0))
@@ -309,7 +332,7 @@ def _layer_run(g: Any, tmp_path: Path, kind: str) -> tuple[
     for _ in range(N_STEPS):
         assert emitter.analyze(steps=1) == 0
         for eid, tag in f2o.items():
-            for gp in (1, 2, 3, 4):
+            for gp in range(1, LAYER_CLASSES[cls] + 1):
                 for k in range(1, len(THICKNESS) + 1):
                     pair = [
                         [float(v) for v in emitter.ops.eleResponse(
@@ -321,7 +344,7 @@ def _layer_run(g: Any, tmp_path: Path, kind: str) -> tuple[
     frames = {
         eid: shell_quaternion(
             np.array([emitter.ops.nodeCoord(n) for n in emitter.ops.eleNodes(tag)]),
-            "ASDShellQ4",
+            cls,
         )
         for eid, tag in f2o.items()
     }
@@ -330,21 +353,16 @@ def _layer_run(g: Any, tmp_path: Path, kind: str) -> tuple[
             {k: np.asarray(v) for k, v in live.items()}, frames)
 
 
-def _layer_case(kind: str, defect: str) -> list[Any]:
-    """``KINDS`` with ``kind`` marked as a strict xfail citing ``defect``."""
-    return [
-        pytest.param(k, marks=pytest.mark.xfail(
-            strict=True, raises=AssertionError, reason=defect))
-        if k == kind else k
-        for k in KINDS
-    ]
-
-
-@pytest.mark.parametrize("kind", KINDS)
-def test_layer_stress_strain_and_thickness_equal_live(
-    g: Any, tmp_path: Path, kind: str,
+def _assert_layers_equal_live(
+    r: Results, live: dict[tuple[int, int, int], np.ndarray], kind: str,
 ) -> None:
-    r, live, _frames = _layer_run(g, tmp_path, kind)
+    """Every layer component, row set, value, thickness and sub-GP. The
+    fiber level lists nothing: a shell's layer state reads as layers."""
+    assert r.elements.fibers.available_components() == [], kind
+    assert r.elements.layers.available_components() == sorted(
+        f"{parent}_{c}" for parent in ("fiber_strain", "fiber_stress")
+        for c in range(N_PLATE)
+    ), kind
     for col, parent in enumerate(("fiber_stress", "fiber_strain")):
         for c in range(N_PLATE):
             comp = f"{parent}_{c}"
@@ -356,11 +374,56 @@ def test_layer_stress_strain_and_thickness_equal_live(
             ]
             assert sorted(rows) == sorted(live), comp
             want = np.stack([live[row][:, col, c] for row in rows], axis=1)
-            _assert_close(slab.values, want, f"{comp} on {kind}")
+            if np.abs(want).max() == 0.0:
+                # A Kirchhoff shell (ShellDKGQ) answers zero transverse
+                # shear in every layer: the file must read zero too.
+                np.testing.assert_array_equal(
+                    slab.values, want, err_msg=f"{comp} on {kind}")
+            else:
+                _assert_close(slab.values, want, f"{comp} on {kind}")
             np.testing.assert_allclose(
                 slab.thickness, [THICKNESS[k] for _e, _gp, k in rows],
                 rtol=RTOL)
             assert not np.asarray(slab.sub_gp_index).any()
+
+
+def _assert_quaternions_are_the_frames(
+    r: Results, live: dict[tuple[int, int, int], np.ndarray],
+    frames: dict[int, np.ndarray], kind: str,
+) -> None:
+    slab = r.elements.layers.get(component="fiber_stress_0")
+    assert sorted(
+        (int(e), int(gp), int(k))
+        for e, gp, k in zip(slab.element_index, slab.gp_index, slab.layer_index)
+    ) == sorted(live)
+    q = np.asarray(slab.local_axes_quaternion, dtype=float)
+    want = np.array([frames[int(e)] for e in slab.element_index])
+    # A unit quaternion and its negative are one rotation.
+    np.testing.assert_allclose(
+        np.abs(np.einsum("ij,ij->i", q, want)), 1.0, rtol=0, atol=1e-12,
+        err_msg=f"quaternion on {kind}")
+
+
+@pytest.mark.parametrize("kind", KINDS)
+def test_layer_stress_strain_and_thickness_equal_live(
+    g: Any, tmp_path: Path, kind: str,
+) -> None:
+    r, live, _frames = _layer_run(g, tmp_path, kind)
+    _assert_layers_equal_live(r, live, kind)
+
+
+@pytest.mark.parametrize("kind", KINDS)
+@pytest.mark.parametrize(
+    "cls", [c for c in LAYER_CLASSES if c != "ASDShellQ4"],
+)
+def test_every_bridge_layered_shell_reads_back_live(
+    g: Any, tmp_path: Path, kind: str, cls: str,
+) -> None:
+    """The other layered-shell classes the bridge emits: values, thickness,
+    sub-GP and frame, the same oracles as the ASDShellQ4 cases."""
+    r, live, frames = _layer_run(g, tmp_path, kind, cls)
+    _assert_layers_equal_live(r, live, f"{cls} on {kind}")
+    _assert_quaternions_are_the_frames(r, live, frames, f"{cls} on {kind}")
 
 
 def _tilted_quad() -> np.ndarray:
@@ -427,14 +490,4 @@ def test_layer_quaternion_is_the_shell_frame(
     g: Any, tmp_path: Path, kind: str,
 ) -> None:
     r, live, frames = _layer_run(g, tmp_path, kind)
-    slab = r.elements.layers.get(component="fiber_stress_0")
-    assert sorted(
-        (int(e), int(gp), int(k))
-        for e, gp, k in zip(slab.element_index, slab.gp_index, slab.layer_index)
-    ) == sorted(live)
-    q = np.asarray(slab.local_axes_quaternion, dtype=float)
-    want = np.array([frames[int(e)] for e in slab.element_index])
-    # A unit quaternion and its negative are one rotation.
-    np.testing.assert_allclose(
-        np.abs(np.einsum("ij,ij->i", q, want)), 1.0, rtol=0, atol=1e-12,
-        err_msg=f"quaternion on {kind}")
+    _assert_quaternions_are_the_frames(r, live, frames, kind)
