@@ -7,7 +7,7 @@
 **Evidence:** two architect briefs written independently, one by Opus and
 one by Fable; neither read the other. They are kept in T's notes folder as
 `ladruno_canonical/brief_opus.md` and `ladruno_canonical/brief_fable.md`.
-The orchestrator reconciled them on #2079 (comment 6205108402). The
+T, the program's orchestrator, reconciled them on #2079 (comment 6205108402). The
 maintainer ratified the reconciled design as written (6205128487) and then
 ruled its five open points one at a time (6205160429, 6205168893,
 6205177638, 6205183430, 6205193494). This ADR records those decisions; it
@@ -38,12 +38,13 @@ the fork's own recorder format, read by `Results.from_ladruno` behind an
 (`results/readers/_ladruno.py`).
 
 So a fork run that records `.ladruno`, the path the program invests in,
-has no viewer route at all. The question put to the two architects was which format is canonical, and
-how the others reach it without losing what they carry.
+has no viewer route at all. The question put to the two architects was
+which format is canonical, and how the others reach it without losing what
+they carry.
 
 Both briefs answered `.ladruno`, and agreed on most of the shape. Where they
-differed, the orchestrator picked, and the maintainer ratified the picks
-with the rest (see *Consequences*).
+differed, T, the program's orchestrator, picked, and the maintainer
+ratified the picks with the rest (see *Consequences*).
 
 ## Decision
 
@@ -171,8 +172,7 @@ Old native files stop opening at slice 10. That is the maintainer's ruling
 (point 4), announced in that slice's changelog; until then nothing that
 opens today stops opening.
 
-The briefs differed on four points, and the orchestrator's picks stand as
-ratified:
+The briefs differed on four points, and T's picks stand as ratified:
 
 - **Class, rule and section tags on `GaussSlab` and its siblings.** The
   Opus brief found them unnecessary, because the file carries them; the
