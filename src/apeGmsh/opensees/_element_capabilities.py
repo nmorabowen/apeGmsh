@@ -565,14 +565,6 @@ _ELEM_REGISTRY: dict[str, _ElemSpec] = {
     # ── 3-D shell (section-based) ──────────────────────────────────────────
     # Shells use a section; with a layered section they expose
     # through-thickness layer responses (has_layers).
-    "ShellMITC3": _ElemSpec(
-        mat_family="section", needs_transf=False,
-        ndm_ok=frozenset({3}), ndf_ok=frozenset({6}),
-        gmsh_etypes=frozenset({2}),
-        node_reorder={2: (0, 1, 2)},
-        slots=("nodes", "secTag"),
-        has_gauss=True, has_layers=True,
-    ),
     "ShellMITC4": _ElemSpec(
         mat_family="section", needs_transf=False,
         ndm_ok=frozenset({3}), ndf_ok=frozenset({6}),

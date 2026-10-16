@@ -22,10 +22,10 @@ from ...element.beam_column import (
     forceBeamColumn,
 )
 from ...element.shell import (
+    SHELLMITC3_REMOVED,
     ASDShellQ4,
     ASDShellT3,
     ShellDKGQ,
-    ShellMITC3,
     ShellMITC4,
 )
 from ...element.solid import (
@@ -102,6 +102,22 @@ _ShellSection = (
 
 class _ElementNS(_BridgeNamespace):
     """``ops.element.<Type>(pg=..., ...)`` — Phase 2 element namespace."""
+
+    if not TYPE_CHECKING:
+        # ``ops.element.ShellMITC3`` was removed (#2092): its spelling raises
+        # the message that names the replacement. The hook only rewords an
+        # AttributeError and answers no new name, so it is
+        # ``__getattribute__`` rather than ``__getattr__``, and type checkers
+        # never see it: a ``__getattr__`` reads as "answers any name" to
+        # mypy and to the skill's fence resolver (tests/_doc_resolver.py),
+        # which would then pass every ``ops.element.<typo>``.
+        def __getattribute__(self, name):
+            try:
+                return object.__getattribute__(self, name)
+            except AttributeError:
+                if name == "ShellMITC3":
+                    raise AttributeError(SHELLMITC3_REMOVED) from None
+                raise
 
     # -- Beam-column family (Phase 2α) ----------------------------------
 
@@ -453,14 +469,6 @@ class _ElementNS(_BridgeNamespace):
         )
 
     # -- Shell family (Phase 2γ) ----------------------------------------
-
-    def ShellMITC3(
-        self, *, pg: str, section: _ShellSection | str
-    ) -> ShellMITC3:
-        section_r = cast(Section, self._bridge._resolve(section, base=Section))
-        return self._bridge._register(
-            ShellMITC3(pg=pg, section=section_r)
-        )
 
     def ShellMITC4(
         self, *, pg: str, section: _ShellSection | str,

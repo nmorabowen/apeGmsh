@@ -2,10 +2,9 @@
 Shell element primitives — typed wrappers over the OpenSees ``element
 Shell*`` family.
 
-Five element types live here:
+Four element types live here:
 
 * :class:`ShellMITC4` — 4-node MITC shell (membrane + bending).
-* :class:`ShellMITC3` — 3-node MITC shell.
 * :class:`ShellDKGQ` — 4-node Discrete Kirchhoff (Quadrilateral) shell.
 * :class:`ASDShellQ4` — 4-node ASD shell (Petracca/ASDEA Software).
 * :class:`ASDShellT3` — 3-node ASD shell.
@@ -13,12 +12,15 @@ Five element types live here:
 The OpenSees commands per the manual:
 
 * ``element ShellMITC4 tag i j k l secTag``
-* ``element ShellMITC3 tag i j k secTag``
 * ``element ShellDKGQ  tag i j k l secTag``
 * ``element ASDShellQ4 tag i j k l secTag [-corotational]``
   ``[-drillingNT alpha] [-localCS x1 x2 x3 y1 y2 y3]``
 * ``element ASDShellT3 tag i j k secTag [-corotational]``
   ``[-drillingDOF dof_id] [-localCS x1 x2 x3 y1 y2 y3]``
+
+``ShellMITC3`` was removed (#2092): no OpenSees build has the element, so
+every model that used it failed at emit. ``ASDShellT3`` is the 3-node shell
+to use; :data:`SHELLMITC3_REMOVED` is the message every spelling raises.
 
 Element fan-out contract
 ========================
@@ -39,7 +41,9 @@ Tests install both contexts manually with :func:`set_tag_resolver` +
 """
 from __future__ import annotations
 
+import sys
 from dataclasses import dataclass
+from opcode import opmap
 from typing import TYPE_CHECKING
 
 from .._internal.tag_resolution import (
@@ -53,8 +57,46 @@ if TYPE_CHECKING:
     from ..emitter.base import Emitter
 
 
+#: What every spelling of the removed ``ShellMITC3`` raises (#2092): the
+#: module ``__getattr__`` here and in :mod:`apeGmsh.opensees.element`, and
+#: ``ops.element``.
+SHELLMITC3_REMOVED = (
+    "ShellMITC3 was removed from the bridge (#2092): no OpenSees build has "
+    "the element (neither the Ladruno fork pin nor upstream), so a model "
+    "using it failed at emit. Use ops.element.ASDShellT3 for a 3-node shell. "
+    "ShellDKGT is the other working 3-node OpenSees shell; the bridge has no "
+    "typed primitive for it."
+)
+
+
+
+def shellmitc3_removed() -> Exception:
+    """The error a spelling of the removed ``ShellMITC3`` raises (#2092).
+
+    An attribute read gets an ``AttributeError``, so ``hasattr`` and
+    ``getattr(..., default)`` still answer "absent". ``from ... import
+    ShellMITC3`` is the exception: CPython swallows an ``AttributeError``
+    from a module ``__getattr__`` during ``IMPORT_FROM`` and raises a bare
+    "cannot import name", which would drop the replacement. So when the
+    caller of the module ``__getattr__`` is executing ``IMPORT_FROM``, the
+    error is an ``ImportError`` carrying the same message.
+    """
+    caller = sys._getframe(2)   # 0: here, 1: a ``__getattr__``, 2: its caller
+    if caller.f_code.co_code[caller.f_lasti] == opmap["IMPORT_FROM"]:
+        return ImportError(SHELLMITC3_REMOVED, name="ShellMITC3")
+    return AttributeError(SHELLMITC3_REMOVED)
+
+
+if not TYPE_CHECKING:
+    # Hidden from type checkers: a module ``__getattr__`` reads to mypy as
+    # "answers any name", which would type-check the removed spelling.
+    def __getattr__(name: str) -> object:
+        if name == "ShellMITC3":
+            raise shellmitc3_removed()
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
 __all__ = [
-    "ShellMITC3",
     "ShellMITC4",
     "ShellDKGQ",
     "ASDShellQ4",
@@ -140,39 +182,6 @@ class ShellMITC4(Element):
     def dependencies(self) -> tuple[Primitive, ...]:
         if self.damp is not None:
             return (self.section, self.damp)
-        return (self.section,)
-
-
-# ---------------------------------------------------------------------------
-# ShellMITC3 — 3-node MITC shell
-# ---------------------------------------------------------------------------
-
-@dataclass(frozen=True, kw_only=True, slots=True)
-class ShellMITC3(Element):
-    """``element ShellMITC3`` — 3-node MITC shell.
-
-    Parameters
-    ----------
-    pg
-        Physical group whose surface (triangular) cells receive this
-        element.
-    section
-        The plate / shell :class:`Section`.
-    """
-
-    pg: str
-    section: Section
-
-    def _emit(self, emitter: "Emitter", tag: int) -> None:
-        nodes = current_element_nodes(emitter)
-        if len(nodes) != 3:
-            raise ValueError(
-                f"ShellMITC3: expected 3 node tags, got {len(nodes)}."
-            )
-        sec_tag = resolve_tag(emitter, self.section)
-        emitter.element("ShellMITC3", tag, *nodes, sec_tag)
-
-    def dependencies(self) -> tuple[Primitive, ...]:
         return (self.section,)
 
 

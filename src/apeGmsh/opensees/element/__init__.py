@@ -32,6 +32,8 @@ the emitter.
 """
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from .beam_column import (
     ElasticTimoshenkoBeam,
     LadrunoDispBeamColumn,
@@ -42,10 +44,10 @@ from .beam_column import (
 )
 from .embedded_rebar import embedded_rebar_args
 from .shell import (
+    shellmitc3_removed,
     ASDShellQ4,
     ASDShellT3,
     ShellDKGQ,
-    ShellMITC3,
     ShellMITC4,
 )
 from .solid import (
@@ -95,7 +97,6 @@ __all__ = [
     # two_node_link
     "TwoNodeLink",
     # shell
-    "ShellMITC3",
     "ShellMITC4",
     "ShellDKGQ",
     "ASDShellQ4",
@@ -119,3 +120,13 @@ __all__ = [
     # embedded reinforcement (Ladruno fork — resolver-produced coupling)
     "embedded_rebar_args",
 ]
+
+
+if not TYPE_CHECKING:
+    # Hidden from type checkers: a module ``__getattr__`` reads to mypy as
+    # "answers any name", which would type-check the removed spelling.
+    def __getattr__(name: str) -> object:
+        # ``ShellMITC3`` was removed (#2092); its spelling names the replacement.
+        if name == "ShellMITC3":
+            raise shellmitc3_removed()
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

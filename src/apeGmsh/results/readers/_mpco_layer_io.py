@@ -45,8 +45,8 @@ v1 scope (a bucket outside it is left unread, and named in the read's
   counts per element).
 
 Bucket discovery leaves out a bucket of a class with no ``LAYER_CATALOG``
-row (ShellMITC3: the pinned fork has no such element, so no file records
-it), a ``header_idx != 0`` bucket, a bucket whose rule differs from the
+row (ShellMITC3: no OpenSees build has the element and the bridge dropped
+it, #2092, so no file records it), a ``header_idx != 0`` bucket, a bucket whose rule differs from the
 class's surface rule, and an unparseable key. A read names each one, by
 class, in one :class:`LayerBucketUnreadWarning`, as the ``.ladruno``
 reader does (#2090). Beam fiber-section buckets (``FIBER_CATALOG``
