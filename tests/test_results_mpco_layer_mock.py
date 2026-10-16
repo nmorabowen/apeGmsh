@@ -598,9 +598,14 @@ class TestDiscoverLayerBuckets:
         f.close()
         with h5py.File(path, "r") as g:
             on_elem = g["MODEL_STAGE[1]/RESULTS/ON_ELEMENTS"]
-            _, buckets = _mlayer.discover_layer_buckets(
-                on_elem, canonical_component="fiber_stress",
-            )
+            with pytest.warns(
+                _mlayer.LayerBucketUnreadWarning,
+                match=r"999-WeirdShell\[201:0:0\]: class 'WeirdShell' has "
+                      r"no layered-shell entry",
+            ):
+                _, buckets = _mlayer.discover_layer_buckets(
+                    on_elem, canonical_component="fiber_stress",
+                )
         assert buckets == []
 
 
