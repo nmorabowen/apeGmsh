@@ -143,15 +143,20 @@ def convert_mpco(
     -------
     The target paths, in partition order.
 
-    Every check runs before the first byte is written. The parts are
-    written into ``<dst parent>/<dst stem>.partial/`` under their final
-    names, stamped, then moved into place; any failure removes the
-    staging directory, and with it every ``.partial`` file, so no target
-    is left behind. :class:`MPCOConversionRefused` is raised for a
-    refusal; a failure during the stamp re-raises its own error after the
-    rollback.
+    The checks on the targets, the archive, the stages and the partition
+    set run before anything is written. The parts are then written into
+    ``<dst parent>/<dst stem>.partial/`` under their final names, stamped,
+    and moved into place. Any failure on the way, a malformed bucket found
+    while writing included, removes the staging directory and every part
+    already moved, so no target is left behind; the source is never
+    opened for writing. :class:`MPCOConversionRefused` is raised for a
+    refusal; another failure (the stamp, the disk) re-raises its own error
+    after the rollback. With ``overwrite=True`` a failure in the final
+    move can leave no file of the old set either.
     """
     plan = _plan(Path(src), Path(dst), model_h5, overwrite)
+    if plan.staging.exists():  # left by an interrupted run; overwrite=True
+        shutil.rmtree(plan.staging)
     try:
         plan.staging.mkdir(parents=False, exist_ok=False)
     except OSError as e:
@@ -315,14 +320,12 @@ def _refuse_existing(
                 f"{len(targets)} parts being written; a reader would mix it "
                 "in. Remove it first. Nothing was written."
             )
-    if staging.exists():
-        if not overwrite:
-            raise MPCOConversionRefused(
-                f"the staging directory {staging} exists (a conversion that "
-                "was interrupted, or one running now). Remove it, or pass "
-                "overwrite=True. Nothing was written."
-            )
-        shutil.rmtree(staging)
+    if staging.exists() and not overwrite:
+        raise MPCOConversionRefused(
+            f"the staging directory {staging} exists (a conversion that "
+            "was interrupted, or one running now). Remove it, or pass "
+            "overwrite=True. Nothing was written."
+        )
 
 
 def _program(model_h5: Path) -> "tuple[list[str], list[str], set[int]]":

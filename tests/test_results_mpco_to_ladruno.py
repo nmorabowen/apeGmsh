@@ -633,6 +633,16 @@ def test_refuses_content_it_does_not_know(fx, tmp_path) -> None:
     _refuses(src, tmp_path / "out.ladruno", "SETS", model_h5=fx["frame"])
 
 
+def test_a_malformed_bucket_found_while_writing_rolls_back(fx, tmp_path) -> None:
+    src = tmp_path / "bad.mpco"
+    shutil.copy(fx["frame_src"], src)
+    with h5py.File(src, "r+") as f:
+        del f["MODEL_STAGE[2]/RESULTS/ON_ELEMENTS/force/"
+              "5-ElasticBeam3d[1:0:0]/META/COMPONENTS"]
+    _refuses(src, tmp_path / "out.ladruno", "no COMPONENTS",
+             model_h5=fx["frame"])
+
+
 def test_refuses_a_left_over_staging_directory(fx, tmp_path) -> None:
     (tmp_path / "out.partial").mkdir()
     _refuses(fx["frame_src"], tmp_path / "out.ladruno", "staging",
