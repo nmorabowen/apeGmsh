@@ -49,6 +49,7 @@ from ._mpco_layer_io import (
     LayerBucketUnreadWarning,
     ShellFrameUnavailableWarning,
 )
+from ._mpco_local_force_io import LINE_STATION_BEAM_CLASSES
 
 if TYPE_CHECKING:
     import h5py
@@ -1160,19 +1161,26 @@ def _dedupe_gauss_columns(
 #: The element-level tokens that are line-station sources, by rank. A
 #: section-level bucket (a ``LEVELS==2`` block: ``section.force``,
 #: ``section.deformation``) is rank 0 whatever its token. ``localForce`` is
-#: rank 1. ``basicForce`` is rank 2, and so is ``axialForce``, the token a
-#: Truss writes for the same basic force (``Truss::setResponse`` takes
-#: ``axialForce``, ``basicForce`` and ``basicForces`` as one response).
-#: Every other element-level token is never a source:
-#: ``globalForce`` holds global end forces, not local station values, and
-#: ``basicStiffness``, ``*DampingForces``, ``rayleighForces`` or the plural
-#: aliases carry no station signs. A read that finds the component only
-#: under such a token warns, naming it
-#: (:class:`LineStationBucketSkippedWarning`).
+#: rank 1 and ``basicForce`` rank 2. ``axialForce``, the token a Truss
+#: writes for the same basic force (``Truss::setResponse`` takes
+#: ``axialForce``, ``basicForce`` and ``basicForces`` as one response),
+#: ranks 3, so a truss that records both reads ``basicForce`` once. Every
+#: other element-level token is never a source: ``globalForce`` holds
+#: global end forces, not local station values, and ``basicStiffness``,
+#: ``*DampingForces`` or ``rayleighForces`` carry no station values. A read
+#: that finds the component only under such a token, on a beam class,
+#: warns, naming it (:class:`LineStationBucketSkippedWarning`).
 _LINE_STATION_TOKEN_RANK: dict[str, int] = {
     "localForce": 1,
     "basicForce": 2,
-    "axialForce": 2,
+    "axialForce": 3,
+}
+
+#: Plural recorder spellings OpenSees answers as the singular response.
+#: They read as the singular token, its rank, gate and station signs.
+_STATION_TOKEN_ALIAS: dict[str, str] = {
+    "localForces": "localForce",
+    "basicForces": "basicForce",
 }
 
 #: The section-level tokens. With the element-level sources above, an
@@ -1183,17 +1191,23 @@ _SECTION_STATION_TOKENS = frozenset({"section.force", "section.deformation"})
 class LineStationBucketSkippedWarning(UserWarning):
     """A ``.ladruno`` bucket gives no line stations although it could seem to.
 
-    Two cases (#2109). A bucket under a station-source token whose
-    ``COLUMN_MAP`` does not parse is dropped; the warning names the bucket
-    and the parse error. A bucket under a token that is never a station
-    source (:data:`_LINE_STATION_TOKEN_RANK`, ``globalForce`` above all)
-    names the component for elements no ranked source covers; those
-    elements get no stations, and the warning names the token, the bucket
-    and the elements.
+    Two cases. A bucket under a station-source token whose ``COLUMN_MAP``
+    does not parse is dropped; the warning names the bucket and the parse
+    error. A beam-class bucket (:data:`LINE_STATION_BEAM_CLASSES`) under a
+    token that is never a station source (:data:`_LINE_STATION_TOKEN_RANK`,
+    ``globalForce`` above all) names the component for elements no ranked
+    source covers; those elements get no stations, and the warning names
+    the token, the bucket and the elements.
     """
 
 
+def _station_token(token: str) -> str:
+    """``token`` with a plural recorder spelling read as its singular."""
+    return _STATION_TOKEN_ALIAS.get(token, token)
+
+
 def _is_station_source_token(token: str) -> bool:
+    token = _station_token(token)
     return token in _LINE_STATION_TOKEN_RANK or token in _SECTION_STATION_TOKENS
 
 
@@ -1227,23 +1241,24 @@ def line_station_available(on_elements: "h5py.Group") -> set[str]:
     parse (its names do not cover its DATA columns) lists nothing and
     warns, naming it. A ``basicForce`` component that
     :func:`_basic_force_refusal` refuses is left out with a warning naming
-    the bucket and the component. An element-level bucket under any token
-    outside :data:`_LINE_STATION_TOKEN_RANK` lists nothing, silently: a
-    shell's ``globalForce`` names ``Mz_1`` too, and listing is no request
-    for line stations. A read of such a component warns
-    (:func:`read_line_station_slab`, #2109).
+    the bucket and the component. A plural token (``localForces``,
+    ``basicForces``) lists as its singular. An element-level bucket under
+    any other token outside :data:`_LINE_STATION_TOKEN_RANK` lists nothing,
+    silently: listing is no request for line stations. A read of such a
+    component on a beam class warns (:func:`read_line_station_slab`).
     """
     out: set[str] = set()
-    for token in on_elements:
-        for key in on_elements[token]:
-            bucket = on_elements[token][key]
+    for raw_token in on_elements:
+        token = _station_token(raw_token)
+        for key in on_elements[raw_token]:
+            bucket = on_elements[raw_token][key]
             element_stations: dict[str, list[int]] = {}
             try:
                 blocks = parse_blocks(bucket)
             except (KeyError, ValueError) as exc:
                 if _is_station_source_token(token):
                     warnings.warn(
-                        _unreadable_bucket_message(token, key, exc),
+                        _unreadable_bucket_message(raw_token, key, exc),
                         LineStationBucketSkippedWarning, stacklevel=2,
                     )
                 continue
@@ -1481,26 +1496,31 @@ def read_line_station_slab(
       natural coordinate is read from the element's ``QUADRATURE/GP_PARAM``
       keyed by ``GAUSS_ID`` (force-based beams), not synthesized.
 
-    An element takes its stations from one source only, the first in this
-    order: section-level, then ``localForce``, then ``basicForce`` (or a
-    truss's ``axialForce``) (:data:`_LINE_STATION_TOKEN_RANK`). A force
-    beam that also records ``localForce`` or ``basicForce`` keeps its
-    section stations, and an elastic beam (no section response) gets its
-    two ``localForce`` stations, as MPCO's reader does.
+    An element takes its stations from one bucket only: the first of the
+    highest rank in this order, section-level, then ``localForce``, then
+    ``basicForce``, then a truss's ``axialForce``
+    (:data:`_LINE_STATION_TOKEN_RANK`); buckets of one rank go in file
+    order. A force beam that also records ``localForce`` or ``basicForce``
+    keeps its section stations, and an elastic beam (no section response)
+    gets its two ``localForce`` stations, as MPCO's reader does. A plural
+    token (``localForces``, ``basicForces``) reads as its singular.
 
-    Any other element-level token is never a source (#2109): ``globalForce``
-    end forces are global, not station values. When such a bucket names
+    Any other element-level token is never a source: ``globalForce`` end
+    forces are global, not station values. When a beam-class bucket
+    (:data:`LINE_STATION_BEAM_CLASSES`) under such a token names
     ``component`` for elements no ranked source covers, those elements get
     no stations and one :class:`LineStationBucketSkippedWarning` names the
-    tokens, buckets and elements. A bucket under a source token whose
-    ``COLUMN_MAP`` does not parse is dropped with the same warning, naming
-    it and the parse error.
+    tokens, buckets and elements. Other classes (bearings, walls, shells)
+    pass silently: their element forces are no beam's stations. A bucket
+    under a source token whose ``COLUMN_MAP`` does not parse is dropped
+    with the same warning, naming it and the parse error.
     """
     found: list[tuple[int, tuple[ndarray, ndarray, ndarray]]] = []
     unreadable: list[str] = []
     unranked: list[tuple[str, ndarray]] = []
-    for token in on_elements:
-        token_grp = on_elements[token]
+    for raw_token in on_elements:
+        token = _station_token(raw_token)
+        token_grp = on_elements[raw_token]
         for key in token_grp:
             bucket = token_grp[key]
             try:
@@ -1508,7 +1528,7 @@ def read_line_station_slab(
             except (KeyError, ValueError) as exc:
                 if _is_station_source_token(token):
                     unreadable.append(
-                        _unreadable_bucket_message(token, key, exc))
+                        _unreadable_bucket_message(raw_token, key, exc))
                 continue
             if any(b.level == 2 for b in blocks):
                 rank = 0
@@ -1523,10 +1543,11 @@ def read_line_station_slab(
                     t_idx=t_idx, element_ids=element_ids,
                 )
             else:
-                if _names_component(blocks, component):
+                if (_class_name(key) in LINE_STATION_BEAM_CLASSES
+                        and _names_component(blocks, component)):
                     hit = _select_rows(bucket, element_ids)
                     if hit is not None:
-                        unranked.append((f"{token}/{key}", hit[1]))
+                        unranked.append((f"{raw_token}/{key}", hit[1]))
                 continue
             if res is not None:
                 found.append((rank, res))
@@ -1540,17 +1561,17 @@ def read_line_station_slab(
     eidx_parts: list[ndarray] = []
     station_parts: list[ndarray] = []
     covered: set[int] = set()
-    for rank in (0, 1, 2):
-        served: set[int] = set()
-        for r, (v, ei, st) in found:
-            keep = ~np.isin(ei, list(covered))
-            if r != rank or not keep.any():
-                continue
-            values_parts.append(v[:, keep])
-            eidx_parts.append(ei[keep])
-            station_parts.append(st[keep])
-            served.update(int(e) for e in ei[keep])
-        covered |= served
+    # Stable sort: one rank keeps file order. ``covered`` grows per
+    # bucket, so a second bucket of the same rank never adds stations to
+    # an element the first one served.
+    for _rank, (v, ei, st) in sorted(found, key=lambda f: f[0]):
+        keep = ~np.isin(ei, list(covered))
+        if not keep.any():
+            continue
+        values_parts.append(v[:, keep])
+        eidx_parts.append(ei[keep])
+        station_parts.append(st[keep])
+        covered.update(int(e) for e in ei[keep])
 
     bare = [
         (where, np.unique(ids[~np.isin(ids, list(covered))]))
@@ -1564,7 +1585,7 @@ def read_line_station_slab(
         warnings.warn(
             f"{component!r} line stations: {listing} name {component!r}, "
             f"but these tokens are never a line-station source "
-            f"(section.force, then localForce, then basicForce or "
+            f"(section.force, then localForce, then basicForce, then "
             f"axialForce are; globalForce end forces are global, not "
             f"station values). Those elements get no {component!r} "
             f"stations.",

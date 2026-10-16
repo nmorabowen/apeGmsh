@@ -56,7 +56,7 @@ FX, FY, FZ, MX, MY, MZ = 1.0e3, 2.0e3, 3.0e3, 4.0e2, 5.0e2, 6.0e2
 LAMBDA = np.array([0.5, 1.0])          # two load steps
 #: element id -> (x_a, x_b)
 SPAN = {11: (0.0, 2.0), 12: (2.0, 4.0), 13: (0.0, 2.0), 14: (2.0, 4.0),
-        21: (0.0, 2.0), 22: (2.0, 4.0)}
+        21: (0.0, 2.0), 22: (2.0, 4.0), 51: (0.0, 2.0)}
 MOMENTS = ("bending_moment_z", "bending_moment_y")
 #: The card's statics at the fixed end and the tip, full load.
 CARD_ENDS = {"bending_moment_z": (8600.0, 600.0),
@@ -168,7 +168,8 @@ class _File:
             names: str | None = None, row: Any = None,
             data_width: int | None = None) -> None:
         """An element-level bucket: ``row(eid)`` scaled by each step."""
-        k0, n0, r0 = ELEMENT_BUCKETS.get(token, ("", "", None))
+        k0, n0, r0 = ELEMENT_BUCKETS.get(token.removesuffix("s"),
+                                         ("", "", None))
         key, names, row = key or k0, names or n0, row or r0
         data = np.array([[row(e) for e in ids] for _ in LAMBDA])
         data *= LAMBDA[:, None, None]
@@ -448,6 +449,104 @@ def test_mpco_basic_force_non_moment_pair_is_refused_by_name(
         slab = _read(r, "bending_moment_y", [11, 12])
     for eid in (11, 12):
         _assert_statics(slab, "bending_moment_y", eid, np.array([-1.0, 1.0]))
+
+
+def test_mpco_refused_basic_pair_warns_only_for_requested_elements(
+    tmp_path: Path,
+) -> None:
+    """Element 11's ``basicForce`` names ``Vy_1,Vy_2``; a read of element
+    12 only asks nothing of that bucket and stays silent, as on
+    ``.ladruno``. A read of element 11 still names it."""
+    f = _File("mpco", tmp_path / "cantilever.mpco")
+    f.add("basicForce", [11], names="N,Vy_1,Vy_2,My_1,My_2,T")
+    f.add("localForce", [12])
+    with f.reader() as r:
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", MPCOBucketSkippedWarning)
+            slab = _read(r, "shear_y", [12])
+        assert slab.element_index.tolist() == [12, 12]
+        with pytest.warns(MPCOBucketSkippedWarning,
+                          match=r"'shear_y' at stations \[1, 2\].*\[11\]"):
+            _read(r, "shear_y", [11, 12])
+
+
+# ---------------------------------------------------------------------
+# One bucket per element inside a rank; plural tokens read as singular
+# ---------------------------------------------------------------------
+
+_TRUSS_KEY = "12-Truss[1:0:0]"
+
+
+def test_ladruno_truss_with_basic_and_axial_force_reads_basic_once(
+    tmp_path: Path,
+) -> None:
+    """A truss that records ``basicForce`` and ``axialForce`` (the same
+    response) read two ``axial_force`` stations: both tokens were rank 2
+    and coverage grew only after a whole rank. ``basicForce`` now wins,
+    and the element reads one station. The two buckets hold different
+    values so the winner is visible."""
+    f = _File("ladruno", tmp_path / "truss.ladruno")
+    f.add("axialForce", [41], key=_TRUSS_KEY, names="N", row=lambda e: [2 * FX])
+    f.add("basicForce", [41], key=_TRUSS_KEY, names="N", row=lambda e: [FX])
+    with f.reader() as r:
+        for ids in ([41], None):
+            slab = _read(r, "axial_force", ids)
+            assert slab.element_index.tolist() == [41]
+            np.testing.assert_allclose(slab.values[:, 0], LAMBDA * FX,
+                                       rtol=RTOL)
+
+
+@pytest.mark.parametrize("fmt", FORMATS)
+def test_plural_tokens_read_as_their_singular(tmp_path: Path, fmt: str) -> None:
+    """``localForces`` / ``basicForces`` are the singular responses under
+    another spelling. They read with the singular's rank and signs
+    (statics), and a singular beside its plural still gives one source.
+    Before, the plurals were never-sources (empty), and on ``.ladruno``
+    a truss's ``basicForces`` lost its axial force."""
+    f = _File(fmt, tmp_path / f"plural.{fmt}")
+    f.add("localForces", [11, 13])
+    f.add("localForce", [13])
+    f.add("basicForces", [12])
+    with f.reader() as r:
+        for comp in MOMENTS:
+            assert comp in _listed(r)
+            slab = _read(r, comp, [11, 12, 13])
+            for eid in (11, 12, 13):
+                _assert_statics(slab, comp, eid, np.array([-1.0, 1.0]))
+    if fmt == "ladruno":
+        t = _File(fmt, tmp_path / "truss_plural.ladruno")
+        t.add("basicForces", [41], key=_TRUSS_KEY, names="N",
+              row=lambda e: [FX])
+        with t.reader() as r:
+            slab = _read(r, "axial_force", [41])
+        assert slab.element_index.tolist() == [41]
+        np.testing.assert_allclose(slab.values[:, 0], LAMBDA * FX, rtol=RTOL)
+
+
+# ---------------------------------------------------------------------
+# The never-source warning is for beam classes only
+# ---------------------------------------------------------------------
+
+@pytest.mark.parametrize("key", [
+    "149-ElastomericBearingPlasticity3d[1:0:0]",
+    "212-MVLEM_3D[1:0:0]",
+])
+@pytest.mark.parametrize("fmt", FORMATS)
+def test_global_force_of_a_non_beam_class_is_silent(
+    tmp_path: Path, fmt: str, key: str,
+) -> None:
+    """A bearing's or a wall's ``globalForce`` names ``Mz_1`` too, but its
+    element forces are no beam's stations: a read of them warns nothing.
+    A beam with only ``globalForce`` still warns
+    (:func:`test_global_force_only_reads_no_stations_and_names_it`)."""
+    f = _File(fmt, tmp_path / f"bearing.{fmt}")
+    f.add("globalForce", [51], key=key)
+    with f.reader() as r:
+        for ids in ([51], None):
+            with warnings.catch_warnings():
+                warnings.simplefilter("error", SKIP_WARNING[fmt])
+                slab = _read(r, "bending_moment_z", ids)
+            assert slab.element_index.size == 0
 
 
 # =====================================================================
