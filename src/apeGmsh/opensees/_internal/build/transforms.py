@@ -10,6 +10,8 @@ import numpy as np
 from ...transform import Corotational, Linear, PDelta
 from ...element.beam_column import (
     ElasticTimoshenkoBeam,
+    LadrunoDispBeamColumn,
+    LadrunoIMKBeam,
     dispBeamColumn,
     elasticBeamColumn,
     forceBeamColumn,
@@ -120,6 +122,8 @@ def _element_transf(spec: Element) -> GeomTransf | None:
             forceBeamColumn,
             dispBeamColumn,
             ElasticTimoshenkoBeam,
+            LadrunoDispBeamColumn,
+            LadrunoIMKBeam,
         ),
     ):
         return spec.transf

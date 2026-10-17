@@ -1085,7 +1085,7 @@ _LOAD_FIELDS: dict[str, dict[str, str]] = {
 #: ``g`` and a body force ``bf`` are global (ADR 0117's load note):
 #: rotating a module never tilts its weight.
 _ELEMENT_LOAD_PARAMS: dict[str, tuple[tuple[tuple[str, ...], ...], tuple[str, ...]]] = {
-    "beamUniform": ((("wx", "wy", "wz"),), ()),
+    "beamUniform": ((("wx", "wy", "wz"), ("wx_end", "wy_end", "wz_end")), ("aL", "bL")),
     "surfacePressure": ((("direction",),), ("p", "normal")),
     "bodyForce": ((), ("g", "density", "bf")),
 }
@@ -1243,6 +1243,8 @@ def _place_load_record(
             params = dict(rec.params)
             for grp in turned:
                 missing = [k for k in grp if k not in params]
+                if len(missing) == len(grp):
+                    continue
                 if missing:
                     raise TypeError(
                         f"compose: {rec.load_type} params lack {missing}; "

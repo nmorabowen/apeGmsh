@@ -21,6 +21,7 @@ from .pg_expand import (
     _record_node_ids,
     expand_pg_to_nodes,
     expand_spec_to_elements,
+    resolve_ladruno_membrane_context,
 )
 
 
@@ -312,6 +313,16 @@ def infer_node_ndf(
             continue
         first_tag.setdefault(cls_name, int(fanout.conn[0][0]))
         blocks.extend(_conn_width_blocks(fanout.conn))
+        if cls_name == "LadrunoMembrane":
+            _fr, supp_tags, hole_loops = resolve_ladruno_membrane_context(
+                fem, spec, include_frames=False,
+            )
+            extra_ids = [
+                *supp_tags,
+                *(n for h in hole_loops for n in h),
+            ]
+            if extra_ids:
+                blocks.append(np.asarray([extra_ids], dtype=np.int64))
 
     # One registry probe + one unique-node pass per class.
     structural: list[tuple[str, "frozenset[int]", int, np.ndarray]] = []
@@ -434,7 +445,7 @@ def validate_adaptive_element_endpoints(
 
     for spec in elements:
         cls = type(spec).__name__
-        if element_class_ndf_ok(cls) != _ADAPTIVE_NDF_OK:
+        if cls == "LadrunoMembrane" or element_class_ndf_ok(cls) != _ADAPTIVE_NDF_OK:
             continue
         for eid, node_tags in expand_spec_to_elements(fem, spec):
             eff = {

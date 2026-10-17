@@ -2,7 +2,7 @@
 from __future__ import annotations
 from typing import TYPE_CHECKING
 
-from typing import Any, Iterable, Iterator, Mapping, cast, overload
+from typing import Any, Iterable, Iterator, Mapping, Sequence, cast, overload
 
 import numpy as np
 
@@ -14,6 +14,7 @@ from .pg_expand import (
     ElementPlanRows,
     expand_pg_to_elements,
     expand_spec_to_elements,
+    resolve_ladruno_membrane_context,
 )
 
 
@@ -760,6 +761,24 @@ def node_pair_rank(
     return min(common)
 
 
+def macro_element_rank(
+    spec: Element, node_tags: Sequence[int],
+    node_owners: "NodePartitionOwners",
+) -> int:
+    """The one rank that writes a multi-node macro-element (e.g. LadrunoMembrane)."""
+    common: set[int] | None = None
+    for n in node_tags:
+        rn = set(node_owners.get(int(n)))
+        common = rn if common is None else (common & rn)
+    if not common:
+        raise BridgeError(
+            f"apeSees: {type(spec).__name__} nodes {tuple(node_tags)} do not "
+            f"share a single owning partition rank; macro-elements must reside "
+            f"wholly on one rank or be emitted serially."
+        )
+    return min(common)
+
+
 class FemToOpsTagMap:
     """Columnar ``{fem_eid: ops_element_tag}`` map (B3).
 
@@ -1086,6 +1105,15 @@ def compute_stage_ownership(
         # in v1.
         for _eid, conn in expand_spec_to_elements(fem, spec):
             for node_id in conn:
+                if owner_idx is None:
+                    global_nodes.add(int(node_id))
+                else:
+                    node_stages.setdefault(int(node_id), set()).add(owner_idx)
+        if type(spec).__name__ == "LadrunoMembrane":
+            _fr, supp_tags, hole_loops = resolve_ladruno_membrane_context(
+                fem, spec, include_frames=False,
+            )
+            for node_id in (*supp_tags, *(n for h in hole_loops for n in h)):
                 if owner_idx is None:
                     global_nodes.add(int(node_id))
                 else:

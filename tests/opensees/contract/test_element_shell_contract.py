@@ -26,6 +26,7 @@ from apeGmsh.opensees._internal.types import Element, Primitive
 from apeGmsh.opensees.element.shell import (
     ASDShellQ4,
     ASDShellT3,
+    LadrunoMembrane,
     ShellDKGQ,
     ShellMITC4,
 )
@@ -37,6 +38,7 @@ ALL_SHELL_ELEMENTS: list[type[Element]] = [
     ShellDKGQ,
     ASDShellQ4,
     ASDShellT3,
+    LadrunoMembrane,
 ]
 
 

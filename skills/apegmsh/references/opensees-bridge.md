@@ -137,8 +137,7 @@ ops.element.forceBeamColumn(pg="Cols", transf=transf, integration=integ)
 ops.element.ShellMITC4(pg="Deck", section=slab)
 ```
 
-There is **no `eleLoad` pattern verb** — distributed/body loads are
-element parameters (`body_force=`, `pressure=`), not loads.
+Element-scoped distributed/surface/self-weight loads (`eleLoad`) are authored inside a `Plain` pattern via `p.from_model(case)` or `p.beam_uniform` / `p.surface_load` / `p.self_weight` (see below); solid elements also accept intrinsic `body_force=` / `pressure=` constructor args.
 
 ### Choosing an element (modeling judgment)
 
@@ -253,23 +252,33 @@ ops.mass_from_model()   # verified: tests/opensees/integration/test_mass_from_mo
 # mass (dofs=[3]) or a non-zero Ixx/Iyy raises (so derive_rotational on a 2-D solid raises).
 # verified: tests/opensees/integration/test_mass_from_model_2d.py::test_2d_frame_mass_lands_on_translations_not_rz
 
-# Nodal loads + prescribed (non-zero) SP — pattern-scoped.
+# Nodal + element loads + prescribed (non-zero) SP — pattern-scoped.
 ts = ops.timeSeries.Linear()                    # also Constant/Path/Trig/Pulse
 with ops.pattern.Plain(series=ts) as p:         # also UniformExcitation   # verified: tests/opensees/unit/test_emitter_protocol.py::test_pattern_open_close_pair
-    p.from_model("dead")                         # import the resolved g.loads case
-    p.load(pg="Tip", forces=(0.0, 0.0, -5e4))   # + ad-hoc bridge-authored load
+    p.from_model("dead")                         # import resolved g.loads case (nodal + element loads + non-zero sp)
+    p.load(pg="Tip", forces=(0.0, 0.0, -5e4))   # + ad-hoc bridge-authored nodal load
+    p.beam_uniform(pg="Beams", wy=-12e3)        # full-span uniform local-y beam load
+    p.beam_uniform(pg="Girders", wy=(-8e3, -16e3), span=(0.2, 0.8))  # partial/trapezoidal (fork WP-098)
+    p.surface_load(pg="Slab")                   # trigger LadrunoMembrane tributary load distribution
+    p.self_weight(pg="Cols", wz=-9.81)          # element self-weight multiplier
     p.sp(pg="LoadingPin", dof=3, value=0.01)    # prescribed displacement
 ```
 
-`p.from_model(case)` replays the resolved nodal records tagged that
-case (loads → `load`, prescribed disp → `sp`; homogeneous fixes are
-never imported — use `ops.fix`). A case matching **zero** importable
+`p.from_model(case)` replays the resolved nodal and element records tagged that
+case (nodal loads → `load`, element loads from `g.loads.line(..., target_form="element")` /
+`g.loads.surface.pressure(..., target_form="element")` / `g.loads.gravity(..., target_form="element")` →
+`eleLoad` with automatic global-to-local beam triad projection via the beam's `geomTransf`,
+and prescribed disp → `sp`; homogeneous fixes are
+never imported — use `ops.fix`). `g.loads.line(..., target_form="element", span=(aL, bL), magnitude=(q_a, q_b))`
+authors partial-span and linearly varying trapezoidal frame loads directly on the geometry.
+A case matching **zero** importable
 records anywhere in the broker raises `BridgeError` at emit (typo, a
 hold-only case, or a pre-2.26.1 `model.h5` that flattened displacement
 case names — the message says which); `from_model(case,
 allow_empty=True)` permits a deliberately empty import. `p.load` / `p.sp` fan a `pg=` across
 the group's nodes at build time; `node=` takes an explicit tag or a
-`Node` from `ops.nodes.get(...)`. In a staged deck, open the pattern
+`Node` from `ops.nodes.get(...)`. `p.beam_uniform` / `p.surface_load` / `p.self_weight`
+accept `pg=`, `label=`, or `ele=` (element spec or tag). In a staged deck, open the pattern
 inside the stage with `s.pattern(series=...)` — a global pattern + a
 stage raises `BridgeError` (no-mixing, ADR 0051 §5). To release a
 prior-tier BC inside a stage use `s.remove_bc(...)` (the

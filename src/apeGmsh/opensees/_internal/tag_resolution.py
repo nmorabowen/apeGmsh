@@ -39,6 +39,7 @@ if TYPE_CHECKING:
 __all__ = [
     "ATTR_CURRENT_FEM_ELEMENT_ID",
     "ATTR_ELEMENT_NODES",
+    "ATTR_MEMBRANE_CONTEXT",
     "ATTR_PHANTOM_NODE_TAGS",
     "ATTR_STAGE_OWNED_NODE_TAGS",
     "ATTR_TAG_RESOLVER",
@@ -47,12 +48,14 @@ __all__ = [
     "clear_element_emit_context",
     "current_element_nodes",
     "current_fem_element_id",
+    "current_membrane_context",
     "damp_args",
     "is_phantom_node",
     "is_stage_owned_node",
     "resolve_tag",
     "set_current_fem_element_id",
     "set_element_nodes",
+    "set_membrane_context",
     "set_phantom_node_tags",
     "set_stage_owned_node_tags",
     "set_tag_resolver",
@@ -337,3 +340,28 @@ def current_fem_element_id(emitter: "Emitter") -> int:
     if eid is None:
         return MISSING_FEM_ELEMENT_ID
     return int(eid)
+
+
+#: Emitter attribute carrying pre-resolved ``(frames, support_nodes, holes)``
+#: for a :class:`~apeGmsh.opensees.element.shell.LadrunoMembrane` emission.
+ATTR_MEMBRANE_CONTEXT = "_ladruno_membrane_context"
+
+
+def set_membrane_context(
+    emitter: object,
+    context: "tuple[tuple[int, ...], tuple[int, ...], tuple[tuple[int, ...], ...]] | None",
+) -> None:
+    """Attach (or clear with ``None``) resolved ``(frames, support_nodes, holes)``
+    tuples on ``emitter`` for :class:`LadrunoMembrane`."""
+    if context is None:
+        if hasattr(emitter, ATTR_MEMBRANE_CONTEXT):
+            delattr(emitter, ATTR_MEMBRANE_CONTEXT)
+        return
+    setattr(emitter, ATTR_MEMBRANE_CONTEXT, context)
+
+
+def current_membrane_context(
+    emitter: "Emitter",
+) -> "tuple[tuple[int, ...], tuple[int, ...], tuple[tuple[int, ...], ...]] | None":
+    """Return the pre-resolved ``(frames, support_nodes, holes)`` context if set."""
+    return getattr(emitter, ATTR_MEMBRANE_CONTEXT, None)

@@ -589,6 +589,14 @@ _ELEM_REGISTRY: dict[str, _ElemSpec] = {
         slots=("nodes", "secTag"),
         has_gauss=True, has_layers=True,
     ),
+    "LadrunoMembrane": _ElemSpec(
+        mat_family="section", needs_transf=False,
+        ndm_ok=frozenset({2, 3}), ndf_ok=frozenset({1, 2, 3, 4, 5, 6}),
+        gmsh_etypes=frozenset({2, 3}),
+        node_reorder={2: (0, 1, 2), 3: (0, 1, 2, 3)},
+        slots=("nodes",),
+        ndf_required={2: 1, 3: 1},
+    ),
 
     # ── 1-D truss (uniaxial material) ──────────────────────────────────────
     # Trusses report force as a single per-element scalar (no GPs,

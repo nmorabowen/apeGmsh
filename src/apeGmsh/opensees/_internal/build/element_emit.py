@@ -10,15 +10,19 @@ import numpy as np
 from ..types import Element, Primitive
 from ..tag_allocator import TagAllocator
 from ..tag_resolution import (
+    MISSING_FEM_ELEMENT_ID,
     set_current_fem_element_id,
     set_element_nodes,
+    set_membrane_context,
     set_tag_resolver,
 )
+from ...element.shell import LadrunoMembrane
 from .errors import BridgeError
 from .pg_expand import (
     ElementPlanRows,
     _describe_pg_cells,
     expand_spec_to_elements,
+    resolve_ladruno_membrane_context,
 )
 from .ownership import SortedIntToInt, _EMPTY_INT64
 from .transforms import _element_transf
@@ -67,6 +71,9 @@ def reserve_fem_element_tags(
             continue                        # node-pair form: no FEM id
         eids = np.asarray(expand_spec_to_elements(fem, spec).eids,
                           dtype=np.int64)
+        eids = eids[eids != MISSING_FEM_ELEMENT_ID]
+        if eids.size == 0:
+            continue
         blocks.append(eids)
         owners.append(np.full(eids.shape[0], len(specs), dtype=np.int64))
         specs.append(spec)
@@ -176,7 +183,11 @@ def allocate_element_tags(
             # #1327: a quad-only element on a triangle PG fails here,
             # naming the PG, instead of per element inside ``_emit``.
             check_quad_element_on_triangles(spec, fanout)
-        if element_tags == "fem" and pg is not None:
+        if (
+            element_tags == "fem"
+            and pg is not None
+            and not (n == 1 and int(fanout.eids[0]) == MISSING_FEM_ELEMENT_ID)
+        ):
             eids = np.asarray(fanout.eids, dtype=np.int64)
             if n and int(eids.max()) > tags.last("element"):
                 raise BridgeError(
@@ -404,6 +415,8 @@ def emit_element_spec_partitioned(
     element_owner: "SortedIntToInt | Mapping[int, int]",
     ndm: int | None = None,
     envelope_ndf: int | None = None,
+    element_plan: "Iterable[tuple[Element, ElementPlanRows]]" = (),
+    fem_eid_to_ops_tag: "Any" = None,
 ) -> None:
     """Per-rank element fan-out (ADR 0027).
 
@@ -448,6 +461,16 @@ def emit_element_spec_partitioned(
         spec, cast("list[tuple[int, tuple[int, ...]]]", owned_rows), fem)
 
     transf_spec = _element_transf(spec)
+    if isinstance(spec, LadrunoMembrane):
+        set_membrane_context(
+            emitter,
+            resolve_ladruno_membrane_context(
+                fem,
+                spec,
+                element_plan=element_plan,
+                fem_eid_to_ops_tag=fem_eid_to_ops_tag,
+            ),
+        )
 
     bracketed = (
         ndm is not None and envelope_ndf is not None
@@ -459,36 +482,40 @@ def emit_element_spec_partitioned(
     # this spec's earlier rows written and the bracket open, and
     # propagates.  The checks that must precede the first write (owner
     # probe, ADR 0044 sweep) run above, over the whole owned set.
-    for eid, node_tags, ele_tag in owned_rows.triples():
-        set_element_nodes(emitter, node_tags)
-        set_current_fem_element_id(emitter, eid)
+    try:
+        for eid, node_tags, ele_tag in owned_rows.triples():
+            set_element_nodes(emitter, node_tags)
+            set_current_fem_element_id(emitter, eid)
 
-        if (
-            transf_spec is not None
-            and transf_tag_for_element is not None
-            and (id(transf_spec), eid) in transf_tag_for_element
-        ):
-            override_tag = transf_tag_for_element[(id(transf_spec), eid)]
-            base = base_resolver
-            override = transf_spec
+            if (
+                transf_spec is not None
+                and transf_tag_for_element is not None
+                and (id(transf_spec), eid) in transf_tag_for_element
+            ):
+                override_tag = transf_tag_for_element[(id(transf_spec), eid)]
+                base = base_resolver
+                override = transf_spec
 
-            def _resolver_with_override(
-                p: Primitive,
-                _base: object = base,
-                _override_spec: Primitive = override,
-                _override_tag: int = override_tag,
-            ) -> int:
-                if p is _override_spec:
-                    return _override_tag
-                return int(_base(p))  # type: ignore[operator]
+                def _resolver_with_override(
+                    p: Primitive,
+                    _base: object = base,
+                    _override_spec: Primitive = override,
+                    _override_tag: int = override_tag,
+                ) -> int:
+                    if p is _override_spec:
+                        return _override_tag
+                    return int(_base(p))  # type: ignore[operator]
 
-            set_tag_resolver(emitter, _resolver_with_override)
-            try:
+                set_tag_resolver(emitter, _resolver_with_override)
+                try:
+                    spec._emit(emitter, ele_tag)
+                finally:
+                    set_tag_resolver(emitter, base_resolver)  # type: ignore[arg-type]
+            else:
                 spec._emit(emitter, ele_tag)
-            finally:
-                set_tag_resolver(emitter, base_resolver)  # type: ignore[arg-type]
-        else:
-            spec._emit(emitter, ele_tag)
+    finally:
+        if isinstance(spec, LadrunoMembrane):
+            set_membrane_context(emitter, None)
 
     if bracketed:
         close_builder_ndf_bracket(

@@ -17,6 +17,7 @@ from .pattern import (
     H5DRM,
     Plain,
     UniformExcitation,
+    _EleLoadRecord,
     _LoadRecord,
     _SPRecord,
 )
@@ -27,4 +28,5 @@ __all__ = [
     "H5DRM",
     "_LoadRecord",
     "_SPRecord",
+    "_EleLoadRecord",
 ]

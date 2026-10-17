@@ -168,7 +168,8 @@ _FORK_ONLY_ELEMENTS = frozenset(
      "LadrunoQuad", "LadrunoCST", "LadrunoUP",
      "LadrunoKinematicCoupling", "LadrunoDistributingCoupling",
      "LadrunoEmbeddedNode", "LadrunoRigidBody",
-     "LadrunoDispBeamColumn", "LadrunoIMKBeam"})
+     "LadrunoDispBeamColumn", "LadrunoIMKBeam",
+     "LadrunoMembrane"})
 
 #: Integrator types that exist only in the Ladruno fork build. Unlike the
 #: element gate, these cannot be verified after the fact: openseespy's
@@ -1144,6 +1145,25 @@ class LiveOpsEmitter:
         self._ops.load(tag, *forces)
 
     def eleLoad(self, *args: int | float | str) -> None:
+        if "-type" in args:
+            type_idx = args.index("-type")
+            if type_idx + 1 < len(args):
+                ltype = str(args[type_idx + 1])
+                trailing = args[type_idx + 2:]
+                ndm = self._model_ndm if self._model_ndm is not None else 3
+                if ltype == "-beamUniform" and len(trailing) > (
+                    2 if ndm == 2 else 3
+                ):
+                    self._stock_build_gate(
+                        "eleLoad -type -beamUniform with partial/trapezoidal "
+                        "span requires the Ladruno fork (stock openseespy omits "
+                        "OPS_Beam2dPartialUniformLoad / "
+                        "OPS_Beam3dPartialUniformLoad)."
+                    )
+                elif ltype == "-surfaceLoad":
+                    self._stock_build_gate(
+                        "eleLoad -type -surfaceLoad requires the Ladruno fork."
+                    )
         self._ops.eleLoad(*args)
 
     def sp(self, tag: int, dof: int, value: float) -> None:
