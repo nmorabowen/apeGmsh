@@ -87,6 +87,7 @@ take.
 | **`.ladruno` recorder** | recorder | `recorder ladruno` — note `.ladruno`, a sibling of the vanilla `.mpco` |
 | **LadrunoPorousOverlay family** | load pattern + driver + recorder channels | fork-only persistent-fluid staggered u-p (PATTERN tag 33022, fork ADR-73, shipped incl. both explicit lanes) — **no typed primitive yet** (follow-up ADR; see the section below) |
 | **LadrunoShellModifier** | section | fork-only ETABS-style stiffness modifiers wrapping any order-8 plate section (fork ADR 91) — typed `ops.section.LadrunoShellModifier` |
+| **LadrunoMembrane + partial/trapezoidal `-beamUniform`** | element + `eleLoad` | fork-only arbitrary-polygon slab load distributor & in-plane membrane (tag 33022, fork WP-098) + `Beam2d/3dPartialUniformLoad` (`p.beam_uniform(..., span=(aL, bL), wy=(w_a, w_b))`) + exact piecewise-cubic span diagrams (`reconstruct_beam_span_diagrams`) |
 | **stack profiler** | control command | `ops.profiler.*` — brackets the analyze loop; writes `profile.h5` |
 
 The three **explicit integrators** are emittable via typed primitives:
@@ -313,6 +314,34 @@ vanishing silently.
 `-nl` bowing strain, `-hinge`/`-hingeY`/`-hingeBiaxial` lumped hinges) and
 `LadrunoIMKBeam` (:807, concentrated-plasticity IMK). Both take `pg=` +
 `transf=` like any beam.
+
+**`LadrunoMembrane` (slab tributary load distribution & in-plane membrane, tag 33022, WP-098)** (`element/shell.py`, `ops.element.LadrunoMembrane`):
+Distributes uniform surface pressure (`pressure=`) or self-weight (`rho=`, `thickness=`) onto supporting 1-D frame elements (`frames=`, emitting sub-segment trapezoidal `Beam3dPartialUniformLoad` objects internally) and/or point supports (`support_nodes=`), with optional in-plane CST membrane stiffness (`section=`, `mat=` + `thickness=`, or `E=`/`nu=`/`thickness=`). Accepts either a 2-D surface `pg=` (automatically extracting the CCW outer boundary node loop and CW interior hole loops from the mesh) or an explicit `nodes=` boundary loop + `holes=`.
+
+```python
+from apeGmsh.results import reconstruct_beam_span_diagrams
+
+# 1. Declare supporting beams and the slab membrane
+beams = ops.element.elasticBeamColumn(
+    pg="Beams", A=0.18, E=25e9, G=10.4e9, J=2e-3, Iy=3.375e-3, Iz=1.5e-3, transf=tr,
+)
+ops.element.LadrunoMembrane(
+    pg="Slab",                 # extracts outer boundary loop (+ any interior holes) from the 2D PG
+    frames=beams,              # or frames="Beams" (1D PG name or sequence of element specs/tags)
+    method="tributary",        # "tributary" (default), "oneway" (takes span_axis=), "fea_poisson", or "fea_plate"
+    pressure=-5e3,             # surface pressure [F/L^2] distributed when p.surface_load fires
+    E=25e9, nu=0.2, thickness=0.15,  # optional in-plane membrane stiffness
+)
+
+# 2. Trigger membrane surface load and/or partial/trapezoidal beam loads inside a Plain pattern
+with ops.pattern.Plain(series=ops.timeSeries.Linear()) as p:
+    p.surface_load(pg="Slab")
+    p.beam_uniform(pg="Beams", wy=(-4e3, -8e3), span=(0.25, 0.75))
+
+# 3. Reconstruct exact piecewise-cubic V(x) and M(x) span diagrams from endpoint forces + sub-segment loads
+diagrams = reconstruct_beam_span_diagrams(res, step=-1, n_interior_per_segment=9)
+# diagrams[ele_tag] -> BeamSpanDiagram(xi, x, N, Vy, Vz, T, My, Mz)
+```
 
 **Analysis cluster** (`analysis/integrator.py`, `ops.integrator.<Type>`):
 `LadrunoArcLength` (:612, adaptive Ramm arc-length + viscous stabilisation),

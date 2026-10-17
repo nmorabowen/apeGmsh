@@ -341,9 +341,16 @@ def validate_from_model_cases(
     nodes = getattr(fem, "nodes", None)
     load_set = getattr(nodes, "loads", None) if nodes is not None else None
     sp_set = getattr(nodes, "sp", None) if nodes is not None else None
+    elements = getattr(fem, "elements", None)
+    elem_load_set = (
+        getattr(elements, "loads", None) if elements is not None else None
+    )
 
     load_patterns: set[str] = (
         set(load_set.patterns()) if load_set is not None else set()
+    )
+    elem_load_patterns: set[str] = (
+        set(elem_load_set.patterns()) if elem_load_set is not None else set()
     )
     sp_prescribed: set[str] = (
         {r.pattern for r in sp_set.prescribed()}
@@ -352,11 +359,11 @@ def validate_from_model_cases(
     sp_homogeneous_only: set[str] = (
         {r.pattern for r in sp_set.homogeneous()}
         if sp_set is not None else set()
-    ) - sp_prescribed - load_patterns
+    ) - sp_prescribed - load_patterns - elem_load_patterns
 
     problems: list[str] = []
     for case in cases:
-        if case in load_patterns or case in sp_prescribed:
+        if case in load_patterns or case in elem_load_patterns or case in sp_prescribed:
             continue
         if case in sp_homogeneous_only:
             problems.append(
@@ -369,7 +376,7 @@ def validate_from_model_cases(
     if not problems:
         return
 
-    available = sorted(load_patterns | sp_prescribed)
+    available = sorted(load_patterns | elem_load_patterns | sp_prescribed)
     hint = ""
     if (
         sp_set is not None

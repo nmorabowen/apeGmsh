@@ -797,7 +797,7 @@ with g.loads.case("dead"):            # context manager groups defs
 point.force(target, force, *, pg=None, label=None, tag=None, name=None)
 point.moment(target, moment, *, ...)
 point.force_closest(xyz, force, *, within=None, tol=None, ...)   point.moment_closest(xyz, moment, ...)
-line(target, *, magnitude=None, direction=(0,0,-1), q_xyz=None, reduction=, target_form=, ...)
+line(target, *, magnitude=None, direction=(0,0,-1), q_xyz=None, span=(0.0,1.0), reduction=, target_form=, ...)   # target_form="element" accepts span=(aL, bL) & (q_a, q_b)
 surface.pressure(target, magnitude, *, reduction=, target_form=, ...)   # scalar × face normal
 surface.traction(target, vector, *, reduction=, target_form=, ...)      # free global vector / area
 surface.shear(target, vector, *, reduction=, name=None)                 # strict in-plane (tangent); nodal-only
@@ -884,8 +884,11 @@ ops.fix_from_model()                                ops.mass_from_model()   # al
 ts = ops.timeSeries.Linear|Constant|Path|Trig|Pulse|Ricker(...)
 ts = ops.timeSeries.MomentStep|Yoffe(...)           # ADR 0062 normalized moment function S(t)
 with ops.pattern.Plain(series=ts) as p:             # or UniformExcitation
-    p.from_model("dead")                            # import a g.loads.case into the deck
-    p.load(*, pg=None, node=None, forces)           # + ad-hoc bridge-authored load
+    p.from_model("dead")                            # import a g.loads.case into the deck (nodal + element loads + non-zero sp)
+    p.load(*, pg=None, node=None, forces)           # + ad-hoc bridge-authored nodal load
+    p.beam_uniform(*, pg=None, label=None, ele=None, wy=0.0, wz=None, wx=0.0, span=None, aL=0.0, bL=1.0)
+    p.surface_load(*, pg=None, label=None, ele=None)
+    p.self_weight(*, pg=None, label=None, ele=None, wx=0.0, wy=0.0, wz=None)
     p.sp(*, pg=None, node=None, dof, value)
     p.moment_tensor(*, position, frame, M0=1.0,     # earthquake point source (ADR 0062 — RHS nodal forces)
         mech=dict(strike,dip,rake) | m_ij=<3×3>, t0=0.0, method="consistent"|"dipole", region=None)
@@ -903,11 +906,11 @@ ops.footfall_walking(*, num_modes, body_weight, g, response_nodes, excitation="s
     excitation_nodes=None, dof=3, occupancy="office", limit="curve"|"table",
     damp=|modal_damp=|rayleigh=, f_max=20.0, n_extra=30, dt=0.005, solver="-genBandArpack")
     -> FootfallResult                               # DG11 2nd ed Ch.7 walking check (ADR 0109); a_p/limit as fractions of g
-# Loads reach the deck ONLY via p.from_model(case) or p.load — nothing
-# auto-emits, so no 2x double-count trap. The deck is authoritative: the
-# bridge applies exactly what you import and does NOT audit the geometry's
-# case-list (no WarnUnconsumedModelLoads). A case you don't import is not
-# applied; an import of a non-existent case is a no-op.
+# Loads reach the deck ONLY via p.from_model(case) or p.load / p.beam_uniform /
+# p.surface_load / p.self_weight — nothing auto-emits, so no 2x double-count trap.
+# The deck is authoritative: the bridge applies exactly what you import and does
+# NOT audit the geometry's case-list (no WarnUnconsumedModelLoads). A case you
+# don't import is not applied; an import of a non-existent case raises BridgeError.
 # NO mixing: a global ops.pattern.* + ops.stage(...) -> BridgeError.
 # Staged prescribed motion (rotations included, zeros skipped):
 #   s.imposed_path(node=, ratios=(r1..r6), series=) -> Plain
