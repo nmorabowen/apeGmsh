@@ -149,6 +149,7 @@ def test_unit_not_declared_warning_contract(tmp_path: Path) -> None:
     from apeGmsh.units import UnitNotDeclaredWarning as LiveUnitNotDeclaredWarning
 
     with pytest.warns(LiveUnitNotDeclaredWarning, match="no consistent unit system declared"):
+        warnings.simplefilter("always", LiveUnitNotDeclaredWarning)
         g = apeGmsh(model_name="warn_model", save_to=tmp_path / "w.h5")
     assert g.units is None
 
