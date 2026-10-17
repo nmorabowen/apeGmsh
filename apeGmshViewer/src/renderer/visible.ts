@@ -2,14 +2,30 @@
 // viewport's rebuild decision is testable without a GPU.
 
 import type { BlobStore } from "../state/blobs.ts";
-import { inactiveElements } from "../state/selectors.ts";
+import { hiddenElementsOf, inactiveElements } from "../state/selectors.ts";
 import type { DeclPath, LegendEntry, MeshInfo, State } from "../state/types.ts";
 
-/** The stage-activation mask of the phase shown (V4b), or null when activation hides nothing. */
+/** The stage-activation and hidden-declaration mask of the phase shown (V4b + Spotlight/Search), or null when nothing is masked. */
 export function elementMaskOf(s: State, info: MeshInfo, blobs: BlobStore): ElementMask | null {
   const inactive = inactiveElements(s);
-  if (!inactive || inactive.hidden === 0) return null;
-  return { mask: inactive.mask, lineElement: blobs.i32(info.lineElement), triElement: blobs.i32(info.triElement) };
+  const hiddenSet = hiddenElementsOf(s);
+  const hasInactive = inactive !== null && inactive.hidden > 0;
+  const legendDecls = new Set(info.legend.map((e) => e.decl).filter((d): d is DeclPath => d !== null));
+  const hasNonLegendHidden =
+    s.visibility.hidden.some((p) => !legendDecls.has(p) && s.decls[p]?.kind !== "physical_group") && hiddenSet.size > 0;
+  if (!hasInactive && !hasNonLegendHidden) return null;
+  let mask: Uint8Array;
+  if (hasNonLegendHidden) {
+    mask = new Uint8Array(info.elements.length);
+    for (let i = 0; i < info.elements.length; i++) {
+      const inact = hasInactive ? inactive!.mask[i]! : 0;
+      const hid = hiddenSet.has(info.elements[i]!) ? 1 : 0;
+      mask[i] = inact | hid;
+    }
+  } else {
+    mask = inactive!.mask;
+  }
+  return { mask, lineElement: blobs.i32(info.lineElement), triElement: blobs.i32(info.triElement) };
 }
 
 /** Original indices of the segments, triangles and outline edges to draw, in order. */

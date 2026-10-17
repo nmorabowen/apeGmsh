@@ -221,6 +221,52 @@ function nodeOf(s: State, d: Decl, via: Field | null, problems: string[], seen: 
   };
 }
 
+import {
+  clauseLabel,
+  clauseToSearchClause,
+  elementsOfDecl,
+  hiddenElementsOf,
+  indexOf,
+  parseSearchText,
+  runSearchTerms,
+  searchResultsOf,
+  selectedElementsOf,
+  type ModelIndex,
+  type SearchSummary,
+  type SearchTerm,
+} from "./search.ts";
+import {
+  initialSearch,
+  initialSpotlight,
+  SPOTLIGHT_EVENT_LEDGER,
+  spotlightViewOf,
+  type EventLedgerEntry,
+  type SpotlightItem,
+  type SpotlightView,
+} from "./spotlight.ts";
+
+export {
+  clauseLabel,
+  clauseToSearchClause,
+  elementsOfDecl,
+  hiddenElementsOf,
+  indexOf,
+  initialSearch,
+  initialSpotlight,
+  parseSearchText,
+  runSearchTerms,
+  searchResultsOf,
+  selectedElementsOf,
+  SPOTLIGHT_EVENT_LEDGER,
+  spotlightViewOf,
+  type EventLedgerEntry,
+  type ModelIndex,
+  type SearchSummary,
+  type SearchTerm,
+  type SpotlightItem,
+  type SpotlightView,
+};
+
 /**
  * The definition chain of an element or an OpenSees object, or null when the
  * path is not declared or is a group (a group has members, not a chain).
@@ -236,19 +282,101 @@ export function chainOf(s: State, path: DeclPath, nodes: readonly number[] | nul
 /** The pick of a selected declaration, if it is selected (its node tags come from it). */
 const pickOf = (s: State, decl: DeclPath): Pick | undefined => s.selection.picks.find((p) => p.decl === decl);
 
-/** What the inspector shows: the pinned declarations, then the selection. */
+/** Maximum number of individual unpinned definition chains rendered before switching to a batch summary card. */
+export const MAX_INSPECTED_CHAINS = 4;
+
+/** What the inspector shows: the pinned declarations, then the selection (up to MAX_INSPECTED_CHAINS unpinned chains). */
 export function inspected(s: State): { decl: DeclPath; pinned: boolean; chain: Chain }[] {
   const out: { decl: DeclPath; pinned: boolean; chain: Chain }[] = [];
   for (const p of s.inspector.pinned) {
     const chain = chainOf(s, p, pickOf(s, p)?.nodes ?? null);
     if (chain) out.push({ decl: p, pinned: true, chain });
   }
-  for (const p of s.selection.decls) {
-    if (s.inspector.pinned.includes(p)) continue;
-    const chain = chainOf(s, p, pickOf(s, p)?.nodes ?? null);
-    if (chain) out.push({ decl: p, pinned: false, chain });
+  const unpinned = s.selection.decls.filter(
+    (p) => !s.inspector.pinned.includes(p) && s.decls[p] !== undefined && s.decls[p]!.kind !== "physical_group" && s.decls[p]!.kind !== "label",
+  );
+  if (unpinned.length <= MAX_INSPECTED_CHAINS) {
+    for (const p of unpinned) {
+      const chain = chainOf(s, p, pickOf(s, p)?.nodes ?? null);
+      if (chain) out.push({ decl: p, pinned: false, chain });
+    }
   }
   return out;
+}
+
+/** Summary card data for any pinned or selected physical_group or label declaration. */
+export interface InspectedGroup {
+  readonly decl: DeclPath;
+  readonly pinned: boolean;
+  readonly kind: "physical_group" | "label";
+  readonly name: string;
+  readonly h5: string;
+  readonly dim: number;
+  readonly tag: number;
+  readonly count: number;
+  readonly hidden: boolean;
+}
+
+export function inspectedGroupsOf(s: State): InspectedGroup[] {
+  const out: InspectedGroup[] = [];
+  const seen = new Set<DeclPath>();
+  const add = (p: DeclPath, pinned: boolean) => {
+    if (seen.has(p)) return;
+    const d = s.decls[p];
+    if (!d || (d.kind !== "physical_group" && d.kind !== "label") || !d.group) return;
+    seen.add(p);
+    out.push({
+      decl: p,
+      pinned,
+      kind: d.kind,
+      name: d.name,
+      h5: d.h5,
+      dim: d.group.dim,
+      tag: d.group.tag,
+      count: d.group.count,
+      hidden: s.visibility.hidden.includes(p),
+    });
+  };
+  for (const p of s.inspector.pinned) add(p, true);
+  for (const p of s.selection.decls) add(p, false);
+  return out;
+}
+
+/** Summary card data when a batch selection holds more than MAX_INSPECTED_CHAINS declarations. */
+export interface InspectedBatch {
+  readonly count: number;
+  readonly elementCount: number;
+  readonly kinds: readonly string[];
+  readonly types: readonly string[];
+  readonly groups: readonly string[];
+  readonly decls: readonly DeclPath[];
+}
+
+export function inspectedBatchOf(s: State): InspectedBatch | null {
+  const unpinned = s.selection.decls.filter(
+    (p) => !s.inspector.pinned.includes(p) && s.decls[p] !== undefined && s.decls[p]!.kind !== "physical_group" && s.decls[p]!.kind !== "label",
+  );
+  if (unpinned.length <= MAX_INSPECTED_CHAINS) return null;
+  const kinds = new Set<string>();
+  const types = new Set<string>();
+  const groups = new Set<string>();
+  const elems = new Set<DeclPath>();
+  for (const p of unpinned) {
+    const d = s.decls[p];
+    if (!d) continue;
+    kinds.add(d.kind);
+    types.add(d.type);
+    for (const g of d.element?.groups ?? []) groups.add(s.decls[g]?.name ?? g);
+    for (const e of elementsOfDecl(s, p)) elems.add(e);
+  }
+  return {
+    count: unpinned.length,
+    elementCount: elems.size,
+    kinds: [...kinds],
+    types: [...types].slice(0, 8),
+    groups: [...groups].slice(0, 8),
+    decls: unpinned,
+  };
 }
 
 export const legendOf = (s: State): LegendEntry[] => s.mesh?.legend ?? [];
@@ -1000,6 +1128,22 @@ export function windowContentOf(s: State, kind: WindowKind): WindowContent {
         };
       });
     return { rows, note: rows.length ? null : "the model declares no material or section" };
+  }
+  if (kind === "search") {
+    const res = searchResultsOf(s);
+    const rows: WindowRow[] = res.matched.slice(0, 200).map((d) => ({
+      key: d.path,
+      section: d.kind,
+      title: d.name,
+      detail: `${d.type}` + (d.tag !== null ? ` tag ${d.tag}` : d.element?.femId !== null && d.element?.femId !== undefined ? ` #${d.element.femId}` : ""),
+      h5: d.h5,
+      declKey: d.path,
+      select: d.path,
+    }));
+    return {
+      rows,
+      note: res.total === 0 ? "no declarations match the current search" : `${res.total} matching declarations (${res.elementCount} elements)`,
+    };
   }
   if (!defs) return { rows: [], note: "the model has no /opensees zone" };
   const rows: WindowRow[] = [];

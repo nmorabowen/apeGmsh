@@ -31,7 +31,7 @@ import { cutsOf, type Cut } from "../state/clip.ts";
 import { columnOf, elementCellValues, gaussCellValues, isNodeTopology, NO_DATA_RGB, primitiveColours, vertexValues } from "../state/contour.ts";
 import { vertexDisplacements } from "../state/deform.ts";
 import { applyPlan, cornerVertexValues, planFor, vertexCorners } from "../state/extrapolation.ts";
-import { activationNow, contourView, deformView, NO_SOLID_CELLS, type ContourView } from "../state/selectors.ts";
+import { activationNow, contourView, deformView, hiddenElementsOf, NO_SOLID_CELLS, type ContourView } from "../state/selectors.ts";
 import { SOLID_CORNERS, SOLID_SHAPES, sliceSolids, sliceExtent, solidShapeOf, type Slice, type Solids } from "../state/slice.ts";
 import type { Decl, DeclPath, State } from "../state/types.ts";
 import { DARK_ROLE } from "../theme/tokens.ts";
@@ -140,6 +140,7 @@ function colourGroupOf(d: Decl, decls: Readonly<Record<DeclPath, Decl>>): DeclPa
 /** Which cells are drawn (1) given the hidden legend rows and the stage's activation; null when every cell is. */
 export function shownCells(s: State, t: SolidTable): Uint8Array | null {
   const hidden = new Set(s.visibility.hidden);
+  const hiddenElems = hidden.size ? hiddenElementsOf(s) : null;
   const a = activationNow(s)?.activation;
   const inactive = a?.state === "filtered" ? a.inactiveTags : null;
   if (!hidden.size && !inactive?.size) return null;
@@ -147,7 +148,10 @@ export function shownCells(s: State, t: SolidTable): Uint8Array | null {
   t.decl.forEach((p, c) => {
     const d = s.decls[p]!;
     const g = hidden.size ? colourGroupOf(d, s.decls) : null;
-    const off = (g !== null && hidden.has(g)) || (inactive !== null && (d.element?.metas ?? []).some((m) => inactive.has(m.tag)));
+    const off =
+      (hiddenElems !== null && hiddenElems.has(p)) ||
+      (g !== null && hidden.has(g)) ||
+      (inactive !== null && (d.element?.metas ?? []).some((m) => inactive.has(m.tag)));
     out[c] = off ? 0 : 1;
   });
   return out;

@@ -14,6 +14,7 @@
 
 import * as THREE from "three";
 import type { BlobStore } from "../state/blobs.ts";
+import { selectedElementsOf } from "../state/selectors.ts";
 import type { State } from "../state/types.ts";
 import { DARK, themeTokens, toHexNumber, type ThemeMode } from "../theme/tokens.ts";
 
@@ -185,10 +186,12 @@ export function selectionBounds(
  */
 export function focusOf(s: State, blobs: BlobStore): Focus | null {
   const info = s.mesh;
-  if (!info || s.selection.decls.length === 0) return null;
+  const sel = selectedElementsOf(s);
+  if (!info || sel.length === 0) return null;
+  const selSet = new Set<string>(sel);
   const selected = new Set<number>();
   info.elements.forEach((p, i) => {
-    if (s.selection.decls.includes(p)) selected.add(i);
+    if (selSet.has(p)) selected.add(i);
   });
   if (selected.size === 0) return null;
   const lines: number[] = [], tris: number[] = [];
