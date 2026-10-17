@@ -19,6 +19,7 @@ import { statSync } from "node:fs";
 import { openResults, type ResultsFile, type ResultsH5, type StageInfo } from "../reader/results.ts";
 import { gaussCellValues } from "../state/contour.ts";
 import { applyPlan, planRange, type ExtrapPlan } from "../state/extrapolation.ts";
+import type { UnitSystemId } from "../state/types.ts";
 
 /** One stage as the renderer's store keeps it (state/types.ts `ResultsStage`). */
 export interface ResultsStageMeta {
@@ -66,6 +67,8 @@ export interface ResultsMeta {
   programDecl: string | null;
   /** V4c2a: the element-id verdict; element contours draw only for a verified file */
   elementIndex: ElementIndexVerdict;
+  /** Consistent unit system declared in `/model/meta/@units` or `@units`, or null when undeclared */
+  units: UnitSystemId | null;
 }
 
 export type ResultsOpenAnswer =
@@ -180,6 +183,7 @@ export function metaOf(rf: ResultsFile): ResultsMeta {
       unread: [...s.unread],
     })),
     elementIndex: { ...rf.elementIndexVerdict() },
+    units: i.units,
   };
 }
 

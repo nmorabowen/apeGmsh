@@ -42,6 +42,9 @@ class ResultsInspect:
         else:
             lines.append("  FEM: not bound")
 
+        if r.units is not None:
+            lines.append(f"  Units: {r.units}")
+
         stages = r.stages
         if not stages:
             lines.append("  Stages: (none)")

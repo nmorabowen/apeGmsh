@@ -317,6 +317,8 @@ export interface ResultsInfo {
    * unverified: selectors `elementVerdictOf`, never as verified.
    */
   elementIndex?: ElementIndexVerdict;
+  /** Consistent unit system declared in `/model/meta/@units` or `@units`, or null when undeclared. */
+  units?: UnitSystemId | null;
 }
 
 /**
@@ -430,9 +432,11 @@ export interface ContourState {
   /** the user's min and max (`range: fixed`) */
   fixed: { min: number; max: number } | null;
   cmap: ContourCmap;
-  /** the file's assumed native `baseUnits` system (default `kN_m_s`) */
-  sourceUnits: UnitSystemId;
-  /** the target `baseUnits` display system (`as_stored` keeps raw numbers) */
+  /** the consistent unit system declared in the model or results file (`/meta/@units` or `INFO/PROVENANCE@units`), or null when undeclared */
+  declaredUnits: UnitSystemId | null;
+  /** the file's native `baseUnits` system (`declaredUnits` when declared; null when undeclared until the user selects `from <system>`) */
+  sourceUnits: UnitSystemId | null;
+  /** the target `baseUnits` display system (`as_stored` keeps raw numbers; defaults to `declaredUnits` when declared) */
   targetUnits: UnitDisplay;
   /** the finite min and max of the step shown, over every recorded node; `key` names the step and component it is for */
   stepRange: { key: string; min: number | null; max: number | null } | null;
@@ -610,6 +614,8 @@ export interface State {
   contour: ContourState;
   /** V4d: the model's spatial dimension (`/meta/ndm`), or why it is not known */
   ndm: SpatialNdm;
+  /** the loaded model's declared consistent unit system (`/meta/@units`), or null when undeclared */
+  units: UnitSystemId | null;
   /** V4d: the deformed shape */
   deform: DeformState;
   /** V4e1: the section planes */
@@ -634,6 +640,8 @@ export interface ModelLoad {
   stageElements: StageElements;
   /** V4d: the model's spatial dimension; absent means not read (nothing is taken to be 2-D) */
   ndm?: SpatialNdm;
+  /** the model's declared consistent unit system (`/meta/@units`), or null when undeclared */
+  units?: UnitSystemId | null;
 }
 
 /** The payload of `fileLoaded` for the geometry artifact. */

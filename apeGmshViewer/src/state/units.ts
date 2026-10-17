@@ -231,6 +231,14 @@ export function unitSymbolFor(kind: FieldDimensionKind, sys: UnitSystemSpec): st
   }
 }
 
+/** Parse a `/meta/@units` or `INFO/PROVENANCE@units` attribute value into a canonical `UnitSystemId`, or null. */
+export function parseDeclaredUnits(raw: unknown): UnitSystemId | null {
+  if (typeof raw === "string" && UNIT_SYSTEM_IDS.includes(raw as UnitSystemId)) {
+    return raw as UnitSystemId;
+  }
+  return null;
+}
+
 /**
  * Compute the multiplicative conversion factor and display unit symbol for a
  * contour field when converting from `sourceUnits` to `targetUnits`.
@@ -238,18 +246,29 @@ export function unitSymbolFor(kind: FieldDimensionKind, sys: UnitSystemSpec): st
 export function resolveFieldUnits(
   field: string,
   source: ContourSource,
-  sourceUnits: UnitSystemId,
+  sourceUnits: UnitSystemId | null,
   targetUnits: UnitDisplay,
   stageKind?: "static" | "transient" | "mode",
+  declaredUnits: UnitSystemId | null = null,
 ): { factor: number; unit: string | null; note: string } {
   if (targetUnits === "as_stored") {
     return {
       factor: 1,
       unit: null,
-      note: "Units: not stored in the results file.",
+      note: declaredUnits
+        ? `Units: raw values (declared as ${UNIT_SYSTEMS[declaredUnits].label} in file).`
+        : "Units: not stored in the results file.",
     };
   }
-  const src = UNIT_SYSTEMS[sourceUnits];
+  const effectiveSource = declaredUnits ?? sourceUnits;
+  if (effectiveSource === null) {
+    return {
+      factor: 1,
+      unit: null,
+      note: "Units: not declared in file — select the source unit system (from …) to convert.",
+    };
+  }
+  const src = UNIT_SYSTEMS[effectiveSource];
   const dst = UNIT_SYSTEMS[targetUnits];
   const dim = classifyFieldDimension(field, source, stageKind);
   const factor =
@@ -257,9 +276,17 @@ export function resolveFieldUnits(
     Math.pow(src.L / dst.L, dim.l) *
     Math.pow(src.T / dst.T, dim.t);
   const unit = unitSymbolFor(dim.kind, dst);
-  const note =
-    sourceUnits === targetUnits
-      ? `Units: ${dst.label} (file native).`
-      : `Units: ${dst.label} (converted from ${src.label}).`;
+  let note: string;
+  if (declaredUnits !== null) {
+    note =
+      effectiveSource === targetUnits
+        ? `Units: ${dst.label} (declared in file).`
+        : `Units: ${dst.label} (converted from declared ${src.label}).`;
+  } else {
+    note =
+      effectiveSource === targetUnits
+        ? `Units: ${dst.label} (file native).`
+        : `Units: ${dst.label} (converted from ${src.label}).`;
+  }
   return { factor, unit, note };
 }

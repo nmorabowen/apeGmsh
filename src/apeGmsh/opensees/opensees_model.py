@@ -864,6 +864,11 @@ class OpenSeesModel:
         return self._model_name
 
     @property
+    def units(self) -> str | None:
+        """``/meta/units`` canonical unit system ID from the source archive, or ``None``."""
+        return getattr(self._fem, "units", None)
+
+    @property
     def ndm(self) -> int:
         """``/meta/ndm`` value from the source archive.
 

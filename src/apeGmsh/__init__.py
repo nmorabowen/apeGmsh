@@ -104,6 +104,13 @@ from apeGmsh.viewers import settings, theme_editor
 from apeGmsh._workdir import workdir
 from apeGmsh import profiler
 from apeGmsh.sections import SectionProperties, SectionMaterial
+from apeGmsh.units import (
+    UNIT_SYSTEMS,
+    UnitNotDeclaredWarning,
+    UnitSystemId,
+    UnitSystemSpec,
+    resolve_unit_system,
+)
 
 # Backward-compatible alias (SelectionPicker was the pre-v1 name)
 SelectionPicker = ModelViewer
@@ -192,5 +199,10 @@ __all__ = [
     "theme_editor",
     "workdir",
     "profiler",
+    "UNIT_SYSTEMS",
+    "UnitNotDeclaredWarning",
+    "UnitSystemId",
+    "UnitSystemSpec",
+    "resolve_unit_system",
     "__version__",
 ]

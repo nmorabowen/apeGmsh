@@ -61,7 +61,7 @@ export function contourLines(
   const c = v.clim;
   const constant = c.min !== null && c.max !== null && c.min === c.max;
   const stageKind = s.phase.at?.kind === "results" ? s.results?.stages[s.phase.at.stage]?.kind : undefined;
-  const u = resolveFieldUnits(v.field, s.contour.source, s.contour.sourceUnits, s.contour.targetUnits, stageKind);
+  const u = resolveFieldUnits(v.field, s.contour.source, s.contour.sourceUnits, s.contour.targetUnits, stageKind, s.contour.declaredUnits);
   const unitSuffix = u.unit ? ` [${u.unit}]` : "";
   return {
     title: `${v.field} · ${v.component.label}${unitSuffix}`,
@@ -298,23 +298,35 @@ export function mountLegend(store: Store): () => void {
     const dst = el("select", "contour-units-target");
     dst.title = "display unit system (baseUnits)";
     for (const opt of UNIT_DISPLAY_OPTIONS) {
-      const o = el("option", undefined, opt.label);
+      const label = opt.value !== "as_stored" && opt.value === s.contour.declaredUnits ? `${opt.label} (native)` : opt.label;
+      const o = el("option", undefined, label);
       o.value = opt.value;
       o.selected = opt.value === s.contour.targetUnits;
       dst.append(o);
     }
     unlisten.push(listen(dst, "change", () => store.dispatch({ type: "setContourUnits", target: dst.value as UnitDisplay })));
     unitRow.append(dst);
-    if (s.contour.targetUnits !== "as_stored") {
+    if (s.contour.targetUnits !== "as_stored" && s.contour.declaredUnits === null) {
       const src = el("select", "contour-units-source");
       src.title = "file native unit system (from)";
+      if (s.contour.sourceUnits === null) {
+        const p = el("option", undefined, "from … (pick source units)");
+        p.value = "";
+        p.disabled = true;
+        p.selected = true;
+        src.append(p);
+      }
       for (const id of UNIT_SYSTEM_IDS) {
         const o = el("option", undefined, `from ${UNIT_SYSTEMS[id].label}`);
         o.value = id;
         o.selected = id === s.contour.sourceUnits;
         src.append(o);
       }
-      unlisten.push(listen(src, "change", () => store.dispatch({ type: "setContourUnits", source: src.value as UnitSystemId })));
+      unlisten.push(
+        listen(src, "change", () => {
+          if (src.value) store.dispatch({ type: "setContourUnits", source: src.value as UnitSystemId });
+        }),
+      );
       unitRow.append(src);
     }
     legend.append(unitRow);
@@ -436,6 +448,7 @@ function contourSignature(s: State): string {
     s.contour.component,
     s.contour.range,
     s.contour.fixed,
+    s.contour.declaredUnits,
     s.contour.sourceUnits,
     s.contour.targetUnits,
   ]);

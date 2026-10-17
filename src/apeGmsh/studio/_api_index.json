@@ -546,6 +546,12 @@
       "skill": "references/fem-broker.md",
       "symbol": "FEMData.with_mass"
     },
+    "FEMData.with_units": {
+      "doc": "Return a shallow copy with ``units`` set to the canonical unit system ID.",
+      "signature": "with_units(units: \"'Any'\") -> \"'FEMData'\"",
+      "skill": "references/fem-broker.md",
+      "symbol": "FEMData.with_units"
+    },
     "Job": {
       "doc": "Handle to one submitted job. Construct via ``Cluster.submit`` or ``Job.load``.",
       "signature": "Job(cluster: 'Cluster', name: 'str', slurm_id: 'int', remote_dir: 'str', local_dir: 'Path', deck: 'str') -> None",
@@ -785,6 +791,24 @@
       "signature": "stage(name_or_id: 'str') -> \"'Results'\"",
       "skill": "references/results.md",
       "symbol": "Results.stage"
+    },
+    "Results.to_units": {
+      "doc": "Return a new :class:`Results` view whose slabs and bound",
+      "signature": "to_units(target: \"'Any'\", *, source: \"'Any'\" = None) -> \"'Results'\"",
+      "skill": "references/results.md",
+      "symbol": "Results.to_units"
+    },
+    "Results.unit_factor": {
+      "doc": "Return the multiplicative conversion factor for ``component`` at",
+      "signature": "unit_factor(component: 'str', *, level: \"'str | Any'\" = 'nodes', target: \"'Any'\" = None, source: \"'Any'\" = None) -> 'float'",
+      "skill": "references/results.md",
+      "symbol": "Results.unit_factor"
+    },
+    "Results.unit_symbol": {
+      "doc": "Return the display unit symbol for ``component`` in :attr:`units`",
+      "signature": "unit_symbol(component: 'str', *, level: \"'str | Any'\" = 'nodes') -> 'str'",
+      "skill": "references/results.md",
+      "symbol": "Results.unit_symbol"
     },
     "Results.viewer": {
       "doc": "Open the post-solve results window on a ``ResultsSession``.",
@@ -1088,7 +1112,7 @@
     },
     "g.from_h5": {
       "doc": "Construct a session in chain phase directly from a saved FEMData.",
-      "signature": "from_h5(path: \"'str | Path'\", *, model_name: 'str | None' = None, verbose: 'bool' = False) -> \"'apeGmsh'\"",
+      "signature": "from_h5(path: \"'str | Path'\", *, model_name: 'str | None' = None, units: 'Any' = None, verbose: 'bool' = False) -> \"'apeGmsh'\"",
       "skill": "references/api-cheatsheet.md",
       "symbol": "g.from_h5"
     },
@@ -3071,6 +3095,12 @@
       "signature": "tee_solid(bf: 'float', tf: 'float', h: 'float', tw: 'float', length: 'float', *, anchor='start', align='z', label: 'str' = 'tee_solid', lc: 'float' = 1e+22, translate: 'tuple[float, float, float]' = (0.0, 0.0, 0.0), rotate: 'tuple[float, ...] | None' = None) -> \"'Instance'\"",
       "skill": "references/section-properties.md",
       "symbol": "g.sections.tee_solid"
+    },
+    "g.set_units": {
+      "doc": "Declare or update the session's consistent unit system.",
+      "signature": "set_units(units: 'Any') -> 'None'",
+      "skill": "references/api-cheatsheet.md",
+      "symbol": "g.set_units"
     },
     "g.view.add_element_scalar": {
       "doc": "Add a scalar field with one value per element.",

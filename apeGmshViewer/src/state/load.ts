@@ -13,6 +13,7 @@ import { groupAdjacency } from "./adjacency.ts";
 import { assignSlots, NO_GROUP, OPS_ONLY, slotColour } from "./palette.ts";
 import { emptyRecord } from "./reduce.ts";
 import type { ArtifactInfo, BlockInfo, Decl, DeclPath, DeclSource, ElementFacts, LegendEntry, Lineage, MeshInfo, ModelLoad, ProvenanceEntry, StageElements, ZoneStatus } from "./types.ts";
+import { parseDeclaredUnits } from "./units.ts";
 
 /** The legend rows that are not a physical group (build.ts names them). */
 const NO_GROUP_ROW = "(no physical group)";
@@ -414,5 +415,6 @@ export function loadModel(
     sequence: model.sequence,
     lineage: results.lineage,
     stageElements: results.stageElements,
+    units: parseDeclaredUnits(model.meta["units"]),
   };
 }

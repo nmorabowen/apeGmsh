@@ -152,7 +152,7 @@ X_AXIS = (1.0, 0.0, 0.0)  # normal of both end faces
 FACE_TOL = 1e-6  # m
 TIP_NODE_FORCE = (0.0, 0.0, -5e4)  # N, at every Tip node
 
-with apeGmsh(model_name="my_model", save_to="my_model.h5") as g:
+with apeGmsh(model_name="my_model", units="N_m_s", save_to="my_model.h5") as g:
     # GEOMETRY (occ) → PHYSICAL GROUPS (dim-unique names) → pre-mesh
     # LOADS/MASSES/CONSTRAINTS (on labels/PGs) → MESH → SNAPSHOT (workflows.md §1).
     g.model.geometry.add_box(0.0, 0.0, 0.0, LENGTH, WIDTH, DEPTH, label="body")

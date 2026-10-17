@@ -7,7 +7,7 @@
 import { initialClip, reduceClip } from "./clip.ts";
 import { CMAP_NAMES, componentName, contourKeysOf, defaultPick, hasPick } from "./contour.ts";
 import { deformOf, elementJoinKey, geometryPairing, resultsPairing, stageCount, stageIdentity } from "./selectors.ts";
-import { WINDOW_KINDS, type ArtifactInfo, type ArtifactKind, type ContourState, type DeclPath, type DeformState, type Event, type PhaseKey, type SpatialNdm, type State } from "./types.ts";
+import { WINDOW_KINDS, type ArtifactInfo, type ArtifactKind, type ContourState, type DeclPath, type DeformState, type Event, type PhaseKey, type SpatialNdm, type State, type UnitSystemId } from "./types.ts";
 import { UNIT_SYSTEM_IDS } from "./units.ts";
 
 /** The deformed shape before the user turns it on: true scale, no ghost (V4d; the Qt defaults). */
@@ -29,13 +29,25 @@ export const initialContour: ContourState = {
   range: "history",
   fixed: null,
   cmap: "jet",
-  sourceUnits: "kN_m_s",
+  declaredUnits: null,
+  sourceUnits: null,
   targetUnits: "as_stored",
   stepRange: null,
   scan: null,
   notice: null,
   reads: 0,
 };
+
+function syncContourUnits(c: ContourState, declaredUnits: UnitSystemId | null, keepManual: boolean): ContourState {
+  if (declaredUnits !== null) {
+    const targetUnits = keepManual && c.declaredUnits === declaredUnits && c.targetUnits !== "as_stored" ? c.targetUnits : declaredUnits;
+    return { ...c, declaredUnits, sourceUnits: declaredUnits, targetUnits };
+  }
+  if (!keepManual || c.declaredUnits !== null) {
+    return { ...c, declaredUnits: null, sourceUnits: null, targetUnits: "as_stored" };
+  }
+  return { ...c, declaredUnits: null };
+}
 
 export const initialState: State = {
   artifacts: { geometry: null, model: null, results: null },
@@ -64,6 +76,7 @@ export const initialState: State = {
   resultStep: null,
   contour: initialContour,
   ndm: NO_NDM,
+  units: null,
   deform: initialDeform,
   clip: initialClip,
 };
@@ -164,8 +177,10 @@ export function reduce(s: State, e: Event): State {
       // The same path again (a reload after fileChanged) keeps what was read until the new read lands.
       const info: ArtifactInfo = prev && prev.path === e.path ? { ...prev, stale: false, error: null } : opened(e.path);
       // Another results file: the metadata read from the old one goes with it.
-      const results = e.artifact === "results" && !(prev && prev.path === e.path) ? null : s.results;
-      return withPhase({ ...s, artifacts: { ...s.artifacts, [e.artifact]: info }, results });
+      const clearedResults = e.artifact === "results" && !(prev && prev.path === e.path);
+      const results = clearedResults ? null : s.results;
+      const contour = clearedResults ? syncContourUnits(s.contour, s.units, s.artifacts.model?.status === "ready") : s.contour;
+      return withPhase({ ...s, artifacts: { ...s.artifacts, [e.artifact]: info }, results, contour });
     }
     case "fileLoaded": {
       // A fileChanged that arrived while this read ran keeps the artifact
@@ -186,6 +201,8 @@ export function reduce(s: State, e: Event): State {
       // The stage selection survives a re-read only while its row still
       // names the same stage; a new file, or a changed row, clears it.
       const keep = reread && s.stage !== null && stageIdentity(s.sequence, s.stage) === stageIdentity(sequence, s.stage);
+      const modelUnits = e.load.units ?? null;
+      const declaredUnits = modelUnits ?? s.results?.units ?? null;
       return withPhase({
         ...s,
         phase: reread ? s.phase : { ...s.phase, at: null },
@@ -201,6 +218,8 @@ export function reduce(s: State, e: Event): State {
         lineage,
         stageElements,
         ndm: e.load.ndm ?? { ndm: null, reason: "the model's /meta/ndm was not read" },
+        units: modelUnits,
+        contour: syncContourUnits(s.contour, declaredUnits, reread || s.results !== null),
         stage: keep ? s.stage : null,
         selection: NO_SELECTION,
         hover: null,
@@ -224,7 +243,14 @@ export function reduce(s: State, e: Event): State {
       const stale = prev !== null && prev.path === e.path && prev.stale;
       const info: ArtifactInfo = { ...(prev && prev.path === e.path ? prev : opened(e.path)), status: "failed", error: e.error, stale };
       if (e.artifact === "geometry") return withPhase({ ...s, artifacts: { ...s.artifacts, geometry: info }, geometry: null });
-      if (e.artifact === "results") return withPhase({ ...s, artifacts: { ...s.artifacts, results: info }, results: null });
+      if (e.artifact === "results") {
+        return withPhase({
+          ...s,
+          artifacts: { ...s.artifacts, results: info },
+          results: null,
+          contour: syncContourUnits(s.contour, s.units, s.artifacts.model?.status === "ready"),
+        });
+      }
       // The model is gone with its derivations; the failure is shown instead.
       // The results stay read (they re-pair when a model loads).
       return withPhase({
@@ -234,6 +260,7 @@ export function reduce(s: State, e: Event): State {
         windows: s.windows,
         geometry: s.geometry,
         results: s.results,
+        contour: syncContourUnits(initialState.contour, s.results?.units ?? null, false),
         source: { ...initialState.source, seq: s.source.seq },
         // V4d: the user's deformed-shape settings stand; the count was for the old model.
         deform: { ...s.deform, measured: null },
@@ -244,7 +271,14 @@ export function reduce(s: State, e: Event): State {
     case "fileClosed": {
       if (!s.artifacts[e.artifact]) return s;
       if (e.artifact === "geometry") return withPhase({ ...s, artifacts: { ...s.artifacts, geometry: null }, geometry: null });
-      if (e.artifact === "results") return withPhase({ ...s, artifacts: { ...s.artifacts, results: null }, results: null });
+      if (e.artifact === "results") {
+        return withPhase({
+          ...s,
+          artifacts: { ...s.artifacts, results: null },
+          results: null,
+          contour: syncContourUnits(s.contour, s.units, s.artifacts.model?.status === "ready"),
+        });
+      }
       return withPhase({
         ...initialState,
         artifacts: { ...s.artifacts, model: null },
@@ -252,6 +286,7 @@ export function reduce(s: State, e: Event): State {
         windows: s.windows,
         geometry: s.geometry,
         results: s.results,
+        contour: syncContourUnits(initialState.contour, s.results?.units ?? null, false),
         source: { ...initialState.source, seq: s.source.seq },
         // V4d: the user's deformed-shape settings stand; the count was for the old model.
         deform: { ...s.deform, measured: null },
@@ -338,6 +373,8 @@ export function reduce(s: State, e: Event): State {
       const old = at?.kind === "results" ? s.results?.stages[at.stage] : undefined;
       const now = at?.kind === "results" ? e.info.stages[at.stage] : undefined;
       const keep = !old || (now !== undefined && now.id === old.id && now.name === old.name);
+      const declaredUnits = s.units ?? e.info.units ?? null;
+      const rereadResults = prev.status === "ready";
       // V4c1: a re-read invalidates the measured ranges (the same path, other
       // data); a pick the re-read stage no longer has is cleared, with a notice.
       const next = withPhase({
@@ -346,7 +383,11 @@ export function reduce(s: State, e: Event): State {
         results: e.info,
         phase: keep ? s.phase : { ...s.phase, at: null },
         // V4c2a: the element join is checked again on the re-read's rows.
-        contour: { ...s.contour, stepRange: null, scan: null, join: null, reads: s.contour.reads + 1 },
+        contour: syncContourUnits(
+          { ...s.contour, stepRange: null, scan: null, join: null, reads: s.contour.reads + 1 },
+          declaredUnits,
+          rereadResults || s.artifacts.model?.status === "ready",
+        ),
       });
       const c = next.contour;
       if (c.field === null || c.component === null) return next;
@@ -393,12 +434,14 @@ export function reduce(s: State, e: Event): State {
       if (!CMAP_NAMES.includes(e.cmap)) throw new RangeError(`setContourCmap: ${JSON.stringify(e.cmap)}`);
       return s.contour.cmap === e.cmap ? s : { ...s, contour: { ...s.contour, cmap: e.cmap } };
     case "setContourUnits": {
-      const sourceUnits = e.source ?? s.contour.sourceUnits;
+      if (e.source !== undefined && !UNIT_SYSTEM_IDS.includes(e.source)) {
+        throw new RangeError(`setContourUnits: source ${JSON.stringify(e.source)}`);
+      }
       const targetUnits = e.target ?? s.contour.targetUnits;
-      if (!UNIT_SYSTEM_IDS.includes(sourceUnits)) throw new RangeError(`setContourUnits: source ${JSON.stringify(sourceUnits)}`);
       if (targetUnits !== "as_stored" && !UNIT_SYSTEM_IDS.includes(targetUnits)) {
         throw new RangeError(`setContourUnits: target ${JSON.stringify(targetUnits)}`);
       }
+      const sourceUnits = s.contour.declaredUnits ?? e.source ?? s.contour.sourceUnits;
       if (s.contour.sourceUnits === sourceUnits && s.contour.targetUnits === targetUnits) return s;
       return { ...s, contour: { ...s.contour, sourceUnits, targetUnits } };
     }

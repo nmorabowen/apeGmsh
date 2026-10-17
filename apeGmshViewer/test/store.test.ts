@@ -668,3 +668,20 @@ test("the legend carries a generated colour per group and the two synthetic rows
   assert.equal(groups.length, loaded.mesh!.elements.length);
   for (const g of groups) assert.ok(g >= 0 && g < legend.length);
 });
+
+test("loadModel reads model.meta.units and reduce auto-selects contour units when declared", () => {
+  const mDeclared: ModelFile = { ...synthetic(complete(), [meta("forceBeamColumn", [1, 1])]), meta: { units: "kN_m_s" } };
+  const sDeclared = reduce(initialState, { type: "fileLoaded", artifact: "model", load: loadModel(mDeclared, new BlobStore()) });
+  assert.equal(sDeclared.units, "kN_m_s");
+  assert.equal(sDeclared.contour.declaredUnits, "kN_m_s");
+  assert.equal(sDeclared.contour.sourceUnits, "kN_m_s");
+  assert.equal(sDeclared.contour.targetUnits, "kN_m_s");
+
+  const mUndeclared: ModelFile = { ...synthetic(complete(), [meta("forceBeamColumn", [1, 1])]), meta: {} };
+  const sUndeclared = reduce(initialState, { type: "fileLoaded", artifact: "model", load: loadModel(mUndeclared, new BlobStore()) });
+  assert.equal(sUndeclared.units, null);
+  assert.equal(sUndeclared.contour.declaredUnits, null);
+  assert.equal(sUndeclared.contour.sourceUnits, null);
+  assert.equal(sUndeclared.contour.targetUnits, "as_stored");
+});
+

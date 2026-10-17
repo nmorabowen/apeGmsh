@@ -548,6 +548,25 @@ class LadrunoReader:
 
     # -- model / fem ---------------------------------------------------
 
+    @property
+    def units(self) -> "Optional[str]":
+        """Canonical unit system ID from ``INFO/PROVENANCE@units``, or ``None``."""
+        info = self._h5["INFO"] if "INFO" in self._h5 else None
+        if info is None or "PROVENANCE" not in info:
+            return None
+        prov = info["PROVENANCE"]
+        if "units" not in prov.attrs:
+            return None
+        raw = _decode(prov.attrs["units"]).strip()
+        if not raw:
+            return None
+        from ...units import resolve_unit_system
+
+        try:
+            return resolve_unit_system(raw)
+        except (TypeError, ValueError):
+            return None
+
     def fem(self) -> "Optional[FEMData]":
         if not isinstance(self._fem_cache, _Sentinel):
             return self._fem_cache  # type: ignore[return-value]
@@ -573,7 +592,9 @@ class LadrunoReader:
             self._fem_cache = None
             return None
         from ...mesh.FEMData import FEMData
-        self._fem_cache = FEMData.from_ladruno_model(model_grp)
+        built_fem = FEMData.from_ladruno_model(model_grp)
+        built_fem.units = self.units
+        self._fem_cache = built_fem
         return self._fem_cache  # type: ignore[return-value]
 
     def opensees_model(self) -> "Optional[OpenSeesModel]":
