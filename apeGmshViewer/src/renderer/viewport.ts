@@ -18,7 +18,7 @@ import { LineSegmentsGeometry } from "three/addons/lines/LineSegmentsGeometry.js
 import type { BlobStore } from "../state/blobs.ts";
 import type { DisplacementData } from "../effects.ts";
 import type { LadrunoLineStationStep } from "../reader/ladruno.ts";
-import { contourView, geometryPairing, gizmoPlanes, legendEntryColour } from "../state/selectors.ts";
+import { contourView, geometryPairing, gizmoPlanes, legendEntryColour, selectedElementsOf } from "../state/selectors.ts";
 import { contourColours, contourShownKey, elementColours, noDataColours, toLinear, type StepValues } from "./contour.ts";
 import { CapLayer, releaseAware } from "./caps.ts";
 import { SectionClip, sliderBox } from "./clip.ts";
@@ -466,7 +466,7 @@ export class Viewport {
       if (this.edges) this.edges.visible = edgesShown(s.visibility.edges, next, s.visibility.opacity);
       if (this.ghost) applyGhostVisibility(this.ghost, s.visibility.edges, next, s.visibility.opacity);
       // The selection outline follows the moved vertices (no pulse: the selection did not change).
-      if (s.selection.decls.length) this.setHighlight(s, false);
+      if (selectedElementsOf(s).length) this.setHighlight(s, false);
       changed = true;
     }
     const ghost = this.ghostWanted(s) && s.phase.at?.kind !== "geometry";
@@ -794,7 +794,7 @@ export class Viewport {
     this.ghost.visible = this.ghostWanted(s) && s.phase.at?.kind !== "geometry";
     this.setMarkers(info);
     this.applyVisibility(s, false);
-    this.applyDim(s.selection.decls.length > 0);
+    this.applyDim(selectedElementsOf(s).length > 0);
     this.requestRender();
   }
 
@@ -902,7 +902,7 @@ export class Viewport {
     if (!info) return;
     // V4d: frame what is drawn: the selection where it is drawn, or the whole (deformed) model (renderer/deform.ts `frameFocus`).
     const idx = this.indexOf(info);
-    const selected = s.selection.decls.flatMap((d) => {
+    const selected = selectedElementsOf(s).flatMap((d) => {
       const e = idx.byPath.get(d);
       const p = e === undefined ? undefined : idx.prims.get(e);
       return p ? [p] : [];
@@ -914,7 +914,7 @@ export class Viewport {
     this.clear(this.highlight);
     this.lineMaterials = this.lineMaterials.filter((m) => this.lines?.material === m);
     const info = s.mesh;
-    const selected = s.selection.decls;
+    const selected = selectedElementsOf(s);
     this.applyDim(selected.length > 0);
     if (!info || selected.length === 0) {
       this.halo.release();

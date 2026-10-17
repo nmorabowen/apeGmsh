@@ -13,6 +13,7 @@ import { mountLineDiagram } from "../panels/lineDiagram.ts";
 import { mountPhase } from "../panels/phase.ts";
 import { mountPlanes } from "../panels/planes.ts";
 import { mountSources } from "../panels/sources.ts";
+import { mountSpotlight } from "../panels/spotlight.ts";
 import { mountWindows } from "../panels/windows/frame.ts";
 import { BlobStore } from "../state/blobs.ts";
 import { offsetRange } from "../state/clip.ts";
@@ -52,6 +53,7 @@ const panels = [
   mountPhase(store),
   mountSources(store),
   mountWindows(store),
+  mountSpotlight(store),
 ];
 // V4e1: the section planes panel; its slider box and the view direction come from the viewport.
 panels.push(mountPlanes(store, { box: () => viewport.sliderBox(), viewNormal: () => viewport.viewNormal(), sliding: (on) => viewport.setSliding(on) }));

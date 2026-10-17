@@ -181,6 +181,18 @@ const EVERY: Record<EventType, Event> = {
   setLineDiagramRange: { type: "setLineDiagramRange", range: "fixed", fixed: { min: -10, max: 10 } },
   lineDiagramStepRange: { type: "lineDiagramStepRange", key: "x", min: -5, max: 5 },
   lineDiagramScan: { type: "lineDiagramScan", scan: { key: "x", status: "done", done: 3, total: 3, min: -12, max: 12, error: null } },
+  selectDecls: { type: "selectDecls", decls: [archPath], add: false },
+  openSpotlight: { type: "openSpotlight", mode: "root" },
+  closeSpotlight: { type: "closeSpotlight" },
+  setSpotlightMode: { type: "setSpotlightMode", mode: "opacity" },
+  setSpotlightQuery: { type: "setSpotlightQuery", query: "Arch" },
+  addSpotlightClause: { type: "addSpotlightClause", clause: { join: "and", negate: false, field: "group", op: ":", value: "Arch" } },
+  removeSpotlightClause: { type: "removeSpotlightClause", id: "sp-1" },
+  clearSpotlightClauses: { type: "clearSpotlightClauses" },
+  setSearchText: { type: "setSearchText", text: "type:forceBeamColumn" },
+  addSearchClause: { type: "addSearchClause", clause: { join: "and", negate: false, field: "group", op: ":", value: "Arch" } },
+  removeSearchClause: { type: "removeSearchClause", id: "q-1" },
+  clearSearch: { type: "clearSearch" },
 };
 
 test("reducer purity: every event leaves a frozen state untouched and returns plain data", () => {
@@ -198,8 +210,8 @@ test("reducer purity: every event leaves a frozen state untouched and returns pl
   }
   assert.equal(
     Object.keys(EVERY).length,
-    62,
-    "decision 17's 20 events plus selectAdd, fileClosed, requestSource, sourceResult, setLoaded (V2f), frameSelection, setColourBy, selectStage (V4f), resultsLoaded and resultStep (V4b), the five contour events (V4c1), setContourUnits (baseUnits), the four deformed-shape events (V4d), setContourGauss and contourElementJoin (V4c2a), the seven section-plane events (V4e1), the three gizmo events (V4e2: setClipPose, setShowGizmos, setClipGizmo), setCutFace (V4e3), and the ten line-diagram events",
+    74,
+    "decision 17's 20 events plus selectAdd, fileClosed, requestSource, sourceResult, setLoaded (V2f), frameSelection, setColourBy, selectStage (V4f), resultsLoaded and resultStep (V4b), the five contour events (V4c1), setContourUnits (baseUnits), the four deformed-shape events (V4d), setContourGauss and contourElementJoin (V4c2a), the seven section-plane events (V4e1), the three gizmo events (V4e2: setClipPose, setShowGizmos, setClipGizmo), setCutFace (V4e3), the ten line-diagram events, and the 12 Spotlight/Search/selectDecls events",
   );
 });
 

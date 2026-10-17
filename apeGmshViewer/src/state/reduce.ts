@@ -12,7 +12,9 @@ import {
   LINE_DIAGRAM_CMAP_NAMES,
   lineDiagramKeysOf,
 } from "./lineDiagram.ts";
+import { elementsOfDecl } from "./search.ts";
 import { deformOf, elementJoinKey, geometryPairing, resultsPairing, stageCount, stageIdentity } from "./selectors.ts";
+import { initialSearch, initialSpotlight } from "./spotlight.ts";
 import {
   LINE_STATION_COMPONENTS,
   WINDOW_KINDS,
@@ -102,6 +104,8 @@ export const initialState: State = {
   deform: initialDeform,
   clip: initialClip,
   lineDiagram: initialLineDiagram,
+  spotlight: initialSpotlight,
+  search: initialSearch,
 };
 
 const NO_SELECTION: State["selection"] = { decls: [], picks: [] };
@@ -300,6 +304,8 @@ export function reduce(s: State, e: Event): State {
         hover: null,
         visibility: { ...s.visibility, hidden: [], opacity },
         inspector: { pinned: [] },
+        spotlight: reread ? s.spotlight : { ...initialSpotlight, seq: s.spotlight.seq },
+        search: reread ? s.search : { ...initialSearch, seq: s.search.seq },
         // The request count survives the re-read (see State.source).
         source: { seq: s.source.seq, request: null, last: null },
       });
@@ -337,6 +343,8 @@ export function reduce(s: State, e: Event): State {
         geometry: s.geometry,
         results: s.results,
         contour: syncContourUnits(initialState.contour, s.results?.units ?? null, false),
+        spotlight: { ...initialSpotlight, seq: s.spotlight.seq },
+        search: { ...initialSearch, seq: s.search.seq },
         source: { ...initialState.source, seq: s.source.seq },
         // V4d: the user's deformed-shape settings stand; the count was for the old model.
         deform: { ...s.deform, measured: null },
@@ -365,6 +373,8 @@ export function reduce(s: State, e: Event): State {
         geometry: s.geometry,
         results: s.results,
         contour: syncContourUnits(initialState.contour, s.results?.units ?? null, false),
+        spotlight: { ...initialSpotlight, seq: s.spotlight.seq },
+        search: { ...initialSearch, seq: s.search.seq },
         source: { ...initialState.source, seq: s.source.seq },
         // V4d: the user's deformed-shape settings stand; the count was for the old model.
         deform: { ...s.deform, measured: null },
@@ -402,6 +412,14 @@ export function reduce(s: State, e: Event): State {
       }
       return { ...s, selection: { decls: [...s.selection.decls, e.pick.decl], picks: [...s.selection.picks, e.pick] } };
     }
+    case "selectDecls": {
+      for (const d of e.decls) {
+        if (!(d in s.decls)) throw new Error(`selectDecls: ${d} is not a declaration of the loaded model`);
+      }
+      const next = uniq(e.add ? [...s.selection.decls, ...e.decls] : e.decls);
+      const picks = next.map((decl) => s.selection.picks.find((p) => p.decl === decl) ?? { decl, at: null, nodes: null });
+      return { ...s, selection: { decls: next, picks } };
+    }
     case "clearSelection":
       return s.selection.decls.length === 0 ? s : { ...s, selection: NO_SELECTION };
     case "hover":
@@ -413,8 +431,17 @@ export function reduce(s: State, e: Event): State {
       return { ...s, visibility: { ...s.visibility, hidden } };
     }
     case "isolate": {
-      const keep = new Set(e.decls);
-      return { ...s, visibility: { ...s.visibility, hidden: groupPaths(s).filter((p) => !keep.has(p)) } };
+      const allGroups = e.decls.length > 0 && e.decls.every((d) => s.decls[d]?.kind === "physical_group");
+      if (allGroups) {
+        const keep = new Set(e.decls);
+        return { ...s, visibility: { ...s.visibility, hidden: groupPaths(s).filter((p) => !keep.has(p)) } };
+      }
+      const keepElems = new Set<DeclPath>();
+      for (const d of e.decls) {
+        for (const el of elementsOfDecl(s, d)) keepElems.add(el);
+      }
+      const allElems = s.mesh ? s.mesh.elements : Object.values(s.decls).filter((d) => d.kind === "element").map((d) => d.path);
+      return { ...s, visibility: { ...s.visibility, hidden: allElems.filter((p) => !keepElems.has(p)) } };
     }
     case "showAll":
       return { ...s, visibility: { ...s.visibility, hidden: [] } };
@@ -701,6 +728,47 @@ export function reduce(s: State, e: Event): State {
     case "lineDiagramScan":
       if (lineDiagramKeysOf(s)?.scan !== e.scan.key) return s;
       return { ...s, lineDiagram: { ...s.lineDiagram, scan: e.scan } };
+    case "openSpotlight": {
+      const mode = e.mode ?? "root";
+      const query = e.query ?? s.spotlight.query;
+      if (s.spotlight.open && s.spotlight.mode === mode && s.spotlight.query === query) return s;
+      return { ...s, spotlight: { ...s.spotlight, open: true, mode, query } };
+    }
+    case "closeSpotlight":
+      return !s.spotlight.open && s.spotlight.mode === "root" && s.spotlight.query === "" && s.spotlight.clauses.length === 0
+        ? s
+        : { ...s, spotlight: { ...s.spotlight, open: false, mode: "root", query: "", clauses: [] } };
+    case "setSpotlightMode": {
+      const query = e.query ?? "";
+      if (s.spotlight.mode === e.mode && s.spotlight.query === query) return s;
+      return { ...s, spotlight: { ...s.spotlight, mode: e.mode, query } };
+    }
+    case "setSpotlightQuery":
+      return s.spotlight.query === e.query ? s : { ...s, spotlight: { ...s.spotlight, query: e.query } };
+    case "addSpotlightClause": {
+      const seq = s.spotlight.seq + 1;
+      const clause = { ...e.clause, id: `sp-${seq}` };
+      return { ...s, spotlight: { ...s.spotlight, clauses: [...s.spotlight.clauses, clause], seq } };
+    }
+    case "removeSpotlightClause": {
+      const clauses = s.spotlight.clauses.filter((c) => c.id !== e.id);
+      return clauses.length === s.spotlight.clauses.length ? s : { ...s, spotlight: { ...s.spotlight, clauses } };
+    }
+    case "clearSpotlightClauses":
+      return s.spotlight.clauses.length === 0 ? s : { ...s, spotlight: { ...s.spotlight, clauses: [] } };
+    case "setSearchText":
+      return s.search.text === e.text ? s : { ...s, search: { ...s.search, text: e.text } };
+    case "addSearchClause": {
+      const seq = s.search.seq + 1;
+      const clause = { ...e.clause, id: `q-${seq}` };
+      return { ...s, search: { ...s.search, clauses: [...s.search.clauses, clause], seq } };
+    }
+    case "removeSearchClause": {
+      const clauses = s.search.clauses.filter((c) => c.id !== e.id);
+      return clauses.length === s.search.clauses.length ? s : { ...s, search: { ...s.search, clauses } };
+    }
+    case "clearSearch":
+      return s.search.text === "" && s.search.clauses.length === 0 ? s : { ...s, search: { ...s.search, text: "", clauses: [] } };
     default: {
       const unknown: never = e;
       throw new Error(`reduce: unknown event ${JSON.stringify(unknown)}`);

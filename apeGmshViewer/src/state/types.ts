@@ -14,7 +14,7 @@ import type { Definitions, OpsFamily, Param, SequenceZone } from "../model/types
 // panel allow-list: state/store, state/selectors, state/types, ui/).
 export type { Chain, ChainNode, Field } from "../chain/resolve.ts";
 // The model-definition data, as the reader read it (plain data: no typed array).
-export type { AnalysisDef, DeclParams, DeclRecord, DeclValue, Definitions, DefObject, SequenceZone, StageDef, Table } from "../model/types.ts";
+export type { AnalysisDef, DeclParams, DeclRecord, DeclValue, Definitions, DefObject, OpsFamily, SequenceZone, StageDef, Table } from "../model/types.ts";
 
 /**
  * A declaration path, `<zone>/<family>/<name|#k>` (decision 11): the key of
@@ -556,10 +556,72 @@ export interface BlockInfo {
   connectivity: BlobRef;
 }
 
-export type WindowKind = "stages" | "analysis" | "patterns" | "recorders" | "materials";
+export type WindowKind = "stages" | "analysis" | "patterns" | "recorders" | "materials" | "search";
 
 /** Every window kind, in menu order (the registry in panels/windows/ has one view per kind). */
-export const WINDOW_KINDS: readonly WindowKind[] = ["stages", "analysis", "patterns", "recorders", "materials"];
+export const WINDOW_KINDS: readonly WindowKind[] = ["stages", "analysis", "patterns", "recorders", "materials", "search"];
+
+/** Fields the pure search engine (`state/search.ts`) filters declarations by. */
+export type SearchField =
+  | "any"
+  | "kind"
+  | "type"
+  | "name"
+  | "group"
+  | "role"
+  | "uses"
+  | "id"
+  | "param"
+  | "stage"
+  | "visibility";
+
+/** Comparison operators supported by a `SearchClause`. */
+export type SearchOp = ":" | "contains" | "=" | "!=" | ">" | ">=" | "<" | "<=";
+
+/** One structured filter clause in the Search window or Spotlight filter bar. */
+export interface SearchClause {
+  readonly id: string;
+  readonly join: "and" | "or";
+  readonly negate: boolean;
+  readonly field: SearchField;
+  readonly op: SearchOp;
+  readonly key?: string;
+  readonly value: string;
+}
+
+/** The Search window's state: structured filter chips and free-text query. */
+export interface SearchState {
+  readonly text: string;
+  readonly clauses: readonly SearchClause[];
+  readonly seq: number;
+}
+
+/** Which drill-down mode Spotlight (`Ctrl+K`) is currently in. */
+export type SpotlightMode =
+  | "root"
+  | "help"
+  | "opacity"
+  | "colourBy"
+  | "phase"
+  | "step"
+  | "contourField"
+  | "contourGauss"
+  | "contourRange"
+  | "contourCmap"
+  | "contourUnits"
+  | "deformScale"
+  | "windows"
+  | "planes"
+  | "selectionActions";
+
+/** Spotlight (`Ctrl+K`) state: open status, drill-down mode, query string, and interactive filter chips. */
+export interface SpotlightState {
+  readonly open: boolean;
+  readonly mode: SpotlightMode;
+  readonly query: string;
+  readonly clauses: readonly SearchClause[];
+  readonly seq: number;
+}
 
 /**
  * One row of a model-definition window: what the reader read, where (`h5`),
@@ -656,6 +718,10 @@ export interface State {
   clip: ClipState;
   /** 1-D beam line diagram state */
   lineDiagram: LineDiagramState;
+  /** Spotlight (`Ctrl+K`) command and search palette */
+  spotlight: SpotlightState;
+  /** Search window query builder and text filter */
+  search: SearchState;
 }
 
 /** The payload of `fileLoaded` for the model artifact: what the loader derived from the file. */
@@ -706,10 +772,11 @@ export type Event =
   | { type: "zoneRefused"; artifact: ArtifactKind; zone: string; version: string; accepted: string; newer: boolean; reason: string }
   | { type: "select"; pick: Pick }
   | { type: "selectAdd"; pick: Pick }
+  | { type: "selectDecls"; decls: readonly DeclPath[]; add?: boolean }
   | { type: "clearSelection" }
   | { type: "hover"; at: Pick | DeclPath | null }
-  | { type: "setHidden"; decls: DeclPath[]; hidden: boolean }
-  | { type: "isolate"; decls: DeclPath[] }
+  | { type: "setHidden"; decls: readonly DeclPath[]; hidden: boolean }
+  | { type: "isolate"; decls: readonly DeclPath[] }
   | { type: "showAll" }
   | { type: "setEdges"; on: boolean }
   | { type: "setOpacity"; value: number }
@@ -790,6 +857,19 @@ export type Event =
   | { type: "setLineDiagramFlipSign"; flipSign: boolean | null }
   | { type: "setLineDiagramRange"; range: ContourRange; fixed?: { min: number; max: number } }
   | { type: "lineDiagramStepRange"; key: string; min: number | null; max: number | null; notice?: string | null }
-  | { type: "lineDiagramScan"; scan: ContourScan };
+  | { type: "lineDiagramScan"; scan: ContourScan }
+  /** Spotlight (`Ctrl+K`): open, close, navigate drill-down modes, edit query or filter chips */
+  | { type: "openSpotlight"; mode?: SpotlightMode; query?: string }
+  | { type: "closeSpotlight" }
+  | { type: "setSpotlightMode"; mode: SpotlightMode; query?: string }
+  | { type: "setSpotlightQuery"; query: string }
+  | { type: "addSpotlightClause"; clause: Omit<SearchClause, "id"> }
+  | { type: "removeSpotlightClause"; id: string }
+  | { type: "clearSpotlightClauses" }
+  /** Search window: edit free-text query or structured filter clauses */
+  | { type: "setSearchText"; text: string }
+  | { type: "addSearchClause"; clause: Omit<SearchClause, "id"> }
+  | { type: "removeSearchClause"; id: string }
+  | { type: "clearSearch" };
 
 export type EventType = Event["type"];

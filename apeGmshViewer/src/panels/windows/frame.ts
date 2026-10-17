@@ -24,6 +24,8 @@ export const changed = (s: State, p: State): boolean =>
   s.decls !== p.decls ||
   s.provenance !== p.provenance ||
   s.selection !== p.selection ||
+  s.visibility !== p.visibility ||
+  s.search !== p.search ||
   s.stage !== p.stage ||
   s.source !== p.source;
 
@@ -88,6 +90,11 @@ export function mountWindows(store: Store): () => void {
 
   const render = (s: State, prev: State | null) => {
     if (prev && !changed(s, prev)) return;
+    const active = typeof document !== "undefined" ? (document.activeElement as HTMLInputElement | null) : null;
+    const focusKey = active?.dataset?.["focusKey"];
+    const selStart = active && typeof active.selectionStart === "number" ? active.selectionStart : null;
+    const selEnd = active && typeof active.selectionEnd === "number" ? active.selectionEnd : null;
+
     const ready = s.artifacts.model?.status === "ready";
     menu.hidden = !ready;
     for (const { kind, b } of buttons) b.classList.toggle("on", s.windows.open.includes(kind));
@@ -123,6 +130,15 @@ export function mountWindows(store: Store): () => void {
       const left = lefts.get(card.dataset["window"] ?? "");
       const t = card.querySelector<HTMLElement>(".stage-timeline");
       if (left !== undefined && t) t.scrollLeft = left;
+    }
+    if (focusKey) {
+      const nextInput = host.querySelector<HTMLInputElement>(`[data-focus-key="${focusKey}"]`);
+      if (nextInput && typeof nextInput.focus === "function") {
+        nextInput.focus();
+        if (selStart !== null && selEnd !== null && typeof nextInput.setSelectionRange === "function") {
+          nextInput.setSelectionRange(selStart, selEnd);
+        }
+      }
     }
   };
   render(store.get(), null);
