@@ -145,15 +145,16 @@ def test_resolve_unit_system_rejects_invalid_and_inconsistent_inputs() -> None:
 
 
 def test_unit_not_declared_warning_contract(tmp_path: Path) -> None:
-    with pytest.warns(UnitNotDeclaredWarning, match="no consistent unit system declared"):
+    import warnings
+    from apeGmsh.units import UnitNotDeclaredWarning as LiveUnitNotDeclaredWarning
+
+    with pytest.warns(LiveUnitNotDeclaredWarning, match="no consistent unit system declared"):
         g = apeGmsh(model_name="warn_model", save_to=tmp_path / "w.h5")
     assert g.units is None
 
     # Silent when units= is declared (verified under -W error::UnitNotDeclaredWarning)
-    import warnings
-
     with warnings.catch_warnings():
-        warnings.simplefilter("error", UnitNotDeclaredWarning)
+        warnings.simplefilter("error", LiveUnitNotDeclaredWarning)
         g_ok = apeGmsh(model_name="ok_model", units="kN_m_s", save_to=tmp_path / "ok.h5")
         assert g_ok.units == "kN_m_s"
         g_internal = apeGmsh(model_name="internal", _artifacts=False)

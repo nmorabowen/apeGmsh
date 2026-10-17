@@ -67,8 +67,12 @@ def default_artifact_dir() -> Path:
 def _should_warn_unit_not_declared(warning_cls: type[Warning]) -> bool:
     import warnings
 
-    for action, _msg, cat, _mod, _ln in warnings.filters:
-        if isinstance(cat, type) and issubclass(cat, warning_cls):
+    for action, msg, cat, mod, ln in warnings.filters:
+        if msg is not None or mod is not None or ln != 0:
+            continue
+        if isinstance(cat, type) and (
+            issubclass(warning_cls, cat) or cat.__name__ == warning_cls.__name__
+        ):
             return action != "ignore"
     return True
 
