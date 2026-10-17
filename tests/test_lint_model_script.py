@@ -135,8 +135,8 @@ def test_v5() -> None:
     assert rules_hit("mm = x * 1000\n", "V5") == [1]
     assert rules_hit("kn = x / 1e3\n", "V5") == [1]
     assert rules_hit("mm = x / MM\nKN = 1e3\n", "V5") == []
-    assert rules_hit('with apeGmsh(model_name="m") as g:\n    pass\n', "V5") == [1]
-    assert rules_hit('with apeGmsh(model_name="m", units="kN_m_s") as g:\n    pass\n', "V5") == []
+    assert rules_hit('with apeGmsh(model_name="m") as g:\n    pass\n', "U1") == [1]
+    assert rules_hit('with apeGmsh(model_name="m", units="kN_m_s") as g:\n    pass\n', "U1") == []
 
 
 def test_t1() -> None:
