@@ -69,13 +69,13 @@ class FakeNode {
       } else this.children.push(x);
     }
   }
-  addEventListener(type: string, fn: (e: { stopPropagation(): void }) => void): void {
+  addEventListener(type: string, fn: (e: { stopPropagation(): void; shiftKey?: boolean; ctrlKey?: boolean; metaKey?: boolean }) => void): void {
     if (type === "click") this.handlers.push(fn);
   }
   /** Fire this node's click listeners; true when one stopped propagation. */
-  click(): boolean {
+  click(mods: { shiftKey?: boolean; ctrlKey?: boolean; metaKey?: boolean } = {}): boolean {
     let stopped = false;
-    for (const h of this.handlers) h({ stopPropagation: () => (stopped = true) });
+    for (const h of this.handlers) h({ ...mods, stopPropagation: () => (stopped = true) });
     return stopped;
   }
   all(pred: (n: FakeNode) => boolean): FakeNode[] {
@@ -232,15 +232,19 @@ test("the view draws a section heading per group, a row per declaration, a field
   assert.equal(rows[0]!.all((n) => n.className === "f-src")[0]!.textContent, "/opensees/materials/uniaxial/ASDSteel1D_1");
 });
 
-test("a row click selects its declaration; a link click selects the referenced one and does not bubble to the row", () => {
+test("a row click selects its declaration (or dispatches selectAdd with Shift/Ctrl/Meta); a link click selects the referenced one and does not bubble to the row", () => {
   const { root, events } = render(state);
-  const [, sec] = rowsOf(root);
+  const [mat, sec] = rowsOf(root);
   sec!.click();
   const link = linksIn(sec!).find((l) => l.dataset["decl"] === M)!;
   assert.equal(link.click(), true, "the link stops propagation");
+  mat!.click({ shiftKey: true });
+  assert.equal(link.click({ ctrlKey: true }), true);
   assert.deepEqual(events, [
     { type: "select", pick: { decl: S, at: null, nodes: null } },
     { type: "select", pick: { decl: M, at: null, nodes: null } },
+    { type: "selectAdd", pick: { decl: M, at: null, nodes: null } },
+    { type: "selectAdd", pick: { decl: M, at: null, nodes: null } },
   ]);
   assert.deepEqual(reduce(state, events[1]!).selection.decls, [M], "the store selects the referenced declaration");
 });

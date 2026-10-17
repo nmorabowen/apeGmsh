@@ -137,7 +137,7 @@ export function hitElement(
       return { element: lineElement[drawn.lineMap[h.faceIndex!]!]!, point: h.point };
     }
   }
-  if (faces) {
+  if (faces && faces.visible) {
     const hit = raycaster.intersectObject(faces, false)[0];
     if (hit && hit.faceIndex !== undefined && hit.faceIndex !== null && !clipped(hit.point)) return { element: triElement[drawn.triMap[hit.faceIndex]!]!, point: hit.point };
   }

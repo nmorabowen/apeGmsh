@@ -23,7 +23,7 @@
 import type { Event, State } from "../../state/store.ts";
 import { recorderDecls, shortValue, sourceFor } from "../../state/selectors.ts";
 import type { DeclPath, DeclRecord, DeclValue, DefObject, StageDef } from "../../state/types.ts";
-import { el } from "../../ui/dom.ts";
+import { el, isSelectAdd } from "../../ui/dom.ts";
 import type { WindowView } from "./view.ts";
 
 /** One parameter of a recorder, by field name. */
@@ -296,7 +296,7 @@ export const view: WindowView = (s: State, act: (e: Event) => void) => {
       // The frame highlights the row while the store selects its group (frame.ts markSelected).
       row.dataset["decl"] = decl;
       row.title = `select ${decl}`;
-      row.addEventListener("click", () => act({ type: "select", pick: { decl, at: null, nodes: null } }));
+      row.addEventListener("click", (e) => act({ type: isSelectAdd(e) ? "selectAdd" : "select", pick: { decl, at: null, nodes: null } }));
     }
     body.append(row);
   }

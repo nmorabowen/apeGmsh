@@ -6,12 +6,34 @@
 
 import { initialClip, reduceClip } from "./clip.ts";
 import { CMAP_NAMES, componentName, contourKeysOf, defaultPick, hasPick } from "./contour.ts";
+import {
+  defaultLineDiagramComponent,
+  initialLineDiagramState,
+  LINE_DIAGRAM_CMAP_NAMES,
+  lineDiagramKeysOf,
+} from "./lineDiagram.ts";
 import { deformOf, elementJoinKey, geometryPairing, resultsPairing, stageCount, stageIdentity } from "./selectors.ts";
-import { WINDOW_KINDS, type ArtifactInfo, type ArtifactKind, type ContourState, type DeclPath, type DeformState, type Event, type PhaseKey, type SpatialNdm, type State, type UnitSystemId } from "./types.ts";
+import {
+  LINE_STATION_COMPONENTS,
+  WINDOW_KINDS,
+  type ArtifactInfo,
+  type ArtifactKind,
+  type ContourState,
+  type DeclPath,
+  type DeformState,
+  type Event,
+  type LineDiagramState,
+  type PhaseKey,
+  type SpatialNdm,
+  type State,
+  type UnitSystemId,
+} from "./types.ts";
 import { UNIT_SYSTEM_IDS } from "./units.ts";
 
 /** The deformed shape before the user turns it on: true scale, no ghost (V4d; the Qt defaults). */
 export const initialDeform: DeformState = { on: false, scale: 1, ghost: false, measured: null };
+
+export const initialLineDiagram: LineDiagramState = initialLineDiagramState;
 
 /** No model, no dimension. */
 const NO_NDM: SpatialNdm = { ndm: null, reason: "no model is loaded" };
@@ -79,6 +101,7 @@ export const initialState: State = {
   units: null,
   deform: initialDeform,
   clip: initialClip,
+  lineDiagram: initialLineDiagram,
 };
 
 const NO_SELECTION: State["selection"] = { decls: [], picks: [] };
@@ -153,7 +176,7 @@ function withPhase(s: State): State {
     else if (at.step >= n) at = { ...at, step: n - 1 };
   }
   const resultStep = at?.kind === "results" && s.resultStep && s.resultStep.stage === at.stage && s.resultStep.step === at.step ? s.resultStep : null;
-  return withContourPick({ ...s, phase: { axis, at }, resultStep });
+  return withLineDiagramPick(withContourPick({ ...s, phase: { axis, at }, resultStep }));
 }
 
 /** The stage a contour pick is checked against: the results stage shown. */
@@ -170,6 +193,55 @@ function withContourPick(s: State): State {
   return pick ? { ...s, contour: { ...s.contour, ...pick } } : s;
 }
 
+/**
+ * Auto-pick a line-station component when landing on a results stage with
+ * `lineStations` and `lineDiagram.component` is null or absent from the stage.
+ */
+function withLineDiagramPick(s: State): State {
+  const stage = shownStage(s);
+  const avail = stage?.lineStations;
+  if (!avail || avail.length === 0) {
+    if (s.lineDiagram.stepRange === null && s.lineDiagram.scan === null && s.lineDiagram.notice === null) return s;
+    return {
+      ...s,
+      lineDiagram: {
+        ...s.lineDiagram,
+        stepRange: null,
+        scan: null,
+        notice: null,
+      },
+    };
+  }
+  if (s.lineDiagram.component !== null && avail.includes(s.lineDiagram.component)) {
+    const keys = lineDiagramKeysOf(s);
+    const keepStep = keys !== null && s.lineDiagram.stepRange?.key === keys.step;
+    const keepScan = keys !== null && s.lineDiagram.scan?.key === keys.scan;
+    if (keepStep && keepScan) return s;
+    return {
+      ...s,
+      lineDiagram: {
+        ...s.lineDiagram,
+        stepRange: keepStep ? s.lineDiagram.stepRange : null,
+        scan: keepScan ? s.lineDiagram.scan : null,
+        notice: keepStep ? s.lineDiagram.notice : null,
+      },
+    };
+  }
+  const picked = defaultLineDiagramComponent(avail);
+  if (picked === s.lineDiagram.component) return s;
+  return {
+    ...s,
+    lineDiagram: {
+      ...s.lineDiagram,
+      component: picked,
+      flipSign: null,
+      stepRange: null,
+      scan: null,
+      notice: null,
+    },
+  };
+}
+
 export function reduce(s: State, e: Event): State {
   switch (e.type) {
     case "fileOpened": {
@@ -180,7 +252,8 @@ export function reduce(s: State, e: Event): State {
       const clearedResults = e.artifact === "results" && !(prev && prev.path === e.path);
       const results = clearedResults ? null : s.results;
       const contour = clearedResults ? syncContourUnits(s.contour, s.units, s.artifacts.model?.status === "ready") : s.contour;
-      return withPhase({ ...s, artifacts: { ...s.artifacts, [e.artifact]: info }, results, contour });
+      const lineDiagram = clearedResults ? { ...s.lineDiagram, stepRange: null, scan: null } : s.lineDiagram;
+      return withPhase({ ...s, artifacts: { ...s.artifacts, [e.artifact]: info }, results, contour, lineDiagram });
     }
     case "fileLoaded": {
       // A fileChanged that arrived while this read ran keeps the artifact
@@ -203,6 +276,8 @@ export function reduce(s: State, e: Event): State {
       const keep = reread && s.stage !== null && stageIdentity(s.sequence, s.stage) === stageIdentity(sequence, s.stage);
       const modelUnits = e.load.units ?? null;
       const declaredUnits = modelUnits ?? s.results?.units ?? null;
+      const hasLines = mesh.counts.lineCells > 0 || mesh.counts.opsOnly > 0;
+      const opacity = reread ? s.visibility.opacity : mesh.counts.solidCells > 0 && hasLines ? 0.35 : 1;
       return withPhase({
         ...s,
         phase: reread ? s.phase : { ...s.phase, at: null },
@@ -223,7 +298,7 @@ export function reduce(s: State, e: Event): State {
         stage: keep ? s.stage : null,
         selection: NO_SELECTION,
         hover: null,
-        visibility: { ...s.visibility, hidden: [] },
+        visibility: { ...s.visibility, hidden: [], opacity },
         inspector: { pinned: [] },
         // The request count survives the re-read (see State.source).
         source: { seq: s.source.seq, request: null, last: null },
@@ -249,6 +324,7 @@ export function reduce(s: State, e: Event): State {
           artifacts: { ...s.artifacts, results: info },
           results: null,
           contour: syncContourUnits(s.contour, s.units, s.artifacts.model?.status === "ready"),
+          lineDiagram: { ...s.lineDiagram, stepRange: null, scan: null },
         });
       }
       // The model is gone with its derivations; the failure is shown instead.
@@ -266,6 +342,7 @@ export function reduce(s: State, e: Event): State {
         deform: { ...s.deform, measured: null },
         // V4e1: the section planes stand too (the slider re-derives its range from the next mesh).
         clip: s.clip,
+        lineDiagram: s.lineDiagram,
       });
     }
     case "fileClosed": {
@@ -277,6 +354,7 @@ export function reduce(s: State, e: Event): State {
           artifacts: { ...s.artifacts, results: null },
           results: null,
           contour: syncContourUnits(s.contour, s.units, s.artifacts.model?.status === "ready"),
+          lineDiagram: { ...s.lineDiagram, stepRange: null, scan: null },
         });
       }
       return withPhase({
@@ -292,6 +370,7 @@ export function reduce(s: State, e: Event): State {
         deform: { ...s.deform, measured: null },
         // V4e1: the section planes stand too (the slider re-derives its range from the next mesh).
         clip: s.clip,
+        lineDiagram: s.lineDiagram,
       });
     }
     case "fileChanged": {
@@ -316,7 +395,11 @@ export function reduce(s: State, e: Event): State {
       return { ...s, selection: { decls: [e.pick.decl], picks: [e.pick] } };
     case "selectAdd": {
       if (!(e.pick.decl in s.decls)) throw new Error(`selectAdd: ${e.pick.decl} is not a declaration of the loaded model`);
-      if (s.selection.decls.includes(e.pick.decl)) return s;
+      if (s.selection.decls.includes(e.pick.decl)) {
+        const decls = s.selection.decls.filter((d) => d !== e.pick.decl);
+        const picks = s.selection.picks.filter((p) => p.decl !== e.pick.decl);
+        return decls.length === 0 ? { ...s, selection: NO_SELECTION } : { ...s, selection: { decls, picks } };
+      }
       return { ...s, selection: { decls: [...s.selection.decls, e.pick.decl], picks: [...s.selection.picks, e.pick] } };
     }
     case "clearSelection":
@@ -375,6 +458,13 @@ export function reduce(s: State, e: Event): State {
       const keep = !old || (now !== undefined && now.id === old.id && now.name === old.name);
       const declaredUnits = s.units ?? e.info.units ?? null;
       const rereadResults = prev.status === "ready";
+      const firstLineStage = e.info.stages.find((st) => (st.lineStations?.length ?? 0) > 0);
+      const curComp = s.lineDiagram.component;
+      const validOnAny =
+        curComp !== null && e.info.stages.some((st) => st.lineStations?.includes(curComp));
+      const nextLineComp = validOnAny
+        ? curComp
+        : defaultLineDiagramComponent(firstLineStage?.lineStations);
       // V4c1: a re-read invalidates the measured ranges (the same path, other
       // data); a pick the re-read stage no longer has is cleared, with a notice.
       const next = withPhase({
@@ -388,6 +478,14 @@ export function reduce(s: State, e: Event): State {
           declaredUnits,
           rereadResults || s.artifacts.model?.status === "ready",
         ),
+        lineDiagram: {
+          ...s.lineDiagram,
+          component: nextLineComp,
+          flipSign: nextLineComp === curComp ? s.lineDiagram.flipSign : null,
+          stepRange: null,
+          scan: null,
+          notice: null,
+        },
       });
       const c = next.contour;
       if (c.field === null || c.component === null) return next;
@@ -528,6 +626,81 @@ export function reduce(s: State, e: Event): State {
       const clip = reduceClip(s.clip, e, s.mesh?.center ?? [0, 0, 0]);
       return clip === s.clip ? s : { ...s, clip };
     }
+    case "setLineDiagram":
+      if (typeof e.on !== "boolean") throw new RangeError(`setLineDiagram: ${JSON.stringify(e.on)}`);
+      return s.lineDiagram.on === e.on ? s : withLineDiagramPick({ ...s, lineDiagram: { ...s.lineDiagram, on: e.on } });
+    case "setLineDiagramComponent": {
+      if (!LINE_STATION_COMPONENTS.includes(e.component)) {
+        throw new RangeError(`setLineDiagramComponent: ${JSON.stringify(e.component)}`);
+      }
+      const stage = shownStage(s);
+      if (stage?.lineStations && stage.lineStations.length > 0 && !stage.lineStations.includes(e.component)) {
+        throw new RangeError(`setLineDiagramComponent: ${e.component} is not a line-station component of stage ${stage.id}`);
+      }
+      if (s.lineDiagram.component === e.component && s.lineDiagram.flipSign === null && s.lineDiagram.notice === null) return s;
+      return {
+        ...s,
+        lineDiagram: {
+          ...s.lineDiagram,
+          component: e.component,
+          flipSign: null,
+          stepRange: null,
+          scan: null,
+          notice: null,
+        },
+      };
+    }
+    case "setLineDiagramScale":
+      if (typeof e.scale !== "number" || !Number.isFinite(e.scale) || e.scale <= 0) {
+        throw new RangeError(`setLineDiagramScale: the scale must be a finite number above 0; got ${JSON.stringify(e.scale)}`);
+      }
+      return s.lineDiagram.scale === e.scale ? s : { ...s, lineDiagram: { ...s.lineDiagram, scale: e.scale } };
+    case "setLineDiagramPlane":
+      if (e.plane !== "local" && e.plane !== "screen") {
+        throw new RangeError(`setLineDiagramPlane: ${JSON.stringify(e.plane)}`);
+      }
+      return s.lineDiagram.plane === e.plane && s.lineDiagram.notice === null
+        ? s
+        : { ...s, lineDiagram: { ...s.lineDiagram, plane: e.plane, notice: null } };
+    case "setLineDiagramCmap":
+      if (!LINE_DIAGRAM_CMAP_NAMES.includes(e.cmap)) {
+        throw new RangeError(`setLineDiagramCmap: ${JSON.stringify(e.cmap)}`);
+      }
+      return s.lineDiagram.cmap === e.cmap ? s : { ...s, lineDiagram: { ...s.lineDiagram, cmap: e.cmap } };
+    case "setLineDiagramFill":
+      if (typeof e.fill !== "boolean") throw new RangeError(`setLineDiagramFill: ${JSON.stringify(e.fill)}`);
+      return s.lineDiagram.fill === e.fill ? s : { ...s, lineDiagram: { ...s.lineDiagram, fill: e.fill } };
+    case "setLineDiagramFlipSign":
+      if (e.flipSign !== null && typeof e.flipSign !== "boolean") {
+        throw new RangeError(`setLineDiagramFlipSign: ${JSON.stringify(e.flipSign)}`);
+      }
+      return s.lineDiagram.flipSign === e.flipSign ? s : { ...s, lineDiagram: { ...s.lineDiagram, flipSign: e.flipSign } };
+    case "setLineDiagramRange": {
+      if (e.range !== "history" && e.range !== "step" && e.range !== "fixed") {
+        throw new RangeError(`setLineDiagramRange: ${JSON.stringify(e.range)}`);
+      }
+      let fixed = s.lineDiagram.fixed;
+      if (e.range === "fixed") {
+        fixed = e.fixed ?? s.lineDiagram.fixed;
+        if (!fixed || !Number.isFinite(fixed.min) || !Number.isFinite(fixed.max) || !(fixed.min < fixed.max)) {
+          throw new RangeError(`setLineDiagramRange: a fixed range needs a finite min below a finite max; got ${JSON.stringify(fixed)}`);
+        }
+      }
+      return { ...s, lineDiagram: { ...s.lineDiagram, range: e.range, fixed } };
+    }
+    case "lineDiagramStepRange":
+      if (lineDiagramKeysOf(s)?.step !== e.key) return s;
+      return {
+        ...s,
+        lineDiagram: {
+          ...s.lineDiagram,
+          stepRange: { key: e.key, min: e.min, max: e.max },
+          notice: e.notice !== undefined ? e.notice : s.lineDiagram.notice,
+        },
+      };
+    case "lineDiagramScan":
+      if (lineDiagramKeysOf(s)?.scan !== e.scan.key) return s;
+      return { ...s, lineDiagram: { ...s.lineDiagram, scan: e.scan } };
     default: {
       const unknown: never = e;
       throw new Error(`reduce: unknown event ${JSON.stringify(unknown)}`);

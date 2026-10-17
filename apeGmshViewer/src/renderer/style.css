@@ -41,12 +41,22 @@ option:disabled { color: var(--muted); }
 }
 #banner div + div { margin-top: 3px; }
 
+#line-diagram {
+  position: fixed; left: 16px; top: 102px; max-height: calc(55vh - 118px); overflow: auto;
+  padding: 10px 12px; border-radius: 10px; min-width: 280px; max-width: 292px;
+  background: var(--panel); border: 1px solid var(--line);
+}
+#banner:not([hidden]) ~ #line-diagram {
+  top: 168px; max-height: calc(55vh - 184px);
+}
+#line-diagram[hidden] { display: none; }
+
 #legend {
   position: fixed; left: 16px; bottom: 16px; max-height: 45vh; overflow: auto;
   padding: 10px 12px; border-radius: 10px; min-width: 200px;
   background: var(--panel); border: 1px solid var(--line);
 }
-#legend h3, #inspector h3 {
+#legend h3, #line-diagram h3, #inspector h3 {
   margin: 0 0 6px; font-size: 12px; font-weight: 600;
   letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted);
 }
@@ -98,6 +108,11 @@ option:disabled { color: var(--muted); }
 .deform-scale-label.scaled { color: var(--accent); font-weight: 600; }
 .deform-marker { width: 8px; height: 8px; flex: none; outline: 2.5px solid var(--text); margin: 0 3px; }
 .deform-missing { font-size: 13px; }
+
+.line-diagram { max-width: 268px; }
+.line-diagram-pick .line-diagram-field { flex: 0 0 auto; }
+.line-diagram-title { font-weight: 600; margin: 2px 0 4px; }
+.line-diagram-planes, .line-diagram-cmaps { flex-wrap: wrap; }
 
 /* The right rail (V2g, design brief on #1426): the inspector on top, the
    sources below, never overlapping. The rail itself takes no clicks. */
@@ -162,7 +177,7 @@ code { font-family: var(--mono); }
 .sibling { color: var(--muted); }
 .legend-row.clickable { cursor: pointer; }
 .legend-row.hidden-group { opacity: 0.4; text-decoration: line-through; }
-#legend h3, #inspector h3 { display: flex; align-items: center; gap: 8px; }
+#legend h3, #line-diagram h3, #inspector h3 { display: flex; align-items: center; gap: 8px; }
 .legend-all, .pin {
   margin-left: auto; padding: 0 6px; border-radius: 4px; cursor: pointer;
   font: 600 11px var(--font); letter-spacing: 0; text-transform: none;
@@ -356,26 +371,26 @@ code { font-family: var(--mono); }
 .vc-projection { flex: 1 1 auto; }
 .vc-theme { flex: 0 0 auto; }
 
-/* Universal collapsible panels (ui/collapse.ts): every <aside> in #rail and #legend */
-#rail > aside > h3:first-child, #legend > h3:first-child {
+/* Universal collapsible panels (ui/collapse.ts): every <aside> in #rail, #legend, and #line-diagram */
+#rail > aside > h3:first-child, #legend > h3:first-child, #line-diagram > h3:first-child {
   cursor: pointer; user-select: none;
 }
-#rail > aside > h3:first-child::before, #legend > h3:first-child::before {
+#rail > aside > h3:first-child::before, #legend > h3:first-child::before, #line-diagram > h3:first-child::before {
   content: "\25be"; font-size: 11px; color: var(--muted);
 }
-#rail > aside > h3:first-child:hover::before, #legend > h3:first-child:hover::before {
+#rail > aside > h3:first-child:hover::before, #legend > h3:first-child:hover::before, #line-diagram > h3:first-child:hover::before {
   color: var(--accent);
 }
-#rail > aside[data-collapsed="true"] > h3:first-child::before, #legend[data-collapsed="true"] > h3:first-child::before {
+#rail > aside[data-collapsed="true"] > h3:first-child::before, #legend[data-collapsed="true"] > h3:first-child::before, #line-diagram[data-collapsed="true"] > h3:first-child::before {
   content: "\25b8";
 }
-#rail > aside[data-collapsed="true"], #legend[data-collapsed="true"] {
+#rail > aside[data-collapsed="true"], #legend[data-collapsed="true"], #line-diagram[data-collapsed="true"] {
   flex: 0 0 auto; overflow: hidden; padding-top: 8px; padding-bottom: 8px;
 }
-#rail > aside[data-collapsed="true"] > h3:first-child, #legend[data-collapsed="true"] > h3:first-child {
+#rail > aside[data-collapsed="true"] > h3:first-child, #legend[data-collapsed="true"] > h3:first-child, #line-diagram[data-collapsed="true"] > h3:first-child {
   margin-bottom: 0;
 }
-#rail > aside[data-collapsed="true"] > :not(:first-child), #legend[data-collapsed="true"] > :not(:first-child) {
+#rail > aside[data-collapsed="true"] > :not(:first-child), #legend[data-collapsed="true"] > :not(:first-child), #line-diagram[data-collapsed="true"] > :not(:first-child) {
   display: none;
 }
 #inspector[data-collapsed="true"] + #sources { max-height: 100%; }

@@ -31,7 +31,7 @@ import * as THREE from "three";
 import type { Box, Vec3 } from "../state/clip.ts";
 import type { ClipPlane, Event } from "../state/types.ts";
 import { DARK, DARK_MAIN, toHexNumber } from "../theme/tokens.ts";
-import { CLICK_SLOP_PX } from "./bindings.ts";
+import { CLICK_SLOP_PX, isSelectAdd } from "./bindings.ts";
 import type { ListenTarget } from "./navigation.ts";
 
 /** The quad reaches a hair past the box's cross-section, so it reads as a tool, not a face of the model. */
@@ -326,7 +326,7 @@ export interface GizmoHost {
   /** HTML chrome (the legend, a panel) is over this client point: it wins the press */
   chromeAt(clientX: number, clientY: number): boolean;
   /** a click on a gizmo goes through to the model pick */
-  select(clientX: number, clientY: number): void;
+  select(clientX: number, clientY: number, add?: boolean): void;
 }
 
 /** The gesture in flight, frozen at the press. */
@@ -377,7 +377,7 @@ export class GizmoInteractor {
   }
 
   private onDown(e: PointerEvent): void {
-    if (e.button !== 0 || e.shiftKey || this.drag) return;
+    if (e.button !== 0 || isSelectAdd(e) || this.drag) return;
     if (this.host.chromeAt(e.clientX, e.clientY)) return;
     const ray = this.host.rayAt(e.clientX, e.clientY);
     const hit = this.host.hit(ray);
@@ -443,7 +443,7 @@ export class GizmoInteractor {
     this.claim(e);
     this.endDrag();
     // A press and release within the slop is a click: the model under the quad is picked through it.
-    if (!d.moved) this.host.select(e.clientX, e.clientY);
+    if (!d.moved) this.host.select(e.clientX, e.clientY, isSelectAdd(e));
   }
 
   private endDrag(): void {

@@ -14,7 +14,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import * as THREE from "three";
-import { basePositions, frameFocus, gatherInto, ghostObjects, missingMarkerObjects, positionsFor, selectionOutline, type FullPositions } from "../../src/renderer/deform.ts";
+import { applyGhostVisibility, basePositions, frameFocus, gatherInto, ghostObjects, missingMarkerObjects, positionsFor, selectionOutline, type FullPositions } from "../../src/renderer/deform.ts";
 import { selectionBounds, type Prims } from "../../src/renderer/selection.ts";
 import { elementMaskOf, visibleMaps } from "../../src/renderer/visible.ts";
 import { missingMarkers } from "../../src/state/deform.ts";
@@ -140,9 +140,9 @@ test("F framing: the selection where it is drawn, and with nothing selected the 
   h.effects.dispose();
 });
 
-test("reference ghost: the undeformed mesh of what is drawn, whatever is drawn", async () => {
+test("reference ghost: the undeformed mesh of what is drawn, and applyGhostVisibility respects surface opacity and edges toggle", async () => {
   const h = await opened(DEFORM_2D, DEFORM_2D_RESULTS);
-  const { s } = await deformed(h, 0, 2, 30);
+  const { s, full } = await deformed(h, 0, 2, 30);
   const info = s.mesh!;
   const drawn = drawnOf(h, s);
   const edgeMap = Int32Array.from({ length: info.edgePositions.shape[0]! }, (_, i) => i);
@@ -150,8 +150,33 @@ test("reference ghost: the undeformed mesh of what is drawn, whatever is drawn",
   const objs = ghostObjects(info, h.blobs, drawn, edgeMap);
   const pos = (o: THREE.Object3D) => (o as THREE.Mesh).geometry.getAttribute("position").array as Float32Array;
   const faces = objs.find((o) => o instanceof THREE.Mesh)!;
+  assert.equal(faces.name, "ghost faces");
   assert.deepEqual(pos(faces), gatherInto(base.tri, drawn.triMap, 9));
-  const segs = objs.filter((o) => o instanceof THREE.LineSegments).map(pos);
-  assert.deepEqual(segs, [gatherInto(base.edge, edgeMap, 6), gatherInto(base.line, drawn.lineMap, 6)]);
+  const segs = objs.filter((o) => o instanceof THREE.LineSegments);
+  assert.deepEqual(segs.map((o) => o.name), ["ghost edges", "ghost lines"]);
+  assert.deepEqual(segs.map(pos), [gatherInto(base.edge, edgeMap, 6), gatherInto(base.line, drawn.lineMap, 6)]);
+
+  const group = new THREE.Group();
+  for (const o of objs) group.add(o);
+  const ghostEdges = segs[0]!, ghostLines = segs[1]!;
+
+  // Default (edges on, opacity 1): faces, outline edges and 1-D lines all visible.
+  applyGhostVisibility(group, true, full, 1);
+  assert.equal(faces.visible, true);
+  assert.equal(ghostEdges.visible, true);
+  assert.equal(ghostLines.visible, true);
+
+  // Edges off, opacity 1: outline edges hidden, faces and 1-D lines stay visible.
+  applyGhostVisibility(group, false, full, 1);
+  assert.equal(faces.visible, true);
+  assert.equal(ghostEdges.visible, false);
+  assert.equal(ghostLines.visible, true);
+
+  // Surface opacity 0 ("off"), even with edges toggle true: ghost faces and ghost outline edges both hidden, 1-D ghost lines stay visible.
+  applyGhostVisibility(group, true, full, 0);
+  assert.equal(faces.visible, false, "ghost surfaces hidden when opacity is 0");
+  assert.equal(ghostEdges.visible, false, "ghost outline edges hidden when opacity is 0");
+  assert.equal(ghostLines.visible, true, "1-D ghost lines remain visible when 2-D/3-D surfaces are off");
+
   h.effects.dispose();
 });

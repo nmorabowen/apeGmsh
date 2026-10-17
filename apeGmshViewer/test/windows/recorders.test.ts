@@ -254,22 +254,22 @@ class RecNode {
   disabled = false;
   dataset: Record<string, string> = {};
   style: Record<string, string> = {};
-  private handlers: (() => void)[] = [];
+  private handlers: ((e?: { shiftKey?: boolean; ctrlKey?: boolean; metaKey?: boolean }) => void)[] = [];
   append(...xs: (RecNode | string)[]): void {
     for (const x of xs) if (typeof x !== "string") this.children.push(x);
   }
-  addEventListener(_t: string, fn: () => void): void {
+  addEventListener(_t: string, fn: (e?: { shiftKey?: boolean; ctrlKey?: boolean; metaKey?: boolean }) => void): void {
     this.handlers.push(fn);
   }
-  click(): void {
-    for (const h of this.handlers) h();
+  click(mods?: { shiftKey?: boolean; ctrlKey?: boolean; metaKey?: boolean }): void {
+    for (const h of this.handlers) h(mods);
   }
   all(pred: (n: RecNode) => boolean): RecNode[] {
     return [...(pred(this) ? [this] : []), ...this.children.flatMap((c) => c.all(pred))];
   }
 }
 
-test("V4f: a row that selects a group carries data-decl, and the frame highlights it while the store selects that group", () => {
+test("V4f: a row that selects a group carries data-decl, dispatches select or selectAdd (Shift/Ctrl/Meta), and the frame highlights it while the store selects that group", () => {
   const g = globalThis as { document?: unknown };
   const saved = g.document;
   g.document = { createElement: () => new RecNode() };
@@ -281,6 +281,11 @@ test("V4f: a row that selects a group carries data-decl, and the frame highlight
     assert.equal(arch.length, 1, "the crown row names the group it selects");
     assert.ok(rows.filter((r) => r !== arch[0]).every((r) => r.dataset["decl"] === undefined), "a row that selects nothing carries no data-decl");
     arch[0]!.click();
+    arch[0]!.click({ shiftKey: true });
+    assert.deepEqual(events, [
+      { type: "select", pick: { decl: "mesh/physical_group/Arch", at: null, nodes: null } },
+      { type: "selectAdd", pick: { decl: "mesh/physical_group/Arch", at: null, nodes: null } },
+    ]);
     const selected = reduce(s, events[0] as Parameters<typeof reduce>[1]);
     const again = view(selected, () => {}) as unknown as RecNode;
     assert.equal(markSelected(again as unknown as HTMLElement, selected.selection.decls), 1);

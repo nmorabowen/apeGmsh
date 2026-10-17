@@ -82,10 +82,10 @@ contextBridge.exposeInMainWorld("viewer", {
   openGeometry: (path: string) => ipcRenderer.invoke("geometry:open", path),
   // V4b (#1728): a results file's metadata, then one step at a time (./results.ts).
   openResults: (path: string) => ipcRenderer.invoke("results:open", path),
-  readResultsStep: (req: { path: string; stage: string; step: number; seq: number }) => ipcRenderer.invoke("results:readStep", req),
+  readResultsStep: (req: { path: string; stage: string; step: number; seq: number; element?: string; lineDiagram?: string }) => ipcRenderer.invoke("results:readStep", req),
   // V4c1 (#1756): the history-range scan of a contour field, its cancel, and its progress.
   // V4c2b: an element scan may carry a node-located topology's extrapolation plan (main checks it).
-  scanResults: (req: { path: string; stage: string; components: string[]; magnitude: boolean; scanId: number; source?: "element"; plan?: unknown }) => ipcRenderer.invoke("results:scan", req),
+  scanResults: (req: { path: string; stage: string; components: string[]; magnitude: boolean; scanId: number; source?: "element" | "line"; plan?: unknown }) => ipcRenderer.invoke("results:scan", req),
   cancelResultsScan: (scanId: number) => ipcRenderer.invoke("results:scanCancel", scanId),
   onScanProgress: (cb: (p: { scanId: number; done: number; total: number }) => void) => {
     const handler = (_e: IpcRendererEvent, p: { scanId: number; done: number; total: number }) => cb(p);

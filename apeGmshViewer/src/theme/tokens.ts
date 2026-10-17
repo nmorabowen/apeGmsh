@@ -223,6 +223,9 @@ export const DARK = {
   accent: OFFICE.accent,
   accentInk: "#1B1E24",
   accentWash: "rgba(230, 159, 0, 0.16)",
+  /** office warn (Okabe-Ito orange) and ok (sky blue) tokens */
+  warn: OFFICE.warn,
+  ok: OFFICE.ok,
   /** interpreted-value tag: the office warn colour */
   interp: OFFICE.warn,
   interpWash: "rgba(70, 40, 20, 0.92)",
@@ -325,6 +328,9 @@ export const LIGHT = {
   accent: "#181B20",
   accentInk: "#FFFFFF",
   accentWash: "rgba(24, 27, 32, 0.10)",
+  /** office warn (Okabe-Ito orange) and ok (sky blue) tokens */
+  warn: OFFICE.warn,
+  ok: OFFICE.ok,
   /** interpreted-value tag on light surfaces */
   interp: "#9A5000",
   interpWash: "rgba(255, 247, 237, 0.95)",
@@ -376,6 +382,8 @@ export function cssVariables(mode: ThemeMode = "dark"): Record<string, string> {
     "--accent": t.accent,
     "--accent-ink": t.accentInk,
     "--accent-wash": t.accentWash,
+    "--warn": t.warn,
+    "--ok": t.ok,
     "--interp": t.interp,
     "--interp-wash": t.interpWash,
     "--interp-text": t.interpText,

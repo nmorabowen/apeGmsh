@@ -10,6 +10,7 @@
 
 import type { ModelFile } from "./model/types.ts";
 import type { GeometryZone } from "./reader/geometry.ts";
+import type { LadrunoLineStationStep } from "./reader/ladruno.ts";
 import type { ProvenanceZone } from "./reader/provenance.ts";
 import { GEOMETRY_TARGET, NEUTRAL_TARGET, OPENSEES_TARGET, PROVENANCE_TARGET, ZONE_FLOOR } from "./reader/read.ts";
 import type { BlobStore } from "./state/blobs.ts";
@@ -18,11 +19,12 @@ import { loadModel } from "./state/load.ts";
 import { columnOf, finiteRange, finiteRangeOf, gaussCellValues, gaussFields, isNodeTopology, joinElements } from "./state/contour.ts";
 import { applyPlan, cellLookup, extrapolationVerdict, planFor, planRange, type ExtrapPlan } from "./state/extrapolation.ts";
 import { missingDrawnNodes, spatialNdm, vertexDisplacements, type VertexDisplacement } from "./state/deform.ts";
-import { contourView, deformView, elementJoinKey, sourceFor } from "./state/selectors.ts";
+import { buildLineDiagram3D, joinLadrunoElements } from "./state/lineDiagram.ts";
+import { contourView, deformView, elementJoinKey, lineDiagramKeysOf, resultsPairing, sourceFor } from "./state/selectors.ts";
 import type { Store } from "./state/store.ts";
 import { focusOf, type Focus } from "./renderer/selection.ts";
 import { elementMaskOf, visibleMaps } from "./renderer/visible.ts";
-import type { ArtifactKind, BlobRef, ContourScan, ElementJoinVerdict, Lineage, ResultsInfo, StageElements, State, ZoneStatus } from "./state/types.ts";
+import type { ArtifactKind, BlobRef, ContourScan, ElementJoinVerdict, Lineage, LineStationComponent, ResultsInfo, StageElements, State, ZoneStatus } from "./state/types.ts";
 
 const TARGET = { neutral: NEUTRAL_TARGET, opensees: OPENSEES_TARGET, geometry: GEOMETRY_TARGET, provenance: PROVENANCE_TARGET } as const;
 
@@ -75,7 +77,7 @@ export interface Bridge {
     | { ok: false; error: string }
   >;
   /** V4c1: the history range of a contour field (main/results.ts `ResultsHost.scan`); the reply echoes `scanId`. V4c2a: `source: "element"`. */
-  scanResults?(req: { path: string; stage: string; components: string[]; magnitude: boolean; scanId: number; source?: "element"; plan?: ExtrapPlan }): Promise<
+  scanResults?(req: { path: string; stage: string; components: string[]; magnitude: boolean; scanId: number; source?: "element" | "line"; plan?: ExtrapPlan }): Promise<
     | { ok: true; scanId: number; min: number | null; max: number | null; steps: number; ms: number }
     | { ok: false; scanId: number; error: string; cancelled?: true; changed?: true }
   >;
@@ -87,8 +89,8 @@ export interface Bridge {
   /** V4c1: the progress of the running scans; returns the unsubscribe. */
   onScanProgress?(cb: (p: { scanId: number; done: number; total: number }) => void): (() => void) | void;
   /** V4b: one step of the open results file; the reply echoes `seq`. V4c2a: `element` reads one Gauss component too (`gauss`, by group). */
-  readResultsStep?(req: { path: string; stage: string; step: number; seq: number; element?: string }): Promise<
-    | { ok: true; seq: number; stage: string; step: number; nodal: Record<string, Float64Array>; gauss?: Record<string, Float64Array> }
+  readResultsStep?(req: { path: string; stage: string; step: number; seq: number; element?: string; lineDiagram?: LineStationComponent }): Promise<
+    | { ok: true; seq: number; stage: string; step: number; nodal: Record<string, Float64Array>; gauss?: Record<string, Float64Array>; lineDiagram?: LadrunoLineStationStep | null }
     | { ok: false; seq: number; error: string; changed?: true }
   >;
   /** V2f: read a /geometry sibling (null: the file has no such zone). */
@@ -213,6 +215,8 @@ export interface StepData {
   /** V4c2a: the element component fetched with the step, or null; and its values by gauss group, (E * G,) element-major */
   element: string | null;
   gauss: Record<string, Float64Array>;
+  /** Line diagram component fetched with the step, or null */
+  lineDiagram?: LadrunoLineStationStep | null;
 }
 
 export class Effects {
@@ -285,12 +289,19 @@ export class Effects {
       this.store.subscribe((s) => this.syncJoin(s)),
       // V4d: the displacement of the step shown, and the count of drawn nodes without one.
       this.store.subscribe((s) => this.syncDeform(s)),
+      // 3-D line diagram step range and history scan.
+      this.store.subscribe((s) => this.syncLineDiagram(s)),
     );
     if (typeof this.bridge.onScanProgress === "function") {
       const off = this.bridge.onScanProgress((p) => {
         const run = this.scanRun;
-        if (!run || p.scanId !== run.id) return;
-        this.store.dispatch({ type: "contourScan", scan: { key: run.key, status: "running", done: p.done, total: p.total, min: null, max: null, error: null } });
+        if (run && p.scanId === run.id) {
+          this.store.dispatch({ type: "contourScan", scan: { key: run.key, status: "running", done: p.done, total: p.total, min: null, max: null, error: null } });
+        }
+        const lineRun = this.lineScanRun;
+        if (lineRun && p.scanId === lineRun.id) {
+          this.store.dispatch({ type: "lineDiagramScan", scan: { key: lineRun.key, status: "running", done: p.done, total: p.total, min: null, max: null, error: null } });
+        }
       });
       if (typeof off === "function") this.off.push(off);
     }
@@ -345,6 +356,154 @@ export class Effects {
     if (!run) return;
     this.scanRun = null;
     if (typeof this.bridge.cancelResultsScan === "function") void this.bridge.cancelResultsScan(run.id).catch(() => undefined);
+  }
+
+  // -- 3-D line diagram step range and history scan ---------------------------
+
+  private lineRangeFor: { key: string; data: StepData } | null = null;
+  private lineScanRun: { id: number; key: string } | null = null;
+  private readonly lineScanCache = new Map<string, { min: number | null; max: number | null; total: number }>();
+
+  /** The current line diagram step data and its key, or null. */
+  currentLineDiagram(): { key: string; step: LadrunoLineStationStep } | null {
+    const s = this.store.get();
+    const ldKeys = lineDiagramKeysOf(s);
+    const at = s.phase.at;
+    const data = this.step;
+    if (
+      !ldKeys ||
+      at?.kind !== "results" ||
+      !data ||
+      data.stage !== at.stage ||
+      data.step !== at.step ||
+      !data.lineDiagram ||
+      data.lineDiagram.component !== s.lineDiagram.component
+    ) {
+      return null;
+    }
+    return { key: ldKeys.step, step: data.lineDiagram };
+  }
+
+  private stopLineScan(): void {
+    const run = this.lineScanRun;
+    if (!run) return;
+    this.lineScanRun = null;
+    if (typeof this.bridge.cancelResultsScan === "function") void this.bridge.cancelResultsScan(run.id).catch(() => undefined);
+  }
+
+  private syncLineDiagram(s: State): void {
+    const ldKeys = lineDiagramKeysOf(s);
+    if (!s.lineDiagram.on || !ldKeys || s.lineDiagram.component === null) {
+      if (this.lineScanRun) this.stopLineScan();
+      return;
+    }
+    const at = s.phase.at;
+    const data = this.step;
+    if (
+      at?.kind === "results" &&
+      data &&
+      data.stage === at.stage &&
+      data.step === at.step &&
+      s.resultStep?.status === "ready" &&
+      data.lineDiagram &&
+      data.lineDiagram.component === s.lineDiagram.component
+    ) {
+      const rangeContextKey = `${ldKeys.step}|${s.lineDiagram.plane}|${s.visibility.hidden.join(",")}|${s.mesh?.linePositions.id ?? "nomesh"}`;
+      const stepMeasured = s.lineDiagram.stepRange?.key === ldKeys.step && this.lineRangeFor?.key === rangeContextKey;
+      if (!stepMeasured && !(this.lineRangeFor && this.lineRangeFor.key === rangeContextKey && this.lineRangeFor.data === data)) {
+        this.lineRangeFor = { key: rangeContextKey, data };
+        let r: { min: number; max: number } | null;
+        let notice: string | null = null;
+        if (s.mesh && s.results && resultsPairing(s).state === "paired") {
+          const join = joinLadrunoElements(s.decls, resultsPairing(s), s.results.elementIndexSpace);
+          if (!join.ok) {
+            r = null;
+            notice = join.reason;
+          } else {
+            const visibleIndices = visibleMaps(
+              s.mesh.legend,
+              s.visibility.hidden,
+              this.blobs.i32(s.mesh.lineGroup),
+              this.blobs.i32(s.mesh.triGroup),
+              elementMaskOf(s, s.mesh, this.blobs),
+            ).lineMap;
+            const geom = buildLineDiagram3D({
+              decls: s.decls,
+              meshElements: s.mesh.elements,
+              lineElement: this.blobs.i32(s.mesh.lineElement),
+              drawnLinePositions: this.blobs.f32(s.mesh.linePositions),
+              visibleLineMap: visibleIndices,
+              stepData: data.lineDiagram,
+              join,
+              ndm: s.ndm.ndm,
+              charLength: 2 * s.mesh.radius,
+              scale: s.lineDiagram.scale,
+              flipSign: s.lineDiagram.flipSign,
+              cmap: s.lineDiagram.cmap,
+              plane: s.lineDiagram.plane,
+              cameraViewDir: [0, 0, -1],
+            });
+            r = geom.beams.length > 0 ? finiteRangeOf(geom.beams.map((b) => b.values)) : null;
+            notice = geom.notice;
+          }
+        } else {
+          r = finiteRange([data.lineDiagram.values], false);
+        }
+        const key = ldKeys.step;
+        queueMicrotask(() => this.store.dispatch({ type: "lineDiagramStepRange", key, min: r?.min ?? null, max: r?.max ?? null, notice }));
+      }
+    }
+    const want = s.lineDiagram.range === "history" ? ldKeys.scan : null;
+    if (want === (this.lineScanRun?.key ?? null)) return;
+    if (this.lineScanRun) this.stopLineScan();
+    if (want === null) return;
+    if (s.lineDiagram.scan?.key === want && s.lineDiagram.scan.status !== "running") return;
+    const cached = this.lineScanCache.get(want);
+    if (cached) {
+      queueMicrotask(() =>
+        this.store.dispatch({
+          type: "lineDiagramScan",
+          scan: { key: want, status: "done", done: cached.total, total: cached.total, min: cached.min, max: cached.max, error: null },
+        }),
+      );
+      return;
+    }
+    this.startLineScan(s, want, s.lineDiagram.component);
+  }
+
+  private startLineScan(s: State, key: string, component: LineStationComponent): void {
+    const info = s.results!;
+    const at = s.phase.at as { kind: "results"; stage: number };
+    const st = info.stages[at.stage]!;
+    const id = ++this.scanSeq;
+    this.lineScanRun = { id, key };
+    const total = st.time.length;
+    const report = (scan: ContourScan) =>
+      this.store.dispatch({ type: "lineDiagramScan", scan });
+    queueMicrotask(() => {
+      if (this.lineScanRun?.id !== id) return;
+      report({ key, status: "running", done: 0, total, min: null, max: null, error: null });
+      if (typeof this.bridge.scanResults !== "function") {
+        this.lineScanRun = null;
+        report({ key, status: "failed", done: 0, total, min: null, max: null, error: "this build has no history scan" });
+        return;
+      }
+      void this.bridge
+        .scanResults({ path: info.path, stage: st.id, components: [component], magnitude: false, scanId: id, source: "line" })
+        .catch((err: unknown) => ({ ok: false as const, scanId: id, error: err instanceof Error ? err.message : String(err) }))
+        .then((res) => {
+          if (this.lineScanRun?.id !== id || res.scanId !== id) return;
+          this.lineScanRun = null;
+          if (res.ok) {
+            this.lineScanCache.set(key, { min: res.min, max: res.max, total: res.steps });
+            report({ key, status: "done", done: res.steps, total: res.steps, min: res.min, max: res.max, error: null });
+            return;
+          }
+          if ("cancelled" in res && res.cancelled) return;
+          report({ key, status: "failed", done: 0, total, min: null, max: null, error: res.error });
+          if ("changed" in res && res.changed) this.store.dispatch({ type: "fileChanged", path: info.path });
+        });
+    });
   }
 
   /**
@@ -560,6 +719,9 @@ export class Effects {
     this.stopScan();
     this.scanCache.clear();
     this.rangeFor = null;
+    this.stopLineScan();
+    this.lineScanCache.clear();
+    this.lineRangeFor = null;
     try {
       const res = await this.bridge.openResults(path).catch((err: unknown) => ({ ok: false as const, error: err instanceof Error ? err.message : String(err) }));
       if (token !== this.resultsToken) return false;
@@ -610,16 +772,25 @@ export class Effects {
     // rows joined the mesh of a verified file: `contourView` is `element` for no other).
     const v = contourView(s);
     const element = v.state === "element" ? v.component.key : null;
-    const key = `${info.path}|${st.id}|${at.step}|${element ?? ""}`;
+    const lineDiagram = s.lineDiagram.on && s.lineDiagram.component !== null && st.lineStations?.includes(s.lineDiagram.component) ? s.lineDiagram.component : null;
+    const key = `${info.path}|${st.id}|${at.step}|${element ?? ""}|${lineDiagram ?? ""}`;
     if (key === this.stepKey) return;
     this.stepKey = key;
     const seq = ++this.stepSeq;
     this.step = null;
     // Not from inside this listener: the other listeners have not seen `s` yet.
-    queueMicrotask(() => void this.fetchStep(info.path, at.stage, st.id, at.step, seq, element));
+    queueMicrotask(() => void this.fetchStep(info.path, at.stage, st.id, at.step, seq, element, lineDiagram));
   }
 
-  private async fetchStep(path: string, stage: number, stageId: string, step: number, seq: number, element: string | null = null): Promise<void> {
+  private async fetchStep(
+    path: string,
+    stage: number,
+    stageId: string,
+    step: number,
+    seq: number,
+    element: string | null = null,
+    lineDiagram: LineStationComponent | null = null,
+  ): Promise<void> {
     if (seq !== this.stepSeq) return;
     this.store.dispatch({ type: "resultStep", status: { stage, step, status: "loading", error: null } });
     if (typeof this.bridge.readResultsStep !== "function") {
@@ -627,7 +798,14 @@ export class Effects {
       return;
     }
     const res = await this.bridge
-      .readResultsStep({ path, stage: stageId, step, seq, ...(element !== null ? { element } : {}) })
+      .readResultsStep({
+        path,
+        stage: stageId,
+        step,
+        seq,
+        ...(element !== null ? { element } : {}),
+        ...(lineDiagram !== null ? { lineDiagram } : {}),
+      })
       .catch((err: unknown) => ({ ok: false as const, seq, error: err instanceof Error ? err.message : String(err) }));
     // Latest wins: a slow reply for an older request never paints over a newer step.
     if (seq !== this.stepSeq || res.seq !== seq) return;
@@ -637,7 +815,7 @@ export class Effects {
       if ("changed" in res && res.changed) this.store.dispatch({ type: "fileChanged", path });
       return;
     }
-    this.step = { stage, step, nodal: res.nodal, element, gauss: res.gauss ?? {} };
+    this.step = { stage, step, nodal: res.nodal, element, gauss: res.gauss ?? {}, lineDiagram: res.lineDiagram ?? null };
     this.store.dispatch({ type: "resultStep", status: { stage, step, status: "ready", error: null } });
   }
 

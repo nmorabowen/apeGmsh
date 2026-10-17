@@ -524,3 +524,371 @@ test("INFO/PROVENANCE@units reads a known UnitSystemId into index.units and mark
   });
 });
 
+// -- line stations & local axes ------------------------------------------------
+
+test("TRUSS basicForce reads single-station axial force N across steps", () => {
+  withFile(TRUSS, (r) => {
+    assert.deepEqual(r.availableLineStations("stage_0"), ["N"]);
+    const slab = r.readLineStations("stage_0", "N");
+    assert.equal(slab.component, "N");
+    assert.equal(slab.nSteps, 4);
+    assert.equal(slab.nStationsTotal, 2);
+    assert.deepEqual(Array.from(slab.elementIndex), [1, 2]);
+    assert.deepEqual(Array.from(slab.stationNaturalCoord), [0, 0]);
+    // EA = 1000, L = 1, F = 10 * t => N = 2.5, 5.0, 7.5, 10.0 in both trusses
+    for (let k = 0; k < 4; k++) {
+      const expected = 2.5 * (k + 1);
+      assert.ok(close(slab.values[k * 2 + 0]!, expected));
+      assert.ok(close(slab.values[k * 2 + 1]!, expected));
+      const step = r.readLineStationStep("stage_0", "N", k);
+      assert.ok(close(step.values[0]!, expected));
+      assert.ok(close(step.values[1]!, expected));
+    }
+    const emptyVy = r.readLineStations("stage_0", "Vy");
+    assert.equal(emptyVy.nStationsTotal, 0);
+    assert.equal(emptyVy.values.length, 0);
+  });
+});
+
+test("line station precedence (section.force > localForce > basicForce > axialForce), GP_PARAM, and 2D/3D localForce gate", () => {
+  const p2d = edited(TRUSS, (f) => {
+    const stage = f.get("MODEL_STAGE[1]") as h5wasm.Group;
+    const elems = stage.get("RESULTS/ON_ELEMENTS") as h5wasm.Group;
+    const timeArr = new Float64Array([0.25, 0.5, 0.75, 1.0]);
+    const stepArr = new Int32Array([0, 1, 2, 3]);
+
+    // Add localForce for element 1 & 2 (2D: N_1, V_1, M_1, N_2, V_2, M_2)
+    const lf = elems.create_group("localForce");
+    const lfBlock = lf.create_group("10-ElasticBeam2d[0]");
+    lfBlock.create_dataset({ name: "ID", data: new Int32Array([1, 2]), shape: [2] });
+    lfBlock.create_dataset({ name: "TIME", data: timeArr });
+    lfBlock.create_dataset({ name: "STEP", data: stepArr });
+    // Step 0..3: elem 1 has end_1=(N_1=-100, V_1=20, M_1=-50), end_2=(N_2=100, V_2=-20, M_2=80)
+    // elem 2 has end_1=(N_1=-200, V_1=30, M_1=-60), end_2=(N_2=200, V_2=-30, M_2=90)
+    const lfData = new Float64Array(4 * 2 * 6);
+    for (let k = 0; k < 4; k++) {
+      const s = k + 1;
+      lfData.set([-100 * s, 20 * s, -50 * s, 100 * s, -20 * s, 80 * s], k * 12 + 0);
+      lfData.set([-200 * s, 30 * s, -60 * s, 200 * s, -30 * s, 90 * s], k * 12 + 6);
+    }
+    lfBlock.create_dataset({ name: "DATA", data: lfData, shape: [4, 2, 6] });
+    const lfMap = lfBlock.create_group("COLUMN_MAP");
+    lfMap.create_attribute("COMP_NAMES", "N_1,V_1,M_1,N_2,V_2,M_2");
+    lfMap.create_dataset({ name: "LEVELS", data: new Int32Array([0]), shape: [1] });
+    lfMap.create_dataset({ name: "GAUSS_ID", data: new Int32Array([-1]), shape: [1] });
+
+    // Add section.force for element 1 only (3 Gauss stations: xi = [-0.7746, 0, 0.7746])
+    const sf = elems.create_group("section.force");
+    const sfBlock = sf.create_group("20-ForceBeamColumn2d[0]");
+    sfBlock.create_dataset({ name: "ID", data: new Int32Array([1]), shape: [1] });
+    sfBlock.create_dataset({ name: "TIME", data: timeArr });
+    sfBlock.create_dataset({ name: "STEP", data: stepArr });
+    const sfData = new Float64Array(4 * 1 * 6);
+    for (let k = 0; k < 4; k++) {
+      const s = k + 1;
+      // 3 stations x (P, Mz): (111*s, 11*s), (112*s, 12*s), (113*s, 13*s)
+      sfData.set([111 * s, 11 * s, 112 * s, 12 * s, 113 * s, 13 * s], k * 6);
+    }
+    sfBlock.create_dataset({ name: "DATA", data: sfData, shape: [4, 1, 6] });
+    const sfMap = sfBlock.create_group("COLUMN_MAP");
+    sfMap.create_attribute("COMP_NAMES", "P,Mz\nP,Mz\nP,Mz");
+    sfMap.create_dataset({ name: "LEVELS", data: new Int32Array([2, 2, 2]), shape: [3] });
+    sfMap.create_dataset({ name: "GAUSS_ID", data: new Int32Array([0, 1, 2]), shape: [3] });
+
+    const modelElements = stage.get("MODEL/ELEMENTS") as h5wasm.Group;
+    const fbcModel = modelElements.create_group("20-ForceBeamColumn2d[0]");
+    const quad = fbcModel.create_group("QUADRATURE");
+    quad.create_dataset({ name: "GP_PARAM", data: new Float64Array([-0.7746, 0.0, 0.7746]), shape: [3, 1] });
+  });
+
+  withFile(p2d, (r) => {
+    // 2D file exposes N, Vy, Mz (V_1/V_2 -> Vy, M_1/M_2 -> Mz; no Vz, My, T)
+    assert.deepEqual(r.availableLineStations("stage_0"), ["N", "Vy", "Mz"]);
+    const nSlab = r.readLineStations("stage_0", "N");
+    // Element 1 comes from section.force (Rank 0, 3 stations); Element 2 comes from localForce (Rank 1, 2 stations)
+    assert.deepEqual(Array.from(nSlab.elementIndex), [1, 1, 1, 2, 2]);
+    assert.deepEqual(
+      Array.from(nSlab.stationNaturalCoord).map((v: number) => +v.toFixed(4)),
+      [-0.7746, 0, 0.7746, -1, 1],
+    );
+    const step0N = r.readLineStationStep("stage_0", "N", 0);
+    // Element 1 stations: 111, 112, 113; Element 2 stations: end_1 (-1 * -200 = +200), end_2 (+1 * 200 = +200)
+    assert.deepEqual(Array.from(step0N.values), [111, 112, 113, 200, 200]);
+
+    const mzSlab = r.readLineStations("stage_0", "Mz");
+    const step0Mz = r.readLineStationStep("stage_0", "Mz", 0);
+    // Element 1 from section.force: [11, 12, 13]; Element 2 from localForce: end_1 (-1 * -60 = +60), end_2 (+1 * 90 = +90)
+    assert.deepEqual(Array.from(mzSlab.elementIndex), [1, 1, 1, 2, 2]);
+    assert.deepEqual(Array.from(step0Mz.values), [11, 12, 13, 60, 90]);
+
+    // Vy is only in localForce, so both Element 1 and Element 2 fall back to Rank 1 localForce!
+    const step0Vy = r.readLineStationStep("stage_0", "Vy", 0);
+    // end_1: +1 * V_1, end_2: -1 * V_2 => elem 1: [20, 20], elem 2: [30, 30]
+    assert.deepEqual(Array.from(step0Vy.elementIndex), [1, 1, 2, 2]);
+    assert.deepEqual(Array.from(step0Vy.values), [20, 20, 30, 30]);
+  });
+});
+
+test("readLocalAxes prioritises per-step RESULTS/ON_ELEMENTS/LOCAL_AXES over reference MODEL/LOCAL_AXES", () => {
+  // 90 deg rotation around X axis: q = [w=cos(45)=sqrt(1/2), x=sin(45)=sqrt(1/2), y=0, z=0]
+  // Row 2 of R(q) (LocalAxes.matrices in _slabs.py): [2(xz - yw), 2(yz + xw), 1 - 2(x^2 + y^2)] = [0, +1, 0]
+  const s = Math.SQRT1_2;
+  const p = edited(TRUSS, (f) => {
+    const model = f.get("MODEL_STAGE[1]/MODEL") as h5wasm.Group;
+    const la = model.create_group("LOCAL_AXES");
+    const beam = la.create_group("ElasticBeam3d");
+    beam.create_dataset({ name: "ID", data: new Int32Array([1, 2]), shape: [2] });
+    // elem 1: identity q=[1,0,0,0] -> z_rec=[0,0,1]; elem 2: 90 deg about X -> z_rec=[0,+1,0]
+    beam.create_dataset({
+      name: "FRAME",
+      data: new Float64Array([1, 0, 0, 0, s, s, 0, 0]),
+      shape: [2, 4],
+    });
+  });
+
+  withFile(p, (r) => {
+    const axes = r.readLocalAxes("stage_0", { step: 0 });
+    assert.deepEqual(Array.from(axes.elementIds), [1, 2]);
+    assert.deepEqual(Array.from(axes.hasRecorded), [1, 1]);
+    const expected = [0, 0, 1, 0, 1, 0];
+    for (let i = 0; i < 6; i++) assert.ok(close(axes.zRec[i]!, expected[i]!, 1e-12));
+  });
+
+  // Add per-step RESULTS/ON_ELEMENTS/LOCAL_AXES and verify it takes priority
+  const pStep = edited(p, (f) => {
+    const elems = f.get("MODEL_STAGE[1]/RESULTS/ON_ELEMENTS") as h5wasm.Group;
+    const la = elems.create_group("LOCAL_AXES");
+    const block = la.create_group("CorotBeam3d[0]");
+    block.create_dataset({ name: "ID", data: new Int32Array([1]), shape: [1] });
+    // 4 steps x 1 elem x 3 components (z_x, z_y, z_z)
+    const data = new Float64Array([
+      1, 0, 0,
+      0, 1, 0,
+      0, 0, 1,
+      -1, 0, 0,
+    ]);
+    block.create_dataset({ name: "DATA", data, shape: [4, 1, 3] });
+  });
+
+  withFile(pStep, (r) => {
+    // F1a: calling readLocalAxes without options.step returns reference MODEL/LOCAL_AXES, not step 0 of RESULTS/ON_ELEMENTS/LOCAL_AXES!
+    const axesRef = r.readLocalAxes("stage_0", { elementIds: [1] });
+    assert.deepEqual(Array.from(axesRef.elementIds), [1]);
+    assert.deepEqual(Array.from(axesRef.zRec), [0, 0, 1]);
+    assert.deepEqual(axesRef.sources, ["model_local_axes"]);
+
+    // All-step readLineStations (no step) also attaches reference MODEL/LOCAL_AXES
+    const allStepSlab = r.readLineStations("stage_0", "N", { elementIds: [1] });
+    assert.deepEqual(Array.from(allStepSlab.localAxesZRec!), [0, 0, 1]);
+    assert.deepEqual(allStepSlab.localAxesSources, ["model_local_axes"]);
+
+    // Passing step: 0 or step: 1 reads RESULTS/ON_ELEMENTS/LOCAL_AXES and marks provenance "step_local_axes"
+    const axes0 = r.readLocalAxes("stage_0", { elementIds: [1], step: 0 });
+    assert.deepEqual(Array.from(axes0.zRec), [1, 0, 0]);
+    assert.deepEqual(axes0.sources, ["step_local_axes"]);
+
+    const axes1 = r.readLocalAxes("stage_0", { elementIds: [1], step: 1 });
+    assert.deepEqual(Array.from(axes1.elementIds), [1]);
+    assert.deepEqual(Array.from(axes1.zRec), [0, 1, 0]);
+    assert.deepEqual(axes1.sources, ["step_local_axes"]);
+
+    const step1 = r.readLineStationStep("stage_0", "N", 1, { elementIds: [1] });
+    assert.deepEqual(Array.from(step1.localAxesZRec!), [0, 1, 0]);
+    assert.deepEqual(step1.localAxesSources, ["step_local_axes"]);
+  });
+
+  // Planar 3D model without INFO@SPATIAL_DIM (COORDINATES shape (3, 3) with z = 0)
+  // must infer ndm = 3 from column width (matching Python _file_spatial_dim) and
+  // refuse 2D localForce (V_1/M_1).
+  const pPlanar3d = edited(TRUSS, (f) => {
+    const info = f.get("INFO") as h5wasm.Group;
+    setAttr(info, "SPATIAL_DIM", null);
+    const nodesGrp = f.get("MODEL_STAGE[1]/MODEL/NODES") as h5wasm.Group & { delete(name: string): void };
+    if (typeof nodesGrp.delete === "function") {
+      nodesGrp.delete("COORDINATES");
+      nodesGrp.create_dataset({
+        name: "COORDINATES",
+        data: new Float64Array([0, 0, 0, 1, 0, 0, 2, 0, 0]),
+        shape: [3, 3],
+      });
+    } else {
+      setAttr(info, "SPATIAL_DIM", 3);
+    }
+    const elems = f.get("MODEL_STAGE[1]/RESULTS/ON_ELEMENTS") as h5wasm.Group;
+    const lf = elems.create_group("localForce");
+    const lfBlock = lf.create_group("10-ElasticBeam2d[0]");
+    lfBlock.create_dataset({ name: "ID", data: new Int32Array([1]), shape: [1] });
+    lfBlock.create_dataset({ name: "TIME", data: new Float64Array([0.25, 0.5, 0.75, 1.0]) });
+    lfBlock.create_dataset({ name: "STEP", data: new Int32Array([0, 1, 2, 3]) });
+    lfBlock.create_dataset({ name: "DATA", data: new Float64Array(4 * 1 * 6), shape: [4, 1, 6] });
+    const lfMap = lfBlock.create_group("COLUMN_MAP");
+    lfMap.create_attribute("COMP_NAMES", "N_1,V_1,M_1,N_2,V_2,M_2");
+    lfMap.create_dataset({ name: "LEVELS", data: new Int32Array([0]), shape: [1] });
+    lfMap.create_dataset({ name: "GAUSS_ID", data: new Int32Array([-1]), shape: [1] });
+  });
+  withFile(pPlanar3d, (r) => {
+    assert.equal(r.inferSpatialDim(), 3);
+    const warnings: string[] = [];
+    const avail = r.availableLineStations("stage_0", warnings);
+    // V_1/M_1 are refused on a 3D file; only N (from basicForce/localForce) is available.
+    assert.deepEqual(avail, ["N"]);
+    assert.ok(warnings.some((w) => /2-D names/.test(w)));
+  });
+});
+
+test("F2/F3/F4/F6: sectionServed scoping, whole-element GAUSS_ID validation (1-based, out-of-bounds, negative), 2D section alias gating on 3D, and LOCAL_AXES shape guard", () => {
+  const timeArr = new Float64Array([0.25, 0.5, 0.75, 1.0]);
+  const stepArr = new Int32Array([0, 1, 2, 3]);
+
+  // 1. F2 + F4: 3-D file with `section.deformation` (LEVELS=2, eps/kappaZ) + 2-D `localForce` (V_1/M_1)
+  //    + `section.force` with 2-D shorthand `M,V,P` on a 3-D model:
+  //    - 2-D shorthand `M`, `V` in `section.force` must NOT alias to `Mz`, `Vy` on `ndm === 3` (F4)
+  //    - `section.deformation` (or `section.force` serving `P -> N`) must NOT mark `Mz` as sectionServed,
+  //      so reading `Mz` must still trigger the 2-D `localForce` layout error gate (F2)!
+  const pF2F4 = edited(TRUSS, (f) => {
+    const info = f.get("INFO") as h5wasm.Group;
+    setAttr(info, "SPATIAL_DIM", 3);
+    const elems = f.get("MODEL_STAGE[1]/RESULTS/ON_ELEMENTS") as h5wasm.Group;
+
+    // 2D localForce on a 3D model (invalid for element 1)
+    const lf = elems.create_group("localForce");
+    const lfBlock = lf.create_group("10-ElasticBeam2d[0]");
+    lfBlock.create_dataset({ name: "ID", data: new Int32Array([1]), shape: [1] });
+    lfBlock.create_dataset({ name: "TIME", data: timeArr });
+    lfBlock.create_dataset({ name: "STEP", data: stepArr });
+    lfBlock.create_dataset({ name: "DATA", data: new Float64Array(4 * 1 * 6), shape: [4, 1, 6] });
+    const lfMap = lfBlock.create_group("COLUMN_MAP");
+    lfMap.create_attribute("COMP_NAMES", "N_1,V_1,M_1,N_2,V_2,M_2");
+    lfMap.create_dataset({ name: "LEVELS", data: new Int32Array([0]), shape: [1] });
+    lfMap.create_dataset({ name: "GAUSS_ID", data: new Int32Array([-1]), shape: [1] });
+
+    // section.deformation with 3D-valid eps,kappaZ and 2D-only gamma,alpha,kappa
+    const sd = elems.create_group("section.deformation");
+    const sdBlock = sd.create_group("20-ForceBeamColumn3d[0]");
+    sdBlock.create_dataset({ name: "ID", data: new Int32Array([1]), shape: [1] });
+    sdBlock.create_dataset({ name: "TIME", data: timeArr });
+    sdBlock.create_dataset({ name: "STEP", data: stepArr });
+    sdBlock.create_dataset({ name: "DATA", data: new Float64Array(4 * 1 * 4), shape: [4, 1, 4] });
+    const sdMap = sdBlock.create_group("COLUMN_MAP");
+    sdMap.create_attribute("COMP_NAMES", "eps,gamma,alpha,kappa");
+    sdMap.create_dataset({ name: "LEVELS", data: new Int32Array([2]), shape: [1] });
+    sdMap.create_dataset({ name: "GAUSS_ID", data: new Int32Array([0]), shape: [1] });
+
+    // section.force with P and 2D-only V, M on a 3D model
+    const sf = elems.create_group("section.force");
+    const sfBlock = sf.create_group("20-ForceBeamColumn3d[0]");
+    sfBlock.create_dataset({ name: "ID", data: new Int32Array([1]), shape: [1] });
+    sfBlock.create_dataset({ name: "TIME", data: timeArr });
+    sfBlock.create_dataset({ name: "STEP", data: stepArr });
+    sfBlock.create_dataset({ name: "DATA", data: new Float64Array(4 * 1 * 3).fill(42), shape: [4, 1, 3] });
+    const sfMap = sfBlock.create_group("COLUMN_MAP");
+    sfMap.create_attribute("COMP_NAMES", "P,V,M");
+    sfMap.create_dataset({ name: "LEVELS", data: new Int32Array([2]), shape: [1] });
+    sfMap.create_dataset({ name: "GAUSS_ID", data: new Int32Array([0]), shape: [1] });
+  });
+
+  withFile(pF2F4, (r) => {
+    // F4: On a 3-D model, 2-D shorthand aliases V, M, gamma, alpha, kappa are NOT exposed; only N (from P) and eps are available.
+    const warnings: string[] = [];
+    assert.deepEqual(r.availableLineStations("stage_0", warnings), ["N", "eps"]);
+    // N is served by section.force (P -> N) for element 1 (42) and basicForce for element 2 (2.5).
+    const nStep = r.readLineStationStep("stage_0", "N", 0);
+    assert.deepEqual(Array.from(nStep.values), [42, 2.5]);
+    // F2: Mz is NOT served by section.force (since M is refused on 3-D) nor by section.deformation,
+    // so reading Mz must throw the 2-D localForce layout error instead of being suppressed by sectionServed!
+    assert.throws(
+      () => r.readLineStations("stage_0", "Mz"),
+      (e: unknown) => e instanceof LadrunoError && e.kind === "layout" && /2-D names/.test(e.message),
+    );
+  });
+
+  // 2. F3 + F6: 1-based GAUSS_ID [1, 2, 3], partially out-of-bounds GAUSS_ID [0, 1, 99],
+  //    multiple negative GAUSS_ID [-1, -1, -1], and malformed LOCAL_AXES shape
+  const pF3F6 = edited(TRUSS, (f) => {
+    const stage = f.get("MODEL_STAGE[1]") as h5wasm.Group;
+    const elems = stage.get("RESULTS/ON_ELEMENTS") as h5wasm.Group;
+    const modelElements = stage.get("MODEL/ELEMENTS") as h5wasm.Group;
+
+    // Element 1: 1-based GAUSS_ID = [1, 2, 3] with 3-row GP_PARAM = [-0.7746, 0, 0.7746]
+    const sf = elems.create_group("section.force");
+    const b1 = sf.create_group("20-ForceBeamColumn2d[0]");
+    b1.create_dataset({ name: "ID", data: new Int32Array([1]), shape: [1] });
+    b1.create_dataset({ name: "TIME", data: timeArr });
+    b1.create_dataset({ name: "STEP", data: stepArr });
+    b1.create_dataset({ name: "DATA", data: new Float64Array(4 * 1 * 3).fill(10), shape: [4, 1, 3] });
+    const m1 = b1.create_group("COLUMN_MAP");
+    m1.create_attribute("COMP_NAMES", "V\nV\nV");
+    m1.create_dataset({ name: "LEVELS", data: new Int32Array([2, 2, 2]), shape: [3] });
+    m1.create_dataset({ name: "GAUSS_ID", data: new Int32Array([1, 2, 3]), shape: [3] });
+    const fbcModel1 = modelElements.create_group("20-ForceBeamColumn2d[0]");
+    fbcModel1.create_group("QUADRATURE").create_dataset({
+      name: "GP_PARAM",
+      data: new Float64Array([-0.7746, 0.0, 0.7746]),
+      shape: [3, 1],
+    });
+
+    // Element 2: out-of-bounds GAUSS_ID = [0, 1, 99] with 3-row GP_PARAM = [-0.7746, 0, 0.7746] -> whole-element fallback [-1, 0, 1]
+    const b2 = sf.create_group("21-DispBeamColumn2d[0]");
+    b2.create_dataset({ name: "ID", data: new Int32Array([2]), shape: [1] });
+    b2.create_dataset({ name: "TIME", data: timeArr });
+    b2.create_dataset({ name: "STEP", data: stepArr });
+    b2.create_dataset({ name: "DATA", data: new Float64Array(4 * 1 * 3).fill(20), shape: [4, 1, 3] });
+    const m2 = b2.create_group("COLUMN_MAP");
+    m2.create_attribute("COMP_NAMES", "M\nM\nM");
+    m2.create_dataset({ name: "LEVELS", data: new Int32Array([2, 2, 2]), shape: [3] });
+    m2.create_dataset({ name: "GAUSS_ID", data: new Int32Array([0, 1, 99]), shape: [3] });
+    const fbcModel2 = modelElements.create_group("21-DispBeamColumn2d[0]");
+    fbcModel2.create_group("QUADRATURE").create_dataset({
+      name: "GP_PARAM",
+      data: new Float64Array([-0.7746, 0.0, 0.7746]),
+      shape: [3, 1],
+    });
+
+    // Element 3: multiple single-GP blocks with GAUSS_ID = [-1, -1, -1] AND a 5-point QUADRATURE/GP_PARAM
+    // (must not collide on key -1, and must NOT falsely treat [-1, -1, -1] as 0-based [0, 1, 2] into GP_PARAM!)
+    const sd = elems.create_group("section.deformation");
+    const b3 = sd.create_group("22-ElasticBeam2d[0]");
+    b3.create_dataset({ name: "ID", data: new Int32Array([3]), shape: [1] });
+    b3.create_dataset({ name: "TIME", data: timeArr });
+    b3.create_dataset({ name: "STEP", data: stepArr });
+    const d3 = new Float64Array(4 * 1 * 3);
+    for (let k = 0; k < 4; k++) d3.set([1, 2, 3], k * 3);
+    b3.create_dataset({ name: "DATA", data: d3, shape: [4, 1, 3] });
+    const m3 = b3.create_group("COLUMN_MAP");
+    m3.create_attribute("COMP_NAMES", "kappa\nkappa\nkappa");
+    m3.create_dataset({ name: "LEVELS", data: new Int32Array([2, 2, 2]), shape: [3] });
+    m3.create_dataset({ name: "GAUSS_ID", data: new Int32Array([-1, -1, -1]), shape: [3] });
+    const fbcModel3 = modelElements.create_group("22-ElasticBeam2d[0]");
+    fbcModel3.create_group("QUADRATURE").create_dataset({
+      name: "GP_PARAM",
+      data: new Float64Array([-0.90618, -0.538469, 0.0, 0.538469, 0.90618]),
+      shape: [5, 1],
+    });
+
+    // F6: Malformed MODEL/LOCAL_AXES with ID length 2 and FRAME length 5 (not divisible by 2)
+    const la = (stage.get("MODEL") as h5wasm.Group).create_group("LOCAL_AXES");
+    const badSub = la.create_group("BadBeam");
+    badSub.create_dataset({ name: "ID", data: new Int32Array([1, 2]), shape: [2] });
+    badSub.create_dataset({ name: "FRAME", data: new Float64Array([1, 0, 0, 0, 1]), shape: [5] });
+  });
+
+  withFile(pF3F6, (r) => {
+    // 1-based GAUSS_ID [1, 2, 3] maps to GP_PARAM [-0.7746, 0, 0.7746]
+    const vy = r.readLineStationStep("stage_0", "Vy", 0);
+    assert.deepEqual(
+      Array.from(vy.stationNaturalCoord).map((v) => +v.toFixed(4)),
+      [-0.7746, 0, 0.7746],
+    );
+    // Out-of-bounds GAUSS_ID [0, 1, 99] falls back to [-1, 0, 1] for the ENTIRE element (never mixing [-0.7746, 0, 1])
+    const mz = r.readLineStationStep("stage_0", "Mz", 0);
+    assert.deepEqual(Array.from(mz.stationNaturalCoord), [-1, 0, 1]);
+    // GAUSS_ID [-1, -1, -1] keeps all 3 stations in block order with values [1, 2, 3] at [-1, 0, 1], ignoring the 5-row GP_PARAM
+    const kz = r.readLineStationStep("stage_0", "kappaZ", 0);
+    assert.equal(kz.values.length, 3);
+    assert.deepEqual(Array.from(kz.stationNaturalCoord), [-1, 0, 1]);
+    assert.deepEqual(Array.from(kz.values), [1, 2, 3]);
+    // Malformed MODEL/LOCAL_AXES is safely skipped
+    const axes = r.readLocalAxes("stage_0");
+    assert.equal(axes.elementIds.length, 0);
+  });
+});

@@ -105,8 +105,16 @@ function canvasOf() {
 }
 
 /** A pointer event Node's EventTarget can deliver (Node has no PointerEvent). */
-function pointer(type: string, x: number, y: number, extra: { button?: number; shiftKey?: boolean } = {}): globalThis.Event {
-  return Object.assign(new globalThis.Event(type, { cancelable: true }), { button: extra.button ?? 0, shiftKey: extra.shiftKey ?? false, clientX: x, clientY: y, pointerId: 1 });
+function pointer(type: string, x: number, y: number, extra: { button?: number; shiftKey?: boolean; ctrlKey?: boolean; metaKey?: boolean } = {}): globalThis.Event {
+  return Object.assign(new globalThis.Event(type, { cancelable: true }), {
+    button: extra.button ?? 0,
+    shiftKey: extra.shiftKey ?? false,
+    ctrlKey: extra.ctrlKey ?? false,
+    metaKey: extra.metaKey ?? false,
+    clientX: x,
+    clientY: y,
+    pointerId: 1,
+  });
 }
 
 interface Rig {
@@ -119,7 +127,7 @@ interface Rig {
   picks: [number, number][];
   geom: (id?: string) => GizmoGeometry;
   at: (p: readonly number[]) => [number, number];
-  send: (type: string, x: number, y: number, extra?: { button?: number; shiftKey?: boolean }) => globalThis.Event;
+  send: (type: string, x: number, y: number, extra?: { button?: number; shiftKey?: boolean; ctrlKey?: boolean; metaKey?: boolean }) => globalThis.Event;
   /** Put the state on the geometry phase (or back), through the viewport's own syncGizmos. */
   phase: (kind: "geometry" | "results" | null) => void;
   receiver: Record<string, unknown>;
@@ -563,6 +571,15 @@ test("G-PICK: a click through the quad picks the model under it; no scene raycas
   assert.ok(select && select.type === "select", "the click went through to the pick");
   assert.equal(select.pick.decl, "mesh/element/1");
   near(select.pick.at![2]!, 0.5, 1e-6, "on the face below the quad, not on the quad");
+  // Shift+click and Ctrl+click through the quad bypass the gizmo drag and dispatch selectAdd via the navigator.
+  for (const mod of [{ shiftKey: true }, { ctrlKey: true }] as const) {
+    r.send("pointerdown", x, y, mod);
+    assert.equal(r.gizmo.dragging, false, "modifier click is not claimed by the gizmo");
+    r.send("pointerup", x, y, mod);
+    const last = r.store.log.at(-1);
+    assert.ok(last && last.type === "selectAdd", "modifier click through the quad dispatches selectAdd");
+    assert.equal(last.pick.decl, "mesh/element/1");
+  }
   // A scene-wide raycast (what any future pick over the scene would do): the gizmo is never hit.
   const scene = new THREE.Scene();
   scene.add(r.gizmos.root, faces);

@@ -17,12 +17,14 @@ import { LineSegments2 } from "three/addons/lines/LineSegments2.js";
 import { LineSegmentsGeometry } from "three/addons/lines/LineSegmentsGeometry.js";
 import type { BlobStore } from "../state/blobs.ts";
 import type { DisplacementData } from "../effects.ts";
+import type { LadrunoLineStationStep } from "../reader/ladruno.ts";
 import { contourView, geometryPairing, gizmoPlanes, legendEntryColour } from "../state/selectors.ts";
 import { contourColours, contourShownKey, elementColours, noDataColours, toLinear, type StepValues } from "./contour.ts";
 import { CapLayer, releaseAware } from "./caps.ts";
 import { SectionClip, sliderBox } from "./clip.ts";
 import { GizmoInteractor, PlaneGizmos } from "./gizmo.ts";
-import { basePositions, drawnPositions, edgesShown, frameFocus, gatherInto, ghostObjects, missingMarkerObjects, positionsFor, selectionOutline, writePositions, type FullPositions } from "./deform.ts";
+import { applyGhostVisibility, basePositions, drawnPositions, edgesShown, frameFocus, gatherInto, ghostObjects, missingMarkerObjects, positionsFor, selectionOutline, writePositions, type FullPositions } from "./deform.ts";
+import { LineDiagramLayer } from "./lineDiagram.ts";
 import type { State, Store } from "../state/store.ts";
 import { roleColouring } from "../state/roles.ts";
 import type { Box } from "../state/clip.ts";
@@ -108,6 +110,9 @@ export class Viewport {
   contourApplied: string | null = null;
   /** V4d: the displacement the effects computed for the step shown (effects.currentDisplacement). */
   private dispSource: () => DisplacementData | null = () => null;
+  /** 3-D line diagram step data from effects (effects.currentLineDiagram). */
+  private lineDiagramSource: () => { key: string; step: LadrunoLineStationStep } | null = () => null;
+  readonly lineDiagram: LineDiagramLayer;
   /** V4d: every primitive's positions as drawn now (undeformed, or deformed at the step and scale its key names). */
   private full: FullPositions | null = null;
   /** V4d: the reference ghost (the undeformed mesh, faint) and the markers of drawn nodes with no displacement. */
@@ -165,7 +170,8 @@ export class Viewport {
     this.keyLight = new THREE.DirectionalLight(toHexNumber(DARK.keyLight), 1.4);
     this.keyLight.position.set(0.5, 0.8, 1);
     this.perspCamera.add(this.keyLight);
-    this.scene.add(this.content, this.highlight, this.geometryLayer);
+    this.lineDiagram = new LineDiagramLayer(this.camera);
+    this.scene.add(this.content, this.highlight, this.geometryLayer, this.lineDiagram.root);
     // V4d: the ghost and the missing-displacement markers (shown with the mesh, never on the geometry phase).
     this.scene.add(this.ghost, this.markers);
     // V4e2: the gizmos (renderer/gizmo.ts): skipped by the clip stamping, never a raycast target.
@@ -215,6 +221,7 @@ export class Viewport {
     }
     this.activeProjection = mode;
     this.camera.add(this.keyLight);
+    this.lineDiagram.setCamera(this.camera);
     this.syncCameraFrustum();
     this.nav.updated();
   }
@@ -231,6 +238,7 @@ export class Viewport {
     this.keyLight.color.setHex(toHexNumber(t.keyLight));
     this.keyLight.intensity = mode === "light" ? 0.95 : 1.4;
     this.halo.setTheme(mode);
+    this.lineDiagram.setTheme(mode);
     const s = this.store.get();
     if (this.geometryInfo) {
       this.setGeometry(this.geometryInfo);
@@ -240,6 +248,7 @@ export class Viewport {
     if (s.mesh) {
       this.rebuild(s, s.mesh);
       if (s.selection.decls.length) this.setHighlight(s, false);
+      this.syncLineDiagram(s);
     }
     this.notifyView();
     this.requestRender();
@@ -279,7 +288,7 @@ export class Viewport {
         const top = typeof document === "undefined" ? element : document.elementFromPoint(x, y);
         return top !== null && top !== element;
       },
-      select: (x, y) => this.selectAt(x, y),
+      select: (x, y, add) => this.selectAt(x, y, add),
     });
     const nav = new Navigator({
       get camera(): ViewCamera {
@@ -296,7 +305,7 @@ export class Viewport {
         this.aim(x, y);
         return this.raycaster.ray.clone();
       },
-      select: (x, y) => this.selectAt(x, y),
+      select: (x, y, add) => this.selectAt(x, y, add),
       fit: () => {
         const s = this.store.get();
         // On the geometry phase (or with no mesh), F fits the geometry; else the frame effect
@@ -304,18 +313,30 @@ export class Viewport {
         if (this.geometryInfo && (s.phase.at?.kind === "geometry" || !s.mesh)) this.frameGeometry(this.geometryInfo, nav.heading);
         else this.store.dispatch({ type: "frameSelection" });
       },
+      clearSelection: () => this.store.dispatch({ type: "clearSelection" }),
+      toggleEdges: () => {
+        const s = this.store.get();
+        if (s.mesh && (s.mesh.counts.faceCells > 0 || s.mesh.counts.solidCells > 0) && s.visibility.opacity > 0) {
+          this.store.dispatch({ type: "setEdges", on: !s.visibility.edges });
+        }
+      },
       changed: () => {
         this.syncCameraFrustum();
         this.notifyView();
+        this.lineDiagram.onCameraChange();
         this.requestRender();
       },
     });
     return { gizmo, nav };
   }
 
-  /** A click at a client point: select what it picks, or clear the selection. */
-  private selectAt(x: number, y: number): void {
+  /** A click at a client point: select (or toggle in the selection when `add` is true) what it picks; on a plain miss, clear the selection. */
+  private selectAt(x: number, y: number, add = false): void {
     const pick = this.pickAt(x, y);
+    if (add) {
+      if (pick) this.store.dispatch({ type: "selectAdd", pick });
+      return;
+    }
     this.store.dispatch(pick ? { type: "select", pick } : { type: "clearSelection" });
   }
 
@@ -327,6 +348,7 @@ export class Viewport {
     this.gizmoInput.dispose();
     this.gizmos.dispose();
     this.caps.dispose();
+    this.lineDiagram.dispose();
     this.halo.dispose();
     this.clear(this.content);
     this.clear(this.highlight);
@@ -340,7 +362,10 @@ export class Viewport {
   private onState(s: State, prev: State | null): void {
     // V4e1: the planes move in place; every material already shares them.
     if (!prev || s.clip !== prev.clip) {
-      if (this.clip.sync(s.clip)) this.requestRender();
+      if (this.clip.sync(s.clip)) {
+        this.lineDiagram.setClippingPlanes(this.clip.planes);
+        this.requestRender();
+      }
     }
     this.syncGizmos(s, prev);
     this.settleCaps(s);
@@ -349,6 +374,7 @@ export class Viewport {
       this.setMesh(s.mesh);
       this.applyVisibility(s);
       this.setHighlight(s);
+      this.syncLineDiagram(s);
       return;
     }
     if (s.visibility.colourBy !== prev.visibility.colourBy && s.mesh) this.rebuild(s, s.mesh);
@@ -356,6 +382,28 @@ export class Viewport {
     if (s.selection !== prev.selection) this.setHighlight(s);
     if (s.visibility.colourBy === "contour") this.recolour(s);
     this.redeform(s);
+    this.syncLineDiagram(s);
+  }
+
+  /** Where the 3-D line diagram's step data comes from (app.ts wires the effects). */
+  setLineDiagramSource(source: () => { key: string; step: LadrunoLineStationStep } | null): void {
+    this.lineDiagramSource = source;
+    this.syncLineDiagram(this.store.get());
+  }
+
+  private syncLineDiagram(s: State = this.store.get()): void {
+    if (
+      this.lineDiagram.sync(
+        s,
+        this.blobs,
+        this.lineDiagramSource(),
+        this.full ?? this.dispSource(),
+        false,
+        this.drawn?.lineMap,
+      )
+    ) {
+      this.requestRender();
+    }
   }
 
   /**
@@ -390,7 +438,9 @@ export class Viewport {
   /** V4d: where the deformed shape's displacement comes from (app.ts wires the effects). */
   setDisplacementSource(source: () => DisplacementData | null): void {
     this.dispSource = source;
-    this.redeform(this.store.get());
+    const s = this.store.get();
+    this.redeform(s);
+    this.syncLineDiagram(s);
   }
 
   /** The ghost shows behind a deformed mesh, when the user asked for it. */
@@ -413,7 +463,8 @@ export class Viewport {
       this.full = next;
       writePositions(this.faces, this.lines, next, this.drawn, this.edges && this.edgeMap ? { object: this.edges, map: this.edgeMap } : null);
       this.setMarkers(info);
-      if (this.edges) this.edges.visible = edgesShown(s.visibility.edges, next);
+      if (this.edges) this.edges.visible = edgesShown(s.visibility.edges, next, s.visibility.opacity);
+      if (this.ghost) applyGhostVisibility(this.ghost, s.visibility.edges, next, s.visibility.opacity);
       // The selection outline follows the moved vertices (no pulse: the selection did not change).
       if (s.selection.decls.length) this.setHighlight(s, false);
       changed = true;
@@ -760,12 +811,12 @@ export class Viewport {
         return;
       }
     }
-    if (this.edges) this.edges.visible = edgesShown(s.visibility.edges, this.full);
+    if (this.edges) this.edges.visible = edgesShown(s.visibility.edges, this.full, s.visibility.opacity);
+    if (this.ghost) applyGhostVisibility(this.ghost, s.visibility.edges, this.full, s.visibility.opacity);
     if (this.faces) {
+      const opacity = s.visibility.opacity;
+      this.faces.visible = opacity > 0;
       const m = this.faces.material as THREE.MeshStandardMaterial;
-      // Line elements inside solids (embedded rebar) would be hidden: see through the solids.
-      const auto = info.counts.solidCells > 0 && info.linePositions.shape[0]! > 0 ? 0.35 : 1;
-      const opacity = Math.min(auto, s.visibility.opacity);
       m.transparent = opacity < 1;
       m.opacity = opacity;
       m.depthWrite = opacity >= 1;
@@ -837,8 +888,8 @@ export class Viewport {
   /** The nearest drawn mesh point under a client-space point, or null on a miss. */
   pointAt(clientX: number, clientY: number): THREE.Vector3 | null {
     const targets: THREE.Object3D[] = [];
-    if (this.lines) targets.push(this.lines);
-    if (this.faces) targets.push(this.faces);
+    if (this.lines && this.lines.visible) targets.push(this.lines);
+    if (this.faces && this.faces.visible) targets.push(this.faces);
     if (!targets.length) return null;
     this.aim(clientX, clientY);
     return nearestHit(this.raycaster, targets);

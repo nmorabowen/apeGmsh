@@ -14,6 +14,7 @@ import {
   type Decoded,
 } from "../chain/signatures.ts";
 import type { ModelFile, OpsFamily, OpsObject, Param } from "../model/types.ts";
+import { transformVecxzOf } from "../reader/read.ts";
 import type { Decl, DeclPath, ElementFacts } from "./types.ts";
 
 export const FAMILY_DIR: Record<OpsFamily, string> = {
@@ -258,6 +259,7 @@ export function objectPaths(model: ModelFile, warnings: string[]): Map<OpsObject
 
 export function objectDecl(obj: OpsObject, id: { path: DeclPath; name: string; nameSource: string }, lookup: Lookup): Decl {
   const links = objectLinks(obj, lookup);
+  const vecxz = obj.family === "geomTransf" ? transformVecxzOf(obj) : [];
   return {
     path: id.path,
     kind: obj.family,
@@ -271,5 +273,6 @@ export function objectDecl(obj: OpsObject, id: { path: DeclPath; name: string; n
     links: links.links,
     problems: links.problems,
     fields: objectFields(obj),
+    ...(vecxz.length > 0 ? { vecxz } : {}),
   };
 }

@@ -86,6 +86,8 @@ export interface Decl {
   problems: readonly string[];
   /** display-ready read facts of an object: type, tag, params, attrs, tables (elements derive theirs) */
   fields: readonly Field[];
+  /** for a 3-D geomTransf object: full `(emittedTag, vecxz)` rows from `per_element_vecxz` and `per_element_emitted_tag` (untruncated) */
+  vecxz?: readonly { readonly tag: number; readonly vecxz: readonly [number, number, number] }[];
   element?: ElementFacts;
   group?: { dim: number; tag: number; count: number; ids: BlobRef };
   /** where the user's code made this declaration (/provenance, joined by decl path); absent when the file has no record for it */
@@ -267,6 +269,10 @@ export interface ResultsStage {
   gauss: GaussGroup[];
   /** element categories the reader does not read */
   unread: string[];
+  /** .ladruno INFO/PROVENANCE@element_index_space ("fem" or "ops_tag"), or null */
+  elementIndexSpace?: string | null;
+  /** 1-D beam line-station components recorded in this stage (.ladruno) */
+  lineStations?: LineStationComponent[];
 }
 
 /** One `gauss_points` group of a results stage (V4c2a): metadata, and its element ids as a blob ref. */
@@ -319,6 +325,8 @@ export interface ResultsInfo {
   elementIndex?: ElementIndexVerdict;
   /** Consistent unit system declared in `/model/meta/@units` or `@units`, or null when undeclared. */
   units?: UnitSystemId | null;
+  /** .ladruno INFO/PROVENANCE@element_index_space ("fem" or "ops_tag"), or null */
+  elementIndexSpace?: string | null;
 }
 
 /**
@@ -505,6 +513,32 @@ export interface ClipState {
   notice: string | null;
 }
 
+export const LINE_STATION_COMPONENTS = [
+  "N", "Vy", "Vz", "T", "My", "Mz",
+  "eps", "gammaY", "gammaZ", "theta", "kappaY", "kappaZ",
+] as const;
+export type LineStationComponent = (typeof LINE_STATION_COMPONENTS)[number];
+
+export type LineDiagramCmap = "sign" | ContourCmap;
+export type LineDiagramPlane = "local" | "screen";
+
+export interface LineDiagramState {
+  on: boolean;
+  component: LineStationComponent | null;
+  /** User scale multiplier (default 1, > 0). */
+  scale: number;
+  plane: LineDiagramPlane;
+  cmap: LineDiagramCmap;
+  fill: boolean;
+  /** null means use component default (`true` for My/Mz, `false` otherwise); boolean overrides. */
+  flipSign: boolean | null;
+  range: ContourRange;
+  fixed: { min: number; max: number } | null;
+  stepRange: { key: string; min: number | null; max: number | null } | null;
+  scan: ContourScan | null;
+  notice: string | null;
+}
+
 /** What the user clicked: the declaration, the hit point, and the cell's node tags as the viewport read them from the connectivity blob. */
 export interface Pick {
   decl: DeclPath;
@@ -620,6 +654,8 @@ export interface State {
   deform: DeformState;
   /** V4e1: the section planes */
   clip: ClipState;
+  /** 1-D beam line diagram state */
+  lineDiagram: LineDiagramState;
 }
 
 /** The payload of `fileLoaded` for the model artifact: what the loader derived from the file. */
@@ -744,6 +780,16 @@ export type Event =
   /** V4e2: one plane's gizmo eye */
   | { type: "setClipGizmo"; id: string; visible: boolean }
   /** V4e3: the footer's "Contour on cut face" toggle (a cap on every cutting plane through a solid) */
-  | { type: "setCutFace"; on: boolean };
+  | { type: "setCutFace"; on: boolean }
+  | { type: "setLineDiagram"; on: boolean }
+  | { type: "setLineDiagramComponent"; component: LineStationComponent }
+  | { type: "setLineDiagramScale"; scale: number }
+  | { type: "setLineDiagramPlane"; plane: LineDiagramPlane }
+  | { type: "setLineDiagramCmap"; cmap: LineDiagramCmap }
+  | { type: "setLineDiagramFill"; fill: boolean }
+  | { type: "setLineDiagramFlipSign"; flipSign: boolean | null }
+  | { type: "setLineDiagramRange"; range: ContourRange; fixed?: { min: number; max: number } }
+  | { type: "lineDiagramStepRange"; key: string; min: number | null; max: number | null; notice?: string | null }
+  | { type: "lineDiagramScan"; scan: ContourScan };
 
 export type EventType = Event["type"];

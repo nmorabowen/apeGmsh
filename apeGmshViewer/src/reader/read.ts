@@ -1035,3 +1035,79 @@ function readTable(ds: H5Dataset): Table {
   for (let i = 0; i < flat.length; i += width) rows.push(flat.slice(i, i + width));
   return { path: ds.path, columns: width === 1 ? ["value"] : Array.from({ length: width }, (_, j) => `[${j}]`), rows };
 }
+
+function flattenNumericRows(rows: readonly (readonly unknown[])[]): number[] {
+  const out: number[] = [];
+  const visit = (x: unknown): void => {
+    if (Array.isArray(x)) {
+      for (const item of x) visit(item);
+    } else if (typeof x === "number") {
+      out.push(x);
+    } else if (typeof x === "bigint") {
+      out.push(Number(x));
+    }
+  };
+  visit(rows);
+  return out;
+}
+
+/**
+ * Extract `(emittedTag, vecxz)` pairs from a `/opensees/transforms/<name>`
+ * `OpsObject` (`per_element_vecxz` of shape `(n, 3)` and
+ * `per_element_emitted_tag` of shape `(n,)`, matching Python's
+ * `H5Model.element_local_axes_vecxz`). A 2-D transform writes
+ * `per_element_vecxz` of shape `(1, 0)` and returns `[]`.
+ */
+export function transformVecxzOf(obj: OpsObject): { tag: number; vecxz: [number, number, number] }[] {
+  if (obj.family !== "geomTransf") return [];
+  const vecTable = obj.tables["per_element_vecxz"];
+  if (vecTable !== undefined) {
+    if (vecTable.columns.length !== 3 || vecTable.rows.length === 0) return [];
+    const flatVec = flattenNumericRows(vecTable.rows);
+    if (flatVec.length < 3 || flatVec.length % 3 !== 0) return [];
+    const nVec = flatVec.length / 3;
+    const tagTable = obj.tables["per_element_emitted_tag"];
+    const flatTags = tagTable ? flattenNumericRows(tagTable.rows) : [obj.tag];
+    const n = Math.min(nVec, flatTags.length);
+    const out: { tag: number; vecxz: [number, number, number] }[] = [];
+    for (let r = 0; r < n; r++) {
+      const tag = flatTags[r]!;
+      const vx = flatVec[r * 3]!;
+      const vy = flatVec[r * 3 + 1]!;
+      const vz = flatVec[r * 3 + 2]!;
+      if (Number.isInteger(tag) && Number.isFinite(vx) && Number.isFinite(vy) && Number.isFinite(vz)) {
+        out.push({ tag, vecxz: [vx, vy, vz] });
+      }
+    }
+    return out;
+  }
+  // Fallback for synthetic geomTransf objects constructed without `tables` in tests:
+  if (
+    (obj.params.length === 3 || obj.params.length === 9) &&
+    typeof obj.params[0] === "number" &&
+    typeof obj.params[1] === "number" &&
+    typeof obj.params[2] === "number" &&
+    Number.isFinite(obj.params[0]) &&
+    Number.isFinite(obj.params[1]) &&
+    Number.isFinite(obj.params[2])
+  ) {
+    return [{ tag: obj.tag, vecxz: [obj.params[0], obj.params[1], obj.params[2]] }];
+  }
+  return [];
+}
+
+/**
+ * Map every emitted 3-D `geomTransf` tag in `model` to its `vecxz` `(3,)`
+ * reference vector from `/opensees/transforms/<name>/{per_element_vecxz, per_element_emitted_tag}`.
+ */
+export function modelTransformVecxz(model: ModelFile): Map<number, [number, number, number]> {
+  const out = new Map<number, [number, number, number]>();
+  for (const obj of model.opensees?.objects ?? []) {
+    if (obj.family !== "geomTransf") continue;
+    for (const { tag, vecxz } of transformVecxzOf(obj)) {
+      out.set(tag, vecxz);
+    }
+  }
+  return out;
+}
+

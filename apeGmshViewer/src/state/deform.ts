@@ -52,7 +52,9 @@ const DISP_NAME = /^displacement_([^_]*)$/;
  */
 export function displacementAxes(stage: ResultsStage, ndm: SpatialNdm): DisplacementAxes {
   const label = stage.name || stage.id;
-  const refused = stage.refusedNodal.filter((r) => DISP_NAME.test(r.component));
+  const refused = stage.refusedNodal.filter(
+    (r) => DISP_NAME.test(r.component) || r.component === "DISPLACEMENT" || r.component.startsWith("DISPLACEMENT/"),
+  );
   if (refused.length) {
     return {
       ok: false,
@@ -63,7 +65,35 @@ export function displacementAxes(stage: ResultsStage, ndm: SpatialNdm): Displace
     };
   }
   const field = fieldsOf(stage).find((f) => f.name === DISPLACEMENT);
-  if (!field) return { ok: false, kind: "absent", reason: `stage ${label} records no nodal displacement` };
+  if (!field) {
+    if (stage.nodal.some((n) => n.startsWith("DISPLACEMENT/"))) {
+      const lAxis = (lo: "x" | "y" | "z", hi: "X" | "Y" | "Z"): string | null =>
+        stage.nodal.find((n) => n === `DISPLACEMENT/U${lo}` || n === `DISPLACEMENT/${hi}`) ?? null;
+      const lx = lAxis("x", "X");
+      const ly = lAxis("y", "Y");
+      const lz = lAxis("z", "Z");
+      if (lx && ly && lz) return { ok: true, datasets: [lx, ly, lz], note: null };
+      if (lx && ly && !lz) {
+        if (ndm.ndm === 2) {
+          return {
+            ok: true,
+            datasets: [lx, ly, null],
+            note: `2-D model (ndm 2, ${ndm.source}): z is not a degree of freedom, so it stays at the node's z`,
+          };
+        }
+        return {
+          ok: false,
+          kind: "refused",
+          reason:
+            `stage ${label} records no displacement_z and the model is not declared 2-D ` +
+            `(${ndm.ndm === null ? ndm.reason : `ndm ${ndm.ndm}`}): a z displacement of 0 would be a guess`,
+        };
+      }
+      const missing = (["x", "y"] as const).filter((a) => (a === "x" ? !lx : !ly)).map((a) => `displacement_${a}`);
+      return { ok: false, kind: "refused", reason: `stage ${label} records no ${missing.join(" or ")}: the deformed shape needs every translational axis` };
+    }
+    return { ok: false, kind: "absent", reason: `stage ${label} records no nodal displacement` };
+  }
   const odd = field.components.filter((c) => !c.magnitude && !["x", "y", "z"].includes(c.label));
   if (odd.length) {
     return {
