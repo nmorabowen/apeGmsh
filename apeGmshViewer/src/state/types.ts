@@ -394,6 +394,12 @@ export type ElementJoinVerdict =
   | { key: string; ok: true; rows: number; extrapolation: ExtrapolationVerdict }
   | { key: string; ok: false; code: "unknown-id" | "duplicate-id"; reason: string };
 
+/** The seven consistent unit systems of `baseUnits.systems` (state/units.ts). */
+export type UnitSystemId = "kN_m_s" | "tf_m_s" | "kgf_m_s" | "N_mm_s" | "N_m_s" | "kip_in_s" | "dyne_cm_s";
+
+/** What unit system the contour legend displays values in: `as_stored` (raw file values, default) or a `baseUnits` system. */
+export type UnitDisplay = "as_stored" | UnitSystemId;
+
 /** The contour colouring (V4c1, #1756): what is picked, and the ranges the effects measured. */
 export interface ContourState {
   /** V4c2a: a nodal field (V4c1) or an element field; `field` and `component` name one of that source */
@@ -409,6 +415,10 @@ export interface ContourState {
   /** the user's min and max (`range: fixed`) */
   fixed: { min: number; max: number } | null;
   cmap: ContourCmap;
+  /** the file's assumed native `baseUnits` system (default `kN_m_s`) */
+  sourceUnits: UnitSystemId;
+  /** the target `baseUnits` display system (`as_stored` keeps raw numbers) */
+  targetUnits: UnitDisplay;
   /** the finite min and max of the step shown, over every recorded node; `key` names the step and component it is for */
   stepRange: { key: string; min: number | null; max: number | null } | null;
   scan: ContourScan | null;
@@ -674,6 +684,8 @@ export type Event =
   /** V4c1: the colour range mode; `fixed` takes the user's min and max */
   | { type: "setContourRange"; range: ContourRange; fixed?: { min: number; max: number } }
   | { type: "setContourCmap"; cmap: ContourCmap }
+  /** baseUnits: set the file's assumed native unit system and/or the display unit system */
+  | { type: "setContourUnits"; source?: UnitSystemId; target?: UnitDisplay }
   /** V4c1 (effects): the finite range of the step shown, for the key it was measured on */
   | { type: "contourStepRange"; key: string; min: number | null; max: number | null }
   /** V4c1 (effects): the history scan started, progressed, finished or failed */

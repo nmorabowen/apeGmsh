@@ -151,6 +151,7 @@ const EVERY: Record<EventType, Event> = {
   setContourField: { type: "setContourField", field: "displacement", component: "displacement_x" },
   setContourRange: { type: "setContourRange", range: "fixed", fixed: { min: 0, max: 1 } },
   setContourCmap: { type: "setContourCmap", cmap: "viridis" },
+  setContourUnits: { type: "setContourUnits", source: "kN_m_s", target: "tf_m_s" },
   contourStepRange: { type: "contourStepRange", key: "x", min: 0, max: 1 },
   contourScan: { type: "contourScan", scan: { key: "x", status: "running", done: 1, total: 2, min: null, max: null, error: null } },
   setDeform: { type: "setDeform", on: true },
@@ -187,8 +188,8 @@ test("reducer purity: every event leaves a frozen state untouched and returns pl
   }
   assert.equal(
     Object.keys(EVERY).length,
-    51,
-    "decision 17's 20 events plus fileClosed, requestSource, sourceResult, setLoaded (V2f), frameSelection, setColourBy, selectStage (V4f), resultsLoaded and resultStep (V4b), the five contour events (V4c1), the four deformed-shape events (V4d), setContourGauss and contourElementJoin (V4c2a), the seven section-plane events (V4e1), the three gizmo events (V4e2: setClipPose, setShowGizmos, setClipGizmo), and setCutFace (V4e3)",
+    52,
+    "decision 17's 20 events plus fileClosed, requestSource, sourceResult, setLoaded (V2f), frameSelection, setColourBy, selectStage (V4f), resultsLoaded and resultStep (V4b), the five contour events (V4c1), setContourUnits (baseUnits), the four deformed-shape events (V4d), setContourGauss and contourElementJoin (V4c2a), the seven section-plane events (V4e1), the three gizmo events (V4e2: setClipPose, setShowGizmos, setClipGizmo), and setCutFace (V4e3)",
   );
 });
 

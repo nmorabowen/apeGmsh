@@ -61,11 +61,12 @@ html, body {
 /* V4c1: the contour legend (field picker, ramp, range mode, colormap). The
    ramp's and the no-data chip's colours are data (state/contour.ts), set inline. */
 .contour-pick { display: flex; gap: 6px; margin: 0 0 8px; }
-.contour-pick select, .contour-cmap, .contour-fixed input {
+.contour-units { display: flex; flex-direction: column; gap: 4px; margin: 2px 0 6px; }
+.contour-pick select, .contour-units select, .contour-cmap, .contour-fixed input {
   font: 600 12px var(--font); color: var(--text); background: var(--hover);
   border: 1px solid var(--line); border-radius: 5px; padding: 1px 4px;
 }
-.contour-pick select { flex: 1; min-width: 0; }
+.contour-pick select, .contour-units select { flex: 1; min-width: 0; width: 100%; }
 .contour-title { font-weight: 600; margin: 2px 0 4px; }
 .contour-ramp { height: 12px; width: 240px; border-radius: 3px; border: 1px solid var(--line); }
 .contour-ends { display: flex; justify-content: space-between; width: 240px; font: 12px var(--mono); color: var(--text); margin: 2px 0 4px; }
