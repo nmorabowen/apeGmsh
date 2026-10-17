@@ -17,8 +17,8 @@ import { LineSegments2 } from "three/addons/lines/LineSegments2.js";
 import { LineSegmentsGeometry } from "three/addons/lines/LineSegmentsGeometry.js";
 import type { BlobStore } from "../state/blobs.ts";
 import type { DisplacementData } from "../effects.ts";
-import { contourView, geometryPairing, gizmoPlanes } from "../state/selectors.ts";
-import { contourColours, contourShownKey, elementColours, noDataColours, type StepValues } from "./contour.ts";
+import { contourView, geometryPairing, gizmoPlanes, legendEntryColour } from "../state/selectors.ts";
+import { contourColours, contourShownKey, elementColours, noDataColours, toLinear, type StepValues } from "./contour.ts";
 import { CapLayer, releaseAware } from "./caps.ts";
 import { SectionClip, sliderBox } from "./clip.ts";
 import { GizmoInteractor, PlaneGizmos } from "./gizmo.ts";
@@ -27,7 +27,7 @@ import type { State, Store } from "../state/store.ts";
 import { roleColouring } from "../state/roles.ts";
 import type { Box } from "../state/clip.ts";
 import type { DeclPath, GeometryInfo, LegendEntry, MeshInfo, Pick } from "../state/types.ts";
-import { DARK, toHexNumber } from "../theme/tokens.ts";
+import { DARK, themeTokens, toHexNumber, type ThemeMode } from "../theme/tokens.ts";
 import {
   DEFAULT_FOV_DEG,
   depthOf,
@@ -73,6 +73,8 @@ export class Viewport {
   readonly orthoCamera: THREE.OrthographicCamera;
   readonly nav: Navigator;
   private activeProjection: ProjectionMode = "perspective";
+  private activeTheme: ThemeMode = "dark";
+  private readonly hemiLight: THREE.HemisphereLight;
   private readonly keyLight: THREE.DirectionalLight;
   private readonly viewListeners = new Set<() => void>();
   private readonly scene = new THREE.Scene();
@@ -136,6 +138,11 @@ export class Viewport {
     return this.activeProjection;
   }
 
+  /** Current viewport theme mode ("dark" or "light"). */
+  get theme(): ThemeMode {
+    return this.activeTheme;
+  }
+
   constructor(host: HTMLElement, store: Store, blobs: BlobStore) {
     this.host = host;
     this.store = store;
@@ -153,7 +160,8 @@ export class Viewport {
     this.perspCamera.up.set(0, 0, 1);
     this.orthoCamera.up.set(0, 0, 1);
     this.scene.add(this.perspCamera, this.orthoCamera);
-    this.scene.add(new THREE.HemisphereLight(toHexNumber(DARK.skyLight), toHexNumber(DARK.groundLight), 1.6));
+    this.hemiLight = new THREE.HemisphereLight(toHexNumber(DARK.skyLight), toHexNumber(DARK.groundLight), 1.6);
+    this.scene.add(this.hemiLight);
     this.keyLight = new THREE.DirectionalLight(toHexNumber(DARK.keyLight), 1.4);
     this.keyLight.position.set(0.5, 0.8, 1);
     this.perspCamera.add(this.keyLight);
@@ -177,7 +185,7 @@ export class Viewport {
     this.onState(store.get(), null);
   }
 
-  /** Subscribe to camera heading, projection, or model visibility changes (for the ViewCube). */
+  /** Subscribe to camera heading, projection, theme, or model visibility changes (for the ViewCube). */
   onViewChange(fn: () => void): () => void {
     this.viewListeners.add(fn);
     return () => this.viewListeners.delete(fn);
@@ -209,6 +217,32 @@ export class Viewport {
     this.camera.add(this.keyLight);
     this.syncCameraFrustum();
     this.nav.updated();
+  }
+
+  /** Switch between dark and light (report-ready white paper) viewport themes. */
+  setTheme(mode: ThemeMode): void {
+    if (mode === this.activeTheme) return;
+    this.activeTheme = mode;
+    const t = themeTokens(mode);
+    this.renderer.setClearColor(toHexNumber(t.bg0), 0);
+    this.hemiLight.color.setHex(toHexNumber(t.skyLight));
+    this.hemiLight.groundColor.setHex(toHexNumber(t.groundLight));
+    this.hemiLight.intensity = mode === "light" ? 1.05 : 1.6;
+    this.keyLight.color.setHex(toHexNumber(t.keyLight));
+    this.keyLight.intensity = mode === "light" ? 0.95 : 1.4;
+    this.halo.setTheme(mode);
+    const s = this.store.get();
+    if (this.geometryInfo) {
+      this.setGeometry(this.geometryInfo);
+      const onGeometry = s.phase.at?.kind === "geometry";
+      this.geometryLayer.visible = geometryPairing(s).draw && (onGeometry || !s.mesh);
+    }
+    if (s.mesh) {
+      this.rebuild(s, s.mesh);
+      if (s.selection.decls.length) this.setHighlight(s, false);
+    }
+    this.notifyView();
+    this.requestRender();
   }
 
   /** Reset the view to the default isometric (or 2-D plan) orientation and fit the whole model. */
@@ -395,7 +429,7 @@ export class Viewport {
   /** The markers of drawn nodes with no displacement at the step shown (none when undeformed). */
   private setMarkers(info: MeshInfo): void {
     this.clear(this.markers);
-    if (this.full && this.drawn) for (const o of missingMarkerObjects(this.full, info, this.blobs, this.drawn)) this.markers.add(o);
+    if (this.full && this.drawn) for (const o of missingMarkerObjects(this.full, info, this.blobs, this.drawn, this.activeTheme)) this.markers.add(o);
   }
 
   /** V4c1: where the contour's step data comes from (app.ts wires the effects). */
@@ -475,11 +509,12 @@ export class Viewport {
     this.geometryLayer.visible = false;
     this.geometryInfo = g;
     if (!g) return;
+    const t = themeTokens(this.activeTheme);
     const curves = this.blobs.f32(g.curvePositions);
     if (curves.length) {
       const cg = new THREE.BufferGeometry();
       cg.setAttribute("position", new THREE.BufferAttribute(curves, 3));
-      this.geometryLayer.add(new THREE.LineSegments(cg, new THREE.LineBasicMaterial({ color: toHexNumber(DARK.geometryCurve) })));
+      this.geometryLayer.add(new THREE.LineSegments(cg, new THREE.LineBasicMaterial({ color: toHexNumber(t.geometryCurve) })));
     }
     const tris = this.blobs.f32(g.surfacePositions);
     if (tris.length) {
@@ -487,7 +522,7 @@ export class Viewport {
       sg.setAttribute("position", new THREE.BufferAttribute(tris, 3));
       sg.computeVertexNormals();
       const m = new THREE.MeshStandardMaterial({
-        color: toHexNumber(DARK.geometrySurface), side: THREE.DoubleSide, flatShading: true, transparent: true, opacity: 0.35, depthWrite: false,
+        color: toHexNumber(t.geometrySurface), side: THREE.DoubleSide, flatShading: true, transparent: true, opacity: 0.35, depthWrite: false,
         polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1,
       });
       this.geometryLayer.add(new THREE.Mesh(sg, m));
@@ -496,7 +531,7 @@ export class Viewport {
     if (pts.length) {
       const pg = new THREE.BufferGeometry();
       pg.setAttribute("position", new THREE.BufferAttribute(pts, 3));
-      this.geometryLayer.add(new THREE.Points(pg, new THREE.PointsMaterial({ color: toHexNumber(DARK.geometryPoint), size: 5, sizeAttenuation: false })));
+      this.geometryLayer.add(new THREE.Points(pg, new THREE.PointsMaterial({ color: toHexNumber(t.geometryPoint), size: 5, sizeAttenuation: false })));
     }
   }
 
@@ -541,7 +576,7 @@ export class Viewport {
     const m = new LineMaterial({
       linewidth: width,
       vertexColors: col !== null,
-      color: colour ?? toHexNumber(DARK.keyLight),
+      color: colour ?? toHexNumber(themeTokens(this.activeTheme).keyLight),
       worldUnits: false,
     });
     m.resolution.set(this.host.clientWidth || 1, this.host.clientHeight || 1);
@@ -579,21 +614,26 @@ export class Viewport {
    * (state/roles.ts, per element, mapped to the primitives here).
    */
   private colourSource(s: State, info: MeshInfo): { legend: readonly LegendEntry[]; line: Int32Array; tri: Int32Array; edge: number } {
+    const t = themeTokens(this.activeTheme);
     if (s.visibility.colourBy === "group") {
-      return { legend: info.legend, line: this.blobs.i32(info.lineGroup), tri: this.blobs.i32(info.triGroup), edge: toHexNumber(DARK.edge) };
+      return { legend: info.legend, line: this.blobs.i32(info.lineGroup), tri: this.blobs.i32(info.triGroup), edge: toHexNumber(t.edge) };
     }
     const r = roleColouring(s);
     if (!r) throw new Error("viewport: colour by role with no mesh");
     const perPrim = (element: Int32Array) => Int32Array.from(element, (e) => r.byElement[e]!);
-    return { legend: r.legend, line: perPrim(this.blobs.i32(info.lineElement)), tri: perPrim(this.blobs.i32(info.triElement)), edge: toHexNumber(DARK.edgeRole) };
+    return { legend: r.legend, line: perPrim(this.blobs.i32(info.lineElement)), tri: perPrim(this.blobs.i32(info.triElement)), edge: toHexNumber(t.edgeRole) };
   }
 
   /** Vertex colours of the drawn primitives from a legend and a per-primitive row index. */
   private colours(legend: readonly LegendEntry[], group: Int32Array, map: Int32Array, perPrim: number): Float32Array {
     const out = new Float32Array(map.length * perPrim * 3);
+    // LineMaterial (perPrim === 2) is unlit and runs linearToSRGB on output; linearising in light mode keeps 1-D beams true to their legend chip.
+    const linearise = perPrim === 2 && this.activeTheme === "light";
     for (let d = 0; d < map.length; d++) {
-      const c = legend[group[map[d]!]!]?.color;
-      if (!c) throw new Error(`viewport: primitive ${map[d]} has no legend row`);
+      const entry = legend[group[map[d]!]!];
+      if (!entry) throw new Error(`viewport: primitive ${map[d]} has no legend row`);
+      const srgb = legendEntryColour(entry, this.activeTheme);
+      const c = linearise ? [toLinear(srgb[0]), toLinear(srgb[1]), toLinear(srgb[2])] : srgb;
       for (let v = 0; v < perPrim; v++) out.set(c, (d * perPrim + v) * 3);
     }
     return out;
@@ -644,12 +684,13 @@ export class Viewport {
     this.edgeMap = null;
     const drawn = this.visible(s, info);
     this.drawn = drawn;
+    const t = themeTokens(this.activeTheme);
     // V4c1: a contour colours per vertex from the step on screen; until its
     // data is here, every drawn primitive is no data (never a group colour).
     const contour = s.visibility.colourBy === "contour";
     const cc = contour ? (this.contourFor(s, info, drawn) ?? { line: noDataColours(drawn.lineMap, 2), tri: noDataColours(drawn.triMap, 3), key: "no-data:loading" }) : null;
     this.contourApplied = cc?.key ?? null;
-    const source = contour ? { legend: [], line: new Int32Array(0), tri: new Int32Array(0), edge: toHexNumber(DARK.edge) } : this.colourSource(s, info);
+    const source = contour ? { legend: [], line: new Int32Array(0), tri: new Int32Array(0), edge: toHexNumber(t.edge) } : this.colourSource(s, info);
     // V4d: the positions drawn are the deformed ones when the deformed shape
     // shows (copied out: writePositions later moves them in place, so they
     // never alias a mesh blob), and the ghost is the undeformed mesh.
@@ -685,7 +726,8 @@ export class Viewport {
       if (edge.length) {
         const eg = new THREE.BufferGeometry();
         eg.setAttribute("position", new THREE.BufferAttribute(edge, 3));
-        const em = new THREE.LineBasicMaterial({ color: source.edge, transparent: true, opacity: 0.45 });
+        const edgeOpacity = this.activeTheme === "light" ? 0.72 : 0.45;
+        const em = new THREE.LineBasicMaterial({ color: source.edge, transparent: true, opacity: edgeOpacity });
         this.edges = new THREE.LineSegments(eg, em);
         this.content.add(this.edges);
       }
@@ -697,7 +739,7 @@ export class Viewport {
     }
     // V4d: the ghost of what is drawn, and the markers of its nodes with no displacement.
     this.clear(this.ghost);
-    for (const o of ghostObjects(info, this.blobs, drawn, this.edgeMap)) this.ghost.add(o);
+    for (const o of ghostObjects(info, this.blobs, drawn, this.edgeMap, this.activeTheme)) this.ghost.add(o);
     this.ghost.visible = this.ghostWanted(s) && s.phase.at?.kind !== "geometry";
     this.setMarkers(info);
     this.applyVisibility(s, false);
@@ -737,7 +779,8 @@ export class Viewport {
     const k = on ? DIM : 1;
     if (this.faces) (this.faces.material as THREE.MeshStandardMaterial).color.setScalar(k);
     if (this.lines) (this.lines.material as LineMaterial).color.setScalar(k);
-    if (this.edges) (this.edges.material as THREE.LineBasicMaterial).opacity = on ? 0.2 : 0.45;
+    const restOpacity = this.activeTheme === "light" ? 0.72 : 0.45;
+    if (this.edges) (this.edges.material as THREE.LineBasicMaterial).opacity = on ? 0.2 : restOpacity;
     this.caps.setDim(k);
   }
 

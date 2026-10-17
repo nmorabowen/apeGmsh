@@ -51,7 +51,7 @@ option:disabled { color: var(--muted); }
   letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted);
 }
 .legend-row { display: flex; align-items: center; gap: 8px; padding: 1px 0; }
-.chip { width: 12px; height: 12px; border-radius: 3px; flex: none; }
+.chip { width: 12px; height: 12px; border-radius: 3px; flex: none; border: 1px solid var(--line); }
 .chip.stripe { background-image: repeating-linear-gradient(135deg, transparent 0 3px, var(--bg-0) 3px 5px); }
 .chip.stripe2 { background-image: repeating-linear-gradient(45deg, transparent 0 2px, var(--bg-0) 2px 3px); }
 .legend-count { margin-left: auto; color: var(--muted); font-variant-numeric: tabular-nums; }
@@ -306,9 +306,9 @@ code { font-family: var(--mono); }
 .planes-foot { margin: 8px 0 0; padding-top: 8px; border-top: 1px solid var(--line); flex-wrap: wrap; }
 .planes-capnote { margin: 6px 0 0; }
 
-/* ViewCube and camera projection selector (Perspective / Orthographic) */
+/* ViewCube, camera projection (Perspective / Orthographic), and background theme (Dark / Light) */
 #viewcube {
-  position: fixed; top: 14px; right: 502px; width: 132px;
+  position: fixed; top: 14px; right: 502px; width: 164px;
   display: flex; flex-direction: column; align-items: center; gap: 6px;
   padding: 8px; border-radius: 10px;
   background: var(--panel); border: 1px solid var(--line);
@@ -347,11 +347,14 @@ code { font-family: var(--mono); }
   fill: var(--text); font: 700 17px var(--font); letter-spacing: 0.04em;
   pointer-events: none; user-select: none;
 }
-.vc-projection {
-  width: 100%; font: 600 12px var(--font); color: var(--text);
+.vc-selects { display: flex; width: 100%; gap: 4px; }
+.vc-projection, .vc-theme {
+  min-width: 0; font: 600 11.5px var(--font); color: var(--text);
   border: 1px solid var(--line);
-  border-radius: 5px; padding: 3px 6px; cursor: pointer;
+  border-radius: 5px; padding: 3px 4px; cursor: pointer;
 }
+.vc-projection { flex: 1 1 auto; }
+.vc-theme { flex: 0 0 auto; }
 
 /* Universal collapsible panels (ui/collapse.ts): every <aside> in #rail and #legend */
 #rail > aside > h3:first-child, #legend > h3:first-child {

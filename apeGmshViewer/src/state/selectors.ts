@@ -34,6 +34,7 @@ import { displacementAxes } from "./deform.ts";
 export type { Clim, ElementComponent, ElementField, FieldComponent, NodalField } from "./contour.ts";
 export { GHOST_OPACITY, scaleLabel } from "./deform.ts";
 export { CMAP_NAMES, CMAPS, MAGNITUDE, NO_DATA_RGB, RANGE_MODES, sampleCmap } from "./contour.ts";
+export { legendEntryColour } from "./palette.ts";
 export { resolveFieldUnits, UNIT_DISPLAY_OPTIONS, UNIT_SYSTEM_IDS, UNIT_SYSTEMS } from "./units.ts";
 
 export type { Activation } from "./activation.ts";

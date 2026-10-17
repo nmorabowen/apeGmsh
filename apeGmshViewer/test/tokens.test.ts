@@ -11,12 +11,12 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { groupAdjacency } from "../src/state/adjacency.ts";
-import { assignSlots, cvdDistance, hueOf, NEVER_ADJACENT, NO_GROUP, OPS_ONLY, RING_SIZE, slotColour, SLOTS, slotsContrast } from "../src/state/palette.ts";
+import { assignSlots, cvdDistance, hueOf, legendEntryColour, LIGHT_SLOTS, NEVER_ADJACENT, NO_GROUP, OPS_ONLY, RING_SIZE, slotColour, SLOTS, slotsContrast } from "../src/state/palette.ts";
 import { colourGroups } from "../src/mesh/build.ts";
 import { roleColouring, UNASSIGNED_ROW } from "../src/state/roles.ts";
 import {
-  contrastRatio, DARK, DARK_L1, DARK_L2, DARK_MAIN, DARK_MAIN_RING2, DARK_ROLE, FONT_FILES, hexToRgb, oklabDistance, OFFICE, OFFICE_MAIN, protanopia, relight, rgbToHex,
-  simulateCvd, srgbToOklch, type Cvd, type RGB,
+  contrastRatio, cssVariables, DARK, DARK_L1, DARK_L2, DARK_MAIN, DARK_MAIN_RING2, DARK_ROLE, FONT_FILES, hexToRgb, LIGHT, LIGHT_L1, LIGHT_L2, LIGHT_MAIN, LIGHT_MAIN_RING2, LIGHT_ROLE, oklabDistance, OFFICE, OFFICE_MAIN, protanopia, relight, rgbToHex,
+  simulateCvd, srgbToOklch, THEME_MODES, themeTokens, type Cvd, type RGB,
 } from "../src/theme/tokens.ts";
 import { BlobStore } from "../src/state/blobs.ts";
 import { loadModel } from "../src/state/load.ts";
@@ -123,6 +123,78 @@ test("WCAG: every group, role and chrome colour clears its ratio on both ends of
   check("error", DARK.error, 4.5);
   check("selection", DARK.selection, 4.5);
   console.log("WCAG contrast:\n  " + rows.join("\n  "));
+});
+
+test("WCAG light theme: every group, role, chrome and synthetic-group colour clears its ratio on both ends of the light paper gradient, with lightness steps and CVD separation", () => {
+  assert.deepEqual([...THEME_MODES], ["dark", "light"]);
+  assert.equal(themeTokens("dark"), DARK);
+  assert.equal(themeTokens("light"), LIGHT);
+  const varsDark = cssVariables("dark");
+  const varsLight = cssVariables("light");
+  assert.equal(varsDark["--bg-1"], DARK.bg1);
+  assert.equal(varsLight["--bg-1"], LIGHT.bg1);
+  assert.equal(varsLight["--bg-0"], LIGHT.bg0);
+  assert.equal(varsLight["--text"], LIGHT.text);
+
+  // Lightness steps across the 16 light slots and between Ring 1 and Ring 2.
+  const seq = [...LIGHT_L1, ...LIGHT_L2];
+  for (let i = 1; i < seq.length; i++) assert.ok(Math.abs(seq[i]! - seq[i - 1]!) >= STEP - 1e-9, `light entries ${i - 1},${i}: ${seq[i - 1]} vs ${seq[i]}`);
+  for (let i = 0; i < RING_SIZE; i++) assert.ok(Math.abs(LIGHT_L2[i]! - LIGHT_L1[i]!) >= STEP - 1e-9, `light ring step ${i}`);
+  [...LIGHT_MAIN, ...LIGHT_MAIN_RING2].forEach((hex, i) => assert.ok(Math.abs(L(hex) - seq[i]!) < 0.012, `light ${i} ${hex}: L ${L(hex).toFixed(3)} vs ${seq[i]}`));
+
+  // Protanopia and deuteranopia separation for the 8 primary light hues and the 4 light roles, plus zero yellow hues (55..110 deg).
+  for (const hex of [...LIGHT_MAIN, ...LIGHT_MAIN_RING2]) {
+    const { C, h } = srgbToOklch(hexToRgb(hex));
+    if (C > 0.03) assert.ok(h < 55 || h > 110, `light colour ${hex} has yellowish hue ${h.toFixed(1)} deg`);
+  }
+  for (const kind of ["protanopia", "deuteranopia"] as const) {
+    for (let i = 0; i < LIGHT_MAIN.length; i++) for (let j = i + 1; j < LIGHT_MAIN.length; j++) {
+      const d = seenAs(kind, LIGHT_MAIN[i]!, LIGHT_MAIN[j]!);
+      assert.ok(d >= 0.03, `light ${i} ${LIGHT_MAIN[i]} vs ${j} ${LIGHT_MAIN[j]}: ${d.toFixed(3)} under ${kind}`);
+    }
+  }
+  const lightRoles = Object.entries(LIGHT_ROLE);
+  for (let i = 0; i < lightRoles.length; i++) for (let j = i + 1; j < lightRoles.length; j++) {
+    assert.ok(seen(lightRoles[i]![1], lightRoles[j]![1]) >= SAFE, `light role ${lightRoles[i]![0]} vs ${lightRoles[j]![0]}`);
+  }
+
+  const lbg0 = hexToRgb(LIGHT.bg0), lbg1 = hexToRgb(LIGHT.bg1);
+  const check = (name: string, hex: string, min: number) => {
+    const r0 = contrastRatio(hexToRgb(hex), lbg0), r1 = contrastRatio(hexToRgb(hex), lbg1);
+    assert.ok(r0 >= min, `light ${name} ${hex} is ${r0.toFixed(2)}:1 on ${LIGHT.bg0}, needs ${min}:1`);
+    assert.ok(r1 >= min, `light ${name} ${hex} is ${r1.toFixed(2)}:1 on ${LIGHT.bg1}, needs ${min}:1`);
+  };
+  LIGHT_MAIN.forEach((h, i) => check(`group ${i} (${OFFICE_MAIN[i]})`, h, 3));
+  LIGHT_MAIN_RING2.forEach((h, i) => check(`group ${i + 8} (${OFFICE_MAIN[i]}, ring 2)`, h, 3));
+  for (const [role, hex] of Object.entries(LIGHT_ROLE)) check(`role ${role}`, hex, 3);
+  check("no group", LIGHT.noGroup, 3);
+  check("OpenSees-only", LIGHT.opsOnly, 3);
+  check("unassigned role", LIGHT.unassigned, 3);
+  check("halo", LIGHT.halo, 3);
+  check("text", LIGHT.text, 7);
+  check("muted text", LIGHT.muted, 4.5);
+  check("source paths", LIGHT.source, 4.5);
+  check("interp text", LIGHT.interpText, 4.5);
+  check("accent", LIGHT.accent, 4.5);
+  check("interp tag", LIGHT.interp, 4.5);
+  check("error", LIGHT.error, 4.5);
+
+  // legendEntryColour maps slots, roles, and synthetic groups in both themes.
+  assert.equal(LIGHT_SLOTS.length, 2 * RING_SIZE);
+  assert.deepEqual(slotColour(0, "light").color, hexToRgb(LIGHT_MAIN[0]!));
+  assert.deepEqual(slotColour(8, "light"), { color: hexToRgb(LIGHT_MAIN_RING2[0]!), ring: 1 });
+  assert.deepEqual(
+    legendEntryColour({ path: "/g", name: "Arch", count: 1, color: hexToRgb(DARK_MAIN[1]!), slot: 1, ring: 0 }, "light"),
+    hexToRgb(LIGHT_MAIN[1]!),
+  );
+  assert.deepEqual(
+    legendEntryColour({ path: null, name: "column", count: 1, color: hexToRgb(DARK_ROLE.column) }, "light"),
+    hexToRgb(LIGHT_ROLE.column),
+  );
+  assert.deepEqual(
+    legendEntryColour({ path: null, name: "(OpenSees-only, no cell)", count: 1, color: OPS_ONLY }, "light"),
+    hexToRgb(LIGHT.opsOnly),
+  );
 });
 
 test("the roles take the office colours; no two roles are told apart by red/green alone", () => {
