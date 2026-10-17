@@ -30,7 +30,8 @@ These rules cover user model scripts, not library code.
    in one call, from a list if needed.
 6. **Named numbers.** Each engineering number sits in the data section, one per line, with its
    unit and meaning (`SU = 75.0  # kPa, undrained shear strength`). A tuned value says why it
-   was tuned. State the unit system once, and convert for printing by dividing by a named unit
+   was tuned. Declare the consistent unit system on the session (`apeGmsh(..., units="kN_m_s")`
+   or a `baseUnits.systems` module), and convert for printing by dividing by a named unit
    (`settlement / MM`). Spell names out; a textbook symbol appears only inside its formula.
 7. **One action per statement.** No nested comprehensions, no long one-line formulas, no
    arithmetic inside an f-string. Dividing by a named unit (`{force / KN:.1f}`) is the one
@@ -136,7 +137,7 @@ MEMBERS = {
 LOADED_JOINTS = ["B1", "B2", "B3", "B4", "B5"]
 MIDSPAN_JOINT = "B3"
 
-with apeGmsh(model_name="pratt_truss", verbose=False) as g:
+with apeGmsh(model_name="pratt_truss", units="N_m_s", verbose=False) as g:
     # --- 2. Geometry
     for i in range(N_PANELS + 1):
         g.model.geometry.add_point(i * PANEL, 0.0, 0.0, label=f"B{i}")
@@ -321,7 +322,7 @@ floor_force = {}
 for k in FLOORS:
     floor_force[k] = BASE_SHEAR * k * STOREY / SUM_OF_HEIGHTS   # N
 
-with apeGmsh(model_name="rc_frame_2storey") as g:
+with apeGmsh(model_name="rc_frame_2storey", units="N_m_s") as g:
     # --- 2. Geometry
     # Joint "J{i}{j}_L{k}": column line i in X, j in Y, level k (0 = base).
     joints_at_level = {}
@@ -541,7 +542,7 @@ TOL_SLOPE = 0.15           # relative; the hand estimate ignores the rigid base 
 MIN_PLASTIC_SHARE = 0.10   # plastic settlement / elastic settlement at the final pressure
 MM = 1.0e-3                # m per mm
 
-with apeGmsh(model_name="staged_footing") as g:
+with apeGmsh(model_name="staged_footing", units="kN_m_s") as g:
     geo = g.model.geometry
 
     # --- 2. Geometry: outline points at z = 0 (a 2-D model), then the seven edges

@@ -644,7 +644,7 @@ import sys
 from apeGmsh import apeGmsh
 from apeGmsh.opensees import apeSees
 
-with apeGmsh(verbose=False) as g:  # named by the script's stem
+with apeGmsh(units="N_m_s", verbose=False) as g:  # named by the script's stem
     g.model.geometry.add_box(0, 0, 0, 1, 1, 1, label="b")
     g.physical.add_volume("b", name="B")
     g.mesh.sizing.set_global_size(0.5)

@@ -496,3 +496,31 @@ test("a value outside §7b.1, an unknown attribute, and a missing group are repo
     assert.match(r.index.lineageReason!, /no INFO\/PROVENANCE group/);
   });
 });
+
+test("INFO/PROVENANCE@units reads a known UnitSystemId into index.units and marks an unknown id malformed", () => {
+  const withUnits = edited(STAMPED, (f) => {
+    setAttr(f.get("INFO/PROVENANCE") as h5wasm.Group, "units", "N_mm_s");
+  });
+  withFile(withUnits, (r) => {
+    assert.equal(r.index.units, "N_mm_s");
+    const prov = r.index.provenance;
+    assert.equal(prov.state, "present");
+    if (prov.state === "present") {
+      assert.deepEqual(prov.attrs.units, { state: "present", value: "N_mm_s" });
+      assert.equal(prov.units, "N_mm_s");
+    }
+  });
+  const badUnits = edited(STAMPED, (f) => {
+    setAttr(f.get("INFO/PROVENANCE") as h5wasm.Group, "units", "slug_furlong_fortnight");
+  });
+  withFile(badUnits, (r) => {
+    assert.equal(r.index.units, null);
+    const prov = r.index.provenance;
+    assert.equal(prov.state, "present");
+    if (prov.state === "present") {
+      assert.equal(prov.attrs.units.state, "malformed");
+      assert.equal(prov.units, null);
+    }
+  });
+});
+

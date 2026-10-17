@@ -49,7 +49,7 @@ Usage::
 from __future__ import annotations
 
 import uuid
-from typing import TYPE_CHECKING
+from typing import Any, TYPE_CHECKING
 
 import numpy as np
 from numpy import ndarray
@@ -1747,10 +1747,14 @@ class FEMData:
         composed_from: "ComposeSet | tuple[ComposeRecord, ...] | None" = None,
         session_id: str | None = None,
         model_name: str = "",
+        units: "Any" = None,
     ) -> None:
+        from apeGmsh.units import resolve_unit_system
+
         self.nodes    = nodes
         self.elements = elements
         self.info     = info
+        self._units: str | None = resolve_unit_system(units)
         # ── The session's name (ADR 0112 D1) ─────────────────────
         # ``from_gmsh`` stamps ``session.name``, the H5 reader passes
         # ``/meta/model_name`` back, and derived copies inherit it.  It
@@ -1842,6 +1846,17 @@ class FEMData:
             )
         self.partitions: PartitionSet = PartitionSet(records)
 
+    @property
+    def units(self) -> str | None:
+        """Declared consistent unit system ID (e.g. ``"kN_m_s"``), or ``None``."""
+        return getattr(self, "_units", None)
+
+    @units.setter
+    def units(self, value: Any) -> None:
+        from apeGmsh.units import resolve_unit_system
+
+        self._units = resolve_unit_system(value)
+
     def __setstate__(self, state: dict) -> None:
         """Unpickle, minting a ``session_id`` for a pre-#1304 pickle.
 
@@ -1850,6 +1865,7 @@ class FEMData:
         bridge composer reads that as a stub FEM and silently writes a file
         with no neutral zone.  A fresh id is what any new snapshot gets.
         """
+        legacy_units = state.pop("units", None)
         self.__dict__.update(state)
         if "session_id" not in state:
             self.session_id = str(uuid.uuid4())
@@ -1859,6 +1875,8 @@ class FEMData:
             self.model_name = ""
         if "extract_view" not in state:
             self.extract_view = None
+        if "_units" not in state:
+            self.units = legacy_units
 
     @property
     def snapshot_id(self) -> str:
@@ -1989,6 +2007,7 @@ class FEMData:
             # ADR 0112 D1: the view this snapshot is of the mesh, so
             # end() can re-extract it and compare like with like.
             fem.extract_view = (dim, bool(remove_orphans))
+            fem.units = getattr(session, "units", None)
         return fem
 
     @classmethod
@@ -2225,6 +2244,16 @@ class FEMData:
         # Drop the snapshot_id cache — record set changed.
         if hasattr(new, "_snapshot_id_cache"):
             del new._snapshot_id_cache
+        return new
+
+    def with_units(self, units: "Any") -> "FEMData":
+        """Return a shallow copy with ``units`` set to the canonical unit system ID."""
+        import copy
+        from apeGmsh.units import resolve_unit_system
+
+        new = copy.copy(self)
+        new.units = resolve_unit_system(units)
+        new.inspect = InspectComposite(new)
         return new
 
     def repartition(self, n_parts: int, *, weights=None) -> "FEMData":

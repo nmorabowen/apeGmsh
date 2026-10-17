@@ -36,6 +36,8 @@
 //
 // Browser-safe: no Node import.
 
+import type { UnitSystemId } from "../state/types.ts";
+import { parseDeclaredUnits, UNIT_SYSTEM_IDS } from "../state/units.ts";
 import type { NodalInfo, ResultsH5, StageInfo } from "./results.ts";
 
 /** `INFO@GENERATOR` of every file this reader opens (schema §2, "reader branch key"). */
@@ -54,8 +56,8 @@ const MODAL_GROUPS = ["MODES_OF_VIBRATION(U)", "MODES_OF_VIBRATION(R)"];
 const UNREAD_BUCKETS = new Set(["ON_ELEMENTS", "ON_DOMAIN", "ON_REGIONS", "ENVELOPES"]);
 const STAGE_CHILDREN = new Set(["MODEL", "RESULTS"]);
 
-/** The six consumer-owned attributes of schema §7b.1, in its order. */
-export const PROVENANCE_ATTRS = ["model_hash", "fem_hash", "stage_names", "element_index_space", "unsupported", "writer"] as const;
+/** The consumer-owned attributes of schema §7b.1, in its order. */
+export const PROVENANCE_ATTRS = ["model_hash", "fem_hash", "stage_names", "element_index_space", "unsupported", "writer", "units"] as const;
 export type ProvenanceAttr = (typeof PROVENANCE_ATTRS)[number];
 const PROVENANCE_JSON_LISTS = new Set<ProvenanceAttr>(["stage_names", "unsupported"]);
 
@@ -115,6 +117,8 @@ export type LadrunoProvenance =
       stageNames: string[] | null;
       /** `unsupported` decoded, or null when it is not present and well formed */
       unsupported: string[] | null;
+      /** `units` decoded when it is a valid `UnitSystemId`, else null */
+      units: UnitSystemId | null;
       /** other attribute names in the group: UPPERCASE ones are the fork's (§7b.1 rule 4), lowercase ones unknown */
       other: string[];
     };
@@ -157,6 +161,8 @@ export interface LadrunoIndex {
   /** both hashes present and well formed, else null with `lineageReason` */
   lineage: LadrunoLineage | null;
   lineageReason: string | null;
+  /** Consistent unit system stamped on `INFO/PROVENANCE@units`, or null when absent/malformed */
+  units: UnitSystemId | null;
   warnings: string[];
 }
 
@@ -236,6 +242,7 @@ export class LadrunoFile {
       provenance,
       lineage,
       lineageReason: reason,
+      units: provenance.state === "present" ? provenance.units : null,
       warnings,
     };
   }
@@ -580,6 +587,7 @@ export class LadrunoFile {
     const attrs = {} as Record<ProvenanceAttr, ProvenanceFact>;
     let stageNames: string[] | null = null;
     let unsupported: string[] | null = null;
+    let units: UnitSystemId | null = null;
     for (const name of PROVENANCE_ATTRS) {
       const fact = provenanceFact(g.attrs[name], name);
       if (fact.state === "present" && PROVENANCE_JSON_LISTS.has(name)) {
@@ -595,6 +603,14 @@ export class LadrunoFile {
         attrs[name] = { state: "malformed", reason: `@element_index_space = ${JSON.stringify(fact.value)}; §7b.1 allows "fem" or no attribute` };
         continue;
       }
+      if (fact.state === "present" && name === "units") {
+        const parsed = parseDeclaredUnits(fact.value);
+        if (parsed === null) {
+          attrs[name] = { state: "malformed", reason: `@units = ${JSON.stringify(fact.value)}; expected one of ${UNIT_SYSTEM_IDS.join(", ")}` };
+          continue;
+        }
+        units = parsed;
+      }
       if (fact.state === "present" && (name === "model_hash" || name === "fem_hash") && fact.value === "") {
         attrs[name] = { state: "malformed", reason: `@${name} is an empty string` };
         continue;
@@ -603,7 +619,7 @@ export class LadrunoFile {
     }
     const known = new Set<string>(PROVENANCE_ATTRS);
     const other = Object.keys(g.attrs).filter((k) => !known.has(k)).sort();
-    return { state: "present", attrs, stageNames, unsupported, other };
+    return { state: "present", attrs, stageNames, unsupported, units, other };
   }
 
   // -- helpers ----------------------------------------------------------------

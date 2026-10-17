@@ -346,3 +346,79 @@ test("baseUnits: setContourUnits converts forces and moments to tf_m_s and label
   assert.equal(modeDisp.unit, null);
   assert.equal(modeDisp.factor, 1);
 });
+
+test("declared vs undeclared units: declared files auto-select native units; undeclared files require source units", async () => {
+  const h = await opened();
+  // Undeclared file starts at as_stored with sourceUnits === null.
+  assert.equal(h.store.get().contour.declaredUnits, null);
+  assert.equal(h.store.get().contour.sourceUnits, null);
+  assert.equal(h.store.get().contour.targetUnits, "as_stored");
+
+  h.store.dispatch({ type: "setPhase", at: { kind: "results", stage: 2, step: 1 } });
+  h.store.dispatch({ type: "setColourBy", by: "contour" });
+  await until(() => h.store.get().contour.scan?.status === "done", "the initial history scan");
+
+  // Selecting a target unit system on an undeclared file without sourceUnits prompts for source units.
+  h.store.dispatch({ type: "setContourUnits", target: "N_mm_s" });
+  assert.equal(h.store.get().contour.sourceUnits, null);
+  assert.equal(h.store.get().contour.targetUnits, "N_mm_s");
+  const vUndeclared = contourView(h.store.get());
+  assert.equal(vUndeclared.state, "ready");
+  if (vUndeclared.state === "ready") {
+    const lines = contourLines(h.store.get(), vUndeclared);
+    assert.equal(lines.title, "displacement · magnitude");
+    assert.equal(lines.units, "Units: not declared in file — select the source unit system (from …) to convert.");
+  }
+
+  // Once the user specifies sourceUnits, conversion is applied immediately.
+  h.store.dispatch({ type: "setContourUnits", source: "kN_m_s" });
+  assert.equal(h.store.get().contour.sourceUnits, "kN_m_s");
+  if (vUndeclared.state === "ready") {
+    const lines = contourLines(h.store.get(), vUndeclared);
+    assert.equal(lines.title, "displacement · magnitude [mm]");
+    assert.equal(lines.units, "Units: N-mm-tonne-s (converted from kN-m-tonne-s).");
+  }
+
+  // When a results file carries declared units (`units: "kN_m_s"`), native units are auto-selected and sourceUnits is locked.
+  const infoWithUnits = { ...h.store.get().results!, units: "kN_m_s" as const };
+  h.store.dispatch({ type: "resultsLoaded", info: infoWithUnits, sizeBytes: 0, readMs: 0, warnings: [] });
+  assert.equal(h.store.get().contour.declaredUnits, "kN_m_s");
+  assert.equal(h.store.get().contour.sourceUnits, "kN_m_s");
+  assert.equal(h.store.get().contour.targetUnits, "kN_m_s");
+
+  await until(() => h.store.get().contour.scan?.status === "done", "the history scan after resultsLoaded");
+  const vDeclared = contourView(h.store.get());
+  assert.equal(vDeclared.state, "ready");
+  if (vDeclared.state === "ready") {
+    const lines = contourLines(h.store.get(), vDeclared);
+    assert.equal(lines.title, "displacement · magnitude [m]");
+    assert.equal(lines.units, "Units: kN-m-tonne-s (declared in file).");
+  }
+
+  // Converting a declared file needs only targetUnits; sourceUnits stays locked to declaredUnits.
+  h.store.dispatch({ type: "setContourUnits", target: "N_mm_s", source: "kip_in_s" });
+  assert.equal(h.store.get().contour.sourceUnits, "kN_m_s");
+  assert.equal(h.store.get().contour.targetUnits, "N_mm_s");
+  if (vDeclared.state === "ready") {
+    const lines = contourLines(h.store.get(), vDeclared);
+    assert.equal(lines.title, "displacement · magnitude [mm]");
+    assert.equal(lines.units, "Units: N-mm-tonne-s (converted from declared kN-m-tonne-s).");
+  }
+
+  // Transitioning back to an undeclared results file resets declaredUnits/sourceUnits to null and targetUnits to as_stored.
+  const infoUndeclared = { ...h.store.get().results!, units: null };
+  h.store.dispatch({ type: "resultsLoaded", info: infoUndeclared, sizeBytes: 0, readMs: 0, warnings: [] });
+  assert.equal(h.store.get().contour.declaredUnits, null);
+  assert.equal(h.store.get().contour.sourceUnits, null);
+  assert.equal(h.store.get().contour.targetUnits, "as_stored");
+
+  // Re-load declared units, then open a different results path via fileOpened -> resets contour units to model's units (null).
+  h.store.dispatch({ type: "resultsLoaded", info: infoWithUnits, sizeBytes: 0, readMs: 0, warnings: [] });
+  assert.equal(h.store.get().contour.declaredUnits, "kN_m_s");
+  h.store.dispatch({ type: "fileOpened", artifact: "results", path: "/another/file.ladruno" });
+  assert.equal(h.store.get().contour.declaredUnits, null);
+  assert.equal(h.store.get().contour.sourceUnits, null);
+  assert.equal(h.store.get().contour.targetUnits, "as_stored");
+
+  h.effects.dispose();
+});

@@ -8494,6 +8494,7 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
         self,
         fem: "FEMData",
         *,
+        units: "Any" = None,
         default_orientation: Orientation | None | _UnsetType = _UNSET,
         opensees: "OpenSeesTarget | None" = None,
         element_tags: ElementTagMode = "sequential",
@@ -8504,6 +8505,28 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
                 f"apeSees: element_tags must be one of {ELEMENT_TAG_MODES}, "
                 f"not {element_tags!r}."
             )
+        from apeGmsh.units import UnitSystemId, resolve_unit_system
+
+        resolved_units = resolve_unit_system(units)
+        fem_units: UnitSystemId | None = getattr(fem, "units", None)
+        if (
+            resolved_units is not None
+            and fem_units is not None
+            and resolved_units != fem_units
+        ):
+            raise ValueError(
+                f"apeSees: declared units {resolved_units!r} conflict with "
+                f"fem.units {fem_units!r}."
+            )
+        self._units: UnitSystemId | None = (
+            resolved_units if resolved_units is not None else fem_units
+        )
+        if (
+            resolved_units is not None
+            and fem_units is None
+            and hasattr(fem, "with_units")
+        ):
+            fem = fem.with_units(resolved_units)
         self._fem: "FEMData" = fem
         # ADR 0111 D2 — how element tags are numbered at emit (BuiltModel).
         self._element_tags: ElementTagMode = element_tags
@@ -8693,6 +8716,11 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
     @property
     def fem(self) -> "FEMData":
         return self._fem
+
+    @property
+    def units(self) -> "str | None":
+        """Canonical consistent unit system ID (e.g. ``'kN_m_s'``), or ``None``."""
+        return self._units
 
     # -- OpenSees runtime target / capabilities --------------------------
     @property

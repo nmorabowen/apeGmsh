@@ -64,6 +64,15 @@ def default_artifact_dir() -> Path:
     return Path.cwd()
 
 
+def _should_warn_unit_not_declared(warning_cls: type[Warning]) -> bool:
+    import warnings
+
+    for action, _msg, cat, _mod, _ln in warnings.filters:
+        if isinstance(cat, type) and issubclass(cat, warning_cls):
+            return action != "ignore"
+    return True
+
+
 class apeGmsh(_SessionBase):
     """Standalone single-model Gmsh session with all composites.
 
@@ -140,6 +149,7 @@ class apeGmsh(_SessionBase):
         self,
         *,
         model_name: str | None = None,
+        units: Any = None,
         verbose: bool = False,
         save_to: str | Path | None = None,
         overwrite: bool = True,
@@ -163,6 +173,9 @@ class apeGmsh(_SessionBase):
                     "apeGmsh(model_name=''): the model name must be a "
                     "non-empty string; leave it out to take the script's stem"
                 )
+        from .units import UnitNotDeclaredWarning, resolve_unit_system
+
+        resolved_units = resolve_unit_system(units)
         super().__init__(name=name, verbose=verbose)
         # ADR 0112 D1: this session *is* the model; ``end()`` writes
         # ``model.h5`` and its geometry sibling unconditionally.  The
@@ -170,6 +183,22 @@ class apeGmsh(_SessionBase):
         # only (section mesh workers, solver cross-checks, the demo
         # builder); it is not a user-facing opt-out.
         self._writes_artifacts = bool(_artifacts)
+        self._units = resolved_units
+        if (
+            self._units is None
+            and self._writes_artifacts
+            and _should_warn_unit_not_declared(UnitNotDeclaredWarning)
+        ):
+            import warnings
+
+            warnings.warn(
+                "apeGmsh(...): no consistent unit system declared (pass "
+                "units='kN_m_s' or a baseUnits.systems module such as "
+                "units=kN_m_s); Results and apeGmshViewer will require "
+                "manual unit selection for unit conversions.",
+                UnitNotDeclaredWarning,
+                stacklevel=2,
+            )
         # Labels (Tier 1 naming) are auto-created from label= kwargs
         # on geometry methods in both Part and Assembly sessions.
         self._auto_pg_from_label = True
@@ -203,6 +232,19 @@ class apeGmsh(_SessionBase):
         # rather than re-extracting from absent gmsh.
         self._fem_from_h5: bool = False
 
+    @property
+    def units(self):
+        """Canonical consistent unit system ID (e.g. ``'kN_m_s'``), or ``None``."""
+        return self._units
+
+    def set_units(self, units: Any) -> None:
+        """Declare or update the session's consistent unit system."""
+        from .units import resolve_unit_system
+
+        self._units = resolve_unit_system(units)
+        if self._fem is not None:
+            self._fem.units = self._units
+
     # ------------------------------------------------------------------
     # Chain-phase constructor — Phase 3B.2c / ADR 0038
     # ------------------------------------------------------------------
@@ -213,6 +255,7 @@ class apeGmsh(_SessionBase):
         path: "str | Path",
         *,
         model_name: str | None = None,
+        units: Any = None,
         verbose: bool = False,
     ) -> "apeGmsh":
         """Construct a session in chain phase directly from a saved FEMData.
@@ -368,11 +411,26 @@ class apeGmsh(_SessionBase):
             offending call and the alternative that answers it.
         """
         from .mesh.FEMData import FEMData
+        from .units import resolve_unit_system
 
         p = Path(path)
         loaded_fem = FEMData.from_h5(str(p))
+        if units is not None:
+            resolved_units = resolve_unit_system(units)
+            if (
+                loaded_fem.units is not None
+                and resolved_units is not None
+                and resolved_units != loaded_fem.units
+            ):
+                raise ValueError(
+                    f"apeGmsh.from_h5: explicit units={resolved_units!r} "
+                    f"conflicts with {p.name} units={loaded_fem.units!r}."
+                )
+        else:
+            resolved_units = loaded_fem.units
+        loaded_fem.units = resolved_units
         name = model_name if model_name is not None else p.stem
-        instance = cls(model_name=name, verbose=verbose)
+        instance = cls(model_name=name, units=resolved_units, verbose=verbose)
         instance._fem = loaded_fem
         instance._fem_from_h5 = True
         # Mark the cache fresh so the first ``get_fem_data()`` returns

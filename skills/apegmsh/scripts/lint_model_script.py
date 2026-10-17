@@ -327,6 +327,18 @@ def rule_v4(src: Source) -> list[Finding]:
 def rule_v5(src: Source) -> list[Finding]:
     out: list[Finding] = []
     for node in ast.walk(src.tree):
+        if isinstance(node, ast.Call):
+            callee = (
+                node.func.id if isinstance(node.func, ast.Name)
+                else node.func.attr if isinstance(node.func, ast.Attribute)
+                else None
+            )
+            if callee == "apeGmsh" and not any(kw.arg == "units" for kw in node.keywords):
+                out.append(Finding(
+                    node.lineno,
+                    "V5",
+                    "apeGmsh() called without units=; declare a consistent unit system (e.g. units='kN_m_s')",
+                ))
         if not isinstance(node, ast.BinOp):
             continue
         right = _number(node.right)

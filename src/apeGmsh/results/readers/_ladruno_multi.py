@@ -375,11 +375,22 @@ class LadrunoMultiPartitionReader:
 
     # -- model / fem ---------------------------------------------------
 
+    @property
+    def units(self) -> "Optional[str]":
+        """Canonical unit system ID from ``INFO/PROVENANCE@units``, or ``None``."""
+        for r in self._readers:
+            u = r.units
+            if u is not None:
+                return u
+        return None
+
     def fem(self) -> "Optional[FEMData]":
         if not isinstance(self._fem_cache, _Sentinel):
             return self._fem_cache  # type: ignore[return-value]
         per = [r.fem() for r in self._readers]
         merged = None if all(f is None for f in per) else _merge_partition_fems(per)
+        if merged is not None:
+            merged.units = self.units
         self._fem_cache = merged
         return merged
 

@@ -736,6 +736,9 @@ def write_meta(
     if isinstance(fem, FEMData):
         meta.attrs["session_id"] = _validated_session_id(fem.session_id)
     meta.attrs["model_name"] = str(model_name)
+    fem_units = getattr(fem, "units", None)
+    if fem_units is not None:
+        meta.attrs["units"] = str(fem_units)
     # ADR 0038 §"Schema" — tag-span-max (max(max_node, max_elem) -
     # min(min_node, min_elem) + 1) used by Phase 3B's
     # ``_compute_source_span`` to size per-module reservations.  Stored
@@ -3046,12 +3049,29 @@ def read_neutral_zone_from_group(
             raw_name.decode("utf-8") if isinstance(raw_name, bytes)
             else str(raw_name)
         )
+    units: str | None = None
+    if "units" in parent["meta"].attrs:
+        raw_units = parent["meta"].attrs["units"]
+        units_str = (
+            raw_units.decode("utf-8") if isinstance(raw_units, bytes)
+            else str(raw_units)
+        )
+        if units_str:
+            from apeGmsh.units import resolve_unit_system
+
+            try:
+                units = resolve_unit_system(units_str)
+            except (TypeError, ValueError) as exc:
+                raise MalformedH5Error(
+                    f"{label}: /meta/units is invalid: {exc}"
+                ) from exc
     rebuilt = FEMData(
         nodes=nodes, elements=elements, info=info,
         mesh_selection=mesh_selection,
         composed_from=composed_from,
         session_id=session_id,
         model_name=model_name,
+        units=units,
     )
 
     # B4 — verify /meta/snapshot_id matches the recomputed hash

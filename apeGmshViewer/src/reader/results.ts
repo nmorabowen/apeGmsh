@@ -31,6 +31,8 @@
 // several is refused ("unsupported"), not merged (the doc's union rule is a
 // follow-up for the real reader).
 
+import type { UnitSystemId } from "../state/types.ts";
+import { parseDeclaredUnits } from "../state/units.ts";
 import { NEUTRAL_TARGET, OPENSEES_TARGET, ZONE_FLOOR } from "./read.ts";
 
 /** The results zone this reader was written against, and its floor (ADR 0113). */
@@ -190,6 +192,8 @@ export interface ResultsIndex {
    * steps it lists are what was written so far (V4b seam "partial writes").
    */
   partial: string | null;
+  /** Consistent unit system declared in `/model/meta/@units` or `@units`, or null when undeclared. */
+  units: UnitSystemId | null;
 }
 
 /** The `/meta/lineage` hashes, each a 32-character hex string or null when the writer did not stamp it. */
@@ -236,6 +240,7 @@ export class ResultsFile {
     const stagesGroup = this.group(f, "stages");
     const ids = sortStageIds(stagesGroup.keys());
     const lineage = this.readLineage(f);
+    const units = parseDeclaredUnits(modelMeta?.attrs["units"]?.value ?? f.attrs["units"]?.value);
     this.index = {
       path,
       version,
@@ -248,6 +253,7 @@ export class ResultsFile {
       warnings,
       lineage,
       partial: partialOf(version, lineage),
+      units,
     };
   }
 

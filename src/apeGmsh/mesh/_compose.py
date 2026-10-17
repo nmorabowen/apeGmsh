@@ -711,6 +711,7 @@ class _RewrittenBundle:
     # Auto-emitted rebar elements (ADR 0117 D4): bar cells offset, PG
     # prefixed, material ``{label}.{name}``.
     rebar_elements: tuple = ()
+    source_units: "str | None" = None
 
 
 # ── Helper: schema-version + tag-span reader ───────────────────────
@@ -2066,6 +2067,7 @@ def _rewrite_source_for_compose(
         contact_planes=new_contact_planes,
         interfaces=new_interfaces,
         rebar_elements=new_rebar_elements,
+        source_units=getattr(source, "units", None),
     )
 
 
@@ -2965,12 +2967,26 @@ def _merge_bundle_into_fem(
         (*existing_records, new_record, *grafted),
     )
 
+    host_units = getattr(fem, "units", None)
+    src_units = bundle.source_units
+    if (
+        host_units is not None
+        and src_units is not None
+        and host_units != src_units
+    ):
+        raise ComposeError(
+            f"compose(label={bundle.label!r}): unit system mismatch between "
+            f"host ({host_units!r}) and source module ({src_units!r})."
+        )
+    merged_units = host_units if host_units is not None else src_units
+
     new_fem = FEMData(
         nodes=new_nodes,
         elements=new_elements,
         info=new_info,
         mesh_selection=new_mesh_selection,
         composed_from=new_composed_from,
+        units=merged_units,
     )
 
     # ── 11. Now append the bundle's records via the with_*
@@ -3175,6 +3191,7 @@ def _rebuilt_fem(fem: "FEMData") -> "FEMData":
         info=fem.info,
         mesh_selection=fem.mesh_selection,
         composed_from=fem.composed_from,
+        units=getattr(fem, "units", None),
     )
 
 
