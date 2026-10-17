@@ -20,9 +20,11 @@ import { chainOf, contourFieldsOf, contourView, deformOf, deformView, elementVer
 import { Store } from "../state/store.ts";
 import { WINDOW_KINDS, type DeclPath, type GaussMode } from "../state/types.ts";
 import { applyTheme } from "../theme/tokens.ts";
+import { mountCollapsibleChrome } from "../ui/collapse.ts";
 import { contourKey, contourShownKey, elementContourKey } from "./contour.ts";
 import { tipPoint } from "./gizmo.ts";
 import { zoomToward } from "./navigation.ts";
+import { mountViewCube } from "./viewcube.ts";
 import { Viewport } from "./viewport.ts";
 
 const bridge = (window as unknown as { viewer: Bridge }).viewer;
@@ -40,6 +42,33 @@ viewport.setDisplacementSource(() => effects.currentDisplacement());
 const panels = [mountHeader(store), mountBanner(store), mountLegend(store), mountInspector(store), mountEmpty(store), mountPhase(store), mountSources(store), mountWindows(store)];
 // V4e1: the section planes panel; its slider box and the view direction come from the viewport.
 panels.push(mountPlanes(store, { box: () => viewport.sliderBox(), viewNormal: () => viewport.viewNormal(), sliding: (on) => viewport.setSliding(on) }));
+panels.push(
+  mountViewCube({
+    visible: () => {
+      const s = store.get();
+      return s.mesh !== null || s.geometry !== null;
+    },
+    heading: () => viewport.nav.heading,
+    projection: () => viewport.projection,
+    setProjection: (mode) => viewport.setProjection(mode),
+    snapTo: (h) => viewport.nav.snapTo(h),
+    orbit: (dYaw, dTilt) => viewport.nav.orbit(viewport.nav.target, dYaw, dTilt),
+    home: () => viewport.home(),
+    subscribe: (fn) => viewport.onViewChange(fn),
+  }),
+);
+const chrome = mountCollapsibleChrome({
+  visible: () => {
+    const s = store.get();
+    return s.mesh !== null || s.provenance.length > 0;
+  },
+  onRailToggle: (collapsed) => viewport.setRailCollapsed(collapsed),
+});
+const unsubChrome = store.subscribe(() => chrome.syncVisibility());
+panels.push(() => {
+  unsubChrome();
+  chrome.dispose();
+});
 window.addEventListener("beforeunload", () => {
   for (const d of panels) d();
   effects.dispose();
