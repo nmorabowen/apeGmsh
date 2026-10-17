@@ -11,6 +11,7 @@
 // highlights the meeting strips across all visible faces at once.
 
 import * as THREE from "three";
+import { THEME_MODES, type ThemeMode } from "../theme/tokens.ts";
 import { el } from "../ui/dom.ts";
 import { CLICK_SLOP_PX } from "./bindings.ts";
 import {
@@ -216,6 +217,8 @@ export interface ViewCubeHost {
   heading(): Heading;
   projection(): ProjectionMode;
   setProjection(mode: ProjectionMode): void;
+  theme?(): ThemeMode;
+  setTheme?(mode: ThemeMode): void;
   snapTo(heading: Heading): void;
   orbit(dYaw: number, dTilt: number): void;
   home(): void;
@@ -234,8 +237,8 @@ const ptsAttr = (pts: readonly (readonly [number, number])[]): string =>
   pts.map(([x, y]) => `${x.toFixed(2)},${y.toFixed(2)}`).join(" ");
 
 /**
- * Mount the Revit-style ViewCube and its Perspective / Orthographic dropdown
- * into `#viewcube`. Returns the cleanup function.
+ * Mount the Revit-style ViewCube and its Perspective / Orthographic and
+ * Dark / Light dropdowns into `#viewcube`. Returns the cleanup function.
  */
 export function mountViewCube(host: ViewCubeHost): () => void {
   const root = document.getElementById("viewcube");
@@ -269,7 +272,18 @@ export function mountViewCube(host: ViewCubeHost): () => void {
   select.title = "Camera projection";
   select.append(optPersp, optOrtho);
 
-  root.append(bar, svg, select);
+  const optDark = el("option", undefined, "Dark");
+  optDark.value = "dark";
+  const optLight = el("option", undefined, "Light");
+  optLight.value = "light";
+  const themeSelect = el("select", "vc-theme");
+  themeSelect.title = "Background theme";
+  themeSelect.append(optDark, optLight);
+
+  const selects = el("div", "vc-selects");
+  selects.append(select, themeSelect);
+
+  root.append(bar, svg, selects);
 
   let hoveredZone: string | null = null;
   let drag: { id: number; x0: number; y0: number; x: number; y: number; zoneId: string | null } | null = null;
@@ -285,6 +299,7 @@ export function mountViewCube(host: ViewCubeHost): () => void {
     root.hidden = !show;
     if (!show) return;
     select.value = host.projection();
+    themeSelect.value = host.theme?.() ?? "dark";
     const h = host.heading();
     const faces = projectCube(h);
     svg.replaceChildren();
@@ -404,6 +419,10 @@ export function mountViewCube(host: ViewCubeHost): () => void {
   select.addEventListener("change", () => {
     const v = select.value as ProjectionMode;
     if ((PROJECTION_MODES as readonly string[]).includes(v)) host.setProjection(v);
+  });
+  themeSelect.addEventListener("change", () => {
+    const v = themeSelect.value as ThemeMode;
+    if ((THEME_MODES as readonly string[]).includes(v)) host.setTheme?.(v);
   });
 
   const unsub = host.subscribe(render);

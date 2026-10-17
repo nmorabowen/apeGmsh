@@ -39,7 +39,7 @@ effects.setFrameTarget(viewport);
 viewport.setStepSource(() => effects.currentStep());
 // V4d: the deformed shape moves the drawn vertices by the displacement the effects computed for the step shown.
 viewport.setDisplacementSource(() => effects.currentDisplacement());
-const panels = [mountHeader(store), mountBanner(store), mountLegend(store), mountInspector(store), mountEmpty(store), mountPhase(store), mountSources(store), mountWindows(store)];
+const panels = [mountHeader(store), mountBanner(store), mountLegend(store, (fn) => viewport.onViewChange(fn)), mountInspector(store), mountEmpty(store), mountPhase(store), mountSources(store), mountWindows(store)];
 // V4e1: the section planes panel; its slider box and the view direction come from the viewport.
 panels.push(mountPlanes(store, { box: () => viewport.sliderBox(), viewNormal: () => viewport.viewNormal(), sliding: (on) => viewport.setSliding(on) }));
 panels.push(
@@ -51,6 +51,11 @@ panels.push(
     heading: () => viewport.nav.heading,
     projection: () => viewport.projection,
     setProjection: (mode) => viewport.setProjection(mode),
+    theme: () => viewport.theme,
+    setTheme: (mode) => {
+      applyTheme(document, mode);
+      viewport.setTheme(mode);
+    },
     snapTo: (h) => viewport.nav.snapTo(h),
     orbit: (dYaw, dTilt) => viewport.nav.orbit(viewport.nav.target, dYaw, dTilt),
     home: () => viewport.home(),

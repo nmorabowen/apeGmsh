@@ -15,7 +15,7 @@
 import * as THREE from "three";
 import type { BlobStore } from "../state/blobs.ts";
 import type { State } from "../state/types.ts";
-import { DARK, toHexNumber } from "../theme/tokens.ts";
+import { DARK, themeTokens, toHexNumber, type ThemeMode } from "../theme/tokens.ts";
 
 /** The layer the highlight objects also live on; the mask pass renders it alone. */
 export const HALO_LAYER = 1;
@@ -273,6 +273,11 @@ export class SelectionHalo {
       }),
     );
     this.pass.add(this.quad);
+  }
+
+  /** Update the halo ring colour for the active theme. */
+  setTheme(mode: ThemeMode): void {
+    (this.quad.material.uniforms["colour"]!.value as THREE.Color).setHex(toHexNumber(themeTokens(mode).halo));
   }
 
   /** The canvas size in CSS pixels and the device pixel ratio; the mask follows on its next use. */
