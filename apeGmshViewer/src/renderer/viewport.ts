@@ -28,7 +28,18 @@ import { roleColouring } from "../state/roles.ts";
 import type { Box } from "../state/clip.ts";
 import type { DeclPath, GeometryInfo, LegendEntry, MeshInfo, Pick } from "../state/types.ts";
 import { DARK, toHexNumber } from "../theme/tokens.ts";
-import { headingOf, Navigator, nearestHit, type Heading } from "./navigation.ts";
+import {
+  DEFAULT_FOV_DEG,
+  depthOf,
+  headingOf,
+  ISO_FORWARD,
+  Navigator,
+  nearestHit,
+  syncOrthoFrustum,
+  type Heading,
+  type ProjectionMode,
+  type ViewCamera,
+} from "./navigation.ts";
 import { fitDistance, type Focus, hitElement, SELECTION_COLOUR, SelectionHalo } from "./selection.ts";
 import { edgeMask, elementMaskOf, sameDrawn, visibleMaps, type Drawn } from "./visible.ts";
 
@@ -58,8 +69,12 @@ interface MeshIndex {
 
 export class Viewport {
   readonly renderer: THREE.WebGLRenderer;
-  readonly camera: THREE.PerspectiveCamera;
+  readonly perspCamera: THREE.PerspectiveCamera;
+  readonly orthoCamera: THREE.OrthographicCamera;
   readonly nav: Navigator;
+  private activeProjection: ProjectionMode = "perspective";
+  private readonly keyLight: THREE.DirectionalLight;
+  private readonly viewListeners = new Set<() => void>();
   private readonly scene = new THREE.Scene();
   private readonly raycaster = new THREE.Raycaster();
   private readonly host: HTMLElement;
@@ -105,9 +120,20 @@ export class Viewport {
   readonly caps = new CapLayer();
   /** V4e3: a panel offset slider is held: the caps wait for its release, as for a gizmo drag. */
   private sliding = false;
+  private railCollapsed = false;
   /** V4d: what the drawn positions show now: `base`, or the displacement key and scale; null with no mesh. */
   get deformApplied(): string | null {
     return this.full?.key ?? null;
+  }
+
+  /** The active camera (perspective by default, or orthographic). */
+  get camera(): ViewCamera {
+    return this.activeProjection === "orthographic" ? this.orthoCamera : this.perspCamera;
+  }
+
+  /** Current camera projection mode. */
+  get projection(): ProjectionMode {
+    return this.activeProjection;
   }
 
   constructor(host: HTMLElement, store: Store, blobs: BlobStore) {
@@ -121,14 +147,16 @@ export class Viewport {
     this.renderer.localClippingEnabled = true;
     host.appendChild(this.renderer.domElement);
 
-    this.camera = new THREE.PerspectiveCamera(35, 1, 0.01, 1000);
+    this.perspCamera = new THREE.PerspectiveCamera(DEFAULT_FOV_DEG, 1, 0.01, 1000);
+    this.orthoCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, -1000, 1000);
     // Z up, always: the navigator's heading has no roll, so Z stays vertical on screen.
-    this.camera.up.set(0, 0, 1);
-    this.scene.add(this.camera);
+    this.perspCamera.up.set(0, 0, 1);
+    this.orthoCamera.up.set(0, 0, 1);
+    this.scene.add(this.perspCamera, this.orthoCamera);
     this.scene.add(new THREE.HemisphereLight(toHexNumber(DARK.skyLight), toHexNumber(DARK.groundLight), 1.6));
-    const key = new THREE.DirectionalLight(toHexNumber(DARK.keyLight), 1.4);
-    key.position.set(0.5, 0.8, 1);
-    this.camera.add(key);
+    this.keyLight = new THREE.DirectionalLight(toHexNumber(DARK.keyLight), 1.4);
+    this.keyLight.position.set(0.5, 0.8, 1);
+    this.perspCamera.add(this.keyLight);
     this.scene.add(this.content, this.highlight, this.geometryLayer);
     // V4d: the ghost and the missing-displacement markers (shown with the mesh, never on the geometry phase).
     this.scene.add(this.ghost, this.markers);
@@ -149,6 +177,47 @@ export class Viewport {
     this.onState(store.get(), null);
   }
 
+  /** Subscribe to camera heading, projection, or model visibility changes (for the ViewCube). */
+  onViewChange(fn: () => void): () => void {
+    this.viewListeners.add(fn);
+    return () => this.viewListeners.delete(fn);
+  }
+
+  private notifyView(): void {
+    for (const fn of this.viewListeners) fn();
+  }
+
+  /** Switch between perspective and orthographic projection, preserving target scale and pose. */
+  setProjection(mode: ProjectionMode): void {
+    if (mode === this.activeProjection) return;
+    const m = this.store.get().mesh ?? this.geometryInfo;
+    const r = m?.radius ?? 1;
+    if (mode === "orthographic") {
+      this.nav.orthoDistance = Math.max(depthOf(this.perspCamera, this.nav.target), 1e-3 * r);
+      this.orthoCamera.position.copy(this.perspCamera.position);
+      this.orthoCamera.quaternion.copy(this.perspCamera.quaternion);
+      this.orthoCamera.updateMatrixWorld();
+    } else {
+      this.perspCamera.position.copy(this.orthoCamera.position);
+      this.perspCamera.quaternion.copy(this.orthoCamera.quaternion);
+      const back = new THREE.Vector3(0, 0, 1).applyQuaternion(this.perspCamera.quaternion);
+      const curDepth = depthOf(this.perspCamera, this.nav.target);
+      this.perspCamera.position.addScaledVector(back, this.nav.orthoDistance - curDepth);
+      this.perspCamera.updateMatrixWorld();
+    }
+    this.activeProjection = mode;
+    this.camera.add(this.keyLight);
+    this.syncCameraFrustum();
+    this.nav.updated();
+  }
+
+  /** Reset the view to the default isometric (or 2-D plan) orientation and fit the whole model. */
+  home(): void {
+    const s = this.store.get();
+    if (this.geometryInfo && (s.phase.at?.kind === "geometry" || !s.mesh)) this.frameGeometry(this.geometryInfo, null);
+    else if (s.mesh) this.frame(s.mesh, null, null);
+  }
+
   /**
    * V4e2: the canvas's pointer listeners, the gizmo's first: listeners on one
    * target run in the order they were added, so a press the gizmo claims
@@ -158,6 +227,7 @@ export class Viewport {
    */
   private wireInput(): { gizmo: GizmoInteractor; nav: Navigator } {
     const element = this.renderer.domElement;
+    const self = this;
     const gizmo = new GizmoInteractor({
       // V4e3: a release ends the drag in the gizmo's own handler, and moves no plane; the caps are sliced right after it.
       element: releaseAware(element, () => this.settleCaps()),
@@ -178,7 +248,9 @@ export class Viewport {
       select: (x, y) => this.selectAt(x, y),
     });
     const nav = new Navigator({
-      camera: this.camera,
+      get camera(): ViewCamera {
+        return self.camera;
+      },
       element: this.renderer.domElement,
       keys: window,
       bounds: () => {
@@ -198,7 +270,11 @@ export class Viewport {
         if (this.geometryInfo && (s.phase.at?.kind === "geometry" || !s.mesh)) this.frameGeometry(this.geometryInfo, nav.heading);
         else this.store.dispatch({ type: "frameSelection" });
       },
-      changed: () => this.requestRender(),
+      changed: () => {
+        this.syncCameraFrustum();
+        this.notifyView();
+        this.requestRender();
+      },
     });
     return { gizmo, nav };
   }
@@ -388,7 +464,10 @@ export class Viewport {
     this.ghost.visible = !onGeometry && this.ghostWanted(s);
     // A geometry opened alone is framed when it first shows.
     if (show && !wasShown && !s.mesh && this.geometryInfo) this.frameGeometry(this.geometryInfo);
-    if (!prev || s.geometry !== prev.geometry || s.phase !== prev.phase || s.artifacts !== prev.artifacts) this.requestRender();
+    if (!prev || s.geometry !== prev.geometry || s.phase !== prev.phase || s.artifacts !== prev.artifacts) {
+      this.notifyView();
+      this.requestRender();
+    }
   }
 
   private setGeometry(g: GeometryInfo | null): void {
@@ -421,20 +500,35 @@ export class Viewport {
     }
   }
 
+  /** Collapse or expand the right rail, updating the camera frustum offset immediately. */
+  setRailCollapsed(collapsed: boolean): void {
+    if (this.railCollapsed === collapsed) return;
+    this.railCollapsed = collapsed;
+    this.syncCameraFrustum();
+    this.requestRender();
+  }
+
   /** Width kept clear for the right rail (inspector, sources): the model is framed left of it. */
   private panelWidth(): number {
+    if (this.railCollapsed) return 0;
     const w = this.host.clientWidth || 1;
     return w > 1000 ? INSPECTOR_PX : 0;
+  }
+
+  private syncCameraFrustum(): void {
+    const w = this.host.clientWidth || 1, h = this.host.clientHeight || 1;
+    // A virtual frame P px wider, viewed from x = P: its centre lands at (w - P) / 2.
+    const p = this.panelWidth();
+    this.perspCamera.aspect = (w + p) / h;
+    this.perspCamera.setViewOffset(w + p, h, p, 0, w, h);
+    this.perspCamera.updateProjectionMatrix();
+    if (this.nav) syncOrthoFrustum(this.orthoCamera, this.nav.orthoDistance, w + p, h, p, w, h, this.perspCamera.fov);
   }
 
   private resize(): void {
     const w = this.host.clientWidth || 1, h = this.host.clientHeight || 1;
     this.renderer.setSize(w, h);
-    // A virtual frame P px wider, viewed from x = P: its centre lands at (w - P) / 2.
-    const p = this.panelWidth();
-    this.camera.aspect = (w + p) / h;
-    this.camera.setViewOffset(w + p, h, p, 0, w, h);
-    this.camera.updateProjectionMatrix();
+    this.syncCameraFrustum();
     for (const m of this.lineMaterials) m.resolution.set(w, h);
     this.halo.resize(w, h, this.renderer.getPixelRatio());
     this.requestRender();
@@ -533,6 +627,7 @@ export class Viewport {
     this.full = null;
     this.clear(this.ghost);
     this.clear(this.markers);
+    this.notifyView();
     if (!info) return this.requestRender();
     this.indexOf(info);
     this.rebuild(this.store.get(), info);
@@ -674,11 +769,12 @@ export class Viewport {
       }
       const planar = z1 - z0 <= 1e-6 * r;
       // Plan: looking down -Z with +Y up the screen. Isometric: from (1, -1.3, 0.9).
-      heading = planar ? { yaw: 0, tilt: 0 } : headingOf(new THREE.Vector3(-1.0, 1.3, -0.9));
+      heading = planar ? { yaw: 0, tilt: 0 } : headingOf(ISO_FORWARD.clone());
     }
     this.nav.setHeading(heading);
     // Fit the bounding sphere in the free area, vertically and horizontally.
-    const dist = fitDistance(r, this.camera.fov, (this.host.clientWidth || 1) - this.panelWidth(), this.host.clientHeight || 1);
+    const dist = fitDistance(r, this.perspCamera.fov, (this.host.clientWidth || 1) - this.panelWidth(), this.host.clientHeight || 1);
+    this.nav.orthoDistance = dist;
     const back = new THREE.Vector3(0, 0, 1).applyQuaternion(this.camera.quaternion);
     this.camera.position.copy(c).addScaledVector(back, dist);
     this.nav.target.copy(c);

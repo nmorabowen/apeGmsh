@@ -95,8 +95,8 @@ html, body {
 /* The right rail (V2g, design brief on #1426): the inspector on top, the
    sources below, never overlapping. The rail itself takes no clicks. */
 #rail {
-  position: fixed; top: 14px; right: 14px; bottom: 14px; width: 470px;
-  display: flex; flex-direction: column; justify-content: flex-end; gap: 10px;
+  position: fixed; top: 14px; right: 20px; bottom: 14px; width: 470px;
+  display: flex; flex-direction: column; justify-content: flex-start; gap: 10px;
   pointer-events: none;
 }
 #rail > * { pointer-events: auto; }
@@ -264,7 +264,7 @@ code { font-family: var(--mono); }
 /* V4e1: the section planes panel (ADR 0083 Part 4), at the top of the rail,
    above the inspector; it scrolls past 45 % of the rail. */
 #planes {
-  flex: 0 0 auto; min-height: 0; max-height: 45%; margin-bottom: auto;
+  flex: 0 0 auto; min-height: 0; max-height: 45%;
   overflow: auto; padding: 10px 12px; border-radius: 10px;
   background: var(--panel); border: 1px solid var(--line);
 }
@@ -298,3 +298,89 @@ code { font-family: var(--mono); }
 .planes-notice { color: var(--error); font-size: 13px; margin: 0 0 6px; }
 .planes-foot { margin: 8px 0 0; padding-top: 8px; border-top: 1px solid var(--line); flex-wrap: wrap; }
 .planes-capnote { margin: 6px 0 0; }
+
+/* ViewCube and camera projection selector (Perspective / Orthographic) */
+#viewcube {
+  position: fixed; top: 14px; right: 502px; width: 132px;
+  display: flex; flex-direction: column; align-items: center; gap: 6px;
+  padding: 8px; border-radius: 10px;
+  background: var(--panel); border: 1px solid var(--line);
+  user-select: none;
+}
+#viewcube[hidden] { display: none; }
+@media (max-width: 1000px) {
+  #viewcube { right: 24px; }
+}
+.vc-bar { display: flex; width: 100%; justify-content: space-between; gap: 4px; }
+.vc-btn {
+  flex: 1; padding: 1px 0; border-radius: 5px; cursor: pointer;
+  font: 600 13px var(--font); color: var(--text);
+  background: var(--hover); border: 1px solid var(--line);
+}
+.vc-btn:hover { border-color: var(--accent); color: var(--accent); }
+.vc-svg { width: 116px; height: 116px; display: block; cursor: grab; touch-action: none; }
+.vc-svg:active { cursor: grabbing; }
+.vc-ring { fill: none; stroke: var(--line); stroke-width: 2.5; pointer-events: none; }
+.vc-compass {
+  fill: var(--muted); font: 700 13px var(--font);
+  pointer-events: none; user-select: none;
+}
+.vc-face-bg { fill: var(--bg-1); pointer-events: none; }
+.vc-patch {
+  fill: var(--faint); stroke: none; stroke-width: 0.9;
+  cursor: pointer; transition: fill 60ms ease;
+}
+#viewcube:hover .vc-patch { stroke: var(--line); }
+.vc-patch.hovered, #viewcube:hover .vc-patch.hovered { fill: var(--accent); stroke: var(--accent); }
+.vc-face-outline {
+  fill: none; stroke: var(--drop-border); stroke-width: 1.8;
+  pointer-events: none;
+}
+.vc-label {
+  fill: var(--text); font: 700 17px var(--font); letter-spacing: 0.04em;
+  pointer-events: none; user-select: none;
+}
+.vc-projection {
+  width: 100%; font: 600 12px var(--font); color: var(--text);
+  background: var(--hover); border: 1px solid var(--line);
+  border-radius: 5px; padding: 3px 6px; cursor: pointer;
+}
+
+/* Universal collapsible panels (ui/collapse.ts): every <aside> in #rail and #legend */
+#rail > aside > h3:first-child, #legend > h3:first-child {
+  cursor: pointer; user-select: none;
+}
+#rail > aside > h3:first-child::before, #legend > h3:first-child::before {
+  content: "\25be"; font-size: 11px; color: var(--muted);
+}
+#rail > aside > h3:first-child:hover::before, #legend > h3:first-child:hover::before {
+  color: var(--accent);
+}
+#rail > aside[data-collapsed="true"] > h3:first-child::before, #legend[data-collapsed="true"] > h3:first-child::before {
+  content: "\25b8";
+}
+#rail > aside[data-collapsed="true"], #legend[data-collapsed="true"] {
+  flex: 0 0 auto; overflow: hidden; padding-top: 8px; padding-bottom: 8px;
+}
+#rail > aside[data-collapsed="true"] > h3:first-child, #legend[data-collapsed="true"] > h3:first-child {
+  margin-bottom: 0;
+}
+#rail > aside[data-collapsed="true"] > :not(:first-child), #legend[data-collapsed="true"] > :not(:first-child) {
+  display: none;
+}
+#inspector[data-collapsed="true"] + #sources { max-height: 100%; }
+
+/* Right-rail side drawer toggle (#rail-toggle): always anchored on the right edge */
+#rail-toggle {
+  position: fixed; top: 50%; right: 0; transform: translateY(-50%);
+  width: 16px; height: 52px; padding: 0; border-radius: 6px 0 0 6px;
+  cursor: pointer; font: 700 15px var(--font); color: var(--muted);
+  background: var(--panel); border: 1px solid var(--line); border-right: none;
+}
+#rail-toggle:hover { color: var(--accent); border-color: var(--accent); }
+#rail-toggle[hidden] { display: none; }
+body[data-rail-collapsed="true"] #rail { display: none; }
+body[data-rail-collapsed="true"] #viewcube { right: 24px; }
+body[data-rail-collapsed="true"] #windows { right: 24px; }
+
+
