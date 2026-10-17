@@ -27,7 +27,7 @@
 import type { Event, State } from "../../state/store.ts";
 import { declOfTag } from "../../state/selectors.ts";
 import type { Decl, DeclPath, DeclRecord, DeclValue, Definitions } from "../../state/types.ts";
-import { el } from "../../ui/dom.ts";
+import { el, isSelectAdd } from "../../ui/dom.ts";
 import type { WindowView } from "./view.ts";
 
 /** The families the window lists, in display order, with each group's heading. */
@@ -283,7 +283,8 @@ export function materialsOf(s: State): MaterialsData {
 
 // ---- DOM --------------------------------------------------------------------
 
-const select = (act: (e: Event) => void, decl: DeclPath): void => act({ type: "select", pick: { decl, at: null, nodes: null } });
+const select = (act: (e: Event) => void, decl: DeclPath, add = false): void =>
+  act({ type: add ? "selectAdd" : "select", pick: { decl, at: null, nodes: null } });
 
 function refEl(r: Ref, act: (e: Event) => void): HTMLElement {
   const a = el("span", "window-ref", r.label);
@@ -294,7 +295,7 @@ function refEl(r: Ref, act: (e: Event) => void): HTMLElement {
     a.style.cssText = "color: var(--accent); text-decoration: underline; cursor: pointer;";
     a.addEventListener("click", (e) => {
       e.stopPropagation();
-      select(act, target);
+      select(act, target, isSelectAdd(e));
     });
   } else {
     a.title = r.why ?? "";
@@ -411,7 +412,7 @@ function rowEl(r: MaterialRow, act: (e: Event) => void): HTMLElement {
   const row = el("div", "window-row clickable");
   row.dataset["decl"] = r.path;
   row.title = `select ${r.path}`;
-  row.addEventListener("click", () => select(act, r.path));
+  row.addEventListener("click", (e) => select(act, r.path, isSelectAdd(e)));
   const head = el("div", "window-row-head");
   head.append(el("span", "window-row-title", r.handle), el("span", "node-type", r.type));
   if (r.tag !== null) head.append(el("span", "window-row-decl", `@${r.tag}`));

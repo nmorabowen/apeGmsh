@@ -6,7 +6,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import * as THREE from "three";
-import { bindingFor, buttonOf, keyAction, POINTER_BINDINGS, WHEEL_ACTION, type Button } from "../src/renderer/bindings.ts";
+import { bindingFor, buttonOf, isSelectAdd, keyAction, POINTER_BINDINGS, WHEEL_ACTION, type Button } from "../src/renderer/bindings.ts";
 import {
   clampZoom, headingOf, Navigator, nearestHit, orbitAbout, orientationOf, panBy, pivotFor, snapAbout,
   syncOrthoFrustum, zoomToward, ZOOM_MAX, ZOOM_MIN, type Heading, type ListenTarget, type NavHost, type ViewCamera,
@@ -71,7 +71,7 @@ test("CAD convention: left selects and never orbits, right orbits, middle and sh
   assert.equal(WHEEL_ACTION, "zoom-to-cursor");
 });
 
-test("DOM buttons map to the table; back/forward are unbound; F fits", () => {
+test("DOM buttons map to the table; back/forward are unbound; F fits, Escape clears selection, E toggles edges", () => {
   assert.equal(buttonOf(0), "left");
   assert.equal(buttonOf(1), "middle");
   assert.equal(buttonOf(2), "right");
@@ -79,7 +79,14 @@ test("DOM buttons map to the table; back/forward are unbound; F fits", () => {
   assert.equal(buttonOf(4), null);
   assert.equal(keyAction("f"), "fit");
   assert.equal(keyAction("F"), "fit");
+  assert.equal(keyAction("Escape"), "clearSelection");
+  assert.equal(keyAction("e"), "toggleEdges");
+  assert.equal(keyAction("E"), "toggleEdges");
   assert.equal(keyAction("g"), null);
+  assert.equal(isSelectAdd({}), false);
+  assert.equal(isSelectAdd({ shiftKey: true }), true);
+  assert.equal(isSelectAdd({ ctrlKey: true }), true);
+  assert.equal(isSelectAdd({ metaKey: true }), true);
 });
 
 // ---- pivot ------------------------------------------------------------------
@@ -331,3 +338,46 @@ test("orthographic: matches perspective scale at the target depth, pans pixel-fo
   close(afterZoom[1], beforeZoom[1], 1e-6, "ortho zoom y px");
 });
 
+test("modifier clicks pass add=true for Shift, Ctrl and Meta; Escape clears selection and E toggles edges", () => {
+  const element = new FakeTarget(), keys = new FakeTarget();
+  const clicks: [number, number, boolean][] = [];
+  let cleared = 0, toggledEdges = 0, fitted = 0;
+  const nav = new Navigator({
+    camera: camera(new THREE.Vector3(0, -10, 0), { yaw: 0, tilt: Math.PI / 2 }),
+    element,
+    keys,
+    bounds: () => ({ center: new THREE.Vector3(), radius: 1 }),
+    hitAt: () => null,
+    rayAt: () => new THREE.Ray(),
+    select: (x, y, add = false) => clicks.push([x, y, add]),
+    fit: () => fitted++,
+    clearSelection: () => cleared++,
+    toggleEdges: () => toggledEdges++,
+    changed: () => {},
+  });
+  element.fire("pointerdown", { ...press(1, 0, 10, 20), shiftKey: false, ctrlKey: false, metaKey: false });
+  element.fire("pointerup", { ...press(1, 0, 10, 20), shiftKey: false, ctrlKey: false, metaKey: false });
+  element.fire("pointerdown", { ...press(2, 0, 30, 40), shiftKey: true });
+  element.fire("pointerup", { ...press(2, 0, 30, 40), shiftKey: true });
+  element.fire("pointerdown", { ...press(3, 0, 50, 60), ctrlKey: true });
+  element.fire("pointerup", { ...press(3, 0, 50, 60), ctrlKey: true });
+  element.fire("pointerdown", { ...press(4, 0, 70, 80), metaKey: true });
+  element.fire("pointerup", { ...press(4, 0, 70, 80), metaKey: true });
+  assert.deepEqual(clicks, [
+    [10, 20, false],
+    [30, 40, true],
+    [50, 60, true],
+    [70, 80, true],
+  ]);
+  keys.fire("keydown", { key: "Escape", ctrlKey: false, altKey: false, metaKey: false, repeat: false, target: null });
+  keys.fire("keydown", { key: "e", ctrlKey: false, altKey: false, metaKey: false, repeat: false, target: null });
+  keys.fire("keydown", { key: "E", ctrlKey: false, altKey: false, metaKey: false, repeat: false, target: null });
+  keys.fire("keydown", { key: "f", ctrlKey: false, altKey: false, metaKey: false, repeat: false, target: null });
+  // Inside an input or with Ctrl/Meta held, key shortcuts do not fire.
+  keys.fire("keydown", { key: "e", ctrlKey: false, altKey: false, metaKey: false, repeat: false, target: { tagName: "INPUT" } });
+  keys.fire("keydown", { key: "Escape", ctrlKey: true, altKey: false, metaKey: false, repeat: false, target: null });
+  assert.equal(cleared, 1);
+  assert.equal(toggledEdges, 2);
+  assert.equal(fitted, 1);
+  nav.dispose();
+});

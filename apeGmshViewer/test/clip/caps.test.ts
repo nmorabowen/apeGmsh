@@ -23,7 +23,7 @@ import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import * as THREE from "three";
-import { CAP_FILL, CAP_STEP, capColours, CapLayer, releaseAware, solidTable } from "../../src/renderer/caps.ts";
+import { CAP_FILL, CAP_STEP, capColours, capKeys, CapLayer, releaseAware, solidTable } from "../../src/renderer/caps.ts";
 import { sliderBox, SectionClip } from "../../src/renderer/clip.ts";
 import { toLinear } from "../../src/renderer/contour.ts";
 import { GizmoInteractor, PlaneGizmos } from "../../src/renderer/gizmo.ts";
@@ -397,6 +397,48 @@ test("F-TOGGLE: Contour on cut face off removes every cap; on brings them back",
   capsNow(h, caps);
   assert.equal(caps.count, 0);
   assert.throws(() => reduce(initialState, { type: "setCutFace", on: "yes" as unknown as boolean }), RangeError);
+});
+
+test("surface opacity presets: caps are opaque at 1 (solid), translucent without depthWrite at 0.2 (ghost, no re-slice), and hidden at 0 (off)", async () => {
+  const h = await opened();
+  plane(h, [0, 0, -1], -2.2);
+  const caps = capsNow(h);
+  assert.equal(caps.count, 1);
+  assert.equal(caps.settledFor(h.store.get()), true);
+  const mat = caps.drawn[0]!.mesh.material as THREE.MeshStandardMaterial;
+  assert.equal(mat.opacity, 1);
+  assert.equal(mat.transparent, false);
+  assert.equal(mat.depthWrite, true);
+
+  // Switching to ghost (0.2) updates the cap material in place without slicing again.
+  const slicesBeforeGhost = caps.slices;
+  h.store.dispatch({ type: "setOpacity", value: 0.2 });
+  assert.equal(caps.settledFor(h.store.get()), false, "unsettled before sync reflects the new opacity");
+  assert.equal(caps.sync(h.store.get(), h.blobs, h.effects.currentStep(), false), true);
+  assert.equal(caps.slices, slicesBeforeGhost, "switching to ghost does not re-slice");
+  assert.equal(caps.count, 1);
+  assert.equal(caps.settledFor(h.store.get()), true);
+  assert.ok(Math.abs(mat.opacity - 0.2) < 1e-6);
+  assert.equal(mat.transparent, true);
+  assert.equal(mat.depthWrite, false, "ghost cap does not depth-occlude 1-D elements behind it");
+
+  // Switching to off (0) hides and clears the caps so no cut face floats in space.
+  h.store.dispatch({ type: "setOpacity", value: 0 });
+  assert.equal(capKeys(h.store.get()), null, "capKeys is null when surface opacity is 0");
+  assert.equal(caps.sync(h.store.get(), h.blobs, h.effects.currentStep(), false), true);
+  assert.equal(caps.count, 0);
+  assert.equal(caps.root.visible, false);
+  assert.equal(caps.root.children.length, 0);
+  assert.equal(caps.settledFor(h.store.get()), true);
+
+  // Returning to solid (1) restores the opaque cap.
+  h.store.dispatch({ type: "setOpacity", value: 1 });
+  capsNow(h, caps);
+  assert.equal(caps.count, 1);
+  assert.equal(mat.opacity, 1);
+  assert.equal(mat.transparent, false);
+  assert.equal(mat.depthWrite, true);
+  assert.equal(caps.settledFor(h.store.get()), true);
 });
 
 test("F-TRIM: two planes trim each other's caps: each lies in the other's kept half", async () => {

@@ -31,6 +31,7 @@ export type Candidates = Record<Kind, string>;
 const SUFFIXES: readonly (readonly [string, Kind])[] = [
   [".geometry.h5", "geometry"],
   [".results.h5", "results"],
+  [".ladruno", "results"],
   [".h5", "model"],
 ];
 
@@ -51,13 +52,13 @@ export function classify(path: string): { kind: Kind; stem: string } {
       return { kind, stem: path.slice(0, path.length - suffix.length) };
     }
   }
-  throw new Error(`apeGmshViewer opens <stem>.h5, <stem>.geometry.h5 or <stem>.results.h5; got ${path}`);
+  throw new Error(`apeGmshViewer opens <stem>.h5, <stem>.geometry.h5, <stem>.ladruno or <stem>.results.h5; got ${path}`);
 }
 
 /**
- * The paths of the set `opened` belongs to: the conventional name for each
- * kind, except the opened file's own kind, which keeps the opened spelling.
- */
+   * The paths of the set `opened` belongs to: the conventional name for each
+   * kind, except the opened file's own kind, which keeps the opened spelling.
+   */
 export function candidates(opened: string): Candidates {
   const { kind, stem } = classify(opened);
   const c: Candidates = { model: `${stem}.h5`, geometry: `${stem}.geometry.h5`, results: `${stem}.results.h5` };
@@ -68,7 +69,12 @@ export function candidates(opened: string): Candidates {
 /** The set as the disk holds it now: each candidate that exists. */
 export function stemSet(c: Candidates, exists: (p: string) => boolean): OpenSet {
   const has = (p: string) => (exists(p) ? p : null);
-  return { model: has(c.model), geometry: has(c.geometry), results: has(c.results) };
+  let results = has(c.results);
+  if (results === null && c.results.toLowerCase().endsWith(".results.h5")) {
+    const stem = c.results.slice(0, c.results.length - ".results.h5".length);
+    results = has(`${stem}.ladruno`);
+  }
+  return { model: has(c.model), geometry: has(c.geometry), results };
 }
 
 /** The set that opening `path` opens. The opened file must exist. */

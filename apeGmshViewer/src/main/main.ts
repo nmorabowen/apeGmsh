@@ -164,7 +164,8 @@ ipcMain.handle("results:readStep", (_e, req: unknown) => {
     typeof r.stage !== "string" ||
     typeof r.step !== "number" ||
     typeof r.seq !== "number" ||
-    (r.element !== undefined && typeof r.element !== "string")
+    (r.element !== undefined && typeof r.element !== "string") ||
+    (r.lineDiagram !== undefined && typeof r.lineDiagram !== "string")
   ) {
     return { ok: false, seq: -1, error: `results:readStep: malformed request ${JSON.stringify(req)}` };
   }
@@ -184,7 +185,7 @@ ipcMain.handle("results:scan", (e, req: unknown) => {
     !Array.isArray(r.components) ||
     typeof r.magnitude !== "boolean" ||
     typeof r.scanId !== "number" ||
-    (r.source !== undefined && r.source !== "element") ||
+    (r.source !== undefined && r.source !== "element" && r.source !== "line") ||
     // V4c2b: a plan only with an element scan, and only one that checks (state/extrapolation.ts `checkPlan`).
     (r.plan !== undefined && (r.source !== "element" || !checkPlan(r.plan)))
   ) {
@@ -262,7 +263,8 @@ ipcMain.handle("capture:still", async (e, suffix: string) => {
   if (!win) throw new Error("capture: no window");
   const img = await win.webContents.capturePage();
   const size = img.getSize();
-  const path = suffix ? out!.replace(/\.png$/i, "") + `.${suffix}.png` : out!;
+  const safeSuffix = suffix ? suffix.replace(/[\\/]/g, "_") : "";
+  const path = safeSuffix ? out!.replace(/\.png$/i, "") + `.${safeSuffix}.png` : out!;
   if (img.isEmpty() || size.width === 0) {
     writeFileSync(`${out!}.error.txt`, `capturePage returned an empty image for ${path}`);
     return null;

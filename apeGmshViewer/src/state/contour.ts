@@ -37,6 +37,34 @@ const AXES = ["x", "y", "z"] as const;
  */
 const TRANSLATIONAL = new Set(["displacement", "velocity", "acceleration", "displacement_increment", "reaction_force"]);
 
+/** Translational `.ladruno` ON_NODES result families whose vector magnitude is offered. */
+const LADRUNO_TRANSLATIONAL = new Set([
+  "DISPLACEMENT",
+  "VELOCITY",
+  "ACCELERATION",
+  "REACTION_FORCE",
+  "RAYLEIGH_FORCES",
+]);
+
+/** Axis mapping for `.ladruno` ON_NODES `<RESULT>/<label>` component labels. */
+const LADRUNO_AXIS_MAP: Readonly<Record<string, (typeof AXES)[number]>> = {
+  Ux: "x",
+  Uy: "y",
+  Uz: "z",
+  Vx: "x",
+  Vy: "y",
+  Vz: "z",
+  Ax: "x",
+  Ay: "y",
+  Az: "z",
+  Rx: "x",
+  Ry: "y",
+  Rz: "z",
+  X: "x",
+  Y: "y",
+  Z: "z",
+};
+
 /** The key of the magnitude component. A dataset name never has this form (the `|` cannot appear in a vocabulary name). */
 export const MAGNITUDE = "|magnitude|";
 
@@ -63,13 +91,15 @@ export interface NodalField {
 
 /**
  * The nodal fields of a stage's component names, in first-seen order. A name
- * `<field>_<x|y|z>` is an axis component of `<field>`; a name ending in `_`
- * is an unnamed component of the name before it, labelled `[k]` (its
- * position in that field), never a guessed axis; any other name is a scalar
- * field of its own (`pore_pressure`). The magnitude comes first for a
- * translational field with two or more axis components, none of them
- * `refused` (the reader's per-component refusals: a magnitude without a
- * refused axis is not the magnitude).
+ * `<field>_<x|y|z>` is an axis component of `<field>`; a `.ladruno` name
+ * `<RESULT>/<label>` is grouped under `<RESULT>` with its axis label mapped
+ * (`Ux -> x`, `Uy -> y`, `Uz -> z`, etc.); a name ending in `_` is an unnamed
+ * component of the name before it, labelled `[k]` (its position in that
+ * field), never a guessed axis; any other name is a scalar field of its own
+ * (`pore_pressure`). The magnitude comes first for a translational field with
+ * two or more axis components, none of them `refused` (the reader's
+ * per-component refusals: a magnitude without a refused axis is not the
+ * magnitude).
  */
 export function nodalFields(names: readonly string[], refused: readonly { component: string; reason: string }[] = []): NodalField[] {
   const order: string[] = [];
@@ -84,6 +114,15 @@ export function nodalFields(names: readonly string[], refused: readonly { compon
     return p;
   };
   for (const n of names) {
+    const slash = /^([^/]+)\/(.+)$/.exec(n);
+    if (slash) {
+      const field = slash[1]!;
+      const sub = slash[2]!;
+      const axis = LADRUNO_AXIS_MAP[sub];
+      if (axis && !at(field).axis.has(axis)) at(field).axis.set(axis, n);
+      else at(field).other.push(n);
+      continue;
+    }
     const m = /^(.+)_([^_]*)$/.exec(n);
     if (m && (AXES as readonly string[]).includes(m[2]!)) at(m[1]!).axis.set(m[2]!, n);
     else if (m && m[2] === "") at(m[1]!).other.push(n);
@@ -93,13 +132,22 @@ export function nodalFields(names: readonly string[], refused: readonly { compon
     const p = parts.get(name)!;
     const comps: FieldComponent[] = [];
     const axis = AXES.filter((a) => p.axis.has(a)).map((a) => p.axis.get(a)!);
-    const lost = TRANSLATIONAL.has(name) ? refused.filter((r) => AXES.some((a) => r.component === `${name}_${a}`)) : [];
+    const isTranslational = TRANSLATIONAL.has(name) || LADRUNO_TRANSLATIONAL.has(name);
+    const lost = isTranslational
+      ? refused.filter(
+          (r) =>
+            AXES.some((a) => r.component === `${name}_${a}`) ||
+            r.component === name ||
+            r.component.startsWith(`${name}/`),
+        )
+      : [];
     const magnitudeRefused = lost.length ? `${lost.map((r) => r.component).join(", ")} not read (${lost.map((r) => r.reason).join("; ")})` : null;
-    if (TRANSLATIONAL.has(name) && axis.length >= 2 && !magnitudeRefused) comps.push({ key: MAGNITUDE, label: "magnitude", datasets: axis, magnitude: true });
+    if (isTranslational && axis.length >= 2 && !magnitudeRefused) comps.push({ key: MAGNITUDE, label: "magnitude", datasets: axis, magnitude: true });
     for (const a of AXES) if (p.axis.has(a)) comps.push({ key: p.axis.get(a)!, label: a, datasets: [p.axis.get(a)!], magnitude: false });
     let k = comps.filter((c) => !c.magnitude).length;
     for (const o of p.other) {
-      const label = o === name ? o : `[${k}]`;
+      const slash = /^([^/]+)\/(.+)$/.exec(o);
+      const label = slash ? slash[2]! : o === name ? o : `[${k}]`;
       comps.push({ key: o, label, datasets: [o], magnitude: false });
       k++;
     }
@@ -326,6 +374,18 @@ export const CMAPS: Readonly<Record<ContourCmap, Stops>> = {
   ],
 };
 
+const cssRgb = (rgb: readonly number[]): string => `rgb(${rgb.map((c) => Math.round(c * 255)).join(",")})`;
+
+/** A CSS gradient through a colormap's stops (the same table the mesh colours from). */
+export const rampCss = (cmap: ContourCmap): string =>
+  `linear-gradient(to right, ${CMAPS[cmap].map(([t, r, g, b]) => `${cssRgb([r, g, b])} ${(100 * t).toFixed(1)}%`).join(", ")})`;
+
+/** A legend number: four significant digits, exponent form outside 1e-3..1e4. */
+export function fmtValue(v: number): string {
+  if (v === 0) return "0";
+  const a = Math.abs(v);
+  return a >= 1e-3 && a < 1e4 ? String(Number(v.toPrecision(4))) : v.toExponential(3);
+}
 /**
  * The "no data" colour (sRGB): the office's muted grey (theme/tokens.ts),
  * away from every ramp above (test/contour.test.ts checks its distance to

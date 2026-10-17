@@ -27,3 +27,8 @@ export function listen<K extends keyof HTMLElementEventMap>(
   target.addEventListener(type, fn);
   return () => target.removeEventListener(type, fn);
 }
+
+/** Whether a click or pointer event's modifiers toggle in the selection (Shift, Ctrl or Cmd/Meta). */
+export function isSelectAdd(e?: { readonly shiftKey?: boolean; readonly ctrlKey?: boolean; readonly metaKey?: boolean }): boolean {
+  return Boolean(e && (e.shiftKey || e.ctrlKey || e.metaKey));
+}

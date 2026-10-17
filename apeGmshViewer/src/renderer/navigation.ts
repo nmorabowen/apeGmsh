@@ -12,7 +12,7 @@
 // the pivot, which keeps the pivot on the same pixel.
 
 import * as THREE from "three";
-import { bindingFor, buttonOf, CLICK_SLOP_PX, keyAction, type DragAction } from "./bindings.ts";
+import { bindingFor, buttonOf, CLICK_SLOP_PX, isSelectAdd, keyAction, type DragAction } from "./bindings.ts";
 
 export const Z_UP: Readonly<THREE.Vector3> = new THREE.Vector3(0, 0, 1);
 export const DEFAULT_FOV_DEG = 35;
@@ -198,9 +198,11 @@ export interface NavHost {
   hitAt(clientX: number, clientY: number): THREE.Vector3 | null;
   /** The world ray through a client-space point. */
   rayAt(clientX: number, clientY: number): THREE.Ray;
-  select(clientX: number, clientY: number): void;
+  select(clientX: number, clientY: number, add?: boolean): void;
   /** Frame the whole model, keeping the heading. */
   fit(): void;
+  clearSelection?(): void;
+  toggleEdges?(): void;
   changed(): void;
 }
 
@@ -211,6 +213,7 @@ interface Drag {
   id: number;
   action: DragAction | null;
   click: boolean;
+  add: boolean;
   x0: number;
   y0: number;
   x: number;
@@ -299,6 +302,7 @@ export class Navigator {
       id: e.pointerId,
       action: binding.drag,
       click: binding.click === "select",
+      add: isSelectAdd(e),
       x0: e.clientX, y0: e.clientY, x: e.clientX, y: e.clientY,
       pivot: anchor,
       depth: Math.max(depthOf(this.host.camera, anchor), 1e-3 * b.radius),
@@ -332,7 +336,9 @@ export class Navigator {
     if (!d || e.pointerId !== d.id) return;
     this.drag = null;
     if (this.host.element.hasPointerCapture(e.pointerId)) this.host.element.releasePointerCapture(e.pointerId);
-    if (d.click && Math.hypot(e.clientX - d.x0, e.clientY - d.y0) <= CLICK_SLOP_PX) this.host.select(e.clientX, e.clientY);
+    if (d.click && Math.hypot(e.clientX - d.x0, e.clientY - d.y0) <= CLICK_SLOP_PX) {
+      this.host.select(e.clientX, e.clientY, d.add || isSelectAdd(e));
+    }
   }
 
   private onWheel(e: WheelEvent): void {
@@ -363,6 +369,9 @@ export class Navigator {
     if (e.ctrlKey || e.altKey || e.metaKey || e.repeat) return;
     const t = e.target as HTMLElement | null;
     if (t && (t.isContentEditable || t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT")) return;
-    if (keyAction(e.key) === "fit" && this.host.bounds()) this.host.fit();
+    const action = keyAction(e.key);
+    if (action === "fit" && this.host.bounds()) this.host.fit();
+    else if (action === "clearSelection") this.host.clearSelection?.();
+    else if (action === "toggleEdges") this.host.toggleEdges?.();
   }
 }
