@@ -330,4 +330,32 @@ test("every colour in the app comes from src/theme/tokens.ts: no colour literal 
   const m = /backgroundColor:\s*"(#[0-9a-fA-F]{6})"/.exec(mainTs);
   assert.ok(m, "main.ts sets the window background");
   assert.equal(m![1]!.toUpperCase(), DARK.window.toUpperCase(), "the window background equals the token");
+  // Every <select>, <option> and <optgroup> uses the opaque dark background token (--bg-1),
+  // never a translucent rgba token (--hover, --faint, --panel) that leaves Chromium's native popup white.
+  const css = readFileSync(join(src, "renderer", "style.css"), "utf8");
+  assert.match(css, /select,\s*option,\s*optgroup\s*\{[^}]*color:\s*var\(--text\)[^}]*background-color:\s*var\(--bg-1\)/s);
+  const selectClasses = new Set<string>();
+  const inlineOffenders: string[] = [];
+  for (const f of files.filter((p) => p.endsWith(".ts"))) {
+    const text = readFileSync(f, "utf8");
+    for (const hit of text.matchAll(/const\s+(\w+)\s*=\s*el\(\s*["']select["'](?:\s*,\s*["']([^"']+)["'])?\s*\)/g)) {
+      const varName = hit[1]!;
+      for (const cls of (hit[2] ?? "").split(/\s+/).filter(Boolean)) selectClasses.add(cls);
+      const inlineRe = new RegExp(`\\b${varName}\\.style\\b[^;]*var\\(--(?:hover|faint|panel)\\)`);
+      if (inlineRe.test(text)) inlineOffenders.push(`${f.slice(src.length + 1)}: ${varName}`);
+    }
+  }
+  assert.ok(selectClasses.size >= 4, `found select classes: ${[...selectClasses].join(", ")}`);
+  assert.deepEqual(inlineOffenders, []);
+  const checkSelectCss = (sheet: string): string[] => {
+    const bad: string[] = [];
+    for (const block of sheet.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+      const sel = block[1]!.trim(), body = block[2]!;
+      const targetsSelect = /\bselect\b/.test(sel) || [...selectClasses].some((c) => new RegExp(`\\.${c}\\b`).test(sel));
+      if (targetsSelect && /background(?:-color)?\s*:[^;]*var\(--(?:hover|faint|panel)\)/.test(body)) bad.push(`${sel} { ${body.trim()} }`);
+    }
+    return bad;
+  };
+  assert.deepEqual(checkSelectCss(css), []);
+  assert.equal(checkSelectCss(".contour-cmap { background: var(--hover); }").length, 1, "the select CSS lint catches a planted translucent background");
 });

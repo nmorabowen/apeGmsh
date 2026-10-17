@@ -11,9 +11,9 @@ import { test } from "node:test";
 import * as h5wasm from "h5wasm/node";
 import { ResultsHost } from "../../src/main/results.ts";
 import type { ResultsH5 } from "../../src/reader/results.ts";
-import { contourLines } from "../../src/panels/legend.ts";
+import { contourLines, rampCss } from "../../src/panels/legend.ts";
 import { contourKey } from "../../src/renderer/contour.ts";
-import { CMAP_NAMES, climOf, fieldsOf, MAGNITUDE, NO_DATA_RGB, nodalFields, primitiveColours, sampleCmap, vertexValues } from "../../src/state/contour.ts";
+import { CMAPS, CMAP_NAMES, climOf, fieldsOf, MAGNITUDE, NO_DATA_RGB, nodalFields, primitiveColours, sampleCmap, vertexValues } from "../../src/state/contour.ts";
 import { contourFieldsOf, contourView, noticesOf, resolveFieldUnits } from "../../src/state/selectors.ts";
 import type { ContourScan } from "../../src/state/types.ts";
 import { opened, STAGED_RESULTS, tick, until } from "./harness.ts";
@@ -42,13 +42,38 @@ test("an unnamed component (a name ending in `_`) renders as [k], never as a gue
 
 // -- colormaps ------------------------------------------------------------------
 
-test("jet is matplotlib's segment data at its breakpoints; the no-data colour is far from every ramp", () => {
+test("jet is matplotlib's segment data at its breakpoints; diverging wavefield maps centre on white; the no-data colour is far from every ramp", () => {
+  assert.deepEqual(CMAP_NAMES, [
+    "jet", "turbo", "viridis", "plasma", "inferno", "magma",
+    "coolwarm", "RdBu_r", "RdBu", "bwr", "seismic", "BrBG", "Spectral",
+  ]);
+  assert.deepEqual(Object.keys(CMAPS), [...CMAP_NAMES]);
   assert.deepEqual(sampleCmap("jet", 0), [0, 0, 0.5]);
   assert.deepEqual(sampleCmap("jet", 1), [0.5, 0, 0]);
   const mid = sampleCmap("jet", 0.5);
   // red (0.35 -> 0.66: 0 -> 1), green (0.375 -> 0.64: 1), blue (0.34 -> 0.65: 1 -> 0)
   assert.ok(Math.abs(mid[0] - 0.15 / 0.31) < 1e-12 && mid[1] === 1 && Math.abs(mid[2] - 0.15 / 0.31) < 1e-12, `jet(0.5) = ${mid}`);
+  // Symmetric blue-white-red wavefield maps: negative is blue (b > r), zero is neutral white, positive is red (r > b).
+  for (const wf of ["RdBu_r", "bwr", "seismic"] as const) {
+    const lo = sampleCmap(wf, 0), zero = sampleCmap(wf, 0.5), hi = sampleCmap(wf, 1);
+    assert.ok(lo[2] > lo[0] && hi[0] > hi[2], `${wf} endpoints: ${lo} -> ${hi}`);
+    assert.ok(zero[0] > 0.95 && zero[1] > 0.95 && zero[2] > 0.95, `${wf}(0.5) = ${zero}`);
+  }
+  for (const [t0, t1] of [[0, 1], [0.25, 0.75], [0.5, 0.5], [1, 0]] as const) {
+    const a = sampleCmap("RdBu", t0), b = sampleCmap("RdBu_r", t1);
+    assert.ok(Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]) < 1e-12, `RdBu(${t0}) vs RdBu_r(${t1})`);
+  }
   for (const cmap of CMAP_NAMES) {
+    const stops = CMAPS[cmap];
+    assert.equal(stops[0]![0], 0, `${cmap} starts at 0`);
+    assert.equal(stops.at(-1)![0], 1, `${cmap} ends at 1`);
+    for (let i = 0; i < stops.length; i++) {
+      const [t, r, g, b] = stops[i]!;
+      if (i > 0) assert.ok(t > stops[i - 1]![0], `${cmap} stop ${i} strictly increases`);
+      assert.ok(r >= 0 && r <= 1 && g >= 0 && g <= 1 && b >= 0 && b <= 1, `${cmap} stop ${i} in [0,1]`);
+    }
+    const grad = rampCss(cmap);
+    assert.match(grad, /^linear-gradient\(to right, rgb\(\d+,\d+,\d+\) 0\.0%(?:, rgb\(\d+,\d+,\d+\) \d+\.\d%)+, rgb\(\d+,\d+,\d+\) 100\.0%\)$/);
     for (let i = 0; i <= 200; i++) {
       const c = sampleCmap(cmap, i / 200);
       const d = Math.hypot(c[0] - NO_DATA_RGB[0], c[1] - NO_DATA_RGB[1], c[2] - NO_DATA_RGB[2]);
