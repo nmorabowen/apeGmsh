@@ -22,6 +22,14 @@ Quick start
     for mode in results.modes:
         print(mode.mode_index, mode.frequency_hz)
 """
+from ._beam_diagrams import (
+    BeamSpanDiagram,
+    BeamSpanSegmentLoad,
+    parse_ele_load_beam_uniform,
+    parse_membrane_subsegment_loads,
+    reconstruct_beam_element_diagram,
+    reconstruct_beam_span_diagrams,
+)
 from ._plane_recovery import OutOfPlaneRecoveryWarning
 from ._slabs import (
     ElementSlab,
@@ -52,6 +60,13 @@ __all__ = [
     # Explicit one-way MPCO -> .ladruno conversion (ADR 0122 D5)
     "convert_mpco",
     "MPCOConversionRefused",
+    # Exact piecewise-cubic beam span diagram reconstruction
+    "BeamSpanSegmentLoad",
+    "BeamSpanDiagram",
+    "parse_membrane_subsegment_loads",
+    "parse_ele_load_beam_uniform",
+    "reconstruct_beam_element_diagram",
+    "reconstruct_beam_span_diagrams",
     # Ladruno live-telemetry monitor sink (lightweight, not a Results)
     "read_monitor",
     "tail_monitor",

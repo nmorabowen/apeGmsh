@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import Iterable
 
-from ..types import Primitive
+from ..types import Element, Primitive
 from .errors import BridgeError
 
 
@@ -45,11 +45,19 @@ def topological_order(
     for p in primitives:
         _collect_reachable(p, seen)
 
+    non_membrane_elem_ids = [
+        i for i, p in seen.items()
+        if isinstance(p, Element) and type(p).__name__ != "LadrunoMembrane"
+    ]
     # Build adjacency: for each primitive, list its dependencies.
-    deps: dict[int, list[int]] = {
-        i: [id(d) for d in p.dependencies()]
-        for i, p in seen.items()
-    }
+    deps: dict[int, list[int]] = {}
+    for i, p in seen.items():
+        p_deps = [id(d) for d in p.dependencies()]
+        if type(p).__name__ == "LadrunoMembrane":
+            for eid in non_membrane_elem_ids:
+                if eid not in p_deps:
+                    p_deps.append(eid)
+        deps[i] = p_deps
     in_degree: dict[int, int] = {i: 0 for i in seen}
     for i, ds in deps.items():
         for d in ds:

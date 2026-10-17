@@ -44,14 +44,20 @@ Tests install both contexts manually with :func:`set_tag_resolver` +
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+import math
+from typing import ClassVar, Sequence, TYPE_CHECKING
 
 from .._internal.tag_resolution import (
+    ATTR_ELEMENT_NODES,
+    clear_element_emit_context,
     current_element_nodes,
+    current_membrane_context,
     damp_args,
     resolve_tag,
 )
-from .._internal.types import Damping, Element, Primitive, Section
+from .._internal.types import Damping, Element, NDMaterial, Primitive, Section
+from ..node import Node, NodeSet
+from ..section.plate import ElasticMembranePlateSection
 
 if TYPE_CHECKING:
     from ..emitter.base import Emitter
@@ -62,6 +68,7 @@ __all__ = [
     "ShellDKGQ",
     "ASDShellQ4",
     "ASDShellT3",
+    "LadrunoMembrane",
 ]
 
 
@@ -363,3 +370,518 @@ class ASDShellT3(Element):
 
     def dependencies(self) -> tuple[Primitive, ...]:
         return (self.section,)
+
+
+# ---------------------------------------------------------------------------
+# LadrunoMembrane — N-node polygon membrane + load-distribution macro-element
+# ---------------------------------------------------------------------------
+
+_MEMBRANE_METHODS: frozenset[str] = frozenset({
+    "tributary",
+    "oneway",
+    "fea_poisson",
+    "fea_plate",
+})
+
+MembraneNodeRef = int | str | Node
+
+
+def _normalize_node_ref(cls_name: str, field_name: str, val: object) -> int | str:
+    if isinstance(val, bool) or not isinstance(val, (int, str, Node)):
+        raise TypeError(
+            f"{cls_name}: {field_name} must be an integer node tag, Node, or "
+            f"point label/PG name, got {type(val).__name__}."
+        )
+    if isinstance(val, str):
+        if not val:
+            raise ValueError(f"{cls_name}: {field_name} name must be non-empty.")
+        return val
+    tag = int(val.tag) if isinstance(val, Node) else int(val)
+    if tag <= 0:
+        raise ValueError(
+            f"{cls_name}: {field_name} node tag must be > 0, got {tag}."
+        )
+    return tag
+
+
+def _resolve_node_ref(cls_name: str, field_name: str, val: object) -> int:
+    norm = _normalize_node_ref(cls_name, field_name, val)
+    if isinstance(norm, str):
+        raise RuntimeError(
+            f"{cls_name}: {field_name}={norm!r} requires emitting through "
+            "ops.build().emit(...)."
+        )
+    return norm
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class LadrunoMembrane(Element):
+    """``element LadrunoMembrane`` — polygon floor/wall diaphragm and load distributor.
+
+    Ladruno fork (``ELE_TAG = 33022``). Emits one macro-element per polygon
+    panel rather than fanning out per Gmsh cell:
+
+    ``element LadrunoMembrane $tag -nodes $n1 $n2 $n3 ... [-frames $f1 ...]``
+    ``[-supportNodes $sn1 ...] [-hole $h1 $h2 $h3 ...] [-method $method]``
+    ``[-spanAxis $dx $dy [$dz]] [-orthoRatio $eta] [-pressure $q]``
+    ``[-thick $t -mat $matTag | -stiff $E $nu $t] [-rho $rho] [-lumped]``
+    ``[-meshSize $hMax] [-damp $dampTag]``
+    """
+
+    ELE_TAG: ClassVar[int] = 33022
+
+    pg: str | None = None
+    nodes: tuple[MembraneNodeRef, ...] | None = None
+    frames: tuple[int | str | Element, ...] | None = None
+    support_nodes: tuple[int | str | Node | NodeSet, ...] | None = None
+    holes: tuple[tuple[MembraneNodeRef, ...] | str, ...] | None = None
+    method: str = "tributary"
+    span_axis: tuple[float, ...] | None = None
+    ortho_ratio: float | None = None
+    pressure: float | None = None
+    section: Section | None = None
+    mat: NDMaterial | None = None
+    E: float | None = None
+    nu: float | None = None
+    thickness: float | None = None
+    thick: float | None = None
+    stiff: tuple[float, float, float] | None = None
+    rho: float | None = None
+    lumped: bool = False
+    mesh_size: float | None = None
+    damp: Damping | None = None
+
+    def __post_init__(self) -> None:
+        has_pg = self.pg is not None
+        has_nodes = self.nodes is not None
+        if has_pg == has_nodes:
+            raise ValueError(
+                "LadrunoMembrane: pass exactly one of pg= or nodes=(...); got "
+                f"pg={self.pg!r}, nodes={self.nodes!r}."
+            )
+        if has_pg and (not isinstance(self.pg, str) or not self.pg):
+            raise ValueError(
+                f"LadrunoMembrane: pg= must be a non-empty string, got {self.pg!r}."
+            )
+        if self.nodes is not None:
+            if not isinstance(self.nodes, Sequence) or isinstance(self.nodes, (str, bytes)):
+                raise TypeError(
+                    "LadrunoMembrane: nodes= must be a sequence of >= 3 node refs."
+                )
+            raw_n = tuple(self.nodes)
+            if len(raw_n) < 3:
+                raise ValueError(
+                    f"LadrunoMembrane: nodes= requires at least 3 boundary nodes, "
+                    f"got {len(raw_n)}."
+                )
+            n_tup = tuple(
+                _normalize_node_ref("LadrunoMembrane", f"nodes[{idx}]", n)
+                for idx, n in enumerate(raw_n)
+            )
+            if len(set(n_tup)) < 3:
+                raise ValueError(
+                    f"LadrunoMembrane: nodes= requires at least 3 distinct boundary "
+                    f"nodes, got {n_tup!r}."
+                )
+            object.__setattr__(self, "nodes", n_tup)
+
+        if self.frames is not None:
+            if isinstance(self.frames, (int, str, Element)) and not isinstance(self.frames, bool):
+                f_tup: tuple[int | str | Element, ...] = (self.frames,)
+            elif isinstance(self.frames, Sequence) and not isinstance(self.frames, (str, bytes)):
+                f_tup = tuple(self.frames)
+            else:
+                raise TypeError(
+                    "LadrunoMembrane: frames= must be an Element, PG/label name, "
+                    "integer tag, or sequence thereof."
+                )
+            for idx, item in enumerate(f_tup):
+                if isinstance(item, bool) or not isinstance(item, (int, str, Element)):
+                    raise TypeError(
+                        f"LadrunoMembrane: frames[{idx}] must be an int tag, PG/label "
+                        f"name, or Element spec, got {type(item).__name__}."
+                    )
+                if isinstance(item, int) and item <= 0:
+                    raise ValueError(
+                        f"LadrunoMembrane: frames[{idx}] tag must be positive, got {item}."
+                    )
+                if isinstance(item, str) and not item:
+                    raise ValueError(
+                        f"LadrunoMembrane: frames[{idx}] name must be non-empty."
+                    )
+            object.__setattr__(self, "frames", f_tup)
+
+        if self.support_nodes is not None:
+            if (
+                isinstance(self.support_nodes, (int, str, Node, NodeSet))
+                and not isinstance(self.support_nodes, bool)
+            ):
+                raw_sn: tuple[object, ...] = (self.support_nodes,)
+            elif (
+                isinstance(self.support_nodes, Sequence)
+                and not isinstance(self.support_nodes, (str, bytes))
+            ):
+                raw_sn = tuple(self.support_nodes)
+            else:
+                raise TypeError(
+                    "LadrunoMembrane: support_nodes= must be a node tag, Node, "
+                    "NodeSet, PG/label name, or sequence thereof."
+                )
+            norm_sn: list[int | str] = []
+            for idx, sn_item in enumerate(raw_sn):
+                if isinstance(sn_item, bool) or not isinstance(
+                    sn_item, (int, str, Node, NodeSet)
+                ):
+                    raise TypeError(
+                        f"LadrunoMembrane: support_nodes[{idx}] must be an int tag, "
+                        f"Node, NodeSet, or PG/label name, got {type(sn_item).__name__}."
+                    )
+                if isinstance(sn_item, NodeSet):
+                    for t in sn_item.tags:
+                        norm_sn.append(
+                            _normalize_node_ref(
+                                "LadrunoMembrane", f"support_nodes[{idx}]", int(t)
+                            )
+                        )
+                else:
+                    norm_sn.append(
+                        _normalize_node_ref(
+                            "LadrunoMembrane", f"support_nodes[{idx}]", sn_item
+                        )
+                    )
+            object.__setattr__(self, "support_nodes", tuple(norm_sn))
+
+        if self.holes is not None:
+            if isinstance(self.holes, str):
+                if not self.holes:
+                    raise ValueError("LadrunoMembrane: holes= PG name must be non-empty.")
+                h_tup: tuple[tuple[MembraneNodeRef, ...] | str, ...] = (self.holes,)
+            elif isinstance(self.holes, Sequence) and not isinstance(self.holes, (str, bytes)):
+                raw_holes = tuple(self.holes)
+                if raw_holes and all(
+                    isinstance(x, (int, Node)) and not isinstance(x, bool)
+                    for x in raw_holes
+                ):
+                    raw_holes = (raw_holes,)  # type: ignore[assignment]
+                norm_holes: list[tuple[MembraneNodeRef, ...] | str] = []
+                for h_idx, h in enumerate(raw_holes):
+                    if isinstance(h, str):
+                        if not h:
+                            raise ValueError(
+                                f"LadrunoMembrane: holes[{h_idx}] name must be non-empty."
+                            )
+                        norm_holes.append(h)
+                    elif isinstance(h, Sequence) and not isinstance(h, (str, bytes)):
+                        raw_loop = tuple(h)
+                        if len(raw_loop) < 3:
+                            raise ValueError(
+                                f"LadrunoMembrane: holes[{h_idx}] requires at least 3 "
+                                f"nodes, got {len(raw_loop)}."
+                            )
+                        loop = tuple(
+                            _normalize_node_ref(
+                                "LadrunoMembrane", f"holes[{h_idx}][{n_idx}]", n
+                            )
+                            for n_idx, n in enumerate(raw_loop)
+                        )
+                        if len(set(loop)) < 3:
+                            raise ValueError(
+                                f"LadrunoMembrane: holes[{h_idx}] requires at least 3 "
+                                f"distinct nodes, got {loop!r}."
+                            )
+                        norm_holes.append(loop)
+                    else:
+                        raise TypeError(
+                            f"LadrunoMembrane: holes[{h_idx}] must be a sequence of "
+                            f">= 3 node refs or a PG/label name."
+                        )
+                h_tup = tuple(norm_holes)
+            else:
+                raise TypeError(
+                    "LadrunoMembrane: holes= must be a sequence of hole loops or PG names."
+                )
+            object.__setattr__(self, "holes", h_tup)
+
+        if self.method not in _MEMBRANE_METHODS:
+            raise ValueError(
+                f"LadrunoMembrane: method must be one of {sorted(_MEMBRANE_METHODS)}, "
+                f"got {self.method!r}."
+            )
+
+        if self.span_axis is not None:
+            if not isinstance(self.span_axis, Sequence) or isinstance(
+                self.span_axis, (str, bytes)
+            ):
+                raise TypeError("LadrunoMembrane: span_axis= must be a 2- or 3-tuple of floats.")
+            sa = tuple(float(c) for c in self.span_axis)
+            if len(sa) not in (2, 3):
+                raise ValueError(
+                    f"LadrunoMembrane: span_axis= must have 2 or 3 components, got {len(sa)}."
+                )
+            if not all(math.isfinite(c) for c in sa) or math.hypot(*sa) <= 0.0:
+                raise ValueError(
+                    "LadrunoMembrane: span_axis= must be a finite non-zero vector."
+                )
+            object.__setattr__(self, "span_axis", sa)
+
+        if self.ortho_ratio is not None:
+            eta = float(self.ortho_ratio)
+            if not math.isfinite(eta) or eta <= 0.0 or eta > 1.0:
+                raise ValueError(
+                    "LadrunoMembrane: ortho_ratio= must be finite and in (0, 1], "
+                    f"got {self.ortho_ratio!r}."
+                )
+            object.__setattr__(self, "ortho_ratio", eta)
+
+        if self.pressure is not None:
+            q = float(self.pressure)
+            if not math.isfinite(q):
+                raise ValueError(
+                    f"LadrunoMembrane: pressure= must be finite, got {self.pressure!r}."
+                )
+            object.__setattr__(self, "pressure", q)
+
+        if self.thickness is not None and self.thick is not None:
+            if float(self.thickness) != float(self.thick):
+                raise ValueError(
+                    "LadrunoMembrane: pass at most one of thickness= or thick=."
+                )
+        eff_thick = self.thickness if self.thickness is not None else self.thick
+
+        if self.stiff is not None:
+            if (
+                eff_thick is not None
+                or self.E is not None
+                or self.nu is not None
+                or self.mat is not None
+                or self.section is not None
+            ):
+                raise ValueError(
+                    "LadrunoMembrane: stiff= is mutually exclusive with "
+                    "E=/nu=/thickness=/thick=/mat= and section=."
+                )
+            if not isinstance(self.stiff, Sequence) or isinstance(self.stiff, (str, bytes)):
+                raise TypeError("LadrunoMembrane: stiff= must be a 3-tuple (E, nu, t).")
+            st = tuple(float(c) for c in self.stiff)
+            if len(st) != 3:
+                raise ValueError(
+                    f"LadrunoMembrane: stiff= must be a 3-tuple (E, nu, t), got {len(st)} items."
+                )
+            E_val, nu_val, t_val = st
+            if not (math.isfinite(E_val) and E_val > 0.0):
+                raise ValueError(f"LadrunoMembrane: stiff E must be > 0, got {E_val!r}.")
+            if not (math.isfinite(nu_val) and -1.0 < nu_val < 0.5):
+                raise ValueError(
+                    f"LadrunoMembrane: stiff nu must be in (-1, 0.5), got {nu_val!r}."
+                )
+            if not (math.isfinite(t_val) and t_val > 0.0):
+                raise ValueError(f"LadrunoMembrane: stiff t must be > 0, got {t_val!r}.")
+            object.__setattr__(self, "stiff", (E_val, nu_val, t_val))
+            object.__setattr__(self, "E", E_val)
+            object.__setattr__(self, "nu", nu_val)
+            object.__setattr__(self, "thickness", t_val)
+            object.__setattr__(self, "thick", t_val)
+        elif self.E is not None or self.nu is not None:
+            if self.mat is not None or self.section is not None:
+                raise ValueError(
+                    "LadrunoMembrane: E=/nu=/thickness= is mutually exclusive with "
+                    "mat= and section=."
+                )
+            if self.E is None or self.nu is None or eff_thick is None:
+                raise ValueError(
+                    "LadrunoMembrane: E=, nu=, and thickness= must all be provided "
+                    "together for isotropic -stiff."
+                )
+            E_val = float(self.E)
+            nu_val = float(self.nu)
+            t_val = float(eff_thick)
+            if not (math.isfinite(E_val) and E_val > 0.0):
+                raise ValueError(f"LadrunoMembrane: E= must be > 0, got {self.E!r}.")
+            if not (math.isfinite(nu_val) and -1.0 < nu_val < 0.5):
+                raise ValueError(
+                    f"LadrunoMembrane: nu= must be in (-1, 0.5), got {self.nu!r}."
+                )
+            if not (math.isfinite(t_val) and t_val > 0.0):
+                raise ValueError(
+                    f"LadrunoMembrane: thickness= must be > 0, got {eff_thick!r}."
+                )
+            object.__setattr__(self, "E", E_val)
+            object.__setattr__(self, "nu", nu_val)
+            object.__setattr__(self, "thickness", t_val)
+            object.__setattr__(self, "thick", t_val)
+            object.__setattr__(self, "stiff", (E_val, nu_val, t_val))
+        elif self.mat is not None:
+            if self.section is not None:
+                raise ValueError(
+                    "LadrunoMembrane: section= is mutually exclusive with mat=/thickness=."
+                )
+            if eff_thick is None:
+                raise ValueError(
+                    "LadrunoMembrane: thickness= (or thick=) and mat= must be supplied "
+                    "together (-thick $t -mat $matTag)."
+                )
+            t_val = float(eff_thick)
+            if not math.isfinite(t_val) or t_val <= 0.0:
+                raise ValueError(
+                    f"LadrunoMembrane: thickness= must be > 0, got {eff_thick!r}."
+                )
+            if not isinstance(self.mat, NDMaterial):
+                raise TypeError(
+                    f"LadrunoMembrane: mat= must be an NDMaterial, got {type(self.mat).__name__}."
+                )
+            object.__setattr__(self, "thickness", t_val)
+            object.__setattr__(self, "thick", t_val)
+        elif eff_thick is not None:
+            raise ValueError(
+                "LadrunoMembrane: thickness= (or thick=) requires either mat= or both E= and nu=."
+            )
+        elif self.section is not None:
+            if not isinstance(self.section, ElasticMembranePlateSection):
+                raise TypeError(
+                    "LadrunoMembrane: section= must be an ElasticMembranePlateSection "
+                    "(or pass mat=/thickness= or E=/nu=/thickness=); got "
+                    f"{type(self.section).__name__}."
+                )
+
+        if self.rho is not None:
+            r_val = float(self.rho)
+            if not math.isfinite(r_val) or r_val < 0.0:
+                raise ValueError(
+                    f"LadrunoMembrane: rho= must be >= 0, got {self.rho!r}."
+                )
+            object.__setattr__(self, "rho", r_val)
+
+        if self.mesh_size is not None:
+            ms_val = float(self.mesh_size)
+            if not math.isfinite(ms_val) or ms_val <= 0.0:
+                raise ValueError(
+                    f"LadrunoMembrane: mesh_size= must be > 0, got {self.mesh_size!r}."
+                )
+            object.__setattr__(self, "mesh_size", ms_val)
+
+    def _resolve_standalone_context(
+        self,
+    ) -> tuple[tuple[int, ...], tuple[int, ...], tuple[tuple[int, ...], ...]]:
+        """Fallback resolution when ``_emit`` is called outside the bridge build pipeline."""
+        frames_out: list[int] = []
+        if self.frames is not None:
+            for f in self.frames:
+                if isinstance(f, int) and not isinstance(f, bool):
+                    frames_out.append(int(f))
+                else:
+                    raise RuntimeError(
+                        "LadrunoMembrane: frames= containing PG/label names or Element "
+                        "specs requires emitting through ops.build().emit(...)."
+                    )
+        supp_out: list[int] = []
+        if self.support_nodes is not None:
+            for sn in self.support_nodes:
+                if isinstance(sn, int) and not isinstance(sn, bool):
+                    supp_out.append(int(sn))
+                elif isinstance(sn, Node):
+                    supp_out.append(_resolve_node_ref("LadrunoMembrane", "support_nodes", sn))
+                elif isinstance(sn, NodeSet):
+                    supp_out.extend(int(t) for t in sn.tags)
+                else:
+                    raise RuntimeError(
+                        "LadrunoMembrane: support_nodes= containing PG/label names "
+                        "requires emitting through ops.build().emit(...)."
+                    )
+        holes_out: list[tuple[int, ...]] = []
+        if self.holes is not None:
+            for h_idx, h in enumerate(self.holes):
+                if isinstance(h, str):
+                    raise RuntimeError(
+                        "LadrunoMembrane: holes= containing PG/label names "
+                        "requires emitting through ops.build().emit(...)."
+                    )
+                holes_out.append(
+                    tuple(
+                        _resolve_node_ref("LadrunoMembrane", f"holes[{h_idx}][{i}]", n)
+                        for i, n in enumerate(h)
+                    )
+                )
+        return tuple(frames_out), tuple(supp_out), tuple(holes_out)
+
+    def _emit(self, emitter: "Emitter", tag: int) -> None:
+        if getattr(emitter, ATTR_ELEMENT_NODES, None) is not None:
+            nodes = current_element_nodes(emitter)
+        elif self.nodes is not None:
+            nodes = tuple(
+                _resolve_node_ref("LadrunoMembrane", f"nodes[{i}]", n)
+                for i, n in enumerate(self.nodes)
+            )
+        else:
+            nodes = current_element_nodes(emitter)
+
+        if len(nodes) < 3:
+            raise ValueError(
+                f"LadrunoMembrane: expected at least 3 node tags, got {len(nodes)}."
+            )
+
+        ctx = current_membrane_context(emitter)
+        if ctx is not None:
+            frames_tags, support_node_tags, hole_loops = ctx
+        else:
+            frames_tags, support_node_tags, hole_loops = self._resolve_standalone_context()
+
+        args: list[int | float | str] = ["-nodes", *(int(n) for n in nodes)]
+        if frames_tags:
+            args.extend(["-frames", *(int(f) for f in frames_tags)])
+        if support_node_tags:
+            args.extend(["-supportNodes", *(int(sn) for sn in support_node_tags)])
+        for hole_loop in hole_loops:
+            args.extend(["-hole", *(int(h) for h in hole_loop)])
+        args.extend(["-method", self.method])
+        if self.span_axis is not None:
+            args.extend(["-spanAxis", *(float(c) for c in self.span_axis)])
+        if self.ortho_ratio is not None:
+            args.extend(["-orthoRatio", float(self.ortho_ratio)])
+        if self.pressure is not None:
+            args.extend(["-pressure", float(self.pressure)])
+        if self.thickness is not None and self.mat is not None:
+            mat_tag = resolve_tag(emitter, self.mat)
+            args.extend(["-thick", float(self.thickness), "-mat", mat_tag])
+        elif self.stiff is not None:
+            args.extend(["-stiff", *(float(c) for c in self.stiff)])
+        elif isinstance(self.section, ElasticMembranePlateSection):
+            args.extend([
+                "-stiff",
+                float(self.section.E),
+                float(self.section.nu),
+                float(self.section.h),
+            ])
+        eff_rho = self.rho
+        if (
+            eff_rho is None
+            and isinstance(self.section, ElasticMembranePlateSection)
+            and float(self.section.rho) > 0.0
+        ):
+            eff_rho = float(self.section.rho)
+        if eff_rho is not None:
+            args.extend(["-rho", float(eff_rho)])
+        if self.lumped:
+            args.append("-lumped")
+        if self.mesh_size is not None:
+            args.extend(["-meshSize", float(self.mesh_size)])
+        args.extend(damp_args(emitter, self.damp))
+
+        # Clear element-nodes / fem_eid context before emitter.element so
+        # H5Emitter archives the entire flag-prefixed command ("-nodes", ...)
+        # in args/args_str with connectivity=(), preserving round-trip fidelity.
+        clear_element_emit_context(emitter)
+        emitter.element("LadrunoMembrane", tag, *args)
+
+    def dependencies(self) -> tuple[Primitive, ...]:
+        deps: list[Primitive] = []
+        if self.section is not None:
+            deps.append(self.section)
+        if self.mat is not None:
+            deps.append(self.mat)
+        if self.damp is not None:
+            deps.append(self.damp)
+        if self.frames is not None:
+            for f in self.frames:
+                if isinstance(f, Element):
+                    deps.append(f)
+        return tuple(deps)

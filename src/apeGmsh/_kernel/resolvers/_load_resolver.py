@@ -409,6 +409,19 @@ class LoadResolver:
         curve.  Each node receives ``magnitude * Σ(adjacent_edge_len/2)``
         in the direction vector.
         """
+        span = getattr(defn, "span", (0.0, 1.0))
+        if (float(span[0]), float(span[1])) != (0.0, 1.0):
+            raise ValueError(
+                "LineLoadDef with non-default span requires target_form='element'."
+            )
+        if isinstance(defn.magnitude, (tuple, list)) or (
+            defn.q_xyz is not None
+            and len(defn.q_xyz) == 2
+            and isinstance(defn.q_xyz[0], (tuple, list))
+        ):
+            raise ValueError(
+                "LineLoadDef with trapezoidal 2-tuple magnitude or q_xyz requires target_form='element'."
+            )
         if defn.q_xyz is not None:
             q = np.asarray(defn.q_xyz, dtype=float)
         else:
@@ -587,6 +600,19 @@ class LoadResolver:
         """
         from .._consistent_quadrature import integrate_edge
 
+        span = getattr(defn, "span", (0.0, 1.0))
+        if (float(span[0]), float(span[1])) != (0.0, 1.0):
+            raise ValueError(
+                "LineLoadDef with non-default span requires target_form='element'."
+            )
+        if isinstance(defn.magnitude, (tuple, list)) or (
+            defn.q_xyz is not None
+            and len(defn.q_xyz) == 2
+            and isinstance(defn.q_xyz[0], (tuple, list))
+        ):
+            raise ValueError(
+                "LineLoadDef with trapezoidal 2-tuple magnitude or q_xyz requires target_form='element'."
+            )
         basis = getattr(defn, "basis", "lagrange")
         if defn.q_xyz is not None:
             q = np.asarray(defn.q_xyz, dtype=float)
@@ -764,19 +790,78 @@ class LoadResolver:
         element_ids: list[int],
     ) -> list[ElementLoadRecord]:
         """Emit one ElementLoadRecord per beam element with beamUniform params."""
+        span = getattr(defn, "span", (0.0, 1.0))
+        a_l, b_l = float(span[0]), float(span[1])
+        if not (0.0 <= a_l < b_l <= 1.0):
+            raise ValueError(
+                f"LineLoadDef.span=(aL, bL) requires 0.0 <= aL < bL <= 1.0, "
+                f"got ({a_l}, {b_l})."
+            )
         if defn.q_xyz is not None:
-            qx, qy, qz = defn.q_xyz
+            if (
+                isinstance(defn.q_xyz, (tuple, list))
+                and len(defn.q_xyz) == 2
+                and isinstance(defn.q_xyz[0], (tuple, list))
+                and isinstance(defn.q_xyz[1], (tuple, list))
+            ):
+                q1, q2 = defn.q_xyz
+                if len(q1) != 3 or len(q2) != 3:
+                    raise ValueError(
+                        "LineLoadDef.q_xyz trapezoidal 2-tuple requires two 3-tuples, "
+                        f"got {defn.q_xyz!r}."
+                    )
+                qx1, qy1, qz1 = float(q1[0]), float(q1[1]), float(q1[2])
+                qx2, qy2, qz2 = float(q2[0]), float(q2[1]), float(q2[2])
+            else:
+                if not isinstance(defn.q_xyz, (tuple, list)) or len(defn.q_xyz) != 3:
+                    raise ValueError(
+                        f"LineLoadDef.q_xyz must be a 3-tuple or 2-tuple of 3-tuples, got {defn.q_xyz!r}."
+                    )
+                qx1, qy1, qz1 = (
+                    float(defn.q_xyz[0]),
+                    float(defn.q_xyz[1]),
+                    float(defn.q_xyz[2]),
+                )
+                qx2, qy2, qz2 = qx1, qy1, qz1
         else:
-            v = defn.magnitude * _direction_vec(defn.direction)
-            qx, qy, qz = float(v[0]), float(v[1]), float(v[2])
+            dvec = _direction_vec(defn.direction)
+            if isinstance(defn.magnitude, (tuple, list)):
+                if len(defn.magnitude) != 2:
+                    raise ValueError(
+                        f"LineLoadDef.magnitude tuple must have length 2, got {defn.magnitude!r}."
+                    )
+                v1 = float(defn.magnitude[0]) * dvec
+                v2 = float(defn.magnitude[1]) * dvec
+                qx1, qy1, qz1 = float(v1[0]), float(v1[1]), float(v1[2])
+                qx2, qy2, qz2 = float(v2[0]), float(v2[1]), float(v2[2])
+            else:
+                v = float(defn.magnitude) * dvec
+                qx1, qy1, qz1 = float(v[0]), float(v[1]), float(v[2])
+                qx2, qy2, qz2 = qx1, qy1, qz1
+
+        is_full_span = a_l == 0.0 and b_l == 1.0
+        is_uniform = (qx1, qy1, qz1) == (qx2, qy2, qz2)
         out: list[ElementLoadRecord] = []
         for eid in element_ids:
+            if is_full_span and is_uniform:
+                params: dict[str, object] = {"wx": qx1, "wy": qy1, "wz": qz1}
+            else:
+                params = {
+                    "wx": qx1,
+                    "wy": qy1,
+                    "wz": qz1,
+                    "wx_end": qx2,
+                    "wy_end": qy2,
+                    "wz_end": qz2,
+                    "aL": a_l,
+                    "bL": b_l,
+                }
             out.append(ElementLoadRecord(
                 pattern=defn.pattern,
                 name=defn.name,
                 element_id=int(eid),
                 load_type="beamUniform",
-                params={"wx": qx, "wy": qy, "wz": qz},
+                params=params,
             ))
         return out
 
@@ -792,15 +877,34 @@ class LoadResolver:
         element's midpoint, so each element gets its own constant
         ``beamUniform`` (the only thing OpenSees ``eleLoad`` supports).
         """
+        span = getattr(defn, "span", (0.0, 1.0))
+        a_l, b_l = float(span[0]), float(span[1])
+        is_full_span = a_l == 0.0 and b_l == 1.0
         out: list[ElementLoadRecord] = []
         for eid, (wx, wy, wz) in items:
+            if is_full_span:
+                params: dict[str, object] = {
+                    "wx": float(wx),
+                    "wy": float(wy),
+                    "wz": float(wz),
+                }
+            else:
+                params = {
+                    "wx": float(wx),
+                    "wy": float(wy),
+                    "wz": float(wz),
+                    "wx_end": float(wx),
+                    "wy_end": float(wy),
+                    "wz_end": float(wz),
+                    "aL": a_l,
+                    "bL": b_l,
+                }
             out.append(ElementLoadRecord(
                 pattern=defn.pattern,
                 name=defn.name,
                 element_id=int(eid),
                 load_type="beamUniform",
-                params={"wx": float(wx), "wy": float(wy),
-                        "wz": float(wz)},
+                params=params,
             ))
         return out
 

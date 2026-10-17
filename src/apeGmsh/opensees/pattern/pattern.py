@@ -37,15 +37,22 @@ patterns-vs-flat split mirrors that).
 """
 from __future__ import annotations
 
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
+import numbers
 from typing import TYPE_CHECKING
 
+from .._internal.build.errors import BridgeError
 from .._internal.tag_resolution import resolve_tag
-from .._internal.types import Pattern, Primitive, TimeSeries
+from .._internal.types import Element, Pattern, Primitive, TimeSeries
 
 if TYPE_CHECKING:
     from ..emitter.base import Emitter
     from ..node import Node
+
+
+class _BridgeValueError(BridgeError, ValueError):
+    """Error that satisfies both BridgeError and ValueError checks."""
 
 
 def _node_to_tag(node: "int | Node") -> int:
@@ -71,6 +78,7 @@ __all__ = [
     "H5DRM",
     "_LoadRecord",
     "_SPRecord",
+    "_EleLoadRecord",
     "_MomentTensorRecord",
 ]
 
@@ -126,6 +134,126 @@ class _SPRecord:
     target: str
     dof: int
     value: float
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class _EleLoadRecord:
+    """One element-load entry inside a :class:`Plain` pattern.
+
+    A value object — not a :class:`Primitive`. Held in a tuple by the
+    parent :class:`Plain` instance.
+    """
+
+    load_type: str
+    target_kind: str
+    target: object
+    wy: tuple[float, float] = (0.0, 0.0)
+    wz: tuple[float, float] | None = None
+    wx: tuple[float, float] = (0.0, 0.0)
+    aL: float = 0.0
+    bL: float = 1.0
+
+
+def _resolve_ele_target(
+    method_name: str,
+    *,
+    pg: str | None,
+    label: str | None,
+    ele: "int | Element | Sequence[int | Element] | None",
+) -> tuple[str, object]:
+    """Validate and normalize ``pg=`` / ``label=`` / ``ele=`` for ``Plain`` element loads."""
+    given = int(pg is not None) + int(label is not None) + int(ele is not None)
+    if given != 1:
+        raise ValueError(
+            f"{method_name}: supply exactly one of pg=, label=, or ele= "
+            f"(got pg={pg!r}, label={label!r}, ele={ele!r})."
+        )
+    if pg is not None:
+        if not isinstance(pg, str) or not pg:
+            raise ValueError(f"{method_name}: pg must be a non-empty str, got {pg!r}.")
+        return "pg", pg
+    if label is not None:
+        if not isinstance(label, str) or not label:
+            raise ValueError(f"{method_name}: label must be a non-empty str, got {label!r}.")
+        return "label", label
+    assert ele is not None
+    if isinstance(ele, Element) or (isinstance(ele, numbers.Integral) and not isinstance(ele, bool)):
+        raw_items: tuple[object, ...] = (ele,)
+    elif isinstance(ele, Iterable) and not isinstance(ele, (str, bytes)):
+        raw_items = tuple(ele)
+        if not raw_items:
+            raise ValueError(f"{method_name}: ele= sequence must not be empty.")
+    else:
+        raise ValueError(
+            f"{method_name}: ele= must be an int, Element, or sequence thereof, got {ele!r}."
+        )
+    out: list[int | Element] = []
+    for item in raw_items:
+        if isinstance(item, Element):
+            out.append(item)
+        elif isinstance(item, numbers.Integral) and not isinstance(item, bool):
+            out.append(int(item))
+        else:
+            raise ValueError(
+                f"{method_name}: invalid ele= item {item!r}; expected int or Element."
+            )
+    return "ele", tuple(out)
+
+
+def _normalize_beam_w(
+    val: float | tuple[float, float], name: str,
+) -> tuple[float, float]:
+    """Normalize a scalar or ``(w_a, w_b)`` 2-tuple into a float 2-tuple."""
+    if isinstance(val, (tuple, list)):
+        if len(val) != 2:
+            raise ValueError(
+                f"Plain.beam_uniform: {name} tuple must have length 2 (w_a, w_b), got {val!r}."
+            )
+        return (float(val[0]), float(val[1]))
+    v = float(val)
+    return (v, v)
+
+
+def _beam_uniform_args(rec: _EleLoadRecord, ndm: int) -> tuple[float, ...]:
+    """Build trailing float args for ``eleLoad ... -type -beamUniform``."""
+    wy_a, wy_b = rec.wy
+    wx_a, wx_b = rec.wx
+    a_l, b_l = rec.aL, rec.bL
+    is_full_span = a_l == 0.0 and b_l == 1.0
+    if ndm == 2:
+        if rec.wz is not None and (rec.wz[0] != 0.0 or rec.wz[1] != 0.0):
+            raise _BridgeValueError(
+                "Plain.beam_uniform: wz is not supported in 2D (ndm=2); "
+                f"got wz={rec.wz!r}."
+            )
+        is_uniform = wy_a == wy_b and wx_a == wx_b
+        if is_full_span and is_uniform:
+            return (wy_a, wx_a)
+        if is_uniform:
+            return (wy_a, wx_a, a_l, b_l)
+        return (wy_a, wx_a, a_l, b_l, wy_b, wx_b)
+    wz_a, wz_b = rec.wz if rec.wz is not None else (0.0, 0.0)
+    is_uniform = wy_a == wy_b and wz_a == wz_b and wx_a == wx_b
+    if is_full_span and is_uniform:
+        return (wy_a, wz_a, wx_a)
+    if is_uniform:
+        return (wy_a, wz_a, wx_a, a_l, b_l)
+    return (wy_a, wz_a, wx_a, a_l, b_l, wy_b, wz_b, wx_b)
+
+
+def _self_weight_args(rec: _EleLoadRecord, ndm: int) -> tuple[float, ...]:
+    """Build trailing float args for ``eleLoad ... -type -selfWeight``."""
+    wx_a = rec.wx[0]
+    wy_a = rec.wy[0]
+    if ndm == 2:
+        if rec.wz is not None and rec.wz[0] != 0.0:
+            raise _BridgeValueError(
+                "Plain.self_weight: wz is not supported in 2D (ndm=2); "
+                f"got wz={rec.wz[0]!r}."
+            )
+        return (wx_a, wy_a)
+    wz_a = rec.wz[0] if rec.wz is not None else 0.0
+    return (wx_a, wy_a, wz_a)
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
@@ -205,6 +333,11 @@ class Plain(Pattern):
         init=False, repr=False, compare=False, default_factory=list,
     )
 
+    @property
+    def _ele_loads_(self) -> list[_EleLoadRecord]:
+        lst: list[_EleLoadRecord] = self.__dict__.setdefault("_ele_loads_", [])
+        return lst
+
     # -- Inspection -----------------------------------------------------
 
     @property
@@ -216,6 +349,11 @@ class Plain(Pattern):
     def sps(self) -> tuple[_SPRecord, ...]:
         """Tuple snapshot of the recorded :class:`_SPRecord` entries."""
         return tuple(self._sps_)
+
+    @property
+    def ele_loads(self) -> tuple[_EleLoadRecord, ...]:
+        """Tuple snapshot of the recorded :class:`_EleLoadRecord` entries."""
+        return tuple(self.__dict__.get("_ele_loads_", ()))
 
     @property
     def from_model_cases(self) -> tuple[str, ...]:
@@ -331,6 +469,109 @@ class Plain(Pattern):
                 dof=dof, value=value,
             )
         self._sps_.append(rec)
+
+    def beam_uniform(
+        self,
+        *,
+        pg: str | None = None,
+        label: str | None = None,
+        ele: "int | Element | Sequence[int | Element] | None" = None,
+        wy: float | tuple[float, float] = 0.0,
+        wz: float | tuple[float, float] | None = None,
+        wx: float | tuple[float, float] = 0.0,
+        aL: float = 0.0,
+        bL: float = 1.0,
+        span: tuple[float, float] | None = None,
+    ) -> None:
+        """Record a beam distributed load (``eleLoad -type -beamUniform``).
+
+        All load components (``wy``, ``wz``, ``wx``) are in **local element
+        coordinates**. Each component may be a scalar ``float`` (uniform over
+        the loaded segment) or a 2-tuple ``(w_a, w_b)`` (linearly varying /
+        trapezoidal over ``[aL, bL]``).
+        """
+        target_kind, target = _resolve_ele_target(
+            "Plain.beam_uniform", pg=pg, label=label, ele=ele,
+        )
+        if span is not None:
+            if aL != 0.0 or bL != 1.0:
+                raise ValueError(
+                    "Plain.beam_uniform: pass either span=(aL, bL) or aL=/bL=, not both."
+                )
+            if not isinstance(span, (tuple, list)) or len(span) != 2:
+                raise ValueError(
+                    f"Plain.beam_uniform: span must be a 2-tuple (aL, bL), got {span!r}."
+                )
+            a_val, b_val = float(span[0]), float(span[1])
+        else:
+            a_val, b_val = float(aL), float(bL)
+        if not (0.0 <= a_val < b_val <= 1.0):
+            raise ValueError(
+                f"Plain.beam_uniform: requires 0.0 <= aL < bL <= 1.0, "
+                f"got aL={a_val}, bL={b_val}."
+            )
+        wy_pair = _normalize_beam_w(wy, "wy")
+        wx_pair = _normalize_beam_w(wx, "wx")
+        wz_pair = _normalize_beam_w(wz, "wz") if wz is not None else None
+        self._ele_loads_.append(
+            _EleLoadRecord(
+                load_type="beamUniform",
+                target_kind=target_kind,
+                target=target,
+                wy=wy_pair,
+                wz=wz_pair,
+                wx=wx_pair,
+                aL=a_val,
+                bL=b_val,
+            )
+        )
+
+    def surface_load(
+        self,
+        *,
+        pg: str | None = None,
+        label: str | None = None,
+        ele: "int | Element | Sequence[int | Element] | None" = None,
+    ) -> None:
+        """Record a surface-load activation (``eleLoad -type -surfaceLoad``)."""
+        target_kind, target = _resolve_ele_target(
+            "Plain.surface_load", pg=pg, label=label, ele=ele,
+        )
+        self._ele_loads_.append(
+            _EleLoadRecord(
+                load_type="surfaceLoad",
+                target_kind=target_kind,
+                target=target,
+            )
+        )
+
+    def self_weight(
+        self,
+        *,
+        pg: str | None = None,
+        label: str | None = None,
+        ele: "int | Element | Sequence[int | Element] | None" = None,
+        wx: float = 0.0,
+        wy: float = 0.0,
+        wz: float | None = None,
+    ) -> None:
+        """Record a continuum self-weight multiplier (``eleLoad -type -selfWeight``)."""
+        target_kind, target = _resolve_ele_target(
+            "Plain.self_weight", pg=pg, label=label, ele=ele,
+        )
+        wx_f = float(wx)
+        wy_f = float(wy)
+        wz_pair = (float(wz), float(wz)) if wz is not None else None
+        self._ele_loads_.append(
+            _EleLoadRecord(
+                load_type="selfWeight",
+                target_kind=target_kind,
+                target=target,
+                wy=(wy_f, wy_f),
+                wz=wz_pair,
+                wx=(wx_f, wx_f),
+            )
+        )
 
     def from_model(self, case: str, *, allow_empty: bool = False) -> None:
         """Import the geometry-declared loads tagged with load *case*.
@@ -520,6 +761,43 @@ class Plain(Pattern):
                     "Plain._emit: pg= sp fan-out is the bridge build "
                     "pipeline's job (Phase 4). Tests should use node= "
                     "records to exercise emit."
+                )
+        for erec in self._ele_loads_:
+            if erec.target_kind != "ele":
+                raise NotImplementedError(
+                    f"Plain._emit: {erec.target_kind}= ele_load fan-out is "
+                    "the bridge build pipeline's job (Phase 4). Tests should "
+                    "use integer ele= tags to exercise emit directly."
+                )
+            assert isinstance(erec.target, tuple)
+            if any(not isinstance(t, int) for t in erec.target):
+                raise NotImplementedError(
+                    "Plain._emit: Element spec handle resolution is the "
+                    "bridge build pipeline's job (Phase 4). Tests should use "
+                    "integer ele= tags to exercise emit directly."
+                )
+            ele_tags = tuple(int(t) for t in erec.target)
+            em_ndm = getattr(emitter, "_ndm", None) or getattr(
+                emitter, "_model_ndm", None
+            )
+            ndm = int(em_ndm) if em_ndm is not None else (3 if erec.wz is not None else 2)
+            if erec.load_type == "beamUniform":
+                emitter.eleLoad(
+                    "-ele",
+                    *ele_tags,
+                    "-type",
+                    "-beamUniform",
+                    *_beam_uniform_args(erec, ndm),
+                )
+            elif erec.load_type == "surfaceLoad":
+                emitter.eleLoad("-ele", *ele_tags, "-type", "-surfaceLoad")
+            elif erec.load_type == "selfWeight":
+                emitter.eleLoad(
+                    "-ele",
+                    *ele_tags,
+                    "-type",
+                    "-selfWeight",
+                    *_self_weight_args(erec, ndm),
                 )
         emitter.pattern_close()
 

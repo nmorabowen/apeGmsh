@@ -44,6 +44,7 @@ from .embedded_rebar import embedded_rebar_args
 from .shell import (
     ASDShellQ4,
     ASDShellT3,
+    LadrunoMembrane,
     ShellDKGQ,
     ShellMITC4,
 )
@@ -98,6 +99,7 @@ __all__ = [
     "ShellDKGQ",
     "ASDShellQ4",
     "ASDShellT3",
+    "LadrunoMembrane",
     # solid
     "FourNodeTetrahedron",
     "TenNodeTetrahedron",
