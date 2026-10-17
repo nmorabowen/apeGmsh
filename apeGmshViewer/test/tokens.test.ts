@@ -184,15 +184,15 @@ test("WCAG light theme: every group, role, chrome and synthetic-group colour cle
   assert.deepEqual(slotColour(0, "light").color, hexToRgb(LIGHT_MAIN[0]!));
   assert.deepEqual(slotColour(8, "light"), { color: hexToRgb(LIGHT_MAIN_RING2[0]!), ring: 1 });
   assert.deepEqual(
-    legendEntryColour({ path: "/g", name: "Arch", count: 1, color: hexToRgb(DARK_MAIN[1]!), slot: 1, ring: 0 }, "light"),
+    legendEntryColour({ decl: "/g", name: "Arch", elements: 1, color: hexToRgb(DARK_MAIN[1]!), cue: null, slot: 1 }, "light"),
     hexToRgb(LIGHT_MAIN[1]!),
   );
   assert.deepEqual(
-    legendEntryColour({ path: null, name: "column", count: 1, color: hexToRgb(DARK_ROLE.column) }, "light"),
+    legendEntryColour({ decl: null, name: "column", elements: 1, color: hexToRgb(DARK_ROLE.column), cue: null, slot: null }, "light"),
     hexToRgb(LIGHT_ROLE.column),
   );
   assert.deepEqual(
-    legendEntryColour({ path: null, name: "(OpenSees-only, no cell)", count: 1, color: OPS_ONLY }, "light"),
+    legendEntryColour({ decl: null, name: "(OpenSees-only, no cell)", elements: 1, color: OPS_ONLY, cue: null, slot: null }, "light"),
     hexToRgb(LIGHT.opsOnly),
   );
 });
