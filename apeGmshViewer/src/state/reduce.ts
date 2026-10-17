@@ -8,6 +8,7 @@ import { initialClip, reduceClip } from "./clip.ts";
 import { CMAP_NAMES, componentName, contourKeysOf, defaultPick, hasPick } from "./contour.ts";
 import { deformOf, elementJoinKey, geometryPairing, resultsPairing, stageCount, stageIdentity } from "./selectors.ts";
 import { WINDOW_KINDS, type ArtifactInfo, type ArtifactKind, type ContourState, type DeclPath, type DeformState, type Event, type PhaseKey, type SpatialNdm, type State } from "./types.ts";
+import { UNIT_SYSTEM_IDS } from "./units.ts";
 
 /** The deformed shape before the user turns it on: true scale, no ghost (V4d; the Qt defaults). */
 export const initialDeform: DeformState = { on: false, scale: 1, ghost: false, measured: null };
@@ -28,6 +29,8 @@ export const initialContour: ContourState = {
   range: "history",
   fixed: null,
   cmap: "jet",
+  sourceUnits: "kN_m_s",
+  targetUnits: "as_stored",
   stepRange: null,
   scan: null,
   notice: null,
@@ -389,6 +392,16 @@ export function reduce(s: State, e: Event): State {
     case "setContourCmap":
       if (!CMAP_NAMES.includes(e.cmap)) throw new RangeError(`setContourCmap: ${JSON.stringify(e.cmap)}`);
       return s.contour.cmap === e.cmap ? s : { ...s, contour: { ...s.contour, cmap: e.cmap } };
+    case "setContourUnits": {
+      const sourceUnits = e.source ?? s.contour.sourceUnits;
+      const targetUnits = e.target ?? s.contour.targetUnits;
+      if (!UNIT_SYSTEM_IDS.includes(sourceUnits)) throw new RangeError(`setContourUnits: source ${JSON.stringify(sourceUnits)}`);
+      if (targetUnits !== "as_stored" && !UNIT_SYSTEM_IDS.includes(targetUnits)) {
+        throw new RangeError(`setContourUnits: target ${JSON.stringify(targetUnits)}`);
+      }
+      if (s.contour.sourceUnits === sourceUnits && s.contour.targetUnits === targetUnits) return s;
+      return { ...s, contour: { ...s.contour, sourceUnits, targetUnits } };
+    }
     case "contourStepRange":
       // Only the step and component on screen: a late answer for another is dropped.
       if (contourKeysOf(s)?.step !== e.key) return s;

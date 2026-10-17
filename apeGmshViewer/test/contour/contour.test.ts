@@ -14,7 +14,7 @@ import type { ResultsH5 } from "../../src/reader/results.ts";
 import { contourLines } from "../../src/panels/legend.ts";
 import { contourKey } from "../../src/renderer/contour.ts";
 import { CMAP_NAMES, climOf, fieldsOf, MAGNITUDE, NO_DATA_RGB, nodalFields, primitiveColours, sampleCmap, vertexValues } from "../../src/state/contour.ts";
-import { contourFieldsOf, contourView, noticesOf } from "../../src/state/selectors.ts";
+import { contourFieldsOf, contourView, noticesOf, resolveFieldUnits } from "../../src/state/selectors.ts";
 import type { ContourScan } from "../../src/state/types.ts";
 import { opened, STAGED_RESULTS, tick, until } from "./harness.ts";
 
@@ -302,4 +302,22 @@ test("partial write: a component whose value columns disagree with _ids is refus
   assert.ok(noticesOf(h.store.get()).some((t) => t.startsWith("Nodal component displacement_y not read: ")));
   host.close();
   h.effects.dispose();
+});
+
+test("baseUnits: setContourUnits converts forces and moments to tf_m_s and labels display units", () => {
+  const rf = resolveFieldUnits("reaction_force", "nodal", "kN_m_s", "tf_m_s", "static");
+  assert.equal(rf.unit, "tf");
+  assert.ok(Math.abs(rf.factor - 1000 / 9806.65) < 1e-15);
+  const wa = resolveFieldUnits("wood_armer_neg", "element", "kN_m_s", "tf_m_s", "static");
+  assert.equal(wa.unit, "tf·m/m");
+  assert.ok(Math.abs(wa.factor - 1000 / 9806.65) < 1e-15);
+  const rm = resolveFieldUnits("rib_moment_pos", "element", "kN_m_s", "tf_m_s", "static");
+  assert.equal(rm.unit, "tf·m");
+  assert.ok(Math.abs(rm.factor - 1000 / 9806.65) < 1e-15);
+  const dispMm = resolveFieldUnits("displacement", "nodal", "kN_m_s", "N_mm_s", "static");
+  assert.equal(dispMm.unit, "mm");
+  assert.equal(dispMm.factor, 1000);
+  const modeDisp = resolveFieldUnits("displacement", "nodal", "kN_m_s", "N_mm_s", "mode");
+  assert.equal(modeDisp.unit, null);
+  assert.equal(modeDisp.factor, 1);
 });
