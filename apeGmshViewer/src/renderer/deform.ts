@@ -16,7 +16,7 @@ import type { BlobStore } from "../state/blobs.ts";
 import { deformedPositions, GHOST_OPACITY, missingMarkers } from "../state/deform.ts";
 import { deformView } from "../state/selectors.ts";
 import type { MeshInfo, State } from "../state/types.ts";
-import { DARK, OFFICE, toHexNumber } from "../theme/tokens.ts";
+import { DARK, OFFICE, themeTokens, toHexNumber, type ThemeMode } from "../theme/tokens.ts";
 import { highlightObjects, selectionBounds, type Focus, type Prims } from "./selection.ts";
 
 /** Every primitive's positions (6 floats per segment, 9 per triangle, 6 per outline edge; original order), and what they show. */
@@ -176,7 +176,13 @@ export const MISSING_PX = [13, 8] as const;
  * once): drawn over everything, at a fixed pixel size, where those nodes
  * sit (undeformed). Empty when every drawn node has a displacement.
  */
-export function missingMarkerObjects(full: FullPositions, info: MeshInfo, blobs: BlobStore, drawn: { lineMap: Int32Array; triMap: Int32Array }): THREE.Object3D[] {
+export function missingMarkerObjects(
+  full: FullPositions,
+  info: MeshInfo,
+  blobs: BlobStore,
+  drawn: { lineMap: Int32Array; triMap: Int32Array },
+  mode: ThemeMode = "dark",
+): THREE.Object3D[] {
   const disp = full.disp;
   if (!disp || (disp.line.count === 0 && disp.tri.count === 0)) return [];
   const seen = new Set<number>();
@@ -187,7 +193,8 @@ export function missingMarkerObjects(full: FullPositions, info: MeshInfo, blobs:
   if (!pts.length) return [];
   const g = new THREE.BufferGeometry();
   g.setAttribute("position", new THREE.BufferAttribute(new Float32Array(pts), 3));
-  return [MISSING_RING, MISSING_CORE].map((colour, i) => {
+  const ringColour = toHexNumber(themeTokens(mode).text);
+  return [ringColour, MISSING_CORE].map((colour, i) => {
     const p = new THREE.Points(g, new THREE.PointsMaterial({ color: colour, size: MISSING_PX[i]!, sizeAttenuation: false, depthTest: false }));
     p.renderOrder = 20 + i;
     return p;
@@ -199,16 +206,23 @@ export function missingMarkerObjects(full: FullPositions, info: MeshInfo, blobs:
  * one neutral colour at the Qt ghost opacity, behind the deformed mesh
  * (no depth write, drawn first).
  */
-export function ghostObjects(info: MeshInfo, blobs: BlobStore, drawn: { lineMap: Int32Array; triMap: Int32Array }, edgeMap: Int32Array | null): THREE.Object3D[] {
+export function ghostObjects(
+  info: MeshInfo,
+  blobs: BlobStore,
+  drawn: { lineMap: Int32Array; triMap: Int32Array },
+  edgeMap: Int32Array | null,
+  mode: ThemeMode = "dark",
+): THREE.Object3D[] {
   // Always the mesh blobs: the ghost is the undeformed mesh, whatever is drawn.
   const base = basePositions(info, blobs);
   const edges = edgeMap ? gatherInto(base.edge, edgeMap, 6) : null;
+  const t = themeTokens(mode);
   const out: THREE.Object3D[] = [];
   if (edges?.length) {
     // The undeformed outline edges, as the Qt ghost keeps its wireframe.
     const g = new THREE.BufferGeometry();
     g.setAttribute("position", new THREE.BufferAttribute(edges, 3));
-    const e = new THREE.LineSegments(g, new THREE.LineBasicMaterial({ color: toHexNumber(DARK.geometryCurve), transparent: true, opacity: GHOST_OPACITY, depthWrite: false }));
+    const e = new THREE.LineSegments(g, new THREE.LineBasicMaterial({ color: toHexNumber(t.geometryCurve), transparent: true, opacity: GHOST_OPACITY, depthWrite: false }));
     e.renderOrder = -1;
     out.push(e);
   }
@@ -218,7 +232,7 @@ export function ghostObjects(info: MeshInfo, blobs: BlobStore, drawn: { lineMap:
     g.setAttribute("position", new THREE.BufferAttribute(tri, 3));
     g.computeVertexNormals();
     const m = new THREE.MeshStandardMaterial({
-      color: toHexNumber(DARK.geometrySurface), side: THREE.DoubleSide, flatShading: true,
+      color: toHexNumber(t.geometrySurface), side: THREE.DoubleSide, flatShading: true,
       transparent: true, opacity: GHOST_OPACITY, depthWrite: false,
     });
     const mesh = new THREE.Mesh(g, m);
@@ -229,7 +243,7 @@ export function ghostObjects(info: MeshInfo, blobs: BlobStore, drawn: { lineMap:
   if (line.length) {
     const g = new THREE.BufferGeometry();
     g.setAttribute("position", new THREE.BufferAttribute(line, 3));
-    const l = new THREE.LineSegments(g, new THREE.LineBasicMaterial({ color: toHexNumber(DARK.geometryCurve), transparent: true, opacity: GHOST_OPACITY, depthWrite: false }));
+    const l = new THREE.LineSegments(g, new THREE.LineBasicMaterial({ color: toHexNumber(t.geometryCurve), transparent: true, opacity: GHOST_OPACITY, depthWrite: false }));
     l.renderOrder = -1;
     out.push(l);
   }

@@ -15,6 +15,7 @@ import {
   deformView,
   GHOST_OPACITY,
   isHidden,
+  legendEntryColour,
   legendOf,
   NO_DATA_RGB,
   RANGE_MODES,
@@ -87,18 +88,21 @@ const GAUSS_MODES: readonly { mode: GaussMode; label: string; title: string }[] 
   { mode: "node_discrete", label: "at nodes, per element", title: "gauss_node_discrete: the Gauss points extrapolated to each element's corners, no averaging (jumps between elements show)" },
 ];
 
-export function mountLegend(store: Store): () => void {
+export function mountLegend(store: Store, subscribeTheme?: (fn: () => void) => () => void): () => void {
   const legend = byId("legend");
   let unlisten: (() => void)[] = [];
   let lastContour = "";
   let lastDeform = "";
+  let lastTheme = "";
   const render = (s: State, prev: State | null) => {
+    const theme = document.documentElement.dataset["theme"] === "light" ? "light" : "dark";
     const contour = s.visibility.colourBy === "contour";
-    if (prev && s.mesh === prev.mesh && s.visibility.hidden === prev.visibility.hidden && s.visibility.colourBy === prev.visibility.colourBy) {
+    if (prev && theme === lastTheme && s.mesh === prev.mesh && s.visibility.hidden === prev.visibility.hidden && s.visibility.colourBy === prev.visibility.colourBy) {
       // In contour mode the legend follows the pick, the step and the ranges, and (V4d) the deformed shape's
       // state in every mode; it is rebuilt only when what it says changed.
       if (deformSignature(s) === lastDeform && (!contour || contourSignature(s) === lastContour)) return;
     }
+    lastTheme = theme;
     lastDeform = deformSignature(s);
     for (const u of unlisten) u();
     unlisten = [];
@@ -136,7 +140,8 @@ export function mountLegend(store: Store): () => void {
       const hidden = !byRole && isHidden(s, e.decl);
       const row = el("div", "legend-row" + (hidden ? " hidden-group" : "") + (!byRole && e.decl ? " clickable" : ""));
       const chip = el("span", "chip" + (e.cue ? ` ${e.cue}` : ""));
-      chip.style.backgroundColor = `rgb(${e.color.map((c) => Math.round(c * 255)).join(",")})`;
+      const rgb = legendEntryColour(e, theme);
+      chip.style.backgroundColor = css(rgb);
       row.append(chip, el("span", undefined, e.name), el("span", "legend-count", e.elements.toLocaleString()));
       if (!byRole && e.decl) {
         const decl = e.decl;
@@ -380,8 +385,13 @@ export function mountLegend(store: Store): () => void {
 
   render(store.get(), null);
   const unsubscribe = store.subscribe(render);
+  const unsubTheme = subscribeTheme?.(() => {
+    const theme = document.documentElement.dataset["theme"] === "light" ? "light" : "dark";
+    if (theme !== lastTheme) render(store.get(), null);
+  });
   return () => {
     unsubscribe();
+    unsubTheme?.();
     for (const u of unlisten) u();
   };
 }

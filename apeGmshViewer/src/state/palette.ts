@@ -16,7 +16,24 @@
 // neighbour takes the lowest free slot. The assignment is a pure function
 // of the adjacency, so the same file gives the same colours.
 
-import { DARK, DARK_MAIN, DARK_MAIN_RING2, hexToRgb, oklabDistance, simulateCvd, srgbToOklch, type RGB } from "../theme/tokens.ts";
+import {
+  DARK,
+  DARK_MAIN,
+  DARK_MAIN_RING2,
+  hexToRgb,
+  LIGHT_MAIN,
+  LIGHT_MAIN_RING2,
+  LIGHT_ROLE,
+  oklabDistance,
+  ROLES,
+  simulateCvd,
+  srgbToOklch,
+  themeTokens,
+  type RGB,
+  type Role,
+  type ThemeMode,
+} from "../theme/tokens.ts";
+import type { LegendEntry } from "./types.ts";
 
 /** Elements in no physical group, and OpenSees-only elements. */
 export const NO_GROUP: RGB = hexToRgb(DARK.noGroup);
@@ -24,20 +41,35 @@ export const OPS_ONLY: RGB = hexToRgb(DARK.opsOnly);
 
 /** The rings of the group palette: the office colours, then the same hues one lightness step away. */
 export const RINGS: readonly (readonly RGB[])[] = [DARK_MAIN.map(hexToRgb), DARK_MAIN_RING2.map(hexToRgb)];
+export const LIGHT_RINGS: readonly (readonly RGB[])[] = [LIGHT_MAIN.map(hexToRgb), LIGHT_MAIN_RING2.map(hexToRgb)];
 /** Office colours per ring. */
 export const RING_SIZE = DARK_MAIN.length;
 /** Slots: ring 0 then ring 1. */
 export const SLOTS: readonly RGB[] = RINGS.flat();
+export const LIGHT_SLOTS: readonly RGB[] = LIGHT_RINGS.flat();
 /** Office indices that may never colour adjacent groups, the office orange (1) beside the dark gold (4). */
 export const NEVER_ADJACENT: readonly [number, number][] = [[1, 4]];
 /** What two adjacent groups must keep: this much CVD-simulated OKLab distance, and a lightness step or a hue gap. */
 export const ADJACENT_MIN_DISTANCE = 0.05;
 export const ADJACENT_MIN_DL = 0.1;
 
-/** The colour and ring of slot `s`. */
-export function slotColour(s: number): { color: RGB; ring: number } {
+/** The colour and ring of slot `s` for `mode` ("dark" by default). */
+export function slotColour(s: number, mode: ThemeMode = "dark"): { color: RGB; ring: number } {
   if (!Number.isInteger(s) || s < 0 || s >= SLOTS.length) throw new RangeError(`slotColour: ${s}`);
-  return { color: SLOTS[s]!, ring: Math.floor(s / RING_SIZE) };
+  const table = mode === "light" ? LIGHT_SLOTS : SLOTS;
+  return { color: table[s]!, ring: Math.floor(s / RING_SIZE) };
+}
+
+/** Resolve a legend entry's display RGB for the active theme ("dark" or "light"). */
+export function legendEntryColour(e: LegendEntry, mode: ThemeMode = "dark"): RGB {
+  if (mode === "dark") return e.color;
+  if (e.slot !== null && e.slot >= 0 && e.slot < LIGHT_SLOTS.length) return LIGHT_SLOTS[e.slot]!;
+  const t = themeTokens("light");
+  if (e.name === "(OpenSees-only, no cell)") return hexToRgb(t.opsOnly);
+  if (e.name === "(no physical group)") return hexToRgb(t.noGroup);
+  if (e.name === "(no structural role in the file)") return hexToRgb(t.unassigned);
+  if ((ROLES as readonly string[]).includes(e.name)) return hexToRgb(LIGHT_ROLE[e.name as Role]);
+  return e.color;
 }
 
 /** Office hue family of a slot. */
