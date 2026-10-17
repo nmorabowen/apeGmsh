@@ -342,7 +342,22 @@ export interface ResultStepStatus {
 export type ContourRange = "history" | "step" | "fixed";
 
 /** The contour colormaps (state/contour.ts `CMAPS`); jet is the default. */
-export type ContourCmap = "jet" | "viridis" | "coolwarm";
+export const CMAP_NAMES = [
+  "jet",
+  "turbo",
+  "viridis",
+  "plasma",
+  "inferno",
+  "magma",
+  "coolwarm",
+  "RdBu_r",
+  "RdBu",
+  "bwr",
+  "seismic",
+  "BrBG",
+  "Spectral",
+] as const;
+export type ContourCmap = (typeof CMAP_NAMES)[number];
 
 /** The history-range scan of the contour's field (main reads every step; the effects report it). */
 export interface ContourScan {

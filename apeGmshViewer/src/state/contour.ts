@@ -22,7 +22,8 @@
 
 import { hexToRgb, OFFICE, type RGB } from "../theme/tokens.ts";
 import type { NodeTopology } from "./extrapolation.ts";
-import type { ContourCmap, ContourRange, ContourScan, ContourSource, ContourState, DeclPath, Decl, GaussGroup, GaussMode, ResultsStage, State } from "./types.ts";
+import { CMAP_NAMES, type ContourCmap, type ContourRange, type ContourScan, type ContourSource, type ContourState, type DeclPath, type Decl, type GaussGroup, type GaussMode, type ResultsStage, type State } from "./types.ts";
+export { CMAP_NAMES };
 
 // -- fields -------------------------------------------------------------------
 
@@ -185,9 +186,11 @@ function fromSegments(r: Segments, g: Segments, b: Segments): Stops {
 /**
  * The colormaps, as sRGB stops `[t, r, g, b]` interpolated linearly. Jet is
  * matplotlib's piecewise-linear `jet`, built from its segment data, the
- * maintainer's stated preference for contours; viridis and coolwarm are the
- * perceptual alternatives, sampled from matplotlib's `viridis` and
- * Moreland's `coolwarm`.
+ * maintainer's stated preference for contours; turbo, viridis, plasma,
+ * inferno and magma are the sequential alternatives; coolwarm, RdBu_r, RdBu,
+ * bwr, seismic, BrBG and Spectral are the diverging maps (RdBu_r, bwr and
+ * seismic are the symmetric blue-white-red wavefield palettes: negative blue,
+ * zero white, positive red).
  */
 export const CMAPS: Readonly<Record<ContourCmap, Stops>> = {
   jet: fromSegments(
@@ -195,6 +198,17 @@ export const CMAPS: Readonly<Record<ContourCmap, Stops>> = {
     [[0, 0], [0.125, 0], [0.375, 1], [0.64, 1], [0.91, 0], [1, 0]],
     [[0, 0.5], [0.11, 1], [0.34, 1], [0.65, 0], [1, 0]],
   ),
+  turbo: [
+    [0, 0.19, 0.072, 0.232],
+    [0.125, 0.276, 0.421, 0.891],
+    [0.25, 0.158, 0.736, 0.923],
+    [0.375, 0.197, 0.949, 0.595],
+    [0.5, 0.644, 0.99, 0.234],
+    [0.625, 0.933, 0.812, 0.227],
+    [0.75, 0.984, 0.493, 0.128],
+    [0.875, 0.816, 0.185, 0.018],
+    [1, 0.48, 0.016, 0.011],
+  ],
   viridis: [
     [0, 0.267, 0.005, 0.329],
     [0.125, 0.283, 0.141, 0.458],
@@ -206,6 +220,39 @@ export const CMAPS: Readonly<Record<ContourCmap, Stops>> = {
     [0.875, 0.478, 0.821, 0.318],
     [1, 0.993, 0.906, 0.144],
   ],
+  plasma: [
+    [0, 0.05, 0.03, 0.528],
+    [0.125, 0.3, 0.01, 0.632],
+    [0.25, 0.495, 0.012, 0.658],
+    [0.375, 0.665, 0.139, 0.586],
+    [0.5, 0.798, 0.28, 0.47],
+    [0.625, 0.902, 0.425, 0.36],
+    [0.75, 0.973, 0.586, 0.252],
+    [0.875, 0.993, 0.772, 0.155],
+    [1, 0.94, 0.975, 0.131],
+  ],
+  inferno: [
+    [0, 0.001, 0, 0.014],
+    [0.125, 0.129, 0.047, 0.291],
+    [0.25, 0.342, 0.062, 0.429],
+    [0.375, 0.541, 0.135, 0.415],
+    [0.5, 0.736, 0.216, 0.33],
+    [0.625, 0.894, 0.353, 0.194],
+    [0.75, 0.978, 0.558, 0.035],
+    [0.875, 0.975, 0.798, 0.206],
+    [1, 0.988, 0.998, 0.645],
+  ],
+  magma: [
+    [0, 0.001, 0, 0.014],
+    [0.125, 0.113, 0.065, 0.277],
+    [0.25, 0.317, 0.072, 0.485],
+    [0.375, 0.513, 0.148, 0.508],
+    [0.5, 0.716, 0.215, 0.475],
+    [0.625, 0.904, 0.32, 0.388],
+    [0.75, 0.987, 0.536, 0.382],
+    [0.875, 0.997, 0.77, 0.535],
+    [1, 0.987, 0.991, 0.75],
+  ],
   coolwarm: [
     [0, 0.23, 0.299, 0.754],
     [0.25, 0.552, 0.69, 0.996],
@@ -213,9 +260,71 @@ export const CMAPS: Readonly<Record<ContourCmap, Stops>> = {
     [0.75, 0.958, 0.603, 0.482],
     [1, 0.706, 0.016, 0.15],
   ],
+  RdBu_r: [
+    [0, 0.02, 0.188, 0.38],
+    [0.1, 0.129, 0.4, 0.675],
+    [0.2, 0.263, 0.576, 0.765],
+    [0.3, 0.573, 0.773, 0.871],
+    [0.4, 0.82, 0.898, 0.941],
+    [0.5, 0.969, 0.969, 0.969],
+    [0.6, 0.992, 0.859, 0.78],
+    [0.7, 0.957, 0.647, 0.51],
+    [0.8, 0.839, 0.376, 0.302],
+    [0.9, 0.698, 0.094, 0.169],
+    [1, 0.404, 0, 0.122],
+  ],
+  RdBu: [
+    [0, 0.404, 0, 0.122],
+    [0.1, 0.698, 0.094, 0.169],
+    [0.2, 0.839, 0.376, 0.302],
+    [0.3, 0.957, 0.647, 0.51],
+    [0.4, 0.992, 0.859, 0.78],
+    [0.5, 0.969, 0.969, 0.969],
+    [0.6, 0.82, 0.898, 0.941],
+    [0.7, 0.573, 0.773, 0.871],
+    [0.8, 0.263, 0.576, 0.765],
+    [0.9, 0.129, 0.4, 0.675],
+    [1, 0.02, 0.188, 0.38],
+  ],
+  bwr: [
+    [0, 0, 0, 1],
+    [0.5, 1, 1, 1],
+    [1, 1, 0, 0],
+  ],
+  seismic: [
+    [0, 0, 0, 0.3],
+    [0.25, 0, 0, 1],
+    [0.5, 1, 1, 1],
+    [0.75, 1, 0, 0],
+    [1, 0.5, 0, 0],
+  ],
+  BrBG: [
+    [0, 0.329, 0.188, 0.02],
+    [0.1, 0.549, 0.318, 0.039],
+    [0.2, 0.749, 0.506, 0.176],
+    [0.3, 0.875, 0.761, 0.49],
+    [0.4, 0.965, 0.91, 0.765],
+    [0.5, 0.961, 0.961, 0.961],
+    [0.6, 0.78, 0.918, 0.898],
+    [0.7, 0.502, 0.804, 0.757],
+    [0.8, 0.208, 0.592, 0.561],
+    [0.9, 0.004, 0.4, 0.369],
+    [1, 0, 0.235, 0.188],
+  ],
+  Spectral: [
+    [0, 0.62, 0.004, 0.259],
+    [0.1, 0.835, 0.243, 0.31],
+    [0.2, 0.957, 0.427, 0.263],
+    [0.3, 0.992, 0.682, 0.38],
+    [0.4, 0.996, 0.878, 0.545],
+    [0.5, 1, 1, 0.749],
+    [0.6, 0.902, 0.961, 0.596],
+    [0.7, 0.671, 0.867, 0.643],
+    [0.8, 0.4, 0.761, 0.647],
+    [0.9, 0.196, 0.533, 0.741],
+    [1, 0.369, 0.31, 0.635],
+  ],
 };
-
-export const CMAP_NAMES: readonly ContourCmap[] = ["jet", "viridis", "coolwarm"];
 
 /**
  * The "no data" colour (sRGB): the office's muted grey (theme/tokens.ts),
