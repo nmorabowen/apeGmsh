@@ -295,6 +295,9 @@ class TestLadrunoMembraneEmitAndBridge:
             mesh_size=1.0,
         )
         ops.fix(pg="Corners", dofs=(1, 1, 1, 1, 1, 1))
+        # #2151: pressure= acts only through an activating pattern.
+        with ops.pattern.Plain(series=ops.timeSeries.Linear()) as p:
+            p.surface_load(pg="Slab")
 
         rec = RecordingEmitter()
         ops.build().emit(rec)
@@ -319,13 +322,16 @@ class TestLadrunoMembraneEmitAndBridge:
         n3 = ops.nodes.get(tag=3)
         n9 = ops.nodes.get(tag=9)
         corners_set = ops.nodes.get(pg="Corners")
-        ops.element.LadrunoMembrane(
+        slab = ops.element.LadrunoMembrane(
             nodes=("c1", n3, n9, 7),
             support_nodes=(corners_set,),
             holes=[("c1", 2, 5)],
             pressure=-4.0,
         )
         ops.fix(pg="Corners", dofs=(1, 1, 1, 1, 1, 1))
+        # #2151: pressure= acts only through an activating pattern.
+        with ops.pattern.Plain(series=ops.timeSeries.Linear()) as p:
+            p.surface_load(ele=slab)
 
         rec = RecordingEmitter()
         ops.build().emit(rec)
@@ -420,6 +426,9 @@ class TestLadrunoMembraneEmitAndBridge:
             pressure=-5.0,
         )
         ops.fix(pg="Corners", dofs=(1, 1, 1, 1, 1, 1))
+        # #2151: pressure= acts only through an activating pattern.
+        with ops.pattern.Plain(series=ops.timeSeries.Linear()) as p:
+            p.surface_load(pg="DonutSlab")
 
         rec = RecordingEmitter()
         ops.build().emit(rec)
@@ -602,7 +611,7 @@ class TestLadrunoMembraneEmitAndBridge:
             mesh_size=0.75,
         )
         # Second membrane: shorter argument list (explicit nodes=, E/nu/thickness)
-        ops.element.LadrunoMembrane(
+        slab2 = ops.element.LadrunoMembrane(
             nodes=(1, 3, 9, 7),
             support_nodes=(1, 3, 7, 9),
             method="tributary",
@@ -612,6 +621,10 @@ class TestLadrunoMembraneEmitAndBridge:
             thickness=0.15,
         )
         ops.fix(pg="Corners", dofs=(1, 1, 1, 1, 1, 1))
+        # #2151: pressure= acts only through an activating pattern.
+        with ops.pattern.Plain(series=ops.timeSeries.Linear()) as p:
+            p.surface_load(pg="Slab")
+            p.surface_load(ele=slab2)
 
         built = ops.build()
         tcl_em = TclEmitter()
