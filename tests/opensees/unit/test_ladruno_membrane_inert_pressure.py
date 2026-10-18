@@ -22,7 +22,9 @@ from apeGmsh.opensees._internal.build.membrane_load_guard import (
 )
 from apeGmsh.opensees.element.shell import LadrunoMembrane
 from apeGmsh.opensees.emitter.recording import RecordingEmitter
+from apeGmsh.opensees.material.nd import ElasticIsotropic
 from apeGmsh.opensees.pattern.pattern import Plain
+from apeGmsh.opensees.section.plate import ElasticMembranePlateSection
 from tests.opensees.fixtures.fem_stub import FEMStub, _ElementsStub, _NodesStub
 from tests.opensees.unit.test_ladruno_membrane import _2x2_slab_fem
 
@@ -133,6 +135,59 @@ class TestRefuses:
         with pytest.raises(InertMembranePressureError, match="label= does not"):
             ops.build()
 
+    def test_beam_uniform_alone_refuses(self) -> None:
+        """``-beamUniform`` loads the membrane from its own ``w`` and never
+        reads ``-pressure`` (``LadrunoMembrane.cpp`` ~L1131-1143)."""
+        ops, slab = _deck_2143()
+        with ops.pattern.Plain(series=ops.timeSeries.Linear()) as p:
+            p.beam_uniform(ele=slab, wz=-1.0)
+        with pytest.raises(InertMembranePressureError, match="beam_uniform never"):
+            ops.build()
+
+    def test_self_weight_with_rho_t_refuses(self) -> None:
+        """With ``rho`` x thickness the fork's ``-selfWeight`` scales it, not
+        ``-pressure`` (``LadrunoMembrane.cpp`` ~L1115-1117)."""
+        ops, slab = _slab_on_beams(
+            pressure=-10.0, E=30e9, nu=0.2, thickness=0.2, rho=2500.0,
+        )
+        with ops.pattern.Plain(series=ops.timeSeries.Linear()) as p:
+            p.self_weight(ele=slab, wz=-9.81)
+        with pytest.raises(InertMembranePressureError, match="no rho x thickness"):
+            ops.build()
+
+    @pytest.mark.parametrize("source", ["mat", "section"])
+    def test_self_weight_with_a_material_or_section_density_refuses(
+        self, source: str,
+    ) -> None:
+        """With no ``-rho`` the fork reads the ``-mat`` material's density; a
+        section's density is emitted as ``-rho`` with ``-stiff E nu h``."""
+        if source == "mat":
+            ops, _slab = _slab_on_beams(
+                pressure=-5.0, thickness=0.2,
+                mat=ElasticIsotropic(E=30e9, nu=0.2, rho=2400.0),
+            )
+        else:
+            ops, _slab = _slab_on_beams(
+                pressure=-5.0,
+                section=ElasticMembranePlateSection(E=30e9, nu=0.2, h=0.2, rho=2400.0),
+            )
+        with ops.pattern.Plain(series=ops.timeSeries.Linear()) as p:
+            p.self_weight(pg="Slab", wz=-9.81)
+        with pytest.raises(InertMembranePressureError):
+            ops.build()
+
+    def test_a_zero_self_weight_vector_refuses(self) -> None:
+        ops, slab = _deck_2143()
+        with ops.pattern.Plain(series=ops.timeSeries.Linear()) as p:
+            p.self_weight(ele=slab)
+        with pytest.raises(InertMembranePressureError):
+            ops.build()
+
+    def test_the_message_offers_dropping_pressure(self) -> None:
+        ops, _slab = _deck_2143()
+        with pytest.raises(InertMembranePressureError, match="drop pressure="):
+            ops.build()
+
     def test_an_int_ele_tag_fails_closed_and_names_the_handle(self) -> None:
         """A membrane's tag is planned at emit, and the tag law keeps planning
         off the build side, so an int ``ele=`` is never matched to one, even
@@ -180,11 +235,27 @@ class TestBuilds:
             p.surface_load(ele=slab)
         assert _ele_load_tags(ops) == [("-ele", 2, "-type", "-surfaceLoad")]
 
-    @pytest.mark.parametrize("verb", ["surface_load", "self_weight", "beam_uniform"])
-    def test_each_activating_verb_counts(self, verb: str) -> None:
+    def test_surface_load_counts(self) -> None:
         ops, slab = _deck_2143()
         with ops.pattern.Plain(series=ops.timeSeries.Linear()) as p:
-            getattr(p, verb)(ele=slab)
+            p.surface_load(ele=slab)
+        ops.build()
+
+    def test_a_nonzero_self_weight_counts_without_rho_t(self) -> None:
+        """No ``rho`` x thickness: the fork's ``-selfWeight`` falls back to
+        ``-pressure`` (``LadrunoMembrane.cpp`` ~L1115-1120)."""
+        ops, slab = _deck_2143()
+        with ops.pattern.Plain(series=ops.timeSeries.Linear()) as p:
+            p.self_weight(ele=slab, wz=-1.0)
+        ops.build()
+
+    def test_a_self_weight_counts_when_the_material_has_no_density(self) -> None:
+        ops, _slab = _slab_on_beams(
+            pressure=-5.0, thickness=0.2,
+            mat=ElasticIsotropic(E=30e9, nu=0.2, rho=0.0),
+        )
+        with ops.pattern.Plain(series=ops.timeSeries.Linear()) as p:
+            p.self_weight(pg="Slab", wz=-1.0)
         ops.build()
 
     def test_pg_target_counts(self) -> None:

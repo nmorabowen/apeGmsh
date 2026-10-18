@@ -2,13 +2,21 @@
 
 The fork's ``LadrunoMembrane`` fills its load vector only in
 ``LadrunoMembrane::addLoad``, from an ``eleLoad`` inside a pattern
-(FORK_PIN ``100eb9ae1``, ``LadrunoMembrane.cpp``; fork guide section 4).
-``-pressure`` is a reference value that the pattern's ``-surfaceLoad``
-(or, without ``rho``/thickness, ``-selfWeight``) scales. A membrane that
-sets ``pressure=`` with no ``Plain`` pattern targeting it therefore
-carries no load at all: ``analyze`` returns 0 and every support reaction
-reads exactly 0.0 (#2143). :func:`refuse_inert_membrane_pressure` turns
-that silent zero into an error at ``ops.build()``.
+(FORK_PIN ``100eb9ae1``, ``LadrunoMembrane.cpp``; fork guide section 4),
+and ``-pressure`` is read on two of its paths only:
+
+* ``-surfaceLoad`` always scales ``-pressure``;
+* ``-selfWeight`` scales ``rho`` x thickness when the membrane has both
+  (``rho`` from ``-rho``, else from the ``-mat`` material), and falls back
+  to ``-pressure`` only when it has not;
+* ``-beamUniform`` loads the membrane from its own ``w`` values and never
+  reads ``-pressure``.
+
+A membrane that sets ``pressure=`` with no pattern reaching it on one of
+those paths applies none of it: with no other load, ``analyze`` returns 0
+and every support reaction reads exactly 0.0 (#2143).
+:func:`refuse_inert_membrane_pressure` turns that silent zero into an
+error at ``ops.build()``.
 
 ``rho=`` is not refused here: with a thickness it also builds the
 element's mass matrix (``LadrunoMembrane::getMass``), so a modal or
@@ -32,6 +40,7 @@ from typing import TYPE_CHECKING, Iterator
 
 from ...element.shell import LadrunoMembrane
 from ...pattern.pattern import Plain
+from ...section.plate import ElasticMembranePlateSection
 from .errors import BridgeError
 
 if TYPE_CHECKING:
@@ -41,12 +50,9 @@ if TYPE_CHECKING:
 __all__ = ["InertMembranePressureError", "refuse_inert_membrane_pressure"]
 
 
-#: The ``Plain`` element-load types (``surface_load``, ``self_weight``,
-#: ``beam_uniform``) that reach ``LadrunoMembrane::addLoad``. They are every
-#: type ``Plain`` records today; an unknown one fails closed below.
-#: ``-beamUniform`` loads the membrane from its own ``w`` values and does not
-#: read ``-pressure``; it counts because the element is then loaded.
-_ACTIVATING: frozenset[str] = frozenset({"surfaceLoad", "selfWeight", "beamUniform"})
+#: Every element-load type ``Plain`` records today; an unknown one fails
+#: closed below, since it must be classed before it can count.
+_KNOWN_TYPES: frozenset[str] = frozenset({"surfaceLoad", "selfWeight", "beamUniform"})
 
 
 class InertMembranePressureError(BridgeError):
@@ -65,21 +71,61 @@ def _plain_patterns(bm: "BuiltModel") -> Iterator[Plain]:
             yield prim
 
 
+def _may_have_rho_t(m: LadrunoMembrane) -> bool:
+    """True unless ``m`` surely has no ``rho`` x thickness in the fork.
+
+    It mirrors what ``m`` emits: ``-rho`` is ``rho=``, else the section's
+    ``rho``; the thickness is ``thickness=`` (from ``stiff=``, ``E=``/``nu=``
+    or ``mat=``), else the section's ``h``. With ``-rho`` zero the fork
+    reads the ``mat=`` material's density. A material whose density this
+    bridge cannot read counts as having one (fail closed: ``self_weight``
+    then does not count as reading ``pressure=``).
+    """
+    section = m.section if isinstance(m.section, ElasticMembranePlateSection) else None
+    thick = m.thickness if m.thickness is not None else (
+        float(section.h) if section is not None else 0.0
+    )
+    if not thick > 0.0:
+        return False
+    rho = m.rho if m.rho is not None else (
+        float(section.rho) if section is not None else 0.0
+    )
+    if rho > 0.0:
+        return True
+    if m.mat is None:
+        return False
+    mat_rho = getattr(m.mat, "rho", None)
+    return mat_rho is None or float(mat_rho) > 0.0
+
+
+def _reads_pressure(
+    load_type: str, vector: tuple[float, ...], m: LadrunoMembrane,
+) -> bool:
+    """True iff a ``load_type`` load with ``vector`` reaches ``m``'s
+    ``-pressure`` (the paths in the module docstring)."""
+    if load_type == "surfaceLoad":
+        return True
+    if load_type == "selfWeight":
+        return any(c != 0.0 for c in vector) and not _may_have_rho_t(m)
+    return False
+
+
 def refuse_inert_membrane_pressure(bm: "BuiltModel") -> None:
     """Raise when a pressured ``LadrunoMembrane`` has no activating pattern.
 
     A membrane with ``pressure`` nonzero must be targeted by a ``Plain``
-    pattern's ``surface_load``, ``self_weight`` or ``beam_uniform``, top
-    level or inside a stage. A membrane without ``pressure`` (stiffness
-    or mass only) is never refused.
+    pattern, top level or inside a stage, on a path that reads it: a
+    ``surface_load``, or a nonzero ``self_weight`` when the membrane has no
+    ``rho`` x thickness. A membrane without ``pressure`` (stiffness or mass
+    only) is never refused.
 
     Raises
     ------
     InertMembranePressureError
         Naming the membrane, its inert ``pressure``, and the fix.
     BridgeError
-        When a ``Plain`` holds an element-load type this guard does not
-        know (fail closed: a new type must say whether it activates).
+        When a ``Plain`` holds an element-load type or target kind this
+        guard does not know (fail closed: a new one must be classed).
     """
     pressured = [
         p for p in bm.primitives
@@ -89,24 +135,31 @@ def refuse_inert_membrane_pressure(bm: "BuiltModel") -> None:
     if not pressured:
         return
 
-    hit: set[int] = set()
-    pgs: set[str] = set()
+    by_pg: dict[str, list[LadrunoMembrane]] = {}
+    for p in pressured:
+        if p.pg is not None:
+            by_pg.setdefault(p.pg, []).append(p)
+    pressured_ids = {id(p) for p in pressured}
+
+    activated: set[int] = set()
     int_targets = False
     for pattern in _plain_patterns(bm):
         for rec in pattern.ele_loads:
-            if rec.load_type not in _ACTIVATING:
+            if rec.load_type not in _KNOWN_TYPES:
                 raise BridgeError(
                     f"LadrunoMembrane pressure guard: Plain element-load type "
                     f"{rec.load_type!r} is unknown; it must be classed as "
-                    "activating a membrane's pressure= or not (#2151)."
+                    "reading a membrane's pressure= or not (#2151)."
                 )
+            targets: list[LadrunoMembrane] = []
             if rec.target_kind == "pg":
-                pgs.add(str(rec.target))
+                targets = by_pg.get(str(rec.target), [])
             elif rec.target_kind == "ele":
                 assert isinstance(rec.target, tuple)
                 for item in rec.target:
                     if isinstance(item, LadrunoMembrane):
-                        hit.add(id(item))
+                        if id(item) in pressured_ids:
+                            targets.append(item)
                     elif isinstance(item, int):
                         int_targets = True
             elif rec.target_kind != "label":
@@ -114,9 +167,13 @@ def refuse_inert_membrane_pressure(bm: "BuiltModel") -> None:
                     f"LadrunoMembrane pressure guard: Plain element-load "
                     f"target kind {rec.target_kind!r} is unknown (#2151)."
                 )
+            vector = (*rec.wx, *rec.wy, *(rec.wz or (0.0, 0.0)))
+            activated.update(
+                id(m) for m in targets
+                if _reads_pressure(rec.load_type, vector, m)
+            )
 
-    hit.update(id(p) for p in pressured if p.pg is not None and p.pg in pgs)
-    unhit = [p for p in pressured if id(p) not in hit]
+    unhit = [p for p in pressured if id(p) not in activated]
     if not unhit:
         return
 
@@ -137,10 +194,11 @@ def refuse_inert_membrane_pressure(bm: "BuiltModel") -> None:
     raise InertMembranePressureError(
         f"LadrunoMembrane({where}) sets pressure={membrane.pressure!r}, but no "
         "Plain pattern activates it, so it applies no load: the fork reads "
-        "-pressure only inside LadrunoMembrane::addLoad, and every support "
-        "reaction would read 0.0. Target the membrane from a pattern: "
+        "-pressure only inside LadrunoMembrane::addLoad, on a surface_load, or "
+        "on a nonzero self_weight when the membrane has no rho x thickness; "
+        "beam_uniform never reads it. Target the membrane from a pattern: "
         "`with ops.pattern.Plain(series=...) as p: "
-        f"p.surface_load({target})`. A stage's s.pattern(...) counts too; "
-        "label= does not, since it resolves to mesh cells and a membrane "
-        f"has none.{more}"
+        f"p.surface_load({target})`, or drop pressure= if the model is modal "
+        "or stiffness only. A stage's s.pattern(...) counts too; label= does "
+        f"not, since it resolves to mesh cells and a membrane has none.{more}"
     )
