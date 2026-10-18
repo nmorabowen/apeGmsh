@@ -50,7 +50,7 @@ from ...opensees._response_catalog import (
     lookup_fiber,
     parse_mpco_element_key,
 )
-from ._mpco_element_io import _attr_scalar
+from ._mpco_element_io import _attr_scalar, warn_unparseable_bucket_key
 from ._mpco_line_io import read_gp_x_from_connectivity
 
 if TYPE_CHECKING:
@@ -123,7 +123,11 @@ def discover_fiber_buckets(
     for bracket_key in token_grp:
         try:
             elem_key = parse_mpco_element_key(bracket_key)
-        except ValueError:
+        except ValueError as exc:
+            warn_unparseable_bucket_key(
+                token_grp[bracket_key], exc,
+                what=f"fiber discovery of {canonical_component!r}",
+            )
             continue
         if not elem_key.is_custom_rule:
             # Beam fiber-section buckets always use the custom rule.

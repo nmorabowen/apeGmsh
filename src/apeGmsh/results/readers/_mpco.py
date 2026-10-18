@@ -53,15 +53,34 @@ _PROGRAM_STAGE_KINDS = frozenset({"static", "transient"})
 
 
 class MPCOBucketSkippedWarning(UserWarning):
-    """A material-state, spring or line-station bucket the MPCO reader
-    leaves unread.
+    """A bucket the MPCO reader leaves unread, so its elements return no
+    values.
 
-    Its decoder refused the bucket (malformed ``META``, a ``NUM_COLUMNS``
-    mismatch, a missing ``GP_X``, a section code with no canonical), so
-    the elements it holds return no values. One warning per read names
-    the file, every such bucket and the decoder's reason. The layer level
-    names its unread buckets in
-    :class:`~apeGmsh.results.readers._mpco_layer_io.LayerBucketUnreadWarning`.
+    It covers two kinds of bucket:
+
+    * **Refused by its decoder** at read time, at the material-state,
+      spring and line-station levels (malformed ``META``, a
+      ``NUM_COLUMNS`` mismatch, a missing ``GP_X``, a section code with
+      no canonical). One warning per read names the file, every such
+      bucket and the decoder's reason.
+    * **Left out at discovery**, one warning per bucket naming its path,
+      the reason and the file:
+
+      - at the Gauss and material-state levels, a bucket on a nonzero
+        custom-rule index (#2115), and a standard-rule bucket whose
+        class and rule have no ``RESPONSE_CATALOG`` row (#2160);
+      - at the spring level, a ZeroLength-family bucket on a nonzero
+        custom-rule index (#2160);
+      - at the Gauss, material-state, spring, fiber and line-station
+        levels, a bucket whose bracket key does not parse as
+        ``<tag>-<Class>[<rule>:<cust>:<hdr>]`` (#2165). A key under two
+        alias groups of one token is named once.
+
+    The layer level names its unread buckets, an unparseable key among
+    them, in
+    :class:`~apeGmsh.results.readers._mpco_layer_io.LayerBucketUnreadWarning`,
+    and the nodal-force level in
+    :class:`~apeGmsh.results.readers._mpco_nodal_io.NodalForceBucketSkippedWarning`.
     """
 
 

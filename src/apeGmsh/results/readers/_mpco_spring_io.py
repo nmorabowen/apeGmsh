@@ -45,7 +45,7 @@ array ready to be packed into a :class:`SpringSlab`.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -59,7 +59,11 @@ from ...opensees._response_catalog import (
     is_zerolength_catalogued,
     parse_mpco_element_key,
 )
-from ._mpco_element_io import _attr_scalar, warn_unread_bucket
+from ._mpco_element_io import (
+    _attr_scalar,
+    warn_unparseable_bucket_key,
+    warn_unread_bucket,
+)
 
 if TYPE_CHECKING:
     import h5py
@@ -139,6 +143,71 @@ class _SpringBucket:
 # Bucket discovery
 # =====================================================================
 
+@dataclass
+class _SpringScan:
+    """What :func:`scan_spring_buckets` finds in one spring group.
+
+    ``custom_rule`` holds the ``(bracket_key, elem_key)`` of every
+    ZeroLength-family bucket on a nonzero custom-rule index, and
+    ``unparseable`` the ``(bracket_key, parser error)`` of every bucket
+    whose key does not parse; the reader leaves both unread.
+    """
+    mpco_group_name: str | None
+    buckets: list[_SpringBucket] = field(default_factory=list)
+    custom_rule: list[tuple[str, MPCOElementKey]] = field(default_factory=list)
+    unparseable: list[tuple[str, ValueError]] = field(default_factory=list)
+
+
+def scan_spring_buckets(
+    on_elements_grp: "h5py.Group",
+    *,
+    canonical_component: str,
+) -> _SpringScan:
+    """Sort a spring group's buckets without warning.
+
+    The readable buckets are the ones :func:`discover_spring_buckets`
+    returns. A key that does not parse names no class, so it may be a
+    spring or a beam's ``basicForce``; this is the only reader that
+    parses the keys of a spring group, so its unparseable keys are
+    reported here. A parsed key of a class outside
+    :data:`ZEROLENGTH_CATALOG` (a beam's ``basicForce``) is not this
+    level's, and is in no list.
+    """
+    mapping = canonical_to_spring_token(canonical_component)
+    if mapping is None:
+        return _SpringScan(None)
+    mpco_group_name, catalog_token = mapping
+    scan = _SpringScan(mpco_group_name)
+    if mpco_group_name not in on_elements_grp:
+        return scan
+
+    token_grp = on_elements_grp[mpco_group_name]
+    for bracket_key in token_grp:
+        try:
+            elem_key = parse_mpco_element_key(bracket_key)
+        except ValueError as exc:
+            scan.unparseable.append((bracket_key, exc))
+            continue
+        # header_idx may differ (different spring counts) — we accept all.
+        # The group also holds non-spring classes (a beam's basicForce),
+        # which are not this reader's to name.
+        if not is_zerolength_catalogued(elem_key.class_name, catalog_token):
+            continue
+        if elem_key.custom_rule_idx != 0:
+            scan.custom_rule.append((bracket_key, elem_key))
+            continue
+        from ...opensees._response_catalog import lookup_zerolength  # noqa: PLC0415
+        layout = lookup_zerolength(elem_key.class_name, catalog_token)
+        scan.buckets.append(_SpringBucket(
+            bracket_key=bracket_key,
+            elem_key=elem_key,
+            catalog_layout=layout,
+            mpco_group_name=mpco_group_name,
+            catalog_token=catalog_token,
+        ))
+    return scan
+
+
 def discover_spring_buckets(
     on_elements_grp: "h5py.Group",
     *,
@@ -160,43 +229,26 @@ def discover_spring_buckets(
         (the ON_ELEMENTS child that holds the data), or ``None`` if
         the canonical has no spring routing. ``buckets`` contains one
         entry per catalogued ZeroLength bucket in that group.
+
+    Each bucket :func:`scan_spring_buckets` leaves unread is named in one
+    ``MPCOBucketSkippedWarning``: a custom-rule ZeroLength bucket (#2160)
+    and a key that does not parse (#2165).
     """
-    mapping = canonical_to_spring_token(canonical_component)
-    if mapping is None:
-        return (None, [])
-    mpco_group_name, catalog_token = mapping
-
-    if mpco_group_name not in on_elements_grp:
-        return (mpco_group_name, [])
-
-    token_grp = on_elements_grp[mpco_group_name]
-    out: list[_SpringBucket] = []
-    for bracket_key in token_grp:
-        try:
-            elem_key = parse_mpco_element_key(bracket_key)
-        except ValueError:
-            continue
-        # header_idx may differ (different spring counts) — we accept all.
-        # The group also holds non-spring classes (a beam's basicForce),
-        # which are not this reader's to name.
-        if not is_zerolength_catalogued(elem_key.class_name, catalog_token):
-            continue
-        if elem_key.custom_rule_idx != 0:
-            _warn_unread_custom_rule_spring(
-                token_grp[bracket_key], elem_key,
-                what=f"spring discovery of {canonical_component!r}",
+    scan = scan_spring_buckets(
+        on_elements_grp, canonical_component=canonical_component,
+    )
+    what = f"spring discovery of {canonical_component!r}"
+    if scan.custom_rule or scan.unparseable:
+        token_grp = on_elements_grp[scan.mpco_group_name]
+        for bracket_key, exc in scan.unparseable:
+            warn_unparseable_bucket_key(
+                token_grp[bracket_key], exc, what=what,
             )
-            continue
-        from ...opensees._response_catalog import lookup_zerolength  # noqa: PLC0415
-        layout = lookup_zerolength(elem_key.class_name, catalog_token)
-        out.append(_SpringBucket(
-            bracket_key=bracket_key,
-            elem_key=elem_key,
-            catalog_layout=layout,
-            mpco_group_name=mpco_group_name,
-            catalog_token=catalog_token,
-        ))
-    return (mpco_group_name, out)
+        for bracket_key, elem_key in scan.custom_rule:
+            _warn_unread_custom_rule_spring(
+                token_grp[bracket_key], elem_key, what=what,
+            )
+    return (scan.mpco_group_name, scan.buckets)
 
 
 def _warn_unread_custom_rule_spring(
@@ -357,5 +409,6 @@ __all__ = [
     "discover_spring_buckets",
     "read_spring_bucket_slab",
     "resolve_n_springs",
+    "scan_spring_buckets",
     "spring_canonicals_in_bucket",
 ]

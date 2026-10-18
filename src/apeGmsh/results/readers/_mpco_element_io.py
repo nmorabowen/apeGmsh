@@ -158,11 +158,15 @@ def discover_gauss_buckets(
         for bracket_key in token_grp:
             if bracket_key in seen_keys:
                 continue
+            what = f"gauss discovery of {canonical_component!r}"
             try:
                 elem_key = parse_mpco_element_key(bracket_key)
-            except ValueError:
+            except ValueError as exc:
+                warn_unparseable_bucket_key(
+                    token_grp[bracket_key], exc, what=what,
+                )
+                seen_keys.add(bracket_key)
                 continue
-            what = f"gauss discovery of {canonical_component!r}"
             if elem_key.custom_rule_idx != 0:
                 warn_unread_custom_rule_bucket(
                     token_grp[bracket_key], elem_key, what=what,
@@ -244,6 +248,22 @@ def warn_uncatalogued_bucket(
             f"{elem_key.int_rule} has no RESPONSE_CATALOG row for token "
             f"{catalog_token!r}, which is what places its Gauss points"
         ),
+    )
+
+
+def warn_unparseable_bucket_key(
+    bucket_grp: "h5py.Group", exc: ValueError, *, what: str,
+) -> None:
+    """Name a bucket whose bracket key does not parse (#2165).
+
+    Without a parsed key the reader has no class, rule or header to look
+    the bucket up by, so it is left unread. One
+    ``MPCOBucketSkippedWarning`` per key; the other buckets still read.
+    """
+    warn_unread_bucket(
+        bucket_grp,
+        what=what,
+        reason=f"its bracket key does not parse ({exc})",
     )
 
 

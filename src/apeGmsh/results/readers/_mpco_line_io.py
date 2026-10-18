@@ -59,7 +59,11 @@ from ...opensees._response_catalog import (
     resolve_layout_from_gp_x,
     unflatten,
 )
-from ._mpco_element_io import _attr_scalar, validate_bucket_meta
+from ._mpco_element_io import (
+    _attr_scalar,
+    validate_bucket_meta,
+    warn_unparseable_bucket_key,
+)
 
 if TYPE_CHECKING:
     import h5py
@@ -228,7 +232,11 @@ def discover_line_station_buckets(
     for bracket_key in token_grp:
         try:
             elem_key = parse_mpco_element_key(bracket_key)
-        except ValueError:
+        except ValueError as exc:
+            warn_unparseable_bucket_key(
+                token_grp[bracket_key], exc,
+                what=f"line-station discovery of {canonical_component!r}",
+            )
             continue
         catalogued = is_custom_rule_catalogued(
             elem_key.class_name, catalog_token)

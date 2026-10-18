@@ -511,8 +511,14 @@ def _refuse_unknown(group: "h5py.Group", known: "set[str]", where: str) -> None:
 
 
 def _scan_stage(stage: "h5py.Group", where: str, unsupported: set[str]) -> None:
-    """Refuse what the writer would refuse; collect the lossy categories."""
-    from ._mpco_spring_io import discover_spring_buckets
+    """Refuse what the writer would refuse; collect the lossy categories.
+
+    ``springs`` is set by every ZeroLength-family bucket the stage holds,
+    on any custom-rule index: each one is copied verbatim and none is read
+    back. The scan is the spring reader's, without its warnings, which
+    say a bucket is left unread; here every bucket is copied.
+    """
+    from ._mpco_spring_io import scan_spring_buckets
 
     _refuse_unknown(stage, {"MODEL", "RESULTS"}, where)
     if "MODEL" not in stage:
@@ -536,7 +542,8 @@ def _scan_stage(stage: "h5py.Group", where: str, unsupported: set[str]) -> None:
     if "ON_ELEMENTS" in results:
         on_el = results["ON_ELEMENTS"]
         for comp in ("spring_force", "spring_deformation"):
-            if discover_spring_buckets(on_el, canonical_component=comp)[1]:
+            scan = scan_spring_buckets(on_el, canonical_component=comp)
+            if scan.buckets or scan.custom_rule:
                 unsupported.add(_SPRINGS)
 
 
