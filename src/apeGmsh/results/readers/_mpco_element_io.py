@@ -20,13 +20,15 @@ header when one class's elements write different META, and each header
 bucket is checked against its own ``NUM_COLUMNS`` and META by
 :func:`validate_bucket_meta` before it is read.
 
-v1 scope (skipped when encountered):
+A bucket with a nonzero custom-rule index (``209-SixNodeTri[1000:2:0]``)
+is left unread and named in one ``MPCOBucketSkippedWarning``. MPCO opens
+a new custom-rule index for each distinct set of Gauss-point positions
+(``GP_X``), so the catalog's fixed coordinates cannot be trusted for it,
+and this reader does not yet check ``GP_X``.
 
-- ``custom_rule_idx != 0`` (force-based beams with user IPs).
-- Element classes not yet in the catalog.
-
-Anything outside the v1 scope simply contributes nothing to the slab —
-the user can always extend the catalog and re-read the same file.
+An element class absent from the catalog on a standard rule contributes
+nothing to the slab; the user can extend the catalog and re-read the
+same file.
 """
 from __future__ import annotations
 
@@ -161,6 +163,10 @@ def discover_gauss_buckets(
             except ValueError:
                 continue
             if elem_key.custom_rule_idx != 0:
+                warn_unread_custom_rule_bucket(
+                    token_grp[bracket_key], elem_key,
+                    what=f"gauss discovery of {canonical_component!r}",
+                )
                 continue
             found = catalog_layout(
                 elem_key, catalog_token, where=f"{name}/{bracket_key}",
@@ -181,6 +187,33 @@ def discover_gauss_buckets(
             if found_name is None:
                 found_name = name
     return (found_name or mpco_group_name, out)
+
+
+def warn_unread_custom_rule_bucket(
+    bucket_grp: "h5py.Group",
+    elem_key: MPCOElementKey,
+    *,
+    what: str,
+) -> None:
+    """Name a bucket with a nonzero custom-rule index, by path and class.
+
+    MPCO opens a new custom-rule index for each distinct set of
+    Gauss-point positions (``GP_X``), so RESPONSE_CATALOG's fixed
+    coordinates cannot be trusted for it, and the bucket is left unread.
+    One ``MPCOBucketSkippedWarning`` per bucket; the other buckets still
+    read.
+    """
+    from ._mpco import MPCOBucketSkippedWarning
+    warnings.warn(
+        f"MPCO {what} in {Path(bucket_grp.file.filename).name} left 1 "
+        f"bucket(s) unread, so their elements return no values: "
+        f"{bucket_grp.name}: class {elem_key.class_name!r} carries custom "
+        f"integration rule {elem_key.custom_rule_idx} (bracket rule "
+        f"{elem_key.int_rule}). MPCO numbers a custom rule per set of "
+        f"Gauss-point positions (GP_X), which this reader does not "
+        f"verify, so the catalog's Gauss points cannot be assumed.",
+        MPCOBucketSkippedWarning, stacklevel=4,
+    )
 
 
 # The fork's MPCO recorder writes the bracket rule as 0

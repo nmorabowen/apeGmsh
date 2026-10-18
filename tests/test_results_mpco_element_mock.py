@@ -9,6 +9,7 @@ lives in ``test_results_mpco_element_real.py``.
 from __future__ import annotations
 
 import math
+import re
 from pathlib import Path
 
 import h5py
@@ -16,6 +17,7 @@ import numpy as np
 import pytest
 
 from apeGmsh.results import Results
+from apeGmsh.results.readers._mpco import MPCOBucketSkippedWarning
 from apeGmsh.opensees._response_catalog import (
 
     ELE_TAG_FourNodeQuad,
@@ -494,25 +496,28 @@ class TestBucketFiltering:
             slab = s.elements.gauss.get(component="stress_xx")
             assert slab.values.shape == (1, 0)
 
-    def test_custom_rule_bucket_is_skipped(self, tmp_path: Path) -> None:
-        """Custom integration rule (1000) is out of v1 scope — skip it."""
+    def test_custom_rule_bucket_is_named(self, tmp_path: Path) -> None:
+        """A bucket with a nonzero custom-rule index is unread, and named
+        in an ``MPCOBucketSkippedWarning`` (#2115)."""
         layout = lookup("FourNodeTetrahedron", IntRule.Tet_GL_1, "stress")
         path = tmp_path / "custom_rule.mpco"
         f, stage_name = _create_mpco_skeleton(
             path, node_ids=np.array([1]), node_coords=np.zeros((1, 3)),
             n_steps=1, dt=1.0,
         )
+        key = f"{layout.class_tag}-FourNodeTetrahedron[1000:3:0]"
         try:
-            # Bucket with custom_rule_idx=3 — must be ignored.
             on_elements = f[stage_name]["RESULTS"].require_group("ON_ELEMENTS")
             stress = on_elements.create_group("stresses")
-            stress.create_group(
-                f"{layout.class_tag}-FourNodeTetrahedron[1000:3:0]"
-            )
+            stress.create_group(key)
         finally:
             f.close()
 
         with Results.from_mpco(path, model_h5=_stub_model_h5_path()) as r:
             s = r.stage(r.stages[0].id)
-            slab = s.elements.gauss.get(component="stress_xx")
+            with pytest.warns(MPCOBucketSkippedWarning, match=re.escape(
+                f"stresses/{key}: class 'FourNodeTetrahedron' carries "
+                f"custom integration rule 3",
+            )):
+                slab = s.elements.gauss.get(component="stress_xx")
             assert slab.values.shape == (1, 0)
