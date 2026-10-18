@@ -246,7 +246,7 @@ if TYPE_CHECKING:
 else:
     from apeGmsh.fem import FEMData
 if not TYPE_CHECKING:
-    from apeGmsh.solvers import runtime_only
+    from apeGmsh.interop import runtime_only
 else:
     from apeGmsh.studio import checker_only
 
@@ -279,7 +279,7 @@ def test_census_definition() -> None:
         ("<module>", "apeGmsh.viz", False),            # per name; mesh is same-package
         ("<module>", "apeGmsh.results", False),        # relative, resolved
         ("<module>", "apeGmsh.fem", False),            # TYPE_CHECKING else branch runs
-        ("<module>", "apeGmsh.solvers", False),        # `if not TYPE_CHECKING:` body runs
+        ("<module>", "apeGmsh.interop", False),        # `if not TYPE_CHECKING:` body runs
         ("<module>", "apeGmsh._kernel", False),        # class body is module level
         ("Panel.show", "apeGmsh.viewers", True),
         ("Panel.show.inner", "apeGmsh.results", True),
