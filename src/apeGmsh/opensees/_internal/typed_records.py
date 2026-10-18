@@ -664,7 +664,7 @@ class StageRecordRO:
     """Read-side value form of one ``/opensees/stages/stage_NNN`` group.
 
     The immutable mirror of the writer's per-stage capture bucket
-    (``H5Emitter._StageEmitBlock``) — every field is the persisted
+    (``_h5_blocks._StageEmitBlock``) — every field is the persisted
     value, never a primitive reference.  ``OpenSeesModel.stages()``
     exposes a tuple of these; ``to_h5`` echoes them back through
     ``H5Emitter.restore_stage_blocks`` so a ``from_h5 → to_h5``
