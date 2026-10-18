@@ -488,15 +488,22 @@ def mask_absent_rotations(
             "values or padding is unknown. Pass the model the deck ran."
         )
     layouts = [_node_layout(nodes_ndf[int(n)], ndm) for n in node_ids]
-    roles = model_h5_rotation_roles(
-        model_h5, node_ids, where=f"{model_h5}: the rotation mask",
-    )
-    refused = np.array(
-        [roles.refusal(int(n)) is not None for n in node_ids], dtype=bool)
+    refused: "ndarray | None" = None
     for comp, slot in slots.items():
         if slot >= 3:               # rx, ry, rz are spatial slots 3..5
-            absent = refused | np.array(
-                [slot not in lay for lay in layouts], dtype=bool)
+            absent = np.array([slot not in lay for lay in layouts], dtype=bool)
+            if not absent.all():
+                # The layout keeps the slot at some nodes; their elements
+                # say whether it holds a rotation, as RotationMask asks.
+                if refused is None:
+                    roles = model_h5_rotation_roles(
+                        model_h5, node_ids,
+                        where=f"{model_h5}: the rotation mask",
+                    )
+                    refused = np.array(
+                        [roles.refusal(int(n)) is not None for n in node_ids],
+                        dtype=bool)
+                absent |= refused
             components[comp] = np.where(absent, np.nan, components[comp])
 
 # =====================================================================

@@ -288,3 +288,24 @@ def test_an_unknown_reader_type_refuses_the_attach(
     attach = attach_ladruno if fmt == "ladruno" else attach_mpco
     with pytest.raises(TypeError, match="object is none of"):
         attach(object(), model_h5, 2)
+
+
+def test_out_mask_reads_no_roles_when_the_layout_masks_every_node(
+    model: tuple, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The ``.out`` mask asks the model's roles only where some node's
+    layout keeps the slot, as ``RotationMask.absent`` does. 2-D layouts
+    have no ``rotation_x`` slot, so that read is NaN everywhere without
+    replaying the model (which a bridge-only archive cannot do)."""
+    from apeGmsh.opensees import _recorder_translate as rt
+
+    fem, model_h5, up, frame = model
+
+    def _no_replay(*_a: Any, **_k: Any) -> Any:
+        raise AssertionError("the roles were read for a slot no layout keeps")
+
+    monkeypatch.setattr(rt, "model_h5_rotation_roles", _no_replay)
+    nodes = np.array(up + frame)
+    comps = {"rotation_x": np.ones((1, len(nodes)))}
+    rt.mask_absent_rotations(comps, nodes, model_h5, fem)
+    assert np.isnan(comps["rotation_x"]).all()
