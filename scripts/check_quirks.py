@@ -300,6 +300,15 @@ RULES: dict[str, str] = {
         "(#1493) removed viz/NotebookPreview.py, which had imported pyvista beside plotly "
         "outside the viewers package with no ADR"
     ),
+    "fork-token-string": (
+        "adds a string literal (not a docstring) naming the Ladruno fork under src/apeGmsh/results/. "
+        "tests/test_fork_token_ratchet.py counts such a string as a fork token, so it pushes "
+        "results/** over its baseline, and the baseline never rises. User-facing text there must "
+        "stay fork-neutral (say 'the recorder that stores per-element Gauss points', not the "
+        "fork's name); a name the code must spell belongs behind the fork-recorder seam, "
+        "results/readers/_ladruno*.py, or in opensees/. Lesson: #2030 (PR #1999 round 2, PR #2023 "
+        "at 3f3873fa: both refusal texts named the fork and review, not the author, caught it)"
+    ),
     "render-tech-import": (
         "imports plotly, bokeh, k3d, pythreejs or trame in src/. No render technology enters "
         "without a superseding ADR (ADR 0116 D4); trame leaves with the legacy results viewer. "
@@ -1481,7 +1490,7 @@ PYTHON_RULES: dict[str, Callable[[ast.AST, str, Path], Iterator[tuple[int, str]]
 
 #: Rules read from the lines a branch adds, so they need `--base REF`. Without it they
 #: stay silent; a waiver for one is read here, not by the per-file scan.
-DIFF_RULES = {"comment-provenance"}
+DIFF_RULES = {"comment-provenance", "fork-token-string"}
 PROVENANCE_SCOPE = "src/"
 _MONTH = r"(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.?"
 PROVENANCE = re.compile(
@@ -1536,27 +1545,31 @@ def _deleted_comments(diff: str) -> Counter[str]:
     return deleted
 
 
-def _waived_above(lines: list[str], line: int) -> bool:
-    """A `comment-provenance-ok <reason>` waiver on `line` or in the comment block above it."""
+def _waived_above(lines: list[str], line: int, rule: str = "comment-provenance") -> bool:
+    """A `<rule>-ok <reason>` waiver on `line` or in the comment block above it."""
     at = line
     while True:
         match = WAIVER.search(lines[at - 1]) if 0 < at <= len(lines) else None
-        if match and match.group("rule") == "comment-provenance" and match.group("reason").strip(" —-:"):
+        if match and match.group("rule") == rule and match.group("reason").strip(" —-:"):
             return True
         at -= 1
         if at < 1 or not lines[at - 1].lstrip().startswith("#"):
             return False
 
 
+def _git_out(root: Path, *args: str) -> str:
+    done = subprocess.run(
+        ["git", "-C", str(root), *args], capture_output=True, text=True, encoding="utf-8"
+    )
+    if done.returncode != 0:
+        raise SystemExit(f"check_quirks: `git {' '.join(args)}` failed: {done.stderr.strip()}")
+    return done.stdout
+
+
 def check_comment_provenance(root: Path, base: str) -> list[Finding]:
     """Comments that `src/` gained since the merge base with `base` and carry history."""
     def run(*args: str) -> str:
-        done = subprocess.run(
-            ["git", "-C", str(root), *args], capture_output=True, text=True, encoding="utf-8"
-        )
-        if done.returncode != 0:
-            raise SystemExit(f"check_quirks: `git {' '.join(args)}` failed: {done.stderr.strip()}")
-        return done.stdout
+        return _git_out(root, *args)
 
     fork = run("merge-base", base, "HEAD").strip()
     diff = run("diff", "-U0", "--no-color", "--no-ext-diff", fork, "--", f"{PROVENANCE_SCOPE}*.py")
@@ -1575,6 +1588,72 @@ def check_comment_provenance(root: Path, base: str) -> list[Finding]:
                     moved[comment.strip()] -= 1
                     continue
                 findings.append(Finding(rel, line, "comment-provenance", RULES["comment-provenance"]))
+    return findings
+
+
+# --- fork-token-string (diff mode) -------------------------------------------
+
+#: The one definition of a fork token. tests/test_fork_token_ratchet.py reads these names
+#: from here, so the ratchet and this rule cannot drift apart.
+FORK_TOKEN = re.compile("ladruno", re.IGNORECASE)
+#: The fork seam, relative to src/apeGmsh: readers for the fork's own output format.
+FORK_SEAM_GLOBS = ("results/readers/_ladruno*.py",)
+FORK_TOKEN_SCOPE = "src/apeGmsh/results/"
+_DOC_OWNERS = (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)
+
+
+def doc_constant_ids(tree: ast.AST) -> set[int]:
+    """`id()` of every docstring constant in `tree`."""
+    ids: set[int] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, _DOC_OWNERS) and node.body:
+            first = node.body[0]
+            if (isinstance(first, ast.Expr) and isinstance(first.value, ast.Constant)
+                    and isinstance(first.value.value, str)):
+                ids.add(id(first.value))
+    return ids
+
+
+def _fork_string_spans(text: str) -> list[tuple[int, int]]:
+    """`(first, last)` line of every non-docstring string constant naming the fork."""
+    try:
+        tree = ast.parse(text)
+    except SyntaxError:
+        return []
+    docs = doc_constant_ids(tree)
+    return [
+        (node.lineno, node.end_lineno or node.lineno)
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Constant) and isinstance(node.value, str)
+        and id(node) not in docs and FORK_TOKEN.search(node.value)
+    ]
+
+
+def check_fork_token_string(root: Path, base: str) -> list[Finding]:
+    """Strings under results/ that name the fork, on a line this branch adds."""
+    fork = _git_out(root, "merge-base", base, "HEAD").strip()
+    diff = _git_out(root, "diff", "-U0", "--no-color", "--no-ext-diff", fork, "--",
+                    f"{FORK_TOKEN_SCOPE}*.py")
+    findings: list[Finding] = []
+    for rel, numbers in sorted(_added_lines(diff).items()):
+        inside = Path(rel).relative_to("src/apeGmsh")
+        if any(inside.match(glob) for glob in FORK_SEAM_GLOBS):
+            continue
+        path = root / rel
+        text = _read_source(path) if path.is_file() else None
+        if text is None:
+            continue
+        lines = text.splitlines()
+        hit: set[int] = set()
+        for first, last in _fork_string_spans(text):
+            added = sorted(n for n in numbers if first <= n <= last)
+            if not added:
+                continue
+            # Before 3.12 an f-string part spans the whole literal: report the line that spells the token.
+            line = next((n for n in added if FORK_TOKEN.search(lines[n - 1])), added[0])
+            if line not in hit and not _waived_above(lines, line, "fork-token-string"):
+                hit.add(line)
+                findings.append(Finding(rel, line, "fork-token-string", RULES["fork-token-string"]))
     return findings
 
 
@@ -1703,6 +1782,7 @@ def _scan(root: Path, base: str | None = None) -> list[Finding]:
     findings = check_adr_numbers(root) + check_doc_paths(root) + check_arch_path(root)
     if base is not None:
         findings += check_comment_provenance(root, base)
+        findings += check_fork_token_string(root, base)
     for path in _python_files(root):
         findings.extend(scan_file(path, path.relative_to(root).as_posix(), root))
     findings.extend(_stale_baseline(root))
