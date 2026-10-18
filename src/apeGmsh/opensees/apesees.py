@@ -127,6 +127,7 @@ from ._internal.build.interfaces import (
     _register_interface_phantoms,
     _validate_interface_records,
 )
+from ._internal.build.membrane_load_guard import refuse_inert_membrane_pressure
 from ._internal.build.patterns import emit_pattern_spec, broker_mass_components
 from ._internal.build.recorders import emit_recorder_spec
 from ._internal.build.transforms import emit_transform_specs
@@ -11490,7 +11491,7 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
                 and getattr(p, "pg", None) is None
                 and not isinstance(p, LadrunoMembrane)
             ])
-        return BuiltModel(
+        built = BuiltModel(
             primitives=tuple(self._primitives),
             tag_for=tag_for,
             ndm=self._ndm,
@@ -11517,6 +11518,9 @@ class apeSees(_ContactQueryMixin, _ModalMixin, _FrfMixin, _ExplicitMixin):
             _decl_owners={
                 oid: owner for oid, (owner, _decl) in self._decls.items()},
         )
+        # A membrane pressure= that no pattern activates loads nothing.
+        refuse_inert_membrane_pressure(built)
+        return built
 
     # -- Internal helpers ------------------------------------------------
 
