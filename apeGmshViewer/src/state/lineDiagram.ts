@@ -931,7 +931,17 @@ export function buildLineDiagram3D(opts: BuildLineDiagram3DOptions): LineDiagram
       }
 
       const axes = beamLocalAxes(xLocal, zRec);
-      extrudeDir = axisChoice === "y" ? axes.yLocal : axes.zLocal;
+      if (axisChoice === "y") {
+        extrudeDir = axes.yLocal;
+      } else if (component === "My" || component === "kappaY") {
+        // Right-hand rule about +yLocal = zLocal x xLocal puts tension on +zLocal for My > 0
+        // and on -zLocal for My < 0 (opposite to Mz about +zLocal = xLocal x yLocal).
+        // Using -zLocal as the unflipped (compression-side) baseline makes flipSign=true
+        // (signMult = -1) extrude on the tension side (+My * zLocal), matching Mz.
+        extrudeDir = [-axes.zLocal[0], -axes.zLocal[1], -axes.zLocal[2]];
+      } else {
+        extrudeDir = axes.zLocal;
+      }
       zRecSource = source;
     }
 

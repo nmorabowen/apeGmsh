@@ -110,6 +110,7 @@ option:disabled { color: var(--muted); }
 .deform-missing { font-size: 13px; }
 
 .line-diagram { max-width: 268px; }
+.line-diagram-pick { flex-direction: column; }
 .line-diagram-pick .line-diagram-field { flex: 0 0 auto; }
 .line-diagram-title { font-weight: 600; margin: 2px 0 4px; }
 .line-diagram-planes, .line-diagram-cmaps { flex-wrap: wrap; }
