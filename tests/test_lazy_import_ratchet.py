@@ -50,8 +50,6 @@ from collections.abc import Iterable, Iterator
 from pathlib import Path
 from typing import NamedTuple
 
-import pytest
-
 REPO = Path(__file__).resolve().parents[1]
 SRC = REPO / "src"
 SNAPSHOT = Path(__file__).resolve().with_name("lazy_import_snapshot.txt")
@@ -222,6 +220,77 @@ def test_lazy_share_does_not_grow() -> None:
     if ok and msg:
         print(msg)
     assert ok, msg
+
+
+_FIXTURE = '''
+from typing import TYPE_CHECKING
+import apeGmsh.results.Results
+from apeGmsh import viz, mesh
+from . import _helpers
+from ..results import reader
+import numpy
+if TYPE_CHECKING:
+    from apeGmsh.core import Part
+else:
+    from apeGmsh.fem import FEMData
+
+class Panel:
+    from apeGmsh._kernel import keys
+
+    def show(self):
+        from apeGmsh.viewers import qt
+        if TYPE_CHECKING:
+            from apeGmsh.sections import Section
+        def inner():
+            import apeGmsh.results
+            from .sibling import thing
+        return lambda: 0
+
+async def load():
+    from apeGmsh import results
+'''
+
+
+def test_census_definition() -> None:
+    got = {(s.qualname, s.module, s.lazy)
+           for s in sites_in("apeGmsh/mesh/view.py", _FIXTURE)}
+    assert got == {
+        ("<module>", "apeGmsh.results.Results", False),
+        ("<module>", "apeGmsh.viz", False),            # per name; mesh is same-package
+        ("<module>", "apeGmsh.results", False),        # relative, resolved
+        ("<module>", "apeGmsh.fem", False),            # TYPE_CHECKING else branch runs
+        ("<module>", "apeGmsh._kernel", False),        # class body is module level
+        ("Panel.show", "apeGmsh.viewers", True),
+        ("Panel.show.inner", "apeGmsh.results", True),
+        ("load", "apeGmsh.results", True),
+    }
+    # the root package, and a package __init__ resolving `from . import x`
+    root = {s.module for s in sites_in("apeGmsh/__init__.py", "from . import mesh, _x\n")}
+    assert root == {"apeGmsh.mesh", "apeGmsh._x"}
+    pkg = list(sites_in("apeGmsh/mesh/__init__.py", "from . import a\nfrom .. import viz\n"))
+    assert [(s.module, s.lazy) for s in pkg] == [("apeGmsh.viz", False)]
+
+
+def test_self_test_growth_fails_and_names_the_site() -> None:
+    base = census([("apeGmsh/a/m.py", "import apeGmsh.b\ndef f():\n    import apeGmsh.c\n")])
+    bl, bt = counts(base)
+    assert (bl, bt) == (1, 2) and verdict(bl, bt, bl, bt, []) == (True, None)
+    snap = Counter(snapshot_lines(base))
+    grown = census([("apeGmsh/a/m.py", "import apeGmsh.b\ndef f():\n    import apeGmsh.c\n"
+                     "def g():\n    from apeGmsh.d import x\n")])
+    added = new_lazy(grown, snap)
+    assert added == ["apeGmsh/a/m.py | g | apeGmsh.d"]
+    ok, msg = verdict(*counts(grown), bl, bt, added)
+    assert not ok and "apeGmsh/a/m.py | g | apeGmsh.d" in msg and "Do not raise" in msg
+    # a hoist (lazy -> eager) lowers the share: passes and names the pair to adopt
+    shrunk = census([("apeGmsh/a/m.py", "import apeGmsh.b\nimport apeGmsh.c\n")])
+    ok, msg = verdict(*counts(shrunk), bl, bt, [])
+    assert ok and "BASELINE_LAZY = 0" in msg and "BASELINE_TOTAL = 2" in msg
+
+
+def test_snapshot_parses_and_baseline_is_consistent() -> None:
+    snap = read_snapshot()
+    assert sum(snap.values()) >= 1 and 0 < BASELINE_LAZY <= BASELINE_TOTAL
 
 
 def main(argv: list[str]) -> int:

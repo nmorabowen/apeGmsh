@@ -656,6 +656,17 @@ def test_loc_ratchet_escapes_pins_are_human_gated():
     assert not _merged(gh)
 
 
+def test_lazy_import_ratchet_baseline_is_human_gated():
+    """C4 (#1967): the lazy-share pair and its snapshot are baseline. Revert-proof: with
+    either BASELINE entry removed this fails at the membership assert."""
+    for path in ("tests/test_lazy_import_ratchet.py", "tests/lazy_import_snapshot.txt"):
+        assert path in land_pr.BASELINE
+        gh, git = _d4([_row(path)])
+        with pytest.raises(land_pr.LandError, match=rf"check 8: .*{re.escape(path)}.*'human-gate'"):
+            _run(1218, gh, git)
+        assert not _merged(gh)
+
+
 def test_baseline_renamed_away_is_refused():
     gh, git = _d4([_row("tests/freeze_census_v2.py", "renamed", previous="tests/freeze_census.py")])
     with pytest.raises(land_pr.LandError, match=r"check 8: .*tests/freeze_census\.py"):
