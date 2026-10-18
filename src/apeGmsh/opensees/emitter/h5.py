@@ -78,7 +78,7 @@ from collections import Counter
 from collections.abc import Callable, Mapping
 from types import MappingProxyType
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any, NamedTuple, NoReturn, Sequence
+from typing import Any, NamedTuple, NoReturn, Sequence
 
 from .base import DroppedAxisGuard
 from .caps import TargetCaps
@@ -131,10 +131,6 @@ from ._h5_write_model import (  # noqa: F401  (re-exported name helpers)
     time_series_name,
     transform_name,
 )
-
-if TYPE_CHECKING:
-    pass
-
 
 __all__ = [
     "Declaration", "DeclParamsRow", "DeclTagRun", "H5Emitter",
@@ -677,8 +673,6 @@ _PATH_SERIES_TOKENS: tuple[str, ...] = ("Path",)
 _BLOCK_PATTERN_TOKENS: tuple[str, ...] = ("Plain", "MultiSupport")
 
 
-
-
 # ---------------------------------------------------------------------------
 # Buffered intermediate representations
 # ---------------------------------------------------------------------------
@@ -691,12 +685,9 @@ _BLOCK_PATTERN_TOKENS: tuple[str, ...] = ("Plain", "MultiSupport")
 # already depend on.
 
 
-
-
 # ---------------------------------------------------------------------------
 # Emit order and the generic store (ADR 0114 R2/R3a, schema 2.23.0)
 # ---------------------------------------------------------------------------
-
 
 
 class Declaration(NamedTuple):
@@ -953,12 +944,6 @@ def decl_argv_names(
 #: family in field order (``()`` when the row references none).
 DeclParamsRow = tuple[
     int, str, str, str, tuple[str, ...], tuple[str, ...], tuple[str, ...]]
-
-
-
-
-
-
 
 
 # ---------------------------------------------------------------------------
@@ -1779,21 +1764,3 @@ for _verb, _row in VERBS.items():
     if _row.via == "protocol" and _verb not in _NOTED_INLINE:
         setattr(H5Emitter, _verb, _noted(_verb, getattr(H5Emitter, _verb)))
 del _verb, _row
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-

@@ -349,7 +349,13 @@ def _is_trivial(stmt: ast.stmt) -> bool:
 
 
 def _h5_tree() -> ast.Module:
-    return ast.parse((_EMITTER_DIR / "h5.py").read_text(encoding="utf-8"))
+    """``h5.py`` plus the four mixin modules, so an alias bound in a mixin is
+    seen by :func:`_refusal_names` too."""
+    body: list[ast.stmt] = []
+    for stem in ("h5", *(m for m, _ in _H5_MIXINS)):
+        tree = ast.parse((_EMITTER_DIR / f"{stem}.py").read_text(encoding="utf-8"))
+        body.extend(tree.body)
+    return ast.Module(body=body, type_ignores=[])
 
 
 def _h5_methods() -> dict[str, _FuncDef]:
