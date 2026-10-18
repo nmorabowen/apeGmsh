@@ -1351,8 +1351,13 @@ def test_rule_zero_uncatalogued_class_warns_by_name(tmp_path: Path) -> None:
     assert slab.natural_coords.shape == (3, 0)
 
 
+@pytest.mark.parametrize("other_rule,other_token", [
+    ("Triangle_GL_1", "stress"),    # another rule, the same token
+    ("Triangle_GL_2", "damage"),    # the same rule, another token
+])
 def test_rule_zero_ambiguous_placement_refuses(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    other_rule: str, other_token: str,
 ) -> None:
     import dataclasses
 
@@ -1361,11 +1366,13 @@ def test_rule_zero_ambiguous_placement_refuses(
         GaussLayoutMismatch,
     )
 
-    # A second SixNodeTri rule with the same points in another order: rule 0
-    # names no rule, so the reader cannot tell which one the file used.
+    # A second SixNodeTri layout of 3 GPs with the points in another order.
+    # Rule 0 names no rule and placement ignores the token, so the reader
+    # cannot tell which one the file used.
     base = RESPONSE_CATALOG[("SixNodeTri", IntRule.Triangle_GL_2, "stress")]
     monkeypatch.setitem(
-        RESPONSE_CATALOG, ("SixNodeTri", IntRule.Triangle_GL_1, "stress"),
+        RESPONSE_CATALOG,
+        ("SixNodeTri", getattr(IntRule, other_rule), other_token),
         dataclasses.replace(base, natural_coords=TRI_GL_2[::-1].copy()),
     )
     path, _ = _named_gp_file(
@@ -1374,6 +1381,32 @@ def test_rule_zero_ambiguous_placement_refuses(
     with LadrunoReader(path) as r:
         with pytest.raises(GaussLayoutMismatch, match="place them differently"):
             r.read_gauss("stage_0", "stress_xx")
+
+
+#: LadrunoBrick's 2x2x2 points in its GP order, the last axis fastest
+#: (the order its ``stresses`` response and the Brick rule share).
+_H = 1.0 / np.sqrt(3.0)
+HEX_GL_2 = np.array([
+    [-_H, -_H, -_H], [-_H, -_H, _H], [-_H, _H, -_H], [-_H, _H, _H],
+    [_H, -_H, -_H], [_H, -_H, _H], [_H, _H, -_H], [_H, _H, _H],
+])
+
+
+def test_rule_zero_material_bucket_is_placed_like_the_element(
+    tmp_path: Path,
+) -> None:
+    # A material response is recorded at the element's own Gauss points, so
+    # LadrunoBrick's `material.pstrain` takes the 8-GP placement of its
+    # `stress` layout, although the catalog has no `material.pstrain` entry.
+    # It used to warn GaussCoordsUnavailableWarning on every such bucket.
+    labels = ("epsP11", "epsP22", "epsP33", "epsP12", "epsP23", "epsP13")
+    canon = tuple(f"plastic_strain_{c}" for c in
+                  ("xx", "yy", "zz", "xy", "yz", "xz"))
+    path, data = _named_gp_file(
+        tmp_path, "33002-LadrunoBrick[0:0:0]", labels, 8, level=4,
+        token="material.pstrain",
+    )
+    _assert_reads(path, data, canon, 8, HEX_GL_2)
 
 
 # ---------------------------------------------------------------------------
